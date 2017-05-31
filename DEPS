@@ -6,7 +6,7 @@ vars = {
   'buildspec_platforms':
     'all',
   'buildtools_revision':
-    '454e53abae6e4d68ee992b0a93a4174b75519393',
+    '104574186c17cd4701857454feba8872e52a7d82',
   'catapult_revision':
     'fd47e24b0e0912f153cd68a5dfc995d6f7cd2b81',
   'chromium_git':
