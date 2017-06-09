@@ -12,6 +12,7 @@
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "tools/gn/input_file_manager.h"
@@ -29,8 +30,9 @@ class Scheduler {
 
   bool Run();
 
-  base::MessageLoop* main_loop() { return &main_loop_; }
-  base::SequencedWorkerPool* pool() { return pool_.get(); }
+  scoped_refptr<base::SingleThreadTaskRunner> task_runner() {
+    return main_loop_.task_runner();
+  }
 
   InputFileManager* input_file_manager() { return input_file_manager_.get(); }
 

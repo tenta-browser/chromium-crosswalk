@@ -63,7 +63,7 @@ std::unique_ptr<base::DictionaryValue> ReadValue(const base::win::RegKey& key,
     return nullptr;
   }
 
-  if (!value->IsType(base::Value::TYPE_DICTIONARY)) {
+  if (!value->IsType(base::Value::Type::DICTIONARY)) {
     LOG(ERROR) << "Failed to parse '" << value_name << "': not a dictionary.";
     return nullptr;
   }
@@ -266,7 +266,7 @@ bool PairingRegistryDelegateWin::Delete(const std::string& client_id) {
 }
 
 std::unique_ptr<PairingRegistry::Delegate> CreatePairingRegistryDelegate() {
-  return base::WrapUnique(new PairingRegistryDelegateWin());
+  return base::MakeUnique<PairingRegistryDelegateWin>();
 }
 
 }  // namespace remoting

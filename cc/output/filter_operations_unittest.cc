@@ -9,6 +9,7 @@
 #include "third_party/skia/include/effects/SkBlurImageFilter.h"
 #include "third_party/skia/include/effects/SkDropShadowImageFilter.h"
 #include "third_party/skia/include/effects/SkOffsetImageFilter.h"
+#include "third_party/skia/include/effects/SkXfermodeImageFilter.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
 
@@ -32,6 +33,18 @@ TEST(FilterOperationsTest, MapRectBlur) {
   ops.Append(FilterOperation::CreateBlurFilter(20));
   EXPECT_EQ(gfx::Rect(-60, -60, 130, 130),
             ops.MapRect(gfx::Rect(0, 0, 10, 10), SkMatrix::I()));
+  EXPECT_EQ(gfx::Rect(-120, -120, 260, 260),
+            ops.MapRect(gfx::Rect(0, 0, 20, 20), SkMatrix::MakeScale(2, 2)));
+  EXPECT_EQ(gfx::Rect(-60, -70, 130, 130),
+            ops.MapRect(gfx::Rect(0, -10, 10, 10), SkMatrix::MakeScale(1, -1)));
+}
+
+TEST(FilterOperationsTest, MapRectBlurOverflow) {
+  // Passes if float-cast-overflow does not occur in ubsan builds.
+  // The blur spread exceeds INT_MAX.
+  FilterOperations ops;
+  ops.Append(FilterOperation::CreateBlurFilter(2e9f));
+  ops.MapRect(gfx::Rect(0, 0, 10, 10), SkMatrix::I());
 }
 
 TEST(FilterOperationsTest, MapRectReverseBlur) {
@@ -39,6 +52,12 @@ TEST(FilterOperationsTest, MapRectReverseBlur) {
   ops.Append(FilterOperation::CreateBlurFilter(20));
   EXPECT_EQ(gfx::Rect(-60, -60, 130, 130),
             ops.MapRectReverse(gfx::Rect(0, 0, 10, 10), SkMatrix::I()));
+  EXPECT_EQ(
+      gfx::Rect(-120, -120, 260, 260),
+      ops.MapRectReverse(gfx::Rect(0, 0, 20, 20), SkMatrix::MakeScale(2, 2)));
+  EXPECT_EQ(gfx::Rect(-60, -70, 130, 130),
+            ops.MapRectReverse(gfx::Rect(0, -10, 10, 10),
+                               SkMatrix::MakeScale(1, -1)));
 }
 
 TEST(FilterOperationsTest, GetOutsetsDropShadowReferenceFilter) {
@@ -71,6 +90,10 @@ TEST(FilterOperationsTest, MapRectDropShadowReferenceFilter) {
           nullptr)));
   EXPECT_EQ(gfx::Rect(-9, -19, 34, 64),
             ops.MapRect(gfx::Rect(0, 0, 10, 10), SkMatrix::I()));
+  EXPECT_EQ(gfx::Rect(-18, -38, 68, 128),
+            ops.MapRect(gfx::Rect(0, 0, 20, 20), SkMatrix::MakeScale(2, 2)));
+  EXPECT_EQ(gfx::Rect(-9, -45, 34, 64),
+            ops.MapRect(gfx::Rect(0, -10, 10, 10), SkMatrix::MakeScale(1, -1)));
 }
 
 TEST(FilterOperationsTest, MapRectReverseDropShadowReferenceFilter) {
@@ -83,6 +106,12 @@ TEST(FilterOperationsTest, MapRectReverseDropShadowReferenceFilter) {
           nullptr)));
   EXPECT_EQ(gfx::Rect(-15, -35, 34, 64),
             ops.MapRectReverse(gfx::Rect(0, 0, 10, 10), SkMatrix::I()));
+  EXPECT_EQ(
+      gfx::Rect(-30, -70, 68, 128),
+      ops.MapRectReverse(gfx::Rect(0, 0, 20, 20), SkMatrix::MakeScale(2, 2)));
+  EXPECT_EQ(gfx::Rect(-15, -29, 34, 64),
+            ops.MapRectReverse(gfx::Rect(0, -10, 10, 10),
+                               SkMatrix::MakeScale(1, -1)));
 }
 
 TEST(FilterOperationsTest, MapRectOffsetReferenceFilter) {
@@ -91,6 +120,10 @@ TEST(FilterOperationsTest, MapRectOffsetReferenceFilter) {
   ops.Append(FilterOperation::CreateReferenceFilter(std::move(filter)));
   EXPECT_EQ(gfx::Rect(30, 40, 10, 10),
             ops.MapRect(gfx::Rect(0, 0, 10, 10), SkMatrix::I()));
+  EXPECT_EQ(gfx::Rect(60, 80, 20, 20),
+            ops.MapRect(gfx::Rect(0, 0, 20, 20), SkMatrix::MakeScale(2, 2)));
+  EXPECT_EQ(gfx::Rect(30, -50, 10, 10),
+            ops.MapRect(gfx::Rect(0, -10, 10, 10), SkMatrix::MakeScale(1, -1)));
 }
 
 TEST(FilterOperationsTest, MapRectReverseOffsetReferenceFilter) {
@@ -99,6 +132,12 @@ TEST(FilterOperationsTest, MapRectReverseOffsetReferenceFilter) {
   ops.Append(FilterOperation::CreateReferenceFilter(std::move(filter)));
   EXPECT_EQ(gfx::Rect(-30, -40, 10, 10),
             ops.MapRectReverse(gfx::Rect(0, 0, 10, 10), SkMatrix::I()));
+  EXPECT_EQ(
+      gfx::Rect(-60, -80, 20, 20),
+      ops.MapRectReverse(gfx::Rect(0, 0, 20, 20), SkMatrix::MakeScale(2, 2)));
+  EXPECT_EQ(gfx::Rect(-30, 30, 10, 10),
+            ops.MapRectReverse(gfx::Rect(0, -10, 10, 10),
+                               SkMatrix::MakeScale(1, -1)));
 }
 
 TEST(FilterOperationsTest, MapRectCombineNonCommutative) {
@@ -114,6 +153,10 @@ TEST(FilterOperationsTest, MapRectCombineNonCommutative) {
 
   EXPECT_EQ(gfx::Rect(200, 200, 20, 20),
             ops.MapRect(gfx::Rect(10, 10), SkMatrix::I()));
+  EXPECT_EQ(gfx::Rect(400, 400, 40, 40),
+            ops.MapRect(gfx::Rect(20, 20), SkMatrix::MakeScale(2, 2)));
+  EXPECT_EQ(gfx::Rect(200, -220, 20, 20),
+            ops.MapRect(gfx::Rect(0, -10, 10, 10), SkMatrix::MakeScale(1, -1)));
 }
 
 TEST(FilterOperationsTest, MapRectReverseCombineNonCommutative) {
@@ -129,6 +172,11 @@ TEST(FilterOperationsTest, MapRectReverseCombineNonCommutative) {
 
   EXPECT_EQ(gfx::Rect(10, 10),
             ops.MapRectReverse(gfx::Rect(200, 200, 20, 20), SkMatrix::I()));
+  EXPECT_EQ(gfx::Rect(20, 20), ops.MapRectReverse(gfx::Rect(400, 400, 40, 40),
+                                                  SkMatrix::MakeScale(2, 2)));
+  EXPECT_EQ(gfx::Rect(0, -10, 10, 10),
+            ops.MapRectReverse(gfx::Rect(200, -220, 20, 20),
+                               SkMatrix::MakeScale(1, -1)));
 }
 
 TEST(FilterOperationsTest, GetOutsetsNullReferenceFilter) {
@@ -149,6 +197,10 @@ TEST(FilterOperationsTest, MapRectNullReferenceFilter) {
   ops.Append(FilterOperation::CreateReferenceFilter(nullptr));
   EXPECT_EQ(gfx::Rect(0, 0, 10, 10),
             ops.MapRect(gfx::Rect(0, 0, 10, 10), SkMatrix::I()));
+  EXPECT_EQ(gfx::Rect(0, 0, 20, 20),
+            ops.MapRect(gfx::Rect(0, 0, 20, 20), SkMatrix::MakeScale(2, 2)));
+  EXPECT_EQ(gfx::Rect(0, -10, 10, 10),
+            ops.MapRect(gfx::Rect(0, -10, 10, 10), SkMatrix::MakeScale(1, -1)));
 }
 
 TEST(FilterOperationsTest, MapRectReverseNullReferenceFilter) {
@@ -156,6 +208,12 @@ TEST(FilterOperationsTest, MapRectReverseNullReferenceFilter) {
   ops.Append(FilterOperation::CreateReferenceFilter(nullptr));
   EXPECT_EQ(gfx::Rect(0, 0, 10, 10),
             ops.MapRectReverse(gfx::Rect(0, 0, 10, 10), SkMatrix::I()));
+  EXPECT_EQ(
+      gfx::Rect(0, 0, 20, 20),
+      ops.MapRectReverse(gfx::Rect(0, 0, 20, 20), SkMatrix::MakeScale(2, 2)));
+  EXPECT_EQ(gfx::Rect(0, -10, 10, 10),
+            ops.MapRectReverse(gfx::Rect(0, -10, 10, 10),
+                               SkMatrix::MakeScale(1, -1)));
 }
 
 TEST(FilterOperationsTest, GetOutsetsDropShadow) {
@@ -175,6 +233,10 @@ TEST(FilterOperationsTest, MapRectDropShadow) {
   ops.Append(FilterOperation::CreateDropShadowFilter(gfx::Point(3, 8), 20, 0));
   EXPECT_EQ(gfx::Rect(-57, -52, 130, 130),
             ops.MapRect(gfx::Rect(0, 0, 10, 10), SkMatrix::I()));
+  EXPECT_EQ(gfx::Rect(-114, -104, 260, 260),
+            ops.MapRect(gfx::Rect(0, 0, 20, 20), SkMatrix::MakeScale(2, 2)));
+  EXPECT_EQ(gfx::Rect(-57, -78, 130, 130),
+            ops.MapRect(gfx::Rect(0, -10, 10, 10), SkMatrix::MakeScale(1, -1)));
 }
 
 TEST(FilterOperationsTest, MapRectReverseDropShadow) {
@@ -182,6 +244,61 @@ TEST(FilterOperationsTest, MapRectReverseDropShadow) {
   ops.Append(FilterOperation::CreateDropShadowFilter(gfx::Point(3, 8), 20, 0));
   EXPECT_EQ(gfx::Rect(-63, -68, 130, 130),
             ops.MapRectReverse(gfx::Rect(0, 0, 10, 10), SkMatrix::I()));
+  EXPECT_EQ(
+      gfx::Rect(-126, -136, 260, 260),
+      ops.MapRectReverse(gfx::Rect(0, 0, 20, 20), SkMatrix::MakeScale(2, 2)));
+  EXPECT_EQ(gfx::Rect(-63, -62, 130, 130),
+            ops.MapRectReverse(gfx::Rect(0, -10, 10, 10),
+                               SkMatrix::MakeScale(1, -1)));
+}
+
+TEST(FilterOperationsTest, GetOutsetsDropShadowDoesNotContract) {
+  // Even with a drop-shadow, the original content is still drawn. Thus the
+  // content bounds are never contracted due to a drop-shadow.
+  FilterOperations ops;
+  ops.Append(FilterOperation::CreateDropShadowFilter(gfx::Point(3, 8), 0, 0));
+  int top, right, bottom, left;
+  top = right = bottom = left = 0;
+  ops.GetOutsets(&top, &right, &bottom, &left);
+  EXPECT_EQ(0, top);
+  EXPECT_EQ(3, right);
+  EXPECT_EQ(8, bottom);
+  EXPECT_EQ(0, left);
+}
+
+TEST(FilterOperationsTest, MapRectDropShadowDoesNotContract) {
+  // Even with a drop-shadow, the original content is still drawn. Thus the
+  // content bounds are never contracted due to a drop-shadow.
+  FilterOperations ops;
+  ops.Append(FilterOperation::CreateDropShadowFilter(gfx::Point(3, 8), 0, 0));
+  EXPECT_EQ(gfx::Rect(0, 0, 13, 18),
+            ops.MapRect(gfx::Rect(0, 0, 10, 10), SkMatrix::I()));
+}
+
+TEST(FilterOperationsTest, MapRectReverseDropShadowDoesNotContract) {
+  // Even with a drop-shadow, the original content is still drawn. Thus the
+  // content bounds are never contracted due to a drop-shadow.
+  FilterOperations ops;
+  ops.Append(FilterOperation::CreateDropShadowFilter(gfx::Point(3, 8), 0, 0));
+  EXPECT_EQ(gfx::Rect(-3, -8, 13, 18),
+            ops.MapRectReverse(gfx::Rect(0, 0, 10, 10), SkMatrix::I()));
+}
+
+TEST(FilterOperationsTest, MapRectTypeConversionDoesNotOverflow) {
+  // Must be bigger than half of the positive range so that the width/height
+  // overflow happens, but small enough that there aren't other issues before
+  // the overflow would happen.
+  SkScalar big_offset =
+      SkFloatToScalar(std::numeric_limits<int>::max()) * 2 / 3;
+
+  FilterOperations ops;
+  ops.Append(FilterOperation::CreateReferenceFilter(SkXfermodeImageFilter::Make(
+      SkBlendMode::kSrcOver,
+      SkOffsetImageFilter::Make(-big_offset, -big_offset, nullptr),
+      SkOffsetImageFilter::Make(big_offset, big_offset, nullptr), nullptr)));
+  gfx::Rect rect = ops.MapRect(gfx::Rect(-10, -10, 20, 20), SkMatrix::I());
+  EXPECT_GT(rect.width(), 0);
+  EXPECT_GT(rect.height(), 0);
 }
 
 #define SAVE_RESTORE_AMOUNT(filter_name, filter_type, a)                  \
@@ -845,6 +962,17 @@ TEST(FilterOperationsTest, BlendRaggedSequences) {
   EXPECT_EQ(to, blended);
   blended = to.Blend(from, 1.5);
   EXPECT_EQ(to, blended);
+}
+
+TEST(FilterOperationsTest, ToString) {
+  FilterOperations filters;
+  EXPECT_EQ(std::string("{\"FilterOperations\":[]}"), filters.ToString());
+
+  filters.Append(FilterOperation::CreateSaturateFilter(3.f));
+  filters.Append(FilterOperation::CreateBlurFilter(2.f));
+  EXPECT_EQ(std::string("{\"FilterOperations\":[{\"amount\":3.0,\"type\":2},"
+                        "{\"amount\":2.0,\"type\":8}]}"),
+            filters.ToString());
 }
 
 }  // namespace

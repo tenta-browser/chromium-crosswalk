@@ -102,7 +102,6 @@ component("proxy") {
     "plugin_var_tracker.h",
     "ppapi_command_buffer_proxy.cc",
     "ppapi_command_buffer_proxy.h",
-    "ppapi_message_utils.h",
     "ppapi_messages.h",
     "ppb_audio_proxy.cc",
     "ppb_audio_proxy.h",
@@ -279,6 +278,7 @@ component("proxy") {
   ]
 
   deps = [
+    ":common",
     "//base",
     "//gpu/command_buffer/client:gles2_implementation",
     "//gpu/ipc/common:command_buffer_traits",
@@ -287,6 +287,8 @@ component("proxy") {
     "//mojo/edk/system",
     "//ppapi/c",
     "//ppapi/shared_impl",
+    "//ui/gfx/geometry",
+    "//ui/gfx/ipc/geometry",
   ]
 
   if (!is_nacl) {
@@ -302,6 +304,17 @@ component("proxy") {
   if (!is_nacl_nonsfi) {
     deps += [ "//third_party/icu" ]
   }
+}
+
+source_set("common") {
+  sources = [
+    "tcp_socket_resource_constants.cc",
+    "tcp_socket_resource_constants.h",
+    "udp_socket_resource_constants.cc",
+    "udp_socket_resource_constants.h",
+  ]
+
+  configs += [ ":proxy_implementation" ]
 }
 
 group("ipc") {
@@ -320,6 +333,7 @@ source_set("ipc_sources") {
   sources = [
     "nacl_message_scanner.cc",
     "nacl_message_scanner.h",
+    "ppapi_message_utils.h",
     "ppapi_messages.cc",
     "ppapi_messages.h",
     "ppapi_param_traits.cc",
@@ -356,7 +370,7 @@ source_set("ipc_sources") {
   }
 }
 
-source_set("test_support") {
+static_library("test_support") {
   testonly = true
 
   sources = [

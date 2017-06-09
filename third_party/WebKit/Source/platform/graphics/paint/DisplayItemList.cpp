@@ -4,6 +4,7 @@
 
 #include "platform/graphics/paint/DisplayItemList.h"
 
+#include "platform/graphics/LoggingCanvas.h"
 #include "platform/graphics/paint/DrawingDisplayItem.h"
 #include "platform/graphics/paint/PaintChunk.h"
 #include "third_party/skia/include/core/SkPictureAnalyzer.h"
@@ -14,73 +15,101 @@
 
 namespace blink {
 
-DisplayItem& DisplayItemList::appendByMoving(DisplayItem& item, const IntRect& visualRect, SkPictureGpuAnalyzer& gpuAnalyzer)
-{
-    // No reason to continue the analysis once we have a veto.
-    if (gpuAnalyzer.suitableForGpuRasterization())
-        item.analyzeForGpuRasterization(gpuAnalyzer);
-
+DisplayItem& DisplayItemList::appendByMoving(DisplayItem& item) {
 #ifndef NDEBUG
-    String originalDebugString = item.asDebugString();
+  String originalDebugString = item.asDebugString();
 #endif
-    ASSERT(item.hasValidClient());
-    DisplayItem& result = ContiguousContainer::appendByMoving(item, item.derivedSize());
-    // ContiguousContainer::appendByMoving() calls an in-place constructor
-    // on item which replaces it with a tombstone/"dead display item" that
-    // can be safely destructed but should never be used.
-    ASSERT(!item.hasValidClient());
+  ASSERT(item.hasValidClient());
+  DisplayItem& result =
+      ContiguousContainer::appendByMoving(item, item.derivedSize());
+  // ContiguousContainer::appendByMoving() calls an in-place constructor
+  // on item which replaces it with a tombstone/"dead display item" that
+  // can be safely destructed but should never be used.
+  ASSERT(!item.hasValidClient());
 #ifndef NDEBUG
-    // Save original debug string in the old item to help debugging.
-    item.setClientDebugString(originalDebugString);
+  // Save original debug string in the old item to help debugging.
+  item.setClientDebugString(originalDebugString);
 #endif
-    appendVisualRect(visualRect);
-    return result;
+  return result;
 }
 
-void DisplayItemList::appendVisualRect(const IntRect& visualRect)
-{
-    size_t itemIndex = m_visualRects.size();
-    const DisplayItem& item = (*this)[itemIndex];
-
-    // For paired display items such as transforms, since we are not guaranteed containment, the
-    // visual rect must comprise the union of the visual rects for all items within its block.
-
-    if (item.isBegin()) {
-        m_visualRects.append(visualRect);
-        m_beginItemIndices.append(itemIndex);
-
-    } else if (item.isEnd()) {
-        size_t lastBeginIndex = m_beginItemIndices.last();
-        m_beginItemIndices.removeLast();
-
-        // Ending bounds match the starting bounds.
-        m_visualRects.append(m_visualRects[lastBeginIndex]);
-
-        // The block that ended needs to be included in the bounds of the enclosing block.
-        growCurrentBeginItemVisualRect(m_visualRects[lastBeginIndex]);
-
-    } else {
-        m_visualRects.append(visualRect);
-        growCurrentBeginItemVisualRect(visualRect);
-    }
-}
-
-void DisplayItemList::growCurrentBeginItemVisualRect(const IntRect& visualRect)
-{
-    if (!m_beginItemIndices.isEmpty())
-        m_visualRects[m_beginItemIndices.last()].unite(visualRect);
+void DisplayItemList::appendVisualRect(const IntRect& visualRect) {
+  m_visualRects.push_back(visualRect);
 }
 
 DisplayItemList::Range<DisplayItemList::iterator>
-DisplayItemList::itemsInPaintChunk(const PaintChunk& paintChunk)
-{
-    return Range<iterator>(begin() + paintChunk.beginIndex, begin() + paintChunk.endIndex);
+DisplayItemList::itemsInPaintChunk(const PaintChunk& paintChunk) {
+  return Range<iterator>(begin() + paintChunk.beginIndex,
+                         begin() + paintChunk.endIndex);
 }
 
 DisplayItemList::Range<DisplayItemList::const_iterator>
-DisplayItemList::itemsInPaintChunk(const PaintChunk& paintChunk) const
-{
-    return Range<const_iterator>(begin() + paintChunk.beginIndex, begin() + paintChunk.endIndex);
+DisplayItemList::itemsInPaintChunk(const PaintChunk& paintChunk) const {
+  return Range<const_iterator>(begin() + paintChunk.beginIndex,
+                               begin() + paintChunk.endIndex);
 }
 
-} // namespace blink
+std::unique_ptr<JSONArray> DisplayItemList::subsequenceAsJSON(
+    size_t beginIndex,
+    size_t endIndex,
+    JsonFlags options) const {
+  std::unique_ptr<JSONArray> jsonArray = JSONArray::create();
+  size_t i = 0;
+  for (auto it = begin() + beginIndex; it != begin() + endIndex; ++it, ++i) {
+    std::unique_ptr<JSONObject> json = JSONObject::create();
+
+    const DisplayItem& displayItem = *it;
+    if ((options & SkipNonDrawings) && !displayItem.isDrawing())
+      continue;
+
+    json->setInteger("index", i);
+#ifndef NDEBUG
+    StringBuilder stringBuilder;
+    displayItem.dumpPropertiesAsDebugString(stringBuilder);
+
+    if (options & ShownOnlyDisplayItemTypes) {
+      json->setString("type",
+                      DisplayItem::typeAsDebugString(displayItem.getType()));
+    } else {
+      json->setString("properties", stringBuilder.toString());
+    }
+
+#endif
+    if (displayItem.hasValidClient()) {
+#if CHECK_DISPLAY_ITEM_CLIENT_ALIVENESS
+      if (!displayItem.client().isAlive()) {
+        json->setBoolean("clientIsAlive", true);
+      } else {
+#else
+
+      if (options & ShowClientDebugName) {
+#endif
+        json->setString(
+            "clientDebugName",
+            String::format("clientDebugName: \"%s\"",
+                           displayItem.client().debugName().ascii().data()));
+      }
+#ifndef NDEBUG
+      if ((options & ShowPaintRecords) && displayItem.isDrawing()) {
+        if (const PaintRecord* record =
+                static_cast<const DrawingDisplayItem&>(displayItem)
+                    .GetPaintRecord()) {
+          json->setString("record", recordAsDebugString(record));
+        }
+      }
+#endif
+    }
+    if (hasVisualRect(i)) {
+      IntRect localVisualRect = visualRect(i);
+      json->setString(
+          "visualRect",
+          String::format("[%d,%d %dx%d]", localVisualRect.x(),
+                         localVisualRect.y(), localVisualRect.width(),
+                         localVisualRect.height()));
+    }
+    jsonArray->pushObject(std::move(json));
+  }
+  return jsonArray;
+}
+
+}  // namespace blink

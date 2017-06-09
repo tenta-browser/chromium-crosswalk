@@ -11,6 +11,7 @@
 #include <string>
 
 #include "base/macros.h"
+#include "base/threading/thread_checker.h"
 #include "base/time/time.h"
 #include "chrome/browser/prerender/prerender_contents.h"
 #include "chrome/browser/prerender/prerender_final_status.h"
@@ -25,10 +26,6 @@ enum NavigationType {
   NAVIGATION_TYPE_NORMAL,
   // A completed navigation or swap that began as a prerender.
   NAVIGATION_TYPE_PRERENDERED,
-  // A normal completed navigation in the control group or with a control
-  // prerender that would have been prerendered.
-  NAVIGATION_TYPE_WOULD_HAVE_BEEN_PRERENDERED,
-  NAVIGATION_TYPE_MAX,
 };
 
 // PrerenderHistograms is responsible for recording all prerender specific
@@ -50,6 +47,12 @@ class PrerenderHistograms {
                                    base::TimeDelta perceived_page_load_time,
                                    NavigationType navigation_type,
                                    const GURL& url);
+
+  // Record that a first contentful paint occured, and whether we were able to
+  // successfuly record the perceived FCP.
+  void RecordPerceivedFirstContentfulPaintStatus(Origin origin,
+                                                 bool successful,
+                                                 bool was_hidden);
 
   // Records, in a histogram, the percentage of the page load time that had
   // elapsed by the time it is swapped in.  Values outside of [0, 1.0] are
@@ -83,7 +86,7 @@ class PrerenderHistograms {
   void RecordFinalStatus(Origin origin, FinalStatus final_status) const;
 
   // To be called when a new prerender is added.
-  void RecordPrerender(Origin origin, const GURL& url);
+  void RecordPrerender();
 
   // To be called when a new prerender is started.
   void RecordPrerenderStarted(Origin origin) const;
@@ -105,7 +108,32 @@ class PrerenderHistograms {
   void RecordNetworkBytes(Origin origin,
                           bool used,
                           int64_t prerender_bytes,
-                          int64_t profile_bytes);
+                          int64_t profile_bytes) const;
+
+  // Called when a NoStatePrefetch request has received a response (including
+  // redirects). May be called several times per resource, in case of redirects.
+  void RecordPrefetchResponseReceived(Origin origin,
+                                      bool is_main_resource,
+                                      bool is_redirect,
+                                      bool is_no_store) const;
+
+  // Called when a NoStatePrefetch resource has been loaded. This is called only
+  // once per resource, when all redirects have been resolved.
+  void RecordPrefetchRedirectCount(Origin origin,
+                                   bool is_main_resource,
+                                   int redirect_count) const;
+
+  // Records the time to first contentful paint with respect to a possible
+  // prefetch of the page. The time to first contentful paint with respect to
+  // the navigation start is recorded (even if the page was prererendered in
+  // advance of navigation start). One of several histograms is used, depending
+  // on whether this URL could have been prefetched before the navigation
+  // leading to the paint.
+  void RecordPrefetchFirstContentfulPaintTime(Origin origin,
+                                              bool is_no_store,
+                                              bool was_hidden,
+                                              base::TimeDelta time,
+                                              base::TimeDelta prefetch_age);
 
  private:
   base::TimeTicks GetCurrentTimeTicks() const;
@@ -118,16 +146,6 @@ class PrerenderHistograms {
   // observed.
   bool WithinWindow() const;
 
-  // Returns whether or not there is currently an origin wash.
-  bool IsOriginWash() const;
-
-  // Origin of the last prerender seen.
-  Origin last_origin_;
-
-  // A boolean indicating that we have recently encountered a combination of
-  // different origins, making an attribution of PPLT's to origins impossible.
-  bool origin_wash_;
-
   // The time when we last saw a prerender request coming from a renderer.
   // This is used to record perceived PLT's for a certain amount of time
   // from the point that we last saw a <link rel=prerender> tag.
@@ -138,6 +156,8 @@ class PrerenderHistograms {
   // start recording events before the first prerender occurs.
   bool seen_any_pageload_;
   bool seen_pageload_started_after_prerender_;
+
+  base::ThreadChecker thread_checker_;
 
   DISALLOW_COPY_AND_ASSIGN(PrerenderHistograms);
 };

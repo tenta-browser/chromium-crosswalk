@@ -5,11 +5,12 @@
 package org.chromium.chrome.browser.preferences.datareduction;
 
 import android.content.Context;
+import android.support.test.filters.SmallTest;
 import android.test.UiThreadTest;
-import android.test.suitebuilder.annotation.SmallTest;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.test.util.AdvancedMockContext;
+import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.browser.net.spdyproxy.DataReductionProxySettings;
 import org.chromium.chrome.browser.preferences.PrefServiceBridge;
@@ -40,8 +41,11 @@ public class DataReductionPromoUtilsTest extends NativeLibraryTestBase {
      */
     @UiThreadTest
     @SmallTest
+    @CommandLineFlags.Add("force-fieldtrials=DataCompressionProxyPromoVisibility/Enabled")
     @Feature({"DataReduction"})
     public void testCanShowPromos() {
+        if (DataReductionProxySettings.getInstance().isDataReductionProxyManaged()) return;
+        assertFalse(DataReductionProxySettings.getInstance().isDataReductionProxyEnabled());
         assertTrue(DataReductionPromoUtils.canShowPromos());
         DataReductionProxySettings.getInstance().setDataReductionProxyEnabled(mContext, true);
         assertFalse(DataReductionPromoUtils.canShowPromos());

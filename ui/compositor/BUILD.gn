@@ -45,7 +45,9 @@ component("compositor") {
     "layer_animator.h",
     "layer_animator_collection.cc",
     "layer_animator_collection.h",
+    "layer_delegate.cc",
     "layer_delegate.h",
+    "layer_observer.h",
     "layer_owner.cc",
     "layer_owner.h",
     "layer_threaded_animation_delegate.h",
@@ -76,10 +78,14 @@ component("compositor") {
     "//base",
     "//base/third_party/dynamic_annotations",
     "//cc",
+    "//cc/animation",
+    "//cc/paint",
     "//cc/surfaces",
     "//cc/surfaces:surface_id",
+    "//cc/surfaces:surfaces",
     "//gpu/command_buffer/common",
     "//skia",
+    "//ui/base",
     "//ui/gfx",
     "//ui/gfx/geometry",
     "//ui/gl",
@@ -96,7 +102,7 @@ component("compositor") {
   }
 }
 
-source_set("test_support") {
+static_library("test_support") {
   testonly = true
   sources = [
     "test/context_factories_for_test.cc",
@@ -138,10 +144,10 @@ source_set("test_support") {
     "//cc",
     "//cc:test_support",
     "//cc/surfaces",
-    "//gpu/command_buffer/client:gl_in_process_context",
     "//gpu/command_buffer/client:gles2_c_lib",
     "//gpu/command_buffer/client:gles2_implementation",
     "//gpu/command_buffer/common:gles2_utils",
+    "//gpu/ipc:gl_in_process_context",
     "//gpu/skia_bindings",
     "//skia",
     "//testing/gtest",

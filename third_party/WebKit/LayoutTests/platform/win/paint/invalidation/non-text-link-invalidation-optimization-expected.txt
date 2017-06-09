@@ -1,7 +1,5 @@
 {
-  "name": "Content Root Layer",
-  "bounds": [800, 600],
-  "children": [
+  "layers": [
     {
       "name": "LayoutView #document",
       "bounds": [800, 600],
@@ -15,7 +13,7 @@
         },
         {
           "object": "LayoutText #text",
-          "rect": [76, 8, 64, 18],
+          "rect": [76, 8, 64, 17],
           "reason": "style change"
         },
         {
@@ -25,12 +23,12 @@
         },
         {
           "object": "LayoutText #text",
-          "rect": [360, 8, 54, 18],
+          "rect": [360, 8, 54, 17],
           "reason": "style change"
         },
         {
           "object": "LayoutText #text",
-          "rect": [139, 8, 29, 18],
+          "rect": [139, 8, 29, 17],
           "reason": "style change"
         },
         {

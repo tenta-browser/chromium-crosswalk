@@ -14,8 +14,8 @@
 namespace cc {
 
 class ContentLayerClient;
+class DisplayItemList;
 class RecordingSource;
-class ResourceUpdateQueue;
 
 class CC_EXPORT PictureLayer : public Layer {
  public:
@@ -24,6 +24,9 @@ class CC_EXPORT PictureLayer : public Layer {
   void ClearClient();
 
   void SetNearestNeighbor(bool nearest_neighbor);
+  bool nearest_neighbor() const {
+    return picture_layer_inputs_.nearest_neighbor;
+  }
 
   // Layer interface.
   std::unique_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl) override;
@@ -31,19 +34,34 @@ class CC_EXPORT PictureLayer : public Layer {
   void PushPropertiesTo(LayerImpl* layer) override;
   void SetNeedsDisplayRect(const gfx::Rect& layer_rect) override;
   bool Update() override;
-  void SetIsMask(bool is_mask) override;
+  void SetLayerMaskType(LayerMaskType mask_type) override;
   sk_sp<SkPicture> GetPicture() const override;
+
   bool IsSuitableForGpuRasterization() const override;
 
   void RunMicroBenchmark(MicroBenchmark* benchmark) override;
 
-  ContentLayerClient* client() { return client_; }
+  ContentLayerClient* client() { return picture_layer_inputs_.client; }
 
   RecordingSource* GetRecordingSourceForTesting() {
     return recording_source_.get();
   }
 
+  const DisplayItemList* GetDisplayItemList();
+
  protected:
+  // Encapsulates all data, callbacks or interfaces received from the embedder.
+  struct PictureLayerInputs {
+    PictureLayerInputs();
+    ~PictureLayerInputs();
+
+    ContentLayerClient* client = nullptr;
+    bool nearest_neighbor = false;
+    gfx::Rect recorded_viewport;
+    scoped_refptr<DisplayItemList> display_list;
+    size_t painter_reported_memory_usage = 0;
+  };
+
   explicit PictureLayer(ContentLayerClient* client);
   // Allow tests to inject a recording source.
   PictureLayer(ContentLayerClient* client,
@@ -51,19 +69,16 @@ class CC_EXPORT PictureLayer : public Layer {
   ~PictureLayer() override;
 
   bool HasDrawableContent() const override;
-  void SetTypeForProtoSerialization(proto::LayerNode* proto) const override;
-  void LayerSpecificPropertiesToProto(proto::LayerProperties* proto) override;
-  void FromLayerSpecificPropertiesProto(
-      const proto::LayerProperties& proto) override;
 
-  bool is_mask() const { return is_mask_; }
+  LayerMaskType mask_type() { return mask_type_; }
+
+  PictureLayerInputs picture_layer_inputs_;
 
  private:
   friend class TestSerializationPictureLayer;
 
   void DropRecordingSourceContentIfInvalid();
 
-  ContentLayerClient* client_;
   std::unique_ptr<RecordingSource> recording_source_;
   devtools_instrumentation::
       ScopedLayerObjectTracker instrumentation_object_tracker_;
@@ -71,8 +86,7 @@ class CC_EXPORT PictureLayer : public Layer {
   Region last_updated_invalidation_;
 
   int update_source_frame_number_;
-  bool is_mask_;
-  bool nearest_neighbor_;
+  LayerMaskType mask_type_;
 
   DISALLOW_COPY_AND_ASSIGN(PictureLayer);
 };

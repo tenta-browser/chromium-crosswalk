@@ -33,8 +33,9 @@ ui::ContextFactory* NoTransportImageTransportFactory::GetContextFactory() {
   return context_factory_.get();
 }
 
-cc::SurfaceManager* NoTransportImageTransportFactory::GetSurfaceManager() {
-  return surface_manager_.get();
+ui::ContextFactoryPrivate*
+NoTransportImageTransportFactory::GetContextFactoryPrivate() {
+  return context_factory_.get();
 }
 
 display_compositor::GLHelper* NoTransportImageTransportFactory::GetGLHelper() {
@@ -45,5 +46,8 @@ display_compositor::GLHelper* NoTransportImageTransportFactory::GetGLHelper() {
   }
   return gl_helper_.get();
 }
+
+void NoTransportImageTransportFactory::SetGpuChannelEstablishFactory(
+    gpu::GpuChannelEstablishFactory* factory) {}
 
 }  // namespace content

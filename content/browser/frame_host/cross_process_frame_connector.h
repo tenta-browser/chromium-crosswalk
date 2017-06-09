@@ -14,12 +14,13 @@
 #include "ui/gfx/geometry/rect.h"
 
 namespace blink {
+class WebGestureEvent;
 class WebInputEvent;
-struct WebScreenInfo;
 }
 
 namespace cc {
 class SurfaceId;
+class SurfaceInfo;
 struct SurfaceSequence;
 }
 
@@ -29,7 +30,6 @@ class Message;
 
 namespace content {
 class RenderFrameProxyHost;
-class RenderWidgetHostImpl;
 class RenderWidgetHostViewBase;
 class RenderWidgetHostViewChildFrame;
 class WebCursor;
@@ -86,23 +86,35 @@ class CONTENT_EXPORT CrossProcessFrameConnector {
 
   void RenderProcessGone();
 
-  virtual void SetChildFrameSurface(const cc::SurfaceId& surface_id,
-                                    const gfx::Size& frame_size,
-                                    float scale_factor,
+  virtual void SetChildFrameSurface(const cc::SurfaceInfo& surface_info,
                                     const cc::SurfaceSequence& sequence);
 
   gfx::Rect ChildFrameRect();
-  float device_scale_factor() const { return device_scale_factor_; }
-  void GetScreenInfo(blink::WebScreenInfo* results);
   void UpdateCursor(const WebCursor& cursor);
   gfx::Point TransformPointToRootCoordSpace(const gfx::Point& point,
-                                            cc::SurfaceId surface_id);
+                                            const cc::SurfaceId& surface_id);
+  // TransformPointToLocalCoordSpace() can only transform points between
+  // surfaces where one is embedded (not necessarily directly) within the
+  // other, and will return false if this is not the case. For points that can
+  // be in sibling surfaces, they must first be converted to the root
+  // surface's coordinate space.
+  bool TransformPointToLocalCoordSpace(const gfx::Point& point,
+                                       const cc::SurfaceId& original_surface,
+                                       const cc::SurfaceId& local_surface_id,
+                                       gfx::Point* transformed_point);
+  // Returns false if |target_view| and |view_| do not have the same root
+  // RenderWidgetHostView.
+  bool TransformPointToCoordSpaceForView(const gfx::Point& point,
+                                         RenderWidgetHostViewBase* target_view,
+                                         const cc::SurfaceId& local_surface_id,
+                                         gfx::Point* transformed_point);
+
   // Pass acked touch events to the root view for gesture processing.
   void ForwardProcessAckedTouchEvent(const TouchEventWithLatencyInfo& touch,
                                      InputEventAckState ack_result);
-  // Gesture and wheel events with unused scroll deltas must be bubbled to
-  // ancestors who may consume the delta.
-  void BubbleScrollEvent(const blink::WebInputEvent& event);
+  // Gesture events with unused scroll deltas must be bubbled to ancestors
+  // who may consume the delta.
+  void BubbleScrollEvent(const blink::WebGestureEvent& event);
 
   // Determines whether the root RenderWidgetHostView (and thus the current
   // page) has focus.
@@ -131,13 +143,12 @@ class CONTENT_EXPORT CrossProcessFrameConnector {
   // Handlers for messages received from the parent frame.
   void OnForwardInputEvent(const blink::WebInputEvent* event);
   void OnFrameRectChanged(const gfx::Rect& frame_rect);
+  void OnUpdateViewportIntersection(const gfx::Rect& viewport_intersection);
   void OnVisibilityChanged(bool visible);
-  void OnInitializeChildFrame(float scale_factor);
   void OnSatisfySequence(const cc::SurfaceSequence& sequence);
   void OnRequireSequence(const cc::SurfaceId& id,
                          const cc::SurfaceSequence& sequence);
 
-  void SetDeviceScaleFactor(float scale_factor);
   void SetRect(const gfx::Rect& frame_rect);
 
   // The RenderFrameProxyHost that routes messages to the parent frame's
@@ -148,7 +159,8 @@ class CONTENT_EXPORT CrossProcessFrameConnector {
   RenderWidgetHostViewChildFrame* view_;
 
   gfx::Rect child_frame_rect_;
-  float device_scale_factor_;
+
+  bool is_scroll_bubbling_;
 };
 
 }  // namespace content

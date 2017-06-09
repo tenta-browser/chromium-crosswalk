@@ -30,8 +30,6 @@ namespace media {
 class VideoFrame;
 
 namespace cast {
-class AudioSender;
-class VideoSender;
 
 class VideoFrameInput : public base::RefCountedThreadSafe<VideoFrameInput> {
  public:
@@ -104,7 +102,7 @@ class CastSender {
   // Initialize the audio stack. Must be called in order to send audio frames.
   // |status_change_cb| will be run as operational status changes.
   virtual void InitializeAudio(
-      const AudioSenderConfig& audio_config,
+      const FrameSenderConfig& audio_config,
       const StatusChangeCallback& status_change_cb) = 0;
 
   // Initialize the video stack. Must be called in order to send video frames.
@@ -112,7 +110,7 @@ class CastSender {
   //
   // TODO(miu): Remove the VEA-specific callbacks.  http://crbug.com/454029
   virtual void InitializeVideo(
-      const VideoSenderConfig& video_config,
+      const FrameSenderConfig& video_config,
       const StatusChangeCallback& status_change_cb,
       const CreateVideoEncodeAcceleratorCallback& create_vea_cb,
       const CreateVideoEncodeMemoryCallback& create_video_encode_mem_cb) = 0;

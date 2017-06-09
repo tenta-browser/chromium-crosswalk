@@ -33,6 +33,7 @@
 
 #include "platform/heap/Handle.h"
 #include "public/platform/modules/serviceworker/WebServiceWorkerError.h"
+#include "v8/include/v8.h"
 
 namespace blink {
 
@@ -40,13 +41,24 @@ class DOMException;
 class ScriptPromiseResolver;
 
 class ServiceWorkerError {
-    STATIC_ONLY(ServiceWorkerError);
-public:
-    // For CallbackPromiseAdapter
-    using WebType = const WebServiceWorkerError&;
-    static DOMException* take(ScriptPromiseResolver*, const WebServiceWorkerError& webError);
+  STATIC_ONLY(ServiceWorkerError);
+
+ public:
+  // For CallbackPromiseAdapter
+  using WebType = const WebServiceWorkerError&;
+  static DOMException* take(ScriptPromiseResolver*,
+                            const WebServiceWorkerError& webError);
 };
 
-} // namespace blink
+class ServiceWorkerErrorForUpdate : public ServiceWorkerError {
+  STATIC_ONLY(ServiceWorkerErrorForUpdate);
 
-#endif // ServiceWorkerError_h
+ public:
+  // For CallbackPromiseAdapter
+  static v8::Local<v8::Value> take(ScriptPromiseResolver* resolver,
+                                   const WebServiceWorkerError& webError);
+};
+
+}  // namespace blink
+
+#endif  // ServiceWorkerError_h

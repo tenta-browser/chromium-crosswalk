@@ -16,7 +16,7 @@
 #include "chrome/browser/chromeos/app_mode/kiosk_profile_loader.h"
 #include "chrome/browser/chromeos/app_mode/startup_app_launcher.h"
 #include "chrome/browser/chromeos/login/app_launch_signin_screen.h"
-#include "chrome/browser/chromeos/login/screens/app_launch_splash_screen_actor.h"
+#include "chrome/browser/chromeos/login/screens/app_launch_splash_screen_view.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 
@@ -26,17 +26,15 @@ namespace chromeos {
 
 class LoginDisplayHost;
 class OobeUI;
-class UserManager;
 
 // Controller for the kiosk app launch process, responsible for
 // coordinating loading the kiosk profile, launching the app, and
 // updating the splash screen UI.
-class AppLaunchController
-    : public AppLaunchSplashScreenActor::Delegate,
-      public KioskProfileLoader::Delegate,
-      public StartupAppLauncher::Delegate,
-      public AppLaunchSigninScreen::Delegate,
-      public content::NotificationObserver {
+class AppLaunchController : public AppLaunchSplashScreenView::Delegate,
+                            public KioskProfileLoader::Delegate,
+                            public StartupAppLauncher::Delegate,
+                            public AppLaunchSigninScreen::Delegate,
+                            public content::NotificationObserver {
  public:
   typedef base::Callback<bool()> ReturnBoolCallback;
 
@@ -85,11 +83,15 @@ class AppLaunchController
   // owner password might be checked before showing the network configure UI.
   void MaybeShowNetworkConfigureUI();
 
+  // Show network configuration UI when ready (i.e. after app profile is
+  // loaded).
+  void ShowNetworkConfigureUIWhenReady();
+
   // KioskProfileLoader::Delegate overrides:
   void OnProfileLoaded(Profile* profile) override;
   void OnProfileLoadFailed(KioskAppLaunchError::Error error) override;
 
-  // AppLaunchSplashScreenActor::Delegate overrides:
+  // AppLaunchSplashScreenView::Delegate overrides:
   void OnConfigureNetwork() override;
   void OnCancelAppLaunch() override;
   void OnNetworkConfigRequested(bool requested) override;
@@ -98,6 +100,7 @@ class AppLaunchController
   // StartupAppLauncher::Delegate overrides:
   void InitializeNetwork() override;
   bool IsNetworkReady() override;
+  bool ShouldSkipAppInstallation() override;
   void OnLoadingOAuthFile() override;
   void OnInitializingTokenService() override;
   void OnInstallingApp() override;
@@ -119,7 +122,7 @@ class AppLaunchController
   const bool diagnostic_mode_;
   LoginDisplayHost* host_ = nullptr;
   OobeUI* oobe_ui_ = nullptr;
-  AppLaunchSplashScreenActor* app_launch_splash_screen_actor_ = nullptr;
+  AppLaunchSplashScreenView* app_launch_splash_screen_view_ = nullptr;
   std::unique_ptr<KioskProfileLoader> kiosk_profile_loader_;
   std::unique_ptr<StartupAppLauncher> startup_app_launcher_;
   std::unique_ptr<AppLaunchSigninScreen> signin_screen_;
@@ -137,6 +140,7 @@ class AppLaunchController
   bool network_wait_timedout_ = false;
   bool showing_network_dialog_ = false;
   bool network_config_requested_ = false;
+  bool show_network_config_ui_after_profile_load_ = false;
   int64_t launch_splash_start_time_ = 0;
 
   static bool skip_splash_wait_;

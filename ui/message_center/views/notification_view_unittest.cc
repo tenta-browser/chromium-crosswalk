@@ -7,6 +7,7 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -93,6 +94,7 @@ class NotificationViewTest : public views::ViewsTestBase,
   void ClickOnNotificationButton(const std::string& notification_id,
                                  int button_index) override;
   void ClickOnSettingsButton(const std::string& notification_id) override;
+  void UpdateNotificationSize(const std::string& notification_id) override;
 
  protected:
   // Used to fill bitmaps returned by CreateBitmap().
@@ -166,11 +168,11 @@ class NotificationViewTest : public views::ViewsTestBase,
     std::vector<views::View*>::iterator current = vertical_order.begin();
     std::vector<views::View*>::iterator last = current++;
     while (current != vertical_order.end()) {
-      gfx::Point last_point = (*last)->bounds().origin();
+      gfx::Point last_point = (*last)->origin();
       views::View::ConvertPointToTarget(
           (*last), notification_view(), &last_point);
 
-      gfx::Point current_point = (*current)->bounds().origin();
+      gfx::Point current_point = (*current)->origin();
       views::View::ConvertPointToTarget(
           (*current), notification_view(), &current_point);
 
@@ -279,6 +281,12 @@ void NotificationViewTest::ClickOnNotificationButton(
 }
 
 void NotificationViewTest::ClickOnSettingsButton(
+    const std::string& notification_id) {
+  // For this test, this method should not be invoked.
+  NOTREACHED();
+}
+
+void NotificationViewTest::UpdateNotificationSize(
     const std::string& notification_id) {
   // For this test, this method should not be invoked.
   NOTREACHED();
@@ -641,10 +649,12 @@ TEST_F(NotificationViewTest, FormatContextMessageTest) {
   // The url has been elided (it starts with an ellipsis)
   // The end of the domainsuffix is shown
   // the url piece is not shown
-  EXPECT_TRUE(base::UTF16ToUTF8(result).find(
-                  ".veryveryveyrylong.chromium.org") != std::string::npos);
-  EXPECT_TRUE(base::UTF16ToUTF8(result).find("\xE2\x80\xA6") == 0);
-  EXPECT_TRUE(base::UTF16ToUTF8(result).find("hello") == std::string::npos);
+  std::string result_utf8 = base::UTF16ToUTF8(result);
+  EXPECT_TRUE(result_utf8.find(".veryveryveyrylong.chromium.org") !=
+              std::string::npos);
+  EXPECT_TRUE(base::StartsWith(result_utf8, "\xE2\x80\xA6",
+                               base::CompareCase::SENSITIVE));
+  EXPECT_TRUE(result_utf8.find("hello") == std::string::npos);
 }
 
 TEST_F(NotificationViewTest, SlideOut) {

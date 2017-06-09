@@ -12,7 +12,7 @@
 
 #include "base/i18n/number_formatting.h"
 #include "base/macros.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
@@ -30,6 +30,7 @@
 #include "chrome/browser/ui/views/toolbar/app_menu_observer.h"
 #include "chrome/browser/ui/views/toolbar/extension_toolbar_menu_view.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/grit/theme_resources.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/zoom/page_zoom.h"
 #include "components/zoom/zoom_controller.h"
@@ -42,18 +43,17 @@
 #include "content/public/browser/user_metrics.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/common/feature_switch.h"
-#include "grit/theme_resources.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkPaint.h"
-#include "ui/accessibility/ax_view_state.h"
+#include "ui/accessibility/ax_node_data.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/layout.h"
-#include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/font_list.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_skia_source.h"
+#include "ui/gfx/scoped_canvas.h"
 #include "ui/gfx/skia_util.h"
 #include "ui/gfx/text_utils.h"
 #include "ui/views/background.h"
@@ -124,9 +124,9 @@ class FullscreenButton : public ImageButton {
     return pref;
   }
 
-  void GetAccessibleState(ui::AXViewState* state) override {
-    ImageButton::GetAccessibleState(state);
-    state->role = ui::AX_ROLE_MENU_ITEM;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override {
+    ImageButton::GetAccessibleNodeData(node_data);
+    node_data->role = ui::AX_ROLE_MENU_ITEM;
   }
 
  private:
@@ -158,14 +158,15 @@ class InMenuButtonBackground : public views::Background {
         button ? button->state() : views::Button::STATE_NORMAL;
     int h = view->height();
 
-    // Draw leading border where needed. This is along the left edge unless the
-    // layout is RTL and the button isn't mirroring itself.
+    // Draw leading border if desired.
     gfx::Rect bounds(view->GetLocalBounds());
     if (type_ == LEADING_BORDER) {
-      gfx::Rect rect = view->FlipCanvasOnPaintForRTLUI()
-          ? gfx::Rect(0, 0, 1, h)
-          : gfx::Rect(view->GetMirroredXWithWidthInView(0, 1), 0, 1, h);
-      canvas->FillRect(rect, BorderColor(view, views::Button::STATE_NORMAL));
+      // We need to flip the canvas for RTL iff the button is not auto-flipping
+      // already, so we end up flipping exactly once.
+      gfx::ScopedRTLFlipCanvas scoped_canvas(
+          canvas, view->width(), !view->flip_canvas_on_paint_for_rtl_ui());
+      canvas->FillRect(gfx::Rect(0, 0, 1, h),
+                       BorderColor(view, views::Button::STATE_NORMAL));
       bounds.Inset(gfx::Insets(0, 1, 0, 0));
     }
 
@@ -194,14 +195,12 @@ class InMenuButtonBackground : public views::Background {
                                  views::Button::ButtonState state) {
     const ui::NativeTheme* theme = view->GetNativeTheme();
     switch (state) {
-      case views::Button::STATE_HOVERED:
-        // Hovered should be handled in DrawBackground.
-        NOTREACHED();
-        return theme->GetSystemColor(
-            ui::NativeTheme::kColorId_HoverMenuItemBackgroundColor);
       case views::Button::STATE_PRESSED:
         return theme->GetSystemColor(
             ui::NativeTheme::kColorId_FocusedMenuItemBackgroundColor);
+      case views::Button::STATE_HOVERED:
+        // Hovered should be handled in DrawBackground.
+        NOTREACHED();
       default:
         return theme->GetSystemColor(
             ui::NativeTheme::kColorId_MenuBackgroundColor);
@@ -264,14 +263,14 @@ class InMenuButton : public LabelButton {
 
     in_menu_background_ = new InMenuButtonBackground(type);
     set_background(in_menu_background_);
-    SetBorder(views::Border::CreateEmptyBorder(0, kHorizontalPadding, 0,
-                                               kHorizontalPadding));
+    SetBorder(
+        views::CreateEmptyBorder(0, kHorizontalPadding, 0, kHorizontalPadding));
     SetFontList(MenuConfig::instance().font_list);
   }
 
-  void GetAccessibleState(ui::AXViewState* state) override {
-    LabelButton::GetAccessibleState(state);
-    state->role = ui::AX_ROLE_MENU_ITEM;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override {
+    LabelButton::GetAccessibleNodeData(node_data);
+    node_data->role = ui::AX_ROLE_MENU_ITEM;
   }
 
   // views::LabelButton
@@ -585,7 +584,7 @@ class AppMenu::ZoomView : public AppMenuView {
   void OnNativeThemeChanged(const ui::NativeTheme* theme) override {
     AppMenuView::OnNativeThemeChanged(theme);
 
-    zoom_label_->SetBorder(views::Border::CreateEmptyBorder(
+    zoom_label_->SetBorder(views::CreateEmptyBorder(
         0, kZoomLabelHorizontalPadding, 0, kZoomLabelHorizontalPadding));
     zoom_label_->SetFontList(MenuConfig::instance().font_list);
     zoom_label_max_width_valid_ = false;
@@ -633,7 +632,7 @@ class AppMenu::ZoomView : public AppMenuView {
     WebContents* contents = GetActiveWebContents();
     int zoom = 100;
     if (contents) {
-      auto zoom_controller = zoom::ZoomController::FromWebContents(contents);
+      auto* zoom_controller = zoom::ZoomController::FromWebContents(contents);
       if (zoom_controller)
         zoom = zoom_controller->GetZoomPercent();
       increment_button_->SetEnabled(zoom <
@@ -657,7 +656,7 @@ class AppMenu::ZoomView : public AppMenuView {
 
       WebContents* selected_tab = GetActiveWebContents();
       if (selected_tab) {
-        auto zoom_controller =
+        auto* zoom_controller =
             zoom::ZoomController::FromWebContents(selected_tab);
         DCHECK(zoom_controller);
         // Enumerate all zoom factors that can be used in PageZoom::Zoom.
@@ -731,12 +730,6 @@ class AppMenu::RecentTabsMenuModelDelegate : public ui::MenuModelDelegate {
     return model_->GetLabelFontListAt(index);
   }
 
-  bool GetShouldUseDisabledEmphasizedForegroundColor(int index) const {
-    // The items for which we get a font list, should be shown in the bolded
-    // color.
-    return GetLabelFontListAt(index) ? true : false;
-  }
-
   // ui::MenuModelDelegate implementation:
 
   void OnIconChanged(int index) override {
@@ -803,12 +796,13 @@ AppMenu::AppMenu(Browser* browser, int run_flags)
 
 AppMenu::~AppMenu() {
   if (bookmark_menu_delegate_.get()) {
-    BookmarkModel* model = BookmarkModelFactory::GetForProfile(
-        browser_->profile());
+    BookmarkModel* model =
+        BookmarkModelFactory::GetForBrowserContext(browser_->profile());
     if (model)
       model->RemoveObserver(this);
   }
-  FOR_EACH_OBSERVER(AppMenuObserver, observer_list_, AppMenuDestroyed());
+  for (AppMenuObserver& observer : observer_list_)
+    observer.AppMenuDestroyed();
 }
 
 void AppMenu::Init(ui::MenuModel* model) {
@@ -818,7 +812,7 @@ void AppMenu::Init(ui::MenuModel* model) {
                                // so we get the taller menu style.
   PopulateMenu(root_, model);
 
-  int32_t types = views::MenuRunner::HAS_MNEMONICS;
+  int32_t types = views::MenuRunner::HAS_MNEMONICS | views::MenuRunner::ASYNC;
   if (for_drop()) {
     // We add NESTED_DRAG since currently the only operation to open the app
     // menu for is an extension action drag, which is controlled by the child
@@ -833,22 +827,8 @@ void AppMenu::RunMenu(views::MenuButton* host) {
   views::View::ConvertPointToScreen(host, &screen_loc);
   gfx::Rect bounds(screen_loc, host->size());
   content::RecordAction(UserMetricsAction("ShowAppMenu"));
-  if (menu_runner_->RunMenuAt(host->GetWidget(),
-                              host,
-                              bounds,
-                              views::MENU_ANCHOR_TOPRIGHT,
-                              ui::MENU_SOURCE_NONE) ==
-      views::MenuRunner::MENU_DELETED)
-    return;
-  if (bookmark_menu_delegate_.get()) {
-    BookmarkModel* model = BookmarkModelFactory::GetForProfile(
-        browser_->profile());
-    if (model)
-      model->RemoveObserver(this);
-  }
-  if (selected_menu_model_) {
-    selected_menu_model_->ActivatedAt(selected_index_);
-  }
+  menu_runner_->RunMenuAt(host->GetWidget(), host, bounds,
+                          views::MENU_ANCHOR_TOPRIGHT, ui::MENU_SOURCE_NONE);
 }
 
 void AppMenu::CloseMenu() {
@@ -876,14 +856,10 @@ const gfx::FontList* AppMenu::GetLabelFontList(int command_id) const {
   return NULL;
 }
 
-bool AppMenu::GetShouldUseDisabledEmphasizedForegroundColor(
-    int command_id) const {
-  if (IsRecentTabsCommand(command_id)) {
-    return recent_tabs_menu_model_delegate_->
-        GetShouldUseDisabledEmphasizedForegroundColor(
-            ModelIndexFromCommandId(command_id));
-  }
-  return false;
+bool AppMenu::GetShouldUseNormalForegroundColor(int command_id) const {
+  // Use the normal foreground color instead of the disabled color for the
+  // recent tab headers. Only the headers from that submenu have font lists.
+  return IsRecentTabsCommand(command_id) && GetLabelFontList(command_id);
 }
 
 base::string16 AppMenu::GetTooltipText(int command_id,
@@ -1069,6 +1045,18 @@ bool AppMenu::ShouldCloseOnDragComplete() {
   return false;
 }
 
+void AppMenu::OnMenuClosed(views::MenuItemView* menu,
+                           views::MenuRunner::RunResult result) {
+  if (bookmark_menu_delegate_.get()) {
+    BookmarkModel* model =
+        BookmarkModelFactory::GetForBrowserContext(browser_->profile());
+    if (model)
+      model->RemoveObserver(this);
+  }
+  if (selected_menu_model_)
+    selected_menu_model_->ActivatedAt(selected_index_);
+}
+
 void AppMenu::BookmarkModelChanged() {
   DCHECK(bookmark_menu_delegate_.get());
   if (!bookmark_menu_delegate_->is_mutating_model())
@@ -1117,13 +1105,10 @@ void AppMenu::PopulateMenu(MenuItemView* parent, MenuModel* model) {
       case IDC_EXTENSIONS_OVERFLOW_MENU: {
         std::unique_ptr<ExtensionToolbarMenuView> extension_toolbar(
             new ExtensionToolbarMenuView(browser_, this, item));
-        if (ui::MaterialDesignController::IsModeMaterial()) {
-          for (int i = 0; i < extension_toolbar->contents()->child_count();
-               ++i) {
-            View* action_view = extension_toolbar->contents()->child_at(i);
-            action_view->set_background(new InMenuButtonBackground(
-                InMenuButtonBackground::ROUNDED_BUTTON));
-          }
+        for (int i = 0; i < extension_toolbar->contents()->child_count(); ++i) {
+          View* action_view = extension_toolbar->contents()->child_at(i);
+          action_view->set_background(new InMenuButtonBackground(
+              InMenuButtonBackground::ROUNDED_BUTTON));
         }
         extension_toolbar_ = extension_toolbar.get();
         item->AddChildView(extension_toolbar.release());
@@ -1234,7 +1219,7 @@ void AppMenu::CreateBookmarkMenu() {
     return;  // Already created the menu.
 
   BookmarkModel* model =
-      BookmarkModelFactory::GetForProfile(browser_->profile());
+      BookmarkModelFactory::GetForBrowserContext(browser_->profile());
   if (!model->loaded())
     return;
 

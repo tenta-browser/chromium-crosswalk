@@ -15,8 +15,6 @@
 #include "base/time/time.h"
 #include "net/base/net_export.h"
 
-class GURL;
-
 namespace net {
 
 struct DnsConfig;
@@ -211,8 +209,11 @@ class NET_EXPORT NetworkChangeNotifier {
   // example an association with a particular WiFi network with a particular
   // SSID or a connection to particular cellular network.
   // The meaning of this handle is target-dependent. On Android NetworkHandles
-  // are equivalent to the framework's concept of NetIDs (e.g. Network.netId).
-  typedef int32_t NetworkHandle;
+  // are equivalent to:
+  //   On Lollipop, the framework's concept of NetIDs (e.g. Network.netId), and
+  //   On Marshmallow and newer releases, network handles
+  //           (e.g. Network.getNetworkHandle()).
+  typedef int64_t NetworkHandle;
 
   // A list of networks.
   typedef std::vector<NetworkHandle> NetworkList;

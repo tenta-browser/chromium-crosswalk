@@ -10,9 +10,9 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 
 #include "base/containers/hash_tables.h"
-#include "base/containers/scoped_ptr_hash_map.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
@@ -24,6 +24,7 @@
 #include "gpu/ipc/common/gpu_stream_constants.h"
 #include "gpu/ipc/service/gpu_command_buffer_stub.h"
 #include "gpu/ipc/service/gpu_memory_manager.h"
+#include "ipc/ipc_sender.h"
 #include "ipc/ipc_sync_channel.h"
 #include "ipc/message_router.h"
 #include "ui/gfx/geometry/size.h"
@@ -37,10 +38,6 @@ namespace base {
 class WaitableEvent;
 }
 
-namespace IPC {
-class MessageFilter;
-}
-
 namespace gpu {
 
 class PreemptionFlag;
@@ -49,18 +46,25 @@ class SyncPointManager;
 class GpuChannelManager;
 class GpuChannelMessageFilter;
 class GpuChannelMessageQueue;
-class GpuWatchdog;
+class GpuWatchdogThread;
+
+class GPU_EXPORT FilteredSender : public IPC::Sender {
+ public:
+  FilteredSender();
+  ~FilteredSender() override;
+
+  virtual void AddFilter(IPC::MessageFilter* filter) = 0;
+  virtual void RemoveFilter(IPC::MessageFilter* filter) = 0;
+};
 
 // Encapsulates an IPC channel between the GPU process and one renderer
 // process. On the renderer side there's a corresponding GpuChannelHost.
-class GPU_EXPORT GpuChannel
-    : public IPC::Listener,
-      public IPC::Sender {
+class GPU_EXPORT GpuChannel : public IPC::Listener, public FilteredSender {
  public:
   // Takes ownership of the renderer process handle.
   GpuChannel(GpuChannelManager* gpu_channel_manager,
              SyncPointManager* sync_point_manager,
-             GpuWatchdog* watchdog,
+             GpuWatchdogThread* watchdog,
              gl::GLShareGroup* share_group,
              gles2::MailboxManager* mailbox_manager,
              PreemptionFlag* preempting_flag,
@@ -86,7 +90,7 @@ class GPU_EXPORT GpuChannel
 
   SyncPointManager* sync_point_manager() const { return sync_point_manager_; }
 
-  GpuWatchdog* watchdog() const { return watchdog_; }
+  GpuWatchdogThread* watchdog() const { return watchdog_; }
 
   const scoped_refptr<gles2::MailboxManager>& mailbox_manager() const {
     return mailbox_manager_;
@@ -99,8 +103,6 @@ class GPU_EXPORT GpuChannel
   const scoped_refptr<PreemptionFlag>& preempted_flag() const {
     return preempted_flag_;
   }
-
-  const std::string& channel_id() const { return channel_id_; }
 
   virtual base::ProcessId GetClientPID() const;
 
@@ -116,10 +118,13 @@ class GPU_EXPORT GpuChannel
 
   // IPC::Listener implementation:
   bool OnMessageReceived(const IPC::Message& msg) override;
+  void OnChannelConnected(int32_t peer_pid) override;
   void OnChannelError() override;
 
-  // IPC::Sender implementation:
+  // FilteredSender implementation:
   bool Send(IPC::Message* msg) override;
+  void AddFilter(IPC::MessageFilter* filter) override;
+  void RemoveFilter(IPC::MessageFilter* filter) override;
 
   void OnStreamRescheduled(int32_t stream_id, bool scheduled);
 
@@ -138,9 +143,6 @@ class GPU_EXPORT GpuChannel
   void RemoveRoute(int32_t route_id);
 
   void CacheShader(const std::string& key, const std::string& shader);
-
-  void AddFilter(IPC::MessageFilter* filter);
-  void RemoveFilter(IPC::MessageFilter* filter);
 
   uint64_t GetMemoryUsage();
 
@@ -178,9 +180,11 @@ class GPU_EXPORT GpuChannel
   scoped_refptr<GpuChannelMessageFilter> filter_;
 
   // Map of routing id to command buffer stub.
-  base::ScopedPtrHashMap<int32_t, std::unique_ptr<GpuCommandBufferStub>> stubs_;
+  std::unordered_map<int32_t, std::unique_ptr<GpuCommandBufferStub>> stubs_;
 
  private:
+  friend class TestGpuChannel;
+
   bool OnControlMessageReceived(const IPC::Message& msg);
 
   void HandleMessage(const scoped_refptr<GpuChannelMessageQueue>& queue);
@@ -232,9 +236,6 @@ class GPU_EXPORT GpuChannel
 
   IPC::Listener* unhandled_message_listener_;
 
-  // Uniquely identifies the channel within this GPU process.
-  std::string channel_id_;
-
   // Used to implement message routing functionality to CommandBuffer objects
   IPC::MessageRouter router_;
 
@@ -262,7 +263,7 @@ class GPU_EXPORT GpuChannel
 
   scoped_refptr<gles2::MailboxManager> mailbox_manager_;
 
-  GpuWatchdog* const watchdog_;
+  GpuWatchdogThread* const watchdog_;
 
   // Map of stream id to appropriate message queue.
   base::hash_map<int32_t, scoped_refptr<GpuChannelMessageQueue>> streams_;
@@ -278,6 +279,8 @@ class GPU_EXPORT GpuChannel
 
   // Can real time streams be created on this channel.
   const bool allow_real_time_streams_;
+
+  base::ProcessId peer_pid_;
 
   // Member variables should appear before the WeakPtrFactory, to ensure
   // that any WeakPtrs to Controller are invalidated before its members
@@ -303,7 +306,7 @@ class GPU_EXPORT GpuChannelMessageFilter : public IPC::MessageFilter {
   GpuChannelMessageFilter();
 
   // IPC::MessageFilter implementation.
-  void OnFilterAdded(IPC::Sender* sender) override;
+  void OnFilterAdded(IPC::Channel* channel) override;
   void OnFilterRemoved() override;
   void OnChannelConnected(int32_t peer_pid) override;
   void OnChannelError() override;
@@ -331,7 +334,7 @@ class GPU_EXPORT GpuChannelMessageFilter : public IPC::MessageFilter {
   base::hash_map<int32_t, scoped_refptr<GpuChannelMessageQueue>> routes_;
   base::Lock routes_lock_;  // Protects |routes_|.
 
-  IPC::Sender* sender_;
+  IPC::Channel* channel_;
   base::ProcessId peer_pid_;
   std::vector<scoped_refptr<IPC::MessageFilter>> channel_filters_;
 

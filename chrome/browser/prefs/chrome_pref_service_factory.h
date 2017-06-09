@@ -20,7 +20,7 @@ namespace policy {
 class PolicyService;
 }
 
-namespace syncable_prefs {
+namespace sync_preferences {
 class PrefServiceSyncable;
 }
 
@@ -28,9 +28,7 @@ namespace user_prefs {
 class PrefRegistrySyncable;
 }
 
-class PrefHashStore;
 class PrefRegistry;
-class PrefRegistrySimple;
 class PrefService;
 
 class PrefStore;
@@ -72,7 +70,7 @@ std::unique_ptr<PrefService> CreateLocalState(
     const scoped_refptr<PrefRegistry>& pref_registry,
     bool async);
 
-std::unique_ptr<syncable_prefs::PrefServiceSyncable> CreateProfilePrefs(
+std::unique_ptr<sync_preferences::PrefServiceSyncable> CreateProfilePrefs(
     const base::FilePath& pref_filename,
     base::SequencedTaskRunner* pref_io_task_runner,
     TrackedPreferenceValidationDelegate* validation_delegate,
@@ -90,7 +88,7 @@ void DisableDomainCheckForTesting();
 // preference values in |master_prefs|. Returns true on success.
 bool InitializePrefsFromMasterPrefs(
     const base::FilePath& profile_path,
-    const base::DictionaryValue& master_prefs);
+    std::unique_ptr<base::DictionaryValue> master_prefs);
 
 // Retrieves the time of the last preference reset event, if any, for the
 // provided profile. If no reset has occurred, returns a null |Time|.
@@ -99,9 +97,6 @@ base::Time GetResetTime(Profile* profile);
 // Clears the time of the last preference reset event, if any, for the provided
 // profile.
 void ClearResetTime(Profile* profile);
-
-// Register local state prefs used by chrome preference system.
-void RegisterPrefs(PrefRegistrySimple* registry);
 
 // Register user prefs used by chrome preference system.
 void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry);

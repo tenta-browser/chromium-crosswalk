@@ -16,7 +16,6 @@
 #include "base/trace_event/trace_event.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_context.h"
-#include "ui/gl/scoped_api.h"
 #include "ui/gl/scoped_binders.h"
 #include "ui/gl/yuv_to_rgb_converter.h"
 
@@ -33,6 +32,7 @@ namespace {
 bool ValidInternalFormat(unsigned internalformat) {
   switch (internalformat) {
     case GL_RED:
+    case GL_RG:
     case GL_BGRA_EXT:
     case GL_RGB:
     case GL_RGB_YCBCR_420V_CHROMIUM:
@@ -53,6 +53,7 @@ bool ValidFormat(gfx::BufferFormat format) {
     case gfx::BufferFormat::UYVY_422:
     case gfx::BufferFormat::YUV_420_BIPLANAR:
       return true;
+    case gfx::BufferFormat::RG_88:
     case gfx::BufferFormat::ATC:
     case gfx::BufferFormat::ATCIA:
     case gfx::BufferFormat::DXT1:
@@ -73,6 +74,8 @@ GLenum TextureFormat(gfx::BufferFormat format) {
   switch (format) {
     case gfx::BufferFormat::R_8:
       return GL_RED;
+    case gfx::BufferFormat::RG_88:
+      return GL_RG;
     case gfx::BufferFormat::BGRA_8888:
     case gfx::BufferFormat::BGRX_8888:
     case gfx::BufferFormat::RGBA_8888:
@@ -102,6 +105,8 @@ GLenum DataFormat(gfx::BufferFormat format) {
   switch (format) {
     case gfx::BufferFormat::R_8:
       return GL_RED;
+    case gfx::BufferFormat::RG_88:
+      return GL_RG;
     case gfx::BufferFormat::BGRA_8888:
     case gfx::BufferFormat::BGRX_8888:
     case gfx::BufferFormat::RGBA_8888:
@@ -129,6 +134,7 @@ GLenum DataFormat(gfx::BufferFormat format) {
 GLenum DataType(gfx::BufferFormat format) {
   switch (format) {
     case gfx::BufferFormat::R_8:
+    case gfx::BufferFormat::RG_88:
       return GL_UNSIGNED_BYTE;
     case gfx::BufferFormat::BGRA_8888:
     case gfx::BufferFormat::BGRX_8888:
@@ -175,7 +181,6 @@ GLImageIOSurface::GLImageIOSurface(const gfx::Size& size,
 
 GLImageIOSurface::~GLImageIOSurface() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  DCHECK(!io_surface_);
 }
 
 bool GLImageIOSurface::Initialize(IOSurfaceRef io_surface,
@@ -215,12 +220,6 @@ bool GLImageIOSurface::InitializeWithCVPixelBuffer(
 
   cv_pixel_buffer_.reset(cv_pixel_buffer, base::scoped_policy::RETAIN);
   return true;
-}
-
-void GLImageIOSurface::Destroy(bool have_context) {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  io_surface_.reset();
-  cv_pixel_buffer_.reset();
 }
 
 gfx::Size GLImageIOSurface::GetSize() {
@@ -274,25 +273,36 @@ bool GLImageIOSurface::CopyTexImage(unsigned target) {
   if (format_ != gfx::BufferFormat::YUV_420_BIPLANAR)
     return false;
 
-  if (target != GL_TEXTURE_RECTANGLE_ARB) {
-    LOG(ERROR) << "YUV_420_BIPLANAR requires GL_TEXTURE_RECTANGLE_ARB target";
-    return false;
-  }
-
   GLContext* gl_context = GLContext::GetCurrent();
   DCHECK(gl_context);
 
   YUVToRGBConverter* yuv_to_rgb_converter = gl_context->GetYUVToRGBConverter();
   DCHECK(yuv_to_rgb_converter);
 
-  ScopedSetGLToRealGLApi scoped_set_gl_api;
-
   // Note that state restoration is done explicitly instead of scoped binders to
   // avoid https://crbug.com/601729.
   GLint rgb_texture = 0;
-  glGetIntegerv(GL_TEXTURE_BINDING_RECTANGLE_ARB, &rgb_texture);
+  GLenum target_getter = 0;
+  switch (target) {
+    case GL_TEXTURE_2D:
+      target_getter = GL_TEXTURE_BINDING_2D;
+      break;
+    case GL_TEXTURE_CUBE_MAP:
+      target_getter = GL_TEXTURE_BINDING_CUBE_MAP;
+      break;
+    case GL_TEXTURE_EXTERNAL_OES:
+      target_getter = GL_TEXTURE_BINDING_EXTERNAL_OES;
+      break;
+    case GL_TEXTURE_RECTANGLE_ARB:
+      target_getter = GL_TEXTURE_BINDING_RECTANGLE_ARB;
+      break;
+    default:
+      NOTIMPLEMENTED() << " Target not supported.";
+      return false;
+  }
+  glGetIntegerv(target_getter, &rgb_texture);
   base::ScopedClosureRunner destroy_resources_runner(base::BindBlock(^{
-    glBindTexture(GL_TEXTURE_RECTANGLE_ARB, rgb_texture);
+    glBindTexture(target, rgb_texture);
   }));
 
   CGLContextObj cgl_context = CGLGetCurrentContext();
@@ -319,10 +329,7 @@ bool GLImageIOSurface::CopyTexImage(unsigned target) {
     }
   }
 
-  yuv_to_rgb_converter->CopyYUV420ToRGB(
-      GL_TEXTURE_RECTANGLE_ARB,
-      size_,
-      rgb_texture);
+  yuv_to_rgb_converter->CopyYUV420ToRGB(target, size_, rgb_texture);
   return true;
 }
 

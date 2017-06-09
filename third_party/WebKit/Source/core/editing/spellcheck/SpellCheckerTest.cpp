@@ -4,26 +4,83 @@
 
 #include "core/editing/spellcheck/SpellChecker.h"
 
-#include "core/editing/EditingTestBase.h"
 #include "core/editing/Editor.h"
+#include "core/editing/spellcheck/SpellCheckTestBase.h"
+#include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/Settings.h"
+#include "core/html/HTMLInputElement.h"
 
 namespace blink {
 
-class SpellCheckerTest : public EditingTestBase {
+class SpellCheckerTest : public SpellCheckTestBase {
+ protected:
+  int layoutCount() const { return page().frameView().layoutCount(); }
+  DummyPageHolder& page() const { return dummyPageHolder(); }
+
+  void forceLayout();
 };
 
-TEST_F(SpellCheckerTest, AdvanceToNextMisspellingWithEmptyInputNoCrash)
-{
-    setBodyContent("<input placeholder='placeholder'>abc");
-    updateAllLifecyclePhases();
-    Element* input = document().querySelector("input", ASSERT_NO_EXCEPTION);
-    input->focus();
-    document().settings()->setUnifiedTextCheckerEnabled(true);
-    // Do not crash in AdvanceToNextMisspelling command.
-    EXPECT_TRUE(document().frame()->editor().executeCommand("AdvanceToNextMisspelling"));
-    document().settings()->setUnifiedTextCheckerEnabled(false);
+void SpellCheckerTest::forceLayout() {
+  FrameView& frameView = page().frameView();
+  IntRect frameRect = frameView.frameRect();
+  frameRect.setWidth(frameRect.width() + 1);
+  frameRect.setHeight(frameRect.height() + 1);
+  page().frameView().setFrameRect(frameRect);
+  document().updateStyleAndLayoutIgnorePendingStylesheets();
 }
 
-} // namespace blink
+TEST_F(SpellCheckerTest, AdvanceToNextMisspellingWithEmptyInputNoCrash) {
+  setBodyContent("<input placeholder='placeholder'>abc");
+  updateAllLifecyclePhases();
+  Element* input = document().querySelector("input");
+  input->focus();
+  // Do not crash in AdvanceToNextMisspelling command.
+  EXPECT_TRUE(
+      document().frame()->editor().executeCommand("AdvanceToNextMisspelling"));
+}
+
+// Regression test for crbug.com/701309
+TEST_F(SpellCheckerTest, AdvanceToNextMisspellingWithImageInTableNoCrash) {
+  setBodyContent(
+      "<div contenteditable>"
+      "<table><tr><td>"
+      "<img src=foo.jpg>"
+      "</td></tr></table>"
+      "zz zz zz"
+      "</div>");
+  document().querySelector("div")->focus();
+  updateAllLifecyclePhases();
+
+  // Do not crash in advanceToNextMisspelling.
+  document().frame()->spellChecker().advanceToNextMisspelling(false);
+}
+
+TEST_F(SpellCheckerTest, SpellCheckDoesNotCauseUpdateLayout) {
+  setBodyContent("<input>");
+  HTMLInputElement* input =
+      toHTMLInputElement(document().querySelector("input"));
+  input->focus();
+  input->setValue("Hello, input field");
+  document().updateStyleAndLayout();
+  VisibleSelection oldSelection =
+      document()
+          .frame()
+          ->selection()
+          .computeVisibleSelectionInDOMTreeDeprecated();
+
+  Position newPosition(input->innerEditorElement()->firstChild(), 3);
+  document().frame()->selection().setSelection(
+      SelectionInDOMTree::Builder().collapse(newPosition).build());
+  ASSERT_EQ(3u, input->selectionStart());
+
+  EXPECT_TRUE(frame().spellChecker().isSpellCheckingEnabled());
+  forceLayout();
+  int startCount = layoutCount();
+  frame().spellChecker().respondToChangedSelection(
+      oldSelection.start(),
+      FrameSelection::CloseTyping | FrameSelection::ClearTypingStyle);
+  EXPECT_EQ(startCount, layoutCount());
+}
+
+}  // namespace blink

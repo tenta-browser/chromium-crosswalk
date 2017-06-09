@@ -16,9 +16,6 @@
 
 namespace cc {
 
-class LayerTreeHost;
-class ScopedUIResource;
-
 class CC_EXPORT NinePatchLayer : public UIResourceLayer {
  public:
   static scoped_refptr<NinePatchLayer> Create();
@@ -42,6 +39,11 @@ class CC_EXPORT NinePatchLayer : public UIResourceLayer {
   void SetFillCenter(bool fill_center);
   void SetNearestNeighbor(bool nearest_neighbor);
 
+  // |rect| is the space completely occluded by another layer in layer
+  // space. This can be used for example to occlude the entire window's
+  // content when drawing the shadow with a 9 patches layer.
+  void SetLayerOcclusion(const gfx::Rect& occlusion);
+
  private:
   NinePatchLayer();
   ~NinePatchLayer() override;
@@ -54,6 +56,10 @@ class CC_EXPORT NinePatchLayer : public UIResourceLayer {
   // The transparent center region that shows the parent layer's contents in
   // image space.
   gfx::Rect image_aperture_;
+
+  // The occluded region in layer space set by SetLayerOcclusion. It is
+  // usually larger than |image_aperture_|.
+  gfx::Rect layer_occlusion_;
 
   DISALLOW_COPY_AND_ASSIGN(NinePatchLayer);
 };

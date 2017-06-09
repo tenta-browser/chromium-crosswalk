@@ -6,6 +6,7 @@
 #include "base/location.h"
 #include "base/message_loop/message_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/input_method/input_method_persistence.h"
 #include "chrome/browser/chromeos/language_preferences.h"
@@ -42,23 +43,22 @@ void Append_en_US_InputMethods(std::vector<std::string>* out) {
 class FocusPODWaiter {
  public:
   FocusPODWaiter() : focused_(false), runner_(new content::MessageLoopRunner) {
-    GetOobeUI()
-        ->signin_screen_handler_for_test()
-        ->SetFocusPODCallbackForTesting(
-            base::Bind(&FocusPODWaiter::OnFocusPOD, base::Unretained(this)));
+    GetOobeUI()->signin_screen_handler()->SetFocusPODCallbackForTesting(
+        base::Bind(&FocusPODWaiter::OnFocusPOD, base::Unretained(this)));
   }
   ~FocusPODWaiter() {
-    GetOobeUI()
-        ->signin_screen_handler_for_test()
-        ->SetFocusPODCallbackForTesting(base::Closure());
+    GetOobeUI()->signin_screen_handler()->SetFocusPODCallbackForTesting(
+        base::Closure());
   }
 
   void OnFocusPOD() {
+    ASSERT_TRUE(base::MessageLoopForUI::IsCurrent());
     focused_ = true;
-    if (runner_.get())
-      base::MessageLoopForUI::current()->task_runner()->PostTask(
+    if (runner_.get()) {
+      base::ThreadTaskRunnerHandle::Get()->PostTask(
           FROM_HERE,
           base::Bind(&FocusPODWaiter::ExitMessageLoop, base::Unretained(this)));
+    }
   }
 
   void ExitMessageLoop() { runner_->Quit(); }
@@ -67,9 +67,8 @@ class FocusPODWaiter {
     if (focused_)
       return;
     runner_->Run();
-    GetOobeUI()
-        ->signin_screen_handler_for_test()
-        ->SetFocusPODCallbackForTesting(base::Closure());
+    GetOobeUI()->signin_screen_handler()->SetFocusPODCallbackForTesting(
+        base::Closure());
     runner_ = NULL;
   }
 

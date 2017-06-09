@@ -14,7 +14,7 @@ if (is_android) {
 source_ids = "//third_party/usb_ids/usb.ids"
 generated_ids = "$target_gen_dir/usb_ids_gen.cc"
 
-source_set("usb") {
+static_library("usb") {
   sources = [
     "android/usb_jni_registrar.cc",
     "android/usb_jni_registrar.h",
@@ -32,8 +32,12 @@ source_set("usb") {
     "usb_device_handle.h",
     "usb_device_handle_android.cc",
     "usb_device_handle_android.h",
+    "usb_device_handle_win.cc",
+    "usb_device_handle_win.h",
     "usb_device_linux.cc",
     "usb_device_linux.h",
+    "usb_device_win.cc",
+    "usb_device_win.h",
     "usb_endpoint_android.cc",
     "usb_endpoint_android.h",
     "usb_ids.cc",
@@ -44,6 +48,8 @@ source_set("usb") {
     "usb_service.h",
     "usb_service_android.cc",
     "usb_service_android.h",
+    "usb_service_win.cc",
+    "usb_service_win.h",
     "webusb_descriptors.cc",
     "webusb_descriptors.h",
     generated_ids,
@@ -54,7 +60,7 @@ source_set("usb") {
     "//base",
     "//base/third_party/dynamic_annotations",
     "//components/device_event_log",
-    "//device/core",
+    "//device/base",
     "//net",
   ]
 
@@ -87,6 +93,10 @@ source_set("usb") {
     deps += [ "//third_party/libusb" ]
   }
 
+  if (is_win) {
+    libs = [ "setupapi.lib" ]
+  }
+
   if (is_android || is_chromeos || is_linux) {
     sources += [
       "usb_device_handle_usbfs.cc",
@@ -102,7 +112,7 @@ source_set("usb") {
   }
 }
 
-source_set("test_support") {
+static_library("test_support") {
   testonly = true
 
   sources = [

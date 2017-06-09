@@ -8,7 +8,7 @@
 #import "chrome/browser/ui/cocoa/extensions/browser_action_button.h"
 #import "chrome/browser/ui/cocoa/extensions/browser_actions_controller.h"
 #import "chrome/browser/ui/cocoa/extensions/toolbar_actions_bar_bubble_mac.h"
-#import "chrome/browser/ui/cocoa/run_loop_testing.h"
+#import "chrome/browser/ui/cocoa/test/run_loop_testing.h"
 #import "chrome/browser/ui/cocoa/toolbar/toolbar_controller.h"
 #include "chrome/browser/ui/extensions/extension_message_bubble_browsertest.h"
 #include "ui/base/cocoa/cocoa_base_utils.h"
@@ -90,9 +90,11 @@ class ExtensionMessageBubbleBrowserTestMac
   ExtensionMessageBubbleBrowserTestMac() {}
   ~ExtensionMessageBubbleBrowserTestMac() override {}
 
- private:
   // ExtensionMessageBubbleBrowserTest:
   void SetUpCommandLine(base::CommandLine* command_line) override;
+
+ private:
+  // ExtensionMessageBubbleBrowserTest:
   void CheckBubbleNative(Browser* browser, AnchorPosition anchor) override;
   void CloseBubbleNative(Browser* browser) override;
   void CheckBubbleIsNotPresentNative(Browser* browser) override;
@@ -101,6 +103,17 @@ class ExtensionMessageBubbleBrowserTestMac
   void ClickDismissButton(Browser* browser) override;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionMessageBubbleBrowserTestMac);
+};
+
+class ExtensionMessageBubbleBrowserTestLegacyMac
+    : public ExtensionMessageBubbleBrowserTestMac {
+ protected:
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    ExtensionMessageBubbleBrowserTestMac::SetUpCommandLine(command_line);
+    override_redesign_.reset();
+    override_redesign_.reset(new extensions::FeatureSwitch::ScopedOverride(
+        extensions::FeatureSwitch::extension_action_redesign(), false));
+  }
 };
 
 void ExtensionMessageBubbleBrowserTestMac::SetUpCommandLine(
@@ -148,7 +161,7 @@ void ExtensionMessageBubbleBrowserTestMac::CheckBubbleIsNotPresentNative(
 void ExtensionMessageBubbleBrowserTestMac::ClickLearnMoreButton(
     Browser* browser) {
   ToolbarActionsBarBubbleMac* bubble = GetBubbleForBrowser(browser);
-  ClickInView([bubble learnMoreButton]);
+  ClickInView([bubble link]);
 }
 
 void ExtensionMessageBubbleBrowserTestMac::ClickActionButton(Browser* browser) {
@@ -167,12 +180,12 @@ IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleBrowserTestMac,
   TestBubbleAnchoredToExtensionAction();
 }
 
-IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleBrowserTestMac,
+IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleBrowserTestLegacyMac,
                        ExtensionBubbleAnchoredToAppMenu) {
   TestBubbleAnchoredToAppMenu();
 }
 
-IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleBrowserTestMac,
+IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleBrowserTestLegacyMac,
                        ExtensionBubbleAnchoredToAppMenuWithOtherAction) {
   TestBubbleAnchoredToAppMenuWithOtherAction();
 }
@@ -215,4 +228,34 @@ IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleBrowserTestMac,
 IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleBrowserTestMac,
                        TestClickingDismissButton) {
   TestClickingDismissButton();
+}
+
+IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleBrowserTestMac,
+                       TestControlledHomeMessageBubble) {
+  TestControlledHomeBubbleShown();
+}
+
+IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleBrowserTestMac,
+                       TestControlledSearchMessageBubble) {
+  TestControlledSearchBubbleShown();
+}
+
+IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleBrowserTestMac,
+                       PRE_TestControlledStartupMessageBubble) {
+  PreTestControlledStartupBubbleShown();
+}
+
+IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleBrowserTestMac,
+                       TestControlledStartupMessageBubble) {
+  TestControlledStartupBubbleShown();
+}
+
+IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleBrowserTestMac,
+                       PRE_TestControlledStartupNotShownOnRestart) {
+  PreTestControlledStartupNotShownOnRestart();
+}
+
+IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleBrowserTestMac,
+                       TestControlledStartupNotShownOnRestart) {
+  TestControlledStartupNotShownOnRestart();
 }

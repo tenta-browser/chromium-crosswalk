@@ -40,117 +40,109 @@
 namespace blink {
 
 class InstrumentingAgents;
+class Resource;
 class ThreadDebugger;
 class WorkerGlobalScope;
 
-namespace InspectorInstrumentation {
-
-class CORE_EXPORT AsyncTask {
-    STACK_ALLOCATED();
-public:
-    AsyncTask(ExecutionContext*, void* task);
-    AsyncTask(ExecutionContext*, void* task, bool enabled);
-    ~AsyncTask();
-
-private:
-    ThreadDebugger* m_debugger;
-    void* m_task;
-};
+namespace probe {
 
 class CORE_EXPORT NativeBreakpoint {
-    STACK_ALLOCATED();
-public:
-    NativeBreakpoint(ExecutionContext*, const char* name, bool sync);
-    NativeBreakpoint(ExecutionContext*, EventTarget*, Event*);
-    ~NativeBreakpoint();
+  STACK_ALLOCATED();
 
-private:
-    Member<InstrumentingAgents> m_instrumentingAgents;
-    bool m_sync;
+ public:
+  NativeBreakpoint(ExecutionContext*, const char* name);
+  NativeBreakpoint(ExecutionContext*, EventTarget*, Event*);
+  ~NativeBreakpoint();
+
+ private:
+  Member<InstrumentingAgents> m_instrumentingAgents;
 };
 
-class CORE_EXPORT StyleRecalc {
-    STACK_ALLOCATED();
-public:
-    StyleRecalc(Document*);
-    ~StyleRecalc();
-private:
-    Member<InstrumentingAgents> m_instrumentingAgents;
+class CORE_EXPORT AsyncTask {
+  STACK_ALLOCATED();
+
+ public:
+  AsyncTask(ExecutionContext*, void* task);
+  AsyncTask(ExecutionContext*, void* task, bool enabled);
+  AsyncTask(ExecutionContext*, void* task, const char* breakpointName);
+  ~AsyncTask();
+
+ private:
+  ThreadDebugger* m_debugger;
+  void* m_task;
+  NativeBreakpoint m_breakpoint;
 };
-
-class CORE_EXPORT JavaScriptDialog {
-    STACK_ALLOCATED();
-public:
-    JavaScriptDialog(LocalFrame*, const String& message, ChromeClient::DialogType);
-    void setResult(bool);
-    ~JavaScriptDialog();
-private:
-    Member<InstrumentingAgents> m_instrumentingAgents;
-    bool m_result;
-};
-
-class CORE_EXPORT FrontendCounter {
-    STATIC_ONLY(FrontendCounter);
-private:
-    friend void frontendCreated();
-    friend void frontendDeleted();
-    friend bool hasFrontends();
-    static int s_frontendCounter;
-};
-
-inline void frontendCreated() { atomicIncrement(&FrontendCounter::s_frontendCounter); }
-inline void frontendDeleted() { atomicDecrement(&FrontendCounter::s_frontendCounter); }
-inline bool hasFrontends() { return acquireLoad(&FrontendCounter::s_frontendCounter); }
-
-CORE_EXPORT void registerInstrumentingAgents(InstrumentingAgents*);
-CORE_EXPORT void unregisterInstrumentingAgents(InstrumentingAgents*);
 
 // Called from generated instrumentation code.
 CORE_EXPORT InstrumentingAgents* instrumentingAgentsFor(WorkerGlobalScope*);
-CORE_EXPORT InstrumentingAgents* instrumentingAgentsForNonDocumentContext(ExecutionContext*);
+CORE_EXPORT InstrumentingAgents* instrumentingAgentsForNonDocumentContext(
+    ExecutionContext*);
 
-inline InstrumentingAgents* instrumentingAgentsFor(LocalFrame* frame)
-{
-    return frame ? frame->instrumentingAgents() : nullptr;
+inline InstrumentingAgents* instrumentingAgentsFor(LocalFrame* frame) {
+  return frame ? frame->instrumentingAgents() : nullptr;
 }
 
-inline InstrumentingAgents* instrumentingAgentsFor(Document& document)
-{
-    LocalFrame* frame = document.frame();
-    if (!frame && document.templateDocumentHost())
-        frame = document.templateDocumentHost()->frame();
-    return instrumentingAgentsFor(frame);
+inline InstrumentingAgents* instrumentingAgentsFor(Document& document) {
+  LocalFrame* frame = document.frame();
+  if (!frame && document.templateDocumentHost())
+    frame = document.templateDocumentHost()->frame();
+  return instrumentingAgentsFor(frame);
 }
 
-inline InstrumentingAgents* instrumentingAgentsFor(Document* document)
-{
-    return document ? instrumentingAgentsFor(*document) : nullptr;
+inline InstrumentingAgents* instrumentingAgentsFor(Document* document) {
+  return document ? instrumentingAgentsFor(*document) : nullptr;
 }
 
-inline InstrumentingAgents* instrumentingAgentsFor(ExecutionContext* context)
-{
-    if (!context)
-        return nullptr;
-    return context->isDocument() ? instrumentingAgentsFor(*toDocument(context)) : instrumentingAgentsForNonDocumentContext(context);
+inline InstrumentingAgents* instrumentingAgentsFor(ExecutionContext* context) {
+  if (!context)
+    return nullptr;
+  return context->isDocument()
+             ? instrumentingAgentsFor(*toDocument(context))
+             : instrumentingAgentsForNonDocumentContext(context);
 }
 
-inline InstrumentingAgents* instrumentingAgentsFor(Node* node)
-{
-    return node ? instrumentingAgentsFor(node->document()) : nullptr;
+inline InstrumentingAgents* instrumentingAgentsFor(Node* node) {
+  return node ? instrumentingAgentsFor(node->document()) : nullptr;
 }
 
-inline InstrumentingAgents* instrumentingAgentsFor(EventTarget* eventTarget)
-{
-    return eventTarget ? instrumentingAgentsFor(eventTarget->getExecutionContext()) : nullptr;
+inline InstrumentingAgents* instrumentingAgentsFor(EventTarget* eventTarget) {
+  return eventTarget
+             ? instrumentingAgentsFor(eventTarget->getExecutionContext())
+             : nullptr;
 }
 
-} // namespace InspectorInstrumentation
-} // namespace blink
+CORE_EXPORT void breakIfNeeded(ExecutionContext*, const char* name);
+
+CORE_EXPORT void asyncTaskScheduled(ExecutionContext*,
+                                    const String& name,
+                                    void*,
+                                    bool recurring = false);
+CORE_EXPORT void asyncTaskScheduledBreakable(ExecutionContext*,
+                                             const char* name,
+                                             void*,
+                                             bool recurring = false);
+CORE_EXPORT void asyncTaskCanceled(ExecutionContext*, void*);
+CORE_EXPORT void asyncTaskCanceledBreakable(ExecutionContext*,
+                                            const char* name,
+                                            void*);
+
+CORE_EXPORT void allAsyncTasksCanceled(ExecutionContext*);
+CORE_EXPORT void canceledAfterReceivedResourceResponse(LocalFrame*,
+                                                       DocumentLoader*,
+                                                       unsigned long identifier,
+                                                       const ResourceResponse&,
+                                                       Resource*);
+CORE_EXPORT void continueWithPolicyIgnore(LocalFrame*,
+                                          DocumentLoader*,
+                                          unsigned long identifier,
+                                          const ResourceResponse&,
+                                          Resource*);
+
+}  // namespace InspectorInstrumentation
+}  // namespace blink
 
 #include "core/InspectorInstrumentationInl.h"
 
-#include "core/inspector/InspectorInstrumentationCustomInl.h"
-
 #include "core/InspectorOverridesInl.h"
 
-#endif // !defined(InspectorInstrumentation_h)
+#endif  // !defined(InspectorInstrumentation_h)

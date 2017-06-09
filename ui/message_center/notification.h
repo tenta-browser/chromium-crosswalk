@@ -20,7 +20,17 @@
 #include "ui/message_center/notifier_settings.h"
 #include "url/gurl.h"
 
+#if !defined(OS_IOS)
+#include "mojo/public/cpp/bindings/struct_traits.h"  // nogncheck
+#endif
+
 namespace message_center {
+
+#if !defined(OS_IOS)
+namespace mojom {
+class NotificationDataView;
+}
+#endif
 
 struct MESSAGE_CENTER_EXPORT NotificationItem {
   base::string16 title;
@@ -29,11 +39,18 @@ struct MESSAGE_CENTER_EXPORT NotificationItem {
   NotificationItem(const base::string16& title, const base::string16& message);
 };
 
+enum class ButtonType { BUTTON, TEXT };
+
 struct MESSAGE_CENTER_EXPORT ButtonInfo {
   base::string16 title;
   gfx::Image icon;
+  ButtonType type = ButtonType::BUTTON;
+  base::string16 placeholder;
 
-  ButtonInfo(const base::string16& title);
+  explicit ButtonInfo(const base::string16& title);
+  ButtonInfo(const ButtonInfo& other);
+  ~ButtonInfo();
+  ButtonInfo& operator=(const ButtonInfo& other);
 };
 
 class MESSAGE_CENTER_EXPORT RichNotificationData {
@@ -61,10 +78,14 @@ class MESSAGE_CENTER_EXPORT RichNotificationData {
   std::vector<int> vibration_pattern;
   bool renotify;
   bool silent;
+  base::string16 accessible_name;
 };
 
 class MESSAGE_CENTER_EXPORT Notification {
  public:
+  // Default constructor needed for generated mojom files
+  Notification();
+
   Notification(NotificationType type,
                const std::string& id,
                const base::string16& title,
@@ -79,6 +100,8 @@ class MESSAGE_CENTER_EXPORT Notification {
   Notification(const std::string& id, const Notification& other);
 
   Notification(const Notification& other);
+
+  Notification& operator=(const Notification& other);
 
   virtual ~Notification();
 
@@ -171,11 +194,6 @@ class MESSAGE_CENTER_EXPORT Notification {
   const gfx::Image& icon() const { return icon_; }
   void set_icon(const gfx::Image& icon) { icon_ = icon; }
 
-  // Gets and sets whether to draw a solid background colour behind the
-  // notification's icon. Only applies to the Views implementation.
-  bool draw_icon_background() const { return draw_icon_background_; }
-  void set_draw_icon_background(bool draw) { draw_icon_background_ = draw; }
-
   const gfx::Image& image() const { return optional_fields_.image; }
   void set_image(const gfx::Image& image) { optional_fields_.image = image; }
 
@@ -228,6 +246,11 @@ class MESSAGE_CENTER_EXPORT Notification {
   void set_pinned(bool pinned) { optional_fields_.pinned = pinned; }
 #endif  // defined(OS_CHROMEOS)
 
+  // Gets a text for spoken feedback.
+  const base::string16& accessible_name() const {
+    return optional_fields_.accessible_name;
+  }
+
   NotificationDelegate* delegate() const { return delegate_.get(); }
 
   const RichNotificationData& rich_notification_data() const {
@@ -256,8 +279,6 @@ class MESSAGE_CENTER_EXPORT Notification {
       const base::Closure& click_callback);
 
  protected:
-  Notification& operator=(const Notification& other);
-
   // The type of notification we'd like displayed.
   NotificationType type_;
 
@@ -267,10 +288,6 @@ class MESSAGE_CENTER_EXPORT Notification {
 
   // Image data for the associated icon, used by Ash when available.
   gfx::Image icon_;
-
-  // True by default; controls whether to draw a solid background colour behind
-  // the |icon_|. Only applies to the Views implementation.
-  bool draw_icon_background_;
 
   // The display string for the source of the notification.  Could be
   // the same as origin_url_, or the name of an extension.
@@ -290,6 +307,10 @@ class MESSAGE_CENTER_EXPORT Notification {
   // A proxy object that allows access back to the JavaScript object that
   // represents the notification, for firing events.
   scoped_refptr<NotificationDelegate> delegate_;
+
+#if !defined(OS_IOS)
+  friend struct mojo::StructTraits<mojom::NotificationDataView, Notification>;
+#endif
 };
 
 }  // namespace message_center

@@ -22,6 +22,7 @@
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
+#include "base/test/histogram_tester.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
@@ -32,18 +33,25 @@
 #include "net/base/test_completion_callback.h"
 #include "net/http/http_response_headers.h"
 #include "net/log/net_log.h"
+#include "net/log/net_log_event_type.h"
+#include "net/log/net_log_source.h"
+#include "net/log/net_log_source_type.h"
 #include "net/log/test_net_log.h"
 #include "net/log/test_net_log_entry.h"
 #include "net/log/test_net_log_util.h"
 #include "net/socket/client_socket_factory.h"
 #include "net/socket/client_socket_handle.h"
+#include "net/socket/datagram_client_socket.h"
 #include "net/socket/socket_performance_watcher.h"
 #include "net/socket/socket_test_util.h"
 #include "net/socket/ssl_client_socket.h"
 #include "net/socket/stream_socket.h"
-#include "net/udp/datagram_client_socket.h"
+#include "net/test/gtest_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+using net::test::IsError;
+using net::test::IsOk;
 
 using ::testing::Invoke;
 using ::testing::Return;
@@ -54,6 +62,7 @@ namespace {
 
 const int kDefaultMaxSockets = 4;
 const int kDefaultMaxSocketsPerGroup = 2;
+const char kIdleSocketFateHistogram[] = "Net.Socket.IdleSocketFate";
 
 // Make sure |handle| sets load times correctly when it has been assigned a
 // reused socket.
@@ -64,7 +73,7 @@ void TestLoadTimingInfoConnectedReused(const ClientSocketHandle& handle) {
   EXPECT_TRUE(handle.GetLoadTimingInfo(true, &load_timing_info));
 
   EXPECT_EQ(true, load_timing_info.socket_reused);
-  EXPECT_NE(NetLog::Source::kInvalidId, load_timing_info.socket_log_id);
+  EXPECT_NE(NetLogSource::kInvalidId, load_timing_info.socket_log_id);
 
   ExpectConnectTimingHasNoTimes(load_timing_info.connect_timing);
   ExpectLoadTimingHasOnlyConnectionTimes(load_timing_info);
@@ -81,7 +90,7 @@ void TestLoadTimingInfoConnectedNotReused(const ClientSocketHandle& handle) {
   EXPECT_TRUE(handle.GetLoadTimingInfo(false, &load_timing_info));
 
   EXPECT_FALSE(load_timing_info.socket_reused);
-  EXPECT_NE(NetLog::Source::kInvalidId, load_timing_info.socket_log_id);
+  EXPECT_NE(NetLogSource::kInvalidId, load_timing_info.socket_log_id);
 
   ExpectConnectTimingHasTimes(load_timing_info.connect_timing,
                               CONNECT_TIMING_HAS_CONNECT_TIMES_ONLY);
@@ -100,7 +109,7 @@ void TestLoadTimingInfoNotConnected(const ClientSocketHandle& handle) {
   EXPECT_FALSE(handle.GetLoadTimingInfo(false, &load_timing_info));
 
   EXPECT_FALSE(load_timing_info.socket_reused);
-  EXPECT_EQ(NetLog::Source::kInvalidId, load_timing_info.socket_log_id);
+  EXPECT_EQ(NetLogSource::kInvalidId, load_timing_info.socket_log_id);
 
   ExpectConnectTimingHasNoTimes(load_timing_info.connect_timing);
   ExpectLoadTimingHasOnlyConnectionTimes(load_timing_info);
@@ -121,7 +130,7 @@ class MockClientSocket : public StreamSocket {
   explicit MockClientSocket(net::NetLog* net_log)
       : connected_(false),
         has_unread_data_(false),
-        net_log_(BoundNetLog::Make(net_log, NetLog::SOURCE_SOCKET)),
+        net_log_(NetLogWithSource::Make(net_log, NetLogSourceType::SOCKET)),
         was_used_to_convey_data_(false) {}
 
   // Sets whether the socket has unread data. If true, the next call to Read()
@@ -171,12 +180,12 @@ class MockClientSocket : public StreamSocket {
     return ERR_UNEXPECTED;
   }
 
-  const BoundNetLog& NetLog() const override { return net_log_; }
+  const NetLogWithSource& NetLog() const override { return net_log_; }
 
   void SetSubresourceSpeculation() override {}
   void SetOmniboxSpeculation() override {}
   bool WasEverUsed() const override { return was_used_to_convey_data_; }
-  bool WasNpnNegotiated() const override { return false; }
+  bool WasAlpnNegotiated() const override { return false; }
   NextProto GetNegotiatedProtocol() const override { return kProtoUnknown; }
   bool GetSSLInfo(SSLInfo* ssl_info) override { return false; }
   void GetConnectionAttempts(ConnectionAttempts* out) const override {
@@ -192,7 +201,7 @@ class MockClientSocket : public StreamSocket {
  private:
   bool connected_;
   bool has_unread_data_;
-  BoundNetLog net_log_;
+  NetLogWithSource net_log_;
   bool was_used_to_convey_data_;
 
   DISALLOW_COPY_AND_ASSIGN(MockClientSocket);
@@ -208,7 +217,7 @@ class MockClientSocketFactory : public ClientSocketFactory {
       DatagramSocket::BindType bind_type,
       const RandIntCallback& rand_int_cb,
       NetLog* net_log,
-      const NetLog::Source& source) override {
+      const NetLogSource& source) override {
     NOTREACHED();
     return std::unique_ptr<DatagramClientSocket>();
   }
@@ -218,7 +227,7 @@ class MockClientSocketFactory : public ClientSocketFactory {
       std::unique_ptr<
           SocketPerformanceWatcher> /* socket_performance_watcher */,
       NetLog* /* net_log */,
-      const NetLog::Source& /*source*/) override {
+      const NetLogSource& /*source*/) override {
     allocation_count_++;
     return std::unique_ptr<StreamSocket>();
   }
@@ -275,12 +284,14 @@ class TestConnectJob : public ConnectJob {
                  ConnectJob::Delegate* delegate,
                  MockClientSocketFactory* client_socket_factory,
                  NetLog* net_log)
-      : ConnectJob(group_name,
-                   timeout_duration,
-                   request.priority(),
-                   request.respect_limits(),
-                   delegate,
-                   BoundNetLog::Make(net_log, NetLog::SOURCE_CONNECT_JOB)),
+      : ConnectJob(
+            group_name,
+            timeout_duration,
+            request.priority(),
+            request.respect_limits(),
+            delegate,
+            NetLogWithSource::Make(net_log,
+                                   NetLogSourceType::TRANSPORT_CONNECT_JOB)),
         job_type_(job_type),
         client_socket_factory_(client_socket_factory),
         load_state_(LOAD_STATE_IDLE),
@@ -313,7 +324,7 @@ class TestConnectJob : public ConnectJob {
   int ConnectInternal() override {
     AddressList ignored;
     client_socket_factory_->CreateTransportClientSocket(ignored, NULL, NULL,
-                                                        NetLog::Source());
+                                                        NetLogSource());
     SetSocket(std::unique_ptr<StreamSocket>(
         new MockClientSocket(net_log().net_log())));
     switch (job_type_) {
@@ -504,7 +515,7 @@ class TestClientSocketPool : public ClientSocketPool {
                     RespectLimits respect_limits,
                     ClientSocketHandle* handle,
                     const CompletionCallback& callback,
-                    const BoundNetLog& net_log) override {
+                    const NetLogWithSource& net_log) override {
     const scoped_refptr<TestSocketParams>* casted_socket_params =
         static_cast<const scoped_refptr<TestSocketParams>*>(params);
     return base_.RequestSocket(group_name, *casted_socket_params, priority,
@@ -514,11 +525,17 @@ class TestClientSocketPool : public ClientSocketPool {
   void RequestSockets(const std::string& group_name,
                       const void* params,
                       int num_sockets,
-                      const BoundNetLog& net_log) override {
+                      const NetLogWithSource& net_log) override {
     const scoped_refptr<TestSocketParams>* casted_params =
         static_cast<const scoped_refptr<TestSocketParams>*>(params);
 
     base_.RequestSockets(group_name, *casted_params, num_sockets, net_log);
+  }
+
+  void SetPriority(const std::string& group_name,
+                   ClientSocketHandle* handle,
+                   RequestPriority priority) override {
+    base_.SetPriority(group_name, handle, priority);
   }
 
   void CancelRequest(const std::string& group_name,
@@ -723,6 +740,8 @@ class ClientSocketPoolBaseTest : public testing::Test {
   std::vector<std::unique_ptr<TestSocketRequest>>* requests() {
     return test_base_.requests();
   }
+  // Only counts the requests that get sockets asynchronously;
+  // synchronous completions are not registered by this count.
   size_t completion_count() const { return test_base_.completion_count(); }
 
   TestNetLog net_log_;
@@ -742,12 +761,13 @@ TEST_F(ClientSocketPoolBaseTest, ConnectJob_NoTimeoutOnSynchronousCompletion) {
   TestClientSocketPoolBase::Request request(
       &ignored, CompletionCallback(), DEFAULT_PRIORITY,
       ClientSocketPool::RespectLimits::ENABLED,
-      internal::ClientSocketPoolBaseHelper::NORMAL, params_, BoundNetLog());
+      internal::ClientSocketPoolBaseHelper::NORMAL, params_,
+      NetLogWithSource());
   std::unique_ptr<TestConnectJob> job(
       new TestConnectJob(TestConnectJob::kMockJob, "a", request,
                          base::TimeDelta::FromMicroseconds(1), &delegate,
                          &client_socket_factory_, NULL));
-  EXPECT_EQ(OK, job->Connect());
+  EXPECT_THAT(job->Connect(), IsOk());
 }
 
 TEST_F(ClientSocketPoolBaseTest, ConnectJob_TimedOut) {
@@ -758,7 +778,8 @@ TEST_F(ClientSocketPoolBaseTest, ConnectJob_TimedOut) {
   TestClientSocketPoolBase::Request request(
       &ignored, CompletionCallback(), DEFAULT_PRIORITY,
       ClientSocketPool::RespectLimits::ENABLED,
-      internal::ClientSocketPoolBaseHelper::NORMAL, params_, BoundNetLog());
+      internal::ClientSocketPoolBaseHelper::NORMAL, params_,
+      NetLogWithSource());
   // Deleted by TestConnectJobDelegate.
   TestConnectJob* job =
       new TestConnectJob(TestConnectJob::kMockPendingJob,
@@ -768,28 +789,28 @@ TEST_F(ClientSocketPoolBaseTest, ConnectJob_TimedOut) {
                          &delegate,
                          &client_socket_factory_,
                          &log);
-  ASSERT_EQ(ERR_IO_PENDING, job->Connect());
+  ASSERT_THAT(job->Connect(), IsError(ERR_IO_PENDING));
   base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(1));
-  EXPECT_EQ(ERR_TIMED_OUT, delegate.WaitForResult());
+  EXPECT_THAT(delegate.WaitForResult(), IsError(ERR_TIMED_OUT));
 
   TestNetLogEntry::List entries;
   log.GetEntries(&entries);
 
   EXPECT_EQ(6u, entries.size());
+  EXPECT_TRUE(LogContainsBeginEvent(entries, 0,
+                                    NetLogEventType::SOCKET_POOL_CONNECT_JOB));
   EXPECT_TRUE(LogContainsBeginEvent(
-      entries, 0, NetLog::TYPE_SOCKET_POOL_CONNECT_JOB));
-  EXPECT_TRUE(LogContainsBeginEvent(
-      entries, 1, NetLog::TYPE_SOCKET_POOL_CONNECT_JOB_CONNECT));
+      entries, 1, NetLogEventType::SOCKET_POOL_CONNECT_JOB_CONNECT));
+  EXPECT_TRUE(LogContainsEvent(entries, 2,
+                               NetLogEventType::CONNECT_JOB_SET_SOCKET,
+                               NetLogEventPhase::NONE));
   EXPECT_TRUE(LogContainsEvent(
-      entries, 2, NetLog::TYPE_CONNECT_JOB_SET_SOCKET,
-      NetLog::PHASE_NONE));
-  EXPECT_TRUE(LogContainsEvent(
-      entries, 3, NetLog::TYPE_SOCKET_POOL_CONNECT_JOB_TIMED_OUT,
-      NetLog::PHASE_NONE));
+      entries, 3, NetLogEventType::SOCKET_POOL_CONNECT_JOB_TIMED_OUT,
+      NetLogEventPhase::NONE));
   EXPECT_TRUE(LogContainsEndEvent(
-      entries, 4, NetLog::TYPE_SOCKET_POOL_CONNECT_JOB_CONNECT));
-  EXPECT_TRUE(LogContainsEndEvent(
-      entries, 5, NetLog::TYPE_SOCKET_POOL_CONNECT_JOB));
+      entries, 4, NetLogEventType::SOCKET_POOL_CONNECT_JOB_CONNECT));
+  EXPECT_TRUE(LogContainsEndEvent(entries, 5,
+                                  NetLogEventType::SOCKET_POOL_CONNECT_JOB));
 }
 
 TEST_F(ClientSocketPoolBaseTest, BasicSynchronous) {
@@ -814,16 +835,14 @@ TEST_F(ClientSocketPoolBaseTest, BasicSynchronous) {
   log.GetEntries(&entries);
 
   EXPECT_EQ(4u, entries.size());
-  EXPECT_TRUE(LogContainsBeginEvent(
-      entries, 0, NetLog::TYPE_SOCKET_POOL));
+  EXPECT_TRUE(LogContainsBeginEvent(entries, 0, NetLogEventType::SOCKET_POOL));
   EXPECT_TRUE(LogContainsEvent(
-      entries, 1, NetLog::TYPE_SOCKET_POOL_BOUND_TO_CONNECT_JOB,
-      NetLog::PHASE_NONE));
-  EXPECT_TRUE(LogContainsEvent(
-      entries, 2, NetLog::TYPE_SOCKET_POOL_BOUND_TO_SOCKET,
-      NetLog::PHASE_NONE));
-  EXPECT_TRUE(LogContainsEndEvent(
-      entries, 3, NetLog::TYPE_SOCKET_POOL));
+      entries, 1, NetLogEventType::SOCKET_POOL_BOUND_TO_CONNECT_JOB,
+      NetLogEventPhase::NONE));
+  EXPECT_TRUE(LogContainsEvent(entries, 2,
+                               NetLogEventType::SOCKET_POOL_BOUND_TO_SOCKET,
+                               NetLogEventPhase::NONE));
+  EXPECT_TRUE(LogContainsEndEvent(entries, 3, NetLogEventType::SOCKET_POOL));
 }
 
 TEST_F(ClientSocketPoolBaseTest, InitConnectionFailure) {
@@ -852,34 +871,37 @@ TEST_F(ClientSocketPoolBaseTest, InitConnectionFailure) {
   log.GetEntries(&entries);
 
   EXPECT_EQ(3u, entries.size());
-  EXPECT_TRUE(LogContainsBeginEvent(
-      entries, 0, NetLog::TYPE_SOCKET_POOL));
+  EXPECT_TRUE(LogContainsBeginEvent(entries, 0, NetLogEventType::SOCKET_POOL));
   EXPECT_TRUE(LogContainsEvent(
-      entries, 1, NetLog::TYPE_SOCKET_POOL_BOUND_TO_CONNECT_JOB,
-      NetLog::PHASE_NONE));
-  EXPECT_TRUE(LogContainsEndEvent(
-      entries, 2, NetLog::TYPE_SOCKET_POOL));
+      entries, 1, NetLogEventType::SOCKET_POOL_BOUND_TO_CONNECT_JOB,
+      NetLogEventPhase::NONE));
+  EXPECT_TRUE(LogContainsEndEvent(entries, 2, NetLogEventType::SOCKET_POOL));
 }
 
 TEST_F(ClientSocketPoolBaseTest, TotalLimit) {
+  base::HistogramTester histograms;
   CreatePool(kDefaultMaxSockets, kDefaultMaxSocketsPerGroup);
 
   // TODO(eroman): Check that the NetLog contains this event.
 
-  EXPECT_EQ(OK, StartRequest("a", DEFAULT_PRIORITY));
-  EXPECT_EQ(OK, StartRequest("b", DEFAULT_PRIORITY));
-  EXPECT_EQ(OK, StartRequest("c", DEFAULT_PRIORITY));
-  EXPECT_EQ(OK, StartRequest("d", DEFAULT_PRIORITY));
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsOk());
+  EXPECT_THAT(StartRequest("b", DEFAULT_PRIORITY), IsOk());
+  EXPECT_THAT(StartRequest("c", DEFAULT_PRIORITY), IsOk());
+  EXPECT_THAT(StartRequest("d", DEFAULT_PRIORITY), IsOk());
 
   EXPECT_EQ(static_cast<int>(requests_size()),
             client_socket_factory_.allocation_count());
   EXPECT_EQ(requests_size() - kDefaultMaxSockets, completion_count());
 
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("e", DEFAULT_PRIORITY));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("f", DEFAULT_PRIORITY));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("g", DEFAULT_PRIORITY));
+  EXPECT_THAT(StartRequest("e", DEFAULT_PRIORITY), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("f", DEFAULT_PRIORITY), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("g", DEFAULT_PRIORITY), IsError(ERR_IO_PENDING));
 
   ReleaseAllConnections(ClientSocketPoolTest::NO_KEEP_ALIVE);
+
+  EXPECT_THAT(histograms.GetAllSamples(kIdleSocketFateHistogram),
+              testing::ElementsAre(
+                  base::Bucket(/*IDLE_SOCKET_FATE_RELEASE_UNUSABLE=*/3, 7)));
 
   EXPECT_EQ(static_cast<int>(requests_size()),
             client_socket_factory_.allocation_count());
@@ -898,24 +920,28 @@ TEST_F(ClientSocketPoolBaseTest, TotalLimit) {
 }
 
 TEST_F(ClientSocketPoolBaseTest, TotalLimitReachedNewGroup) {
+  base::HistogramTester histograms;
   CreatePool(kDefaultMaxSockets, kDefaultMaxSocketsPerGroup);
 
   // TODO(eroman): Check that the NetLog contains this event.
 
   // Reach all limits: max total sockets, and max sockets per group.
-  EXPECT_EQ(OK, StartRequest("a", DEFAULT_PRIORITY));
-  EXPECT_EQ(OK, StartRequest("a", DEFAULT_PRIORITY));
-  EXPECT_EQ(OK, StartRequest("b", DEFAULT_PRIORITY));
-  EXPECT_EQ(OK, StartRequest("b", DEFAULT_PRIORITY));
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsOk());
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsOk());
+  EXPECT_THAT(StartRequest("b", DEFAULT_PRIORITY), IsOk());
+  EXPECT_THAT(StartRequest("b", DEFAULT_PRIORITY), IsOk());
 
   EXPECT_EQ(static_cast<int>(requests_size()),
             client_socket_factory_.allocation_count());
   EXPECT_EQ(requests_size() - kDefaultMaxSockets, completion_count());
 
   // Now create a new group and verify that we don't starve it.
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("c", DEFAULT_PRIORITY));
+  EXPECT_THAT(StartRequest("c", DEFAULT_PRIORITY), IsError(ERR_IO_PENDING));
 
   ReleaseAllConnections(ClientSocketPoolTest::NO_KEEP_ALIVE);
+  EXPECT_THAT(histograms.GetAllSamples(kIdleSocketFateHistogram),
+              testing::ElementsAre(
+                  base::Bucket(/*IDLE_SOCKET_FATE_RELEASE_UNUSABLE=*/3, 5)));
 
   EXPECT_EQ(static_cast<int>(requests_size()),
             client_socket_factory_.allocation_count());
@@ -932,21 +958,25 @@ TEST_F(ClientSocketPoolBaseTest, TotalLimitReachedNewGroup) {
 }
 
 TEST_F(ClientSocketPoolBaseTest, TotalLimitRespectsPriority) {
+  base::HistogramTester histograms;
   CreatePool(kDefaultMaxSockets, kDefaultMaxSocketsPerGroup);
 
-  EXPECT_EQ(OK, StartRequest("b", LOWEST));
-  EXPECT_EQ(OK, StartRequest("a", MEDIUM));
-  EXPECT_EQ(OK, StartRequest("b", HIGHEST));
-  EXPECT_EQ(OK, StartRequest("a", LOWEST));
+  EXPECT_THAT(StartRequest("b", LOWEST), IsOk());
+  EXPECT_THAT(StartRequest("a", MEDIUM), IsOk());
+  EXPECT_THAT(StartRequest("b", HIGHEST), IsOk());
+  EXPECT_THAT(StartRequest("a", LOWEST), IsOk());
 
   EXPECT_EQ(static_cast<int>(requests_size()),
             client_socket_factory_.allocation_count());
 
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("c", LOWEST));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", MEDIUM));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("b", HIGHEST));
+  EXPECT_THAT(StartRequest("c", LOWEST), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", MEDIUM), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("b", HIGHEST), IsError(ERR_IO_PENDING));
 
   ReleaseAllConnections(ClientSocketPoolTest::NO_KEEP_ALIVE);
+  EXPECT_THAT(histograms.GetAllSamples(kIdleSocketFateHistogram),
+              testing::ElementsAre(
+                  base::Bucket(/*IDLE_SOCKET_FATE_RELEASE_UNUSABLE=*/3, 7)));
 
   EXPECT_EQ(requests_size() - kDefaultMaxSockets, completion_count());
 
@@ -966,22 +996,127 @@ TEST_F(ClientSocketPoolBaseTest, TotalLimitRespectsPriority) {
   EXPECT_EQ(ClientSocketPoolTest::kIndexOutOfBounds, GetOrderOfRequest(9));
 }
 
+// Test reprioritizing a request before completion doesn't interfere with
+// its completion.
+TEST_F(ClientSocketPoolBaseTest, ReprioritizeOne) {
+  CreatePool(kDefaultMaxSockets, 1);
+
+  EXPECT_THAT(StartRequest("a", LOWEST), IsError(OK));
+  EXPECT_THAT(StartRequest("a", MEDIUM), IsError(ERR_IO_PENDING));
+  EXPECT_TRUE(request(0)->handle()->socket());
+  EXPECT_FALSE(request(1)->handle()->socket());
+
+  request(1)->handle()->SetPriority(MEDIUM);
+
+  ReleaseOneConnection(ClientSocketPoolTest::NO_KEEP_ALIVE);
+
+  EXPECT_TRUE(request(1)->handle()->socket());
+}
+
+// Reprioritize a request up past another one and make sure that changes the
+// completion order.
+TEST_F(ClientSocketPoolBaseTest, ReprioritizeUpReorder) {
+  CreatePool(kDefaultMaxSockets, 1);
+
+  EXPECT_THAT(StartRequest("a", LOWEST), IsError(OK));
+  EXPECT_THAT(StartRequest("a", MEDIUM), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", LOWEST), IsError(ERR_IO_PENDING));
+  EXPECT_TRUE(request(0)->handle()->socket());
+  EXPECT_FALSE(request(1)->handle()->socket());
+  EXPECT_FALSE(request(2)->handle()->socket());
+
+  request(2)->handle()->SetPriority(HIGHEST);
+
+  ReleaseAllConnections(ClientSocketPoolTest::NO_KEEP_ALIVE);
+
+  EXPECT_EQ(1, GetOrderOfRequest(1));
+  EXPECT_EQ(3, GetOrderOfRequest(2));
+  EXPECT_EQ(2, GetOrderOfRequest(3));
+}
+
+// Reprioritize a request without changing relative priorities and check
+// that the order doesn't change.
+TEST_F(ClientSocketPoolBaseTest, ReprioritizeUpNoReorder) {
+  CreatePool(kDefaultMaxSockets, 1);
+
+  EXPECT_THAT(StartRequest("a", LOWEST), IsError(OK));
+  EXPECT_THAT(StartRequest("a", MEDIUM), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", LOW), IsError(ERR_IO_PENDING));
+  EXPECT_TRUE(request(0)->handle()->socket());
+  EXPECT_FALSE(request(1)->handle()->socket());
+  EXPECT_FALSE(request(2)->handle()->socket());
+
+  request(2)->handle()->SetPriority(MEDIUM);
+
+  ReleaseAllConnections(ClientSocketPoolTest::NO_KEEP_ALIVE);
+
+  EXPECT_EQ(1, GetOrderOfRequest(1));
+  EXPECT_EQ(2, GetOrderOfRequest(2));
+  EXPECT_EQ(3, GetOrderOfRequest(3));
+}
+
+// Reprioritize a request past down another one and make sure that changes the
+// completion order.
+TEST_F(ClientSocketPoolBaseTest, ReprioritizeDownReorder) {
+  CreatePool(kDefaultMaxSockets, 1);
+
+  EXPECT_THAT(StartRequest("a", LOWEST), IsError(OK));
+  EXPECT_THAT(StartRequest("a", HIGHEST), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", MEDIUM), IsError(ERR_IO_PENDING));
+  EXPECT_TRUE(request(0)->handle()->socket());
+  EXPECT_FALSE(request(1)->handle()->socket());
+  EXPECT_FALSE(request(2)->handle()->socket());
+
+  request(1)->handle()->SetPriority(LOW);
+
+  ReleaseAllConnections(ClientSocketPoolTest::NO_KEEP_ALIVE);
+
+  EXPECT_EQ(1, GetOrderOfRequest(1));
+  EXPECT_EQ(3, GetOrderOfRequest(2));
+  EXPECT_EQ(2, GetOrderOfRequest(3));
+}
+
+// Reprioritize a request to the same level as another and confirm it is
+// put after the old request.
+TEST_F(ClientSocketPoolBaseTest, ReprioritizeResetFIFO) {
+  CreatePool(kDefaultMaxSockets, 1);
+
+  EXPECT_THAT(StartRequest("a", LOWEST), IsError(OK));
+  EXPECT_THAT(StartRequest("a", HIGHEST), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", MEDIUM), IsError(ERR_IO_PENDING));
+  EXPECT_TRUE(request(0)->handle()->socket());
+  EXPECT_FALSE(request(1)->handle()->socket());
+  EXPECT_FALSE(request(2)->handle()->socket());
+
+  request(1)->handle()->SetPriority(MEDIUM);
+
+  ReleaseAllConnections(ClientSocketPoolTest::NO_KEEP_ALIVE);
+
+  EXPECT_EQ(1, GetOrderOfRequest(1));
+  EXPECT_EQ(3, GetOrderOfRequest(2));
+  EXPECT_EQ(2, GetOrderOfRequest(3));
+}
+
 TEST_F(ClientSocketPoolBaseTest, TotalLimitRespectsGroupLimit) {
+  base::HistogramTester histograms;
   CreatePool(kDefaultMaxSockets, kDefaultMaxSocketsPerGroup);
 
-  EXPECT_EQ(OK, StartRequest("a", LOWEST));
-  EXPECT_EQ(OK, StartRequest("a", LOW));
-  EXPECT_EQ(OK, StartRequest("b", HIGHEST));
-  EXPECT_EQ(OK, StartRequest("b", MEDIUM));
+  EXPECT_THAT(StartRequest("a", LOWEST), IsOk());
+  EXPECT_THAT(StartRequest("a", LOW), IsOk());
+  EXPECT_THAT(StartRequest("b", HIGHEST), IsOk());
+  EXPECT_THAT(StartRequest("b", MEDIUM), IsOk());
 
   EXPECT_EQ(static_cast<int>(requests_size()),
             client_socket_factory_.allocation_count());
 
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("c", MEDIUM));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", LOW));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("b", HIGHEST));
+  EXPECT_THAT(StartRequest("c", MEDIUM), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", LOW), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("b", HIGHEST), IsError(ERR_IO_PENDING));
 
   ReleaseAllConnections(ClientSocketPoolTest::NO_KEEP_ALIVE);
+  EXPECT_THAT(histograms.GetAllSamples(kIdleSocketFateHistogram),
+              testing::ElementsAre(
+                  base::Bucket(/*IDLE_SOCKET_FATE_RELEASE_UNUSABLE=*/3, 7)));
 
   EXPECT_EQ(static_cast<int>(requests_size()),
             client_socket_factory_.allocation_count());
@@ -1007,15 +1142,16 @@ TEST_F(ClientSocketPoolBaseTest, TotalLimitRespectsGroupLimit) {
 
 // Make sure that we count connecting sockets against the total limit.
 TEST_F(ClientSocketPoolBaseTest, TotalLimitCountsConnectingSockets) {
+  base::HistogramTester histograms;
   CreatePool(kDefaultMaxSockets, kDefaultMaxSocketsPerGroup);
 
-  EXPECT_EQ(OK, StartRequest("a", DEFAULT_PRIORITY));
-  EXPECT_EQ(OK, StartRequest("b", DEFAULT_PRIORITY));
-  EXPECT_EQ(OK, StartRequest("c", DEFAULT_PRIORITY));
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsOk());
+  EXPECT_THAT(StartRequest("b", DEFAULT_PRIORITY), IsOk());
+  EXPECT_THAT(StartRequest("c", DEFAULT_PRIORITY), IsOk());
 
   // Create one asynchronous request.
   connect_job_factory_->set_job_type(TestConnectJob::kMockPendingJob);
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("d", DEFAULT_PRIORITY));
+  EXPECT_THAT(StartRequest("d", DEFAULT_PRIORITY), IsError(ERR_IO_PENDING));
 
   // We post all of our delayed tasks with a 2ms delay. I.e. they don't
   // actually become pending until 2ms after they have been created. In order
@@ -1026,9 +1162,12 @@ TEST_F(ClientSocketPoolBaseTest, TotalLimitCountsConnectingSockets) {
 
   // The next synchronous request should wait for its turn.
   connect_job_factory_->set_job_type(TestConnectJob::kMockJob);
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("e", DEFAULT_PRIORITY));
+  EXPECT_THAT(StartRequest("e", DEFAULT_PRIORITY), IsError(ERR_IO_PENDING));
 
   ReleaseAllConnections(ClientSocketPoolTest::NO_KEEP_ALIVE);
+  EXPECT_THAT(histograms.GetAllSamples(kIdleSocketFateHistogram),
+              testing::ElementsAre(
+                  base::Bucket(/*IDLE_SOCKET_FATE_RELEASE_UNUSABLE=*/3, 5)));
 
   EXPECT_EQ(static_cast<int>(requests_size()),
             client_socket_factory_.allocation_count());
@@ -1044,30 +1183,40 @@ TEST_F(ClientSocketPoolBaseTest, TotalLimitCountsConnectingSockets) {
 }
 
 TEST_F(ClientSocketPoolBaseTest, CorrectlyCountStalledGroups) {
+  base::HistogramTester histograms;
   CreatePool(kDefaultMaxSockets, kDefaultMaxSockets);
   connect_job_factory_->set_job_type(TestConnectJob::kMockJob);
 
-  EXPECT_EQ(OK, StartRequest("a", DEFAULT_PRIORITY));
-  EXPECT_EQ(OK, StartRequest("a", DEFAULT_PRIORITY));
-  EXPECT_EQ(OK, StartRequest("a", DEFAULT_PRIORITY));
-  EXPECT_EQ(OK, StartRequest("a", DEFAULT_PRIORITY));
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsOk());
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsOk());
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsOk());
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsOk());
 
   connect_job_factory_->set_job_type(TestConnectJob::kMockWaitingJob);
 
   EXPECT_EQ(kDefaultMaxSockets, client_socket_factory_.allocation_count());
 
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("b", DEFAULT_PRIORITY));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("c", DEFAULT_PRIORITY));
+  EXPECT_THAT(StartRequest("b", DEFAULT_PRIORITY), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("c", DEFAULT_PRIORITY), IsError(ERR_IO_PENDING));
 
   EXPECT_EQ(kDefaultMaxSockets, client_socket_factory_.allocation_count());
 
   EXPECT_TRUE(ReleaseOneConnection(ClientSocketPoolTest::KEEP_ALIVE));
+  EXPECT_THAT(
+      histograms.GetAllSamples(kIdleSocketFateHistogram),
+      testing::ElementsAre(base::Bucket(/*IDLE_SOCKET_FATE_CLOSE_ONE=*/8, 1)));
   EXPECT_EQ(kDefaultMaxSockets + 1, client_socket_factory_.allocation_count());
   EXPECT_TRUE(ReleaseOneConnection(ClientSocketPoolTest::KEEP_ALIVE));
+  EXPECT_THAT(
+      histograms.GetAllSamples(kIdleSocketFateHistogram),
+      testing::ElementsAre(base::Bucket(/*IDLE_SOCKET_FATE_CLOSE_ONE=*/8, 2)));
   EXPECT_EQ(kDefaultMaxSockets + 2, client_socket_factory_.allocation_count());
   EXPECT_TRUE(ReleaseOneConnection(ClientSocketPoolTest::KEEP_ALIVE));
   EXPECT_TRUE(ReleaseOneConnection(ClientSocketPoolTest::KEEP_ALIVE));
   EXPECT_EQ(kDefaultMaxSockets + 2, client_socket_factory_.allocation_count());
+  EXPECT_THAT(
+      histograms.GetAllSamples(kIdleSocketFateHistogram),
+      testing::ElementsAre(base::Bucket(/*IDLE_SOCKET_FATE_CLOSE_ONE=*/8, 2)));
 }
 
 TEST_F(ClientSocketPoolBaseTest, StallAndThenCancelAndTriggerAvailableSocket) {
@@ -1079,15 +1228,16 @@ TEST_F(ClientSocketPoolBaseTest, StallAndThenCancelAndTriggerAvailableSocket) {
   EXPECT_EQ(ERR_IO_PENDING,
             handle.Init("a", params_, DEFAULT_PRIORITY,
                         ClientSocketPool::RespectLimits::ENABLED,
-                        callback.callback(), pool_.get(), BoundNetLog()));
+                        callback.callback(), pool_.get(), NetLogWithSource()));
 
   ClientSocketHandle handles[4];
   for (size_t i = 0; i < arraysize(handles); ++i) {
     TestCompletionCallback callback;
-    EXPECT_EQ(ERR_IO_PENDING,
-              handles[i].Init("b", params_, DEFAULT_PRIORITY,
-                              ClientSocketPool::RespectLimits::ENABLED,
-                              callback.callback(), pool_.get(), BoundNetLog()));
+    EXPECT_EQ(
+        ERR_IO_PENDING,
+        handles[i].Init("b", params_, DEFAULT_PRIORITY,
+                        ClientSocketPool::RespectLimits::ENABLED,
+                        callback.callback(), pool_.get(), NetLogWithSource()));
   }
 
   // One will be stalled, cancel all the handles now.
@@ -1105,20 +1255,21 @@ TEST_F(ClientSocketPoolBaseTest, CancelStalledSocketAtSocketLimit) {
     ClientSocketHandle handles[kDefaultMaxSockets];
     TestCompletionCallback callbacks[kDefaultMaxSockets];
     for (int i = 0; i < kDefaultMaxSockets; ++i) {
-      EXPECT_EQ(OK, handles[i].Init(
-                        base::IntToString(i), params_, DEFAULT_PRIORITY,
-                        ClientSocketPool::RespectLimits::ENABLED,
-                        callbacks[i].callback(), pool_.get(), BoundNetLog()));
+      EXPECT_EQ(OK,
+                handles[i].Init(base::IntToString(i), params_, DEFAULT_PRIORITY,
+                                ClientSocketPool::RespectLimits::ENABLED,
+                                callbacks[i].callback(), pool_.get(),
+                                NetLogWithSource()));
     }
 
     // Force a stalled group.
     ClientSocketHandle stalled_handle;
     TestCompletionCallback callback;
-    EXPECT_EQ(
-        ERR_IO_PENDING,
-        stalled_handle.Init("foo", params_, DEFAULT_PRIORITY,
-                            ClientSocketPool::RespectLimits::ENABLED,
-                            callback.callback(), pool_.get(), BoundNetLog()));
+    EXPECT_EQ(ERR_IO_PENDING,
+              stalled_handle.Init("foo", params_, DEFAULT_PRIORITY,
+                                  ClientSocketPool::RespectLimits::ENABLED,
+                                  callback.callback(), pool_.get(),
+                                  NetLogWithSource()));
 
     // Cancel the stalled request.
     stalled_handle.Reset();
@@ -1141,22 +1292,22 @@ TEST_F(ClientSocketPoolBaseTest, CancelPendingSocketAtSocketLimit) {
     ClientSocketHandle handles[kDefaultMaxSockets];
     for (int i = 0; i < kDefaultMaxSockets; ++i) {
       TestCompletionCallback callback;
-      EXPECT_EQ(
-          ERR_IO_PENDING,
-          handles[i].Init(base::IntToString(i), params_, DEFAULT_PRIORITY,
-                          ClientSocketPool::RespectLimits::ENABLED,
-                          callback.callback(), pool_.get(), BoundNetLog()));
+      EXPECT_EQ(ERR_IO_PENDING,
+                handles[i].Init(base::IntToString(i), params_, DEFAULT_PRIORITY,
+                                ClientSocketPool::RespectLimits::ENABLED,
+                                callback.callback(), pool_.get(),
+                                NetLogWithSource()));
     }
 
     // Force a stalled group.
     connect_job_factory_->set_job_type(TestConnectJob::kMockPendingJob);
     ClientSocketHandle stalled_handle;
     TestCompletionCallback callback;
-    EXPECT_EQ(
-        ERR_IO_PENDING,
-        stalled_handle.Init("foo", params_, DEFAULT_PRIORITY,
-                            ClientSocketPool::RespectLimits::ENABLED,
-                            callback.callback(), pool_.get(), BoundNetLog()));
+    EXPECT_EQ(ERR_IO_PENDING,
+              stalled_handle.Init("foo", params_, DEFAULT_PRIORITY,
+                                  ClientSocketPool::RespectLimits::ENABLED,
+                                  callback.callback(), pool_.get(),
+                                  NetLogWithSource()));
 
     // Since it is stalled, it should have no connect jobs.
     EXPECT_EQ(0, pool_->NumConnectJobsInGroup("foo"));
@@ -1170,7 +1321,7 @@ TEST_F(ClientSocketPoolBaseTest, CancelPendingSocketAtSocketLimit) {
     EXPECT_EQ(0, pool_->NumUnassignedConnectJobsInGroup("foo"));
 
     // The stalled socket should connect.
-    EXPECT_EQ(OK, callback.WaitForResult());
+    EXPECT_THAT(callback.WaitForResult(), IsOk());
 
     EXPECT_EQ(kDefaultMaxSockets + 1,
               client_socket_factory_.allocation_count());
@@ -1195,11 +1346,11 @@ TEST_F(ClientSocketPoolBaseTest, WaitForStalledSocketAtSocketLimit) {
     ClientSocketHandle handles[kDefaultMaxSockets];
     for (int i = 0; i < kDefaultMaxSockets; ++i) {
       TestCompletionCallback callback;
-      EXPECT_EQ(
-          OK, handles[i].Init(base::StringPrintf("Take 2: %d", i), params_,
-                              DEFAULT_PRIORITY,
-                              ClientSocketPool::RespectLimits::ENABLED,
-                              callback.callback(), pool_.get(), BoundNetLog()));
+      EXPECT_EQ(OK, handles[i].Init(base::StringPrintf("Take 2: %d", i),
+                                    params_, DEFAULT_PRIORITY,
+                                    ClientSocketPool::RespectLimits::ENABLED,
+                                    callback.callback(), pool_.get(),
+                                    NetLogWithSource()));
     }
 
     EXPECT_EQ(kDefaultMaxSockets, client_socket_factory_.allocation_count());
@@ -1207,11 +1358,11 @@ TEST_F(ClientSocketPoolBaseTest, WaitForStalledSocketAtSocketLimit) {
     EXPECT_FALSE(pool_->IsStalled());
 
     // Now we will hit the socket limit.
-    EXPECT_EQ(
-        ERR_IO_PENDING,
-        stalled_handle.Init("foo", params_, DEFAULT_PRIORITY,
-                            ClientSocketPool::RespectLimits::ENABLED,
-                            callback.callback(), pool_.get(), BoundNetLog()));
+    EXPECT_EQ(ERR_IO_PENDING,
+              stalled_handle.Init("foo", params_, DEFAULT_PRIORITY,
+                                  ClientSocketPool::RespectLimits::ENABLED,
+                                  callback.callback(), pool_.get(),
+                                  NetLogWithSource()));
     EXPECT_TRUE(pool_->IsStalled());
 
     // Dropping out of scope will close all handles and return them to idle.
@@ -1219,7 +1370,7 @@ TEST_F(ClientSocketPoolBaseTest, WaitForStalledSocketAtSocketLimit) {
 
   // But if we wait for it, the released idle sockets will be closed in
   // preference of the waiting request.
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 
   EXPECT_EQ(kDefaultMaxSockets + 1, client_socket_factory_.allocation_count());
   EXPECT_EQ(3, pool_->IdleSocketCount());
@@ -1227,6 +1378,7 @@ TEST_F(ClientSocketPoolBaseTest, WaitForStalledSocketAtSocketLimit) {
 
 // Regression test for http://crbug.com/40952.
 TEST_F(ClientSocketPoolBaseTest, CloseIdleSocketAtSocketLimitDeleteGroup) {
+  base::HistogramTester histograms;
   CreatePool(kDefaultMaxSockets, kDefaultMaxSocketsPerGroup);
   pool_->EnableConnectBackupJobs();
   connect_job_factory_->set_job_type(TestConnectJob::kMockJob);
@@ -1234,9 +1386,10 @@ TEST_F(ClientSocketPoolBaseTest, CloseIdleSocketAtSocketLimitDeleteGroup) {
   for (int i = 0; i < kDefaultMaxSockets; ++i) {
     ClientSocketHandle handle;
     TestCompletionCallback callback;
-    EXPECT_EQ(OK, handle.Init(base::IntToString(i), params_, DEFAULT_PRIORITY,
-                              ClientSocketPool::RespectLimits::ENABLED,
-                              callback.callback(), pool_.get(), BoundNetLog()));
+    EXPECT_EQ(
+        OK, handle.Init(base::IntToString(i), params_, DEFAULT_PRIORITY,
+                        ClientSocketPool::RespectLimits::ENABLED,
+                        callback.callback(), pool_.get(), NetLogWithSource()));
   }
 
   // Flush all the DoReleaseSocket tasks.
@@ -1251,27 +1404,36 @@ TEST_F(ClientSocketPoolBaseTest, CloseIdleSocketAtSocketLimitDeleteGroup) {
   // "0" is special here, since it should be the first entry in the sorted map,
   // which is the one which we would close an idle socket for.  We shouldn't
   // close an idle socket though, since we should reuse the idle socket.
-  EXPECT_EQ(OK, handle.Init("0", params_, DEFAULT_PRIORITY,
-                            ClientSocketPool::RespectLimits::ENABLED,
-                            callback.callback(), pool_.get(), BoundNetLog()));
+  EXPECT_EQ(OK,
+            handle.Init("0", params_, DEFAULT_PRIORITY,
+                        ClientSocketPool::RespectLimits::ENABLED,
+                        callback.callback(), pool_.get(), NetLogWithSource()));
 
+  EXPECT_THAT(histograms.GetAllSamples(kIdleSocketFateHistogram),
+              testing::ElementsAre(
+                  base::Bucket(/*IDLE_SOCKET_FATE_REUSE_UNUSED=*/1, 1)));
   EXPECT_EQ(kDefaultMaxSockets, client_socket_factory_.allocation_count());
   EXPECT_EQ(kDefaultMaxSockets - 1, pool_->IdleSocketCount());
 }
 
 TEST_F(ClientSocketPoolBaseTest, PendingRequests) {
+  base::HistogramTester histograms;
   CreatePool(kDefaultMaxSockets, kDefaultMaxSocketsPerGroup);
 
-  EXPECT_EQ(OK, StartRequest("a", DEFAULT_PRIORITY));
-  EXPECT_EQ(OK, StartRequest("a", DEFAULT_PRIORITY));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", IDLE));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", LOWEST));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", MEDIUM));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", HIGHEST));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", LOW));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", LOWEST));
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsOk());
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsOk());
+  EXPECT_THAT(StartRequest("a", IDLE), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", LOWEST), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", MEDIUM), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", HIGHEST), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", LOW), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", LOWEST), IsError(ERR_IO_PENDING));
 
   ReleaseAllConnections(ClientSocketPoolTest::KEEP_ALIVE);
+  // 2 sockets reused for last 6 requests.
+  EXPECT_THAT(histograms.GetAllSamples(kIdleSocketFateHistogram),
+              testing::ElementsAre(
+                  base::Bucket(/*IDLE_SOCKET_FATE_REUSE_UNUSED=*/1, 6)));
 
   EXPECT_EQ(kDefaultMaxSocketsPerGroup,
             client_socket_factory_.allocation_count());
@@ -1292,21 +1454,25 @@ TEST_F(ClientSocketPoolBaseTest, PendingRequests) {
 }
 
 TEST_F(ClientSocketPoolBaseTest, PendingRequests_NoKeepAlive) {
+  base::HistogramTester histograms;
   CreatePool(kDefaultMaxSockets, kDefaultMaxSocketsPerGroup);
 
-  EXPECT_EQ(OK, StartRequest("a", DEFAULT_PRIORITY));
-  EXPECT_EQ(OK, StartRequest("a", DEFAULT_PRIORITY));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", LOWEST));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", MEDIUM));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", HIGHEST));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", LOW));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", LOWEST));
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsOk());
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsOk());
+  EXPECT_THAT(StartRequest("a", LOWEST), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", MEDIUM), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", HIGHEST), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", LOW), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", LOWEST), IsError(ERR_IO_PENDING));
 
   ReleaseAllConnections(ClientSocketPoolTest::NO_KEEP_ALIVE);
 
   for (size_t i = kDefaultMaxSocketsPerGroup; i < requests_size(); ++i)
-    EXPECT_EQ(OK, request(i)->WaitForResult());
+    EXPECT_THAT(request(i)->WaitForResult(), IsOk());
 
+  EXPECT_THAT(histograms.GetAllSamples(kIdleSocketFateHistogram),
+              testing::ElementsAre(
+                  base::Bucket(/*IDLE_SOCKET_FATE_RELEASE_UNUSABE=*/3, 7)));
   EXPECT_EQ(static_cast<int>(requests_size()),
             client_socket_factory_.allocation_count());
   EXPECT_EQ(requests_size() - kDefaultMaxSocketsPerGroup,
@@ -1325,7 +1491,7 @@ TEST_F(ClientSocketPoolBaseTest, CancelRequestClearGroup) {
   EXPECT_EQ(ERR_IO_PENDING,
             handle.Init("a", params_, DEFAULT_PRIORITY,
                         ClientSocketPool::RespectLimits::ENABLED,
-                        callback.callback(), pool_.get(), BoundNetLog()));
+                        callback.callback(), pool_.get(), NetLogWithSource()));
   handle.Reset();
 }
 
@@ -1339,7 +1505,7 @@ TEST_F(ClientSocketPoolBaseTest, ConnectCancelConnect) {
   EXPECT_EQ(ERR_IO_PENDING,
             handle.Init("a", params_, DEFAULT_PRIORITY,
                         ClientSocketPool::RespectLimits::ENABLED,
-                        callback.callback(), pool_.get(), BoundNetLog()));
+                        callback.callback(), pool_.get(), NetLogWithSource()));
 
   handle.Reset();
 
@@ -1347,24 +1513,25 @@ TEST_F(ClientSocketPoolBaseTest, ConnectCancelConnect) {
   EXPECT_EQ(ERR_IO_PENDING,
             handle.Init("a", params_, DEFAULT_PRIORITY,
                         ClientSocketPool::RespectLimits::ENABLED,
-                        callback2.callback(), pool_.get(), BoundNetLog()));
+                        callback2.callback(), pool_.get(), NetLogWithSource()));
 
-  EXPECT_EQ(OK, callback2.WaitForResult());
+  EXPECT_THAT(callback2.WaitForResult(), IsOk());
   EXPECT_FALSE(callback.have_result());
 
   handle.Reset();
 }
 
 TEST_F(ClientSocketPoolBaseTest, CancelRequest) {
+  base::HistogramTester histograms;
   CreatePool(kDefaultMaxSockets, kDefaultMaxSocketsPerGroup);
 
-  EXPECT_EQ(OK, StartRequest("a", DEFAULT_PRIORITY));
-  EXPECT_EQ(OK, StartRequest("a", DEFAULT_PRIORITY));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", LOWEST));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", MEDIUM));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", HIGHEST));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", LOW));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", LOWEST));
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsOk());
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsOk());
+  EXPECT_THAT(StartRequest("a", LOWEST), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", MEDIUM), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", HIGHEST), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", LOW), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", LOWEST), IsError(ERR_IO_PENDING));
 
   // Cancel a request.
   size_t index_to_cancel = kDefaultMaxSocketsPerGroup + 2;
@@ -1372,6 +1539,10 @@ TEST_F(ClientSocketPoolBaseTest, CancelRequest) {
   (*requests())[index_to_cancel]->handle()->Reset();
 
   ReleaseAllConnections(ClientSocketPoolTest::KEEP_ALIVE);
+  // 2 sockets reused for 4 requests.
+  EXPECT_THAT(histograms.GetAllSamples(kIdleSocketFateHistogram),
+              testing::ElementsAre(
+                  base::Bucket(/*IDLE_SOCKET_FATE_REUSE_UNUSED=*/1, 4)));
 
   EXPECT_EQ(kDefaultMaxSocketsPerGroup,
             client_socket_factory_.allocation_count());
@@ -1402,7 +1573,7 @@ void RequestSocketOnComplete(ClientSocketHandle* handle,
                              TestConnectJob::JobType next_job_type,
                              const CompletionCallback& nested_callback,
                              int first_request_result) {
-  EXPECT_EQ(OK, first_request_result);
+  EXPECT_THAT(first_request_result, IsOk());
 
   test_connect_job_factory->set_job_type(next_job_type);
 
@@ -1415,7 +1586,7 @@ void RequestSocketOnComplete(ClientSocketHandle* handle,
   TestCompletionCallback callback;
   int rv = handle->Init("a", params, LOWEST,
                         ClientSocketPool::RespectLimits::ENABLED,
-                        nested_callback, pool, BoundNetLog());
+                        nested_callback, pool, NetLogWithSource());
   if (rv != ERR_IO_PENDING) {
     DCHECK_EQ(TestConnectJob::kMockJob, next_job_type);
     nested_callback.Run(rv);
@@ -1438,10 +1609,10 @@ TEST_F(ClientSocketPoolBaseTest, RequestPendingJobTwice) {
       base::Bind(&RequestSocketOnComplete, &handle, pool_.get(),
                  connect_job_factory_, TestConnectJob::kMockPendingJob,
                  second_result_callback.callback()),
-      pool_.get(), BoundNetLog());
-  ASSERT_EQ(ERR_IO_PENDING, rv);
+      pool_.get(), NetLogWithSource());
+  ASSERT_THAT(rv, IsError(ERR_IO_PENDING));
 
-  EXPECT_EQ(OK, second_result_callback.WaitForResult());
+  EXPECT_THAT(second_result_callback.WaitForResult(), IsOk());
 }
 
 // Tests the case where a second socket is requested in a completion callback,
@@ -1458,10 +1629,10 @@ TEST_F(ClientSocketPoolBaseTest, RequestPendingJobThenSynchronous) {
       base::Bind(&RequestSocketOnComplete, &handle, pool_.get(),
                  connect_job_factory_, TestConnectJob::kMockPendingJob,
                  second_result_callback.callback()),
-      pool_.get(), BoundNetLog());
-  ASSERT_EQ(ERR_IO_PENDING, rv);
+      pool_.get(), NetLogWithSource());
+  ASSERT_THAT(rv, IsError(ERR_IO_PENDING));
 
-  EXPECT_EQ(OK, second_result_callback.WaitForResult());
+  EXPECT_THAT(second_result_callback.WaitForResult(), IsOk());
 }
 
 // Make sure that pending requests get serviced after active requests get
@@ -1471,13 +1642,13 @@ TEST_F(ClientSocketPoolBaseTest, CancelActiveRequestWithPendingRequests) {
 
   connect_job_factory_->set_job_type(TestConnectJob::kMockPendingJob);
 
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", DEFAULT_PRIORITY));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", DEFAULT_PRIORITY));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", DEFAULT_PRIORITY));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", DEFAULT_PRIORITY));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", DEFAULT_PRIORITY));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", DEFAULT_PRIORITY));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", DEFAULT_PRIORITY));
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsError(ERR_IO_PENDING));
 
   // Now, kDefaultMaxSocketsPerGroup requests should be active.
   // Let's cancel them.
@@ -1488,7 +1659,7 @@ TEST_F(ClientSocketPoolBaseTest, CancelActiveRequestWithPendingRequests) {
 
   // Let's wait for the rest to complete now.
   for (size_t i = kDefaultMaxSocketsPerGroup; i < requests_size(); ++i) {
-    EXPECT_EQ(OK, request(i)->WaitForResult());
+    EXPECT_THAT(request(i)->WaitForResult(), IsOk());
     request(i)->handle()->Reset();
   }
 
@@ -1508,10 +1679,10 @@ TEST_F(ClientSocketPoolBaseTest, FailingActiveRequestWithPendingRequests) {
 
   // Queue up all the requests
   for (size_t i = 0; i < kNumberOfRequests; ++i)
-    EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", DEFAULT_PRIORITY));
+    EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsError(ERR_IO_PENDING));
 
   for (size_t i = 0; i < kNumberOfRequests; ++i)
-    EXPECT_EQ(ERR_CONNECTION_FAILED, request(i)->WaitForResult());
+    EXPECT_THAT(request(i)->WaitForResult(), IsError(ERR_CONNECTION_FAILED));
 }
 
 TEST_F(ClientSocketPoolBaseTest, CancelActiveRequestThenRequestSocket) {
@@ -1523,50 +1694,104 @@ TEST_F(ClientSocketPoolBaseTest, CancelActiveRequestThenRequestSocket) {
   TestCompletionCallback callback;
   int rv = handle.Init("a", params_, DEFAULT_PRIORITY,
                        ClientSocketPool::RespectLimits::ENABLED,
-                       callback.callback(), pool_.get(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+                       callback.callback(), pool_.get(), NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   // Cancel the active request.
   handle.Reset();
 
   rv = handle.Init("a", params_, DEFAULT_PRIORITY,
                    ClientSocketPool::RespectLimits::ENABLED,
-                   callback.callback(), pool_.get(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
-  EXPECT_EQ(OK, callback.WaitForResult());
+                   callback.callback(), pool_.get(), NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 
   EXPECT_FALSE(handle.is_reused());
   TestLoadTimingInfoConnectedNotReused(handle);
   EXPECT_EQ(2, client_socket_factory_.allocation_count());
 }
 
+TEST_F(ClientSocketPoolBaseTest, CloseIdleSocketsForced) {
+  base::HistogramTester histograms;
+  CreatePool(kDefaultMaxSockets, kDefaultMaxSocketsPerGroup);
+  ClientSocketHandle handle;
+  TestCompletionCallback callback;
+  BoundTestNetLog log;
+  int rv = handle.Init("a", params_, LOWEST,
+                       ClientSocketPool::RespectLimits::ENABLED,
+                       callback.callback(), pool_.get(), log.bound());
+  EXPECT_THAT(rv, IsOk());
+  handle.Reset();
+  EXPECT_EQ(1, pool_->IdleSocketCount());
+  pool_->CloseIdleSockets();
+  EXPECT_THAT(histograms.GetAllSamples(kIdleSocketFateHistogram),
+              testing::ElementsAre(
+                  base::Bucket(/*IDLE_SOCKET_FATE_CLEAN_UP_FORCED=*/4, 1)));
+}
+
+TEST_F(ClientSocketPoolBaseTest, CleanUpUnusableIdleSockets) {
+  base::HistogramTester histograms;
+  CreatePool(kDefaultMaxSockets, kDefaultMaxSocketsPerGroup);
+  ClientSocketHandle handle;
+  TestCompletionCallback callback;
+  BoundTestNetLog log;
+  int rv = handle.Init("a", params_, LOWEST,
+                       ClientSocketPool::RespectLimits::ENABLED,
+                       callback.callback(), pool_.get(), log.bound());
+  EXPECT_THAT(rv, IsOk());
+  StreamSocket* socket = handle.socket();
+  handle.Reset();
+  EXPECT_EQ(1, pool_->IdleSocketCount());
+
+  // Disconnect socket now to make the socket unusable.
+  socket->Disconnect();
+  ClientSocketHandle handle2;
+  rv = handle2.Init("a", params_, LOWEST,
+                    ClientSocketPool::RespectLimits::ENABLED,
+                    callback.callback(), pool_.get(), log.bound());
+  EXPECT_THAT(rv, IsOk());
+  EXPECT_FALSE(handle2.is_reused());
+
+  EXPECT_THAT(histograms.GetAllSamples(kIdleSocketFateHistogram),
+              testing::ElementsAre(
+                  base::Bucket(/*IDLE_SOCKET_FATE_CLEAN_UP_UNUSABLE=*/7, 1)));
+}
+
 // Regression test for http://crbug.com/17985.
 TEST_F(ClientSocketPoolBaseTest, GroupWithPendingRequestsIsNotEmpty) {
+  base::HistogramTester histograms;
   const int kMaxSockets = 3;
   const int kMaxSocketsPerGroup = 2;
   CreatePool(kMaxSockets, kMaxSocketsPerGroup);
 
   const RequestPriority kHighPriority = HIGHEST;
 
-  EXPECT_EQ(OK, StartRequest("a", DEFAULT_PRIORITY));
-  EXPECT_EQ(OK, StartRequest("a", DEFAULT_PRIORITY));
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsOk());
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsOk());
 
   // This is going to be a pending request in an otherwise empty group.
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", DEFAULT_PRIORITY));
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsError(ERR_IO_PENDING));
 
   // Reach the maximum socket limit.
-  EXPECT_EQ(OK, StartRequest("b", DEFAULT_PRIORITY));
+  EXPECT_THAT(StartRequest("b", DEFAULT_PRIORITY), IsOk());
 
   // Create a stalled group with high priorities.
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("c", kHighPriority));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("c", kHighPriority));
+  EXPECT_THAT(StartRequest("c", kHighPriority), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("c", kHighPriority), IsError(ERR_IO_PENDING));
 
   // Release the first two sockets from "a".  Because this is a keepalive,
   // the first release will unblock the pending request for "a".  The
   // second release will unblock a request for "c", becaue it is the next
   // high priority socket.
   EXPECT_TRUE(ReleaseOneConnection(ClientSocketPoolTest::KEEP_ALIVE));
+  EXPECT_THAT(histograms.GetAllSamples(kIdleSocketFateHistogram),
+              testing::ElementsAre(
+                  base::Bucket(/*IDLE_SOCKET_FATE_REUSE_UNUSED=*/1, 1)));
   EXPECT_TRUE(ReleaseOneConnection(ClientSocketPoolTest::KEEP_ALIVE));
+  EXPECT_THAT(
+      histograms.GetAllSamples(kIdleSocketFateHistogram),
+      testing::ElementsAre(base::Bucket(/*IDLE_SOCKET_FATE_REUSE_UNUSED=*/1, 1),
+                           base::Bucket(/*IDLE_SOCKET_FATE_CLOSE_ONE=*/8, 1)));
 
   // Closing idle sockets should not get us into trouble, but in the bug
   // we were hitting a CHECK here.
@@ -1575,6 +1800,10 @@ TEST_F(ClientSocketPoolBaseTest, GroupWithPendingRequestsIsNotEmpty) {
 
   // Run the released socket wakeups.
   base::RunLoop().RunUntilIdle();
+  EXPECT_THAT(
+      histograms.GetAllSamples(kIdleSocketFateHistogram),
+      testing::ElementsAre(base::Bucket(/*IDLE_SOCKET_FATE_REUSE_UNUSED=*/1, 1),
+                           base::Bucket(/*IDLE_SOCKET_FATE_CLOSE_ONE=*/8, 1)));
 }
 
 TEST_F(ClientSocketPoolBaseTest, BasicAsynchronous) {
@@ -1587,11 +1816,11 @@ TEST_F(ClientSocketPoolBaseTest, BasicAsynchronous) {
   int rv = handle.Init("a", params_, LOWEST,
                        ClientSocketPool::RespectLimits::ENABLED,
                        callback.callback(), pool_.get(), log.bound());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
   EXPECT_EQ(LOAD_STATE_CONNECTING, pool_->GetLoadState("a", &handle));
   TestLoadTimingInfoNotConnected(handle);
 
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
   EXPECT_TRUE(handle.is_initialized());
   EXPECT_TRUE(handle.socket());
   TestLoadTimingInfoConnectedNotReused(handle);
@@ -1603,16 +1832,14 @@ TEST_F(ClientSocketPoolBaseTest, BasicAsynchronous) {
   log.GetEntries(&entries);
 
   EXPECT_EQ(4u, entries.size());
-  EXPECT_TRUE(LogContainsBeginEvent(
-      entries, 0, NetLog::TYPE_SOCKET_POOL));
+  EXPECT_TRUE(LogContainsBeginEvent(entries, 0, NetLogEventType::SOCKET_POOL));
   EXPECT_TRUE(LogContainsEvent(
-      entries, 1, NetLog::TYPE_SOCKET_POOL_BOUND_TO_CONNECT_JOB,
-      NetLog::PHASE_NONE));
-  EXPECT_TRUE(LogContainsEvent(
-      entries, 2, NetLog::TYPE_SOCKET_POOL_BOUND_TO_SOCKET,
-      NetLog::PHASE_NONE));
-  EXPECT_TRUE(LogContainsEndEvent(
-      entries, 3, NetLog::TYPE_SOCKET_POOL));
+      entries, 1, NetLogEventType::SOCKET_POOL_BOUND_TO_CONNECT_JOB,
+      NetLogEventPhase::NONE));
+  EXPECT_TRUE(LogContainsEvent(entries, 2,
+                               NetLogEventType::SOCKET_POOL_BOUND_TO_SOCKET,
+                               NetLogEventPhase::NONE));
+  EXPECT_TRUE(LogContainsEndEvent(entries, 3, NetLogEventType::SOCKET_POOL));
 }
 
 TEST_F(ClientSocketPoolBaseTest,
@@ -1633,7 +1860,7 @@ TEST_F(ClientSocketPoolBaseTest,
                         ClientSocketPool::RespectLimits::ENABLED,
                         callback.callback(), pool_.get(), log.bound()));
   EXPECT_EQ(LOAD_STATE_CONNECTING, pool_->GetLoadState("a", &handle));
-  EXPECT_EQ(ERR_CONNECTION_FAILED, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsError(ERR_CONNECTION_FAILED));
   EXPECT_FALSE(handle.is_ssl_error());
   EXPECT_TRUE(handle.ssl_error_response_info().headers.get() == NULL);
 
@@ -1641,13 +1868,11 @@ TEST_F(ClientSocketPoolBaseTest,
   log.GetEntries(&entries);
 
   EXPECT_EQ(3u, entries.size());
-  EXPECT_TRUE(LogContainsBeginEvent(
-      entries, 0, NetLog::TYPE_SOCKET_POOL));
+  EXPECT_TRUE(LogContainsBeginEvent(entries, 0, NetLogEventType::SOCKET_POOL));
   EXPECT_TRUE(LogContainsEvent(
-      entries, 1, NetLog::TYPE_SOCKET_POOL_BOUND_TO_CONNECT_JOB,
-      NetLog::PHASE_NONE));
-  EXPECT_TRUE(LogContainsEndEvent(
-      entries, 2, NetLog::TYPE_SOCKET_POOL));
+      entries, 1, NetLogEventType::SOCKET_POOL_BOUND_TO_CONNECT_JOB,
+      NetLogEventPhase::NONE));
+  EXPECT_TRUE(LogContainsEndEvent(entries, 2, NetLogEventType::SOCKET_POOL));
 }
 
 // Check that an async ConnectJob failure does not result in creation of a new
@@ -1657,11 +1882,11 @@ TEST_F(ClientSocketPoolBaseTest, AsyncFailureWithPendingRequestWithJob) {
   CreatePool(2, 2);
   connect_job_factory_->set_job_type(TestConnectJob::kMockPendingFailingJob);
 
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", DEFAULT_PRIORITY));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", DEFAULT_PRIORITY));
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsError(ERR_IO_PENDING));
 
-  EXPECT_EQ(ERR_CONNECTION_FAILED, request(0)->WaitForResult());
-  EXPECT_EQ(ERR_CONNECTION_FAILED, request(1)->WaitForResult());
+  EXPECT_THAT(request(0)->WaitForResult(), IsError(ERR_CONNECTION_FAILED));
+  EXPECT_THAT(request(1)->WaitForResult(), IsError(ERR_CONNECTION_FAILED));
 
   EXPECT_EQ(2, client_socket_factory_.allocation_count());
 }
@@ -1680,19 +1905,20 @@ TEST_F(ClientSocketPoolBaseTest, TwoRequestsCancelOne) {
   EXPECT_EQ(ERR_IO_PENDING,
             handle.Init("a", params_, DEFAULT_PRIORITY,
                         ClientSocketPool::RespectLimits::ENABLED,
-                        callback.callback(), pool_.get(), BoundNetLog()));
+                        callback.callback(), pool_.get(), NetLogWithSource()));
   BoundTestNetLog log2;
-  EXPECT_EQ(ERR_IO_PENDING,
-            handle2.Init("a", params_, DEFAULT_PRIORITY,
-                         ClientSocketPool::RespectLimits::ENABLED,
-                         callback2.callback(), pool_.get(), BoundNetLog()));
+  EXPECT_EQ(
+      ERR_IO_PENDING,
+      handle2.Init("a", params_, DEFAULT_PRIORITY,
+                   ClientSocketPool::RespectLimits::ENABLED,
+                   callback2.callback(), pool_.get(), NetLogWithSource()));
 
   handle.Reset();
 
 
   // At this point, request 2 is just waiting for the connect job to finish.
 
-  EXPECT_EQ(OK, callback2.WaitForResult());
+  EXPECT_THAT(callback2.WaitForResult(), IsOk());
   handle2.Reset();
 
   // Now request 2 has actually finished.
@@ -1704,10 +1930,10 @@ TEST_F(ClientSocketPoolBaseTest, CancelRequestLimitsJobs) {
 
   connect_job_factory_->set_job_type(TestConnectJob::kMockPendingJob);
 
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", LOWEST));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", LOW));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", MEDIUM));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", HIGHEST));
+  EXPECT_THAT(StartRequest("a", LOWEST), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", LOW), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", MEDIUM), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", HIGHEST), IsError(ERR_IO_PENDING));
 
   EXPECT_EQ(kDefaultMaxSocketsPerGroup, pool_->NumConnectJobsInGroup("a"));
   (*requests())[2]->handle()->Reset();
@@ -1732,11 +1958,11 @@ TEST_F(ClientSocketPoolBaseTest, ReleaseSockets) {
   std::vector<TestSocketRequest*> request_order;
   size_t completion_count;  // unused
   TestSocketRequest req1(&request_order, &completion_count);
-  int rv = req1.handle()->Init("a", params_, DEFAULT_PRIORITY,
-                               ClientSocketPool::RespectLimits::ENABLED,
-                               req1.callback(), pool_.get(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
-  EXPECT_EQ(OK, req1.WaitForResult());
+  int rv = req1.handle()->Init(
+      "a", params_, DEFAULT_PRIORITY, ClientSocketPool::RespectLimits::ENABLED,
+      req1.callback(), pool_.get(), NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
+  EXPECT_THAT(req1.WaitForResult(), IsOk());
 
   // Job 1 finished OK.  Start job 2 (also async OK).  Request 3 is pending
   // without a job.
@@ -1745,13 +1971,13 @@ TEST_F(ClientSocketPoolBaseTest, ReleaseSockets) {
   TestSocketRequest req2(&request_order, &completion_count);
   rv = req2.handle()->Init("a", params_, DEFAULT_PRIORITY,
                            ClientSocketPool::RespectLimits::ENABLED,
-                           req2.callback(), pool_.get(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+                           req2.callback(), pool_.get(), NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
   TestSocketRequest req3(&request_order, &completion_count);
   rv = req3.handle()->Init("a", params_, DEFAULT_PRIORITY,
                            ClientSocketPool::RespectLimits::ENABLED,
-                           req3.callback(), pool_.get(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+                           req3.callback(), pool_.get(), NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   // Both Requests 2 and 3 are pending.  We release socket 1 which should
   // service request 2.  Request 3 should still be waiting.
@@ -1759,13 +1985,13 @@ TEST_F(ClientSocketPoolBaseTest, ReleaseSockets) {
   // Run the released socket wakeups.
   base::RunLoop().RunUntilIdle();
   ASSERT_TRUE(req2.handle()->socket());
-  EXPECT_EQ(OK, req2.WaitForResult());
+  EXPECT_THAT(req2.WaitForResult(), IsOk());
   EXPECT_FALSE(req3.handle()->socket());
 
   // Signal job 2, which should service request 3.
 
   client_socket_factory_.SignalJobs();
-  EXPECT_EQ(OK, req3.WaitForResult());
+  EXPECT_THAT(req3.WaitForResult(), IsOk());
 
   ASSERT_EQ(3U, request_order.size());
   EXPECT_EQ(&req1, request_order[0]);
@@ -1784,16 +2010,16 @@ TEST_F(ClientSocketPoolBaseTest, PendingJobCompletionOrder) {
   std::vector<TestSocketRequest*> request_order;
   size_t completion_count;  // unused
   TestSocketRequest req1(&request_order, &completion_count);
-  int rv = req1.handle()->Init("a", params_, DEFAULT_PRIORITY,
-                               ClientSocketPool::RespectLimits::ENABLED,
-                               req1.callback(), pool_.get(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  int rv = req1.handle()->Init(
+      "a", params_, DEFAULT_PRIORITY, ClientSocketPool::RespectLimits::ENABLED,
+      req1.callback(), pool_.get(), NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   TestSocketRequest req2(&request_order, &completion_count);
   rv = req2.handle()->Init("a", params_, DEFAULT_PRIORITY,
                            ClientSocketPool::RespectLimits::ENABLED,
-                           req2.callback(), pool_.get(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+                           req2.callback(), pool_.get(), NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   // The pending job is sync.
   connect_job_factory_->set_job_type(TestConnectJob::kMockJob);
@@ -1801,12 +2027,12 @@ TEST_F(ClientSocketPoolBaseTest, PendingJobCompletionOrder) {
   TestSocketRequest req3(&request_order, &completion_count);
   rv = req3.handle()->Init("a", params_, DEFAULT_PRIORITY,
                            ClientSocketPool::RespectLimits::ENABLED,
-                           req3.callback(), pool_.get(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+                           req3.callback(), pool_.get(), NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
-  EXPECT_EQ(ERR_CONNECTION_FAILED, req1.WaitForResult());
-  EXPECT_EQ(OK, req2.WaitForResult());
-  EXPECT_EQ(ERR_CONNECTION_FAILED, req3.WaitForResult());
+  EXPECT_THAT(req1.WaitForResult(), IsError(ERR_CONNECTION_FAILED));
+  EXPECT_THAT(req2.WaitForResult(), IsOk());
+  EXPECT_THAT(req3.WaitForResult(), IsError(ERR_CONNECTION_FAILED));
 
   ASSERT_EQ(3U, request_order.size());
   EXPECT_EQ(&req1, request_order[0]);
@@ -1823,8 +2049,8 @@ TEST_F(ClientSocketPoolBaseTest, LoadStateOneRequest) {
   TestCompletionCallback callback;
   int rv = handle.Init("a", params_, DEFAULT_PRIORITY,
                        ClientSocketPool::RespectLimits::ENABLED,
-                       callback.callback(), pool_.get(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+                       callback.callback(), pool_.get(), NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
   EXPECT_EQ(LOAD_STATE_CONNECTING, handle.GetLoadState());
 
   client_socket_factory_.SetJobLoadState(0, LOAD_STATE_SSL_HANDSHAKE);
@@ -1844,16 +2070,16 @@ TEST_F(ClientSocketPoolBaseTest, LoadStateTwoRequests) {
   TestCompletionCallback callback;
   int rv = handle.Init("a", params_, DEFAULT_PRIORITY,
                        ClientSocketPool::RespectLimits::ENABLED,
-                       callback.callback(), pool_.get(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+                       callback.callback(), pool_.get(), NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
   client_socket_factory_.SetJobLoadState(0, LOAD_STATE_RESOLVING_HOST);
 
   ClientSocketHandle handle2;
   TestCompletionCallback callback2;
   rv = handle2.Init("a", params_, DEFAULT_PRIORITY,
                     ClientSocketPool::RespectLimits::ENABLED,
-                    callback2.callback(), pool_.get(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+                    callback2.callback(), pool_.get(), NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
   client_socket_factory_.SetJobLoadState(1, LOAD_STATE_RESOLVING_HOST);
 
   // Check that both handles report the state of the first job.
@@ -1877,15 +2103,15 @@ TEST_F(ClientSocketPoolBaseTest, LoadStateTwoRequestsChangeSecondRequestState) {
   TestCompletionCallback callback;
   int rv = handle.Init("a", params_, DEFAULT_PRIORITY,
                        ClientSocketPool::RespectLimits::ENABLED,
-                       callback.callback(), pool_.get(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+                       callback.callback(), pool_.get(), NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   ClientSocketHandle handle2;
   TestCompletionCallback callback2;
   rv = handle2.Init("a", params_, DEFAULT_PRIORITY,
                     ClientSocketPool::RespectLimits::ENABLED,
-                    callback2.callback(), pool_.get(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+                    callback2.callback(), pool_.get(), NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
   client_socket_factory_.SetJobLoadState(1, LOAD_STATE_RESOLVING_HOST);
 
   EXPECT_EQ(LOAD_STATE_CONNECTING, handle.GetLoadState());
@@ -1894,7 +2120,7 @@ TEST_F(ClientSocketPoolBaseTest, LoadStateTwoRequestsChangeSecondRequestState) {
   // First job connects and the first request gets the socket.  The
   // second handle switches to the state of the remaining ConnectJob.
   client_socket_factory_.SignalJob(0);
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
   EXPECT_EQ(LOAD_STATE_RESOLVING_HOST, handle2.GetLoadState());
 }
 
@@ -1907,8 +2133,8 @@ TEST_F(ClientSocketPoolBaseTest, LoadStateGroupLimit) {
   TestCompletionCallback callback;
   int rv = handle.Init("a", params_, MEDIUM,
                        ClientSocketPool::RespectLimits::ENABLED,
-                       callback.callback(), pool_.get(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+                       callback.callback(), pool_.get(), NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
   EXPECT_EQ(LOAD_STATE_CONNECTING, handle.GetLoadState());
 
   // Request another socket from the same pool, buth with a higher priority.
@@ -1917,8 +2143,8 @@ TEST_F(ClientSocketPoolBaseTest, LoadStateGroupLimit) {
   TestCompletionCallback callback2;
   rv = handle2.Init("a", params_, HIGHEST,
                     ClientSocketPool::RespectLimits::ENABLED,
-                    callback2.callback(), pool_.get(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+                    callback2.callback(), pool_.get(), NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
   EXPECT_EQ(LOAD_STATE_WAITING_FOR_AVAILABLE_SOCKET, handle.GetLoadState());
   EXPECT_EQ(LOAD_STATE_CONNECTING, handle2.GetLoadState());
 
@@ -1930,7 +2156,7 @@ TEST_F(ClientSocketPoolBaseTest, LoadStateGroupLimit) {
   EXPECT_EQ(LOAD_STATE_SSL_HANDSHAKE, handle2.GetLoadState());
 
   client_socket_factory_.SignalJob(0);
-  EXPECT_EQ(OK, callback2.WaitForResult());
+  EXPECT_THAT(callback2.WaitForResult(), IsOk());
   EXPECT_EQ(LOAD_STATE_WAITING_FOR_AVAILABLE_SOCKET, handle.GetLoadState());
 
   // Closing the second socket should cause the stalled handle to finally get a
@@ -1949,16 +2175,16 @@ TEST_F(ClientSocketPoolBaseTest, LoadStatePoolLimit) {
   TestCompletionCallback callback;
   int rv = handle.Init("a", params_, DEFAULT_PRIORITY,
                        ClientSocketPool::RespectLimits::ENABLED,
-                       callback.callback(), pool_.get(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+                       callback.callback(), pool_.get(), NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   // Request for socket from another pool.
   ClientSocketHandle handle2;
   TestCompletionCallback callback2;
   rv = handle2.Init("b", params_, DEFAULT_PRIORITY,
                     ClientSocketPool::RespectLimits::ENABLED,
-                    callback2.callback(), pool_.get(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+                    callback2.callback(), pool_.get(), NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   // Request another socket from the first pool.  Request should stall at the
   // socket pool limit.
@@ -1966,8 +2192,8 @@ TEST_F(ClientSocketPoolBaseTest, LoadStatePoolLimit) {
   TestCompletionCallback callback3;
   rv = handle3.Init("a", params_, DEFAULT_PRIORITY,
                     ClientSocketPool::RespectLimits::ENABLED,
-                    callback2.callback(), pool_.get(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+                    callback2.callback(), pool_.get(), NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   // The third handle should remain stalled as the other sockets in its group
   // goes through the connect process.
@@ -1980,7 +2206,7 @@ TEST_F(ClientSocketPoolBaseTest, LoadStatePoolLimit) {
   EXPECT_EQ(LOAD_STATE_WAITING_FOR_STALLED_SOCKET_POOL, handle3.GetLoadState());
 
   client_socket_factory_.SignalJob(0);
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
   EXPECT_EQ(LOAD_STATE_WAITING_FOR_STALLED_SOCKET_POOL, handle3.GetLoadState());
 
   // Closing a socket should allow the stalled handle to finally get a new
@@ -1999,7 +2225,7 @@ TEST_F(ClientSocketPoolBaseTest, Recoverable) {
   EXPECT_EQ(ERR_PROXY_AUTH_REQUESTED,
             handle.Init("a", params_, DEFAULT_PRIORITY,
                         ClientSocketPool::RespectLimits::ENABLED,
-                        callback.callback(), pool_.get(), BoundNetLog()));
+                        callback.callback(), pool_.get(), NetLogWithSource()));
   EXPECT_TRUE(handle.is_initialized());
   EXPECT_TRUE(handle.socket());
 }
@@ -2014,9 +2240,9 @@ TEST_F(ClientSocketPoolBaseTest, AsyncRecoverable) {
   EXPECT_EQ(ERR_IO_PENDING,
             handle.Init("a", params_, DEFAULT_PRIORITY,
                         ClientSocketPool::RespectLimits::ENABLED,
-                        callback.callback(), pool_.get(), BoundNetLog()));
+                        callback.callback(), pool_.get(), NetLogWithSource()));
   EXPECT_EQ(LOAD_STATE_CONNECTING, pool_->GetLoadState("a", &handle));
-  EXPECT_EQ(ERR_PROXY_AUTH_REQUESTED, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsError(ERR_PROXY_AUTH_REQUESTED));
   EXPECT_TRUE(handle.is_initialized());
   EXPECT_TRUE(handle.socket());
 }
@@ -2031,7 +2257,7 @@ TEST_F(ClientSocketPoolBaseTest, AdditionalErrorStateSynchronous) {
   EXPECT_EQ(ERR_CONNECTION_FAILED,
             handle.Init("a", params_, DEFAULT_PRIORITY,
                         ClientSocketPool::RespectLimits::ENABLED,
-                        callback.callback(), pool_.get(), BoundNetLog()));
+                        callback.callback(), pool_.get(), NetLogWithSource()));
   EXPECT_FALSE(handle.is_initialized());
   EXPECT_FALSE(handle.socket());
   EXPECT_TRUE(handle.is_ssl_error());
@@ -2048,9 +2274,9 @@ TEST_F(ClientSocketPoolBaseTest, AdditionalErrorStateAsynchronous) {
   EXPECT_EQ(ERR_IO_PENDING,
             handle.Init("a", params_, DEFAULT_PRIORITY,
                         ClientSocketPool::RespectLimits::ENABLED,
-                        callback.callback(), pool_.get(), BoundNetLog()));
+                        callback.callback(), pool_.get(), NetLogWithSource()));
   EXPECT_EQ(LOAD_STATE_CONNECTING, pool_->GetLoadState("a", &handle));
-  EXPECT_EQ(ERR_CONNECTION_FAILED, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsError(ERR_CONNECTION_FAILED));
   EXPECT_FALSE(handle.is_initialized());
   EXPECT_FALSE(handle.socket());
   EXPECT_TRUE(handle.is_ssl_error());
@@ -2059,6 +2285,7 @@ TEST_F(ClientSocketPoolBaseTest, AdditionalErrorStateAsynchronous) {
 
 // Make sure we can reuse sockets.
 TEST_F(ClientSocketPoolBaseTest, CleanupTimedOutIdleSocketsReuse) {
+  base::HistogramTester histograms;
   CreatePoolWithIdleTimeouts(
       kDefaultMaxSockets, kDefaultMaxSocketsPerGroup,
       base::TimeDelta(),  // Time out unused sockets immediately.
@@ -2070,10 +2297,10 @@ TEST_F(ClientSocketPoolBaseTest, CleanupTimedOutIdleSocketsReuse) {
   TestCompletionCallback callback;
   int rv = handle.Init("a", params_, LOWEST,
                        ClientSocketPool::RespectLimits::ENABLED,
-                       callback.callback(), pool_.get(), BoundNetLog());
-  ASSERT_EQ(ERR_IO_PENDING, rv);
+                       callback.callback(), pool_.get(), NetLogWithSource());
+  ASSERT_THAT(rv, IsError(ERR_IO_PENDING));
   EXPECT_EQ(LOAD_STATE_CONNECTING, pool_->GetLoadState("a", &handle));
-  ASSERT_EQ(OK, callback.WaitForResult());
+  ASSERT_THAT(callback.WaitForResult(), IsOk());
 
   // Use and release the socket.
   EXPECT_EQ(1, handle.socket()->Write(NULL, 1, CompletionCallback()));
@@ -2089,18 +2316,21 @@ TEST_F(ClientSocketPoolBaseTest, CleanupTimedOutIdleSocketsReuse) {
   rv = handle.Init("a", params_, LOWEST,
                    ClientSocketPool::RespectLimits::ENABLED,
                    CompletionCallback(), pool_.get(), log.bound());
-  ASSERT_EQ(OK, rv);
+  ASSERT_THAT(rv, IsOk());
   EXPECT_TRUE(handle.is_reused());
   TestLoadTimingInfoConnectedReused(handle);
 
   ASSERT_TRUE(pool_->HasGroup("a"));
   EXPECT_EQ(0, pool_->IdleSocketCountInGroup("a"));
   EXPECT_EQ(1, pool_->NumActiveSocketsInGroup("a"));
+  EXPECT_THAT(histograms.GetAllSamples(kIdleSocketFateHistogram),
+              testing::ElementsAre(
+                  base::Bucket(/*IDLE_SOCKET_FATE_REUSE_REUSED=*/0, 1)));
 
   TestNetLogEntry::List entries;
   log.GetEntries(&entries);
   EXPECT_TRUE(LogContainsEntryWithType(
-      entries, 1, NetLog::TYPE_SOCKET_POOL_REUSED_AN_EXISTING_SOCKET));
+      entries, 1, NetLogEventType::SOCKET_POOL_REUSED_AN_EXISTING_SOCKET));
 }
 
 #if defined(OS_IOS)
@@ -2113,6 +2343,7 @@ TEST_F(ClientSocketPoolBaseTest, CleanupTimedOutIdleSocketsReuse) {
 #endif
 // Make sure we cleanup old unused sockets.
 TEST_F(ClientSocketPoolBaseTest, MAYBE_CleanupTimedOutIdleSocketsNoReuse) {
+  base::HistogramTester histograms;
   CreatePoolWithIdleTimeouts(
       kDefaultMaxSockets, kDefaultMaxSocketsPerGroup,
       base::TimeDelta(),  // Time out unused sockets immediately
@@ -2126,16 +2357,16 @@ TEST_F(ClientSocketPoolBaseTest, MAYBE_CleanupTimedOutIdleSocketsNoReuse) {
   TestCompletionCallback callback;
   int rv = handle.Init("a", params_, LOWEST,
                        ClientSocketPool::RespectLimits::ENABLED,
-                       callback.callback(), pool_.get(), BoundNetLog());
-  ASSERT_EQ(ERR_IO_PENDING, rv);
+                       callback.callback(), pool_.get(), NetLogWithSource());
+  ASSERT_THAT(rv, IsError(ERR_IO_PENDING));
   EXPECT_EQ(LOAD_STATE_CONNECTING, pool_->GetLoadState("a", &handle));
 
   ClientSocketHandle handle2;
   TestCompletionCallback callback2;
   rv = handle2.Init("a", params_, LOWEST,
                     ClientSocketPool::RespectLimits::ENABLED,
-                    callback2.callback(), pool_.get(), BoundNetLog());
-  ASSERT_EQ(ERR_IO_PENDING, rv);
+                    callback2.callback(), pool_.get(), NetLogWithSource());
+  ASSERT_THAT(rv, IsError(ERR_IO_PENDING));
   EXPECT_EQ(LOAD_STATE_CONNECTING, pool_->GetLoadState("a", &handle2));
 
   // Cancel one of the requests.  Wait for the other, which will get the first
@@ -2144,7 +2375,7 @@ TEST_F(ClientSocketPoolBaseTest, MAYBE_CleanupTimedOutIdleSocketsNoReuse) {
   // just posts a DoReleaseSocket() task).
 
   handle.Reset();
-  ASSERT_EQ(OK, callback2.WaitForResult());
+  ASSERT_THAT(callback2.WaitForResult(), IsOk());
   // Use the socket.
   EXPECT_EQ(1, handle2.socket()->Write(NULL, 1, CompletionCallback()));
   handle2.Reset();
@@ -2166,9 +2397,15 @@ TEST_F(ClientSocketPoolBaseTest, MAYBE_CleanupTimedOutIdleSocketsNoReuse) {
   rv = handle.Init("a", params_, LOWEST,
                    ClientSocketPool::RespectLimits::ENABLED,
                    callback3.callback(), pool_.get(), log.bound());
-  ASSERT_EQ(ERR_IO_PENDING, rv);
-  ASSERT_EQ(OK, callback3.WaitForResult());
+  ASSERT_THAT(rv, IsError(ERR_IO_PENDING));
+  ASSERT_THAT(callback3.WaitForResult(), IsOk());
   EXPECT_FALSE(handle.is_reused());
+
+  EXPECT_THAT(
+      histograms.GetAllSamples(kIdleSocketFateHistogram),
+      testing::ElementsAre(
+          base::Bucket(/*IDLE_SOCKET_FATE_CLEAN_UP_TIMED_OUT_REUSED=*/5, 1),
+          base::Bucket(/*IDLE_SOCKET_FATE_CLEAN_UP_TIMED_OUT_UNUSED=*/6, 1)));
 
   // Make sure the idle socket is closed.
   ASSERT_TRUE(pool_->HasGroup("a"));
@@ -2178,7 +2415,7 @@ TEST_F(ClientSocketPoolBaseTest, MAYBE_CleanupTimedOutIdleSocketsNoReuse) {
   TestNetLogEntry::List entries;
   log.GetEntries(&entries);
   EXPECT_FALSE(LogContainsEntryWithType(
-      entries, 1, NetLog::TYPE_SOCKET_POOL_REUSED_AN_EXISTING_SOCKET));
+      entries, 1, NetLogEventType::SOCKET_POOL_REUSED_AN_EXISTING_SOCKET));
 }
 
 // Make sure that we process all pending requests even when we're stalling
@@ -2197,29 +2434,29 @@ TEST_F(ClientSocketPoolBaseTest, MultipleReleasingDisconnectedSockets) {
   TestCompletionCallback callback;
   int rv = handle.Init("a", params_, LOWEST,
                        ClientSocketPool::RespectLimits::ENABLED,
-                       callback.callback(), pool_.get(), BoundNetLog());
-  EXPECT_EQ(OK, rv);
+                       callback.callback(), pool_.get(), NetLogWithSource());
+  EXPECT_THAT(rv, IsOk());
 
   ClientSocketHandle handle2;
   TestCompletionCallback callback2;
   rv = handle2.Init("a", params_, LOWEST,
                     ClientSocketPool::RespectLimits::ENABLED,
-                    callback2.callback(), pool_.get(), BoundNetLog());
-  EXPECT_EQ(OK, rv);
+                    callback2.callback(), pool_.get(), NetLogWithSource());
+  EXPECT_THAT(rv, IsOk());
 
   ClientSocketHandle handle3;
   TestCompletionCallback callback3;
   rv = handle3.Init("a", params_, LOWEST,
                     ClientSocketPool::RespectLimits::ENABLED,
-                    callback3.callback(), pool_.get(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+                    callback3.callback(), pool_.get(), NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   ClientSocketHandle handle4;
   TestCompletionCallback callback4;
   rv = handle4.Init("a", params_, LOWEST,
                     ClientSocketPool::RespectLimits::ENABLED,
-                    callback4.callback(), pool_.get(), BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+                    callback4.callback(), pool_.get(), NetLogWithSource());
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
 
   // Release two disconnected sockets.
 
@@ -2228,9 +2465,9 @@ TEST_F(ClientSocketPoolBaseTest, MultipleReleasingDisconnectedSockets) {
   handle2.socket()->Disconnect();
   handle2.Reset();
 
-  EXPECT_EQ(OK, callback3.WaitForResult());
+  EXPECT_THAT(callback3.WaitForResult(), IsOk());
   EXPECT_FALSE(handle3.is_reused());
-  EXPECT_EQ(OK, callback4.WaitForResult());
+  EXPECT_THAT(callback4.WaitForResult(), IsOk());
   EXPECT_FALSE(handle4.is_reused());
 }
 
@@ -2256,26 +2493,26 @@ TEST_F(ClientSocketPoolBaseTest, SocketLimitReleasingSockets) {
     EXPECT_EQ(OK, handle_a[i].Init("a", params_, LOWEST,
                                    ClientSocketPool::RespectLimits::ENABLED,
                                    callback_a[i].callback(), pool_.get(),
-                                   BoundNetLog()));
+                                   NetLogWithSource()));
     EXPECT_EQ(OK, handle_b[i].Init("b", params_, LOWEST,
                                    ClientSocketPool::RespectLimits::ENABLED,
                                    callback_b[i].callback(), pool_.get(),
-                                   BoundNetLog()));
+                                   NetLogWithSource()));
   }
 
   // Make 4 pending requests, 2 per group.
 
   for (int i = 2; i < 4; ++i) {
-    EXPECT_EQ(
-        ERR_IO_PENDING,
-        handle_a[i].Init("a", params_, LOWEST,
-                         ClientSocketPool::RespectLimits::ENABLED,
-                         callback_a[i].callback(), pool_.get(), BoundNetLog()));
-    EXPECT_EQ(
-        ERR_IO_PENDING,
-        handle_b[i].Init("b", params_, LOWEST,
-                         ClientSocketPool::RespectLimits::ENABLED,
-                         callback_b[i].callback(), pool_.get(), BoundNetLog()));
+    EXPECT_EQ(ERR_IO_PENDING,
+              handle_a[i].Init("a", params_, LOWEST,
+                               ClientSocketPool::RespectLimits::ENABLED,
+                               callback_a[i].callback(), pool_.get(),
+                               NetLogWithSource()));
+    EXPECT_EQ(ERR_IO_PENDING,
+              handle_b[i].Init("b", params_, LOWEST,
+                               ClientSocketPool::RespectLimits::ENABLED,
+                               callback_b[i].callback(), pool_.get(),
+                               NetLogWithSource()));
   }
 
   // Release b's socket first.  The order is important, because in
@@ -2297,33 +2534,40 @@ TEST_F(ClientSocketPoolBaseTest, SocketLimitReleasingSockets) {
   handle_a[1].Reset();
 
   for (int i = 2; i < 4; ++i) {
-    EXPECT_EQ(OK, callback_b[i].WaitForResult());
-    EXPECT_EQ(OK, callback_a[i].WaitForResult());
+    EXPECT_THAT(callback_b[i].WaitForResult(), IsOk());
+    EXPECT_THAT(callback_a[i].WaitForResult(), IsOk());
   }
 }
 
 TEST_F(ClientSocketPoolBaseTest,
        ReleasingDisconnectedSocketsMaintainsPriorityOrder) {
+  base::HistogramTester histograms;
   CreatePool(kDefaultMaxSockets, kDefaultMaxSocketsPerGroup);
 
   connect_job_factory_->set_job_type(TestConnectJob::kMockPendingJob);
 
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", DEFAULT_PRIORITY));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", DEFAULT_PRIORITY));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", DEFAULT_PRIORITY));
-  EXPECT_EQ(ERR_IO_PENDING, StartRequest("a", DEFAULT_PRIORITY));
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsError(ERR_IO_PENDING));
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsError(ERR_IO_PENDING));
 
-  EXPECT_EQ(OK, (*requests())[0]->WaitForResult());
-  EXPECT_EQ(OK, (*requests())[1]->WaitForResult());
+  EXPECT_THAT((*requests())[0]->WaitForResult(), IsOk());
+  EXPECT_THAT((*requests())[1]->WaitForResult(), IsOk());
   EXPECT_EQ(2u, completion_count());
 
   // Releases one connection.
   EXPECT_TRUE(ReleaseOneConnection(ClientSocketPoolTest::NO_KEEP_ALIVE));
-  EXPECT_EQ(OK, (*requests())[2]->WaitForResult());
+  EXPECT_THAT((*requests())[2]->WaitForResult(), IsOk());
+  EXPECT_THAT(histograms.GetAllSamples(kIdleSocketFateHistogram),
+              testing::ElementsAre(
+                  base::Bucket(/*IDLE_SOCKET_FATE_RELEASE_UNUSABLE=*/3, 1)));
 
   EXPECT_TRUE(ReleaseOneConnection(ClientSocketPoolTest::NO_KEEP_ALIVE));
-  EXPECT_EQ(OK, (*requests())[3]->WaitForResult());
+  EXPECT_THAT((*requests())[3]->WaitForResult(), IsOk());
   EXPECT_EQ(4u, completion_count());
+  EXPECT_THAT(histograms.GetAllSamples(kIdleSocketFateHistogram),
+              testing::ElementsAre(
+                  base::Bucket(/*IDLE_SOCKET_FATE_RELEASE_UNUSABLE=*/3, 2)));
 
   EXPECT_EQ(1, GetOrderOfRequest(1));
   EXPECT_EQ(2, GetOrderOfRequest(2));
@@ -2362,7 +2606,7 @@ class TestReleasingSocketRequest : public TestCompletionCallbackBase {
     EXPECT_EQ(expected_result_,
               handle2_.Init("a", con_params, DEFAULT_PRIORITY,
                             ClientSocketPool::RespectLimits::ENABLED,
-                            callback2_.callback(), pool_, BoundNetLog()));
+                            callback2_.callback(), pool_, NetLogWithSource()));
   }
 
   TestClientSocketPool* const pool_;
@@ -2378,9 +2622,9 @@ class TestReleasingSocketRequest : public TestCompletionCallbackBase {
 TEST_F(ClientSocketPoolBaseTest, AdditionalErrorSocketsDontUseSlot) {
   CreatePool(kDefaultMaxSockets, kDefaultMaxSocketsPerGroup);
 
-  EXPECT_EQ(OK, StartRequest("b", DEFAULT_PRIORITY));
-  EXPECT_EQ(OK, StartRequest("a", DEFAULT_PRIORITY));
-  EXPECT_EQ(OK, StartRequest("b", DEFAULT_PRIORITY));
+  EXPECT_THAT(StartRequest("b", DEFAULT_PRIORITY), IsOk());
+  EXPECT_THAT(StartRequest("a", DEFAULT_PRIORITY), IsOk());
+  EXPECT_THAT(StartRequest("b", DEFAULT_PRIORITY), IsOk());
 
   EXPECT_EQ(static_cast<int>(requests_size()),
             client_socket_factory_.allocation_count());
@@ -2388,14 +2632,15 @@ TEST_F(ClientSocketPoolBaseTest, AdditionalErrorSocketsDontUseSlot) {
   connect_job_factory_->set_job_type(
       TestConnectJob::kMockPendingAdditionalErrorStateJob);
   TestReleasingSocketRequest req(pool_.get(), OK, false);
-  EXPECT_EQ(ERR_IO_PENDING,
-            req.handle()->Init("a", params_, DEFAULT_PRIORITY,
-                               ClientSocketPool::RespectLimits::ENABLED,
-                               req.callback(), pool_.get(), BoundNetLog()));
+  EXPECT_EQ(
+      ERR_IO_PENDING,
+      req.handle()->Init("a", params_, DEFAULT_PRIORITY,
+                         ClientSocketPool::RespectLimits::ENABLED,
+                         req.callback(), pool_.get(), NetLogWithSource()));
   // The next job should complete synchronously
   connect_job_factory_->set_job_type(TestConnectJob::kMockJob);
 
-  EXPECT_EQ(ERR_CONNECTION_FAILED, req.WaitForResult());
+  EXPECT_THAT(req.WaitForResult(), IsError(ERR_CONNECTION_FAILED));
   EXPECT_FALSE(req.handle()->is_initialized());
   EXPECT_FALSE(req.handle()->socket());
   EXPECT_TRUE(req.handle()->is_ssl_error());
@@ -2419,7 +2664,7 @@ TEST_F(ClientSocketPoolBaseTest, CallbackThatReleasesPool) {
   EXPECT_EQ(ERR_IO_PENDING,
             handle.Init("a", params_, DEFAULT_PRIORITY,
                         ClientSocketPool::RespectLimits::ENABLED,
-                        callback.callback(), pool_.get(), BoundNetLog()));
+                        callback.callback(), pool_.get(), NetLogWithSource()));
 
   pool_->FlushWithError(ERR_NETWORK_CHANGED);
 
@@ -2436,8 +2681,8 @@ TEST_F(ClientSocketPoolBaseTest, DoNotReuseSocketAfterFlush) {
   EXPECT_EQ(ERR_IO_PENDING,
             handle.Init("a", params_, DEFAULT_PRIORITY,
                         ClientSocketPool::RespectLimits::ENABLED,
-                        callback.callback(), pool_.get(), BoundNetLog()));
-  EXPECT_EQ(OK, callback.WaitForResult());
+                        callback.callback(), pool_.get(), NetLogWithSource()));
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
   EXPECT_EQ(ClientSocketHandle::UNUSED, handle.reuse_type());
 
   pool_->FlushWithError(ERR_NETWORK_CHANGED);
@@ -2448,8 +2693,8 @@ TEST_F(ClientSocketPoolBaseTest, DoNotReuseSocketAfterFlush) {
   EXPECT_EQ(ERR_IO_PENDING,
             handle.Init("a", params_, DEFAULT_PRIORITY,
                         ClientSocketPool::RespectLimits::ENABLED,
-                        callback.callback(), pool_.get(), BoundNetLog()));
-  EXPECT_EQ(OK, callback.WaitForResult());
+                        callback.callback(), pool_.get(), NetLogWithSource()));
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
   EXPECT_EQ(ClientSocketHandle::UNUSED, handle.reuse_type());
 }
 
@@ -2477,10 +2722,11 @@ class ConnectWithinCallback : public TestCompletionCallbackBase {
  private:
   void OnComplete(int result) {
     SetResult(result);
-    EXPECT_EQ(ERR_IO_PENDING,
-              handle_.Init(group_name_, params_, DEFAULT_PRIORITY,
-                           ClientSocketPool::RespectLimits::ENABLED,
-                           nested_callback_.callback(), pool_, BoundNetLog()));
+    EXPECT_EQ(
+        ERR_IO_PENDING,
+        handle_.Init(group_name_, params_, DEFAULT_PRIORITY,
+                     ClientSocketPool::RespectLimits::ENABLED,
+                     nested_callback_.callback(), pool_, NetLogWithSource()));
   }
 
   const std::string group_name_;
@@ -2504,14 +2750,14 @@ TEST_F(ClientSocketPoolBaseTest, AbortAllRequestsOnFlush) {
   EXPECT_EQ(ERR_IO_PENDING,
             handle.Init("a", params_, DEFAULT_PRIORITY,
                         ClientSocketPool::RespectLimits::ENABLED,
-                        callback.callback(), pool_.get(), BoundNetLog()));
+                        callback.callback(), pool_.get(), NetLogWithSource()));
 
   // Second job will be started during the first callback, and will
   // asynchronously complete with OK.
   connect_job_factory_->set_job_type(TestConnectJob::kMockPendingJob);
   pool_->FlushWithError(ERR_NETWORK_CHANGED);
-  EXPECT_EQ(ERR_NETWORK_CHANGED, callback.WaitForResult());
-  EXPECT_EQ(OK, callback.WaitForNestedResult());
+  EXPECT_THAT(callback.WaitForResult(), IsError(ERR_NETWORK_CHANGED));
+  EXPECT_THAT(callback.WaitForNestedResult(), IsOk());
 }
 
 // Cancel a pending socket request while we're at max sockets,
@@ -2529,17 +2775,17 @@ TEST_F(ClientSocketPoolBaseTest, BackupSocketCancelAtMaxSockets) {
   EXPECT_EQ(ERR_IO_PENDING,
             handle.Init("bar", params_, DEFAULT_PRIORITY,
                         ClientSocketPool::RespectLimits::ENABLED,
-                        callback.callback(), pool_.get(), BoundNetLog()));
+                        callback.callback(), pool_.get(), NetLogWithSource()));
 
   // Start (MaxSockets - 1) connected sockets to reach max sockets.
   connect_job_factory_->set_job_type(TestConnectJob::kMockJob);
   ClientSocketHandle handles[kDefaultMaxSockets];
   for (int i = 1; i < kDefaultMaxSockets; ++i) {
     TestCompletionCallback callback;
-    EXPECT_EQ(OK,
-              handles[i].Init("bar", params_, DEFAULT_PRIORITY,
-                              ClientSocketPool::RespectLimits::ENABLED,
-                              callback.callback(), pool_.get(), BoundNetLog()));
+    EXPECT_EQ(OK, handles[i].Init("bar", params_, DEFAULT_PRIORITY,
+                                  ClientSocketPool::RespectLimits::ENABLED,
+                                  callback.callback(), pool_.get(),
+                                  NetLogWithSource()));
   }
 
   base::RunLoop().RunUntilIdle();
@@ -2567,7 +2813,7 @@ TEST_F(ClientSocketPoolBaseTest, CancelBackupSocketAfterCancelingAllRequests) {
   EXPECT_EQ(ERR_IO_PENDING,
             handle.Init("bar", params_, DEFAULT_PRIORITY,
                         ClientSocketPool::RespectLimits::ENABLED,
-                        callback.callback(), pool_.get(), BoundNetLog()));
+                        callback.callback(), pool_.get(), NetLogWithSource()));
   ASSERT_TRUE(pool_->HasGroup("bar"));
   EXPECT_EQ(1, pool_->NumConnectJobsInGroup("bar"));
   EXPECT_EQ(0, pool_->NumUnassignedConnectJobsInGroup("bar"));
@@ -2595,21 +2841,22 @@ TEST_F(ClientSocketPoolBaseTest, CancelBackupSocketAfterFinishingAllRequests) {
   EXPECT_EQ(ERR_IO_PENDING,
             handle.Init("bar", params_, DEFAULT_PRIORITY,
                         ClientSocketPool::RespectLimits::ENABLED,
-                        callback.callback(), pool_.get(), BoundNetLog()));
+                        callback.callback(), pool_.get(), NetLogWithSource()));
   connect_job_factory_->set_job_type(TestConnectJob::kMockPendingJob);
   ClientSocketHandle handle2;
   TestCompletionCallback callback2;
-  EXPECT_EQ(ERR_IO_PENDING,
-            handle2.Init("bar", params_, DEFAULT_PRIORITY,
-                         ClientSocketPool::RespectLimits::ENABLED,
-                         callback2.callback(), pool_.get(), BoundNetLog()));
+  EXPECT_EQ(
+      ERR_IO_PENDING,
+      handle2.Init("bar", params_, DEFAULT_PRIORITY,
+                   ClientSocketPool::RespectLimits::ENABLED,
+                   callback2.callback(), pool_.get(), NetLogWithSource()));
   ASSERT_TRUE(pool_->HasGroup("bar"));
   EXPECT_EQ(2, pool_->NumConnectJobsInGroup("bar"));
 
   // Cancel request 1 and then complete request 2.  With the requests finished,
   // the backup timer should be cancelled.
   handle.Reset();
-  EXPECT_EQ(OK, callback2.WaitForResult());
+  EXPECT_THAT(callback2.WaitForResult(), IsOk());
   // Wait for the backup timer to fire (add some slop to ensure it fires)
   base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(
       ClientSocketPool::kMaxConnectRetryIntervalMs / 2 * 3));
@@ -2629,8 +2876,8 @@ TEST_F(ClientSocketPoolBaseTest, DelayedSocketBindingWaitingForConnect) {
   EXPECT_EQ(ERR_IO_PENDING,
             handle1.Init("a", params_, DEFAULT_PRIORITY,
                          ClientSocketPool::RespectLimits::ENABLED,
-                         callback.callback(), pool_.get(), BoundNetLog()));
-  EXPECT_EQ(OK, callback.WaitForResult());
+                         callback.callback(), pool_.get(), NetLogWithSource()));
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 
   // No idle sockets, no pending jobs.
   EXPECT_EQ(0, pool_->IdleSocketCount());
@@ -2642,7 +2889,7 @@ TEST_F(ClientSocketPoolBaseTest, DelayedSocketBindingWaitingForConnect) {
   EXPECT_EQ(ERR_IO_PENDING,
             handle2.Init("a", params_, DEFAULT_PRIORITY,
                          ClientSocketPool::RespectLimits::ENABLED,
-                         callback.callback(), pool_.get(), BoundNetLog()));
+                         callback.callback(), pool_.get(), NetLogWithSource()));
   // No idle sockets, and one connecting job.
   EXPECT_EQ(0, pool_->IdleSocketCount());
   EXPECT_EQ(1, pool_->NumConnectJobsInGroup("a"));
@@ -2658,7 +2905,7 @@ TEST_F(ClientSocketPoolBaseTest, DelayedSocketBindingWaitingForConnect) {
   EXPECT_EQ(1, pool_->NumConnectJobsInGroup("a"));
 
   // The second socket connected, even though it was a Waiting Job.
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 
   // And we can see there is still one job waiting.
   EXPECT_EQ(1, pool_->NumConnectJobsInGroup("a"));
@@ -2681,8 +2928,8 @@ TEST_F(ClientSocketPoolBaseTest, DelayedSocketBindingAtGroupCapacity) {
   EXPECT_EQ(ERR_IO_PENDING,
             handle1.Init("a", params_, DEFAULT_PRIORITY,
                          ClientSocketPool::RespectLimits::ENABLED,
-                         callback.callback(), pool_.get(), BoundNetLog()));
-  EXPECT_EQ(OK, callback.WaitForResult());
+                         callback.callback(), pool_.get(), NetLogWithSource()));
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 
   // No idle sockets, no pending jobs.
   EXPECT_EQ(0, pool_->IdleSocketCount());
@@ -2694,7 +2941,7 @@ TEST_F(ClientSocketPoolBaseTest, DelayedSocketBindingAtGroupCapacity) {
   EXPECT_EQ(ERR_IO_PENDING,
             handle2.Init("a", params_, DEFAULT_PRIORITY,
                          ClientSocketPool::RespectLimits::ENABLED,
-                         callback.callback(), pool_.get(), BoundNetLog()));
+                         callback.callback(), pool_.get(), NetLogWithSource()));
   // No idle sockets, and one connecting job.
   EXPECT_EQ(0, pool_->IdleSocketCount());
   EXPECT_EQ(1, pool_->NumConnectJobsInGroup("a"));
@@ -2710,7 +2957,7 @@ TEST_F(ClientSocketPoolBaseTest, DelayedSocketBindingAtGroupCapacity) {
   EXPECT_EQ(1, pool_->NumConnectJobsInGroup("a"));
 
   // The second socket connected, even though it was a Waiting Job.
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 
   // And we can see there is still one job waiting.
   EXPECT_EQ(1, pool_->NumConnectJobsInGroup("a"));
@@ -2735,8 +2982,8 @@ TEST_F(ClientSocketPoolBaseTest, DelayedSocketBindingAtStall) {
   EXPECT_EQ(ERR_IO_PENDING,
             handle1.Init("a", params_, DEFAULT_PRIORITY,
                          ClientSocketPool::RespectLimits::ENABLED,
-                         callback.callback(), pool_.get(), BoundNetLog()));
-  EXPECT_EQ(OK, callback.WaitForResult());
+                         callback.callback(), pool_.get(), NetLogWithSource()));
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 
   // No idle sockets, no pending jobs.
   EXPECT_EQ(0, pool_->IdleSocketCount());
@@ -2748,7 +2995,7 @@ TEST_F(ClientSocketPoolBaseTest, DelayedSocketBindingAtStall) {
   EXPECT_EQ(ERR_IO_PENDING,
             handle2.Init("a", params_, DEFAULT_PRIORITY,
                          ClientSocketPool::RespectLimits::ENABLED,
-                         callback.callback(), pool_.get(), BoundNetLog()));
+                         callback.callback(), pool_.get(), NetLogWithSource()));
   // No idle sockets, and one connecting job.
   EXPECT_EQ(0, pool_->IdleSocketCount());
   EXPECT_EQ(1, pool_->NumConnectJobsInGroup("a"));
@@ -2764,7 +3011,7 @@ TEST_F(ClientSocketPoolBaseTest, DelayedSocketBindingAtStall) {
   EXPECT_EQ(1, pool_->NumConnectJobsInGroup("a"));
 
   // The second socket connected, even though it was a Waiting Job.
-  EXPECT_EQ(OK, callback.WaitForResult());
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 
   // And we can see there is still one job waiting.
   EXPECT_EQ(1, pool_->NumConnectJobsInGroup("a"));
@@ -2789,10 +3036,11 @@ TEST_F(ClientSocketPoolBaseTest, SynchronouslyProcessOnePendingRequest) {
 
   ClientSocketHandle handle1;
   TestCompletionCallback callback1;
-  EXPECT_EQ(ERR_IO_PENDING,
-            handle1.Init("a", params_, DEFAULT_PRIORITY,
-                         ClientSocketPool::RespectLimits::ENABLED,
-                         callback1.callback(), pool_.get(), BoundNetLog()));
+  EXPECT_EQ(
+      ERR_IO_PENDING,
+      handle1.Init("a", params_, DEFAULT_PRIORITY,
+                   ClientSocketPool::RespectLimits::ENABLED,
+                   callback1.callback(), pool_.get(), NetLogWithSource()));
   EXPECT_EQ(1, pool_->NumConnectJobsInGroup("a"));
 
   // Make the second request synchronously fail.  This should make the Group
@@ -2802,15 +3050,16 @@ TEST_F(ClientSocketPoolBaseTest, SynchronouslyProcessOnePendingRequest) {
   TestCompletionCallback callback2;
   // It'll be ERR_IO_PENDING now, but the TestConnectJob will synchronously fail
   // when created.
-  EXPECT_EQ(ERR_IO_PENDING,
-            handle2.Init("a", params_, DEFAULT_PRIORITY,
-                         ClientSocketPool::RespectLimits::ENABLED,
-                         callback2.callback(), pool_.get(), BoundNetLog()));
+  EXPECT_EQ(
+      ERR_IO_PENDING,
+      handle2.Init("a", params_, DEFAULT_PRIORITY,
+                   ClientSocketPool::RespectLimits::ENABLED,
+                   callback2.callback(), pool_.get(), NetLogWithSource()));
 
   EXPECT_EQ(1, pool_->NumConnectJobsInGroup("a"));
 
-  EXPECT_EQ(ERR_CONNECTION_FAILED, callback1.WaitForResult());
-  EXPECT_EQ(ERR_CONNECTION_FAILED, callback2.WaitForResult());
+  EXPECT_THAT(callback1.WaitForResult(), IsError(ERR_CONNECTION_FAILED));
+  EXPECT_THAT(callback2.WaitForResult(), IsError(ERR_CONNECTION_FAILED));
   EXPECT_FALSE(pool_->HasGroup("a"));
 }
 
@@ -2821,27 +3070,30 @@ TEST_F(ClientSocketPoolBaseTest, PreferUsedSocketToUnusedSocket) {
 
   ClientSocketHandle handle1;
   TestCompletionCallback callback1;
-  EXPECT_EQ(ERR_IO_PENDING,
-            handle1.Init("a", params_, DEFAULT_PRIORITY,
-                         ClientSocketPool::RespectLimits::ENABLED,
-                         callback1.callback(), pool_.get(), BoundNetLog()));
+  EXPECT_EQ(
+      ERR_IO_PENDING,
+      handle1.Init("a", params_, DEFAULT_PRIORITY,
+                   ClientSocketPool::RespectLimits::ENABLED,
+                   callback1.callback(), pool_.get(), NetLogWithSource()));
 
   ClientSocketHandle handle2;
   TestCompletionCallback callback2;
-  EXPECT_EQ(ERR_IO_PENDING,
-            handle2.Init("a", params_, DEFAULT_PRIORITY,
-                         ClientSocketPool::RespectLimits::ENABLED,
-                         callback2.callback(), pool_.get(), BoundNetLog()));
+  EXPECT_EQ(
+      ERR_IO_PENDING,
+      handle2.Init("a", params_, DEFAULT_PRIORITY,
+                   ClientSocketPool::RespectLimits::ENABLED,
+                   callback2.callback(), pool_.get(), NetLogWithSource()));
   ClientSocketHandle handle3;
   TestCompletionCallback callback3;
-  EXPECT_EQ(ERR_IO_PENDING,
-            handle3.Init("a", params_, DEFAULT_PRIORITY,
-                         ClientSocketPool::RespectLimits::ENABLED,
-                         callback3.callback(), pool_.get(), BoundNetLog()));
+  EXPECT_EQ(
+      ERR_IO_PENDING,
+      handle3.Init("a", params_, DEFAULT_PRIORITY,
+                   ClientSocketPool::RespectLimits::ENABLED,
+                   callback3.callback(), pool_.get(), NetLogWithSource()));
 
-  EXPECT_EQ(OK, callback1.WaitForResult());
-  EXPECT_EQ(OK, callback2.WaitForResult());
-  EXPECT_EQ(OK, callback3.WaitForResult());
+  EXPECT_THAT(callback1.WaitForResult(), IsOk());
+  EXPECT_THAT(callback2.WaitForResult(), IsOk());
+  EXPECT_THAT(callback3.WaitForResult(), IsOk());
 
   // Use the socket.
   EXPECT_EQ(1, handle1.socket()->Write(NULL, 1, CompletionCallback()));
@@ -2851,15 +3103,18 @@ TEST_F(ClientSocketPoolBaseTest, PreferUsedSocketToUnusedSocket) {
   handle2.Reset();
   handle3.Reset();
 
-  EXPECT_EQ(OK, handle1.Init("a", params_, DEFAULT_PRIORITY,
-                             ClientSocketPool::RespectLimits::ENABLED,
-                             callback1.callback(), pool_.get(), BoundNetLog()));
-  EXPECT_EQ(OK, handle2.Init("a", params_, DEFAULT_PRIORITY,
-                             ClientSocketPool::RespectLimits::ENABLED,
-                             callback2.callback(), pool_.get(), BoundNetLog()));
-  EXPECT_EQ(OK, handle3.Init("a", params_, DEFAULT_PRIORITY,
-                             ClientSocketPool::RespectLimits::ENABLED,
-                             callback3.callback(), pool_.get(), BoundNetLog()));
+  EXPECT_EQ(
+      OK, handle1.Init("a", params_, DEFAULT_PRIORITY,
+                       ClientSocketPool::RespectLimits::ENABLED,
+                       callback1.callback(), pool_.get(), NetLogWithSource()));
+  EXPECT_EQ(
+      OK, handle2.Init("a", params_, DEFAULT_PRIORITY,
+                       ClientSocketPool::RespectLimits::ENABLED,
+                       callback2.callback(), pool_.get(), NetLogWithSource()));
+  EXPECT_EQ(
+      OK, handle3.Init("a", params_, DEFAULT_PRIORITY,
+                       ClientSocketPool::RespectLimits::ENABLED,
+                       callback3.callback(), pool_.get(), NetLogWithSource()));
 
   EXPECT_TRUE(handle1.socket()->WasEverUsed());
   EXPECT_TRUE(handle2.socket()->WasEverUsed());
@@ -2870,7 +3125,7 @@ TEST_F(ClientSocketPoolBaseTest, RequestSockets) {
   CreatePool(kDefaultMaxSockets, kDefaultMaxSocketsPerGroup);
   connect_job_factory_->set_job_type(TestConnectJob::kMockPendingJob);
 
-  pool_->RequestSockets("a", &params_, 2, BoundNetLog());
+  pool_->RequestSockets("a", &params_, 2, NetLogWithSource());
 
   ASSERT_TRUE(pool_->HasGroup("a"));
   EXPECT_EQ(2, pool_->NumConnectJobsInGroup("a"));
@@ -2879,24 +3134,26 @@ TEST_F(ClientSocketPoolBaseTest, RequestSockets) {
 
   ClientSocketHandle handle1;
   TestCompletionCallback callback1;
-  EXPECT_EQ(ERR_IO_PENDING,
-            handle1.Init("a", params_, DEFAULT_PRIORITY,
-                         ClientSocketPool::RespectLimits::ENABLED,
-                         callback1.callback(), pool_.get(), BoundNetLog()));
+  EXPECT_EQ(
+      ERR_IO_PENDING,
+      handle1.Init("a", params_, DEFAULT_PRIORITY,
+                   ClientSocketPool::RespectLimits::ENABLED,
+                   callback1.callback(), pool_.get(), NetLogWithSource()));
 
   ClientSocketHandle handle2;
   TestCompletionCallback callback2;
-  EXPECT_EQ(ERR_IO_PENDING,
-            handle2.Init("a", params_, DEFAULT_PRIORITY,
-                         ClientSocketPool::RespectLimits::ENABLED,
-                         callback2.callback(), pool_.get(), BoundNetLog()));
+  EXPECT_EQ(
+      ERR_IO_PENDING,
+      handle2.Init("a", params_, DEFAULT_PRIORITY,
+                   ClientSocketPool::RespectLimits::ENABLED,
+                   callback2.callback(), pool_.get(), NetLogWithSource()));
 
   EXPECT_EQ(2, pool_->NumConnectJobsInGroup("a"));
   EXPECT_EQ(0, pool_->NumUnassignedConnectJobsInGroup("a"));
   EXPECT_EQ(0, pool_->IdleSocketCountInGroup("a"));
 
-  EXPECT_EQ(OK, callback1.WaitForResult());
-  EXPECT_EQ(OK, callback2.WaitForResult());
+  EXPECT_THAT(callback1.WaitForResult(), IsOk());
+  EXPECT_THAT(callback2.WaitForResult(), IsOk());
   handle1.Reset();
   handle2.Reset();
 
@@ -2911,17 +3168,18 @@ TEST_F(ClientSocketPoolBaseTest, RequestSocketsWhenAlreadyHaveAConnectJob) {
 
   ClientSocketHandle handle1;
   TestCompletionCallback callback1;
-  EXPECT_EQ(ERR_IO_PENDING,
-            handle1.Init("a", params_, DEFAULT_PRIORITY,
-                         ClientSocketPool::RespectLimits::ENABLED,
-                         callback1.callback(), pool_.get(), BoundNetLog()));
+  EXPECT_EQ(
+      ERR_IO_PENDING,
+      handle1.Init("a", params_, DEFAULT_PRIORITY,
+                   ClientSocketPool::RespectLimits::ENABLED,
+                   callback1.callback(), pool_.get(), NetLogWithSource()));
 
   ASSERT_TRUE(pool_->HasGroup("a"));
   EXPECT_EQ(1, pool_->NumConnectJobsInGroup("a"));
   EXPECT_EQ(0, pool_->NumUnassignedConnectJobsInGroup("a"));
   EXPECT_EQ(0, pool_->IdleSocketCountInGroup("a"));
 
-  pool_->RequestSockets("a", &params_, 2, BoundNetLog());
+  pool_->RequestSockets("a", &params_, 2, NetLogWithSource());
 
   EXPECT_EQ(2, pool_->NumConnectJobsInGroup("a"));
   EXPECT_EQ(1, pool_->NumUnassignedConnectJobsInGroup("a"));
@@ -2929,17 +3187,18 @@ TEST_F(ClientSocketPoolBaseTest, RequestSocketsWhenAlreadyHaveAConnectJob) {
 
   ClientSocketHandle handle2;
   TestCompletionCallback callback2;
-  EXPECT_EQ(ERR_IO_PENDING,
-            handle2.Init("a", params_, DEFAULT_PRIORITY,
-                         ClientSocketPool::RespectLimits::ENABLED,
-                         callback2.callback(), pool_.get(), BoundNetLog()));
+  EXPECT_EQ(
+      ERR_IO_PENDING,
+      handle2.Init("a", params_, DEFAULT_PRIORITY,
+                   ClientSocketPool::RespectLimits::ENABLED,
+                   callback2.callback(), pool_.get(), NetLogWithSource()));
 
   EXPECT_EQ(2, pool_->NumConnectJobsInGroup("a"));
   EXPECT_EQ(0, pool_->NumUnassignedConnectJobsInGroup("a"));
   EXPECT_EQ(0, pool_->IdleSocketCountInGroup("a"));
 
-  EXPECT_EQ(OK, callback1.WaitForResult());
-  EXPECT_EQ(OK, callback2.WaitForResult());
+  EXPECT_THAT(callback1.WaitForResult(), IsOk());
+  EXPECT_THAT(callback2.WaitForResult(), IsOk());
   handle1.Reset();
   handle2.Reset();
 
@@ -2955,39 +3214,42 @@ TEST_F(ClientSocketPoolBaseTest,
 
   ClientSocketHandle handle1;
   TestCompletionCallback callback1;
-  EXPECT_EQ(ERR_IO_PENDING,
-            handle1.Init("a", params_, DEFAULT_PRIORITY,
-                         ClientSocketPool::RespectLimits::ENABLED,
-                         callback1.callback(), pool_.get(), BoundNetLog()));
+  EXPECT_EQ(
+      ERR_IO_PENDING,
+      handle1.Init("a", params_, DEFAULT_PRIORITY,
+                   ClientSocketPool::RespectLimits::ENABLED,
+                   callback1.callback(), pool_.get(), NetLogWithSource()));
 
   ClientSocketHandle handle2;
   TestCompletionCallback callback2;
-  EXPECT_EQ(ERR_IO_PENDING,
-            handle2.Init("a", params_, DEFAULT_PRIORITY,
-                         ClientSocketPool::RespectLimits::ENABLED,
-                         callback2.callback(), pool_.get(), BoundNetLog()));
+  EXPECT_EQ(
+      ERR_IO_PENDING,
+      handle2.Init("a", params_, DEFAULT_PRIORITY,
+                   ClientSocketPool::RespectLimits::ENABLED,
+                   callback2.callback(), pool_.get(), NetLogWithSource()));
 
   ClientSocketHandle handle3;
   TestCompletionCallback callback3;
-  EXPECT_EQ(ERR_IO_PENDING,
-            handle3.Init("a", params_, DEFAULT_PRIORITY,
-                         ClientSocketPool::RespectLimits::ENABLED,
-                         callback3.callback(), pool_.get(), BoundNetLog()));
+  EXPECT_EQ(
+      ERR_IO_PENDING,
+      handle3.Init("a", params_, DEFAULT_PRIORITY,
+                   ClientSocketPool::RespectLimits::ENABLED,
+                   callback3.callback(), pool_.get(), NetLogWithSource()));
 
   ASSERT_TRUE(pool_->HasGroup("a"));
   EXPECT_EQ(3, pool_->NumConnectJobsInGroup("a"));
   EXPECT_EQ(0, pool_->NumUnassignedConnectJobsInGroup("a"));
   EXPECT_EQ(0, pool_->IdleSocketCountInGroup("a"));
 
-  pool_->RequestSockets("a", &params_, 2, BoundNetLog());
+  pool_->RequestSockets("a", &params_, 2, NetLogWithSource());
 
   EXPECT_EQ(3, pool_->NumConnectJobsInGroup("a"));
   EXPECT_EQ(0, pool_->NumUnassignedConnectJobsInGroup("a"));
   EXPECT_EQ(0, pool_->IdleSocketCountInGroup("a"));
 
-  EXPECT_EQ(OK, callback1.WaitForResult());
-  EXPECT_EQ(OK, callback2.WaitForResult());
-  EXPECT_EQ(OK, callback3.WaitForResult());
+  EXPECT_THAT(callback1.WaitForResult(), IsOk());
+  EXPECT_THAT(callback2.WaitForResult(), IsOk());
+  EXPECT_THAT(callback3.WaitForResult(), IsOk());
   handle1.Reset();
   handle2.Reset();
   handle3.Reset();
@@ -3003,8 +3265,7 @@ TEST_F(ClientSocketPoolBaseTest, RequestSocketsAtMaxSocketLimit) {
 
   ASSERT_FALSE(pool_->HasGroup("a"));
 
-  pool_->RequestSockets("a", &params_, kDefaultMaxSockets,
-                        BoundNetLog());
+  pool_->RequestSockets("a", &params_, kDefaultMaxSockets, NetLogWithSource());
 
   ASSERT_TRUE(pool_->HasGroup("a"));
   EXPECT_EQ(kDefaultMaxSockets, pool_->NumConnectJobsInGroup("a"));
@@ -3012,8 +3273,7 @@ TEST_F(ClientSocketPoolBaseTest, RequestSocketsAtMaxSocketLimit) {
 
   ASSERT_FALSE(pool_->HasGroup("b"));
 
-  pool_->RequestSockets("b", &params_, kDefaultMaxSockets,
-                        BoundNetLog());
+  pool_->RequestSockets("b", &params_, kDefaultMaxSockets, NetLogWithSource());
 
   ASSERT_FALSE(pool_->HasGroup("b"));
 }
@@ -3025,7 +3285,7 @@ TEST_F(ClientSocketPoolBaseTest, RequestSocketsHitMaxSocketLimit) {
   ASSERT_FALSE(pool_->HasGroup("a"));
 
   pool_->RequestSockets("a", &params_, kDefaultMaxSockets - 1,
-                        BoundNetLog());
+                        NetLogWithSource());
 
   ASSERT_TRUE(pool_->HasGroup("a"));
   EXPECT_EQ(kDefaultMaxSockets - 1, pool_->NumConnectJobsInGroup("a"));
@@ -3035,8 +3295,7 @@ TEST_F(ClientSocketPoolBaseTest, RequestSocketsHitMaxSocketLimit) {
 
   ASSERT_FALSE(pool_->HasGroup("b"));
 
-  pool_->RequestSockets("b", &params_, kDefaultMaxSockets,
-                        BoundNetLog());
+  pool_->RequestSockets("b", &params_, kDefaultMaxSockets, NetLogWithSource());
 
   ASSERT_TRUE(pool_->HasGroup("b"));
   EXPECT_EQ(1, pool_->NumConnectJobsInGroup("b"));
@@ -3049,11 +3308,12 @@ TEST_F(ClientSocketPoolBaseTest, RequestSocketsCountIdleSockets) {
 
   ClientSocketHandle handle1;
   TestCompletionCallback callback1;
-  EXPECT_EQ(ERR_IO_PENDING,
-            handle1.Init("a", params_, DEFAULT_PRIORITY,
-                         ClientSocketPool::RespectLimits::ENABLED,
-                         callback1.callback(), pool_.get(), BoundNetLog()));
-  ASSERT_EQ(OK, callback1.WaitForResult());
+  EXPECT_EQ(
+      ERR_IO_PENDING,
+      handle1.Init("a", params_, DEFAULT_PRIORITY,
+                   ClientSocketPool::RespectLimits::ENABLED,
+                   callback1.callback(), pool_.get(), NetLogWithSource()));
+  ASSERT_THAT(callback1.WaitForResult(), IsOk());
   handle1.Reset();
 
   ASSERT_TRUE(pool_->HasGroup("a"));
@@ -3061,7 +3321,7 @@ TEST_F(ClientSocketPoolBaseTest, RequestSocketsCountIdleSockets) {
   EXPECT_EQ(0, pool_->NumUnassignedConnectJobsInGroup("a"));
   EXPECT_EQ(1, pool_->IdleSocketCountInGroup("a"));
 
-  pool_->RequestSockets("a", &params_, 2, BoundNetLog());
+  pool_->RequestSockets("a", &params_, 2, NetLogWithSource());
 
   EXPECT_EQ(1, pool_->NumConnectJobsInGroup("a"));
   EXPECT_EQ(1, pool_->NumUnassignedConnectJobsInGroup("a"));
@@ -3074,11 +3334,12 @@ TEST_F(ClientSocketPoolBaseTest, RequestSocketsCountActiveSockets) {
 
   ClientSocketHandle handle1;
   TestCompletionCallback callback1;
-  EXPECT_EQ(ERR_IO_PENDING,
-            handle1.Init("a", params_, DEFAULT_PRIORITY,
-                         ClientSocketPool::RespectLimits::ENABLED,
-                         callback1.callback(), pool_.get(), BoundNetLog()));
-  ASSERT_EQ(OK, callback1.WaitForResult());
+  EXPECT_EQ(
+      ERR_IO_PENDING,
+      handle1.Init("a", params_, DEFAULT_PRIORITY,
+                   ClientSocketPool::RespectLimits::ENABLED,
+                   callback1.callback(), pool_.get(), NetLogWithSource()));
+  ASSERT_THAT(callback1.WaitForResult(), IsOk());
 
   ASSERT_TRUE(pool_->HasGroup("a"));
   EXPECT_EQ(0, pool_->NumConnectJobsInGroup("a"));
@@ -3086,7 +3347,7 @@ TEST_F(ClientSocketPoolBaseTest, RequestSocketsCountActiveSockets) {
   EXPECT_EQ(0, pool_->IdleSocketCountInGroup("a"));
   EXPECT_EQ(1, pool_->NumActiveSocketsInGroup("a"));
 
-  pool_->RequestSockets("a", &params_, 2, BoundNetLog());
+  pool_->RequestSockets("a", &params_, 2, NetLogWithSource());
 
   EXPECT_EQ(1, pool_->NumConnectJobsInGroup("a"));
   EXPECT_EQ(1, pool_->NumUnassignedConnectJobsInGroup("a"));
@@ -3099,7 +3360,7 @@ TEST_F(ClientSocketPoolBaseTest, RequestSocketsSynchronous) {
   connect_job_factory_->set_job_type(TestConnectJob::kMockJob);
 
   pool_->RequestSockets("a", &params_, kDefaultMaxSocketsPerGroup,
-                        BoundNetLog());
+                        NetLogWithSource());
 
   ASSERT_TRUE(pool_->HasGroup("a"));
   EXPECT_EQ(0, pool_->NumConnectJobsInGroup("a"));
@@ -3107,7 +3368,7 @@ TEST_F(ClientSocketPoolBaseTest, RequestSocketsSynchronous) {
   EXPECT_EQ(kDefaultMaxSocketsPerGroup, pool_->IdleSocketCountInGroup("a"));
 
   pool_->RequestSockets("b", &params_, kDefaultMaxSocketsPerGroup,
-                        BoundNetLog());
+                        NetLogWithSource());
 
   EXPECT_EQ(0, pool_->NumConnectJobsInGroup("b"));
   EXPECT_EQ(0, pool_->NumUnassignedConnectJobsInGroup("b"));
@@ -3119,14 +3380,14 @@ TEST_F(ClientSocketPoolBaseTest, RequestSocketsSynchronousError) {
   connect_job_factory_->set_job_type(TestConnectJob::kMockFailingJob);
 
   pool_->RequestSockets("a", &params_, kDefaultMaxSocketsPerGroup,
-                        BoundNetLog());
+                        NetLogWithSource());
 
   ASSERT_FALSE(pool_->HasGroup("a"));
 
   connect_job_factory_->set_job_type(
       TestConnectJob::kMockAdditionalErrorStateJob);
   pool_->RequestSockets("a", &params_, kDefaultMaxSocketsPerGroup,
-                        BoundNetLog());
+                        NetLogWithSource());
 
   ASSERT_FALSE(pool_->HasGroup("a"));
 }
@@ -3135,34 +3396,35 @@ TEST_F(ClientSocketPoolBaseTest, RequestSocketsMultipleTimesDoesNothing) {
   CreatePool(4, 4);
   connect_job_factory_->set_job_type(TestConnectJob::kMockPendingJob);
 
-  pool_->RequestSockets("a", &params_, 2, BoundNetLog());
+  pool_->RequestSockets("a", &params_, 2, NetLogWithSource());
 
   ASSERT_TRUE(pool_->HasGroup("a"));
   EXPECT_EQ(2, pool_->NumConnectJobsInGroup("a"));
   EXPECT_EQ(2, pool_->NumUnassignedConnectJobsInGroup("a"));
   EXPECT_EQ(0, pool_->IdleSocketCountInGroup("a"));
 
-  pool_->RequestSockets("a", &params_, 2, BoundNetLog());
+  pool_->RequestSockets("a", &params_, 2, NetLogWithSource());
   EXPECT_EQ(2, pool_->NumConnectJobsInGroup("a"));
   EXPECT_EQ(2, pool_->NumUnassignedConnectJobsInGroup("a"));
   EXPECT_EQ(0, pool_->IdleSocketCountInGroup("a"));
 
   ClientSocketHandle handle1;
   TestCompletionCallback callback1;
-  EXPECT_EQ(ERR_IO_PENDING,
-            handle1.Init("a", params_, DEFAULT_PRIORITY,
-                         ClientSocketPool::RespectLimits::ENABLED,
-                         callback1.callback(), pool_.get(), BoundNetLog()));
-  ASSERT_EQ(OK, callback1.WaitForResult());
+  EXPECT_EQ(
+      ERR_IO_PENDING,
+      handle1.Init("a", params_, DEFAULT_PRIORITY,
+                   ClientSocketPool::RespectLimits::ENABLED,
+                   callback1.callback(), pool_.get(), NetLogWithSource()));
+  ASSERT_THAT(callback1.WaitForResult(), IsOk());
 
   ClientSocketHandle handle2;
   TestCompletionCallback callback2;
   int rv = handle2.Init("a", params_, DEFAULT_PRIORITY,
                         ClientSocketPool::RespectLimits::ENABLED,
-                        callback2.callback(), pool_.get(), BoundNetLog());
+                        callback2.callback(), pool_.get(), NetLogWithSource());
   if (rv != OK) {
-    EXPECT_EQ(ERR_IO_PENDING, rv);
-    EXPECT_EQ(OK, callback2.WaitForResult());
+    EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
+    EXPECT_THAT(callback2.WaitForResult(), IsOk());
   }
 
   EXPECT_EQ(0, pool_->NumConnectJobsInGroup("a"));
@@ -3177,7 +3439,7 @@ TEST_F(ClientSocketPoolBaseTest, RequestSocketsMultipleTimesDoesNothing) {
   EXPECT_EQ(0, pool_->NumUnassignedConnectJobsInGroup("a"));
   EXPECT_EQ(2, pool_->IdleSocketCountInGroup("a"));
 
-  pool_->RequestSockets("a", &params_, 2, BoundNetLog());
+  pool_->RequestSockets("a", &params_, 2, NetLogWithSource());
   EXPECT_EQ(0, pool_->NumConnectJobsInGroup("a"));
   EXPECT_EQ(0, pool_->NumUnassignedConnectJobsInGroup("a"));
   EXPECT_EQ(2, pool_->IdleSocketCountInGroup("a"));
@@ -3187,24 +3449,24 @@ TEST_F(ClientSocketPoolBaseTest, RequestSocketsDifferentNumSockets) {
   CreatePool(4, 4);
   connect_job_factory_->set_job_type(TestConnectJob::kMockPendingJob);
 
-  pool_->RequestSockets("a", &params_, 1, BoundNetLog());
+  pool_->RequestSockets("a", &params_, 1, NetLogWithSource());
 
   ASSERT_TRUE(pool_->HasGroup("a"));
   EXPECT_EQ(1, pool_->NumConnectJobsInGroup("a"));
   EXPECT_EQ(1, pool_->NumUnassignedConnectJobsInGroup("a"));
   EXPECT_EQ(0, pool_->IdleSocketCountInGroup("a"));
 
-  pool_->RequestSockets("a", &params_, 2, BoundNetLog());
+  pool_->RequestSockets("a", &params_, 2, NetLogWithSource());
   EXPECT_EQ(2, pool_->NumConnectJobsInGroup("a"));
   EXPECT_EQ(2, pool_->NumUnassignedConnectJobsInGroup("a"));
   EXPECT_EQ(0, pool_->IdleSocketCountInGroup("a"));
 
-  pool_->RequestSockets("a", &params_, 3, BoundNetLog());
+  pool_->RequestSockets("a", &params_, 3, NetLogWithSource());
   EXPECT_EQ(3, pool_->NumConnectJobsInGroup("a"));
   EXPECT_EQ(3, pool_->NumUnassignedConnectJobsInGroup("a"));
   EXPECT_EQ(0, pool_->IdleSocketCountInGroup("a"));
 
-  pool_->RequestSockets("a", &params_, 1, BoundNetLog());
+  pool_->RequestSockets("a", &params_, 1, NetLogWithSource());
   EXPECT_EQ(3, pool_->NumConnectJobsInGroup("a"));
   EXPECT_EQ(3, pool_->NumUnassignedConnectJobsInGroup("a"));
   EXPECT_EQ(0, pool_->IdleSocketCountInGroup("a"));
@@ -3214,7 +3476,7 @@ TEST_F(ClientSocketPoolBaseTest, PreconnectJobsTakenByNormalRequests) {
   CreatePool(kDefaultMaxSockets, kDefaultMaxSocketsPerGroup);
   connect_job_factory_->set_job_type(TestConnectJob::kMockPendingJob);
 
-  pool_->RequestSockets("a", &params_, 1, BoundNetLog());
+  pool_->RequestSockets("a", &params_, 1, NetLogWithSource());
 
   ASSERT_TRUE(pool_->HasGroup("a"));
   EXPECT_EQ(1, pool_->NumConnectJobsInGroup("a"));
@@ -3223,16 +3485,17 @@ TEST_F(ClientSocketPoolBaseTest, PreconnectJobsTakenByNormalRequests) {
 
   ClientSocketHandle handle1;
   TestCompletionCallback callback1;
-  EXPECT_EQ(ERR_IO_PENDING,
-            handle1.Init("a", params_, DEFAULT_PRIORITY,
-                         ClientSocketPool::RespectLimits::ENABLED,
-                         callback1.callback(), pool_.get(), BoundNetLog()));
+  EXPECT_EQ(
+      ERR_IO_PENDING,
+      handle1.Init("a", params_, DEFAULT_PRIORITY,
+                   ClientSocketPool::RespectLimits::ENABLED,
+                   callback1.callback(), pool_.get(), NetLogWithSource()));
 
   EXPECT_EQ(1, pool_->NumConnectJobsInGroup("a"));
   EXPECT_EQ(0, pool_->NumUnassignedConnectJobsInGroup("a"));
   EXPECT_EQ(0, pool_->IdleSocketCountInGroup("a"));
 
-  ASSERT_EQ(OK, callback1.WaitForResult());
+  ASSERT_THAT(callback1.WaitForResult(), IsOk());
 
   // Make sure if a preconnected socket is not fully connected when a request
   // starts, it has a connect start time.
@@ -3247,7 +3510,7 @@ TEST_F(ClientSocketPoolBaseTest, PreconnectJobsTakenByNormalRequests) {
 TEST_F(ClientSocketPoolBaseTest, ConnectedPreconnectJobsHaveNoConnectTimes) {
   CreatePool(kDefaultMaxSockets, kDefaultMaxSocketsPerGroup);
   connect_job_factory_->set_job_type(TestConnectJob::kMockJob);
-  pool_->RequestSockets("a", &params_, 1, BoundNetLog());
+  pool_->RequestSockets("a", &params_, 1, NetLogWithSource());
 
   ASSERT_TRUE(pool_->HasGroup("a"));
   EXPECT_EQ(0, pool_->NumConnectJobsInGroup("a"));
@@ -3256,9 +3519,10 @@ TEST_F(ClientSocketPoolBaseTest, ConnectedPreconnectJobsHaveNoConnectTimes) {
 
   ClientSocketHandle handle;
   TestCompletionCallback callback;
-  EXPECT_EQ(OK, handle.Init("a", params_, DEFAULT_PRIORITY,
-                            ClientSocketPool::RespectLimits::ENABLED,
-                            callback.callback(), pool_.get(), BoundNetLog()));
+  EXPECT_EQ(OK,
+            handle.Init("a", params_, DEFAULT_PRIORITY,
+                        ClientSocketPool::RespectLimits::ENABLED,
+                        callback.callback(), pool_.get(), NetLogWithSource()));
 
   // Make sure the idle socket was used.
   EXPECT_EQ(0, pool_->IdleSocketCountInGroup("a"));
@@ -3281,29 +3545,32 @@ TEST_F(ClientSocketPoolBaseTest, PreconnectClosesIdleSocketRemovesGroup) {
   // Set up one idle socket in "a".
   ClientSocketHandle handle1;
   TestCompletionCallback callback1;
-  EXPECT_EQ(ERR_IO_PENDING,
-            handle1.Init("a", params_, DEFAULT_PRIORITY,
-                         ClientSocketPool::RespectLimits::ENABLED,
-                         callback1.callback(), pool_.get(), BoundNetLog()));
+  EXPECT_EQ(
+      ERR_IO_PENDING,
+      handle1.Init("a", params_, DEFAULT_PRIORITY,
+                   ClientSocketPool::RespectLimits::ENABLED,
+                   callback1.callback(), pool_.get(), NetLogWithSource()));
 
-  ASSERT_EQ(OK, callback1.WaitForResult());
+  ASSERT_THAT(callback1.WaitForResult(), IsOk());
   handle1.Reset();
   EXPECT_EQ(1, pool_->IdleSocketCountInGroup("a"));
 
   // Set up two active sockets in "b".
   ClientSocketHandle handle2;
   TestCompletionCallback callback2;
-  EXPECT_EQ(ERR_IO_PENDING,
-            handle1.Init("b", params_, DEFAULT_PRIORITY,
-                         ClientSocketPool::RespectLimits::ENABLED,
-                         callback1.callback(), pool_.get(), BoundNetLog()));
-  EXPECT_EQ(ERR_IO_PENDING,
-            handle2.Init("b", params_, DEFAULT_PRIORITY,
-                         ClientSocketPool::RespectLimits::ENABLED,
-                         callback2.callback(), pool_.get(), BoundNetLog()));
+  EXPECT_EQ(
+      ERR_IO_PENDING,
+      handle1.Init("b", params_, DEFAULT_PRIORITY,
+                   ClientSocketPool::RespectLimits::ENABLED,
+                   callback1.callback(), pool_.get(), NetLogWithSource()));
+  EXPECT_EQ(
+      ERR_IO_PENDING,
+      handle2.Init("b", params_, DEFAULT_PRIORITY,
+                   ClientSocketPool::RespectLimits::ENABLED,
+                   callback2.callback(), pool_.get(), NetLogWithSource()));
 
-  ASSERT_EQ(OK, callback1.WaitForResult());
-  ASSERT_EQ(OK, callback2.WaitForResult());
+  ASSERT_THAT(callback1.WaitForResult(), IsOk());
+  ASSERT_THAT(callback2.WaitForResult(), IsOk());
   EXPECT_EQ(0, pool_->IdleSocketCountInGroup("b"));
   EXPECT_EQ(0, pool_->NumUnassignedConnectJobsInGroup("b"));
   EXPECT_EQ(2, pool_->NumActiveSocketsInGroup("b"));
@@ -3313,7 +3580,7 @@ TEST_F(ClientSocketPoolBaseTest, PreconnectClosesIdleSocketRemovesGroup) {
   // Requesting 2 preconnected sockets for "a" should fail to allocate any more
   // sockets for "a", and "b" should still have 2 active sockets.
 
-  pool_->RequestSockets("a", &params_, 2, BoundNetLog());
+  pool_->RequestSockets("a", &params_, 2, NetLogWithSource());
   EXPECT_EQ(0, pool_->NumConnectJobsInGroup("a"));
   EXPECT_EQ(0, pool_->NumUnassignedConnectJobsInGroup("a"));
   EXPECT_EQ(1, pool_->IdleSocketCountInGroup("a"));
@@ -3331,7 +3598,7 @@ TEST_F(ClientSocketPoolBaseTest, PreconnectClosesIdleSocketRemovesGroup) {
   EXPECT_EQ(2, pool_->IdleSocketCountInGroup("b"));
   EXPECT_EQ(0, pool_->NumActiveSocketsInGroup("b"));
 
-  pool_->RequestSockets("a", &params_, 2, BoundNetLog());
+  pool_->RequestSockets("a", &params_, 2, NetLogWithSource());
   EXPECT_EQ(1, pool_->NumConnectJobsInGroup("a"));
   EXPECT_EQ(1, pool_->NumUnassignedConnectJobsInGroup("a"));
   EXPECT_EQ(1, pool_->IdleSocketCountInGroup("a"));
@@ -3350,7 +3617,7 @@ TEST_F(ClientSocketPoolBaseTest, PreconnectWithoutBackupJob) {
   connect_job_factory_->set_job_type(TestConnectJob::kMockWaitingJob);
   connect_job_factory_->set_timeout_duration(
       base::TimeDelta::FromMilliseconds(500));
-  pool_->RequestSockets("a", &params_, 1, BoundNetLog());
+  pool_->RequestSockets("a", &params_, 1, NetLogWithSource());
   EXPECT_EQ(1, pool_->NumConnectJobsInGroup("a"));
   EXPECT_EQ(1, pool_->NumUnassignedConnectJobsInGroup("a"));
   EXPECT_EQ(0, pool_->IdleSocketCountInGroup("a"));
@@ -3372,7 +3639,7 @@ TEST_F(ClientSocketPoolBaseTest, PreconnectWithBackupJob) {
 
   // Make the ConnectJob hang forever.
   connect_job_factory_->set_job_type(TestConnectJob::kMockWaitingJob);
-  pool_->RequestSockets("a", &params_, 1, BoundNetLog());
+  pool_->RequestSockets("a", &params_, 1, NetLogWithSource());
   EXPECT_EQ(1, pool_->NumConnectJobsInGroup("a"));
   EXPECT_EQ(1, pool_->NumUnassignedConnectJobsInGroup("a"));
   EXPECT_EQ(0, pool_->IdleSocketCountInGroup("a"));
@@ -3385,13 +3652,13 @@ TEST_F(ClientSocketPoolBaseTest, PreconnectWithBackupJob) {
   EXPECT_EQ(ERR_IO_PENDING,
             handle.Init("a", params_, DEFAULT_PRIORITY,
                         ClientSocketPool::RespectLimits::ENABLED,
-                        callback.callback(), pool_.get(), BoundNetLog()));
+                        callback.callback(), pool_.get(), NetLogWithSource()));
   // Timer has started, but the backup connect job shouldn't be created yet.
   EXPECT_EQ(1, pool_->NumConnectJobsInGroup("a"));
   EXPECT_EQ(0, pool_->NumUnassignedConnectJobsInGroup("a"));
   EXPECT_EQ(0, pool_->IdleSocketCountInGroup("a"));
   EXPECT_EQ(0, pool_->NumActiveSocketsInGroup("a"));
-  ASSERT_EQ(OK, callback.WaitForResult());
+  ASSERT_THAT(callback.WaitForResult(), IsOk());
 
   // The hung connect job should still be there, but everything else should be
   // complete.
@@ -3407,7 +3674,7 @@ TEST_F(ClientSocketPoolBaseTest, PreconnectWithUnreadData) {
   CreatePool(kDefaultMaxSockets, kDefaultMaxSocketsPerGroup);
   connect_job_factory_->set_job_type(TestConnectJob::kMockUnreadDataJob);
 
-  pool_->RequestSockets("a", &params_, 1, BoundNetLog());
+  pool_->RequestSockets("a", &params_, 1, NetLogWithSource());
 
   ASSERT_TRUE(pool_->HasGroup("a"));
   EXPECT_EQ(0, pool_->NumConnectJobsInGroup("a"));
@@ -3419,9 +3686,10 @@ TEST_F(ClientSocketPoolBaseTest, PreconnectWithUnreadData) {
   connect_job_factory_->set_job_type(TestConnectJob::kMockFailingJob);
   ClientSocketHandle handle;
   TestCompletionCallback callback;
-  EXPECT_EQ(OK, handle.Init("a", params_, DEFAULT_PRIORITY,
-                            ClientSocketPool::RespectLimits::ENABLED,
-                            callback.callback(), pool_.get(), BoundNetLog()));
+  EXPECT_EQ(OK,
+            handle.Init("a", params_, DEFAULT_PRIORITY,
+                        ClientSocketPool::RespectLimits::ENABLED,
+                        callback.callback(), pool_.get(), NetLogWithSource()));
 
   ASSERT_TRUE(pool_->HasGroup("a"));
   EXPECT_EQ(0, pool_->NumConnectJobsInGroup("a"));
@@ -3456,14 +3724,14 @@ class MockLayeredPool : public HigherLayeredPool {
     scoped_refptr<TestSocketParams> params(new TestSocketParams());
     return handle_.Init(group_name_, params, DEFAULT_PRIORITY,
                         ClientSocketPool::RespectLimits::ENABLED,
-                        callback_.callback(), pool, BoundNetLog());
+                        callback_.callback(), pool, NetLogWithSource());
   }
 
   int RequestSocketWithoutLimits(TestClientSocketPool* pool) {
     scoped_refptr<TestSocketParams> params(new TestSocketParams());
     return handle_.Init(group_name_, params, MAXIMUM_PRIORITY,
                         ClientSocketPool::RespectLimits::DISABLED,
-                        callback_.callback(), pool, BoundNetLog());
+                        callback_.callback(), pool, NetLogWithSource());
   }
 
   bool ReleaseOneConnection() {
@@ -3494,22 +3762,26 @@ TEST_F(ClientSocketPoolBaseTest, FailToCloseIdleSocketsNotHeldByLayeredPool) {
   connect_job_factory_->set_job_type(TestConnectJob::kMockJob);
 
   MockLayeredPool mock_layered_pool(pool_.get(), "foo");
-  EXPECT_EQ(OK, mock_layered_pool.RequestSocket(pool_.get()));
+  EXPECT_THAT(mock_layered_pool.RequestSocket(pool_.get()), IsOk());
   EXPECT_CALL(mock_layered_pool, CloseOneIdleConnection())
       .WillOnce(Return(false));
   EXPECT_FALSE(pool_->CloseOneIdleConnectionInHigherLayeredPool());
 }
 
 TEST_F(ClientSocketPoolBaseTest, ForciblyCloseIdleSocketsHeldByLayeredPool) {
+  base::HistogramTester histograms;
   CreatePool(kDefaultMaxSockets, kDefaultMaxSocketsPerGroup);
   connect_job_factory_->set_job_type(TestConnectJob::kMockJob);
 
   MockLayeredPool mock_layered_pool(pool_.get(), "foo");
-  EXPECT_EQ(OK, mock_layered_pool.RequestSocket(pool_.get()));
+  EXPECT_THAT(mock_layered_pool.RequestSocket(pool_.get()), IsOk());
   EXPECT_CALL(mock_layered_pool, CloseOneIdleConnection())
       .WillOnce(Invoke(&mock_layered_pool,
                        &MockLayeredPool::ReleaseOneConnection));
   EXPECT_TRUE(pool_->CloseOneIdleConnectionInHigherLayeredPool());
+  EXPECT_THAT(histograms.GetAllSamples(kIdleSocketFateHistogram),
+              testing::ElementsAre(
+                  base::Bucket(/*IDLE_SOCKET_FATE_RELEASE_UNUSABLE=*/3, 1)));
 }
 
 // Tests the basic case of closing an idle socket in a higher layered pool when
@@ -3519,7 +3791,7 @@ TEST_F(ClientSocketPoolBaseTest, CloseIdleSocketsHeldByLayeredPoolWhenNeeded) {
   connect_job_factory_->set_job_type(TestConnectJob::kMockJob);
 
   MockLayeredPool mock_layered_pool(pool_.get(), "foo");
-  EXPECT_EQ(OK, mock_layered_pool.RequestSocket(pool_.get()));
+  EXPECT_THAT(mock_layered_pool.RequestSocket(pool_.get()), IsOk());
   EXPECT_CALL(mock_layered_pool, CloseOneIdleConnection())
       .WillOnce(Invoke(&mock_layered_pool,
                        &MockLayeredPool::ReleaseOneConnection));
@@ -3528,8 +3800,8 @@ TEST_F(ClientSocketPoolBaseTest, CloseIdleSocketsHeldByLayeredPoolWhenNeeded) {
   EXPECT_EQ(ERR_IO_PENDING,
             handle.Init("a", params_, DEFAULT_PRIORITY,
                         ClientSocketPool::RespectLimits::ENABLED,
-                        callback.callback(), pool_.get(), BoundNetLog()));
-  EXPECT_EQ(OK, callback.WaitForResult());
+                        callback.callback(), pool_.get(), NetLogWithSource()));
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 }
 
 // Same as above, but the idle socket is in the same group as the stalled
@@ -3546,12 +3818,13 @@ TEST_F(ClientSocketPoolBaseTest,
   // has the maximum number of connections already, it's not stalled).
   ClientSocketHandle handle1;
   TestCompletionCallback callback1;
-  EXPECT_EQ(OK, handle1.Init("group1", params_, DEFAULT_PRIORITY,
-                             ClientSocketPool::RespectLimits::ENABLED,
-                             callback1.callback(), pool_.get(), BoundNetLog()));
+  EXPECT_EQ(
+      OK, handle1.Init("group1", params_, DEFAULT_PRIORITY,
+                       ClientSocketPool::RespectLimits::ENABLED,
+                       callback1.callback(), pool_.get(), NetLogWithSource()));
 
   MockLayeredPool mock_layered_pool(pool_.get(), "group2");
-  EXPECT_EQ(OK, mock_layered_pool.RequestSocket(pool_.get()));
+  EXPECT_THAT(mock_layered_pool.RequestSocket(pool_.get()), IsOk());
   EXPECT_CALL(mock_layered_pool, CloseOneIdleConnection())
       .WillOnce(Invoke(&mock_layered_pool,
                        &MockLayeredPool::ReleaseOneConnection));
@@ -3560,8 +3833,8 @@ TEST_F(ClientSocketPoolBaseTest,
   EXPECT_EQ(ERR_IO_PENDING,
             handle.Init("group2", params_, DEFAULT_PRIORITY,
                         ClientSocketPool::RespectLimits::ENABLED,
-                        callback2.callback(), pool_.get(), BoundNetLog()));
-  EXPECT_EQ(OK, callback2.WaitForResult());
+                        callback2.callback(), pool_.get(), NetLogWithSource()));
+  EXPECT_THAT(callback2.WaitForResult(), IsOk());
 }
 
 // Tests the case when an idle socket can be closed when a new request is
@@ -3578,12 +3851,13 @@ TEST_F(ClientSocketPoolBaseTest,
 
   ClientSocketHandle handle1;
   TestCompletionCallback callback1;
-  EXPECT_EQ(OK, handle1.Init("group1", params_, DEFAULT_PRIORITY,
-                             ClientSocketPool::RespectLimits::ENABLED,
-                             callback1.callback(), pool_.get(), BoundNetLog()));
+  EXPECT_EQ(
+      OK, handle1.Init("group1", params_, DEFAULT_PRIORITY,
+                       ClientSocketPool::RespectLimits::ENABLED,
+                       callback1.callback(), pool_.get(), NetLogWithSource()));
 
   MockLayeredPool mock_layered_pool(pool_.get(), "group2");
-  EXPECT_EQ(OK, mock_layered_pool.RequestSocket(pool_.get()));
+  EXPECT_THAT(mock_layered_pool.RequestSocket(pool_.get()), IsOk());
   EXPECT_CALL(mock_layered_pool, CloseOneIdleConnection())
       .WillRepeatedly(Invoke(&mock_layered_pool,
                              &MockLayeredPool::ReleaseOneConnection));
@@ -3592,10 +3866,11 @@ TEST_F(ClientSocketPoolBaseTest,
   // The third request is made when the socket pool is in a stalled state.
   ClientSocketHandle handle3;
   TestCompletionCallback callback3;
-  EXPECT_EQ(ERR_IO_PENDING,
-            handle3.Init("group3", params_, DEFAULT_PRIORITY,
-                         ClientSocketPool::RespectLimits::ENABLED,
-                         callback3.callback(), pool_.get(), BoundNetLog()));
+  EXPECT_EQ(
+      ERR_IO_PENDING,
+      handle3.Init("group3", params_, DEFAULT_PRIORITY,
+                   ClientSocketPool::RespectLimits::ENABLED,
+                   callback3.callback(), pool_.get(), NetLogWithSource()));
 
   base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(callback3.have_result());
@@ -3606,16 +3881,17 @@ TEST_F(ClientSocketPoolBaseTest,
   mock_layered_pool.set_can_release_connection(true);
   ClientSocketHandle handle4;
   TestCompletionCallback callback4;
-  EXPECT_EQ(ERR_IO_PENDING,
-            handle4.Init("group3", params_, DEFAULT_PRIORITY,
-                         ClientSocketPool::RespectLimits::ENABLED,
-                         callback4.callback(), pool_.get(), BoundNetLog()));
-  EXPECT_EQ(OK, callback3.WaitForResult());
+  EXPECT_EQ(
+      ERR_IO_PENDING,
+      handle4.Init("group3", params_, DEFAULT_PRIORITY,
+                   ClientSocketPool::RespectLimits::ENABLED,
+                   callback4.callback(), pool_.get(), NetLogWithSource()));
+  EXPECT_THAT(callback3.WaitForResult(), IsOk());
   EXPECT_FALSE(callback4.have_result());
 
   // Closing a handle should free up another socket slot.
   handle1.Reset();
-  EXPECT_EQ(OK, callback4.WaitForResult());
+  EXPECT_THAT(callback4.WaitForResult(), IsOk());
 }
 
 // Tests the case when an idle socket can be closed when a new request is
@@ -3636,12 +3912,13 @@ TEST_F(ClientSocketPoolBaseTest,
 
   ClientSocketHandle handle1;
   TestCompletionCallback callback1;
-  EXPECT_EQ(OK, handle1.Init("group1", params_, DEFAULT_PRIORITY,
-                             ClientSocketPool::RespectLimits::ENABLED,
-                             callback1.callback(), pool_.get(), BoundNetLog()));
+  EXPECT_EQ(
+      OK, handle1.Init("group1", params_, DEFAULT_PRIORITY,
+                       ClientSocketPool::RespectLimits::ENABLED,
+                       callback1.callback(), pool_.get(), NetLogWithSource()));
 
   MockLayeredPool mock_layered_pool(pool_.get(), "group2");
-  EXPECT_EQ(OK, mock_layered_pool.RequestSocket(pool_.get()));
+  EXPECT_THAT(mock_layered_pool.RequestSocket(pool_.get()), IsOk());
   EXPECT_CALL(mock_layered_pool, CloseOneIdleConnection())
       .WillRepeatedly(Invoke(&mock_layered_pool,
                              &MockLayeredPool::ReleaseOneConnection));
@@ -3650,10 +3927,11 @@ TEST_F(ClientSocketPoolBaseTest,
   // The third request is made when the socket pool is in a stalled state.
   ClientSocketHandle handle3;
   TestCompletionCallback callback3;
-  EXPECT_EQ(ERR_IO_PENDING,
-            handle3.Init("group3", params_, MEDIUM,
-                         ClientSocketPool::RespectLimits::ENABLED,
-                         callback3.callback(), pool_.get(), BoundNetLog()));
+  EXPECT_EQ(
+      ERR_IO_PENDING,
+      handle3.Init("group3", params_, MEDIUM,
+                   ClientSocketPool::RespectLimits::ENABLED,
+                   callback3.callback(), pool_.get(), NetLogWithSource()));
 
   base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(callback3.have_result());
@@ -3663,16 +3941,17 @@ TEST_F(ClientSocketPoolBaseTest,
   mock_layered_pool.set_can_release_connection(true);
   ClientSocketHandle handle4;
   TestCompletionCallback callback4;
-  EXPECT_EQ(ERR_IO_PENDING,
-            handle4.Init("group3", params_, HIGHEST,
-                         ClientSocketPool::RespectLimits::ENABLED,
-                         callback4.callback(), pool_.get(), BoundNetLog()));
-  EXPECT_EQ(OK, callback4.WaitForResult());
+  EXPECT_EQ(
+      ERR_IO_PENDING,
+      handle4.Init("group3", params_, HIGHEST,
+                   ClientSocketPool::RespectLimits::ENABLED,
+                   callback4.callback(), pool_.get(), NetLogWithSource()));
+  EXPECT_THAT(callback4.WaitForResult(), IsOk());
   EXPECT_FALSE(callback3.have_result());
 
   // Closing a handle should free up another socket slot.
   handle1.Reset();
-  EXPECT_EQ(OK, callback3.WaitForResult());
+  EXPECT_THAT(callback3.WaitForResult(), IsOk());
 }
 
 TEST_F(ClientSocketPoolBaseTest,
@@ -3681,12 +3960,13 @@ TEST_F(ClientSocketPoolBaseTest,
   connect_job_factory_->set_job_type(TestConnectJob::kMockJob);
 
   MockLayeredPool mock_layered_pool1(pool_.get(), "foo");
-  EXPECT_EQ(OK, mock_layered_pool1.RequestSocket(pool_.get()));
+  EXPECT_THAT(mock_layered_pool1.RequestSocket(pool_.get()), IsOk());
   EXPECT_CALL(mock_layered_pool1, CloseOneIdleConnection())
       .WillRepeatedly(Invoke(&mock_layered_pool1,
                              &MockLayeredPool::ReleaseOneConnection));
   MockLayeredPool mock_layered_pool2(pool_.get(), "bar");
-  EXPECT_EQ(OK, mock_layered_pool2.RequestSocketWithoutLimits(pool_.get()));
+  EXPECT_THAT(mock_layered_pool2.RequestSocketWithoutLimits(pool_.get()),
+              IsOk());
   EXPECT_CALL(mock_layered_pool2, CloseOneIdleConnection())
       .WillRepeatedly(Invoke(&mock_layered_pool2,
                              &MockLayeredPool::ReleaseOneConnection));
@@ -3695,8 +3975,8 @@ TEST_F(ClientSocketPoolBaseTest,
   EXPECT_EQ(ERR_IO_PENDING,
             handle.Init("a", params_, DEFAULT_PRIORITY,
                         ClientSocketPool::RespectLimits::ENABLED,
-                        callback.callback(), pool_.get(), BoundNetLog()));
-  EXPECT_EQ(OK, callback.WaitForResult());
+                        callback.callback(), pool_.get(), NetLogWithSource()));
+  EXPECT_THAT(callback.WaitForResult(), IsOk());
 }
 
 // Test that when a socket pool and group are at their limits, a request
@@ -3726,7 +4006,7 @@ TEST_F(ClientSocketPoolBaseTest, IgnoreLimits) {
                                 ClientSocketPool::RespectLimits::DISABLED));
   ASSERT_EQ(1, pool_->NumConnectJobsInGroup("a"));
 
-  EXPECT_EQ(OK, request(2)->WaitForResult());
+  EXPECT_THAT(request(2)->WaitForResult(), IsOk());
   EXPECT_FALSE(request(1)->have_result());
 }
 
@@ -3761,7 +4041,7 @@ TEST_F(ClientSocketPoolBaseTest, IgnoreLimitsCancelOtherJob) {
   request(1)->handle()->Reset();
   ASSERT_EQ(1, pool_->NumConnectJobsInGroup("a"));
 
-  EXPECT_EQ(OK, request(2)->WaitForResult());
+  EXPECT_THAT(request(2)->WaitForResult(), IsOk());
   EXPECT_FALSE(request(1)->have_result());
 }
 

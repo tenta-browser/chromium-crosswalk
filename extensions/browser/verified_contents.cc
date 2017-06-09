@@ -44,8 +44,8 @@ const char kWebstoreKId[] = "webstore";
 // Helper function to iterate over a list of dictionaries, returning the
 // dictionary that has |key| -> |value| in it, if any, or NULL.
 DictionaryValue* FindDictionaryWithValue(const ListValue* list,
-                                         std::string key,
-                                         std::string value) {
+                                         const std::string& key,
+                                         const std::string& value) {
   for (const auto& i : *list) {
     DictionaryValue* dictionary;
     if (!i->GetAsDictionary(&dictionary))
@@ -97,7 +97,7 @@ bool VerifiedContents::InitFrom(const base::FilePath& path,
     return false;
 
   std::unique_ptr<base::Value> value(base::JSONReader::Read(payload));
-  if (!value.get() || !value->IsType(Value::TYPE_DICTIONARY))
+  if (!value.get() || !value->IsType(Value::Type::DICTIONARY))
     return false;
   DictionaryValue* dictionary = static_cast<DictionaryValue*>(value.get());
 
@@ -236,7 +236,7 @@ bool VerifiedContents::GetPayload(const base::FilePath& path,
   if (!base::ReadFileToString(path, &contents))
     return false;
   std::unique_ptr<base::Value> value(base::JSONReader::Read(contents));
-  if (!value.get() || !value->IsType(Value::TYPE_LIST))
+  if (!value.get() || !value->IsType(Value::Type::LIST))
     return false;
   ListValue* top_list = static_cast<ListValue*>(value.get());
 

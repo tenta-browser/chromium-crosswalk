@@ -72,14 +72,6 @@ int DebugColors::SurfaceBorderWidth(const LayerTreeImpl* tree_impl) {
   return Scale(2, tree_impl);
 }
 
-// Replicas of render surfaces are purple.
-SkColor DebugColors::SurfaceReplicaBorderColor() {
-  return SkColorSetARGB(100, 160, 0, 255);
-}
-int DebugColors::SurfaceReplicaBorderWidth(const LayerTreeImpl* tree_impl) {
-  return Scale(2, tree_impl);
-}
-
 // ======= Tile colors =======
 
 // High-res tile borders are cyan.
@@ -146,6 +138,19 @@ int DebugColors::DirectPictureBorderWidth(const LayerTreeImpl* tree_impl) {
   return Scale(1, tree_impl);
 }
 
+// Borders added to GL composited draw quads. This is useful to debug HW
+// overlays. When the border disappears, it means we're using an overlay.
+// We draw borders in different colors to be able to distinguish neighboring
+// quads (often shadows).
+SkColor DebugColors::GLCompositedTextureQuadBorderColor(int index) {
+  const SkColor kColors[] = {SK_ColorBLUE,   SK_ColorGREEN, SK_ColorRED,
+                             SK_ColorYELLOW, SK_ColorCYAN,  SK_ColorMAGENTA};
+  return kColors[index % arraysize(kColors)];
+}
+int DebugColors::GLCompositedTextureQuadBoderWidth() {
+  return 6;
+}
+
 // Compressed tile borders are blue.
 SkColor DebugColors::CompressedTileBorderColor() {
   return SkColorSetARGB(100, 20, 20, 240);
@@ -206,22 +211,13 @@ SkColor DebugColors::SurfaceDamageRectFillColor() {
   return SkColorSetARGB(30, 200, 100, 0);
 }
 
-// Surface replica screen space rects in green.
+// Surface screen space rects in yellow-green.
 SkColor DebugColors::ScreenSpaceLayerRectBorderColor() {
   return SkColorSetARGB(255, 100, 200, 0);
 }
 int DebugColors::ScreenSpaceLayerRectBorderWidth() { return 2; }
 SkColor DebugColors::ScreenSpaceLayerRectFillColor() {
   return SkColorSetARGB(30, 100, 200, 0);
-}
-
-// Layer screen space rects in purple.
-SkColor DebugColors::ScreenSpaceSurfaceReplicaRectBorderColor() {
-  return SkColorSetARGB(255, 100, 0, 200);
-}
-int DebugColors::ScreenSpaceSurfaceReplicaRectBorderWidth() { return 2; }
-SkColor DebugColors::ScreenSpaceSurfaceReplicaRectFillColor() {
-  return SkColorSetARGB(10, 100, 0, 200);
 }
 
 // Touch-event-handler rects in yellow.

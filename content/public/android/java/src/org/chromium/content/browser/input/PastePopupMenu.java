@@ -18,9 +18,9 @@ public interface PastePopupMenu {
         void paste();
 
         /**
-         * Called when the popup menu is dismissed.
+         * @return Whether clipboard is nonempty.
          */
-        void onDismiss();
+        boolean canPaste();
     }
 
     /**

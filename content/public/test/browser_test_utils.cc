@@ -10,32 +10,47 @@
 
 #include "base/auto_reset.h"
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/json/json_reader.h"
 #include "base/macros.h"
 #include "base/process/kill.h"
 #include "base/rand_util.h"
+#include "base/stl_util.h"
+#include "base/strings/pattern.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/test/test_timeouts.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "content/browser/accessibility/accessibility_mode_helper.h"
+#include "cc/surfaces/surface.h"
+#include "cc/surfaces/surface_manager.h"
 #include "content/browser/accessibility/browser_accessibility.h"
 #include "content/browser/accessibility/browser_accessibility_manager.h"
+#include "content/browser/browser_plugin/browser_plugin_guest.h"
+#include "content/browser/compositor/surface_utils.h"
+#include "content/browser/frame_host/cross_process_frame_connector.h"
 #include "content/browser/frame_host/frame_tree_node.h"
 #include "content/browser/frame_host/render_frame_host_impl.h"
+#include "content/browser/frame_host/render_widget_host_view_child_frame.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/browser/web_contents/web_contents_view.h"
+#include "content/common/fileapi/file_system_messages.h"
+#include "content/common/fileapi/webblob_messages.h"
 #include "content/common/input/synthetic_web_input_event_builders.h"
 #include "content/common/input_messages.h"
 #include "content/common/view_messages.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/browser_plugin_guest_manager.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/histogram_fetcher.h"
 #include "content/public/browser/navigation_entry.h"
+#include "content/public/browser/navigation_handle.h"
+#include "content/public/browser/navigation_throttle.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_frame_host.h"
@@ -43,20 +58,30 @@
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/test/test_fileapi_operation_waiter.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "content/public/test/test_utils.h"
 #include "content/test/accessibility_browser_test_utils.h"
+#include "ipc/ipc_security_test_util.h"
 #include "net/base/filename_util.h"
 #include "net/cookies/cookie_store.h"
+#include "net/filter/gzip_header.h"
+#include "net/filter/gzip_source_stream.h"
+#include "net/filter/mock_source_stream.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_request.h"
 #include "net/test/embedded_test_server/http_response.h"
 #include "net/test/python_utils.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
+#include "storage/browser/fileapi/file_system_context.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/base/clipboard/clipboard.h"
+#include "ui/base/clipboard/scoped_clipboard_writer.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/base/test/test_clipboard.h"
 #include "ui/compositor/test/draw_waiter_for_test.h"
+#include "ui/events/base_event_utils.h"
 #include "ui/events/gesture_detection/gesture_configuration.h"
 #include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/events/keycodes/dom/keycode_converter.h"
@@ -74,49 +99,6 @@
 
 namespace content {
 namespace {
-
-class DOMOperationObserver : public NotificationObserver,
-                             public WebContentsObserver {
- public:
-  explicit DOMOperationObserver(RenderFrameHost* rfh)
-      : WebContentsObserver(WebContents::FromRenderFrameHost(rfh)),
-        did_respond_(false) {
-    registrar_.Add(this, NOTIFICATION_DOM_OPERATION_RESPONSE,
-                   Source<WebContents>(web_contents()));
-    message_loop_runner_ = new MessageLoopRunner;
-  }
-
-  void Observe(int type,
-               const NotificationSource& source,
-               const NotificationDetails& details) override {
-    DCHECK(type == NOTIFICATION_DOM_OPERATION_RESPONSE);
-    Details<std::string> dom_op_result(details);
-    if (!did_respond_) {
-      response_ = *dom_op_result.ptr();
-      did_respond_ = true;
-      message_loop_runner_->Quit();
-    }
-  }
-
-  // Overridden from WebContentsObserver:
-  void RenderProcessGone(base::TerminationStatus status) override {
-    message_loop_runner_->Quit();
-  }
-
-  bool WaitAndGetResponse(std::string* response) WARN_UNUSED_RESULT {
-    message_loop_runner_->Run();
-    *response = response_;
-    return did_respond_;
-  }
-
- private:
-  NotificationRegistrar registrar_;
-  std::string response_;
-  bool did_respond_;
-  scoped_refptr<MessageLoopRunner> message_loop_runner_;
-
-  DISALLOW_COPY_AND_ASSIGN(DOMOperationObserver);
-};
 
 class InterstitialObserver : public content::WebContentsObserver {
  public:
@@ -156,12 +138,14 @@ bool ExecuteScriptHelper(RenderFrameHost* render_frame_host,
   //                automation id.
   std::string script =
       "window.domAutomationController.setAutomationId(0);" + original_script;
-  DOMOperationObserver dom_op_observer(render_frame_host);
+  // TODO(lukasza): Only get messages from the specific |render_frame_host|.
+  DOMMessageQueue dom_message_queue(
+      WebContents::FromRenderFrameHost(render_frame_host));
   render_frame_host->ExecuteJavaScriptWithUserGestureForTests(
       base::UTF8ToUTF16(script));
   std::string json;
-  if (!dom_op_observer.WaitAndGetResponse(&json)) {
-    DLOG(ERROR) << "Cannot communicate with DOMOperationObserver.";
+  if (!dom_message_queue.WaitForMessage(&json)) {
+    DLOG(ERROR) << "Cannot communicate with DOMMessageQueue.";
     return false;
   }
 
@@ -190,15 +174,19 @@ bool ExecuteScriptInIsolatedWorldHelper(RenderFrameHost* render_frame_host,
                                         const int world_id,
                                         const std::string& original_script,
                                         std::unique_ptr<base::Value>* result) {
+  // TODO(jcampan): we should make the domAutomationController not require an
+  //                automation id.
   std::string script =
       "window.domAutomationController.setAutomationId(0);" + original_script;
-  DOMOperationObserver dom_op_observer(render_frame_host);
+  // TODO(lukasza): Only get messages from the specific |render_frame_host|.
+  DOMMessageQueue dom_message_queue(
+      WebContents::FromRenderFrameHost(render_frame_host));
   render_frame_host->ExecuteJavaScriptInIsolatedWorld(
       base::UTF8ToUTF16(script),
       content::RenderFrameHost::JavaScriptResultCallback(), world_id);
   std::string json;
-  if (!dom_op_observer.WaitAndGetResponse(&json)) {
-    DLOG(ERROR) << "Cannot communicate with DOMOperationObserver.";
+  if (!dom_message_queue.WaitForMessage(&json)) {
+    DLOG(ERROR) << "Cannot communicate with DOMMessageQueue.";
     return false;
   }
 
@@ -220,18 +208,12 @@ void BuildSimpleWebKeyEvent(blink::WebInputEvent::Type type,
                             ui::DomKey key,
                             ui::DomCode code,
                             ui::KeyboardCode key_code,
-                            int modifiers,
                             NativeWebKeyboardEvent* event) {
   event->domKey = key;
   event->domCode = static_cast<int>(code);
   event->nativeKeyCode = ui::KeycodeConverter::DomCodeToNativeKeycode(code);
   event->windowsKeyCode = key_code;
-  event->setKeyIdentifierFromWindowsKeyCode();
-  event->type = type;
-  event->modifiers = modifiers;
   event->isSystemKey = false;
-  event->timeStampSeconds =
-      (base::TimeTicks::Now() - base::TimeTicks()).InSecondsF();
   event->skip_in_browser = true;
 
   if (type == blink::WebInputEvent::Char ||
@@ -247,8 +229,8 @@ void InjectRawKeyEvent(WebContents* web_contents,
                        ui::DomCode code,
                        ui::KeyboardCode key_code,
                        int modifiers) {
-  NativeWebKeyboardEvent event;
-  BuildSimpleWebKeyEvent(type, key, code, key_code, modifiers, &event);
+  NativeWebKeyboardEvent event(type, modifiers, base::TimeTicks::Now());
+  BuildSimpleWebKeyEvent(type, key, code, key_code, &event);
   WebContentsImpl* web_contents_impl =
       static_cast<WebContentsImpl*>(web_contents);
   RenderWidgetHostImpl* main_frame_rwh =
@@ -295,7 +277,7 @@ void SetCookieOnIOThread(const GURL& url,
 }
 
 std::unique_ptr<net::test_server::HttpResponse>
-CrossSiteRedirectResponseHandler(const GURL& server_base_url,
+CrossSiteRedirectResponseHandler(const net::EmbeddedTestServer* test_server,
                                  const net::test_server::HttpRequest& request) {
   net::HttpStatusCode http_status_code;
 
@@ -326,7 +308,8 @@ CrossSiteRedirectResponseHandler(const GURL& server_base_url,
   // Replace the host of the URL with the one passed in the URL.
   GURL::Replacements replace_host;
   replace_host.SetHostStr(base::StringPiece(params).substr(0, slash));
-  GURL redirect_server = server_base_url.ReplaceComponents(replace_host);
+  GURL redirect_server =
+      test_server->base_url().ReplaceComponents(replace_host);
 
   // Append the real part of the path to the new URL.
   std::string path = params.substr(slash + 1);
@@ -339,6 +322,97 @@ CrossSiteRedirectResponseHandler(const GURL& server_base_url,
   http_response->AddCustomHeader("Location", redirect_target.spec());
   return std::move(http_response);
 }
+
+// Helper class used by the TestNavigationManager to pause navigations.
+// Note: the throttle should be added to the *end* of the list of throttles,
+// so all NavigationThrottles that should be attached observe the
+// WillStartRequest callback. RegisterThrottleForTesting has this behavior.
+class TestNavigationManagerThrottle : public NavigationThrottle {
+ public:
+  TestNavigationManagerThrottle(NavigationHandle* handle,
+                                base::Closure on_will_start_request_closure,
+                                base::Closure on_will_process_response_closure)
+      : NavigationThrottle(handle),
+        on_will_start_request_closure_(on_will_start_request_closure),
+        on_will_process_response_closure_(on_will_process_response_closure) {}
+  ~TestNavigationManagerThrottle() override {}
+
+ private:
+  // NavigationThrottle:
+  NavigationThrottle::ThrottleCheckResult WillStartRequest() override {
+    BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
+                            on_will_start_request_closure_);
+    return NavigationThrottle::DEFER;
+  }
+
+  NavigationThrottle::ThrottleCheckResult WillProcessResponse() override {
+    BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
+                            on_will_process_response_closure_);
+    return NavigationThrottle::DEFER;
+  }
+
+  base::Closure on_will_start_request_closure_;
+  base::Closure on_will_process_response_closure_;
+};
+
+bool HasGzipHeader(const base::RefCountedMemory& maybe_gzipped) {
+  net::GZipHeader header;
+  net::GZipHeader::Status header_status = net::GZipHeader::INCOMPLETE_HEADER;
+  const char* header_end = nullptr;
+  while (header_status == net::GZipHeader::INCOMPLETE_HEADER) {
+    header_status = header.ReadMore(maybe_gzipped.front_as<char>(),
+                                    maybe_gzipped.size(),
+                                    &header_end);
+  }
+  return header_status == net::GZipHeader::COMPLETE_HEADER;
+}
+
+void AppendGzippedResource(const base::RefCountedMemory& encoded,
+                           std::string* to_append) {
+  std::unique_ptr<net::MockSourceStream> source_stream(
+      new net::MockSourceStream());
+  source_stream->AddReadResult(encoded.front_as<char>(), encoded.size(),
+                               net::OK, net::MockSourceStream::SYNC);
+  // Add an EOF.
+  source_stream->AddReadResult(encoded.front_as<char>() + encoded.size(), 0,
+                               net::OK, net::MockSourceStream::SYNC);
+  std::unique_ptr<net::GzipSourceStream> filter = net::GzipSourceStream::Create(
+      std::move(source_stream), net::SourceStream::TYPE_GZIP);
+  scoped_refptr<net::IOBufferWithSize> dest_buffer =
+      new net::IOBufferWithSize(4096);
+  net::CompletionCallback callback;
+  while (true) {
+    int rv = filter->Read(dest_buffer.get(), dest_buffer->size(), callback);
+    ASSERT_LE(0, rv);
+    if (rv <= 0)
+      break;
+    to_append->append(dest_buffer->data(), rv);
+  }
+}
+
+// Queries for video input devices on the current system using the getSources
+// API.
+//
+// This does not guarantee that a getUserMedia with video will succeed, as the
+// camera could be busy for instance.
+//
+// Returns has-video-input-device to the test if there is a webcam available,
+// no-video-input-devices otherwise.
+const char kHasVideoInputDeviceOnSystem[] =
+    "(function() {"
+      "navigator.mediaDevices.enumerateDevices()"
+      ".then(function(devices) {"
+        "devices.forEach(function(device) {"
+          "if (device.kind == 'videoinput') {"
+            "window.domAutomationController.send('has-video-input-device');"
+            "return;"
+          "}"
+        "});"
+        "window.domAutomationController.send('no-video-input-devices');"
+      "});"
+    "})()";
+
+const char kHasVideoInputDevice[] = "has-video-input-device";
 
 }  // namespace
 
@@ -453,12 +527,12 @@ void SimulateMouseClickAt(WebContents* web_contents,
                           int modifiers,
                           blink::WebMouseEvent::Button button,
                           const gfx::Point& point) {
-  blink::WebMouseEvent mouse_event;
-  mouse_event.type = blink::WebInputEvent::MouseDown;
+  blink::WebMouseEvent mouse_event(
+      blink::WebInputEvent::MouseDown, modifiers,
+      ui::EventTimeStampToSeconds(ui::EventTimeForNow()));
   mouse_event.button = button;
   mouse_event.x = point.x();
   mouse_event.y = point.y();
-  mouse_event.modifiers = modifiers;
   // Mac needs globalX/globalY for events to plugins.
   gfx::Rect offset = web_contents->GetContainerBounds();
   mouse_event.globalX = point.x() + offset.x();
@@ -466,7 +540,7 @@ void SimulateMouseClickAt(WebContents* web_contents,
   mouse_event.clickCount = 1;
   web_contents->GetRenderViewHost()->GetWidget()->ForwardMouseEvent(
       mouse_event);
-  mouse_event.type = blink::WebInputEvent::MouseUp;
+  mouse_event.setType(blink::WebInputEvent::MouseUp);
   web_contents->GetRenderViewHost()->GetWidget()->ForwardMouseEvent(
       mouse_event);
 }
@@ -474,8 +548,9 @@ void SimulateMouseClickAt(WebContents* web_contents,
 void SimulateMouseEvent(WebContents* web_contents,
                         blink::WebInputEvent::Type type,
                         const gfx::Point& point) {
-  blink::WebMouseEvent mouse_event;
-  mouse_event.type = type;
+  blink::WebMouseEvent mouse_event(
+      type, blink::WebInputEvent::NoModifiers,
+      ui::EventTimeStampToSeconds(ui::EventTimeForNow()));
   mouse_event.x = point.x();
   mouse_event.y = point.y();
   web_contents->GetRenderViewHost()->GetWidget()->ForwardMouseEvent(
@@ -485,8 +560,10 @@ void SimulateMouseEvent(WebContents* web_contents,
 void SimulateMouseWheelEvent(WebContents* web_contents,
                              const gfx::Point& point,
                              const gfx::Vector2d& delta) {
-  blink::WebMouseWheelEvent wheel_event;
-  wheel_event.type = blink::WebInputEvent::MouseWheel;
+  blink::WebMouseWheelEvent wheel_event(
+      blink::WebInputEvent::MouseWheel, blink::WebInputEvent::NoModifiers,
+      ui::EventTimeStampToSeconds(ui::EventTimeForNow()));
+
   wheel_event.x = point.x();
   wheel_event.y = point.y();
   wheel_event.deltaX = delta.x();
@@ -502,15 +579,19 @@ void SimulateGestureScrollSequence(WebContents* web_contents,
   RenderWidgetHostImpl* widget_host = RenderWidgetHostImpl::From(
       web_contents->GetRenderViewHost()->GetWidget());
 
-  blink::WebGestureEvent scroll_begin;
-  scroll_begin.type = blink::WebGestureEvent::GestureScrollBegin;
+  blink::WebGestureEvent scroll_begin(
+      blink::WebGestureEvent::GestureScrollBegin,
+      blink::WebInputEvent::NoModifiers,
+      ui::EventTimeStampToSeconds(ui::EventTimeForNow()));
   scroll_begin.sourceDevice = blink::WebGestureDeviceTouchpad;
   scroll_begin.x = point.x();
   scroll_begin.y = point.y();
   widget_host->ForwardGestureEvent(scroll_begin);
 
-  blink::WebGestureEvent scroll_update;
-  scroll_update.type = blink::WebGestureEvent::GestureScrollUpdate;
+  blink::WebGestureEvent scroll_update(
+      blink::WebGestureEvent::GestureScrollUpdate,
+      blink::WebInputEvent::NoModifiers,
+      ui::EventTimeStampToSeconds(ui::EventTimeForNow()));
   scroll_update.sourceDevice = blink::WebGestureDeviceTouchpad;
   scroll_update.x = point.x();
   scroll_update.y = point.y();
@@ -520,8 +601,10 @@ void SimulateGestureScrollSequence(WebContents* web_contents,
   scroll_update.data.scrollUpdate.velocityY = 0;
   widget_host->ForwardGestureEvent(scroll_update);
 
-  blink::WebGestureEvent scroll_end;
-  scroll_end.type = blink::WebGestureEvent::GestureScrollEnd;
+  blink::WebGestureEvent scroll_end(
+      blink::WebGestureEvent::GestureScrollEnd,
+      blink::WebInputEvent::NoModifiers,
+      ui::EventTimeStampToSeconds(ui::EventTimeForNow()));
   scroll_end.sourceDevice = blink::WebGestureDeviceTouchpad;
   scroll_end.x = point.x() + delta.x();
   scroll_end.y = point.y() + delta.y();
@@ -534,22 +617,28 @@ void SimulateGestureFlingSequence(WebContents* web_contents,
   RenderWidgetHostImpl* widget_host = RenderWidgetHostImpl::From(
       web_contents->GetRenderViewHost()->GetWidget());
 
-  blink::WebGestureEvent scroll_begin;
-  scroll_begin.type = blink::WebGestureEvent::GestureScrollBegin;
+  blink::WebGestureEvent scroll_begin(
+      blink::WebGestureEvent::GestureScrollBegin,
+      blink::WebInputEvent::NoModifiers,
+      ui::EventTimeStampToSeconds(ui::EventTimeForNow()));
   scroll_begin.sourceDevice = blink::WebGestureDeviceTouchpad;
   scroll_begin.x = point.x();
   scroll_begin.y = point.y();
   widget_host->ForwardGestureEvent(scroll_begin);
 
-  blink::WebGestureEvent scroll_end;
-  scroll_end.type = blink::WebGestureEvent::GestureScrollEnd;
+  blink::WebGestureEvent scroll_end(
+      blink::WebGestureEvent::GestureScrollEnd,
+      blink::WebInputEvent::NoModifiers,
+      ui::EventTimeStampToSeconds(ui::EventTimeForNow()));
   scroll_end.sourceDevice = blink::WebGestureDeviceTouchpad;
   scroll_end.x = point.x();
   scroll_end.y = point.y();
   widget_host->ForwardGestureEvent(scroll_end);
 
-  blink::WebGestureEvent fling_start;
-  fling_start.type = blink::WebGestureEvent::GestureFlingStart;
+  blink::WebGestureEvent fling_start(
+      blink::WebGestureEvent::GestureFlingStart,
+      blink::WebInputEvent::NoModifiers,
+      ui::EventTimeStampToSeconds(ui::EventTimeForNow()));
   fling_start.sourceDevice = blink::WebGestureDeviceTouchpad;
   fling_start.x = point.x();
   fling_start.y = point.y();
@@ -560,12 +649,12 @@ void SimulateGestureFlingSequence(WebContents* web_contents,
 }
 
 void SimulateTapAt(WebContents* web_contents, const gfx::Point& point) {
-  blink::WebGestureEvent tap;
-  tap.type = blink::WebGestureEvent::GestureTap;
+  blink::WebGestureEvent tap(
+      blink::WebGestureEvent::GestureTap, blink::WebInputEvent::ControlKey,
+      ui::EventTimeStampToSeconds(ui::EventTimeForNow()));
   tap.sourceDevice = blink::WebGestureDeviceTouchpad;
   tap.x = point.x();
   tap.y = point.y();
-  tap.modifiers = blink::WebInputEvent::ControlKey;
   RenderWidgetHostImpl* widget_host = RenderWidgetHostImpl::From(
       web_contents->GetRenderViewHost()->GetWidget());
   widget_host->ForwardGestureEvent(tap);
@@ -574,12 +663,12 @@ void SimulateTapAt(WebContents* web_contents, const gfx::Point& point) {
 void SimulateTapWithModifiersAt(WebContents* web_contents,
                                 unsigned modifiers,
                                 const gfx::Point& point) {
-  blink::WebGestureEvent tap;
-  tap.type = blink::WebGestureEvent::GestureTap;
+  blink::WebGestureEvent tap(
+      blink::WebGestureEvent::GestureTap, modifiers,
+      ui::EventTimeStampToSeconds(ui::EventTimeForNow()));
   tap.sourceDevice = blink::WebGestureDeviceTouchpad;
   tap.x = point.x();
   tap.y = point.y();
-  tap.modifiers = modifiers;
   RenderWidgetHostImpl* widget_host = RenderWidgetHostImpl::From(
       web_contents->GetRenderViewHost()->GetWidget());
   widget_host->ForwardGestureEvent(tap);
@@ -672,6 +761,13 @@ void SimulateKeyPress(WebContents* web_contents,
   }
 
   ASSERT_EQ(modifiers, 0);
+}
+
+bool IsWebcamAvailableOnSystem(WebContents* web_contents) {
+  std::string result;
+  EXPECT_TRUE(content::ExecuteScriptAndExtractString(
+      web_contents, kHasVideoInputDeviceOnSystem, &result));
+  return result == kHasVideoInputDevice;
 }
 
 RenderFrameHost* ConvertToRenderFrameHost(WebContents* web_contents) {
@@ -809,9 +905,14 @@ bool ExecuteWebUIResourceTest(WebContents* web_contents,
   for (std::vector<int>::iterator iter = ids.begin();
        iter != ids.end();
        ++iter) {
-    scoped_refptr<base::RefCountedMemory> resource =
+    scoped_refptr<base::RefCountedMemory> bytes =
         ResourceBundle::GetSharedInstance().LoadDataResourceBytes(*iter);
-    script.append(resource->front_as<char>(), resource->size());
+
+    if (HasGzipHeader(*bytes))
+      AppendGzippedResource(*bytes, &script);
+    else
+      script.append(bytes->front_as<char>(), bytes->size());
+
     script.append("\n");
   }
   if (!ExecuteScript(web_contents, script))
@@ -868,8 +969,7 @@ void FetchHistogramsFromChildProcesses() {
   scoped_refptr<content::MessageLoopRunner> runner = new MessageLoopRunner;
 
   FetchHistogramsAsynchronously(
-      base::MessageLoop::current(),
-      runner->QuitClosure(),
+      base::ThreadTaskRunnerHandle::Get(), runner->QuitClosure(),
       // If this call times out, it means that a child process is not
       // responding, which is something we should not ignore.  The timeout is
       // set to be longer than the normal browser test timeout so that it will
@@ -879,9 +979,8 @@ void FetchHistogramsFromChildProcesses() {
 }
 
 void SetupCrossSiteRedirector(net::EmbeddedTestServer* embedded_test_server) {
-   embedded_test_server->RegisterRequestHandler(
-       base::Bind(&CrossSiteRedirectResponseHandler,
-                  embedded_test_server->base_url()));
+  embedded_test_server->RegisterRequestHandler(
+      base::Bind(&CrossSiteRedirectResponseHandler, embedded_test_server));
 }
 
 void WaitForInterstitialAttach(content::WebContents* web_contents) {
@@ -939,7 +1038,7 @@ bool WaitForRenderFrameReady(RenderFrameHost* rfh) {
 void EnableAccessibilityForWebContents(WebContents* web_contents) {
   WebContentsImpl* web_contents_impl =
       static_cast<WebContentsImpl*>(web_contents);
-  web_contents_impl->SetAccessibilityMode(AccessibilityModeComplete);
+  web_contents_impl->SetAccessibilityMode(ACCESSIBILITY_MODE_COMPLETE);
 }
 
 void WaitForAccessibilityFocusChange() {
@@ -972,6 +1071,14 @@ bool AccessibilityTreeContainsNodeWithName(BrowserAccessibility* node,
   return false;
 }
 
+bool ListenToGuestWebContents(
+    AccessibilityNotificationWaiter* accessibility_waiter,
+    WebContents* web_contents) {
+  accessibility_waiter->ListenToAdditionalFrame(
+      static_cast<RenderFrameHostImpl*>(web_contents->GetMainFrame()));
+  return true;
+}
+
 void WaitForAccessibilityTreeToContainNodeWithName(WebContents* web_contents,
                                                    const std::string& name) {
   WebContentsImpl* web_contents_impl = static_cast<WebContentsImpl*>(
@@ -981,15 +1088,25 @@ void WaitForAccessibilityTreeToContainNodeWithName(WebContents* web_contents,
   BrowserAccessibilityManager* main_frame_manager =
       main_frame->browser_accessibility_manager();
   FrameTree* frame_tree = web_contents_impl->GetFrameTree();
-  while (!AccessibilityTreeContainsNodeWithName(
+  while (!main_frame_manager || !AccessibilityTreeContainsNodeWithName(
              main_frame_manager->GetRoot(), name)) {
     AccessibilityNotificationWaiter accessibility_waiter(main_frame,
                                                          ui::AX_EVENT_NONE);
-    for (FrameTreeNode* node : frame_tree->Nodes())
+    for (FrameTreeNode* node : frame_tree->Nodes()) {
       accessibility_waiter.ListenToAdditionalFrame(
           node->current_frame_host());
+    }
+
+    content::BrowserPluginGuestManager* guest_manager =
+        web_contents_impl->GetBrowserContext()->GetGuestManager();
+    if (guest_manager) {
+      guest_manager->ForEachGuest(web_contents_impl,
+                                  base::Bind(&ListenToGuestWebContents,
+                                             &accessibility_waiter));
+    }
 
     accessibility_waiter.WaitForNotification();
+    main_frame_manager = main_frame->browser_accessibility_manager();
   }
 }
 
@@ -1003,11 +1120,102 @@ ui::AXTreeUpdate GetAccessibilityTreeSnapshot(WebContents* web_contents) {
   return manager->SnapshotAXTreeForTesting();
 }
 
+bool IsWebContentsBrowserPluginFocused(content::WebContents* web_contents) {
+  WebContentsImpl* web_contents_impl =
+      static_cast<WebContentsImpl*>(web_contents);
+  BrowserPluginGuest* browser_plugin_guest =
+      web_contents_impl->GetBrowserPluginGuest();
+  return browser_plugin_guest ? browser_plugin_guest->focused() : false;
+}
+
+RenderWidgetHost* GetMouseLockWidget(WebContents* web_contents) {
+  return static_cast<WebContentsImpl*>(web_contents)->GetMouseLockWidget();
+}
+
+#if defined(USE_AURA)
+void SendRoutedTouchTapSequence(content::WebContents* web_contents,
+                                gfx::Point point) {
+  RenderWidgetHostViewAura* rwhva = static_cast<RenderWidgetHostViewAura*>(
+      web_contents->GetRenderWidgetHostView());
+  ui::TouchEvent touch_start(ui::ET_TOUCH_PRESSED, point, 0,
+                             base::TimeTicks::Now());
+  rwhva->OnTouchEvent(&touch_start);
+  ui::TouchEvent touch_end(ui::ET_TOUCH_RELEASED, point, 0,
+                           base::TimeTicks::Now());
+  rwhva->OnTouchEvent(&touch_end);
+}
+
+void SendRoutedGestureTapSequence(content::WebContents* web_contents,
+                                  gfx::Point point) {
+  RenderWidgetHostViewAura* rwhva = static_cast<RenderWidgetHostViewAura*>(
+      web_contents->GetRenderWidgetHostView());
+  ui::GestureEventDetails gesture_tap_down_details(ui::ET_GESTURE_TAP_DOWN);
+  gesture_tap_down_details.set_device_type(
+      ui::GestureDeviceType::DEVICE_TOUCHSCREEN);
+  ui::GestureEvent gesture_tap_down(point.x(), point.y(), 0,
+                                    base::TimeTicks::Now(),
+                                    gesture_tap_down_details);
+  rwhva->OnGestureEvent(&gesture_tap_down);
+  ui::GestureEventDetails gesture_tap_details(ui::ET_GESTURE_TAP);
+  gesture_tap_details.set_device_type(
+      ui::GestureDeviceType::DEVICE_TOUCHSCREEN);
+  gesture_tap_details.set_tap_count(1);
+  ui::GestureEvent gesture_tap(point.x(), point.y(), 0, base::TimeTicks::Now(),
+                               gesture_tap_details);
+  rwhva->OnGestureEvent(&gesture_tap);
+}
+
+// TODO(wjmaclean): The next two functions are a modified version of
+// SurfaceHitTestReadyNotifier that (1) works for BrowserPlugin-based guests,
+// and (2) links outside of content-browsertests. At some point in time we
+// should probably merge these.
+namespace {
+
+bool ContainsSurfaceId(const cc::SurfaceId& container_surface_id,
+                       RenderWidgetHostViewChildFrame* target_view) {
+  if (!container_surface_id.is_valid())
+    return false;
+
+  cc::Surface* container_surface =
+      GetSurfaceManager()->GetSurfaceForId(container_surface_id);
+  if (!container_surface || !container_surface->active_referenced_surfaces())
+    return false;
+
+  for (const cc::SurfaceId& id :
+       *container_surface->active_referenced_surfaces()) {
+    if (id == target_view->SurfaceIdForTesting() ||
+        ContainsSurfaceId(id, target_view))
+      return true;
+  }
+  return false;
+}
+
+}  // namespace
+
+void WaitForGuestSurfaceReady(content::WebContents* guest_web_contents) {
+  RenderWidgetHostViewChildFrame* child_view =
+      static_cast<RenderWidgetHostViewChildFrame*>(
+          guest_web_contents->GetRenderWidgetHostView());
+
+  cc::SurfaceId root_surface_id =
+      static_cast<RenderWidgetHostViewAura*>(
+          static_cast<content::WebContentsImpl*>(guest_web_contents)
+              ->GetOuterWebContents()
+              ->GetRenderWidgetHostView())
+          ->SurfaceIdForTesting();
+
+  while (!ContainsSurfaceId(root_surface_id, child_view)) {
+    base::RunLoop run_loop;
+    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+        FROM_HERE, run_loop.QuitClosure(), TestTimeouts::tiny_timeout());
+    run_loop.Run();
+  }
+}
+#endif
+
 TitleWatcher::TitleWatcher(WebContents* web_contents,
                            const base::string16& expected_title)
-    : WebContentsObserver(web_contents),
-      message_loop_runner_(new MessageLoopRunner) {
-  EXPECT_TRUE(web_contents != NULL);
+    : WebContentsObserver(web_contents) {
   expected_titles_.push_back(expected_title);
 }
 
@@ -1020,7 +1228,7 @@ TitleWatcher::~TitleWatcher() {
 
 const base::string16& TitleWatcher::WaitAndGetTitle() {
   TestTitle();
-  message_loop_runner_->Run();
+  run_loop_.Run();
   return observed_title_;
 }
 
@@ -1037,15 +1245,11 @@ void TitleWatcher::TitleWasSet(NavigationEntry* entry, bool explicit_set) {
 }
 
 void TitleWatcher::TestTitle() {
-  std::vector<base::string16>::const_iterator it =
-      std::find(expected_titles_.begin(),
-                expected_titles_.end(),
-                web_contents()->GetTitle());
-  if (it == expected_titles_.end())
-    return;
-
-  observed_title_ = *it;
-  message_loop_runner_->Quit();
+  const base::string16& current_title = web_contents()->GetTitle();
+  if (base::ContainsValue(expected_titles_, current_title)) {
+    observed_title_ = current_title;
+    run_loop_.Quit();
+  }
 }
 
 RenderProcessHostWatcher::RenderProcessHostWatcher(
@@ -1096,6 +1300,12 @@ DOMMessageQueue::DOMMessageQueue() {
                  NotificationService::AllSources());
 }
 
+DOMMessageQueue::DOMMessageQueue(WebContents* web_contents)
+    : WebContentsObserver(web_contents) {
+  registrar_.Add(this, NOTIFICATION_DOM_OPERATION_RESPONSE,
+                 Source<WebContents>(web_contents));
+}
+
 DOMMessageQueue::~DOMMessageQueue() {}
 
 void DOMMessageQueue::Observe(int type,
@@ -1107,6 +1317,18 @@ void DOMMessageQueue::Observe(int type,
     message_loop_runner_->Quit();
 }
 
+void DOMMessageQueue::RenderProcessGone(base::TerminationStatus status) {
+  switch (status) {
+    case base::TERMINATION_STATUS_NORMAL_TERMINATION:
+    case base::TERMINATION_STATUS_STILL_RUNNING:
+      break;
+    default:
+      if (message_loop_runner_.get())
+        message_loop_runner_->Quit();
+      break;
+  }
+}
+
 void DOMMessageQueue::ClearQueue() {
   message_queue_ = std::queue<std::string>();
 }
@@ -1115,10 +1337,15 @@ bool DOMMessageQueue::WaitForMessage(std::string* message) {
   DCHECK(message);
   if (message_queue_.empty()) {
     // This will be quit when a new message comes in.
-    message_loop_runner_ = new MessageLoopRunner;
+    message_loop_runner_ =
+        new MessageLoopRunner(MessageLoopRunner::QuitMode::IMMEDIATE);
     message_loop_runner_->Run();
   }
-  // The queue should not be empty, unless we were quit because of a timeout.
+  return PopMessage(message);
+}
+
+bool DOMMessageQueue::PopMessage(std::string* message) {
+  DCHECK(message);
   if (message_queue_.empty())
     return false;
   *message = message_queue_.front();
@@ -1283,17 +1510,20 @@ InputMsgWatcher::InputMsgWatcher(RenderWidgetHost* render_widget_host,
                                  blink::WebInputEvent::Type type)
     : BrowserMessageFilter(InputMsgStart),
       wait_for_type_(type),
-      ack_result_(INPUT_EVENT_ACK_STATE_UNKNOWN) {
+      ack_result_(INPUT_EVENT_ACK_STATE_UNKNOWN),
+      ack_source_(static_cast<uint32_t>(InputEventAckSource::UNKNOWN)) {
   render_widget_host->GetProcess()->AddFilter(this);
 }
 
 InputMsgWatcher::~InputMsgWatcher() {}
 
 void InputMsgWatcher::ReceivedAck(blink::WebInputEvent::Type ack_type,
-                                  uint32_t ack_state) {
+                                  uint32_t ack_state,
+                                  uint32_t ack_source) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (wait_for_type_ == ack_type) {
     ack_result_ = ack_state;
+    ack_source_ = ack_source;
     if (!quit_.is_null())
       quit_.Run();
   }
@@ -1306,21 +1536,344 @@ bool InputMsgWatcher::OnMessageReceived(const IPC::Message& message) {
     InputHostMsg_HandleInputEvent_ACK::Read(&message, &params);
     blink::WebInputEvent::Type ack_type = std::get<0>(params).type;
     InputEventAckState ack_state = std::get<0>(params).state;
+    InputEventAckSource ack_source = std::get<0>(params).source;
     BrowserThread::PostTask(
         BrowserThread::UI, FROM_HERE,
-        base::Bind(&InputMsgWatcher::ReceivedAck, this, ack_type, ack_state));
+        base::Bind(&InputMsgWatcher::ReceivedAck, this, ack_type, ack_state,
+                   static_cast<uint32_t>(ack_source)));
   }
   return false;
 }
 
+bool InputMsgWatcher::HasReceivedAck() const {
+  return ack_result_ != INPUT_EVENT_ACK_STATE_UNKNOWN;
+}
+
 uint32_t InputMsgWatcher::WaitForAck() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  if (ack_result_ != INPUT_EVENT_ACK_STATE_UNKNOWN)
+  if (HasReceivedAck())
     return ack_result_;
   base::RunLoop run_loop;
   base::AutoReset<base::Closure> reset_quit(&quit_, run_loop.QuitClosure());
   run_loop.Run();
   return ack_result_;
+}
+
+#if defined(OS_WIN)
+static void RunTaskAndSignalCompletion(const base::Closure& task,
+                                       base::WaitableEvent* completion) {
+  task.Run();
+  completion->Signal();
+}
+
+static void RunTaskOnIOThreadAndWait(const base::Closure& task) {
+  base::WaitableEvent completion(
+      base::WaitableEvent::ResetPolicy::AUTOMATIC,
+      base::WaitableEvent::InitialState::NOT_SIGNALED);
+  BrowserThread::PostTask(
+      BrowserThread::IO, FROM_HERE,
+      base::Bind(&RunTaskAndSignalCompletion, task, &completion));
+  completion.Wait();
+}
+#endif
+
+static void SetUpTestClipboard() {
+#if defined(OS_WIN)
+  if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
+    RunTaskOnIOThreadAndWait(base::Bind(&SetUpTestClipboard));
+    return;
+  }
+#endif
+  ui::TestClipboard::CreateForCurrentThread();
+}
+
+// TODO(dcheng): Make the test clipboard on different threads share the
+// same backing store. crbug.com/629765
+BrowserTestClipboardScope::BrowserTestClipboardScope() {
+  SetUpTestClipboard();
+}
+
+static void TearDownTestClipboard() {
+#if defined(OS_WIN)
+  if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
+    RunTaskOnIOThreadAndWait(base::Bind(&TearDownTestClipboard));
+    return;
+  }
+#endif
+  ui::Clipboard::DestroyClipboardForCurrentThread();
+}
+
+BrowserTestClipboardScope::~BrowserTestClipboardScope() {
+  TearDownTestClipboard();
+}
+
+void BrowserTestClipboardScope::SetRtf(const std::string& rtf) {
+#if defined(OS_WIN)
+  if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
+    RunTaskOnIOThreadAndWait(base::Bind(&BrowserTestClipboardScope::SetRtf,
+                                        base::Unretained(this), rtf));
+    return;
+  }
+#endif
+  ui::ScopedClipboardWriter clipboard_writer(ui::CLIPBOARD_TYPE_COPY_PASTE);
+  clipboard_writer.WriteRTF(rtf);
+}
+
+void BrowserTestClipboardScope::SetText(const std::string& text) {
+#if defined(OS_WIN)
+  if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
+    RunTaskOnIOThreadAndWait(base::Bind(&BrowserTestClipboardScope::SetText,
+                                        base::Unretained(this), text));
+    return;
+  }
+#endif
+  ui::ScopedClipboardWriter clipboard_writer(ui::CLIPBOARD_TYPE_COPY_PASTE);
+  clipboard_writer.WriteText(base::ASCIIToUTF16(text));
+}
+
+class FrameFocusedObserver::FrameTreeNodeObserverImpl
+    : public FrameTreeNode::Observer {
+ public:
+  explicit FrameTreeNodeObserverImpl(FrameTreeNode* owner)
+      : owner_(owner), message_loop_runner_(new MessageLoopRunner) {
+    owner->AddObserver(this);
+  }
+  ~FrameTreeNodeObserverImpl() override { owner_->RemoveObserver(this); }
+
+  void Run() { message_loop_runner_->Run(); }
+
+  void OnFrameTreeNodeFocused(FrameTreeNode* node) override {
+    if (node == owner_)
+      message_loop_runner_->Quit();
+  }
+
+ private:
+  FrameTreeNode* owner_;
+  scoped_refptr<MessageLoopRunner> message_loop_runner_;
+};
+
+FrameFocusedObserver::FrameFocusedObserver(RenderFrameHost* owner_host)
+    : impl_(new FrameTreeNodeObserverImpl(
+          static_cast<RenderFrameHostImpl*>(owner_host)->frame_tree_node())) {}
+
+FrameFocusedObserver::~FrameFocusedObserver() {}
+
+void FrameFocusedObserver::Wait() {
+  impl_->Run();
+}
+
+TestNavigationManager::TestNavigationManager(WebContents* web_contents,
+                                             const GURL& url)
+    : WebContentsObserver(web_contents),
+      url_(url),
+      handle_(nullptr),
+      navigation_paused_(false),
+      current_state_(NavigationState::INITIAL),
+      desired_state_(NavigationState::STARTED),
+      weak_factory_(this) {}
+
+TestNavigationManager::~TestNavigationManager() {
+  if (navigation_paused_)
+    handle_->Resume();
+}
+
+bool TestNavigationManager::WaitForRequestStart() {
+  // This is the default desired state. In PlzNavigate, a browser-initiated
+  // navigation can reach this state synchronously, so the TestNavigationManager
+  // is set to always pause navigations at WillStartRequest. This ensures the
+  // user can always call WaitForWillStartRequest.
+  DCHECK(desired_state_ == NavigationState::STARTED);
+  return WaitForDesiredState();
+}
+
+bool TestNavigationManager::WaitForResponse() {
+  desired_state_ = NavigationState::RESPONSE;
+  return WaitForDesiredState();
+}
+
+void TestNavigationManager::WaitForNavigationFinished() {
+  desired_state_ = NavigationState::FINISHED;
+  WaitForDesiredState();
+}
+
+void TestNavigationManager::DidStartNavigation(NavigationHandle* handle) {
+  if (!ShouldMonitorNavigation(handle))
+    return;
+
+  handle_ = handle;
+  std::unique_ptr<NavigationThrottle> throttle(
+      new TestNavigationManagerThrottle(
+          handle_, base::Bind(&TestNavigationManager::OnWillStartRequest,
+                              weak_factory_.GetWeakPtr()),
+          base::Bind(&TestNavigationManager::OnWillProcessResponse,
+                     weak_factory_.GetWeakPtr())));
+  handle_->RegisterThrottleForTesting(std::move(throttle));
+}
+
+void TestNavigationManager::DidFinishNavigation(NavigationHandle* handle) {
+  if (handle != handle_)
+    return;
+  current_state_ = NavigationState::FINISHED;
+  navigation_paused_ = false;
+  handle_ = nullptr;
+  OnNavigationStateChanged();
+}
+
+void TestNavigationManager::OnWillStartRequest() {
+  current_state_ = NavigationState::STARTED;
+  navigation_paused_ = true;
+  OnNavigationStateChanged();
+}
+
+void TestNavigationManager::OnWillProcessResponse() {
+  current_state_ = NavigationState::RESPONSE;
+  navigation_paused_ = true;
+  OnNavigationStateChanged();
+}
+
+bool TestNavigationManager::WaitForDesiredState() {
+  // If the desired state has laready been reached, just return.
+  if (current_state_ == desired_state_)
+    return true;
+
+  // Resume the navigation if it was paused.
+  if (navigation_paused_)
+     handle_->Resume();
+
+  // Wait for the desired state if needed.
+  if (current_state_ < desired_state_) {
+    DCHECK(!loop_runner_);
+    loop_runner_ = new MessageLoopRunner();
+    loop_runner_->Run();
+    loop_runner_ = nullptr;
+  }
+
+  // Return false if the navigation did not reach the state specified by the
+  // user.
+  return current_state_ == desired_state_;
+}
+
+void TestNavigationManager::OnNavigationStateChanged() {
+  // If the state the user was waiting for has been reached, exit the message
+  // loop.
+  if (current_state_ >= desired_state_) {
+    if (loop_runner_)
+      loop_runner_->Quit();
+    return;
+  }
+
+  // Otherwise, the navigation should be resumed if it was previously paused.
+  if (navigation_paused_)
+    handle_->Resume();
+}
+
+bool TestNavigationManager::ShouldMonitorNavigation(NavigationHandle* handle) {
+  if (handle_ || handle->GetURL() != url_)
+    return false;
+  if (current_state_ != NavigationState::INITIAL)
+    return false;
+  return true;
+}
+
+ConsoleObserverDelegate::ConsoleObserverDelegate(WebContents* web_contents,
+                                                 const std::string& filter)
+    : web_contents_(web_contents),
+      filter_(filter),
+      message_loop_runner_(new MessageLoopRunner) {}
+
+ConsoleObserverDelegate::~ConsoleObserverDelegate() {}
+
+void ConsoleObserverDelegate::Wait() {
+  message_loop_runner_->Run();
+}
+
+bool ConsoleObserverDelegate::DidAddMessageToConsole(
+    WebContents* source,
+    int32_t level,
+    const base::string16& message,
+    int32_t line_no,
+    const base::string16& source_id) {
+  DCHECK(source == web_contents_);
+
+  std::string ascii_message = base::UTF16ToASCII(message);
+  if (base::MatchPattern(ascii_message, filter_)) {
+    message_ = ascii_message;
+    message_loop_runner_->Quit();
+  }
+  return false;
+}
+
+// static
+void PwnMessageHelper::CreateBlobWithPayload(RenderProcessHost* process,
+                                             std::string uuid,
+                                             std::string content_type,
+                                             std::string content_disposition,
+                                             std::string payload) {
+  std::vector<storage::DataElement> data_elements(1);
+  data_elements[0].SetToBytes(payload.c_str(), payload.size());
+
+  IPC::IpcSecurityTestUtil::PwnMessageReceived(
+      process->GetChannel(),
+      BlobStorageMsg_RegisterBlob(uuid, content_type, content_disposition,
+                                  data_elements));
+}
+
+
+// static
+void PwnMessageHelper::RegisterBlobURL(RenderProcessHost* process,
+                                       GURL url,
+                                       std::string uuid) {
+  IPC::IpcSecurityTestUtil::PwnMessageReceived(
+      process->GetChannel(), BlobHostMsg_RegisterPublicURL(url, uuid));
+}
+
+// static
+void PwnMessageHelper::FileSystemCreate(RenderProcessHost* process,
+                                        int request_id,
+                                        GURL path,
+                                        bool exclusive,
+                                        bool is_directory,
+                                        bool recursive) {
+  TestFileapiOperationWaiter waiter(
+      process->GetStoragePartition()->GetFileSystemContext());
+
+  IPC::IpcSecurityTestUtil::PwnMessageReceived(
+      process->GetChannel(),
+      FileSystemHostMsg_Create(request_id, path, exclusive, is_directory,
+                               recursive));
+
+  // If this started an async operation, wait for it to complete.
+  if (waiter.did_start_update())
+    waiter.WaitForEndUpdate();
+}
+
+// static
+void PwnMessageHelper::FileSystemWrite(RenderProcessHost* process,
+                                       int request_id,
+                                       GURL file_path,
+                                       std::string blob_uuid,
+                                       int64_t position) {
+  TestFileapiOperationWaiter waiter(
+      process->GetStoragePartition()->GetFileSystemContext());
+
+  IPC::IpcSecurityTestUtil::PwnMessageReceived(
+      process->GetChannel(),
+      FileSystemHostMsg_Write(request_id, file_path, blob_uuid, position));
+
+  // If this started an async operation, wait for it to complete.
+  if (waiter.did_start_update())
+    waiter.WaitForEndUpdate();
+}
+
+void PwnMessageHelper::LockMouse(RenderProcessHost* process,
+                                 int routing_id,
+                                 bool user_gesture,
+                                 bool last_unlocked_by_target,
+                                 bool privileged) {
+  IPC::IpcSecurityTestUtil::PwnMessageReceived(
+      process->GetChannel(),
+      ViewHostMsg_LockMouse(routing_id, user_gesture, last_unlocked_by_target,
+                            privileged));
 }
 
 }  // namespace content

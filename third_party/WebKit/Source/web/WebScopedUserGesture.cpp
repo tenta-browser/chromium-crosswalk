@@ -30,25 +30,24 @@
 
 #include "public/web/WebScopedUserGesture.h"
 
+#include "core/dom/DocumentUserGestureToken.h"
 #include "platform/UserGestureIndicator.h"
 #include "public/web/WebUserGestureToken.h"
+#include "web/WebLocalFrameImpl.h"
 
 namespace blink {
 
-void WebScopedUserGesture::initialize()
-{
-    m_indicator.reset(new UserGestureIndicator(DefinitelyProcessingNewUserGesture));
+WebScopedUserGesture::WebScopedUserGesture(const WebUserGestureToken& token) {
+  if (!token.isNull())
+    m_indicator.reset(new UserGestureIndicator(token));
 }
 
-void WebScopedUserGesture::initializeWithToken(const WebUserGestureToken& token)
-{
-    if (!token.isNull())
-        m_indicator.reset(new UserGestureIndicator(token));
+WebScopedUserGesture::WebScopedUserGesture(WebLocalFrame* frame) {
+  m_indicator.reset(new UserGestureIndicator(DocumentUserGestureToken::create(
+      frame ? toWebLocalFrameImpl(frame)->frame()->document() : nullptr,
+      UserGestureToken::NewGesture)));
 }
 
-void WebScopedUserGesture::reset()
-{
-    m_indicator.reset(0);
-}
+WebScopedUserGesture::~WebScopedUserGesture() {}
 
-} // namespace blink
+}  // namespace blink

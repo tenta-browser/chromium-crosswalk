@@ -17,12 +17,14 @@ ClipboardMonitor::~ClipboardMonitor() {
 
 // static
 ClipboardMonitor* ClipboardMonitor::GetInstance() {
-  return base::Singleton<ClipboardMonitor>::get();
+  return base::Singleton<ClipboardMonitor,
+                         base::LeakySingletonTraits<ClipboardMonitor>>::get();
 }
 
 void ClipboardMonitor::NotifyClipboardDataChanged() {
   DCHECK(CalledOnValidThread());
-  FOR_EACH_OBSERVER(ClipboardObserver, observers_, OnClipboardDataChanged());
+  for (ClipboardObserver& observer : observers_)
+    observer.OnClipboardDataChanged();
 }
 
 void ClipboardMonitor::AddObserver(ClipboardObserver* observer) {

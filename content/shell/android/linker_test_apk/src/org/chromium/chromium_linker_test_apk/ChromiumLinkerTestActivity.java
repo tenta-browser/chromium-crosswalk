@@ -118,8 +118,7 @@ public class ChromiumLinkerTestActivity extends Activity {
         // Load the library in the browser process, this will also run the test
         // runner in this process.
         try {
-            LibraryLoader.get(LibraryProcessType.PROCESS_BROWSER)
-                    .ensureInitialized(getApplicationContext());
+            LibraryLoader.get(LibraryProcessType.PROCESS_BROWSER).ensureInitialized();
         } catch (ProcessInitException e) {
             Log.i(TAG, "Cannot load chromium_linker_test:" +  e);
         }
@@ -127,7 +126,7 @@ public class ChromiumLinkerTestActivity extends Activity {
         // Now, start a new renderer process by creating a new view.
         // This will run the test runner in the renderer process.
 
-        BrowserStartupController.get(getApplicationContext(), LibraryProcessType.PROCESS_BROWSER)
+        BrowserStartupController.get(LibraryProcessType.PROCESS_BROWSER)
                 .initChromiumBrowserProcessForTests();
 
         LayoutInflater inflater =
@@ -140,7 +139,7 @@ public class ChromiumLinkerTestActivity extends Activity {
         mShellManager.setStartupUrl("about:blank");
 
         try {
-            BrowserStartupController.get(this, LibraryProcessType.PROCESS_BROWSER)
+            BrowserStartupController.get(LibraryProcessType.PROCESS_BROWSER)
                     .startBrowserProcessesAsync(
                             true,
                             new BrowserStartupController.StartupCallback() {

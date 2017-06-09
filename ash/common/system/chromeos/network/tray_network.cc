@@ -4,32 +4,31 @@
 
 #include "ash/common/system/chromeos/network/tray_network.h"
 
-#include "ash/common/ash_switches.h"
 #include "ash/common/shelf/wm_shelf_util.h"
+#include "ash/common/system/chromeos/network/network_icon.h"
+#include "ash/common/system/chromeos/network/network_icon_animation.h"
+#include "ash/common/system/chromeos/network/network_icon_animation_observer.h"
 #include "ash/common/system/chromeos/network/network_state_list_detailed_view.h"
 #include "ash/common/system/chromeos/network/tray_network_state_observer.h"
+#include "ash/common/system/tray/system_tray.h"
 #include "ash/common/system/tray/system_tray_delegate.h"
 #include "ash/common/system/tray/system_tray_notifier.h"
 #include "ash/common/system/tray/tray_constants.h"
 #include "ash/common/system/tray/tray_item_more.h"
 #include "ash/common/system/tray/tray_item_view.h"
+#include "ash/common/system/tray/tray_popup_item_style.h"
 #include "ash/common/system/tray/tray_utils.h"
 #include "ash/common/wm_shell.h"
-#include "ash/system/tray/system_tray.h"
+#include "ash/resources/grit/ash_resources.h"
+#include "ash/strings/grit/ash_strings.h"
 #include "base/command_line.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
-#include "grit/ash_resources.h"
-#include "grit/ash_strings.h"
-#include "grit/ui_chromeos_strings.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
-#include "ui/accessibility/ax_view_state.h"
+#include "ui/accessibility/ax_node_data.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
-#include "ui/chromeos/network/network_icon.h"
-#include "ui/chromeos/network/network_icon_animation.h"
-#include "ui/chromeos/network/network_icon_animation_observer.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/link.h"
 #include "ui/views/controls/link_listener.h"
@@ -44,44 +43,45 @@ using chromeos::NetworkTypePattern;
 namespace ash {
 namespace tray {
 
+namespace {
+
+// Returns the connected, non-virtual (aka VPN), network.
+const NetworkState* GetConnectedNetwork() {
+  NetworkStateHandler* handler = NetworkHandler::Get()->network_state_handler();
+  return handler->ConnectedNetworkByType(NetworkTypePattern::NonVirtual());
+}
+
+}  // namespace
+
 class NetworkTrayView : public TrayItemView,
-                        public ui::network_icon::AnimationObserver {
+                        public network_icon::AnimationObserver {
  public:
   explicit NetworkTrayView(TrayNetwork* network_tray)
       : TrayItemView(network_tray) {
-    SetLayoutManager(
-        new views::BoxLayout(views::BoxLayout::kHorizontal, 0, 0, 0));
-
-    image_view_ = new views::ImageView;
-    AddChildView(image_view_);
-
+    CreateImageView();
     UpdateNetworkStateHandlerIcon();
   }
 
   ~NetworkTrayView() override {
-    ui::network_icon::NetworkIconAnimation::GetInstance()->RemoveObserver(this);
+    network_icon::NetworkIconAnimation::GetInstance()->RemoveObserver(this);
   }
 
   const char* GetClassName() const override { return "NetworkTrayView"; }
 
   void UpdateNetworkStateHandlerIcon() {
-    NetworkStateHandler* handler =
-        NetworkHandler::Get()->network_state_handler();
     gfx::ImageSkia image;
     base::string16 name;
     bool animating = false;
-    ui::network_icon::GetDefaultNetworkImageAndLabel(
-        ui::network_icon::ICON_TYPE_TRAY, &image, &name, &animating);
+    network_icon::GetDefaultNetworkImageAndLabel(network_icon::ICON_TYPE_TRAY,
+                                                 &image, &name, &animating);
     bool show_in_tray = !image.isNull();
     UpdateIcon(show_in_tray, image);
     if (animating)
-      ui::network_icon::NetworkIconAnimation::GetInstance()->AddObserver(this);
+      network_icon::NetworkIconAnimation::GetInstance()->AddObserver(this);
     else
-      ui::network_icon::NetworkIconAnimation::GetInstance()->RemoveObserver(
-          this);
+      network_icon::NetworkIconAnimation::GetInstance()->RemoveObserver(this);
     // Update accessibility.
-    const NetworkState* connected_network =
-        handler->ConnectedNetworkByType(NetworkTypePattern::NonVirtual());
+    const NetworkState* connected_network = GetConnectedNetwork();
     if (connected_network) {
       UpdateConnectionStatus(base::UTF8ToUTF16(connected_network->name()),
                              true);
@@ -90,21 +90,13 @@ class NetworkTrayView : public TrayItemView,
     }
   }
 
-  void UpdateAlignment(ShelfAlignment alignment) {
-    SetLayoutManager(new views::BoxLayout(IsHorizontalAlignment(alignment)
-                                              ? views::BoxLayout::kHorizontal
-                                              : views::BoxLayout::kVertical,
-                                          0, 0, 0));
-    Layout();
+  // views::View:
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override {
+    node_data->SetName(connection_status_string_);
+    node_data->role = ui::AX_ROLE_BUTTON;
   }
 
-  // views::View override.
-  void GetAccessibleState(ui::AXViewState* state) override {
-    state->name = connection_status_string_;
-    state->role = ui::AX_ROLE_BUTTON;
-  }
-
-  // ui::network_icon::AnimationObserver
+  // network_icon::AnimationObserver:
   void NetworkIconChanged() override { UpdateNetworkStateHandlerIcon(); }
 
  private:
@@ -124,47 +116,59 @@ class NetworkTrayView : public TrayItemView,
   }
 
   void UpdateIcon(bool tray_icon_visible, const gfx::ImageSkia& image) {
-    image_view_->SetImage(image);
+    image_view()->SetImage(image);
     SetVisible(tray_icon_visible);
     SchedulePaint();
   }
 
-  views::ImageView* image_view_;
   base::string16 connection_status_string_;
 
   DISALLOW_COPY_AND_ASSIGN(NetworkTrayView);
 };
 
 class NetworkDefaultView : public TrayItemMore,
-                           public ui::network_icon::AnimationObserver {
+                           public network_icon::AnimationObserver {
  public:
-  NetworkDefaultView(TrayNetwork* network_tray, bool show_more)
-      : TrayItemMore(network_tray, show_more) {
+  explicit NetworkDefaultView(TrayNetwork* network_tray)
+      : TrayItemMore(network_tray) {
     Update();
   }
 
   ~NetworkDefaultView() override {
-    ui::network_icon::NetworkIconAnimation::GetInstance()->RemoveObserver(this);
+    network_icon::NetworkIconAnimation::GetInstance()->RemoveObserver(this);
   }
 
   void Update() {
     gfx::ImageSkia image;
     base::string16 label;
     bool animating = false;
-    ui::network_icon::GetDefaultNetworkImageAndLabel(
-        ui::network_icon::ICON_TYPE_DEFAULT_VIEW, &image, &label, &animating);
+    // TODO(bruthig): Update the image to use the proper color. See
+    // https://crbug.com/632027.
+    network_icon::GetDefaultNetworkImageAndLabel(
+        network_icon::ICON_TYPE_DEFAULT_VIEW, &image, &label, &animating);
     if (animating)
-      ui::network_icon::NetworkIconAnimation::GetInstance()->AddObserver(this);
+      network_icon::NetworkIconAnimation::GetInstance()->AddObserver(this);
     else
-      ui::network_icon::NetworkIconAnimation::GetInstance()->RemoveObserver(
-          this);
-    SetImage(&image);
+      network_icon::NetworkIconAnimation::GetInstance()->RemoveObserver(this);
+    SetImage(image);
     SetLabel(label);
     SetAccessibleName(label);
+    UpdateStyle();
   }
 
-  // ui::network_icon::AnimationObserver
+  // network_icon::AnimationObserver
   void NetworkIconChanged() override { Update(); }
+
+ protected:
+  // TrayItemMore:
+  std::unique_ptr<TrayPopupItemStyle> HandleCreateStyle() const override {
+    std::unique_ptr<TrayPopupItemStyle> style =
+        TrayItemMore::HandleCreateStyle();
+    style->set_color_style(GetConnectedNetwork() != nullptr
+                               ? TrayPopupItemStyle::ColorStyle::ACTIVE
+                               : TrayPopupItemStyle::ColorStyle::INACTIVE);
+    return style;
+  }
 
  private:
   DISALLOW_COPY_AND_ASSIGN(NetworkDefaultView);
@@ -265,7 +269,8 @@ views::View* TrayNetwork::CreateDefaultView(LoginStatus status) {
   if (!chromeos::NetworkHandler::IsInitialized())
     return NULL;
   CHECK(tray_ != NULL);
-  default_ = new tray::NetworkDefaultView(this, status != LoginStatus::LOCKED);
+  default_ = new tray::NetworkDefaultView(this);
+  default_->SetEnabled(status != LoginStatus::LOCKED);
   return default_;
 }
 
@@ -301,10 +306,8 @@ void TrayNetwork::DestroyDetailedView() {
 void TrayNetwork::UpdateAfterLoginStatusChange(LoginStatus status) {}
 
 void TrayNetwork::UpdateAfterShelfAlignmentChange(ShelfAlignment alignment) {
-  if (tray_) {
+  if (tray_)
     SetTrayImageItemBorder(tray_, alignment);
-    tray_->UpdateAlignment(alignment);
-  }
 }
 
 void TrayNetwork::RequestToggleWifi() {
@@ -322,8 +325,7 @@ void TrayNetwork::RequestToggleWifi() {
                                 chromeos::network_handler::ErrorCallback());
 }
 
-void TrayNetwork::OnCaptivePortalDetected(
-    const std::string& /* service_path */) {
+void TrayNetwork::OnCaptivePortalDetected(const std::string& /* guid */) {
   NetworkStateChanged();
 }
 

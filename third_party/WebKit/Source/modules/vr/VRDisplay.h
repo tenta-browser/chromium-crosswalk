@@ -5,15 +5,16 @@
 #ifndef VRDisplay_h
 #define VRDisplay_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/dom/Document.h"
 #include "core/dom/FrameRequestCallback.h"
+#include "core/events/EventTarget.h"
 #include "device/vr/vr_service.mojom-blink.h"
 #include "modules/vr/VRDisplayCapabilities.h"
 #include "modules/vr/VRLayer.h"
+#include "mojo/public/cpp/bindings/binding.h"
+#include "platform/Timer.h"
 #include "platform/heap/Handle.h"
 #include "public/platform/WebGraphicsContext3DProvider.h"
-#include "public/platform/WebThread.h"
 #include "wtf/Forward.h"
 #include "wtf/text/WTFString.h"
 
@@ -26,81 +27,188 @@ class GLES2Interface;
 namespace blink {
 
 class NavigatorVR;
+class ScriptedAnimationController;
 class VRController;
 class VREyeParameters;
+class VRFrameData;
 class VRStageParameters;
 class VRPose;
 
 class WebGLRenderingContextBase;
 
-enum VREye {
-    VREyeNone,
-    VREyeLeft,
-    VREyeRight
-};
+enum VREye { VREyeNone, VREyeLeft, VREyeRight };
 
-class VRDisplay final : public GarbageCollectedFinalized<VRDisplay>, public ScriptWrappable, public WebThread::TaskObserver {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    ~VRDisplay();
+class VRDisplay final : public EventTargetWithInlineData,
+                        public ActiveScriptWrappable<VRDisplay>,
+                        public ContextLifecycleObserver,
+                        public device::mojom::blink::VRDisplayClient {
+  DEFINE_WRAPPERTYPEINFO();
+  USING_GARBAGE_COLLECTED_MIXIN(VRDisplay);
+  USING_PRE_FINALIZER(VRDisplay, dispose);
 
-    unsigned displayId() const { return m_displayId; }
-    const String& displayName() const { return m_displayName; }
+ public:
+  ~VRDisplay();
 
-    VRDisplayCapabilities* capabilities() const { return m_capabilities; }
-    VRStageParameters* stageParameters() const { return m_stageParameters; }
+  unsigned displayId() const { return m_displayId; }
+  const String& displayName() const { return m_displayName; }
 
-    bool isConnected() const { return m_isConnected; }
-    bool isPresenting() const { return m_isPresenting; }
+  VRDisplayCapabilities* capabilities() const { return m_capabilities; }
+  VRStageParameters* stageParameters() const { return m_stageParameters; }
 
-    VRPose* getPose();
-    VRPose* getImmediatePose();
-    void resetPose();
+  bool isConnected() const { return m_isConnected; }
+  bool isPresenting() const { return m_isPresenting; }
 
-    VREyeParameters* getEyeParameters(const String&);
+  bool getFrameData(VRFrameData*);
+  VRPose* getPose();
+  void resetPose();
 
-    int requestAnimationFrame(FrameRequestCallback*);
-    void cancelAnimationFrame(int id);
+  double depthNear() const { return m_depthNear; }
+  double depthFar() const { return m_depthFar; }
 
-    ScriptPromise requestPresent(ScriptState*, const HeapVector<VRLayer>& layers);
-    ScriptPromise exitPresent(ScriptState*);
+  void setDepthNear(double value) { m_depthNear = value; }
+  void setDepthFar(double value) { m_depthFar = value; }
 
-    HeapVector<VRLayer> getLayers();
+  VREyeParameters* getEyeParameters(const String&);
 
-    void submitFrame(VRPose*);
+  int requestAnimationFrame(FrameRequestCallback*);
+  void cancelAnimationFrame(int id);
 
-    DECLARE_VIRTUAL_TRACE();
+  ScriptPromise requestPresent(ScriptState*, const HeapVector<VRLayer>& layers);
+  ScriptPromise exitPresent(ScriptState*);
 
-protected:
-    friend class VRDisplayCollection;
+  HeapVector<VRLayer> getLayers();
 
-    VRDisplay(NavigatorVR*);
+  void submitFrame();
 
-    void update(const device::blink::VRDisplayPtr&);
+  Document* document();
 
-    VRController* controller();
+  // EventTarget overrides:
+  ExecutionContext* getExecutionContext() const override;
+  const AtomicString& interfaceName() const override;
 
-private:
-    // TaskObserver implementation.
-    void didProcessTask() override;
-    void willProcessTask() override { }
+  // ContextLifecycleObserver implementation.
+  void contextDestroyed(ExecutionContext*) override;
 
-    Member<NavigatorVR> m_navigatorVR;
-    unsigned m_displayId;
-    String m_displayName;
-    bool m_isConnected;
-    bool m_isPresenting;
-    bool m_canUpdateFramePose;
-    unsigned m_compositorHandle;
-    Member<VRDisplayCapabilities> m_capabilities;
-    Member<VRStageParameters> m_stageParameters;
-    Member<VREyeParameters> m_eyeParametersLeft;
-    Member<VREyeParameters> m_eyeParametersRight;
-    Member<VRPose> m_framePose;
+  // ScriptWrappable implementation.
+  bool hasPendingActivity() const final;
+
+  void focusChanged();
+
+  DECLARE_VIRTUAL_TRACE();
+
+ protected:
+  friend class VRController;
+
+  VRDisplay(NavigatorVR*,
+            device::mojom::blink::VRDisplayPtr,
+            device::mojom::blink::VRDisplayClientRequest);
+
+  void update(const device::mojom::blink::VRDisplayInfoPtr&);
+
+  void updatePose();
+
+  void beginPresent();
+  void forceExitPresent();
+
+  void updateLayerBounds();
+  void disconnected();
+
+  VRController* controller();
+
+ private:
+  void onFullscreenCheck(TimerBase*);
+  void onPresentComplete(bool);
+
+  void onConnected();
+  void onDisconnected();
+
+  void stopPresenting();
+
+  void OnPresentChange();
+
+  // VRDisplayClient
+  void OnChanged(device::mojom::blink::VRDisplayInfoPtr) override;
+  void OnExitPresent() override;
+  void OnBlur() override;
+  void OnFocus() override;
+  void OnActivate(device::mojom::blink::VRDisplayEventReason) override;
+  void OnDeactivate(device::mojom::blink::VRDisplayEventReason) override;
+
+  void OnVSync(device::mojom::blink::VRPosePtr,
+               mojo::common::mojom::blink::TimeDeltaPtr,
+               int16_t frameId,
+               device::mojom::blink::VRVSyncProvider::Status);
+  void ConnectVSyncProvider();
+
+  ScriptedAnimationController& ensureScriptedAnimationController(Document*);
+  void processScheduledAnimations(double timestamp);
+
+  Member<NavigatorVR> m_navigatorVR;
+  unsigned m_displayId = 0;
+  String m_displayName;
+  bool m_isConnected = false;
+  bool m_isPresenting = false;
+  bool m_isValidDeviceForPresenting = true;
+  Member<VRDisplayCapabilities> m_capabilities;
+  Member<VRStageParameters> m_stageParameters;
+  Member<VREyeParameters> m_eyeParametersLeft;
+  Member<VREyeParameters> m_eyeParametersRight;
+  device::mojom::blink::VRPosePtr m_framePose;
+
+  // This frame ID is vr-specific and is used to track when frames arrive at the
+  // VR compositor so that it knows which poses to use, when to apply bounds
+  // updates, etc.
+  int16_t m_vrFrameId = -1;
+  VRLayer m_layer;
+  double m_depthNear = 0.01;
+  double m_depthFar = 10000.0;
+
+  void dispose();
+
+  TaskRunnerTimer<VRDisplay> m_fullscreenCheckTimer;
+  String m_fullscreenOrigWidth;
+  String m_fullscreenOrigHeight;
+  gpu::gles2::GLES2Interface* m_contextGL = nullptr;
+  Member<WebGLRenderingContextBase> m_renderingContext;
+
+  Member<ScriptedAnimationController> m_scriptedAnimationController;
+  bool m_pendingRaf = false;
+  bool m_pendingVsync = false;
+  bool m_inAnimationFrame = false;
+  bool m_displayBlurred = false;
+  bool m_reenteredFullscreen = false;
+  double m_timebase = -1;
+
+  device::mojom::blink::VRDisplayPtr m_display;
+
+  mojo::Binding<device::mojom::blink::VRDisplayClient> m_displayClientBinding;
+  device::mojom::blink::VRVSyncProviderPtr m_vrVSyncProvider;
+
+  HeapDeque<Member<ScriptPromiseResolver>> m_pendingPresentResolvers;
 };
 
 using VRDisplayVector = HeapVector<Member<VRDisplay>>;
 
-} // namespace blink
+enum class PresentationResult {
+  Requested = 0,
+  Success = 1,
+  SuccessAlreadyPresenting = 2,
+  VRDisplayCannotPresent = 3,
+  PresentationNotSupportedByDisplay = 4,
+  VRDisplayNotFound = 5,
+  NotInitiatedByUserGesture = 6,
+  InvalidNumberOfLayers = 7,
+  InvalidLayerSource = 8,
+  LayerSourceMissingWebGLContext = 9,
+  InvalidLayerBounds = 10,
+  ServiceInactive = 11,
+  RequestDenied = 12,
+  FullscreenNotEnabled = 13,
+  PresentationResultMax,  // Must be last member of enum.
+};
 
-#endif // VRDisplay_h
+void ReportPresentationResult(PresentationResult);
+
+}  // namespace blink
+
+#endif  // VRDisplay_h

@@ -10,6 +10,9 @@
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/memory/weak_ptr.h"
+#include "base/time/time.h"
+#include "media/base/media_observer.h"
 #include "media/blink/media_blink_export.h"
 #include "media/filters/context_3d.h"
 
@@ -20,8 +23,6 @@ class TaskRunner;
 
 namespace blink {
 class WebContentDecryptionModule;
-class WebMediaPlayerClient;
-class WebMediaSession;
 }
 
 namespace media {
@@ -57,7 +58,10 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerParams {
       const AdjustAllocatedMemoryCB& adjust_allocated_memory_cb,
       blink::WebContentDecryptionModule* initial_cdm,
       SurfaceManager* surface_manager,
-      blink::WebMediaSession* media_session);
+      base::WeakPtr<MediaObserver> media_observer,
+      base::TimeDelta max_keyframe_distance_to_disable_background_video,
+      bool enable_instant_source_buffer_gc,
+      bool allow_suspend);
 
   ~WebMediaPlayerParams();
 
@@ -97,7 +101,19 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerParams {
 
   SurfaceManager* surface_manager() const { return surface_manager_; }
 
-  const blink::WebMediaSession* media_session() const { return media_session_; }
+  base::WeakPtr<MediaObserver> media_observer() const {
+    return media_observer_;
+  }
+
+  base::TimeDelta max_keyframe_distance_to_disable_background_video() const {
+    return max_keyframe_distance_to_disable_background_video_;
+  }
+
+  bool enable_instant_source_buffer_gc() const {
+    return enable_instant_source_buffer_gc_;
+  }
+
+  bool allow_suspend() const { return allow_suspend_; }
 
  private:
   DeferLoadCB defer_load_cb_;
@@ -111,8 +127,10 @@ class MEDIA_BLINK_EXPORT WebMediaPlayerParams {
 
   blink::WebContentDecryptionModule* initial_cdm_;
   SurfaceManager* surface_manager_;
-
-  blink::WebMediaSession* media_session_;
+  base::WeakPtr<MediaObserver> media_observer_;
+  base::TimeDelta max_keyframe_distance_to_disable_background_video_;
+  bool enable_instant_source_buffer_gc_;
+  const bool allow_suspend_;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(WebMediaPlayerParams);
 };

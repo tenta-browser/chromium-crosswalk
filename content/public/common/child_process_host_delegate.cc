@@ -10,4 +10,9 @@ bool ChildProcessHostDelegate::CanShutdown() {
   return true;
 }
 
+service_manager::InterfaceProvider*
+ChildProcessHostDelegate::GetRemoteInterfaces() {
+  return nullptr;
+}
+
 }  // namespace content

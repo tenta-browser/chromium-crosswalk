@@ -10,7 +10,6 @@
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/linked_ptr.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread.h"
@@ -21,17 +20,16 @@
 #include "media/cast/logging/logging_defines.h"
 
 namespace base {
-class BinaryValue;
 class DictionaryValue;
 class SingleThreadTaskRunner;
+class Value;
+using BinaryValue = Value;
 }  // namespace base
 
 namespace media {
-class VideoFrame;
 
 namespace cast {
 class CastEnvironment;
-class FrameInput;
 class RawEventSubscriberBundle;
 
 namespace transport {
@@ -104,17 +102,24 @@ class CastSessionDelegate : public CastSessionDelegateBase {
   // deliver any data between calling the two methods.
   // It's OK to call only one of the two methods.
   // StartUDP must be called before these methods.
-  void StartAudio(const media::cast::AudioSenderConfig& config,
+  void StartAudio(const media::cast::FrameSenderConfig& config,
                   const AudioFrameInputAvailableCallback& callback,
                   const ErrorCallback& error_callback);
 
-  void StartVideo(const media::cast::VideoSenderConfig& config,
-                  const VideoFrameInputAvailableCallback& callback,
-                  const ErrorCallback& error_callback,
-                  const media::cast::CreateVideoEncodeAcceleratorCallback&
-                      create_vea_cb,
-                  const media::cast::CreateVideoEncodeMemoryCallback&
-                      create_video_encode_mem_cb);
+  void StartVideo(
+      const media::cast::FrameSenderConfig& config,
+      const VideoFrameInputAvailableCallback& callback,
+      const ErrorCallback& error_callback,
+      const media::cast::CreateVideoEncodeAcceleratorCallback& create_vea_cb,
+      const media::cast::CreateVideoEncodeMemoryCallback&
+          create_video_encode_mem_cb);
+
+  // Start remoting session for one stream. After calling this method, a
+  // remoting sender will be ready for sending the demuxed stream. StartUDP()
+  // must be called before calling this method.
+  void StartRemotingStream(int32_t stream_id,
+                           const media::cast::FrameSenderConfig& config,
+                           const ErrorCallback& error_callback);
 
   void ToggleLogging(bool is_audio, bool enable);
   void GetEventLogsAndReset(bool is_audio,

@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "base/callback_forward.h"
+#include "base/memory/ref_counted.h"
 #include "base/strings/string_piece.h"
 #include "build/build_config.h"
 #include "content/public/browser/web_contents_delegate.h"
@@ -34,6 +35,9 @@ class WMTestHelper;
 namespace views {
 class Widget;
 class ViewsDelegate;
+}
+namespace wm {
+class WMState;
 }
 #endif  // defined(USE_AURA)
 
@@ -76,7 +80,6 @@ class Shell : public WebContentsDelegate,
   void UpdateNavigationControls(bool to_different_document);
   void Close();
   void ShowDevTools();
-  void ShowDevToolsForElementAt(int x, int y);
   void CloseDevTools();
 #if defined(OS_MACOSX)
   // Resizes the web content view to the given dimensions.
@@ -86,10 +89,11 @@ class Shell : public WebContentsDelegate,
   // Do one time initialization at application startup.
   static void Initialize();
 
-  static Shell* CreateNewWindow(BrowserContext* browser_context,
-                                const GURL& url,
-                                SiteInstance* site_instance,
-                                const gfx::Size& initial_size);
+  static Shell* CreateNewWindow(
+      BrowserContext* browser_context,
+      const GURL& url,
+      const scoped_refptr<SiteInstance>& site_instance,
+      const gfx::Size& initial_size);
 
   // Returns the Shell object corresponding to the given RenderViewHost.
   static Shell* FromRenderViewHost(RenderViewHost* rvh);
@@ -129,6 +133,8 @@ class Shell : public WebContentsDelegate,
                            bool to_different_document) override;
 #if defined(OS_ANDROID)
   void LoadProgressChanged(WebContents* source, double progress) override;
+  base::android::ScopedJavaLocalRef<jobject>
+      GetContentVideoViewEmbedder() override;
 #endif
   void EnterFullscreenModeForTab(WebContents* web_contents,
                                  const GURL& origin) override;
@@ -152,14 +158,19 @@ class Shell : public WebContentsDelegate,
   void HandleKeyboardEvent(WebContents* source,
                            const NativeWebKeyboardEvent& event) override;
 #endif
-  bool AddMessageToConsole(WebContents* source,
-                           int32_t level,
-                           const base::string16& message,
-                           int32_t line_no,
-                           const base::string16& source_id) override;
-  void RendererUnresponsive(WebContents* source) override;
+  bool DidAddMessageToConsole(WebContents* source,
+                              int32_t level,
+                              const base::string16& message,
+                              int32_t line_no,
+                              const base::string16& source_id) override;
+  void RendererUnresponsive(
+      WebContents* source,
+      const WebContentsUnresponsiveState& unresponsive_state) override;
   void ActivateContents(WebContents* contents) override;
-  bool HandleContextMenu(const content::ContextMenuParams& params) override;
+  bool ShouldAllowRunningInsecureContent(content::WebContents* web_contents,
+                                         bool allowed_per_prefs,
+                                         const url::Origin& origin,
+                                         const GURL& resource_url) override;
 
   static gfx::Size GetShellDefaultSize();
 
@@ -205,8 +216,6 @@ class Shell : public WebContentsDelegate,
   void PlatformSetIsLoading(bool loading);
   // Set the title of shell window
   void PlatformSetTitle(const base::string16& title);
-  // User right-clicked on the web view
-  bool PlatformHandleContextMenu(const content::ContextMenuParams& params);
 #if defined(OS_ANDROID)
   void PlatformToggleFullscreenModeForTab(WebContents* web_contents,
                                           bool enter_fullscreen);
@@ -227,7 +236,6 @@ class Shell : public WebContentsDelegate,
   // WebContentsObserver
   void TitleWasSet(NavigationEntry* entry, bool explicit_set) override;
 
-  void InnerShowDevTools();
   void OnDevToolsWebContentsDestroyed();
 
   std::unique_ptr<ShellJavaScriptDialogManager> dialog_manager_;
@@ -252,6 +260,8 @@ class Shell : public WebContentsDelegate,
 #if defined(OS_CHROMEOS)
   static wm::WMTestHelper* wm_test_helper_;
   static display::Screen* test_screen_;
+#else
+  static wm::WMState* wm_state_;
 #endif
 #if defined(TOOLKIT_VIEWS)
   static views::ViewsDelegate* views_delegate_;

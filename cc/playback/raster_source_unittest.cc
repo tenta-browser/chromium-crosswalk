@@ -10,7 +10,7 @@
 
 #include "cc/test/fake_recording_source.h"
 #include "cc/test/skia_common.h"
-#include "cc/tiles/software_image_decode_controller.h"
+#include "cc/tiles/software_image_decode_cache.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkPixelRef.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
@@ -27,18 +27,18 @@ TEST(RasterSourceTest, AnalyzeIsSolidUnscaled) {
   std::unique_ptr<FakeRecordingSource> recording_source =
       FakeRecordingSource::CreateFilledRecordingSource(layer_bounds);
 
-  SkPaint solid_paint;
+  PaintFlags solid_flags;
   SkColor solid_color = SkColorSetARGB(255, 12, 23, 34);
-  solid_paint.setColor(solid_color);
+  solid_flags.setColor(solid_color);
 
   SkColor non_solid_color = SkColorSetARGB(128, 45, 56, 67);
   SkColor color = SK_ColorTRANSPARENT;
-  SkPaint non_solid_paint;
+  PaintFlags non_solid_flags;
   bool is_solid_color = false;
-  non_solid_paint.setColor(non_solid_color);
+  non_solid_flags.setColor(non_solid_color);
 
-  recording_source->add_draw_rect_with_paint(gfx::Rect(layer_bounds),
-                                             solid_paint);
+  recording_source->add_draw_rect_with_flags(gfx::Rect(layer_bounds),
+                                             solid_flags);
   recording_source->Rerecord();
 
   scoped_refptr<RasterSource> raster =
@@ -48,46 +48,46 @@ TEST(RasterSourceTest, AnalyzeIsSolidUnscaled) {
   for (int y = 0; y <= 300; y += 100) {
     for (int x = 0; x <= 300; x += 100) {
       gfx::Rect rect(x, y, 100, 100);
-      is_solid_color = raster->PerformSolidColorAnalysis(rect, 1.0, &color);
+      is_solid_color = raster->PerformSolidColorAnalysis(rect, 1.f, &color);
       EXPECT_TRUE(is_solid_color) << rect.ToString();
       EXPECT_EQ(solid_color, color) << rect.ToString();
     }
   }
 
   // Add one non-solid pixel and recreate the raster source.
-  recording_source->add_draw_rect_with_paint(gfx::Rect(50, 50, 1, 1),
-                                             non_solid_paint);
+  recording_source->add_draw_rect_with_flags(gfx::Rect(50, 50, 1, 1),
+                                             non_solid_flags);
   recording_source->Rerecord();
   raster =
       RasterSource::CreateFromRecordingSource(recording_source.get(), false);
 
   color = SK_ColorTRANSPARENT;
   is_solid_color =
-      raster->PerformSolidColorAnalysis(gfx::Rect(0, 0, 100, 100), 1.0, &color);
+      raster->PerformSolidColorAnalysis(gfx::Rect(0, 0, 100, 100), 1.f, &color);
   EXPECT_FALSE(is_solid_color);
 
   color = SK_ColorTRANSPARENT;
   is_solid_color = raster->PerformSolidColorAnalysis(
-      gfx::Rect(100, 0, 100, 100), 1.0, &color);
+      gfx::Rect(100, 0, 100, 100), 1.f, &color);
   EXPECT_TRUE(is_solid_color);
   EXPECT_EQ(solid_color, color);
 
   // Boundaries should be clipped.
   color = SK_ColorTRANSPARENT;
   is_solid_color = raster->PerformSolidColorAnalysis(
-      gfx::Rect(350, 0, 100, 100), 1.0, &color);
+      gfx::Rect(350, 0, 100, 100), 1.f, &color);
   EXPECT_TRUE(is_solid_color);
   EXPECT_EQ(solid_color, color);
 
   color = SK_ColorTRANSPARENT;
   is_solid_color = raster->PerformSolidColorAnalysis(
-      gfx::Rect(0, 350, 100, 100), 1.0, &color);
+      gfx::Rect(0, 350, 100, 100), 1.f, &color);
   EXPECT_TRUE(is_solid_color);
   EXPECT_EQ(solid_color, color);
 
   color = SK_ColorTRANSPARENT;
   is_solid_color = raster->PerformSolidColorAnalysis(
-      gfx::Rect(350, 350, 100, 100), 1.0, &color);
+      gfx::Rect(350, 350, 100, 100), 1.f, &color);
   EXPECT_TRUE(is_solid_color);
   EXPECT_EQ(solid_color, color);
 }
@@ -100,16 +100,16 @@ TEST(RasterSourceTest, AnalyzeIsSolidScaled) {
 
   SkColor solid_color = SkColorSetARGB(255, 12, 23, 34);
   SkColor color = SK_ColorTRANSPARENT;
-  SkPaint solid_paint;
+  PaintFlags solid_flags;
   bool is_solid_color = false;
-  solid_paint.setColor(solid_color);
+  solid_flags.setColor(solid_color);
 
   SkColor non_solid_color = SkColorSetARGB(128, 45, 56, 67);
-  SkPaint non_solid_paint;
-  non_solid_paint.setColor(non_solid_color);
+  PaintFlags non_solid_flags;
+  non_solid_flags.setColor(non_solid_color);
 
-  recording_source->add_draw_rect_with_paint(gfx::Rect(0, 0, 400, 400),
-                                             solid_paint);
+  recording_source->add_draw_rect_with_flags(gfx::Rect(0, 0, 400, 400),
+                                             solid_flags);
   recording_source->Rerecord();
 
   scoped_refptr<RasterSource> raster =
@@ -126,8 +126,8 @@ TEST(RasterSourceTest, AnalyzeIsSolidScaled) {
   }
 
   // Add one non-solid pixel and recreate the raster source.
-  recording_source->add_draw_rect_with_paint(gfx::Rect(50, 50, 1, 1),
-                                             non_solid_paint);
+  recording_source->add_draw_rect_with_flags(gfx::Rect(50, 50, 1, 1),
+                                             non_solid_flags);
   recording_source->Rerecord();
   raster =
       RasterSource::CreateFromRecordingSource(recording_source.get(), false);
@@ -253,10 +253,10 @@ TEST(RasterSourceTest, RasterFullContents) {
 
   // Because the caller sets content opaque, it also promises that it
   // has at least filled in layer_bounds opaquely.
-  SkPaint white_paint;
-  white_paint.setColor(SK_ColorWHITE);
-  recording_source->add_draw_rect_with_paint(gfx::Rect(layer_bounds),
-                                             white_paint);
+  PaintFlags white_flags;
+  white_flags.setColor(SK_ColorWHITE);
+  recording_source->add_draw_rect_with_flags(gfx::Rect(layer_bounds),
+                                             white_flags);
   recording_source->Rerecord();
 
   scoped_refptr<RasterSource> raster =
@@ -318,10 +318,10 @@ TEST(RasterSourceTest, RasterPartialContents) {
   recording_source->SetClearCanvasWithDebugColor(false);
 
   // First record everything as white.
-  SkPaint white_paint;
-  white_paint.setColor(SK_ColorWHITE);
-  recording_source->add_draw_rect_with_paint(gfx::Rect(layer_bounds),
-                                             white_paint);
+  PaintFlags white_flags;
+  white_flags.setColor(SK_ColorWHITE);
+  recording_source->add_draw_rect_with_flags(gfx::Rect(layer_bounds),
+                                             white_flags);
   recording_source->Rerecord();
 
   scoped_refptr<RasterSource> raster =
@@ -356,10 +356,10 @@ TEST(RasterSourceTest, RasterPartialContents) {
   }
 
   // Re-record everything as black.
-  SkPaint black_paint;
-  black_paint.setColor(SK_ColorBLACK);
-  recording_source->add_draw_rect_with_paint(gfx::Rect(layer_bounds),
-                                             black_paint);
+  PaintFlags black_flags;
+  black_flags.setColor(SK_ColorBLACK);
+  recording_source->add_draw_rect_with_flags(gfx::Rect(layer_bounds),
+                                             black_flags);
   recording_source->Rerecord();
 
   // Make a new RasterSource from the new recording.
@@ -412,11 +412,11 @@ TEST(RasterSourceTest, RasterPartialClear) {
 
   // First record everything as white.
   const unsigned alpha_dark = 10u;
-  SkPaint white_paint;
-  white_paint.setColor(SK_ColorWHITE);
-  white_paint.setAlpha(alpha_dark);
-  recording_source->add_draw_rect_with_paint(gfx::Rect(layer_bounds),
-                                             white_paint);
+  PaintFlags white_flags;
+  white_flags.setColor(SK_ColorWHITE);
+  white_flags.setAlpha(alpha_dark);
+  recording_source->add_draw_rect_with_flags(gfx::Rect(layer_bounds),
+                                             white_flags);
   recording_source->Rerecord();
 
   scoped_refptr<RasterSource> raster =
@@ -458,9 +458,9 @@ TEST(RasterSourceTest, RasterPartialClear) {
 
   // Record everything as a slightly lighter white.
   const unsigned alpha_light = 18u;
-  white_paint.setAlpha(alpha_light);
-  recording_source_light->add_draw_rect_with_paint(gfx::Rect(layer_bounds),
-                                                   white_paint);
+  white_flags.setAlpha(alpha_light);
+  recording_source_light->add_draw_rect_with_flags(gfx::Rect(layer_bounds),
+                                                   white_flags);
   recording_source_light->Rerecord();
 
   // Make a new RasterSource from the new recording.
@@ -532,7 +532,7 @@ TEST(RasterSourceTest, GetPictureMemoryUsageIncludesClientReportedMemory) {
 
   scoped_refptr<RasterSource> raster =
       RasterSource::CreateFromRecordingSource(recording_source.get(), false);
-  size_t total_memory_usage = raster->GetPictureMemoryUsage();
+  size_t total_memory_usage = raster->GetMemoryUsage();
   EXPECT_GE(total_memory_usage, kReportedMemoryUsageInBytes);
   EXPECT_LT(total_memory_usage, 2 * kReportedMemoryUsageInBytes);
 }
@@ -552,19 +552,19 @@ TEST(RasterSourceTest, ImageHijackCanvasRespectsSharedCanvasTransform) {
                                    gfx::Point(0, 0));
 
   // 2. Cover everything in red.
-  SkPaint paint;
-  paint.setColor(SK_ColorRED);
-  recording_source->add_draw_rect_with_paint(gfx::Rect(size), paint);
+  PaintFlags flags;
+  flags.setColor(SK_ColorRED);
+  recording_source->add_draw_rect_with_flags(gfx::Rect(size), flags);
 
   // 3. Draw 4x4 green rects into every corner.
-  paint.setColor(SK_ColorGREEN);
-  recording_source->add_draw_rect_with_paint(gfx::Rect(0, 0, 4, 4), paint);
-  recording_source->add_draw_rect_with_paint(
-      gfx::Rect(size.width() - 4, 0, 4, 4), paint);
-  recording_source->add_draw_rect_with_paint(
-      gfx::Rect(0, size.height() - 4, 4, 4), paint);
-  recording_source->add_draw_rect_with_paint(
-      gfx::Rect(size.width() - 4, size.height() - 4, 4, 4), paint);
+  flags.setColor(SK_ColorGREEN);
+  recording_source->add_draw_rect_with_flags(gfx::Rect(0, 0, 4, 4), flags);
+  recording_source->add_draw_rect_with_flags(
+      gfx::Rect(size.width() - 4, 0, 4, 4), flags);
+  recording_source->add_draw_rect_with_flags(
+      gfx::Rect(0, size.height() - 4, 4, 4), flags);
+  recording_source->add_draw_rect_with_flags(
+      gfx::Rect(size.width() - 4, size.height() - 4, 4, 4), flags);
 
   recording_source->SetGenerateDiscardableImagesMetadata(true);
   recording_source->Rerecord();
@@ -572,10 +572,10 @@ TEST(RasterSourceTest, ImageHijackCanvasRespectsSharedCanvasTransform) {
   bool can_use_lcd = true;
   scoped_refptr<RasterSource> raster_source =
       recording_source->CreateRasterSource(can_use_lcd);
-  SoftwareImageDecodeController controller(
+  SoftwareImageDecodeCache controller(
       ResourceFormat::RGBA_8888,
       LayerTreeSettings().software_decoded_image_budget_bytes);
-  raster_source->set_image_decode_controller(&controller);
+  raster_source->set_image_decode_cache(&controller);
 
   SkBitmap bitmap;
   bitmap.allocN32Pixels(size.width() * 0.5f, size.height() * 0.25f);

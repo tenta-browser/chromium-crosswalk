@@ -28,16 +28,31 @@
 
 #include "platform/PlatformExport.h"
 #include "platform/graphics/Color.h"
-#include "wtf/PassRefPtr.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
 
 class SkColorFilter;
+class SkColorSpace;
 
 namespace blink {
 
-enum ColorSpace {
-    ColorSpaceDeviceRGB,
-    ColorSpaceSRGB,
-    ColorSpaceLinearRGB
+struct WebScreenInfo;
+
+enum ColorSpace { ColorSpaceDeviceRGB, ColorSpaceSRGB, ColorSpaceLinearRGB };
+
+enum class ColorSpaceGamut {
+  // Values synced with 'Gamut' in src/tools/metrics/histograms/histograms.xml
+  Unknown = 0,
+  LessThanNTSC = 1,
+  NTSC = 2,
+  SRGB = 3,
+  AlmostP3 = 4,
+  P3 = 5,
+  AdobeRGB = 6,
+  Wide = 7,
+  BT2020 = 8,
+  ProPhoto = 9,
+  UltraWide = 10,
+  End
 };
 
 namespace ColorSpaceUtilities {
@@ -47,16 +62,25 @@ namespace ColorSpaceUtilities {
 // If the conversion cannot be performed, or is a no-op (identity transform),
 // then 0 is returned.
 // (Note that a round-trip - f(B,A)[f(A,B)[x]] - is not lossless in general.)
-const uint8_t* getConversionLUT(ColorSpace dstColorSpace, ColorSpace srcColorSpace = ColorSpaceDeviceRGB);
+const uint8_t* getConversionLUT(ColorSpace dstColorSpace,
+                                ColorSpace srcColorSpace = ColorSpaceDeviceRGB);
 
-// Convert a Color assumed to be in the |srcColorSpace| into the |dstColorSpace|.
-Color convertColor(const Color& srcColor, ColorSpace dstColorSpace, ColorSpace srcColorSpace = ColorSpaceDeviceRGB);
+// Convert a Color assumed to be in the |srcColorSpace| into the
+// |dstColorSpace|.
+Color convertColor(const Color& srcColor,
+                   ColorSpace dstColorSpace,
+                   ColorSpace srcColorSpace = ColorSpaceDeviceRGB);
 
-// Create a color filter that will convert from |srcColorSpace| into |dstColorSpace|.
-PassRefPtr<SkColorFilter> createColorSpaceFilter(ColorSpace srcColorSpace, ColorSpace dstColorSpace);
+// Create a color filter that will convert from |srcColorSpace| into
+// |dstColorSpace|.
+sk_sp<SkColorFilter> createColorSpaceFilter(ColorSpace srcColorSpace,
+                                            ColorSpace dstColorSpace);
 
-} // namespace ColorSpaceUtilities
+PLATFORM_EXPORT ColorSpaceGamut getColorSpaceGamut(const WebScreenInfo&);
+ColorSpaceGamut getColorSpaceGamut(SkColorSpace*);
 
-} // namespace blink
+}  // namespace ColorSpaceUtilities
 
-#endif // ColorSpace_h
+}  // namespace blink
+
+#endif  // ColorSpace_h

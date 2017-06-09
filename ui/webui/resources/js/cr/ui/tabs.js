@@ -105,8 +105,8 @@ cr.define('cr.ui', function() {
     handleSelectedChange_: function(e) {
       var target = e.target;
       if (e.newValue && isTabElement(target) && getTabBox(target) == this) {
-        var index = Array.prototype.indexOf.call(target.parentElement.children,
-                                                 target);
+        var index =
+            Array.prototype.indexOf.call(target.parentElement.children, target);
         this.selectedIndex = index;
       }
     },
@@ -118,8 +118,8 @@ cr.define('cr.ui', function() {
    * The index of the selected tab or -1 if no tab is selected.
    * @type {number}
    */
-  cr.defineProperty(TabBox, 'selectedIndex', cr.PropertyKind.JS_PROP,
-                    selectedIndexSetHook);
+  cr.defineProperty(
+      TabBox, 'selectedIndex', cr.PropertyKind.JS_PROP, selectedIndexSetHook);
 
   /**
    * Creates a new tabs element.
@@ -150,13 +150,13 @@ cr.define('cr.ui', function() {
      */
     handleKeyDown_: function(e) {
       var delta = 0;
-      switch (e.keyIdentifier) {
-        case 'Left':
-        case 'Up':
+      switch (e.key) {
+        case 'ArrowLeft':
+        case 'ArrowUp':
           delta = -1;
           break;
-        case 'Right':
-        case 'Down':
+        case 'ArrowRight':
+        case 'ArrowDown':
           delta = 1;
           break;
       }

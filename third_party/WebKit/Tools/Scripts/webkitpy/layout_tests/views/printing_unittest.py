@@ -28,16 +28,12 @@
 
 """Unit tests for printing.py."""
 
-import StringIO
 import optparse
+import StringIO
 import sys
 import unittest
 
 from webkitpy.common.host_mock import MockHost
-
-from webkitpy.common.system import logtesting
-from webkitpy.layout_tests import port
-from webkitpy.layout_tests.controllers import manager
 from webkitpy.layout_tests.models import test_expectations
 from webkitpy.layout_tests.models import test_failures
 from webkitpy.layout_tests.models import test_results
@@ -53,7 +49,7 @@ def get_options(args):
 class TestUtilityFunctions(unittest.TestCase):
 
     def test_print_options(self):
-        options, args = get_options([])
+        options, _ = get_options([])
         self.assertIsNotNone(options)
 
 
@@ -83,9 +79,6 @@ class FakeShard(object):
 
 class Testprinter(unittest.TestCase):
 
-    def assertEmpty(self, stream):
-        self.assertFalse(stream.getvalue())
-
     def assertNotEmpty(self, stream):
         self.assertTrue(stream.getvalue())
 
@@ -103,7 +96,6 @@ class Testprinter(unittest.TestCase):
         options, args = option_parser.parse_args(args)
         host = MockHost()
         self._port = host.port_factory.get('test', options)
-        nproc = 2
 
         regular_output = StringIO.StringIO()
         printer = printing.Printer(self._port, options, regular_output)
@@ -120,18 +112,21 @@ class Testprinter(unittest.TestCase):
     def test_configure_and_cleanup(self):
         # This test verifies that calling cleanup repeatedly and deleting
         # the object is safe.
-        printer, err = self.get_printer()
+        printer, _ = self.get_printer()
         printer.cleanup()
         printer.cleanup()
         printer = None
 
     def test_print_config(self):
         printer, err = self.get_printer()
-        # FIXME: it's lame that i have to set these options directly.
+        # FIXME: Make it so these options don't have to be set directly.
+        # pylint: disable=protected-access
         printer._options.pixel_tests = True
         printer._options.new_baseline = True
         printer._options.time_out_ms = 6000
         printer._options.slow_time_out_ms = 12000
+        printer._options.order = 'random'
+        printer._options.seed = 1234
         printer.print_config('/tmp')
         self.assertIn("Using port 'test-mac-mac10.10'", err.getvalue())
         self.assertIn('Test configuration: <mac10.10, x86, release>', err.getvalue())
@@ -142,6 +137,7 @@ class Testprinter(unittest.TestCase):
         self.assertIn('Pixel tests enabled', err.getvalue())
         self.assertIn('Command line:', err.getvalue())
         self.assertIn('Regular timeout: ', err.getvalue())
+        self.assertIn('Using random order with seed: 1234', err.getvalue())
 
         self.reset(err)
         printer._options.quiet = True
@@ -236,11 +232,16 @@ class Testprinter(unittest.TestCase):
     def test_print_found(self):
         printer, err = self.get_printer()
 
-        printer.print_found(100, 10, 1, 1)
+        self.reset(err)
+        printer.print_found(100, 100, 10, 1, 1)
         self.assertWritten(err, ["Found 100 tests; running 10, skipping 90.\n"])
 
         self.reset(err)
-        printer.print_found(100, 10, 2, 3)
+        printer.print_found(100, 20, 10, 1, 1)
+        self.assertWritten(err, ["Found 20 tests (total 100); running 10, skipping 10.\n"])
+
+        self.reset(err)
+        printer.print_found(100, 100, 10, 2, 3)
         self.assertWritten(err, ["Found 100 tests; running 10 (6 times each: --repeat-each=2 --iterations=3), skipping 90.\n"])
 
     def test_debug_rwt_logging_is_throttled(self):

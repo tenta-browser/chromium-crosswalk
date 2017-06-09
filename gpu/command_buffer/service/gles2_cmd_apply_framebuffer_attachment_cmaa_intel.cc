@@ -6,7 +6,9 @@
 
 #include "base/logging.h"
 #include "gpu/command_buffer/service/framebuffer_manager.h"
+#include "gpu/command_buffer/service/gles2_cmd_copy_texture_chromium.h"
 #include "gpu/command_buffer/service/gles2_cmd_decoder.h"
+#include "gpu/command_buffer/service/texture_manager.h"
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_gl_api_implementation.h"
 #include "ui/gl/gl_version_info.h"
@@ -14,6 +16,7 @@
 #define SHADER(Src) #Src
 
 namespace gpu {
+namespace gles2 {
 
 ApplyFramebufferAttachmentCMAAINTELResourceManager::
     ApplyFramebufferAttachmentCMAAINTELResourceManager()
@@ -27,27 +30,23 @@ ApplyFramebufferAttachmentCMAAINTELResourceManager::
       frame_id_(0),
       width_(0),
       height_(0),
-      copy_to_framebuffer_shader_(0),
-      copy_to_image_shader_(0),
       edges0_shader_(0),
       edges1_shader_(0),
       edges_combine_shader_(0),
       process_and_apply_shader_(0),
       debug_display_edges_shader_(0),
       cmaa_framebuffer_(0),
-      copy_framebuffer_(0),
       rgba8_texture_(0),
       working_color_texture_(0),
       edges0_texture_(0),
       edges1_texture_(0),
       mini4_edge_texture_(0),
       mini4_edge_depth_texture_(0),
-      edges1_shader_result_texture_float4_slot1_(0),
-      edges1_shader_result_texture_(0),
-      edges_combine_shader_result_texture_float4_slot1_(0),
-      process_and_apply_shader_result_texture_float4_slot1_(0),
-      edges_combine_shader_result_texture_slot2_(0),
-      copy_to_image_shader_outTexture_(0) {}
+      edges0_shader_result_rgba_texture_slot1_(0),
+      edges0_shader_target_texture_slot2_(0),
+      edges1_shader_result_edge_texture_(0),
+      process_and_apply_shader_result_rgba_texture_slot1_(0),
+      edges_combine_shader_result_edge_texture_(0) {}
 
 ApplyFramebufferAttachmentCMAAINTELResourceManager::
     ~ApplyFramebufferAttachmentCMAAINTELResourceManager() {
@@ -59,10 +58,6 @@ void ApplyFramebufferAttachmentCMAAINTELResourceManager::Initialize(
   DCHECK(decoder);
   is_gles31_compatible_ =
       decoder->GetGLContext()->GetVersionInfo()->IsAtLeastGLES(3, 1);
-
-  copy_to_image_shader_ = CreateProgram("", vert_str_, copy_frag_str_);
-  copy_to_framebuffer_shader_ =
-      CreateProgram("#define OUT_FBO 1\n", vert_str_, copy_frag_str_);
 
   // Check if RGBA8UI is supported as an FBO colour target with depth.
   // If not supported, GLSL needs to convert the data to/from float so there is
@@ -179,18 +174,16 @@ void ApplyFramebufferAttachmentCMAAINTELResourceManager::Initialize(
   process_and_apply_shader_ =
       CreateProgram(blur.str().c_str(), vert_str_, cmaa_frag_c_str);
 
-  edges1_shader_result_texture_float4_slot1_ =
-      glGetUniformLocation(edges0_shader_, "g_resultTextureFlt4Slot1");
-  edges1_shader_result_texture_ =
-      glGetUniformLocation(edges1_shader_, "g_resultTexture");
-  edges_combine_shader_result_texture_float4_slot1_ =
-      glGetUniformLocation(edges_combine_shader_, "g_resultTextureFlt4Slot1");
-  edges_combine_shader_result_texture_slot2_ =
-      glGetUniformLocation(edges_combine_shader_, "g_resultTextureSlot2");
-  process_and_apply_shader_result_texture_float4_slot1_ = glGetUniformLocation(
-      process_and_apply_shader_, "g_resultTextureFlt4Slot1");
-  copy_to_image_shader_outTexture_ =
-      glGetUniformLocation(copy_to_image_shader_, "outTexture");
+  edges0_shader_result_rgba_texture_slot1_ =
+      glGetUniformLocation(edges0_shader_, "g_resultRGBATextureSlot1");
+  edges0_shader_target_texture_slot2_ =
+      glGetUniformLocation(edges0_shader_, "g_targetTextureSlot2");
+  edges1_shader_result_edge_texture_ =
+      glGetUniformLocation(edges1_shader_, "g_resultEdgeTexture");
+  edges_combine_shader_result_edge_texture_ =
+      glGetUniformLocation(edges_combine_shader_, "g_resultEdgeTexture");
+  process_and_apply_shader_result_rgba_texture_slot1_ = glGetUniformLocation(
+      process_and_apply_shader_, "g_resultRGBATextureSlot1");
 
   initialized_ = true;
 }
@@ -201,8 +194,6 @@ void ApplyFramebufferAttachmentCMAAINTELResourceManager::Destroy() {
 
   ReleaseTextures();
 
-  glDeleteProgram(copy_to_image_shader_);
-  glDeleteProgram(copy_to_framebuffer_shader_);
   glDeleteProgram(process_and_apply_shader_);
   glDeleteProgram(edges_combine_shader_);
   glDeleteProgram(edges1_shader_);
@@ -216,14 +207,20 @@ void ApplyFramebufferAttachmentCMAAINTELResourceManager::Destroy() {
 // color attachments of currently bound draw framebuffer.
 // Reference GL_INTEL_framebuffer_CMAA for details.
 void ApplyFramebufferAttachmentCMAAINTELResourceManager::
-    ApplyFramebufferAttachmentCMAAINTEL(gles2::GLES2Decoder* decoder,
-                                        gles2::Framebuffer* framebuffer) {
+    ApplyFramebufferAttachmentCMAAINTEL(
+        GLES2Decoder* decoder,
+        Framebuffer* framebuffer,
+        CopyTextureCHROMIUMResourceManager* copier,
+        TextureManager* texture_manager) {
   DCHECK(decoder);
   DCHECK(initialized_);
   if (!framebuffer)
     return;
 
-  GLuint last_framebuffer = framebuffer->service_id();
+  glDisable(GL_SCISSOR_TEST);
+  glDisable(GL_STENCIL_TEST);
+  glDisable(GL_CULL_FACE);
+  glDisable(GL_BLEND);
 
   // Process each color attachment of the current draw framebuffer.
   uint32_t max_draw_buffers = decoder->GetContextGroup()->max_draw_buffers();
@@ -246,41 +243,60 @@ void ApplyFramebufferAttachmentCMAAINTELResourceManager::
 
       // CMAA internally expects GL_RGBA8 textures.
       // Process using a GL_RGBA8 copy if this is not the case.
-      bool do_copy = internal_format != GL_RGBA8;
-
-      // Copy source_texture to rgba8_texture_
-      if (do_copy) {
-        CopyTexture(source_texture, rgba8_texture_, false);
-      }
+      DCHECK(attachment->object_name());
+      TextureRef* texture =
+          texture_manager->GetTexture(attachment->object_name());
+      const bool rgba_immutable =
+          texture->texture()->IsImmutable() &&
+          TextureManager::ExtractFormatFromStorageFormat(internal_format) ==
+              GL_RGBA;
+      const bool do_copy = !rgba_immutable;
 
       // CMAA Effect
-      glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, last_framebuffer);
       if (do_copy) {
-        ApplyCMAAEffectTexture(rgba8_texture_, rgba8_texture_);
+        ApplyCMAAEffectTexture(source_texture, rgba8_texture_, do_copy);
+
+        // Source format for DoCopySubTexture is always GL_RGBA8.
+        CopyTextureMethod method = DIRECT_COPY;
+        bool copy_tex_image_format_valid =
+            !GLES2Util::IsIntegerFormat(internal_format) &&
+            GLES2Util::GetColorEncodingFromInternalFormat(internal_format) !=
+                GL_SRGB &&
+            internal_format != GL_BGRA_EXT && internal_format != GL_BGRA8_EXT;
+        if (GLES2Util::IsSizedColorFormat(internal_format)) {
+          int dr, dg, db, da;
+          GLES2Util::GetColorFormatComponentSizes(internal_format, 0, &dr, &dg,
+                                                  &db, &da);
+          if ((dr > 0 && dr != 8) || (dg > 0 && dg != 8) ||
+              (db > 0 && db != 8) || (da > 0 && da != 8)) {
+            copy_tex_image_format_valid = false;
+          }
+        }
+        if (!copy_tex_image_format_valid)
+          method = DIRECT_DRAW;
+        bool color_renderable =
+            Texture::ColorRenderable(decoder->GetFeatureInfo(), internal_format,
+                                     texture->texture()->IsImmutable());
+#if defined(OS_CHROMEOS) && defined(ARCH_CPU_X86_FAMILY)
+        // glDrawArrays is faster than glCopyTexSubImage2D on IA Mesa driver,
+        // although opposite in Android.
+        // TODO(dshwang): After Mesa fixes this issue, remove this hack.
+        // https://bugs.freedesktop.org/show_bug.cgi?id=98478, crbug.com/535198.
+        if (color_renderable)
+          method = DIRECT_DRAW;
+#endif
+        if (method == DIRECT_DRAW && !color_renderable)
+          method = DRAW_AND_COPY;
+
+        copier->DoCopySubTexture(
+            decoder, GL_TEXTURE_2D, rgba8_texture_, 0, GL_RGBA8, GL_TEXTURE_2D,
+            source_texture, 0, internal_format, 0, 0, 0, 0, width_, height_,
+            width_, height_, width_, height_, false, false, false, method);
       } else {
-        ApplyCMAAEffectTexture(source_texture, source_texture);
+        ApplyCMAAEffectTexture(source_texture, source_texture, do_copy);
       }
 
-      // Copy rgba8_texture_ to source_texture
-      if (do_copy) {
-        // Move source_texture to the first color attachment of the copy fbo.
-        glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, last_framebuffer);
-        glFramebufferTexture2DEXT(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + i,
-                                  GL_TEXTURE_2D, 0, 0);
-        glBindFramebufferEXT(GL_FRAMEBUFFER, copy_framebuffer_);
-        glFramebufferTexture2DEXT(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                                  GL_TEXTURE_2D, source_texture, 0);
-
-        CopyTexture(rgba8_texture_, source_texture, true);
-
-        // Restore color attachments
-        glBindFramebufferEXT(GL_FRAMEBUFFER, copy_framebuffer_);
-        glFramebufferTexture2DEXT(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                                  GL_TEXTURE_2D, rgba8_texture_, 0);
-        glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, last_framebuffer);
-        glFramebufferTexture2DEXT(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + i,
-                                  GL_TEXTURE_2D, source_texture, 0);
-      }
+      decoder->RestoreTextureState(source_texture);
     }
   }
 
@@ -297,7 +313,8 @@ void ApplyFramebufferAttachmentCMAAINTELResourceManager::
 
 void ApplyFramebufferAttachmentCMAAINTELResourceManager::ApplyCMAAEffectTexture(
     GLuint source_texture,
-    GLuint dest_texture) {
+    GLuint dest_texture,
+    bool do_copy) {
   frame_id_++;
 
   GLuint edge_texture_a;
@@ -343,22 +360,29 @@ void ApplyFramebufferAttachmentCMAAINTELResourceManager::ApplyCMAAEffectTexture(
   // Outputs
   //  gl_FragDepth                        mini4_edge_depth_texture_    fbo.depth
   //  out uvec4 outEdges                  mini4_edge_texture_          fbo.col
-  //  image2D g_resultTextureFlt4Slot1    working_color_texture_       image1
+  //  image2D g_resultRGBATextureSlot1    working_color_texture_       image1
   GLenum edge_format = supports_r8_image_ ? GL_R8 : GL_R32F;
 
   {
     glUseProgram(edges0_shader_);
-    glUniform1f(0, 1.0f);
-    glUniform2f(1, 1.0f / width_, 1.0f / height_);
+    glUniform2f(0, 1.0f / width_, 1.0f / height_);
     glDepthMask(GL_TRUE);
     glDepthFunc(GL_ALWAYS);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 
     if (!is_gles31_compatible_) {
-      glUniform1i(edges1_shader_result_texture_float4_slot1_, 1);
+      glUniform1i(edges0_shader_result_rgba_texture_slot1_, 1);
+      glUniform1i(edges0_shader_target_texture_slot2_, 2);
     }
     glBindImageTextureEXT(1, working_color_texture_, 0, GL_FALSE, 0,
                           GL_WRITE_ONLY, GL_RGBA8);
+    if (do_copy) {
+      glUniform1i(2, GL_TRUE);
+      glBindImageTextureEXT(2, dest_texture, 0, GL_FALSE, 0, GL_WRITE_ONLY,
+                            GL_RGBA8);
+    } else {
+      glUniform1i(2, GL_FALSE);
+    }
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, source_texture);
@@ -375,17 +399,16 @@ void ApplyFramebufferAttachmentCMAAINTELResourceManager::ApplyCMAAEffectTexture(
   // Inputs
   //  g_src0Texture4Uint                  mini4_edge_texture_          tex1
   // Outputs
-  //  image2D g_resultTexture             edge_texture_b               image0
+  //  image2D g_resultEdgeTexture         edge_texture_b               image0
   {
     glUseProgram(edges1_shader_);
-    glUniform1f(0, 0.0f);
-    glUniform2f(1, 1.0f / width_, 1.0f / height_);
+    glUniform2f(0, 1.0f / width_, 1.0f / height_);
     glDepthMask(GL_FALSE);
     glDepthFunc(GL_LESS);
     glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
 
     if (!is_gles31_compatible_) {
-      glUniform1i(edges1_shader_result_texture_, 0);
+      glUniform1i(edges1_shader_result_edge_texture_, 0);
     }
     glBindImageTextureEXT(0, edge_texture_b, 0, GL_FALSE, 0, GL_WRITE_ONLY,
                           edge_format);
@@ -399,9 +422,7 @@ void ApplyFramebufferAttachmentCMAAINTELResourceManager::ApplyCMAAEffectTexture(
   }
 
   //  - Combine RightBottom (.xy) edges from previous pass into
-  //    RightBottomLeftTop (.xyzw) edges and output it into the mask (have to
-  //    fill in the whole buffer including empty ones for the line length
-  //    detection to work correctly).
+  //    RightBottomLeftTop (.xyzw) edges and output it into the mask.
   //  - On all pixels with any edge, input buffer into a temporary color buffer
   //    needed for correct blending in the next pass (other pixels not needed
   //    so not copied to avoid bandwidth use).
@@ -411,23 +432,22 @@ void ApplyFramebufferAttachmentCMAAINTELResourceManager::ApplyCMAAEffectTexture(
   // Inputs
   //  g_src0TextureFlt                    edge_texture_b               tex1 //ps
   // Outputs
-  //  image2D g_resultTextureSlot2        edge_texture_a               image2
+  //  image2D g_resultEdgeTexture         edge_texture_a               image2
   //  gl_FragDepth                        mini4_edge_texture_          fbo.depth
   {
     // Combine edges: each pixel will now contain info on all (top, right,
-    // bottom, left) edges; also create depth mask as above depth and mark
-    // potential Z sAND also copy source color data but only on edge pixels
+    // bottom, left) edges; also mark depth 1 value on all pixels with any edge
+    // and also copy source color data but only on edge pixels
     glUseProgram(edges_combine_shader_);
-    glUniform1f(0, 1.0f);
-    glUniform2f(1, 1.0f / width_, 1.0f / height_);
+    glUniform2f(0, 1.0f / width_, 1.0f / height_);
     glDepthMask(GL_TRUE);
-    glDepthFunc(GL_ALWAYS);
+    glDepthFunc(GL_LESS);
     glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
 
     if (!is_gles31_compatible_) {
-      glUniform1i(edges_combine_shader_result_texture_slot2_, 2);
+      glUniform1i(edges_combine_shader_result_edge_texture_, 0);
     }
-    glBindImageTextureEXT(2, edge_texture_a, 0, GL_FALSE, 0, GL_WRITE_ONLY,
+    glBindImageTextureEXT(0, edge_texture_a, 0, GL_FALSE, 0, GL_WRITE_ONLY,
                           edge_format);
 
     glActiveTexture(GL_TEXTURE1);
@@ -451,18 +471,17 @@ void ApplyFramebufferAttachmentCMAAINTELResourceManager::ApplyCMAAEffectTexture(
   //  g_src0TextureFlt                     edge_texture_a              tex1 //ps
   //  sampled
   // Outputs
-  //  g_resultTextureFlt4Slot1             dest_texture                image1
+  //  g_resultRGBATextureSlot1             dest_texture                image1
   //  gl_FragDepth                         mini4_edge_texture_         fbo.depth
   {
     glUseProgram(process_and_apply_shader_);
-    glUniform1f(0, 0.0f);
-    glUniform2f(1, 1.0f / width_, 1.0f / height_);
+    glUniform2f(0, 1.0f / width_, 1.0f / height_);
     glDepthMask(GL_FALSE);
     glDepthFunc(GL_LESS);
     glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
 
     if (!is_gles31_compatible_) {
-      glUniform1i(process_and_apply_shader_result_texture_float4_slot1_, 1);
+      glUniform1i(process_and_apply_shader_result_rgba_texture_slot1_, 1);
     }
     glBindImageTextureEXT(1, dest_texture, 0, GL_FALSE, 0, GL_WRITE_ONLY,
                           GL_RGBA8);
@@ -496,7 +515,6 @@ void ApplyFramebufferAttachmentCMAAINTELResourceManager::OnSize(GLint width,
   height_ = height;
   width_ = width;
 
-  glGenFramebuffersEXT(1, &copy_framebuffer_);
   glGenTextures(1, &rgba8_texture_);
   glBindTexture(GL_TEXTURE_2D, rgba8_texture_);
   glTexStorage2DEXT(GL_TEXTURE_2D, 1, GL_RGBA8, width, height);
@@ -557,7 +575,6 @@ void ApplyFramebufferAttachmentCMAAINTELResourceManager::OnSize(GLint width,
 
 void ApplyFramebufferAttachmentCMAAINTELResourceManager::ReleaseTextures() {
   if (textures_initialized_) {
-    glDeleteFramebuffersEXT(1, &copy_framebuffer_);
     glDeleteFramebuffersEXT(1, &cmaa_framebuffer_);
     glDeleteTextures(1, &rgba8_texture_);
     glDeleteTextures(1, &edges0_texture_);
@@ -567,35 +584,6 @@ void ApplyFramebufferAttachmentCMAAINTELResourceManager::ReleaseTextures() {
     glDeleteTextures(1, &working_color_texture_);
   }
   textures_initialized_ = false;
-}
-
-void ApplyFramebufferAttachmentCMAAINTELResourceManager::CopyTexture(
-    GLint source,
-    GLint dest,
-    bool via_fbo) {
-  glViewport(0, 0, width_, height_);
-  glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, source);
-
-  if (!via_fbo) {
-    glUseProgram(copy_to_image_shader_);
-    if (!is_gles31_compatible_) {
-      glUniform1i(copy_to_image_shader_outTexture_, 0);
-    }
-    glBindImageTextureEXT(0, dest, 0, GL_FALSE, 0, GL_WRITE_ONLY, GL_RGBA8);
-  } else {
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_STENCIL_TEST);
-    glDisable(GL_CULL_FACE);
-    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-    glDepthMask(GL_FALSE);
-    glDisable(GL_BLEND);
-    glUseProgram(copy_to_framebuffer_shader_);
-  }
-
-  glDrawArrays(GL_TRIANGLES, 0, 3);
-  glUseProgram(0);
-  glBindTexture(GL_TEXTURE_2D, 0);
 }
 
 GLuint ApplyFramebufferAttachmentCMAAINTELResourceManager::CreateProgram(
@@ -690,7 +678,6 @@ GLuint ApplyFramebufferAttachmentCMAAINTELResourceManager::CreateShader(
 const char ApplyFramebufferAttachmentCMAAINTELResourceManager::vert_str_[] =
   SHADER(
     precision highp float;
-    layout(location = 0) uniform float g_Depth;
     // No input data.
     // Verts are autogenerated.
     //
@@ -703,7 +690,7 @@ const char ApplyFramebufferAttachmentCMAAINTELResourceManager::vert_str_[] =
     {
        float x = -1.0 + float((gl_VertexID & 1) << 2);
        float y = -1.0 + float((gl_VertexID & 2) << 1);
-       gl_Position = vec4(x, y, g_Depth, 1.0);
+       gl_Position = vec4(x, y, 0.0, 1.0);
     }
   );
 
@@ -716,12 +703,13 @@ const char ApplyFramebufferAttachmentCMAAINTELResourceManager::cmaa_frag_s1_[] =
     \n#define EDGE_DETECT_THRESHOLD 13.0f\n
     \n#define saturate(x) clamp((x), 0.0, 1.0)\n
 
-    // bind to location 0
-    layout(location = 0) uniform float g_Depth;
     // bind to a uniform buffer bind point 0
-    layout(location = 1) uniform vec2 g_OneOverScreenSize;
+    layout(location = 0) uniform vec2 g_OneOverScreenSize;
     \n#ifndef EDGE_DETECT_THRESHOLD\n
-    layout(location = 2) uniform float g_ColorThreshold;
+    layout(location = 1) uniform float g_ColorThreshold;
+    \n#endif\n
+    \n#ifdef DETECT_EDGES1\n
+    layout(location = 2) uniform int g_DoCopy;
     \n#endif\n
 
     \n#ifdef SUPPORTS_USAMPLER2D\n
@@ -747,18 +735,18 @@ const char ApplyFramebufferAttachmentCMAAINTELResourceManager::cmaa_frag_s1_[] =
     // bind to image stage 0/1/2
     \n#ifdef GL_ES\n
     layout(binding = 0, EDGE_READ_FORMAT) restrict writeonly uniform highp
-        image2D g_resultTexture;
+        image2D g_resultEdgeTexture;
     layout(binding = 1, rgba8) restrict writeonly uniform highp
-        image2D g_resultTextureFlt4Slot1;
-    layout(binding = 2, EDGE_READ_FORMAT) restrict writeonly uniform highp
-        image2D g_resultTextureSlot2;
+        image2D g_resultRGBATextureSlot1;
+    layout(binding = 2, rgba8) restrict writeonly uniform highp
+        image2D g_targetTextureSlot2;
     \n#else\n
     layout(EDGE_READ_FORMAT) restrict writeonly uniform highp
-        image2D g_resultTexture;
+        image2D g_resultEdgeTexture;
     layout(rgba8) restrict writeonly uniform highp
-        image2D g_resultTextureFlt4Slot1;
-    layout(EDGE_READ_FORMAT) restrict writeonly uniform highp
-        image2D g_resultTextureSlot2;
+        image2D g_resultRGBATextureSlot1;
+    layout(rgba8) restrict writeonly uniform highp
+        image2D g_targetTextureSlot2;
     \n#endif\n
 
     // Constants
@@ -1017,7 +1005,7 @@ const char ApplyFramebufferAttachmentCMAAINTELResourceManager::cmaa_frag_s1_[] =
                                 float(pixelPos.y) + 0.5);
 
     \n#ifdef DEBUG_OUTPUT_AAINFO\n
-        imageStore(g_resultTextureSlot2, pixelPos,
+        imageStore(g_resultEdgeTexture, pixelPos,
                    PackBlurAAInfo(pixelPos, 1u));
     \n#endif\n
 
@@ -1034,7 +1022,7 @@ const char ApplyFramebufferAttachmentCMAAINTELResourceManager::cmaa_frag_s1_[] =
     \n#ifdef IN_GAMMA_CORRECT_MODE\n
         color.rgb = D3DX_FLOAT3_to_SRGB(color.rgb);
     \n#endif\n
-        imageStore(g_resultTextureFlt4Slot1, pixelPos, color);
+        imageStore(g_resultRGBATextureSlot1, pixelPos, color);
       }
     }
 
@@ -1093,6 +1081,13 @@ const char ApplyFramebufferAttachmentCMAAINTELResourceManager::cmaa_frag_s1_[] =
           texelFetchOffset(g_screenTexture, screenPosI.xy, 0, ivec2(0, 2));
       vec4 pixel12 =
           texelFetchOffset(g_screenTexture, screenPosI.xy, 0, ivec2(1, 2));
+
+      if (g_DoCopy == 1) {
+        imageStore(g_targetTextureSlot2, screenPosI.xy + ivec2(0, 0), pixel00);
+        imageStore(g_targetTextureSlot2, screenPosI.xy + ivec2(1, 0), pixel10);
+        imageStore(g_targetTextureSlot2, screenPosI.xy + ivec2(0, 1), pixel01);
+        imageStore(g_targetTextureSlot2, screenPosI.xy + ivec2(1, 1), pixel11);
+      }
 
       float storeFlagPixel00 = 0.0;
       float storeFlagPixel10 = 0.0;
@@ -1167,28 +1162,28 @@ const char ApplyFramebufferAttachmentCMAAINTELResourceManager::cmaa_frag_s1_[] =
 
       if (gl_FragDepth != 0.0) {
         if (storeFlagPixel00 != 0.0)
-          imageStore(g_resultTextureFlt4Slot1, screenPosI.xy + ivec2(0, 0),
+          imageStore(g_resultRGBATextureSlot1, screenPosI.xy + ivec2(0, 0),
                      pixel00);
         if (storeFlagPixel10 != 0.0)
-          imageStore(g_resultTextureFlt4Slot1, screenPosI.xy + ivec2(1, 0),
+          imageStore(g_resultRGBATextureSlot1, screenPosI.xy + ivec2(1, 0),
                      pixel10);
         if (storeFlagPixel20 != 0.0)
-          imageStore(g_resultTextureFlt4Slot1, screenPosI.xy + ivec2(2, 0),
+          imageStore(g_resultRGBATextureSlot1, screenPosI.xy + ivec2(2, 0),
                      pixel20);
         if (storeFlagPixel01 != 0.0)
-          imageStore(g_resultTextureFlt4Slot1, screenPosI.xy + ivec2(0, 1),
+          imageStore(g_resultRGBATextureSlot1, screenPosI.xy + ivec2(0, 1),
                      pixel01);
         if (storeFlagPixel02 != 0.0)
-          imageStore(g_resultTextureFlt4Slot1, screenPosI.xy + ivec2(0, 2),
+          imageStore(g_resultRGBATextureSlot1, screenPosI.xy + ivec2(0, 2),
                      pixel02);
         if (storeFlagPixel11 != 0.0)
-          imageStore(g_resultTextureFlt4Slot1, screenPosI.xy + ivec2(1, 1),
+          imageStore(g_resultRGBATextureSlot1, screenPosI.xy + ivec2(1, 1),
                      pixel11);
         if (storeFlagPixel21 != 0.0)
-          imageStore(g_resultTextureFlt4Slot1, screenPosI.xy + ivec2(2, 1),
+          imageStore(g_resultRGBATextureSlot1, screenPosI.xy + ivec2(2, 1),
                      pixel21);
         if (storeFlagPixel12 != 0.0)
-          imageStore(g_resultTextureFlt4Slot1, screenPosI.xy + ivec2(1, 2),
+          imageStore(g_resultRGBATextureSlot1, screenPosI.xy + ivec2(1, 2),
                      pixel12);
       }
       outEdges = STORE_UVEC4(outputEdges);
@@ -1293,7 +1288,7 @@ const char ApplyFramebufferAttachmentCMAAINTELResourceManager::cmaa_frag_s2_[] =
         CollectEdges(2, 2, edges, packedVals);
         uint pe = PackEdge(PruneNonDominantEdges(edges));
         if (pe != 0u) {
-          imageStore(g_resultTexture, 2 * screenPosI.xy + ivec2(0, 0),
+          imageStore(g_resultEdgeTexture, 2 * screenPosI.xy + ivec2(0, 0),
                      vec4(float(0x80u | pe) / 255.0, 0, 0, 0));
         }
       }
@@ -1322,7 +1317,7 @@ const char ApplyFramebufferAttachmentCMAAINTELResourceManager::cmaa_frag_s2_[] =
         // Note: texelFetch() on out of range gives an undefined value.
         uint pe = PackEdge(dominant_edges * uvec4(notTopRight.x, 1, 1, 1));
         if (pe != 0u) {
-          imageStore(g_resultTexture, 2 * screenPosI.xy + ivec2(1, 0),
+          imageStore(g_resultEdgeTexture, 2 * screenPosI.xy + ivec2(1, 0),
                      vec4(float(0x80u | pe) / 255.0, 0, 0, 0));
         }
       }
@@ -1349,7 +1344,7 @@ const char ApplyFramebufferAttachmentCMAAINTELResourceManager::cmaa_frag_s2_[] =
         uvec4 dominant_edges = PruneNonDominantEdges(edges);
         uint pe = PackEdge(dominant_edges * uvec4(1, notTopRight.y, 1, 1));
         if (pe != 0u) {
-          imageStore(g_resultTexture, 2 * screenPosI.xy + ivec2(0, 1),
+          imageStore(g_resultEdgeTexture, 2 * screenPosI.xy + ivec2(0, 1),
                      vec4(float(0x80u | pe) / 255.0, 0, 0, 0));
         }
       }
@@ -1359,7 +1354,7 @@ const char ApplyFramebufferAttachmentCMAAINTELResourceManager::cmaa_frag_s2_[] =
         uvec4 dominant_edges = PruneNonDominantEdges(edges);
         uint pe = PackEdge(dominant_edges * uvec4(notTopRight, 1, 1));
         if (pe != 0u) {
-          imageStore(g_resultTexture, 2 * screenPosI.xy + ivec2(1, 1),
+          imageStore(g_resultEdgeTexture, 2 * screenPosI.xy + ivec2(1, 1),
                      vec4(float(0x80u | pe) / 255.0, 0, 0, 0));
         }
       }
@@ -1417,13 +1412,13 @@ const char ApplyFramebufferAttachmentCMAAINTELResourceManager::cmaa_frag_s2_[] =
           pixelsC | ((pixelsL & 0x01u) << 2u) | ((pixelsU & 0x02u) << 2u);
       vec4 outEdge4Flt = vec4(outEdge4) / 255.0;
 
-      imageStore(g_resultTextureSlot2, screenPosIBase.xy + ivec2(0, 0),
+      imageStore(g_resultEdgeTexture, screenPosIBase.xy + ivec2(0, 0),
                  outEdge4Flt.xxxx);
-      imageStore(g_resultTextureSlot2, screenPosIBase.xy + ivec2(1, 0),
+      imageStore(g_resultEdgeTexture, screenPosIBase.xy + ivec2(1, 0),
                  outEdge4Flt.yyyy);
-      imageStore(g_resultTextureSlot2, screenPosIBase.xy + ivec2(0, 1),
+      imageStore(g_resultEdgeTexture, screenPosIBase.xy + ivec2(0, 1),
                  outEdge4Flt.zzzz);
-      imageStore(g_resultTextureSlot2, screenPosIBase.xy + ivec2(1, 1),
+      imageStore(g_resultEdgeTexture, screenPosIBase.xy + ivec2(1, 1),
                  outEdge4Flt.wwww);
 
       // uvec4 numberOfEdges4 = uvec4(bitCount(outEdge4));
@@ -1438,10 +1433,29 @@ const char ApplyFramebufferAttachmentCMAAINTELResourceManager::cmaa_frag_s2_[] =
     \n#ifdef BLUR_EDGES\n
     layout(early_fragment_tests) in;
     void BlurEdges() {
-      int _i;
-
+      // Each |gl_FragCoord| updates 4 texels of the original texture, which are
+      // 2x|gl_FragCoord| + (-1 or 0, -1 or 0) in the unnormalized texture
+      // coordinate, which is the coordinate used by texelFetch().
+      // e.g. when gl_FragCoord == (3.5, 3.5), this fragment shader covers
+      // (6,6) (6,7) (7,6) (7,7) texels.
+      // Note: gl_FragCoord == (0.5, 0.5) (i.e. left-bottom-most fragment)
+      // covers (0,0) (0,1) (1,0) (1,1) texels
+      // gl_FragCoord == ((w/2)-0.5, (h/2)-0.5) (i.e. right-top-most fragment)
+      // covers (w-2,h-2) (w-2,h-1) (w-1,h-2) (w-1,h-1)
       ivec3 screenPosIBase = ivec3(ivec2(gl_FragCoord.xy) * 2, 0);
       vec3 screenPosBase = vec3(screenPosIBase);
+
+      // When gl_FragCoord == (0.5, 0.5) (i.e. left-bottom-most fragment),
+      // |sampA| textureGatherOffset() looks up (-1,-1), (-1,0), (0,-1), (0,0).
+      // (-1,-1), (-1,0), (0,-1) must be handled.
+      // Note: textureGatherOffset() on out of range gives an undefined value.
+      uvec2 notBottomLeft = uvec2(notEqual(screenPosIBase.xy, ivec2(0, 0)));
+      // When gl_FragCoord == ((w/2)-0.5, (h/2)-0.5) (i.e. right-top-most
+      // fragment), |sampD| looks up (w-1, h-1), (w-1, h), (w, h-1), (w, h).
+      // (w-1, h), (w, h-1), (w, h) must be handled.
+      uvec2 notTopRight = uvec2(
+          notEqual((screenPosIBase.xy + 2), textureSize(g_src0TextureFlt, 0)));
+
       uint forFollowUpCount = 0u;
       ivec4 forFollowUpCoords[4];
 
@@ -1464,24 +1478,27 @@ const char ApplyFramebufferAttachmentCMAAINTELResourceManager::cmaa_frag_s2_[] =
                               screenPosBase.xy * g_OneOverScreenSize,
                               ivec2(2, 2)) *255.5);
 
-      packedEdgesArray[(0) * 4 + (0)] = sampA.w;
-      packedEdgesArray[(1) * 4 + (0)] = sampA.z;
-      packedEdgesArray[(0) * 4 + (1)] = sampA.x;
+      packedEdgesArray[(0) * 4 + (0)] =
+          sampA.w * notBottomLeft.x * notBottomLeft.y;
+      packedEdgesArray[(1) * 4 + (0)] = sampA.z * notBottomLeft.y;
+      packedEdgesArray[(0) * 4 + (1)] = sampA.x * notBottomLeft.x;
       packedEdgesArray[(1) * 4 + (1)] = sampA.y;
-      packedEdgesArray[(2) * 4 + (0)] = sampB.w;
-      packedEdgesArray[(3) * 4 + (0)] = sampB.z;
+      packedEdgesArray[(2) * 4 + (0)] = sampB.w * notBottomLeft.y;
+      packedEdgesArray[(3) * 4 + (0)] =
+          sampB.z * notBottomLeft.y * notTopRight.x;
       packedEdgesArray[(2) * 4 + (1)] = sampB.x;
-      packedEdgesArray[(3) * 4 + (1)] = sampB.y;
-      packedEdgesArray[(0) * 4 + (2)] = sampC.w;
+      packedEdgesArray[(3) * 4 + (1)] = sampB.y * notTopRight.x;
+      packedEdgesArray[(0) * 4 + (2)] = sampC.w * notBottomLeft.x;
       packedEdgesArray[(1) * 4 + (2)] = sampC.z;
-      packedEdgesArray[(0) * 4 + (3)] = sampC.x;
-      packedEdgesArray[(1) * 4 + (3)] = sampC.y;
+      packedEdgesArray[(0) * 4 + (3)] =
+          sampC.x * notBottomLeft.x * notTopRight.y;
+      packedEdgesArray[(1) * 4 + (3)] = sampC.y * notTopRight.y;
       packedEdgesArray[(2) * 4 + (2)] = sampD.w;
-      packedEdgesArray[(3) * 4 + (2)] = sampD.z;
-      packedEdgesArray[(2) * 4 + (3)] = sampD.x;
-      packedEdgesArray[(3) * 4 + (3)] = sampD.y;
+      packedEdgesArray[(3) * 4 + (2)] = sampD.z * notTopRight.x;
+      packedEdgesArray[(2) * 4 + (3)] = sampD.x * notTopRight.y;
+      packedEdgesArray[(3) * 4 + (3)] = sampD.y * notTopRight.x * notTopRight.y;
 
-      for (_i = 0; _i < 4; _i++) {
+      for (int _i = 0; _i < 4; _i++) {
         int _x = _i % 2;
         int _y = _i / 2;
 
@@ -1490,12 +1507,11 @@ const char ApplyFramebufferAttachmentCMAAINTELResourceManager::cmaa_frag_s2_[] =
         uint packedEdgesC = packedEdgesArray[(1 + _x) * 4 + (1 + _y)];
 
         uvec4 edges = UnpackEdge(packedEdgesC);
-        vec4 edgesFlt = vec4(edges);
-
-        float numberOfEdges = dot(edgesFlt, vec4(1, 1, 1, 1));
-        if (numberOfEdges <= 1.0)
+        uint numberOfEdges = edges.x + edges.y + edges.z + edges.w;
+        if (numberOfEdges <= 1u)
           continue;
 
+        vec4 edgesFlt = vec4(edges);
         float fromRight = edgesFlt.r;
         float fromAbove = edgesFlt.g;
         float fromLeft = edgesFlt.b;
@@ -1518,7 +1534,7 @@ const char ApplyFramebufferAttachmentCMAAINTELResourceManager::cmaa_frag_s2_[] =
         // the current pixel's colour in return.
         // However, in the case when this is an actual corner, the pixel's
         // colour will be partially overwritten by it's 2 neighbours.
-        if( numberOfEdges == 2.0 )
+        if (numberOfEdges == 2u)
         {
           // with value of 0.15, the pixel will retain approx 77% of its
           // colour and the remaining 23% will come from its 2 neighbours
@@ -1558,10 +1574,38 @@ const char ApplyFramebufferAttachmentCMAAINTELResourceManager::cmaa_frag_s2_[] =
                            bool(packedEdgesB & 0x04u);
           if (large_l1 || large_l2 || large_l3 || large_l4)
             continue;
+
+          // Don't blend isolated L shape because it's not a closed geometry.
+          // isolated_l1 isolated_l2 isolated_l3 isolated_l4
+          //   _                                   _
+          //   X|          X|         |X          |X
+          //               ¯¯         ¯¯
+          bool isolated_l1 = (packedEdgesC == (0x01u | 0x02u)) &&
+                           bool((packedEdgesL & 0x02u) == 0x00u) &&
+                           bool((packedEdgesT & 0x04u) == 0x00u) &&
+                           bool((packedEdgesR & 0x08u) == 0x00u) &&
+                           bool((packedEdgesB & 0x01u) == 0x00u);
+          bool isolated_l2 = (packedEdgesC == (0x01u | 0x08u)) &&
+                           bool((packedEdgesL & 0x08u) == 0x00u) &&
+                           bool((packedEdgesT & 0x01u) == 0x00u) &&
+                           bool((packedEdgesR & 0x02u) == 0x00u) &&
+                           bool((packedEdgesB & 0x04u) == 0x00u);
+          bool isolated_l3 = (packedEdgesC == (0x04u | 0x08u)) &&
+                           bool((packedEdgesL & 0x02u) == 0x00u) &&
+                           bool((packedEdgesT & 0x04u) == 0x00u) &&
+                           bool((packedEdgesR & 0x08u) == 0x00u) &&
+                           bool((packedEdgesB & 0x01u) == 0x00u);
+          bool isolated_l4 = (packedEdgesC == (0x02u | 0x04u)) &&
+                           bool((packedEdgesL & 0x08u) == 0x00u) &&
+                           bool((packedEdgesT & 0x01u) == 0x00u) &&
+                           bool((packedEdgesR & 0x02u) == 0x00u) &&
+                           bool((packedEdgesB & 0x04u) == 0x00u);
+          if (isolated_l1 || isolated_l2 || isolated_l3 || isolated_l4)
+            continue;
         }
 
         // 2.) U-like shape (surrounded with edges from 3 sides)
-        if (numberOfEdges == 3.0) {
+        if (numberOfEdges == 3u) {
           // with value of 0.13, the pixel will retain approx 72% of its
           // colour and the remaining 28% will be picked from its 3
           // neighbours (which are unlikely to be blurred too but could be)
@@ -1569,7 +1613,7 @@ const char ApplyFramebufferAttachmentCMAAINTELResourceManager::cmaa_frag_s2_[] =
         }
 
         // 3.) Completely surrounded with edges from all 4 sides
-        if (numberOfEdges == 4.0) {
+        if (numberOfEdges == 4u) {
           // with value of 0.07, the pixel will retain 78% of its colour
           // and the remaining 22% will come from its 4 neighbours (which
           // are unlikely to be blurred)
@@ -1628,12 +1672,12 @@ const char ApplyFramebufferAttachmentCMAAINTELResourceManager::cmaa_frag_s2_[] =
     \n#endif\n
 
     \n#ifdef DEBUG_OUTPUT_AAINFO\n
-        imageStore(g_resultTextureSlot2, screenPosI.xy,
-                   PackBlurAAInfo(screenPosI.xy, uint(numberOfEdges)));
+        imageStore(g_resultEdgeTexture, screenPosI.xy,
+                   PackBlurAAInfo(screenPosI.xy, numberOfEdges));
     \n#endif\n
-        imageStore(g_resultTextureFlt4Slot1, screenPosI.xy, color);
+        imageStore(g_resultRGBATextureSlot1, screenPosI.xy, color);
 
-        if (numberOfEdges == 2.0) {
+        if (numberOfEdges == 2u) {
           uint packedEdgesL = packedEdgesArray[(0 + _x) * 4 + (1 + _y)];
           uint packedEdgesB = packedEdgesArray[(1 + _x) * 4 + (0 + _y)];
           uint packedEdgesR = packedEdgesArray[(2 + _x) * 4 + (1 + _y)];
@@ -1841,30 +1885,7 @@ const char ApplyFramebufferAttachmentCMAAINTELResourceManager::cmaa_frag_s2_[] =
     \n#endif\n
     }
   );
-
-const char
-  ApplyFramebufferAttachmentCMAAINTELResourceManager::copy_frag_str_[] =
-    SHADER(
-      precision highp float;
-      layout(binding = 0) uniform highp sampler2D inTexture;
-      layout(location = 0) out vec4 outColor;
-      \n#ifdef GL_ES\n
-      layout(binding = 0, rgba8) restrict writeonly uniform highp
-                                                     image2D outTexture;
-      \n#else\n
-      layout(rgba8) restrict writeonly uniform highp image2D outTexture;
-      \n#endif\n
-
-      void main() {
-        ivec2 screenPosI = ivec2( gl_FragCoord.xy );
-        vec4 pixel = texelFetch(inTexture, screenPosI, 0);
-      \n#ifdef OUT_FBO\n
-        outColor = pixel;
-      \n#else\n
-        imageStore(outTexture, screenPosI, pixel);
-      \n#endif\n
-      }
-    );
 /* clang-format on */
 
+}  // namespace gles2
 }  // namespace gpu

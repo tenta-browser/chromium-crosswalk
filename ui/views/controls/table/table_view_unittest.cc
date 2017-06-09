@@ -161,6 +161,29 @@ std::string GetModelToViewAsString(TableView* table) {
   return result;
 }
 
+// Formats the whole table as a string, like: "[a, b, c], [d, e, f]". Rows
+// scrolled out of view are included; hidden columns are excluded.
+std::string GetRowsInViewOrderAsString(TableView* table) {
+  std::string result;
+  for (int i = 0; i < table->RowCount(); ++i) {
+    if (i != 0)
+      result += ", ";  // Comma between each row.
+
+    // Format row |i| like this: "[value1, value2, value3]"
+    result += "[";
+    for (size_t j = 0; j < table->visible_columns().size(); ++j) {
+      const ui::TableColumn& column = table->visible_columns()[j].column;
+      if (j != 0)
+        result += ", ";  // Comma between each value in the row.
+
+      result += base::UTF16ToUTF8(
+          table->model()->GetText(table->ViewToModel(i), column.id));
+    }
+    result += "]";
+  }
+  return result;
+}
+
 class TestTableView : public TableView {
  public:
   TestTableView(ui::TableModel* model,
@@ -335,6 +358,13 @@ TEST_F(TableViewTest, ResizeViaGesture) {
 
 // Assertions for table sorting.
 TEST_F(TableViewTest, Sort) {
+  // Initial ordering.
+  EXPECT_TRUE(table_->sort_descriptors().empty());
+  EXPECT_EQ("0 1 2 3", GetViewToModelAsString(table_));
+  EXPECT_EQ("0 1 2 3", GetModelToViewAsString(table_));
+  EXPECT_EQ("[0, 1], [1, 1], [2, 2], [3, 0]",
+            GetRowsInViewOrderAsString(table_));
+
   // Toggle the sort order of the first column, shouldn't change anything.
   table_->ToggleSortOrder(0);
   ASSERT_EQ(1u, table_->sort_descriptors().size());
@@ -342,46 +372,119 @@ TEST_F(TableViewTest, Sort) {
   EXPECT_TRUE(table_->sort_descriptors()[0].ascending);
   EXPECT_EQ("0 1 2 3", GetViewToModelAsString(table_));
   EXPECT_EQ("0 1 2 3", GetModelToViewAsString(table_));
+  EXPECT_EQ("[0, 1], [1, 1], [2, 2], [3, 0]",
+            GetRowsInViewOrderAsString(table_));
 
-  // Invert the sort (first column descending).
+  // Toggle the sort (first column descending).
   table_->ToggleSortOrder(0);
   ASSERT_EQ(1u, table_->sort_descriptors().size());
   EXPECT_EQ(0, table_->sort_descriptors()[0].column_id);
   EXPECT_FALSE(table_->sort_descriptors()[0].ascending);
   EXPECT_EQ("3 2 1 0", GetViewToModelAsString(table_));
   EXPECT_EQ("3 2 1 0", GetModelToViewAsString(table_));
+  EXPECT_EQ("[3, 0], [2, 2], [1, 1], [0, 1]",
+            GetRowsInViewOrderAsString(table_));
 
-  // Change cell 0x3 to -1, meaning we have 0, 1, 2, -1 (in the first column).
+  // Change the [3, 0] cell to [-1, 0]. This should move it to the back of
+  // the current sort order.
   model_->ChangeRow(3, -1, 0);
   ASSERT_EQ(1u, table_->sort_descriptors().size());
   EXPECT_EQ(0, table_->sort_descriptors()[0].column_id);
   EXPECT_FALSE(table_->sort_descriptors()[0].ascending);
   EXPECT_EQ("2 1 0 3", GetViewToModelAsString(table_));
   EXPECT_EQ("2 1 0 3", GetModelToViewAsString(table_));
+  EXPECT_EQ("[2, 2], [1, 1], [0, 1], [-1, 0]",
+            GetRowsInViewOrderAsString(table_));
 
-  // Invert sort again (first column ascending).
+  // Toggle the sort again, to clear the sort and restore the model ordering.
+  table_->ToggleSortOrder(0);
+  EXPECT_TRUE(table_->sort_descriptors().empty());
+  EXPECT_EQ("0 1 2 3", GetViewToModelAsString(table_));
+  EXPECT_EQ("0 1 2 3", GetModelToViewAsString(table_));
+  EXPECT_EQ("[0, 1], [1, 1], [2, 2], [-1, 0]",
+            GetRowsInViewOrderAsString(table_));
+
+  // Toggle the sort again (first column ascending).
   table_->ToggleSortOrder(0);
   ASSERT_EQ(1u, table_->sort_descriptors().size());
   EXPECT_EQ(0, table_->sort_descriptors()[0].column_id);
   EXPECT_TRUE(table_->sort_descriptors()[0].ascending);
   EXPECT_EQ("3 0 1 2", GetViewToModelAsString(table_));
   EXPECT_EQ("1 2 3 0", GetModelToViewAsString(table_));
+  EXPECT_EQ("[-1, 0], [0, 1], [1, 1], [2, 2]",
+            GetRowsInViewOrderAsString(table_));
 
-  // Add a row so that model has 0, 3, 1, 2, -1.
+  // Add a row that's second in the model order, but last in the active sort
+  // order.
   model_->AddRow(1, 3, 4);
   ASSERT_EQ(1u, table_->sort_descriptors().size());
   EXPECT_EQ(0, table_->sort_descriptors()[0].column_id);
   EXPECT_TRUE(table_->sort_descriptors()[0].ascending);
   EXPECT_EQ("4 0 2 3 1", GetViewToModelAsString(table_));
   EXPECT_EQ("1 4 2 3 0", GetModelToViewAsString(table_));
+  EXPECT_EQ("[-1, 0], [0, 1], [1, 1], [2, 2], [3, 4]",
+            GetRowsInViewOrderAsString(table_));
 
-  // Delete the first row, ending up with 3, 1, 2, -1.
-  model_->RemoveRow(0);
+  // Add a row that's last in the model order but second in the the active sort
+  // order.
+  model_->AddRow(5, -1, 20);
   ASSERT_EQ(1u, table_->sort_descriptors().size());
   EXPECT_EQ(0, table_->sort_descriptors()[0].column_id);
   EXPECT_TRUE(table_->sort_descriptors()[0].ascending);
-  EXPECT_EQ("3 1 2 0", GetViewToModelAsString(table_));
-  EXPECT_EQ("3 1 2 0", GetModelToViewAsString(table_));
+  EXPECT_EQ("4 5 0 2 3 1", GetViewToModelAsString(table_));
+  EXPECT_EQ("2 5 3 4 0 1", GetModelToViewAsString(table_));
+  EXPECT_EQ("[-1, 0], [-1, 20], [0, 1], [1, 1], [2, 2], [3, 4]",
+            GetRowsInViewOrderAsString(table_));
+
+  // Click the first column again, then click the second column. This should
+  // yield an ordering of second column ascending, with the first column
+  // descending as a tiebreaker.
+  table_->ToggleSortOrder(0);
+  table_->ToggleSortOrder(1);
+  ASSERT_EQ(2u, table_->sort_descriptors().size());
+  EXPECT_EQ(1, table_->sort_descriptors()[0].column_id);
+  EXPECT_TRUE(table_->sort_descriptors()[0].ascending);
+  EXPECT_EQ(0, table_->sort_descriptors()[1].column_id);
+  EXPECT_FALSE(table_->sort_descriptors()[1].ascending);
+  EXPECT_EQ("4 2 0 3 1 5", GetViewToModelAsString(table_));
+  EXPECT_EQ("2 4 1 3 0 5", GetModelToViewAsString(table_));
+  EXPECT_EQ("[-1, 0], [1, 1], [0, 1], [2, 2], [3, 4], [-1, 20]",
+            GetRowsInViewOrderAsString(table_));
+
+  // Toggle the current column to change from ascending to descending. This
+  // should result in an almost-reversal of the previous order, except for the
+  // two rows with the same value for the second column.
+  table_->ToggleSortOrder(1);
+  ASSERT_EQ(2u, table_->sort_descriptors().size());
+  EXPECT_EQ(1, table_->sort_descriptors()[0].column_id);
+  EXPECT_FALSE(table_->sort_descriptors()[0].ascending);
+  EXPECT_EQ(0, table_->sort_descriptors()[1].column_id);
+  EXPECT_FALSE(table_->sort_descriptors()[1].ascending);
+  EXPECT_EQ("5 1 3 2 0 4", GetViewToModelAsString(table_));
+  EXPECT_EQ("4 1 3 2 5 0", GetModelToViewAsString(table_));
+  EXPECT_EQ("[-1, 20], [3, 4], [2, 2], [1, 1], [0, 1], [-1, 0]",
+            GetRowsInViewOrderAsString(table_));
+
+  // Delete the [0, 1] row from the model. It's at model index zero.
+  model_->RemoveRow(0);
+  ASSERT_EQ(2u, table_->sort_descriptors().size());
+  EXPECT_EQ(1, table_->sort_descriptors()[0].column_id);
+  EXPECT_FALSE(table_->sort_descriptors()[0].ascending);
+  EXPECT_EQ(0, table_->sort_descriptors()[1].column_id);
+  EXPECT_FALSE(table_->sort_descriptors()[1].ascending);
+  EXPECT_EQ("4 0 2 1 3", GetViewToModelAsString(table_));
+  EXPECT_EQ("1 3 2 4 0", GetModelToViewAsString(table_));
+  EXPECT_EQ("[-1, 20], [3, 4], [2, 2], [1, 1], [-1, 0]",
+            GetRowsInViewOrderAsString(table_));
+
+  // Toggle the current sort column again. This should clear both the primary
+  // and secondary sort descriptor.
+  table_->ToggleSortOrder(1);
+  EXPECT_TRUE(table_->sort_descriptors().empty());
+  EXPECT_EQ("0 1 2 3 4", GetViewToModelAsString(table_));
+  EXPECT_EQ("0 1 2 3 4", GetModelToViewAsString(table_));
+  EXPECT_EQ("[3, 4], [1, 1], [2, 2], [-1, 0], [-1, 20]",
+            GetRowsInViewOrderAsString(table_));
 }
 
 // Verfies clicking on the header sorts.
@@ -501,7 +604,13 @@ TEST_F(TableViewTest, Grouping) {
   EXPECT_EQ("0 1 2 3", GetViewToModelAsString(table_));
   EXPECT_EQ("0 1 2 3", GetModelToViewAsString(table_));
 
-  // Toggle to ascending sort.
+  // Toggle to clear the sort.
+  table_->ToggleSortOrder(0);
+  EXPECT_TRUE(table_->sort_descriptors().empty());
+  EXPECT_EQ("0 1 2 3", GetViewToModelAsString(table_));
+  EXPECT_EQ("0 1 2 3", GetModelToViewAsString(table_));
+
+  // Toggle again to effect an ascending sort.
   table_->ToggleSortOrder(0);
   ASSERT_EQ(1u, table_->sort_descriptors().size());
   EXPECT_EQ(0, table_->sort_descriptors()[0].column_id);
@@ -536,7 +645,7 @@ class TableViewObserverImpl : public TableViewObserver {
 // Assertions around changing the selection.
 TEST_F(TableViewTest, Selection) {
   TableViewObserverImpl observer;
-  table_->SetObserver(&observer);
+  table_->set_observer(&observer);
 
   // Initially no selection.
   EXPECT_EQ("active=-1 anchor=-1 selection=", SelectionStateAsString());
@@ -565,7 +674,7 @@ TEST_F(TableViewTest, Selection) {
   EXPECT_EQ(0, observer.GetChangedCountAndClear());
   EXPECT_EQ("active=3 anchor=3 selection=3", SelectionStateAsString());
 
-  table_->SetObserver(NULL);
+  table_->set_observer(NULL);
 }
 
 // 0 1 2 3:
@@ -577,7 +686,7 @@ TEST_F(TableViewTest, Selection) {
 // remove 0 -> 0 (none selected)
 TEST_F(TableViewTest, SelectionNoSelectOnRemove) {
   TableViewObserverImpl observer;
-  table_->SetObserver(&observer);
+  table_->set_observer(&observer);
   table_->set_select_on_remove(false);
 
   // Initially no selection.
@@ -615,7 +724,7 @@ TEST_F(TableViewTest, SelectionNoSelectOnRemove) {
   EXPECT_EQ(1, observer.GetChangedCountAndClear());
   EXPECT_EQ("active=-1 anchor=-1 selection=", SelectionStateAsString());
 
-  table_->SetObserver(nullptr);
+  table_->set_observer(nullptr);
 }
 
 // Verifies selection works by way of a gesture.
@@ -624,14 +733,14 @@ TEST_F(TableViewTest, SelectOnTap) {
   EXPECT_EQ("active=-1 anchor=-1 selection=", SelectionStateAsString());
 
   TableViewObserverImpl observer;
-  table_->SetObserver(&observer);
+  table_->set_observer(&observer);
 
   // Click on the first row, should select it.
   TapOnRow(0);
   EXPECT_EQ(1, observer.GetChangedCountAndClear());
   EXPECT_EQ("active=0 anchor=0 selection=0", SelectionStateAsString());
 
-  table_->SetObserver(NULL);
+  table_->set_observer(NULL);
 }
 
 // Verifies up/down correctly navigates through groups.
@@ -652,7 +761,7 @@ TEST_F(TableViewTest, KeyUpDown) {
   table_->SetGrouper(&grouper);
 
   TableViewObserverImpl observer;
-  table_->SetObserver(&observer);
+  table_->set_observer(&observer);
 
   // Initially no selection.
   EXPECT_EQ("active=-1 anchor=-1 selection=", SelectionStateAsString());
@@ -761,7 +870,7 @@ TEST_F(TableViewTest, KeyUpDown) {
   EXPECT_EQ(0, observer.GetChangedCountAndClear());
   EXPECT_EQ("active=2 anchor=2 selection=2", SelectionStateAsString());
 
-  table_->SetObserver(NULL);
+  table_->set_observer(NULL);
 }
 
 // Verifies home/end do the right thing.
@@ -782,7 +891,7 @@ TEST_F(TableViewTest, HomeEnd) {
   table_->SetGrouper(&grouper);
 
   TableViewObserverImpl observer;
-  table_->SetObserver(&observer);
+  table_->set_observer(&observer);
 
   // Initially no selection.
   EXPECT_EQ("active=-1 anchor=-1 selection=", SelectionStateAsString());
@@ -795,7 +904,7 @@ TEST_F(TableViewTest, HomeEnd) {
   EXPECT_EQ(1, observer.GetChangedCountAndClear());
   EXPECT_EQ("active=4 anchor=4 selection=3 4", SelectionStateAsString());
 
-  table_->SetObserver(NULL);
+  table_->set_observer(NULL);
 }
 
 // Verifies multiple selection gestures work (control-click, shift-click ...).
@@ -819,7 +928,7 @@ TEST_F(TableViewTest, Multiselection) {
   EXPECT_EQ("active=-1 anchor=-1 selection=", SelectionStateAsString());
 
   TableViewObserverImpl observer;
-  table_->SetObserver(&observer);
+  table_->set_observer(&observer);
 
   // Click on the first row, should select it and the second row.
   ClickOnRow(0, 0);
@@ -851,7 +960,7 @@ TEST_F(TableViewTest, Multiselection) {
   EXPECT_EQ(1, observer.GetChangedCountAndClear());
   EXPECT_EQ("active=4 anchor=4 selection=3 4", SelectionStateAsString());
 
-  table_->SetObserver(NULL);
+  table_->set_observer(NULL);
 }
 
 // Verifies multiple selection gestures work when sorted.
@@ -884,7 +993,7 @@ TEST_F(TableViewTest, MultiselectionWithSort) {
   EXPECT_EQ("active=-1 anchor=-1 selection=", SelectionStateAsString());
 
   TableViewObserverImpl observer;
-  table_->SetObserver(&observer);
+  table_->set_observer(&observer);
 
   // Click on the third row, should select it and the second row.
   ClickOnRow(2, 0);
@@ -896,7 +1005,7 @@ TEST_F(TableViewTest, MultiselectionWithSort) {
   EXPECT_EQ(1, observer.GetChangedCountAndClear());
   EXPECT_EQ("active=2 anchor=4 selection=2 3 4", SelectionStateAsString());
 
-  table_->SetObserver(NULL);
+  table_->set_observer(NULL);
 }
 
 // Verifies we don't crash after removing the selected row when there is

@@ -8,6 +8,7 @@
 
 #include <string>
 
+#include "base/task_scheduler/post_task.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/grit/chromium_strings.h"
@@ -48,8 +49,9 @@ void ChromeBrowserMainPartsLinux::PreProfileInit() {
   // Needs to be called after we have chrome::DIR_USER_DATA and
   // g_browser_process.  This happens in PreCreateThreads.
   // base::GetLinuxDistro() will initialize its value if needed.
-  content::BrowserThread::PostBlockingPoolTask(
-      FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, base::TaskTraits().MayBlock().WithPriority(
+                     base::TaskPriority::BACKGROUND),
       base::Bind(base::IgnoreResult(&base::GetLinuxDistro)));
 #endif
 
@@ -58,9 +60,15 @@ void ChromeBrowserMainPartsLinux::PreProfileInit() {
 
 #if !defined(OS_CHROMEOS)
   // Forward to os_crypt the flag to use a specific password store.
-  std::string password_store =
-      parsed_command_line().GetSwitchValueASCII(switches::kPasswordStore);
-  OSCrypt::SetStore(password_store);
+  OSCrypt::SetStore(
+      parsed_command_line().GetSwitchValueASCII(switches::kPasswordStore));
+  // Forward the product name
+  OSCrypt::SetProductName(l10n_util::GetStringUTF8(IDS_PRODUCT_NAME));
+  // OSCrypt may target keyring, which requires calls from the main thread.
+  scoped_refptr<base::SingleThreadTaskRunner> main_thread_runner(
+      content::BrowserThread::GetTaskRunnerForThread(
+          content::BrowserThread::UI));
+  OSCrypt::SetMainThreadRunner(main_thread_runner);
 #endif
 
   ChromeBrowserMainPartsPosix::PreProfileInit();

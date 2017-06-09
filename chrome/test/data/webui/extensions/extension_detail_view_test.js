@@ -38,7 +38,7 @@ cr.define('extension_detail_view_tests', function() {
           incognitoAccess: {isEnabled: true, isActive: false},
           fileAccess: {isEnabled: true, isActive: false},
           runOnAllUrls: {isEnabled: true, isActive: false},
-          errorCollection: {isEnabled: true, isActive: false}
+          errorCollection: {isEnabled: true, isActive: false},
         });
         mockDelegate = new extension_test_util.MockItemDelegate();
         item = new extensions.DetailView();
@@ -54,8 +54,8 @@ cr.define('extension_detail_view_tests', function() {
 
         var testIsVisible = extension_test_util.isVisible.bind(null, item);
         expectTrue(testIsVisible('#close-button'));
-        expectTrue(testIsVisible('#open-in-webstore'));
-        expectTrue(testIsVisible('#options'));
+        expectFalse(testIsVisible('#open-homepage'));
+        expectFalse(testIsVisible('#options'));
 
         // Check the checkboxes visibility and state. They should be visible
         // only if the associated option is enabled, and checked if the
@@ -103,9 +103,22 @@ cr.define('extension_detail_view_tests', function() {
                      item.$$('#permissions-list').querySelectorAll('li').
                          length);
         expectFalse(testIsVisible('#no-permissions'));
+
+        var optionsUrl =
+             'chrome-extension://' + extensionData.id + '/options.html';
+        item.set('data.optionsPage', {openInTab: true, url: optionsUrl});
+        expectTrue(testIsVisible('#options'));
+
+        var homepageUrl = 'https://www.example.com/';
+        item.set('data.homePage', {specified: true, url: homepageUrl});
+        expectTrue(testIsVisible('#open-homepage'));
+        expectEquals(homepageUrl, item.$$('#open-homepage').href);
       });
 
       test(assert(TestNames.ClickableElements), function() {
+        var optionsUrl =
+            'chrome-extension://' + extensionData.id + '/options.html';
+        item.set('data.optionsPage', {openInTab: true, url: optionsUrl});
         Polymer.dom.flush();
         mockDelegate.testClickingCalls(
             item.$$('#allow-incognito'), 'setItemAllowedIncognito',
@@ -119,6 +132,8 @@ cr.define('extension_detail_view_tests', function() {
         mockDelegate.testClickingCalls(
             item.$$('#collect-errors'), 'setItemCollectsErrors',
             [extensionData.id, true]);
+        mockDelegate.testClickingCalls(
+            item.$$('#options'), 'showItemOptionsPage', [extensionData.id]);
       });
     });
   }

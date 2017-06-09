@@ -6,14 +6,15 @@
 
 #include "base/macros.h"
 #include "base/strings/string16.h"
+#include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/ui/autofill/password_generation_popup_controller.h"
 #include "chrome/browser/ui/autofill/popup_constants.h"
-#include "ui/accessibility/ax_view_state.h"
+#include "ui/accessibility/ax_node_data.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/paint_vector_icon.h"
-#include "ui/gfx/vector_icons_public.h"
+#include "ui/native_theme/native_theme.h"
 #include "ui/views/background.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/image_view.h"
@@ -98,8 +99,8 @@ class PasswordGenerationPopupViewViews::PasswordBox : public views::View {
     SetLayoutManager(box_layout);
 
     views::ImageView* key_image = new views::ImageView();
-    key_image->SetImage(gfx::CreateVectorIcon(gfx::VectorIconId::AUTOLOGIN, 32,
-                                              gfx::kChromeIconGrey));
+    key_image->SetImage(
+        gfx::CreateVectorIcon(kAutologinIcon, 32, gfx::kChromeIconGrey));
     AddChildView(key_image);
 
     PasswordTextBox* password_text_box = new PasswordTextBox();
@@ -144,16 +145,18 @@ PasswordGenerationPopupViewViews::PasswordGenerationPopupViewViews(
   help_label_->set_background(
       views::Background::CreateSolidBackground(
           kExplanatoryTextBackgroundColor));
-  help_label_->SetBorder(views::Border::CreateEmptyBorder(
+  help_label_->SetBorder(views::CreateEmptyBorder(
       PasswordGenerationPopupController::kHelpVerticalPadding -
-      kHelpVerticalOffset,
+          kHelpVerticalOffset,
       PasswordGenerationPopupController::kHorizontalPadding,
       PasswordGenerationPopupController::kHelpVerticalPadding -
-      kHelpVerticalOffset,
+          kHelpVerticalOffset,
       PasswordGenerationPopupController::kHorizontalPadding));
   AddChildView(help_label_);
 
-  set_background(views::Background::CreateSolidBackground(kPopupBackground));
+  set_background(views::Background::CreateSolidBackground(
+      GetNativeTheme()->GetSystemColor(
+          ui::NativeTheme::kColorId_ResultsTableNormalBackground)));
 }
 
 PasswordGenerationPopupViewViews::~PasswordGenerationPopupViewViews() {}
@@ -209,9 +212,10 @@ void PasswordGenerationPopupViewViews::PasswordSelectionUpdated() {
 
   password_view_->set_background(
       views::Background::CreateSolidBackground(
-          controller_->password_selected() ?
-          kHoveredBackgroundColor :
-          kPopupBackground));
+          GetNativeTheme()->GetSystemColor(
+              controller_->password_selected() ?
+                  ui::NativeTheme::kColorId_ResultsTableHoveredBackground :
+                  ui::NativeTheme::kColorId_ResultsTableNormalBackground)));
 }
 
 void PasswordGenerationPopupViewViews::Layout() {
@@ -279,10 +283,10 @@ PasswordGenerationPopupView* PasswordGenerationPopupView::Create(
   return new PasswordGenerationPopupViewViews(controller, observing_widget);
 }
 
-void PasswordGenerationPopupViewViews::GetAccessibleState(
-    ui::AXViewState* state) {
-  state->name = controller_->SuggestedText();
-  state->role = ui::AX_ROLE_MENU_ITEM;
+void PasswordGenerationPopupViewViews::GetAccessibleNodeData(
+    ui::AXNodeData* node_data) {
+  node_data->SetName(controller_->SuggestedText());
+  node_data->role = ui::AX_ROLE_MENU_ITEM;
 }
 
 }  // namespace autofill

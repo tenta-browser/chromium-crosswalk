@@ -2,12 +2,17 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-source_set("service") {
+if (is_component_build) {
+  link_target_type = "source_set"
+} else {
+  link_target_type = "static_library"
+}
+target(link_target_type, "service") {
   visibility = [
     "//media/*",
     "//content/gpu/*",
     "//content/public/gpu/*",
-    "//components/mus/gpu/*",
+    "//services/ui/gpu/*",
   ]
 
   sources = [
@@ -17,10 +22,10 @@ source_set("service") {
     "gpu_video_decode_accelerator.h",
     "gpu_video_encode_accelerator.cc",
     "gpu_video_encode_accelerator.h",
-    "media_channel.cc",
-    "media_channel.h",
-    "media_service.cc",
-    "media_service.h",
+    "media_gpu_channel.cc",
+    "media_gpu_channel.h",
+    "media_gpu_channel_manager.cc",
+    "media_gpu_channel_manager.h",
   ]
 
   include_dirs = [ "//third_party/mesa/src/include" ]
@@ -34,9 +39,13 @@ source_set("service") {
   ]
   deps = [
     "//gpu/ipc/service",
+    "//media:media_features",
     "//media/gpu/ipc/common",
     "//third_party/mesa:mesa_headers",
+    "//ui/gfx/ipc/color",
   ]
+
+  configs += [ "//media/gpu:gpu_config" ]
 
   if (is_chromeos && current_cpu != "arm") {
     configs += [ "//third_party/libva:libva_config" ]

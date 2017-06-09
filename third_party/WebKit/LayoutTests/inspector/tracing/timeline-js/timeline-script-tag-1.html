@@ -1,0 +1,51 @@
+<html>
+<head>
+<script src="../../../http/tests/inspector/inspector-test.js"></script>
+<script src="../../../http/tests/inspector/timeline-test.js"></script>
+<script>
+
+function performActions()
+{
+    var iframe = document.createElement("iframe");
+    iframe.src = "../resources/timeline-iframe-data.html";
+    document.body.appendChild(iframe);
+}
+
+function test() 
+{
+    UI.panels.timeline._disableCaptureJSProfileSetting.set(true);
+    InspectorTest.startTimeline(step1);
+    function step1()
+    {
+        InspectorTest.addConsoleSniffer(step2);
+        InspectorTest.evaluateInPage("performActions()");
+    }
+
+    function step2()
+    {
+        InspectorTest.stopTimeline(step3);
+    }
+
+    function step3()
+    {
+        InspectorTest.timelineModel().mainThreadEvents().forEach(event => {
+            if (event.name === TimelineModel.TimelineModel.RecordType.EvaluateScript) {
+                InspectorTest.printTraceEventProperties(event);
+            } else if (event.name === TimelineModel.TimelineModel.RecordType.TimeStamp) {
+                InspectorTest.addResult(`----> ${Timeline.TimelineUIUtils.eventTitle(event)}`);
+            }
+        });
+        InspectorTest.completeTest();
+    }
+}
+
+</script>
+</head>
+
+<body onload="runTest()">
+<p>
+Tests the Timeline API instrumentation of an HTML script tag.
+</p>
+
+</body>
+</html>

@@ -4,44 +4,34 @@
 
 #include "ash/common/system/tray/tray_item_more.h"
 
-#include "ash/common/system/tray/fixed_sized_image_view.h"
 #include "ash/common/system/tray/system_tray_item.h"
 #include "ash/common/system/tray/tray_constants.h"
-#include "grit/ash_resources.h"
-#include "ui/accessibility/ax_view_state.h"
-#include "ui/base/resource/resource_bundle.h"
+#include "ash/common/system/tray/tray_popup_item_style.h"
+#include "ash/common/system/tray/tray_popup_utils.h"
+#include "ash/common/system/tray/tri_view.h"
+#include "base/memory/ptr_util.h"
+#include "ui/accessibility/ax_node_data.h"
 #include "ui/gfx/image/image.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
-#include "ui/views/layout/box_layout.h"
+#include "ui/views/layout/fill_layout.h"
 
 namespace ash {
 
-TrayItemMore::TrayItemMore(SystemTrayItem* owner, bool show_more)
-    : owner_(owner),
-      show_more_(show_more),
-      icon_(NULL),
-      label_(NULL),
-      more_(NULL) {
-  SetLayoutManager(new views::BoxLayout(views::BoxLayout::kHorizontal,
-                                        kTrayPopupPaddingHorizontal, 0,
-                                        kTrayPopupPaddingBetweenItems));
+TrayItemMore::TrayItemMore(SystemTrayItem* owner)
+    : ActionableView(owner, TrayPopupInkDropStyle::FILL_BOUNDS),
+      tri_view_(TrayPopupUtils::CreateDefaultRowView()),
+      icon_(TrayPopupUtils::CreateMainImageView()),
+      label_(TrayPopupUtils::CreateDefaultLabel()),
+      more_(TrayPopupUtils::CreateMoreImageView()) {
+  AddChildView(tri_view_);
+  SetLayoutManager(new views::FillLayout);
 
-  icon_ = new FixedSizedImageView(0, kTrayPopupItemHeight);
-  AddChildView(icon_);
+  tri_view_->AddView(TriView::Container::START, icon_);
+  tri_view_->AddView(TriView::Container::CENTER, label_);
+  tri_view_->AddView(TriView::Container::END, more_);
 
-  label_ = new views::Label;
-  label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-  AddChildView(label_);
-
-  if (show_more) {
-    more_ = new views::ImageView;
-    more_->EnableCanvasFlippingForRTLUI(true);
-    more_->SetImage(ui::ResourceBundle::GetSharedInstance()
-                        .GetImageNamed(IDR_AURA_UBER_TRAY_MORE)
-                        .ToImageSkia());
-    AddChildView(more_);
-  }
+  SetInkDropMode(InkDropHostView::InkDropMode::ON);
 }
 
 TrayItemMore::~TrayItemMore() {}
@@ -52,7 +42,7 @@ void TrayItemMore::SetLabel(const base::string16& label) {
   SchedulePaint();
 }
 
-void TrayItemMore::SetImage(const gfx::ImageSkia* image_skia) {
+void TrayItemMore::SetImage(const gfx::ImageSkia& image_skia) {
   icon_->SetImage(image_skia);
   SchedulePaint();
 }
@@ -61,47 +51,43 @@ void TrayItemMore::SetAccessibleName(const base::string16& name) {
   accessible_name_ = name;
 }
 
-void TrayItemMore::ReplaceIcon(views::View* view) {
-  delete icon_;
-  icon_ = NULL;
-  AddChildViewAt(view, 0);
+std::unique_ptr<TrayPopupItemStyle> TrayItemMore::CreateStyle() const {
+  std::unique_ptr<TrayPopupItemStyle> style = HandleCreateStyle();
+  if (!enabled())
+    style->set_color_style(TrayPopupItemStyle::ColorStyle::DISABLED);
+  return style;
+}
+
+std::unique_ptr<TrayPopupItemStyle> TrayItemMore::HandleCreateStyle() const {
+  return base::MakeUnique<TrayPopupItemStyle>(
+      TrayPopupItemStyle::FontStyle::DEFAULT_VIEW_LABEL);
+}
+
+void TrayItemMore::UpdateStyle() {
+  std::unique_ptr<TrayPopupItemStyle> style = CreateStyle();
+  style->SetupLabel(label_);
 }
 
 bool TrayItemMore::PerformAction(const ui::Event& event) {
-  if (!show_more_)
-    return false;
-
   owner()->TransitionDetailedView();
   return true;
 }
 
-void TrayItemMore::Layout() {
-  // Let the box-layout do the layout first. Then move the '>' arrow to right
-  // align.
-  views::View::Layout();
-
-  if (!show_more_)
-    return;
-
-  // Make sure the chevron always has the full size.
-  gfx::Size size = more_->GetPreferredSize();
-  gfx::Rect bounds(size);
-  bounds.set_x(width() - size.width() - kTrayPopupPaddingBetweenItems);
-  bounds.set_y((height() - size.height()) / 2);
-  more_->SetBoundsRect(bounds);
-
-  // Adjust the label's bounds in case it got cut off by |more_|.
-  if (label_->bounds().Intersects(more_->bounds())) {
-    gfx::Rect bounds = label_->bounds();
-    bounds.set_width(more_->x() - kTrayPopupPaddingBetweenItems - label_->x());
-    label_->SetBoundsRect(bounds);
-  }
+void TrayItemMore::GetAccessibleNodeData(ui::AXNodeData* node_data) {
+  ActionableView::GetAccessibleNodeData(node_data);
+  if (!accessible_name_.empty())
+    node_data->SetName(accessible_name_);
 }
 
-void TrayItemMore::GetAccessibleState(ui::AXViewState* state) {
-  ActionableView::GetAccessibleState(state);
-  if (!accessible_name_.empty())
-    state->name = accessible_name_;
+void TrayItemMore::OnEnabledChanged() {
+  ActionableView::OnEnabledChanged();
+  tri_view_->SetContainerVisible(TriView::Container::END, enabled());
+  UpdateStyle();
+}
+
+void TrayItemMore::OnNativeThemeChanged(const ui::NativeTheme* theme) {
+  ActionableView::OnNativeThemeChanged(theme);
+  UpdateStyle();
 }
 
 }  // namespace ash

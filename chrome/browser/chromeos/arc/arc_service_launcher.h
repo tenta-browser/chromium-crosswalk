@@ -8,10 +8,14 @@
 #include <memory>
 
 #include "base/macros.h"
-#include "base/memory/weak_ptr.h"
-#include "components/arc/arc_service_manager.h"
+
+class Profile;
 
 namespace arc {
+
+class ArcPlayStoreEnabledPreferenceHandler;
+class ArcServiceManager;
+class ArcSessionManager;
 
 // Detects ARC availability and launches ARC bridge service.
 class ArcServiceLauncher {
@@ -19,15 +23,24 @@ class ArcServiceLauncher {
   ArcServiceLauncher();
   ~ArcServiceLauncher();
 
+  // This is to access OnPrimaryUserProfilePrepared() only.
+  static ArcServiceLauncher* Get();
+
+  // Called before the main MessageLooop starts.
   void Initialize();
+
+  // Called after the main MessageLoop stops, but before the Profile is
+  // destroyed.
   void Shutdown();
 
- private:
-  // DBus callback.
-  void OnArcAvailable(bool available);
+  // Called when the main profile is initialized after user logs in.
+  void OnPrimaryUserProfilePrepared(Profile* profile);
 
+ private:
   std::unique_ptr<ArcServiceManager> arc_service_manager_;
-  base::WeakPtrFactory<ArcServiceLauncher> weak_factory_;
+  std::unique_ptr<ArcSessionManager> arc_session_manager_;
+  std::unique_ptr<ArcPlayStoreEnabledPreferenceHandler>
+      arc_play_store_enabled_preference_handler_;
 
   DISALLOW_COPY_AND_ASSIGN(ArcServiceLauncher);
 };

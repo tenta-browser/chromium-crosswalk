@@ -9,8 +9,12 @@
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "services/shell/public/cpp/connection.h"
-#include "services/shell/public/cpp/connector.h"
+#include "base/memory/ptr_util.h"
+#include "mojo/public/cpp/bindings/strong_binding.h"
+#include "services/service_manager/public/cpp/connection.h"
+#include "services/service_manager/public/cpp/connector.h"
+#include "services/service_manager/public/cpp/interface_registry.h"
+#include "services/service_manager/public/cpp/service_context.h"
 
 #if defined(OS_WIN)
 #include "base/base_paths_win.h"
@@ -39,22 +43,22 @@ FileSystemApp::FileSystemApp() : lock_table_(new LockTable) {}
 
 FileSystemApp::~FileSystemApp() {}
 
-void FileSystemApp::Initialize(shell::Connector* connector,
-                               const shell::Identity& identity,
-                               uint32_t id) {
-  tracing_.Initialize(connector, identity.name());
+void FileSystemApp::OnStart() {
+  tracing_.Initialize(context()->connector(), context()->identity().name());
 }
 
-bool FileSystemApp::AcceptConnection(shell::Connection* connection) {
-  connection->AddInterface<mojom::FileSystem>(this);
+bool FileSystemApp::OnConnect(const service_manager::ServiceInfo& remote_info,
+                              service_manager::InterfaceRegistry* registry) {
+  registry->AddInterface<mojom::FileSystem>(this);
   return true;
 }
 
 // |InterfaceFactory<Files>| implementation:
-void FileSystemApp::Create(shell::Connection* connection,
-                           mojo::InterfaceRequest<mojom::FileSystem> request) {
-  new FileSystemImpl(connection, std::move(request), GetUserDataDir(),
-                     lock_table_);
+void FileSystemApp::Create(const service_manager::Identity& remote_identity,
+                           mojom::FileSystemRequest request) {
+  mojo::MakeStrongBinding(base::MakeUnique<FileSystemImpl>(
+                              remote_identity, GetUserDataDir(), lock_table_),
+                          std::move(request));
 }
 
 //static

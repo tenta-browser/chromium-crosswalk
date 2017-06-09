@@ -15,15 +15,19 @@
 #include "base/memory/shared_memory.h"
 #include "base/memory/weak_ptr.h"
 #include "base/power_monitor/power_monitor.h"
-#include "base/sequenced_task_runner.h"
+#include "base/single_thread_task_runner.h"
 #include "base/tracked_objects.h"
 #include "build/build_config.h"
+#include "content/common/associated_interfaces.mojom.h"
 #include "content/common/content_export.h"
 #include "content/public/child/child_thread.h"
+#include "ipc/ipc.mojom.h"
 #include "ipc/ipc_message.h"  // For IPC_MESSAGE_LOG_ENABLED.
 #include "ipc/ipc_platform_file.h"
 #include "ipc/message_router.h"
-#include "services/shell/public/cpp/shell_client.h"
+#include "mojo/public/cpp/bindings/associated_binding.h"
+#include "mojo/public/cpp/bindings/associated_binding_set.h"
+#include "services/service_manager/public/cpp/service_info.h"
 
 namespace base {
 class MessageLoop;
@@ -35,41 +39,34 @@ class SyncChannel;
 class SyncMessageFilter;
 }  // namespace IPC
 
+namespace service_manager {
+class Connection;
+}  // namespace service_manager
+
 namespace mojo {
 namespace edk {
 class ScopedIPCSupport;
 }  // namespace edk
 }  // namespace mojo
 
-namespace blink {
-class WebFrame;
-}  // namespace blink
-
 namespace content {
-class ChildMessageFilter;
-class ChildDiscardableSharedMemoryManager;
-class ChildGpuMemoryBufferManager;
 class ChildHistogramMessageFilter;
 class ChildResourceMessageFilter;
-class ChildSharedBitmapManager;
 class FileSystemDispatcher;
 class InProcessChildThreadParams;
 class NotificationDispatcher;
-class PushDispatcher;
 class ServiceWorkerMessageFilter;
 class QuotaDispatcher;
 class QuotaMessageFilter;
 class ResourceDispatcher;
 class ThreadSafeSender;
-class WebSocketDispatcher;
-class WebSocketMessageFilter;
-struct RequestInfo;
 
 // The main thread of a child process derives from this class.
 class CONTENT_EXPORT ChildThreadImpl
     : public IPC::Listener,
       virtual public ChildThread,
-      public NON_EXPORTED_BASE(shell::ShellClient){
+      NON_EXPORTED_BASE(public mojom::RouteProvider),
+      NON_EXPORTED_BASE(public mojom::AssociatedInterfaceProvider) {
  public:
   struct CONTENT_EXPORT Options;
 
@@ -85,7 +82,8 @@ class CONTENT_EXPORT ChildThreadImpl
   // should be joined in Shutdown().
   ~ChildThreadImpl() override;
   virtual void Shutdown();
-  void ShutdownDiscardableSharedMemoryManager();
+  // Returns true if the thread should be destroyed.
+  virtual bool ShouldBeDestroyed();
 
   // IPC::Sender implementation:
   bool Send(IPC::Message* msg) override;
@@ -97,52 +95,34 @@ class CONTENT_EXPORT ChildThreadImpl
 #endif
   void RecordAction(const base::UserMetricsAction& action) override;
   void RecordComputedAction(const std::string& action) override;
-  MojoShellConnection* GetMojoShellConnection() override;
-  shell::InterfaceRegistry* GetInterfaceRegistry() override;
-  shell::InterfaceProvider* GetRemoteInterfaces() override;
+  ServiceManagerConnection* GetServiceManagerConnection() override;
+  service_manager::InterfaceRegistry* GetInterfaceRegistry() override;
+  service_manager::InterfaceProvider* GetRemoteInterfaces() override;
 
-  // shell::ShellClient:
-  shell::InterfaceRegistry* GetInterfaceRegistryForConnection() override;
-  shell::InterfaceProvider* GetInterfaceProviderForConnection() override;
+  // Returns the service_manager::ServiceInfo for the child process & the
+  // browser process, once available.
+  const service_manager::ServiceInfo& GetChildServiceInfo() const;
+  const service_manager::ServiceInfo& GetBrowserServiceInfo() const;
+  bool IsConnectedToBrowser() const;
 
   IPC::SyncChannel* channel() { return channel_.get(); }
 
   IPC::MessageRouter* GetRouter();
 
-  // Allocates a block of shared memory of the given size. Returns NULL on
+  mojom::RouteProvider* GetRemoteRouteProvider();
+
+  // Allocates a block of shared memory of the given size. Returns nullptr on
   // failure.
-  // Note: On posix, this requires a sync IPC to the browser process,
-  // but on windows the child process directly allocates the block.
-  std::unique_ptr<base::SharedMemory> AllocateSharedMemory(size_t buf_size);
-
-  // A static variant that can be called on background threads provided
-  // the |sender| passed in is safe to use on background threads.
-  // |out_of_memory| is an output variable populated on failure which tells the
-  // caller whether the failure was caused by an out of memory error.
   static std::unique_ptr<base::SharedMemory> AllocateSharedMemory(
-      size_t buf_size,
-      IPC::Sender* sender,
-      bool* out_of_memory);
+      size_t buf_size);
 
-  ChildSharedBitmapManager* shared_bitmap_manager() const {
-    return shared_bitmap_manager_.get();
-  }
-
-  ChildGpuMemoryBufferManager* gpu_memory_buffer_manager() const {
-    return gpu_memory_buffer_manager_.get();
-  }
-
-  ChildDiscardableSharedMemoryManager* discardable_shared_memory_manager()
-      const {
-    return discardable_shared_memory_manager_.get();
-  }
+#if defined(OS_LINUX)
+  void SetThreadPriority(base::PlatformThreadId id,
+                         base::ThreadPriority priority);
+#endif
 
   ResourceDispatcher* resource_dispatcher() const {
     return resource_dispatcher_.get();
-  }
-
-  WebSocketDispatcher* websocket_dispatcher() const {
-    return websocket_dispatcher_.get();
   }
 
   FileSystemDispatcher* file_system_dispatcher() const {
@@ -155,10 +135,6 @@ class CONTENT_EXPORT ChildThreadImpl
 
   NotificationDispatcher* notification_dispatcher() const {
     return notification_dispatcher_.get();
-  }
-
-  PushDispatcher* push_dispatcher() const {
-    return push_dispatcher_.get();
   }
 
   IPC::SyncMessageFilter* sync_message_filter() const {
@@ -188,10 +164,6 @@ class CONTENT_EXPORT ChildThreadImpl
     return resource_message_filter_.get();
   }
 
-  WebSocketMessageFilter* websocket_message_filter() const {
-    return websocket_message_filter_.get();
-  }
-
   base::MessageLoop* message_loop() const { return message_loop_; }
 
   // Returns the one child thread. Can only be called on the main thread.
@@ -209,17 +181,27 @@ class CONTENT_EXPORT ChildThreadImpl
   // Called when the process refcount is 0.
   void OnProcessFinalRelease();
 
+  // Called by subclasses to manually start the ServiceManagerConnection. Must
+  // only be called if
+  // ChildThreadImpl::Options::auto_start_service_manager_connection was set to
+  // |false| on ChildThreadImpl construction.
+  void StartServiceManagerConnection();
+
   virtual bool OnControlMessageReceived(const IPC::Message& msg);
   virtual void OnProcessBackgrounded(bool backgrounded);
   virtual void OnProcessPurgeAndSuspend();
+  virtual void OnProcessResume();
 
   // IPC::Listener implementation:
   bool OnMessageReceived(const IPC::Message& msg) override;
+  void OnAssociatedInterfaceRequest(
+      const std::string& interface_name,
+      mojo::ScopedInterfaceEndpointHandle handle) override;
   void OnChannelConnected(int32_t peer_pid) override;
   void OnChannelError() override;
 
   bool IsInBrowserProcess() const;
-  scoped_refptr<base::SequencedTaskRunner> GetIOTaskRunner();
+  scoped_refptr<base::SingleThreadTaskRunner> GetIOTaskRunner();
 
  private:
   class ChildThreadMessageRouter : public IPC::MessageRouter {
@@ -239,7 +221,7 @@ class CONTENT_EXPORT ChildThreadImpl
 
   // We create the channel first without connecting it so we can add filters
   // prior to any messages being received, then connect it afterwards.
-  void ConnectChannel(bool use_mojo_channel, const std::string& ipc_token);
+  void ConnectChannel();
 
   // IPC message handlers.
   void OnShutdown();
@@ -252,12 +234,36 @@ class CONTENT_EXPORT ChildThreadImpl
 
   void EnsureConnected();
 
-  std::unique_ptr<mojo::edk::ScopedIPCSupport> mojo_ipc_support_;
-  std::unique_ptr<MojoShellConnection> mojo_shell_connection_;
-  std::unique_ptr<shell::InterfaceRegistry> interface_registry_;
-  std::unique_ptr<shell::InterfaceProvider> remote_interfaces_;
+  // mojom::RouteProvider:
+  void GetRoute(
+      int32_t routing_id,
+      mojom::AssociatedInterfaceProviderAssociatedRequest request) override;
 
-  std::string channel_name_;
+  // mojom::AssociatedInterfaceProvider:
+  void GetAssociatedInterface(
+      const std::string& name,
+      mojom::AssociatedInterfaceAssociatedRequest request) override;
+
+  // Called when a connection is received from another service. When that other
+  // service is the browser process, stores the remote's info.
+  void OnServiceConnect(const service_manager::ServiceInfo& local_info,
+                        const service_manager::ServiceInfo& remote_info);
+
+  std::unique_ptr<mojo::edk::ScopedIPCSupport> mojo_ipc_support_;
+  std::unique_ptr<service_manager::InterfaceRegistry> interface_registry_;
+  std::unique_ptr<service_manager::InterfaceProvider> remote_interfaces_;
+  std::unique_ptr<ServiceManagerConnection> service_manager_connection_;
+  std::unique_ptr<service_manager::Connection> browser_connection_;
+
+  bool connected_to_browser_ = false;
+  service_manager::ServiceInfo child_info_;
+  service_manager::ServiceInfo browser_info_;
+
+  mojo::AssociatedBinding<mojom::RouteProvider> route_provider_binding_;
+  mojo::AssociatedBindingSet<mojom::AssociatedInterfaceProvider, int32_t>
+      associated_interface_provider_bindings_;
+  mojom::RouteProviderAssociatedPtr remote_route_provider_;
+
   std::unique_ptr<IPC::SyncChannel> channel_;
 
   // Allows threads other than the main thread to send sync messages.
@@ -271,8 +277,6 @@ class CONTENT_EXPORT ChildThreadImpl
 
   // Handles resource loads for this process.
   std::unique_ptr<ResourceDispatcher> resource_dispatcher_;
-
-  std::unique_ptr<WebSocketDispatcher> websocket_dispatcher_;
 
   // The OnChannelError() callback was invoked - the channel is dead, don't
   // attempt to communicate.
@@ -292,24 +296,16 @@ class CONTENT_EXPORT ChildThreadImpl
 
   scoped_refptr<QuotaMessageFilter> quota_message_filter_;
 
-  scoped_refptr<WebSocketMessageFilter> websocket_message_filter_;
-
   scoped_refptr<NotificationDispatcher> notification_dispatcher_;
-
-  scoped_refptr<PushDispatcher> push_dispatcher_;
-
-  std::unique_ptr<ChildSharedBitmapManager> shared_bitmap_manager_;
-
-  std::unique_ptr<ChildGpuMemoryBufferManager> gpu_memory_buffer_manager_;
-
-  std::unique_ptr<ChildDiscardableSharedMemoryManager>
-      discardable_shared_memory_manager_;
 
   std::unique_ptr<base::PowerMonitor> power_monitor_;
 
-  scoped_refptr<base::SequencedTaskRunner> browser_process_io_runner_;
+  scoped_refptr<base::SingleThreadTaskRunner> browser_process_io_runner_;
 
-  base::WeakPtrFactory<ChildThreadImpl> channel_connected_factory_;
+  std::unique_ptr<base::WeakPtrFactory<ChildThreadImpl>>
+      channel_connected_factory_;
+
+  base::WeakPtrFactory<ChildThreadImpl> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ChildThreadImpl);
 };
@@ -320,12 +316,11 @@ struct ChildThreadImpl::Options {
 
   class Builder;
 
-  std::string channel_name;
-  bool use_mojo_channel;
-  scoped_refptr<base::SequencedTaskRunner> browser_process_io_runner;
+  bool auto_start_service_manager_connection;
+  bool connect_to_browser;
+  scoped_refptr<base::SingleThreadTaskRunner> browser_process_io_runner;
   std::vector<IPC::MessageFilter*> startup_filters;
-  std::string in_process_ipc_token;
-  std::string in_process_application_token;
+  std::string in_process_service_request_token;
 
  private:
   Options();
@@ -336,8 +331,8 @@ class ChildThreadImpl::Options::Builder {
   Builder();
 
   Builder& InBrowserProcess(const InProcessChildThreadParams& params);
-  Builder& UseMojoChannel(bool use_mojo_channel);
-  Builder& WithChannelName(const std::string& channel_name);
+  Builder& AutoStartServiceManagerConnection(bool auto_start);
+  Builder& ConnectToBrowser(bool connect_to_browser);
   Builder& AddStartupFilter(IPC::MessageFilter* filter);
 
   Options Build();

@@ -16,13 +16,12 @@
 #include "base/lazy_instance.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/process/process_info.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
-#include "base/strings/stringprintf.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "build/build_config.h"
@@ -35,9 +34,10 @@
 #include "net/url_request/url_fetcher_delegate.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "net/url_request/url_request_status.h"
+#include "rlz/features/features.h"
 #include "url/gurl.h"
 
-#if defined(ENABLE_RLZ)
+#if BUILDFLAG(ENABLE_RLZ)
 #include "rlz/lib/machine_id.h"
 #endif
 
@@ -85,7 +85,7 @@ GURL GetBackendUrl() {
 // |result|.
 bool HashWithMachineId(const std::string& salt, std::string* result) {
   std::string machine_id;
-#if defined(ENABLE_RLZ)
+#if BUILDFLAG(ENABLE_RLZ)
   if (!rlz_lib::GetMachineId(&machine_id))
     return false;
 #else
@@ -99,7 +99,7 @@ bool HashWithMachineId(const std::string& salt, std::string* result) {
   hash->Update(salt.data(), salt.size());
 
   std::string result_bytes(crypto::kSHA256Length, 0);
-  hash->Finish(string_as_array(&result_bytes), result_bytes.size());
+  hash->Finish(base::string_as_array(&result_bytes), result_bytes.size());
 
   base::Base64Encode(result_bytes, result);
   return true;
@@ -356,7 +356,7 @@ void InstallSigner::GetSignature(const SignatureCallback& callback) {
 
   salt_ = std::string(kSaltBytes, 0);
   DCHECK_EQ(kSaltBytes, salt_.size());
-  crypto::RandBytes(string_as_array(&salt_), salt_.size());
+  crypto::RandBytes(base::string_as_array(&salt_), salt_.size());
 
   std::string hash_base64;
   if (!HashWithMachineId(salt_, &hash_base64)) {

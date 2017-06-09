@@ -8,6 +8,7 @@
 
 #include "base/process/process.h"
 #include "cc/surfaces/surface.h"
+#include "cc/surfaces/surface_info.h"
 #include "content/common/content_export.h"
 #include "content/common/content_param_traits.h"
 #include "content/common/cursors/webcursor.h"
@@ -73,10 +74,17 @@ IPC_MESSAGE_CONTROL5(
     int /* selection_end */)
 
 // This message is sent from BrowserPlugin to BrowserPluginGuest to notify that
-// confirming the current composition is requested.
-IPC_MESSAGE_CONTROL3(BrowserPluginHostMsg_ImeConfirmComposition,
-                     int /* browser_plugin_instance_id */,
-                     std::string /* text */,
+// deleting the current composition and inserting specified text is requested.
+IPC_MESSAGE_CONTROL4(
+    BrowserPluginHostMsg_ImeCommitText,
+    int /* browser_plugin_instance_id */,
+    std::string /* text */,
+    std::vector<blink::WebCompositionUnderline> /* underlines */,
+    int /* relative_cursor_pos */)
+
+// This message is sent from BrowserPlugin to BrowserPluginGuest to notify that
+// inserting the current composition is requested.
+IPC_MESSAGE_CONTROL1(BrowserPluginHostMsg_ImeFinishComposingText,
                      bool /* keep selection */)
 
 // Deletes the current selection plus the specified number of characters before
@@ -157,6 +165,9 @@ IPC_MESSAGE_ROUTED3(BrowserPluginHostMsg_RequireSequence,
 IPC_MESSAGE_CONTROL1(BrowserPluginMsg_GuestGone,
                      int /* browser_plugin_instance_id */)
 
+IPC_MESSAGE_CONTROL1(BrowserPluginMsg_GuestReady,
+                     int /* browser_plugin_instance_id */)
+
 // When the user tabs to the end of the tab stops of a guest, the browser
 // process informs the embedder to tab out of the browser plugin.
 IPC_MESSAGE_CONTROL2(BrowserPluginMsg_AdvanceFocus,
@@ -174,11 +185,9 @@ IPC_MESSAGE_CONTROL2(BrowserPluginMsg_SetCursor,
                      int /* browser_plugin_instance_id */,
                      content::WebCursor /* cursor */)
 
-IPC_MESSAGE_CONTROL5(BrowserPluginMsg_SetChildFrameSurface,
+IPC_MESSAGE_CONTROL3(BrowserPluginMsg_SetChildFrameSurface,
                      int /* browser_plugin_instance_id */,
-                     cc::SurfaceId /* surface_id */,
-                     gfx::Size /* frame_size */,
-                     float /* scale_factor */,
+                     cc::SurfaceInfo /* surface_info */,
                      cc::SurfaceSequence /* sequence */)
 
 // Forwards a PointerLock Unlock request to the BrowserPlugin.

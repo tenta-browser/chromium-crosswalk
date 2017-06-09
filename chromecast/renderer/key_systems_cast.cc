@@ -86,28 +86,38 @@ class PlayReadyKeySystemProperties : public ::media::KeySystemProperties {
 void AddChromecastKeySystems(
     std::vector<std::unique_ptr<::media::KeySystemProperties>>*
         key_systems_properties,
-    bool enable_persistent_license_support) {
+    bool enable_persistent_license_support,
+    bool force_software_crypto) {
 #if defined(PLAYREADY_CDM_AVAILABLE)
+  bool enable_persistent_license_playready = enable_persistent_license_support;
 #if defined(OS_ANDROID)
-  CHECK(!enable_persistent_license_support);
+  LOG_IF(WARNING, enable_persistent_license_playready)
+      << "Android doesn't support Playready persistent license.";
+  enable_persistent_license_playready = false;
 #endif
   key_systems_properties->emplace_back(
-      new PlayReadyKeySystemProperties(enable_persistent_license_support));
+      new PlayReadyKeySystemProperties(enable_persistent_license_playready));
 #endif  // defined(PLAYREADY_CDM_AVAILABLE)
 
 #if defined(WIDEVINE_CDM_AVAILABLE)
   using Robustness = cdm::WidevineKeySystemProperties::Robustness;
   ::media::SupportedCodecs codecs =
       ::media::EME_CODEC_MP4_AAC | ::media::EME_CODEC_MP4_AVC1 |
-      ::media::EME_CODEC_WEBM_VP8 | ::media::EME_CODEC_WEBM_VP9;
+      ::media::EME_CODEC_MP4_VP9 | ::media::EME_CODEC_WEBM_VP8 |
+      ::media::EME_CODEC_WEBM_VP9;
+#if BUILDFLAG(ENABLE_HEVC_DEMUXING)
+  codecs |= ::media::EME_CODEC_MP4_HEVC;
+#endif
   key_systems_properties->emplace_back(new cdm::WidevineKeySystemProperties(
       codecs,  // Regular codecs.
 #if defined(OS_ANDROID)
       codecs,  // Hardware-secure codecs.
 #endif
-      Robustness::HW_SECURE_ALL,             // Max audio robustness.
-      Robustness::HW_SECURE_ALL,             // Max video robustness.
-      EmeSessionTypeSupport::NOT_SUPPORTED,  // persistent-license.
+      Robustness::HW_SECURE_ALL,  // Max audio robustness.
+      Robustness::HW_SECURE_ALL,  // Max video robustness.
+      enable_persistent_license_support
+          ? EmeSessionTypeSupport::SUPPORTED
+          : EmeSessionTypeSupport::NOT_SUPPORTED,  // persistent-license.
       EmeSessionTypeSupport::NOT_SUPPORTED,  // persistent-release-message.
       // Note: On Chromecast, all CDMs may have persistent state.
       EmeFeatureSupport::ALWAYS_ENABLED,    // Persistent state.

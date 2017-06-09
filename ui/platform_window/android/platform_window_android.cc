@@ -15,6 +15,9 @@
 #include "ui/gfx/geometry/point.h"
 #include "ui/platform_window/platform_window_delegate.h"
 
+using base::android::JavaParamRef;
+using base::android::ScopedJavaLocalRef;
+
 namespace ui {
 
 namespace {
@@ -66,7 +69,7 @@ PlatformWindowAndroid::~PlatformWindowAndroid() {
   ScopedJavaLocalRef<jobject> scoped_obj =
       java_platform_window_android_.get(env);
   if (!scoped_obj.is_null()) {
-    Java_PlatformWindowAndroid_detach(env, scoped_obj.obj());
+    Java_PlatformWindowAndroid_detach(env, scoped_obj);
   }
 }
 
@@ -157,7 +160,7 @@ void PlatformWindowAndroid::ReleaseWindow() {
 // PlatformWindowAndroid, PlatformWindow implementation:
 
 void PlatformWindowAndroid::Show() {
-  if (!java_platform_window_android_.is_empty())
+  if (!java_platform_window_android_.is_uninitialized())
     return;
   JNIEnv* env = base::android::AttachCurrentThread();
   java_platform_window_android_ = JavaObjectWeakGlobalRef(

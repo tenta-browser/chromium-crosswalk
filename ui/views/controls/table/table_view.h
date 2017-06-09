@@ -5,7 +5,6 @@
 #ifndef UI_VIEWS_CONTROLS_TABLE_TABLE_VIEW_VIEWS_H_
 #define UI_VIEWS_CONTROLS_TABLE_TABLE_VIEW_VIEWS_H_
 
-#include <memory>
 #include <vector>
 
 #include "base/macros.h"
@@ -37,7 +36,6 @@ struct GroupRange;
 class TableGrouper;
 class TableHeader;
 class TableViewObserver;
-class TableViewRowBackgroundPainter;
 class TableViewTestHelper;
 
 // The cells in the first column of a table can contain:
@@ -106,19 +104,12 @@ class VIEWS_EXPORT TableView
   // Returns a new ScrollView that contains the receiver.
   View* CreateParentIfNecessary();
 
-  void SetRowBackgroundPainter(
-      std::unique_ptr<TableViewRowBackgroundPainter> painter);
-
   // Sets the TableGrouper. TableView does not own |grouper| (common use case is
   // to have TableModel implement TableGrouper).
   void SetGrouper(TableGrouper* grouper);
 
   // Returns the number of rows in the TableView.
   int RowCount() const;
-
-  // Returns the number of selected rows.
-  // TODO(sky): remove this and force callers to use selection_model().
-  int SelectedRowCount();
 
   // Selects the specified item, making sure it's visible.
   void Select(int model_row);
@@ -141,11 +132,8 @@ class VIEWS_EXPORT TableView
   // or not).
   bool HasColumn(int id) const;
 
-  // TODO(sky): rename to set_observer().
-  void SetObserver(TableViewObserver* observer) {
-    table_view_observer_ = observer;
-  }
-  TableViewObserver* observer() const { return table_view_observer_; }
+  void set_observer(TableViewObserver* observer) { observer_ = observer; }
+  TableViewObserver* observer() const { return observer_; }
 
   const std::vector<VisibleColumn>& visible_columns() const {
     return visible_columns_;
@@ -154,10 +142,17 @@ class VIEWS_EXPORT TableView
   // Sets the width of the column. |index| is in terms of |visible_columns_|.
   void SetVisibleColumnWidth(int index, int width);
 
-  // Toggles the sort order of the specified visible column index.
+  // Modify the table sort order, depending on a clicked column and the previous
+  // table sort order. Does nothing if this column is not sortable.
+  //
+  // When called repeatedly on the same sortable column, the sort order will
+  // cycle through three states in order: sorted -> reverse-sorted -> unsorted.
+  // When switching from one sort column to another, the previous sort column
+  // will be remembered and used as a secondary sort key.
   void ToggleSortOrder(int visible_column_index);
 
   const SortDescriptors& sort_descriptors() const { return sort_descriptors_; }
+  void SetSortDescriptors(const SortDescriptors& descriptors);
   bool is_sorted() const { return !sort_descriptors_.empty(); }
 
   // Maps from the index in terms of the model to that of the view.
@@ -183,7 +178,7 @@ class VIEWS_EXPORT TableView
                       base::string16* tooltip) const override;
   bool GetTooltipTextOrigin(const gfx::Point& p,
                             gfx::Point* loc) const override;
-  void GetAccessibleState(ui::AXViewState* state) override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
 
   // ui::TableModelObserver overrides:
   void OnModelChanged() override;
@@ -226,9 +221,6 @@ class VIEWS_EXPORT TableView
 
   // Invoked when the number of rows changes in some way.
   void NumRowsChanged();
-
-  // Resets the sort descriptions.
-  void SetSortDescriptors(const SortDescriptors& sort_descriptors);
 
   // Does the actual sort and updates the mappings (|view_to_model_| and
   // |model_to_view_|) appropriately.
@@ -327,8 +319,7 @@ class VIEWS_EXPORT TableView
   // is selected then.
   bool select_on_remove_ = true;
 
-  // TODO(sky): rename to observer_.
-  TableViewObserver* table_view_observer_;
+  TableViewObserver* observer_;
 
   // The selection, in terms of the model.
   ui::ListSelectionModel selection_model_;
@@ -350,8 +341,6 @@ class VIEWS_EXPORT TableView
   // Mappings used when sorted.
   std::vector<int> view_to_model_;
   std::vector<int> model_to_view_;
-
-  std::unique_ptr<TableViewRowBackgroundPainter> row_background_painter_;
 
   TableGrouper* grouper_;
 

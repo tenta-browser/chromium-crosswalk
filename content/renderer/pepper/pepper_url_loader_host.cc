@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+#include "base/memory/ptr_util.h"
 #include "content/renderer/pepper/pepper_plugin_instance_impl.h"
 #include "content/renderer/pepper/renderer_ppapi_host_impl.h"
 #include "content/renderer/pepper/url_request_info_util.h"
@@ -19,22 +20,22 @@
 #include "ppapi/shared_impl/ppapi_globals.h"
 #include "third_party/WebKit/public/platform/WebSecurityOrigin.h"
 #include "third_party/WebKit/public/platform/WebURLError.h"
-#include "third_party/WebKit/public/platform/WebURLLoader.h"
 #include "third_party/WebKit/public/platform/WebURLRequest.h"
 #include "third_party/WebKit/public/platform/WebURLResponse.h"
+#include "third_party/WebKit/public/web/WebAssociatedURLLoader.h"
+#include "third_party/WebKit/public/web/WebAssociatedURLLoaderOptions.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
 #include "third_party/WebKit/public/web/WebElement.h"
 #include "third_party/WebKit/public/web/WebKit.h"
 #include "third_party/WebKit/public/web/WebLocalFrame.h"
 #include "third_party/WebKit/public/web/WebPluginContainer.h"
-#include "third_party/WebKit/public/web/WebURLLoaderOptions.h"
 
+using blink::WebAssociatedURLLoader;
+using blink::WebAssociatedURLLoaderOptions;
 using blink::WebLocalFrame;
 using blink::WebString;
 using blink::WebURL;
 using blink::WebURLError;
-using blink::WebURLLoader;
-using blink::WebURLLoaderOptions;
 using blink::WebURLRequest;
 using blink::WebURLResponse;
 
@@ -100,7 +101,8 @@ PepperURLLoaderHost::~PepperURLLoaderHost() {
   // re-entering the scoped_ptr destructor with the same scoped_ptr object
   // via loader_.reset(). Be sure that loader_ is first NULL then destroy
   // the scoped_ptr. See http://crbug.com/159429.
-  std::unique_ptr<blink::WebURLLoader> for_destruction_only(loader_.release());
+  std::unique_ptr<WebAssociatedURLLoader> for_destruction_only(
+      loader_.release());
 }
 
 int32_t PepperURLLoaderHost::OnResourceMessageReceived(
@@ -120,19 +122,21 @@ int32_t PepperURLLoaderHost::OnResourceMessageReceived(
   return PP_ERROR_FAILED;
 }
 
-void PepperURLLoaderHost::willFollowRedirect(
-    WebURLLoader* loader,
-    WebURLRequest& new_request,
+bool PepperURLLoaderHost::willFollowRedirect(
+    const WebURLRequest& new_request,
     const WebURLResponse& redirect_response) {
   DCHECK(out_of_order_replies_.empty());
   if (!request_data_.follow_redirects) {
     SaveResponse(redirect_response);
     SetDefersLoading(true);
+    // Defer the request and wait the plugin to audit the redirect. We
+    // shouldn't return false here as decision has been delegated to the
+    // plugin.
   }
+  return true;
 }
 
 void PepperURLLoaderHost::didSendData(
-    WebURLLoader* loader,
     unsigned long long bytes_sent,
     unsigned long long total_bytes_to_be_sent) {
   // TODO(darin): Bounds check input?
@@ -141,8 +145,7 @@ void PepperURLLoaderHost::didSendData(
   UpdateProgress();
 }
 
-void PepperURLLoaderHost::didReceiveResponse(WebURLLoader* loader,
-                                             const WebURLResponse& response) {
+void PepperURLLoaderHost::didReceiveResponse(const WebURLResponse& response) {
   // Sets -1 if the content length is unknown. Send before issuing callback.
   total_bytes_to_be_received_ = response.expectedContentLength();
   UpdateProgress();
@@ -150,36 +153,28 @@ void PepperURLLoaderHost::didReceiveResponse(WebURLLoader* loader,
   SaveResponse(response);
 }
 
-void PepperURLLoaderHost::didDownloadData(WebURLLoader* loader,
-                                          int data_length,
-                                          int encoded_data_length) {
+void PepperURLLoaderHost::didDownloadData(int data_length) {
   bytes_received_ += data_length;
   UpdateProgress();
 }
 
-void PepperURLLoaderHost::didReceiveData(WebURLLoader* loader,
-                                         const char* data,
-                                         int data_length,
-                                         int encoded_data_length) {
+void PepperURLLoaderHost::didReceiveData(const char* data, int data_length) {
   // Note that |loader| will be NULL for document loads.
   bytes_received_ += data_length;
   UpdateProgress();
 
-  PpapiPluginMsg_URLLoader_SendData* message =
-      new PpapiPluginMsg_URLLoader_SendData;
+  auto message = base::MakeUnique<PpapiPluginMsg_URLLoader_SendData>();
   message->WriteData(data, data_length);
-  SendUpdateToPlugin(message);
+  SendUpdateToPlugin(std::move(message));
 }
 
-void PepperURLLoaderHost::didFinishLoading(WebURLLoader* loader,
-                                           double finish_time,
-                                           int64_t total_encoded_data_length) {
+void PepperURLLoaderHost::didFinishLoading(double finish_time) {
   // Note that |loader| will be NULL for document loads.
-  SendUpdateToPlugin(new PpapiPluginMsg_URLLoader_FinishedLoading(PP_OK));
+  SendUpdateToPlugin(
+      base::MakeUnique<PpapiPluginMsg_URLLoader_FinishedLoading>(PP_OK));
 }
 
-void PepperURLLoaderHost::didFail(WebURLLoader* loader,
-                                  const WebURLError& error) {
+void PepperURLLoaderHost::didFail(const WebURLError& error) {
   // Note that |loader| will be NULL for document loads.
   int32_t pp_error = PP_ERROR_FAILED;
   if (error.domain.equals(WebString::fromUTF8(net::kErrorDomain))) {
@@ -195,12 +190,13 @@ void PepperURLLoaderHost::didFail(WebURLLoader* loader,
     // It's a WebKit error.
     pp_error = PP_ERROR_NOACCESS;
   }
-  SendUpdateToPlugin(new PpapiPluginMsg_URLLoader_FinishedLoading(pp_error));
+  SendUpdateToPlugin(
+      base::MakeUnique<PpapiPluginMsg_URLLoader_FinishedLoading>(pp_error));
 }
 
 void PepperURLLoaderHost::DidConnectPendingHostToResource() {
-  for (size_t i = 0; i < pending_replies_.size(); i++)
-    host()->SendUnsolicitedReply(pp_resource(), *pending_replies_[i]);
+  for (const auto& reply : pending_replies_)
+    host()->SendUnsolicitedReply(pp_resource(), *reply);
   pending_replies_.clear();
 }
 
@@ -215,7 +211,8 @@ int32_t PepperURLLoaderHost::OnHostMsgOpen(
   DCHECK(ret != PP_OK_COMPLETIONPENDING);
 
   if (ret != PP_OK)
-    SendUpdateToPlugin(new PpapiPluginMsg_URLLoader_FinishedLoading(ret));
+    SendUpdateToPlugin(
+        base::MakeUnique<PpapiPluginMsg_URLLoader_FinishedLoading>(ret));
   return PP_OK;
 }
 
@@ -263,16 +260,16 @@ int32_t PepperURLLoaderHost::InternalOnHostMsgOpen(
   web_request.setRequestorProcessID(renderer_ppapi_host_->GetPluginPID());
   // The requests from the plugins with private permission which can bypass same
   // origin must skip the ServiceWorker.
-  web_request.setSkipServiceWorker(
+  web_request.setServiceWorkerMode(
       host()->permissions().HasPermission(ppapi::PERMISSION_PRIVATE)
-          ? blink::WebURLRequest::SkipServiceWorker::All
-          : blink::WebURLRequest::SkipServiceWorker::None);
+          ? WebURLRequest::ServiceWorkerMode::None
+          : WebURLRequest::ServiceWorkerMode::All);
 
-  WebURLLoaderOptions options;
+  WebAssociatedURLLoaderOptions options;
   if (has_universal_access_) {
     options.allowCredentials = true;
     options.crossOriginRequestPolicy =
-        WebURLLoaderOptions::CrossOriginRequestPolicyAllow;
+        WebAssociatedURLLoaderOptions::CrossOriginRequestPolicyAllow;
   } else {
     // All other HTTP requests are untrusted.
     options.untrustedHTTP = true;
@@ -280,8 +277,8 @@ int32_t PepperURLLoaderHost::InternalOnHostMsgOpen(
       // Allow cross-origin requests with access control. The request specifies
       // if credentials are to be sent.
       options.allowCredentials = filled_in_request_data.allow_credentials;
-      options.crossOriginRequestPolicy =
-          WebURLLoaderOptions::CrossOriginRequestPolicyUseAccessControl;
+      options.crossOriginRequestPolicy = WebAssociatedURLLoaderOptions::
+          CrossOriginRequestPolicyUseAccessControl;
     } else {
       // Same-origin requests can always send credentials.
       options.allowCredentials = true;
@@ -323,7 +320,8 @@ int32_t PepperURLLoaderHost::OnHostMsgGrantUniversalAccess(
   return PP_OK;
 }
 
-void PepperURLLoaderHost::SendUpdateToPlugin(IPC::Message* message) {
+void PepperURLLoaderHost::SendUpdateToPlugin(
+    std::unique_ptr<IPC::Message> message) {
   // We must send messages to the plugin in the order that the responses are
   // received from webkit, even when the host isn't ready to send messages or
   // when the host performs an asynchronous operation.
@@ -338,31 +336,30 @@ void PepperURLLoaderHost::SendUpdateToPlugin(IPC::Message* message) {
       message->type() == PpapiPluginMsg_URLLoader_FinishedLoading::ID) {
     // Messages that must be sent after ReceivedResponse.
     if (pending_response_) {
-      out_of_order_replies_.push_back(message);
+      out_of_order_replies_.push_back(std::move(message));
     } else {
-      SendOrderedUpdateToPlugin(message);
+      SendOrderedUpdateToPlugin(std::move(message));
     }
   } else if (message->type() == PpapiPluginMsg_URLLoader_ReceivedResponse::ID) {
     // Allow SendData and FinishedLoading into the ordered queue.
     DCHECK(pending_response_);
-    SendOrderedUpdateToPlugin(message);
-    for (size_t i = 0; i < out_of_order_replies_.size(); i++)
-      SendOrderedUpdateToPlugin(out_of_order_replies_[i]);
-    // SendOrderedUpdateToPlugin destroys the messages for us.
-    out_of_order_replies_.weak_clear();
+    SendOrderedUpdateToPlugin(std::move(message));
+    for (auto& reply : out_of_order_replies_)
+      SendOrderedUpdateToPlugin(std::move(reply));
+    out_of_order_replies_.clear();
     pending_response_ = false;
   } else {
     // Messages without ordering constraints.
-    SendOrderedUpdateToPlugin(message);
+    SendOrderedUpdateToPlugin(std::move(message));
   }
 }
 
-void PepperURLLoaderHost::SendOrderedUpdateToPlugin(IPC::Message* message) {
+void PepperURLLoaderHost::SendOrderedUpdateToPlugin(
+    std::unique_ptr<IPC::Message> message) {
   if (pp_resource() == 0) {
-    pending_replies_.push_back(message);
+    pending_replies_.push_back(std::move(message));
   } else {
     host()->SendUnsolicitedReply(pp_resource(), *message);
-    delete message;
   }
 }
 
@@ -375,13 +372,13 @@ void PepperURLLoaderHost::Close() {
     // other URLLoaders and then closes the main one, the others should still
     // remain connected. Work out how to only cancel the main request:
     // crbug.com/384197.
-    blink::WebLocalFrame* frame = GetFrame();
+    WebLocalFrame* frame = GetFrame();
     if (frame)
       frame->stopLoading();
   }
 }
 
-blink::WebLocalFrame* PepperURLLoaderHost::GetFrame() {
+WebLocalFrame* PepperURLLoaderHost::GetFrame() {
   PepperPluginInstanceImpl* instance_object =
       static_cast<PepperPluginInstanceImpl*>(
           renderer_ppapi_host_->GetPluginInstance(pp_instance()));
@@ -422,7 +419,8 @@ void PepperURLLoaderHost::SaveResponse(const WebURLResponse& response) {
 
 void PepperURLLoaderHost::DidDataFromWebURLResponse(
     const ppapi::URLResponseInfoData& data) {
-  SendUpdateToPlugin(new PpapiPluginMsg_URLLoader_ReceivedResponse(data));
+  SendUpdateToPlugin(
+      base::MakeUnique<PpapiPluginMsg_URLLoader_ReceivedResponse>(data));
 }
 
 void PepperURLLoaderHost::UpdateProgress() {
@@ -435,11 +433,12 @@ void PepperURLLoaderHost::UpdateProgress() {
     // getting download progress when they happen to set the upload progress
     // flag.
     ppapi::proxy::ResourceMessageReplyParams params;
-    SendUpdateToPlugin(new PpapiPluginMsg_URLLoader_UpdateProgress(
-        record_upload ? bytes_sent_ : -1,
-        record_upload ? total_bytes_to_be_sent_ : -1,
-        record_download ? bytes_received_ : -1,
-        record_download ? total_bytes_to_be_received_ : -1));
+    SendUpdateToPlugin(
+        base::MakeUnique<PpapiPluginMsg_URLLoader_UpdateProgress>(
+            record_upload ? bytes_sent_ : -1,
+            record_upload ? total_bytes_to_be_sent_ : -1,
+            record_download ? bytes_received_ : -1,
+            record_download ? total_bytes_to_be_received_ : -1));
   }
 }
 

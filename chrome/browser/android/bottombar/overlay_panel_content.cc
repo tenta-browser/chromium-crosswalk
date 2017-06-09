@@ -25,6 +25,7 @@
 #include "jni/OverlayPanelContent_jni.h"
 #include "net/url_request/url_fetcher_impl.h"
 
+using base::android::JavaParamRef;
 using content::ContentViewCore;
 
 namespace {
@@ -45,8 +46,7 @@ OverlayPanelContent::OverlayPanelContent(JNIEnv* env, jobject obj) {
 
 OverlayPanelContent::~OverlayPanelContent() {
   JNIEnv* env = base::android::AttachCurrentThread();
-  Java_OverlayPanelContent_clearNativePanelContentPtr(
-      env, java_manager_.obj());
+  Java_OverlayPanelContent_clearNativePanelContentPtr(env, java_manager_);
 }
 
 void OverlayPanelContent::Destroy(JNIEnv* env,
@@ -100,6 +100,8 @@ void OverlayPanelContent::SetWebContents(
   // TODO(pedrosimonetti): Confirm with dtrainor@ if the comment above
   // is accurate.
   web_contents_.reset(web_contents);
+
+  web_contents_->SetIsOverlayContent(true);
   // TODO(pedrosimonetti): confirm if we need this after promoting it
   // to a real tab.
   TabAndroid::AttachTabHelpers(web_contents_.get());
@@ -107,19 +109,8 @@ void OverlayPanelContent::SetWebContents(
       new web_contents_delegate_android::WebContentsDelegateAndroid(
           env, jweb_contents_delegate));
   web_contents_->SetDelegate(web_contents_delegate_.get());
-}
-
-void OverlayPanelContent::SetViewAndroid(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
-    const JavaParamRef<jobject>& jcontent_view_core) {
-  content::ContentViewCore* content_view_core =
-      content::ContentViewCore::GetNativeContentViewCore(env,
-                                                         jcontent_view_core);
-  DCHECK(content_view_core);
-
   ViewAndroidHelper::FromWebContents(web_contents_.get())
-      ->SetViewAndroid(content_view_core);
+      ->SetViewAndroid(web_contents_->GetNativeView());
 }
 
 void OverlayPanelContent::DestroyWebContents(
@@ -141,8 +132,8 @@ void OverlayPanelContent::SetInterceptNavigationDelegate(
   DCHECK(web_contents);
   navigation_interception::InterceptNavigationDelegate::Associate(
       web_contents,
-      base::WrapUnique(new navigation_interception::InterceptNavigationDelegate(
-          env, delegate)));
+      base::MakeUnique<navigation_interception::InterceptNavigationDelegate>(
+          env, delegate));
 }
 
 bool RegisterOverlayPanelContent(JNIEnv* env) {

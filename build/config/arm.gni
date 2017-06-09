@@ -8,11 +8,19 @@ import("//build/config/v8_target_cpu.gni")
 # ARM code is being compiled.  But they can also be relevant in the
 # other contexts when the code will change its behavior based on the
 # cpu it wants to generate code for.
-if (current_cpu == "arm" || v8_target_cpu == "arm") {
+if (current_cpu == "arm" || v8_current_cpu == "arm") {
   declare_args() {
     # Version of the ARM processor when compiling on ARM. Ignored on non-ARM
     # platforms.
     arm_version = 7
+
+    # The ARM architecture. This will be a string like "armv6" or "armv7-a".
+    # An empty string means to use the default for the arm_version.
+    arm_arch = ""
+
+    # The ARM floating point hardware. This will be a string like "neon" or
+    # "vfpv3". An empty string means to use the default for the arm_version.
+    arm_fpu = ""
 
     # The ARM floating point mode. This is either the string "hard", "soft", or
     # "softfp". An empty string means to use the default one for the
@@ -25,7 +33,7 @@ if (current_cpu == "arm" || v8_target_cpu == "arm") {
     arm_tune = ""
 
     # Whether to use the neon FPU instruction set or not.
-    arm_use_neon = true
+    arm_use_neon = ""
 
     # Whether to enable optional NEON code paths.
     arm_optionally_use_neon = false
@@ -38,18 +46,33 @@ if (current_cpu == "arm" || v8_target_cpu == "arm") {
   assert(arm_float_abi == "" || arm_float_abi == "hard" ||
          arm_float_abi == "soft" || arm_float_abi == "softfp")
 
+  if (arm_use_neon == "") {
+    if (current_os == "linux" && target_cpu != v8_target_cpu) {
+      # Don't use neon on V8 simulator builds as a default.
+      arm_use_neon = false
+    } else {
+      arm_use_neon = true
+    }
+  }
+
   if (arm_version == 6) {
-    arm_arch = "armv6"
+    if (arm_arch == "") {
+      arm_arch = "armv6"
+    }
     if (arm_tune != "") {
       arm_tune = ""
     }
     if (arm_float_abi == "") {
       arm_float_abi = "softfp"
     }
-    arm_fpu = "vfp"
+    if (arm_fpu == "") {
+      arm_fpu = "vfp"
+    }
     arm_use_thumb = false
   } else if (arm_version == 7) {
-    arm_arch = "armv7-a"
+    if (arm_arch == "") {
+      arm_arch = "armv7-a"
+    }
     if (arm_tune == "") {
       arm_tune = "generic-armv7-a"
     }
@@ -57,18 +80,25 @@ if (current_cpu == "arm" || v8_target_cpu == "arm") {
     if (arm_float_abi == "") {
       if (current_os == "android" || target_os == "android") {
         arm_float_abi = "softfp"
+      } else if (current_os == "linux" && target_cpu != v8_target_cpu) {
+        # Default to the same as Android for V8 simulator builds.
+        arm_float_abi = "softfp"
       } else {
         arm_float_abi = "hard"
       }
     }
 
-    if (arm_use_neon) {
-      arm_fpu = "neon"
-    } else {
-      arm_fpu = "vfpv3-d16"
+    if (arm_fpu == "") {
+      if (arm_use_neon) {
+        arm_fpu = "neon"
+      } else {
+        arm_fpu = "vfpv3-d16"
+      }
     }
   } else if (arm_version == 8) {
-    arm_arch = "armv8-a"
+    if (arm_arch == "") {
+      arm_arch = "armv8-a"
+    }
     if (arm_tune == "") {
       arm_tune = "generic-armv8-a"
     }
@@ -81,13 +111,15 @@ if (current_cpu == "arm" || v8_target_cpu == "arm") {
       }
     }
 
-    if (arm_use_neon) {
-      arm_fpu = "neon"
-    } else {
-      arm_fpu = "vfpv3-d16"
+    if (arm_fpu == "") {
+      if (arm_use_neon) {
+        arm_fpu = "neon"
+      } else {
+        arm_fpu = "vfpv3-d16"
+      }
     }
   }
-} else if (current_cpu == "arm64" || v8_target_cpu == "arm64") {
+} else if (current_cpu == "arm64" || v8_current_cpu == "arm64") {
   # arm64 supports only "hard".
   arm_float_abi = "hard"
   arm_use_neon = true

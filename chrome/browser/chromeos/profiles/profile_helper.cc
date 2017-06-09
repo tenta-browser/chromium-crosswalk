@@ -7,6 +7,7 @@
 #include "base/barrier_closure.h"
 #include "base/callback.h"
 #include "base/command_line.h"
+#include "base/strings/string_util.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browsing_data/browsing_data_helper.h"
 #include "chrome/browser/browsing_data/browsing_data_remover.h"
@@ -138,13 +139,12 @@ std::string ProfileHelper::GetUserIdHashFromProfile(const Profile* profile) {
 
   // Check that profile directory starts with the correct prefix.
   std::string prefix(chrome::kProfileDirPrefix);
-  if (profile_dir.find(prefix) != 0) {
+  if (!base::StartsWith(profile_dir, prefix, base::CompareCase::SENSITIVE)) {
     // This happens when creating a TestingProfile in browser tests.
     return std::string();
   }
 
-  return profile_dir.substr(prefix.length(),
-                            profile_dir.length() - prefix.length());
+  return profile_dir.substr(prefix.length());
 }
 
 // static
@@ -262,9 +262,9 @@ void ProfileHelper::ClearSigninProfile(const base::Closure& on_clear_callback) {
     browsing_data_remover_ =
         BrowsingDataRemoverFactory::GetForBrowserContext(GetSigninProfile());
     browsing_data_remover_->AddObserver(this);
-    browsing_data_remover_->Remove(BrowsingDataRemover::Unbounded(),
-                                   BrowsingDataRemover::REMOVE_SITE_DATA,
-                                   BrowsingDataHelper::ALL);
+    browsing_data_remover_->RemoveAndReply(
+        base::Time(), base::Time::Max(), BrowsingDataRemover::REMOVE_SITE_DATA,
+        BrowsingDataHelper::ALL, this);
   } else {
     on_clear_profile_stage_finished_.Run();
   }
@@ -316,8 +316,7 @@ Profile* ProfileHelper::GetProfileByUserUnsafe(const user_manager::User* user) {
     LOG(ERROR) << "ProfileHelper::GetProfileByUserUnsafe is called when "
                   "|user|'s profile is not created. It probably means that "
                   "something is wrong with a calling code. Please report in "
-                  "http://crbug.com/361528 if you see this message. user_id: "
-               << user->email();
+                  "http://crbug.com/361528 if you see this message.";
     profile = ProfileManager::GetActiveUserProfile();
   }
 
@@ -367,9 +366,11 @@ const user_manager::User* ProfileHelper::GetUserByProfile(
     return user_manager->GetActiveUser();
   }
 
+  // Finds the matching user in logged-in user list since only a logged-in
+  // user would have a profile.
   const std::string username_hash =
       ProfileHelper::GetUserIdHashFromProfile(profile);
-  const user_manager::UserList& users = user_manager->GetUsers();
+  const user_manager::UserList& users = user_manager->GetLoggedInUsers();
   const user_manager::UserList::const_iterator pos = std::find_if(
       users.begin(), users.end(), UsernameHashMatcher(username_hash));
   if (pos != users.end())

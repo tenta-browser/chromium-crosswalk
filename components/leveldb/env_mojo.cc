@@ -8,6 +8,7 @@
 
 #include <memory>
 
+#include "base/strings/string_util.h"
 #include "base/trace_event/trace_event.h"
 #include "third_party/leveldatabase/chromium_logger.h"
 #include "third_party/leveldatabase/src/include/leveldb/status.h"
@@ -137,10 +138,12 @@ class MojoWritableFile : public leveldb::WritableFile {
         dir_(dir),
         thread_(thread) {
     base::FilePath path = base::FilePath::FromUTF8Unsafe(fname);
-    if (path.BaseName().AsUTF8Unsafe().find("MANIFEST") == 0)
+    if (base::StartsWith(path.BaseName().AsUTF8Unsafe(), "MANIFEST",
+                         base::CompareCase::SENSITIVE)) {
       file_type_ = kManifest;
-    else if (path.MatchesExtension(table_extension))
+    } else if (path.MatchesExtension(table_extension)) {
       file_type_ = kTable;
+    }
     parent_dir_ =
         base::FilePath::FromUTF8Unsafe(fname).DirName().AsUTF8Unsafe();
   }
@@ -214,9 +217,10 @@ class MojoWritableFile : public leveldb::WritableFile {
 
 }  // namespace
 
-MojoEnv::MojoEnv(scoped_refptr<LevelDBMojoProxy> file_thread,
+MojoEnv::MojoEnv(const std::string& name,
+                 scoped_refptr<LevelDBMojoProxy> file_thread,
                  LevelDBMojoProxy::OpaqueDir* dir)
-    : thread_(file_thread), dir_(dir) {}
+    : ChromiumEnv(name), thread_(file_thread), dir_(dir) {}
 
 MojoEnv::~MojoEnv() {
   thread_->UnregisterDirectory(dir_);
@@ -226,8 +230,7 @@ Status MojoEnv::NewSequentialFile(const std::string& fname,
                                   SequentialFile** result) {
   TRACE_EVENT1("leveldb", "MojoEnv::NewSequentialFile", "fname", fname);
   base::File f = thread_->OpenFileHandle(
-      dir_, mojo::String::From(fname),
-      filesystem::mojom::kFlagOpen | filesystem::mojom::kFlagRead);
+      dir_, fname, filesystem::mojom::kFlagOpen | filesystem::mojom::kFlagRead);
   if (!f.IsValid()) {
     *result = nullptr;
     return MakeIOError(fname, "Unable to create sequential file",
@@ -242,8 +245,7 @@ Status MojoEnv::NewRandomAccessFile(const std::string& fname,
                                     RandomAccessFile** result) {
   TRACE_EVENT1("leveldb", "MojoEnv::NewRandomAccessFile", "fname", fname);
   base::File f = thread_->OpenFileHandle(
-      dir_, mojo::String::From(fname),
-      filesystem::mojom::kFlagRead | filesystem::mojom::kFlagOpen);
+      dir_, fname, filesystem::mojom::kFlagRead | filesystem::mojom::kFlagOpen);
   if (!f.IsValid()) {
     *result = nullptr;
     base::File::Error error_code = f.error_details();
@@ -258,9 +260,9 @@ Status MojoEnv::NewRandomAccessFile(const std::string& fname,
 Status MojoEnv::NewWritableFile(const std::string& fname,
                                 WritableFile** result) {
   TRACE_EVENT1("leveldb", "MojoEnv::NewWritableFile", "fname", fname);
-  base::File f = thread_->OpenFileHandle(
-      dir_, mojo::String::From(fname),
-      filesystem::mojom::kCreateAlways | filesystem::mojom::kFlagWrite);
+  base::File f =
+      thread_->OpenFileHandle(dir_, fname, filesystem::mojom::kCreateAlways |
+                                               filesystem::mojom::kFlagWrite);
   if (!f.IsValid()) {
     *result = nullptr;
     return MakeIOError(fname, "Unable to create writable file",
@@ -274,9 +276,9 @@ Status MojoEnv::NewWritableFile(const std::string& fname,
 Status MojoEnv::NewAppendableFile(const std::string& fname,
                                   WritableFile** result) {
   TRACE_EVENT1("leveldb", "MojoEnv::NewAppendableFile", "fname", fname);
-  base::File f = thread_->OpenFileHandle(
-      dir_, mojo::String::From(fname),
-      filesystem::mojom::kFlagOpenAlways | filesystem::mojom::kFlagAppend);
+  base::File f =
+      thread_->OpenFileHandle(dir_, fname, filesystem::mojom::kFlagOpenAlways |
+                                               filesystem::mojom::kFlagAppend);
   if (!f.IsValid()) {
     *result = nullptr;
     return MakeIOError(fname, "Unable to create appendable file",
@@ -335,7 +337,7 @@ Status MojoEnv::LockFile(const std::string& fname, FileLock** lock) {
   TRACE_EVENT1("leveldb", "MojoEnv::LockFile", "fname", fname);
 
   std::pair<filesystem::mojom::FileError, LevelDBMojoProxy::OpaqueLock*> p =
-      thread_->LockFile(dir_, mojo::String::From(fname));
+      thread_->LockFile(dir_, fname);
 
   if (p.second)
     *lock = new MojoFileLock(p.second, fname);
@@ -356,24 +358,25 @@ Status MojoEnv::UnlockFile(FileLock* lock) {
 
 Status MojoEnv::GetTestDirectory(std::string* path) {
   // TODO(erg): This method is actually only used from the test harness in
-  // leveldb. And when we go and port that test stuff to a mojo apptest, we
-  // probably won't use it since the mojo filesystem actually handles temporary
-  // filesystems just fine.
+  // leveldb. And when we go and port that test stuff to a
+  // service_manager::ServiceTest,
+  // we probably won't use it since the mojo filesystem actually handles
+  // temporary filesystems just fine.
   NOTREACHED();
   return Status::OK();
 }
 
 Status MojoEnv::NewLogger(const std::string& fname, Logger** result) {
   TRACE_EVENT1("leveldb", "MojoEnv::NewLogger", "fname", fname);
-  std::unique_ptr<base::File> f(new base::File(thread_->OpenFileHandle(
-      dir_, mojo::String::From(fname),
-      filesystem::mojom::kCreateAlways | filesystem::mojom::kFlagWrite)));
-  if (!f->IsValid()) {
+  base::File f(thread_->OpenFileHandle(
+      dir_, fname,
+      filesystem::mojom::kCreateAlways | filesystem::mojom::kFlagWrite));
+  if (!f.IsValid()) {
     *result = NULL;
     return MakeIOError(fname, "Unable to create log file",
-                       leveldb_env::kNewLogger, f->error_details());
+                       leveldb_env::kNewLogger, f.error_details());
   } else {
-    *result = new leveldb::ChromiumLogger(f.release());
+    *result = new leveldb::ChromiumLogger(std::move(f));
     return Status::OK();
   }
 }

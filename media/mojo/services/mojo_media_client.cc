@@ -6,9 +6,12 @@
 
 #include "base/single_thread_task_runner.h"
 #include "media/base/audio_decoder.h"
+#include "media/base/audio_renderer_sink.h"
 #include "media/base/cdm_factory.h"
+#include "media/base/media_log.h"
 #include "media/base/renderer_factory.h"
 #include "media/base/video_decoder.h"
+#include "media/base/video_renderer_sink.h"
 
 namespace media {
 
@@ -16,9 +19,7 @@ MojoMediaClient::MojoMediaClient() {}
 
 MojoMediaClient::~MojoMediaClient() {}
 
-void MojoMediaClient::Initialize() {}
-
-void MojoMediaClient::WillQuit() {}
+void MojoMediaClient::Initialize(service_manager::Connector* connector) {}
 
 std::unique_ptr<AudioDecoder> MojoMediaClient::CreateAudioDecoder(
     scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
@@ -26,7 +27,18 @@ std::unique_ptr<AudioDecoder> MojoMediaClient::CreateAudioDecoder(
 }
 
 std::unique_ptr<VideoDecoder> MojoMediaClient::CreateVideoDecoder(
-    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+    mojom::CommandBufferIdPtr command_buffer_id) {
+  return nullptr;
+}
+
+scoped_refptr<AudioRendererSink> MojoMediaClient::CreateAudioRendererSink(
+    const std::string& audio_device_id) {
+  return nullptr;
+}
+
+std::unique_ptr<VideoRendererSink> MojoMediaClient::CreateVideoRendererSink(
+    const scoped_refptr<base::SingleThreadTaskRunner>& task_runner) {
   return nullptr;
 }
 
@@ -35,17 +47,8 @@ std::unique_ptr<RendererFactory> MojoMediaClient::CreateRendererFactory(
   return nullptr;
 }
 
-AudioRendererSink* MojoMediaClient::CreateAudioRendererSink() {
-  return nullptr;
-}
-
-VideoRendererSink* MojoMediaClient::CreateVideoRendererSink(
-    const scoped_refptr<base::SingleThreadTaskRunner>& task_runner) {
-  return nullptr;
-}
-
 std::unique_ptr<CdmFactory> MojoMediaClient::CreateCdmFactory(
-    shell::mojom::InterfaceProvider* interface_provider) {
+    service_manager::mojom::InterfaceProvider* host_interfaces) {
   return nullptr;
 }
 

@@ -40,7 +40,7 @@ namespace {
 #undef DestroyAll
 #endif
 
-base::LazyInstance<IDMap<GpuProcessHostUIShim> > g_hosts_by_id =
+base::LazyInstance<IDMap<GpuProcessHostUIShim*>> g_hosts_by_id =
     LAZY_INSTANCE_INITIALIZER;
 
 void SendOnIOThreadTask(int host_id, IPC::Message* msg) {
@@ -71,10 +71,7 @@ GpuProcessHostUIShim::GpuProcessHostUIShim(int host_id)
 #if defined(USE_OZONE)
   ui::OzonePlatform::GetInstance()
       ->GetGpuPlatformSupportHost()
-      ->OnChannelEstablished(
-          host_id,
-          BrowserThread::GetMessageLoopProxyForThread(BrowserThread::IO),
-          base::Bind(&SendOnIOThreadTask, host_id_));
+      ->OnChannelEstablished();
 #endif
 }
 
@@ -105,7 +102,7 @@ void GpuProcessHostUIShim::Destroy(int host_id, const std::string& message) {
 void GpuProcessHostUIShim::DestroyAll() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   while (!g_hosts_by_id.Pointer()->IsEmpty()) {
-    IDMap<GpuProcessHostUIShim>::iterator it(g_hosts_by_id.Pointer());
+    IDMap<GpuProcessHostUIShim*>::iterator it(g_hosts_by_id.Pointer());
     delete it.GetCurrentValue();
   }
 }
@@ -121,7 +118,7 @@ GpuProcessHostUIShim* GpuProcessHostUIShim::GetOneInstance() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (g_hosts_by_id.Pointer()->IsEmpty())
     return NULL;
-  IDMap<GpuProcessHostUIShim>::iterator it(g_hosts_by_id.Pointer());
+  IDMap<GpuProcessHostUIShim*>::iterator it(g_hosts_by_id.Pointer());
   return it.GetCurrentValue();
 }
 
@@ -169,6 +166,12 @@ void GpuProcessHostUIShim::SimulateHang() {
   Send(new GpuMsg_Hang());
 }
 
+#if defined(OS_ANDROID)
+void GpuProcessHostUIShim::SimulateJavaCrash() {
+  Send(new GpuMsg_JavaCrash());
+}
+#endif
+
 GpuProcessHostUIShim::~GpuProcessHostUIShim() {
   DCHECK(CalledOnValidThread());
   if (!close_callback_.is_null())
@@ -184,8 +187,6 @@ bool GpuProcessHostUIShim::OnControlMessageReceived(
     IPC_MESSAGE_HANDLER(GpuHostMsg_OnLogMessage, OnLogMessage)
     IPC_MESSAGE_HANDLER(GpuHostMsg_GraphicsInfoCollected,
                         OnGraphicsInfoCollected)
-    IPC_MESSAGE_HANDLER(GpuHostMsg_VideoMemoryUsageStats,
-                        OnVideoMemoryUsageStatsReceived);
 
     IPC_MESSAGE_UNHANDLED_ERROR()
   IPC_END_MESSAGE_MAP()
@@ -208,12 +209,6 @@ void GpuProcessHostUIShim::OnGraphicsInfoCollected(
   TRACE_EVENT0("test_gpu", "OnGraphicsInfoCollected");
 
   GpuDataManagerImpl::GetInstance()->UpdateGpuInfo(gpu_info);
-}
-
-void GpuProcessHostUIShim::OnVideoMemoryUsageStatsReceived(
-    const gpu::VideoMemoryUsageStats& video_memory_usage_stats) {
-  GpuDataManagerImpl::GetInstance()->UpdateVideoMemoryUsageStats(
-      video_memory_usage_stats);
 }
 
 }  // namespace content

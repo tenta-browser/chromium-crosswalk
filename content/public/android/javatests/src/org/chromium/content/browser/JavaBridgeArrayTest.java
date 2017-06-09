@@ -4,7 +4,7 @@
 
 package org.chromium.content.browser;
 
-import android.test.suitebuilder.annotation.SmallTest;
+import android.support.test.filters.SmallTest;
 
 import org.chromium.base.annotations.SuppressFBWarnings;
 import org.chromium.base.test.util.Feature;
@@ -21,7 +21,7 @@ import org.chromium.base.test.util.Feature;
  */
 public class JavaBridgeArrayTest extends JavaBridgeTestBase {
     @SuppressFBWarnings("CHROMIUM_SYNCHRONIZED_METHOD")
-    private class TestObject extends Controller {
+    private static class TestObject extends Controller {
         private boolean mBooleanValue;
         private int mIntValue;
         private String mStringValue;

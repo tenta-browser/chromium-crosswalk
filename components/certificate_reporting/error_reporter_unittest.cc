@@ -14,10 +14,15 @@
 #include "base/bind_helpers.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "components/certificate_reporting/encrypted_cert_logger.pb.h"
-#include "crypto/curve25519.h"
+#include "net/test/url_request/url_request_failed_job.h"
+#include "net/test/url_request/url_request_mock_data_job.h"
 #include "net/url_request/report_sender.h"
+#include "net/url_request/url_request_test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/boringssl/src/include/openssl/curve25519.h"
 
 namespace certificate_reporting {
 
@@ -28,6 +33,15 @@ const char kDummyHttpsReportUri[] = "https://example.test";
 const char kDummyReport[] = "a dummy report";
 const uint32_t kServerPublicKeyTestVersion = 16;
 
+void ErrorCallback(bool* called, const GURL& report_uri, int net_error) {
+  EXPECT_NE(net::OK, net_error);
+  *called = true;
+}
+
+void SuccessCallback(bool* called) {
+  *called = true;
+}
+
 // A mock ReportSender that keeps track of the last report
 // sent.
 class MockCertificateReportSender : public net::ReportSender {
@@ -36,34 +50,70 @@ class MockCertificateReportSender : public net::ReportSender {
       : net::ReportSender(nullptr, DO_NOT_SEND_COOKIES) {}
   ~MockCertificateReportSender() override {}
 
-  void Send(const GURL& report_uri, const std::string& report) override {
+  void Send(
+      const GURL& report_uri,
+      base::StringPiece content_type,
+      base::StringPiece report,
+      const base::Callback<void()>& success_callback,
+      const base::Callback<void(const GURL&, int)>& error_callback) override {
     latest_report_uri_ = report_uri;
-    latest_report_ = report;
+    report.CopyToString(&latest_report_);
+    content_type.CopyToString(&latest_content_type_);
   }
 
-  const GURL& latest_report_uri() { return latest_report_uri_; }
+  const GURL& latest_report_uri() const { return latest_report_uri_; }
 
-  const std::string& latest_report() { return latest_report_; }
+  const std::string& latest_report() const { return latest_report_; }
+
+  const std::string& latest_content_type() const {
+    return latest_content_type_;
+  }
 
  private:
   GURL latest_report_uri_;
   std::string latest_report_;
+  std::string latest_content_type_;
 
   DISALLOW_COPY_AND_ASSIGN(MockCertificateReportSender);
+};
+
+// A test network delegate that allows the user to specify a callback to
+// be run whenever a net::URLRequest is destroyed.
+class TestCertificateReporterNetworkDelegate : public net::NetworkDelegateImpl {
+ public:
+  TestCertificateReporterNetworkDelegate()
+      : url_request_destroyed_callback_(base::Bind(&base::DoNothing)) {}
+
+  void set_url_request_destroyed_callback(const base::Closure& callback) {
+    url_request_destroyed_callback_ = callback;
+  }
+
+  // net::NetworkDelegateImpl:
+  void OnURLRequestDestroyed(net::URLRequest* request) override {
+    url_request_destroyed_callback_.Run();
+  }
+
+ private:
+  base::Closure url_request_destroyed_callback_;
+
+  DISALLOW_COPY_AND_ASSIGN(TestCertificateReporterNetworkDelegate);
 };
 
 class ErrorReporterTest : public ::testing::Test {
  public:
   ErrorReporterTest() {
     memset(server_private_key_, 1, sizeof(server_private_key_));
-    crypto::curve25519::ScalarBaseMult(server_private_key_, server_public_key_);
+    X25519_public_from_private(server_public_key_, server_private_key_);
   }
 
   ~ErrorReporterTest() override {}
 
  protected:
+  base::MessageLoopForIO loop_;
   uint8_t server_public_key_[32];
   uint8_t server_private_key_[32];
+
+  DISALLOW_COPY_AND_ASSIGN(ErrorReporterTest);
 };
 
 // Test that ErrorReporter::SendExtendedReportingReport sends
@@ -76,35 +126,90 @@ TEST_F(ErrorReporterTest, ExtendedReportingSendReport) {
   ErrorReporter https_reporter(https_url, server_public_key_,
                                kServerPublicKeyTestVersion,
                                base::WrapUnique(mock_report_sender));
-  https_reporter.SendExtendedReportingReport(kDummyReport);
+  https_reporter.SendExtendedReportingReport(
+      kDummyReport, base::Closure(), base::Callback<void(const GURL&, int)>());
   EXPECT_EQ(mock_report_sender->latest_report_uri(), https_url);
   EXPECT_EQ(mock_report_sender->latest_report(), kDummyReport);
 
   // Data should be encrypted when sent to an HTTP URL.
-  if (ErrorReporter::IsHttpUploadUrlSupported()) {
-    MockCertificateReportSender* http_mock_report_sender =
-        new MockCertificateReportSender();
-    GURL http_url(kDummyHttpReportUri);
-    ErrorReporter http_reporter(http_url, server_public_key_,
-                                kServerPublicKeyTestVersion,
-                                base::WrapUnique(http_mock_report_sender));
-    http_reporter.SendExtendedReportingReport(kDummyReport);
+  MockCertificateReportSender* http_mock_report_sender =
+      new MockCertificateReportSender();
+  GURL http_url(kDummyHttpReportUri);
+  ErrorReporter http_reporter(http_url, server_public_key_,
+                              kServerPublicKeyTestVersion,
+                              base::WrapUnique(http_mock_report_sender));
+  http_reporter.SendExtendedReportingReport(
+      kDummyReport, base::Closure(), base::Callback<void(const GURL&, int)>());
 
-    EXPECT_EQ(http_mock_report_sender->latest_report_uri(), http_url);
+  EXPECT_EQ(http_mock_report_sender->latest_report_uri(), http_url);
+  EXPECT_EQ("application/octet-stream",
+            http_mock_report_sender->latest_content_type());
 
-    std::string uploaded_report;
-    EncryptedCertLoggerRequest encrypted_request;
-    ASSERT_TRUE(encrypted_request.ParseFromString(
-        http_mock_report_sender->latest_report()));
-    EXPECT_EQ(kServerPublicKeyTestVersion,
-              encrypted_request.server_public_key_version());
-    EXPECT_EQ(EncryptedCertLoggerRequest::AEAD_ECDH_AES_128_CTR_HMAC_SHA256,
-              encrypted_request.algorithm());
-    ASSERT_TRUE(ErrorReporter::DecryptErrorReport(
-        server_private_key_, encrypted_request, &uploaded_report));
+  std::string uploaded_report;
+  EncryptedCertLoggerRequest encrypted_request;
+  ASSERT_TRUE(encrypted_request.ParseFromString(
+      http_mock_report_sender->latest_report()));
+  EXPECT_EQ(kServerPublicKeyTestVersion,
+            encrypted_request.server_public_key_version());
+  EXPECT_EQ(EncryptedCertLoggerRequest::AEAD_ECDH_AES_128_CTR_HMAC_SHA256,
+            encrypted_request.algorithm());
+  ASSERT_TRUE(ErrorReporter::DecryptErrorReport(
+      server_private_key_, encrypted_request, &uploaded_report));
 
-    EXPECT_EQ(kDummyReport, uploaded_report);
-  }
+  EXPECT_EQ(kDummyReport, uploaded_report);
+}
+
+// Tests that an UMA histogram is recorded if a report fails to send.
+TEST_F(ErrorReporterTest, ErroredRequestCallsCallback) {
+  net::URLRequestFailedJob::AddUrlHandler();
+
+  base::RunLoop run_loop;
+  net::TestURLRequestContext context(true);
+  TestCertificateReporterNetworkDelegate test_delegate;
+  test_delegate.set_url_request_destroyed_callback(run_loop.QuitClosure());
+  context.set_network_delegate(&test_delegate);
+  context.Init();
+
+  GURL report_uri(
+      net::URLRequestFailedJob::GetMockHttpUrl(net::ERR_CONNECTION_FAILED));
+  ErrorReporter reporter(&context, report_uri,
+                         net::ReportSender::DO_NOT_SEND_COOKIES);
+
+  bool error_callback_called = false;
+  bool success_callback_called = false;
+  reporter.SendExtendedReportingReport(
+      kDummyReport, base::Bind(&SuccessCallback, &success_callback_called),
+      base::Bind(&ErrorCallback, &error_callback_called));
+  run_loop.Run();
+
+  EXPECT_TRUE(error_callback_called);
+  EXPECT_FALSE(success_callback_called);
+}
+
+// Tests that an UMA histogram is recorded if a report fails to send.
+TEST_F(ErrorReporterTest, SuccessfulRequestCallsCallback) {
+  net::URLRequestMockDataJob::AddUrlHandler();
+
+  base::RunLoop run_loop;
+  net::TestURLRequestContext context(true);
+  TestCertificateReporterNetworkDelegate test_delegate;
+  test_delegate.set_url_request_destroyed_callback(run_loop.QuitClosure());
+  context.set_network_delegate(&test_delegate);
+  context.Init();
+
+  GURL report_uri(net::URLRequestMockDataJob::GetMockHttpUrl("some data", 1));
+  ErrorReporter reporter(&context, report_uri,
+                         net::ReportSender::DO_NOT_SEND_COOKIES);
+
+  bool error_callback_called = false;
+  bool success_callback_called = false;
+  reporter.SendExtendedReportingReport(
+      kDummyReport, base::Bind(&SuccessCallback, &success_callback_called),
+      base::Bind(&ErrorCallback, &error_callback_called));
+  run_loop.Run();
+
+  EXPECT_FALSE(error_callback_called);
+  EXPECT_TRUE(success_callback_called);
 }
 
 // This test decrypts a "known gold" report. It's intentionally brittle

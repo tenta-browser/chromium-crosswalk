@@ -5,6 +5,7 @@
 #include "ui/views/examples/text_example.h"
 
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/font_list.h"
@@ -137,9 +138,9 @@ Combobox* TextExample::AddCombobox(GridLayout* layout,
                                    int count) {
   layout->StartRow(0, 0);
   layout->AddView(new Label(base::ASCIIToUTF16(name)));
-  ExampleComboboxModel* model = new ExampleComboboxModel(strings, count);
-  example_combobox_model_.push_back(model);
-  Combobox* combobox = new Combobox(model);
+  example_combobox_model_.push_back(
+      base::MakeUnique<ExampleComboboxModel>(strings, count));
+  Combobox* combobox = new Combobox(example_combobox_model_.back().get());
   combobox->SetSelectedIndex(0);
   combobox->set_listener(this);
   layout->AddView(combobox, kNumColumns - 1, 1);
@@ -148,7 +149,7 @@ Combobox* TextExample::AddCombobox(GridLayout* layout,
 
 void TextExample::CreateExampleView(View* container) {
   text_view_ = new TextExampleView;
-  text_view_->SetBorder(Border::CreateSolidBorder(1, SK_ColorGRAY));
+  text_view_->SetBorder(CreateSolidBorder(1, SK_ColorGRAY));
   GridLayout* layout = new GridLayout(container);
   container->SetLayoutManager(layout);
   layout->AddPaddingRow(0, 8);

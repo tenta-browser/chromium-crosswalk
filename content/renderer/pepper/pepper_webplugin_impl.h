@@ -16,8 +16,6 @@
 #include "third_party/WebKit/public/web/WebPlugin.h"
 #include "ui/gfx/geometry/rect.h"
 
-struct _NPP;
-
 namespace blink {
 struct WebPluginParams;
 struct WebPrintParams;
@@ -28,7 +26,6 @@ namespace content {
 class PepperPluginInstanceImpl;
 class PluginInstanceThrottlerImpl;
 class PluginModule;
-class PPB_URLLoader_Impl;
 class RenderFrameImpl;
 
 class PepperWebPluginImpl : public blink::WebPlugin {
@@ -99,9 +96,6 @@ class PepperWebPluginImpl : public blink::WebPlugin {
   gfx::Rect plugin_rect_;
   PP_Var instance_object_;
   blink::WebPluginContainer* container_;
-
-  // TODO(tommycli): Remove once we fix https://crbug.com/588624.
-  bool destroyed_;
 
   DISALLOW_COPY_AND_ASSIGN(PepperWebPluginImpl);
 };

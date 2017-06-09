@@ -190,7 +190,7 @@ class TextureUploadPerfTest : public testing::Test {
     surface_ = gl::init::CreateOffscreenGLSurface(gfx::Size());
     gl_context_ =
         gl::init::CreateGLContext(nullptr,  // share_group
-                                  surface_.get(), gl::PreferIntegratedGpu);
+                                  surface_.get(), gl::GLContextAttribs());
     ui::ScopedMakeCurrent smc(gl_context_.get(), surface_.get());
     glGenTextures(1, &color_texture_);
     glBindTexture(GL_TEXTURE_2D, color_texture_);
@@ -222,7 +222,7 @@ class TextureUploadPerfTest : public testing::Test {
     // used to draw a quad on the offscreen surface.
     vertex_shader_ = LoadShader(GL_VERTEX_SHADER, kVertexShader);
 
-    bool is_gles = gl::GetGLImplementation() == gl::kGLImplementationEGLGLES2;
+    bool is_gles = gl_context_->GetVersionInfo()->is_es;
     fragment_shader_ = LoadShader(
         GL_FRAGMENT_SHADER,
         base::StringPrintf("%s%s", is_gles ? kShaderDefaultFloatPrecision : "",
@@ -408,7 +408,7 @@ class TextureUploadPerfTest : public testing::Test {
     for (int i = 0; i < kUploadPerfWarmupRuns + kUploadPerfTestRuns; ++i) {
       GenerateTextureData(size, GLFormatBytePerPixel(format), i + 1, &pixels);
       auto run = UploadAndDraw(texture_id, size, pixels, format, subimage);
-      if (i < kUploadPerfWarmupRuns || !run.size()) {
+      if (i < kUploadPerfWarmupRuns || run.empty()) {
         continue;
       }
       successful_runs++;

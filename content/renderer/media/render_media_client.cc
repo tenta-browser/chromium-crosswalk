@@ -4,7 +4,6 @@
 
 #include "content/renderer/media/render_media_client.h"
 
-#include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/time/default_tick_clock.h"
 #include "content/public/common/content_client.h"
@@ -12,11 +11,8 @@
 
 namespace content {
 
-static base::LazyInstance<RenderMediaClient>::Leaky g_render_media_client =
-    LAZY_INSTANCE_INITIALIZER;
-
 void RenderMediaClient::Initialize() {
-  g_render_media_client.Get();
+  GetInstance();
 }
 
 RenderMediaClient::RenderMediaClient()
@@ -31,7 +27,7 @@ RenderMediaClient::~RenderMediaClient() {
 
 void RenderMediaClient::AddKeySystemsInfoForUMA(
     std::vector<media::KeySystemInfoForUMA>* key_systems_info_for_uma) {
-  DVLOG(2) << __FUNCTION__;
+  DVLOG(2) << __func__;
 #if defined(WIDEVINE_CDM_AVAILABLE)
   key_systems_info_for_uma->push_back(media::KeySystemInfoForUMA(
       kWidevineKeySystem, kWidevineKeySystemNameForUMA));
@@ -39,7 +35,7 @@ void RenderMediaClient::AddKeySystemsInfoForUMA(
 }
 
 bool RenderMediaClient::IsKeySystemsUpdateNeeded() {
-  DVLOG(2) << __FUNCTION__;
+  DVLOG(2) << __func__;
   DCHECK(thread_checker_.CalledOnValidThread());
 
   // Always needs update if we have never updated, regardless the
@@ -67,7 +63,7 @@ bool RenderMediaClient::IsKeySystemsUpdateNeeded() {
 void RenderMediaClient::AddSupportedKeySystems(
     std::vector<std::unique_ptr<media::KeySystemProperties>>*
         key_systems_properties) {
-  DVLOG(2) << __FUNCTION__;
+  DVLOG(2) << __func__;
   DCHECK(thread_checker_.CalledOnValidThread());
 
   GetContentClient()->renderer()->AddSupportedKeySystems(
@@ -93,18 +89,38 @@ void RenderMediaClient::RecordRapporURL(const std::string& metric,
   GetContentClient()->renderer()->RecordRapporURL(metric, url);
 }
 
+bool RenderMediaClient::IsSupportedVideoConfig(media::VideoCodec codec,
+                                               media::VideoCodecProfile profile,
+                                               int level) {
+  switch (codec) {
+    case media::kCodecH264:
+    case media::kCodecVP8:
+    case media::kCodecVP9:
+    case media::kCodecTheora:
+      return true;
+
+    case media::kUnknownVideoCodec:
+    case media::kCodecVC1:
+    case media::kCodecMPEG2:
+    case media::kCodecMPEG4:
+    case media::kCodecHEVC:
+    case media::kCodecDolbyVision:
+      return false;
+  }
+
+  NOTREACHED();
+  return false;
+}
+
 void RenderMediaClient::SetTickClockForTesting(
     std::unique_ptr<base::TickClock> tick_clock) {
   tick_clock_.swap(tick_clock);
 }
 
-// This functions is for testing purpose only. The declaration in the
-// header file is guarded by "#if defined(UNIT_TEST)" so that it can be used
-// by tests but not non-test code. However, this .cc file is compiled as part of
-// "content" where "UNIT_TEST" is not defined. So we need to specify
-// "CONTENT_EXPORT" here again so that it is visible to tests.
-CONTENT_EXPORT RenderMediaClient* GetRenderMediaClientInstanceForTesting() {
-  return g_render_media_client.Pointer();
+// static
+RenderMediaClient* RenderMediaClient::GetInstance() {
+  static RenderMediaClient* client = new RenderMediaClient();
+  return client;
 }
 
 }  // namespace content

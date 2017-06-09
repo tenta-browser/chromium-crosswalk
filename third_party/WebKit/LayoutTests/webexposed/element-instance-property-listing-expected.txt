@@ -1,4 +1,3 @@
-CONSOLE WARNING: line 18: The <keygen> element is deprecated and will be removed in M54, around October 2016. See https://www.chromestatus.com/features/5716060992962560 for more details.
 This test documents all properties on all element instances.
 
 On success, you will see a series of "PASS" messages, followed by "TEST COMPLETE".
@@ -74,14 +73,17 @@ namespace http://www.w3.org/1999/xhtml
     property getElementsByClassName
     property getElementsByTagName
     property getElementsByTagNameNS
+    property getRootNode
     property hasAttribute
     property hasAttributeNS
     property hasAttributes
     property hasChildNodes
+    property hasPointerCapture
     property hidden
     property id
     property innerHTML
     property innerText
+    property inputMode
     property insertAdjacentElement
     property insertAdjacentHTML
     property insertAdjacentText
@@ -111,6 +113,7 @@ namespace http://www.w3.org/1999/xhtml
     property offsetTop
     property offsetWidth
     property onabort
+    property onauxclick
     property onbeforecopy
     property onbeforecut
     property onbeforepaste
@@ -244,7 +247,6 @@ namespace http://www.w3.org/1999/xhtml
     property webkitMatchesSelector
     property webkitRequestFullScreen
     property webkitRequestFullscreen
-    property webkitdropzone
 html element a
     property charset
     property coords
@@ -277,6 +279,7 @@ html element applet
 html element area
     property alt
     property coords
+    property download
     property hash
     property host
     property hostname
@@ -289,6 +292,7 @@ html element area
     property port
     property protocol
     property referrerPolicy
+    property rel
     property search
     property shape
     property target
@@ -312,6 +316,7 @@ html element audio
     property canPlayType
     property captureStream
     property controls
+    property controlsList
     property crossOrigin
     property currentSrc
     property currentTime
@@ -327,6 +332,7 @@ html element audio
     property muted
     property networkState
     property onencrypted
+    property onwaitingforkey
     property pause
     property paused
     property play
@@ -550,8 +556,10 @@ html element i
 html element iframe
     property align
     property allowFullscreen
+    property allowPaymentRequest
     property contentDocument
     property contentWindow
+    property csp
     property frameBorder
     property getSVGDocument
     property height
@@ -614,7 +622,6 @@ html element input
     property height
     property incremental
     property indeterminate
-    property inputMode
     property labels
     property list
     property max
@@ -656,20 +663,6 @@ html element ins
     property dateTime
 html element kbd
 html element keygen
-    property autofocus
-    property challenge
-    property checkValidity
-    property disabled
-    property form
-    property keytype
-    property labels
-    property name
-    property reportValidity
-    property setCustomValidity
-    property type
-    property validationMessage
-    property validity
-    property willValidate
 html element label
     property control
     property form
@@ -691,6 +684,7 @@ html element link
     property import
     property integrity
     property media
+    property referrerPolicy
     property rel
     property relList
     property rev
@@ -953,7 +947,6 @@ html element textarea
     property dirName
     property disabled
     property form
-    property inputMode
     property labels
     property maxLength
     property minLength
@@ -1057,6 +1050,7 @@ html element video
     property canPlayType
     property captureStream
     property controls
+    property controlsList
     property crossOrigin
     property currentSrc
     property currentTime
@@ -1074,6 +1068,7 @@ html element video
     property muted
     property networkState
     property onencrypted
+    property onwaitingforkey
     property pause
     property paused
     property play
@@ -1179,14 +1174,17 @@ namespace http://www.w3.org/2000/svg
     property getElementsByClassName
     property getElementsByTagName
     property getElementsByTagNameNS
+    property getRootNode
     property hasAttribute
     property hasAttributeNS
     property hasAttributes
     property hasChildNodes
+    property hasPointerCapture
     property hidden
     property id
     property innerHTML
     property innerText
+    property inputMode
     property insertAdjacentElement
     property insertAdjacentHTML
     property insertAdjacentText
@@ -1216,6 +1214,7 @@ namespace http://www.w3.org/2000/svg
     property offsetTop
     property offsetWidth
     property onabort
+    property onauxclick
     property onbeforecopy
     property onbeforecut
     property onbeforepaste
@@ -1349,7 +1348,6 @@ namespace http://www.w3.org/2000/svg
     property webkitMatchesSelector
     property webkitRequestFullScreen
     property webkitRequestFullscreen
-    property webkitdropzone
 svg element a
     property charset
     property coords
@@ -1381,7 +1379,6 @@ svg element animateMotion
 svg element animateTransform
 svg element circle
 svg element clipPath
-svg element cursor
 svg element defs
 svg element desc
 svg element discard

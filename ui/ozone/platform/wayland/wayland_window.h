@@ -13,12 +13,13 @@
 
 namespace ui {
 
-class WaylandDisplay;
+class PlatformWindowDelegate;
+class WaylandConnection;
 
 class WaylandWindow : public PlatformWindow, public PlatformEventDispatcher {
  public:
   WaylandWindow(PlatformWindowDelegate* delegate,
-                WaylandDisplay* display,
+                WaylandConnection* connection,
                 const gfx::Rect& bounds);
   ~WaylandWindow() override;
 
@@ -34,6 +35,9 @@ class WaylandWindow : public PlatformWindow, public PlatformEventDispatcher {
 
   // Set whether this window has pointer focus and should dispatch mouse events.
   void set_pointer_focus(bool focus) { has_pointer_focus_ = focus; }
+
+  // Set whether this window has keyboard focus and should dispatch key events.
+  void set_keyboard_focus(bool focus) { has_keyboard_focus_ = focus; }
 
   // PlatformWindow
   void Show() override;
@@ -68,7 +72,7 @@ class WaylandWindow : public PlatformWindow, public PlatformEventDispatcher {
 
  private:
   PlatformWindowDelegate* delegate_;
-  WaylandDisplay* display_;
+  WaylandConnection* connection_;
 
   wl::Object<wl_surface> surface_;
   wl::Object<xdg_surface> xdg_surface_;
@@ -77,6 +81,7 @@ class WaylandWindow : public PlatformWindow, public PlatformEventDispatcher {
   gfx::Rect pending_bounds_;
   uint32_t pending_configure_serial_;
   bool has_pointer_focus_ = false;
+  bool has_keyboard_focus_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(WaylandWindow);
 };

@@ -5,7 +5,6 @@
 #include "chrome/browser/media/protected_media_identifier_permission_context.h"
 
 #include "base/command_line.h"
-#include "base/strings/stringprintf.h"
 #include "build/build_config.h"
 #include "chrome/browser/content_settings/tab_specific_content_settings.h"
 #include "chrome/browser/permissions/permission_util.h"
@@ -13,7 +12,6 @@
 #include "chrome/common/pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/permission_type.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/user_metrics.h"
 #include "content/public/browser/web_contents.h"
@@ -38,7 +36,6 @@ using chromeos::attestation::PlatformVerificationDialog;
 ProtectedMediaIdentifierPermissionContext::
     ProtectedMediaIdentifierPermissionContext(Profile* profile)
     : PermissionContextBase(profile,
-                            content::PermissionType::PROTECTED_MEDIA_IDENTIFIER,
                             CONTENT_SETTINGS_TYPE_PROTECTED_MEDIA_IDENTIFIER)
 #if defined(OS_CHROMEOS)
       ,
@@ -57,6 +54,7 @@ void ProtectedMediaIdentifierPermissionContext::DecidePermission(
     const PermissionRequestID& id,
     const GURL& requesting_origin,
     const GURL& embedding_origin,
+    bool user_gesture,
     const BrowserPermissionCallback& callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
@@ -83,10 +81,11 @@ void ProtectedMediaIdentifierPermissionContext::DecidePermission(
 }
 #endif  // defined(OS_CHROMEOS)
 
-ContentSetting ProtectedMediaIdentifierPermissionContext::GetPermissionStatus(
-      const GURL& requesting_origin,
-      const GURL& embedding_origin) const {
-  DVLOG(1) << __FUNCTION__ << ": (" << requesting_origin.spec() << ", "
+ContentSetting
+ProtectedMediaIdentifierPermissionContext::GetPermissionStatusInternal(
+    const GURL& requesting_origin,
+    const GURL& embedding_origin) const {
+  DVLOG(1) << __func__ << ": (" << requesting_origin.spec() << ", "
            << embedding_origin.spec() << ")";
 
   if (!requesting_origin.is_valid() || !embedding_origin.is_valid() ||
@@ -94,8 +93,9 @@ ContentSetting ProtectedMediaIdentifierPermissionContext::GetPermissionStatus(
     return CONTENT_SETTING_BLOCK;
   }
 
-  ContentSetting content_setting = PermissionContextBase::GetPermissionStatus(
-      requesting_origin, embedding_origin);
+  ContentSetting content_setting =
+      PermissionContextBase::GetPermissionStatusInternal(requesting_origin,
+                                                         embedding_origin);
   DCHECK(content_setting == CONTENT_SETTING_ALLOW ||
          content_setting == CONTENT_SETTING_BLOCK ||
          content_setting == CONTENT_SETTING_ASK);
@@ -205,6 +205,7 @@ void ProtectedMediaIdentifierPermissionContext::
   bool persist = false; // Whether the ContentSetting should be saved.
   switch (response) {
     case PlatformVerificationDialog::CONSENT_RESPONSE_NONE:
+      VLOG(1) << "Platform verification dismissed by user.";
       content_setting = CONTENT_SETTING_ASK;
       persist = false;
       break;

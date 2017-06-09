@@ -54,6 +54,7 @@ class MutableProfileOAuth2TokenServiceDelegate
 
   // Overridden from OAuth2TokenServiceDelegate.
   void Shutdown() override;
+  LoadCredentialsState GetLoadCredentialsState() const override;
 
   // Overridden from NetworkChangeObserver.
   void OnNetworkChanged(net::NetworkChangeNotifier::ConnectionType type)
@@ -113,8 +114,9 @@ class MutableProfileOAuth2TokenServiceDelegate
                            ShutdownService);
 
   // WebDataServiceConsumer implementation:
-  void OnWebDataServiceRequestDone(WebDataServiceBase::Handle handle,
-                                   const WDTypedResult* result) override;
+  void OnWebDataServiceRequestDone(
+      WebDataServiceBase::Handle handle,
+      std::unique_ptr<WDTypedResult> result) override;
 
   // Loads credentials into in memory stucture.
   void LoadAllCredentialsIntoMemory(
@@ -149,6 +151,9 @@ class MutableProfileOAuth2TokenServiceDelegate
   // The primary account id of this service's profile during the loading of
   // credentials.  This member is empty otherwise.
   std::string loading_primary_account_id_;
+
+  // The state of the load credentials operation.
+  LoadCredentialsState load_credentials_state_;
 
   ScopedVector<RevokeServerRefreshToken> server_revokes_;
 

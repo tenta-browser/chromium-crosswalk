@@ -44,13 +44,7 @@ void BackgroundSyncLauncherAndroid::LaunchBrowserIfStoppedImpl(
 
   JNIEnv* env = base::android::AttachCurrentThread();
   Java_BackgroundSyncLauncher_launchBrowserIfStopped(
-      env, java_launcher_.obj(), base::android::GetApplicationContext(),
-      launch_when_next_online, min_delay_ms);
-}
-
-// static
-bool BackgroundSyncLauncherAndroid::RegisterLauncher(JNIEnv* env) {
-  return RegisterNativesImpl(env);
+      env, java_launcher_, launch_when_next_online, min_delay_ms);
 }
 
 // static
@@ -83,5 +77,5 @@ BackgroundSyncLauncherAndroid::~BackgroundSyncLauncherAndroid() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   JNIEnv* env = base::android::AttachCurrentThread();
-  Java_BackgroundSyncLauncher_destroy(env, java_launcher_.obj());
+  Java_BackgroundSyncLauncher_destroy(env, java_launcher_);
 }

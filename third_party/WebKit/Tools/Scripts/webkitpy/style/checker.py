@@ -35,21 +35,21 @@ import os.path
 import re
 import sys
 
-from checkers.common import categories as CommonCategories
-from checkers.common import CarriageReturnChecker
-from checkers.cpp import CppChecker
-from checkers.jsonchecker import JSONChecker
-from checkers.png import PNGChecker
-from checkers.python import PythonChecker
-from checkers.test_expectations import TestExpectationsChecker
-from checkers.text import TextChecker
-from checkers.xcodeproj import XcodeProjectFileChecker
-from checkers.xml import XMLChecker
-from error_handlers import DefaultStyleErrorHandler
-from filter import FilterConfiguration
-from optparser import ArgumentParser
-from optparser import DefaultCommandOptionValues
-from webkitpy.common.system.logutils import configure_logging as _configure_logging
+from webkitpy.common.system.log_utils import configure_logging as _configure_logging
+from webkitpy.style.checkers.common import CarriageReturnChecker
+from webkitpy.style.checkers.common import categories as CommonCategories
+from webkitpy.style.checkers.cpp import CppChecker
+from webkitpy.style.checkers.jsonchecker import JSONChecker
+from webkitpy.style.checkers.png import PNGChecker
+from webkitpy.style.checkers.python import PythonChecker
+from webkitpy.style.checkers.test_expectations import TestExpectationsChecker
+from webkitpy.style.checkers.text import TextChecker
+from webkitpy.style.checkers.xcodeproj import XcodeProjectFileChecker
+from webkitpy.style.checkers.xml import XMLChecker
+from webkitpy.style.error_handlers import DefaultStyleErrorHandler
+from webkitpy.style.filter import FilterConfiguration
+from webkitpy.style.optparser import ArgumentParser
+from webkitpy.style.optparser import DefaultCommandOptionValues
 
 
 _log = logging.getLogger(__name__)
@@ -92,8 +92,6 @@ _BASE_FILTER_RULES = [
     '-runtime/printf',
     '-runtime/threadsafe_fn',
     '-runtime/rtti',
-    '-whitespace/blank_line',
-    '-whitespace/end_of_line',
     # List Python pep8 categories last.
     #
     # Because much of WebKit's Python code base does not abide by the
@@ -121,14 +119,6 @@ _BASE_FILTER_RULES = [
 # for example, in the test_path_rules_specifier() unit test method of
 # checker_unittest.py.
 _PATH_RULES_SPECIFIER = [
-    # Files in these directories are consumers of the WebKit
-    # API and therefore do not follow the same header including
-    # discipline as WebCore.
-
-    ([  # There is no clean way to avoid "yy_*" names used by flex.
-        "Source/core/css/CSSParser-in.cpp"],
-     ["-readability/naming"]),
-
     # For third-party Python code, keep only the following checks--
     #
     #   No tabs: to avoid having to set the SVN allow-tabs property.
@@ -274,7 +264,6 @@ def check_webkit_style_configuration(options):
 
     Args:
       options: A CommandOptionValues instance.
-
     """
     filter_configuration = FilterConfiguration(
         base_rules=_BASE_FILTER_RULES,
@@ -296,7 +285,6 @@ def _create_log_handlers(stream):
 
     Args:
       stream: See the configure_logging() docstring.
-
     """
     # Handles logging.WARNING and above.
     error_handler = logging.StreamHandler(stream)
@@ -323,7 +311,6 @@ def _create_debug_log_handlers(stream):
 
     Args:
       stream: See the configure_logging() docstring.
-
     """
     handler = logging.StreamHandler(stream)
     formatter = logging.Formatter("%(name)s: %(levelname)-8s %(message)s")
@@ -350,7 +337,6 @@ def configure_logging(stream, logger=None, is_verbose=False):
               should be used only in unit tests.  Defaults to the
               root logger.
       is_verbose: A boolean value of whether logging should be verbose.
-
     """
     # If the stream does not define an "encoding" data attribute, the
     # logging module can throw an error like the following:
@@ -401,7 +387,7 @@ class CheckerDispatcher(object):
         return os.path.splitext(file_path)[1].lstrip(".")
 
     def _should_skip_file_path(self, file_path, skip_array_entry):
-        match = re.search("\s*png$", file_path)
+        match = re.search(r"\s*png$", file_path)
         if match:
             return False
         if isinstance(skip_array_entry, str):
@@ -527,7 +513,6 @@ class StyleProcessorConfiguration(object):
 
       stderr_write: A function that takes a string as a parameter and
                     serves as stderr.write.
-
     """
 
     def __init__(self,
@@ -556,7 +541,6 @@ class StyleProcessorConfiguration(object):
 
           stderr_write: A function that takes a string as a parameter and
                         serves as stderr.write.
-
         """
         self._filter_configuration = filter_configuration
         self._output_format = output_format
@@ -578,7 +562,6 @@ class StyleProcessorConfiguration(object):
                                the application's confidence in the error.
                                A higher number means greater confidence.
           file_path: The path of the file being checked
-
         """
         if confidence_in_error < self.min_confidence:
             return False
@@ -614,7 +597,6 @@ class ProcessorBase(object):
         The TextFileReader class calls this method prior to reading in
         the lines of a file.  Use this method, for example, to prevent
         the style checker from reading binary files into memory.
-
         """
         raise NotImplementedError('Subclasses should implement.')
 
@@ -631,7 +613,6 @@ class ProcessorBase(object):
                     may support a "reportable_lines" parameter that represents
                     the line numbers of the lines for which style errors
                     should be reported.
-
         """
         raise NotImplementedError('Subclasses should implement.')
 
@@ -643,7 +624,6 @@ class StyleProcessor(ProcessorBase):
     Attributes:
       error_count: An integer that is the total number of reported
                    errors for the lifetime of this instance.
-
     """
 
     def __init__(self, configuration, mock_dispatcher=None,
@@ -661,7 +641,6 @@ class StyleProcessor(ProcessorBase):
                                        transforming carriage returns.
                                        This parameter is for unit testing.
                                        Defaults to CarriageReturnChecker.
-
         """
         if mock_dispatcher is None:
             dispatcher = CheckerDispatcher()
@@ -696,8 +675,7 @@ class StyleProcessor(ProcessorBase):
         if self._dispatcher.should_skip_without_warning(file_path):
             return False
         if self._dispatcher.should_skip_with_warning(file_path):
-            _log.warn('File exempt from style guide. Skipping: "%s"'
-                      % file_path)
+            _log.warning('File exempt from style guide. Skipping: "%s"', file_path)
             return False
         return True
 
@@ -714,7 +692,6 @@ class StyleProcessor(ProcessorBase):
                         for all lines should be reported.  When not None, this
                         list normally contains the line numbers corresponding
                         to the modified lines of a patch.
-
         """
         _log.debug("Checking style: " + file_path)
 

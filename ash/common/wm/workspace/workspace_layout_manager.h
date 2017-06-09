@@ -14,39 +14,36 @@
 #include "ash/common/wm/wm_types.h"
 #include "ash/common/wm_activation_observer.h"
 #include "ash/common/wm_layout_manager.h"
-#include "ash/common/wm_root_window_controller_observer.h"
-#include "ash/common/wm_window_observer.h"
 #include "base/macros.h"
+#include "ui/aura/window_observer.h"
+#include "ui/display/display_observer.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/keyboard/keyboard_controller_observer.h"
 
 namespace ash {
+
+class RootWindowController;
 class WmShell;
-class WmRootWindowController;
+class WmWindow;
 class WorkspaceLayoutManagerBackdropDelegate;
 
 namespace wm {
-class WorkspaceLayoutManagerDelegate;
 class WMEvent;
 }
 
 // LayoutManager used on the window created for a workspace.
 class ASH_EXPORT WorkspaceLayoutManager
     : public WmLayoutManager,
-      public WmWindowObserver,
+      public aura::WindowObserver,
       public WmActivationObserver,
       public keyboard::KeyboardControllerObserver,
-      public WmRootWindowControllerObserver,
+      public display::DisplayObserver,
       public ShellObserver,
       public wm::WindowStateObserver {
  public:
-  WorkspaceLayoutManager(
-      WmWindow* window,
-      std::unique_ptr<wm::WorkspaceLayoutManagerDelegate> delegate);
-
+  // |window| is the container for this layout manager.
+  explicit WorkspaceLayoutManager(WmWindow* window);
   ~WorkspaceLayoutManager() override;
-
-  void DeleteDelegate();
 
   // A delegate which can be set to add a backdrop behind the top most visible
   // window. With the call the ownership of the delegate will be transferred to
@@ -63,19 +60,14 @@ class ASH_EXPORT WorkspaceLayoutManager
   void SetChildBounds(WmWindow* child,
                       const gfx::Rect& requested_bounds) override;
 
-  // WmRootWindowControllerObserver overrides:
-  void OnWorkAreaChanged() override;
-  void OnFullscreenStateChanged(bool is_fullscreen) override;
-
-  // Overriden from WmWindowObserver:
-  void OnWindowTreeChanged(
-      WmWindow* window,
-      const WmWindowObserver::TreeChangeParams& params) override;
-  void OnWindowPropertyChanged(WmWindow* window,
-                               WmWindowProperty property) override;
-  void OnWindowStackingChanged(WmWindow* window) override;
-  void OnWindowDestroying(WmWindow* window) override;
-  void OnWindowBoundsChanged(WmWindow* window,
+  // Overriden from aura::WindowObserver:
+  void OnWindowHierarchyChanged(const HierarchyChangeParams& params) override;
+  void OnWindowPropertyChanged(aura::Window* window,
+                               const void* key,
+                               intptr_t old) override;
+  void OnWindowStackingChanged(aura::Window* window) override;
+  void OnWindowDestroying(aura::Window* window) override;
+  void OnWindowBoundsChanged(aura::Window* window,
                              const gfx::Rect& old_bounds,
                              const gfx::Rect& new_bounds) override;
 
@@ -85,18 +77,19 @@ class ASH_EXPORT WorkspaceLayoutManager
 
   // keyboard::KeyboardControllerObserver overrides:
   void OnKeyboardBoundsChanging(const gfx::Rect& new_bounds) override;
+  void OnKeyboardClosed() override;
 
   // WindowStateObserver overrides:
   void OnPostWindowStateTypeChange(wm::WindowState* window_state,
                                    wm::WindowStateType old_type) override;
 
+  // display::DisplayObserver overrides:
+  void OnDisplayMetricsChanged(const display::Display& display,
+                               uint32_t changed_metrics) override;
+
   // ShellObserver overrides:
-  void OnFullscreenStateChanged(bool is_fullscreen, WmWindow* root) override {
-    // Do nothing. Fullscreen state change is observed by the
-    // WmRootWindowControllerObserver::OnFullscreenStateChanged().
-    // Because the name is conflicting, some compiler warns because this is
-    // hidden. To avoid it, we define it here, with empty body.
-  }
+  void OnFullscreenStateChanged(bool is_fullscreen,
+                                WmWindow* root_window) override;
   void OnPinnedStateChanged(WmWindow* pinned_window) override;
 
  private:
@@ -124,10 +117,8 @@ class ASH_EXPORT WorkspaceLayoutManager
 
   WmWindow* window_;
   WmWindow* root_window_;
-  WmRootWindowController* root_window_controller_;
+  RootWindowController* root_window_controller_;
   WmShell* shell_;
-
-  std::unique_ptr<wm::WorkspaceLayoutManagerDelegate> delegate_;
 
   // Set of windows we're listening to.
   WindowSet windows_;

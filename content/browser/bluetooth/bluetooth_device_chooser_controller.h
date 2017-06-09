@@ -6,17 +6,19 @@
 #define CONTENT_BROWSER_BLUETOOTH_BLUETOOTH_DEVICE_CHOOSER_CONTROLLER_H_
 
 #include <string>
+#include <unordered_set>
 
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "content/common/content_export.h"
 #include "content/public/browser/bluetooth_chooser.h"
 #include "third_party/WebKit/public/platform/modules/bluetooth/web_bluetooth.mojom.h"
 
 namespace device {
 class BluetoothAdapter;
 class BluetoothDevice;
-class BluetoothDiscoveryFilter;
 class BluetoothDiscoverySession;
 }
 
@@ -29,30 +31,28 @@ class WebBluetoothServiceImpl;
 // Class that interacts with a chooser and starts a bluetooth discovery session.
 // This class needs to be re-instantiated for each call to GetDevice(). Calling
 // GetDevice() twice for the same instance will DCHECK.
-class BluetoothDeviceChooserController final {
+class CONTENT_EXPORT BluetoothDeviceChooserController final {
  public:
   typedef base::Callback<void(blink::mojom::WebBluetoothRequestDeviceOptionsPtr,
                               const std::string& device_address)>
       SuccessCallback;
-  typedef base::Callback<void(blink::mojom::WebBluetoothError error)>
+  typedef base::Callback<void(blink::mojom::WebBluetoothResult result)>
       ErrorCallback;
 
   // |web_bluetooth_service_| service that owns this class.
   // |render_frame_host| should be the RenderFrameHost that owns the
   // |web_bluetooth_service_|.
   // |adapter| should be the adapter used to scan for Bluetooth devices.
-  // |scan_duration| is how long will a discovery session be active.
   BluetoothDeviceChooserController(
       WebBluetoothServiceImpl* web_bluetooth_service_,
       RenderFrameHost* render_frame_host,
-      device::BluetoothAdapter* adapter,
-      base::TimeDelta scan_duration);
+      device::BluetoothAdapter* adapter);
   ~BluetoothDeviceChooserController();
 
   // This function performs the following checks before starting a discovery
   // session:
   //   - Validates filters in |request_device_options|.
-  //   - Removes any blacklisted UUIDs from
+  //   - Removes any blocklisted UUIDs from
   //     |request_device_options.optinal_services|.
   //   - Checks if the request came from a cross-origin iframe.
   //   - Checks if the request came from a unique origin.
@@ -79,9 +79,17 @@ class BluetoothDeviceChooserController final {
   // that the adapter changed states.
   void AdapterPoweredChanged(bool powered);
 
+  // Received Signal Strength Indicator (RSSI) is a measurement of the power
+  // present in a received radio signal.
+  static int CalculateSignalStrengthLevel(int8_t rssi);
+
+  // After this method is called any new instance of
+  // BluetoothDeviceChooserController will have a scan duration of 0.
+  static void SetTestScanDurationForTesting();
+
  private:
-  // Populates the chooser with the devices that are already in the adapter.
-  void PopulateFoundDevices();
+  // Populates the chooser with the GATT connected devices.
+  void PopulateConnectedDevices();
 
   // Notifies the chooser that discovery is starting and starts a discovery
   // session.
@@ -105,7 +113,10 @@ class BluetoothDeviceChooserController final {
   // Helper function to asynchronously run success_callback_.
   void PostSuccessCallback(const std::string& device_address);
   // Helper function to asynchronously run error_callback_.
-  void PostErrorCallback(blink::mojom::WebBluetoothError error);
+  void PostErrorCallback(blink::mojom::WebBluetoothResult result);
+
+  // If true all new instances of this class will have a scan duration of 0.
+  static bool use_test_scan_duration_;
 
   // The adapter used to get existing devices and start a discovery session.
   device::BluetoothAdapter* adapter_;
@@ -135,6 +146,12 @@ class BluetoothDeviceChooserController final {
   // session. We need to null it when the platform stops discovery.
   // http://crbug.com/611852
   std::unique_ptr<device::BluetoothDiscoverySession> discovery_session_;
+
+  // The time when scanning starts.
+  base::Optional<base::TimeTicks> scanning_start_time_;
+
+  // The device ids that are currently shown in the chooser.
+  std::unordered_set<std::string> device_ids_;
 
   // Weak pointer factory for generating 'this' pointers that might live longer
   // than we do.

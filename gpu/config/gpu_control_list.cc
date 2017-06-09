@@ -38,7 +38,7 @@ bool ProcessVersionString(const std::string& version_string,
   // If the splitter is '-', we assume it's a date with format "mm-dd-yyyy";
   // we split it into the order of "yyyy", "mm", "dd".
   if (splitter == '-') {
-    std::string year = (*version)[version->size() - 1];
+    std::string year = version->back();
     for (int i = version->size() - 1; i > 0; --i) {
       (*version)[i] = (*version)[i - 1];
     }
@@ -125,7 +125,7 @@ const char kVersionStyleStringLexical[] = "lexical";
 
 const char kOp[] = "op";
 
-}  // namespace anonymous
+}  // namespace
 
 GpuControlList::VersionInfo::VersionInfo(
     const std::string& version_op,
@@ -580,6 +580,15 @@ GpuControlList::GpuControlListEntry::GetEntryFromValue(
     dictionary_entry_count++;
   }
 
+  std::string gl_version_string_value;
+  if (value->GetString("gl_version_string", &gl_version_string_value)) {
+    if (!entry->SetGLVersionStringInfo(gl_version_string_value)) {
+      LOG(WARNING) << "Malformed gl_version_string entry " << entry->id();
+      return NULL;
+    }
+    dictionary_entry_count++;
+  }
+
   std::string gl_vendor_value;
   if (value->GetString("gl_vendor", &gl_vendor_value)) {
     if (!entry->SetGLVendorInfo(gl_vendor_value)) {
@@ -733,6 +742,26 @@ GpuControlList::GpuControlListEntry::GetEntryFromValue(
   bool in_process_gpu;
   if (value->GetBoolean("in_process_gpu", &in_process_gpu)) {
     entry->SetInProcessGPUInfo(in_process_gpu);
+    dictionary_entry_count++;
+  }
+
+  const base::DictionaryValue* pixel_shader_version_value = NULL;
+  if (value->GetDictionary("pixel_shader_version",
+                           &pixel_shader_version_value)) {
+    std::string pixel_shader_version_op = "any";
+    std::string pixel_shader_version_string;
+    std::string pixel_shader_version_string2;
+    pixel_shader_version_value->GetString(kOp, &pixel_shader_version_op);
+    pixel_shader_version_value->GetString("value",
+                                          &pixel_shader_version_string);
+    pixel_shader_version_value->GetString("value2",
+                                          &pixel_shader_version_string2);
+    if (!entry->SetPixelShaderVersionInfo(pixel_shader_version_op,
+                                          pixel_shader_version_string,
+                                          pixel_shader_version_string2)) {
+      LOG(WARNING) << "Malformed pixel shader version entry " << entry->id();
+      return NULL;
+    }
     dictionary_entry_count++;
   }
 
@@ -930,6 +959,12 @@ bool GpuControlList::GpuControlListEntry::SetGLVersionInfo(
   return gl_version_info_->IsValid();
 }
 
+bool GpuControlList::GpuControlListEntry::SetGLVersionStringInfo(
+    const std::string& version_string_value) {
+  gl_version_string_info_ = version_string_value;
+  return !gl_version_string_info_.empty();
+}
+
 bool GpuControlList::GpuControlListEntry::SetGLVendorInfo(
     const std::string& vendor_value) {
   gl_vendor_info_ = vendor_value;
@@ -1049,6 +1084,15 @@ bool GpuControlList::GpuControlListEntry::SetFeatures(
       features_.insert(feature);
   }
   return true;
+}
+
+bool GpuControlList::GpuControlListEntry::SetPixelShaderVersionInfo(
+    const std::string& version_op,
+    const std::string& version_string,
+    const std::string& version_string2) {
+  pixel_shader_version_info_.reset(new VersionInfo(
+      version_op, std::string(), version_string, version_string2));
+  return pixel_shader_version_info_->IsValid();
 }
 
 void GpuControlList::GpuControlListEntry::AddException(
@@ -1257,6 +1301,8 @@ bool GpuControlList::GpuControlListEntry::Contains(
   }
   if (GLVersionInfoMismatch(gpu_info.gl_version))
     return false;
+  if (StringMismatch(gpu_info.gl_version, gl_version_string_info_))
+    return false;
   if (StringMismatch(gpu_info.gl_vendor, gl_vendor_info_))
     return false;
   if (StringMismatch(gpu_info.gl_renderer, gl_renderer_info_))
@@ -1299,6 +1345,10 @@ bool GpuControlList::GpuControlListEntry::Contains(
     if (StringMismatch(cpu_info.cpu_brand(), cpu_brand_))
       return false;
   }
+  if (pixel_shader_version_info_.get() != NULL) {
+    if (!pixel_shader_version_info_->Contains(gpu_info.pixel_shader_version))
+      return false;
+  }
 
   for (size_t i = 0; i < exceptions_.size(); ++i) {
     if (exceptions_[i]->Contains(os_type, os_version, gpu_info) &&
@@ -1319,9 +1369,16 @@ bool GpuControlList::GpuControlListEntry::NeedsMoreInfo(
     return true;
   if (driver_version_info_.get() && gpu_info.driver_version.empty())
     return true;
+  if ((gl_version_info_.get() || !gl_version_string_info_.empty()) &&
+      gpu_info.gl_version.empty()) {
+    return true;
+  }
   if (!gl_vendor_info_.empty() && gpu_info.gl_vendor.empty())
     return true;
   if (!gl_renderer_info_.empty() && gpu_info.gl_renderer.empty())
+    return true;
+  if (pixel_shader_version_info_.get() != NULL &&
+      gpu_info.pixel_shader_version.empty())
     return true;
 
   if (consider_exceptions) {
@@ -1394,14 +1451,11 @@ GpuControlList::~GpuControlList() {
 bool GpuControlList::LoadList(
     const std::string& json_context,
     GpuControlList::OsFilter os_filter) {
-  std::unique_ptr<base::Value> root = base::JSONReader::Read(json_context);
-  if (root.get() == NULL || !root->IsType(base::Value::TYPE_DICTIONARY))
+  std::unique_ptr<base::DictionaryValue> root =
+      base::DictionaryValue::From(base::JSONReader::Read(json_context));
+  if (!root)
     return false;
-
-  base::DictionaryValue* root_dictionary =
-      static_cast<base::DictionaryValue*>(root.get());
-  DCHECK(root_dictionary);
-  return LoadList(*root_dictionary, os_filter);
+  return LoadList(*root, os_filter);
 }
 
 bool GpuControlList::LoadList(const base::DictionaryValue& parsed_json,
@@ -1560,6 +1614,17 @@ void GpuControlList::GetReasons(base::ListValue* problem_list,
 
 size_t GpuControlList::num_entries() const {
   return entries_.size();
+}
+
+bool GpuControlList::has_duplicated_entry_id() const {
+  std::set<int> ids;
+  for (size_t i = 0; i < entries_.size(); ++i) {
+    if (ids.count(entries_[i]->id()) == 0)
+      ids.insert(entries_[i]->id());
+    else
+      return true;
+  }
+  return false;
 }
 
 uint32_t GpuControlList::max_entry_id() const {

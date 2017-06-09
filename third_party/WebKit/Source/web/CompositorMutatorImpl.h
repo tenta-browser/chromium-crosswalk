@@ -14,49 +14,48 @@
 
 namespace blink {
 
-class CompositorProxy;
-class CompositorProxyClientImpl;
-class CompositorWorkerGlobalScope;
+class CompositorAnimator;
 class CompositorMutatorClient;
 
-// Fans out requests from the compositor to all of the registered ProxyClients which
-// can then mutate layers through their CompositorProxy interfaces. Requests for
-// animation frames are received from ProxyClients and sent to the compositor to
-// generate a new compositor frame.
+// Fans out requests from the compositor to all of the registered
+// CompositorAnimators which can then mutate layers through their respective
+// mutate interface. Requests for animation frames are received from
+// CompositorAnimators and sent to the compositor to generate a new compositor
+// frame.
 //
 // Should be accessed only on the compositor thread.
 class CompositorMutatorImpl final : public CompositorMutator {
-    WTF_MAKE_NONCOPYABLE(CompositorMutatorImpl);
-public:
-    static std::unique_ptr<CompositorMutatorClient> createClient();
-    static CompositorMutatorImpl* create();
+  WTF_MAKE_NONCOPYABLE(CompositorMutatorImpl);
 
-    DEFINE_INLINE_TRACE()
-    {
-        CompositorMutator::trace(visitor);
-        visitor->trace(m_proxyClients);
-    }
+ public:
+  static std::unique_ptr<CompositorMutatorClient> createClient();
+  static CompositorMutatorImpl* create();
 
-    // CompositorMutator implementation.
-    bool mutate(double monotonicTimeNow, CompositorMutableStateProvider*) override;
+  // CompositorMutator implementation.
+  bool mutate(double monotonicTimeNow,
+              CompositorMutableStateProvider*) override;
 
-    void registerProxyClient(CompositorProxyClientImpl*);
+  void registerCompositorAnimator(CompositorAnimator*);
+  void unregisterCompositorAnimator(CompositorAnimator*);
 
-    void setNeedsMutate();
+  void setNeedsMutate();
 
-    void setClient(CompositorMutatorClient* client) { m_client = client; }
-    CustomCompositorAnimationManager* animationManager() { return m_animationManager.get(); }
+  void setClient(CompositorMutatorClient* client) { m_client = client; }
+  CustomCompositorAnimationManager* animationManager() {
+    return m_animationManager.get();
+  }
 
-private:
-    CompositorMutatorImpl();
+ private:
+  CompositorMutatorImpl();
 
-    using ProxyClients = HeapHashSet<WeakMember<CompositorProxyClientImpl>>;
-    ProxyClients m_proxyClients;
+  using CompositorAnimators =
+      HashSet<CrossThreadPersistent<CompositorAnimator>>;
+  CompositorAnimators m_animators;
 
-    std::unique_ptr<CustomCompositorAnimationManager> m_animationManager;
-    CompositorMutatorClient* m_client;
+  std::unique_ptr<CustomCompositorAnimationManager> m_animationManager;
+  CompositorMutatorClient* m_client;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // CompositorMutatorImpl_h
+#endif  // CompositorMutatorImpl_h

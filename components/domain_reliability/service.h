@@ -13,10 +13,11 @@
 #include "base/memory/ref_counted.h"
 #include "base/single_thread_task_runner.h"
 #include "components/domain_reliability/clear_mode.h"
+#include "components/domain_reliability/config.h"
 #include "components/domain_reliability/domain_reliability_export.h"
 #include "components/keyed_service/core/keyed_service.h"
 
-class PrefService;
+class GURL;
 
 namespace base {
 class Value;
@@ -54,12 +55,22 @@ class DOMAIN_RELIABILITY_EXPORT DomainReliabilityService
 
   // Clears browsing data on the associated Monitor. |Init()| must have been
   // called first.
-  virtual void ClearBrowsingData(DomainReliabilityClearMode clear_mode,
-                                 const base::Closure& callback) = 0;
+  virtual void ClearBrowsingData(
+      DomainReliabilityClearMode clear_mode,
+      const base::Callback<bool(const GURL&)>& origin,
+      const base::Closure& callback) = 0;
 
   virtual void GetWebUIData(
       const base::Callback<void(std::unique_ptr<base::Value>)>& callback)
       const = 0;
+
+  virtual void SetDiscardUploadsForTesting(
+      bool discard_uploads) = 0;
+
+  virtual void AddContextForTesting(
+      std::unique_ptr<const DomainReliabilityConfig> config) = 0;
+
+  virtual void ForceUploadsForTesting() = 0;
 
  protected:
   DomainReliabilityService();

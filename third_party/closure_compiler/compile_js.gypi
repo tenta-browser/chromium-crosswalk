@@ -32,7 +32,9 @@
         'out_file%': '<(SHARED_INTERMEDIATE_DIR)/closure/<!(python <(CLOSURE_DIR)/build/outputs.py <(_target_name).js)',
         'externs%': [],
         'depends%': [],
+        # TODO(dbeam): remove when no longer used from remoting/.
         'script_args%': [],
+        'closure_args%': '<(default_closure_args)',
         'disabled_closure_args%': '<(default_disabled_closure_args)',
       },
       'inputs': [
@@ -42,7 +44,6 @@
         '<(CLOSURE_DIR)/build/inputs.py',
         '<(CLOSURE_DIR)/build/outputs.py',
         '<(CLOSURE_DIR)/compiler/compiler.jar',
-        '<(CLOSURE_DIR)/runner/runner.jar',
         '<!@(python <(CLOSURE_DIR)/build/inputs.py <@(source_files) -d <@(depends) -e <@(externs))',
       ],
       'outputs': [
@@ -55,9 +56,9 @@
         '<@(script_args)',
         '--depends', '<@(depends)',
         '--externs', '<@(externs)',
-        '--out-file', '<(out_file)',
-        '--closure-args', '<@(closure_args)', '<@(disabled_closure_args)',
-        # Add '--verbose' for make glorious log spam of Closure compiler.
+        '--out_file', '<(out_file)',
+        '--closure_args', '<@(closure_args)', '<@(disabled_closure_args)',
+        # '--verbose' # for make glorious log spam of Closure compiler.
       ],
       'message': 'Compiling <(_target_name)',
     }

@@ -21,18 +21,17 @@ CheckBool DisassemblerElf32X86::TypedRVAX86::ComputeRelativeTarget(
 }
 
 CheckBool DisassemblerElf32X86::TypedRVAX86::EmitInstruction(
-    AssemblyProgram* program,
-    Label* label) {
-  return program->EmitRel32(label);
+    Label* label,
+    InstructionReceptor* receptor) {
+  return receptor->EmitRel32(label);
 }
 
 uint16_t DisassemblerElf32X86::TypedRVAX86::op_size() const {
   return 4;
 }
 
-DisassemblerElf32X86::DisassemblerElf32X86(const void* start, size_t length)
-    : DisassemblerElf32(start, length) {
-}
+DisassemblerElf32X86::DisassemblerElf32X86(const uint8_t* start, size_t length)
+    : DisassemblerElf32(start, length) {}
 
 // Convert an ELF relocation struction into an RVA.
 CheckBool DisassemblerElf32X86::RelToRVA(Elf32_Rel rel, RVA* result) const {
@@ -73,7 +72,7 @@ CheckBool DisassemblerElf32X86::RelToRVA(Elf32_Rel rel, RVA* result) const {
 
 CheckBool DisassemblerElf32X86::ParseRelocationSection(
     const Elf32_Shdr* section_header,
-    AssemblyProgram* program) {
+    InstructionReceptor* receptor) const {
   // We can reproduce the R_386_RELATIVE entries in one of the relocation table
   // based on other information in the patch, given these conditions:
   //
@@ -120,12 +119,12 @@ CheckBool DisassemblerElf32X86::ParseRelocationSection(
 
   if (match) {
     // Skip over relocation tables.
-    if (!program->EmitElfRelocationInstruction())
+    if (!receptor->EmitElfRelocation())
       return false;
     file_offset += sizeof(Elf32_Rel) * abs32_locations_.size();
   }
 
-  return ParseSimpleRegion(file_offset, section_end, program);
+  return ParseSimpleRegion(file_offset, section_end, receptor);
 }
 
 CheckBool DisassemblerElf32X86::ParseRel32RelocsFromSection(

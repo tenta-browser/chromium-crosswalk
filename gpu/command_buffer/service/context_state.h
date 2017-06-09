@@ -13,6 +13,7 @@
 #include "base/logging.h"
 #include "gpu/command_buffer/service/gl_utils.h"
 #include "gpu/command_buffer/service/sampler_manager.h"
+#include "gpu/command_buffer/service/shader_manager.h"
 #include "gpu/command_buffer/service/texture_manager.h"
 #include "gpu/command_buffer/service/vertex_array_manager.h"
 #include "gpu/command_buffer/service/vertex_attrib_manager.h"
@@ -25,7 +26,6 @@ class Buffer;
 class ErrorState;
 class ErrorStateClient;
 class FeatureInfo;
-class Framebuffer;
 class IndexedBufferBindingHost;
 class Logger;
 class Program;
@@ -63,62 +63,91 @@ struct GPU_EXPORT TextureUnit {
   // glBindTexture
   scoped_refptr<TextureRef> bound_texture_2d_array;
 
-  scoped_refptr<TextureRef> GetInfoForSamplerType(
-      GLenum type) {
+  TextureRef* GetInfoForSamplerType(GLenum type) {
     switch (type) {
       case GL_SAMPLER_2D:
-        return bound_texture_2d;
+      case GL_SAMPLER_2D_SHADOW:
+      case GL_INT_SAMPLER_2D:
+      case GL_UNSIGNED_INT_SAMPLER_2D:
+        return bound_texture_2d.get();
       case GL_SAMPLER_CUBE:
-        return bound_texture_cube_map;
+      case GL_SAMPLER_CUBE_SHADOW:
+      case GL_INT_SAMPLER_CUBE:
+      case GL_UNSIGNED_INT_SAMPLER_CUBE:
+        return bound_texture_cube_map.get();
       case GL_SAMPLER_EXTERNAL_OES:
-        return bound_texture_external_oes;
+        return bound_texture_external_oes.get();
       case GL_SAMPLER_2D_RECT_ARB:
-        return bound_texture_rectangle_arb;
+        return bound_texture_rectangle_arb.get();
       case GL_SAMPLER_3D:
-        return bound_texture_3d;
+      case GL_INT_SAMPLER_3D:
+      case GL_UNSIGNED_INT_SAMPLER_3D:
+        return bound_texture_3d.get();
       case GL_SAMPLER_2D_ARRAY:
-        return bound_texture_2d_array;
+      case GL_SAMPLER_2D_ARRAY_SHADOW:
+      case GL_INT_SAMPLER_2D_ARRAY:
+      case GL_UNSIGNED_INT_SAMPLER_2D_ARRAY:
+        return bound_texture_2d_array.get();
+      default:
+        NOTREACHED();
+        return nullptr;
     }
-
-    NOTREACHED();
-    return NULL;
   }
 
-  scoped_refptr<TextureRef>& GetInfoForTarget(GLenum target) {
+  TextureRef* GetInfoForTarget(GLenum target) {
     switch (target) {
       case GL_TEXTURE_2D:
-        return bound_texture_2d;
+        return bound_texture_2d.get();
       case GL_TEXTURE_CUBE_MAP:
-        return bound_texture_cube_map;
+        return bound_texture_cube_map.get();
       case GL_TEXTURE_EXTERNAL_OES:
-        return bound_texture_external_oes;
+        return bound_texture_external_oes.get();
       case GL_TEXTURE_RECTANGLE_ARB:
-        return bound_texture_rectangle_arb;
+        return bound_texture_rectangle_arb.get();
       case GL_TEXTURE_3D:
-        return bound_texture_3d;
+        return bound_texture_3d.get();
       case GL_TEXTURE_2D_ARRAY:
-        return bound_texture_2d_array;
+        return bound_texture_2d_array.get();
+      default:
+        NOTREACHED();
+        return nullptr;
     }
+  }
 
-    NOTREACHED();
-    return bound_texture_2d;
+  void SetInfoForTarget(GLenum target, TextureRef* texture_ref) {
+    switch (target) {
+      case GL_TEXTURE_2D:
+        bound_texture_2d = texture_ref;
+        break;
+      case GL_TEXTURE_CUBE_MAP:
+        bound_texture_cube_map = texture_ref;
+        break;
+      case GL_TEXTURE_EXTERNAL_OES:
+        bound_texture_external_oes = texture_ref;
+        break;
+      case GL_TEXTURE_RECTANGLE_ARB:
+        bound_texture_rectangle_arb = texture_ref;
+        break;
+      case GL_TEXTURE_3D:
+        bound_texture_3d = texture_ref;
+        break;
+      case GL_TEXTURE_2D_ARRAY:
+        bound_texture_2d_array = texture_ref;
+        break;
+      default:
+        NOTREACHED();
+    }
   }
 };
 
 class GPU_EXPORT Vec4 {
  public:
-  enum DataType {
-    kFloat,
-    kInt,
-    kUInt,
-  };
-
   Vec4() {
     v_[0].float_value = 0.0f;
     v_[1].float_value = 0.0f;
     v_[2].float_value = 0.0f;
     v_[3].float_value = 1.0f;
-    type_ = kFloat;
+    type_ = SHADER_VARIABLE_FLOAT;
   }
 
   template <typename T>
@@ -127,7 +156,7 @@ class GPU_EXPORT Vec4 {
   template <typename T>
   void SetValues(const T* values);
 
-  DataType type() const {
+  ShaderVariableBaseType type() const {
     return type_;
   }
 
@@ -141,7 +170,7 @@ class GPU_EXPORT Vec4 {
   };
 
   ValueUnion v_[4];
-  DataType type_;
+  ShaderVariableBaseType type_;
 };
 
 template <>
@@ -171,6 +200,8 @@ struct GPU_EXPORT ContextState {
 
   void Initialize();
 
+  void SetLineWidthBounds(GLfloat min, GLfloat max);
+
   void SetIgnoreCachedStateForTest(bool ignore) {
     ignore_cached_state = ignore;
   }
@@ -194,6 +225,10 @@ struct GPU_EXPORT ContextState {
   void RestoreIndexedUniformBufferBindings(const ContextState* prev_state);
   void RestoreTextureUnitBindings(
       GLuint unit, const ContextState* prev_state) const;
+
+  void PushTextureDecompressionUnpackState() const;
+  void RestoreUnpackState() const;
+  void DoLineWidth(GLfloat width) const;
 
   // Helper for getting cached state.
   bool GetStateAsGLint(
@@ -244,6 +279,29 @@ struct GPU_EXPORT ContextState {
 
   void SetBoundBuffer(GLenum target, Buffer* buffer);
   void RemoveBoundBuffer(Buffer* buffer);
+
+  void InitGenericAttribs(GLuint max_vertex_attribs) {
+    attrib_values.resize(max_vertex_attribs);
+
+    uint32_t packed_size = max_vertex_attribs / 16;
+    packed_size += (max_vertex_attribs % 16 == 0) ? 0 : 1;
+    generic_attrib_base_type_mask_.resize(packed_size);
+    for (uint32_t i = 0; i < packed_size; ++i) {
+      // All generic attribs are float type by default.
+      generic_attrib_base_type_mask_[i] = 0x55555555u * SHADER_VARIABLE_FLOAT;
+    }
+  }
+
+  void SetGenericVertexAttribBaseType(GLuint index, GLenum base_type) {
+    DCHECK_LT(index, attrib_values.size());
+    int shift_bits = (index % 16) * 2;
+    generic_attrib_base_type_mask_[index / 16] &= ~(0x3 << shift_bits);
+    generic_attrib_base_type_mask_[index / 16] |= (base_type << shift_bits);
+  }
+
+  const std::vector<uint32_t>& generic_attrib_base_type_mask() const {
+    return generic_attrib_base_type_mask_;
+  }
 
   void UnbindTexture(TextureRef* texture);
   void UnbindSampler(Sampler* sampler);
@@ -320,7 +378,19 @@ struct GPU_EXPORT ContextState {
 
   void InitStateManual(const ContextState* prev_state) const;
 
-  bool framebuffer_srgb_;
+  // EnableDisableFramebufferSRGB is called at very high frequency. Cache the
+  // true value of FRAMEBUFFER_SRGB, if we know it, to elide some of these
+  // calls.
+  bool framebuffer_srgb_valid_ = false;
+  bool framebuffer_srgb_ = false;
+
+  // Generic vertex attrib base types: FLOAT, INT, or UINT.
+  // Each base type is encoded into 2 bits, the lowest 2 bits for location 0,
+  // the highest 2 bits for location (max_vertex_attribs - 1).
+  std::vector<uint32_t> generic_attrib_base_type_mask_;
+
+  GLfloat line_width_min_ = 0.0f;
+  GLfloat line_width_max_ = 1.0f;
 
   FeatureInfo* feature_info_;
   std::unique_ptr<ErrorState> error_state_;
@@ -330,4 +400,3 @@ struct GPU_EXPORT ContextState {
 }  // namespace gpu
 
 #endif  // GPU_COMMAND_BUFFER_SERVICE_CONTEXT_STATE_H_
-

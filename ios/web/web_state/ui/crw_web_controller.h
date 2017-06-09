@@ -9,7 +9,6 @@
 
 #import "ios/web/net/crw_request_tracker_delegate.h"
 #import "ios/web/public/navigation_manager.h"
-#import "ios/web/public/web_state/crw_web_user_interface_delegate.h"
 #import "ios/web/public/web_state/js/crw_js_injection_evaluator.h"
 #import "ios/web/public/web_state/ui/crw_web_delegate.h"
 #include "ios/web/public/web_state/url_verification_constants.h"
@@ -30,9 +29,6 @@ enum LoadPhase {
   PAGE_LOADED = 2
 };
 
-// The accessibility identifier of the top-level container view.
-extern NSString* const kContainerViewID;
-
 }  // namespace web
 
 @class CRWJSInjectionReceiver;
@@ -44,15 +40,8 @@ extern NSString* const kContainerViewID;
 @protocol CRWWebViewProxy;
 class GURL;
 
-namespace base {
-class Value;
-}
-
 namespace web {
-class BrowserState;
-struct Referrer;
 class WebState;
-class WebInterstitialImpl;
 class WebStateImpl;
 }
 
@@ -64,7 +53,6 @@ class WebStateImpl;
 // This is an abstract class which must not be instantiated directly.
 // TODO(stuartmorgan): Move all of the navigation APIs out of this class.
 @interface CRWWebController : NSObject<CRWJSInjectionEvaluator,
-                                       CRWRequestTrackerDelegate,
                                        CRWTouchTrackingDelegate,
                                        UIGestureRecognizerDelegate>
 
@@ -73,7 +61,6 @@ class WebStateImpl;
 @property(nonatomic, assign) BOOL webUsageEnabled;
 
 @property(nonatomic, assign) id<CRWWebDelegate> delegate;
-@property(nonatomic, weak) id<CRWWebUserInterfaceDelegate> UIDelegate;
 @property(nonatomic, assign) id<CRWNativeContentProvider> nativeProvider;
 @property(nonatomic, assign)
     id<CRWSwipeRecognizerProvider> swipeRecognizerProvider;
@@ -102,10 +89,6 @@ class WebStateImpl;
 // (nothing loaded) and 1.0 (fully loaded).
 @property(nonatomic, readonly) double loadingProgress;
 
-// Returns whether the page can navigate backwards or forwards.
-@property(nonatomic, readonly) BOOL canGoBack;
-@property(nonatomic, readonly) BOOL canGoForward;
-
 // Returns the x, y offset the content has been scrolled.
 @property(nonatomic, readonly) CGPoint scrollPosition;
 
@@ -116,9 +99,6 @@ class WebStateImpl;
 // calls should be suppressed. Default is NO. When dialog is suppressed
 // |CRWWebDelegate webControllerDidSuppressDialog:| will be called.
 @property(nonatomic, assign) BOOL shouldSuppressDialogs;
-
-// YES if Mojo should be used for WebUI, defaults to NO.
-@property(nonatomic, assign) BOOL useMojoForWebUI;
 
 // Designated initializer. Initializes web controller with |webState|. The
 // calling code must retain the ownership of |webState|.
@@ -198,17 +178,12 @@ class WebStateImpl;
 // used when deliberately pre-triggering a load without displaying.
 - (void)triggerPendingLoad;
 
-// Navigate forwards or backwards by one page.
-- (void)goBack;
-- (void)goForward;
-// Navigate forwards or backwards by |delta| pages.
-- (void)goDelta:(int)delta;
-// Perform necessary setup in order to navigate backwards.
-// TODO(rohitrao): Remove this from the public API.
-- (void)prepareForGoBack;
+// Navigates to the item at the given |index|.
+- (void)goToItemAtIndex:(int)index;
 
-// Evaluates the user-entered |script| in the web view.
-- (void)evaluateUserJavaScript:(NSString*)script;
+// Executes |script| in the web view, registering user interaction.
+- (void)executeUserJavaScript:(NSString*)script
+            completionHandler:(web::JavaScriptResultBlock)completion;
 
 // Dismisses the soft keyboard.
 - (void)dismissKeyboard;
@@ -241,13 +216,16 @@ class WebStateImpl;
 // complete it will be handled internally.
 - (void)restoreStateFromHistory;
 
-// Asynchronously checks whether the element at the location of
-// |gestureRecognizer| is a link.
-- (void)checkLinkPresenceUnderGesture:(UIGestureRecognizer*)gestureRecognizer
-                    completionHandler:(void (^)(BOOL))completionHandler;
-
 // Notifies the CRWWebController that it has been shown.
 - (void)wasShown;
+
+// Notifies the CRWWebController that the current page is an HTTP page
+// containing a password field.
+- (void)didShowPasswordInputOnHTTP;
+
+// Notifies the CRWWebController that the current page is an HTTP page
+// containing a credit card field.
+- (void)didShowCreditCardInputOnHTTP;
 
 // Notifies the CRWWebController that it has been hidden.
 - (void)wasHidden;
@@ -286,14 +264,6 @@ class WebStateImpl;
 // native controller.
 - (void)loadErrorInNativeView:(NSError*)error;
 
-// Helper method called at the end of history navigation methods goBack,
-// goForward, and goDelta.  Loads a new URL if the current entry is not from a
-// pushState() navigation from |fromEntry|. |fromEntry| is the
-// CRWSessionEntry that was the current entry prior to the navigation.
-// TODO(rohitrao): This is only exposed so Tab can call it temporarily.  Remove
-// as soon as all the Tab calls have moved into CRWWebController.
-- (void)finishHistoryNavigationFromEntry:(CRWSessionEntry*)fromEntry;
-
 // Returns the native controller (if any) current mananging the content.
 - (id<CRWNativeContent>)nativeController;
 @end
@@ -314,15 +284,14 @@ class WebStateImpl;
 - (void)resetInjectedWebViewContentView;
 // Returns the number of observers registered for this CRWWebController.
 - (NSUInteger)observerCount;
-// Returns the current window id.
-- (NSString*)windowId;
-- (void)setWindowId:(NSString*)windowId;
 - (void)setURLOnStartLoading:(const GURL&)url;
 - (void)simulateLoadRequestWithURL:(const GURL&)URL;
-- (NSString*)externalRequestWindowName;
 
 // Returns the header height.
 - (CGFloat)headerHeight;
+
+// Loads the HTML into the page at the given URL.
+- (void)loadHTML:(NSString*)HTML forURL:(const GURL&)URL;
 
 // Caches request POST data in the given session entry.  Exposed for testing.
 - (void)cachePOSTDataForRequest:(NSURLRequest*)request

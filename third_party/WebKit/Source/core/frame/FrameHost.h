@@ -40,18 +40,14 @@
 
 namespace blink {
 
-class ChromeClient;
-class CustomElementReactionStack;
-class Deprecation;
+class BrowserControls;
+class ConsoleMessageStorage;
 class EventHandlerRegistry;
 class OverscrollController;
 class Page;
 struct PageScaleConstraints;
 class PageScaleConstraintsSet;
-class Settings;
-class TopControls;
-class UseCounter;
-class Visitor;
+class TopDocumentRootScrollerController;
 class VisualViewport;
 
 // FrameHost is the set of global data shared between multiple frames
@@ -60,91 +56,75 @@ class VisualViewport;
 // however the concept of a Page is moving up out of Blink.
 // In an out-of-process iframe world, a single Page may have
 // multiple frames in different process, thus Page becomes a
-// browser-level concept and Blink core/ only knows about its LocalFrame (and FrameHost).
-// Separating Page from the rest of core/ through this indirection
+// browser-level concept and Blink core/ only knows about its LocalFrame (and
+// FrameHost).  Separating Page from the rest of core/ through this indirection
 // allows us to slowly refactor Page without breaking the rest of core.
-class CORE_EXPORT FrameHost final : public GarbageCollectedFinalized<FrameHost> {
-    WTF_MAKE_NONCOPYABLE(FrameHost);
-public:
-    static FrameHost* create(Page&);
-    ~FrameHost();
+// TODO(sashab): Merge FrameHost back into Page. crbug.com/688614
+class CORE_EXPORT FrameHost final
+    : public GarbageCollectedFinalized<FrameHost> {
+  WTF_MAKE_NONCOPYABLE(FrameHost);
 
-    // Careful: This function will eventually be removed.
-    Page& page();
-    const Page& page() const;
+ public:
+  static FrameHost* create(Page&);
+  ~FrameHost();
 
-    Settings& settings();
-    const Settings& settings() const;
+  Page& page();
+  const Page& page() const;
 
-    ChromeClient& chromeClient();
-    const ChromeClient& chromeClient() const;
+  BrowserControls& browserControls();
+  const BrowserControls& browserControls() const;
 
-    UseCounter& useCounter();
-    const UseCounter& useCounter() const;
+  OverscrollController& overscrollController();
+  const OverscrollController& overscrollController() const;
 
-    Deprecation& deprecation();
-    const Deprecation& deprecation() const;
+  VisualViewport& visualViewport();
+  const VisualViewport& visualViewport() const;
 
-    // Corresponds to pixel density of the device where this Page is
-    // being displayed. In multi-monitor setups this can vary between pages.
-    // This value does not account for Page zoom, use LocalFrame::devicePixelRatio instead.
-    // This is to be deprecated. Use this with caution.
-    // 1) If you need to scale the content per device scale factor, this is still valid.
-    //    In use-zoom-for-dsf mode, this is always 1, and will be remove when transition is complete.
-    // 2) If you want to compute the device related measure (such as device pixel height, or the scale factor for drag image),
-    //    use ChromeClient::screenInfo() instead.
-    float deviceScaleFactorDeprecated() const;
+  PageScaleConstraintsSet& pageScaleConstraintsSet();
+  const PageScaleConstraintsSet& pageScaleConstraintsSet() const;
 
-    TopControls& topControls();
-    const TopControls& topControls() const;
+  EventHandlerRegistry& eventHandlerRegistry();
+  const EventHandlerRegistry& eventHandlerRegistry() const;
 
-    OverscrollController& overscrollController();
-    const OverscrollController& overscrollController() const;
+  ConsoleMessageStorage& consoleMessageStorage();
+  const ConsoleMessageStorage& consoleMessageStorage() const;
 
-    VisualViewport& visualViewport();
-    const VisualViewport& visualViewport() const;
+  TopDocumentRootScrollerController& globalRootScrollerController() const;
 
-    PageScaleConstraintsSet& pageScaleConstraintsSet();
-    const PageScaleConstraintsSet& pageScaleConstraintsSet() const;
+  DECLARE_TRACE();
 
-    EventHandlerRegistry& eventHandlerRegistry();
-    const EventHandlerRegistry& eventHandlerRegistry() const;
+  // Don't allow more than a certain number of frames in a page.
+  // This seems like a reasonable upper bound, and otherwise mutually
+  // recursive frameset pages can quickly bring the program to its knees
+  // with exponential growth in the number of frames.
+  static const int maxNumberOfFrames = 1000;
+  void incrementSubframeCount() { ++m_subframeCount; }
+  void decrementSubframeCount() {
+    ASSERT(m_subframeCount);
+    --m_subframeCount;
+  }
+  int subframeCount() const;
 
-    const AtomicString& overrideEncoding() const { return m_overrideEncoding; }
-    void setOverrideEncoding(const AtomicString& encoding) { m_overrideEncoding = encoding; }
+  void setDefaultPageScaleLimits(float minScale, float maxScale);
+  void setUserAgentPageScaleConstraints(
+      const PageScaleConstraints& newConstraints);
 
-    CustomElementReactionStack& customElementReactionStack();
-    const CustomElementReactionStack& customElementReactionStack() const;
+ private:
+  explicit FrameHost(Page&);
 
-    DECLARE_TRACE();
+  const Member<Page> m_page;
+  const Member<BrowserControls> m_browserControls;
+  const Member<VisualViewport> m_visualViewport;
+  const Member<OverscrollController> m_overscrollController;
+  const Member<EventHandlerRegistry> m_eventHandlerRegistry;
+  const Member<ConsoleMessageStorage> m_consoleMessageStorage;
+  const Member<TopDocumentRootScrollerController>
+      m_globalRootScrollerController;
 
-    // Don't allow more than a certain number of frames in a page.
-    // This seems like a reasonable upper bound, and otherwise mutually
-    // recursive frameset pages can quickly bring the program to its knees
-    // with exponential growth in the number of frames.
-    static const int maxNumberOfFrames = 1000;
-    void incrementSubframeCount() { ++m_subframeCount; }
-    void decrementSubframeCount() { ASSERT(m_subframeCount); --m_subframeCount; }
-    int subframeCount() const;
-
-    void setDefaultPageScaleLimits(float minScale, float maxScale);
-    void setUserAgentPageScaleConstraints(const PageScaleConstraints& newConstraints);
-
-private:
-    explicit FrameHost(Page&);
-
-    const Member<Page> m_page;
-    const Member<TopControls> m_topControls;
-    const std::unique_ptr<PageScaleConstraintsSet> m_pageScaleConstraintsSet;
-    const Member<VisualViewport> m_visualViewport;
-    const Member<OverscrollController> m_overscrollController;
-    const Member<EventHandlerRegistry> m_eventHandlerRegistry;
-    const Member<CustomElementReactionStack> m_customElementReactionStack;
-
-    AtomicString m_overrideEncoding;
-    int m_subframeCount;
+  AtomicString m_overrideEncoding;
+  int m_subframeCount;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // FrameHost_h
+#endif  // FrameHost_h

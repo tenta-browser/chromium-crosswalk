@@ -17,7 +17,8 @@
 #include "base/macros.h"
 #include "base/memory/memory_pressure_monitor.h"
 #include "base/metrics/field_trial.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
+#include "base/observer_list.h"
 #include "base/process/process.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
@@ -28,9 +29,10 @@
 #include "base/time/tick_clock.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/media/media_capture_devices_dispatcher.h"
-#include "chrome/browser/media/media_stream_capture_indicator.h"
+#include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
+#include "chrome/browser/media/webrtc/media_stream_capture_indicator.h"
 #include "chrome/browser/memory/oom_memory_details.h"
+#include "chrome/browser/memory/tab_manager_observer.h"
 #include "chrome/browser/memory/tab_manager_web_contents_data.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -53,10 +55,10 @@
 #include "content/public/common/page_importance_signals.h"
 
 #if defined(OS_CHROMEOS)
-#include "ash/common/session/session_state_delegate.h"
+#include "ash/common/multi_profile_uma.h"
 #include "ash/common/wm_shell.h"
-#include "ash/multi_profile_uma.h"
 #include "chrome/browser/memory/tab_manager_delegate_chromeos.h"
+#include "components/user_manager/user_manager.h"
 #endif
 
 using base::TimeDelta;
@@ -82,15 +84,17 @@ const int kRecentTabDiscardIntervalSeconds = 60;
 // machine was suspended and correct the timing statistics.
 const int kSuspendThresholdSeconds = kAdjustmentIntervalSeconds * 4;
 
+// A suspended renderer is suspended for this duration.
+constexpr base::TimeDelta kDurationOfRendererSuspension =
+    base::TimeDelta::FromSeconds(1200);
+
+// A resumed renderer is resumed for this duration.
+constexpr base::TimeDelta kDurationOfRendererResumption =
+    base::TimeDelta::FromSeconds(10);
+
 // The time during which a tab is protected from discarding after it stops being
 // audible.
 const int kAudioProtectionTimeSeconds = 60;
-
-// Returns a unique ID for a WebContents. Do not cast back to a pointer, as
-// the WebContents could be deleted if the user closed the tab.
-int64_t IdFromWebContents(WebContents* web_contents) {
-  return reinterpret_cast<int64_t>(web_contents);
-}
 
 int FindTabStripModelById(int64_t target_web_contents_id,
                           TabStripModel** model) {
@@ -99,7 +103,7 @@ int FindTabStripModelById(int64_t target_web_contents_id,
     TabStripModel* local_model = browser->tab_strip_model();
     for (int idx = 0; idx < local_model->count(); idx++) {
       WebContents* web_contents = local_model->GetWebContentsAt(idx);
-      int64_t web_contents_id = IdFromWebContents(web_contents);
+      int64_t web_contents_id = TabManager::IdFromWebContents(web_contents);
       if (web_contents_id == target_web_contents_id) {
         *model = local_model;
         return idx;
@@ -114,7 +118,7 @@ int FindTabStripModelById(int64_t target_web_contents_id,
 // TODO(chrisha): Move this do the default implementation of a delegate.
 base::MemoryPressureListener::MemoryPressureLevel
 GetCurrentPressureLevel() {
-  auto monitor = base::MemoryPressureMonitor::Get();
+  auto* monitor = base::MemoryPressureMonitor::Get();
   if (monitor)
     return monitor->GetCurrentPressureLevel();
   return base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_NONE;
@@ -135,10 +139,15 @@ void NotifyRendererProcess(
 ////////////////////////////////////////////////////////////////////////////////
 // TabManager
 
+constexpr base::TimeDelta TabManager::kDefaultTimeToFirstPurge;
+
 TabManager::TabManager()
     : discard_count_(0),
       recent_tab_discard_(false),
       discard_once_(false),
+#if !defined(OS_CHROMEOS)
+      minimum_protection_time_(base::TimeDelta::FromMinutes(10)),
+#endif
       browser_tab_strip_tracker_(this, nullptr, nullptr),
       test_tick_clock_(nullptr),
       under_memory_pressure_(false),
@@ -161,12 +170,15 @@ TabManager::~TabManager() {
 
 void TabManager::Start() {
 #if defined(OS_WIN) || defined(OS_MACOSX)
-  // If the feature is not enabled, do nothing.
+  // Note that discarding is now enabled by default. This check is kept as a
+  // kill switch.
+  // TODO(georgesak): remote this when deemed not needed anymore.
   if (!base::FeatureList::IsEnabled(features::kAutomaticTabDiscarding))
     return;
 
   // Check the variation parameter to see if a tab is to be protected for an
-  // amount of time after being backgrounded. The value is in seconds.
+  // amount of time after being backgrounded. The value is in seconds. Default
+  // is 10 minutes if the variation is absent.
   std::string minimum_protection_time_string =
       variations::GetVariationParamValue(features::kAutomaticTabDiscarding.name,
                                          "MinimumProtectionTime");
@@ -211,6 +223,18 @@ void TabManager::Start() {
     }
   }
 #endif
+  // purge-and-suspend param is used for Purge+Suspend finch experiment
+  // in the following way:
+  // https://docs.google.com/document/d/1hPHkKtXXBTlsZx9s-9U17XC-ofEIzPo9FYbBEc7PPbk/edit?usp=sharing
+  std::string purge_and_suspend_time = variations::GetVariationParamValue(
+      "PurgeAndSuspend", "purge-and-suspend-time");
+  unsigned int time_to_first_purge_sec = 0;
+  if (purge_and_suspend_time.empty() ||
+      !base::StringToUint(purge_and_suspend_time, &time_to_first_purge_sec))
+    time_to_first_suspension_ = kDefaultTimeToFirstPurge;
+  else
+    time_to_first_suspension_ =
+        base::TimeDelta::FromSeconds(time_to_first_purge_sec);
 }
 
 void TabManager::Stop() {
@@ -219,7 +243,7 @@ void TabManager::Stop() {
   memory_pressure_listener_.reset();
 }
 
-TabStatsList TabManager::GetTabStats() {
+TabStatsList TabManager::GetTabStats() const {
   TabStatsList stats_list(GetUnsortedTabStats());
 
   // Sort the collected data so that least desirable to be killed is first, most
@@ -229,7 +253,8 @@ TabStatsList TabManager::GetTabStats() {
   return stats_list;
 }
 
-std::vector<content::RenderProcessHost*> TabManager::GetOrderedRenderers() {
+std::vector<content::RenderProcessHost*>
+TabManager::GetOrderedRenderers() const {
   // Get the tab stats.
   auto tab_stats = GetTabStats();
 
@@ -241,7 +266,7 @@ std::vector<content::RenderProcessHost*> TabManager::GetOrderedRenderers() {
   // Convert the tab sort order to a process sort order. The process inherits
   // the priority of its highest priority tab.
   for (auto& tab : tab_stats) {
-    auto renderer = tab.render_process_host;
+    auto* renderer = tab.render_process_host;
 
     // Skip renderers associated with visible tabs as handling memory pressure
     // notifications in these processes can cause jank. This code works because
@@ -269,6 +294,62 @@ bool TabManager::IsTabDiscarded(content::WebContents* contents) const {
   return GetWebContentsData(contents)->IsDiscarded();
 }
 
+bool TabManager::CanDiscardTab(int64_t target_web_contents_id) const {
+  TabStripModel* model;
+  int idx = FindTabStripModelById(target_web_contents_id, &model);
+
+  if (idx == -1)
+    return false;
+
+  WebContents* web_contents = model->GetWebContentsAt(idx);
+
+  // Do not discard tabs that don't have a valid URL (most probably they have
+  // just been opened and dicarding them would lose the URL).
+  // TODO(georgesak): Look into a workaround to be able to kill the tab without
+  // losing the pending navigation.
+  if (!web_contents->GetLastCommittedURL().is_valid() ||
+      web_contents->GetLastCommittedURL().is_empty()) {
+    return false;
+  }
+
+  // Do not discard tabs in which the user has entered text in a form, lest that
+  // state gets lost.
+  if (web_contents->GetPageImportanceSignals().had_form_interaction)
+    return false;
+
+  // Do not discard tabs that are playing either playing audio or accessing the
+  // microphone or camera as it's too distruptive to the user experience. Note
+  // that tabs that have recently stopped playing audio by at least
+  // |kAudioProtectionTimeSeconds| seconds are protected as well.
+  if (IsMediaTab(web_contents))
+    return false;
+
+  // Do not discard PDFs as they might contain entry that is not saved and they
+  // don't remember their scrolling positions. See crbug.com/547286 and
+  // crbug.com/65244.
+  // TODO(georgesak): Remove this workaround when the bugs are fixed.
+  if (web_contents->GetContentsMimeType() == "application/pdf")
+    return false;
+
+  // Do not discard a previously discarded tab if that's the desired behavior.
+  if (discard_once_ && GetWebContentsData(web_contents)->DiscardCount() > 0)
+    return false;
+
+  // Do not discard a recently used tab.
+  if (minimum_protection_time_.InSeconds() > 0) {
+    auto delta =
+        NowTicks() - GetWebContentsData(web_contents)->LastInactiveTime();
+    if (delta < minimum_protection_time_)
+      return false;
+  }
+
+  // Do not discard a tab that was explicitly disallowed to.
+  if (!IsTabAutoDiscardable(web_contents))
+    return false;
+
+  return true;
+}
+
 void TabManager::DiscardTab() {
 #if defined(OS_CHROMEOS)
   // Call Chrome OS specific low memory handling process.
@@ -292,6 +373,13 @@ WebContents* TabManager::DiscardTabById(int64_t target_web_contents_id) {
   return DiscardWebContentsAt(index, model);
 }
 
+WebContents* TabManager::DiscardTabByExtension(content::WebContents* contents) {
+  if (contents)
+    return DiscardTabById(IdFromWebContents(contents));
+
+  return DiscardTabImpl();
+}
+
 void TabManager::LogMemoryAndDiscardTab() {
   LogMemory("Tab Discards Memory details",
             base::Bind(&TabManager::PurgeMemoryAndDiscardTab));
@@ -307,54 +395,148 @@ void TabManager::set_test_tick_clock(base::TickClock* test_tick_clock) {
   test_tick_clock_ = test_tick_clock;
 }
 
-void TabManager::TabChangedAt(content::WebContents* contents,
-                              int index,
-                              TabChangeType change_type) {
-  if (change_type != TabChangeType::ALL)
-    return;
-  auto data = GetWebContentsData(contents);
-  bool old_state = data->IsRecentlyAudible();
-  bool current_state = contents->WasRecentlyAudible();
-  if (old_state != current_state) {
-    data->SetRecentlyAudible(current_state);
-    data->SetLastAudioChangeTime(NowTicks());
+// Things to collect on the browser thread (because TabStripModel isn't thread
+// safe):
+// 1) whether or not a tab is pinned
+// 2) last time a tab was selected
+// 3) is the tab currently selected
+TabStatsList TabManager::GetUnsortedTabStats() const {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  TabStatsList stats_list;
+  stats_list.reserve(32);  // 99% of users have < 30 tabs open.
+
+  // TODO(chrisha): Move this code to a TabStripModel enumeration delegate!
+  if (!test_tab_strip_models_.empty()) {
+    for (size_t i = 0; i < test_tab_strip_models_.size(); ++i) {
+      AddTabStats(test_tab_strip_models_[i].first,   // tab_strip_model
+                  test_tab_strip_models_[i].second,  // is_app
+                  i == 0,                            // is_active
+                  &stats_list);
+    }
+  } else {
+    // The code here can only be tested under a full browser test.
+    AddTabStats(&stats_list);
   }
+
+  return stats_list;
 }
 
-void TabManager::ActiveTabChanged(content::WebContents* old_contents,
-                                  content::WebContents* new_contents,
-                                  int index,
-                                  int reason) {
-  GetWebContentsData(new_contents)->SetDiscardState(false);
-  // If |old_contents| is set, that tab has switched from being active to
-  // inactive, so record the time of that transition.
-  if (old_contents)
-    GetWebContentsData(old_contents)->SetLastInactiveTime(NowTicks());
+void TabManager::AddObserver(TabManagerObserver* observer) {
+  observers_.AddObserver(observer);
 }
 
-void TabManager::TabInsertedAt(content::WebContents* contents,
-                               int index,
-                               bool foreground) {
-  // Only interested in background tabs, as foreground tabs get taken care of by
-  // ActiveTabChanged.
-  if (foreground)
-    return;
+void TabManager::RemoveObserver(TabManagerObserver* observer) {
+  observers_.RemoveObserver(observer);
+}
 
-  // A new background tab is similar to having a tab switch from being active to
-  // inactive.
-  GetWebContentsData(contents)->SetLastInactiveTime(NowTicks());
+void TabManager::set_minimum_protection_time_for_tests(
+    base::TimeDelta minimum_protection_time) {
+  minimum_protection_time_ = minimum_protection_time;
+}
+
+bool TabManager::IsTabAutoDiscardable(content::WebContents* contents) const {
+  return GetWebContentsData(contents)->IsAutoDiscardable();
+}
+
+void TabManager::SetTabAutoDiscardableState(content::WebContents* contents,
+                                            bool state) {
+  GetWebContentsData(contents)->SetAutoDiscardableState(state);
+}
+
+content::WebContents* TabManager::GetWebContentsById(
+    int64_t tab_contents_id) const {
+  TabStripModel* model = nullptr;
+  int index = FindTabStripModelById(tab_contents_id, &model);
+  if (index == -1)
+    return nullptr;
+  return model->GetWebContentsAt(index);
+}
+
+bool TabManager::CanSuspendBackgroundedRenderer(int render_process_id) const {
+  // A renderer can be suspended if it's not playing media.
+  auto tab_stats = GetUnsortedTabStats();
+  for (auto& tab : tab_stats) {
+    if (tab.child_process_host_id != render_process_id)
+      continue;
+    WebContents* web_contents = GetWebContentsById(tab.tab_contents_id);
+    if (!web_contents)
+      return false;
+    if (IsMediaTab(web_contents))
+      return false;
+  }
+  return true;
+}
+
+// static
+bool TabManager::CompareTabStats(const TabStats& first,
+                                 const TabStats& second) {
+  // Being currently selected is most important to protect.
+  if (first.is_selected != second.is_selected)
+    return first.is_selected;
+
+  // Non auto-discardable tabs are more important to protect.
+  if (first.is_auto_discardable != second.is_auto_discardable)
+    return !first.is_auto_discardable;
+
+  // Protect tabs with pending form entries.
+  if (first.has_form_entry != second.has_form_entry)
+    return first.has_form_entry;
+
+  // Protect streaming audio and video conferencing tabs as these are similar to
+  // active tabs.
+  if (first.is_media != second.is_media)
+    return first.is_media;
+
+  // Tab with internal web UI like NTP or Settings are good choices to discard,
+  // so protect non-Web UI and let the other conditionals finish the sort.
+  if (first.is_internal_page != second.is_internal_page)
+    return !first.is_internal_page;
+
+  // Being pinned is important to protect.
+  if (first.is_pinned != second.is_pinned)
+    return first.is_pinned;
+
+  // Being an app is important too, as it's the only visible surface in the
+  // window and should not be discarded.
+  if (first.is_app != second.is_app)
+    return first.is_app;
+
+  // TODO(jamescook): Incorporate sudden_termination_allowed into the sort
+  // order. This is currently not done because pages with unload handlers set
+  // sudden_termination_allowed false, and that covers too many common pages
+  // with ad networks and statistics scripts.  Ideally check for beforeUnload
+  // handlers, which are likely to present a dialog asking if the user wants to
+  // discard state.  crbug.com/123049.
+
+  // Being more recently active is more important.
+  return first.last_active > second.last_active;
+}
+
+// static
+int64_t TabManager::IdFromWebContents(WebContents* web_contents) {
+  return reinterpret_cast<int64_t>(web_contents);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 // TabManager, private:
 
+void TabManager::OnDiscardedStateChange(content::WebContents* contents,
+                                        bool is_discarded) {
+  for (TabManagerObserver& observer : observers_)
+    observer.OnDiscardedStateChange(contents, is_discarded);
+}
+
+void TabManager::OnAutoDiscardableStateChange(content::WebContents* contents,
+                                              bool is_auto_discardable) {
+  for (TabManagerObserver& observer : observers_)
+    observer.OnAutoDiscardableStateChange(contents, is_auto_discardable);
+}
+
 // static
 void TabManager::PurgeMemoryAndDiscardTab() {
-  if (g_browser_process && g_browser_process->GetTabManager()) {
-    TabManager* manager = g_browser_process->GetTabManager();
-    manager->PurgeBrowserMemory();
-    manager->DiscardTab();
-  }
+  TabManager* manager = g_browser_process->GetTabManager();
+  manager->PurgeBrowserMemory();
+  manager->DiscardTab();
 }
 
 // static
@@ -385,9 +567,8 @@ void TabManager::RecordDiscardStatistics() {
   // Record the discarded tab in relation to the amount of simultaneously
   // logged in users.
   if (ash::WmShell::HasInstance()) {
-    ash::MultiProfileUMA::RecordDiscardedTab(ash::WmShell::Get()
-                                                 ->GetSessionStateDelegate()
-                                                 ->NumberOfLoggedInUsers());
+    ash::MultiProfileUMA::RecordDiscardedTab(
+        user_manager::UserManager::Get()->GetLoggedInUsers().size());
   }
 #endif
   // TODO(jamescook): If the time stats prove too noisy, then divide up users
@@ -454,7 +635,7 @@ int TabManager::GetTabCount() const {
   return tab_count;
 }
 
-void TabManager::AddTabStats(TabStatsList* stats_list) {
+void TabManager::AddTabStats(TabStatsList* stats_list) const {
   BrowserList* browser_list = BrowserList::GetInstance();
   for (BrowserList::const_reverse_iterator browser_iterator =
            browser_list->begin_last_active();
@@ -473,14 +654,13 @@ void TabManager::AddTabStats(TabStatsList* stats_list) {
 void TabManager::AddTabStats(const TabStripModel* model,
                              bool is_app,
                              bool active_model,
-                             TabStatsList* stats_list) {
+                             TabStatsList* stats_list) const {
   for (int i = 0; i < model->count(); i++) {
     WebContents* contents = model->GetWebContentsAt(i);
     if (!contents->IsCrashed()) {
       TabStats stats;
       stats.is_app = is_app;
-      stats.is_internal_page =
-          IsInternalPage(contents->GetLastCommittedURL());
+      stats.is_internal_page = IsInternalPage(contents->GetLastCommittedURL());
       stats.is_media = IsMediaTab(contents);
       stats.is_pinned = model->IsTabPinned(i);
       stats.is_selected = active_model && model->IsTabSelected(i);
@@ -489,6 +669,7 @@ void TabManager::AddTabStats(const TabStripModel* model,
           contents->GetPageImportanceSignals().had_form_interaction;
       stats.discard_count = GetWebContentsData(contents)->DiscardCount();
       stats.last_active = contents->GetLastActiveTime();
+      stats.last_hidden = contents->GetLastHiddenTime();
       stats.render_process_host = contents->GetRenderProcessHost();
       stats.renderer_handle = contents->GetRenderProcessHost()->GetHandle();
       stats.child_process_host_id = contents->GetRenderProcessHost()->GetID();
@@ -537,85 +718,75 @@ void TabManager::UpdateTimerCallback() {
   PurgeAndSuspendBackgroundedTabs();
 }
 
-void TabManager::PurgeAndSuspendBackgroundedTabs() {
-  const base::CommandLine& command_line =
-      *base::CommandLine::ForCurrentProcess();
-  if (!command_line.HasSwitch(switches::kPurgeAndSuspendTime))
-    return;
-  int purge_and_suspend_time = 0;
-  if (!base::StringToInt(
-          command_line.GetSwitchValueASCII(switches::kPurgeAndSuspendTime),
-          &purge_and_suspend_time)) {
-    return;
+TabManager::PurgeAndSuspendState TabManager::GetNextPurgeAndSuspendState(
+    content::WebContents* content,
+    base::TimeTicks current_time,
+    const base::TimeDelta& time_to_first_suspension) const {
+  DCHECK(content);
+  PurgeAndSuspendState state =
+      GetWebContentsData(content)->GetPurgeAndSuspendState();
+
+  auto time_passed = current_time -
+      GetWebContentsData(content)->LastPurgeAndSuspendModifiedTime();
+  switch (state) {
+    case RUNNING:
+      if (time_passed > time_to_first_suspension)
+        return SUSPENDED;
+      break;
+    case RESUMED:
+      if (time_passed > kDurationOfRendererResumption)
+        return SUSPENDED;
+      break;
+    case SUSPENDED:
+      if (time_passed > kDurationOfRendererSuspension)
+        return RESUMED;
+      break;
   }
-  if (purge_and_suspend_time <= 0)
-    return;
-  auto purge_and_suspend_time_threshold =
-      NowTicks() - base::TimeDelta::FromSeconds(purge_and_suspend_time);
+  return state;
+}
+
+void TabManager::PurgeAndSuspendBackgroundedTabs() {
+  base::TimeTicks current_time = NowTicks();
   auto tab_stats = GetUnsortedTabStats();
   for (auto& tab : tab_stats) {
     if (!tab.render_process_host->IsProcessBackgrounded())
       continue;
+    if (!CanSuspendBackgroundedRenderer(tab.child_process_host_id))
+      continue;
+
+    WebContents* content = GetWebContentsById(tab.tab_contents_id);
+    if (!content)
+      continue;
+
+    PurgeAndSuspendState current_state =
+        GetWebContentsData(content)->GetPurgeAndSuspendState();
+    // If the tab's purge-and-suspend state is not RUNNING, the tab should be
+    // backgrounded. Since tab.last_hidden is updated everytime the tab is
+    // hidden, we should see tab.last_hidden < last_modified_time.
+    DCHECK(current_state == RUNNING ||
+           tab.last_hidden <
+               GetWebContentsData(content)->LastPurgeAndSuspendModifiedTime());
+    PurgeAndSuspendState next_state = GetNextPurgeAndSuspendState(
+        content, current_time, time_to_first_suspension_);
+    if (current_state == next_state)
+      continue;
+
     // TODO(hajimehoshi): Now calling PurgeAndSuspend is implemented without
     // timers for simplicity, so PurgeAndSuspend is called even after the
     // renderer is purged and suspended once. This should be replaced with
     // timers if we want necessary and sufficient signals.
-    if (tab.last_active > purge_and_suspend_time_threshold)
-      continue;
-    tab.render_process_host->PurgeAndSuspend();
+    GetWebContentsData(content)->SetPurgeAndSuspendState(next_state);
+    switch (next_state) {
+      case SUSPENDED:
+        tab.render_process_host->PurgeAndSuspend();
+        break;
+      case RESUMED:
+        tab.render_process_host->Resume();
+        break;
+      case RUNNING:
+        NOTREACHED();
+    }
   }
-}
-
-bool TabManager::CanDiscardTab(int64_t target_web_contents_id) const {
-  TabStripModel* model;
-  int idx = FindTabStripModelById(target_web_contents_id, &model);
-
-  if (idx == -1)
-    return false;
-
-  WebContents* web_contents = model->GetWebContentsAt(idx);
-
-  // Do not discard tabs that don't have a valid URL (most probably they have
-  // just been opened and dicarding them would lose the URL).
-  // TODO(georgesak): Look into a workaround to be able to kill the tab without
-  // losing the pending navigation.
-  if (!web_contents->GetLastCommittedURL().is_valid() ||
-      web_contents->GetLastCommittedURL().is_empty()) {
-    return false;
-  }
-
-  // Do not discard tabs in which the user has entered text in a form, lest that
-  // state gets lost.
-  if (web_contents->GetPageImportanceSignals().had_form_interaction)
-    return false;
-
-  // Do not discard tabs that are playing either playing audio or accessing the
-  // microphone or camera as it's too distruptive to the user experience. Note
-  // that tabs that have recently stopped playing audio by at least
-  // |kAudioProtectionTimeSeconds| seconds are protected as well.
-  if (IsMediaTab(web_contents))
-    return false;
-
-  // Do not discard PDFs as they might contain entry that is not saved and they
-  // don't remember their scrolling positions. See crbug.com/547286 and
-  // crbug.com/65244.
-  // TODO(georgesak): Remove this workaround when the bugs are fixed.
-  if (web_contents->GetContentsMimeType() == "application/pdf")
-    return false;
-
-  // Do not discard a previously discarded tab if that's the desired behavior.
-  if (discard_once_ && GetWebContentsData(web_contents)->DiscardCount() > 0)
-    return false;
-
-  // Do not discard a recently used tab.
-  if (minimum_protection_time_.InSeconds() > 0) {
-    auto delta =
-        NowTicks() - GetWebContentsData(web_contents)->LastInactiveTime();
-    if (delta < minimum_protection_time_)
-      return false;
-  }
-
-  return true;
 }
 
 WebContents* TabManager::DiscardWebContentsAt(int index, TabStripModel* model) {
@@ -696,6 +867,46 @@ void TabManager::OnMemoryPressure(
 #endif
 }
 
+void TabManager::TabChangedAt(content::WebContents* contents,
+                              int index,
+                              TabChangeType change_type) {
+  if (change_type != TabChangeType::ALL)
+    return;
+  auto* data = GetWebContentsData(contents);
+  bool old_state = data->IsRecentlyAudible();
+  bool current_state = contents->WasRecentlyAudible();
+  if (old_state != current_state) {
+    data->SetRecentlyAudible(current_state);
+    data->SetLastAudioChangeTime(NowTicks());
+  }
+}
+
+void TabManager::ActiveTabChanged(content::WebContents* old_contents,
+                                  content::WebContents* new_contents,
+                                  int index,
+                                  int reason) {
+  GetWebContentsData(new_contents)->SetDiscardState(false);
+  GetWebContentsData(new_contents)->SetPurgeAndSuspendState(RUNNING);
+  // If |old_contents| is set, that tab has switched from being active to
+  // inactive, so record the time of that transition.
+  if (old_contents)
+    GetWebContentsData(old_contents)->SetLastInactiveTime(NowTicks());
+}
+
+void TabManager::TabInsertedAt(TabStripModel* tab_strip_model,
+                               content::WebContents* contents,
+                               int index,
+                               bool foreground) {
+  // Only interested in background tabs, as foreground tabs get taken care of by
+  // ActiveTabChanged.
+  if (foreground)
+    return;
+
+  // A new background tab is similar to having a tab switch from being active to
+  // inactive.
+  GetWebContentsData(contents)->SetLastInactiveTime(NowTicks());
+}
+
 bool TabManager::IsMediaTab(WebContents* contents) const {
   if (contents->WasRecentlyAudible())
     return true;
@@ -715,49 +926,9 @@ bool TabManager::IsMediaTab(WebContents* contents) const {
 TabManager::WebContentsData* TabManager::GetWebContentsData(
     content::WebContents* contents) const {
   WebContentsData::CreateForWebContents(contents);
-  auto web_contents_data = WebContentsData::FromWebContents(contents);
+  auto* web_contents_data = WebContentsData::FromWebContents(contents);
   web_contents_data->set_test_tick_clock(test_tick_clock_);
   return web_contents_data;
-}
-
-// static
-bool TabManager::CompareTabStats(TabStats first, TabStats second) {
-  // Being currently selected is most important to protect.
-  if (first.is_selected != second.is_selected)
-    return first.is_selected;
-
-  // Protect tabs with pending form entries.
-  if (first.has_form_entry != second.has_form_entry)
-    return first.has_form_entry;
-
-  // Protect streaming audio and video conferencing tabs as these are similar to
-  // active tabs.
-  if (first.is_media != second.is_media)
-    return first.is_media;
-
-  // Tab with internal web UI like NTP or Settings are good choices to discard,
-  // so protect non-Web UI and let the other conditionals finish the sort.
-  if (first.is_internal_page != second.is_internal_page)
-    return !first.is_internal_page;
-
-  // Being pinned is important to protect.
-  if (first.is_pinned != second.is_pinned)
-    return first.is_pinned;
-
-  // Being an app is important too, as it's the only visible surface in the
-  // window and should not be discarded.
-  if (first.is_app != second.is_app)
-    return first.is_app;
-
-  // TODO(jamescook): Incorporate sudden_termination_allowed into the sort
-  // order. This is currently not done because pages with unload handlers set
-  // sudden_termination_allowed false, and that covers too many common pages
-  // with ad networks and statistics scripts.  Ideally check for beforeUnload
-  // handlers, which are likely to present a dialog asking if the user wants to
-  // discard state.  crbug.com/123049.
-
-  // Being more recently active is more important.
-  return first.last_active > second.last_active;
 }
 
 TimeTicks TabManager::NowTicks() const {
@@ -830,27 +1001,29 @@ void TabManager::DoChildProcessDispatch() {
 // TODO(jamescook): This should consider tabs with references to other tabs,
 // such as tabs created with JavaScript window.open(). Potentially consider
 // discarding the entire set together, or use that in the priority computation.
-bool TabManager::DiscardTabImpl() {
+content::WebContents* TabManager::DiscardTabImpl() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   TabStatsList stats = GetTabStats();
 
   if (stats.empty())
-    return false;
+    return nullptr;
   // Loop until a non-discarded tab to kill is found.
   for (TabStatsList::const_reverse_iterator stats_rit = stats.rbegin();
        stats_rit != stats.rend(); ++stats_rit) {
     int64_t least_important_tab_id = stats_rit->tab_contents_id;
-    if (CanDiscardTab(least_important_tab_id) &&
-        DiscardTabById(least_important_tab_id))
-      return true;
+    if (CanDiscardTab(least_important_tab_id)) {
+      WebContents* new_contents = DiscardTabById(least_important_tab_id);
+      if (new_contents)
+        return new_contents;
+    }
   }
-  return false;
+  return nullptr;
 }
 
 // Check the variation parameter to see if a tab can be discarded only once or
 // multiple times.
 // Default is to only discard once per tab.
-bool TabManager::CanOnlyDiscardOnce() {
+bool TabManager::CanOnlyDiscardOnce() const {
 #if defined(OS_WIN) || defined(OS_MACOSX)
   // On Windows and MacOS, default to discarding only once unless otherwise
   // specified by the variation parameter.
@@ -862,32 +1035,6 @@ bool TabManager::CanOnlyDiscardOnce() {
 #else
   return false;
 #endif
-}
-
-// Things to collect on the browser thread (because TabStripModel isn't thread
-// safe):
-// 1) whether or not a tab is pinned
-// 2) last time a tab was selected
-// 3) is the tab currently selected
-TabStatsList TabManager::GetUnsortedTabStats() {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  TabStatsList stats_list;
-  stats_list.reserve(32);  // 99% of users have < 30 tabs open.
-
-  // TODO(chrisha): Move this code to a TabStripModel enumeration delegate!
-  if (!test_tab_strip_models_.empty()) {
-    for (size_t i = 0; i < test_tab_strip_models_.size(); ++i) {
-      AddTabStats(test_tab_strip_models_[i].first,   // tab_strip_model
-                  test_tab_strip_models_[i].second,  // is_app
-                  i == 0,                            // is_active
-                  &stats_list);
-    }
-  } else {
-    // The code here can only be tested under a full browser test.
-    AddTabStats(&stats_list);
-  }
-
-  return stats_list;
 }
 
 }  // namespace memory

@@ -4,8 +4,11 @@
 
 package org.chromium.chrome.browser.compositor.bottombar.readermode;
 
+import android.app.Activity;
 import android.content.Context;
+import android.graphics.RectF;
 
+import org.chromium.base.ActivityState;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.compositor.LayerTitleCache;
 import org.chromium.chrome.browser.compositor.bottombar.OverlayContentDelegate;
@@ -84,10 +87,16 @@ public class ReaderModePanel extends OverlayPanel {
                 mContentViewDelegate.setOverlayPanelContentViewCore(contentView);
 
                 WebContents distilledWebContents = contentView.getWebContents();
-                if (distilledWebContents == null) return;
+                if (distilledWebContents == null) {
+                    closePanel(StateChangeReason.UNKNOWN, false);
+                    return;
+                }
 
                 WebContents sourceWebContents = mManagerDelegate.getBasePageWebContents();
-                if (sourceWebContents == null) return;
+                if (sourceWebContents == null) {
+                    closePanel(StateChangeReason.UNKNOWN, false);
+                    return;
+                }
 
                 DomDistillerTabUtils.distillAndView(sourceWebContents, distilledWebContents);
             }
@@ -131,8 +140,8 @@ public class ReaderModePanel extends OverlayPanel {
     }
 
     @Override
-    public SceneOverlayLayer getUpdatedSceneOverlayTree(LayerTitleCache layerTitleCache,
-            ResourceManager resourceManager, float yOffset) {
+    public SceneOverlayLayer getUpdatedSceneOverlayTree(RectF viewport, RectF visibleViewport,
+            LayerTitleCache layerTitleCache, ResourceManager resourceManager, float yOffset) {
         mSceneLayer.update(resourceManager, this, getBarTextViewId(), mReaderBarTextOpacity);
 
         return mSceneLayer;
@@ -141,8 +150,8 @@ public class ReaderModePanel extends OverlayPanel {
     @Override
     public boolean updateOverlay(long time, long dt) {
         // This will cause the ContentViewCore to size itself appropriately for the panel (includes
-        // top controls height).
-        updateTopControlsState();
+        // browser controls height).
+        updateBrowserControlsState();
 
         return super.updateOverlay(time, dt);
     }
@@ -253,7 +262,7 @@ public class ReaderModePanel extends OverlayPanel {
         if (!mTimerRunning && animatingToOpenState) {
             mStartTime = System.currentTimeMillis();
             mTimerRunning = true;
-            if (mManagerDelegate != null) {
+            if (mManagerDelegate != null && mManagerDelegate.getBasePageWebContents() != null) {
                 String url = mManagerDelegate.getBasePageWebContents().getUrl();
                 RapporServiceBridge.sampleDomainAndRegistryFromURL(
                         "DomDistiller.OpenPanel", url);
@@ -305,22 +314,32 @@ public class ReaderModePanel extends OverlayPanel {
         // Do not attempt to auto-hide the reader mode bar if the toolbar is less than a certain
         // height.
         boolean shouldAutoHide = getToolbarHeight() >= getBarHeightPeeking();
-        // This will cause the reader mode bar to behave like the top controls; sliding out of
+        // This will cause the reader mode bar to behave like the browser controls; sliding out of
         // view as the page scrolls.
-        return super.getOffsetY() + (shouldAutoHide ? getTopControlsOffsetDp() : 0.0f);
+        return super.getOffsetY() + (shouldAutoHide ? getBrowserControlsOffsetDp() : 0.0f);
     }
 
     @Override
-    public void onSizeChanged(float width, float height) {
-        super.onSizeChanged(width, height);
+    public void onLayoutChanged(float width, float height, float visibleViewportOffsetY) {
+        if (width != getWidth()) destroyReaderModeBarControl();
+
+        super.onLayoutChanged(width, height, visibleViewportOffsetY);
+
         if (mManagerDelegate != null) {
-            mManagerDelegate.onSizeChanged();
+            mManagerDelegate.onLayoutChanged();
         }
     }
 
     @Override
     protected float calculateBasePageDesiredOffset() {
         return -getToolbarHeight();
+    }
+
+    @Override
+    public void onActivityStateChange(Activity activity, int newState) {
+        // If the activity is only resuming, don't do anything.
+        if (newState == ActivityState.RESUMED) return;
+        super.onActivityStateChange(activity, newState);
     }
 
     // ============================================================================================

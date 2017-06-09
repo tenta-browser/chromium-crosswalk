@@ -9,7 +9,7 @@
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
-#include "base/threading/worker_pool.h"
+#include "base/task_scheduler/post_task.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkSurface.h"
 #include "ui/gfx/codec/png_codec.h"
@@ -35,7 +35,7 @@ void WriteDataToFile(const base::FilePath& location, const SkBitmap& bitmap) {
 // TODO(altimin): Find a proper way to capture rendering output.
 class FileSurface : public SurfaceOzoneCanvas {
  public:
-  FileSurface(const base::FilePath& location) : location_(location) {}
+  explicit FileSurface(const base::FilePath& location) : location_(location) {}
   ~FileSurface() override {}
 
   // SurfaceOzoneCanvas overrides:
@@ -53,8 +53,12 @@ class FileSurface : public SurfaceOzoneCanvas {
     // TODO(dnicoara) Use SkImage instead to potentially avoid a copy.
     // See crbug.com/361605 for details.
     if (surface_->getCanvas()->readPixels(&bitmap, 0, 0)) {
-      base::WorkerPool::PostTask(
-          FROM_HERE, base::Bind(&WriteDataToFile, location_, bitmap), true);
+      base::PostTaskWithTraits(
+          FROM_HERE, base::TaskTraits()
+                         .WithShutdownBehavior(
+                             base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN)
+                         .MayBlock(),
+          base::Bind(&WriteDataToFile, location_, bitmap));
     }
   }
   std::unique_ptr<gfx::VSyncProvider> CreateVSyncProvider() override {
@@ -68,7 +72,7 @@ class FileSurface : public SurfaceOzoneCanvas {
 
 class TestPixmap : public ui::NativePixmap {
  public:
-  TestPixmap(gfx::BufferFormat format) : format_(format) {}
+  explicit TestPixmap(gfx::BufferFormat format) : format_(format) {}
 
   void* GetEGLClientBuffer() const override { return nullptr; }
   bool AreDmaBufFdsValid() const override { return false; }
@@ -76,6 +80,7 @@ class TestPixmap : public ui::NativePixmap {
   int GetDmaBufFd(size_t plane) const override { return -1; }
   int GetDmaBufPitch(size_t plane) const override { return 0; }
   int GetDmaBufOffset(size_t plane) const override { return 0; }
+  uint64_t GetDmaBufModifier(size_t plane) const override { return 0; }
   gfx::BufferFormat GetBufferFormat() const override { return format_; }
   gfx::Size GetBufferSize() const override { return gfx::Size(); }
   bool ScheduleOverlayPlane(gfx::AcceleratedWidget widget,
@@ -114,12 +119,6 @@ std::unique_ptr<SurfaceOzoneCanvas>
 HeadlessSurfaceFactory::CreateCanvasForWidget(gfx::AcceleratedWidget widget) {
   HeadlessWindow* window = window_manager_->GetWindow(widget);
   return base::WrapUnique<SurfaceOzoneCanvas>(new FileSurface(window->path()));
-}
-
-bool HeadlessSurfaceFactory::LoadEGLGLES2Bindings(
-    AddGLLibraryCallback add_gl_library,
-    SetGLGetProcAddressProcCallback set_gl_get_proc_address) {
-  return false;
 }
 
 scoped_refptr<NativePixmap> HeadlessSurfaceFactory::CreateNativePixmap(

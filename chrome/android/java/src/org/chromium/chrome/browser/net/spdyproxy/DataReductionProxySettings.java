@@ -13,6 +13,7 @@ import org.chromium.base.ContextUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
+import org.chromium.chrome.browser.UrlConstants;
 
 import java.text.NumberFormat;
 import java.util.HashMap;
@@ -125,14 +126,15 @@ public class DataReductionProxySettings {
         mNativeDataReductionProxySettings = nativeInit();
     }
 
-    /** Returns true if the SPDY proxy is allowed to be used. */
-    public boolean isDataReductionProxyAllowed() {
-        return nativeIsDataReductionProxyAllowed(mNativeDataReductionProxySettings);
-    }
-
     /** Returns true if the SPDY proxy promo is allowed to be shown. */
     public boolean isDataReductionProxyPromoAllowed() {
         return nativeIsDataReductionProxyPromoAllowed(mNativeDataReductionProxySettings);
+    }
+
+    /** Returns true if the snackbar promo is allowed to be shown. */
+    public boolean isSnackbarPromoAllowed(String url) {
+        return url.startsWith(UrlConstants.HTTP_URL_PREFIX) && isDataReductionProxyEnabled()
+                && isDataReductionProxyPromoAllowed();
     }
 
     /**
@@ -148,54 +150,6 @@ public class DataReductionProxySettings {
     /** Returns true if the Data Reduction Proxy proxy is enabled. */
     public boolean isDataReductionProxyEnabled() {
         return nativeIsDataReductionProxyEnabled(mNativeDataReductionProxySettings);
-    }
-
-    /**
-     * Returns true if the Data Reduction Proxy proxy can be used for the given url. This method
-     * does not take into account the proxy config or proxy retry list, so it can return true even
-     * when the proxy will not be used.
-     */
-    public boolean canUseDataReductionProxy(String url) {
-        return nativeCanUseDataReductionProxy(mNativeDataReductionProxySettings, url);
-    }
-
-    /**
-     * Returns true if the Data Reduction Proxy's Lo-Fi mode was enabled on the last main frame
-     * request.
-     */
-    public boolean wasLoFiModeActiveOnMainFrame() {
-        return nativeWasLoFiModeActiveOnMainFrame(mNativeDataReductionProxySettings);
-    }
-
-    /**
-     * Returns true if a "Load image" context menu request has not been made since the last main
-     * frame request.
-     */
-    public boolean wasLoFiLoadImageRequestedBefore() {
-        return nativeWasLoFiLoadImageRequestedBefore(mNativeDataReductionProxySettings);
-    }
-
-    /**
-     * Records that a "Load image" context menu request has been made.
-     */
-    public void setLoFiLoadImageRequested() {
-        nativeSetLoFiLoadImageRequested(mNativeDataReductionProxySettings);
-    }
-
-    /**
-     * Counts the number of times the Lo-Fi snackbar has been shown.
-     *  */
-    public void incrementLoFiSnackbarShown() {
-        nativeIncrementLoFiSnackbarShown(mNativeDataReductionProxySettings);
-    }
-
-    /**
-     * Counts the number of requests to reload the page with images from the Lo-Fi snackbar. If the
-     * user requests the page with images a certain number of times, then Lo-Fi is disabled for the
-     * session.
-     *  */
-    public void incrementLoFiUserRequestsForImages() {
-        nativeIncrementLoFiUserRequestsForImages(mNativeDataReductionProxySettings);
     }
 
     /** Returns true if the SPDY proxy is managed by an administrator's policy. */
@@ -217,6 +171,14 @@ public class DataReductionProxySettings {
      */
     public ContentLengths getContentLengths() {
         return nativeGetContentLengths(mNativeDataReductionProxySettings);
+    }
+
+    /**
+     * Returns the total HTTP content length saved.
+     * @return The HTTP content length saved.
+     */
+    public long getTotalHttpContentLengthSaved() {
+        return nativeGetTotalHttpContentLengthSaved(mNativeDataReductionProxySettings);
     }
 
     /**
@@ -285,7 +247,8 @@ public class DataReductionProxySettings {
         }
         String rewritten = extractUrlFromWebliteQueryParams(url);
         if (rewritten == null
-                || !TextUtils.equals(Uri.parse(rewritten).getScheme(), "http")) {
+                || !TextUtils.equals(Uri.parse(rewritten).getScheme(),
+                        UrlConstants.HTTP_SCHEME)) {
             return url;
         }
 
@@ -303,23 +266,9 @@ public class DataReductionProxySettings {
     }
 
     private native long nativeInit();
-    private native boolean nativeIsDataReductionProxyAllowed(
-            long nativeDataReductionProxySettingsAndroid);
     private native boolean nativeIsDataReductionProxyPromoAllowed(
             long nativeDataReductionProxySettingsAndroid);
     private native boolean nativeIsDataReductionProxyEnabled(
-            long nativeDataReductionProxySettingsAndroid);
-    private native boolean nativeCanUseDataReductionProxy(
-            long nativeDataReductionProxySettingsAndroid, String url);
-    private native boolean nativeWasLoFiModeActiveOnMainFrame(
-            long nativeDataReductionProxySettingsAndroid);
-    private native boolean nativeWasLoFiLoadImageRequestedBefore(
-            long nativeDataReductionProxySettingsAndroid);
-    private native void nativeSetLoFiLoadImageRequested(
-            long nativeDataReductionProxySettingsAndroid);
-    private native void nativeIncrementLoFiSnackbarShown(
-            long nativeDataReductionProxySettingsAndroid);
-    private native void nativeIncrementLoFiUserRequestsForImages(
             long nativeDataReductionProxySettingsAndroid);
     private native boolean nativeIsDataReductionProxyManaged(
             long nativeDataReductionProxySettingsAndroid);
@@ -328,6 +277,8 @@ public class DataReductionProxySettings {
     private native long nativeGetDataReductionLastUpdateTime(
             long nativeDataReductionProxySettingsAndroid);
     private native ContentLengths nativeGetContentLengths(
+            long nativeDataReductionProxySettingsAndroid);
+    private native long nativeGetTotalHttpContentLengthSaved(
             long nativeDataReductionProxySettingsAndroid);
     private native long[] nativeGetDailyOriginalContentLengths(
             long nativeDataReductionProxySettingsAndroid);

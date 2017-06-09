@@ -421,6 +421,7 @@ DataPipeConsumerDispatcher::Deserialize(const void* data,
     dispatcher->bytes_available_ = state->bytes_available;
     dispatcher->peer_closed_ = state->flags & kFlagPeerClosed;
     dispatcher->InitializeNoLock();
+    dispatcher->UpdateSignalsStateNoLock();
   }
 
   return dispatcher;
@@ -526,8 +527,8 @@ void DataPipeConsumerDispatcher::UpdateSignalsStateNoLock() {
   } else if (rv == ports::OK && port_status.has_messages && !in_transit_) {
     ports::ScopedMessage message;
     do {
-      int rv = node_controller_->node()->GetMessageIf(control_port_, nullptr,
-                                                      &message);
+      int rv = node_controller_->node()->GetMessage(
+          control_port_, &message, nullptr);
       if (rv != ports::OK)
         peer_closed_ = true;
       if (message) {

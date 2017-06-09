@@ -8,16 +8,19 @@
 #include <utility>
 
 #include "base/command_line.h"
+#include "base/i18n/rtl.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/ui/autofill/autofill_popup_view.h"
+#include "components/autofill/content/browser/content_autofill_driver.h"
 #include "components/autofill/core/browser/autofill_popup_delegate.h"
 #include "components/autofill/core/browser/popup_item_ids.h"
 #include "components/autofill/core/browser/suggestion.h"
 #include "content/public/browser/native_web_keyboard_event.h"
 #include "ui/events/event.h"
+#include "ui/gfx/canvas.h"
 #include "ui/gfx/text_elider.h"
 #include "ui/gfx/text_utils.h"
 
@@ -29,11 +32,6 @@ namespace {
 // Used to indicate that no line is currently selected by the user.
 const int kNoSelection = -1;
 
-#if !defined(OS_ANDROID)
-// Size difference between the normal font and the smaller font, in pixels.
-const int kSmallerFontSizeDelta = -1;
-#endif
-
 }  // namespace
 
 // static
@@ -44,8 +42,7 @@ WeakPtr<AutofillPopupControllerImpl> AutofillPopupControllerImpl::GetOrCreate(
     gfx::NativeView container_view,
     const gfx::RectF& element_bounds,
     base::i18n::TextDirection text_direction) {
-  if (previous.get() && previous->web_contents() == web_contents &&
-      previous->delegate_.get() == delegate.get() &&
+  if (previous.get() && previous->delegate_.get() == delegate.get() &&
       previous->container_view() == container_view &&
       previous->element_bounds() == element_bounds) {
     previous->ClearState();
@@ -68,29 +65,12 @@ AutofillPopupControllerImpl::AutofillPopupControllerImpl(
     gfx::NativeView container_view,
     const gfx::RectF& element_bounds,
     base::i18n::TextDirection text_direction)
-    : controller_common_(new PopupControllerCommon(element_bounds,
-                                                   text_direction,
-                                                   container_view,
-                                                   web_contents)),
+    : controller_common_(element_bounds, text_direction, container_view),
       view_(NULL),
-      layout_model_(this),
+      layout_model_(this, delegate->IsCreditCardPopup()),
       delegate_(delegate),
       weak_ptr_factory_(this) {
   ClearState();
-  controller_common_->SetKeyPressCallback(
-      base::Bind(&AutofillPopupControllerImpl::HandleKeyPressEvent,
-                 base::Unretained(this)));
-#if !defined(OS_ANDROID)
-  smaller_font_list_ =
-      normal_font_list_.DeriveWithSizeDelta(kSmallerFontSizeDelta);
-  bold_font_list_ = normal_font_list_.DeriveWithWeight(gfx::Font::Weight::BOLD);
-#if defined(OS_MACOSX)
-  // There is no italic version of the system font.
-  warning_font_list_ = normal_font_list_;
-#else
-  warning_font_list_ = normal_font_list_.DeriveWithStyle(gfx::Font::ITALIC);
-#endif
-#endif
 }
 
 AutofillPopupControllerImpl::~AutofillPopupControllerImpl() {}
@@ -134,7 +114,10 @@ void AutofillPopupControllerImpl::Show(
     UpdateBoundsAndRedrawPopup();
   }
 
-  controller_common_->RegisterKeyPressCallback();
+  static_cast<ContentAutofillDriver*>(delegate_->GetAutofillDriver())
+      ->RegisterKeyPressHandler(
+          base::Bind(&AutofillPopupControllerImpl::HandleKeyPressEvent,
+                     base::Unretained(this)));
   delegate_->OnPopupShown();
 
   DCHECK_EQ(suggestions_.size(), elided_values_.size());
@@ -206,9 +189,11 @@ void AutofillPopupControllerImpl::UpdateDataListValues(
 }
 
 void AutofillPopupControllerImpl::Hide() {
-  controller_common_->RemoveKeyPressCallback();
-  if (delegate_)
+  if (delegate_) {
     delegate_->OnPopupHidden();
+    static_cast<ContentAutofillDriver*>(delegate_->GetAutofillDriver())
+        ->RemoveKeyPressHandler();
+  }
 
   if (view_)
     view_->Hide();
@@ -245,7 +230,7 @@ bool AutofillPopupControllerImpl::HandleKeyPressEvent(
       Hide();
       return true;
     case ui::VKEY_DELETE:
-      return (event.modifiers & content::NativeWebKeyboardEvent::ShiftKey) &&
+      return (event.modifiers() & content::NativeWebKeyboardEvent::ShiftKey) &&
              RemoveSelectedLine();
     case ui::VKEY_TAB:
       // A tab press should cause the selected line to be accepted, but still
@@ -301,28 +286,20 @@ void AutofillPopupControllerImpl::AcceptSuggestion(size_t index) {
                                  index);
 }
 
-bool AutofillPopupControllerImpl::IsWarning(size_t index) const {
-  return suggestions_[index].frontend_id == POPUP_ITEM_ID_WARNING_MESSAGE;
-}
-
 gfx::Rect AutofillPopupControllerImpl::popup_bounds() const {
   return layout_model_.popup_bounds();
 }
 
-content::WebContents* AutofillPopupControllerImpl::web_contents() {
-  return controller_common_->web_contents();
-}
-
 gfx::NativeView AutofillPopupControllerImpl::container_view() {
-  return controller_common_->container_view();
+  return controller_common_.container_view;
 }
 
 const gfx::RectF& AutofillPopupControllerImpl::element_bounds() const {
-  return controller_common_->element_bounds();
+  return controller_common_.element_bounds;
 }
 
 bool AutofillPopupControllerImpl::IsRTL() const {
-  return controller_common_->is_rtl();
+  return controller_common_.text_direction == base::i18n::RIGHT_TO_LEFT;
 }
 
 const std::vector<autofill::Suggestion>
@@ -333,11 +310,12 @@ AutofillPopupControllerImpl::GetSuggestions() {
 #if !defined(OS_ANDROID)
 int AutofillPopupControllerImpl::GetElidedValueWidthForRow(size_t row) {
   return gfx::GetStringWidth(GetElidedValueAt(row),
-                             GetValueFontListForRow(row));
+                             layout_model_.GetValueFontListForRow(row));
 }
 
 int AutofillPopupControllerImpl::GetElidedLabelWidthForRow(size_t row) {
-  return gfx::GetStringWidth(GetElidedLabelAt(row), GetLabelFontList());
+  return gfx::GetStringWidth(GetElidedLabelAt(row),
+                             layout_model_.GetLabelFontListForRow(row));
 }
 #endif
 
@@ -392,37 +370,12 @@ bool AutofillPopupControllerImpl::RemoveSuggestion(int list_index) {
   return true;
 }
 
-#if !defined(OS_ANDROID)
-const gfx::FontList& AutofillPopupControllerImpl::GetValueFontListForRow(
-    size_t index) const {
-  // Autofill values have positive |frontend_id|.
-  if (suggestions_[index].frontend_id > 0)
-    return bold_font_list_;
-
-  // All other message types are defined here.
-  PopupItemId id = static_cast<PopupItemId>(suggestions_[index].frontend_id);
-  switch (id) {
-    case POPUP_ITEM_ID_WARNING_MESSAGE:
-      return warning_font_list_;
-    case POPUP_ITEM_ID_CLEAR_FORM:
-    case POPUP_ITEM_ID_AUTOFILL_OPTIONS:
-    case POPUP_ITEM_ID_SCAN_CREDIT_CARD:
-    case POPUP_ITEM_ID_SEPARATOR:
-      return normal_font_list_;
-    case POPUP_ITEM_ID_TITLE:
-    case POPUP_ITEM_ID_AUTOCOMPLETE_ENTRY:
-    case POPUP_ITEM_ID_DATALIST_ENTRY:
-    case POPUP_ITEM_ID_PASSWORD_ENTRY:
-      return bold_font_list_;
-  }
-  NOTREACHED();
-  return normal_font_list_;
+ui::NativeTheme::ColorId
+AutofillPopupControllerImpl::GetBackgroundColorIDForRow(int index) const {
+  return index == selected_line_ ?
+    ui::NativeTheme::kColorId_ResultsTableHoveredBackground :
+    ui::NativeTheme::kColorId_ResultsTableNormalBackground;
 }
-
-const gfx::FontList& AutofillPopupControllerImpl::GetLabelFontList() const {
-  return smaller_font_list_;
-}
-#endif
 
 int AutofillPopupControllerImpl::selected_line() const {
   return selected_line_;
@@ -498,7 +451,8 @@ bool AutofillPopupControllerImpl::RemoveSelectedLine() {
 }
 
 bool AutofillPopupControllerImpl::CanAccept(int id) {
-  return id != POPUP_ITEM_ID_SEPARATOR && id != POPUP_ITEM_ID_WARNING_MESSAGE &&
+  return id != POPUP_ITEM_ID_SEPARATOR &&
+         id != POPUP_ITEM_ID_INSECURE_CONTEXT_PAYMENT_DISABLED_MESSAGE &&
          id != POPUP_ITEM_ID_TITLE;
 }
 
@@ -506,9 +460,9 @@ bool AutofillPopupControllerImpl::HasSuggestions() {
   if (suggestions_.empty())
     return false;
   int id = suggestions_[0].frontend_id;
-  return id > 0 ||
-         id == POPUP_ITEM_ID_AUTOCOMPLETE_ENTRY ||
+  return id > 0 || id == POPUP_ITEM_ID_AUTOCOMPLETE_ENTRY ||
          id == POPUP_ITEM_ID_PASSWORD_ENTRY ||
+         id == POPUP_ITEM_ID_USERNAME_ENTRY ||
          id == POPUP_ITEM_ID_DATALIST_ENTRY ||
          id == POPUP_ITEM_ID_SCAN_CREDIT_CARD;
 }
@@ -542,10 +496,10 @@ WeakPtr<AutofillPopupControllerImpl> AutofillPopupControllerImpl::GetWeakPtr() {
 void AutofillPopupControllerImpl::ElideValueAndLabelForRow(
     size_t row,
     int available_width) {
-  int value_width =
-      gfx::GetStringWidth(suggestions_[row].value, GetValueFontListForRow(row));
-  int label_width =
-      gfx::GetStringWidth(suggestions_[row].label, GetLabelFontList());
+  int value_width = gfx::GetStringWidth(
+      suggestions_[row].value, layout_model_.GetValueFontListForRow(row));
+  int label_width = gfx::GetStringWidth(
+      suggestions_[row].label, layout_model_.GetLabelFontListForRow(row));
   int total_text_length = value_width + label_width;
 
   // The line can have no strings if it represents a UI element, such as
@@ -555,13 +509,14 @@ void AutofillPopupControllerImpl::ElideValueAndLabelForRow(
 
   // Each field receives space in proportion to its length.
   int value_size = available_width * value_width / total_text_length;
-  elided_values_[row] =
-      gfx::ElideText(suggestions_[row].value, GetValueFontListForRow(row),
-                     value_size, gfx::ELIDE_TAIL);
+  elided_values_[row] = gfx::ElideText(
+      suggestions_[row].value, layout_model_.GetValueFontListForRow(row),
+      value_size, gfx::ELIDE_TAIL);
 
   int label_size = available_width * label_width / total_text_length;
   elided_labels_[row] = gfx::ElideText(
-      suggestions_[row].label, GetLabelFontList(), label_size, gfx::ELIDE_TAIL);
+      suggestions_[row].label, layout_model_.GetLabelFontListForRow(row),
+      label_size, gfx::ELIDE_TAIL);
 }
 #endif
 

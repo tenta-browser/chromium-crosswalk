@@ -82,12 +82,8 @@ const gfx::Tween::Type kFolderFadeInTweenType = gfx::Tween::EASE_IN_2;
 const gfx::Tween::Type kFolderFadeOutTweenType = gfx::Tween::FAST_OUT_LINEAR_IN;
 
 // Preferred number of columns and rows in apps grid.
-const int kPreferredCols = 4;
-#if defined(OS_CHROMEOS)
+const int kPreferredCols = 6;
 const int kPreferredRows = 4;
-#else
-const int kPreferredRows = 3;
-#endif  // defined(OS_CHROMEOS)
 const int kGridIconDimension = 48;
 
 // Preferred search result icon sizes.
@@ -99,13 +95,11 @@ const int kTileIconSize = 48;
 
 const SkColor kIconColor = gfx::kChromeIconGrey;
 
-// Preferred number of columns and rows in the centered app list apps grid.
-const int kCenteredPreferredCols = 6;
-const int kCenteredPreferredRows = 3;
+// The number of apps shown in the start page app grid.
+const size_t kNumStartPageTiles = 9;
 
-// Preferred number of columns and rows in the experimental app list apps grid.
-const int kExperimentalPreferredCols = 6;
-const int kExperimentalPreferredRows = 4;
+// Maximum number of results to show in the launcher Search UI.
+const size_t kMaxSearchResults = 6;
 
 // The number of apps shown in the start page app grid.
 const size_t kNumStartPageTiles = 9;
@@ -116,13 +110,11 @@ const size_t kMaxSearchResults = 6;
 // Radius of the circle, in which if entered, show re-order preview.
 const int kReorderDroppingCircleRadius = 35;
 
-// The padding around the outside of the experimental app list apps grid
-// (sides).
-const int kExperimentalAppsGridPadding = 24;
+// The padding around the outside of the apps grid (sides).
+const int kAppsGridPadding = 24;
 
-// The padding around the outside of the experimental app list search box (top
-// and sides).
-const int kExperimentalSearchBoxPadding = 16;
+// The padding around the outside of the search box (top and sides).
+const int kSearchBoxPadding = 16;
 
 // Max items allowed in a folder.
 size_t kMaxFolderItems = 16;

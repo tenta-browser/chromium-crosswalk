@@ -17,23 +17,25 @@ namespace switches {
 
 // Switches for the renderer compositor only.
 CC_EXPORT extern const char kDisableThreadedAnimation[];
-CC_EXPORT extern const char kDisableCachedPictureRaster[];
 CC_EXPORT extern const char kDisableCompositedAntialiasing[];
 CC_EXPORT extern const char kDisableMainFrameBeforeActivation[];
+CC_EXPORT extern const char kEnableCheckerImaging[];
 CC_EXPORT extern const char kEnableMainFrameBeforeActivation[];
-CC_EXPORT extern const char kTopControlsHideThreshold[];
-CC_EXPORT extern const char kTopControlsShowThreshold[];
+CC_EXPORT extern const char kBrowserControlsHideThreshold[];
+CC_EXPORT extern const char kBrowserControlsShowThreshold[];
 CC_EXPORT extern const char kSlowDownRasterScaleFactor[];
 CC_EXPORT extern const char kStrictLayerPropertyChangeChecking[];
 CC_EXPORT extern const char kEnableTileCompression[];
 
 // Switches for both the renderer and ui compositors.
-CC_EXPORT extern const char kEnableBeginFrameScheduling[];
+CC_EXPORT extern const char kEnableColorCorrectRendering[];
 CC_EXPORT extern const char kEnableGpuBenchmarking[];
+CC_EXPORT extern const char kEnableTrueColorRendering[];
 
 // Debug visualizations.
 CC_EXPORT extern const char kShowCompositedLayerBorders[];
 CC_EXPORT extern const char kUIShowCompositedLayerBorders[];
+CC_EXPORT extern const char kGlCompositedTextureQuadBorder[];
 CC_EXPORT extern const char kShowFPSCounter[];
 CC_EXPORT extern const char kUIShowFPSCounter[];
 CC_EXPORT extern const char kShowLayerAnimationBounds[];
@@ -44,10 +46,9 @@ CC_EXPORT extern const char kShowSurfaceDamageRects[];
 CC_EXPORT extern const char kUIShowSurfaceDamageRects[];
 CC_EXPORT extern const char kShowScreenSpaceRects[];
 CC_EXPORT extern const char kUIShowScreenSpaceRects[];
-CC_EXPORT extern const char kShowReplicaScreenSpaceRects[];
-CC_EXPORT extern const char kUIShowReplicaScreenSpaceRects[];
 CC_EXPORT extern const char kEnableLayerLists[];
 CC_EXPORT extern const char kUIEnableLayerLists[];
+CC_EXPORT extern const char kShowOverdrawFeedback[];
 
 // Unit test related.
 CC_EXPORT extern const char kCCLayerTreeTestNoTimeout[];

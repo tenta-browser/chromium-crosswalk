@@ -36,11 +36,11 @@ def web_socket_do_extra_handshake(request):
     if 'clear' in urlparse.parse_qs(query):
         max_age = '; Max-Age=0'
     cookie_values = [
-        'WK-WebSocket-test-domain-pass=1; Domain=127.0.0.1' + max_age,
-        'WK-WebSocket-test-domain-fail=1; Domain=example.com' + max_age,
-        'WK-WebSocket-test-path-pass=1; Path=/' + max_age,
-        'WK-WebSocket-test-path-fail=1; Path=/foo/bar' + max_age,
-        'WK-WebSocket-test=1' + max_age,
+        'ws-domain-local-ip=1; Domain=127.0.0.1' + max_age,
+        'ws-domain-example-com=1; Domain=example.com' + max_age,
+        'ws-path-root=1; Path=/' + max_age,
+        'ws-path-foobar=1; Path=/foo/bar' + max_age,
+        'ws=1' + max_age,
         'same-site-strict=1; SameSite=Strict' + max_age,
         'same-site-lax=1; SameSite=Lax' + max_age
     ]

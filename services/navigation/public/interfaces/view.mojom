@@ -4,7 +4,7 @@
 
 module navigation.mojom;
 
-import "components/mus/public/interfaces/window_tree.mojom";
+import "services/ui/public/interfaces/window_tree.mojom";
 import "ui/gfx/geometry/mojo/geometry.mojom";
 import "url/mojo/url.mojom";
 
@@ -43,7 +43,6 @@ enum NavigationType {
 // Copied from //ui/base/window_open_disposition.h
 enum WindowOpenDisposition {
   UNKNOWN,
-  SUPPRESS_OPEN,
   CURRENT_TAB,
   SINGLETON_TAB,
   NEW_FOREGROUND_TAB,
@@ -112,17 +111,13 @@ interface View {
   GoBack();
   GoForward();
   NavigateToOffset(int32 offset);
-  Reload(bool skip_cache);
+  Reload(bool bypass_cache);
   Stop();
 
   // Obtains a Mus WindowTreeClient for the View, so it can be embedded in a
   // UI.
-  GetWindowTreeClient(mus.mojom.WindowTreeClient& client);
+  GetWindowTreeClient(ui.mojom.WindowTreeClient& client);
 
   ShowInterstitial(string html);
   HideInterstitial();
-
-  // The resize area is a rectangle in the bottom corner of the view that allows
-  // the top-level window containing the view to be interactively resized.
-  SetResizerSize(gfx.mojom.Size size);
 };

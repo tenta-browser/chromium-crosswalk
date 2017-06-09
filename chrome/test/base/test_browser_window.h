@@ -91,7 +91,6 @@ class TestBrowserWindow : public BrowserWindow {
   bool IsBookmarkBarAnimating() const override;
   bool IsTabStripEditable() const override;
   bool IsToolbarVisible() const override;
-  gfx::Rect GetRootWindowResizerRect() const override;
   void ShowUpdateChromeDialog() override {}
   void ShowBookmarkBubble(const GURL& url, bool already_bookmarked) override {}
   void ShowBookmarkAppBubble(
@@ -101,10 +100,11 @@ class TestBrowserWindow : public BrowserWindow {
       content::WebContents* contents,
       autofill::SaveCardBubbleController* controller,
       bool user_gesture) override;
-  void ShowTranslateBubble(content::WebContents* contents,
-                           translate::TranslateStep step,
-                           translate::TranslateErrors::Type error_type,
-                           bool is_user_gesture) override {}
+  ShowTranslateBubbleResult ShowTranslateBubble(
+      content::WebContents* contents,
+      translate::TranslateStep step,
+      translate::TranslateErrors::Type error_type,
+      bool is_user_gesture) override;
 #if BUILDFLAG(ENABLE_ONE_CLICK_SIGNIN)
   void ShowOneClickSigninConfirmation(
       const base::string16& email,
@@ -122,8 +122,7 @@ class TestBrowserWindow : public BrowserWindow {
       Profile* profile,
       content::WebContents* web_contents,
       const GURL& virtual_url,
-      const security_state::SecurityStateModel::SecurityInfo& security_info)
-      override {}
+      const security_state::SecurityInfo& security_info) override {}
   void CutCopyPaste(int command_id) override {}
   WindowOpenDisposition GetDispositionForPopupBounds(
       const gfx::Rect& bounds) override;
@@ -133,7 +132,8 @@ class TestBrowserWindow : public BrowserWindow {
   void ShowAvatarBubbleFromAvatarButton(
       AvatarBubbleMode mode,
       const signin::ManageAccountsParams& manage_accounts_params,
-      signin_metrics::AccessPoint access_point) override {}
+      signin_metrics::AccessPoint access_point,
+      bool is_source_keyboard) override {}
   int GetRenderViewHeightInsetWithDetachedBookmarkBar() override;
   void ExecuteExtensionCommand(const extensions::Extension* extension,
                                const extensions::Command& command) override;
@@ -143,6 +143,7 @@ class TestBrowserWindow : public BrowserWindow {
       const base::Callback<void(ImeWarningBubblePermissionStatus status)>&
           callback) override {}
   std::string GetWorkspace() const override;
+  bool IsVisibleOnAllWorkspaces() const override;
 
  protected:
   void DestroyBrowser() override {}
@@ -169,7 +170,6 @@ class TestBrowserWindow : public BrowserWindow {
     void UpdateLocationBarVisibility(bool visible, bool animate) override {}
     bool ShowPageActionPopup(const extensions::Extension* extension,
                              bool grant_active_tab) override;
-    void UpdateOpenPDFInReaderPrompt() override {}
     void SaveStateToContents(content::WebContents* contents) override {}
     void Revert() override {}
     const OmniboxView* GetOmniboxView() const override;

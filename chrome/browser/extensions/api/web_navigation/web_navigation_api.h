@@ -68,8 +68,12 @@ class WebNavigationTabObserver
                            const GURL& url,
                            const content::Referrer& referrer,
                            WindowOpenDisposition disposition,
-                           ui::PageTransition transition) override;
+                           ui::PageTransition transition,
+                           bool started_from_context_menu) override;
   void WebContentsDestroyed() override;
+
+  // This method dispatches the already created onBeforeNavigate event.
+  void DispatchCachedOnBeforeNavigate();
 
  private:
   explicit WebNavigationTabObserver(content::WebContents* web_contents);
@@ -94,6 +98,11 @@ class WebNavigationTabObserver
 
   // Tracks the state of the frames we are sending events for.
   FrameNavigationState navigation_state_;
+
+  // The latest onBeforeNavigate event this frame has generated. It is stored
+  // as it might not be sent immediately, but delayed until the tab is added to
+  // the tab strip and is ready to dispatch events.
+  std::unique_ptr<Event> pending_on_before_navigate_event_;
 
   // Used for tracking registrations to redirect notifications.
   content::NotificationRegistrar registrar_;
@@ -169,16 +178,16 @@ class WebNavigationEventRouter : public TabStripModelObserver,
 };
 
 // API function that returns the state of a given frame.
-class WebNavigationGetFrameFunction : public ChromeSyncExtensionFunction {
+class WebNavigationGetFrameFunction : public UIThreadExtensionFunction {
   ~WebNavigationGetFrameFunction() override {}
-  bool RunSync() override;
+  ResponseAction Run() override;
   DECLARE_EXTENSION_FUNCTION("webNavigation.getFrame", WEBNAVIGATION_GETFRAME)
 };
 
 // API function that returns the states of all frames in a given tab.
-class WebNavigationGetAllFramesFunction : public ChromeSyncExtensionFunction {
+class WebNavigationGetAllFramesFunction : public UIThreadExtensionFunction {
   ~WebNavigationGetAllFramesFunction() override {}
-  bool RunSync() override;
+  ResponseAction Run() override;
   DECLARE_EXTENSION_FUNCTION("webNavigation.getAllFrames",
                              WEBNAVIGATION_GETALLFRAMES)
 };

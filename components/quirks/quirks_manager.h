@@ -57,10 +57,6 @@ class QUIRKS_EXPORT QuirksManager {
   using FakeQuirksFetcherCreator = base::Callback<
       std::unique_ptr<net::URLFetcher>(const GURL&, net::URLFetcherDelegate*)>;
 
-  // Callback after getting days since OOBE on blocking pool.
-  // Parameter is returned number of days.
-  using DaysSinceOobeCallback = base::Callback<void(int)>;
-
   // Delegate class, so implementation can access browser functionality.
   class Delegate {
    public:
@@ -69,19 +65,12 @@ class QUIRKS_EXPORT QuirksManager {
     // Provides Chrome API key for quirks server.
     virtual std::string GetApiKey() const = 0;
 
-    // Returns the read-only directory where icc files were added before the
-    // Quirks Client provided them.
-    virtual base::FilePath GetBuiltInDisplayProfileDirectory() const = 0;
-
     // Returns the path to the writable display profile directory.
     // This directory must already exist.
-    virtual base::FilePath GetDownloadDisplayProfileDirectory() const = 0;
+    virtual base::FilePath GetDisplayProfileDirectory() const = 0;
 
     // Whether downloads are allowed by enterprise device policy.
     virtual bool DevicePolicyEnabled() const = 0;
-
-    // Gets days since first login, returned via callback.
-    virtual void GetDaysSinceOobe(DaysSinceOobeCallback callback) const = 0;
 
    private:
     DISALLOW_ASSIGN(Delegate);
@@ -103,6 +92,7 @@ class QUIRKS_EXPORT QuirksManager {
   // Entry point into manager.  Finds or downloads icc file.
   void RequestIccProfilePath(
       int64_t product_id,
+      const std::string& display_name,
       const RequestFinishedCallback& on_request_finished);
 
   void ClientFinished(QuirksClient* client);
@@ -136,18 +126,9 @@ class QUIRKS_EXPORT QuirksManager {
   // Callback after checking for existing icc file; proceed if not found.
   void OnIccFilePathRequestCompleted(
       int64_t product_id,
+      const std::string& display_name,
       const RequestFinishedCallback& on_request_finished,
       base::FilePath path);
-
-  // Callback after checking OOBE date; launch client if appropriate.
-  void OnDaysSinceOobeReceived(
-      int64_t product_id,
-      const RequestFinishedCallback& on_request_finished,
-      int days_since_oobe);
-
-  // Create and start a client to download file.
-  void CreateClient(int64_t product_id,
-                    const RequestFinishedCallback& on_request_finished);
 
   // Whether downloads allowed by cmd line flag and device policy.
   bool QuirksEnabled();

@@ -15,23 +15,34 @@ class Browser;
 class MediaRouterContextualMenu : public ui::SimpleMenuModel::Delegate {
  public:
   explicit MediaRouterContextualMenu(Browser* browser);
+
+  // Constructor for injecting values in tests.
+  MediaRouterContextualMenu(Browser* browser, bool shown_by_policy);
   ~MediaRouterContextualMenu() override;
 
   ui::MenuModel* menu_model() { return &menu_model_; }
 
  private:
+  FRIEND_TEST_ALL_PREFIXES(MediaRouterContextualMenuUnitTest,
+                           ToggleCloudServicesItem);
+  FRIEND_TEST_ALL_PREFIXES(MediaRouterContextualMenuUnitTest,
+                           ToggleAlwaysShowIconItem);
+  FRIEND_TEST_ALL_PREFIXES(MediaRouterContextualMenuUnitTest,
+                           ActionShownByPolicy);
+
+  // Gets or sets the "Always show icon" option.
+  bool GetAlwaysShowActionPref() const;
+  void SetAlwaysShowActionPref(bool always_show);
+
   // ui::SimpleMenuModel::Delegate:
   bool IsCommandIdChecked(int command_id) const override;
   bool IsCommandIdEnabled(int command_id) const override;
   bool IsCommandIdVisible(int command_id) const override;
-  bool GetAcceleratorForCommandId(int command_id,
-                                  ui::Accelerator* accelerator) override;
   void ExecuteCommand(int command_id, int event_flags) override;
 
   void ReportIssue();
-  void RemoveMediaRouterComponentAction();
 
-  Browser* browser_;
+  Browser* const browser_;
   ui::SimpleMenuModel menu_model_;
 
   DISALLOW_COPY_AND_ASSIGN(MediaRouterContextualMenu);

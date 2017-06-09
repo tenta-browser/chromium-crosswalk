@@ -42,6 +42,11 @@ void VideoFrameMetadata::SetDouble(Key key, double value) {
   dictionary_.SetDoubleWithoutPathExpansion(ToInternalKey(key), value);
 }
 
+void VideoFrameMetadata::SetRotation(Key key, VideoRotation value) {
+  DCHECK_EQ(ROTATION, key);
+  dictionary_.SetIntegerWithoutPathExpansion(ToInternalKey(key), value);
+}
+
 void VideoFrameMetadata::SetString(Key key, const std::string& value) {
   dictionary_.SetWithoutPathExpansion(
       ToInternalKey(key),
@@ -92,6 +97,17 @@ bool VideoFrameMetadata::GetDouble(Key key, double* value) const {
   return dictionary_.GetDoubleWithoutPathExpansion(ToInternalKey(key), value);
 }
 
+bool VideoFrameMetadata::GetRotation(Key key, VideoRotation* value) const {
+  DCHECK_EQ(ROTATION, key);
+  DCHECK(value);
+  int int_value;
+  const bool rv = dictionary_.GetIntegerWithoutPathExpansion(ToInternalKey(key),
+                                                             &int_value);
+  if (rv)
+    *value = static_cast<VideoRotation>(int_value);
+  return rv;
+}
+
 bool VideoFrameMetadata::GetString(Key key, std::string* value) const {
   DCHECK(value);
   const base::BinaryValue* const binary_value = GetBinaryValue(key);
@@ -135,9 +151,9 @@ bool VideoFrameMetadata::IsTrue(Key key) const {
   return GetBoolean(key, &value) && value;
 }
 
-void VideoFrameMetadata::MergeInternalValuesInto(
-    base::DictionaryValue* out) const {
-  out->MergeDictionary(&dictionary_);
+std::unique_ptr<base::DictionaryValue> VideoFrameMetadata::CopyInternalValues()
+    const {
+  return dictionary_.CreateDeepCopy();
 }
 
 void VideoFrameMetadata::MergeInternalValuesFrom(
@@ -154,8 +170,8 @@ const base::BinaryValue* VideoFrameMetadata::GetBinaryValue(Key key) const {
   const base::Value* internal_value = nullptr;
   if (dictionary_.GetWithoutPathExpansion(ToInternalKey(key),
                                           &internal_value) &&
-      internal_value->GetType() == base::Value::TYPE_BINARY) {
-    return static_cast<const base::BinaryValue*>(internal_value);
+      internal_value->GetType() == base::Value::Type::BINARY) {
+    return internal_value;
   }
   return nullptr;
 }

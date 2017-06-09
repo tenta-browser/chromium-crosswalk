@@ -12,8 +12,7 @@
 
 namespace policy {
 
-PolicyMap::Entry::Entry()
-    : level(POLICY_LEVEL_RECOMMENDED), scope(POLICY_SCOPE_USER) {}
+PolicyMap::Entry::Entry() = default;
 
 PolicyMap::Entry::~Entry() = default;
 
@@ -37,10 +36,13 @@ PolicyMap::Entry PolicyMap::Entry::DeepCopy() const {
 
 bool PolicyMap::Entry::has_higher_priority_than(
     const PolicyMap::Entry& other) const {
-  if (level == other.level)
+  if (level == other.level) {
+    if (scope == other.scope) {
+      return source > other.source;
+    }
     return scope > other.scope;
-  else
-    return level > other.level;
+  }
+  return level > other.level;
 }
 
 bool PolicyMap::Entry::Equals(const PolicyMap::Entry& other) const {
@@ -89,8 +91,24 @@ void PolicyMap::Set(const std::string& policy, Entry entry) {
   map_[policy] = std::move(entry);
 }
 
+void PolicyMap::SetSourceForAll(PolicySource source) {
+  for (auto& it : map_) {
+    it.second.source = source;
+  }
+}
+
 void PolicyMap::Erase(const std::string& policy) {
   map_.erase(policy);
+}
+
+void PolicyMap::EraseMatching(
+    const base::Callback<bool(const const_iterator)>& filter) {
+  FilterErase(filter, true);
+}
+
+void PolicyMap::EraseNonmatching(
+    const base::Callback<bool(const const_iterator)>& filter) {
+  FilterErase(filter, false);
 }
 
 void PolicyMap::Swap(PolicyMap* other) {
@@ -156,17 +174,6 @@ void PolicyMap::GetDifferingKeys(const PolicyMap& other,
       differing_keys->insert(iter_other->first);
 }
 
-void PolicyMap::FilterLevel(PolicyLevel level) {
-  PolicyMapType::iterator iter(map_.begin());
-  while (iter != map_.end()) {
-    if (iter->second.level != level) {
-      map_.erase(iter++);
-    } else {
-      ++iter;
-    }
-  }
-}
-
 bool PolicyMap::Equals(const PolicyMap& other) const {
   return other.size() == size() &&
       std::equal(begin(), end(), other.begin(), MapEntryEquals);
@@ -196,6 +203,19 @@ void PolicyMap::Clear() {
 bool PolicyMap::MapEntryEquals(const PolicyMap::PolicyMapType::value_type& a,
                                const PolicyMap::PolicyMapType::value_type& b) {
   return a.first == b.first && a.second.Equals(b.second);
+}
+
+void PolicyMap::FilterErase(
+    const base::Callback<bool(const const_iterator)>& filter,
+    bool deletion_value) {
+  PolicyMapType::iterator iter(map_.begin());
+  while (iter != map_.end()) {
+    if (filter.Run(iter) == deletion_value) {
+      map_.erase(iter++);
+    } else {
+      ++iter;
+    }
+  }
 }
 
 }  // namespace policy

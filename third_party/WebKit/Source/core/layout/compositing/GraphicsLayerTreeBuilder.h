@@ -35,26 +35,15 @@ namespace blink {
 class PaintLayer;
 
 class GraphicsLayerTreeBuilder {
-    STACK_ALLOCATED();
-public:
-    GraphicsLayerTreeBuilder();
-    ~GraphicsLayerTreeBuilder();
+  STACK_ALLOCATED();
 
-    struct AncestorInfo {
-        STACK_ALLOCATED();
-        AncestorInfo()
-            : enclosingCompositedLayer(nullptr)
-            , childLayersOfEnclosingCompositedLayer(nullptr)
-        {
-        }
+ public:
+  GraphicsLayerTreeBuilder();
+  ~GraphicsLayerTreeBuilder();
 
-        PaintLayer* enclosingCompositedLayer;
-        GraphicsLayerVector* childLayersOfEnclosingCompositedLayer;
-    };
-
-    void rebuild(PaintLayer&, AncestorInfo);
+  void rebuild(PaintLayer&, GraphicsLayerVector&);
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // GraphicsLayerTreeBuilder_h
+#endif  // GraphicsLayerTreeBuilder_h

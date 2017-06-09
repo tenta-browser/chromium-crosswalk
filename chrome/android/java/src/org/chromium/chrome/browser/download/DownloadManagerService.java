@@ -17,18 +17,22 @@ import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Environment;
 import android.os.Handler;
+import android.support.annotation.Nullable;
 import android.text.TextUtils;
 import android.util.LongSparseArray;
 import android.util.Pair;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
+import org.chromium.base.ObserverList;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.SuppressFBWarnings;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.download.ui.BackendProvider;
+import org.chromium.chrome.browser.download.ui.DownloadHistoryAdapter;
 import org.chromium.chrome.browser.externalnav.ExternalNavigationDelegateImpl;
 import org.chromium.net.ConnectionType;
 import org.chromium.net.NetworkChangeNotifierAutoDetect;
@@ -38,14 +42,13 @@ import org.chromium.ui.widget.Toast;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
-import java.util.Vector;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Chrome implementation of the {@link DownloadController.DownloadNotificationService} interface.
@@ -58,20 +61,29 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class DownloadManagerService extends BroadcastReceiver implements
         DownloadController.DownloadNotificationService,
         NetworkChangeNotifierAutoDetect.Observer,
-        DownloadManagerDelegate.DownloadQueryCallback {
+        DownloadManagerDelegate.DownloadQueryCallback,
+        DownloadServiceDelegate,
+        BackendProvider.DownloadDelegate {
+    // Download status.
+    public static final int DOWNLOAD_STATUS_IN_PROGRESS = 0;
+    public static final int DOWNLOAD_STATUS_COMPLETE = 1;
+    public static final int DOWNLOAD_STATUS_FAILED = 2;
+    public static final int DOWNLOAD_STATUS_CANCELLED = 3;
+    public static final int DOWNLOAD_STATUS_INTERRUPTED = 4;
+
     private static final String TAG = "DownloadService";
-    // Deprecated shared preference entry. Keep this for a while so that it will be removed when
-    // user updates Chrome.
-    // TODO(qinmin): remove this when most users have upgraded to M49 or above.
-    private static final String DEPRECATED_DOWNLOAD_NOTIFICATION_IDS = "DownloadNotificationIds";
     private static final String DOWNLOAD_DIRECTORY = "Download";
     protected static final String PENDING_OMA_DOWNLOADS = "PendingOMADownloads";
     private static final String UNKNOWN_MIME_TYPE = "application/unknown";
     private static final String DOWNLOAD_UMA_ENTRY = "DownloadUmaEntry";
+    private static final String DOWNLOAD_RETRY_COUNT_FILE_NAME = "DownloadRetryCount";
     private static final long UPDATE_DELAY_MILLIS = 1000;
     // Wait 10 seconds to resume all downloads, so that we won't impact tab loading.
     private static final long RESUME_DELAY_MILLIS = 10000;
     private static final int UNKNOWN_DOWNLOAD_STATUS = -1;
+    public static final long UNKNOWN_BYTES_RECEIVED = -1;
+    private static final String PREF_IS_DOWNLOAD_HOME_ENABLED =
+            "org.chromium.chrome.browser.download.IS_DOWNLOAD_HOME_ENABLED";
 
     // Values for the histogram MobileDownloadResumptionCount.
     private static final int UMA_DOWNLOAD_RESUMPTION_MANUAL_PAUSE = 0;
@@ -81,12 +93,7 @@ public class DownloadManagerService extends BroadcastReceiver implements
     private static final int UMA_DOWNLOAD_RESUMPTION_AUTO_STARTED = 4;
     private static final int UMA_DOWNLOAD_RESUMPTION_COUNT = 5;
 
-    // Download status.
-    static final int DOWNLOAD_STATUS_IN_PROGRESS = 0;
-    static final int DOWNLOAD_STATUS_COMPLETE = 1;
-    static final int DOWNLOAD_STATUS_FAILED = 2;
-    static final int DOWNLOAD_STATUS_CANCELLED = 3;
-    static final int DOWNLOAD_STATUS_INTERRUPTED = 4;
+    private static final int GB_IN_KILO_BYTES = 1024 * 1024;
 
     // Set will be more expensive to initialize, so use an ArrayList here.
     private static final List<String> MIME_TYPES_TO_OPEN = new ArrayList<String>(Arrays.asList(
@@ -105,29 +112,40 @@ public class DownloadManagerService extends BroadcastReceiver implements
     private static boolean sIsNetworkMetered;
 
     private final SharedPreferences mSharedPrefs;
-    private final ConcurrentHashMap<String, DownloadProgress> mDownloadProgressMap =
-            new ConcurrentHashMap<String, DownloadProgress>(4, 0.75f, 2);
+    private final HashMap<String, DownloadProgress> mDownloadProgressMap =
+            new HashMap<String, DownloadProgress>(4, 0.75f);
 
     private final DownloadNotifier mDownloadNotifier;
     // Delay between UI updates.
     private final long mUpdateDelayInMillis;
 
-    // Flag to track if we need to post a task to update download notifications.
-    private final AtomicBoolean mIsUIUpdateScheduled;
     private final Handler mHandler;
     private final Context mContext;
 
     private final LongSparseArray<DownloadItem> mSystemDownloadIdMap =
             new LongSparseArray<DownloadItem>();
-    // Using vector for thread safety.
-    @VisibleForTesting protected final Vector<String> mAutoResumableDownloadIds =
-            new Vector<String>();
+    @VisibleForTesting protected final List<String> mAutoResumableDownloadIds =
+            new ArrayList<String>();
     private final List<DownloadUmaStatsEntry> mUmaEntries = new ArrayList<DownloadUmaStatsEntry>();
+    private final ObserverList<DownloadHistoryAdapter> mHistoryAdapters = new ObserverList<>();
+
     private OMADownloadHandler mOMADownloadHandler;
     private DownloadSnackbarController mDownloadSnackbarController;
     private long mNativeDownloadManagerService;
     private DownloadManagerDelegate mDownloadManagerDelegate;
     private NetworkChangeNotifierAutoDetect mNetworkChangeNotifier;
+    // Flag to track if we need to post a task to update download notifications.
+    private boolean mIsUIUpdateScheduled;
+    private int mAutoResumptionLimit = -1;
+    private DownloadManagerRequestInterceptor mDownloadManagerRequestInterceptor;
+
+    /**
+     * Interface to intercept download request to Android DownloadManager. This is implemented by
+     * tests so that we don't need to actually enqueue a download into the Android DownloadManager.
+     */
+    static interface DownloadManagerRequestInterceptor {
+        void interceptDownloadRequest(DownloadItem item, boolean notifyComplete);
+    }
 
     /**
      * Class representing progress of a download.
@@ -135,8 +153,11 @@ public class DownloadManagerService extends BroadcastReceiver implements
     private static class DownloadProgress {
         final long mStartTimeInMillis;
         boolean mCanDownloadWhileMetered;
-        volatile DownloadItem mDownloadItem;
-        volatile int mDownloadStatus;
+        DownloadItem mDownloadItem;
+        int mDownloadStatus;
+        boolean mIsAutoResumable;
+        boolean mIsUpdated;
+        boolean mIsSupportedMimeType;
 
         DownloadProgress(long startTimeInMillis, boolean canDownloadWhileMetered,
                 DownloadItem downloadItem, int downloadStatus) {
@@ -144,6 +165,18 @@ public class DownloadManagerService extends BroadcastReceiver implements
             mCanDownloadWhileMetered = canDownloadWhileMetered;
             mDownloadItem = downloadItem;
             mDownloadStatus = downloadStatus;
+            mIsAutoResumable = false;
+            mIsUpdated = true;
+        }
+
+        DownloadProgress(DownloadProgress progress) {
+            mStartTimeInMillis = progress.mStartTimeInMillis;
+            mCanDownloadWhileMetered = progress.mCanDownloadWhileMetered;
+            mDownloadItem = progress.mDownloadItem;
+            mDownloadStatus = progress.mDownloadStatus;
+            mIsAutoResumable = progress.mIsAutoResumable;
+            mIsUpdated = progress.mIsUpdated;
+            mIsSupportedMimeType = progress.mIsSupportedMimeType;
         }
     }
 
@@ -190,9 +223,9 @@ public class DownloadManagerService extends BroadcastReceiver implements
      * Creates DownloadManagerService.
      */
     @SuppressFBWarnings("LI_LAZY_INIT") // Findbugs doesn't see this is only UI thread.
-    public static DownloadManagerService getDownloadManagerService(final Context context) {
+    public static DownloadManagerService getDownloadManagerService(Context context) {
         ThreadUtils.assertOnUiThread();
-        assert context == context.getApplicationContext();
+        context = context.getApplicationContext();
         if (sDownloadManagerService == null) {
             sDownloadManagerService = new DownloadManagerService(context,
                     new SystemDownloadNotifier(context),  new Handler(), UPDATE_DELAY_MILLIS);
@@ -219,22 +252,23 @@ public class DownloadManagerService extends BroadcastReceiver implements
     }
 
     @VisibleForTesting
-    protected DownloadManagerService(Context context,
-            DownloadNotifier downloadNotifier,
-            Handler handler,
-            long updateDelayInMillis) {
+    void setDownloadManagerRequestInterceptor(DownloadManagerRequestInterceptor interceptor) {
+        mDownloadManagerRequestInterceptor = interceptor;
+    }
+
+    @VisibleForTesting
+    protected DownloadManagerService(Context context, DownloadNotifier downloadNotifier,
+            Handler handler, long updateDelayInMillis) {
         mContext = context;
         mSharedPrefs = ContextUtils.getAppSharedPreferences();
+        // Clean up unused shared prefs. TODO(qinmin): remove this after M61.
+        mSharedPrefs.edit().remove(PREF_IS_DOWNLOAD_HOME_ENABLED).apply();
         mDownloadNotifier = downloadNotifier;
         mUpdateDelayInMillis = updateDelayInMillis;
         mHandler = handler;
-        mIsUIUpdateScheduled = new AtomicBoolean(false);
         mOMADownloadHandler = new OMADownloadHandler(context);
         mDownloadSnackbarController = new DownloadSnackbarController(context);
         mDownloadManagerDelegate = new DownloadManagerDelegate(mContext);
-        if (mSharedPrefs.contains(DEPRECATED_DOWNLOAD_NOTIFICATION_IDS)) {
-            mSharedPrefs.edit().remove(DEPRECATED_DOWNLOAD_NOTIFICATION_IDS).apply();
-        }
         // Note that this technically leaks the native object, however, DownloadManagerService
         // is a singleton that lives forever and there's no clean shutdown of Chrome on Android.
         init();
@@ -270,36 +304,52 @@ public class DownloadManagerService extends BroadcastReceiver implements
         }
     }
 
-    public void setDownloadManagerDelegate(DownloadManagerDelegate downloadManagerDelegate) {
-        mDownloadManagerDelegate = downloadManagerDelegate;
+    /**
+     * Pre-load shared prefs to avoid being blocked on the disk access async task in the future.
+     */
+    public static void warmUpSharedPrefs(Context context) {
+        getAutoRetryCountSharedPreference(context);
+    }
+
+    public DownloadNotifier getDownloadNotifier() {
+        return mDownloadNotifier;
     }
 
     @Override
     public void onDownloadCompleted(final DownloadInfo downloadInfo) {
         int status = DOWNLOAD_STATUS_COMPLETE;
-        if (downloadInfo.getContentLength() == 0) {
+        String mimeType = downloadInfo.getMimeType();
+        if (downloadInfo.getBytesReceived() == 0) {
             status = DOWNLOAD_STATUS_FAILED;
+        } else {
+            String origMimeType = mimeType;
+            if (TextUtils.isEmpty(origMimeType)) origMimeType = UNKNOWN_MIME_TYPE;
+            mimeType = ChromeDownloadDelegate.remapGenericMimeType(
+                    origMimeType, downloadInfo.getOriginalUrl(), downloadInfo.getFileName());
         }
-        updateDownloadProgress(new DownloadItem(false, downloadInfo), status);
+        DownloadInfo newInfo =
+                DownloadInfo.Builder.fromDownloadInfo(downloadInfo).setMimeType(mimeType).build();
+        DownloadItem downloadItem = new DownloadItem(false, newInfo);
+        updateDownloadProgress(downloadItem, status);
         scheduleUpdateIfNeeded();
     }
 
     @Override
     public void onDownloadUpdated(final DownloadInfo downloadInfo) {
         DownloadItem item = new DownloadItem(false, downloadInfo);
-        updateDownloadProgress(item, DOWNLOAD_STATUS_IN_PROGRESS);
         // If user manually paused a download, this download is no longer auto resumable.
         if (downloadInfo.isPaused()) {
             removeAutoResumableDownload(item.getId());
         }
+        updateDownloadProgress(item, DOWNLOAD_STATUS_IN_PROGRESS);
         scheduleUpdateIfNeeded();
     }
 
     @Override
     public void onDownloadCancelled(final DownloadInfo downloadInfo) {
         DownloadItem item = new DownloadItem(false, downloadInfo);
-        updateDownloadProgress(new DownloadItem(false, downloadInfo), DOWNLOAD_STATUS_CANCELLED);
         removeAutoResumableDownload(item.getId());
+        updateDownloadProgress(new DownloadItem(false, downloadInfo), DOWNLOAD_STATUS_CANCELLED);
         scheduleUpdateIfNeeded();
     }
 
@@ -378,7 +428,7 @@ public class DownloadManagerService extends BroadcastReceiver implements
                                     c.getColumnIndex(DownloadManager.COLUMN_DESCRIPTION)))
                             .setMimeType(c.getString(
                                     c.getColumnIndex(DownloadManager.COLUMN_MEDIA_TYPE)))
-                            .setContentLength(Long.parseLong(c.getString(
+                            .setBytesReceived(Long.parseLong(c.getString(
                                     c.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))))
                             .build();
                 }
@@ -387,7 +437,7 @@ public class DownloadManagerService extends BroadcastReceiver implements
                             .setFileName(title)
                             .build();
                     mDownloadItem.setDownloadInfo(mDownloadInfo);
-                    canResolve = canResolveDownloadItem(mContext, mDownloadItem);
+                    canResolve = canResolveDownloadItem(mContext, mDownloadItem, false);
                 } else if (status == DownloadManager.STATUS_FAILED) {
                     mFailureReason = c.getInt(reasonIndex);
                     manager.remove(mDownloadItem.getSystemDownloadId());
@@ -406,13 +456,15 @@ public class DownloadManagerService extends BroadcastReceiver implements
                 removeOMADownloadFromSharedPrefs(downloadId);
                 mDownloadSnackbarController.onDownloadSucceeded(
                         mDownloadInfo, DownloadSnackbarController.INVALID_NOTIFICATION_ID,
-                        downloadId, result.second);
+                        downloadId, result.second, true);
             } else if (result.first == DownloadManager.STATUS_FAILED) {
                 mOMADownloadHandler.onDownloadFailed(
                         mDownloadInfo, downloadId, mFailureReason, mInstallNotifyURI);
                 removeOMADownloadFromSharedPrefs(downloadId);
-                String fileName = mDownloadInfo.getFileName();
-                onDownloadFailed(fileName, mFailureReason);
+                if (mDownloadInfo != null) {
+                    String fileName = mDownloadInfo.getFileName();
+                    onDownloadFailed(fileName, mFailureReason);
+                }
             }
         }
     }
@@ -513,73 +565,97 @@ public class DownloadManagerService extends BroadcastReceiver implements
     }
 
     /**
-     * Updates notifications for all current downloads. Should not be called from UI thread.
-     *
-     * @return A List of failed downloads.
+     * Updates notifications for a given list of downloads.
+     * @param progresses A list of notifications to update.
      */
-    private List<DownloadItem> updateAllNotifications() {
-        assert !ThreadUtils.runningOnUiThread();
-        List<DownloadItem> downloadItems = new ArrayList<DownloadItem>();
-        for (DownloadProgress progress : mDownloadProgressMap.values()) {
-            if (progress != null) {
-                DownloadItem item = progress.mDownloadItem;
-                DownloadInfo info = item.getDownloadInfo();
-                switch (progress.mDownloadStatus) {
-                    case DOWNLOAD_STATUS_COMPLETE:
-                        mDownloadProgressMap.remove(item.getId());
-                        boolean success = addCompletedDownload(item);
-                        if (success) {
-                            boolean canResolve = isOMADownloadDescription(info)
-                                    || canResolveDownloadItem(mContext, item);
-                            long systemDownloadId = item.getSystemDownloadId();
-                            mDownloadNotifier.notifyDownloadSuccessful(
-                                    info, systemDownloadId, canResolve,
-                                    getLaunchIntentFromDownloadId(mContext, systemDownloadId));
-                            broadcastDownloadSuccessful(info);
-                        } else {
-                            downloadItems.add(item);
-                            mDownloadNotifier.notifyDownloadFailed(info);
-                        }
-                        break;
-                    case DOWNLOAD_STATUS_FAILED:
-                        mDownloadProgressMap.remove(item.getId());
-                        mDownloadNotifier.notifyDownloadFailed(info);
-                        downloadItems.add(item);
-                        Log.w(TAG, "Download failed: " + info.getFilePath());
-                        break;
-                    case DOWNLOAD_STATUS_IN_PROGRESS:
-                        if (info.isPaused()) {
-                            mDownloadProgressMap.remove(item.getId());
-                            mDownloadNotifier.notifyDownloadPaused(info, false);
-                            if (info.isResumable()) {
-                                recordDownloadResumption(UMA_DOWNLOAD_RESUMPTION_MANUAL_PAUSE);
-                            }
-                        } else {
-                            mDownloadNotifier.notifyDownloadProgress(info,
-                                    progress.mStartTimeInMillis, progress.mCanDownloadWhileMetered);
-                        }
-                        break;
-                    case DOWNLOAD_STATUS_CANCELLED:
-                        mDownloadProgressMap.remove(item.getId());
-                        mDownloadNotifier.notifyDownloadCanceled(item.getId());
-                        break;
-                    case DOWNLOAD_STATUS_INTERRUPTED:
-                        // If the download can be auto resumed, keep it in the progress map so we
-                        // can resume it once network becomes available.
-                        boolean isAutoResumable =
-                                mAutoResumableDownloadIds.contains(item.getId());
-                        if (!isAutoResumable) {
-                            mDownloadProgressMap.remove(item.getId());
-                        }
-                        mDownloadNotifier.notifyDownloadPaused(info, isAutoResumable);
-                        break;
-                    default:
-                        assert false;
-                        break;
-                }
+    private void updateAllNotifications(List<DownloadProgress> progresses) {
+        assert ThreadUtils.runningOnUiThread();
+        for (int i = 0; i < progresses.size(); ++i) {
+            DownloadProgress progress = progresses.get(i);
+            DownloadItem item = progress.mDownloadItem;
+            DownloadInfo info = item.getDownloadInfo();
+            boolean notificationUpdateScheduled = true;
+            boolean removeFromDownloadProgressMap = true;
+            switch (progress.mDownloadStatus) {
+                case DOWNLOAD_STATUS_COMPLETE:
+                    notificationUpdateScheduled = updateDownloadSuccessNotification(progress);
+                    removeFromDownloadProgressMap = notificationUpdateScheduled;
+                    break;
+                case DOWNLOAD_STATUS_FAILED:
+                    mDownloadNotifier.notifyDownloadFailed(info);
+                    Log.w(TAG, "Download failed: " + info.getFilePath());
+                    onDownloadFailed(info.getFileName(), DownloadManager.ERROR_UNKNOWN);
+                    break;
+                case DOWNLOAD_STATUS_IN_PROGRESS:
+                    if (info.isPaused()) {
+                        mDownloadNotifier.notifyDownloadPaused(info);
+                        recordDownloadResumption(UMA_DOWNLOAD_RESUMPTION_MANUAL_PAUSE);
+                    } else {
+                        mDownloadNotifier.notifyDownloadProgress(info,
+                                progress.mStartTimeInMillis, progress.mCanDownloadWhileMetered);
+                        removeFromDownloadProgressMap = false;
+                    }
+                    break;
+                case DOWNLOAD_STATUS_CANCELLED:
+                    mDownloadNotifier.notifyDownloadCanceled(item.getId());
+                    break;
+                case DOWNLOAD_STATUS_INTERRUPTED:
+                    mDownloadNotifier.notifyDownloadInterrupted(info, progress.mIsAutoResumable);
+                    removeFromDownloadProgressMap = !progress.mIsAutoResumable;
+                    break;
+                default:
+                    assert false;
+                    break;
+            }
+            if (notificationUpdateScheduled) {
+                progress.mIsUpdated = false;
+            }
+            if (removeFromDownloadProgressMap) {
+                mDownloadProgressMap.remove(item.getId());
             }
         }
-        return downloadItems;
+    }
+
+    /**
+     * Helper method to schedule a task to update the download success notification.
+     * @param progresses Download progress to update.
+     * @return True if the task can be scheduled, or false otherwise.
+     */
+    private boolean updateDownloadSuccessNotification(DownloadProgress progress) {
+        final boolean isSupportedMimeType = progress.mIsSupportedMimeType;
+        final DownloadItem item = progress.mDownloadItem;
+        AsyncTask<Void, Void, Pair<Long, Boolean>> task =
+                new AsyncTask<Void, Void, Pair<Long, Boolean>>() {
+            @Override
+            public Pair<Long, Boolean> doInBackground(Void... params) {
+                boolean success = addCompletedDownload(item);
+                boolean canResolve = success ? (isOMADownloadDescription(item.getDownloadInfo())
+                        || canResolveDownloadItem(mContext, item, isSupportedMimeType)) : false;
+                return Pair.create(item.getSystemDownloadId(), canResolve);
+            }
+
+            @Override
+            protected void onPostExecute(Pair<Long, Boolean> result) {
+                DownloadInfo info = item.getDownloadInfo();
+                if (result.first != DownloadItem.INVALID_DOWNLOAD_ID) {
+                    mDownloadNotifier.notifyDownloadSuccessful(
+                            info, result.first, result.second, isSupportedMimeType);
+                    broadcastDownloadSuccessful(info);
+                } else {
+                    mDownloadNotifier.notifyDownloadFailed(info);
+                    // TODO(qinmin): get the failure message from native.
+                    onDownloadFailed(info.getFileName(), DownloadManager.ERROR_UNKNOWN);
+                }
+            }
+        };
+        try {
+            task.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+            return true;
+        } catch (RejectedExecutionException e) {
+            // Reaching thread limit, update will be reschduled for the next run.
+            Log.e(TAG, "Thread limit reached, reschedule notification update later.");
+            return false;
+        }
     }
 
     /**
@@ -589,18 +665,18 @@ public class DownloadManagerService extends BroadcastReceiver implements
      * @return true if the download is added to the DownloadManager, or false otherwise.
      */
     protected boolean addCompletedDownload(DownloadItem downloadItem) {
+        assert !ThreadUtils.runningOnUiThread();
         DownloadInfo downloadInfo = downloadItem.getDownloadInfo();
-        String mimeType = downloadInfo.getMimeType();
-        if (TextUtils.isEmpty(mimeType)) mimeType = UNKNOWN_MIME_TYPE;
         String description = downloadInfo.getDescription();
         if (TextUtils.isEmpty(description)) description = downloadInfo.getFileName();
         try {
             // Exceptions can be thrown when calling this, although it is not
             // documented on Android SDK page.
             long downloadId = mDownloadManagerDelegate.addCompletedDownload(
-                    downloadInfo.getFileName(), description, mimeType, downloadInfo.getFilePath(),
-                    downloadInfo.getContentLength(), downloadInfo.getOriginalUrl(),
-                    downloadInfo.getReferer());
+                    downloadInfo.getFileName(), description, downloadInfo.getMimeType(),
+                    downloadInfo.getFilePath(), downloadInfo.getBytesReceived(),
+                    downloadInfo.getOriginalUrl(), downloadInfo.getReferrer(),
+                    downloadInfo.getDownloadGuid());
             downloadItem.setSystemDownloadId(downloadId);
             return true;
         } catch (RuntimeException e) {
@@ -627,37 +703,39 @@ public class DownloadManagerService extends BroadcastReceiver implements
                     download.getDownloadInfo(), download.getSystemDownloadId());
             return;
         }
-        openDownloadedContent(download.getSystemDownloadId());
+        openDownloadedContent(download.getDownloadInfo(), download.getSystemDownloadId());
     }
 
     /**
      * Schedule an update if there is no update scheduled.
      */
-    private void scheduleUpdateIfNeeded() {
-        if (mIsUIUpdateScheduled.compareAndSet(false, true)) {
-            Runnable updateTask = new Runnable() {
-                @Override
-                public void run() {
-                    new AsyncTask<Void, Void, List<DownloadItem>>() {
-                        @Override
-                        public List<DownloadItem> doInBackground(Void... params) {
-                            return updateAllNotifications();
-                        }
+    @VisibleForTesting
+    protected void scheduleUpdateIfNeeded() {
+        if (mIsUIUpdateScheduled) return;
 
-                        @Override
-                        protected void onPostExecute(List<DownloadItem> result) {
-                            for (int i = 0; i < result.size(); ++i) {
-                                // TODO(qinmin): get the failure message from native.
-                                onDownloadFailed(result.get(i).getDownloadInfo().getFileName(),
-                                        DownloadManager.ERROR_UNKNOWN);
-                            }
-                        }
-                    }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
-                    mIsUIUpdateScheduled.set(false);
-                }
-            };
-            mHandler.postDelayed(updateTask, mUpdateDelayInMillis);
+        mIsUIUpdateScheduled = true;
+        final List<DownloadProgress> progressPendingUpdate = new ArrayList<DownloadProgress>();
+        Iterator<DownloadProgress> iter = mDownloadProgressMap.values().iterator();
+        while (iter.hasNext()) {
+            DownloadProgress progress = iter.next();
+            if (progress.mIsUpdated) {
+                progressPendingUpdate.add(progress);
+            }
         }
+        if (progressPendingUpdate.isEmpty()) {
+            mIsUIUpdateScheduled = false;
+            return;
+        }
+        updateAllNotifications(progressPendingUpdate);
+
+        Runnable scheduleNextUpdateTask = new Runnable(){
+            @Override
+            public void run() {
+                mIsUIUpdateScheduled = false;
+                scheduleUpdateIfNeeded();
+            }
+        };
+        mHandler.postDelayed(scheduleNextUpdateTask, mUpdateDelayInMillis);
     }
 
     /**
@@ -667,17 +745,25 @@ public class DownloadManagerService extends BroadcastReceiver implements
      * @param downloadStatus Status of the download.
      */
     private void updateDownloadProgress(DownloadItem downloadItem, int downloadStatus) {
+        boolean isSupportedMimeType = (downloadStatus == DOWNLOAD_STATUS_COMPLETE)
+                ? isSupportedMimeType(downloadItem.getDownloadInfo().getMimeType()) : false;
         String id = downloadItem.getId();
         DownloadProgress progress = mDownloadProgressMap.get(id);
+        long bytesReceived = downloadItem.getDownloadInfo().getBytesReceived();
         if (progress == null) {
             if (!downloadItem.getDownloadInfo().isPaused()) {
                 long startTime = System.currentTimeMillis();
                 progress = new DownloadProgress(
                         startTime, isActiveNetworkMetered(mContext), downloadItem, downloadStatus);
-                mDownloadProgressMap.putIfAbsent(id, progress);
-                if (getUmaStatsEntry(downloadItem.getId()) == null) {
+                progress.mIsUpdated = true;
+                progress.mIsSupportedMimeType = isSupportedMimeType;
+                mDownloadProgressMap.put(id, progress);
+                DownloadUmaStatsEntry entry = getUmaStatsEntry(downloadItem.getId());
+                if (entry == null) {
                     addUmaStatsEntry(new DownloadUmaStatsEntry(
-                            downloadItem.getId(), startTime, 0, false, false));
+                            downloadItem.getId(), startTime, 0, false, false, bytesReceived, 0));
+                } else if (updateBytesReceived(entry, bytesReceived)) {
+                    storeUmaEntries();
                 }
             }
             return;
@@ -685,22 +771,28 @@ public class DownloadManagerService extends BroadcastReceiver implements
 
         progress.mDownloadStatus = downloadStatus;
         progress.mDownloadItem = downloadItem;
+        progress.mIsUpdated = true;
+        progress.mIsAutoResumable = mAutoResumableDownloadIds.contains(id);
+        progress.mIsSupportedMimeType = isSupportedMimeType;
         DownloadUmaStatsEntry entry;
         switch (downloadStatus) {
             case DOWNLOAD_STATUS_COMPLETE:
             case DOWNLOAD_STATUS_FAILED:
             case DOWNLOAD_STATUS_CANCELLED:
                 recordDownloadFinishedUMA(downloadStatus, downloadItem.getId(),
-                        downloadItem.getDownloadInfo().getContentLength());
+                        downloadItem.getDownloadInfo().getBytesReceived());
+                clearDownloadRetryCount(downloadItem.getId());
                 break;
             case DOWNLOAD_STATUS_INTERRUPTED:
                 entry = getUmaStatsEntry(downloadItem.getId());
                 entry.numInterruptions++;
+                updateBytesReceived(entry, bytesReceived);
                 storeUmaEntries();
                 break;
             case DOWNLOAD_STATUS_IN_PROGRESS:
                 entry = getUmaStatsEntry(downloadItem.getId());
-                if (entry.isPaused != downloadItem.getDownloadInfo().isPaused()) {
+                if (entry.isPaused != downloadItem.getDownloadInfo().isPaused()
+                        || updateBytesReceived(entry, bytesReceived)) {
                     entry.isPaused = downloadItem.getDownloadInfo().isPaused();
                     storeUmaEntries();
                 }
@@ -710,6 +802,22 @@ public class DownloadManagerService extends BroadcastReceiver implements
         }
     }
 
+    /**
+     * Helper method to update the received bytes and wasted bytes for UMA reporting.
+     * @param  entry UMA entry to update.
+     * @param bytesReceived The current received bytes.
+     * @return true if the UMA stats is updated, or false otherwise.
+     */
+    private boolean updateBytesReceived(DownloadUmaStatsEntry entry, long bytesReceived) {
+        if (bytesReceived == UNKNOWN_BYTES_RECEIVED || bytesReceived == entry.lastBytesReceived) {
+            return false;
+        }
+        if (bytesReceived < entry.lastBytesReceived) {
+            entry.bytesWasted += entry.lastBytesReceived - bytesReceived;
+        }
+        entry.lastBytesReceived = bytesReceived;
+        return true;
+    }
     /**
      * Sets the download handler for OMA downloads, for testing purpose.
      *
@@ -750,6 +858,7 @@ public class DownloadManagerService extends BroadcastReceiver implements
      * content will be saved to the public directory on external storage. Otherwise, the
      * download will be saved in the app directory and user will not get any notifications
      * after download completion.
+     * This will be used by OMA downloads as we need Android DownloadManager to encrypt the content.
      * TODO(qinmin): move this to DownloadManagerDelegate.
      *
      * @param info Download information about the download.
@@ -758,6 +867,10 @@ public class DownloadManagerService extends BroadcastReceiver implements
      */
     public void enqueueDownloadManagerRequest(
             final DownloadItem item, boolean notifyCompleted) {
+        if (mDownloadManagerRequestInterceptor != null) {
+            mDownloadManagerRequestInterceptor.interceptDownloadRequest(item, notifyCompleted);
+            return;
+        }
         EnqueueDownloadRequestTask task = new EnqueueDownloadRequestTask(item);
         task.execute(notifyCompleted);
     }
@@ -794,10 +907,12 @@ public class DownloadManagerService extends BroadcastReceiver implements
             request.setMimeType(info.getMimeType());
             try {
                 if (notifyCompleted) {
-                    // Set downloaded file destination to /sdcard/Download or, should it be
-                    // set to one of several Environment.DIRECTORY* dirs depending on mimetype?
-                    request.setDestinationInExternalPublicDir(
-                            Environment.DIRECTORY_DOWNLOADS, info.getFileName());
+                    if (info.getFileName() != null) {
+                        // Set downloaded file destination to /sdcard/Download or, should it be
+                        // set to one of several Environment.DIRECTORY* dirs depending on mimetype?
+                        request.setDestinationInExternalPublicDir(
+                                Environment.DIRECTORY_DOWNLOADS, info.getFileName());
+                    }
                 } else {
                     File dir = new File(mContext.getExternalFilesDir(null), DOWNLOAD_DIRECTORY);
                     if (dir.mkdir() || dir.isDirectory()) {
@@ -832,7 +947,7 @@ public class DownloadManagerService extends BroadcastReceiver implements
             request.setDescription(description);
             request.setTitle(info.getFileName());
             request.addRequestHeader("Cookie", info.getCookie());
-            request.addRequestHeader("Referer", info.getReferer());
+            request.addRequestHeader("Referer", info.getReferrer());
             request.addRequestHeader("User-Agent", info.getUserAgent());
 
             DownloadManager manager =
@@ -860,7 +975,7 @@ public class DownloadManagerService extends BroadcastReceiver implements
                     mDownloadItem.getSystemDownloadId());
             if (!result) {
                 onDownloadFailed(mDownloadItem.getDownloadInfo().getFileName(), mFailureReason);
-                recordDownloadCompletionStats(true, DOWNLOAD_STATUS_FAILED, 0, 0, 0);
+                recordDownloadCompletionStats(true, DOWNLOAD_STATUS_FAILED, 0, 0, 0, 0);
                 if (isPendingOMADownload) {
                     mOMADownloadHandler.onDownloadFailed(
                             mDownloadItem.getDownloadInfo(), mDownloadItem.getSystemDownloadId(),
@@ -868,7 +983,7 @@ public class DownloadManagerService extends BroadcastReceiver implements
                 }
                 return;
             }
-            Toast.makeText(mContext, R.string.download_pending, Toast.LENGTH_SHORT).show();
+            DownloadUtils.showDownloadStartToast(mContext);
             if (isPendingOMADownload) {
                 // A new downloadId is generated, needs to update the OMADownloadHandler
                 // about this.
@@ -888,7 +1003,7 @@ public class DownloadManagerService extends BroadcastReceiver implements
                         new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE));
             }
             addUmaStatsEntry(new DownloadUmaStatsEntry(
-                    String.valueOf(mDownloadId), mStartTime, 0, false, true));
+                    String.valueOf(mDownloadId), mStartTime, 0, false, true, 0, 0));
             mDownloadItem.setSystemDownloadId(mDownloadId);
             mDownloadItem.setStartTime(mStartTime);
             mSystemDownloadIdMap.put(mDownloadId, mDownloadItem);
@@ -920,51 +1035,34 @@ public class DownloadManagerService extends BroadcastReceiver implements
     }
 
     /**
-     * Launch the best activity for the given intent. If a default activity is provided,
-     * choose the default one. Otherwise, return the Intent picker if there are more than one
-     * capable activities. If the intent is pdf type, return the platform pdf viewer if
-     * it is available so user don't need to choose it from Intent picker.
-     *
-     * @param context Context of the app.
-     * @param intent Intent to open.
-     * @param allowSelfOpen Whether chrome itself is allowed to open the intent.
-     * @return true if an Intent is launched, or false otherwise.
-     */
-    public static boolean openIntent(Context context, Intent intent, boolean allowSelfOpen) {
-        boolean activityResolved = ExternalNavigationDelegateImpl.resolveIntent(
-                context, intent, allowSelfOpen);
-        if (activityResolved) {
-            try {
-                context.startActivity(intent);
-                return true;
-            } catch (ActivityNotFoundException ex) {
-                Log.d(TAG, "activity not found for " + intent.getType()
-                        + " over " + intent.getData().getScheme(), ex);
-            } catch (SecurityException ex) {
-                Log.d(TAG, "cannot open intent: " + intent, ex);
-            }
-        }
-        return false;
-    }
-
-    /**
      * Return the intent to launch for a given download item.
      *
-     * @param context Context of the app.
+     * @param context    Context of the app.
+     * @param filePath   Path to the file.
      * @param downloadId ID of the download item in DownloadManager.
+     * @param isSupportedMimeType Whether the MIME type is supported by browser.
      * @return the intent to launch for the given download item.
      */
-    private static Intent getLaunchIntentFromDownloadId(Context context, long downloadId) {
+    @Nullable
+    static Intent getLaunchIntentFromDownloadId(
+            Context context, @Nullable String filePath, long downloadId,
+            boolean isSupportedMimeType) {
         assert !ThreadUtils.runningOnUiThread();
+        Uri contentUri = DownloadManagerDelegate.getContentUriFromDownloadManager(
+                context, downloadId);
+        if (contentUri == null) return null;
+
         DownloadManager manager =
                 (DownloadManager) context.getSystemService(Context.DOWNLOAD_SERVICE);
-        Uri uri = manager.getUriForDownloadedFile(downloadId);
-        if (uri == null) return null;
-        Intent launchIntent = new Intent(Intent.ACTION_VIEW);
-        launchIntent.setDataAndType(uri, manager.getMimeTypeForDownloadedFile(downloadId));
-        launchIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                | Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        return launchIntent;
+        String mimeType = manager.getMimeTypeForDownloadedFile(downloadId);
+        if (isSupportedMimeType) {
+            // Redirect the user to an internal media viewer.  The file path is necessary to show
+            // the real file path to the user instead of a content:// download ID.
+            Uri fileUri = contentUri;
+            if (filePath != null) fileUri = Uri.fromFile(new File(filePath));
+            return DownloadUtils.getMediaViewerIntentForDownloadItem(fileUri, contentUri, mimeType);
+        }
+        return DownloadUtils.createViewIntentForDownloadItem(contentUri, mimeType);
     }
 
     /**
@@ -972,32 +1070,49 @@ public class DownloadManagerService extends BroadcastReceiver implements
      *
      * @param context Context of the app.
      * @param download A download item.
+     * @param isSupportedMimeType Whether the MIME type is supported by browser.
      * @return true if the download item can be resolved, or false otherwise.
      */
-    static boolean canResolveDownloadItem(Context context, DownloadItem download) {
+    static boolean canResolveDownloadItem(Context context, DownloadItem download,
+            boolean isSupportedMimeType) {
         assert !ThreadUtils.runningOnUiThread();
-        Intent intent = getLaunchIntentFromDownloadId(context, download.getSystemDownloadId());
-        return (intent == null) ? false : ExternalNavigationDelegateImpl.resolveIntent(
-                context, intent, true);
+        Intent intent = getLaunchIntentFromDownloadId(
+                context, download.getDownloadInfo().getFilePath(),
+                download.getSystemDownloadId(), isSupportedMimeType);
+        return (intent == null)
+                ? false : ExternalNavigationDelegateImpl.resolveIntent(intent, true);
+    }
+
+    /** See {@link #openDownloadedContent(Context, String, boolean, long)}. */
+    protected void openDownloadedContent(final DownloadInfo downloadInfo, final long downloadId) {
+        openDownloadedContent(mContext, downloadInfo.getFilePath(),
+                isSupportedMimeType(downloadInfo.getMimeType()), downloadId);
     }
 
     /**
-     * Launch the intent for a given download item.
+     * Launch the intent for a given download item, or Download Home if that's not possible.
      * TODO(qinmin): Move this to DownloadManagerDelegate.
      *
-     * @param downloadId ID of the download item in DownloadManager.
+     * @param context             Context to use.
+     * @param filePath            Path to the downloaded item.
+     * @param isSupportedMimeType MIME type of the downloaded item.
+     * @param downloadId          ID of the download item in DownloadManager.
      */
-    protected void openDownloadedContent(final long downloadId) {
+    protected static void openDownloadedContent(final Context context, final String filePath,
+            final boolean isSupportedMimeType, final long downloadId) {
         new AsyncTask<Void, Void, Intent>() {
             @Override
             public Intent doInBackground(Void... params) {
-                return getLaunchIntentFromDownloadId(mContext, downloadId);
+                return getLaunchIntentFromDownloadId(
+                        context, filePath, downloadId, isSupportedMimeType);
             }
 
             @Override
             protected void onPostExecute(Intent intent) {
-                if (intent != null) {
-                    openIntent(mContext, intent, true);
+                if (intent == null
+                        || !ExternalNavigationDelegateImpl.resolveIntent(intent, true)
+                        || !DownloadUtils.fireOpenIntentForDownload(context, intent)) {
+                    openDownloadsPage(context);
                 }
             }
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
@@ -1010,41 +1125,14 @@ public class DownloadManagerService extends BroadcastReceiver implements
      * @param reason Reason of failure reported by android DownloadManager
      */
     protected void onDownloadFailed(String fileName, int reason) {
-        String reasonString = mContext.getString(
-                R.string.download_failed_reason_unknown_error, fileName);
-        switch (reason) {
-            case DownloadManager.ERROR_FILE_ALREADY_EXISTS:
-                reasonString = mContext.getString(
-                        R.string.download_failed_reason_file_already_exists, fileName);
-                break;
-            case DownloadManager.ERROR_FILE_ERROR:
-                reasonString = mContext.getString(
-                        R.string.download_failed_reason_file_system_error, fileName);
-                break;
-            case DownloadManager.ERROR_INSUFFICIENT_SPACE:
-                reasonString = mContext.getString(
-                        R.string.download_failed_reason_insufficient_space, fileName);
-                break;
-            case DownloadManager.ERROR_CANNOT_RESUME:
-            case DownloadManager.ERROR_HTTP_DATA_ERROR:
-                reasonString = mContext.getString(
-                        R.string.download_failed_reason_network_failures, fileName);
-                break;
-            case DownloadManager.ERROR_TOO_MANY_REDIRECTS:
-            case DownloadManager.ERROR_UNHANDLED_HTTP_CODE:
-                reasonString = mContext.getString(
-                        R.string.download_failed_reason_server_issues, fileName);
-                break;
-            case DownloadManager.ERROR_DEVICE_NOT_FOUND:
-                reasonString = mContext.getString(
-                        R.string.download_failed_reason_storage_not_found, fileName);
-                break;
-            case DownloadManager.ERROR_UNKNOWN:
-            default:
-                break;
+        String failureMessage = getDownloadFailureMessage(fileName, reason);
+        if (mDownloadSnackbarController.getSnackbarManager() != null) {
+            mDownloadSnackbarController.onDownloadFailed(
+                    failureMessage,
+                    reason == DownloadManager.ERROR_FILE_ALREADY_EXISTS);
+        } else {
+            Toast.makeText(mContext, failureMessage, Toast.LENGTH_SHORT).show();
         }
-        mDownloadSnackbarController.onDownloadFailed(
-                reasonString, reason == DownloadManager.ERROR_FILE_ALREADY_EXISTS);
     }
 
     /**
@@ -1061,6 +1149,9 @@ public class DownloadManagerService extends BroadcastReceiver implements
      * @param context Application context
      */
     protected static void openDownloadsPage(Context context) {
+        if (DownloadUtils.showDownloadManager(null, null)) return;
+
+        // Open the Android Download Manager.
         Intent pageView = new Intent(DownloadManager.ACTION_VIEW_DOWNLOADS);
         pageView.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         try {
@@ -1070,13 +1161,8 @@ public class DownloadManagerService extends BroadcastReceiver implements
         }
     }
 
-    /**
-     * Called to resume a paused download.
-     * @param item Download item to resume.
-     * @param hasUserGesture Whether the resumption is triggered by user gesture.
-     */
-    @VisibleForTesting
-    protected void resumeDownload(DownloadItem item, boolean hasUserGesture) {
+    @Override
+    public void resumeDownload(DownloadItem item, boolean hasUserGesture) {
         DownloadProgress progress = mDownloadProgressMap.get(item.getId());
         if (progress != null && progress.mDownloadStatus == DOWNLOAD_STATUS_IN_PROGRESS
                 && !progress.mDownloadItem.getDownloadInfo().isPaused()) {
@@ -1100,30 +1186,41 @@ public class DownloadManagerService extends BroadcastReceiver implements
             if (!progress.mCanDownloadWhileMetered) {
                 progress.mCanDownloadWhileMetered = isActiveNetworkMetered(mContext);
             }
+            clearDownloadRetryCount(item.getId());
+        } else {
+            int count = incrementAndReturnDownloadRetryCount(item.getId());
+            if (count > getAutoResumptionLimit()) {
+                removeAutoResumableDownload(item.getId());
+                onDownloadInterrupted(item.getDownloadInfo(), false);
+                return;
+            }
         }
-        nativeResumeDownload(getNativeDownloadManagerService(), item.getId());
+        nativeResumeDownload(getNativeDownloadManagerService(), item.getId(),
+                item.getDownloadInfo().isOffTheRecord());
     }
 
     /**
      * Called to cancel a download.
      * @param downloadGuid GUID of the download.
+     * @param isOffTheRecord Whether the download is off the record.
      * @param isNotificationDismissed Whether cancel is caused by dismissing the notification.
      */
-    void cancelDownload(String downloadGuid, boolean isNotificationDismissed) {
-        DownloadProgress progress = mDownloadProgressMap.get(downloadGuid);
-        boolean isOffTheRecord = progress == null
-                ? false : progress.mDownloadItem.getDownloadInfo().isOffTheRecord();
-        nativeCancelDownload(getNativeDownloadManagerService(), downloadGuid, isOffTheRecord,
-                isNotificationDismissed);
+    @Override
+    public void cancelDownload(
+            String downloadGuid, boolean isOffTheRecord) {
+        nativeCancelDownload(getNativeDownloadManagerService(), downloadGuid, isOffTheRecord);
+        removeDownloadProgress(downloadGuid);
         recordDownloadFinishedUMA(DOWNLOAD_STATUS_CANCELLED, downloadGuid, 0);
     }
 
     /**
      * Called to pause a download.
      * @param downloadGuid GUID of the download.
+     * @param isOffTheRecord Whether the download is off the record.
      */
-    void pauseDownload(String downloadGuid) {
-        nativePauseDownload(getNativeDownloadManagerService(), downloadGuid);
+    @Override
+    public void pauseDownload(String downloadGuid, boolean isOffTheRecord) {
+        nativePauseDownload(getNativeDownloadManagerService(), downloadGuid, isOffTheRecord);
         DownloadProgress progress = mDownloadProgressMap.get(downloadGuid);
         // Calling pause will stop listening to the download item. Update its progress now.
         // If download is already completed, canceled or failed, there is no need to update the
@@ -1131,9 +1228,54 @@ public class DownloadManagerService extends BroadcastReceiver implements
         if (progress != null && (progress.mDownloadStatus == DOWNLOAD_STATUS_INTERRUPTED
                 || progress.mDownloadStatus == DOWNLOAD_STATUS_IN_PROGRESS)) {
             DownloadInfo info = DownloadInfo.Builder.fromDownloadInfo(
-                    progress.mDownloadItem.getDownloadInfo()).setIsPaused(true).build();
+                    progress.mDownloadItem.getDownloadInfo()).setIsPaused(true)
+                    .setBytesReceived(UNKNOWN_BYTES_RECEIVED).build();
             onDownloadUpdated(info);
         }
+    }
+
+    @Override
+    public void destroyServiceDelegate() {
+        // Lifecycle of DownloadManagerService allows for this call to be ignored.
+    }
+
+    /**
+     * Removes a download from the list.
+     * @param downloadGuid GUID of the download.
+     * @param isOffTheRecord Whether the download is off the record.
+     */
+    @Override
+    public void removeDownload(final String downloadGuid, boolean isOffTheRecord) {
+        nativeRemoveDownload(getNativeDownloadManagerService(), downloadGuid, isOffTheRecord);
+        removeDownloadProgress(downloadGuid);
+        new AsyncTask<Void, Void, Void>() {
+            @Override
+            public Void doInBackground(Void... params) {
+                mDownloadManagerDelegate.removeCompletedDownload(downloadGuid);
+                return null;
+            }
+        }.executeOnExecutor(AsyncTask.SERIAL_EXECUTOR);
+    }
+
+    /**
+     * Checks whether the download can be opened by the browser.
+     * @param isOffTheRecord Whether the download is off the record.
+     * @param mimeType MIME type of the file.
+     * @return Whether the download is openable by the browser.
+     */
+    @Override
+    public boolean isDownloadOpenableInBrowser(boolean isOffTheRecord, String mimeType) {
+        // TODO(qinmin): for audio and video, check if the codec is supported by Chrome.
+        return isSupportedMimeType(mimeType);
+    }
+
+    /**
+     * Checks whether a file with the given MIME type can be opened by the browser.
+     * @param mimeType MIME type of the file.
+     * @return Whether the file would be openable by the browser.
+     */
+    public static boolean isSupportedMimeType(String mimeType) {
+        return nativeIsSupportedMimeType(mimeType);
     }
 
     /**
@@ -1151,7 +1293,7 @@ public class DownloadManagerService extends BroadcastReceiver implements
     void onResumptionFailed(String downloadGuid) {
         mDownloadNotifier.notifyDownloadFailed(
                 new DownloadInfo.Builder().setDownloadGuid(downloadGuid).build());
-        mDownloadProgressMap.remove(downloadGuid);
+        removeDownloadProgress(downloadGuid);
         recordDownloadResumption(UMA_DOWNLOAD_RESUMPTION_FAILED);
         recordDownloadFinishedUMA(DOWNLOAD_STATUS_FAILED, downloadGuid, 0);
     }
@@ -1171,7 +1313,7 @@ public class DownloadManagerService extends BroadcastReceiver implements
             handleAutoOpenAfterDownload(item);
         } else {
             mDownloadSnackbarController.onDownloadSucceeded(
-                    info, notificationId, systemDownloadId, canResolve);
+                    info, notificationId, systemDownloadId, canResolve, false);
         }
     }
 
@@ -1194,7 +1336,7 @@ public class DownloadManagerService extends BroadcastReceiver implements
      * @param numInterruptions Number of interruptions during the download.
      */
     private void recordDownloadCompletionStats(boolean useDownloadManager, int status,
-            long totalDuration, long bytesDownloaded, int numInterruptions) {
+            long totalDuration, long bytesDownloaded, int numInterruptions, long bytesWasted) {
         switch (status) {
             case DOWNLOAD_STATUS_COMPLETE:
                 if (useDownloadManager) {
@@ -1214,6 +1356,8 @@ public class DownloadManagerService extends BroadcastReceiver implements
                     RecordHistogram.recordCountHistogram(
                             "MobileDownload.InterruptionsCount.ChromeNetworkStack.Success",
                             numInterruptions);
+                    recordBytesWasted(
+                            "MobileDownload.BytesWasted.ChromeNetworkStack.Success", bytesWasted);
                 }
                 break;
             case DOWNLOAD_STATUS_FAILED:
@@ -1234,6 +1378,8 @@ public class DownloadManagerService extends BroadcastReceiver implements
                     RecordHistogram.recordCountHistogram(
                             "MobileDownload.InterruptionsCount.ChromeNetworkStack.Failure",
                             numInterruptions);
+                    recordBytesWasted(
+                            "MobileDownload.BytesWasted.ChromeNetworkStack.Failure", bytesWasted);
                 }
                 break;
             case DOWNLOAD_STATUS_CANCELLED:
@@ -1244,11 +1390,23 @@ public class DownloadManagerService extends BroadcastReceiver implements
                     RecordHistogram.recordCountHistogram(
                             "MobileDownload.InterruptionsCount.ChromeNetworkStack.Cancel",
                             numInterruptions);
+                    recordBytesWasted(
+                            "MobileDownload.BytesWasted.ChromeNetworkStack.Cancel", bytesWasted);
                 }
                 break;
             default:
                 break;
         }
+    }
+
+    /**
+     * Helper method to record the bytes wasted metrics when a download completes.
+     * @param name Histogram name
+     * @param bytesWasted Bytes wasted during download.
+     */
+    private void recordBytesWasted(String name, long bytesWasted) {
+        RecordHistogram.recordCustomCountHistogram(
+                name, (int) (bytesWasted / 1024), 1, GB_IN_KILO_BYTES, 50);
     }
 
     @Override
@@ -1265,7 +1423,7 @@ public class DownloadManagerService extends BroadcastReceiver implements
                         mDownloadSnackbarController.onDownloadSucceeded(
                                 result.item.getDownloadInfo(),
                                 DownloadSnackbarController.INVALID_NOTIFICATION_ID,
-                                result.item.getSystemDownloadId(), result.canResolve);
+                                result.item.getSystemDownloadId(), result.canResolve, true);
                     }
                     break;
                 case DOWNLOAD_STATUS_FAILED:
@@ -1277,7 +1435,7 @@ public class DownloadManagerService extends BroadcastReceiver implements
             }
         }
         recordDownloadCompletionStats(true, result.downloadStatus,
-                result.downloadTimeInMilliseconds, result.bytesDownloaded, 0);
+                result.downloadTimeInMilliseconds, result.bytesDownloaded, 0, 0);
         removeUmaStatsEntry(result.item.getId());
     }
 
@@ -1320,6 +1478,15 @@ public class DownloadManagerService extends BroadcastReceiver implements
         if (mAutoResumableDownloadIds.isEmpty()) return;
         mAutoResumableDownloadIds.remove(guid);
         stopListenToConnectionChangeIfNotNeeded();
+    }
+
+    /**
+     * Helper method to remove a download from |mDownloadProgressMap|.
+     * @param guid Id of the download item.
+     */
+    private void removeDownloadProgress(String guid) {
+        mDownloadProgressMap.remove(guid);
+        removeAutoResumableDownload(guid);
     }
 
     @Override
@@ -1432,7 +1599,8 @@ public class DownloadManagerService extends BroadcastReceiver implements
         long currentTime = System.currentTimeMillis();
         long totalTime = Math.max(0, currentTime - entry.downloadStartTime);
         recordDownloadCompletionStats(
-                false, downloadStatus, totalTime, bytesDownloaded, entry.numInterruptions);
+                false, downloadStatus, totalTime, bytesDownloaded, entry.numInterruptions,
+                entry.bytesWasted);
         removeUmaStatsEntry(entryId);
     }
 
@@ -1444,31 +1612,218 @@ public class DownloadManagerService extends BroadcastReceiver implements
             Set<String> entries =
                     DownloadManagerService.getStoredDownloadInfo(mSharedPrefs, DOWNLOAD_UMA_ENTRY);
             for (String entryString : entries) {
-                mUmaEntries.add(DownloadUmaStatsEntry.parseFromString(entryString));
+                DownloadUmaStatsEntry entry = DownloadUmaStatsEntry.parseFromString(entryString);
+                if (entry != null) mUmaEntries.add(entry);
             }
         }
+    }
+
+    /** Adds a new DownloadHistoryAdapter to the list. */
+    @Override
+    public void addDownloadHistoryAdapter(DownloadHistoryAdapter adapter) {
+        mHistoryAdapters.addObserver(adapter);
+        DownloadSharedPreferenceHelper.getInstance().addObserver(adapter);
+    }
+
+    /** Removes a DownloadHistoryAdapter from the list. */
+    @Override
+    public void removeDownloadHistoryAdapter(DownloadHistoryAdapter adapter) {
+        mHistoryAdapters.removeObserver(adapter);
+        DownloadSharedPreferenceHelper.getInstance().removeObserver(adapter);
+    }
+
+    /**
+     * Begins sending back information about all entries in the user's DownloadHistory via
+     * {@link #onAllDownloadsRetrieved}.  If the DownloadHistory is not initialized yet, the
+     * callback will be delayed.
+     *
+     * @param isOffTheRecord Whether or not to get downloads for the off the record profile.
+     */
+    @Override
+    public void getAllDownloads(boolean isOffTheRecord) {
+        nativeGetAllDownloads(getNativeDownloadManagerService(), isOffTheRecord);
+    }
+
+    /**
+     * Fires an Intent that alerts the DownloadNotificationService that an action must be taken
+     * for a particular item.
+     */
+    @Override
+    public void broadcastDownloadAction(DownloadItem downloadItem, String action) {
+        Intent intent = DownloadNotificationService.buildActionIntent(mContext, action,
+                downloadItem.getId(), downloadItem.getDownloadInfo().isOffTheRecord(), false);
+        mContext.sendBroadcast(intent);
+    }
+
+    /**
+     * Checks if the files associated with any downloads have been removed by an external action.
+     * @param isOffTheRecord Whether or not to check downloads for the off the record profile.
+     */
+    @Override
+    public void checkForExternallyRemovedDownloads(boolean isOffTheRecord) {
+        nativeCheckForExternallyRemovedDownloads(getNativeDownloadManagerService(), isOffTheRecord);
+    }
+
+    @CalledByNative
+    private List<DownloadItem> createDownloadItemList() {
+        return new ArrayList<DownloadItem>();
+    }
+
+    @CalledByNative
+    private void addDownloadItemToList(List<DownloadItem> list, DownloadItem item) {
+        list.add(item);
+    }
+
+    @CalledByNative
+    private void onAllDownloadsRetrieved(final List<DownloadItem> list, boolean isOffTheRecord) {
+        for (DownloadHistoryAdapter adapter : mHistoryAdapters) {
+            adapter.onAllDownloadsRetrieved(list, isOffTheRecord);
+        }
+    }
+
+    @CalledByNative
+    private void onDownloadItemCreated(DownloadItem item) {
+        for (DownloadHistoryAdapter adapter : mHistoryAdapters) {
+            adapter.onDownloadItemCreated(item);
+        }
+    }
+
+    @CalledByNative
+    private void onDownloadItemUpdated(DownloadItem item) {
+        for (DownloadHistoryAdapter adapter : mHistoryAdapters) {
+            adapter.onDownloadItemUpdated(item);
+        }
+    }
+
+    @CalledByNative
+    private void onDownloadItemRemoved(String guid, boolean isOffTheRecord) {
+        for (DownloadHistoryAdapter adapter : mHistoryAdapters) {
+            adapter.onDownloadItemRemoved(guid, isOffTheRecord);
+        }
+    }
+
+    /**
+     * Called when a download is canceled before download target is determined.
+     *
+     * @param fileName Name of the download file.
+     * @param reason Reason of failure reported by android DownloadManager.
+     */
+    @CalledByNative
+    private static void onDownloadItemCanceled(String fileName, boolean isExternalStorageMissing) {
+        DownloadManagerService service = getDownloadManagerService(
+                ContextUtils.getApplicationContext());
+        int reason = isExternalStorageMissing ? DownloadManager.ERROR_DEVICE_NOT_FOUND
+                : DownloadManager.ERROR_FILE_ALREADY_EXISTS;
+        service.onDownloadFailed(fileName, reason);
+    }
+
+    /**
+     * Get the message to display when a download fails.
+     *
+     * @param fileName Name of the download file.
+     * @param reason Reason of failure reported by android DownloadManager.
+     */
+    private String getDownloadFailureMessage(String fileName, int reason) {
+        switch (reason) {
+            case DownloadManager.ERROR_FILE_ALREADY_EXISTS:
+                return mContext.getString(
+                        R.string.download_failed_reason_file_already_exists, fileName);
+            case DownloadManager.ERROR_FILE_ERROR:
+                return mContext.getString(
+                        R.string.download_failed_reason_file_system_error, fileName);
+            case DownloadManager.ERROR_INSUFFICIENT_SPACE:
+                return mContext.getString(
+                        R.string.download_failed_reason_insufficient_space, fileName);
+            case DownloadManager.ERROR_CANNOT_RESUME:
+            case DownloadManager.ERROR_HTTP_DATA_ERROR:
+                return mContext.getString(
+                        R.string.download_failed_reason_network_failures, fileName);
+            case DownloadManager.ERROR_TOO_MANY_REDIRECTS:
+            case DownloadManager.ERROR_UNHANDLED_HTTP_CODE:
+                return mContext.getString(
+                        R.string.download_failed_reason_server_issues, fileName);
+            case DownloadManager.ERROR_DEVICE_NOT_FOUND:
+                return mContext.getString(
+                        R.string.download_failed_reason_storage_not_found, fileName);
+            case DownloadManager.ERROR_UNKNOWN:
+            default:
+                return mContext.getString(
+                        R.string.download_failed_reason_unknown_error, fileName);
+        }
+    }
+
+    /**
+     * Returns the SharedPreferences for download retry count.
+     * @return The SharedPreferences to use.
+     */
+    private static SharedPreferences getAutoRetryCountSharedPreference(Context context) {
+        return context.getSharedPreferences(DOWNLOAD_RETRY_COUNT_FILE_NAME, Context.MODE_PRIVATE);
+    }
+
+    /**
+     * Increments the interruption count for a download. If the interruption count reaches a certain
+     * threshold, the download will no longer auto resume unless user click the resume button
+     * to clear the count.
+     * @param downloadGuid Download GUID.
+     * @return The interruption count of the download, after incrementation.
+     */
+    private int incrementAndReturnDownloadRetryCount(String downloadGuid) {
+        SharedPreferences sharedPrefs = getAutoRetryCountSharedPreference(mContext);
+        int count = sharedPrefs.getInt(downloadGuid, 0);
+        count++;
+        SharedPreferences.Editor editor = sharedPrefs.edit();
+        editor.putInt(downloadGuid, count);
+        editor.apply();
+        return count;
+    }
+
+    /**
+     * clears the interruption count for a download.
+     * @param downloadGuid Download GUID.
+     */
+    private void clearDownloadRetryCount(String downloadGuid) {
+        SharedPreferences sharedPrefs = getAutoRetryCountSharedPreference(mContext);
+        SharedPreferences.Editor editor = sharedPrefs.edit();
+        editor.remove(downloadGuid);
+        editor.apply();
+    }
+
+    int getAutoResumptionLimit() {
+        if (mAutoResumptionLimit < 0) {
+            mAutoResumptionLimit = nativeGetAutoResumptionLimit();
+        }
+        return mAutoResumptionLimit;
     }
 
     @Override
     public void onMaxBandwidthChanged(double maxBandwidthMbps) {}
 
     @Override
-    public void onNetworkConnect(int netId, int connectionType) {}
+    public void onNetworkConnect(long netId, int connectionType) {}
 
     @Override
-    public void onNetworkSoonToDisconnect(int netId) {}
+    public void onNetworkSoonToDisconnect(long netId) {}
 
     @Override
-    public void onNetworkDisconnect(int netId) {}
+    public void onNetworkDisconnect(long netId) {}
 
     @Override
-    public void purgeActiveNetworkList(int[] activeNetIds) {}
+    public void purgeActiveNetworkList(long[] activeNetIds) {}
+
+    private static native boolean nativeIsSupportedMimeType(String mimeType);
+    private static native int nativeGetAutoResumptionLimit();
 
     private native long nativeInit();
     private native void nativeResumeDownload(
-            long nativeDownloadManagerService, String downloadGuid);
+            long nativeDownloadManagerService, String downloadGuid, boolean isOffTheRecord);
     private native void nativeCancelDownload(
-            long nativeDownloadManagerService, String downloadGuid, boolean isOffTheRecord,
-            boolean isNotificationDismissed);
-    private native void nativePauseDownload(long nativeDownloadManagerService, String downloadGuid);
+            long nativeDownloadManagerService, String downloadGuid, boolean isOffTheRecord);
+    private native void nativePauseDownload(long nativeDownloadManagerService, String downloadGuid,
+            boolean isOffTheRecord);
+    private native void nativeRemoveDownload(long nativeDownloadManagerService, String downloadGuid,
+            boolean isOffTheRecord);
+    private native void nativeGetAllDownloads(
+            long nativeDownloadManagerService, boolean isOffTheRecord);
+    private native void nativeCheckForExternallyRemovedDownloads(
+            long nativeDownloadManagerService, boolean isOffTheRecord);
 }

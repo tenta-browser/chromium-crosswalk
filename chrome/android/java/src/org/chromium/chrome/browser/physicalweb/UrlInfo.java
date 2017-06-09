@@ -12,20 +12,23 @@ import java.util.Locale;
 /**
  * This class represents a scanned URL and information associated with that URL.
  */
-class UrlInfo implements Comparable<UrlInfo> {
+class UrlInfo {
     private static final String URL_KEY = "url";
     private static final String DISTANCE_KEY = "distance";
-    private static final String SCAN_TIMESTAMP_KEY = "scan_timestamp";
+    private static final String FIRST_SEEN_TIMESTAMP_KEY = "first_seen_timestamp";
+    private static final String DEVICE_ADDRESS_KEY = "device_address";
     private static final String HAS_BEEN_DISPLAYED_KEY = "has_been_displayed";
     private final String mUrl;
+    private final long mFirstSeenTimestamp;
     private double mDistance;
-    private long mScanTimestamp;
+    private String mDeviceAddress;
     private boolean mHasBeenDisplayed;
 
-    public UrlInfo(String url, double distance, long scanTimestamp) {
+    public UrlInfo(String url, double distance, long firstSeenTimestamp) {
         mUrl = url;
         mDistance = distance;
-        mScanTimestamp = scanTimestamp;
+        mFirstSeenTimestamp = firstSeenTimestamp;
+        mDeviceAddress = null;
         mHasBeenDisplayed = false;
     }
 
@@ -33,7 +36,7 @@ class UrlInfo implements Comparable<UrlInfo> {
      * Constructs a simple UrlInfo with only a URL.
      */
     public UrlInfo(String url) {
-        this(url, -1.0, 0);
+        this(url, -1.0, System.currentTimeMillis());
     }
 
     /**
@@ -48,8 +51,9 @@ class UrlInfo implements Comparable<UrlInfo> {
      * Sets the distance of the URL from the scanner in meters.
      * @param distance The estimated distance of the URL from the scanner in meters.
      */
-    public void setDistance(double distance) {
+    public UrlInfo setDistance(double distance) {
         mDistance = distance;
+        return this;
     }
 
     /**
@@ -61,28 +65,38 @@ class UrlInfo implements Comparable<UrlInfo> {
     }
 
     /**
-     * Sets the timestamp of when the URL was last scanned.
-     * This timestamp should be recorded using System.currentTimeMillis().
-     * @param scanTimestamp the new timestamp.
+     * Gets the timestamp of when the URL was first scanned.
+     * This timestamp is recorded using System.currentTimeMillis().
+     * @return The first seen timestamp.
      */
-    public void setScanTimestamp(long scanTimestamp) {
-        mScanTimestamp = scanTimestamp;
+    public long getFirstSeenTimestamp() {
+        return mFirstSeenTimestamp;
     }
 
     /**
-     * Gets the timestamp of when the URL was last scanned.
-     * This timestamp is recorded using System.currentTimeMillis().
-     * @return The scan timestamp.
+     * Sets the device address for the BLE beacon that last emitted this URL.
+     * @param deviceAddress the new device address, matching the
+     *        BluetoothAdapter.checkBluetoothAddress format.
      */
-    public long getScanTimestamp() {
-        return mScanTimestamp;
+    public UrlInfo setDeviceAddress(String deviceAddress) {
+        mDeviceAddress = deviceAddress;
+        return this;
+    }
+
+    /**
+     * Gets the device address for the BLE beacon that last emitted this URL.
+     * @return The device address.
+     */
+    public String getDeviceAddress() {
+        return mDeviceAddress;
     }
 
     /**
      * Marks this URL as having been displayed to the user.
      */
-    public void setHasBeenDisplayed() {
+    public UrlInfo setHasBeenDisplayed() {
         mHasBeenDisplayed = true;
+        return this;
     }
 
     /**
@@ -102,7 +116,8 @@ class UrlInfo implements Comparable<UrlInfo> {
         return new JSONObject()
                 .put(URL_KEY, mUrl)
                 .put(DISTANCE_KEY, mDistance)
-                .put(SCAN_TIMESTAMP_KEY, mScanTimestamp)
+                .put(FIRST_SEEN_TIMESTAMP_KEY, mFirstSeenTimestamp)
+                .put(DEVICE_ADDRESS_KEY, mDeviceAddress)
                 .put(HAS_BEEN_DISPLAYED_KEY, mHasBeenDisplayed);
     }
 
@@ -113,10 +128,9 @@ class UrlInfo implements Comparable<UrlInfo> {
      * @throws JSONException if the values cannot be serialized.
      */
     public static UrlInfo jsonDeserialize(JSONObject jsonObject) throws JSONException {
-        UrlInfo urlInfo = new UrlInfo(
-                jsonObject.getString(URL_KEY),
-                jsonObject.getDouble(DISTANCE_KEY),
-                jsonObject.getLong(SCAN_TIMESTAMP_KEY));
+        UrlInfo urlInfo = new UrlInfo(jsonObject.getString(URL_KEY),
+                jsonObject.getDouble(DISTANCE_KEY), jsonObject.getLong(FIRST_SEEN_TIMESTAMP_KEY))
+                                  .setDeviceAddress(jsonObject.optString(DEVICE_ADDRESS_KEY));
         if (jsonObject.optBoolean(HAS_BEEN_DISPLAYED_KEY, false)) {
             urlInfo.setHasBeenDisplayed();
         }
@@ -124,72 +138,11 @@ class UrlInfo implements Comparable<UrlInfo> {
     }
 
     /**
-     * Returns a hash code for this UrlInfo.
-     * @return hash code
-     */
-    @Override
-    public int hashCode() {
-        int hash = 31 + mUrl.hashCode();
-        hash = hash * 31 + (int) mDistance;
-        hash = hash * 31 + (int) mScanTimestamp;
-        hash = hash * 31 + (mHasBeenDisplayed ? 1 : 0);
-        return hash;
-    }
-
-    /**
-     * Checks if two UrlInfos are equal.
-     * @param other the UrlInfo to compare to.
-     * @return true if the UrlInfo are equal.
-     */
-    @Override
-    public boolean equals(Object other) {
-        if (this == other) {
-            return true;
-        }
-
-        if (other instanceof UrlInfo) {
-            UrlInfo urlInfo = (UrlInfo) other;
-            return compareTo(urlInfo) == 0;
-        }
-        return false;
-    }
-
-    /**
-     * Compares two UrlInfos.
-     * @param other the UrlInfo to compare to.
-     * @return the comparison value.
-     */
-    @Override
-    public int compareTo(UrlInfo other) {
-        int compareValue = mUrl.compareTo(other.mUrl);
-        if (compareValue != 0) {
-            return compareValue;
-        }
-
-        compareValue = Double.compare(mDistance, other.mDistance);
-        if (compareValue != 0) {
-            return compareValue;
-        }
-
-        compareValue = Long.compare(mScanTimestamp, other.mScanTimestamp);
-        if (compareValue != 0) {
-            return compareValue;
-        }
-
-        compareValue = Boolean.compare(mHasBeenDisplayed, mHasBeenDisplayed);
-        if (compareValue != 0) {
-            return compareValue;
-        }
-
-        return 0;
-    }
-
-    /**
      * Represents the UrlInfo as a String.
      */
     @Override
     public String toString() {
-        return String.format(Locale.getDefault(), "%s %f %d %b",
-                mUrl, mDistance, mScanTimestamp, mHasBeenDisplayed);
+        return String.format(Locale.getDefault(), "%s %f %d %b", mUrl, mDistance,
+                mFirstSeenTimestamp, mHasBeenDisplayed);
     }
 }

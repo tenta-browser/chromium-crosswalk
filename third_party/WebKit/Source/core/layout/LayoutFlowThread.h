@@ -32,7 +32,6 @@
 
 #include "core/CoreExport.h"
 #include "core/layout/LayoutBlockFlow.h"
-#include "core/paint/PaintLayerFragment.h"
 #include "wtf/ListHashSet.h"
 
 namespace blink {
@@ -41,119 +40,174 @@ class LayoutMultiColumnSet;
 
 typedef ListHashSet<LayoutMultiColumnSet*> LayoutMultiColumnSetList;
 
-// LayoutFlowThread is used to collect all the layout objects that participate in a flow thread. It
-// will also help in doing the layout. However, it will not layout directly to screen. Instead,
-// LayoutMultiColumnSet objects will redirect their paint and nodeAtPoint methods to this
-// object. Each LayoutMultiColumnSet will actually be a viewPort of the LayoutFlowThread.
-class CORE_EXPORT LayoutFlowThread: public LayoutBlockFlow {
-public:
-    LayoutFlowThread();
-    ~LayoutFlowThread() override { }
+// Layout state for multicol. To be stored when laying out a block child, so
+// that we can roll back to the initial state if we need to re-lay out said
+// block child.
+class MultiColumnLayoutState {
+  friend class LayoutMultiColumnFlowThread;
 
-    bool isLayoutFlowThread() const final { return true; }
-    virtual bool isLayoutMultiColumnFlowThread() const { return false; }
-    virtual bool isLayoutPagedFlowThread() const { return false; }
+ public:
+  MultiColumnLayoutState() : m_columnSet(nullptr) {}
 
-    static LayoutFlowThread* locateFlowThreadContainingBlockOf(const LayoutObject&);
+ private:
+  explicit MultiColumnLayoutState(LayoutMultiColumnSet* columnSet)
+      : m_columnSet(columnSet) {}
+  LayoutMultiColumnSet* columnSet() const { return m_columnSet; }
 
-    void layout() override;
+  LayoutMultiColumnSet* m_columnSet;
+};
 
-    // Always create a Layer for the LayoutFlowThread so that we
-    // can easily avoid drawing the children directly.
-    PaintLayerType layerTypeRequired() const final { return NormalPaintLayer; }
+// LayoutFlowThread is used to collect all the layout objects that participate
+// in a flow thread. It will also help in doing the layout. However, it will not
+// layout directly to screen. Instead, LayoutMultiColumnSet objects will
+// redirect their paint and nodeAtPoint methods to this object. Each
+// LayoutMultiColumnSet will actually be a viewPort of the LayoutFlowThread.
+class CORE_EXPORT LayoutFlowThread : public LayoutBlockFlow {
+ public:
+  LayoutFlowThread();
+  ~LayoutFlowThread() override {}
 
-    virtual void flowThreadDescendantWasInserted(LayoutObject*) { }
-    virtual void flowThreadDescendantWillBeRemoved(LayoutObject*) { }
-    virtual void flowThreadDescendantStyleWillChange(LayoutBox*, StyleDifference, const ComputedStyle& newStyle) { }
-    virtual void flowThreadDescendantStyleDidChange(LayoutBox*, StyleDifference, const ComputedStyle& oldStyle) { }
+  bool isLayoutFlowThread() const final { return true; }
+  virtual bool isLayoutMultiColumnFlowThread() const { return false; }
+  virtual bool isLayoutPagedFlowThread() const { return false; }
 
-    bool nodeAtPoint(HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction) final;
+  static LayoutFlowThread* locateFlowThreadContainingBlockOf(
+      const LayoutObject&);
 
-    virtual void addColumnSetToThread(LayoutMultiColumnSet*) = 0;
-    virtual void removeColumnSetFromThread(LayoutMultiColumnSet*);
+  void layout() override;
 
-    void computeLogicalHeight(LayoutUnit logicalHeight, LayoutUnit logicalTop, LogicalExtentComputedValues&) const override;
+  // Always create a Layer for the LayoutFlowThread so that we
+  // can easily avoid drawing the children directly.
+  PaintLayerType layerTypeRequired() const final { return NormalPaintLayer; }
 
-    bool hasColumnSets() const { return m_multiColumnSetList.size(); }
+  virtual void flowThreadDescendantWasInserted(LayoutObject*) {}
+  virtual void flowThreadDescendantWillBeRemoved(LayoutObject*) {}
+  virtual void flowThreadDescendantStyleWillChange(
+      LayoutBox*,
+      StyleDifference,
+      const ComputedStyle& newStyle) {}
+  virtual void flowThreadDescendantStyleDidChange(
+      LayoutBox*,
+      StyleDifference,
+      const ComputedStyle& oldStyle) {}
 
-    void validateColumnSets();
-    void invalidateColumnSets();
-    bool hasValidColumnSetInfo() const { return !m_columnSetsInvalidated && !m_multiColumnSetList.isEmpty(); }
+  void absoluteQuadsForDescendant(const LayoutBox& descendant,
+                                  Vector<FloatQuad>&,
+                                  MapCoordinatesFlags mode = 0);
 
-    bool mapToVisualRectInAncestorSpace(const LayoutBoxModelObject* ancestor, LayoutRect&, VisualRectFlags = DefaultVisualRectFlags) const override;
+  bool nodeAtPoint(HitTestResult&,
+                   const HitTestLocation& locationInContainer,
+                   const LayoutPoint& accumulatedOffset,
+                   HitTestAction) final;
 
-    LayoutUnit pageLogicalHeightForOffset(LayoutUnit);
-    LayoutUnit pageRemainingLogicalHeightForOffset(LayoutUnit, PageBoundaryRule);
+  virtual void addColumnSetToThread(LayoutMultiColumnSet*) = 0;
+  virtual void removeColumnSetFromThread(LayoutMultiColumnSet*);
 
-    virtual void contentWasLaidOut(LayoutUnit logicalBottomInFlowThreadAfterPagination) = 0;
-    virtual bool canSkipLayout(const LayoutBox&) const = 0;
+  void computeLogicalHeight(LayoutUnit logicalHeight,
+                            LayoutUnit logicalTop,
+                            LogicalExtentComputedValues&) const override;
 
-    // Find and return the next logical top after |flowThreadOffset| that can fit unbreakable
-    // content as tall as |contentLogicalHeight|. |flowThreadOffset| is expected to be at the exact
-    // top of a column that's known to not have enough space for |contentLogicalHeight|. This method
-    // is called when the current column is too short to fit the content, in the hope that there
-    // exists one that's tall enough further ahead. If no such column can be found,
-    // |flowThreadOffset| will be returned.
-    LayoutUnit nextLogicalTopForUnbreakableContent(LayoutUnit flowThreadOffset, LayoutUnit contentLogicalHeight) const;
+  bool hasColumnSets() const { return m_multiColumnSetList.size(); }
 
-    virtual bool isPageLogicalHeightKnown() const { return true; }
-    bool pageLogicalSizeChanged() const { return m_pageLogicalSizeChanged; }
+  void validateColumnSets();
+  void invalidateColumnSets() { m_columnSetsInvalidated = true; }
+  bool hasValidColumnSetInfo() const {
+    return !m_columnSetsInvalidated && !m_multiColumnSetList.isEmpty();
+  }
 
-    void collectLayerFragments(PaintLayerFragments&, const LayoutRect& layerBoundingBox, const LayoutRect& dirtyRectInFlowThread);
+  bool mapToVisualRectInAncestorSpaceInternal(
+      const LayoutBoxModelObject* ancestor,
+      TransformState&,
+      VisualRectFlags = DefaultVisualRectFlags) const override;
 
-    // Return the visual bounding box based on the supplied flow-thread bounding box. Both
-    // rectangles are completely physical in terms of writing mode.
-    LayoutRect fragmentsBoundingBox(const LayoutRect& layerBoundingBox) const;
+  LayoutUnit pageLogicalHeightForOffset(LayoutUnit);
+  LayoutUnit pageRemainingLogicalHeightForOffset(LayoutUnit, PageBoundaryRule);
 
-    virtual LayoutPoint flowThreadPointToVisualPoint(const LayoutPoint& flowThreadPoint) const = 0;
-    virtual LayoutPoint visualPointToFlowThreadPoint(const LayoutPoint& visualPoint) const = 0;
+  virtual void contentWasLaidOut(
+      LayoutUnit logicalBottomInFlowThreadAfterPagination) = 0;
+  virtual bool canSkipLayout(const LayoutBox&) const = 0;
 
-    virtual LayoutMultiColumnSet* columnSetAtBlockOffset(LayoutUnit) const = 0;
+  virtual MultiColumnLayoutState multiColumnLayoutState() const = 0;
+  virtual void restoreMultiColumnLayoutState(const MultiColumnLayoutState&) = 0;
 
-    virtual const char* name() const = 0;
+  // Find and return the next logical top after |flowThreadOffset| that can fit
+  // unbreakable content as tall as |contentLogicalHeight|. |flowThreadOffset|
+  // is expected to be at the exact top of a column that's known to not have
+  // enough space for |contentLogicalHeight|. This method is called when the
+  // current column is too short to fit the content, in the hope that there
+  // exists one that's tall enough further ahead. If no such column can be
+  // found, |flowThreadOffset| will be returned.
+  LayoutUnit nextLogicalTopForUnbreakableContent(
+      LayoutUnit flowThreadOffset,
+      LayoutUnit contentLogicalHeight) const;
 
-protected:
-    void generateColumnSetIntervalTree();
+  virtual bool isPageLogicalHeightKnown() const { return true; }
+  virtual bool mayHaveNonUniformPageLogicalHeight() const = 0;
+  bool pageLogicalSizeChanged() const { return m_pageLogicalSizeChanged; }
 
-    LayoutMultiColumnSetList m_multiColumnSetList;
+  // Return the visual bounding box based on the supplied flow-thread bounding
+  // box. Both rectangles are completely physical in terms of writing mode.
+  LayoutRect fragmentsBoundingBox(const LayoutRect& layerBoundingBox) const;
 
-    typedef PODInterval<LayoutUnit, LayoutMultiColumnSet*> MultiColumnSetInterval;
-    typedef PODIntervalTree<LayoutUnit, LayoutMultiColumnSet*> MultiColumnSetIntervalTree;
+  // Convert a logical position in the flow thread coordinate space to a logical
+  // position in the containing coordinate space.
+  void flowThreadToContainingCoordinateSpace(LayoutUnit& blockPosition,
+                                             LayoutUnit& inlinePosition) const;
 
-    class MultiColumnSetSearchAdapter {
-    public:
-        MultiColumnSetSearchAdapter(LayoutUnit offset)
-            : m_offset(offset)
-            , m_result(nullptr)
-        {
-        }
+  virtual LayoutPoint flowThreadPointToVisualPoint(
+      const LayoutPoint& flowThreadPoint) const = 0;
+  virtual LayoutPoint visualPointToFlowThreadPoint(
+      const LayoutPoint& visualPoint) const = 0;
 
-        const LayoutUnit& lowValue() const { return m_offset; }
-        const LayoutUnit& highValue() const { return m_offset; }
-        void collectIfNeeded(const MultiColumnSetInterval&);
+  virtual LayoutMultiColumnSet* columnSetAtBlockOffset(
+      LayoutUnit,
+      PageBoundaryRule) const = 0;
 
-        LayoutMultiColumnSet* result() const { return m_result; }
+  virtual const char* name() const = 0;
 
-    private:
-        LayoutUnit m_offset;
-        LayoutMultiColumnSet* m_result;
-    };
+ protected:
+  void generateColumnSetIntervalTree();
 
-    MultiColumnSetIntervalTree m_multiColumnSetIntervalTree;
+  LayoutMultiColumnSetList m_multiColumnSetList;
 
-    bool m_columnSetsInvalidated : 1;
-    bool m_pageLogicalSizeChanged : 1;
+  typedef PODInterval<LayoutUnit, LayoutMultiColumnSet*> MultiColumnSetInterval;
+  typedef PODIntervalTree<LayoutUnit, LayoutMultiColumnSet*>
+      MultiColumnSetIntervalTree;
+
+  class MultiColumnSetSearchAdapter {
+   public:
+    MultiColumnSetSearchAdapter(LayoutUnit offset)
+        : m_offset(offset), m_result(nullptr) {}
+
+    const LayoutUnit& lowValue() const { return m_offset; }
+    const LayoutUnit& highValue() const { return m_offset; }
+    void collectIfNeeded(const MultiColumnSetInterval&);
+
+    LayoutMultiColumnSet* result() const { return m_result; }
+
+   private:
+    LayoutUnit m_offset;
+    LayoutMultiColumnSet* m_result;
+  };
+
+  MultiColumnSetIntervalTree m_multiColumnSetIntervalTree;
+
+  bool m_columnSetsInvalidated : 1;
+  bool m_pageLogicalSizeChanged : 1;
 };
 
 DEFINE_LAYOUT_OBJECT_TYPE_CASTS(LayoutFlowThread, isLayoutFlowThread());
 
 // These structures are used by PODIntervalTree for debugging.
 #ifndef NDEBUG
-template <> struct ValueToString<LayoutMultiColumnSet*> {
-    static String toString(const LayoutMultiColumnSet* value) { return String::format("%p", value); }
+template <>
+struct ValueToString<LayoutMultiColumnSet*> {
+  static String toString(const LayoutMultiColumnSet* value) {
+    return String::format("%p", value);
+  }
 };
 #endif
 
-} // namespace blink
+}  // namespace blink
 
-#endif // LayoutFlowThread_h
+#endif  // LayoutFlowThread_h

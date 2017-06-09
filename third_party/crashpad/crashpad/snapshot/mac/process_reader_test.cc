@@ -56,6 +56,8 @@ namespace crashpad {
 namespace test {
 namespace {
 
+const char kDyldPath[] = "/usr/lib/dyld";
+
 TEST(ProcessReader, SelfBasic) {
   ProcessReader process_reader;
   ASSERT_TRUE(process_reader.Initialize(mach_task_self()));
@@ -585,7 +587,7 @@ class ScopedOpenCLNoOpKernel {
     ASSERT_EQ(CL_SUCCESS, rv) << "clCreateContext";
 
     // The goal of the program in |sources| is to produce a cl_kernels image
-    // that doesn’t strictly conform to Mach-O expectations. On Mac OS X 10.10,
+    // that doesn’t strictly conform to Mach-O expectations. On OS X 10.10,
     // cl_kernels modules show up with an __LD,__compact_unwind section, showing
     // up in the __TEXT segment. MachOImageSegmentReader would normally reject
     // modules for this problem, but a special exception is made when this
@@ -690,7 +692,7 @@ TEST(ProcessReader, SelfModules) {
   EXPECT_EQ(ExpectCLKernels(), found_cl_kernels);
 
   size_t index = modules.size() - 1;
-  EXPECT_EQ("/usr/lib/dyld", modules[index].name);
+  EXPECT_EQ(kDyldPath, modules[index].name);
 
   // dyld didn’t load itself either, so it couldn’t record its timestamp, and it
   // is also reported as 0.
@@ -800,7 +802,7 @@ class ProcessReaderModulesChild final : public MachMultiprocess {
         dyld_image_address =
             reinterpret_cast<mach_vm_address_t>(_dyld_get_image_header(index));
       } else {
-        dyld_image_name = "/usr/lib/dyld";
+        dyld_image_name = kDyldPath;
         dyld_image_address = reinterpret_cast<mach_vm_address_t>(
             dyld_image_infos->dyldImageLoadAddress);
       }

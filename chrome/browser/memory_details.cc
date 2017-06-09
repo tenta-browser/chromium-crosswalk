@@ -9,10 +9,11 @@
 
 #include "base/bind.h"
 #include "base/file_version_info.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/sequenced_worker_pool.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/grit/generated_resources.h"
@@ -23,6 +24,7 @@
 #include "content/public/browser/child_process_data.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
+#include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host.h"
@@ -30,13 +32,14 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/bindings_policy.h"
 #include "content/public/common/content_constants.h"
+#include "extensions/features/features.h"
 #include "ui/base/l10n/l10n_util.h"
 
 #if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
 #include "content/public/browser/zygote_host_linux.h"
 #endif
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/process_manager.h"
 #include "extensions/browser/process_map.h"
@@ -51,7 +54,7 @@ using content::NavigationEntry;
 using content::RenderViewHost;
 using content::RenderWidgetHost;
 using content::WebContents;
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 using extensions::Extension;
 #endif
 
@@ -241,7 +244,7 @@ void MemoryDetails::CollectChildInfoOnUIThread() {
       render_process_host = widgets_by_pid[process.pid].front()->GetProcess();
     }
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
     // Determine if this is an extension process.
     bool process_is_for_extensions = false;
     if (render_process_host) {
@@ -296,14 +299,14 @@ void MemoryDetails::CollectChildInfoOnUIThread() {
           chrome_browser->site_data[contents->GetBrowserContext()];
       SiteDetails::CollectSiteInfo(contents, &site_data);
 
-      bool is_webui =
-          rvh->GetEnabledBindings() & content::BINDINGS_POLICY_WEB_UI;
+      bool is_webui = rvh->GetMainFrame()->GetEnabledBindings() &
+                      content::BINDINGS_POLICY_WEB_UI;
 
       if (is_webui) {
         process.renderer_type = ProcessMemoryInformation::RENDERER_CHROME;
       }
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
       if (!is_webui && process_is_for_extensions) {
         const Extension* extension =
             extensions::ExtensionRegistry::Get(

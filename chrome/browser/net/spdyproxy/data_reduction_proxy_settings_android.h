@@ -35,45 +35,25 @@ class DataReductionProxySettingsAndroid {
   void InitDataReductionProxySettings(Profile* profile);
 
   // JNI wrapper interfaces to the indentically-named superclass methods.
-  jboolean IsDataReductionProxyAllowed(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj);
   jboolean IsDataReductionProxyPromoAllowed(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
   jboolean IsDataReductionProxyEnabled(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
-  jboolean CanUseDataReductionProxy(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj,
-      const base::android::JavaParamRef<jstring>& url);
-  jboolean WasLoFiModeActiveOnMainFrame(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj);
-  jboolean WasLoFiLoadImageRequestedBefore(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj);
-  void SetLoFiLoadImageRequested(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj);
   jboolean IsDataReductionProxyManaged(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj);
-  void IncrementLoFiSnackbarShown(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& obj);
-  void IncrementLoFiUserRequestsForImages(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
   void SetDataReductionProxyEnabled(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
       jboolean enabled);
-
   jlong GetDataReductionLastUpdateTime(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);
+  jlong GetTotalHttpContentLengthSaved(
+        JNIEnv* env,
+        const base::android::JavaParamRef<jobject>& obj);
   ScopedJavaLocalRef<jlongArray> GetDailyOriginalContentLengths(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj);

@@ -9,7 +9,9 @@
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/task_runner_util.h"
 #include "components/drive/drive.pb.h"
 #include "components/drive/file_change.h"
@@ -64,7 +66,7 @@ class GetFileForSavingOperationTest : public OperationTestBase {
   void SetUp() override {
     OperationTestBase::SetUp();
 
-    file_task_runner_ = content::BrowserThread::GetMessageLoopProxyForThread(
+    file_task_runner_ = content::BrowserThread::GetTaskRunnerForThread(
         content::BrowserThread::FILE);
 
     operation_.reset(new GetFileForSavingOperation(

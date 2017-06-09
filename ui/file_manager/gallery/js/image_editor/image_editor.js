@@ -8,7 +8,7 @@
  *
  * @param {!Viewport} viewport The viewport.
  * @param {!ImageView} imageView The ImageView containing the images to edit.
- * @param {!ImageEditor.Prompt} prompt Prompt instance.
+ * @param {!ImageEditorPrompt} prompt Prompt instance.
  * @param {!Object} DOMContainers Various DOM containers required for the
  *     editor.
  * @param {!Array<!ImageEditor.Mode>} modes Available editor modes.
@@ -182,7 +182,7 @@ ImageEditor.prototype.lockUI = function(on) {
  * @param {string} name Action name.
  */
 ImageEditor.prototype.recordToolUse = function(name) {
-  ImageUtil.metrics.recordEnum(
+  metrics.recordEnum(
       ImageUtil.getMetricName('Tool'), name, this.actionNames_);
 };
 
@@ -350,7 +350,7 @@ ImageEditor.prototype.getImageView = function() { return this.imageView_; };
 ImageEditor.prototype.getViewport = function() { return this.viewport_; };
 
 /**
- * @return {!ImageEditor.Prompt} Prompt instance.
+ * @return {!ImageEditorPrompt} Prompt instance.
  */
 ImageEditor.prototype.getPrompt = function() { return this.prompt_; };
 
@@ -519,6 +519,11 @@ ImageEditor.Mode.prototype.markUpdated = function() {
 ImageEditor.Mode.prototype.isUpdated = function() { return this.updated_; };
 
 /**
+ * @return {boolean} True if a key event should be consumed by the mode.
+ */
+ImageEditor.Mode.prototype.isConsumingKeyEvents = function() { return false; };
+
+/**
  * Resets the mode to a clean state.
  */
 ImageEditor.Mode.prototype.reset = function() {
@@ -614,6 +619,7 @@ ImageEditor.prototype.enterMode = function(mode) {
 ImageEditor.prototype.setUpMode_ = function(mode) {
   this.currentTool_ = mode.button_;
   this.currentMode_ = mode;
+  this.rootContainer_.setAttribute('editor-mode', mode.name);
 
   // Activate toggle ripple if button is toggleable.
   var filesToggleRipple =
@@ -679,7 +685,19 @@ ImageEditor.prototype.leaveModeInternal_ = function(commit, leaveToSwitchMode) {
   if (!this.currentMode_)
     return;
 
+  // If the current mode is 'Resize', and commit is required,
+  // leaving mode should be stopped when an input value is not valid.
+  if(commit && this.currentMode_.name === 'resize') {
+    var resizeMode = /** @type {!ImageEditor.Mode.Resize} */
+                              (this.currentMode_);
+    if(!resizeMode.isInputValid()) {
+      resizeMode.showAlertDialog();
+      return;
+    }
+  }
+
   this.modeToolbar_.show(false);
+  this.rootContainer_.removeAttribute('editor-mode');
 
   // If it leaves to switch mode, do not restore screen size since the next mode
   // might change screen size. We should avoid to show intermediate animation
@@ -748,6 +766,9 @@ ImageEditor.prototype.enterModeByName_ = function(name) {
  * @return {boolean} True if handled.
  */
 ImageEditor.prototype.onKeyDown = function(event) {
+  if (this.currentMode_ && this.currentMode_.isConsumingKeyEvents())
+    return false;
+
   switch (util.getKeyModifiers(event) + event.key) {
     case 'Escape':
     case 'Enter':
@@ -1121,7 +1142,14 @@ ImageEditor.Toolbar = function(
    */
   this.updateCallback_ = opt_updateCallback || null;
 
-  // Create action buttons.
+  /**
+   * @private {!HTMLElement}
+   */
+  this.container_ = /** @type {!HTMLElement} */ (document.createElement('div'));
+  this.container_.classList.add('container');
+  this.wrapper_.appendChild(this.container_);
+
+    // Create action buttons.
   if (opt_showActionButtons) {
     var actionButtonsLayer = document.createElement('div');
     actionButtonsLayer.classList.add('action-buttons');
@@ -1138,13 +1166,6 @@ ImageEditor.Toolbar = function(
 
     this.wrapper_.appendChild(actionButtonsLayer);
   }
-
-  /**
-   * @private {!HTMLElement}
-   */
-  this.container_ = /** @type {!HTMLElement} */ (document.createElement('div'));
-  this.container_.classList.add('container');
-  this.wrapper_.appendChild(this.container_);
 };
 
 ImageEditor.Toolbar.prototype.__proto__ = cr.EventTarget.prototype;
@@ -1298,6 +1319,53 @@ ImageEditor.Toolbar.prototype.addButton = function(
 };
 
 /**
+ * Add a input field.
+ *
+ * @param {string} name Input name
+ * @param {string} title Input title
+ * @param {function(Event)} handler onInput and onChange handler
+ * @param {string|number} value Default value
+ * @param {string=} opt_unit Unit for an input field
+ * @return {!HTMLElement} Input Element
+ */
+ImageEditor.Toolbar.prototype.addInput = function(
+    name, title, handler, value, opt_unit) {
+
+  var input = /** @type {!HTMLElement} */ (document.createElement('div'));
+  input.classList.add('input', name);
+
+  var text = document.createElement('paper-input');
+  text.setAttribute('label', strf(title));
+  text.classList.add('text', name);
+  text.value = value;
+
+  // We should listen to not only 'change' event, but also 'input' because we
+  // want to update values as soon as the user types characters.
+  text.addEventListener('input', handler, false);
+  text.addEventListener('change', handler, false);
+  input.appendChild(text);
+
+  if(opt_unit) {
+    var unit_label = document.createElement('span');
+    unit_label.textContent = opt_unit;
+    unit_label.classList.add('unit_label');
+    input.appendChild(unit_label);
+  }
+
+  input.name = name;
+  input.getValue = function(text) {
+    return text.value;
+  }.bind(this, text);
+  input.setValue = function(text, value) {
+    text.value = value;
+  }.bind(this, text);
+
+  this.add(input);
+
+  return input;
+};
+
+/**
  * Add a range control (scalar value picker).
  *
  * @param {string} name An option name.
@@ -1386,152 +1454,12 @@ ImageEditor.Toolbar.prototype.show = function(on) {
     return;  // Do not show empty toolbar;
 
   this.wrapper_.hidden = !on;
-};
 
-/** A prompt panel for the editor.
- *
- * @param {!HTMLElement} container Container element.
- * @param {function(string, ...string)} displayStringFunction A formatting
- *     function.
- * @constructor
- * @struct
- */
-ImageEditor.Prompt = function(container, displayStringFunction) {
-  this.container_ = container;
-  this.displayStringFunction_ = displayStringFunction;
-
-  /**
-   * @type {HTMLDivElement}
-   * @private
-   */
-  this.wrapper_ = null;
-
-  /**
-   * @type {HTMLDivElement}
-   * @private
-   */
-  this.prompt_ = null;
-
-  /**
-   * @type {number}
-   * @private
-   */
-  this.timer_ = 0;
-};
-
-/**
- * Reset the prompt.
- */
-ImageEditor.Prompt.prototype.reset = function() {
-  this.cancelTimer();
-  if (this.wrapper_) {
-    this.container_.removeChild(this.wrapper_);
-    this.wrapper_ = null;
-    this.prompt_ = null;
+  // Focus the first input on the toolbar.
+  if (on) {
+    var input = this.container_.querySelector(
+       'button, paper-button, input, paper-input, paper-slider');
+    if (input)
+      input.focus();
   }
-};
-
-/**
- * Cancel the delayed action.
- */
-ImageEditor.Prompt.prototype.cancelTimer = function() {
-  if (this.timer_) {
-    clearTimeout(this.timer_);
-    this.timer_ = 0;
-  }
-};
-
-/**
- * Schedule the delayed action.
- * @param {function()} callback Callback.
- * @param {number} timeout Timeout.
- */
-ImageEditor.Prompt.prototype.setTimer = function(callback, timeout) {
-  this.cancelTimer();
-  var self = this;
-  this.timer_ = setTimeout(function() {
-    self.timer_ = 0;
-    callback();
-  }, timeout);
-};
-
-/**
- * Show the prompt.
- *
- * @param {string} text The prompt text.
- * @param {number=} opt_timeout Timeout in ms.
- * @param {...Object} var_args varArgs for the formatting function.
- */
-ImageEditor.Prompt.prototype.show = function(text, opt_timeout, var_args) {
-  var args = [text].concat(Array.prototype.slice.call(arguments, 2));
-  var message = this.displayStringFunction_.apply(null, args);
-  this.showStringAt('center', message, opt_timeout);
-};
-
-/**
- * Show the position at the specific position.
- *
- * @param {string} pos The 'pos' attribute value.
- * @param {string} text The prompt text.
- * @param {number} timeout Timeout in ms.
- * @param {...Object} var_args varArgs for the formatting function.
- */
-ImageEditor.Prompt.prototype.showAt = function(
-    pos, text, timeout, var_args) {
-  var args = [text].concat(Array.prototype.slice.call(arguments, 3));
-  var message = this.displayStringFunction_.apply(null, args);
-  this.showStringAt(pos, message, timeout);
-};
-
-/**
- * Show the string in the prompt
- *
- * @param {string} pos The 'pos' attribute value.
- * @param {string} text The prompt text.
- * @param {number=} opt_timeout Timeout in ms.
- */
-ImageEditor.Prompt.prototype.showStringAt = function(pos, text, opt_timeout) {
-  this.reset();
-  if (!text)
-    return;
-
-  var document = this.container_.ownerDocument;
-  this.wrapper_ = assertInstanceof(document.createElement('div'),
-      HTMLDivElement);
-  this.wrapper_.className = 'prompt-wrapper';
-  this.wrapper_.setAttribute('pos', pos);
-  this.container_.appendChild(this.wrapper_);
-
-  this.prompt_ = assertInstanceof(document.createElement('div'),
-      HTMLDivElement);
-  this.prompt_.className = 'prompt';
-
-  // Create an extra wrapper which opacity can be manipulated separately.
-  var tool = document.createElement('div');
-  tool.className = 'dimmable';
-  this.wrapper_.appendChild(tool);
-  tool.appendChild(this.prompt_);
-
-  this.prompt_.textContent = text;
-
-  var close = document.createElement('div');
-  close.className = 'close';
-  close.addEventListener('click', this.hide.bind(this));
-  this.prompt_.appendChild(close);
-
-  setTimeout(
-      this.prompt_.setAttribute.bind(this.prompt_, 'state', 'fadein'), 0);
-
-  if (opt_timeout)
-    this.setTimer(this.hide.bind(this), opt_timeout);
-};
-
-/**
- * Hide the prompt.
- */
-ImageEditor.Prompt.prototype.hide = function() {
-  if (!this.prompt_) return;
-  this.prompt_.setAttribute('state', 'fadeout');
-  // Allow some time for the animation to play out.
-  this.setTimer(this.reset.bind(this), 500);
 };

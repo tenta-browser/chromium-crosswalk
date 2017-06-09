@@ -57,7 +57,14 @@ FileTableColumnModel.prototype.applyColumnPositions_ = function(newPos) {
   }
   // Set the new width of columns
   for (var i = 0; i < this.columns_.length; i++) {
-    this.columns_[i].width = newPos[i + 1] - newPos[i];
+    if (!this.columns_[i].visible) {
+      this.columns_[i].width = 0;
+    } else {
+      // Make sure each cell has the minumum width. This is necessary when the
+      // window size is too small to contain all the columns.
+      this.columns_[i].width = Math.max(FileTableColumnModel.MIN_WIDTH_,
+                                        newPos[i + 1] - newPos[i]);
+    }
   }
 };
 
@@ -954,7 +961,7 @@ FileTable.prototype.setThumbnailImage_ = function(box, dataUrl, shouldAnimate) {
   var thumbnail = box.ownerDocument.createElement('div');
   thumbnail.classList.add('thumbnail');
   thumbnail.style.backgroundImage = 'url(' + dataUrl + ')';
-  thumbnail.addEventListener('webkitAnimationEnd', function() {
+  thumbnail.addEventListener('animationend', function() {
     // Remove animation css once animation is completed in order not to animate
     // again when an item is attached to the dom again.
     thumbnail.classList.remove('animate');

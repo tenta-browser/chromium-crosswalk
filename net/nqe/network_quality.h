@@ -13,19 +13,29 @@
 #include "net/base/net_export.h"
 
 namespace net {
-
 namespace nqe {
-
 namespace internal {
+
+// RTT and throughput values are set to |INVALID_RTT_THROUGHPUT| if a valid
+// value is unavailable.
+// GENERATED_JAVA_ENUM_PACKAGE: org.chromium.net
+enum RttThroughputValues {
+  // Invalid value.
+  INVALID_RTT_THROUGHPUT = -1,
+};
 
 // Returns the RTT value to be used when the valid RTT is unavailable. Readers
 // should discard RTT if it is set to the value returned by |InvalidRTT()|.
+// TODO(tbansal): Remove this method, and replace all calls by
+// |INVALID_RTT_THROUGHPUT|.
 NET_EXPORT_PRIVATE base::TimeDelta InvalidRTT();
 
 // Throughput is set to |kInvalidThroughput| if a valid value is
 // unavailable. Readers should discard throughput value if it is set to
 // |kInvalidThroughput|.
-const int32_t kInvalidThroughput = 0;
+// TODO(tbansal): Remove this variable, and replace all calls by
+// |INVALID_RTT_THROUGHPUT|.
+const int32_t kInvalidThroughput = INVALID_RTT_THROUGHPUT;
 
 // NetworkQuality is used to cache the quality of a network connection.
 class NET_EXPORT_PRIVATE NetworkQuality {
@@ -43,16 +53,32 @@ class NET_EXPORT_PRIVATE NetworkQuality {
 
   NetworkQuality& operator=(const NetworkQuality& other);
 
+  bool operator==(const NetworkQuality& other) const;
+
+  // Returns true if |this| is at least as fast as |other| for all parameters
+  // (HTTP RTT, transport RTT etc.)
+  bool IsFaster(const NetworkQuality& other) const;
+
   // Returns the estimate of the round trip time at the HTTP layer.
   const base::TimeDelta& http_rtt() const { return http_rtt_; }
 
+  void set_http_rtt(const base::TimeDelta& http_rtt) { http_rtt_ = http_rtt; }
+
   // Returns the estimate of the round trip time at the transport layer.
   const base::TimeDelta& transport_rtt() const { return transport_rtt_; }
+
+  void set_transport_rtt(const base::TimeDelta& transport_rtt) {
+    transport_rtt_ = transport_rtt;
+  }
 
   // Returns the estimate of the downstream throughput in Kbps (Kilobits per
   // second).
   int32_t downstream_throughput_kbps() const {
     return downstream_throughput_kbps_;
+  }
+
+  void set_downstream_throughput_kbps(int32_t downstream_throughput_kbps) {
+    downstream_throughput_kbps_ = downstream_throughput_kbps;
   }
 
  private:
@@ -67,9 +93,7 @@ class NET_EXPORT_PRIVATE NetworkQuality {
 };
 
 }  // namespace internal
-
 }  // namespace nqe
-
 }  // namespace net
 
 #endif  // NET_NQE_NETWORK_QUALITY_H_

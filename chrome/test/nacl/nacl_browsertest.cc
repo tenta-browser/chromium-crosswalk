@@ -18,7 +18,6 @@
 #include "base/process/launch.h"
 #include "base/process/process.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/win/windows_version.h"
 #include "build/build_config.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
@@ -26,6 +25,10 @@
 #include "components/nacl/browser/nacl_browser.h"
 #include "components/nacl/common/nacl_switches.h"
 #include "content/public/common/content_switches.h"
+
+#if defined(OS_WIN)
+#include "base/win/windows_version.h"
+#endif
 
 namespace {
 
@@ -307,14 +310,14 @@ class NaClBrowserTestPnaclDebug : public NaClBrowserTestPnacl {
   void RunWithTestDebugger(const base::FilePath::StringType& test_url) {
     base::Process test_script;
     std::unique_ptr<base::Environment> env(base::Environment::Create());
-    nacl::NaClBrowser::GetInstance()->SetGdbDebugStubPortListener(
+    nacl::NaClBrowser::SetGdbDebugStubPortListenerForTest(
         base::Bind(&NaClBrowserTestPnaclDebug::StartTestScript,
                    base::Unretained(this), &test_script));
     // Turn on debug stub logging.
     env->SetVar("NACLVERBOSITY", "1");
     RunLoadTest(test_url);
     env->UnSetVar("NACLVERBOSITY");
-    nacl::NaClBrowser::GetInstance()->ClearGdbDebugStubPortListener();
+    nacl::NaClBrowser::ClearGdbDebugStubPortListenerForTest();
     int exit_code;
     LOG(INFO) << "Waiting for script to exit (which waits for embed to die).";
     test_script.WaitForExit(&exit_code);

@@ -12,7 +12,6 @@
 #include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
 #include "components/login/localized_values_builder.h"
 #include "content/public/browser/web_ui.h"
-#include "ui/base/l10n/l10n_util.h"
 
 namespace chromeos {
 
@@ -20,18 +19,18 @@ namespace {
 const char kMethodContextChanged[] = "contextChanged";
 }  // namespace
 
-BaseScreenHandler::BaseScreenHandler()
-    : page_is_ready_(false), base_screen_(nullptr) {
-}
+JSCallsContainer::JSCallsContainer() = default;
 
-BaseScreenHandler::BaseScreenHandler(const std::string& js_screen_path)
-    : page_is_ready_(false),
-      base_screen_(nullptr),
-      js_screen_path_prefix_(js_screen_path + ".") {
-  CHECK(!js_screen_path.empty());
-}
+JSCallsContainer::~JSCallsContainer() = default;
+
+BaseScreenHandler::BaseScreenHandler() = default;
+
+BaseScreenHandler::BaseScreenHandler(JSCallsContainer* js_calls_container)
+    : js_calls_container_(js_calls_container) {}
 
 BaseScreenHandler::~BaseScreenHandler() {
+  if (base_screen_)
+    base_screen_->set_model_view_channel(nullptr);
 }
 
 void BaseScreenHandler::InitializeBase() {
@@ -44,7 +43,7 @@ void BaseScreenHandler::InitializeBase() {
 }
 
 void BaseScreenHandler::GetLocalizedStrings(base::DictionaryValue* dict) {
-  auto builder = base::WrapUnique(new ::login::LocalizedValuesBuilder(dict));
+  auto builder = base::MakeUnique<::login::LocalizedValuesBuilder>(dict);
   DeclareLocalizedValues(builder.get());
   GetAdditionalParameters(dict);
 }
@@ -88,8 +87,12 @@ void BaseScreenHandler::ShowScreenWithData(OobeScreen screen,
                                          screen_params);
 }
 
+OobeUI* BaseScreenHandler::GetOobeUI() const {
+  return static_cast<OobeUI*>(web_ui()->GetController());
+}
+
 OobeScreen BaseScreenHandler::GetCurrentScreen() const {
-  OobeUI* oobe_ui = static_cast<OobeUI*>(web_ui()->GetController());
+  OobeUI* oobe_ui = GetOobeUI();
   if (!oobe_ui)
     return OobeScreen::SCREEN_UNKNOWN;
   return oobe_ui->current_screen();
@@ -123,6 +126,14 @@ void BaseScreenHandler::HandleContextChanged(
     const base::DictionaryValue* diff) {
   if (diff && base_screen_)
     base_screen_->OnContextChanged(*diff);
+}
+
+void BaseScreenHandler::ExecuteDeferredJSCalls() {
+  DCHECK(!js_calls_container_->is_initialized());
+  js_calls_container_->mark_initialized();
+  for (const auto& deferred_js_call : js_calls_container_->deferred_js_calls())
+    deferred_js_call.Run();
+  js_calls_container_->deferred_js_calls().clear();
 }
 
 }  // namespace chromeos

@@ -38,8 +38,7 @@ abstract class AutofillCreditCardEditor extends AutofillEditorBase {
         profilesAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
 
         AutofillProfile noSelection = new AutofillProfile();
-        noSelection.setLabel(
-                getActivity().getString(R.string.autofill_billing_address_select_prompt));
+        noSelection.setLabel(getActivity().getString(R.string.select));
         profilesAdapter.add(noSelection);
 
         List<AutofillProfile> profiles = PersonalDataManager.getInstance().getProfilesForSettings();
@@ -72,5 +71,16 @@ abstract class AutofillCreditCardEditor extends AutofillEditorBase {
         }
 
         return v;
+    }
+
+    @Override
+    protected void initializeButtons(View v) {
+        super.initializeButtons(v);
+
+        mBillingAddress.setOnItemSelectedListener(this);
+
+        // Listen for touch events on billing address field. We clear the keyboard when user touches
+        // the billing address field because it is a drop down menu.
+        mBillingAddress.setOnTouchListener(this);
     }
 }

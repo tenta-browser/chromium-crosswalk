@@ -11,10 +11,14 @@
 #include <stdint.h>
 
 #include <string>
+#include <vector>
 
+#include "base/optional.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/download_danger_type.h"
 #include "content/public/browser/download_interrupt_reasons.h"
+#include "ui/base/page_transition_types.h"
+#include "url/gurl.h"
 
 namespace base {
 class FilePath;
@@ -45,7 +49,7 @@ enum DownloadCountTypes {
   // Downloads that are cancelled before completion (user action or error).
   CANCELLED_COUNT,
 
-  // Downloads that are started. Should be equal to UNTHROTTLED_COUNT.
+  // Downloads that are started.
   START_COUNT,
 
   // Downloads that were interrupted by the OS.
@@ -70,9 +74,9 @@ enum DownloadCountTypes {
   // progress.
   APPEND_TO_DETACHED_FILE_COUNT,
 
-  // Counts the number of instances where the downloaded file is missing after a
-  // successful invocation of ScanAndSaveDownloadedFile().
-  FILE_MISSING_AFTER_SUCCESSFUL_SCAN_COUNT,
+  // (Deprecated) Counts the number of instances where the downloaded file is
+  // missing after a successful invocation of ScanAndSaveDownloadedFile().
+  DOWNLOAD_COUNT_UNUSED_14,
 
   // (Deprecated) Count of downloads with a strong ETag and specified
   // 'Accept-Ranges: bytes'.
@@ -86,6 +90,18 @@ enum DownloadCountTypes {
   // equivalence) and has a 'Accept-Ranges: bytes' header. These downloads are
   // candidates for partial resumption.
   STRONG_VALIDATOR_AND_ACCEPTS_RANGES,
+
+  // To be used for parallel requests.
+  DOWNLOAD_COUNT_UNUSED_18,
+
+  // Count of new downloads.
+  NEW_DOWNLOAD_COUNT,
+
+  // Count of new downloads that are started in normal profile.
+  NEW_DOWNLOAD_COUNT_NORMAL_PROFILE,
+
+  // Downloads that are actually completed in normal profile.
+  COMPLETED_COUNT_NORMAL_PROFILE,
 
   DOWNLOAD_COUNT_TYPES_LAST_ENTRY
 };
@@ -161,22 +177,15 @@ void RecordDangerousDownloadDiscard(
 // Records the mime type of the download.
 void RecordDownloadMimeType(const std::string& mime_type);
 
+// Records the mime type of the download for normal profile.
+void RecordDownloadMimeTypeForNormalProfile(const std::string& mime_type);
+
 // Records usage of Content-Disposition header.
 void RecordDownloadContentDisposition(const std::string& content_disposition);
-
-// Record WRITE_SIZE_COUNT and data_len.
-void RecordDownloadWriteSize(size_t data_len);
-
-// Record WRITE_LOOP_COUNT and number of loops.
-void RecordDownloadWriteLoopCount(int count);
 
 // Record the number of buffers piled up by the IO thread
 // before the file thread gets to draining them.
 void RecordFileThreadReceiveBuffers(size_t num_buffers);
-
-// Record the bandwidth seen in DownloadResourceHandler
-// |actual_bandwidth| and |potential_bandwidth| are in bytes/second.
-void RecordBandwidth(double actual_bandwidth, double potential_bandwidth);
 
 // Record the time of both the first open and all subsequent opens since the
 // download completed.
@@ -189,9 +198,6 @@ void RecordOpen(const base::Time& end, bool first);
 void RecordAcceptsRanges(const std::string& accepts_ranges,
                          int64_t download_len,
                          bool has_strong_validator);
-
-// Record the number of downloads removed by ClearAll.
-void RecordClearAllSize(int size);
 
 // Record the number of completed unopened downloads when a download is opened.
 void RecordOpensOutstanding(int size);
@@ -248,6 +254,12 @@ enum OriginStateOnResumption {
 // enum.
 void RecordOriginStateOnResumption(bool is_partial,
                                    int state);
+
+void RecordDownloadConnectionSecurity(const GURL& download_url,
+                                      const std::vector<GURL>& url_chain);
+
+void RecordDownloadSourcePageTransitionType(
+    const base::Optional<ui::PageTransition>& transition);
 
 }  // namespace content
 

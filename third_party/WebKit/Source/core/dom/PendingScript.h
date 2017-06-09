@@ -28,77 +28,119 @@
 
 #include "bindings/core/v8/ScriptStreamer.h"
 #include "core/CoreExport.h"
-#include "core/fetch/ResourceOwner.h"
-#include "core/fetch/ScriptResource.h"
+#include "core/loader/resource/ScriptResource.h"
+#include "platform/MemoryCoordinator.h"
 #include "platform/heap/Handle.h"
+#include "platform/loader/fetch/ResourceOwner.h"
 #include "wtf/Noncopyable.h"
 #include "wtf/text/TextPosition.h"
 
 namespace blink {
 
 class Element;
+class PendingScript;
 class ScriptSourceCode;
+
+class CORE_EXPORT PendingScriptClient : public GarbageCollectedMixin {
+ public:
+  virtual ~PendingScriptClient() {}
+
+  // Invoked when the pending script has finished loading. This could be during
+  // |watchForLoad| (if the pending script was already ready), or when the
+  // resource loads (if script streaming is not occurring), or when script
+  // streaming finishes.
+  virtual void pendingScriptFinished(PendingScript*) = 0;
+
+  DEFINE_INLINE_VIRTUAL_TRACE() {}
+};
 
 // A container for an external script which may be loaded and executed.
 //
-// TODO(kochi): The comment below is from pre-oilpan age and may not be correct now.
-// A RefPtr alone does not prevent the underlying Resource
-// from purging its data buffer. This class holds a dummy client open for its
-// lifetime in order to guarantee that the data buffer will not be purged.
-class CORE_EXPORT PendingScript final : public GarbageCollectedFinalized<PendingScript>, public ResourceOwner<ScriptResource> {
-    USING_GARBAGE_COLLECTED_MIXIN(PendingScript);
-    USING_PRE_FINALIZER(PendingScript, dispose);
-    WTF_MAKE_NONCOPYABLE(PendingScript);
-public:
-    static PendingScript* create(Element*, ScriptResource*);
-    ~PendingScript() override;
+// TODO(kochi): The comment below is from pre-oilpan age and may not be correct
+// now.
+// A RefPtr alone does not prevent the underlying Resource from purging its data
+// buffer. This class holds a dummy client open for its lifetime in order to
+// guarantee that the data buffer will not be purged.
+class CORE_EXPORT PendingScript final
+    : public GarbageCollectedFinalized<PendingScript>,
+      public ResourceOwner<ScriptResource>,
+      public MemoryCoordinatorClient {
+  USING_GARBAGE_COLLECTED_MIXIN(PendingScript);
+  USING_PRE_FINALIZER(PendingScript, dispose);
+  WTF_MAKE_NONCOPYABLE(PendingScript);
 
-    TextPosition startingPosition() const { return m_startingPosition; }
-    void setStartingPosition(const TextPosition& position) { m_startingPosition = position; }
-    void markParserBlockingLoadStartTime();
-    // Returns the time the load of this script started blocking the parser, or
-    // zero if this script hasn't yet blocked the parser, in
-    // monotonicallyIncreasingTime.
-    double parserBlockingLoadStartTime() const { return m_parserBlockingLoadStartTime; }
+ public:
+  // For script from an external file.
+  static PendingScript* create(Element*, ScriptResource*);
+  // For inline script.
+  static PendingScript* create(Element*, const TextPosition&);
 
-    void watchForLoad(ScriptResourceClient*);
-    void stopWatchingForLoad();
+  static PendingScript* createForTesting(ScriptResource*);
 
-    Element* element() const { return m_element.get(); }
-    void setElement(Element*);
-    Element* releaseElementAndClear();
+  ~PendingScript() override;
 
-    void setScriptResource(ScriptResource*);
+  TextPosition startingPosition() const { return m_startingPosition; }
+  void markParserBlockingLoadStartTime();
+  // Returns the time the load of this script started blocking the parser, or
+  // zero if this script hasn't yet blocked the parser, in
+  // monotonicallyIncreasingTime.
+  double parserBlockingLoadStartTime() const {
+    return m_parserBlockingLoadStartTime;
+  }
 
-    void notifyFinished(Resource*) override;
-    String debugName() const override { return "PendingScript"; }
-    void notifyAppendData(ScriptResource*) override;
+  void watchForLoad(PendingScriptClient*);
+  void stopWatchingForLoad();
 
-    DECLARE_TRACE();
+  Element* element() const;
 
-    ScriptSourceCode getSource(const KURL& documentURL, bool& errorOccurred) const;
+  DECLARE_TRACE();
 
-    void setStreamer(ScriptStreamer*);
-    void streamingFinished();
+  ScriptSourceCode getSource(const KURL& documentURL,
+                             bool& errorOccurred) const;
 
-    bool isReady() const;
-    bool errorOccurred() const;
+  void setStreamer(ScriptStreamer*);
+  void streamingFinished();
 
-    void dispose();
+  bool isReady() const;
+  bool errorOccurred() const;
 
-private:
-    PendingScript(Element*, ScriptResource*);
+  void dispose();
 
-    bool m_watchingForLoad;
-    Member<Element> m_element;
-    TextPosition m_startingPosition; // Only used for inline script tags.
-    bool m_integrityFailure;
-    double m_parserBlockingLoadStartTime;
+ private:
+  PendingScript(Element*,
+                ScriptResource*,
+                const TextPosition&,
+                bool isForTesting = false);
+  PendingScript() = delete;
 
-    Member<ScriptStreamer> m_streamer;
-    Member<ScriptResourceClient> m_client;
+  void checkState() const;
+
+  // ScriptResourceClient
+  void notifyFinished(Resource*) override;
+  String debugName() const override { return "PendingScript"; }
+  void notifyAppendData(ScriptResource*) override;
+
+  // MemoryCoordinatorClient
+  void onPurgeMemory() override;
+
+  bool m_watchingForLoad;
+
+  // |m_element| must points to the corresponding ScriptLoader's element and
+  // thus must be non-null before dispose() is called (except for unit tests).
+  Member<Element> m_element;
+
+  TextPosition m_startingPosition;  // Only used for inline script tags.
+  bool m_integrityFailure;
+  double m_parserBlockingLoadStartTime;
+
+  Member<ScriptStreamer> m_streamer;
+  Member<PendingScriptClient> m_client;
+
+  // This flag is used to skip non-null checks of |m_element| in unit tests,
+  // because |m_element| can be null in unit tests.
+  const bool m_isForTesting;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // PendingScript_h
+#endif  // PendingScript_h

@@ -8,7 +8,6 @@
 #include "components/omnibox/browser/autocomplete_match.h"
 
 class Browser;
-class Profile;
 
 namespace content {
 class WebContents;
@@ -25,7 +24,6 @@ void MaybeShowExtensionControlledHomeNotification(Browser* browser);
 // extension. This bubble is shown only on the first search after the
 // controlling extension takes effect.
 void MaybeShowExtensionControlledSearchNotification(
-    Profile* profile,
     content::WebContents* web_contents,
     AutocompleteMatch::Type match_type);
 

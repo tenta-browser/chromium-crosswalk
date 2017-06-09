@@ -14,6 +14,7 @@
 #include "base/logging.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/threading/sequenced_worker_pool.h"
 #include "base/values.h"
 #include "base/version.h"
 #include "chrome/browser/net/sth_distributor_provider.h"
@@ -55,8 +56,9 @@ STHSetComponentInstallerTraits::STHSetComponentInstallerTraits(
 
 STHSetComponentInstallerTraits::~STHSetComponentInstallerTraits() {}
 
-bool STHSetComponentInstallerTraits::CanAutoUpdate() const {
-  return true;
+bool STHSetComponentInstallerTraits::
+    SupportsGroupPolicyEnabledComponentUpdates() const {
+  return false;
 }
 
 // Public data is delivered via this component, no need for encryption.
@@ -64,10 +66,11 @@ bool STHSetComponentInstallerTraits::RequiresNetworkEncryption() const {
   return false;
 }
 
-bool STHSetComponentInstallerTraits::OnCustomInstall(
+update_client::CrxInstaller::Result
+STHSetComponentInstallerTraits::OnCustomInstall(
     const base::DictionaryValue& manifest,
     const base::FilePath& install_dir) {
-  return true;  // Nothing custom here.
+  return update_client::CrxInstaller::Result(0);  // Nothing custom here.
 }
 
 void STHSetComponentInstallerTraits::ComponentReady(
@@ -104,6 +107,10 @@ std::string STHSetComponentInstallerTraits::GetName() const {
 update_client::InstallerAttributes
 STHSetComponentInstallerTraits::GetInstallerAttributes() const {
   return update_client::InstallerAttributes();
+}
+
+std::vector<std::string> STHSetComponentInstallerTraits::GetMimeTypes() const {
+  return std::vector<std::string>();
 }
 
 void STHSetComponentInstallerTraits::LoadSTHsFromDisk(

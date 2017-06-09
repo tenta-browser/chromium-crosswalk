@@ -5,6 +5,7 @@
 #include "chrome/browser/chromeos/settings/device_settings_provider.h"
 
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/callback.h"
@@ -22,9 +23,9 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chromeos/settings/cros_settings_names.h"
+#include "components/policy/proto/device_management_backend.pb.h"
 #include "components/user_manager/fake_user_manager.h"
 #include "components/user_manager/user.h"
-#include "policy/proto/device_management_backend.pb.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -80,6 +81,8 @@ class DeviceSettingsProviderTest : public DeviceSettingsTestBase {
     proto->set_report_users(enable_reporting);
     proto->set_report_hardware_status(enable_reporting);
     proto->set_report_session_status(enable_reporting);
+    proto->set_report_os_update_status(enable_reporting);
+    proto->set_report_running_kiosk_app(enable_reporting);
     proto->set_device_status_frequency(frequency);
     device_policy_.Build();
     device_settings_test_helper_.set_policy_blob(device_policy_.GetBlob());
@@ -128,12 +131,11 @@ class DeviceSettingsProviderTest : public DeviceSettingsTestBase {
   // decoded.
   void VerifyHeartbeatSettings(bool expected_enable_state,
                                int expected_frequency) {
-
-    const base::FundamentalValue expected_enabled_value(expected_enable_state);
+    const base::Value expected_enabled_value(expected_enable_state);
     EXPECT_TRUE(base::Value::Equals(provider_->Get(kHeartbeatEnabled),
                                     &expected_enabled_value));
 
-    const base::FundamentalValue expected_frequency_value(expected_frequency);
+    const base::Value expected_frequency_value(expected_frequency);
     EXPECT_TRUE(base::Value::Equals(provider_->Get(kHeartbeatFrequency),
                                     &expected_frequency_value));
   }
@@ -151,16 +153,18 @@ class DeviceSettingsProviderTest : public DeviceSettingsTestBase {
       kReportDeviceNetworkInterfaces,
       kReportDeviceUsers,
       kReportDeviceHardwareStatus,
-      kReportDeviceSessionStatus
+      kReportDeviceSessionStatus,
+      kReportOsUpdateStatus,
+      kReportRunningKioskApp
     };
 
-    const base::FundamentalValue expected_enable_value(expected_enable_state);
-    for (const auto& setting : reporting_settings) {
+    const base::Value expected_enable_value(expected_enable_state);
+    for (auto* setting : reporting_settings) {
       EXPECT_TRUE(base::Value::Equals(provider_->Get(setting),
                                       &expected_enable_value))
           << "Value for " << setting << " does not match expected";
     }
-    const base::FundamentalValue expected_frequency_value(expected_frequency);
+    const base::Value expected_frequency_value(expected_frequency);
     EXPECT_TRUE(base::Value::Equals(provider_->Get(kReportUploadFrequency),
                                     &expected_frequency_value));
   }
@@ -168,7 +172,7 @@ class DeviceSettingsProviderTest : public DeviceSettingsTestBase {
   // Helper routine to ensure log upload policy has been correctly
   // decoded.
   void VerifyLogUploadSettings(bool expected_enable_state) {
-    const base::FundamentalValue expected_enabled_value(expected_enable_state);
+    const base::Value expected_enabled_value(expected_enable_state);
     EXPECT_TRUE(base::Value::Equals(provider_->Get(kSystemLogUploadEnabled),
                                     &expected_enabled_value));
   }
@@ -257,7 +261,7 @@ TEST_F(DeviceSettingsProviderTest, SetPrefFailed) {
   SetMetricsReportingSettings(false);
 
   // If we are not the owner no sets should work.
-  base::FundamentalValue value(true);
+  base::Value value(true);
   EXPECT_CALL(*this, SettingChanged(kStatsReportingPref)).Times(1);
   provider_->Set(kStatsReportingPref, value);
   Mock::VerifyAndClearExpectations(this);
@@ -281,7 +285,7 @@ TEST_F(DeviceSettingsProviderTest, SetPrefSucceed) {
             true);
   FlushDeviceSettings();
 
-  base::FundamentalValue value(true);
+  base::Value value(true);
   EXPECT_CALL(*this, SettingChanged(_)).Times(AnyNumber());
   EXPECT_CALL(*this, SettingChanged(kStatsReportingPref)).Times(1);
   provider_->Set(kStatsReportingPref, value);
@@ -400,29 +404,10 @@ TEST_F(DeviceSettingsProviderTest, LegacyDeviceLocalAccounts) {
                         policy::PolicyBuilder::kFakeUsername);
   entry_dict->SetInteger(kAccountsPrefDeviceLocalAccountsKeyType,
                          policy::DeviceLocalAccount::TYPE_PUBLIC_SESSION);
-  expected_accounts.Append(entry_dict.release());
+  expected_accounts.Append(std::move(entry_dict));
   const base::Value* actual_accounts =
       provider_->Get(kAccountsPrefDeviceLocalAccounts);
   EXPECT_TRUE(base::Value::Equals(&expected_accounts, actual_accounts));
-}
-
-TEST_F(DeviceSettingsProviderTest, OwnerIsStillSetWhenDeviceIsConsumerManaged) {
-  owner_key_util_->SetPrivateKey(device_policy_.GetSigningKey());
-  InitOwner(AccountId::FromUserEmail(device_policy_.policy_data().username()),
-            true);
-  device_policy_.policy_data().set_management_mode(
-      em::PolicyData::CONSUMER_MANAGED);
-  device_policy_.policy_data().set_request_token("test request token");
-  device_policy_.Build();
-  device_settings_test_helper_.set_policy_blob(device_policy_.GetBlob());
-  FlushDeviceSettings();
-
-  // Expect that kDeviceOwner is not empty.
-  const base::Value* value = provider_->Get(kDeviceOwner);
-  ASSERT_TRUE(value);
-  std::string string_value;
-  EXPECT_TRUE(value->GetAsString(&string_value));
-  EXPECT_FALSE(string_value.empty());
 }
 
 TEST_F(DeviceSettingsProviderTest, DecodeDeviceState) {
@@ -437,7 +422,7 @@ TEST_F(DeviceSettingsProviderTest, DecodeDeviceState) {
   Mock::VerifyAndClearExpectations(this);
 
   // Verify that the device state has been decoded correctly.
-  const base::FundamentalValue expected_disabled_value(true);
+  const base::Value expected_disabled_value(true);
   EXPECT_TRUE(base::Value::Equals(provider_->Get(kDeviceDisabled),
                                   &expected_disabled_value));
   const base::StringValue expected_disabled_message_value(kDisabledMessage);

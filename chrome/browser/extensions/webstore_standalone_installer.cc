@@ -69,6 +69,11 @@ void WebstoreStandaloneInstaller::BeginInstall() {
       profile_->GetRequestContext(),
       GetRequestorURL(),
       id_));
+
+  std::string json_post_data = GetJsonPostData();
+  if (!json_post_data.empty())
+    webstore_data_fetcher_->SetJsonPostData(json_post_data);
+
   webstore_data_fetcher_->Start();
 }
 
@@ -159,13 +164,17 @@ void WebstoreStandaloneInstaller::InitInstallData(
   // Default implementation sets no properties.
 }
 
+std::string WebstoreStandaloneInstaller::GetJsonPostData() {
+  return std::string();
+}
+
 void WebstoreStandaloneInstaller::OnManifestParsed() {
   ProceedWithInstallPrompt();
 }
 
 std::unique_ptr<ExtensionInstallPrompt>
 WebstoreStandaloneInstaller::CreateInstallUI() {
-  return base::WrapUnique(new ExtensionInstallPrompt(GetWebContents()));
+  return base::MakeUnique<ExtensionInstallPrompt>(GetWebContents());
 }
 
 std::unique_ptr<WebstoreInstaller::Approval>
@@ -173,8 +182,7 @@ WebstoreStandaloneInstaller::CreateApproval() const {
   std::unique_ptr<WebstoreInstaller::Approval> approval(
       WebstoreInstaller::Approval::CreateWithNoInstallPrompt(
           profile_, id_,
-          std::unique_ptr<base::DictionaryValue>(manifest_.get()->DeepCopy()),
-          true));
+          std::unique_ptr<base::DictionaryValue>(manifest_->DeepCopy()), true));
   approval->skip_post_install_ui = !ShouldShowPostInstallUI();
   approval->use_app_installed_bubble = ShouldShowAppInstalledBubble();
   approval->installing_icon = gfx::ImageSkia::CreateFrom1xBitmap(icon_);
@@ -299,8 +307,7 @@ void WebstoreStandaloneInstaller::OnWebstoreResponseParseSuccess(
                       webstore_install::kInvalidWebstoreResponseError);
       return;
     }
-    icon_url = GURL(extension_urls::GetWebstoreLaunchURL()).Resolve(
-        icon_url_string);
+    icon_url = extension_urls::GetWebstoreLaunchURL().Resolve(icon_url_string);
     if (!icon_url.is_valid()) {
       CompleteInstall(webstore_install::INVALID_WEBSTORE_RESPONSE,
                       webstore_install::kInvalidWebstoreResponseError);

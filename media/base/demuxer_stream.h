@@ -7,6 +7,7 @@
 
 #include "base/callback.h"
 #include "base/memory/ref_counted.h"
+#include "base/time/time.h"
 #include "media/base/media_export.h"
 #include "media/base/video_rotation.h"
 
@@ -23,13 +24,14 @@ class MEDIA_EXPORT DemuxerStream {
     AUDIO,
     VIDEO,
     TEXT,
-    NUM_TYPES,  // Always keep this entry as the last one!
+    TYPE_MAX = TEXT,
   };
 
   enum Liveness {
     LIVENESS_UNKNOWN,
     LIVENESS_RECORDED,
     LIVENESS_LIVE,
+    LIVENESS_MAX = LIVENESS_LIVE,
   };
 
   // Status returned in the Read() callback.
@@ -53,6 +55,7 @@ class MEDIA_EXPORT DemuxerStream {
     kOk,
     kAborted,
     kConfigChanged,
+    kStatusMax = kConfigChanged,
   };
 
   // Request a buffer to returned via the provided callback.

@@ -12,14 +12,10 @@
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
-#include "base/feature_list.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
-#include "content/browser/frame_host/frame_tree.h"
-#include "content/browser/frame_host/frame_tree_node.h"
 #include "content/browser/frame_host/render_frame_host_impl.h"
 #include "content/browser/renderer_host/render_view_host_delegate.h"
-#include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_view_android.h"
 #include "content/common/input_messages.h"
@@ -27,44 +23,38 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/native_web_keyboard_event.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/content_features.h"
 #include "jni/ImeAdapter_jni.h"
+#include "third_party/WebKit/public/platform/WebInputEvent.h"
+#include "third_party/WebKit/public/platform/WebTextInputType.h"
 #include "third_party/WebKit/public/web/WebCompositionUnderline.h"
-#include "third_party/WebKit/public/web/WebInputEvent.h"
-#include "third_party/WebKit/public/web/WebTextInputType.h"
 
 using base::android::AttachCurrentThread;
 using base::android::ConvertJavaStringToUTF16;
+using base::android::JavaParamRef;
 
 namespace content {
 namespace {
 
 // Maps a java KeyEvent into a NativeWebKeyboardEvent.
 // |java_key_event| is used to maintain a globalref for KeyEvent.
-// |action| will help determine the WebInputEvent type.
+// |type| will determine the WebInputEvent type.
 // type, |modifiers|, |time_ms|, |key_code|, |unicode_char| is used to create
 // WebKeyboardEvent. |key_code| is also needed ad need to treat the enter key
 // as a key press of character \r.
 NativeWebKeyboardEvent NativeWebKeyboardEventFromKeyEvent(
     JNIEnv* env,
     const base::android::JavaRef<jobject>& java_key_event,
-    int action,
+    int type,
     int modifiers,
     long time_ms,
     int key_code,
     int scan_code,
     bool is_system_key,
     int unicode_char) {
-  blink::WebInputEvent::Type type = blink::WebInputEvent::Undefined;
-  if (action == AKEY_EVENT_ACTION_DOWN)
-    type = blink::WebInputEvent::RawKeyDown;
-  else if (action == AKEY_EVENT_ACTION_UP)
-    type = blink::WebInputEvent::KeyUp;
-  else
-    NOTREACHED() << "Invalid Android key event action: " << action;
-  return NativeWebKeyboardEvent(env, java_key_event, type, modifiers,
-                                time_ms / 1000.0, key_code, scan_code,
-                                unicode_char, is_system_key);
+  return NativeWebKeyboardEvent(env, java_key_event,
+                                static_cast<blink::WebInputEvent::Type>(type),
+                                modifiers, time_ms / 1000.0, key_code,
+                                scan_code, unicode_char, is_system_key);
 }
 
 }  // anonymous namespace
@@ -117,34 +107,21 @@ void AppendUnderlineSpan(JNIEnv*,
 
 ImeAdapterAndroid::ImeAdapterAndroid(RenderWidgetHostViewAndroid* rwhva)
     : rwhva_(rwhva) {
+  DCHECK(rwhva_);
 }
 
 ImeAdapterAndroid::~ImeAdapterAndroid() {
   JNIEnv* env = AttachCurrentThread();
   base::android::ScopedJavaLocalRef<jobject> obj = java_ime_adapter_.get(env);
   if (!obj.is_null())
-    Java_ImeAdapter_detach(env, obj.obj());
-}
-
-bool ImeAdapterAndroid::SendSyntheticKeyEvent(JNIEnv*,
-                                              const JavaParamRef<jobject>&,
-                                              int type,
-                                              long time_ms,
-                                              int key_code,
-                                              int modifiers,
-                                              int text) {
-  NativeWebKeyboardEvent event(static_cast<blink::WebInputEvent::Type>(type),
-                               modifiers, time_ms / 1000.0, key_code, 0,
-                               text, false /* is_system_key */);
-  rwhva_->SendKeyEvent(event);
-  return true;
+    Java_ImeAdapter_detach(env, obj);
 }
 
 bool ImeAdapterAndroid::SendKeyEvent(
     JNIEnv* env,
     const JavaParamRef<jobject>&,
     const JavaParamRef<jobject>& original_key_event,
-    int action,
+    int type,
     int modifiers,
     long time_ms,
     int key_code,
@@ -152,25 +129,9 @@ bool ImeAdapterAndroid::SendKeyEvent(
     bool is_system_key,
     int unicode_char) {
   NativeWebKeyboardEvent event = NativeWebKeyboardEventFromKeyEvent(
-          env, original_key_event, action, modifiers,
-          time_ms, key_code, scan_code, is_system_key, unicode_char);
-  bool key_down_text_insertion =
-      event.type == blink::WebInputEvent::RawKeyDown && event.text[0];
-  // If we are going to follow up with a synthetic Char event, then that's the
-  // one we expect to test if it's handled or unhandled, so skip handling the
-  // "real" event in the browser.
-  event.skip_in_browser = key_down_text_insertion;
+          env, original_key_event, type, modifiers,
+          time_ms / 1000.0, key_code, scan_code, is_system_key, unicode_char);
   rwhva_->SendKeyEvent(event);
-  if (key_down_text_insertion) {
-    // Send a Char event, but without an os_event since we don't want to
-    // roundtrip back to java such synthetic event.
-    NativeWebKeyboardEvent char_event(blink::WebInputEvent::Char, modifiers,
-                                      time_ms / 1000.0, key_code, scan_code,
-                                      unicode_char,
-                                      is_system_key);
-    char_event.skip_in_browser = key_down_text_insertion;
-    rwhva_->SendKeyEvent(char_event);
-  }
   return true;
 }
 
@@ -178,57 +139,65 @@ void ImeAdapterAndroid::SetComposingText(JNIEnv* env,
                                          const JavaParamRef<jobject>& obj,
                                          const JavaParamRef<jobject>& text,
                                          const JavaParamRef<jstring>& text_str,
-                                         int new_cursor_pos) {
-  RenderWidgetHostImpl* rwhi = GetRenderWidgetHostImpl();
+                                         int relative_cursor_pos) {
+  RenderWidgetHostImpl* rwhi = GetFocusedWidget();
   if (!rwhi)
     return;
 
   base::string16 text16 = ConvertJavaStringToUTF16(env, text_str);
 
-  std::vector<blink::WebCompositionUnderline> underlines;
-  // Iterate over spans in |text|, dispatch those that we care about (e.g.,
-  // BackgroundColorSpan) to a matching callback (e.g.,
-  // AppendBackgroundColorSpan()), and populate |underlines|.
-  Java_ImeAdapter_populateUnderlinesFromSpans(
-      env, obj, text, reinterpret_cast<jlong>(&underlines));
+  std::vector<blink::WebCompositionUnderline> underlines =
+      GetUnderlinesFromSpans(env, obj, text, text16);
 
   // Default to plain underline if we didn't find any span that we care about.
   if (underlines.empty()) {
     underlines.push_back(blink::WebCompositionUnderline(
         0, text16.length(), SK_ColorBLACK, false, SK_ColorTRANSPARENT));
   }
-  // Sort spans by |.startOffset|.
-  std::sort(underlines.begin(), underlines.end());
 
-  // new_cursor_position is as described in the Android API for
+  // relative_cursor_pos is as described in the Android API for
   // InputConnection#setComposingText, whereas the parameters for
   // ImeSetComposition are relative to the start of the composition.
-  if (new_cursor_pos > 0)
-    new_cursor_pos = text16.length() + new_cursor_pos - 1;
+  if (relative_cursor_pos > 0)
+    relative_cursor_pos = text16.length() + relative_cursor_pos - 1;
 
   rwhi->ImeSetComposition(text16, underlines, gfx::Range::InvalidRange(),
-                          new_cursor_pos, new_cursor_pos);
+                          relative_cursor_pos, relative_cursor_pos);
 }
 
 void ImeAdapterAndroid::CommitText(JNIEnv* env,
-                                   const JavaParamRef<jobject>&,
-                                   const JavaParamRef<jstring>& text_str) {
-  RenderWidgetHostImpl* rwhi = GetRenderWidgetHostImpl();
+                                   const JavaParamRef<jobject>& obj,
+                                   const JavaParamRef<jobject>& text,
+                                   const JavaParamRef<jstring>& text_str,
+                                   int relative_cursor_pos) {
+  RenderWidgetHostImpl* rwhi = GetFocusedWidget();
   if (!rwhi)
     return;
 
   base::string16 text16 = ConvertJavaStringToUTF16(env, text_str);
-  rwhi->ImeConfirmComposition(text16, gfx::Range::InvalidRange(), false);
+
+  std::vector<blink::WebCompositionUnderline> underlines =
+      GetUnderlinesFromSpans(env, obj, text, text16);
+
+  // relative_cursor_pos is as described in the Android API for
+  // InputConnection#commitText, whereas the parameters for
+  // ImeConfirmComposition are relative to the end of the composition.
+  if (relative_cursor_pos > 0)
+    relative_cursor_pos--;
+  else
+    relative_cursor_pos -= text16.length();
+
+  rwhi->ImeCommitText(text16, underlines, gfx::Range::InvalidRange(),
+                      relative_cursor_pos);
 }
 
 void ImeAdapterAndroid::FinishComposingText(JNIEnv* env,
                                             const JavaParamRef<jobject>&) {
-  RenderWidgetHostImpl* rwhi = GetRenderWidgetHostImpl();
+  RenderWidgetHostImpl* rwhi = GetFocusedWidget();
   if (!rwhi)
     return;
 
-  rwhi->ImeConfirmComposition(base::string16(), gfx::Range::InvalidRange(),
-                              true);
+  rwhi->ImeFinishComposingText(true);
 }
 
 void ImeAdapterAndroid::AttachImeAdapter(
@@ -241,15 +210,14 @@ void ImeAdapterAndroid::CancelComposition() {
   base::android::ScopedJavaLocalRef<jobject> obj =
       java_ime_adapter_.get(AttachCurrentThread());
   if (!obj.is_null())
-    Java_ImeAdapter_cancelComposition(AttachCurrentThread(), obj.obj());
+    Java_ImeAdapter_cancelComposition(AttachCurrentThread(), obj);
 }
 
 void ImeAdapterAndroid::FocusedNodeChanged(bool is_editable_node) {
   base::android::ScopedJavaLocalRef<jobject> obj =
       java_ime_adapter_.get(AttachCurrentThread());
   if (!obj.is_null()) {
-    Java_ImeAdapter_focusedNodeChanged(AttachCurrentThread(),
-                                       obj.obj(),
+    Java_ImeAdapter_focusedNodeChanged(AttachCurrentThread(), obj,
                                        is_editable_node);
   }
 }
@@ -285,11 +253,8 @@ void ImeAdapterAndroid::SetCharacterBounds(
     coordinates_array[coordinates_array_index + 3] = rect.bottom();
   }
   Java_ImeAdapter_setCharacterBounds(
-      env,
-      obj.obj(),
-      base::android::ToJavaFloatArray(env,
-                                      coordinates_array.get(),
-                                      coordinates_array_size).obj());
+      env, obj, base::android::ToJavaFloatArray(env, coordinates_array.get(),
+                                                coordinates_array_size));
 }
 
 void ImeAdapterAndroid::SetComposingRegion(JNIEnv*,
@@ -315,23 +280,40 @@ void ImeAdapterAndroid::DeleteSurroundingText(JNIEnv*,
   RenderFrameHostImpl* rfh =
       static_cast<RenderFrameHostImpl*>(GetFocusedFrame());
   if (rfh)
-    rfh->ExtendSelectionAndDelete(before, after);
+    rfh->DeleteSurroundingText(before, after);
+}
+
+void ImeAdapterAndroid::DeleteSurroundingTextInCodePoints(
+    JNIEnv*,
+    const JavaParamRef<jobject>&,
+    int before,
+    int after) {
+  RenderFrameHostImpl* rfh =
+      static_cast<RenderFrameHostImpl*>(GetFocusedFrame());
+  if (rfh)
+    rfh->DeleteSurroundingTextInCodePoints(before, after);
 }
 
 bool ImeAdapterAndroid::RequestTextInputStateUpdate(
     JNIEnv* env,
     const JavaParamRef<jobject>&) {
-  RenderWidgetHostImpl* rwhi = GetRenderWidgetHostImpl();
+  RenderWidgetHostImpl* rwhi = GetFocusedWidget();
   if (!rwhi)
     return false;
   rwhi->Send(new InputMsg_RequestTextInputStateUpdate(rwhi->GetRoutingID()));
   return true;
 }
 
-bool ImeAdapterAndroid::IsImeThreadEnabled(
+void ImeAdapterAndroid::RequestCursorUpdate(
     JNIEnv* env,
-    const base::android::JavaParamRef<jobject>&) {
-  return base::FeatureList::IsEnabled(features::kImeThread);
+    const base::android::JavaParamRef<jobject>& obj,
+    bool immediate_request,
+    bool monitor_request) {
+  RenderWidgetHostImpl* rwhi = GetFocusedWidget();
+  if (!rwhi)
+    return;
+  rwhi->Send(new InputMsg_RequestCompositionUpdate(
+      rwhi->GetRoutingID(), immediate_request, monitor_request));
 }
 
 void ImeAdapterAndroid::ResetImeAdapter(JNIEnv* env,
@@ -339,36 +321,44 @@ void ImeAdapterAndroid::ResetImeAdapter(JNIEnv* env,
   java_ime_adapter_.reset();
 }
 
-RenderWidgetHostImpl* ImeAdapterAndroid::GetRenderWidgetHostImpl() {
+RenderWidgetHostImpl* ImeAdapterAndroid::GetFocusedWidget() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  DCHECK(rwhva_);
-  RenderWidgetHost* rwh = rwhva_->GetRenderWidgetHost();
-  if (!rwh)
-    return nullptr;
-
-  return RenderWidgetHostImpl::From(rwh);
+  return rwhva_->GetFocusedWidget();
 }
 
 RenderFrameHost* ImeAdapterAndroid::GetFocusedFrame() {
-  RenderWidgetHostImpl* rwh = GetRenderWidgetHostImpl();
-  if (!rwh)
-    return nullptr;
-  RenderViewHost* rvh = RenderViewHost::From(rwh);
-  if (!rvh)
-    return nullptr;
-  FrameTreeNode* focused_frame =
-      rvh->GetDelegate()->GetFrameTree()->GetFocusedFrame();
-  if (!focused_frame)
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  // We get the focused frame from the WebContents of the page. Although
+  // |rwhva_->GetFocusedWidget()| does a similar thing, there is no direct way
+  // to get a RenderFrameHost from its RWH.
+  RenderWidgetHostImpl* rwh =
+      RenderWidgetHostImpl::From(rwhva_->GetRenderWidgetHost());
+  if (!rwh || !rwh->delegate())
     return nullptr;
 
-  return focused_frame->current_frame_host();
+  if (auto* contents = rwh->delegate()->GetAsWebContents())
+    return contents->GetFocusedFrame();
+
+  return nullptr;
 }
 
-WebContents* ImeAdapterAndroid::GetWebContents() {
-  RenderWidgetHostImpl* rwh = GetRenderWidgetHostImpl();
-  if (!rwh)
-    return nullptr;
-  return WebContents::FromRenderViewHost(RenderViewHost::From(rwh));
+std::vector<blink::WebCompositionUnderline>
+ImeAdapterAndroid::GetUnderlinesFromSpans(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& obj,
+    const base::android::JavaParamRef<jobject>& text,
+    const base::string16& text16) {
+  std::vector<blink::WebCompositionUnderline> underlines;
+  // Iterate over spans in |text|, dispatch those that we care about (e.g.,
+  // BackgroundColorSpan) to a matching callback (e.g.,
+  // AppendBackgroundColorSpan()), and populate |underlines|.
+  Java_ImeAdapter_populateUnderlinesFromSpans(
+      env, obj, text, reinterpret_cast<jlong>(&underlines));
+
+  // Sort spans by |.startOffset|.
+  std::sort(underlines.begin(), underlines.end());
+
+  return underlines;
 }
 
 }  // namespace content

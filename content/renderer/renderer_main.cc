@@ -14,22 +14,25 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/statistics_recorder.h"
 #include "base/pending_task.h"
+#include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "base/sys_info.h"
 #include "base/threading/platform_thread.h"
 #include "base/timer/hi_res_timer_manager.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
-#include "components/scheduler/renderer/renderer_scheduler.h"
 #include "content/child/child_process.h"
 #include "content/common/content_constants_internal.h"
-#include "content/common/mojo/mojo_shell_connection_impl.h"
+#include "content/common/service_manager/service_manager_connection_impl.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/main_function_params.h"
 #include "content/public/renderer/content_renderer_client.h"
 #include "content/renderer/render_process_impl.h"
 #include "content/renderer/render_thread_impl.h"
 #include "content/renderer/renderer_main_platform_delegate.h"
+#include "media/media_features.h"
+#include "ppapi/features/features.h"
+#include "third_party/WebKit/public/platform/scheduler/renderer/renderer_scheduler.h"
 #include "third_party/skia/include/core/SkGraphics.h"
 #include "ui/base/ui_base_switches.h"
 
@@ -47,11 +50,11 @@
 #include "third_party/WebKit/public/web/WebView.h"
 #endif  // OS_MACOSX
 
-#if defined(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PLUGINS)
 #include "content/renderer/pepper/pepper_plugin_registry.h"
 #endif
 
-#if defined(ENABLE_WEBRTC)
+#if BUILDFLAG(ENABLE_WEBRTC)
 #include "third_party/webrtc_overrides/init_webrtc.h"
 #endif
 
@@ -151,17 +154,17 @@ int RendererMain(const MainFunctionParams& parameters) {
   base::android::RecordLibraryLoaderRendererHistograms();
 #endif
 
-  std::unique_ptr<scheduler::RendererScheduler> renderer_scheduler(
-      scheduler::RendererScheduler::Create());
+  std::unique_ptr<blink::scheduler::RendererScheduler> renderer_scheduler(
+      blink::scheduler::RendererScheduler::Create());
 
   // PlatformInitialize uses FieldTrials, so this must happen later.
   platform.PlatformInitialize();
 
-#if defined(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PLUGINS)
   // Load pepper plugins before engaging the sandbox.
   PepperPluginRegistry::GetInstance();
 #endif
-#if defined(ENABLE_WEBRTC)
+#if BUILDFLAG(ENABLE_WEBRTC)
   // Initialize WebRTC before engaging the sandbox.
   // NOTE: On linux, this call could already have been made from
   // zygote_main_linux.cc.  However, calling multiple times from the same thread
@@ -173,7 +176,7 @@ int RendererMain(const MainFunctionParams& parameters) {
 #if defined(OS_WIN) || defined(OS_MACOSX)
     // TODO(markus): Check if it is OK to unconditionally move this
     // instruction down.
-    RenderProcessImpl render_process;
+    auto render_process = RenderProcessImpl::Create();
     RenderThreadImpl::Create(std::move(main_message_loop),
                              std::move(renderer_scheduler));
 #endif
@@ -181,7 +184,7 @@ int RendererMain(const MainFunctionParams& parameters) {
     if (!no_sandbox)
       run_loop = platform.EnableSandbox();
 #if defined(OS_POSIX) && !defined(OS_MACOSX)
-    RenderProcessImpl render_process;
+    auto render_process = RenderProcessImpl::Create();
     RenderThreadImpl::Create(std::move(main_message_loop),
                              std::move(renderer_scheduler));
 #endif
@@ -194,7 +197,7 @@ int RendererMain(const MainFunctionParams& parameters) {
         pool->Recycle();
 #endif
       TRACE_EVENT_ASYNC_BEGIN0("toplevel", "RendererMain.START_MSG_LOOP", 0);
-      base::MessageLoop::current()->Run();
+      base::RunLoop().Run();
       TRACE_EVENT_ASYNC_END0("toplevel", "RendererMain.START_MSG_LOOP", 0);
     }
 

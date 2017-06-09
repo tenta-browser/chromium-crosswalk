@@ -32,10 +32,9 @@
 #include "chrome/browser/ui/chrome_select_file_policy.h"
 #include "chrome/browser/ui/crypto_module_password_dialog_nss.h"
 #include "chrome/browser/ui/webui/certificate_viewer_webui.h"
-#include "chrome/grit/settings_strings.h"
+#include "chrome/grit/generated_resources.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
-#include "grit/components_strings.h"
 #include "net/base/crypto_module.h"
 #include "net/base/net_errors.h"
 #include "net/cert/x509_certificate.h"
@@ -90,8 +89,8 @@ struct DictionaryIdComparator {
 
   bool operator()(const std::unique_ptr<base::Value>& a,
                   const std::unique_ptr<base::Value>& b) const {
-    DCHECK(a->GetType() == base::Value::TYPE_DICTIONARY);
-    DCHECK(b->GetType() == base::Value::TYPE_DICTIONARY);
+    DCHECK(a->GetType() == base::Value::Type::DICTIONARY);
+    DCHECK(b->GetType() == base::Value::Type::DICTIONARY);
     const base::DictionaryValue* a_dict;
     bool a_is_dictionary = a->GetAsDictionary(&a_dict);
     DCHECK(a_is_dictionary);
@@ -209,7 +208,7 @@ class CertIdMap {
   typedef std::map<net::X509Certificate*, int32_t> CertMap;
 
   // Creates an ID for cert and looks up the cert for an ID.
-  IDMap<net::X509Certificate> id_map_;
+  IDMap<net::X509Certificate*> id_map_;
 
   // Finds the ID for a cert.
   CertMap cert_map_;
@@ -300,7 +299,7 @@ base::CancelableTaskTracker::TaskId FileAccessProvider::StartRead(
 
   // Post task to file thread to read file.
   return tracker->PostTaskAndReply(
-      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::FILE).get(),
+      BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE).get(),
       FROM_HERE,
       base::Bind(&FileAccessProvider::DoRead, this, path, saved_errno, data),
       base::Bind(callback, base::Owned(saved_errno), base::Owned(data)));
@@ -317,7 +316,7 @@ base::CancelableTaskTracker::TaskId FileAccessProvider::StartWrite(
 
   // Post task to file thread to write file.
   return tracker->PostTaskAndReply(
-      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::FILE).get(),
+      BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE).get(),
       FROM_HERE, base::Bind(&FileAccessProvider::DoWrite, this, path, data,
                             saved_errno, bytes_written),
       base::Bind(callback, base::Owned(saved_errno),
@@ -681,7 +680,7 @@ void CertificatesHandler::ImportPersonalFileRead(const int* read_errno,
   file_data_ = *data;
 
   if (CouldBePFX(file_data_)) {
-    ResolveCallback(base::FundamentalValue(true));
+    ResolveCallback(base::Value(true));
     return;
   }
 
@@ -694,7 +693,7 @@ void CertificatesHandler::ImportPersonalFileRead(const int* read_errno,
   int string_id;
   switch (result) {
     case net::OK:
-      ResolveCallback(base::FundamentalValue(false));
+      ResolveCallback(base::Value(false));
       return;
     case net::ERR_NO_PRIVATE_KEY_FOR_CERT:
       string_id = IDS_SETTINGS_CERTIFICATE_MANAGER_IMPORT_MISSING_KEY;
@@ -719,15 +718,15 @@ void CertificatesHandler::HandleImportPersonalPasswordSelected(
   CHECK(args->GetString(1, &password_));
 
   if (use_hardware_backed_) {
-    module_ = certificate_manager_model_->cert_db()->GetPrivateModule();
+    slot_ = certificate_manager_model_->cert_db()->GetPrivateSlot();
   } else {
-    module_ = certificate_manager_model_->cert_db()->GetPublicModule();
+    slot_ = certificate_manager_model_->cert_db()->GetPublicSlot();
   }
 
-  net::CryptoModuleList modules;
-  modules.push_back(module_);
+  std::vector<crypto::ScopedPK11Slot> modules;
+  modules.push_back(crypto::ScopedPK11Slot(PK11_ReferenceSlot(slot_.get())));
   chrome::UnlockSlotsIfNecessary(
-      modules, chrome::kCryptoModulePasswordCertImport,
+      std::move(modules), chrome::kCryptoModulePasswordCertImport,
       net::HostPortPair(),  // unused.
       GetParentWindow(),
       base::Bind(&CertificatesHandler::ImportPersonalSlotUnlocked,
@@ -741,7 +740,7 @@ void CertificatesHandler::ImportPersonalSlotUnlocked() {
   // for Chrome OS when the "Import and Bind" option is chosen.
   bool is_extractable = !use_hardware_backed_;
   int result = certificate_manager_model_->ImportFromPKCS12(
-      module_.get(), file_data_, password_, is_extractable);
+      slot_.get(), file_data_, password_, is_extractable);
   ImportExportCleanup();
   int string_id;
   switch (result) {
@@ -783,7 +782,7 @@ void CertificatesHandler::ImportExportCleanup() {
   file_data_.clear();
   use_hardware_backed_ = false;
   selected_cert_list_.clear();
-  module_ = NULL;
+  slot_.reset();
   tracker_.TryCancelAll();
 
   // There may be pending file dialogs, we need to tell them that we've gone
@@ -986,9 +985,9 @@ void CertificatesHandler::OnCertificateManagerModelCreated(
 }
 
 void CertificatesHandler::CertificateManagerModelReady() {
-  base::FundamentalValue user_db_available_value(
+  base::Value user_db_available_value(
       certificate_manager_model_->is_user_db_available());
-  base::FundamentalValue tpm_available_value(
+  base::Value tpm_available_value(
       certificate_manager_model_->is_tpm_available());
   CallJavascriptFunction("cr.webUIListenerCallback",
                          base::StringValue("certificates-model-ready"),
@@ -1038,7 +1037,7 @@ void CertificatesHandler::PopulateTree(
 
   {
     std::unique_ptr<base::ListValue> nodes =
-        base::WrapUnique(new base::ListValue());
+        base::MakeUnique<base::ListValue>();
     for (CertificateManagerModel::OrgGroupingMap::iterator i = map.begin();
          i != map.end(); ++i) {
       // Populate first level (org name).
@@ -1125,7 +1124,7 @@ void CertificatesHandler::RejectCallbackWithImportError(
         IDS_SETTINGS_CERTIFICATE_MANAGER_IMPORT_SOME_NOT_IMPORTED);
 
   std::unique_ptr<base::ListValue> cert_error_list =
-      base::WrapUnique(new base::ListValue());
+      base::MakeUnique<base::ListValue>();
   for (size_t i = 0; i < not_imported.size(); ++i) {
     const net::NSSCertDatabase::ImportCertFailure& failure = not_imported[i];
     std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue);

@@ -11,15 +11,37 @@ namespace ios {
 ChromeIdentityService::ChromeIdentityService() {}
 
 ChromeIdentityService::~ChromeIdentityService() {
-  FOR_EACH_OBSERVER(Observer, observer_list_,
-                    OnChromeIdentityServiceWillBeDestroyed());
+  for (auto& observer : observer_list_)
+    observer.OnChromeIdentityServiceWillBeDestroyed();
 }
 
-ChromeIdentityInteractionManager*
-ChromeIdentityService::CreateChromeIdentityInteractionManager(
+void ChromeIdentityService::DismissDialogs() {}
+
+bool ChromeIdentityService::HandleApplicationOpenURL(UIApplication* application,
+                                                     NSURL* url,
+                                                     NSDictionary* options) {
+  return false;
+}
+
+base::scoped_nsobject<UINavigationController>
+ChromeIdentityService::NewAccountDetails(
+    ChromeIdentity* identity,
+    id<ChromeIdentityBrowserOpener> browser_opener) {
+  return base::scoped_nsobject<UINavigationController>();
+}
+
+base::scoped_nsobject<UINavigationController>
+ChromeIdentityService::NewWebAndAppSettingDetails(
+    ChromeIdentity* identity,
+    id<ChromeIdentityBrowserOpener> browser_opener) {
+  return base::scoped_nsobject<UINavigationController>();
+}
+
+base::scoped_nsobject<ChromeIdentityInteractionManager>
+ChromeIdentityService::NewChromeIdentityInteractionManager(
     ios::ChromeBrowserState* browser_state,
     id<ChromeIdentityInteractionManagerDelegate> delegate) const {
-  return [[[ChromeIdentityInteractionManager alloc] init] autorelease];
+  return base::scoped_nsobject<ChromeIdentityInteractionManager>();
 }
 
 bool ChromeIdentityService::IsValidIdentity(ChromeIdentity* identity) const {
@@ -109,18 +131,20 @@ bool ChromeIdentityService::IsInvalidGrantError(NSDictionary* user_info) {
 }
 
 void ChromeIdentityService::FireIdentityListChanged() {
-  FOR_EACH_OBSERVER(Observer, observer_list_, OnIdentityListChanged());
+  for (auto& observer : observer_list_)
+    observer.OnIdentityListChanged();
 }
 
 void ChromeIdentityService::FireAccessTokenRefreshFailed(
     ChromeIdentity* identity,
     NSDictionary* user_info) {
-  FOR_EACH_OBSERVER(Observer, observer_list_,
-                    OnAccessTokenRefreshFailed(identity, user_info));
+  for (auto& observer : observer_list_)
+    observer.OnAccessTokenRefreshFailed(identity, user_info);
 }
 
 void ChromeIdentityService::FireProfileDidUpdate(ChromeIdentity* identity) {
-  FOR_EACH_OBSERVER(Observer, observer_list_, OnProfileUpdate(identity));
+  for (auto& observer : observer_list_)
+    observer.OnProfileUpdate(identity);
 }
 
 }  // namespace ios

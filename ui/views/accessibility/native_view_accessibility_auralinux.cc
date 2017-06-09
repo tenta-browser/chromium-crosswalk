@@ -10,6 +10,7 @@
 #include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "base/stl_util.h"
+#include "ui/accessibility/ax_action_data.h"
 #include "ui/accessibility/ax_enums.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/accessibility/platform/ax_platform_node_auralinux.h"
@@ -46,7 +47,7 @@ class AuraLinuxApplication
       return;
 
     widget = widget->GetTopLevelWidget();
-    if (ContainsValue(widgets_, widget))
+    if (base::ContainsValue(widgets_, widget))
       return;
 
     widgets_.push_back(widget);
@@ -57,9 +58,7 @@ class AuraLinuxApplication
     return platform_node_->GetNativeViewAccessible();
   }
 
-  //
-  // WidgetObserver overrides.
-  //
+  // WidgetObserver:
 
   void OnWidgetDestroying(Widget* widget) override {
     auto iter = std::find(widgets_.begin(), widgets_.end(), widget);
@@ -67,13 +66,13 @@ class AuraLinuxApplication
       widgets_.erase(iter);
   }
 
-  //
-  // ui::AXPlatformNodeDelegate overrides.
-  //
+  // ui::AXPlatformNodeDelegate:
 
   const ui::AXNodeData& GetData() override {
     return data_;
   }
+
+  gfx::NativeWindow GetTopLevelWidget() override { return nullptr; }
 
   gfx::NativeViewAccessible GetParent() override {
     return nullptr;
@@ -108,12 +107,11 @@ class AuraLinuxApplication
     return gfx::kNullAcceleratedWidget;
   }
 
-  void DoDefaultAction() override {
-  }
-
-  bool SetStringValue(const base::string16& new_value) override {
+  bool AccessibilityPerformAction(const ui::AXActionData& data) override {
     return false;
   }
+
+  void DoDefaultAction() override {}
 
  private:
   friend struct base::DefaultSingletonTraits<AuraLinuxApplication>;

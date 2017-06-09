@@ -7,8 +7,6 @@
 
 #include <memory>
 
-#include "base/lazy_instance.h"
-#include "base/macros.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/tick_clock.h"
 #include "base/time/time.h"
@@ -32,14 +30,19 @@ class CONTENT_EXPORT RenderMediaClient : public media::MediaClient {
       std::vector<std::unique_ptr<media::KeySystemProperties>>*
           key_systems_properties) final;
   void RecordRapporURL(const std::string& metric, const GURL& url) final;
+  bool IsSupportedVideoConfig(media::VideoCodec codec,
+                              media::VideoCodecProfile profile,
+                              int level) override;
 
   void SetTickClockForTesting(std::unique_ptr<base::TickClock> tick_clock);
 
  private:
-  friend struct base::DefaultLazyInstanceTraits<RenderMediaClient>;
+  friend class RenderMediaClientTest;
 
   RenderMediaClient();
   ~RenderMediaClient() override;
+
+  static RenderMediaClient* GetInstance();
 
   // Makes sure all methods are called from the same thread.
   base::ThreadChecker thread_checker_;
@@ -57,12 +60,6 @@ class CONTENT_EXPORT RenderMediaClient : public media::MediaClient {
 
   DISALLOW_COPY_AND_ASSIGN(RenderMediaClient);
 };
-
-#if defined(UNIT_TEST)
-// Helper function to access the RenderMediaClient instance. Used only by unit
-// tests.
-CONTENT_EXPORT RenderMediaClient* GetRenderMediaClientInstanceForTesting();
-#endif
 
 }  // namespace content
 

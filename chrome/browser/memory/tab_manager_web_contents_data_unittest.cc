@@ -94,7 +94,7 @@ TEST_F(TabManagerWebContentsDataTest, LastInactiveTime) {
 
 TEST_F(TabManagerWebContentsDataTest, CopyState) {
   std::unique_ptr<WebContents> web_contents2;
-  auto tab_data2 = CreateWebContentsAndTabData(&web_contents2);
+  auto* tab_data2 = CreateWebContentsAndTabData(&web_contents2);
 
   EXPECT_EQ(tab_data()->tab_data_, tab_data2->tab_data_);
   tab_data()->IncrementDiscardCount();
@@ -202,6 +202,27 @@ TEST_F(TabManagerWebContentsDataTest, HistogramsInactiveToReloadTime) {
             histograms.GetTotalCountsForPrefix(kHistogramName).begin()->second);
 
   histograms.ExpectBucketCount(kHistogramName, 12000, 1);
+}
+
+TEST_F(TabManagerWebContentsDataTest, PurgeAndSuspendState) {
+  EXPECT_EQ(TabManager::RUNNING, tab_data()->GetPurgeAndSuspendState());
+  base::TimeTicks last_modified = tab_data()->LastPurgeAndSuspendModifiedTime();
+  test_clock().Advance(base::TimeDelta::FromSeconds(5));
+  tab_data()->SetPurgeAndSuspendState(TabManager::SUSPENDED);
+  EXPECT_EQ(TabManager::SUSPENDED, tab_data()->GetPurgeAndSuspendState());
+  EXPECT_GT(tab_data()->LastPurgeAndSuspendModifiedTime(), last_modified);
+
+  last_modified = tab_data()->LastPurgeAndSuspendModifiedTime();
+  test_clock().Advance(base::TimeDelta::FromSeconds(5));
+  tab_data()->SetPurgeAndSuspendState(TabManager::RESUMED);
+  EXPECT_EQ(TabManager::RESUMED, tab_data()->GetPurgeAndSuspendState());
+  EXPECT_GT(tab_data()->LastPurgeAndSuspendModifiedTime(), last_modified);
+
+  last_modified = tab_data()->LastPurgeAndSuspendModifiedTime();
+  test_clock().Advance(base::TimeDelta::FromSeconds(5));
+  tab_data()->SetPurgeAndSuspendState(TabManager::RUNNING);
+  EXPECT_EQ(TabManager::RUNNING, tab_data()->GetPurgeAndSuspendState());
+  EXPECT_GT(tab_data()->LastPurgeAndSuspendModifiedTime(), last_modified);
 }
 
 }  // namespace memory

@@ -2,15 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Closure compiler won't let this be declared inside cr.define().
-/** @enum {string} */
-var SourceType = {
-  WEBSTORE: 'webstore',
-  POLICY: 'policy',
-  SIDELOADED: 'sideloaded',
-  UNPACKED: 'unpacked',
-};
-
 cr.define('extensions', function() {
   /** @interface */
   var ItemDelegate = function() {};
@@ -50,17 +41,25 @@ cr.define('extensions', function() {
     setItemCollectsErrors: assertNotReached,
 
     /**
-     * @param {string} id,
+     * @param {string} id
      * @param {chrome.developerPrivate.ExtensionView} view
      */
     inspectItemView: assertNotReached,
 
     /** @param {string} id */
+    reloadItem: assertNotReached,
+
+    /** @param {string} id */
     repairItem: assertNotReached,
+
+    /** @param {string} id */
+    showItemOptionsPage: assertNotReached,
   };
 
   var Item = Polymer({
     is: 'extensions-item',
+
+    behaviors: [I18nBehavior],
 
     properties: {
       // The item's delegate, or null.
@@ -74,23 +73,20 @@ cr.define('extensions', function() {
         value: false,
       },
 
-      // Whether or not the expanded view of the item is shown.
-      showingDetails_: {
-        type: Boolean,
-        value: false,
-      },
-
       // The underlying ExtensionInfo itself. Public for use in declarative
       // bindings.
       /** @type {chrome.developerPrivate.ExtensionInfo} */
       data: {
         type: Object,
       },
-    },
 
-    behaviors: [
-      I18nBehavior,
-    ],
+      // Whether or not the expanded view of the item is shown.
+      /** @private */
+      showingDetails_: {
+        type: Boolean,
+        value: false,
+      },
+    },
 
     observers: [
       'observeIdVisibility_(inDevMode, showingDetails_, data.id)',
@@ -107,6 +103,15 @@ cr.define('extensions', function() {
       this.fire('extension-item-size-changed', {item: this.data});
     },
 
+    /**
+     * @return {boolean}
+     * @private
+     */
+    computeErrorsHidden_: function() {
+      return !this.data.manifestErrors.length &&
+             !this.data.runtimeErrors.length;
+    },
+
     /** @private */
     onRemoveTap_: function() {
       this.delegate.deleteItem(this.data.id);
@@ -119,8 +124,13 @@ cr.define('extensions', function() {
     },
 
     /** @private */
+    onErrorsTap_: function() {
+      this.fire('extension-item-show-errors', {data: this.data});
+    },
+
+    /** @private */
     onDetailsTap_: function() {
-      this.fire('extension-item-show-details', {element: this});
+      this.fire('extension-item-show-details', {data: this.data});
     },
 
     /**
@@ -128,7 +138,17 @@ cr.define('extensions', function() {
      * @private
      */
     onInspectTap_: function(e) {
-      this.delegate.inspectItemView(this.data.id, e.model.item);
+      this.delegate.inspectItemView(this.data.id, this.data.views[0]);
+    },
+
+    /** @private */
+    onExtraInspectTap_: function() {
+      this.fire('extension-item-show-details', {data: this.data});
+    },
+
+    /** @private */
+    onReloadTap_: function() {
+      this.delegate.reloadItem(this.data.id);
     },
 
     /** @private */
@@ -153,28 +173,34 @@ cr.define('extensions', function() {
       assertNotReached();  // FileNotFound.
     },
 
-    /** @private */
-    computeClasses_: function() {
-      return this.isEnabled_() ? 'enabled' : 'disabled';
+    /**
+     * Returns true if the enable toggle should be shown.
+     * @return {boolean}
+     * @private
+     */
+    showEnableToggle_: function() {
+      return !this.isTerminated_() && !this.data.disableReasons.corruptInstall;
     },
 
     /**
-     * @return {SourceType}
+     * Returns true if the extension is in the terminated state.
+     * @return {boolean}
      * @private
      */
-    computeSource_: function() {
-      if (this.data.controlledInfo &&
-          this.data.controlledInfo.type ==
-              chrome.developerPrivate.ControllerType.POLICY) {
-        return SourceType.POLICY;
-      } else if (this.data.location ==
-                     chrome.developerPrivate.Location.THIRD_PARTY) {
-        return SourceType.SIDELOADED;
-      } else if (this.data.location ==
-                     chrome.developerPrivate.Location.UNPACKED) {
-        return SourceType.UNPACKED;
-      }
-      return SourceType.WEBSTORE;
+    isTerminated_: function() {
+      return this.data.state ==
+          chrome.developerPrivate.ExtensionState.TERMINATED;
+    },
+
+    /**
+     * return {string}
+     * @private
+     */
+    computeClasses_: function() {
+      var classes = this.isEnabled_() ? 'enabled' : 'disabled';
+      if (this.inDevMode)
+        classes += ' dev-mode';
+      return classes;
     },
 
     /**
@@ -182,7 +208,7 @@ cr.define('extensions', function() {
      * @private
      */
     computeSourceIndicatorIcon_: function() {
-      switch (this.computeSource_()) {
+      switch (extensions.getItemSource(this.data)) {
         case SourceType.POLICY:
           return 'communication:business';
         case SourceType.SIDELOADED:
@@ -200,24 +226,25 @@ cr.define('extensions', function() {
      * @private
      */
     computeSourceIndicatorText_: function() {
-      switch (this.computeSource_()) {
-        case SourceType.POLICY:
-          return loadTimeData.getString('itemSourcePolicy');
-        case SourceType.SIDELOADED:
-          return loadTimeData.getString('itemSourceSideloaded');
-        case SourceType.UNPACKED:
-          return loadTimeData.getString('itemSourceUnpacked');
-        case SourceType.WEBSTORE:
-          return '';
-      }
-      assertNotReached();
+      var sourceType = extensions.getItemSource(this.data);
+      return sourceType == SourceType.WEBSTORE ? '' :
+             extensions.getItemSourceString(sourceType);
     },
 
     /**
-     * @param {chrome.developerPrivate.ExtensionView} view
+     * @return {boolean}
      * @private
      */
-    computeInspectLabel_: function(view) {
+    computeInspectViewsHidden_: function() {
+      return !this.data.views || this.data.views.length == 0;
+    },
+
+    /**
+     * @return {string}
+     * @private
+     */
+    computeFirstInspectLabel_: function() {
+      var view = this.data.views[0];
       // Trim the "chrome-extension://<id>/".
       var url = new URL(view.url);
       var label = view.url;
@@ -230,7 +257,28 @@ cr.define('extensions', function() {
                (view.renderProcessId == -1 ?
                     ' ' + this.i18n('viewInactive') : '') +
                (view.isIframe ? ' ' + this.i18n('viewIframe') : '');
+      var index = this.data.views.indexOf(view);
+      assert(index >= 0);
+      if (index < this.data.views.length - 1)
+        label += ',';
       return label;
+    },
+
+    /**
+     * @return {boolean}
+     * @private
+     */
+    computeExtraViewsHidden_: function() {
+      return this.data.views.length <= 1;
+    },
+
+    /**
+     * @return {string}
+     * @private
+     */
+    computeExtraInspectLabel_: function() {
+      return loadTimeData.getStringF('itemInspectViewsExtra',
+                                     this.data.views.length - 1);
     },
 
     /**

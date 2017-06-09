@@ -4,15 +4,15 @@
 
 #include "ash/common/system/chromeos/session/logout_confirmation_dialog.h"
 
-#include "ash/common/shell_window_ids.h"
 #include "ash/common/system/chromeos/session/logout_confirmation_controller.h"
 #include "ash/common/system/tray/tray_constants.h"
-#include "ash/common/wm_root_window_controller.h"
 #include "ash/common/wm_shell.h"
 #include "ash/common/wm_window.h"
+#include "ash/public/cpp/shell_window_ids.h"
+#include "ash/root_window_controller.h"
+#include "ash/strings/grit/ash_strings.h"
 #include "base/location.h"
 #include "base/time/tick_clock.h"
-#include "grit/ash_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/l10n/time_format.h"
 #include "ui/base/ui_base_types.h"
@@ -39,8 +39,8 @@ LogoutConfirmationDialog::LogoutConfirmationDialog(
   SetLayoutManager(new views::FillLayout());
 
   label_ = new views::Label;
-  label_->SetBorder(views::Border::CreateEmptyBorder(
-      0, kTrayPopupPaddingHorizontal, 0, kTrayPopupPaddingHorizontal));
+  label_->SetBorder(views::CreateEmptyBorder(0, kTrayPopupPaddingHorizontal, 0,
+                                             kTrayPopupPaddingHorizontal));
   label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   label_->SetMultiLine(true);
   AddChildView(label_);

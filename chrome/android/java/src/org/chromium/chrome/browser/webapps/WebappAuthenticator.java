@@ -12,7 +12,7 @@ import android.os.SystemClock;
 import android.util.Log;
 
 import org.chromium.base.SecureRandomInitializer;
-import org.chromium.chrome.browser.metrics.LaunchMetrics.TimesHistogramSample;
+import org.chromium.base.metrics.CachedMetrics.TimesHistogramSample;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -47,7 +47,7 @@ public class WebappAuthenticator {
     private static final Object sLock = new Object();
 
     private static FutureTask<SecretKey> sMacKeyGenerator;
-    private static SecretKey sKey = null;
+    private static SecretKey sKey;
 
     private static final TimesHistogramSample sWebappValidationTimes = new TimesHistogramSample(
             "Android.StrictMode.WebappAuthenticatorMac", TimeUnit.MILLISECONDS);
@@ -212,7 +212,7 @@ public class WebappAuthenticator {
                 @Override
                 public SecretKey call() throws Exception {
                     KeyGenerator generator = KeyGenerator.getInstance(MAC_ALGORITHM_NAME);
-                    SecureRandom random = SecureRandom.getInstance("SHA1PRNG");
+                    SecureRandom random = new SecureRandom();
                     SecureRandomInitializer.initialize(random);
                     generator.init(MAC_KEY_BYTE_COUNT * 8, random);
                     return generator.generateKey();

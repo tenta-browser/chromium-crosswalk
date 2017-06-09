@@ -24,6 +24,7 @@ import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.AppHooks;
 import org.chromium.ui.base.LocalizationUtils;
 
 import java.util.Date;
@@ -79,6 +80,7 @@ public class CustomNotificationBuilder extends NotificationBuilderBase {
     private final Context mContext;
 
     public CustomNotificationBuilder(Context context) {
+        super(context.getResources());
         mContext = context;
     }
 
@@ -120,7 +122,7 @@ public class CustomNotificationBuilder extends NotificationBuilderBase {
             view.setTextViewText(R.id.title, mTitle);
             view.setTextViewText(R.id.body, mBody);
             view.setTextViewText(R.id.origin, mOrigin);
-            view.setImageViewBitmap(R.id.icon, mLargeIcon);
+            view.setImageViewBitmap(R.id.icon, getNormalizedLargeIcon());
             view.setViewPadding(R.id.title, 0, scaledPadding, 0, 0);
             view.setViewPadding(R.id.body_container, 0, scaledPadding, 0, scaledPadding);
             addWorkProfileBadge(view);
@@ -136,9 +138,15 @@ public class CustomNotificationBuilder extends NotificationBuilderBase {
         addActionButtons(bigView);
         configureSettingsButton(bigView);
 
-        // Note: this is not a NotificationCompat builder so be mindful of the
+        // Note: under the hood this is not a NotificationCompat builder so be mindful of the
         // API level of methods you call on the builder.
-        Notification.Builder builder = new Notification.Builder(mContext);
+        // TODO(crbug.com/697104) We should probably use a Compat builder.
+        ChromeNotificationBuilder builder = AppHooks.get().createChromeNotificationBuilder(
+                false /* preferCompat */, NotificationConstants.CATEGORY_ID_SITES,
+                mContext.getString(org.chromium.chrome.R.string.notification_category_sites),
+                NotificationConstants.CATEGORY_GROUP_ID_GENERAL,
+                mContext.getString(
+                        org.chromium.chrome.R.string.notification_category_group_general));
         builder.setTicker(mTickerText);
         builder.setContentIntent(mContentIntent);
         builder.setDeleteIntent(mDeleteIntent);
@@ -153,7 +161,7 @@ public class CustomNotificationBuilder extends NotificationBuilderBase {
         builder.setContentTitle(mTitle);
         builder.setContentText(mBody);
         builder.setSubText(mOrigin);
-        builder.setLargeIcon(mLargeIcon);
+        builder.setLargeIcon(getNormalizedLargeIcon());
         setSmallIconOnBuilder(builder, mSmallIconId, mSmallIconBitmap);
         for (Action action : mActions) {
             addActionToBuilder(builder, action);
@@ -161,10 +169,13 @@ public class CustomNotificationBuilder extends NotificationBuilderBase {
         if (mSettingsAction != null) {
             addActionToBuilder(builder, mSettingsAction);
         }
+        setGroupOnBuilder(builder, mOrigin);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            // Public versions only supported since L, and createPublicNotification requires L+.
+            builder.setPublicVersion(createPublicNotification(mContext));
+        }
 
-        Notification notification = builder.build();
-        notification.bigContentView = bigView;
-        return notification;
+        return builder.buildWithBigContentView(bigView);
     }
 
     /**

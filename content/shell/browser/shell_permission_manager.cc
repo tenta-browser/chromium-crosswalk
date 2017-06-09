@@ -32,6 +32,7 @@ int ShellPermissionManager::RequestPermission(
     PermissionType permission,
     RenderFrameHost* render_frame_host,
     const GURL& requesting_origin,
+    bool user_gesture,
     const base::Callback<void(blink::mojom::PermissionStatus)>& callback) {
   callback.Run(IsWhitelistedPermissionType(permission)
                    ? blink::mojom::PermissionStatus::GRANTED
@@ -43,6 +44,7 @@ int ShellPermissionManager::RequestPermissions(
     const std::vector<PermissionType>& permissions,
     content::RenderFrameHost* render_frame_host,
     const GURL& requesting_origin,
+    bool user_gesture,
     const base::Callback<
         void(const std::vector<blink::mojom::PermissionStatus>&)>& callback) {
   std::vector<blink::mojom::PermissionStatus> result(permissions.size());
@@ -82,12 +84,6 @@ blink::mojom::PermissionStatus ShellPermissionManager::GetPermissionStatus(
     return blink::mojom::PermissionStatus::GRANTED;
   }
   return blink::mojom::PermissionStatus::DENIED;
-}
-
-void ShellPermissionManager::RegisterPermissionUsage(
-    PermissionType permission,
-    const GURL& requesting_origin,
-    const GURL& embedding_origin) {
 }
 
 int ShellPermissionManager::SubscribePermissionStatusChange(

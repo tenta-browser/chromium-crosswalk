@@ -11,10 +11,10 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/api/gcm/gcm_api.h"
+#include "chrome/browser/gcm/gcm_profile_service_factory.h"
+#include "chrome/browser/gcm/instance_id/instance_id_profile_service.h"
+#include "chrome/browser/gcm/instance_id/instance_id_profile_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/services/gcm/gcm_profile_service_factory.h"
-#include "chrome/browser/services/gcm/instance_id/instance_id_profile_service.h"
-#include "chrome/browser/services/gcm/instance_id/instance_id_profile_service_factory.h"
 #include "components/gcm_driver/gcm_driver.h"
 #include "components/gcm_driver/gcm_profile_service.h"
 #include "components/gcm_driver/instance_id/instance_id_driver.h"
@@ -66,6 +66,11 @@ ExtensionGCMAppHandler::~ExtensionGCMAppHandler() {
 
 void ExtensionGCMAppHandler::ShutdownHandler() {
   js_event_router_.reset();
+}
+
+void ExtensionGCMAppHandler::OnStoreReset() {
+  // TODO(crbug.com/661660): Notify the extension somehow that its registration
+  // was invalidated and deleted?
 }
 
 void ExtensionGCMAppHandler::OnMessage(const std::string& app_id,

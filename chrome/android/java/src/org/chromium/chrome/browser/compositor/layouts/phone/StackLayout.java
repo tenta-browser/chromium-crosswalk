@@ -33,6 +33,7 @@ import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.TabModel;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
+import org.chromium.chrome.browser.util.FeatureUtilities;
 import org.chromium.chrome.browser.util.MathUtils;
 import org.chromium.ui.base.LocalizationUtils;
 import org.chromium.ui.resources.ResourceManager;
@@ -82,7 +83,7 @@ public class StackLayout extends Layout implements Animatable<StackLayout.Proper
 
     private int mStackAnimationCount;
 
-    private float mFlingSpeed = 0; // pixel/ms
+    private float mFlingSpeed; // pixel/ms
 
     /** Whether the current fling animation is the result of switching stacks. */
     private boolean mFlingFromModelChange;
@@ -94,8 +95,8 @@ public class StackLayout extends Layout implements Animatable<StackLayout.Proper
     // from the event handler; and mRenderedScrollIndex is the value we get
     // after map mScrollIndex through a decelerate function.
     // Here we use float as index so we can smoothly animate the transition between stack.
-    private float mRenderedScrollOffset = 0.0f;
-    private float mScrollIndexOffset = 0.0f;
+    private float mRenderedScrollOffset;
+    private float mScrollIndexOffset;
 
     private final int mMinMaxInnerMargin;
     private float mInnerMarginPercent;
@@ -113,7 +114,7 @@ public class StackLayout extends Layout implements Animatable<StackLayout.Proper
     // We use StackTab[] instead of ArrayList<StackTab> because the sorting function does
     // an allocation to iterate over the elements.
     // Do not use out of the context of {@link #updateTabPriority}.
-    private StackTab[] mSortedPriorityArray = null;
+    private StackTab[] mSortedPriorityArray;
 
     private final ArrayList<Integer> mVisibilityArray = new ArrayList<Integer>();
     private final VisibilityComparator mVisibilityComparator = new VisibilityComparator();
@@ -121,13 +122,13 @@ public class StackLayout extends Layout implements Animatable<StackLayout.Proper
     private Comparator<StackTab> mSortingComparator = mVisibilityComparator;
 
     private static final int LAYOUTTAB_ASYNCHRONOUS_INITIALIZATION_BATCH_SIZE = 4;
-    private boolean mDelayedLayoutTabInitRequired = false;
+    private boolean mDelayedLayoutTabInitRequired;
 
     private Boolean mTemporarySelectedStack;
 
     // Orientation Variables
-    private PortraitViewport mCachedPortraitViewport = null;
-    private PortraitViewport mCachedLandscapeViewport = null;
+    private PortraitViewport mCachedPortraitViewport;
+    private PortraitViewport mCachedLandscapeViewport;
 
     private final ViewGroup mViewContainer;
 
@@ -162,8 +163,13 @@ public class StackLayout extends Layout implements Animatable<StackLayout.Proper
     }
 
     @Override
-    public int getSizingFlags() {
-        return SizingFlags.ALLOW_TOOLBAR_SHOW | SizingFlags.REQUIRE_FULLSCREEN_SIZE;
+    public boolean forceShowBrowserControlsAndroidView() {
+        return true;
+    }
+
+    @Override
+    public ViewportMode getViewportMode() {
+        return ViewportMode.ALWAYS_FULLSCREEN;
     }
 
     @Override
@@ -241,6 +247,12 @@ public class StackLayout extends Layout implements Animatable<StackLayout.Proper
         startMarginAnimation(false);
         startYOffsetAnimation(false);
         finishScrollStacks();
+
+        // TODO(twellington): Add a proper tab selection animation rather than disabling the current
+        //                    animation.
+        if (FeatureUtilities.isChromeHomeEnabled()) {
+            onUpdateAnimation(System.currentTimeMillis(), true);
+        }
     }
 
     @Override
@@ -341,6 +353,20 @@ public class StackLayout extends Layout implements Animatable<StackLayout.Proper
         mStacks[getTabStackIndex(id)].tabCreated(time, id);
         startMarginAnimation(false);
         uiPreemptivelySelectTabModel(newIsIncognito);
+
+        // TODO(twellington): Add a proper tab creation animation rather than disabling the current
+        //                    animation.
+        if (FeatureUtilities.isChromeHomeEnabled()) {
+            onUpdateAnimation(System.currentTimeMillis(), true);
+        }
+    }
+
+    @Override
+    public void onTabRestored(long time, int tabId) {
+        super.onTabRestored(time, tabId);
+        // Call show() so that new stack tabs and potentially new stacks get created.
+        // TODO(twellington): add animation for showing the restored tab.
+        show(time, false);
     }
 
     @Override
@@ -465,6 +491,9 @@ public class StackLayout extends Layout implements Animatable<StackLayout.Proper
     }
 
     private void startMarginAnimation(boolean enter, boolean showIncognito) {
+        // Any outstanding animations must be cancelled to avoid race condition.
+        cancelAnimation(this, Property.INNER_MARGIN_PERCENT);
+
         float start = mInnerMarginPercent;
         float end = enter && showIncognito ? 1.0f : 0.0f;
         if (start != end) {
@@ -473,6 +502,9 @@ public class StackLayout extends Layout implements Animatable<StackLayout.Proper
     }
 
     private void startYOffsetAnimation(boolean enter) {
+        // Any outstanding animations must be cancelled to avoid race condition.
+        cancelAnimation(this, Property.STACK_OFFSET_Y_PERCENT);
+
         float start = mStackOffsetYPercent;
         float end = enter ? 1.f : 0.f;
         if (start != end) {
@@ -664,7 +696,7 @@ public class StackLayout extends Layout implements Animatable<StackLayout.Proper
         protected float mWidth, mHeight;
         PortraitViewport() {
             mWidth = StackLayout.this.getWidth();
-            mHeight = StackLayout.this.getHeightMinusTopControls();
+            mHeight = StackLayout.this.getHeightMinusBrowserControls();
         }
 
         float getClampedRenderedScrollOffset() {
@@ -720,7 +752,7 @@ public class StackLayout extends Layout implements Animatable<StackLayout.Proper
         }
 
         float getTopHeightOffset() {
-            return (StackLayout.this.getHeight() - getHeightMinusTopControls())
+            return (StackLayout.this.getHeight() - getHeightMinusBrowserControls())
                     * mStackOffsetYPercent;
         }
     }
@@ -728,7 +760,7 @@ public class StackLayout extends Layout implements Animatable<StackLayout.Proper
     class LandscapeViewport extends PortraitViewport {
         LandscapeViewport() {
             // This is purposefully inverted.
-            mWidth = StackLayout.this.getHeightMinusTopControls();
+            mWidth = StackLayout.this.getHeightMinusBrowserControls();
             mHeight = StackLayout.this.getWidth();
         }
 
@@ -1033,8 +1065,8 @@ public class StackLayout extends Layout implements Animatable<StackLayout.Proper
     }
 
     private float getFullScrollDistance() {
-        float distance =
-                getOrientation() == Orientation.PORTRAIT ? getWidth() : getHeightMinusTopControls();
+        float distance = getOrientation() == Orientation.PORTRAIT ? getWidth()
+                                                                  : getHeightMinusBrowserControls();
         return distance - 2 * getViewportParameters().getInnerMargin();
     }
 
@@ -1205,13 +1237,13 @@ public class StackLayout extends Layout implements Animatable<StackLayout.Proper
     }
 
     @Override
-    protected void updateSceneLayer(Rect viewport, Rect contentViewport,
+    protected void updateSceneLayer(RectF viewport, RectF contentViewport,
             LayerTitleCache layerTitleCache, TabContentManager tabContentManager,
             ResourceManager resourceManager, ChromeFullscreenManager fullscreenManager) {
         super.updateSceneLayer(viewport, contentViewport, layerTitleCache, tabContentManager,
                 resourceManager, fullscreenManager);
         assert mSceneLayer != null;
         mSceneLayer.pushLayers(getContext(), viewport, contentViewport, this, layerTitleCache,
-                tabContentManager, resourceManager);
+                tabContentManager, resourceManager, fullscreenManager);
     }
 }

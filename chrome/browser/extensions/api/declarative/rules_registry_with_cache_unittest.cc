@@ -14,7 +14,6 @@
 #include "chrome/browser/extensions/test_extension_environment.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/common/extensions/extension_test_util.h"
-#include "chrome/common/extensions/features/feature_channel.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/version_info/version_info.h"
 #include "content/public/test/test_browser_thread_bundle.h"
@@ -25,6 +24,7 @@
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/value_store/testing_value_store.h"
 #include "extensions/common/extension.h"
+#include "extensions/common/features/feature_channel.h"
 #include "extensions/common/manifest_constants.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -241,12 +241,12 @@ TEST_F(RulesRegistryWithCacheTest, DeclarativeRulesStored) {
   // Default value is always true.
   EXPECT_TRUE(cache_delegate->GetDeclarativeRulesStored(extension1_->id()));
 
-  extension_prefs->UpdateExtensionPref(
-      extension1_->id(), rules_stored_key, new base::FundamentalValue(false));
+  extension_prefs->UpdateExtensionPref(extension1_->id(), rules_stored_key,
+                                       new base::Value(false));
   EXPECT_FALSE(cache_delegate->GetDeclarativeRulesStored(extension1_->id()));
 
-  extension_prefs->UpdateExtensionPref(
-      extension1_->id(), rules_stored_key, new base::FundamentalValue(true));
+  extension_prefs->UpdateExtensionPref(extension1_->id(), rules_stored_key,
+                                       new base::Value(true));
   EXPECT_TRUE(cache_delegate->GetDeclarativeRulesStored(extension1_->id()));
 
   // 2. Test writing behavior.
@@ -324,8 +324,8 @@ TEST_F(RulesRegistryWithCacheTest, RulesStoredFlagMultipleRegistries) {
   EXPECT_TRUE(cache_delegate2->GetDeclarativeRulesStored(extension1_->id()));
 
   // Update the flag for the first registry.
-  extension_prefs->UpdateExtensionPref(
-      extension1_->id(), rules_stored_key1, new base::FundamentalValue(false));
+  extension_prefs->UpdateExtensionPref(extension1_->id(), rules_stored_key1,
+                                       new base::Value(false));
   EXPECT_FALSE(cache_delegate1->GetDeclarativeRulesStored(extension1_->id()));
   EXPECT_TRUE(cache_delegate2->GetDeclarativeRulesStored(extension1_->id()));
 }

@@ -98,23 +98,26 @@ bool Vec4::Equal(const Vec4& other) const {
   if (type_ != other.type_)
     return false;
   switch (type_) {
-    case kFloat:
+    case SHADER_VARIABLE_FLOAT:
       for (size_t ii = 0; ii < 4; ++ii) {
         if (v_[ii].float_value != other.v_[ii].float_value)
           return false;
       }
       break;
-    case kInt:
+    case SHADER_VARIABLE_INT:
       for (size_t ii = 0; ii < 4; ++ii) {
         if (v_[ii].int_value != other.v_[ii].int_value)
           return false;
       }
       break;
-    case kUInt:
+    case SHADER_VARIABLE_UINT:
       for (size_t ii = 0; ii < 4; ++ii) {
         if (v_[ii].uint_value != other.v_[ii].uint_value)
           return false;
       }
+      break;
+    default:
+      NOTREACHED();
       break;
   }
   return true;
@@ -124,17 +127,20 @@ template <>
 void Vec4::GetValues<GLfloat>(GLfloat* values) const {
   DCHECK(values);
   switch (type_) {
-    case kFloat:
+    case SHADER_VARIABLE_FLOAT:
       for (size_t ii = 0; ii < 4; ++ii)
         values[ii] = v_[ii].float_value;
       break;
-    case kInt:
+    case SHADER_VARIABLE_INT:
       for (size_t ii = 0; ii < 4; ++ii)
         values[ii] = static_cast<GLfloat>(v_[ii].int_value);
       break;
-    case kUInt:
+    case SHADER_VARIABLE_UINT:
       for (size_t ii = 0; ii < 4; ++ii)
         values[ii] = static_cast<GLfloat>(v_[ii].uint_value);
+      break;
+    default:
+      NOTREACHED();
       break;
   }
 }
@@ -143,17 +149,20 @@ template <>
 void Vec4::GetValues<GLint>(GLint* values) const {
   DCHECK(values);
   switch (type_) {
-    case kFloat:
+    case SHADER_VARIABLE_FLOAT:
       for (size_t ii = 0; ii < 4; ++ii)
         values[ii] = static_cast<GLint>(v_[ii].float_value);
       break;
-    case kInt:
+    case SHADER_VARIABLE_INT:
       for (size_t ii = 0; ii < 4; ++ii)
         values[ii] = v_[ii].int_value;
       break;
-    case kUInt:
+    case SHADER_VARIABLE_UINT:
       for (size_t ii = 0; ii < 4; ++ii)
         values[ii] = static_cast<GLint>(v_[ii].uint_value);
+      break;
+    default:
+      NOTREACHED();
       break;
   }
 }
@@ -162,17 +171,20 @@ template<>
 void Vec4::GetValues<GLuint>(GLuint* values) const {
   DCHECK(values);
   switch (type_) {
-    case kFloat:
+    case SHADER_VARIABLE_FLOAT:
       for (size_t ii = 0; ii < 4; ++ii)
         values[ii] = static_cast<GLuint>(v_[ii].float_value);
       break;
-    case kInt:
+    case SHADER_VARIABLE_INT:
       for (size_t ii = 0; ii < 4; ++ii)
         values[ii] = static_cast<GLuint>(v_[ii].int_value);
       break;
-    case kUInt:
+    case SHADER_VARIABLE_UINT:
       for (size_t ii = 0; ii < 4; ++ii)
         values[ii] = v_[ii].uint_value;
+      break;
+    default:
+      NOTREACHED();
       break;
   }
 }
@@ -182,7 +194,7 @@ void Vec4::SetValues<GLfloat>(const GLfloat* values) {
   DCHECK(values);
   for (size_t ii = 0; ii < 4; ++ii)
     v_[ii].float_value = values[ii];
-  type_ = kFloat;
+  type_ = SHADER_VARIABLE_FLOAT;
 }
 
 template <>
@@ -190,7 +202,7 @@ void Vec4::SetValues<GLint>(const GLint* values) {
   DCHECK(values);
   for (size_t ii = 0; ii < 4; ++ii)
     v_[ii].int_value = values[ii];
-  type_ = kInt;
+  type_ = SHADER_VARIABLE_INT;
 }
 
 template <>
@@ -198,7 +210,7 @@ void Vec4::SetValues<GLuint>(const GLuint* values) {
   DCHECK(values);
   for (size_t ii = 0; ii < 4; ++ii)
     v_[ii].uint_value = values[ii];
-  type_ = kUInt;
+  type_ = SHADER_VARIABLE_UINT;
 }
 
 ContextState::ContextState(FeatureInfo* feature_info,
@@ -209,13 +221,17 @@ ContextState::ContextState(FeatureInfo* feature_info,
       pack_reverse_row_order(false),
       ignore_cached_state(false),
       fbo_binding_for_scissor_workaround_dirty(false),
-      framebuffer_srgb_(false),
       feature_info_(feature_info),
       error_state_(ErrorState::Create(error_state_client, logger)) {
   Initialize();
 }
 
 ContextState::~ContextState() {
+}
+
+void ContextState::SetLineWidthBounds(GLfloat min, GLfloat max) {
+  line_width_min_ = min;
+  line_width_max_ = max;
 }
 
 void ContextState::RestoreTextureUnitBindings(
@@ -263,6 +279,31 @@ void ContextState::RestoreTextureUnitBindings(
   if (bind_texture_arb) {
     glBindTexture(GL_TEXTURE_RECTANGLE_ARB, service_id_arb);
   }
+}
+
+void ContextState::PushTextureDecompressionUnpackState() const {
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
+  if (bound_pixel_unpack_buffer.get()) {
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    glPixelStorei(GL_UNPACK_IMAGE_HEIGHT, 0);
+  }
+}
+
+void ContextState::RestoreUnpackState() const {
+  glPixelStorei(GL_UNPACK_ALIGNMENT, unpack_alignment);
+  if (bound_pixel_unpack_buffer.get()) {
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER,
+                 GetBufferId(bound_pixel_unpack_buffer.get()));
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, unpack_row_length);
+    glPixelStorei(GL_UNPACK_IMAGE_HEIGHT, unpack_image_height);
+  }
+}
+
+void ContextState::DoLineWidth(GLfloat width) const {
+  glLineWidth(
+      std::min(std::max(width, line_width_min_), line_width_max_));
 }
 
 void ContextState::RestoreBufferBindings() const {
@@ -348,26 +389,29 @@ void ContextState::RestoreVertexAttribValues() const {
   for (size_t attrib = 0; attrib < vertex_attrib_manager->num_attribs();
        ++attrib) {
     switch (attrib_values[attrib].type()) {
-      case Vec4::kFloat:
+      case SHADER_VARIABLE_FLOAT:
         {
           GLfloat v[4];
           attrib_values[attrib].GetValues(v);
           glVertexAttrib4fv(attrib, v);
         }
         break;
-      case Vec4::kInt:
+      case SHADER_VARIABLE_INT:
         {
           GLint v[4];
           attrib_values[attrib].GetValues(v);
           glVertexAttribI4iv(attrib, v);
         }
         break;
-      case Vec4::kUInt:
+      case SHADER_VARIABLE_UINT:
         {
           GLuint v[4];
           attrib_values[attrib].GetValues(v);
           glVertexAttribI4uiv(attrib, v);
         }
+        break;
+      default:
+        NOTREACHED();
         break;
     }
   }
@@ -460,10 +504,8 @@ void ContextState::RestoreState(const ContextState* prev_state) {
   RestoreIndexedUniformBufferBindings(prev_state);
   RestoreGlobalState(prev_state);
 
-  if (prev_state && framebuffer_srgb_ != prev_state->framebuffer_srgb_) {
-    // FRAMEBUFFER_SRGB will be restored lazily at render time.
-    framebuffer_srgb_ = prev_state->framebuffer_srgb_;
-  }
+  // FRAMEBUFFER_SRGB will be restored lazily at render time.
+  framebuffer_srgb_valid_ = false;
 }
 
 ErrorState* ContextState::GetErrorState() {
@@ -562,6 +604,9 @@ void ContextState::RemoveBoundBuffer(Buffer* buffer) {
   if (bound_transform_feedback_buffer.get() == buffer) {
     bound_transform_feedback_buffer = nullptr;
   }
+  if (bound_transform_feedback.get()) {
+    bound_transform_feedback->RemoveBoundBuffer(buffer);
+  }
   if (bound_uniform_buffer.get() == buffer) {
     bound_uniform_buffer = nullptr;
   }
@@ -653,10 +698,11 @@ PixelStoreParams ContextState::GetUnpackParams(Dimension dimension) {
 }
 
 void ContextState::EnableDisableFramebufferSRGB(bool enable) {
-  if (framebuffer_srgb_ == enable)
+  if (framebuffer_srgb_valid_ && framebuffer_srgb_ == enable)
     return;
   EnableDisable(GL_FRAMEBUFFER_SRGB, enable);
   framebuffer_srgb_ = enable;
+  framebuffer_srgb_valid_ = true;
 }
 
 void ContextState::InitStateManual(const ContextState*) const {

@@ -6,7 +6,7 @@
 
 #include <algorithm>
 
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "content/public/browser/browser_thread.h"
 #include "skia/ext/platform_canvas.h"
 #include "ui/base/layout.h"
@@ -75,7 +75,7 @@ SkBitmap SimpleThumbnailCrop::GetClippedBitmap(const SkBitmap& bitmap,
   return clipped_bitmap;
 }
 
-// RenderWidgetHost::CopyFromBackingStore can be costly especially when it is
+// RenderWidgetHostView::CopyFromSurface() can be costly especially when it is
 // necessary to read back the web contents image data from GPU. As the cost is
 // roughly proportional to the number of the copied pixels, the size of the
 // copied pixels should be as small as possible.

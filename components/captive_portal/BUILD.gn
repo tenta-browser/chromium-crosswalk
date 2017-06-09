@@ -15,12 +15,13 @@ component("captive_portal") {
 
   deps = [
     "//base",
+    "//components/data_use_measurement/core",
     "//net",
     "//url",
   ]
 }
 
-source_set("test_support") {
+static_library("test_support") {
   testonly = true
   sources = [
     "captive_portal_testing_utils.cc",

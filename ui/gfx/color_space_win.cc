@@ -2,67 +2,219 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ui/gfx/color_space.h"
-
-#include <windows.h>
-#include <stddef.h>
-#include <map>
-
-#include "base/files/file_util.h"
-#include "base/lazy_instance.h"
-#include "base/macros.h"
-#include "base/synchronization/lock.h"
+#include "ui/gfx/color_space_win.h"
 
 namespace gfx {
 
-namespace {
+DXVA2_ExtendedFormat ColorSpaceWin::GetExtendedFormat(
+    const ColorSpace& color_space) {
+  DXVA2_ExtendedFormat format;
+  memset(&format, 0, sizeof(format));
+  format.SampleFormat = DXVA2_SampleProgressiveFrame;
+  format.VideoLighting = DXVA2_VideoLighting_dim;
+  format.NominalRange = DXVA2_NominalRange_16_235;
+  format.VideoTransferMatrix = DXVA2_VideoTransferMatrix_BT709;
+  format.VideoPrimaries = DXVA2_VideoPrimaries_BT709;
+  format.VideoTransferFunction = DXVA2_VideoTransFunc_709;
 
-void ReadBestMonitorICCProfile(std::vector<char>* profile) {
-  HDC screen_dc = GetDC(NULL);
-  DWORD path_len = MAX_PATH;
-  WCHAR path[MAX_PATH + 1];
+  switch (color_space.range_) {
+    case gfx::ColorSpace::RangeID::LIMITED:
+      format.NominalRange = DXVA2_NominalRange_16_235;
+      break;
+    case gfx::ColorSpace::RangeID::FULL:
+      format.NominalRange = DXVA2_NominalRange_0_255;
+      break;
 
-  BOOL result = GetICMProfile(screen_dc, &path_len, path);
-  ReleaseDC(NULL, screen_dc);
-  if (!result)
-    return;
-  std::string profile_data;
-  if (!base::ReadFileToString(base::FilePath(path), &profile_data))
-    return;
-  size_t length = profile_data.size();
-  if (!ColorSpace::IsValidProfileLength(length))
-    return;
-  profile->assign(profile_data.data(), profile_data.data() + length);
+    case gfx::ColorSpace::RangeID::DERIVED:
+    case gfx::ColorSpace::RangeID::INVALID:
+      // Not handled
+      break;
+  }
+
+  switch (color_space.matrix_) {
+    case gfx::ColorSpace::MatrixID::BT709:
+      format.VideoTransferMatrix = DXVA2_VideoTransferMatrix_BT709;
+      break;
+    case gfx::ColorSpace::MatrixID::BT470BG:
+    case gfx::ColorSpace::MatrixID::SMPTE170M:
+      format.VideoTransferMatrix = DXVA2_VideoTransferMatrix_BT601;
+      break;
+    case gfx::ColorSpace::MatrixID::SMPTE240M:
+      format.VideoTransferMatrix = DXVA2_VideoTransferMatrix_SMPTE240M;
+      break;
+
+    case gfx::ColorSpace::MatrixID::RGB:
+    case gfx::ColorSpace::MatrixID::FCC:
+    case gfx::ColorSpace::MatrixID::YCOCG:
+    case gfx::ColorSpace::MatrixID::BT2020_NCL:
+    case gfx::ColorSpace::MatrixID::BT2020_CL:
+    case gfx::ColorSpace::MatrixID::YDZDX:
+    case gfx::ColorSpace::MatrixID::INVALID:
+      // Not handled
+      break;
+  }
+
+  switch (color_space.primaries_) {
+    case gfx::ColorSpace::PrimaryID::BT709:
+      format.VideoPrimaries = DXVA2_VideoPrimaries_BT709;
+      break;
+    case gfx::ColorSpace::PrimaryID::BT470M:
+      format.VideoPrimaries = DXVA2_VideoPrimaries_BT470_2_SysM;
+      break;
+    case gfx::ColorSpace::PrimaryID::BT470BG:
+      format.VideoPrimaries = DXVA2_VideoPrimaries_BT470_2_SysBG;
+      break;
+    case gfx::ColorSpace::PrimaryID::SMPTE170M:
+      format.VideoPrimaries = DXVA2_VideoPrimaries_SMPTE170M;
+      break;
+    case gfx::ColorSpace::PrimaryID::SMPTE240M:
+      format.VideoPrimaries = DXVA2_VideoPrimaries_SMPTE240M;
+      break;
+
+    case gfx::ColorSpace::PrimaryID::FILM:
+    case gfx::ColorSpace::PrimaryID::BT2020:
+    case gfx::ColorSpace::PrimaryID::SMPTEST428_1:
+    case gfx::ColorSpace::PrimaryID::SMPTEST431_2:
+    case gfx::ColorSpace::PrimaryID::SMPTEST432_1:
+    case gfx::ColorSpace::PrimaryID::XYZ_D50:
+    case gfx::ColorSpace::PrimaryID::ADOBE_RGB:
+    case gfx::ColorSpace::PrimaryID::CUSTOM:
+    case gfx::ColorSpace::PrimaryID::INVALID:
+      // Not handled
+      break;
+  }
+
+  switch (color_space.transfer_) {
+    case gfx::ColorSpace::TransferID::BT709:
+    case gfx::ColorSpace::TransferID::SMPTE170M:
+      format.VideoTransferFunction = DXVA2_VideoTransFunc_709;
+      break;
+    case gfx::ColorSpace::TransferID::SMPTE240M:
+      format.VideoTransferFunction = DXVA2_VideoTransFunc_240M;
+      break;
+    case gfx::ColorSpace::TransferID::GAMMA22:
+      format.VideoTransferFunction = DXVA2_VideoTransFunc_22;
+      break;
+    case gfx::ColorSpace::TransferID::GAMMA28:
+      format.VideoTransferFunction = DXVA2_VideoTransFunc_28;
+      break;
+    case gfx::ColorSpace::TransferID::LINEAR:
+    case gfx::ColorSpace::TransferID::LINEAR_HDR:
+      format.VideoTransferFunction = DXVA2_VideoTransFunc_10;
+      break;
+    case gfx::ColorSpace::TransferID::IEC61966_2_1:
+      format.VideoTransferFunction = DXVA2_VideoTransFunc_sRGB;
+      break;
+
+    case gfx::ColorSpace::TransferID::LOG:
+    case gfx::ColorSpace::TransferID::LOG_SQRT:
+    case gfx::ColorSpace::TransferID::IEC61966_2_4:
+    case gfx::ColorSpace::TransferID::BT1361_ECG:
+    case gfx::ColorSpace::TransferID::BT2020_10:
+    case gfx::ColorSpace::TransferID::BT2020_12:
+    case gfx::ColorSpace::TransferID::SMPTEST2084:
+    case gfx::ColorSpace::TransferID::SMPTEST428_1:
+    case gfx::ColorSpace::TransferID::ARIB_STD_B67:
+    case gfx::ColorSpace::TransferID::GAMMA24:
+    case gfx::ColorSpace::TransferID::SMPTEST2084_NON_HDR:
+    case gfx::ColorSpace::TransferID::CUSTOM:
+    case gfx::ColorSpace::TransferID::INVALID:
+      // Not handled
+      break;
+  }
+
+  return format;
 }
 
-base::LazyInstance<base::Lock> g_best_monitor_color_space_lock =
-    LAZY_INSTANCE_INITIALIZER;
-base::LazyInstance<gfx::ColorSpace> g_best_monitor_color_space =
-    LAZY_INSTANCE_INITIALIZER;
-bool g_has_initialized_best_monitor_color_space = false;
+DXGI_COLOR_SPACE_TYPE ColorSpaceWin::GetDXGIColorSpace(
+    const ColorSpace& color_space) {
+  if (color_space.matrix_ == gfx::ColorSpace::MatrixID::RGB) {
+    // For RGB, we default to FULL
+    if (color_space.range_ == gfx::ColorSpace::RangeID::LIMITED) {
+      if (color_space.primaries_ == gfx::ColorSpace::PrimaryID::BT2020) {
+        if (color_space.transfer_ == gfx::ColorSpace::TransferID::SMPTEST2084) {
+          return DXGI_COLOR_SPACE_RGB_STUDIO_G2084_NONE_P2020;
+        } else {
+          return DXGI_COLOR_SPACE_RGB_STUDIO_G22_NONE_P2020;
+        }
+      } else {
+        return DXGI_COLOR_SPACE_RGB_STUDIO_G22_NONE_P709;
+      }
+    } else {
+      if (color_space.primaries_ == gfx::ColorSpace::PrimaryID::BT2020) {
+        if (color_space.transfer_ == gfx::ColorSpace::TransferID::SMPTEST2084) {
+          return DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020;
+        } else {
+          return DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P2020;
+        }
+      } else {
+        if (color_space.transfer_ == gfx::ColorSpace::TransferID::LINEAR) {
+          return DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709;
+        } else {
+          return DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
+        }
+      }
+    }
+  } else {
+    if (color_space.primaries_ == gfx::ColorSpace::PrimaryID::BT2020) {
+      if (color_space.transfer_ == gfx::ColorSpace::TransferID::SMPTEST2084) {
+        return DXGI_COLOR_SPACE_YCBCR_STUDIO_G2084_LEFT_P2020;
+        // Could also be:
+        // DXGI_COLOR_SPACE_YCBCR_STUDIO_G2084_TOPLEFT_P2020
+      } else {
+        // For YUV, we default to LIMITED
+        if (color_space.range_ == gfx::ColorSpace::RangeID::FULL) {
+          return DXGI_COLOR_SPACE_YCBCR_FULL_G22_LEFT_P2020;
 
-}  // namespace
-
-// static
-ColorSpace ColorSpace::FromBestMonitor() {
-  base::AutoLock lock(g_best_monitor_color_space_lock.Get());
-  return g_best_monitor_color_space.Get();
+        } else {
+          return DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P2020;
+          // Could also be:
+          // DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_TOPLEFT_P2020
+        }
+      }
+    } else if (color_space.primaries_ == gfx::ColorSpace::PrimaryID::BT470BG ||
+               color_space.primaries_ ==
+                   gfx::ColorSpace::PrimaryID::SMPTE170M) {
+      // For YUV, we default to LIMITED
+      if (color_space.range_ == gfx::ColorSpace::RangeID::FULL) {
+        return DXGI_COLOR_SPACE_YCBCR_FULL_G22_LEFT_P601;
+      } else {
+        return DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P601;
+      }
+    } else {
+      // For YUV, we default to LIMITED
+      if (color_space.range_ == gfx::ColorSpace::RangeID::FULL) {
+        // TODO(hubbe): Check if this is correct.
+        if (color_space.transfer_ == gfx::ColorSpace::TransferID::SMPTE170M) {
+          return DXGI_COLOR_SPACE_YCBCR_FULL_G22_NONE_P709_X601;
+        } else {
+          return DXGI_COLOR_SPACE_YCBCR_FULL_G22_LEFT_P709;
+        }
+      } else {
+        return DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709;
+      }
+    }
+  }
 }
 
-// static
-bool ColorSpace::CachedProfilesNeedUpdate() {
-  base::AutoLock lock(g_best_monitor_color_space_lock.Get());
-  return !g_has_initialized_best_monitor_color_space;
-}
+D3D11_VIDEO_PROCESSOR_COLOR_SPACE ColorSpaceWin::GetD3D11ColorSpace(
+    const ColorSpace& color_space) {
+  D3D11_VIDEO_PROCESSOR_COLOR_SPACE ret = {0};
+  if (color_space.range_ != gfx::ColorSpace::RangeID::FULL) {
+    ret.RGB_Range = 1;
+    ret.Nominal_Range = D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_0_255;
+  } else {
+    ret.Nominal_Range = D3D11_VIDEO_PROCESSOR_NOMINAL_RANGE_16_235;
+  }
+  switch (color_space.transfer_) {
+    case gfx::ColorSpace::TransferID::BT709:
+    case gfx::ColorSpace::TransferID::SMPTE170M:
+      ret.YCbCr_Matrix = 1;
 
-// static
-void ColorSpace::UpdateCachedProfilesOnBackgroundThread() {
-  std::vector<char> icc_profile;
-  ReadBestMonitorICCProfile(&icc_profile);
-
-  base::AutoLock lock(g_best_monitor_color_space_lock.Get());
-  g_best_monitor_color_space.Get().icc_profile_ = icc_profile;
-  g_has_initialized_best_monitor_color_space = true;
+    default:
+      break;
+  }
+  return ret;
 }
 
 }  // namespace gfx

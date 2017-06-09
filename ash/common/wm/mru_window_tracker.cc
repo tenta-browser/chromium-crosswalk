@@ -6,13 +6,14 @@
 
 #include <algorithm>
 
-#include "ash/common/shell_window_ids.h"
 #include "ash/common/wm/focus_rules.h"
 #include "ash/common/wm/switchable_windows.h"
 #include "ash/common/wm/window_state.h"
 #include "ash/common/wm_shell.h"
 #include "ash/common/wm_window.h"
+#include "ash/public/cpp/shell_window_ids.h"
 #include "base/bind.h"
+#include "ui/aura/window.h"
 
 namespace ash {
 
@@ -32,14 +33,6 @@ void AddTrackedWindows(WmWindow* root,
   WmWindow* container = root->GetChildByShellWindowId(container_id);
   const MruWindowTracker::WindowList children(container->GetChildren());
   windows->insert(windows->end(), children.begin(), children.end());
-}
-
-// Returns whether |w1| should be considered less recently used than |w2|. This
-// is used for a stable sort to move minimized windows to the LRU end of the
-// list.
-bool CompareWindowState(WmWindow* w1, WmWindow* w2) {
-  return w1->GetWindowState()->IsMinimized() &&
-         !w2->GetWindowState()->IsMinimized();
 }
 
 // Returns a list of windows ordered by their stacking order.
@@ -67,8 +60,7 @@ MruWindowTracker::WindowList BuildWindowListInternal(
   // Removes unfocusable windows.
   std::vector<WmWindow*>::iterator itr = windows.begin();
   while (itr != windows.end()) {
-    if (!should_include_window_predicate.Run(*itr) ||
-        (*itr)->GetWindowState()->ShouldBeExcludedFromMru())
+    if (!should_include_window_predicate.Run(*itr))
       itr = windows.erase(itr);
     else
       ++itr;
@@ -95,9 +87,6 @@ MruWindowTracker::WindowList BuildWindowListInternal(
     }
   }
 
-  // Move minimized windows to the beginning (LRU end) of the list.
-  std::stable_sort(windows.begin(), windows.end(), CompareWindowState);
-
   // Window cycling expects the topmost window at the front of the list.
   std::reverse(windows.begin(), windows.end());
 
@@ -116,7 +105,7 @@ MruWindowTracker::MruWindowTracker() : ignore_window_activations_(false) {
 MruWindowTracker::~MruWindowTracker() {
   WmShell::Get()->RemoveActivationObserver(this);
   for (WmWindow* window : mru_windows_)
-    window->RemoveObserver(this);
+    window->aura_window()->RemoveObserver(this);
 }
 
 MruWindowTracker::WindowList MruWindowTracker::BuildMruWindowList() const {
@@ -149,7 +138,7 @@ void MruWindowTracker::SetActiveWindow(WmWindow* active_window) {
       std::find(mru_windows_.begin(), mru_windows_.end(), active_window);
   // Observe all newly tracked windows.
   if (iter == mru_windows_.end())
-    active_window->AddObserver(this);
+    active_window->aura_window()->AddObserver(this);
   else
     mru_windows_.erase(iter);
   mru_windows_.push_front(active_window);
@@ -161,11 +150,11 @@ void MruWindowTracker::OnWindowActivated(WmWindow* gained_active,
     SetActiveWindow(gained_active);
 }
 
-void MruWindowTracker::OnWindowDestroyed(WmWindow* window) {
+void MruWindowTracker::OnWindowDestroyed(aura::Window* window) {
   // It's possible for OnWindowActivated() to be called after
   // OnWindowDestroying(). This means we need to override OnWindowDestroyed()
   // else we may end up with a deleted window in |mru_windows_|.
-  mru_windows_.remove(window);
+  mru_windows_.remove(WmWindow::Get(window));
   window->RemoveObserver(this);
 }
 

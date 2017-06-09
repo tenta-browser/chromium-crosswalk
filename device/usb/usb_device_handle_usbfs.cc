@@ -17,9 +17,9 @@
 
 #include "base/bind.h"
 #include "base/cancelable_callback.h"
+#include "base/files/file_descriptor_watcher_posix.h"
 #include "base/logging.h"
 #include "base/message_loop/message_loop.h"
-#include "base/message_loop/message_pump_libevent.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/stl_util.h"
 #include "base/threading/thread_restrictions.h"
@@ -135,8 +135,7 @@ UsbTransferStatus ConvertTransferResult(int rc) {
 }  // namespace
 
 class UsbDeviceHandleUsbfs::FileThreadHelper
-    : public base::MessagePumpLibevent::Watcher,
-      public base::MessageLoop::DestructionObserver {
+    : public base::MessageLoop::DestructionObserver {
  public:
   FileThreadHelper(int fd,
                    scoped_refptr<UsbDeviceHandleUsbfs> device_handle,
@@ -145,18 +144,17 @@ class UsbDeviceHandleUsbfs::FileThreadHelper
 
   static void Start(std::unique_ptr<FileThreadHelper> self);
 
-  // base::MessagePumpLibevent::Watcher overrides.
-  void OnFileCanReadWithoutBlocking(int fd) override;
-  void OnFileCanWriteWithoutBlocking(int fd) override;
-
   // base::MessageLoop::DestructionObserver overrides.
   void WillDestroyCurrentMessageLoop() override;
 
  private:
+  // Called when |fd_| is writable without blocking.
+  void OnFileCanWriteWithoutBlocking();
+
   int fd_;
   scoped_refptr<UsbDeviceHandleUsbfs> device_handle_;
   scoped_refptr<base::SequencedTaskRunner> task_runner_;
-  base::MessagePumpLibevent::FileDescriptorWatcher file_watcher_;
+  std::unique_ptr<base::FileDescriptorWatcher::Controller> watch_controller_;
   base::ThreadChecker thread_checker_;
 
   DISALLOW_COPY_AND_ASSIGN(FileThreadHelper);
@@ -181,25 +179,21 @@ void UsbDeviceHandleUsbfs::FileThreadHelper::Start(
 
   // Linux indicates that URBs are available to reap by marking the file
   // descriptor writable.
-  if (!base::MessageLoopForIO::current()->WatchFileDescriptor(
-          self->fd_, true, base::MessageLoopForIO::WATCH_WRITE,
-          &self->file_watcher_, self.get())) {
-    USB_LOG(ERROR) << "Failed to start watching device file descriptor.";
-  }
+  self->watch_controller_ = base::FileDescriptorWatcher::WatchWritable(
+      self->fd_, base::Bind(&FileThreadHelper::OnFileCanWriteWithoutBlocking,
+                            base::Unretained(self.get())));
 
   // |self| is now owned by the current message loop.
   base::MessageLoop::current()->AddDestructionObserver(self.release());
 }
 
-void UsbDeviceHandleUsbfs::FileThreadHelper::OnFileCanReadWithoutBlocking(
-    int fd) {
-  NOTREACHED();  // Only listening for writability.
+void UsbDeviceHandleUsbfs::FileThreadHelper::WillDestroyCurrentMessageLoop() {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  delete this;
 }
 
-void UsbDeviceHandleUsbfs::FileThreadHelper::OnFileCanWriteWithoutBlocking(
-    int fd) {
+void UsbDeviceHandleUsbfs::FileThreadHelper::OnFileCanWriteWithoutBlocking() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  DCHECK_EQ(fd_, fd);
 
   const size_t MAX_URBS_PER_EVENT = 10;
   std::vector<usbdevfs_urb*> urbs;
@@ -214,7 +208,7 @@ void UsbDeviceHandleUsbfs::FileThreadHelper::OnFileCanWriteWithoutBlocking(
       if (errno == ENODEV) {
         // Device has disconnected. Stop watching the file descriptor to avoid
         // looping until |device_handle_| is closed.
-        file_watcher_.StopWatchingFileDescriptor();
+        watch_controller_.reset();
         break;
       }
     } else {
@@ -225,11 +219,6 @@ void UsbDeviceHandleUsbfs::FileThreadHelper::OnFileCanWriteWithoutBlocking(
   task_runner_->PostTask(
       FROM_HERE,
       base::Bind(&UsbDeviceHandleUsbfs::ReapedUrbs, device_handle_, urbs));
-}
-
-void UsbDeviceHandleUsbfs::FileThreadHelper::WillDestroyCurrentMessageLoop() {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  delete this;
 }
 
 struct UsbDeviceHandleUsbfs::Transfer {
@@ -247,9 +236,6 @@ struct UsbDeviceHandleUsbfs::Transfer {
 
   scoped_refptr<net::IOBuffer> control_transfer_buffer;
   scoped_refptr<net::IOBuffer> buffer;
-  TransferCallback callback;
-  IsochronousTransferCallback isoc_callback;
-  scoped_refptr<base::SingleThreadTaskRunner> callback_runner;
   base::CancelableClosure timeout_closure;
   bool cancelled = false;
 
@@ -259,13 +245,18 @@ struct UsbDeviceHandleUsbfs::Transfer {
   bool discarded = false;
   bool reaped = false;
 
+ private:
+  TransferCallback callback;
+  IsochronousTransferCallback isoc_callback;
+  scoped_refptr<base::SingleThreadTaskRunner> callback_runner;
+
+  DISALLOW_COPY_AND_ASSIGN(Transfer);
+
+ public:
   // The |urb| field must be the last in the struct so that the extra space
   // allocated by the overridden new function above extends the length of its
   // |iso_frame_desc| field.
   usbdevfs_urb urb;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(Transfer);
 };
 
 UsbDeviceHandleUsbfs::Transfer::Transfer(
@@ -303,20 +294,22 @@ void* UsbDeviceHandleUsbfs::Transfer::operator new(
 void UsbDeviceHandleUsbfs::Transfer::RunCallback(UsbTransferStatus status,
                                                  size_t bytes_transferred) {
   DCHECK_NE(urb.type, USBDEVFS_URB_TYPE_ISO);
-  DCHECK(!callback.is_null());
+  DCHECK(callback);
   if (!callback_runner || callback_runner->BelongsToCurrentThread()) {
     callback.Run(status, buffer, bytes_transferred);
   } else {
     callback_runner->PostTask(
         FROM_HERE, base::Bind(callback, status, buffer, bytes_transferred));
   }
+  callback.Reset();
 }
 
 void UsbDeviceHandleUsbfs::Transfer::RunIsochronousCallback(
     const std::vector<IsochronousPacket>& packets) {
   DCHECK_EQ(urb.type, USBDEVFS_URB_TYPE_ISO);
-  DCHECK(!isoc_callback.is_null());
+  DCHECK(isoc_callback);
   isoc_callback.Run(buffer, packets);
+  isoc_callback.Reset();
 }
 
 UsbDeviceHandleUsbfs::UsbDeviceHandleUsbfs(
@@ -350,10 +343,12 @@ void UsbDeviceHandleUsbfs::Close() {
   // On the |task_runner_| thread check |device_| to see if the handle is
   // closed. On the |blocking_task_runner_| thread check |fd_.is_valid()| to
   // see if the handle is closed.
-  for (const auto& transfer : transfers_)
-    CancelTransfer(transfer.get(), USB_TRANSFER_CANCELLED);
   device_->HandleClosed(this);
   device_ = nullptr;
+
+  for (const auto& transfer : transfers_)
+    CancelTransfer(transfer.get(), USB_TRANSFER_CANCELLED);
+
   blocking_task_runner_->PostTask(
       FROM_HERE, base::Bind(&UsbDeviceHandleUsbfs::CloseBlocking, this));
 }
@@ -375,7 +370,7 @@ void UsbDeviceHandleUsbfs::ClaimInterface(int interface_number,
     return;
   }
 
-  if (ContainsKey(interfaces_, interface_number)) {
+  if (base::ContainsKey(interfaces_, interface_number)) {
     USB_LOG(DEBUG) << "Interface " << interface_number << " already claimed.";
     task_runner_->PostTask(FROM_HERE, base::Bind(callback, false));
     return;
@@ -859,6 +854,9 @@ UsbDeviceHandleUsbfs::RemoveFromTransferList(Transfer* transfer_ptr) {
 
 void UsbDeviceHandleUsbfs::CancelTransfer(Transfer* transfer,
                                           UsbTransferStatus status) {
+  if (transfer->cancelled)
+    return;
+
   // |transfer| must stay in |transfers_| as it is still being processed by the
   // kernel and will be reaped later.
   transfer->cancelled = true;

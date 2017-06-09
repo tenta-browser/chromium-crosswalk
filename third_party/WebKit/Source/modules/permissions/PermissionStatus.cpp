@@ -8,125 +8,111 @@
 #include "core/dom/Document.h"
 #include "core/events/Event.h"
 #include "modules/EventTargetModulesNames.h"
-#include "modules/permissions/PermissionController.h"
-#include "modules/permissions/Permissions.h"
+#include "modules/permissions/PermissionUtils.h"
 #include "public/platform/Platform.h"
-#include "public/platform/modules/permissions/WebPermissionClient.h"
+#include "wtf/Functional.h"
 
 namespace blink {
 
 // static
-PermissionStatus* PermissionStatus::take(ScriptPromiseResolver* resolver, WebPermissionStatus status, WebPermissionType type)
-{
-    return PermissionStatus::createAndListen(resolver->getExecutionContext(), status, type);
+PermissionStatus* PermissionStatus::take(ScriptPromiseResolver* resolver,
+                                         MojoPermissionStatus status,
+                                         MojoPermissionDescriptor descriptor) {
+  return PermissionStatus::createAndListen(resolver->getExecutionContext(),
+                                           status, std::move(descriptor));
 }
 
-PermissionStatus* PermissionStatus::createAndListen(ExecutionContext* executionContext, WebPermissionStatus status, WebPermissionType type)
-{
-    PermissionStatus* permissionStatus = new PermissionStatus(executionContext, status, type);
-    permissionStatus->suspendIfNeeded();
-    permissionStatus->startListening();
-    return permissionStatus;
+PermissionStatus* PermissionStatus::createAndListen(
+    ExecutionContext* executionContext,
+    MojoPermissionStatus status,
+    MojoPermissionDescriptor descriptor) {
+  PermissionStatus* permissionStatus =
+      new PermissionStatus(executionContext, status, std::move(descriptor));
+  permissionStatus->suspendIfNeeded();
+  permissionStatus->startListening();
+  return permissionStatus;
 }
 
-PermissionStatus::PermissionStatus(ExecutionContext* executionContext, WebPermissionStatus status, WebPermissionType type)
-    : ActiveScriptWrappable(this)
-    , ActiveDOMObject(executionContext)
-    , m_status(status)
-    , m_type(type)
-    , m_listening(false)
-{
+PermissionStatus::PermissionStatus(ExecutionContext* executionContext,
+                                   MojoPermissionStatus status,
+                                   MojoPermissionDescriptor descriptor)
+    : SuspendableObject(executionContext),
+      m_status(status),
+      m_descriptor(std::move(descriptor)),
+      m_binding(this) {}
+
+PermissionStatus::~PermissionStatus() = default;
+
+void PermissionStatus::dispose() {
+  stopListening();
 }
 
-PermissionStatus::~PermissionStatus()
-{
-    stopListening();
+const AtomicString& PermissionStatus::interfaceName() const {
+  return EventTargetNames::PermissionStatus;
 }
 
-const AtomicString& PermissionStatus::interfaceName() const
-{
-    return EventTargetNames::PermissionStatus;
+ExecutionContext* PermissionStatus::getExecutionContext() const {
+  return SuspendableObject::getExecutionContext();
 }
 
-ExecutionContext* PermissionStatus::getExecutionContext() const
-{
-    return ActiveDOMObject::getExecutionContext();
+bool PermissionStatus::hasPendingActivity() const {
+  return m_binding.is_bound();
 }
 
-void PermissionStatus::permissionChanged(WebPermissionType type, WebPermissionStatus status)
-{
-    ASSERT(m_type == type);
-    if (m_status == status)
-        return;
-
-    m_status = status;
-    dispatchEvent(Event::create(EventTypeNames::change));
+void PermissionStatus::resume() {
+  startListening();
 }
 
-bool PermissionStatus::hasPendingActivity() const
-{
-    return m_listening;
+void PermissionStatus::suspend() {
+  stopListening();
 }
 
-void PermissionStatus::resume()
-{
-    startListening();
+void PermissionStatus::contextDestroyed(ExecutionContext*) {
+  stopListening();
 }
 
-void PermissionStatus::suspend()
-{
-    stopListening();
+String PermissionStatus::state() const {
+  switch (m_status) {
+    case MojoPermissionStatus::GRANTED:
+      return "granted";
+    case MojoPermissionStatus::DENIED:
+      return "denied";
+    case MojoPermissionStatus::ASK:
+      return "prompt";
+  }
+
+  ASSERT_NOT_REACHED();
+  return "denied";
 }
 
-void PermissionStatus::stop()
-{
-    stopListening();
+void PermissionStatus::startListening() {
+  DCHECK(!m_binding.is_bound());
+  mojom::blink::PermissionObserverPtr observer;
+  m_binding.Bind(mojo::MakeRequest(&observer));
+
+  mojom::blink::PermissionServicePtr service;
+  connectToPermissionService(getExecutionContext(),
+                             mojo::MakeRequest(&service));
+  service->AddPermissionObserver(m_descriptor->Clone(),
+                                 getExecutionContext()->getSecurityOrigin(),
+                                 m_status, std::move(observer));
 }
 
-void PermissionStatus::startListening()
-{
-    ASSERT(!m_listening);
-
-    WebPermissionClient* client = Permissions::getClient(getExecutionContext());
-    if (!client)
-        return;
-    m_listening = true;
-    client->startListening(m_type, KURL(KURL(), getExecutionContext()->getSecurityOrigin()->toString()), this);
+void PermissionStatus::stopListening() {
+  m_binding.Close();
 }
 
-void PermissionStatus::stopListening()
-{
-    if (!m_listening)
-        return;
+void PermissionStatus::OnPermissionStatusChange(MojoPermissionStatus status) {
+  if (m_status == status)
+    return;
 
-    ASSERT(getExecutionContext());
-
-    m_listening = false;
-    WebPermissionClient* client = Permissions::getClient(getExecutionContext());
-    if (!client)
-        return;
-    client->stopListening(this);
+  m_status = status;
+  dispatchEvent(Event::create(EventTypeNames::change));
 }
 
-String PermissionStatus::state() const
-{
-    switch (m_status) {
-    case WebPermissionStatusGranted:
-        return "granted";
-    case WebPermissionStatusDenied:
-        return "denied";
-    case WebPermissionStatusPrompt:
-        return "prompt";
-    }
-
-    ASSERT_NOT_REACHED();
-    return "denied";
+DEFINE_TRACE(PermissionStatus) {
+  EventTargetWithInlineData::trace(visitor);
+  SuspendableObject::trace(visitor);
 }
 
-DEFINE_TRACE(PermissionStatus)
-{
-    EventTargetWithInlineData::trace(visitor);
-    ActiveDOMObject::trace(visitor);
-}
-
-} // namespace blink
+}  // namespace blink

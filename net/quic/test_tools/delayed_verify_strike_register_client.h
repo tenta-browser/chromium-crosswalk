@@ -5,14 +5,13 @@
 #ifndef NET_QUIC_TEST_TOOLS_DELAYED_VERIFY_STRIKE_REGISTER_CLIENT_H_
 #define NET_QUIC_TEST_TOOLS_DELAYED_VERIFY_STRIKE_REGISTER_CLIENT_H_
 
-#include <stdint.h>
-
+#include <cstdint>
 #include <string>
 #include <vector>
 
 #include "base/macros.h"
 #include "base/strings/string_piece.h"
-#include "net/quic/crypto/local_strike_register_client.h"
+#include "net/quic/core/crypto/local_strike_register_client.h"
 
 namespace net {
 namespace test {

@@ -35,101 +35,115 @@
 
 namespace blink {
 
-float CachingWordShaper::width(const Font* font, const TextRun& run,
-    HashSet<const SimpleFontData*>* fallbackFonts,
-    FloatRect* glyphBounds)
-{
-    float width = 0;
-    RefPtr<const ShapeResult> wordResult;
-    CachingWordShapeIterator iterator(m_shapeCache, run, font);
-    while (iterator.next(&wordResult)) {
-        if (wordResult) {
-            if (glyphBounds) {
-                FloatRect adjustedBounds = wordResult->bounds();
-                // Translate glyph bounds to the current glyph position which
-                // is the total width before this glyph.
-                adjustedBounds.setX(adjustedBounds.x() + width);
-                glyphBounds->unite(adjustedBounds);
-            }
-            width += wordResult->width();
-            if (fallbackFonts)
-                wordResult->fallbackFonts(fallbackFonts);
-        }
+ShapeCache* CachingWordShaper::shapeCache() const {
+  return m_font.m_fontFallbackList->shapeCache(m_font.m_fontDescription);
+}
+
+float CachingWordShaper::width(const TextRun& run,
+                               HashSet<const SimpleFontData*>* fallbackFonts,
+                               FloatRect* glyphBounds) {
+  float width = 0;
+  RefPtr<const ShapeResult> wordResult;
+  CachingWordShapeIterator iterator(shapeCache(), run, &m_font);
+  while (iterator.next(&wordResult)) {
+    if (wordResult) {
+      if (glyphBounds) {
+        FloatRect adjustedBounds = wordResult->bounds();
+        // Translate glyph bounds to the current glyph position which
+        // is the total width before this glyph.
+        adjustedBounds.setX(adjustedBounds.x() + width);
+        glyphBounds->unite(adjustedBounds);
+      }
+      width += wordResult->width();
+      if (fallbackFonts)
+        wordResult->fallbackFonts(fallbackFonts);
     }
+  }
 
-    return width;
+  return width;
 }
 
-static inline float shapeResultsForRun(ShapeCache* shapeCache, const Font* font,
-    const TextRun& run, HashSet<const SimpleFontData*>* fallbackFonts,
-    ShapeResultBuffer* resultsBuffer)
-{
-    CachingWordShapeIterator iterator(shapeCache, run, font);
-    RefPtr<const ShapeResult> wordResult;
-    float totalWidth = 0;
-    while (iterator.next(&wordResult)) {
-        if (wordResult) {
-            totalWidth += wordResult->width();
-            if (fallbackFonts)
-                wordResult->fallbackFonts(fallbackFonts);
-            resultsBuffer->appendResult(wordResult.release());
-        }
+static inline float shapeResultsForRun(
+    ShapeCache* shapeCache,
+    const Font* font,
+    const TextRun& run,
+    ShapeResultBuffer* resultsBuffer) {
+  CachingWordShapeIterator iterator(shapeCache, run, font);
+  RefPtr<const ShapeResult> wordResult;
+  float totalWidth = 0;
+  while (iterator.next(&wordResult)) {
+    if (wordResult) {
+      totalWidth += wordResult->width();
+      resultsBuffer->appendResult(std::move(wordResult));
     }
-    return totalWidth;
+  }
+  return totalWidth;
 }
 
-int CachingWordShaper::offsetForPosition(const Font* font, const TextRun& run, float targetX, bool includePartialGlyphs)
-{
-    ShapeResultBuffer buffer;
-    shapeResultsForRun(m_shapeCache, font, run, nullptr, &buffer);
+int CachingWordShaper::offsetForPosition(const TextRun& run,
+                                         float targetX,
+                                         bool includePartialGlyphs) {
+  ShapeResultBuffer buffer;
+  shapeResultsForRun(shapeCache(), &m_font, run, &buffer);
 
-    return buffer.offsetForPosition(run, targetX, includePartialGlyphs);
+  return buffer.offsetForPosition(run, targetX, includePartialGlyphs);
 }
 
-float CachingWordShaper::fillGlyphBuffer(const Font* font, const TextRun& run,
-    HashSet<const SimpleFontData*>* fallbackFonts,
-    GlyphBuffer* glyphBuffer, unsigned from, unsigned to)
-{
-    ShapeResultBuffer buffer;
-    shapeResultsForRun(m_shapeCache, font, run, fallbackFonts, &buffer);
+float CachingWordShaper::fillGlyphBuffer(
+    const TextRun& run,
+    GlyphBuffer* glyphBuffer,
+    unsigned from,
+    unsigned to) {
+  ShapeResultBuffer buffer;
+  shapeResultsForRun(shapeCache(), &m_font, run, &buffer);
 
-    return buffer.fillGlyphBuffer(glyphBuffer, run, from, to);
+  return buffer.fillGlyphBuffer(glyphBuffer, run, from, to);
 }
 
-float CachingWordShaper::fillGlyphBufferForTextEmphasis(const Font* font,
-    const TextRun& run, const GlyphData* emphasisData, GlyphBuffer* glyphBuffer,
-    unsigned from, unsigned to)
-{
-    ShapeResultBuffer buffer;
-    shapeResultsForRun(m_shapeCache, font, run, nullptr, &buffer);
+float CachingWordShaper::fillGlyphBufferForTextEmphasis(
+    const TextRun& run,
+    const GlyphData* emphasisData,
+    GlyphBuffer* glyphBuffer,
+    unsigned from,
+    unsigned to) {
+  ShapeResultBuffer buffer;
+  shapeResultsForRun(shapeCache(), &m_font, run, &buffer);
 
-    return buffer.fillGlyphBufferForTextEmphasis(glyphBuffer, run, emphasisData, from, to);
+  return buffer.fillGlyphBufferForTextEmphasis(glyphBuffer, run, emphasisData,
+                                               from, to);
 }
 
-CharacterRange CachingWordShaper::getCharacterRange(const Font* font,
-    const TextRun& run, unsigned from, unsigned to)
-{
-    ShapeResultBuffer buffer;
-    float totalWidth = shapeResultsForRun(m_shapeCache, font, run, nullptr,
-        &buffer);
+CharacterRange CachingWordShaper::getCharacterRange(const TextRun& run,
+                                                    unsigned from,
+                                                    unsigned to) {
+  ShapeResultBuffer buffer;
+  float totalWidth =
+      shapeResultsForRun(shapeCache(), &m_font, run, &buffer);
 
-    return buffer.getCharacterRange(run.direction(), totalWidth, from, to);
+  return buffer.getCharacterRange(run.direction(), totalWidth, from, to);
 }
 
 Vector<CharacterRange> CachingWordShaper::individualCharacterRanges(
-    const Font* font, const TextRun& run)
-{
-    ShapeResultBuffer buffer;
-    float totalWidth = shapeResultsForRun(m_shapeCache, font, run, nullptr,
-        &buffer);
+    const TextRun& run) {
+  ShapeResultBuffer buffer;
+  float totalWidth =
+      shapeResultsForRun(shapeCache(), &m_font, run, &buffer);
 
-    auto ranges = buffer.individualCharacterRanges(run.direction(), totalWidth);
-    // The shaper can fail to return glyph metrics for all characters (see
-    // crbug.com/613915 and crbug.com/615661) so add empty ranges to ensure all
-    // characters have an associated range.
-    while (ranges.size() < static_cast<unsigned>(run.length()))
-        ranges.append(CharacterRange(0, 0));
-    return ranges;
+  auto ranges = buffer.individualCharacterRanges(run.direction(), totalWidth);
+  // The shaper can fail to return glyph metrics for all characters (see
+  // crbug.com/613915 and crbug.com/615661) so add empty ranges to ensure all
+  // characters have an associated range.
+  while (ranges.size() < static_cast<unsigned>(run.length()))
+    ranges.push_back(CharacterRange(0, 0));
+  return ranges;
 }
 
-}; // namespace blink
+Vector<ShapeResultBuffer::RunFontData> CachingWordShaper::runFontData(
+      const TextRun& run) const {
+  ShapeResultBuffer buffer;
+  shapeResultsForRun(shapeCache(), &m_font, run, &buffer);
+
+  return buffer.runFontData();
+}
+
+};  // namespace blink

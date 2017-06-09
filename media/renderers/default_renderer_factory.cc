@@ -13,7 +13,6 @@
 #include "media/base/decoder_factory.h"
 #include "media/base/media_log.h"
 #include "media/filters/gpu_video_decoder.h"
-#include "media/filters/opus_audio_decoder.h"
 #include "media/renderers/audio_renderer_impl.h"
 #include "media/renderers/gpu_video_accelerator_factories.h"
 #include "media/renderers/renderer_impl.h"
@@ -52,8 +51,6 @@ ScopedVector<AudioDecoder> DefaultRendererFactory::CreateAudioDecoders(
   audio_decoders.push_back(
       new FFmpegAudioDecoder(media_task_runner, media_log_));
 #endif
-
-  audio_decoders.push_back(new OpusAudioDecoder(media_task_runner));
 
   // Use an external decoder only if we cannot otherwise decode in the
   // renderer.
@@ -118,8 +115,8 @@ std::unique_ptr<Renderer> DefaultRendererFactory::CreateRenderer(
       CreateVideoDecoders(media_task_runner, request_surface_cb, gpu_factories),
       true, gpu_factories, media_log_));
 
-  return base::WrapUnique(new RendererImpl(
-      media_task_runner, std::move(audio_renderer), std::move(video_renderer)));
+  return base::MakeUnique<RendererImpl>(
+      media_task_runner, std::move(audio_renderer), std::move(video_renderer));
 }
 
 }  // namespace media

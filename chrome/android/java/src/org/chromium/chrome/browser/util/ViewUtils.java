@@ -6,6 +6,7 @@ package org.chromium.chrome.browser.util;
 
 import android.graphics.Canvas;
 import android.graphics.Region;
+import android.support.annotation.DrawableRes;
 import android.view.View;
 import android.view.ViewGroup;
 
@@ -28,6 +29,19 @@ public class ViewUtils {
                 if (child.getVisibility() == View.VISIBLE) {
                     recursiveInvalidate(child);
                 }
+            }
+        }
+    }
+
+    /**
+     * Sets the enabled property of a View and all of its descendants.
+     */
+    public static void setEnabledRecursive(View view, boolean enabled) {
+        view.setEnabled(enabled);
+        if (view instanceof ViewGroup) {
+            ViewGroup group = (ViewGroup) view;
+            for (int i = 0; i < group.getChildCount(); i++) {
+                setEnabledRecursive(group.getChildAt(i), enabled);
             }
         }
     }
@@ -81,15 +95,29 @@ public class ViewUtils {
     }
 
     /**
-     * Helper for overriding {@link View#gatherTransparentRegions()} for views that are fully opaque
-     * and have children extending beyond their bounds. If the transparent region optimization is
-     * turned on (which is the case whenever the view hierarchy contains a SurfaceView somewhere),
-     * the children might otherwise confuse the SurfaceFlinger.
+     * Helper for overriding {@link ViewGroup#gatherTransparentRegion} for views that are fully
+     * opaque and have children extending beyond their bounds. If the transparent region
+     * optimization is turned on (which is the case whenever the view hierarchy contains a
+     * SurfaceView somewhere), the children might otherwise confuse the SurfaceFlinger.
      */
     public static void gatherTransparentRegionsForOpaqueView(View view, Region region) {
         view.getLocationInWindow(sLocationTmp);
         region.op(sLocationTmp[0], sLocationTmp[1],
                 sLocationTmp[0] + view.getRight() - view.getLeft(),
                 sLocationTmp[1] + view.getBottom() - view.getTop(), Region.Op.DIFFERENCE);
+    }
+
+    /**
+     * Sets the background of a view to the given 9-patch resource and restores its padding. This
+     * works around a bug in Android where the padding is lost when a 9-patch resource is applied
+     * programmatically.
+     */
+    public static void setNinePatchBackgroundResource(View view, @DrawableRes int resource) {
+        int left = view.getPaddingLeft();
+        int top = view.getPaddingTop();
+        int right = view.getPaddingRight();
+        int bottom = view.getPaddingBottom();
+        view.setBackgroundResource(resource);
+        view.setPadding(left, top, right, bottom);
     }
 }

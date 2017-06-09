@@ -4,8 +4,9 @@
 
 package org.chromium.chrome.browser.share;
 
+import android.app.Activity;
 import android.content.Intent;
-import android.test.suitebuilder.annotation.SmallTest;
+import android.support.test.filters.SmallTest;
 
 import org.chromium.components.dom_distiller.core.DomDistillerUrlUtils;
 import org.chromium.content.browser.test.NativeLibraryTestBase;
@@ -24,7 +25,7 @@ public class ShareUrlTest extends NativeLibraryTestBase {
     }
 
     private void assertCorrectUrl(String originalUrl, String sharedUrl) {
-        Intent intent = ShareHelper.getShareIntent("", sharedUrl, null);
+        Intent intent = ShareHelper.getShareIntent(new Activity(), "", "", sharedUrl, null, null);
         assert (intent.hasExtra(Intent.EXTRA_TEXT));
         String url = intent.getStringExtra(Intent.EXTRA_TEXT);
         assertEquals(originalUrl, url);

@@ -7,6 +7,7 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
@@ -21,8 +22,6 @@
 
 namespace {
 
-const char kBrowserBlacklistTrialEnabledGroupName[] = "Enabled";
-
 class ChromeBlacklistTrialTest : public testing::Test {
  protected:
   ChromeBlacklistTrialTest() {}
@@ -31,7 +30,8 @@ class ChromeBlacklistTrialTest : public testing::Test {
   void SetUp() override {
     testing::Test::SetUp();
 
-    override_manager_.OverrideRegistry(HKEY_CURRENT_USER);
+    ASSERT_NO_FATAL_FAILURE(
+        override_manager_.OverrideRegistry(HKEY_CURRENT_USER));
 
     blacklist_registry_key_.reset(
         new base::win::RegKey(HKEY_CURRENT_USER,
@@ -91,7 +91,7 @@ TEST_F(ChromeBlacklistTrialTest, BlacklistDisabledRun) {
 
   // Create the field trial with the blacklist disabled group.
   base::FieldTrialList field_trial_list(
-    new metrics::SHA1EntropyProvider("test"));
+      base::MakeUnique<metrics::SHA1EntropyProvider>("test"));
 
   scoped_refptr<base::FieldTrial> trial(
     base::FieldTrialList::CreateFieldTrial(
@@ -154,44 +154,6 @@ TEST_F(ChromeBlacklistTrialTest, VersionChanged) {
   blacklist_registry_key_->ReadValueDW(blacklist::kBeaconAttemptCount,
                                        &attempt_count);
   ASSERT_EQ(static_cast<DWORD>(0), attempt_count);
-}
-
-TEST_F(ChromeBlacklistTrialTest, AddFinchBlacklistToRegistry) {
-  // Create the field trial with the blacklist enabled group.
-  base::FieldTrialList field_trial_list(
-      new metrics::SHA1EntropyProvider("test"));
-
-  scoped_refptr<base::FieldTrial> trial(base::FieldTrialList::CreateFieldTrial(
-      kBrowserBlacklistTrialName, kBrowserBlacklistTrialEnabledGroupName));
-
-  // Set up the trial with the desired parameters.
-  std::map<std::string, std::string> desired_params;
-  desired_params["TestDllName1"] = "TestDll1.dll";
-  desired_params["TestDllName2"] = "TestDll2.dll";
-
-  variations::AssociateVariationParams(
-      kBrowserBlacklistTrialName,
-      kBrowserBlacklistTrialEnabledGroupName,
-      desired_params);
-
-  // This should add the dlls in those parameters to the registry.
-  AddFinchBlacklistToRegistry();
-
-  // Check that all the values in desired_params were added to the registry.
-  base::win::RegKey finch_blacklist_registry_key(
-      HKEY_CURRENT_USER,
-      blacklist::kRegistryFinchListPath,
-      KEY_QUERY_VALUE | KEY_SET_VALUE);
-
-  ASSERT_EQ(desired_params.size(),
-            finch_blacklist_registry_key.GetValueCount());
-
-  for (std::map<std::string, std::string>::iterator it = desired_params.begin();
-       it != desired_params.end();
-       ++it) {
-    std::wstring name = base::UTF8ToWide(it->first);
-    ASSERT_TRUE(finch_blacklist_registry_key.HasValue(name.c_str()));
-  }
 }
 
 }  // namespace

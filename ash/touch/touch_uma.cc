@@ -5,15 +5,16 @@
 #include "ash/touch/touch_uma.h"
 
 #include "ash/common/wm_shell.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/stringprintf.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_event_dispatcher.h"
-#include "ui/aura/window_property.h"
+#include "ui/base/class_property.h"
 #include "ui/events/event.h"
 #include "ui/events/event_utils.h"
 #include "ui/gfx/geometry/point_conversions.h"
+#include "ui/views/widget/widget.h"
 
 #if defined(USE_X11)
 #include <X11/extensions/XInput2.h>
@@ -40,10 +41,12 @@ struct WindowTouchDetails {
   base::TimeTicks last_mt_time_;
 };
 
-DEFINE_OWNED_WINDOW_PROPERTY_KEY(WindowTouchDetails, kWindowTouchDetails, NULL);
+DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(WindowTouchDetails,
+                                   kWindowTouchDetails,
+                                   NULL);
 }
 
-DECLARE_WINDOW_PROPERTY_TYPE(WindowTouchDetails*);
+DECLARE_UI_CLASS_PROPERTY_TYPE(WindowTouchDetails*);
 
 namespace ash {
 
@@ -103,7 +106,8 @@ void TouchUMA::RecordTouchEvent(aura::Window* target,
 
   // Prefer raw event location (when available) over calibrated location.
   if (event.HasNativeEvent()) {
-    position = ui::EventLocationFromNative(event.native_event());
+    position =
+        gfx::ToFlooredPoint(ui::EventLocationFromNative(event.native_event()));
     position = gfx::ScaleToFlooredPoint(
         position, 1.f / target->layer()->device_scale_factor());
   }
@@ -112,18 +116,19 @@ void TouchUMA::RecordTouchEvent(aura::Window* target,
   position.set_y(std::min(bounds.height() - 1, std::max(0, position.y())));
 
   UMA_HISTOGRAM_CUSTOM_COUNTS(
-      "Ash.TouchPositionX", position.x() / bucket_size_x, 0,
+      "Ash.TouchPositionX", position.x() / bucket_size_x, 1,
       kBucketCountForLocation, kBucketCountForLocation + 1);
   UMA_HISTOGRAM_CUSTOM_COUNTS(
-      "Ash.TouchPositionY", position.y() / bucket_size_y, 0,
+      "Ash.TouchPositionY", position.y() / bucket_size_y, 1,
       kBucketCountForLocation, kBucketCountForLocation + 1);
 
+  const int touch_pointer_id = event.pointer_details().id;
   if (event.type() == ui::ET_TOUCH_PRESSED) {
     WmShell::Get()->RecordUserMetricsAction(UMA_TOUCHSCREEN_TAP_DOWN);
 
-    details->last_start_time_[event.touch_id()] = event.time_stamp();
-    details->start_touch_position_[event.touch_id()] = event.root_location();
-    details->last_touch_position_[event.touch_id()] = event.location();
+    details->last_start_time_[touch_pointer_id] = event.time_stamp();
+    details->start_touch_position_[touch_pointer_id] = event.root_location();
+    details->last_touch_position_[touch_pointer_id] = event.location();
 
     if (details->last_release_time_.ToInternalValue()) {
       // Measuring the interval between a touch-release and the next
@@ -144,16 +149,16 @@ void TouchUMA::RecordTouchEvent(aura::Window* target,
                                 details->last_start_time_.size(), 1,
                                 kMaxTouchPoints, kMaxTouchPoints + 1);
   } else if (event.type() == ui::ET_TOUCH_RELEASED) {
-    if (details->last_start_time_.count(event.touch_id())) {
+    if (details->last_start_time_.count(touch_pointer_id)) {
       base::TimeDelta duration =
-          event.time_stamp() - details->last_start_time_[event.touch_id()];
+          event.time_stamp() - details->last_start_time_[touch_pointer_id];
       // Look for touches that were [almost] stationary for a long time.
       const double kLongStationaryTouchDuration = 10;
       const int kLongStationaryTouchDistanceSquared = 100;
       if (duration.InSecondsF() > kLongStationaryTouchDuration) {
         gfx::Vector2d distance =
             event.root_location() -
-            details->start_touch_position_[event.touch_id()];
+            details->start_touch_position_[touch_pointer_id];
         if (distance.LengthSquared() < kLongStationaryTouchDistanceSquared) {
           UMA_HISTOGRAM_CUSTOM_COUNTS("Ash.StationaryTouchDuration",
                                       duration.InSeconds(),
@@ -161,30 +166,30 @@ void TouchUMA::RecordTouchEvent(aura::Window* target,
         }
       }
     }
-    details->last_start_time_.erase(event.touch_id());
-    details->last_move_time_.erase(event.touch_id());
-    details->start_touch_position_.erase(event.touch_id());
-    details->last_touch_position_.erase(event.touch_id());
+    details->last_start_time_.erase(touch_pointer_id);
+    details->last_move_time_.erase(touch_pointer_id);
+    details->start_touch_position_.erase(touch_pointer_id);
+    details->last_touch_position_.erase(touch_pointer_id);
     details->last_release_time_ = event.time_stamp();
   } else if (event.type() == ui::ET_TOUCH_MOVED) {
     int distance = 0;
-    if (details->last_touch_position_.count(event.touch_id())) {
-      gfx::Point lastpos = details->last_touch_position_[event.touch_id()];
+    if (details->last_touch_position_.count(touch_pointer_id)) {
+      gfx::Point lastpos = details->last_touch_position_[touch_pointer_id];
       distance =
           std::abs(lastpos.x() - event.x()) + std::abs(lastpos.y() - event.y());
     }
 
-    if (details->last_move_time_.count(event.touch_id())) {
+    if (details->last_move_time_.count(touch_pointer_id)) {
       base::TimeDelta move_delay =
-          event.time_stamp() - details->last_move_time_[event.touch_id()];
+          event.time_stamp() - details->last_move_time_[touch_pointer_id];
       UMA_HISTOGRAM_CUSTOM_COUNTS("Ash.TouchMoveInterval",
                                   move_delay.InMilliseconds(), 1, 50, 25);
     }
 
     UMA_HISTOGRAM_CUSTOM_COUNTS("Ash.TouchMoveSteps", distance, 1, 1000, 50);
 
-    details->last_move_time_[event.touch_id()] = event.time_stamp();
-    details->last_touch_position_[event.touch_id()] = event.location();
+    details->last_move_time_[touch_pointer_id] = event.time_stamp();
+    details->last_touch_position_[touch_pointer_id] = event.location();
   }
 }
 
@@ -220,7 +225,7 @@ void TouchUMA::UpdateTouchState(const ui::TouchEvent& event) {
   }
 }
 
-TouchUMA::GestureActionType TouchUMA::FindGestureActionType(
+GestureActionType TouchUMA::FindGestureActionType(
     aura::Window* window,
     const ui::GestureEvent& event) {
   if (!window || window->GetRootWindow() == window) {
@@ -231,10 +236,10 @@ TouchUMA::GestureActionType TouchUMA::FindGestureActionType(
     return GESTURE_UNKNOWN;
   }
 
-  std::string name = window ? window->name() : std::string();
+  std::string name = window ? window->GetName() : std::string();
 
-  const char kDesktopBackgroundView[] = "DesktopBackgroundView";
-  if (name == kDesktopBackgroundView) {
+  const char kWallpaperView[] = "WallpaperView";
+  if (name == kWallpaperView) {
     if (event.type() == ui::ET_GESTURE_SCROLL_BEGIN)
       return GESTURE_DESKTOP_SCROLL;
     if (event.type() == ui::ET_GESTURE_PINCH_BEGIN)

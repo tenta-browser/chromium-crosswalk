@@ -5,32 +5,31 @@
 #include "chrome/browser/ui/views/frame/browser_non_client_frame_view_ash.h"
 
 #include "ash/common/ash_constants.h"
-#include "ash/common/ash_switches.h"
-#include "ash/frame/caption_buttons/frame_caption_button_container_view.h"
-#include "ash/frame/header_painter.h"
+#include "ash/common/frame/caption_buttons/frame_caption_button_container_view.h"
+#include "ash/common/frame/header_painter.h"
+#include "ash/common/wm/maximize_mode/maximize_mode_controller.h"
+#include "ash/common/wm_shell.h"
 #include "ash/shell.h"
-#include "ash/wm/maximize_mode/maximize_mode_controller.h"
+#include "ash/test/immersive_fullscreen_controller_test_api.h"
 #include "base/command_line.h"
 #include "build/build_config.h"
+#include "chrome/browser/profiles/profile_avatar_icon_util.h"
+#include "chrome/browser/ui/ash/multi_user/multi_user_util.h"
+#include "chrome/browser/ui/ash/multi_user/multi_user_window_manager_test.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/exclusive_access/fullscreen_controller.h"
 #include "chrome/browser/ui/exclusive_access/fullscreen_controller_test.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/frame/immersive_mode_controller.h"
+#include "chrome/browser/ui/views/frame/immersive_mode_controller_ash.h"
+#include "chrome/browser/ui/views/profiles/profile_indicator_icon.h"
 #include "chrome/browser/ui/views/tabs/tab.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "components/signin/core/account_id/account_id.h"
 #include "ui/base/hit_test.h"
 #include "ui/compositor/scoped_animation_duration_scale_mode.h"
 #include "ui/views/widget/widget.h"
-
-#if defined(OS_CHROMEOS)
-#include "chrome/browser/profiles/profile_avatar_icon_util.h"
-#include "chrome/browser/ui/ash/multi_user/multi_user_util.h"
-#include "chrome/browser/ui/ash/multi_user/multi_user_window_manager_test.h"
-#include "chrome/browser/ui/views/profiles/profile_indicator_icon.h"
-#include "components/signin/core/account_id/account_id.h"
-#endif  // defined(OS_CHROMEOS)
 
 using views::Widget;
 
@@ -106,8 +105,6 @@ IN_PROC_BROWSER_TEST_F(BrowserNonClientFrameViewAshTest,
   EXPECT_TRUE(frame_view->caption_button_container_->visible());
 }
 
-// TODO(zturner): Change this to USE_ASH after fixing the test on Windows.
-#if defined(OS_CHROMEOS)
 IN_PROC_BROWSER_TEST_F(BrowserNonClientFrameViewAshTest, ImmersiveFullscreen) {
   BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser());
   content::WebContents* web_contents = browser_view->GetActiveWebContents();
@@ -119,7 +116,13 @@ IN_PROC_BROWSER_TEST_F(BrowserNonClientFrameViewAshTest, ImmersiveFullscreen) {
 
   ImmersiveModeController* immersive_mode_controller =
       browser_view->immersive_mode_controller();
-  immersive_mode_controller->SetupForTest();
+  ASSERT_EQ(ImmersiveModeController::Type::ASH,
+            immersive_mode_controller->type());
+
+  ash::ImmersiveFullscreenControllerTestApi(
+      static_cast<ImmersiveModeControllerAsh*>(immersive_mode_controller)
+          ->controller())
+      .SetupForTest();
 
   // Immersive fullscreen starts disabled.
   ASSERT_FALSE(widget->IsFullscreen());
@@ -127,8 +130,7 @@ IN_PROC_BROWSER_TEST_F(BrowserNonClientFrameViewAshTest, ImmersiveFullscreen) {
 
   // Frame paints by default.
   EXPECT_TRUE(frame_view->ShouldPaint());
-  EXPECT_LT(Tab::GetImmersiveHeight(),
-            frame_view->header_painter_->GetHeaderHeightForPainting());
+  EXPECT_LT(0, frame_view->header_painter_->GetHeaderHeightForPainting());
 
   // Enter both browser fullscreen and tab fullscreen. Entering browser
   // fullscreen should enable immersive fullscreen.
@@ -157,17 +159,15 @@ IN_PROC_BROWSER_TEST_F(BrowserNonClientFrameViewAshTest, ImmersiveFullscreen) {
   EXPECT_TRUE(immersive_mode_controller->IsRevealed());
   EXPECT_TRUE(frame_view->ShouldPaint());
   EXPECT_TRUE(frame_view->caption_button_container_->visible());
-  EXPECT_FALSE(frame_view->UseImmersiveLightbarHeaderStyle());
 
   // End the reveal. When in both immersive browser fullscreen and tab
-  // fullscreen, the tab lightbars should not be painted.
+  // fullscreen.
   revealed_lock.reset();
   EXPECT_FALSE(immersive_mode_controller->IsRevealed());
   EXPECT_FALSE(frame_view->ShouldPaint());
   EXPECT_EQ(0, frame_view->header_painter_->GetHeaderHeightForPainting());
 
-  // Repeat test but without tab fullscreen. The tab lightbars should now show
-  // when the top-of-window views are not revealed.
+  // Repeat test but without tab fullscreen.
   {
     std::unique_ptr<FullscreenNotificationObserver> waiter(
         new FullscreenNotificationObserver());
@@ -184,18 +184,13 @@ IN_PROC_BROWSER_TEST_F(BrowserNonClientFrameViewAshTest, ImmersiveFullscreen) {
   EXPECT_TRUE(immersive_mode_controller->IsRevealed());
   EXPECT_TRUE(frame_view->ShouldPaint());
   EXPECT_TRUE(frame_view->caption_button_container_->visible());
-  EXPECT_FALSE(frame_view->UseImmersiveLightbarHeaderStyle());
-  EXPECT_LT(Tab::GetImmersiveHeight(),
-            frame_view->header_painter_->GetHeaderHeightForPainting());
+  EXPECT_LT(0, frame_view->header_painter_->GetHeaderHeightForPainting());
 
-  // Ending the reveal should hide the caption buttons and the header should
-  // be in the lightbar style.
+  // Ending the reveal. Immersive browser should have the same behavior as full
+  // screen, i.e., having an origin of (0,0).
   revealed_lock.reset();
-  EXPECT_TRUE(frame_view->ShouldPaint());
-  EXPECT_FALSE(frame_view->caption_button_container_->visible());
-  EXPECT_TRUE(frame_view->UseImmersiveLightbarHeaderStyle());
-  EXPECT_EQ(Tab::GetImmersiveHeight(),
-            frame_view->header_painter_->GetHeaderHeightForPainting());
+  EXPECT_FALSE(frame_view->ShouldPaint());
+  EXPECT_EQ(0, frame_view->header_painter_->GetHeaderHeightForPainting());
 
   // Exiting immersive fullscreen should make the caption buttons and the frame
   // visible again.
@@ -208,9 +203,7 @@ IN_PROC_BROWSER_TEST_F(BrowserNonClientFrameViewAshTest, ImmersiveFullscreen) {
   EXPECT_FALSE(immersive_mode_controller->IsEnabled());
   EXPECT_TRUE(frame_view->ShouldPaint());
   EXPECT_TRUE(frame_view->caption_button_container_->visible());
-  EXPECT_FALSE(frame_view->UseImmersiveLightbarHeaderStyle());
-  EXPECT_LT(Tab::GetImmersiveHeight(),
-            frame_view->header_painter_->GetHeaderHeightForPainting());
+  EXPECT_LT(0, frame_view->header_painter_->GetHeaderHeightForPainting());
 }
 
 // Tests that Avatar icon should show on the top left corner of the teleported
@@ -270,8 +263,6 @@ IN_PROC_BROWSER_TEST_F(BrowserNonClientFrameViewAshTest,
   EXPECT_EQ(HTCAPTION, frame_view->NonClientHitTest(avatar_center));
 }
 
-#endif  // defined(OS_CHROMEOS)
-
 // Tests that FrameCaptionButtonContainer has been relaid out in response to
 // maximize mode being toggled.
 IN_PROC_BROWSER_TEST_F(BrowserNonClientFrameViewAshTest,
@@ -284,16 +275,18 @@ IN_PROC_BROWSER_TEST_F(BrowserNonClientFrameViewAshTest,
           widget->non_client_view()->frame_view());
 
   const gfx::Rect initial = frame_view->caption_button_container_->bounds();
-  ash::Shell::GetInstance()->maximize_mode_controller()->
-      EnableMaximizeModeWindowManager(true);
+  ash::WmShell::Get()
+      ->maximize_mode_controller()
+      ->EnableMaximizeModeWindowManager(true);
   ash::FrameCaptionButtonContainerView::TestApi test(frame_view->
                                                      caption_button_container_);
   test.EndAnimations();
   const gfx::Rect during_maximize = frame_view->caption_button_container_->
       bounds();
   EXPECT_GT(initial.width(), during_maximize.width());
-  ash::Shell::GetInstance()->maximize_mode_controller()->
-      EnableMaximizeModeWindowManager(false);
+  ash::WmShell::Get()
+      ->maximize_mode_controller()
+      ->EnableMaximizeModeWindowManager(false);
   test.EndAnimations();
   const gfx::Rect after_restore = frame_view->caption_button_container_->
       bounds();

@@ -36,7 +36,7 @@ bool ExtensionViewInternalExtensionFunction::RunAsync() {
 // Checks the validity of |src|, including that it follows the chrome extension
 // scheme and that its extension ID is valid.
 // Returns true if |src| is valid.
-bool IsSrcValid(GURL src) {
+bool IsSrcValid(const GURL& src) {
   // Check if src is valid and matches the extension scheme.
   if (!src.is_valid() || !src.SchemeIs(kExtensionScheme))
     return false;
@@ -64,7 +64,7 @@ bool ExtensionViewInternalLoadSrcFunction::RunAsyncSafe(
     has_load_succeeded = guest->NavigateGuest(src, true /* force_navigation */);
 
   // Return whether load is successful.
-  SetResult(base::MakeUnique<base::FundamentalValue>(has_load_succeeded));
+  SetResult(base::MakeUnique<base::Value>(has_load_succeeded));
   SendResponse(true);
   return true;
 }

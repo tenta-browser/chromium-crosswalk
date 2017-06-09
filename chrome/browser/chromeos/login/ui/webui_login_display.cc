@@ -17,10 +17,10 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
-#include "chromeos/login/user_names.h"
 #include "components/signin/core/account_id/account_id.h"
+#include "components/strings/grit/components_strings.h"
 #include "components/user_manager/user_manager.h"
-#include "grit/components_strings.h"
+#include "components/user_manager/user_names.h"
 #include "ui/base/ime/chromeos/ime_keyboard.h"
 #include "ui/base/ime/chromeos/input_method_manager.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -52,13 +52,15 @@ void WebUILoginDisplay::ClearAndEnablePassword() {
 void WebUILoginDisplay::Init(const user_manager::UserList& users,
                              bool show_guest,
                              bool show_users,
-                             bool show_new_user) {
+                             bool allow_new_user) {
   // Testing that the delegate has been set.
   DCHECK(delegate_);
   SignInScreenController::Get()->Init(users, show_guest);
   show_guest_ = show_guest;
+  show_users_changed_ = (show_users_ != show_users);
   show_users_ = show_users;
-  show_new_user_ = show_new_user;
+  allow_new_user_changed_ = (allow_new_user_ != allow_new_user);
+  allow_new_user_ = allow_new_user;
 
   ui::UserActivityDetector* activity_detector = ui::UserActivityDetector::Get();
   if (activity_detector && !activity_detector->HasObserver(this))
@@ -113,10 +115,6 @@ void WebUILoginDisplay::ShowError(int error_msg_id,
 
   std::string error_text;
   switch (error_msg_id) {
-    case IDS_LOGIN_ERROR_AUTHENTICATING_HOSTED:
-      error_text = l10n_util::GetStringFUTF8(
-          error_msg_id, l10n_util::GetStringUTF16(IDS_SHORT_PRODUCT_OS_NAME));
-      break;
     case IDS_LOGIN_ERROR_CAPTIVE_PORTAL:
       error_text = l10n_util::GetStringFUTF8(
           error_msg_id, delegate()->GetConnectedNetworkName());
@@ -131,7 +129,8 @@ void WebUILoginDisplay::ShowError(int error_msg_id,
   if (error_msg_id != IDS_LOGIN_ERROR_WHITELIST &&
       error_msg_id != IDS_ENTERPRISE_LOGIN_ERROR_WHITELIST &&
       error_msg_id != IDS_LOGIN_ERROR_OWNER_KEY_LOST &&
-      error_msg_id != IDS_LOGIN_ERROR_OWNER_REQUIRED) {
+      error_msg_id != IDS_LOGIN_ERROR_OWNER_REQUIRED &&
+      error_msg_id != IDS_LOGIN_ERROR_GOOGLE_ACCOUNT_NOT_ALLOWED) {
     // Display a warning if Caps Lock is on.
     input_method::InputMethodManager* ime_manager =
         input_method::InputMethodManager::Get();
@@ -150,15 +149,8 @@ void WebUILoginDisplay::ShowError(int error_msg_id,
   }
 
   std::string help_link;
-  switch (error_msg_id) {
-    case IDS_LOGIN_ERROR_AUTHENTICATING_HOSTED:
-      help_link = l10n_util::GetStringUTF8(IDS_LEARN_MORE);
-      break;
-    default:
-      if (login_attempts > 1)
-        help_link = l10n_util::GetStringUTF8(IDS_LEARN_MORE);
-      break;
-  }
+  if (login_attempts > 1)
+    help_link = l10n_util::GetStringUTF8(IDS_LEARN_MORE);
 
   webui_handler_->ShowError(login_attempts, error_text, help_link,
                             help_topic_id);
@@ -236,7 +228,11 @@ void WebUILoginDisplay::LoadWallpaper(const AccountId& account_id) {
 }
 
 void WebUILoginDisplay::LoadSigninWallpaper() {
-  WallpaperManager::Get()->SetDefaultWallpaperDelayed(login::SignInAccountId());
+  if (!WallpaperManager::Get()->SetDeviceWallpaperIfApplicable(
+          user_manager::SignInAccountId())) {
+    WallpaperManager::Get()->SetDefaultWallpaperDelayed(
+        user_manager::SignInAccountId());
+  }
 }
 
 void WebUILoginDisplay::OnSigninScreenReady() {
@@ -244,6 +240,11 @@ void WebUILoginDisplay::OnSigninScreenReady() {
 
   if (delegate_)
     delegate_->OnSigninScreenReady();
+}
+
+void WebUILoginDisplay::OnGaiaScreenReady() {
+  if (delegate_)
+    delegate_->OnGaiaScreenReady();
 }
 
 void WebUILoginDisplay::RemoveUser(const AccountId& account_id) {
@@ -302,6 +303,18 @@ bool WebUILoginDisplay::IsShowUsers() const {
   return show_users_;
 }
 
+bool WebUILoginDisplay::ShowUsersHasChanged() const {
+  return show_users_changed_;
+}
+
+bool WebUILoginDisplay::IsAllowNewUser() const {
+  return allow_new_user_;
+}
+
+bool WebUILoginDisplay::AllowNewUserChanged() const {
+  return allow_new_user_changed_;
+}
+
 bool WebUILoginDisplay::IsSigninInProgress() const {
   return delegate_->IsSigninInProgress();
 }
@@ -315,13 +328,19 @@ void WebUILoginDisplay::SetDisplayEmail(const std::string& email) {
     delegate_->SetDisplayEmail(email);
 }
 
+void WebUILoginDisplay::SetDisplayAndGivenName(const std::string& display_name,
+                                               const std::string& given_name) {
+  if (delegate_)
+    delegate_->SetDisplayAndGivenName(display_name, given_name);
+}
+
 void WebUILoginDisplay::Signout() {
   delegate_->Signout();
 }
 
 void WebUILoginDisplay::OnUserActivity(const ui::Event* event) {
   if (delegate_)
-    delegate_->ResetPublicSessionAutoLoginTimer();
+    delegate_->ResetAutoLoginTimer();
 }
 
 bool WebUILoginDisplay::IsUserWhitelisted(const AccountId& account_id) {

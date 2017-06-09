@@ -31,8 +31,8 @@
 #ifndef WebKit_h
 #define WebKit_h
 
-#include "../platform/Platform.h"
-#include <v8.h>
+#include "public/platform/Platform.h"
+#include "v8/include/v8.h"
 
 namespace blink {
 
@@ -48,12 +48,6 @@ BLINK_EXPORT void initialize(Platform*);
 // initialize must have been called first.
 BLINK_EXPORT v8::Isolate* mainThreadIsolate();
 
-// Once shutdown, the Platform passed to initialize will no longer
-// be accessed. No other WebKit objects should be in use when this function is
-// called. Any background threads created by WebKit are promised to be
-// terminated by the time this function returns.
-BLINK_EXPORT void shutdown();
-
 // Alters the rendering of content to conform to a fixed set of rules.
 BLINK_EXPORT void setLayoutTestMode(bool);
 BLINK_EXPORT bool layoutTestMode();
@@ -65,13 +59,6 @@ BLINK_EXPORT void setMockThemeEnabledForTest(bool);
 // Alters the rendering of fonts for layout tests.
 BLINK_EXPORT void setFontAntialiasingEnabledForTest(bool);
 BLINK_EXPORT bool fontAntialiasingEnabledForTest();
-
-// Forces the use of the complex text path for layout tests.
-BLINK_EXPORT void setAlwaysUseComplexTextForTest(bool);
-BLINK_EXPORT bool alwaysUseComplexTextForTest();
-
-// Enables the named log channel. See WebCore/platform/Logging.h for details.
-BLINK_EXPORT void enableLogChannel(const char*);
 
 // Purge the plugin list cache. If |reloadPages| is true, any pages
 // containing plugins will be reloaded after refreshing the plugin list.
@@ -88,6 +75,6 @@ BLINK_EXPORT void MemoryPressureNotificationToWorkerThreadIsolates(
 // Set the RAIL performance mode on all worker thread isolates.
 BLINK_EXPORT void setRAILModeOnWorkerThreadIsolates(v8::RAILMode);
 
-} // namespace blink
+}  // namespace blink
 
 #endif

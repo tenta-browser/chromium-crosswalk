@@ -10,19 +10,19 @@
 
 #include "ash/common/shelf/wm_shelf.h"
 #include "ash/common/shelf/wm_shelf_util.h"
-#include "ash/common/shell_window_ids.h"
 #include "ash/common/wm/overview/window_selector_controller.h"
 #include "ash/common/wm/window_animation_types.h"
 #include "ash/common/wm/window_parenting_utils.h"
 #include "ash/common/wm/window_state.h"
 #include "ash/common/wm_lookup.h"
-#include "ash/common/wm_root_window_controller.h"
 #include "ash/common/wm_shell.h"
 #include "ash/common/wm_window.h"
 #include "ash/common/wm_window_property.h"
+#include "ash/public/cpp/shell_window_ids.h"
+#include "ash/root_window_controller.h"
+#include "ash/wm/window_properties.h"
 #include "base/auto_reset.h"
 #include "third_party/skia/include/core/SkColor.h"
-#include "third_party/skia/include/core/SkPaint.h"
 #include "third_party/skia/include/core/SkPath.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
 #include "ui/gfx/canvas.h"
@@ -78,10 +78,10 @@ class CalloutWidgetBackground : public views::Background {
         break;
     }
     // Hard code the arrow color for now.
-    SkPaint paint;
-    paint.setStyle(SkPaint::kFill_Style);
-    paint.setColor(SkColorSetARGB(0xff, 0xe5, 0xe5, 0xe5));
-    canvas->DrawPath(path, paint);
+    cc::PaintFlags flags;
+    flags.setStyle(cc::PaintFlags::kFill_Style);
+    flags.setColor(SkColorSetARGB(0xff, 0xe5, 0xe5, 0xe5));
+    canvas->DrawPath(path, flags);
   }
 
   ShelfAlignment alignment() { return alignment_; }
@@ -181,7 +181,8 @@ class PanelCalloutWidget : public views::Widget {
   }
 
   void SetAlignment(ShelfAlignment alignment) {
-    gfx::Rect callout_bounds = GetWindowBoundsInScreen();
+    WmWindow* window = WmLookup::Get()->GetWindowForWidget(this);
+    gfx::Rect callout_bounds = window->GetBounds();
     if (IsHorizontalAlignment(alignment)) {
       callout_bounds.set_width(kArrowWidth);
       callout_bounds.set_height(kArrowHeight);
@@ -189,7 +190,12 @@ class PanelCalloutWidget : public views::Widget {
       callout_bounds.set_width(kArrowHeight);
       callout_bounds.set_height(kArrowWidth);
     }
-    SetBounds(callout_bounds);
+    WmWindow* parent = window->GetParent();
+    // It's important this go through WmWindow and not Widget. Going through
+    // Widget means it may move do a different screen, we don't want that.
+    window->SetBounds(callout_bounds);
+    // Setting the bounds should not trigger changing the parent.
+    DCHECK_EQ(parent, window->GetParent());
     if (background_->alignment() != alignment) {
       background_->set_alignment(alignment);
       SchedulePaintInRect(gfx::Rect(callout_bounds.size()));
@@ -334,7 +340,7 @@ void PanelLayoutManager::OnWindowAddedToLayout(WmWindow* child) {
   if (in_add_window_)
     return;
   base::AutoReset<bool> auto_reset_in_add_window(&in_add_window_, true);
-  if (!child->GetWindowState()->panel_attached()) {
+  if (!child->GetBoolProperty(WmWindowProperty::PANEL_ATTACHED)) {
     // This should only happen when a window is added to panel container as a
     // result of bounds change from within the application during a drag.
     // If so we have already stopped the drag and should reparent the panel
@@ -354,7 +360,7 @@ void PanelLayoutManager::OnWindowAddedToLayout(WmWindow* child) {
   panel_info.callout_widget = new PanelCalloutWidget(panel_container_);
   panel_info.slide_in = child != dragged_panel_;
   panel_windows_.push_back(panel_info);
-  child->AddObserver(this);
+  child->aura_window()->AddObserver(this);
   child->GetWindowState()->AddObserver(this);
   Relayout();
 }
@@ -364,6 +370,7 @@ void PanelLayoutManager::OnWillRemoveWindowFromLayout(WmWindow* child) {}
 void PanelLayoutManager::OnWindowRemovedFromLayout(WmWindow* child) {
   if (child->GetType() == ui::wm::WINDOW_TYPE_POPUP)
     return;
+
   PanelList::iterator found =
       std::find(panel_windows_.begin(), panel_windows_.end(), child);
   if (found != panel_windows_.end()) {
@@ -371,8 +378,8 @@ void PanelLayoutManager::OnWindowRemovedFromLayout(WmWindow* child) {
     panel_windows_.erase(found);
   }
   if (restore_windows_on_shelf_visible_)
-    restore_windows_on_shelf_visible_->Remove(child);
-  child->RemoveObserver(this);
+    restore_windows_on_shelf_visible_->Remove(child->aura_window());
+  child->aura_window()->RemoveObserver(this);
   child->GetWindowState()->RemoveObserver(this);
 
   if (dragged_panel_ == child)
@@ -432,7 +439,7 @@ void PanelLayoutManager::SetChildBounds(WmWindow* child,
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// PanelLayoutManager, WmShellObserver implementation:
+// PanelLayoutManager, ShellObserver implementation:
 
 void PanelLayoutManager::OnOverviewModeEnded() {
   Relayout();
@@ -446,11 +453,12 @@ void PanelLayoutManager::OnShelfAlignmentChanged(WmWindow* root_window) {
 /////////////////////////////////////////////////////////////////////////////
 // PanelLayoutManager, WindowObserver implementation:
 
-void PanelLayoutManager::OnWindowPropertyChanged(WmWindow* window,
-                                                 WmWindowProperty property) {
+void PanelLayoutManager::OnWindowPropertyChanged(aura::Window* window,
+                                                 const void* key,
+                                                 intptr_t old) {
   // Trigger a relayout to position the panels whenever the panel icon is set
   // or changes.
-  if (property == WmWindowProperty::SHELF_ID)
+  if (key == kShelfIDKey)
     Relayout();
 }
 
@@ -465,9 +473,11 @@ void PanelLayoutManager::OnPostWindowStateTypeChange(
   if (restore_windows_on_shelf_visible_) {
     if (window_state->IsMinimized()) {
       MinimizePanel(window_state->window());
-      restore_windows_on_shelf_visible_->Remove(window_state->window());
+      restore_windows_on_shelf_visible_->Remove(
+          window_state->window()->aura_window());
     } else {
-      restore_windows_on_shelf_visible_->Add(window_state->window());
+      restore_windows_on_shelf_visible_->Add(
+          window_state->window()->aura_window());
     }
     return;
   }
@@ -509,17 +519,18 @@ void PanelLayoutManager::WillChangeVisibilityState(
   bool shelf_hidden = new_state == ash::SHELF_HIDDEN;
   if (!shelf_hidden) {
     if (restore_windows_on_shelf_visible_) {
-      std::unique_ptr<WmWindowTracker> restore_windows(
+      std::unique_ptr<aura::WindowTracker> restore_windows(
           std::move(restore_windows_on_shelf_visible_));
-      for (WmWindow* window : restore_windows->windows())
-        RestorePanel(window);
+      for (aura::Window* window : restore_windows->windows())
+        RestorePanel(WmWindow::Get(window));
     }
     return;
   }
 
   if (restore_windows_on_shelf_visible_)
     return;
-  std::unique_ptr<WmWindowTracker> minimized_windows(new WmWindowTracker);
+  std::unique_ptr<aura::WindowTracker> minimized_windows(
+      new aura::WindowTracker);
   for (PanelList::iterator iter = panel_windows_.begin();
        iter != panel_windows_.end();) {
     WmWindow* window = iter->window;
@@ -527,7 +538,7 @@ void PanelLayoutManager::WillChangeVisibilityState(
     // Advance the iterator before minimizing it: http://crbug.com/393047.
     ++iter;
     if (window != dragged_panel_ && window->IsVisible()) {
-      minimized_windows->Add(window);
+      minimized_windows->Add(window->aura_window());
       window->GetWindowState()->Minimize();
     }
   }
@@ -545,6 +556,11 @@ void PanelLayoutManager::OnShelfIconPositionsChanged() {
 // PanelLayoutManager private implementation:
 
 void PanelLayoutManager::MinimizePanel(WmWindow* panel) {
+  // Clusterfuzz can trigger panel accelerators before the shelf is created.
+  // TODO(jamescook): Revert this after http://crbug.com/648964 is fixed.
+  if (!shelf_)
+    return;
+
   panel->SetVisibilityAnimationType(
       wm::WINDOW_VISIBILITY_ANIMATION_TYPE_MINIMIZE);
   ui::Layer* layer = panel->GetLayer();
@@ -590,7 +606,7 @@ void PanelLayoutManager::Relayout() {
   base::AutoReset<bool> auto_reset_in_layout(&in_layout_, true);
 
   const ShelfAlignment alignment = shelf_->GetAlignment();
-  const bool horizontal = IsHorizontalAlignment(shelf_->GetAlignment());
+  const bool horizontal = shelf_->IsHorizontalAlignment();
   gfx::Rect shelf_bounds = panel_container_->ConvertRectFromScreen(
       shelf_->GetWindow()->GetBoundsInScreen());
   int panel_start_bounds = kPanelIdealSpacing;
@@ -618,7 +634,7 @@ void PanelLayoutManager::Relayout() {
     // the dragged panel.
     if (panel != dragged_panel_ && restore_windows_on_shelf_visible_) {
       panel->GetWindowState()->Minimize();
-      restore_windows_on_shelf_visible_->Add(panel);
+      restore_windows_on_shelf_visible_->Add(panel->aura_window());
       continue;
     }
 
@@ -732,6 +748,11 @@ void PanelLayoutManager::Relayout() {
 }
 
 void PanelLayoutManager::UpdateStacking(WmWindow* active_panel) {
+  // Clusterfuzz can trigger panel accelerators before the shelf is created.
+  // TODO(jamescook): Revert this after http://crbug.com/648964 is fixed.
+  if (!shelf_)
+    return;
+
   if (!active_panel) {
     if (!last_active_panel_)
       return;
@@ -748,7 +769,7 @@ void PanelLayoutManager::UpdateStacking(WmWindow* active_panel) {
   // the titlebar--even though it doesn't update the shelf icon positions, we
   // still want the visual effect.
   std::map<int, WmWindow*> window_ordering;
-  const bool horizontal = IsHorizontalAlignment(shelf_->GetAlignment());
+  const bool horizontal = shelf_->IsHorizontalAlignment();
   for (PanelList::const_iterator it = panel_windows_.begin();
        it != panel_windows_.end(); ++it) {
     gfx::Rect bounds = it->window->GetBounds();
@@ -782,7 +803,12 @@ void PanelLayoutManager::UpdateStacking(WmWindow* active_panel) {
 }
 
 void PanelLayoutManager::UpdateCallouts() {
-  const bool horizontal = IsHorizontalAlignment(shelf_->GetAlignment());
+  // Clusterfuzz can trigger panel accelerators before the shelf is created.
+  // TODO(jamescook): Revert this after http://crbug.com/648964 is fixed.
+  if (!shelf_)
+    return;
+
+  const bool horizontal = shelf_->IsHorizontalAlignment();
   for (PanelList::iterator iter = panel_windows_.begin();
        iter != panel_windows_.end(); ++iter) {
     WmWindow* panel = iter->window;
@@ -829,6 +855,8 @@ void PanelLayoutManager::UpdateCallouts() {
         callout_bounds);
 
     callout_widget_window->SetBoundsDirect(callout_bounds);
+    DCHECK_EQ(panel_container_, callout_widget_window->GetParent());
+    DCHECK_EQ(panel_container_, panel->GetParent());
     panel_container_->StackChildAbove(callout_widget_window, panel);
 
     ui::Layer* layer = callout_widget_window->GetLayer();
@@ -896,5 +924,7 @@ void PanelLayoutManager::OnKeyboardBoundsChanging(
   // propogate automatically to this class, so manually recalculate bounds.
   OnWindowResized();
 }
+
+void PanelLayoutManager::OnKeyboardClosed() {}
 
 }  // namespace ash

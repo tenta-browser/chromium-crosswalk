@@ -12,6 +12,7 @@
 #include "base/memory/ref_counted_memory.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/sys_info.h"
+#include "base/threading/sequenced_worker_pool.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
@@ -30,6 +31,7 @@
 #include "content/public/common/content_switches.h"
 #include "gpu/config/gpu_info.h"
 #include "net/base/network_change_notifier.h"
+#include "v8/include/v8-version-string.h"
 
 #if (defined(OS_POSIX) && defined(USE_UDEV)) || defined(OS_WIN) || \
     defined(OS_MACOSX)
@@ -114,6 +116,7 @@ std::unique_ptr<base::DictionaryValue> GenerateTracingMetadataDict() {
 
   metadata_dict->SetString("network-type", GetNetworkTypeString());
   metadata_dict->SetString("product-version", GetContentClient()->GetProduct());
+  metadata_dict->SetString("v8-version", V8_VERSION_STRING);
   metadata_dict->SetString("user-agent", GetContentClient()->GetUserAgent());
 
   // OS
@@ -167,6 +170,13 @@ std::unique_ptr<base::DictionaryValue> GenerateTracingMetadataDict() {
   metadata_dict->SetString("clock-domain", GetClockString());
   metadata_dict->SetBoolean("highres-ticks",
                             base::TimeTicks::IsHighResolution());
+
+  base::Time::Exploded ctime;
+  base::Time::Now().UTCExplode(&ctime);
+  std::string time_string = base::StringPrintf("%u-%u-%u %d:%d:%d",
+      ctime.year, ctime.month, ctime.day_of_month, ctime.hour,
+      ctime.minute, ctime.second);
+  metadata_dict->SetString("trace-capture-datetime", time_string);
 
   return metadata_dict;
 }
@@ -252,6 +262,7 @@ bool TracingControllerImpl::StartTracing(
   start_tracing_done_callback_ = callback;
   start_tracing_trace_config_.reset(
       new base::trace_event::TraceConfig(trace_config));
+  metadata_.reset(new base::DictionaryValue());
   pending_start_tracing_ack_count_ = 0;
 
 #if defined(OS_ANDROID)
@@ -329,6 +340,11 @@ void TracingControllerImpl::OnAllTracingAgentsStarted() {
   start_tracing_trace_config_.reset();
 }
 
+void TracingControllerImpl::AddMetadata(const base::DictionaryValue& data) {
+  if (metadata_)
+    metadata_->MergeDictionary(&data);
+}
+
 bool TracingControllerImpl::StopTracing(
     const scoped_refptr<TraceDataSink>& trace_data_sink) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
@@ -347,16 +363,20 @@ bool TracingControllerImpl::StopTracing(
   }
 
   if (trace_data_sink) {
+    MetadataFilterPredicate metadata_filter;
     if (TraceLog::GetInstance()->GetCurrentTraceConfig()
         .IsArgumentFilterEnabled()) {
       std::unique_ptr<TracingDelegate> delegate(
           GetContentClient()->browser()->GetTracingDelegate());
-      if (delegate) {
-        trace_data_sink->SetMetadataFilterPredicate(
-            delegate->GetMetadataFilterPredicate());
-      }
+      if (delegate)
+        metadata_filter = delegate->GetMetadataFilterPredicate();
     }
-    trace_data_sink->AddMetadata(*GenerateTracingMetadataDict().get());
+    AddFilteredMetadata(trace_data_sink.get(), GenerateTracingMetadataDict(),
+                        metadata_filter);
+    AddFilteredMetadata(trace_data_sink.get(), std::move(metadata_),
+                        metadata_filter);
+  } else {
+    metadata_.reset();
   }
 
   trace_data_sink_ = trace_data_sink;
@@ -398,7 +418,7 @@ void TracingControllerImpl::OnStopTracingDone() {
   pending_stop_tracing_filters_ = trace_message_filters_;
 
   pending_stop_tracing_ack_count_ += additional_tracing_agents_.size();
-  for (auto it : additional_tracing_agents_) {
+  for (auto* it : additional_tracing_agents_) {
     it->StopAgentTracing(
         base::Bind(&TracingControllerImpl::OnEndAgentTracingAcked,
                    base::Unretained(this)));
@@ -441,46 +461,6 @@ bool TracingControllerImpl::GetTraceBufferUsage(
   return true;
 }
 
-bool TracingControllerImpl::SetWatchEvent(
-    const std::string& category_name,
-    const std::string& event_name,
-    const WatchEventCallback& callback) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-
-  if (callback.is_null())
-    return false;
-
-  watch_category_name_ = category_name;
-  watch_event_name_ = event_name;
-  watch_event_callback_ = callback;
-
-  TraceLog::GetInstance()->SetWatchEvent(
-      category_name, event_name,
-      base::Bind(&TracingControllerImpl::OnWatchEventMatched,
-                 base::Unretained(this)));
-
-  for (TraceMessageFilterSet::iterator it = trace_message_filters_.begin();
-      it != trace_message_filters_.end(); ++it) {
-    it->get()->SendSetWatchEvent(category_name, event_name);
-  }
-  return true;
-}
-
-bool TracingControllerImpl::CancelWatchEvent() {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-
-  if (!can_cancel_watch_event())
-    return false;
-
-  for (TraceMessageFilterSet::iterator it = trace_message_filters_.begin();
-      it != trace_message_filters_.end(); ++it) {
-    it->get()->SendCancelWatchEvent();
-  }
-
-  watch_event_callback_.Reset();
-  return true;
-}
-
 bool TracingControllerImpl::IsTracing() const {
   return is_tracing_;
 }
@@ -504,17 +484,13 @@ void TracingControllerImpl::AddTraceMessageFilter(
 #endif
 
   trace_message_filters_.insert(trace_message_filter);
-  if (can_cancel_watch_event()) {
-    trace_message_filter->SendSetWatchEvent(watch_category_name_,
-                                            watch_event_name_);
-  }
   if (can_stop_tracing()) {
     trace_message_filter->SendBeginTracing(
         TraceLog::GetInstance()->GetCurrentTraceConfig());
   }
 
-  FOR_EACH_OBSERVER(TraceMessageFilterObserver, trace_message_filter_observers_,
-                    OnTraceMessageFilterAdded(trace_message_filter));
+  for (auto& observer : trace_message_filter_observers_)
+    observer.OnTraceMessageFilterAdded(trace_message_filter);
 }
 
 void TracingControllerImpl::RemoveTraceMessageFilter(
@@ -579,7 +555,7 @@ void TracingControllerImpl::RemoveTraceMessageFilter(
 
 void TracingControllerImpl::AddTracingAgent(const std::string& agent_name) {
 #if defined(OS_CHROMEOS)
-  auto debug_daemon =
+  auto* debug_daemon =
       chromeos::DBusThreadManager::Get()->GetDebugDaemonClient();
   if (agent_name == debug_daemon->GetTracingAgentName()) {
     additional_tracing_agents_.push_back(debug_daemon);
@@ -588,7 +564,7 @@ void TracingControllerImpl::AddTracingAgent(const std::string& agent_name) {
     return;
   }
 #elif defined(OS_WIN)
-  auto etw_agent = EtwTracingAgent::GetInstance();
+  auto* etw_agent = EtwTracingAgent::GetInstance();
   if (agent_name == etw_agent->GetTracingAgentName()) {
     additional_tracing_agents_.push_back(etw_agent);
     return;
@@ -596,7 +572,7 @@ void TracingControllerImpl::AddTracingAgent(const std::string& agent_name) {
 #endif
 
 #if defined(ENABLE_POWER_TRACING)
-  auto power_agent = PowerTracingAgent::GetInstance();
+  auto* power_agent = PowerTracingAgent::GetInstance();
   if (agent_name == power_agent->GetTracingAgentName()) {
     additional_tracing_agents_.push_back(power_agent);
     return;
@@ -770,18 +746,6 @@ void TracingControllerImpl::OnTraceLogStatusReply(
   }
 }
 
-void TracingControllerImpl::OnWatchEventMatched() {
-  if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
-    BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-        base::Bind(&TracingControllerImpl::OnWatchEventMatched,
-                   base::Unretained(this)));
-    return;
-  }
-
-  if (!watch_event_callback_.is_null())
-    watch_event_callback_.Run();
-}
-
 void TracingControllerImpl::RegisterTracingUI(TracingUI* tracing_ui) {
   DCHECK(tracing_uis_.find(tracing_ui) == tracing_uis_.end());
   tracing_uis_.insert(tracing_ui);
@@ -868,7 +832,7 @@ void TracingControllerImpl::IssueClockSyncMarker() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(pending_clock_sync_ack_count_ == 0);
 
-  for (const auto& it : additional_tracing_agents_) {
+  for (auto* it : additional_tracing_agents_) {
     if (it->SupportsExplicitClockSync()) {
       it->RecordClockSyncMarker(
           base::GenerateGUID(),
@@ -910,6 +874,26 @@ void TracingControllerImpl::OnClockSyncMarkerRecordedByAgent(
     clock_sync_timer_.Stop();
     StopTracingAfterClockSync();
   }
+}
+
+void TracingControllerImpl::AddFilteredMetadata(
+    TracingController::TraceDataSink* sink,
+    std::unique_ptr<base::DictionaryValue> metadata,
+    const MetadataFilterPredicate& filter) {
+  if (filter.is_null()) {
+    sink->AddMetadata(std::move(metadata));
+    return;
+  }
+  std::unique_ptr<base::DictionaryValue> filtered_metadata(
+      new base::DictionaryValue);
+  for (base::DictionaryValue::Iterator it(*metadata); !it.IsAtEnd();
+       it.Advance()) {
+    if (filter.Run(it.key()))
+      filtered_metadata->Set(it.key(), it.value().DeepCopy());
+    else
+      filtered_metadata->SetString(it.key(), "__stripped__");
+  }
+  sink->AddMetadata(std::move(filtered_metadata));
 }
 
 void TracingControllerImpl::RequestGlobalMemoryDump(

@@ -25,13 +25,6 @@ class AppRegistrationData;
 
 class BrowserDistribution {
  public:
-  enum Type {
-    CHROME_BROWSER,
-    CHROME_FRAME,
-    CHROME_BINARIES,
-    NUM_TYPES
-  };
-
   enum Subfolder {
     SUBFOLDER_CHROME,
     SUBFOLDER_APPS,
@@ -47,19 +40,14 @@ class BrowserDistribution {
 
   static BrowserDistribution* GetDistribution();
 
-  static BrowserDistribution* GetSpecificDistribution(Type type);
-
-  Type GetType() const { return type_; }
-
   // Getter and adaptors for the underlying |app_reg_data_|.
   const AppRegistrationData& GetAppRegistrationData() const;
-  base::string16 GetAppGuid() const;
   base::string16 GetStateKey() const;
   base::string16 GetStateMediumKey() const;
   base::string16 GetVersionKey() const;
 
   virtual void DoPostUninstallOperations(
-      const Version& version,
+      const base::Version& version,
       const base::FilePath& local_data_path,
       const base::string16& distribution_data);
 
@@ -139,8 +127,6 @@ class BrowserDistribution {
 
   virtual bool CanCreateDesktopShortcuts();
 
-  virtual bool GetChromeChannel(base::string16* channel);
-
   // Returns the CommandExecuteImpl class UUID (or empty string if this
   // distribution doesn't include a DelegateExecute verb handler).
   virtual base::string16 GetCommandExecuteImplClsid();
@@ -156,14 +142,12 @@ class BrowserDistribution {
   virtual bool HasUserExperiments();
 
  protected:
-  BrowserDistribution(Type type,
-                      std::unique_ptr<AppRegistrationData> app_reg_data);
+  explicit BrowserDistribution(
+      std::unique_ptr<AppRegistrationData> app_reg_data);
 
   template<class DistributionClass>
   static BrowserDistribution* GetOrCreateBrowserDistribution(
       BrowserDistribution** dist);
-
-  const Type type_;
 
   std::unique_ptr<AppRegistrationData> app_reg_data_;
 

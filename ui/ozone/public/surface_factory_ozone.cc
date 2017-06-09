@@ -9,28 +9,19 @@
 #include "base/command_line.h"
 #include "ui/ozone/public/native_pixmap.h"
 #include "ui/ozone/public/surface_ozone_canvas.h"
-#include "ui/ozone/public/surface_ozone_egl.h"
 
 namespace ui {
 
-SurfaceFactoryOzone::SurfaceFactoryOzone() {
+SurfaceFactoryOzone::SurfaceFactoryOzone() {}
+
+SurfaceFactoryOzone::~SurfaceFactoryOzone() {}
+
+std::vector<gl::GLImplementation>
+SurfaceFactoryOzone::GetAllowedGLImplementations() {
+  return std::vector<gl::GLImplementation>{gl::kGLImplementationOSMesaGL};
 }
 
-SurfaceFactoryOzone::~SurfaceFactoryOzone() {
-}
-
-intptr_t SurfaceFactoryOzone::GetNativeDisplay() {
-  return 0;
-}
-
-std::unique_ptr<SurfaceOzoneEGL> SurfaceFactoryOzone::CreateEGLSurfaceForWidget(
-    gfx::AcceleratedWidget widget) {
-  return nullptr;
-}
-
-std::unique_ptr<SurfaceOzoneEGL>
-SurfaceFactoryOzone::CreateSurfacelessEGLSurfaceForWidget(
-    gfx::AcceleratedWidget widget) {
+GLOzone* SurfaceFactoryOzone::GetGLOzone(gl::GLImplementation implementation) {
   return nullptr;
 }
 

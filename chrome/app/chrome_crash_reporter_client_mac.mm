@@ -7,8 +7,10 @@
 #include <CoreFoundation/CoreFoundation.h>
 
 #include "base/mac/scoped_cftyperef.h"
+#include "base/path_service.h"
 #include "base/strings/sys_string_conversions.h"
-#include "policy/policy_constants.h"
+#include "chrome/common/chrome_paths.h"
+#include "components/policy/policy_constants.h"
 
 #if !defined(DISABLE_NACL)
 #include "base/command_line.h"
@@ -16,6 +18,11 @@
 #include "components/nacl/common/nacl_switches.h"
 #include "native_client/src/trusted/service_runtime/osx/crash_filter.h"
 #endif
+
+bool ChromeCrashReporterClient::GetCrashMetricsLocation(
+    base::FilePath* metrics_dir) {
+  return PathService::Get(chrome::DIR_USER_DATA, metrics_dir);
+}
 
 bool ChromeCrashReporterClient::ReportingIsEnforcedByPolicy(
     bool* breakpad_enabled) {

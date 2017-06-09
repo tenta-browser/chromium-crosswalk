@@ -112,13 +112,14 @@ std::set<FunctionDecl*> GetLateParsedFunctionDecls(TranslationUnitDecl* decl) {
   return v.late_parsed_decls;
 }
 
-std::string GetAutoReplacementTypeAsString(QualType type) {
+std::string GetAutoReplacementTypeAsString(QualType type,
+                                           StorageClass storage_class) {
   QualType non_reference_type = type.getNonReferenceType();
   if (!non_reference_type->isPointerType())
-    return "auto";
+    return storage_class == SC_Static ? "static auto" : "auto";
 
-  std::string result =
-      GetAutoReplacementTypeAsString(non_reference_type->getPointeeType());
+  std::string result = GetAutoReplacementTypeAsString(
+      non_reference_type->getPointeeType(), storage_class);
   result += "*";
   if (non_reference_type.isLocalConstQualified())
     result += " const";
@@ -217,13 +218,6 @@ bool FindBadConstructsConsumer::VisitVarDecl(clang::VarDecl* var_decl) {
 
 void FindBadConstructsConsumer::CheckChromeClass(SourceLocation record_location,
                                                  CXXRecordDecl* record) {
-  // By default, the clang checker doesn't check some types (templates, etc).
-  // That was only a mistake; once Chromium code passes these checks, we should
-  // remove the "check-templates" option and remove this code.
-  // See crbug.com/441916
-  if (!options_.check_templates && IsPodOrTemplateType(*record))
-    return;
-
   bool implementation_file = InImplementationFile(record_location);
 
   if (!implementation_file) {
@@ -368,7 +362,7 @@ void FindBadConstructsConsumer::CheckCtorDtorWeight(
         // The current check is buggy. An implicit copy constructor does not
         // have an inline body, so this check never fires for classes with a
         // user-declared out-of-line constructor.
-        if (it->hasInlineBody() && options_.check_implicit_copy_ctors) {
+        if (it->hasInlineBody()) {
           if (it->isCopyConstructor() &&
               !record->hasUserDeclaredCopyConstructor()) {
             // In general, implicit constructors are generated on demand.  But
@@ -660,7 +654,7 @@ void FindBadConstructsConsumer::CountType(const Type* type,
 
       // HACK: I'm at a loss about how to get the syntax checker to get
       // whether a template is externed or not. For the first pass here,
-      // just do retarded string comparisons.
+      // just do simple string comparisons.
       if (TemplateDecl* decl = name.getAsTemplateDecl()) {
         std::string base_name = decl->getNameAsString();
         if (base_name == "basic_string")
@@ -682,7 +676,15 @@ void FindBadConstructsConsumer::CountType(const Type* type,
     }
     case Type::Typedef: {
       while (const TypedefType* TT = dyn_cast<TypedefType>(type)) {
-        type = TT->getDecl()->getUnderlyingType().getTypePtr();
+        if (auto* decl = TT->getDecl()) {
+          const std::string name = decl->getNameAsString();
+          auto* context = decl->getDeclContext();
+          if (name == "atomic_int" && context->isStdNamespace()) {
+            (*trivial_member)++;
+            return;
+          }
+          type = decl->getUnderlyingType().getTypePtr();
+        }
       }
       CountType(type,
                 trivial_member,
@@ -974,7 +976,7 @@ void FindBadConstructsConsumer::ParseFunctionTemplates(
       continue;
 
     // Parse and build AST for yet-uninstantiated template functions.
-    clang::LateParsedTemplate* lpt = sema.LateParsedTemplateMap[fd];
+    clang::LateParsedTemplate* lpt = sema.LateParsedTemplateMap[fd].get();
     sema.LateTemplateParser(sema.OpaqueParser, *lpt);
   }
 }
@@ -1015,7 +1017,8 @@ void FindBadConstructsConsumer::CheckVarDecl(clang::VarDecl* var_decl) {
                                           diag_auto_deduced_to_a_pointer_type_)
                 << FixItHint::CreateReplacement(
                        range,
-                       GetAutoReplacementTypeAsString(var_decl->getType()));
+                       GetAutoReplacementTypeAsString(
+                           var_decl->getType(), var_decl->getStorageClass()));
           }
         }
       }

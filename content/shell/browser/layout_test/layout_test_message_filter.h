@@ -17,6 +17,7 @@ class GURL;
 
 namespace base {
 class DictionaryValue;
+class NullableString16;
 }
 
 namespace net {
@@ -59,11 +60,12 @@ class LayoutTestMessageFilter : public BrowserMessageFilter {
                                         bool permission_granted);
   void OnClearWebNotificationPermissions();
   void OnSimulateWebNotificationClick(const std::string& title,
-                                      int action_index);
+                                      int action_index,
+                                      const base::NullableString16& reply);
   void OnSimulateWebNotificationClose(const std::string& title, bool by_user);
   void OnSetPushMessagingPermission(const GURL& origin, bool allowed);
   void OnClearPushMessagingPermissions();
-  void OnAcceptAllCookies(bool accept);
+  void OnBlockThirdPartyCookies(bool block);
   void OnDeleteAllCookies();
   void OnSetPermission(const std::string& name,
                        blink::mojom::PermissionStatus status,

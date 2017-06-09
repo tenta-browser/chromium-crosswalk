@@ -17,6 +17,9 @@ description("Spell checking should be triggered on focus of an editable. " +
 "should be marked on focus.Turn spell checker off and on again and again focus editables. " +
 "Mispelling should be marked again");
 
+if (window.testRunner)
+    testRunner.setMockSpellCheckerEnabled(true);
+
 var frame1 = document.getElementById("frame1");
 var testEditable1 = frame1.contentWindow.document.createElement("div");
 testEditable1.setAttribute("contentEditable", "true");
@@ -29,8 +32,7 @@ testEditable1.innerText = "zz zz zz.";
 testEditable2.innerText = "zz zz zz.";
 
 if (window.internals) {
-    internals.settings.setUnifiedTextCheckerEnabled(true);
-    internals.setContinuousSpellCheckingEnabled(true);
+    internals.setSpellCheckingEnabled(true);
 
     shouldBe('internals.markerCountForNode(testEditable1.childNodes[0], "spelling")', '0');
     shouldBe('internals.markerCountForNode(testEditable2.childNodes[0], "spelling")', '0');
@@ -38,10 +40,10 @@ if (window.internals) {
     shouldBe('internals.markerCountForNode(testEditable1.childNodes[0], "spelling")', '3');
     testEditable2.focus();
     shouldBe('internals.markerCountForNode(testEditable1.childNodes[0], "spelling")', '3');
-    internals.setContinuousSpellCheckingEnabled(false);
+    internals.setSpellCheckingEnabled(false);
     shouldBe('internals.markerCountForNode(testEditable1.childNodes[0], "spelling")', '0');
     shouldBe('internals.markerCountForNode(testEditable2.childNodes[0], "spelling")', '0');
-    internals.setContinuousSpellCheckingEnabled(true);
+    internals.setSpellCheckingEnabled(true);
     testEditable1.focus();
     testEditable2.focus();
     shouldBe('internals.markerCountForNode(testEditable1.childNodes[0], "spelling")', '3');

@@ -10,6 +10,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <unordered_set>
 
 #include "base/files/file_path.h"
 #include "base/macros.h"
@@ -45,6 +46,17 @@ class ArcDefaultAppList {
     base::FilePath app_path;  // App folder that contains pre-installed icons.
   };
 
+  enum class FilterLevel {
+    // Filter nothing.
+    NOTHING,
+    // Filter out only optional apps, excluding Play Store for example. Used in
+    // case when Play Store is managed and enabled.
+    OPTIONAL_APPS,
+    // Filter out everything. Used in case when Play Store is managed and
+    // disabled.
+    ALL
+  };
+
   // Defines App id to default AppInfo mapping.
   using AppInfoMap = std::map<std::string, std::unique_ptr<AppInfo>>;
 
@@ -67,11 +79,18 @@ class ArcDefaultAppList {
   void MaybeMarkPackageUninstalled(const std::string& package_name,
                                    bool uninstalled);
 
+  // Returns set of packages which are marked not as uninstalled.
+  std::unordered_set<std::string> GetActivePackages() const;
+
   const AppInfoMap& app_map() const { return apps_; }
+
+  void set_filter_level(FilterLevel filter_level) {
+    filter_level_ = filter_level;
+  }
 
  private:
   // Defines mapping package name to uninstalled state.
-  using PacakageMap = std::map<std::string, bool>;
+  using PackageMap = std::map<std::string, bool>;
 
   // Called when default apps are read.
   void OnAppsReady(std::unique_ptr<AppInfoMap> apps);
@@ -79,9 +98,10 @@ class ArcDefaultAppList {
   // Unowned pointer.
   Delegate* const delegate_;
   content::BrowserContext* const context_;
+  FilterLevel filter_level_ = FilterLevel::ALL;
 
   AppInfoMap apps_;
-  PacakageMap packages_;
+  PackageMap packages_;
 
   base::WeakPtrFactory<ArcDefaultAppList> weak_ptr_factory_;
 

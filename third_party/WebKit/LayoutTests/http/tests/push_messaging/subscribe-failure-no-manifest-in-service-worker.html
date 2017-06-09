@@ -20,9 +20,10 @@ async_test(function(test) {
 
     getActiveServiceWorkerWithMessagePort(test, script, scope)
         .then(function(workerInfo) {
-            // Call subscribe in service worker context. It will fail because although the sender
-            // id has been specified in the manifest, the manifest cannot be read in a service
-            // worker context, and no previous subscription will exist from a document context.
+            // Call subscribe in service worker context. It will fail because
+            // although the sender id has been specified in the manifest, the
+            // manifest cannot be read in a service worker context, and no
+            // previous subscription will exist from a document context.
             workerInfo.port.postMessage({command: 'subscribe'});
 
             workerInfo.port.addEventListener('message', function(event) {
@@ -31,8 +32,9 @@ async_test(function(test) {
 
                 assert_equals(event.data.command, 'subscribe');
                 assert_false(event.data.success, 'subscribe is not expected to succeed.');
-                assert_regexp_match(event.data.errorMessage,
-                                    /gcm_sender_id not found in manifest/);
+                assert_regexp_match(
+                    event.data.errorMessage,
+                    /missing applicationServerKey, and gcm_sender_id not found in manifest/);
 
                 test.done();
             });

@@ -14,7 +14,6 @@
 #include "content/renderer/media/webrtc/peer_connection_remote_audio_source.h"
 #include "content/renderer/media/webrtc_audio_renderer.h"
 #include "content/renderer/render_thread_impl.h"
-#include "media/base/audio_hardware_config.h"
 #include "third_party/WebKit/public/platform/WebMediaStream.h"
 #include "third_party/webrtc/api/mediastreaminterface.h"
 
@@ -62,13 +61,14 @@ MediaStreamRendererFactoryImpl::GetVideoRenderer(
     const blink::WebMediaStream& web_stream,
     const base::Closure& error_cb,
     const MediaStreamVideoRenderer::RepaintCB& repaint_cb,
+    const scoped_refptr<base::SingleThreadTaskRunner>& io_task_runner,
     const scoped_refptr<base::SingleThreadTaskRunner>& media_task_runner,
     const scoped_refptr<base::TaskRunner>& worker_task_runner,
     media::GpuVideoAcceleratorFactories* gpu_factories) {
   DCHECK(!web_stream.isNull());
 
   DVLOG(1) << "MediaStreamRendererFactoryImpl::GetVideoRenderer stream:"
-           << base::UTF16ToUTF8(base::StringPiece16(web_stream.id()));
+           << web_stream.id().utf8();
 
   blink::WebVector<blink::WebMediaStreamTrack> video_tracks;
   web_stream.videoTracks(video_tracks);
@@ -78,8 +78,8 @@ MediaStreamRendererFactoryImpl::GetVideoRenderer(
   }
 
   return new MediaStreamVideoRendererSink(video_tracks[0], error_cb, repaint_cb,
-                                          media_task_runner, worker_task_runner,
-                                          gpu_factories);
+                                          io_task_runner, media_task_runner,
+                                          worker_task_runner, gpu_factories);
 }
 
 scoped_refptr<MediaStreamAudioRenderer>
@@ -95,7 +95,7 @@ MediaStreamRendererFactoryImpl::GetAudioRenderer(
     return NULL;
 
   DVLOG(1) << "MediaStreamRendererFactoryImpl::GetAudioRenderer stream:"
-           << base::UTF16ToUTF8(base::StringPiece16(web_stream.id()));
+           << web_stream.id().utf8();
 
   // TODO(tommi): We need to fix the data flow so that
   // it works the same way for all track implementations, local, remote or what

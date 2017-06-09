@@ -13,7 +13,7 @@
 #include "content/public/renderer/render_thread.h"
 #include "media/base/audio_capturer_source.h"
 #include "media/base/bind_to_current_loop.h"
-#include "media/base/video_capturer_source.h"
+#include "media/capture/video_capturer_source.h"
 #include "third_party/WebKit/public/platform/WebMediaStream.h"
 #include "third_party/WebKit/public/platform/WebMediaStreamSource.h"
 #include "third_party/WebKit/public/platform/WebMediaStreamTrack.h"
@@ -59,8 +59,7 @@ class CastReceiverSession::VideoCapturerSource
 
 CastReceiverSession::CastReceiverSession()
     : delegate_(new CastReceiverSessionDelegate()),
-      io_task_runner_(
-          content::RenderThread::Get()->GetIOMessageLoopProxy()) {}
+      io_task_runner_(content::RenderThread::Get()->GetIOTaskRunner()) {}
 
 CastReceiverSession::~CastReceiverSession() {
   // We should always be able to delete the object on the IO thread.

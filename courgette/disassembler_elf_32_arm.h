@@ -16,7 +16,7 @@
 
 namespace courgette {
 
-class AssemblyProgram;
+class InstructionReceptor;
 
 enum ARM_RVA {
   ARM_OFF8,
@@ -28,6 +28,11 @@ enum ARM_RVA {
 
 class DisassemblerElf32ARM : public DisassemblerElf32 {
  public:
+  // Returns true if a valid executable is detected using only quick checks.
+  static bool QuickDetect(const uint8_t* start, size_t length) {
+    return DisassemblerElf32::QuickDetect(start, length, EM_ARM);
+  }
+
   class TypedRVAARM : public TypedRVA {
    public:
     TypedRVAARM(ARM_RVA type, RVA rva) : TypedRVA(rva), type_(type) { }
@@ -35,8 +40,8 @@ class DisassemblerElf32ARM : public DisassemblerElf32 {
 
     // TypedRVA interfaces.
     CheckBool ComputeRelativeTarget(const uint8_t* op_pointer) override;
-    CheckBool EmitInstruction(AssemblyProgram* program,
-                              Label* label) override;
+    CheckBool EmitInstruction(Label* label,
+                              InstructionReceptor* receptor) override;
     uint16_t op_size() const override;
 
     uint16_t c_op() const { return c_op_; }
@@ -47,7 +52,7 @@ class DisassemblerElf32ARM : public DisassemblerElf32 {
     const uint8_t* arm_op_;
   };
 
-  DisassemblerElf32ARM(const void* start, size_t length);
+  DisassemblerElf32ARM(const uint8_t* start, size_t length);
 
   ~DisassemblerElf32ARM() override { }
 
@@ -81,8 +86,8 @@ class DisassemblerElf32ARM : public DisassemblerElf32 {
   CheckBool RelToRVA(Elf32_Rel rel,
                      RVA* result) const override WARN_UNUSED_RESULT;
   CheckBool ParseRelocationSection(const Elf32_Shdr* section_header,
-                                   AssemblyProgram* program)
-      override WARN_UNUSED_RESULT;
+                                   InstructionReceptor* receptor) const override
+      WARN_UNUSED_RESULT;
   CheckBool ParseRel32RelocsFromSection(const Elf32_Shdr* section)
       override WARN_UNUSED_RESULT;
 
@@ -90,6 +95,7 @@ class DisassemblerElf32ARM : public DisassemblerElf32 {
   std::map<RVA, int> rel32_target_rvas_;
 #endif
 
+ private:
   DISALLOW_COPY_AND_ASSIGN(DisassemblerElf32ARM);
 };
 

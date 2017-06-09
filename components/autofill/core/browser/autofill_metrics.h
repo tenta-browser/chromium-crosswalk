@@ -17,7 +17,17 @@
 
 namespace base {
 class TimeDelta;
-}
+}  // namespace base
+
+namespace ukm {
+class UkmService;
+}  // namespace ukm
+
+namespace internal {
+// Name constants are exposed here so they can be referenced from tests.
+extern const char kUKMCardUploadDecisionEntryName[];
+extern const char kUKMCardUploadDecisionMetricName[];
+}  // namespace internal
 
 namespace autofill {
 
@@ -383,6 +393,13 @@ class AutofillMetrics {
     FORM_EVENT_LOCAL_SUGGESTION_WILL_SUBMIT_ONCE,
     FORM_EVENT_SERVER_SUGGESTION_WILL_SUBMIT_ONCE,
     FORM_EVENT_MASKED_SERVER_CARD_SUGGESTION_WILL_SUBMIT_ONCE,
+    // A dropdown with suggestions was shown and a form was submitted after
+    // that.
+    FORM_EVENT_SUGGESTION_SHOWN_SUBMITTED_ONCE,
+    // A dropdown with suggestions was shown and a form is about to be
+    // submitted. If the submission is not interrupted by JavaScript, the "form
+    // submitted" event above will also be logged.
+    FORM_EVENT_SUGGESTION_SHOWN_WILL_SUBMIT_ONCE,
 
     NUM_FORM_EVENTS,
   };
@@ -511,8 +528,19 @@ class AutofillMetrics {
     NUM_WALLET_REQUIRED_ACTIONS
   };
 
+  // For mesuring how wallet addresses are converted to local profiles.
+  enum WalletAddressConversionType : int {
+    // The converted wallet address was merged into an existing local profile.
+    CONVERTED_ADDRESS_MERGED,
+    // The converted wallet address was added as a new local profile.
+    CONVERTED_ADDRESS_ADDED,
+    NUM_CONVERTED_ADDRESS_CONVERSION_TYPES
+  };
+
   static void LogCardUploadDecisionMetric(CardUploadDecisionMetric metric);
-  static void LogCreditCardInfoBarMetric(InfoBarMetric metric);
+  static void LogCreditCardInfoBarMetric(InfoBarMetric metric,
+                                         bool is_uploading);
+  static void LogCreditCardFillingInfoBarMetric(InfoBarMetric metric);
   static void LogSaveCardPromptMetric(SaveCardPromptMetric metric,
                                       bool is_uploading,
                                       bool is_reshow);
@@ -600,6 +628,10 @@ class AutofillMetrics {
   // This should be called each time a new profile is launched.
   static void LogStoredLocalCreditCardCount(size_t num_local_cards);
 
+  // This should be called each time a new profile is launched.
+  static void LogStoredServerCreditCardCounts(size_t num_masked_cards,
+                                              size_t num_unmasked_cards);
+
   // Log the number of profiles available when an autofillable form is
   // submitted.
   static void LogNumberOfProfilesAtAutofillableFormSubmission(
@@ -646,6 +678,32 @@ class AutofillMetrics {
   // Log how many profiles were removed as part of the deduplication process.
   static void LogNumberOfProfilesRemovedDuringDedupe(size_t num_removed);
 
+  // Log whether the Autofill query on a credit card form is made in a secure
+  // context.
+  static void LogIsQueriedCreditCardFormSecure(bool is_secure);
+
+  // Log how the converted wallet address was added to the local autofill
+  // profiles.
+  static void LogWalletAddressConversionType(WalletAddressConversionType type);
+
+  // This should be called when the user selects the Form-Not-Secure warning
+  // suggestion to show an explanation of the warning.
+  static void LogShowedHttpNotSecureExplanation();
+
+  // Logs the card upload decision ukm based on the specified |url| and
+  // |upload_decision|.
+  static void LogCardUploadDecisionUkm(
+      ukm::UkmService* ukm_service,
+      const GURL& url,
+      AutofillMetrics::CardUploadDecisionMetric upload_decision);
+
+  // Logs the the |ukm_entry_name| with the specified |url| and the specified
+  // |metrics|. Returns whether the ukm was sucessfully logged.
+  static bool LogUkm(ukm::UkmService* ukm_service,
+                     const GURL& url,
+                     const std::string& ukm_entry_name,
+                     const std::map<std::string, int>& metrics);
+
   // Utility to autofill form events in the relevant histograms depending on
   // the presence of server and/or local data.
   class FormEventLogger {
@@ -658,6 +716,10 @@ class AutofillMetrics {
 
     inline void set_is_local_data_available(bool is_local_data_available) {
       is_local_data_available_ = is_local_data_available;
+    }
+
+    inline void set_is_context_secure(bool is_context_secure) {
+      is_context_secure_ = is_context_secure;
     }
 
     void OnDidInteractWithAutofillableForm();
@@ -684,6 +746,7 @@ class AutofillMetrics {
     bool is_for_credit_card_;
     bool is_server_data_available_;
     bool is_local_data_available_;
+    bool is_context_secure_;
     bool has_logged_interacted_;
     bool has_logged_suggestions_shown_;
     bool has_logged_masked_server_card_suggestion_selected_;

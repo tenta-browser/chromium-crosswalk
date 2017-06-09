@@ -29,12 +29,18 @@
 import base64
 import time
 
+from webkitpy.common.system.crash_logs import CrashLogs
+from webkitpy.layout_tests.models import test_run_results
+from webkitpy.layout_tests.models.test_configuration import TestConfiguration
 from webkitpy.layout_tests.port.base import Port, VirtualTestSuite
 from webkitpy.layout_tests.port.driver import DeviceFailure, Driver, DriverOutput
-from webkitpy.layout_tests.models.test_configuration import TestConfiguration
-from webkitpy.layout_tests.models import test_run_results
-from webkitpy.common.system.filesystem_mock import MockFileSystem
-from webkitpy.common.system.crashlogs import CrashLogs
+
+
+# Here we use a non-standard location for the layout tests, to ensure that
+# this works. The path contains a '.' in the name because we've seen bugs
+# related to this before.
+LAYOUT_TEST_DIR = '/test.checkout/LayoutTests'
+PERF_TEST_DIR = '/test.checkout/PerformanceTests'
 
 
 # This sets basic expectations for a test. Each individual expectation
@@ -103,9 +109,11 @@ class TestList(object):
 #
 # These numbers may need to be updated whenever we add or delete tests. This includes virtual tests.
 #
-TOTAL_TESTS = 114
-TOTAL_SKIPS = 26
-TOTAL_CRASHES = 80
+TOTAL_TESTS = 106
+TOTAL_WONTFIX = 3
+TOTAL_SKIPS = 22 + TOTAL_WONTFIX
+TOTAL_CRASHES = 76
+
 UNEXPECTED_PASSES = 1
 UNEXPECTED_FAILURES = 26
 
@@ -117,7 +125,6 @@ def unit_test_list():
     tests.add('failures/expected/device_failure.html', device_failure=True)
     tests.add('failures/expected/timeout.html', timeout=True)
     tests.add('failures/expected/leak.html', leak=True)
-    tests.add('failures/expected/missing_text.html', expected_text=None)
     tests.add('failures/expected/needsrebaseline.html', actual_text='needsrebaseline text')
     tests.add('failures/expected/needsmanualrebaseline.html', actual_text='needsmanualrebaseline text')
     tests.add('failures/expected/image.html',
@@ -132,14 +139,6 @@ def unit_test_list():
               actual_image=None, expected_image=None,
               actual_checksum=None)
     tests.add('failures/expected/keyboard.html', keyboard=True)
-    tests.add('failures/expected/missing_check.html',
-              expected_image='missing_check-png')
-    tests.add('failures/expected/missing_image.html', expected_image=None)
-    tests.add('failures/expected/missing_audio.html', expected_audio=None,
-              actual_text=None, expected_text=None,
-              actual_image=None, expected_image=None,
-              actual_checksum=None)
-    tests.add('failures/expected/missing_text.html', expected_text=None)
     tests.add('failures/expected/newlines_leading.html',
               expected_text="\nfoo\n", actual_text="foo\n")
     tests.add('failures/expected/newlines_trailing.html',
@@ -269,22 +268,14 @@ layer at (0,0) size 800x34
     return tests
 
 
-# Here we use a non-standard location for the layout tests, to ensure that
-# this works. The path contains a '.' in the name because we've seen bugs
-# related to this before.
-
-LAYOUT_TEST_DIR = '/test.checkout/LayoutTests'
-PERF_TEST_DIR = '/test.checkout/PerformanceTests'
-
-
 # Here we synthesize an in-memory filesystem from the test list
 # in order to fully control the test output and to demonstrate that
 # we don't need a real filesystem to run the tests.
 def add_unit_tests_to_mock_filesystem(filesystem):
     # Add the test_expectations file.
-    filesystem.maybe_make_directory('/mock-checkout/LayoutTests')
-    if not filesystem.exists('/mock-checkout/LayoutTests/TestExpectations'):
-        filesystem.write_text_file('/mock-checkout/LayoutTests/TestExpectations', """
+    filesystem.maybe_make_directory(LAYOUT_TEST_DIR)
+    if not filesystem.exists(LAYOUT_TEST_DIR + '/TestExpectations'):
+        filesystem.write_text_file(LAYOUT_TEST_DIR + '/TestExpectations', """
 Bug(test) failures/expected/crash.html [ Crash ]
 Bug(test) failures/expected/crash_then_text.html [ Failure ]
 Bug(test) failures/expected/image.html [ Failure ]
@@ -293,10 +284,6 @@ Bug(test) failures/expected/needsmanualrebaseline.html [ NeedsManualRebaseline ]
 Bug(test) failures/expected/audio.html [ Failure ]
 Bug(test) failures/expected/image_checksum.html [ Failure ]
 Bug(test) failures/expected/mismatch.html [ Failure ]
-Bug(test) failures/expected/missing_check.html [ Missing Pass ]
-Bug(test) failures/expected/missing_image.html [ Missing Pass ]
-Bug(test) failures/expected/missing_audio.html [ Missing Pass ]
-Bug(test) failures/expected/missing_text.html [ Missing Pass ]
 Bug(test) failures/expected/newlines_leading.html [ Failure ]
 Bug(test) failures/expected/newlines_trailing.html [ Failure ]
 Bug(test) failures/expected/newlines_with_excess_CR.html [ Failure ]
@@ -310,6 +297,13 @@ Bug(test) failures/expected/leak.html [ Leak ]
 Bug(test) failures/unexpected/pass.html [ Failure ]
 Bug(test) passes/skipped/skip.html [ Skip ]
 Bug(test) passes/text.html [ Pass ]
+""")
+
+    if not filesystem.exists(LAYOUT_TEST_DIR + '/NeverFixTests'):
+        filesystem.write_text_file(LAYOUT_TEST_DIR + '/NeverFixTests', """
+Bug(test) failures/expected/keyboard.html [ WontFix ]
+Bug(test) failures/expected/exception.html [ WontFix ]
+Bug(test) failures/expected/device_failure.html [ WontFix ]
 """)
 
     filesystem.maybe_make_directory(LAYOUT_TEST_DIR + '/reftests/foo')
@@ -365,27 +359,13 @@ class TestPort(Port):
     port_name = 'test'
     default_port_name = 'test-mac-mac10.10'
 
-    # TODO(wkorman): The below constant is legacy code and is only referenced by a unit test. Find the modern way to do
-    # the same thing that test is doing and delete this.
-    #
-    # A list of platform names sufficient to cover all the baselines.
-    # The list should be sorted so that a later platform  will reuse
-    # an earlier platform's baselines if they are the same (e.g.,
-    # 'mac10.10' should precede 'mac10.9').
-    ALL_BASELINE_VARIANTS = (
-        'test-linux-trusty', 'test-linux-precise', 'test-linux-x86',
-        'test-mac-mac10.11', 'test-mac-mac10.10',
-        'test-win-win10', 'test-win-win7'
-    )
-
     FALLBACK_PATHS = {
         'win7': ['test-win-win7', 'test-win-win10'],
         'win10': ['test-win-win10'],
         'mac10.10': ['test-mac-mac10.10', 'test-mac-mac10.11'],
         'mac10.11': ['test-mac-mac10.11'],
-        'trusty': ['test-linux-trusty', 'test-win-win7'],
-        'precise': ['test-linux-precise', 'test-linux-trusty', 'test-win-win7'],
-        'linux32': ['test-linux-x86', 'test-linux-precise', 'test-linux-trusty', 'test-win-win7'],
+        'trusty': ['test-linux-trusty', 'test-win-win10'],
+        'precise': ['test-linux-precise', 'test-linux-trusty', 'test-win-win10'],
     }
 
     @classmethod
@@ -408,7 +388,7 @@ class TestPort(Port):
         # test ports. rebaseline_unittest.py needs to not mix both "real" ports
         # and "test" ports
 
-        self._generic_expectations_path = '/mock-checkout/LayoutTests/TestExpectations'
+        self._generic_expectations_path = LAYOUT_TEST_DIR + '/TestExpectations'
         self._results_directory = None
 
         self._operating_system = 'mac'
@@ -422,14 +402,30 @@ class TestPort(Port):
             'test-win-win10': 'win10',
             'test-mac-mac10.10': 'mac10.10',
             'test-mac-mac10.11': 'mac10.11',
-            'test-linux-x86': 'linux32',
             'test-linux-precise': 'precise',
             'test-linux-trusty': 'trusty',
         }
         self._version = version_map[self._name]
 
-        if self._operating_system == 'linux' and self._version != 'linux32':
+        if self._operating_system == 'linux':
             self._architecture = 'x86_64'
+
+        self.all_systems = (('mac10.10', 'x86'),
+                            ('mac10.11', 'x86'),
+                            ('win7', 'x86'),
+                            ('win10', 'x86'),
+                            ('precise', 'x86_64'),
+                            ('trusty', 'x86_64'))
+
+        self.all_build_types = ('debug', 'release')
+
+        # To avoid surprises when introducing new macros, these are
+        # intentionally fixed in time.
+        self.configuration_specifier_macros_dict = {
+            'mac': ['mac10.10', 'mac10.11'],
+            'win': ['win7', 'win10'],
+            'linux': ['precise', 'trusty']
+        }
 
     def buildbot_archives_baselines(self):
         return self._name != 'test-win-win7'
@@ -473,7 +469,7 @@ class TestPort(Port):
     def webkit_base(self):
         return '/test.checkout'
 
-    def _skipped_tests_for_unsupported_features(self, test_list):
+    def skipped_layout_tests(self, _):
         return set(['failures/expected/skip_text.html',
                     'failures/unexpected/skip_pass.html',
                     'virtual/skipped/failures/expected'])
@@ -483,9 +479,6 @@ class TestPort(Port):
 
     def operating_system(self):
         return self._operating_system
-
-    def _path_to_wdiff(self):
-        return None
 
     def default_results_directory(self):
         return '/tmp/layout-test-results'
@@ -518,7 +511,7 @@ class TestPort(Port):
         return "/usr/sbin/httpd"
 
     def path_to_apache_config_file(self):
-        return self._filesystem.join(self.layout_tests_dir(), 'http', 'conf', 'httpd.conf')
+        return self._filesystem.join(self.apache_config_directory(), 'httpd.conf')
 
     def path_to_generic_test_expectations_file(self):
         return self._generic_expectations_path
@@ -528,33 +521,16 @@ class TestPort(Port):
         # By default, we assume we want to test every graphics type in
         # every configuration on every system.
         test_configurations = []
-        for version, architecture in self._all_systems():
-            for build_type in self._all_build_types():
+        for version, architecture in self.all_systems:
+            for build_type in self.all_build_types:
                 test_configurations.append(TestConfiguration(
                     version=version,
                     architecture=architecture,
                     build_type=build_type))
         return test_configurations
 
-    def _all_systems(self):
-        return (('mac10.10', 'x86'),
-                ('mac10.11', 'x86'),
-                ('win7', 'x86'),
-                ('win10', 'x86'),
-                ('linux32', 'x86'),
-                ('precise', 'x86_64'),
-                ('trusty', 'x86_64'))
-
-    def _all_build_types(self):
-        return ('debug', 'release')
-
     def configuration_specifier_macros(self):
-        """To avoid surprises when introducing new macros, these are intentionally fixed in time."""
-        return {
-            'mac': ['mac10.10', 'mac10.11'],
-            'win': ['win7', 'win10'],
-            'linux': ['linux32', 'precise', 'trusty']
-        }
+        return self.configuration_specifier_macros_dict
 
     def virtual_test_suites(self):
         return [

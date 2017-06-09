@@ -10,9 +10,12 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/strings/string16.h"
+#include "cc/paint/paint_flags.h"
 #include "ui/views/controls/button/label_button.h"
 
-class SkPaint;
+namespace gfx {
+struct VectorIcon;
+}
 
 namespace views {
 
@@ -40,11 +43,13 @@ class VIEWS_EXPORT Checkbox : public LabelButton {
   // Overridden from LabelButton:
   void Layout() override;
   const char* GetClassName() const override;
-  void GetAccessibleState(ui::AXViewState* state) override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   void OnPaint(gfx::Canvas* canvas) override;
   void OnFocus() override;
   void OnBlur() override;
   void OnNativeThemeChanged(const ui::NativeTheme* theme) override;
+  std::unique_ptr<InkDropRipple> CreateInkDropRipple() const override;
+  SkColor GetInkDropBaseColor() const override;
   gfx::ImageSkia GetImage(ButtonState for_state) const override;
 
   // Set the image shown for each button state depending on whether it is
@@ -55,7 +60,10 @@ class VIEWS_EXPORT Checkbox : public LabelButton {
                       const gfx::ImageSkia& image);
 
   // Paints a focus indicator for the view.
-  virtual void PaintFocusRing(gfx::Canvas* canvas, const SkPaint& paint);
+  virtual void PaintFocusRing(gfx::Canvas* canvas, const cc::PaintFlags& flags);
+
+  // Gets the vector icon to use based on the current state of |checked_|.
+  virtual const gfx::VectorIcon& GetVectorIcon() const;
 
  private:
   // Overridden from Button:
@@ -67,7 +75,7 @@ class VIEWS_EXPORT Checkbox : public LabelButton {
   // True if the checkbox is checked.
   bool checked_;
 
-  // The images for each button state.
+  // The images for each button node_data.
   gfx::ImageSkia images_[2][2][STATE_COUNT];
 
   DISALLOW_COPY_AND_ASSIGN(Checkbox);

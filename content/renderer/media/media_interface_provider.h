@@ -9,37 +9,37 @@
 #include "base/macros.h"
 #include "base/threading/thread_checker.h"
 #include "content/common/content_export.h"
-#include "media/mojo/interfaces/service_factory.mojom.h"
-#include "services/shell/public/interfaces/interface_provider.mojom.h"
+#include "media/mojo/interfaces/interface_factory.mojom.h"
+#include "services/service_manager/public/interfaces/interface_provider.mojom.h"
 #include "url/gurl.h"
+
+namespace service_manager {
+class InterfaceProvider;
+}
 
 namespace content {
 
 // MediaInterfaceProvider is an implementation of mojo InterfaceProvider that
-// provides media related services and handles app disconnection automatically.
+// provides media related services and handles disconnection automatically.
 // This class is single threaded.
 class CONTENT_EXPORT MediaInterfaceProvider
-    : public shell::mojom::InterfaceProvider {
+    : public service_manager::mojom::InterfaceProvider {
  public:
-  // Callback used to connect to a mojo application.
-  using ConnectToApplicationCB =
-      base::Callback<shell::mojom::InterfaceProviderPtr(const GURL& url)>;
-
   explicit MediaInterfaceProvider(
-      const ConnectToApplicationCB& connect_to_app_cb);
+      service_manager::InterfaceProvider* remote_interfaces);
   ~MediaInterfaceProvider() final;
 
   // InterfaceProvider implementation.
-  void GetInterface(const mojo::String& interface_name,
+  void GetInterface(const std::string& interface_name,
                     mojo::ScopedMessagePipeHandle pipe) final;
 
  private:
-  media::mojom::ServiceFactory* GetMediaServiceFactory();
+  media::mojom::InterfaceFactory* GetMediaInterfaceFactory();
   void OnConnectionError();
 
   base::ThreadChecker thread_checker_;
-  ConnectToApplicationCB connect_to_app_cb_;
-  media::mojom::ServiceFactoryPtr media_service_factory_;
+  service_manager::InterfaceProvider* remote_interfaces_;
+  media::mojom::InterfaceFactoryPtr media_interface_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(MediaInterfaceProvider);
 };

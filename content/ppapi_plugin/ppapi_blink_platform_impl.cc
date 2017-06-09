@@ -21,7 +21,7 @@
 #if defined(OS_MACOSX)
 #include "third_party/WebKit/public/platform/mac/WebSandboxSupport.h"
 #elif defined(OS_POSIX) && !defined(OS_ANDROID)
-#include "content/common/child_process_sandbox_support_impl_linux.h"
+#include "content/child/child_process_sandbox_support_impl_linux.h"
 #include "third_party/WebKit/public/platform/linux/WebFallbackFont.h"
 #include "third_party/WebKit/public/platform/linux/WebSandboxSupport.h"
 #include "third_party/icu/source/common/unicode/utf16.h"
@@ -143,11 +143,6 @@ blink::WebClipboard* PpapiBlinkPlatformImpl::clipboard() {
   return NULL;
 }
 
-blink::WebMimeRegistry* PpapiBlinkPlatformImpl::mimeRegistry() {
-  NOTREACHED();
-  return NULL;
-}
-
 blink::WebFileUtilities* PpapiBlinkPlatformImpl::fileUtilities() {
   NOTREACHED();
   return NULL;
@@ -215,6 +210,7 @@ blink::WebURLLoader* PpapiBlinkPlatformImpl::createURLLoader() {
 
 void PpapiBlinkPlatformImpl::getPluginList(
     bool refresh,
+    const blink::WebSecurityOrigin& mainFrameOrigin,
     blink::WebPluginListBuilder* builder) {
   NOTREACHED();
 }

@@ -206,7 +206,7 @@ FileTasks.prototype.openSuggestAppsDialog = function(
   var extension = splitted[1];
 
   // Returns with failure if the file has neither extension nor MIME type.
-  if (!extension || !mimeType) {
+  if (!extension && !mimeType) {
     onFailure();
     return;
   }
@@ -235,9 +235,8 @@ FileTasks.prototype.openSuggestAppsDialog = function(
  *
  * @const
  * @type {Array<string>}
- * @private
  */
-FileTasks.UMA_INDEX_KNOWN_EXTENSIONS_ = Object.freeze([
+FileTasks.UMA_INDEX_KNOWN_EXTENSIONS = Object.freeze([
   'other', '.3ga', '.3gp', '.aac', '.alac', '.asf', '.avi', '.bmp', '.csv',
   '.doc', '.docx', '.flac', '.gif', '.jpeg', '.jpg', '.log', '.m3u', '.m3u8',
   '.m4a', '.m4v', '.mid', '.mkv', '.mov', '.mp3', '.mp4', '.mpg', '.odf',
@@ -277,11 +276,11 @@ FileTasks.recordViewingFileTypeUMA_ = function(entries) {
   for (var i = 0; i < entries.length; i++) {
     var entry = entries[i];
     var extension = FileType.getExtension(entry).toLowerCase();
-    if (FileTasks.UMA_INDEX_KNOWN_EXTENSIONS_.indexOf(extension) < 0) {
+    if (FileTasks.UMA_INDEX_KNOWN_EXTENSIONS.indexOf(extension) < 0) {
       extension = 'other';
     }
     metrics.recordEnum(
-        'ViewingFileType', extension, FileTasks.UMA_INDEX_KNOWN_EXTENSIONS_);
+        'ViewingFileType', extension, FileTasks.UMA_INDEX_KNOWN_EXTENSIONS);
   }
 };
 
@@ -317,7 +316,7 @@ FileTasks.annotateTasks_ = function(tasks, entries) {
     var task = tasks[i];
     var taskParts = task.taskId.split('|');
 
-    // Skip internal Files.app's handlers.
+    // Skip internal Files app's handlers.
     if (taskParts[0] === id &&
         (taskParts[2] === 'select' || taskParts[2] === 'open')) {
       continue;
@@ -496,10 +495,8 @@ FileTasks.prototype.executeDefaultInternal_ = function(opt_callback) {
         break;
       case 'message_sent':
         util.isTeleported(window).then(function(teleported) {
-          if (teleported) {
-            util.showOpenInOtherDesktopAlert(
-                this.ui_.alertDialog, this.entries_);
-          }
+          if (teleported)
+            this.ui_.showOpenInOtherDesktopAlert(this.entries_);
         }.bind(this));
         callback(true, this.entries_);
         break;
@@ -546,10 +543,8 @@ FileTasks.prototype.executeInternal_ = function(taskId) {
             if (result !== 'message_sent')
               return;
             util.isTeleported(window).then(function(teleported) {
-              if (teleported) {
-                util.showOpenInOtherDesktopAlert(
-                    this.ui_.alertDialog, this.entries_);
-              }
+              if (teleported)
+                this.ui_.showOpenInOtherDesktopAlert(this.entries_);
             }.bind(this));
       }.bind(this));
     }

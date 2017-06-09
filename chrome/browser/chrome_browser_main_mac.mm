@@ -13,6 +13,7 @@
 #import "base/mac/foundation_util.h"
 #include "base/mac/mac_util.h"
 #include "base/mac/scoped_nsobject.h"
+#include "base/mac/sdk_forward_declarations.h"
 #include "base/path_service.h"
 #include "base/threading/thread_task_runner_handle.h"
 #import "chrome/browser/app_controller_mac.h"
@@ -20,6 +21,7 @@
 #include "chrome/browser/browser_process.h"
 #import "chrome/browser/chrome_browser_application_mac.h"
 #include "chrome/browser/mac/install_from_dmg.h"
+#include "chrome/browser/mac/keychain_reauthorize.h"
 #import "chrome/browser/mac/keystone_glue.h"
 #include "chrome/browser/mac/mac_startup_profiler.h"
 #include "chrome/browser/ui/app_list/app_list_service.h"
@@ -149,9 +151,23 @@ void ChromeBrowserMainPartsMac::PreMainMessageLoopStart() {
                                bundle:base::mac::FrameworkBundle()]);
   // TODO(viettrungluu): crbug.com/20504 - This currently leaks, so if you
   // change this, you'll probably need to change the Valgrind suppression.
-  [nib instantiateNibWithOwner:NSApp topLevelObjects:nil];
+  NSArray* top_level_objects = nil;
+  [nib instantiateWithOwner:NSApp topLevelObjects:&top_level_objects];
+  for (NSObject* object : top_level_objects)
+    [object retain];
   // Make sure the app controller has been created.
   DCHECK([NSApp delegate]);
+
+  // Do Keychain reauthorization. This gets two chances to run. If the first
+  // try doesn't complete successfully (crashes or is interrupted for any
+  // reason), there will be a second chance. Once this step completes
+  // successfully, it should never have to run again.
+  NSString* const keychain_reauthorize_pref =
+      @"KeychainReauthorizeInAppSpring2017";
+  const int kKeychainReauthorizeMaxTries = 2;
+
+  chrome::KeychainReauthorizeIfNeeded(keychain_reauthorize_pref,
+                                      kKeychainReauthorizeMaxTries);
 }
 
 void ChromeBrowserMainPartsMac::PostMainMessageLoopStart() {

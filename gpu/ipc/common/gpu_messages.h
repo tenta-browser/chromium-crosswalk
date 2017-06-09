@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "base/memory/shared_memory.h"
+#include "base/unguessable_token.h"
 #include "build/build_config.h"
 #include "gpu/command_buffer/common/capabilities.h"
 #include "gpu/command_buffer/common/command_buffer.h"
@@ -36,9 +37,7 @@
 #include "ui/gfx/swap_result.h"
 #include "url/ipc/url_param_traits.h"
 
-#if defined(OS_ANDROID)
-#include "gpu/ipc/common/android/surface_texture_peer.h"
-#elif defined(OS_MACOSX)
+#if defined(OS_MACOSX)
 #include "ui/base/cocoa/remote_layer_api.h"
 #include "ui/gfx/mac/io_surface.h"
 #endif
@@ -77,7 +76,6 @@ IPC_STRUCT_BEGIN(GpuCommandBufferMsg_SwapBuffersCompleted_Params)
   // TODO(ccameron): Remove these parameters once the CALayer tree is hosted in
   // the browser process.
   // https://crbug.com/604052
-  IPC_STRUCT_MEMBER(gpu::SurfaceHandle, surface_handle)
   // Only one of ca_context_id or io_surface may be non-0.
   IPC_STRUCT_MEMBER(CAContextID, ca_context_id)
   IPC_STRUCT_MEMBER(bool, fullscreen_low_power_ca_context_valid)
@@ -124,12 +122,10 @@ IPC_SYNC_MESSAGE_CONTROL0_1(GpuChannelMsg_GetDriverBugWorkArounds,
 
 #if defined(OS_ANDROID)
 //------------------------------------------------------------------------------
-// Stream Texture Messages
-// Tells the GPU process create and send the java surface texture object to
-// the renderer process through the binder thread.
-IPC_MESSAGE_ROUTED2(GpuStreamTextureMsg_EstablishPeer,
-                    int32_t, /* primary_id */
-                    int32_t /* secondary_id */)
+// Tells the StreamTexture to send its SurfaceTexture to the browser process,
+// via the ScopedSurfaceRequestConduit.
+IPC_MESSAGE_ROUTED1(GpuStreamTextureMsg_ForwardForSurfaceRequest,
+                    base::UnguessableToken)
 
 // Tells the GPU process to set the size of StreamTexture from the given
 // stream Id.
@@ -247,3 +243,6 @@ IPC_SYNC_MESSAGE_ROUTED2_1(GpuCommandBufferMsg_CreateStreamTexture,
                            uint32_t, /* client_texture_id */
                            int32_t,  /* stream_id */
                            bool /* succeeded */)
+
+// Start or stop VSync sygnal production on GPU side (Windows only).
+IPC_MESSAGE_ROUTED1(GpuCommandBufferMsg_SetNeedsVSync, bool /* needs_vsync */)

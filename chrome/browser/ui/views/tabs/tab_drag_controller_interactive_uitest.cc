@@ -9,7 +9,9 @@
 #include <algorithm>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/callback.h"
+#include "base/callback_helpers.h"
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/macros.h"
@@ -40,6 +42,7 @@
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/content_switches.h"
 #include "ui/base/test/ui_controls.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
@@ -59,18 +62,21 @@
 #endif
 
 #if defined(USE_ASH)
-#include "ash/aura/wm_window_aura.h"
+#include "ash/common/ash_switches.h"
 #include "ash/common/wm/root_window_finder.h"
 #include "ash/common/wm/window_state.h"
-#include "ash/display/display_manager.h"
+#include "ash/common/wm_window.h"
 #include "ash/shell.h"
 #include "ash/test/cursor_manager_test_api.h"
+#include "ash/test/immersive_fullscreen_controller_test_api.h"
 #include "ash/wm/window_state_aura.h"
 #include "ash/wm/window_util.h"
 #include "chrome/browser/ui/views/frame/immersive_mode_controller.h"
+#include "chrome/browser/ui/views/frame/immersive_mode_controller_ash.h"
 #include "ui/aura/client/screen_position_client.h"
 #include "ui/aura/test/event_generator_delegate_aura.h"
 #include "ui/aura/window_event_dispatcher.h"
+#include "ui/display/manager/display_manager.h"
 #include "ui/events/test/event_generator.h"
 #endif
 
@@ -206,6 +212,10 @@ void TabDragControllerTest::SetWindowFinderForTabStrip(
     std::unique_ptr<WindowFinder> window_finder) {
   ASSERT_TRUE(tab_strip->drag_controller_.get());
   tab_strip->drag_controller_->window_finder_ = std::move(window_finder);
+}
+
+void TabDragControllerTest::SetUpCommandLine(base::CommandLine* command_line) {
+  command_line->AppendSwitch(switches::kDisableResizeLock);
 }
 
 namespace {
@@ -394,9 +404,9 @@ class DetachToBrowserTabDragControllerTest
     if (input_source() == INPUT_SOURCE_MOUSE)
       return;
 #if defined(OS_CHROMEOS)
-    event_generator_.reset(new ui::test::EventGenerator(
-        new ScreenEventGeneratorDelegate(ash::WmWindowAura::GetAuraWindow(
-            ash::wm::GetRootWindowAt(point)))));
+    event_generator_.reset(
+        new ui::test::EventGenerator(new ScreenEventGeneratorDelegate(
+            ash::WmWindow::GetAuraWindow(ash::wm::GetRootWindowAt(point)))));
 #endif
   }
 
@@ -532,7 +542,7 @@ class DetachToBrowserTabDragControllerTest
       // Schedule observer to quit message loop when done dragging. This has to
       // be async so the message loop can run.
       test::QuitWhenNotDraggingImpl();
-      base::MessageLoop::current()->Run();
+      base::RunLoop().Run();
     } else {
       // Touch events are sync, so we know we're not in a drag session. But some
       // tests rely on the browser fully closing, which is async. So, run all
@@ -666,16 +676,9 @@ void DragToSeparateWindowStep2(DetachToBrowserTabDragControllerTest* test,
 
 }  // namespace
 
-#if defined(OS_CHROMEOS) || defined(OS_LINUX)
-// TODO(sky,sad): Disabled as it fails due to resize locks with a real
-// compositor. crbug.com/331924
-#define MAYBE_DragToSeparateWindow DISABLED_DragToSeparateWindow
-#else
-#define MAYBE_DragToSeparateWindow DragToSeparateWindow
-#endif
 // Creates two browsers, drags from first into second.
 IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTest,
-                       MAYBE_DragToSeparateWindow) {
+                       DragToSeparateWindow) {
   TabStrip* tab_strip = GetTabStripForBrowser(browser());
 
   // Add another tab to browser().
@@ -796,18 +799,55 @@ bool HasUserChangedWindowPositionOrSize(gfx::NativeWindow window) {
 }
 #endif
 
+// Encapsulates waiting for the browser window to become maximized. This is
+// needed for example on Chrome desktop linux, where window maximization is done
+// asynchronously as an event received from a different process.
+class MaximizedBrowserWindowWaiter {
+ public:
+  explicit MaximizedBrowserWindowWaiter(BrowserWindow* window)
+      : window_(window) {}
+  ~MaximizedBrowserWindowWaiter() = default;
+
+  // Blocks until the browser window becomes maximized.
+  void Wait() {
+    if (CheckMaximized())
+      return;
+
+    base::RunLoop run_loop;
+    quit_ = run_loop.QuitClosure();
+    run_loop.Run();
+  }
+
+ private:
+  bool CheckMaximized() {
+    if (!window_->IsMaximized()) {
+      base::MessageLoop::current()->task_runner()->PostTask(
+          FROM_HERE, base::Bind(
+              base::IgnoreResult(&MaximizedBrowserWindowWaiter::CheckMaximized),
+              base::Unretained(this)));
+      return false;
+    }
+
+    // Quit the run_loop to end the wait.
+    if (!quit_.is_null())
+      base::ResetAndReturn(&quit_).Run();
+    return true;
+  }
+
+  // The browser window observed by this waiter.
+  BrowserWindow* window_;
+
+  // The waiter's RunLoop quit closure.
+  base::Closure quit_;
+
+  DISALLOW_COPY_AND_ASSIGN(MaximizedBrowserWindowWaiter);
+};
+
 }  // namespace
 
-#if defined(OS_CHROMEOS) || defined(OS_LINUX)
-// TODO(sky,sad): Disabled as it fails due to resize locks with a real
-// compositor. crbug.com/331924
-#define MAYBE_DetachToOwnWindow DISABLED_DetachToOwnWindow
-#else
-#define MAYBE_DetachToOwnWindow DetachToOwnWindow
-#endif
 // Drags from browser to separate window and releases mouse.
 IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTest,
-                       MAYBE_DetachToOwnWindow) {
+                       DetachToOwnWindow) {
   const gfx::Rect initial_bounds(browser()->window()->GetBounds());
   // Add another tab.
   AddTabAndResetBrowser(browser());
@@ -860,9 +900,13 @@ IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTest,
   EXPECT_FALSE(tab_strip2->GetWidget()->HasCapture());
 }
 
-#if defined(OS_CHROMEOS) || defined(OS_LINUX) || defined(OS_MACOSX)
-// TODO(sky,sad): Disabled as it fails due to resize locks with a real
-// compositor. crbug.com/331924
+#if defined(OS_LINUX) || defined(OS_MACOSX)
+// TODO(afakhry,varkha): Disabled on Linux as it fails on the bot because
+// setting the window bounds to the work area bounds in
+// DesktopWindowTreeHostX11::SetBounds() always insets it by one pixel in both
+// width and height. This results in considering the source browser window not
+// being full size, and the test is not as expected.
+// crbug.com/626761, crbug.com/331924.
 // TODO(tapted,mblsha): Disabled as the Mac IsMaximized() behavior is not
 // consistent with other platforms. crbug.com/603562
 #define MAYBE_DetachFromFullsizeWindow DISABLED_DetachFromFullsizeWindow
@@ -923,6 +967,7 @@ IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTest,
 
   // Only second window should be maximized.
   EXPECT_FALSE(browser()->window()->IsMaximized());
+  MaximizedBrowserWindowWaiter(new_browser->window()).Wait();
   EXPECT_TRUE(new_browser->window()->IsMaximized());
 
   // The tab strip should no longer have capture because the drag was ended and
@@ -931,9 +976,7 @@ IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTest,
   EXPECT_FALSE(tab_strip2->GetWidget()->HasCapture());
 }
 
-#if defined(OS_CHROMEOS) || defined(OS_LINUX) || defined(OS_MACOSX)
-// TODO(sky,sad): Disabled as it fails due to resize locks with a real
-// compositor. crbug.com/331924
+#if defined(OS_MACOSX)
 // TODO(tapted,mblsha): Disabled as the Mac IsMaximized() behavior is not
 // consistent with other platforms. crbug.com/603562
 #define MAYBE_DetachToOwnWindowFromMaximizedWindow \
@@ -947,6 +990,7 @@ IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTest,
                        MAYBE_DetachToOwnWindowFromMaximizedWindow) {
   // Maximize the initial browser window.
   browser()->window()->Maximize();
+  MaximizedBrowserWindowWaiter(browser()->window()).Wait();
   ASSERT_TRUE(browser()->window()->IsMaximized());
 
   // Add another tab.
@@ -990,6 +1034,7 @@ IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTest,
       new_browser->window()->GetNativeWindow()));
 
   // The new window should be maximized.
+  MaximizedBrowserWindowWaiter(new_browser->window()).Wait();
   EXPECT_TRUE(new_browser->window()->IsMaximized());
 }
 
@@ -1324,9 +1369,8 @@ IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTest, MAYBE_DragAll) {
   // Size unchanged, but it should have moved down.
   EXPECT_EQ(initial_bounds.size(), final_bounds.size());
   EXPECT_EQ(initial_bounds.origin().x(), final_bounds.origin().x());
-  // TODO(mblsha): Fails on MacViews because of crbug.com/518740
-  // EXPECT_EQ(initial_bounds.origin().y() + GetDetachY(tab_strip),
-  //           final_bounds.origin().y());
+  EXPECT_EQ(initial_bounds.origin().y() + GetDetachY(tab_strip),
+            final_bounds.origin().y());
 }
 
 namespace {
@@ -1971,7 +2015,7 @@ IN_PROC_BROWSER_TEST_P(DetachToBrowserInSeparateDisplayTabDragControllerTest,
                             ->GetDisplayNearestWindow(second_root)
                             .work_area();
   work_area.Inset(20, 20, 20, 60);
-  Browser::CreateParams params(browser()->profile());
+  Browser::CreateParams params(browser()->profile(), true);
   params.initial_show_state = ui::SHOW_STATE_NORMAL;
   params.initial_bounds = work_area;
   Browser* browser2 = new Browser(params);
@@ -2048,11 +2092,17 @@ IN_PROC_BROWSER_TEST_P(DetachToBrowserInSeparateDisplayTabDragControllerTest,
   BrowserView* browser_view2 = BrowserView::GetBrowserViewForBrowser(browser2);
   ImmersiveModeController* immersive_controller2 =
       browser_view2->immersive_mode_controller();
-  immersive_controller2->SetupForTest();
+  ASSERT_EQ(ImmersiveModeController::Type::ASH, immersive_controller2->type());
+  ash::ImmersiveFullscreenControllerTestApi(
+      static_cast<ImmersiveModeControllerAsh*>(immersive_controller2)
+          ->controller())
+      .SetupForTest();
   chrome::ToggleFullscreenMode(browser2);
+  // For MD, the browser's top chrome is completely offscreen, with tabstrip
+  // visible.
   ASSERT_TRUE(immersive_controller2->IsEnabled());
   ASSERT_FALSE(immersive_controller2->IsRevealed());
-  ASSERT_TRUE(tab_strip2->IsImmersiveStyle());
+  ASSERT_TRUE(tab_strip2->visible());
 
   // Move to the first tab and drag it enough so that it detaches, but not
   // enough that it attaches to browser2.
@@ -2072,7 +2122,7 @@ IN_PROC_BROWSER_TEST_P(DetachToBrowserInSeparateDisplayTabDragControllerTest,
   // browser2's top chrome should be revealed and the tab strip should be
   // at normal height while user is tragging tabs_strip2's tabs.
   ASSERT_TRUE(immersive_controller2->IsRevealed());
-  ASSERT_FALSE(tab_strip2->IsImmersiveStyle());
+  ASSERT_TRUE(tab_strip2->visible());
 
   // Release the mouse, stopping the drag session.
   ASSERT_TRUE(ReleaseInput());
@@ -2095,7 +2145,7 @@ IN_PROC_BROWSER_TEST_P(DetachToBrowserInSeparateDisplayTabDragControllerTest,
 
   EXPECT_TRUE(immersive_controller2->IsEnabled());
   EXPECT_FALSE(immersive_controller2->IsRevealed());
-  EXPECT_TRUE(tab_strip2->IsImmersiveStyle());
+  EXPECT_TRUE(tab_strip2->visible());
 }
 
 // Subclass of DetachToBrowserTabDragControllerTest that
@@ -2227,7 +2277,7 @@ class DetachToBrowserInSeparateDisplayAndCancelTabDragControllerTest
   void QuitWhenNotDragging() {
     DCHECK(TabDragController::IsActive());
     test::QuitWhenNotDraggingImpl();
-    base::MessageLoop::current()->Run();
+    base::RunLoop().Run();
   }
 
  private:
@@ -2244,7 +2294,7 @@ void CancelDragTabToWindowInSeparateDisplayStep3(
   ASSERT_EQ(2u, browser_list->size());
 
   // Switching display mode should cancel the drag operation.
-  ash::DisplayManager* display_manager =
+  display::DisplayManager* display_manager =
       ash::Shell::GetInstance()->display_manager();
   display_manager->AddRemoveDisplay();
 }
@@ -2426,7 +2476,11 @@ void DetachToDockedWindowNextStep(
 
 // Drags from browser to separate window, docks that window and releases mouse.
 IN_PROC_BROWSER_TEST_P(DetachToBrowserTabDragControllerTest,
-                       DISABLED_DetachToDockedWindowFromMaximizedWindow) {
+                       DetachToDockedWindowFromMaximizedWindow) {
+  // Enable docked windows for this test.
+  base::CommandLine::ForCurrentProcess()->AppendSwitch(
+      ash::switches::kAshEnableDockedWindows);
+
   // Maximize the initial browser window.
   browser()->window()->Maximize();
   ASSERT_TRUE(browser()->window()->IsMaximized());

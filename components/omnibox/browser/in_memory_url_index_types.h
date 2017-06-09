@@ -53,10 +53,6 @@ TermMatches SortMatches(const TermMatches& matches);
 // cleaned up matches.  Assumes |matches| is already sorted.
 TermMatches DeoverlapMatches(const TermMatches& sorted_matches);
 
-// Sorts and removes overlapping substring matches from |matches| and
-// returns the cleaned up matches.
-TermMatches SortAndDeoverlapMatches(const TermMatches& matches);
-
 // Extracts and returns the offsets from |matches|.  This includes both
 // the offsets corresponding to the beginning of a match and the offsets
 // corresponding to the end of a match (i.e., offset+length for that match).
@@ -151,6 +147,9 @@ typedef std::vector<history::VisitInfo> VisitInfoVector;
 struct HistoryInfoMapValue {
   HistoryInfoMapValue();
   HistoryInfoMapValue(const HistoryInfoMapValue& other);
+  HistoryInfoMapValue(HistoryInfoMapValue&& other);
+  HistoryInfoMapValue& operator=(const HistoryInfoMapValue& other);
+  HistoryInfoMapValue& operator=(HistoryInfoMapValue&& other);
   ~HistoryInfoMapValue();
 
   // This field is always populated.
@@ -170,6 +169,9 @@ typedef base::hash_map<HistoryID, HistoryInfoMapValue> HistoryInfoMap;
 struct RowWordStarts {
   RowWordStarts();
   RowWordStarts(const RowWordStarts& other);
+  RowWordStarts(RowWordStarts&& other);
+  RowWordStarts& operator=(const RowWordStarts& other);
+  RowWordStarts& operator=(RowWordStarts&& other);
   ~RowWordStarts();
 
   // Clears both url_word_starts_ and title_word_starts_.

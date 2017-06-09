@@ -20,6 +20,8 @@ std::string GetCodecName(VideoCodec codec) {
       return "h264";
     case kCodecHEVC:
       return "hevc";
+    case kCodecDolbyVision:
+      return "dolbyvision";
     case kCodecVC1:
       return "vc1";
     case kCodecMPEG2:
@@ -79,9 +81,102 @@ std::string GetProfileName(VideoCodecProfile profile) {
       return "vp9 profile2";
     case VP9PROFILE_PROFILE3:
       return "vp9 profile3";
+    case DOLBYVISION_PROFILE0:
+      return "dolby vision profile 0";
+    case DOLBYVISION_PROFILE4:
+      return "dolby vision profile 4";
+    case DOLBYVISION_PROFILE5:
+      return "dolby vision profile 5";
+    case DOLBYVISION_PROFILE7:
+      return "dolby vision profile 7";
   }
   NOTREACHED();
   return "";
+}
+
+bool ParseNewStyleVp9CodecID(const std::string& codec_id,
+                             VideoCodecProfile* profile,
+                             uint8_t* level_idc) {
+  std::vector<std::string> fields = base::SplitString(
+      codec_id, ".", base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL);
+
+  // TODO(kqyang): The spec specifies 8 fields. We do not allow missing or extra
+  // fields. See crbug.com/667834.
+  if (fields.size() != 8)
+    return false;
+
+  if (fields[0] != "vp09")
+    return false;
+
+  std::vector<int> values;
+  for (size_t i = 1; i < fields.size(); ++i) {
+    // Missing value is not allowed.
+    if (fields[i] == "")
+      return false;
+    int value;
+    if (!base::StringToInt(fields[i], &value))
+      return false;
+    if (value < 0)
+      return false;
+    values.push_back(value);
+  }
+
+  const int profile_idc = values[0];
+  switch (profile_idc) {
+    case 0:
+      *profile = VP9PROFILE_PROFILE0;
+      break;
+    case 1:
+      *profile = VP9PROFILE_PROFILE1;
+      break;
+    case 2:
+      *profile = VP9PROFILE_PROFILE2;
+      break;
+    case 3:
+      *profile = VP9PROFILE_PROFILE3;
+      break;
+    default:
+      return false;
+  }
+
+  *level_idc = values[1];
+  // TODO(kqyang): Check if |level_idc| is valid. See crbug.com/667834.
+
+  const int bit_depth = values[2];
+  if (bit_depth != 8 && bit_depth != 10 && bit_depth != 12)
+    return false;
+
+  const int color_space = values[3];
+  if (color_space > 7)
+    return false;
+
+  const int chroma_subsampling = values[4];
+  if (chroma_subsampling > 3)
+    return false;
+
+  const int transfer_function = values[5];
+  if (transfer_function > 1)
+    return false;
+
+  const int video_full_range_flag = values[6];
+  if (video_full_range_flag > 1)
+    return false;
+
+  return true;
+}
+
+bool ParseLegacyVp9CodecID(const std::string& codec_id,
+                           VideoCodecProfile* profile,
+                           uint8_t* level_idc) {
+  if (codec_id == "vp9" || codec_id == "vp9.0") {
+    // Profile is not included in the codec string. Assuming profile 0 to be
+    // backward compatible.
+    *profile = VP9PROFILE_PROFILE0;
+    // Use 0 to indicate unknown level.
+    *level_idc = 0;
+    return true;
+  }
+  return false;
 }
 
 bool ParseAVCCodecId(const std::string& codec_id,
@@ -95,7 +190,7 @@ bool ParseAVCCodecId(const std::string& codec_id,
   uint32_t elem = 0;
   if (codec_id.size() != 11 ||
       !base::HexStringToUInt(base::StringPiece(codec_id).substr(5), &elem)) {
-    DVLOG(4) << __FUNCTION__ << ": invalid avc codec id (" << codec_id << ")";
+    DVLOG(4) << __func__ << ": invalid avc codec id (" << codec_id << ")";
     return false;
   }
 
@@ -106,8 +201,7 @@ bool ParseAVCCodecId(const std::string& codec_id,
   // Check that the lower two bits of |constraints_byte| are zero (those are
   // reserved and must be zero according to ISO IEC 14496-10).
   if (constraints_byte & 3) {
-    DVLOG(4) << __FUNCTION__ << ": non-zero reserved bits in codec id "
-             << codec_id;
+    DVLOG(4) << __func__ << ": non-zero reserved bits in codec id " << codec_id;
     return false;
   }
 
@@ -176,6 +270,55 @@ bool ParseAVCCodecId(const std::string& codec_id,
   return true;
 }
 
+#if BUILDFLAG(ENABLE_MSE_MPEG2TS_STREAM_PARSER)
+static const char kHexString[] = "0123456789ABCDEF";
+static char IntToHex(int i) {
+  DCHECK_GE(i, 0) << i << " not a hex value";
+  DCHECK_LE(i, 15) << i << " not a hex value";
+  return kHexString[i];
+}
+
+std::string TranslateLegacyAvc1CodecIds(const std::string& codec_id) {
+  // Special handling for old, pre-RFC 6381 format avc1 strings, which are still
+  // being used by some HLS apps to preserve backward compatibility with older
+  // iOS devices. The old format was avc1.<profile>.<level>
+  // Where <profile> is H.264 profile_idc encoded as a decimal number, i.e.
+  // 66 is baseline profile (0x42)
+  // 77 is main profile (0x4d)
+  // 100 is high profile (0x64)
+  // And <level> is H.264 level multiplied by 10, also encoded as decimal number
+  // E.g. <level> 31 corresponds to H.264 level 3.1
+  // See, for example, http://qtdevseed.apple.com/qadrift/testcases/tc-0133.php
+  uint32_t level_start = 0;
+  std::string result;
+  if (base::StartsWith(codec_id, "avc1.66.", base::CompareCase::SENSITIVE)) {
+    level_start = 8;
+    result = "avc1.4200";
+  } else if (base::StartsWith(codec_id, "avc1.77.",
+                              base::CompareCase::SENSITIVE)) {
+    level_start = 8;
+    result = "avc1.4D00";
+  } else if (base::StartsWith(codec_id, "avc1.100.",
+                              base::CompareCase::SENSITIVE)) {
+    level_start = 9;
+    result = "avc1.6400";
+  }
+
+  uint32_t level = 0;
+  if (level_start > 0 &&
+      base::StringToUint(codec_id.substr(level_start), &level) && level < 256) {
+    // This is a valid legacy avc1 codec id - return the codec id translated
+    // into RFC 6381 format.
+    result.push_back(IntToHex(level >> 4));
+    result.push_back(IntToHex(level & 0xf));
+    return result;
+  }
+
+  // This is not a valid legacy avc1 codec id - return the original codec id.
+  return codec_id;
+}
+#endif
+
 #if BUILDFLAG(ENABLE_HEVC_DEMUXING)
 // The specification for HEVC codec id strings can be found in ISO IEC 14496-15
 // dated 2012 or newer in the Annex E.3
@@ -196,7 +339,7 @@ bool ParseHEVCCodecId(const std::string& codec_id,
       18;  // up to 6 constraint bytes, bytes are dot-separated and hex-encoded.
 
   if (codec_id.size() > kMaxHevcCodecIdLength) {
-    DVLOG(4) << __FUNCTION__ << ": Codec id is too long (" << codec_id << ")";
+    DVLOG(4) << __func__ << ": Codec id is too long (" << codec_id << ")";
     return false;
   }
 
@@ -205,7 +348,7 @@ bool ParseHEVCCodecId(const std::string& codec_id,
   DCHECK(elem[0] == "hev1" || elem[0] == "hvc1");
 
   if (elem.size() < 4) {
-    DVLOG(4) << __FUNCTION__ << ": invalid HEVC codec id " << codec_id;
+    DVLOG(4) << __func__ << ": invalid HEVC codec id " << codec_id;
     return false;
   }
 
@@ -220,13 +363,13 @@ bool ParseHEVCCodecId(const std::string& codec_id,
   unsigned general_profile_idc = 0;
   if (!base::StringToUint(elem[1], &general_profile_idc) ||
       general_profile_idc > 0x1f) {
-    DVLOG(4) << __FUNCTION__ << ": invalid general_profile_idc=" << elem[1];
+    DVLOG(4) << __func__ << ": invalid general_profile_idc=" << elem[1];
     return false;
   }
 
   uint32_t general_profile_compatibility_flags = 0;
   if (!base::HexStringToUInt(elem[2], &general_profile_compatibility_flags)) {
-    DVLOG(4) << __FUNCTION__
+    DVLOG(4) << __func__
              << ": invalid general_profile_compatibility_flags=" << elem[2];
     return false;
   }
@@ -250,7 +393,7 @@ bool ParseHEVCCodecId(const std::string& codec_id,
     general_tier_flag = (elem[3][0] == 'L') ? 0 : 1;
     elem[3].erase(0, 1);
   } else {
-    DVLOG(4) << __FUNCTION__ << ": invalid general_tier_flag=" << elem[3];
+    DVLOG(4) << __func__ << ": invalid general_tier_flag=" << elem[3];
     return false;
   }
   DCHECK(general_tier_flag == 0 || general_tier_flag == 1);
@@ -258,7 +401,7 @@ bool ParseHEVCCodecId(const std::string& codec_id,
   unsigned general_level_idc = 0;
   if (!base::StringToUint(elem[3], &general_level_idc) ||
       general_level_idc > 0xff) {
-    DVLOG(4) << __FUNCTION__ << ": invalid general_level_idc=" << elem[3];
+    DVLOG(4) << __func__ << ": invalid general_level_idc=" << elem[3];
     return false;
   }
 
@@ -269,21 +412,151 @@ bool ParseHEVCCodecId(const std::string& codec_id,
   memset(constraint_flags, 0, sizeof(constraint_flags));
 
   if (elem.size() > 10) {
-    DVLOG(4) << __FUNCTION__ << ": unexpected number of trailing bytes in HEVC "
+    DVLOG(4) << __func__ << ": unexpected number of trailing bytes in HEVC "
              << "codec id " << codec_id;
     return false;
   }
   for (size_t i = 4; i < elem.size(); ++i) {
     unsigned constr_byte = 0;
     if (!base::HexStringToUInt(elem[i], &constr_byte) || constr_byte > 0xFF) {
-      DVLOG(4) << __FUNCTION__ << ": invalid constraint byte=" << elem[i];
+      DVLOG(4) << __func__ << ": invalid constraint byte=" << elem[i];
       return false;
     }
-    constraint_flags[i] = constr_byte;
+    constraint_flags[i - 4] = constr_byte;
   }
 
   return true;
 }
 #endif
+
+#if BUILDFLAG(ENABLE_DOLBY_VISION_DEMUXING)
+bool IsDolbyVisionAVCCodecId(const std::string& codec_id) {
+  return base::StartsWith(codec_id, "dva1.", base::CompareCase::SENSITIVE) ||
+         base::StartsWith(codec_id, "dvav.", base::CompareCase::SENSITIVE);
+}
+
+bool IsDolbyVisionHEVCCodecId(const std::string& codec_id) {
+  return base::StartsWith(codec_id, "dvh1.", base::CompareCase::SENSITIVE) ||
+         base::StartsWith(codec_id, "dvhe.", base::CompareCase::SENSITIVE);
+}
+
+// The specification for Dolby Vision codec id strings can be found in Dolby
+// Vision streams within the MPEG-DASH format.
+bool ParseDolbyVisionCodecId(const std::string& codec_id,
+                             VideoCodecProfile* profile,
+                             uint8_t* level_idc) {
+  if (!IsDolbyVisionAVCCodecId(codec_id) &&
+      !IsDolbyVisionHEVCCodecId(codec_id)) {
+    return false;
+  }
+
+  const int kMaxDvCodecIdLength = 5     // FOURCC string
+                                  + 1   // delimiting period
+                                  + 2   // profile id as 2 digit string
+                                  + 1   // delimiting period
+                                  + 2;  // level id as 2 digit string.
+
+  if (codec_id.size() > kMaxDvCodecIdLength) {
+    DVLOG(4) << __func__ << ": Codec id is too long (" << codec_id << ")";
+    return false;
+  }
+
+  std::vector<std::string> elem = base::SplitString(
+      codec_id, ".", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
+  DCHECK(elem[0] == "dvh1" || elem[0] == "dvhe" || elem[0] == "dva1" ||
+         elem[0] == "dvav");
+
+  if (elem.size() != 3) {
+    DVLOG(4) << __func__ << ": invalid dolby vision codec id " << codec_id;
+    return false;
+  }
+
+  // Profile string should be two digits.
+  unsigned profile_id = 0;
+  if (elem[1].size() != 2 || !base::StringToUint(elem[1], &profile_id) ||
+      profile_id > 7) {
+    DVLOG(4) << __func__ << ": invalid format or profile_id=" << elem[1];
+    return false;
+  }
+
+  // Only profiles 0, 4, 5 and 7 are valid. Profile 0 is encoded based on AVC
+  // while profile 4, 5 and 7 are based on HEVC.
+  switch (profile_id) {
+    case 0:
+      if (!IsDolbyVisionAVCCodecId(codec_id)) {
+        DVLOG(4) << __func__
+                 << ": codec id is mismatched with profile_id=" << profile_id;
+        return false;
+      }
+      *profile = DOLBYVISION_PROFILE0;
+      break;
+#if BUILDFLAG(ENABLE_HEVC_DEMUXING)
+    case 4:
+    case 5:
+    case 7:
+      if (!IsDolbyVisionHEVCCodecId(codec_id)) {
+        DVLOG(4) << __func__
+                 << ": codec id is mismatched with profile_id=" << profile_id;
+        return false;
+      }
+      if (profile_id == 4)
+        *profile = DOLBYVISION_PROFILE4;
+      else if (profile_id == 5)
+        *profile = DOLBYVISION_PROFILE5;
+      else if (profile_id == 7)
+        *profile = DOLBYVISION_PROFILE7;
+      break;
+#endif
+    default:
+      DVLOG(4) << __func__
+               << ": depecrated and not supported profile_id=" << profile_id;
+      return false;
+  }
+
+  // Level string should be two digits.
+  unsigned level_id = 0;
+  if (elem[2].size() != 2 || !base::StringToUint(elem[2], &level_id) ||
+      level_id > 9 || level_id < 1) {
+    DVLOG(4) << __func__ << ": invalid format level_id=" << elem[2];
+    return false;
+  }
+
+  *level_idc = level_id;
+
+  return true;
+}
+#endif
+
+VideoCodec StringToVideoCodec(const std::string& codec_id) {
+  std::vector<std::string> elem = base::SplitString(
+      codec_id, ".", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
+  if (elem.empty())
+    return kUnknownVideoCodec;
+  VideoCodecProfile profile = VIDEO_CODEC_PROFILE_UNKNOWN;
+  uint8_t level = 0;
+  if (codec_id == "vp8" || codec_id == "vp8.0")
+    return kCodecVP8;
+  if (ParseNewStyleVp9CodecID(codec_id, &profile, &level) ||
+      ParseLegacyVp9CodecID(codec_id, &profile, &level)) {
+    return kCodecVP9;
+  }
+  if (codec_id == "theora")
+    return kCodecTheora;
+  if (ParseAVCCodecId(codec_id, &profile, &level))
+    return kCodecH264;
+#if BUILDFLAG(ENABLE_MSE_MPEG2TS_STREAM_PARSER)
+  if (ParseAVCCodecId(TranslateLegacyAvc1CodecIds(codec_id), &profile, &level))
+    return kCodecH264;
+#endif
+#if BUILDFLAG(ENABLE_HEVC_DEMUXING)
+  if (ParseHEVCCodecId(codec_id, &profile, &level))
+    return kCodecHEVC;
+#endif
+#if BUILDFLAG(ENABLE_DOLBY_VISION_DEMUXING)
+  if (ParseDolbyVisionCodecId(codec_id, &profile, &level))
+    return kCodecDolbyVision;
+#endif
+  return kUnknownVideoCodec;
+}
 
 }  // namespace media

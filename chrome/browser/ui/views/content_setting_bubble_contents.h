@@ -20,15 +20,14 @@
 #include "ui/views/controls/link_listener.h"
 
 class ContentSettingBubbleModel;
-class Profile;
 
 namespace chrome {
 class ContentSettingBubbleViewsBridge;
 }
 
 namespace views {
-class LabelButton;
 class RadioButton;
+class LabelButton;
 }
 
 // ContentSettingBubbleContents is used when the user turns on different kinds
@@ -59,6 +58,8 @@ class ContentSettingBubbleContents : public content::WebContentsObserver,
   // views::BubbleDialogDelegateView:
   void Init() override;
   View* CreateExtraView() override;
+  bool Accept() override;
+  bool Close() override;
   int GetDialogButtons() const override;
   base::string16 GetDialogButtonLabel(ui::DialogButton button) const override;
 
@@ -92,9 +93,8 @@ class ContentSettingBubbleContents : public content::WebContentsObserver,
   typedef std::map<views::Link*, int> ListItemLinks;
 
   // content::WebContentsObserver:
-  void DidNavigateMainFrame(
-      const content::LoadCommittedDetails& details,
-      const content::FrameNavigateParams& params) override;
+  void DidFinishNavigation(
+      content::NavigationHandle* navigation_handle) override;
 
   // views::ButtonListener:
   void ButtonPressed(views::Button* sender, const ui::Event& event) override;
@@ -115,8 +115,8 @@ class ContentSettingBubbleContents : public content::WebContentsObserver,
   RadioGroup radio_group_;
   views::Link* custom_link_;
   views::Link* manage_link_;
+  views::LabelButton* manage_button_;
   views::Link* learn_more_link_;
-  views::LabelButton* close_button_;
 
   // Combobox models the bubble owns.
   std::list<MediaComboboxModel> combobox_models_;

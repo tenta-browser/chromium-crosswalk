@@ -9,6 +9,7 @@
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
@@ -644,12 +645,12 @@ void DelayByShowPressTimeout() {
 void SetTouchRadius(ui::TouchEvent* event, float radius_x, float radius_y) {
   // Using ctor (over direct struct access) due to it's special behavior with
   // radii.
-  ui::PointerDetails details(ui::EventPointerType::POINTER_TYPE_TOUCH,
-                             radius_x,
-                             radius_y,
-                             event->pointer_details().force,
-                             event->pointer_details().tilt_x,
-                             event->pointer_details().tilt_y);
+  ui::PointerDetails details(
+      ui::EventPointerType::POINTER_TYPE_TOUCH, radius_x, radius_y,
+      event->pointer_details().force, event->pointer_details().tilt_x,
+      event->pointer_details().tilt_y,
+      event->pointer_details().tangential_pressure,
+      event->pointer_details().twist, event->pointer_details().id);
   event->set_pointer_details(details);
 }
 
@@ -684,6 +685,33 @@ class GestureRecognizerWithSwitchTest : public GestureRecognizerTest {
  private:
   DISALLOW_COPY_AND_ASSIGN(GestureRecognizerWithSwitchTest);
 };
+
+// Verify that we do not crash when removing a window during a cancel touch
+// event originating from CancelActiveTouchesExcept. This monitors for
+// regressions on crbug.com/651258.
+TEST_F(GestureRecognizerTest, TouchCancelCanDestroyWindow) {
+  auto delegate = base::MakeUnique<GestureEventConsumeDelegate>();
+  TimedEvents tes;
+  const int kTouchId = 1;
+
+  // Create a window that will remove itself from its parent on touch cancelled
+  // events.
+  std::unique_ptr<aura::Window> window(CreateTestWindowWithDelegate(
+      delegate.get(), -1234, gfx::Rect(0, 0, 200, 200), root_window()));
+  auto handler = base::MakeUnique<RemoveOnTouchCancelHandler>();
+  window->AddPreTargetHandler(handler.get());
+
+  // Dispatch an event to |host_window| that will be cancelled.
+  ui::TouchEvent press(ui::ET_TOUCH_PRESSED, gfx::Point(101, 101),
+                       kTouchId, tes.Now());
+  DispatchEventUsingWindowDispatcher(&press);
+
+  // Cancel event, verify there is no crash.
+  ui::GestureRecognizer::Get()->CancelActiveTouchesExcept(nullptr);
+
+  EXPECT_EQ(1, handler->touch_cancelled_count());
+  EXPECT_EQ(nullptr, window->parent());
+}
 
 // Check that appropriate touch events generate tap gesture events.
 TEST_F(GestureRecognizerTest, GestureEventTap) {
@@ -2576,6 +2604,7 @@ TEST_F(GestureRecognizerTest, TwoFingerTap) {
       delegate->events(), ui::ET_GESTURE_TAP_CANCEL, ui::ET_GESTURE_BEGIN);
 
   // Little bit of touch move should not affect our state.
+  // Moving within slop region doesn't cause scrolling.
   delegate->Reset();
   ui::TouchEvent move1(ui::ET_TOUCH_MOVED, gfx::Point(102, 202),
                        kTouchId1, tes.Now());
@@ -2583,8 +2612,7 @@ TEST_F(GestureRecognizerTest, TwoFingerTap) {
   ui::TouchEvent move2(ui::ET_TOUCH_MOVED, gfx::Point(131, 202),
                        kTouchId2, tes.Now());
   DispatchEventUsingWindowDispatcher(&move2);
-  EXPECT_3_EVENTS(delegate->events(), ui::ET_GESTURE_SCROLL_BEGIN,
-                  ui::ET_GESTURE_SCROLL_UPDATE, ui::ET_GESTURE_SCROLL_UPDATE);
+  EXPECT_0_EVENTS(delegate->events());
 
   // Make sure there is enough delay before the touch is released so that it is
   // recognized as a tap.
@@ -2597,15 +2625,14 @@ TEST_F(GestureRecognizerTest, TwoFingerTap) {
       delegate->events(), ui::ET_GESTURE_TWO_FINGER_TAP, ui::ET_GESTURE_END);
 
   // Lift second finger.
-  // Make sure there is enough delay before the touch is released so that it is
-  // recognized as a tap.
+  // Two fingers have been down at some point during the current touch,
+  // single tap doesn't happen while releasing the second finger.
   delegate->Reset();
   ui::TouchEvent release2(ui::ET_TOUCH_RELEASED, gfx::Point(130, 201),
                           kTouchId2, tes.LeapForward(50));
 
   DispatchEventUsingWindowDispatcher(&release2);
-  EXPECT_2_EVENTS(
-      delegate->events(), ui::ET_GESTURE_SCROLL_END, ui::ET_GESTURE_END);
+  EXPECT_1_EVENT(delegate->events(), ui::ET_GESTURE_END);
 }
 
 TEST_F(GestureRecognizerTest, TwoFingerTapExpired) {

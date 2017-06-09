@@ -6,11 +6,13 @@
 #define CONTENT_PUBLIC_BROWSER_BROWSER_THREAD_H_
 
 #include <string>
+#include <utility>
 
 #include "base/callback.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/memory/ref_counted.h"
 #include "base/single_thread_task_runner.h"
 #include "base/task_runner_util.h"
 #include "base/time/time.h"
@@ -118,38 +120,35 @@ class CONTENT_EXPORT BrowserThread {
       const base::Closure& task,
       base::TimeDelta delay);
 
-  static bool PostTaskAndReply(
-      ID identifier,
-      const tracked_objects::Location& from_here,
-      const base::Closure& task,
-      const base::Closure& reply);
+  static bool PostTaskAndReply(ID identifier,
+                               const tracked_objects::Location& from_here,
+                               base::Closure task,
+                               base::Closure reply);
 
   template <typename ReturnType, typename ReplyArgType>
   static bool PostTaskAndReplyWithResult(
       ID identifier,
       const tracked_objects::Location& from_here,
-      const base::Callback<ReturnType(void)>& task,
-      const base::Callback<void(ReplyArgType)>& reply) {
+      base::Callback<ReturnType()> task,
+      base::Callback<void(ReplyArgType)> reply) {
     scoped_refptr<base::SingleThreadTaskRunner> task_runner =
-        GetMessageLoopProxyForThread(identifier);
-    return base::PostTaskAndReplyWithResult(task_runner.get(), from_here, task,
-                                            reply);
+        GetTaskRunnerForThread(identifier);
+    return base::PostTaskAndReplyWithResult(task_runner.get(), from_here,
+                                            std::move(task), std::move(reply));
   }
 
   template <class T>
   static bool DeleteSoon(ID identifier,
                          const tracked_objects::Location& from_here,
                          const T* object) {
-    return GetMessageLoopProxyForThread(identifier)->DeleteSoon(
-        from_here, object);
+    return GetTaskRunnerForThread(identifier)->DeleteSoon(from_here, object);
   }
 
   template <class T>
   static bool ReleaseSoon(ID identifier,
                           const tracked_objects::Location& from_here,
                           const T* object) {
-    return GetMessageLoopProxyForThread(identifier)->ReleaseSoon(
-        from_here, object);
+    return GetTaskRunnerForThread(identifier)->ReleaseSoon(from_here, object);
   }
 
   // Simplified wrappers for posting to the blocking thread pool. Use this
@@ -177,8 +176,8 @@ class CONTENT_EXPORT BrowserThread {
                                    const base::Closure& task);
   static bool PostBlockingPoolTaskAndReply(
       const tracked_objects::Location& from_here,
-      const base::Closure& task,
-      const base::Closure& reply);
+      base::Closure task,
+      base::Closure reply);
   static bool PostBlockingPoolSequencedTask(
       const std::string& sequence_token_name,
       const tracked_objects::Location& from_here,
@@ -220,28 +219,22 @@ class CONTENT_EXPORT BrowserThread {
 
   // Callers can hold on to a refcounted task runner beyond the lifetime
   // of the thread.
-  static scoped_refptr<base::SingleThreadTaskRunner>
-  GetMessageLoopProxyForThread(ID identifier);
+  static scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunnerForThread(
+      ID identifier);
 
-  // Returns a pointer to the thread's message loop, which will become
-  // invalid during shutdown, so you probably shouldn't hold onto it.
+  // Sets the delegate for BrowserThread::IO.
   //
-  // This must not be called before the thread is started, or after
-  // the thread is stopped, or it will DCHECK.
+  // This only supports the IO thread as it doesn't work for potentially
+  // redirected threads (ref. http://crbug.com/653916) and also doesn't make
+  // sense for the UI thread.
   //
-  // Ownership remains with the BrowserThread implementation, so you
-  // must not delete the pointer.
-  static base::MessageLoop* UnsafeGetMessageLoopForThread(ID identifier);
-
-  // Sets the delegate for the specified BrowserThread.
-  //
-  // Only one delegate may be registered at a time.  Delegates may be
+  // Only one delegate may be registered at a time. The delegate may be
   // unregistered by providing a nullptr pointer.
   //
-  // If the caller unregisters a delegate before CleanUp has been
-  // called, it must perform its own locking to ensure the delegate is
-  // not deleted while unregistering.
-  static void SetDelegate(ID identifier, BrowserThreadDelegate* delegate);
+  // If the caller unregisters the delegate before CleanUp has been called, it
+  // must perform its own locking to ensure the delegate is not deleted while
+  // unregistering.
+  static void SetIOThreadDelegate(BrowserThreadDelegate* delegate);
 
   // Use these templates in conjunction with RefCountedThreadSafe or scoped_ptr
   // when you want to ensure that an object is deleted on a specific thread.

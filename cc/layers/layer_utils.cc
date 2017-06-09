@@ -7,6 +7,7 @@
 #include "cc/layers/layer_impl.h"
 #include "cc/trees/layer_tree_host_common.h"
 #include "cc/trees/layer_tree_impl.h"
+#include "cc/trees/transform_node.h"
 #include "ui/gfx/geometry/box_f.h"
 
 namespace cc {
@@ -18,7 +19,7 @@ bool HasTransformAnimationThatInflatesBounds(const LayerImpl& layer) {
 }
 
 inline bool HasAncestorTransformAnimation(const TransformNode* transform_node) {
-  return transform_node->data.to_screen_is_potentially_animated;
+  return transform_node->to_screen_is_potentially_animated;
 }
 
 inline bool HasAncestorFilterAnimation(const LayerImpl& layer) {
@@ -86,13 +87,13 @@ bool LayerUtils::GetAnimationBounds(const LayerImpl& layer_in, gfx::BoxF* out) {
   for (; transform_tree.parent(transform_node);
        transform_node = transform_tree.parent(transform_node)) {
     LayerImpl* layer =
-        layer_in.layer_tree_impl()->LayerById(transform_node->owner_id);
+        layer_in.layer_tree_impl()->LayerById(transform_node->owning_layer_id);
 
     // Filter animation bounds are unimplemented, see function
     // HasAncestorFilterAnimation() for reference.
 
     if (HasTransformAnimationThatInflatesBounds(*layer)) {
-      coalesced_transform.ConcatTransform(transform_node->data.pre_local);
+      coalesced_transform.ConcatTransform(transform_node->pre_local);
       coalesced_transform.TransformBox(&box);
       coalesced_transform.MakeIdentity();
 
@@ -101,9 +102,9 @@ bool LayerUtils::GetAnimationBounds(const LayerImpl& layer_in, gfx::BoxF* out) {
         return false;
       box = inflated;
 
-      coalesced_transform.ConcatTransform(transform_node->data.post_local);
+      coalesced_transform.ConcatTransform(transform_node->post_local);
     } else {
-      coalesced_transform.ConcatTransform(transform_node->data.to_parent);
+      coalesced_transform.ConcatTransform(transform_node->to_parent);
     }
   }
 

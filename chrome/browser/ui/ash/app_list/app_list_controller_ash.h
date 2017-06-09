@@ -5,10 +5,10 @@
 #ifndef CHROME_BROWSER_UI_ASH_APP_LIST_APP_LIST_CONTROLLER_ASH_H_
 #define CHROME_BROWSER_UI_ASH_APP_LIST_APP_LIST_CONTROLLER_ASH_H_
 
+#include "ash/public/cpp/shelf_types.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "chrome/browser/ui/app_list/app_list_controller_delegate.h"
-#include "chrome/browser/ui/ash/launcher/chrome_launcher_types.h"
 
 namespace app_list {
 class AppListPresenterImpl;
@@ -19,7 +19,6 @@ class AppListControllerDelegateAsh : public AppListControllerDelegate {
   explicit AppListControllerDelegateAsh(app_list::AppListPresenterImpl*);
   ~AppListControllerDelegateAsh() override;
 
- private:
   // AppListControllerDelegate overrides:
   void DismissView() override;
   gfx::NativeWindow GetAppListWindow() override;
@@ -50,7 +49,8 @@ class AppListControllerDelegateAsh : public AppListControllerDelegate {
   void ShowForProfileByPath(const base::FilePath& profile_path) override;
   bool ShouldShowUserIcon() override;
 
-  ash::LaunchSource AppListSourceToLaunchSource(AppListSource source);
+ private:
+  ash::ShelfLaunchSource AppListSourceToLaunchSource(AppListSource source);
 
   // Not owned.
   app_list::AppListPresenterImpl* app_list_presenter_;

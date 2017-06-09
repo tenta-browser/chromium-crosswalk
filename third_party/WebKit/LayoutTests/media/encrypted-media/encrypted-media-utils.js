@@ -17,23 +17,8 @@ function consoleWrite(text)
 function isInitDataTypeSupported(initDataType)
 {
     return navigator.requestMediaKeySystemAccess(
-                         "org.w3.clearkey", [{ initDataTypes : [initDataType] }])
-        .then(function() { return(true); }, function() { return(false); });
-}
-
-// Returns a promise that is fulfilled with an initDataType that is supported,
-// rejected if none are supported.
-function getSupportedInitDataType()
-{
-    var configuration = [{ initDataTypes : [ 'webm', 'cenc', 'keyids' ] }];
-    return navigator.requestMediaKeySystemAccess('org.w3.clearkey', configuration)
-        .then(function(access) {
-            var initDataTypes = access.getConfiguration().initDataTypes;
-            assert_greater_than(initDataTypes.length, 0);
-            return Promise.resolve(initDataTypes[0]);
-        }, function(error) {
-            return Promise.reject('No supported initDataType.');
-        });
+                        "org.w3.clearkey", getSimpleConfigurationForInitDataType(initDataType))
+        .then(function() { return true; }, function() { return false; });
 }
 
 function getInitData(initDataType)
@@ -47,7 +32,7 @@ function getInitData(initDataType)
 
   if (initDataType == 'cenc') {
       return new Uint8Array([
-          0x00, 0x00, 0x00, 0x00,                          // size = 0
+          0x00, 0x00, 0x00, 0x34,                          // size = 52
           0x70, 0x73, 0x73, 0x68,                          // 'pssh'
           0x01,                                            // version = 1
           0x00, 0x00, 0x00,                                // flags
@@ -69,6 +54,54 @@ function getInitData(initDataType)
   }
 
   throw 'initDataType ' + initDataType + ' not supported.';
+}
+
+// Returns an array of audioCapabilities that includes entries for a set of
+// codecs that should cover all user agents.
+function getPossibleAudioCapabilities()
+{
+    return [
+        { contentType: 'audio/mp4; codecs="mp4a.40.2"' },
+        { contentType: 'audio/webm; codecs="opus"' },
+    ];
+}
+
+// Returns a trivial MediaKeySystemConfiguration that should be accepted,
+// possibly as a subset of the specified capabilities, by all user agents.
+function getSimpleConfiguration()
+{
+    return [ {
+        initDataTypes : [ 'webm', 'cenc', 'keyids' ],
+        audioCapabilities: getPossibleAudioCapabilities()
+    } ];
+}
+
+// Returns a MediaKeySystemConfiguration for |initDataType| that should be
+// accepted, possibly as a subset of the specified capabilities, by all
+// user agents.
+function getSimpleConfigurationForInitDataType(initDataType)
+{
+    return [ {
+        initDataTypes: [ initDataType ],
+        audioCapabilities: getPossibleAudioCapabilities()
+    } ];
+}
+
+// Returns a MediaKeySystemConfiguration for |mediaFile| that specifies
+// both audio and video capabilities for the specified file..
+function getConfigurationForFile(mediaFile)
+{
+    if (mediaFile.toLowerCase().endsWith('.webm')) {
+        return [ {
+            initDataTypes: [ 'webm' ],
+            audioCapabilities: [ { contentType: 'audio/webm; codecs="opus"' } ],
+            videoCapabilities: [ { contentType: 'video/webm; codecs="vp8"' } ]
+        } ];
+    }
+
+    // NOTE: Supporting other mediaFormats is not currently implemented as
+    // Chromium only tests with WebM files.
+    throw 'mediaFile ' + mediaFile + ' not supported.';
 }
 
 function waitForEventAndRunStep(eventName, element, func, stepTest)
@@ -261,14 +294,14 @@ function extractSingleKeyIdFromMessage(message)
 // Create a MediaKeys object for Clear Key with 1 session. KeyId and key
 // required for the video are already known and provided. Returns a promise
 // that resolves to the MediaKeys object created.
-function createMediaKeys(keyId, key)
+function createClearKeyMediaKeysAndInitializeWithOneKey(keyId, key)
 {
     var mediaKeys;
     var mediaKeySession;
     var request = stringToUint8Array(createKeyIDs(keyId));
     var jwkSet = stringToUint8Array(createJWKSet(createJWK(keyId, key)));
 
-    return navigator.requestMediaKeySystemAccess('org.w3.clearkey', [{}]).then(function(access) {
+    return navigator.requestMediaKeySystemAccess('org.w3.clearkey', getSimpleConfigurationForInitDataType('keyids')).then(function(access) {
         return access.createMediaKeys();
     }).then(function(result) {
         mediaKeys = result;
@@ -295,4 +328,17 @@ function playVideoAndWaitForTimeupdate(video, content, duration)
             resolve('success');
         });
     });
+}
+
+// Verifies that the number of existing MediaKey and MediaKeySession objects
+// match what is expected.
+function verifyMediaKeyAndMediaKeySessionCount(
+    expectedMediaKeysCount, expectedMediaKeySessionCount, description)
+{
+    assert_equals(window.internals.mediaKeysCount(),
+                  expectedMediaKeysCount,
+                  description + ', MediaKeys:');
+    assert_equals(window.internals.mediaKeySessionCount(),
+                  expectedMediaKeySessionCount,
+                  description + ', MediaKeySession:');
 }

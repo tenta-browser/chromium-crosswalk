@@ -13,6 +13,7 @@
       "lastError": {
         "type": "object",
         "optional": true,
+        "deprecated": "Please use $(ref:runtime.lastError).",
         "description": "Set for the lifetime of a callback if an ansychronous extension api has resulted in an error. If no error has occured lastError will be <var>undefined</var>.",
         "properties": {
           "message": { "type": "string", "description": "Description of the error that has taken place." }
@@ -59,6 +60,7 @@
       },
       {
         "name": "getURL",
+        "deprecated": "Please use $(ref:runtime.getURL).",
         "nocompile": true,
         "type": "function",
         "description": "Converts a relative path within an extension install directory to a fully-qualified URL.",
@@ -94,6 +96,11 @@
                 "type": "integer",
                 "optional": true,
                 "description": "The window to restrict the search to. If omitted, returns all views."
+              },
+              "tabId": {
+                "type": "integer",
+                "optional":true,
+                "description": "Find a view according to a tab id. If this field is omitted, returns all views."
               }
             }
           }

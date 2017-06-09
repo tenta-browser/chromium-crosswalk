@@ -9,9 +9,13 @@
 #include <string>
 
 #include "base/files/file_util.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/task_runner_util.h"
+#include "base/task_scheduler/post_task.h"
+#include "chrome/browser/chromeos/arc/arc_session_manager.h"
+#include "chrome/browser/chromeos/arc/arc_util.h"
+#include "chrome/browser/chromeos/arc/policy/arc_policy_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/app_list/app_list_service.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_list_prefs_factory.h"
@@ -19,10 +23,11 @@
 #include "chrome/browser/ui/app_list/arc/arc_package_syncable_service.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/arc/arc_bridge_service.h"
+#include "components/arc/arc_service_manager.h"
 #include "components/crx_file/id_util.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/scoped_user_pref_update.h"
+#include "components/user_manager/user_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -47,7 +52,8 @@ const char kShouldSync[] = "should_sync";
 const char kSystem[] = "system";
 const char kUninstalled[] = "uninstalled";
 
-constexpr int kSetNotificationsEnabledMinVersion = 6;
+constexpr base::TimeDelta kDetectDefaultAppAvailabilityTimeout =
+    base::TimeDelta::FromSeconds(15);
 
 // Provider of write access to a dictionary storing ARC prefs.
 class ScopedArcPrefUpdate : public DictionaryPrefUpdate {
@@ -110,7 +116,6 @@ bool InstallIconFromFileThread(const std::string& app_id,
                                ui::ScaleFactor scale_factor,
                                const base::FilePath& icon_path,
                                const std::vector<uint8_t>& content_png) {
-  DCHECK(content::BrowserThread::GetBlockingPool()->RunsTasksOnCurrentThread());
   DCHECK(!content_png.empty());
 
   base::CreateDirectory(icon_path.DirName());
@@ -131,18 +136,19 @@ bool InstallIconFromFileThread(const std::string& app_id,
 }
 
 void DeleteAppFolderFromFileThread(const base::FilePath& path) {
-  DCHECK(content::BrowserThread::GetBlockingPool()->RunsTasksOnCurrentThread());
   DCHECK(path.DirName().BaseName().MaybeAsASCII() == prefs::kArcApps &&
          (!base::PathExists(path) || base::DirectoryExists(path)));
   const bool deleted = base::DeleteFile(path, true);
   DCHECK(deleted);
 }
 
-bool IsArcEnabled() {
-  arc::ArcAuthService* auth_service = arc::ArcAuthService::Get();
-  return auth_service &&
-         auth_service->state() != arc::ArcAuthService::State::NOT_INITIALIZED &&
-         auth_service->IsArcEnabled();
+// TODO(crbug.com/672829): Due to shutdown procedure dependency,
+// ArcAppListPrefs may try to touch ArcSessionManager related stuff.
+// Specifically, this returns false on shutdown phase.
+// Remove this check after the shutdown behavior is fixed.
+bool IsArcAlive() {
+  const auto* arc_session_manager = arc::ArcSessionManager::Get();
+  return arc_session_manager && arc_session_manager->IsAllowed();
 }
 
 bool GetInt64FromPref(const base::DictionaryValue* dict,
@@ -228,7 +234,6 @@ ArcAppListPrefs::ArcAppListPrefs(
     : profile_(profile),
       prefs_(profile->GetPrefs()),
       app_instance_holder_(app_instance_holder),
-      sync_service_(nullptr),
       binding_(this),
       default_apps_(this, profile),
       weak_ptr_factory_(this) {
@@ -238,38 +243,44 @@ ArcAppListPrefs::ArcAppListPrefs(
   const base::FilePath& base_path = profile->GetPath();
   base_path_ = base_path.AppendASCII(prefs::kArcApps);
 
-  arc::ArcAuthService* auth_service = arc::ArcAuthService::Get();
-  if (!auth_service)
+  arc::ArcSessionManager* arc_session_manager = arc::ArcSessionManager::Get();
+  if (!arc_session_manager)
     return;
 
-  DCHECK(arc::ArcAuthService::IsAllowedForProfile(profile));
+  DCHECK(arc::IsArcAllowedForProfile(profile));
+
+  const std::vector<std::string> existing_app_ids = GetAppIds();
+  tracked_apps_.insert(existing_app_ids.begin(), existing_app_ids.end());
 
   // Once default apps are ready OnDefaultAppsReady is called.
 }
 
 ArcAppListPrefs::~ArcAppListPrefs() {
-  // A reference to ArcBridgeService is kept here so that it would crash the
-  // tests where ArcBridgeService and ArcAppListPrefs are not destroyed in right
-  // order.
-  arc::ArcBridgeService* bridge_service = arc::ArcBridgeService::Get();
-  if (bridge_service)
-    app_instance_holder_->RemoveObserver(this);
-
-  arc::ArcAuthService* auth_service = arc::ArcAuthService::Get();
-  if (auth_service)
-    auth_service->RemoveObserver(this);
+  arc::ArcSessionManager* arc_session_manager = arc::ArcSessionManager::Get();
+  if (!arc_session_manager)
+    return;
+  DCHECK(arc::ArcServiceManager::Get());
+  arc_session_manager->RemoveObserver(this);
+  app_instance_holder_->RemoveObserver(this);
 }
 
 void ArcAppListPrefs::StartPrefs() {
-  arc::ArcAuthService* auth_service = arc::ArcAuthService::Get();
-  CHECK(auth_service);
+  arc::ArcSessionManager* arc_session_manager = arc::ArcSessionManager::Get();
+  CHECK(arc_session_manager);
 
-  if (auth_service->state() != arc::ArcAuthService::State::NOT_INITIALIZED)
-    OnOptInEnabled(auth_service->IsArcEnabled());
-  auth_service->AddObserver(this);
+  if (arc_session_manager->profile()) {
+    // Note: If ArcSessionManager has profile, it should be as same as the one
+    // this instance has, because ArcAppListPrefsFactory creates an instance
+    // only if the given Profile meets ARC's requirement.
+    // Anyway, just in case, check it here.
+    DCHECK_EQ(profile_, arc_session_manager->profile());
+    OnArcPlayStoreEnabledChanged(
+        arc::IsArcPlayStoreEnabledForProfile(profile_));
+  }
+  arc_session_manager->AddObserver(this);
 
   app_instance_holder_->AddObserver(this);
-  if (!app_instance_holder_->instance())
+  if (!app_instance_holder_->has_instance())
     OnInstanceClosed();
 }
 
@@ -293,6 +304,23 @@ base::FilePath ArcAppListPrefs::GetIconPath(
   return ToIconPath(GetAppPath(app_id), scale_factor);
 }
 
+bool ArcAppListPrefs::IsIconRequestRecorded(
+    const std::string& app_id,
+    ui::ScaleFactor scale_factor) const {
+  const auto iter = request_icon_recorded_.find(app_id);
+  if (iter == request_icon_recorded_.end())
+    return false;
+  return iter->second & (1 << scale_factor);
+}
+
+void ArcAppListPrefs::MaybeRemoveIconRequestRecord(const std::string& app_id) {
+  request_icon_recorded_.erase(app_id);
+}
+
+void ArcAppListPrefs::ClearIconRequestRecord() {
+  request_icon_recorded_.clear();
+}
+
 void ArcAppListPrefs::RequestIcon(const std::string& app_id,
                                   ui::ScaleFactor scale_factor) {
   if (!IsRegistered(app_id)) {
@@ -300,15 +328,16 @@ void ArcAppListPrefs::RequestIcon(const std::string& app_id,
     return;
   }
 
-  // In case app is not ready, defer this request.
-  if (!ready_apps_.count(app_id)) {
-    request_icon_deferred_[app_id] =
-        request_icon_deferred_[app_id] | 1 << scale_factor;
-    return;
-  }
+  // In case app is not ready, recorded request will be send to ARC when app
+  // becomes ready.
+  // This record will prevent ArcAppIcon from resending request to ARC for app
+  // icon when icon file decode failure is suffered in case app sends bad icon.
+  request_icon_recorded_[app_id] |= (1 << scale_factor);
 
-  arc::mojom::AppInstance* app_instance = app_instance_holder_->instance();
-  if (!app_instance) {
+  if (!ready_apps_.count(app_id))
+    return;
+
+  if (!app_instance_holder_->has_instance()) {
     // AppInstance should be ready since we have app_id in ready_apps_. This
     // can happen in browser_tests.
     return;
@@ -321,16 +350,31 @@ void ArcAppListPrefs::RequestIcon(const std::string& app_id,
   }
 
   if (app_info->icon_resource_id.empty()) {
+    auto* app_instance =
+        ARC_GET_INSTANCE_FOR_METHOD(app_instance_holder_, RequestAppIcon);
+    // Version 0 instance should always be available here because has_instance()
+    // returned true above.
+    DCHECK(app_instance);
     app_instance->RequestAppIcon(
         app_info->package_name, app_info->activity,
         static_cast<arc::mojom::ScaleFactor>(scale_factor));
   } else {
+    auto* app_instance =
+        ARC_GET_INSTANCE_FOR_METHOD(app_instance_holder_, RequestIcon);
+    if (!app_instance)
+      return;  // The instance version on ARC side was too old.
     app_instance->RequestIcon(
         app_info->icon_resource_id,
         static_cast<arc::mojom::ScaleFactor>(scale_factor),
         base::Bind(&ArcAppListPrefs::OnIcon, base::Unretained(this), app_id,
                    static_cast<arc::mojom::ScaleFactor>(scale_factor)));
   }
+}
+
+void ArcAppListPrefs::MaybeRequestIcon(const std::string& app_id,
+                                       ui::ScaleFactor scale_factor) {
+  if (!IsIconRequestRecorded(app_id, scale_factor))
+    RequestIcon(app_id, scale_factor);
 }
 
 void ArcAppListPrefs::SetNotificationsEnabled(const std::string& app_id,
@@ -350,23 +394,15 @@ void ArcAppListPrefs::SetNotificationsEnabled(const std::string& app_id,
   // In case app is not ready, defer this request.
   if (!ready_apps_.count(app_id)) {
     SetNotificationsEnabledDeferred(prefs_).Put(app_id, enabled);
-    FOR_EACH_OBSERVER(
-        Observer, observer_list_,
-        OnNotificationsEnabledChanged(app_info->package_name, enabled));
+    for (auto& observer : observer_list_)
+      observer.OnNotificationsEnabledChanged(app_info->package_name, enabled);
     return;
   }
 
-  arc::mojom::AppInstance* app_instance = app_instance_holder_->instance();
-  if (!app_instance) {
-    // AppInstance should be ready since we have app_id in ready_apps_.
-    NOTREACHED();
+  auto* app_instance = ARC_GET_INSTANCE_FOR_METHOD(app_instance_holder_,
+                                                   SetNotificationsEnabled);
+  if (!app_instance)
     return;
-  }
-
-  if (app_instance_holder_->version() < kSetNotificationsEnabledMinVersion) {
-    VLOG(2) << "app version is too small to set notifications enabled.";
-    return;
-  }
 
   SetNotificationsEnabledDeferred(prefs_).Remove(app_id);
   app_instance->SetNotificationsEnabled(app_info->package_name, enabled);
@@ -386,7 +422,7 @@ bool ArcAppListPrefs::HasObserver(Observer* observer) {
 
 std::unique_ptr<ArcAppListPrefs::PackageInfo> ArcAppListPrefs::GetPackage(
     const std::string& package_name) const {
-  if (!IsArcEnabled())
+  if (!IsArcAlive() || !arc::IsArcPlayStoreEnabledForProfile(profile_))
     return nullptr;
 
   const base::DictionaryValue* package = nullptr;
@@ -395,6 +431,10 @@ std::unique_ptr<ArcAppListPrefs::PackageInfo> ArcAppListPrefs::GetPackage(
   if (!packages ||
       !packages->GetDictionaryWithoutPathExpansion(package_name, &package))
     return std::unique_ptr<PackageInfo>();
+
+  bool uninstalled = false;
+  if (package->GetBoolean(kUninstalled, &uninstalled) && uninstalled)
+    return nullptr;
 
   int32_t package_version = 0;
   int64_t last_backup_android_id = 0;
@@ -414,8 +454,8 @@ std::unique_ptr<ArcAppListPrefs::PackageInfo> ArcAppListPrefs::GetPackage(
 }
 
 std::vector<std::string> ArcAppListPrefs::GetAppIds() const {
-  if (!IsArcEnabled()) {
-    // Default Arc apps available before OptIn.
+  if (!IsArcAlive() || !arc::IsArcPlayStoreEnabledForProfile(profile_)) {
+    // Default ARC apps available before OptIn.
     std::vector<std::string> ids;
     for (const auto& default_app : default_apps_.app_map()) {
       if (default_apps_.HasApp(default_app.first))
@@ -446,8 +486,9 @@ std::vector<std::string> ArcAppListPrefs::GetAppIdsNoArcEnabledCheck() const {
 
 std::unique_ptr<ArcAppListPrefs::AppInfo> ArcAppListPrefs::GetApp(
     const std::string& app_id) const {
-  // Information for default app is available before Arc enabled.
-  if (!IsArcEnabled() && !default_apps_.HasApp(app_id))
+  // Information for default app is available before ARC enabled.
+  if ((!IsArcAlive() || !arc::IsArcPlayStoreEnabledForProfile(profile_)) &&
+      !default_apps_.HasApp(app_id))
     return std::unique_ptr<AppInfo>();
 
   const base::DictionaryValue* app = nullptr;
@@ -502,7 +543,8 @@ std::unique_ptr<ArcAppListPrefs::AppInfo> ArcAppListPrefs::GetApp(
 }
 
 bool ArcAppListPrefs::IsRegistered(const std::string& app_id) const {
-  if (!IsArcEnabled() && !default_apps_.HasApp(app_id))
+  if ((!IsArcAlive() || !arc::IsArcPlayStoreEnabledForProfile(profile_)) &&
+      !default_apps_.HasApp(app_id))
     return false;
 
   const base::DictionaryValue* app = nullptr;
@@ -544,10 +586,8 @@ void ArcAppListPrefs::SetLastLaunchTime(const std::string& app_id,
 void ArcAppListPrefs::DisableAllApps() {
   std::unordered_set<std::string> old_ready_apps;
   old_ready_apps.swap(ready_apps_);
-  for (auto& app_id : old_ready_apps) {
-    FOR_EACH_OBSERVER(Observer, observer_list_,
-                      OnAppReadyChanged(app_id, false));
-  }
+  for (auto& app_id : old_ready_apps)
+    NotifyAppReadyChanged(app_id, false);
 }
 
 void ArcAppListPrefs::NotifyRegisteredApps() {
@@ -562,11 +602,12 @@ void ArcAppListPrefs::NotifyRegisteredApps() {
       NOTREACHED();
       continue;
     }
+
     // Default apps are reported earlier.
-    if (default_apps_.HasApp(app_id))
-      continue;
-    FOR_EACH_OBSERVER(Observer, observer_list_,
-                      OnAppRegistered(app_id, *app_info));
+    if (tracked_apps_.insert(app_id).second) {
+      for (auto& observer : observer_list_)
+        observer.OnAppRegistered(app_id, *app_info);
+    }
   }
 
   apps_restored_ = true;
@@ -580,32 +621,66 @@ void ArcAppListPrefs::RemoveAllApps() {
     } else {
       if (ready_apps_.count(app_id)) {
         ready_apps_.erase(app_id);
-        FOR_EACH_OBSERVER(Observer, observer_list_,
-                          OnAppReadyChanged(app_id, false));
+        NotifyAppReadyChanged(app_id, false);
       }
     }
   }
   DCHECK(ready_apps_.empty());
 }
 
-void ArcAppListPrefs::OnOptInEnabled(bool enabled) {
+void ArcAppListPrefs::OnArcPlayStoreEnabledChanged(bool enabled) {
+  SetDefaultAppsFilterLevel();
+
   if (enabled)
     NotifyRegisteredApps();
   else
     RemoveAllApps();
 }
 
+void ArcAppListPrefs::SetDefaultAppsFilterLevel() {
+  // There is no a blacklisting mechanism for Android apps. Until there is
+  // one, we have no option but to ban all pre-installed apps on Android side.
+  // Match this requirement and don't show pre-installed apps for managed users
+  // in app list.
+  if (arc::policy_util::IsAccountManaged(profile_)) {
+    default_apps_.set_filter_level(
+        arc::IsArcPlayStoreEnabledForProfile(profile_)
+            ? ArcDefaultAppList::FilterLevel::OPTIONAL_APPS
+            : ArcDefaultAppList::FilterLevel::ALL);
+  } else {
+    default_apps_.set_filter_level(ArcDefaultAppList::FilterLevel::NOTHING);
+  }
+
+  // Register default apps if it was not registered before.
+  RegisterDefaultApps();
+}
+
 void ArcAppListPrefs::OnDefaultAppsReady() {
   // Apply uninstalled packages now.
+
   const std::vector<std::string> uninstalled_package_names =
       GetPackagesFromPrefs(false);
   for (const auto& uninstalled_package_name : uninstalled_package_names)
     default_apps_.MaybeMarkPackageUninstalled(uninstalled_package_name, true);
 
-  // Report default apps first, note, app_map includes uninstalled apps as well.
+  SetDefaultAppsFilterLevel();
+
+  default_apps_ready_ = true;
+  if (!default_apps_ready_callback_.is_null())
+    default_apps_ready_callback_.Run();
+
+  StartPrefs();
+}
+
+void ArcAppListPrefs::RegisterDefaultApps() {
+  // Report default apps first, note, app_map includes uninstalled and filtered
+  // out apps as well.
   for (const auto& default_app : default_apps_.app_map()) {
     const std::string& app_id = default_app.first;
     if (!default_apps_.HasApp(app_id))
+      continue;
+    // Skip already tracked app.
+    if (tracked_apps_.count(app_id))
       continue;
     const ArcDefaultAppList::AppInfo& app_info = *default_app.second.get();
     AddAppAndShortcut(false /* app_ready */,
@@ -620,12 +695,6 @@ void ArcAppListPrefs::OnDefaultAppsReady() {
                       true /* launchable */,
                       arc::mojom::OrientationLock::NONE);
   }
-
-  default_apps_ready_ = true;
-  if (!default_apps_ready_callback_.is_null())
-    default_apps_ready_callback_.Run();
-
-  StartPrefs();
 }
 
 void ArcAppListPrefs::SetDefaltAppsReadyCallback(base::Closure callback) {
@@ -636,17 +705,24 @@ void ArcAppListPrefs::SetDefaltAppsReadyCallback(base::Closure callback) {
     default_apps_ready_callback_.Run();
 }
 
-void ArcAppListPrefs::OnInstanceReady() {
-  arc::mojom::AppInstance* app_instance = app_instance_holder_->instance();
+void ArcAppListPrefs::SimulateDefaultAppAvailabilityTimeoutForTesting() {
+  if (!detect_default_app_availability_timeout_.IsRunning())
+    return;
+  detect_default_app_availability_timeout_.Stop();
+  DetectDefaultAppAvailability();
+}
 
+void ArcAppListPrefs::OnInstanceReady() {
+  // Init() is also available at version 0.
+  arc::mojom::AppInstance* app_instance =
+      ARC_GET_INSTANCE_FOR_METHOD(app_instance_holder_, RefreshAppList);
+
+  // Note, sync_service_ may be nullptr in testing.
   sync_service_ = arc::ArcPackageSyncableService::Get(profile_);
-  DCHECK(sync_service_);
 
   // In some tests app_instance may not be set.
-  if (!app_instance) {
-    VLOG(2) << "Request to refresh app list when bridge service is not ready.";
+  if (!app_instance)
     return;
-  }
 
   is_initialized_ = false;
 
@@ -656,7 +732,11 @@ void ArcAppListPrefs::OnInstanceReady() {
 
 void ArcAppListPrefs::OnInstanceClosed() {
   DisableAllApps();
+  installing_packages_count_ = 0;
+  default_apps_installations_.clear();
+  detect_default_app_availability_timeout_.Stop();
   binding_.Close();
+  ClearIconRequestRecord();
 
   if (sync_service_) {
     sync_service_->StopSyncing(syncer::ARC_PACKAGE);
@@ -664,25 +744,22 @@ void ArcAppListPrefs::OnInstanceClosed() {
   }
 
   is_initialized_ = false;
+  package_list_initial_refreshed_ = false;
 }
 
-void ArcAppListPrefs::MaybeAddNonLaunchableApp(const std::string& name,
-                                               const std::string& package_name,
-                                               const std::string& activity) {
-  DCHECK(IsArcEnabled());
+void ArcAppListPrefs::MaybeAddNonLaunchableApp(
+    const base::Optional<std::string>& name,
+    const std::string& package_name,
+    const std::string& activity) {
+  DCHECK(arc::IsArcPlayStoreEnabledForProfile(profile_));
   if (IsRegistered(GetAppId(package_name, activity)))
     return;
 
-  AddAppAndShortcut(true /* app_ready */,
-                    name, package_name,
-                    activity,
-                    std::string() /* intent_uri */,
-                    std::string() /* icon_resource_id */,
-                    false /* sticky */,
-                    false /* notifications_enabled */,
-                    false /* shortcut */,
-                    false /* launchable */,
-                    arc::mojom::OrientationLock::NONE);
+  AddAppAndShortcut(true /* app_ready */, name.has_value() ? *name : "",
+                    package_name, activity, std::string() /* intent_uri */,
+                    std::string() /* icon_resource_id */, false /* sticky */,
+                    false /* notifications_enabled */, false /* shortcut */,
+                    false /* launchable */, arc::mojom::OrientationLock::NONE);
 }
 
 void ArcAppListPrefs::AddAppAndShortcut(
@@ -699,23 +776,19 @@ void ArcAppListPrefs::AddAppAndShortcut(
     const arc::mojom::OrientationLock orientation_lock) {
   const std::string app_id = shortcut ? GetAppId(package_name, intent_uri)
                                       : GetAppId(package_name, activity);
-
-  // |updated_name| will be only used on M53 and will be reverted later on Tot.
   std::string updated_name = name;
-  if (app_id == arc::kPlayStoreAppId) {
-    updated_name =
-        name + " (" +
-        l10n_util::GetStringUTF8(IDS_ABOUT_PAGE_CURRENT_CHANNEL_BETA) + ")";
-  }
+  // Add "(beta)" string to Play Store. See crbug.com/644576 for details.
+  if (app_id == arc::kPlayStoreAppId)
+    updated_name = l10n_util::GetStringUTF8(IDS_ARC_PLAYSTORE_ICON_TITLE_BETA);
 
-  const bool was_registered = IsRegistered(app_id);
-  if (was_registered) {
+  const bool was_tracked = tracked_apps_.count(app_id);
+  if (was_tracked) {
     std::unique_ptr<ArcAppListPrefs::AppInfo> app_old_info = GetApp(app_id);
     DCHECK(app_old_info);
     DCHECK(launchable);
     if (updated_name != app_old_info->name) {
-      FOR_EACH_OBSERVER(Observer, observer_list_,
-                        OnAppNameUpdated(app_id, updated_name));
+      for (auto& observer : observer_list_)
+        observer.OnAppNameUpdated(app_id, updated_name);
     }
   }
 
@@ -745,31 +818,28 @@ void ArcAppListPrefs::AddAppAndShortcut(
   if (was_disabled && app_ready)
     ready_apps_.insert(app_id);
 
-  if (was_registered) {
-    if (was_disabled && app_ready) {
-      FOR_EACH_OBSERVER(Observer, observer_list_,
-                        OnAppReadyChanged(app_id, true));
-    }
+  if (was_tracked) {
+    if (was_disabled && app_ready)
+      NotifyAppReadyChanged(app_id, true);
   } else {
     AppInfo app_info(updated_name, package_name, activity, intent_uri,
                      icon_resource_id, base::Time(), GetInstallTime(app_id),
                      sticky, notifications_enabled, true,
                      launchable && arc::ShouldShowInLauncher(app_id), shortcut,
                      launchable, orientation_lock);
-    FOR_EACH_OBSERVER(Observer,
-                      observer_list_,
-                      OnAppRegistered(app_id, app_info));
+    for (auto& observer : observer_list_)
+      observer.OnAppRegistered(app_id, app_info);
+    tracked_apps_.insert(app_id);
   }
 
   if (app_ready) {
-    auto deferred_icons = request_icon_deferred_.find(app_id);
-    if (deferred_icons != request_icon_deferred_.end()) {
+    auto pending_icons = request_icon_recorded_.find(app_id);
+    if (pending_icons != request_icon_recorded_.end()) {
       for (uint32_t i = ui::SCALE_FACTOR_100P; i < ui::NUM_SCALE_FACTORS; ++i) {
-        if (deferred_icons->second & (1 << i)) {
+        if (pending_icons->second & (1 << i)) {
           RequestIcon(app_id, static_cast<ui::ScaleFactor>(i));
         }
       }
-      request_icon_deferred_.erase(deferred_icons);
     }
 
     bool deferred_notifications_enabled;
@@ -787,6 +857,8 @@ void ArcAppListPrefs::RemoveApp(const std::string& app_id) {
     arc::RemoveCachedIcon(app_info->icon_resource_id);
   }
 
+  MaybeRemoveIconRequestRecord(app_id);
+
   // From now, app is not available.
   ready_apps_.erase(app_id);
 
@@ -801,16 +873,21 @@ void ArcAppListPrefs::RemoveApp(const std::string& app_id) {
   const bool removed = apps->Remove(app_id, nullptr);
   DCHECK(removed);
 
-  FOR_EACH_OBSERVER(Observer, observer_list_, OnAppRemoved(app_id));
+  DCHECK(tracked_apps_.count(app_id));
+  for (auto& observer : observer_list_)
+    observer.OnAppRemoved(app_id);
+  tracked_apps_.erase(app_id);
 
   // Remove local data on file system.
-  content::BrowserThread::GetBlockingPool()->PostTask(
-      FROM_HERE, base::Bind(&DeleteAppFolderFromFileThread, app_path));
+  base::PostTaskWithTraits(
+      FROM_HERE, base::TaskTraits().MayBlock().WithPriority(
+                     base::TaskPriority::BACKGROUND),
+      base::Bind(&DeleteAppFolderFromFileThread, app_path));
 }
 
 void ArcAppListPrefs::AddOrUpdatePackagePrefs(
     PrefService* prefs, const arc::mojom::ArcPackageInfo& package) {
-  DCHECK(IsArcEnabled());
+  DCHECK(arc::IsArcPlayStoreEnabledForProfile(profile_));
   const std::string& package_name = package.package_name;
   default_apps_.MaybeMarkPackageUninstalled(package_name, false);
   if (package_name.empty()) {
@@ -828,11 +905,12 @@ void ArcAppListPrefs::AddOrUpdatePackagePrefs(
   package_dict->SetString(kLastBackupAndroidId, id_str);
   package_dict->SetString(kLastBackupTime, time_str);
   package_dict->SetBoolean(kSystem, package.system);
+  package_dict->SetBoolean(kUninstalled, false);
 }
 
 void ArcAppListPrefs::RemovePackageFromPrefs(PrefService* prefs,
                                              const std::string& package_name) {
-  DCHECK(IsArcEnabled());
+  DCHECK(arc::IsArcPlayStoreEnabledForProfile(profile_));
   default_apps_.MaybeMarkPackageUninstalled(package_name, true);
   if (!default_apps_.HasPackage(package_name)) {
     DictionaryPrefUpdate update(prefs, prefs::kArcPackages);
@@ -848,8 +926,8 @@ void ArcAppListPrefs::RemovePackageFromPrefs(PrefService* prefs,
 }
 
 void ArcAppListPrefs::OnAppListRefreshed(
-    mojo::Array<arc::mojom::AppInfoPtr> apps) {
-  DCHECK(IsArcEnabled());
+    std::vector<arc::mojom::AppInfoPtr> apps) {
+  DCHECK(arc::IsArcPlayStoreEnabledForProfile(profile_));
   std::vector<std::string> old_apps = GetAppIds();
 
   ready_apps_.clear();
@@ -877,6 +955,7 @@ void ArcAppListPrefs::OnAppListRefreshed(
     if (IsShortcut(app_id)) {
       // If this is a shortcut, we just mark it as ready.
       ready_apps_.insert(app_id);
+      NotifyAppReadyChanged(app_id, true);
     } else {
       // Default apps may not be installed yet at this moment.
       if (!default_apps_.HasApp(app_id))
@@ -886,20 +965,41 @@ void ArcAppListPrefs::OnAppListRefreshed(
 
   if (!is_initialized_) {
     is_initialized_ = true;
+    MaybeSetDefaultAppLoadingTimeout();
     UMA_HISTOGRAM_COUNTS_1000("Arc.AppsInstalledAtStartup", ready_apps_.size());
+  }
+}
+
+void ArcAppListPrefs::DetectDefaultAppAvailability() {
+  for (const auto& package : default_apps_.GetActivePackages()) {
+    // Check if already installed or installation in progress.
+    if (!GetPackage(package) && !default_apps_installations_.count(package))
+      HandlePackageRemoved(package);
+  }
+}
+
+void ArcAppListPrefs::MaybeSetDefaultAppLoadingTimeout() {
+  // Find at least one not installed default app package.
+  for (const auto& package : default_apps_.GetActivePackages()) {
+    if (!GetPackage(package)) {
+      detect_default_app_availability_timeout_.Start(FROM_HERE,
+          kDetectDefaultAppAvailabilityTimeout, this,
+          &ArcAppListPrefs::DetectDefaultAppAvailability);
+      break;
+    }
   }
 }
 
 void ArcAppListPrefs::OnTaskOrientationLockRequested(
     int32_t task_id,
     const arc::mojom::OrientationLock orientation_lock) {
-  FOR_EACH_OBSERVER(Observer, observer_list_,
-                    OnTaskOrientationLockRequested(task_id, orientation_lock));
+  for (auto& observer : observer_list_)
+    observer.OnTaskOrientationLockRequested(task_id, orientation_lock);
 }
 
 void ArcAppListPrefs::AddApp(const arc::mojom::AppInfo& app_info) {
-  if ((app_info.name.get().empty() || app_info.package_name.get().empty() ||
-       app_info.activity.get().empty())) {
+  if ((app_info.name.empty() || app_info.package_name.empty() ||
+       app_info.activity.empty())) {
     VLOG(2) << "App Name, package name, and activity cannot be empty.";
     return;
   }
@@ -922,15 +1022,16 @@ void ArcAppListPrefs::OnAppAddedDeprecated(arc::mojom::AppInfoPtr app) {
 }
 
 void ArcAppListPrefs::OnPackageAppListRefreshed(
-    const mojo::String& package_name,
-    mojo::Array<arc::mojom::AppInfoPtr> apps) {
-  if (package_name.get().empty()) {
+    const std::string& package_name,
+    std::vector<arc::mojom::AppInfoPtr> apps) {
+  if (package_name.empty()) {
     VLOG(2) << "Package name cannot be empty.";
     return;
   }
 
   std::unordered_set<std::string> apps_to_remove =
       GetAppsForPackage(package_name);
+  default_apps_.MaybeMarkPackageUninstalled(package_name, false);
   for (const auto& app : apps) {
     apps_to_remove.erase(GetAppId(app->package_name, app->activity));
     AddApp(*app);
@@ -941,7 +1042,7 @@ void ArcAppListPrefs::OnPackageAppListRefreshed(
 }
 
 void ArcAppListPrefs::OnInstallShortcut(arc::mojom::ShortcutInfoPtr shortcut) {
-  if ((shortcut->name.get().empty() || shortcut->intent_uri.get().empty())) {
+  if ((shortcut->name.empty() || shortcut->intent_uri.empty())) {
     VLOG(2) << "Shortcut Name, and intent_uri cannot be empty.";
     return;
   }
@@ -987,20 +1088,26 @@ std::unordered_set<std::string> ArcAppListPrefs::GetAppsForPackage(
   return app_set;
 }
 
-void ArcAppListPrefs::OnPackageRemoved(const mojo::String& package_name) {
+void ArcAppListPrefs::HandlePackageRemoved(const std::string& package_name) {
   const std::unordered_set<std::string> apps_to_remove =
       GetAppsForPackage(package_name);
   for (const auto& app_id : apps_to_remove)
     RemoveApp(app_id);
 
   RemovePackageFromPrefs(prefs_, package_name);
-  FOR_EACH_OBSERVER(Observer, observer_list_, OnPackageRemoved(package_name));
 }
 
-void ArcAppListPrefs::OnAppIcon(const mojo::String& package_name,
-                                const mojo::String& activity,
+void ArcAppListPrefs::OnPackageRemoved(const std::string& package_name) {
+  HandlePackageRemoved(package_name);
+
+  for (auto& observer : observer_list_)
+    observer.OnPackageRemoved(package_name);
+}
+
+void ArcAppListPrefs::OnAppIcon(const std::string& package_name,
+                                const std::string& activity,
                                 arc::mojom::ScaleFactor scale_factor,
-                                mojo::Array<uint8_t> icon_png_data) {
+                                const std::vector<uint8_t>& icon_png_data) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   DCHECK_NE(0u, icon_png_data.size());
 
@@ -1011,12 +1118,12 @@ void ArcAppListPrefs::OnAppIcon(const mojo::String& package_name,
   }
 
   InstallIcon(app_id, static_cast<ui::ScaleFactor>(scale_factor),
-              icon_png_data.To<std::vector<uint8_t>>());
+              icon_png_data);
 }
 
-void ArcAppListPrefs::OnIcon(const mojo::String& app_id,
+void ArcAppListPrefs::OnIcon(const std::string& app_id,
                              arc::mojom::ScaleFactor scale_factor,
-                             mojo::Array<uint8_t> icon_png_data) {
+                             const std::vector<uint8_t>& icon_png_data) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   DCHECK_NE(0u, icon_png_data.size());
 
@@ -1026,28 +1133,35 @@ void ArcAppListPrefs::OnIcon(const mojo::String& app_id,
   }
 
   InstallIcon(app_id, static_cast<ui::ScaleFactor>(scale_factor),
-              icon_png_data.To<std::vector<uint8_t>>());
+              icon_png_data);
 }
 
 void ArcAppListPrefs::OnTaskCreated(int32_t task_id,
-                                    const mojo::String& package_name,
-                                    const mojo::String& activity,
-                                    const mojo::String& name) {
+                                    const std::string& package_name,
+                                    const std::string& activity,
+                                    const base::Optional<std::string>& name,
+                                    const base::Optional<std::string>& intent) {
   MaybeAddNonLaunchableApp(name, package_name, activity);
-  FOR_EACH_OBSERVER(Observer, observer_list_,
-                    OnTaskCreated(task_id, package_name, activity));
+  for (auto& observer : observer_list_) {
+    observer.OnTaskCreated(task_id,
+                           package_name,
+                           activity,
+                           intent.value_or(std::string()));
+  }
 }
 
 void ArcAppListPrefs::OnTaskDestroyed(int32_t task_id) {
-  FOR_EACH_OBSERVER(Observer, observer_list_, OnTaskDestroyed(task_id));
+  for (auto& observer : observer_list_)
+    observer.OnTaskDestroyed(task_id);
 }
 
 void ArcAppListPrefs::OnTaskSetActive(int32_t task_id) {
-  FOR_EACH_OBSERVER(Observer, observer_list_, OnTaskSetActive(task_id));
+  for (auto& observer : observer_list_)
+    observer.OnTaskSetActive(task_id);
 }
 
 void ArcAppListPrefs::OnNotificationsEnabledChanged(
-    const mojo::String& package_name,
+    const std::string& package_name,
     bool enabled) {
   const base::DictionaryValue* apps = prefs_->GetDictionary(prefs::kArcApps);
   for (base::DictionaryValue::Iterator app(*apps); !app.IsAtEnd();
@@ -1066,8 +1180,8 @@ void ArcAppListPrefs::OnNotificationsEnabledChanged(
     base::DictionaryValue* updateing_app_dict = update.Get();
     updateing_app_dict->SetBoolean(kNotificationsEnabled, enabled);
   }
-  FOR_EACH_OBSERVER(Observer, observer_list_,
-                    OnNotificationsEnabledChanged(package_name, enabled));
+  for (auto& observer : observer_list_)
+    observer.OnNotificationsEnabledChanged(package_name, enabled);
 }
 
 void ArcAppListPrefs::MaybeShowPackageInAppLauncher(
@@ -1090,36 +1204,46 @@ void ArcAppListPrefs::MaybeShowPackageInAppLauncher(
     AppListService* service = AppListService::Get();
     CHECK(service);
     service->ShowForAppInstall(profile_, app_id, false);
+    last_shown_batch_installation_revision_ =
+        current_batch_installation_revision_;
     break;
   }
 }
 
+bool ArcAppListPrefs::IsUnknownPackage(const std::string& package_name) const {
+  return !GetPackage(package_name) &&
+      !sync_service_->IsPackageSyncing(package_name);
+}
+
 void ArcAppListPrefs::OnPackageAdded(
     arc::mojom::ArcPackageInfoPtr package_info) {
-  DCHECK(IsArcEnabled());
+  DCHECK(arc::IsArcPlayStoreEnabledForProfile(profile_));
 
   // Ignore packages installed by internal sync.
   DCHECK(sync_service_);
-  const bool new_package_in_system = !GetPackage(package_info->package_name) &&
-      !sync_service_->IsPackageSyncing(package_info->package_name);
+  const bool unknown_package = IsUnknownPackage(package_info->package_name);
 
   AddOrUpdatePackagePrefs(prefs_, *package_info);
-  FOR_EACH_OBSERVER(Observer, observer_list_,
-                    OnPackageInstalled(*package_info));
-  if (new_package_in_system)
+  for (auto& observer : observer_list_)
+    observer.OnPackageInstalled(*package_info);
+  if (unknown_package &&
+      current_batch_installation_revision_ !=
+          last_shown_batch_installation_revision_) {
     MaybeShowPackageInAppLauncher(*package_info);
+  }
 }
 
 void ArcAppListPrefs::OnPackageModified(
     arc::mojom::ArcPackageInfoPtr package_info) {
-  DCHECK(IsArcEnabled());
+  DCHECK(arc::IsArcPlayStoreEnabledForProfile(profile_));
   AddOrUpdatePackagePrefs(prefs_, *package_info);
-  FOR_EACH_OBSERVER(Observer, observer_list_, OnPackageModified(*package_info));
+  for (auto& observer : observer_list_)
+    observer.OnPackageModified(*package_info);
 }
 
 void ArcAppListPrefs::OnPackageListRefreshed(
-    mojo::Array<arc::mojom::ArcPackageInfoPtr> packages) {
-  DCHECK(IsArcEnabled());
+    std::vector<arc::mojom::ArcPackageInfoPtr> packages) {
+  DCHECK(arc::IsArcPlayStoreEnabledForProfile(profile_));
 
   const std::vector<std::string> old_packages(GetPackagesFromPrefs());
   std::unordered_set<std::string> current_packages;
@@ -1134,12 +1258,14 @@ void ArcAppListPrefs::OnPackageListRefreshed(
       RemovePackageFromPrefs(prefs_, package_name);
   }
 
-  // Start ArcPackageSyncService ASAP. This is the call_back of
-  // app_instance->RefreshAppList() in OnInstanceReady(). SyncStarted() should
-  // only be called after packagelist refresh is completed. SyncStarted() is
-  // no-op after first time setup or if sync is disabled.
-  DCHECK(sync_service_);
-  sync_service_->SyncStarted();
+  // TODO(lgcheng@) File http://b/31944261. Remove the flag after Android side
+  // cleanup.
+  if (package_list_initial_refreshed_)
+    return;
+
+  package_list_initial_refreshed_ = true;
+  for (auto& observer : observer_list_)
+    observer.OnPackageListInitialRefreshed();
 }
 
 std::vector<std::string> ArcAppListPrefs::GetPackagesFromPrefs() const {
@@ -1149,16 +1275,22 @@ std::vector<std::string> ArcAppListPrefs::GetPackagesFromPrefs() const {
 std::vector<std::string> ArcAppListPrefs::GetPackagesFromPrefs(
     bool installed) const {
   std::vector<std::string> packages;
-  if (!IsArcEnabled() && installed)
+  if ((!IsArcAlive() || !arc::IsArcPlayStoreEnabledForProfile(profile_)) &&
+      installed)
     return packages;
 
   const base::DictionaryValue* package_prefs =
       prefs_->GetDictionary(prefs::kArcPackages);
   for (base::DictionaryValue::Iterator package(*package_prefs);
        !package.IsAtEnd(); package.Advance()) {
+    const base::DictionaryValue* package_info;
+    if (!package.value().GetAsDictionary(&package_info)) {
+      NOTREACHED();
+      continue;
+    }
 
     bool uninstalled = false;
-    package_prefs->GetBoolean(kSystem, &uninstalled);
+    package_info->GetBoolean(kUninstalled, &uninstalled);
     if (installed != !uninstalled)
       continue;
 
@@ -1188,8 +1320,9 @@ void ArcAppListPrefs::InstallIcon(const std::string& app_id,
                                   ui::ScaleFactor scale_factor,
                                   const std::vector<uint8_t>& content_png) {
   base::FilePath icon_path = GetIconPath(app_id, scale_factor);
-  base::PostTaskAndReplyWithResult(
-      content::BrowserThread::GetBlockingPool(), FROM_HERE,
+  base::PostTaskWithTraitsAndReplyWithResult(
+      FROM_HERE, base::TaskTraits().MayBlock().WithPriority(
+                     base::TaskPriority::BACKGROUND),
       base::Bind(&InstallIconFromFileThread, app_id, scale_factor, icon_path,
                  content_png),
       base::Bind(&ArcAppListPrefs::OnIconInstalled,
@@ -1203,8 +1336,41 @@ void ArcAppListPrefs::OnIconInstalled(const std::string& app_id,
   if (!install_succeed)
     return;
 
-  FOR_EACH_OBSERVER(Observer, observer_list_,
-                    OnAppIconUpdated(app_id, scale_factor));
+  for (auto& observer : observer_list_)
+    observer.OnAppIconUpdated(app_id, scale_factor);
+}
+
+void ArcAppListPrefs::OnInstallationStarted(
+    const base::Optional<std::string>& package_name) {
+  // Start new batch installation group if this is first installation.
+  if (!installing_packages_count_)
+    ++current_batch_installation_revision_;
+  ++installing_packages_count_;
+
+  if (package_name.has_value() && default_apps_.HasPackage(*package_name))
+    default_apps_installations_.insert(*package_name);
+}
+
+void ArcAppListPrefs::OnInstallationFinished(
+    arc::mojom::InstallationResultPtr result) {
+  if (result && default_apps_.HasPackage(result->package_name)) {
+    default_apps_installations_.erase(result->package_name);
+
+    if (!result->success && !GetPackage(result->package_name))
+      HandlePackageRemoved(result->package_name);
+  }
+
+  if (!installing_packages_count_) {
+    VLOG(2) << "Received unexpected installation finished event";
+    return;
+  }
+  --installing_packages_count_;
+}
+
+void ArcAppListPrefs::NotifyAppReadyChanged(const std::string& app_id,
+                                            bool ready) {
+  for (auto& observer : observer_list_)
+    observer.OnAppReadyChanged(app_id, ready);
 }
 
 ArcAppListPrefs::AppInfo::AppInfo(const std::string& name,

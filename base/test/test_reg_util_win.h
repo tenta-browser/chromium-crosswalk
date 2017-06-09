@@ -38,7 +38,11 @@ class RegistryOverrideManager {
   // Override the given registry hive using a randomly generated temporary key.
   // Multiple overrides to the same hive are not supported and lead to undefined
   // behavior.
+  // Optional return of the registry override path.
+  // Calls to these functions must be wrapped in ASSERT_NO_FATAL_FAILURE to
+  // ensure that tests do not proceeed in case of failure to override.
   void OverrideRegistry(HKEY override);
+  void OverrideRegistry(HKEY override, base::string16* override_path);
 
  private:
   friend class RegistryOverrideManagerTest;
@@ -51,7 +55,7 @@ class RegistryOverrideManager {
 
    private:
     HKEY override_;
-    base::win::RegKey temp_key_;
+    base::string16 key_path_;
 
     DISALLOW_COPY_AND_ASSIGN(ScopedRegistryKeyOverride);
   };

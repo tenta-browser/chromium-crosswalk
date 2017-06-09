@@ -9,12 +9,9 @@
 
 #include "base/macros.h"
 #include "ios/public/provider/chrome/browser/chrome_browser_provider.h"
-
-class FakeProfileOAuth2TokenServiceIOSProvider;
+#include "ios/public/provider/chrome/browser/ui/text_field_styling.h"
 
 namespace ios {
-
-class TestUpdatableResourceProvider;
 
 class TestChromeBrowserProvider : public ChromeBrowserProvider {
  public:
@@ -25,17 +22,29 @@ class TestChromeBrowserProvider : public ChromeBrowserProvider {
   static TestChromeBrowserProvider* GetTestProvider();
 
   // ChromeBrowserProvider:
-  ProfileOAuth2TokenServiceIOSProvider*
-  GetProfileOAuth2TokenServiceIOSProvider() override;
+  SigninResourcesProvider* GetSigninResourcesProvider() override;
+  void SetChromeIdentityServiceForTesting(
+      std::unique_ptr<ChromeIdentityService> service) override;
   ChromeIdentityService* GetChromeIdentityService() override;
-  UpdatableResourceProvider* GetUpdatableResourceProvider() override;
+  UITextField<TextFieldStyling>* CreateStyledTextField(
+      CGRect frame) const override NS_RETURNS_RETAINED;
+  VoiceSearchProvider* GetVoiceSearchProvider() const override;
+  AppDistributionProvider* GetAppDistributionProvider() const override;
+  OmahaServiceProvider* GetOmahaServiceProvider() const override;
+  UserFeedbackProvider* GetUserFeedbackProvider() const override;
+  SpotlightProvider* GetSpotlightProvider() const override;
+  BrandedImageProvider* GetBrandedImageProvider() const override;
+  id<NativeAppWhitelistManager> GetNativeAppWhitelistManager() const override;
 
  private:
-  std::unique_ptr<FakeProfileOAuth2TokenServiceIOSProvider>
-      oauth2_token_service_provider_;
+  std::unique_ptr<AppDistributionProvider> app_distribution_provider_;
+  std::unique_ptr<BrandedImageProvider> branded_image_provider_;
   std::unique_ptr<ChromeIdentityService> chrome_identity_service_;
-  std::unique_ptr<TestUpdatableResourceProvider>
-      test_updatable_resource_provider_;
+  std::unique_ptr<OmahaServiceProvider> omaha_service_provider_;
+  std::unique_ptr<SigninResourcesProvider> signin_resources_provider_;
+  std::unique_ptr<VoiceSearchProvider> voice_search_provider_;
+  std::unique_ptr<UserFeedbackProvider> user_feedback_provider_;
+  std::unique_ptr<SpotlightProvider> spotlight_provider_;
 
   DISALLOW_COPY_AND_ASSIGN(TestChromeBrowserProvider);
 };

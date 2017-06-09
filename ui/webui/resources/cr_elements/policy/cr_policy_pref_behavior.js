@@ -9,37 +9,20 @@
 /** @polymerBehavior */
 var CrPolicyPrefBehavior = {
   /**
-   * @param {!chrome.settingsPrivate.PrefObject} pref
-   * @return {boolean} True if the pref is controlled by an enforced policy.
+   * @return {boolean} True if |this.pref| is controlled by an enforced policy.
    */
-  isPrefPolicyControlled: function(pref) {
-    return pref.policyEnforcement ==
-           chrome.settingsPrivate.PolicyEnforcement.ENFORCED;
+  isPrefPolicyControlled: function() {
+    return (
+        this.pref.enforcement == chrome.settingsPrivate.Enforcement.ENFORCED &&
+        this.pref.controlledBy !=
+            chrome.settingsPrivate.ControlledBy.EXTENSION);
   },
 
   /**
-   * @param {chrome.settingsPrivate.PolicySource} source
-   * @param {chrome.settingsPrivate.PolicyEnforcement} enforcement
-   * @return {CrPolicyIndicatorType} The indicator type based on |source| and
-   *     |enforcement|.
+   * @return {boolean} True if |this.pref| has a recommended or enforced policy.
    */
-  getIndicatorType: function(source, enforcement) {
-    if (enforcement == chrome.settingsPrivate.PolicyEnforcement.RECOMMENDED)
-      return CrPolicyIndicatorType.RECOMMENDED;
-    if (enforcement == chrome.settingsPrivate.PolicyEnforcement.ENFORCED) {
-      switch (source) {
-        case chrome.settingsPrivate.PolicySource.PRIMARY_USER:
-          return CrPolicyIndicatorType.PRIMARY_USER;
-        case chrome.settingsPrivate.PolicySource.OWNER:
-          return CrPolicyIndicatorType.OWNER;
-        case chrome.settingsPrivate.PolicySource.USER_POLICY:
-          return CrPolicyIndicatorType.USER_POLICY;
-        case chrome.settingsPrivate.PolicySource.DEVICE_POLICY:
-          return CrPolicyIndicatorType.DEVICE_POLICY;
-        case chrome.settingsPrivate.PolicySource.EXTENSION:
-          return CrPolicyIndicatorType.EXTENSION;
-      }
-    }
-    return CrPolicyIndicatorType.NONE;
+  hasPrefPolicyIndicator: function() {
+    return this.isPrefPolicyControlled() ||
+        this.pref.enforcement == chrome.settingsPrivate.Enforcement.RECOMMENDED;
   },
 };

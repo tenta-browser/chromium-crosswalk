@@ -7,6 +7,7 @@
 
 #include <deque>
 #include <memory>
+#include <string>
 
 #include "base/callback.h"
 #include "base/macros.h"
@@ -14,6 +15,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/synchronization/lock.h"
 #include "chromecast/media/cma/backend/alsa/media_pipeline_backend_alsa.h"
+#include "chromecast/media/cma/backend/alsa/slew_volume.h"
 #include "chromecast/media/cma/backend/alsa/stream_mixer_alsa.h"
 #include "chromecast/media/cma/backend/alsa/stream_mixer_alsa_input.h"
 
@@ -28,6 +30,8 @@ class MultiChannelResampler;
 
 namespace chromecast {
 namespace media {
+
+class FilterGroup;
 
 // Input queue implementation for StreamMixerAlsa. Each input source pushes
 // frames to an instance of StreamMixerAlsaInputImpl; this then signals the
@@ -89,6 +93,7 @@ class StreamMixerAlsaInputImpl : public StreamMixerAlsa::InputQueue {
   StreamMixerAlsaInputImpl(StreamMixerAlsaInput::Delegate* delegate,
                            int input_samples_per_second,
                            bool primary,
+                           const std::string& device_id,
                            StreamMixerAlsa* mixer);
 
   ~StreamMixerAlsaInputImpl() override;
@@ -113,13 +118,20 @@ class StreamMixerAlsaInputImpl : public StreamMixerAlsa::InputQueue {
  private:
   // StreamMixerAlsa::InputQueue implementation:
   int input_samples_per_second() const override;
-  float volume_multiplier() const override;
   bool primary() const override;
+  std::string device_id() const override;
   bool IsDeleting() const override;
   void Initialize(const MediaPipelineBackendAlsa::RenderingDelay&
                       mixer_rendering_delay) override;
+  void set_filter_group(FilterGroup* filter_group) override;
+  FilterGroup* filter_group() override;
   int MaxReadSize() override;
   void GetResampledData(::media::AudioBus* dest, int frames) override;
+  void OnSkipped() override;
+  void VolumeScaleAccumulate(bool repeat_transition,
+                             const float* src,
+                             int frames,
+                             float* dest) override;
   void AfterWriteFrames(const MediaPipelineBackendAlsa::RenderingDelay&
                             mixer_rendering_delay) override;
   void SignalError(StreamMixerAlsaInput::MixerError error) override;
@@ -142,12 +154,16 @@ class StreamMixerAlsaInputImpl : public StreamMixerAlsa::InputQueue {
   StreamMixerAlsaInput::Delegate* const delegate_;
   const int input_samples_per_second_;
   const bool primary_;
+  std::string device_id_;
   StreamMixerAlsa* const mixer_;
+  FilterGroup* filter_group_;
   const scoped_refptr<base::SingleThreadTaskRunner> mixer_task_runner_;
   const scoped_refptr<base::SingleThreadTaskRunner> caller_task_runner_;
 
+  double resample_ratio_;
+
   State state_;
-  float volume_multiplier_;
+  SlewVolume slew_volume_;
 
   base::Lock queue_lock_;  // Lock for the following queue-related members.
   scoped_refptr<DecoderBufferBase> pending_data_;
@@ -162,6 +178,7 @@ class StreamMixerAlsaInputImpl : public StreamMixerAlsa::InputQueue {
   int fade_frames_remaining_;
   int fade_out_frames_total_;
   int zeroed_frames_;  // current count of consecutive 0-filled frames
+  bool is_underflowing_;
 
   OnReadyToDeleteCb delete_cb_;
 

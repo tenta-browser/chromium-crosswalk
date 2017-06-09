@@ -28,7 +28,7 @@ DirectoryItemTreeBaseMethods.getItemByEntry = function(entry) {
       // The Drive root volume item "Google Drive" and its child "My Drive" have
       // the same entry. When we look for a tree item of Drive's root directory,
       // "My Drive" should be returned, as we use "Google Drive" for grouping
-      // "My Drive", "Shared with me", "Recent", and "Offine".
+      // "My Drive", "Shared with me", "Recent", and "Offline".
       // Therefore, we have to skip "Google Drive" here.
       if (item instanceof DriveVolumeItem)
         return item.getItemByEntry(entry);
@@ -122,6 +122,8 @@ function DirectoryItem(label, tree) {
   item.hasChildren = false;
 
   item.label = label;
+  item.setAttribute('aria-label', label);
+
   return item;
 }
 
@@ -639,7 +641,14 @@ VolumeItem.prototype.setupIcon_ = function(icon, volumeInfo) {
         'style', 'background-image: ' + backgroundImage);
   }
   icon.setAttribute('volume-type-icon', volumeInfo.volumeType);
-  icon.setAttribute('volume-subtype', volumeInfo.deviceType || '');
+  if (volumeInfo.volumeType === VolumeManagerCommon.VolumeType.MEDIA_VIEW) {
+    icon.setAttribute(
+        'volume-subtype',
+        VolumeManagerCommon.getMediaViewRootTypeFromVolumeId(
+            volumeInfo.volumeId));
+  } else {
+    icon.setAttribute('volume-subtype', volumeInfo.deviceType || '');
+  }
 };
 
 /**

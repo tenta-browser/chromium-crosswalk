@@ -12,7 +12,7 @@
 #include <utility>
 
 #include "base/metrics/field_trial.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "chrome/browser/prerender/prerender_contents.h"
 #include "chrome/browser/prerender/prerender_handle.h"
 #include "chrome/browser/prerender/prerender_manager.h"
@@ -23,10 +23,11 @@
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/session_storage_namespace.h"
 #include "content/public/common/referrer.h"
+#include "extensions/features/features.h"
 #include "ui/gfx/geometry/size.h"
 #include "url/gurl.h"
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "components/guest_view/browser/guest_view_base.h"
 #endif
 
@@ -131,6 +132,8 @@ class PrerenderLinkManager::PendingPrerenderManager
     }
   }
 
+  void OnPrerenderNetworkBytesChanged(PrerenderContents* launcher) override {}
+
  private:
   // A pointer to the parent PrerenderLinkManager.
   PrerenderLinkManager* link_manager_;
@@ -169,7 +172,7 @@ void PrerenderLinkManager::OnAddPrerender(int launcher_child_id,
             FindByLauncherChildIdAndPrerenderId(launcher_child_id,
                                                 prerender_id));
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   content::RenderViewHost* rvh =
       content::RenderViewHost::FromID(launcher_child_id, render_view_route_id);
   content::WebContents* web_contents =
@@ -381,25 +384,30 @@ void PrerenderLinkManager::StartPrerenders() {
       continue;
     }
 
-    PrerenderHandle* handle = manager_->AddPrerenderFromLinkRelPrerender(
-        (*i)->launcher_child_id, (*i)->render_view_route_id,
-        (*i)->url, (*i)->rel_types, (*i)->referrer, (*i)->size);
+    std::unique_ptr<PrerenderHandle> handle =
+        manager_->AddPrerenderFromLinkRelPrerender(
+            (*i)->launcher_child_id, (*i)->render_view_route_id, (*i)->url,
+            (*i)->rel_types, (*i)->referrer, (*i)->size);
     if (!handle) {
       // This prerender couldn't be launched, it's gone.
       prerenders_.erase(*i);
       continue;
     }
 
-    // We have successfully started a new prerender.
-    (*i)->handle = handle;
-    ++total_started_prerender_count;
-    handle->SetObserver(this);
-    if (handle->IsPrerendering())
-      OnPrerenderStart(handle);
-    RecordLinkManagerStarting((*i)->rel_types);
-
-    running_launcher_and_render_view_routes.insert(
-        launcher_and_render_view_route);
+    if (handle->IsPrerendering()) {
+      // We have successfully started a new prerender.
+      (*i)->handle = handle.release();
+      ++total_started_prerender_count;
+      (*i)->handle->SetObserver(this);
+      OnPrerenderStart((*i)->handle);
+      RecordLinkManagerStarting((*i)->rel_types);
+      running_launcher_and_render_view_routes.insert(
+          launcher_and_render_view_route);
+    } else {
+      Send((*i)->launcher_child_id,
+          new PrerenderMsg_OnPrerenderStop((*i)->prerender_id));
+      prerenders_.erase(*i);
+    }
   }
 }
 
@@ -520,9 +528,12 @@ void PrerenderLinkManager::OnPrerenderStop(
     return;
 
   Send(prerender->launcher_child_id,
-       new PrerenderMsg_OnPrerenderStop(prerender->prerender_id));
+      new PrerenderMsg_OnPrerenderStop(prerender->prerender_id));
   RemovePrerender(prerender);
   StartPrerenders();
 }
+
+void PrerenderLinkManager::OnPrerenderNetworkBytesChanged(
+    PrerenderHandle* prerender_handle) {}
 
 }  // namespace prerender

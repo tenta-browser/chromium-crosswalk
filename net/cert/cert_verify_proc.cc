@@ -18,12 +18,17 @@
 #include "net/base/net_errors.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "net/base/url_util.h"
+#include "net/cert/asn1_util.h"
 #include "net/cert/cert_status_flags.h"
 #include "net/cert/cert_verifier.h"
 #include "net/cert/cert_verify_proc_whitelist.h"
 #include "net/cert/cert_verify_result.h"
 #include "net/cert/crl_set.h"
+#include "net/cert/internal/parse_ocsp.h"
+#include "net/cert/internal/signature_algorithm.h"
+#include "net/cert/ocsp_revocation_status.h"
 #include "net/cert/x509_certificate.h"
+#include "net/der/encode_values.h"
 #include "url/url_canon.h"
 
 #if defined(USE_NSS_CERTS)
@@ -37,6 +42,7 @@
 #elif defined(OS_MACOSX)
 #include "net/cert/cert_verify_proc_mac.h"
 #elif defined(OS_WIN)
+#include "base/win/windows_version.h"
 #include "net/cert/cert_verify_proc_win.h"
 #else
 #error Implement certificate verification.
@@ -182,6 +188,158 @@ bool IsPastSHA1DeprecationDate(const X509Certificate& cert) {
   return start >= kSHA1DeprecationDate;
 }
 
+// Checks if the given RFC 6960 OCSPCertID structure |cert_id| has the same
+// serial number as |certificate|.
+//
+// TODO(dadrian): Verify name and key hashes. https://crbug.com/620005
+bool CheckCertIDMatchesCertificate(const OCSPCertID& cert_id,
+                                   const X509Certificate& certificate) {
+  der::Input serial(&certificate.serial_number());
+  return cert_id.serial_number == serial;
+}
+
+// Populates |ocsp_result| with revocation information for |certificate|, based
+// on the unparsed OCSP response in |raw_response|.
+void CheckOCSP(const std::string& raw_response,
+               const X509Certificate& certificate,
+               OCSPVerifyResult* ocsp_result) {
+  // The maximum age for an OCSP response, implemented as time since the
+  // |this_update| field in OCSPSingleREsponse. Responses older than |max_age|
+  // will be considered invalid.
+  static base::TimeDelta max_age = base::TimeDelta::FromDays(7);
+  *ocsp_result = OCSPVerifyResult();
+
+  if (raw_response.empty()) {
+    ocsp_result->response_status = OCSPVerifyResult::MISSING;
+    return;
+  }
+
+  der::Input response_der(&raw_response);
+  OCSPResponse response;
+  if (!ParseOCSPResponse(response_der, &response)) {
+    ocsp_result->response_status = OCSPVerifyResult::PARSE_RESPONSE_ERROR;
+    return;
+  }
+
+  // RFC 6960 defines all responses |response_status| != SUCCESSFUL as error
+  // responses. No revocation information is provided on error responses, and
+  // the OCSPResponseData structure is not set.
+  if (response.status != OCSPResponse::ResponseStatus::SUCCESSFUL) {
+    ocsp_result->response_status = OCSPVerifyResult::ERROR_RESPONSE;
+    return;
+  }
+
+  // Actual revocation information is contained within the BasicOCSPResponse as
+  // a ResponseData structure. The BasicOCSPResponse was parsed above, and
+  // contains an unparsed ResponseData. From RFC 6960:
+  //
+  // BasicOCSPResponse       ::= SEQUENCE {
+  //    tbsResponseData      ResponseData,
+  //    signatureAlgorithm   AlgorithmIdentifier,
+  //    signature            BIT STRING,
+  //    certs            [0] EXPLICIT SEQUENCE OF Certificate OPTIONAL }
+  //
+  // ResponseData ::= SEQUENCE {
+  //     version              [0] EXPLICIT Version DEFAULT v1,
+  //     responderID              ResponderID,
+  //     producedAt               GeneralizedTime,
+  //     responses                SEQUENCE OF SingleResponse,
+  //     responseExtensions   [1] EXPLICIT Extensions OPTIONAL }
+  OCSPResponseData response_data;
+  if (!ParseOCSPResponseData(response.data, &response_data)) {
+    ocsp_result->response_status = OCSPVerifyResult::PARSE_RESPONSE_DATA_ERROR;
+    return;
+  }
+
+  // If producedAt is outside of the certificate validity period, reject the
+  // response.
+  der::GeneralizedTime not_before, not_after;
+  if (!der::EncodeTimeAsGeneralizedTime(certificate.valid_start(),
+                                        &not_before) ||
+      !der::EncodeTimeAsGeneralizedTime(certificate.valid_expiry(),
+                                        &not_after)) {
+    ocsp_result->response_status = OCSPVerifyResult::BAD_PRODUCED_AT;
+    return;
+  }
+  if (response_data.produced_at < not_before ||
+      response_data.produced_at > not_after) {
+    ocsp_result->response_status = OCSPVerifyResult::BAD_PRODUCED_AT;
+    return;
+  }
+
+  // TODO(svaldez): Unify with GetOCSPCertStatus. https://crbug.com/629249
+  base::Time verify_time = base::Time::Now();
+  ocsp_result->response_status = OCSPVerifyResult::NO_MATCHING_RESPONSE;
+  for (const auto& single_response_der : response_data.responses) {
+    // In the common case, there should only be one SingleResponse in the
+    // ResponseData (matching the certificate requested and used on this
+    // connection). However, it is possible for the OCSP responder to provide
+    // multiple responses for multiple certificates. Look through all the
+    // provided SingleResponses, and check to see if any match the certificate.
+    // A SingleResponse matches a certificate if it has the same serial number.
+    OCSPSingleResponse single_response;
+    if (!ParseOCSPSingleResponse(single_response_der, &single_response))
+      continue;
+    OCSPCertID cert_id;
+    if (!ParseOCSPCertID(single_response.cert_id_tlv, &cert_id))
+      continue;
+    if (!CheckCertIDMatchesCertificate(cert_id, certificate))
+      continue;
+    // The SingleResponse matches the certificate, but may be out of date. Out
+    // of date responses are noted seperate from responses with mismatched
+    // serial numbers. If an OCSP responder provides both an up to date response
+    // and an expired response, the up to date response takes precedence
+    // (PROVIDED > INVALID_DATE).
+    if (!CheckOCSPDateValid(single_response, verify_time, max_age)) {
+      if (ocsp_result->response_status != OCSPVerifyResult::PROVIDED)
+        ocsp_result->response_status = OCSPVerifyResult::INVALID_DATE;
+      continue;
+    }
+
+    // In the case with multiple matching and up to date responses, keep only
+    // the strictest status (REVOKED > UNKNOWN > GOOD). The current
+    // |revocation_status| is only valid if |response_status| is already set to
+    // PROVIDED.
+    OCSPRevocationStatus current_status = OCSPRevocationStatus::GOOD;
+    if (ocsp_result->response_status == OCSPVerifyResult::PROVIDED) {
+      current_status = ocsp_result->revocation_status;
+    }
+    if (current_status == OCSPRevocationStatus::GOOD ||
+        single_response.cert_status.status == OCSPRevocationStatus::REVOKED) {
+      ocsp_result->revocation_status = single_response.cert_status.status;
+    }
+    ocsp_result->response_status = OCSPVerifyResult::PROVIDED;
+  }
+}
+
+// Records histograms indicating whether the certificate |cert|, which
+// is assumed to have been validated chaining to a private root,
+// contains the TLS Feature Extension (https://tools.ietf.org/html/rfc7633) and
+// has valid OCSP information stapled.
+void RecordTLSFeatureExtensionWithPrivateRoot(
+    X509Certificate* cert,
+    const OCSPVerifyResult& ocsp_result) {
+  std::string cert_der;
+  if (!X509Certificate::GetDEREncoded(cert->os_cert_handle(), &cert_der))
+    return;
+
+  // This checks only for the presence of the TLS Feature Extension, but
+  // does not check the feature list, and in particular does not verify that
+  // its value is 'status_request' or 'status_request2'. In practice the
+  // only use of the TLS feature extension is for OCSP stapling, so
+  // don't bother to check the value.
+  bool has_extension = asn1::HasTLSFeatureExtension(cert_der);
+
+  UMA_HISTOGRAM_BOOLEAN("Net.Certificate.TLSFeatureExtensionWithPrivateRoot",
+                        has_extension);
+  if (!has_extension)
+    return;
+
+  UMA_HISTOGRAM_BOOLEAN(
+      "Net.Certificate.TLSFeatureExtensionWithPrivateRootHasOCSP",
+      (ocsp_result.response_status != OCSPVerifyResult::MISSING));
+}
+
 // Comparison functor used for binary searching whether a given HashValue,
 // which MUST be a SHA-256 hash, is contained with an array of SHA-256
 // hashes.
@@ -200,6 +358,145 @@ struct HashToArrayComparator {
     return memcmp(lhs.data(), rhs, crypto::kSHA256Length) < 0;
   }
 };
+
+bool AreSHA1IntermediatesAllowed() {
+#if defined(OS_WIN)
+  // TODO(rsleevi): Remove this once https://crbug.com/588789 is resolved
+  // for Windows 7/2008 users.
+  // Note: This must be kept in sync with cert_verify_proc_unittest.cc
+  return base::win::GetVersion() < base::win::VERSION_WIN8;
+#else
+  return false;
+#endif
+};
+
+// Sets the "has_*" boolean members in |verify_result| that correspond with
+// the the presence of |hash| somewhere in the certificate chain (excluding the
+// trust anchor).
+void MapAlgorithmToBool(DigestAlgorithm hash, CertVerifyResult* verify_result) {
+  switch (hash) {
+    case DigestAlgorithm::Md2:
+      verify_result->has_md2 = true;
+      break;
+    case DigestAlgorithm::Md4:
+      verify_result->has_md4 = true;
+      break;
+    case DigestAlgorithm::Md5:
+      verify_result->has_md5 = true;
+      break;
+    case DigestAlgorithm::Sha1:
+      verify_result->has_sha1 = true;
+      break;
+    case DigestAlgorithm::Sha256:
+    case DigestAlgorithm::Sha384:
+    case DigestAlgorithm::Sha512:
+      break;
+  }
+}
+
+// Inspects the signature algorithms in a single certificate |cert|.
+//
+//   * Sets |verify_result->has_md2| to true if the certificate uses MD2.
+//   * Sets |verify_result->has_md4| to true if the certificate uses MD4.
+//   * Sets |verify_result->has_md5| to true if the certificate uses MD5.
+//   * Sets |verify_result->has_sha1| to true if the certificate uses SHA1.
+//
+// Returns false if the signature algorithm was unknown or mismatched.
+WARN_UNUSED_RESULT bool InspectSignatureAlgorithmForCert(
+    X509Certificate::OSCertHandle cert,
+    CertVerifyResult* verify_result) {
+  std::string cert_der;
+  base::StringPiece cert_algorithm_sequence;
+  base::StringPiece tbs_algorithm_sequence;
+
+  // Extract the AlgorithmIdentifier SEQUENCEs
+  if (!X509Certificate::GetDEREncoded(cert, &cert_der) ||
+      !asn1::ExtractSignatureAlgorithmsFromDERCert(
+          cert_der, &cert_algorithm_sequence, &tbs_algorithm_sequence)) {
+    return false;
+  }
+
+  if (!SignatureAlgorithm::IsEquivalent(der::Input(cert_algorithm_sequence),
+                                        der::Input(tbs_algorithm_sequence))) {
+    return false;
+  }
+
+  std::unique_ptr<SignatureAlgorithm> algorithm =
+      SignatureAlgorithm::Create(der::Input(cert_algorithm_sequence), nullptr);
+  if (!algorithm)
+    return false;
+
+  MapAlgorithmToBool(algorithm->digest(), verify_result);
+
+  // Check algorithm-specific parameters.
+  switch (algorithm->algorithm()) {
+    case SignatureAlgorithmId::RsaPkcs1:
+    case SignatureAlgorithmId::Ecdsa:
+      DCHECK(!algorithm->has_params());
+      break;
+    case SignatureAlgorithmId::RsaPss:
+      MapAlgorithmToBool(algorithm->ParamsForRsaPss()->mgf1_hash(),
+                         verify_result);
+      break;
+  }
+
+  return true;
+}
+
+// InspectSignatureAlgorithmsInChain() sets |verify_result->has_*| based on
+// the signature algorithms used in the chain, and also checks that certificates
+// don't have contradictory signature algorithms.
+//
+// Returns false if any signature algorithm in the chain is unknown or
+// mismatched.
+//
+// Background:
+//
+// X.509 certificates contain two redundant descriptors for the signature
+// algorithm; one is covered by the signature, but in order to verify the
+// signature, the other signature algorithm is untrusted.
+//
+// RFC 5280 states that the two should be equal, in order to mitigate risk of
+// signature substitution attacks, but also discourages verifiers from enforcing
+// the profile of RFC 5280.
+//
+// System verifiers are inconsistent - some use the unsigned signature, some use
+// the signed signature, and they generally do not enforce that both match. This
+// creates confusion, as it's possible that the signature itself may be checked
+// using algorithm A, but if subsequent consumers report the certificate
+// algorithm, they may end up reporting algorithm B, which was not used to
+// verify the certificate. This function enforces that the two signatures match
+// in order to prevent such confusion.
+WARN_UNUSED_RESULT bool InspectSignatureAlgorithmsInChain(
+    CertVerifyResult* verify_result) {
+  const X509Certificate::OSCertHandles& intermediates =
+      verify_result->verified_cert->GetIntermediateCertificates();
+
+  // If there are no intermediates, then the leaf is trusted or verification
+  // failed.
+  if (intermediates.empty())
+    return true;
+
+  DCHECK(!verify_result->has_sha1);
+
+  // Fill in hash algorithms for the leaf certificate.
+  if (!InspectSignatureAlgorithmForCert(
+          verify_result->verified_cert->os_cert_handle(), verify_result)) {
+    return false;
+  }
+
+  verify_result->has_sha1_leaf = verify_result->has_sha1;
+
+  // Fill in hash algorithms for the intermediate cerificates, excluding the
+  // final one (which is presumably the trust anchor; may be incorrect for
+  // partial chains).
+  for (size_t i = 0; i + 1 < intermediates.size(); ++i) {
+    if (!InspectSignatureAlgorithmForCert(intermediates[i], verify_result))
+      return false;
+  }
+
+  return true;
+}
 
 }  // namespace
 
@@ -222,7 +519,8 @@ CertVerifyProc* CertVerifyProc::CreateDefault() {
 #endif
 }
 
-CertVerifyProc::CertVerifyProc() {}
+CertVerifyProc::CertVerifyProc()
+    : sha1_legacy_mode_enabled(base::FeatureList::IsEnabled(kSHA1LegacyMode)) {}
 
 CertVerifyProc::~CertVerifyProc() {}
 
@@ -251,12 +549,24 @@ int CertVerifyProc::Verify(X509Certificate* cert,
   int rv = VerifyInternal(cert, hostname, ocsp_response, flags, crl_set,
                           additional_trust_anchors, verify_result);
 
-  UMA_HISTOGRAM_BOOLEAN("Net.CertCommonNameFallback",
-                        verify_result->common_name_fallback_used);
-  if (!verify_result->is_issued_by_known_root) {
-    UMA_HISTOGRAM_BOOLEAN("Net.CertCommonNameFallbackPrivateCA",
-                          verify_result->common_name_fallback_used);
+  // Check for mismatched signature algorithms and unknown signature algorithms
+  // in the chain. Also fills in the has_* booleans for the digest algorithms
+  // present in the chain.
+  if (!InspectSignatureAlgorithmsInChain(verify_result)) {
+    verify_result->cert_status |= CERT_STATUS_INVALID;
+    rv = MapCertStatusToNetError(verify_result->cert_status);
   }
+
+  bool allow_common_name_fallback =
+      !verify_result->is_issued_by_known_root &&
+      (flags & CertVerifier::VERIFY_ENABLE_COMMON_NAME_FALLBACK_LOCAL_ANCHORS);
+  if (!cert->VerifyNameMatch(hostname, allow_common_name_fallback)) {
+    verify_result->cert_status |= CERT_STATUS_COMMON_NAME_INVALID;
+    rv = MapCertStatusToNetError(verify_result->cert_status);
+  }
+
+  CheckOCSP(ocsp_response, *verify_result->verified_cert,
+            &verify_result->ocsp_result);
 
   // This check is done after VerifyInternal so that VerifyInternal can fill
   // in the list of public key hashes.
@@ -276,7 +586,7 @@ int CertVerifyProc::Verify(X509Certificate* cert,
   }
 
   if (IsNonWhitelistedCertificate(*verify_result->verified_cert,
-                                  verify_result->public_key_hashes)) {
+                                  verify_result->public_key_hashes, hostname)) {
     verify_result->cert_status |= CERT_STATUS_AUTHORITY_INVALID;
     rv = MapCertStatusToNetError(verify_result->cert_status);
   }
@@ -304,15 +614,28 @@ int CertVerifyProc::Verify(X509Certificate* cert,
     verify_result->cert_status |= CERT_STATUS_SHA1_SIGNATURE_PRESENT;
 
   // Flag certificates using weak signature algorithms.
-  // The CA/Browser Forum Baseline Requirements (beginning with v1.2.1)
-  // prohibits SHA-1 certificates from being issued beginning on
-  // 1 January 2016. Ideally, all of SHA-1 in new certificates would be
-  // disabled on this date, but enterprises need more time to transition.
-  // As the risk is greatest for publicly trusted certificates, prevent
-  // those certificates from being trusted from that date forward.
+
+  // Legacy SHA-1 behaviour:
+  // - Reject all publicly trusted SHA-1 leaf certs issued after
+  //   2016-01-01.
+  bool legacy_sha1_issue = verify_result->has_sha1_leaf &&
+                           verify_result->is_issued_by_known_root &&
+                           IsPastSHA1DeprecationDate(*cert);
+
+  // Current SHA-1 behaviour:
+  // - Reject all SHA-1
+  // - ... unless it's not publicly trusted and SHA-1 is allowed
+  // - ... or SHA-1 is in the intermediate and SHA-1 intermediates are
+  //   allowed for that platform. See https://crbug.com/588789
+  bool current_sha1_issue =
+      (verify_result->is_issued_by_known_root ||
+       !(flags & CertVerifier::VERIFY_ENABLE_SHA1_LOCAL_ANCHORS)) &&
+      (verify_result->has_sha1_leaf ||
+       (verify_result->has_sha1 && !AreSHA1IntermediatesAllowed()));
+
   if (verify_result->has_md5 ||
-      (verify_result->has_sha1_leaf && verify_result->is_issued_by_known_root &&
-       IsPastSHA1DeprecationDate(*cert))) {
+      (sha1_legacy_mode_enabled && legacy_sha1_issue) ||
+      (!sha1_legacy_mode_enabled && current_sha1_issue)) {
     verify_result->cert_status |= CERT_STATUS_WEAK_SIGNATURE_ALGORITHM;
     // Avoid replacing a more serious error, such as an OS/library failure,
     // by ensuring that if verification failed, it failed with a certificate
@@ -338,6 +661,11 @@ int CertVerifyProc::Verify(X509Certificate* cert,
     if (rv == OK)
       rv = MapCertStatusToNetError(verify_result->cert_status);
   }
+
+  // Record a histogram for the presence of the TLS feature extension in
+  // a certificate chaining to a private root.
+  if (rv == OK && !verify_result->is_issued_by_known_root)
+    RecordTLSFeatureExtensionWithPrivateRoot(cert, verify_result->ocsp_result);
 
   return rv;
 }
@@ -398,13 +726,11 @@ static bool CheckNameConstraints(const std::vector<std::string>& dns_names,
     if (host_info.IsIPAddress())
       continue;
 
-    const size_t registry_len = registry_controlled_domains::GetRegistryLength(
-        dns_name,
-        registry_controlled_domains::EXCLUDE_UNKNOWN_REGISTRIES,
-        registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
     // If the name is not in a known TLD, ignore it. This permits internal
     // names.
-    if (registry_len == 0)
+    if (!registry_controlled_domains::HostHasRegistryControlledDomain(
+            dns_name, registry_controlled_domains::EXCLUDE_UNKNOWN_REGISTRIES,
+            registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES))
       continue;
 
     for (size_t j = 0; domains[j][0]; ++j) {
@@ -560,12 +886,12 @@ bool CertVerifyProc::HasTooLongValidity(const X509Certificate& cert) {
   if (exploded_expiry.day_of_month > exploded_start.day_of_month)
     ++month_diff;
 
-  static const base::Time time_2012_07_01 =
-      base::Time::FromUTCExploded({2012, 7, 0, 1, 0, 0, 0, 0});
-  static const base::Time time_2015_04_01 =
-      base::Time::FromUTCExploded({2015, 4, 0, 1, 0, 0, 0, 0});
-  static const base::Time time_2019_07_01 =
-      base::Time::FromUTCExploded({2019, 7, 0, 1, 0, 0, 0, 0});
+  const base::Time time_2012_07_01 =
+      base::Time::FromInternalValue(12985574400000000);
+  const base::Time time_2015_04_01 =
+      base::Time::FromInternalValue(13072320000000000);
+  const base::Time time_2019_07_01 =
+      base::Time::FromInternalValue(13206412800000000);
 
   // For certificates issued before the BRs took effect.
   if (start < time_2012_07_01 && (month_diff > 120 || expiry > time_2019_07_01))
@@ -581,5 +907,9 @@ bool CertVerifyProc::HasTooLongValidity(const X509Certificate& cert) {
 
   return false;
 }
+
+// static
+const base::Feature CertVerifyProc::kSHA1LegacyMode{
+    "SHA1LegacyMode", base::FEATURE_DISABLED_BY_DEFAULT};
 
 }  // namespace net

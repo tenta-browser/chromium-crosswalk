@@ -6,6 +6,7 @@
 
 #include <algorithm>
 
+#include "ash/common/shelf/shelf_item_delegate.h"
 #include "ash/common/shelf/shelf_model_observer.h"
 
 namespace ash {
@@ -21,15 +22,12 @@ int ShelfItemTypeToWeight(ShelfItemType type) {
     case TYPE_BROWSER_SHORTCUT:
     case TYPE_APP_SHORTCUT:
       return 1;
-    case TYPE_WINDOWED_APP:
-    case TYPE_PLATFORM_APP:
+    case TYPE_APP:
       return 2;
     case TYPE_DIALOG:
       return 3;
     case TYPE_APP_PANEL:
       return 4;
-    case TYPE_IME_MENU:
-      return 5;
     case TYPE_UNDEFINED:
       NOTREACHED() << "ShelfItemType must be set";
       return -1;
@@ -45,9 +43,15 @@ bool CompareByWeight(const ShelfItem& a, const ShelfItem& b) {
 
 }  // namespace
 
-ShelfModel::ShelfModel() : next_id_(1), status_(STATUS_NORMAL) {}
+ShelfModel::ShelfModel() : next_id_(1) {}
 
 ShelfModel::~ShelfModel() {}
+
+void ShelfModel::DestroyItemDelegates() {
+  // Some ShelfItemDelegates access this model in their destructors and hence
+  // need early cleanup.
+  id_to_item_delegate_map_.clear();
+}
 
 int ShelfModel::Add(const ShelfItem& item) {
   return AddAt(items_.size(), item);
@@ -57,19 +61,21 @@ int ShelfModel::AddAt(int index, const ShelfItem& item) {
   index = ValidateInsertionIndex(item.type, index);
   items_.insert(items_.begin() + index, item);
   items_[index].id = next_id_++;
-  FOR_EACH_OBSERVER(ShelfModelObserver, observers_, ShelfItemAdded(index));
+  for (auto& observer : observers_)
+    observer.ShelfItemAdded(index);
   return index;
 }
 
 void ShelfModel::RemoveItemAt(int index) {
   DCHECK(index >= 0 && index < item_count());
-  // The app list and browser shortcut can't be removed.
-  DCHECK(items_[index].type != TYPE_APP_LIST &&
-         items_[index].type != TYPE_BROWSER_SHORTCUT);
   ShelfID id = items_[index].id;
   items_.erase(items_.begin() + index);
-  FOR_EACH_OBSERVER(ShelfModelObserver, observers_,
-                    ShelfItemRemoved(index, id));
+  RemoveShelfItemDelegate(id);
+  // TODO(jamescook): Fold this into ShelfItemRemoved in existing observers.
+  for (auto& observer : observers_)
+    observer.OnSetShelfItemDelegate(id, nullptr);
+  for (auto& observer : observers_)
+    observer.ShelfItemRemoved(index, id);
 }
 
 void ShelfModel::Move(int index, int target_index) {
@@ -79,12 +85,16 @@ void ShelfModel::Move(int index, int target_index) {
   ShelfItem item(items_[index]);
   items_.erase(items_.begin() + index);
   items_.insert(items_.begin() + target_index, item);
-  FOR_EACH_OBSERVER(ShelfModelObserver, observers_,
-                    ShelfItemMoved(index, target_index));
+  for (auto& observer : observers_)
+    observer.ShelfItemMoved(index, target_index);
 }
 
 void ShelfModel::Set(int index, const ShelfItem& item) {
-  DCHECK(index >= 0 && index < item_count());
+  if (index < 0 || index >= item_count()) {
+    NOTREACHED();
+    return;
+  }
+
   int new_index = item.type == items_[index].type
                       ? index
                       : ValidateInsertionIndex(item.type, index);
@@ -92,8 +102,8 @@ void ShelfModel::Set(int index, const ShelfItem& item) {
   ShelfItem old_item(items_[index]);
   items_[index] = item;
   items_[index].id = old_item.id;
-  FOR_EACH_OBSERVER(ShelfModelObserver, observers_,
-                    ShelfItemChanged(index, old_item));
+  for (auto& observer : observers_)
+    observer.ShelfItemChanged(index, old_item);
 
   // If the type changes confirm that the item is still in the right order.
   if (new_index != index) {
@@ -132,12 +142,8 @@ ShelfItems::const_iterator ShelfModel::ItemByID(int id) const {
 }
 
 int ShelfModel::FirstRunningAppIndex() const {
-  // Since lower_bound only checks weights against each other, we do not need
-  // to explicitly change different running application types.
-  DCHECK_EQ(ShelfItemTypeToWeight(TYPE_WINDOWED_APP),
-            ShelfItemTypeToWeight(TYPE_PLATFORM_APP));
   ShelfItem weight_dummy;
-  weight_dummy.type = TYPE_WINDOWED_APP;
+  weight_dummy.type = TYPE_APP;
   return std::lower_bound(items_.begin(), items_.end(), weight_dummy,
                           CompareByWeight) -
          items_.begin();
@@ -149,6 +155,26 @@ int ShelfModel::FirstPanelIndex() const {
   return std::lower_bound(items_.begin(), items_.end(), weight_dummy,
                           CompareByWeight) -
          items_.begin();
+}
+
+void ShelfModel::SetShelfItemDelegate(
+    ShelfID id,
+    std::unique_ptr<ShelfItemDelegate> item_delegate) {
+  // If another ShelfItemDelegate is already registered for |id|, we assume
+  // that this request is replacing ShelfItemDelegate for |id| with
+  // |item_delegate|.
+  RemoveShelfItemDelegate(id);
+
+  for (auto& observer : observers_)
+    observer.OnSetShelfItemDelegate(id, item_delegate.get());
+
+  id_to_item_delegate_map_[id] = std::move(item_delegate);
+}
+
+ShelfItemDelegate* ShelfModel::GetShelfItemDelegate(ShelfID id) {
+  if (id_to_item_delegate_map_.find(id) != id_to_item_delegate_map_.end())
+    return id_to_item_delegate_map_[id].get();
+  return nullptr;
 }
 
 void ShelfModel::AddObserver(ShelfModelObserver* observer) {
@@ -175,6 +201,11 @@ int ShelfModel::ValidateInsertionIndex(ShelfItemType type, int index) const {
                    static_cast<ShelfItems::difference_type>(index));
 
   return index;
+}
+
+void ShelfModel::RemoveShelfItemDelegate(ShelfID id) {
+  if (id_to_item_delegate_map_.find(id) != id_to_item_delegate_map_.end())
+    id_to_item_delegate_map_.erase(id);
 }
 
 }  // namespace ash

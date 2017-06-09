@@ -23,6 +23,7 @@
 #include "base/task_runner.h"
 #include "base/threading/worker_pool.h"
 #include "base/time/time.h"
+#include "base/trace_event/memory_usage_estimator.h"
 #include "net/base/net_errors.h"
 #include "net/disk_cache/simple/simple_entry_format.h"
 #include "net/disk_cache/simple/simple_histogram_macros.h"
@@ -83,9 +84,9 @@ EntryMetadata::EntryMetadata()
     entry_size_(0) {
 }
 
-EntryMetadata::EntryMetadata(base::Time last_used_time, uint64_t entry_size)
-    : last_used_time_seconds_since_epoch_(0),
-      entry_size_(base::checked_cast<int32_t>(entry_size)) {
+EntryMetadata::EntryMetadata(base::Time last_used_time,
+                             base::StrictNumeric<uint32_t> entry_size)
+    : last_used_time_seconds_since_epoch_(0), entry_size_(entry_size) {
   SetLastUsedTime(last_used_time);
 }
 
@@ -112,12 +113,12 @@ void EntryMetadata::SetLastUsedTime(const base::Time& last_used_time) {
     last_used_time_seconds_since_epoch_ = 1;
 }
 
-uint64_t EntryMetadata::GetEntrySize() const {
+uint32_t EntryMetadata::GetEntrySize() const {
   return entry_size_;
 }
 
-void EntryMetadata::SetEntrySize(uint64_t entry_size) {
-  entry_size_ = base::checked_cast<int32_t>(entry_size);
+void EntryMetadata::SetEntrySize(base::StrictNumeric<uint32_t> entry_size) {
+  entry_size_ = entry_size;
 }
 
 void EntryMetadata::Serialize(base::Pickle* pickle) const {
@@ -132,11 +133,10 @@ bool EntryMetadata::Deserialize(base::PickleIterator* it) {
   int64_t tmp_last_used_time;
   uint64_t tmp_entry_size;
   if (!it->ReadInt64(&tmp_last_used_time) || !it->ReadUInt64(&tmp_entry_size) ||
-      tmp_entry_size >
-          static_cast<uint64_t>(std::numeric_limits<int32_t>::max()))
+      tmp_entry_size > std::numeric_limits<decltype(entry_size_)>::max())
     return false;
   SetLastUsedTime(base::Time::FromInternalValue(tmp_last_used_time));
-  entry_size_ = static_cast<int32_t>(tmp_entry_size);
+  entry_size_ = static_cast<uint32_t>(tmp_entry_size);
   return true;
 }
 
@@ -221,16 +221,14 @@ std::unique_ptr<SimpleIndex::HashList> SimpleIndex::GetEntriesBetween(
     end_time = base::Time::Max();
   else
     end_time += EntryMetadata::GetUpperEpsilonForTimeComparisons();
-  const base::Time extended_end_time =
-      end_time.is_null() ? base::Time::Max() : end_time;
-  DCHECK(extended_end_time >= initial_time);
+  DCHECK(end_time >= initial_time);
+
   std::unique_ptr<HashList> ret_hashes(new HashList());
-  for (EntrySet::iterator it = entries_set_.begin(), end = entries_set_.end();
-       it != end; ++it) {
-    EntryMetadata& metadata = it->second;
+  for (const auto& entry : entries_set_) {
+    const EntryMetadata& metadata = entry.second;
     base::Time entry_time = metadata.GetLastUsedTime();
-    if (initial_time <= entry_time && entry_time < extended_end_time)
-      ret_hashes->push_back(it->first);
+    if (initial_time <= entry_time && entry_time < end_time)
+      ret_hashes->push_back(entry.first);
   }
   return ret_hashes;
 }
@@ -249,13 +247,40 @@ uint64_t SimpleIndex::GetCacheSize() const {
   return cache_size_;
 }
 
+uint64_t SimpleIndex::GetCacheSizeBetween(base::Time initial_time,
+                                          base::Time end_time) const {
+  DCHECK_EQ(true, initialized_);
+
+  if (!initial_time.is_null())
+    initial_time -= EntryMetadata::GetLowerEpsilonForTimeComparisons();
+  if (end_time.is_null())
+    end_time = base::Time::Max();
+  else
+    end_time += EntryMetadata::GetUpperEpsilonForTimeComparisons();
+
+  DCHECK(end_time >= initial_time);
+  uint64_t size = 0;
+  for (const auto& entry : entries_set_) {
+    const EntryMetadata& metadata = entry.second;
+    base::Time entry_time = metadata.GetLastUsedTime();
+    if (initial_time <= entry_time && entry_time < end_time)
+      size += metadata.GetEntrySize();
+  }
+  return size;
+}
+
+size_t SimpleIndex::EstimateMemoryUsage() const {
+  return base::trace_event::EstimateMemoryUsage(entries_set_) +
+         base::trace_event::EstimateMemoryUsage(removed_entries_);
+}
+
 void SimpleIndex::Insert(uint64_t entry_hash) {
   DCHECK(io_thread_checker_.CalledOnValidThread());
   // Upon insert we don't know yet the size of the entry.
   // It will be updated later when the SimpleEntryImpl finishes opening or
   // creating the new entry, and then UpdateEntrySize will be called.
-  InsertInEntrySet(
-      entry_hash, EntryMetadata(base::Time::Now(), 0), &entries_set_);
+  InsertInEntrySet(entry_hash, EntryMetadata(base::Time::Now(), 0u),
+                   &entries_set_);
   if (!initialized_)
     removed_entries_.erase(entry_hash);
   PostponeWritingToDisk();
@@ -265,7 +290,7 @@ void SimpleIndex::Remove(uint64_t entry_hash) {
   DCHECK(io_thread_checker_.CalledOnValidThread());
   EntrySet::iterator it = entries_set_.find(entry_hash);
   if (it != entries_set_.end()) {
-    UpdateEntryIteratorSize(&it, 0);
+    UpdateEntryIteratorSize(&it, 0u);
     entries_set_.erase(it);
   }
 
@@ -342,7 +367,8 @@ void SimpleIndex::StartEvictionIfNeeded() {
                                                    AsWeakPtr()));
 }
 
-bool SimpleIndex::UpdateEntrySize(uint64_t entry_hash, int64_t entry_size) {
+bool SimpleIndex::UpdateEntrySize(uint64_t entry_hash,
+                                  base::StrictNumeric<uint32_t> entry_size) {
   DCHECK(io_thread_checker_.CalledOnValidThread());
   EntrySet::iterator it = entries_set_.find(entry_hash);
   if (it == entries_set_.end())
@@ -387,13 +413,14 @@ void SimpleIndex::PostponeWritingToDisk() {
       FROM_HERE, base::TimeDelta::FromMilliseconds(delay), write_to_disk_cb_);
 }
 
-void SimpleIndex::UpdateEntryIteratorSize(EntrySet::iterator* it,
-                                          int64_t entry_size) {
+void SimpleIndex::UpdateEntryIteratorSize(
+    EntrySet::iterator* it,
+    base::StrictNumeric<uint32_t> entry_size) {
   // Update the total cache size with the new entry size.
   DCHECK(io_thread_checker_.CalledOnValidThread());
   DCHECK_GE(cache_size_, (*it)->second.GetEntrySize());
   cache_size_ -= (*it)->second.GetEntrySize();
-  cache_size_ += entry_size;
+  cache_size_ += static_cast<uint32_t>(entry_size);
   (*it)->second.SetEntrySize(entry_size);
 }
 
@@ -440,6 +467,20 @@ void SimpleIndex::MergeInitializingSet(
   SIMPLE_CACHE_UMA(CUSTOM_COUNTS,
                    "IndexInitializationWaiters", cache_type_,
                    to_run_when_initialized_.size(), 0, 100, 20);
+  SIMPLE_CACHE_UMA(CUSTOM_COUNTS, "IndexNumEntriesOnInit", cache_type_,
+                   entries_set_.size(), 0, 100000, 50);
+  SIMPLE_CACHE_UMA(
+      MEMORY_KB, "CacheSizeOnInit", cache_type_,
+      static_cast<base::HistogramBase::Sample>(cache_size_ / kBytesInKb));
+  SIMPLE_CACHE_UMA(
+      MEMORY_KB, "MaxCacheSizeOnInit", cache_type_,
+      static_cast<base::HistogramBase::Sample>(max_size_ / kBytesInKb));
+  if (max_size_ > 0) {
+    SIMPLE_CACHE_UMA(PERCENTAGE, "PercentFullOnInit", cache_type_,
+                     static_cast<base::HistogramBase::Sample>(
+                         (cache_size_ * 100) / max_size_));
+  }
+
   // Run all callbacks waiting for the index to come up.
   for (CallbackList::iterator it = to_run_when_initialized_.begin(),
        end = to_run_when_initialized_.end(); it != end; ++it) {

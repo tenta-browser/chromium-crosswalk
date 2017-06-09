@@ -26,7 +26,6 @@
 
 #include "core/CoreExport.h"
 #include "core/html/HTMLElement.h"
-#include "core/style/ComputedStyle.h"
 
 namespace blink {
 
@@ -34,40 +33,33 @@ class HTMLSelectElement;
 class HTMLDivElement;
 
 class CORE_EXPORT HTMLOptGroupElement final : public HTMLElement {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static HTMLOptGroupElement* create(Document&);
+  DEFINE_WRAPPERTYPEINFO();
 
-    bool isDisabledFormControl() const override;
-    String defaultToolTip() const override;
-    HTMLSelectElement* ownerSelectElement() const;
+ public:
+  static HTMLOptGroupElement* create(Document&);
 
-    String groupLabelText() const;
-    HTMLDivElement& optGroupLabelElement() const;
+  bool isDisabledFormControl() const override;
+  String defaultToolTip() const override;
+  HTMLSelectElement* ownerSelectElement() const;
 
-private:
-    explicit HTMLOptGroupElement(Document&);
+  String groupLabelText() const;
+  HTMLDivElement& optGroupLabelElement() const;
 
-    bool supportsFocus() const override;
-    void parseAttribute(const QualifiedName&, const AtomicString&, const AtomicString&) override;
-    void accessKeyAction(bool sendMouseEvents) override;
-    void didAddUserAgentShadowRoot(ShadowRoot&) override;
-    void attach(const AttachContext& = AttachContext()) override;
-    void detach(const AttachContext& = AttachContext()) override;
-    bool matchesEnabledPseudoClass() const override;
-    InsertionNotificationRequest insertedInto(ContainerNode*) override;
-    void removedFrom(ContainerNode*) override;
+ private:
+  explicit HTMLOptGroupElement(Document&);
+  ~HTMLOptGroupElement();
 
-    // <optgroup> might not have a layoutObject so we manually manage a cached style.
-    void updateNonComputedStyle();
-    ComputedStyle* nonLayoutObjectComputedStyle() const override;
-    PassRefPtr<ComputedStyle> customStyleForLayoutObject() override;
+  bool supportsFocus() const override;
+  void parseAttribute(const AttributeModificationParams&) override;
+  void accessKeyAction(bool sendMouseEvents) override;
+  void didAddUserAgentShadowRoot(ShadowRoot&) override;
+  bool matchesEnabledPseudoClass() const override;
+  InsertionNotificationRequest insertedInto(ContainerNode*) override;
+  void removedFrom(ContainerNode*) override;
 
-    void updateGroupLabel();
-
-    RefPtr<ComputedStyle> m_style;
+  void updateGroupLabel();
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // HTMLOptGroupElement_h
+#endif  // HTMLOptGroupElement_h

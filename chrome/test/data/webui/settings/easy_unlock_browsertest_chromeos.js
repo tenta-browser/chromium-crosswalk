@@ -9,7 +9,7 @@ GEN_INCLUDE(['settings_page_browsertest.js']);
 /**
  * @constructor
  * @extends {SettingsPageBrowserTest}
-*/
+ */
 function SettingsEasyUnlockBrowserTest() {
 }
 
@@ -134,7 +134,7 @@ TEST_F('SettingsEasyUnlockBrowserTest', 'MAYBE_EasyUnlock', function() {
 
       // Before clearing the body, save a copy of the real prefs so we can
       // cleanly re-create the People page element.
-      prefs = document.querySelector('cr-settings').$$('settings-prefs').prefs;
+      prefs = document.querySelector('settings-ui').$$('settings-prefs').prefs;
     });
 
     setup(function() {
@@ -173,6 +173,8 @@ TEST_F('SettingsEasyUnlockBrowserTest', 'MAYBE_EasyUnlock', function() {
       browserProxy.setEnabledStatus(true);
       document.body.appendChild(page);
 
+      var turnOffDialog = null;
+
       return browserProxy.whenCalled('getEnabledStatus').then(function() {
         assertTrue(page.easyUnlockAllowed_);
         expectTrue(page.easyUnlockEnabled_);
@@ -184,31 +186,54 @@ TEST_F('SettingsEasyUnlockBrowserTest', 'MAYBE_EasyUnlock', function() {
         expectFalse(turnOffButton.hidden)
 
         MockInteractions.tap(turnOffButton);
-        return browserProxy.whenCalled('getTurnOffFlowStatus').then(function() {
-          Polymer.dom.flush();
+        return browserProxy.whenCalled('getTurnOffFlowStatus');
+      }).then(function() {
+        Polymer.dom.flush();
 
-          var turnOffDialog = page.$$('#easyUnlockTurnOffDialog');
-          assertTrue(!!turnOffDialog);
+        turnOffDialog = page.$$('#easyUnlockTurnOffDialog');
+        assertTrue(!!turnOffDialog);
 
-          var turnOffDialogConfirmButton = turnOffDialog.$$('#turnOff');
-          assertTrue(!!turnOffDialogConfirmButton);
-          expectFalse(turnOffDialogConfirmButton.hidden);
+        // Verify that elements on the turn off dialog are hidden or active
+        // according to the easy unlock turn off status.
+        var turnOffDialogButtonContainer =
+            turnOffDialog.$$('.button-container');
+        var turnOffDialogButtonSpinner = turnOffDialog.$$('paper-spinner');
+        var turnOffDialogConfirmButton = turnOffDialog.$$('#turnOff');
+        var turnOffDialogCancelButton = turnOffDialog.$$('.cancel-button');
+        assertTrue(!!turnOffDialogButtonContainer);
+        assertTrue(!!turnOffDialogButtonSpinner);
+        assertTrue(!!turnOffDialogConfirmButton);
+        assertTrue(!!turnOffDialogCancelButton);
 
-          MockInteractions.tap(turnOffDialogConfirmButton);
+        cr.webUIListenerCallback('easy-unlock-turn-off-flow-status', 'offline');
+        expectTrue(turnOffDialogButtonContainer.hidden);
+        expectFalse(turnOffDialogButtonSpinner.active);
 
-          return browserProxy.whenCalled('startTurnOffFlow').then(function() {
-            // To signal successful turnoff, the enabled status is broadcast
-            // as false. At that point, the dialog should close and cancel
-            // any in-progress turnoff flow. The cancellation should be
-            // a no-op assuming the turnoff originated from this tab.
-            cr.webUIListenerCallback('easy-unlock-enabled-status', false);
-            return browserProxy.whenCalled('cancelTurnOffFlow').then(
-                function() {
-                  Polymer.dom.flush();
-                  expectFalse(turnOffDialog.$.dialog.opened);
-                });
-          });
-        });
+        cr.webUIListenerCallback('easy-unlock-turn-off-flow-status', 'pending');
+        expectFalse(turnOffDialogButtonContainer.hidden);
+        expectTrue(turnOffDialogButtonSpinner.active);
+
+        cr.webUIListenerCallback('easy-unlock-turn-off-flow-status',
+            'server-error');
+        expectFalse(turnOffDialogButtonContainer.hidden);
+        expectTrue(turnOffDialogCancelButton.hidden);
+
+        cr.webUIListenerCallback('easy-unlock-turn-off-flow-status', 'idle');
+        expectFalse(turnOffDialogConfirmButton.hidden);
+
+        MockInteractions.tap(turnOffDialogConfirmButton);
+
+        return browserProxy.whenCalled('startTurnOffFlow');
+      }).then(function() {
+        // To signal successful turnoff, the enabled status is broadcast
+        // as false. At that point, the dialog should close and cancel
+        // any in-progress turnoff flow. The cancellation should be
+        // a no-op assuming the turnoff originated from this tab.
+        cr.webUIListenerCallback('easy-unlock-enabled-status', false);
+        return browserProxy.whenCalled('cancelTurnOffFlow');
+      }).then(function() {
+        Polymer.dom.flush();
+        expectFalse(turnOffDialog.$.dialog.open);
       });
     });
   });

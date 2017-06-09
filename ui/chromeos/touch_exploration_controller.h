@@ -6,7 +6,6 @@
 #define UI_CHROMEOS_TOUCH_EXPLORATION_CONTROLLER_H_
 
 #include "base/macros.h"
-#include "base/time/tick_clock.h"
 #include "base/timer/timer.h"
 #include "base/values.h"
 #include "ui/accessibility/ax_enums.h"
@@ -24,9 +23,9 @@ class Window;
 namespace ui {
 
 class Event;
-class EventHandler;
 class GestureEvent;
 class GestureProviderAura;
+class TouchAccessibilityEnabler;
 class TouchEvent;
 
 // A delegate to handle commands in response to detected accessibility gesture
@@ -182,13 +181,18 @@ class UI_CHROMEOS_EXPORT TouchExplorationController
  public:
   explicit TouchExplorationController(
       aura::Window* root_window,
-      ui::TouchExplorationControllerDelegate* delegate);
+      ui::TouchExplorationControllerDelegate* delegate,
+      TouchAccessibilityEnabler* touch_accessibility_enabler);
   ~TouchExplorationController() override;
 
   // Make synthesized touch events are anchored at this point. This is
   // called when the object with accessibility focus is updated via something
   // other than touch exploration.
   void SetTouchAccessibilityAnchorPoint(const gfx::Point& anchor_point);
+
+  // Events within the exclude bounds will not be rewritten.
+  // |bounds| are in root window coordinates.
+  void SetExcludeBounds(const gfx::Rect& bounds);
 
  private:
   friend class TouchExplorationControllerTestApi;
@@ -501,9 +505,14 @@ class UI_CHROMEOS_EXPORT TouchExplorationController
   // This toggles whether VLOGS are turned on or not.
   bool VLOG_on_;
 
-  // When touch_exploration_controller gets time relative to real time during
-  // testing, this clock is set to the simulated clock and used.
-  base::TickClock* tick_clock_;
+  // LocatedEvents within this area should be left alone.
+  gfx::Rect exclude_bounds_;
+
+  // Code that detects a touch-screen gesture to enable or disable
+  // accessibility. That handler is always running, whereas this is not,
+  // but events need to be sent to TouchAccessibilityEnabler before being
+  // rewritten when TouchExplorationController is running.
+  TouchAccessibilityEnabler* touch_accessibility_enabler_;
 
   DISALLOW_COPY_AND_ASSIGN(TouchExplorationController);
 };

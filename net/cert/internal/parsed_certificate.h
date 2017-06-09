@@ -13,12 +13,17 @@
 #include "net/base/net_export.h"
 #include "net/cert/internal/parse_certificate.h"
 #include "net/der/input.h"
+#include "third_party/boringssl/src/include/openssl/base.h"
 
 namespace net {
 
 struct GeneralNames;
 class NameConstraints;
+class ParsedCertificate;
 class SignatureAlgorithm;
+class CertErrors;
+
+using ParsedCertificateList = std::vector<scoped_refptr<ParsedCertificate>>;
 
 // Represents an X.509 certificate, including Certificate, TBSCertificate, and
 // standard extensions.
@@ -33,40 +38,48 @@ class NET_EXPORT ParsedCertificate
   // Map from OID to ParsedExtension.
   using ExtensionsMap = std::map<der::Input, ParsedExtension>;
 
-  // The certificate data for may either be owned internally (INTERNAL_COPY) or
-  // owned externally (EXTERNAL_REFERENCE). When it is owned internally the data
-  // is held by |cert_data_|
-  enum class DataSource {
-    INTERNAL_COPY,
-    EXTERNAL_REFERENCE,
-  };
-
   // Creates a ParsedCertificate given a DER-encoded Certificate. Returns
   // nullptr on failure. Failure will occur if the standard certificate fields
   // and supported extensions cannot be parsed.
-  //
-  // The provided certificate data is either copied, or aliased, depending on
-  // the value of |source|. See the comments for DataSource for details.
-  static scoped_refptr<ParsedCertificate> CreateFromCertificateData(
-      const uint8_t* data,
-      size_t length,
-      DataSource source,
-      const ParseCertificateOptions& options);
-
-  // Creates a ParsedCertificate and appends it to |chain|. Returns true if the
-  // certificate was successfully parsed and added. If false is return, |chain|
-  // is unmodified.
-  static bool CreateAndAddToVector(
-      const uint8_t* data,
-      size_t length,
-      DataSource source,
+  // On either success or failure, if |errors| is non-null it may have error
+  // information added to it.
+  static scoped_refptr<ParsedCertificate> Create(
+      bssl::UniquePtr<CRYPTO_BUFFER> cert_data,
       const ParseCertificateOptions& options,
-      std::vector<scoped_refptr<net::ParsedCertificate>>* chain);
+      CertErrors* errors);
 
-  // Creates a ParsedCertificate, copying the data from |data|.
-  static scoped_refptr<ParsedCertificate> CreateFromCertificateCopy(
-      const base::StringPiece& data,
-      const ParseCertificateOptions& options);
+  // Creates a ParsedCertificate by copying the provided |data|, and appends it
+  // to |chain|. Returns true if the certificate was successfully parsed and
+  // added. If false is return, |chain| is unmodified.
+  //
+  // On either success or failure, if |errors| is non-null it may have error
+  // information added to it.
+  static bool CreateAndAddToVector(
+      bssl::UniquePtr<CRYPTO_BUFFER> cert_data,
+      const ParseCertificateOptions& options,
+      std::vector<scoped_refptr<net::ParsedCertificate>>* chain,
+      CertErrors* errors);
+
+  // Like Create() this builds a ParsedCertificate given a DER-encoded
+  // Certificate and returns nullptr on failure.
+  //
+  // However a copy of |data| is NOT made.
+  //
+  // This is a dangerous way to create as ParsedCertificate and should only be
+  // used with care when saving a copy is really worth it, or the data is known
+  // to come from static storage (and hence remain valid for entire life of
+  // process).
+  //
+  // ParsedCertificate is reference counted, so it is easy to extend the life
+  // and and end up with a ParsedCertificate referencing feed memory.
+  //
+  // On either success or failure, if |errors| is non-null it may have error
+  // information added to it.
+  static scoped_refptr<ParsedCertificate> CreateWithoutCopyingUnsafe(
+      const uint8_t* data,
+      size_t length,
+      const ParseCertificateOptions& options,
+      CertErrors* errors);
 
   // Returns the DER-encoded certificate data for this cert.
   const der::Input& der_cert() const { return cert_; }
@@ -181,13 +194,19 @@ class NET_EXPORT ParsedCertificate
   ParsedCertificate();
   ~ParsedCertificate();
 
-  // The backing store for the certificate data. This is only applicable when
-  // the ParsedCertificate was initialized using DataSource::INTERNAL_COPY.
-  std::vector<uint8_t> cert_data_;
+  // Creates a ParsedCertificate.  If |backing_data| is non-null, the
+  // certificate's DER-encoded data will be referenced from here. Otherwise the
+  // certificate's data will be |static_data|, and the pointer MUST remain
+  // valid and its data unmodified for the entirety of the program.
+  static scoped_refptr<ParsedCertificate> CreateInternal(
+      bssl::UniquePtr<CRYPTO_BUFFER> backing_data,
+      der::Input static_data,
+      const ParseCertificateOptions& options,
+      CertErrors* errors);
 
-  // Note that the backing data for |cert_| (and its  may come either from
-  // |cert_data_| or some external buffer (depending on how the
-  // ParsedCertificate was created).
+  // The backing store for the certificate data. May be null if created by
+  // CreateWithoutCopyingUnsafe.
+  bssl::UniquePtr<CRYPTO_BUFFER> cert_data_;
 
   // Points to the raw certificate DER.
   der::Input cert_;

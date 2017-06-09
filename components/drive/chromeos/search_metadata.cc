@@ -11,7 +11,7 @@
 #include "base/bind.h"
 #include "base/i18n/string_search.h"
 #include "base/memory/ptr_util.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -158,7 +158,7 @@ FileError MaybeAddEntryToResult(
   if (result_candidates->size() == at_most_num_matches)
     result_candidates->pop();
   result_candidates->push(
-      base::WrapUnique(new ResultCandidate(it->GetID(), entry, highlighted)));
+      base::MakeUnique<ResultCandidate>(it->GetID(), entry, highlighted));
   return FILE_ERROR_OK;
 }
 

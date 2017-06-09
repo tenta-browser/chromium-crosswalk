@@ -66,9 +66,9 @@ void RegisterServiceWorkerCallback(bool* called,
 void FindServiceWorkerRegistrationCallback(
     scoped_refptr<ServiceWorkerRegistration>* out_registration,
     ServiceWorkerStatusCode status,
-    const scoped_refptr<ServiceWorkerRegistration>& registration) {
+    scoped_refptr<ServiceWorkerRegistration> registration) {
   EXPECT_EQ(SERVICE_WORKER_OK, status) << ServiceWorkerStatusToString(status);
-  *out_registration = registration;
+  *out_registration = std::move(registration);
 }
 
 void UnregisterServiceWorkerCallback(bool* called,
@@ -136,9 +136,7 @@ class BackgroundSyncManagerTest : public testing::Test {
     // Create a StoragePartition with the correct BrowserContext so that the
     // BackgroundSyncManager can find the BrowserContext through it.
     storage_partition_impl_.reset(new StoragePartitionImpl(
-        helper_->browser_context(), base::FilePath(), nullptr, nullptr, nullptr,
-        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
-        nullptr, nullptr, nullptr));
+        helper_->browser_context(), base::FilePath(), nullptr));
     helper_->context_wrapper()->set_storage_partition(
         storage_partition_impl_.get());
 

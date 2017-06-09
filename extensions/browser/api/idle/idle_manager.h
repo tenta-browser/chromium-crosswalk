@@ -22,7 +22,8 @@
 #include "ui/base/idle/idle.h"
 
 namespace base {
-class StringValue;
+class Value;
+using StringValue = Value;
 }  // namespace base
 
 namespace content {
@@ -89,7 +90,7 @@ class IdleManager : public ExtensionRegistryObserver,
   void OnListenerAdded(const EventListenerInfo& details) override;
   void OnListenerRemoved(const EventListenerInfo& details) override;
 
-  void QueryState(int threshold, QueryStateCallback notify);
+  void QueryState(int threshold, const QueryStateCallback& notify);
   void SetThreshold(const std::string& extension_id, int threshold);
   static std::unique_ptr<base::StringValue> CreateIdleValue(
       ui::IdleState idle_state);

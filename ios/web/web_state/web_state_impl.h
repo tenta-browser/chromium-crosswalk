@@ -17,15 +17,15 @@
 #include "base/memory/ref_counted.h"
 #include "base/observer_list.h"
 #include "base/values.h"
-#include "ios/web/navigation/navigation_manager_delegate.h"
-#include "ios/web/navigation/navigation_manager_impl.h"
-#include "ios/web/net/request_tracker_impl.h"
+#import "ios/web/navigation/navigation_manager_delegate.h"
+#import "ios/web/navigation/navigation_manager_impl.h"
 #import "ios/web/public/java_script_dialog_callback.h"
 #include "ios/web/public/java_script_dialog_type.h"
-#include "ios/web/public/web_state/web_state.h"
+#import "ios/web/public/web_state/web_state.h"
+#import "ios/web/public/web_state/web_state_delegate.h"
 #include "url/gurl.h"
 
-@protocol CRWRequestTrackerDelegate;
+@class CRWSessionStorage;
 @class CRWWebController;
 @protocol CRWWebViewProxy;
 @class NSURLRequest;
@@ -44,7 +44,6 @@ struct FaviconURL;
 struct LoadCommittedDetails;
 class NavigationManager;
 class WebInterstitialImpl;
-class WebStateDelegate;
 class WebStateFacadeDelegate;
 class WebStatePolicyDecider;
 class WebUIIOS;
@@ -63,7 +62,10 @@ class WebUIIOS;
 //    writing them out for session saves.
 class WebStateImpl : public WebState, public NavigationManagerDelegate {
  public:
+  // Constructor for WebStateImpls created for new sessions.
   WebStateImpl(BrowserState* browser_state);
+  // Constructor for WebStatesImpls created for deserialized sessions
+  WebStateImpl(BrowserState* browser_state, CRWSessionStorage* session_storage);
   ~WebStateImpl() override;
 
   // Gets/Sets the CRWWebController that backs this object.
@@ -74,24 +76,23 @@ class WebStateImpl : public WebState, public NavigationManagerDelegate {
   WebStateFacadeDelegate* GetFacadeDelegate() const;
   void SetFacadeDelegate(WebStateFacadeDelegate* facade_delegate);
 
-  // Returns a WebStateImpl that doesn't have a browser context, web
-  // controller, or facade set, but which otherwise has the same state variables
-  // as the calling object (including copies of the NavigationManager and its
-  // attendant CRWSessionController).
-  // TODO(crbug.com/546377): Clean up this method.
-  WebStateImpl* CopyForSessionWindow();
-
   // Notifies the observers that a provisional navigation has started.
   void OnProvisionalNavigationStarted(const GURL& url);
 
   // Called when a navigation is committed.
   void OnNavigationCommitted(const GURL& url);
 
-  // Notifies the observers that the URL hash of the current page changed.
-  void OnUrlHashChanged();
+  // Notifies the observers that same page navigation did finish.
+  void OnSamePageNavigation(const GURL& url);
 
-  // Notifies the observers that the history state of the current page changed.
-  void OnHistoryStateChanged();
+  // Notifies the observers that navigation to error page did finish.
+  void OnErrorPageNavigation(const GURL& url);
+
+  // Called when page title was changed.
+  void OnTitleChanged();
+
+  // Notifies the observers that the render process was terminated.
+  void OnRenderProcessGone();
 
   // Called when a script command is received.
   // Returns true if the command was handled.
@@ -113,7 +114,6 @@ class WebStateImpl : public WebState, public NavigationManagerDelegate {
                                 const std::string& field_name,
                                 const std::string& type,
                                 const std::string& value,
-                                int key_code,
                                 bool input_missing);
 
   // Called when new FaviconURL candidates are received.
@@ -192,27 +192,6 @@ class WebStateImpl : public WebState, public NavigationManagerDelegate {
   // allowed to continue by asking its policy deciders. Defaults to true.
   bool ShouldAllowResponse(NSURLResponse* response);
 
-  // Request tracker management. For now, this exposes the RequestTracker for
-  // embedders to use.
-  // TODO(stuartmorgan): RequestTracker should become an internal detail of this
-  // class.
-
-  // Create a new tracker using |delegate| as its delegate.
-  void InitializeRequestTracker(id<CRWRequestTrackerDelegate> delegate);
-
-  // Close the request tracker and delete it.
-  void CloseRequestTracker();
-
-  // Returns the tracker for this WebStateImpl.
-  RequestTrackerImpl* GetRequestTracker();
-
-  // Lazily creates (if necessary) and returns |request_group_id_|.
-  // IMPORTANT: This should not be used for anything other than associating this
-  // instance to network requests.
-  // This function is only intended to be used in web/.
-  // TODO(stuartmorgan): Move this method in an implementation file in web/.
-  NSString* GetRequestGroupID();
-
   // WebState:
   WebStateDelegate* GetDelegate() override;
   void SetDelegate(WebStateDelegate* delegate) override;
@@ -223,8 +202,10 @@ class WebStateImpl : public WebState, public NavigationManagerDelegate {
   UIView* GetView() override;
   BrowserState* GetBrowserState() const override;
   void OpenURL(const WebState::OpenURLParams& params) override;
+  void Stop() override;
   const NavigationManager* GetNavigationManager() const override;
   NavigationManager* GetNavigationManager() override;
+  CRWSessionStorage* BuildSessionStorage() override;
   CRWJSInjectionReceiver* GetJSInjectionReceiver() const override;
   void ExecuteJavaScript(const base::string16& javascript) override;
   void ExecuteJavaScript(const base::string16& javascript,
@@ -242,17 +223,13 @@ class WebStateImpl : public WebState, public NavigationManagerDelegate {
   void ShowTransientContentView(CRWContentView* content_view) override;
   bool IsShowingWebInterstitial() const override;
   WebInterstitial* GetWebInterstitial() const override;
-  int GetCertGroupId() const override;
+  void OnPasswordInputShownOnHttp() override;
+  void OnCreditCardInputShownOnHttp() override;
   void AddScriptCommandCallback(const ScriptCommandCallback& callback,
                                 const std::string& command_prefix) override;
   void RemoveScriptCommandCallback(const std::string& command_prefix) override;
   id<CRWWebViewProxy> GetWebViewProxy() const override;
-  int DownloadImage(const GURL& url,
-                    bool is_favicon,
-                    uint32_t max_bitmap_size,
-                    bool bypass_cache,
-                    const ImageDownloadCallback& callback) override;
-  shell::InterfaceRegistry* GetMojoInterfaceRegistry() override;
+  service_manager::InterfaceRegistry* GetMojoInterfaceRegistry() override;
   base::WeakPtr<WebState> AsWeakPtr() override;
 
   // Adds |interstitial|'s view to the web controller's content view.
@@ -266,6 +243,9 @@ class WebStateImpl : public WebState, public NavigationManagerDelegate {
   // Notifies the delegate that a context menu needs handling.
   bool HandleContextMenu(const ContextMenuParams& params);
 
+  // Notifies the delegate that a Form Repost dialog needs to be presented.
+  void ShowRepostFormWarningDialog(const base::Callback<void(bool)>& callback);
+
   // Notifies the delegate that a JavaScript dialog needs to be presented.
   void RunJavaScriptDialog(const GURL& origin_url,
                            JavaScriptDialogType java_script_dialog_type,
@@ -273,11 +253,17 @@ class WebStateImpl : public WebState, public NavigationManagerDelegate {
                            NSString* default_prompt_text,
                            const DialogClosedCallback& callback);
 
+  // Notifies the delegate that request receives an authentication challenge
+  // and is unable to respond using cached credentials.
+  void OnAuthRequired(NSURLProtectionSpace* protection_space,
+                      NSURLCredential* proposed_credential,
+                      const WebStateDelegate::AuthCallback& callback);
+
   // Cancels all dialogs associated with this web_state.
-  void CancelActiveAndPendingDialogs();
+  void CancelDialogs();
 
   // NavigationManagerDelegate:
-  void NavigateToPendingEntry() override;
+  void GoToIndex(int index) override;
   void LoadURLWithParams(const NavigationManager::WebLoadParams&) override;
   void OnNavigationItemsPruned(size_t pruned_item_count) override;
   void OnNavigationItemChanged() override;
@@ -292,9 +278,13 @@ class WebStateImpl : public WebState, public NavigationManagerDelegate {
   void RemovePolicyDecider(WebStatePolicyDecider* decider) override;
 
  private:
+  // The SessionStorageBuilder functions require access to private variables of
+  // WebStateImpl.
+  friend SessionStorageBuilder;
+
   // Creates a WebUIIOS object for |url| that is owned by the caller. Returns
   // nullptr if |url| does not correspond to a WebUI page.
-  WebUIIOS* CreateWebUIIOS(const GURL& url);
+  std::unique_ptr<web::WebUIIOS> CreateWebUIIOS(const GURL& url);
 
   // Updates the HTTP response headers for the main page using the headers
   // passed to the OnHttpResponseHeadersReceived() function below.
@@ -319,7 +309,8 @@ class WebStateImpl : public WebState, public NavigationManagerDelegate {
   // The CRWWebController that backs this object.
   base::scoped_nsobject<CRWWebController> web_controller_;
 
-  NavigationManagerImpl navigation_manager_;
+  // The NavigationManagerImpl that stores session info for this WebStateImpl.
+  std::unique_ptr<NavigationManagerImpl> navigation_manager_;
 
   // |web::WebUIIOS| object for the current page if it is a WebUI page that
   // uses the web-based WebUI framework, or nullptr otherwise.
@@ -350,14 +341,6 @@ class WebStateImpl : public WebState, public NavigationManagerDelegate {
   // Returned by reference.
   base::string16 empty_string16_;
 
-  // Request tracker associted with this object.
-  scoped_refptr<RequestTrackerImpl> request_tracker_;
-
-  // A number identifying this object. This number is injected into the user
-  // agent to allow the network layer to know which web view requests originated
-  // from.
-  base::scoped_nsobject<NSString> request_group_id_;
-
   // Callbacks associated to command prefixes.
   std::map<std::string, ScriptCommandCallback> script_command_callbacks_;
 
@@ -367,7 +350,7 @@ class WebStateImpl : public WebState, public NavigationManagerDelegate {
   base::WeakPtrFactory<WebState> weak_factory_;
 
   // Mojo interface registry for this WebState.
-  std::unique_ptr<shell::InterfaceRegistry> mojo_interface_registry_;
+  std::unique_ptr<service_manager::InterfaceRegistry> mojo_interface_registry_;
 
   DISALLOW_COPY_AND_ASSIGN(WebStateImpl);
 };

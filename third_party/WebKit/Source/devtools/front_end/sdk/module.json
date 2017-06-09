@@ -2,12 +2,13 @@
     "dependencies": [
         "common",
         "host",
-        "platform"
+        "platform",
+        "protocol"
     ],
     "extensions": [
         {
             "type": "setting",
-            "settingName": "blockedURLs",
+            "settingName": "networkBlockedURLs",
             "settingType": "array",
             "defaultValue": []
         },
@@ -25,13 +26,37 @@
         },
         {
             "type": "setting",
+            "category": "Console",
+            "title": "Preserve log upon navigation",
+            "settingName": "preserveConsoleLog",
+            "settingType": "boolean",
+            "defaultValue": false,
+            "options": [
+                {
+                    "value": true,
+                    "title": "Preserve log upon navigation"
+                },
+                {
+                    "value": false,
+                    "title": "Do not preserve log upon navigation"
+                }
+            ]
+        },
+        {
+            "type": "setting",
             "category": "Debugger",
             "settingName": "pauseOnExceptionEnabled",
             "settingType": "boolean",
             "defaultValue": false,
             "options": [
-                { "value": true, "title": "Pause on exceptions" },
-                { "value": false, "title": "Do not pause on exceptions" }
+                {
+                    "value": true,
+                    "title": "Pause on exceptions"
+                },
+                {
+                    "value": false,
+                    "title": "Do not pause on exceptions"
+                }
             ]
         },
         {
@@ -47,8 +72,14 @@
             "settingType": "boolean",
             "defaultValue": false,
             "options": [
-                { "value": true, "title": "Capture async stack traces" },
-                { "value": false, "title": "Do not capture async stack traces" }
+                {
+                    "value": true,
+                    "title": "Capture async stack traces"
+                },
+                {
+                    "value": false,
+                    "title": "Do not capture async stack traces"
+                }
             ]
         },
         {
@@ -56,26 +87,32 @@
             "settingName": "showMetricsRulers",
             "settingType": "boolean",
             "defaultValue": false
+        },
+        {
+            "type": "setting",
+            "category": "Console",
+            "title": "Enable custom formatters",
+            "settingName": "customFormatters",
+            "settingType": "boolean",
+            "defaultValue": false
         }
     ],
     "scripts": [
-        "InspectorBackend.js",
-        "../InspectorBackendCommands.js",
-        "InspectorBackendHostedMode.js",
         "Target.js",
         "TargetManager.js",
-        "ApplicationCacheModel.js",
+        "Connections.js",
         "ConsoleModel.js",
         "ContentProviders.js",
+        "CookieModel.js",
         "CookieParser.js",
         "ProfileTreeModel.js",
+        "ServerTiming.js",
         "CPUProfileDataModel.js",
         "CPUProfilerModel.js",
         "CSSMatchedStyles.js",
         "CSSMedia.js",
         "CSSMetadata.js",
         "CSSModel.js",
-        "CSSParser.js",
         "CSSProperty.js",
         "CSSRule.js",
         "CSSStyleDeclaration.js",
@@ -83,26 +120,28 @@
         "DOMModel.js",
         "DebuggerModel.js",
         "HAREntry.js",
+        "LayerTreeBase.js",
         "NetworkLog.js",
         "ServiceWorkerManager.js",
         "TracingManager.js",
         "TracingModel.js",
-        "WorkerManager.js",
         "RuntimeModel.js",
+        "ScreenCaptureModel.js",
         "Script.js",
         "ServiceWorkerCacheModel.js",
         "RemoteObject.js",
         "Resource.js",
         "ResourceTreeModel.js",
+        "SecurityOriginManager.js",
         "SourceMap.js",
         "NetworkManager.js",
         "NetworkRequest.js",
         "PaintProfiler.js",
         "HeapProfilerModel.js",
-        "../SupportedCSSProperties.js"
+        "../SupportedCSSProperties.js",
+        "FilmStripModel.js"
     ],
     "skip_compilation": [
-        "../InspectorBackendCommands.js",
         "../SupportedCSSProperties.js"
     ]
 }

@@ -17,7 +17,6 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/path_service.h"
-#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/test_timeouts.h"
 #include "base/time/time.h"
@@ -49,7 +48,6 @@
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/download_item.h"
 #include "content/public/browser/download_manager.h"
-#include "content/public/browser/geolocation_provider.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/notification_service.h"
@@ -57,12 +55,13 @@
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "content/public/common/geoposition.h"
 #include "content/public/common/resource_request_body.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/download_test_observer.h"
 #include "content/public/test/test_navigation_observer.h"
 #include "content/public/test/test_utils.h"
+#include "device/geolocation/geolocation_provider.h"
+#include "device/geolocation/geoposition.h"
 #include "net/base/filename_util.h"
 #include "net/cookies/cookie_constants.h"
 #include "net/cookies/cookie_monster.h"
@@ -97,7 +96,7 @@ Browser* WaitForBrowserNotInSet(std::set<Browser*> excluded_browsers) {
     BrowserAddedObserver observer;
     new_browser = observer.WaitForSingleNewBrowser();
     // The new browser should never be in |excluded_browsers|.
-    DCHECK(!ContainsKey(excluded_browsers, new_browser));
+    DCHECK(!base::ContainsKey(excluded_browsers, new_browser));
   }
   return new_browser;
 }
@@ -166,7 +165,7 @@ void NavigateToURLWithPost(Browser* browser, const GURL& url) {
 }
 
 void NavigateToURL(Browser* browser, const GURL& url) {
-  NavigateToURLWithDisposition(browser, url, CURRENT_TAB,
+  NavigateToURLWithDisposition(browser, url, WindowOpenDisposition::CURRENT_TAB,
                                BROWSER_TEST_WAIT_FOR_NAVIGATION);
 }
 
@@ -177,11 +176,12 @@ void NavigateToURLWithDispositionBlockUntilNavigationsComplete(
     WindowOpenDisposition disposition,
     int browser_test_flags) {
   TabStripModel* tab_strip = browser->tab_strip_model();
-  if (disposition == CURRENT_TAB && tab_strip->GetActiveWebContents())
-      content::WaitForLoadStop(tab_strip->GetActiveWebContents());
+  if (disposition == WindowOpenDisposition::CURRENT_TAB &&
+      tab_strip->GetActiveWebContents())
+    content::WaitForLoadStop(tab_strip->GetActiveWebContents());
   content::TestNavigationObserver same_tab_observer(
-      tab_strip->GetActiveWebContents(),
-      number_of_navigations);
+      tab_strip->GetActiveWebContents(), number_of_navigations,
+      content::MessageLoopRunner::QuitMode::DEFERRED);
 
   std::set<Browser*> initial_browsers;
   for (auto* browser : *BrowserList::GetInstance())
@@ -202,7 +202,7 @@ void NavigateToURLWithDispositionBlockUntilNavigationsComplete(
     return;
   }
   WebContents* web_contents = NULL;
-  if (disposition == NEW_BACKGROUND_TAB) {
+  if (disposition == WindowOpenDisposition::NEW_BACKGROUND_TAB) {
     // We've opened up a new tab, but not selected it.
     TabStripModel* tab_strip = browser->tab_strip_model();
     web_contents = tab_strip->GetWebContentsAt(tab_strip->active_index() + 1);
@@ -211,18 +211,19 @@ void NavigateToURLWithDispositionBlockUntilNavigationsComplete(
         << "\" because the new tab is not available yet";
     if (!web_contents)
       return;
-  } else if ((disposition == CURRENT_TAB) ||
-      (disposition == NEW_FOREGROUND_TAB) ||
-      (disposition == SINGLETON_TAB)) {
+  } else if ((disposition == WindowOpenDisposition::CURRENT_TAB) ||
+             (disposition == WindowOpenDisposition::NEW_FOREGROUND_TAB) ||
+             (disposition == WindowOpenDisposition::SINGLETON_TAB)) {
     // The currently selected tab is the right one.
     web_contents = browser->tab_strip_model()->GetActiveWebContents();
   }
-  if (disposition == CURRENT_TAB) {
+  if (disposition == WindowOpenDisposition::CURRENT_TAB) {
     same_tab_observer.Wait();
     return;
   } else if (web_contents) {
-    content::TestNavigationObserver observer(web_contents,
-                                             number_of_navigations);
+    content::TestNavigationObserver observer(
+        web_contents, number_of_navigations,
+        content::MessageLoopRunner::QuitMode::DEFERRED);
     observer.Wait();
     return;
   }
@@ -247,10 +248,7 @@ void NavigateToURLBlockUntilNavigationsComplete(Browser* browser,
                                                 const GURL& url,
                                                 int number_of_navigations) {
   NavigateToURLWithDispositionBlockUntilNavigationsComplete(
-      browser,
-      url,
-      number_of_navigations,
-      CURRENT_TAB,
+      browser, url, number_of_navigations, WindowOpenDisposition::CURRENT_TAB,
       BROWSER_TEST_WAIT_FOR_NAVIGATION);
 }
 
@@ -337,8 +335,8 @@ int FindInPage(WebContents* tab,
 void DownloadURL(Browser* browser, const GURL& download_url) {
   base::ScopedTempDir downloads_directory;
   ASSERT_TRUE(downloads_directory.CreateUniqueTempDir());
-  browser->profile()->GetPrefs()->SetFilePath(
-      prefs::kDownloadDefaultDirectory, downloads_directory.path());
+  browser->profile()->GetPrefs()->SetFilePath(prefs::kDownloadDefaultDirectory,
+                                              downloads_directory.GetPath());
 
   content::DownloadManager* download_manager =
       content::BrowserContext::GetDownloadManager(browser->profile());
@@ -468,13 +466,13 @@ Browser* BrowserAddedObserver::WaitForSingleNewBrowser() {
 }
 
 void OverrideGeolocation(double latitude, double longitude) {
-  content::Geoposition position;
+  device::Geoposition position;
   position.latitude = latitude;
   position.longitude = longitude;
   position.altitude = 0.;
   position.accuracy = 0.;
   position.timestamp = base::Time::Now();
-  content::GeolocationProvider::GetInstance()->OverrideLocationForTesting(
+  device::GeolocationProvider::GetInstance()->OverrideLocationForTesting(
       position);
 }
 
@@ -540,6 +538,34 @@ void WaitForHistoryToLoad(history::HistoryService* history_service) {
     scoped_observer.Add(history_service);
     runner->Run();
   }
+}
+
+BrowserActivationWaiter::BrowserActivationWaiter(const Browser* browser)
+    : browser_(browser), observed_(false) {
+  if (chrome::FindLastActive() == browser_) {
+    observed_ = true;
+    return;
+  }
+  BrowserList::AddObserver(this);
+}
+
+BrowserActivationWaiter::~BrowserActivationWaiter() {}
+
+void BrowserActivationWaiter::WaitForActivation() {
+  if (observed_)
+    return;
+  message_loop_runner_ = new content::MessageLoopRunner;
+  message_loop_runner_->Run();
+}
+
+void BrowserActivationWaiter::OnBrowserSetLastActive(Browser* browser) {
+  if (browser != browser_)
+    return;
+
+  observed_ = true;
+  BrowserList::RemoveObserver(this);
+  if (message_loop_runner_.get() && message_loop_runner_->loop_running())
+    message_loop_runner_->Quit();
 }
 
 }  // namespace ui_test_utils

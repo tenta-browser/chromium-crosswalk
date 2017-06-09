@@ -11,25 +11,13 @@
 namespace ash {
 
 enum ShelfConstant {
-  // The alpha value for the shelf background when a window is overlapping.
-  SHELF_BACKGROUND_ALPHA,
-
   // Size of the shelf when visible (height when the shelf is horizontal and
   // width when the shelf is vertical).
   SHELF_SIZE,
 
-  // Size of the space between buttons on the shelf.
-  SHELF_BUTTON_SPACING,
-
-  // Size allocated for each app button on the shelf.
-  SHELF_BUTTON_SIZE,
-
   // Insets allocated for shelf when it is auto hidden.
   SHELF_INSETS_FOR_AUTO_HIDE
 };
-
-// Invalid image resource id used for ShelfItemDetails.
-extern const int kInvalidImageResourceID;
 
 // We reserve a small area on the edge of the workspace area to ensure that
 // the resize handle at the edge of the window can be hit.
@@ -42,23 +30,26 @@ extern const int kWorkspaceAreaAutoHideInset;
 // Size of the shelf when auto-hidden.
 ASH_EXPORT extern const int kShelfAutoHideSize;
 
-// Inset between the inner edge of the shelf (towards centre of screen), and
-// the shelf items, notifications, status area etc.
-extern const int kShelfItemInset;
-
-const int kInvalidShelfID = 0;
-
 // Animation duration for switching black shelf and dock background on and off.
 ASH_EXPORT extern const int kTimeToSwitchBackgroundMs;
 
-// The base color of the shelf to which different alpha values are applied
-// based on the desired shelf opacity level.
-ASH_EXPORT extern const SkColor kShelfBaseColor;
+// The default base color of the shelf to which different alpha values are
+// applied based on the desired shelf opacity level.
+ASH_EXPORT extern const SkColor kShelfDefaultBaseColor;
+
+// Size allocated for each app button on the shelf.
+ASH_EXPORT extern const int kShelfButtonSize;
+
+// Size of the space between buttons on the shelf.
+ASH_EXPORT extern const int kShelfButtonSpacing;
 
 // Highlight color used for shelf button activated states.
 // TODO(bruthig|mohsen): Use of this color is temporary. Draw the active state
 // using the material design ripple animation.
 ASH_EXPORT extern const SkColor kShelfButtonActivatedHighlightColor;
+
+// Ink drop color for shelf items.
+extern const SkColor kShelfInkDropBaseColor;
 
 // Opacity of the ink drop ripple for shelf items when the ripple is visible.
 extern const float kShelfInkDropVisibleOpacity;
@@ -66,6 +57,9 @@ extern const float kShelfInkDropVisibleOpacity;
 // The foreground color of the icons used in the shelf (launcher,
 // notifications, etc).
 ASH_EXPORT extern const SkColor kShelfIconColor;
+
+// The alpha value for the shelf background when a window is overlapping.
+ASH_EXPORT extern const int kShelfTranslucentAlpha;
 
 // The width and height of the material design overflow button.
 // TODO(tdanderson): Refactor constants which are common between the shelf

@@ -40,7 +40,7 @@ void OzonePlatform::InitializeForUI() {
 
 // static
 void OzonePlatform::InitializeForUI(const InitParams& args) {
-  CreateInstance();
+  EnsureInstance();
   if (g_platform_initialized_ui)
     return;
   g_platform_initialized_ui = true;
@@ -58,7 +58,7 @@ void OzonePlatform::InitializeForGPU() {
 
 // static
 void OzonePlatform::InitializeForGPU(const InitParams& args) {
-  CreateInstance();
+  EnsureInstance();
   if (g_platform_initialized_gpu)
     return;
   g_platform_initialized_gpu = true;
@@ -72,7 +72,7 @@ OzonePlatform* OzonePlatform::GetInstance() {
 }
 
 // static
-void OzonePlatform::CreateInstance() {
+OzonePlatform* OzonePlatform::EnsureInstance() {
   if (!instance_) {
     TRACE_EVENT1("ozone",
                  "OzonePlatform::Initialize",
@@ -85,6 +85,7 @@ void OzonePlatform::CreateInstance() {
     OzonePlatform* pl = platform.release();
     DCHECK_EQ(instance_, pl);
   }
+  return instance_;
 }
 
 // static
@@ -94,10 +95,20 @@ OzonePlatform* OzonePlatform::instance_;
 void OzonePlatform::InitializeUI(const InitParams& args) {
   InitializeUI();
 }
+
 void OzonePlatform::InitializeGPU(const InitParams& args) {
   InitializeGPU();
 }
 
-void OzonePlatform::AddInterfaces(shell::Connection* connection) {}
+IPC::MessageFilter* OzonePlatform::GetGpuMessageFilter() {
+  return nullptr;
+}
+
+base::MessageLoop::Type OzonePlatform::GetMessageLoopTypeForGpu() {
+  return base::MessageLoop::TYPE_DEFAULT;
+}
+
+void OzonePlatform::AddInterfaces(
+    service_manager::InterfaceRegistry* registry) {}
 
 }  // namespace ui

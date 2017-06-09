@@ -21,7 +21,8 @@
 #       //content/public/app:both_sources (source set)
 
 import("//build/config/chrome_build.gni")
-import("//mojo/public/mojo_application_manifest.gni")
+import("//build/config/ui.gni")
+import("//services/service_manager/public/service_manifest.gni")
 
 public_app_shared_sources = [
   "content_jni_onload.h",
@@ -37,10 +38,11 @@ public_app_shared_deps = [
   "//base:i18n",
   "//content:export",
   "//content/public/common:common_sources",
-  "//content/public/gpu:gpu_sources",
-  "//content/public/renderer:renderer_sources",
-  "//content/public/utility:utility_sources",
 ]
+
+if (use_aura) {
+  public_app_shared_deps += [ "//ui/aura" ]
+}
 
 if (is_component_build) {
   source_set("both_sources") {
@@ -54,7 +56,16 @@ if (is_component_build) {
     deps = public_app_shared_deps + [
              "//content/app:both",
              "//content/public/browser:browser_sources",
+             "//content/public/gpu:gpu_sources",
+             "//content/public/renderer:renderer_sources",
+             "//content/public/utility:utility_sources",
            ]
+
+    allow_circular_includes_from = [
+      # This target is a pair with the non-public version. They always go
+      # together and include headers from each other.
+      "//content/app:both",
+    ]
   }
 
   # These all just forward to content, which in turn depends on "both_sources".
@@ -94,7 +105,16 @@ if (is_component_build) {
              "//content/app:both",
              "//content/public/browser",
              "//content/public/common",
+             "//content/public/gpu:gpu_sources",
+             "//content/public/renderer:renderer_sources",
+             "//content/public/utility:utility_sources",
            ]
+
+    allow_circular_includes_from = [
+      # This target is a pair with the non-public version. They always go
+      # together and include headers from each other.
+      "//content/app:both",
+    ]
   }
 
   if (is_multi_dll_chrome) {
@@ -111,6 +131,12 @@ if (is_component_build) {
                "//content/public/browser",
                "//content/public/common",
              ]
+
+      allow_circular_includes_from = [
+        # This target is a pair with the non-public version. They always go
+        # together and include headers from each other.
+        "//content/app:browser",
+      ]
     }
 
     source_set("child") {
@@ -125,6 +151,12 @@ if (is_component_build) {
                "//content/app:child",
                "//content/public/common",
              ]
+
+      allow_circular_includes_from = [
+        # This target is a pair with the non-public version. They always go
+        # together and include headers from each other.
+        "//content/app:child",
+      ]
     }
   } else {
     # When the multi-DLL build is disabled, there is only one type of the
@@ -142,34 +174,38 @@ if (is_component_build) {
   }
 }
 
-mojo_application_manifest("browser_manifest") {
-  type = "exe"
-  application_name = "content_browser"
-  source = "mojo/content_browser_manifest.json"
-  packaged_applications = [
-    "media",
-    "user",
-  ]
-  deps = [
+service_manifest("packaged_services_manifest") {
+  name = "content_packaged_services"
+  source = "mojo/content_packaged_services_manifest.json"
+  packaged_services = [
     "//media/mojo/services:media_manifest",
-    "//services/user:manifest",
+    "//services/device:manifest",
+    "//services/shape_detection:manifest",
   ]
 }
 
-mojo_application_manifest("gpu_manifest") {
-  type = "exe"
-  application_name = "content_gpu"
+service_manifest("browser_manifest") {
+  name = "content_browser"
+  source = "mojo/content_browser_manifest.json"
+  packaged_services = [ "//services/file:manifest" ]
+}
+
+service_manifest("gpu_manifest") {
+  name = "content_gpu"
   source = "mojo/content_gpu_manifest.json"
 }
 
-mojo_application_manifest("renderer_manifest") {
-  type = "exe"
-  application_name = "content_renderer"
+service_manifest("plugin_manifest") {
+  name = "content_plugin"
+  source = "mojo/content_plugin_manifest.json"
+}
+
+service_manifest("renderer_manifest") {
+  name = "content_renderer"
   source = "mojo/content_renderer_manifest.json"
 }
 
-mojo_application_manifest("utility_manifest") {
-  type = "exe"
-  application_name = "content_utility"
+service_manifest("utility_manifest") {
+  name = "content_utility"
   source = "mojo/content_utility_manifest.json"
 }

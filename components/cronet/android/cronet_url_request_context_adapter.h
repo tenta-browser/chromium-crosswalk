@@ -18,6 +18,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/threading/thread.h"
 #include "components/prefs/json_pref_store.h"
+#include "net/nqe/effective_connection_type.h"
 #include "net/nqe/network_quality_estimator.h"
 #include "net/nqe/network_quality_observation_source.h"
 
@@ -31,13 +32,16 @@ class TimeTicks;
 namespace net {
 class HttpServerPropertiesManager;
 class NetLog;
+class NetworkQualitiesPrefsManager;
 class ProxyConfigService;
 class SdchOwner;
 class URLRequestContext;
 class WriteToFileNetLogObserver;
+class FileNetLogObserver;
 }  // namespace net
 
 namespace cronet {
+class TestUtil;
 
 #if defined(DATA_REDUCTION_PROXY_SUPPORT)
 class CronetDataReductionProxy;
@@ -49,7 +53,9 @@ bool CronetUrlRequestContextAdapterRegisterJni(JNIEnv* env);
 
 // Adapter between Java CronetUrlRequestContext and net::URLRequestContext.
 class CronetURLRequestContextAdapter
-    : public net::NetworkQualityEstimator::RTTObserver,
+    : public net::NetworkQualityEstimator::EffectiveConnectionTypeObserver,
+      public net::NetworkQualityEstimator::RTTAndThroughputEstimatesObserver,
+      public net::NetworkQualityEstimator::RTTObserver,
       public net::NetworkQualityEstimator::ThroughputObserver {
  public:
   explicit CronetURLRequestContextAdapter(
@@ -76,16 +82,30 @@ class CronetURLRequestContextAdapter
 
   net::URLRequestContext* GetURLRequestContext();
 
-  // Starts NetLog logging to file. This can be called on any thread.
-  void StartNetLogToFile(JNIEnv* env,
+  // Starts NetLog logging to file. This can be called on any thread.  Returns
+  // false if it fails to open log file.
+  bool StartNetLogToFile(JNIEnv* env,
                          const base::android::JavaParamRef<jobject>& jcaller,
                          const base::android::JavaParamRef<jstring>& jfile_name,
                          jboolean jlog_all);
+
+  // Starts NetLog logging to disk with a bounded amount of disk space. This
+  // can be called on any thread.
+  void StartNetLogToDisk(JNIEnv* env,
+                         const base::android::JavaParamRef<jobject>& jcaller,
+                         const base::android::JavaParamRef<jstring>& jdir_name,
+                         jboolean jlog_all,
+                         jint jmax_size);
 
   // Stops NetLog logging to file. This can be called on any thread. This will
   // flush any remaining writes to disk.
   void StopNetLog(JNIEnv* env,
                   const base::android::JavaParamRef<jobject>& jcaller);
+
+  // Posts a task to Network thread to get serialized results of certificate
+  // verifications of |context_|'s |cert_verifier|.
+  void GetCertVerifierData(JNIEnv* env,
+                           const base::android::JavaParamRef<jobject>& jcaller);
 
   // Default net::LOAD flags used to create requests.
   int default_load_flags() const { return default_load_flags_; }
@@ -93,20 +113,17 @@ class CronetURLRequestContextAdapter
   // Called on main Java thread to initialize URLRequestContext.
   void InitRequestContextOnMainThread();
 
-  // Enables the network quality estimator.
-  // TODO(tbansal):  http://crbug.com/618034 Remove this API.
-  void EnableNetworkQualityEstimator(
-      JNIEnv* env,
-      const base::android::JavaParamRef<jobject>& jcaller);
-
-  // Configures the network quality estimator to observe localhost requests, and
-  // to consider smaller responses when observing throughput for testing. This
-  // should be called after the network quality estimator has been enabled.
+  // Configures the network quality estimator to observe requests to localhost,
+  // to use smaller responses when estimating throughput, and to disable the
+  // device offline checks when computing the effective connection type or when
+  // writing the prefs. This should only be used for testing. This can be
+  // called only after the network quality estimator has been enabled.
   void ConfigureNetworkQualityEstimatorForTesting(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& jcaller,
       jboolean use_local_host_requests,
-      jboolean use_smaller_responses);
+      jboolean use_smaller_responses,
+      jboolean disable_offline_check);
 
   // Request that RTT and/or throughput observations should or should not be
   // provided by the network quality estimator.
@@ -120,6 +137,8 @@ class CronetURLRequestContextAdapter
       bool should);
 
  private:
+  friend class TestUtil;
+
   // Initializes |context_| on the Network thread.
   void InitializeOnNetworkThread(
       std::unique_ptr<URLRequestContextConfig> config,
@@ -133,22 +152,36 @@ class CronetURLRequestContextAdapter
 
   scoped_refptr<base::SingleThreadTaskRunner> GetNetworkTaskRunner() const;
 
+  // Serializes results of certificate verifications of |context_|'s
+  // |cert_verifier| on the Network thread.
+  void GetCertVerifierDataOnNetworkThread();
+
   // Gets the file thread. Create one if there is none.
   base::Thread* GetFileThread();
 
-  // Instantiate and configure the network quality estimator.
-  // TODO(tbansal):  http://crbug.com/618034 Remove this API.
-  void EnableNetworkQualityEstimatorOnNetworkThread();
-
   // Configures the network quality estimator to observe requests to localhost,
-  // as well as to use smaller responses when estimating throughput. This
-  // should only be used for testing.
+  // to use smaller responses when estimating throughput, and to disable the
+  // device offline checks when computing the effective connection type or when
+  // writing the prefs. This should only be used for testing.
   void ConfigureNetworkQualityEstimatorOnNetworkThreadForTesting(
       bool use_local_host_requests,
-      bool use_smaller_responses);
+      bool use_smaller_responses,
+      bool disable_offline_check);
 
   void ProvideRTTObservationsOnNetworkThread(bool should);
   void ProvideThroughputObservationsOnNetworkThread(bool should);
+
+  // net::NetworkQualityEstimator::EffectiveConnectionTypeObserver
+  // implementation.
+  void OnEffectiveConnectionTypeChanged(
+      net::EffectiveConnectionType effective_connection_type) override;
+
+  // net::NetworkQualityEstimator::RTTAndThroughputEstimatesObserver
+  // implementation.
+  void OnRTTOrThroughputEstimatesComputed(
+      base::TimeDelta http_rtt,
+      base::TimeDelta transport_rtt,
+      int32_t downstream_throughput_kbps) override;
 
   // net::NetworkQualityEstimator::RTTObserver implementation.
   void OnRTTObservation(int32_t rtt_ms,
@@ -160,6 +193,19 @@ class CronetURLRequestContextAdapter
       int32_t throughput_kbps,
       const base::TimeTicks& timestamp,
       net::NetworkQualityObservationSource source) override;
+
+  // Same as StartNetLogToDisk, but called only on the network thread.
+  void StartNetLogToBoundedFileOnNetworkThread(const std::string& dir_path,
+                                               bool include_socket_bytes,
+                                               int size);
+
+  // Stops NetLog logging to file by calling StopObserving() and destroying
+  // the |bounded_file_observer_|.
+  void StopBoundedFileNetLogOnNetworkThread();
+
+  // Callback for StopObserving() that unblocks the Java ConditionVariable and
+  // signals that it is safe to access the NetLog files.
+  void StopNetLogCompleted();
 
   // Helper method to stop NetLog logging to file. This can be called on any
   // thread. This will flush any remaining writes to disk.
@@ -175,6 +221,8 @@ class CronetURLRequestContextAdapter
   // |write_to_file_observer_lock_|.
   std::unique_ptr<net::WriteToFileNetLogObserver> write_to_file_observer_;
   base::Lock write_to_file_observer_lock_;
+
+  std::unique_ptr<net::FileNetLogObserver> bounded_file_observer_;
 
   // |pref_service_| should outlive the HttpServerPropertiesManager owned by
   // |context_|.
@@ -199,6 +247,10 @@ class CronetURLRequestContextAdapter
 
   // A network quality estimator.
   std::unique_ptr<net::NetworkQualityEstimator> network_quality_estimator_;
+
+  // Manages the writing and reading of the network quality prefs.
+  std::unique_ptr<net::NetworkQualitiesPrefsManager>
+      network_qualities_prefs_manager_;
 
   // Java object that owns this CronetURLRequestContextAdapter.
   base::android::ScopedJavaGlobalRef<jobject> jcronet_url_request_context_;

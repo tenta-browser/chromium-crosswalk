@@ -30,7 +30,7 @@
 import unittest
 
 from webkitpy.common.host_mock import MockHost
-from webkitpy.common.system.systemhost_mock import MockSystemHost
+from webkitpy.common.system.system_host_mock import MockSystemHost
 from webkitpy.layout_tests import run_webkit_tests
 from webkitpy.layout_tests.controllers.layout_test_runner import LayoutTestRunner, Sharder, TestRunInterruptedException
 from webkitpy.layout_tests.models import test_expectations
@@ -79,6 +79,8 @@ class LockCheckingRunner(LayoutTestRunner):
         self._should_have_http_lock = http_lock
 
     def handle_finished_list(self, source, list_name, num_tests, elapsed_time):
+        # TODO(qyearsley): This is never called; it should be fixed or removed.
+        self._tester.fail('This is never called')
         if not self._finished_list_called:
             self._tester.assertEqual(list_name, 'locked_tests')
             self._tester.assertTrue(self._remaining_locked_shards)
@@ -104,7 +106,7 @@ class LayoutTestRunnerTests(unittest.TestCase):
         return LockCheckingRunner(port, options, FakePrinter(), self, True)
 
     def _run_tests(self, runner, tests):
-        test_inputs = [TestInput(test, 6000) for test in tests]
+        test_inputs = [TestInput(test, timeout_ms=6000) for test in tests]
         expectations = TestExpectations(runner._port, tests)
         runner.run_tests(expectations, test_inputs, set(), num_workers=1)
 
@@ -113,7 +115,7 @@ class LayoutTestRunnerTests(unittest.TestCase):
         runner._options.exit_after_n_failures = None
         runner._options.exit_after_n_crashes_or_times = None
         test_names = ['passes/text.html', 'passes/image.html']
-        runner._test_inputs = [TestInput(test_name, 6000) for test_name in test_names]
+        runner._test_inputs = [TestInput(test_name, timeout_ms=6000) for test_name in test_names]  # pylint: disable=protected-access
 
         run_results = TestRunResults(TestExpectations(runner._port, test_names), len(test_names))
         run_results.unexpected_failures = 100
@@ -135,7 +137,7 @@ class LayoutTestRunnerTests(unittest.TestCase):
 
         runner._options.exit_after_n_crashes_or_timeouts = None
         runner._options.exit_after_n_failures = 10
-        exception = self.assertRaises(TestRunInterruptedException, runner._interrupt_if_at_failure_limits, run_results)
+        self.assertRaises(TestRunInterruptedException, runner._interrupt_if_at_failure_limits, run_results)
 
     def test_update_summary_with_result(self):
         # Reftests expected to be image mismatch should be respected when pixel_tests=False.
@@ -222,7 +224,7 @@ class SharderTests(unittest.TestCase):
                               'http/tests/websocket/tests/websocket-protocol-ignored.html']),
                                ('locked_shard_2',
                                 ['http/tests/xmlhttprequest/supported-xml-content-types.html',
-                                 'perf/object-keys.html'])]),
+                                 'perf/object-keys.html'])])
         self.assert_shards(unlocked,
                            [('virtual/threaded/dir', ['virtual/threaded/dir/test.html']),
                             ('virtual/threaded/fast/foo', ['virtual/threaded/fast/foo/test.html']),
@@ -262,7 +264,7 @@ class SharderTests(unittest.TestCase):
         self.assertEqual(len(unlocked), 0)
 
     def test_multiple_locked_shards(self):
-        locked, unlocked = self.get_shards(num_workers=4, fully_parallel=False, max_locked_shards=2, run_singly=False)
+        locked, _ = self.get_shards(num_workers=4, fully_parallel=False, max_locked_shards=2, run_singly=False)
         self.assert_shards(locked,
                            [('locked_shard_1',
                              ['http/tests/security/view-source-no-refresh.html',
@@ -272,7 +274,7 @@ class SharderTests(unittest.TestCase):
                                 ['http/tests/xmlhttprequest/supported-xml-content-types.html',
                                  'perf/object-keys.html'])])
 
-        locked, unlocked = self.get_shards(num_workers=4, fully_parallel=False, run_singly=False)
+        locked, _ = self.get_shards(num_workers=4, fully_parallel=False, run_singly=False)
         self.assert_shards(locked,
                            [('locked_shard_1',
                              ['http/tests/security/view-source-no-refresh.html',
@@ -284,14 +286,14 @@ class SharderTests(unittest.TestCase):
     def test_virtual_shards(self):
         # With run_singly=False, we try to keep all of the tests in a virtual suite together even
         # when fully_parallel=True, so that we don't restart every time the command line args change.
-        locked, unlocked = self.get_shards(num_workers=2, fully_parallel=True, max_locked_shards=2, run_singly=False,
-                                           test_list=['virtual/foo/bar1.html', 'virtual/foo/bar2.html'])
+        _, unlocked = self.get_shards(num_workers=2, fully_parallel=True, max_locked_shards=2, run_singly=False,
+                                      test_list=['virtual/foo/bar1.html', 'virtual/foo/bar2.html'])
         self.assert_shards(unlocked,
                            [('virtual/foo', ['virtual/foo/bar1.html', 'virtual/foo/bar2.html'])])
 
         # But, with run_singly=True, we have to restart every time anyway, so we want full parallelism.
-        locked, unlocked = self.get_shards(num_workers=2, fully_parallel=True, max_locked_shards=2, run_singly=True,
-                                           test_list=['virtual/foo/bar1.html', 'virtual/foo/bar2.html'])
+        _, unlocked = self.get_shards(num_workers=2, fully_parallel=True, max_locked_shards=2, run_singly=True,
+                                      test_list=['virtual/foo/bar1.html', 'virtual/foo/bar2.html'])
         self.assert_shards(unlocked,
                            [('.', ['virtual/foo/bar1.html']),
                             ('.', ['virtual/foo/bar2.html'])])

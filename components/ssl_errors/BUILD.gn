@@ -2,8 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-# GYP version: components/ssl_errors.gypi
-source_set("ssl_errors") {
+static_library("ssl_errors") {
   sources = [
     "error_classification.cc",
     "error_classification.h",
@@ -32,6 +31,7 @@ source_set("unit_tests") {
     ":ssl_errors",
     "//base",
     "//components/network_time",
+    "//components/network_time:network_time_test_support",
     "//components/prefs:test_support",
     "//net:test_support",
     "//testing/gtest",

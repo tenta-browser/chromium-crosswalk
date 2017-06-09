@@ -19,7 +19,6 @@ class BrowserViewLayoutDelegate;
 class ContentsLayoutManager;
 class ImmersiveModeController;
 class InfoBarContainerView;
-class TabContentsContainer;
 class TabStrip;
 
 namespace gfx {
@@ -29,7 +28,6 @@ class Size;
 
 namespace views {
 class ClientView;
-class SingleSplitView;
 }
 
 namespace web_modal {

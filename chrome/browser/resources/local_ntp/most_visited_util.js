@@ -7,58 +7,8 @@
  * @fileoverview Utilities for rendering most visited thumbnails and titles.
  */
 
-<include src="instant_iframe_validation.js">
+// <include src="instant_iframe_validation.js">
 
-
-/**
- * The different types of events that are logged from the NTP.  This enum is
- * used to transfer information from the NTP javascript to the renderer and is
- * not used as a UMA enum histogram's logged value.
- * Note: Keep in sync with common/ntp_logging_events.h
- * @enum {number}
- * @const
- */
-var NTP_LOGGING_EVENT_TYPE = {
-  // The suggestion is coming from the server.
-  NTP_SERVER_SIDE_SUGGESTION: 0,
-  // The suggestion is coming from the client.
-  NTP_CLIENT_SIDE_SUGGESTION: 1,
-  // Indicates a tile was rendered, no matter if it's a thumbnail, a gray tile
-  // or an external tile.
-  NTP_TILE: 2,
-  // The tile uses a local thumbnail image.
-  NTP_THUMBNAIL_TILE: 3,
-  // Used when no thumbnail is specified and a gray tile with the domain is used
-  // as the main tile.
-  NTP_GRAY_TILE: 4,
-  // The visuals of that tile are handled externally by the page itself.
-  NTP_EXTERNAL_TILE: 5,
-  // There was an error in loading both the thumbnail image and the fallback
-  // (if it was provided), resulting in a grey tile.
-  NTP_THUMBNAIL_ERROR: 6,
-  // Used a gray tile with the domain as the fallback for a failed thumbnail.
-  NTP_GRAY_TILE_FALLBACK: 7,
-  // The visuals of that tile's fallback are handled externally.
-  NTP_EXTERNAL_TILE_FALLBACK: 8,
-  // The user moused over an NTP tile or title.
-  NTP_MOUSEOVER: 9,
-  // A NTP Tile has finished loading (successfully or failing).
-  NTP_TILE_LOADED: 10,
-};
-
-/**
- * Type of the impression provider for a generic client-provided suggestion.
- * @type {string}
- * @const
- */
-var CLIENT_PROVIDER_NAME = 'client';
-
-/**
- * Type of the impression provider for a generic server-provided suggestion.
- * @type {string}
- * @const
- */
-var SERVER_PROVIDER_NAME = 'server';
 
 /**
  * The origin of this request.
@@ -98,12 +48,9 @@ function parseQueryParams(location) {
  * @param {string} title The title for the link.
  * @param {string|undefined} text The text for the link or none.
  * @param {string|undefined} direction The text direction.
- * @param {string|undefined} provider A provider name (max 8 alphanumeric
- *     characters) used for logging. Undefined if suggestion is not coming from
- *     the server.
  * @return {HTMLAnchorElement} A new link element.
  */
-function createMostVisitedLink(params, href, title, text, direction, provider) {
+function createMostVisitedLink(params, href, title, text, direction) {
   var styles = getMostVisitedStyles(params, !!text);
   var link = document.createElement('a');
   link.style.color = styles.color;
@@ -136,10 +83,6 @@ function createMostVisitedLink(params, href, title, text, direction, provider) {
     spanWrap.textContent = text;
     link.appendChild(spanWrap);
   }
-  link.addEventListener('mouseover', function() {
-    var ntpApiHandle = chrome.embeddedSearch.newTabPage;
-    ntpApiHandle.logEvent(NTP_LOGGING_EVENT_TYPE.NTP_MOUSEOVER);
-  });
   link.addEventListener('focus', function() {
     window.parent.postMessage('linkFocused', DOMAIN_ORIGIN);
   });
@@ -153,12 +96,6 @@ function createMostVisitedLink(params, href, title, text, direction, provider) {
     // Ping are only populated for server-side suggestions, never for MV.
     if (isServerSuggestion && params.ping) {
       generatePing(DOMAIN_ORIGIN + params.ping);
-    }
-
-    var ntpApiHandle = chrome.embeddedSearch.newTabPage;
-    if ('pos' in params && isFinite(params.pos)) {
-      ntpApiHandle.logMostVisitedNavigation(parseInt(params.pos, 10),
-                                            provider || '');
     }
 
     // Follow <a> normally, so transition type will be LINK.
@@ -263,37 +200,28 @@ function fillMostVisited(location, fill) {
   params.rid = parseInt(params.rid, 10);
   if (!isFinite(params.rid) && !params.url)
     return;
-  // Log whether the suggestion was obtained from the server or the client.
-  chrome.embeddedSearch.newTabPage.logEvent(params.url ?
-      NTP_LOGGING_EVENT_TYPE.NTP_SERVER_SIDE_SUGGESTION :
-      NTP_LOGGING_EVENT_TYPE.NTP_CLIENT_SIDE_SUGGESTION);
   var data;
   if (params.url) {
     // Means that the suggestion data comes from the server. Create data object.
     data = {
       url: params.url,
-      largeIconUrl: params.liu || '',
       thumbnailUrl: params.tu || '',
       title: params.ti || '',
       direction: params.di || '',
-      domain: params.dom || '',
-      provider: params.pr || SERVER_PROVIDER_NAME
+      domain: params.dom || ''
     };
   } else {
-    var apiHandle = chrome.embeddedSearch.searchBox;
+    var apiHandle = chrome.embeddedSearch.newTabPage;
     data = apiHandle.getMostVisitedItemData(params.rid);
     if (!data)
       return;
-    // Allow server-side provider override.
-    data.provider = params.pr || CLIENT_PROVIDER_NAME;
   }
 
   if (isFinite(params.dummy) && parseInt(params.dummy, 10)) {
     data.dummy = true;
   }
   if (/^javascript:/i.test(data.url) ||
-      /^javascript:/i.test(data.thumbnailUrl) ||
-      !/^[a-z0-9]{0,8}$/i.test(data.provider))
+      /^javascript:/i.test(data.thumbnailUrl))
     return;
   if (data.direction)
     document.body.dir = data.direction;

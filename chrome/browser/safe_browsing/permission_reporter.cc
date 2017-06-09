@@ -2,47 +2,52 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/safe_browsing/permission_reporter.h"
+
+#include <functional>
+
+#include "base/hash.h"
+#include "base/memory/ptr_util.h"
+#include "base/time/default_clock.h"
+#include "chrome/browser/permissions/permission_request.h"
 #include "chrome/common/safe_browsing/permission_report.pb.h"
 #include "components/variations/active_field_trials.h"
-#include "content/public/browser/permission_type.h"
 #include "net/url_request/report_sender.h"
-
-using content::PermissionType;
 
 namespace safe_browsing {
 
 namespace {
 // URL to upload permission action reports.
 const char kPermissionActionReportingUploadUrl[] =
-    "http://safebrowsing.googleusercontent.com/safebrowsing/clientreport/"
-    "permission-action";
+    "https://safebrowsing.googleusercontent.com/safebrowsing/clientreport/"
+    "chrome-permissions";
+
+const int kMaximumReportsPerOriginPerPermissionPerMinute = 5;
 
 PermissionReport::PermissionType PermissionTypeForReport(
-    PermissionType permission) {
+    ContentSettingsType permission) {
   switch (permission) {
-    case PermissionType::MIDI_SYSEX:
+    case CONTENT_SETTINGS_TYPE_MIDI_SYSEX:
       return PermissionReport::MIDI_SYSEX;
-    case PermissionType::PUSH_MESSAGING:
+    case CONTENT_SETTINGS_TYPE_PUSH_MESSAGING:
       return PermissionReport::PUSH_MESSAGING;
-    case PermissionType::NOTIFICATIONS:
+    case CONTENT_SETTINGS_TYPE_NOTIFICATIONS:
       return PermissionReport::NOTIFICATIONS;
-    case PermissionType::GEOLOCATION:
+    case CONTENT_SETTINGS_TYPE_GEOLOCATION:
       return PermissionReport::GEOLOCATION;
-    case PermissionType::PROTECTED_MEDIA_IDENTIFIER:
+    case CONTENT_SETTINGS_TYPE_PROTECTED_MEDIA_IDENTIFIER:
       return PermissionReport::PROTECTED_MEDIA_IDENTIFIER;
-    case PermissionType::MIDI:
-      return PermissionReport::MIDI;
-    case PermissionType::DURABLE_STORAGE:
+    case CONTENT_SETTINGS_TYPE_DURABLE_STORAGE:
       return PermissionReport::DURABLE_STORAGE;
-    case PermissionType::AUDIO_CAPTURE:
+    case CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC:
       return PermissionReport::AUDIO_CAPTURE;
-    case PermissionType::VIDEO_CAPTURE:
+    case CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA:
       return PermissionReport::VIDEO_CAPTURE;
-    case PermissionType::BACKGROUND_SYNC:
-      return PermissionReport::UNKNOWN_PERMISSION;
-    case PermissionType::NUM:
+    case CONTENT_SETTINGS_TYPE_BACKGROUND_SYNC:
+      return PermissionReport::BACKGROUND_SYNC;
+    case CONTENT_SETTINGS_TYPE_PLUGINS:
+      return PermissionReport::FLASH;
+    default:
       break;
   }
 
@@ -52,20 +57,20 @@ PermissionReport::PermissionType PermissionTypeForReport(
 
 PermissionReport::Action PermissionActionForReport(PermissionAction action) {
   switch (action) {
-    case GRANTED:
+    case PermissionAction::GRANTED:
       return PermissionReport::GRANTED;
-    case DENIED:
+    case PermissionAction::DENIED:
       return PermissionReport::DENIED;
-    case DISMISSED:
+    case PermissionAction::DISMISSED:
       return PermissionReport::DISMISSED;
-    case IGNORED:
+    case PermissionAction::IGNORED:
       return PermissionReport::IGNORED;
-    case REVOKED:
+    case PermissionAction::REVOKED:
       return PermissionReport::REVOKED;
-    case REENABLED:
-    case REQUESTED:
+    case PermissionAction::REENABLED:
+    case PermissionAction::REQUESTED:
       return PermissionReport::ACTION_UNSPECIFIED;
-    case PERMISSION_ACTION_NUM:
+    case PermissionAction::NUM:
       break;
   }
 
@@ -73,37 +78,111 @@ PermissionReport::Action PermissionActionForReport(PermissionAction action) {
   return PermissionReport::ACTION_UNSPECIFIED;
 }
 
+PermissionReport::SourceUI SourceUIForReport(PermissionSourceUI source_ui) {
+  switch (source_ui) {
+    case PermissionSourceUI::PROMPT:
+      return PermissionReport::PROMPT;
+    case PermissionSourceUI::OIB:
+      return PermissionReport::OIB;
+    case PermissionSourceUI::SITE_SETTINGS:
+      return PermissionReport::SITE_SETTINGS;
+    case PermissionSourceUI::PAGE_ACTION:
+      return PermissionReport::PAGE_ACTION;
+    case PermissionSourceUI::NUM:
+      break;
+  }
+
+  NOTREACHED();
+  return PermissionReport::SOURCE_UI_UNSPECIFIED;
+}
+
+PermissionReport::GestureType GestureTypeForReport(
+    PermissionRequestGestureType gesture_type) {
+  switch (gesture_type) {
+    case PermissionRequestGestureType::UNKNOWN:
+      return PermissionReport::GESTURE_TYPE_UNSPECIFIED;
+    case PermissionRequestGestureType::GESTURE:
+      return PermissionReport::GESTURE;
+    case PermissionRequestGestureType::NO_GESTURE:
+      return PermissionReport::NO_GESTURE;
+    case PermissionRequestGestureType::NUM:
+      break;
+  }
+
+  NOTREACHED();
+  return PermissionReport::GESTURE_TYPE_UNSPECIFIED;
+}
+
+PermissionReport::PersistDecision PersistDecisionForReport(
+    PermissionPersistDecision persist_decision) {
+  switch (persist_decision) {
+    case PermissionPersistDecision::UNSPECIFIED:
+      return PermissionReport::PERSIST_DECISION_UNSPECIFIED;
+    case PermissionPersistDecision::PERSISTED:
+      return PermissionReport::PERSISTED;
+    case PermissionPersistDecision::NOT_PERSISTED:
+      return PermissionReport::NOT_PERSISTED;
+  }
+
+  NOTREACHED();
+  return PermissionReport::PERSIST_DECISION_UNSPECIFIED;
+}
+
 }  // namespace
 
+bool PermissionAndOrigin::operator==(const PermissionAndOrigin& other) const {
+  return (permission == other.permission && origin == other.origin);
+}
+
+std::size_t PermissionAndOriginHash::operator()(
+    const PermissionAndOrigin& permission_and_origin) const {
+  std::size_t permission_hash =
+      static_cast<std::size_t>(permission_and_origin.permission);
+  std::size_t origin_hash =
+      std::hash<std::string>()(permission_and_origin.origin.spec());
+  return base::HashInts(permission_hash, origin_hash);
+}
+
 PermissionReporter::PermissionReporter(net::URLRequestContext* request_context)
-    : PermissionReporter(base::WrapUnique(new net::ReportSender(
-          request_context,
-          net::ReportSender::CookiesPreference::DO_NOT_SEND_COOKIES))) {}
+    : PermissionReporter(
+          base::MakeUnique<net::ReportSender>(
+              request_context,
+              net::ReportSender::CookiesPreference::DO_NOT_SEND_COOKIES),
+          base::WrapUnique(new base::DefaultClock)) {}
 
 PermissionReporter::PermissionReporter(
-    std::unique_ptr<net::ReportSender> report_sender)
-    : permission_report_sender_(std::move(report_sender)) {}
+    std::unique_ptr<net::ReportSender> report_sender,
+    std::unique_ptr<base::Clock> clock)
+    : permission_report_sender_(std::move(report_sender)),
+      clock_(std::move(clock)) {}
 
 PermissionReporter::~PermissionReporter() {}
 
-void PermissionReporter::SendReport(const GURL& origin,
-                                    content::PermissionType permission,
-                                    PermissionAction action) {
+void PermissionReporter::SendReport(const PermissionReportInfo& report_info) {
+  if (IsReportThresholdExceeded(report_info.permission, report_info.origin))
+    return;
+
   std::string serialized_report;
-  BuildReport(origin, permission, action, &serialized_report);
+  BuildReport(report_info, &serialized_report);
   permission_report_sender_->Send(GURL(kPermissionActionReportingUploadUrl),
-                                  serialized_report);
+                                  "application/octet-stream", serialized_report,
+                                  base::Closure(),
+                                  base::Callback<void(const GURL&, int)>());
 }
 
 // static
-bool PermissionReporter::BuildReport(const GURL& origin,
-                                     PermissionType permission,
-                                     PermissionAction action,
+bool PermissionReporter::BuildReport(const PermissionReportInfo& report_info,
                                      std::string* output) {
   PermissionReport report;
-  report.set_origin(origin.spec());
-  report.set_permission(PermissionTypeForReport(permission));
-  report.set_action(PermissionActionForReport(action));
+  report.set_origin(report_info.origin.spec());
+  report.set_permission(PermissionTypeForReport(report_info.permission));
+  report.set_action(PermissionActionForReport(report_info.action));
+  report.set_source_ui(SourceUIForReport(report_info.source_ui));
+  report.set_gesture(GestureTypeForReport(report_info.gesture_type));
+  report.set_persisted(
+      PersistDecisionForReport(report_info.persist_decision));
+  report.set_num_prior_dismissals(report_info.num_prior_dismissals);
+  report.set_num_prior_ignores(report_info.num_prior_ignores);
 
   // Collect platform data.
 #if defined(OS_ANDROID)
@@ -124,6 +203,24 @@ bool PermissionReporter::BuildReport(const GURL& origin,
     field_trial->set_group_id(active_group_id.group);
   }
   return report.SerializeToString(output);
+}
+
+bool PermissionReporter::IsReportThresholdExceeded(
+    ContentSettingsType permission,
+    const GURL& origin) {
+  std::queue<base::Time>& log = report_logs_[{permission, origin}];
+  base::Time current_time = clock_->Now();
+  // Remove entries that are sent more than one minute ago.
+  while (!log.empty() &&
+         current_time - log.front() > base::TimeDelta::FromMinutes(1)) {
+    log.pop();
+  }
+  if (log.size() < kMaximumReportsPerOriginPerPermissionPerMinute) {
+    log.push(current_time);
+    return false;
+  } else {
+    return true;
+  }
 }
 
 }  // namespace safe_browsing

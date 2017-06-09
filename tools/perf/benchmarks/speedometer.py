@@ -63,14 +63,17 @@ class SpeedometerMeasurement(legacy_page_test.LegacyPageTest):
           benchmarkClient._measuredValues.push(measuredValues);
           benchmarkClient._timeValues.push(measuredValues.total);
         };
-        benchmarkClient.iterationCount = %d;
+        benchmarkClient.iterationCount = {{ count }};
         startTest();
-        """ % iterationCount)
-    tab.WaitForJavaScriptExpression(
-        'benchmarkClient._finishedTestCount == benchmarkClient.testsCount', 600)
+        """,
+        count=iterationCount)
+    tab.WaitForJavaScriptCondition(
+        'benchmarkClient._finishedTestCount == benchmarkClient.testsCount',
+        timeout=600)
     results.AddValue(list_of_scalar_values.ListOfScalarValues(
         page, 'Total', 'ms',
-        tab.EvaluateJavaScript('benchmarkClient._timeValues'), important=True))
+        tab.EvaluateJavaScript('benchmarkClient._timeValues'),
+        important=True))
 
     # Extract the timings for each suite
     for suite_name in self.enabled_suites:
@@ -80,10 +83,11 @@ class SpeedometerMeasurement(legacy_page_test.LegacyPageTest):
               var suite_times = [];
               for(var i = 0; i < benchmarkClient.iterationCount; i++) {
                 suite_times.push(
-                    benchmarkClient._measuredValues[i].tests['%s'].total);
+                    benchmarkClient._measuredValues[i].tests[{{ key }}].total);
               };
               suite_times;
-              """ % suite_name), important=False))
+              """,
+              key=suite_name), important=False))
     keychain_metric.KeychainMetric().AddResults(tab, results)
 
 
@@ -114,3 +118,13 @@ class SpeedometerIgnition(Speedometer):
   @classmethod
   def Name(cls):
     return 'speedometer-ignition'
+
+
+class SpeedometerTurbo(Speedometer):
+  def SetExtraBrowserOptions(self, options):
+    super(SpeedometerTurbo, self).SetExtraBrowserOptions(options)
+    v8_helper.EnableTurbo(options)
+
+  @classmethod
+  def Name(cls):
+    return 'speedometer-turbo'

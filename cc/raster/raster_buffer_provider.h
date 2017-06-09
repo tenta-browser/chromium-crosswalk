@@ -12,12 +12,9 @@
 #include "cc/raster/task_graph_runner.h"
 #include "cc/raster/tile_task.h"
 #include "cc/resources/resource_format.h"
+#include "cc/resources/resource_provider.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
-
-namespace base {
-class SequencedTaskRunner;
-}
 
 namespace cc {
 class Resource;
@@ -42,6 +39,7 @@ class CC_EXPORT RasterBufferProvider {
       const gfx::Rect& canvas_bitmap_rect,
       const gfx::Rect& canvas_playback_rect,
       float scale,
+      sk_sp<SkColorSpace> color_space,
       const RasterSource::PlaybackSettings& playback_settings);
 
   // Acquire raster buffer.
@@ -60,7 +58,25 @@ class CC_EXPORT RasterBufferProvider {
   virtual ResourceFormat GetResourceFormat(bool must_support_alpha) const = 0;
 
   // Determine if the resource requires swizzling.
-  virtual bool GetResourceRequiresSwizzle(bool must_support_alpha) const = 0;
+  virtual bool IsResourceSwizzleRequired(bool must_support_alpha) const = 0;
+
+  // Determine if the RasterBufferProvider can handle partial raster into
+  // the Resource provided in AcquireBufferForRaster.
+  virtual bool CanPartialRasterIntoProvidedResource() const = 0;
+
+  // Returns true if the indicated resource is ready to draw.
+  virtual bool IsResourceReadyToDraw(ResourceId id) const = 0;
+
+  // Calls the provided |callback| when the provided |resources| are ready to
+  // draw. Returns a callback ID which can be used to track this callback.
+  // Will return 0 if no callback is needed (resources are already ready to
+  // draw). The caller may optionally pass the ID of a pending callback to
+  // avoid creating a new callback unnecessarily. If the caller does not
+  // have a pending callback, 0 should be passed for |pending_callback_id|.
+  virtual uint64_t SetReadyToDrawCallback(
+      const ResourceProvider::ResourceIdArray& resource_ids,
+      const base::Callback<void()>& callback,
+      uint64_t pending_callback_id) const = 0;
 
   // Shutdown for doing cleanup.
   virtual void Shutdown() = 0;

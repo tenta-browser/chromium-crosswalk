@@ -8,6 +8,7 @@ import re
 
 from core import perf_benchmark
 
+from telemetry import benchmark
 from telemetry.core import util
 from telemetry.page import legacy_page_test
 from telemetry.timeline import async_slice as async_slice_module
@@ -150,7 +151,7 @@ class _ServiceWorkerMicroBenchmarkMeasurement(legacy_page_test.LegacyPageTest):
 
   def ValidateAndMeasurePage(self, page, tab, results):
     del page  # unused
-    tab.WaitForJavaScriptExpression('window.done', 40)
+    tab.WaitForJavaScriptCondition('window.done', timeout=40)
     json = tab.EvaluateJavaScript('window.results || {}')
     for key, value in json.iteritems():
       results.AddValue(scalar.ScalarValue(
@@ -173,6 +174,7 @@ class ServiceWorkerPerfTest(perf_benchmark.PerfBenchmark):
     return 'service_worker.service_worker'
 
 
+@benchmark.Disabled('android-webview')  # http://crbug.com/653924
 class ServiceWorkerMicroBenchmarkPerfTest(perf_benchmark.PerfBenchmark):
   """This test is a microbenchmark of service worker.
 

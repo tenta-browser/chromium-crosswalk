@@ -18,7 +18,7 @@
 #include "extensions/common/extension.h"
 
 #if defined(USE_ASH)
-#include "ash/shell.h"
+#include "ash/shell.h"  // nogncheck
 #endif
 
 namespace extensions {
@@ -83,7 +83,7 @@ void SetLaunchType(content::BrowserContext* context,
 
   ExtensionPrefs::Get(context)->UpdateExtensionPref(
       extension_id, kPrefLaunchType,
-      new base::FundamentalValue(static_cast<int>(launch_type)));
+      new base::Value(static_cast<int>(launch_type)));
 
   // Sync the launch type.
   const Extension* extension =

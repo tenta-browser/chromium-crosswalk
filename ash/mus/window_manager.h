@@ -10,30 +10,48 @@
 #include <memory>
 #include <set>
 
+#include "ash/root_window_controller.h"
 #include "base/macros.h"
-#include "base/observer_list.h"
-#include "components/mus/common/types.h"
-#include "components/mus/public/cpp/window_manager_delegate.h"
-#include "components/mus/public/cpp/window_observer.h"
-#include "components/mus/public/cpp/window_tree_client_delegate.h"
-#include "components/mus/public/interfaces/window_manager.mojom.h"
+#include "base/memory/ref_counted.h"
+#include "services/ui/common/types.h"
+#include "services/ui/public/interfaces/display/display_controller.mojom.h"
+#include "services/ui/public/interfaces/window_manager.mojom.h"
+#include "ui/aura/mus/window_manager_delegate.h"
+#include "ui/aura/mus/window_tree_client_delegate.h"
+
+namespace base {
+class SequencedWorkerPool;
+}
 
 namespace display {
 class Display;
-class Screen;
 }
 
-namespace shell {
+namespace service_manager {
 class Connector;
 }
 
+namespace views {
+class PointerWatcherEventRouter;
+}
+
+namespace wm {
+class WMState;
+}
+
 namespace ash {
-namespace mus {
 
 class RootWindowController;
-class ShadowController;
-class WindowManagerObserver;
-class WmShellMus;
+class ScreenMus;
+class ShellDelegate;
+
+namespace test {
+class AshTestHelper;
+}
+
+namespace mus {
+
+class AcceleratorHandler;
 class WmLookupMus;
 class WmTestHelper;
 
@@ -41,85 +59,148 @@ class WmTestHelper;
 // WindowTreeClientDelegate for mash. WindowManager creates (and owns)
 // a RootWindowController per Display. WindowManager takes ownership of
 // the WindowTreeClient.
-class WindowManager : public ::mus::WindowManagerDelegate,
-                      public ::mus::WindowObserver,
-                      public ::mus::WindowTreeClientDelegate {
+class WindowManager : public aura::WindowManagerDelegate,
+                      public aura::WindowTreeClientDelegate {
  public:
-  explicit WindowManager(shell::Connector* connector);
+  explicit WindowManager(service_manager::Connector* connector);
   ~WindowManager() override;
 
-  void Init(::mus::WindowTreeClient* window_tree_client);
+  void Init(std::unique_ptr<aura::WindowTreeClient> window_tree_client,
+            const scoped_refptr<base::SequencedWorkerPool>& blocking_pool);
 
-  WmShellMus* shell() { return shell_.get(); }
+  // Called during shutdown to delete all the RootWindowControllers.
+  void DeleteAllRootWindowControllers();
 
-  ::mus::WindowManagerClient* window_manager_client() {
+  ScreenMus* screen() { return screen_.get(); }
+
+  aura::WindowTreeClient* window_tree_client() {
+    return window_tree_client_.get();
+  }
+
+  aura::WindowManagerClient* window_manager_client() {
     return window_manager_client_;
   }
 
-  shell::Connector* connector() { return connector_; }
+  service_manager::Connector* connector() { return connector_; }
 
-  void SetScreenLocked(bool is_locked);
-
-  // Creates a new top level window.
-  ::mus::Window* NewTopLevelWindow(
-      std::map<std::string, std::vector<uint8_t>>* properties);
+  aura::PropertyConverter* property_converter() {
+    return property_converter_.get();
+  }
 
   std::set<RootWindowController*> GetRootWindowControllers();
 
-  void AddObserver(WindowManagerObserver* observer);
-  void RemoveObserver(WindowManagerObserver* observer);
+  // Returns the next accelerator namespace id by value in |id|. Returns true
+  // if there is another slot available, false if all slots are taken up.
+  bool GetNextAcceleratorNamespaceId(uint16_t* id);
+  void AddAcceleratorHandler(uint16_t id_namespace,
+                             AcceleratorHandler* handler);
+  void RemoveAcceleratorHandler(uint16_t id_namespace);
+
+  // Returns the DisplayController interface if available. Will be null if no
+  // service_manager::Connector was available, for example in some tests.
+  display::mojom::DisplayController* GetDisplayController();
+
+  // Called during creation of the shell to create a RootWindowController.
+  // See comment in CreateRootWindowController() for details.
+  void CreatePrimaryRootWindowController(
+      std::unique_ptr<aura::WindowTreeHostMus> window_tree_host);
 
  private:
+  friend class ash::test::AshTestHelper;
   friend class WmTestHelper;
 
-  void AddAccelerators();
+  using RootWindowControllers = std::set<std::unique_ptr<RootWindowController>>;
 
-  RootWindowController* CreateRootWindowController(
-      ::mus::Window* window,
-      const display::Display& display);
+  // Called once the first Display has been obtained.
+  void CreateShell(
+      std::unique_ptr<aura::WindowTreeHostMus> primary_window_tree_host);
 
-  // ::mus::WindowObserver:
-  void OnWindowDestroying(::mus::Window* window) override;
-  void OnWindowDestroyed(::mus::Window* window) override;
+  void CreateAndRegisterRootWindowController(
+      std::unique_ptr<aura::WindowTreeHostMus> window_tree_host,
+      const display::Display& display,
+      ash::RootWindowController::RootWindowType root_window_type);
+
+  // Deletes the specified RootWindowController. Called when a display is
+  // removed. |in_shutdown| is true if called from Shutdown().
+  void DestroyRootWindowController(RootWindowController* root_window_controller,
+                                   bool in_shutdown);
+
+  void Shutdown();
+
+  RootWindowController* GetPrimaryRootWindowController();
 
   // WindowTreeClientDelegate:
-  void OnEmbed(::mus::Window* root) override;
-  void OnWindowTreeClientDestroyed(::mus::WindowTreeClient* client) override;
-  void OnEventObserved(const ui::Event& event, ::mus::Window* target) override;
+  void OnEmbed(
+      std::unique_ptr<aura::WindowTreeHostMus> window_tree_host) override;
+  void OnEmbedRootDestroyed(aura::WindowTreeHostMus* window_tree_host) override;
+  void OnLostConnection(aura::WindowTreeClient* client) override;
+  void OnPointerEventObserved(const ui::PointerEvent& event,
+                              aura::Window* target) override;
+  aura::PropertyConverter* GetPropertyConverter() override;
 
   // WindowManagerDelegate:
-  void SetWindowManagerClient(::mus::WindowManagerClient* client) override;
-  bool OnWmSetBounds(::mus::Window* window, gfx::Rect* bounds) override;
+  void SetWindowManagerClient(aura::WindowManagerClient* client) override;
+  bool OnWmSetBounds(aura::Window* window, gfx::Rect* bounds) override;
   bool OnWmSetProperty(
-      ::mus::Window* window,
+      aura::Window* window,
       const std::string& name,
       std::unique_ptr<std::vector<uint8_t>>* new_data) override;
-  ::mus::Window* OnWmCreateTopLevelWindow(
+  void OnWmSetCanFocus(aura::Window* window, bool can_focus) override;
+  aura::Window* OnWmCreateTopLevelWindow(
+      ui::mojom::WindowType window_type,
       std::map<std::string, std::vector<uint8_t>>* properties) override;
-  void OnWmClientJankinessChanged(
-      const std::set<::mus::Window*>& client_windows,
-      bool not_responding) override;
-  void OnWmNewDisplay(::mus::Window* window,
+  void OnWmClientJankinessChanged(const std::set<aura::Window*>& client_windows,
+                                  bool not_responding) override;
+  void OnWmWillCreateDisplay(const display::Display& display) override;
+  void OnWmNewDisplay(std::unique_ptr<aura::WindowTreeHostMus> window_tree_host,
                       const display::Display& display) override;
-  void OnAccelerator(uint32_t id, const ui::Event& event) override;
+  void OnWmDisplayRemoved(aura::WindowTreeHostMus* window_tree_host) override;
+  void OnWmDisplayModified(const display::Display& display) override;
+  void OnWmPerformMoveLoop(aura::Window* window,
+                           ui::mojom::MoveLoopSource source,
+                           const gfx::Point& cursor_location,
+                           const base::Callback<void(bool)>& on_done) override;
+  void OnWmCancelMoveLoop(aura::Window* window) override;
+  ui::mojom::EventResult OnAccelerator(uint32_t id,
+                                       const ui::Event& event) override;
+  void OnWmSetClientArea(
+      aura::Window* window,
+      const gfx::Insets& insets,
+      const std::vector<gfx::Rect>& additional_client_areas) override;
+  bool IsWindowActive(aura::Window* window) override;
+  void OnWmDeactivateWindow(aura::Window* window) override;
 
-  shell::Connector* connector_;
+  service_manager::Connector* connector_;
+  display::mojom::DisplayControllerPtr display_controller_;
 
-  ::mus::WindowTreeClient* window_tree_client_ = nullptr;
+  std::unique_ptr<::wm::WMState> wm_state_;
+  std::unique_ptr<aura::PropertyConverter> property_converter_;
 
-  ::mus::WindowManagerClient* window_manager_client_ = nullptr;
+  std::unique_ptr<aura::WindowTreeClient> window_tree_client_;
 
-  std::unique_ptr<ShadowController> shadow_controller_;
+  aura::WindowManagerClient* window_manager_client_ = nullptr;
 
-  std::set<std::unique_ptr<RootWindowController>> root_window_controllers_;
+  std::unique_ptr<views::PointerWatcherEventRouter>
+      pointer_watcher_event_router_;
 
-  base::ObserverList<WindowManagerObserver> observers_;
+  RootWindowControllers root_window_controllers_;
 
-  std::unique_ptr<display::Screen> screen_;
+  std::unique_ptr<ScreenMus> screen_;
 
-  std::unique_ptr<WmShellMus> shell_;
+  bool created_shell_ = false;
 
   std::unique_ptr<WmLookupMus> lookup_;
+
+  std::map<uint16_t, AcceleratorHandler*> accelerator_handlers_;
+  uint16_t next_accelerator_namespace_id_ = 0u;
+
+  scoped_refptr<base::SequencedWorkerPool> blocking_pool_;
+
+  // Only set in tests. If non-null this is used as the shell delegate.
+  std::unique_ptr<ShellDelegate> shell_delegate_for_test_;
+
+  // See WmShellMus's constructor for details. Tests may set to false.
+  bool create_session_state_delegate_stub_for_test_ = true;
 
   DISALLOW_COPY_AND_ASSIGN(WindowManager);
 };

@@ -6,11 +6,13 @@
 #define CHROME_BROWSER_PAGE_LOAD_METRICS_OBSERVERS_SERVICE_WORKER_PAGE_LOAD_METRICS_OBSERVER_H_
 
 #include "base/macros.h"
-#include "components/page_load_metrics/browser/page_load_metrics_observer.h"
+#include "chrome/browser/page_load_metrics/page_load_metrics_observer.h"
 
 namespace internal {
 
 // Expose metrics for tests.
+extern const char kHistogramServiceWorkerParseStart[];
+extern const char kBackgroundHistogramServiceWorkerParseStart[];
 extern const char kHistogramServiceWorkerFirstContentfulPaint[];
 extern const char kBackgroundHistogramServiceWorkerFirstContentfulPaint[];
 extern const char kHistogramServiceWorkerParseStartToFirstContentfulPaint[];
@@ -29,6 +31,9 @@ class ServiceWorkerPageLoadMetricsObserver
  public:
   ServiceWorkerPageLoadMetricsObserver();
   // page_load_metrics::PageLoadMetricsObserver implementation:
+  void OnParseStart(
+      const page_load_metrics::PageLoadTiming& timing,
+      const page_load_metrics::PageLoadExtraInfo& extra_info) override;
   void OnFirstContentfulPaint(
       const page_load_metrics::PageLoadTiming& timing,
       const page_load_metrics::PageLoadExtraInfo& extra_info) override;

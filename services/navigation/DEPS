@@ -1,9 +1,9 @@
 include_rules = [
-  "+components/mus/public/cpp",
+  "+services/ui/public/cpp",
   "+content/public",
   "+content/shell",
   "+net/base",
   "+sandbox",
-  "+services/shell",
+  "+services/service_manager",
   "+ui"
 ]

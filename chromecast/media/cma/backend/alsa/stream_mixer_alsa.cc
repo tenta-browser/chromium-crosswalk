@@ -6,23 +6,29 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
+#include <unordered_set>
 #include <utility>
 
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/lazy_instance.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
+#include "base/numerics/saturated_arithmetic.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chromecast/base/chromecast_switches.h"
+#include "chromecast/media/base/audio_device_ids.h"
 #include "chromecast/media/cma/backend/alsa/alsa_wrapper.h"
 #include "chromecast/media/cma/backend/alsa/audio_filter_factory.h"
+#include "chromecast/media/cma/backend/alsa/filter_group.h"
 #include "chromecast/media/cma/backend/alsa/stream_mixer_alsa_input_impl.h"
+#include "media/audio/audio_device_description.h"
 #include "media/base/audio_bus.h"
 #include "media/base/media_switches.h"
-#include "media/base/vector_math.h"
 
 #define RETURN_REPORT_ERROR(snd_func, ...)                        \
   do {                                                            \
@@ -75,6 +81,9 @@ const int kPreventUnderrunChunkSize = 512;
 const int kDefaultCheckCloseTimeoutMs = 2000;
 
 const int kMaxWriteSizeMs = 20;
+// The minimum amount of data that we allow in the ALSA buffer before starting
+// to skip inputs with no available data.
+const int kMinBufferedDataMs = 8;
 
 // A list of supported sample rates.
 // TODO(jyw): move this up into chromecast/public for 1) documentation and
@@ -108,6 +117,8 @@ static int* kAlsaDirDontCare = nullptr;
 // some devices do not support 32 bit samples.
 const snd_pcm_format_t kPreferredSampleFormats[] = {SND_PCM_FORMAT_S32,
                                                     SND_PCM_FORMAT_S16};
+
+const int64_t kNoTimestamp = std::numeric_limits<int64_t>::min();
 
 int64_t TimespecToMicroseconds(struct timespec time) {
   return static_cast<int64_t>(time.tv_sec) *
@@ -157,6 +168,12 @@ bool GetSwitchValueAsNonNegativeInt(const std::string& switch_name,
     return false;
   }
   return true;
+}
+
+void VectorAccumulate(const int32_t* source, size_t size, int32_t* dest) {
+  for (size_t i = 0; i < size; ++i) {
+    dest[i] = base::SaturatedAddition(source[i], dest[i]);
+  }
 }
 
 class StreamMixerAlsaInstance : public StreamMixerAlsa {
@@ -237,11 +254,23 @@ StreamMixerAlsa::StreamMixerAlsa()
           ? kLowSampleRateCutoff
           : 0;
 
-  // Create filters
-  pre_loopback_filter_ = AudioFilterFactory::MakeAudioFilter(
-      AudioFilterFactory::PRE_LOOPBACK_FILTER);
-  post_loopback_filter_ = AudioFilterFactory::MakeAudioFilter(
-      AudioFilterFactory::POST_LOOPBACK_FILTER);
+  // Create filter groups.
+  // TODO(bshaya): Switch to filter groups based on AudioContentType.
+  filter_groups_.push_back(base::MakeUnique<FilterGroup>(
+      std::unordered_set<std::string>(
+          {::media::AudioDeviceDescription::kCommunicationsDeviceId}),
+      AudioFilterFactory::COMMUNICATION_AUDIO_FILTER));
+  filter_groups_.push_back(base::MakeUnique<FilterGroup>(
+      std::unordered_set<std::string>({kAlarmAudioDeviceId}),
+      AudioFilterFactory::ALARM_AUDIO_FILTER));
+  filter_groups_.push_back(base::MakeUnique<FilterGroup>(
+      std::unordered_set<std::string>({kTtsAudioDeviceId}),
+      AudioFilterFactory::TTS_AUDIO_FILTER));
+  filter_groups_.push_back(base::MakeUnique<FilterGroup>(
+      std::unordered_set<std::string>(
+          {::media::AudioDeviceDescription::kDefaultDeviceId,
+           kEarconAudioDeviceId, ""}),
+      AudioFilterFactory::MEDIA_AUDIO_FILTER));
 
   DefineAlsaParameters();
 }
@@ -317,7 +346,7 @@ unsigned int StreamMixerAlsa::DetermineOutputRate(unsigned int requested_rate) {
   // rate when the input sample rate is not supported.
   const int* kSupportedSampleRatesEnd =
       kSupportedSampleRates + arraysize(kSupportedSampleRates);
-  auto nearest_sample_rate =
+  auto* nearest_sample_rate =
       std::min_element(kSupportedSampleRates, kSupportedSampleRatesEnd,
                        [this](int r1, int r2) -> bool {
                          return abs(requested_output_samples_per_second_ - r1) <
@@ -521,22 +550,15 @@ void StreamMixerAlsa::Start() {
   }
 
   // Initialize filters
-  if (pre_loopback_filter_) {
-    pre_loopback_filter_->SetSampleRateAndFormat(
-        output_samples_per_second_, ::media::SampleFormat::kSampleFormatS32);
-  }
-
-  if (post_loopback_filter_) {
-    post_loopback_filter_->SetSampleRateAndFormat(
-        output_samples_per_second_, ::media::SampleFormat::kSampleFormatS32);
+  for (auto&& filter_group : filter_groups_) {
+    filter_group->Initialize(output_samples_per_second_,
+                             ::media::SampleFormat::kSampleFormatS32);
   }
 
   RETURN_REPORT_ERROR(PcmPrepare, pcm_);
   RETURN_REPORT_ERROR(PcmStatusMalloc, &pcm_status_);
 
-  struct timespec now = {0, 0};
-  clock_gettime(CLOCK_MONOTONIC_RAW, &now);
-  rendering_delay_.timestamp_microseconds = TimespecToMicroseconds(now);
+  rendering_delay_.timestamp_microseconds = kNoTimestamp;
   rendering_delay_.delay_microseconds = 0;
 
   state_ = kStateNormalPlayback;
@@ -547,9 +569,12 @@ void StreamMixerAlsa::Stop() {
     observer->OnLoopbackInterrupted();
   }
 
-  alsa_->PcmStatusFree(pcm_status_);
+  if (alsa_) {
+    alsa_->PcmStatusFree(pcm_status_);
+    alsa_->PcmHwParamsFree(pcm_hw_params_);
+  }
+
   pcm_status_ = nullptr;
-  alsa_->PcmHwParamsFree(pcm_hw_params_);
   pcm_hw_params_ = nullptr;
   state_ = kStateUninitialized;
   output_samples_per_second_ = kInvalidSampleRate;
@@ -626,6 +651,7 @@ void StreamMixerAlsa::AddInput(std::unique_ptr<InputQueue> input) {
   }
 
   DCHECK(input);
+
   // If the new input is a primary one, we may need to change the output
   // sample rate to match its input sample rate.
   // We only change the output rate if it is not set to a fixed value.
@@ -635,17 +661,31 @@ void StreamMixerAlsa::AddInput(std::unique_ptr<InputQueue> input) {
   }
 
   check_close_timer_->Stop();
-  if (state_ == kStateUninitialized) {
-    requested_output_samples_per_second_ = input->input_samples_per_second();
-    Start();
-    input->Initialize(rendering_delay_);
-    inputs_.push_back(std::move(input));
-  } else if (state_ == kStateNormalPlayback) {
-    input->Initialize(rendering_delay_);
-    inputs_.push_back(std::move(input));
-  } else {
-    input->SignalError(StreamMixerAlsaInput::MixerError::kInternalError);
-    ignored_inputs_.push_back(std::move(input));
+  switch (state_) {
+    case kStateUninitialized:
+      requested_output_samples_per_second_ = input->input_samples_per_second();
+      Start();
+    // Fallthrough intended
+    case kStateNormalPlayback: {
+      bool found_filter_group = false;
+      input->Initialize(rendering_delay_);
+      for (auto&& filter_group : filter_groups_) {
+        if (filter_group->CanProcessInput(input.get())) {
+          found_filter_group = true;
+          input->set_filter_group(filter_group.get());
+          break;
+        }
+      }
+      DCHECK(found_filter_group) << "Could not find a filter group for "
+                                 << input->device_id();
+      inputs_.push_back(std::move(input));
+    } break;
+    case kStateError:
+      input->SignalError(StreamMixerAlsaInput::MixerError::kInternalError);
+      ignored_inputs_.push_back(std::move(input));
+      break;
+    default:
+      NOTREACHED();
   }
 }
 
@@ -753,99 +793,111 @@ void StreamMixerAlsa::WriteFrames() {
 
 bool StreamMixerAlsa::TryWriteFrames() {
   DCHECK(mixer_task_runner_->BelongsToCurrentThread());
+  DCHECK_GE(filter_groups_.size(), 1u);
+
   if (state_ != kStateNormalPlayback) {
     return false;
   }
 
+  const int min_frames_in_buffer =
+      output_samples_per_second_ * kMinBufferedDataMs / 1000;
   int chunk_size = output_samples_per_second_ * kMaxWriteSizeMs / 1000;
-  std::vector<InputQueue*> active_inputs;
+  bool is_silence = true;
+  for (auto&& filter_group : filter_groups_) {
+    filter_group->ClearActiveInputs();
+  }
   for (auto&& input : inputs_) {
     int read_size = input->MaxReadSize();
     if (read_size > 0) {
-      active_inputs.push_back(input.get());
+      DCHECK(input->filter_group());
+      input->filter_group()->AddActiveInput(input.get());
       chunk_size = std::min(chunk_size, read_size);
+      is_silence = false;
     } else if (input->primary()) {
+      if (alsa_->PcmStatus(pcm_, pcm_status_) != 0) {
+        LOG(ERROR) << "Failed to get status";
+        return false;
+      }
+
+      int frames_in_buffer =
+          alsa_buffer_size_ - alsa_->PcmStatusGetAvail(pcm_status_);
+      if (alsa_->PcmStatusGetState(pcm_status_) == SND_PCM_STATE_XRUN ||
+          frames_in_buffer < min_frames_in_buffer) {
+        // If there has been (or soon will be) an underrun, continue without the
+        // empty primary input stream.
+        input->OnSkipped();
+        continue;
+      }
+
       // A primary input cannot provide any data, so wait until later.
+      retry_write_frames_timer_->Start(
+          FROM_HERE, base::TimeDelta::FromMilliseconds(kMinBufferedDataMs / 2),
+          base::Bind(&StreamMixerAlsa::WriteFrames, base::Unretained(this)));
       return false;
+    } else {
+      input->OnSkipped();
     }
   }
 
-  if (active_inputs.empty()) {
-    // No inputs have any data to provide.
-    if (!inputs_.empty()) {
-      return false;  // If there are some inputs, don't fill with silence.
-    }
-
-    // If we have no inputs, fill with silence to avoid underrun.
+  if (is_silence) {
+    // No inputs have any data to provide. Push silence to prevent underrun.
     chunk_size = kPreventUnderrunChunkSize;
-    if (!mixed_ || mixed_->frames() < chunk_size) {
-      mixed_ = ::media::AudioBus::Create(kNumOutputChannels, chunk_size);
-    }
-
-    mixed_->Zero();
-    WriteMixedPcm(*mixed_, chunk_size);
-    return true;
   }
 
-  // If |mixed_| has not been allocated, or it is too small, allocate a buffer.
-  if (!mixed_ || mixed_->frames() < chunk_size) {
-    mixed_ = ::media::AudioBus::Create(kNumOutputChannels, chunk_size);
-  }
-
-  // If |temp_| has not been allocated, or is too small, allocate a buffer.
-  if (!temp_ || temp_->frames() < chunk_size) {
-    temp_ = ::media::AudioBus::Create(kNumOutputChannels, chunk_size);
-  }
-
-  mixed_->ZeroFramesPartial(0, chunk_size);
-
-  // Loop through active inputs, polling them for data, and mixing them.
-  for (InputQueue* input : active_inputs) {
-    input->GetResampledData(temp_.get(), chunk_size);
-    for (int c = 0; c < kNumOutputChannels; ++c) {
-      float volume_scalar = input->volume_multiplier();
-      DCHECK(volume_scalar >= 0.0 && volume_scalar <= 1.0) << volume_scalar;
-      ::media::vector_math::FMAC(temp_->channel(c), volume_scalar, chunk_size,
-                                 mixed_->channel(c));
+  // Mix and filter each group.
+  std::vector<uint8_t>* interleaved = nullptr;
+  for (auto&& filter_group : filter_groups_) {
+    if (filter_group->MixAndFilter(chunk_size)) {
+      if (!interleaved) {
+        interleaved = filter_group->GetInterleaved();
+      } else {
+        DCHECK_EQ(4, BytesPerOutputFormatSample());
+        VectorAccumulate(
+            reinterpret_cast<int32_t*>(filter_group->GetInterleaved()->data()),
+            chunk_size * kNumOutputChannels,
+            reinterpret_cast<int32_t*>(interleaved->data()));
+      }
     }
   }
 
-  WriteMixedPcm(*mixed_, chunk_size);
+  if (!interleaved) {
+    // No group has any data, write empty buffer.
+    filter_groups_[0]->ClearInterleaved(chunk_size);
+    interleaved = filter_groups_[0]->GetInterleaved();
+  }
+
+  WriteMixedPcm(interleaved, chunk_size);
   return true;
+}
+
+size_t StreamMixerAlsa::InterleavedSize(int frames) {
+  return BytesPerOutputFormatSample() *
+         static_cast<size_t>(frames * kNumOutputChannels);
 }
 
 ssize_t StreamMixerAlsa::BytesPerOutputFormatSample() {
   return alsa_->PcmFormatSize(pcm_format_, 1);
 }
 
-void StreamMixerAlsa::WriteMixedPcm(const ::media::AudioBus& mixed,
+void StreamMixerAlsa::WriteMixedPcm(std::vector<uint8_t>* interleaved,
                                     int frames) {
   DCHECK(mixer_task_runner_->BelongsToCurrentThread());
   CHECK_PCM_INITIALIZED();
+  DCHECK(interleaved);
+  DCHECK_GE(interleaved->size(), InterleavedSize(frames));
 
-  size_t interleaved_size = static_cast<size_t>(frames * kNumOutputChannels) *
-                            BytesPerOutputFormatSample();
-  if (interleaved_.size() < interleaved_size) {
-    interleaved_.resize(interleaved_size);
-  }
-
-  int64_t expected_playback_time = rendering_delay_.timestamp_microseconds +
-                                   rendering_delay_.delay_microseconds;
-  mixed.ToInterleaved(frames, BytesPerOutputFormatSample(),
-                      interleaved_.data());
-  // Filter, send to observers, and post filter
-  if (pre_loopback_filter_) {
-    pre_loopback_filter_->ProcessInterleaved(interleaved_.data(), frames);
+  int64_t expected_playback_time;
+  if (rendering_delay_.timestamp_microseconds == kNoTimestamp) {
+    expected_playback_time = kNoTimestamp;
+  } else {
+    expected_playback_time = rendering_delay_.timestamp_microseconds +
+                             rendering_delay_.delay_microseconds;
   }
 
   for (CastMediaShlib::LoopbackAudioObserver* observer : loopback_observers_) {
     observer->OnLoopbackAudio(expected_playback_time, kSampleFormatS32,
                               output_samples_per_second_, kNumOutputChannels,
-                              interleaved_.data(), interleaved_size);
-  }
-
-  if (post_loopback_filter_) {
-    post_loopback_filter_->ProcessInterleaved(interleaved_.data(), frames);
+                              interleaved->data(), InterleavedSize(frames));
   }
 
   // If the PCM has been drained it will be in SND_PCM_STATE_SETUP and need
@@ -855,7 +907,7 @@ void StreamMixerAlsa::WriteMixedPcm(const ::media::AudioBus& mixed,
   }
 
   int frames_left = frames;
-  uint8_t* data = &interleaved_[0];
+  uint8_t* data = interleaved->data();
   while (frames_left) {
     int frames_or_error;
     while ((frames_or_error = alsa_->PcmWritei(pcm_, data, frames_left)) < 0) {
@@ -878,15 +930,14 @@ void StreamMixerAlsa::UpdateRenderingDelay(int newly_pushed_frames) {
   DCHECK(mixer_task_runner_->BelongsToCurrentThread());
   CHECK_PCM_INITIALIZED();
 
-  if (alsa_->PcmStatus(pcm_, pcm_status_) != 0) {
-    // Estimate updated delay based on the number of frames we just pushed.
-    rendering_delay_.delay_microseconds +=
-        static_cast<int64_t>(newly_pushed_frames) *
-        base::Time::kMicrosecondsPerSecond / output_samples_per_second_;
+  if (alsa_->PcmStatus(pcm_, pcm_status_) != 0 ||
+      alsa_->PcmStatusGetState(pcm_status_) != SND_PCM_STATE_RUNNING) {
+    rendering_delay_.timestamp_microseconds = kNoTimestamp;
+    rendering_delay_.delay_microseconds = 0;
     return;
   }
 
-  snd_htimestamp_t status_timestamp;
+  snd_htimestamp_t status_timestamp = {};
   alsa_->PcmStatusGetHtstamp(pcm_status_, &status_timestamp);
   rendering_delay_.timestamp_microseconds =
       TimespecToMicroseconds(status_timestamp);

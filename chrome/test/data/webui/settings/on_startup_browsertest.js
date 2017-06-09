@@ -20,7 +20,7 @@ var RestoreOnStartupEnum = {
  * Test Polymer On Startup Settings elements.
  * @constructor
  * @extends {SettingsPageBrowserTest}
-*/
+ */
 function OnStartupSettingsBrowserTest() {}
 
 OnStartupSettingsBrowserTest.prototype = {
@@ -62,7 +62,7 @@ TEST_F('OnStartupSettingsBrowserTest', 'uiTests', function() {
       self.getPage('basic').set('pageVisibility.onStartup', true);
       Polymer.dom.flush();
 
-      settingsPrefs = document.querySelector('cr-settings').$$(
+      settingsPrefs = document.querySelector('settings-ui').$$(
           'settings-prefs');
       assertTrue(!!settingsPrefs);
       return CrSettingsPrefs.initialized;

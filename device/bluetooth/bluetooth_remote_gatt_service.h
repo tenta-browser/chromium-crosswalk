@@ -11,13 +11,11 @@
 #include "base/macros.h"
 #include "device/bluetooth/bluetooth_export.h"
 #include "device/bluetooth/bluetooth_gatt_service.h"
-#include "device/bluetooth/bluetooth_remote_gatt_characteristic.h"
 
 namespace device {
 
 class BluetoothDevice;
 class BluetoothRemoteGattCharacteristic;
-class BluetoothRemoteGattDescriptor;
 
 // BluetoothRemoteGattService represents a remote GATT service.
 //

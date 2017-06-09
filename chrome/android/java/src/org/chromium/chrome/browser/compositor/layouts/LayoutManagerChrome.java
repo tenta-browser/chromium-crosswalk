@@ -37,7 +37,6 @@ import org.chromium.chrome.browser.tabmodel.TabModelSelector.CloseAllTabsDelegat
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorTabObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
-import org.chromium.chrome.browser.util.FeatureUtilities;
 import org.chromium.chrome.browser.widget.OverviewListLayout;
 import org.chromium.ui.base.LocalizationUtils;
 import org.chromium.ui.resources.dynamics.DynamicResourceLoader;
@@ -93,6 +92,7 @@ public class LayoutManagerChrome
             if (type == TabLaunchType.FROM_RESTORE) return;
             if (type == TabLaunchType.FROM_REPARENTING) return;
             if (type == TabLaunchType.FROM_EXTERNAL_APP) return;
+            if (type == TabLaunchType.FROM_LAUNCHER_SHORTCUT) return;
 
             tabCreating(getTabModelSelector().getCurrentTabId(), tab.getUrl(), tab.isIncognito());
         }
@@ -100,15 +100,17 @@ public class LayoutManagerChrome
         @Override
         public void didAddTab(Tab tab, TabLaunchType launchType) {
             int tabId = tab.getId();
-            if (launchType != TabLaunchType.FROM_RESTORE) {
+            if (launchType == TabLaunchType.FROM_RESTORE) {
+                getActiveLayout().onTabRestored(time(), tabId);
+            } else {
                 boolean incognito = tab.isIncognito();
                 boolean willBeSelected = launchType != TabLaunchType.FROM_LONGPRESS_BACKGROUND
                         || (!getTabModelSelector().isIncognitoSelected() && incognito);
-                float lastTapX = LocalizationUtils.isLayoutRtl() ? mLastContentWidthDp : 0.f;
+                float lastTapX = LocalizationUtils.isLayoutRtl()
+                        ? mHost.getWidth() * mPxToDp : 0.f;
                 float lastTapY = 0.f;
                 if (launchType != TabLaunchType.FROM_CHROME_UI) {
-                    float heightDelta =
-                            mLastFullscreenViewportDp.height() - mLastVisibleViewportDp.height();
+                    float heightDelta = mHost.getHeightMinusBrowserControls() * mPxToDp;
                     lastTapX = mPxToDp * mLastTapX;
                     lastTapY = mPxToDp * mLastTapY - heightDelta;
                 }
@@ -542,20 +544,10 @@ public class LayoutManagerChrome
 
     @Override
     public void initLayoutTabFromHost(final int tabId) {
-        super.initLayoutTabFromHost(tabId);
-
-        if (getTabModelSelector() == null || getActiveLayout() == null) return;
-
-        TabModelSelector selector = getTabModelSelector();
-        Tab tab = selector.getTabById(tabId);
-        if (tab == null) return;
-
-        LayoutTab layoutTab = getExistingLayoutTab(tabId);
-        if (layoutTab == null) return;
-
-        if (mTitleCache != null && layoutTab.isTitleNeeded()) {
-            mTitleCache.getUpdatedTitle(tab, "");
+        if (mTitleCache != null) {
+            mTitleCache.remove(tabId);
         }
+        super.initLayoutTabFromHost(tabId);
     }
 
     /**
@@ -688,8 +680,7 @@ public class LayoutManagerChrome
         public boolean isSwipeEnabled(ScrollDirection direction) {
             FullscreenManager manager = mHost.getFullscreenManager();
             if (getActiveLayout() != mStaticLayout
-                    || !DeviceClassManager.enableToolbarSwipe(
-                               FeatureUtilities.isDocumentMode(mHost.getContext()))
+                    || !DeviceClassManager.enableToolbarSwipe()
                     || (manager != null && manager.getPersistentFullscreenMode())) {
                 return false;
             }

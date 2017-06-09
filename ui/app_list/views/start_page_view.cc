@@ -11,7 +11,7 @@
 #include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
-#include "ui/accessibility/ax_view_state.h"
+#include "ui/accessibility/ax_node_data.h"
 #include "ui/app_list/app_list_constants.h"
 #include "ui/app_list/app_list_item.h"
 #include "ui/app_list/app_list_model.h"
@@ -95,9 +95,9 @@ class CustomLauncherPageBackgroundView : public views::View {
   bool selected() { return selected_; }
 
   // Overridden from views::View:
-  void GetAccessibleState(ui::AXViewState* state) override {
-    state->role = ui::AX_ROLE_BUTTON;
-    state->name = base::UTF8ToUTF16(custom_launcher_page_name_);
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override {
+    node_data->role = ui::AX_ROLE_BUTTON;
+    node_data->SetName(custom_launcher_page_name_);
   }
 
  private:
@@ -126,7 +126,7 @@ class StartPageView::StartPageTilesContainer
   AllAppsTileItemView* all_apps_button() { return all_apps_button_; }
 
   // Overridden from SearchResultContainerView:
-  int Update() override;
+  int DoUpdate() override;
   void UpdateSelectedIndex(int old_selected, int new_selected) override;
   void OnContainerSelected(bool from_bottom,
                            bool directional_movement) override;
@@ -171,7 +171,7 @@ TileItemView* StartPageView::StartPageTilesContainer::GetTileItemView(
   return search_result_tile_views_[index];
 }
 
-int StartPageView::StartPageTilesContainer::Update() {
+int StartPageView::StartPageTilesContainer::DoUpdate() {
   // Ignore updates and disable buttons when transitioning to a different
   // state.
   if (contents_view_->GetActiveState() != AppListModel::STATE_START) {
@@ -202,7 +202,6 @@ int StartPageView::StartPageTilesContainer::Update() {
     search_result_tile_views_[i]->SetEnabled(true);
   }
 
-  Layout();
   parent()->Layout();
   // Add 1 to the results size to account for the all apps button.
   return display_results.size() + 1;
@@ -211,10 +210,10 @@ int StartPageView::StartPageTilesContainer::Update() {
 void StartPageView::StartPageTilesContainer::UpdateSelectedIndex(
     int old_selected,
     int new_selected) {
-  if (old_selected >= 0)
+  if (old_selected >= 0 && old_selected < num_results())
     GetTileItemView(old_selected)->SetSelected(false);
 
-  if (new_selected >= 0)
+  if (new_selected >= 0 && new_selected < num_results())
     GetTileItemView(new_selected)->SetSelected(true);
 }
 
@@ -249,6 +248,7 @@ void StartPageView::StartPageTilesContainer::CreateAppsGrid(int apps_num) {
 
   // Add SearchResultTileItemViews to the container.
   int i = 0;
+  search_result_tile_views_.reserve(apps_num);
   for (; i < apps_num; ++i) {
     SearchResultTileItemView* tile_item =
         new SearchResultTileItemView(this, view_delegate_);
@@ -258,7 +258,7 @@ void StartPageView::StartPageTilesContainer::CreateAppsGrid(int apps_num) {
     AddChildView(tile_item);
     tile_item->SetParentBackgroundColor(kLabelBackgroundColor);
     tile_item->SetHoverStyle(TileItemView::HOVER_STYLE_ANIMATE_SHADOW);
-    search_result_tile_views_.push_back(tile_item);
+    search_result_tile_views_.emplace_back(tile_item);
   }
 
   // Also add a special "all apps" button to the end of the container.
@@ -294,7 +294,6 @@ StartPageView::StartPageView(AppListMainView* app_list_main_view,
   AddChildView(custom_launcher_page_background_);
 
   tiles_container_->SetResults(view_delegate_->GetModel()->results());
-  Reset();
 }
 
 StartPageView::~StartPageView() {
@@ -360,8 +359,8 @@ void StartPageView::OnShown() {
     custom_page_view->SetVisible(
         app_list_main_view_->ShouldShowCustomLauncherPage());
   }
-  tiles_container_->Update();
   tiles_container_->ClearSelectedIndex();
+  tiles_container_->Update();
   custom_launcher_page_background_->SetSelected(false);
 }
 

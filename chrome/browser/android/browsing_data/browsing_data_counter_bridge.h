@@ -7,9 +7,7 @@
 
 #include "base/android/jni_weak_ref.h"
 #include "base/android/scoped_java_ref.h"
-#include "chrome/browser/browsing_data/browsing_data_counter.h"
-
-class Profile;
+#include "components/browsing_data/core/counters/browsing_data_counter.h"
 
 // This class is a wrapper for BrowsingDataCounter (C++ backend) to be used by
 // ClearBrowsingDataFragment (Java UI).
@@ -30,10 +28,11 @@ class BrowsingDataCounterBridge {
   static bool Register(JNIEnv* env);
 
  private:
-  void onCounterFinished(std::unique_ptr<BrowsingDataCounter::Result> result);
+  void onCounterFinished(
+      std::unique_ptr<browsing_data::BrowsingDataCounter::Result> result);
 
   base::android::ScopedJavaGlobalRef<jobject> jobject_;
-  std::unique_ptr<BrowsingDataCounter> counter_;
+  std::unique_ptr<browsing_data::BrowsingDataCounter> counter_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowsingDataCounterBridge);
 };

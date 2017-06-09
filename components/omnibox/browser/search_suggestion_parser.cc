@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "base/i18n/icu_string_conversions.h"
+#include "base/json/json_reader.h"
 #include "base/json/json_string_value_serializer.h"
 #include "base/json/json_writer.h"
 #include "base/logging.h"
@@ -374,8 +375,8 @@ std::unique_ptr<base::Value> SearchSuggestionParser::DeserializeJsonData(
     // Remove any XSSI guards to allow for JSON parsing.
     json_data.remove_prefix(response_start_index);
 
-    JSONStringValueDeserializer deserializer(json_data);
-    deserializer.set_allow_trailing_comma(true);
+    JSONStringValueDeserializer deserializer(json_data,
+                                             base::JSON_ALLOW_TRAILING_COMMAS);
     int error_code = 0;
     std::unique_ptr<base::Value> data =
         deserializer.Deserialize(&error_code, NULL);
@@ -523,6 +524,8 @@ bool SearchSuggestionParser::ParseSuggestResults(
             answer = SuggestionAnswer::ParseAnswer(answer_json);
             int answer_type = 0;
             if (answer && base::StringToInt(answer_type_str, &answer_type)) {
+              UMA_HISTOGRAM_SPARSE_SLOWLY("Omnibox.AnswerParseType",
+                                          answer_type);
               answer_parsed_successfully = true;
 
               answer->set_type(answer_type);

@@ -6,7 +6,7 @@
 # AddressSanitizer can not provide additional info.
 #    #0 0x7f62d3d34cf0 in ?? ??:0
 #    #1 0x1fec5c261c15ff
-crbug.com/145940 [ Linux ] fast/images/embed-does-not-propagate-dimensions-to-object-ancestor.html [ Skip ]
+crbug.com/145940 [ Linux ] images/embed-does-not-propagate-dimensions-to-object-ancestor.html [ Skip ]
 crbug.com/145940 [ Linux ] fast/loader/loadInProgress.html [ Skip ]
 crbug.com/145940 [ Linux ] fast/replaced/border-radius-clip.html [ Skip ]
 crbug.com/145940 [ Linux ] plugins/crash-restoring-plugin-page-from-page-cache.html [ Skip ]
@@ -45,13 +45,6 @@ crbug.com/142301 [ Linux ] plugins/get-url-notify-with-url-that-fails-to-load.ht
 # AddressSanitizer can not provide additional info.
 #     #0 0x8c2ee4 in WebCore::reportFatalErrorInMainThread
 crbug.com/173366 [ Linux ] fast/js/string-replacement-outofmemory.html [ Skip ]
-
-# Crash in fast/speechsynthesis/speech-synthesis-cancel.html:
-# ==10454==ERROR: AddressSanitizer: SEGV on unknown address 0x000000000008 (pc 0x00000558b918 sp 0x7fff3153dcf0 bp 0x7fff3153dcf0 T0)
-# AddressSanitizer can not provide additional info.
-#     #0 0x558b917 in WebCore::PlatformSpeechSynthesisUtterance::client() const /mnt/data/b/build/slave/WebKit_Linux_ASAN/build/src/out/Release/../../third_party/WebKit/Source/core/platform/PlatformSpeechSynthesisUtterance.h:71:0
-# [pkasting] July 23 2014: Now timing out instead of crashing.
-crbug.com/250520 [ Linux ] fast/speechsynthesis/speech-synthesis-cancel.html [ Timeout ]
 
 # These tests consistently fail on slow bots.
 crbug.com/231357 [ Linux ] compositing/video-page-visibility.html [ Failure ]
@@ -100,7 +93,7 @@ crbug.com/243871 [ Linux ] virtual/threaded/fast/scroll-behavior/ [ Skip ]
 # Reliably timeout on Linux ASAN bots.
 crbug.com/248938 [ Linux ] virtual/threaded/animations/transition-and-animation-2.html [ Skip ]
 
-crbug.com/446661 [Linux ] fast/dom/Geolocation/success-clear-watch.html [ Timeout Pass ]
+crbug.com/446661 [Linux ] geolocation-api/success-clear-watch.html [ Timeout Pass ]
 
 crbug.com/464065 [ Linux ] media/track/css-cue-for-video-in-shadow.html [ Timeout ]
 crbug.com/464065 [ Linux ] media/track/css-cue-for-video-in-shadow-2.html [ Timeout ]
@@ -117,4 +110,4 @@ crbug.com/572723 [ Linux ] inspector/sources/debugger/debugger-completions-on-ca
 # Intentionally failed allocations, via partitionAllocGenericFlags()
 crbug.com/577889 [ Linux ] fast/js/typed-array-allocation-failure.html [ Crash ]
 
-crbug.com/624712 [ Linux ] virtual/threaded/fast/compositorworker/compositor-attribute-change-worker.html [Timeout]
+crbug.com/624712 [ Linux ] virtual/threaded/fast/compositorworker/compositor-attribute-change-worker.html [ Timeout ]

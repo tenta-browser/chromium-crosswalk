@@ -9,14 +9,15 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/string16.h"
 #include "chrome/browser/process_singleton.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/grit/theme_resources.h"
 #include "chrome/installer/util/browser_distribution.h"
 #include "chrome/installer/util/user_experiment.h"
-#include "grit/components_strings.h"
-#include "grit/theme_resources.h"
+#include "components/strings/grit/components_strings.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -232,7 +233,7 @@ TryChromeDialogView::Result TryChromeDialogView::ShowModal(
     // and the 'make default' checkbox and the OK button on the same row.
     layout->AddPaddingRow(0, views::kUnrelatedControlVerticalSpacing);
     layout->StartRow(0, 6);
-    separator = new views::Separator(views::Separator::HORIZONTAL);
+    separator = new views::Separator();
     layout->AddView(separator);
     layout->AddPaddingRow(0, views::kUnrelatedControlVerticalSpacing);
 
@@ -288,7 +289,7 @@ TryChromeDialogView::Result TryChromeDialogView::ShowModal(
   popup_->Show();
   if (!listener.is_null())
     listener.Run(popup_->GetNativeView());
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   if (!listener.is_null())
     listener.Run(NULL);
   return result_;

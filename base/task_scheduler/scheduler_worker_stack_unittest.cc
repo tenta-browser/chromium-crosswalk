@@ -10,7 +10,7 @@
 #include "base/task_scheduler/scheduler_worker.h"
 #include "base/task_scheduler/sequence.h"
 #include "base/task_scheduler/task_tracker.h"
-#include "base/task_scheduler/test_utils.h"
+#include "base/test/gtest_util.h"
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -26,8 +26,11 @@ class MockSchedulerWorkerDelegate : public SchedulerWorker::Delegate {
   scoped_refptr<Sequence> GetWork(SchedulerWorker* worker) override {
     return nullptr;
   }
+  void DidRunTask() override {
+    ADD_FAILURE() << "Unexpected call to DidRunTask()";
+  }
   void ReEnqueueSequence(scoped_refptr<Sequence> sequence) override {
-    ADD_FAILURE() << "This delegate not expect to have sequences to reenqueue.";
+    ADD_FAILURE() << "Unexpected call to ReEnqueueSequence()";
   }
   TimeDelta GetSleepTimeout() override {
     return TimeDelta::Max();
@@ -35,6 +38,7 @@ class MockSchedulerWorkerDelegate : public SchedulerWorker::Delegate {
   bool CanDetach(SchedulerWorker* worker) override {
     return false;
   }
+  void OnDetach() override { ADD_FAILURE() << "Unexpected call to OnDetach()"; }
 };
 
 class TaskSchedulerWorkerStackTest : public testing::Test {
@@ -63,9 +67,9 @@ class TaskSchedulerWorkerStackTest : public testing::Test {
     worker_c_->JoinForTesting();
   }
 
-  std::unique_ptr<SchedulerWorker> worker_a_;
-  std::unique_ptr<SchedulerWorker> worker_b_;
-  std::unique_ptr<SchedulerWorker> worker_c_;
+  scoped_refptr<SchedulerWorker> worker_a_;
+  scoped_refptr<SchedulerWorker> worker_b_;
+  scoped_refptr<SchedulerWorker> worker_c_;
 
  private:
   TaskTracker task_tracker_;
@@ -76,6 +80,8 @@ class TaskSchedulerWorkerStackTest : public testing::Test {
 // Verify that Push() and Pop() add/remove values in FIFO order.
 TEST_F(TaskSchedulerWorkerStackTest, PushPop) {
   SchedulerWorkerStack stack;
+  EXPECT_EQ(nullptr, stack.Pop());
+
   EXPECT_TRUE(stack.IsEmpty());
   EXPECT_EQ(0U, stack.Size());
 
@@ -110,6 +116,86 @@ TEST_F(TaskSchedulerWorkerStackTest, PushPop) {
   EXPECT_EQ(worker_a_.get(), stack.Pop());
   EXPECT_TRUE(stack.IsEmpty());
   EXPECT_EQ(0U, stack.Size());
+
+  EXPECT_EQ(nullptr, stack.Pop());
+}
+
+// Verify that Peek() returns the correct values in FIFO order.
+TEST_F(TaskSchedulerWorkerStackTest, PeekPop) {
+  SchedulerWorkerStack stack;
+  EXPECT_EQ(nullptr, stack.Peek());
+
+  EXPECT_TRUE(stack.IsEmpty());
+  EXPECT_EQ(0U, stack.Size());
+
+  stack.Push(worker_a_.get());
+  EXPECT_EQ(worker_a_.get(), stack.Peek());
+  EXPECT_FALSE(stack.IsEmpty());
+  EXPECT_EQ(1U, stack.Size());
+
+  stack.Push(worker_b_.get());
+  EXPECT_EQ(worker_b_.get(), stack.Peek());
+  EXPECT_FALSE(stack.IsEmpty());
+  EXPECT_EQ(2U, stack.Size());
+
+  stack.Push(worker_c_.get());
+  EXPECT_EQ(worker_c_.get(), stack.Peek());
+  EXPECT_FALSE(stack.IsEmpty());
+  EXPECT_EQ(3U, stack.Size());
+
+  EXPECT_EQ(worker_c_.get(), stack.Pop());
+  EXPECT_EQ(worker_b_.get(), stack.Peek());
+  EXPECT_FALSE(stack.IsEmpty());
+  EXPECT_EQ(2U, stack.Size());
+
+  EXPECT_EQ(worker_b_.get(), stack.Pop());
+  EXPECT_EQ(worker_a_.get(), stack.Peek());
+  EXPECT_FALSE(stack.IsEmpty());
+  EXPECT_EQ(1U, stack.Size());
+
+  EXPECT_EQ(worker_a_.get(), stack.Pop());
+  EXPECT_TRUE(stack.IsEmpty());
+  EXPECT_EQ(0U, stack.Size());
+
+  EXPECT_EQ(nullptr, stack.Peek());
+}
+
+// Verify that Contains() returns true for workers on the stack.
+TEST_F(TaskSchedulerWorkerStackTest, Contains) {
+  SchedulerWorkerStack stack;
+  EXPECT_FALSE(stack.Contains(worker_a_.get()));
+  EXPECT_FALSE(stack.Contains(worker_b_.get()));
+  EXPECT_FALSE(stack.Contains(worker_c_.get()));
+
+  stack.Push(worker_a_.get());
+  EXPECT_TRUE(stack.Contains(worker_a_.get()));
+  EXPECT_FALSE(stack.Contains(worker_b_.get()));
+  EXPECT_FALSE(stack.Contains(worker_c_.get()));
+
+  stack.Push(worker_b_.get());
+  EXPECT_TRUE(stack.Contains(worker_a_.get()));
+  EXPECT_TRUE(stack.Contains(worker_b_.get()));
+  EXPECT_FALSE(stack.Contains(worker_c_.get()));
+
+  stack.Push(worker_c_.get());
+  EXPECT_TRUE(stack.Contains(worker_a_.get()));
+  EXPECT_TRUE(stack.Contains(worker_b_.get()));
+  EXPECT_TRUE(stack.Contains(worker_c_.get()));
+
+  stack.Pop();
+  EXPECT_TRUE(stack.Contains(worker_a_.get()));
+  EXPECT_TRUE(stack.Contains(worker_b_.get()));
+  EXPECT_FALSE(stack.Contains(worker_c_.get()));
+
+  stack.Pop();
+  EXPECT_TRUE(stack.Contains(worker_a_.get()));
+  EXPECT_FALSE(stack.Contains(worker_b_.get()));
+  EXPECT_FALSE(stack.Contains(worker_c_.get()));
+
+  stack.Pop();
+  EXPECT_FALSE(stack.Contains(worker_a_.get()));
+  EXPECT_FALSE(stack.Contains(worker_b_.get()));
+  EXPECT_FALSE(stack.Contains(worker_c_.get()));
 }
 
 // Verify that a value can be removed by Remove().
@@ -166,7 +252,7 @@ TEST_F(TaskSchedulerWorkerStackTest, PushAfterRemove) {
 TEST_F(TaskSchedulerWorkerStackTest, PushTwice) {
   SchedulerWorkerStack stack;
   stack.Push(worker_a_.get());
-  EXPECT_DCHECK_DEATH({ stack.Push(worker_a_.get()); }, "");
+  EXPECT_DCHECK_DEATH({ stack.Push(worker_a_.get()); });
 }
 
 }  // namespace internal

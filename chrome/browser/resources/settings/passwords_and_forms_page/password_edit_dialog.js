@@ -24,10 +24,10 @@ Polymer({
     password: String,
   },
 
-  /** Opens the dialog. */
-  open: function() {
+  /** @override */
+  attached: function() {
     this.password = '';
-    this.$.dialog.open();
+    this.$.dialog.showModal();
   },
 
   /** Closes the dialog. */
@@ -43,6 +43,17 @@ Polymer({
    */
   getPasswordInputType_: function(password) {
     return password ? 'text' : 'password';
+  },
+
+  /**
+   * Gets the title text for the show/hide icon.
+   * @param {string} password
+   * @param {string} hide The i18n text to use for 'Hide'
+   * @param {string} show The i18n text to use for 'Show'
+   * @private
+   */
+  showPasswordTitle_: function(password, hide, show) {
+    return password ? hide : show;
   },
 
   /**

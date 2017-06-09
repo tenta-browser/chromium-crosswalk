@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_EXTENSIONS_EXTENSION_SERVICE_H_
 
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -21,6 +22,7 @@
 #include "chrome/browser/extensions/extension_management.h"
 #include "chrome/browser/extensions/install_gate.h"
 #include "chrome/browser/extensions/pending_extension_manager.h"
+#include "components/sync/model/string_ordinal.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "extensions/browser/crx_file_info.h"
@@ -32,20 +34,18 @@
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_set.h"
 #include "extensions/common/manifest.h"
-#include "sync/api/string_ordinal.h"
+#include "extensions/features/features.h"
 
-#if !defined(ENABLE_EXTENSIONS)
+#if !BUILDFLAG(ENABLE_EXTENSIONS)
 #error "Extensions must be enabled"
 #endif
 
-class GURL;
 class HostContentSettingsMap;
 class Profile;
 
 namespace base {
 class CommandLine;
 class SequencedTaskRunner;
-class Version;
 }
 
 namespace content {
@@ -57,8 +57,6 @@ class AppDataMigrator;
 class ComponentLoader;
 class CrxInstaller;
 class ExtensionActionStorageManager;
-class ExtensionDownloader;
-class ExtensionDownloaderDelegate;
 class ExtensionErrorController;
 class ExtensionRegistry;
 class ExtensionSystem;
@@ -242,9 +240,10 @@ class ExtensionService
       const extensions::ExternalProviderInterface* provider) override;
   void OnExternalProviderUpdateComplete(
       const extensions::ExternalProviderInterface* provider,
-      const ScopedVector<extensions::ExternalInstallInfoUpdateUrl>&
+      const std::vector<
+          std::unique_ptr<extensions::ExternalInstallInfoUpdateUrl>>&
           external_update_url_extensions,
-      const ScopedVector<extensions::ExternalInstallInfoFile>&
+      const std::vector<std::unique_ptr<extensions::ExternalInstallInfoFile>>&
           external_file_extensions,
       const std::set<std::string>& removed_extensions) override;
 
@@ -293,7 +292,7 @@ class ExtensionService
   // Disable non-default and non-managed extensions with ids not in
   // |except_ids|. Default extensions are those from the Web Store with
   // |was_installed_by_default| flag.
-  void DisableUserExtensions(const std::vector<std::string>& except_ids);
+  void DisableUserExtensionsExcept(const std::vector<std::string>& except_ids);
 
   // Puts all extensions in a blocked state: Unloading every extension, and
   // preventing them from ever loading until UnblockAllExtensions is called.
@@ -392,11 +391,6 @@ class ExtensionService
     return &delayed_installs_;
   }
 
-  bool show_extensions_prompts() const { return show_extensions_prompts_; }
-  void set_show_extensions_prompts(bool show_extensions_prompts) {
-    show_extensions_prompts_ = show_extensions_prompts;
-  }
-
   Profile* profile() { return profile_; }
 
   // Note that this may return NULL if autoupdate is not turned on.
@@ -429,9 +423,8 @@ class ExtensionService
   void ClearProvidersForTesting();
 
   // Adds an ExternalProviderInterface for the service to use during testing.
-  // Takes ownership of |test_provider|.
   void AddProviderForTesting(
-      extensions::ExternalProviderInterface* test_provider);
+      std::unique_ptr<extensions::ExternalProviderInterface> test_provider);
 
   // Simulate an extension being blacklisted for tests.
   void BlacklistExtensionForTest(const std::string& extension_id);
@@ -458,6 +451,9 @@ class ExtensionService
   }
 
  private:
+  // Loads extensions specified via a command line flag/switch.
+  void LoadExtensionsFromCommandLineFlag(const char* switch_name);
+
   // Reloads the specified extension, sending the onLaunched() event to it if it
   // currently has any window showing. |be_noisy| determines whether noisy
   // failures are allowed for unpacked extension installs.
@@ -594,6 +590,8 @@ class ExtensionService
       const base::FilePath& install_dir,
       const base::FilePath& extension_path);
 
+  const base::CommandLine* command_line_ = nullptr;
+
   // The normal profile associated with this ExtensionService.
   Profile* profile_ = nullptr;
 
@@ -617,6 +615,10 @@ class ExtensionService
   // These extensions should appear in registry_.
   extensions::ExtensionSet greylist_;
 
+  // Set of whitelisted enabled extensions loaded from the
+  // --disable-extensions-except command line flag.
+  std::set<std::string> disable_flag_exempted_extensions_;
+
   // The list of extension installs delayed for various reasons.  The reason
   // for delayed install is stored in ExtensionPrefs. These are not part of
   // ExtensionRegistry because they are not yet installed.
@@ -630,9 +632,6 @@ class ExtensionService
 
   // Whether or not extensions are enabled.
   bool extensions_enabled_ = true;
-
-  // Whether to notify users when they attempt to install an extension.
-  bool show_extensions_prompts_ = true;
 
   // Signaled when all extensions are loaded.
   extensions::OneShotEvent* const ready_;
@@ -735,6 +734,8 @@ class ExtensionService
   FRIEND_TEST_ALL_PREFIXES(ExtensionServiceTest,
                            WillNotLoadBlacklistedExtensionsFromDirectory);
   FRIEND_TEST_ALL_PREFIXES(ExtensionServiceTest, ReloadBlacklistedExtension);
+  FRIEND_TEST_ALL_PREFIXES(ExtensionServiceTest,
+                           RemoveExtensionFromBlacklist);
   FRIEND_TEST_ALL_PREFIXES(ExtensionServiceTest, BlacklistedInPrefsFromStartup);
   FRIEND_TEST_ALL_PREFIXES(ExtensionServiceTest,
                            GreylistedExtensionDisabled);

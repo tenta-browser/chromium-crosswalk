@@ -32,9 +32,15 @@ if (current_cpu == "x86") {
 if (is_nacl) {
   platform_include_dir = "//third_party/libvpx/source/config/nacl"
 } else {
-  if (is_posix && !is_mac) {
+  # The mac configurations are currently a relic. They were useful when
+  # x86inc.asm did not work for MACH_O but now the build is identical to the
+  # linux config. iOS for arm on the other hand needs an apple-specific twist in
+  # vpx_config.asm
+  if (is_ios && current_cpu == "arm") {
+    os_category = current_os
+  } else if (is_posix) {  # Should cover linux, mac, and the ios simulator.
     os_category = "linux"
-  } else {
+  } else {  # This should only match windows.
     os_category = current_os
   }
   platform_include_dir =
@@ -48,18 +54,6 @@ config("libvpx_config") {
     "//third_party/libvpx/source/libvpx",
     "$root_gen_dir/third_party/libvpx",  # Provides vpx_rtcd.h.
   ]
-
-  if (current_cpu == "arm" && is_clang) {
-    # TODO(hans) Enable integrated-as (crbug.com/124610).
-    asmflags = [ "-fno-integrated-as" ]
-    if (is_android) {
-      rebased_android_toolchain_root =
-          rebase_path(android_toolchain_root, root_build_dir)
-
-      # Else /usr/bin/as gets picked up.
-      asmflags += [ "-B${rebased_android_toolchain_root}/bin" ]
-    }
-  }
 }
 
 # gn orders flags on a target before flags from configs. The default config
@@ -90,7 +84,7 @@ config("libvpx_external_config") {
   include_dirs = [ "//third_party/libvpx/source/libvpx" ]
 }
 
-if (current_cpu == "x86" || current_cpu == "x64") {
+if (current_cpu == "x86" || (current_cpu == "x64" && !is_msan)) {
   yasm_assemble("libvpx_yasm") {
     if (current_cpu == "x86") {
       sources = libvpx_srcs_x86_assembly
@@ -113,8 +107,14 @@ if (current_cpu == "x86" || current_cpu == "x64") {
   }
 }
 
-if (current_cpu == "x86" || current_cpu == "x64") {
-  static_library("libvpx_intrinsics_mmx") {
+if (current_cpu == "x86" || (current_cpu == "x64" && !is_msan)) {
+  # The following targets are deliberately source_set rather than
+  # static_library. The :libvpx target exposes these intrinsic implementations
+  # via global function pointer symbols, which hides the object dependency at
+  # link time. On Mac, this results in undefined references to the intrinsic
+  # symbols.
+
+  source_set("libvpx_intrinsics_mmx") {
     configs += [ ":libvpx_config" ]
     configs -= [ "//build/config/compiler:chromium_code" ]
     configs += [ "//build/config/compiler:no_chromium_code" ]
@@ -129,7 +129,7 @@ if (current_cpu == "x86" || current_cpu == "x64") {
     }
   }
 
-  static_library("libvpx_intrinsics_sse2") {
+  source_set("libvpx_intrinsics_sse2") {
     configs += [ ":libvpx_config" ]
     configs -= [ "//build/config/compiler:chromium_code" ]
     configs += [ "//build/config/compiler:no_chromium_code" ]
@@ -144,7 +144,7 @@ if (current_cpu == "x86" || current_cpu == "x64") {
     }
   }
 
-  static_library("libvpx_intrinsics_ssse3") {
+  source_set("libvpx_intrinsics_ssse3") {
     configs += [ ":libvpx_config" ]
     configs -= [ "//build/config/compiler:chromium_code" ]
     configs += [ "//build/config/compiler:no_chromium_code" ]
@@ -159,7 +159,7 @@ if (current_cpu == "x86" || current_cpu == "x64") {
     }
   }
 
-  static_library("libvpx_intrinsics_sse4_1") {
+  source_set("libvpx_intrinsics_sse4_1") {
     configs += [ ":libvpx_config" ]
     configs -= [ "//build/config/compiler:chromium_code" ]
     configs += [ "//build/config/compiler:no_chromium_code" ]
@@ -174,7 +174,7 @@ if (current_cpu == "x86" || current_cpu == "x64") {
     }
   }
 
-  static_library("libvpx_intrinsics_avx") {
+  source_set("libvpx_intrinsics_avx") {
     configs += [ ":libvpx_config" ]
     configs -= [ "//build/config/compiler:chromium_code" ]
     configs += [ "//build/config/compiler:no_chromium_code" ]
@@ -191,7 +191,7 @@ if (current_cpu == "x86" || current_cpu == "x64") {
     }
   }
 
-  static_library("libvpx_intrinsics_avx2") {
+  source_set("libvpx_intrinsics_avx2") {
     configs += [ ":libvpx_config" ]
     configs -= [ "//build/config/compiler:chromium_code" ]
     configs += [ "//build/config/compiler:no_chromium_code" ]
@@ -219,28 +219,41 @@ if (cpu_arch_full == "arm-neon-cpu-detect") {
   }
 }
 
-# Converts ARM assembly files to GAS style.
 if (current_cpu == "arm") {
+  if (cpu_arch_full == "arm-neon") {
+    arm_assembly_sources = libvpx_srcs_arm_neon_assembly
+  } else if (cpu_arch_full == "arm-neon-cpu-detect") {
+    arm_assembly_sources = libvpx_srcs_arm_neon_cpu_detect_assembly
+  } else {
+    arm_assembly_sources = libvpx_srcs_arm_assembly
+  }
+}
+
+# Converts ARM assembly files to GAS style.
+if (current_cpu == "arm" && arm_assembly_sources != []) {
   action_foreach("convert_arm_assembly") {
     script = "//third_party/libvpx/run_perl.py"
-    if (cpu_arch_full == "arm-neon") {
-      sources = libvpx_srcs_arm_neon_assembly
-    } else if (cpu_arch_full == "arm-neon-cpu-detect") {
-      sources = libvpx_srcs_arm_neon_cpu_detect_assembly
-    } else {
-      sources = libvpx_srcs_arm_assembly
-    }
+    sources = arm_assembly_sources
+    gen_file =
+        get_label_info("//third_party/libvpx/source/libvpx", "root_gen_dir") +
+        "/{{source_root_relative_dir}}/{{source_file_part}}.S"
     outputs = [
-      "$target_gen_dir/{{source_name_part}}.S",
+      gen_file,
     ]
+    if (is_ios) {
+      ads2gas_script =
+          "//third_party/libvpx/source/libvpx/build/make/ads2gas_apple.pl"
+    } else {
+      ads2gas_script =
+          "//third_party/libvpx/source/libvpx/build/make/ads2gas.pl"
+    }
     args = [
       "-s",
-      rebase_path("//third_party/libvpx/source/libvpx/build/make/ads2gas.pl",
-                  root_build_dir),
+      rebase_path(ads2gas_script, root_build_dir),
       "-i",
       "{{source}}",
       "-o",
-      rebase_path("$target_gen_dir/{{source_name_part}}.S"),
+      rebase_path(gen_file),
     ]
   }
 
@@ -251,6 +264,11 @@ if (current_cpu == "arm") {
     configs += [ ":libvpx_warnings" ]
     if (cpu_arch_full == "arm-neon" || cpu_arch_full == "arm-neon-cpu-detect") {
       asmflags = [ "-mfpu=neon" ]
+
+      # allow asm files to include generated sources which match the source
+      # tree layout, e.g., vpx_dsp/arm/...
+      include_dirs = [ get_label_info("//third_party/libvpx/source/libvpx",
+                                      "target_gen_dir") ]
     }
     deps = [
       ":convert_arm_assembly",
@@ -310,7 +328,7 @@ static_library("libvpx") {
   if (is_android) {
     deps += [ "//third_party/android_tools:cpu_features" ]
   }
-  if (current_cpu == "arm") {
+  if (current_cpu == "arm" && arm_assembly_sources != []) {
     deps += [ ":libvpx_assembly_arm" ]
   }
 

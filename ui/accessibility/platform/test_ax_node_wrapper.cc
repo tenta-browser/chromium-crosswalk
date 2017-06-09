@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "base/containers/hash_tables.h"
+#include "ui/accessibility/ax_action_data.h"
 #include "ui/accessibility/platform/test_ax_node_wrapper.h"
 
 namespace ui {
@@ -31,7 +32,10 @@ class TestAXTreeDelegate : public AXTreeDelegate {
     }
   }
   void OnSubtreeWillBeDeleted(AXTree* tree, AXNode* node) override {}
+  void OnNodeWillBeReparented(AXTree* tree, AXNode* node) override {}
+  void OnSubtreeWillBeReparented(AXTree* tree, AXNode* node) override {}
   void OnNodeCreated(AXTree* tree, AXNode* node) override {}
+  void OnNodeReparented(AXTree* tree, AXNode* node) override {}
   void OnNodeChanged(AXTree* tree, AXNode* node) override {}
   void OnAtomicUpdateFinished(AXTree* tree,
                               bool root_changed,
@@ -69,6 +73,10 @@ TestAXNodeWrapper::~TestAXNodeWrapper() {
 
 const AXNodeData& TestAXNodeWrapper::GetData() {
   return node_->data();
+}
+
+gfx::NativeWindow TestAXNodeWrapper::GetTopLevelWidget() {
+  return nullptr;
 }
 
 gfx::NativeViewAccessible TestAXNodeWrapper::GetParent() {
@@ -109,12 +117,12 @@ TestAXNodeWrapper::GetTargetForNativeAccessibilityEvent() {
   return gfx::kNullAcceleratedWidget;
 }
 
-void TestAXNodeWrapper::DoDefaultAction() {
+bool TestAXNodeWrapper::AccessibilityPerformAction(
+    const ui::AXActionData& data) {
+  return true;
 }
 
-bool TestAXNodeWrapper::SetStringValue(const base::string16& new_value) {
-  return false;
-}
+void TestAXNodeWrapper::DoDefaultAction() {}
 
 TestAXNodeWrapper::TestAXNodeWrapper(AXTree* tree, AXNode* node)
     : tree_(tree),

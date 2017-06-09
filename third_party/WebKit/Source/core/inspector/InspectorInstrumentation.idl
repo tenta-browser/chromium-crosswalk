@@ -62,15 +62,16 @@ interface InspectorInstrumentation {
 #include "core/animation/Animation.h"
 #include "core/dom/CharacterData.h"
 #include "core/dom/PseudoElement.h"
+#include "core/html/HTMLSlotElement.h"
 
+class ConsoleMessage;
 class ThreadableLoaderClient;
 class WebSocketHandshakeRequest;
 class WebSocketHandshakeResponse;
 class WorkerInspectorProxy;
 class XMLHttpRequest;
 
-    // We should call PageDebuggerAgent method first otherwise this method resets script cache and removes scripts executed by other agents.
-    [V8, Page, Animation]
+    [Page, Animation]
     void didClearDocumentOfWindowObject([Keep] LocalFrame*);
 
     [DOMDebugger]
@@ -100,11 +101,17 @@ class XMLHttpRequest;
     [DOM]
     void didPerformElementShadowDistribution([Keep] Element*);
 
+    [DOM]
+    void didPerformSlotDistribution([Keep] HTMLSlotElement*);
+
     [CSS]
     void documentDetached([Keep] Document*);
 
     [CSS]
     void activeStyleSheetsUpdated([Keep] Document*);
+
+    [CSS]
+    void fontsUpdated(Document*);
 
     [CSS]
     void mediaQueryResultChanged(Document*);
@@ -119,6 +126,9 @@ class XMLHttpRequest;
     void willSendXMLHttpOrFetchNetworkRequest(ExecutionContext*, const String& url);
 
     [DOMDebugger]
+    void didCreateCanvasContext(Document*);
+
+    [DOMDebugger]
     void didFireWebGLError(Element*, const String& errorName);
 
     [DOMDebugger]
@@ -127,7 +137,10 @@ class XMLHttpRequest;
     [DOMDebugger]
     void didFireWebGLErrorOrWarning(Element*, const String& message);
 
-    [Page]
+    [Performance]
+    void willUpdateLayout(Document*);
+
+    [Page, Performance]
     void didUpdateLayout(LocalFrame*);
 
     [Page]
@@ -135,9 +148,6 @@ class XMLHttpRequest;
 
     [LayerTree]
     void didPaint(LocalFrame*, const GraphicsLayer*, GraphicsContext&, const LayoutRect&);
-
-    [Network]
-    void didScheduleStyleRecalculation([Keep] Document*);
 
     [Network]
     void applyUserAgentOverride(LocalFrame*, String* userAgent);
@@ -158,7 +168,10 @@ class XMLHttpRequest;
     void didReceiveResourceResponse([Keep] LocalFrame*, unsigned long identifier, DocumentLoader*, const ResourceResponse&, Resource*);
 
     [Network]
-    void didReceiveData([Keep] LocalFrame*, unsigned long identifier, const char* data, int dataLength, int encodedDataLength);
+    void didReceiveData([Keep] LocalFrame*, unsigned long identifier, const char* data, int dataLength);
+
+    [Network]
+    void didReceiveEncodedDataLength([Keep] LocalFrame*, unsigned long identifier, int encodedDataLength);
 
     [Network]
     void didFinishLoading(LocalFrame* frame, unsigned long identifier, double finishTime, int64_t encodedDataLength);
@@ -202,17 +215,18 @@ class XMLHttpRequest;
     [Network]
     void didFinishFetch([Keep] ExecutionContext*, ThreadableLoaderClient*, const AtomicString& method, const String& url);
 
+    // Detach and remove all references to the given client.
+    [Network]
+    void detachClientRequest(ExecutionContext*, ThreadableLoaderClient*);
+
     [Network]
     void scriptImported(ExecutionContext*, unsigned long identifier, const String& sourceString);
 
-    [V8]
+    [DOMDebugger]
     void scriptExecutionBlockedByCSP(ExecutionContext*, const String& directiveText);
 
     [Network]
     void didReceiveScriptResponse(ExecutionContext*, unsigned long identifier);
-
-    [V8]
-    void didStartProvisionalLoad([Keep] LocalFrame*);
 
     [DOM, Page]
     void domContentLoadedEventFired([Keep] LocalFrame*);
@@ -232,10 +246,10 @@ class XMLHttpRequest;
     [DOM]
     void frameDocumentUpdated([Keep] LocalFrame*);
 
-    [Page]
-    void frameStartedLoading([Keep] LocalFrame*);
+    [Page, Tracing]
+    void frameStartedLoading([Keep] LocalFrame*, FrameLoadType);
 
-    [Page]
+    [Page, Tracing]
     void frameStoppedLoading([Keep] LocalFrame*);
 
     [Page, Network]
@@ -243,6 +257,12 @@ class XMLHttpRequest;
 
     [Page, Network]
     void frameClearedScheduledNavigation([Keep] LocalFrame*);
+
+    [Network]
+    void frameScheduledClientNavigation([Keep] LocalFrame*);
+
+    [Network]
+    void frameClearedScheduledClientNavigation([Keep] LocalFrame*);
 
     [Worker]
     void didStartWorker(ExecutionContext*, WorkerInspectorProxy* proxy, bool waitingForDebugger);
@@ -294,6 +314,33 @@ class XMLHttpRequest;
 
     [Page]
     void windowCreated(LocalFrame* opener, LocalFrame* created);
+
+    [Log]
+    void consoleMessageAdded(ExecutionContext*, ConsoleMessage*);
+
+    [Page, Performance]
+    RecalculateStyle(Document*);
+
+    [Page]
+    void willRunJavaScriptDialog(LocalFrame* frame, const String& message, ChromeClient::DialogType dialogType);
+
+    [Page]
+    void didRunJavaScriptDialog(LocalFrame* frame, bool result);
+
+    [Performance]
+    void willExecuteScript([Keep] ExecutionContext*);
+
+    [Performance]
+    void didExecuteScript(ExecutionContext*);
+
+    [Performance]
+    void willCallFunction([Keep] ExecutionContext*);
+
+    [Performance]
+    void didCallFunction([Keep] ExecutionContext*, v8::Local<v8::Function>);
+
+    [Performance]
+    void documentWriteFetchScript([Keep] Document*);
 }
 
 interface InspectorOverrides {

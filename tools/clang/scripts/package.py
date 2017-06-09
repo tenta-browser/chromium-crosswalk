@@ -87,7 +87,7 @@ def RunGsutil(args):
 
 def GsutilArchiveExists(archive_name, platform):
   gsutil_args = ['-q', 'stat',
-                 'gs://chromium-browser-clang/%s/%s.tgz' %
+                 'gs://chromium-browser-clang-staging/%s/%s.tgz' %
                  (platform, archive_name)]
   return RunGsutil(gsutil_args) == 0
 
@@ -97,7 +97,7 @@ def MaybeUpload(args, archive_name, platform):
   # so -n option to gsutil is used. It will warn, if the upload was aborted.
   gsutil_args = ['cp', '-n', '-a', 'public-read',
                   '%s.tgz' % archive_name,
-                  'gs://chromium-browser-clang/%s/%s.tgz' %
+                  'gs://chromium-browser-clang-staging/%s/%s.tgz' %
                  (platform, archive_name)]
   if args.upload:
     print 'Uploading %s to Google Cloud Storage...' % archive_name
@@ -141,9 +141,10 @@ def main():
       GsutilArchiveExists(golddir, platform)):
     print ('Desired toolchain revision %s is already available '
            'in Google Cloud Storage:') % expected_stamp
-    print 'gs://chromium-browser-clang/%s/%s.tgz' % (platform, pdir)
+    print 'gs://chromium-browser-clang-staging/%s/%s.tgz' % (platform, pdir)
     if sys.platform.startswith('linux'):
-      print 'gs://chromium-browser-clang/%s/%s.tgz' % (platform, golddir)
+      print 'gs://chromium-browser-clang-staging/%s/%s.tgz' % (platform,
+                                                               golddir)
     return 0
 
   with open('buildlog.txt', 'w') as log:
@@ -195,6 +196,7 @@ def main():
   # This supports the same patterns that the fnmatch module understands.
   exe_ext = '.exe' if sys.platform == 'win32' else ''
   want = ['bin/llvm-symbolizer' + exe_ext,
+          'bin/sancov' + exe_ext,
           'lib/clang/*/asan_blacklist.txt',
           'lib/clang/*/cfi_blacklist.txt',
           # Copy built-in headers (lib/clang/3.x.y/include).
@@ -210,11 +212,12 @@ def main():
                  'lib/libBlinkGCPlugin.' + so_ext,
                  ])
   if sys.platform == 'darwin':
-    want.extend([# Copy only the OSX (ASan and profile) and iossim (ASan)
-                 # runtime libraries:
+    want.extend([# Copy only the OSX and iossim (ASan and profile) runtime
+                 # libraries:
                  'lib/clang/*/lib/darwin/*asan_osx*',
                  'lib/clang/*/lib/darwin/*asan_iossim*',
                  'lib/clang/*/lib/darwin/*profile_osx*',
+                 'lib/clang/*/lib/darwin/*profile_iossim*',
                  ])
   elif sys.platform.startswith('linux'):
     # Copy the libstdc++.so.6 we linked Clang against so it can run.
@@ -287,6 +290,17 @@ def main():
       tar.add(os.path.join(golddir, 'lib'), arcname='lib',
               filter=PrintTarProgress)
     MaybeUpload(args, golddir, platform)
+
+  # Zip up llvm-objdump for sanitizer coverage.
+  objdumpdir = 'llvmobjdump-' + stamp
+  shutil.rmtree(objdumpdir, ignore_errors=True)
+  os.makedirs(os.path.join(objdumpdir, 'bin'))
+  shutil.copy(os.path.join(LLVM_RELEASE_DIR, 'bin', 'llvm-objdump' + exe_ext),
+              os.path.join(objdumpdir, 'bin'))
+  with tarfile.open(objdumpdir + '.tgz', 'w:gz') as tar:
+    tar.add(os.path.join(objdumpdir, 'bin'), arcname='bin',
+            filter=PrintTarProgress)
+  MaybeUpload(args, objdumpdir, platform)
 
   # FIXME: Warn if the file already exists on the server.
 

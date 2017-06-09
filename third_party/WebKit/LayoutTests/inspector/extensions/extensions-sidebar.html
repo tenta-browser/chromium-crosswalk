@@ -19,14 +19,14 @@ function initialize_extensionsSidebarTest()
     {
         var sidebar = InspectorTest._extensionSidebar(panelName);
         InspectorTest.deprecatedRunAfterPendingDispatches(function() {
-            sidebar.expand();
+            sidebar.revealView();
             callback();
         });
     }
 
     InspectorTest._extensionSidebar = function(panelName)
     {
-        var sidebarPanes = WebInspector.extensionServer.sidebarPanes();
+        var sidebarPanes = Extensions.extensionServer.sidebarPanes();
         var result;
         for (var i = 0; i < sidebarPanes.length; ++i) {
             if (sidebarPanes[i].panelName() === panelName)
@@ -44,9 +44,8 @@ function extension_sidebarSetPage(panelName, nextTest)
         dumpObject(sidebar);
         function onShown(win)
         {
-            var sidebarHeight = win.document.documentElement.getBoundingClientRect().height;
-            if (win.innerHeight !== sidebarHeight)
-                output("sidebar height mismatch, expected: " + win.innerHeight + ", actual:" + sidebarHeight);
+            if (panelName !== "elements")
+                output("sidebar height " + win.document.documentElement.getBoundingClientRect().height);
             sidebar.onShown.removeListener(onShown);
             nextTest();
         }

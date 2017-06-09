@@ -1,7 +1,9 @@
 include_rules = [
-  "+components/network_session_configurator/switches.h",
   "-content/shell/browser/layout_test",
-  "+services/shell/public/cpp",
+  "+components/keyed_service/content",
+  "+device/geolocation",
+  "+services/navigation",
+  "+services/service_manager/public/cpp",
 ]
 
 specific_include_rules = {

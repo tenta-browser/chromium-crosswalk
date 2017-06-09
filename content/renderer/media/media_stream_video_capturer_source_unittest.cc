@@ -83,9 +83,9 @@ class MediaStreamVideoCapturerSourceTest : public testing::Test {
         std::move(delegate));
     source_->SetDeviceInfo(device_info);
 
-    webkit_source_.initialize(base::UTF8ToUTF16("dummy_source_id"),
+    webkit_source_.initialize(blink::WebString::fromASCII("dummy_source_id"),
                               blink::WebMediaStreamSource::TypeVideo,
-                              base::UTF8ToUTF16("dummy_source_name"),
+                              blink::WebString::fromASCII("dummy_source_name"),
                               false /* remote */);
     webkit_source_.setExtraData(source_);
     webkit_source_id_ = webkit_source_.id();
@@ -113,7 +113,7 @@ class MediaStreamVideoCapturerSourceTest : public testing::Test {
     source_stopped_ = true;
     EXPECT_EQ(source.id(), webkit_source_id_);
   }
-  void OnStarted(bool result) { source_->OnStarted(result); }
+  void OnStarted(bool result) { source_->OnRunStateChanged(result); }
 
  protected:
   void OnConstraintsApplied(MediaStreamSource* source,
@@ -298,9 +298,9 @@ TEST_F(MediaStreamVideoCapturerSourceTest, Ended) {
       base::Bind(&MediaStreamVideoCapturerSourceTest::OnSourceStopped,
                  base::Unretained(this)),
       std::move(delegate));
-  webkit_source_.initialize(base::UTF8ToUTF16("dummy_source_id"),
+  webkit_source_.initialize(blink::WebString::fromASCII("dummy_source_id"),
                             blink::WebMediaStreamSource::TypeVideo,
-                            base::UTF8ToUTF16("dummy_source_name"),
+                            blink::WebString::fromASCII("dummy_source_name"),
                             false /* remote */);
   webkit_source_.setExtraData(source_);
   webkit_source_id_ = webkit_source_.id();
@@ -309,10 +309,10 @@ TEST_F(MediaStreamVideoCapturerSourceTest, Ended) {
   EXPECT_CALL(mock_delegate(), GetCurrentSupportedFormats(_, _, _, _));
   EXPECT_CALL(mock_delegate(), StartCapture(_, _, _));
   blink::WebMediaStreamTrack track = StartSource();
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   OnStarted(true);
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(blink::WebMediaStreamSource::ReadyStateLive,
             webkit_source_.getReadyState());
 
@@ -320,7 +320,7 @@ TEST_F(MediaStreamVideoCapturerSourceTest, Ended) {
 
   EXPECT_CALL(mock_delegate(), StopCapture());
   OnStarted(false);
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(blink::WebMediaStreamSource::ReadyStateEnded,
             webkit_source_.getReadyState());
   // Verify that MediaStreamSource::SourceStoppedCallback has been triggered.
@@ -351,9 +351,7 @@ class FakeMediaStreamVideoSink : public MediaStreamVideoSink {
                     base::TimeTicks capture_time) {
     *capture_time_ = capture_time;
     metadata_->Clear();
-    base::DictionaryValue tmp;
-    frame->metadata()->MergeInternalValuesInto(&tmp);
-    metadata_->MergeInternalValuesFrom(tmp);
+    metadata_->MergeMetadataFrom(frame->metadata());
     base::ResetAndReturn(&got_frame_cb_).Run();
   }
 

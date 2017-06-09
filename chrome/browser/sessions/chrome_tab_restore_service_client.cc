@@ -11,8 +11,9 @@
 #include "chrome/common/url_constants.h"
 #include "components/sessions/content/content_live_tab.h"
 #include "content/public/browser/browser_thread.h"
+#include "extensions/features/features.h"
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/extensions/tab_helper.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/extensions/extension_metrics.h"
@@ -23,12 +24,14 @@
 
 #if !defined(OS_ANDROID)
 #include "chrome/browser/ui/browser_live_tab_context.h"
+#else
+#include "chrome/browser/ui/android/tab_model/android_live_tab_context.h"
 #endif
 
 namespace {
 
 void RecordAppLaunch(Profile* profile, const GURL& url) {
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   const extensions::Extension* extension =
       extensions::ExtensionRegistry::Get(profile)
           ->enabled_extensions()
@@ -38,7 +41,7 @@ void RecordAppLaunch(Profile* profile, const GURL& url) {
 
   extensions::RecordAppLaunchType(
       extension_misc::APP_LAUNCH_NTP_RECENTLY_CLOSED, extension->GetType());
-#endif  // defined(ENABLE_EXTENSIONS)
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 }
 
 }  // namespace
@@ -51,8 +54,8 @@ ChromeTabRestoreServiceClient::~ChromeTabRestoreServiceClient() {}
 sessions::LiveTabContext* ChromeTabRestoreServiceClient::CreateLiveTabContext(
     const std::string& app_name) {
 #if defined(OS_ANDROID)
-  // Android does not support LiveTabContext, as tab persistence
-  // is implemented on the Java side.
+  // Android does not support creating a LiveTabContext here.
+  NOTREACHED();
   return nullptr;
 #else
   return BrowserLiveTabContext::Create(profile_, app_name);
@@ -63,9 +66,8 @@ sessions::LiveTabContext*
 ChromeTabRestoreServiceClient::FindLiveTabContextForTab(
     const sessions::LiveTab* tab) {
 #if defined(OS_ANDROID)
-  // Android does not support LiveTabContext, as tab persistence
-  // is implemented on the Java side.
-  return nullptr;
+  return AndroidLiveTabContext::FindContextForWebContents(
+      static_cast<const sessions::ContentLiveTab*>(tab)->web_contents());
 #else
   return BrowserLiveTabContext::FindContextForWebContents(
       static_cast<const sessions::ContentLiveTab*>(tab)->web_contents());
@@ -76,9 +78,7 @@ sessions::LiveTabContext*
 ChromeTabRestoreServiceClient::FindLiveTabContextWithID(
     SessionID::id_type desired_id) {
 #if defined(OS_ANDROID)
-  // Android does not support LiveTabContext, as tab persistence
-  // is implemented on the Java side.
-  return nullptr;
+  return AndroidLiveTabContext::FindContextWithID(desired_id);;
 #else
   return BrowserLiveTabContext::FindContextWithID(desired_id);
 #endif
@@ -92,7 +92,7 @@ std::string ChromeTabRestoreServiceClient::GetExtensionAppIDForTab(
     sessions::LiveTab* tab) {
   std::string extension_app_id;
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   extensions::TabHelper* extensions_tab_helper =
       extensions::TabHelper::FromWebContents(
           static_cast<sessions::ContentLiveTab*>(tab)->web_contents());
@@ -122,7 +122,7 @@ GURL ChromeTabRestoreServiceClient::GetNewTabURL() {
 }
 
 bool ChromeTabRestoreServiceClient::HasLastSession() {
-#if defined(ENABLE_SESSION_SERVICE)
+#if BUILDFLAG(ENABLE_SESSION_SERVICE)
   SessionService* session_service =
       SessionServiceFactory::GetForProfile(profile_);
   Profile::ExitType exit_type = profile_->GetLastSessionExitType();
@@ -142,7 +142,7 @@ void ChromeTabRestoreServiceClient::GetLastSession(
     const sessions::GetLastSessionCallback& callback,
     base::CancelableTaskTracker* tracker) {
   DCHECK(HasLastSession());
-#if defined(ENABLE_SESSION_SERVICE)
+#if BUILDFLAG(ENABLE_SESSION_SERVICE)
   SessionServiceFactory::GetForProfile(profile_)
       ->GetLastSession(callback, tracker);
 #endif

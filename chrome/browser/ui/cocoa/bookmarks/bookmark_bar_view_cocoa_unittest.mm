@@ -12,8 +12,8 @@
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_button.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_button_cell.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_folder_target.h"
-#include "chrome/browser/ui/cocoa/cocoa_profile_test.h"
-#import "chrome/browser/ui/cocoa/cocoa_test_helper.h"
+#include "chrome/browser/ui/cocoa/test/cocoa_profile_test.h"
+#import "chrome/browser/ui/cocoa/test/cocoa_test_helper.h"
 #import "chrome/browser/ui/cocoa/url_drop_target.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/bookmarks/browser/bookmark_model.h"
@@ -223,7 +223,7 @@ TEST_F(BookmarkBarViewTest, BookmarkButtonDragAndDrop) {
   [info reset];
 
   BookmarkModel* bookmark_model =
-      BookmarkModelFactory::GetForProfile(profile());
+      BookmarkModelFactory::GetForBrowserContext(profile());
   const BookmarkNode* node =
       bookmark_model->AddURL(bookmark_model->bookmark_bar_node(),
                              0,
@@ -264,7 +264,7 @@ TEST_F(BookmarkBarViewTest, BookmarkButtonDragAndDropAcrossProfiles) {
   other_profile->CreateBookmarkModel(true);
 
   BookmarkModel* bookmark_model =
-      BookmarkModelFactory::GetForProfile(profile());
+      BookmarkModelFactory::GetForBrowserContext(profile());
   bookmarks::test::WaitForBookmarkModelToLoad(bookmark_model);
 
   const BookmarkNode* node =
@@ -285,7 +285,8 @@ TEST_F(BookmarkBarViewTest, BookmarkButtonDragAndDropAcrossProfiles) {
   [info setDragDataType:ui::ClipboardUtil::UTIForPasteboardType(
                             kBookmarkButtonDragType)];
   [info setButton:dragged_button.get()];
-  [info setBookmarkModel:BookmarkModelFactory::GetForProfile(other_profile)];
+  [info setBookmarkModel:BookmarkModelFactory::GetForBrowserContext(
+                             other_profile)];
   EXPECT_EQ([view_ draggingEntered:(id)info.get()], NSDragOperationMove);
   EXPECT_TRUE([view_ performDragOperation:(id)info.get()]);
   EXPECT_TRUE([info dragButtonToPong]);

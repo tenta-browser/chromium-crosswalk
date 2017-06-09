@@ -18,6 +18,9 @@ class ASH_EXPORT TrayPopupHeaderButton : public views::ToggleImageButton {
   static const char kViewClassName[];
 
   TrayPopupHeaderButton(views::ButtonListener* listener,
+                        const gfx::ImageSkia& icon,
+                        int accessible_name_id);
+  TrayPopupHeaderButton(views::ButtonListener* listener,
                         int enabled_resource_id,
                         int disabled_resource_id,
                         int enabled_resource_id_hover,
@@ -31,7 +34,9 @@ class ASH_EXPORT TrayPopupHeaderButton : public views::ToggleImageButton {
   gfx::Size GetPreferredSize() const override;
 
   // Overridden from views::CustomButton:
-  void StateChanged() override;
+  void StateChanged(ButtonState old_state) override;
+
+  void Initialize(const gfx::ImageSkia& icon, int accessible_name_id);
 
   DISALLOW_COPY_AND_ASSIGN(TrayPopupHeaderButton);
 };

@@ -18,15 +18,17 @@
 #include "chrome/browser/media/router/media_route.h"
 #include "chrome/browser/media/router/media_sink.h"
 #include "chrome/browser/media/router/media_source.h"
+#include "chrome/browser/media/router/route_message_observer.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "content/public/browser/presentation_service_delegate.h"
-#include "content/public/browser/presentation_session_message.h"
-
-class Profile;
 
 namespace content {
 class WebContents;
 }
+
+namespace url {
+class Origin;
+}  // namespace url
 
 namespace media_router {
 
@@ -34,7 +36,6 @@ class IssuesObserver;
 class MediaRoutesObserver;
 class MediaSinksObserver;
 class PresentationConnectionStateObserver;
-class PresentationSessionMessagesObserver;
 class RouteRequestResult;
 
 // Type of callback used in |CreateRoute()|, |JoinRoute()|, and
@@ -61,14 +62,12 @@ using PresentationConnectionStateSubscription = base::CallbackList<void(
 // TODO(imcheng): Reduce number of parameters by putting them into structs.
 class MediaRouter : public KeyedService {
  public:
-  using PresentationSessionMessageCallback = base::Callback<void(
-      std::unique_ptr<ScopedVector<content::PresentationSessionMessage>>)>;
   using SendRouteMessageCallback = base::Callback<void(bool sent)>;
 
   ~MediaRouter() override = default;
 
   // Creates a media route from |source_id| to |sink_id|.
-  // |origin| is the URL of requestor's page.
+  // |origin| is the origin of requestor's page.
   // |web_contents| is the WebContents of the tab in which the request was made.
   // |origin| and |web_contents| are used for enforcing same-origin and/or
   // same-tab scope for JoinRoute() requests. (e.g., if enforced, the page
@@ -79,16 +78,15 @@ class MediaRouter : public KeyedService {
   // success or failure, in the order they are listed.
   // If |timeout| is positive, then any un-invoked |callbacks| will be invoked
   // with a timeout error after the timeout expires.
-  // If |off_the_record| is true, the request was made by an off the record
-  // (incognito) profile.
+  // If |incognito| is true, the request was made by an incognito profile.
   virtual void CreateRoute(
       const MediaSource::Id& source_id,
       const MediaSink::Id& sink_id,
-      const GURL& origin,
+      const url::Origin& origin,
       content::WebContents* web_contents,
       const std::vector<MediaRouteResponseCallback>& callbacks,
       base::TimeDelta timeout,
-      bool off_the_record) = 0;
+      bool incognito) = 0;
 
   // Creates a route and connects it to an existing route identified by
   // |route_id|. |route_id| must refer to a non-local route, unnassociated with
@@ -102,16 +100,15 @@ class MediaRouter : public KeyedService {
   // success or failure, in the order they are listed.
   // If |timeout| is positive, then any un-invoked |callbacks| will be invoked
   // with a timeout error after the timeout expires.
-  // If |off_the_record| is true, the request was made by an off the record
-  // (incognito) profile.
+  // If |incognito| is true, the request was made by an incognito profile.
   virtual void ConnectRouteByRouteId(
       const MediaSource::Id& source_id,
       const MediaRoute::Id& route_id,
-      const GURL& origin,
+      const url::Origin& origin,
       content::WebContents* web_contents,
       const std::vector<MediaRouteResponseCallback>& callbacks,
       base::TimeDelta timeout,
-      bool off_the_record) = 0;
+      bool incognito) = 0;
 
   // Joins an existing route identified by |presentation_id|.
   // |source|: The source to route to the existing route.
@@ -123,16 +120,15 @@ class MediaRouter : public KeyedService {
   // success or failure, in the order they are listed.
   // If |timeout| is positive, then any un-invoked |callbacks| will be invoked
   // with a timeout error after the timeout expires.
-  // If |off_the_record| is true, the request was made by an off the record
-  // (incognito) profile.
+  // If |incognito| is true, the request was made by an incognito profile.
   virtual void JoinRoute(
       const MediaSource::Id& source,
       const std::string& presentation_id,
-      const GURL& origin,
+      const url::Origin& origin,
       content::WebContents* web_contents,
       const std::vector<MediaRouteResponseCallback>& callbacks,
       base::TimeDelta timeout,
-      bool off_the_record) = 0;
+      bool incognito) = 0;
 
   // Terminates the media route specified by |route_id|.
   virtual void TerminateRoute(const MediaRoute::Id& route_id) = 0;
@@ -153,8 +149,8 @@ class MediaRouter : public KeyedService {
       std::unique_ptr<std::vector<uint8_t>> data,
       const SendRouteMessageCallback& callback) = 0;
 
-  // Adds a new |issue|.
-  virtual void AddIssue(const Issue& issue) = 0;
+  // Adds a new issue with info |issue_info|.
+  virtual void AddIssue(const IssueInfo& issue_info) = 0;
 
   // Clears the issue with the id |issue_id|.
   virtual void ClearIssue(const Issue::Id& issue_id) = 0;
@@ -185,16 +181,20 @@ class MediaRouter : public KeyedService {
       const MediaRoute::Id& route_id,
       const content::PresentationConnectionStateChangedCallback& callback) = 0;
 
-  // Called when the off the record (incognito) profile for this instance is
-  // being shut down.  This will terminate all off the record media routes.
-  virtual void OnOffTheRecordProfileShutdown() = 0;
+  // Called when the incognito profile for this instance is being shut down.
+  // This will terminate all incognito media routes.
+  virtual void OnIncognitoProfileShutdown() = 0;
+
+  // Returns the media routes that currently exist. To get notified whenever
+  // there is a change to the media routes, subclass MediaRoutesObserver.
+  virtual std::vector<MediaRoute> GetCurrentRoutes() const = 0;
 
  private:
   friend class IssuesObserver;
   friend class MediaSinksObserver;
   friend class MediaRoutesObserver;
   friend class PresentationConnectionStateObserver;
-  friend class PresentationSessionMessagesObserver;
+  friend class RouteMessageObserver;
 
   // The following functions are called by friend Observer classes above.
 
@@ -237,18 +237,16 @@ class MediaRouter : public KeyedService {
   virtual void UnregisterIssuesObserver(IssuesObserver* observer) = 0;
 
   // Registers |observer| with this MediaRouter. |observer| specifies a media
-  // route corresponding to a presentation and will receive messages from the
-  // MediaSink connected to the route. Note that MediaRouter does not own
-  // |observer|. |observer| should be unregistered before it is destroyed.
-  // Registering the same observer more than once will result in undefined
-  // behavior.
-  virtual void RegisterPresentationSessionMessagesObserver(
-      PresentationSessionMessagesObserver* observer) = 0;
+  // route and will receive messages from the MediaSink connected to the
+  // route. Note that MediaRouter does not own |observer|. |observer| should be
+  // unregistered before it is destroyed. Registering the same observer more
+  // than once will result in undefined behavior.
+  virtual void RegisterRouteMessageObserver(RouteMessageObserver* observer) = 0;
 
-  // Unregisters a previously registered PresentationSessionMessagesObserver.
-  // |observer| will stop receiving further updates.
-  virtual void UnregisterPresentationSessionMessagesObserver(
-      PresentationSessionMessagesObserver* observer) = 0;
+  // Unregisters a previously registered RouteMessagesObserver. |observer| will
+  // stop receiving further updates.
+  virtual void UnregisterRouteMessageObserver(
+      RouteMessageObserver* observer) = 0;
 };
 
 }  // namespace media_router

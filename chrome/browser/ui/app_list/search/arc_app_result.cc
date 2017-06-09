@@ -47,7 +47,7 @@ void ArcAppResult::ExecuteLaunchCommand(int event_flags) {
 void ArcAppResult::Open(int event_flags) {
   RecordHistogram(APP_SEARCH_RESULT);
 
-  if (!arc::LaunchApp(profile(), app_id()))
+  if (!arc::LaunchApp(profile(), app_id(), event_flags))
     return;
 
   // Manually close app_list view because focus is not changed on ARC app start,
@@ -56,9 +56,9 @@ void ArcAppResult::Open(int event_flags) {
 }
 
 std::unique_ptr<SearchResult> ArcAppResult::Duplicate() const {
-  std::unique_ptr<SearchResult> copy(
-      new ArcAppResult(profile(), app_id(), controller(),
-                       display_type() == DISPLAY_RECOMMENDATION));
+  std::unique_ptr<SearchResult> copy =
+      base::MakeUnique<ArcAppResult>(profile(), app_id(), controller(),
+                                     display_type() == DISPLAY_RECOMMENDATION);
   copy->set_title(title());
   copy->set_title_tags(title_tags());
   copy->set_relevance(relevance());

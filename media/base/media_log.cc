@@ -16,6 +16,30 @@ namespace media {
 // unique IDs.
 static base::StaticAtomicSequenceNumber g_media_log_count;
 
+// Audio+video watch time metrics.
+const char MediaLog::kWatchTimeAudioVideoAll[] =
+    "Media.WatchTime.AudioVideo.All";
+const char MediaLog::kWatchTimeAudioVideoMse[] =
+    "Media.WatchTime.AudioVideo.MSE";
+const char MediaLog::kWatchTimeAudioVideoEme[] =
+    "Media.WatchTime.AudioVideo.EME";
+const char MediaLog::kWatchTimeAudioVideoSrc[] =
+    "Media.WatchTime.AudioVideo.SRC";
+const char MediaLog::kWatchTimeAudioVideoBattery[] =
+    "Media.WatchTime.AudioVideo.Battery";
+const char MediaLog::kWatchTimeAudioVideoAc[] = "Media.WatchTime.AudioVideo.AC";
+
+// Audio only "watch time" metrics.
+const char MediaLog::kWatchTimeAudioAll[] = "Media.WatchTime.Audio.All";
+const char MediaLog::kWatchTimeAudioMse[] = "Media.WatchTime.Audio.MSE";
+const char MediaLog::kWatchTimeAudioEme[] = "Media.WatchTime.Audio.EME";
+const char MediaLog::kWatchTimeAudioSrc[] = "Media.WatchTime.Audio.SRC";
+const char MediaLog::kWatchTimeAudioBattery[] = "Media.WatchTime.Audio.Battery";
+const char MediaLog::kWatchTimeAudioAc[] = "Media.WatchTime.Audio.AC";
+
+const char MediaLog::kWatchTimeFinalize[] = "FinalizeWatchTime";
+const char MediaLog::kWatchTimeFinalizePower[] = "FinalizePowerWatchTime";
+
 std::string MediaLog::MediaLogLevelToString(MediaLogLevel level) {
   switch (level) {
     case MEDIALOG_ERROR:
@@ -82,6 +106,8 @@ std::string MediaLog::EventTypeToString(MediaLogEvent::Type type) {
       return "MEDIA_DEBUG_LOG_ENTRY";
     case MediaLogEvent::PROPERTY_CHANGE:
       return "PROPERTY_CHANGE";
+    case MediaLogEvent::WATCH_TIME_UPDATE:
+      return "WATCH_TIME_UPDATE";
   }
   NOTREACHED();
   return NULL;
@@ -101,6 +127,8 @@ std::string MediaLog::PipelineStatusToString(PipelineStatus status) {
       return "pipeline: initialization failed";
     case PIPELINE_ERROR_COULD_NOT_RENDER:
       return "pipeline: could not render";
+    case PIPELINE_ERROR_EXTERNAL_RENDERER_FAILED:
+      return "pipeline: external renderer failed";
     case PIPELINE_ERROR_READ:
       return "pipeline: read error";
     case PIPELINE_ERROR_INVALID_STATE:
@@ -121,8 +149,6 @@ std::string MediaLog::PipelineStatusToString(PipelineStatus status) {
       return "chunk demuxer: application requested network error on eos";
     case AUDIO_RENDERER_ERROR:
       return "audio renderer: output device reported an error";
-    case AUDIO_RENDERER_ERROR_SPLICE_FAILED:
-      return "audio renderer: post-decode audio splicing failed";
   }
   NOTREACHED();
   return NULL;
@@ -144,6 +170,17 @@ std::string MediaLog::MediaEventToLogString(const MediaLogEvent& event) {
   return EventTypeToString(event.type) + " " + params_json;
 }
 
+std::string MediaLog::BufferingStateToString(BufferingState state) {
+  switch (state) {
+    case BUFFERING_HAVE_NOTHING:
+      return "BUFFERING_HAVE_NOTHING";
+    case BUFFERING_HAVE_ENOUGH:
+      return "BUFFERING_HAVE_ENOUGH";
+  }
+  NOTREACHED();
+  return "";
+}
+
 MediaLog::MediaLog() : id_(g_media_log_count.GetNext()) {}
 
 MediaLog::~MediaLog() {}
@@ -155,7 +192,7 @@ std::string MediaLog::GetLastErrorMessage() {
 }
 
 void MediaLog::RecordRapporWithSecurityOrigin(const std::string& metric) {
-  NOTIMPLEMENTED() << "Default MediaLog doesn't support rappor reporting.";
+  DVLOG(1) << "Default MediaLog doesn't support rappor reporting.";
 }
 
 std::unique_ptr<MediaLogEvent> MediaLog::CreateEvent(MediaLogEvent::Type type) {
@@ -248,6 +285,13 @@ std::unique_ptr<MediaLogEvent> MediaLog::CreateBufferedExtentsChangedEvent(
   event->params.SetDouble("buffer_current", current);
   event->params.SetDouble("buffer_end", end);
   return event;
+}
+
+std::unique_ptr<MediaLogEvent> MediaLog::CreateBufferingStateChangedEvent(
+    const std::string& property,
+    BufferingState state) {
+  return CreateStringEvent(MediaLogEvent::PROPERTY_CHANGE, property,
+                           BufferingStateToString(state));
 }
 
 void MediaLog::AddLogEvent(MediaLogLevel level, const std::string& message) {

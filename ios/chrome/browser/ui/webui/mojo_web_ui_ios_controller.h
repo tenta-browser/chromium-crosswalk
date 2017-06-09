@@ -5,11 +5,11 @@
 #ifndef IOS_CHROME_BROWSER_UI_WEBUI_MOJO_WEB_UI_IOS_CONTROLLER_H_
 #define IOS_CHROME_BROWSER_UI_WEBUI_MOJO_WEB_UI_IOS_CONTROLLER_H_
 
-#include "ios/public/provider/web/web_ui_ios.h"
-#include "ios/public/provider/web/web_ui_ios_controller.h"
 #import "ios/web/public/web_state/web_state.h"
-#include "services/shell/public/cpp/interface_factory.h"
-#include "services/shell/public/cpp/interface_registry.h"
+#include "ios/web/public/webui/web_ui_ios.h"
+#include "ios/web/public/webui/web_ui_ios_controller.h"
+#include "services/service_manager/public/cpp/interface_factory.h"
+#include "services/service_manager/public/cpp/interface_registry.h"
 
 // This class is intended for web ui pages that use mojo. It is expected that
 // subclasses will do two things:
@@ -20,8 +20,9 @@
 // . Override BindUIHandler() to create and bind the implementation of the
 //   bindings.
 template <typename Interface>
-class MojoWebUIIOSController : public web::WebUIIOSController,
-                               public shell::InterfaceFactory<Interface> {
+class MojoWebUIIOSController
+    : public web::WebUIIOSController,
+      public service_manager::InterfaceFactory<Interface> {
  public:
   explicit MojoWebUIIOSController(web::WebUIIOS* web_ui)
       : web::WebUIIOSController(web_ui) {
@@ -33,8 +34,8 @@ class MojoWebUIIOSController : public web::WebUIIOSController,
   virtual void BindUIHandler(mojo::InterfaceRequest<Interface> request) = 0;
 
  private:
-  // shell::InterfaceFactory overrides:
-  void Create(shell::Connection*,
+  // service_manager::InterfaceFactory overrides:
+  void Create(const service_manager::Identity& remote_identity,
               mojo::InterfaceRequest<Interface> request) override {
     BindUIHandler(std::move(request));
   }

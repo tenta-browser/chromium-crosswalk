@@ -3,20 +3,22 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-"""Install Debian Wheezy sysroots for building chromium.
+"""Install Debian sysroots for building chromium.
 """
 
 # The sysroot is needed to ensure that binaries will run on Debian Wheezy,
-# the oldest supported linux distribution.  This script can be run manually but
-# is more often run as part of gclient hooks. When run from hooks this script
-# in a no-op on non-linux platforms.
+# the oldest supported linux distribution. For ARM64 linux, we have Debian
+# Jessie sysroot as Jessie is the first version with ARM64 support. This script
+# can be run manually but is more often run as part of gclient hooks. When run
+# from hooks this script is a no-op on non-linux platforms.
 
 # The sysroot image could be constructed from scratch based on the current
-# state or Debian Wheezy but for consistency we currently use a pre-built root
-# image. The image will normally need to be rebuilt every time chrome's build
-# dependencies are changed.
+# state or Debian Wheezy/Jessie but for consistency we currently use a
+# pre-built root image. The image will normally need to be rebuilt every time
+# chrome's build dependencies are changed.
 
 import hashlib
+import json
 import platform
 import optparse
 import os
@@ -24,6 +26,7 @@ import re
 import shutil
 import subprocess
 import sys
+import urllib2
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(os.path.dirname(SCRIPT_DIR)))
@@ -34,24 +37,8 @@ import gyp_environment
 
 URL_PREFIX = 'https://commondatastorage.googleapis.com'
 URL_PATH = 'chrome-linux-sysroot/toolchain'
-REVISION_AMD64 = 'c52471d9dec240c8d0a88fa98aa1eefeee32e22f'
-REVISION_ARM = 'c52471d9dec240c8d0a88fa98aa1eefeee32e22f'
-REVISION_I386 = 'c52471d9dec240c8d0a88fa98aa1eefeee32e22f'
-REVISION_MIPS = 'c52471d9dec240c8d0a88fa98aa1eefeee32e22f'
-TARBALL_AMD64 = 'debian_wheezy_amd64_sysroot.tgz'
-TARBALL_ARM = 'debian_wheezy_arm_sysroot.tgz'
-TARBALL_I386 = 'debian_wheezy_i386_sysroot.tgz'
-TARBALL_MIPS = 'debian_wheezy_mips_sysroot.tgz'
-TARBALL_AMD64_SHA1SUM = 'ca4ed6e7c9e333b046be19d38584a11f6785eea6'
-TARBALL_ARM_SHA1SUM = '1fab0c2b1e93a933ddc593df3b43872b0ba5ded2'
-TARBALL_I386_SHA1SUM = '80c48c303319af2284e4a104c882d888af75ba81'
-TARBALL_MIPS_SHA1SUM = '01da32a35288627e05cfca193b7f3659531c6f7d'
-SYSROOT_DIR_AMD64 = 'debian_wheezy_amd64-sysroot'
-SYSROOT_DIR_ARM = 'debian_wheezy_arm-sysroot'
-SYSROOT_DIR_I386 = 'debian_wheezy_i386-sysroot'
-SYSROOT_DIR_MIPS = 'debian_wheezy_mips-sysroot'
 
-valid_archs = ('arm', 'i386', 'amd64', 'mips')
+VALID_ARCHS = ('arm', 'arm64', 'i386', 'amd64', 'mips')
 
 
 class Error(Exception):
@@ -80,8 +67,14 @@ def DetectHostArch():
     return 'i386'
   elif detected_host_arch == 'arm':
     return 'arm'
+  elif detected_host_arch == 'arm64':
+    return 'arm64'
   elif detected_host_arch == 'mips':
     return 'mips'
+  elif detected_host_arch == 'ppc':
+    return 'ppc'
+  elif detected_host_arch == 's390':
+    return 's390'
 
   raise Error('Unrecognized host arch: %s' % detected_host_arch)
 
@@ -111,26 +104,43 @@ def DetectTargetArch():
   return None
 
 
-def InstallDefaultSysroots():
+def InstallDefaultSysroots(host_arch):
   """Install the default set of sysroot images.
 
   This includes at least the sysroot for host architecture, and the 32-bit
   sysroot for building the v8 snapshot image.  It can also include the cross
   compile sysroot for ARM/MIPS if cross compiling environment can be detected.
+
+  Another reason we're installing this by default is so that developers can
+  compile and run on our supported platforms without having to worry about
+  flipping things back and forth and whether the sysroots have been downloaded
+  or not.
   """
-  host_arch = DetectHostArch()
-  InstallSysroot(host_arch)
+  InstallDefaultSysrootForArch(host_arch)
 
   if host_arch == 'amd64':
-    InstallSysroot('i386')
+    InstallDefaultSysrootForArch('i386')
 
-  # Finally, if we can detect a non-standard target_arch such as ARM or
-  # MIPS, then install the sysroot too.
-  # Don't attampt to install arm64 since this is currently and android-only
-  # architecture.
+  # Desktop Chromium OS builds require the precise sysroot.
+  # TODO(thomasanderson): only download this when the GN arg target_os
+  # == 'chromeos', when the functionality to perform the check becomes
+  # available.
+  InstallSysroot('Precise', 'amd64')
+
+  # If we can detect a non-standard target_arch such as ARM or MIPS,
+  # then install the sysroot too.  Don't attempt to install arm64
+  # since this is currently and android-only architecture.
   target_arch = DetectTargetArch()
-  if target_arch and target_arch not in (host_arch, 'i386', 'arm64'):
-    InstallSysroot(target_arch)
+  if target_arch and target_arch not in (host_arch, 'i386'):
+    InstallDefaultSysrootForArch(target_arch)
+
+  # Desktop Linux ozone builds require libxkbcommon* which is not
+  # available in Wheezy.
+  # TODO(thomasanderson): Remove this once the Jessie sysroot is used
+  # by default.
+  gyp_defines = gyp_chromium.GetGypVars(gyp_chromium.GetSupplementalFiles())
+  if gyp_defines.get('use_ozone') == '1':
+    InstallSysroot('Jessie', 'amd64')
 
 
 def main(args):
@@ -138,50 +148,56 @@ def main(args):
   parser.add_option('--running-as-hook', action='store_true',
                     default=False, help='Used when running from gclient hooks.'
                                         ' Installs default sysroot images.')
-  parser.add_option('--arch', type='choice', choices=valid_archs,
-                    help='Sysroot architecture: %s' % ', '.join(valid_archs))
+  parser.add_option('--arch', type='choice', choices=VALID_ARCHS,
+                    help='Sysroot architecture: %s' % ', '.join(VALID_ARCHS))
   options, _ = parser.parse_args(args)
   if options.running_as_hook and not sys.platform.startswith('linux'):
     return 0
 
   if options.running_as_hook:
-    InstallDefaultSysroots()
+    host_arch = DetectHostArch()
+    # PPC/s390 don't use sysroot, see http://crbug.com/646169
+    if host_arch in ['ppc','s390']:
+      return 0
+    InstallDefaultSysroots(host_arch)
   else:
     if not options.arch:
       print 'You much specify either --arch or --running-as-hook'
       return 1
-    InstallSysroot(options.arch)
+    InstallDefaultSysrootForArch(options.arch)
 
   return 0
 
-
-def InstallSysroot(target_arch):
-  # The sysroot directory should match the one specified in build/common.gypi.
-  # TODO(thestig) Consider putting this else where to avoid having to recreate
-  # it on every build.
-  linux_dir = os.path.dirname(SCRIPT_DIR)
+def InstallDefaultSysrootForArch(target_arch):
   if target_arch == 'amd64':
-    sysroot = os.path.join(linux_dir, SYSROOT_DIR_AMD64)
-    tarball_filename = TARBALL_AMD64
-    tarball_sha1sum = TARBALL_AMD64_SHA1SUM
-    revision = REVISION_AMD64
+    InstallSysroot('Wheezy', 'amd64')
   elif target_arch == 'arm':
-    sysroot = os.path.join(linux_dir, SYSROOT_DIR_ARM)
-    tarball_filename = TARBALL_ARM
-    tarball_sha1sum = TARBALL_ARM_SHA1SUM
-    revision = REVISION_ARM
+    InstallSysroot('Wheezy', 'arm')
+  elif target_arch == 'arm64':
+    InstallSysroot('Jessie', 'arm64')
   elif target_arch == 'i386':
-    sysroot = os.path.join(linux_dir, SYSROOT_DIR_I386)
-    tarball_filename = TARBALL_I386
-    tarball_sha1sum = TARBALL_I386_SHA1SUM
-    revision = REVISION_I386
+    InstallSysroot('Wheezy', 'i386')
   elif target_arch == 'mips':
-    sysroot = os.path.join(linux_dir, SYSROOT_DIR_MIPS)
-    tarball_filename = TARBALL_MIPS
-    tarball_sha1sum = TARBALL_MIPS_SHA1SUM
-    revision = REVISION_MIPS
+    InstallSysroot('Wheezy', 'mips')
   else:
     raise Error('Unknown architecture: %s' % target_arch)
+
+def InstallSysroot(target_platform, target_arch):
+  # The sysroot directory should match the one specified in build/common.gypi.
+  # TODO(thestig) Consider putting this elsewhere to avoid having to recreate
+  # it on every build.
+  linux_dir = os.path.dirname(SCRIPT_DIR)
+
+  sysroots_file = os.path.join(SCRIPT_DIR, 'sysroots.json')
+  sysroots = json.load(open(sysroots_file))
+  sysroot_key = '%s_%s' % (target_platform.lower(), target_arch)
+  if sysroot_key not in sysroots:
+    raise Error('No sysroot for: %s %s' % (target_platform, target_arch))
+  sysroot_dict = sysroots[sysroot_key]
+  revision = sysroot_dict['Revision']
+  tarball_filename = sysroot_dict['Tarball']
+  tarball_sha1sum = sysroot_dict['Sha1Sum']
+  sysroot = os.path.join(linux_dir, sysroot_dict['SysrootDir'])
 
   url = '%s/%s/%s/%s' % (URL_PREFIX, URL_PATH, revision, tarball_filename)
 
@@ -189,11 +205,12 @@ def InstallSysroot(target_arch):
   if os.path.exists(stamp):
     with open(stamp) as s:
       if s.read() == url:
-        print 'Debian Wheezy %s root image already up to date: %s' % \
-            (target_arch, sysroot)
+        print '%s %s sysroot image already up to date: %s' % \
+            (target_platform, target_arch, sysroot)
         return
 
-  print 'Installing Debian Wheezy %s root image: %s' % (target_arch, sysroot)
+  print 'Installing Debian %s %s root image: %s' % \
+      (target_platform, target_arch, sysroot)
   if os.path.isdir(sysroot):
     shutil.rmtree(sysroot)
   os.mkdir(sysroot)
@@ -201,8 +218,16 @@ def InstallSysroot(target_arch):
   print 'Downloading %s' % url
   sys.stdout.flush()
   sys.stderr.flush()
-  subprocess.check_call(
-      ['curl', '--fail', '--retry', '3', '-L', url, '-o', tarball])
+  for _ in range(3):
+    try:
+      response = urllib2.urlopen(url)
+      with open(tarball, "wb") as f:
+        f.write(response.read())
+      break
+    except:
+      pass
+  else:
+    raise Error('Failed to download %s' % url)
   sha1sum = GetSha1(tarball)
   if sha1sum != tarball_sha1sum:
     raise Error('Tarball sha1sum is wrong.'

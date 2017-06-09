@@ -42,7 +42,7 @@ class SyncControlVSyncProvider : public gfx::VSyncProvider {
   // from configuration change (monitor reconfiguration, moving windows
   // between monitors, suspend and resume, etc.).
   std::queue<base::TimeDelta> last_computed_intervals_;
-#endif
+#endif  // defined(OS_LINUX)
 
   DISALLOW_COPY_AND_ASSIGN(SyncControlVSyncProvider);
 };

@@ -6,7 +6,6 @@
 
 #include <stddef.h>
 
-#include "base/command_line.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/json/string_escape.h"
@@ -15,7 +14,6 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
-#include "components/devtools_http_handler/devtools_http_handler.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_view_host.h"
@@ -27,7 +25,6 @@
 #include "content/shell/browser/shell_browser_main_parts.h"
 #include "content/shell/browser/shell_content_browser_client.h"
 #include "content/shell/browser/shell_devtools_manager_delegate.h"
-#include "content/shell/common/shell_switches.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_response_headers.h"
@@ -52,7 +49,7 @@ class ResponseWriter : public net::URLFetcherResponseWriter {
   int Write(net::IOBuffer* buffer,
             int num_bytes,
             const net::CompletionCallback& callback) override;
-  int Finish(const net::CompletionCallback& callback) override;
+  int Finish(int net_error, const net::CompletionCallback& callback) override;
 
  private:
   base::WeakPtr<ShellDevToolsFrontend> shell_devtools_;
@@ -82,7 +79,7 @@ int ResponseWriter::Write(net::IOBuffer* buffer,
   if (!base::IsStringUTF8(chunk))
     return num_bytes;
 
-  base::FundamentalValue* id = new base::FundamentalValue(stream_id_);
+  base::Value* id = new base::Value(stream_id_);
   base::StringValue* chunkValue = new base::StringValue(chunk);
 
   content::BrowserThread::PostTask(
@@ -93,8 +90,15 @@ int ResponseWriter::Write(net::IOBuffer* buffer,
   return num_bytes;
 }
 
-int ResponseWriter::Finish(const net::CompletionCallback& callback) {
+int ResponseWriter::Finish(int net_error,
+                           const net::CompletionCallback& callback) {
   return net::OK;
+}
+
+static GURL GetFrontendURL() {
+  int port = ShellDevToolsManagerDelegate::GetHttpHandlerPort();
+  return GURL(
+      base::StringPrintf("http://127.0.0.1:%d/devtools/inspector.html", port));
 }
 
 }  // namespace
@@ -113,13 +117,7 @@ ShellDevToolsFrontend* ShellDevToolsFrontend::Show(
   ShellDevToolsFrontend* devtools_frontend = new ShellDevToolsFrontend(
       shell,
       inspected_contents);
-
-  devtools_http_handler::DevToolsHttpHandler* http_handler =
-      ShellContentBrowserClient::Get()
-          ->shell_browser_main_parts()
-          ->devtools_http_handler();
-  shell->LoadURL(http_handler->GetFrontendURL("/devtools/inspector.html"));
-
+  shell->LoadURL(GetFrontendURL());
   return devtools_frontend;
 }
 
@@ -132,8 +130,12 @@ void ShellDevToolsFrontend::Focus() {
 }
 
 void ShellDevToolsFrontend::InspectElementAt(int x, int y) {
-  if (agent_host_)
-    agent_host_->InspectElement(x, y);
+  if (agent_host_) {
+    agent_host_->InspectElement(this, x, y);
+  } else {
+    inspect_element_at_x_ = x;
+    inspect_element_at_y_ = y;
+  }
 }
 
 void ShellDevToolsFrontend::Close() {
@@ -152,6 +154,8 @@ ShellDevToolsFrontend::ShellDevToolsFrontend(Shell* frontend_shell,
     : WebContentsObserver(frontend_shell->web_contents()),
       frontend_shell_(frontend_shell),
       inspected_contents_(inspected_contents),
+      inspect_element_at_x_(-1),
+      inspect_element_at_y_(-1),
       weak_factory_(this) {
 }
 
@@ -173,6 +177,12 @@ void ShellDevToolsFrontend::RenderViewCreated(
 void ShellDevToolsFrontend::DocumentAvailableInMainFrame() {
   agent_host_ = DevToolsAgentHost::GetOrCreateFor(inspected_contents_);
   agent_host_->AttachClient(this);
+  if (inspect_element_at_x_ != -1) {
+    agent_host_->InspectElement(
+        this, inspect_element_at_x_, inspect_element_at_y_);
+    inspect_element_at_x_ = -1;
+    inspect_element_at_y_ = -1;
+  }
 }
 
 void ShellDevToolsFrontend::WebContentsDestroyed() {
@@ -190,7 +200,7 @@ void ShellDevToolsFrontend::SetPreferences(const std::string& json) {
   if (!parsed || !parsed->GetAsDictionary(&dict))
     return;
   for (base::DictionaryValue::Iterator it(*dict); !it.IsAtEnd(); it.Advance()) {
-    if (!it.value().IsType(base::Value::TYPE_STRING))
+    if (!it.value().IsType(base::Value::Type::STRING))
       continue;
     preferences_.SetWithoutPathExpansion(it.key(), it.value().CreateDeepCopy());
   }
@@ -274,6 +284,9 @@ void ShellDevToolsFrontend::HandleMessageFromDevToolsFrontend(
   } else if (method == "requestFileSystems") {
     web_contents()->GetMainFrame()->ExecuteJavaScriptForTests(
         base::ASCIIToUTF16("DevToolsAPI.fileSystemsLoaded([]);"));
+  } else if (method == "reattach") {
+    agent_host_->DetachClient(this);
+    agent_host_->AttachClient(this);
   } else {
     return;
   }
@@ -356,13 +369,14 @@ void ShellDevToolsFrontend::CallClientFunction(
 
 void ShellDevToolsFrontend::SendMessageAck(int request_id,
                                            const base::Value* arg) {
-  base::FundamentalValue id_value(request_id);
+  base::Value id_value(request_id);
   CallClientFunction("DevToolsAPI.embedderMessageAck",
                      &id_value, arg, nullptr);
 }
 
 void ShellDevToolsFrontend::AgentHostClosed(
     DevToolsAgentHost* agent_host, bool replaced) {
+  agent_host_ = nullptr;
   frontend_shell_->Close();
 }
 

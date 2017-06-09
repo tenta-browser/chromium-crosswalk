@@ -112,8 +112,8 @@ DevToolsWindow* DevToolsWindowTesting::OpenDevToolsWindowSync(
     content::WebContents* inspected_web_contents,
     bool is_docked) {
   std::string settings = is_docked ?
-      "{\"currentDockState\":\"\\\"bottom\\\"\"}" :
-      "{\"currentDockState\":\"\\\"undocked\\\"\"}";
+      "{\"isUnderTest\": true, \"currentDockState\":\"\\\"bottom\\\"\"}" :
+      "{\"isUnderTest\": true, \"currentDockState\":\"\\\"undocked\\\"\"}";
   scoped_refptr<content::DevToolsAgentHost> agent(
       content::DevToolsAgentHost::GetOrCreateFor(inspected_web_contents));
   DevToolsWindow::ToggleDevToolsWindow(
@@ -197,9 +197,7 @@ void DevToolsWindowCreationObserver::DevToolsWindowCreated(
 }
 
 DevToolsWindow* DevToolsWindowCreationObserver::devtools_window() {
-  if (devtools_windows_.empty())
-    return nullptr;
-  return devtools_windows_[devtools_windows_.size() - 1];
+  return !devtools_windows_.empty() ? devtools_windows_.back() : nullptr;
 }
 
 void DevToolsWindowCreationObserver::CloseAllSync() {

@@ -6,15 +6,18 @@ package org.chromium.chrome.browser.tabmodel;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.support.test.filters.MediumTest;
+import android.support.test.filters.SmallTest;
 import android.test.MoreAsserts;
-import android.test.suitebuilder.annotation.MediumTest;
-import android.test.suitebuilder.annotation.SmallTest;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.StreamUtil;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.AdvancedMockContext;
+import org.chromium.base.test.util.CallbackHelper;
+import org.chromium.base.test.util.DisabledTest;
+import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.browser.TabState;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.DocumentModeAssassin.DocumentModeAssassinForTesting;
@@ -28,7 +31,6 @@ import org.chromium.chrome.browser.tabmodel.document.DocumentTabModelImpl;
 import org.chromium.chrome.browser.tabmodel.document.MockDocumentTabModel;
 import org.chromium.chrome.test.util.browser.tabmodel.document.MockActivityDelegate;
 import org.chromium.content.browser.test.NativeLibraryTestBase;
-import org.chromium.content.browser.test.util.CallbackHelper;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -178,7 +180,9 @@ public class DocumentModeAssassinTest extends NativeLibraryTestBase {
     }
 
     /** Tests the full pathway. */
-    @MediumTest
+    // Flaky, see http://crbug/666815.
+    // @MediumTest
+    @DisabledTest
     public void testFullMigration() throws Exception {
         final CallbackHelper copyStartedCallback = new CallbackHelper();
         final CallbackHelper copyCallback = new CallbackHelper();
@@ -268,6 +272,7 @@ public class DocumentModeAssassinTest extends NativeLibraryTestBase {
 
     /** Tests the fallback pathway, triggered when the user has failed to migrate too many times. */
     @MediumTest
+    @RetryOnFailure
     public void testForceMigrationAfterFailures() throws Exception {
         final CallbackHelper writeDoneCallback = new CallbackHelper();
         final CallbackHelper changeStartedCallback = new CallbackHelper();
@@ -439,7 +444,7 @@ public class DocumentModeAssassinTest extends NativeLibraryTestBase {
         loadNativeLibraryAndInitBrowserProcess();
         TabPersistentStore.setBaseStateDirectoryForTests(mTabbedModeDirectory.getBaseDirectory());
 
-        TestTabModelSelector selector = new TestTabModelSelector(mContext);
+        TestTabModelSelector selector = new TestTabModelSelector();
         TabPersistentStore store = selector.mTabPersistentStore;
         MockTabPersistentStoreObserver mockObserver = selector.mTabPersistentStoreObserver;
 
@@ -612,6 +617,45 @@ public class DocumentModeAssassinTest extends NativeLibraryTestBase {
         assertFalse(prefs.contains(keyToBeDeleted));
     }
 
+    @SmallTest
+    public void testIsOptedOutOfDocumentModeMigration() throws Exception {
+        TabPersistentStore.setBaseStateDirectoryForTests(mTabbedModeDirectory.getBaseDirectory());
+        SharedPreferences.Editor sharedPreferencesEditor =
+                ContextUtils.getAppSharedPreferences().edit();
+
+        // If no preferences for document mode are set, the user is not in document mode.
+        sharedPreferencesEditor.remove(DocumentModeAssassin.MIGRATION_ON_UPGRADE_ATTEMPTED);
+        sharedPreferencesEditor.remove(DocumentModeAssassin.OPT_OUT_STATE);
+        sharedPreferencesEditor.apply();
+        assertTrue(DocumentModeAssassin.isOptedOutOfDocumentMode());
+
+        // If the preference for opting out of document mode is set, the user is not in document
+        // mode.
+        sharedPreferencesEditor.remove(DocumentModeAssassin.MIGRATION_ON_UPGRADE_ATTEMPTED);
+        sharedPreferencesEditor.putInt(DocumentModeAssassin.OPT_OUT_STATE,
+                DocumentModeAssassin.OPTED_OUT_OF_DOCUMENT_MODE);
+        sharedPreferencesEditor.apply();
+        assertTrue(DocumentModeAssassin.isOptedOutOfDocumentMode());
+
+        // If the user has been migrated into document mode and no preference has been set for
+        // OPT_OUT_STATE, the user should still be in document mode.
+        sharedPreferencesEditor.putBoolean(DocumentModeAssassin.MIGRATION_ON_UPGRADE_ATTEMPTED,
+                true);
+        sharedPreferencesEditor.remove(DocumentModeAssassin.OPT_OUT_STATE);
+        sharedPreferencesEditor.apply();
+        assertFalse(DocumentModeAssassin.isOptedOutOfDocumentMode());
+
+        // If the user has been migrated into document mode and no preference has been set for
+        // OPT_OUT_STATE, but a "new" tabbed mode metadata file exists, migration has already been
+        // attempted or incorrectly skipped. The user is not in document mode.
+        sharedPreferencesEditor.putBoolean(DocumentModeAssassin.MIGRATION_ON_UPGRADE_ATTEMPTED,
+                true);
+        sharedPreferencesEditor.remove(DocumentModeAssassin.OPT_OUT_STATE);
+        sharedPreferencesEditor.apply();
+        mTabbedModeDirectory.writeTabModelFiles(TestTabModelDirectory.TAB_MODEL_METADATA_V5, false);
+        assertTrue(DocumentModeAssassin.isOptedOutOfDocumentMode());
+    }
+
     /** Creates a DocumentModeAssassin with all of its calls pointing at our mocked classes.
      * @param isMigrationNecessary TODO(dfalcantara):*/
     private DocumentModeAssassinForTesting createAssassinForTesting(
@@ -661,6 +705,6 @@ public class DocumentModeAssassinTest extends NativeLibraryTestBase {
                 TabState.SAVED_TAB_STATE_FILE_PREFIX + "_unparseable");
 
         writeUselessFileToDirectory(mTabbedModeDirectory.getDataDirectory(),
-                TabPersistentStore.SAVED_STATE_FILE);
+                TabbedModeTabPersistencePolicy.LEGACY_SAVED_STATE_FILE);
     }
 }

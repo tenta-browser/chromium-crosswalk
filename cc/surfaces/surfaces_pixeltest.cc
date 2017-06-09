@@ -6,11 +6,11 @@
 #include "cc/quads/render_pass.h"
 #include "cc/quads/solid_color_draw_quad.h"
 #include "cc/quads/surface_draw_quad.h"
+#include "cc/surfaces/local_surface_id_allocator.h"
 #include "cc/surfaces/surface.h"
 #include "cc/surfaces/surface_aggregator.h"
 #include "cc/surfaces/surface_factory.h"
 #include "cc/surfaces/surface_factory_client.h"
-#include "cc/surfaces/surface_id_allocator.h"
 #include "cc/surfaces/surface_manager.h"
 #include "cc/test/pixel_comparator.h"
 #include "cc/test/pixel_test.h"
@@ -21,6 +21,11 @@
 namespace cc {
 namespace {
 
+static constexpr FrameSinkId kArbitraryRootFrameSinkId(1, 1);
+static constexpr FrameSinkId kArbitraryChildFrameSinkId(2, 2);
+static constexpr FrameSinkId kArbitraryLeftFrameSinkId(3, 3);
+static constexpr FrameSinkId kArbitraryRightFrameSinkId(4, 4);
+
 class EmptySurfaceFactoryClient : public SurfaceFactoryClient {
  public:
   void ReturnResources(const ReturnedResourceArray& resources) override {}
@@ -29,11 +34,13 @@ class EmptySurfaceFactoryClient : public SurfaceFactoryClient {
 
 class SurfacesPixelTest : public RendererPixelTest<GLRenderer> {
  public:
-  SurfacesPixelTest() : allocator_(1u), factory_(&manager_, &client_) {}
+  SurfacesPixelTest()
+      : factory_(kArbitraryRootFrameSinkId, &manager_, &client_) {}
+  ~SurfacesPixelTest() override { factory_.EvictSurface(); }
 
  protected:
   SurfaceManager manager_;
-  SurfaceIdAllocator allocator_;
+  LocalSurfaceIdAllocator allocator_;
   EmptySurfaceFactoryClient client_;
   SurfaceFactory factory_;
 };
@@ -47,7 +54,7 @@ SharedQuadState* CreateAndAppendTestSharedQuadState(
   const gfx::Rect clip_rect = gfx::Rect(size);
   bool is_clipped = false;
   float opacity = 1.f;
-  const SkXfermode::Mode blend_mode = SkXfermode::kSrcOver_Mode;
+  const SkBlendMode blend_mode = SkBlendMode::kSrcOver;
   SharedQuadState* shared_state = render_pass->CreateAndAppendSharedQuadState();
   shared_state->SetAll(transform, layer_bounds, visible_layer_rect, clip_rect,
                        is_clipped, opacity, blend_mode, 0);
@@ -57,7 +64,7 @@ SharedQuadState* CreateAndAppendTestSharedQuadState(
 // Draws a very simple frame with no surface references.
 TEST_F(SurfacesPixelTest, DrawSimpleFrame) {
   gfx::Rect rect(device_viewport_size_);
-  RenderPassId id(1, 1);
+  int id = 1;
   std::unique_ptr<RenderPass> pass = RenderPass::Create();
   pass->SetNew(id, rect, rect, gfx::Transform());
 
@@ -73,26 +80,21 @@ TEST_F(SurfacesPixelTest, DrawSimpleFrame) {
                      SK_ColorGREEN,
                      force_anti_aliasing_off);
 
-  std::unique_ptr<DelegatedFrameData> delegated_frame_data(
-      new DelegatedFrameData);
-  delegated_frame_data->render_pass_list.push_back(std::move(pass));
 
   CompositorFrame root_frame;
-  root_frame.delegated_frame_data = std::move(delegated_frame_data);
+  root_frame.render_pass_list.push_back(std::move(pass));
 
-  SurfaceId root_surface_id = allocator_.GenerateId();
-  factory_.Create(root_surface_id);
-  factory_.SubmitCompositorFrame(root_surface_id, std::move(root_frame),
+  LocalSurfaceId root_local_surface_id = allocator_.GenerateId();
+  SurfaceId root_surface_id(factory_.frame_sink_id(), root_local_surface_id);
+  factory_.SubmitCompositorFrame(root_local_surface_id, std::move(root_frame),
                                  SurfaceFactory::DrawCallback());
 
   SurfaceAggregator aggregator(&manager_, resource_provider_.get(), true);
   CompositorFrame aggregated_frame = aggregator.Aggregate(root_surface_id);
-  factory_.Destroy(root_surface_id);
 
   bool discard_alpha = false;
   ExactPixelComparator pixel_comparator(discard_alpha);
-  RenderPassList* pass_list =
-      &aggregated_frame.delegated_frame_data->render_pass_list;
+  RenderPassList* pass_list = &aggregated_frame.render_pass_list;
   EXPECT_TRUE(RunPixelTest(pass_list,
                            base::FilePath(FILE_PATH_LITERAL("green.png")),
                            pixel_comparator));
@@ -101,13 +103,16 @@ TEST_F(SurfacesPixelTest, DrawSimpleFrame) {
 // Draws a frame with simple surface embedding.
 TEST_F(SurfacesPixelTest, DrawSimpleAggregatedFrame) {
   gfx::Size child_size(200, 100);
-  SurfaceId child_surface_id = allocator_.GenerateId();
-  SurfaceId root_surface_id = allocator_.GenerateId();
-  factory_.Create(child_surface_id);
-  factory_.Create(root_surface_id);
+  SurfaceFactory child_factory(kArbitraryChildFrameSinkId, &manager_, &client_);
+  LocalSurfaceId child_local_surface_id = allocator_.GenerateId();
+  SurfaceId child_surface_id(child_factory.frame_sink_id(),
+                             child_local_surface_id);
+  LocalSurfaceId root_local_surface_id = allocator_.GenerateId();
+  SurfaceId root_surface_id(factory_.frame_sink_id(), root_local_surface_id);
+
   {
     gfx::Rect rect(device_viewport_size_);
-    RenderPassId id(1, 1);
+    int id = 1;
     std::unique_ptr<RenderPass> pass = RenderPass::Create();
     pass->SetNew(id, rect, rect, gfx::Transform());
 
@@ -117,9 +122,9 @@ TEST_F(SurfacesPixelTest, DrawSimpleAggregatedFrame) {
     SurfaceDrawQuad* surface_quad =
         pass->CreateAndAppendDrawQuad<SurfaceDrawQuad>();
     surface_quad->SetNew(pass->shared_quad_state_list.back(),
-                         gfx::Rect(child_size),
-                         gfx::Rect(child_size),
-                         child_surface_id);
+                         gfx::Rect(child_size), gfx::Rect(child_size),
+                         child_surface_id, SurfaceDrawQuadType::PRIMARY,
+                         nullptr);
 
     SolidColorDrawQuad* color_quad =
         pass->CreateAndAppendDrawQuad<SolidColorDrawQuad>();
@@ -130,20 +135,16 @@ TEST_F(SurfacesPixelTest, DrawSimpleAggregatedFrame) {
                        SK_ColorYELLOW,
                        force_anti_aliasing_off);
 
-    std::unique_ptr<DelegatedFrameData> delegated_frame_data(
-        new DelegatedFrameData);
-    delegated_frame_data->render_pass_list.push_back(std::move(pass));
-
     CompositorFrame root_frame;
-    root_frame.delegated_frame_data = std::move(delegated_frame_data);
+    root_frame.render_pass_list.push_back(std::move(pass));
 
-    factory_.SubmitCompositorFrame(root_surface_id, std::move(root_frame),
+    factory_.SubmitCompositorFrame(root_local_surface_id, std::move(root_frame),
                                    SurfaceFactory::DrawCallback());
   }
 
   {
     gfx::Rect rect(child_size);
-    RenderPassId id(1, 1);
+    int id = 1;
     std::unique_ptr<RenderPass> pass = RenderPass::Create();
     pass->SetNew(id, rect, rect, gfx::Transform());
 
@@ -159,15 +160,12 @@ TEST_F(SurfacesPixelTest, DrawSimpleAggregatedFrame) {
                        SK_ColorBLUE,
                        force_anti_aliasing_off);
 
-    std::unique_ptr<DelegatedFrameData> delegated_frame_data(
-        new DelegatedFrameData);
-    delegated_frame_data->render_pass_list.push_back(std::move(pass));
-
     CompositorFrame child_frame;
-    child_frame.delegated_frame_data = std::move(delegated_frame_data);
+    child_frame.render_pass_list.push_back(std::move(pass));
 
-    factory_.SubmitCompositorFrame(child_surface_id, std::move(child_frame),
-                                   SurfaceFactory::DrawCallback());
+    child_factory.SubmitCompositorFrame(child_local_surface_id,
+                                        std::move(child_frame),
+                                        SurfaceFactory::DrawCallback());
   }
 
   SurfaceAggregator aggregator(&manager_, resource_provider_.get(), true);
@@ -175,13 +173,12 @@ TEST_F(SurfacesPixelTest, DrawSimpleAggregatedFrame) {
 
   bool discard_alpha = false;
   ExactPixelComparator pixel_comparator(discard_alpha);
-  RenderPassList* pass_list =
-      &aggregated_frame.delegated_frame_data->render_pass_list;
+  RenderPassList* pass_list = &aggregated_frame.render_pass_list;
   EXPECT_TRUE(RunPixelTest(pass_list,
                            base::FilePath(FILE_PATH_LITERAL("blue_yellow.png")),
                            pixel_comparator));
-  factory_.Destroy(root_surface_id);
-  factory_.Destroy(child_surface_id);
+
+  child_factory.EvictSurface();
 }
 
 // Tests a surface quad that has a non-identity transform into its pass.
@@ -195,16 +192,18 @@ TEST_F(SurfacesPixelTest, DrawAggregatedFrameWithSurfaceTransforms) {
   //                 bottom_blue_quad (100x100 @ 0x100)
   //   right_child -> top_blue_quad (100x100 @ 0x0),
   //                  bottom_green_quad (100x100 @ 0x100)
-  SurfaceId left_child_id = allocator_.GenerateId();
-  SurfaceId right_child_id = allocator_.GenerateId();
-  SurfaceId root_surface_id = allocator_.GenerateId();
-  factory_.Create(left_child_id);
-  factory_.Create(right_child_id);
-  factory_.Create(root_surface_id);
+  SurfaceFactory left_factory(kArbitraryLeftFrameSinkId, &manager_, &client_);
+  SurfaceFactory right_factory(kArbitraryRightFrameSinkId, &manager_, &client_);
+  LocalSurfaceId left_child_local_id = allocator_.GenerateId();
+  SurfaceId left_child_id(left_factory.frame_sink_id(), left_child_local_id);
+  LocalSurfaceId right_child_local_id = allocator_.GenerateId();
+  SurfaceId right_child_id(right_factory.frame_sink_id(), right_child_local_id);
+  LocalSurfaceId root_local_surface_id = allocator_.GenerateId();
+  SurfaceId root_surface_id(factory_.frame_sink_id(), root_local_surface_id);
 
   {
     gfx::Rect rect(device_viewport_size_);
-    RenderPassId id(1, 1);
+    int id = 1;
     std::unique_ptr<RenderPass> pass = RenderPass::Create();
     pass->SetNew(id, rect, rect, gfx::Transform());
 
@@ -215,9 +214,9 @@ TEST_F(SurfacesPixelTest, DrawAggregatedFrameWithSurfaceTransforms) {
     SurfaceDrawQuad* left_surface_quad =
         pass->CreateAndAppendDrawQuad<SurfaceDrawQuad>();
     left_surface_quad->SetNew(pass->shared_quad_state_list.back(),
-                              gfx::Rect(child_size),
-                              gfx::Rect(child_size),
-                              left_child_id);
+                              gfx::Rect(child_size), gfx::Rect(child_size),
+                              left_child_id, SurfaceDrawQuadType::PRIMARY,
+                              nullptr);
 
     surface_transform.Translate(100, 0);
     CreateAndAppendTestSharedQuadState(
@@ -226,24 +225,20 @@ TEST_F(SurfacesPixelTest, DrawAggregatedFrameWithSurfaceTransforms) {
     SurfaceDrawQuad* right_surface_quad =
         pass->CreateAndAppendDrawQuad<SurfaceDrawQuad>();
     right_surface_quad->SetNew(pass->shared_quad_state_list.back(),
-                               gfx::Rect(child_size),
-                               gfx::Rect(child_size),
-                               right_child_id);
-
-    std::unique_ptr<DelegatedFrameData> delegated_frame_data(
-        new DelegatedFrameData);
-    delegated_frame_data->render_pass_list.push_back(std::move(pass));
+                               gfx::Rect(child_size), gfx::Rect(child_size),
+                               right_child_id, SurfaceDrawQuadType::PRIMARY,
+                               nullptr);
 
     CompositorFrame root_frame;
-    root_frame.delegated_frame_data = std::move(delegated_frame_data);
+    root_frame.render_pass_list.push_back(std::move(pass));
 
-    factory_.SubmitCompositorFrame(root_surface_id, std::move(root_frame),
+    factory_.SubmitCompositorFrame(root_local_surface_id, std::move(root_frame),
                                    SurfaceFactory::DrawCallback());
   }
 
   {
     gfx::Rect rect(child_size);
-    RenderPassId id(1, 1);
+    int id = 1;
     std::unique_ptr<RenderPass> pass = RenderPass::Create();
     pass->SetNew(id, rect, rect, gfx::Transform());
 
@@ -267,20 +262,17 @@ TEST_F(SurfacesPixelTest, DrawAggregatedFrameWithSurfaceTransforms) {
                               SK_ColorBLUE,
                               force_anti_aliasing_off);
 
-    std::unique_ptr<DelegatedFrameData> delegated_frame_data(
-        new DelegatedFrameData);
-    delegated_frame_data->render_pass_list.push_back(std::move(pass));
-
     CompositorFrame child_frame;
-    child_frame.delegated_frame_data = std::move(delegated_frame_data);
+    child_frame.render_pass_list.push_back(std::move(pass));
 
-    factory_.SubmitCompositorFrame(left_child_id, std::move(child_frame),
-                                   SurfaceFactory::DrawCallback());
+    left_factory.SubmitCompositorFrame(left_child_local_id,
+                                       std::move(child_frame),
+                                       SurfaceFactory::DrawCallback());
   }
 
   {
     gfx::Rect rect(child_size);
-    RenderPassId id(1, 1);
+    int id = 1;
     std::unique_ptr<RenderPass> pass = RenderPass::Create();
     pass->SetNew(id, rect, rect, gfx::Transform());
 
@@ -304,15 +296,12 @@ TEST_F(SurfacesPixelTest, DrawAggregatedFrameWithSurfaceTransforms) {
                               SK_ColorGREEN,
                               force_anti_aliasing_off);
 
-    std::unique_ptr<DelegatedFrameData> delegated_frame_data(
-        new DelegatedFrameData);
-    delegated_frame_data->render_pass_list.push_back(std::move(pass));
-
     CompositorFrame child_frame;
-    child_frame.delegated_frame_data = std::move(delegated_frame_data);
+    child_frame.render_pass_list.push_back(std::move(pass));
 
-    factory_.SubmitCompositorFrame(right_child_id, std::move(child_frame),
-                                   SurfaceFactory::DrawCallback());
+    right_factory.SubmitCompositorFrame(right_child_local_id,
+                                        std::move(child_frame),
+                                        SurfaceFactory::DrawCallback());
   }
 
   SurfaceAggregator aggregator(&manager_, resource_provider_.get(), true);
@@ -320,16 +309,14 @@ TEST_F(SurfacesPixelTest, DrawAggregatedFrameWithSurfaceTransforms) {
 
   bool discard_alpha = false;
   ExactPixelComparator pixel_comparator(discard_alpha);
-  RenderPassList* pass_list =
-      &aggregated_frame.delegated_frame_data->render_pass_list;
+  RenderPassList* pass_list = &aggregated_frame.render_pass_list;
   EXPECT_TRUE(RunPixelTest(
       pass_list,
       base::FilePath(FILE_PATH_LITERAL("four_blue_green_checkers.png")),
       pixel_comparator));
 
-  factory_.Destroy(root_surface_id);
-  factory_.Destroy(left_child_id);
-  factory_.Destroy(right_child_id);
+  left_factory.EvictSurface();
+  right_factory.EvictSurface();
 }
 
 }  // namespace

@@ -5,9 +5,12 @@
 cr.define('device_page_tests', function() {
   /** @enum {string} */
   var TestNames = {
+    DevicePage: 'device page',
     Display: 'display',
     Keyboard: 'keyboard',
-    Touchpad: 'touchpad',
+    Pointers: 'pointers',
+    Power: 'power',
+    Stylus: 'stylus',
   };
 
   /**
@@ -16,9 +19,26 @@ cr.define('device_page_tests', function() {
    */
   function TestDevicePageBrowserProxy() {
     this.keyboardShortcutsOverlayShown_ = 0;
+    this.updatePowerStatusCalled_ = 0;
+    this.onNoteTakingAppsUpdated_ = null;
+    this.requestNoteTakingApps_ = 0;
+    this.setPreferredNoteTakingApp_ = '';
   }
 
   TestDevicePageBrowserProxy.prototype = {
+    /** override */
+    initializePointers: function() {
+      // Enable mouse and touchpad.
+      cr.webUIListenerCallback('has-mouse-changed', true);
+      cr.webUIListenerCallback('has-touchpad-changed', true);
+    },
+
+    /** override */
+    initializeStylus: function() {
+      // Enable stylus.
+      cr.webUIListenerCallback('has-stylus-changed', true);
+    },
+
     /** @override */
     handleLinkEvent: function(e) {
       settings.DevicePageBrowserProxyImpl.prototype.handleLinkEvent.call(
@@ -34,10 +54,35 @@ cr.define('device_page_tests', function() {
     showKeyboardShortcutsOverlay: function() {
       this.keyboardShortcutsOverlayShown_++;
     },
+
+    /** @override */
+    updatePowerStatus: function() {
+      this.updatePowerStatusCalled_++;
+    },
+
+    /** @override */
+    setPowerSource: function(powerSourceId) {
+      this.powerSourceId_ = powerSourceId;
+    },
+
+    /** @override */
+    setNoteTakingAppsUpdatedCallback: function(callback) {
+      this.onNoteTakingAppsUpdated_ = callback;
+    },
+
+    /** @override */
+    requestNoteTakingApps: function() {
+      this.requestNoteTakingApps_++;
+    },
+
+    /** @override */
+    setPreferredNoteTakingApp: function(appId) {
+      this.setPreferredNoteTakingApp_ = appId;
+    },
   };
 
-  suite('SettingsDevicePage', function() {
-    var fakePrefs = {
+  function getFakePrefs() {
+    return {
       settings: {
         touchpad: {
           enable_tap_to_click: {
@@ -48,12 +93,29 @@ cr.define('device_page_tests', function() {
           enable_tap_dragging: {
             key: 'settings.touchpad.enable_tap_dragging',
             type: chrome.settingsPrivate.PrefType.BOOLEAN,
-            value: true,
+            value: false,
           },
           natural_scroll: {
             key: 'settings.touchpad.natural_scroll',
             type: chrome.settingsPrivate.PrefType.BOOLEAN,
             value: false,
+          },
+          sensitivity2: {
+            key: 'settings.touchpad.sensitivity2',
+            type: chrome.settingsPrivate.PrefType.NUMBER,
+            value: 3,
+          },
+        },
+        mouse: {
+          primary_right: {
+            key: 'settings.mouse.primary_right',
+            type: chrome.settingsPrivate.PrefType.BOOLEAN,
+            value: false,
+          },
+          sensitivity2: {
+            key: 'settings.mouse.sensitivity2',
+            type: chrome.settingsPrivate.PrefType.NUMBER,
+            value: 4,
           },
         },
         language: {
@@ -82,6 +144,16 @@ cr.define('device_page_tests', function() {
             type: chrome.settingsPrivate.PrefType.NUMBER,
             value: 3,
           },
+          remap_escape_key_to: {
+            key: 'settings.language.remap_escape_key_to',
+            type: chrome.settingsPrivate.PrefType.NUMBER,
+            value: 5,
+          },
+          remap_backspace_key_to: {
+            key: 'settings.language.remap_backspace_key_to',
+            type: chrome.settingsPrivate.PrefType.NUMBER,
+            value: 6,
+          },
           send_function_keys: {
             key: 'settings.language.send_function_keys',
             type: chrome.settingsPrivate.PrefType.BOOLEAN,
@@ -105,7 +177,9 @@ cr.define('device_page_tests', function() {
         }
       }
     };
+  }
 
+  suite('SettingsDevicePage', function() {
     /** @type {!SettingsDevicePage|undefined} */
     var devicePage;
 
@@ -122,45 +196,45 @@ cr.define('device_page_tests', function() {
       settings.display.systemDisplayApi = fakeSystemDisplay;
 
       PolymerTest.clearBody();
+      settings.navigateTo(settings.Route.BASIC);
+
       devicePage = document.createElement('settings-device-page');
-      devicePage.currentRoute = {page: 'basic', section: '', subpage: []};
-      devicePage.prefs = fakePrefs;
+      devicePage.prefs = getFakePrefs();
       settings.DevicePageBrowserProxyImpl.instance_ =
           new TestDevicePageBrowserProxy();
-      document.body.appendChild(devicePage);
+
+      // settings-animated-pages expects a parent with data-page set.
+      var basicPage = document.createElement('div');
+      basicPage.dataset.page = 'basic';
+      basicPage.appendChild(devicePage);
+      document.body.appendChild(basicPage);
 
       // Allow the light DOM to be distributed to settings-animated-pages.
       setTimeout(done);
     });
 
-    /** @return {!Promise<!Element>} */
-    function showAndGetDeviceSubpage(subpage) {
-      Polymer.dom.flush();
-      var row = devicePage.$$('#main #' + subpage + 'Row');
-      assertTrue(!!row);
-      MockInteractions.tap(row);
-
-      // The 0-duration animation still requires flushing the task queue.
+    /** @return {!Promise<!HTMLElement>} */
+    function showAndGetDeviceSubpage(subpage, expectedRoute) {
       return new Promise(function(resolve, reject) {
-        expectEquals('device', devicePage.currentRoute.section);
-        expectEquals(subpage, devicePage.currentRoute.subpage[0]);
-        var page = devicePage.$$('#' + subpage + ' settings-' + subpage);
-        assertTrue(!!page);
-        setTimeout(function() {
-          resolve(page);
-        });
+        var row = assert(devicePage.$$('#main #' + subpage + 'Row'));
+        devicePage.$.pages.addEventListener('neon-animation-finish', resolve);
+        MockInteractions.tap(row);
+      }).then(function() {
+        assertEquals(expectedRoute, settings.getCurrentRoute());
+        var page = devicePage.$$('settings-' + subpage);
+        return assert(page);
       });
     };
 
     /**
-     * @param {!HTMLElement} touchpadPage
+     * @param {!HTMLElement} pointersPage
      * @param {Boolean} expected
      */
-    function expectNaturalScrollValue(touchpadPage, expected) {
+    function expectNaturalScrollValue(pointersPage, expected) {
       var naturalScrollOff =
-          touchpadPage.$$('paper-radio-button[name="false"]');
+          pointersPage.$$('paper-radio-button[name="false"]');
       var naturalScrollOn =
-          touchpadPage.$$('paper-radio-button[name="true"]');
+          pointersPage.$$('paper-radio-button[name="true"]');
       assertTrue(!!naturalScrollOff);
       assertTrue(!!naturalScrollOn);
 
@@ -170,36 +244,128 @@ cr.define('device_page_tests', function() {
                    devicePage.prefs.settings.touchpad.natural_scroll.value);
     }
 
-    test(assert(TestNames.Touchpad), function(done) {
-      showAndGetDeviceSubpage('touchpad').then(function(touchpadPage) {
-        expectNaturalScrollValue(touchpadPage, false);
+    test(assert(TestNames.DevicePage), function() {
+      expectLT(0, devicePage.$.pointersRow.offsetHeight);
+      expectLT(0, devicePage.$.keyboardRow.offsetHeight);
+      expectLT(0, devicePage.$.displayRow.offsetHeight);
+
+      cr.webUIListenerCallback('has-mouse-changed', false);
+      expectLT(0, devicePage.$.pointersRow.offsetHeight);
+      cr.webUIListenerCallback('has-touchpad-changed', false);
+      expectEquals(0, devicePage.$.pointersRow.offsetHeight);
+      cr.webUIListenerCallback('has-mouse-changed', true);
+      expectLT(0, devicePage.$.pointersRow.offsetHeight);
+    });
+
+    suite(assert(TestNames.Pointers), function() {
+      var pointersPage;
+
+      setup(function() {
+        return showAndGetDeviceSubpage(
+            'pointers', settings.Route.POINTERS).then(function(page) {
+              pointersPage = page;
+            });
+      });
+
+      test('subpage responds to pointer attach/detach', function() {
+        assertEquals(settings.Route.POINTERS, settings.getCurrentRoute());
+        assertLT(0, pointersPage.$.mouse.offsetHeight);
+        assertLT(0, pointersPage.$.touchpad.offsetHeight);
+        assertLT(0, pointersPage.$$('#mouse h2').offsetHeight);
+        assertLT(0, pointersPage.$$('#touchpad h2').offsetHeight);
+
+        cr.webUIListenerCallback('has-touchpad-changed', false);
+        assertEquals(settings.Route.POINTERS, settings.getCurrentRoute());
+        assertLT(0, pointersPage.$.mouse.offsetHeight);
+        assertEquals(0, pointersPage.$.touchpad.offsetHeight);
+        assertEquals(0, pointersPage.$$('#mouse h2').offsetHeight);
+        assertEquals(0, pointersPage.$$('#touchpad h2').offsetHeight);
+
+        // Wait for the transition back to the main page.
+        return new Promise(function(resolve, reject) {
+          devicePage.$.pages.addEventListener('neon-animation-finish', resolve);
+
+          cr.webUIListenerCallback('has-mouse-changed', false);
+        }).then(function() {
+          assertEquals(settings.Route.DEVICE, settings.getCurrentRoute());
+          assertEquals(0, devicePage.$$('#main #pointersRow').offsetHeight);
+
+          cr.webUIListenerCallback('has-touchpad-changed', true);
+          assertLT(0, devicePage.$$('#main #pointersRow').offsetHeight);
+          return showAndGetDeviceSubpage('pointers', settings.Route.POINTERS);
+        }).then(function(page) {
+          assertEquals(0, pointersPage.$.mouse.offsetHeight);
+          assertLT(0, pointersPage.$.touchpad.offsetHeight);
+          assertEquals(0, pointersPage.$$('#mouse h2').offsetHeight);
+          assertEquals(0, pointersPage.$$('#touchpad h2').offsetHeight);
+
+          cr.webUIListenerCallback('has-mouse-changed', true);
+          assertEquals(settings.Route.POINTERS, settings.getCurrentRoute());
+          assertLT(0, pointersPage.$.mouse.offsetHeight);
+          assertLT(0, pointersPage.$.touchpad.offsetHeight);
+          assertLT(0, pointersPage.$$('#mouse h2').offsetHeight);
+          assertLT(0, pointersPage.$$('#touchpad h2').offsetHeight);
+        });
+      });
+
+      test('mouse', function() {
+        expectLT(0, pointersPage.$.mouse.offsetHeight);
+
+        expectFalse(pointersPage.$$('#mouse settings-toggle-button').checked);
+
+        var slider = assert(pointersPage.$$('#mouse cr-slider'));
+        expectEquals(4, slider.value);
+        MockInteractions.pressAndReleaseKeyOn(slider.$.slider, 37 /* left */);
+        expectEquals(3, devicePage.prefs.settings.mouse.sensitivity2.value);
+
+        pointersPage.set('prefs.settings.mouse.sensitivity2.value', 5);
+        expectEquals(5, slider.value);
+      });
+
+      test('touchpad', function() {
+        expectLT(0, pointersPage.$.touchpad.offsetHeight);
+
+        expectTrue(pointersPage.$$('#touchpad #enableTapToClick').checked);
+        expectFalse(pointersPage.$$('#touchpad #enableTapDragging').checked);
+
+        var slider = assert(pointersPage.$$('#touchpad cr-slider'));
+        expectEquals(3, slider.value);
+        MockInteractions.pressAndReleaseKeyOn(
+            slider.$.slider, 39 /* right */);
+        expectEquals(4, devicePage.prefs.settings.touchpad.sensitivity2.value);
+
+        pointersPage.set('prefs.settings.touchpad.sensitivity2.value', 2);
+        expectEquals(2, slider.value);
+      });
+
+      test('link doesn\'t activate control', function(done) {
+        expectNaturalScrollValue(pointersPage, false);
 
         // Tapping the link shouldn't enable the radio button.
         var naturalScrollOn =
-            touchpadPage.$$('paper-radio-button[name="true"]');
+            pointersPage.$$('paper-radio-button[name="true"]');
         var a = naturalScrollOn.querySelector('a');
 
         MockInteractions.tap(a);
-        expectNaturalScrollValue(touchpadPage, false);
+        expectNaturalScrollValue(pointersPage, false);
 
         MockInteractions.tap(naturalScrollOn);
-        expectNaturalScrollValue(touchpadPage, true);
-
+        expectNaturalScrollValue(pointersPage, true);
         devicePage.set('prefs.settings.touchpad.natural_scroll.value', false);
-        expectNaturalScrollValue(touchpadPage, false);
+        expectNaturalScrollValue(pointersPage, false);
 
         // Enter on the link shouldn't enable the radio button either.
         MockInteractions.pressEnter(a);
 
-        // Annoyingly, we have to schedule an async event with a timeout greater
-        // than or equal to the timeout used by IronButtonState (1).
+        // Annoyingly, we have to schedule an async event with a timeout
+        // greater than or equal to the timeout used by IronButtonState (1).
         // https://github.com/PolymerElements/iron-behaviors/issues/54
         Polymer.Base.async(function() {
-          expectNaturalScrollValue(touchpadPage, false);
+          expectNaturalScrollValue(pointersPage, false);
 
           MockInteractions.pressEnter(naturalScrollOn);
           Polymer.Base.async(function() {
-            expectNaturalScrollValue(touchpadPage, true);
+            expectNaturalScrollValue(pointersPage, true);
             done();
           }, 1);
         }, 1);
@@ -208,7 +374,8 @@ cr.define('device_page_tests', function() {
 
     test(assert(TestNames.Keyboard), function() {
       // Open the keyboard subpage.
-      return showAndGetDeviceSubpage('keyboard').then(function(keyboardPage) {
+      return showAndGetDeviceSubpage(
+          'keyboard', settings.Route.KEYBOARD).then(function(keyboardPage) {
         // Initially, the optional keys are hidden.
         expectFalse(!!keyboardPage.$$('#capsLockKey'));
         expectFalse(!!keyboardPage.$$('#diamondKey'));
@@ -242,11 +409,12 @@ cr.define('device_page_tests', function() {
             keyboardPage.$.delaySlider.$.slider, 37 /* left */);
         MockInteractions.pressAndReleaseKeyOn(
             keyboardPage.$.repeatRateSlider.$.slider, 39 /* right */);
-        expectEquals(
-            1000, fakePrefs.settings.language.xkb_auto_repeat_delay_r2.value);
+        expectEquals(1000,
+            devicePage.prefs.settings.language.xkb_auto_repeat_delay_r2.value);
         expectEquals(
             300,
-            fakePrefs.settings.language.xkb_auto_repeat_interval_r2.value);
+            devicePage.prefs.settings.language.xkb_auto_repeat_interval_r2.value
+        );
 
         // Test sliders change when prefs change.
         devicePage.set(
@@ -260,10 +428,10 @@ cr.define('device_page_tests', function() {
         // Test sliders round to nearest value when prefs change.
         devicePage.set(
             'prefs.settings.language.xkb_auto_repeat_delay_r2.value', 600);
-        expectEquals(600, keyboardPage.$.delaySlider.value);
+        expectEquals(500, keyboardPage.$.delaySlider.value);
         devicePage.set(
             'prefs.settings.language.xkb_auto_repeat_interval_r2.value', 45);
-        expectEquals(45, keyboardPage.$.repeatRateSlider.value);
+        expectEquals(50, keyboardPage.$.repeatRateSlider.value);
 
         devicePage.set(
             'prefs.settings.language.xkb_auto_repeat_enabled_r2.value',
@@ -280,10 +448,6 @@ cr.define('device_page_tests', function() {
     });
 
     test(assert(TestNames.Display), function() {
-      // Open the display subpage.
-      var displayPage = showAndGetDeviceSubpage('display');
-      assertTrue(!!displayPage);
-
       var addDisplay = function(n) {
         var display = {
           id: 'fakeDisplayId' + n,
@@ -305,7 +469,8 @@ cr.define('device_page_tests', function() {
       var displayPage;
       return Promise.all([
         // Get the display sub-page.
-        showAndGetDeviceSubpage('display').then(function(page) {
+        showAndGetDeviceSubpage(
+            'display', settings.Route.DISPLAY).then(function(page) {
           displayPage = page;
         }),
         // Wait for the initial call to getInfo.
@@ -318,7 +483,6 @@ cr.define('device_page_tests', function() {
         return Promise.all([
           fakeSystemDisplay.getInfoCalled.promise,
           fakeSystemDisplay.getLayoutCalled.promise,
-          new Promise(function(resolve, reject) { setTimeout(resolve); })
         ]);
       }).then(function() {
         // There should be a single display which should be primary and
@@ -360,8 +524,8 @@ cr.define('device_page_tests', function() {
         expectEquals(
             displayPage.displays[1].id, displayPage.selectedDisplay.id);
 
-        displayPage.onMakePrimaryTap_();
-        displayPage.onSetOrientation_({detail: {selected: '90'}});
+        displayPage.updatePrimaryDisplay_({target: {value: '0'}});
+        displayPage.onOrientationChange_({target: {value: '90'}});
         fakeSystemDisplay.onDisplayChanged.callListeners();
 
         return Promise.all([
@@ -396,6 +560,251 @@ cr.define('device_page_tests', function() {
         expectTrue(displayPage.displays[0].isPrimary);
         expectTrue(displayPage.showMirror_(displayPage.displays));
         expectTrue(displayPage.isMirrored_(displayPage.displays));
+      });
+    });
+
+    suite(assert(TestNames.Power), function() {
+      /**
+       * Sets power sources using a deep copy of |sources|.
+       * @param {Array<settings.PowerSource>} sources
+       * @param {string} powerSourceId
+       * @param {bool} isLowPowerCharger
+       */
+      function setPowerSources(sources, powerSourceId, isLowPowerCharger) {
+        var sourcesCopy = sources.map(function(source) {
+          return Object.assign({}, source);
+        });
+        cr.webUIListenerCallback('power-sources-changed',
+            sourcesCopy, powerSourceId, isLowPowerCharger);
+      }
+
+      suite('no power settings', function() {
+        test('power row hidden', function() {
+          assertEquals(null, devicePage.$$('#powerRow'));
+          assertEquals(0,
+              settings.DevicePageBrowserProxyImpl.getInstance()
+              .updatePowerStatusCalled_);
+        });
+      });
+
+      suite('power settings', function() {
+        var powerPage;
+        var powerSourceRow;
+        var powerSourceWrapper;
+        var powerSourceSelect;
+
+        suiteSetup(function() {
+          // Always show power settings.
+          loadTimeData.overrideValues({
+            enablePowerSettings: true,
+          });
+        });
+
+        setup(function() {
+          return showAndGetDeviceSubpage('power', settings.Route.POWER)
+              .then(function(page) {
+                powerPage = page;
+                powerSourceRow = assert(powerPage.$$('#powerSourceRow'));
+                powerSourceWrapper =
+                    assert(powerSourceRow.querySelector('.md-select-wrapper'));
+                powerSourceSelect = assert(powerPage.$$('#powerSource'));
+                assertEquals(
+                    1,
+                    settings.DevicePageBrowserProxyImpl.getInstance()
+                        .updatePowerStatusCalled_);
+              });
+        });
+
+        test('power sources', function() {
+          var batteryStatus = {
+            charging: false,
+            calculating: false,
+            percent: 50,
+            statusText: '5 hours left',
+          };
+          cr.webUIListenerCallback(
+              'battery-status-changed', Object.assign({}, batteryStatus));
+          setPowerSources([], '', false);
+          Polymer.dom.flush();
+
+          // Power sources dropdown is hidden.
+          assertTrue(powerSourceWrapper.hidden);
+
+          // Attach a dual-role USB device.
+          var powerSource = {
+            id: '2',
+            type: settings.PowerDeviceType.DUAL_ROLE_USB,
+            description: 'USB-C device',
+          };
+          setPowerSources([powerSource], '', false);
+          Polymer.dom.flush();
+
+          // "Battery" should be selected.
+          assertFalse(powerSourceWrapper.hidden);
+          assertEquals('', powerSourceSelect.value);
+
+          // Select the power source.
+          setPowerSources([powerSource], powerSource.id, true);
+          Polymer.dom.flush();
+          assertFalse(powerSourceWrapper.hidden);
+          assertEquals(powerSource.id, powerSourceSelect.value);
+
+          // Send another power source; the first should still be selected.
+          var otherPowerSource = Object.assign({}, powerSource);
+          otherPowerSource.id = '3';
+          setPowerSources(
+              [otherPowerSource, powerSource], powerSource.id, true);
+          Polymer.dom.flush();
+          assertFalse(powerSourceWrapper.hidden);
+          assertEquals(powerSource.id, powerSourceSelect.value);
+        });
+
+        test('choose power source', function() {
+          var batteryStatus = {
+            charging: false,
+            calculating: false,
+            percent: 50,
+            statusText: '5 hours left',
+          };
+          cr.webUIListenerCallback(
+              'battery-status-changed', Object.assign({}, batteryStatus));
+
+          // Attach a dual-role USB device.
+          var powerSource = {
+            id: '3',
+            type: settings.PowerDeviceType.DUAL_ROLE_USB,
+            description: 'USB-C device',
+          };
+          setPowerSources([powerSource], '', false);
+          Polymer.dom.flush();
+
+          // Select the device.
+          powerSourceSelect.value = powerSourceSelect.children[1].value;
+          powerSourceSelect.dispatchEvent(new CustomEvent('change'));
+          Polymer.dom.flush();
+          expectEquals(
+              powerSource.id,
+              settings.DevicePageBrowserProxyImpl.getInstance().powerSourceId_);
+        });
+      });
+    });
+
+    suite(assert(TestNames.Stylus), function() {
+      var stylusPage;
+      var appSelector;
+      var browserProxy;
+      var noAppsDiv;
+      var waitingDiv;
+      var selectAppDiv;
+
+      suiteSetup(function() {
+        // Always show stylus settings.
+        loadTimeData.overrideValues({
+          stylusAllowed: true,
+        });
+      });
+
+      setup(function() {
+        return showAndGetDeviceSubpage('stylus', settings.Route.STYLUS).then(
+            function(page) {
+              stylusPage = page;
+              browserProxy = settings.DevicePageBrowserProxyImpl.getInstance();
+              appSelector = assert(page.$$('#menu'));
+              noAppsDiv = assert(page.$$('#no-apps'));
+              waitingDiv = assert(page.$$('#waiting'));
+              selectAppDiv = assert(page.$$('#select-app'));
+
+              assertEquals(1, browserProxy.requestNoteTakingApps_);
+              assertEquals('', browserProxy.setPreferredNoteTakingApp_);
+              assert(browserProxy.onNoteTakingAppsUpdated_);
+            });
+      });
+
+      // Helper function to allocate a note app entry.
+      function entry(name, value, preferred) {
+        return {
+          name: name,
+          value: value,
+          preferred: preferred
+        };
+      }
+
+      test('initial app choice selector value', function() {
+        // Selector chooses the first value in list if there is no preferred
+        // value set.
+        browserProxy.onNoteTakingAppsUpdated_(
+            [entry('n1', 'v1', false), entry('n2', 'v2', false)], false);
+        Polymer.dom.flush();
+        assertEquals('v1', appSelector.value);
+
+        // Selector chooses the preferred value if set.
+        browserProxy.onNoteTakingAppsUpdated_(
+            [entry('n1', 'v1', false), entry('n2', 'v2', true)], false);
+        Polymer.dom.flush();
+        assertEquals('v2', appSelector.value);
+      });
+
+      test('change preferred app', function() {
+        // Load app list.
+        browserProxy.onNoteTakingAppsUpdated_(
+            [entry('n1', 'v1', false), entry('n2', 'v2', true)], false);
+        Polymer.dom.flush();
+        assertEquals('', browserProxy.setPreferredNoteTakingApp_);
+
+        // Update select element to new value, verify browser proxy is called.
+        appSelector.value = 'v1';
+        stylusPage.onSelectedAppChanged_();
+        assertEquals('v1', browserProxy.setPreferredNoteTakingApp_);
+      });
+
+      test('preferred app does not change without interaction', function() {
+        // Pass various types of data to page, verify the preferred note-app
+        // does not change.
+        browserProxy.onNoteTakingAppsUpdated_([], false);
+        Polymer.dom.flush();
+        assertEquals('', browserProxy.setPreferredNoteTakingApp_);
+
+        browserProxy.onNoteTakingAppsUpdated_([], true);
+        Polymer.dom.flush();
+        assertEquals('', browserProxy.setPreferredNoteTakingApp_);
+
+        browserProxy.onNoteTakingAppsUpdated_([entry('n', 'v', false)], true);
+        Polymer.dom.flush();
+        assertEquals('', browserProxy.setPreferredNoteTakingApp_);
+
+        browserProxy.onNoteTakingAppsUpdated_([entry('n', 'v', false)], false);
+        Polymer.dom.flush();
+        assertEquals('', browserProxy.setPreferredNoteTakingApp_);
+
+        browserProxy.onNoteTakingAppsUpdated_(
+            [entry('n1', 'v1', false), entry('n2', 'v2', true)], false);
+        Polymer.dom.flush();
+        assertEquals('', browserProxy.setPreferredNoteTakingApp_);
+      });
+
+      test('app-visibility', function() {
+        // No apps available.
+        browserProxy.onNoteTakingAppsUpdated_([], false);
+        assert(!noAppsDiv.hidden);
+        assert(waitingDiv.hidden);
+        assert(selectAppDiv.hidden);
+
+        // Waiting for apps to finish loading.
+        browserProxy.onNoteTakingAppsUpdated_([], true);
+        assert(noAppsDiv.hidden);
+        assert(!waitingDiv.hidden);
+        assert(selectAppDiv.hidden);
+
+        browserProxy.onNoteTakingAppsUpdated_([entry('n', 'v', false)], true);
+        assert(noAppsDiv.hidden);
+        assert(!waitingDiv.hidden);
+        assert(selectAppDiv.hidden);
+
+        // Apps loaded, show selector.
+        browserProxy.onNoteTakingAppsUpdated_([entry('n', 'v', false)], false);
+        assert(noAppsDiv.hidden);
+        assert(waitingDiv.hidden);
+        assert(!selectAppDiv.hidden);
       });
     });
   });

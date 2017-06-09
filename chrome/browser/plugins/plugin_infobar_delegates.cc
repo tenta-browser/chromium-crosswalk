@@ -10,6 +10,7 @@
 #include "base/path_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
+#include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/browser/plugins/chrome_plugin_service_filter.h"
@@ -17,21 +18,22 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/shell_integration.h"
 #include "chrome/browser/ui/browser_commands.h"
+#include "chrome/common/features.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/locale_settings.h"
+#include "chrome/grit/theme_resources.h"
 #include "components/google/core/browser/google_util.h"
 #include "components/infobars/core/infobar.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/user_metrics.h"
 #include "content/public/browser/web_contents.h"
-#include "grit/components_strings.h"
-#include "grit/theme_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 
-#if defined(ENABLE_PLUGIN_INSTALLATION)
+#if BUILDFLAG(ENABLE_PLUGIN_INSTALLATION)
 #include "chrome/browser/plugins/plugin_installer.h"
 #endif
 
@@ -42,7 +44,7 @@
 
 using base::UserMetricsAction;
 
-#if defined(ENABLE_PLUGIN_INSTALLATION)
+#if BUILDFLAG(ENABLE_PLUGIN_INSTALLATION)
 
 // OutdatedPluginInfoBarDelegate ----------------------------------------------
 
@@ -108,8 +110,8 @@ void OutdatedPluginInfoBarDelegate::InfoBarDismissed() {
   content::RecordAction(UserMetricsAction("OutdatedPluginInfobar.Dismissed"));
 }
 
-int OutdatedPluginInfoBarDelegate::GetIconId() const {
-  return IDR_INFOBAR_PLUGIN_INSTALL;
+const gfx::VectorIcon& OutdatedPluginInfoBarDelegate::GetVectorIcon() const {
+  return kExtensionIcon;
 }
 
 base::string16 OutdatedPluginInfoBarDelegate::GetMessageText() const {
@@ -210,4 +212,4 @@ void OutdatedPluginInfoBarDelegate::Replace(
                            installer, std::move(plugin_metadata), message))));
 }
 
-#endif  // defined(ENABLE_PLUGIN_INSTALLATION)
+#endif  // BUILDFLAG(ENABLE_PLUGIN_INSTALLATION)

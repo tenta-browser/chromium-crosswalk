@@ -9,6 +9,7 @@
 
 #include "base/bind.h"
 #include "base/command_line.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
@@ -30,7 +31,9 @@
 #include "content/public/browser/resource_dispatcher_host.h"
 #include "content/public/browser/resource_request_info.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/browser/web_contents_delegate.h"
 #include "content/public/common/origin_util.h"
+#include "extensions/features/features.h"
 #include "net/base/auth.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/load_flags.h"
@@ -40,17 +43,20 @@
 #include "net/url_request/url_request_context.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/text_elider.h"
+#include "url/origin.h"
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "components/guest_view/browser/guest_view_base.h"
 #include "extensions/browser/view_type_utils.h"
+#endif
+
+#if !defined(OS_ANDROID)
+#include "chrome/browser/ui/blocked_content/app_modal_dialog_helper.h"
 #endif
 
 using autofill::PasswordForm;
 using content::BrowserThread;
 using content::NavigationController;
-using content::RenderViewHost;
-using content::RenderViewHostDelegate;
 using content::ResourceDispatcherHost;
 using content::ResourceRequestInfo;
 using content::WebContents;
@@ -59,11 +65,26 @@ class LoginHandlerImpl;
 
 namespace {
 
+// Auth prompt types for UMA. Do not reorder or delete entries; only add to the
+// end.
+enum AuthPromptType {
+  AUTH_PROMPT_TYPE_WITH_INTERSTITIAL = 0,
+  AUTH_PROMPT_TYPE_MAIN_FRAME = 1,
+  AUTH_PROMPT_TYPE_SUBRESOURCE_SAME_ORIGIN = 2,
+  AUTH_PROMPT_TYPE_SUBRESOURCE_CROSS_ORIGIN = 3,
+  AUTH_PROMPT_TYPE_ENUM_COUNT = 4
+};
+
 // Helper to remove the ref from an net::URLRequest to the LoginHandler.
 // Should only be called from the IO thread, since it accesses an
 // net::URLRequest.
 void ResetLoginHandlerForRequest(net::URLRequest* request) {
   ResourceDispatcherHost::Get()->ClearLoginDelegateForRequest(request);
+}
+
+void RecordHttpAuthPromptType(AuthPromptType prompt_type) {
+  UMA_HISTOGRAM_ENUMERATION("Net.HttpAuthPromptType", prompt_type,
+                            AUTH_PROMPT_TYPE_ENUM_COUNT);
 }
 
 }  // namespace
@@ -95,14 +116,14 @@ LoginHandler::LoginHandler(net::AuthChallengeInfo* auth_info,
 
   AddRef();  // matched by LoginHandler::ReleaseSoon().
 
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE,
-      base::Bind(&LoginHandler::AddObservers, this));
-
   const content::ResourceRequestInfo* info =
       ResourceRequestInfo::ForRequest(request);
   DCHECK(info);
   web_contents_getter_ = info->GetWebContentsGetterForRequest();
+
+  BrowserThread::PostTask(
+      BrowserThread::UI, FROM_HERE,
+      base::Bind(&LoginHandler::AddObservers, this));
 }
 
 void LoginHandler::OnRequestCancelled() {
@@ -172,7 +193,7 @@ void LoginHandler::SetAuth(const base::string16& username,
   if (password_manager_) {
     password_form_.username_value = username;
     password_form_.password_value = password;
-    password_manager_->ProvisionallySavePassword(password_form_);
+    password_manager_->ProvisionallySavePassword(password_form_, nullptr);
     if (logger) {
       logger->LogPasswordForm(
           autofill::SavePasswordProgressLogger::STRING_LOGINHANDLER_FORM,
@@ -315,6 +336,12 @@ void LoginHandler::AddObservers() {
                   content::NotificationService::AllBrowserContextsAndSources());
   registrar_->Add(this, chrome::NOTIFICATION_AUTH_CANCELLED,
                   content::NotificationService::AllBrowserContextsAndSources());
+
+#if !defined(OS_ANDROID)
+  WebContents* requesting_contents = GetWebContentsForLogin();
+  if (requesting_contents)
+    dialog_helper_.reset(new AppModalDialogHelper(requesting_contents));
+#endif
 }
 
 void LoginHandler::RemoveObservers() {
@@ -422,6 +449,9 @@ void LoginHandler::CloseContentsDeferred() {
   CloseDialog();
   if (interstitial_delegate_)
     interstitial_delegate_->Proceed();
+#if !defined(OS_ANDROID)
+  dialog_helper_.reset();
+#endif
 }
 
 // static
@@ -433,7 +463,7 @@ std::string LoginHandler::GetSignonRealm(
     // Historically we've been storing the signon realm for proxies using
     // net::HostPortPair::ToString().
     net::HostPortPair host_port_pair =
-        net::HostPortPair::FromURL(GURL(auth_info.challenger.Serialize()));
+        net::HostPortPair::FromURL(auth_info.challenger.GetURL());
     signon_realm = host_port_pair.ToString();
     signon_realm.append("/");
   } else {
@@ -458,14 +488,9 @@ PasswordForm LoginHandler::MakeInputForPasswordManager(
   } else {
     dialog_form.scheme = PasswordForm::SCHEME_OTHER;
   }
-  if (auth_info.is_proxy) {
-    dialog_form.origin = GURL(auth_info.challenger.Serialize());
-  } else if (!auth_info.challenger.IsSameOriginWith(url::Origin(request_url))) {
-    dialog_form.origin = GURL();
-    NOTREACHED();  // crbug.com/32718
-  } else {
-    dialog_form.origin = GURL(auth_info.challenger.Serialize());
-  }
+  dialog_form.origin = auth_info.challenger.GetURL();
+  DCHECK(auth_info.is_proxy ||
+         auth_info.challenger.IsSameOriginWith(url::Origin(request_url)));
   dialog_form.signon_realm = GetSignonRealm(dialog_form.origin, auth_info);
   return dialog_form;
 }
@@ -482,7 +507,7 @@ void LoginHandler::GetDialogStrings(const GURL& request_url,
         IDS_LOGIN_DIALOG_PROXY_AUTHORITY,
         url_formatter::FormatOriginForSecurityDisplay(
             auth_info.challenger, url_formatter::SchemeDisplay::SHOW));
-    authority_url = GURL(auth_info.challenger.Serialize());
+    authority_url = auth_info.challenger.GetURL();
   } else {
     *authority = l10n_util::GetStringFUTF16(
         IDS_LOGIN_DIALOG_AUTHORITY,
@@ -523,7 +548,7 @@ void LoginHandler::ShowLoginPrompt(const GURL& request_url,
       handler->GetPasswordManagerForLogin();
 
   if (!password_manager) {
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
     // A WebContents in a <webview> (a GuestView type) does not have a password
     // manager, but still needs to be able to show login prompts.
     const auto* guest =
@@ -572,6 +597,7 @@ void LoginHandler::LoginDialogCallback(const GURL& request_url,
   // (a) if the request is cross origin or
   // (b) if an interstitial is already being shown or
   // (c) the prompt is for proxy authentication
+  // (d) we're not displaying a standalone app
   //
   // For (a), there are two different ways the navigation can occur:
   // 1- The user enters the resource URL in the omnibox.
@@ -593,10 +619,16 @@ void LoginHandler::LoginDialogCallback(const GURL& request_url,
   // being displayed simultaneously. This is specially important when the proxy
   // is accessed via an open connection while the target server is considered
   // secure.
+  const bool is_cross_origin_request =
+      parent_contents->GetLastCommittedURL().GetOrigin() !=
+      request_url.GetOrigin();
   if (is_main_frame &&
-      (parent_contents->ShowingInterstitialPage() || auth_info->is_proxy ||
-       parent_contents->GetLastCommittedURL().GetOrigin() !=
-           request_url.GetOrigin())) {
+      (is_cross_origin_request || parent_contents->ShowingInterstitialPage() ||
+       auth_info->is_proxy) &&
+      parent_contents->GetDelegate()->GetDisplayMode(parent_contents) !=
+          blink::WebDisplayModeStandalone) {
+    RecordHttpAuthPromptType(AUTH_PROMPT_TYPE_WITH_INTERSTITIAL);
+
     // Show a blank interstitial for main-frame, cross origin requests
     // so that the correct URL is shown in the omnibox.
     base::Closure callback =
@@ -609,7 +641,15 @@ void LoginHandler::LoginDialogCallback(const GURL& request_url,
              parent_contents, auth_info->is_proxy ? GURL() : request_url,
              callback))
             ->GetWeakPtr());
+
   } else {
+    if (is_main_frame) {
+      RecordHttpAuthPromptType(AUTH_PROMPT_TYPE_MAIN_FRAME);
+    } else {
+      RecordHttpAuthPromptType(is_cross_origin_request
+                                   ? AUTH_PROMPT_TYPE_SUBRESOURCE_CROSS_ORIGIN
+                                   : AUTH_PROMPT_TYPE_SUBRESOURCE_SAME_ORIGIN);
+    }
     ShowLoginPrompt(request_url, auth_info, handler);
   }
 }
@@ -619,7 +659,8 @@ void LoginHandler::LoginDialogCallback(const GURL& request_url,
 
 LoginHandler* CreateLoginPrompt(net::AuthChallengeInfo* auth_info,
                                 net::URLRequest* request) {
-  bool is_main_frame = (request->load_flags() & net::LOAD_MAIN_FRAME) != 0;
+  bool is_main_frame =
+      (request->load_flags() & net::LOAD_MAIN_FRAME_DEPRECATED) != 0;
   LoginHandler* handler = LoginHandler::Create(auth_info, request);
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
@@ -628,4 +669,3 @@ LoginHandler* CreateLoginPrompt(net::AuthChallengeInfo* auth_info,
                  is_main_frame));
   return handler;
 }
-

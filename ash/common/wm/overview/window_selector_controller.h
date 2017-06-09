@@ -30,13 +30,20 @@ class ASH_EXPORT WindowSelectorController : public WindowSelectorDelegate {
   // at certain times, such as when the lock screen is visible.
   static bool CanSelect();
 
-  // Enters overview mode. This is essentially the window cycling mode however
-  // not released on releasing the alt key and allows selecting with the mouse
-  // or touch rather than keypresses.
-  void ToggleOverview();
+  // Attempts to toggle overview mode and returns true if successful (showing
+  // overview would be unsuccessful if there are no windows to show).
+  bool ToggleOverview();
 
   // Returns true if window selection mode is active.
-  bool IsSelecting();
+  bool IsSelecting() const;
+
+  // Moves the current selection by |increment| items. Positive values of
+  // |increment| move the selection forward, negative values move it backward.
+  void IncrementSelection(int increment);
+
+  // Accepts current selection if any. Returns true if a selection was made,
+  // false otherwise.
+  bool AcceptSelection();
 
   // Returns true if overview mode is restoring minimized windows so that they
   // are visible during overview mode.

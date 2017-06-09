@@ -33,9 +33,6 @@ class GL_EXPORT GLImage : public base::RefCounted<GLImage> {
  public:
   GLImage() {}
 
-  // Destroys the image.
-  virtual void Destroy(bool have_context) = 0;
-
   // Get the size of the image.
   virtual gfx::Size GetSize() = 0;
 
@@ -67,6 +64,9 @@ class GL_EXPORT GLImage : public base::RefCounted<GLImage> {
                                     gfx::OverlayTransform transform,
                                     const gfx::Rect& bounds_rect,
                                     const gfx::RectF& crop_rect) = 0;
+
+  // Flush any preceding rendering for the image.
+  virtual void Flush() = 0;
 
   // Dumps information about the memory backing the GLImage to a dump named
   // |dump_name|.

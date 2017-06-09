@@ -15,9 +15,13 @@ import shutil
 import sys
 
 from grit import grd_reader
-from grit import util
-from grit.tool import interface
 from grit import shortcuts
+from grit import util
+from grit.format import minifier
+from grit.node import include
+from grit.node import message
+from grit.node import structure
+from grit.tool import interface
 
 
 # It would be cleaner to have each module register itself, but that would
@@ -40,7 +44,7 @@ _format_modules = {
 _format_modules.update(
     (type, 'policy_templates.template_formatter') for type in
         [ 'adm', 'admx', 'adml', 'reg', 'doc', 'json',
-          'plist', 'plist_strings', 'ios_plist', 'android_policy' ])
+          'plist', 'plist_strings', 'android_policy' ])
 
 
 def GetFormatter(type):
@@ -80,6 +84,17 @@ Options:
 
   -o OUTPUTDIR      Specify what directory output paths are relative to.
                     Defaults to the current directory.
+
+  -p FILE           Specify a file containing a pre-determined mapping from
+                    resource names to resource ids which will be used to assign
+                    resource ids to those resources. Resources not found in this
+                    file will be assigned ids normally. The motivation is to run
+                    your app's startup and have it dump the resources it loads,
+                    and then pass these via this flag. This will pack startup
+                    resources together, thus reducing paging while all other
+                    resources are unperturbed. The file should have the format:
+                      RESOURCE_ONE_NAME 123
+                      RESOURCE_TWO_NAME 124
 
   -D NAME[=VAL]     Specify a C-preprocessor-like define NAME with optional
                     value VAL (defaults to 1) which will be used to control
@@ -123,6 +138,12 @@ Options:
                     generated will depend on a stampfile instead of the first
                     output in the input .grd file.
 
+  --js-minifier     A command to run the Javascript minifier. If not set then
+                    Javascript won't be minified. The command should read the
+                    original Javascript from standard input, and output the
+                    minified Javascript to standard output. A non-zero exit
+                    status will be taken as indicating failure.
+
 Conditional inclusion of resources only affects the output of files which
 control which resources get linked into a binary, e.g. it affects .rc files
 meant for compilation but it does not affect resource header files (that define
@@ -136,6 +157,7 @@ are exported to translation interchange files (e.g. XMB files), etc.
   def Run(self, opts, args):
     self.output_directory = '.'
     first_ids_file = None
+    predetermined_ids_file = None
     whitelist_filenames = []
     assert_output_files = []
     target_platform = None
@@ -145,11 +167,15 @@ are exported to translation interchange files (e.g. XMB files), etc.
     output_all_resource_defines = None
     write_only_new = False
     depend_on_stamp = False
-    (own_opts, args) = getopt.getopt(args, 'a:o:D:E:f:w:t:h:',
+    js_minifier = None
+    replace_ellipsis = True
+    (own_opts, args) = getopt.getopt(args, 'a:p:o:D:E:f:w:t:h:',
         ('depdir=','depfile=','assert-file-list=',
          'output-all-resource-defines',
          'no-output-all-resource-defines',
+         'no-replace-ellipsis',
          'depend-on-stamp',
+         'js-minifier=',
          'write-only-new='))
     for (key, val) in own_opts:
       if key == '-a':
@@ -176,6 +202,10 @@ are exported to translation interchange files (e.g. XMB files), etc.
         output_all_resource_defines = True
       elif key == '--no-output-all-resource-defines':
         output_all_resource_defines = False
+      elif key == '--no-replace-ellipsis':
+        replace_ellipsis = False
+      elif key == '-p':
+        predetermined_ids_file = val
       elif key == '-t':
         target_platform = val
       elif key == '-h':
@@ -188,6 +218,8 @@ are exported to translation interchange files (e.g. XMB files), etc.
         write_only_new = val != '0'
       elif key == '--depend-on-stamp':
         depend_on_stamp = True
+      elif key == '--js-minifier':
+        js_minifier = val
 
     if len(args):
       print 'This tool takes no tool-specific arguments.'
@@ -207,11 +239,15 @@ are exported to translation interchange files (e.g. XMB files), etc.
         whitelist_contents = util.ReadFile(whitelist_filename, util.RAW_TEXT)
         self.whitelist_names.update(whitelist_contents.strip().split('\n'))
 
+    if js_minifier:
+      minifier.SetJsMinifier(js_minifier)
+
     self.write_only_new = write_only_new
 
     self.res = grd_reader.Parse(opts.input,
                                 debug=opts.extra_verbose,
                                 first_ids_file=first_ids_file,
+                                predetermined_ids_file=predetermined_ids_file,
                                 defines=self.defines,
                                 target_platform=target_platform)
 
@@ -227,6 +263,13 @@ are exported to translation interchange files (e.g. XMB files), etc.
     if rc_header_format:
       self.res.AssignRcHeaderFormat(rc_header_format)
     self.res.RunGatherers()
+
+    # Replace ... with the single-character version. http://crbug.com/621772
+    if replace_ellipsis:
+      for node in self.res:
+        if isinstance(node, message.MessageNode):
+          node.SetReplaceEllipsis(True)
+
     self.Process()
 
     if assert_output_files:
@@ -267,9 +310,6 @@ are exported to translation interchange files (e.g. XMB files), etc.
   def AddWhitelistTags(start_node, whitelist_names):
     # Walk the tree of nodes added attributes for the nodes that shouldn't
     # be written into the target files (skip markers).
-    from grit.node import include
-    from grit.node import message
-    from grit.node import structure
     for node in start_node:
       # Same trick data_pack.py uses to see what nodes actually result in
       # real items.

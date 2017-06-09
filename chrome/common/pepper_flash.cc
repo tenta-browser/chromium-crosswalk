@@ -34,7 +34,9 @@ const char kPepperFlashOperatingSystem[] =
     "mac";
 #elif defined(OS_WIN)
     "win";
-#else  // OS_LINUX, etc. TODO(viettrungluu): Separate out Chrome OS and Android?
+#elif defined(OS_CHROMEOS)
+    "chromeos";
+#else  // OS_LINUX,
     "linux";
 #endif
 
@@ -44,7 +46,9 @@ const char kPepperFlashArch[] =
     "ia32";
 #elif defined(ARCH_CPU_X86_64)
     "x64";
-#else  // TODO(viettrungluu): Support an ARM check?
+#elif defined(ARCH_CPU_ARMEL)
+    "arm";
+#else
     "???";
 #endif
 
@@ -95,7 +99,7 @@ bool CheckPepperFlashInterfaces(const base::DictionaryValue& manifest) {
 }  // namespace
 
 bool CheckPepperFlashManifest(const base::DictionaryValue& manifest,
-                              Version* version_out) {
+                              base::Version* version_out) {
   std::string name;
   manifest.GetStringASCII("name", &name);
   // TODO(viettrungluu): Support WinFlapper for now, while we change the format
@@ -106,7 +110,7 @@ bool CheckPepperFlashManifest(const base::DictionaryValue& manifest,
 
   std::string proposed_version;
   manifest.GetStringASCII("version", &proposed_version);
-  Version version(proposed_version.c_str());
+  base::Version version(proposed_version.c_str());
   if (!version.IsValid())
     return false;
 

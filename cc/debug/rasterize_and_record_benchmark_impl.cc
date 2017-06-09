@@ -52,7 +52,6 @@ void RunBenchmark(RasterSource* raster_source,
       bitmap.allocPixels(SkImageInfo::MakeN32Premul(content_rect.width(),
                                                     content_rect.height()));
       SkCanvas canvas(bitmap);
-
       raster_source->PlaybackToCanvas(&canvas, content_rect, content_rect,
                                       contents_scale,
                                       RasterSource::PlaybackSettings());
@@ -71,10 +70,10 @@ class FixedInvalidationPictureLayerTilingClient
  public:
   FixedInvalidationPictureLayerTilingClient(
       PictureLayerTilingClient* base_client,
-      const Region invalidation)
+      const Region& invalidation)
       : base_client_(base_client), invalidation_(invalidation) {}
 
-  ScopedTilePtr CreateTile(const Tile::CreateInfo& info) override {
+  std::unique_ptr<Tile> CreateTile(const Tile::CreateInfo& info) override {
     return base_client_->CreateTile(info);
   }
 
@@ -174,7 +173,8 @@ void RasterizeAndRecordBenchmarkImpl::RunOnLayer(PictureLayerImpl* layer) {
       PictureLayerTilingSet::Create(
           layer->GetTree(), &client, settings.tiling_interest_area_padding,
           settings.skewport_target_time_in_seconds,
-          settings.skewport_extrapolation_limit_in_screen_pixels);
+          settings.skewport_extrapolation_limit_in_screen_pixels,
+          settings.max_preraster_distance_in_screen_pixels);
 
   PictureLayerTiling* tiling =
       tiling_set->AddTiling(1.f, layer->GetRasterSource());
@@ -207,7 +207,7 @@ void RasterizeAndRecordBenchmarkImpl::RunOnLayer(PictureLayerImpl* layer) {
 
   const RasterSource* layer_raster_source = layer->GetRasterSource();
   rasterize_results_.total_memory_usage +=
-      layer_raster_source->GetPictureMemoryUsage();
+      layer_raster_source->GetMemoryUsage();
 }
 
 RasterizeAndRecordBenchmarkImpl::RasterizeResults::RasterizeResults()

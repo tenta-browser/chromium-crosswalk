@@ -21,7 +21,8 @@ class ScopedUserProtocolEntryTest : public testing::Test {
   static const wchar_t kProtocolEntryFakeValue[];
 
   void SetUp() override {
-    registry_overrides_manager_.OverrideRegistry(HKEY_CURRENT_USER);
+    ASSERT_NO_FATAL_FAILURE(
+        registry_overrides_manager_.OverrideRegistry(HKEY_CURRENT_USER));
     ASSERT_FALSE(RegistryEntry(kProtocolEntryKeyPath, kProtocolEntryName,
                                base::string16())
                      .KeyExistsInRegistry(RegistryEntry::LOOK_IN_HKCU));
@@ -37,7 +38,7 @@ class ScopedUserProtocolEntryTest : public testing::Test {
 
   void CreateScopedUserProtocolEntryAndVerifyRegistryValue(
       const base::string16& expected_entry_value) {
-    entry_ = base::WrapUnique(new ScopedUserProtocolEntry(L"http"));
+    entry_ = base::MakeUnique<ScopedUserProtocolEntry>(L"http");
     ASSERT_TRUE(RegistryEntry(kProtocolEntryKeyPath, kProtocolEntryName,
                               expected_entry_value)
                     .ExistsInRegistry(RegistryEntry::LOOK_IN_HKCU));

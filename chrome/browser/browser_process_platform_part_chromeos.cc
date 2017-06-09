@@ -4,8 +4,8 @@
 
 #include "chrome/browser/browser_process_platform_part_chromeos.h"
 
-#include "base/command_line.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/time/default_tick_clock.h"
 #include "base/time/tick_clock.h"
 #include "chrome/browser/browser_process.h"
@@ -23,7 +23,6 @@
 #include "chrome/browser/chromeos/system/timezone_util.h"
 #include "chrome/browser/lifetime/keep_alive_types.h"
 #include "chrome/browser/lifetime/scoped_keep_alive.h"
-#include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_switches.h"
 #include "chromeos/geolocation/simple_geolocation_provider.h"
 #include "chromeos/timezone/timezone_resolver.h"
@@ -31,11 +30,9 @@
 #include "components/user_manager/user_manager.h"
 
 BrowserProcessPlatformPart::BrowserProcessPlatformPart()
-    : created_profile_helper_(false) {
-}
+    : created_profile_helper_(false) {}
 
-BrowserProcessPlatformPart::~BrowserProcessPlatformPart() {
-}
+BrowserProcessPlatformPart::~BrowserProcessPlatformPart() {}
 
 void BrowserProcessPlatformPart::InitializeAutomaticRebootManager() {
   DCHECK(!automatic_reboot_manager_);
@@ -76,22 +73,13 @@ void BrowserProcessPlatformPart::ShutdownDeviceDisablingManager() {
   device_disabling_manager_delegate_.reset();
 }
 
-void BrowserProcessPlatformPart::InitializeSessionManager(
-    const base::CommandLine& parsed_command_line,
-    Profile* profile,
-    bool is_running_test) {
+void BrowserProcessPlatformPart::InitializeSessionManager() {
   DCHECK(!session_manager_);
-  session_manager_ = chromeos::ChromeSessionManager::CreateSessionManager(
-      parsed_command_line, profile, is_running_test);
+  session_manager_ = base::MakeUnique<chromeos::ChromeSessionManager>();
 }
 
 void BrowserProcessPlatformPart::ShutdownSessionManager() {
   session_manager_.reset();
-}
-
-session_manager::SessionManager* BrowserProcessPlatformPart::SessionManager() {
-  DCHECK(CalledOnValidThread());
-  return session_manager_.get();
 }
 
 void BrowserProcessPlatformPart::RegisterKeepAlive() {
@@ -142,12 +130,6 @@ chromeos::TimeZoneResolver* BrowserProcessPlatformPart::GetTimezoneResolver() {
   return timezone_resolver_.get();
 }
 
-chromeos::system::SystemClock* BrowserProcessPlatformPart::GetSystemClock() {
-  if (!system_clock_.get())
-    system_clock_.reset(new chromeos::system::SystemClock());
-
-  return system_clock_.get();
-}
 void BrowserProcessPlatformPart::StartTearDown() {
   // interactive_ui_tests check for memory leaks before this object is
   // destroyed.  So we need to destroy |timezone_resolver_| here.
@@ -159,6 +141,16 @@ std::unique_ptr<policy::BrowserPolicyConnector>
 BrowserProcessPlatformPart::CreateBrowserPolicyConnector() {
   return std::unique_ptr<policy::BrowserPolicyConnector>(
       new policy::BrowserPolicyConnectorChromeOS());
+}
+
+chromeos::system::SystemClock* BrowserProcessPlatformPart::GetSystemClock() {
+  if (!system_clock_.get())
+    system_clock_.reset(new chromeos::system::SystemClock());
+  return system_clock_.get();
+}
+
+void BrowserProcessPlatformPart::DestroySystemClock() {
+  system_clock_.reset();
 }
 
 void BrowserProcessPlatformPart::CreateProfileHelper() {

@@ -4,16 +4,17 @@
 
 #include "ui/views/widget/desktop_aura/desktop_drop_target_win.h"
 
-#include "base/metrics/histogram.h"
+#include "base/memory/ptr_util.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/win/win_util.h"
+#include "ui/aura/client/drag_drop_client.h"
+#include "ui/aura/client/drag_drop_delegate.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
 #include "ui/base/dragdrop/drop_target_event.h"
 #include "ui/base/dragdrop/os_exchange_data_provider_win.h"
 #include "ui/events/event_constants.h"
-#include "ui/wm/public/drag_drop_client.h"
-#include "ui/wm/public/drag_drop_delegate.h"
 
 using aura::client::DragDropClient;
 using aura::client::DragDropDelegate;
@@ -128,8 +129,7 @@ void DesktopDropTargetWin::Translate(
     DragDropDelegate** delegate) {
   gfx::Point location(position.x, position.y);
   gfx::Point root_location = location;
-  root_window_->GetHost()->ConvertPointFromNativeScreen(
-      &root_location);
+  root_window_->GetHost()->ConvertScreenInPixelsToDIP(&root_location);
   aura::Window* target_window =
       root_window_->GetEventHandlerForPoint(root_location);
   bool target_window_changed = false;
@@ -148,7 +148,8 @@ void DesktopDropTargetWin::Translate(
   if (!*delegate)
     return;
 
-  data->reset(new OSExchangeData(new OSExchangeDataProviderWin(data_object)));
+  data->reset(new OSExchangeData(
+      base::MakeUnique<OSExchangeDataProviderWin>(data_object)));
   location = root_location;
   aura::Window::ConvertPointToTarget(root_window_, target_window_, &location);
   event->reset(new ui::DropTargetEvent(

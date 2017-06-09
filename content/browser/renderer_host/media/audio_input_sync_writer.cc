@@ -6,8 +6,10 @@
 
 #include <algorithm>
 
-#include "base/metrics/histogram.h"
+#include "base/format_macros.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/stringprintf.h"
+#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "content/browser/renderer_host/media/media_stream_manager.h"
 #include "content/public/browser/browser_thread.h"
@@ -108,13 +110,8 @@ AudioInputSyncWriter::~AudioInputSyncWriter() {
                             AUDIO_CAPTURER_AUDIO_GLITCHES_MAX + 1);
 
   std::string log_string = base::StringPrintf(
-#if defined(COMPILER_MSVC)
-      "AISW: number of detected audio glitches: %Iu out of %Iu",
-#else
-      "AISW: number of detected audio glitches: %zu out of %zu",
-#endif
-      write_error_count_,
-      write_count_);
+      "AISW: number of detected audio glitches: %" PRIuS " out of %" PRIuS,
+      write_error_count_, write_count_);
   MediaStreamManager::SendMessageToNativeLog(log_string);
   DVLOG(1) << log_string;
 }
@@ -123,6 +120,7 @@ void AudioInputSyncWriter::Write(const AudioBus* data,
                                  double volume,
                                  bool key_pressed,
                                  uint32_t hardware_delay_bytes) {
+  TRACE_EVENT0("audio", "AudioInputSyncWriter::Write");
   ++write_count_;
   CheckTimeSinceLastWrite();
 
@@ -175,6 +173,8 @@ void AudioInputSyncWriter::Write(const AudioBus* data,
   if (write_error) {
     ++write_error_count_;
     ++trailing_write_error_count_;
+    TRACE_EVENT_INSTANT0("audio", "AudioInputSyncWriter write error",
+                         TRACE_EVENT_SCOPE_THREAD);
   } else {
     trailing_write_error_count_ = 0;
   }
@@ -334,6 +334,9 @@ bool AudioInputSyncWriter::SignalDataWrittenAndUpdateCounters() {
     const std::string error_message = "AISW: No room in socket buffer.";
     LOG(WARNING) << error_message;
     AddToNativeLog(error_message);
+    TRACE_EVENT_INSTANT0("audio",
+                         "AudioInputSyncWriter: No room in socket buffer",
+                         TRACE_EVENT_SCOPE_THREAD);
     return false;
   }
 

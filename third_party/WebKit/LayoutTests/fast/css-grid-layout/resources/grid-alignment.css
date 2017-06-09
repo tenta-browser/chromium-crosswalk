@@ -18,6 +18,8 @@
 .alignSelfEndSafe { align-self: end safe; }
 .alignSelfEndUnsafe { align-self: end unsafe; }
 
+.alignSelfBaseline { align-self: baseline; }
+
 /* align-items */
 .alignItemsAuto { align-items: auto; }
 .alignItemsStretch { align-items: stretch; }
@@ -91,6 +93,16 @@
 .justifyContentStretch { justify-content: stretch; }
 
 /* Both align-items and justify-items */
+.itemsNormal {
+    align-items: normal;
+    justify-items: normal;
+}
+
+.itemsStretch {
+    align-items: stretch;
+    justify-items: stretch;
+}
+
 .itemsStart {
     align-items: start;
     justify-items: start;
@@ -130,6 +142,38 @@
 .selfStretch {
     align-self: stretch;
     justify-self: stretch;
+}
+.selfStart {
+    align-self: start;
+    justify-self: start;
+}
+.selfEnd {
+    align-self: end;
+    justify-self: end;
+}
+.selfCenter {
+    align-self: center;
+    justify-self: center;
+}
+.selfRight {
+    align-self: right;
+    justify-self: right;
+}
+.selfLeft {
+    align-self: left;
+    justify-self: left;
+}
+.selfSelfStart {
+    align-self: self-start;
+    justify-self: self-start;
+}
+.selfSelfEnd {
+    align-self: self-end;
+    justify-self: self-end;
+}
+.selfBaseline {
+    align-self: baseline;
+    justify-self: baseline;
 }
 
 /* Both align-content and justify-content */

@@ -7,7 +7,7 @@
 
 namespace autofill {
 
-// The size of the border around the entire results popup, in pixels.
+// TODO(crbug.com/676221): Change this to pixels
 const int kPopupBorderThickness = 1;
 
 }  // namespace autofill

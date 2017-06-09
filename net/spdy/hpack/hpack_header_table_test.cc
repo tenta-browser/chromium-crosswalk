@@ -12,6 +12,7 @@
 #include "base/macros.h"
 #include "net/spdy/hpack/hpack_constants.h"
 #include "net/spdy/hpack/hpack_entry.h"
+#include "net/spdy/spdy_flags.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace net {
@@ -273,14 +274,12 @@ TEST_F(HpackHeaderTableTest, SetSizes) {
   table_.SetMaxSize(max_size);
   EXPECT_EQ(2u, peer_.dynamic_entries().size());
 
-  // Changing SETTINGS_HEADER_TABLE_SIZE doesn't affect table_.max_size(),
-  // iff SETTINGS_HEADER_TABLE_SIZE >= |max_size|.
+  // Changing SETTINGS_HEADER_TABLE_SIZE.
   EXPECT_EQ(kDefaultHeaderTableSizeSetting, table_.settings_size_bound());
-  table_.SetSettingsHeaderTableSize(kDefaultHeaderTableSizeSetting * 2);
-  EXPECT_EQ(max_size, table_.max_size());
-  table_.SetSettingsHeaderTableSize(max_size + 1);
-  EXPECT_EQ(max_size, table_.max_size());
-  EXPECT_EQ(2u, peer_.dynamic_entries().size());
+  // In production, the size passed to SetSettingsHeaderTableSize is never
+  // larger than table_.settings_size_bound().
+  table_.SetSettingsHeaderTableSize(kDefaultHeaderTableSizeSetting * 3 + 1);
+  EXPECT_EQ(kDefaultHeaderTableSizeSetting * 3 + 1, table_.max_size());
 
   // SETTINGS_HEADER_TABLE_SIZE upper-bounds |table_.max_size()|,
   // and will force evictions.

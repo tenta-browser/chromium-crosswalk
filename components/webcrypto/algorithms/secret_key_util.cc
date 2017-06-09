@@ -4,8 +4,6 @@
 
 #include "components/webcrypto/algorithms/secret_key_util.h"
 
-#include <openssl/rand.h>
-
 #include "components/webcrypto/algorithms/util.h"
 #include "components/webcrypto/blink_key_handle.h"
 #include "components/webcrypto/crypto_data.h"
@@ -13,6 +11,7 @@
 #include "components/webcrypto/jwk.h"
 #include "components/webcrypto/status.h"
 #include "crypto/openssl_util.h"
+#include "third_party/boringssl/src/include/openssl/rand.h"
 
 namespace webcrypto {
 
@@ -48,13 +47,6 @@ Status CreateWebCryptoSecretKey(const CryptoData& key_data,
                                      blink::WebCryptoKeyTypeSecret, extractable,
                                      algorithm, usages);
   return Status::Success();
-}
-
-Status CheckSecretKeyCreationUsages(
-    blink::WebCryptoKeyUsageMask all_possible_usages,
-    blink::WebCryptoKeyUsageMask actual_usages) {
-  return CheckKeyCreationUsages(all_possible_usages, actual_usages,
-                                EmptyUsagePolicy::REJECT_EMPTY);
 }
 
 void WriteSecretKeyJwk(const CryptoData& raw_key_data,

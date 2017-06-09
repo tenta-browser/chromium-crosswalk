@@ -41,7 +41,7 @@ InputMethodEngine::~InputMethodEngine() {
   // Removes the listeners for OnWindowDestroyed.
   if (follow_cursor_window_)
     follow_cursor_window_->RemoveObserver(this);
-  for (auto window : normal_windows_)
+  for (auto* window : normal_windows_)
     window->RemoveObserver(this);
 
   CloseImeWindows();
@@ -109,7 +109,7 @@ void InputMethodEngine::HideImeWindow(int window_id) {
 void InputMethodEngine::CloseImeWindows() {
   if (follow_cursor_window_)
     follow_cursor_window_->Close();
-  for (auto window : normal_windows_)
+  for (auto* window : normal_windows_)
     window->Close();
   normal_windows_.clear();
 }
@@ -150,6 +150,8 @@ void InputMethodEngine::UpdateComposition(
   if (input_context && !handling_key_event_) {
     input_context->UpdateCompositionText(composition_, cursor_pos, is_visible);
     composition_.Clear();
+  } else {
+    composition_changed_ = true;
   }
 }
 
@@ -166,6 +168,8 @@ void InputMethodEngine::CommitTextToInputContext(int context_id,
   if (input_context && !handling_key_event_) {
     input_context->CommitText(text_);
     text_ = "";
+  } else {
+    commit_text_changed_ = true;
   }
 }
 
@@ -185,7 +189,7 @@ ui::ImeWindow* InputMethodEngine::FindWindowById(int window_id) const {
       follow_cursor_window_->GetFrameId() == window_id) {
     return follow_cursor_window_;
   }
-  for (auto ime_window : normal_windows_) {
+  for (auto* ime_window : normal_windows_) {
     if (ime_window->GetFrameId() == window_id)
       return ime_window;
   }
@@ -242,7 +246,7 @@ bool InputMethodEngine::IsSpecialPage(ui::InputMethod* input_method) {
   // Checks if the last committed url has the whitelisted sheme.
   std::vector<const char*> whitelist_schemes{url::kFtpScheme, url::kHttpScheme,
                                              url::kHttpsScheme};
-  for (auto scheme : whitelist_schemes) {
+  for (auto* scheme : whitelist_schemes) {
     if (url.SchemeIs(scheme))
       return false;
   }

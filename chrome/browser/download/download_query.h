@@ -30,7 +30,7 @@ class Value;
 // id ascending.
 //
 // DownloadQuery query;
-// base::FundamentalValue start_time(0);
+// base::Value start_time(0);
 // CHECK(query.AddFilter(FILTER_START_TIME, start_time));
 // bool FilterOutOddDownloads(const DownloadItem& item) {
 //   return 0 == (item.GetId() % 2);
@@ -69,6 +69,8 @@ class DownloadQuery {
     FILTER_TOTAL_BYTES,          // double
     FILTER_TOTAL_BYTES_GREATER,  // double
     FILTER_TOTAL_BYTES_LESS,     // double
+    FILTER_ORIGINAL_URL,         // string
+    FILTER_ORIGINAL_URL_REGEX,   // string
     FILTER_URL,                  // string
     FILTER_URL_REGEX,            // string
   };
@@ -85,6 +87,7 @@ class DownloadQuery {
     SORT_START_TIME,
     SORT_STATE,
     SORT_TOTAL_BYTES,
+    SORT_ORIGINAL_URL,
     SORT_URL,
   };
 

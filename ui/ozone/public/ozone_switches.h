@@ -14,11 +14,7 @@ OZONE_BASE_EXPORT extern const char kOzonePlatform[];
 
 OZONE_BASE_EXPORT extern const char kOzoneDumpFile[];
 
-OZONE_BASE_EXPORT extern const char kOzoneTestSingleOverlaySupport[];
-
-OZONE_BASE_EXPORT extern const char kOzoneInitialDisplayBounds[];
-
-OZONE_BASE_EXPORT extern const char kOzoneInitialDisplayPhysicalSizeMm[];
+OZONE_BASE_EXPORT extern const char kEnableDrmAtomic[];
 
 }  // namespace switches
 

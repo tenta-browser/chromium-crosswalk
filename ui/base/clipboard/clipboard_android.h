@@ -15,8 +15,6 @@
 
 namespace ui {
 
-bool RegisterClipboardAndroid(JNIEnv* env);
-
 class ClipboardAndroid : public Clipboard {
  private:
   friend class Clipboard;
@@ -25,6 +23,7 @@ class ClipboardAndroid : public Clipboard {
   ~ClipboardAndroid() override;
 
   // Clipboard overrides:
+  void OnPreShutdown() override;
   uint64_t GetSequenceNumber(ClipboardType type) const override;
   bool IsFormatAvailable(const FormatType& format,
                          ClipboardType type) const override;

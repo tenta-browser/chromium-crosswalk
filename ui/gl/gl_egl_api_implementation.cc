@@ -12,7 +12,8 @@
 
 namespace gl {
 
-RealEGLApi* g_real_egl;
+RealEGLApi* g_real_egl = nullptr;
+DebugEGLApi* g_debug_egl = nullptr;
 
 void InitializeStaticGLBindingsEGL() {
   g_driver_egl.InitializeStaticBindings();
@@ -21,14 +22,20 @@ void InitializeStaticGLBindingsEGL() {
   }
   g_real_egl->Initialize(&g_driver_egl);
   g_current_egl_context = g_real_egl;
-  g_driver_egl.InitializeExtensionBindings();
 }
 
 void InitializeDebugGLBindingsEGL() {
-  g_driver_egl.InitializeDebugBindings();
+  if (!g_debug_egl) {
+    g_debug_egl = new DebugEGLApi(g_real_egl);
+  }
+  g_current_egl_context = g_debug_egl;
 }
 
-void ClearGLBindingsEGL() {
+void ClearBindingsEGL() {
+  if (g_debug_egl) {
+    delete g_debug_egl;
+    g_debug_egl = NULL;
+  }
   if (g_real_egl) {
     delete g_real_egl;
     g_real_egl = NULL;
@@ -92,6 +99,10 @@ const char* RealEGLApi::eglQueryStringFn(EGLDisplay dpy, EGLint name) {
   }
   return EGLApiBase::eglQueryStringFn(dpy, name);
 }
+
+DebugEGLApi::DebugEGLApi(EGLApi* egl_api) : egl_api_(egl_api) {}
+
+DebugEGLApi::~DebugEGLApi() {}
 
 TraceEGLApi::~TraceEGLApi() {
 }

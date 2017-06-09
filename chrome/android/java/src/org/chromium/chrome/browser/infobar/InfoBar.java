@@ -50,8 +50,7 @@ public abstract class InfoBar implements InfoBarView {
      * @param nativeInfoBarPtr Pointer to the native InfoBarAndroid, not to its subclass.
      */
     @CalledByNative
-    private void setNativeInfoBar(long nativeInfoBarPtr) {
-        assert mNativeInfoBarPtr == 0;
+    private final void setNativeInfoBar(long nativeInfoBarPtr) {
         mNativeInfoBarPtr = nativeInfoBarPtr;
     }
 
@@ -120,6 +119,11 @@ public abstract class InfoBar implements InfoBarView {
         return messageView.getText() + mContext.getString(R.string.bottom_bar_screen_position);
     }
 
+    @Override
+    public boolean isLegalDisclosure() {
+        return false;
+    }
+
     /**
      * @return whether the infobar actually needed closing.
      */
@@ -134,6 +138,10 @@ public abstract class InfoBar implements InfoBarView {
             return true;
         }
         return false;
+    }
+
+    long getNativeInfoBarPtr() {
+        return mNativeInfoBarPtr;
     }
 
     void setInfoBarContainer(InfoBarContainer container) {

@@ -12,7 +12,6 @@
 
 namespace base {
 class MessageLoop;
-class Thread;
 }
 
 namespace content {
@@ -50,12 +49,10 @@ class TestBrowserThread {
   // Returns true if the thread is running.
   bool IsRunning();
 
-  // Returns a Thread pointer for the thread. This should not be used
-  // in new tests.
-  base::Thread* DeprecatedGetThreadObject();
-
  private:
   std::unique_ptr<TestBrowserThreadImpl> impl_;
+
+  const BrowserThread::ID identifier_;
 
   DISALLOW_COPY_AND_ASSIGN(TestBrowserThread);
 };

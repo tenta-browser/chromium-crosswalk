@@ -7,12 +7,16 @@
 #include <algorithm>
 #include <utility>
 
+#include "base/command_line.h"
 #include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/task_runner_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/default_clock.h"
+#include "components/data_use_measurement/core/data_use_user_data.h"
+#include "components/search_provider_logos/switches.h"
 #include "net/http/http_response_headers.h"
+#include "net/http/http_status_code.h"
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "net/url_request/url_request_status.h"
@@ -22,8 +26,6 @@ namespace search_provider_logos {
 namespace {
 
 const int64_t kMaxDownloadBytes = 1024 * 1024;
-
-//const int kDecodeLogoTimeoutSeconds = 30;
 
 // Returns whether the metadata for the cached logo indicates that the logo is
 // OK to show, i.e. it's not expired or it's allowed to be shown temporarily
@@ -156,7 +158,8 @@ void LogoTracker::ReturnToIdle(int outcome) {
   is_cached_logo_valid_ = false;
 
   // Clear obsevers.
-  FOR_EACH_OBSERVER(LogoObserver, logo_observers_, OnObserverRemoved());
+  for (auto& observer : logo_observers_)
+    observer.OnObserverRemoved();
   logo_observers_.Clear();
 }
 
@@ -185,7 +188,8 @@ void LogoTracker::OnCachedLogoAvailable(const LogoMetadata& metadata,
   }
   is_cached_logo_valid_ = true;
   Logo* logo = cached_logo_.get();
-  FOR_EACH_OBSERVER(LogoObserver, logo_observers_, OnLogoAvailable(logo, true));
+  for (auto& observer : logo_observers_)
+    observer.OnLogoAvailable(logo, true);
   FetchLogo();
 }
 
@@ -208,17 +212,25 @@ void LogoTracker::FetchLogo() {
   DCHECK(!fetcher_);
   DCHECK(!is_idle_);
 
-  GURL url;
   std::string fingerprint;
   if (cached_logo_ && !cached_logo_->metadata.fingerprint.empty() &&
       cached_logo_->metadata.expiration_time >= clock_->Now()) {
     fingerprint = cached_logo_->metadata.fingerprint;
   }
-  url = append_queryparams_func_.Run(
-      logo_url_, fingerprint, wants_cta_, transparent_);
+  GURL url;
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  if (command_line->HasSwitch(switches::kGoogleDoodleUrl)) {
+    url = GURL(command_line->GetSwitchValueASCII(switches::kGoogleDoodleUrl));
+  } else {
+    url = append_queryparams_func_.Run(
+        logo_url_, fingerprint, wants_cta_, transparent_);
+  }
 
   fetcher_ = net::URLFetcher::Create(url, net::URLFetcher::GET, this);
   fetcher_->SetRequestContext(request_context_getter_.get());
+  data_use_measurement::DataUseUserData::AttachToFetcher(
+      fetcher_.get(),
+      data_use_measurement::DataUseUserData::SEARCH_PROVIDER_LOGOS);
   fetcher_->Start();
   logo_download_start_time_ = base::TimeTicks::Now();
 }
@@ -288,14 +300,13 @@ void LogoTracker::OnFreshLogoAvailable(
     // Notify observers if a new logo was fetched, or if the new logo is NULL
     // but the cached logo was non-NULL.
     if (logo || cached_logo_) {
-      FOR_EACH_OBSERVER(LogoObserver,
-                        logo_observers_,
-                        OnLogoAvailable(logo.get(), false));
+      for (auto& observer : logo_observers_)
+        observer.OnLogoAvailable(logo.get(), false);
       SetCachedLogo(std::move(encoded_logo));
     }
   }
 
-  DCHECK(download_outcome != kDownloadOutcomeNotTracked);
+  DCHECK_NE(kDownloadOutcomeNotTracked, download_outcome);
   ReturnToIdle(download_outcome);
 }
 
@@ -303,7 +314,16 @@ void LogoTracker::OnURLFetchComplete(const net::URLFetcher* source) {
   DCHECK(!is_idle_);
   std::unique_ptr<net::URLFetcher> cleanup_fetcher(fetcher_.release());
 
-  if (!source->GetStatus().is_success() || (source->GetResponseCode() != 200)) {
+  if (!source->GetStatus().is_success()) {
+    ReturnToIdle(DOWNLOAD_OUTCOME_DOWNLOAD_FAILED);
+    return;
+  }
+
+  int response_code = source->GetResponseCode();
+  if (response_code != net::HTTP_OK &&
+      response_code != net::URLFetcher::RESPONSE_CODE_INVALID) {
+    // RESPONSE_CODE_INVALID is returned when fetching from a file: URL
+    // (for testing). In all other cases we would have had a non-success status.
     ReturnToIdle(DOWNLOAD_OUTCOME_DOWNLOAD_FAILED);
     return;
   }
@@ -326,7 +346,8 @@ void LogoTracker::OnURLFetchComplete(const net::URLFetcher* source) {
 
 void LogoTracker::OnURLFetchDownloadProgress(const net::URLFetcher* source,
                                              int64_t current,
-                                             int64_t total) {
+                                             int64_t total,
+                                             int64_t current_network_bytes) {
   if (total > kMaxDownloadBytes || current > kMaxDownloadBytes) {
     LOG(WARNING) << "Search provider logo exceeded download size limit";
     ReturnToIdle(DOWNLOAD_OUTCOME_DOWNLOAD_FAILED);

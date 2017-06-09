@@ -95,18 +95,14 @@ void ParseJsonOnBlockingPool(
 // Returns response headers as a string. Returns a warning message if
 // |url_fetcher| does not contain a valid response. Used only for debugging.
 std::string GetResponseHeadersAsString(const URLFetcher* url_fetcher) {
-  // net::HttpResponseHeaders::raw_headers(), as the name implies, stores
-  // all headers in their raw format, i.e each header is null-terminated.
-  // So logging raw_headers() only shows the first header, which is probably
-  // the status line.  GetNormalizedHeaders, on the other hand, will show all
-  // the headers, one per line, which is probably what we want.
   std::string headers;
   // Check that response code indicates response headers are valid (i.e. not
   // malformed) before we retrieve the headers.
   if (url_fetcher->GetResponseCode() == URLFetcher::RESPONSE_CODE_INVALID) {
     headers.assign("Response headers are malformed!!");
   } else {
-    url_fetcher->GetResponseHeaders()->GetNormalizedHeaders(&headers);
+    headers = net::HttpUtil::ConvertHeadersBackToHTTPResponse(
+        url_fetcher->GetResponseHeaders()->raw_headers());
   }
   return headers;
 }
@@ -293,8 +289,8 @@ int ResponseWriter::Write(net::IOBuffer* buffer,
                           int num_bytes,
                           const net::CompletionCallback& callback) {
   if (!get_content_callback_.is_null()) {
-    get_content_callback_.Run(HTTP_SUCCESS, base::WrapUnique(new std::string(
-                                                buffer->data(), num_bytes)));
+    get_content_callback_.Run(
+        HTTP_SUCCESS, base::MakeUnique<std::string>(buffer->data(), num_bytes));
   }
 
   if (file_writer_) {
@@ -312,9 +308,10 @@ int ResponseWriter::Write(net::IOBuffer* buffer,
   return num_bytes;
 }
 
-int ResponseWriter::Finish(const net::CompletionCallback& callback) {
+int ResponseWriter::Finish(int net_error,
+                           const net::CompletionCallback& callback) {
   if (file_writer_)
-    return file_writer_->Finish(callback);
+    return file_writer_->Finish(net_error, callback);
 
   return net::OK;
 }
@@ -984,7 +981,8 @@ void DownloadFileRequestBase::GetOutputFilePath(
 void DownloadFileRequestBase::OnURLFetchDownloadProgress(
     const URLFetcher* source,
     int64_t current,
-    int64_t total) {
+    int64_t total,
+    int64_t current_network_bytes) {
   if (!progress_callback_.is_null())
     progress_callback_.Run(current, total);
 }

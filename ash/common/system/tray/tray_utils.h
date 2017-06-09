@@ -7,7 +7,7 @@
 
 #include <vector>
 
-#include "ash/common/shelf/shelf_types.h"
+#include "ash/public/cpp/shelf_types.h"
 #include "base/strings/string16.h"
 
 namespace views {
@@ -29,12 +29,6 @@ void SetTrayImageItemBorder(views::View* tray_view, ShelfAlignment alignment);
 // Sets the empty border around a label tray item for adjusting the space
 // around it.
 void SetTrayLabelItemBorder(TrayItemView* tray_view, ShelfAlignment alignment);
-
-// Computes an accessible label for this button based on all descendant view
-// labels by concatenating them in depth-first order.
-void GetAccessibleLabelFromDescendantViews(
-    views::View* view,
-    std::vector<base::string16>& out_labels);
 
 }  // namespace ash
 

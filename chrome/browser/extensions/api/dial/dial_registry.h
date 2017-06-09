@@ -8,15 +8,14 @@
 #include <stddef.h>
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/containers/hash_tables.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/memory/linked_ptr.h"
 #include "base/memory/ref_counted.h"
-#include "base/threading/thread_checker.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/extensions/api/dial/dial_service.h"
@@ -24,14 +23,17 @@
 #include "net/base/network_change_notifier.h"
 
 namespace extensions {
+namespace api {
+namespace dial {
 
 // Keeps track of devices that have responded to discovery requests and notifies
 // the observer with an updated, complete set of active devices.  The registry's
 // observer (i.e., the Dial API) owns the registry instance.
+// DialRegistry lives on the IO thread.
 class DialRegistry : public DialService::Observer,
                      public net::NetworkChangeNotifier::NetworkChangeObserver {
  public:
-  typedef std::vector<DialDeviceData> DeviceList;
+  using DeviceList = std::vector<DialDeviceData>;
 
   enum DialErrorCode {
     DIAL_NO_LISTENERS = 0,
@@ -72,22 +74,30 @@ class DialRegistry : public DialService::Observer,
   // already active.
   bool DiscoverNow();
 
+  // Returns the URL of the device description for the device identified by
+  // |label|, or an empty GURL if no such device exists.
+  GURL GetDeviceDescriptionURL(const std::string& label) const;
+
+  // Adds a device directly to the registry as if it was discovered.  For tests
+  // only.  Note that if discovery is actually started, this device will be
+  // removed by PruneExpiredDevices().
+  void AddDeviceForTest(const DialDeviceData& device_data);
+
  protected:
   // Returns a new instance of the DIAL service.  Overridden by tests.
-  virtual DialService* CreateDialService();
+  virtual std::unique_ptr<DialService> CreateDialService();
   virtual void ClearDialService();
 
   // Returns the current time.  Overridden by tests.
   virtual base::Time Now() const;
 
- protected:
   // The DIAL service. Periodic discovery is active when this is not NULL.
   std::unique_ptr<DialService> dial_;
 
  private:
-  typedef base::hash_map<std::string, linked_ptr<DialDeviceData> >
-      DeviceByIdMap;
-  typedef std::map<std::string, linked_ptr<DialDeviceData> > DeviceByLabelMap;
+  using DeviceByIdMap =
+      base::hash_map<std::string, std::unique_ptr<DialDeviceData>>;
+  using DeviceByLabelMap = std::map<std::string, DialDeviceData*>;
 
   // DialService::Observer:
   void OnDiscoveryRequest(DialService* service) override;
@@ -119,7 +129,7 @@ class DialRegistry : public DialService::Observer,
 
   // Attempts to add a newly discovered device to the registry.  Returns true if
   // successful.
-  bool MaybeAddDevice(const linked_ptr<DialDeviceData>& device_data);
+  bool MaybeAddDevice(std::unique_ptr<DialDeviceData> device_data);
 
   // Remove devices from the registry that have expired, i.e. not responded
   // after some time.  Returns true if the registry was modified.
@@ -152,9 +162,9 @@ class DialRegistry : public DialService::Observer,
   int label_count_;
 
   // Registry parameters
-  base::TimeDelta refresh_interval_delta_;
-  base::TimeDelta expiration_delta_;
-  size_t max_devices_;
+  const base::TimeDelta refresh_interval_delta_;
+  const base::TimeDelta expiration_delta_;
+  const size_t max_devices_;
 
   // A map used to track known devices by their device_id.
   DeviceByIdMap device_by_id_map_;
@@ -169,9 +179,6 @@ class DialRegistry : public DialService::Observer,
   // Interface from which the DIAL API is notified of DIAL device events. the
   // DIAL API owns this DIAL registry.
   Observer* const dial_api_;
-
-  // Thread checker.
-  base::ThreadChecker thread_checker_;
 
   FRIEND_TEST_ALL_PREFIXES(DialRegistryTest, TestAddRemoveListeners);
   FRIEND_TEST_ALL_PREFIXES(DialRegistryTest, TestNoDevicesDiscovered);
@@ -188,6 +195,8 @@ class DialRegistry : public DialService::Observer,
   DISALLOW_COPY_AND_ASSIGN(DialRegistry);
 };
 
+}  // namespace dial
+}  // namespace api
 }  // namespace extensions
 
 #endif  // CHROME_BROWSER_EXTENSIONS_API_DIAL_DIAL_REGISTRY_H_

@@ -5,39 +5,61 @@
 #ifndef InstalledAppController_h
 #define InstalledAppController_h
 
-#include "core/frame/LocalFrameLifecycleObserver.h"
+#include "core/dom/ContextLifecycleObserver.h"
+#include "core/frame/LocalFrame.h"
 #include "modules/ModulesExport.h"
 #include "platform/Supplementable.h"
-#include "public/platform/modules/installedapp/WebInstalledAppClient.h"
+#include "public/platform/WebVector.h"
+#include "public/platform/modules/installedapp/WebRelatedApplication.h"
+#include "public/platform/modules/installedapp/WebRelatedAppsFetcher.h"
+#include "wtf/RefPtr.h"
+#include "wtf/Vector.h"
+
+#include <memory>
 
 namespace blink {
 
-class WebSecurityOrigin;
+class SecurityOrigin;
 
 class MODULES_EXPORT InstalledAppController final
-    : public GarbageCollectedFinalized<InstalledAppController>, public Supplement<LocalFrame>, public LocalFrameLifecycleObserver {
-    USING_GARBAGE_COLLECTED_MIXIN(InstalledAppController);
-    WTF_MAKE_NONCOPYABLE(InstalledAppController);
-public:
-    virtual ~InstalledAppController();
+    : public GarbageCollectedFinalized<InstalledAppController>,
+      public Supplement<LocalFrame>,
+      public ContextLifecycleObserver {
+  USING_GARBAGE_COLLECTED_MIXIN(InstalledAppController);
+  WTF_MAKE_NONCOPYABLE(InstalledAppController);
 
-    void getInstalledApps(const WebSecurityOrigin&, std::unique_ptr<AppInstalledCallbacks>);
+ public:
+  virtual ~InstalledAppController();
 
-    static void provideTo(LocalFrame&, WebInstalledAppClient*);
-    static InstalledAppController* from(LocalFrame&);
-    static const char* supplementName();
+  // Gets a list of related apps from a particular origin's manifest that belong
+  // to the current underlying platform, and are installed.
+  void getInstalledRelatedApps(WTF::RefPtr<SecurityOrigin>,
+                               std::unique_ptr<AppInstalledCallbacks>);
 
-    DECLARE_VIRTUAL_TRACE();
+  static void provideTo(LocalFrame&, WebRelatedAppsFetcher*);
+  static InstalledAppController* from(LocalFrame&);
+  static const char* supplementName();
 
-private:
-    InstalledAppController(LocalFrame&, WebInstalledAppClient*);
+  DECLARE_VIRTUAL_TRACE();
 
-    // Inherited from LocalFrameLifecycleObserver.
-    void willDetachFrameHost() override;
+ private:
+  class GetRelatedAppsCallbacks;
 
-    WebInstalledAppClient* m_client;
+  InstalledAppController(LocalFrame&, WebRelatedAppsFetcher*);
+
+  // Inherited from ContextLifecycleObserver.
+  void contextDestroyed(ExecutionContext*) override;
+
+  // For a given security origin, takes a set of related applications and
+  // filters them by those which belong to the current underlying platform, and
+  // are actually installed. Passes the filtered list to the callback.
+  void filterByInstalledApps(WTF::RefPtr<SecurityOrigin>,
+                             const WebVector<WebRelatedApplication>&,
+                             std::unique_ptr<AppInstalledCallbacks>);
+
+  WebRelatedAppsFetcher* m_relatedAppsFetcher;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // InstalledAppController_h
+#endif  // InstalledAppController_h

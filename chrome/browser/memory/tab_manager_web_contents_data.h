@@ -72,6 +72,33 @@ class TabManager::WebContentsData
   // |test_tick_clock_| for more details.
   void set_test_tick_clock(base::TickClock* test_tick_clock);
 
+  // Returns the auto-discardable state of the tab.
+  // See tab_manager.h for more information.
+  bool IsAutoDiscardable();
+
+  // Sets/clears the auto-discardable state of the tab.
+  void SetAutoDiscardableState(bool state);
+
+  // Sets the current purge-and-suspend state, and update the timestamp,
+  // i.e. the last purge-and-suspend modified time.
+  // TODO(tasak): remove this after PurgeAndSuspend code is moved into
+  // MemoryCoordinator.
+  void SetPurgeAndSuspendState(TabManager::PurgeAndSuspendState state);
+
+  // Returns the last purge-and-suspend modified time.
+  // TODO(tasak): remove this after PurgeAndSuspend code is moved into
+  // MemoryCoordinator.
+  base::TimeTicks LastPurgeAndSuspendModifiedTime() const;
+
+  // Sets the timestamp of the last modified time the purge-and-suspend state
+  // of the tab was changed for testing.
+  void SetLastPurgeAndSuspendModifiedTimeForTesting(base::TimeTicks timestamp);
+
+  // Returns the current state of purge-and-suspend.
+  // TODO(tasak): remove this after PurgeAndSuspend code is moved into
+  // MemoryCoordinator.
+  TabManager::PurgeAndSuspendState GetPurgeAndSuspendState() const;
+
  private:
   // Needed to access tab_data_.
   FRIEND_TEST_ALL_PREFIXES(TabManagerWebContentsDataTest, CopyState);
@@ -99,6 +126,8 @@ class TabManager::WebContentsData
     base::TimeTicks last_inactive_time_;
     // Site Engagement score (set to -1 if not available).
     double engagement_score_;
+    // Is tab eligible for auto discarding? Defaults to true.
+    bool is_auto_discardable;
   };
 
   // Returns either the system's clock or the test clock. See |test_tick_clock_|
@@ -111,6 +140,12 @@ class TabManager::WebContentsData
   // Pointer to a test clock. If this is set, NowTicks() returns the value of
   // this test clock. Otherwise it returns the system clock's value.
   base::TickClock* test_tick_clock_;
+
+  // The last time purge-and-suspend state was modified.
+  base::TimeTicks last_purge_and_suspend_modified_time_;
+
+  // The current state of purge-and-suspend.
+  PurgeAndSuspendState purge_and_suspend_state_;
 
   DISALLOW_COPY_AND_ASSIGN(WebContentsData);
 };

@@ -10,24 +10,38 @@
 namespace blink {
 
 class CSSTranslateInterpolationType : public CSSInterpolationType {
-public:
-    CSSTranslateInterpolationType(CSSPropertyID property)
-        : CSSInterpolationType(property)
-    {
-        ASSERT(property == CSSPropertyTranslate);
-    }
+ public:
+  CSSTranslateInterpolationType(PropertyHandle property)
+      : CSSInterpolationType(property) {
+    DCHECK_EQ(cssProperty(), CSSPropertyTranslate);
+  }
 
-    InterpolationValue maybeConvertUnderlyingValue(const InterpolationEnvironment&) const final;
-    void apply(const InterpolableValue&, const NonInterpolableValue*, InterpolationEnvironment&) const final;
+  InterpolationValue maybeConvertStandardPropertyUnderlyingValue(
+      const ComputedStyle&) const final;
+  void composite(UnderlyingValueOwner&,
+                 double underlyingFraction,
+                 const InterpolationValue&,
+                 double interpolationFraction) const final;
+  void applyStandardPropertyValue(const InterpolableValue&,
+                                  const NonInterpolableValue*,
+                                  StyleResolverState&) const final;
 
-private:
-    InterpolationValue maybeConvertNeutral(const InterpolationValue& underlying, ConversionCheckers&) const final;
-    InterpolationValue maybeConvertInitial(const StyleResolverState&, ConversionCheckers&) const final;
-    InterpolationValue maybeConvertInherit(const StyleResolverState&, ConversionCheckers&) const final;
-    InterpolationValue maybeConvertValue(const CSSValue&, const StyleResolverState&, ConversionCheckers&) const final;
+ private:
+  InterpolationValue maybeConvertNeutral(const InterpolationValue& underlying,
+                                         ConversionCheckers&) const final;
+  InterpolationValue maybeConvertInitial(const StyleResolverState&,
+                                         ConversionCheckers&) const final;
+  InterpolationValue maybeConvertInherit(const StyleResolverState&,
+                                         ConversionCheckers&) const final;
+  InterpolationValue maybeConvertValue(const CSSValue&,
+                                       const StyleResolverState*,
+                                       ConversionCheckers&) const final;
 
+  PairwiseInterpolationValue maybeMergeSingles(
+      InterpolationValue&&,
+      InterpolationValue&&) const final;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // CSSTranslateInterpolationType_h
+#endif  // CSSTranslateInterpolationType_h

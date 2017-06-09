@@ -37,14 +37,15 @@
 namespace blink {
 
 class MediaStream;
-class ExecutionContext;
+class ScriptState;
 
 class URLMediaStream {
-    STATIC_ONLY(URLMediaStream);
-public:
-    static String createObjectURL(ExecutionContext*, MediaStream*);
+  STATIC_ONLY(URLMediaStream);
+
+ public:
+  static String createObjectURL(ScriptState*, MediaStream*);
 };
 
-} // namespace blink
+}  // namespace blink
 
 #endif

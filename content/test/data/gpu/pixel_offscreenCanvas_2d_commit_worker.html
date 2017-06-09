@@ -1,0 +1,105 @@
+<!DOCTYPE HTML>
+
+<!-- READ BEFORE UPDATING:
+If this test is updated make sure to increment the "revision" value of the
+associated test in content/test/gpu/gpu_tests/pixel_test_pages.py. This will ensure
+that the baseline images are regenerated on the next run.
+-->
+
+<html>
+<head>
+<title>OffscreenCanvas 2d commit flow on worker thread: Four-color square on white background.</title>
+<style type="text/css">
+.nomargin {
+  margin: 0px auto;
+}
+</style>
+<script id="myWorker" type="text/worker">
+
+var g_offscreen2d;
+var g_animationFrameNumber = 0;
+
+self.onmessage = function(e) {
+  var transferredCanvas = e.data;
+  g_offscreen2d = transferredCanvas.getContext("2d");
+  g_offscreen2d.fillStyle = "red";
+  g_offscreen2d.fillRect(0, 0, 200, 200);
+  drawLoop();
+}  
+
+function drawLoop()
+{
+  if (g_animationFrameNumber < 10) {
+    g_animationFrameNumber++;
+    // Purposely intersperse overdraw and non-overdraw commit cases to see
+    // if OffscreenCanvas commit() handles both cases well.
+    if (0 == g_animationFrameNumber % 2) {
+      // When promise is used, the next drawLoop() is called after the first
+      // frame is resolved; therefore there is no overdraw in this case.
+      g_offscreen2d.commit().then(drawLoop);
+    } else {
+      // When the next drawLoop() is invoked regardless the promise resolve
+      // status of the previous commit(), the frame committed in the next
+      // drawLoop() is very likely to be overdrawn.
+      g_offscreen2d.commit();
+      drawLoop();
+    }
+  } else {
+    g_offscreen2d.fillStyle = "red";
+    g_offscreen2d.fillRect(0, 0, 100, 100);
+    g_offscreen2d.fillStyle = "green";
+    g_offscreen2d.fillRect(100, 0, 100, 100);
+    g_offscreen2d.fillStyle = "blue";
+    g_offscreen2d.fillRect(0, 100, 100, 100);
+    g_offscreen2d.fillStyle = "black";
+    g_offscreen2d.fillRect(100, 100, 100, 100);
+    g_offscreen2d.commit()
+
+    // The following fill is never committed
+    g_offscreen2d.fillStyle = "blue";
+    g_offscreen2d.fillRect(0, 0, 200, 200);    
+    self.postMessage("");
+  }
+}
+</script>
+<script>
+var g_swapsBeforeAck = 15;
+
+function makeWorker(script)
+{
+   var blob = new Blob([script]);
+   return new Worker(URL.createObjectURL(blob));
+}
+
+function waitForFinish()
+{
+  if (g_swapsBeforeAck == 0) {
+    domAutomationController.setAutomationId(1);
+    domAutomationController.send("SUCCESS");
+  } else {
+    g_swapsBeforeAck--;
+    document.getElementById('container').style.zIndex = g_swapsBeforeAck + 1;
+    window.requestAnimationFrame(waitForFinish);
+  }
+}
+
+function main()
+{
+  var canvas2D = document.getElementById("c");
+  var offscreenCanvas = canvas2D.transferControlToOffscreen();
+  var worker = makeWorker(document.getElementById("myWorker").textContent);
+  worker.onmessage = function (e) {
+      waitForFinish();
+  };
+  worker.postMessage(offscreenCanvas, [offscreenCanvas]);
+}
+</script>
+</head>
+<body onload="main()">
+<div style="position:relative; width:300px; height:300px; background-color:white">
+</div>
+<div id="container" style="position:absolute; top:0px; left:0px">
+<canvas id="c" width="200" height="200" class="nomargin"></canvas>
+</div>
+</body>
+</html>

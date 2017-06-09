@@ -34,6 +34,7 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "components/browsing_data/core/browsing_data_utils.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
@@ -408,8 +409,10 @@ class SdchBrowserTest : public InProcessBrowserTest,
     BrowsingDataRemover* remover =
         BrowsingDataRemoverFactory::GetForBrowserContext(browser()->profile());
     BrowsingDataRemoverCompletionObserver completion_observer(remover);
-    remover->Remove(BrowsingDataRemover::Period(BrowsingDataRemover::LAST_HOUR),
-                    remove_mask, BrowsingDataHelper::UNPROTECTED_WEB);
+    remover->RemoveAndReply(
+        browsing_data::CalculateBeginDeleteTime(browsing_data::LAST_HOUR),
+        browsing_data::CalculateEndDeleteTime(browsing_data::LAST_HOUR),
+        remove_mask, BrowsingDataHelper::UNPROTECTED_WEB, &completion_observer);
     completion_observer.BlockUntilCompletion();
   }
 
@@ -435,10 +438,10 @@ class SdchBrowserTest : public InProcessBrowserTest,
       return false;
 
     second_profile_ = g_browser_process->profile_manager()->GetProfile(
-        second_profile_data_dir_.path());
+        second_profile_data_dir_.GetPath());
     if (!second_profile_) return false;
 
-    second_browser_ = new Browser(Browser::CreateParams(second_profile_));
+    second_browser_ = new Browser(Browser::CreateParams(second_profile_, true));
     if (!second_browser_) return false;
 
     chrome::AddSelectedTabWithURL(second_browser_,

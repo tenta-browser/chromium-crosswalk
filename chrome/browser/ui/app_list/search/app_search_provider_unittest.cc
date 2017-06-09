@@ -20,10 +20,10 @@
 #include "chrome/browser/ui/app_list/test/test_app_list_controller_delegate.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/sync/model/string_ordinal.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/uninstall_reason.h"
 #include "extensions/common/extension_set.h"
-#include "sync/api/string_ordinal.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/app_list/app_list_folder_item.h"
 #include "ui/app_list/app_list_item.h"
@@ -34,7 +34,6 @@
 #include "chrome/browser/ui/app_list/arc/arc_app_item.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_test.h"
 #include "components/arc/test/fake_app_instance.h"
-#include "components/arc/test/fake_arc_bridge_service.h"
 #endif
 
 namespace app_list {
@@ -74,9 +73,8 @@ class AppSearchProviderTest : public AppListTestBase {
 
     // Sort results by relevance.
     std::vector<SearchResult*> sorted_results;
-    std::copy(app_search_->results().begin(),
-              app_search_->results().end(),
-              std::back_inserter(sorted_results));
+    for (const auto& result : app_search_->results())
+      sorted_results.emplace_back(result.get());
     std::sort(sorted_results.begin(), sorted_results.end(), &MoreRelevant);
 
     std::string result_str;

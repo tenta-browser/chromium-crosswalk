@@ -7,14 +7,16 @@
 #include <stdint.h>
 
 #include <iterator>
+#include <map>
+#include <memory>
 #include <queue>
 #include <utility>
 
 #include "base/callback.h"
 #include "base/feature_list.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
-#include "base/stl_util.h"
 #include "base/threading/thread.h"
 #include "content/browser/byte_stream.h"
 #include "content/browser/download/download_create_info.h"
@@ -59,6 +61,7 @@ namespace {
 class MockDelegate : public DownloadItemImplDelegate {
  public:
   MockDelegate() : DownloadItemImplDelegate() {
+    browser_context_.reset(new TestBrowserContext);
     SetDefaultExpectations();
   }
 
@@ -78,7 +81,10 @@ class MockDelegate : public DownloadItemImplDelegate {
   MOCK_METHOD2(MockResumeInterruptedDownload,
                void(DownloadUrlParameters* params, uint32_t id));
 
-  MOCK_CONST_METHOD0(GetBrowserContext, BrowserContext*());
+  BrowserContext* GetBrowserContext() const override {
+    return browser_context_.get();
+  }
+
   MOCK_METHOD1(DownloadOpened, void(DownloadItemImpl*));
   MOCK_METHOD1(DownloadRemoved, void(DownloadItemImpl*));
   MOCK_CONST_METHOD1(AssertStateConsistent, void(DownloadItemImpl*));
@@ -97,6 +103,8 @@ class MockDelegate : public DownloadItemImplDelegate {
     EXPECT_CALL(*this, ShouldOpenDownload(_, _))
         .WillRepeatedly(Return(true));
   }
+
+  std::unique_ptr<TestBrowserContext> browser_context_;
 };
 
 class MockRequestHandle : public DownloadRequestHandleInterface {
@@ -254,14 +262,14 @@ class DownloadItemTest : public testing::Test {
 
   ~DownloadItemTest() {
     RunAllPendingInMessageLoops();
-    STLDeleteElements(&allocated_downloads_);
   }
 
   DownloadItemImpl* CreateDownloadItemWithCreateInfo(
       std::unique_ptr<DownloadCreateInfo> info) {
-    DownloadItemImpl* download = new DownloadItemImpl(
-        &delegate_, next_download_id_++, *(info.get()), net::BoundNetLog());
-    allocated_downloads_.insert(download);
+    DownloadItemImpl* download =
+        new DownloadItemImpl(&delegate_, next_download_id_++, *(info.get()),
+                             net::NetLogWithSource());
+    allocated_downloads_[download] = base::WrapUnique(download);
     return download;
   }
 
@@ -272,8 +280,8 @@ class DownloadItemTest : public testing::Test {
     create_info_->download_id = ++next_download_id_;
     DownloadItemImpl* download =
         new DownloadItemImpl(&delegate_, create_info_->download_id,
-                             *create_info_, net::BoundNetLog());
-    allocated_downloads_.insert(download);
+                             *create_info_, net::NetLogWithSource());
+    allocated_downloads_[download] = base::WrapUnique(download);
     return download;
   }
 
@@ -375,7 +383,6 @@ class DownloadItemTest : public testing::Test {
   // Destroy a previously created download item.
   void DestroyDownloadItem(DownloadItem* item) {
     allocated_downloads_.erase(item);
-    delete item;
   }
 
   void RunAllPendingInMessageLoops() { base::RunLoop().RunUntilIdle(); }
@@ -396,7 +403,7 @@ class DownloadItemTest : public testing::Test {
  private:
   TestBrowserThreadBundle thread_bundle_;
   StrictMock<MockDelegate> delegate_;
-  std::set<DownloadItem*> allocated_downloads_;
+  std::map<DownloadItem*, std::unique_ptr<DownloadItem>> allocated_downloads_;
   std::unique_ptr<DownloadCreateInfo> create_info_;
   uint32_t next_download_id_ = DownloadItem::kInvalidId + 1;
   TestBrowserContext browser_context_;
@@ -417,7 +424,8 @@ TEST_F(DownloadItemTest, NotificationAfterUpdate) {
   ASSERT_EQ(DownloadItem::IN_PROGRESS, item->GetState());
   TestDownloadItemObserver observer(item);
 
-  item->DestinationUpdate(kDownloadChunkSize, kDownloadSpeed);
+  item->DestinationUpdate(kDownloadChunkSize, kDownloadSpeed,
+                          std::vector<DownloadItem::ReceivedSlice>());
   ASSERT_TRUE(observer.CheckAndResetDownloadUpdated());
   EXPECT_EQ(kDownloadSpeed, item->CurrentSpeed());
   CleanupItem(item, file, DownloadItem::IN_PROGRESS);
@@ -485,6 +493,125 @@ TEST_F(DownloadItemTest, NotificationAfterDestroyed) {
   ASSERT_TRUE(observer.download_destroyed());
 }
 
+TEST_F(DownloadItemTest, NotificationAfterRemove) {
+  DownloadItemImpl* item = CreateDownloadItem();
+  DownloadItemImplDelegate::DownloadTargetCallback target_callback;
+  MockDownloadFile* download_file =
+      CallDownloadItemStart(item, &target_callback);
+  EXPECT_CALL(*download_file, Cancel());
+  EXPECT_CALL(*mock_delegate(), DownloadRemoved(_));
+  TestDownloadItemObserver observer(item);
+
+  item->Remove();
+  ASSERT_TRUE(observer.CheckAndResetDownloadUpdated());
+  ASSERT_TRUE(observer.download_removed());
+}
+
+TEST_F(DownloadItemTest, NotificationAfterOnContentCheckCompleted) {
+  // Setting to NOT_DANGEROUS does not trigger a notification.
+  DownloadItemImpl* safe_item = CreateDownloadItem();
+  MockDownloadFile* download_file =
+      DoIntermediateRename(safe_item, DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS);
+  TestDownloadItemObserver safe_observer(safe_item);
+
+  safe_item->OnAllDataSaved(0, std::unique_ptr<crypto::SecureHash>());
+  EXPECT_TRUE(safe_observer.CheckAndResetDownloadUpdated());
+  safe_item->OnContentCheckCompleted(DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS);
+  EXPECT_TRUE(safe_observer.CheckAndResetDownloadUpdated());
+  CleanupItem(safe_item, download_file, DownloadItem::IN_PROGRESS);
+
+  // Setting to unsafe url or unsafe file should trigger a notification.
+  DownloadItemImpl* unsafeurl_item = CreateDownloadItem();
+  download_file =
+      DoIntermediateRename(unsafeurl_item, DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS);
+  TestDownloadItemObserver unsafeurl_observer(unsafeurl_item);
+
+  unsafeurl_item->OnAllDataSaved(0, std::unique_ptr<crypto::SecureHash>());
+  EXPECT_TRUE(unsafeurl_observer.CheckAndResetDownloadUpdated());
+  unsafeurl_item->OnContentCheckCompleted(DOWNLOAD_DANGER_TYPE_DANGEROUS_URL);
+  EXPECT_TRUE(unsafeurl_observer.CheckAndResetDownloadUpdated());
+
+  EXPECT_CALL(*mock_delegate(), ShouldCompleteDownload(_, _))
+      .WillOnce(Return(true));
+  EXPECT_CALL(*download_file, RenameAndAnnotate(_, _, _, _, _));
+  unsafeurl_item->ValidateDangerousDownload();
+  EXPECT_TRUE(unsafeurl_observer.CheckAndResetDownloadUpdated());
+  CleanupItem(unsafeurl_item, download_file, DownloadItem::IN_PROGRESS);
+
+  DownloadItemImpl* unsafefile_item = CreateDownloadItem();
+  download_file =
+      DoIntermediateRename(unsafefile_item, DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS);
+  TestDownloadItemObserver unsafefile_observer(unsafefile_item);
+
+  unsafefile_item->OnAllDataSaved(0, std::unique_ptr<crypto::SecureHash>());
+  EXPECT_TRUE(unsafefile_observer.CheckAndResetDownloadUpdated());
+  unsafefile_item->OnContentCheckCompleted(DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE);
+  EXPECT_TRUE(unsafefile_observer.CheckAndResetDownloadUpdated());
+
+  EXPECT_CALL(*mock_delegate(), ShouldCompleteDownload(_, _))
+      .WillOnce(Return(true));
+  EXPECT_CALL(*download_file, RenameAndAnnotate(_, _, _, _, _));
+  unsafefile_item->ValidateDangerousDownload();
+  EXPECT_TRUE(unsafefile_observer.CheckAndResetDownloadUpdated());
+  CleanupItem(unsafefile_item, download_file, DownloadItem::IN_PROGRESS);
+}
+
+// DownloadItemImpl::OnDownloadTargetDetermined will schedule a task to run
+// DownloadFile::Rename(). Once the rename
+// completes, DownloadItemImpl receives a notification with the new file
+// name. Check that observers are updated when the new filename is available and
+// not before.
+TEST_F(DownloadItemTest, NotificationAfterOnDownloadTargetDetermined) {
+  DownloadItemImpl* item = CreateDownloadItem();
+  DownloadItemImplDelegate::DownloadTargetCallback callback;
+  MockDownloadFile* download_file = CallDownloadItemStart(item, &callback);
+  TestDownloadItemObserver observer(item);
+  base::FilePath target_path(kDummyTargetPath);
+  base::FilePath intermediate_path(target_path.InsertBeforeExtensionASCII("x"));
+  base::FilePath new_intermediate_path(
+      target_path.InsertBeforeExtensionASCII("y"));
+  EXPECT_CALL(*download_file, RenameAndUniquify(intermediate_path, _))
+      .WillOnce(ScheduleRenameAndUniquifyCallback(
+          DOWNLOAD_INTERRUPT_REASON_NONE, new_intermediate_path));
+
+  // Currently, a notification would be generated if the danger type is anything
+  // other than NOT_DANGEROUS.
+  callback.Run(target_path, DownloadItem::TARGET_DISPOSITION_OVERWRITE,
+               DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS, intermediate_path);
+  EXPECT_FALSE(observer.CheckAndResetDownloadUpdated());
+  RunAllPendingInMessageLoops();
+  EXPECT_TRUE(observer.CheckAndResetDownloadUpdated());
+  EXPECT_EQ(new_intermediate_path, item->GetFullPath());
+
+  CleanupItem(item, download_file, DownloadItem::IN_PROGRESS);
+}
+
+TEST_F(DownloadItemTest, NotificationAfterTogglePause) {
+  DownloadItemImpl* item = CreateDownloadItem();
+  TestDownloadItemObserver observer(item);
+  MockDownloadFile* mock_download_file(new MockDownloadFile);
+  std::unique_ptr<DownloadFile> download_file(mock_download_file);
+  std::unique_ptr<DownloadRequestHandleInterface> request_handle(
+      new NiceMock<MockRequestHandle>);
+
+  EXPECT_CALL(*mock_download_file, Initialize(_));
+  EXPECT_CALL(*mock_delegate(), DetermineDownloadTarget(_, _));
+  item->Start(std::move(download_file), std::move(request_handle),
+              *create_info());
+
+  item->Pause();
+  ASSERT_TRUE(observer.CheckAndResetDownloadUpdated());
+
+  ASSERT_TRUE(item->IsPaused());
+
+  item->Resume();
+  ASSERT_TRUE(observer.CheckAndResetDownloadUpdated());
+
+  RunAllPendingInMessageLoops();
+
+  CleanupItem(item, mock_download_file, DownloadItem::IN_PROGRESS);
+}
+
 // Test that a download is resumed automatcially after a continuable interrupt.
 TEST_F(DownloadItemTest, ContinueAfterInterrupted) {
   DownloadItemImpl* item = CreateDownloadItem();
@@ -496,8 +623,6 @@ TEST_F(DownloadItemTest, ContinueAfterInterrupted) {
   EXPECT_CALL(*download_file, FullPath())
       .WillOnce(ReturnRefOfCopy(base::FilePath()));
   EXPECT_CALL(*download_file, Detach());
-  EXPECT_CALL(*mock_delegate(), GetBrowserContext())
-      .WillRepeatedly(Return(browser_context()));
   EXPECT_CALL(*mock_delegate(), MockResumeInterruptedDownload(_, _)).Times(1);
   item->DestinationObserverAsWeakPtr()->DestinationError(
       DOWNLOAD_INTERRUPT_REASON_FILE_TRANSIENT_ERROR, 0,
@@ -583,8 +708,6 @@ TEST_F(DownloadItemTest, LimitRestartsAfterInterrupted) {
 
   EXPECT_CALL(*mock_delegate(), DetermineDownloadTarget(item, _))
       .WillRepeatedly(SaveArg<1>(&callback));
-  EXPECT_CALL(*mock_delegate(), GetBrowserContext())
-      .WillRepeatedly(Return(browser_context()));
   EXPECT_CALL(*mock_delegate(), MockResumeInterruptedDownload(_, _))
       .Times(DownloadItemImpl::kMaxAutoResumeAttempts);
   for (int i = 0; i < (DownloadItemImpl::kMaxAutoResumeAttempts + 1); ++i) {
@@ -640,10 +763,12 @@ TEST_F(DownloadItemTest, FailedResumptionDoesntUpdateOriginState) {
   const char kFirstETag[] = "ABC";
   const char kFirstLastModified[] = "Yesterday";
   const char kFirstURL[] = "http://www.example.com/download";
+  const char kMimeType[] = "text/css";
   create_info()->content_disposition = kContentDisposition;
   create_info()->etag = kFirstETag;
   create_info()->last_modified = kFirstLastModified;
   create_info()->url_chain.push_back(GURL(kFirstURL));
+  create_info()->mime_type = kMimeType;
 
   DownloadItemImpl* item = CreateDownloadItem();
   MockDownloadFile* download_file =
@@ -652,10 +777,9 @@ TEST_F(DownloadItemTest, FailedResumptionDoesntUpdateOriginState) {
   EXPECT_EQ(kFirstETag, item->GetETag());
   EXPECT_EQ(kFirstLastModified, item->GetLastModifiedTime());
   EXPECT_EQ(kFirstURL, item->GetURL().spec());
+  EXPECT_EQ(kMimeType, item->GetMimeType());
 
   EXPECT_CALL(*mock_delegate(), MockResumeInterruptedDownload(_, _));
-  EXPECT_CALL(*mock_delegate(), GetBrowserContext())
-      .WillRepeatedly(Return(browser_context()));
   EXPECT_CALL(*download_file, Detach());
   item->DestinationObserverAsWeakPtr()->DestinationError(
       DOWNLOAD_INTERRUPT_REASON_FILE_TRANSIENT_ERROR, 0,
@@ -669,11 +793,13 @@ TEST_F(DownloadItemTest, FailedResumptionDoesntUpdateOriginState) {
   const char kSecondETag[] = "123";
   const char kSecondLastModified[] = "Today";
   const char kSecondURL[] = "http://example.com/another-download";
+  const char kSecondMimeType[] = "text/html";
   create_info()->content_disposition = kSecondContentDisposition;
   create_info()->etag = kSecondETag;
   create_info()->last_modified = kSecondLastModified;
   create_info()->url_chain.clear();
   create_info()->url_chain.push_back(GURL(kSecondURL));
+  create_info()->mime_type = kSecondMimeType;
   create_info()->result = DOWNLOAD_INTERRUPT_REASON_NETWORK_FAILED;
 
   // The following ends up calling DownloadItem::Start(), but shouldn't result
@@ -684,8 +810,60 @@ TEST_F(DownloadItemTest, FailedResumptionDoesntUpdateOriginState) {
   EXPECT_EQ(kFirstETag, item->GetETag());
   EXPECT_EQ(kFirstLastModified, item->GetLastModifiedTime());
   EXPECT_EQ(kFirstURL, item->GetURL().spec());
+  EXPECT_EQ(kMimeType, item->GetMimeType());
   EXPECT_EQ(DownloadItem::INTERRUPTED, item->GetState());
   EXPECT_EQ(DOWNLOAD_INTERRUPT_REASON_NETWORK_FAILED, item->GetLastReason());
+}
+
+// If the download resumption request succeeds, the origin state should be
+// updated
+TEST_F(DownloadItemTest, SucceededResumptionUpdatesOriginState) {
+  const char kContentDisposition[] = "attachment; filename=foo";
+  const char kFirstETag[] = "ABC";
+  const char kFirstLastModified[] = "Yesterday";
+  const char kFirstURL[] = "http://www.example.com/download";
+  const char kMimeType[] = "text/css";
+  create_info()->content_disposition = kContentDisposition;
+  create_info()->etag = kFirstETag;
+  create_info()->last_modified = kFirstLastModified;
+  create_info()->url_chain.push_back(GURL(kFirstURL));
+  create_info()->mime_type = kMimeType;
+
+  DownloadItemImpl* item = CreateDownloadItem();
+  MockDownloadFile* download_file =
+      DoIntermediateRename(item, DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS);
+  EXPECT_CALL(*mock_delegate(), MockResumeInterruptedDownload(_, _));
+  EXPECT_CALL(*download_file, Detach());
+  item->DestinationObserverAsWeakPtr()->DestinationError(
+      DOWNLOAD_INTERRUPT_REASON_FILE_TRANSIENT_ERROR, 0,
+      std::unique_ptr<crypto::SecureHash>());
+  RunAllPendingInMessageLoops();
+  EXPECT_EQ(DownloadItem::IN_PROGRESS, item->GetState());
+
+  // Now change the create info. The changes should not cause the DownloadItem
+  // to be updated.
+  const char kSecondContentDisposition[] = "attachment; filename=bar";
+  const char kSecondETag[] = "123";
+  const char kSecondLastModified[] = "Today";
+  const char kSecondURL[] = "http://example.com/another-download";
+  const char kSecondMimeType[] = "text/html";
+  create_info()->content_disposition = kSecondContentDisposition;
+  create_info()->etag = kSecondETag;
+  create_info()->last_modified = kSecondLastModified;
+  create_info()->url_chain.clear();
+  create_info()->url_chain.push_back(GURL(kSecondURL));
+  create_info()->mime_type = kSecondMimeType;
+
+  DownloadItemImplDelegate::DownloadTargetCallback target_callback;
+  download_file = CallDownloadItemStart(item, &target_callback);
+
+  EXPECT_EQ(kSecondContentDisposition, item->GetContentDisposition());
+  EXPECT_EQ(kSecondETag, item->GetETag());
+  EXPECT_EQ(kSecondLastModified, item->GetLastModifiedTime());
+  EXPECT_EQ(kSecondURL, item->GetURL().spec());
+  EXPECT_EQ(kSecondMimeType, item->GetMimeType());
+
+  CleanupItem(item, download_file, DownloadItem::IN_PROGRESS);
 }
 
 // Test that resumption uses the final URL in a URL chain when resuming.
@@ -705,8 +883,6 @@ TEST_F(DownloadItemTest, ResumeUsingFinalURL) {
   EXPECT_CALL(*download_file, FullPath())
       .WillOnce(ReturnRefOfCopy(base::FilePath()));
   EXPECT_CALL(*download_file, Detach());
-  EXPECT_CALL(*mock_delegate(), GetBrowserContext())
-      .WillRepeatedly(Return(browser_context()));
   EXPECT_CALL(*mock_delegate(), MockResumeInterruptedDownload(
                                     Property(&DownloadUrlParameters::url,
                                              GURL("http://example.com/c")),
@@ -725,127 +901,6 @@ TEST_F(DownloadItemTest, ResumeUsingFinalURL) {
 
   // The download is currently in RESUMING_INTERNAL, which maps to IN_PROGRESS.
   CleanupItem(item, nullptr, DownloadItem::IN_PROGRESS);
-}
-
-TEST_F(DownloadItemTest, NotificationAfterRemove) {
-  DownloadItemImpl* item = CreateDownloadItem();
-  DownloadItemImplDelegate::DownloadTargetCallback target_callback;
-  MockDownloadFile* download_file =
-      CallDownloadItemStart(item, &target_callback);
-  EXPECT_CALL(*download_file, Cancel());
-  EXPECT_CALL(*mock_delegate(), DownloadRemoved(_));
-  TestDownloadItemObserver observer(item);
-
-  item->Remove();
-  ASSERT_TRUE(observer.CheckAndResetDownloadUpdated());
-  ASSERT_TRUE(observer.download_removed());
-}
-
-TEST_F(DownloadItemTest, NotificationAfterOnContentCheckCompleted) {
-  // Setting to NOT_DANGEROUS does not trigger a notification.
-  DownloadItemImpl* safe_item = CreateDownloadItem();
-  MockDownloadFile* download_file =
-      DoIntermediateRename(safe_item, DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS);
-  TestDownloadItemObserver safe_observer(safe_item);
-
-  safe_item->OnAllDataSaved(0, std::unique_ptr<crypto::SecureHash>());
-  EXPECT_TRUE(safe_observer.CheckAndResetDownloadUpdated());
-  safe_item->OnContentCheckCompleted(DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS);
-  EXPECT_TRUE(safe_observer.CheckAndResetDownloadUpdated());
-  CleanupItem(safe_item, download_file, DownloadItem::IN_PROGRESS);
-
-  // Setting to unsafe url or unsafe file should trigger a notification.
-  DownloadItemImpl* unsafeurl_item =
-      CreateDownloadItem();
-  download_file =
-      DoIntermediateRename(unsafeurl_item, DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS);
-  TestDownloadItemObserver unsafeurl_observer(unsafeurl_item);
-
-  unsafeurl_item->OnAllDataSaved(0, std::unique_ptr<crypto::SecureHash>());
-  EXPECT_TRUE(unsafeurl_observer.CheckAndResetDownloadUpdated());
-  unsafeurl_item->OnContentCheckCompleted(DOWNLOAD_DANGER_TYPE_DANGEROUS_URL);
-  EXPECT_TRUE(unsafeurl_observer.CheckAndResetDownloadUpdated());
-
-  EXPECT_CALL(*mock_delegate(), ShouldCompleteDownload(_, _))
-      .WillOnce(Return(true));
-  EXPECT_CALL(*download_file, RenameAndAnnotate(_, _, _, _, _));
-  unsafeurl_item->ValidateDangerousDownload();
-  EXPECT_TRUE(unsafeurl_observer.CheckAndResetDownloadUpdated());
-  CleanupItem(unsafeurl_item, download_file, DownloadItem::IN_PROGRESS);
-
-  DownloadItemImpl* unsafefile_item =
-      CreateDownloadItem();
-  download_file =
-      DoIntermediateRename(unsafefile_item, DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS);
-  TestDownloadItemObserver unsafefile_observer(unsafefile_item);
-
-  unsafefile_item->OnAllDataSaved(0, std::unique_ptr<crypto::SecureHash>());
-  EXPECT_TRUE(unsafefile_observer.CheckAndResetDownloadUpdated());
-  unsafefile_item->OnContentCheckCompleted(DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE);
-  EXPECT_TRUE(unsafefile_observer.CheckAndResetDownloadUpdated());
-
-  EXPECT_CALL(*mock_delegate(), ShouldCompleteDownload(_, _))
-      .WillOnce(Return(true));
-  EXPECT_CALL(*download_file, RenameAndAnnotate(_, _, _, _, _));
-  unsafefile_item->ValidateDangerousDownload();
-  EXPECT_TRUE(unsafefile_observer.CheckAndResetDownloadUpdated());
-  CleanupItem(unsafefile_item, download_file, DownloadItem::IN_PROGRESS);
-}
-
-// DownloadItemImpl::OnDownloadTargetDetermined will schedule a task to run
-// DownloadFile::Rename(). Once the rename
-// completes, DownloadItemImpl receives a notification with the new file
-// name. Check that observers are updated when the new filename is available and
-// not before.
-TEST_F(DownloadItemTest, NotificationAfterOnDownloadTargetDetermined) {
-  DownloadItemImpl* item = CreateDownloadItem();
-  DownloadItemImplDelegate::DownloadTargetCallback callback;
-  MockDownloadFile* download_file = CallDownloadItemStart(item, &callback);
-  TestDownloadItemObserver observer(item);
-  base::FilePath target_path(kDummyTargetPath);
-  base::FilePath intermediate_path(target_path.InsertBeforeExtensionASCII("x"));
-  base::FilePath new_intermediate_path(
-      target_path.InsertBeforeExtensionASCII("y"));
-  EXPECT_CALL(*download_file, RenameAndUniquify(intermediate_path, _))
-      .WillOnce(ScheduleRenameAndUniquifyCallback(
-          DOWNLOAD_INTERRUPT_REASON_NONE, new_intermediate_path));
-
-  // Currently, a notification would be generated if the danger type is anything
-  // other than NOT_DANGEROUS.
-  callback.Run(target_path, DownloadItem::TARGET_DISPOSITION_OVERWRITE,
-               DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS, intermediate_path);
-  EXPECT_FALSE(observer.CheckAndResetDownloadUpdated());
-  RunAllPendingInMessageLoops();
-  EXPECT_TRUE(observer.CheckAndResetDownloadUpdated());
-  EXPECT_EQ(new_intermediate_path, item->GetFullPath());
-
-  CleanupItem(item, download_file, DownloadItem::IN_PROGRESS);
-}
-
-TEST_F(DownloadItemTest, NotificationAfterTogglePause) {
-  DownloadItemImpl* item = CreateDownloadItem();
-  TestDownloadItemObserver observer(item);
-  MockDownloadFile* mock_download_file(new MockDownloadFile);
-  std::unique_ptr<DownloadFile> download_file(mock_download_file);
-  std::unique_ptr<DownloadRequestHandleInterface> request_handle(
-      new NiceMock<MockRequestHandle>);
-
-  EXPECT_CALL(*mock_download_file, Initialize(_));
-  EXPECT_CALL(*mock_delegate(), DetermineDownloadTarget(_, _));
-  item->Start(std::move(download_file), std::move(request_handle),
-              *create_info());
-
-  item->Pause();
-  ASSERT_TRUE(observer.CheckAndResetDownloadUpdated());
-
-  ASSERT_TRUE(item->IsPaused());
-
-  item->Resume();
-  ASSERT_TRUE(observer.CheckAndResetDownloadUpdated());
-
-  RunAllPendingInMessageLoops();
-
-  CleanupItem(item, mock_download_file, DownloadItem::IN_PROGRESS);
 }
 
 TEST_F(DownloadItemTest, DisplayName) {
@@ -1171,16 +1226,21 @@ TEST_F(DownloadItemTest, DestinationUpdate) {
   item->SetTotalBytes(100l);
   EXPECT_EQ(100l, item->GetTotalBytes());
 
-  as_observer->DestinationUpdate(10, 20);
+  std::vector<DownloadItem::ReceivedSlice> received_slices;
+  received_slices.emplace_back(0, 10);
+  as_observer->DestinationUpdate(10, 20, received_slices);
   EXPECT_EQ(20l, item->CurrentSpeed());
   EXPECT_EQ(10l, item->GetReceivedBytes());
   EXPECT_EQ(100l, item->GetTotalBytes());
+  EXPECT_EQ(received_slices, item->GetReceivedSlices());
   EXPECT_TRUE(observer.CheckAndResetDownloadUpdated());
 
-  as_observer->DestinationUpdate(200, 20);
+  received_slices.emplace_back(200, 100);
+  as_observer->DestinationUpdate(200, 20, received_slices);
   EXPECT_EQ(20l, item->CurrentSpeed());
   EXPECT_EQ(200l, item->GetReceivedBytes());
   EXPECT_EQ(0l, item->GetTotalBytes());
+  EXPECT_EQ(received_slices, item->GetReceivedSlices());
   EXPECT_TRUE(observer.CheckAndResetDownloadUpdated());
 
   CleanupItem(item, file, DownloadItem::IN_PROGRESS);
@@ -1252,7 +1312,8 @@ TEST_F(DownloadItemTest, DestinationCompleted) {
   EXPECT_FALSE(item->AllDataSaved());
   EXPECT_FALSE(observer.CheckAndResetDownloadUpdated());
 
-  as_observer->DestinationUpdate(10, 20);
+  as_observer->DestinationUpdate(
+      10, 20, std::vector<DownloadItem::ReceivedSlice>());
   EXPECT_TRUE(observer.CheckAndResetDownloadUpdated());
   EXPECT_FALSE(observer.CheckAndResetDownloadUpdated());  // Confirm reset.
   EXPECT_EQ(DownloadItem::IN_PROGRESS, item->GetState());
@@ -1309,10 +1370,12 @@ TEST_F(DownloadItemTest, EnabledActionsForNormalDownload) {
 }
 
 TEST_F(DownloadItemTest, EnabledActionsForTemporaryDownload) {
+  // A download created with a non-empty FilePath is considered a temporary
+  // download.
+  create_info()->save_info->file_path = base::FilePath(kDummyTargetPath);
   DownloadItemImpl* item = CreateDownloadItem();
   MockDownloadFile* download_file =
       DoIntermediateRename(item, DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS);
-  item->SetIsTemporary(true);
 
   // InProgress Temporary
   ASSERT_EQ(DownloadItem::IN_PROGRESS, item->GetState());
@@ -1538,7 +1601,7 @@ TEST_F(DownloadItemTest, CompleteDelegate_BlockTwice) {
   EXPECT_EQ(DownloadItem::COMPLETE, item->GetState());
 }
 
-TEST_F(DownloadItemTest, StealDangerousDownload) {
+TEST_F(DownloadItemTest, StealDangerousDownloadAndDiscard) {
   DownloadItemImpl* item = CreateDownloadItem();
   MockDownloadFile* download_file =
       DoIntermediateRename(item, DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE);
@@ -1550,12 +1613,34 @@ TEST_F(DownloadItemTest, StealDangerousDownload) {
   EXPECT_CALL(*download_file, Detach());
   EXPECT_CALL(*mock_delegate(), DownloadRemoved(_));
   base::WeakPtrFactory<DownloadItemTest> weak_ptr_factory(this);
+  item->OnAllDataSaved(0, std::unique_ptr<crypto::SecureHash>());
   item->StealDangerousDownload(
+      true,  // delete_file_after_feedback
       base::Bind(&DownloadItemTest::OnDownloadFileAcquired,
                  weak_ptr_factory.GetWeakPtr(),
                  base::Unretained(&returned_path)));
   RunAllPendingInMessageLoops();
   EXPECT_EQ(full_path, returned_path);
+}
+
+TEST_F(DownloadItemTest, StealDangerousDownloadAndKeep) {
+  DownloadItemImpl* item = CreateDownloadItem();
+  MockDownloadFile* download_file =
+      DoIntermediateRename(item, DOWNLOAD_DANGER_TYPE_DANGEROUS_FILE);
+  ASSERT_TRUE(item->IsDangerous());
+  base::FilePath full_path(FILE_PATH_LITERAL("foo.txt"));
+  base::FilePath returned_path;
+  EXPECT_CALL(*download_file, FullPath()).WillOnce(ReturnRefOfCopy(full_path));
+  base::WeakPtrFactory<DownloadItemTest> weak_ptr_factory(this);
+  item->OnAllDataSaved(0, std::unique_ptr<crypto::SecureHash>());
+  item->StealDangerousDownload(
+      false,  // delete_file_after_feedback
+      base::Bind(&DownloadItemTest::OnDownloadFileAcquired,
+                 weak_ptr_factory.GetWeakPtr(),
+                 base::Unretained(&returned_path)));
+  RunAllPendingInMessageLoops();
+  EXPECT_NE(full_path, returned_path);
+  CleanupItem(item, download_file, DownloadItem::IN_PROGRESS);
 }
 
 TEST_F(DownloadItemTest, StealInterruptedDangerousDownload) {
@@ -1574,10 +1659,11 @@ TEST_F(DownloadItemTest, StealInterruptedDangerousDownload) {
 
   EXPECT_CALL(*mock_delegate(), DownloadRemoved(_));
   base::WeakPtrFactory<DownloadItemTest> weak_ptr_factory(this);
+  item->OnAllDataSaved(0, std::unique_ptr<crypto::SecureHash>());
   item->StealDangerousDownload(
-      base::Bind(&DownloadItemTest::OnDownloadFileAcquired,
-                 weak_ptr_factory.GetWeakPtr(),
-                 base::Unretained(&returned_path)));
+      true, base::Bind(&DownloadItemTest::OnDownloadFileAcquired,
+                       weak_ptr_factory.GetWeakPtr(),
+                       base::Unretained(&returned_path)));
   RunAllPendingInMessageLoops();
   EXPECT_EQ(full_path, returned_path);
 }
@@ -1595,10 +1681,11 @@ TEST_F(DownloadItemTest, StealInterruptedNonResumableDangerousDownload) {
 
   EXPECT_CALL(*mock_delegate(), DownloadRemoved(_));
   base::WeakPtrFactory<DownloadItemTest> weak_ptr_factory(this);
+  item->OnAllDataSaved(0, std::unique_ptr<crypto::SecureHash>());
   item->StealDangerousDownload(
-      base::Bind(&DownloadItemTest::OnDownloadFileAcquired,
-                 weak_ptr_factory.GetWeakPtr(),
-                 base::Unretained(&returned_path)));
+      true, base::Bind(&DownloadItemTest::OnDownloadFileAcquired,
+                       weak_ptr_factory.GetWeakPtr(),
+                       base::Unretained(&returned_path)));
   RunAllPendingInMessageLoops();
   EXPECT_TRUE(returned_path.empty());
 }
@@ -1681,8 +1768,10 @@ void DestinationUpdateInvoker(
   DVLOG(20) << "DestinationUpdate(bytes_so_far:" << bytes_so_far
             << ", bytes_per_sec:" << bytes_per_sec
             << ") observer:" << !!observer;
-  if (observer)
-    observer->DestinationUpdate(bytes_so_far, bytes_per_sec);
+  if (observer) {
+    observer->DestinationUpdate(bytes_so_far, bytes_per_sec,
+                                std::vector<DownloadItem::ReceivedSlice>());
+  }
 }
 
 void DestinationErrorInvoker(

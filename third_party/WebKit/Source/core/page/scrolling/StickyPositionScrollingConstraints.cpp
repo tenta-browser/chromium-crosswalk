@@ -6,51 +6,81 @@
 
 namespace blink {
 
-FloatSize StickyPositionScrollingConstraints::computeStickyOffset(const FloatRect& viewportRect) const
-{
-    FloatRect boxRect = m_scrollContainerRelativeStickyBoxRect;
+FloatSize StickyPositionScrollingConstraints::computeStickyOffset(
+    const FloatRect& viewportRect,
+    const StickyPositionScrollingConstraints* ancestorStickyBoxConstraints,
+    const StickyPositionScrollingConstraints*
+        ancestorContainingBlockConstraints) {
+  // Adjust the constraint rect locations based on our ancestor sticky elements
+  // These adjustments are necessary to avoid double offsetting in the case of
+  // nested sticky elements.
+  FloatSize ancestorStickyBoxOffset =
+      ancestorStickyBoxConstraints
+          ? ancestorStickyBoxConstraints->getTotalStickyBoxStickyOffset()
+          : FloatSize();
+  FloatSize ancestorContainingBlockOffset =
+      ancestorContainingBlockConstraints
+          ? ancestorContainingBlockConstraints
+                ->getTotalContainingBlockStickyOffset()
+          : FloatSize();
+  FloatRect stickyBoxRect = m_scrollContainerRelativeStickyBoxRect;
+  FloatRect containingBlockRect = m_scrollContainerRelativeContainingBlockRect;
+  stickyBoxRect.move(ancestorStickyBoxOffset + ancestorContainingBlockOffset);
+  containingBlockRect.move(ancestorContainingBlockOffset);
 
-    if (hasAnchorEdge(AnchorEdgeRight)) {
-        float rightLimit = viewportRect.maxX() - m_rightOffset;
-        float rightDelta = std::min<float>(0, rightLimit - m_scrollContainerRelativeStickyBoxRect.maxX());
-        float availableSpace = std::min<float>(0, m_scrollContainerRelativeContainingBlockRect.x() - m_scrollContainerRelativeStickyBoxRect.x());
-        if (rightDelta < availableSpace)
-            rightDelta = availableSpace;
+  FloatRect boxRect = stickyBoxRect;
 
-        boxRect.move(rightDelta, 0);
-    }
+  if (hasAnchorEdge(AnchorEdgeRight)) {
+    float rightLimit = viewportRect.maxX() - m_rightOffset;
+    float rightDelta = std::min<float>(0, rightLimit - stickyBoxRect.maxX());
+    float availableSpace =
+        std::min<float>(0, containingBlockRect.x() - stickyBoxRect.x());
+    if (rightDelta < availableSpace)
+      rightDelta = availableSpace;
 
-    if (hasAnchorEdge(AnchorEdgeLeft)) {
-        float leftLimit = viewportRect.x() + m_leftOffset;
-        float leftDelta = std::max<float>(0, leftLimit - m_scrollContainerRelativeStickyBoxRect.x());
-        float availableSpace = std::max<float>(0, m_scrollContainerRelativeContainingBlockRect.maxX() - m_scrollContainerRelativeStickyBoxRect.maxX());
-        if (leftDelta > availableSpace)
-            leftDelta = availableSpace;
+    boxRect.move(rightDelta, 0);
+  }
 
-        boxRect.move(leftDelta, 0);
-    }
+  if (hasAnchorEdge(AnchorEdgeLeft)) {
+    float leftLimit = viewportRect.x() + m_leftOffset;
+    float leftDelta = std::max<float>(0, leftLimit - stickyBoxRect.x());
+    float availableSpace =
+        std::max<float>(0, containingBlockRect.maxX() - stickyBoxRect.maxX());
+    if (leftDelta > availableSpace)
+      leftDelta = availableSpace;
 
-    if (hasAnchorEdge(AnchorEdgeBottom)) {
-        float bottomLimit = viewportRect.maxY() - m_bottomOffset;
-        float bottomDelta = std::min<float>(0, bottomLimit - m_scrollContainerRelativeStickyBoxRect.maxY());
-        float availableSpace = std::min<float>(0, m_scrollContainerRelativeContainingBlockRect.y() - m_scrollContainerRelativeStickyBoxRect.y());
-        if (bottomDelta < availableSpace)
-            bottomDelta = availableSpace;
+    boxRect.move(leftDelta, 0);
+  }
 
-        boxRect.move(0, bottomDelta);
-    }
+  if (hasAnchorEdge(AnchorEdgeBottom)) {
+    float bottomLimit = viewportRect.maxY() - m_bottomOffset;
+    float bottomDelta = std::min<float>(0, bottomLimit - stickyBoxRect.maxY());
+    float availableSpace =
+        std::min<float>(0, containingBlockRect.y() - stickyBoxRect.y());
+    if (bottomDelta < availableSpace)
+      bottomDelta = availableSpace;
 
-    if (hasAnchorEdge(AnchorEdgeTop)) {
-        float topLimit = viewportRect.y() + m_topOffset;
-        float topDelta = std::max<float>(0, topLimit - m_scrollContainerRelativeStickyBoxRect.y());
-        float availableSpace = std::max<float>(0, m_scrollContainerRelativeContainingBlockRect.maxY() - m_scrollContainerRelativeStickyBoxRect.maxY());
-        if (topDelta > availableSpace)
-            topDelta = availableSpace;
+    boxRect.move(0, bottomDelta);
+  }
 
-        boxRect.move(0, topDelta);
-    }
+  if (hasAnchorEdge(AnchorEdgeTop)) {
+    float topLimit = viewportRect.y() + m_topOffset;
+    float topDelta = std::max<float>(0, topLimit - stickyBoxRect.y());
+    float availableSpace =
+        std::max<float>(0, containingBlockRect.maxY() - stickyBoxRect.maxY());
+    if (topDelta > availableSpace)
+      topDelta = availableSpace;
 
-    return boxRect.location() - m_scrollContainerRelativeStickyBoxRect.location();
+    boxRect.move(0, topDelta);
+  }
+
+  FloatSize stickyOffset = boxRect.location() - stickyBoxRect.location();
+
+  m_totalStickyBoxStickyOffset = ancestorStickyBoxOffset + stickyOffset;
+  m_totalContainingBlockStickyOffset =
+      ancestorStickyBoxOffset + ancestorContainingBlockOffset + stickyOffset;
+
+  return stickyOffset;
 }
 
-} // namespace blink
+}  // namespace blink

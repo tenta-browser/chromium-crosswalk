@@ -36,11 +36,21 @@ static void SetRuntimeFeatureDefaultsForPlatform() {
   WebRuntimeFeatures::enableOrientationEvent(true);
   WebRuntimeFeatures::enableFastMobileScrolling(true);
   WebRuntimeFeatures::enableMediaCapture(true);
-  WebRuntimeFeatures::enableNewMediaPlaybackUi(true);
+  // Android won't be able to reliably support non-persistent notifications, the
+  // intended behavior for which is in flux by itself.
+  WebRuntimeFeatures::enableNotificationConstructor(false);
   // Android does not yet support switching of audio output devices
   WebRuntimeFeatures::enableAudioOutputDevices(false);
-#else
+  WebRuntimeFeatures::enableAutoplayMutedVideos(true);
+  // Android does not yet support SystemMonitor.
+  WebRuntimeFeatures::enableOnDeviceChange(false);
+  WebRuntimeFeatures::enableMediaSession(true);
+#else  // defined(OS_ANDROID)
   WebRuntimeFeatures::enableNavigatorContentUtils(true);
+  if (base::FeatureList::IsEnabled(
+          features::kCrossOriginMediaPlaybackRequiresUserGesture)) {
+    WebRuntimeFeatures::enableAutoplayMutedVideos(true);
+  }
 #endif  // defined(OS_ANDROID)
 
 #if defined(OS_ANDROID) || defined(USE_AURA)
@@ -51,18 +61,26 @@ static void SetRuntimeFeatureDefaultsForPlatform() {
     // Only Android, ChromeOS support NetInfo right now.
     WebRuntimeFeatures::enableNetworkInformation(false);
 #endif
+
+// Web Bluetooth is shipped on Android, ChromeOS & MacOS, experimental
+// otherwise.
+#if defined(OS_CHROMEOS) || defined(OS_ANDROID) || defined(OS_MACOSX)
+  WebRuntimeFeatures::enableWebBluetooth(true);
+#endif
 }
 
 void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
     const base::CommandLine& command_line) {
-  if (command_line.HasSwitch(switches::kEnableExperimentalWebPlatformFeatures))
+  bool enableExperimentalWebPlatformFeatures = command_line.HasSwitch(
+      switches::kEnableExperimentalWebPlatformFeatures);
+  if (enableExperimentalWebPlatformFeatures)
     WebRuntimeFeatures::enableExperimentalFeatures(true);
 
   WebRuntimeFeatures::enableOriginTrials(
       base::FeatureList::IsEnabled(features::kOriginTrials));
 
-  if (command_line.HasSwitch(switches::kEnableWebBluetooth))
-    WebRuntimeFeatures::enableWebBluetooth(true);
+  WebRuntimeFeatures::enableFeaturePolicy(
+      base::FeatureList::IsEnabled(features::kFeaturePolicy));
 
   if (!base::FeatureList::IsEnabled(features::kWebUsb))
     WebRuntimeFeatures::enableWebUsb(false);
@@ -78,6 +96,18 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
     // Chrome's Push Messaging implementation relies on Web Notifications.
     WebRuntimeFeatures::enablePushMessaging(false);
   }
+
+  if (!base::FeatureList::IsEnabled(features::kNotificationContentImage))
+    WebRuntimeFeatures::enableNotificationContentImage(false);
+
+  // For the time being, wasm serialization is separately controlled
+  // by this flag. WebAssembly APIs and compilation is now enabled
+  // unconditionally in V8.
+  if (base::FeatureList::IsEnabled(features::kWebAssembly))
+    WebRuntimeFeatures::enableWebAssemblySerialization(true);
+
+  WebRuntimeFeatures::enableSharedArrayBuffer(
+      base::FeatureList::IsEnabled(features::kSharedArrayBuffer));
 
   if (command_line.HasSwitch(switches::kDisableSharedWorkers))
     WebRuntimeFeatures::enableSharedWorker(false);
@@ -102,6 +132,10 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
 
   if (command_line.HasSwitch(switches::kForceDisplayList2dCanvas))
     WebRuntimeFeatures::forceDisplayList2dCanvas(true);
+
+  if (command_line.HasSwitch(
+      switches::kEnableCanvas2dDynamicRenderingModeSwitching))
+    WebRuntimeFeatures::enableCanvas2dDynamicRenderingModeSwitching(true);
 
   if (command_line.HasSwitch(switches::kEnableWebGLDraftExtensions))
     WebRuntimeFeatures::enableWebGLDraftExtensions(true);
@@ -147,9 +181,11 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
   if (command_line.HasSwitch(switches::kEnablePreciseMemoryInfo))
     WebRuntimeFeatures::enablePreciseMemoryInfo(true);
 
+  if (command_line.HasSwitch(switches::kEnablePrintBrowser))
+    WebRuntimeFeatures::enablePrintBrowser(true);
+
   if (command_line.HasSwitch(switches::kEnableNetworkInformation) ||
-      command_line.HasSwitch(
-          switches::kEnableExperimentalWebPlatformFeatures)) {
+      enableExperimentalWebPlatformFeatures) {
     WebRuntimeFeatures::enableNetworkInformation(true);
   }
 
@@ -159,6 +195,9 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
   if (command_line.HasSwitch(switches::kReducedReferrerGranularity))
     WebRuntimeFeatures::enableReducedReferrerGranularity(true);
 
+  if (command_line.HasSwitch(switches::kRootLayerScrolls))
+    WebRuntimeFeatures::enableRootLayerScrolling(true);
+
   if (command_line.HasSwitch(switches::kDisablePermissionsAPI))
     WebRuntimeFeatures::enablePermissionsAPI(false);
 
@@ -167,25 +206,17 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
   else
     WebRuntimeFeatures::enableV8IdleTasks(true);
 
-  if (command_line.HasSwitch(switches::kEnableUnsafeES3APIs))
-    WebRuntimeFeatures::enableUnsafeES3APIs(true);
-
   if (command_line.HasSwitch(switches::kEnableWebVR))
     WebRuntimeFeatures::enableWebVR(true);
 
-#if defined(OS_WIN)
-  // FIXME: Remove this condition after rebase to chromium v47.
-  WebRuntimeFeatures::enablePresentationAPI(true);
-#else
+  WebRuntimeFeatures::enableWebVRExperimentalRendering(
+      base::FeatureList::IsEnabled(features::kWebVRExperimentalRendering));
+
   if (command_line.HasSwitch(switches::kDisablePresentationAPI))
     WebRuntimeFeatures::enablePresentationAPI(false);
-#endif
 
-  if (base::FeatureList::IsEnabled(features::kWeakMemoryCache))
-    WebRuntimeFeatures::enableWeakMemoryCache(true);
-
-  if (base::FeatureList::IsEnabled(features::kDoNotUnlockSharedBuffer))
-    WebRuntimeFeatures::enableDoNotUnlockSharedBuffer(true);
+  if (command_line.HasSwitch(switches::kDisableRemotePlaybackAPI))
+    WebRuntimeFeatures::enableRemotePlaybackAPI(false);
 
   const std::string webfonts_intervention_v2_group_name =
       base::FieldTrialList::FindFullName("WebFontsInterventionV2");
@@ -195,6 +226,10 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
     WebRuntimeFeatures::enableWebFontsInterventionV2With2G(
         webfonts_intervention_v2_about_flag.compare(
             switches::kEnableWebFontsInterventionV2SwitchValueEnabledWith2G) ==
+        0);
+    WebRuntimeFeatures::enableWebFontsInterventionV2With3G(
+        webfonts_intervention_v2_about_flag.compare(
+            switches::kEnableWebFontsInterventionV2SwitchValueEnabledWith3G) ==
         0);
     WebRuntimeFeatures::enableWebFontsInterventionV2WithSlow2G(
         webfonts_intervention_v2_about_flag.compare(
@@ -206,6 +241,10 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
         webfonts_intervention_v2_group_name,
         switches::kEnableWebFontsInterventionV2SwitchValueEnabledWith2G,
         base::CompareCase::INSENSITIVE_ASCII));
+    WebRuntimeFeatures::enableWebFontsInterventionV2With3G(base::StartsWith(
+        webfonts_intervention_v2_group_name,
+        switches::kEnableWebFontsInterventionV2SwitchValueEnabledWith3G,
+        base::CompareCase::INSENSITIVE_ASCII));
     WebRuntimeFeatures::enableWebFontsInterventionV2WithSlow2G(base::StartsWith(
         webfonts_intervention_v2_group_name,
         switches::kEnableWebFontsInterventionV2SwitchValueEnabledWithSlow2G,
@@ -214,43 +253,120 @@ void SetRuntimeFeaturesDefaultsAndUpdateFromArgs(
   if (command_line.HasSwitch(switches::kEnableWebFontsInterventionTrigger))
     WebRuntimeFeatures::enableWebFontsInterventionTrigger(true);
 
-  if (base::FeatureList::IsEnabled(features::kScrollAnchoring))
-    WebRuntimeFeatures::enableScrollAnchoring(true);
+  WebRuntimeFeatures::enableScrollAnchoring(
+      base::FeatureList::IsEnabled(features::kScrollAnchoring) ||
+      enableExperimentalWebPlatformFeatures);
 
   if (command_line.HasSwitch(switches::kEnableSlimmingPaintV2))
     WebRuntimeFeatures::enableSlimmingPaintV2(true);
 
-  // Note that it might already by true for OS_ANDROID, above.  This is for
-  // non-android versions.
-  if (base::FeatureList::IsEnabled(features::kNewMediaPlaybackUi))
-    WebRuntimeFeatures::enableNewMediaPlaybackUi(true);
+  if (base::FeatureList::IsEnabled(features::kSlimmingPaintInvalidation))
+    WebRuntimeFeatures::enableSlimmingPaintInvalidation(true);
+
+  if (command_line.HasSwitch(switches::kEnableSlimmingPaintInvalidation))
+    WebRuntimeFeatures::enableSlimmingPaintInvalidation(true);
+
+  if (command_line.HasSwitch(switches::kDisableSlimmingPaintInvalidation))
+    WebRuntimeFeatures::enableSlimmingPaintInvalidation(false);
 
   if (base::FeatureList::IsEnabled(features::kDocumentWriteEvaluator))
     WebRuntimeFeatures::enableDocumentWriteEvaluator(true);
 
+  if (base::FeatureList::IsEnabled(features::kLazyParseCSS))
+    WebRuntimeFeatures::enableLazyParseCSS(true);
+
   WebRuntimeFeatures::enableMediaDocumentDownloadButton(
       base::FeatureList::IsEnabled(features::kMediaDocumentDownloadButton));
 
-  if (base::FeatureList::IsEnabled(features::kPointerEvents))
-    WebRuntimeFeatures::enableFeatureFromString("PointerEvent", true);
+  WebRuntimeFeatures::enablePointerEvent(
+      base::FeatureList::IsEnabled(features::kPointerEvents));
+
+  WebRuntimeFeatures::enablePassiveDocumentEventListeners(
+      base::FeatureList::IsEnabled(features::kPassiveDocumentEventListeners));
 
   WebRuntimeFeatures::enableFeatureFromString(
       "FontCacheScaling",
       base::FeatureList::IsEnabled(features::kFontCacheScaling));
 
-  if (!base::FeatureList::IsEnabled(features::kPaintOptimizations))
-    WebRuntimeFeatures::enableFeatureFromString("PaintOptimizations", false);
+  WebRuntimeFeatures::enableFeatureFromString(
+      "FramebustingNeedsSameOriginOrUserGesture",
+      base::FeatureList::IsEnabled(
+          features::kFramebustingNeedsSameOriginOrUserGesture));
 
-  if (base::FeatureList::IsEnabled(features::kParseHTMLOnMainThread))
-    WebRuntimeFeatures::enableFeatureFromString("ParseHTMLOnMainThread", true);
+  if (command_line.HasSwitch(switches::kDisableBackgroundTimerThrottling))
+    WebRuntimeFeatures::enableTimerThrottlingForBackgroundTabs(false);
+
+  WebRuntimeFeatures::enableExpensiveBackgroundTimerThrottling(
+      base::FeatureList::IsEnabled(
+          features::kExpensiveBackgroundTimerThrottling));
+
+  if (base::FeatureList::IsEnabled(features::kHeapCompaction))
+    WebRuntimeFeatures::enableHeapCompaction(true);
 
   WebRuntimeFeatures::enableRenderingPipelineThrottling(
     base::FeatureList::IsEnabled(features::kRenderingPipelineThrottling));
 
+  WebRuntimeFeatures::enableTimerThrottlingForHiddenFrames(
+      base::FeatureList::IsEnabled(features::kTimerThrottlingForHiddenFrames));
+
+  WebRuntimeFeatures::enableTouchpadAndWheelScrollLatching(
+      base::FeatureList::IsEnabled(features::kTouchpadAndWheelScrollLatching));
+
+  if (base::FeatureList::IsEnabled(
+          features::kSendBeaconThrowForBlobWithNonSimpleType))
+    WebRuntimeFeatures::enableSendBeaconThrowForBlobWithNonSimpleType(true);
+
 #if defined(OS_ANDROID)
+  if (command_line.HasSwitch(switches::kDisableMediaSessionAPI))
+    WebRuntimeFeatures::enableMediaSession(false);
+
   WebRuntimeFeatures::enablePaymentRequest(
       base::FeatureList::IsEnabled(features::kWebPayments));
 #endif
+
+  // Sets the RuntimeEnabledFeatures for Navigation Preload feature only when
+  // '--enable-features' command line flag is given. While experimenting this
+  // feature using Origin-Trial, this base::Feature is enabled by default in
+  // content_features.cc. So FeatureList::IsEnabled() always returns true. But,
+  // unless the command line explicitly enabled the feature, this feature should
+  // be available only when a valid origin trial token is set. This check is
+  // done by the generated code of
+  // blink::OriginTrials::serviceWorkerNavigationPreloadEnabled(). See the
+  // comments in service_worker_version.h for the details.
+  if (base::FeatureList::GetInstance()->IsFeatureOverriddenFromCommandLine(
+          features::kServiceWorkerNavigationPreload.name,
+          base::FeatureList::OVERRIDE_ENABLE_FEATURE)) {
+    WebRuntimeFeatures::enableServiceWorkerNavigationPreload(true);
+  }
+
+  if (base::FeatureList::IsEnabled(features::kSpeculativeLaunchServiceWorker))
+    WebRuntimeFeatures::enableSpeculativeLaunchServiceWorker(true);
+
+  if (base::FeatureList::IsEnabled(features::kGamepadExtensions))
+    WebRuntimeFeatures::enableGamepadExtensions(true);
+
+  if (base::FeatureList::IsEnabled(features::kCompositeOpaqueFixedPosition))
+    WebRuntimeFeatures::enableFeatureFromString("CompositeOpaqueFixedPosition",
+        true);
+
+  if (!base::FeatureList::IsEnabled(features::kCompositeOpaqueScrollers))
+    WebRuntimeFeatures::enableFeatureFromString("CompositeOpaqueScrollers",
+        false);
+
+  if (base::FeatureList::IsEnabled(features::kGenericSensor))
+    WebRuntimeFeatures::enableGenericSensor(true);
+
+  if (base::FeatureList::IsEnabled(features::kFasterLocationReload))
+    WebRuntimeFeatures::enableFasterLocationReload(true);
+
+  // Enable features which VrShell depends on.
+  if (base::FeatureList::IsEnabled(features::kVrShell)) {
+    WebRuntimeFeatures::enableGamepadExtensions(true);
+    WebRuntimeFeatures::enableWebVR(true);
+  }
+
+  if (base::FeatureList::IsEnabled(features::kLoadingWithMojo))
+    WebRuntimeFeatures::enableLoadingWithMojo(true);
 
   // Enable explicitly enabled features, and then disable explicitly disabled
   // ones.

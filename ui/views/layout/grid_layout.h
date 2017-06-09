@@ -7,6 +7,7 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <vector>
 
 #include "base/macros.h"
@@ -18,7 +19,7 @@
 // define the structure of the Grid first, then add the Views.
 // The following creates a trivial grid with two columns separated by
 // a column with padding:
-// ColumnSet* columns = layout->AddColumnSet(0); // Give this column an
+// ColumnSet* columns = layout->AddColumnSet(0); // Give this column set an
 //                                               // identifier of 0.
 // columns->AddColumn(FILL, // Views are horizontally resized to fill column.
 //                    FILL, // Views starting in this column are vertically
@@ -128,8 +129,9 @@ class VIEWS_EXPORT GridLayout : public LayoutManager {
   void StartRowWithPadding(float vertical_resize, int column_set_id,
                            float padding_resize, int padding);
 
-  // Starts a new row with the specified column set.
-  void StartRow(float vertical_resize, int column_set_id);
+  // Starts a new row with the specified column set and height (0 for
+  // unspecified height).
+  void StartRow(float vertical_resize, int column_set_id, int height = 0);
 
   // Advances past columns. Use this when the current column should not
   // contain any views.
@@ -165,10 +167,6 @@ class VIEWS_EXPORT GridLayout : public LayoutManager {
   // is the same as the View supplied in the constructor.
   void Installed(View* host) override;
 
-  // Notification we've been uninstalled on a particular host. Checks that host
-  // is the same as the View supplied in the constructor.
-  void Uninstalled(View* host) override;
-
   // Notification that a view has been added.
   void ViewAdded(View* host, View* view) override;
 
@@ -201,11 +199,11 @@ class VIEWS_EXPORT GridLayout : public LayoutManager {
 
   // This is called internally from AddView. It adds the ViewState to the
   // appropriate structures, and updates internal fields such as next_column_.
-  void AddViewState(ViewState* view_state);
+  void AddViewState(std::unique_ptr<ViewState> view_state);
 
   // Adds the Row to rows_, as well as updating next_column_,
   // current_row_col_set ...
-  void AddRow(Row* row);
+  void AddRow(std::unique_ptr<Row> row);
 
   // As the name says, updates the remaining_height of the ViewState for
   // all Rows the supplied ViewState touches.
@@ -248,13 +246,13 @@ class VIEWS_EXPORT GridLayout : public LayoutManager {
   bool adding_view_;
 
   // ViewStates. This is ordered by row_span in ascending order.
-  mutable std::vector<ViewState*> view_states_;
+  mutable std::vector<std::unique_ptr<ViewState>> view_states_;
 
   // ColumnSets.
-  mutable std::vector<ColumnSet*> column_sets_;
+  mutable std::vector<std::unique_ptr<ColumnSet>> column_sets_;
 
   // Rows.
-  mutable std::vector<Row*> rows_;
+  mutable std::vector<std::unique_ptr<Row>> rows_;
 
   // Minimum preferred size.
   gfx::Size minimum_size_;
@@ -351,14 +349,14 @@ class VIEWS_EXPORT ColumnSet {
   // as updating the remaining_width.
   void CalculateSize();
 
-  // Distributes delta amoung the resizable columns.
+  // Distributes delta among the resizable columns.
   void Resize(int delta);
 
   // ID for this columnset.
   const int id_;
 
   // The columns.
-  std::vector<Column*> columns_;
+  std::vector<std::unique_ptr<Column>> columns_;
 
   // The ViewStates. This is sorted based on column_span in ascending
   // order.

@@ -8,6 +8,8 @@
 #ifndef CHROME_INSTALLER_UTIL_GOOGLE_CHROME_DISTRIBUTION_H_
 #define CHROME_INSTALLER_UTIL_GOOGLE_CHROME_DISTRIBUTION_H_
 
+#include <memory>
+
 #include "base/strings/string16.h"
 #include "chrome/installer/util/browser_distribution.h"
 
@@ -29,7 +31,7 @@ class GoogleChromeDistribution : public BrowserDistribution {
   //   concatenated to the survey url if the file in local_data_path indicates
   //   the user has opted in to providing anonymous usage data.
   void DoPostUninstallOperations(
-      const Version& version,
+      const base::Version& version,
       const base::FilePath& local_data_path,
       const base::string16& distribution_data) override;
 

@@ -44,6 +44,12 @@ class GeolocationPermissionContextAndroid
   explicit GeolocationPermissionContextAndroid(Profile* profile);
   ~GeolocationPermissionContextAndroid() override;
 
+ protected:
+  // GeolocationPermissionContext:
+  ContentSetting GetPermissionStatusInternal(
+      const GURL& requesting_origin,
+      const GURL& embedding_origin) const override;
+
  private:
   friend class GeolocationPermissionContextTests;
 
@@ -52,9 +58,16 @@ class GeolocationPermissionContextAndroid
       content::WebContents* web_contents,
       const PermissionRequestID& id,
       const GURL& requesting_frame_origin,
+      bool user_gesture,
       const BrowserPermissionCallback& callback) override;
   void CancelPermissionRequest(content::WebContents* web_contents,
                                const PermissionRequestID& id) override;
+  void NotifyPermissionSet(const PermissionRequestID& id,
+                           const GURL& requesting_origin,
+                           const GURL& embedding_origin,
+                           const BrowserPermissionCallback& callback,
+                           bool persist,
+                           ContentSetting content_setting) override;
 
   void HandleUpdateAndroidPermissions(const PermissionRequestID& id,
                                       const GURL& requesting_frame_origin,

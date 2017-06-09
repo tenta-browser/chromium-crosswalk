@@ -21,42 +21,46 @@ namespace cc {
 
 class CC_EXPORT FilterDisplayItem : public DisplayItem {
  public:
-  FilterDisplayItem(const FilterOperations& filters, const gfx::RectF& bounds);
-  explicit FilterDisplayItem(const proto::DisplayItem& proto);
+  FilterDisplayItem(const FilterOperations& filters,
+                    const gfx::RectF& bounds,
+                    const gfx::PointF& origin);
   ~FilterDisplayItem() override;
 
-  void ToProtobuf(proto::DisplayItem* proto) const override;
   void Raster(SkCanvas* canvas,
               SkPicture::AbortCallback* callback) const override;
   void AsValueInto(const gfx::Rect& visual_rect,
                    base::trace_event::TracedValue* array) const override;
-  size_t ExternalMemoryUsage() const override;
 
+  size_t ExternalMemoryUsage() const {
+    // FilterOperations doesn't expose its capacity, but size is probably good
+    // enough.
+    return filters_.size() * sizeof(filters_.at(0));
+  }
   int ApproximateOpCount() const { return 1; }
 
  private:
-  void SetNew(const FilterOperations& filters, const gfx::RectF& bounds);
+  void SetNew(const FilterOperations& filters,
+              const gfx::RectF& bounds,
+              const gfx::PointF& origin);
 
   FilterOperations filters_;
   gfx::RectF bounds_;
+  gfx::PointF origin_;
 };
 
 class CC_EXPORT EndFilterDisplayItem : public DisplayItem {
  public:
   EndFilterDisplayItem();
-  explicit EndFilterDisplayItem(const proto::DisplayItem& proto);
   ~EndFilterDisplayItem() override;
 
   static std::unique_ptr<EndFilterDisplayItem> Create() {
-    return base::WrapUnique(new EndFilterDisplayItem());
+    return base::MakeUnique<EndFilterDisplayItem>();
   }
 
-  void ToProtobuf(proto::DisplayItem* proto) const override;
   void Raster(SkCanvas* canvas,
               SkPicture::AbortCallback* callback) const override;
   void AsValueInto(const gfx::Rect& visual_rect,
                    base::trace_event::TracedValue* array) const override;
-  size_t ExternalMemoryUsage() const override;
 
   int ApproximateOpCount() const { return 0; }
 };

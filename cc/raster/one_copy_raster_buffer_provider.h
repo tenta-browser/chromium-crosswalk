@@ -17,7 +17,6 @@
 namespace cc {
 struct StagingBuffer;
 class StagingBufferPool;
-class ResourcePool;
 
 class CC_EXPORT OneCopyRasterBufferProvider : public RasterBufferProvider {
  public:
@@ -40,7 +39,13 @@ class CC_EXPORT OneCopyRasterBufferProvider : public RasterBufferProvider {
   void ReleaseBufferForRaster(std::unique_ptr<RasterBuffer> buffer) override;
   void OrderingBarrier() override;
   ResourceFormat GetResourceFormat(bool must_support_alpha) const override;
-  bool GetResourceRequiresSwizzle(bool must_support_alpha) const override;
+  bool IsResourceSwizzleRequired(bool must_support_alpha) const override;
+  bool CanPartialRasterIntoProvidedResource() const override;
+  bool IsResourceReadyToDraw(ResourceId id) const override;
+  uint64_t SetReadyToDrawCallback(
+      const ResourceProvider::ResourceIdArray& resource_ids,
+      const base::Closure& callback,
+      uint64_t pending_callback_id) const override;
   void Shutdown() override;
 
   // Playback raster source and copy result into |resource|.
@@ -97,6 +102,7 @@ class CC_EXPORT OneCopyRasterBufferProvider : public RasterBufferProvider {
       const gfx::Rect& raster_full_rect,
       const gfx::Rect& raster_dirty_rect,
       float scale,
+      sk_sp<SkColorSpace> dst_color_space,
       const RasterSource::PlaybackSettings& playback_settings,
       uint64_t previous_content_id,
       uint64_t new_content_id);
@@ -106,6 +112,7 @@ class CC_EXPORT OneCopyRasterBufferProvider : public RasterBufferProvider {
                           const RasterSource* raster_source,
                           uint64_t previous_content_id,
                           uint64_t new_content_id);
+  gfx::BufferUsage StagingBufferUsage() const;
 
   ContextProvider* const compositor_context_provider_;
   ContextProvider* const worker_context_provider_;

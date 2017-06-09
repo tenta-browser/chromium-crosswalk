@@ -11,7 +11,9 @@
 #include "base/json/json_writer.h"
 #include "base/lazy_instance.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/threading/non_thread_safe.h"
 #include "base/trace_event/trace_event.h"
 #include "content/common/devtools_messages.h"
 #include "content/common/frame_messages.h"
@@ -43,20 +45,34 @@ namespace {
 const size_t kMaxMessageChunkSize = IPC::Channel::kMaximumMessageSize / 4;
 const char kPageGetAppManifest[] = "Page.getAppManifest";
 
-
 class WebKitClientMessageLoopImpl
-    : public WebDevToolsAgentClient::WebKitClientMessageLoop {
+    : public WebDevToolsAgentClient::WebKitClientMessageLoop,
+      public base::NonThreadSafe {
  public:
-  WebKitClientMessageLoopImpl() : message_loop_(base::MessageLoop::current()) {}
-  ~WebKitClientMessageLoopImpl() override { message_loop_ = NULL; }
+  WebKitClientMessageLoopImpl() = default;
+  ~WebKitClientMessageLoopImpl() override { DCHECK(CalledOnValidThread()); }
   void run() override {
-    base::MessageLoop::ScopedNestableTaskAllower allow(message_loop_);
-    message_loop_->Run();
+    DCHECK(CalledOnValidThread());
+
+    base::RunLoop* const previous_run_loop = run_loop_;
+    base::RunLoop run_loop;
+    run_loop_ = &run_loop;
+
+    base::MessageLoop::ScopedNestableTaskAllower allow(
+        base::MessageLoop::current());
+    run_loop.Run();
+
+    run_loop_ = previous_run_loop;
   }
-  void quitNow() override { message_loop_->QuitNow(); }
+  void quitNow() override {
+    DCHECK(CalledOnValidThread());
+    DCHECK(run_loop_);
+
+    run_loop_->Quit();
+  }
 
  private:
-  base::MessageLoop* message_loop_;
+  base::RunLoop* run_loop_ = nullptr;
 };
 
 typedef std::map<int, DevToolsAgent*> IdToAgentMap;
@@ -69,7 +85,6 @@ DevToolsAgent::DevToolsAgent(RenderFrameImpl* frame)
     : RenderFrameObserver(frame),
       is_attached_(false),
       is_devtools_client_(false),
-      paused_in_mouse_move_(false),
       paused_(false),
       frame_(frame),
       cpu_throttler_(new DevToolsCPUThrottler()),
@@ -138,18 +153,10 @@ DevToolsAgent::createClientMessageLoop() {
 
 void DevToolsAgent::willEnterDebugLoop() {
   paused_ = true;
-  if (RenderWidget* widget = frame_->GetRenderWidget())
-    paused_in_mouse_move_ = widget->SendAckForMouseMoveFromDebugger();
 }
 
 void DevToolsAgent::didExitDebugLoop() {
   paused_ = false;
-  if (!paused_in_mouse_move_)
-    return;
-  if (RenderWidget* widget = frame_->GetRenderWidget()) {
-    widget->IgnoreAckForMouseMoveFromDebugger();
-    paused_in_mouse_move_ = false;
-  }
 }
 
 bool DevToolsAgent::requestDevToolsForFrame(blink::WebLocalFrame* webFrame) {
@@ -262,10 +269,11 @@ void DevToolsAgent::OnDispatchOnInspectorBackend(int session_id,
                                             WebString::fromUTF8(message));
 }
 
-void DevToolsAgent::OnInspectElement(int x, int y) {
+void DevToolsAgent::OnInspectElement(int session_id, int x, int y) {
   blink::WebFloatRect point_rect(x, y, 0, 0);
   frame_->GetRenderWidget()->convertWindowToViewport(&point_rect);
-  GetWebAgent()->inspectElementAt(WebPoint(point_rect.x, point_rect.y));
+  GetWebAgent()->inspectElementAt(
+      session_id, WebPoint(point_rect.x, point_rect.y));
 }
 
 void DevToolsAgent::OnRequestNewWindowACK(bool success) {
@@ -297,6 +305,7 @@ bool DevToolsAgent::IsAttached() {
 
 void DevToolsAgent::GotManifest(int session_id,
                                 int call_id,
+                                const GURL& manifest_url,
                                 const Manifest& manifest,
                                 const ManifestDebugInfo& debug_info) {
   if (!is_attached_)
@@ -309,18 +318,19 @@ void DevToolsAgent::GotManifest(int session_id,
 
   bool failed = false;
   for (const auto& error : debug_info.errors) {
-    base::DictionaryValue* error_value = new base::DictionaryValue();
-    errors->Append(error_value);
+    std::unique_ptr<base::DictionaryValue> error_value(
+        new base::DictionaryValue());
     error_value->SetString("message", error.message);
     error_value->SetBoolean("critical", error.critical);
     error_value->SetInteger("line", error.line);
     error_value->SetInteger("column", error.column);
     if (error.critical)
       failed = true;
+    errors->Append(std::move(error_value));
   }
 
   WebString url = frame_->GetWebFrame()->document().manifestURL().string();
-  result->SetString("url", url);
+  result->SetString("url", url.utf16());
   if (!failed)
     result->SetString("data", debug_info.raw_data);
   result->Set("errors", errors.release());

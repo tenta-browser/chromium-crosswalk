@@ -6,9 +6,9 @@
 
 #include "base/metrics/histogram.h"
 #include "build/build_config.h"
+#include "components/strings/grit/components_strings.h"
 #include "components/translate/core/browser/translate_driver.h"
 #include "components/translate/core/browser/translate_infobar_delegate.h"
-#include "grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 
 namespace translate {
@@ -98,12 +98,6 @@ bool OptionsMenuModel::IsCommandIdEnabled(int command_id) const {
       break;
   }
   return true;
-}
-
-bool OptionsMenuModel::GetAcceleratorForCommandId(
-    int command_id,
-    ui::Accelerator* accelerator) {
-  return false;
 }
 
 void OptionsMenuModel::ExecuteCommand(int command_id, int event_flags) {

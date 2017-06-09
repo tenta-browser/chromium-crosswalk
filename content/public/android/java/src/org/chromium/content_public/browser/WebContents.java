@@ -4,12 +4,11 @@
 
 package org.chromium.content_public.browser;
 
-import android.graphics.Bitmap;
-import android.graphics.Rect;
+import android.os.Handler;
 import android.os.Parcelable;
 
-import org.chromium.base.ObserverList;
 import org.chromium.base.VisibleForTesting;
+import org.chromium.ui.OverscrollRefreshHandler;
 
 /**
  * The WebContents Java wrapper to allow communicating with the native WebContents object.
@@ -103,15 +102,9 @@ public interface WebContents extends Parcelable {
     void selectAll();
 
     /**
-     * Clear the selection. This includes the cursor which is a zero-sized selection, and keyboard
-     * will be hidden as a result.
+     * Collapse the selection to the end of selection range.
      */
-    void unselect();
-
-    /**
-     * Inserts css into main frame's document.
-     */
-    void insertCSS(String css);
+    void collapseSelection();
 
     /**
      * To be called when the ContentView is hidden.
@@ -122,6 +115,11 @@ public interface WebContents extends Parcelable {
      * To be called when the ContentView is shown.
      */
     void onShow();
+
+    /**
+     * Removes handles used in text selection.
+     */
+    void dismissTextHandles();
 
     /**
      * Suspends all media players for this WebContents.  Note: There may still
@@ -176,19 +174,13 @@ public interface WebContents extends Parcelable {
     void exitFullscreen();
 
     /**
-     * Changes whether hiding the top controls is enabled.
+     * Changes whether hiding the browser controls is enabled.
      *
-     * @param enableHiding Whether hiding the top controls should be enabled or not.
-     * @param enableShowing Whether showing the top controls should be enabled or not.
+     * @param enableHiding Whether hiding the browser controls should be enabled or not.
+     * @param enableShowing Whether showing the browser controls should be enabled or not.
      * @param animate Whether the transition should be animated or not.
      */
-    void updateTopControlsState(boolean enableHiding, boolean enableShowing,
-            boolean animate);
-
-    /**
-     * Shows the IME if the focused widget could accept text input.
-     */
-    void showImeIfNeeded();
+    void updateBrowserControlsState(boolean enableHiding, boolean enableShowing, boolean animate);
 
     /**
      * Brings the Editable to the visible area while IME is up to make easier for inputing text.
@@ -274,7 +266,16 @@ public interface WebContents extends Parcelable {
     /**
      * Dispatches a Message event to the specified frame.
      */
-    void sendMessageToFrame(String frameName, String message, String targetOrigin);
+    void postMessageToFrame(String frameName, String message,
+            String sourceOrigin, String targetOrigin, MessagePort[] ports);
+
+    /**
+     * Creates a message channel for sending postMessage requests and returns the ports for
+     * each end of the channel.
+     * @param service The message port service to register the channel with.
+     * @return The ports that forms the ends of the message channel created.
+     */
+    MessagePort[] createMessageChannel();
 
     /**
      * Returns whether the initial empty page has been accessed by a script from another
@@ -295,27 +296,23 @@ public interface WebContents extends Parcelable {
     int getThemeColor();
 
     /**
+     * Initiate extraction of text, HTML, and other information for clipping puposes (smart clip)
+     * from the rectangle area defined by starting positions (x and y), and width and height.
+     */
+    void requestSmartClipExtract(int x, int y, int width, int height);
+
+    /**
+     * Register a handler to handle smart clip data once extraction is done.
+     */
+    void setSmartClipResultHandler(final Handler smartClipHandler);
+
+    /**
      * Requests a snapshop of accessibility tree. The result is provided asynchronously
      * using the callback
      * @param callback The callback to be called when the snapshot is ready. The callback
      *                 cannot be null.
      */
     void requestAccessibilitySnapshot(AccessibilitySnapshotCallback callback);
-
-    /**
-     * Resumes the current media session.
-     */
-    void resumeMediaSession();
-
-    /**
-     * Suspends the current media session.
-     */
-    void suspendMediaSession();
-
-    /**
-     * Stops the current media session.
-     */
-    void stopMediaSession();
 
     /**
      * Add an observer to the WebContents
@@ -332,31 +329,22 @@ public interface WebContents extends Parcelable {
     void removeObserver(WebContentsObserver observer);
 
     /**
-     * @return The list of observers.
+     * Sets a handler to handle swipe to refresh events.
+     *
+     * @param handler The handler to install.
      */
-    @VisibleForTesting
-    ObserverList.RewindableIterator<WebContentsObserver> getObserversForTesting();
+    void setOverscrollRefreshHandler(OverscrollRefreshHandler handler);
 
     /**
-     * Called when context menu gets opened.
+     * Requests an image snapshot of the content.
+     *
+     * @param width The width of the resulting bitmap, or 0 for "auto."
+     * @param height The height of the resulting bitmap, or 0 for "auto."
+     * @param callback May be called synchronously, or at a later point, to deliver the bitmap
+     *                 result (or a failure code).
      */
-    void onContextMenuOpened();
+    public void getContentBitmapAsync(int width, int height, ContentBitmapCallback callback);
 
-    /**
-     * Called when context menu gets closed. Note that closing context menu that is
-     * not triggered by WebContents will still call this. However, it will have no effect
-     * if onContextMenuOpened() isn't called in advance.
-     */
-    void onContextMenuClosed();
-
-    /**
-     * @return The character encoding for the current visible page.
-     */
-    @VisibleForTesting
-    String getEncoding();
-
-    public void getContentBitmapAsync(Bitmap.Config config, float scale, Rect srcRect,
-            ContentBitmapCallback callback);
     /**
      * Reloads all the Lo-Fi images in this WebContents.
      */
@@ -381,4 +369,26 @@ public interface WebContents extends Parcelable {
      */
     public int downloadImage(String url, boolean isFavicon, int maxBitmapSize,
             boolean bypassCache, ImageDownloadCallback callback);
+
+    /**
+     * Whether the WebContents has an active fullscreen video with native or custom controls.
+     * The WebContents must be fullscreen when this method is called.
+     */
+    public boolean hasActiveEffectivelyFullscreenVideo();
+
+    /**
+     * Issues a fake notification about the renderer being killed.
+     *
+     * @param wasOomProtected True if the renderer was protected from the OS out-of-memory killer
+     *                        (e.g. renderer for the currently selected tab)
+     */
+    public void simulateRendererKilledForTesting(boolean wasOomProtected);
+
+    /**
+     * Notifies the WebContents about the new persistent video status. It should be called whenever
+     * the value changes.
+     *
+     * @param value Whether there is a persistent video associated with this WebContents.
+     */
+    public void setHasPersistentVideo(boolean value);
 }

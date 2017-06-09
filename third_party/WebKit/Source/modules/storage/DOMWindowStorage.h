@@ -5,40 +5,39 @@
 #ifndef DOMWindowStorage_h
 #define DOMWindowStorage_h
 
-#include "core/frame/DOMWindowProperty.h"
 #include "platform/Supplementable.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
 
-class DOMWindow;
 class ExceptionState;
+class LocalDOMWindow;
 class Storage;
 
-class DOMWindowStorage final : public GarbageCollected<DOMWindowStorage>, public Supplement<LocalDOMWindow>, public DOMWindowProperty {
-    USING_GARBAGE_COLLECTED_MIXIN(DOMWindowStorage);
-public:
-    static DOMWindowStorage& from(LocalDOMWindow&);
-    static Storage* sessionStorage(DOMWindow&, ExceptionState&);
-    static Storage* localStorage(DOMWindow&, ExceptionState&);
+class DOMWindowStorage final : public GarbageCollected<DOMWindowStorage>,
+                               public Supplement<LocalDOMWindow> {
+  USING_GARBAGE_COLLECTED_MIXIN(DOMWindowStorage);
 
-    Storage* sessionStorage(ExceptionState&) const;
-    Storage* localStorage(ExceptionState&) const;
-    Storage* optionalSessionStorage() const { return m_sessionStorage.get(); }
-    Storage* optionalLocalStorage() const { return m_localStorage.get(); }
+ public:
+  static DOMWindowStorage& from(LocalDOMWindow&);
+  static Storage* sessionStorage(LocalDOMWindow&, ExceptionState&);
+  static Storage* localStorage(LocalDOMWindow&, ExceptionState&);
 
-    DECLARE_TRACE();
+  Storage* sessionStorage(ExceptionState&) const;
+  Storage* localStorage(ExceptionState&) const;
+  Storage* optionalSessionStorage() const { return m_sessionStorage.get(); }
+  Storage* optionalLocalStorage() const { return m_localStorage.get(); }
 
-private:
-    explicit DOMWindowStorage(LocalDOMWindow&);
-    static const char* supplementName();
+  DECLARE_TRACE();
 
-    Member<LocalDOMWindow> m_window;
-    mutable Member<Storage> m_sessionStorage;
-    mutable Member<Storage> m_localStorage;
+ private:
+  explicit DOMWindowStorage(LocalDOMWindow&);
+  static const char* supplementName();
 
+  mutable Member<Storage> m_sessionStorage;
+  mutable Member<Storage> m_localStorage;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // DOMWindowStorage_h
+#endif  // DOMWindowStorage_h

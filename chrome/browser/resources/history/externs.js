@@ -35,24 +35,11 @@ var HistoryEntry;
  *     BrowsingHistoryHandler::QueryComplete()
  * @typedef {{finished: boolean,
  *            hasSyncedResults: boolean,
- *            queryEndTime: string,
- *            queryStartTime: string,
+ *            queryInterval: string,
+ *            queryStartMonth: string,
  *            term: string}}
  */
 var HistoryQuery;
-
-/**
- * The type of the foreign session info object. This definition is based on
- * chrome/browser/ui/webui/foreign_session_handler.cc:
- * @typedef {{collapsed: boolean,
- *            deviceType: string,
- *            name: string,
- *            modifiedTime: string,
- *            tag: string,
- *            timestamp: number,
- *            windows: Array}}
- */
-var ForeignSession;
 
 /**
  * The type of the foreign session tab object. This definition is based on
@@ -65,3 +52,26 @@ var ForeignSession;
  *            url: string}}
  */
 var ForeignSessionTab;
+
+/**
+ * The type of the foreign session tab object. This definition is based on
+ * chrome/browser/ui/webui/foreign_session_handler.cc:
+ * @typedef {{timestamp: number,
+ *            userVisibleTimestamp: string,
+ *            sessionId: number,
+ *            tabs: Array<ForeignSessionTab>}}
+ */
+var ForeignSessionWindow;
+
+/**
+ * The type of the foreign session info object. This definition is based on
+ * chrome/browser/ui/webui/foreign_session_handler.cc:
+ * @typedef {{collapsed: boolean,
+ *            deviceType: string,
+ *            name: string,
+ *            modifiedTime: string,
+ *            tag: string,
+ *            timestamp: number,
+ *            windows: Array<ForeignSessionWindow>}}
+ */
+var ForeignSession;

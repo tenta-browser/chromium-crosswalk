@@ -11,10 +11,10 @@
 #include "components/autofill/core/browser/credit_card.h"
 #include "components/autofill/core/browser/legal_message_line.h"
 #include "components/autofill/core/common/autofill_constants.h"
+#include "components/grit/components_scaled_resources.h"
 #include "components/infobars/core/infobar.h"
 #include "components/infobars/core/infobar_manager.h"
-#include "grit/components_scaled_resources.h"
-#include "grit/components_strings.h"
+#include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/gfx/vector_icons_public.h"
@@ -43,7 +43,8 @@ AutofillSaveCardInfoBarDelegateMobile::AutofillSaveCardInfoBarDelegateMobile(
   if (legal_message)
     LegalMessageLine::Parse(*legal_message, &legal_messages_);
 
-  AutofillMetrics::LogCreditCardInfoBarMetric(AutofillMetrics::INFOBAR_SHOWN);
+  AutofillMetrics::LogCreditCardInfoBarMetric(AutofillMetrics::INFOBAR_SHOWN,
+                                              upload_);
 }
 
 AutofillSaveCardInfoBarDelegateMobile::
@@ -54,7 +55,7 @@ AutofillSaveCardInfoBarDelegateMobile::
 
 void AutofillSaveCardInfoBarDelegateMobile::OnLegalMessageLinkClicked(
     GURL url) {
-  infobar()->owner()->OpenURL(url, NEW_FOREGROUND_TAB);
+  infobar()->owner()->OpenURL(url, WindowOpenDisposition::NEW_FOREGROUND_TAB);
 }
 
 int AutofillSaveCardInfoBarDelegateMobile::GetIconId() const {
@@ -97,7 +98,7 @@ base::string16 AutofillSaveCardInfoBarDelegateMobile::GetButtonLabel(
     InfoBarButton button) const {
   return l10n_util::GetStringUTF16(button == BUTTON_OK
                                        ? IDS_AUTOFILL_SAVE_CARD_PROMPT_ACCEPT
-                                       : IDS_AUTOFILL_SAVE_CARD_PROMPT_DENY);
+                                       : IDS_NO_THANKS);
 }
 
 bool AutofillSaveCardInfoBarDelegateMobile::Accept() {
@@ -120,7 +121,7 @@ void AutofillSaveCardInfoBarDelegateMobile::LogUserAction(
     AutofillMetrics::InfoBarMetric user_action) {
   DCHECK(!had_user_interaction_);
 
-  AutofillMetrics::LogCreditCardInfoBarMetric(user_action);
+  AutofillMetrics::LogCreditCardInfoBarMetric(user_action, upload_);
   had_user_interaction_ = true;
 }
 

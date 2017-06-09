@@ -8,25 +8,26 @@
 
 #include "components/filesystem/public/interfaces/directory.mojom.h"
 #include "components/filesystem/public/interfaces/types.mojom.h"
-#include "services/shell/public/cpp/connector.h"
+#include "services/service_manager/public/cpp/connector.h"
 
 namespace filesystem {
 
-FilesTestBase::FilesTestBase() : ShellTest("exe:filesystem_service_unittests") {
+FilesTestBase::FilesTestBase()
+    : ServiceTest("filesystem_service_unittests") {
 }
 
 FilesTestBase::~FilesTestBase() {
 }
 
 void FilesTestBase::SetUp() {
-  ShellTest::SetUp();
-  connector()->ConnectToInterface("mojo:filesystem", &files_);
+  ServiceTest::SetUp();
+  connector()->BindInterface("filesystem", &files_);
 }
 
 void FilesTestBase::GetTemporaryRoot(mojom::DirectoryPtr* directory) {
   mojom::FileError error = mojom::FileError::FAILED;
-  files()->OpenTempDirectory(GetProxy(directory), Capture(&error));
-  ASSERT_TRUE(files().WaitForIncomingResponse());
+  bool handled = files()->OpenTempDirectory(MakeRequest(directory), &error);
+  ASSERT_TRUE(handled);
   ASSERT_EQ(mojom::FileError::OK, error);
 }
 

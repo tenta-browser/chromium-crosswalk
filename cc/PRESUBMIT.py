@@ -170,7 +170,8 @@ def CheckUniquePtr(input_api, output_api,
       if re.search(r'(=|\breturn)\s*std::unique_ptr<.*?(?<!])>\([^)]+\)', line):
         errors.append(output_api.PresubmitError(
           ('%s:%d uses explicit std::unique_ptr constructor. ' +
-           'Use base::WrapUnique() instead.') % (f.LocalPath(), line_number)))
+           'Use base::MakeUnique<T>() instead.') %
+          (f.LocalPath(), line_number)))
       # Disallow:
       # std::unique_ptr<T>()
       if re.search(r'\bstd::unique_ptr<.*?>\(\)', line):
@@ -322,32 +323,15 @@ def CheckChangeOnUpload(input_api, output_api):
   results += CheckNamespace(input_api, output_api)
   results += CheckForUseOfWrongClock(input_api, output_api)
   results += FindUselessIfdefs(input_api, output_api)
-  results += input_api.canned_checks.CheckPatchFormatted(input_api, output_api)
   return results
 
 def PostUploadHook(cl, change, output_api):
   """git cl upload will call this hook after the issue is created/modified.
 
-  This hook adds extra try bots list to the CL description in order to run
-  Blink tests in addition to CQ try bots.
+  This hook adds an extra try bot list to the CL description in order to run
+  Blink tests in addition to the CQ try bots.
   """
-  rietveld_obj = cl.RpcServer()
-  issue = cl.issue
-  description = rietveld_obj.get_description(issue)
-  if re.search(r'^CQ_INCLUDE_TRYBOTS=.*', description, re.M | re.I):
-    return []
-
-  bots = [
-    'tryserver.blink:linux_blink_rel',
-  ]
-
-  results = []
-  new_description = description
-  new_description += '\nCQ_INCLUDE_TRYBOTS=%s' % ';'.join(bots)
-  results.append(output_api.PresubmitNotifyResult(
-      'Automatically added Blink trybots to run Blink tests on CQ.'))
-
-  if new_description != description:
-    rietveld_obj.update_description(issue, new_description)
-
-  return results
+  return output_api.EnsureCQIncludeTrybotsAreAdded(
+    cl,
+    ['master.tryserver.blink:linux_trusty_blink_rel'],
+    'Automatically added Blink trybots to run Blink tests on CQ.')

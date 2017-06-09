@@ -10,16 +10,20 @@
 #include "base/debug/leak_annotations.h"
 #include "base/files/file_path.h"
 #include "base/format_macros.h"
-#include "base/strings/stringprintf.h"
 #include "net/base/net_errors.h"
 #include "net/base/test_completion_callback.h"
 #include "net/cert/cert_verify_proc.h"
 #include "net/cert/cert_verify_result.h"
 #include "net/cert/x509_certificate.h"
-#include "net/log/net_log.h"
+#include "net/log/net_log_with_source.h"
 #include "net/test/cert_test_util.h"
+#include "net/test/gtest_util.h"
 #include "net/test/test_data_directory.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+using net::test::IsError;
+using net::test::IsOk;
 
 namespace net {
 
@@ -83,14 +87,15 @@ TEST_F(MultiThreadedCertVerifierTest, InflightJoin) {
   error = verifier_.Verify(
       CertVerifier::RequestParams(test_cert, "www.example.com", 0,
                                   std::string(), CertificateList()),
-      NULL, &verify_result, callback.callback(), &request, BoundNetLog());
-  ASSERT_EQ(ERR_IO_PENDING, error);
+      NULL, &verify_result, callback.callback(), &request, NetLogWithSource());
+  ASSERT_THAT(error, IsError(ERR_IO_PENDING));
   EXPECT_TRUE(request);
   error = verifier_.Verify(
       CertVerifier::RequestParams(test_cert, "www.example.com", 0,
                                   std::string(), CertificateList()),
-      NULL, &verify_result2, callback2.callback(), &request2, BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, error);
+      NULL, &verify_result2, callback2.callback(), &request2,
+      NetLogWithSource());
+  EXPECT_THAT(error, IsError(ERR_IO_PENDING));
   EXPECT_TRUE(request2);
   error = callback.WaitForResult();
   EXPECT_TRUE(IsCertificateError(error));
@@ -114,8 +119,9 @@ TEST_F(MultiThreadedCertVerifierTest, CancelRequest) {
   error = verifier_.Verify(
       CertVerifier::RequestParams(test_cert, "www.example.com", 0,
                                   std::string(), CertificateList()),
-      NULL, &verify_result, base::Bind(&FailTest), &request, BoundNetLog());
-  ASSERT_EQ(ERR_IO_PENDING, error);
+      NULL, &verify_result, base::Bind(&FailTest), &request,
+      NetLogWithSource());
+  ASSERT_THAT(error, IsError(ERR_IO_PENDING));
   ASSERT_TRUE(request);
   request.reset();
 
@@ -127,8 +133,9 @@ TEST_F(MultiThreadedCertVerifierTest, CancelRequest) {
     error = verifier_.Verify(
         CertVerifier::RequestParams(test_cert, "www2.example.com", 0,
                                     std::string(), CertificateList()),
-        NULL, &verify_result, callback.callback(), &request, BoundNetLog());
-    ASSERT_EQ(ERR_IO_PENDING, error);
+        NULL, &verify_result, callback.callback(), &request,
+        NetLogWithSource());
+    ASSERT_THAT(error, IsError(ERR_IO_PENDING));
     EXPECT_TRUE(request);
     error = callback.WaitForResult();
   }
@@ -157,9 +164,10 @@ TEST_F(MultiThreadedCertVerifierTest, CancelRequestThenQuit) {
     error = verifier_.Verify(
         CertVerifier::RequestParams(test_cert, "www.example.com", 0,
                                     std::string(), CertificateList()),
-        NULL, &verify_result, callback.callback(), &request, BoundNetLog());
+        NULL, &verify_result, callback.callback(), &request,
+        NetLogWithSource());
   }
-  ASSERT_EQ(ERR_IO_PENDING, error);
+  ASSERT_THAT(error, IsError(ERR_IO_PENDING));
   EXPECT_TRUE(request);
   request.reset();
   // Destroy |verifier| by going out of scope.
@@ -198,37 +206,42 @@ TEST_F(MultiThreadedCertVerifierTest, MultipleInflightJoin) {
   error = verifier_.Verify(
       CertVerifier::RequestParams(test_cert, domain2, 0, std::string(),
                                   CertificateList()),
-      nullptr, &verify_result1, callback1.callback(), &request1, BoundNetLog());
-  ASSERT_EQ(ERR_IO_PENDING, error);
+      nullptr, &verify_result1, callback1.callback(), &request1,
+      NetLogWithSource());
+  ASSERT_THAT(error, IsError(ERR_IO_PENDING));
   EXPECT_TRUE(request1);
 
   error = verifier_.Verify(
       CertVerifier::RequestParams(test_cert, domain2, 0, std::string(),
                                   CertificateList()),
-      nullptr, &verify_result2, callback2.callback(), &request2, BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, error);
+      nullptr, &verify_result2, callback2.callback(), &request2,
+      NetLogWithSource());
+  EXPECT_THAT(error, IsError(ERR_IO_PENDING));
   EXPECT_TRUE(request2);
 
   error = verifier_.Verify(
       CertVerifier::RequestParams(test_cert, domain3, 0, std::string(),
                                   CertificateList()),
-      nullptr, &verify_result3, callback3.callback(), &request3, BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, error);
+      nullptr, &verify_result3, callback3.callback(), &request3,
+      NetLogWithSource());
+  EXPECT_THAT(error, IsError(ERR_IO_PENDING));
   EXPECT_TRUE(request3);
 
   // Start duplicate requests (which should join to existing jobs).
   error = verifier_.Verify(
       CertVerifier::RequestParams(test_cert, domain1, 0, std::string(),
                                   CertificateList()),
-      nullptr, &verify_result4, callback4.callback(), &request4, BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, error);
+      nullptr, &verify_result4, callback4.callback(), &request4,
+      NetLogWithSource());
+  EXPECT_THAT(error, IsError(ERR_IO_PENDING));
   EXPECT_TRUE(request4);
 
   error = verifier_.Verify(
       CertVerifier::RequestParams(test_cert, domain2, 0, std::string(),
                                   CertificateList()),
-      nullptr, &verify_result5, callback5.callback(), &request5, BoundNetLog());
-  EXPECT_EQ(ERR_IO_PENDING, error);
+      nullptr, &verify_result5, callback5.callback(), &request5,
+      NetLogWithSource());
+  EXPECT_THAT(error, IsError(ERR_IO_PENDING));
   EXPECT_TRUE(request5);
 
   error = callback1.WaitForResult();

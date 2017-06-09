@@ -30,8 +30,7 @@
 #include "content/public/test/content_browser_test_utils.h"
 #include "content/public/test/test_utils.h"
 #include "content/shell/browser/shell.h"
-#include "third_party/WebKit/public/web/WebInputEvent.h"
-#include "ui/events/event_switches.h"
+#include "third_party/WebKit/public/platform/WebInputEvent.h"
 #include "ui/events/latency_info.h"
 
 using blink::WebInputEvent;
@@ -51,7 +50,7 @@ const char kTouchActionDataURL[] =
     "  width: 96px;"
     "  border: 2px solid blue;"
     "}"
-    ".spacer { height: 1000px; }"
+    ".spacer { height: 10000px; }"
     ".ta-none { touch-action: none; }"
     "</style>"
     "<div class=box></div>"
@@ -110,8 +109,8 @@ class TouchActionBrowserTest : public ContentBrowserTest {
 
   // ContentBrowserTest:
   void SetUpCommandLine(base::CommandLine* cmd) override {
-    cmd->AppendSwitchASCII(switches::kTouchEvents,
-                           switches::kTouchEventsEnabled);
+    cmd->AppendSwitchASCII(switches::kTouchEventFeatureDetection,
+                           switches::kTouchEventFeatureDetectionEnabled);
     // TODO(rbyers): Remove this switch once touch-action ships.
     // http://crbug.com/241964
     cmd->AppendSwitch(switches::kEnableExperimentalWebPlatformFeatures);
@@ -131,12 +130,17 @@ class TouchActionBrowserTest : public ContentBrowserTest {
   // Generate touch events for a synthetic scroll from |point| for |distance|.
   // Returns true if the page scrolled by the desired amount, and false if
   // it didn't scroll at all.
-  bool DoTouchScroll(const gfx::Point& point, const gfx::Vector2d& distance) {
+  bool DoTouchScroll(const gfx::Point& point,
+                     const gfx::Vector2d& distance,
+                     bool wait_until_scrolled) {
     EXPECT_EQ(0, GetScrollTop());
 
     int scrollHeight = ExecuteScriptAndExtractInt(
         "document.documentElement.scrollHeight");
-    EXPECT_EQ(1200, scrollHeight);
+    EXPECT_EQ(10200, scrollHeight);
+
+    scoped_refptr<FrameWatcher> frame_watcher(new FrameWatcher());
+    frame_watcher->AttachTo(shell()->web_contents());
 
     SyntheticSmoothScrollGestureParams params;
     params.gesture_source_type = SyntheticGestureParams::TOUCH_INPUT;
@@ -156,12 +160,21 @@ class TouchActionBrowserTest : public ContentBrowserTest {
     runner_->Run();
     runner_ = NULL;
 
+    // Expect that the compositor scrolled at least one pixel while the
+    // main thread was in a busy loop.
+    while (wait_until_scrolled &&
+           frame_watcher->LastMetadata().root_scroll_offset.y() <
+               (distance.y() / 2)) {
+      frame_watcher->WaitFrames(1);
+    }
+
     // Check the scroll offset
     int scrollTop = GetScrollTop();
     if (scrollTop == 0)
       return false;
 
-    EXPECT_EQ(distance.y(), scrollTop);
+    // Allow for 1px rounding inaccuracies for some screen sizes.
+    EXPECT_LT(distance.y() / 2, scrollTop);
     return true;
   }
 
@@ -174,14 +187,14 @@ class TouchActionBrowserTest : public ContentBrowserTest {
 // Mac doesn't yet have a gesture recognizer, so can't support turning touch
 // events into scroll gestures.
 // Will be fixed with http://crbug.com/337142
-// Flaky on all platforms, see https://crbug.com/376668.
+// Flaky on all platforms: https://crbug.com/376668
 //
 // Verify the test infrastructure works - we can touch-scroll the page and get a
 // touchcancel as expected.
 IN_PROC_BROWSER_TEST_F(TouchActionBrowserTest, DISABLED_DefaultAuto) {
   LoadURL();
 
-  bool scrolled = DoTouchScroll(gfx::Point(50, 50), gfx::Vector2d(0, 45));
+  bool scrolled = DoTouchScroll(gfx::Point(50, 50), gfx::Vector2d(0, 45), true);
   EXPECT_TRUE(scrolled);
 
   EXPECT_EQ(1, ExecuteScriptAndExtractInt("eventCounts.touchstart"));
@@ -193,8 +206,7 @@ IN_PROC_BROWSER_TEST_F(TouchActionBrowserTest, DISABLED_DefaultAuto) {
 // Verify that touching a touch-action: none region disables scrolling and
 // enables all touch events to be sent.
 // Disabled on MacOS because it doesn't support touch input.
-// Disabled on Android due to flakiness, see https://crbug.com/376668.
-#if defined(OS_MACOSX) || defined(OS_ANDROID)
+#if defined(OS_MACOSX)
 #define MAYBE_TouchActionNone DISABLED_TouchActionNone
 #else
 #define MAYBE_TouchActionNone TouchActionNone
@@ -202,7 +214,8 @@ IN_PROC_BROWSER_TEST_F(TouchActionBrowserTest, DISABLED_DefaultAuto) {
 IN_PROC_BROWSER_TEST_F(TouchActionBrowserTest, MAYBE_TouchActionNone) {
   LoadURL();
 
-  bool scrolled = DoTouchScroll(gfx::Point(50, 150), gfx::Vector2d(0, 45));
+  bool scrolled =
+      DoTouchScroll(gfx::Point(50, 150), gfx::Vector2d(0, 45), false);
   EXPECT_FALSE(scrolled);
 
   EXPECT_EQ(1, ExecuteScriptAndExtractInt("eventCounts.touchstart"));

@@ -8,23 +8,28 @@
 #include "ash/ash_export.h"
 #include "ash/common/system/tray/system_tray_item.h"
 #include "base/macros.h"
+#include "third_party/skia/include/core/SkColor.h"
 
 namespace views {
 class ImageView;
 }
 
+namespace gfx {
+struct VectorIcon;
+}
+
 namespace ash {
 class TrayItemView;
 
+// A system tray item that uses an image as its "tray view" in the status area.
 class ASH_EXPORT TrayImageItem : public SystemTrayItem {
  public:
-  TrayImageItem(SystemTray* system_tray, int resource_id, UmaType uma_type);
+  TrayImageItem(SystemTray* system_tray,
+                const gfx::VectorIcon& icon,
+                UmaType uma_type);
   ~TrayImageItem() override;
 
   views::View* tray_view();
-
-  // Changes the icon of the tray-view to the specified resource.
-  void SetImageFromResourceId(int resource_id);
 
  protected:
   virtual bool GetInitialVisibility() = 0;
@@ -39,11 +44,18 @@ class ASH_EXPORT TrayImageItem : public SystemTrayItem {
   void UpdateAfterLoginStatusChange(LoginStatus status) override;
   void UpdateAfterShelfAlignmentChange(ShelfAlignment alignment) override;
 
- private:
-  // Set the alignment of the image depending on the shelf alignment.
-  void SetItemAlignment(ShelfAlignment alignment);
+  // Sets the color of the icon to |color|.
+  void SetIconColor(SkColor color);
 
-  int resource_id_;
+ private:
+  // Sets the current icon on |tray_view_|'s ImageView.
+  void UpdateImageOnImageView();
+
+  // The icon and its current color.
+  const gfx::VectorIcon& icon_;
+  SkColor icon_color_;
+
+  // The image view in the tray.
   TrayItemView* tray_view_;
 
   DISALLOW_COPY_AND_ASSIGN(TrayImageItem);

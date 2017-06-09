@@ -5,6 +5,8 @@
 #ifndef ASH_COMMON_SYSTEM_TRAY_TRAY_ITEM_MORE_H_
 #define ASH_COMMON_SYSTEM_TRAY_TRAY_ITEM_MORE_H_
 
+#include <memory>
+
 #include "ash/common/system/tray/actionable_view.h"
 #include "base/macros.h"
 #include "ui/views/view.h"
@@ -17,37 +19,49 @@ class View;
 
 namespace ash {
 class SystemTrayItem;
+class TrayPopupItemStyle;
+class TriView;
 
-// A view with a chevron ('>') on the right edge. Clicking on the view brings up
-// the detailed view of the tray-item that owns it.
+// A view with a more arrow on the right edge. Clicking on the view brings up
+// the detailed view of the tray-item that owns it. If the view is disabled, it
+// will not show the more arrow.
 class TrayItemMore : public ActionableView {
  public:
-  TrayItemMore(SystemTrayItem* owner, bool show_more);
+  explicit TrayItemMore(SystemTrayItem* owner);
   ~TrayItemMore() override;
 
-  SystemTrayItem* owner() const { return owner_; }
-
   void SetLabel(const base::string16& label);
-  void SetImage(const gfx::ImageSkia* image_skia);
+  void SetImage(const gfx::ImageSkia& image_skia);
   void SetAccessibleName(const base::string16& name);
 
  protected:
-  // Replaces the default icon (on the left of the label), and allows a custom
-  // view to be placed there. Once the default icon is replaced, |SetImage|
-  // should never be called.
-  void ReplaceIcon(views::View* view);
+  // Returns a style that will be applied to the elements in the UpdateStyle()
+  // method if |this| is enabled; otherwise, we force |this| to use
+  // ColorStyle::DISABLED.
+  std::unique_ptr<TrayPopupItemStyle> CreateStyle() const;
+
+  // Called by CreateStyle() to give descendants a chance to customize the
+  // style; e.g. to change the style's ColorStyle based on whether Bluetooth is
+  // enabled/disabled.
+  virtual std::unique_ptr<TrayPopupItemStyle> HandleCreateStyle() const;
+
+  // Applies the style created from CreateStyle(). Should be called whenever any
+  // input state changes that changes the style configuration created by
+  // CreateStyle(). E.g. if Bluetooth is changed between enabled/disabled then
+  // a differently configured style will be returned from CreateStyle() and thus
+  // it will need to be applied.
+  virtual void UpdateStyle();
 
  private:
   // Overridden from ActionableView.
   bool PerformAction(const ui::Event& event) override;
 
   // Overridden from views::View.
-  void Layout() override;
-  void GetAccessibleState(ui::AXViewState* state) override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
+  void OnEnabledChanged() override;
+  void OnNativeThemeChanged(const ui::NativeTheme* theme) override;
 
-  SystemTrayItem* owner_;
-  // True if |more_| should be shown.
-  bool show_more_;
+  TriView* tri_view_;
   views::ImageView* icon_;
   views::Label* label_;
   views::ImageView* more_;

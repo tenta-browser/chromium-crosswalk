@@ -22,6 +22,7 @@ import android.graphics.PorterDuff;
 import android.graphics.PorterDuffXfermode;
 import android.graphics.Rect;
 import android.graphics.drawable.BitmapDrawable;
+import android.graphics.drawable.Drawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.UserManager;
@@ -29,14 +30,14 @@ import android.preference.Preference;
 import android.preference.Preference.OnPreferenceClickListener;
 import android.preference.PreferenceFragment;
 import android.preference.PreferenceScreen;
-import android.provider.Settings;
 import android.text.TextUtils;
 import android.util.Pair;
 
+import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.ChromeApplication;
+import org.chromium.chrome.browser.AppHooks;
 import org.chromium.chrome.browser.childaccounts.ChildAccountService;
 import org.chromium.chrome.browser.preferences.ChromeBasePreference;
 import org.chromium.chrome.browser.preferences.ManagedPreferenceDelegate;
@@ -52,9 +53,8 @@ import org.chromium.chrome.browser.signin.SigninManager.SignInStateObserver;
 import org.chromium.chrome.browser.sync.ProfileSyncService;
 import org.chromium.chrome.browser.sync.ProfileSyncService.SyncStateChangedListener;
 import org.chromium.chrome.browser.sync.ui.SyncCustomizationFragment;
-import org.chromium.sync.AndroidSyncSettings;
-import org.chromium.sync.signin.AccountManagerHelper;
-import org.chromium.sync.signin.ChromeSigninController;
+import org.chromium.components.signin.AccountManagerHelper;
+import org.chromium.components.signin.ChromeSigninController;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -72,6 +72,8 @@ public class AccountManagementFragment extends PreferenceFragment
         implements SignOutDialogListener, ProfileDownloader.Observer,
                 SyncStateChangedListener, SignInStateObserver,
                 ConfirmManagedSyncDataDialog.Listener {
+    private static final String TAG = "AcctManagementPref";
+
     public static final String SIGN_OUT_DIALOG_TAG = "sign_out_dialog_tag";
     private static final String CLEAR_DATA_PROGRESS_DIALOG_TAG = "clear_data_progress";
 
@@ -100,15 +102,14 @@ public class AccountManagementFragment extends PreferenceFragment
     private static final HashMap<String, Pair<String, Bitmap>> sToNamePicture =
             new HashMap<String, Pair<String, Bitmap>>();
 
-    private static String sChildAccountId = null;
-    private static Bitmap sCachedBadgedPicture = null;
+    private static String sChildAccountId;
+    private static Bitmap sCachedBadgedPicture;
 
     public static final String PREF_SIGN_OUT = "sign_out";
     public static final String PREF_ADD_ACCOUNT = "add_account";
     public static final String PREF_PARENTAL_SETTINGS = "parental_settings";
     public static final String PREF_PARENT_ACCOUNTS = "parent_accounts";
     public static final String PREF_CHILD_CONTENT = "child_content";
-    public static final String PREF_CHILD_SAFE_SITES = "child_safe_sites";
     public static final String PREF_GOOGLE_ACTIVITY_CONTROLS = "google_activity_controls";
     public static final String PREF_SYNC_SETTINGS = "sync_settings";
 
@@ -290,15 +291,9 @@ public class AccountManagementFragment extends PreferenceFragment
 
                         if (ProfileSyncService.get() == null) return true;
 
-                        if (AndroidSyncSettings.isMasterSyncEnabled(preferences)) {
-                            Bundle args = new Bundle();
-                            args.putString(
-                                    SyncCustomizationFragment.ARGUMENT_ACCOUNT, account.name);
-                            preferences.startFragment(
-                                    SyncCustomizationFragment.class.getName(), args);
-                        } else {
-                            openSyncSettingsPage(preferences);
-                        }
+                        Bundle args = new Bundle();
+                        args.putString(SyncCustomizationFragment.ARGUMENT_ACCOUNT, account.name);
+                        preferences.startFragment(SyncCustomizationFragment.class.getName(), args);
 
                         return true;
                     }
@@ -307,14 +302,15 @@ public class AccountManagementFragment extends PreferenceFragment
 
     private void configureGoogleActivityControls() {
         Preference pref = findPreference(PREF_GOOGLE_ACTIVITY_CONTROLS);
+        if (ChildAccountService.isChildAccount()) {
+            pref.setSummary(R.string.sign_in_google_activity_controls_message_child_account);
+        }
         pref.setOnPreferenceClickListener(new OnPreferenceClickListener() {
             @Override
             public boolean onPreferenceClick(Preference preference) {
                 Activity activity = getActivity();
-                ((ChromeApplication) (activity.getApplicationContext()))
-                        .createGoogleActivityController()
-                        .openWebAndAppActivitySettings(activity,
-                                ChromeSigninController.get(activity).getSignedInAccountName());
+                AppHooks.get().createGoogleActivityController().openWebAndAppActivitySettings(
+                        activity, ChromeSigninController.get(activity).getSignedInAccountName());
                 RecordUserAction.record("Signin_AccountSettings_GoogleActivityControlsClicked");
                 return true;
             }
@@ -361,7 +357,6 @@ public class AccountManagementFragment extends PreferenceFragment
     private void configureChildAccountPreferences() {
         Preference parentAccounts = findPreference(PREF_PARENT_ACCOUNTS);
         Preference childContent = findPreference(PREF_CHILD_CONTENT);
-        Preference childSafeSites = findPreference(PREF_CHILD_SAFE_SITES);
         if (ChildAccountService.isChildAccount()) {
             Resources res = getActivity().getResources();
             PrefServiceBridge prefService = PrefServiceBridge.getInstance();
@@ -381,37 +376,34 @@ public class AccountManagementFragment extends PreferenceFragment
             }
             parentAccounts.setSummary(parentText);
             parentAccounts.setSelectable(false);
+            ((ChromeBasePreference) parentAccounts).setUseReducedPadding(true);
 
-            final boolean unapprovedContentBlocked =
-                    prefService.getDefaultSupervisedUserFilteringBehavior()
-                    == PrefServiceBridge.SUPERVISED_USER_FILTERING_BLOCK;
-            final String contentText = res.getString(
-                    unapprovedContentBlocked ? R.string.account_management_child_content_approved
-                            : R.string.account_management_child_content_all);
-            childContent.setSummary(contentText);
-            childContent.setSelectable(false);
+            final int childContentSummary;
+            int defaultBehavior = prefService.getDefaultSupervisedUserFilteringBehavior();
+            if (defaultBehavior == PrefServiceBridge.SUPERVISED_USER_FILTERING_BLOCK) {
+                childContentSummary = R.string.account_management_child_content_approved;
+            } else if (prefService.isSupervisedUserSafeSitesEnabled()) {
+                childContentSummary = R.string.account_management_child_content_filter_mature;
+            } else {
+                childContentSummary = R.string.account_management_child_content_all;
+            }
+            childContent.setSummary(childContentSummary);
+            // TODO(dgn): made selectable to show the dividers. Find a way to avoid this. A side
+            // effect is that it shows a tap ripple on an item that is not interactive.
+            // childContent.setSelectable(false);
 
-            final String safeSitesText = res.getString(
-                    prefService.isSupervisedUserSafeSitesEnabled()
-                            ? R.string.text_on : R.string.text_off);
-            childSafeSites.setSummary(safeSitesText);
-            childSafeSites.setSelectable(false);
+            Drawable newIcon = ApiCompatibilityUtils.getDrawable(
+                    getResources(), R.drawable.ic_drive_site_white_24dp);
+            newIcon.mutate().setColorFilter(
+                    ApiCompatibilityUtils.getColor(getResources(), R.color.google_grey_600),
+                    PorterDuff.Mode.SRC_IN);
+            childContent.setIcon(newIcon);
         } else {
             PreferenceScreen prefScreen = getPreferenceScreen();
             prefScreen.removePreference(findPreference(PREF_PARENTAL_SETTINGS));
             prefScreen.removePreference(parentAccounts);
             prefScreen.removePreference(childContent);
-            prefScreen.removePreference(childSafeSites);
         }
-    }
-
-    private void openSyncSettingsPage(Activity activity) {
-        // TODO(crbug/557784): This needs to actually take the user to a specific account settings
-        // page. There doesn't seem to be an obvious way to do that at the moment, but should update
-        // this when we figure that out.
-        Intent intent = new Intent(Settings.ACTION_SYNC_SETTINGS);
-        intent.putExtra(Settings.EXTRA_ACCOUNT_TYPES, new String[] {"com.google"});
-        activity.startActivity(intent);
     }
 
     private void updateAccountsList() {
@@ -433,7 +425,7 @@ public class AccountManagementFragment extends PreferenceFragment
             pref.setTitle(account.name);
 
             boolean isChildAccount = ChildAccountService.isChildAccount();
-
+            pref.setUseReducedPadding(isChildAccount);
             pref.setIcon(new BitmapDrawable(getResources(),
                     isChildAccount ? getBadgedUserPicture(account.name, getResources()) :
                         getUserPicture(account.name, getResources())));

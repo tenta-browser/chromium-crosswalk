@@ -4,25 +4,20 @@ let mockBatteryMonitor = loadMojoModules(
     'mockBatteryMonitor',
     ['device/battery/battery_monitor.mojom',
      'device/battery/battery_status.mojom',
-     'mojo/public/js/router',
+     'mojo/public/js/bindings',
     ]).then(mojo => {
-  let [batteryMonitor, batteryStatus, router] = mojo.modules;
+  let [batteryMonitor, batteryStatus, bindings] = mojo.modules;
 
-  class MockBatteryMonitor extends batteryMonitor.BatteryMonitor.stubClass {
-    constructor(serviceRegistry) {
-      super();
-      serviceRegistry.addServiceOverrideForTesting(
+  class MockBatteryMonitor {
+    constructor(interfaceProvider) {
+      interfaceProvider.addInterfaceOverrideForTesting(
           batteryMonitor.BatteryMonitor.name,
-          handle => this.connect_(handle));
+          handle => this.bindingSet_.addBinding(this, handle));
 
-      this.serviceRegistry_ = serviceRegistry;
+      this.interfaceProvider_ = interfaceProvider;
       this.pendingRequests_ = [];
       this.status_ = null;
-    }
-
-    connect_(handle) {
-      this.router_ = new router.Router(handle);
-      this.router_.setIncomingReceiver(this);
+      this.bindingSet_ = new bindings.BindingSet(batteryMonitor.BatteryMonitor);
     }
 
     queryNextStatus() {
@@ -50,7 +45,7 @@ let mockBatteryMonitor = loadMojoModules(
       this.status_ = null;
     }
   }
-  return new MockBatteryMonitor(mojo.serviceRegistry);
+  return new MockBatteryMonitor(mojo.interfaces);
 });
 
 let batteryInfo;

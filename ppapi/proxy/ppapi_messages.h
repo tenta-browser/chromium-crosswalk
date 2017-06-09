@@ -94,18 +94,18 @@ IPC_ENUM_TRAITS_MAX_VALUE(ppapi::TCPSocketVersion,
                           ppapi::TCP_SOCKET_VERSION_1_1_OR_ABOVE)
 IPC_ENUM_TRAITS(PP_AudioSampleRate)
 IPC_ENUM_TRAITS_MAX_VALUE(PP_BlendMode, PP_BLENDMODE_LAST)
-IPC_ENUM_TRAITS_MAX_VALUE(PP_CdmExceptionCode, PP_CDMEXCEPTIONCODE_OUTPUTERROR)
-IPC_ENUM_TRAITS_MAX_VALUE(PP_CdmKeyStatus, PP_CDMKEYSTATUS_STATUSPENDING)
-IPC_ENUM_TRAITS_MAX_VALUE(PP_CdmMessageType, PP_CDMMESSAGETYPE_LICENSE_RELEASE)
+IPC_ENUM_TRAITS_MAX_VALUE(PP_CdmExceptionCode, PP_CDMEXCEPTIONCODE_MAX)
+IPC_ENUM_TRAITS_MAX_VALUE(PP_CdmKeyStatus, PP_CDMKEYSTATUS_MAX)
+IPC_ENUM_TRAITS_MAX_VALUE(PP_CdmMessageType, PP_CDMMESSAGETYPE_MAX)
 IPC_ENUM_TRAITS(PP_DeviceType_Dev)
-IPC_ENUM_TRAITS(PP_DecryptorStreamType)
+IPC_ENUM_TRAITS_MAX_VALUE(PP_DecryptorStreamType, PP_DECRYPTORSTREAMTYPE_MAX)
 IPC_ENUM_TRAITS_MAX_VALUE(PP_FileSystemType, PP_FILESYSTEMTYPE_ISOLATED)
 IPC_ENUM_TRAITS_MAX_VALUE(PP_FileType, PP_FILETYPE_OTHER)
 IPC_ENUM_TRAITS(PP_Flash_BrowserOperations_Permission)
 IPC_ENUM_TRAITS(PP_Flash_BrowserOperations_SettingType)
 IPC_ENUM_TRAITS(PP_FlashSetting)
 IPC_ENUM_TRAITS(PP_ImageDataFormat)
-IPC_ENUM_TRAITS_MAX_VALUE(PP_InitDataType, PP_INITDATATYPE_WEBM)
+IPC_ENUM_TRAITS_MAX_VALUE(PP_InitDataType, PP_INITDATATYPE_MAX)
 IPC_ENUM_TRAITS(PP_InputEvent_MouseButton)
 IPC_ENUM_TRAITS(PP_InputEvent_Type)
 IPC_ENUM_TRAITS_MAX_VALUE(PP_IsolatedFileSystemType_Private,
@@ -119,7 +119,7 @@ IPC_ENUM_TRAITS(PP_PrintOutputFormat_Dev)
 IPC_ENUM_TRAITS(PP_PrintScalingOption_Dev)
 IPC_ENUM_TRAITS_MAX_VALUE(PP_PrivateDuplexMode_Dev, PP_PRIVATEDUPLEXMODE_LAST)
 IPC_ENUM_TRAITS(PP_PrivateFontCharset)
-IPC_ENUM_TRAITS_MAX_VALUE(PP_SessionType, PP_SESSIONTYPE_PERSISTENT_RELEASE)
+IPC_ENUM_TRAITS_MAX_VALUE(PP_SessionType, PP_SESSIONTYPE_MAX)
 IPC_ENUM_TRAITS_MAX_VALUE(PP_TCPSocket_Option,
                           PP_TCPSOCKET_OPTION_RECV_BUFFER_SIZE)
 IPC_ENUM_TRAITS(PP_TextInput_Type)
@@ -502,6 +502,10 @@ IPC_STRUCT_TRAITS_BEGIN(ppapi::proxy::PPB_AudioEncodeParameters)
   IPC_STRUCT_TRAITS_MEMBER(output_profile)
   IPC_STRUCT_TRAITS_MEMBER(initial_bitrate)
   IPC_STRUCT_TRAITS_MEMBER(acceleration)
+IPC_STRUCT_TRAITS_END()
+
+IPC_STRUCT_TRAITS_BEGIN(ppapi::CompositorLayerData::Transform)
+  IPC_STRUCT_TRAITS_MEMBER(matrix)
 IPC_STRUCT_TRAITS_END()
 
 #if !defined(OS_NACL) && !defined(NACL_WIN64)
@@ -1045,14 +1049,15 @@ IPC_MESSAGE_ROUTED1(PpapiHostMsg_PPBCore_ReleaseResource,
                     ppapi::HostResource)
 
 // PPB_Graphics3D.
-IPC_SYNC_MESSAGE_ROUTED3_4(PpapiHostMsg_PPBGraphics3D_Create,
-                           PP_Instance /* instance */,
-                           ppapi::HostResource /* share_context */,
-                           std::vector<int32_t> /* attrib_list */,
-                           ppapi::HostResource /* result */,
-                           gpu::Capabilities /* capabilities */,
-                           ppapi::proxy::SerializedHandle /* shared_state */,
-                           gpu::CommandBufferId /* command_buffer_id */)
+IPC_SYNC_MESSAGE_ROUTED3_4(
+    PpapiHostMsg_PPBGraphics3D_Create,
+    PP_Instance /* instance */,
+    ppapi::HostResource /* share_context */,
+    gpu::gles2::ContextCreationAttribHelper /* attrib_helper */,
+    ppapi::HostResource /* result */,
+    gpu::Capabilities /* capabilities */,
+    ppapi::proxy::SerializedHandle /* shared_state */,
+    gpu::CommandBufferId /* command_buffer_id */)
 IPC_SYNC_MESSAGE_ROUTED2_0(PpapiHostMsg_PPBGraphics3D_SetGetBuffer,
                            ppapi::HostResource /* context */,
                            int32_t /* transfer_buffer_id */)
@@ -1086,9 +1091,10 @@ IPC_SYNC_MESSAGE_ROUTED2_0(PpapiHostMsg_PPBGraphics3D_DestroyTransferBuffer,
 // after this message is sent.
 IPC_MESSAGE_ROUTED1(PpapiHostMsg_PPBGraphics3D_TakeFrontBuffer,
                     ppapi::HostResource /* graphics_3d */)
-IPC_MESSAGE_ROUTED2(PpapiHostMsg_PPBGraphics3D_SwapBuffers,
+IPC_MESSAGE_ROUTED3(PpapiHostMsg_PPBGraphics3D_SwapBuffers,
                     ppapi::HostResource /* graphics_3d */,
-                    gpu::SyncToken /* sync_token */)
+                    gpu::SyncToken /* sync_token */,
+                    gfx::Size /* size */)
 IPC_MESSAGE_ROUTED1(PpapiHostMsg_PPBGraphics3D_EnsureWorkVisible,
                     ppapi::HostResource /* context */)
 
@@ -2028,6 +2034,33 @@ IPC_MESSAGE_CONTROL3(PpapiPluginMsg_VideoSource_GetFrameReply,
                      PP_TimeTicks /* timestamp */)
 IPC_MESSAGE_CONTROL0(PpapiHostMsg_VideoSource_Close)
 
+// VpnProvider ----------------------------------------------------------------
+IPC_MESSAGE_CONTROL0(PpapiHostMsg_VpnProvider_Create)
+
+// VpnProvider plugin -> host -> plugin
+IPC_MESSAGE_CONTROL2(PpapiHostMsg_VpnProvider_Bind,
+                     std::string /* configuration_id */,
+                     std::string /* configuration_name */)
+IPC_MESSAGE_CONTROL3(PpapiPluginMsg_VpnProvider_BindReply,
+                     uint32_t /* queue_size */,
+                     uint32_t /* max_packet_size */,
+                     int32_t /* status */)
+IPC_MESSAGE_CONTROL2(PpapiHostMsg_VpnProvider_SendPacket,
+                     uint32_t /* packet_size */,
+                     uint32_t /* id */)
+IPC_MESSAGE_CONTROL1(PpapiPluginMsg_VpnProvider_SendPacketReply,
+                     uint32_t /* id */)
+
+// VpnProvider host -> plugin
+IPC_MESSAGE_CONTROL0(PpapiPluginMsg_VpnProvider_OnUnbind)
+
+// VpnProvider host -> plugin -> host
+IPC_MESSAGE_CONTROL2(PpapiPluginMsg_VpnProvider_OnPacketReceived,
+                     uint32_t /* packet_size */,
+                     uint32_t /* id */)
+IPC_MESSAGE_CONTROL1(PpapiHostMsg_VpnProvider_OnPacketReceivedReply,
+                     uint32_t /* id */)
+
 // WebSocket -------------------------------------------------------------------
 
 IPC_MESSAGE_CONTROL0(PpapiHostMsg_WebSocket_Create)
@@ -2499,5 +2532,8 @@ IPC_MESSAGE_CONTROL1(PpapiPluginMsg_VideoCapture_OnError,
                      uint32_t /* error */)
 IPC_MESSAGE_CONTROL1(PpapiPluginMsg_VideoCapture_OnBufferReady,
                      uint32_t /* buffer */)
+
+// Sent by the PPAPI process to indicate that a field trial has been activated.
+IPC_MESSAGE_CONTROL1(PpapiHostMsg_FieldTrialActivated, std::string /* name */)
 
 #endif  // !defined(OS_NACL) && !defined(NACL_WIN64)

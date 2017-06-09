@@ -11,14 +11,16 @@
 
 namespace blink {
 
-class Settings;
-
-WebGLContextAttributes toWebGLContextAttributes(const CanvasContextCreationAttributes&);
+WebGLContextAttributes toWebGLContextAttributes(
+    const CanvasContextCreationAttributes&);
 
 // Set up the attributes that can be used to create a GL context via the
 // Platform API.
-Platform::ContextAttributes toPlatformContextAttributes(const WebGLContextAttributes&, unsigned webGLVersion);
+Platform::ContextAttributes toPlatformContextAttributes(
+    const CanvasContextCreationAttributes&,
+    unsigned webGLVersion,
+    bool supportOwnOffscreenSurface);
 
-} // namespace blink
+}  // namespace blink
 
-#endif // WebGLContextAttributeHelpers_h
+#endif  // WebGLContextAttributeHelpers_h

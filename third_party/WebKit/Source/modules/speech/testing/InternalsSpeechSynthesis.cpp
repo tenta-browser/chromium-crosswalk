@@ -39,15 +39,24 @@
 
 namespace blink {
 
-void InternalsSpeechSynthesis::enableMockSpeechSynthesizer(Internals&, Document* document)
-{
-    ASSERT(document && document->domWindow());
+void InternalsSpeechSynthesis::enableMockSpeechSynthesizer(
+    ScriptState* scriptState,
+    Internals&,
+    DOMWindow* window) {
+  // TODO(dcheng): Performing a local/remote check is an anti-pattern. However,
+  // it is necessary here since |window| is an argument passed from Javascript,
+  // and the Window interface is accessible cross origin. The long-term fix is
+  // to make the Internals object per-context, so |window| doesn't need to
+  // passed as an argument.
+  if (!window->isLocalDOMWindow())
+    return;
+  SpeechSynthesis* synthesis = DOMWindowSpeechSynthesis::speechSynthesis(
+      scriptState, toLocalDOMWindow(*window));
+  if (!synthesis)
+    return;
 
-    SpeechSynthesis* synthesis = DOMWindowSpeechSynthesis::speechSynthesis(*document->domWindow());
-    if (!synthesis)
-        return;
-
-    synthesis->setPlatformSynthesizer(PlatformSpeechSynthesizerMock::create(synthesis));
+  synthesis->setPlatformSynthesizer(
+      PlatformSpeechSynthesizerMock::create(synthesis));
 }
 
-} // namespace blink
+}  // namespace blink

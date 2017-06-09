@@ -6,11 +6,10 @@
 
 #include <algorithm>
 
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
-#include "base/task_runner_util.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/timer/elapsed_timer.h"
-#include "content/public/browser/browser_thread.h"
 #include "crypto/secure_hash.h"
 #include "crypto/sha2.h"
 #include "extensions/browser/content_hash_reader.h"
@@ -66,9 +65,10 @@ void ContentVerifyJob::Start() {
   if (g_test_observer)
     g_test_observer->JobStarted(hash_reader_->extension_id(),
                                 hash_reader_->relative_path());
-  base::PostTaskAndReplyWithResult(
-      content::BrowserThread::GetBlockingPool(),
+  base::PostTaskWithTraitsAndReplyWithResult(
       FROM_HERE,
+      base::TaskTraits().MayBlock().WithPriority(
+          base::TaskPriority::USER_VISIBLE),
       base::Bind(&ContentHashReader::Init, hash_reader_),
       base::Bind(&ContentVerifyJob::OnHashesReady, this));
 }
@@ -146,7 +146,7 @@ bool ContentVerifyJob::FinishBlock() {
   if (current_hash_byte_count_ <= 0)
     return true;
   std::string final(crypto::kSHA256Length, 0);
-  current_hash_->Finish(string_as_array(&final), final.size());
+  current_hash_->Finish(base::string_as_array(& final), final.size());
   current_hash_.reset();
   current_hash_byte_count_ = 0;
 
@@ -178,7 +178,7 @@ void ContentVerifyJob::OnHashesReady(bool success) {
   if (!queue_.empty()) {
     std::string tmp;
     queue_.swap(tmp);
-    BytesRead(tmp.size(), string_as_array(&tmp));
+    BytesRead(tmp.size(), base::string_as_array(&tmp));
   }
   if (done_reading_) {
     ScopedElapsedTimer timer(&time_spent_);

@@ -50,7 +50,7 @@ void BrowserPluginEmbedder::DragLeftGuest(BrowserPluginGuest* guest) {
 bool BrowserPluginEmbedder::NotifyScreenInfoChanged(
     WebContents* guest_web_contents) {
   if (guest_web_contents->GetRenderViewHost()) {
-    auto render_widget_host = RenderWidgetHostImpl::From(
+    auto* render_widget_host = RenderWidgetHostImpl::From(
         guest_web_contents->GetRenderViewHost()->GetWidget());
     render_widget_host->NotifyScreenInfoChanged();
   }
@@ -116,10 +116,6 @@ void BrowserPluginEmbedder::DidSendScreenRects() {
       base::Bind(&BrowserPluginEmbedder::DidSendScreenRectsCallback));
 }
 
-bool BrowserPluginEmbedder::OnMessageReceived(const IPC::Message& message) {
-  return OnMessageReceived(message, nullptr);
-}
-
 bool BrowserPluginEmbedder::OnMessageReceived(
     const IPC::Message& message,
     RenderFrameHost* render_frame_host) {
@@ -127,8 +123,6 @@ bool BrowserPluginEmbedder::OnMessageReceived(
   IPC_BEGIN_MESSAGE_MAP_WITH_PARAM(BrowserPluginEmbedder, message,
                                    render_frame_host)
     IPC_MESSAGE_HANDLER(BrowserPluginHostMsg_Attach, OnAttach)
-    IPC_MESSAGE_HANDLER_GENERIC(DragHostMsg_UpdateDragCursor,
-                                OnUpdateDragCursor(&handled));
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
   return handled;
@@ -156,8 +150,8 @@ void BrowserPluginEmbedder::SystemDragEnded() {
   ClearGuestDragStateIfApplicable();
 }
 
-void BrowserPluginEmbedder::OnUpdateDragCursor(bool* handled) {
-  *handled = !!guest_dragging_over_;
+bool BrowserPluginEmbedder::OnUpdateDragCursor() {
+  return !!guest_dragging_over_;
 }
 
 void BrowserPluginEmbedder::OnAttach(
@@ -180,7 +174,7 @@ void BrowserPluginEmbedder::OnAttach(
 bool BrowserPluginEmbedder::HandleKeyboardEvent(
     const NativeWebKeyboardEvent& event) {
   if ((event.windowsKeyCode != ui::VKEY_ESCAPE) ||
-      (event.modifiers & blink::WebInputEvent::InputModifiers)) {
+      (event.modifiers() & blink::WebInputEvent::InputModifiers)) {
     return false;
   }
 

@@ -35,9 +35,6 @@ class DebugColors {
   static SkColor SurfaceBorderColor();
   static int SurfaceBorderWidth(const LayerTreeImpl* tree_impl);
 
-  static SkColor SurfaceReplicaBorderColor();
-  static int SurfaceReplicaBorderWidth(const LayerTreeImpl* tree_impl);
-
   static SkColor HighResTileBorderColor();
   static int HighResTileBorderWidth(const LayerTreeImpl* tree_impl);
 
@@ -86,10 +83,6 @@ class DebugColors {
   static int ScreenSpaceLayerRectBorderWidth();
   static SkColor ScreenSpaceLayerRectFillColor();
 
-  static SkColor ScreenSpaceSurfaceReplicaRectBorderColor();
-  static int ScreenSpaceSurfaceReplicaRectBorderWidth();
-  static SkColor ScreenSpaceSurfaceReplicaRectFillColor();
-
   static SkColor TouchEventHandlerRectBorderColor();
   static int TouchEventHandlerRectBorderWidth();
   static SkColor TouchEventHandlerRectFillColor();
@@ -114,6 +107,9 @@ class DebugColors {
   static SkColor MissingPictureFillColor();
   static SkColor MissingResizeInvalidations();
   static SkColor PictureBorderColor();
+
+  static SkColor GLCompositedTextureQuadBorderColor(int index);
+  static int GLCompositedTextureQuadBoderWidth();
 
   static SkColor HUDBackgroundColor();
   static SkColor HUDSeparatorLineColor();

@@ -19,9 +19,6 @@
 #include "cc/base/cc_export.h"
 
 namespace base {
-namespace trace_event {
-class TracedValue;
-}
 class SingleThreadTaskRunner;
 }
 
@@ -39,6 +36,8 @@ class CC_EXPORT TaskRunnerProvider {
         new TaskRunnerProvider(main_task_runner, impl_task_runner));
   }
 
+  // TODO(vmpstr): Should these return scoped_refptr to task runners? Many
+  // places turn them into scoped_refptrs. How many of them need to?
   base::SingleThreadTaskRunner* MainThreadTaskRunner() const;
   bool HasImplThread() const;
   base::SingleThreadTaskRunner* ImplThreadTaskRunner() const;

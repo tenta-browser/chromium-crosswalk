@@ -6,7 +6,7 @@ package org.chromium.chrome.browser.accessibility;
 
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.test.suitebuilder.annotation.SmallTest;
+import android.support.test.filters.SmallTest;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.ThreadUtils;
@@ -145,8 +145,7 @@ public class FontSizePrefsTest extends NativeLibraryTestBase {
         // Delete PREF_USER_FONT_SCALE_FACTOR. This simulates the condition just after upgrading to
         // M51, when userFontScaleFactor was added.
         SharedPreferences.Editor editor = ContextUtils.getAppSharedPreferences().edit();
-        editor.remove(FontSizePrefs.PREF_USER_FONT_SCALE_FACTOR);
-        editor.commit();
+        editor.remove(FontSizePrefs.PREF_USER_FONT_SCALE_FACTOR).apply();
 
         // Intial userFontScaleFactor should be set to fontScaleFactor / systemFontScale.
         assertEquals(1.5f, getUserFontScaleFactor(), EPSILON);

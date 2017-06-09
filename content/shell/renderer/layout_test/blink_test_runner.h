@@ -12,17 +12,16 @@
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
-#include "components/test_runner/test_preferences.h"
-#include "components/test_runner/web_test_delegate.h"
 #include "content/public/common/page_state.h"
 #include "content/public/renderer/render_view_observer.h"
 #include "content/public/renderer/render_view_observer_tracker.h"
+#include "content/shell/common/layout_test.mojom.h"
 #include "content/shell/common/layout_test/layout_test_bluetooth_fake_adapter_setter.mojom.h"
-#include "content/shell/common/shell_test_configuration.h"
+#include "content/shell/test_runner/test_preferences.h"
+#include "content/shell/test_runner/web_test_delegate.h"
 #include "v8/include/v8.h"
 
 class SkBitmap;
-class SkCanvas;
 
 namespace base {
 class DictionaryValue;
@@ -31,12 +30,13 @@ class DictionaryValue;
 namespace blink {
 class WebDeviceMotionData;
 class WebDeviceOrientationData;
+class WebFrame;
+class WebURLRequest;
 class WebView;
-struct WebRect;
 }
 
 namespace test_runner {
-class WebTestProxyBase;
+class AppBannerService;
 }
 
 namespace content {
@@ -73,8 +73,8 @@ class BlinkTestRunner : public RenderViewObserver,
   void SetDeviceOrientationData(
       const blink::WebDeviceOrientationData& data) override;
   void PrintMessage(const std::string& message) override;
-  void PostTask(blink::WebTaskRunner::Task* task) override;
-  void PostDelayedTask(blink::WebTaskRunner::Task* task, long long ms) override;
+  void PostTask(const base::Closure& task) override;
+  void PostDelayedTask(const base::Closure& task, long long ms) override;
   blink::WebString RegisterIsolatedFileSystem(
       const blink::WebVector<blink::WebString>& absolute_filenames) override;
   long long GetCurrentTimeInMillisecond() override;
@@ -98,13 +98,20 @@ class BlinkTestRunner : public RenderViewObserver,
   std::string EvaluateInWebInspectorOverlay(const std::string& script) override;
   void ClearAllDatabases() override;
   void SetDatabaseQuota(int quota) override;
-  void SimulateWebNotificationClick(const std::string& title,
-                                    int action_index) override;
+  void SimulateWebNotificationClick(
+      const std::string& title,
+      int action_index,
+      const base::NullableString16& reply) override;
   void SimulateWebNotificationClose(const std::string& title,
                                     bool by_user) override;
   void SetDeviceScaleFactor(float factor) override;
   void SetDeviceColorProfile(const std::string& name) override;
   float GetWindowToViewportScale() override;
+  std::unique_ptr<blink::WebInputEvent> TransformScreenToWidgetCoordinates(
+      test_runner::WebWidgetTestProxyBase* web_widget_test_proxy_base,
+      const blink::WebInputEvent& event) override;
+  test_runner::WebWidgetTestProxyBase* GetWebWidgetTestProxyBase(
+      blink::WebLocalFrame* frame) override;
   void EnableUseZoomForDSF() override;
   bool IsUseZoomForDSFEnabled() override;
   void SetBluetoothFakeAdapter(const std::string& adapter_name,
@@ -116,7 +123,7 @@ class BlinkTestRunner : public RenderViewObserver,
   void SendBluetoothManualChooserEvent(const std::string& event,
                                        const std::string& argument) override;
   void SetFocus(blink::WebView* web_view, bool focus) override;
-  void SetAcceptAllCookies(bool accept) override;
+  void SetBlockThirdPartyCookies(bool block) override;
   std::string PathToLocalResource(const std::string& resource) override;
   void SetLocale(const std::string& locale) override;
   void OnLayoutTestRuntimeFlagsChanged(
@@ -146,14 +153,18 @@ class BlinkTestRunner : public RenderViewObserver,
       blink::WebMediaStream* stream) override;
   cc::SharedBitmapManager* GetSharedBitmapManager() override;
   void DispatchBeforeInstallPromptEvent(
-      int request_id,
       const std::vector<std::string>& event_platforms,
       const base::Callback<void(bool)>& callback) override;
+  void ResolveBeforeInstallPromptPromise(
+      const std::string& platform) override;
   blink::WebPlugin* CreatePluginPlaceholder(
     blink::WebLocalFrame* frame,
     const blink::WebPluginParams& params) override;
-  float GetDeviceScaleFactorForTest() const override;
+  float GetDeviceScaleFactor() const override;
   void RunIdleTasks(const base::Closure& callback) override;
+  void ForceTextInputStateUpdate(blink::WebFrame* frame) override;
+  bool IsNavigationInitiatedByRenderer(
+      const blink::WebURLRequest& request) override;
 
   // Resets a RenderView to a known state for layout tests. It is used both when
   // a RenderView is created and when reusing an existing RenderView for the
@@ -165,8 +176,8 @@ class BlinkTestRunner : public RenderViewObserver,
   void ReportLeakDetectionResult(const LeakDetectionResult& result);
 
   // Message handlers forwarded by LayoutTestRenderFrameObserver.
-  void OnSetTestConfiguration(const ShellTestConfiguration& params);
-  void OnReplicateTestConfiguration(const ShellTestConfiguration& params);
+  void OnSetTestConfiguration(mojom::ShellTestConfigurationPtr params);
+  void OnReplicateTestConfiguration(mojom::ShellTestConfigurationPtr params);
   void OnSetupSecondaryRenderer();
 
  private:
@@ -199,7 +210,7 @@ class BlinkTestRunner : public RenderViewObserver,
 
   test_runner::TestPreferences prefs_;
 
-  ShellTestConfiguration test_config_;
+  mojom::ShellTestConfigurationPtr test_config_;
 
   std::vector<int> routing_ids_;
   std::vector<std::vector<PageState> > session_histories_;
@@ -211,6 +222,8 @@ class BlinkTestRunner : public RenderViewObserver,
   bool is_main_window_;
 
   bool focus_on_next_commit_;
+
+  std::unique_ptr<test_runner::AppBannerService> app_banner_service_;
 
   std::unique_ptr<LeakDetector> leak_detector_;
 

@@ -16,7 +16,7 @@
 #include "base/values.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "content/public/browser/browser_thread.h"
-#include "device/core/device_client.h"
+#include "device/base/device_client.h"
 #include "device/hid/hid_device_info.h"
 #include "device/hid/hid_service.h"
 #include "device/usb/usb_device.h"
@@ -101,7 +101,7 @@ void SaveDevicePermissionEntry(BrowserContext* context,
   }
 
   std::unique_ptr<base::Value> device_entry(entry->ToValue());
-  DCHECK(devices->Find(*device_entry.get()) == devices->end());
+  DCHECK(devices->Find(*device_entry) == devices->end());
   devices->Append(std::move(device_entry));
 }
 

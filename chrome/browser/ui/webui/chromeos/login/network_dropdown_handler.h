@@ -16,7 +16,7 @@
 namespace chromeos {
 
 class NetworkDropdownHandler : public BaseScreenHandler,
-                               public NetworkDropdown::Actor {
+                               public NetworkDropdown::View {
  public:
   class Observer {
    public:
@@ -51,6 +51,10 @@ class NetworkDropdownHandler : public BaseScreenHandler,
   void HandleNetworkDropdownHide();
   // Handles network drop-down refresh.
   void HandleNetworkDropdownRefresh();
+
+  void HandleLaunchProxySettingsDialog();
+  void HandleLaunchAddWiFiNetworkDialog();
+  void HandleLaunchAddMobileNetworkDialog();
 
   std::unique_ptr<NetworkDropdown> dropdown_;
 

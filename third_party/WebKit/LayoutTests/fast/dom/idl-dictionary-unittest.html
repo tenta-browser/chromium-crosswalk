@@ -37,6 +37,7 @@ if (window.internals && internals.dictionaryTest) {
     shouldBeUndefined('dict.doubleOrStringMember');
     shouldBeUndefined('dict.doubleOrStringSequenceMember');
     shouldBeNull('dict.eventTargetOrNullMember');
+    shouldBeUndefined('dict.prefixGetMember');
     debug('');
 
     debug('Test for setting undefined');
@@ -91,7 +92,8 @@ if (window.internals && internals.dictionaryTest) {
         objectOrNullMemberWithDefault: testObject2,
         doubleOrStringMember: 3.14,
         doubleOrStringSequenceMember: [3.14, 'Hello'],
-        eventTargetOrNullMember: element1
+        eventTargetOrNullMember: element1,
+        prefixGetMember: testObject1,
     });
     dict = dictionaryTest.get();
     shouldBe('dict.longMember', '1');
@@ -120,6 +122,7 @@ if (window.internals && internals.dictionaryTest) {
     shouldBe('dict.doubleOrStringMember', '3.14');
     shouldBe('dict.doubleOrStringSequenceMember', '[3.14, "Hello"]');
     shouldBe('dict.eventTargetOrNullMember', 'element1');
+    shouldBe('dict.prefixGetMember', 'testObject1');
     debug('');
 
     debug('Additional test for union type members');
@@ -308,6 +311,20 @@ if (window.internals && internals.dictionaryTest) {
     shouldBeEqualToString('derived.derivedStringMember', 'modifiedString2');
     shouldBeEqualToString('derived.derivedStringMemberWithDefault', 'modifiedString3');
     shouldBeUndefined('derived.invalidMember');
+    shouldBeFalse('derived.requiredBooleanMember');
+    debug('');
+
+    debug('Test for triple level derived dictionary');
+    dictionaryTest.setDerivedDerived({
+        longMember: 1,
+        derivedStringMember: 'modifiedString',
+        derivedDerivedStringMember: 'modifiedString2',
+        requiredBooleanMember: false,
+    });
+    derived = dictionaryTest.getDerivedDerived();
+    shouldBe('derived.longMember', '1');
+    shouldBeEqualToString('derived.derivedStringMember', 'modifiedString');
+    shouldBeEqualToString('derived.derivedDerivedStringMember', 'modifiedString2');
     shouldBeFalse('derived.requiredBooleanMember');
     debug('');
 

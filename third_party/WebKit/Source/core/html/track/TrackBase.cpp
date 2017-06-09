@@ -34,29 +34,23 @@
 
 namespace blink {
 
-TrackBase::TrackBase(WebMediaPlayer::TrackType type, const AtomicString& kind, const AtomicString& label, const AtomicString& language, const String& id)
-    : m_type(type)
-    , m_kind(kind)
-    , m_label(label)
-    , m_language(language)
-    , m_id(id)
-    , m_mediaElement(nullptr)
-{
+TrackBase::TrackBase(WebMediaPlayer::TrackType type,
+                     const AtomicString& kind,
+                     const AtomicString& label,
+                     const AtomicString& language,
+                     const String& id)
+    : m_type(type),
+      m_kind(kind),
+      m_label(label),
+      m_language(language),
+      m_id(id),
+      m_mediaElement(nullptr) {}
+
+TrackBase::~TrackBase() {}
+
+DEFINE_TRACE(TrackBase) {
+  Supplementable<TrackBase>::trace(visitor);
+  visitor->trace(m_mediaElement);
 }
 
-TrackBase::~TrackBase()
-{
-}
-
-Node* TrackBase::owner() const
-{
-    return m_mediaElement;
-}
-
-DEFINE_TRACE(TrackBase)
-{
-    Supplementable<TrackBase>::trace(visitor);
-    visitor->trace(m_mediaElement);
-}
-
-} // namespace blink
+}  // namespace blink

@@ -10,14 +10,10 @@
 
 #include "media/audio/android/audio_manager_android.h"
 #include "media/audio/android/audio_record_input.h"
-#include "media/base/android/media_codec_util.h"
 #include "media/base/android/media_drm_bridge.h"
 #include "media/base/android/media_player_bridge.h"
 #include "media/base/android/media_player_listener.h"
-#include "media/base/android/sdk_media_codec_bridge.h"
-#include "media/base/android/webaudio_media_codec_bridge.h"
-#include "media/capture/video/android/video_capture_device_android.h"
-#include "media/capture/video/android/video_capture_device_factory_android.h"
+#include "media/base/android/media_server_crash_listener.h"
 
 namespace media {
 
@@ -27,10 +23,8 @@ static base::android::RegistrationMethod kMediaRegisteredMethods[] = {
     {"MediaDrmBridge", MediaDrmBridge::RegisterMediaDrmBridge},
     {"MediaPlayerBridge", MediaPlayerBridge::RegisterMediaPlayerBridge},
     {"MediaPlayerListener", MediaPlayerListener::RegisterMediaPlayerListener},
-    {"SdkMediaCodecBridge", SdkMediaCodecBridge::RegisterSdkMediaCodecBridge},
-    {"MediaCodecUtil", MediaCodecUtil::RegisterMediaCodecUtil},
-    {"WebAudioMediaCodecBridge",
-     WebAudioMediaCodecBridge::RegisterWebAudioMediaCodecBridge},
+    {"MediaServerCrashListener",
+     MediaServerCrashListener::RegisterMediaServerCrashListener},
 };
 
 bool RegisterJni(JNIEnv* env) {

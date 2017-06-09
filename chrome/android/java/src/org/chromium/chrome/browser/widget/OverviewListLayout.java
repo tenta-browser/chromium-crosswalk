@@ -59,8 +59,8 @@ public class OverviewListLayout extends Layout implements AccessibilityTabModelA
     }
 
     @Override
-    public int getSizingFlags() {
-        return SizingFlags.REQUIRE_FULLSCREEN_SIZE;
+    public ViewportMode getViewportMode() {
+        return ViewportMode.ALWAYS_FULLSCREEN;
     }
 
     @Override
@@ -73,7 +73,7 @@ public class OverviewListLayout extends Layout implements AccessibilityTabModelA
         FrameLayout.LayoutParams params =
                 (FrameLayout.LayoutParams) mTabModelWrapper.getLayoutParams();
         if (params == null) return;
-        params.topMargin = (int) ((getHeight() - getHeightMinusTopControls()) * mDpToPx);
+        params.topMargin = (int) ((getHeight() - getHeightMinusBrowserControls()) * mDpToPx);
         mTabModelWrapper.setLayoutParams(params);
     }
 
@@ -104,6 +104,15 @@ public class OverviewListLayout extends Layout implements AccessibilityTabModelA
         super.onTabCreated(
                 time, tabId, tabIndex, sourceTabId, newIsIncognito, background, originX, originY);
         startHiding(tabId, false);
+    }
+
+    @Override
+    public void onTabRestored(long time, int tabId) {
+        super.onTabRestored(time, tabId);
+        // Call show() so that new tabs and potentially the toggle between incognito and normal
+        // lists are created.
+        // TODO(twellington): add animation for showing the restored tab.
+        show(time, false);
     }
 
     @Override

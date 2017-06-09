@@ -6,35 +6,52 @@
 #define CSSURIValue_h
 
 #include "core/css/CSSValue.h"
+#include "wtf/text/WTFString.h"
 
 namespace blink {
 
+class Document;
+class KURL;
+class SVGElementProxy;
+
 class CSSURIValue : public CSSValue {
-public:
-    static CSSURIValue* create(const String& str)
-    {
-        return new CSSURIValue(str);
-    }
+ public:
+  static CSSURIValue* create(const String& relativeUrl, const KURL& url) {
+    return new CSSURIValue(AtomicString(relativeUrl), url);
+  }
+  static CSSURIValue* create(const AtomicString& absoluteUrl) {
+    return new CSSURIValue(absoluteUrl, absoluteUrl);
+  }
+  ~CSSURIValue();
 
-    String value() const { return m_string; }
+  SVGElementProxy& ensureElementProxy(const Document&) const;
+  void reResolveUrl(const Document&) const;
 
-    String customCSSText() const;
+  const String& value() const { return m_relativeUrl; }
 
-    bool equals(const CSSURIValue& other) const
-    {
-        return m_string == other.m_string;
-    }
+  String customCSSText() const;
 
-    DECLARE_TRACE_AFTER_DISPATCH();
+  bool isLocal(const Document&) const;
+  bool equals(const CSSURIValue&) const;
 
-private:
-    CSSURIValue(const String&);
+  DECLARE_TRACE_AFTER_DISPATCH();
 
-    String m_string;
+ private:
+  CSSURIValue(const AtomicString&, const KURL&);
+  CSSURIValue(const AtomicString& relativeUrl, const AtomicString& absoluteUrl);
+
+  KURL absoluteUrl() const;
+  AtomicString fragmentIdentifier() const;
+
+  AtomicString m_relativeUrl;
+  bool m_isLocal;
+
+  mutable Member<SVGElementProxy> m_proxy;
+  mutable AtomicString m_absoluteUrl;
 };
 
 DEFINE_CSS_VALUE_TYPE_CASTS(CSSURIValue, isURIValue());
 
-} // namespace blink
+}  // namespace blink
 
-#endif // CSSURIValue_h
+#endif  // CSSURIValue_h

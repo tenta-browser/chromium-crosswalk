@@ -16,33 +16,27 @@
  * @const
  */
 var LOG_TYPE = {
-  // The suggestion is coming from the server. Unused here.
-  NTP_SERVER_SIDE_SUGGESTION: 0,
-  // The suggestion is coming from the client.
-  NTP_CLIENT_SIDE_SUGGESTION: 1,
-  // Indicates a tile was rendered, no matter if it's a thumbnail, a gray tile
-  // or an external tile.
-  NTP_TILE: 2,
-  // The tile uses a local thumbnail image.
-  NTP_THUMBNAIL_TILE: 3,
-  // Used when no thumbnail is specified and a gray tile with the domain is used
-  // as the main tile. Unused here.
-  NTP_GRAY_TILE: 4,
-  // The visuals of that tile are handled externally by the page itself.
-  // Unused here.
-  NTP_EXTERNAL_TILE: 5,
-  // There was an error in loading both the thumbnail image and the fallback
-  // (if it was provided), resulting in a gray tile.
-  NTP_THUMBNAIL_ERROR: 6,
-  // Used a gray tile with the domain as the fallback for a failed thumbnail.
-  // Unused here.
-  NTP_GRAY_TILE_FALLBACK: 7,
-  // The visuals of that tile's fallback are handled externally. Unused here.
-  NTP_EXTERNAL_TILE_FALLBACK: 8,
-  // The user moused over an NTP tile.
-  NTP_MOUSEOVER: 9,
-  // A NTP Tile has finished loading (successfully or failing).
-  NTP_TILE_LOADED: 10,
+  // All NTP tiles have finished loading (successfully or failing).
+  NTP_ALL_TILES_LOADED: 11,
+  // The data for all NTP tiles (title, URL, etc, but not the thumbnail image)
+  // has been received. In contrast to NTP_ALL_TILES_LOADED, this is recorded
+  // before the actual DOM elements have loaded (in particular the thumbnail
+  // images).
+  NTP_ALL_TILES_RECEIVED: 12,
+};
+
+
+/**
+ * The different sources that an NTP tile can have.
+ * Note: Keep in sync with components/ntp_tiles/ntp_tile_source.h
+ * @enum {number}
+ * @const
+ */
+var NTPTileSource = {
+  TOP_SITES: 0,
+  SUGGESTIONS_SERVICE: 1,
+  POPULAR: 3,
+  WHITELIST: 4,
 };
 
 
@@ -55,31 +49,11 @@ var NUMBER_OF_TILES = 8;
 
 
 /**
- * Whether to use icons instead of thumbnails.
- * @type {boolean}
- */
-var USE_ICONS = false;
-
-
-/**
  * Number of lines to display in titles.
  * @type {number}
  */
 var NUM_TITLE_LINES = 1;
 
-/**
- * Type of the impression provider for a generic client-provided suggestion.
- * @type {string}
- * @const
- */
-var CLIENT_PROVIDER_NAME = 'client';
-
-/**
- * Type of the impression provider for a generic server-provided suggestion.
- * @type {string}
- * @const
- */
-var SERVER_PROVIDER_NAME = 'server';
 
 /**
  * The origin of this request.
@@ -89,7 +63,8 @@ var DOMAIN_ORIGIN = '{{ORIGIN}}';
 
 
 /**
- * Counter for DOM elements that we are waiting to finish loading.
+ * Counter for DOM elements that we are waiting to finish loading. Starts out
+ * at 1 because initially we're waiting for the "show" message from the parent.
  * @type {number}
  */
 var loadedCounter = 1;
@@ -109,11 +84,6 @@ var tiles = null;
  */
 var queryArgs = {};
 
-/**
- * Url to ping when suggestions have been shown.
- */
-var impressionUrl = null;
-
 
 /**
  * Log an event on the NTP.
@@ -124,25 +94,23 @@ var logEvent = function(eventType) {
 };
 
 /**
- * Log impression of a most visited tile on the NTP.
- * @param {number} tileIndex position of the tile, >= 0 and < NUMBER_OF_TILES
- * @param {string} provider specifies the UMA histogram to be reported
- *     (NewTabPage.SuggestionsImpression.{provider})
+ * Log impression of an NTP tile.
+ * @param {number} tileIndex Position of the tile, >= 0 and < NUMBER_OF_TILES.
+ * @param {number} tileSource The source from NTPTileSource.
  */
-function logMostVisitedImpression(tileIndex, provider) {
+function logMostVisitedImpression(tileIndex, tileSource) {
   chrome.embeddedSearch.newTabPage.logMostVisitedImpression(tileIndex,
-                                                            provider);
+                                                            tileSource);
 }
 
 /**
- * Log click on a most visited tile on the NTP.
- * @param {number} tileIndex position of the tile, >= 0 and < NUMBER_OF_TILES
- * @param {string} provider specifies the UMA histogram to be reported
- *     (NewTabPage.SuggestionsImpression.{provider})
+ * Log click on an NTP tile.
+ * @param {number} tileIndex Position of the tile, >= 0 and < NUMBER_OF_TILES.
+ * @param {number} tileSource The source from NTPTileSource.
  */
-function logMostVisitedNavigation(tileIndex, provider) {
+function logMostVisitedNavigation(tileIndex, tileSource) {
   chrome.embeddedSearch.newTabPage.logMostVisitedNavigation(tileIndex,
-                                                            provider);
+                                                            tileSource);
 }
 
 /**
@@ -153,9 +121,10 @@ function logMostVisitedNavigation(tileIndex, provider) {
 var countLoad = function() {
   loadedCounter -= 1;
   if (loadedCounter <= 0) {
-    showTiles();
-    logEvent(LOG_TYPE.NTP_TILE_LOADED);
+    swapInNewTiles();
+    logEvent(LOG_TYPE.NTP_ALL_TILES_LOADED);
     window.parent.postMessage({cmd: 'loaded'}, DOMAIN_ORIGIN);
+    // TODO(treib): Why do we reset to 1 here?
     loadedCounter = 1;
   }
 };
@@ -187,8 +156,7 @@ var handleCommand = function(data) {
   if (cmd == 'tile') {
     addTile(data);
   } else if (cmd == 'show') {
-    countLoad();
-    hideOverflowTiles(data);
+    showTiles(data);
   } else if (cmd == 'updateTheme') {
     updateTheme(data);
   } else if (cmd == 'tilesVisible') {
@@ -199,38 +167,51 @@ var handleCommand = function(data) {
 };
 
 
+/**
+ * Handler for the 'show' message from the host page.
+ * @param {object} info Data received in the message.
+ */
+var showTiles = function(info) {
+  logEvent(LOG_TYPE.NTP_ALL_TILES_RECEIVED);
+  countLoad();
+  hideOverflowTiles(info);
+}
+
+
+/**
+ * Handler for the 'updateTheme' message from the host page.
+ * @param {object} info Data received in the message.
+ */
 var updateTheme = function(info) {
   var themeStyle = [];
 
   if (info.tileBorderColor) {
-    themeStyle.push('.thumb-ntp .mv-tile {' +
+    themeStyle.push('.mv-tile {' +
         'border: 1px solid ' + info.tileBorderColor + '; }');
   }
   if (info.tileHoverBorderColor) {
-    themeStyle.push('.thumb-ntp .mv-tile:hover {' +
+    themeStyle.push('.mv-tile:hover {' +
         'border-color: ' + info.tileHoverBorderColor + '; }');
   }
   if (info.isThemeDark) {
-    themeStyle.push('.thumb-ntp .mv-tile, .thumb-ntp .mv-empty-tile { ' +
+    themeStyle.push('.mv-tile, .mv-empty-tile { ' +
         'background: rgb(51,51,51); }');
-    themeStyle.push('.thumb-ntp .mv-thumb.failed-img { ' +
+    themeStyle.push('.mv-thumb.failed-img { ' +
         'background-color: #555; }');
-    themeStyle.push('.thumb-ntp .mv-thumb.failed-img::after { ' +
+    themeStyle.push('.mv-thumb.failed-img::after { ' +
         'border-color: #333; }');
-    themeStyle.push('.thumb-ntp .mv-x { ' +
+    themeStyle.push('.mv-x { ' +
         'background: linear-gradient(to left, ' +
         'rgb(51,51,51) 60%, transparent); }');
-    themeStyle.push('html[dir=rtl] .thumb-ntp .mv-x { ' +
+    themeStyle.push('html[dir=rtl] .mv-x { ' +
         'background: linear-gradient(to right, ' +
         'rgb(51,51,51) 60%, transparent); }');
-    themeStyle.push('.thumb-ntp .mv-x::after { ' +
+    themeStyle.push('.mv-x::after { ' +
         'background-color: rgba(255,255,255,0.7); }');
-    themeStyle.push('.thumb-ntp .mv-x:hover::after { ' +
+    themeStyle.push('.mv-x:hover::after { ' +
         'background-color: #fff; }');
-    themeStyle.push('.thumb-ntp .mv-x:active::after { ' +
+    themeStyle.push('.mv-x:active::after { ' +
         'background-color: rgba(255,255,255,0.5); }');
-    themeStyle.push('.icon-ntp .mv-tile:focus { ' +
-        'background: rgba(255,255,255,0.2); }');
   }
   if (info.tileTitleColor) {
     themeStyle.push('body { color: ' + info.tileTitleColor + '; }');
@@ -241,7 +222,8 @@ var updateTheme = function(info) {
 
 
 /**
- * Hides extra tiles that don't fit on screen.
+ * Hides extra tiles that don't fit on screen. Called in response to the 'show'
+ * and 'tilesVisible' messages from the host page.
  */
 var hideOverflowTiles = function(data) {
   var tileAndEmptyTileList = document.querySelectorAll(
@@ -265,10 +247,11 @@ var removeAllOldTiles = function() {
 
 
 /**
- * Called when the host page has finished sending us tile information and
- * we are ready to show the new tiles and drop the old ones.
+ * Called when all tiles have finished loading (successfully or not), including
+ * their thumbnail images, and we are ready to show the new tiles and drop the
+ * old ones.
  */
-var showTiles = function() {
+var swapInNewTiles = function() {
   // Store the tiles on the current closure.
   var cur = tiles;
 
@@ -279,13 +262,16 @@ var showTiles = function() {
 
   var parent = document.querySelector('#most-visited');
 
-  // Mark old tile DIV for removal after the transition animation is done.
+  // Only fade in the new tiles if there were tiles before.
+  var fadeIn = false;
   var old = parent.querySelector('#mv-tiles');
   if (old) {
+    fadeIn = true;
+    // Mark old tile DIV for removal after the transition animation is done.
     old.removeAttribute('id');
     old.classList.add('mv-tiles-old');
     old.style.opacity = 0.0;
-    cur.addEventListener('webkitTransitionEnd', function(ev) {
+    cur.addEventListener('transitionend', function(ev) {
       if (ev.target === cur) {
         removeAllOldTiles();
       }
@@ -295,52 +281,47 @@ var showTiles = function() {
   // Add new tileset.
   cur.id = 'mv-tiles';
   parent.appendChild(cur);
-  // We want the CSS transition to trigger, so need to add to the DOM before
-  // setting the style.
-  setTimeout(function() {
-    cur.style.opacity = 1.0;
-  }, 0);
-
-  // Make sure the tiles variable contain the next tileset we may use.
-  tiles = document.createElement('div');
-
-  if (impressionUrl) {
-    navigator.sendBeacon(impressionUrl);
-    impressionUrl = null;
+  // getComputedStyle causes the initial style (opacity 0) to be applied, so
+  // that when we then set it to 1, that triggers the CSS transition.
+  if (fadeIn) {
+    window.getComputedStyle(cur).opacity;
   }
+  cur.style.opacity = 1.0;
+
+  // Make sure the tiles variable contain the next tileset we'll use if the host
+  // page sends us an updated set of tiles.
+  tiles = document.createElement('div');
 };
 
 
 /**
- * Called when the host page wants to add a suggestion tile.
- * For Most Visited, it grabs the data from Chrome and pass on.
- * For host page generated it just passes the data.
+ * Handler for the 'show' message from the host page, called when it wants to
+ * add a suggestion tile.
+ * It's also used to fill up our tiles to NUMBER_OF_TILES if necessary.
  * @param {object} args Data for the tile to be rendered.
  */
 var addTile = function(args) {
   if (isFinite(args.rid)) {
-    // If a valid number passed in |args.rid|: a local chrome suggestion.
-    var data = chrome.embeddedSearch.searchBox.getMostVisitedItemData(args.rid);
+    // If a valid number passed in |args.rid|: a local Chrome suggestion. Grab
+    // the data from the embeddedSearch API.
+    var data =
+        chrome.embeddedSearch.newTabPage.getMostVisitedItemData(args.rid);
     if (!data)
       return;
 
     data.tid = data.rid;
-    data.provider = CLIENT_PROVIDER_NAME;
     if (!data.faviconUrl) {
       data.faviconUrl = 'chrome-search://favicon/size/16@' +
           window.devicePixelRatio + 'x/' + data.renderViewId + '/' + data.tid;
     }
-    logEvent(LOG_TYPE.NTP_CLIENT_SIDE_SUGGESTION);
     tiles.appendChild(renderTile(data));
   } else if (args.url) {
     // If a URL is passed: a server-side suggestion.
-    args.provider = args.provider || SERVER_PROVIDER_NAME;
+    args.tileSource = NTPTileSource.SUGGESTIONS_SERVICE;
     // check sanity of the arguments
     if (/^javascript:/i.test(args.url) ||
-        /^javascript:/i.test(args.thumbnailUrl) ||
-        !/^[a-z0-9]{0,8}$/i.test(args.provider))
+        /^javascript:/i.test(args.thumbnailUrl))
       return;
-    logEvent(LOG_TYPE.NTP_SERVER_SIDE_SUGGESTION);
     tiles.appendChild(renderTile(args));
   } else {  // an empty tile
     tiles.appendChild(renderTile(null));
@@ -349,13 +330,13 @@ var addTile = function(args) {
 
 /**
  * Called when the user decided to add a tile to the blacklist.
- * It sets of the animation for the blacklist and sends the blacklisted id
+ * It sets off the animation for the blacklist and sends the blacklisted id
  * to the host page.
  * @param {Element} tile DOM node of the tile we want to remove.
  */
 var blacklistTile = function(tile) {
   tile.classList.add('blacklisted');
-  tile.addEventListener('webkitTransitionEnd', function(ev) {
+  tile.addEventListener('transitionend', function(ev) {
     if (ev.propertyName != 'width') return;
 
     window.parent.postMessage({cmd: 'tileBlacklisted',
@@ -371,8 +352,7 @@ var blacklistTile = function(tile) {
  */
 var isSchemeAllowed = function(url) {
   return url.startsWith('http://') || url.startsWith('https://') ||
-         url.startsWith('ftp://') || url.startsWith('file://') ||
-         url.startsWith('chrome-extension://');
+         url.startsWith('ftp://') || url.startsWith('chrome-extension://');
 };
 
 
@@ -389,41 +369,27 @@ var renderTile = function(data) {
     return tile;
   }
 
-  logEvent(LOG_TYPE.NTP_TILE);
   // The tile will be appended to tiles.
   var position = tiles.children.length;
-  if (data.provider) {
-    logMostVisitedImpression(position, data.provider);
-  }
+  logMostVisitedImpression(position, data.tileSource);
 
   tile.className = 'mv-tile';
   tile.setAttribute('data-tid', data.tid);
   var html = [];
-  if (!USE_ICONS) {
-    html.push('<div class="mv-favicon"></div>');
-  }
+  html.push('<div class="mv-favicon"></div>');
   html.push('<div class="mv-title"></div><div class="mv-thumb"></div>');
-  html.push('<div class="mv-x"></div>');
+  html.push('<div class="mv-x" role="button"></div>');
   tile.innerHTML = html.join('');
   tile.lastElementChild.title = queryArgs['removeTooltip'] || '';
 
   if (isSchemeAllowed(data.url)) {
     tile.href = data.url;
   }
+  tile.setAttribute('aria-label', data.title);
   tile.title = data.title;
-  if (data.impressionUrl) {
-    impressionUrl = data.impressionUrl;
-  }
-  if (data.pingUrl) {
-    tile.addEventListener('click', function(ev) {
-      navigator.sendBeacon(data.pingUrl);
-    });
-  }
 
   tile.addEventListener('click', function(ev) {
-    if (data.provider) {
-      logMostVisitedNavigation(position, data.provider);
-    }
+    logMostVisitedNavigation(position, data.tileSource);
   });
 
   tile.addEventListener('keydown', function(event) {
@@ -467,10 +433,6 @@ var renderTile = function(data) {
       }
     }
   });
-  // TODO(fserb): remove this or at least change to mouseenter.
-  tile.addEventListener('mouseover', function() {
-    logEvent(LOG_TYPE.NTP_MOUSEOVER);
-  });
 
   var title = tile.querySelector('.mv-title');
   title.innerText = data.title;
@@ -479,125 +441,103 @@ var renderTile = function(data) {
     title.classList.add('multiline');
   }
 
-  if (USE_ICONS) {
-    var thumb = tile.querySelector('.mv-thumb');
-    if (data.largeIconUrl) {
-      var img = document.createElement('img');
-      img.title = data.title;
-      img.src = data.largeIconUrl;
-      img.classList.add('large-icon');
-      loadedCounter += 1;
-      img.addEventListener('load', countLoad);
-      img.addEventListener('load', function(ev) {
-        thumb.classList.add('large-icon-outer');
-      });
-      img.addEventListener('error', countLoad);
-      img.addEventListener('error', function(ev) {
-        thumb.classList.add('failed-img');
-        thumb.removeChild(img);
-        logEvent(LOG_TYPE.NTP_THUMBNAIL_ERROR);
-      });
-      thumb.appendChild(img);
-      logEvent(LOG_TYPE.NTP_THUMBNAIL_TILE);
-    } else {
-      thumb.classList.add('failed-img');
-    }
-  } else { // THUMBNAILS
-    // We keep track of the outcome of loading possible thumbnails for this
-    // tile. Possible values:
-    //   - null: waiting for load/error
-    //   - false: error
-    //   - a string: URL that loaded correctly.
-    // This is populated by acceptImage/rejectImage and loadBestImage
-    // decides the best one to load.
-    var results = [];
-    var thumb = tile.querySelector('.mv-thumb');
-    var img = document.createElement('img');
-    var loaded = false;
+  // We keep track of the outcome of loading possible thumbnails for this
+  // tile. Possible values:
+  //   - null: waiting for load/error
+  //   - false: error
+  //   - a string: URL that loaded correctly.
+  // This is populated by imageLoaded/imageLoadFailed, and selectBestImage
+  // selects the best one to display.
+  var results = [];
+  var thumb = tile.querySelector('.mv-thumb');
+  var img = document.createElement('img');
+  var loaded = false;
 
-    var loadBestImage = function() {
-      if (loaded) {
+  var selectBestImage = function() {
+    if (loaded) {
+      return;
+    }
+    // |results| is ordered from best candidate to worst.
+    for (var i = 0; i < results.length; ++i) {
+      if (results[i] === null) {
+        // A better candidate is still waiting to be loaded; defer.
         return;
       }
-      for (var i = 0; i < results.length; ++i) {
-        if (results[i] === null) {
-          return;
-        }
-        if (results[i] != false) {
-          img.src = results[i];
-          loaded = true;
-          return;
-        }
+      if (results[i] != false) {
+        // This is the best (non-failed) candidate. Use it!
+        img.src = results[i];
+        loaded = true;
+        return;
       }
-      thumb.classList.add('failed-img');
-      thumb.removeChild(img);
-      logEvent(LOG_TYPE.NTP_THUMBNAIL_ERROR);
-      countLoad();
-    };
+    }
+    // If we get here, then all candidates failed to load.
+    thumb.classList.add('failed-img');
+    thumb.removeChild(img);
+    // Usually we count the load once the img element gets either a 'load' or
+    // an 'error' event. Since we have removed the img element, instead count
+    // the load here.
+    countLoad();
+  };
 
-    var acceptImage = function(idx, url) {
-      return function(ev) {
-        results[idx] = url;
-        loadBestImage();
-      };
+  var imageLoaded = function(idx, url) {
+    return function(ev) {
+      results[idx] = url;
+      selectBestImage();
     };
+  };
 
-    var rejectImage = function(idx) {
-      return function(ev) {
-        results[idx] = false;
-        loadBestImage();
-      };
+  var imageLoadFailed = function(idx) {
+    return function(ev) {
+      results[idx] = false;
+      selectBestImage();
     };
+  };
 
-    img.title = data.title;
-    img.classList.add('thumbnail');
+  img.title = data.title;
+  loadedCounter += 1;
+  img.addEventListener('load', countLoad);
+  img.addEventListener('error', countLoad);
+  img.addEventListener('error', function(ev) {
+    thumb.classList.add('failed-img');
+    thumb.removeChild(img);
+  });
+  thumb.appendChild(img);
+
+  if (data.thumbnailUrl) {
+    img.src = data.thumbnailUrl;
+  } else {
+    // Get all thumbnailUrls for the tile.
+    // They are ordered from best one to be used to worst.
+    for (var i = 0; i < data.thumbnailUrls.length; ++i) {
+      results.push(null);
+    }
+    for (var i = 0; i < data.thumbnailUrls.length; ++i) {
+      if (data.thumbnailUrls[i]) {
+        var image = new Image();
+        image.src = data.thumbnailUrls[i];
+        image.onload = imageLoaded(i, data.thumbnailUrls[i]);
+        image.onerror = imageLoadFailed(i);
+      } else {
+        imageLoadFailed(i)(/*ev=*/null);
+      }
+    }
+  }
+
+  var favicon = tile.querySelector('.mv-favicon');
+  if (data.faviconUrl) {
+    var fi = document.createElement('img');
+    fi.src = data.faviconUrl;
+    // Set the title to empty so screen readers won't say the image name.
+    fi.title = '';
     loadedCounter += 1;
-    img.addEventListener('load', countLoad);
-    img.addEventListener('error', countLoad);
-    img.addEventListener('error', function(ev) {
-      thumb.classList.add('failed-img');
-      thumb.removeChild(img);
-      logEvent(LOG_TYPE.NTP_THUMBNAIL_ERROR);
-    });
-    thumb.appendChild(img);
-    logEvent(LOG_TYPE.NTP_THUMBNAIL_TILE);
-
-    if (data.thumbnailUrl) {
-      img.src = data.thumbnailUrl;
-    } else {
-      // Get all thumbnailUrls for the tile.
-      // They are ordered from best one to be used to worst.
-      for (var i = 0; i < data.thumbnailUrls.length; ++i) {
-        results.push(null);
-      }
-      for (var i = 0; i < data.thumbnailUrls.length; ++i) {
-        if (data.thumbnailUrls[i]) {
-          var image = new Image();
-          image.src = data.thumbnailUrls[i];
-          image.onload = acceptImage(i, data.thumbnailUrls[i]);
-          image.onerror = rejectImage(i);
-        } else {
-          rejectImage(i)(null);
-        }
-      }
-    }
-
-    var favicon = tile.querySelector('.mv-favicon');
-    if (data.faviconUrl) {
-      var fi = document.createElement('img');
-      fi.src = data.faviconUrl;
-      // Set the title to empty so screen readers won't say the image name.
-      fi.title = '';
-      loadedCounter += 1;
-      fi.addEventListener('load', countLoad);
-      fi.addEventListener('error', countLoad);
-      fi.addEventListener('error', function(ev) {
-        favicon.classList.add('failed-favicon');
-      });
-      favicon.appendChild(fi);
-    } else {
+    fi.addEventListener('load', countLoad);
+    fi.addEventListener('error', countLoad);
+    fi.addEventListener('error', function(ev) {
       favicon.classList.add('failed-favicon');
-    }
+    });
+    favicon.appendChild(fi);
+  } else {
+    favicon.classList.add('failed-favicon');
   }
 
   var mvx = tile.querySelector('.mv-x');
@@ -613,10 +553,13 @@ var renderTile = function(data) {
 
 
 /**
- * Do some initialization and parses the query arguments passed to the iframe.
+ * Does some initialization and parses the query arguments passed to the iframe.
  */
 var init = function() {
-  // Creates a new DOM element to hold the tiles.
+  // Create a new DOM element to hold the tiles. The tiles will be added
+  // one-by-one via addTile, and the whole thing will be inserted into the page
+  // in swapInNewTiles, after the parent has sent us the 'show' message, and all
+  // thumbnails and favicons have loaded.
   tiles = document.createElement('div');
 
   // Parse query arguments.
@@ -628,17 +571,11 @@ var init = function() {
     queryArgs[decodeURIComponent(val[0])] = decodeURIComponent(val[1]);
   }
 
-  // Apply class for icon NTP, if specified.
-  USE_ICONS = queryArgs['icons'] == '1';
   if ('ntl' in queryArgs) {
     var ntl = parseInt(queryArgs['ntl'], 10);
     if (isFinite(ntl))
       NUM_TITLE_LINES = ntl;
   }
-
-  // Duplicating NTP_DESIGN.mainClass.
-  document.querySelector('#most-visited').classList.add(
-      USE_ICONS ? 'icon-ntp' : 'thumb-ntp');
 
   // Enable RTL.
   if (queryArgs['rtl'] == '1') {

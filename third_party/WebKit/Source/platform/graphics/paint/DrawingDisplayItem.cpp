@@ -5,118 +5,123 @@
 #include "platform/graphics/paint/DrawingDisplayItem.h"
 
 #include "platform/graphics/GraphicsContext.h"
+#include "platform/graphics/paint/PaintCanvas.h"
 #include "public/platform/WebDisplayItemList.h"
-#include "third_party/skia/include/core/SkPictureAnalyzer.h"
-
-#if ENABLE(ASSERT)
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkData.h"
-#include "third_party/skia/include/core/SkStream.h"
-#endif
+#include "third_party/skia/include/core/SkPictureAnalyzer.h"
 
 namespace blink {
 
-void DrawingDisplayItem::replay(GraphicsContext& context) const
-{
-    if (m_picture)
-        context.drawPicture(m_picture.get());
+void DrawingDisplayItem::replay(GraphicsContext& context) const {
+  if (m_record)
+    context.drawRecord(m_record.get());
 }
 
-void DrawingDisplayItem::appendToWebDisplayItemList(const IntRect& visualRect, WebDisplayItemList* list) const
-{
-    if (m_picture)
-        list->appendDrawingItem(visualRect, toSkSp(m_picture));
+void DrawingDisplayItem::appendToWebDisplayItemList(
+    const IntRect& visualRect,
+    WebDisplayItemList* list) const {
+  if (m_record)
+    list->appendDrawingItem(visualRect, m_record);
 }
 
-bool DrawingDisplayItem::drawsContent() const
-{
-    return m_picture.get();
+bool DrawingDisplayItem::drawsContent() const {
+  return m_record.get();
 }
 
-void DrawingDisplayItem::analyzeForGpuRasterization(SkPictureGpuAnalyzer& analyzer) const
-{
-    analyzer.analyzePicture(m_picture.get());
+void DrawingDisplayItem::analyzeForGpuRasterization(
+    SkPictureGpuAnalyzer& analyzer) const {
+  // TODO(enne): Need an SkPictureGpuAnalyzer on PictureRecord.
+  // This is a bit overkill to ToSkPicture a record just to get
+  // numSlowPaths.
+  if (!m_record)
+    return;
+  analyzer.analyzePicture(ToSkPicture(m_record.get()));
 }
 
 #ifndef NDEBUG
-void DrawingDisplayItem::dumpPropertiesAsDebugString(WTF::StringBuilder& stringBuilder) const
-{
-    DisplayItem::dumpPropertiesAsDebugString(stringBuilder);
-    if (m_picture) {
-        stringBuilder.append(WTF::String::format(", rect: [%f,%f %fx%f]",
-            m_picture->cullRect().x(), m_picture->cullRect().y(),
-            m_picture->cullRect().width(), m_picture->cullRect().height()));
-    }
+void DrawingDisplayItem::dumpPropertiesAsDebugString(
+    StringBuilder& stringBuilder) const {
+  DisplayItem::dumpPropertiesAsDebugString(stringBuilder);
+  if (m_record) {
+    stringBuilder.append(
+        String::format(", rect: [%f,%f %fx%f]", m_record->cullRect().x(),
+                       m_record->cullRect().y(), m_record->cullRect().width(),
+                       m_record->cullRect().height()));
+  }
 }
 #endif
 
-#if ENABLE(ASSERT)
-static bool bitmapIsAllZero(const SkBitmap& bitmap)
-{
-    bitmap.lockPixels();
-    bool result = true;
-    for (int x = 0; result && x < bitmap.width(); ++x) {
-        for (int y = 0; result && y < bitmap.height(); ++y) {
-            if (SkColorSetA(bitmap.getColor(x, y), 0) != SK_ColorTRANSPARENT) {
-                result = false;
-                break;
-            }
-        }
-    }
-    bitmap.unlockPixels();
-    return result;
-}
-
-bool DrawingDisplayItem::equals(const DisplayItem& other) const
-{
-    if (!DisplayItem::equals(other))
-        return false;
-
-    RefPtr<const SkPicture> picture = this->picture();
-    RefPtr<const SkPicture> otherPicture = static_cast<const DrawingDisplayItem&>(other).picture();
-
-    if (!picture && !otherPicture)
-        return true;
-    if (!picture || !otherPicture)
-        return false;
-
-    switch (getUnderInvalidationCheckingMode()) {
-    case DrawingDisplayItem::CheckPicture: {
-        if (picture->approximateOpCount() != otherPicture->approximateOpCount())
-            return false;
-
-        SkDynamicMemoryWStream pictureSerialized;
-        picture->serialize(&pictureSerialized);
-        SkDynamicMemoryWStream otherPictureSerialized;
-        otherPicture->serialize(&otherPictureSerialized);
-        if (pictureSerialized.bytesWritten() != otherPictureSerialized.bytesWritten())
-            return false;
-
-        RefPtr<SkData> oldData = adoptRef(otherPictureSerialized.copyToData());
-        RefPtr<SkData> newData = adoptRef(pictureSerialized.copyToData());
-        return oldData->equals(newData.get());
-    }
-    case DrawingDisplayItem::CheckBitmap: {
-        SkRect rect = picture->cullRect();
-        if (rect != otherPicture->cullRect())
-            return false;
-
-        SkBitmap bitmap;
-        bitmap.allocPixels(SkImageInfo::MakeN32Premul(rect.width(), rect.height()));
-        SkCanvas canvas(bitmap);
-        canvas.translate(-rect.x(), -rect.y());
-        canvas.drawPicture(otherPicture.get());
-        SkPaint diffPaint;
-        diffPaint.setXfermodeMode(SkXfermode::kDifference_Mode);
-        canvas.drawPicture(picture.get(), nullptr, &diffPaint);
-        return bitmapIsAllZero(bitmap);
-    }
-    default:
-        ASSERT_NOT_REACHED();
-    }
+static bool recordsEqual(const PaintRecord* record1,
+                         const PaintRecord* record2) {
+  if (record1->approximateOpCount() != record2->approximateOpCount())
     return false;
-}
-#endif // ENABLE(ASSERT)
 
-} // namespace blink
+  // TODO(enne): PaintRecord should have an operator==
+  sk_sp<SkData> data1 = ToSkPicture(record1)->serialize();
+  sk_sp<SkData> data2 = ToSkPicture(record2)->serialize();
+  return data1->equals(data2.get());
+}
+
+static SkBitmap recordToBitmap(const PaintRecord* record) {
+  SkBitmap bitmap;
+  SkRect rect = record->cullRect();
+  bitmap.allocPixels(SkImageInfo::MakeN32Premul(rect.width(), rect.height()));
+  PaintCanvas canvas(bitmap);
+  canvas.clear(SK_ColorTRANSPARENT);
+  canvas.translate(-rect.x(), -rect.y());
+  canvas.drawPicture(record);
+  return bitmap;
+}
+
+static bool bitmapsEqual(const PaintRecord* record1,
+                         const PaintRecord* record2) {
+  SkRect rect = record1->cullRect();
+  if (rect != record2->cullRect())
+    return false;
+
+  SkBitmap bitmap1 = recordToBitmap(record1);
+  SkBitmap bitmap2 = recordToBitmap(record2);
+  bitmap1.lockPixels();
+  bitmap2.lockPixels();
+  int mismatchCount = 0;
+  const int maxMismatches = 10;
+  for (int y = 0; y < rect.height() && mismatchCount < maxMismatches; ++y) {
+    for (int x = 0; x < rect.width() && mismatchCount < maxMismatches; ++x) {
+      SkColor pixel1 = bitmap1.getColor(x, y);
+      SkColor pixel2 = bitmap2.getColor(x, y);
+      if (pixel1 != pixel2) {
+        LOG(ERROR) << "x=" << x << " y=" << y << " " << std::hex << pixel1
+                   << " vs " << std::hex << pixel2;
+        ++mismatchCount;
+      }
+    }
+  }
+  bitmap1.unlockPixels();
+  bitmap2.unlockPixels();
+  return !mismatchCount;
+}
+
+bool DrawingDisplayItem::equals(const DisplayItem& other) const {
+  if (!DisplayItem::equals(other))
+    return false;
+
+  const PaintRecord* record = this->GetPaintRecord();
+  const PaintRecord* otherRecord =
+      static_cast<const DrawingDisplayItem&>(other).GetPaintRecord();
+
+  if (!record && !otherRecord)
+    return true;
+  if (!record || !otherRecord)
+    return false;
+
+  if (recordsEqual(record, otherRecord))
+    return true;
+
+  // Sometimes the client may produce different records for the same visual
+  // result, which should be treated as equal.
+  return bitmapsEqual(record, otherRecord);
+}
+
+}  // namespace blink

@@ -55,45 +55,6 @@
     height: 28px;
 }
 
-.sources-editor-tabstrip-left {
-    width: 22px;
-}
-
-.sources-editor-tabstrip-right {
-    width: 36px;
-}
-
-.function-location-link {
-    float: right;
-    margin-left: 10px;
-}
-
-.function-location-step-into {
-    position: relative;
-    height: 14px;
-    transform: rotate(-90deg);
-}
-
-.function-popover-title {
-    border-bottom: 1px solid #AAA;
-    margin-bottom: 3px;
-    padding-bottom: 2px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-
-.function-title-link-container {
-    display: flex;
-    align-items: center;
-    position: relative;
-    margin-left: 10px;
-}
-
-.function-popover-title .function-name {
-    font-weight: bold;
-}
-
 .panel.sources .sidebar-pane-stack {
     overflow: auto;
 }
@@ -106,25 +67,6 @@
     cursor: auto;
 }
 
-.callstack-info {
-    text-align: center;
-    font-style: italic;
-    font-size: 90%;
-    padding: 6px;
-    color: #888;
-    pointer-events: none;
-}
-
-.callstack-info.status {
-    border-top: 1px solid rgb(189, 189, 189);
-    background-color: rgb(255, 255, 194);
-}
-
-.-theme-with-dark-background .callstack-info.status {
-    background-color: hsl(46, 98%, 22%);
-    color: #ccc;
-}
-
 .watch-expression-delete-button {
     width: 10px;
     height: 10px;
@@ -134,6 +76,7 @@
     background-repeat: no-repeat;
     border: 0 none transparent;
     position: absolute;
+    top: 4px;
     right: 3px;
     display: none;
 }
@@ -144,7 +87,7 @@
 
 .watch-expressions {
     overflow-x: hidden;
-    padding: 3px 6px 6px 0px;
+    min-height: 26px;
 }
 
 .watch-expressions .dimmed {
@@ -155,7 +98,7 @@
     white-space: nowrap;
     text-overflow: ellipsis;
     overflow: hidden;
-    line-height: 12px;
+    line-height: 16px;
     margin-left: 11px;
 }
 
@@ -167,6 +110,7 @@
     position: relative;
     padding: 1px 0px 1px 6px;
     flex: none;
+    min-height: 20px;
 }
 
 .watch-expressions .name {
@@ -175,6 +119,14 @@
     white-space: nowrap;
     text-overflow: ellipsis ;
     overflow: hidden;
+}
+
+.watch-expression-error {
+    color: red;
+}
+
+.-theme-with-dark-background .watch-expression-error {
+    color: hsl(0, 100%, 65%);
 }
 
 .watch-expressions-separator {
@@ -234,10 +186,6 @@
     white-space: normal;
 }
 
-.scope-chain-sidebar-pane-section {
-    padding: 2px 4px 2px 4px;
-}
-
 .scope-chain-sidebar-pane-section-subtitle {
     float: right;
     margin-left: 5px;
@@ -254,5 +202,9 @@
 
 .scope-chain-sidebar-pane-section {
     padding: 2px 4px 2px 4px;
-    overflow: hidden;
+    flex: none;
+}
+
+.event-listeners-sidebar-pane .toolbar {
+    border-bottom: 1px solid #eee;
 }

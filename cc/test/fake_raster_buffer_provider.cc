@@ -28,9 +28,26 @@ ResourceFormat FakeRasterBufferProviderImpl::GetResourceFormat(
   return ResourceFormat::RGBA_8888;
 }
 
-bool FakeRasterBufferProviderImpl::GetResourceRequiresSwizzle(
+bool FakeRasterBufferProviderImpl::IsResourceSwizzleRequired(
     bool must_support_alpha) const {
   return ResourceFormatRequiresSwizzle(GetResourceFormat(must_support_alpha));
+}
+
+bool FakeRasterBufferProviderImpl::CanPartialRasterIntoProvidedResource()
+    const {
+  return true;
+}
+
+bool FakeRasterBufferProviderImpl::IsResourceReadyToDraw(
+    ResourceId resource_id) const {
+  return true;
+}
+
+uint64_t FakeRasterBufferProviderImpl::SetReadyToDrawCallback(
+    const ResourceProvider::ResourceIdArray& resource_ids,
+    const base::Callback<void()>& callback,
+    uint64_t pending_callback_id) const {
+  return 0;
 }
 
 void FakeRasterBufferProviderImpl::Shutdown() {}

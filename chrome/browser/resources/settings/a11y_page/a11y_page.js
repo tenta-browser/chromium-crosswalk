@@ -4,20 +4,22 @@
 
 /**
  * @fileoverview
- * 'settings-a11y-page' is the settings page containing accessibility
- * settings.
- *
- * Example:
- *
- *    <iron-animated-pages>
- *      <settings-a11y-page prefs="{{prefs}}"></settings-a11y-page>
- *      ... other pages ...
- *    </iron-animated-pages>
+ * 'settings-a11y-page' is the small section of advanced settings with
+ * a link to the web store accessibility page on most platforms, and
+ * a subpage with lots of other settings on Chrome OS.
  */
 Polymer({
   is: 'settings-a11y-page',
 
   properties: {
+    /**
+     * The current active route.
+     */
+    currentRoute: {
+      type: Object,
+      notify: true,
+    },
+
     /**
      * Preferences state.
      */
@@ -26,19 +28,19 @@ Polymer({
       notify: true,
     },
 
-<if expr="chromeos">
-    /**
-     * Whether to show experimental accessibility features.
-     * @private {boolean}
-     */
-    showExperimentalFeatures_: {
+    /** @private */
+    isGuest_: {
       type: Boolean,
-      value: function() {
-        return loadTimeData.getBoolean('showExperimentalA11yFeatures');
-      },
-    }
-</if>
+      value: function() { return loadTimeData.getBoolean('isGuest'); }
+    },
   },
+
+// <if expr="chromeos">
+  /** @private */
+  onManageAccessibilityFeaturesTap_: function() {
+    settings.navigateTo(settings.Route.MANAGE_ACCESSIBILITY);
+  },
+// </if>
 
   /** @private */
   onMoreFeaturesTap_: function() {

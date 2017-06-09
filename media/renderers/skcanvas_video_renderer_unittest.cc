@@ -2,10 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <GLES3/gl3.h>
 #include <stdint.h>
 
 #include "base/macros.h"
+#include "base/memory/aligned_memory.h"
 #include "base/message_loop/message_loop.h"
+#include "cc/paint/paint_canvas.h"
+#include "cc/paint/paint_flags.h"
+#include "cc/paint/paint_surface.h"
 #include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/gles2_interface_stub.h"
 #include "media/base/timestamp_constants.h"
@@ -14,7 +19,7 @@
 #include "media/renderers/skcanvas_video_renderer.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/libyuv/include/libyuv/convert.h"
-#include "third_party/skia/include/core/SkCanvas.h"
+#include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 #include "third_party/skia/include/gpu/GrContext.h"
 #include "third_party/skia/include/gpu/gl/GrGLInterface.h"
@@ -29,12 +34,12 @@ static const int kHeight = 240;
 static const gfx::RectF kNaturalRect(kWidth, kHeight);
 
 // Helper for filling a |canvas| with a solid |color|.
-void FillCanvas(SkCanvas* canvas, SkColor color) {
+void FillCanvas(cc::PaintCanvas* canvas, SkColor color) {
   canvas->clear(color);
 }
 
 // Helper for returning the color of a solid |canvas|.
-SkColor GetColorAt(SkCanvas* canvas, int x, int y) {
+SkColor GetColorAt(cc::PaintCanvas* canvas, int x, int y) {
   SkBitmap bitmap;
   if (!bitmap.tryAllocN32Pixels(1, 1))
     return 0;
@@ -43,8 +48,33 @@ SkColor GetColorAt(SkCanvas* canvas, int x, int y) {
   return bitmap.getColor(0, 0);
 }
 
-SkColor GetColor(SkCanvas* canvas) {
+SkColor GetColor(cc::PaintCanvas* canvas) {
   return GetColorAt(canvas, 0, 0);
+}
+
+// Generate frame pixels to provided |external_memory| and wrap it as frame.
+scoped_refptr<VideoFrame> CreateTestY16Frame(const gfx::Size& coded_size,
+                                             const gfx::Rect& visible_rect,
+                                             void* external_memory,
+                                             base::TimeDelta timestamp) {
+  const int offset_x = visible_rect.x();
+  const int offset_y = visible_rect.y();
+  const int stride = coded_size.width();
+  const size_t byte_size = stride * coded_size.height() * 2;
+
+  // In the visible rect, fill upper byte with [0-255] and lower with [255-0].
+  uint16_t* data = static_cast<uint16_t*>(external_memory);
+  for (int j = 0; j < visible_rect.height(); j++) {
+    for (int i = 0; i < visible_rect.width(); i++) {
+      const int value = i + j * visible_rect.width();
+      data[(stride * (j + offset_y)) + i + offset_x] =
+          ((value & 0xFF) << 8) | (~value & 0xFF);
+    }
+  }
+
+  return media::VideoFrame::WrapExternalData(
+      media::PIXEL_FORMAT_Y16, coded_size, visible_rect, visible_rect.size(),
+      static_cast<uint8_t*>(external_memory), byte_size, timestamp);
 }
 
 class SkCanvasVideoRendererTest : public testing::Test {
@@ -60,21 +90,22 @@ class SkCanvasVideoRendererTest : public testing::Test {
   ~SkCanvasVideoRendererTest() override;
 
   // Paints to |canvas| using |renderer_| without any frame data.
-  void PaintWithoutFrame(SkCanvas* canvas);
+  void PaintWithoutFrame(cc::PaintCanvas* canvas);
 
   // Paints the |video_frame| to the |canvas| using |renderer_|, setting the
   // color of |video_frame| to |color| first.
   void Paint(const scoped_refptr<VideoFrame>& video_frame,
-             SkCanvas* canvas,
+             cc::PaintCanvas* canvas,
              Color color);
   void PaintRotated(const scoped_refptr<VideoFrame>& video_frame,
-                    SkCanvas* canvas,
+                    cc::PaintCanvas* canvas,
                     const gfx::RectF& dest_rect,
                     Color color,
-                    SkXfermode::Mode mode,
+                    SkBlendMode mode,
                     VideoRotation video_rotation);
 
-  void Copy(const scoped_refptr<VideoFrame>& video_frame, SkCanvas* canvas);
+  void Copy(const scoped_refptr<VideoFrame>& video_frame,
+            cc::PaintCanvas* canvas);
 
   // Getters for various frame sizes.
   scoped_refptr<VideoFrame> natural_frame() { return natural_frame_; }
@@ -83,7 +114,7 @@ class SkCanvasVideoRendererTest : public testing::Test {
   scoped_refptr<VideoFrame> cropped_frame() { return cropped_frame_; }
 
   // Standard canvas.
-  SkCanvas* target_canvas() { return &target_canvas_; }
+  cc::PaintCanvas* target_canvas() { return &target_canvas_; }
 
  protected:
   SkCanvasVideoRenderer renderer_;
@@ -93,7 +124,7 @@ class SkCanvasVideoRendererTest : public testing::Test {
   scoped_refptr<VideoFrame> smaller_frame_;
   scoped_refptr<VideoFrame> cropped_frame_;
 
-  SkCanvas target_canvas_;
+  cc::PaintCanvas target_canvas_;
   base::MessageLoop message_loop_;
 
   DISALLOW_COPY_AND_ASSIGN(SkCanvasVideoRendererTest);
@@ -205,25 +236,27 @@ SkCanvasVideoRendererTest::SkCanvasVideoRendererTest()
 
 SkCanvasVideoRendererTest::~SkCanvasVideoRendererTest() {}
 
-void SkCanvasVideoRendererTest::PaintWithoutFrame(SkCanvas* canvas) {
-  renderer_.Paint(nullptr, canvas, kNaturalRect, 0xFF,
-                  SkXfermode::kSrcOver_Mode, VIDEO_ROTATION_0, Context3D());
+void SkCanvasVideoRendererTest::PaintWithoutFrame(cc::PaintCanvas* canvas) {
+  cc::PaintFlags flags;
+  flags.setFilterQuality(kLow_SkFilterQuality);
+  renderer_.Paint(nullptr, canvas, kNaturalRect, flags, VIDEO_ROTATION_0,
+                  Context3D());
 }
 
 void SkCanvasVideoRendererTest::Paint(
     const scoped_refptr<VideoFrame>& video_frame,
-    SkCanvas* canvas,
+    cc::PaintCanvas* canvas,
     Color color) {
-  PaintRotated(video_frame, canvas, kNaturalRect, color,
-               SkXfermode::kSrcOver_Mode, VIDEO_ROTATION_0);
+  PaintRotated(video_frame, canvas, kNaturalRect, color, SkBlendMode::kSrcOver,
+               VIDEO_ROTATION_0);
 }
 
 void SkCanvasVideoRendererTest::PaintRotated(
     const scoped_refptr<VideoFrame>& video_frame,
-    SkCanvas* canvas,
+    cc::PaintCanvas* canvas,
     const gfx::RectF& dest_rect,
     Color color,
-    SkXfermode::Mode mode,
+    SkBlendMode mode,
     VideoRotation video_rotation) {
   switch (color) {
     case kNone:
@@ -238,13 +271,16 @@ void SkCanvasVideoRendererTest::PaintRotated(
       media::FillYUV(video_frame.get(), 29, 255, 107);
       break;
   }
-  renderer_.Paint(video_frame, canvas, dest_rect, 0xFF, mode, video_rotation,
+  cc::PaintFlags flags;
+  flags.setBlendMode(mode);
+  flags.setFilterQuality(kLow_SkFilterQuality);
+  renderer_.Paint(video_frame, canvas, dest_rect, flags, video_rotation,
                   Context3D());
 }
 
 void SkCanvasVideoRendererTest::Copy(
     const scoped_refptr<VideoFrame>& video_frame,
-    SkCanvas* canvas) {
+    cc::PaintCanvas* canvas) {
   renderer_.Copy(video_frame, canvas, Context3D());
 }
 
@@ -259,7 +295,7 @@ TEST_F(SkCanvasVideoRendererTest, TransparentFrame) {
   FillCanvas(target_canvas(), SK_ColorRED);
   PaintRotated(
       VideoFrame::CreateTransparentFrame(gfx::Size(kWidth, kHeight)).get(),
-      target_canvas(), kNaturalRect, kNone, SkXfermode::kSrcOver_Mode,
+      target_canvas(), kNaturalRect, kNone, SkBlendMode::kSrcOver,
       VIDEO_ROTATION_0);
   EXPECT_EQ(static_cast<SkColor>(SK_ColorRED), GetColor(target_canvas()));
 }
@@ -269,7 +305,7 @@ TEST_F(SkCanvasVideoRendererTest, TransparentFrameSrcMode) {
   // SRC mode completely overwrites the buffer.
   PaintRotated(
       VideoFrame::CreateTransparentFrame(gfx::Size(kWidth, kHeight)).get(),
-      target_canvas(), kNaturalRect, kNone, SkXfermode::kSrc_Mode,
+      target_canvas(), kNaturalRect, kNone, SkBlendMode::kSrc,
       VIDEO_ROTATION_0);
   EXPECT_EQ(static_cast<SkColor>(SK_ColorTRANSPARENT),
             GetColor(target_canvas()));
@@ -306,7 +342,7 @@ TEST_F(SkCanvasVideoRendererTest, Smaller) {
 
 TEST_F(SkCanvasVideoRendererTest, NoTimestamp) {
   VideoFrame* video_frame = natural_frame().get();
-  video_frame->set_timestamp(media::kNoTimestamp());
+  video_frame->set_timestamp(media::kNoTimestamp);
   Paint(video_frame, target_canvas(), kRed);
   EXPECT_EQ(SK_ColorRED, GetColor(target_canvas()));
 }
@@ -332,7 +368,7 @@ TEST_F(SkCanvasVideoRendererTest, CroppedFrame) {
 }
 
 TEST_F(SkCanvasVideoRendererTest, CroppedFrame_NoScaling) {
-  SkCanvas canvas(AllocBitmap(kWidth, kHeight));
+  cc::PaintCanvas canvas(AllocBitmap(kWidth, kHeight));
   const gfx::Rect crop_rect = cropped_frame()->visible_rect();
 
   // Force painting to a non-zero position on the destination bitmap, to check
@@ -359,9 +395,9 @@ TEST_F(SkCanvasVideoRendererTest, CroppedFrame_NoScaling) {
 }
 
 TEST_F(SkCanvasVideoRendererTest, Video_Rotation_90) {
-  SkCanvas canvas(AllocBitmap(kWidth, kHeight));
+  cc::PaintCanvas canvas(AllocBitmap(kWidth, kHeight));
   PaintRotated(cropped_frame(), &canvas, kNaturalRect, kNone,
-               SkXfermode::kSrcOver_Mode, VIDEO_ROTATION_90);
+               SkBlendMode::kSrcOver, VIDEO_ROTATION_90);
   // Check the corners.
   EXPECT_EQ(SK_ColorGREEN, GetColorAt(&canvas, 0, 0));
   EXPECT_EQ(SK_ColorBLACK, GetColorAt(&canvas, kWidth - 1, 0));
@@ -370,9 +406,9 @@ TEST_F(SkCanvasVideoRendererTest, Video_Rotation_90) {
 }
 
 TEST_F(SkCanvasVideoRendererTest, Video_Rotation_180) {
-  SkCanvas canvas(AllocBitmap(kWidth, kHeight));
+  cc::PaintCanvas canvas(AllocBitmap(kWidth, kHeight));
   PaintRotated(cropped_frame(), &canvas, kNaturalRect, kNone,
-               SkXfermode::kSrcOver_Mode, VIDEO_ROTATION_180);
+               SkBlendMode::kSrcOver, VIDEO_ROTATION_180);
   // Check the corners.
   EXPECT_EQ(SK_ColorBLUE, GetColorAt(&canvas, 0, 0));
   EXPECT_EQ(SK_ColorGREEN, GetColorAt(&canvas, kWidth - 1, 0));
@@ -381,9 +417,9 @@ TEST_F(SkCanvasVideoRendererTest, Video_Rotation_180) {
 }
 
 TEST_F(SkCanvasVideoRendererTest, Video_Rotation_270) {
-  SkCanvas canvas(AllocBitmap(kWidth, kHeight));
+  cc::PaintCanvas canvas(AllocBitmap(kWidth, kHeight));
   PaintRotated(cropped_frame(), &canvas, kNaturalRect, kNone,
-               SkXfermode::kSrcOver_Mode, VIDEO_ROTATION_270);
+               SkBlendMode::kSrcOver, VIDEO_ROTATION_270);
   // Check the corners.
   EXPECT_EQ(SK_ColorRED, GetColorAt(&canvas, 0, 0));
   EXPECT_EQ(SK_ColorBLUE, GetColorAt(&canvas, kWidth - 1, 0));
@@ -392,12 +428,12 @@ TEST_F(SkCanvasVideoRendererTest, Video_Rotation_270) {
 }
 
 TEST_F(SkCanvasVideoRendererTest, Video_Translate) {
-  SkCanvas canvas(AllocBitmap(kWidth, kHeight));
+  cc::PaintCanvas canvas(AllocBitmap(kWidth, kHeight));
   FillCanvas(&canvas, SK_ColorMAGENTA);
 
   PaintRotated(cropped_frame(), &canvas,
                gfx::RectF(kWidth / 2, kHeight / 2, kWidth / 2, kHeight / 2),
-               kNone, SkXfermode::kSrcOver_Mode, VIDEO_ROTATION_0);
+               kNone, SkBlendMode::kSrcOver, VIDEO_ROTATION_0);
   // Check the corners of quadrant 2 and 4.
   EXPECT_EQ(SK_ColorMAGENTA, GetColorAt(&canvas, 0, 0));
   EXPECT_EQ(SK_ColorMAGENTA, GetColorAt(&canvas, (kWidth / 2) - 1, 0));
@@ -411,12 +447,12 @@ TEST_F(SkCanvasVideoRendererTest, Video_Translate) {
 }
 
 TEST_F(SkCanvasVideoRendererTest, Video_Translate_Rotation_90) {
-  SkCanvas canvas(AllocBitmap(kWidth, kHeight));
+  cc::PaintCanvas canvas(AllocBitmap(kWidth, kHeight));
   FillCanvas(&canvas, SK_ColorMAGENTA);
 
   PaintRotated(cropped_frame(), &canvas,
                gfx::RectF(kWidth / 2, kHeight / 2, kWidth / 2, kHeight / 2),
-               kNone, SkXfermode::kSrcOver_Mode, VIDEO_ROTATION_90);
+               kNone, SkBlendMode::kSrcOver, VIDEO_ROTATION_90);
   // Check the corners of quadrant 2 and 4.
   EXPECT_EQ(SK_ColorMAGENTA, GetColorAt(&canvas, 0, 0));
   EXPECT_EQ(SK_ColorMAGENTA, GetColorAt(&canvas, (kWidth / 2) - 1, 0));
@@ -430,12 +466,12 @@ TEST_F(SkCanvasVideoRendererTest, Video_Translate_Rotation_90) {
 }
 
 TEST_F(SkCanvasVideoRendererTest, Video_Translate_Rotation_180) {
-  SkCanvas canvas(AllocBitmap(kWidth, kHeight));
+  cc::PaintCanvas canvas(AllocBitmap(kWidth, kHeight));
   FillCanvas(&canvas, SK_ColorMAGENTA);
 
   PaintRotated(cropped_frame(), &canvas,
                gfx::RectF(kWidth / 2, kHeight / 2, kWidth / 2, kHeight / 2),
-               kNone, SkXfermode::kSrcOver_Mode, VIDEO_ROTATION_180);
+               kNone, SkBlendMode::kSrcOver, VIDEO_ROTATION_180);
   // Check the corners of quadrant 2 and 4.
   EXPECT_EQ(SK_ColorMAGENTA, GetColorAt(&canvas, 0, 0));
   EXPECT_EQ(SK_ColorMAGENTA, GetColorAt(&canvas, (kWidth / 2) - 1, 0));
@@ -449,12 +485,12 @@ TEST_F(SkCanvasVideoRendererTest, Video_Translate_Rotation_180) {
 }
 
 TEST_F(SkCanvasVideoRendererTest, Video_Translate_Rotation_270) {
-  SkCanvas canvas(AllocBitmap(kWidth, kHeight));
+  cc::PaintCanvas canvas(AllocBitmap(kWidth, kHeight));
   FillCanvas(&canvas, SK_ColorMAGENTA);
 
   PaintRotated(cropped_frame(), &canvas,
                gfx::RectF(kWidth / 2, kHeight / 2, kWidth / 2, kHeight / 2),
-               kNone, SkXfermode::kSrcOver_Mode, VIDEO_ROTATION_270);
+               kNone, SkBlendMode::kSrcOver, VIDEO_ROTATION_270);
   // Check the corners of quadrant 2 and 4.
   EXPECT_EQ(SK_ColorMAGENTA, GetColorAt(&canvas, 0, 0));
   EXPECT_EQ(SK_ColorMAGENTA, GetColorAt(&canvas, (kWidth / 2) - 1, 0));
@@ -505,6 +541,38 @@ TEST_F(SkCanvasVideoRendererTest, HighBits) {
             GetColorAt(target_canvas(), kWidth * 3 / 8, kHeight * 3 / 6));
 }
 
+TEST_F(SkCanvasVideoRendererTest, Y16) {
+  SkBitmap bitmap;
+  bitmap.allocPixels(SkImageInfo::MakeN32(16, 16, kPremul_SkAlphaType));
+
+  // |offset_x| and |offset_y| define visible rect's offset to coded rect.
+  const int offset_x = 3;
+  const int offset_y = 5;
+  const int stride = bitmap.width() + offset_x;
+  const size_t byte_size = stride * (bitmap.height() + offset_y) * 2;
+  std::unique_ptr<unsigned char, base::AlignedFreeDeleter> memory(
+      static_cast<unsigned char*>(base::AlignedAlloc(
+          byte_size, media::VideoFrame::kFrameAddressAlignment)));
+  const gfx::Rect rect(offset_x, offset_y, bitmap.width(), bitmap.height());
+  scoped_refptr<media::VideoFrame> video_frame =
+      CreateTestY16Frame(gfx::Size(stride, offset_y + bitmap.height()), rect,
+                         memory.get(), cropped_frame()->timestamp());
+
+  cc::PaintCanvas canvas(bitmap);
+  cc::PaintFlags flags;
+  flags.setFilterQuality(kNone_SkFilterQuality);
+  renderer_.Paint(video_frame, &canvas,
+                  gfx::RectF(bitmap.width(), bitmap.height()), flags,
+                  VIDEO_ROTATION_0, Context3D());
+  SkAutoLockPixels lock(bitmap);
+  for (int j = 0; j < bitmap.height(); j++) {
+    for (int i = 0; i < bitmap.width(); i++) {
+      const int value = i + j * bitmap.width();
+      EXPECT_EQ(SkColorSetRGB(value, value, value), bitmap.getColor(i, j));
+    }
+  }
+}
+
 namespace {
 class TestGLES2Interface : public gpu::gles2::GLES2InterfaceStub {
  public:
@@ -512,6 +580,58 @@ class TestGLES2Interface : public gpu::gles2::GLES2InterfaceStub {
     DCHECK_EQ(1, n);
     *textures = 1;
   }
+
+  void TexImage2D(GLenum target,
+                  GLint level,
+                  GLint internalformat,
+                  GLsizei width,
+                  GLsizei height,
+                  GLint border,
+                  GLenum format,
+                  GLenum type,
+                  const void* pixels) override {
+    if (!teximage2d_callback_.is_null()) {
+      teximage2d_callback_.Run(target, level, internalformat, width, height,
+                               border, format, type, pixels);
+    }
+  }
+
+  void TexSubImage2D(GLenum target,
+                     GLint level,
+                     GLint xoffset,
+                     GLint yoffset,
+                     GLsizei width,
+                     GLsizei height,
+                     GLenum format,
+                     GLenum type,
+                     const void* pixels) override {
+    if (!texsubimage2d_callback_.is_null()) {
+      texsubimage2d_callback_.Run(target, level, xoffset, yoffset, width,
+                                  height, format, type, pixels);
+    }
+  }
+
+  base::Callback<void(GLenum target,
+                      GLint level,
+                      GLint internalformat,
+                      GLsizei width,
+                      GLsizei height,
+                      GLint border,
+                      GLenum format,
+                      GLenum type,
+                      const void* pixels)>
+      teximage2d_callback_;
+
+  base::Callback<void(GLenum target,
+                      GLint level,
+                      GLint xoffset,
+                      GLint yoffset,
+                      GLsizei width,
+                      GLsizei height,
+                      GLenum format,
+                      GLenum type,
+                      const void* pixels)>
+      texsubimage2d_callback_;
 };
 void MailboxHoldersReleased(const gpu::SyncToken& sync_token) {}
 }  // namespace
@@ -525,7 +645,7 @@ TEST_F(SkCanvasVideoRendererTest, ContextLost) {
       reinterpret_cast<GrBackendContext>(null_interface.get())));
   gr_context->abandonContext();
 
-  SkCanvas canvas(AllocBitmap(kWidth, kHeight));
+  cc::PaintCanvas canvas(AllocBitmap(kWidth, kHeight));
 
   TestGLES2Interface gles2;
   Context3D context_3d(&gles2, gr_context.get());
@@ -534,9 +654,159 @@ TEST_F(SkCanvasVideoRendererTest, ContextLost) {
       gpu::Mailbox::Generate(), gpu::SyncToken(), GL_TEXTURE_RECTANGLE_ARB)};
   auto video_frame = VideoFrame::WrapNativeTextures(
       PIXEL_FORMAT_UYVY, holders, base::Bind(MailboxHoldersReleased), size,
-      gfx::Rect(size), size, kNoTimestamp());
+      gfx::Rect(size), size, kNoTimestamp);
 
-  renderer_.Paint(video_frame, &canvas, kNaturalRect, 0xFF,
-                  SkXfermode::kSrcOver_Mode, VIDEO_ROTATION_90, context_3d);
+  cc::PaintFlags flags;
+  flags.setFilterQuality(kLow_SkFilterQuality);
+  renderer_.Paint(video_frame, &canvas, kNaturalRect, flags, VIDEO_ROTATION_90,
+                  context_3d);
 }
+
+void EmptyCallback(const gpu::SyncToken& sync_token) {}
+
+TEST_F(SkCanvasVideoRendererTest, CorrectFrameSizeToVisibleRect) {
+  int fWidth{16}, fHeight{16};
+  SkImageInfo imInfo =
+      SkImageInfo::MakeN32(fWidth, fHeight, kOpaque_SkAlphaType);
+
+  sk_sp<const GrGLInterface> glInterface(GrGLCreateNullInterface());
+  sk_sp<GrContext> grContext(
+      GrContext::Create(kOpenGL_GrBackend,
+                        reinterpret_cast<GrBackendContext>(glInterface.get())));
+
+  sk_sp<cc::PaintSurface> surface = cc::PaintSurface::MakeRenderTarget(
+      grContext.get(), SkBudgeted::kYes, imInfo);
+  cc::PaintCanvas* canvas = surface->getCanvas();
+
+  TestGLES2Interface gles2;
+  Context3D context_3d(&gles2, grContext.get());
+  gfx::Size coded_size(fWidth, fHeight);
+  gfx::Size visible_size(fWidth / 2, fHeight / 2);
+
+  gpu::MailboxHolder mailbox_holders[VideoFrame::kMaxPlanes];
+  for (size_t i = 0; i < VideoFrame::kMaxPlanes; i++) {
+    mailbox_holders[i] = gpu::MailboxHolder(
+        gpu::Mailbox::Generate(), gpu::SyncToken(), GL_TEXTURE_RECTANGLE_ARB);
+  }
+
+  auto video_frame = VideoFrame::WrapNativeTextures(
+      PIXEL_FORMAT_I420, mailbox_holders, base::Bind(EmptyCallback), coded_size,
+      gfx::Rect(visible_size), visible_size,
+      base::TimeDelta::FromMilliseconds(4));
+
+  gfx::RectF visible_rect(visible_size.width(), visible_size.height());
+  cc::PaintFlags flags;
+  renderer_.Paint(video_frame, canvas, visible_rect, flags, VIDEO_ROTATION_0,
+                  context_3d);
+
+  EXPECT_EQ(fWidth / 2, renderer_.LastImageDimensionsForTesting().width());
+  EXPECT_EQ(fWidth / 2, renderer_.LastImageDimensionsForTesting().height());
+}
+
+TEST_F(SkCanvasVideoRendererTest, TexImage2D_Y16_RGBA32F) {
+  // Create test frame.
+  // |offset_x| and |offset_y| define visible rect's offset to coded rect.
+  const int offset_x = 3;
+  const int offset_y = 5;
+  const int width = 16;
+  const int height = 16;
+  const int stride = width + offset_x;
+  const size_t byte_size = stride * (height + offset_y) * 2;
+  std::unique_ptr<unsigned char, base::AlignedFreeDeleter> memory(
+      static_cast<unsigned char*>(base::AlignedAlloc(
+          byte_size, media::VideoFrame::kFrameAddressAlignment)));
+  const gfx::Rect rect(offset_x, offset_y, width, height);
+  scoped_refptr<media::VideoFrame> video_frame =
+      CreateTestY16Frame(gfx::Size(stride, offset_y + height), rect,
+                         memory.get(), cropped_frame()->timestamp());
+
+  // Create GL context.
+  sk_sp<const GrGLInterface> null_interface(GrGLCreateNullInterface());
+  sk_sp<GrContext> gr_context(GrContext::Create(
+      kOpenGL_GrBackend,
+      reinterpret_cast<GrBackendContext>(null_interface.get())));
+  TestGLES2Interface gles2;
+  Context3D context_3d(&gles2, gr_context.get());
+
+  // Bind the texImage2D callback to verify the uint16 to float32 conversion.
+  gles2.teximage2d_callback_ =
+      base::Bind([](GLenum target, GLint level, GLint internalformat,
+                    GLsizei width, GLsizei height, GLint border, GLenum format,
+                    GLenum type, const void* pixels) {
+        EXPECT_EQ(static_cast<unsigned>(GL_FLOAT), type);
+        EXPECT_EQ(static_cast<unsigned>(GL_RGBA), format);
+        EXPECT_EQ(GL_RGBA, internalformat);
+        EXPECT_EQ(0, border);
+        EXPECT_EQ(16, width);
+        EXPECT_EQ(16, height);
+        EXPECT_EQ(static_cast<unsigned>(GL_TEXTURE_2D), target);
+        const float* data = static_cast<const float*>(pixels);
+        for (int j = 0; j < height; j++) {
+          for (int i = 0; i < width; i++) {
+            const int value = i + (height - j - 1) * width;  // flip_y is true.
+            float expected_value =
+                (((value & 0xFF) << 8) | (~value & 0xFF)) / 65535.f;
+            EXPECT_EQ(expected_value, data[(i + j * width) * 4]);
+            EXPECT_EQ(expected_value, data[(i + j * width) * 4 + 1]);
+            EXPECT_EQ(expected_value, data[(i + j * width) * 4 + 2]);
+            EXPECT_EQ(1.0f, data[(i + j * width) * 4 + 3]);
+          }
+        }
+      });
+  SkCanvasVideoRenderer::TexImage2D(GL_TEXTURE_2D, &gles2, video_frame.get(), 0,
+                                    GL_RGBA, GL_RGBA, GL_FLOAT, true /*flip_y*/,
+                                    true);
+}
+
+TEST_F(SkCanvasVideoRendererTest, TexSubImage2D_Y16_R32F) {
+  // Create test frame.
+  // |offset_x| and |offset_y| define visible rect's offset to coded rect.
+  const int offset_x = 3;
+  const int offset_y = 5;
+  const int width = 16;
+  const int height = 16;
+  const int stride = width + offset_x;
+  const size_t byte_size = stride * (height + offset_y) * 2;
+  std::unique_ptr<unsigned char, base::AlignedFreeDeleter> memory(
+      static_cast<unsigned char*>(base::AlignedAlloc(
+          byte_size, media::VideoFrame::kFrameAddressAlignment)));
+  const gfx::Rect rect(offset_x, offset_y, width, height);
+  scoped_refptr<media::VideoFrame> video_frame =
+      CreateTestY16Frame(gfx::Size(stride, offset_y + height), rect,
+                         memory.get(), cropped_frame()->timestamp());
+
+  // Create GL context.
+  sk_sp<const GrGLInterface> null_interface(GrGLCreateNullInterface());
+  sk_sp<GrContext> gr_context(GrContext::Create(
+      kOpenGL_GrBackend,
+      reinterpret_cast<GrBackendContext>(null_interface.get())));
+  TestGLES2Interface gles2;
+  Context3D context_3d(&gles2, gr_context.get());
+
+  // Bind the texImage2D callback to verify the uint16 to float32 conversion.
+  gles2.texsubimage2d_callback_ = base::Bind([](
+      GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width,
+      GLsizei height, GLenum format, GLenum type, const void* pixels) {
+    EXPECT_EQ(static_cast<unsigned>(GL_FLOAT), type);
+    EXPECT_EQ(static_cast<unsigned>(GL_RED), format);
+    EXPECT_EQ(2, xoffset);
+    EXPECT_EQ(1, yoffset);
+    EXPECT_EQ(16, width);
+    EXPECT_EQ(16, height);
+    EXPECT_EQ(static_cast<unsigned>(GL_TEXTURE_2D), target);
+    const float* data = static_cast<const float*>(pixels);
+    for (int j = 0; j < height; j++) {
+      for (int i = 0; i < width; i++) {
+        const int value = i + j * width;  // flip_y is false.
+        float expected_value =
+            (((value & 0xFF) << 8) | (~value & 0xFF)) / 65535.f;
+        EXPECT_EQ(expected_value, data[(i + j * width)]);
+      }
+    }
+  });
+  SkCanvasVideoRenderer::TexSubImage2D(GL_TEXTURE_2D, &gles2, video_frame.get(),
+                                       0, GL_RED, GL_FLOAT, 2 /*xoffset*/,
+                                       1 /*yoffset*/, false /*flip_y*/, true);
+}
+
 }  // namespace media

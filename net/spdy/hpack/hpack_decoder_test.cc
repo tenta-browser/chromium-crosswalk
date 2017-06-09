@@ -35,9 +35,6 @@ class HpackDecoderPeer {
     return decoder_->DecodeNextName(in, out);
   }
   HpackHeaderTable* header_table() { return &decoder_->header_table_; }
-  const SpdyHeaderBlock& decoded_block() const {
-    return decoder_->decoded_block_;
-  }
 
   bool DecodeNextStringLiteral(HpackInputStream* in,
                                bool is_header_key,
@@ -88,7 +85,7 @@ class HpackDecoderTest : public ::testing::TestWithParam<bool> {
     if (handler_exists_) {
       return handler_.decoded_block();
     } else {
-      return decoder_peer_.decoded_block();
+      return decoder_.decoded_block();
     }
   }
 
@@ -138,11 +135,7 @@ TEST_P(HpackDecoderTest, AddHeaderDataWithHandleControlFrameHeadersData) {
                                                      second_input.size()));
   // A string which would push the buffer over the threshold is refused.
   const int kThirdInputSize =
-      ((FLAGS_chromium_http2_flag_remove_hpack_decode_buffer_size_limit
-            ? kMaxBufferSizeBytes
-            : kMaxDecodeBufferSize) -
-       (first_input.size() + second_input.size())) +
-      1;
+      kMaxBufferSizeBytes - (first_input.size() + second_input.size()) + 1;
   string third_input = string(kThirdInputSize, 'y');
   ASSERT_GT(first_input.size() + second_input.size() + third_input.size(),
             kMaxBufferSizeBytes);
@@ -358,9 +351,6 @@ TEST_P(HpackDecoderTest, InvalidIndexedHeader) {
   EXPECT_FALSE(DecodeHeaderBlock(StringPiece("\xbe", 1)));
 }
 
-// Test that a header block with a pseudo-header field following a regular one
-// is treated as malformed.  (HTTP2 draft-14 8.1.2.1., HPACK draft-09 3.1.)
-
 TEST_P(HpackDecoderTest, ContextUpdateMaximumSize) {
   EXPECT_EQ(kDefaultHeaderTableSizeSetting,
             decoder_peer_.header_table()->max_size());
@@ -553,8 +543,9 @@ TEST_P(HpackDecoderTest, StringLiteralIncomplete) {
   EXPECT_EQ(21u, input_stream.ParsedBytes());
 }
 
-// Round-tripping the header set from E.2.1 should work.
-TEST_P(HpackDecoderTest, BasicE21) {
+// Round-tripping the header set from RFC 7541 C.3.1 should work.
+// http://httpwg.org/specs/rfc7541.html#rfc.section.C.3.1
+TEST_P(HpackDecoderTest, BasicC31) {
   HpackEncoder encoder(ObtainHpackHuffmanTable());
 
   SpdyHeaderBlock expected_header_set;
@@ -571,7 +562,9 @@ TEST_P(HpackDecoderTest, BasicE21) {
   EXPECT_EQ(expected_header_set, decoded_block());
 }
 
-TEST_P(HpackDecoderTest, SectionD4RequestHuffmanExamples) {
+// RFC 7541, Section C.4: Request Examples with Huffman Coding
+// http://httpwg.org/specs/rfc7541.html#rfc.section.C.4
+TEST_P(HpackDecoderTest, SectionC4RequestHuffmanExamples) {
   // 82                                      | == Indexed - Add ==
   //                                         |   idx = 2
   //                                         | -> :method: GET
@@ -678,7 +671,9 @@ TEST_P(HpackDecoderTest, SectionD4RequestHuffmanExamples) {
   EXPECT_EQ(164u, decoder_peer_.header_table()->size());
 }
 
-TEST_P(HpackDecoderTest, SectionD6ResponseHuffmanExamples) {
+// RFC 7541, Section C.6: Response Examples with Huffman Coding
+// http://httpwg.org/specs/rfc7541.html#rfc.section.C.6
+TEST_P(HpackDecoderTest, SectionC6ResponseHuffmanExamples) {
   decoder_.ApplyHeaderTableSizeSetting(256);
 
   // 48                                      | == Literal indexed ==

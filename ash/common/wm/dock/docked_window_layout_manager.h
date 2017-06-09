@@ -8,17 +8,18 @@
 #include <memory>
 
 #include "ash/ash_export.h"
+#include "ash/common/shell_observer.h"
 #include "ash/common/wm/dock/dock_types.h"
 #include "ash/common/wm/dock/docked_window_layout_manager_observer.h"
 #include "ash/common/wm/window_state_observer.h"
 #include "ash/common/wm/wm_snap_to_pixel_layout_manager.h"
 #include "ash/common/wm_activation_observer.h"
-#include "ash/common/wm_root_window_controller_observer.h"
-#include "ash/common/wm_window_observer.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
 #include "base/time/time.h"
+#include "ui/aura/window_observer.h"
+#include "ui/display/display_observer.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/keyboard/keyboard_controller_observer.h"
 
@@ -26,8 +27,7 @@ namespace ash {
 class DockedBackgroundWidget;
 class DockedWindowLayoutManagerObserver;
 class DockedWindowResizerTest;
-class Shelf;
-class WmRootWindowController;
+class RootWindowController;
 class WmShelf;
 
 // DockedWindowLayoutManager is responsible for organizing windows when they are
@@ -44,9 +44,10 @@ class WmShelf;
 // common functionality.
 class ASH_EXPORT DockedWindowLayoutManager
     : public wm::WmSnapToPixelLayoutManager,
-      public WmRootWindowControllerObserver,
-      public WmWindowObserver,
+      public display::DisplayObserver,
+      public aura::WindowObserver,
       public WmActivationObserver,
+      public ShellObserver,
       public keyboard::KeyboardControllerObserver,
       public wm::WindowStateObserver {
  public:
@@ -134,25 +135,31 @@ class ASH_EXPORT DockedWindowLayoutManager
   void SetChildBounds(WmWindow* child,
                       const gfx::Rect& requested_bounds) override;
 
-  // WmRootWindowControllerObserver:
-  void OnWorkAreaChanged() override;
-  void OnFullscreenStateChanged(bool is_fullscreen) override;
-  void OnShelfAlignmentChanged() override;
+  // display::DisplayObserver:
+  void OnDisplayMetricsChanged(const display::Display& display,
+                               uint32_t changed_metrics) override;
 
   // wm::WindowStateObserver:
   void OnPreWindowStateTypeChange(wm::WindowState* window_state,
                                   wm::WindowStateType old_type) override;
 
-  // WmWindowObserver:
-  void OnWindowBoundsChanged(WmWindow* window,
+  // aura::WindowObserver:
+  void OnWindowBoundsChanged(aura::Window* window,
                              const gfx::Rect& old_bounds,
                              const gfx::Rect& new_bounds) override;
-  void OnWindowVisibilityChanging(WmWindow* window, bool visible) override;
-  void OnWindowDestroying(WmWindow* window) override;
+  void OnWindowVisibilityChanging(aura::Window* window, bool visible) override;
+  void OnWindowDestroying(aura::Window* window) override;
 
   // WmActivationObserver:
   void OnWindowActivated(WmWindow* gained_active,
                          WmWindow* lost_active) override;
+
+  // ShellObserver:
+  void OnShelfAlignmentChanged(WmWindow* root_window) override;
+  void OnFullscreenStateChanged(bool is_fullscreen,
+                                WmWindow* root_window) override;
+  void OnOverviewModeStarting() override;
+  void OnOverviewModeEnded() override;
 
  private:
   struct CompareMinimumHeight;
@@ -240,11 +247,12 @@ class ASH_EXPORT DockedWindowLayoutManager
 
   // keyboard::KeyboardControllerObserver:
   void OnKeyboardBoundsChanging(const gfx::Rect& keyboard_bounds) override;
+  void OnKeyboardClosed() override;
 
   // Parent window associated with this layout manager.
   WmWindow* dock_container_;
 
-  WmRootWindowController* root_window_controller_;
+  RootWindowController* root_window_controller_;
 
   // Protect against recursive calls to Relayout().
   bool in_layout_;
@@ -276,6 +284,9 @@ class ASH_EXPORT DockedWindowLayoutManager
 
   // Target bounds of a docked window being dragged.
   gfx::Rect dragged_bounds_;
+
+  // True while in overview mode.
+  bool in_overview_;
 
   // Side of the screen that the dock is positioned at.
   DockedAlignment alignment_;

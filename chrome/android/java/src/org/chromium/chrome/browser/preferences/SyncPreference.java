@@ -12,12 +12,13 @@ import android.preference.Preference;
 import android.util.AttributeSet;
 
 import org.chromium.base.ApiCompatibilityUtils;
+import org.chromium.base.BuildInfo;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.childaccounts.ChildAccountService;
 import org.chromium.chrome.browser.sync.GoogleServiceAuthError;
 import org.chromium.chrome.browser.sync.ProfileSyncService;
-import org.chromium.sync.AndroidSyncSettings;
-import org.chromium.sync.signin.ChromeSigninController;
+import org.chromium.components.signin.ChromeSigninController;
+import org.chromium.components.sync.AndroidSyncSettings;
+import org.chromium.components.sync.ProtocolErrorClientAction;
 
 /**
  * A preference that displays the current sync account and status (enabled, error, needs passphrase,
@@ -86,10 +87,6 @@ public class SyncPreference extends Preference {
         ProfileSyncService profileSyncService = ProfileSyncService.get();
         Resources res = context.getResources();
 
-        if (ChildAccountService.isChildAccount()) {
-            return res.getString(R.string.kids_account);
-        }
-
         if (!AndroidSyncSettings.isMasterSyncEnabled(context)) {
             return res.getString(R.string.sync_android_master_sync_disabled);
         }
@@ -102,8 +99,15 @@ public class SyncPreference extends Preference {
             return res.getString(profileSyncService.getAuthError().getMessage());
         }
 
-        // TODO(crbug/557784): Surface IDS_SYNC_UPGRADE_CLIENT string when we require the user
-        // to upgrade
+        if (profileSyncService.getProtocolErrorClientAction()
+                == ProtocolErrorClientAction.UPGRADE_CLIENT) {
+            return res.getString(
+                    R.string.sync_error_upgrade_client, BuildInfo.getPackageLabel(context));
+        }
+
+        if (profileSyncService.hasUnrecoverableError()) {
+            return res.getString(R.string.sync_error_generic);
+        }
 
         boolean syncEnabled = AndroidSyncSettings.isSyncEnabled(context);
 

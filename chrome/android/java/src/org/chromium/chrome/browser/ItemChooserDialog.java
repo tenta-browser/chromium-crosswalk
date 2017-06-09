@@ -10,7 +10,7 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
-import android.text.SpannableString;
+import android.text.TextUtils;
 import android.text.method.LinkMovementMethod;
 import android.view.Gravity;
 import android.view.LayoutInflater;
@@ -26,7 +26,6 @@ import android.widget.ListView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 
-import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.util.MathUtils;
@@ -64,24 +63,23 @@ public class ItemChooserDialog {
      */
     public static class ItemChooserRow {
         private final String mKey;
-        private final String mDescription;
+        private String mDescription;
 
         public ItemChooserRow(String key, String description) {
             mKey = key;
             mDescription = description;
         }
 
-        @Override
-        public boolean equals(Object obj) {
-            if (!(obj instanceof ItemChooserRow)) return false;
-            if (this == obj) return true;
-            ItemChooserRow item = (ItemChooserRow) obj;
-            return mKey.equals(item.mKey) && mDescription.equals(item.mDescription);
-        }
-
-        @Override
-        public int hashCode() {
-            return mKey.hashCode() + mDescription.hashCode();
+        /**
+         * Returns true if all parameters match the corresponding member.
+         *
+         * @param key Expected item unique identifier.
+         * @param description Expected item description.
+         */
+        public boolean hasSameContents(String key, String description) {
+            if (!TextUtils.equals(mKey, key)) return false;
+            if (!TextUtils.equals(mDescription, description)) return false;
+            return true;
         }
     }
 
@@ -95,6 +93,9 @@ public class ItemChooserDialog {
         public final CharSequence searching;
         // The message to show when no results were produced.
         public final CharSequence noneFound;
+        // A status message to show above the button row after an item has
+        // been added and discovery is still ongoing.
+        public final CharSequence statusActive;
         // A status message to show above the button row after discovery has
         // stopped and no devices have been found.
         public final CharSequence statusIdleNoneFound;
@@ -105,11 +106,12 @@ public class ItemChooserDialog {
         public final CharSequence positiveButton;
 
         public ItemChooserLabels(CharSequence title, CharSequence searching, CharSequence noneFound,
-                CharSequence statusIdleNoneFound, CharSequence statusIdleSomeFound,
-                CharSequence positiveButton) {
+                CharSequence statusActive, CharSequence statusIdleNoneFound,
+                CharSequence statusIdleSomeFound, CharSequence positiveButton) {
             this.title = title;
             this.searching = searching;
             this.noneFound = noneFound;
+            this.statusActive = statusActive;
             this.statusIdleNoneFound = statusIdleNoneFound;
             this.statusIdleSomeFound = statusIdleSomeFound;
             this.positiveButton = positiveButton;
@@ -117,9 +119,20 @@ public class ItemChooserDialog {
     }
 
     /**
+     * Item holder for performance boost.
+     */
+    private static class ViewHolder {
+        private TextView mTextView;
+
+        public ViewHolder(View view) {
+            mTextView = (TextView) view.findViewById(R.id.description);
+        }
+    }
+
+    /**
      * The various states the dialog can represent.
      */
-    private enum State { STARTING, DISCOVERY_IDLE }
+    private enum State { INITIALIZING_ADAPTER, STARTING, PROGRESS_UPDATE_AVAILABLE, DISCOVERY_IDLE }
 
     /**
      * An adapter for keeping track of which items to show in the dialog.
@@ -127,12 +140,6 @@ public class ItemChooserDialog {
     public class ItemAdapter extends ArrayAdapter<ItemChooserRow>
             implements AdapterView.OnItemClickListener {
         private final LayoutInflater mInflater;
-
-        // The background color of the highlighted item.
-        private final int mBackgroundHighlightColor;
-
-        // The color of the non-highlighted text.
-        private final int mDefaultTextColor;
 
         // The zero-based index of the item currently selected in the dialog,
         // or -1 (INVALID_POSITION) if nothing is selected.
@@ -144,43 +151,79 @@ public class ItemChooserDialog {
         // Item descriptions are counted in a map.
         private Map<String, Integer> mItemDescriptionMap = new HashMap<>();
 
+        // Map of keys to items so that we can access the items in O(1).
+        private Map<String, ItemChooserRow> mKeyToItemMap = new HashMap<>();
+
         public ItemAdapter(Context context, int resource) {
             super(context, resource);
 
             mInflater = LayoutInflater.from(context);
-
-            mBackgroundHighlightColor = ApiCompatibilityUtils.getColor(getContext().getResources(),
-                    R.color.light_active_color);
-            mDefaultTextColor = ApiCompatibilityUtils.getColor(getContext().getResources(),
-                    R.color.default_text_color);
         }
 
         @Override
-        public void add(ItemChooserRow item) {
-            String description = item.mDescription;
-            int count = mItemDescriptionMap.containsKey(description)
-                    ? mItemDescriptionMap.get(description) : 0;
-            mItemDescriptionMap.put(description, count + 1);
-            super.add(item);
-        }
-
-        @Override
-        public void remove(ItemChooserRow item) {
-            String description = item.mDescription;
-            if (mItemDescriptionMap.containsKey(description)) {
-                int count = mItemDescriptionMap.get(description);
-                if (count == 1) {
-                    mItemDescriptionMap.remove(description);
-                } else {
-                    mItemDescriptionMap.put(description, count - 1);
-                }
+        public boolean isEmpty() {
+            boolean isEmpty = super.isEmpty();
+            if (isEmpty) {
+                assert mKeyToItemMap.isEmpty();
+                assert mDisabledEntries.isEmpty();
+                assert mItemDescriptionMap.isEmpty();
+            } else {
+                assert !mKeyToItemMap.isEmpty();
+                assert !mItemDescriptionMap.isEmpty();
             }
-            super.remove(item);
+            return isEmpty;
+        }
+
+        public void addOrUpdate(String key, String description) {
+            ItemChooserRow oldItem = mKeyToItemMap.get(key);
+            if (oldItem != null) {
+                if (oldItem.hasSameContents(key, description)) {
+                    // No need to update anything.
+                    return;
+                }
+
+                if (!TextUtils.equals(oldItem.mDescription, description)) {
+                    removeFromDescriptionsMap(oldItem.mDescription);
+                    oldItem.mDescription = description;
+                    addToDescriptionsMap(oldItem.mDescription);
+                }
+
+                notifyDataSetChanged();
+                return;
+            }
+
+            assert !mKeyToItemMap.containsKey(key);
+            ItemChooserRow newItem = new ItemChooserRow(key, description);
+            mKeyToItemMap.put(key, newItem);
+
+            addToDescriptionsMap(newItem.mDescription);
+            add(newItem);
+        }
+
+        public void removeItemWithKey(String key) {
+            ItemChooserRow oldItem = mKeyToItemMap.remove(key);
+            if (oldItem == null) return;
+            int oldItemPosition = getPosition(oldItem);
+            // If the removed item is the item that is currently selected, deselect it
+            // and disable the confirm button. Otherwise if the removed item is before
+            // the currently selected item, the currently selected item's index needs
+            // to be adjusted by one.
+            if (oldItemPosition == mSelectedItem) {
+                mSelectedItem = ListView.INVALID_POSITION;
+                mConfirmButton.setEnabled(false);
+            } else if (oldItemPosition < mSelectedItem) {
+                --mSelectedItem;
+            }
+            removeFromDescriptionsMap(oldItem.mDescription);
+            super.remove(oldItem);
         }
 
         @Override
         public void clear() {
             mSelectedItem = ListView.INVALID_POSITION;
+            mKeyToItemMap.clear();
+            mDisabledEntries.clear();
+            mItemDescriptionMap.clear();
             mConfirmButton.setEnabled(false);
             super.clear();
         }
@@ -190,6 +233,7 @@ public class ItemChooserDialog {
          * selected.
          */
         public String getSelectedItemKey() {
+            if (mSelectedItem == ListView.INVALID_POSITION) return "";
             ItemChooserRow row = getItem(mSelectedItem);
             if (row == null) return "";
             return row.mKey;
@@ -210,7 +254,7 @@ public class ItemChooserDialog {
         }
 
         /**
-         * Sets whether the itam is enabled. Disabled items are grayed out.
+         * Sets whether the item is enabled. Disabled items are grayed out.
          * @param id The id of the item to affect.
          * @param enabled Whether the item should be enabled or not.
          */
@@ -220,6 +264,14 @@ public class ItemChooserDialog {
             } else {
                 mDisabledEntries.add(id);
             }
+
+            if (mSelectedItem != ListView.INVALID_POSITION) {
+                ItemChooserRow selectedRow = getItem(mSelectedItem);
+                if (id.equals(selectedRow.mKey)) {
+                    mConfirmButton.setEnabled(enabled);
+                }
+            }
+
             notifyDataSetChanged();
         }
 
@@ -241,37 +293,45 @@ public class ItemChooserDialog {
 
         @Override
         public View getView(int position, View convertView, ViewGroup parent) {
-            TextView view;
-            if (convertView instanceof TextView) {
-                view = (TextView) convertView;
+            ViewHolder row;
+            if (convertView == null) {
+                convertView = mInflater.inflate(R.layout.item_chooser_dialog_row, parent, false);
+                row = new ViewHolder(convertView);
+                convertView.setTag(row);
             } else {
-                view = (TextView) mInflater.inflate(
-                        R.layout.item_chooser_dialog_row, parent, false);
+                row = (ViewHolder) convertView.getTag();
             }
 
-            // Set highlighting for currently selected item.
-            if (position == mSelectedItem) {
-                view.setBackgroundColor(mBackgroundHighlightColor);
-                view.setTextColor(Color.WHITE);
-            } else {
-                view.setBackground(null);
-                if (!isEnabled(position)) {
-                    view.setTextColor(ApiCompatibilityUtils.getColor(getContext().getResources(),
-                            R.color.primary_text_disabled_material_light));
-                } else {
-                    view.setTextColor(mDefaultTextColor);
-                }
-            }
+            row.mTextView.setEnabled(isEnabled(position));
+            row.mTextView.setText(getDisplayText(position));
 
-            view.setText(getDisplayText(position));
-            return view;
+            return convertView;
         }
 
         @Override
         public void onItemClick(AdapterView<?> adapter, View view, int position, long id) {
             mSelectedItem = position;
             mConfirmButton.setEnabled(true);
-            mItemAdapter.notifyDataSetChanged();
+            notifyDataSetChanged();
+        }
+
+        private void addToDescriptionsMap(String description) {
+            int count = mItemDescriptionMap.containsKey(description)
+                    ? mItemDescriptionMap.get(description)
+                    : 0;
+            mItemDescriptionMap.put(description, count + 1);
+        }
+
+        private void removeFromDescriptionsMap(String description) {
+            if (!mItemDescriptionMap.containsKey(description)) {
+                return;
+            }
+            int count = mItemDescriptionMap.get(description);
+            if (count == 1) {
+                mItemDescriptionMap.remove(description);
+            } else {
+                mItemDescriptionMap.put(description, count - 1);
+            }
         }
     }
 
@@ -349,7 +409,9 @@ public class ItemChooserDialog {
         });
 
         mItemAdapter = new ItemAdapter(mActivity, R.layout.item_chooser_dialog_row);
+        mItemAdapter.setNotifyOnChange(true);
         mListView.setAdapter(mItemAdapter);
+        mListView.setChoiceMode(ListView.CHOICE_MODE_SINGLE);
         mListView.setEmptyView(mEmptyMessage);
         mListView.setOnItemClickListener(mItemAdapter);
         mListView.setDivider(null);
@@ -378,8 +440,15 @@ public class ItemChooserDialog {
     }
 
     private void showDialogForView(View view) {
-        mDialog = new Dialog(mActivity);
+        mDialog = new Dialog(mActivity) {
+            @Override
+            public void onWindowFocusChanged(boolean hasFocus) {
+                super.onWindowFocusChanged(hasFocus);
+                if (!hasFocus) super.dismiss();
+            }
+        };
         mDialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+        mDialog.setCanceledOnTouchOutside(true);
         mDialog.addContentView(view,
                 new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
                                               LinearLayout.LayoutParams.MATCH_PARENT));
@@ -408,23 +477,25 @@ public class ItemChooserDialog {
     }
 
     /**
-    * Add an item to the end of the list to show in the dialog.
-    *
-    * @param item The item to be added to the end of the chooser.
-    */
-    public void addItemToList(ItemChooserRow item) {
+     * Adds an item to the end of the list to show in the dialog if the item
+     * was not in the chooser. Otherwise updates the items description.
+     *
+     * @param key Unique identifier for that item.
+     * @param description Text in the row.
+     */
+    public void addOrUpdateItem(String key, String description) {
         mProgressBar.setVisibility(View.GONE);
-        mItemAdapter.add(item);
-        setState(State.DISCOVERY_IDLE);
+        mItemAdapter.addOrUpdate(key, description);
+        setState(State.PROGRESS_UPDATE_AVAILABLE);
     }
 
     /**
-    * Remove an item that is shown in the dialog.
-    *
-    * @param item The item to be removed in the chooser.
-    */
-    public void removeItemFromList(ItemChooserRow item) {
-        mItemAdapter.remove(item);
+     * Removes an item that is shown in the dialog.
+     *
+     * @param key Unique identifier for the item.
+     */
+    public void removeItemFromList(String key) {
+        mItemAdapter.removeItemWithKey(key);
         setState(State.DISCOVERY_IDLE);
     }
 
@@ -438,11 +509,18 @@ public class ItemChooserDialog {
 
     /**
      * Sets whether the item is enabled.
-     * @param id The id of the item to affect.
+     * @param key Unique indetifier for the item.
      * @param enabled Whether the item should be enabled or not.
      */
-    public void setEnabled(String id, boolean enabled) {
-        mItemAdapter.setEnabled(id, enabled);
+    public void setEnabled(String key, boolean enabled) {
+        mItemAdapter.setEnabled(key, enabled);
+    }
+
+    /**
+     * Indicates the adapter is being initialized.
+     */
+    public void signalInitializingAdapter() {
+        setState(State.INITIALIZING_ADAPTER);
     }
 
     /**
@@ -456,7 +534,7 @@ public class ItemChooserDialog {
     /**
      * Shows an error message in the dialog.
      */
-    public void setErrorState(SpannableString errorMessage, SpannableString errorStatus) {
+    public void setErrorState(CharSequence errorMessage, CharSequence errorStatus) {
         mListView.setVisibility(View.GONE);
         mProgressBar.setVisibility(View.GONE);
         mEmptyMessage.setText(errorMessage);
@@ -466,11 +544,21 @@ public class ItemChooserDialog {
 
     private void setState(State state) {
         switch (state) {
+            case INITIALIZING_ADAPTER:
+                mListView.setVisibility(View.GONE);
+                mProgressBar.setVisibility(View.VISIBLE);
+                mEmptyMessage.setVisibility(View.GONE);
+                break;
             case STARTING:
                 mStatus.setText(mLabels.searching);
                 mListView.setVisibility(View.GONE);
                 mProgressBar.setVisibility(View.VISIBLE);
                 mEmptyMessage.setVisibility(View.GONE);
+                break;
+            case PROGRESS_UPDATE_AVAILABLE:
+                mStatus.setText(mLabels.statusActive);
+                mProgressBar.setVisibility(View.GONE);
+                mListView.setVisibility(View.VISIBLE);
                 break;
             case DISCOVERY_IDLE:
                 boolean showEmptyMessage = mItemAdapter.isEmpty();

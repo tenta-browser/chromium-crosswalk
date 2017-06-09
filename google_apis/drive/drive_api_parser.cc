@@ -32,7 +32,7 @@ bool CreateFileResourceFromValue(const base::Value* value,
 // for JSONValueConverter::RegisterCustomField method.
 // TODO(mukai): make it return false in case of invalid |url_string|.
 bool GetGURLFromString(const base::StringPiece& url_string, GURL* result) {
-  *result = GURL(url_string.as_string());
+  *result = GURL(url_string);
   return true;
 }
 
@@ -133,7 +133,6 @@ const char kAppListKind[] = "drive#appList";
 // Parent Resource
 // https://developers.google.com/drive/v2/reference/parents
 const char kParentReferenceKind[] = "drive#parentReference";
-const char kParentLink[] = "parentLink";
 
 // File Resource
 // https://developers.google.com/drive/v2/reference/files
@@ -155,6 +154,7 @@ const char kImageMediaMetadata[] = "imageMediaMetadata";
 const char kShared[] = "shared";
 // These 5 flags are defined under |labels|.
 const char kLabelTrashed[] = "trashed";
+const char kLabelStarred[] = "starred";
 // These 3 flags are defined under |imageMediaMetadata|.
 const char kImageMediaMetadataWidth[] = "width";
 const char kImageMediaMetadataHeight[] = "height";
@@ -163,6 +163,25 @@ const char kImageMediaMetadataRotation[] = "rotation";
 const char kShareLink[] = "shareLink";
 
 const char kDriveFolderMimeType[] = "application/vnd.google-apps.folder";
+
+// Team Drive
+const char kTeamDriveKind[] = "drive#teamDrive";
+const char kCapabilities[] = "capabilities";
+
+// Team Drive capabilities.
+const char kCanAddChildren[] = "canAddChildren";
+const char kCanComment[] = "canComment";
+const char kCanCopy[] = "canCopy";
+const char kCanDeleteTeamDrive[] = "canDeleteTeamDrive";
+const char kCanDownload[] = "canDownload";
+const char kCanEdit[] = "canEdit";
+const char kCanListChildren[] = "canListChildren";
+const char kCanManageMembers[] = "canManageMembers";
+const char kCanReadRevisions[] = "canReadRevisions";
+const char kCanRemoveChildren[] = "canRemoveChildren";
+const char kCanRename[] = "canRename";
+const char kCanRenameTeamDrive[] = "canRenameTeamDrive";
+const char kCanShare[] = "canShare";
 
 // Files List
 // https://developers.google.com/drive/v2/reference/files/list
@@ -392,6 +411,91 @@ bool AppList::Parse(const base::Value& value) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+// TeamDriveCapabilities implementation
+
+TeamDriveCapabilities::TeamDriveCapabilities()
+    : can_add_children_(false),
+      can_comment_(false),
+      can_copy_(false),
+      can_delete_team_drive_(false),
+      can_download_(false),
+      can_edit_(false),
+      can_list_children_(false),
+      can_manage_members_(false),
+      can_read_revisions_(false),
+      can_remove_children_(false),
+      can_rename_(false),
+      can_rename_team_drive_(false),
+      can_share_(false) {
+}
+
+TeamDriveCapabilities::~TeamDriveCapabilities(){}
+
+// static
+void TeamDriveCapabilities::RegisterJSONConverter(
+    base::JSONValueConverter<TeamDriveCapabilities>* converter) {
+  converter->RegisterBoolField(kCanAddChildren,
+                               &TeamDriveCapabilities::can_add_children_);
+  converter->RegisterBoolField(kCanComment,
+                               &TeamDriveCapabilities::can_comment_);
+  converter->RegisterBoolField(kCanCopy, &TeamDriveCapabilities::can_copy_);
+  converter->RegisterBoolField(kCanDeleteTeamDrive,
+                               &TeamDriveCapabilities::can_delete_team_drive_);
+  converter->RegisterBoolField(kCanDownload,
+                               &TeamDriveCapabilities::can_download_);
+  converter->RegisterBoolField(kCanEdit, &TeamDriveCapabilities::can_edit_);
+  converter->RegisterBoolField(kCanListChildren,
+                               &TeamDriveCapabilities::can_list_children_);
+  converter->RegisterBoolField(kCanManageMembers,
+                               &TeamDriveCapabilities::can_manage_members_);
+  converter->RegisterBoolField(kCanReadRevisions,
+                               &TeamDriveCapabilities::can_read_revisions_);
+  converter->RegisterBoolField(kCanRemoveChildren,
+                               &TeamDriveCapabilities::can_remove_children_);
+  converter->RegisterBoolField(kCanRename, &TeamDriveCapabilities::can_rename_);
+  converter->RegisterBoolField(kCanRenameTeamDrive,
+                               &TeamDriveCapabilities::can_rename_team_drive_);
+  converter->RegisterBoolField(kCanShare, &TeamDriveCapabilities::can_share_);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// TeamDriveResource implementation
+
+TeamDriveResource::TeamDriveResource() {}
+
+TeamDriveResource::~TeamDriveResource() {}
+
+// static
+std::unique_ptr<TeamDriveResource> TeamDriveResource::CreateFrom(
+    const base::Value& value) {
+  std::unique_ptr<TeamDriveResource> resource(new TeamDriveResource());
+  if (!IsResourceKindExpected(value, kTeamDriveKind) ||
+      !resource->Parse(value)) {
+    LOG(ERROR) << "Unable to create: Invalid Team Drive resource JSON!";
+    return std::unique_ptr<TeamDriveResource>();
+  }
+  return resource;
+}
+
+// static
+void TeamDriveResource::RegisterJSONConverter(
+    base::JSONValueConverter<TeamDriveResource>* converter) {
+  converter->RegisterStringField(kId, &TeamDriveResource::id_);
+  converter->RegisterStringField(kName, &TeamDriveResource::name_);
+  converter->RegisterNestedField(kCapabilities,
+                                 &TeamDriveResource::capabilities_);
+}
+
+bool TeamDriveResource::Parse(const base::Value& value) {
+  base::JSONValueConverter<TeamDriveResource> converter;
+  if (!converter.Convert(value, this)) {
+    LOG(ERROR) << "Unable to parse: Invalid Team Drive resource JSON!";
+    return false;
+  }
+  return true;
+}
+
+////////////////////////////////////////////////////////////////////////////////
 // ParentReference implementation
 
 ParentReference::ParentReference() {}
@@ -402,9 +506,6 @@ ParentReference::~ParentReference() {}
 void ParentReference::RegisterJSONConverter(
     base::JSONValueConverter<ParentReference>* converter) {
   converter->RegisterStringField(kId, &ParentReference::file_id_);
-  converter->RegisterCustomField<GURL>(kParentLink,
-                                       &ParentReference::parent_link_,
-                                       GetGURLFromString);
 }
 
 // static
@@ -642,7 +743,9 @@ bool ChangeList::Parse(const base::Value& value) {
 ////////////////////////////////////////////////////////////////////////////////
 // FileLabels implementation
 
-FileLabels::FileLabels() : trashed_(false) {}
+FileLabels::FileLabels()
+    : trashed_(false),
+      starred_(false) {}
 
 FileLabels::~FileLabels() {}
 
@@ -650,6 +753,7 @@ FileLabels::~FileLabels() {}
 void FileLabels::RegisterJSONConverter(
     base::JSONValueConverter<FileLabels>* converter) {
   converter->RegisterBoolField(kLabelTrashed, &FileLabels::trashed_);
+  converter->RegisterBoolField(kLabelStarred, &FileLabels::starred_);
 }
 
 // static

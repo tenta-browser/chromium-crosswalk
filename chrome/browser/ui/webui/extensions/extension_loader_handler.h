@@ -18,7 +18,7 @@
 #include "base/scoped_observer.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/extension_error_reporter.h"
-#include "content/public/browser/navigation_controller.h"
+#include "content/public/browser/reload_type.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_ui_message_handler.h"
 
@@ -65,9 +65,8 @@ class ExtensionLoaderHandler : public content::WebUIMessageHandler,
                      const std::string& error) override;
 
   // content::WebContentsObserver:
-  void DidStartNavigationToPendingEntry(
-      const GURL& url,
-      content::NavigationController::ReloadType reload_type) override;
+  void DidStartNavigation(
+      content::NavigationHandle* navigation_handle) override;
 
   // Add a failure to |failures_|. If it was a manifest error, |manifest| will
   // hold the manifest contents, and |line_number| will point to the line at

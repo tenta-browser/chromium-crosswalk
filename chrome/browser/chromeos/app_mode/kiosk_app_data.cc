@@ -11,6 +11,7 @@
 #include "base/json/json_writer.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
@@ -162,7 +163,7 @@ class KioskAppData::CrxLoader : public extensions::SandboxedUnpackerClient {
     scoped_refptr<extensions::SandboxedUnpacker> unpacker(
         new extensions::SandboxedUnpacker(
             extensions::Manifest::INTERNAL, extensions::Extension::NO_FLAGS,
-            temp_dir_.path(), task_runner_.get(), this));
+            temp_dir_.GetPath(), task_runner_.get(), this));
     unpacker->StartWithCrx(extensions::CRXFileInfo(crx_file_));
   }
 
@@ -171,7 +172,7 @@ class KioskAppData::CrxLoader : public extensions::SandboxedUnpackerClient {
 
     if (!temp_dir_.Delete()) {
       LOG(WARNING) << "Can not delete temp directory at "
-                   << temp_dir_.path().value();
+                   << temp_dir_.GetPath().value();
     }
 
     BrowserThread::PostTask(
@@ -426,8 +427,9 @@ void KioskAppData::ClearCache() {
   dict_update->Remove(app_key, NULL);
 
   if (!icon_path_.empty()) {
-    BrowserThread::PostBlockingPoolTask(
-        FROM_HERE,
+    base::PostTaskWithTraits(
+        FROM_HERE, base::TaskTraits().MayBlock().WithPriority(
+                       base::TaskPriority::BACKGROUND),
         base::Bind(base::IgnoreResult(&base::DeleteFile), icon_path_, false));
   }
 }
@@ -475,6 +477,20 @@ bool KioskAppData::IsFromWebStore() const {
 
 void KioskAppData::SetStatusForTest(Status status) {
   SetStatus(status);
+}
+
+// static
+std::unique_ptr<KioskAppData> KioskAppData::CreateForTest(
+    KioskAppDataDelegate* delegate,
+    const std::string& app_id,
+    const AccountId& account_id,
+    const GURL& update_url,
+    const std::string& required_platform_version) {
+  std::unique_ptr<KioskAppData> data(new KioskAppData(
+      delegate, app_id, account_id, update_url, base::FilePath()));
+  data->status_ = STATUS_LOADED;
+  data->required_platform_version_ = required_platform_version;
+  return data;
 }
 
 void KioskAppData::SetStatus(Status status) {
@@ -648,8 +664,8 @@ void KioskAppData::OnWebstoreResponseParseSuccess(
                              &icon_url_string))
     return;
 
-  GURL icon_url = GURL(extension_urls::GetWebstoreLaunchURL()).Resolve(
-      icon_url_string);
+  GURL icon_url =
+      extension_urls::GetWebstoreLaunchURL().Resolve(icon_url_string);
   if (!icon_url.is_valid()) {
     LOG(ERROR) << "Webstore response error (icon url): "
                << ValueToString(*webstore_data);

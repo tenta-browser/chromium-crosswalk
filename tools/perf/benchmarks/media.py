@@ -74,19 +74,19 @@ class MediaNetworkSimulation(perf_benchmark.PerfBenchmark):
     return 'media.media_cns_cases'
 
 
-@benchmark.Enabled('android')
-@benchmark.Disabled('l', 'android-webview')  # WebView: crbug.com/419689
+@benchmark.Disabled('l', 'android-webview')  # WebView: crbug.com/419689.
 class MediaAndroid(perf_benchmark.PerfBenchmark):
   """Obtains media metrics for key user scenarios on Android."""
   test = media.Media
   tag = 'android'
   page_set = page_sets.ToughVideoCasesPageSet
   # Exclude is_4k and 50 fps media files (garden* & crowd*).
-  options = {'story_label_filter_exclude': 'is_4k,is_50fps'}
+  options = {'story_tag_filter_exclude': 'is_4k,is_50fps'}
 
   @classmethod
-  def ShouldDisable(cls, possible_browser):  # crbug.com/448092
-    """Disable test for Android One device."""
+  def ShouldDisable(cls, possible_browser):
+    if possible_browser.platform.GetOSName() != "android":
+      return True
     return cls.IsSvelte(possible_browser)
 
   @classmethod
@@ -102,9 +102,9 @@ class MediaChromeOS4kOnly(perf_benchmark.PerfBenchmark):
   tag = 'chromeOS4kOnly'
   page_set = page_sets.ToughVideoCasesPageSet
   options = {
-      'story_label_filter': 'is_4k',
+      'story_tag_filter': 'is_4k',
       # Exclude is_50fps test files: crbug/331816
-      'story_label_filter_exclude': 'is_50fps'
+      'story_tag_filter_exclude': 'is_50fps'
   }
 
   @classmethod
@@ -123,7 +123,7 @@ class MediaChromeOS(perf_benchmark.PerfBenchmark):
   tag = 'chromeOS'
   page_set = page_sets.ToughVideoCasesPageSet
   # Exclude is_50fps test files: crbug/331816
-  options = {'story_label_filter_exclude': 'is_4k,is_50fps'}
+  options = {'story_tag_filter_exclude': 'is_4k,is_50fps'}
 
   @classmethod
   def Name(cls):

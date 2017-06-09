@@ -5,9 +5,9 @@
 package org.chromium.content.browser;
 
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.UrlUtils;
-import org.chromium.content.browser.test.util.CallbackHelper;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.browser.WebContentsObserver;
@@ -51,9 +51,8 @@ public class WebContentsObserverAndroidTest extends ContentShellTestBase {
     /*
     @SmallTest
     @Feature({"Navigation"})
-    http://crbug.com/411931
     */
-    @DisabledTest
+    @DisabledTest(message = "crbug.com/411931")
     public void testDidFirstVisuallyNonEmptyPaint() throws Throwable {
         TestWebContentsObserver observer = ThreadUtils.runOnUiThreadBlocking(
                 new Callable<TestWebContentsObserver>() {

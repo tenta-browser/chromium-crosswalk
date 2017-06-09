@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-source_set("core") {
+static_library("core") {
   sources = [
     "data_use_user_data.cc",
     "data_use_user_data.h",
@@ -10,5 +10,47 @@ source_set("core") {
   deps = [
     "//base",
     "//net",
+  ]
+}
+
+static_library("ascriber") {
+  sources = [
+    "data_use.cc",
+    "data_use.h",
+    "data_use_ascriber.cc",
+    "data_use_ascriber.h",
+    "data_use_measurement.cc",
+    "data_use_measurement.h",
+    "data_use_network_delegate.cc",
+    "data_use_network_delegate.h",
+    "data_use_recorder.cc",
+    "data_use_recorder.h",
+  ]
+  deps = [
+    ":core",
+    "//base",
+    "//components/metrics",
+    "//google_apis",
+    "//net",
+  ]
+
+  if (!is_ios) {
+    deps += [ "//components/domain_reliability" ]
+  }
+}
+
+source_set("unit_tests") {
+  sources = [
+    "data_use_measurement_unittest.cc",
+    "data_use_network_delegate_unittest.cc",
+  ]
+  testonly = true
+  deps = [
+    ":ascriber",
+    ":core",
+    "//base/test:test_support",
+    "//components/metrics:metrics",
+    "//net:test_support",
+    "//testing/gtest",
   ]
 }

@@ -9,7 +9,6 @@
 #include <string>
 
 #include "base/macros.h"
-#include "base/threading/thread_checker.h"
 #include "chrome/browser/media/router/create_presentation_connection_request.h"
 #include "content/public/browser/web_contents_observer.h"
 
@@ -59,8 +58,9 @@ class MediaRouterDialogController {
   // instance.
   explicit MediaRouterDialogController(content::WebContents* initiator);
 
-  // Activates the WebContents that initiated the dialog, e.g. focuses the tab.
-  void ActivateInitiatorWebContents();
+  // Creates a media router dialog if necessary, then activates the WebContents
+  // that initiated the dialog, e.g. focuses the tab.
+  void FocusOnMediaRouterDialog(bool dialog_needs_creation);
 
   // Passes the ownership of the CreatePresentationConnectionRequest to the
   // caller.
@@ -82,8 +82,6 @@ class MediaRouterDialogController {
   virtual void CreateMediaRouterDialog() = 0;
   // Closes the media router dialog if it exists.
   virtual void CloseMediaRouterDialog() = 0;
-
-  base::ThreadChecker thread_checker_;
 
  private:
   class InitiatorWebContentsObserver;

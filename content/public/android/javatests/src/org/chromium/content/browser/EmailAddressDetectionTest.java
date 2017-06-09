@@ -4,13 +4,17 @@
 
 package org.chromium.content.browser;
 
-import android.test.suitebuilder.annotation.MediumTest;
+import android.support.test.filters.MediumTest;
 
+import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.RetryOnFailure;
+import org.chromium.content.common.ContentSwitches;
 
 /**
  * Test suite for email address detection.
  */
+@CommandLineFlags.Add({ContentSwitches.ENABLE_CONTENT_INTENT_DETECTION})
 public class EmailAddressDetectionTest extends ContentDetectionTestBase {
 
     private static final String EMAIL_INTENT_PREFIX = "mailto:";
@@ -23,9 +27,9 @@ public class EmailAddressDetectionTest extends ContentDetectionTestBase {
 
     @MediumTest
     @Feature({"ContentDetection", "TabContents"})
+    @RetryOnFailure
     public void testValidEmailAddresses() throws Throwable {
         startActivityWithTestUrl("content/test/data/android/content_detection/email.html");
-        assertWaitForPageScaleFactorMatch(1.0f);
 
         // valid_1: i.want.a.pony@chromium.org.
         String intentUrl = scrollAndTapExpectingIntent("valid_1");

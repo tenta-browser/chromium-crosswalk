@@ -4,15 +4,6 @@
 
 #include "net/cert/x509_certificate.h"
 
-#include <openssl/asn1.h>
-#include <openssl/bytestring.h>
-#include <openssl/crypto.h>
-#include <openssl/obj_mac.h>
-#include <openssl/pem.h>
-#include <openssl/sha.h>
-#include <openssl/ssl.h>
-#include <openssl/x509v3.h>
-
 #include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "base/numerics/safe_conversions.h"
@@ -22,10 +13,17 @@
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "crypto/openssl_util.h"
-#include "crypto/scoped_openssl_types.h"
 #include "net/base/ip_address.h"
 #include "net/base/net_errors.h"
 #include "net/cert/x509_util_openssl.h"
+#include "third_party/boringssl/src/include/openssl/asn1.h"
+#include "third_party/boringssl/src/include/openssl/bytestring.h"
+#include "third_party/boringssl/src/include/openssl/crypto.h"
+#include "third_party/boringssl/src/include/openssl/obj_mac.h"
+#include "third_party/boringssl/src/include/openssl/pem.h"
+#include "third_party/boringssl/src/include/openssl/sha.h"
+#include "third_party/boringssl/src/include/openssl/ssl.h"
+#include "third_party/boringssl/src/include/openssl/x509v3.h"
 
 #if defined(OS_ANDROID)
 #include "base/logging.h"
@@ -35,9 +33,6 @@
 namespace net {
 
 namespace {
-
-using ScopedGENERAL_NAMES =
-    crypto::ScopedOpenSSL<GENERAL_NAMES, GENERAL_NAMES_free>;
 
 void CreateOSCertHandlesFromPKCS7Bytes(
     const char* data,
@@ -97,46 +92,49 @@ void ParsePrincipal(X509Certificate::OSCertHandle cert,
                                       &principal->country_name);
 }
 
-void ParseSubjectAltName(X509Certificate::OSCertHandle cert,
+bool ParseSubjectAltName(X509Certificate::OSCertHandle cert,
                          std::vector<std::string>* dns_names,
                          std::vector<std::string>* ip_addresses) {
-  DCHECK(dns_names || ip_addresses);
   int index = X509_get_ext_by_NID(cert, NID_subject_alt_name, -1);
   X509_EXTENSION* alt_name_ext = X509_get_ext(cert, index);
   if (!alt_name_ext)
-    return;
+    return false;
 
-  ScopedGENERAL_NAMES alt_names(
+  bssl::UniquePtr<GENERAL_NAMES> alt_names(
       reinterpret_cast<GENERAL_NAMES*>(X509V3_EXT_d2i(alt_name_ext)));
   if (!alt_names.get())
-    return;
+    return false;
 
+  bool has_san = false;
   for (size_t i = 0; i < sk_GENERAL_NAME_num(alt_names.get()); ++i) {
     const GENERAL_NAME* name = sk_GENERAL_NAME_value(alt_names.get(), i);
-    if (name->type == GEN_DNS && dns_names) {
-      const unsigned char* dns_name = ASN1_STRING_data(name->d.dNSName);
-      if (!dns_name)
-        continue;
-      int dns_name_len = ASN1_STRING_length(name->d.dNSName);
-      dns_names->push_back(
-          std::string(reinterpret_cast<const char*>(dns_name), dns_name_len));
-    } else if (name->type == GEN_IPADD && ip_addresses) {
-      const unsigned char* ip_addr = name->d.iPAddress->data;
-      if (!ip_addr)
-        continue;
-      int ip_addr_len = name->d.iPAddress->length;
-      if (ip_addr_len != static_cast<int>(IPAddress::kIPv4AddressSize) &&
-          ip_addr_len != static_cast<int>(IPAddress::kIPv6AddressSize)) {
-        // http://www.ietf.org/rfc/rfc3280.txt requires subjectAltName iPAddress
-        // to have 4 or 16 bytes, whereas in a name constraint it includes a
-        // net mask hence 8 or 32 bytes. Logging to help diagnose any mixup.
-        LOG(WARNING) << "Bad sized IP Address in cert: " << ip_addr_len;
-        continue;
+    if (name->type == GEN_DNS) {
+      has_san = true;
+      if (dns_names) {
+        const unsigned char* dns_name = ASN1_STRING_data(name->d.dNSName);
+        int dns_name_len = ASN1_STRING_length(name->d.dNSName);
+        dns_names->push_back(
+            base::StringPiece(reinterpret_cast<const char*>(dns_name),
+                              dns_name_len)
+                .as_string());
       }
-      ip_addresses->push_back(
-          std::string(reinterpret_cast<const char*>(ip_addr), ip_addr_len));
+    } else if (name->type == GEN_IPADD) {
+      has_san = true;
+      if (ip_addresses) {
+        const unsigned char* ip_addr = name->d.iPAddress->data;
+        int ip_addr_len = name->d.iPAddress->length;
+        ip_addresses->push_back(
+            base::StringPiece(reinterpret_cast<const char*>(ip_addr),
+                              ip_addr_len)
+                .as_string());
+      }
     }
+    // Fast path: Found at least one subjectAltName and the caller doesn't
+    // need the actual values.
+    if (has_san && !ip_addresses && !dns_names)
+      return true;
   }
+  return has_san;
 }
 
 class X509InitSingleton {
@@ -164,15 +162,10 @@ class X509InitSingleton {
     ResetCertStore();
   }
 
-  crypto::ScopedOpenSSL<X509_STORE, X509_STORE_free> store_;
+  bssl::UniquePtr<X509_STORE> store_;
 
   DISALLOW_COPY_AND_ASSIGN(X509InitSingleton);
 };
-
-// Used to free a list of X509_NAMEs and the objects it points to.
-void sk_X509_NAME_free_all(STACK_OF(X509_NAME)* sk) {
-  sk_X509_NAME_pop_free(sk, X509_NAME_free);
-}
 
 }  // namespace
 
@@ -180,7 +173,8 @@ void sk_X509_NAME_free_all(STACK_OF(X509_NAME)* sk) {
 X509Certificate::OSCertHandle X509Certificate::DupOSCertHandle(
     OSCertHandle cert_handle) {
   DCHECK(cert_handle);
-  return X509_up_ref(cert_handle);
+  X509_up_ref(cert_handle);
+  return cert_handle;
 }
 
 // static
@@ -289,7 +283,7 @@ X509Certificate::OSCertHandles X509Certificate::CreateOSCertHandlesFromBytes(
   return results;
 }
 
-void X509Certificate::GetSubjectAltName(
+bool X509Certificate::GetSubjectAltName(
     std::vector<std::string>* dns_names,
     std::vector<std::string>* ip_addrs) const {
   if (dns_names)
@@ -297,7 +291,7 @@ void X509Certificate::GetSubjectAltName(
   if (ip_addrs)
     ip_addrs->clear();
 
-  ParseSubjectAltName(cert_handle_, dns_names, ip_addrs);
+  return ParseSubjectAltName(cert_handle_, dns_names, ip_addrs);
 }
 
 // static
@@ -360,11 +354,10 @@ void X509Certificate::GetPublicKeyInfo(OSCertHandle cert_handle,
   *type = kPublicKeyTypeUnknown;
   *size_bits = 0;
 
-  crypto::ScopedEVP_PKEY scoped_key(X509_get_pubkey(cert_handle));
+  bssl::UniquePtr<EVP_PKEY> scoped_key(X509_get_pubkey(cert_handle));
   if (!scoped_key.get())
     return;
 
-  CHECK(scoped_key.get());
   EVP_PKEY* key = scoped_key.get();
 
   switch (key->type) {
@@ -394,8 +387,7 @@ bool X509Certificate::IsIssuedByEncoded(
 
   // Convert to a temporary list of X509_NAME objects.
   // It will own the objects it points to.
-  crypto::ScopedOpenSSL<STACK_OF(X509_NAME), sk_X509_NAME_free_all>
-      issuer_names(sk_X509_NAME_new_null());
+  bssl::UniquePtr<STACK_OF(X509_NAME)> issuer_names(sk_X509_NAME_new_null());
   if (!issuer_names.get())
     return false;
 
@@ -441,7 +433,7 @@ bool X509Certificate::IsIssuedByEncoded(
 
 // static
 bool X509Certificate::IsSelfSigned(OSCertHandle cert_handle) {
-  crypto::ScopedEVP_PKEY scoped_key(X509_get_pubkey(cert_handle));
+  bssl::UniquePtr<EVP_PKEY> scoped_key(X509_get_pubkey(cert_handle));
   if (!scoped_key)
     return false;
   if (!X509_verify(cert_handle, scoped_key.get()))

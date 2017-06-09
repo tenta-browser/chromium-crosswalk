@@ -9,6 +9,8 @@
     </p>
     <script src="../../resources/js-test.js"></script>
     <script>
+        setPrintTestResultsLazily();
+
         var floatPrecision = 0.00001;
         function checkValue(actual, expected)
         {
@@ -22,16 +24,16 @@
             checkValue('document.scrollingElement.scrollHeight', 1000)
             checkValue('document.scrollingElement.scrollWidth', 1000);
 
-            // Scrolling right to 50.
-            document.scrollingElement.scrollLeft = 50;
-            checkValue('document.scrollingElement.scrollLeft', 50);
+            // Scrolling right to 40.
+            document.scrollingElement.scrollLeft = 40;
+            checkValue('document.scrollingElement.scrollLeft', 40);
 
             // Zooming in.
             eventSender.zoomPageIn();
             checkValue('document.scrollingElement.scrollHeight', 1000);
             checkValue('document.scrollingElement.scrollWidth', 1000);
             checkValue('document.scrollingElement.scrollTop', 0);
-            checkValue('document.scrollingElement.scrollLeft', 50);
+            checkValue('document.scrollingElement.scrollLeft', 40);
 
             // Scrolling down to 100.
             document.scrollingElement.scrollTop = 100;
@@ -40,7 +42,7 @@
             // Zooming back out.
             eventSender.zoomPageOut();
             checkValue('document.scrollingElement.scrollTop', 100);
-            checkValue('document.scrollingElement.scrollLeft', 50);
+            checkValue('document.scrollingElement.scrollLeft', 40);
         }
     </script>
 </body>

@@ -19,6 +19,7 @@
 #include "extensions/browser/guest_view/web_view/web_view_guest.h"
 #include "extensions/browser/guest_view/web_view/web_view_permission_helper_delegate.h"
 #include "extensions/browser/guest_view/web_view/web_view_permission_types.h"
+#include "ppapi/features/features.h"
 
 using content::BrowserPluginGuestDelegate;
 using content::RenderViewHost;
@@ -182,7 +183,7 @@ WebViewPermissionHelper* WebViewPermissionHelper::FromWebContents(
   return web_view_guest->web_view_permission_helper_.get();
 }
 
-#if defined(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PLUGINS)
 bool WebViewPermissionHelper::OnMessageReceived(
     const IPC::Message& message,
     content::RenderFrameHost* render_frame_host) {
@@ -193,7 +194,7 @@ bool WebViewPermissionHelper::OnMessageReceived(
 bool WebViewPermissionHelper::OnMessageReceived(const IPC::Message& message) {
   return web_view_permission_helper_delegate_->OnMessageReceived(message);
 }
-#endif  // defined(ENABLE_PLUGINS)
+#endif  // BUILDFLAG(ENABLE_PLUGINS)
 
 void WebViewPermissionHelper::RequestMediaAccessPermission(
     content::WebContents* source,
@@ -271,9 +272,10 @@ void WebViewPermissionHelper::RequestPointerLockPermission(
 void WebViewPermissionHelper::RequestGeolocationPermission(
     int bridge_id,
     const GURL& requesting_frame,
+    bool user_gesture,
     const base::Callback<void(bool)>& callback) {
   web_view_permission_helper_delegate_->RequestGeolocationPermission(
-      bridge_id, requesting_frame, callback);
+      bridge_id, requesting_frame, user_gesture, callback);
 }
 
 void WebViewPermissionHelper::CancelGeolocationPermissionRequest(
@@ -336,20 +338,20 @@ int WebViewPermissionHelper::RequestPermission(
   args->SetInteger(webview::kRequestId, request_id);
   switch (permission_type) {
     case WEB_VIEW_PERMISSION_TYPE_NEW_WINDOW: {
-      web_view_guest_->DispatchEventToView(base::WrapUnique(
-          new GuestViewEvent(webview::kEventNewWindow, std::move(args))));
+      web_view_guest_->DispatchEventToView(base::MakeUnique<GuestViewEvent>(
+          webview::kEventNewWindow, std::move(args)));
       break;
     }
     case WEB_VIEW_PERMISSION_TYPE_JAVASCRIPT_DIALOG: {
-      web_view_guest_->DispatchEventToView(base::WrapUnique(
-          new GuestViewEvent(webview::kEventDialog, std::move(args))));
+      web_view_guest_->DispatchEventToView(base::MakeUnique<GuestViewEvent>(
+          webview::kEventDialog, std::move(args)));
       break;
     }
     default: {
       args->SetString(webview::kPermission,
                       PermissionTypeToString(permission_type));
-      web_view_guest_->DispatchEventToView(base::WrapUnique(new GuestViewEvent(
-          webview::kEventPermissionRequest, std::move(args))));
+      web_view_guest_->DispatchEventToView(base::MakeUnique<GuestViewEvent>(
+          webview::kEventPermissionRequest, std::move(args)));
       break;
     }
   }

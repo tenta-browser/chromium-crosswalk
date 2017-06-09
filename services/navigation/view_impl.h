@@ -5,17 +5,19 @@
 #ifndef SERVICES_NAVIGATION_VIEW_IMPL_H_
 #define SERVICES_NAVIGATION_VIEW_IMPL_H_
 
+#include <memory>
+
 #include "base/macros.h"
-#include "components/mus/public/cpp/window_tree_client_delegate.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
-#include "mojo/public/cpp/bindings/strong_binding.h"
 #include "services/navigation/public/interfaces/view.mojom.h"
-#include "services/shell/public/cpp/interface_factory.h"
-#include "services/shell/public/cpp/shell_client.h"
-#include "services/shell/public/cpp/shell_connection_ref.h"
+#include "services/service_manager/public/cpp/connector.h"
+#include "services/service_manager/public/cpp/interface_factory.h"
+#include "services/service_manager/public/cpp/service.h"
+#include "services/service_manager/public/cpp/service_context_ref.h"
+#include "ui/aura/mus/window_tree_client_delegate.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/views/widget/widget_delegate.h"
 
@@ -29,29 +31,28 @@ namespace navigation {
 class ViewImpl : public mojom::View,
                  public content::WebContentsDelegate,
                  public content::NotificationObserver,
-                 public mus::WindowTreeClientDelegate,
+                 public aura::WindowTreeClientDelegate,
                  public views::WidgetDelegate {
  public:
-  ViewImpl(shell::Connector* connector,
+  ViewImpl(std::unique_ptr<service_manager::Connector> connector,
            const std::string& client_user_id,
            mojom::ViewClientPtr client,
-           mojom::ViewRequest request,
-           std::unique_ptr<shell::ShellConnectionRef> ref);
+           std::unique_ptr<service_manager::ServiceContextRef> ref);
   ~ViewImpl() override;
 
  private:
+  void DeleteTreeAndWidget();
+
   // mojom::View:
   void NavigateTo(const GURL& url) override;
   void GoBack() override;
   void GoForward() override;
   void NavigateToOffset(int offset) override;
-  void Reload(bool skip_cache) override;
+  void Reload(bool bypass_cache) override;
   void Stop() override;
-  void GetWindowTreeClient(
-      mus::mojom::WindowTreeClientRequest request) override;
-  void ShowInterstitial(const mojo::String& html) override;
+  void GetWindowTreeClient(ui::mojom::WindowTreeClientRequest request) override;
+  void ShowInterstitial(const std::string& html) override;
   void HideInterstitial() override;
-  void SetResizerSize(const gfx::Size& size) override;
 
   // content::WebContentsDelegate:
   void AddNewContents(content::WebContents* source,
@@ -71,27 +72,31 @@ class ViewImpl : public mojom::View,
   void LoadProgressChanged(content::WebContents* source,
                            double progress) override;
   void UpdateTargetURL(content::WebContents* source, const GURL& url) override;
-  gfx::Rect GetRootWindowResizerRect() const override;
 
   // content::NotificationObserver:
   void Observe(int type,
                const content::NotificationSource& source,
                const content::NotificationDetails& details) override;
 
-  // mus::WindowTreeClientDelegate:
-  void OnEmbed(mus::Window* root) override;
-  void OnWindowTreeClientDestroyed(mus::WindowTreeClient* client) override;
-  void OnEventObserved(const ui::Event& event, mus::Window* target) override;
+  // aura::WindowTreeClientDelegate:
+  void OnEmbed(
+      std::unique_ptr<aura::WindowTreeHostMus> window_tree_host) override;
+  void OnEmbedRootDestroyed(aura::WindowTreeHostMus* window_tree_host) override;
+  void OnLostConnection(aura::WindowTreeClient* client) override;
+  void OnPointerEventObserved(const ui::PointerEvent& event,
+                              aura::Window* target) override;
+  aura::PropertyConverter* GetPropertyConverter() override;
 
   // views::WidgetDelegate:
   views::View* GetContentsView() override;
   views::Widget* GetWidget() override;
   const views::Widget* GetWidget() const override;
 
-  shell::Connector* connector_;
-  mojo::StrongBinding<mojom::View> binding_;
+  std::unique_ptr<service_manager::Connector> connector_;
   mojom::ViewClientPtr client_;
-  std::unique_ptr<shell::ShellConnectionRef> ref_;
+  std::unique_ptr<service_manager::ServiceContextRef> ref_;
+
+  std::unique_ptr<aura::WindowTreeClient> window_tree_client_;
 
   views::WebView* web_view_;
 
@@ -99,9 +104,8 @@ class ViewImpl : public mojom::View,
 
   content::NotificationRegistrar registrar_;
 
+  std::unique_ptr<aura::WindowTreeHostMus> window_tree_host_;
   std::unique_ptr<views::Widget> widget_;
-
-  gfx::Size resizer_size_;
 
   DISALLOW_COPY_AND_ASSIGN(ViewImpl);
 };

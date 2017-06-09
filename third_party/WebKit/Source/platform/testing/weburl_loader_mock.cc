@@ -12,12 +12,23 @@
 
 namespace blink {
 
+namespace {
+
+void assertFallbackLoaderAvailability(const WebURL& url,
+                                      const WebURLLoader* default_loader) {
+  DCHECK(KURL(url).protocolIsData()) << "shouldn't be falling back: "
+                                     << url.string().utf8();
+  DCHECK(default_loader) << "default_loader wasn't set: "
+                         << url.string().utf8();
+}
+
+}  // namespace
+
 WebURLLoaderMock::WebURLLoaderMock(WebURLLoaderMockFactoryImpl* factory,
                                    WebURLLoader* default_loader)
     : factory_(factory),
-      default_loader_(wrapUnique(default_loader)),
-      weak_factory_(this) {
-}
+      default_loader_(WTF::wrapUnique(default_loader)),
+      weak_factory_(this) {}
 
 WebURLLoaderMock::~WebURLLoaderMock() {
   cancel();
@@ -36,7 +47,7 @@ void WebURLLoaderMock::ServeAsynchronousRequest(
   // will just proxy to the client.
   std::unique_ptr<WebURLLoaderTestDelegate> default_delegate;
   if (!delegate) {
-    default_delegate = wrapUnique(new WebURLLoaderTestDelegate());
+    default_delegate = WTF::wrapUnique(new WebURLLoaderTestDelegate());
     delegate = default_delegate.get();
   }
 
@@ -44,20 +55,19 @@ void WebURLLoaderMock::ServeAsynchronousRequest(
   // to be called which will make the ResourceLoader to delete |this|.
   WeakPtr<WebURLLoaderMock> self = weak_factory_.createWeakPtr();
 
-  delegate->didReceiveResponse(client_, this, response);
+  delegate->didReceiveResponse(client_, response);
   if (!self)
     return;
 
   if (error.reason) {
-    delegate->didFail(client_, this, error);
+    delegate->didFail(client_, error, data.size(), 0);
     return;
   }
-  delegate->didReceiveData(client_, this, data.data(), data.size(),
-                           data.size());
+  delegate->didReceiveData(client_, data.data(), data.size());
   if (!self)
     return;
 
-  delegate->didFinishLoading(client_, this, 0, data.size());
+  delegate->didFinishLoading(client_, 0, data.size(), data.size());
 }
 
 WebURLRequest WebURLLoaderMock::ServeRedirect(
@@ -66,15 +76,13 @@ WebURLRequest WebURLLoaderMock::ServeRedirect(
   KURL redirectURL(
       ParsedURLString, redirectResponse.httpHeaderField("Location"));
 
-  WebURLRequest newRequest;
-  newRequest.initialize();
-  newRequest.setURL(redirectURL);
+  WebURLRequest newRequest(redirectURL);
   newRequest.setFirstPartyForCookies(redirectURL);
   newRequest.setDownloadToFile(request.downloadToFile());
   newRequest.setUseStreamOnResponse(request.useStreamOnResponse());
   newRequest.setRequestContext(request.getRequestContext());
   newRequest.setFrameType(request.getFrameType());
-  newRequest.setSkipServiceWorker(request.skipServiceWorker());
+  newRequest.setServiceWorkerMode(request.getServiceWorkerMode());
   newRequest.setShouldResetAppCache(request.shouldResetAppCache());
   newRequest.setFetchRequestMode(request.getFetchRequestMode());
   newRequest.setFetchCredentialsMode(request.getFetchCredentialsMode());
@@ -83,19 +91,16 @@ WebURLRequest WebURLLoaderMock::ServeRedirect(
 
   WeakPtr<WebURLLoaderMock> self = weak_factory_.createWeakPtr();
 
-  client_->willFollowRedirect(this, newRequest, redirectResponse);
+  bool follow = client_->willFollowRedirect(newRequest, redirectResponse);
+  if (!follow)
+    newRequest = WebURLRequest();
 
   // |this| might be deleted in willFollowRedirect().
   if (!self)
     return newRequest;
 
-  if (redirectURL != KURL(newRequest.url())) {
-    // Only follow the redirect if WebKit left the URL unmodified.
-    // We assume that WebKit only changes the URL to suppress a redirect, and we
-    // assume that it does so by setting it to be invalid.
-    DCHECK(!newRequest.url().isValid());
+  if (!follow)
     cancel();
-  }
 
   return newRequest;
 }
@@ -103,16 +108,18 @@ WebURLRequest WebURLLoaderMock::ServeRedirect(
 void WebURLLoaderMock::loadSynchronously(const WebURLRequest& request,
                                          WebURLResponse& response,
                                          WebURLError& error,
-                                         WebData& data) {
+                                         WebData& data,
+                                         int64_t& encoded_data_length,
+                                         int64_t& encoded_body_length) {
   if (factory_->IsMockedURL(request.url())) {
-    factory_->LoadSynchronously(request, &response, &error, &data);
+      factory_->LoadSynchronously(request, &response, &error, &data,
+                                  &encoded_data_length);
     return;
   }
-  DCHECK(KURL(request.url()).protocolIsData())
-      << "loadSynchronously shouldn't be falling back: "
-      << request.url().string().utf8();
+  assertFallbackLoaderAvailability(request.url(), default_loader_.get());
   using_default_loader_ = true;
-  default_loader_->loadSynchronously(request, response, error, data);
+  default_loader_->loadSynchronously(request, response, error, data,
+                                     encoded_data_length, encoded_body_length);
 }
 
 void WebURLLoaderMock::loadAsynchronously(const WebURLRequest& request,
@@ -123,9 +130,7 @@ void WebURLLoaderMock::loadAsynchronously(const WebURLRequest& request,
     factory_->LoadAsynchronouly(request, this);
     return;
   }
-  DCHECK(KURL(request.url()).protocolIsData())
-      << "loadAsynchronously shouldn't be falling back: "
-      << request.url().string().utf8();
+  assertFallbackLoaderAvailability(request.url(), default_loader_.get());
   using_default_loader_ = true;
   default_loader_->loadAsynchronously(request, client);
 }
@@ -154,7 +159,8 @@ void WebURLLoaderMock::setDefersLoading(bool deferred) {
   NOTIMPLEMENTED();
 }
 
-void WebURLLoaderMock::setLoadingTaskRunner(WebTaskRunner* runner) {
+void WebURLLoaderMock::setLoadingTaskRunner(
+    base::SingleThreadTaskRunner* runner) {
   // In principle this is NOTIMPLEMENTED(), but if we put that here it floods
   // the console during webkit unit tests, so we leave the function empty.
   DCHECK(runner);

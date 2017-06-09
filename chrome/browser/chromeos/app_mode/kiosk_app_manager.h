@@ -17,16 +17,17 @@
 #include "base/time/time.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_app_data_delegate.h"
 #include "chrome/browser/chromeos/extensions/external_cache.h"
-#include "chrome/browser/chromeos/policy/enterprise_install_attributes.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
+#include "chrome/browser/chromeos/settings/install_attributes.h"
 #include "components/signin/core/account_id/account_id.h"
 #include "ui/gfx/image/image_skia.h"
 
+class GURL;
 class PrefRegistrySimple;
 class Profile;
 
 namespace base {
-class RefCountedString;
+class CommandLine;
 }
 
 namespace extensions {
@@ -110,6 +111,8 @@ class KioskAppManager : public KioskAppDataDelegate,
 
   // Removes cryptohomes which could not be removed during the previous session.
   static void RemoveObsoleteCryptohomes();
+
+  static bool IsConsumerKioskEnabled();
 
   // Initiates reading of consumer kiosk mode auto-launch status.
   void GetConsumerKioskAutoLaunchStatus(
@@ -234,6 +237,13 @@ class KioskAppManager : public KioskAppDataDelegate,
   // Initialize |app_session_|.
   void InitSession(Profile* profile, const std::string& app_id);
 
+  // Adds an app with the given meta data directly and skips meta data fetching
+  // for test.
+  void AddAppForTest(const std::string& app_id,
+                     const AccountId& account_id,
+                     const GURL& update_url,
+                     const std::string& required_platform_version);
+
   AppSession* app_session() { return app_session_.get(); }
   bool external_loader_created() const { return external_loader_created_; }
   bool secondary_app_external_loader_created() const {
@@ -286,13 +296,12 @@ class KioskAppManager : public KioskAppDataDelegate,
       const std::string& id,
       extensions::ExtensionDownloaderDelegate::Error error) override;
 
-  // Callback for EnterpriseInstallAttributes::LockDevice() during
+  // Callback for InstallAttributes::LockDevice() during
   // EnableConsumerModeKiosk() call.
-  void OnLockDevice(
-      const EnableKioskAutoLaunchCallback& callback,
-      policy::EnterpriseInstallAttributes::LockResult result);
+  void OnLockDevice(const EnableKioskAutoLaunchCallback& callback,
+                    InstallAttributes::LockResult result);
 
-  // Callback for EnterpriseInstallAttributes::ReadImmutableAttributes() during
+  // Callback for InstallAttributes::ReadImmutableAttributes() during
   // GetConsumerKioskModeStatus() call.
   void OnReadImmutableAttributes(
       const GetConsumerKioskAutoLaunchStatusCallback& callback);
@@ -311,6 +320,15 @@ class KioskAppManager : public KioskAppDataDelegate,
 
   // Returns the auto launch delay.
   base::TimeDelta GetAutoLaunchDelay() const;
+
+  // Gets list of user switches that should be passed to Chrome in case current
+  // session has to be restored, e.g. in case of a crash. The switches will be
+  // returned as |switches| command line arguments.
+  // Returns whether the set of switches would have to be changed in respect to
+  // the current set of switches - if that is not the case |switches| might not
+  // get populated.
+  bool GetSwitchesForSessionRestore(const std::string& app_id,
+                                    base::CommandLine* switches);
 
   // True if machine ownership is already established.
   bool ownership_established_;

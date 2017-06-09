@@ -19,6 +19,7 @@
 #include "components/data_use_measurement/core/data_use_user_data.h"
 #include "components/invalidation/impl/gcm_network_channel_delegate.h"
 #include "google_apis/gaia/google_service_auth_error.h"
+#include "net/base/load_flags.h"
 #include "net/http/http_status_code.h"
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_request_status.h"
@@ -121,8 +122,10 @@ GCMNetworkChannel::GCMNetworkChannel(
       diagnostic_info_(this),
       weak_factory_(this) {
   net::NetworkChangeNotifier::AddNetworkChangeObserver(this);
-  delegate_->Initialize(base::Bind(&GCMNetworkChannel::OnConnectionStateChanged,
-                                   weak_factory_.GetWeakPtr()));
+  delegate_->Initialize(
+      base::Bind(&GCMNetworkChannel::OnConnectionStateChanged,
+                 weak_factory_.GetWeakPtr()),
+      base::Bind(&GCMNetworkChannel::OnStoreReset, weak_factory_.GetWeakPtr()));
   Register();
 }
 
@@ -194,7 +197,7 @@ void GCMNetworkChannel::OnGetTokenComplete(
     const GoogleServiceAuthError& error,
     const std::string& token) {
   DCHECK(CalledOnValidThread());
-  if (cached_message_.empty()) {
+  if (cached_message_.empty() || registration_id_.empty()) {
     // Nothing to do.
     return;
   }
@@ -220,6 +223,8 @@ void GCMNetworkChannel::OnGetTokenComplete(
   data_use_measurement::DataUseUserData::AttachToFetcher(
       fetcher_.get(), data_use_measurement::DataUseUserData::INVALIDATION);
   fetcher_->SetRequestContext(request_context_getter_.get());
+  fetcher_->SetLoadFlags(net::LOAD_DO_NOT_SEND_COOKIES |
+                         net::LOAD_DO_NOT_SAVE_COOKIES);
   const std::string auth_header("Authorization: Bearer " + access_token_);
   fetcher_->AddExtraRequestHeader(auth_header);
   if (!echo_token_.empty()) {
@@ -300,6 +305,11 @@ void GCMNetworkChannel::OnIncomingMessage(const std::string& message,
 
 void GCMNetworkChannel::OnConnectionStateChanged(bool online) {
   UpdateGcmChannelState(online);
+}
+
+void GCMNetworkChannel::OnStoreReset() {
+  // TODO(crbug.com/661660): Tell server the registration ID is no longer valid.
+  registration_id_.clear();
 }
 
 void GCMNetworkChannel::OnNetworkChanged(

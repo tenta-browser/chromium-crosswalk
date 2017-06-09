@@ -11,7 +11,9 @@
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/profiles/profile_window.h"
+#include "chrome/common/features.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/web_ui_message_handler.h"
@@ -22,13 +24,14 @@ class DictionaryValue;
 class ListValue;
 }
 
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
 class SupervisedUserRegistrationUtility;
 #endif
 
 // Handler for the 'create profile' page.
 class SigninCreateProfileHandler : public content::WebUIMessageHandler,
-                                   public content::NotificationObserver {
+                                   public content::NotificationObserver,
+                                   public ProfileAttributesStorage::Observer {
  public:
   SigninCreateProfileHandler();
   ~SigninCreateProfileHandler() override;
@@ -42,7 +45,7 @@ class SigninCreateProfileHandler : public content::WebUIMessageHandler,
                            ReturnSignedInProfiles);
   FRIEND_TEST_ALL_PREFIXES(SigninCreateProfileHandlerTest,
                            CreateProfile);
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
   FRIEND_TEST_ALL_PREFIXES(SigninCreateProfileHandlerTest,
                            CreateSupervisedUser);
   FRIEND_TEST_ALL_PREFIXES(SigninCreateProfileHandlerTest,
@@ -55,6 +58,8 @@ class SigninCreateProfileHandler : public content::WebUIMessageHandler,
                            CustodianHasAuthError);
   FRIEND_TEST_ALL_PREFIXES(SigninCreateProfileHandlerTest,
                            NotAllowedToCreateSupervisedUser);
+  FRIEND_TEST_ALL_PREFIXES(SigninCreateProfileHandlerTest,
+                           CreateProfileWithForceSignin);
 #endif
 
   // WebUIMessageHandler implementation.
@@ -64,6 +69,9 @@ class SigninCreateProfileHandler : public content::WebUIMessageHandler,
   void Observe(int type,
                const content::NotificationSource& source,
                const content::NotificationDetails& details) override;
+
+  // ProfileAttributesStorage::Observer implementation:
+  void OnProfileAuthInfoChanged(const base::FilePath& profile_path) override;
 
   // Represents the final profile creation status. It is used to map
   // the status to the javascript method to be called.
@@ -76,7 +84,7 @@ class SigninCreateProfileHandler : public content::WebUIMessageHandler,
   // It is used to map the type of the profile creation operation to the
   // correct UMA metric name.
   enum ProfileCreationOperationType {
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
     SUPERVISED_PROFILE_CREATION,
     SUPERVISED_PROFILE_IMPORT,
 #endif
@@ -135,6 +143,9 @@ class SigninCreateProfileHandler : public content::WebUIMessageHandler,
   virtual void OpenNewWindowForProfile(Profile* profile,
                                        Profile::CreateStatus status);
 
+  // Opens a new signin dialog for |profile|.
+  virtual void OpenSigninDialogForProfile(Profile* profile);
+
   // This callback is run after a new browser (but not the window) has been
   // created for the new profile.
   void OnBrowserReadyCallback(Profile* profile, Profile::CreateStatus status);
@@ -168,7 +179,7 @@ class SigninCreateProfileHandler : public content::WebUIMessageHandler,
                                const std::string& supervised_user_id,
                                Profile* custodian_profile);
 
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
   base::string16 GetProfileCreateErrorMessageRemote() const;
   base::string16 GetProfileCreateErrorMessageSignin() const;
 

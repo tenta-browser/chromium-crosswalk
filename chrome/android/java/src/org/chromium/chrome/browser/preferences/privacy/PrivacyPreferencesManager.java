@@ -12,25 +12,26 @@ import android.net.NetworkInfo;
 import org.chromium.base.CommandLine;
 import org.chromium.base.ContextUtils;
 import org.chromium.base.VisibleForTesting;
-import org.chromium.chrome.R;
-import org.chromium.chrome.browser.ChromeApplication;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.device.DeviceClassManager;
 import org.chromium.chrome.browser.physicalweb.PhysicalWeb;
 import org.chromium.chrome.browser.preferences.PrefServiceBridge;
+import org.chromium.components.minidump_uploader.util.CrashReportingPermissionManager;
 
 /**
  * Reads, writes, and migrates preferences related to network usage and privacy.
  */
 public class PrivacyPreferencesManager implements CrashReportingPermissionManager{
+    static final String DEPRECATED_PREF_CRASH_DUMP_UPLOAD = "crash_dump_upload";
+    static final String DEPRECATED_PREF_CRASH_DUMP_UPLOAD_NO_CELLULAR =
+            "crash_dump_upload_no_cellular";
+    private static final String DEPRECATED_PREF_CELLULAR_EXPERIMENT = "cellular_experiment";
 
-    static final String PREF_CRASH_DUMP_UPLOAD = "crash_dump_upload";
-    static final String PREF_CRASH_DUMP_UPLOAD_NO_CELLULAR = "crash_dump_upload_no_cellular";
-    static final String PREF_METRICS_REPORTING = "metrics_reporting";
+    public static final String PREF_METRICS_REPORTING = "metrics_reporting";
+    private static final String PREF_METRICS_IN_SAMPLE = "in_metrics_sample";
     private static final String PREF_NETWORK_PREDICTIONS = "network_predictions";
     private static final String PREF_BANDWIDTH_OLD = "prefetch_bandwidth";
     private static final String PREF_BANDWIDTH_NO_CELLULAR_OLD = "prefetch_bandwidth_no_cellular";
-    private static final String PREF_CELLULAR_EXPERIMENT = "cellular_experiment";
     private static final String ALLOW_PRERENDER_OLD = "allow_prefetch";
     private static final String PREF_PHYSICAL_WEB = "physical_web";
     private static final int PHYSICAL_WEB_OFF = 0;
@@ -42,25 +43,19 @@ public class PrivacyPreferencesManager implements CrashReportingPermissionManage
     private final Context mContext;
     private final SharedPreferences mSharedPreferences;
 
-    private boolean mCrashUploadingCommandLineDisabled;
-    private final String mCrashDumpNeverUpload;
-    private final String mCrashDumpWifiOnlyUpload;
-    private final String mCrashDumpAlwaysUpload;
+    private boolean mCrashUploadingDisabledByCommandLine;
 
     @VisibleForTesting
     PrivacyPreferencesManager(Context context) {
         mContext = context;
         mSharedPreferences = ContextUtils.getAppSharedPreferences();
 
-        // Crash dump uploading preferences.
         // We default the command line flag to disable uploads unless altered on deferred startup
         // to prevent unwanted uploads at startup. If the command line flag to enable uploading is
-        // turned on, the other options for when to upload (depending on user/network preferences
-        // apply.
-        mCrashUploadingCommandLineDisabled = true;
-        mCrashDumpNeverUpload = context.getString(R.string.crash_dump_never_upload_value);
-        mCrashDumpWifiOnlyUpload = context.getString(R.string.crash_dump_only_with_wifi_value);
-        mCrashDumpAlwaysUpload = context.getString(R.string.crash_dump_always_upload_value);
+        // turned on, the other conditions (e.g. user/network preferences) for when to upload apply.
+        // This currently applies to only crash reporting and is ignored for metrics reporting.
+        mCrashUploadingDisabledByCommandLine = true;
+        migrateUsageAndCrashPreferences();
     }
 
     public static PrivacyPreferencesManager getInstance() {
@@ -70,12 +65,32 @@ public class PrivacyPreferencesManager implements CrashReportingPermissionManage
         return sInstance;
     }
 
-    /**
-     * Returns the Crash Dump Upload preference value.
-     * @return String value of the preference.
-     */
-    public String getPrefCrashDumpUploadPreference() {
-        return mSharedPreferences.getString(PREF_CRASH_DUMP_UPLOAD, mCrashDumpNeverUpload);
+    public void migrateUsageAndCrashPreferences() {
+        SharedPreferences.Editor editor = mSharedPreferences.edit();
+
+        if (mSharedPreferences.contains(DEPRECATED_PREF_CRASH_DUMP_UPLOAD)) {
+            String crashDumpNeverUpload = "crash_dump_never_upload";
+            setUsageAndCrashReporting(
+                    !mSharedPreferences
+                             .getString(DEPRECATED_PREF_CRASH_DUMP_UPLOAD, crashDumpNeverUpload)
+                             .equals(crashDumpNeverUpload));
+
+            // Remove both this preference and the related one. If the related one is not removed
+            // now, later migrations could read from it and clobber the state.
+            editor.remove(DEPRECATED_PREF_CRASH_DUMP_UPLOAD);
+            if (mSharedPreferences.contains(DEPRECATED_PREF_CRASH_DUMP_UPLOAD_NO_CELLULAR)) {
+                editor.remove(DEPRECATED_PREF_CRASH_DUMP_UPLOAD_NO_CELLULAR);
+            }
+        } else if (mSharedPreferences.contains(DEPRECATED_PREF_CRASH_DUMP_UPLOAD_NO_CELLULAR)) {
+            setUsageAndCrashReporting(mSharedPreferences.getBoolean(
+                    DEPRECATED_PREF_CRASH_DUMP_UPLOAD_NO_CELLULAR, false));
+            editor.remove(DEPRECATED_PREF_CRASH_DUMP_UPLOAD_NO_CELLULAR);
+        }
+
+        if (mSharedPreferences.contains(DEPRECATED_PREF_CELLULAR_EXPERIMENT)) {
+            editor.remove(DEPRECATED_PREF_CELLULAR_EXPERIMENT);
+        }
+        editor.apply();
     }
 
     /**
@@ -148,11 +163,6 @@ public class PrivacyPreferencesManager implements CrashReportingPermissionManage
                     }
                 }
             }
-            // But disable after all if kNetworkPredictionEnabled was disabled by the user.
-            if (prefService.obsoleteNetworkPredictionEnabledHasUserSetting()
-                    && !prefService.obsoleteGetNetworkPredictionEnabledUserPrefValue()) {
-                newValue = false;
-            }
             // Save new value in Chrome PrefService.
             prefService.setNetworkPredictionEnabled(newValue);
         }
@@ -222,211 +232,116 @@ public class PrivacyPreferencesManager implements CrashReportingPermissionManage
     }
 
     /**
-     * Check whether to allow uploading usage and crash reporting. The option should be either
-     * "always upload", or "wifi only" with current connection being wifi/ethernet for the
-     * three-choice pref or ON for the new two-choice pref.
-     *
-     * @return boolean whether to allow uploading crash dump.
-     */
-    private boolean allowUploadCrashDump() {
-        if (isCellularExperimentEnabled()) return isUsageAndCrashReportingEnabled();
-
-        if (isMobileNetworkCapable()) {
-            String option =
-                    mSharedPreferences.getString(PREF_CRASH_DUMP_UPLOAD, mCrashDumpNeverUpload);
-            return option.equals(mCrashDumpAlwaysUpload)
-                    || (option.equals(mCrashDumpWifiOnlyUpload) && isWiFiOrEthernetNetwork());
-        }
-
-        return mSharedPreferences.getBoolean(PREF_CRASH_DUMP_UPLOAD_NO_CELLULAR, false);
-    }
-
-    /**
-     * Check whether usage and crash reporting set to ON. Also initializes the new pref if
-     * necessary.
-     *
-     * @return boolean whether usage and crash reporting set to ON.
-     */
-    public boolean isUsageAndCrashReportingEnabled() {
-        // If the preference is not set initialize it based on the old preference value.
-        if (!mSharedPreferences.contains(PREF_METRICS_REPORTING)) {
-            setUsageAndCrashReporting(isUploadCrashDumpEnabled());
-        }
-        return mSharedPreferences.getBoolean(PREF_METRICS_REPORTING, false);
-    }
-
-    /**
      * Sets the usage and crash reporting preference ON or OFF.
      *
      * @param enabled A boolean corresponding whether usage and crash reports uploads are allowed.
      */
     public void setUsageAndCrashReporting(boolean enabled) {
         mSharedPreferences.edit().putBoolean(PREF_METRICS_REPORTING, enabled).apply();
-    }
-
-    /**
-     * Sets whether cellular experiment is enabled or not.
-     */
-    @VisibleForTesting
-    public void setCellularExperiment(boolean enabled) {
-        mSharedPreferences.edit().putBoolean(PREF_CELLULAR_EXPERIMENT, enabled).apply();
-    }
-
-    /**
-     * Checks whether user is assigned to experimental group for enabling new cellular uploads
-     * functionality.
-     *
-     * @return boolean whether user is assigned to experimental group.
-     */
-    public boolean isCellularExperimentEnabled() {
-        return mSharedPreferences.getBoolean(PREF_CELLULAR_EXPERIMENT, false);
-    }
-
-    /**
-     * Sets the crash upload preference, which determines whether crash dumps will be uploaded
-     * always, never, or only on wifi.
-     *
-     * @param when A String denoting when crash dump uploading is allowed. One of
-     *             R.array.crash_upload_values.
-     */
-    public void setUploadCrashDump(String when) {
-        // Set the crash upload preference regardless of the current connection status.
-        boolean canUpload = !when.equals(mCrashDumpNeverUpload);
-        PrefServiceBridge.getInstance().setCrashReportingEnabled(canUpload);
-    }
-
-    /**
-     * Provides a way to remove disabling crash uploading entirely.
-     * Enable crash uploading based on user's preference when an overriding flag
-     * does not exist in commandline.
-     * Used to differentiate from tests that trigger crashers intentionally, so these crashers are
-     * not uploaded.
-     */
-    public void enablePotentialCrashUploading() {
-        mCrashUploadingCommandLineDisabled = false;
-    }
-
-    /**
-     * Check whether crash dump upload preference is disabled according to corresponding preference.
-     *
-     * @return boolean {@code true} if the option is set to not send.
-     */
-    public boolean isNeverUploadCrashDump() {
-        if (isCellularExperimentEnabled()) return !isUsageAndCrashReportingEnabled();
-        return !isUploadCrashDumpEnabled();
-    }
-
-    /**
-     * Check whether crash dump upload preference is set to NEVER only.
-     *
-     * @return boolean {@code true} if the option is set to NEVER.
-     */
-    public boolean isUploadCrashDumpEnabled() {
-        if (isMobileNetworkCapable()) {
-            return !mSharedPreferences.getString(PREF_CRASH_DUMP_UPLOAD, mCrashDumpNeverUpload)
-                            .equals(mCrashDumpNeverUpload);
-        }
-
-        return mSharedPreferences.getBoolean(PREF_CRASH_DUMP_UPLOAD_NO_CELLULAR, false);
-    }
-
-    /**
-     * Sets the initial value for whether crash stacks may be uploaded.
-     * This should be called only once, the first time Chrome is launched.
-     */
-    public void initCrashUploadPreference(boolean allowCrashUpload) {
-        SharedPreferences.Editor ed = mSharedPreferences.edit();
-        if (isMobileNetworkCapable()) {
-            if (allowCrashUpload) {
-                ed.putString(PREF_CRASH_DUMP_UPLOAD, mCrashDumpWifiOnlyUpload);
-            } else {
-                ed.putString(PREF_CRASH_DUMP_UPLOAD, mCrashDumpNeverUpload);
-            }
-        } else {
-            ed.putString(PREF_CRASH_DUMP_UPLOAD, mCrashDumpNeverUpload);
-            ed.putBoolean(PREF_CRASH_DUMP_UPLOAD_NO_CELLULAR, allowCrashUpload);
-        }
-        ed.apply();
-        if (isCellularExperimentEnabled()) setUsageAndCrashReporting(allowCrashUpload);
         syncUsageAndCrashReportingPrefs();
     }
 
     /**
-     * Check whether to allow uploading crash dump now.
-     * {@link #allowUploadCrashDump()} should return {@code true},
-     * and the network should be connected as well.
-     *
-     * This function should not result in a native call as it can be called in circumstances where
-     * natives are not guaranteed to be loaded.
-     *
-     * @return whether to allow uploading crash dump now.
+     * Update usage and crash preferences based on Android preferences if possible in case they are
+     * out of sync.
      */
-    @Override
-    public boolean isUploadPermitted() {
-        return !mCrashUploadingCommandLineDisabled && isNetworkAvailable()
-                && (allowUploadCrashDump() || isUploadEnabledForTests());
+    public void syncUsageAndCrashReportingPrefs() {
+        if (PrefServiceBridge.isInitialized()) {
+            PrefServiceBridge.getInstance().setMetricsReportingEnabled(
+                    isUsageAndCrashReportingPermittedByUser());
+        }
     }
 
     /**
-     * Check whether to allow UMA uploading.
-     *
-     * TODO(asvitkine): This is temporary split up from isUploadPermitted() above with
-     * the |mCrashUploadingCommandLineDisabled| check removed, in order to diagnose if
-     * that check is responsible for decreased UMA uploads in M49. http://crbug.com/602703
-     *
-     * This function should not result in a native call as it can be called in circumstances where
-     * natives are not guaranteed to be loaded.
-     *
-     * @return whether to allow UMA uploading.
+     * Sets whether this client is in-sample for usage metrics and crash reporting. See
+     * {@link org.chromium.chrome.browser.metrics.UmaUtils#isClientInMetricsSample} for details.
      */
-    @Override
-    public boolean isUmaUploadPermitted() {
-        return isNetworkAvailable() && (allowUploadCrashDump() || isUploadEnabledForTests());
+    public void setClientInMetricsSample(boolean inSample) {
+        mSharedPreferences.edit().putBoolean(PREF_METRICS_IN_SAMPLE, inSample).apply();
     }
 
     /**
-     * Check whether not to disable uploading crash dump by command line flag.
-     * If command line flag disables crash dump uploading, do not retry, but also do not delete.
+     * Checks whether this client is in-sample for usage metrics and crash reporting. See
+     * {@link org.chromium.chrome.browser.metrics.UmaUtils#isClientInMetricsSample} for details.
+     *
+     * @returns boolean Whether client is in-sample.
+     */
+    @Override
+    public boolean isClientInMetricsSample() {
+        // The default value is true to avoid sampling out crashes that occur before native code has
+        // been initialized on first run. We'd rather have some extra crashes than none from that
+        // time.
+        return mSharedPreferences.getBoolean(PREF_METRICS_IN_SAMPLE, true);
+    }
+
+    /**
+     * Checks whether uploading of crash dumps is permitted for the available network(s).
+     *
+     * @return whether uploading crash dumps is permitted.
+     */
+    @Override
+    public boolean isNetworkAvailableForCrashUploads() {
+        return isNetworkAvailable() && isWiFiOrEthernetNetwork();
+    }
+
+    /**
+     * Checks whether uploading of crash dumps is permitted, based on the corresponding command line
+     * flag only.
      * TODO(jchinlee): this is not quite a boolean. Depending on other refactoring, change to enum.
      *
-     * @return whether experimental flag doesn't disable uploading crash dump.
+     * @return whether uploading of crash dumps is enabled or disabled by a command line flag.
      */
     @Override
-    public boolean isUploadCommandLineDisabled() {
-        return mCrashUploadingCommandLineDisabled;
+    public boolean isCrashUploadDisabledByCommandLine() {
+        return mCrashUploadingDisabledByCommandLine;
     }
 
     /**
-     * Check whether the user allows uploading.
-     * This doesn't take network condition or experimental state (i.e. disabling upload) into
-     * consideration.
-     * A crash dump may be retried if this check passes.
+     * Checks whether uploading of usage metrics is currently permitted.
      *
-     * @return whether user's preference allows uploading crash dump.
+     * Note that this function intentionally does not check |mCrashUploadingDisabledByCommandLine|.
+     * See http://crbug.com/602703 for more details.
+     *
+     * @return whether uploading usage metrics is currently permitted.
      */
     @Override
-    public boolean isUploadUserPermitted() {
-        if (isCellularExperimentEnabled()) return isUsageAndCrashReportingEnabled();
-
-        if (isMobileNetworkCapable()) {
-            String option =
-                    mSharedPreferences.getString(PREF_CRASH_DUMP_UPLOAD, mCrashDumpNeverUpload);
-            return option.equals(mCrashDumpAlwaysUpload) || option.equals(mCrashDumpWifiOnlyUpload);
-        }
-        return mSharedPreferences.getBoolean(PREF_CRASH_DUMP_UPLOAD_NO_CELLULAR, false);
+    public boolean isMetricsUploadPermitted() {
+        return isNetworkAvailable()
+                && (isUsageAndCrashReportingPermittedByUser() || isUploadEnabledForTests());
     }
 
     /**
-     * Check whether uploading crash dump should be in constrained mode based on user experiments
-     * and current connection type. This function shows whether in general uploads should be limited
-     * for this user and does not determine whether crash uploads are currently possible or not. Use
-     * |isUploadPermitted| function for that before calling |isUploadLimited|.
+     * Checks whether uploading of usage metrics and crash dumps is currently permitted, based on
+     * user consent only. This doesn't take network condition or experimental state (i.e. disabling
+     * upload) into consideration. A crash dump may be retried if this check passes.
      *
-     * @return whether uploading logic should be constrained.
+     * @return whether the user has consented to reporting usage metrics and crash dumps.
      */
     @Override
-    public boolean isUploadLimited() {
-        return isCellularExperimentEnabled() && !isWiFiOrEthernetNetwork();
+    public boolean isUsageAndCrashReportingPermittedByUser() {
+        return mSharedPreferences.getBoolean(PREF_METRICS_REPORTING, false);
+    }
+
+    /**
+     * Check whether the command line switch is used to force uploading if at all possible. Used by
+     * test devices to avoid UI manipulation.
+     *
+     * @return whether uploading should be enabled if at all possible.
+     */
+    @Override
+    public boolean isUploadEnabledForTests() {
+        return CommandLine.getInstance().hasSwitch(ChromeSwitches.FORCE_CRASH_DUMP_UPLOAD);
+    }
+
+    /**
+     * Provides a way to remove disabling crash uploading entirely.
+     * Enable crash uploading based on user's preference when an overriding flag does not exist in
+     * commandline.
+     * Used to differentiate from tests that trigger crashes intentionally, so these crashes are not
+     * uploaded.
+     */
+    public void enablePotentialCrashUploading() {
+        mCrashUploadingDisabledByCommandLine = false;
     }
 
     /**
@@ -441,10 +356,10 @@ public class PrivacyPreferencesManager implements CrashReportingPermissionManage
         mSharedPreferences.edit().putInt(PREF_PHYSICAL_WEB, state).apply();
         if (enabled) {
             if (!isOnboarding) {
-                PhysicalWeb.startPhysicalWeb((ChromeApplication) mContext);
+                PhysicalWeb.startPhysicalWeb();
             }
         } else {
-            PhysicalWeb.stopPhysicalWeb((ChromeApplication) mContext);
+            PhysicalWeb.stopPhysicalWeb();
         }
     }
 
@@ -466,29 +381,5 @@ public class PrivacyPreferencesManager implements CrashReportingPermissionManage
     public boolean isPhysicalWebEnabled() {
         int state = mSharedPreferences.getInt(PREF_PHYSICAL_WEB, PHYSICAL_WEB_ONBOARDING);
         return (state == PHYSICAL_WEB_ON);
-    }
-
-    /**
-     * Check whether the command line switch is used to force uploading if at all possible. Used by
-     * test devices to avoid UI manipulation.
-     *
-     * @return whether uploading should be enabled if at all possible.
-     */
-    @Override
-    public boolean isUploadEnabledForTests() {
-        return CommandLine.getInstance().hasSwitch(ChromeSwitches.FORCE_CRASH_DUMP_UPLOAD);
-    }
-
-    /**
-     * Update usage and crash preferences based on Android preferences in case they are out of
-     * sync.
-     */
-    public void syncUsageAndCrashReportingPrefs() {
-        boolean isUploadUserPermitted = isUploadUserPermitted();
-        if (isCellularExperimentEnabled()) {
-            PrefServiceBridge.getInstance().setMetricsReportingEnabled(isUploadUserPermitted);
-        }
-
-        PrefServiceBridge.getInstance().setCrashReportingEnabled(isUploadUserPermitted);
     }
 }

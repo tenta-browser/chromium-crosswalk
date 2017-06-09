@@ -130,10 +130,10 @@ class TestWebGraphicsContext3D {
   virtual void genRenderbuffers(GLsizei count, GLuint* ids);
   virtual void genTextures(GLsizei count, GLuint* ids);
 
-  virtual void deleteBuffers(GLsizei count, GLuint* ids);
-  virtual void deleteFramebuffers(GLsizei count, GLuint* ids);
-  virtual void deleteRenderbuffers(GLsizei count, GLuint* ids);
-  virtual void deleteTextures(GLsizei count, GLuint* ids);
+  virtual void deleteBuffers(GLsizei count, const GLuint* ids);
+  virtual void deleteFramebuffers(GLsizei count, const GLuint* ids);
+  virtual void deleteRenderbuffers(GLsizei count, const GLuint* ids);
+  virtual void deleteTextures(GLsizei count, const GLuint* ids);
 
   virtual GLuint createBuffer();
   virtual GLuint createFramebuffer();
@@ -268,7 +268,6 @@ class TestWebGraphicsContext3D {
                                                     GLsizei height,
                                                     GLenum internalformat,
                                                     GLenum usage);
-  virtual void getImageivCHROMIUM(GLuint image_id, GLenum param, GLint* data);
 
   virtual GLuint64 insertFenceSync();
   virtual void genSyncToken(GLuint64 fence_sync, GLbyte* sync_token);
@@ -301,7 +300,7 @@ class TestWebGraphicsContext3D {
 
   size_t NumUsedTextures() const { return used_textures_.size(); }
   bool UsedTexture(int texture) const {
-    return ContainsKey(used_textures_, texture);
+    return base::ContainsKey(used_textures_, texture);
   }
   void ResetUsedTextures() { used_textures_.clear(); }
 
@@ -336,7 +335,6 @@ class TestWebGraphicsContext3D {
   void set_support_sync_query(bool support) {
     test_capabilities_.sync_query = support;
   }
-  void set_support_image(bool support) { test_capabilities_.image = support; }
   void set_support_texture_rectangle(bool support) {
     test_capabilities_.texture_rectangle = support;
   }
@@ -345,6 +343,12 @@ class TestWebGraphicsContext3D {
   }
   void set_msaa_is_slow(bool msaa_is_slow) {
     test_capabilities_.msaa_is_slow = msaa_is_slow;
+  }
+  void set_gpu_rasterization(bool gpu_rasterization) {
+    test_capabilities_.gpu_rasterization = gpu_rasterization;
+  }
+  void set_support_set_draw_rectangle(bool support) {
+    test_capabilities_.set_draw_rectangle = support;
   }
 
   // When this context is lost, all contexts in its share group are also lost.

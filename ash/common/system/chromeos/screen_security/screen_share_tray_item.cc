@@ -9,8 +9,8 @@
 #include "ash/common/system/system_notifier.h"
 #include "ash/common/system/tray/system_tray_notifier.h"
 #include "ash/common/wm_shell.h"
-#include "grit/ash_resources.h"
-#include "grit/ash_strings.h"
+#include "ash/resources/grit/ash_resources.h"
+#include "ash/strings/grit/ash_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/message_center/message_center.h"
@@ -33,14 +33,9 @@ ScreenShareTrayItem::~ScreenShareTrayItem() {
   WmShell::Get()->system_tray_notifier()->RemoveScreenShareObserver(this);
 }
 
-views::View* ScreenShareTrayItem::CreateTrayView(LoginStatus status) {
-  set_tray_view(new tray::ScreenTrayView(this, IDR_AURA_UBER_TRAY_SCREENSHARE));
-  return tray_view();
-}
-
 views::View* ScreenShareTrayItem::CreateDefaultView(LoginStatus status) {
   set_default_view(new tray::ScreenStatusView(
-      this, IDR_AURA_UBER_TRAY_SCREENSHARE_DARK,
+      this,
       l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_SCREEN_SHARE_BEING_HELPED),
       l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_SCREEN_SHARE_STOP)));
   return default_view();

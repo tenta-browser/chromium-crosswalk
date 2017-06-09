@@ -7,7 +7,9 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <string>
+#include <vector>
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
@@ -18,24 +20,16 @@
 #include "ppapi/host/resource_host.h"
 #include "ppapi/proxy/serialized_structs.h"
 
-struct PP_ImageDataDesc;
-struct PP_Size;
-class SkBitmap;
-
 namespace content {
-class PepperPluginInstance;
+class RenderFrame;
 class RendererPpapiHost;
-}
-
-namespace ppapi {
-class HostResource;
 }
 
 namespace ppapi {
 namespace host {
 struct HostMessageContext;
-}
-}
+}  // namespace host
+}  // namespace ppapi
 
 namespace pdf {
 
@@ -71,6 +65,7 @@ class PepperPDFHost : public ppapi::host::ResourceHost {
   // PPB_PDF_Impl instance.
   static void SetPrintClient(PrintClient* print_client);
 
+  // ppapi::host::ResourceHost:
   int32_t OnResourceMessageReceived(
       const IPC::Message& msg,
       ppapi::host::HostMessageContext* context) override;
@@ -104,12 +99,13 @@ class PepperPDFHost : public ppapi::host::ResourceHost {
       const std::vector<PP_PrivateAccessibilityTextRunInfo>& text_runs,
       const std::vector<PP_PrivateAccessibilityCharInfo>& chars);
 
-  void CreatePdfAccessibilityTreeIfNeeded(
-      content::PepperPluginInstance* instance);
+  void CreatePdfAccessibilityTreeIfNeeded();
+
+  content::RenderFrame* GetRenderFrame();
 
   std::unique_ptr<PdfAccessibilityTree> pdf_accessibility_tree_;
 
-  content::RendererPpapiHost* host_;
+  content::RendererPpapiHost* const host_;
 
   DISALLOW_COPY_AND_ASSIGN(PepperPDFHost);
 };

@@ -43,21 +43,14 @@ namespace blink {
 // end points as well as metadata for the selection region.
 // See |WebSelection|.
 struct CompositedSelection {
-    STACK_ALLOCATED();
-    CompositedSelection()
-        : type(NoSelection)
-        , isEditable(false)
-        , isEmptyTextFormControl(false)
-    {
-    }
+  STACK_ALLOCATED();
+  CompositedSelection() : type(NoSelection) {}
 
-    SelectionType type;
-    CompositedSelectionBound start;
-    CompositedSelectionBound end;
-    bool isEditable;
-    bool isEmptyTextFormControl;
+  SelectionType type;
+  CompositedSelectionBound start;
+  CompositedSelectionBound end;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // CompositedSelection_h
+#endif  // CompositedSelection_h

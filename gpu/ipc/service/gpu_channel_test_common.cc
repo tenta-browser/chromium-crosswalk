@@ -33,9 +33,6 @@ void TestGpuChannelManagerDelegate::DidLoseContext(
     error::ContextLostReason reason,
     const GURL& active_url) {}
 
-void TestGpuChannelManagerDelegate::GpuMemoryUmaStats(
-    const GPUMemoryUmaStats& params) {}
-
 void TestGpuChannelManagerDelegate::StoreShaderToDisk(
     int32_t client_id,
     const std::string& key,
@@ -61,7 +58,8 @@ TestGpuChannelManager::TestGpuChannelManager(
                         io_task_runner,
                         nullptr,
                         sync_point_manager,
-                        gpu_memory_buffer_factory) {}
+                        gpu_memory_buffer_factory,
+                        GpuFeatureInfo()) {}
 
 TestGpuChannelManager::~TestGpuChannelManager() {
   // Clear gpu channels here so that any IPC messages sent are handled using the
@@ -75,12 +73,12 @@ std::unique_ptr<GpuChannel> TestGpuChannelManager::CreateGpuChannel(
     bool preempts,
     bool allow_view_command_buffers,
     bool allow_real_time_streams) {
-  return base::WrapUnique(new TestGpuChannel(
+  return base::MakeUnique<TestGpuChannel>(
       this, sync_point_manager(), share_group(), mailbox_manager(),
       preempts ? preemption_flag() : nullptr,
       preempts ? nullptr : preemption_flag(), task_runner_.get(),
       io_task_runner_.get(), client_id, client_tracing_id,
-      allow_view_command_buffers, allow_real_time_streams));
+      allow_view_command_buffers, allow_real_time_streams);
 }
 
 TestGpuChannel::TestGpuChannel(GpuChannelManager* gpu_channel_manager,
@@ -121,7 +119,8 @@ base::ProcessId TestGpuChannel::GetClientPID() const {
 
 IPC::ChannelHandle TestGpuChannel::Init(base::WaitableEvent* shutdown_event) {
   filter_->OnFilterAdded(&sink_);
-  return IPC::ChannelHandle(channel_id());
+  mojo::MessagePipe pipe;
+  return pipe.handle0.release();
 }
 
 bool TestGpuChannel::Send(IPC::Message* msg) {
@@ -133,7 +132,7 @@ bool TestGpuChannel::Send(IPC::Message* msg) {
 GpuChannelTestCommon::GpuChannelTestCommon()
     : task_runner_(new base::TestSimpleTaskRunner),
       io_task_runner_(new base::TestSimpleTaskRunner),
-      sync_point_manager_(new SyncPointManager(false)),
+      sync_point_manager_(new SyncPointManager()),
       channel_manager_delegate_(new TestGpuChannelManagerDelegate()) {}
 
 GpuChannelTestCommon::~GpuChannelTestCommon() {

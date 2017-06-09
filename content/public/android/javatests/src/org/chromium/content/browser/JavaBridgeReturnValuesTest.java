@@ -4,7 +4,7 @@
 
 package org.chromium.content.browser;
 
-import android.test.suitebuilder.annotation.SmallTest;
+import android.support.test.filters.SmallTest;
 
 import org.chromium.base.annotations.SuppressFBWarnings;
 import org.chromium.base.test.util.Feature;
@@ -24,7 +24,7 @@ public class JavaBridgeReturnValuesTest extends JavaBridgeTestBase {
     // An instance of this class is injected into the page to test returning
     // Java values to JavaScript.
     @SuppressFBWarnings("CHROMIUM_SYNCHRONIZED_METHOD")
-    private class TestObject extends Controller {
+    private static class TestObject extends Controller {
         private String mStringResult;
         private boolean mBooleanResult;
 

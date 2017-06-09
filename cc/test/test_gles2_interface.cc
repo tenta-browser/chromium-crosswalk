@@ -10,12 +10,8 @@
 
 namespace cc {
 
-TestGLES2Interface::TestGLES2Interface(TestWebGraphicsContext3D* test_context)
-    : test_context_(test_context) {
-  DCHECK(test_context_);
-}
-
-TestGLES2Interface::~TestGLES2Interface() {}
+TestGLES2Interface::TestGLES2Interface() = default;
+TestGLES2Interface::~TestGLES2Interface() = default;
 
 void TestGLES2Interface::GenTextures(GLsizei n, GLuint* textures) {
   for (GLsizei i = 0; i < n; ++i) {
@@ -48,9 +44,7 @@ void TestGLES2Interface::GenQueriesEXT(GLsizei n, GLuint* queries) {
 }
 
 void TestGLES2Interface::DeleteTextures(GLsizei n, const GLuint* textures) {
-  for (GLsizei i = 0; i < n; ++i) {
-    test_context_->deleteTexture(textures[i]);
-  }
+  test_context_->deleteTextures(n, textures);
 }
 
 void TestGLES2Interface::DeleteBuffers(GLsizei n, const GLuint* buffers) {
@@ -281,21 +275,6 @@ void TestGLES2Interface::DestroyImageCHROMIUM(GLuint image_id) {
   test_context_->destroyImageCHROMIUM(image_id);
 }
 
-GLuint TestGLES2Interface::CreateGpuMemoryBufferImageCHROMIUM(
-    GLsizei width,
-    GLsizei height,
-    GLenum internalformat,
-    GLenum usage) {
-  return test_context_->createGpuMemoryBufferImageCHROMIUM(
-      width, height, internalformat, usage);
-}
-
-void TestGLES2Interface::GetImageivCHROMIUM(GLuint image_id,
-                                            GLenum param,
-                                            GLint* data) {
-  return test_context_->getImageivCHROMIUM(image_id, param, data);
-}
-
 void TestGLES2Interface::BindTexImage2DCHROMIUM(GLenum target, GLint image_id) {
   test_context_->bindTexImage2DCHROMIUM(target, image_id);
 }
@@ -404,6 +383,12 @@ GLenum TestGLES2Interface::GetGraphicsResetStatusKHR() {
   if (test_context_->isContextLost())
     return GL_UNKNOWN_CONTEXT_RESET_KHR;
   return GL_NO_ERROR;
+}
+
+void TestGLES2Interface::set_test_context(TestWebGraphicsContext3D* context) {
+  DCHECK(!test_context_);
+  test_context_ = context;
+  InitializeTestContext(test_context_);
 }
 
 }  // namespace cc

@@ -9,6 +9,7 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/trace_event/trace_event.h"
 #include "media/base/bind_to_current_loop.h"
 #include "media/base/cdm_context.h"
@@ -42,7 +43,7 @@ void DecryptingVideoDecoder::Initialize(const VideoDecoderConfig& config,
                                         CdmContext* cdm_context,
                                         const InitCB& init_cb,
                                         const OutputCB& output_cb) {
-  DVLOG(2) << __FUNCTION__ << ": " << config.AsHumanReadableString();
+  DVLOG(2) << __func__ << ": " << config.AsHumanReadableString();
 
   DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK(state_ == kUninitialized ||
@@ -51,7 +52,7 @@ void DecryptingVideoDecoder::Initialize(const VideoDecoderConfig& config,
   DCHECK(decode_cb_.is_null());
   DCHECK(reset_cb_.is_null());
   DCHECK(config.IsValidConfig());
-  DCHECK(config.is_encrypted());
+  DCHECK(cdm_context);
 
   init_cb_ = BindToCurrentLoop(init_cb);
   output_cb_ = BindToCurrentLoop(output_cb);
@@ -59,7 +60,6 @@ void DecryptingVideoDecoder::Initialize(const VideoDecoderConfig& config,
   config_ = config;
 
   if (state_ == kUninitialized) {
-    DCHECK(cdm_context);
     if (!cdm_context->GetDecryptor()) {
       MEDIA_LOG(DEBUG, media_log_) << GetDisplayName() << ": no decryptor";
       base::ResetAndReturn(&init_cb_).Run(false);
@@ -68,7 +68,8 @@ void DecryptingVideoDecoder::Initialize(const VideoDecoderConfig& config,
 
     decryptor_ = cdm_context->GetDecryptor();
   } else {
-    // Reinitialization.
+    // Reinitialization (i.e. upon a config change). The new config can be
+    // encrypted or clear.
     decryptor_->DeinitializeDecoder(Decryptor::kVideo);
   }
 
@@ -114,10 +115,15 @@ void DecryptingVideoDecoder::Reset(const base::Closure& closure) {
          state_ == kWaitingForKey ||
          state_ == kDecodeFinished ||
          state_ == kError) << state_;
-  DCHECK(init_cb_.is_null());  // No Reset() during pending initialization.
   DCHECK(reset_cb_.is_null());
 
   reset_cb_ = BindToCurrentLoop(closure);
+
+  // TODO(xhwang): These CHECKs are used to help investigate a bug. Remove them
+  // after the investigation is over. See http://crbug.com/695554
+  CHECK(state_ != kUninitialized);
+  CHECK(state_ != kPendingDecoderInit);
+  CHECK(init_cb_.is_null());  // No Reset() during pending initialization.
 
   decryptor_->ResetDecoder(Decryptor::kVideo);
 
@@ -241,8 +247,12 @@ void DecryptingVideoDecoder::DeliverFrame(
   }
 
   if (status == Decryptor::kNoKey) {
-    DVLOG(2) << "DeliverFrame() - kNoKey";
-    MEDIA_LOG(DEBUG, media_log_) << GetDisplayName() << ": no key";
+    std::string key_id =
+        scoped_pending_buffer_to_decode->decrypt_config()->key_id();
+    std::string missing_key_id = base::HexEncode(key_id.data(), key_id.size());
+    DVLOG(1) << "DeliverFrame() - no key for key ID " << missing_key_id;
+    MEDIA_LOG(INFO, media_log_) << GetDisplayName() << ": no key for key ID "
+                                << missing_key_id;
 
     // Set |pending_buffer_to_decode_| back as we need to try decoding the
     // pending buffer again when new key is added to the decryptor.
@@ -250,6 +260,8 @@ void DecryptingVideoDecoder::DeliverFrame(
 
     if (need_to_try_again_if_nokey_is_returned) {
       // The |state_| is still kPendingDecode.
+      MEDIA_LOG(INFO, media_log_) << GetDisplayName()
+                                  << ": key was added, resuming decode";
       DecodePendingBuffer();
       return;
     }
@@ -294,6 +306,8 @@ void DecryptingVideoDecoder::OnKeyAdded() {
   }
 
   if (state_ == kWaitingForKey) {
+    MEDIA_LOG(INFO, media_log_) << GetDisplayName()
+                                << ": key added, resuming decode";
     state_ = kPendingDecode;
     DecodePendingBuffer();
   }

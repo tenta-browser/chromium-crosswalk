@@ -6,7 +6,7 @@
 <script>
 if (window.testRunner) {
   // Block third-party cookies.
-  testRunner.setAlwaysAcceptCookies(false);
+  testRunner.setBlockThirdPartyCookies(true);
 }
 
 const origin = WS_ORIGIN;
@@ -23,8 +23,8 @@ promise_test(() => {
                         'headers should contain a cookie header.');
       assert_equals(
           normalizeCookie(cookie),
-          'WK-WebSocket-test-domain-pass=1; WK-WebSocket-test-path-pass=1; ' +
-              'WK-WebSocket-test=1; same-site-lax=1; same-site-strict=1');
+          'same-site-lax=1; same-site-strict=1; ws-domain-local-ip=1; ' +
+              'ws-path-root=1; ws=1');
       return clear(origin);
     }
   );

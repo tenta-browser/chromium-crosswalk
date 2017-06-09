@@ -4,15 +4,12 @@
 
 import("//build/config/features.gni")
 import("//build/config/ui.gni")
-import("//mojo/public/mojo_application.gni")
-import("//mojo/public/mojo_application_manifest.gni")
+import("//services/catalog/public/tools/catalog.gni")
+import("//services/service_manager/public/cpp/service.gni")
+import("//services/service_manager/public/service_manifest.gni")
 import("//testing/test.gni")
 import("//tools/grit/repack.gni")
 
-gypi = exec_script("//build/gypi_to_gn.py",
-                   [ rebase_path("../views.gyp") ],
-                   "scope",
-                   [ "../views.gyp" ])
 component("mus") {
   output_name = "ui_views_mus_lib"
 
@@ -21,35 +18,28 @@ component("mus") {
     "aura_init.h",
     "clipboard_mus.cc",
     "clipboard_mus.h",
-    "display_list.cc",
-    "display_list.h",
-    "input_method_mus.cc",
-    "input_method_mus.h",
+    "desktop_window_tree_host_mus.cc",
+    "desktop_window_tree_host_mus.h",
+    "mus_client.cc",
+    "mus_client.h",
+    "mus_client_observer.h",
     "mus_export.h",
-    "native_widget_mus.cc",
-    "native_widget_mus.h",
+    "pointer_watcher_event_router.cc",
+    "pointer_watcher_event_router.h",
     "screen_mus.cc",
     "screen_mus.h",
     "screen_mus_delegate.h",
-    "surface_binding.cc",
-    "surface_binding.h",
-    "surface_context_factory.cc",
-    "surface_context_factory.h",
-    "window_manager_connection.cc",
-    "window_manager_connection.h",
     "window_manager_constants_converters.cc",
     "window_manager_constants_converters.h",
     "window_manager_frame_values.cc",
     "window_manager_frame_values.h",
-    "window_tree_host_mus.cc",
-    "window_tree_host_mus.h",
   ]
 
   defines = [ "VIEWS_MUS_IMPLEMENTATION" ]
 
   public_deps = [
     ":resources",
-    "//components/mus/public/cpp",
+    "//services/ui/public/cpp",
     "//ui/aura",
   ]
   deps = [
@@ -58,22 +48,22 @@ component("mus") {
     "//base/third_party/dynamic_annotations",
     "//cc",
     "//cc/surfaces",
-    "//components/bitmap_uploader",
-    "//components/mus/common:mus_common",
-    "//components/mus/gles2:lib",
-    "//components/mus/public/cpp",
-    "//components/mus/public/interfaces",
+    "//components/discardable_memory/client",
+    "//components/discardable_memory/public/interfaces",
     "//mojo/common",
     "//mojo/public/cpp/bindings",
+    "//net",
     "//services/catalog/public/cpp",
-    "//services/shell/public/cpp",
-    "//services/shell/public/interfaces",
+    "//services/catalog/public/interfaces:constants",
+    "//services/service_manager/public/cpp",
+    "//services/service_manager/public/interfaces",
+    "//services/ui/public/cpp",
+    "//services/ui/public/interfaces",
     "//skia",
     "//third_party/icu",
     "//ui/aura",
     "//ui/compositor",
     "//ui/display",
-    "//ui/display/mojo",
     "//ui/events",
     "//ui/events:events_base",
     "//ui/gfx",
@@ -83,7 +73,7 @@ component("mus") {
     "//ui/native_theme",
     "//ui/platform_window",
     "//ui/platform_window/mojo",
-    "//ui/platform_window/mojo:interfaces_cpp_sources",
+    "//ui/platform_window/mojo:interfaces",
     "//ui/platform_window/stub",
     "//ui/views",
     "//ui/wm",
@@ -118,11 +108,12 @@ group("for_mojo_application") {
   ]
 }
 
-source_set("test_support") {
+static_library("test_support") {
   testonly = true
 
   sources = [
-    "../test/native_widget_factory_mus.cc",
+    "../test/native_widget_factory_aura_mus.cc",
+    "test_utils.h",
     "views_mus_test_suite.cc",
     "views_mus_test_suite.h",
   ]
@@ -131,12 +122,14 @@ source_set("test_support") {
     ":mus",
     "//base",
     "//base/test:test_support",
-    "//components/mus/common:mus_common",
-    "//services/shell/background:lib",
-    "//services/shell/background/tests:test_support",
-    "//services/shell/public/cpp:sources",
+    "//mojo/edk/system",
+    "//services/catalog:lib",
+    "//services/service_manager/background:lib",
+    "//services/service_manager/public/cpp:sources",
+    "//services/ui/common:mus_common",
     "//testing/gtest",
     "//ui/aura",
+    "//ui/aura:test_support",
     "//ui/gl:test_support",
     "//ui/resources",
     "//ui/resources:ui_test_pak",
@@ -145,6 +138,7 @@ source_set("test_support") {
   ]
 
   data_deps = [
+    ":views_mus_tests_catalog",
     "//ui/resources:ui_test_pak_data",
   ]
 }
@@ -152,33 +146,14 @@ source_set("test_support") {
 test("views_mus_unittests") {
   testonly = true
 
-  configs += [ "//build/config:precompiled_headers" ]
-
   sources = [
-    "display_list_unittest.cc",
-    "native_widget_mus_unittest.cc",
+    "desktop_window_tree_host_mus_unittest.cc",
+    "pointer_watcher_event_router_unittest.cc",
     "run_all_unittests_mus.cc",
     "screen_mus_unittest.cc",
-    "window_manager_connection_unittest.cc",
   ]
 
-  sources += rebase_path(gypi.views_unittests_sources, ".", "//ui/views")
-  sources += rebase_path(gypi.views_unittests_aura_sources, ".", "//ui/views")
-
-  sources -= [
-    # Mus has its own runner.
-    "../run_all_unittests_main.cc",
-
-    # EventGenerator doesn't work well with IME in mus.
-    # crbug.com/615033 crbug.com/548407
-    "../controls/textfield/textfield_unittest.cc",
-
-    # Tooltips. crbug.com/599558
-    "../corewm/tooltip_controller_unittest.cc",
-
-    # Some of the tests need drag-drop support. crbug.com/614037
-    "../touchui/touch_selection_controller_impl_unittest.cc",
-  ]
+  configs += [ "//build/config:precompiled_headers" ]
 
   deps = [
     ":mus",
@@ -187,10 +162,8 @@ test("views_mus_unittests") {
     "//base:i18n",
     "//base/test:test_support",
     "//cc",
-    "//components/mus/public/cpp",
-    "//components/mus/public/cpp/tests:unittest_support",
-    "//components/mus/public/interfaces",
-    "//services/shell/background:main",  # Provides main().
+    "//net",
+    "//services/ui/public/interfaces",
     "//skia",
     "//testing/gtest",
     "//third_party/icu",
@@ -212,13 +185,15 @@ test("views_mus_unittests") {
     "//ui/touch_selection",
     "//ui/views",
     "//ui/views:test_support_internal",
+    "//ui/views:views_unittests_sources",
     "//ui/wm",
     "//url",
   ]
 
   data_deps = [
-    ":unittests_manifest",
-    "//components/mus/test_wm",
+    ":views_mus_tests_catalog_copy",
+    "//services/ui/ime/test_ime_driver",
+    "//services/ui/test_wm",
   ]
 
   if (is_win) {
@@ -252,8 +227,6 @@ test("views_mus_unittests") {
 test("views_mus_interactive_ui_tests") {
   testonly = true
 
-  configs += [ "//build/config:precompiled_headers" ]
-
   sources = [
     "../widget/widget_interactive_uitest.cc",
     "clipboard_unittest.cc",
@@ -264,7 +237,6 @@ test("views_mus_interactive_ui_tests") {
     ":mus",
     ":test_support",
     "//base",
-    "//services/shell/background:main",  # Provides main().
     "//testing/gmock",
     "//testing/gtest",
     "//ui/aura",
@@ -280,8 +252,8 @@ test("views_mus_interactive_ui_tests") {
   ]
 
   data_deps = [
-    ":interactive_ui_tests_manifest",
-    "//components/mus/test_wm",
+    ":views_mus_tests_catalog_copy",
+    "//services/ui/test_wm",
   ]
 
   if (is_win) {
@@ -298,14 +270,36 @@ test("views_mus_interactive_ui_tests") {
   }
 }
 
-mojo_application_manifest("unittests_manifest") {
-  type = "exe"
-  application_name = "views_mus_unittests"
+service_manifest("unittests_manifest") {
+  name = "views_mus_unittests"
   source = "unittests_manifest.json"
 }
 
-mojo_application_manifest("interactive_ui_tests_manifest") {
-  type = "exe"
-  application_name = "views_mus_interactive_ui_tests"
+service_manifest("interactive_ui_tests_manifest") {
+  name = "views_mus_interactive_ui_tests"
   source = "interactive_ui_tests_manifest.json"
+}
+
+catalog("views_mus_tests_catalog") {
+  testonly = true
+
+  embedded_services = [
+    ":unittests_manifest",
+    ":interactive_ui_tests_manifest",
+  ]
+
+  standalone_services = [ "//services/ui/test_wm:manifest" ]
+
+  catalog_deps = [ "//mash:catalog" ]
+}
+
+copy("views_mus_tests_catalog_copy") {
+  testonly = true
+  sources = get_target_outputs(":views_mus_tests_catalog")
+  outputs = [
+    "${root_out_dir}/views_mus_tests_catalog.json",
+  ]
+  deps = [
+    ":views_mus_tests_catalog",
+  ]
 }

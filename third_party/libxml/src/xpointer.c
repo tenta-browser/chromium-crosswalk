@@ -320,6 +320,45 @@ xmlXPtrRangesEqual(xmlXPathObjectPtr range1, xmlXPathObjectPtr range2) {
 }
 
 /**
+ * xmlXPtrNewRangeInternal:
+ * @start:  the starting node
+ * @startindex:  the start index
+ * @end:  the ending point
+ * @endindex:  the ending index
+ *
+ * Internal function to create a new xmlXPathObjectPtr of type range
+ *
+ * Returns the newly created object.
+ */
+static xmlXPathObjectPtr
+xmlXPtrNewRangeInternal(xmlNodePtr start, int startindex,
+                        xmlNodePtr end, int endindex) {
+    xmlXPathObjectPtr ret;
+
+    /*
+     * Namespace nodes must be copied (see xmlXPathNodeSetDupNs).
+     * Disallow them for now.
+     */
+    if ((start != NULL) && (start->type == XML_NAMESPACE_DECL))
+	return(NULL);
+    if ((end != NULL) && (end->type == XML_NAMESPACE_DECL))
+	return(NULL);
+
+    ret = (xmlXPathObjectPtr) xmlMalloc(sizeof(xmlXPathObject));
+    if (ret == NULL) {
+        xmlXPtrErrMemory("allocating range");
+	return(NULL);
+    }
+    memset(ret, 0, sizeof(xmlXPathObject));
+    ret->type = XPATH_RANGE;
+    ret->user = start;
+    ret->index = startindex;
+    ret->user2 = end;
+    ret->index2 = endindex;
+    return(ret);
+}
+
+/**
  * xmlXPtrNewRange:
  * @start:  the starting node
  * @startindex:  the start index
@@ -344,17 +383,7 @@ xmlXPtrNewRange(xmlNodePtr start, int startindex,
     if (endindex < 0)
 	return(NULL);
 
-    ret = (xmlXPathObjectPtr) xmlMalloc(sizeof(xmlXPathObject));
-    if (ret == NULL) {
-        xmlXPtrErrMemory("allocating range");
-	return(NULL);
-    }
-    memset(ret, 0 , (size_t) sizeof(xmlXPathObject));
-    ret->type = XPATH_RANGE;
-    ret->user = start;
-    ret->index = startindex;
-    ret->user2 = end;
-    ret->index2 = endindex;
+    ret = xmlXPtrNewRangeInternal(start, startindex, end, endindex);
     xmlXPtrRangeCheckOrder(ret);
     return(ret);
 }
@@ -381,17 +410,8 @@ xmlXPtrNewRangePoints(xmlXPathObjectPtr start, xmlXPathObjectPtr end) {
     if (end->type != XPATH_POINT)
 	return(NULL);
 
-    ret = (xmlXPathObjectPtr) xmlMalloc(sizeof(xmlXPathObject));
-    if (ret == NULL) {
-        xmlXPtrErrMemory("allocating range");
-	return(NULL);
-    }
-    memset(ret, 0 , (size_t) sizeof(xmlXPathObject));
-    ret->type = XPATH_RANGE;
-    ret->user = start->user;
-    ret->index = start->index;
-    ret->user2 = end->user;
-    ret->index2 = end->index;
+    ret = xmlXPtrNewRangeInternal(start->user, start->index, end->user,
+                                  end->index);
     xmlXPtrRangeCheckOrder(ret);
     return(ret);
 }
@@ -416,17 +436,7 @@ xmlXPtrNewRangePointNode(xmlXPathObjectPtr start, xmlNodePtr end) {
     if (start->type != XPATH_POINT)
 	return(NULL);
 
-    ret = (xmlXPathObjectPtr) xmlMalloc(sizeof(xmlXPathObject));
-    if (ret == NULL) {
-        xmlXPtrErrMemory("allocating range");
-	return(NULL);
-    }
-    memset(ret, 0 , (size_t) sizeof(xmlXPathObject));
-    ret->type = XPATH_RANGE;
-    ret->user = start->user;
-    ret->index = start->index;
-    ret->user2 = end;
-    ret->index2 = -1;
+    ret = xmlXPtrNewRangeInternal(start->user, start->index, end, -1);
     xmlXPtrRangeCheckOrder(ret);
     return(ret);
 }
@@ -453,17 +463,7 @@ xmlXPtrNewRangeNodePoint(xmlNodePtr start, xmlXPathObjectPtr end) {
     if (end->type != XPATH_POINT)
 	return(NULL);
 
-    ret = (xmlXPathObjectPtr) xmlMalloc(sizeof(xmlXPathObject));
-    if (ret == NULL) {
-        xmlXPtrErrMemory("allocating range");
-	return(NULL);
-    }
-    memset(ret, 0 , (size_t) sizeof(xmlXPathObject));
-    ret->type = XPATH_RANGE;
-    ret->user = start;
-    ret->index = -1;
-    ret->user2 = end->user;
-    ret->index2 = end->index;
+    ret = xmlXPtrNewRangeInternal(start, -1, end->user, end->index);
     xmlXPtrRangeCheckOrder(ret);
     return(ret);
 }
@@ -486,17 +486,7 @@ xmlXPtrNewRangeNodes(xmlNodePtr start, xmlNodePtr end) {
     if (end == NULL)
 	return(NULL);
 
-    ret = (xmlXPathObjectPtr) xmlMalloc(sizeof(xmlXPathObject));
-    if (ret == NULL) {
-        xmlXPtrErrMemory("allocating range");
-	return(NULL);
-    }
-    memset(ret, 0 , (size_t) sizeof(xmlXPathObject));
-    ret->type = XPATH_RANGE;
-    ret->user = start;
-    ret->index = -1;
-    ret->user2 = end;
-    ret->index2 = -1;
+    ret = xmlXPtrNewRangeInternal(start, -1, end, -1);
     xmlXPtrRangeCheckOrder(ret);
     return(ret);
 }
@@ -516,17 +506,7 @@ xmlXPtrNewCollapsedRange(xmlNodePtr start) {
     if (start == NULL)
 	return(NULL);
 
-    ret = (xmlXPathObjectPtr) xmlMalloc(sizeof(xmlXPathObject));
-    if (ret == NULL) {
-        xmlXPtrErrMemory("allocating range");
-	return(NULL);
-    }
-    memset(ret, 0 , (size_t) sizeof(xmlXPathObject));
-    ret->type = XPATH_RANGE;
-    ret->user = start;
-    ret->index = -1;
-    ret->user2 = NULL;
-    ret->index2 = -1;
+    ret = xmlXPtrNewRangeInternal(start, -1, NULL, -1);
     return(ret);
 }
 
@@ -541,6 +521,8 @@ xmlXPtrNewCollapsedRange(xmlNodePtr start) {
  */
 xmlXPathObjectPtr
 xmlXPtrNewRangeNodeObject(xmlNodePtr start, xmlXPathObjectPtr end) {
+    xmlNodePtr endNode;
+    int endIndex;
     xmlXPathObjectPtr ret;
 
     if (start == NULL)
@@ -549,47 +531,28 @@ xmlXPtrNewRangeNodeObject(xmlNodePtr start, xmlXPathObjectPtr end) {
 	return(NULL);
     switch (end->type) {
 	case XPATH_POINT:
+	    endNode = end->user;
+	    endIndex = end->index;
+	    break;
 	case XPATH_RANGE:
+	    endNode = end->user2;
+	    endIndex = end->index2;
 	    break;
 	case XPATH_NODESET:
 	    /*
 	     * Empty set ...
 	     */
-	    if (end->nodesetval->nodeNr <= 0)
+	    if ((end->nodesetval == NULL) || (end->nodesetval->nodeNr <= 0))
 		return(NULL);
+	    endNode = end->nodesetval->nodeTab[end->nodesetval->nodeNr - 1];
+	    endIndex = -1;
 	    break;
 	default:
 	    /* TODO */
 	    return(NULL);
     }
 
-    ret = (xmlXPathObjectPtr) xmlMalloc(sizeof(xmlXPathObject));
-    if (ret == NULL) {
-        xmlXPtrErrMemory("allocating range");
-	return(NULL);
-    }
-    memset(ret, 0 , (size_t) sizeof(xmlXPathObject));
-    ret->type = XPATH_RANGE;
-    ret->user = start;
-    ret->index = -1;
-    switch (end->type) {
-	case XPATH_POINT:
-	    ret->user2 = end->user;
-	    ret->index2 = end->index;
-	    break;
-	case XPATH_RANGE:
-	    ret->user2 = end->user2;
-	    ret->index2 = end->index2;
-	    break;
-	case XPATH_NODESET: {
-	    ret->user2 = end->nodesetval->nodeTab[end->nodesetval->nodeNr - 1];
-	    ret->index2 = -1;
-	    break;
-	}
-	default:
-	    STRANGE
-	    return(NULL);
-    }
+    ret = xmlXPtrNewRangeInternal(start, -1, endNode, endIndex);
     xmlXPtrRangeCheckOrder(ret);
     return(ret);
 }
@@ -1398,7 +1361,7 @@ xmlXPtrEval(const xmlChar *str, xmlXPathContextPtr ctx) {
 		     */
 		    xmlNodeSetPtr set;
 		    set = tmp->nodesetval;
-		    if ((set->nodeNr != 1) ||
+		    if ((set == NULL) || (set->nodeNr != 1) ||
 			(set->nodeTab[0] != (xmlNodePtr) ctx->doc))
 			stack++;
 		} else
@@ -1833,8 +1796,8 @@ xmlXPtrStartPointFunction(xmlXPathParserContextPtr ctxt, int nargs) {
 		case XPATH_RANGE: {
 		    xmlNodePtr node = tmp->user;
 		    if (node != NULL) {
-			if (node->type == XML_ATTRIBUTE_NODE) {
-			    /* TODO: Namespace Nodes ??? */
+			if ((node->type == XML_ATTRIBUTE_NODE) ||
+                            (node->type == XML_NAMESPACE_DECL)) {
 			    xmlXPathFreeObject(obj);
 			    xmlXPtrFreeLocationSet(newset);
 			    XP_ERROR(XPTR_SYNTAX_ERROR);
@@ -1929,8 +1892,8 @@ xmlXPtrEndPointFunction(xmlXPathParserContextPtr ctxt, int nargs) {
 		case XPATH_RANGE: {
 		    xmlNodePtr node = tmp->user2;
 		    if (node != NULL) {
-			if (node->type == XML_ATTRIBUTE_NODE) {
-			    /* TODO: Namespace Nodes ??? */
+			if ((node->type == XML_ATTRIBUTE_NODE) ||
+                            (node->type == XML_NAMESPACE_DECL)) {
 			    xmlXPathFreeObject(obj);
 			    xmlXPtrFreeLocationSet(newset);
 			    XP_ERROR(XPTR_SYNTAX_ERROR);
@@ -2071,9 +2034,11 @@ xmlXPtrRangeFunction(xmlXPathParserContextPtr ctxt, int nargs) {
 	xmlXPathFreeObject(set);
         XP_ERROR(XPATH_MEMORY_ERROR);
     }
-    for (i = 0;i < oldset->locNr;i++) {
-	xmlXPtrLocationSetAdd(newset,
-		xmlXPtrCoveringRange(ctxt, oldset->locTab[i]));
+    if (oldset != NULL) {
+        for (i = 0;i < oldset->locNr;i++) {
+            xmlXPtrLocationSetAdd(newset,
+                    xmlXPtrCoveringRange(ctxt, oldset->locTab[i]));
+        }
     }
 
     /*

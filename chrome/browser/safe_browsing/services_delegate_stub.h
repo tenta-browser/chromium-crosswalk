@@ -18,7 +18,9 @@ class ServicesDelegateStub : public ServicesDelegate {
 
  private:
   // ServicesDelegate:
-  void Initialize() override;
+  const scoped_refptr<SafeBrowsingDatabaseManager>& v4_local_database_manager()
+      const override;
+  void Initialize(bool v4_enabled = false) override;
   void InitializeCsdService(
       net::URLRequestContextGetter* context_getter) override;
   void ShutdownServices() override;
@@ -28,8 +30,6 @@ class ServicesDelegateStub : public ServicesDelegate {
       CreatePreferenceValidationDelegate(Profile* profile) override;
   void RegisterDelayedAnalysisCallback(
       const DelayedAnalysisCallback& callback) override;
-  void RegisterExtendedReportingOnlyDelayedAnalysisCallback(
-      const DelayedAnalysisCallback& callback) override;
   void AddDownloadManager(content::DownloadManager* download_manager) override;
   ClientSideDetectionService* GetCsdService() override;
   DownloadProtectionService* GetDownloadService() override;
@@ -38,6 +38,8 @@ class ServicesDelegateStub : public ServicesDelegate {
     net::URLRequestContextGetter* url_request_context_getter,
     const V4ProtocolConfig& v4_config) override;
   void StopOnIOThread(bool shutdown) override;
+
+  scoped_refptr<SafeBrowsingDatabaseManager> v4_local_database_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(ServicesDelegateStub);
 };

@@ -45,6 +45,7 @@ namespace {
 const uint32_t kMaxVaryingVectors = 8;
 const uint32_t kMaxDrawBuffers = 8;
 const uint32_t kMaxDualSourceDrawBuffers = 8;
+const uint32_t kMaxVertexAttribs = 8;
 
 void ShaderCacheCb(const std::string& key, const std::string& shader) {}
 
@@ -58,19 +59,18 @@ uint32_t ComputeOffset(const void* start, const void* position) {
 class ProgramManagerTestBase : public GpuServiceTest {
  protected:
   virtual void SetupProgramManager() {
-    manager_.reset(new ProgramManager(nullptr, kMaxVaryingVectors,
-                                      kMaxDualSourceDrawBuffers,
-                                      gpu_preferences_,
-                                      feature_info_.get()));
+    manager_.reset(new ProgramManager(
+        nullptr, kMaxVaryingVectors, kMaxDrawBuffers, kMaxDualSourceDrawBuffers,
+        kMaxVertexAttribs, gpu_preferences_, feature_info_.get(), nullptr));
   }
   void SetUpBase(const char* gl_version,
                  const char* gl_extensions,
                  FeatureInfo* feature_info = nullptr) {
     GpuServiceTest::SetUpWithGLVersion(gl_version, gl_extensions);
-    TestHelper::SetupFeatureInfoInitExpectationsWithGLVersion(
-        gl_.get(), gl_extensions, "", gl_version);
     if (!feature_info)
       feature_info = new FeatureInfo();
+    TestHelper::SetupFeatureInfoInitExpectationsWithGLVersion(
+        gl_.get(), gl_extensions, "", gl_version, feature_info->context_type());
     feature_info->InitializeForTesting();
     feature_info_ = feature_info;
     SetupProgramManager();
@@ -128,7 +128,7 @@ TEST_F(ProgramManagerTest, Destroy) {
 }
 
 TEST_F(ProgramManagerTest, DeleteBug) {
-  ShaderManager shader_manager;
+  ShaderManager shader_manager(nullptr);
   const GLuint kClient1Id = 1;
   const GLuint kClient2Id = 2;
   const GLuint kService1Id = 11;
@@ -234,6 +234,8 @@ class ProgramManagerWithShaderTest : public ProgramManagerTestBase {
 
   static const size_t kNumAttribs;
   static const size_t kNumUniforms;
+
+  ProgramManagerWithShaderTest() : shader_manager_(nullptr) {}
 
  protected:
   typedef TestHelper::AttribInfo AttribInfo;
@@ -1743,6 +1745,124 @@ TEST_F(ProgramManagerWithShaderTest, AttribUniformNameConflict) {
   EXPECT_TRUE(LinkAsExpected(program, false));
 }
 
+TEST_F(ProgramManagerWithShaderTest, FragmentOutputTypes) {
+  // Set up program
+  Shader* vshader = shader_manager_.CreateShader(
+      kVertexShaderClientId, kVertexShaderServiceId, GL_VERTEX_SHADER);
+  TestHelper::SetShaderStates(gl_.get(), vshader, true, nullptr, nullptr,
+                              nullptr, nullptr, nullptr, nullptr, nullptr,
+                              nullptr, nullptr);
+  Shader* fshader = shader_manager_.CreateShader(
+      kFragmentShaderClientId, kFragmentShaderServiceId, GL_FRAGMENT_SHADER);
+  ASSERT_TRUE(vshader && fshader);
+  Program* program =
+      manager_->CreateProgram(kClientProgramId, kServiceProgramId);
+  ASSERT_TRUE(program);
+  EXPECT_TRUE(program->AttachShader(&shader_manager_, vshader));
+  EXPECT_TRUE(program->AttachShader(&shader_manager_, fshader));
+
+  {  // No outputs.
+    TestHelper::SetShaderStates(gl_.get(), fshader, true, nullptr, nullptr,
+                                nullptr, nullptr, nullptr, nullptr, nullptr,
+                                nullptr, nullptr);
+    EXPECT_TRUE(LinkAsExpected(program, true));
+    EXPECT_EQ(0u, program->fragment_output_type_mask());
+    EXPECT_EQ(0u, program->fragment_output_written_mask());
+  }
+
+  {  // gl_FragColor
+    OutputVariableList fragment_outputs;
+    sh::OutputVariable var = TestHelper::ConstructOutputVariable(
+        GL_FLOAT_VEC4, 0, GL_MEDIUM_FLOAT, true, "gl_FragColor");
+    var.location = -1;
+    fragment_outputs.push_back(var);
+    TestHelper::SetShaderStates(gl_.get(), fshader, true, nullptr, nullptr,
+                                nullptr, nullptr, nullptr, nullptr, nullptr,
+                                &fragment_outputs, nullptr);
+    EXPECT_TRUE(LinkAsExpected(program, true));
+    EXPECT_EQ(0x3u, program->fragment_output_type_mask());
+    EXPECT_EQ(0x3u, program->fragment_output_written_mask());
+  }
+
+  {  // gl_FragData
+    OutputVariableList fragment_outputs;
+    sh::OutputVariable var = TestHelper::ConstructOutputVariable(
+        GL_FLOAT_VEC4, 8, GL_MEDIUM_FLOAT, true, "gl_FragData");
+    var.location = -1;
+    fragment_outputs.push_back(var);
+    TestHelper::SetShaderStates(gl_.get(), fshader, true, nullptr, nullptr,
+                                nullptr, nullptr, nullptr, nullptr, nullptr,
+                                &fragment_outputs, nullptr);
+    EXPECT_TRUE(LinkAsExpected(program, true));
+    EXPECT_EQ(0xFFFFu, program->fragment_output_type_mask());
+    EXPECT_EQ(0xFFFFu, program->fragment_output_written_mask());
+  }
+
+  {  // gl_FragColor, gl_FragDepth
+    OutputVariableList fragment_outputs;
+    sh::OutputVariable var = TestHelper::ConstructOutputVariable(
+        GL_FLOAT_VEC4, 0, GL_MEDIUM_FLOAT, true, "gl_FragColor");
+    var.location = -1;
+    fragment_outputs.push_back(var);
+    var = TestHelper::ConstructOutputVariable(
+        GL_FLOAT, 0, GL_MEDIUM_FLOAT, true, "gl_FragDepth");
+    var.location = -1;
+    fragment_outputs.push_back(var);
+    TestHelper::SetShaderStates(gl_.get(), fshader, true, nullptr, nullptr,
+                                nullptr, nullptr, nullptr, nullptr, nullptr,
+                                &fragment_outputs, nullptr);
+    EXPECT_TRUE(LinkAsExpected(program, true));
+    EXPECT_EQ(0x3u, program->fragment_output_type_mask());
+    EXPECT_EQ(0x3u, program->fragment_output_written_mask());
+  }
+
+  {  // Single user defined output.
+    OutputVariableList fragment_outputs;
+    sh::OutputVariable var = TestHelper::ConstructOutputVariable(
+        GL_UNSIGNED_INT_VEC4, 0, GL_MEDIUM_INT, true, "myOutput");
+    var.location = -1;
+    fragment_outputs.push_back(var);
+    TestHelper::SetShaderStates(gl_.get(), fshader, true, nullptr, nullptr,
+                                nullptr, nullptr, nullptr, nullptr, nullptr,
+                                &fragment_outputs, nullptr);
+    EXPECT_TRUE(LinkAsExpected(program, true));
+    EXPECT_EQ(0x2u, program->fragment_output_type_mask());
+    EXPECT_EQ(0x3u, program->fragment_output_written_mask());
+  }
+
+  {  // Single user defined output - no static use.
+    OutputVariableList fragment_outputs;
+    sh::OutputVariable var = TestHelper::ConstructOutputVariable(
+        GL_UNSIGNED_INT_VEC4, 0, GL_MEDIUM_INT, false, "myOutput");
+    var.location = -1;
+    fragment_outputs.push_back(var);
+    TestHelper::SetShaderStates(gl_.get(), fshader, true, nullptr, nullptr,
+                                nullptr, nullptr, nullptr, nullptr, nullptr,
+                                &fragment_outputs, nullptr);
+    EXPECT_TRUE(LinkAsExpected(program, true));
+    EXPECT_EQ(0x2u, program->fragment_output_type_mask());
+    EXPECT_EQ(0x3u, program->fragment_output_written_mask());
+  }
+
+  {  // Multiple user defined outputs.
+    OutputVariableList fragment_outputs;
+    sh::OutputVariable var = TestHelper::ConstructOutputVariable(
+        GL_INT_VEC4, 0, GL_MEDIUM_INT, true, "myOutput");
+    var.location = 0;
+    fragment_outputs.push_back(var);
+    var = TestHelper::ConstructOutputVariable(
+        GL_FLOAT_VEC4, 2, GL_MEDIUM_FLOAT, true, "myOutputArray");
+    var.location = 2;
+    fragment_outputs.push_back(var);
+    TestHelper::SetShaderStates(gl_.get(), fshader, true, nullptr, nullptr,
+                                nullptr, nullptr, nullptr, nullptr, nullptr,
+                                &fragment_outputs, nullptr);
+    EXPECT_TRUE(LinkAsExpected(program, true));
+    EXPECT_EQ(0xF1u, program->fragment_output_type_mask());
+    EXPECT_EQ(0xF3u, program->fragment_output_written_mask());
+  }
+}
+
 // Varyings go over 8 rows.
 TEST_F(ProgramManagerWithShaderTest, TooManyVaryings) {
   const VarInfo kVertexVaryings[] = {
@@ -1943,17 +2063,17 @@ class ProgramManagerWithCacheTest : public ProgramManagerTestBase {
 
   ProgramManagerWithCacheTest()
       : cache_(new MockProgramCache()),
-        vertex_shader_(NULL),
-        fragment_shader_(NULL),
-        program_(NULL) {
-  }
+        vertex_shader_(nullptr),
+        fragment_shader_(nullptr),
+        program_(nullptr),
+        shader_manager_(nullptr) {}
 
  protected:
   void SetupProgramManager() override {
-    manager_.reset(new ProgramManager(cache_.get(), kMaxVaryingVectors,
-                                      kMaxDualSourceDrawBuffers,
-                                      gpu_preferences_,
-                                      feature_info_.get()));
+    manager_.reset(
+        new ProgramManager(cache_.get(), kMaxVaryingVectors, kMaxDrawBuffers,
+                           kMaxDualSourceDrawBuffers, kMaxVertexAttribs,
+                           gpu_preferences_, feature_info_.get(), nullptr));
   }
 
   void SetUp() override {
@@ -1987,11 +2107,10 @@ class ProgramManagerWithCacheTest : public ProgramManagerTestBase {
 
   void SetProgramCached() {
     cache_->LinkedProgramCacheSuccess(
-        vertex_shader_->source(),
-        fragment_shader_->source(),
+        vertex_shader_->source(), fragment_shader_->source(),
         &program_->bind_attrib_location_map(),
-        program_->transform_feedback_varyings(),
-        program_->transform_feedback_buffer_mode());
+        program_->effective_transform_feedback_varyings(),
+        program_->effective_transform_feedback_buffer_mode());
   }
 
   void SetExpectationsForProgramCached() {
@@ -2004,14 +2123,13 @@ class ProgramManagerWithCacheTest : public ProgramManagerTestBase {
       Program* program,
       Shader* vertex_shader,
       Shader* fragment_shader) {
-    EXPECT_CALL(*cache_.get(), SaveLinkedProgram(
-        program->service_id(),
-        vertex_shader,
-        fragment_shader,
-        &program->bind_attrib_location_map(),
-        program_->transform_feedback_varyings(),
-        program_->transform_feedback_buffer_mode(),
-        _)).Times(1);
+    EXPECT_CALL(*cache_.get(),
+                SaveLinkedProgram(
+                    program->service_id(), vertex_shader, fragment_shader,
+                    &program->bind_attrib_location_map(),
+                    program_->effective_transform_feedback_varyings(),
+                    program_->effective_transform_feedback_buffer_mode(), _))
+        .Times(1);
   }
 
   void SetExpectationsForNotCachingProgram() {
@@ -2024,14 +2142,13 @@ class ProgramManagerWithCacheTest : public ProgramManagerTestBase {
       Program* program,
       Shader* vertex_shader,
       Shader* fragment_shader) {
-    EXPECT_CALL(*cache_.get(), SaveLinkedProgram(
-        program->service_id(),
-        vertex_shader,
-        fragment_shader,
-        &program->bind_attrib_location_map(),
-        program_->transform_feedback_varyings(),
-        program_->transform_feedback_buffer_mode(),
-        _)).Times(0);
+    EXPECT_CALL(*cache_.get(),
+                SaveLinkedProgram(
+                    program->service_id(), vertex_shader, fragment_shader,
+                    &program->bind_attrib_location_map(),
+                    program_->effective_transform_feedback_varyings(),
+                    program_->effective_transform_feedback_buffer_mode(), _))
+        .Times(0);
   }
 
   void SetExpectationsForProgramLoad(ProgramCache::ProgramLoadResult result) {
@@ -2049,13 +2166,11 @@ class ProgramManagerWithCacheTest : public ProgramManagerTestBase {
       Shader* fragment_shader,
       ProgramCache::ProgramLoadResult result) {
     EXPECT_CALL(*cache_.get(),
-                LoadLinkedProgram(service_program_id,
-                                  vertex_shader,
-                                  fragment_shader,
-                                  &program->bind_attrib_location_map(),
-                                  program_->transform_feedback_varyings(),
-                                  program_->transform_feedback_buffer_mode(),
-                                  _))
+                LoadLinkedProgram(
+                    service_program_id, vertex_shader, fragment_shader,
+                    &program->bind_attrib_location_map(),
+                    program_->effective_transform_feedback_varyings(),
+                    program_->effective_transform_feedback_buffer_mode(), _))
         .WillOnce(Return(result));
   }
 
@@ -2076,7 +2191,7 @@ class ProgramManagerWithCacheTest : public ProgramManagerTestBase {
   void SetExpectationsForProgramLink(GLuint service_program_id) {
     TestHelper::SetupShaderExpectations(gl_.get(), feature_info_.get(), nullptr,
                                         0, nullptr, 0, service_program_id);
-    if (gl::g_driver_gl.ext.b_GL_ARB_get_program_binary) {
+    if (gl::g_current_gl_driver->ext.b_GL_ARB_get_program_binary) {
       EXPECT_CALL(*gl_.get(),
                   ProgramParameteri(service_program_id,
                                     PROGRAM_BINARY_RETRIEVABLE_HINT,

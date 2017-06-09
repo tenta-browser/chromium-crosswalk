@@ -20,12 +20,12 @@
 
 class AccountId;
 
-namespace net {
-class URLRequestContextGetter;
+namespace base {
+class TaskRunner;
 }
 
-namespace policy {
-class WildcardLoginChecker;
+namespace net {
+class URLRequestContextGetter;
 }
 
 namespace content {
@@ -82,6 +82,9 @@ class CHROMEOS_EXPORT LoginPerformer : public AuthStatusConsumer {
   // Performs a login into the kiosk mode account with |app_account_id|.
   void LoginAsKioskAccount(const AccountId& app_account_id,
                            bool use_guest_mount);
+
+  // Performs a login into the ARC kiosk mode account with |arc_app_account_id|.
+  void LoginAsArcKioskAccount(const AccountId& arc_app_account_id);
 
   // AuthStatusConsumer implementation:
   void OnAuthFailure(const AuthFailure& error) override;

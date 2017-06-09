@@ -50,14 +50,6 @@ void AddIfNew(const std::string& str,
   AddIfNew(output_file, source, deps, found_file);
 }
 
-// Returns the output file that the runtime deps considers for the given
-// targets. This is weird only for shared libraries.
-const OutputFile& GetMainOutput(const Target* target) {
-  if (target->output_type() == Target::SHARED_LIBRARY)
-    return target->runtime_link_output_file();
-  return target->dependency_output_file();
-}
-
 // To avoid duplicate traversals of targets, or duplicating output files that
 // might be listed by more than one target, the set of targets and output files
 // that have been found so far is passed. The "value" of the seen_targets map
@@ -86,8 +78,10 @@ void RecursiveCollectRuntimeDeps(const Target* target,
   // loadable modules.
   if (target->output_type() == Target::EXECUTABLE ||
       target->output_type() == Target::LOADABLE_MODULE ||
-      target->output_type() == Target::SHARED_LIBRARY)
-    AddIfNew(GetMainOutput(target), target, deps, found_files);
+      target->output_type() == Target::SHARED_LIBRARY) {
+    for (const auto& runtime_output : target->runtime_outputs())
+      AddIfNew(runtime_output, target, deps, found_files);
+  }
 
   // Add all data files.
   for (const auto& file : target->data())
@@ -173,8 +167,19 @@ bool CollectRuntimeDepsFromFlag(const Builder& builder,
       return false;
     }
 
-    OutputFile output_file =
-        OutputFile(GetMainOutput(target).value() + ".runtime_deps");
+    OutputFile output_file;
+    const char extension[] = ".runtime_deps";
+    if (target->output_type() == Target::SHARED_LIBRARY ||
+        target->output_type() == Target::LOADABLE_MODULE) {
+      // Force the first output for shared-library-type linker outputs since
+      // the dependency output files might not be the main output.
+      CHECK(!target->computed_outputs().empty());
+      output_file =
+          OutputFile(target->computed_outputs()[0].value() + extension);
+    } else {
+      output_file =
+          OutputFile(target->dependency_output_file().value() + extension);
+    }
     files_to_write->push_back(std::make_pair(output_file, target));
   }
   return true;
@@ -199,74 +204,73 @@ bool WriteRuntimeDepsFile(const OutputFile& output_file,
 }  // namespace
 
 const char kRuntimeDeps_Help[] =
-    "Runtime dependencies\n"
-    "\n"
-    "  Runtime dependencies of a target are exposed via the \"runtime_deps\"\n"
-    "  category of \"gn desc\" (see \"gn help desc\") or they can be written\n"
-    "  at build generation time via write_runtime_deps(), or\n"
-    "  --runtime-deps-list-file (see \"gn help --runtime-deps-list-file\").\n"
-    "\n"
-    "  To a first approximation, the runtime dependencies of a target are\n"
-    "  the set of \"data\" files, data directories, and the shared libraries\n"
-    "  from all transitive dependencies. Executables, shared libraries, and\n"
-    "  loadable modules are considered runtime dependencies of themselves.\n"
-    "\n"
-    "Executables\n"
-    "\n"
-    "  Executable targets and those executable targets' transitive\n"
-    "  dependencies are not considered unless that executable is listed in\n"
-    "  \"data_deps\". Otherwise, GN assumes that the executable (and\n"
-    "  everything it requires) is a build-time dependency only.\n"
-    "\n"
-    "Actions and copies\n"
-    "\n"
-    "  Action and copy targets that are listed as \"data_deps\" will have all\n"
-    "  of their outputs and data files considered as runtime dependencies.\n"
-    "  Action and copy targets that are \"deps\" or \"public_deps\" will have\n"
-    "  only their data files considered as runtime dependencies. These\n"
-    "  targets can list an output file in both the \"outputs\" and \"data\"\n"
-    "  lists to force an output file as a runtime dependency in all cases.\n"
-    "\n"
-    "  The different rules for deps and data_deps are to express build-time\n"
-    "  (deps) vs. run-time (data_deps) outputs. If GN counted all build-time\n"
-    "  copy steps as data dependencies, there would be a lot of extra stuff,\n"
-    "  and if GN counted all run-time dependencies as regular deps, the\n"
-    "  build's parallelism would be unnecessarily constrained.\n"
-    "\n"
-    "  This rule can sometimes lead to unintuitive results. For example,\n"
-    "  given the three targets:\n"
-    "    A  --[data_deps]-->  B  --[deps]-->  ACTION\n"
-    "  GN would say that A does not have runtime deps on the result of the\n"
-    "  ACTION, which is often correct. But the purpose of the B target might\n"
-    "  be to collect many actions into one logic unit, and the \"data\"-ness\n"
-    "  of A's dependency is lost. Solutions:\n"
-    "\n"
-    "   - List the outputs of the action in it's data section (if the\n"
-    "     results of that action are always runtime files).\n"
-    "   - Have B list the action in data_deps (if the outputs of the actions\n"
-    "     are always runtime files).\n"
-    "   - Have B list the action in both deps and data deps (if the outputs\n"
-    "     might be used in both contexts and you don't care about unnecessary\n"
-    "     entries in the list of files required at runtime).\n"
-    "   - Split B into run-time and build-time versions with the appropriate\n"
-    "     \"deps\" for each.\n"
-    "\n"
-    "Static libraries and source sets\n"
-    "\n"
-    "  The results of static_library or source_set targets are not considered\n"
-    "  runtime dependencies since these are assumed to be intermediate\n"
-    "  targets only. If you need to list a static library as a runtime\n"
-    "  dependency, you can manually compute the .a/.lib file name for the\n"
-    "  current platform and list it in the \"data\" list of a target\n"
-    "  (possibly on the static library target itself).\n"
-    "\n"
-    "Multiple outputs\n"
-    "\n"
-    "  When a tool produces more than one output, only the first output\n"
-    "  is considered. For example, a shared library target may produce a\n"
-    "  .dll and a .lib file on Windows. Only the .dll file will be considered\n"
-    "  a runtime dependency. This applies only to linker tools. Scripts and\n"
-    "  copy steps with multiple outputs will get all outputs listed.\n";
+    R"(Runtime dependencies
+
+  Runtime dependencies of a target are exposed via the "runtime_deps" category
+  of "gn desc" (see "gn help desc") or they can be written at build generation
+  time via write_runtime_deps(), or --runtime-deps-list-file (see "gn help
+  --runtime-deps-list-file").
+
+  To a first approximation, the runtime dependencies of a target are the set of
+  "data" files, data directories, and the shared libraries from all transitive
+  dependencies. Executables, shared libraries, and loadable modules are
+  considered runtime dependencies of themselves.
+
+Executables
+
+  Executable targets and those executable targets' transitive dependencies are
+  not considered unless that executable is listed in "data_deps". Otherwise, GN
+  assumes that the executable (and everything it requires) is a build-time
+  dependency only.
+
+Actions and copies
+
+  Action and copy targets that are listed as "data_deps" will have all of their
+  outputs and data files considered as runtime dependencies. Action and copy
+  targets that are "deps" or "public_deps" will have only their data files
+  considered as runtime dependencies. These targets can list an output file in
+  both the "outputs" and "data" lists to force an output file as a runtime
+  dependency in all cases.
+
+  The different rules for deps and data_deps are to express build-time (deps)
+  vs. run-time (data_deps) outputs. If GN counted all build-time copy steps as
+  data dependencies, there would be a lot of extra stuff, and if GN counted all
+  run-time dependencies as regular deps, the build's parallelism would be
+  unnecessarily constrained.
+
+  This rule can sometimes lead to unintuitive results. For example, given the
+  three targets:
+    A  --[data_deps]-->  B  --[deps]-->  ACTION
+  GN would say that A does not have runtime deps on the result of the ACTION,
+  which is often correct. But the purpose of the B target might be to collect
+  many actions into one logic unit, and the "data"-ness of A's dependency is
+  lost. Solutions:
+
+   - List the outputs of the action in it's data section (if the results of
+     that action are always runtime files).
+   - Have B list the action in data_deps (if the outputs of the actions are
+     always runtime files).
+   - Have B list the action in both deps and data deps (if the outputs might be
+     used in both contexts and you don't care about unnecessary entries in the
+     list of files required at runtime).
+   - Split B into run-time and build-time versions with the appropriate "deps"
+     for each.
+
+Static libraries and source sets
+
+  The results of static_library or source_set targets are not considered
+  runtime dependencies since these are assumed to be intermediate targets only.
+  If you need to list a static library as a runtime dependency, you can
+  manually compute the .a/.lib file name for the current platform and list it
+  in the "data" list of a target (possibly on the static library target
+  itself).
+
+Multiple outputs
+
+  Linker tools can specify which of their outputs should be considered when
+  computing the runtime deps by setting runtime_outputs. If this is unset on
+  the tool, the default will be the first output only.
+)";
 
 RuntimeDepsVector ComputeRuntimeDeps(const Target* target) {
   RuntimeDepsVector result;

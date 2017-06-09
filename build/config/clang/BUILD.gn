@@ -38,15 +38,7 @@ config("find_bad_constructs") {
       "-Xclang",
       "-plugin-arg-find-bad-constructs",
       "-Xclang",
-      "check-templates",
-      "-Xclang",
-      "-plugin-arg-find-bad-constructs",
-      "-Xclang",
-      "follow-macro-expansion",
-      "-Xclang",
-      "-plugin-arg-find-bad-constructs",
-      "-Xclang",
-      "check-implicit-copy-ctors",
+      "check-auto-raw-pointer",
     ]
 
     if ((is_linux || is_android) && !is_chromecast) {
@@ -68,5 +60,7 @@ config("extra_warnings") {
 
     # Warns when a const char[] is converted to bool.
     "-Wstring-conversion",
+
+    "-Wtautological-overlap-compare",
   ]
 }

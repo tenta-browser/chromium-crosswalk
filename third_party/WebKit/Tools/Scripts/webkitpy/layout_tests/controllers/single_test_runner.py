@@ -50,8 +50,8 @@ def run_single_test(
         secondary_driver, test_input, stop_when_done)
     try:
         return runner.run()
-    except DeviceFailure as e:
-        _log.error("device failed: %s", str(e))
+    except DeviceFailure as error:
+        _log.error("device failed: %s", error)
         return TestResult(test_input.test_name, device_failed=True)
 
 
@@ -66,7 +66,7 @@ class SingleTestRunner(object):
         self._results_directory = results_directory
         self._driver = primary_driver
         self._reference_driver = primary_driver
-        self._timeout = test_input.timeout
+        self._timeout_ms = test_input.timeout_ms
         self._worker_name = worker_name
         self._test_name = test_input.test_name
         self._should_run_pixel_test = test_input.should_run_pixel_test
@@ -126,7 +126,7 @@ class SingleTestRunner(object):
         else:
             test_name = self._test_name
             args = self._port.lookup_physical_test_args(self._test_name)
-        return DriverInput(test_name, self._timeout, image_hash, self._should_run_pixel_test, args)
+        return DriverInput(test_name, self._timeout_ms, image_hash, self._should_run_pixel_test, args)
 
     def run(self):
         if self._options.enable_sanitizer:
@@ -230,7 +230,7 @@ class SingleTestRunner(object):
         fs.maybe_make_directory(output_dir)
         output_basename = fs.basename(fs.splitext(self._test_name)[0] + "-expected" + extension)
         output_path = fs.join(output_dir, output_basename)
-        _log.info('Writing new expected result "%s"' % port.relative_test_filename(output_path))
+        _log.info('Writing new expected result "%s"', port.relative_test_filename(output_path))
         port.update_baseline(output_path, data)
 
     def _handle_error(self, driver_output, reference_filename=None):
@@ -243,7 +243,6 @@ class SingleTestRunner(object):
               which html file is used for producing the driver_output.
         """
         failures = []
-        fs = self._filesystem
         if driver_output.timeout:
             failures.append(test_failures.FailureTimeout(bool(reference_filename)))
 
@@ -258,17 +257,17 @@ class SingleTestRunner(object):
                                                        driver_output.crashed_pid,
                                                        self._port.output_contains_sanitizer_messages(driver_output.crash_log)))
             if driver_output.error:
-                _log.debug("%s %s crashed, (stderr lines):" % (self._worker_name, testname))
+                _log.debug("%s %s crashed, (stderr lines):", self._worker_name, testname)
             else:
-                _log.debug("%s %s crashed, (no stderr)" % (self._worker_name, testname))
+                _log.debug("%s %s crashed, (no stderr)", self._worker_name, testname)
         elif driver_output.leak:
             failures.append(test_failures.FailureLeak(bool(reference_filename),
                                                       driver_output.leak_log))
-            _log.debug("%s %s leaked" % (self._worker_name, testname))
+            _log.debug("%s %s leaked", self._worker_name, testname)
         elif driver_output.error:
-            _log.debug("%s %s output stderr lines:" % (self._worker_name, testname))
+            _log.debug("%s %s output stderr lines:", self._worker_name, testname)
         for line in driver_output.error.splitlines():
-            _log.debug("  %s" % line)
+            _log.debug("  %s", line)
         return failures
 
     def _compare_output(self, expected_driver_output, driver_output):
@@ -286,19 +285,19 @@ class SingleTestRunner(object):
             failures.extend(testharness_failures)
         else:
             failures.extend(self._compare_text(expected_driver_output.text, driver_output.text))
-            failures.extend(self._compare_audio(expected_driver_output.audio, driver_output.audio))
-            if self._should_run_pixel_test:
-                failures.extend(self._compare_image(expected_driver_output, driver_output))
+        failures.extend(self._compare_audio(expected_driver_output.audio, driver_output.audio))
+        if self._should_run_pixel_test:
+            failures.extend(self._compare_image(expected_driver_output, driver_output))
         has_repaint_overlay = (repaint_overlay.result_contains_repaint_rects(expected_driver_output.text) or
                                repaint_overlay.result_contains_repaint_rects(driver_output.text))
         return TestResult(self._test_name, failures, driver_output.test_time, driver_output.has_stderr(),
                           pid=driver_output.pid, has_repaint_overlay=has_repaint_overlay)
 
     def _compare_testharness_test(self, driver_output, expected_driver_output):
-        if expected_driver_output.image or expected_driver_output.audio or expected_driver_output.text:
+        if expected_driver_output.text:
             return False, []
 
-        if driver_output.image or driver_output.audio or self._is_render_tree(driver_output.text):
+        if self._is_render_tree(driver_output.text):
             return False, []
 
         text = driver_output.text or ''
@@ -333,7 +332,8 @@ class SingleTestRunner(object):
 
     def _get_normalized_output_text(self, output):
         """Returns the normalized text output, i.e. the output in which
-        the end-of-line characters are normalized to "\n"."""
+        the end-of-line characters are normalized to "\n".
+        """
         # Running tests on Windows produces "\r\n".  The "\n" part is helpfully
         # changed to "\r\n" by our system (Python/Cygwin), resulting in
         # "\r\r\n", when, in fact, we wanted to compare the text output with
@@ -354,7 +354,7 @@ class SingleTestRunner(object):
         elif driver_output.image_hash != expected_driver_output.image_hash:
             diff, err_str = self._port.diff_image(expected_driver_output.image, driver_output.image)
             if err_str:
-                _log.warning('  %s : %s' % (self._test_name, err_str))
+                _log.warning('  %s : %s', self._test_name, err_str)
                 failures.append(test_failures.FailureImageHashMismatch())
                 driver_output.error = (driver_output.error or '') + err_str
             else:
@@ -363,7 +363,7 @@ class SingleTestRunner(object):
                     failures.append(test_failures.FailureImageHashMismatch())
                 else:
                     # See https://bugs.webkit.org/show_bug.cgi?id=69444 for why this isn't a full failure.
-                    _log.warning('  %s -> pixel hash failed (but diff passed)' % self._test_name)
+                    _log.warning('  %s -> pixel hash failed (but diff passed)', self._test_name)
         return failures
 
     def _run_reftest(self):
@@ -400,7 +400,7 @@ class SingleTestRunner(object):
                 args = self._port.lookup_physical_reference_args(self._test_name)
             reference_test_name = self._port.relative_test_filename(reference_filename)
             reference_test_names.append(reference_test_name)
-            driver_input = DriverInput(reference_test_name, self._timeout,
+            driver_input = DriverInput(reference_test_name, self._timeout_ms,
                                        image_hash=test_output.image_hash, should_run_pixel_test=True, args=args)
             expected_output = self._reference_driver.run_test(driver_input, self._stop_when_done)
             total_test_time += expected_output.test_time
@@ -453,6 +453,6 @@ class SingleTestRunner(object):
             elif err_str:
                 _log.error(err_str)
             else:
-                _log.warning("  %s -> ref test hashes didn't match but diff passed" % self._test_name)
+                _log.warning("  %s -> ref test hashes didn't match but diff passed", self._test_name)
 
         return TestResult(self._test_name, failures, 0, has_stderr, pid=actual_driver_output.pid)

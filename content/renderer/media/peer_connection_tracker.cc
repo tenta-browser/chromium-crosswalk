@@ -1,10 +1,14 @@
 // Copyright (c) 2013 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
+
 #include "content/renderer/media/peer_connection_tracker.h"
 
 #include <stddef.h>
 #include <stdint.h>
+
+#include <memory>
+#include <utility>
 
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -81,13 +85,13 @@ static std::string SerializeAnswerOptions(
 
 static std::string SerializeMediaStreamComponent(
     const blink::WebMediaStreamTrack& component) {
-  return base::UTF16ToUTF8(base::StringPiece16(component.source().id()));
+  return component.source().id().utf8();
 }
 
 static std::string SerializeMediaDescriptor(
     const blink::WebMediaStream& stream) {
-  std::string label = base::UTF16ToUTF8(base::StringPiece16(stream.id()));
-  std::string result = "label: " + label;
+  std::string id = stream.id().utf8();
+  std::string result = "id: " + id;
   blink::WebVector<blink::WebMediaStreamTrack> tracks;
   stream.audioTracks(tracks);
   if (!tracks.isEmpty()) {
@@ -271,7 +275,8 @@ static base::DictionaryValue* GetDictValueStats(const StatsReport& report) {
 
 // Builds a DictionaryValue from the StatsReport.
 // The caller takes the ownership of the returned value.
-static base::DictionaryValue* GetDictValue(const StatsReport& report) {
+static std::unique_ptr<base::DictionaryValue> GetDictValue(
+    const StatsReport& report) {
   std::unique_ptr<base::DictionaryValue> stats, result;
 
   stats.reset(GetDictValueStats(report));
@@ -286,7 +291,7 @@ static base::DictionaryValue* GetDictValue(const StatsReport& report) {
   result->SetString("id", report.id()->ToString());
   result->SetString("type", report.TypeToString());
 
-  return result.release();
+  return result;
 }
 
 class InternalStatsObserver : public webrtc::StatsObserver {
@@ -298,9 +303,9 @@ class InternalStatsObserver : public webrtc::StatsObserver {
     std::unique_ptr<base::ListValue> list(new base::ListValue());
 
     for (const auto* r : reports) {
-      base::DictionaryValue* report = GetDictValue(*r);
+      std::unique_ptr<base::DictionaryValue> report = GetDictValue(*r);
       if (report)
-        list->Append(report);
+        list->Append(std::move(report));
     }
 
     if (!list->empty()) {
@@ -343,6 +348,8 @@ bool PeerConnectionTracker::OnControlMessageReceived(
   IPC_BEGIN_MESSAGE_MAP(PeerConnectionTracker, message)
     IPC_MESSAGE_HANDLER(PeerConnectionTracker_GetAllStats, OnGetAllStats)
     IPC_MESSAGE_HANDLER(PeerConnectionTracker_OnSuspend, OnSuspend)
+    IPC_MESSAGE_HANDLER(PeerConnectionTracker_StartEventLog, OnStartEventLog)
+    IPC_MESSAGE_HANDLER(PeerConnectionTracker_StopEventLog, OnStopEventLog)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
   return handled;
@@ -380,6 +387,36 @@ void PeerConnectionTracker::OnSuspend() {
   }
 }
 
+void PeerConnectionTracker::OnStartEventLog(int peer_connection_id,
+                                            IPC::PlatformFileForTransit file) {
+  DCHECK(main_thread_.CalledOnValidThread());
+  for (auto& it : peer_connection_id_map_) {
+    if (it.second == peer_connection_id) {
+#if defined(OS_ANDROID)
+      // A lower maximum filesize is used on Android because storage space is
+      // more scarce on mobile. This upper limit applies to each peerconnection
+      // individually, so the total amount of used storage can be a multiple of
+      // this.
+      const int64_t kMaxFilesizeBytes = 10000000;
+#else
+      const int64_t kMaxFilesizeBytes = 60000000;
+#endif
+      it.first->StartEventLog(file, kMaxFilesizeBytes);
+      return;
+    }
+  }
+}
+
+void PeerConnectionTracker::OnStopEventLog(int peer_connection_id) {
+  DCHECK(main_thread_.CalledOnValidThread());
+  for (auto& it : peer_connection_id_map_) {
+    if (it.second == peer_connection_id) {
+      it.first->StopEventLog();
+      return;
+    }
+  }
+}
+
 void PeerConnectionTracker::RegisterPeerConnection(
     RTCPeerConnectionHandler* pc_handler,
     const webrtc::PeerConnectionInterface::RTCConfiguration& config,
@@ -392,8 +429,8 @@ void PeerConnectionTracker::RegisterPeerConnection(
 
   info.lid = GetNextLocalID();
   info.rtc_configuration =
-      "{ servers: " +  SerializeServers(config.servers) + ", " +
-      "iceTransportType: " + SerializeIceTransportType(config.type) + ", " +
+      "{ iceServers: " +  SerializeServers(config.servers) + ", " +
+      "iceTransportPolicy: " + SerializeIceTransportType(config.type) + ", " +
       "bundlePolicy: " + SerializeBundlePolicy(config.bundle_policy) + ", " +
       "rtcpMuxPolicy: " + SerializeRtcpMuxPolicy(config.rtcp_mux_policy) + " }";
 
@@ -487,7 +524,7 @@ void PeerConnectionTracker::TrackSetSessionDescription(
       value);
 }
 
-void PeerConnectionTracker::TrackUpdateIce(
+void PeerConnectionTracker::TrackSetConfiguration(
     RTCPeerConnectionHandler* pc_handler,
     const webrtc::PeerConnectionInterface::RTCConfiguration& config) {
   DCHECK(main_thread_.CalledOnValidThread());
@@ -502,10 +539,7 @@ void PeerConnectionTracker::TrackUpdateIce(
          << "rtcpMuxPolicy: " << SerializeRtcpMuxPolicy(config.rtcp_mux_policy)
          << "}";
 
-  SendPeerConnectionUpdate(
-      id,
-      "updateIce",
-      result.str());
+  SendPeerConnectionUpdate(id, "setConfiguration", result.str());
 }
 
 void PeerConnectionTracker::TrackAddIceCandidate(
@@ -517,11 +551,10 @@ void PeerConnectionTracker::TrackAddIceCandidate(
   int id = GetLocalIDForHandler(pc_handler);
   if (id == -1)
     return;
-  std::string value =
-      "sdpMid: " + base::UTF16ToUTF8(base::StringPiece16(candidate.sdpMid())) +
-      ", " + "sdpMLineIndex: " + base::UintToString(candidate.sdpMLineIndex()) +
-      ", " + "candidate: " +
-      base::UTF16ToUTF8(base::StringPiece16(candidate.candidate()));
+  std::string value = "sdpMid: " + candidate.sdpMid().utf8() + ", " +
+                      "sdpMLineIndex: " +
+                      base::UintToString(candidate.sdpMLineIndex()) + ", " +
+                      "candidate: " + candidate.candidate().utf8();
 
   // OnIceCandidate always succeeds as it's a callback from the browser.
   DCHECK(source != SOURCE_LOCAL || succeeded);
@@ -667,8 +700,7 @@ void PeerConnectionTracker::TrackCreateDTMFSender(
   int id = GetLocalIDForHandler(pc_handler);
   if (id == -1)
     return;
-  SendPeerConnectionUpdate(id, "createDTMFSender",
-                           base::UTF16ToUTF8(base::StringPiece16(track.id())));
+  SendPeerConnectionUpdate(id, "createDTMFSender", track.id().utf8());
 }
 
 void PeerConnectionTracker::TrackGetUserMedia(

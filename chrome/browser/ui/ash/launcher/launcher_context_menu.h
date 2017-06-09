@@ -18,7 +18,7 @@ class WmShelf;
 }
 
 // Base class for context menu which is shown for a regular extension item in
-// the shelf, or for an Arc app item in the shelf, or shown when right click
+// the shelf, or for an ARC app item in the shelf, or shown when right click
 // on desktop shell.
 class LauncherContextMenu : public ui::SimpleMenuModel,
                             public ui::SimpleMenuModel::Delegate {
@@ -35,8 +35,6 @@ class LauncherContextMenu : public ui::SimpleMenuModel,
   base::string16 GetLabelForCommandId(int command_id) const override;
   bool IsCommandIdChecked(int command_id) const override;
   bool IsCommandIdEnabled(int command_id) const override;
-  bool GetAcceleratorForCommandId(int command_id,
-                                  ui::Accelerator* accelerator) override;
   void ExecuteCommand(int command_id, int event_flags) override;
 
  protected:
@@ -87,6 +85,8 @@ class LauncherContextMenu : public ui::SimpleMenuModel,
                            ArcLauncherContextMenuItemCheck);
   FRIEND_TEST_ALL_PREFIXES(LauncherContextMenuTest,
                            DesktopShellLauncherContextMenuVerifyCloseItem);
+  FRIEND_TEST_ALL_PREFIXES(LauncherContextMenuTest,
+                           AutohideShelfOptionOnExternalDisplay);
   FRIEND_TEST_ALL_PREFIXES(ShelfAppBrowserTest,
                            LauncherContextMenuVerifyCloseItemAppearance);
 

@@ -20,6 +20,9 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/android/data_usage/data_use_tab_model.h"
 #include "chrome/browser/android/data_usage/external_data_use_observer.h"
+#include "chrome/test/base/testing_browser_process.h"
+#include "chrome/test/base/testing_profile.h"
+#include "chrome/test/base/testing_profile_manager.h"
 #include "components/data_usage/core/data_use.h"
 #include "components/data_usage/core/data_use_aggregator.h"
 #include "components/sessions/core/session_id.h"
@@ -58,9 +61,14 @@ class ExternalDataUseReporterTest : public testing::Test {
   void SetUp() override {
     thread_bundle_.reset(new content::TestBrowserThreadBundle(
         content::TestBrowserThreadBundle::IO_MAINLOOP));
-    io_task_runner_ = content::BrowserThread::GetMessageLoopProxyForThread(
+    profile_manager_.reset(
+        new TestingProfileManager(TestingBrowserProcess::GetGlobal()));
+    EXPECT_TRUE(profile_manager_->SetUp());
+    profile_ = profile_manager_->CreateTestingProfile("p1");
+
+    io_task_runner_ = content::BrowserThread::GetTaskRunnerForThread(
         content::BrowserThread::IO);
-    ui_task_runner_ = content::BrowserThread::GetMessageLoopProxyForThread(
+    ui_task_runner_ = content::BrowserThread::GetTaskRunnerForThread(
         content::BrowserThread::UI);
     data_use_aggregator_.reset(
         new data_usage::DataUseAggregator(nullptr, nullptr));
@@ -127,7 +135,10 @@ class ExternalDataUseReporterTest : public testing::Test {
   }
 
   void OnDataUse(const data_usage::DataUse& data_use) {
-    external_data_use_reporter()->OnDataUse(data_use);
+    std::unique_ptr<std::vector<const data_usage::DataUse>> data_use_list(
+        new std::vector<const data_usage::DataUse>());
+    data_use_list->push_back(data_use);
+    external_data_use_reporter()->OnDataUse(std::move(data_use_list));
   }
 
   ExternalDataUseObserver* external_data_use_observer() const {
@@ -139,7 +150,7 @@ class ExternalDataUseReporterTest : public testing::Test {
   }
 
   DataUseTabModel* data_use_tab_model() const {
-    return external_data_use_reporter()->data_use_tab_model_;
+    return external_data_use_observer()->GetDataUseTabModel();
   }
 
   const ExternalDataUseReporter::DataUseReports& buffered_data_reports() const {
@@ -156,6 +167,11 @@ class ExternalDataUseReporterTest : public testing::Test {
   std::unique_ptr<content::TestBrowserThreadBundle> thread_bundle_;
   std::unique_ptr<data_usage::DataUseAggregator> data_use_aggregator_;
   std::unique_ptr<ExternalDataUseObserver> external_data_use_observer_;
+
+  std::unique_ptr<TestingProfileManager> profile_manager_;
+
+  // Test profile used by the tests is owned by |profile_manager_|.
+  TestingProfile* profile_;
 
   scoped_refptr<base::SingleThreadTaskRunner> io_task_runner_;
   scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner_;

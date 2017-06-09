@@ -12,6 +12,7 @@
 #include "base/numerics/safe_conversions.h"
 #include "net/spdy/hpack/hpack_input_stream.h"
 #include "net/spdy/hpack/hpack_output_stream.h"
+#include "net/spdy/platform/api/spdy_estimate_memory_usage.h"
 
 namespace net {
 
@@ -50,7 +51,7 @@ size_t HpackHuffmanTable::DecodeTable::size() const {
   return size_t(1) << indexed_length;
 }
 
-HpackHuffmanTable::HpackHuffmanTable() {}
+HpackHuffmanTable::HpackHuffmanTable() : pad_bits_(0), failed_symbol_id_(0) {}
 
 HpackHuffmanTable::~HpackHuffmanTable() {}
 
@@ -266,7 +267,6 @@ size_t HpackHuffmanTable::EncodedSize(StringPiece in) const {
 }
 
 bool HpackHuffmanTable::GenericDecodeString(HpackInputStream* in,
-                                            size_t out_capacity,
                                             string* out) const {
   // Number of decode iterations required for a 32-bit code.
   const int kDecodeIterations = static_cast<int>(
@@ -304,10 +304,6 @@ bool HpackHuffmanTable::GenericDecodeString(HpackInputStream* in,
       // The input is an invalid prefix, larger than any prefix in the table.
       return false;
     } else {
-      if (out->size() == out_capacity) {
-        // This code would cause us to overflow |out_capacity|.
-        return false;
-      }
       if (entry.symbol_id < 256) {
         // Assume symbols >= 256 are used for padding.
         out->push_back(static_cast<char>(entry.symbol_id));
@@ -321,6 +317,13 @@ bool HpackHuffmanTable::GenericDecodeString(HpackInputStream* in,
   }
   NOTREACHED();
   return false;
+}
+
+size_t HpackHuffmanTable::EstimateMemoryUsage() const {
+  return SpdyEstimateMemoryUsage(decode_tables_) +
+         SpdyEstimateMemoryUsage(decode_entries_) +
+         SpdyEstimateMemoryUsage(code_by_id_) +
+         SpdyEstimateMemoryUsage(length_by_id_);
 }
 
 }  // namespace net

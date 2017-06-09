@@ -37,6 +37,10 @@ enum MergeType {
 
 }  // namespace internal
 
+namespace test {
+class BridgedNativeWidgetTest;
+}  // namespace test
+
 // A model that represents text content for a views::Textfield.
 // It supports editing, selection and cursor manipulation.
 class VIEWS_EXPORT TextfieldModel {
@@ -95,15 +99,17 @@ class VIEWS_EXPORT TextfieldModel {
 
   // Deletes the first character after the current cursor position (as if, the
   // the user has pressed delete key in the textfield). Returns true if
-  // the deletion is successful.
+  // the deletion is successful. If |add_to_kill_buffer| is true, the deleted
+  // text is copied to the kill buffer.
   // If there is composition text, it'll be deleted instead.
-  bool Delete();
+  bool Delete(bool add_to_kill_buffer = false);
 
   // Deletes the first character before the current cursor position (as if, the
   // the user has pressed backspace key in the textfield). Returns true if
-  // the removal is successful.
+  // the removal is successful. If |add_to_kill_buffer| is true, the deleted
+  // text is copied to the kill buffer.
   // If there is composition text, it'll be deleted instead.
-  bool Backspace();
+  bool Backspace(bool add_to_kill_buffer = false);
 
   // Cursor related methods.
 
@@ -114,13 +120,14 @@ class VIEWS_EXPORT TextfieldModel {
   // The current composition text will be confirmed.
   void MoveCursor(gfx::BreakType break_type,
                   gfx::VisualCursorDirection direction,
-                  bool select);
+                  gfx::SelectionBehavior selection_behavior);
 
   // Updates the cursor to the specified selection model. Any composition text
   // will be confirmed, which may alter the specified selection range start.
   bool MoveCursorTo(const gfx::SelectionModel& cursor);
 
-  // Helper function to call MoveCursorTo on the TextfieldModel.
+  // Calls the corresponding function on the associated RenderText instance. Any
+  // composition text will be confirmed.
   bool MoveCursorTo(const gfx::Point& point, bool select);
 
   // Selection related methods.
@@ -182,6 +189,10 @@ class VIEWS_EXPORT TextfieldModel {
   // changed.
   bool Transpose();
 
+  // Pastes text from the kill buffer at the current cursor position. Returns
+  // true if the text has changed after yanking.
+  bool Yank();
+
   // Tells if any text is selected, even if the selection is in composition
   // text.
   bool HasSelection() const;
@@ -225,6 +236,9 @@ class VIEWS_EXPORT TextfieldModel {
 
  private:
   friend class internal::Edit;
+  friend class test::BridgedNativeWidgetTest;
+  friend class TextfieldModelTest;
+  friend class TextfieldTest;
 
   FRIEND_TEST_ALL_PREFIXES(TextfieldModelTest, UndoRedo_BasicTest);
   FRIEND_TEST_ALL_PREFIXES(TextfieldModelTest, UndoRedo_CutCopyPasteTest);
@@ -252,9 +266,8 @@ class VIEWS_EXPORT TextfieldModel {
                                size_t new_text_start);
   void ExecuteAndRecordInsert(const base::string16& new_text, bool mergeable);
 
-  // Adds or merge |edit| into edit history. Return true if the edit
-  // has been merged and must be deleted after redo.
-  bool AddOrMergeEditHistory(internal::Edit* edit);
+  // Adds or merges |edit| into the edit history.
+  void AddOrMergeEditHistory(std::unique_ptr<internal::Edit> edit);
 
   // Modify the text buffer in following way:
   // 1) Delete the string from |delete_from| to |delte_to|.
@@ -269,6 +282,9 @@ class VIEWS_EXPORT TextfieldModel {
 
   void ClearComposition();
 
+  // Clears the kill buffer. Used to clear global state between tests.
+  static void ClearKillBuffer();
+
   // The TextfieldModel::Delegate instance should be provided by the owner.
   Delegate* delegate_;
 
@@ -278,11 +294,13 @@ class VIEWS_EXPORT TextfieldModel {
   // The composition range.
   gfx::Range composition_range_;
 
-  typedef std::list<internal::Edit*> EditHistory;
+  // The list of Edits. The oldest Edits are at the front of the list, and the
+  // newest ones are at the back of the list.
+  using EditHistory = std::list<std::unique_ptr<internal::Edit>>;
   EditHistory edit_history_;
 
   // An iterator that points to the current edit that can be undone.
-  // This iterator moves from the |end()|, meaining no edit to undo,
+  // This iterator moves from the |end()|, meaning no edit to undo,
   // to the last element (one before |end()|), meaning no edit to redo.
   //
   // There is no edit to undo (== end()) when:

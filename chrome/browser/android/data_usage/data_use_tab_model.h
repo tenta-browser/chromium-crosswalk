@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 
+#include "base/callback.h"
+#include "base/callback_forward.h"
 #include "base/containers/hash_tables.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
@@ -23,7 +25,6 @@
 #include "url/gurl.h"
 
 namespace base {
-class SingleThreadTaskRunner;
 class TickClock;
 }
 
@@ -36,7 +37,6 @@ namespace chrome {
 namespace android {
 
 class DataUseMatcher;
-class ExternalDataUseObserverBridge;
 
 // Models tracking and labeling of data usage within each Tab. Within each tab,
 // the model tracks the data use of a sequence of navigations in a "tracking
@@ -105,15 +105,12 @@ class DataUseTabModel {
   static const char kDefaultTag[];
   static const char kCustomTabTag[];
 
-  DataUseTabModel();
-
-  // Initializes |this| on UI thread. |external_data_use_observer_bridge| is the
-  // pointer to ExternalDataUseObserverBridge object. DataUseTabModel and
-  // ExternalDataUseObserverBridge objects are owned by ExternalDataUseObserver
-  // and DataUseTabModel is destroyed first followed by
-  // ExternalDataUseObserverBridge.
-  void InitOnUIThread(
-      const ExternalDataUseObserverBridge* external_data_use_observer_bridge);
+  // |force_fetch_matching_rules_callback| is the callback to be run to initiate
+  // fetching matching rules and |on_matching_rules_fetched_callback|
+  // is the callback to be run after matching rules are fetched.
+  DataUseTabModel(
+      const base::Closure& force_fetch_matching_rules_callback,
+      const base::Callback<void(bool)>& on_matching_rules_fetched_callback);
 
   virtual ~DataUseTabModel();
 
@@ -143,7 +140,7 @@ class DataUseTabModel {
   // Notifies the DataUseTabModel that tracking label |label| is removed. Any
   // active tracking sessions with the label are ended, without notifying any of
   // the TabDataUseObserver.
-  virtual void OnTrackingLabelRemoved(std::string label);
+  virtual void OnTrackingLabelRemoved(const std::string& label);
 
   // Gets the tracking information for the tab with id |tab_id| at time
   // |timestamp|. |output_info| must not be null. If a tab tracking session is
@@ -305,6 +302,9 @@ class DataUseTabModel {
 
   // Stores the matching patterns.
   std::unique_ptr<DataUseMatcher> data_use_matcher_;
+
+  // Callback to be run to initiate fetching the matching rules.
+  const base::Closure force_fetch_matching_rules_callback_;
 
   // True if DataUseTabModel is ready to process UI navigation events.
   // DataUseTabModel will be considered ready when the first rule fetch is

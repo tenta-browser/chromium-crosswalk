@@ -2,17 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ash/wm/immersive_fullscreen_controller.h"
+#include "ash/shared/immersive_fullscreen_controller.h"
 
-#include "ash/common/shelf/shelf_types.h"
+#include "ash/common/shelf/wm_shelf.h"
 #include "ash/common/wm/window_state.h"
-#include "ash/display/display_manager.h"
 #include "ash/display/mouse_cursor_event_filter.h"
+#include "ash/public/cpp/shelf_types.h"
 #include "ash/root_window_controller.h"
-#include "ash/shelf/shelf.h"
+#include "ash/shared/immersive_fullscreen_controller_delegate.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
-#include "ash/test/display_manager_test_api.h"
+#include "ash/test/immersive_fullscreen_controller_test_api.h"
 #include "ash/wm/window_state_aura.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/cursor_client.h"
@@ -20,7 +20,9 @@
 #include "ui/aura/test/test_window_delegate.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_event_dispatcher.h"
-#include "ui/display/manager/display_layout.h"
+#include "ui/display/display_layout.h"
+#include "ui/display/manager/display_manager.h"
+#include "ui/display/test/display_manager_test_api.h"
 #include "ui/events/event_utils.h"
 #include "ui/events/test/event_generator.h"
 #include "ui/events/test/test_event_handler.h"
@@ -45,7 +47,7 @@ class TestBubbleDialogDelegate : public views::BubbleDialogDelegateView {
 };
 
 class MockImmersiveFullscreenControllerDelegate
-    : public ImmersiveFullscreenController::Delegate {
+    : public ImmersiveFullscreenControllerDelegate {
  public:
   MockImmersiveFullscreenControllerDelegate(views::View* top_container_view)
       : top_container_view_(top_container_view),
@@ -53,7 +55,7 @@ class MockImmersiveFullscreenControllerDelegate
         visible_fraction_(1) {}
   ~MockImmersiveFullscreenControllerDelegate() override {}
 
-  // ImmersiveFullscreenController::Delegate overrides:
+  // ImmersiveFullscreenControllerDelegate overrides:
   void OnImmersiveRevealStarted() override {
     enabled_ = true;
     visible_fraction_ = 0;
@@ -164,7 +166,7 @@ class ImmersiveFullscreenControllerTest : public ash::test::AshTestBase {
         new MockImmersiveFullscreenControllerDelegate(top_container_));
     controller_.reset(new ImmersiveFullscreenController);
     controller_->Init(delegate_.get(), widget_, top_container_);
-    controller_->SetupForTest();
+    ImmersiveFullscreenControllerTestApi(controller_.get()).SetupForTest();
 
     // The mouse is moved so that it is not over |top_container_| by
     // AshTestBase.
@@ -352,8 +354,8 @@ TEST_F(ImmersiveFullscreenControllerTest, OnMouseEvent) {
                           top_container_bounds_in_screen.y());
 
   // Mouse wheel event does nothing.
-  ui::MouseEvent wheel(ui::ET_MOUSEWHEEL, top_edge_pos, top_edge_pos,
-                       ui::EventTimeForNow(), ui::EF_NONE, ui::EF_NONE);
+  ui::MouseWheelEvent wheel(gfx::Vector2d(), top_edge_pos, top_edge_pos,
+                            ui::EventTimeForNow(), ui::EF_NONE, ui::EF_NONE);
   event_generator.Dispatch(&wheel);
   EXPECT_FALSE(top_edge_hover_timer_running());
 
@@ -494,13 +496,11 @@ TEST_F(ImmersiveFullscreenControllerTest, Inactive) {
 // has a vertical display layout (primary display above/below secondary display)
 // and the immersive fullscreen window is on the bottom display.
 TEST_F(ImmersiveFullscreenControllerTest, MouseEventsVerticalDisplayLayout) {
-  if (!SupportsMultipleDisplays())
-    return;
-
   // Set up initial state.
   UpdateDisplay("800x600,800x600");
   ash::Shell::GetInstance()->display_manager()->SetLayoutForCurrentDisplays(
-      test::CreateDisplayLayout(display::DisplayPlacement::TOP, 0));
+      display::test::CreateDisplayLayout(display_manager(),
+                                         display::DisplayPlacement::TOP, 0));
 
   SetEnabled(true);
   ASSERT_TRUE(controller()->IsEnabled());
@@ -659,16 +659,7 @@ TEST_F(ImmersiveFullscreenControllerTest, DifferentModalityEnterExit) {
 }
 
 // Test when the SWIPE_CLOSE edge gesture closes the top-of-window views.
-#if !defined(OS_CHROMEOS)
-// On Windows/Linux, touch events do not result in mouse events being disabled.
-// As a result, the last part of this test which ends the reveal via a gesture
-// will not work correctly.  See crbug.com/332430, and the function
-// ShouldHideCursorOnTouch() in compound_event_filter.cc.
-#define MAYBE_EndRevealViaGesture DISABLED_EndRevealViaGesture
-#else
-#define MAYBE_EndRevealViaGesture EndRevealViaGesture
-#endif
-TEST_F(ImmersiveFullscreenControllerTest, MAYBE_EndRevealViaGesture) {
+TEST_F(ImmersiveFullscreenControllerTest, EndRevealViaGesture) {
   SetEnabled(true);
   EXPECT_TRUE(controller()->IsEnabled());
   EXPECT_FALSE(controller()->IsRevealed());
@@ -773,10 +764,6 @@ TEST_F(ImmersiveFullscreenControllerTest, WindowStateImmersiveFullscreen) {
   ASSERT_FALSE(controller()->IsEnabled());
   EXPECT_FALSE(window_state->in_immersive_fullscreen());
 }
-
-// Do not test under windows because focus testing is not reliable on
-// Windows. (crbug.com/79493)
-#if !defined(OS_WIN)
 
 // Test how focus and activation affects whether the top-of-window views are
 // revealed.
@@ -1013,13 +1000,11 @@ TEST_F(ImmersiveFullscreenControllerTest, Bubbles) {
   bubble_widget8->Close();
 }
 
-#endif  // defined(OS_WIN)
-
 // Test that the shelf is set to auto hide as long as the window is in
 // immersive fullscreen and that the shelf's state before entering immersive
 // fullscreen is restored upon exiting immersive fullscreen.
 TEST_F(ImmersiveFullscreenControllerTest, Shelf) {
-  Shelf* shelf = Shelf::ForPrimaryDisplay();
+  WmShelf* shelf = GetPrimaryShelf();
 
   // Shelf is visible by default.
   window()->SetProperty(aura::client::kShowStateKey, ui::SHOW_STATE_NORMAL);

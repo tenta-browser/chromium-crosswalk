@@ -6,28 +6,37 @@
 
 #include <vector>
 
+#include "ash/common/material_design/material_design_controller.h"
 #include "ash/common/session/session_state_delegate.h"
 #include "ash/common/system/tray/hover_highlight_view.h"
+#include "ash/common/system/tray/system_tray.h"
+#include "ash/common/system/tray/system_tray_controller.h"
 #include "ash/common/system/tray/system_tray_delegate.h"
 #include "ash/common/system/tray/system_tray_notifier.h"
 #include "ash/common/system/tray/tray_constants.h"
 #include "ash/common/system/tray/tray_details_view.h"
 #include "ash/common/system/tray/tray_item_more.h"
 #include "ash/common/system/tray/tray_item_view.h"
+#include "ash/common/system/tray/tray_popup_item_style.h"
+#include "ash/common/system/tray/tray_popup_utils.h"
 #include "ash/common/system/tray/tray_utils.h"
+#include "ash/common/system/tray/tri_view.h"
 #include "ash/common/system/tray_accessibility.h"
 #include "ash/common/wm_shell.h"
-#include "ash/system/tray/system_tray.h"
+#include "ash/resources/grit/ash_resources.h"
+#include "ash/resources/vector_icons/vector_icons.h"
+#include "ash/strings/grit/ash_strings.h"
 #include "base/logging.h"
 #include "base/strings/utf_string_conversions.h"
-#include "grit/ash_resources.h"
-#include "grit/ash_strings.h"
 #include "ui/accessibility/ax_enums.h"
-#include "ui/accessibility/ax_view_state.h"
+#include "ui/accessibility/ax_node_data.h"
+#include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/font.h"
 #include "ui/gfx/image/image.h"
+#include "ui/gfx/paint_vector_icon.h"
 #include "ui/keyboard/keyboard_util.h"
+#include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/widget/widget.h"
@@ -51,11 +60,11 @@ class SelectableHoverHighlightView : public HoverHighlightView {
 
  protected:
   // Overridden from views::View.
-  void GetAccessibleState(ui::AXViewState* state) override {
-    HoverHighlightView::GetAccessibleState(state);
-    state->role = ui::AX_ROLE_CHECK_BOX;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override {
+    HoverHighlightView::GetAccessibleNodeData(node_data);
+    node_data->role = ui::AX_ROLE_CHECK_BOX;
     if (selected_)
-      state->AddStateFlag(ui::AX_STATE_CHECKED);
+      node_data->AddStateFlag(ui::AX_STATE_CHECKED);
   }
 
  private:
@@ -66,10 +75,14 @@ class SelectableHoverHighlightView : public HoverHighlightView {
 
 class IMEDefaultView : public TrayItemMore {
  public:
-  explicit IMEDefaultView(SystemTrayItem* owner, const base::string16& label)
-      : TrayItemMore(owner, true) {
-    ui::ResourceBundle& bundle = ui::ResourceBundle::GetSharedInstance();
-    SetImage(bundle.GetImageNamed(IDR_AURA_UBER_TRAY_IME).ToImageSkia());
+  IMEDefaultView(SystemTrayItem* owner, const base::string16& label)
+      : TrayItemMore(owner) {
+    if (MaterialDesignController::IsSystemTrayMenuMaterial()) {
+      SetImage(gfx::CreateVectorIcon(kSystemMenuKeyboardIcon, kMenuIconColor));
+    } else {
+      ui::ResourceBundle& bundle = ui::ResourceBundle::GetSharedInstance();
+      SetImage(*bundle.GetImageNamed(IDR_AURA_UBER_TRAY_IME).ToImageSkia());
+    }
     UpdateLabel(label);
   }
 
@@ -80,93 +93,87 @@ class IMEDefaultView : public TrayItemMore {
     SetAccessibleName(label);
   }
 
+ protected:
+  // TrayItemMore:
+  void UpdateStyle() override {
+    TrayItemMore::UpdateStyle();
+
+    if (!MaterialDesignController::IsSystemTrayMenuMaterial())
+      return;
+
+    std::unique_ptr<TrayPopupItemStyle> style = CreateStyle();
+    SetImage(
+        gfx::CreateVectorIcon(kSystemMenuKeyboardIcon, style->GetIconColor()));
+  }
+
  private:
   DISALLOW_COPY_AND_ASSIGN(IMEDefaultView);
 };
 
-class IMEDetailedView : public TrayDetailsView, public ViewClickListener {
+class IMEDetailedView : public ImeListView {
  public:
-  IMEDetailedView(SystemTrayItem* owner,
-                  LoginStatus login,
-                  bool show_keyboard_toggle)
-      : TrayDetailsView(owner), login_(login) {
-    SystemTrayDelegate* delegate = WmShell::Get()->system_tray_delegate();
-    IMEInfoList list;
-    delegate->GetAvailableIMEList(&list);
-    IMEPropertyInfoList property_list;
-    delegate->GetCurrentIMEProperties(&property_list);
-    Update(list, property_list, show_keyboard_toggle);
-  }
+  IMEDetailedView(SystemTrayItem* owner, LoginStatus login)
+      : ImeListView(owner),
+        login_(login),
+        settings_(nullptr),
+        settings_button_(nullptr) {}
 
   ~IMEDetailedView() override {}
 
+  void SetImeManagedMessage(base::string16 ime_managed_message) {
+    ime_managed_message_ = ime_managed_message;
+  }
+
   void Update(const IMEInfoList& list,
               const IMEPropertyInfoList& property_list,
-              bool show_keyboard_toggle) {
-    Reset();
-    ime_map_.clear();
-    property_map_.clear();
-    CreateScrollableList();
-
-    if (list.size() > 1)
-      AppendIMEList(list);
-    if (!property_list.empty())
-      AppendIMEProperties(property_list);
-
-    if (show_keyboard_toggle) {
-      if (list.size() > 1 || !property_list.empty())
-        AddScrollSeparator();
-      AppendKeyboardStatus();
+              bool show_keyboard_toggle,
+              SingleImeBehavior single_ime_behavior) override {
+    ImeListView::Update(list, property_list, show_keyboard_toggle,
+                        single_ime_behavior);
+    if (!MaterialDesignController::IsSystemTrayMenuMaterial() &&
+        TrayPopupUtils::CanOpenWebUISettings(login_)) {
+      AppendSettings();
     }
 
-    if (login_ != LoginStatus::NOT_LOGGED_IN && login_ != LoginStatus::LOCKED &&
-        !WmShell::Get()->GetSessionStateDelegate()->IsInSecondaryLoginScreen())
-      AppendSettings();
-    AppendHeaderEntry();
-
-    Layout();
-    SchedulePaint();
+    CreateTitleRow(IDS_ASH_STATUS_TRAY_IME);
   }
 
  private:
-  void AppendHeaderEntry() { CreateSpecialRow(IDS_ASH_STATUS_TRAY_IME, this); }
-
-  // Appends the IMEs to the scrollable area of the detailed view.
-  void AppendIMEList(const IMEInfoList& list) {
-    DCHECK(ime_map_.empty());
-    for (size_t i = 0; i < list.size(); i++) {
-      HoverHighlightView* container = new SelectableHoverHighlightView(
-          this, list[i].name, list[i].selected);
-      scroll_content()->AddChildView(container);
-      ime_map_[container] = list[i].id;
-    }
+  // ImeListView:
+  void HandleViewClicked(views::View* view) override {
+    ImeListView::HandleViewClicked(view);
+    if (view == settings_)
+      ShowSettings();
   }
 
-  // Appends the IME listed to the scrollable area of the detailed
-  // view.
-  void AppendIMEProperties(const IMEPropertyInfoList& property_list) {
-    DCHECK(property_map_.empty());
-    for (size_t i = 0; i < property_list.size(); i++) {
-      HoverHighlightView* container = new SelectableHoverHighlightView(
-          this, property_list[i].name, property_list[i].selected);
-      if (i == 0)
-        container->SetBorder(views::Border::CreateSolidSidedBorder(
-            1, 0, 0, 0, kBorderLightColor));
-      scroll_content()->AddChildView(container);
-      property_map_[container] = property_list[i].key;
-    }
+  void ResetImeListView() override {
+    ImeListView::ResetImeListView();
+    settings_button_ = nullptr;
+    controlled_setting_icon_ = nullptr;
   }
 
-  void AppendKeyboardStatus() {
-    HoverHighlightView* container = new HoverHighlightView(this);
-    int id = keyboard::IsKeyboardEnabled()
-                 ? IDS_ASH_STATUS_TRAY_DISABLE_KEYBOARD
-                 : IDS_ASH_STATUS_TRAY_ENABLE_KEYBOARD;
-    container->AddLabel(
-        ui::ResourceBundle::GetSharedInstance().GetLocalizedString(id),
-        gfx::ALIGN_LEFT, false /* highlight */);
-    scroll_content()->AddChildView(container);
-    keyboard_status_ = container;
+  void HandleButtonPressed(views::Button* sender,
+                           const ui::Event& event) override {
+    ImeListView::HandleButtonPressed(sender, event);
+    if (sender == settings_button_)
+      ShowSettings();
+  }
+
+  void CreateExtraTitleRowButtons() override {
+    if (MaterialDesignController::IsSystemTrayMenuMaterial()) {
+      if (!ime_managed_message_.empty()) {
+        controlled_setting_icon_ = TrayPopupUtils::CreateMainImageView();
+        controlled_setting_icon_->SetImage(
+            gfx::CreateVectorIcon(kSystemMenuBusinessIcon, kMenuIconColor));
+        controlled_setting_icon_->SetTooltipText(ime_managed_message_);
+        tri_view()->AddView(TriView::Container::END, controlled_setting_icon_);
+      }
+
+      tri_view()->SetContainerVisible(TriView::Container::END, true);
+      settings_button_ =
+          CreateSettingsButton(login_, IDS_ASH_STATUS_TRAY_IME_SETTINGS);
+      tri_view()->AddView(TriView::Container::END, settings_button_);
+    }
   }
 
   void AppendSettings() {
@@ -179,44 +186,26 @@ class IMEDetailedView : public TrayDetailsView, public ViewClickListener {
     settings_ = container;
   }
 
-  // Overridden from ViewClickListener.
-  void OnViewClicked(views::View* sender) override {
-    SystemTrayDelegate* delegate = WmShell::Get()->system_tray_delegate();
-    if (sender == footer()->content()) {
-      TransitionToDefaultView();
-    } else if (sender == settings_) {
-      WmShell::Get()->RecordUserMetricsAction(
-          UMA_STATUS_AREA_IME_SHOW_DETAILED);
-      delegate->ShowIMESettings();
-    } else if (sender == keyboard_status_) {
-      WmShell::Get()->ToggleIgnoreExternalKeyboard();
-    } else {
-      std::map<views::View*, std::string>::const_iterator ime_find;
-      ime_find = ime_map_.find(sender);
-      if (ime_find != ime_map_.end()) {
-        WmShell::Get()->RecordUserMetricsAction(
-            UMA_STATUS_AREA_IME_SWITCH_MODE);
-        std::string ime_id = ime_find->second;
-        delegate->SwitchIME(ime_id);
-        GetWidget()->Close();
-      } else {
-        std::map<views::View*, std::string>::const_iterator prop_find;
-        prop_find = property_map_.find(sender);
-        if (prop_find != property_map_.end()) {
-          const std::string key = prop_find->second;
-          delegate->ActivateIMEProperty(key);
-          GetWidget()->Close();
-        }
-      }
-    }
+  void ShowSettings() {
+    WmShell::Get()->RecordUserMetricsAction(UMA_STATUS_AREA_IME_SHOW_DETAILED);
+    WmShell::Get()->system_tray_controller()->ShowIMESettings();
+    if (owner()->system_tray())
+      owner()->system_tray()->CloseSystemBubble();
   }
 
   LoginStatus login_;
 
-  std::map<views::View*, std::string> ime_map_;
-  std::map<views::View*, std::string> property_map_;
+  // Not used in material design.
   views::View* settings_;
-  views::View* keyboard_status_;
+
+  // Only used in material design.
+  views::Button* settings_button_;
+
+  // This icon says that the IMEs are managed by policy.
+  views::ImageView* controlled_setting_icon_;
+  // If non-empty, a controlled setting icon should be displayed with this
+  // string as tooltip.
+  base::string16 ime_managed_message_;
 
   DISALLOW_COPY_AND_ASSIGN(IMEDetailedView);
 };
@@ -259,13 +248,16 @@ void TrayIME::Update() {
     default_->SetVisible(ShouldDefaultViewBeVisible());
     default_->UpdateLabel(GetDefaultViewLabel(ime_list_.size() > 1));
   }
-  if (detailed_)
-    detailed_->Update(ime_list_, property_list_, ShouldShowKeyboardToggle());
+  if (detailed_) {
+    detailed_->SetImeManagedMessage(ime_managed_message_);
+    detailed_->Update(ime_list_, property_list_, ShouldShowKeyboardToggle(),
+                      GetSingleImeBehavior());
+  }
 }
 
 void TrayIME::UpdateTrayLabel(const IMEInfo& current, size_t count) {
   if (tray_label_) {
-    bool visible = count > 1 && is_visible_;
+    bool visible = ShouldShowImeTrayItem(count) && is_visible_;
     tray_label_->SetVisible(visible);
     // Do not change label before hiding because this change is noticeable.
     if (!visible)
@@ -283,9 +275,7 @@ void TrayIME::UpdateTrayLabel(const IMEInfo& current, size_t count) {
 
 bool TrayIME::ShouldShowKeyboardToggle() {
   return keyboard_suppressed_ &&
-         !WmShell::Get()
-              ->GetAccessibilityDelegate()
-              ->IsVirtualKeyboardEnabled();
+         !WmShell::Get()->accessibility_delegate()->IsVirtualKeyboardEnabled();
 }
 
 base::string16 TrayIME::GetDefaultViewLabel(bool show_ime_label) {
@@ -315,16 +305,17 @@ views::View* TrayIME::CreateTrayView(LoginStatus status) {
 
 views::View* TrayIME::CreateDefaultView(LoginStatus status) {
   CHECK(default_ == NULL);
-  default_ =
-      new tray::IMEDefaultView(this, GetDefaultViewLabel(ime_list_.size() > 1));
+  default_ = new tray::IMEDefaultView(
+      this, GetDefaultViewLabel(ShouldShowImeTrayItem(ime_list_.size())));
   default_->SetVisible(ShouldDefaultViewBeVisible());
   return default_;
 }
 
 views::View* TrayIME::CreateDetailedView(LoginStatus status) {
   CHECK(detailed_ == NULL);
-  detailed_ =
-      new tray::IMEDetailedView(this, status, ShouldShowKeyboardToggle());
+  detailed_ = new tray::IMEDetailedView(this, status);
+  detailed_->SetImeManagedMessage(ime_managed_message_);
+  detailed_->Init(ShouldShowKeyboardToggle(), GetSingleImeBehavior());
   return detailed_;
 }
 
@@ -355,6 +346,7 @@ void TrayIME::OnIMERefresh() {
   delegate->GetCurrentIME(&current_ime_);
   delegate->GetAvailableIMEList(&ime_list_);
   delegate->GetCurrentIMEProperties(&property_list_);
+  ime_managed_message_ = delegate->GetIMEManagedMessage();
 
   Update();
 }
@@ -367,9 +359,27 @@ void TrayIME::OnIMEMenuActivationChanged(bool is_active) {
     Update();
 }
 
+bool TrayIME::IsIMEManaged() {
+  return !ime_managed_message_.empty();
+}
+
 bool TrayIME::ShouldDefaultViewBeVisible() {
-  return is_visible_ && (ime_list_.size() > 1 || property_list_.size() > 1 ||
-                         ShouldShowKeyboardToggle());
+  return is_visible_ &&
+         (ShouldShowImeTrayItem(ime_list_.size()) ||
+          property_list_.size() > 1 || ShouldShowKeyboardToggle());
+}
+
+bool TrayIME::ShouldShowImeTrayItem(size_t ime_count) {
+  // If managed, we want to show the tray icon even if there's only one input
+  // method to choose from.
+  size_t threshold = IsIMEManaged() ? 1 : 2;
+  return ime_count >= threshold;
+}
+
+ImeListView::SingleImeBehavior TrayIME::GetSingleImeBehavior() {
+  // If managed, we also want to show a single IME.
+  return IsIMEManaged() ? ImeListView::SHOW_SINGLE_IME
+                        : ImeListView::HIDE_SINGLE_IME;
 }
 
 }  // namespace ash

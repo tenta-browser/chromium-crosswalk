@@ -8,8 +8,8 @@
 #include "base/test/simple_test_tick_clock.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/media/media_capture_devices_dispatcher.h"
-#include "chrome/browser/media/media_stream_capture_indicator.h"
+#include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
+#include "chrome/browser/media/webrtc/media_stream_capture_indicator.h"
 #include "chrome/browser/memory/tab_manager.h"
 #include "chrome/browser/memory/tab_manager_web_contents_data.h"
 #include "chrome/browser/ui/browser.h"
@@ -20,8 +20,11 @@
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/interactive_test_utils.h"
+#include "content/public/browser/navigation_details.h"
+#include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
+#include "content/public/browser/render_process_host.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/test_utils.h"
 #include "url/gurl.h"
@@ -33,33 +36,31 @@ using content::OpenURLParams;
 namespace memory {
 
 class TabManagerTest : public InProcessBrowserTest {
- public:
-  // Tab discarding is enabled by default on CrOS. On other platforms, force it
-  // by turning on the corresponding experiment as some tests assume this
-  // behavior it turned on.
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-#if !defined(OS_LINUX)
-    command_line->AppendSwitchASCII(switches::kEnableFeatures,
-                                    features::kAutomaticTabDiscarding.name);
-#endif
-  }
 };
+
+bool ObserveNavEntryCommitted(const GURL& expected_url,
+                              const content::NotificationSource& source,
+                              const content::NotificationDetails& details) {
+  return content::Details<content::LoadCommittedDetails>(details)
+             ->entry->GetURL() == expected_url;
+}
 
 IN_PROC_BROWSER_TEST_F(TabManagerTest, TabManagerBasics) {
   using content::WindowedNotificationObserver;
   TabManager* tab_manager = g_browser_process->GetTabManager();
-  ASSERT_TRUE(tab_manager);
   EXPECT_FALSE(tab_manager->recent_tab_discard());
 
   // Disable the protection of recent tabs.
-  tab_manager->minimum_protection_time_ = base::TimeDelta::FromMinutes(0);
+  tab_manager->set_minimum_protection_time_for_tests(
+      base::TimeDelta::FromMinutes(0));
 
   // Get three tabs open.
   WindowedNotificationObserver load1(
       content::NOTIFICATION_NAV_ENTRY_COMMITTED,
       content::NotificationService::AllSources());
   OpenURLParams open1(GURL(chrome::kChromeUIAboutURL), content::Referrer(),
-                      CURRENT_TAB, ui::PAGE_TRANSITION_TYPED, false);
+                      WindowOpenDisposition::CURRENT_TAB,
+                      ui::PAGE_TRANSITION_TYPED, false);
   browser()->OpenURL(open1);
   load1.Wait();
 
@@ -67,7 +68,8 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, TabManagerBasics) {
       content::NOTIFICATION_NAV_ENTRY_COMMITTED,
       content::NotificationService::AllSources());
   OpenURLParams open2(GURL(chrome::kChromeUICreditsURL), content::Referrer(),
-                      NEW_FOREGROUND_TAB, ui::PAGE_TRANSITION_TYPED, false);
+                      WindowOpenDisposition::NEW_FOREGROUND_TAB,
+                      ui::PAGE_TRANSITION_TYPED, false);
   browser()->OpenURL(open2);
   load2.Wait();
 
@@ -75,11 +77,12 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, TabManagerBasics) {
       content::NOTIFICATION_NAV_ENTRY_COMMITTED,
       content::NotificationService::AllSources());
   OpenURLParams open3(GURL(chrome::kChromeUITermsURL), content::Referrer(),
-                      NEW_FOREGROUND_TAB, ui::PAGE_TRANSITION_TYPED, false);
+                      WindowOpenDisposition::NEW_FOREGROUND_TAB,
+                      ui::PAGE_TRANSITION_TYPED, false);
   browser()->OpenURL(open3);
   load3.Wait();
 
-  auto tsm = browser()->tab_strip_model();
+  auto* tsm = browser()->tab_strip_model();
   EXPECT_EQ(3, tsm->count());
 
   // Navigate the current (third) tab to a different URL, so we can test
@@ -88,7 +91,8 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, TabManagerBasics) {
       content::NOTIFICATION_NAV_ENTRY_COMMITTED,
       content::NotificationService::AllSources());
   OpenURLParams open4(GURL(chrome::kChromeUIVersionURL), content::Referrer(),
-                      CURRENT_TAB, ui::PAGE_TRANSITION_TYPED, false);
+                      WindowOpenDisposition::CURRENT_TAB,
+                      ui::PAGE_TRANSITION_TYPED, false);
   browser()->OpenURL(open4);
   load4.Wait();
 
@@ -96,7 +100,8 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, TabManagerBasics) {
   WindowedNotificationObserver load5(
       content::NOTIFICATION_NAV_ENTRY_COMMITTED,
       content::NotificationService::AllSources());
-  OpenURLParams open5(GURL("chrome://dns"), content::Referrer(), CURRENT_TAB,
+  OpenURLParams open5(GURL("chrome://dns"), content::Referrer(),
+                      WindowOpenDisposition::CURRENT_TAB,
                       ui::PAGE_TRANSITION_TYPED, false);
   browser()->OpenURL(open5);
   load5.Wait();
@@ -139,7 +144,8 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, TabManagerBasics) {
   // Select the first tab.  It should reload.
   WindowedNotificationObserver reload1(
       content::NOTIFICATION_NAV_ENTRY_COMMITTED,
-      content::NotificationService::AllSources());
+      base::Bind(&ObserveNavEntryCommitted,
+                 GURL(chrome::kChromeUIChromeURLsURL)));
   chrome::SelectNumberedTab(browser(), 0);
   reload1.Wait();
   // Make sure the FindBarController gets the right WebContents.
@@ -153,7 +159,7 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, TabManagerBasics) {
   // Select the third tab. It should reload.
   WindowedNotificationObserver reload2(
       content::NOTIFICATION_NAV_ENTRY_COMMITTED,
-      content::NotificationService::AllSources());
+      base::Bind(&ObserveNavEntryCommitted, GURL("chrome://dns")));
   chrome::SelectNumberedTab(browser(), 2);
   reload2.Wait();
   EXPECT_EQ(2, tsm->active_index());
@@ -167,15 +173,15 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, TabManagerBasics) {
   EXPECT_FALSE(chrome::CanGoForward(browser()));
   WindowedNotificationObserver back1(
       content::NOTIFICATION_NAV_ENTRY_COMMITTED,
-      content::NotificationService::AllSources());
-  chrome::GoBack(browser(), CURRENT_TAB);
+      base::Bind(&ObserveNavEntryCommitted, GURL(chrome::kChromeUIVersionURL)));
+  chrome::GoBack(browser(), WindowOpenDisposition::CURRENT_TAB);
   back1.Wait();
   EXPECT_TRUE(chrome::CanGoBack(browser()));
   EXPECT_TRUE(chrome::CanGoForward(browser()));
   WindowedNotificationObserver back2(
       content::NOTIFICATION_NAV_ENTRY_COMMITTED,
-      content::NotificationService::AllSources());
-  chrome::GoBack(browser(), CURRENT_TAB);
+      base::Bind(&ObserveNavEntryCommitted, GURL(chrome::kChromeUITermsURL)));
+  chrome::GoBack(browser(), WindowOpenDisposition::CURRENT_TAB);
   back2.Wait();
   EXPECT_FALSE(chrome::CanGoBack(browser()));
   EXPECT_TRUE(chrome::CanGoForward(browser()));
@@ -188,17 +194,18 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, TabManagerBasics) {
 // discard upon |MEMORY_PRESSURE_LEVEL_CRITICAL| event.
 IN_PROC_BROWSER_TEST_F(TabManagerTest, OomPressureListener) {
   TabManager* tab_manager = g_browser_process->GetTabManager();
-  ASSERT_TRUE(tab_manager);
 
   // Disable the protection of recent tabs.
-  tab_manager->minimum_protection_time_ = base::TimeDelta::FromMinutes(0);
+  tab_manager->set_minimum_protection_time_for_tests(
+      base::TimeDelta::FromMinutes(0));
 
   // Get three tabs open.
   content::WindowedNotificationObserver load1(
       content::NOTIFICATION_NAV_ENTRY_COMMITTED,
       content::NotificationService::AllSources());
   OpenURLParams open1(GURL(chrome::kChromeUIAboutURL), content::Referrer(),
-                      CURRENT_TAB, ui::PAGE_TRANSITION_TYPED, false);
+                      WindowOpenDisposition::CURRENT_TAB,
+                      ui::PAGE_TRANSITION_TYPED, false);
   browser()->OpenURL(open1);
   load1.Wait();
 
@@ -206,7 +213,8 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, OomPressureListener) {
       content::NOTIFICATION_NAV_ENTRY_COMMITTED,
       content::NotificationService::AllSources());
   OpenURLParams open2(GURL(chrome::kChromeUICreditsURL), content::Referrer(),
-                      NEW_FOREGROUND_TAB, ui::PAGE_TRANSITION_TYPED, false);
+                      WindowOpenDisposition::NEW_FOREGROUND_TAB,
+                      ui::PAGE_TRANSITION_TYPED, false);
   browser()->OpenURL(open2);
   load2.Wait();
   EXPECT_FALSE(tab_manager->recent_tab_discard());
@@ -238,10 +246,10 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, OomPressureListener) {
 
 IN_PROC_BROWSER_TEST_F(TabManagerTest, InvalidOrEmptyURL) {
   TabManager* tab_manager = g_browser_process->GetTabManager();
-  ASSERT_TRUE(tab_manager);
 
   // Disable the protection of recent tabs.
-  tab_manager->minimum_protection_time_ = base::TimeDelta::FromMinutes(0);
+  tab_manager->set_minimum_protection_time_for_tests(
+      base::TimeDelta::FromMinutes(0));
 
   // Open two tabs. Wait for the foreground one to load but do not wait for the
   // background one.
@@ -249,7 +257,8 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, InvalidOrEmptyURL) {
       content::NOTIFICATION_NAV_ENTRY_COMMITTED,
       content::NotificationService::AllSources());
   OpenURLParams open1(GURL(chrome::kChromeUIAboutURL), content::Referrer(),
-                      CURRENT_TAB, ui::PAGE_TRANSITION_TYPED, false);
+                      WindowOpenDisposition::CURRENT_TAB,
+                      ui::PAGE_TRANSITION_TYPED, false);
   browser()->OpenURL(open1);
   load1.Wait();
 
@@ -257,7 +266,8 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, InvalidOrEmptyURL) {
       content::NOTIFICATION_NAV_ENTRY_COMMITTED,
       content::NotificationService::AllSources());
   OpenURLParams open2(GURL(chrome::kChromeUICreditsURL), content::Referrer(),
-                      NEW_BACKGROUND_TAB, ui::PAGE_TRANSITION_TYPED, false);
+                      WindowOpenDisposition::NEW_BACKGROUND_TAB,
+                      ui::PAGE_TRANSITION_TYPED, false);
   browser()->OpenURL(open2);
 
   ASSERT_EQ(2, browser()->tab_strip_model()->count());
@@ -274,7 +284,6 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, InvalidOrEmptyURL) {
 // Makes sure that PDF pages are protected.
 IN_PROC_BROWSER_TEST_F(TabManagerTest, ProtectPDFPages) {
   TabManager* tab_manager = g_browser_process->GetTabManager();
-  ASSERT_TRUE(tab_manager);
 
   // Start the embedded test server so we can get served the required PDF page.
   ASSERT_TRUE(embedded_test_server()->InitializeAndListen());
@@ -287,7 +296,7 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, ProtectPDFPages) {
 
   GURL url2(chrome::kChromeUIAboutURL);
   ui_test_utils::NavigateToURLWithDisposition(
-      browser(), url2, NEW_FOREGROUND_TAB,
+      browser(), url2, WindowOpenDisposition::NEW_FOREGROUND_TAB,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
 
   // No discarding should be possible as the only background tab is displaying a
@@ -303,21 +312,21 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, ProtectRecentlyUsedTabs) {
   // constant (as of now, it gets set through variations).
   const int kProtectionTime = 5;
   TabManager* tab_manager = g_browser_process->GetTabManager();
-  ASSERT_TRUE(tab_manager);
 
   base::SimpleTestTickClock test_clock_;
   tab_manager->set_test_tick_clock(&test_clock_);
 
-  auto tsm = browser()->tab_strip_model();
+  auto* tsm = browser()->tab_strip_model();
 
   // Set the minimum time of protection.
-  tab_manager->minimum_protection_time_ =
-      base::TimeDelta::FromMinutes(kProtectionTime);
+  tab_manager->set_minimum_protection_time_for_tests(
+      base::TimeDelta::FromMinutes(kProtectionTime));
 
   // Open 2 tabs, the second one being in the background.
   ui_test_utils::NavigateToURL(browser(), GURL(chrome::kChromeUIAboutURL));
   ui_test_utils::NavigateToURLWithDisposition(
-      browser(), GURL(chrome::kChromeUIAboutURL), NEW_BACKGROUND_TAB,
+      browser(), GURL(chrome::kChromeUIAboutURL),
+      WindowOpenDisposition::NEW_BACKGROUND_TAB,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
   EXPECT_EQ(2, tsm->count());
 
@@ -357,18 +366,19 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, ProtectRecentlyUsedTabs) {
 // Makes sure that tabs using media devices are protected.
 IN_PROC_BROWSER_TEST_F(TabManagerTest, ProtectVideoTabs) {
   TabManager* tab_manager = g_browser_process->GetTabManager();
-  ASSERT_TRUE(tab_manager);
 
   // Disable the protection of recent tabs.
-  tab_manager->minimum_protection_time_ = base::TimeDelta::FromMinutes(0);
+  tab_manager->set_minimum_protection_time_for_tests(
+      base::TimeDelta::FromMinutes(0));
 
   // Open 2 tabs, the second one being in the background.
   ui_test_utils::NavigateToURL(browser(), GURL(chrome::kChromeUIAboutURL));
   ui_test_utils::NavigateToURLWithDisposition(
-      browser(), GURL(chrome::kChromeUIAboutURL), NEW_BACKGROUND_TAB,
+      browser(), GURL(chrome::kChromeUIAboutURL),
+      WindowOpenDisposition::NEW_BACKGROUND_TAB,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
 
-  auto tab = browser()->tab_strip_model()->GetWebContentsAt(1);
+  auto* tab = browser()->tab_strip_model()->GetWebContentsAt(1);
 
   // Simulate that a video stream is now being captured.
   content::MediaStreamDevice fake_media_device(
@@ -391,6 +401,84 @@ IN_PROC_BROWSER_TEST_F(TabManagerTest, ProtectVideoTabs) {
 
   // Should be able to discard the background tab now.
   EXPECT_TRUE(tab_manager->DiscardTabImpl());
+}
+
+IN_PROC_BROWSER_TEST_F(TabManagerTest, CanSuspendBackgroundedRenderer) {
+  TabManager* tab_manager = g_browser_process->GetTabManager();
+
+  // Open 2 tabs, the second one being in the background.
+  ui_test_utils::NavigateToURL(browser(), GURL(chrome::kChromeUIAboutURL));
+  ui_test_utils::NavigateToURLWithDisposition(
+      browser(), GURL(chrome::kChromeUIAboutURL),
+      WindowOpenDisposition::NEW_BACKGROUND_TAB,
+      ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
+
+  auto* tab = browser()->tab_strip_model()->GetWebContentsAt(1);
+  // Simulate that a video stream is now being captured.
+  content::MediaStreamDevice fake_media_device(
+      content::MEDIA_DEVICE_VIDEO_CAPTURE, "fake_media_device",
+      "fake_media_device");
+  content::MediaStreamDevices video_devices(1, fake_media_device);
+  MediaCaptureDevicesDispatcher* dispatcher =
+      MediaCaptureDevicesDispatcher::GetInstance();
+  dispatcher->SetTestVideoCaptureDevices(video_devices);
+  std::unique_ptr<content::MediaStreamUI> video_stream_ui =
+      dispatcher->GetMediaStreamCaptureIndicator()->RegisterMediaStream(
+          tab, video_devices);
+  video_stream_ui->OnStarted(base::Closure());
+
+  // Should not be able to suspend a tab which plays a video.
+  int render_process_id = tab->GetRenderProcessHost()->GetID();
+  ASSERT_FALSE(tab_manager->CanSuspendBackgroundedRenderer(render_process_id));
+
+  // Remove the video stream.
+  video_stream_ui.reset();
+
+  // Should be able to suspend the background tab now.
+  EXPECT_TRUE(tab_manager->CanSuspendBackgroundedRenderer(render_process_id));
+}
+
+IN_PROC_BROWSER_TEST_F(TabManagerTest, AutoDiscardable) {
+  using content::WindowedNotificationObserver;
+  TabManager* tab_manager = g_browser_process->GetTabManager();
+
+  // Disable the protection of recent tabs.
+  tab_manager->set_minimum_protection_time_for_tests(
+      base::TimeDelta::FromMinutes(0));
+
+  // Get two tabs open.
+  WindowedNotificationObserver load1(
+      content::NOTIFICATION_NAV_ENTRY_COMMITTED,
+      content::NotificationService::AllSources());
+  OpenURLParams open1(GURL(chrome::kChromeUIAboutURL), content::Referrer(),
+                      WindowOpenDisposition::CURRENT_TAB,
+                      ui::PAGE_TRANSITION_TYPED, false);
+  browser()->OpenURL(open1);
+  load1.Wait();
+
+  WindowedNotificationObserver load2(
+      content::NOTIFICATION_NAV_ENTRY_COMMITTED,
+      content::NotificationService::AllSources());
+  OpenURLParams open2(GURL(chrome::kChromeUICreditsURL), content::Referrer(),
+                      WindowOpenDisposition::NEW_FOREGROUND_TAB,
+                      ui::PAGE_TRANSITION_TYPED, false);
+  browser()->OpenURL(open2);
+  load2.Wait();
+
+  // Set the auto-discardable state of the first tab to false.
+  auto* tsm = browser()->tab_strip_model();
+  ASSERT_EQ(2, tsm->count());
+  tab_manager->SetTabAutoDiscardableState(tsm->GetWebContentsAt(0), false);
+
+  // Shouldn't discard the tab, since auto-discardable is deactivated.
+  EXPECT_FALSE(tab_manager->DiscardTabImpl());
+
+  // Reset auto-discardable state to true.
+  tab_manager->SetTabAutoDiscardableState(tsm->GetWebContentsAt(0), true);
+
+  // Now it should be able to discard the tab.
+  EXPECT_TRUE(tab_manager->DiscardTabImpl());
+  EXPECT_TRUE(tab_manager->IsTabDiscarded(tsm->GetWebContentsAt(0)));
 }
 
 }  // namespace memory

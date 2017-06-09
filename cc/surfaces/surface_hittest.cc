@@ -5,7 +5,6 @@
 #include "cc/surfaces/surface_hittest.h"
 
 #include "cc/output/compositor_frame.h"
-#include "cc/output/delegated_frame_data.h"
 #include "cc/quads/draw_quad.h"
 #include "cc/quads/render_pass_draw_quad.h"
 #include "cc/quads/surface_draw_quad.h"
@@ -23,9 +22,10 @@ SurfaceHittest::SurfaceHittest(SurfaceHittestDelegate* delegate,
 
 SurfaceHittest::~SurfaceHittest() {}
 
-SurfaceId SurfaceHittest::GetTargetSurfaceAtPoint(SurfaceId root_surface_id,
-                                                  const gfx::Point& point,
-                                                  gfx::Transform* transform) {
+SurfaceId SurfaceHittest::GetTargetSurfaceAtPoint(
+    const SurfaceId& root_surface_id,
+    const gfx::Point& point,
+    gfx::Transform* transform) {
   SurfaceId out_surface_id = root_surface_id;
 
   // Reset the output transform to identity.
@@ -33,29 +33,52 @@ SurfaceId SurfaceHittest::GetTargetSurfaceAtPoint(SurfaceId root_surface_id,
     *transform = gfx::Transform();
 
   std::set<const RenderPass*> referenced_passes;
-  GetTargetSurfaceAtPointInternal(root_surface_id, RenderPassId(), point,
-                                  &referenced_passes, &out_surface_id,
-                                  transform);
+  GetTargetSurfaceAtPointInternal(root_surface_id, 0, point, &referenced_passes,
+                                  &out_surface_id, transform);
 
   return out_surface_id;
 }
 
-bool SurfaceHittest::GetTransformToTargetSurface(SurfaceId root_surface_id,
-                                                 SurfaceId target_surface_id,
-                                                 gfx::Transform* transform) {
+bool SurfaceHittest::GetTransformToTargetSurface(
+    const SurfaceId& root_surface_id,
+    const SurfaceId& target_surface_id,
+    gfx::Transform* transform) {
   // Reset the output transform to identity.
   if (transform)
     *transform = gfx::Transform();
 
   std::set<const RenderPass*> referenced_passes;
   return GetTransformToTargetSurfaceInternal(root_surface_id, target_surface_id,
-                                             RenderPassId(), &referenced_passes,
-                                             transform);
+                                             0, &referenced_passes, transform);
+}
+
+bool SurfaceHittest::TransformPointToTargetSurface(
+    const SurfaceId& original_surface_id,
+    const SurfaceId& target_surface_id,
+    gfx::Point* point) {
+  gfx::Transform transform;
+  // Two possibilities need to be considered: original_surface_id can be
+  // embedded in target_surface_id, or vice versa.
+  if (GetTransformToTargetSurface(target_surface_id, original_surface_id,
+                                  &transform)) {
+    if (transform.GetInverse(&transform))
+      transform.TransformPoint(point);
+    else
+      return false;
+  } else if (GetTransformToTargetSurface(original_surface_id, target_surface_id,
+                                         &transform)) {
+    // No need to invert the transform matrix in this case.
+    transform.TransformPoint(point);
+  } else {
+    return false;
+  }
+
+  return true;
 }
 
 bool SurfaceHittest::GetTargetSurfaceAtPointInternal(
-    SurfaceId surface_id,
-    const RenderPassId& render_pass_id,
+    const SurfaceId& surface_id,
+    int render_pass_id,
     const gfx::Point& point_in_root_target,
     std::set<const RenderPass*>* referenced_passes,
     SurfaceId* out_surface_id,
@@ -103,7 +126,7 @@ bool SurfaceHittest::GetTargetSurfaceAtPointInternal(
 
       gfx::Transform transform_to_child_space;
       if (GetTargetSurfaceAtPointInternal(
-              surface_quad->surface_id, RenderPassId(), point_in_quad_space,
+              surface_quad->surface_id, 0, point_in_quad_space,
               referenced_passes, out_surface_id, &transform_to_child_space)) {
         *out_transform = transform_to_child_space * target_to_quad_transform *
                          transform_from_root_target;
@@ -148,9 +171,9 @@ bool SurfaceHittest::GetTargetSurfaceAtPointInternal(
 }
 
 bool SurfaceHittest::GetTransformToTargetSurfaceInternal(
-    SurfaceId root_surface_id,
-    SurfaceId target_surface_id,
-    const RenderPassId& render_pass_id,
+    const SurfaceId& root_surface_id,
+    const SurfaceId& target_surface_id,
+    int render_pass_id,
     std::set<const RenderPass*>* referenced_passes,
     gfx::Transform* out_transform) {
   if (root_surface_id == target_surface_id) {
@@ -196,8 +219,8 @@ bool SurfaceHittest::GetTransformToTargetSurfaceInternal(
       // find the |target_surface_id| there.
       gfx::Transform transform_to_child_space;
       if (GetTransformToTargetSurfaceInternal(
-              surface_quad->surface_id, target_surface_id, RenderPassId(),
-              referenced_passes, &transform_to_child_space)) {
+              surface_quad->surface_id, target_surface_id, 0, referenced_passes,
+              &transform_to_child_space)) {
         *out_transform = transform_to_child_space * target_to_quad_transform *
                          transform_from_root_target;
         return true;
@@ -228,25 +251,22 @@ bool SurfaceHittest::GetTransformToTargetSurfaceInternal(
 }
 
 const RenderPass* SurfaceHittest::GetRenderPassForSurfaceById(
-    SurfaceId surface_id,
-    const RenderPassId& render_pass_id) {
+    const SurfaceId& surface_id,
+    int render_pass_id) {
   Surface* surface = manager_->GetSurfaceForId(surface_id);
   if (!surface)
     return nullptr;
+  if (!surface->HasActiveFrame())
+    return nullptr;
+  const CompositorFrame& surface_frame = surface->GetActiveFrame();
 
-  const CompositorFrame& surface_frame = surface->GetEligibleFrame();
-  if (!surface_frame.delegated_frame_data)
+  if (surface_frame.render_pass_list.empty())
     return nullptr;
 
-  const DelegatedFrameData* frame_data =
-      surface_frame.delegated_frame_data.get();
-  if (frame_data->render_pass_list.empty())
-    return nullptr;
+  if (!render_pass_id)
+    return surface_frame.render_pass_list.back().get();
 
-  if (!render_pass_id.IsValid())
-    return frame_data->render_pass_list.back().get();
-
-  for (const auto& render_pass : frame_data->render_pass_list) {
+  for (const auto& render_pass : surface_frame.render_pass_list) {
     if (render_pass->id == render_pass_id)
       return render_pass.get();
   }

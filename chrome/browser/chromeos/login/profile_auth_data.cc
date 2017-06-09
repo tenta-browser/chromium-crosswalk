@@ -44,17 +44,25 @@ void ImportCookies(const net::CookieList& cookies,
     // To re-create the original cookie, a domain should only be passed in to
     // SetCookieWithDetailsAsync if cookie.Domain() has a leading period, to
     // re-create the original cookie.
-    std::string domain;
-    if (!cookie.Domain().empty() && cookie.Domain()[0] == '.')
-      domain = cookie.Domain();
+    std::string effective_domain = cookie.Domain();
+    std::string host;
+    if (effective_domain.length() > 1 && effective_domain[0] == '.') {
+      host = effective_domain.substr(1);
+    } else {
+      host = effective_domain;
+      effective_domain = "";
+    }
+
+    // Assume HTTPS - since the cookies are being restored from another store,
+    // they have already gone through the strict secure check.
+    GURL url(std::string(url::kHttpsScheme) + url::kStandardSchemeSeparator +
+             host + "/");
 
     cookie_store->SetCookieWithDetailsAsync(
-        cookie.Source(), cookie.Name(), cookie.Value(), domain, cookie.Path(),
+        url, cookie.Name(), cookie.Value(), effective_domain, cookie.Path(),
         cookie.CreationDate(), cookie.ExpiryDate(), cookie.LastAccessDate(),
         cookie.IsSecure(), cookie.IsHttpOnly(), cookie.SameSite(),
-        // enforce_strict_secure should have been applied on the original
-        // cookie, prior to import.
-        false, cookie.Priority(), net::CookieStore::SetCookiesCallback());
+        cookie.Priority(), net::CookieStore::SetCookiesCallback());
   }
 }
 

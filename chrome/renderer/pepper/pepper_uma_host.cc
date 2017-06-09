@@ -10,6 +10,7 @@
 #include "base/metrics/histogram.h"
 #include "base/sha1.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_util.h"
 #include "chrome/common/chrome_content_client.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/render_messages.h"
@@ -17,7 +18,9 @@
 #include "content/public/renderer/pepper_plugin_instance.h"
 #include "content/public/renderer/render_thread.h"
 #include "content/public/renderer/renderer_ppapi_host.h"
+#include "extensions/features/features.h"
 #include "ppapi/c/pp_errors.h"
+#include "ppapi/features/features.h"
 #include "ppapi/host/dispatch_host_message.h"
 #include "ppapi/host/host_message_context.h"
 #include "ppapi/host/ppapi_host.h"
@@ -25,10 +28,10 @@
 
 #include "widevine_cdm_version.h"  // In SHARED_INTERMEDIATE_DIR.
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
-#endif  // defined(ENABLE_EXTENSIONS)
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 namespace {
 
@@ -50,7 +53,7 @@ const char* const kWhitelistedHistogramPrefixes[] = {
 };
 
 const char* const kWhitelistedPluginBaseNames[] = {
-#if defined(WIDEVINE_CDM_AVAILABLE) && defined(ENABLE_PEPPER_CDMS)
+#if defined(WIDEVINE_CDM_AVAILABLE) && BUILDFLAG(ENABLE_PEPPER_CDMS)
     kWidevineCdmAdapterFileName,  // see http://crbug.com/368743
                                   // and http://crbug.com/410630
 #endif
@@ -104,7 +107,7 @@ int32_t PepperUMAHost::OnResourceMessageReceived(
 }
 
 bool PepperUMAHost::IsPluginWhitelisted() {
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   return ChromeContentRendererClient::IsExtensionOrSharedModuleWhitelisted(
       document_url_, allowed_origins_);
 #else
@@ -113,17 +116,18 @@ bool PepperUMAHost::IsPluginWhitelisted() {
 }
 
 bool PepperUMAHost::IsHistogramAllowed(const std::string& histogram) {
-  if (is_plugin_in_process_ && histogram.find("NaCl.") == 0) {
+  if (is_plugin_in_process_ &&
+      base::StartsWith(histogram, "NaCl.", base::CompareCase::SENSITIVE)) {
     return true;
   }
 
   if (IsPluginWhitelisted() &&
-      ContainsKey(allowed_histogram_prefixes_, HashPrefix(histogram))) {
+      base::ContainsKey(allowed_histogram_prefixes_, HashPrefix(histogram))) {
     return true;
   }
 
-  if (ContainsKey(allowed_plugin_base_names_,
-                  plugin_base_name_.MaybeAsASCII())) {
+  if (base::ContainsKey(allowed_plugin_base_names_,
+                        plugin_base_name_.MaybeAsASCII())) {
     return true;
   }
 

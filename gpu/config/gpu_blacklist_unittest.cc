@@ -81,6 +81,13 @@ TEST_F(GpuBlacklistTest, CurrentBlacklistValidation) {
       kSoftwareRenderingListJson, GpuBlacklist::kAllOs));
 }
 
+TEST_F(GpuBlacklistTest, DuplicatedIDValidation) {
+  std::unique_ptr<GpuBlacklist> blacklist(GpuBlacklist::Create());
+  EXPECT_TRUE(blacklist->LoadList(
+      kSoftwareRenderingListJson, GpuBlacklist::kAllOs));
+  EXPECT_FALSE(blacklist->has_duplicated_entry_id());
+}
+
 #define GPU_BLACKLIST_FEATURE_TEST(test_name, feature_name, feature_type) \
 TEST_F(GpuBlacklistTest, test_name) {                                     \
   RunFeatureTest(feature_name, feature_type);                             \
@@ -125,5 +132,13 @@ GPU_BLACKLIST_FEATURE_TEST(PanelFitting,
 GPU_BLACKLIST_FEATURE_TEST(GpuRasterization,
                            "gpu_rasterization",
                            GPU_FEATURE_TYPE_GPU_RASTERIZATION)
+
+GPU_BLACKLIST_FEATURE_TEST(AcceleratedVpxDecode,
+                           "accelerated_vpx_decode",
+                           GPU_FEATURE_TYPE_ACCELERATED_VPX_DECODE)
+
+GPU_BLACKLIST_FEATURE_TEST(WebGL2,
+                           "webgl2",
+                           GPU_FEATURE_TYPE_WEBGL2)
 
 }  // namespace gpu

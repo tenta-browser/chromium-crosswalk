@@ -9,9 +9,9 @@
 #include <stdint.h>
 
 #include <memory>
+#include <unordered_map>
 
 #include "base/android/scoped_java_ref.h"
-#include "base/containers/scoped_ptr_hash_map.h"
 #include "base/id_map.h"
 #include "base/macros.h"
 #include "base/observer_list.h"
@@ -35,26 +35,26 @@ class MediaRouterAndroid : public MediaRouterBase {
   // MediaRouter implementation.
   void CreateRoute(const MediaSource::Id& source_id,
                    const MediaSink::Id& sink_id,
-                   const GURL& origin,
+                   const url::Origin& origin,
                    content::WebContents* web_contents,
                    const std::vector<MediaRouteResponseCallback>& callbacks,
                    base::TimeDelta timeout,
-                   bool off_the_record) override;
+                   bool incognito) override;
   void JoinRoute(const MediaSource::Id& source,
                  const std::string& presentation_id,
-                 const GURL& origin,
+                 const url::Origin& origin,
                  content::WebContents* web_contents,
                  const std::vector<MediaRouteResponseCallback>& callbacks,
                  base::TimeDelta timeout,
-                 bool off_the_record) override;
+                 bool incognito) override;
   void ConnectRouteByRouteId(
       const MediaSource::Id& source,
       const MediaRoute::Id& route_id,
-      const GURL& origin,
+      const url::Origin& origin,
       content::WebContents* web_contents,
       const std::vector<MediaRouteResponseCallback>& callbacks,
       base::TimeDelta timeout,
-      bool off_the_record) override;
+      bool incognito) override;
   void DetachRoute(const MediaRoute::Id& route_id) override;
   void TerminateRoute(const MediaRoute::Id& route_id) override;
   void SendRouteMessage(const MediaRoute::Id& route_id,
@@ -64,7 +64,7 @@ class MediaRouterAndroid : public MediaRouterBase {
       const MediaRoute::Id& route_id,
       std::unique_ptr<std::vector<uint8_t>> data,
       const SendRouteMessageCallback& callback) override;
-  void AddIssue(const Issue& issue) override;
+  void AddIssue(const IssueInfo& issue_info) override;
   void ClearIssue(const Issue::Id& issue_id) override;
   void OnUserGesture() override;
   void SearchSinks(
@@ -136,14 +136,12 @@ class MediaRouterAndroid : public MediaRouterBase {
   void UnregisterMediaRoutesObserver(MediaRoutesObserver* observer) override;
   void RegisterIssuesObserver(IssuesObserver* observer) override;
   void UnregisterIssuesObserver(IssuesObserver* observer) override;
-  void RegisterPresentationSessionMessagesObserver(
-      PresentationSessionMessagesObserver* observer) override;
-  void UnregisterPresentationSessionMessagesObserver(
-      PresentationSessionMessagesObserver* observer) override;
+  void RegisterRouteMessageObserver(RouteMessageObserver* observer) override;
+  void UnregisterRouteMessageObserver(RouteMessageObserver* observer) override;
 
   base::android::ScopedJavaGlobalRef<jobject> java_media_router_;
 
-  using MediaSinkObservers = base::ScopedPtrHashMap<
+  using MediaSinkObservers = std::unordered_map<
       MediaSource::Id,
       std::unique_ptr<base::ObserverList<MediaSinksObserver>>>;
   MediaSinkObservers sinks_observers_;
@@ -162,20 +160,19 @@ class MediaRouterAndroid : public MediaRouterBase {
     std::vector<MediaRouteResponseCallback> callbacks;
   };
 
-  using MediaRouteRequests =
-      IDMap<MediaRouteRequest, IDMapOwnPointer>;
+  using MediaRouteRequests = IDMap<std::unique_ptr<MediaRouteRequest>>;
   MediaRouteRequests route_requests_;
 
   using MediaRoutes = std::vector<MediaRoute>;
   MediaRoutes active_routes_;
 
-  using SendMessageCallbacks = IDMap<SendRouteMessageCallback, IDMapOwnPointer>;
+  using SendMessageCallbacks = IDMap<std::unique_ptr<SendRouteMessageCallback>>;
   SendMessageCallbacks message_callbacks_;
 
-  using MessagesObservers = base::ScopedPtrHashMap<
+  using MessageObservers = std::unordered_map<
       MediaRoute::Id,
-      std::unique_ptr<base::ObserverList<PresentationSessionMessagesObserver>>>;
-  MessagesObservers messages_observers_;
+      std::unique_ptr<base::ObserverList<RouteMessageObserver>>>;
+  MessageObservers message_observers_;
 
   DISALLOW_COPY_AND_ASSIGN(MediaRouterAndroid);
 };

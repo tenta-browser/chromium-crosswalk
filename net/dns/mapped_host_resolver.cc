@@ -23,29 +23,25 @@ int MappedHostResolver::Resolve(const RequestInfo& original_info,
                                 RequestPriority priority,
                                 AddressList* addresses,
                                 const CompletionCallback& callback,
-                                RequestHandle* out_req,
-                                const BoundNetLog& net_log) {
+                                std::unique_ptr<Request>* request,
+                                const NetLogWithSource& net_log) {
   RequestInfo info = original_info;
   int rv = ApplyRules(&info);
   if (rv != OK)
     return rv;
 
-  return impl_->Resolve(info, priority, addresses, callback, out_req, net_log);
+  return impl_->Resolve(info, priority, addresses, callback, request, net_log);
 }
 
 int MappedHostResolver::ResolveFromCache(const RequestInfo& original_info,
                                          AddressList* addresses,
-                                         const BoundNetLog& net_log) {
+                                         const NetLogWithSource& net_log) {
   RequestInfo info = original_info;
   int rv = ApplyRules(&info);
   if (rv != OK)
     return rv;
 
   return impl_->ResolveFromCache(info, addresses, net_log);
-}
-
-void MappedHostResolver::CancelRequest(RequestHandle req) {
-  impl_->CancelRequest(req);
 }
 
 void MappedHostResolver::SetDnsClientEnabled(bool enabled) {
@@ -58,6 +54,14 @@ HostCache* MappedHostResolver::GetHostCache() {
 
 std::unique_ptr<base::Value> MappedHostResolver::GetDnsConfigAsValue() const {
   return impl_->GetDnsConfigAsValue();
+}
+
+void MappedHostResolver::SetDefaultAddressFamily(AddressFamily address_family) {
+  impl_->SetDefaultAddressFamily(address_family);
+}
+
+AddressFamily MappedHostResolver::GetDefaultAddressFamily() const {
+  return impl_->GetDefaultAddressFamily();
 }
 
 int MappedHostResolver::ApplyRules(RequestInfo* info) const {

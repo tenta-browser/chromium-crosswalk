@@ -4,8 +4,10 @@
 
 #include "remoting/protocol/client_video_dispatcher.h"
 
+#include <memory>
+#include <vector>
+
 #include "base/bind.h"
-#include "base/memory/scoped_vector.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "remoting/base/buffered_socket_writer.h"
@@ -34,6 +36,7 @@ class ClientVideoDispatcherTest : public testing::Test,
 
   // ChannelDispatcherBase::EventHandler interface.
   void OnChannelInitialized(ChannelDispatcherBase* channel_dispatcher) override;
+  void OnChannelClosed(ChannelDispatcherBase* channel_dispatcher) override;
 
  protected:
   void OnChannelError(int error);
@@ -57,10 +60,10 @@ class ClientVideoDispatcherTest : public testing::Test,
   MessageReader reader_;
   BufferedSocketWriter writer_;
 
-  ScopedVector<VideoPacket> video_packets_;
+  std::vector<std::unique_ptr<VideoPacket>> video_packets_;
   std::vector<base::Closure> packet_done_callbacks_;
 
-  ScopedVector<VideoAck> ack_messages_;
+  std::vector<std::unique_ptr<VideoAck>> ack_messages_;
 };
 
 ClientVideoDispatcherTest::ClientVideoDispatcherTest()
@@ -87,13 +90,19 @@ ClientVideoDispatcherTest::ClientVideoDispatcherTest()
 void ClientVideoDispatcherTest::ProcessVideoPacket(
     std::unique_ptr<VideoPacket> video_packet,
     const base::Closure& done) {
-  video_packets_.push_back(video_packet.release());
+  video_packets_.push_back(std::move(video_packet));
   packet_done_callbacks_.push_back(done);
 }
 
 void ClientVideoDispatcherTest::OnChannelInitialized(
     ChannelDispatcherBase* channel_dispatcher) {
   initialized_ = true;
+}
+
+void ClientVideoDispatcherTest::OnChannelClosed(
+    ChannelDispatcherBase* channel_dispatcher) {
+  // Don't expect channels to be closed.
+  FAIL();
 }
 
 void ClientVideoDispatcherTest::OnChannelError(int error) {
@@ -105,7 +114,7 @@ void ClientVideoDispatcherTest::OnMessageReceived(
     std::unique_ptr<CompoundBuffer> buffer) {
   std::unique_ptr<VideoAck> ack = ParseMessage<VideoAck>(buffer.get());
   EXPECT_TRUE(ack);
-  ack_messages_.push_back(ack.release());
+  ack_messages_.push_back(std::move(ack));
 }
 
 void ClientVideoDispatcherTest::OnReadError(int error) {

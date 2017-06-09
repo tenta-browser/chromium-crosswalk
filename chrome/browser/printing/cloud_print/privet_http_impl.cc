@@ -18,15 +18,16 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "chrome/browser/extensions/api/gcd_private/privet_v3_context_getter.h"
 #include "chrome/browser/printing/cloud_print/privet_constants.h"
 #include "chrome/common/chrome_content_client.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/cloud_print/cloud_print_constants.h"
 #include "net/base/url_util.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
+#include "printing/features/features.h"
 #include "url/gurl.h"
 
-#if defined(ENABLE_PRINT_PREVIEW)
+#if BUILDFLAG(ENABLE_PRINT_PREVIEW)
 #include "chrome/browser/printing/pwg_raster_converter.h"
 #include "components/cloud_devices/common/printer_description.h"
 #include "printing/pdf_render_settings.h"
@@ -44,7 +45,7 @@ const char kPrivetRegisterUserArgName[] = "user";
 
 const int kPrivetCancelationTimeoutSeconds = 3;
 
-#if defined(ENABLE_PRINT_PREVIEW)
+#if BUILDFLAG(ENABLE_PRINT_PREVIEW)
 const char kPrivetURLKeyUserName[] = "user_name";
 const char kPrivetURLKeyClientName[] = "client_name";
 const char kPrivetURLKeyJobname[] = "job_name";
@@ -394,7 +395,7 @@ void PrivetJSONOperationImpl::OnNeedPrivetToken(
   privet_client_->RefreshPrivetToken(callback);
 }
 
-#if defined(ENABLE_PRINT_PREVIEW)
+#if BUILDFLAG(ENABLE_PRINT_PREVIEW)
 PrivetLocalPrintOperationImpl::PrivetLocalPrintOperationImpl(
     PrivetHTTPClient* privet_client,
     PrivetLocalPrintOperation::Delegate* delegate)
@@ -725,9 +726,36 @@ std::unique_ptr<PrivetURLFetcher> PrivetHTTPClientImpl::CreateURLFetcher(
   replacements.SetHostStr(host);
   std::string port = base::UintToString(host_port_.port());
   replacements.SetPortStr(port);
+
+  net::NetworkTrafficAnnotationTag traffic_annotation =
+      net::DefineNetworkTrafficAnnotation("cloud_print", R"(
+        semantics {
+          sender: "Cloud Print"
+          description:
+            "Cloud Print local printing uses these requests to query "
+            "information from printers on local network and send print jobs to "
+            "them."
+          trigger:
+            "Print Preview; New printer on network; chrome://devices/"
+          data:
+            "Printer information, settings and document for printing."
+          destination: OTHER
+        }
+        policy {
+          cookies_allowed: false
+          setting:
+            "Users can enable or disable background requests by 'Show "
+            "notifications when new printers are detected on the network' in "
+            "Chrome's settings under Advanced Settings, Google Cloud Print. "
+            "User triggered requests, like from print preview or "
+            "chrome://devices/ cannot be disabled."
+          }
+          policy_exception_justification:
+            "Not implemented, it's good to do so."
+        })");
   return std::unique_ptr<PrivetURLFetcher>(
       new PrivetURLFetcher(url.ReplaceComponents(replacements), request_type,
-                           context_getter_, delegate));
+                           context_getter_, traffic_annotation, delegate));
 }
 
 void PrivetHTTPClientImpl::RefreshPrivetToken(
@@ -797,7 +825,7 @@ PrivetV1HTTPClientImpl::CreateCapabilitiesOperation(
 std::unique_ptr<PrivetLocalPrintOperation>
 PrivetV1HTTPClientImpl::CreateLocalPrintOperation(
     PrivetLocalPrintOperation::Delegate* delegate) {
-#if defined(ENABLE_PRINT_PREVIEW)
+#if BUILDFLAG(ENABLE_PRINT_PREVIEW)
   return std::unique_ptr<PrivetLocalPrintOperation>(
       new PrivetLocalPrintOperationImpl(info_client(), delegate));
 #else

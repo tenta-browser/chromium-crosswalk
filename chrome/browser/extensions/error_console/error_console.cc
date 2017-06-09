@@ -15,7 +15,6 @@
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/error_console/error_console_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/common/extensions/features/feature_channel.h"
 #include "chrome/common/pref_names.h"
 #include "components/crx_file/id_util.h"
 #include "components/prefs/pref_service.h"
@@ -30,6 +29,7 @@
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_set.h"
 #include "extensions/common/feature_switch.h"
+#include "extensions/common/features/feature_channel.h"
 
 namespace extensions {
 
@@ -75,7 +75,8 @@ ErrorConsole::ErrorConsole(Profile* profile)
 }
 
 ErrorConsole::~ErrorConsole() {
-  FOR_EACH_OBSERVER(Observer, observers_, OnErrorConsoleDestroyed());
+  for (auto& observer : observers_)
+    observer.OnErrorConsoleDestroyed();
 }
 
 // static
@@ -100,9 +101,8 @@ void ErrorConsole::SetReportingForExtension(const std::string& extension_id,
   else
     mask &= ~(1 << type);
 
-  prefs_->UpdateExtensionPref(extension_id,
-                              kStoreExtensionErrorsPref,
-                              new base::FundamentalValue(mask));
+  prefs_->UpdateExtensionPref(extension_id, kStoreExtensionErrorsPref,
+                              new base::Value(mask));
 }
 
 void ErrorConsole::SetReportingAllForExtension(
@@ -113,9 +113,8 @@ void ErrorConsole::SetReportingAllForExtension(
 
   int mask = enabled ? (1 << ExtensionError::NUM_ERROR_TYPES) - 1 : 0;
 
-  prefs_->UpdateExtensionPref(extension_id,
-                              kStoreExtensionErrorsPref,
-                              new base::FundamentalValue(mask));
+  prefs_->UpdateExtensionPref(extension_id, kStoreExtensionErrorsPref,
+                              new base::Value(mask));
 }
 
 bool ErrorConsole::IsReportingEnabledForExtension(
@@ -146,13 +145,15 @@ void ErrorConsole::ReportError(std::unique_ptr<ExtensionError> error) {
     return;
 
   const ExtensionError* weak_error = errors_.AddError(std::move(error));
-  FOR_EACH_OBSERVER(Observer, observers_, OnErrorAdded(weak_error));
+  for (auto& observer : observers_)
+    observer.OnErrorAdded(weak_error);
 }
 
 void ErrorConsole::RemoveErrors(const ErrorMap::Filter& filter) {
   std::set<std::string> affected_ids;
   errors_.RemoveErrors(filter, &affected_ids);
-  FOR_EACH_OBSERVER(Observer, observers_, OnErrorsRemoved(affected_ids));
+  for (auto& observer : observers_)
+    observer.OnErrorsRemoved(affected_ids);
 }
 
 const ErrorList& ErrorConsole::GetErrorsForExtension(

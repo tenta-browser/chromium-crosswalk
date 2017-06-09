@@ -78,7 +78,8 @@ class InterstitialPageImpl::InterstitialPageRVHDelegateView
                      WebDragOperationsMask operations_allowed,
                      const gfx::ImageSkia& image,
                      const gfx::Vector2d& image_offset,
-                     const DragEventSourceInfo& event_info) override;
+                     const DragEventSourceInfo& event_info,
+                     RenderWidgetHostImpl* source_rwh) override;
   void UpdateDragCursor(WebDragOperation operation) override;
   void GotFocus() override;
   void TakeFocus(bool reverse) override;
@@ -151,7 +152,6 @@ InterstitialPageImpl::InterstitialPageImpl(
       url_(url),
       new_navigation_(new_navigation),
       should_discard_pending_nav_entry_(new_navigation),
-      reload_on_dont_proceed_(false),
       enabled_(true),
       action_taken_(NO_ACTION),
       render_view_host_(NULL),
@@ -235,7 +235,8 @@ void InterstitialPageImpl::Show() {
 
     controller_->SetTransientEntry(std::move(entry));
 
-    static_cast<WebContentsImpl*>(web_contents_)->DidChangeVisibleSSLState();
+    static_cast<WebContentsImpl*>(web_contents_)
+        ->DidChangeVisibleSecurityState();
   }
 
   DCHECK(!render_view_host_);
@@ -245,8 +246,7 @@ void InterstitialPageImpl::Show() {
   GURL data_url = GURL("data:text/html;charset=utf-8," +
                        net::EscapePath(delegate_->GetHTMLContents()));
   frame_tree_.root()->current_frame_host()->NavigateToInterstitialURL(data_url);
-  frame_tree_.root()->current_frame_host()->SetAccessibilityMode(
-      GetAccessibilityMode());
+  frame_tree_.root()->current_frame_host()->UpdateAccessibilityMode();
 
   notification_registrar_.Add(this, NOTIFICATION_NAV_ENTRY_PENDING,
       Source<NavigationController>(controller_));
@@ -298,13 +298,10 @@ void InterstitialPageImpl::Hide() {
   controller_->delegate()->DetachInterstitialPage();
   // Let's revert to the original title if necessary.
   NavigationEntry* entry = controller_->GetVisibleEntry();
-  if (entry && !new_navigation_ && should_revert_web_contents_title_) {
-    entry->SetTitle(original_web_contents_title_);
-    controller_->delegate()->NotifyNavigationStateChanged(
-        INVALIDATE_TYPE_TITLE);
-  }
+  if (entry && !new_navigation_ && should_revert_web_contents_title_)
+    web_contents_->UpdateTitleForEntry(entry, original_web_contents_title_);
 
-  static_cast<WebContentsImpl*>(web_contents_)->DidChangeVisibleSSLState();
+  static_cast<WebContentsImpl*>(web_contents_)->DidChangeVisibleSecurityState();
 
   InterstitialPageMap::iterator iter =
       g_web_contents_to_interstitial_page->find(web_contents_);
@@ -351,8 +348,9 @@ void InterstitialPageImpl::Observe(
   }
 }
 
-bool InterstitialPageImpl::OnMessageReceived(RenderFrameHost* render_frame_host,
-                                             const IPC::Message& message) {
+bool InterstitialPageImpl::OnMessageReceived(
+    RenderFrameHostImpl* render_frame_host,
+    const IPC::Message& message) {
   if (render_frame_host->GetRenderViewHost() != render_view_host_) {
     DCHECK(!render_view_host_)
         << "We expect an interstitial page to have only a single RVH";
@@ -360,7 +358,8 @@ bool InterstitialPageImpl::OnMessageReceived(RenderFrameHost* render_frame_host,
   }
 
   bool handled = true;
-  IPC_BEGIN_MESSAGE_MAP(InterstitialPageImpl, message)
+  IPC_BEGIN_MESSAGE_MAP_WITH_PARAM(InterstitialPageImpl, message,
+                                   render_frame_host)
     IPC_MESSAGE_HANDLER(FrameHostMsg_DomOperationResponse,
                         OnDomOperationResponse)
     IPC_MESSAGE_UNHANDLED(handled = false)
@@ -369,8 +368,9 @@ bool InterstitialPageImpl::OnMessageReceived(RenderFrameHost* render_frame_host,
   return handled;
 }
 
-bool InterstitialPageImpl::OnMessageReceived(RenderViewHost* render_view_host,
-                                             const IPC::Message& message) {
+bool InterstitialPageImpl::OnMessageReceived(
+    RenderViewHostImpl* render_view_host,
+    const IPC::Message& message) {
   return false;
 }
 
@@ -384,7 +384,6 @@ void InterstitialPageImpl::RenderFrameCreated(
 
 void InterstitialPageImpl::UpdateTitle(
     RenderFrameHost* render_frame_host,
-    int32_t page_id,
     const base::string16& title,
     base::i18n::TextDirection title_direction) {
   if (!enabled())
@@ -411,8 +410,7 @@ void InterstitialPageImpl::UpdateTitle(
   }
   // TODO(evan): make use of title_direction.
   // http://code.google.com/p/chromium/issues/detail?id=27094
-  entry->SetTitle(title);
-  controller_->delegate()->NotifyNavigationStateChanged(INVALIDATE_TYPE_TITLE);
+  web_contents_->UpdateTitleForEntry(entry, title);
 }
 
 InterstitialPage* InterstitialPageImpl::GetAsInterstitialPage() {
@@ -528,6 +526,11 @@ void InterstitialPageImpl::DidNavigate(
   }
 }
 
+WebContents* InterstitialPageImpl::OpenURL(const OpenURLParams& params) {
+  NOTREACHED();
+  return nullptr;
+}
+
 RendererPreferences InterstitialPageImpl::GetRendererPrefs(
     BrowserContext* browser_context) const {
   delegate_->OverrideRendererPrefs(&renderer_preferences_);
@@ -581,7 +584,7 @@ RenderViewHostImpl* InterstitialPageImpl::CreateRenderViewHost() {
   int32_t widget_routing_id = site_instance->GetProcess()->GetNextRoutingID();
   frame_tree_.root()->render_manager()->Init(
       site_instance.get(), widget_routing_id, MSG_ROUTING_NONE,
-      widget_routing_id);
+      widget_routing_id, false);
   return frame_tree_.root()->current_frame_host()->render_view_host();
 }
 
@@ -593,13 +596,11 @@ WebContentsView* InterstitialPageImpl::CreateWebContentsView() {
   RenderWidgetHostViewBase* view =
       wcv->CreateViewForWidget(render_view_host_->GetWidget(), false);
   RenderWidgetHostImpl::From(render_view_host_->GetWidget())->SetView(view);
-  render_view_host_->AllowBindings(BINDINGS_POLICY_DOM_AUTOMATION);
+  render_view_host_->GetMainFrame()->AllowBindings(
+      BINDINGS_POLICY_DOM_AUTOMATION);
 
-  int32_t max_page_id = web_contents()->GetMaxPageIDForSiteInstance(
-      render_view_host_->GetSiteInstance());
   render_view_host_->CreateRenderView(MSG_ROUTING_NONE,
                                       MSG_ROUTING_NONE,
-                                      max_page_id,
                                       FrameReplicationState(),
                                       false);
   controller_->delegate()->RenderFrameForInterstitialPageCreated(
@@ -669,14 +670,11 @@ void InterstitialPageImpl::DontProceed() {
 
   if (should_discard_pending_nav_entry_) {
     // Since no navigation happens we have to discard the transient entry
-    // explicitely.  Note that by calling DiscardNonCommittedEntries() we also
+    // explicitly.  Note that by calling DiscardNonCommittedEntries() we also
     // discard the pending entry, which is what we want, since the navigation is
     // cancelled.
     controller_->DiscardNonCommittedEntries();
   }
-
-  if (reload_on_dont_proceed_)
-    controller_->Reload(true);
 
   Hide();
   delegate_->OnDontProceed();
@@ -741,18 +739,23 @@ void InterstitialPageImpl::DontCreateViewForTesting() {
 
 void InterstitialPageImpl::CreateNewWindow(
     SiteInstance* source_site_instance,
-    int32_t route_id,
+    int32_t render_view_route_id,
     int32_t main_frame_route_id,
     int32_t main_frame_widget_route_id,
-    const ViewHostMsg_CreateWindow_Params& params,
+    const mojom::CreateNewWindowParams& params,
     SessionStorageNamespace* session_storage_namespace) {
-  NOTREACHED() << "InterstitialPage does not support showing popups yet.";
+  NOTREACHED() << "InterstitialPage does not support showing popups.";
+}
+
+void InterstitialPageImpl::SetFocusedFrame(FrameTreeNode* node,
+                                           SiteInstance* source) {
+  frame_tree_.SetFocusedFrame(node, source);
 }
 
 void InterstitialPageImpl::CreateNewWidget(int32_t render_process_id,
                                            int32_t route_id,
                                            blink::WebPopupType popup_type) {
-  NOTREACHED() << "InterstitialPage does not support showing drop-downs yet.";
+  NOTREACHED() << "InterstitialPage does not support showing drop-downs.";
 }
 
 void InterstitialPageImpl::CreateNewFullscreenWidget(int32_t render_process_id,
@@ -762,17 +765,17 @@ void InterstitialPageImpl::CreateNewFullscreenWidget(int32_t render_process_id,
 }
 
 void InterstitialPageImpl::ShowCreatedWindow(int process_id,
-                                             int route_id,
+                                             int main_frame_widget_route_id,
                                              WindowOpenDisposition disposition,
                                              const gfx::Rect& initial_rect,
                                              bool user_gesture) {
-  NOTREACHED() << "InterstitialPage does not support showing popups yet.";
+  NOTREACHED() << "InterstitialPage does not support showing popups.";
 }
 
 void InterstitialPageImpl::ShowCreatedWidget(int process_id,
                                              int route_id,
                                              const gfx::Rect& initial_rect) {
-  NOTREACHED() << "InterstitialPage does not support showing drop-downs yet.";
+  NOTREACHED() << "InterstitialPage does not support showing drop-downs.";
 }
 
 void InterstitialPageImpl::ShowCreatedFullscreenWidget(int process_id,
@@ -853,6 +856,7 @@ void InterstitialPageImpl::TakeActionOnResourceDispatcher(
 }
 
 void InterstitialPageImpl::OnDomOperationResponse(
+    RenderFrameHostImpl* source,
     const std::string& json_string) {
   std::string json = json_string;
   // Needed by test code.
@@ -894,8 +898,10 @@ void InterstitialPageImpl::InterstitialPageRVHDelegateView::StartDragging(
     WebDragOperationsMask allowed_operations,
     const gfx::ImageSkia& image,
     const gfx::Vector2d& image_offset,
-    const DragEventSourceInfo& event_info) {
-  interstitial_page_->render_view_host_->DragSourceSystemDragEnded();
+    const DragEventSourceInfo& event_info,
+    RenderWidgetHostImpl* source_rwh) {
+  interstitial_page_->render_view_host_->GetWidget()->
+      DragSourceSystemDragEnded();
   DVLOG(1) << "InterstitialPage does not support dragging yet.";
 }
 
@@ -945,6 +951,26 @@ void InterstitialPageImpl::UnderlyingContentObserver::WebContentsDestroyed() {
 TextInputManager* InterstitialPageImpl::GetTextInputManager() {
   return !web_contents_ ? nullptr : static_cast<WebContentsImpl*>(web_contents_)
                                         ->GetTextInputManager();
+}
+
+void InterstitialPageImpl::GetScreenInfo(ScreenInfo* screen_info) {
+  WebContentsImpl* web_contents_impl =
+      static_cast<WebContentsImpl*>(web_contents_);
+  if (!web_contents_impl) {
+    WebContentsView::GetDefaultScreenInfo(screen_info);
+    return;
+  }
+
+  web_contents_impl->GetView()->GetScreenInfo(screen_info);
+}
+
+void InterstitialPageImpl::UpdateDeviceScaleFactor(double device_scale_factor) {
+  WebContentsImpl* web_contents_impl =
+      static_cast<WebContentsImpl*>(web_contents_);
+  if (!web_contents_impl)
+    return;
+
+  web_contents_impl->UpdateDeviceScaleFactor(device_scale_factor);
 }
 
 }  // namespace content

@@ -23,13 +23,11 @@
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "extensions/browser/api/declarative_content/content_rules_registry.h"
-#include "extensions/common/extension.h"
+#include "extensions/common/extension_id.h"
 
 namespace content {
 class BrowserContext;
 class WebContents;
-struct FrameNavigateParams;
-struct LoadCommittedDetails;
 }
 
 namespace extensions {
@@ -69,10 +67,9 @@ class ChromeContentRulesRegistry
   // ContentRulesRegistry:
   void MonitorWebContentsForRuleEvaluation(
       content::WebContents* contents) override;
-  void DidNavigateMainFrame(
+  void DidFinishNavigation(
       content::WebContents* tab,
-      const content::LoadCommittedDetails& details,
-      const content::FrameNavigateParams& params) override;
+      content::NavigationHandle* navigation_handle) override;
 
   // RulesRegistry:
   std::string AddRulesImpl(

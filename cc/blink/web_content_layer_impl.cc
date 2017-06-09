@@ -11,7 +11,6 @@
 #include "cc/base/switches.h"
 #include "cc/blink/web_display_item_list_impl.h"
 #include "cc/layers/picture_layer.h"
-#include "cc/playback/display_item_list_settings.h"
 #include "third_party/WebKit/public/platform/WebContentLayerClient.h"
 #include "third_party/WebKit/public/platform/WebFloatPoint.h"
 #include "third_party/WebKit/public/platform/WebFloatRect.h"
@@ -22,12 +21,6 @@
 using cc::PictureLayer;
 
 namespace cc_blink {
-
-static bool UseCachedPictureRaster() {
-  static bool use = !base::CommandLine::ForCurrentProcess()->HasSwitch(
-      cc::switches::kDisableCachedPictureRaster);
-  return use;
-}
 
 static blink::WebContentLayerClient::PaintingControlSetting
 PaintingControlToWeb(
@@ -45,6 +38,8 @@ PaintingControlToWeb(
       return blink::WebContentLayerClient::DisplayListPaintingDisabled;
     case cc::ContentLayerClient::SUBSEQUENCE_CACHING_DISABLED:
       return blink::WebContentLayerClient::SubsequenceCachingDisabled;
+    case cc::ContentLayerClient::PARTIAL_INVALIDATION:
+      return blink::WebContentLayerClient::PartialInvalidation;
   }
   NOTREACHED();
   return blink::WebContentLayerClient::PaintDefaultBehavior;
@@ -52,7 +47,7 @@ PaintingControlToWeb(
 
 WebContentLayerImpl::WebContentLayerImpl(blink::WebContentLayerClient* client)
     : client_(client) {
-  layer_ = base::WrapUnique(new WebLayerImpl(PictureLayer::Create(this)));
+  layer_ = base::MakeUnique<WebLayerImpl>(PictureLayer::Create(this));
   layer_->layer()->SetIsDrawable(true);
 }
 
@@ -71,11 +66,7 @@ gfx::Rect WebContentLayerImpl::PaintableRegion() {
 scoped_refptr<cc::DisplayItemList>
 WebContentLayerImpl::PaintContentsToDisplayList(
     cc::ContentLayerClient::PaintingControlSetting painting_control) {
-  cc::DisplayItemListSettings settings;
-  settings.use_cached_picture = UseCachedPictureRaster();
-
-  scoped_refptr<cc::DisplayItemList> display_list =
-      cc::DisplayItemList::Create(PaintableRegion(), settings);
+  auto display_list = make_scoped_refptr(new cc::DisplayItemList);
   if (client_) {
     WebDisplayItemListImpl list(display_list.get());
     client_->paintContents(&list, PaintingControlToWeb(painting_control));

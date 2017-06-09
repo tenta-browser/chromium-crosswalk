@@ -2,11 +2,13 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//mojo/public/mojo_application.gni")
-import("//mojo/public/mojo_application_manifest.gni")
+import("//services/catalog/public/tools/catalog.gni")
+import("//services/service_manager/public/cpp/service.gni")
+import("//services/service_manager/public/service_manifest.gni")
+import("//services/service_manager/public/tools/test/service_test.gni")
 import("//testing/test.gni")
 
-source_set("lib") {
+static_library("lib") {
   sources = [
     "env_mojo.cc",
     "env_mojo.h",
@@ -18,18 +20,21 @@ source_set("lib") {
     "leveldb_service_impl.h",
   ]
 
-  deps = [
+  public_deps = [
     "//components/filesystem/public/interfaces",
     "//components/leveldb/public/cpp",
     "//components/leveldb/public/interfaces",
+  ]
+
+  deps = [
     "//mojo/common",
     "//mojo/public/cpp/system",
-    "//services/shell/public/cpp",
+    "//services/service_manager/public/cpp",
     "//third_party/leveldatabase",
   ]
 }
 
-mojo_native_application("leveldb") {
+service("leveldb") {
   sources = [
     "leveldb_app.cc",
     "leveldb_app.h",
@@ -42,25 +47,23 @@ mojo_native_application("leveldb") {
     "//mojo/common",
     "//mojo/public/cpp/bindings",
     "//mojo/public/cpp/system",
-    "//services/shell/public/cpp",
+    "//services/service_manager/public/cpp",
     "//services/tracing/public/cpp",
-  ]
-
-  data_deps = [
-    ":manifest",
   ]
 }
 
-mojo_application_manifest("manifest") {
-  application_name = "leveldb"
+service_manifest("manifest") {
+  name = "leveldb"
   source = "manifest.json"
 }
 
-test("leveldb_service_unittests") {
+service_test("leveldb_service_unittests") {
   sources = [
     "leveldb_service_unittest.cc",
     "remote_iterator_unittest.cc",
   ]
+
+  catalog = ":leveldb_service_unittests_catalog"
 
   deps = [
     "//base",
@@ -70,21 +73,26 @@ test("leveldb_service_unittests") {
     "//mojo/common",
     "//mojo/public/cpp/bindings",
     "//mojo/public/cpp/system",
-    "//services/shell/public/cpp:shell_test_support",
-    "//services/shell/public/cpp:sources",
-    "//services/shell/public/cpp/test:run_all_shelltests",
+    "//services/service_manager/public/cpp:service_test_support",
+    "//services/service_manager/public/cpp:sources",
     "//third_party/leveldatabase",
   ]
 
   data_deps = [
-    ":test_manifest",
     ":leveldb",
     "//components/filesystem:filesystem",
   ]
 }
 
-mojo_application_manifest("test_manifest") {
-  type = "exe"
-  application_name = "leveldb_service_unittests"
+service_manifest("test_manifest") {
+  name = "leveldb_service_unittests"
   source = "test_manifest.json"
+}
+
+catalog("leveldb_service_unittests_catalog") {
+  embedded_services = [ ":test_manifest" ]
+  standalone_services = [
+    ":manifest",
+    "//components/filesystem:manifest",
+  ]
 }

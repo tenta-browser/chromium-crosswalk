@@ -40,6 +40,7 @@
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/safe_json/json_sanitizer.h"
+#include "components/update_client/update_client_errors.h"
 #include "content/public/browser/browser_thread.h"
 
 namespace component_updater {
@@ -250,10 +251,11 @@ class SupervisedUserWhitelistComponentInstallerTraits
   // ComponentInstallerTraits overrides:
   bool VerifyInstallation(const base::DictionaryValue& manifest,
                           const base::FilePath& install_dir) const override;
-  bool CanAutoUpdate() const override;
+  bool SupportsGroupPolicyEnabledComponentUpdates() const override;
   bool RequiresNetworkEncryption() const override;
-  bool OnCustomInstall(const base::DictionaryValue& manifest,
-                       const base::FilePath& install_dir) override;
+  update_client::CrxInstaller::Result OnCustomInstall(
+      const base::DictionaryValue& manifest,
+      const base::FilePath& install_dir) override;
   void ComponentReady(const base::Version& version,
                       const base::FilePath& install_dir,
                       std::unique_ptr<base::DictionaryValue> manifest) override;
@@ -261,6 +263,7 @@ class SupervisedUserWhitelistComponentInstallerTraits
   void GetHash(std::vector<uint8_t>* hash) const override;
   std::string GetName() const override;
   update_client::InstallerAttributes GetInstallerAttributes() const override;
+  std::vector<std::string> GetMimeTypes() const override;
 
   std::string crx_id_;
   std::string name_;
@@ -277,8 +280,9 @@ bool SupervisedUserWhitelistComponentInstallerTraits::VerifyInstallation(
   return base::PathExists(GetRawWhitelistPath(manifest, install_dir));
 }
 
-bool SupervisedUserWhitelistComponentInstallerTraits::CanAutoUpdate() const {
-  return true;
+bool SupervisedUserWhitelistComponentInstallerTraits::
+    SupportsGroupPolicyEnabledComponentUpdates() const {
+  return false;
 }
 
 bool SupervisedUserWhitelistComponentInstallerTraits::
@@ -286,11 +290,16 @@ bool SupervisedUserWhitelistComponentInstallerTraits::
   return true;
 }
 
-bool SupervisedUserWhitelistComponentInstallerTraits::OnCustomInstall(
+update_client::CrxInstaller::Result
+SupervisedUserWhitelistComponentInstallerTraits::OnCustomInstall(
     const base::DictionaryValue& manifest,
     const base::FilePath& install_dir) {
   // Delete the existing sanitized whitelist.
-  return base::DeleteFile(GetSanitizedWhitelistPath(crx_id_), false);
+  const bool success =
+      base::DeleteFile(GetSanitizedWhitelistPath(crx_id_), false);
+  return update_client::CrxInstaller::Result(
+      success ? update_client::InstallError::NONE
+              : update_client::InstallError::GENERIC_ERROR);
 }
 
 void SupervisedUserWhitelistComponentInstallerTraits::ComponentReady(
@@ -324,6 +333,11 @@ update_client::InstallerAttributes
 SupervisedUserWhitelistComponentInstallerTraits::GetInstallerAttributes()
     const {
   return update_client::InstallerAttributes();
+}
+
+std::vector<std::string>
+SupervisedUserWhitelistComponentInstallerTraits::GetMimeTypes() const {
+  return std::vector<std::string>();
 }
 
 class SupervisedUserWhitelistInstallerImpl
@@ -535,8 +549,8 @@ void SupervisedUserWhitelistInstallerImpl::RegisterWhitelist(
       clients = new base::ListValue;
       whitelist_dict->Set(kClients, clients);
     }
-    bool success =
-        clients->AppendIfNotPresent(new base::StringValue(client_id));
+    bool success = clients->AppendIfNotPresent(
+        base::MakeUnique<base::StringValue>(client_id));
     DCHECK(success);
   }
 
@@ -635,8 +649,8 @@ std::vector<uint8_t> SupervisedUserWhitelistInstaller::GetHashFromCrxId(
 void SupervisedUserWhitelistInstaller::TriggerComponentUpdate(
     OnDemandUpdater* updater,
     const std::string& crx_id) {
-  const bool result = updater->OnDemandUpdate(crx_id);
-  DCHECK(result);
+  // TODO(sorin): use a callback to check the result (crbug.com/639189).
+  updater->OnDemandUpdate(crx_id, component_updater::Callback());
 }
 
 }  // namespace component_updater

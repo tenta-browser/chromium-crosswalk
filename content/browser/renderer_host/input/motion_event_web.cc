@@ -10,8 +10,8 @@
 #include <cmath>
 
 #include "base/logging.h"
-#include "content/browser/renderer_host/input/web_input_event_util.h"
 #include "content/common/input/web_touch_event_traits.h"
+#include "ui/events/blink/blink_event_util.h"
 
 using blink::WebInputEvent;
 using blink::WebPointerProperties;
@@ -23,7 +23,7 @@ namespace {
 
 ui::MotionEvent::Action GetActionFrom(const WebTouchEvent& event) {
   DCHECK(event.touchesLength);
-  switch (event.type) {
+  switch (event.type()) {
     case WebInputEvent::TouchStart:
       if (WebTouchEventTraits::AllTouchPointsHaveState(
               event, WebTouchPoint::StatePressed))
@@ -188,7 +188,7 @@ float MotionEventWeb::GetTilt(size_t pointer_index) const {
 
 base::TimeTicks MotionEventWeb::GetEventTime() const {
   return base::TimeTicks() +
-         base::TimeDelta::FromMicroseconds(event_.timeStampSeconds *
+         base::TimeDelta::FromMicroseconds(event_.timeStampSeconds() *
                                            base::Time::kMicrosecondsPerSecond);
 }
 
@@ -205,6 +205,8 @@ ui::MotionEvent::ToolType MotionEventWeb::GetToolType(
       return TOOL_TYPE_MOUSE;
     case WebPointerProperties::PointerType::Pen:
       return TOOL_TYPE_STYLUS;
+    case WebPointerProperties::PointerType::Eraser:
+      return TOOL_TYPE_ERASER;
     case WebPointerProperties::PointerType::Touch:
       return TOOL_TYPE_FINGER;
   }
@@ -217,7 +219,7 @@ int MotionEventWeb::GetButtonState() const {
 }
 
 int MotionEventWeb::GetFlags() const {
-  return WebEventModifiersToEventFlags(event_.modifiers);
+  return ui::WebEventModifiersToEventFlags(event_.modifiers());
 }
 
 }  // namespace content

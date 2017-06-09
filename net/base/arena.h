@@ -16,6 +16,16 @@ namespace net {
 // Not thread-safe.
 class NET_EXPORT_PRIVATE UnsafeArena {
  public:
+  class Status {
+   private:
+    friend class UnsafeArena;
+    size_t bytes_allocated_;
+
+   public:
+    Status() : bytes_allocated_(0) {}
+    size_t bytes_allocated() const { return bytes_allocated_; }
+  };
+
   // Blocks allocated by this arena will be at least |block_size| bytes.
   explicit UnsafeArena(size_t block_size);
   ~UnsafeArena();
@@ -29,13 +39,17 @@ class NET_EXPORT_PRIVATE UnsafeArena {
   UnsafeArena(UnsafeArena&& other);
   UnsafeArena& operator=(UnsafeArena&& other);
 
+  char* Alloc(size_t size);
+  char* Realloc(char* original, size_t oldsize, size_t newsize);
   char* Memdup(const char* data, size_t size);
 
   // If |data| and |size| describe the most recent allocation made from this
   // arena, the memory is reclaimed. Otherwise, this method is a no-op.
-  void Free(void* data, size_t size);
+  void Free(char* data, size_t size);
 
   void Reset();
+
+  Status status() const { return status_; }
 
  private:
   struct Block {
@@ -55,6 +69,7 @@ class NET_EXPORT_PRIVATE UnsafeArena {
 
   size_t block_size_;
   std::vector<Block> blocks_;
+  Status status_;
 };
 
 }  // namespace net

@@ -4,11 +4,9 @@
 
 #include "courgette/disassembler_win32.h"
 
-#include <stddef.h>
-#include <stdint.h>
-
 #include <algorithm>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "courgette/assembly_program.h"
 #include "courgette/courgette.h"
@@ -19,7 +17,7 @@
 
 namespace courgette {
 
-DisassemblerWin32::DisassemblerWin32(const void* start, size_t length)
+DisassemblerWin32::DisassemblerWin32(const uint8_t* start, size_t length)
     : Disassembler(start, length) {}
 
 RVA DisassemblerWin32::FileOffsetToRVA(FileOffset file_offset) const {
@@ -223,25 +221,24 @@ bool DisassemblerWin32::ParseHeader() {
   return Good();
 }
 
-bool DisassemblerWin32::Disassemble(AssemblyProgram* target) {
+bool DisassemblerWin32::Disassemble(AssemblyProgram* program) {
   if (!ok())
     return false;
-
-  target->set_image_base(image_base());
 
   if (!ParseAbs32Relocs())
     return false;
 
   ParseRel32RelocsFromSections();
 
-  PrecomputeLabels(target);
-  RemoveUnusedRel32Locations(target);
+  PrecomputeLabels(program);
+  RemoveUnusedRel32Locations(program);
 
-  if (!ParseFile(target))
+  if (!program->GenerateInstructions(
+          base::Bind(&DisassemblerWin32::ParseFile, base::Unretained(this)))) {
     return false;
+  }
 
-  target->DefaultAssignIndexes();
-
+  program->DefaultAssignIndexes();
   return true;
 }
 
@@ -338,56 +335,32 @@ std::string DisassemblerWin32::SectionName(const Section* section) {
   return name;
 }
 
-RvaVisitor* DisassemblerWin32::CreateAbs32TargetRvaVisitor() {
-  return new RvaVisitor_Abs32(abs32_locations_, *this);
-}
+// static
+bool DisassemblerWin32::QuickDetect(const uint8_t* start,
+                                    size_t length,
+                                    uint16_t magic) {
+  if (length < kOffsetOfFileAddressOfNewExeHeader + 4 /* size */)
+    return false;
 
-RvaVisitor* DisassemblerWin32::CreateRel32TargetRvaVisitor() {
-  return new RvaVisitor_Rel32(rel32_locations_, *this);
-}
+  // Have 'MZ' magic for a DOS header?
+  if (start[0] != 'M' || start[1] != 'Z')
+    return false;
 
-void DisassemblerWin32::RemoveUnusedRel32Locations(
-    AssemblyProgram* program) {
-  auto cond = [this, program](RVA rva) -> bool {
-    // + 4 since offset is relative to start of next instruction.
-    RVA target_rva = rva + 4 + Read32LittleEndian(RVAToPointer(rva));
-    return program->FindRel32Label(target_rva) == nullptr;
-  };
-  rel32_locations_.erase(
-      std::remove_if(rel32_locations_.begin(), rel32_locations_.end(), cond),
-      rel32_locations_.end());
-}
+  FileOffset file_offset = static_cast<FileOffset>(
+      ReadU32(start, kOffsetOfFileAddressOfNewExeHeader));
+  if (file_offset >= length || file_offset % 8 != 0)
+    return false;
+  const uint8_t* const pe_header = start + file_offset;
+  const size_t kMinPEHeaderSize = 4 /*signature*/ + kSizeOfCoffHeader;
+  if (pe_header <= start || pe_header + kMinPEHeaderSize >= start + length)
+    return false;
 
-CheckBool DisassemblerWin32::ParseFile(AssemblyProgram* program) {
-  // Walk all the bytes in the file, whether or not in a section.
-  FileOffset file_offset = 0;
-  while (file_offset < length()) {
-    const Section* section = FindNextSection(file_offset);
-    if (section == nullptr) {
-      // No more sections. There should not be extra stuff following last
-      // section.
-      //   ParseNonSectionFileRegion(file_offset, pe_info().length(), program);
-      break;
-    }
-    if (file_offset < section->file_offset_of_raw_data) {
-      FileOffset section_start_offset = section->file_offset_of_raw_data;
-      if (!ParseNonSectionFileRegion(file_offset, section_start_offset,
-                                     program)) {
-        return false;
-      }
-
-      file_offset = section_start_offset;
-    }
-    FileOffset end = file_offset + section->size_of_raw_data;
-    if (!ParseFileRegion(section, file_offset, end, program))
-      return false;
-    file_offset = end;
-  }
-
-#if COURGETTE_HISTOGRAM_TARGETS
-  HistogramTargets("abs32 relocs", abs32_target_rvas_);
-  HistogramTargets("rel32 relocs", rel32_target_rvas_);
-#endif
+  const uint8_t* optional_header = pe_header + 4 + kSizeOfCoffHeader;
+  // Check we can read the magic.
+  if (optional_header + 2 >= start + length)
+    return false;
+  if (magic != ReadU16(optional_header, 0))
+    return false;
 
   return true;
 }
@@ -446,16 +419,71 @@ void DisassemblerWin32::ParseRel32RelocsFromSections() {
 #endif
 }
 
+RvaVisitor* DisassemblerWin32::CreateAbs32TargetRvaVisitor() {
+  return new RvaVisitor_Abs32(abs32_locations_, *this);
+}
+
+RvaVisitor* DisassemblerWin32::CreateRel32TargetRvaVisitor() {
+  return new RvaVisitor_Rel32(rel32_locations_, *this);
+}
+
+void DisassemblerWin32::RemoveUnusedRel32Locations(
+    AssemblyProgram* program) {
+  auto cond = [this, program](RVA rva) -> bool {
+    // + 4 since offset is relative to start of next instruction.
+    RVA target_rva = rva + 4 + Read32LittleEndian(RVAToPointer(rva));
+    return program->FindRel32Label(target_rva) == nullptr;
+  };
+  rel32_locations_.erase(
+      std::remove_if(rel32_locations_.begin(), rel32_locations_.end(), cond),
+      rel32_locations_.end());
+}
+
+CheckBool DisassemblerWin32::ParseFile(AssemblyProgram* program,
+                                       InstructionReceptor* receptor) const {
+  // Walk all the bytes in the file, whether or not in a section.
+  FileOffset file_offset = 0;
+  while (file_offset < length()) {
+    const Section* section = FindNextSection(file_offset);
+    if (section == nullptr) {
+      // No more sections. There should not be extra stuff following last
+      // section.
+      //   ParseNonSectionFileRegion(file_offset, pe_info().length(), receptor);
+      break;
+    }
+    if (file_offset < section->file_offset_of_raw_data) {
+      FileOffset section_start_offset = section->file_offset_of_raw_data;
+      if (!ParseNonSectionFileRegion(file_offset, section_start_offset,
+                                     receptor)) {
+        return false;
+      }
+
+      file_offset = section_start_offset;
+    }
+    FileOffset end = file_offset + section->size_of_raw_data;
+    if (!ParseFileRegion(section, file_offset, end, program, receptor))
+      return false;
+    file_offset = end;
+  }
+
+#if COURGETTE_HISTOGRAM_TARGETS
+  HistogramTargets("abs32 relocs", abs32_target_rvas_);
+  HistogramTargets("rel32 relocs", rel32_target_rvas_);
+#endif
+
+  return true;
+}
+
 CheckBool DisassemblerWin32::ParseNonSectionFileRegion(
     FileOffset start_file_offset,
     FileOffset end_file_offset,
-    AssemblyProgram* program) {
+    InstructionReceptor* receptor) const {
   if (incomplete_disassembly_)
     return true;
 
   if (end_file_offset > start_file_offset) {
-    if (!program->EmitBytesInstruction(FileOffsetToPointer(start_file_offset),
-                                       end_file_offset - start_file_offset)) {
+    if (!receptor->EmitMultipleBytes(FileOffsetToPointer(start_file_offset),
+                                     end_file_offset - start_file_offset)) {
       return false;
     }
   }
@@ -463,10 +491,12 @@ CheckBool DisassemblerWin32::ParseNonSectionFileRegion(
   return true;
 }
 
-CheckBool DisassemblerWin32::ParseFileRegion(const Section* section,
-                                             FileOffset start_file_offset,
-                                             FileOffset end_file_offset,
-                                             AssemblyProgram* program) {
+CheckBool DisassemblerWin32::ParseFileRegion(
+    const Section* section,
+    FileOffset start_file_offset,
+    FileOffset end_file_offset,
+    AssemblyProgram* program,
+    InstructionReceptor* receptor) const {
   RVA relocs_start_rva = base_relocation_table().address_;
 
   const uint8_t* start_pointer = FileOffsetToPointer(start_file_offset);
@@ -480,10 +510,10 @@ CheckBool DisassemblerWin32::ParseFileRegion(const Section* section,
   // subtract 'pointer_to_rva'.
   const uint8_t* const adjust_pointer_to_rva = start_pointer - start_rva;
 
-  std::vector<RVA>::iterator rel32_pos = rel32_locations_.begin();
-  std::vector<RVA>::iterator abs32_pos = abs32_locations_.begin();
+  std::vector<RVA>::const_iterator rel32_pos = rel32_locations_.begin();
+  std::vector<RVA>::const_iterator abs32_pos = abs32_locations_.begin();
 
-  if (!program->EmitOriginInstruction(start_rva))
+  if (!receptor->EmitOrigin(start_rva))
     return false;
 
   const uint8_t* p = start_pointer;
@@ -495,7 +525,7 @@ CheckBool DisassemblerWin32::ParseFileRegion(const Section* section,
     // actually be anywhere.  Make sure we skip it because we will regenerate it
     // during assembly.
     if (current_rva == relocs_start_rva) {
-      if (!program->EmitPeRelocsInstruction())
+      if (!receptor->EmitPeRelocs())
         return false;
       uint32_t relocs_size = base_relocation_table().size_;
       if (relocs_size) {
@@ -514,7 +544,7 @@ CheckBool DisassemblerWin32::ParseFileRegion(const Section* section,
       // which it might be.  We assume offset==0.
       Label* label = program->FindAbs32Label(target_rva);
       DCHECK(label);
-      if (!EmitAbs(label, program))
+      if (!EmitAbs(label, receptor))
         return false;
       p += kVAWidth;
       continue;
@@ -528,7 +558,7 @@ CheckBool DisassemblerWin32::ParseFileRegion(const Section* section,
       RVA target_rva = current_rva + 4 + Read32LittleEndian(p);
       Label* label = program->FindRel32Label(target_rva);
       DCHECK(label);
-      if (!program->EmitRel32(label))
+      if (!receptor->EmitRel32(label))
         return false;
       p += 4;
       continue;
@@ -543,7 +573,7 @@ CheckBool DisassemblerWin32::ParseFileRegion(const Section* section,
       }
     }
 
-    if (!program->EmitByteInstruction(*p))
+    if (!receptor->EmitSingleByte(*p))
       return false;
     p += 1;
   }
@@ -557,7 +587,7 @@ CheckBool DisassemblerWin32::ParseFileRegion(const Section* section,
 // command-line configuration for this feature because this code has to be
 // small, which means compiled-out.
 void DisassemblerWin32::HistogramTargets(const char* kind,
-                                         const std::map<RVA, int>& map) {
+                                         const std::map<RVA, int>& map) const {
   int total = 0;
   std::map<int, std::vector<RVA>> h;
   for (std::map<RVA, int>::const_iterator p = map.begin(); p != map.end();

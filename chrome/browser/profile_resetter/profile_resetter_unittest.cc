@@ -559,12 +559,9 @@ TEST_F(ProfileResetterTest, ResetExtensionsByDisabling) {
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
 
-  scoped_refptr<Extension> theme =
-      CreateExtension(base::ASCIIToUTF16("example1"),
-                      temp_dir.path(),
-                      Manifest::INVALID_LOCATION,
-                      extensions::Manifest::TYPE_THEME,
-                      false);
+  scoped_refptr<Extension> theme = CreateExtension(
+      base::ASCIIToUTF16("example1"), temp_dir.GetPath(),
+      Manifest::INVALID_LOCATION, extensions::Manifest::TYPE_THEME, false);
   service_->FinishInstallationForTest(theme.get());
   // Let ThemeService finish creating the theme pack.
   base::RunLoop().RunUntilIdle();
@@ -655,12 +652,9 @@ TEST_F(ProfileResetterTest, ResetExtensionsAndDefaultApps) {
   base::ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
 
-  scoped_refptr<Extension> ext1 =
-      CreateExtension(base::ASCIIToUTF16("example1"),
-                      temp_dir.path(),
-                      Manifest::INVALID_LOCATION,
-                      extensions::Manifest::TYPE_THEME,
-                      false);
+  scoped_refptr<Extension> ext1 = CreateExtension(
+      base::ASCIIToUTF16("example1"), temp_dir.GetPath(),
+      Manifest::INVALID_LOCATION, extensions::Manifest::TYPE_THEME, false);
   service_->FinishInstallationForTest(ext1.get());
   // Let ThemeService finish creating the theme pack.
   base::RunLoop().RunUntilIdle();
@@ -693,6 +687,29 @@ TEST_F(ProfileResetterTest, ResetExtensionsAndDefaultApps) {
   EXPECT_FALSE(registry()->enabled_extensions().Contains(ext2->id()));
   EXPECT_TRUE(registry()->enabled_extensions().Contains(ext3->id()));
   EXPECT_TRUE(theme_service->UsingDefaultTheme());
+}
+
+TEST_F(ProfileResetterTest, ResetExtensionsByReenablingExternalComponents) {
+  service_->Init();
+
+  base::ScopedTempDir temp_dir;
+  ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
+
+  scoped_refptr<Extension> ext =
+      CreateExtension(base::ASCIIToUTF16("example"),
+                      base::FilePath(FILE_PATH_LITERAL("//nonexistent")),
+                      Manifest::EXTERNAL_COMPONENT,
+                      extensions::Manifest::TYPE_EXTENSION, false);
+  service_->AddExtension(ext.get());
+
+  service_->DisableExtension(ext->id(),
+                             extensions::Extension::DISABLE_USER_ACTION);
+  EXPECT_FALSE(registry()->enabled_extensions().Contains(ext->id()));
+  EXPECT_TRUE(registry()->disabled_extensions().Contains(ext->id()));
+
+  ResetAndWait(ProfileResetter::EXTENSIONS);
+  EXPECT_TRUE(registry()->enabled_extensions().Contains(ext->id()));
+  EXPECT_FALSE(registry()->disabled_extensions().Contains(ext->id()));
 }
 
 TEST_F(ProfileResetterTest, ResetStartPageNonOrganic) {

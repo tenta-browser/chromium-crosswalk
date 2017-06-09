@@ -7,6 +7,7 @@
       'target_name': 'privacy_page_browser_proxy',
       'dependencies': [
         '<(DEPTH)/ui/webui/resources/js/compiled_resources2.gyp:cr',
+        '../compiled_resources2.gyp:lifetime_browser_proxy',
         '<(EXTERNS_GYP):chrome_send',
       ],
       'includes': ['../../../../../third_party/closure_compiler/compile_js2.gypi'],
@@ -14,10 +15,15 @@
     {
       'target_name': 'privacy_page',
       'dependencies': [
-        'privacy_page_browser_proxy',
-        '../site_settings/compiled_resources2.gyp:constants',
-        '../settings_main/compiled_resources2.gyp:settings_main_rendered',
+        '<(DEPTH)/ui/webui/resources/js/compiled_resources2.gyp:i18n_behavior',
+        '<(DEPTH)/ui/webui/resources/js/compiled_resources2.gyp:web_ui_listener_behavior',
+        '../compiled_resources2.gyp:route',
         '../settings_page/compiled_resources2.gyp:settings_animated_pages',
+        '../settings_ui/compiled_resources2.gyp:settings_ui_types',
+        '../site_settings/compiled_resources2.gyp:constants',
+        '../site_settings/compiled_resources2.gyp:site_data_details_subpage',
+        'privacy_page_browser_proxy',
+        '<(EXTERNS_GYP):settings_private',
       ],
       'includes': ['../../../../../third_party/closure_compiler/compile_js2.gypi'],
     },

@@ -8,8 +8,6 @@
 #include <stdint.h>
 
 #include <limits>
-#include <memory>
-#include <vector>
 
 #include "base/bind.h"
 #include "base/command_line.h"
@@ -58,7 +56,7 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/bookmarks/test/bookmark_test_helpers.h"
-#include "components/browser_sync/browser/profile_sync_service.h"
+#include "components/browser_sync/profile_sync_service.h"
 #include "components/google/core/browser/google_url_tracker.h"
 #include "components/invalidation/impl/invalidation_switches.h"
 #include "components/invalidation/impl/p2p_invalidation_service.h"
@@ -70,8 +68,11 @@
 #include "components/search_engines/template_url_service.h"
 #include "components/signin/core/browser/profile_identity_provider.h"
 #include "components/signin/core/browser/signin_manager.h"
-#include "components/sync_driver/invalidation_helper.h"
-#include "components/sync_driver/sync_driver_switches.h"
+#include "components/sync/base/invalidation_helper.h"
+#include "components/sync/driver/sync_driver_switches.h"
+#include "components/sync/engine_impl/sync_scheduler_impl.h"
+#include "components/sync/protocol/sync.pb.h"
+#include "components/sync/test/fake_server/fake_server_network_resources.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/web_contents.h"
@@ -81,19 +82,17 @@
 #include "net/base/load_flags.h"
 #include "net/base/network_change_notifier.h"
 #include "net/base/port_util.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/test_url_fetcher_factory.h"
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_fetcher_delegate.h"
-#include "sync/engine/sync_scheduler_impl.h"
-#include "sync/protocol/sync.pb.h"
-#include "sync/test/fake_server/fake_server.h"
-#include "sync/test/fake_server/fake_server_network_resources.h"
 #include "url/gurl.h"
 
 #if defined(OS_CHROMEOS)
 #include "chromeos/chromeos_switches.h"
 #endif
 
+using browser_sync::ProfileSyncService;
 using content::BrowserThread;
 
 namespace switches {
@@ -145,7 +144,8 @@ class SyncServerStatusChecker : public net::URLFetcherDelegate {
     source->GetResponseAsString(&data);
     running_ =
         (source->GetStatus().status() == net::URLRequestStatus::SUCCESS &&
-        source->GetResponseCode() == 200 && data.find("ok") == 0);
+         source->GetResponseCode() == 200 &&
+         base::StartsWith(data, "ok", base::CompareCase::SENSITIVE));
     base::MessageLoop::current()->QuitWhenIdle();
   }
 
@@ -175,16 +175,16 @@ class EncryptionChecker : public SingleClientStatusChangeChecker {
 
 std::unique_ptr<KeyedService> BuildFakeServerProfileInvalidationProvider(
     content::BrowserContext* context) {
-  return base::WrapUnique(new invalidation::ProfileInvalidationProvider(
+  return base::MakeUnique<invalidation::ProfileInvalidationProvider>(
       std::unique_ptr<invalidation::InvalidationService>(
-          new fake_server::FakeServerInvalidationService)));
+          new fake_server::FakeServerInvalidationService));
 }
 
 std::unique_ptr<KeyedService> BuildP2PProfileInvalidationProvider(
     content::BrowserContext* context,
     syncer::P2PNotificationTarget notification_target) {
   Profile* profile = static_cast<Profile*>(context);
-  return base::WrapUnique(new invalidation::ProfileInvalidationProvider(
+  return base::MakeUnique<invalidation::ProfileInvalidationProvider>(
       std::unique_ptr<invalidation::InvalidationService>(
           new invalidation::P2PInvalidationService(
               std::unique_ptr<IdentityProvider>(new ProfileIdentityProvider(
@@ -192,7 +192,7 @@ std::unique_ptr<KeyedService> BuildP2PProfileInvalidationProvider(
                   ProfileOAuth2TokenServiceFactory::GetForProfile(profile),
                   LoginUIServiceFactory::GetShowLoginPopupCallbackForProfile(
                       profile))),
-              profile->GetRequestContext(), notification_target))));
+              profile->GetRequestContext(), notification_target)));
 }
 
 std::unique_ptr<KeyedService> BuildSelfNotifyingP2PProfileInvalidationProvider(
@@ -308,6 +308,9 @@ void SyncTest::AddTestSwitches(base::CommandLine* cl) {
 
   if (!cl->HasSwitch(switches::kSyncShortInitialRetryOverride))
     cl->AppendSwitch(switches::kSyncShortInitialRetryOverride);
+
+  if (!cl->HasSwitch(switches::kSyncShortNudgeDelayForTest))
+    cl->AppendSwitch(switches::kSyncShortNudgeDelayForTest);
 }
 
 void SyncTest::AddOptionalTypesToCommandLine(base::CommandLine* cl) {}
@@ -346,7 +349,7 @@ void SyncTest::CreateProfile(int index) {
     CHECK(
       tmp_profile_paths_[index]->CreateUniqueTempDirUnderPath(user_data_dir));
   }
-  base::FilePath profile_path = tmp_profile_paths_[index]->path();
+  base::FilePath profile_path = tmp_profile_paths_[index]->GetPath();
   if (UsingExternalServers()) {
     // If running against an EXTERNAL_LIVE_SERVER, we signin profiles using real
     // GAIA server. This requires creating profiles with no test hooks.
@@ -355,8 +358,9 @@ void SyncTest::CreateProfile(int index) {
     // Without need of real GAIA authentication, we create new test profiles.
     // For test profiles, a custom delegate needs to be used to do the
     // initialization work before the profile is registered.
-    profile_delegates_[index].reset(new SyncProfileDelegate(base::Bind(
-            &SyncTest::InitializeProfile, base::Unretained(this), index)));
+    profile_delegates_[index] =
+        base::MakeUnique<SyncProfileDelegate>(base::Bind(
+            &SyncTest::InitializeProfile, base::Unretained(this), index));
     MakeTestProfile(profile_path, index);
   }
 
@@ -464,7 +468,7 @@ std::vector<ProfileSyncService*> SyncTest::GetSyncServices() {
 Profile* SyncTest::verifier() {
   if (!use_verifier_)
     LOG(FATAL) << "Verifier account is disabled.";
-  if (verifier_ == NULL)
+  if (verifier_ == nullptr)
     LOG(FATAL) << "SetupClients() has not yet been called.";
   return verifier_;
 }
@@ -508,8 +512,8 @@ bool SyncTest::SetupClients() {
   if (use_verifier_) {
     base::FilePath user_data_dir;
     PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
-    profile_delegates_[num_clients_].reset(
-        new SyncProfileDelegate(base::Callback<void(Profile*)>()));
+    profile_delegates_[num_clients_] =
+        base::MakeUnique<SyncProfileDelegate>(base::Callback<void(Profile*)>());
     verifier_ = MakeTestProfile(
         user_data_dir.Append(FILE_PATH_LITERAL("Verifier")), num_clients_);
     WaitForDataModels(verifier());
@@ -525,10 +529,10 @@ void SyncTest::InitializeProfile(int index, Profile* profile) {
   profiles_[index] = profile;
 
   // CheckInitialState() assumes that no windows are open at startup.
-  browsers_[index] = new Browser(Browser::CreateParams(GetProfile(index)));
+  browsers_[index] =
+      new Browser(Browser::CreateParams(GetProfile(index), true));
 
-  EXPECT_FALSE(GetBrowser(index) == NULL) << "Could not create Browser "
-                                          << index << ".";
+  EXPECT_NE(nullptr, GetBrowser(index)) << "Could not create Browser " << index;
 
   // Make sure the ProfileSyncService has been created before creating the
   // ProfileSyncServiceHarness - some tests expect the ProfileSyncService to
@@ -553,8 +557,7 @@ void SyncTest::InitializeProfile(int index, Profile* profile) {
                                         username_,
                                         password_,
                                         singin_type);
-  EXPECT_FALSE(GetClient(index) == NULL) << "Could not create Client "
-                                         << index << ".";
+  EXPECT_NE(nullptr, GetClient(index)) << "Could not create Client " << index;
   InitializeInvalidations(index);
 }
 
@@ -702,8 +705,8 @@ void SyncTest::SetUpInProcessBrowserTestFixture() {
   resolver->AllowDirectLookup("*.thawte.com");
   resolver->AllowDirectLookup("*.geotrust.com");
   resolver->AllowDirectLookup("*.gstatic.com");
-  mock_host_resolver_override_.reset(
-      new net::ScopedDefaultHostResolverProc(resolver));
+  mock_host_resolver_override_ =
+      base::MakeUnique<net::ScopedDefaultHostResolverProc>(resolver);
 }
 
 void SyncTest::TearDownInProcessBrowserTestFixture() {
@@ -712,7 +715,7 @@ void SyncTest::TearDownInProcessBrowserTestFixture() {
 
 void SyncTest::WaitForDataModels(Profile* profile) {
   bookmarks::test::WaitForBookmarkModelToLoad(
-      BookmarkModelFactory::GetForProfile(profile));
+      BookmarkModelFactory::GetForBrowserContext(profile));
   ui_test_utils::WaitForHistoryToLoad(HistoryServiceFactory::GetForProfile(
       profile, ServiceAccessType::EXPLICIT_ACCESS));
   search_test_utils::WaitForTemplateURLServiceToLoad(
@@ -739,8 +742,8 @@ void SyncTest::ReadPasswordFile() {
 }
 
 void SyncTest::SetupMockGaiaResponses() {
-  factory_.reset(new net::URLFetcherImplFactory());
-  fake_factory_.reset(new net::FakeURLFetcherFactory(factory_.get()));
+  factory_ = base::MakeUnique<net::URLFetcherImplFactory>();
+  fake_factory_ = base::MakeUnique<net::FakeURLFetcherFactory>(factory_.get());
   fake_factory_->SetFakeResponse(
       GaiaUrls::GetInstance()->get_user_info_url(),
       "email=user@gmail.com\ndisplayEmail=user@gmail.com",
@@ -793,7 +796,7 @@ void SyncTest::SetupMockGaiaResponses() {
 void SyncTest::SetOAuth2TokenResponse(const std::string& response_data,
                                       net::HttpStatusCode response_code,
                                       net::URLRequestStatus::Status status) {
-  ASSERT_TRUE(NULL != fake_factory_.get());
+  ASSERT_NE(nullptr, fake_factory_.get());
   fake_factory_->SetFakeResponse(GaiaUrls::GetInstance()->oauth2_token_url(),
                                  response_data, response_code, status);
 }
@@ -869,7 +872,7 @@ void SyncTest::SetUpTestServerIfRequired() {
     if (!SetUpLocalTestServer())
       LOG(FATAL) << "Failed to set up local test server";
   } else if (server_type_ == IN_PROCESS_FAKE_SERVER) {
-    fake_server_.reset(new fake_server::FakeServer());
+    fake_server_ = base::MakeUnique<fake_server::FakeServer>();
     SetupMockGaiaResponses();
   } else {
     LOG(FATAL) << "Don't know which server environment to run test in.";
@@ -899,7 +902,7 @@ bool SyncTest::SetUpLocalPythonTestServer() {
 
   net::HostPortPair xmpp_host_port_pair(sync_server_.host_port_pair());
   xmpp_host_port_pair.set_port(xmpp_port);
-  xmpp_port_.reset(new net::ScopedPortException(xmpp_port));
+  xmpp_port_ = base::MakeUnique<net::ScopedPortException>(xmpp_port);
 
   if (!cl->HasSwitch(invalidation::switches::kSyncNotificationHostPort)) {
     cl->AppendSwitchASCII(invalidation::switches::kSyncNotificationHostPort,
@@ -933,11 +936,11 @@ bool SyncTest::SetUpLocalTestServer() {
   const int kNumIntervals = 15;
   if (WaitForTestServerToStart(kMaxWaitTime, kNumIntervals)) {
     DVLOG(1) << "Started local test server at "
-             << cl->GetSwitchValueASCII(switches::kSyncServiceURL) << ".";
+             << cl->GetSwitchValueASCII(switches::kSyncServiceURL);
     return true;
   } else {
     LOG(ERROR) << "Could not start local test server at "
-               << cl->GetSwitchValueASCII(switches::kSyncServiceURL) << ".";
+               << cl->GetSwitchValueASCII(switches::kSyncServiceURL);
     return false;
   }
 }
@@ -975,7 +978,8 @@ bool SyncTest::IsTestServerRunning() {
   GURL sync_url_status(sync_url.append("/healthz"));
   SyncServerStatusChecker delegate;
   std::unique_ptr<net::URLFetcher> fetcher =
-      net::URLFetcher::Create(sync_url_status, net::URLFetcher::GET, &delegate);
+      net::URLFetcher::Create(sync_url_status, net::URLFetcher::GET, &delegate,
+                              TRAFFIC_ANNOTATION_FOR_TESTS);
   fetcher->SetLoadFlags(net::LOAD_DISABLE_CACHE |
                         net::LOAD_DO_NOT_SEND_COOKIES |
                         net::LOAD_DO_NOT_SAVE_COOKIES);
@@ -1014,9 +1018,7 @@ bool SyncTest::IsEncryptionComplete(int index) {
 
 bool SyncTest::AwaitEncryptionComplete(int index) {
   ProfileSyncService* service = GetClient(index)->service();
-  EncryptionChecker checker(service);
-  checker.Wait();
-  return !checker.TimedOut();
+  return EncryptionChecker(service).Wait();
 }
 
 bool SyncTest::AwaitQuiescence() {

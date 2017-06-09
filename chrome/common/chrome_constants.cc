@@ -116,10 +116,13 @@ const base::FilePath::CharType kHelperProcessExecutablePath[] = FPL("chrome");
 #if defined(OS_MACOSX)
 const base::FilePath::CharType kFrameworkName[] =
     FPL(PRODUCT_STRING " Framework.framework");
+const base::FilePath::CharType kFrameworkExecutableName[] =
+    FPL(PRODUCT_STRING " Framework");
 #endif  // OS_MACOSX
 
 #if defined(OS_WIN)
 const base::FilePath::CharType kBrowserResourcesDll[] = FPL("chrome.dll");
+const base::FilePath::CharType kChromeElfDllName[] = FPL("chrome_elf.dll");
 const base::FilePath::CharType kStatusTrayWindowClass[] =
     FPL("Chrome_StatusTrayWindow");
 #endif  // defined(OS_WIN)
@@ -155,11 +158,11 @@ const base::FilePath::CharType kOfflinePageMetadataDirname[] =
 const base::FilePath::CharType kOfflinePageRequestQueueDirname[] =
     FPL("Offline Pages/request_queue");
 const base::FilePath::CharType kPreferencesFilename[] = FPL("Preferences");
+const base::FilePath::CharType kPreviewsOptOutDBFilename[] =
+    FPL("previews_opt_out.db");
 const base::FilePath::CharType kProtectedPreferencesFilenameDeprecated[] =
     FPL("Protected Preferences");
 const base::FilePath::CharType kReadmeFilename[] = FPL("README");
-const base::FilePath::CharType kSafeBrowsingBaseFilename[] =
-    FPL("Safe Browsing");
 const base::FilePath::CharType kSecurePreferencesFilename[] =
     FPL("Secure Preferences");
 const base::FilePath::CharType kServiceStateFileName[] = FPL("Service State");
@@ -171,8 +174,6 @@ const base::FilePath::CharType kSingletonSocketFilename[] =
 const base::FilePath::CharType kSupervisedUserSettingsFilename[] =
     FPL("Managed Mode Settings");
 const base::FilePath::CharType kThemePackFilename[] = FPL("Cached Theme.pak");
-const base::FilePath::CharType kThemePackMaterialDesignFilename[] =
-    FPL("Cached Theme Material Design.pak");
 const base::FilePath::CharType kWebAppDirname[] = FPL("Web Applications");
 
 #if defined(OS_WIN)
@@ -199,13 +200,6 @@ const float kMaxShareOfExtensionProcesses = 0.30f;
 #if defined(OS_LINUX)
 const int kLowestRendererOomScore = 300;
 const int kHighestRendererOomScore = 1000;
-#endif
-
-#if defined(OS_WIN)
-const wchar_t kMetroNavigationAndSearchMessage[] =
-    L"CHROME_METRO_NAV_SEARCH_REQUEST";
-const wchar_t kMetroGetCurrentTabInfoMessage[] =
-    L"CHROME_METRO_GET_CURRENT_TAB_INFO";
 #endif
 
 #if defined(OS_CHROMEOS)

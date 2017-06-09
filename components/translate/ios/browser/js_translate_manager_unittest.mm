@@ -6,16 +6,12 @@
 
 #import "base/mac/scoped_nsobject.h"
 #include "base/strings/sys_string_conversions.h"
-#include "base/time/time.h"
-#include "grit/components_resources.h"
-#import "ios/web/public/test/crw_test_js_injection_receiver.h"
+#include "components/grit/components_resources.h"
+#import "ios/web/public/test/fakes/crw_test_js_injection_receiver.h"
 #import "ios/web/public/test/js_test_util.h"
 #import "testing/gtest_mac.h"
 #include "testing/platform_test.h"
 #include "ui/base/resource/resource_bundle.h"
-
-using base::Time;
-using base::TimeDelta;
 
 @interface JsTranslateManager (Testing)
 - (double)performanceNow;
@@ -24,8 +20,7 @@ using base::TimeDelta;
 @implementation JsTranslateManager (Testing)
 // Returns the time in milliseconds.
 - (double)performanceNow {
-  NSString* result =
-      web::EvaluateJavaScriptAsString(self.receiver, @"performance.now()");
+  id result = web::ExecuteJavaScript(self.receiver, @"performance.now()");
   return [result doubleValue];
 }
 @end
@@ -45,14 +40,15 @@ class JsTranslateManagerTest : public PlatformTest {
   bool IsDefined(NSString* name) {
     NSString* script =
         [NSString stringWithFormat:@"typeof %@ != 'undefined'", name];
-    return [web::EvaluateJavaScriptAsString(receiver_, script) isEqual:@"true"];
+    return [web::ExecuteJavaScript(receiver_, script) boolValue];
   }
 
   base::scoped_nsobject<CRWTestJSInjectionReceiver> receiver_;
   base::scoped_nsobject<JsTranslateManager> manager_;
 };
 
-TEST_F(JsTranslateManagerTest, PerformancePlaceholder) {
+// TODO(crbug.com/658619#c47): Test reported as flaky.
+TEST_F(JsTranslateManagerTest, DISABLED_PerformancePlaceholder) {
   [manager_ inject];
   EXPECT_TRUE(IsDefined(@"performance"));
   EXPECT_TRUE(IsDefined(@"performance.now"));
@@ -71,22 +67,6 @@ TEST_F(JsTranslateManagerTest, Inject) {
   [manager_ inject];
   EXPECT_TRUE([manager_ hasBeenInjected]);
   EXPECT_EQ(nil, [manager_ script]);
-  // TODO(shreyasv): Switch to the util function in web/ once that CL lands.
-  __block BOOL block_was_called = NO;
-  [manager_ evaluate:@"cr.googleTranslate.libReady"
-      stringResultHandler:^(NSString* result, NSError*) {
-        block_was_called = YES;
-        EXPECT_NSEQ(@"false", result);
-      }];
-  // TODO(shreyasv): Move to |WaitUntilCondition| once that is moved to ios/.
-  const NSTimeInterval kTimeout = 5.0;
-  Time startTime = Time::Now();
-  while (!block_was_called &&
-         (Time::Now() - startTime < TimeDelta::FromSeconds(kTimeout))) {
-    NSDate* beforeDate = [NSDate dateWithTimeIntervalSinceNow:.01];
-    [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode
-                             beforeDate:beforeDate];
-  }
-
-  EXPECT_TRUE(block_was_called);
+  EXPECT_NSEQ(@NO,
+              web::ExecuteJavaScript(manager_, @"cr.googleTranslate.libReady"));
 }

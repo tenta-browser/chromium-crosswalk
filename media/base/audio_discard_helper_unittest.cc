@@ -30,14 +30,8 @@ static scoped_refptr<DecoderBuffer> CreateEncodedBuffer(
 }
 
 static scoped_refptr<AudioBuffer> CreateDecodedBuffer(int frames) {
-  return MakeAudioBuffer(kSampleFormatPlanarF32,
-                         CHANNEL_LAYOUT_MONO,
-                         1,
-                         kSampleRate,
-                         0.0f,
-                         kDataStep,
-                         frames,
-                         kNoTimestamp());
+  return MakeAudioBuffer(kSampleFormatPlanarF32, CHANNEL_LAYOUT_MONO, 1,
+                         kSampleRate, 0.0f, kDataStep, frames, kNoTimestamp);
 }
 
 static float ExtractDecodedData(const scoped_refptr<AudioBuffer>& buffer,
@@ -51,7 +45,7 @@ static float ExtractDecodedData(const scoped_refptr<AudioBuffer>& buffer,
 }
 
 TEST(AudioDiscardHelperTest, TimeDeltaToFrames) {
-  AudioDiscardHelper discard_helper(kSampleRate, 0);
+  AudioDiscardHelper discard_helper(kSampleRate, 0, false);
 
   EXPECT_EQ(0u, discard_helper.TimeDeltaToFrames(base::TimeDelta()));
   EXPECT_EQ(
@@ -75,7 +69,7 @@ TEST(AudioDiscardHelperTest, TimeDeltaToFrames) {
 }
 
 TEST(AudioDiscardHelperTest, BasicProcessBuffers) {
-  AudioDiscardHelper discard_helper(kSampleRate, 0);
+  AudioDiscardHelper discard_helper(kSampleRate, 0, false);
   ASSERT_FALSE(discard_helper.initialized());
 
   const base::TimeDelta kTimestamp = base::TimeDelta();
@@ -107,7 +101,7 @@ TEST(AudioDiscardHelperTest, BasicProcessBuffers) {
 }
 
 TEST(AudioDiscardHelperTest, NegativeTimestampClampsToZero) {
-  AudioDiscardHelper discard_helper(kSampleRate, 0);
+  AudioDiscardHelper discard_helper(kSampleRate, 0, false);
   ASSERT_FALSE(discard_helper.initialized());
 
   const base::TimeDelta kTimestamp = -base::TimeDelta::FromSeconds(1);
@@ -127,7 +121,7 @@ TEST(AudioDiscardHelperTest, NegativeTimestampClampsToZero) {
 }
 
 TEST(AudioDiscardHelperTest, ProcessBuffersWithInitialDiscard) {
-  AudioDiscardHelper discard_helper(kSampleRate, 0);
+  AudioDiscardHelper discard_helper(kSampleRate, 0, false);
   ASSERT_FALSE(discard_helper.initialized());
 
   const base::TimeDelta kTimestamp = base::TimeDelta();
@@ -153,7 +147,7 @@ TEST(AudioDiscardHelperTest, ProcessBuffersWithInitialDiscard) {
 }
 
 TEST(AudioDiscardHelperTest, ProcessBuffersWithLargeInitialDiscard) {
-  AudioDiscardHelper discard_helper(kSampleRate, 0);
+  AudioDiscardHelper discard_helper(kSampleRate, 0, false);
   ASSERT_FALSE(discard_helper.initialized());
 
   const base::TimeDelta kTimestamp = base::TimeDelta();
@@ -186,7 +180,7 @@ TEST(AudioDiscardHelperTest, ProcessBuffersWithLargeInitialDiscard) {
 }
 
 TEST(AudioDiscardHelperTest, AllowNonMonotonicTimestamps) {
-  AudioDiscardHelper discard_helper(kSampleRate, 0);
+  AudioDiscardHelper discard_helper(kSampleRate, 0, false);
   ASSERT_FALSE(discard_helper.initialized());
 
   const base::TimeDelta kTimestamp = base::TimeDelta();
@@ -212,7 +206,7 @@ TEST(AudioDiscardHelperTest, AllowNonMonotonicTimestamps) {
 }
 
 TEST(AudioDiscardHelperTest, DiscardEndPadding) {
-  AudioDiscardHelper discard_helper(kSampleRate, 0);
+  AudioDiscardHelper discard_helper(kSampleRate, 0, false);
   ASSERT_FALSE(discard_helper.initialized());
 
   const base::TimeDelta kTimestamp = base::TimeDelta();
@@ -235,7 +229,7 @@ TEST(AudioDiscardHelperTest, DiscardEndPadding) {
 }
 
 TEST(AudioDiscardHelperTest, BadDiscardEndPadding) {
-  AudioDiscardHelper discard_helper(kSampleRate, 0);
+  AudioDiscardHelper discard_helper(kSampleRate, 0, false);
   ASSERT_FALSE(discard_helper.initialized());
 
   const base::TimeDelta kTimestamp = base::TimeDelta();
@@ -256,7 +250,7 @@ TEST(AudioDiscardHelperTest, BadDiscardEndPadding) {
 }
 
 TEST(AudioDiscardHelperTest, InitialDiscardAndDiscardEndPadding) {
-  AudioDiscardHelper discard_helper(kSampleRate, 0);
+  AudioDiscardHelper discard_helper(kSampleRate, 0, false);
   ASSERT_FALSE(discard_helper.initialized());
 
   const base::TimeDelta kTimestamp = base::TimeDelta();
@@ -285,7 +279,7 @@ TEST(AudioDiscardHelperTest, InitialDiscardAndDiscardEndPadding) {
 }
 
 TEST(AudioDiscardHelperTest, InitialDiscardAndDiscardPadding) {
-  AudioDiscardHelper discard_helper(kSampleRate, 0);
+  AudioDiscardHelper discard_helper(kSampleRate, 0, false);
   ASSERT_FALSE(discard_helper.initialized());
 
   const base::TimeDelta kTimestamp = base::TimeDelta();
@@ -314,7 +308,7 @@ TEST(AudioDiscardHelperTest, InitialDiscardAndDiscardPadding) {
 TEST(AudioDiscardHelperTest, InitialDiscardAndDiscardPaddingAndDecoderDelay) {
   // Use a decoder delay of 5ms.
   const int kDecoderDelay = kSampleRate / 100 / 2;
-  AudioDiscardHelper discard_helper(kSampleRate, kDecoderDelay);
+  AudioDiscardHelper discard_helper(kSampleRate, kDecoderDelay, false);
   ASSERT_FALSE(discard_helper.initialized());
   discard_helper.Reset(kDecoderDelay);
 
@@ -422,7 +416,7 @@ TEST(AudioDiscardHelperTest, InitialDiscardAndDiscardPaddingAndDecoderDelay) {
 }
 
 TEST(AudioDiscardHelperTest, DelayedDiscardInitialDiscardAndDiscardPadding) {
-  AudioDiscardHelper discard_helper(kSampleRate, 0);
+  AudioDiscardHelper discard_helper(kSampleRate, 0, true);
   ASSERT_FALSE(discard_helper.initialized());
 
   const base::TimeDelta kTimestamp = base::TimeDelta();
@@ -457,7 +451,7 @@ TEST(AudioDiscardHelperTest, DelayedDiscardInitialDiscardAndDiscardPadding) {
 }
 
 TEST(AudioDiscardHelperTest, CompleteDiscard) {
-  AudioDiscardHelper discard_helper(kSampleRate, 0);
+  AudioDiscardHelper discard_helper(kSampleRate, 0, false);
   ASSERT_FALSE(discard_helper.initialized());
 
   const base::TimeDelta kTimestamp = base::TimeDelta();
@@ -468,7 +462,7 @@ TEST(AudioDiscardHelperTest, CompleteDiscard) {
   scoped_refptr<DecoderBuffer> encoded_buffer =
       CreateEncodedBuffer(kTimestamp, kDuration);
   encoded_buffer->set_discard_padding(
-      std::make_pair(kInfiniteDuration(), base::TimeDelta()));
+      std::make_pair(kInfiniteDuration, base::TimeDelta()));
   scoped_refptr<AudioBuffer> decoded_buffer = CreateDecodedBuffer(kTestFrames);
 
   // Verify all of the first buffer is discarded.
@@ -487,7 +481,7 @@ TEST(AudioDiscardHelperTest, CompleteDiscard) {
 }
 
 TEST(AudioDiscardHelperTest, CompleteDiscardWithDelayedDiscard) {
-  AudioDiscardHelper discard_helper(kSampleRate, 0);
+  AudioDiscardHelper discard_helper(kSampleRate, 0, true);
   ASSERT_FALSE(discard_helper.initialized());
 
   const base::TimeDelta kTimestamp = base::TimeDelta();
@@ -498,7 +492,7 @@ TEST(AudioDiscardHelperTest, CompleteDiscardWithDelayedDiscard) {
   scoped_refptr<DecoderBuffer> encoded_buffer =
       CreateEncodedBuffer(kTimestamp, kDuration);
   encoded_buffer->set_discard_padding(
-      std::make_pair(kInfiniteDuration(), base::TimeDelta()));
+      std::make_pair(kInfiniteDuration, base::TimeDelta()));
   scoped_refptr<AudioBuffer> decoded_buffer = CreateDecodedBuffer(kTestFrames);
 
   // Setup a delayed discard.
@@ -523,7 +517,7 @@ TEST(AudioDiscardHelperTest, CompleteDiscardWithDelayedDiscard) {
 TEST(AudioDiscardHelperTest, CompleteDiscardWithInitialDiscardDecoderDelay) {
   // Use a decoder delay of 5ms.
   const int kDecoderDelay = kSampleRate / 100 / 2;
-  AudioDiscardHelper discard_helper(kSampleRate, kDecoderDelay);
+  AudioDiscardHelper discard_helper(kSampleRate, kDecoderDelay, false);
   ASSERT_FALSE(discard_helper.initialized());
   discard_helper.Reset(kDecoderDelay);
 
@@ -534,7 +528,7 @@ TEST(AudioDiscardHelperTest, CompleteDiscardWithInitialDiscardDecoderDelay) {
   scoped_refptr<DecoderBuffer> encoded_buffer =
       CreateEncodedBuffer(kTimestamp, kDuration);
   encoded_buffer->set_discard_padding(
-      std::make_pair(kInfiniteDuration(), base::TimeDelta()));
+      std::make_pair(kInfiniteDuration, base::TimeDelta()));
   scoped_refptr<AudioBuffer> decoded_buffer = CreateDecodedBuffer(kTestFrames);
 
   // Verify all of the first buffer is discarded.

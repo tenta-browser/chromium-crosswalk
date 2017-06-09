@@ -6,10 +6,12 @@
 
 #include <memory>
 
+#include "base/bind.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/memory/ptr_util.h"
 #include "base/values.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/devtools_agent_host.h"
 
 namespace headless {
@@ -30,6 +32,7 @@ HeadlessDevToolsClientImpl* HeadlessDevToolsClientImpl::From(
 HeadlessDevToolsClientImpl::HeadlessDevToolsClientImpl()
     : agent_host_(nullptr),
       next_message_id_(0),
+      renderer_crashed_(false),
       accessibility_domain_(this),
       animation_domain_(this),
       application_cache_domain_(this),
@@ -49,6 +52,7 @@ HeadlessDevToolsClientImpl::HeadlessDevToolsClientImpl()
       inspector_domain_(this),
       io_domain_(this),
       layer_tree_domain_(this),
+      log_domain_(this),
       memory_domain_(this),
       network_domain_(this),
       page_domain_(this),
@@ -57,22 +61,36 @@ HeadlessDevToolsClientImpl::HeadlessDevToolsClientImpl()
       runtime_domain_(this),
       security_domain_(this),
       service_worker_domain_(this),
+      target_domain_(this),
       tracing_domain_(this),
-      worker_domain_(this) {}
+      browser_main_thread_(content::BrowserThread::GetTaskRunnerForThread(
+          content::BrowserThread::UI)),
+      weak_ptr_factory_(this) {}
 
 HeadlessDevToolsClientImpl::~HeadlessDevToolsClientImpl() {}
 
-void HeadlessDevToolsClientImpl::AttachToHost(
+bool HeadlessDevToolsClientImpl::AttachToHost(
+    content::DevToolsAgentHost* agent_host) {
+  DCHECK(!agent_host_);
+  if (agent_host->AttachClient(this)) {
+    agent_host_ = agent_host;
+    return true;
+  }
+  return false;
+}
+
+void HeadlessDevToolsClientImpl::ForceAttachToHost(
     content::DevToolsAgentHost* agent_host) {
   DCHECK(!agent_host_);
   agent_host_ = agent_host;
-  agent_host_->AttachClient(this);
+  agent_host_->ForceAttachClient(this);
 }
 
 void HeadlessDevToolsClientImpl::DetachFromHost(
     content::DevToolsAgentHost* agent_host) {
   DCHECK_EQ(agent_host_, agent_host);
-  agent_host_->DetachClient(this);
+  if (!renderer_crashed_)
+    agent_host_->DetachClient(this);
   agent_host_ = nullptr;
   pending_messages_.clear();
 }
@@ -88,8 +106,10 @@ void HeadlessDevToolsClientImpl::DispatchProtocolMessage(
     NOTREACHED() << "Badly formed reply";
     return;
   }
-  if (!DispatchMessageReply(*message_dict) && !DispatchEvent(*message_dict))
+  if (!DispatchMessageReply(*message_dict) &&
+      !DispatchEvent(std::move(message), *message_dict)) {
     DLOG(ERROR) << "Unhandled protocol message: " << json_message;
+  }
 }
 
 bool HeadlessDevToolsClientImpl::DispatchMessageReply(
@@ -106,11 +126,16 @@ bool HeadlessDevToolsClientImpl::DispatchMessageReply(
   pending_messages_.erase(it);
   if (!callback.callback_with_result.is_null()) {
     const base::DictionaryValue* result_dict;
-    if (!message_dict.GetDictionary("result", &result_dict)) {
-      NOTREACHED() << "Badly formed reply result";
+    if (message_dict.GetDictionary("result", &result_dict)) {
+      callback.callback_with_result.Run(*result_dict);
+    } else if (message_dict.GetDictionary("error", &result_dict)) {
+      std::unique_ptr<base::Value> null_value = base::Value::CreateNullValue();
+      DLOG(ERROR) << "Error in method call result: " << *result_dict;
+      callback.callback_with_result.Run(*null_value);
+    } else {
+      NOTREACHED() << "Reply has neither result nor error";
       return false;
     }
-    callback.callback_with_result.Run(*result_dict);
   } else if (!callback.callback.is_null()) {
     callback.callback.Run();
   }
@@ -118,11 +143,14 @@ bool HeadlessDevToolsClientImpl::DispatchMessageReply(
 }
 
 bool HeadlessDevToolsClientImpl::DispatchEvent(
+    std::unique_ptr<base::Value> owning_message,
     const base::DictionaryValue& message_dict) {
   std::string method;
   if (!message_dict.GetString("method", &method))
     return false;
-  auto it = event_handlers_.find(method);
+  if (method == "Inspector.targetCrashed")
+    renderer_crashed_ = true;
+  EventHandlerMap::const_iterator it = event_handlers_.find(method);
   if (it == event_handlers_.end()) {
     NOTREACHED() << "Unknown event: " << method;
     return false;
@@ -133,9 +161,22 @@ bool HeadlessDevToolsClientImpl::DispatchEvent(
       NOTREACHED() << "Badly formed event parameters";
       return false;
     }
-    it->second.Run(*result_dict);
+    // DevTools assumes event handling is async so we must post a task here or
+    // we risk breaking things.
+    browser_main_thread_->PostTask(
+        FROM_HERE, base::Bind(&HeadlessDevToolsClientImpl::DispatchEventTask,
+                              weak_ptr_factory_.GetWeakPtr(),
+                              base::Passed(std::move(owning_message)),
+                              &it->second, result_dict));
   }
   return true;
+}
+
+void HeadlessDevToolsClientImpl::DispatchEventTask(
+    std::unique_ptr<base::Value> owning_message,
+    const EventHandler* event_handler,
+    const base::DictionaryValue* result_dict) {
+  event_handler->Run(*result_dict);
 }
 
 void HeadlessDevToolsClientImpl::AgentHostClosed(
@@ -222,6 +263,10 @@ layer_tree::Domain* HeadlessDevToolsClientImpl::GetLayerTree() {
   return &layer_tree_domain_;
 }
 
+log::Domain* HeadlessDevToolsClientImpl::GetLog() {
+  return &log_domain_;
+}
+
 memory::Domain* HeadlessDevToolsClientImpl::GetMemory() {
   return &memory_domain_;
 }
@@ -254,18 +299,20 @@ service_worker::Domain* HeadlessDevToolsClientImpl::GetServiceWorker() {
   return &service_worker_domain_;
 }
 
-tracing::Domain* HeadlessDevToolsClientImpl::GetTracing() {
-  return &tracing_domain_;
+target::Domain* HeadlessDevToolsClientImpl::GetTarget() {
+  return &target_domain_;
 }
 
-worker::Domain* HeadlessDevToolsClientImpl::GetWorker() {
-  return &worker_domain_;
+tracing::Domain* HeadlessDevToolsClientImpl::GetTracing() {
+  return &tracing_domain_;
 }
 
 template <typename CallbackType>
 void HeadlessDevToolsClientImpl::FinalizeAndSendMessage(
     base::DictionaryValue* message,
     CallbackType callback) {
+  if (renderer_crashed_)
+    return;
   DCHECK(agent_host_);
   int id = next_message_id_++;
   message->SetInteger("id", id);

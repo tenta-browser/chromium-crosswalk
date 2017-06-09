@@ -33,12 +33,12 @@
 
 #include "platform/heap/Heap.h"
 #include "platform/heap/HeapAllocator.h"
-#include "platform/heap/InlinedGlobalMarkingVisitor.h"
 #include "platform/heap/Member.h"
 #include "platform/heap/Persistent.h"
 #include "platform/heap/ThreadState.h"
 #include "platform/heap/TraceTraits.h"
 #include "platform/heap/Visitor.h"
+#include "platform/heap/VisitorImpl.h"
 #include "wtf/Allocator.h"
 
 #if defined(LEAK_SANITIZER)
@@ -54,28 +54,28 @@ namespace blink {
 // wtf/ can freely call upon Oilpan functionality.
 #if defined(LEAK_SANITIZER)
 class LeakSanitizerDisableScope {
-    STACK_ALLOCATED();
-    WTF_MAKE_NONCOPYABLE(LeakSanitizerDisableScope);
-public:
-    LeakSanitizerDisableScope()
-    {
-        __lsan_disable();
-        if (ThreadState::current())
-            ThreadState::current()->enterStaticReferenceRegistrationDisabledScope();
-    }
+  STACK_ALLOCATED();
+  WTF_MAKE_NONCOPYABLE(LeakSanitizerDisableScope);
 
-    ~LeakSanitizerDisableScope()
-    {
-        __lsan_enable();
-        if (ThreadState::current())
-            ThreadState::current()->leaveStaticReferenceRegistrationDisabledScope();
-    }
+ public:
+  LeakSanitizerDisableScope() {
+    __lsan_disable();
+    if (ThreadState::current())
+      ThreadState::current()->enterStaticReferenceRegistrationDisabledScope();
+  }
+
+  ~LeakSanitizerDisableScope() {
+    __lsan_enable();
+    if (ThreadState::current())
+      ThreadState::current()->leaveStaticReferenceRegistrationDisabledScope();
+  }
 };
-#define LEAK_SANITIZER_DISABLED_SCOPE LeakSanitizerDisableScope lsanDisabledScope
+#define LEAK_SANITIZER_DISABLED_SCOPE \
+  LeakSanitizerDisableScope lsanDisabledScope
 #else
 #define LEAK_SANITIZER_DISABLED_SCOPE
 #endif
 
-} // namespace blink
+}  // namespace blink
 
 #endif

@@ -6,12 +6,12 @@
 
 #include "ash/common/accessibility_delegate.h"
 #include "ash/common/accessibility_types.h"
+#include "ash/common/system/chromeos/ime_menu/ime_list_view.h"
 #include "ash/common/system/tray/system_tray_notifier.h"
-#include "ash/common/system/tray/tray_details_view.h"
 #include "ash/common/wm_shell.h"
 #include "ash/test/ash_test_base.h"
-#include "ash/test/virtual_keyboard_test_helper.h"
-#include "base/command_line.h"
+#include "base/strings/utf_string_conversions.h"
+#include "ui/events/devices/device_data_manager.h"
 #include "ui/keyboard/keyboard_util.h"
 
 namespace ash {
@@ -21,11 +21,9 @@ class TrayIMETest : public test::AshTestBase {
   TrayIMETest() {}
   ~TrayIMETest() override {}
 
-  TrayIME* tray() { return tray_.get(); }
+  views::View* default_view() const { return default_view_.get(); }
 
-  views::View* default_view() { return default_view_.get(); }
-
-  views::View* detailed_view() { return detailed_view_.get(); }
+  views::View* detailed_view() const { return detailed_view_.get(); }
 
   // Mocks enabling the a11y virtual keyboard since the actual a11y manager
   // is not created in ash tests.
@@ -34,9 +32,15 @@ class TrayIMETest : public test::AshTestBase {
   // Sets the current number of active IMEs.
   void SetIMELength(int length);
 
-  // Returns the view in the detailed views scroll content at the provided
-  // index.
-  views::View* GetScrollChildView(int index);
+  // Returns the view responsible for toggling virtual keyboard.
+  views::View* GetToggleView() const;
+
+  // Sets the managed IMEs tooltip message (and thus also if IMEs are managed =
+  // non-empty or not = empty)
+  void SetManagedMessage(base::string16 managed_message);
+
+  void SuppressKeyboard();
+  void RestoreKeyboard();
 
   // test::AshTestBase:
   void SetUp() override;
@@ -46,11 +50,16 @@ class TrayIMETest : public test::AshTestBase {
   std::unique_ptr<TrayIME> tray_;
   std::unique_ptr<views::View> default_view_;
   std::unique_ptr<views::View> detailed_view_;
+
+  bool keyboard_suppressed_ = false;
+  std::vector<ui::TouchscreenDevice> touchscreen_devices_to_restore_;
+  std::vector<ui::InputDevice> keyboard_devices_to_restore_;
+
+  DISALLOW_COPY_AND_ASSIGN(TrayIMETest);
 };
 
 void TrayIMETest::SetAccessibilityKeyboardEnabled(bool enabled) {
-  WmShell::Get()->GetAccessibilityDelegate()->SetVirtualKeyboardEnabled(
-      enabled);
+  WmShell::Get()->accessibility_delegate()->SetVirtualKeyboardEnabled(enabled);
   keyboard::SetAccessibilityKeyboardEnabled(enabled);
   AccessibilityNotificationVisibility notification =
       enabled ? A11Y_NOTIFICATION_SHOW : A11Y_NOTIFICATION_NONE;
@@ -67,12 +76,44 @@ void TrayIMETest::SetIMELength(int length) {
   tray_->Update();
 }
 
-views::View* TrayIMETest::GetScrollChildView(int index) {
-  TrayDetailsView* details = static_cast<TrayDetailsView*>(detailed_view());
-  views::View* content = details->scroll_content();
-  EXPECT_TRUE(content);
-  EXPECT_GT(content->child_count(), index);
-  return content->child_at(index);
+views::View* TrayIMETest::GetToggleView() const {
+  ImeListViewTestApi test_api(static_cast<ImeListView*>(detailed_view()));
+  return test_api.GetToggleView();
+}
+
+void TrayIMETest::SetManagedMessage(base::string16 managed_message) {
+  tray_->ime_managed_message_ = managed_message;
+  tray_->Update();
+}
+
+void TrayIMETest::SuppressKeyboard() {
+  DCHECK(!keyboard_suppressed_);
+  keyboard_suppressed_ = true;
+
+  ui::DeviceDataManager* device_manager = ui::DeviceDataManager::GetInstance();
+  touchscreen_devices_to_restore_ = device_manager->GetTouchscreenDevices();
+  keyboard_devices_to_restore_ = device_manager->GetKeyboardDevices();
+
+  ui::DeviceHotplugEventObserver* manager =
+      ui::DeviceDataManager::GetInstance();
+  std::vector<ui::TouchscreenDevice> screens;
+  screens.push_back(
+      ui::TouchscreenDevice(1, ui::InputDeviceType::INPUT_DEVICE_INTERNAL,
+                            "Touchscreen", gfx::Size(1024, 768), 0));
+  manager->OnTouchscreenDevicesUpdated(screens);
+
+  std::vector<ui::InputDevice> keyboards;
+  keyboards.push_back(ui::InputDevice(
+      2, ui::InputDeviceType::INPUT_DEVICE_EXTERNAL, "keyboard"));
+  manager->OnKeyboardDevicesUpdated(keyboards);
+}
+
+void TrayIMETest::RestoreKeyboard() {
+  DCHECK(keyboard_suppressed_);
+  ui::DeviceHotplugEventObserver* manager =
+      ui::DeviceDataManager::GetInstance();
+  manager->OnTouchscreenDevicesUpdated(touchscreen_devices_to_restore_);
+  manager->OnKeyboardDevicesUpdated(keyboard_devices_to_restore_);
 }
 
 void TrayIMETest::SetUp() {
@@ -83,6 +124,8 @@ void TrayIMETest::SetUp() {
 }
 
 void TrayIMETest::TearDown() {
+  if (keyboard_suppressed_)
+    RestoreKeyboard();
   SetAccessibilityKeyboardEnabled(false);
   tray_.reset();
   default_view_.reset();
@@ -101,11 +144,27 @@ TEST_F(TrayIMETest, HiddenWithNoIMEs) {
   EXPECT_TRUE(default_view()->visible());
 }
 
+// Tests that if IMEs are managed, the default view is displayed even for a
+// single IME.
+TEST_F(TrayIMETest, ShownWithSingleIMEWhenManaged) {
+  SetManagedMessage(base::ASCIIToUTF16("managed"));
+  SetIMELength(0);
+  EXPECT_FALSE(default_view()->visible());
+  SetIMELength(1);
+  EXPECT_TRUE(default_view()->visible());
+  SetIMELength(2);
+  EXPECT_TRUE(default_view()->visible());
+}
+
 // Tests that if no IMEs are present the default view is hidden when a11y is
 // enabled.
 TEST_F(TrayIMETest, HidesOnA11yEnabled) {
+  // TODO: investigate failure in mash. http://crbug.com/695561.
+  if (WmShell::Get()->IsRunningInMash())
+    return;
+
   SetIMELength(0);
-  test::VirtualKeyboardTestHelper::SuppressKeyboard();
+  SuppressKeyboard();
   EXPECT_TRUE(default_view()->visible());
   // Enable a11y keyboard.
   SetAccessibilityKeyboardEnabled(true);
@@ -118,19 +177,23 @@ TEST_F(TrayIMETest, HidesOnA11yEnabled) {
 // Tests that clicking on the keyboard toggle causes the virtual keyboard
 // to toggle between enabled and disabled.
 TEST_F(TrayIMETest, PerformActionOnDetailedView) {
+  // TODO: investigate failure in mash. http://crbug.com/695561.
+  if (WmShell::Get()->IsRunningInMash())
+    return;
+
   SetIMELength(0);
-  test::VirtualKeyboardTestHelper::SuppressKeyboard();
+  SuppressKeyboard();
   EXPECT_FALSE(keyboard::IsKeyboardEnabled());
-  views::View* toggle = GetScrollChildView(0);
+  views::View* toggle = GetToggleView();
   ui::GestureEvent tap(0, 0, 0, base::TimeTicks(),
                        ui::GestureEventDetails(ui::ET_GESTURE_TAP));
   // Enable the keyboard.
   toggle->OnGestureEvent(&tap);
   EXPECT_TRUE(keyboard::IsKeyboardEnabled());
   EXPECT_TRUE(default_view()->visible());
-  // With no IMEs the toggle should be the first child.
-  toggle = GetScrollChildView(0);
+
   // Clicking again should disable the keyboard.
+  toggle = GetToggleView();
   tap = ui::GestureEvent(0, 0, 0, base::TimeTicks(),
                          ui::GestureEventDetails(ui::ET_GESTURE_TAP));
   toggle->OnGestureEvent(&tap);

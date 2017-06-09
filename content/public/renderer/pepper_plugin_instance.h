@@ -46,7 +46,7 @@ class Isolate;
 }
 
 namespace content {
-class RenderView;
+class RenderFrame;
 
 class PepperPluginInstance {
  public:
@@ -56,7 +56,7 @@ class PepperPluginInstance {
 
   virtual ~PepperPluginInstance() {}
 
-  virtual content::RenderView* GetRenderView() = 0;
+  virtual content::RenderFrame* GetRenderFrame() = 0;
 
   virtual blink::WebPluginContainer* GetContainer() = 0;
 

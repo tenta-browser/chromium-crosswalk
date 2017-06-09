@@ -5,10 +5,10 @@
 #include "ash/common/shelf/shelf_alignment_menu.h"
 
 #include "ash/common/metrics/user_metrics_action.h"
-#include "ash/common/shelf/shelf_types.h"
 #include "ash/common/shelf/wm_shelf.h"
 #include "ash/common/wm_shell.h"
-#include "grit/ash_strings.h"
+#include "ash/public/cpp/shelf_types.h"
+#include "ash/strings/grit/ash_strings.h"
 
 namespace ash {
 
@@ -43,12 +43,6 @@ bool ShelfAlignmentMenu::IsCommandIdChecked(int command_id) const {
 
 bool ShelfAlignmentMenu::IsCommandIdEnabled(int command_id) const {
   return true;
-}
-
-bool ShelfAlignmentMenu::GetAcceleratorForCommandId(
-    int command_id,
-    ui::Accelerator* accelerator) {
-  return false;
 }
 
 void ShelfAlignmentMenu::ExecuteCommand(int command_id, int event_flags) {

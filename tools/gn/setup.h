@@ -82,7 +82,7 @@ class Setup {
   }
 
   BuildSettings& build_settings() { return build_settings_; }
-  Builder* builder() { return builder_.get(); }
+  Builder& builder() { return builder_; }
   LoaderImpl* loader() { return loader_.get(); }
 
   // Name of the file in the root build directory that contains the build
@@ -128,7 +128,7 @@ class Setup {
 
   BuildSettings build_settings_;
   scoped_refptr<LoaderImpl> loader_;
-  scoped_refptr<Builder> builder_;
+  Builder builder_;
 
   SourceFile root_build_file_;
 
@@ -149,6 +149,10 @@ class Setup {
   std::unique_ptr<InputFile> dotfile_input_file_;
   std::vector<Token> dotfile_tokens_;
   std::unique_ptr<ParseNode> dotfile_root_;
+
+  // Default overrides, specified in the dotfile.
+  // Owned by the Value (if it exists) in the dotfile_scope_.
+  const Scope* default_args_;
 
   // Set to true when we should populate the build arguments from the command
   // line or build argument file. See setter above.

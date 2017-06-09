@@ -229,7 +229,7 @@ void ExternalCache::CheckCache() {
     return;
 
   // If request_context_ is missing we can't download anything.
-  if (!downloader_ && request_context_.get()) {
+  if (request_context_.get()) {
     downloader_ = ChromeExtensionDownloaderFactory::CreateForRequestContext(
         request_context_.get(), this);
   }
@@ -257,7 +257,7 @@ void ExternalCache::CheckCache() {
         update_url = extension_urls::GetWebstoreUpdateUrl();
 
       if (update_url.is_valid())
-        downloader_->AddPendingExtension(it.key(), update_url, 0);
+        downloader_->AddPendingExtension(it.key(), update_url, false, 0);
     }
 
     base::FilePath file_path;

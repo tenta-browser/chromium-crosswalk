@@ -18,12 +18,17 @@
 #include "ppapi/cpp/video_decoder.h"
 #include "ppapi/utility/completion_callback_factory.h"
 #include "remoting/client/plugin/pepper_video_renderer.h"
+#include "remoting/client/plugin/pepper_video_renderer_2d.h"
 #include "remoting/protocol/video_stub.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_geometry.h"
 
 struct PPB_OpenGLES2;
 
 namespace remoting {
+
+namespace protocol {
+class FrameStatsConsumer;
+}  // namespace protocol
 
 // PepperVideoRenderer that uses the PPB_VideoDecoder interface for video
 // decoding and Graphics3D for rendering.
@@ -41,10 +46,11 @@ class PepperVideoRenderer3D : public PepperVideoRenderer,
 
   // VideoRenderer interface.
   bool Initialize(const ClientContext& client_context,
-                  protocol::PerformanceTracker* perf_tracker) override;
+                  protocol::FrameStatsConsumer* stats_consumer) override;
   void OnSessionConfig(const protocol::SessionConfig& config) override;
   protocol::VideoStub* GetVideoStub() override;
   protocol::FrameConsumer* GetFrameConsumer() override;
+  protocol::FrameStatsConsumer* GetFrameStatsConsumer() override;
 
   // protocol::VideoStub interface.
   void ProcessVideoPacket(std::unique_ptr<VideoPacket> packet,
@@ -65,8 +71,8 @@ class PepperVideoRenderer3D : public PepperVideoRenderer,
   // Callback for pp::VideoDecoder::Decode().
   void OnDecodeDone(int32_t result);
 
-  // Fetches next picture from the |video_decoder_|.
-  void GetNextPicture();
+  // Fetches next picture from the |video_decoder_| if a decoded frame is ready.
+  void GetNextPictureIfReady();
 
   // Callback for pp::VideoDecoder::GetPicture().
   void OnPictureReady(int32_t result, PP_VideoPicture picture);
@@ -93,7 +99,7 @@ class PepperVideoRenderer3D : public PepperVideoRenderer,
 
   pp::Instance* pp_instance_ = nullptr;
   EventHandler* event_handler_ = nullptr;
-  protocol::PerformanceTracker* perf_tracker_ = nullptr;
+  protocol::FrameStatsConsumer* stats_consumer_ = nullptr;
 
   pp::Graphics3D graphics_;
   const PPB_OpenGLES2* gles2_if_;
@@ -131,6 +137,11 @@ class PepperVideoRenderer3D : public PepperVideoRenderer,
   // the |current_picture_| is rendered.
   std::list<std::unique_ptr<FrameTracker>> current_picture_frames_;
 
+  // The fallback software renderer, if input video packet size is larger than
+  // hardware limitation.
+  PepperVideoRenderer2D fallback_renderer_;
+  bool use_fallback_renderer_ = false;
+
   // Set to true if the screen has been resized and needs to be repainted.
   bool force_repaint_ = false;
 
@@ -152,6 +163,10 @@ class PepperVideoRenderer3D : public PepperVideoRenderer,
   bool debug_dirty_region_ = false;
 
   pp::CompletionCallbackFactory<PepperVideoRenderer3D> callback_factory_;
+
+  // The hardware limitation.
+  int gl_max_texture_size_;
+  int gl_max_viewport_size_[2];
 
   DISALLOW_COPY_AND_ASSIGN(PepperVideoRenderer3D);
 };

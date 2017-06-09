@@ -2,5 +2,4 @@ skyostil@chromium.org
 tedchoc@chromium.org
 yfriedman@chromium.org
 
-per-file synchronous_compositor_*.h=boliu@chromium.org
-per-file synchronous_compositor_*.cc=boliu@chromium.org
+# COMPONENT: Content>WebApps

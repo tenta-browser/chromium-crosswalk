@@ -7,39 +7,49 @@
 
 #include "bindings/core/v8/ScopedPersistent.h"
 #include "core/css/CSSPaintImageGenerator.h"
+#include "core/css/cssom/CSSStyleValue.h"
 #include "platform/geometry/IntSize.h"
 #include "platform/heap/Handle.h"
-#include <v8.h>
+#include "v8/include/v8.h"
 
 namespace blink {
 
 class CSSPaintDefinition;
+class CSSSyntaxDescriptor;
 class Document;
 class Image;
 
 class CSSPaintImageGeneratorImpl final : public CSSPaintImageGenerator {
-public:
-    static CSSPaintImageGenerator* create(const String& name, Document&, Observer*);
-    ~CSSPaintImageGeneratorImpl() override;
+ public:
+  static CSSPaintImageGenerator* create(const String& name,
+                                        Document&,
+                                        Observer*);
+  ~CSSPaintImageGeneratorImpl() override;
 
-    PassRefPtr<Image> paint(const LayoutObject&, const IntSize&) final;
-    const Vector<CSSPropertyID>& nativeInvalidationProperties() const final;
-    const Vector<AtomicString>& customInvalidationProperties() const final;
+  PassRefPtr<Image> paint(const LayoutObject&,
+                          const IntSize&,
+                          float zoom,
+                          const CSSStyleValueVector*) final;
+  const Vector<CSSPropertyID>& nativeInvalidationProperties() const final;
+  const Vector<AtomicString>& customInvalidationProperties() const final;
+  bool hasAlpha() const final;
+  const Vector<CSSSyntaxDescriptor>& inputArgumentTypes() const final;
+  bool isImageGeneratorReady() const final;
 
-    // Should be called from the PaintWorkletGlobalScope when a javascript class
-    // is registered with the same name.
-    void setDefinition(CSSPaintDefinition*);
+  // Should be called from the PaintWorkletGlobalScope when a javascript class
+  // is registered with the same name.
+  void setDefinition(CSSPaintDefinition*);
 
-    DECLARE_VIRTUAL_TRACE();
+  DECLARE_VIRTUAL_TRACE();
 
-private:
-    CSSPaintImageGeneratorImpl(Observer*);
-    CSSPaintImageGeneratorImpl(CSSPaintDefinition*);
+ private:
+  CSSPaintImageGeneratorImpl(Observer*);
+  CSSPaintImageGeneratorImpl(CSSPaintDefinition*);
 
-    Member<CSSPaintDefinition> m_definition;
-    Member<Observer> m_observer;
+  Member<CSSPaintDefinition> m_definition;
+  Member<Observer> m_observer;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // CSSPaintImageGeneratorImpl_h
+#endif  // CSSPaintImageGeneratorImpl_h

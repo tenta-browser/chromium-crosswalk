@@ -136,7 +136,7 @@ class GLES2_IMPL_EXPORT GLES2Implementation
     ShaderPrecisionMap shader_precisions;
   };
 
-  // The maxiumum result size from simple GL get commands.
+  // The maximum result size from simple GL get commands.
   static const size_t kMaxSizeOfSimpleResult =
       16 * sizeof(uint32_t);  // NOLINT.
 
@@ -187,15 +187,9 @@ class GLES2_IMPL_EXPORT GLES2Implementation
   // this file instead of having to edit some template or the code generator.
   #include "gpu/command_buffer/client/gles2_implementation_autogen.h"
 
-  void DisableVertexAttribArray(GLuint index) override;
-  void EnableVertexAttribArray(GLuint index) override;
-  void GetVertexAttribfv(GLuint index, GLenum pname, GLfloat* params) override;
-  void GetVertexAttribiv(GLuint index, GLenum pname, GLint* params) override;
-  void GetVertexAttribIiv(GLuint index, GLenum pname, GLint* params) override;
-  void GetVertexAttribIuiv(GLuint index, GLenum pname, GLuint* params) override;
-
   // ContextSupport implementation.
   void Swap() override;
+  void SwapWithBounds(const std::vector<gfx::Rect>& rects) override;
   void PartialSwapBuffers(const gfx::Rect& sub_buffer) override;
   void CommitOverlayPlanes() override;
   void ScheduleOverlayPlane(int plane_z_order,
@@ -252,9 +246,12 @@ class GLES2_IMPL_EXPORT GLES2Implementation
   void FreeUnusedSharedMemory();
   void FreeEverything();
 
+  void FreeSharedMemory(void*) override;
+
   // ContextSupport implementation.
   void SignalSyncToken(const gpu::SyncToken& sync_token,
                        const base::Closure& callback) override;
+  bool IsSyncTokenSignalled(const gpu::SyncToken& sync_token) override;
   void SignalQuery(uint32_t query, const base::Closure& callback) override;
   void SetAggressivelyFreeResources(bool aggressively_free_resources) override;
 
@@ -537,10 +534,6 @@ class GLES2_IMPL_EXPORT GLES2Implementation
                                    GLsizei height,
                                    GLenum internalformat);
   void DestroyImageCHROMIUMHelper(GLuint image_id);
-  GLuint CreateGpuMemoryBufferImageCHROMIUMHelper(GLsizei width,
-                                                  GLsizei height,
-                                                  GLenum internalformat,
-                                                  GLenum usage);
 
   // Helper for GetVertexAttrib
   bool GetVertexAttribHelper(GLuint index, GLenum pname, uint32_t* param);
@@ -820,7 +813,7 @@ class GLES2_IMPL_EXPORT GLES2Implementation
 
   int current_trace_stack_;
 
-  GpuControl* gpu_control_;
+  GpuControl* const gpu_control_;
 
   Capabilities capabilities_;
 

@@ -4,7 +4,7 @@
 
 #include "gpu/ipc/service/gpu_memory_buffer_factory_ozone_native_pixmap.h"
 
-#include "ui/gl/gl_image_ozone_native_pixmap.h"
+#include "ui/ozone/gl/gl_image_ozone_native_pixmap.h"
 #include "ui/ozone/public/client_native_pixmap.h"
 #include "ui/ozone/public/client_native_pixmap_factory.h"
 #include "ui/ozone/public/native_pixmap.h"
@@ -32,9 +32,9 @@ GpuMemoryBufferFactoryOzoneNativePixmap::CreateGpuMemoryBuffer(
           ->GetSurfaceFactoryOzone()
           ->CreateNativePixmap(surface_handle, size, format, usage);
   if (!pixmap.get()) {
-    DLOG(ERROR) << "Failed to create pixmap " << size.width() << "x"
-                << size.height() << " format " << static_cast<int>(format)
-                << ", usage " << static_cast<int>(usage);
+    DLOG(ERROR) << "Failed to create pixmap " << size.ToString() << " format "
+                << static_cast<int>(format) << ", usage "
+                << static_cast<int>(usage);
     return gfx::GpuMemoryBufferHandle();
   }
 
@@ -106,13 +106,43 @@ GpuMemoryBufferFactoryOzoneNativePixmap::CreateImageForGpuMemoryBuffer(
     }
   }
 
-  scoped_refptr<gl::GLImageOzoneNativePixmap> image(
-      new gl::GLImageOzoneNativePixmap(size, internalformat));
+  scoped_refptr<ui::GLImageOzoneNativePixmap> image(
+      new ui::GLImageOzoneNativePixmap(size, internalformat));
   if (!image->Initialize(pixmap.get(), format)) {
-    LOG(ERROR) << "Failed to create GLImage";
+    LOG(ERROR) << "Failed to create GLImage " << size.ToString() << " format "
+               << static_cast<int>(format);
     return nullptr;
   }
   return image;
+}
+
+scoped_refptr<gl::GLImage>
+GpuMemoryBufferFactoryOzoneNativePixmap::CreateAnonymousImage(
+    const gfx::Size& size,
+    gfx::BufferFormat format,
+    unsigned internalformat) {
+  scoped_refptr<ui::NativePixmap> pixmap =
+      ui::OzonePlatform::GetInstance()
+          ->GetSurfaceFactoryOzone()
+          ->CreateNativePixmap(gpu::kNullSurfaceHandle, size, format,
+                               gfx::BufferUsage::SCANOUT);
+  if (!pixmap.get()) {
+    LOG(ERROR) << "Failed to create pixmap " << size.ToString() << " format "
+               << static_cast<int>(format);
+    return nullptr;
+  }
+  scoped_refptr<ui::GLImageOzoneNativePixmap> image(
+      new ui::GLImageOzoneNativePixmap(size, internalformat));
+  if (!image->Initialize(pixmap.get(), format)) {
+    LOG(ERROR) << "Failed to create GLImage " << size.ToString() << " format "
+               << static_cast<int>(format);
+    return nullptr;
+  }
+  return image;
+}
+
+unsigned GpuMemoryBufferFactoryOzoneNativePixmap::RequiredTextureType() {
+  return GL_TEXTURE_EXTERNAL_OES;
 }
 
 }  // namespace gpu

@@ -11,30 +11,29 @@
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "chrome/browser/chromeos/input_method/input_method_configuration.h"
-#include "chrome/browser/chromeos/input_method/mock_input_method_manager.h"
+#include "chrome/browser/chromeos/input_method/mock_input_method_manager_impl.h"
 #include "chrome/browser/chromeos/login/session/user_session_manager.h"
 #include "chrome/browser/chromeos/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/chromeos/login/users/scoped_user_manager_enabler.h"
-#include "chrome/browser/chromeos/system/fake_input_device_settings.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
 #include "components/prefs/pref_member.h"
-#include "components/syncable_prefs/testing_pref_service_syncable.h"
+#include "components/sync/model/attachments/attachment_id.h"
+#include "components/sync/model/attachments/attachment_service_proxy_for_test.h"
+#include "components/sync/model/fake_sync_change_processor.h"
+#include "components/sync/model/sync_change.h"
+#include "components/sync/model/sync_data.h"
+#include "components/sync/model/sync_error_factory.h"
+#include "components/sync/model/sync_error_factory_mock.h"
+#include "components/sync/model/syncable_service.h"
+#include "components/sync/protocol/preference_specifics.pb.h"
+#include "components/sync/protocol/sync.pb.h"
+#include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_utils.h"
-#include "sync/api/attachments/attachment_id.h"
-#include "sync/api/fake_sync_change_processor.h"
-#include "sync/api/sync_change.h"
-#include "sync/api/sync_data.h"
-#include "sync/api/sync_error_factory.h"
-#include "sync/api/sync_error_factory_mock.h"
-#include "sync/api/syncable_service.h"
-#include "sync/internal_api/public/attachments/attachment_service_proxy_for_test.h"
-#include "sync/protocol/preference_specifics.pb.h"
-#include "sync/protocol/sync.pb.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/ime/chromeos/extension_ime_util.h"
 #include "ui/base/ime/chromeos/input_method_whitelist.h"
@@ -75,12 +74,12 @@ CreatePrefSyncData(const std::string& name, const base::Value& value) {
 namespace input_method {
 namespace {
 
-class MyMockInputMethodManager : public MockInputMethodManager {
+class MyMockInputMethodManager : public MockInputMethodManagerImpl {
  public:
-  class State : public MockInputMethodManager::State {
+  class State : public MockInputMethodManagerImpl::State {
    public:
     explicit State(MyMockInputMethodManager* manager)
-        : MockInputMethodManager::State(manager), manager_(manager) {
+        : MockInputMethodManagerImpl::State(manager), manager_(manager) {
       input_method_extensions_.reset(new InputMethodDescriptors);
     }
 
@@ -178,8 +177,6 @@ class PreferencesTest : public testing::Test {
     mock_manager_ = new input_method::MyMockInputMethodManager(
         &previous_input_method_, &current_input_method_);
     input_method::InitializeForTesting(mock_manager_);
-    system::InputDeviceSettings::SetSettingsForTesting(
-        new system::FakeInputDeviceSettings());
 
     prefs_.reset(new Preferences(mock_manager_));
   }
@@ -208,7 +205,7 @@ class PreferencesTest : public testing::Test {
   // Not owned.
   const user_manager::User* test_user_;
   TestingProfile* test_profile_;
-  syncable_prefs::TestingPrefServiceSyncable* pref_service_;
+  sync_preferences::TestingPrefServiceSyncable* pref_service_;
   input_method::MyMockInputMethodManager* mock_manager_;
 
  private:
@@ -250,17 +247,11 @@ class InputMethodPreferencesTest : public PreferencesTest {
     InitComponentExtensionIMEManager();
     input_method::InputMethodDescriptors descriptors;
     mock_manager_->GetActiveIMEState()->AddInputMethodExtension(
-        kIdentityIMEID,
-        descriptors,
-        NULL);
+        kIdentityIMEID, descriptors, nullptr);
     mock_manager_->GetActiveIMEState()->AddInputMethodExtension(
-        kToUpperIMEID,
-        descriptors,
-        NULL);
+        kToUpperIMEID, descriptors, nullptr);
     mock_manager_->GetActiveIMEState()->AddInputMethodExtension(
-        kAPIArgumentIMEID,
-        descriptors,
-        NULL);
+        kAPIArgumentIMEID, descriptors, nullptr);
   }
 
   void InitComponentExtensionIMEManager() {

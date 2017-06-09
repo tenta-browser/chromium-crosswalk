@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <map>
 #include <utility>
+#include <vector>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
@@ -18,7 +19,7 @@
 #include "base/i18n/string_compare.h"
 #include "base/id_map.h"
 #include "base/macros.h"
-#include "base/memory/scoped_vector.h"
+#include "base/memory/ptr_util.h"
 #include "base/posix/safe_strerror.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -32,9 +33,9 @@
 #include "chrome/browser/ui/crypto_module_password_dialog_nss.h"
 #include "chrome/browser/ui/webui/certificate_viewer_webui.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
-#include "grit/components_strings.h"
 #include "net/base/crypto_module.h"
 #include "net/base/net_errors.h"
 #include "net/cert/x509_certificate.h"
@@ -206,7 +207,7 @@ class CertIdMap {
   typedef std::map<net::X509Certificate*, int32_t> CertMap;
 
   // Creates an ID for cert and looks up the cert for an ID.
-  IDMap<net::X509Certificate>id_map_;
+  IDMap<net::X509Certificate*> id_map_;
 
   // Finds the ID for a cert.
   CertMap cert_map_;
@@ -299,7 +300,7 @@ base::CancelableTaskTracker::TaskId FileAccessProvider::StartRead(
 
   // Post task to file thread to read file.
   return tracker->PostTaskAndReply(
-      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::FILE).get(),
+      BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE).get(),
       FROM_HERE,
       base::Bind(&FileAccessProvider::DoRead, this, path, saved_errno, data),
       base::Bind(callback, base::Owned(saved_errno), base::Owned(data)));
@@ -316,16 +317,11 @@ base::CancelableTaskTracker::TaskId FileAccessProvider::StartWrite(
 
   // Post task to file thread to write file.
   return tracker->PostTaskAndReply(
-      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::FILE).get(),
-      FROM_HERE,
-      base::Bind(&FileAccessProvider::DoWrite,
-                 this,
-                 path,
-                 data,
-                 saved_errno,
-                 bytes_written),
-      base::Bind(
-          callback, base::Owned(saved_errno), base::Owned(bytes_written)));
+      BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE).get(),
+      FROM_HERE, base::Bind(&FileAccessProvider::DoWrite, this, path, data,
+                            saved_errno, bytes_written),
+      base::Bind(callback, base::Owned(saved_errno),
+                 base::Owned(bytes_written)));
 }
 
 void FileAccessProvider::DoRead(const base::FilePath& path,
@@ -610,11 +606,11 @@ void CertificateManagerHandler::GetCATrust(const base::ListValue* args) {
 
   net::NSSCertDatabase::TrustBits trust_bits =
       certificate_manager_model_->cert_db()->GetCertTrust(cert, net::CA_CERT);
-  base::FundamentalValue ssl_value(
+  base::Value ssl_value(
       static_cast<bool>(trust_bits & net::NSSCertDatabase::TRUSTED_SSL));
-  base::FundamentalValue email_value(
+  base::Value email_value(
       static_cast<bool>(trust_bits & net::NSSCertDatabase::TRUSTED_EMAIL));
-  base::FundamentalValue obj_sign_value(
+  base::Value obj_sign_value(
       static_cast<bool>(trust_bits & net::NSSCertDatabase::TRUSTED_OBJ_SIGN));
   web_ui()->CallJavascriptFunctionUnsafe(
       "CertificateEditCaTrustOverlay.populateTrust", ssl_value, email_value,
@@ -838,16 +834,15 @@ void CertificateManagerHandler::ImportPersonalPasswordSelected(
   }
 
   if (use_hardware_backed_) {
-    module_ = certificate_manager_model_->cert_db()->GetPrivateModule();
+    slot_ = certificate_manager_model_->cert_db()->GetPrivateSlot();
   } else {
-    module_ = certificate_manager_model_->cert_db()->GetPublicModule();
+    slot_ = certificate_manager_model_->cert_db()->GetPublicSlot();
   }
 
-  net::CryptoModuleList modules;
-  modules.push_back(module_);
+  std::vector<crypto::ScopedPK11Slot> modules;
+  modules.push_back(crypto::ScopedPK11Slot(PK11_ReferenceSlot(slot_.get())));
   chrome::UnlockSlotsIfNecessary(
-      modules,
-      chrome::kCryptoModulePasswordCertImport,
+      std::move(modules), chrome::kCryptoModulePasswordCertImport,
       net::HostPortPair(),  // unused.
       GetParentWindow(),
       base::Bind(&CertificateManagerHandler::ImportPersonalSlotUnlocked,
@@ -861,7 +856,7 @@ void CertificateManagerHandler::ImportPersonalSlotUnlocked() {
   // for Chrome OS when the "Import and Bind" option is chosen.
   bool is_extractable = !use_hardware_backed_;
   int result = certificate_manager_model_->ImportFromPKCS12(
-      module_.get(), file_data_, password_, is_extractable);
+      slot_.get(), file_data_, password_, is_extractable);
   ImportExportCleanup();
   web_ui()->CallJavascriptFunctionUnsafe("CertificateRestoreOverlay.dismiss");
   int string_id;
@@ -902,7 +897,7 @@ void CertificateManagerHandler::ImportExportCleanup() {
   file_data_.clear();
   use_hardware_backed_ = false;
   selected_cert_list_.clear();
-  module_ = NULL;
+  slot_.reset();
   tracker_.TryCancelAll();
 
   // There may be pending file dialogs, we need to tell them that we've gone
@@ -1089,9 +1084,9 @@ void CertificateManagerHandler::OnCertificateManagerModelCreated(
 }
 
 void CertificateManagerHandler::CertificateManagerModelReady() {
-  base::FundamentalValue user_db_available_value(
+  base::Value user_db_available_value(
       certificate_manager_model_->is_user_db_available());
-  base::FundamentalValue tpm_available_value(
+  base::Value tpm_available_value(
       certificate_manager_model_->is_tpm_available());
   web_ui()->CallJavascriptFunctionUnsafe("CertificateManager.onModelReady",
                                          user_db_available_value,
@@ -1197,14 +1192,18 @@ void CertificateManagerHandler::PopulateTree(
 
 void CertificateManagerHandler::ShowError(const std::string& title,
                                           const std::string& error) const {
-  ScopedVector<const base::Value> args;
-  args.push_back(new base::StringValue(title));
-  args.push_back(new base::StringValue(error));
-  args.push_back(new base::StringValue(l10n_util::GetStringUTF8(IDS_OK)));
-  args.push_back(base::Value::CreateNullValue().release());  // cancelTitle
-  args.push_back(base::Value::CreateNullValue().release());  // okCallback
-  args.push_back(base::Value::CreateNullValue().release());  // cancelCallback
-  web_ui()->CallJavascriptFunctionUnsafe("AlertOverlay.show", args.get());
+  auto title_value = base::MakeUnique<base::StringValue>(title);
+  auto error_value = base::MakeUnique<base::StringValue>(error);
+  auto ok_title_value =
+      base::MakeUnique<base::StringValue>(l10n_util::GetStringUTF8(IDS_OK));
+  auto cancel_title_value = base::Value::CreateNullValue();
+  auto ok_callback_value = base::Value::CreateNullValue();
+  auto cancel_callback_value = base::Value::CreateNullValue();
+  std::vector<const base::Value*> args = {
+      title_value.get(),       error_value.get(),
+      ok_title_value.get(),    cancel_title_value.get(),
+      ok_callback_value.get(), cancel_callback_value.get()};
+  web_ui()->CallJavascriptFunctionUnsafe("AlertOverlay.show", args);
 }
 
 void CertificateManagerHandler::ShowImportErrors(

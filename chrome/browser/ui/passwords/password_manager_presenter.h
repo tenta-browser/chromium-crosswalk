@@ -31,8 +31,6 @@ enum class PasswordEntryType { SAVED, BLACKLISTED };
 
 class PasswordUIView;
 
-class Profile;
-
 // Contains the common logic used by a PasswordUIView to
 // interact with PasswordStore. It provides completion callbacks for
 // PasswordStore operations and updates the view on PasswordStore changes.
@@ -120,7 +118,7 @@ class PasswordManagerPresenter
 
     // Send the password store's reply back to the handler.
     void OnGetPasswordStoreResults(
-        ScopedVector<autofill::PasswordForm> results) override;
+        std::vector<std::unique_ptr<autofill::PasswordForm>> results) override;
   };
 
   // A short class to mediate requests to the password store for exceptions.
@@ -133,7 +131,7 @@ class PasswordManagerPresenter
 
     // Send the password store's reply back to the handler.
     void OnGetPasswordStoreResults(
-        ScopedVector<autofill::PasswordForm> results) override;
+        std::vector<std::unique_ptr<autofill::PasswordForm>> results) override;
   };
 
   // Password store consumer for populating the password list and exceptions.

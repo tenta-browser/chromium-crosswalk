@@ -13,24 +13,31 @@ namespace {
 
 class PlatformChannelFactory : public ChannelFactory {
  public:
-  PlatformChannelFactory(ChannelHandle handle, Channel::Mode mode)
-      : handle_(handle), mode_(mode) {}
-
-  std::string GetName() const override {
-    return handle_.name;
-  }
+  PlatformChannelFactory(
+      ChannelHandle handle,
+      Channel::Mode mode,
+      const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner)
+      : handle_(handle), mode_(mode), ipc_task_runner_(ipc_task_runner) {}
 
   std::unique_ptr<Channel> BuildChannel(Listener* listener) override {
-    if (handle_.mojo_handle.is_valid()) {
-      return ChannelMojo::Create(
-          mojo::ScopedMessagePipeHandle(handle_.mojo_handle), mode_, listener);
-    }
+#if defined(OS_NACL_SFI)
     return Channel::Create(handle_, mode_, listener);
+#else
+    DCHECK(handle_.is_mojo_channel_handle());
+    return ChannelMojo::Create(
+        mojo::ScopedMessagePipeHandle(handle_.mojo_handle), mode_, listener,
+        ipc_task_runner_);
+#endif
+  }
+
+  scoped_refptr<base::SingleThreadTaskRunner> GetIPCTaskRunner() override {
+    return ipc_task_runner_;
   }
 
  private:
   ChannelHandle handle_;
   Channel::Mode mode_;
+  scoped_refptr<base::SingleThreadTaskRunner> ipc_task_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(PlatformChannelFactory);
 };
@@ -40,8 +47,10 @@ class PlatformChannelFactory : public ChannelFactory {
 // static
 std::unique_ptr<ChannelFactory> ChannelFactory::Create(
     const ChannelHandle& handle,
-    Channel::Mode mode) {
-  return base::WrapUnique(new PlatformChannelFactory(handle, mode));
+    Channel::Mode mode,
+    const scoped_refptr<base::SingleThreadTaskRunner>& ipc_task_runner) {
+  return base::MakeUnique<PlatformChannelFactory>(handle, mode,
+                                                  ipc_task_runner);
 }
 
 }  // namespace IPC

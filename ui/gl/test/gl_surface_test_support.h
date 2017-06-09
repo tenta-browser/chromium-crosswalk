@@ -9,15 +9,13 @@
 
 namespace gl {
 
-class GLContext;
-
 class GLSurfaceTestSupport {
  public:
   static void InitializeOneOff();
   static void InitializeOneOffImplementation(GLImplementation impl,
                                              bool fallback_to_osmesa);
   static void InitializeOneOffWithMockBindings();
-  static void InitializeDynamicMockBindings(GLContext* context);
+  static void InitializeOneOffWithStubBindings();
 };
 
 }  // namespace gl

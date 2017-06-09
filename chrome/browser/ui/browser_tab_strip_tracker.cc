@@ -61,6 +61,11 @@ void BrowserTabStripTracker::MaybeTrackBrowser(Browser* browser) {
   if (!ShouldTrackBrowser(browser))
     return;
 
+  // It's possible that a browser is added to the observed browser list twice.
+  // In this case it might cause crash as seen in crbug.com/685731.
+  if (browsers_observing_.find(browser) != browsers_observing_.end())
+    return;
+
   browsers_observing_.insert(browser);
 
   if (browser_list_observer_)
@@ -71,7 +76,8 @@ void BrowserTabStripTracker::MaybeTrackBrowser(Browser* browser) {
   const int active_index = tab_strip_model->active_index();
   for (int i = 0; i < tab_strip_model->count(); ++i) {
     tab_strip_model_observer_->TabInsertedAt(
-        tab_strip_model->GetWebContentsAt(i), i, i == active_index);
+        tab_strip_model, tab_strip_model->GetWebContentsAt(i), i,
+        i == active_index);
   }
 }
 

@@ -16,14 +16,18 @@ class GLES2Interface;
 }
 }
 
-namespace content {
+namespace ui {
 class ContextProviderCommandBuffer;
+}
+
+namespace content {
 
 class CONTENT_EXPORT WebGraphicsContext3DProviderImpl
     : public NON_EXPORTED_BASE(blink::WebGraphicsContext3DProvider) {
  public:
   explicit WebGraphicsContext3DProviderImpl(
-      scoped_refptr<ContextProviderCommandBuffer> provider);
+      scoped_refptr<ui::ContextProviderCommandBuffer> provider,
+      bool software_rendering);
   ~WebGraphicsContext3DProviderImpl() override;
 
   // WebGraphicsContext3DProvider implementation.
@@ -31,16 +35,19 @@ class CONTENT_EXPORT WebGraphicsContext3DProviderImpl
   gpu::gles2::GLES2Interface* contextGL() override;
   GrContext* grContext() override;
   gpu::Capabilities getCapabilities() override;
-  void setLostContextCallback(blink::WebClosure) override;
+  bool isSoftwareRendering() const override;
+  void setLostContextCallback(const base::Closure&) override;
   void setErrorMessageCallback(
-      blink::WebFunction<void(const char*, int32_t)>) override;
+      const base::Callback<void(const char*, int32_t)>&) override;
+  void signalQuery(uint32_t, const base::Closure&) override;
 
-  ContextProviderCommandBuffer* context_provider() const {
+  ui::ContextProviderCommandBuffer* context_provider() const {
     return provider_.get();
   }
 
  private:
-  scoped_refptr<ContextProviderCommandBuffer> provider_;
+  scoped_refptr<ui::ContextProviderCommandBuffer> provider_;
+  const bool software_rendering_;
 };
 
 }  // namespace content

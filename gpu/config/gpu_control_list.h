@@ -91,6 +91,9 @@ class GPU_EXPORT GpuControlList {
   // Returns the number of entries.  This is only for tests.
   size_t num_entries() const;
 
+  // This is only for tests.
+  bool has_duplicated_entry_id() const;
+
   // Register a feature to FeatureMap - used to construct a GpuControlList.
   void AddSupportedFeature(const std::string& feature_name, int feature_id);
   // Register whether "all" is recognized as all features.
@@ -366,6 +369,8 @@ class GPU_EXPORT GpuControlList {
                           const std::string& version_string,
                           const std::string& version_string2);
 
+    bool SetGLVersionStringInfo(const std::string& version_string_value);
+
     bool SetGLVendorInfo(const std::string& vendor_value);
 
     bool SetGLRendererInfo(const std::string& renderer_value);
@@ -402,6 +407,10 @@ class GPU_EXPORT GpuControlList {
 
     void SetDirectRenderingInfo(bool value);
     void SetInProcessGPUInfo(bool value);
+
+    bool SetPixelShaderVersionInfo(const std::string& version_op,
+                                   const std::string& version_string,
+                                   const std::string& version_string2);
 
     bool SetFeatures(const std::vector<std::string>& features,
                      const std::vector<std::string>& exceptions,
@@ -447,6 +456,7 @@ class GPU_EXPORT GpuControlList {
     std::unique_ptr<VersionInfo> driver_version_info_;
     std::unique_ptr<VersionInfo> driver_date_info_;
     std::unique_ptr<VersionInfo> gl_version_info_;
+    std::string gl_version_string_info_;
     std::string gl_vendor_info_;
     std::string gl_renderer_info_;
     std::string gl_extensions_info_;
@@ -460,6 +470,7 @@ class GPU_EXPORT GpuControlList {
     std::unique_ptr<IntInfo> gpu_count_info_;
     std::unique_ptr<BoolInfo> direct_rendering_info_;
     std::unique_ptr<BoolInfo> in_process_gpu_info_;
+    std::unique_ptr<VersionInfo> pixel_shader_version_info_;
     std::set<int> features_;
     std::vector<ScopedGpuControlListEntry> exceptions_;
   };

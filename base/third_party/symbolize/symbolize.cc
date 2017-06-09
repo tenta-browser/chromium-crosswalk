@@ -56,6 +56,7 @@
 
 #if defined(HAVE_SYMBOLIZE)
 
+#include <algorithm>
 #include <limits>
 
 #include "symbolize.h"
@@ -296,10 +297,12 @@ FindSymbol(uint64_t pc, const int fd, char *out, int out_size,
 
     // Read at most NUM_SYMBOLS symbols at once to save read() calls.
     ElfW(Sym) buf[NUM_SYMBOLS];
-    const ssize_t len = ReadFromOffset(fd, &buf, sizeof(buf), offset);
+    int num_symbols_to_read = std::min(NUM_SYMBOLS, num_symbols - i);
+    const ssize_t len =
+        ReadFromOffset(fd, &buf, sizeof(buf[0]) * num_symbols_to_read, offset);
     SAFE_ASSERT(len % sizeof(buf[0]) == 0);
     const ssize_t num_symbols_in_buf = len / sizeof(buf[0]);
-    SAFE_ASSERT(num_symbols_in_buf <= sizeof(buf)/sizeof(buf[0]));
+    SAFE_ASSERT(num_symbols_in_buf <= num_symbols_to_read);
     for (int j = 0; j < num_symbols_in_buf; ++j) {
       const ElfW(Sym)& symbol = buf[j];
       uint64_t start_address = symbol.st_value;
@@ -327,7 +330,7 @@ FindSymbol(uint64_t pc, const int fd, char *out, int out_size,
 // false.
 static bool GetSymbolFromObjectFile(const int fd, uint64_t pc,
                                     char *out, int out_size,
-                                    uint64_t map_start_address) {
+                                    uint64_t map_base_address) {
   // Read the ELF header.
   ElfW(Ehdr) elf_header;
   if (!ReadFromOffsetExact(fd, &elf_header, sizeof(elf_header), 0)) {
@@ -336,7 +339,28 @@ static bool GetSymbolFromObjectFile(const int fd, uint64_t pc,
 
   uint64_t symbol_offset = 0;
   if (elf_header.e_type == ET_DYN) {  // DSO needs offset adjustment.
-    symbol_offset = map_start_address;
+    ElfW(Phdr) phdr;
+    // We need to find the PT_LOAD segment corresponding to the read-execute
+    // file mapping in order to correctly perform the offset adjustment.
+    for (unsigned i = 0; i != elf_header.e_phnum; ++i) {
+      if (!ReadFromOffsetExact(fd, &phdr, sizeof(phdr),
+                               elf_header.e_phoff + i * sizeof(phdr)))
+        return false;
+      if (phdr.p_type == PT_LOAD &&
+          (phdr.p_flags & (PF_R | PF_X)) == (PF_R | PF_X)) {
+        // Find the mapped address corresponding to virtual address zero. We do
+        // this by first adding p_offset. This gives us the mapped address of
+        // the start of the segment, or in other words the mapped address
+        // corresponding to the virtual address of the segment. (Note that this
+        // is distinct from the start address, as p_offset is not guaranteed to
+        // be page aligned.) We then subtract p_vaddr, which takes us to virtual
+        // address zero.
+        symbol_offset = map_base_address + phdr.p_offset - phdr.p_vaddr;
+        break;
+      }
+    }
+    if (symbol_offset == 0)
+      return false;
   }
 
   ElfW(Shdr) symtab, strtab;
@@ -783,7 +807,7 @@ static ATTRIBUTE_NOINLINE bool SymbolizeAndDemangle(void *pc, char *out,
     }
   }
   if (!GetSymbolFromObjectFile(wrapped_object_fd.get(), pc0,
-                               out, out_size, start_address)) {
+                               out, out_size, base_address)) {
     return false;
   }
 

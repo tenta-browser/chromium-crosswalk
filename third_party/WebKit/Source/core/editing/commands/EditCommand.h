@@ -26,8 +26,9 @@
 #ifndef EditCommand_h
 #define EditCommand_h
 
+#include "core/CoreExport.h"
 #include "core/editing/VisibleSelection.h"
-#include "core/editing/commands/EditAction.h"
+#include "core/events/InputEvent.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
@@ -36,66 +37,65 @@ class CompositeEditCommand;
 class Document;
 class EditingState;
 
-class EditCommand : public GarbageCollectedFinalized<EditCommand> {
-public:
-    virtual ~EditCommand();
+class CORE_EXPORT EditCommand : public GarbageCollectedFinalized<EditCommand> {
+ public:
+  virtual ~EditCommand();
 
-    void setParent(CompositeEditCommand*);
+  virtual void setParent(CompositeEditCommand*);
 
-    virtual EditAction editingAction() const;
+  virtual InputEvent::InputType inputType() const;
 
-    const VisibleSelection& startingSelection() const { return m_startingSelection; }
-    const VisibleSelection& endingSelection() const { return m_endingSelection; }
+  virtual bool isSimpleEditCommand() const { return false; }
+  virtual bool isCompositeEditCommand() const { return false; }
+  bool isTopLevelCommand() const { return !m_parent; }
 
-    virtual bool isSimpleEditCommand() const { return false; }
-    virtual bool isCompositeEditCommand() const { return false; }
-    bool isTopLevelCommand() const { return !m_parent; }
+  // The |EditingState*| argument must not be nullptr.
+  virtual void doApply(EditingState*) = 0;
 
-    // The |EditingState*| argument must not be nullptr.
-    virtual void doApply(EditingState*) = 0;
+  // |TypingCommand| will return the text of the last |m_commands|.
+  virtual String textDataForInputEvent() const;
 
-    DECLARE_VIRTUAL_TRACE();
+  DECLARE_VIRTUAL_TRACE();
 
-protected:
-    explicit EditCommand(Document&);
+ protected:
+  explicit EditCommand(Document&);
 
-    Document& document() const { return *m_document.get(); }
-    CompositeEditCommand* parent() const { return m_parent; }
-    void setStartingSelection(const VisibleSelection&);
-    void setEndingSelection(const VisibleSelection&);
-    void setEndingSelection(const VisiblePosition&);
+  Document& document() const { return *m_document.get(); }
+  CompositeEditCommand* parent() const { return m_parent; }
 
-    // TODO(yosin) |isRenderedCharacter()| should be removed, and we should use
-    // |VisiblePosition::characterAfter()| and
-    // |VisiblePosition::characterBefore()|.
-    static bool isRenderedCharacter(const Position&);
+  // TODO(yosin) |isRenderedCharacter()| should be removed, and we should use
+  // |VisiblePosition::characterAfter()| and
+  // |VisiblePosition::characterBefore()|.
+  static bool isRenderedCharacter(const Position&);
 
-private:
-    Member<Document> m_document;
-    VisibleSelection m_startingSelection;
-    VisibleSelection m_endingSelection;
-    Member<CompositeEditCommand> m_parent;
+ private:
+  Member<Document> m_document;
+  Member<CompositeEditCommand> m_parent;
 };
 
 enum ShouldAssumeContentIsAlwaysEditable {
-    AssumeContentIsAlwaysEditable,
-    DoNotAssumeContentIsAlwaysEditable,
+  AssumeContentIsAlwaysEditable,
+  DoNotAssumeContentIsAlwaysEditable,
 };
 
-class SimpleEditCommand : public EditCommand {
-public:
-    virtual void doUnapply() = 0;
-    virtual void doReapply(); // calls doApply()
+class CORE_EXPORT SimpleEditCommand : public EditCommand {
+ public:
+  virtual void doUnapply() = 0;
+  virtual void doReapply();  // calls doApply()
 
-protected:
-    explicit SimpleEditCommand(Document& document) : EditCommand(document) { }
+ protected:
+  explicit SimpleEditCommand(Document& document) : EditCommand(document) {}
 
-private:
-    bool isSimpleEditCommand() const final { return true; }
+ private:
+  bool isSimpleEditCommand() const final { return true; }
 };
 
-DEFINE_TYPE_CASTS(SimpleEditCommand, EditCommand, command, command->isSimpleEditCommand(), command.isSimpleEditCommand());
+DEFINE_TYPE_CASTS(SimpleEditCommand,
+                  EditCommand,
+                  command,
+                  command->isSimpleEditCommand(),
+                  command.isSimpleEditCommand());
 
-} // namespace blink
+}  // namespace blink
 
-#endif // EditCommand_h
+#endif  // EditCommand_h

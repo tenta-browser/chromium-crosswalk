@@ -10,7 +10,7 @@
 #include <utility>
 
 #include "base/macros.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
@@ -32,9 +32,6 @@
 #endif
 
 namespace {
-
-static base::LazyInstance<content::MediaInternals>::Leaky g_media_internals =
-    LAZY_INSTANCE_INITIALIZER;
 
 base::string16 SerializeUpdate(const std::string& function,
                                const base::Value* value) {
@@ -81,6 +78,10 @@ std::string FormatToString(media::AudioParameters::Format format) {
       return "pcm_linear";
     case media::AudioParameters::AUDIO_PCM_LOW_LATENCY:
       return "pcm_low_latency";
+    case media::AudioParameters::AUDIO_BITSTREAM_AC3:
+      return "ac3";
+    case media::AudioParameters::AUDIO_BITSTREAM_EAC3:
+      return "eac3";
     case media::AudioParameters::AUDIO_FAKE:
       return "fake";
   }
@@ -289,8 +290,19 @@ class MediaInternals::MediaInternalsUMAHandler {
                        const media::MediaLogEvent& event);
 
  private:
+  struct WatchTimeInfo {
+    base::TimeDelta all_watch_time = media::kNoTimestamp;
+    base::TimeDelta mse_watch_time = media::kNoTimestamp;
+    base::TimeDelta eme_watch_time = media::kNoTimestamp;
+    base::TimeDelta src_watch_time = media::kNoTimestamp;
+    base::TimeDelta ac_watch_time = media::kNoTimestamp;
+    base::TimeDelta battery_watch_time = media::kNoTimestamp;
+  };
+
   struct PipelineInfo {
     bool has_pipeline = false;
+    bool has_ever_played = false;
+    bool has_reached_have_enough = false;
     media::PipelineStatus last_pipeline_status = media::PIPELINE_OK;
     bool has_audio = false;
     bool has_video = false;
@@ -299,6 +311,7 @@ class MediaInternals::MediaInternalsUMAHandler {
     std::string audio_codec_name;
     std::string video_codec_name;
     std::string video_decoder;
+    WatchTimeInfo watch_time_info;
   };
 
   // Helper function to report PipelineStatus associated with a player to UMA.
@@ -306,6 +319,64 @@ class MediaInternals::MediaInternalsUMAHandler {
 
   // Helper to generate PipelineStatus UMA name for AudioVideo streams.
   std::string GetUMANameForAVStream(const PipelineInfo& player_info);
+
+  // Saves the watch time info from |event| under |key| at |watch_time| if |key|
+  // is present in |event.params|.
+  void MaybeSaveWatchTime(const media::MediaLogEvent& event,
+                          const char* key,
+                          base::TimeDelta* watch_time) {
+    if (!event.params.HasKey(key))
+      return;
+
+    double in_seconds;
+    const bool result =
+        event.params.GetDoubleWithoutPathExpansion(key, &in_seconds);
+    DCHECK(result);
+    *watch_time = base::TimeDelta::FromSecondsD(in_seconds);
+
+    DVLOG(2) << "Saved watch time for " << key << " of " << *watch_time;
+  }
+
+  enum class FinalizeType { EVERYTHING, POWER_ONLY };
+  void FinalizeWatchTime(bool has_video,
+                         WatchTimeInfo* watch_time_info,
+                         FinalizeType finalize_type) {
+// Use a macro instead of a function so we can use the histogram macro (which
+// checks that the uma name is a static value). We use a custom time range for
+// the histogram macro to capitalize on common expected watch times.
+#define MAYBE_RECORD_WATCH_TIME(uma_name, watch_time)                         \
+  if (watch_time_info->watch_time != media::kNoTimestamp) {                   \
+    UMA_HISTOGRAM_CUSTOM_TIMES(                                               \
+        media::MediaLog::uma_name, watch_time_info->watch_time,               \
+        base::TimeDelta::FromSeconds(7), base::TimeDelta::FromHours(10), 50); \
+    watch_time_info->watch_time = media::kNoTimestamp;                        \
+  }
+
+    if (has_video) {
+      if (finalize_type == FinalizeType::EVERYTHING) {
+        MAYBE_RECORD_WATCH_TIME(kWatchTimeAudioVideoAll, all_watch_time);
+        MAYBE_RECORD_WATCH_TIME(kWatchTimeAudioVideoMse, mse_watch_time);
+        MAYBE_RECORD_WATCH_TIME(kWatchTimeAudioVideoEme, eme_watch_time);
+        MAYBE_RECORD_WATCH_TIME(kWatchTimeAudioVideoSrc, src_watch_time);
+      } else {
+        DCHECK_EQ(finalize_type, FinalizeType::POWER_ONLY);
+      }
+      MAYBE_RECORD_WATCH_TIME(kWatchTimeAudioVideoBattery, battery_watch_time);
+      MAYBE_RECORD_WATCH_TIME(kWatchTimeAudioVideoAc, ac_watch_time);
+    } else {
+      if (finalize_type == FinalizeType::EVERYTHING) {
+        MAYBE_RECORD_WATCH_TIME(kWatchTimeAudioAll, all_watch_time);
+        MAYBE_RECORD_WATCH_TIME(kWatchTimeAudioMse, mse_watch_time);
+        MAYBE_RECORD_WATCH_TIME(kWatchTimeAudioEme, eme_watch_time);
+        MAYBE_RECORD_WATCH_TIME(kWatchTimeAudioSrc, src_watch_time);
+      } else {
+        DCHECK_EQ(finalize_type, FinalizeType::POWER_ONLY);
+      }
+      MAYBE_RECORD_WATCH_TIME(kWatchTimeAudioBattery, battery_watch_time);
+      MAYBE_RECORD_WATCH_TIME(kWatchTimeAudioAc, ac_watch_time);
+    }
+#undef MAYBE_RECORD_WATCH_TIME
+  }
 
   // Key is player id.
   typedef std::map<int, PipelineInfo> PlayerInfoMap;
@@ -328,6 +399,10 @@ void MediaInternals::MediaInternalsUMAHandler::SavePlayerState(
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   PlayerInfoMap& player_info = renderer_info_[render_process_id];
   switch (event.type) {
+    case media::MediaLogEvent::PLAY: {
+      player_info[event.id].has_ever_played = true;
+      break;
+    }
     case media::MediaLogEvent::PIPELINE_STATE_CHANGED: {
       player_info[event.id].has_pipeline = true;
       break;
@@ -368,7 +443,71 @@ void MediaInternals::MediaInternalsUMAHandler::SavePlayerState(
       if (event.params.HasKey("video_dds")) {
         event.params.GetBoolean("video_dds", &player_info[event.id].video_dds);
       }
+      if (event.params.HasKey("pipeline_buffering_state")) {
+        std::string buffering_state;
+        event.params.GetString("pipeline_buffering_state", &buffering_state);
+        if (buffering_state == "BUFFERING_HAVE_ENOUGH")
+          player_info[event.id].has_reached_have_enough = true;
+      }
       break;
+    case media::MediaLogEvent::Type::WATCH_TIME_UPDATE: {
+      DVLOG(2) << "Processing watch time update.";
+      PipelineInfo& info = player_info[event.id];
+      WatchTimeInfo& wti = info.watch_time_info;
+      // Save audio only watch time information.
+      MaybeSaveWatchTime(event, media::MediaLog::kWatchTimeAudioAll,
+                         &wti.all_watch_time);
+      MaybeSaveWatchTime(event, media::MediaLog::kWatchTimeAudioMse,
+                         &wti.mse_watch_time);
+      MaybeSaveWatchTime(event, media::MediaLog::kWatchTimeAudioEme,
+                         &wti.eme_watch_time);
+      MaybeSaveWatchTime(event, media::MediaLog::kWatchTimeAudioSrc,
+                         &wti.src_watch_time);
+      MaybeSaveWatchTime(event, media::MediaLog::kWatchTimeAudioBattery,
+                         &wti.battery_watch_time);
+      MaybeSaveWatchTime(event, media::MediaLog::kWatchTimeAudioAc,
+                         &wti.ac_watch_time);
+
+      // Save audio+video watch time information.
+      MaybeSaveWatchTime(event, media::MediaLog::kWatchTimeAudioVideoAll,
+                         &wti.all_watch_time);
+      MaybeSaveWatchTime(event, media::MediaLog::kWatchTimeAudioVideoMse,
+                         &wti.mse_watch_time);
+      MaybeSaveWatchTime(event, media::MediaLog::kWatchTimeAudioVideoEme,
+                         &wti.eme_watch_time);
+      MaybeSaveWatchTime(event, media::MediaLog::kWatchTimeAudioVideoSrc,
+                         &wti.src_watch_time);
+      MaybeSaveWatchTime(event, media::MediaLog::kWatchTimeAudioVideoBattery,
+                         &wti.battery_watch_time);
+      MaybeSaveWatchTime(event, media::MediaLog::kWatchTimeAudioVideoAc,
+                         &wti.ac_watch_time);
+
+      if (event.params.HasKey(media::MediaLog::kWatchTimeFinalize)) {
+        bool should_finalize;
+        DCHECK(event.params.GetBoolean(media::MediaLog::kWatchTimeFinalize,
+                                       &should_finalize) &&
+               should_finalize);
+        FinalizeWatchTime(info.has_video, &wti, FinalizeType::EVERYTHING);
+      } else if (event.params.HasKey(
+                     media::MediaLog::kWatchTimeFinalizePower)) {
+        bool should_finalize;
+        DCHECK(event.params.GetBoolean(media::MediaLog::kWatchTimeFinalizePower,
+                                       &should_finalize) &&
+               should_finalize);
+        FinalizeWatchTime(info.has_video, &wti, FinalizeType::POWER_ONLY);
+      }
+      break;
+    }
+    case media::MediaLogEvent::Type::WEBMEDIAPLAYER_DESTROYED: {
+      // Upon player destruction report UMA data; if the player is not torn down
+      // before process exit, it will be logged during OnProcessTerminated().
+      auto it = player_info.find(event.id);
+      if (it == player_info.end())
+        break;
+
+      ReportUMAForPipelineStatus(it->second);
+      player_info.erase(it);
+    }
     default:
       break;
   }
@@ -446,6 +585,11 @@ void MediaInternals::MediaInternalsUMAHandler::ReportUMAForPipelineStatus(
     UMA_HISTOGRAM_BOOLEAN("Media.VideoDecoderFallback",
                           player_info.video_decoder_changed);
   }
+
+  // Report whether this player ever saw a playback event. Used to measure the
+  // effectiveness of efforts to reduce loaded-but-never-used players.
+  if (player_info.has_reached_have_enough)
+    UMA_HISTOGRAM_BOOLEAN("Media.HasEverPlayed", player_info.has_ever_played);
 }
 
 void MediaInternals::MediaInternalsUMAHandler::OnProcessTerminated(
@@ -458,13 +602,16 @@ void MediaInternals::MediaInternalsUMAHandler::OnProcessTerminated(
   auto it = players_it->second.begin();
   while (it != players_it->second.end()) {
     ReportUMAForPipelineStatus(it->second);
+    FinalizeWatchTime(it->second.has_video, &(it->second.watch_time_info),
+                      FinalizeType::EVERYTHING);
     players_it->second.erase(it++);
   }
   renderer_info_.erase(players_it);
 }
 
 MediaInternals* MediaInternals::GetInstance() {
-  return g_media_internals.Pointer();
+  static content::MediaInternals* internals = new content::MediaInternals();
+  return internals;
 }
 
 MediaInternals::MediaInternals()
@@ -485,7 +632,7 @@ void MediaInternals::Observe(int type,
   RenderProcessHost* process = Source<RenderProcessHost>(source).ptr();
 
   uma_handler_->OnProcessTerminated(process->GetID());
-  pending_events_map_.erase(process->GetID());
+  saved_events_by_process_.erase(process->GetID());
 }
 
 // Converts the |event| to a |update|. Returns whether the conversion succeeded.
@@ -529,13 +676,15 @@ void MediaInternals::OnMediaEvents(
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   // Notify observers that |event| has occurred.
   for (const auto& event : events) {
-    if (CanUpdate()) {
-      base::string16 update;
-      if (ConvertEventToUpdate(render_process_id, event, &update))
-        SendUpdate(update);
+    // Some events should not be recorded in the UI.
+    if (event.type != media::MediaLogEvent::Type::WATCH_TIME_UPDATE) {
+      if (CanUpdate()) {
+        base::string16 update;
+        if (ConvertEventToUpdate(render_process_id, event, &update))
+          SendUpdate(update);
+      }
+      SaveEvent(render_process_id, event);
     }
-
-    SaveEvent(render_process_id, event);
     uma_handler_->SavePlayerState(render_process_id, event);
   }
 }
@@ -568,10 +717,10 @@ bool MediaInternals::CanUpdate() {
 
 void MediaInternals::SendHistoricalMediaEvents() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  for (const auto& pending_events : pending_events_map_) {
-    for (const auto& event : pending_events.second) {
+  for (const auto& saved_events : saved_events_by_process_) {
+    for (const auto& event : saved_events.second) {
       base::string16 update;
-      if (ConvertEventToUpdate(pending_events.first, event, &update))
+      if (ConvertEventToUpdate(saved_events.first, event, &update))
         SendUpdate(update);
     }
   }
@@ -600,29 +749,33 @@ void MediaInternals::SendVideoCaptureDeviceCapabilities() {
 }
 
 void MediaInternals::UpdateVideoCaptureDeviceCapabilities(
-    const media::VideoCaptureDeviceInfos& video_capture_device_infos) {
+    const std::vector<std::tuple<media::VideoCaptureDeviceDescriptor,
+                                 media::VideoCaptureFormats>>&
+        descriptors_and_formats) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   video_capture_capabilities_cached_data_.Clear();
 
-  for (const auto& video_capture_device_info : video_capture_device_infos) {
+  for (const auto& device_format_pair : descriptors_and_formats) {
     base::ListValue* format_list = new base::ListValue();
     // TODO(nisse): Representing format information as a string, to be
     // parsed by the javascript handler, is brittle. Consider passing
     // a list of mappings instead.
 
-    for (const auto& format : video_capture_device_info.supported_formats)
+    const media::VideoCaptureDeviceDescriptor& descriptor =
+        std::get<0>(device_format_pair);
+    const media::VideoCaptureFormats& supported_formats =
+        std::get<1>(device_format_pair);
+    for (const auto& format : supported_formats)
       format_list->AppendString(media::VideoCaptureFormat::ToString(format));
 
     std::unique_ptr<base::DictionaryValue> device_dict(
         new base::DictionaryValue());
-    device_dict->SetString("id", video_capture_device_info.name.id());
-    device_dict->SetString(
-        "name", video_capture_device_info.name.GetNameAndModel());
+    device_dict->SetString("id", descriptor.device_id);
+    device_dict->SetString("name", descriptor.GetNameAndModel());
     device_dict->Set("formats", format_list);
 #if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX) || \
     defined(OS_ANDROID)
-    device_dict->SetString(
-        "captureApi", video_capture_device_info.name.GetCaptureApiTypeString());
+    device_dict->SetString("captureApi", descriptor.GetCaptureApiTypeString());
 #endif
     video_capture_capabilities_cached_data_.Append(std::move(device_dict));
   }
@@ -662,9 +815,6 @@ void MediaInternals::SaveEvent(int process_id,
                                const media::MediaLogEvent& event) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  // Max number of saved updates allowed for one process.
-  const size_t kMaxNumEvents = 128;
-
   // Do not save instantaneous events that happen frequently and have little
   // value in the future.
   if (event.type == media::MediaLogEvent::NETWORK_ACTIVITY_SET ||
@@ -672,12 +822,22 @@ void MediaInternals::SaveEvent(int process_id,
     return;
   }
 
-  auto& pending_events = pending_events_map_[process_id];
-  // TODO(xhwang): Notify user that some old logs could have been truncated.
-  // See http://crbug.com/498520
-  if (pending_events.size() >= kMaxNumEvents)
-    pending_events.pop_front();
-  pending_events.push_back(event);
+  // Save the event and limit the total number per renderer. At the time of
+  // writing, 512 events of the kind: { "property": value } together consume
+  // ~88kb of memory on linux.
+  std::list<media::MediaLogEvent>& saved_events =
+      saved_events_by_process_[process_id];
+  saved_events.push_back(event);
+  if (saved_events.size() > 512) {
+    // Remove all events for a given player as soon as we have to remove a
+    // single event for that player to avoid showing incomplete players.
+    int id_to_remove = saved_events.front().id;
+    auto new_end = std::remove_if(saved_events.begin(), saved_events.end(),
+                                  [&](const media::MediaLogEvent& event) {
+                                    return event.id == id_to_remove;
+                                  });
+    saved_events.erase(new_end, saved_events.end());
+  }
 }
 
 void MediaInternals::UpdateAudioLog(AudioLogUpdateType type,

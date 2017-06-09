@@ -11,6 +11,7 @@
 #include "base/logging.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/process/kill.h"
+#include "base/strings/string_util.h"
 #include "base/sys_info.h"
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
@@ -31,6 +32,9 @@
 #endif
 
 namespace {
+
+// Enables wifi and data only, not airplane mode.
+const int kDefaultConnectionType = 6;
 
 bool KillProcess(const base::Process& process, bool kill_gracefully) {
 #if defined(OS_POSIX)
@@ -71,16 +75,21 @@ ChromeDesktopImpl::ChromeDesktopImpl(
     std::unique_ptr<DevToolsClient> websocket_client,
     ScopedVector<DevToolsEventListener>& devtools_event_listeners,
     std::unique_ptr<PortReservation> port_reservation,
+    std::string page_load_strategy,
     base::Process process,
     const base::CommandLine& command,
     base::ScopedTempDir* user_data_dir,
-    base::ScopedTempDir* extension_dir)
+    base::ScopedTempDir* extension_dir,
+    bool network_emulation_enabled)
     : ChromeImpl(std::move(http_client),
                  std::move(websocket_client),
                  devtools_event_listeners,
-                 std::move(port_reservation)),
+                 std::move(port_reservation),
+                 page_load_strategy),
       process_(std::move(process)),
-      command_(command) {
+      command_(command),
+      network_connection_enabled_(network_emulation_enabled),
+      network_connection_(kDefaultConnectionType) {
   if (user_data_dir->IsValid())
     CHECK(user_data_dir_.Set(user_data_dir->Take()));
   if (extension_dir->IsValid())
@@ -104,7 +113,8 @@ ChromeDesktopImpl::~ChromeDesktopImpl() {
 Status ChromeDesktopImpl::WaitForPageToLoad(
     const std::string& url,
     const base::TimeDelta& timeout_raw,
-    std::unique_ptr<WebView>* web_view) {
+    std::unique_ptr<WebView>* web_view,
+    bool w3c_compliant) {
   Timeout timeout(timeout_raw);
   std::string id;
   WebViewInfo::Type type = WebViewInfo::Type::kPage;
@@ -116,7 +126,7 @@ Status ChromeDesktopImpl::WaitForPageToLoad(
 
     for (size_t i = 0; i < views_info.GetSize(); ++i) {
       const WebViewInfo& view_info = views_info.Get(i);
-      if (view_info.url.find(url) == 0) {
+      if (base::StartsWith(view_info.url, url, base::CompareCase::SENSITIVE)) {
         id = view_info.id;
         type = view_info.type;
         break;
@@ -139,8 +149,9 @@ Status ChromeDesktopImpl::WaitForPageToLoad(
     device_metrics = nullptr;
   }
   std::unique_ptr<WebView> web_view_tmp(
-      new WebViewImpl(id, devtools_http_client_->browser_info(),
-                      devtools_http_client_->CreateClient(id), device_metrics));
+      new WebViewImpl(id, w3c_compliant, devtools_http_client_->browser_info(),
+                      devtools_http_client_->CreateClient(id), device_metrics,
+                      page_load_strategy()));
   Status status = web_view_tmp->ConnectIfNecessary();
   if (status.IsError())
     return status;
@@ -153,14 +164,16 @@ Status ChromeDesktopImpl::WaitForPageToLoad(
 }
 
 Status ChromeDesktopImpl::GetAutomationExtension(
-    AutomationExtension** extension) {
+    AutomationExtension** extension,
+    bool w3c_compliant) {
   if (!automation_extension_) {
     std::unique_ptr<WebView> web_view;
     Status status = WaitForPageToLoad(
         "chrome-extension://aapnijgdinlhnhlmodcfapnahmbfebeb/"
         "_generated_background_page.html",
         base::TimeDelta::FromSeconds(10),
-        &web_view);
+        &web_view,
+        w3c_compliant);
     if (status.IsError())
       return Status(kUnknownError, "cannot get automation extension", status);
 
@@ -187,13 +200,21 @@ bool ChromeDesktopImpl::HasTouchScreen() const {
   return IsMobileEmulationEnabled();
 }
 
+bool ChromeDesktopImpl::IsNetworkConnectionEnabled() const {
+  return network_connection_enabled_;
+}
+
 Status ChromeDesktopImpl::QuitImpl() {
   // If the Chrome session uses a custom user data directory, try sending a
   // SIGTERM signal before SIGKILL, so that Chrome has a chance to write
-  // everything back out to the user data directory and exit cleanly.If
-  // we're using a temporary user data directory, we're going to delete
-  // the temporary directory anyway, so just send SIGKILL immediately.
-  if (!KillProcess(process_, !user_data_dir_.IsValid()))
+  // everything back out to the user data directory and exit cleanly. If we're
+  // using a temporary user data directory, we're going to delete the temporary
+  // directory anyway, so just send SIGKILL immediately.
+  bool kill_gracefully = !user_data_dir_.IsValid();
+  // If the Chrome session is being run with --log-net-log, send SIGTERM first
+  // to allow Chrome to write out all the net logs to the log path.
+  kill_gracefully |= command_.HasSwitch("log-net-log");
+  if (!KillProcess(process_, kill_gracefully))
     return Status(kUnknownError, "cannot kill Chrome");
   return Status(kOk);
 }

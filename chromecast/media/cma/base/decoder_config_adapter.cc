@@ -5,6 +5,7 @@
 #include "chromecast/media/cma/base/decoder_config_adapter.h"
 
 #include "base/logging.h"
+#include "chromecast/media/base/media_codec_support.h"
 #include "media/base/channel_layout.h"
 
 namespace chromecast {
@@ -43,6 +44,8 @@ AudioCodec ToAudioCodec(const ::media::AudioCodec audio_codec) {
 SampleFormat ToSampleFormat(const ::media::SampleFormat sample_format) {
   switch (sample_format) {
     case ::media::kUnknownSampleFormat:
+    case ::media::kSampleFormatAc3:
+    case ::media::kSampleFormatEac3:
       return kUnknownSampleFormat;
     case ::media::kSampleFormatU8:
       return kSampleFormatU8;
@@ -63,65 +66,6 @@ SampleFormat ToSampleFormat(const ::media::SampleFormat sample_format) {
   }
   NOTREACHED();
   return kUnknownSampleFormat;
-}
-
-// Converts ::media::VideoCodec to chromecast::media::VideoCodec. Any unknown or
-// unsupported codec will be converted to chromecast::media::kCodecUnknown.
-VideoCodec ToVideoCodec(const ::media::VideoCodec video_codec) {
-  switch (video_codec) {
-    case ::media::kCodecH264:
-      return kCodecH264;
-    case ::media::kCodecVP8:
-      return kCodecVP8;
-    case ::media::kCodecVP9:
-      return kCodecVP9;
-    case ::media::kCodecHEVC:
-      return kCodecHEVC;
-    default:
-      LOG(ERROR) << "Unsupported video codec " << video_codec;
-  }
-  return kVideoCodecUnknown;
-}
-
-// Converts ::media::VideoCodecProfile to chromecast::media::VideoProfile.
-VideoProfile ToVideoProfile(const ::media::VideoCodecProfile codec_profile) {
-  switch (codec_profile) {
-    case ::media::H264PROFILE_BASELINE:
-      return kH264Baseline;
-    case ::media::H264PROFILE_MAIN:
-      return kH264Main;
-    case ::media::H264PROFILE_EXTENDED:
-      return kH264Extended;
-    case ::media::H264PROFILE_HIGH:
-      return kH264High;
-    case ::media::H264PROFILE_HIGH10PROFILE:
-      return kH264High10;
-    case ::media::H264PROFILE_HIGH422PROFILE:
-      return kH264High422;
-    case ::media::H264PROFILE_HIGH444PREDICTIVEPROFILE:
-      return kH264High444Predictive;
-    case ::media::H264PROFILE_SCALABLEBASELINE:
-      return kH264ScalableBaseline;
-    case ::media::H264PROFILE_SCALABLEHIGH:
-      return kH264ScalableHigh;
-    case ::media::H264PROFILE_STEREOHIGH:
-      return kH264Stereohigh;
-    case ::media::H264PROFILE_MULTIVIEWHIGH:
-      return kH264MultiviewHigh;
-    case ::media::VP8PROFILE_ANY:
-      return kVP8ProfileAny;
-    case ::media::VP9PROFILE_PROFILE0:
-      return kVP9Profile0;
-    case ::media::VP9PROFILE_PROFILE1:
-      return kVP9Profile1;
-    case ::media::VP9PROFILE_PROFILE2:
-      return kVP9Profile2;
-    case ::media::VP9PROFILE_PROFILE3:
-      return kVP9Profile3;
-    default:
-      LOG(INFO) << "Unsupported video codec profile " << codec_profile;
-  }
-  return kVideoProfileUnknown;
 }
 
 ::media::ChannelLayout ToMediaChannelLayout(int channel_number) {
@@ -289,11 +233,43 @@ VideoConfig DecoderConfigAdapter::ToCastVideoConfig(
   }
 
   video_config.id = id;
-  video_config.codec = ToVideoCodec(config.codec());
-  video_config.profile = ToVideoProfile(config.profile());
+  video_config.codec = ToCastVideoCodec(config.codec(), config.profile());
+  video_config.profile = ToCastVideoProfile(config.profile());
   video_config.extra_data = config.extra_data();
   video_config.encryption_scheme = ToEncryptionScheme(
       config.encryption_scheme());
+
+  // TODO(servolk): gfx::ColorSpace currently doesn't provide getters for color
+  // space components. We'll need to way to fix this. crbug.com/649758
+  // video_config.primaries =
+  //     static_cast<PrimaryID>(config.color_space_info().primaries());
+  // video_config.transfer =
+  //     static_cast<TransferID>(config.color_space_info().transfer());
+  // video_config.matrix =
+  //     static_cast<MatrixID>(config.color_space_info().matrix());
+  // video_config.range =
+  //     static_cast<RangeID>(config.color_space_info().range());
+
+  base::Optional<::media::HDRMetadata> hdr_metadata = config.hdr_metadata();
+  if (hdr_metadata) {
+    video_config.have_hdr_metadata = true;
+    video_config.hdr_metadata.max_cll = hdr_metadata->max_cll;
+    video_config.hdr_metadata.max_fall = hdr_metadata->max_fall;
+
+    const auto& mm1 = hdr_metadata->mastering_metadata;
+    auto& mm2 = video_config.hdr_metadata.mastering_metadata;
+    mm2.primary_r_chromaticity_x = mm1.primary_r_chromaticity_x;
+    mm2.primary_r_chromaticity_y = mm1.primary_r_chromaticity_y;
+    mm2.primary_g_chromaticity_x = mm1.primary_g_chromaticity_x;
+    mm2.primary_g_chromaticity_y = mm1.primary_g_chromaticity_y;
+    mm2.primary_b_chromaticity_x = mm1.primary_b_chromaticity_x;
+    mm2.primary_b_chromaticity_y = mm1.primary_b_chromaticity_y;
+    mm2.white_point_chromaticity_x = mm1.white_point_chromaticity_x;
+    mm2.white_point_chromaticity_y = mm1.white_point_chromaticity_y;
+    mm2.luminance_max = mm1.luminance_max;
+    mm2.luminance_min = mm1.luminance_min;
+  }
+
   return video_config;
 }
 

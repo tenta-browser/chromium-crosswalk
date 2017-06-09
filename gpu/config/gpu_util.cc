@@ -12,11 +12,16 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
+#include "base/sys_info.h"
+#include "gpu/config/gpu_blacklist.h"
 #include "gpu/config/gpu_control_list_jsons.h"
 #include "gpu/config/gpu_driver_bug_list.h"
+#include "gpu/config/gpu_feature_type.h"
+#include "gpu/config/gpu_finch_features.h"
 #include "gpu/config/gpu_info_collector.h"
 #include "gpu/config/gpu_switches.h"
 #include "ui/gl/gl_switches.h"
+#include "ui/gl/gpu_switching_manager.h"
 
 namespace gpu {
 
@@ -58,14 +63,33 @@ void StringToIds(const std::string& str, std::vector<uint32_t>* list) {
   }
 }
 
-}  // namespace anonymous
+GpuFeatureStatus GetGpuRasterizationFeatureStatus(
+    const std::set<int>& blacklisted_features,
+    const base::CommandLine& command_line) {
+  if (command_line.HasSwitch(switches::kDisableGpuRasterization))
+    return kGpuFeatureStatusDisabled;
+  else if (command_line.HasSwitch(switches::kEnableGpuRasterization))
+    return kGpuFeatureStatusEnabled;
 
-void MergeFeatureSets(std::set<int>* dst, const std::set<int>& src) {
-  DCHECK(dst);
-  if (src.empty())
-    return;
-  dst->insert(src.begin(), src.end());
+  if (blacklisted_features.count(GPU_FEATURE_TYPE_GPU_RASTERIZATION))
+    return kGpuFeatureStatusBlacklisted;
+
+#if defined(OS_ANDROID)
+  // We can't use GPU rasterization on low-end devices, because the Ganesh
+  // cache would consume too much memory.
+  if (base::SysInfo::IsLowEndDevice())
+    return kGpuFeatureStatusBlacklisted;
+#endif  // defined(OS_ANDROID)
+
+  // Gpu Rasterization on platforms that are not fully enabled is controlled by
+  // a finch experiment.
+  if (!base::FeatureList::IsEnabled(features::kDefaultEnableGpuRasterization))
+    return kGpuFeatureStatusDisabled;
+
+  return kGpuFeatureStatusEnabled;
 }
+
+}  // namespace anonymous
 
 void ApplyGpuDriverBugWorkarounds(const GPUInfo& gpu_info,
                                   base::CommandLine* command_line) {
@@ -143,6 +167,36 @@ void ParseSecondaryGpuDevicesFromCommandLine(
     secondary_device.device_id = device_ids[i];
     gpu_info->secondary_gpus.push_back(secondary_device);
   }
+}
+
+void InitializeDualGpusIfSupported(
+    const std::set<int>& driver_bug_workarounds) {
+  ui::GpuSwitchingManager* switching_manager =
+      ui::GpuSwitchingManager::GetInstance();
+  if (!switching_manager->SupportsDualGpus())
+    return;
+  if (driver_bug_workarounds.count(gpu::FORCE_DISCRETE_GPU) == 1)
+    ui::GpuSwitchingManager::GetInstance()->ForceUseOfDiscreteGpu();
+  else if (driver_bug_workarounds.count(gpu::FORCE_INTEGRATED_GPU) == 1)
+    ui::GpuSwitchingManager::GetInstance()->ForceUseOfIntegratedGpu();
+}
+
+GpuFeatureInfo GetGpuFeatureInfo(const GPUInfo& gpu_info,
+                                 const base::CommandLine& command_line) {
+  GpuFeatureInfo gpu_feature_info;
+  std::set<int> blacklisted_features;
+  if (!command_line.HasSwitch(switches::kIgnoreGpuBlacklist)) {
+    std::unique_ptr<GpuBlacklist> list(GpuBlacklist::Create());
+    list->LoadList(kSoftwareRenderingListJson, GpuControlList::kCurrentOsOnly);
+    blacklisted_features =
+        list->MakeDecision(GpuControlList::kOsAny, std::string(), gpu_info);
+  }
+
+  // Currently only used for GPU rasterization.
+  gpu_feature_info.status_values[GPU_FEATURE_TYPE_GPU_RASTERIZATION] =
+      GetGpuRasterizationFeatureStatus(blacklisted_features, command_line);
+
+  return gpu_feature_info;
 }
 
 }  // namespace gpu

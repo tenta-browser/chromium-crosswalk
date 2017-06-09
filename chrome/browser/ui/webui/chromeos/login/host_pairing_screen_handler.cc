@@ -6,10 +6,10 @@
 
 #include "base/command_line.h"
 #include "base/strings/string_util.h"
-#include "chrome/browser/ui/webui/chromeos/login/oobe_screen.h"
+#include "chrome/browser/chromeos/login/oobe_screen.h"
+#include "chrome/grit/generated_resources.h"
 #include "chromeos/chromeos_switches.h"
 #include "components/login/localized_values_builder.h"
-#include "grit/generated_resources.h"
 
 namespace chromeos {
 
@@ -26,16 +26,13 @@ const char kCallbackContextReady[] = "contextReady";
 
 }  // namespace
 
-HostPairingScreenHandler::HostPairingScreenHandler()
-    : BaseScreenHandler(kJsScreenPath),
-      delegate_(NULL),
-      show_on_init_(false),
-      js_context_ready_(false) {
+HostPairingScreenHandler::HostPairingScreenHandler() {
+  set_call_js_prefix(kJsScreenPath);
 }
 
 HostPairingScreenHandler::~HostPairingScreenHandler() {
   if (delegate_)
-    delegate_->OnActorDestroyed(this);
+    delegate_->OnViewDestroyed(this);
 }
 
 void HostPairingScreenHandler::HandleContextReady() {

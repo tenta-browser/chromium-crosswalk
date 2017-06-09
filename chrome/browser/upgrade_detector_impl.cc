@@ -12,9 +12,8 @@
 #include "base/bind.h"
 #include "base/build_time.h"
 #include "base/command_line.h"
-#include "base/files/file_path.h"
+#include "base/feature_list.h"
 #include "base/memory/singleton.h"
-#include "base/path_service.h"
 #include "base/process/launch.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -116,21 +115,7 @@ void CheckForUnstableChannel(const base::Closure& callback_task,
   *is_unstable_channel = IsUnstableChannel();
   BrowserThread::PostTask(BrowserThread::UI, FROM_HERE, callback_task);
 }
-#else
-// Return true if the currently running Chrome is a system install.
-bool IsSystemInstall() {
-  // Get the version of the currently *installed* instance of Chrome,
-  // which might be newer than the *running* instance if we have been
-  // upgraded in the background.
-  base::FilePath exe_path;
-  if (!PathService::Get(base::DIR_EXE, &exe_path)) {
-    NOTREACHED() << "Failed to find executable path";
-    return false;
-  }
-
-  return !InstallUtil::IsPerUserInstall(exe_path);
-}
-
+#else  // !defined(OS_WIN)
 #if defined(GOOGLE_CHROME_BUILD)
 // Sets |is_unstable_channel| to true if the current chrome is on the dev or
 // canary channels. Sets |is_auto_update_enabled| to true if Google Update will
@@ -154,15 +139,15 @@ void DetectUpdatability(const base::Closure& callback_task,
 
 // Gets the currently installed version. On Windows, if |critical_update| is not
 // NULL, also retrieves the critical update version info if available.
-base::Version GetCurrentlyInstalledVersionImpl(Version* critical_update) {
+base::Version GetCurrentlyInstalledVersionImpl(base::Version* critical_update) {
   base::ThreadRestrictions::AssertIOAllowed();
 
-  Version installed_version;
+  base::Version installed_version;
 #if defined(OS_WIN)
   // Get the version of the currently *installed* instance of Chrome,
   // which might be newer than the *running* instance if we have been
   // upgraded in the background.
-  bool system_install = IsSystemInstall();
+  bool system_install = !InstallUtil::IsPerUserInstall();
 
   // TODO(tommi): Check if using the default distribution is always the right
   // thing to do.
@@ -173,8 +158,8 @@ base::Version GetCurrentlyInstalledVersionImpl(Version* critical_update) {
                                           critical_update);
   }
 #elif defined(OS_MACOSX)
-  installed_version =
-      Version(base::UTF16ToASCII(keystone_glue::CurrentlyInstalledVersion()));
+  installed_version = base::Version(
+      base::UTF16ToASCII(keystone_glue::CurrentlyInstalledVersion()));
 #elif defined(OS_POSIX)
   // POSIX but not Mac OS X: Linux, etc.
   base::CommandLine command_line(*base::CommandLine::ForCurrentProcess());
@@ -186,7 +171,7 @@ base::Version GetCurrentlyInstalledVersionImpl(Version* critical_update) {
   }
   base::TrimWhitespaceASCII(reply, base::TRIM_ALL, &reply);
 
-  installed_version = Version(reply);
+  installed_version = base::Version(reply);
 #endif
   return installed_version;
 }
@@ -316,12 +301,12 @@ void UpgradeDetectorImpl::DetectUpgradeTask(
     base::WeakPtr<UpgradeDetectorImpl> upgrade_detector) {
   DCHECK_CURRENTLY_ON(BrowserThread::FILE);
 
-  Version critical_update;
-  Version installed_version =
+  base::Version critical_update;
+  base::Version installed_version =
       GetCurrentlyInstalledVersionImpl(&critical_update);
 
   // Get the version of the currently *running* instance of Chrome.
-  Version running_version(version_info::GetVersionNumber());
+  base::Version running_version(version_info::GetVersionNumber());
   if (!running_version.IsValid()) {
     NOTREACHED();
     return;
@@ -393,6 +378,12 @@ void UpgradeDetectorImpl::CheckForUpgrade() {
 }
 
 bool UpgradeDetectorImpl::DetectOutdatedInstall() {
+  constexpr base::Feature kOutdatedBuildDetector =
+      { "OutdatedBuildDetector", base::FEATURE_ENABLED_BY_DEFAULT };
+
+  if (!base::FeatureList::IsEnabled(kOutdatedBuildDetector))
+    return false;
+
   // Don't show the bubble if we have a brand code that is NOT organic, unless
   // an outdated build is being simulated by command line switches.
   static bool simulate_outdated = SimulatingOutdated();
@@ -402,16 +393,17 @@ bool UpgradeDetectorImpl::DetectOutdatedInstall() {
       return false;
 
 #if defined(OS_WIN)
-    // Don't show the update bubbles to enterprise users (i.e., on a domain).
-    if (base::win::IsEnrolledToDomain())
+    // Don't show the update bubbles to enterprise users.
+    if (base::win::IsEnterpriseManaged())
       return false;
 #endif
   }
 
   base::Time network_time;
   base::TimeDelta uncertainty;
-  if (!g_browser_process->network_time_tracker()->GetNetworkTime(
-          &network_time, &uncertainty)) {
+  if (g_browser_process->network_time_tracker()->GetNetworkTime(&network_time,
+                                                                &uncertainty) !=
+      network_time::NetworkTimeTracker::NETWORK_TIME_AVAILABLE) {
     // When network time has not been initialized yet, simply rely on the
     // machine's current time.
     network_time = base::Time::Now();

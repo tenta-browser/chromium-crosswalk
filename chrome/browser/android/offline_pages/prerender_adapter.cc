@@ -6,7 +6,6 @@
 
 #include "chrome/browser/prerender/prerender_manager.h"
 #include "chrome/browser/prerender/prerender_manager_factory.h"
-#include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/gfx/geometry/size.h"
@@ -26,30 +25,28 @@ PrerenderAdapter::~PrerenderAdapter() {
     DestroyActive();
 }
 
-bool PrerenderAdapter::CanPrerender() const {
-  return prerender::PrerenderManager::ActuallyPrerendering();
-}
-
 bool PrerenderAdapter::StartPrerender(
     content::BrowserContext* browser_context,
     const GURL& url,
     content::SessionStorageNamespace* session_storage_namespace,
     const gfx::Size& size) {
   DCHECK(!IsActive());
-  DCHECK(CanPrerender());
 
-  Profile* profile = Profile::FromBrowserContext(browser_context);
   prerender::PrerenderManager* manager =
-      prerender::PrerenderManagerFactory::GetForProfile(profile);
+      prerender::PrerenderManagerFactory::GetForBrowserContext(browser_context);
   DCHECK(manager);
 
-  // Start prerendering the url and capture the handle for the prerendering.
-  active_handle_.reset(
-      manager->AddPrerenderForOffline(url, session_storage_namespace, size));
+  // AddPrerenderForOffline() triggers the start event, and it is before the
+  // observer is set.
+  active_handle_ =
+      manager->AddPrerenderForOffline(url, session_storage_namespace, size);
   if (!active_handle_)
     return false;
+  DCHECK(active_handle_->contents());
+  DCHECK(active_handle_->contents()->prerendering_has_started());
 
   active_handle_->SetObserver(this);
+
   return true;
 }
 
@@ -82,26 +79,37 @@ void PrerenderAdapter::DestroyActive() {
 }
 
 void PrerenderAdapter::OnPrerenderStart(prerender::PrerenderHandle* handle) {
-  DCHECK(active_handle_.get() == handle);
-  observer_->OnPrerenderStart();
+  // Not expected as the start event will happen before the observer is set.
+  NOTREACHED();
 }
 
 void PrerenderAdapter::OnPrerenderStopLoading(
     prerender::PrerenderHandle* handle) {
-  DCHECK(active_handle_.get() == handle);
+  DCHECK_EQ(active_handle_.get(), handle);
   observer_->OnPrerenderStopLoading();
 }
 
 void PrerenderAdapter::OnPrerenderDomContentLoaded(
     prerender::PrerenderHandle* handle) {
-  DCHECK(active_handle_.get() == handle);
+  DCHECK_EQ(active_handle_.get(), handle);
   observer_->OnPrerenderDomContentLoaded();
 }
 
 void PrerenderAdapter::OnPrerenderStop(prerender::PrerenderHandle* handle) {
   if (IsActive()) {
-    DCHECK(active_handle_.get() == handle);
+    DCHECK_EQ(active_handle_.get(), handle);
     observer_->OnPrerenderStop();
+  }
+}
+
+void PrerenderAdapter::OnPrerenderNetworkBytesChanged(
+    prerender::PrerenderHandle* handle) {
+  if (IsActive()) {
+    DCHECK_EQ(active_handle_.get(), handle);
+    prerender::PrerenderContents* contents = handle->contents();
+    if (!contents)
+      return;
+    observer_->OnPrerenderNetworkBytesChanged(contents->network_bytes());
   }
 }
 

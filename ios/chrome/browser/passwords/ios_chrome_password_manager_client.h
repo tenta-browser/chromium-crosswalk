@@ -24,6 +24,10 @@ class PasswordFormManager;
 - (void)showSavePasswordInfoBar:
     (std::unique_ptr<password_manager::PasswordFormManager>)formToSave;
 
+// Shows UI to prompt the user to update the password.
+- (void)showUpdatePasswordInfoBar:
+    (std::unique_ptr<password_manager::PasswordFormManager>)formToUpdate;
+
 @property(readonly, nonatomic) ios::ChromeBrowserState* browserState;
 
 @property(readonly, nonatomic) const GURL& lastCommittedURL;
@@ -46,8 +50,7 @@ class IOSChromePasswordManagerClient
       password_manager::CredentialSourceType type,
       bool update_password) override;
   bool PromptUserToChooseCredentials(
-      ScopedVector<autofill::PasswordForm> local_forms,
-      ScopedVector<autofill::PasswordForm> federated_forms,
+      std::vector<std::unique_ptr<autofill::PasswordForm>> local_forms,
       const GURL& origin,
       const CredentialsCallback& callback) override;
   void AutomaticPasswordSave(
@@ -56,8 +59,9 @@ class IOSChromePasswordManagerClient
   bool IsOffTheRecord() const override;
   PrefService* GetPrefs() override;
   password_manager::PasswordStore* GetPasswordStore() const override;
-  void NotifyUserAutoSignin(ScopedVector<autofill::PasswordForm> local_forms,
-                            const GURL& origin) override;
+  void NotifyUserAutoSignin(
+      std::vector<std::unique_ptr<autofill::PasswordForm>> local_forms,
+      const GURL& origin) override;
   void NotifyUserCouldBeAutoSignedIn(
       std::unique_ptr<autofill::PasswordForm> form) override;
   void NotifySuccessfulLoginWithExistingPassword(

@@ -4,6 +4,7 @@
 
 #include "chrome/browser/profiles/chrome_browser_main_extra_parts_profiles.h"
 
+#include <memory>
 #include <utility>
 
 #include "build/build_config.h"
@@ -17,6 +18,7 @@
 #include "chrome/browser/content_settings/cookie_settings_factory.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/custom_handlers/protocol_handler_registry_factory.h"
+#include "chrome/browser/data_use_measurement/chrome_data_use_ascriber_service_factory.h"
 #include "chrome/browser/dom_distiller/dom_distiller_service_factory.h"
 #include "chrome/browser/domain_reliability/service_factory.h"
 #include "chrome/browser/download/download_service_factory.h"
@@ -27,9 +29,10 @@
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/invalidation/profile_invalidation_provider_factory.h"
 #include "chrome/browser/media_galleries/media_galleries_preferences_factory.h"
+#include "chrome/browser/net/nqe/ui_network_quality_estimator_service_factory.h"
 #include "chrome/browser/notifications/extension_welcome_notification_factory.h"
 #include "chrome/browser/notifications/notifier_state_tracker_factory.h"
-#include "chrome/browser/ntp_snippets/ntp_snippets_service_factory.h"
+#include "chrome/browser/ntp_snippets/content_suggestions_service_factory.h"
 #include "chrome/browser/password_manager/password_manager_setting_migrator_service_factory.h"
 #include "chrome/browser/password_manager/password_store_factory.h"
 #include "chrome/browser/plugins/plugin_prefs_factory.h"
@@ -45,6 +48,7 @@
 #include "chrome/browser/prerender/prerender_message_filter.h"
 #include "chrome/browser/printing/cloud_print/cloud_print_proxy_service_factory.h"
 #include "chrome/browser/profiles/gaia_info_update_service_factory.h"
+#include "chrome/browser/safe_browsing/certificate_reporting_service_factory.h"
 #include "chrome/browser/search/instant_service_factory.h"
 #include "chrome/browser/search/suggestions/suggestions_service_factory.h"
 #include "chrome/browser/search_engines/template_url_fetcher_factory.h"
@@ -67,8 +71,12 @@
 #include "chrome/browser/undo/bookmark_undo_service_factory.h"
 #include "chrome/browser/web_data_service_factory.h"
 #include "chrome/common/features.h"
+#include "components/spellcheck/spellcheck_build_features.h"
+#include "extensions/features/features.h"
+#include "ppapi/features/features.h"
+#include "printing/features/features.h"
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "apps/browser_context_keyed_service_factories.h"
 #include "chrome/browser/apps/shortcut_manager_factory.h"
 #include "chrome/browser/extensions/api/networking_private/networking_private_ui_delegate_factory_impl.h"
@@ -82,25 +90,23 @@
 #include "extensions/browser/browser_context_keyed_service_factories.h"
 #endif
 
-#if defined(ENABLE_CAPTIVE_PORTAL_DETECTION)
+#if BUILDFLAG(ENABLE_CAPTIVE_PORTAL_DETECTION)
 #include "chrome/browser/captive_portal/captive_portal_service_factory.h"
 #endif
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/ownership/owner_settings_service_chromeos_factory.h"
-#include "chrome/browser/chromeos/policy/consumer_enrollment_handler_factory.h"
-#include "chrome/browser/chromeos/policy/consumer_management_notifier_factory.h"
 #include "chrome/browser/chromeos/policy/policy_cert_service_factory.h"
 #include "chrome/browser/chromeos/policy/recommendation_restorer_factory.h"
-#include "chrome/browser/chromeos/policy/user_cloud_policy_manager_factory_chromeos.h"
 #include "chrome/browser/chromeos/policy/user_cloud_policy_token_forwarder_factory.h"
 #include "chrome/browser/chromeos/policy/user_network_configuration_updater_factory.h"
+#include "chrome/browser/chromeos/policy/user_policy_manager_factory_chromeos.h"
 #else
 #include "chrome/browser/policy/cloud/user_cloud_policy_manager_factory.h"
 #include "chrome/browser/policy/cloud/user_policy_signin_service_factory.h"
 #endif
 
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
 #include "chrome/browser/supervised_user/legacy/supervised_user_sync_service_factory.h"
 #include "chrome/browser/supervised_user/supervised_user_service_factory.h"
 #if defined(OS_CHROMEOS)
@@ -109,17 +115,16 @@
 #endif
 #endif
 
-#if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
-#include "chrome/browser/signin/cross_device_promo_factory.h"
-#endif
-
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/printer_detector/printer_detector_factory.h"
+#include "chrome/browser/chromeos/printing/cups_print_job_manager_factory.h"
+#include "chrome/browser/chromeos/printing/printers_manager_factory.h"
 #include "chrome/browser/extensions/api/platform_keys/verify_trust_api.h"
 #endif
 
 #if defined(OS_ANDROID)
 #include "chrome/browser/android/data_usage/data_use_ui_tab_model_factory.h"
+#include "chrome/browser/android/search_geolocation/search_geolocation_service.h"
 #else
 #include "chrome/browser/ui/global_error/global_error_service_factory.h"
 #include "chrome/browser/usb/usb_chooser_context_factory.h"
@@ -127,14 +132,22 @@
 
 #if defined(OS_WIN)
 #include "chrome/browser/profile_resetter/triggered_profile_resetter_factory.h"
+#include "chrome/browser/ui/desktop_ios_promotion/sms_service_factory.h"
 #endif
 
-#if defined(ENABLE_SPELLCHECK)
+#if BUILDFLAG(ENABLE_SPELLCHECK)
 #include "chrome/browser/spellchecker/spellcheck_factory.h"
 #endif
 
-#if defined(ENABLE_SERVICE_DISCOVERY)
+#if BUILDFLAG(ENABLE_SERVICE_DISCOVERY)
 #include "chrome/browser/printing/cloud_print/privet_notifications_factory.h"
+#endif
+
+#if defined(ENABLE_MEDIA_ROUTER)
+#include "chrome/browser/media/router/media_router_factory.h"
+#if !defined(OS_ANDROID)
+#include "chrome/browser/media/router/media_router_ui_service_factory.h"
+#endif
 #endif
 
 namespace chrome {
@@ -164,7 +177,7 @@ ChromeBrowserMainExtraPartsProfiles::~ChromeBrowserMainExtraPartsProfiles() {
 // static
 void ChromeBrowserMainExtraPartsProfiles::
 EnsureBrowserContextKeyedServiceFactoriesBuilt() {
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   apps::EnsureBrowserContextKeyedServiceFactoriesBuilt();
   extensions::EnsureBrowserContextKeyedServiceFactoriesBuilt();
   extensions::ExtensionManagementFactory::GetInstance();
@@ -172,7 +185,7 @@ EnsureBrowserContextKeyedServiceFactoriesBuilt() {
   AppShortcutManagerFactory::GetInstance();
 #endif
 
-#if defined(ENABLE_APP_LIST)
+#if BUILDFLAG(ENABLE_APP_LIST)
   app_list::AppListSyncableServiceFactory::GetInstance();
 #endif
 
@@ -187,34 +200,37 @@ EnsureBrowserContextKeyedServiceFactoriesBuilt() {
   BookmarkModelFactory::GetInstance();
   BookmarkUndoServiceFactory::GetInstance();
   BrowsingDataRemoverFactory::GetInstance();
-#if defined(ENABLE_CAPTIVE_PORTAL_DETECTION)
+#if BUILDFLAG(ENABLE_CAPTIVE_PORTAL_DETECTION)
   CaptivePortalServiceFactory::GetInstance();
 #endif
+  CertificateReportingServiceFactory::GetInstance();
 #if defined(OS_ANDROID)
   chrome::android::DataUseUITabModelFactory::GetInstance();
 #endif
-#if defined(ENABLE_PRINT_PREVIEW)
+  UINetworkQualityEstimatorServiceFactory::GetInstance();
+#if BUILDFLAG(ENABLE_PRINT_PREVIEW)
   CloudPrintProxyServiceFactory::GetInstance();
 #endif
   CookieSettingsFactory::GetInstance();
-#if !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
-  CrossDevicePromoFactory::GetInstance();
-#endif
-#if defined(ENABLE_NOTIFICATIONS)
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   ExtensionWelcomeNotificationFactory::GetInstance();
 #endif
   NotifierStateTrackerFactory::GetInstance();
-#endif  // defined(ENABLE_NOTIFICATIONS)
+  data_use_measurement::ChromeDataUseAscriberServiceFactory::GetInstance();
+#if defined(OS_WIN)
+  SMSServiceFactory::GetInstance();
+#endif
   dom_distiller::DomDistillerServiceFactory::GetInstance();
   domain_reliability::DomainReliabilityServiceFactory::GetInstance();
   DownloadServiceFactory::GetInstance();
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   EasyUnlockServiceFactory::GetInstance();
   EnhancedBookmarkKeyServiceFactory::GetInstance();
 #endif
 #if defined(OS_CHROMEOS)
   chromeos::PrinterDetectorFactory::GetInstance();
+  chromeos::CupsPrintJobManagerFactory::GetInstance();
+  chromeos::PrintersManagerFactory::GetInstance();
   extensions::VerifyTrustAPI::GetFactoryInstance();
 #endif
   FaviconServiceFactory::GetInstance();
@@ -225,17 +241,17 @@ EnsureBrowserContextKeyedServiceFactoriesBuilt() {
 #endif
   GoogleURLTrackerFactory::GetInstance();
   HistoryServiceFactory::GetInstance();
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   HotwordServiceFactory::GetInstance();
 #endif
   HostContentSettingsMapFactory::GetInstance();
   InMemoryURLIndexFactory::GetInstance();
   invalidation::ProfileInvalidationProviderFactory::GetInstance();
   InstantServiceFactory::GetInstance();
-#if defined(ENABLE_SERVICE_DISCOVERY)
+#if BUILDFLAG(ENABLE_SERVICE_DISCOVERY)
   cloud_print::PrivetNotificationServiceFactory::GetInstance();
 #endif
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
 #if defined(OS_CHROMEOS)
   chromeos::SupervisedUserPasswordServiceFactory::GetInstance();
   chromeos::ManagerPasswordServiceFactory::GetInstance();
@@ -245,7 +261,7 @@ EnsureBrowserContextKeyedServiceFactoriesBuilt() {
   SupervisedUserSyncServiceFactory::GetInstance();
 #endif
 #endif
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 #if defined(OS_CHROMEOS) || defined(OS_WIN) || defined(OS_MACOSX)
   std::unique_ptr<extensions::NetworkingPrivateVerifyDelegateFactoryImpl>
       networking_private_verify_delegate_factory(
@@ -260,28 +276,33 @@ EnsureBrowserContextKeyedServiceFactoriesBuilt() {
       ->SetUIDelegateFactory(std::move(networking_private_ui_delegate_factory));
 #endif
 #endif
+#if defined(ENABLE_MEDIA_ROUTER)
+  media_router::MediaRouterFactory::GetInstance();
+#if !defined(OS_ANDROID)
+  media_router::MediaRouterUIServiceFactory::GetInstance();
+#endif
+#endif  // defined(ENABLE_MEDIA_ROUTER)
 #if !defined(OS_ANDROID)
   MediaGalleriesPreferencesFactory::GetInstance();
   NTPResourceCacheFactory::GetInstance();
 #endif
-  NTPSnippetsServiceFactory::GetInstance();
+  ContentSuggestionsServiceFactory::GetInstance();
   PasswordStoreFactory::GetInstance();
   PasswordManagerSettingMigratorServiceFactory::GetInstance();
 #if !defined(OS_ANDROID)
   PinnedTabServiceFactory::GetInstance();
+  ThemeServiceFactory::GetInstance();
 #endif
-#if defined(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PLUGINS)
   PluginPrefsFactory::GetInstance();
 #endif
   PrefsTabHelper::GetServiceInstance();
   policy::ProfilePolicyConnectorFactory::GetInstance();
 #if defined(OS_CHROMEOS)
   chromeos::OwnerSettingsServiceChromeOSFactory::GetInstance();
-  policy::ConsumerEnrollmentHandlerFactory::GetInstance();
-  policy::ConsumerManagementNotifierFactory::GetInstance();
   policy::PolicyCertServiceFactory::GetInstance();
   policy::RecommendationRestorerFactory::GetInstance();
-  policy::UserCloudPolicyManagerFactoryChromeOS::GetInstance();
+  policy::UserPolicyManagerFactoryChromeOS::GetInstance();
   policy::UserCloudPolicyTokenForwarderFactory::GetInstance();
   policy::UserNetworkConfigurationUpdaterFactory::GetInstance();
 #else  // !defined(OS_CHROMEOS)
@@ -299,7 +320,10 @@ EnsureBrowserContextKeyedServiceFactoriesBuilt() {
   prerender::PrerenderMessageFilter::EnsureShutdownNotifierFactoryBuilt();
   ProfileSyncServiceFactory::GetInstance();
   ProtocolHandlerRegistryFactory::GetInstance();
-#if defined(ENABLE_SESSION_SERVICE)
+#if defined(OS_ANDROID)
+  SearchGeolocationService::Factory::GetInstance();
+#endif
+#if BUILDFLAG(ENABLE_SESSION_SERVICE)
   SessionServiceFactory::GetInstance();
 #endif
   ShortcutsBackendFactory::GetInstance();
@@ -308,7 +332,7 @@ EnsureBrowserContextKeyedServiceFactoriesBuilt() {
   if (SiteEngagementService::IsEnabled())
     SiteEngagementServiceFactory::GetInstance();
 
-#if defined(ENABLE_SPELLCHECK)
+#if BUILDFLAG(ENABLE_SPELLCHECK)
   SpellcheckServiceFactory::GetInstance();
 #endif
   suggestions::SuggestionsServiceFactory::GetInstance();
@@ -316,9 +340,6 @@ EnsureBrowserContextKeyedServiceFactoriesBuilt() {
   TabRestoreServiceFactory::GetInstance();
   TemplateURLFetcherFactory::GetInstance();
   TemplateURLServiceFactory::GetInstance();
-#if defined(ENABLE_THEMES)
-  ThemeServiceFactory::GetInstance();
-#endif
 #if defined(OS_WIN)
   TriggeredProfileResetterFactory::GetInstance();
 #endif

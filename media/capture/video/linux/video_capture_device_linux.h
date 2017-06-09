@@ -18,8 +18,8 @@
 #include "base/files/scoped_file.h"
 #include "base/macros.h"
 #include "base/threading/thread.h"
-#include "media/base/video_capture_types.h"
 #include "media/capture/video/video_capture_device.h"
+#include "media/capture/video_capture_types.h"
 
 namespace media {
 
@@ -31,16 +31,23 @@ class VideoCaptureDeviceLinux : public VideoCaptureDevice {
   static VideoPixelFormat V4l2FourCcToChromiumPixelFormat(uint32_t v4l2_fourcc);
   static std::list<uint32_t> GetListOfUsableFourCCs(bool favour_mjpeg);
 
-  explicit VideoCaptureDeviceLinux(const Name& device_name);
+  explicit VideoCaptureDeviceLinux(
+      const VideoCaptureDeviceDescriptor& device_descriptor);
   ~VideoCaptureDeviceLinux() override;
 
   // VideoCaptureDevice implementation.
   void AllocateAndStart(const VideoCaptureParams& params,
                         std::unique_ptr<Client> client) override;
   void StopAndDeAllocate() override;
+  void TakePhoto(TakePhotoCallback callback) override;
+  void GetPhotoCapabilities(GetPhotoCapabilitiesCallback callback) override;
+  void SetPhotoOptions(mojom::PhotoSettingsPtr settings,
+                       SetPhotoOptionsCallback callback) override;
 
  protected:
-  void SetRotation(int rotation);
+  virtual void SetRotation(int rotation);
+
+  const VideoCaptureDeviceDescriptor device_descriptor_;
 
  private:
   static int TranslatePowerLineFrequencyToV4L2(PowerLineFrequency frequency);
@@ -50,9 +57,10 @@ class VideoCaptureDeviceLinux : public VideoCaptureDevice {
   // VideoCaptureDeviceLinux lives but otherwise operating on |v4l2_thread_|.
   scoped_refptr<V4L2CaptureDelegate> capture_impl_;
 
-  base::Thread v4l2_thread_;  // Thread used for reading data from the device.
+  // Photo-related requests waiting for |v4l2_thread_| to be active.
+  std::list<base::Closure> photo_requests_queue_;
 
-  const Name device_name_;
+  base::Thread v4l2_thread_;  // Thread used for reading data from the device.
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(VideoCaptureDeviceLinux);
 };

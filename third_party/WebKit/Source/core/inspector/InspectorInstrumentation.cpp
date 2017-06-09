@@ -33,7 +33,6 @@
 #include "core/InstrumentingAgents.h"
 #include "core/events/Event.h"
 #include "core/events/EventTarget.h"
-#include "core/fetch/FetchInitiatorInfo.h"
 #include "core/frame/FrameHost.h"
 #include "core/inspector/InspectorCSSAgent.h"
 #include "core/inspector/InspectorDOMDebuggerAgent.h"
@@ -46,170 +45,160 @@
 #include "core/page/Page.h"
 #include "core/workers/MainThreadWorkletGlobalScope.h"
 #include "core/workers/WorkerGlobalScope.h"
-#include "platform/v8_inspector/public/V8Debugger.h"
+#include "core/workers/WorkerThread.h"
+#include "platform/loader/fetch/FetchInitiatorInfo.h"
 
 namespace blink {
 
-namespace InspectorInstrumentation {
+namespace probe {
 
-AsyncTask::AsyncTask(ExecutionContext* context, void* task) : AsyncTask(context, task, true)
-{
-}
+AsyncTask::AsyncTask(ExecutionContext* context, void* task)
+    : AsyncTask(context, task, true) {}
 
 AsyncTask::AsyncTask(ExecutionContext* context, void* task, bool enabled)
-    : m_debugger(enabled ? ThreadDebugger::from(toIsolate(context)) : nullptr)
-    , m_task(task)
-{
-    if (m_debugger)
-        m_debugger->asyncTaskStarted(m_task);
+    : m_debugger(enabled ? ThreadDebugger::from(toIsolate(context)) : nullptr),
+      m_task(task),
+      m_breakpoint(nullptr, nullptr) {
+  if (m_debugger)
+    m_debugger->asyncTaskStarted(m_task);
 }
 
-AsyncTask::~AsyncTask()
-{
-    if (m_debugger)
-        m_debugger->asyncTaskFinished(m_task);
+AsyncTask::AsyncTask(ExecutionContext* context,
+                     void* task,
+                     const char* breakpointName)
+    : m_debugger(ThreadDebugger::from(toIsolate(context))),
+      m_task(task),
+      m_breakpoint(context, breakpointName) {
+  if (m_debugger)
+    m_debugger->asyncTaskStarted(m_task);
 }
 
-void asyncTaskScheduled(ExecutionContext* context, const String& name, void* task)
-{
-    if (ThreadDebugger* debugger = ThreadDebugger::from(toIsolate(context)))
-        debugger->asyncTaskScheduled(name, task, false);
+AsyncTask::~AsyncTask() {
+  if (m_debugger)
+    m_debugger->asyncTaskFinished(m_task);
 }
 
-void asyncTaskScheduled(ExecutionContext* context, const String& name, void* task, bool recurring)
-{
-    if (ThreadDebugger* debugger = ThreadDebugger::from(toIsolate(context)))
-        debugger->asyncTaskScheduled(name, task, recurring);
+void asyncTaskScheduled(ExecutionContext* context,
+                        const String& name,
+                        void* task,
+                        bool recurring) {
+  if (ThreadDebugger* debugger = ThreadDebugger::from(toIsolate(context)))
+    debugger->asyncTaskScheduled(name, task, recurring);
 }
 
-void asyncTaskCanceled(ExecutionContext* context, void* task)
-{
-    if (ThreadDebugger* debugger = ThreadDebugger::from(toIsolate(context)))
-        debugger->asyncTaskCanceled(task);
+void asyncTaskScheduledBreakable(ExecutionContext* context,
+                                 const char* name,
+                                 void* task,
+                                 bool recurring) {
+  asyncTaskScheduled(context, name, task, recurring);
+  breakIfNeeded(context, name);
 }
 
-void allAsyncTasksCanceled(ExecutionContext* context)
-{
-    if (ThreadDebugger* debugger = ThreadDebugger::from(toIsolate(context)))
-        debugger->allAsyncTasksCanceled();
+void asyncTaskCanceled(ExecutionContext* context, void* task) {
+  if (ThreadDebugger* debugger = ThreadDebugger::from(toIsolate(context)))
+    debugger->asyncTaskCanceled(task);
 }
 
-NativeBreakpoint::NativeBreakpoint(ExecutionContext* context, const char* name, bool sync)
-    : m_instrumentingAgents(instrumentingAgentsFor(context))
-    , m_sync(sync)
-{
-    if (!m_instrumentingAgents || !m_instrumentingAgents->hasInspectorDOMDebuggerAgents())
-        return;
-    for (InspectorDOMDebuggerAgent* domDebuggerAgent : m_instrumentingAgents->inspectorDOMDebuggerAgents())
-        domDebuggerAgent->allowNativeBreakpoint(name, nullptr, m_sync);
+void asyncTaskCanceledBreakable(ExecutionContext* context,
+                                const char* name,
+                                void* task) {
+  asyncTaskCanceled(context, task);
+  breakIfNeeded(context, name);
 }
 
-NativeBreakpoint::NativeBreakpoint(ExecutionContext* context, EventTarget* eventTarget, Event* event)
-    : m_instrumentingAgents(instrumentingAgentsFor(context))
-    , m_sync(false)
-{
-    if (!m_instrumentingAgents || !m_instrumentingAgents->hasInspectorDOMDebuggerAgents())
-        return;
-    Node* node = eventTarget->toNode();
-    String targetName = node ? node->nodeName() : eventTarget->interfaceName();
-    for (InspectorDOMDebuggerAgent* domDebuggerAgent : m_instrumentingAgents->inspectorDOMDebuggerAgents())
-        domDebuggerAgent->allowNativeBreakpoint(event->type(), &targetName, m_sync);
+void allAsyncTasksCanceled(ExecutionContext* context) {
+  if (ThreadDebugger* debugger = ThreadDebugger::from(toIsolate(context)))
+    debugger->allAsyncTasksCanceled();
 }
 
-NativeBreakpoint::~NativeBreakpoint()
-{
-    if (m_sync || !m_instrumentingAgents || !m_instrumentingAgents->hasInspectorDOMDebuggerAgents())
-        return;
-    for (InspectorDOMDebuggerAgent* domDebuggerAgent : m_instrumentingAgents->inspectorDOMDebuggerAgents())
-        domDebuggerAgent->cancelNativeBreakpoint();
+void breakIfNeeded(ExecutionContext* context, const char* name) {
+  InstrumentingAgents* instrumentingAgents = instrumentingAgentsFor(context);
+  if (!instrumentingAgents ||
+      !instrumentingAgents->hasInspectorDOMDebuggerAgents())
+    return;
+  for (InspectorDOMDebuggerAgent* domDebuggerAgent :
+       instrumentingAgents->inspectorDOMDebuggerAgents()) {
+    domDebuggerAgent->allowNativeBreakpoint(name, nullptr, true);
+  }
 }
 
-StyleRecalc::StyleRecalc(Document* document)
-    : m_instrumentingAgents(instrumentingAgentsFor(document))
-{
-    if (!m_instrumentingAgents || m_instrumentingAgents->hasInspectorNetworkAgents())
-        return;
-    for (InspectorNetworkAgent* networkAgent : m_instrumentingAgents->inspectorNetworkAgents())
-        networkAgent->willRecalculateStyle(document);
+NativeBreakpoint::NativeBreakpoint(ExecutionContext* context, const char* name)
+    : m_instrumentingAgents(instrumentingAgentsFor(context)) {
+  if (!m_instrumentingAgents ||
+      !m_instrumentingAgents->hasInspectorDOMDebuggerAgents())
+    return;
+  for (InspectorDOMDebuggerAgent* domDebuggerAgent :
+       m_instrumentingAgents->inspectorDOMDebuggerAgents())
+    domDebuggerAgent->allowNativeBreakpoint(name, nullptr, false);
 }
 
-StyleRecalc::~StyleRecalc()
-{
-    if (!m_instrumentingAgents)
-        return;
-    if (m_instrumentingAgents->hasInspectorNetworkAgents()) {
-        for (InspectorNetworkAgent* networkAgent : m_instrumentingAgents->inspectorNetworkAgents())
-            networkAgent->didRecalculateStyle();
-    }
-    if (m_instrumentingAgents->hasInspectorPageAgents()) {
-        for (InspectorPageAgent* pageAgent : m_instrumentingAgents->inspectorPageAgents())
-            pageAgent->didRecalculateStyle();
-    }
+NativeBreakpoint::NativeBreakpoint(ExecutionContext* context,
+                                   EventTarget* eventTarget,
+                                   Event* event)
+    : m_instrumentingAgents(instrumentingAgentsFor(context)) {
+  if (!m_instrumentingAgents ||
+      !m_instrumentingAgents->hasInspectorDOMDebuggerAgents())
+    return;
+  Node* node = eventTarget->toNode();
+  String targetName = node ? node->nodeName() : eventTarget->interfaceName();
+  for (InspectorDOMDebuggerAgent* domDebuggerAgent :
+       m_instrumentingAgents->inspectorDOMDebuggerAgents())
+    domDebuggerAgent->allowNativeBreakpoint(event->type(), &targetName, false);
 }
 
-JavaScriptDialog::JavaScriptDialog(LocalFrame* frame, const String& message, ChromeClient::DialogType dialogType)
-    : m_instrumentingAgents(instrumentingAgentsFor(frame))
-    , m_result(false)
-{
-    if (!m_instrumentingAgents || !m_instrumentingAgents->hasInspectorPageAgents())
-        return;
-    for (InspectorPageAgent* pageAgent : m_instrumentingAgents->inspectorPageAgents())
-        pageAgent->willRunJavaScriptDialog(message, dialogType);
+NativeBreakpoint::~NativeBreakpoint() {
+  if (!m_instrumentingAgents ||
+      !m_instrumentingAgents->hasInspectorDOMDebuggerAgents())
+    return;
+  for (InspectorDOMDebuggerAgent* domDebuggerAgent :
+       m_instrumentingAgents->inspectorDOMDebuggerAgents())
+    domDebuggerAgent->cancelNativeBreakpoint();
 }
 
-void JavaScriptDialog::setResult(bool result)
-{
-    m_result = result;
+void didReceiveResourceResponseButCanceled(LocalFrame* frame,
+                                           DocumentLoader* loader,
+                                           unsigned long identifier,
+                                           const ResourceResponse& r,
+                                           Resource* resource) {
+  didReceiveResourceResponse(frame, identifier, loader, r, resource);
 }
 
-JavaScriptDialog::~JavaScriptDialog()
-{
-    if (!m_instrumentingAgents || !m_instrumentingAgents->hasInspectorPageAgents())
-        return;
-    for (InspectorPageAgent* pageAgent : m_instrumentingAgents->inspectorPageAgents())
-        pageAgent->didRunJavaScriptDialog(m_result);
+void canceledAfterReceivedResourceResponse(LocalFrame* frame,
+                                           DocumentLoader* loader,
+                                           unsigned long identifier,
+                                           const ResourceResponse& r,
+                                           Resource* resource) {
+  didReceiveResourceResponseButCanceled(frame, loader, identifier, r, resource);
 }
 
-int FrontendCounter::s_frontendCounter = 0;
-
-bool isDebuggerPaused(LocalFrame*)
-{
-    return MainThreadDebugger::instance()->debugger()->isPaused();
+void continueWithPolicyIgnore(LocalFrame* frame,
+                              DocumentLoader* loader,
+                              unsigned long identifier,
+                              const ResourceResponse& r,
+                              Resource* resource) {
+  didReceiveResourceResponseButCanceled(frame, loader, identifier, r, resource);
 }
 
-void didReceiveResourceResponseButCanceled(LocalFrame* frame, DocumentLoader* loader, unsigned long identifier, const ResourceResponse& r, Resource* resource)
-{
-    didReceiveResourceResponse(frame, identifier, loader, r, resource);
-}
-
-void continueAfterXFrameOptionsDenied(LocalFrame* frame, DocumentLoader* loader, unsigned long identifier, const ResourceResponse& r, Resource* resource)
-{
-    didReceiveResourceResponseButCanceled(frame, loader, identifier, r, resource);
-}
-
-void continueWithPolicyIgnore(LocalFrame* frame, DocumentLoader* loader, unsigned long identifier, const ResourceResponse& r, Resource* resource)
-{
-    didReceiveResourceResponseButCanceled(frame, loader, identifier, r, resource);
-}
-
-InstrumentingAgents* instrumentingAgentsFor(WorkerGlobalScope* workerGlobalScope)
-{
-    if (!workerGlobalScope)
-        return nullptr;
-    if (WorkerInspectorController* controller = workerGlobalScope->workerInspectorController())
-        return controller->instrumentingAgents();
+InstrumentingAgents* instrumentingAgentsFor(
+    WorkerGlobalScope* workerGlobalScope) {
+  if (!workerGlobalScope)
     return nullptr;
+  if (WorkerInspectorController* controller =
+          workerGlobalScope->thread()->workerInspectorController())
+    return controller->instrumentingAgents();
+  return nullptr;
 }
 
-InstrumentingAgents* instrumentingAgentsForNonDocumentContext(ExecutionContext* context)
-{
-    if (context->isWorkerGlobalScope())
-        return instrumentingAgentsFor(toWorkerGlobalScope(context));
-    if (context->isMainThreadWorkletGlobalScope())
-        return instrumentingAgentsFor(toMainThreadWorkletGlobalScope(context)->frame());
-    return nullptr;
+InstrumentingAgents* instrumentingAgentsForNonDocumentContext(
+    ExecutionContext* context) {
+  if (context->isWorkerGlobalScope())
+    return instrumentingAgentsFor(toWorkerGlobalScope(context));
+  if (context->isMainThreadWorkletGlobalScope())
+    return instrumentingAgentsFor(
+        toMainThreadWorkletGlobalScope(context)->frame());
+  return nullptr;
 }
 
-} // namespace InspectorInstrumentation
+}  // namespace InspectorInstrumentation
 
-} // namespace blink
+}  // namespace blink

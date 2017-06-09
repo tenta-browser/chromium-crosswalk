@@ -274,8 +274,8 @@ class PrinterJobHandler : public base::RefCountedThreadSafe<PrinterJobHandler>,
   // The Job spooler object. This is only non-NULL during a print operation.
   // It lives and dies on |print_thread_|
   scoped_refptr<PrintSystem::JobSpooler> job_spooler_;
-  // The message loop proxy representing the thread on which this object
-  // was created. Used by the print thread.
+  // The task runner representing the thread on which this object was created.
+  // Used by the print thread.
   scoped_refptr<base::SingleThreadTaskRunner> job_handler_task_runner_;
 
   // There may be pending tasks in the message queue when Shutdown is called.
@@ -303,7 +303,6 @@ class PrinterJobHandler : public base::RefCountedThreadSafe<PrinterJobHandler>,
 
   base::Time job_start_time_;
   base::Time spooling_start_time_;
-  base::Time last_caps_update_time_;
 
   base::WeakPtrFactory<PrinterJobHandler> weak_ptr_factory_;
 

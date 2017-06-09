@@ -38,29 +38,50 @@ namespace blink {
 class ExceptionState;
 class ScriptState;
 
-class IDBFactory final : public GarbageCollected<IDBFactory>, public ScriptWrappable {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static IDBFactory* create()
-    {
-        return new IDBFactory();
-    }
-    DEFINE_INLINE_VIRTUAL_TRACE() { }
+class IDBFactory final : public GarbageCollected<IDBFactory>,
+                         public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
 
-    IDBRequest* getDatabaseNames(ScriptState*, ExceptionState&);
+ public:
+  static IDBFactory* create() { return new IDBFactory(); }
+  DEFINE_INLINE_VIRTUAL_TRACE() {}
 
-    IDBOpenDBRequest* open(ScriptState*, const String& name, ExceptionState&);
-    IDBOpenDBRequest* open(ScriptState*, const String& name, unsigned long long version, ExceptionState&);
-    IDBOpenDBRequest* deleteDatabase(ScriptState*, const String& name, ExceptionState&);
+  IDBRequest* getDatabaseNames(ScriptState*, ExceptionState&);
 
-    short cmp(ScriptState*, const ScriptValue& first, const ScriptValue& second, ExceptionState&);
+  IDBOpenDBRequest* open(ScriptState*, const String& name, ExceptionState&);
+  IDBOpenDBRequest* open(ScriptState*,
+                         const String& name,
+                         unsigned long long version,
+                         ExceptionState&);
+  IDBOpenDBRequest* deleteDatabase(ScriptState*,
+                                   const String& name,
+                                   ExceptionState&);
 
-private:
-    IDBFactory();
+  // This is currently not exposed to the web applications and is only used by
+  // the DevTools.
+  IDBOpenDBRequest* closeConnectionsAndDeleteDatabase(ScriptState*,
+                                                      const String& name,
+                                                      ExceptionState&);
 
-    IDBOpenDBRequest* openInternal(ScriptState*, const String& name, int64_t version, ExceptionState&);
+  short cmp(ScriptState*,
+            const ScriptValue& first,
+            const ScriptValue& second,
+            ExceptionState&);
+
+ private:
+  IDBFactory();
+
+  IDBOpenDBRequest* openInternal(ScriptState*,
+                                 const String& name,
+                                 int64_t version,
+                                 ExceptionState&);
+
+  IDBOpenDBRequest* deleteDatabaseInternal(ScriptState*,
+                                           const String& name,
+                                           ExceptionState&,
+                                           bool);
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // IDBFactory_h
+#endif  // IDBFactory_h

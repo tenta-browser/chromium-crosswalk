@@ -6,18 +6,6 @@
 
 namespace ios {
 
-namespace {
-SigninErrorProvider* g_signin_error_provider = nullptr;
-}
-
-void SetSigninErrorProvider(SigninErrorProvider* provider) {
-  g_signin_error_provider = provider;
-}
-
-SigninErrorProvider* GetSigninErrorProvider() {
-  return g_signin_error_provider;
-}
-
 SigninErrorProvider::SigninErrorProvider() {}
 
 SigninErrorProvider::~SigninErrorProvider() {}
@@ -27,6 +15,14 @@ SigninErrorCategory SigninErrorProvider::GetErrorCategory(NSError* error) {
 }
 
 bool SigninErrorProvider::IsCanceled(NSError* error) {
+  return false;
+}
+
+bool SigninErrorProvider::IsForbidden(NSError* error) {
+  return false;
+}
+
+bool SigninErrorProvider::IsBadRequest(NSError* error) {
   return false;
 }
 

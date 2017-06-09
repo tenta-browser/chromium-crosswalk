@@ -7,11 +7,12 @@
 
 namespace web {
 
+extern const char kConsoleModuleName[];
 extern const char kSyncMessageChannelModuleName[];
 extern const char kHandleUtilModuleName[];
 extern const char kSupportModuleName[];
 extern const char kCoreModuleName[];
-extern const char kServiceRegistryModuleName[];
+extern const char kInterfaceProviderModuleName[];
 
 }  // namespace web
 

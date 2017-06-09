@@ -98,7 +98,7 @@ api::serial::ParityBit ConvertParityBitFromMojo(
       return api::serial::PARITY_BIT_NONE;
     case device::serial::ParityBit::ODD:
       return api::serial::PARITY_BIT_ODD;
-    case device::serial::ParityBit::NO:
+    case device::serial::ParityBit::NO_PARITY:
       return api::serial::PARITY_BIT_NO;
     case device::serial::ParityBit::EVEN:
       return api::serial::PARITY_BIT_EVEN;
@@ -111,7 +111,7 @@ device::serial::ParityBit ConvertParityBitToMojo(api::serial::ParityBit input) {
     case api::serial::PARITY_BIT_NONE:
       return device::serial::ParityBit::NONE;
     case api::serial::PARITY_BIT_NO:
-      return device::serial::ParityBit::NO;
+      return device::serial::ParityBit::NO_PARITY;
     case api::serial::PARITY_BIT_ODD:
       return device::serial::ParityBit::ODD;
     case api::serial::PARITY_BIT_EVEN:
@@ -167,9 +167,9 @@ SerialConnection::SerialConnection(const std::string& port,
       send_timeout_(0),
       paused_(false),
       io_handler_(device::SerialIoHandler::Create(
-          content::BrowserThread::GetMessageLoopProxyForThread(
+          content::BrowserThread::GetTaskRunnerForThread(
               content::BrowserThread::FILE),
-          content::BrowserThread::GetMessageLoopProxyForThread(
+          content::BrowserThread::GetTaskRunnerForThread(
               content::BrowserThread::UI))) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 }
@@ -225,9 +225,9 @@ bool SerialConnection::Receive(const ReceiveCompleteCallback& callback) {
     return false;
   receive_complete_ = callback;
   receive_buffer_ = new net::IOBuffer(buffer_size_);
-  io_handler_->Read(base::WrapUnique(new device::ReceiveBuffer(
+  io_handler_->Read(base::MakeUnique<device::ReceiveBuffer>(
       receive_buffer_, buffer_size_,
-      base::Bind(&SerialConnection::OnAsyncReadComplete, AsWeakPtr()))));
+      base::Bind(&SerialConnection::OnAsyncReadComplete, AsWeakPtr())));
   receive_timeout_task_.reset();
   if (receive_timeout_ > 0) {
     receive_timeout_task_.reset(new TimeoutTask(
@@ -243,8 +243,8 @@ bool SerialConnection::Send(const std::vector<char>& data,
   if (!send_complete_.is_null())
     return false;
   send_complete_ = callback;
-  io_handler_->Write(base::WrapUnique(new device::SendBuffer(
-      data, base::Bind(&SerialConnection::OnAsyncWriteComplete, AsWeakPtr()))));
+  io_handler_->Write(base::MakeUnique<device::SendBuffer>(
+      data, base::Bind(&SerialConnection::OnAsyncWriteComplete, AsWeakPtr())));
   send_timeout_task_.reset();
   if (send_timeout_ > 0) {
     send_timeout_task_.reset(new TimeoutTask(

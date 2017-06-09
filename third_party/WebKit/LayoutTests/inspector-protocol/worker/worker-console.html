@@ -6,14 +6,16 @@
 var worker;
 var onMessageCallbacks = {};
 
-function startWorker(callback)
+function startWorker()
 {
+    var callback;
+    var promise = new Promise((fulfill) => callback = fulfill);
     worker = new Worker("../resources/worker-console-worker.js");
     worker.onmessage = function(event) {
         worker.onmessage = onMessageFromWorker;
-        if (callback)
-            callback();
+        callback();
     };
+    return promise;
 }
 
 function logInWorkerFromPage(message, callback)
@@ -38,18 +40,17 @@ function stopWorker()
 
 function test()
 {
-    var workerEventHandler = [];
-    InspectorTest.eventHandler["Console.messageAdded"] = onConsoleMessage.bind(null, false);
-    InspectorTest.eventHandler["Worker.workerCreated"] = onWorkerCreated;
-    InspectorTest.eventHandler["Worker.dispatchMessageFromWorker"] = onWorkerMessage;
-    workerEventHandler["Console.messageAdded"] = onConsoleMessage.bind(null, true);
+    var workerEventHandler = {};
+    InspectorTest.eventHandler["Target.attachedToTarget"] = onWorkerCreated;
+    InspectorTest.eventHandler["Target.receivedMessageFromTarget"] = onWorkerMessage;
+    workerEventHandler["Runtime.consoleAPICalled"] = onConsoleAPICalledFromWorker;
 
     var workerId;
 
     function onWorkerCreated(payload)
     {
         InspectorTest.log("Worker.created");
-        workerId = payload.params.workerId;
+        workerId = payload.params.targetInfo.targetId;
     }
 
     var requestId = 0;
@@ -63,16 +64,16 @@ function test()
             "params": params,
             "id": requestId
         };
-        InspectorTest.sendCommandOrDie("Worker.sendMessageToWorker", {
-            workerId: workerId,
+        InspectorTest.sendCommandOrDie("Target.sendMessageToTarget", {
+            targetId: workerId,
             message: JSON.stringify(messageObject)
         });
     }
 
     function onWorkerMessage(payload)
     {
-        if (payload.params.workerId !== workerId)
-            InspectorTest.log("workerId mismatch");
+        if (payload.params.targetId !== workerId)
+            InspectorTest.log("targetId mismatch");
         var messageObject = JSON.parse(payload.params.message);
         var messageId = messageObject["id"];
         if (typeof messageId === "number") {
@@ -91,20 +92,25 @@ function test()
     function logInWorker(message, next)
     {
         InspectorTest.log("Logging in worker: " + message);
-        if (next)
-            InspectorTest.evaluateInPageAsync("logInWorkerFromPage(\"" + message + "\", %callback)", next);
-        else
-            InspectorTest.evaluateInPage("logInWorkerFromPage(\"" + message + "\")");
+        InspectorTest.eventHandler["Log.entryAdded"] = onLogEntry;
+        InspectorTest.evaluateInPage("logInWorkerFromPage(\"" + message + "\")");
+
+        function onLogEntry(payload)
+        {
+            InspectorTest.log("Got log message from page: " + payload.params.entry.text);
+            delete InspectorTest.eventHandler["Log.entryAdded"];
+            next();
+        }
     }
 
     var gotMessages = [];
     var waitingForMessage;
     var waitingForMessageCallback;
 
-    function onConsoleMessage(fromWorker, payload)
+    function onConsoleAPICalledFromWorker(payload)
     {
-        var message = payload.params.message.text;
-        InspectorTest.log("Got console message from " + (fromWorker ? "worker" : "page") + ": " + message);
+        var message = payload.params.args[0].value;
+        InspectorTest.log("Got console API call from worker: " + message);
         gotMessages.push(message);
         if (message === waitingForMessage)
             waitingForMessageCallback();
@@ -123,13 +129,13 @@ function test()
     var steps = [
         function listenToConsole(next)
         {
-            InspectorTest.sendCommandOrDie("Console.enable", {}, next);
+            InspectorTest.sendCommandOrDie("Log.enable", {}, next);
         },
 
         function start0(next)
         {
             InspectorTest.log("Starting worker");
-            InspectorTest.evaluateInPageAsync("startWorker(%callback)", next);
+            InspectorTest.evaluateInPageAsync("startWorker()").then(next);
         },
 
         function log0(next)
@@ -140,14 +146,13 @@ function test()
         function stop0(next)
         {
             InspectorTest.log("Stopping worker");
-            waitForMessage("message0", next);
-            InspectorTest.evaluateInPage("stopWorker()");
+            InspectorTest.evaluateInPage("stopWorker()", next);
         },
 
         function start1(next)
         {
             InspectorTest.log("Starting worker");
-            InspectorTest.evaluateInPageAsync("startWorker(%callback)", next);
+            InspectorTest.evaluateInPageAsync("startWorker()").then(next);
         },
 
         function log1(next)
@@ -157,27 +162,36 @@ function test()
 
         function enable1(next)
         {
-            InspectorTest.log("Sending Worker.enable");
-            InspectorTest.sendCommandOrDie("Worker.enable", {}, next);
+            InspectorTest.log("Starting autoattach");
+            InspectorTest.sendCommandOrDie("Target.setAutoAttach", {autoAttach: true, waitForDebuggerOnStart: false}, next);
         },
 
         function consoleEnable1(next)
         {
-            InspectorTest.log("Sending Console.enable to worker");
+            InspectorTest.log("Sending Runtime.enable to worker");
             waitForMessage("message1", next);
-            sendCommandToWorker("Console.enable", {});
+            sendCommandToWorker("Runtime.enable", {});
         },
 
         function log2(next)
         {
+            logInWorker("message2", next);
+        },
+
+        function waitForMessage2(next)
+        {
             waitForMessage("message2", next);
-            logInWorker("message2");
+        },
+
+        function throw1(next)
+        {
+            logInWorker("throw1", next);
         },
 
         function disable1(next)
         {
-            InspectorTest.log("Sending Worker.disable");
-            InspectorTest.sendCommandOrDie("Worker.disable", {}, next);
+            InspectorTest.log("Stopping autoattach");
+            InspectorTest.sendCommandOrDie("Target.setAutoAttach", {autoAttach: false, waitForDebuggerOnStart: false}, next);
         },
 
         function log3(next)
@@ -194,14 +208,14 @@ function test()
 
         function enable2(next)
         {
-            InspectorTest.log("Sending Worker.enable");
-            InspectorTest.sendCommandOrDie("Worker.enable", {}, next);
+            InspectorTest.log("Starting autoattach");
+            InspectorTest.sendCommandOrDie("Target.setAutoAttach", {autoAttach: true, waitForDebuggerOnStart: false}, next);
         },
 
         function start2(next)
         {
             InspectorTest.log("Starting worker");
-            InspectorTest.evaluateInPageAsync("startWorker(%callback)", next);
+            InspectorTest.evaluateInPageAsync("startWorker()").then(next);
         },
 
         function log4(next)
@@ -211,15 +225,19 @@ function test()
 
         function consoleEnable2(next)
         {
-            InspectorTest.log("Sending Console.enable to worker");
+            InspectorTest.log("Sending Runtime.enable to worker");
             waitForMessage("message4", next);
-            sendCommandToWorker("Console.enable", {});
+            sendCommandToWorker("Runtime.enable", {});
         },
 
         function log5(next)
         {
+            logInWorker("message5", next);
+        },
+
+        function waitForMessage5(next)
+        {
             waitForMessage("message5", next);
-            logInWorker("message5");
         },
 
         function stop2(next)
@@ -231,7 +249,7 @@ function test()
         function start3(next)
         {
             InspectorTest.log("Starting worker");
-            InspectorTest.evaluateInPageAsync("startWorker(%callback)", next);
+            InspectorTest.evaluateInPageAsync("startWorker()").then(next);
         },
 
         function log6(next)
@@ -242,14 +260,13 @@ function test()
         function stop3(next)
         {
             InspectorTest.log("Stopping worker");
-            waitForMessage("message6", next);
-            InspectorTest.evaluateInPage("stopWorker()");
+            InspectorTest.evaluateInPage("stopWorker()", next);
         },
 
         function disable2(next)
         {
-            InspectorTest.log("Sending Worker.disable");
-            InspectorTest.sendCommandOrDie("Worker.disable", {}, next);
+            InspectorTest.log("Stopping autoattach");
+            InspectorTest.sendCommandOrDie("Target.setAutoAttach", {autoAttach: false, waitForDebuggerOnStart: false}, next);
         }
     ];
 

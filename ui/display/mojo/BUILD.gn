@@ -1,20 +1,27 @@
-# Copyright 2016 The Chromium Authors. All rights reserved.
+# Copyright 2017 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-component("mojo") {
-  output_name = "mojo_display_lib"
+import("//mojo/public/tools/bindings/mojom.gni")
 
-  public_deps = [
-    "//components/mus/public/interfaces",
-    "//ui/display",
+mojom("interfaces") {
+  sources = [
+    "display.mojom",
+    "display_layout.mojom",
+    "display_mode.mojom",
   ]
 
-  defines = [ "MOJO_DISPLAY_IMPLEMENTATION" ]
+  public_deps = [
+    "//ui/gfx/geometry/mojo",
+  ]
+}
 
+mojom("test_interfaces") {
   sources = [
-    "display_type_converters.cc",
-    "display_type_converters.h",
-    "mojo_display_export.h",
+    "display_struct_traits_test.mojom",
+  ]
+
+  public_deps = [
+    ":interfaces",
   ]
 }

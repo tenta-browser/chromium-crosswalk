@@ -25,42 +25,59 @@ class GbmBuffer : public GbmBufferBase {
  public:
   static scoped_refptr<GbmBuffer> CreateBuffer(
       const scoped_refptr<GbmDevice>& gbm,
-      gfx::BufferFormat format,
+      uint32_t format,
       const gfx::Size& size,
-      gfx::BufferUsage usage);
+      uint32_t flags);
+  static scoped_refptr<GbmBuffer> CreateBufferWithModifiers(
+      const scoped_refptr<GbmDevice>& gbm,
+      uint32_t format,
+      const gfx::Size& size,
+      uint32_t flags,
+      const std::vector<uint64_t>& modifiers);
   static scoped_refptr<GbmBuffer> CreateBufferFromFds(
       const scoped_refptr<GbmDevice>& gbm,
-      gfx::BufferFormat format,
+      uint32_t format,
       const gfx::Size& size,
       std::vector<base::ScopedFD>&& fds,
-      const std::vector<int>& strides,
-      const std::vector<int>& offsets);
-  gfx::BufferFormat GetFormat() const { return format_; }
-  gfx::BufferUsage GetUsage() const { return usage_; }
+      const std::vector<gfx::NativePixmapPlane>& planes);
+  uint32_t GetFormat() const { return format_; }
+  uint32_t GetFlags() const { return flags_; }
   bool AreFdsValid() const;
   size_t GetFdCount() const;
   int GetFd(size_t plane) const;
   int GetStride(size_t plane) const;
   int GetOffset(size_t plane) const;
+  size_t GetSize(size_t plane) const;
+  uint64_t GetFormatModifier(size_t plane) const;
   gfx::Size GetSize() const override;
 
  private:
   GbmBuffer(const scoped_refptr<GbmDevice>& gbm,
             gbm_bo* bo,
-            gfx::BufferFormat format,
-            gfx::BufferUsage usage,
+            uint32_t format,
+            uint32_t flags,
+            uint64_t modifier,
+            uint32_t addfb_flags,
             std::vector<base::ScopedFD>&& fds,
             const gfx::Size& size,
-            const std::vector<int>& strides,
-            const std::vector<int>& offsets);
+            const std::vector<gfx::NativePixmapPlane>&& planes);
   ~GbmBuffer() override;
 
-  gfx::BufferFormat format_;
-  gfx::BufferUsage usage_;
+  static scoped_refptr<GbmBuffer> CreateBufferForBO(
+      const scoped_refptr<GbmDevice>& gbm,
+      gbm_bo* bo,
+      uint32_t format,
+      const gfx::Size& size,
+      uint32_t flags,
+      uint64_t modifiers,
+      uint32_t addfb_flags);
+
+  uint32_t format_;
+  uint32_t flags_;
   std::vector<base::ScopedFD> fds_;
   gfx::Size size_;
-  std::vector<int> strides_;
-  std::vector<int> offsets_;
+
+  std::vector<gfx::NativePixmapPlane> planes_;
 
   DISALLOW_COPY_AND_ASSIGN(GbmBuffer);
 };
@@ -80,6 +97,7 @@ class GbmPixmap : public NativePixmap {
   int GetDmaBufFd(size_t plane) const override;
   int GetDmaBufPitch(size_t plane) const override;
   int GetDmaBufOffset(size_t plane) const override;
+  uint64_t GetDmaBufModifier(size_t plane) const override;
   gfx::BufferFormat GetBufferFormat() const override;
   gfx::Size GetBufferSize() const override;
   bool ScheduleOverlayPlane(gfx::AcceleratedWidget widget,

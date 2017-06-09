@@ -4,6 +4,8 @@
 
 #include "chrome/browser/extensions/api/webrtc_logging_private/webrtc_logging_private_api.h"
 
+#include <memory>
+
 #include "base/command_line.h"
 #include "base/hash.h"
 #include "base/logging.h"
@@ -59,35 +61,34 @@ content::RenderProcessHost* WebrtcLoggingPrivateFunction::RphFromRequest(
   // If |guest_process_id| is defined, directly use this id to find the
   // corresponding RenderProcessHost.
   if (request.guest_process_id.get())
-    return content::RenderProcessHost::FromID(*request.guest_process_id.get());
+    return content::RenderProcessHost::FromID(*request.guest_process_id);
 
   // Otherwise, use the |tab_id|. If there's no |tab_id| and no
   // |guest_process_id|, we can't look up the RenderProcessHost.
-  if (!request.tab_id.get())
-    return NULL;
+  if (!request.tab_id.get()) {
+    error_ = "No tab ID or guest process ID specified.";
+    return nullptr;
+  }
 
-  int tab_id = *request.tab_id.get();
-  content::WebContents* contents = NULL;
-  if (!ExtensionTabUtil::GetTabById(
-           tab_id, GetProfile(), true, NULL, NULL, &contents, NULL)) {
+  int tab_id = *request.tab_id;
+  content::WebContents* contents = nullptr;
+  if (!ExtensionTabUtil::GetTabById(tab_id, GetProfile(), true, nullptr,
+                                    nullptr, &contents, nullptr)) {
     error_ = extensions::ErrorUtils::FormatErrorMessage(
         extensions::tabs_constants::kTabNotFoundError,
         base::IntToString(tab_id));
-    return NULL;
+    return nullptr;
   }
   if (!contents) {
-    error_ = extensions::ErrorUtils::FormatErrorMessage(
-        "Web contents for tab not found",
-        base::IntToString(tab_id));
-    return NULL;
+    error_ = "Web contents for tab not found.";
+    return nullptr;
   }
   GURL expected_origin = contents->GetLastCommittedURL().GetOrigin();
   if (expected_origin.spec() != security_origin) {
-    error_ = extensions::ErrorUtils::FormatErrorMessage(
-        "Invalid security origin. Expected=" + expected_origin.spec() +
-            ", actual=" + security_origin,
-        base::IntToString(tab_id));
-    return NULL;
+    error_ = base::StringPrintf(
+        "Invalid security origin. Expected=%s, actual=%s",
+        expected_origin.spec().c_str(), security_origin.c_str());
+    return nullptr;
   }
   return contents->GetRenderProcessHost();
 }
@@ -168,7 +169,7 @@ bool WebrtcLoggingPrivateSetMetaDataFunction::RunAsync() {
 
   std::unique_ptr<MetaDataMap> meta_data(new MetaDataMap());
   for (const MetaDataEntry& entry : params->meta_data)
-    (*meta_data.get())[entry.key] = entry.value;
+    (*meta_data)[entry.key] = entry.value;
 
   BrowserThread::PostTask(BrowserThread::IO, FROM_HERE, base::Bind(
       &WebRtcLoggingHandlerHost::SetMetaData, webrtc_logging_handler_host,
@@ -207,6 +208,14 @@ bool WebrtcLoggingPrivateSetUploadOnRenderCloseFunction::RunAsync() {
   webrtc_logging_handler_host->set_upload_log_on_render_close(
       params->should_upload);
 
+  // Post a task since this is an asynchronous extension function.
+  // TODO(devlin): This is unneccessary; this should just be a
+  // UIThreadExtensionFunction. Fix this.
+  BrowserThread::PostTask(
+      BrowserThread::UI, FROM_HERE,
+      base::Bind(
+          &WebrtcLoggingPrivateSetUploadOnRenderCloseFunction::SendResponse,
+          this, true));
   return true;
 }
 
@@ -459,29 +468,25 @@ bool WebrtcLoggingPrivateStartWebRtcEventLoggingFunction::RunAsync() {
   std::unique_ptr<StartWebRtcEventLogging::Params> params(
       StartWebRtcEventLogging::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
-
   if (params->seconds < 0) {
     FireErrorCallback("seconds must be greater than or equal to 0");
     return true;
   }
 
-  content::RenderProcessHost* host =
-      RphFromRequest(params->request, params->security_origin);
-  if (!host)
+  scoped_refptr<WebRtcLoggingHandlerHost> webrtc_logging_handler_host(
+      LoggingHandlerFromRequest(params->request, params->security_origin));
+  if (!webrtc_logging_handler_host.get())
     return false;
 
-  scoped_refptr<WebRtcEventLogHandler> webrtc_event_log_handler(
-      base::UserDataAdapter<WebRtcEventLogHandler>::Get(
-          host, WebRtcEventLogHandler::kWebRtcEventLogHandlerKey));
+  webrtc_logging_handler_host->StartWebRtcEventLogging(
+      base::TimeDelta::FromSeconds(params->seconds),
+      base::Bind(
+          &WebrtcLoggingPrivateStartWebRtcEventLoggingFunction::FireCallback,
+          this),
+      base::Bind(&WebrtcLoggingPrivateStartWebRtcEventLoggingFunction::
+                     FireErrorCallback,
+                 this));
 
-  webrtc_event_log_handler->StartWebRtcEventLogging(
-      host, base::TimeDelta::FromSeconds(params->seconds),
-      base::Bind(
-        &WebrtcLoggingPrivateStartWebRtcEventLoggingFunction::FireCallback,
-        this),
-      base::Bind(
-        &WebrtcLoggingPrivateStartWebRtcEventLoggingFunction::FireErrorCallback,
-        this));
   return true;
 }
 
@@ -495,23 +500,19 @@ bool WebrtcLoggingPrivateStopWebRtcEventLoggingFunction::RunAsync() {
       StopWebRtcEventLogging::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
-  content::RenderProcessHost* host =
-      RphFromRequest(params->request, params->security_origin);
-  if (!host)
+  scoped_refptr<WebRtcLoggingHandlerHost> webrtc_logging_handler_host(
+      LoggingHandlerFromRequest(params->request, params->security_origin));
+  if (!webrtc_logging_handler_host.get())
     return false;
 
-  scoped_refptr<WebRtcEventLogHandler> webrtc_event_log_handler(
-      base::UserDataAdapter<WebRtcEventLogHandler>::Get(
-          host, WebRtcEventLogHandler::kWebRtcEventLogHandlerKey));
+  webrtc_logging_handler_host->StopWebRtcEventLogging(
+      base::Bind(
+          &WebrtcLoggingPrivateStopWebRtcEventLoggingFunction::FireCallback,
+          this),
+      base::Bind(&WebrtcLoggingPrivateStopWebRtcEventLoggingFunction::
+                     FireErrorCallback,
+                 this));
 
-  webrtc_event_log_handler->StopWebRtcEventLogging(
-      host,
-      base::Bind(
-        &WebrtcLoggingPrivateStopWebRtcEventLoggingFunction::FireCallback,
-        this),
-      base::Bind(
-        &WebrtcLoggingPrivateStopWebRtcEventLoggingFunction::FireErrorCallback,
-        this));
   return true;
 }
 

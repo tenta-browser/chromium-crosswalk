@@ -6,12 +6,14 @@
 
 #include <string.h>
 
+#include <memory>
+#include <vector>
+
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_vector.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/rand_util.h"
 #include "base/single_thread_task_runner.h"
@@ -41,14 +43,12 @@ media::VideoCodecProfile WebRTCVideoCodecToVideoCodecProfile(
   switch (type) {
     case webrtc::kVideoCodecVP8:
       return media::VP8PROFILE_ANY;
-    case webrtc::kVideoCodecH264: {
-      switch (codec_settings->codecSpecific.H264.profile) {
-        case webrtc::kProfileBase:
-          return media::H264PROFILE_BASELINE;
-        case webrtc::kProfileMain:
-          return media::H264PROFILE_MAIN;
-      }
-    }
+    case webrtc::kVideoCodecVP9:
+      return media::VP9PROFILE_MIN;
+    case webrtc::kVideoCodecH264:
+      // TODO(magjed): WebRTC is only using Baseline profile for now. Update
+      // once http://crbug/webrtc/6337 is fixed.
+      return media::H264PROFILE_BASELINE;
     default:
       NOTREACHED() << "Unrecognized video codec type";
       return media::VIDEO_CODEC_PROFILE_UNKNOWN;
@@ -224,8 +224,8 @@ class RTCVideoEncoder::Impl
   gfx::Size input_visible_size_;
 
   // Shared memory buffers for input/output with the VEA.
-  ScopedVector<base::SharedMemory> input_buffers_;
-  ScopedVector<base::SharedMemory> output_buffers_;
+  std::vector<std::unique_ptr<base::SharedMemory>> input_buffers_;
+  std::vector<std::unique_ptr<base::SharedMemory>> output_buffers_;
 
   // Input buffers ready to be filled with input from Encode().  As a LIFO since
   // we don't care about ordering.
@@ -237,6 +237,10 @@ class RTCVideoEncoder::Impl
 
   // 15 bits running index of the VP8 frames. See VP8 RTP spec for details.
   uint16_t picture_id_;
+
+  // |capture_time_ms_| field of the last returned webrtc::EncodedImage from
+  // BitstreamBufferReady().
+  int64_t last_capture_time_ms_;
 
   // webrtc::VideoEncoder encode complete callback.
   webrtc::EncodedImageCallback* encoded_image_callback_;
@@ -265,6 +269,7 @@ RTCVideoEncoder::Impl::Impl(media::GpuVideoAcceleratorFactories* gpu_factories,
       input_next_frame_(NULL),
       input_next_frame_keyframe_(false),
       output_buffers_free_count_(0),
+      last_capture_time_ms_(-1),
       encoded_image_callback_(nullptr),
       video_codec_type_(video_codec_type),
       status_(WEBRTC_VIDEO_CODEC_UNINITIALIZED) {
@@ -423,7 +428,7 @@ void RTCVideoEncoder::Impl::RequireBitstreamBuffers(
                         media::VideoEncodeAccelerator::kPlatformFailureError);
       return;
     }
-    input_buffers_.push_back(shm.release());
+    input_buffers_.push_back(std::move(shm));
     input_buffers_free_.push_back(i);
   }
 
@@ -435,7 +440,7 @@ void RTCVideoEncoder::Impl::RequireBitstreamBuffers(
                         media::VideoEncodeAccelerator::kPlatformFailureError);
       return;
     }
-    output_buffers_.push_back(shm.release());
+    output_buffers_.push_back(std::move(shm));
   }
 
   // Immediately provide all output buffers to the VEA.
@@ -465,7 +470,8 @@ void RTCVideoEncoder::Impl::BitstreamBufferReady(int32_t bitstream_buffer_id,
                       media::VideoEncodeAccelerator::kPlatformFailureError);
     return;
   }
-  base::SharedMemory* output_buffer = output_buffers_[bitstream_buffer_id];
+  base::SharedMemory* output_buffer =
+      output_buffers_[bitstream_buffer_id].get();
   if (payload_size > output_buffer->mapped_size()) {
     LogAndNotifyError(FROM_HERE, "invalid payload_size",
                       media::VideoEncodeAccelerator::kPlatformFailureError);
@@ -473,17 +479,22 @@ void RTCVideoEncoder::Impl::BitstreamBufferReady(int32_t bitstream_buffer_id,
   }
   output_buffers_free_count_--;
 
-  // CrOS Nyan provides invalid timestamp. Use the current time for now.
-  // TODO(wuchengli): use the timestamp in BitstreamBufferReady after Nyan is
-  // fixed. http://crbug.com/620565.
+  // Derive the capture time in ms from system clock. Make sure that it is
+  // greater than the last.
   const int64_t capture_time_us = rtc::TimeMicros();
-
-  // Derive the capture time (in ms) and RTP timestamp (in 90KHz ticks).
-  const int64_t capture_time_ms =
+  int64_t capture_time_ms =
       capture_time_us / base::Time::kMicrosecondsPerMillisecond;
+  capture_time_ms = std::max(capture_time_ms, last_capture_time_ms_ + 1);
+  last_capture_time_ms_ = capture_time_ms;
 
+  // Fallback to the current time if encoder does not provide timestamp.
+  const int64_t encoder_time_us =
+      timestamp.is_zero() ? capture_time_us : timestamp.InMicroseconds();
+
+  // Derive the RTP timestamp (in 90KHz ticks).  It can wrap around, get the
+  // lower 32 bits.
   const uint32_t rtp_timestamp = static_cast<uint32_t>(
-      capture_time_us * 90 / base::Time::kMicrosecondsPerMillisecond);
+      encoder_time_us * 90 / base::Time::kMicrosecondsPerMillisecond);
 
   webrtc::EncodedImage image(
       reinterpret_cast<uint8_t*>(output_buffer->memory()), payload_size,
@@ -561,40 +572,48 @@ void RTCVideoEncoder::Impl::EncodeOneFrame() {
   if (next_frame->video_frame_buffer()->native_handle()) {
     frame = static_cast<media::VideoFrame*>(
         next_frame->video_frame_buffer()->native_handle());
-    requires_copy = RequiresSizeChange(frame);
+    requires_copy = RequiresSizeChange(frame) ||
+                    frame->storage_type() != media::VideoFrame::STORAGE_SHMEM;
   } else {
     requires_copy = true;
   }
 
   if (requires_copy) {
-    base::SharedMemory* input_buffer = input_buffers_[index];
+    const base::TimeDelta timestamp =
+        frame ? frame->timestamp()
+              : base::TimeDelta::FromMilliseconds(next_frame->ntp_time_ms());
+    base::SharedMemory* input_buffer = input_buffers_[index].get();
     frame = media::VideoFrame::WrapExternalSharedMemory(
         media::PIXEL_FORMAT_I420, input_frame_coded_size_,
         gfx::Rect(input_visible_size_), input_visible_size_,
         reinterpret_cast<uint8_t*>(input_buffer->memory()),
-        input_buffer->mapped_size(), input_buffer->handle(), 0,
-        base::TimeDelta::FromMilliseconds(next_frame->ntp_time_ms()));
+        input_buffer->mapped_size(), input_buffer->handle(), 0, timestamp);
     if (!frame.get()) {
       LogAndNotifyError(FROM_HERE, "failed to create frame",
                         media::VideoEncodeAccelerator::kPlatformFailureError);
       return;
     }
-    // Do a strided copy of the input frame to match the input requirements for
-    // the encoder.
-    // TODO(sheu): support zero-copy from WebRTC.  http://crbug.com/269312
-    if (libyuv::I420Copy(next_frame->video_frame_buffer()->DataY(),
-                         next_frame->video_frame_buffer()->StrideY(),
-                         next_frame->video_frame_buffer()->DataU(),
-                         next_frame->video_frame_buffer()->StrideU(),
-                         next_frame->video_frame_buffer()->DataV(),
-                         next_frame->video_frame_buffer()->StrideV(),
-                         frame->data(media::VideoFrame::kYPlane),
-                         frame->stride(media::VideoFrame::kYPlane),
-                         frame->data(media::VideoFrame::kUPlane),
-                         frame->stride(media::VideoFrame::kUPlane),
-                         frame->data(media::VideoFrame::kVPlane),
-                         frame->stride(media::VideoFrame::kVPlane),
-                         next_frame->width(), next_frame->height())) {
+
+    // Do a strided copy and scale (if necessary) the input frame to match
+    // the input requirements for the encoder.
+    // TODO(sheu): Support zero-copy from WebRTC. http://crbug.com/269312
+    // TODO(magjed): Downscale with kFilterBox in an image pyramid instead.
+    if (libyuv::I420Scale(next_frame->video_frame_buffer()->DataY(),
+                          next_frame->video_frame_buffer()->StrideY(),
+                          next_frame->video_frame_buffer()->DataU(),
+                          next_frame->video_frame_buffer()->StrideU(),
+                          next_frame->video_frame_buffer()->DataV(),
+                          next_frame->video_frame_buffer()->StrideV(),
+                          next_frame->width(), next_frame->height(),
+                          frame->visible_data(media::VideoFrame::kYPlane),
+                          frame->stride(media::VideoFrame::kYPlane),
+                          frame->visible_data(media::VideoFrame::kUPlane),
+                          frame->stride(media::VideoFrame::kUPlane),
+                          frame->visible_data(media::VideoFrame::kVPlane),
+                          frame->stride(media::VideoFrame::kVPlane),
+                          frame->visible_rect().width(),
+                          frame->visible_rect().height(),
+                          libyuv::kFilterBox)) {
       LogAndNotifyError(FROM_HERE, "Failed to copy buffer",
                         media::VideoEncodeAccelerator::kPlatformFailureError);
       return;
@@ -707,11 +726,12 @@ void RTCVideoEncoder::Impl::ReturnEncodedImage(
     info.codecSpecific.VP8.keyIdx = -1;
   }
 
-  const int32_t retval =
-      encoded_image_callback_->Encoded(image, &info, &header);
-  if (retval < 0) {
-    DVLOG(2) << "ReturnEncodedImage(): encoded_image_callback_ returned "
-             << retval;
+  const auto result =
+      encoded_image_callback_->OnEncodedImage(image, &info, &header);
+  if (result.error != webrtc::EncodedImageCallback::Result::OK) {
+    DVLOG(2)
+        << "ReturnEncodedImage(): webrtc::EncodedImageCallback::Result.error = "
+        << result.error;
   }
 
   UseOutputBitstreamBufferId(bitstream_buffer_id);
@@ -739,7 +759,10 @@ int32_t RTCVideoEncoder::InitEncode(const webrtc::VideoCodec* codec_settings,
            << ", width=" << codec_settings->width
            << ", height=" << codec_settings->height
            << ", startBitrate=" << codec_settings->startBitrate;
-  DCHECK(!impl_.get());
+  if (impl_) {
+    DVLOG(1) << "Release because of reinitialization";
+    Release();
+  }
 
   impl_ = new Impl(gpu_factories_, video_codec_type_);
   const media::VideoCodecProfile profile = WebRTCVideoCodecToVideoCodecProfile(

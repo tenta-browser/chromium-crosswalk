@@ -6,9 +6,13 @@
 #define UI_VIEWS_TEST_MENU_TEST_UTILS_H_
 
 #include "base/macros.h"
+#include "base/memory/weak_ptr.h"
 #include "ui/views/controls/menu/menu_delegate.h"
 
 namespace views {
+
+class MenuController;
+
 namespace test {
 
 // Test implementation of MenuDelegate that tracks calls to MenuDelegate, along
@@ -33,6 +37,8 @@ class TestMenuDelegate : public MenuDelegate {
   int OnPerformDrop(MenuItemView* menu,
                     DropPosition position,
                     const ui::DropTargetEvent& event) override;
+  int GetDragOperations(MenuItemView* sender) override;
+  void WriteDragData(MenuItemView* sender, OSExchangeData* data) override;
 
  private:
   // ID of last executed command.
@@ -50,17 +56,29 @@ class TestMenuDelegate : public MenuDelegate {
   DISALLOW_COPY_AND_ASSIGN(TestMenuDelegate);
 };
 
-// Test api which can be used to hide the active MenuController, without
-// performing normal shutdown.
+// Test api which caches the currently active MenuController. Can be used to
+// toggle visibility, and to clear seletion states, without performing full
+// shutdown. This is used to simulate menus with varing states, such as during
+// drags, without performing the entire operation. Used to test strange shutdown
+// ordering.
 class MenuControllerTestApi {
  public:
   MenuControllerTestApi();
   ~MenuControllerTestApi();
 
-  // Tells the active MenuController to consider itself not showing.
-  void Hide();
+  MenuController* controller() { return controller_.get(); };
+
+  // Clears out the current and pending states, without notifying the associated
+  // menu items.
+  void ClearState();
+
+  // Toggles the internal showing state of |controller_| without attempting
+  // to change associated Widgets.
+  void SetShowing(bool showing);
 
  private:
+  base::WeakPtr<MenuController> controller_;
+
   DISALLOW_COPY_AND_ASSIGN(MenuControllerTestApi);
 };
 

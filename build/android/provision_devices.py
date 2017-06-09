@@ -288,6 +288,10 @@ def SetProperties(device, options):
   if options.disable_network:
     device_settings.ConfigureContentSettings(
         device, device_settings.NETWORK_DISABLED_SETTINGS)
+    if device.build_version_sdk >= version_codes.MARSHMALLOW:
+      # Ensure that NFC is also switched off.
+      device.RunShellCommand(['svc', 'nfc', 'disable'],
+                             as_root=True, check_return=True)
 
   if options.disable_system_chrome:
     # The system chrome version on the device interferes with some tests.
@@ -548,6 +552,7 @@ def main():
   try:
     return ProvisionDevices(args)
   except (device_errors.DeviceUnreachableError, device_errors.NoDevicesError):
+    logging.exception('Unable to provision local devices.')
     return exit_codes.INFRA
 
 

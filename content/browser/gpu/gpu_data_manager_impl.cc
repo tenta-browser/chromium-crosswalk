@@ -30,6 +30,11 @@ bool GpuDataManagerImpl::IsFeatureBlacklisted(int feature) const {
   return private_->IsFeatureBlacklisted(feature);
 }
 
+bool GpuDataManagerImpl::IsFeatureEnabled(int feature) const {
+  base::AutoLock auto_lock(lock_);
+  return private_->IsFeatureEnabled(feature);
+}
+
 bool GpuDataManagerImpl::IsDriverBugWorkaroundActive(int feature) const {
   base::AutoLock auto_lock(lock_);
   return private_->IsDriverBugWorkaroundActive(feature);
@@ -99,11 +104,6 @@ void GpuDataManagerImpl::UnblockDomainFrom3DAPIs(const GURL& url) {
   private_->UnblockDomainFrom3DAPIs(url);
 }
 
-void GpuDataManagerImpl::DisableGpuWatchdog() {
-  base::AutoLock auto_lock(lock_);
-  private_->DisableGpuWatchdog();
-}
-
 void GpuDataManagerImpl::SetGLStrings(const std::string& gl_vendor,
                                       const std::string& gl_renderer,
                                       const std::string& gl_version) {
@@ -134,6 +134,11 @@ void GpuDataManagerImpl::GetDisabledExtensions(
   private_->GetDisabledExtensions(disabled_extensions);
 }
 
+void GpuDataManagerImpl::SetGpuInfo(const gpu::GPUInfo& gpu_info) {
+  base::AutoLock auto_lock(lock_);
+  private_->SetGpuInfo(gpu_info);
+}
+
 void GpuDataManagerImpl::Initialize() {
   base::AutoLock auto_lock(lock_);
   private_->Initialize();
@@ -142,6 +147,12 @@ void GpuDataManagerImpl::Initialize() {
 void GpuDataManagerImpl::UpdateGpuInfo(const gpu::GPUInfo& gpu_info) {
   base::AutoLock auto_lock(lock_);
   private_->UpdateGpuInfo(gpu_info);
+}
+
+void GpuDataManagerImpl::UpdateGpuFeatureInfo(
+    const gpu::GpuFeatureInfo& gpu_feature_info) {
+  base::AutoLock auto_lock(lock_);
+  private_->UpdateGpuFeatureInfo(gpu_feature_info);
 }
 
 void GpuDataManagerImpl::UpdateVideoMemoryUsageStats(

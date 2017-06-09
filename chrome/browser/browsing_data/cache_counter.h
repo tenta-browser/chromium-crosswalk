@@ -8,27 +8,49 @@
 #include <stdint.h>
 
 #include "base/memory/weak_ptr.h"
-#include "chrome/browser/browsing_data/browsing_data_counter.h"
+#include "components/browsing_data/core/counters/browsing_data_counter.h"
 
-class CacheCounter: public BrowsingDataCounter {
+class Profile;
+
+namespace browsing_data {
+class ConditionalCacheCountingHelper;
+}
+
+class CacheCounter : public browsing_data::BrowsingDataCounter {
  public:
-  CacheCounter();
+  class CacheResult : public FinishedResult {
+   public:
+    CacheResult(const CacheCounter* source,
+                int64_t cache_size,
+                bool is_upper_limit);
+    ~CacheResult() override;
+
+    int64_t cache_size() const { return cache_size_; }
+    bool is_upper_limit() const { return is_upper_limit_; }
+
+   private:
+    int64_t cache_size_;
+    bool is_upper_limit_;
+
+    DISALLOW_COPY_AND_ASSIGN(CacheResult);
+  };
+
+  explicit CacheCounter(Profile* profile);
   ~CacheCounter() override;
 
-  const std::string& GetPrefName() const override;
-
-  // Whether this counter awaits the calculation result callback.
-  // Used only for testing.
-  bool Pending();
+  const char* GetPrefName() const override;
 
  private:
-  const std::string pref_name_;
+  void Count() override;
+  void OnCacheSizeCalculated(int64_t bytes, bool is_upper_limit);
+  void FetchEstimate(
+      base::WeakPtr<browsing_data::ConditionalCacheCountingHelper>);
+
+  Profile* profile_;
   bool pending_;
 
   base::WeakPtrFactory<CacheCounter> weak_ptr_factory_;
 
-  void Count() override;
-  void OnCacheSizeCalculated(int64_t bytes);
 };
 
 #endif  // CHROME_BROWSER_BROWSING_DATA_CACHE_COUNTER_H_

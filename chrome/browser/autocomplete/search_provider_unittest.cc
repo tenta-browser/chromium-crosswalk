@@ -17,6 +17,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/autocomplete/autocomplete_classifier_factory.h"
@@ -31,7 +32,7 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
-#include "components/browser_sync/browser/profile_sync_service.h"
+#include "components/browser_sync/profile_sync_service.h"
 #include "components/google/core/browser/google_switches.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/metrics/proto/omnibox_event.pb.h"
@@ -52,7 +53,7 @@
 #include "components/search_engines/template_url_service.h"
 #include "components/signin/core/browser/account_tracker_service.h"
 #include "components/signin/core/browser/signin_manager.h"
-#include "components/sync_driver/pref_names.h"
+#include "components/sync/base/pref_names.h"
 #include "components/variations/entropy_provider.h"
 #include "components/variations/variations_associated_data.h"
 #include "content/public/test/test_browser_thread_bundle.h"
@@ -285,8 +286,7 @@ void SearchProviderTest::SetUp() {
   data.suggestions_url = "http://defaultturl2/{searchTerms}";
   data.instant_url = "http://does/not/exist?strk=1";
   data.search_terms_replacement_key = "strk";
-  default_t_url_ = new TemplateURL(data);
-  turl_model->Add(default_t_url_);
+  default_t_url_ = turl_model->Add(base::MakeUnique<TemplateURL>(data));
   turl_model->SetUserSelectedDefaultSearchProvider(default_t_url_);
   TemplateURLID default_provider_id = default_t_url_->id();
   ASSERT_NE(0, default_provider_id);
@@ -299,8 +299,7 @@ void SearchProviderTest::SetUp() {
   data.SetKeyword(ASCIIToUTF16("k"));
   data.SetURL("http://keyword/{searchTerms}");
   data.suggestions_url = "http://suggest_keyword/{searchTerms}";
-  keyword_t_url_ = new TemplateURL(data);
-  turl_model->Add(keyword_t_url_);
+  keyword_t_url_ = turl_model->Add(base::MakeUnique<TemplateURL>(data));
   ASSERT_NE(0, keyword_t_url_->id());
 
   // Add a page and search term for keyword_t_url_.
@@ -510,7 +509,7 @@ void SearchProviderTest::ResetFieldTrialList() {
   // a DCHECK.
   field_trial_list_.reset();
   field_trial_list_.reset(new base::FieldTrialList(
-      new metrics::SHA1EntropyProvider("foo")));
+      base::MakeUnique<metrics::SHA1EntropyProvider>("foo")));
   variations::testing::ClearAllVariationParams();
 }
 
@@ -1161,8 +1160,7 @@ TEST_F(SearchProviderTest, CommandLineOverrides) {
   data.SetShortName(ASCIIToUTF16("default"));
   data.SetKeyword(data.short_name());
   data.SetURL("{google:baseURL}{searchTerms}");
-  default_t_url_ = new TemplateURL(data);
-  turl_model->Add(default_t_url_);
+  default_t_url_ = turl_model->Add(base::MakeUnique<TemplateURL>(data));
   turl_model->SetUserSelectedDefaultSearchProvider(default_t_url_);
 
   base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
@@ -3228,6 +3226,18 @@ TEST_F(SearchProviderTest, CanSendURL) {
       GURL("https://www.google.com/complete/search"), &google_template_url,
       metrics::OmniboxEventProto::OTHER, SearchTermsData(), &client));
 
+  // Non-HTTP page URL on different domain, yet with feature flag to allow
+  // this turned on.
+  {
+    base::test::ScopedFeatureList feature_list;
+    feature_list.InitAndEnableFeature(
+        omnibox::kSearchProviderContextAllowHttpsUrls);
+    EXPECT_TRUE(SearchProvider::CanSendURL(
+        GURL("https://www.notgoogle.com/search"),
+        GURL("https://www.google.com/complete/search"), &google_template_url,
+        metrics::OmniboxEventProto::OTHER, SearchTermsData(), &client));
+  }
+
   // Non-HTTPS provider.
   EXPECT_FALSE(SearchProvider::CanSendURL(
       GURL("http://www.google.com/search"),
@@ -3252,27 +3262,29 @@ TEST_F(SearchProviderTest, CanSendURL) {
       &client_incognito));
 
   // Tab sync not enabled.
-  profile_.GetPrefs()->SetBoolean(sync_driver::prefs::kSyncKeepEverythingSynced,
+  profile_.GetPrefs()->SetBoolean(syncer::prefs::kSyncKeepEverythingSynced,
                                   false);
-  profile_.GetPrefs()->SetBoolean(sync_driver::prefs::kSyncTabs, false);
+  profile_.GetPrefs()->SetBoolean(syncer::prefs::kSyncTabs, false);
   EXPECT_FALSE(SearchProvider::CanSendURL(
       GURL("http://www.google.com/search"),
       GURL("https://www.google.com/complete/search"), &google_template_url,
       metrics::OmniboxEventProto::OTHER, SearchTermsData(), &client));
-  profile_.GetPrefs()->SetBoolean(sync_driver::prefs::kSyncTabs, true);
+  profile_.GetPrefs()->SetBoolean(syncer::prefs::kSyncTabs, true);
 
   // Tab sync is encrypted.
-  ProfileSyncService* service =
+  browser_sync::ProfileSyncService* service =
       ProfileSyncServiceFactory::GetInstance()->GetForProfile(&profile_);
   syncer::ModelTypeSet encrypted_types = service->GetEncryptedDataTypes();
   encrypted_types.Put(syncer::SESSIONS);
-  service->OnEncryptedTypesChanged(encrypted_types, false);
+  service->GetEncryptionObserverForTest()->OnEncryptedTypesChanged(
+      encrypted_types, false);
   EXPECT_FALSE(SearchProvider::CanSendURL(
       GURL("http://www.google.com/search"),
       GURL("https://www.google.com/complete/search"), &google_template_url,
       metrics::OmniboxEventProto::OTHER, SearchTermsData(), &client));
   encrypted_types.Remove(syncer::SESSIONS);
-  service->OnEncryptedTypesChanged(encrypted_types, false);
+  service->GetEncryptionObserverForTest()->OnEncryptedTypesChanged(
+      encrypted_types, false);
 
   // Check that there were no side effects from previous tests.
   EXPECT_TRUE(SearchProvider::CanSendURL(
@@ -3382,8 +3394,7 @@ TEST_F(SearchProviderTest, SuggestQueryUsesToken) {
   data.SetURL("http://example/{searchTerms}{google:sessionToken}");
   data.suggestions_url =
       "http://suggest/?q={searchTerms}&{google:sessionToken}";
-  default_t_url_ = new TemplateURL(data);
-  turl_model->Add(default_t_url_);
+  default_t_url_ = turl_model->Add(base::MakeUnique<TemplateURL>(data));
   turl_model->SetUserSelectedDefaultSearchProvider(default_t_url_);
 
   base::string16 term = term1_.substr(0, term1_.length() - 1);
@@ -3490,7 +3501,7 @@ TEST_F(SearchProviderTest, RemoveExtraAnswers) {
   match3.answer_contents = base::ASCIIToUTF16("not to play");
   match3.answer_type = base::ASCIIToUTF16("1983");
   match5.answer = SuggestionAnswer::copy(&answer3);
-  match5.answer_contents = base::ASCIIToUTF16("a man");
+  match5.answer_contents = base::ASCIIToUTF16("a person");
   match5.answer_type = base::ASCIIToUTF16("423");
 
   matches.push_back(match1);
@@ -3523,5 +3534,42 @@ TEST_F(SearchProviderTest, DoesNotProvideOnFocus) {
       metrics::OmniboxEventProto::INVALID_SPEC, false, true, true, true, true,
       ChromeAutocompleteSchemeClassifier(&profile_));
   provider_->Start(input, false);
+  EXPECT_TRUE(provider_->matches().empty());
+}
+
+TEST_F(SearchProviderTest, SendsWarmUpRequestOnFocus) {
+  AutocompleteInput input(
+      base::ASCIIToUTF16("f"), base::string16::npos, std::string(), GURL(),
+      metrics::OmniboxEventProto::INVALID_SPEC, false, true, true, true, true,
+      ChromeAutocompleteSchemeClassifier(&profile_));
+
+  // First, verify that without the warm-up feature enabled, the provider
+  // immediately terminates with no matches.
+  provider_->Start(input, false);
+  // RunUntilIdle so that SearchProvider has a chance to create the URLFetchers
+  // (if it wants to, which it shouldn't in this case).
+  base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(provider_->done());
+  EXPECT_TRUE(provider_->matches().empty());
+
+  // Then, check the behavior with the warm-up feature enabled.
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(omnibox::kSearchProviderWarmUpOnFocus);
+  provider_->Start(input, false);
+  // RunUntilIdle so that SearchProvider create the URLFetcher.
+  base::RunLoop().RunUntilIdle();
+  EXPECT_FALSE(provider_->done());
+  EXPECT_TRUE(provider_->matches().empty());
+  // Make sure the default provider's suggest service was queried.
+  net::TestURLFetcher* fetcher = test_factory_.GetFetcherByID(
+      SearchProvider::kDefaultProviderURLFetcherID);
+  EXPECT_TRUE(fetcher);
+  // Even if the fetcher returns results, we should still have no suggestions
+  // (though the provider should now be done).
+  fetcher->set_response_code(200);
+  fetcher->SetResponseString(R"(["",["a", "b"],[],[],{}])");
+  fetcher->delegate()->OnURLFetchComplete(fetcher);
+  RunTillProviderDone();
+  EXPECT_TRUE(provider_->done());
   EXPECT_TRUE(provider_->matches().empty());
 }

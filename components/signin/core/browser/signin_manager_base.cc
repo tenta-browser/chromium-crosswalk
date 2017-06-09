@@ -216,6 +216,10 @@ void SigninManagerBase::SetAuthenticatedAccountId(
                                  account_id);
   client_->GetPrefs()->SetString(prefs::kGoogleServicesLastUsername,
                                  info.email);
+
+  // Commit authenticated account info immediately so that it does not get lost
+  // if Chrome crashes before the next commit interval.
+  client_->GetPrefs()->CommitPendingWrite();
 }
 
 bool SigninManagerBase::IsAuthenticated() const {
@@ -250,7 +254,6 @@ void SigninManagerBase::RemoveSigninDiagnosticsObserver(
 void SigninManagerBase::NotifyDiagnosticsObservers(
     const TimedSigninStatusField& field,
     const std::string& value) {
-  FOR_EACH_OBSERVER(SigninDiagnosticsObserver,
-                    signin_diagnostics_observers_,
-                    NotifySigninValueChanged(field, value));
+  for (auto& observer : signin_diagnostics_observers_)
+    observer.NotifySigninValueChanged(field, value);
 }

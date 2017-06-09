@@ -4,9 +4,9 @@
 
 #include "ash/common/system/tray/tray_constants.h"
 
-#include "ash/common/material_design/material_design_controller.h"
 #include "base/logging.h"
 #include "third_party/skia/include/core/SkColor.h"
+#include "ui/gfx/color_palette.h"
 
 namespace ash {
 
@@ -25,38 +25,48 @@ const int kBubblePaddingVerticalSide = 15;
 // Top inset of system tray bubble for bottom anchor alignment.
 const int kTrayBubbleAnchorTopInsetBottomAnchor = 3;
 
-const int kTrayImageItemHorizontalPaddingBottomAlignment = 1;
 const int kTrayImageItemHorizontalPaddingVerticalAlignment = 1;
-const int kTrayImageItemVerticalPaddingVerticalAlignment = 1;
 
 // Size of tray items on the primary axis.
 const int kTrayItemSize = 32;
+
+const int kTrayImageItemPadding = 3;
 
 const int kTrayLabelItemHorizontalPaddingBottomAlignment = 7;
 
 // Vertical padding between status tray items when the shelf is vertical.
 const int kTrayLabelItemVerticalPaddingVerticalAlignment = 4;
 
-const int kTrayMenuBottomRowPadding = 5;
+const int kTrayMenuBottomRowPadding = 3;
 const int kTrayMenuBottomRowPaddingBetweenItems = -1;
+const int kTrayMenuMinimumWidth = 300;
+const int kTrayMenuMinimumWidthMd = 352;
 
 const int kTrayPopupAutoCloseDelayInSeconds = 2;
 const int kTrayPopupAutoCloseDelayForTextInSeconds = 5;
 const int kTrayPopupPaddingHorizontal = 18;
 const int kTrayPopupPaddingBetweenItems = 10;
-const int kTrayPopupTextSpacingVertical = 4;
-const int kTrayPopupUserCardVerticalPadding = 10;
+const int kTrayPopupButtonEndMargin = 10;
+const int kTrayPopupLabelHorizontalPadding = 4;
+const int kTrayPopupItemMinHeight = 48;
+const int kTrayPopupItemMinStartWidth = 48;
+const int kTrayPopupItemMinEndWidth =
+    kMenuIconSize + 2 * kTrayPopupButtonEndMargin;
 
-const int kTrayPopupItemHeight = 46;
+const int kTrayDetailedViewTransitionDelayMs = 100;
+
+const int kTrayPopupLabelRightPadding = 8;
+
 const int kTrayPopupDetailsIconWidth = 25;
 const int kTrayPopupDetailsLabelExtraLeftMargin = 8;
 const SkColor kTrayPopupHoverBackgroundColor = SkColorSetRGB(0xe4, 0xe4, 0xe4);
 const int kTrayPopupScrollSeparatorHeight = 15;
 const int kTrayRoundedBorderRadius = 2;
 
+const int kTrayToggleButtonWidth = 68;
+
 const SkColor kBackgroundColor = SkColorSetRGB(0xfe, 0xfe, 0xfe);
 const SkColor kHoverBackgroundColor = SkColorSetRGB(0xf3, 0xf3, 0xf3);
-const SkColor kPublicAccountBackgroundColor = SkColorSetRGB(0xf8, 0xe5, 0xb6);
 const SkColor kPublicAccountUserCardTextColor = SkColorSetRGB(0x66, 0x66, 0x66);
 const SkColor kPublicAccountUserCardNameColor = SK_ColorBLACK;
 
@@ -77,30 +87,29 @@ const int kTrayNotificationContentsWidth =
     kTrayPopupMinWidth - (kNotificationIconWidth + kNotificationButtonWidth +
                           (kTrayPopupPaddingHorizontal / 2) * 3);
 
-const int kMessageCenterBubblePadding = 4;
+const int kTrayIconSize = 16;
+const int kTrayEdgePadding = 6;
+const SkColor kTrayIconColor = SK_ColorWHITE;
+const int kMenuIconSize = 20;
+const SkColor kMenuIconColor = gfx::kChromeIconGrey;
+const SkColor kMenuIconColorDisabled = SkColorSetA(gfx::kChromeIconGrey, 0x61);
+const int kMenuButtonSize = 48;
+const int kMenuSeparatorVerticalPadding = 4;
+const int kMenuExtraMarginFromLeftEdge = 4;
+const int kMenuEdgeEffectivePadding =
+    kMenuExtraMarginFromLeftEdge + (kMenuButtonSize - kMenuIconSize) / 2;
 
-int GetTrayConstant(TrayConstant constant) {
-  const int kTrayItemHeightLegacy[] = {38, 38, kTrayItemSize};
-  const int kTraySpacing[] = {4, 4, 8};
-  const int kTrayPaddingFromEdgeOfShelf[] = {3, 3, 8};
-  const int kVirtualKeyboardButtonSize[] = {39, 39, kTrayItemSize};
+const int kHitRegionPadding = 4;
+const int kSeparatorWidth = 1;
 
-  const int mode = MaterialDesignController::GetMode();
-  DCHECK(mode >= MaterialDesignController::NON_MATERIAL &&
-         mode <= MaterialDesignController::MATERIAL_EXPERIMENTAL);
+const SkColor kMenuSeparatorColor = SkColorSetA(SK_ColorBLACK, 0x1F);
 
-  switch (constant) {
-    case TRAY_ITEM_HEIGHT_LEGACY:
-      return kTrayItemHeightLegacy[mode];
-    case TRAY_SPACING:
-      return kTraySpacing[mode];
-    case TRAY_PADDING_FROM_EDGE_OF_SHELF:
-      return kTrayPaddingFromEdgeOfShelf[mode];
-    case VIRTUAL_KEYBOARD_BUTTON_SIZE:
-      return kVirtualKeyboardButtonSize[mode];
-  }
-  NOTREACHED();
-  return 0;
-}
+const SkColor kTrayPopupInkDropBaseColor = SK_ColorBLACK;
+const float kTrayPopupInkDropRippleOpacity = 0.06f;
+const float kTrayPopupInkDropHighlightOpacity = 0.08f;
+const int kTrayPopupInkDropInset = 4;
+const int kTrayPopupInkDropCornerRadius = 2;
+
+const int kTrayPopupSystemInfoRowHeight = 40;
 
 }  // namespace ash

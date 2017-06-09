@@ -21,13 +21,10 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-
 """Supports checking WebKit style in png files."""
 
-
 from webkitpy.common import read_checksum_from_png
-from webkitpy.common.system.systemhost import SystemHost
-from webkitpy.common.checkout.scm.detection import SCMDetector
+from webkitpy.common.system.system_host import SystemHost
 
 
 class PNGChecker(object):
@@ -42,11 +39,9 @@ class PNGChecker(object):
         self._fs = self._host.filesystem
 
     def check(self, inline=None):
-        errorstr = ""
-        config_file_path = ""
-
         if self._fs.exists(self._file_path) and self._file_path.endswith("-expected.png"):
             with self._fs.open_binary_file_for_reading(self._file_path) as filehandle:
                 if not read_checksum_from_png.read_checksum(filehandle):
                     self._handle_style_error(
-                        0, 'image/png', 5, "Image lacks a checksum. Generate pngs using run-webkit-tests to ensure they have a checksum.")
+                        0, 'image/png', 5,
+                        "Image lacks a checksum. Generate pngs using run-webkit-tests to ensure they have a checksum.")

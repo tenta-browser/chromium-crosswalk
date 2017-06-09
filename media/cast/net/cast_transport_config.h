@@ -13,26 +13,19 @@
 
 #include "base/callback.h"
 #include "base/stl_util.h"
+#include "media/cast/cast_config.h"
 #include "media/cast/common/rtp_time.h"
 #include "media/cast/net/cast_transport_defines.h"
 
 namespace media {
 namespace cast {
 
-enum Codec {
-  CODEC_UNKNOWN,
-  CODEC_AUDIO_OPUS,
-  CODEC_AUDIO_PCM16,
-  CODEC_AUDIO_AAC,
-  CODEC_VIDEO_FAKE,
-  CODEC_VIDEO_VP8,
-  CODEC_VIDEO_H264,
-  CODEC_LAST = CODEC_VIDEO_H264
-};
-
 struct CastTransportRtpConfig {
   CastTransportRtpConfig();
   ~CastTransportRtpConfig();
+
+  // Identifier for the RTP stream.
+  int32_t rtp_stream_id;
 
   // Identifier refering to this sender.
   uint32_t ssrc;
@@ -41,7 +34,7 @@ struct CastTransportRtpConfig {
   uint32_t feedback_ssrc;
 
   // RTP payload type enum: Specifies the type/encoding of frame data.
-  int rtp_payload_type;
+  RtpPayloadType rtp_payload_type;
 
   // The AES crypto key and initialization vector.  Each of these strings
   // contains the data in binary form, of size kAesKeySize.  If they are empty
@@ -77,10 +70,10 @@ struct EncodedFrame {
   // Convenience accessors to data as an array of uint8_t elements.
   const uint8_t* bytes() const {
     return reinterpret_cast<uint8_t*>(
-        string_as_array(const_cast<std::string*>(&data)));
+        base::string_as_array(const_cast<std::string*>(&data)));
   }
   uint8_t* mutable_bytes() {
-    return reinterpret_cast<uint8_t*>(string_as_array(&data));
+    return reinterpret_cast<uint8_t*>(base::string_as_array(&data));
   }
 
   // Copies all data members except |data| to |dest|.

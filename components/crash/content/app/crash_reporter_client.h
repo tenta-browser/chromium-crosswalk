@@ -94,10 +94,10 @@ class CrashReporterClient {
   virtual bool GetDeferredUploadsSupported(bool is_per_user_install);
 
   // Returns true if the running binary is a per-user installation.
-  virtual bool GetIsPerUserInstall(const base::string16& exe_path);
+  virtual bool GetIsPerUserInstall();
 
   // Returns true if larger crash dumps should be dumped.
-  virtual bool GetShouldDumpLargerDumps(bool is_per_user_install);
+  virtual bool GetShouldDumpLargerDumps();
 
   // Returns the result code to return when breakpad failed to respawn a
   // crashed process.
@@ -121,22 +121,44 @@ class CrashReporterClient {
 #endif
 
   // The location where minidump files should be written. Returns true if
-  // |crash_dir| was set.
+  // |crash_dir| was set. Windows has to use base::string16 because this code
+  // needs to work in chrome_elf, where only kernel32.dll is allowed, and
+  // base::FilePath and its dependencies pull in other DLLs.
 #if defined(OS_WIN)
   virtual bool GetCrashDumpLocation(base::string16* crash_dir);
 #else
   virtual bool GetCrashDumpLocation(base::FilePath* crash_dir);
 #endif
 
+  // The location where metrics files should be written. Returns true if
+  // |metrics_dir| was set. Windows has to use base::string16 because this code
+  // needs to work in chrome_elf, where only kernel32.dll is allowed, and
+  // base::FilePath and its dependencies pull in other DLLs.
+#if defined(OS_WIN)
+  virtual bool GetCrashMetricsLocation(base::string16* metrics_dir);
+#else
+  virtual bool GetCrashMetricsLocation(base::FilePath* metrics_dir);
+#endif
+
   // Register all of the potential crash keys that can be sent to the crash
   // reporting server. Returns the size of the union of all keys.
   virtual size_t RegisterCrashKeys();
+
+  virtual bool UseCrashKeysWhiteList();
+
+  // Returns a NULL-terminated array of crash keys to whitelist.
+  virtual const char* const* GetCrashKeyWhiteList();
 
   // Returns true if running in unattended mode (for automated testing).
   virtual bool IsRunningUnattended();
 
   // Returns true if the user has given consent to collect stats.
   virtual bool GetCollectStatsConsent();
+
+  // Returns true if the client is currently in the chosen sample that will
+  // report stats and crashes. Crashes should only be reported if this function
+  // returns true and GetCollectStatsConsent returns true.
+  virtual bool GetCollectStatsInSample();
 
 #if defined(OS_WIN) || defined(OS_MACOSX)
   // Returns true if crash reporting is enforced via management policies. In
@@ -147,6 +169,10 @@ class CrashReporterClient {
 #if defined(OS_ANDROID)
   // Returns the descriptor key of the android minidump global descriptor.
   virtual int GetAndroidMinidumpDescriptor();
+
+  // Returns the file descriptor of the pipe used to inform apps of
+  // webview renderer crashes.
+  virtual int GetAndroidCrashSignalFD();
 
   // Returns true if breakpad microdumps should be enabled. This orthogonal to
   // the standard minidump uploader (which depends on the user consent).

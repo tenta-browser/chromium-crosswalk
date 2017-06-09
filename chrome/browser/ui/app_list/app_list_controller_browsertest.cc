@@ -21,17 +21,14 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/testing_profile.h"
+#include "chromeos/chromeos_switches.h"
+#include "components/user_manager/user_names.h"
 #include "ui/app_list/app_list_model.h"
 #include "ui/app_list/app_list_switches.h"
 #include "ui/app_list/search_box_model.h"
 #include "ui/app_list/search_result.h"
 #include "ui/app_list/search_result_observer.h"
 #include "ui/base/models/list_model_observer.h"
-
-#if defined(OS_CHROMEOS)
-#include "chromeos/chromeos_switches.h"
-#include "chromeos/login/user_names.h"
-#endif  // defined(OS_CHROMEOS)
 
 // Browser Test for AppListController that runs on all platforms supporting
 // app_list.
@@ -125,16 +122,9 @@ class AppListControllerSearchResultsBrowserTest
   DISALLOW_COPY_AND_ASSIGN(AppListControllerSearchResultsBrowserTest);
 };
 
-
-// Flaky on Mac. https://crbug.com/415264
-#if defined(OS_MACOSX)
-#define MAYBE_UninstallSearchResult DISABLED_UninstallSearchResult
-#else
-#define MAYBE_UninstallSearchResult UninstallSearchResult
-#endif
 // Test showing search results, and uninstalling one of them while displayed.
 IN_PROC_BROWSER_TEST_F(AppListControllerSearchResultsBrowserTest,
-                       MAYBE_UninstallSearchResult) {
+                       UninstallSearchResult) {
   base::FilePath test_extension_path;
   ASSERT_TRUE(PathService::Get(chrome::DIR_TEST_DATA, &test_extension_path));
   test_extension_path = test_extension_path.AppendASCII("extensions")
@@ -172,8 +162,6 @@ IN_PROC_BROWSER_TEST_F(AppListControllerSearchResultsBrowserTest,
   service->DismissAppList();
 }
 
-#if defined(OS_CHROMEOS)
-
 class AppListControllerGuestModeBrowserTest : public InProcessBrowserTest {
  public:
   AppListControllerGuestModeBrowserTest() {}
@@ -189,7 +177,7 @@ void AppListControllerGuestModeBrowserTest::SetUpCommandLine(
     base::CommandLine* command_line) {
   command_line->AppendSwitch(chromeos::switches::kGuestSession);
   command_line->AppendSwitchASCII(chromeos::switches::kLoginUser,
-                                  chromeos::login::kGuestUserName);
+                                  user_manager::kGuestUserName);
   command_line->AppendSwitchASCII(chromeos::switches::kLoginProfile,
                                   TestingProfile::kTestUserProfileDir);
   command_line->AppendSwitch(switches::kIncognito);
@@ -203,5 +191,3 @@ IN_PROC_BROWSER_TEST_F(AppListControllerGuestModeBrowserTest, Incognito) {
   service->ShowForProfile(browser()->profile());
   EXPECT_EQ(browser()->profile(), service->GetCurrentAppListProfile());
 }
-
-#endif  // defined(OS_CHROMEOS)

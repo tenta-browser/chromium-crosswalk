@@ -3,10 +3,10 @@
 // found in the LICENSE file.
 
 /**
- * The root of the file manager's view managing the DOM of Files.app.
+ * The root of the file manager's view managing the DOM of the Files app.
  *
  * @param {!ProvidersModel} providersModel Model for providers.
- * @param {!HTMLElement} element Top level element of Files.app.
+ * @param {!HTMLElement} element Top level element of the Files app.
  * @param {!LaunchParam} launchParam Launch param.
  * @constructor
  * @struct
@@ -21,7 +21,7 @@ function FileManagerUI(providersModel, element, launchParam) {
   cr.ui.dialogs.BaseDialog.CANCEL_LABEL = str('CANCEL_LABEL');
 
   /**
-   * Top level element of Files.app.
+   * Top level element of the Files app.
    * @type {!HTMLElement}
    */
   this.element = element;
@@ -32,6 +32,16 @@ function FileManagerUI(providersModel, element, launchParam) {
    * @private
    */
   this.dialogType_ = launchParam.type;
+
+  /**
+   * <hr> elements in cr.ui.Menu.
+   * This is a workaround for crbug.com/689255. This member variable is just for
+   * keeping explicit reference to decorated <hr>s to prevent GC from collecting
+   * <hr> wrappers, and not used anywhere.
+   * TODO(fukino): Remove this member variable once the root cause is fixed.
+   * @private {!Array<!Element>}
+   */
+  this.separators_ = [].slice.call(document.querySelectorAll('cr-menu > hr'));
 
   /**
    * Error dialog.
@@ -162,23 +172,6 @@ function FileManagerUI(providersModel, element, launchParam) {
       '#sort-button', cr.ui.MenuButton);
 
   /**
-   * The button to open the details panel.
-   * @type {!Element}
-   * @const
-   */
-  this.detailsButton = queryRequiredElement(
-      '#details-button', this.element);
-
-  /**
-   * Ripple effect of details button.
-   * @private {!FilesToggleRipple}
-   * @const
-   */
-  this.detailsButtonToggleRipple_ =
-      /** @type {!FilesToggleRipple} */ (queryRequiredElement(
-          'files-toggle-ripple', this.detailsButton));
-
-  /**
    * Ripple effect of sort button.
    * @private {!FilesToggleRipple}
    * @const
@@ -229,12 +222,6 @@ function FileManagerUI(providersModel, element, launchParam) {
    * @type {ListContainer}
    */
   this.listContainer = null;
-
-  /**
-   * Details container.
-   * @type {DetailsContainer}
-   */
-  this.detailsContainer = null;
 
   /**
    * @type {!HTMLElement}
@@ -306,7 +293,7 @@ function FileManagerUI(providersModel, element, launchParam) {
   // Initialize attributes.
   this.element.setAttribute('type', this.dialogType_);
 
-  // Hack: make menuitems focusable. Since the menuitems in Files.app is not
+  // Hack: make menuitems focusable. Since the menuitems in the Files app is not
   // button so it doesn't have a tabfocus in nature. It prevents Chromevox from
   // speeaching because the opened menu is closed when the non-focusable object
   // tries to get the focus.
@@ -337,12 +324,9 @@ function FileManagerUI(providersModel, element, launchParam) {
  *
  * @param {!FileTable} table
  * @param {!FileGrid} grid
- * @param {!SingleFileDetailsPanel} singlePanel
- * @param {!MultiFileDetailsPanel} multiPanel
  * @param {!LocationLine} locationLine
  */
-FileManagerUI.prototype.initAdditionalUI = function(
-    table, grid, singlePanel, multiPanel, locationLine) {
+FileManagerUI.prototype.initAdditionalUI = function(table, grid, locationLine) {
   // List container.
   this.listContainer = new ListContainer(
       queryRequiredElement('#list-container', this.element), table, grid);
@@ -350,25 +334,6 @@ FileManagerUI.prototype.initAdditionalUI = function(
   // Splitter.
   this.decorateSplitter_(
       queryRequiredElement('#navigation-list-splitter', this.element));
-
-  // Details container.
-  var listDetailsSplitter =
-      queryRequiredElement('#list-details-splitter', this.element);
-  this.decorateSplitter_(listDetailsSplitter, true);
-  this.detailsContainer = new DetailsContainer(
-      queryRequiredElement('#details-container', this.element),
-      singlePanel,
-      multiPanel,
-      listDetailsSplitter,
-      this.detailsButton,
-      this.detailsButtonToggleRipple_);
-
-  chrome.commandLinePrivate.hasSwitch('enable-files-details-panel',
-      function(enabled) {
-    if (enabled) {
-      this.detailsButton.style.display = 'block';
-    }
-  }.bind(this));
 
   // Location line.
   this.locationLine = locationLine;
@@ -490,17 +455,6 @@ FileManagerUI.prototype.setCurrentListType = function(listType) {
 };
 
 /**
- * Sets the details panel visibility
- * @param {boolean} visibility True if the details panel is visible.
- */
-FileManagerUI.prototype.setDetailsVisibility = function(visibility) {
-  if (this.detailsContainer) {
-    this.detailsContainer.setVisibility(visibility);
-    this.relayout();
-  }
-};
-
-/**
  * Overrides default handling for clicks on hyperlinks.
  * In a packaged apps links with targer='_blank' open in a new tab by
  * default, other links do not open at all.
@@ -549,4 +503,41 @@ FileManagerUI.prototype.decorateSplitter_ = function(splitterElement,
 
   customSplitter.decorate(splitterElement);
   splitterElement.resizeNextElement = !!opt_resizeNextElement;
+};
+
+/**
+ * Sets up and shows the alert to inform a user the task is opened in the
+ * desktop of the running profile.
+ *
+ * @param {Array<Entry>} entries List of opened entries.
+ */
+FileManagerUI.prototype.showOpenInOtherDesktopAlert = function(entries) {
+  if (!entries.length)
+    return;
+  chrome.fileManagerPrivate.getProfiles(
+    function(profiles, currentId, displayedId) {
+      // Find strings.
+      var displayName;
+      for (var i = 0; i < profiles.length; i++) {
+        if (profiles[i].profileId === currentId) {
+          displayName = profiles[i].displayName;
+          break;
+        }
+      }
+      if (!displayName) {
+        console.warn('Display name is not found.');
+        return;
+      }
+
+      var title = entries.length > 1 ?
+          entries[0].name + '\u2026' /* ellipsis */ : entries[0].name;
+      var message = strf(entries.length > 1 ?
+                         'OPEN_IN_OTHER_DESKTOP_MESSAGE_PLURAL' :
+                         'OPEN_IN_OTHER_DESKTOP_MESSAGE',
+                         displayName,
+                         currentId);
+
+      // Show the dialog.
+      this.alertDialog.showWithTitle(title, message, null, null, null);
+    }.bind(this));
 };

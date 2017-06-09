@@ -25,7 +25,8 @@ var I18nBehavior = {
    * @private
    */
   i18nRaw_: function(id, var_args) {
-    return arguments.length == 1 ? loadTimeData.getString(id) :
+    return arguments.length == 1 ?
+        loadTimeData.getString(id) :
         loadTimeData.getStringF.apply(loadTimeData, arguments);
   },
 
@@ -57,4 +58,26 @@ var I18nBehavior = {
     return parseHtmlSubset('<b>' + rawString + '</b>', opts.tags, opts.attrs)
         .firstChild.innerHTML;
   },
+
+  /**
+   * Returns true if a translation exists for |id|.
+   * @param {string} id
+   * @return {boolean}
+   */
+  i18nExists: function(id) {
+    return loadTimeData.valueExists(id);
+  },
 };
+
+/**
+ * TODO(stevenjb): Replace with an interface. b/24294625
+ * @typedef {{
+ *   i18n: function(string, ...string): string}},
+ *   i18nAdvanced: function({
+ *     substitutions: (Array<string>|undefined),
+ *     attrs: (Object<function(Node, string):boolean>|undefined),
+ *     tags: (Array<string>|undefined)}, opts),
+ *   i18nExists: function(string)
+ * }}
+ */
+I18nBehavior.Proto;

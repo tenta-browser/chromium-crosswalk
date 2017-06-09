@@ -10,10 +10,6 @@
 #include "content/public/test/browser_test.h"
 #include "content/public/test/browser_test_base.h"
 
-namespace base {
-class FilePath;
-}
-
 namespace content {
 class BrowserContext;
 }

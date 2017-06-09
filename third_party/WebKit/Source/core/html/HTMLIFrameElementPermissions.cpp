@@ -13,91 +13,82 @@ namespace blink {
 namespace {
 
 struct SupportedPermission {
-    const char* name;
-    WebPermissionType type;
+  const char* name;
+  mojom::blink::PermissionName type;
 };
 
 const SupportedPermission kSupportedPermissions[] = {
-    { "geolocation", WebPermissionTypeGeolocation },
-    { "notifications", WebPermissionTypeNotifications },
-    { "midi", WebPermissionTypeMidiSysEx },
+    {"geolocation", mojom::blink::PermissionName::GEOLOCATION},
+    {"notifications", mojom::blink::PermissionName::NOTIFICATIONS},
+    {"midi", mojom::blink::PermissionName::MIDI},
 };
 
 // Returns true if the name is valid and the type is stored in |result|.
-bool getPermissionType(const AtomicString& name, WebPermissionType* result)
-{
-    for (const SupportedPermission& permission : kSupportedPermissions) {
-        if (name == permission.name) {
-            if (result)
-                *result = permission.type;
-            return true;
-        }
+bool getPermissionType(const AtomicString& name,
+                       mojom::blink::PermissionName* result) {
+  for (const SupportedPermission& permission : kSupportedPermissions) {
+    if (name == permission.name) {
+      if (result)
+        *result = permission.type;
+      return true;
     }
-    return false;
+  }
+  return false;
 }
 
-} // namespace
+}  // namespace
 
-HTMLIFrameElementPermissions::HTMLIFrameElementPermissions(HTMLIFrameElement* element)
-    : DOMTokenList(this)
-    , m_element(element)
-{
+HTMLIFrameElementPermissions::HTMLIFrameElementPermissions(
+    HTMLIFrameElement* element)
+    : DOMTokenList(this), m_element(element) {}
+
+HTMLIFrameElementPermissions::~HTMLIFrameElementPermissions() {}
+
+DEFINE_TRACE(HTMLIFrameElementPermissions) {
+  visitor->trace(m_element);
+  DOMTokenList::trace(visitor);
+  DOMTokenListObserver::trace(visitor);
 }
 
-HTMLIFrameElementPermissions::~HTMLIFrameElementPermissions()
-{
-}
+Vector<mojom::blink::PermissionName>
+HTMLIFrameElementPermissions::parseDelegatedPermissions(
+    String& invalidTokensErrorMessage) const {
+  Vector<blink::mojom::blink::PermissionName> permissions;
+  unsigned numTokenErrors = 0;
+  StringBuilder tokenErrors;
+  const SpaceSplitString& tokens = this->tokens();
 
-DEFINE_TRACE(HTMLIFrameElementPermissions)
-{
-    visitor->trace(m_element);
-    DOMTokenList::trace(visitor);
-    DOMTokenListObserver::trace(visitor);
-}
-
-Vector<WebPermissionType> HTMLIFrameElementPermissions::parseDelegatedPermissions(String& invalidTokensErrorMessage) const
-{
-    Vector<WebPermissionType> permissions;
-    unsigned numTokenErrors = 0;
-    StringBuilder tokenErrors;
-    const SpaceSplitString& tokens = this->tokens();
-
-    for (size_t i = 0; i < tokens.size(); ++i) {
-        WebPermissionType type;
-        if (getPermissionType(tokens[i], &type)) {
-            permissions.append(type);
-        } else {
-            if (numTokenErrors)
-                tokenErrors.append(", '");
-            else
-                tokenErrors.append('\'');
-            tokenErrors.append(tokens[i]);
-            tokenErrors.append('\'');
-            ++numTokenErrors;
-        }
+  for (size_t i = 0; i < tokens.size(); ++i) {
+    blink::mojom::blink::PermissionName type;
+    if (getPermissionType(tokens[i], &type)) {
+      permissions.push_back(type);
+    } else {
+      tokenErrors.append(tokenErrors.isEmpty() ? "'" : ", '");
+      tokenErrors.append(tokens[i]);
+      tokenErrors.append("'");
+      ++numTokenErrors;
     }
+  }
 
-    if (numTokenErrors) {
-        if (numTokenErrors > 1)
-            tokenErrors.append(" are invalid permissions flags.");
-        else
-            tokenErrors.append(" is an invalid permissions flag.");
-        invalidTokensErrorMessage = tokenErrors.toString();
-    }
+  if (numTokenErrors) {
+    tokenErrors.append(numTokenErrors > 1 ? " are invalid permissions flags."
+                                          : " is an invalid permissions flag.");
+    invalidTokensErrorMessage = tokenErrors.toString();
+  }
 
-    return permissions;
+  return permissions;
 }
 
-bool HTMLIFrameElementPermissions::validateTokenValue(const AtomicString& tokenValue, ExceptionState&) const
-{
-    WebPermissionType unused;
-    return getPermissionType(tokenValue, &unused);
+bool HTMLIFrameElementPermissions::validateTokenValue(
+    const AtomicString& tokenValue,
+    ExceptionState&) const {
+  mojom::blink::PermissionName unused;
+  return getPermissionType(tokenValue, &unused);
 }
 
-void HTMLIFrameElementPermissions::valueWasSet()
-{
-    if (m_element)
-        m_element->permissionsValueWasSet();
+void HTMLIFrameElementPermissions::valueWasSet() {
+  if (m_element)
+    m_element->permissionsValueWasSet();
 }
 
-} // namespace blink
+}  // namespace blink

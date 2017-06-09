@@ -9,7 +9,6 @@
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
-#include "chrome/browser/password_manager/chrome_password_manager_client.h"
 #include "chrome/browser/password_manager/password_store_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -19,12 +18,36 @@
 #include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/password_manager/core/browser/password_manager_test_utils.h"
 #include "components/password_manager/core/browser/test_password_store.h"
-#include "components/password_manager/core/common/password_manager_features.h"
 #include "content/public/browser/navigation_details.h"
+#include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+
+namespace {
+
+// A helper class that synchronously waits until the password store handles a
+// GetLogins() request.
+class PasswordStoreResultsObserver
+    : public password_manager::PasswordStoreConsumer {
+ public:
+  PasswordStoreResultsObserver() = default;
+
+  void OnGetPasswordStoreResults(
+      std::vector<std::unique_ptr<autofill::PasswordForm>> results) override {
+    run_loop_.Quit();
+  }
+
+  void Wait() { run_loop_.Run(); }
+
+ private:
+  base::RunLoop run_loop_;
+
+  DISALLOW_COPY_AND_ASSIGN(PasswordStoreResultsObserver);
+};
+
+}  // namespace
 
 NavigationObserver::NavigationObserver(content::WebContents* web_contents)
     : content::WebContentsObserver(web_contents),
@@ -36,6 +59,9 @@ NavigationObserver::~NavigationObserver() {
 
 void NavigationObserver::DidFinishNavigation(
     content::NavigationHandle* navigation_handle) {
+  if (!navigation_handle->HasCommitted())
+    return;
+
   if (quit_on_entry_committed_)
     message_loop_runner_->Quit();
 }
@@ -57,40 +83,35 @@ void NavigationObserver::Wait() {
 }
 
 BubbleObserver::BubbleObserver(content::WebContents* web_contents)
-    : passwords_model_delegate_(
-          PasswordsModelDelegateFromWebContents(web_contents)) {}
+    : passwords_ui_controller_(
+          ManagePasswordsUIController::FromWebContents(web_contents)) {}
 
 bool BubbleObserver::IsShowingSavePrompt() const {
-  return passwords_model_delegate_->GetState() ==
+  return passwords_ui_controller_->GetState() ==
       password_manager::ui::PENDING_PASSWORD_STATE;
 }
 
 bool BubbleObserver::IsShowingUpdatePrompt() const {
-  return passwords_model_delegate_->GetState() ==
+  return passwords_ui_controller_->GetState() ==
       password_manager::ui::PENDING_PASSWORD_UPDATE_STATE;
 }
 
 void BubbleObserver::Dismiss() const  {
-  passwords_model_delegate_->OnBubbleHidden();
-  // Navigate away to reset the state to inactive.
-  static_cast<content::WebContentsObserver*>(
-      static_cast<ManagePasswordsUIController*>(passwords_model_delegate_))
-                ->DidNavigateMainFrame(content::LoadCommittedDetails(),
-                                       content::FrameNavigateParams());
+  passwords_ui_controller_->OnBubbleHidden();
   ASSERT_EQ(password_manager::ui::INACTIVE_STATE,
-            passwords_model_delegate_->GetState());
+            passwords_ui_controller_->GetState());
 }
 
 void BubbleObserver::AcceptSavePrompt() const {
   ASSERT_TRUE(IsShowingSavePrompt());
-  passwords_model_delegate_->SavePassword();
+  passwords_ui_controller_->SavePassword();
   EXPECT_FALSE(IsShowingSavePrompt());
 }
 
 void BubbleObserver::AcceptUpdatePrompt(
     const autofill::PasswordForm& form) const {
   ASSERT_TRUE(IsShowingUpdatePrompt());
-  passwords_model_delegate_->UpdatePassword(form);
+  passwords_ui_controller_->UpdatePassword(form);
   EXPECT_FALSE(IsShowingUpdatePrompt());
 }
 
@@ -110,8 +131,6 @@ void PasswordManagerBrowserTestBase::SetUpOnMainThread() {
       password_manager::BuildPasswordStore<
           content::BrowserContext, password_manager::TestPasswordStore>);
   ASSERT_TRUE(embedded_test_server()->Start());
-  ASSERT_FALSE(base::FeatureList::IsEnabled(
-      password_manager::features::kEnableAutomaticPasswordSaving));
 }
 
 void PasswordManagerBrowserTestBase::TearDownOnMainThread() {
@@ -165,7 +184,7 @@ void PasswordManagerBrowserTestBase::VerifyPasswordIsSavedAndFilled(
   // Let the user interact with the page, so that DOM gets modification events,
   // needed for autofilling fields.
   content::SimulateMouseClickAt(
-      WebContents(), 0, blink::WebMouseEvent::ButtonLeft, gfx::Point(1, 1));
+      WebContents(), 0, blink::WebMouseEvent::Button::Left, gfx::Point(1, 1));
 
   // Wait until that interaction causes the password value to be revealed.
   WaitForElementValue(expected_element, expected_value);
@@ -230,6 +249,15 @@ void PasswordManagerBrowserTestBase::WaitForElementValue(
   EXPECT_EQ(RETURN_CODE_OK, return_value)
       << "element_id = " << element_id
       << ", expected_value = " << expected_value;
+}
+
+void PasswordManagerBrowserTestBase::WaitForPasswordStore() {
+  scoped_refptr<password_manager::PasswordStore> password_store =
+      PasswordStoreFactory::GetForProfile(browser()->profile(),
+                                          ServiceAccessType::IMPLICIT_ACCESS);
+  PasswordStoreResultsObserver syncer;
+  password_store->GetAutofillableLoginsWithAffiliatedRealms(&syncer);
+  syncer.Wait();
 }
 
 void PasswordManagerBrowserTestBase::CheckElementValue(

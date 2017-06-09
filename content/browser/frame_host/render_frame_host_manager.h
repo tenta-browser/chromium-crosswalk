@@ -27,8 +27,6 @@
 
 namespace content {
 class BrowserContext;
-class CrossProcessFrameConnector;
-class CrossSiteTransferringRequest;
 class FrameNavigationEntry;
 class FrameTreeNode;
 class InterstitialPageImpl;
@@ -47,8 +45,8 @@ class RenderWidgetHostDelegate;
 class RenderWidgetHostView;
 class TestWebContents;
 class WebUIImpl;
-struct CommonNavigationParams;
 struct ContentSecurityPolicyHeader;
+struct FrameOwnerProperties;
 struct FrameReplicationState;
 
 // Manages RenderFrameHosts for a FrameTreeNode. It maintains a
@@ -197,7 +195,8 @@ class CONTENT_EXPORT RenderFrameHostManager
   void Init(SiteInstance* site_instance,
             int32_t view_routing_id,
             int32_t frame_routing_id,
-            int32_t widget_routing_id);
+            int32_t widget_routing_id,
+            bool renderer_initiated_creation);
 
   // Returns the currently active RenderFrameHost.
   //
@@ -298,12 +297,8 @@ class CONTENT_EXPORT RenderFrameHostManager
   // The |pending_render_frame_host| is ready to commit a page.  We should
   // ensure that the old RenderFrameHost runs its unload handler first and
   // determine whether a RenderFrameHost transfer is needed.
-  // |cross_site_transferring_request| is NULL if a request is not being
-  // transferred between renderers.
   void OnCrossSiteResponse(RenderFrameHostImpl* pending_render_frame_host,
                            const GlobalRequestID& global_request_id,
-                           std::unique_ptr<CrossSiteTransferringRequest>
-                               cross_site_transferring_request,
                            const std::vector<GURL>& transfer_url_chain,
                            const Referrer& referrer,
                            ui::PageTransition page_transition,
@@ -442,10 +437,9 @@ class CONTENT_EXPORT RenderFrameHostManager
 
   // Called on a frame to notify it that its out-of-process parent frame
   // changed a property (such as allowFullscreen) on its <iframe> element.
-  // Sends updated WebFrameOwnerProperties to the RenderFrame and to all
-  // proxies, skipping the parent process.
-  void OnDidUpdateFrameOwnerProperties(
-      const blink::WebFrameOwnerProperties& properties);
+  // Sends updated FrameOwnerProperties to the RenderFrame and to all proxies,
+  // skipping the parent process.
+  void OnDidUpdateFrameOwnerProperties(const FrameOwnerProperties& properties);
 
   // Send updated origin to all frame proxies when the frame navigates to a new
   // origin.
@@ -482,7 +476,8 @@ class CONTENT_EXPORT RenderFrameHostManager
   // RenderFrameProxyHost in its outer WebContents's SiteInstance,
   // |outer_contents_site_instance|. The frame in outer WebContents that is
   // hosting the inner WebContents is |render_frame_host|, and the frame will
-  // be swapped out with the proxy.
+  // be swapped out with the proxy.Note that this method must only be called
+  // for an OOPIF-based inner WebContents.
   void CreateOuterDelegateProxy(SiteInstance* outer_contents_site_instance,
                                 RenderFrameHostImpl* render_frame_host);
 
@@ -494,8 +489,10 @@ class CONTENT_EXPORT RenderFrameHostManager
   int GetProxyCount();
 
   // Sends an IPC message to every process in the FrameTree. This should only be
-  // called in the top-level RenderFrameHostManager.
-  void SendPageMessage(IPC::Message* msg);
+  // called in the top-level RenderFrameHostManager.  |instance_to_skip|, if
+  // not null, specifies the SiteInstance to which the message should not be
+  // sent.
+  void SendPageMessage(IPC::Message* msg, SiteInstance* instance_to_skip);
 
   // Returns a const reference to the map of proxy hosts. The keys are
   // SiteInstance IDs, the values are RenderFrameProxyHosts.
@@ -508,6 +505,12 @@ class CONTENT_EXPORT RenderFrameHostManager
   void ActiveFrameCountIsZero(SiteInstanceImpl* site_instance) override;
   void RenderProcessGone(SiteInstanceImpl* site_instance) override;
 
+  // Cancels and destroys the pending or speculative RenderFrameHost if they
+  // match the provided |render_frame_host|.
+  void CancelPendingIfNecessary(RenderFrameHostImpl* render_frame_host);
+
+  void OnSetHasReceivedUserGesture();
+
   // Sets up the necessary state for a new RenderViewHost.  If |proxy| is not
   // null, it creates a RenderFrameProxy in the target renderer process which is
   // used to route IPC messages when in swapped out state.  Returns early if the
@@ -518,6 +521,7 @@ class CONTENT_EXPORT RenderFrameHostManager
  private:
   friend class NavigatorTestWithBrowserSideNavigation;
   friend class RenderFrameHostManagerTest;
+  friend class RenderFrameHostTester;
   friend class TestWebContents;
 
   enum class SiteInstanceRelation {
@@ -592,7 +596,8 @@ class CONTENT_EXPORT RenderFrameHostManager
       SiteInstance* candidate_instance,
       ui::PageTransition transition,
       bool dest_is_restore,
-      bool dest_is_view_source_mode);
+      bool dest_is_view_source_mode,
+      bool was_server_redirect);
 
   // Returns a descriptor of the appropriate SiteInstance object for the given
   // |dest_url|, possibly reusing the current, source or destination
@@ -616,7 +621,8 @@ class CONTENT_EXPORT RenderFrameHostManager
       ui::PageTransition transition,
       bool dest_is_restore,
       bool dest_is_view_source_mode,
-      bool force_browsing_instance_swap);
+      bool force_browsing_instance_swap,
+      bool was_server_redirect);
 
   // Converts a SiteInstanceDescriptor to the actual SiteInstance it describes.
   // If a |candidate_instance| is provided (is not nullptr) and it matches the
@@ -668,7 +674,8 @@ class CONTENT_EXPORT RenderFrameHostManager
       int32_t view_routing_id,
       int32_t frame_routing_id,
       int32_t widget_routing_id,
-      bool hidden);
+      bool hidden,
+      bool renderer_initiated_creation);
 
   // PlzNavigate
   // Create and initialize a speculative RenderFrameHost for an ongoing
@@ -680,6 +687,11 @@ class CONTENT_EXPORT RenderFrameHostManager
   // Initialization for RenderFrameHost uses the same sequence as InitRenderView
   // above.
   bool InitRenderFrame(RenderFrameHostImpl* render_frame_host);
+
+  // Helper to reinitialize the RenderFrame, RenderView, and the opener chain
+  // for the provided |render_frame_host|.  Used when the |render_frame_host|
+  // needs to be reused for a new navigation, but it is not live.
+  bool ReinitializeRenderFrame(RenderFrameHostImpl* render_frame_host);
 
   // Makes the pending WebUI on the current RenderFrameHost active. Call this
   // when the current RenderFrameHost commits and it has a pending WebUI.
@@ -710,8 +722,7 @@ class CONTENT_EXPORT RenderFrameHostManager
   void DiscardUnusedFrame(
       std::unique_ptr<RenderFrameHostImpl> render_frame_host);
 
-  // Helper method to terminate the pending RenderFrameHost. The frame may be
-  // deleted immediately, or it may be kept around in hopes of later reuse.
+  // Terminates and deletes the pending RenderFrameHost.
   void CancelPending();
 
   // Clears pending_render_frame_host_, returning it to the caller for disposal.
@@ -741,7 +752,8 @@ class CONTENT_EXPORT RenderFrameHostManager
   // Returns true if a subframe can navigate cross-process.
   bool CanSubframeSwapProcess(const GURL& dest_url,
                               SiteInstance* source_instance,
-                              SiteInstance* dest_instance);
+                              SiteInstance* dest_instance,
+                              bool was_server_redirect);
 
   // For use in creating RenderFrameHosts.
   FrameTreeNode* frame_tree_node_;
@@ -764,12 +776,6 @@ class CONTENT_EXPORT RenderFrameHostManager
   // while a cross-site request is pending until it calls DidNavigate.
   // Note: This member is not used in PlzNavigate.
   std::unique_ptr<RenderFrameHostImpl> pending_render_frame_host_;
-
-  // If a pending request needs to be transferred to another process, this
-  // owns the request until it's transferred to the new process, so it will be
-  // cleaned up if the navigation is cancelled.  Otherwise, this is NULL.
-  std::unique_ptr<CrossSiteTransferringRequest>
-      cross_site_transferring_request_;
 
   // This is used to temporarily store the NavigationHandle during
   // transferring navigations. The handle needs to be stored because the old

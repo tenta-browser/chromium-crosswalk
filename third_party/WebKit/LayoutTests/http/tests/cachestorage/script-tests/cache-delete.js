@@ -56,6 +56,55 @@ cache_test(function(cache) {
   }, 'Cache.delete called with a Request object');
 
 cache_test(function(cache) {
+    var request = new Request(test_url);
+    var response = new_test_response();
+    return cache.put(request, response)
+      .then(function() {
+          return cache.delete(new Request(test_url, {method: 'HEAD'}));
+        })
+      .then(function(result) {
+          assert_false(result,
+                       'Cache.delete should not match a non-GET request ' +
+                       'unless ignoreMethod option is set.');
+          return cache.match(test_url);
+        })
+      .then(function(result) {
+          assert_response_equals(result, response,
+            'Cache.delete should leave non-matching response in the cache.');
+          return cache.delete(new Request(test_url, {method: 'HEAD'}),
+                              {ignoreMethod: true});
+        })
+      .then(function(result) {
+          assert_true(result,
+                      'Cache.delete should match a non-GET request ' +
+                      ' if ignoreMethod is true.')
+        });
+  }, 'Cache.delete called with a HEAD request');
+
+cache_test(function(cache) {
+    var vary_request = new Request('http://example.com/c',
+                                   {headers: {'Cookies': 'is-for-cookie'}});
+    var vary_response = new Response('', {headers: {'Vary': 'Cookies'}});
+    var mismatched_vary_request = new Request('http://example.com/c');
+
+    return cache.put(vary_request.clone(), vary_response.clone())
+      .then(function() {
+          return cache.delete(mismatched_vary_request.clone());
+        })
+      .then(function(result) {
+          assert_false(result,
+                       'Cache.delete should not delete if vary does not ' +
+                       'match unless ignoreVary is true');
+          return cache.delete(mismatched_vary_request.clone(),
+                              {ignoreVary: true});
+        })
+      .then(function(result) {
+          assert_true(result,
+                      'Cache.delete should ignore vary if ignoreVary is true');
+        });
+  }, 'Cache.delete supports ignoreVary');
+
+cache_test(function(cache) {
     return cache.delete(test_url)
       .then(function(result) {
           assert_false(result,
@@ -68,7 +117,7 @@ prepopulated_cache_test(simple_entries, function(cache, entries) {
     return cache.matchAll(entries.a_with_query.request,
                           { ignoreSearch: true })
       .then(function(result) {
-          assert_response_array_equivalent(
+          assert_response_array_equals(
             result,
             [
               entries.a.response,
@@ -82,7 +131,7 @@ prepopulated_cache_test(simple_entries, function(cache, entries) {
                                 { ignoreSearch: true });
         })
       .then(function(result) {
-          assert_response_array_equivalent(result, []);
+          assert_response_array_equals(result, []);
         });
   },
   'Cache.delete with ignoreSearch option (request with search parameters)');
@@ -91,7 +140,7 @@ prepopulated_cache_test(simple_entries, function(cache, entries) {
     return cache.matchAll(entries.a_with_query.request,
                           { ignoreSearch: true })
       .then(function(result) {
-          assert_response_array_equivalent(
+          assert_response_array_equals(
             result,
             [
               entries.a.response,
@@ -107,7 +156,7 @@ prepopulated_cache_test(simple_entries, function(cache, entries) {
                                 { ignoreSearch: true });
         })
       .then(function(result) {
-          assert_response_array_equivalent(result, [ entries.a.response ]);
+          assert_response_array_equals(result, [ entries.a.response ]);
         });
   },
   'Cache.delete with ignoreSearch option (when it is specified as false)');

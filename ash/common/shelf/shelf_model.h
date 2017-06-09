@@ -5,6 +5,9 @@
 #ifndef ASH_COMMON_SHELF_SHELF_MODEL_H_
 #define ASH_COMMON_SHELF_SHELF_MODEL_H_
 
+#include <map>
+#include <memory>
+
 #include "ash/ash_export.h"
 #include "ash/common/shelf/shelf_item_types.h"
 #include "base/macros.h"
@@ -12,19 +15,17 @@
 
 namespace ash {
 
+class ShelfItemDelegate;
 class ShelfModelObserver;
 
-// Model used by ShelfView.
+// Model used for shelf items. Owns ShelfItemDelegates but does not create them.
 class ASH_EXPORT ShelfModel {
  public:
-  enum Status {
-    STATUS_NORMAL,
-    // A status that indicates apps are syncing/loading.
-    STATUS_LOADING,
-  };
-
   ShelfModel();
   ~ShelfModel();
+
+  // Cleans up the ShelfItemDelegates.
+  void DestroyItemDelegates();
 
   // Adds a new item to the model. Returns the resulting index.
   int Add(const ShelfItem& item);
@@ -74,8 +75,12 @@ class ASH_EXPORT ShelfModel {
   const ShelfItems& items() const { return items_; }
   int item_count() const { return static_cast<int>(items_.size()); }
 
-  void set_status(Status status) { status_ = status; }
-  Status status() const { return status_; }
+  // Set |item_delegate| for |id| and takes ownership.
+  void SetShelfItemDelegate(ShelfID id,
+                            std::unique_ptr<ShelfItemDelegate> item_delegate);
+
+  // Returns ShelfItemDelegate for |id|, or null if none exists.
+  ShelfItemDelegate* GetShelfItemDelegate(ShelfID id);
 
   void AddObserver(ShelfModelObserver* observer);
   void RemoveObserver(ShelfModelObserver* observer);
@@ -86,12 +91,17 @@ class ASH_EXPORT ShelfModel {
   // returns the new value.
   int ValidateInsertionIndex(ShelfItemType type, int index) const;
 
+  // Remove and destroy ShelfItemDelegate for |id|.
+  void RemoveShelfItemDelegate(ShelfID id);
+
   // ID assigned to the next item.
   ShelfID next_id_;
 
   ShelfItems items_;
-  Status status_;
   base::ObserverList<ShelfModelObserver> observers_;
+
+  std::map<ShelfID, std::unique_ptr<ShelfItemDelegate>>
+      id_to_item_delegate_map_;
 
   DISALLOW_COPY_AND_ASSIGN(ShelfModel);
 };

@@ -6,6 +6,7 @@
 #define COMPONENTS_AUTOFILL_CORE_BROWSER_AUTOFILL_CLIENT_H_
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "base/callback_forward.h"
@@ -17,26 +18,27 @@
 #include "url/gurl.h"
 
 class IdentityProvider;
+class PrefService;
 
 namespace content {
 class RenderFrameHost;
 }
 
 namespace gfx {
-class Rect;
 class RectF;
 }
 
 namespace rappor {
-class RapporService;
+class RapporServiceImpl;
 }
 
-namespace sync_driver {
+namespace syncer {
 class SyncService;
 }
 
-class GURL;
-class PrefService;
+namespace ukm {
+class UkmService;
+}
 
 namespace autofill {
 
@@ -46,7 +48,6 @@ class CardUnmaskDelegate;
 class CreditCard;
 class FormStructure;
 class PersonalDataManager;
-struct FormData;
 struct Suggestion;
 
 // A client interface that needs to be supplied to the Autofill component by the
@@ -86,9 +87,7 @@ class AutofillClient {
     UNMASK_FOR_AUTOFILL,
   };
 
-  typedef base::Callback<void(const base::string16& /* card number */,
-                              int /* exp month */,
-                              int /* exp year */)> CreditCardScanCallback;
+  typedef base::Callback<void(const CreditCard&)> CreditCardScanCallback;
 
   virtual ~AutofillClient() {}
 
@@ -102,13 +101,16 @@ class AutofillClient {
   virtual PrefService* GetPrefs() = 0;
 
   // Gets the sync service associated with the client.
-  virtual sync_driver::SyncService* GetSyncService() = 0;
+  virtual syncer::SyncService* GetSyncService() = 0;
 
   // Gets the IdentityProvider associated with the client (for OAuth2).
   virtual IdentityProvider* GetIdentityProvider() = 0;
 
-  // Gets the RapporService associated with the client (for metrics).
-  virtual rappor::RapporService* GetRapporService() = 0;
+  // Gets the RapporServiceImpl associated with the client (for metrics).
+  virtual rappor::RapporServiceImpl* GetRapporServiceImpl() = 0;
+
+  // Gets the UKM service assiciated with this client (for metrics).
+  virtual ukm::UkmService* GetUkmService() = 0;
 
   // Causes the Autofill settings UI to be shown.
   virtual void ShowAutofillSettings() = 0;
@@ -131,6 +133,11 @@ class AutofillClient {
       const CreditCard& card,
       std::unique_ptr<base::DictionaryValue> legal_message,
       const base::Closure& callback) = 0;
+
+  // Will show an infobar to get user consent for Credit Card assistive filling.
+  // Will run |callback| on success.
+  virtual void ConfirmCreditCardFillAssist(const CreditCard& card,
+                                           const base::Closure& callback) = 0;
 
   // Gathers risk data and provides it to |callback|.
   virtual void LoadRiskData(
@@ -180,7 +187,17 @@ class AutofillClient {
   virtual void OnFirstUserGestureObserved() = 0;
 
   // If the context is secure.
-  virtual bool IsContextSecure(const GURL& form_origin) = 0;
+  virtual bool IsContextSecure() = 0;
+
+  // Whether it is appropriate to show a signin promo for this user.
+  virtual bool ShouldShowSigninPromo() = 0;
+
+  // Starts the signin flow. Should not be called if ShouldShowSigninPromo()
+  // returns false.
+  virtual void StartSigninFlow() = 0;
+
+  // Shows the explanation of http not secure warning message.
+  virtual void ShowHttpNotSecureExplanation() = 0;
 };
 
 }  // namespace autofill

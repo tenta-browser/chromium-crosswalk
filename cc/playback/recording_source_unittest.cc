@@ -7,11 +7,7 @@
 #include "base/memory/ptr_util.h"
 #include "cc/base/region.h"
 #include "cc/playback/raster_source.h"
-#include "cc/proto/recording_source.pb.h"
-#include "cc/test/fake_client_picture_cache.h"
 #include "cc/test/fake_content_layer_client.h"
-#include "cc/test/fake_engine_picture_cache.h"
-#include "cc/test/fake_image_serialization_processor.h"
 #include "cc/test/fake_recording_source.h"
 #include "cc/test/skia_common.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -34,84 +30,6 @@ scoped_refptr<RasterSource> CreateRasterSource(
   bool can_use_lcd_text = true;
   return RasterSource::CreateFromRecordingSource(recording_source,
                                                  can_use_lcd_text);
-}
-
-void ValidateRecordingSourceSerialization(FakeRecordingSource* source) {
-  std::unique_ptr<FakeImageSerializationProcessor>
-      fake_image_serialization_processor =
-          base::WrapUnique(new FakeImageSerializationProcessor);
-  std::unique_ptr<EnginePictureCache> fake_engine_picture_cache =
-      fake_image_serialization_processor->CreateEnginePictureCache();
-  FakeEnginePictureCache* fake_engine_picture_cache_ptr =
-      static_cast<FakeEnginePictureCache*>(fake_engine_picture_cache.get());
-  std::unique_ptr<ClientPictureCache> fake_client_picture_cache =
-      fake_image_serialization_processor->CreateClientPictureCache();
-
-  fake_engine_picture_cache_ptr->MarkAllSkPicturesAsUsed(
-      source->GetDisplayItemList());
-
-  proto::RecordingSource proto;
-  source->ToProtobuf(&proto);
-
-  std::vector<uint32_t> actual_picture_ids;
-  FakeRecordingSource new_source;
-  new_source.FromProtobuf(proto, fake_client_picture_cache.get(),
-                          &actual_picture_ids);
-
-  EXPECT_THAT(actual_picture_ids,
-              testing::UnorderedElementsAreArray(
-                  fake_engine_picture_cache_ptr->GetAllUsedPictureIds()));
-
-  EXPECT_TRUE(source->EqualsTo(new_source));
-}
-
-TEST(RecordingSourceTest, TestNullDisplayListSerialization) {
-  gfx::Rect recorded_viewport(0, 0, 256, 256);
-
-  std::unique_ptr<FakeRecordingSource> recording_source =
-      CreateRecordingSource(recorded_viewport);
-  recording_source->SetDisplayListUsesCachedPicture(false);
-  recording_source->SetGenerateDiscardableImagesMetadata(true);
-  recording_source->Rerecord();
-  recording_source->SetEmptyBounds();
-
-  ValidateRecordingSourceSerialization(recording_source.get());
-}
-
-TEST(RecordingSourceTest, TestEmptySerializationDeserialization) {
-  gfx::Rect recorded_viewport(0, 0, 256, 256);
-
-  std::unique_ptr<FakeRecordingSource> recording_source =
-      CreateRecordingSource(recorded_viewport);
-  recording_source->SetDisplayListUsesCachedPicture(false);
-  recording_source->SetGenerateDiscardableImagesMetadata(true);
-  recording_source->Rerecord();
-
-  ValidateRecordingSourceSerialization(recording_source.get());
-}
-
-TEST(RecordingSourceTest, TestPopulatedSerializationDeserialization) {
-  gfx::Rect recorded_viewport(0, 0, 256, 256);
-
-  std::unique_ptr<FakeRecordingSource> recording_source =
-      CreateRecordingSource(recorded_viewport);
-  recording_source->SetDisplayListUsesCachedPicture(false);
-
-  SkPaint simple_paint;
-  simple_paint.setColor(SkColorSetARGB(255, 12, 23, 34));
-  recording_source->add_draw_rect_with_paint(gfx::Rect(0, 0, 256, 256),
-                                             simple_paint);
-  recording_source->add_draw_rect_with_paint(gfx::Rect(128, 128, 512, 512),
-                                             simple_paint);
-  recording_source->add_draw_rect_with_paint(gfx::Rect(512, 0, 256, 256),
-                                             simple_paint);
-  recording_source->add_draw_rect_with_paint(gfx::Rect(0, 512, 256, 256),
-                                             simple_paint);
-
-  recording_source->SetGenerateDiscardableImagesMetadata(true);
-  recording_source->Rerecord();
-
-  ValidateRecordingSourceSerialization(recording_source.get());
 }
 
 TEST(RecordingSourceTest, DiscardableImagesWithTransform) {
@@ -265,8 +183,8 @@ TEST(RecordingSourceTest, NoDiscardableImages) {
   std::unique_ptr<FakeRecordingSource> recording_source =
       CreateRecordingSource(recorded_viewport);
 
-  SkPaint simple_paint;
-  simple_paint.setColor(SkColorSetARGB(255, 12, 23, 34));
+  PaintFlags simple_flags;
+  simple_flags.setColor(SkColorSetARGB(255, 12, 23, 34));
 
   SkBitmap non_discardable_bitmap;
   non_discardable_bitmap.allocN32Pixels(128, 128);
@@ -274,14 +192,14 @@ TEST(RecordingSourceTest, NoDiscardableImages) {
   sk_sp<SkImage> non_discardable_image =
       SkImage::MakeFromBitmap(non_discardable_bitmap);
 
-  recording_source->add_draw_rect_with_paint(gfx::Rect(0, 0, 256, 256),
-                                             simple_paint);
-  recording_source->add_draw_rect_with_paint(gfx::Rect(128, 128, 512, 512),
-                                             simple_paint);
-  recording_source->add_draw_rect_with_paint(gfx::Rect(512, 0, 256, 256),
-                                             simple_paint);
-  recording_source->add_draw_rect_with_paint(gfx::Rect(0, 512, 256, 256),
-                                             simple_paint);
+  recording_source->add_draw_rect_with_flags(gfx::Rect(0, 0, 256, 256),
+                                             simple_flags);
+  recording_source->add_draw_rect_with_flags(gfx::Rect(128, 128, 512, 512),
+                                             simple_flags);
+  recording_source->add_draw_rect_with_flags(gfx::Rect(512, 0, 256, 256),
+                                             simple_flags);
+  recording_source->add_draw_rect_with_flags(gfx::Rect(0, 512, 256, 256),
+                                             simple_flags);
   recording_source->add_draw_image(non_discardable_image, gfx::Point(128, 0));
   recording_source->add_draw_image(non_discardable_image, gfx::Point(0, 128));
   recording_source->add_draw_image(non_discardable_image, gfx::Point(150, 150));

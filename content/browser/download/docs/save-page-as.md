@@ -31,8 +31,9 @@ are described by their code comments or by their code structure).
           `SavePackage` on the UI thread.
         * Shephards data (received from the network OR from DOM) into
           FILE thread - via `SaveFileManager::UpdateSaveProgress`
-    * created and owned by `ResourceDispatchedHostImpl`
+    * created and owned by `BrowserMainLoop`
       (ref-counted today, but it is unnecessary - see https://crbug.com/596953)
+    * The global instance can be retrieved by the Get method.
 
 * SaveFile class
     * tracks saving a single file
@@ -100,7 +101,7 @@ Very high-level flow of saving a page as MHTML:
           `SavePackage::OnMHTMLGenerated`.
 
 Note: MHTML format is by default disabled in Save-Page-As UI on Windows, MacOS
-and Linux (it is the default on ChromeOS), but for testing this can be easily
+and Linux (it is the default on Chrome OS), but for testing this can be easily
 changed using `--save-page-as-mhtml` command line switch.
 
 

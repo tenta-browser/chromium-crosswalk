@@ -184,12 +184,15 @@
   return self;
 }
 
-- (void)mouseDown:(NSEvent*)event {
-  if ([event type] != NSLeftMouseDown) {
-    [super mouseDown:event];
+- (void)mouseUp:(NSEvent*)event {
+  if (event.type != NSLeftMouseUp) {
+    [super mouseUp:event];
     return;
   }
-  [controller_ notificationClicked];
+  if (NSPointInRect([self convertPoint:event.locationInWindow fromView:nil],
+                    self.bounds)) {
+    [controller_ notificationClicked];
+  }
 }
 
 - (NSView*)hitTest:(NSPoint)point {
@@ -687,6 +690,7 @@
 }
 
 - (void)settingsClicked:(id)sender {
+  [NSApp activateIgnoringOtherApps:YES];
   messageCenter_->ClickOnSettingsButton([self notificationID]);
 }
 
@@ -736,8 +740,6 @@
   base::scoped_nsobject<NSBox> imageBox(
       [[AccessibilityIgnoredBox alloc] initWithFrame:imageFrame]);
   [self configureCustomBox:imageBox];
-  [imageBox setFillColor:skia::SkColorToCalibratedNSColor(
-      message_center::kIconBackgroundColor)];
   [imageBox setAutoresizingMask:NSViewMinYMargin];
 
   // Inside the image box put the actual icon view.

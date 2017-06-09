@@ -9,7 +9,7 @@
 
 #include "base/android/jni_android.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "third_party/WebKit/public/web/WebInputEvent.h"
+#include "third_party/WebKit/public/platform/WebInputEvent.h"
 #include "ui/events/android/key_event_utils.h"
 #include "ui/events/gesture_detection/motion_event.h"
 #include "ui/events/keycodes/dom/dom_code.h"
@@ -166,4 +166,31 @@ TEST(WebInputEventBuilderAndroidTest, DomKeySyntheticEvent) {
   EXPECT_EQ(ui::KeyboardCode::VKEY_UNKNOWN, web_event.windowsKeyCode);
   EXPECT_EQ(static_cast<int>(ui::DomCode::NONE), web_event.domCode);
   EXPECT_EQ(ui::DomKey::UNIDENTIFIED, web_event.domKey);
+}
+
+// Testing new Android keycode introduced in API 24.
+TEST(WebInputEventBuilderAndroidTest, CutCopyPasteKey) {
+  JNIEnv* env = AttachCurrentThread();
+
+  // The minimum Android NDK does not provide values for these yet:
+  enum {
+    AKEYCODE_CUT = 277,
+    AKEYCODE_COPY = 278,
+    AKEYCODE_PASTE = 279,
+  };
+
+  struct DomKeyTestCase {
+    int key_code;
+    ui::DomKey key;
+  } test_cases[] = {
+      {AKEYCODE_CUT, ui::DomKey::CUT},
+      {AKEYCODE_COPY, ui::DomKey::COPY},
+      {AKEYCODE_PASTE, ui::DomKey::PASTE},
+  };
+
+  for (const auto& entry : test_cases) {
+    WebKeyboardEvent web_event =
+        CreateFakeWebKeyboardEvent(env, entry.key_code, 0, 0);
+    EXPECT_EQ(entry.key, web_event.domKey);
+  }
 }

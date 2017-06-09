@@ -11,11 +11,13 @@
 #include "chrome/browser/browsing_data/cache_counter.h"
 
 #include "base/run_loop.h"
+#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/common/pref_names.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "components/browsing_data/storage_partition_http_cache_data_remover.h"
+#include "components/browsing_data/content/storage_partition_http_cache_data_remover.h"
+#include "components/browsing_data/core/browsing_data_utils.h"
+#include "components/browsing_data/core/pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/storage_partition.h"
 #include "net/disk_cache/disk_cache.h"
@@ -32,16 +34,17 @@ class CacheCounterTest : public InProcessBrowserTest {
  public:
   void SetUpOnMainThread() override {
     SetCacheDeletionPref(true);
-    SetDeletionPeriodPref(BrowsingDataRemover::EVERYTHING);
+    SetDeletionPeriodPref(browsing_data::ALL_TIME);
   }
 
   void SetCacheDeletionPref(bool value) {
-    browser()->profile()->GetPrefs()->SetBoolean(prefs::kDeleteCache, value);
+    browser()->profile()->GetPrefs()->SetBoolean(
+        browsing_data::prefs::kDeleteCache, value);
   }
 
-  void SetDeletionPeriodPref(BrowsingDataRemover::TimePeriod period) {
+  void SetDeletionPeriodPref(browsing_data::TimePeriod period) {
     browser()->profile()->GetPrefs()->SetInteger(
-        prefs::kDeleteTimePeriod, static_cast<int>(period));
+        browsing_data::prefs::kDeleteTimePeriod, static_cast<int>(period));
   }
 
   // One step in the process of creating a cache entry. Every step must be
@@ -129,22 +132,30 @@ class CacheCounterTest : public InProcessBrowserTest {
   }
 
   // Callback from the counter.
-  void CountingCallback(std::unique_ptr<BrowsingDataCounter::Result> result) {
+  void CountingCallback(
+      std::unique_ptr<browsing_data::BrowsingDataCounter::Result> result) {
     DCHECK_CURRENTLY_ON(BrowserThread::UI);
     finished_ = result->Finished();
 
     if (finished_) {
-      result_ = static_cast<BrowsingDataCounter::FinishedResult*>(
-          result.get())->Value();
+      auto* cache_result =
+          static_cast<CacheCounter::CacheResult*>(result.get());
+      result_ = cache_result->cache_size();
+      is_upper_limit_ = cache_result->is_upper_limit();
     }
 
     if (run_loop_ && finished_)
       run_loop_->Quit();
   }
 
-  BrowsingDataCounter::ResultInt GetResult() {
+  browsing_data::BrowsingDataCounter::ResultInt GetResult() {
     DCHECK(finished_);
     return result_;
+  }
+
+  bool IsUpperLimit() {
+    DCHECK(finished_);
+    return is_upper_limit_;
   }
 
  private:
@@ -162,15 +173,18 @@ class CacheCounterTest : public InProcessBrowserTest {
   std::unique_ptr<base::RunLoop> run_loop_;
 
   bool finished_;
-  BrowsingDataCounter::ResultInt result_;
+  browsing_data::BrowsingDataCounter::ResultInt result_;
+  bool is_upper_limit_;
 };
 
 // Tests that for the empty cache, the result is zero.
 IN_PROC_BROWSER_TEST_F(CacheCounterTest, Empty) {
-  CacheCounter counter;
-  counter.Init(browser()->profile(),
-               base::Bind(&CacheCounterTest::CountingCallback,
-                          base::Unretained(this)));
+  Profile* profile = browser()->profile();
+
+  CacheCounter counter(profile);
+  counter.Init(
+      profile->GetPrefs(),
+      base::Bind(&CacheCounterTest::CountingCallback, base::Unretained(this)));
   counter.Restart();
 
   WaitForIOThread();
@@ -181,10 +195,11 @@ IN_PROC_BROWSER_TEST_F(CacheCounterTest, Empty) {
 IN_PROC_BROWSER_TEST_F(CacheCounterTest, NonEmpty) {
   CreateCacheEntry();
 
-  CacheCounter counter;
-  counter.Init(browser()->profile(),
-               base::Bind(&CacheCounterTest::CountingCallback,
-                          base::Unretained(this)));
+  Profile* profile = browser()->profile();
+  CacheCounter counter(profile);
+  counter.Init(
+      profile->GetPrefs(),
+      base::Bind(&CacheCounterTest::CountingCallback, base::Unretained(this)));
   counter.Restart();
 
   WaitForIOThread();
@@ -196,10 +211,11 @@ IN_PROC_BROWSER_TEST_F(CacheCounterTest, NonEmpty) {
 IN_PROC_BROWSER_TEST_F(CacheCounterTest, AfterDoom) {
   CreateCacheEntry();
 
-  CacheCounter counter;
-  counter.Init(browser()->profile(),
-               base::Bind(&CacheCounterTest::CountingCallback,
-                          base::Unretained(this)));
+  Profile* profile = browser()->profile();
+  CacheCounter counter(profile);
+  counter.Init(
+      profile->GetPrefs(),
+      base::Bind(&CacheCounterTest::CountingCallback, base::Unretained(this)));
 
   browsing_data::StoragePartitionHttpCacheDataRemover::CreateForRange(
       content::BrowserContext::GetDefaultStoragePartition(browser()->profile()),
@@ -217,60 +233,47 @@ IN_PROC_BROWSER_TEST_F(CacheCounterTest, AfterDoom) {
 IN_PROC_BROWSER_TEST_F(CacheCounterTest, PrefChanged) {
   SetCacheDeletionPref(false);
 
-  CacheCounter counter;
-  counter.Init(browser()->profile(),
-               base::Bind(&CacheCounterTest::CountingCallback,
-                          base::Unretained(this)));
+  Profile* profile = browser()->profile();
+  CacheCounter counter(profile);
+  counter.Init(
+      profile->GetPrefs(),
+      base::Bind(&CacheCounterTest::CountingCallback, base::Unretained(this)));
   SetCacheDeletionPref(true);
 
   WaitForIOThread();
   EXPECT_EQ(0u, GetResult());
 }
 
-// Tests that the counter does not count if the deletion preference is false.
-IN_PROC_BROWSER_TEST_F(CacheCounterTest, PrefIsFalse) {
-  SetCacheDeletionPref(false);
-
-  CacheCounter counter;
-  counter.Init(browser()->profile(),
-               base::Bind(&CacheCounterTest::CountingCallback,
-                          base::Unretained(this)));
-  counter.Restart();
-
-  EXPECT_FALSE(counter.Pending());
-}
-
-// Tests that the counting is restarted when the time period changes. Currently,
-// the results should be the same for every period. This is because the counter
-// always counts the size of the entire cache, and it is up to the UI
-// to interpret it as exact value or upper bound.
+// Tests that the counting is restarted when the time period changes.
 IN_PROC_BROWSER_TEST_F(CacheCounterTest, PeriodChanged) {
   CreateCacheEntry();
 
-  CacheCounter counter;
-  counter.Init(browser()->profile(),
-               base::Bind(&CacheCounterTest::CountingCallback,
-                          base::Unretained(this)));
+  Profile* profile = browser()->profile();
+  CacheCounter counter(profile);
+  counter.Init(
+      profile->GetPrefs(),
+      base::Bind(&CacheCounterTest::CountingCallback, base::Unretained(this)));
 
-  SetDeletionPeriodPref(BrowsingDataRemover::LAST_HOUR);
+  SetDeletionPeriodPref(browsing_data::LAST_HOUR);
   WaitForIOThread();
-  BrowsingDataCounter::ResultInt result = GetResult();
+  browsing_data::BrowsingDataCounter::ResultInt result = GetResult();
 
-  SetDeletionPeriodPref(BrowsingDataRemover::LAST_DAY);
-  WaitForIOThread();
-  EXPECT_EQ(result, GetResult());
-
-  SetDeletionPeriodPref(BrowsingDataRemover::LAST_WEEK);
+  SetDeletionPeriodPref(browsing_data::LAST_DAY);
   WaitForIOThread();
   EXPECT_EQ(result, GetResult());
 
-  SetDeletionPeriodPref(BrowsingDataRemover::FOUR_WEEKS);
+  SetDeletionPeriodPref(browsing_data::LAST_WEEK);
   WaitForIOThread();
   EXPECT_EQ(result, GetResult());
 
-  SetDeletionPeriodPref(BrowsingDataRemover::EVERYTHING);
+  SetDeletionPeriodPref(browsing_data::FOUR_WEEKS);
   WaitForIOThread();
   EXPECT_EQ(result, GetResult());
+
+  SetDeletionPeriodPref(browsing_data::ALL_TIME);
+  WaitForIOThread();
+  EXPECT_EQ(result, GetResult());
+  EXPECT_FALSE(IsUpperLimit());
 }
 
 }  // namespace

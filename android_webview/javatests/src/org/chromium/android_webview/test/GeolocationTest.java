@@ -5,16 +5,17 @@
 package org.chromium.android_webview.test;
 
 import android.content.Context;
-import android.test.suitebuilder.annotation.MediumTest;
-import android.test.suitebuilder.annotation.SmallTest;
+import android.support.test.filters.MediumTest;
+import android.support.test.filters.SmallTest;
 import android.webkit.GeolocationPermissions;
 
 import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.AwSettings;
 import org.chromium.base.annotations.SuppressFBWarnings;
 import org.chromium.base.test.util.Feature;
-import org.chromium.content.browser.LocationProviderFactory;
-import org.chromium.content.browser.test.util.MockLocationProvider;
+import org.chromium.base.test.util.RetryOnFailure;
+import org.chromium.device.geolocation.LocationProviderFactory;
+import org.chromium.device.geolocation.MockLocationProvider;
 
 import java.util.concurrent.Callable;
 
@@ -134,7 +135,8 @@ public class GeolocationTest extends AwTestBase {
         @Override
         public AwSettings createAwSettings(Context context, boolean supportLegacyQuirks) {
             return new AwSettings(context, false /* isAccessFromFileURLsGrantedByDefault */,
-                    supportLegacyQuirks, false /* allowEmptyDocumentPersistence */, mAllow);
+                    supportLegacyQuirks, false /* allowEmptyDocumentPersistence */, mAllow,
+                    false /* doNotUpdateSelectionOnMutatingSelectionRange */);
         }
     }
 
@@ -171,6 +173,7 @@ public class GeolocationTest extends AwTestBase {
      */
     @MediumTest
     @Feature({"AndroidWebView"})
+    @RetryOnFailure
     public void testWatchPosition() throws Throwable {
         initAwContents(new GrantPermisionAwContentClient());
         loadDataWithBaseUrlSync(mAwContents, mContentsClient.getOnPageFinishedHelper(), RAW_HTML,
@@ -302,6 +305,7 @@ public class GeolocationTest extends AwTestBase {
 
     @Feature({"AndroidWebView"})
     @SmallTest
+    @RetryOnFailure
     public void testDenyAccessByDefault() throws Throwable {
         initAwContents(new DefaultPermisionAwContentClient());
         loadDataWithBaseUrlSync(mAwContents, mContentsClient.getOnPageFinishedHelper(), RAW_HTML,
@@ -321,6 +325,7 @@ public class GeolocationTest extends AwTestBase {
 
     @Feature({"AndroidWebView"})
     @SmallTest
+    @RetryOnFailure
     public void testDenyOnInsecureOrigins() throws Throwable {
         mOverridenFactory = new GeolocationOnInsecureOriginsTestDependencyFactory(false);
         initAwContents(new GrantPermisionAwContentClient());

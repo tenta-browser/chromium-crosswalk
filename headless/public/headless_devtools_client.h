@@ -69,6 +69,9 @@ class Domain;
 namespace layer_tree {
 class Domain;
 }
+namespace log {
+class Domain;
+}
 namespace memory {
 class Domain;
 }
@@ -93,10 +96,10 @@ class Domain;
 namespace service_worker {
 class Domain;
 }
-namespace tracing {
+namespace target {
 class Domain;
 }
-namespace worker {
+namespace tracing {
 class Domain;
 }
 
@@ -131,6 +134,7 @@ class HEADLESS_EXPORT HeadlessDevToolsClient {
   virtual inspector::Domain* GetInspector() = 0;
   virtual io::Domain* GetIO() = 0;
   virtual layer_tree::Domain* GetLayerTree() = 0;
+  virtual log::Domain* GetLog() = 0;
   virtual memory::Domain* GetMemory() = 0;
   virtual network::Domain* GetNetwork() = 0;
   virtual page::Domain* GetPage() = 0;
@@ -139,8 +143,8 @@ class HEADLESS_EXPORT HeadlessDevToolsClient {
   virtual runtime::Domain* GetRuntime() = 0;
   virtual security::Domain* GetSecurity() = 0;
   virtual service_worker::Domain* GetServiceWorker() = 0;
+  virtual target::Domain* GetTarget() = 0;
   virtual tracing::Domain* GetTracing() = 0;
-  virtual worker::Domain* GetWorker() = 0;
 
   // TODO(skyostil): Add notification for disconnection.
 

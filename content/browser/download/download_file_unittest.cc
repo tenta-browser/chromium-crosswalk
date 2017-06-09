@@ -17,7 +17,6 @@
 #include "base/test/test_file_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
-#include "content/browser/browser_thread_impl.h"
 #include "content/browser/byte_stream.h"
 #include "content/browser/download/download_create_info.h"
 #include "content/browser/download/download_destination_observer.h"
@@ -26,9 +25,11 @@
 #include "content/public/browser/download_interrupt_reasons.h"
 #include "content/public/browser/download_manager.h"
 #include "content/public/test/mock_download_manager.h"
+#include "content/public/test/test_browser_thread_bundle.h"
 #include "net/base/file_stream.h"
 #include "net/base/mock_file_stream.h"
 #include "net/base/net_errors.h"
+#include "net/log/net_log_with_source.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -65,7 +66,8 @@ class MockByteStreamReader : public ByteStreamReader {
 
 class MockDownloadDestinationObserver : public DownloadDestinationObserver {
  public:
-  MOCK_METHOD2(DestinationUpdate, void(int64_t, int64_t));
+  MOCK_METHOD3(DestinationUpdate, void(
+      int64_t, int64_t, const std::vector<DownloadItem::ReceivedSlice>&));
   void DestinationError(
       DownloadInterruptReason reason,
       int64_t bytes_so_far,
@@ -101,12 +103,12 @@ class TestDownloadFileImpl : public DownloadFileImpl {
   TestDownloadFileImpl(std::unique_ptr<DownloadSaveInfo> save_info,
                        const base::FilePath& default_downloads_directory,
                        std::unique_ptr<ByteStreamReader> stream,
-                       const net::BoundNetLog& bound_net_log,
+                       const net::NetLogWithSource& net_log,
                        base::WeakPtr<DownloadDestinationObserver> observer)
       : DownloadFileImpl(std::move(save_info),
                          default_downloads_directory,
                          std::move(stream),
-                         bound_net_log,
+                         net_log,
                          observer) {}
 
  protected:
@@ -137,19 +139,18 @@ class DownloadFileTest : public testing::Test {
   static const int kDummyChildId;
   static const int kDummyRequestId;
 
-  DownloadFileTest() :
-      observer_(new StrictMock<MockDownloadDestinationObserver>),
-      observer_factory_(observer_.get()),
-      input_stream_(NULL),
-      bytes_(-1),
-      bytes_per_sec_(-1),
-      ui_thread_(BrowserThread::UI, &loop_),
-      file_thread_(BrowserThread::FILE, &loop_) {
-  }
+  DownloadFileTest()
+      : observer_(new StrictMock<MockDownloadDestinationObserver>),
+        observer_factory_(observer_.get()),
+        input_stream_(NULL),
+        bytes_(-1),
+        bytes_per_sec_(-1) {}
 
   ~DownloadFileTest() override {}
 
-  void SetUpdateDownloadInfo(int64_t bytes, int64_t bytes_per_sec) {
+  void SetUpdateDownloadInfo(
+      int64_t bytes, int64_t bytes_per_sec,
+      const std::vector<DownloadItem::ReceivedSlice>& received_slices) {
     bytes_ = bytes;
     bytes_per_sec_ = bytes_per_sec;
   }
@@ -159,7 +160,7 @@ class DownloadFileTest : public testing::Test {
   }
 
   void SetUp() override {
-    EXPECT_CALL(*(observer_.get()), DestinationUpdate(_, _))
+    EXPECT_CALL(*(observer_.get()), DestinationUpdate(_, _, _))
         .Times(AnyNumber())
         .WillRepeatedly(Invoke(this, &DownloadFileTest::SetUpdateDownloadInfo));
   }
@@ -191,8 +192,8 @@ class DownloadFileTest : public testing::Test {
     std::unique_ptr<DownloadSaveInfo> save_info(new DownloadSaveInfo());
     download_file_.reset(new TestDownloadFileImpl(
         std::move(save_info), base::FilePath(),
-        std::unique_ptr<ByteStreamReader>(input_stream_), net::BoundNetLog(),
-        observer_factory_.GetWeakPtr()));
+        std::unique_ptr<ByteStreamReader>(input_stream_),
+        net::NetLogWithSource(), observer_factory_.GetWeakPtr()));
 
     EXPECT_CALL(*input_stream_, Read(_, _))
         .WillOnce(Return(ByteStreamReader::STREAM_EMPTY))
@@ -286,9 +287,9 @@ class DownloadFileTest : public testing::Test {
     if (check_observer) {
       EXPECT_CALL(*(observer_.get()),
                   MockDestinationCompleted(_, expected_hash));
-      loop_.RunUntilIdle();
+      base::RunLoop().RunUntilIdle();
       ::testing::Mock::VerifyAndClearExpectations(observer_.get());
-      EXPECT_CALL(*(observer_.get()), DestinationUpdate(_, _))
+      EXPECT_CALL(*(observer_.get()), DestinationUpdate(_, _, _))
           .Times(AnyNumber())
           .WillRepeatedly(
               Invoke(this, &DownloadFileTest::SetUpdateDownloadInfo));
@@ -371,8 +372,6 @@ class DownloadFileTest : public testing::Test {
   int64_t bytes_;
   int64_t bytes_per_sec_;
 
-  base::MessageLoop loop_;
-
  private:
   void SetRenameResult(const base::Closure& closure,
                        DownloadInterruptReason* reason_p,
@@ -386,10 +385,7 @@ class DownloadFileTest : public testing::Test {
     closure.Run();
   }
 
-  // UI thread.
-  BrowserThreadImpl ui_thread_;
-  // File thread to satisfy debug checks in DownloadFile.
-  BrowserThreadImpl file_thread_;
+  TestBrowserThreadBundle thread_bundle_;
 
   // Keep track of what data should be saved to the disk file.
   std::string expected_data_;
@@ -488,7 +484,7 @@ TEST_P(DownloadFileTestWithRename, RenameFileFinal) {
   EXPECT_TRUE(base::PathExists(path_3));
 
   FinishStream(DOWNLOAD_INTERRUPT_REASON_NONE, true, kDataHash);
-  loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Rename the file after downloading all the data and closing the file.
   EXPECT_EQ(DOWNLOAD_INTERRUPT_REASON_NONE,
@@ -529,7 +525,7 @@ TEST_F(DownloadFileTest, RenameOverwrites) {
   EXPECT_NE(std::string(file_data), file_contents);
 
   FinishStream(DOWNLOAD_INTERRUPT_REASON_NONE, true, kEmptyHash);
-  loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   DestroyDownloadFile(0);
 }
 
@@ -554,7 +550,7 @@ TEST_F(DownloadFileTest, RenameUniquifies) {
   EXPECT_TRUE(base::PathExists(path_1_suffixed));
 
   FinishStream(DOWNLOAD_INTERRUPT_REASON_NONE, true, kEmptyHash);
-  loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   DestroyDownloadFile(0);
 }
 
@@ -571,7 +567,7 @@ TEST_F(DownloadFileTest, RenameRecognizesSelfConflict) {
   EXPECT_TRUE(base::PathExists(initial_path));
 
   FinishStream(DOWNLOAD_INTERRUPT_REASON_NONE, true, kEmptyHash);
-  loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   DestroyDownloadFile(0);
   EXPECT_EQ(initial_path.value(), new_path.value());
 }
@@ -606,7 +602,7 @@ TEST_P(DownloadFileTestWithRename, RenameError) {
   }
 
   FinishStream(DOWNLOAD_INTERRUPT_REASON_NONE, true, kEmptyHash);
-  loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   DestroyDownloadFile(0);
 }
 
@@ -699,7 +695,7 @@ TEST_P(DownloadFileTestWithRename, RenameWithErrorRetry) {
   EXPECT_TRUE(did_run_callback);
 
   FinishStream(DOWNLOAD_INTERRUPT_REASON_NONE, true, kEmptyHash);
-  loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   DestroyDownloadFile(0);
 }
 
@@ -715,7 +711,7 @@ TEST_F(DownloadFileTest, StreamEmptySuccess) {
 
   // Finish the download this way and make sure we see it on the observer.
   FinishStream(DOWNLOAD_INTERRUPT_REASON_NONE, true, kEmptyHash);
-  loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   DestroyDownloadFile(0);
 }
@@ -744,7 +740,7 @@ TEST_F(DownloadFileTest, StreamEmptyError) {
   FinishStream(
       DOWNLOAD_INTERRUPT_REASON_NETWORK_DISCONNECTED, false, kEmptyHash);
 
-  loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   DestroyDownloadFile(0);
 }
@@ -761,7 +757,7 @@ TEST_F(DownloadFileTest, StreamNonEmptySuccess) {
   EXPECT_CALL(*(observer_.get()), MockDestinationCompleted(_, _));
   sink_callback_.Run();
   VerifyStreamAndSize();
-  loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   DestroyDownloadFile(0);
 }
 
@@ -790,7 +786,7 @@ TEST_F(DownloadFileTest, StreamNonEmptyError) {
               CurrentUpdateStatus(strlen(kTestData1) + strlen(kTestData2), _));
 
   sink_callback_.Run();
-  loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   VerifyStreamAndSize();
   DestroyDownloadFile(0);
 }

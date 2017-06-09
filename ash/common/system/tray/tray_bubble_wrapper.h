@@ -14,7 +14,6 @@ class TrayBubbleView;
 
 namespace ash {
 class TrayBackgroundView;
-class TrayEventFilter;
 
 // Creates and manages the Widget and EventFilter components of a bubble.
 
@@ -31,7 +30,9 @@ class TrayBubbleWrapper : public views::WidgetObserver {
 
   const TrayBackgroundView* tray() const { return tray_; }
   TrayBackgroundView* tray() { return tray_; }
+  views::TrayBubbleView* bubble_view() { return bubble_view_; }
   const views::TrayBubbleView* bubble_view() const { return bubble_view_; }
+  views::Widget* bubble_widget() { return bubble_widget_; }
   const views::Widget* bubble_widget() const { return bubble_widget_; }
 
  private:

@@ -45,7 +45,7 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/crx_file/id_util.h"
-#include "components/syncable_prefs/pref_service_syncable.h"
+#include "components/sync_preferences/pref_service_syncable.h"
 #include "components/update_client/update_query_params.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_observer.h"
@@ -57,10 +57,12 @@
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
+#include "extensions/browser/pref_names.h"
 #include "extensions/browser/updater/extension_downloader.h"
 #include "extensions/browser/updater/extension_downloader_delegate.h"
 #include "extensions/browser/updater/manifest_fetch_data.h"
 #include "extensions/browser/updater/request_queue_impl.h"
+#include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_urls.h"
 #include "extensions/common/manifest_constants.h"
@@ -432,7 +434,7 @@ void SetupPendingExtensionManagerForTest(
         PendingExtensionInfo(id,
                              std::string(),
                              update_url,
-                             Version(),
+                             base::Version(),
                              should_allow_install,
                              kIsFromSync,
                              Manifest::INTERNAL,
@@ -507,7 +509,7 @@ class ServiceForDownloadTests : public MockService {
     extension_id_ = file.extension_id;
     install_path_ = file.path;
 
-    if (ContainsKey(fake_crx_installers_, extension_id_)) {
+    if (base::ContainsKey(fake_crx_installers_, extension_id_)) {
       *out_crx_installer = fake_crx_installers_[extension_id_];
       return true;
     }
@@ -594,7 +596,8 @@ static std::map<std::string, ParamsMap> GetPingDataFromURL(
     base::SplitStringIntoKeyValuePairs(unescaped, '=', '&', &extension_params);
     std::multimap<std::string, std::string> param_map;
     param_map.insert(extension_params.begin(), extension_params.end());
-    if (ContainsKey(param_map, "id") && ContainsKey(param_map, "ping")) {
+    if (base::ContainsKey(param_map, "id") &&
+        base::ContainsKey(param_map, "ping")) {
       std::string id = param_map.find("id")->second;
       result[id] = ParamsMap();
 
@@ -607,7 +610,7 @@ static std::map<std::string, ParamsMap> GetPingDataFromURL(
       base::StringPairs ping_params;
       base::SplitStringIntoKeyValuePairs(ping, '=', '&', &ping_params);
       for (const auto& ping_param : ping_params) {
-        if (!ContainsKey(result[id], ping_param.first))
+        if (!base::ContainsKey(result[id], ping_param.first))
           result[id][ping_param.first] = std::set<std::string>();
         result[id][ping_param.first].insert(ping_param.second);
       }
@@ -819,7 +822,7 @@ class ExtensionUpdaterTest : public testing::Test {
     const std::string& id = extensions[0]->id();
     EXPECT_CALL(delegate, GetPingDataForExtension(id, _));
 
-    downloader.AddExtension(*extensions[0].get(), 0);
+    downloader.AddExtension(*extensions[0], 0);
     downloader.StartAllPending(NULL);
     net::TestURLFetcher* fetcher =
         factory.GetFetcherByID(ExtensionDownloader::kManifestFetcherId);
@@ -1171,7 +1174,7 @@ class ExtensionUpdaterTest : public testing::Test {
 
     std::string id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     std::string hash;
-    Version version("0.0.1");
+    base::Version version("0.0.1");
     std::set<int> requests;
     requests.insert(0);
     std::unique_ptr<ExtensionDownloader::ExtensionFetch> fetch(
@@ -1281,7 +1284,7 @@ class ExtensionUpdaterTest : public testing::Test {
     GURL test_url(base::StringPrintf("%s/extension.crx", url_prefix.c_str()));
     std::string id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     std::string hash;
-  Version version("0.0.1");
+    base::Version version("0.0.1");
     std::set<int> requests;
     requests.insert(0);
     std::unique_ptr<ExtensionDownloader::ExtensionFetch> fetch(
@@ -1502,7 +1505,6 @@ class ExtensionUpdaterTest : public testing::Test {
     ExtensionService* extension_service =
         ExtensionSystem::Get(&profile)->extension_service();
     extension_service->set_extensions_enabled(true);
-    extension_service->set_show_extensions_prompts(false);
 
     scoped_refptr<CrxInstaller> fake_crx1(
         CrxInstaller::CreateSilent(extension_service));
@@ -1708,7 +1710,7 @@ class ExtensionUpdaterTest : public testing::Test {
     std::map<std::string, ParamsMap> url1_ping_data =
         GetPingDataFromURL(url1_fetch_url);
     ParamsMap url1_params = ParamsMap();
-    if (!url1_ping_data.empty() && ContainsKey(url1_ping_data, id))
+    if (!url1_ping_data.empty() && base::ContainsKey(url1_ping_data, id))
       url1_params = url1_ping_data[id];
 
     // First make sure the non-google query had no ping parameter.
@@ -1717,14 +1719,14 @@ class ExtensionUpdaterTest : public testing::Test {
     // Now make sure the google query had the correct ping parameter.
     bool did_rollcall = false;
     if (rollcall_ping_days != 0) {
-      ASSERT_TRUE(ContainsKey(url1_params, "r"));
+      ASSERT_TRUE(base::ContainsKey(url1_params, "r"));
       ASSERT_EQ(1u, url1_params["r"].size());
       EXPECT_EQ(base::IntToString(rollcall_ping_days),
                 *url1_params["r"].begin());
       did_rollcall = true;
     }
     if (active_bit && active_ping_days != 0 && did_rollcall) {
-      ASSERT_TRUE(ContainsKey(url1_params, "a"));
+      ASSERT_TRUE(base::ContainsKey(url1_params, "a"));
       ASSERT_EQ(1u, url1_params["a"].size());
       EXPECT_EQ(base::IntToString(active_ping_days),
                 *url1_params["a"].begin());
@@ -1843,14 +1845,14 @@ class ExtensionUpdaterTest : public testing::Test {
     // Make sure that all the enabled extensions have "e=1" in their ping
     // parameter.
     for (const auto& ext : enabled_extensions) {
-      ASSERT_TRUE(ContainsKey(all_pings, ext->id()));
+      ASSERT_TRUE(base::ContainsKey(all_pings, ext->id()));
       ParamsMap& ping = all_pings[ext->id()];
-      EXPECT_FALSE(ContainsKey(ping, "dr"));
-      ASSERT_TRUE(ContainsKey(ping, "e")) << url;
+      EXPECT_FALSE(base::ContainsKey(ping, "dr"));
+      ASSERT_TRUE(base::ContainsKey(ping, "e")) << url;
       std::set<std::string> e = ping["e"];
       ASSERT_EQ(1u, e.size()) << url;
       EXPECT_EQ(std::string("1"), *e.begin()) << url;
-      EXPECT_FALSE(ContainsKey(ping, "dr"));
+      EXPECT_FALSE(base::ContainsKey(ping, "dr"));
     }
 
     // Make sure that all the disable extensions have the appropriate
@@ -1860,18 +1862,18 @@ class ExtensionUpdaterTest : public testing::Test {
     for (size_t i = 0; i < disabled.size(); i++) {
       scoped_refptr<const Extension>& ext = disabled_extensions[i];
       int disable_reasons = disabled[i];
-      ASSERT_TRUE(ContainsKey(all_pings, ext->id())) << url;
+      ASSERT_TRUE(base::ContainsKey(all_pings, ext->id())) << url;
       ParamsMap& ping = all_pings[ext->id()];
 
-      ASSERT_TRUE(ContainsKey(ping, "e")) << url;
+      ASSERT_TRUE(base::ContainsKey(ping, "e")) << url;
       std::set<std::string> e = ping["e"];
       ASSERT_EQ(1u, e.size()) << url;
       EXPECT_EQ(std::string("0"), *e.begin()) << url;
 
       if (disable_reasons == 0) {
-        EXPECT_FALSE(ContainsKey(ping, "dr"));
+        EXPECT_FALSE(base::ContainsKey(ping, "dr"));
       } else {
-        ASSERT_TRUE(ContainsKey(ping, "dr"));
+        ASSERT_TRUE(base::ContainsKey(ping, "dr"));
         int found_reasons = 0;
         for (const auto& reason_string : ping["dr"]) {
           int reason = 0;
@@ -2130,22 +2132,22 @@ TEST_F(ExtensionUpdaterTest, TestManifestFetchesBuilderAddExtension) {
   // the delegate.
   std::string id = crx_file::id_util::GenerateId("foo");
   EXPECT_CALL(delegate, GetPingDataForExtension(id, _)).WillOnce(Return(false));
-  EXPECT_TRUE(
-      downloader->AddPendingExtension(id, GURL("http://example.com/update"),
-                                      0));
+  EXPECT_TRUE(downloader->AddPendingExtension(
+      id, GURL("http://example.com/update"), false, 0));
   downloader->StartAllPending(NULL);
   Mock::VerifyAndClearExpectations(&delegate);
   EXPECT_EQ(1u, ManifestFetchersCount(downloader.get()));
 
   // Extensions with invalid update URLs should be rejected.
   id = crx_file::id_util::GenerateId("foo2");
-  EXPECT_FALSE(
-      downloader->AddPendingExtension(id, GURL("http:google.com:foo"), 0));
+  EXPECT_FALSE(downloader->AddPendingExtension(id, GURL("http:google.com:foo"),
+                                               false, 0));
   downloader->StartAllPending(NULL);
   EXPECT_EQ(1u, ManifestFetchersCount(downloader.get()));
 
   // Extensions with empty IDs should be rejected.
-  EXPECT_FALSE(downloader->AddPendingExtension(std::string(), GURL(), 0));
+  EXPECT_FALSE(
+      downloader->AddPendingExtension(std::string(), GURL(), false, 0));
   downloader->StartAllPending(NULL);
   EXPECT_EQ(1u, ManifestFetchersCount(downloader.get()));
 
@@ -2161,7 +2163,7 @@ TEST_F(ExtensionUpdaterTest, TestManifestFetchesBuilderAddExtension) {
   // filled in.
   id = crx_file::id_util::GenerateId("foo3");
   EXPECT_CALL(delegate, GetPingDataForExtension(id, _)).WillOnce(Return(false));
-  EXPECT_TRUE(downloader->AddPendingExtension(id, GURL(), 0));
+  EXPECT_TRUE(downloader->AddPendingExtension(id, GURL(), false, 0));
   downloader->StartAllPending(NULL);
   EXPECT_EQ(1u, ManifestFetchersCount(downloader.get()));
 
@@ -2256,6 +2258,22 @@ TEST_F(ExtensionUpdaterTest, TestUninstallWhileUpdateCheck) {
 
   service.set_extensions(ExtensionList(), ExtensionList());
   ASSERT_FALSE(service.GetExtensionById(id, false));
+}
+
+// Tests that we don't get a DCHECK failure when the next check time saved in
+// prefs happens to be within one second of startup.
+TEST_F(ExtensionUpdaterTest, TestPersistedNextCheckTime) {
+  base::Time next_check_time =
+      base::Time::Now() + base::TimeDelta::FromMilliseconds(500);
+  prefs_->pref_service()->SetInt64(pref_names::kNextUpdateCheck,
+                                   next_check_time.ToInternalValue());
+  ServiceForManifestTests service(prefs_.get());
+  ExtensionUpdater updater(&service, service.extension_prefs(),
+                           service.pref_service(), service.profile(),
+                           kDefaultUpdateFrequencySeconds, nullptr,
+                           service.GetDownloaderFactory());
+  updater.Start();
+  updater.Stop();
 }
 
 // TODO(asargent) - (http://crbug.com/12780) add tests for:

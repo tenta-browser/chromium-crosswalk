@@ -15,6 +15,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/sequenced_worker_pool.h"
 #include "chrome/browser/install_verification/win/module_info.h"
 #include "chrome/browser/install_verification/win/module_verification_common.h"
 #include "chrome/browser/safe_browsing/incident_reporting/incident_receiver.h"
@@ -80,8 +81,9 @@ void ReportIncidentsForSuspiciousModules(
     }
 
     // Send the incident to the reporting service.
-    incident_receiver->AddIncidentForProcess(base::WrapUnique(
-        new SuspiciousModuleIncident(std::move(suspicious_module))));
+    incident_receiver->AddIncidentForProcess(
+        base::MakeUnique<SuspiciousModuleIncident>(
+            std::move(suspicious_module)));
   }
 }
 

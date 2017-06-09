@@ -16,7 +16,6 @@
 #include "base/time/time.h"
 #include "cc/debug/micro_benchmark_controller.h"
 #include "cc/playback/recording_source.h"
-#include "ui/gfx/geometry/rect.h"
 
 namespace base {
 class DictionaryValue;
@@ -25,7 +24,7 @@ class DictionaryValue;
 namespace cc {
 
 class LayerTreeHost;
-class Layer;
+
 class RasterizeAndRecordBenchmark : public MicroBenchmark {
  public:
   explicit RasterizeAndRecordBenchmark(
@@ -34,7 +33,7 @@ class RasterizeAndRecordBenchmark : public MicroBenchmark {
   ~RasterizeAndRecordBenchmark() override;
 
   // Implements MicroBenchmark interface.
-  void DidUpdateLayers(LayerTreeHost* host) override;
+  void DidUpdateLayers(LayerTreeHost* layer_tree_host) override;
   void RunOnLayer(PictureLayer* layer) override;
 
   std::unique_ptr<MicroBenchmarkImpl> CreateBenchmarkImpl(
@@ -60,7 +59,7 @@ class RasterizeAndRecordBenchmark : public MicroBenchmark {
   // The following is used in DCHECKs.
   bool main_thread_benchmark_done_;
 
-  LayerTreeHost* host_;
+  LayerTreeHost* layer_tree_host_;
 
   base::WeakPtrFactory<RasterizeAndRecordBenchmark> weak_ptr_factory_;
 };

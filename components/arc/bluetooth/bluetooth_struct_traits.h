@@ -2,11 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef COMPONENTS_ARC_BLUETOOTH_BLUETOOTH_TYPE_TRAITS_H_
-#define COMPONENTS_ARC_BLUETOOTH_BLUETOOTH_TYPE_TRAITS_H_
+#ifndef COMPONENTS_ARC_BLUETOOTH_BLUETOOTH_STRUCT_TRAITS_H_
+#define COMPONENTS_ARC_BLUETOOTH_BLUETOOTH_STRUCT_TRAITS_H_
+
+#include <memory>
+#include <vector>
 
 #include "components/arc/common/bluetooth.mojom.h"
+#include "device/bluetooth/bluetooth_advertisement.h"
 #include "device/bluetooth/bluetooth_common.h"
+#include "device/bluetooth/bluetooth_uuid.h"
 #include "device/bluetooth/bluez/bluetooth_service_attribute_value_bluez.h"
 
 namespace mojo {
@@ -93,6 +98,40 @@ struct EnumTraits<arc::mojom::BluetoothSdpAttributeType,
   }
 };
 
+template <>
+struct StructTraits<arc::mojom::BluetoothUUIDDataView, device::BluetoothUUID> {
+  static std::vector<uint8_t> uuid(const device::BluetoothUUID& input);
+  static bool Read(arc::mojom::BluetoothUUIDDataView data,
+                   device::BluetoothUUID* output);
+};
+
+template <>
+struct StructTraits<arc::mojom::BluetoothAdvertisementDataView,
+                    std::unique_ptr<device::BluetoothAdvertisement::Data>> {
+  static bool Read(
+      arc::mojom::BluetoothAdvertisementDataView advertisement,
+      std::unique_ptr<device::BluetoothAdvertisement::Data>* output);
+
+  // Dummy methods.
+  static arc::mojom::BluetoothAdvertisementType type(
+      const std::unique_ptr<device::BluetoothAdvertisement::Data>& input) {
+    NOTREACHED();
+    return arc::mojom::BluetoothAdvertisementType::ADV_TYPE_NON_CONNECTABLE;
+  }
+
+  static bool include_tx_power(
+      const std::unique_ptr<device::BluetoothAdvertisement::Data>& input) {
+    NOTREACHED();
+    return false;
+  }
+
+  static std::vector<arc::mojom::BluetoothAdvertisingDataPtr> data(
+      const std::unique_ptr<device::BluetoothAdvertisement::Data>& input) {
+    NOTREACHED();
+    return std::vector<arc::mojom::BluetoothAdvertisingDataPtr>();
+  }
+};
+
 }  // namespace mojo
 
-#endif  // COMPONENTS_ARC_BLUETOOTH_BLUETOOTH_TYPE_CONVERTERS_H_
+#endif  // COMPONENTS_ARC_BLUETOOTH_BLUETOOTH_STRUCT_TRAITS_H_

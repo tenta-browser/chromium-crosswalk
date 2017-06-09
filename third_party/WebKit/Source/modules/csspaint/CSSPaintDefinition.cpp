@@ -21,86 +21,126 @@
 
 namespace blink {
 
-CSSPaintDefinition* CSSPaintDefinition::create(ScriptState* scriptState, v8::Local<v8::Function> constructor, v8::Local<v8::Function> paint, Vector<CSSPropertyID>& nativeInvalidationProperties, Vector<AtomicString>& customInvalidationProperties)
-{
-    return new CSSPaintDefinition(scriptState, constructor, paint, nativeInvalidationProperties, customInvalidationProperties);
+namespace {
+
+IntSize getSpecifiedSize(const IntSize& size, float zoom) {
+  float unZoomFactor = 1 / zoom;
+  auto unZoomFn = [unZoomFactor](int a) -> int {
+    return round(a * unZoomFactor);
+  };
+  return IntSize(unZoomFn(size.width()), unZoomFn(size.height()));
 }
 
-CSSPaintDefinition::CSSPaintDefinition(ScriptState* scriptState, v8::Local<v8::Function> constructor, v8::Local<v8::Function> paint, Vector<CSSPropertyID>& nativeInvalidationProperties, Vector<AtomicString>& customInvalidationProperties)
-    : m_scriptState(scriptState)
-    , m_constructor(scriptState->isolate(), constructor)
-    , m_paint(scriptState->isolate(), paint)
-{
-    m_nativeInvalidationProperties.swap(nativeInvalidationProperties);
-    m_customInvalidationProperties.swap(customInvalidationProperties);
+}  // namespace
+
+CSSPaintDefinition* CSSPaintDefinition::create(
+    ScriptState* scriptState,
+    v8::Local<v8::Function> constructor,
+    v8::Local<v8::Function> paint,
+    Vector<CSSPropertyID>& nativeInvalidationProperties,
+    Vector<AtomicString>& customInvalidationProperties,
+    Vector<CSSSyntaxDescriptor>& inputArgumentTypes,
+    bool hasAlpha) {
+  return new CSSPaintDefinition(
+      scriptState, constructor, paint, nativeInvalidationProperties,
+      customInvalidationProperties, inputArgumentTypes, hasAlpha);
 }
 
-CSSPaintDefinition::~CSSPaintDefinition()
-{
+CSSPaintDefinition::CSSPaintDefinition(
+    ScriptState* scriptState,
+    v8::Local<v8::Function> constructor,
+    v8::Local<v8::Function> paint,
+    Vector<CSSPropertyID>& nativeInvalidationProperties,
+    Vector<AtomicString>& customInvalidationProperties,
+    Vector<CSSSyntaxDescriptor>& inputArgumentTypes,
+    bool hasAlpha)
+    : m_scriptState(scriptState),
+      m_constructor(scriptState->isolate(), constructor),
+      m_paint(scriptState->isolate(), paint),
+      m_didCallConstructor(false),
+      m_hasAlpha(hasAlpha) {
+  m_nativeInvalidationProperties.swap(nativeInvalidationProperties);
+  m_customInvalidationProperties.swap(customInvalidationProperties);
+  m_inputArgumentTypes.swap(inputArgumentTypes);
 }
 
-PassRefPtr<Image> CSSPaintDefinition::paint(const LayoutObject& layoutObject, const IntSize& size)
-{
-    ScriptState::Scope scope(m_scriptState.get());
+CSSPaintDefinition::~CSSPaintDefinition() {}
 
-    maybeCreatePaintInstance();
+PassRefPtr<Image> CSSPaintDefinition::paint(
+    const LayoutObject& layoutObject,
+    const IntSize& size,
+    float zoom,
+    const CSSStyleValueVector* paintArguments) {
+  DCHECK(paintArguments);
 
-    v8::Isolate* isolate = m_scriptState->isolate();
-    v8::Local<v8::Object> instance = m_instance.newLocal(isolate);
+  const IntSize specifiedSize = getSpecifiedSize(size, zoom);
 
-    // We may have failed to create an instance class, in which case produce an
-    // invalid image.
-    if (isUndefinedOrNull(instance))
-        return nullptr;
+  ScriptState::Scope scope(m_scriptState.get());
 
-    DCHECK(layoutObject.node());
+  maybeCreatePaintInstance();
 
-    PaintRenderingContext2D* renderingContext = PaintRenderingContext2D::create(
-        ImageBuffer::create(wrapUnique(new RecordingImageBufferSurface(size))));
-    PaintSize* paintSize = PaintSize::create(size);
-    StylePropertyMap* styleMap = FilteredComputedStylePropertyMap::create(
-        CSSComputedStyleDeclaration::create(layoutObject.node()),
-        m_nativeInvalidationProperties, m_customInvalidationProperties);
+  v8::Isolate* isolate = m_scriptState->isolate();
+  v8::Local<v8::Object> instance = m_instance.newLocal(isolate);
 
-    v8::Local<v8::Value> argv[] = {
-        toV8(renderingContext, m_scriptState->context()->Global(), isolate),
-        toV8(paintSize, m_scriptState->context()->Global(), isolate),
-        toV8(styleMap, m_scriptState->context()->Global(), isolate)
-    };
+  // We may have failed to create an instance class, in which case produce an
+  // invalid image.
+  if (isUndefinedOrNull(instance))
+    return nullptr;
 
-    v8::Local<v8::Function> paint = m_paint.newLocal(isolate);
+  DCHECK(layoutObject.node());
 
-    v8::TryCatch block(isolate);
-    block.SetVerbose(true);
+  PaintRenderingContext2D* renderingContext = PaintRenderingContext2D::create(
+      ImageBuffer::create(WTF::wrapUnique(
+          new RecordingImageBufferSurface(size, nullptr /* fallbackFactory */,
+                                          m_hasAlpha ? NonOpaque : Opaque))),
+      m_hasAlpha, zoom);
+  PaintSize* paintSize = PaintSize::create(specifiedSize);
+  StylePropertyMap* styleMap = FilteredComputedStylePropertyMap::create(
+      CSSComputedStyleDeclaration::create(layoutObject.node()),
+      m_nativeInvalidationProperties, m_customInvalidationProperties,
+      layoutObject.node());
 
-    V8ScriptRunner::callFunction(paint, m_scriptState->getExecutionContext(), instance, 3, argv, isolate);
+  v8::Local<v8::Value> argv[] = {
+      ToV8(renderingContext, m_scriptState->context()->Global(), isolate),
+      ToV8(paintSize, m_scriptState->context()->Global(), isolate),
+      ToV8(styleMap, m_scriptState->context()->Global(), isolate),
+      ToV8(*paintArguments, m_scriptState->context()->Global(), isolate)};
 
-    // The paint function may have produced an error, in which case produce an
-    // invalid image.
-    if (block.HasCaught()) {
-        return nullptr;
-    }
+  v8::Local<v8::Function> paint = m_paint.newLocal(isolate);
 
-    return PaintGeneratedImage::create(renderingContext->imageBuffer()->getPicture(), size);
+  v8::TryCatch block(isolate);
+  block.SetVerbose(true);
+
+  V8ScriptRunner::callFunction(paint, m_scriptState->getExecutionContext(),
+                               instance, WTF_ARRAY_LENGTH(argv), argv, isolate);
+
+  // The paint function may have produced an error, in which case produce an
+  // invalid image.
+  if (block.HasCaught()) {
+    return nullptr;
+  }
+
+  return PaintGeneratedImage::create(
+      renderingContext->imageBuffer()->getRecord(), specifiedSize);
 }
 
-void CSSPaintDefinition::maybeCreatePaintInstance()
-{
-    if (m_didCallConstructor)
-        return;
+void CSSPaintDefinition::maybeCreatePaintInstance() {
+  if (m_didCallConstructor)
+    return;
 
-    DCHECK(m_instance.isEmpty());
+  DCHECK(m_instance.isEmpty());
 
-    v8::Isolate* isolate = m_scriptState->isolate();
-    v8::Local<v8::Function> constructor = m_constructor.newLocal(isolate);
-    DCHECK(!isUndefinedOrNull(constructor));
+  v8::Isolate* isolate = m_scriptState->isolate();
+  v8::Local<v8::Function> constructor = m_constructor.newLocal(isolate);
+  DCHECK(!isUndefinedOrNull(constructor));
 
-    v8::Local<v8::Object> paintInstance;
-    if (V8ObjectConstructor::newInstance(isolate, constructor).ToLocal(&paintInstance)) {
-        m_instance.set(isolate, paintInstance);
-    }
+  v8::Local<v8::Object> paintInstance;
+  if (V8ObjectConstructor::newInstance(isolate, constructor)
+          .ToLocal(&paintInstance)) {
+    m_instance.set(isolate, paintInstance);
+  }
 
-    m_didCallConstructor = true;
+  m_didCallConstructor = true;
 }
 
-} // namespace blink
+}  // namespace blink

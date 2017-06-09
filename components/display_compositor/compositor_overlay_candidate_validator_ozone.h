@@ -7,6 +7,7 @@
 
 #include <memory>
 
+#include "base/callback.h"
 #include "base/macros.h"
 #include "components/display_compositor/compositor_overlay_candidate_validator.h"
 #include "components/display_compositor/display_compositor_export.h"
@@ -21,8 +22,9 @@ namespace display_compositor {
 class DISPLAY_COMPOSITOR_EXPORT CompositorOverlayCandidateValidatorOzone
     : public CompositorOverlayCandidateValidator {
  public:
-  explicit CompositorOverlayCandidateValidatorOzone(
-      std::unique_ptr<ui::OverlayCandidatesOzone> overlay_candidates);
+  CompositorOverlayCandidateValidatorOzone(
+      std::unique_ptr<ui::OverlayCandidatesOzone> overlay_candidates,
+      std::string strategies_string);
   ~CompositorOverlayCandidateValidatorOzone() override;
 
   // cc::OverlayCandidateValidator implementation.
@@ -35,6 +37,13 @@ class DISPLAY_COMPOSITOR_EXPORT CompositorOverlayCandidateValidatorOzone
 
  private:
   std::unique_ptr<ui::OverlayCandidatesOzone> overlay_candidates_;
+  // Callback declaration to allocate a new OverlayProcessor::Strategy.
+  using StrategyInstantiator =
+      base::Callback<std::unique_ptr<cc::OverlayProcessor::Strategy>(
+          CompositorOverlayCandidateValidatorOzone*)>;
+  // List callbacks used to instantiate OverlayProcessor::Strategy
+  // as defined by |strategies_string| paramter in the constructor.
+  std::vector<StrategyInstantiator> strategies_instantiators_;
   bool software_mirror_active_;
 
   DISALLOW_COPY_AND_ASSIGN(CompositorOverlayCandidateValidatorOzone);

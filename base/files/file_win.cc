@@ -8,7 +8,7 @@
 #include <stdint.h>
 
 #include "base/logging.h"
-#include "base/metrics/sparse_histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/threading/thread_restrictions.h"
 
 namespace base {
@@ -249,7 +249,7 @@ File::Error File::Unlock() {
   return FILE_OK;
 }
 
-File File::Duplicate() {
+File File::Duplicate() const {
   if (!IsValid())
     return File();
 
@@ -271,6 +271,12 @@ File File::Duplicate() {
   if (async())
     other.async_ = true;
   return other;
+}
+
+bool File::DeleteOnClose(bool delete_on_close) {
+  FILE_DISPOSITION_INFO disposition = {delete_on_close ? TRUE : FALSE};
+  return ::SetFileInformationByHandle(GetPlatformFile(), FileDispositionInfo,
+                                      &disposition, sizeof(disposition)) != 0;
 }
 
 // Static.
@@ -359,6 +365,8 @@ void File::DoInitialize(const FilePath& path, uint32_t flags) {
     access |= FILE_WRITE_ATTRIBUTES;
   if (flags & FLAG_EXECUTE)
     access |= GENERIC_EXECUTE;
+  if (flags & FLAG_CAN_DELETE_ON_CLOSE)
+    access |= DELETE;
 
   DWORD sharing = (flags & FLAG_EXCLUSIVE_READ) ? 0 : FILE_SHARE_READ;
   if (!(flags & FLAG_EXCLUSIVE_WRITE))
@@ -396,9 +404,10 @@ void File::DoInitialize(const FilePath& path, uint32_t flags) {
   }
 }
 
-bool File::DoFlush() {
+bool File::Flush() {
   ThreadRestrictions::AssertIOAllowed();
   DCHECK(IsValid());
+  SCOPED_FILE_TRACE("Flush");
   return ::FlushFileBuffers(file_.Get()) != FALSE;
 }
 

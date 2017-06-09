@@ -20,12 +20,6 @@
 -->
 <grit-part>
   <!-- Polymer 1.0 -->
-  <structure name="IDR_POLYMER_1_0_APP_LAYOUT_APP_DRAWER_APP_DRAWER_EXTRACTED_JS"
-             file="../../../third_party/polymer/v1_0/components-chromium/app-layout/app-drawer/app-drawer-extracted.js"
-             type="chrome_html" />
-  <structure name="IDR_POLYMER_1_0_APP_LAYOUT_APP_DRAWER_APP_DRAWER_HTML"
-             file="../../../third_party/polymer/v1_0/components-chromium/app-layout/app-drawer/app-drawer.html"
-             type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_FONT_ROBOTO_ROBOTO_HTML"
              file="../../../third_party/polymer/v1_0/components-chromium/font-roboto/roboto.html"
              type="chrome_html" />
@@ -170,6 +164,18 @@
   <structure name="IDR_POLYMER_1_0_IRON_LIST_IRON_LIST_HTML"
              file="../../../third_party/polymer/v1_0/components-chromium/iron-list/iron-list.html"
              type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_IRON_LOCATION_IRON_LOCATION_EXTRACTED_JS"
+             file="../../../third_party/polymer/v1_0/components-chromium/iron-location/iron-location-extracted.js"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_IRON_LOCATION_IRON_LOCATION_HTML"
+             file="../../../third_party/polymer/v1_0/components-chromium/iron-location/iron-location.html"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_IRON_LOCATION_IRON_QUERY_PARAMS_EXTRACTED_JS"
+             file="../../../third_party/polymer/v1_0/components-chromium/iron-location/iron-query-params-extracted.js"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_IRON_LOCATION_IRON_QUERY_PARAMS_HTML"
+             file="../../../third_party/polymer/v1_0/components-chromium/iron-location/iron-query-params.html"
+             type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_IRON_MEDIA_QUERY_IRON_MEDIA_QUERY_EXTRACTED_JS"
              file="../../../third_party/polymer/v1_0/components-chromium/iron-media-query/iron-media-query-extracted.js"
              type="chrome_html" />
@@ -193,6 +199,12 @@
              type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_IRON_META_IRON_META_HTML"
              file="../../../third_party/polymer/v1_0/components-chromium/iron-meta/iron-meta.html"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_IRON_OVERLAY_BEHAVIOR_IRON_FOCUSABLES_HELPER_EXTRACTED_JS"
+             file="../../../third_party/polymer/v1_0/components-chromium/iron-overlay-behavior/iron-focusables-helper-extracted.js"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_IRON_OVERLAY_BEHAVIOR_IRON_FOCUSABLES_HELPER_HTML"
+             file="../../../third_party/polymer/v1_0/components-chromium/iron-overlay-behavior/iron-focusables-helper.html"
              type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_IRON_OVERLAY_BEHAVIOR_IRON_OVERLAY_BACKDROP_EXTRACTED_JS"
              file="../../../third_party/polymer/v1_0/components-chromium/iron-overlay-behavior/iron-overlay-backdrop-extracted.js"
@@ -503,14 +515,14 @@
   <structure name="IDR_POLYMER_1_0_PAPER_ICON_BUTTON_PAPER_ICON_BUTTON_EXTRACTED_JS"
              file="../../../third_party/polymer/v1_0/components-chromium/paper-icon-button/paper-icon-button-extracted.js"
              type="chrome_html" />
-  <structure name="IDR_POLYMER_1_0_PAPER_ICON_BUTTON_PAPER_ICON_BUTTON_HTML"
-             file="../../../third_party/polymer/v1_0/components-chromium/paper-icon-button/paper-icon-button.html"
-             type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_PAPER_ICON_BUTTON_PAPER_ICON_BUTTON_LIGHT_EXTRACTED_JS"
              file="../../../third_party/polymer/v1_0/components-chromium/paper-icon-button/paper-icon-button-light-extracted.js"
              type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_PAPER_ICON_BUTTON_PAPER_ICON_BUTTON_LIGHT_HTML"
              file="../../../third_party/polymer/v1_0/components-chromium/paper-icon-button/paper-icon-button-light.html"
+             type="chrome_html" />
+  <structure name="IDR_POLYMER_1_0_PAPER_ICON_BUTTON_PAPER_ICON_BUTTON_HTML"
+             file="../../../third_party/polymer/v1_0/components-chromium/paper-icon-button/paper-icon-button.html"
              type="chrome_html" />
   <structure name="IDR_POLYMER_1_0_PAPER_INPUT_PAPER_INPUT_ADDON_BEHAVIOR_EXTRACTED_JS"
              file="../../../third_party/polymer/v1_0/components-chromium/paper-input/paper-input-addon-behavior-extracted.js"

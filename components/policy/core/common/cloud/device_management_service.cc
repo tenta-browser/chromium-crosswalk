@@ -10,6 +10,7 @@
 #include "base/compiler_specific.h"
 #include "base/location.h"
 #include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/data_use_measurement/core/data_use_user_data.h"
@@ -53,6 +54,7 @@ const int kInternalServerError = 500;
 const int kServiceUnavailable = 503;
 const int kPolicyNotFound = 902;
 const int kDeprovisioned = 903;
+const int kArcDisabled = 904;
 
 // Delay after first unsuccessful upload attempt. After each additional failure,
 // the delay increases exponentially. Can be changed for testing to prevent
@@ -147,6 +149,12 @@ const char* JobTypeToRequestType(DeviceManagementRequestJob::JobType type) {
       return dm_protocol::kValueRequestGcmIdUpdate;
     case DeviceManagementRequestJob::TYPE_ANDROID_MANAGEMENT_CHECK:
       return dm_protocol::kValueRequestCheckAndroidManagement;
+    case DeviceManagementRequestJob::TYPE_CERT_BASED_REGISTRATION:
+      return dm_protocol::kValueRequestCertBasedRegister;
+    case DeviceManagementRequestJob::TYPE_ACTIVE_DIRECTORY_ENROLL_PLAY_USER:
+      return dm_protocol::kValueRequestActiveDirectoryEnrollPlayUser;
+    case DeviceManagementRequestJob::TYPE_ACTIVE_DIRECTORY_PLAY_ACTIVITY:
+      return dm_protocol::kValueRequestActiveDirectoryPlayActivity;
   }
   NOTREACHED() << "Invalid job type " << type;
   return "";
@@ -218,6 +226,9 @@ class DeviceManagementRequestJobImpl : public DeviceManagementRequestJob {
   // Number of times that this job has been retried due to connection errors.
   int retries_count_;
 
+  // The last error why we had to retry.
+  int last_error_ = 0;
+
   // The request context to use for this job.
   scoped_refptr<net::URLRequestContextGetter> request_context_;
 
@@ -225,6 +236,22 @@ class DeviceManagementRequestJobImpl : public DeviceManagementRequestJob {
   base::WeakPtrFactory<DeviceManagementRequestJobImpl> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(DeviceManagementRequestJobImpl);
+};
+
+// Used in the Enterprise.DMServerRequestSuccess histogram, shows how many
+// retries we had to do to execute the DeviceManagementRequestJob.
+enum DMServerRequestSuccess {
+  // No retries happened, the request succeeded for the first try.
+  REQUEST_NO_RETRY = 0,
+
+  // 1..kMaxRetries: number of retries
+
+  // The request failed (too many retries or non-retriable error).
+  REQUEST_FAILED = 10,
+  // The server responded with an error.
+  REQUEST_ERROR,
+
+  REQUEST_MAX
 };
 
 DeviceManagementRequestJobImpl::DeviceManagementRequestJobImpl(
@@ -253,6 +280,9 @@ void DeviceManagementRequestJobImpl::HandleResponse(
     int response_code,
     const std::string& data) {
   if (status.status() != net::URLRequestStatus::SUCCESS) {
+    UMA_HISTOGRAM_ENUMERATION("Enterprise.DMServerRequestSuccess",
+                              DMServerRequestSuccess::REQUEST_FAILED,
+                              DMServerRequestSuccess::REQUEST_MAX);
     LOG(WARNING) << "DMServer request failed, status: " << status.status()
                  << ", error: " << status.error();
     em::DeviceManagementResponse dummy_response;
@@ -260,8 +290,17 @@ void DeviceManagementRequestJobImpl::HandleResponse(
     return;
   }
 
-  if (response_code != kSuccess)
+  if (response_code != kSuccess) {
+    UMA_HISTOGRAM_ENUMERATION("Enterprise.DMServerRequestSuccess",
+                              DMServerRequestSuccess::REQUEST_ERROR,
+                              DMServerRequestSuccess::REQUEST_MAX);
     LOG(WARNING) << "DMServer sent an error response: " << response_code;
+  } else {
+    // Success with retries_count_ retries.
+    UMA_HISTOGRAM_ENUMERATION("Enterprise.DMServerRequestSuccess",
+                              retries_count_,
+                              DMServerRequestSuccess::REQUEST_MAX);
+  }
 
   switch (response_code) {
     case kSuccess: {
@@ -311,6 +350,9 @@ void DeviceManagementRequestJobImpl::HandleResponse(
     case kDeviceIdConflict:
       ReportError(DM_STATUS_SERVICE_DEVICE_ID_CONFLICT);
       return;
+    case kArcDisabled:
+      ReportError(DM_STATUS_SERVICE_ARC_DISABLED);
+      return;
     default:
       // Handle all unknown 5xx HTTP error codes as temporary and any other
       // unknown error as one that needs more time to recover.
@@ -326,10 +368,20 @@ GURL DeviceManagementRequestJobImpl::GetURL(
     const std::string& server_url) {
   std::string result(server_url);
   result += '?';
-  for (ParameterMap::const_iterator entry(query_params_.begin());
-       entry != query_params_.end();
-       ++entry) {
-    if (entry != query_params_.begin())
+  ParameterMap current_query_params(query_params_);
+  if (last_error_ == 0) {
+    // Not a retry.
+    current_query_params.push_back(
+        std::make_pair(dm_protocol::kParamRetry, "false"));
+  } else {
+    current_query_params.push_back(
+        std::make_pair(dm_protocol::kParamRetry, "true"));
+    current_query_params.push_back(std::make_pair(dm_protocol::kParamLastError,
+                                                  std::to_string(last_error_)));
+  }
+  for (ParameterMap::const_iterator entry(current_query_params.begin());
+       entry != current_query_params.end(); ++entry) {
+    if (entry != current_query_params.begin())
       result += '&';
     result += net::EscapeQueryParamValue(entry->first, true);
     result += '=';
@@ -360,6 +412,7 @@ void DeviceManagementRequestJobImpl::ConfigureRequest(
 
 DeviceManagementRequestJobImpl::RetryMethod
 DeviceManagementRequestJobImpl::ShouldRetry(const net::URLFetcher* fetcher) {
+  last_error_ = fetcher->GetStatus().error();
   if (FailedWithProxy(fetcher) && !bypass_proxy_) {
     // Retry the job immediately if it failed due to a broken proxy, by
     // bypassing the proxy on the next try.
@@ -425,6 +478,11 @@ void DeviceManagementRequestJob::SetDMToken(const std::string& dm_token) {
 
 void DeviceManagementRequestJob::SetClientID(const std::string& client_id) {
   AddParameter(dm_protocol::kParamDeviceID, client_id);
+}
+
+void DeviceManagementRequestJob::SetCritical(bool critical) {
+  if (critical)
+    AddParameter(dm_protocol::kParamCritical, "true");
 }
 
 em::DeviceManagementRequest* DeviceManagementRequestJob::GetRequest() {
@@ -528,10 +586,13 @@ DeviceManagementService::DeviceManagementService(
 void DeviceManagementService::StartJob(DeviceManagementRequestJobImpl* job) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  std::string server_url = GetServerUrl();
+  GURL url = job->GetURL(GetServerUrl());
+  DCHECK(url.is_valid()) << "Maybe invalid --device-management-url was passed?";
+
   net::URLFetcher* fetcher =
-      net::URLFetcher::Create(kURLFetcherID, job->GetURL(server_url),
-                              net::URLFetcher::POST, this).release();
+      net::URLFetcher::Create(kURLFetcherID, std::move(url),
+                              net::URLFetcher::POST, this)
+          .release();
   data_use_measurement::DataUseUserData::AttachToFetcher(
       fetcher, data_use_measurement::DataUseUserData::POLICY);
   job->ConfigureRequest(fetcher);

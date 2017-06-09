@@ -14,7 +14,7 @@ GEN_INCLUDE(
 /**
  * @constructor
  * @extends {PolymerTest}
-*/
+ */
 function SettingsPageBrowserTest() {}
 
 SettingsPageBrowserTest.prototype = {
@@ -41,19 +41,32 @@ SettingsPageBrowserTest.prototype = {
   },
 
   /**
-   * @param {string} type The settings page type, e.g. 'advanced' or 'basic'.
+   * Toggles the Advanced sections.
+   */
+  toggleAdvanced: function() {
+    var settingsMain = document.querySelector('* /deep/ settings-main');
+    assert(!!settingsMain);
+    settingsMain.advancedToggleExpanded = !settingsMain.advancedToggleExpanded;
+    Polymer.dom.flush();
+  },
+
+  /**
+   * @param {string} type The settings page type, e.g. 'about' or 'basic'.
    * @return {!PolymerElement} The PolymerElement for the page.
    */
   getPage: function(type) {
-    var settings = document.querySelector('cr-settings');
-    assertTrue(!!settings);
-    var settingsUi = settings.$$('settings-ui');
+    var settingsUi = document.querySelector('settings-ui');
     assertTrue(!!settingsUi);
     var settingsMain = settingsUi.$$('settings-main');
     assertTrue(!!settingsMain);
     var pageType = 'settings-' + type + '-page';
     var page = settingsMain.$$(pageType);
     assertTrue(!!page);
+    var idleRender = page.$$('template[is=settings-idle-render]');
+    if (idleRender) {
+      idleRender.get();
+      Polymer.dom.flush();
+    }
     return page;
   },
 
@@ -74,33 +87,6 @@ SettingsPageBrowserTest.prototype = {
     return undefined;
   },
 
-  /** @return {!SettingsRouterElement} The <settings-router> for the page. */
-  getRouter: function() {
-    var router = document.querySelector('cr-settings').$$('settings-ui')
-        .$$('settings-router');
-    assert(!!router);
-    return router;
-  },
-
-  /**
-   * @return {boolean} True if the router's state is a root page, e.g. Basic.
-   */
-  isAtRoot: function() {
-    var router = this.getRouter();
-    return router.section == '' && router.subpage.length == 0;
-  },
-
-  /** Navigates to the current root page, e.g. Basic. */
-  backToRoot: function() {
-    var router = document.querySelector('cr-settings').$$('settings-ui')
-        .$$('settings-router');
-    router.currentRoute = {
-      page: router.currentRoute.page,
-      section: '',
-      subpage: [],
-    };
-  },
-
   /**
    * Verifies the section has a visible #main element and that any possible
    * sub-pages are hidden.
@@ -119,15 +105,15 @@ SettingsPageBrowserTest.prototype = {
 
     // The section's main child should be stamped and visible.
     var main = stampedChildren.filter(function(element) {
-      return element.id == 'main';
+      return element.getAttribute('route-path') == 'default';
     });
-    assertEquals(main.length, 1, '#main not found for section ' +
+    assertEquals(main.length, 1, 'default card not found for section ' +
         section.section);
     assertGT(main[0].offsetHeight, 0);
 
     // Any other stamped subpages should not be visible.
     var subpages = stampedChildren.filter(function(element) {
-      return element.id != 'main';
+      return element.getAttribute('route-path') != 'default';
     });
     for (var subpage of subpages) {
       assertEquals(subpage.offsetHeight, 0, 'Expected subpage #' + subpage.id +

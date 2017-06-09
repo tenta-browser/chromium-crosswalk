@@ -13,7 +13,7 @@ function populateConsoleWithMessages()
 
 function test()
 {
-    var consoleView = WebInspector.ConsoleView.instance();
+    var consoleView = Console.ConsoleView.instance();
     var viewport = consoleView._viewport;
     const maximumViewportMessagesCount = 150;
     InspectorTest.runTestSuite([
@@ -29,7 +29,7 @@ function test()
             viewport.invalidate();
             var viewportMessagesCount = viewport._lastVisibleIndex - viewport._firstVisibleIndex;
             if (viewportMessagesCount > maximumViewportMessagesCount) {
-                InspectorTest.addResult(String.sprintf("Test cannot be run because viewport could fit %d messages which is more then maxiumum of %d.", viewportMessagesCount, maximumViewportMessagesCount));
+                InspectorTest.addResult(String.sprintf("Test cannot be run because viewport could fit %d messages which is more than maximum of %d.", viewportMessagesCount, maximumViewportMessagesCount));
                 InspectorTest.completeTest();
                 return;
             }

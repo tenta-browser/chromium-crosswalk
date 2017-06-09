@@ -4,6 +4,7 @@
 
 #include "base/process/process.h"
 
+#include "base/debug/activity_tracker.h"
 #include "base/logging.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/process/kill.h"
@@ -81,6 +82,11 @@ bool Process::CanBackgroundProcesses() {
   return true;
 }
 
+// static
+void Process::TerminateCurrentProcessImmediately(int exit_code) {
+  ::TerminateProcess(GetCurrentProcess(), exit_code);
+}
+
 bool Process::IsValid() const {
   return process_.IsValid() || is_current();
 }
@@ -136,12 +142,15 @@ bool Process::Terminate(int exit_code, bool wait) const {
   return result;
 }
 
-bool Process::WaitForExit(int* exit_code) {
+bool Process::WaitForExit(int* exit_code) const {
   return WaitForExitWithTimeout(TimeDelta::FromMilliseconds(INFINITE),
                                 exit_code);
 }
 
-bool Process::WaitForExitWithTimeout(TimeDelta timeout, int* exit_code) {
+bool Process::WaitForExitWithTimeout(TimeDelta timeout, int* exit_code) const {
+  // Record the event that this thread is blocking upon (for hang diagnosis).
+  base::debug::ScopedProcessWaitActivity process_activity(this);
+
   // Limit timeout to INFINITE.
   DWORD timeout_ms = saturated_cast<DWORD>(timeout.InMilliseconds());
   if (::WaitForSingleObject(Handle(), timeout_ms) != WAIT_OBJECT_0)

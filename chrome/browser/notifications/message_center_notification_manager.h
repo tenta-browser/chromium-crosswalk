@@ -25,7 +25,6 @@
 #include "ui/message_center/message_center_tray_delegate.h"
 #include "ui/message_center/message_center_types.h"
 
-class MessageCenterSettingsController;
 class Notification;
 class Profile;
 class ProfileNotification;
@@ -80,12 +79,6 @@ class MessageCenterNotificationManager
       const std::string& delegate_id, Profile* profile);
 
  private:
-  // Adds |profile_notification| to an alternative provider extension or app.
-  void AddNotificationToAlternateProvider(
-      const Notification& notification,
-      Profile* profile,
-      const std::string& extension_id) const;
-
   FRIEND_TEST_ALL_PREFIXES(message_center::WebNotificationTrayTest,
                            ManuallyCloseMessageCenter);
 
@@ -93,21 +86,18 @@ class MessageCenterNotificationManager
   message_center::MessageCenter* message_center_;  // Weak, global.
 
   // Use a map by notification_id since this mapping is the most often used.
-  typedef std::map<std::string, ProfileNotification*> NotificationMap;
-  NotificationMap profile_notifications_;
+  std::map<std::string, std::unique_ptr<ProfileNotification>>
+      profile_notifications_;
 
   // Helpers that add/remove the notification from local map.
   // The local map takes ownership of profile_notification object.
-  void AddProfileNotification(ProfileNotification* profile_notification);
-  void RemoveProfileNotification(ProfileNotification* profile_notification);
+  void AddProfileNotification(
+      std::unique_ptr<ProfileNotification> profile_notification);
+  void RemoveProfileNotification(const std::string& notification_id);
 
   // Returns the ProfileNotification for the |id|, or NULL if no such
   // notification is found.
   ProfileNotification* FindProfileNotification(const std::string& id) const;
-
-  // Get the extension ID of the extension that the user chose to take over
-  // Chorme Notification Center.
-  std::string GetExtensionTakingOverNotifications(Profile* profile);
 
   std::unique_ptr<message_center::NotifierSettingsProvider> settings_provider_;
 

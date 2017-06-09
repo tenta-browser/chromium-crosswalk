@@ -3,8 +3,8 @@
 # found in the LICENSE file.
 
 import("//build/config/ui.gni")
-import("//mojo/public/mojo_application.gni")
-import("//mojo/public/mojo_application_manifest.gni")
+import("//services/service_manager/public/cpp/service.gni")
+import("//services/service_manager/public/service_manifest.gni")
 import("//mojo/public/tools/bindings/mojom.gni")
 import("//tools/grit/repack.gni")
 
@@ -19,15 +19,16 @@ source_set("lib") {
 
   deps = [
     "//base",
-    "//components/mus/public/cpp",
+    "//content/public/common:service_names",
     "//mash/public/interfaces",
     "//mojo/public/cpp/bindings",
     "//services/catalog/public/interfaces",
     "//services/navigation/public/cpp",
     "//services/navigation/public/interfaces",
-    "//services/shell/public/cpp",
-    "//services/shell/public/interfaces",
+    "//services/service_manager/public/cpp",
+    "//services/service_manager/public/interfaces",
     "//services/tracing/public/cpp",
+    "//ui/aura",
     "//ui/gfx/geometry/mojo",
     "//ui/native_theme",
     "//ui/views",
@@ -40,7 +41,7 @@ source_set("lib") {
   ]
 }
 
-mojo_native_application("browser") {
+service("browser") {
   testonly = true
   sources = [
     "main.cc",
@@ -48,19 +49,18 @@ mojo_native_application("browser") {
 
   deps = [
     ":lib",
-    "//services/shell/public/cpp",
+    "//services/service_manager/public/cpp",
     "//ui/views/mus:for_mojo_application",
   ]
 
   resources = [ "$root_out_dir/views_mus_resources.pak" ]
 
   data_deps = [
-    ":manifest",
-    "//components/mus",
+    "//services/ui",
   ]
 }
 
-mojo_application_manifest("manifest") {
-  application_name = "browser"
+service_manifest("manifest") {
+  name = "browser"
   source = "manifest.json"
 }

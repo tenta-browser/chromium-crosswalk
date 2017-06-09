@@ -47,7 +47,7 @@ void URLRequestContextGetter::OnDestruct() const {
       }
     }
   }
-  // If no IO message loop proxy was available, we will just leak memory.
+  // If no IO task runner was available, we will just leak memory.
   // This is also true if the IO thread is gone.
 }
 
@@ -57,8 +57,8 @@ void URLRequestContextGetter::NotifyContextShuttingDown() {
   // Once shutdown starts, this must always return NULL.
   DCHECK(!GetURLRequestContext());
 
-  FOR_EACH_OBSERVER(URLRequestContextGetterObserver, observer_list_,
-                    OnContextShuttingDown());
+  for (auto& observer : observer_list_)
+    observer.OnContextShuttingDown();
 }
 
 TrivialURLRequestContextGetter::TrivialURLRequestContextGetter(

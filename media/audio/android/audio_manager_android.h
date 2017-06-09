@@ -25,6 +25,8 @@ class MEDIA_EXPORT AudioManagerAndroid : public AudioManagerBase {
       scoped_refptr<base::SingleThreadTaskRunner> worker_task_runner,
       AudioLogFactory* audio_log_factory);
 
+  void InitializeIfNeeded();
+
   // Implementation of AudioManager.
   bool HasAudioOutputDevices() override;
   bool HasAudioInputDevices() override;
@@ -43,6 +45,7 @@ class MEDIA_EXPORT AudioManagerAndroid : public AudioManagerBase {
       const LogCallback& log_callback) override;
   void ReleaseOutputStream(AudioOutputStream* stream) override;
   void ReleaseInputStream(AudioInputStream* stream) override;
+  const char* GetName() override;
 
   // Implementation of AudioManagerBase.
   AudioOutputStream* MakeLinearOutputStream(
@@ -80,8 +83,7 @@ class MEDIA_EXPORT AudioManagerAndroid : public AudioManagerBase {
       const AudioParameters& input_params) override;
 
  private:
-  void InitializeOnAudioThread();
-
+  jobject GetJavaAudioManager();
   bool HasNoAudioInputStreams();
   void SetCommunicationAudioModeOn(bool on);
   bool SetAudioDevice(const std::string& device_id);

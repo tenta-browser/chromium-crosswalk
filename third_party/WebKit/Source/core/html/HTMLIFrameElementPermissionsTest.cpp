@@ -4,54 +4,55 @@
 
 #include "core/html/HTMLIFrameElementPermissions.h"
 
-#include "public/platform/modules/permissions/WebPermissionType.h"
+#include "public/platform/modules/permissions/permission.mojom-blink.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace blink {
 
-TEST(HTMLIFrameElementPermissionsTest, ParseDelegatedPermissionsValid)
-{
-    HTMLIFrameElementPermissions* permissions = HTMLIFrameElementPermissions::create(nullptr);
-    Vector<WebPermissionType> result;
-    String errorMessage;
+TEST(HTMLIFrameElementPermissionsTest, ParseDelegatedPermissionsValid) {
+  HTMLIFrameElementPermissions* permissions =
+      HTMLIFrameElementPermissions::create(nullptr);
+  Vector<mojom::blink::PermissionName> result;
+  String errorMessage;
 
-    permissions->setValue("midi");
-    result = permissions->parseDelegatedPermissions(errorMessage);
-    EXPECT_EQ(1u, result.size());
-    EXPECT_EQ(WebPermissionTypeMidiSysEx, result[0]);
+  permissions->setValue("midi");
+  result = permissions->parseDelegatedPermissions(errorMessage);
+  EXPECT_EQ(1u, result.size());
+  EXPECT_EQ(mojom::blink::PermissionName::MIDI, result[0]);
 
-    permissions->setValue("");
-    result = permissions->parseDelegatedPermissions(errorMessage);
-    EXPECT_EQ(0u, result.size());
+  permissions->setValue("");
+  result = permissions->parseDelegatedPermissions(errorMessage);
+  EXPECT_EQ(0u, result.size());
 
-    permissions->setValue("geolocation midi");
-    result = permissions->parseDelegatedPermissions(errorMessage);
-    EXPECT_EQ(2u, result.size());
-    EXPECT_EQ(WebPermissionTypeGeolocation, result[0]);
-    EXPECT_EQ(WebPermissionTypeMidiSysEx, result[1]);
+  permissions->setValue("geolocation midi");
+  result = permissions->parseDelegatedPermissions(errorMessage);
+  EXPECT_EQ(2u, result.size());
+  EXPECT_EQ(mojom::blink::PermissionName::GEOLOCATION, result[0]);
+  EXPECT_EQ(mojom::blink::PermissionName::MIDI, result[1]);
 }
 
-TEST(HTMLIFrameElementPermissionsTest, ParseDelegatedPermissionsInvalid)
-{
-    HTMLIFrameElementPermissions* permissions = HTMLIFrameElementPermissions::create(nullptr);
-    Vector<WebPermissionType> result;
-    String errorMessage;
+TEST(HTMLIFrameElementPermissionsTest, ParseDelegatedPermissionsInvalid) {
+  HTMLIFrameElementPermissions* permissions =
+      HTMLIFrameElementPermissions::create(nullptr);
+  Vector<mojom::blink::PermissionName> result;
+  String errorMessage;
 
-    permissions->setValue("midis");
-    result = permissions->parseDelegatedPermissions(errorMessage);
-    EXPECT_EQ(0u, result.size());
-    EXPECT_EQ("'midis' is an invalid permissions flag.", errorMessage);
+  permissions->setValue("midis");
+  result = permissions->parseDelegatedPermissions(errorMessage);
+  EXPECT_EQ(0u, result.size());
+  EXPECT_EQ("'midis' is an invalid permissions flag.", errorMessage);
 
-    permissions->setValue("geolocations midis");
-    result = permissions->parseDelegatedPermissions(errorMessage);
-    EXPECT_EQ(0u, result.size());
-    EXPECT_EQ("'geolocations', 'midis' are invalid permissions flags.", errorMessage);
+  permissions->setValue("geolocations midis");
+  result = permissions->parseDelegatedPermissions(errorMessage);
+  EXPECT_EQ(0u, result.size());
+  EXPECT_EQ("'geolocations', 'midis' are invalid permissions flags.",
+            errorMessage);
 
-    permissions->setValue("geolocation midis");
-    result = permissions->parseDelegatedPermissions(errorMessage);
-    EXPECT_EQ(1u, result.size());
-    EXPECT_EQ(WebPermissionTypeGeolocation, result[0]);
-    EXPECT_EQ("'midis' is an invalid permissions flag.", errorMessage);
+  permissions->setValue("geolocation midis");
+  result = permissions->parseDelegatedPermissions(errorMessage);
+  EXPECT_EQ(1u, result.size());
+  EXPECT_EQ(mojom::blink::PermissionName::GEOLOCATION, result[0]);
+  EXPECT_EQ("'midis' is an invalid permissions flag.", errorMessage);
 }
 
-} // namespace blink
+}  // namespace blink

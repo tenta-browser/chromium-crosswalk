@@ -12,10 +12,6 @@
 #include "base/macros.h"
 #include "ui/views/controls/menu/menu_message_loop.h"
 
-namespace ui {
-class ScopedEventDispatcher;
-}
-
 namespace views {
 
 class MenuMessageLoopAura : public MenuMessageLoop {
@@ -23,18 +19,11 @@ class MenuMessageLoopAura : public MenuMessageLoop {
   MenuMessageLoopAura();
   ~MenuMessageLoopAura() override;
 
-  // Overridden from MenuMessageLoop:
-  void Run(MenuController* controller,
-           Widget* owner,
-           bool nested_menu) override;
+  // MenuMessageLoop:
+  void Run() override;
   void QuitNow() override;
-  void ClearOwner() override;
 
  private:
-  // Owner of child windows.
-  // WARNING: this may be NULL.
-  Widget* owner_;
-
   base::Closure message_loop_quit_;
 
   DISALLOW_COPY_AND_ASSIGN(MenuMessageLoopAura);

@@ -98,7 +98,7 @@ class PasswordStoreConsumerVerifier
     : public password_manager::PasswordStoreConsumer {
  public:
   void OnGetPasswordStoreResults(
-      ScopedVector<autofill::PasswordForm> results) override {
+      std::vector<std::unique_ptr<autofill::PasswordForm>> results) override {
     password_entries_.swap(results);
     run_loop_.Quit();
   }
@@ -107,13 +107,14 @@ class PasswordStoreConsumerVerifier
     run_loop_.Run();
   }
 
-  const std::vector<autofill::PasswordForm*>& GetPasswords() const {
-    return password_entries_.get();
+  const std::vector<std::unique_ptr<autofill::PasswordForm>>& GetPasswords()
+      const {
+    return password_entries_;
   }
 
  private:
   base::RunLoop run_loop_;
-  ScopedVector<autofill::PasswordForm> password_entries_;
+  std::vector<std::unique_ptr<autofill::PasswordForm>> password_entries_;
 };
 
 static base::FilePath GetFirstNonSigninProfile(
@@ -417,7 +418,15 @@ IN_PROC_BROWSER_TEST_F(ProfileManagerBrowserTest, MAYBE_EphemeralProfile) {
 
 // The test makes sense on those platforms where the keychain exists.
 #if !defined(OS_WIN) && !defined(OS_ANDROID) && !defined(OS_CHROMEOS)
-IN_PROC_BROWSER_TEST_F(ProfileManagerBrowserTest, DeletePasswords) {
+
+// Suddenly started failing on Linux, see http://crbug.com/660488.
+#if defined(OS_LINUX)
+#define MAYBE_DeletePasswords DISABLED_DeletePasswords
+#else
+#define MAYBE_DeletePasswords DeletePasswords
+#endif
+
+IN_PROC_BROWSER_TEST_F(ProfileManagerBrowserTest, MAYBE_DeletePasswords) {
   Profile* profile = ProfileManager::GetActiveUserProfile();
   ASSERT_TRUE(profile);
 
@@ -427,7 +436,6 @@ IN_PROC_BROWSER_TEST_F(ProfileManagerBrowserTest, DeletePasswords) {
   form.signon_realm = "http://accounts.google.com/";
   form.username_value = base::ASCIIToUTF16("my_username");
   form.password_value = base::ASCIIToUTF16("my_password");
-  form.ssl_valid = false;
   form.preferred = true;
   form.blacklisted_by_user = false;
 

@@ -9,6 +9,7 @@
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -26,6 +27,7 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/installer/util/browser_distribution.h"
 #include "components/favicon/core/favicon_service.h"
 #include "components/favicon_base/favicon_types.h"
 #include "components/history/core/browser/history_service.h"
@@ -42,7 +44,10 @@
 #include "ui/gfx/codec/png_codec.h"
 #include "ui/gfx/favicon_size.h"
 #include "ui/gfx/icon_util.h"
+#include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_family.h"
+#include "ui/gfx/image/image_skia.h"
+#include "ui/gfx/image/image_skia_rep.h"
 #include "url/gurl.h"
 
 using content::BrowserThread;
@@ -71,7 +76,7 @@ scoped_refptr<ShellLinkItem> CreateShellLink() {
 }
 
 // Creates a temporary icon file to be shown in JumpList.
-bool CreateIconFile(const SkBitmap& bitmap,
+bool CreateIconFile(const gfx::ImageSkia& image_skia,
                     const base::FilePath& icon_dir,
                     base::FilePath* icon_path) {
   // Retrieve the path to a temporary file.
@@ -84,7 +89,16 @@ bool CreateIconFile(const SkBitmap& bitmap,
   // Create an icon file from the favicon attached to the given |page|, and
   // save it as the temporary file.
   gfx::ImageFamily image_family;
-  image_family.Add(gfx::Image::CreateFrom1xBitmap(bitmap));
+  if (!image_skia.isNull()) {
+    std::vector<float> supported_scales = image_skia.GetSupportedScales();
+    for (auto& scale : supported_scales) {
+      gfx::ImageSkiaRep image_skia_rep = image_skia.GetRepresentation(scale);
+      if (!image_skia_rep.is_null())
+        image_family.Add(
+            gfx::Image::CreateFrom1xBitmap(image_skia_rep.sk_bitmap()));
+    }
+  }
+
   if (!IconUtil::CreateIconFileFromImageFamily(image_family, path,
                                                IconUtil::NORMAL_WRITE))
     return false;
@@ -102,7 +116,7 @@ void CreateIconFiles(const base::FilePath& icon_dir,
   for (ShellLinkItemList::const_iterator item = item_list.begin();
       item != item_list.end(); ++item) {
     base::FilePath icon_path;
-    if (CreateIconFile((*item)->icon_data(), icon_dir, &icon_path))
+    if (CreateIconFile((*item)->icon_image(), icon_dir, &icon_path))
       (*item)->set_icon(icon_path.value(), 0);
   }
 }
@@ -114,6 +128,9 @@ bool UpdateTaskCategory(
   base::FilePath chrome_path;
   if (!PathService::Get(base::FILE_EXE, &chrome_path))
     return false;
+
+  BrowserDistribution* distribution = BrowserDistribution::GetDistribution();
+  int icon_index = distribution->GetIconIndex();
 
   ShellLinkItemList items;
 
@@ -127,7 +144,7 @@ bool UpdateTaskCategory(
     base::ReplaceSubstringsAfterOffset(
         &chrome_title, 0, L"&", base::StringPiece16());
     chrome->set_title(chrome_title);
-    chrome->set_icon(chrome_path.value(), 0);
+    chrome->set_icon(chrome_path.value(), icon_index);
     items.push_back(chrome);
   }
 
@@ -142,7 +159,7 @@ bool UpdateTaskCategory(
     base::ReplaceSubstringsAfterOffset(
         &incognito_title, 0, L"&", base::StringPiece16());
     incognito->set_title(incognito_title);
-    incognito->set_icon(chrome_path.value(), 0);
+    incognito->set_icon(chrome_path.value(), icon_index);
     items.push_back(incognito);
   }
 
@@ -233,10 +250,41 @@ void RunUpdateOnFileThread(
   // icon directory, and create a new directory which contains new JumpList
   // icon files.
   base::FilePath icon_dir_old(icon_dir.value() + L"Old");
-  if (base::PathExists(icon_dir_old))
-    base::DeleteFile(icon_dir_old, true);
-  base::Move(icon_dir, icon_dir_old);
-  base::CreateDirectory(icon_dir);
+
+  enum FolderOperationResult {
+    SUCCESS = 0,
+    DELETE_DEST_FAILED = 1 << 0,
+    MOVE_FAILED = 1 << 1,
+    DELETE_SRC_FAILED = 1 << 2,
+    CREATE_SRC_FAILED = 1 << 3,
+    // This value is beyond the sum of all bit fields above and
+    // should remain last (shifted by one more than the last value)
+    END = 1 << 4
+  };
+
+  // This variable records the status of three folder operations.
+  uint32_t folder_operation_status = FolderOperationResult::SUCCESS;
+
+  if (!base::DeleteFile(icon_dir_old, true)) {
+    folder_operation_status |= FolderOperationResult::DELETE_DEST_FAILED;
+    // If deletion of |icon_dir_old| fails, do not move |icon_dir| to
+    // |icon_dir_old|, instead, delete |icon_dir| directly to avoid bloating
+    // |icon_dir_old| by moving more things to it.
+    if (!base::DeleteFile(icon_dir, true))
+      folder_operation_status |= FolderOperationResult::DELETE_SRC_FAILED;
+  } else if (!base::Move(icon_dir, icon_dir_old)) {
+    folder_operation_status |= FolderOperationResult::MOVE_FAILED;
+    // If Move() fails, delete |icon_dir| to avoid file accumulation in this
+    // directory, which can eventually lead the folder to be huge.
+    if (!base::DeleteFile(icon_dir, true))
+      folder_operation_status |= FolderOperationResult::DELETE_SRC_FAILED;
+  }
+  if (!base::CreateDirectory(icon_dir))
+    folder_operation_status |= FolderOperationResult::CREATE_SRC_FAILED;
+
+  UMA_HISTOGRAM_ENUMERATION("WinJumplist.DetailedFolderResults",
+                            folder_operation_status,
+                            FolderOperationResult::END);
 
   // Create temporary icon files for shortcuts in the "Most Visited" category.
   CreateIconFiles(icon_dir, local_most_visited_pages);
@@ -261,7 +309,9 @@ JumpList::JumpListData::JumpListData() {}
 JumpList::JumpListData::~JumpListData() {}
 
 JumpList::JumpList(Profile* profile)
-    : profile_(profile),
+    : RefcountedKeyedService(content::BrowserThread::GetTaskRunnerForThread(
+          content::BrowserThread::UI)),
+      profile_(profile),
       jumplist_data_(new base::RefCountedData<JumpListData>),
       task_id_(base::CancelableTaskTracker::kBadTaskId),
       weak_ptr_factory_(this) {
@@ -287,14 +337,9 @@ JumpList::JumpList(Profile* profile)
     // your profile is empty. Ask TopSites to update itself when jumplist is
     // initialized.
     top_sites->SyncWithHistory();
-    registrar_.reset(new content::NotificationRegistrar);
     // Register as TopSitesObserver so that we can update ourselves when the
     // TopSites changes.
     top_sites->AddObserver(this);
-    // Register for notification when profile is destroyed to ensure that all
-    // observers are detatched at that time.
-    registrar_->Add(this, chrome::NOTIFICATION_PROFILE_DESTROYED,
-                    content::Source<Profile>(profile_));
   }
   tab_restore_service->AddObserver(this);
   pref_change_registrar_.reset(new PrefChangeRegistrar);
@@ -312,15 +357,6 @@ JumpList::~JumpList() {
 // static
 bool JumpList::Enabled() {
   return JumpListUpdater::IsEnabled();
-}
-
-void JumpList::Observe(int type,
-                       const content::NotificationSource& source,
-                       const content::NotificationDetails& details) {
-  DCHECK(CalledOnValidThread());
-  DCHECK_EQ(chrome::NOTIFICATION_PROFILE_DESTROYED, type);
-  // Profile was destroyed, do clean-up.
-  Terminate();
 }
 
 void JumpList::CancelPendingUpdate() {
@@ -343,10 +379,14 @@ void JumpList::Terminate() {
         TopSitesFactory::GetForProfile(profile_);
     if (top_sites)
       top_sites->RemoveObserver(this);
-    registrar_.reset();
     pref_change_registrar_.reset();
   }
   profile_ = NULL;
+}
+
+void JumpList::ShutdownOnUIThread() {
+  DCHECK(CalledOnValidThread());
+  Terminate();
 }
 
 void JumpList::OnMostVisitedURLsAvailable(
@@ -399,18 +439,17 @@ void JumpList::TabRestoreServiceChanged(sessions::TabRestoreService* service) {
   const int kRecentlyClosedCount = 4;
   sessions::TabRestoreService* tab_restore_service =
       TabRestoreServiceFactory::GetForProfile(profile_);
-  const sessions::TabRestoreService::Entries& entries =
-      tab_restore_service->entries();
-  for (sessions::TabRestoreService::Entries::const_iterator it =
-           entries.begin();
-       it != entries.end(); ++it) {
-    const sessions::TabRestoreService::Entry* entry = *it;
-    if (entry->type == sessions::TabRestoreService::TAB) {
-      AddTab(static_cast<const sessions::TabRestoreService::Tab*>(entry),
-             &temp_list, kRecentlyClosedCount);
-    } else if (entry->type == sessions::TabRestoreService::WINDOW) {
-      AddWindow(static_cast<const sessions::TabRestoreService::Window*>(entry),
-                &temp_list, kRecentlyClosedCount);
+  for (const auto& entry : tab_restore_service->entries()) {
+    switch (entry->type) {
+      case sessions::TabRestoreService::TAB:
+        AddTab(static_cast<const sessions::TabRestoreService::Tab&>(*entry),
+               &temp_list, kRecentlyClosedCount);
+        break;
+      case sessions::TabRestoreService::WINDOW:
+        AddWindow(
+            static_cast<const sessions::TabRestoreService::Window&>(*entry),
+            &temp_list, kRecentlyClosedCount);
+        break;
     }
   }
   // Lock recently_closed_pages and copy temp_list into it.
@@ -427,7 +466,7 @@ void JumpList::TabRestoreServiceChanged(sessions::TabRestoreService* service) {
 void JumpList::TabRestoreServiceDestroyed(
     sessions::TabRestoreService* service) {}
 
-bool JumpList::AddTab(const sessions::TabRestoreService::Tab* tab,
+bool JumpList::AddTab(const sessions::TabRestoreService::Tab& tab,
                       ShellLinkItemList* list,
                       size_t max_items) {
   DCHECK(CalledOnValidThread());
@@ -439,7 +478,7 @@ bool JumpList::AddTab(const sessions::TabRestoreService::Tab* tab,
 
   scoped_refptr<ShellLinkItem> link = CreateShellLink();
   const sessions::SerializedNavigationEntry& current_navigation =
-      tab->navigations.at(tab->current_navigation_index);
+      tab.navigations.at(tab.current_navigation_index);
   std::string url = current_navigation.virtual_url().spec();
   link->GetCommandLine()->AppendArgNative(base::UTF8ToWide(url));
   link->GetCommandLine()->AppendSwitchASCII(
@@ -454,17 +493,17 @@ bool JumpList::AddTab(const sessions::TabRestoreService::Tab* tab,
   return true;
 }
 
-void JumpList::AddWindow(const sessions::TabRestoreService::Window* window,
+void JumpList::AddWindow(const sessions::TabRestoreService::Window& window,
                          ShellLinkItemList* list,
                          size_t max_items) {
   DCHECK(CalledOnValidThread());
 
   // This code enumerates al the tabs in the given window object and add their
   // URLs and titles to the list.
-  DCHECK(!window->tabs.empty());
+  DCHECK(!window.tabs.empty());
 
-  for (size_t i = 0; i < window->tabs.size(); ++i) {
-    if (!AddTab(&window->tabs[i], list, max_items))
+  for (const auto& tab : window.tabs) {
+    if (!AddTab(*tab, list, max_items))
       return;
   }
 }
@@ -514,10 +553,12 @@ void JumpList::OnFaviconDataAvailable(
     base::AutoLock auto_lock(data->list_lock_);
     // Attach the received data to the ShellLinkItem object.
     // This data will be decoded by the RunUpdateOnFileThread method.
-    if (!image_result.image.IsEmpty()) {
-      if (!data->icon_urls_.empty() && data->icon_urls_.front().second.get())
-        data->icon_urls_.front().second->set_icon_data(
-            image_result.image.AsBitmap());
+    if (!image_result.image.IsEmpty() && !data->icon_urls_.empty() &&
+        data->icon_urls_.front().second.get()) {
+      gfx::ImageSkia image_skia = image_result.image.AsImageSkia();
+      image_skia.EnsureRepsForSupportedScales();
+      std::unique_ptr<gfx::ImageSkia> deep_copy(image_skia.DeepCopy());
+      data->icon_urls_.front().second->set_icon_image(*deep_copy);
     }
 
     if (!data->icon_urls_.empty())

@@ -32,37 +32,37 @@
 #define ScriptString_h
 
 #include "bindings/core/v8/SharedPersistent.h"
+#include "v8/include/v8.h"
 #include "wtf/Allocator.h"
 #include "wtf/RefPtr.h"
 #include "wtf/text/WTFString.h"
-#include <v8.h>
 
 namespace blink {
 
 class ScriptString final {
-    DISALLOW_NEW();
-public:
-    ScriptString();
-    ScriptString(v8::Isolate*, v8::Local<v8::String>);
-    ScriptString& operator=(const ScriptString&);
+  DISALLOW_NEW();
 
-    v8::Isolate* isolate()
-    {
-        if (!m_isolate)
-            m_isolate = v8::Isolate::GetCurrent();
-        return m_isolate;
-    }
-    bool isEmpty() const { return !m_string || m_string->isEmpty(); }
-    void clear() { m_string = nullptr; }
-    v8::Local<v8::String> v8Value();
-    ScriptString concatenateWith(const String&);
-    String flattenToString();
+ public:
+  ScriptString();
+  ScriptString(v8::Isolate*, v8::Local<v8::String>);
+  ScriptString& operator=(const ScriptString&);
 
-private:
-    v8::Isolate* m_isolate;
-    RefPtr<SharedPersistent<v8::String>> m_string;
+  v8::Isolate* isolate() {
+    if (!m_isolate)
+      m_isolate = v8::Isolate::GetCurrent();
+    return m_isolate;
+  }
+  bool isEmpty() const { return !m_string || m_string->isEmpty(); }
+  void clear() { m_string = nullptr; }
+  v8::Local<v8::String> v8Value();
+  ScriptString concatenateWith(const String&);
+  String flattenToString();
+
+ private:
+  v8::Isolate* m_isolate;
+  RefPtr<SharedPersistent<v8::String>> m_string;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // ScriptString_h
+#endif  // ScriptString_h

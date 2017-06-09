@@ -5,16 +5,10 @@
 #ifndef COMPONENTS_USER_PREFS_TRACKED_PREF_HASH_STORE_IMPL_H_
 #define COMPONENTS_USER_PREFS_TRACKED_PREF_HASH_STORE_IMPL_H_
 
-#include <memory>
-#include <string>
-
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "components/user_prefs/tracked/pref_hash_calculator.h"
 #include "components/user_prefs/tracked/pref_hash_store.h"
-
-class HashStoreContents;
-class PrefHashStoreTransaction;
 
 // Implements PrefHashStoreImpl by storing preference hashes in a
 // HashStoreContents.
@@ -31,20 +25,15 @@ class PrefHashStoreImpl : public PrefHashStore {
   };
 
   // Constructs a PrefHashStoreImpl that calculates hashes using
-  // |seed| and |device_id| and stores them in |contents|.
+  // |seed| and |legacy_device_id| and stores them in |contents|.
   //
-  // The same |seed| and |device_id| must be used to load and validate
+  // The same |seed| and |legacy_device_id| must be used to load and validate
   // previously stored hashes in |contents|.
   PrefHashStoreImpl(const std::string& seed,
-                    const std::string& device_id,
+                    const std::string& legacy_device_id,
                     bool use_super_mac);
 
   ~PrefHashStoreImpl() override;
-
-  // Provides an external HashStoreContents implementation to be used.
-  // BeginTransaction() will ignore |storage| if this is provided.
-  void set_legacy_hash_store_contents(
-      std::unique_ptr<HashStoreContents> legacy_hash_store_contents);
 
   // Clears the contents of this PrefHashStore. |IsInitialized()| will return
   // false after this call.
@@ -52,13 +41,18 @@ class PrefHashStoreImpl : public PrefHashStore {
 
   // PrefHashStore implementation.
   std::unique_ptr<PrefHashStoreTransaction> BeginTransaction(
-      std::unique_ptr<HashStoreContents> storage) override;
+      HashStoreContents* storage) override;
+
+  std::string ComputeMac(const std::string& path,
+                         const base::Value* new_value) override;
+  std::unique_ptr<base::DictionaryValue> ComputeSplitMacs(
+      const std::string& path,
+      const base::DictionaryValue* split_values) override;
 
  private:
   class PrefHashStoreTransactionImpl;
 
   const PrefHashCalculator pref_hash_calculator_;
-  std::unique_ptr<HashStoreContents> legacy_hash_store_contents_;
   bool use_super_mac_;
 
   DISALLOW_COPY_AND_ASSIGN(PrefHashStoreImpl);

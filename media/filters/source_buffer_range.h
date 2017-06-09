@@ -37,6 +37,15 @@ class SourceBufferRange {
     ALLOW_GAPS
   };
 
+  // Return the config ID for the buffer at |timestamp|. Precondition: callers
+  // must first verify CanSeekTo(timestamp) == true.
+  int GetConfigIdAtTime(DecodeTimestamp timestamp);
+
+  // Return true if all buffers in range of [start, end] have the same config
+  // ID. Precondition: callers must first verify that
+  // CanSeekTo(start) ==  CanSeekTo(end) == true.
+  bool SameConfigThruRange(DecodeTimestamp start, DecodeTimestamp end);
+
   // Sequential buffers with the same decode timestamp make sense under certain
   // conditions, typically when the first buffer is a keyframe. Due to some
   // atypical media append behaviors where a new keyframe might have the same
@@ -178,7 +187,7 @@ class SourceBufferRange {
   void ResetNextBufferPosition();
 
   // Returns the timestamp of the next buffer that will be returned from
-  // GetNextBuffer(), or kNoTimestamp() if the timestamp is unknown.
+  // GetNextBuffer(), or kNoTimestamp if the timestamp is unknown.
   DecodeTimestamp GetNextTimestamp() const;
 
   // Returns the start timestamp of the range.
@@ -193,7 +202,7 @@ class SourceBufferRange {
   DecodeTimestamp GetBufferedEndTimestamp() const;
 
   // Gets the timestamp for the keyframe that is after |timestamp|. If
-  // there isn't a keyframe in the range after |timestamp| then kNoTimestamp()
+  // there isn't a keyframe in the range after |timestamp| then kNoTimestamp
   // is returned. If |timestamp| is in the "gap" between the value  returned by
   // GetStartTimestamp() and the timestamp on the first buffer in |buffers_|,
   // then |timestamp| is returned.
@@ -201,7 +210,7 @@ class SourceBufferRange {
 
   // Gets the timestamp for the closest keyframe that is <= |timestamp|. If
   // there isn't a keyframe before |timestamp| or |timestamp| is outside
-  // this range, then kNoTimestamp() is returned.
+  // this range, then kNoTimestamp is returned.
   DecodeTimestamp KeyframeBeforeTimestamp(DecodeTimestamp timestamp);
 
   // Returns whether a buffer with a starting timestamp of |timestamp| would

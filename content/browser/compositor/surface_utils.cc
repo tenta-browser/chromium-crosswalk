@@ -4,12 +4,12 @@
 
 #include "content/browser/compositor/surface_utils.h"
 
+#include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/memory/ref_counted.h"
 #include "build/build_config.h"
 #include "cc/output/copy_output_result.h"
 #include "cc/resources/single_release_callback.h"
-#include "cc/surfaces/surface_id_allocator.h"
 #include "components/display_compositor/gl_helper.h"
 #include "skia/ext/image_operations.h"
 #include "third_party/skia/include/core/SkCanvas.h"
@@ -76,7 +76,7 @@ void PrepareTextureCopyOutputResult(
   if (!bitmap->tryAllocPixels(SkImageInfo::Make(
           dst_size_in_pixel.width(), dst_size_in_pixel.height(), color_type,
           kOpaque_SkAlphaType))) {
-    scoped_callback_runner.Reset(base::Bind(
+    scoped_callback_runner.ReplaceClosure(base::Bind(
         callback, SkBitmap(), content::READBACK_BITMAP_ALLOCATION_FAILURE));
     return;
   }
@@ -158,12 +158,12 @@ void PrepareBitmapCopyOutputResult(
 
 namespace content {
 
-std::unique_ptr<cc::SurfaceIdAllocator> CreateSurfaceIdAllocator() {
+cc::FrameSinkId AllocateFrameSinkId() {
 #if defined(OS_ANDROID)
-  return CompositorImpl::CreateSurfaceIdAllocator();
+  return CompositorImpl::AllocateFrameSinkId();
 #else
   ImageTransportFactory* factory = ImageTransportFactory::GetInstance();
-  return factory->GetContextFactory()->CreateSurfaceIdAllocator();
+  return factory->GetContextFactoryPrivate()->AllocateFrameSinkId();
 #endif
 }
 
@@ -174,7 +174,7 @@ cc::SurfaceManager* GetSurfaceManager() {
   ImageTransportFactory* factory = ImageTransportFactory::GetInstance();
   if (factory == NULL)
     return nullptr;
-  return factory->GetSurfaceManager();
+  return factory->GetContextFactoryPrivate()->GetSurfaceManager();
 #endif
 }
 

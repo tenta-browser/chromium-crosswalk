@@ -7,8 +7,8 @@ package org.chromium.chrome.browser.precache;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences.Editor;
+import android.support.test.filters.SmallTest;
 import android.test.InstrumentationTestCase;
-import android.test.suitebuilder.annotation.SmallTest;
 
 import com.google.android.gms.gcm.GcmNetworkManager;
 import com.google.android.gms.gcm.Task;
@@ -17,6 +17,7 @@ import org.chromium.base.ContextUtils;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.test.util.AdvancedMockContext;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.components.precache.MockDeviceState;
 
 /**
@@ -107,10 +108,16 @@ public class PrecacheControllerTest extends InstrumentationTestCase {
         mPrecacheLauncher.setController(mPrecacheController);
         mPrecacheController.setPrecacheLauncher(mPrecacheLauncher);
         PrecacheController.setTaskScheduler(mPrecacheTaskScheduler);
-        RecordHistogram.disableForTests();
+        RecordHistogram.setDisabledForTests(true);
         Editor editor = ContextUtils.getAppSharedPreferences().edit();
         editor.putBoolean(PrecacheController.PREF_IS_PRECACHING_ENABLED, false);
         editor.apply();
+    }
+
+    @Override
+    public void tearDown() throws Exception {
+        super.tearDown();
+        RecordHistogram.setDisabledForTests(false);
     }
 
     protected void verifyScheduledAndCanceledCounts(
@@ -182,6 +189,7 @@ public class PrecacheControllerTest extends InstrumentationTestCase {
 
     @SmallTest
     @Feature({"Precache"})
+    @RetryOnFailure
     public void testStartWhenAlreadyStarted() {
         verifyBeginPrecaching();
 
@@ -195,10 +203,11 @@ public class PrecacheControllerTest extends InstrumentationTestCase {
 
     @SmallTest
     @Feature({"Precache"})
+    @RetryOnFailure
     public void testDeviceStateChangeCancels() {
         verifyBeginPrecaching();
 
-        mPrecacheController.setDeviceState(new MockDeviceState(0, false, true));
+        mPrecacheController.setDeviceState(new MockDeviceState(0, true, false));
         mPrecacheController.getDeviceStateReceiver().onReceive(mContext, new Intent());
         assertFalse(mPrecacheController.isPrecaching());
         // A continuation task is scheduled.
@@ -221,6 +230,7 @@ public class PrecacheControllerTest extends InstrumentationTestCase {
 
     @SmallTest
     @Feature({"Precache"})
+    @RetryOnFailure
     public void testDeviceStateChangeWhenNotPrecaching() {
         assertFalse(mPrecacheController.isPrecaching());
         mPrecacheController.setDeviceState(new MockDeviceState(0, false, true));
@@ -234,6 +244,7 @@ public class PrecacheControllerTest extends InstrumentationTestCase {
 
     @SmallTest
     @Feature({"Precache"})
+    @RetryOnFailure
     public void testTimeoutCancelsPrecaching() {
         verifyBeginPrecaching();
 
@@ -246,6 +257,7 @@ public class PrecacheControllerTest extends InstrumentationTestCase {
 
     @SmallTest
     @Feature({"Precache"})
+    @RetryOnFailure
     public void testTimeoutDoesNotCancelIfNotPrecaching() {
         assertFalse(mPrecacheController.isPrecaching());
 
@@ -258,6 +270,7 @@ public class PrecacheControllerTest extends InstrumentationTestCase {
 
     @SmallTest
     @Feature({"Precache"})
+    @RetryOnFailure
     public void testPrecachingEnabledPreferences() {
         // Initial enable will schedule a periodic task.
         PrecacheController.setIsPrecachingEnabled(mContext, true);

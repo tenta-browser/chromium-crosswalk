@@ -14,7 +14,7 @@
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/user_activity/user_activity_detector.h"
 #include "ui/compositor/compositor.h"
-#include "ui/display/chromeos/display_configurator.h"
+#include "ui/display/manager/chromeos/display_configurator.h"
 
 namespace ash {
 
@@ -26,7 +26,6 @@ void StopRenderingRequests() {
   for (aura::Window* window : Shell::GetAllRootWindows()) {
     ui::Compositor* compositor = window->GetHost()->compositor();
     compositor->SetVisible(false);
-    compositor->FinishAllRendering();
   }
 }
 
@@ -81,9 +80,9 @@ void PowerEventObserver::SuspendImminent() {
 
   // This class is responsible for disabling all rendering requests at suspend
   // time and then enabling them at resume time.  When the
-  // lock-before-suspending pref is not set this is easy to do since
+  // auto-screen-lock pref is not set this is easy to do since
   // StopRenderingRequests() is just called directly from this function.  If the
-  // lock-before-suspending pref _is_ set, then the suspend needs to be delayed
+  // auto-screen-lock pref _is_ set, then the suspend needs to be delayed
   // until the lock screen is fully visible.  While it is sufficient from a
   // security perspective to block only until the lock screen is ready, which
   // guarantees that the contents of the user's screen are no longer visible,
@@ -92,7 +91,7 @@ void PowerEventObserver::SuspendImminent() {
   // process starts rendering again.  To deal with this, the suspend is delayed
   // until all the lock screen animations have completed and the suspend request
   // is unblocked from OnLockAnimationsComplete().
-  if (!screen_locked_ && delegate->ShouldLockScreenBeforeSuspending() &&
+  if (!screen_locked_ && delegate->ShouldLockScreenAutomatically() &&
       delegate->CanLockScreen()) {
     screen_lock_callback_ = chromeos::DBusThreadManager::Get()
                                 ->GetPowerManagerClient()
@@ -119,14 +118,22 @@ void PowerEventObserver::SuspendImminent() {
   }
 
   ui::UserActivityDetector::Get()->OnDisplayPowerChanging();
-  Shell::GetInstance()->display_configurator()->SuspendDisplays(base::Bind(
-      &OnSuspendDisplaysCompleted, chromeos::DBusThreadManager::Get()
-                                       ->GetPowerManagerClient()
-                                       ->GetSuspendReadinessCallback()));
+
+  // TODO(derat): After mus exposes a method for suspending displays, call it
+  // here: http://crbug.com/692193
+  if (!WmShell::Get()->IsRunningInMash()) {
+    Shell::GetInstance()->display_configurator()->SuspendDisplays(base::Bind(
+        &OnSuspendDisplaysCompleted, chromeos::DBusThreadManager::Get()
+                                         ->GetPowerManagerClient()
+                                         ->GetSuspendReadinessCallback()));
+  }
 }
 
 void PowerEventObserver::SuspendDone(const base::TimeDelta& sleep_duration) {
-  Shell::GetInstance()->display_configurator()->ResumeDisplays();
+  // TODO(derat): After mus exposes a method for resuming displays, call it
+  // here: http://crbug.com/692193
+  if (!WmShell::Get()->IsRunningInMash())
+    Shell::GetInstance()->display_configurator()->ResumeDisplays();
   WmShell::Get()->system_tray_notifier()->NotifyRefreshClock();
 
   // If the suspend request was being blocked while waiting for the lock

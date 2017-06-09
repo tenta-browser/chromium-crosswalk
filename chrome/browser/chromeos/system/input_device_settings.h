@@ -155,32 +155,52 @@ class CHROMEOS_EXPORT InputDeviceSettings {
  public:
   typedef base::Callback<void(bool)> DeviceExistsCallback;
 
+  // Interface for faking touchpad and mouse. Accessed through
+  // GetFakeInterface(), implemented only in FakeInputDeviceSettings.
+  class FakeInterface {
+   public:
+    virtual void set_touchpad_exists(bool exists) = 0;
+    virtual void set_mouse_exists(bool exists) = 0;
+    virtual const TouchpadSettings& current_touchpad_settings() const = 0;
+    virtual const MouseSettings& current_mouse_settings() const = 0;
+  };
+
   virtual ~InputDeviceSettings() {}
 
   // Returns current instance of InputDeviceSettings.
   static InputDeviceSettings* Get();
 
-  // Replaces current instance with |test_settings|. Takes ownership of
-  // |test_settings|. Default implementation could be returned back by passing
-  // NULL to this method.
-  static void SetSettingsForTesting(InputDeviceSettings* test_settings);
-
   // Returns true if UI should implement enhanced keyboard support for cases
   // where other input devices like mouse are absent.
   static bool ForceKeyboardDrivenUINavigation();
 
-  // Registers local pref names for touchpad and touch screen statuses.
+  // Registers local state pref names for touchscreen status.
   static void RegisterPrefs(PrefRegistrySimple* registry);
 
-  void InitTouchDevicesStatusFromLocalPrefs();
+  // Registers profile pref names for touchpad and touchscreen statuses.
+  static void RegisterProfilePrefs(PrefRegistrySimple* registry);
 
-  // Toggles the status of Touchscreen/Touchpad on or off and updates the local
-  // prefs.
-  void ToggleTouchscreen();
+  // Updates the enabled/disabled status of the touchscreen/touchpad from the
+  // preferences.
+  void UpdateTouchDevicesStatusFromPrefs();
+
+  // If |use_local_state| is true, returns the touchscreen status from local
+  // state, otherwise from user prefs.
+  bool IsTouchscreenEnabledInPrefs(bool use_local_state) const;
+
+  // Sets the status of touchscreen to |enabled| in prefs. If |use_local_state|,
+  // pref is set in local state, otherwise in user pref.
+  void SetTouchscreenEnabledInPrefs(bool enabled, bool use_local_state);
+
+  // Updates the enabled/disabled status of the touchscreen from prefs. Enabled
+  // if both local state and user prefs are enabled, otherwise disabled.
+  void UpdateTouchscreenStatusFromPrefs();
+
+  // Toggles the status of touchpad between enabled and disabled.
   void ToggleTouchpad();
 
-  // Calls |callback| asynchronously after determining if a touchpad is
-  // connected.
+  // Calls |callback|, possibly asynchronously, after determining if a touchpad
+  // is connected.
   virtual void TouchpadExists(const DeviceExistsCallback& callback) = 0;
 
   // Updates several touchpad settings at a time. Updates only settings that
@@ -204,7 +224,8 @@ class CHROMEOS_EXPORT InputDeviceSettings {
   // Turns natural scrolling on/off for all devices except wheel mice
   virtual void SetNaturalScroll(bool enabled) = 0;
 
-  // Calls |callback| asynchronously after determining if a mouse is connected.
+  // Calls |callback|, possibly asynchronously, after determining if a mouse is
+  // connected.
   virtual void MouseExists(const DeviceExistsCallback& callback) = 0;
 
   // Updates several mouse settings at a time. Updates only settings that
@@ -224,6 +245,9 @@ class CHROMEOS_EXPORT InputDeviceSettings {
 
   // Reapplies previously set mouse settings.
   virtual void ReapplyMouseSettings() = 0;
+
+  // Returns an interface for faking settings, or nullptr.
+  virtual FakeInterface* GetFakeInterface() = 0;
 
  private:
   virtual void SetInternalTouchpadEnabled(bool enabled) {}

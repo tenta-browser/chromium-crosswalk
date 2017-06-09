@@ -5,9 +5,7 @@
 #include "ash/common/system/tray/tray_popup_item_container.h"
 
 #include "ash/common/system/tray/tray_constants.h"
-#include "ui/base/ui_base_switches_util.h"
 #include "ui/gfx/canvas.h"
-#include "ui/views/border.h"
 #include "ui/views/layout/box_layout.h"
 
 namespace ash {
@@ -21,7 +19,7 @@ TrayPopupItemContainer::TrayPopupItemContainer(views::View* view,
   layout->SetDefaultFlex(1);
   SetLayoutManager(layout);
   if (view->layer()) {
-    SetPaintToLayer(true);
+    SetPaintToLayer();
     layer()->SetFillsBoundsOpaquely(view->layer()->fills_bounds_opaquely());
   }
   AddChildView(view);
@@ -63,8 +61,6 @@ void TrayPopupItemContainer::OnMouseExited(const ui::MouseEvent& event) {
 }
 
 void TrayPopupItemContainer::OnGestureEvent(ui::GestureEvent* event) {
-  if (!switches::IsTouchFeedbackEnabled())
-    return;
   if (event->type() == ui::ET_GESTURE_TAP_DOWN) {
     SetActive(true);
   } else if (event->type() == ui::ET_GESTURE_TAP_CANCEL ||

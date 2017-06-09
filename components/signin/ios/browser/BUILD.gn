@@ -35,8 +35,6 @@ source_set("browser") {
 source_set("test_support") {
   testonly = true
   sources = [
-    "fake_profile_oauth2_token_service_ios_delegate.h",
-    "fake_profile_oauth2_token_service_ios_delegate.mm",
     "fake_profile_oauth2_token_service_ios_provider.h",
     "fake_profile_oauth2_token_service_ios_provider.mm",
   ]
@@ -57,11 +55,11 @@ source_set("unit_tests") {
 
   deps = [
     ":test_support",
-    "//components/pref_registry:test_support",
     "//components/prefs:test_support",
     "//components/signin/core/browser",
     "//components/signin/core/browser:test_support",
     "//components/signin/core/common",
+    "//components/sync_preferences:test_support",
     "//ios/web",
     "//ios/web:test_support",
     "//third_party/ocmock",

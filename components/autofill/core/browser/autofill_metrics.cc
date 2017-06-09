@@ -11,14 +11,23 @@
 #include "base/metrics/sparse_histogram.h"
 #include "base/metrics/user_metrics.h"
 #include "base/time/time.h"
+#include "components/autofill/core/browser/autofill_experiments.h"
 #include "components/autofill/core/browser/autofill_type.h"
 #include "components/autofill/core/browser/form_structure.h"
 #include "components/autofill/core/common/form_data.h"
+#include "components/ukm/ukm_entry_builder.h"
+
+namespace internal {
+const char kUKMCardUploadDecisionEntryName[] = "Autofill.CardUploadDecision";
+const char kUKMCardUploadDecisionMetricName[] = "UploadDecision";
+}  // namespace internal
 
 namespace autofill {
 
 namespace {
 
+// Note: if adding an enum value here, update the corresponding description for
+// AutofillTypeQualityByFieldType in histograms.xml.
 enum FieldTypeGroupForMetrics {
   GROUP_AMBIGUOUS = 0,
   GROUP_NAME,
@@ -40,6 +49,7 @@ enum FieldTypeGroupForMetrics {
   GROUP_ADDRESS_LINE_3,
   GROUP_USERNAME,
   GROUP_STREET_ADDRESS,
+  GROUP_CREDIT_CARD_VERIFICATION,
   NUM_FIELD_TYPE_GROUPS_FOR_METRICS
 };
 
@@ -116,7 +126,7 @@ int GetFieldTypeGroupMetric(ServerFieldType field_type,
           group = GROUP_ADDRESS_COUNTRY;
           break;
         default:
-          NOTREACHED();
+          NOTREACHED() << field_type << " has no group assigned (ambiguous)";
           group = GROUP_AMBIGUOUS;
           break;
       }
@@ -151,8 +161,11 @@ int GetFieldTypeGroupMetric(ServerFieldType field_type,
         case CREDIT_CARD_EXP_DATE_4_DIGIT_YEAR:
           group = GROUP_CREDIT_CARD_DATE;
           break;
+        case CREDIT_CARD_VERIFICATION_CODE:
+          group = GROUP_CREDIT_CARD_VERIFICATION;
+          break;
         default:
-          NOTREACHED();
+          NOTREACHED() << field_type << " has no group assigned (ambiguous)";
           group = GROUP_AMBIGUOUS;
           break;
       }
@@ -258,9 +271,22 @@ void AutofillMetrics::LogCardUploadDecisionMetric(
 }
 
 // static
-void AutofillMetrics::LogCreditCardInfoBarMetric(InfoBarMetric metric) {
+void AutofillMetrics::LogCreditCardInfoBarMetric(InfoBarMetric metric,
+                                                 bool is_uploading) {
   DCHECK_LT(metric, NUM_INFO_BAR_METRICS);
-  UMA_HISTOGRAM_ENUMERATION("Autofill.CreditCardInfoBar", metric,
+  if (is_uploading) {
+    UMA_HISTOGRAM_ENUMERATION("Autofill.CreditCardInfoBar.Server", metric,
+                              NUM_INFO_BAR_METRICS);
+  } else {
+    UMA_HISTOGRAM_ENUMERATION("Autofill.CreditCardInfoBar.Local", metric,
+                              NUM_INFO_BAR_METRICS);
+  }
+}
+
+// static
+void AutofillMetrics::LogCreditCardFillingInfoBarMetric(InfoBarMetric metric) {
+  DCHECK_LT(metric, NUM_INFO_BAR_METRICS);
+  UMA_HISTOGRAM_ENUMERATION("Autofill.CreditCardFillingInfoBar", metric,
                             NUM_INFO_BAR_METRICS);
 }
 
@@ -522,6 +548,16 @@ void AutofillMetrics::LogStoredLocalCreditCardCount(size_t num_local_cards) {
 }
 
 // static
+void AutofillMetrics::LogStoredServerCreditCardCounts(
+    size_t num_masked_cards,
+    size_t num_unmasked_cards) {
+  UMA_HISTOGRAM_COUNTS_1000("Autofill.StoredServerCreditCardCount.Masked",
+                            num_masked_cards);
+  UMA_HISTOGRAM_COUNTS_1000("Autofill.StoredServerCreditCardCount.Unmasked",
+                            num_unmasked_cards);
+}
+
+// static
 void AutofillMetrics::LogNumberOfProfilesAtAutofillableFormSubmission(
     size_t num_profiles) {
   UMA_HISTOGRAM_COUNTS(
@@ -641,10 +677,67 @@ void AutofillMetrics::LogNumberOfProfilesRemovedDuringDedupe(
                             std::min(int(num_removed), 50));
 }
 
+// static
+void AutofillMetrics::LogIsQueriedCreditCardFormSecure(bool is_secure) {
+  UMA_HISTOGRAM_BOOLEAN("Autofill.QueriedCreditCardFormIsSecure", is_secure);
+}
+
+// static
+void AutofillMetrics::LogWalletAddressConversionType(
+    WalletAddressConversionType type) {
+  DCHECK_LT(type, NUM_CONVERTED_ADDRESS_CONVERSION_TYPES);
+  UMA_HISTOGRAM_ENUMERATION("Autofill.WalletAddressConversionType", type,
+                            NUM_CONVERTED_ADDRESS_CONVERSION_TYPES);
+}
+
+// static
+void AutofillMetrics::LogShowedHttpNotSecureExplanation() {
+  base::RecordAction(
+      base::UserMetricsAction("Autofill_ShowedHttpNotSecureExplanation"));
+}
+
+// static
+void AutofillMetrics::LogCardUploadDecisionUkm(
+    ukm::UkmService* ukm_service,
+    const GURL& url,
+    AutofillMetrics::CardUploadDecisionMetric upload_decision) {
+  if (upload_decision >= AutofillMetrics::NUM_CARD_UPLOAD_DECISION_METRICS)
+    return;
+
+  // Set up as a map because the follow-up CL will add more metrics.
+  std::map<std::string, int> metrics = {
+      {internal::kUKMCardUploadDecisionMetricName,
+       static_cast<int>(upload_decision)}};
+  LogUkm(ukm_service, url, internal::kUKMCardUploadDecisionEntryName, metrics);
+}
+
+// static
+bool AutofillMetrics::LogUkm(ukm::UkmService* ukm_service,
+                             const GURL& url,
+                             const std::string& ukm_entry_name,
+                             const std::map<std::string, int>& metrics) {
+  if (!IsUkmLoggingEnabled() || !ukm_service || !url.is_valid() ||
+      metrics.empty()) {
+    return false;
+  }
+
+  int32_t source_id = ukm_service->GetNewSourceID();
+  ukm_service->UpdateSourceURL(source_id, url);
+  std::unique_ptr<ukm::UkmEntryBuilder> builder =
+      ukm_service->GetEntryBuilder(source_id, ukm_entry_name.c_str());
+
+  for (auto it = metrics.begin(); it != metrics.end(); ++it) {
+    builder->AddMetric(it->first.c_str(), it->second);
+  }
+
+  return true;
+}
+
 AutofillMetrics::FormEventLogger::FormEventLogger(bool is_for_credit_card)
     : is_for_credit_card_(is_for_credit_card),
       is_server_data_available_(false),
       is_local_data_available_(false),
+      is_context_secure_(false),
       has_logged_interacted_(false),
       has_logged_suggestions_shown_(false),
       has_logged_masked_server_card_suggestion_selected_(false),
@@ -652,8 +745,7 @@ AutofillMetrics::FormEventLogger::FormEventLogger(bool is_for_credit_card)
       has_logged_will_submit_(false),
       has_logged_submitted_(false),
       logged_suggestion_filled_was_server_data_(false),
-      logged_suggestion_filled_was_masked_server_card_(false) {
-}
+      logged_suggestion_filled_was_masked_server_card_(false) {}
 
 void AutofillMetrics::FormEventLogger::OnDidInteractWithAutofillableForm() {
   if (!has_logged_interacted_) {
@@ -780,6 +872,10 @@ void AutofillMetrics::FormEventLogger::OnWillSubmitForm() {
     Log(AutofillMetrics::FORM_EVENT_LOCAL_SUGGESTION_WILL_SUBMIT_ONCE);
   }
 
+  if (has_logged_suggestions_shown_) {
+    Log(AutofillMetrics::FORM_EVENT_SUGGESTION_SHOWN_WILL_SUBMIT_ONCE);
+  }
+
   base::RecordAction(base::UserMetricsAction("Autofill_OnWillSubmitForm"));
 }
 
@@ -803,6 +899,10 @@ void AutofillMetrics::FormEventLogger::OnFormSubmitted() {
   } else {
     Log(AutofillMetrics::FORM_EVENT_LOCAL_SUGGESTION_SUBMITTED_ONCE);
   }
+
+  if (has_logged_suggestions_shown_) {
+    Log(AutofillMetrics::FORM_EVENT_SUGGESTION_SHOWN_SUBMITTED_ONCE);
+  }
 }
 
 void AutofillMetrics::FormEventLogger::Log(FormEvent event) const {
@@ -813,6 +913,14 @@ void AutofillMetrics::FormEventLogger::Log(FormEvent event) const {
   else
     name += "Address";
   LogUMAHistogramEnumeration(name, event, NUM_FORM_EVENTS);
+
+  // Log again in a different histogram for credit card forms on nonsecure
+  // pages, so that form interactions on nonsecure pages can be analyzed on
+  // their own.
+  if (is_for_credit_card_ && !is_context_secure_) {
+    LogUMAHistogramEnumeration(name + ".OnNonsecurePage", event,
+                               NUM_FORM_EVENTS);
+  }
 
   // Logging again in a different histogram for segmentation purposes.
   // TODO(waltercacau): Re-evaluate if we still need such fine grained

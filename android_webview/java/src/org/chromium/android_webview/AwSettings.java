@@ -17,6 +17,7 @@ import android.webkit.WebSettings.LayoutAlgorithm;
 import android.webkit.WebSettings.PluginState;
 import android.webkit.WebSettings.ZoomDensity;
 
+import org.chromium.base.BuildInfo;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
@@ -68,36 +69,39 @@ public class AwSettings {
     private int mDefaultFixedFontSize = 13;
     private boolean mLoadsImagesAutomatically = true;
     private boolean mImagesEnabled = true;
-    private boolean mJavaScriptEnabled = false;
-    private boolean mAllowUniversalAccessFromFileURLs = false;
-    private boolean mAllowFileAccessFromFileURLs = false;
-    private boolean mJavaScriptCanOpenWindowsAutomatically = false;
-    private boolean mSupportMultipleWindows = false;
+    private boolean mJavaScriptEnabled;
+    private boolean mAllowUniversalAccessFromFileURLs;
+    private boolean mAllowFileAccessFromFileURLs;
+    private boolean mJavaScriptCanOpenWindowsAutomatically;
+    private boolean mSupportMultipleWindows;
     private PluginState mPluginState = PluginState.OFF;
-    private boolean mAppCacheEnabled = false;
-    private boolean mDomStorageEnabled = false;
-    private boolean mDatabaseEnabled = false;
-    private boolean mUseWideViewport = false;
-    private boolean mZeroLayoutHeightDisablesViewportQuirk = false;
-    private boolean mForceZeroLayoutHeight = false;
-    private boolean mLoadWithOverviewMode = false;
+    private boolean mAppCacheEnabled;
+    private boolean mDomStorageEnabled;
+    private boolean mDatabaseEnabled;
+    private boolean mUseWideViewport;
+    private boolean mZeroLayoutHeightDisablesViewportQuirk;
+    private boolean mForceZeroLayoutHeight;
+    private boolean mLoadWithOverviewMode;
     private boolean mMediaPlaybackRequiresUserGesture = true;
     private String mDefaultVideoPosterURL;
-    private float mInitialPageScalePercent = 0;
+    private float mInitialPageScalePercent;
     private boolean mSpatialNavigationEnabled;  // Default depends on device features.
-    private boolean mEnableSupportedHardwareAcceleratedFeatures = false;
+    private boolean mEnableSupportedHardwareAcceleratedFeatures;
     private int mMixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW;
 
-    private boolean mForceVideoOverlayForTests = false;
-    private boolean mOffscreenPreRaster = false;
+    private boolean mOffscreenPreRaster;
     private int mDisabledMenuItems = MENU_ITEM_NONE;
 
     // Although this bit is stored on AwSettings it is actually controlled via the CookieManager.
-    private boolean mAcceptThirdPartyCookies = false;
+    private boolean mAcceptThirdPartyCookies;
+
+    // if null, default to AwContentsStatics.getSafeBrowsingEnabled()
+    private Boolean mSafeBrowsingEnabled;
 
     private final boolean mSupportLegacyQuirks;
     private final boolean mAllowEmptyDocumentPersistence;
     private final boolean mAllowGeolocationOnInsecureOrigins;
+    private final boolean mDoNotUpdateSelectionOnMutatingSelectionRange;
 
     private final boolean mPasswordEchoEnabled;
 
@@ -108,10 +112,10 @@ public class AwSettings {
     private int mCacheMode = WebSettings.LOAD_DEFAULT;
     private boolean mShouldFocusFirstNode = true;
     private boolean mGeolocationEnabled = true;
-    private boolean mAutoCompleteEnabled = true;
-    private boolean mFullscreenSupported = false;
+    private boolean mAutoCompleteEnabled = !BuildInfo.isAtLeastO();
+    private boolean mFullscreenSupported;
     private boolean mSupportZoom = true;
-    private boolean mBuiltInZoomControls = false;
+    private boolean mBuiltInZoomControls;
     private boolean mDisplayZoomControls = true;
 
     static class LazyDefaultUserAgent{
@@ -124,10 +128,10 @@ public class AwSettings {
     // For compatibility with the legacy WebView, we can only enable AppCache when the path is
     // provided. However, we don't use the path, so we just check if we have received it from the
     // client.
-    private static boolean sAppCachePathIsSet = false;
+    private static boolean sAppCachePathIsSet;
 
     // The native side of this object. It's lifetime is bounded by the WebContent it is attached to.
-    private long mNativeAwSettings = 0;
+    private long mNativeAwSettings;
 
     // Custom handler that queues messages to call native code on the UI thread.
     private final EventHandler mEventHandler;
@@ -142,7 +146,7 @@ public class AwSettings {
         // Actual UI thread handler
         private Handler mHandler;
         // Synchronization flag.
-        private boolean mSynchronizationPending = false;
+        private boolean mSynchronizationPending;
 
         EventHandler() {
         }
@@ -208,11 +212,10 @@ public class AwSettings {
                 boolean supportsDoubleTapZoom, boolean supportsMultiTouchZoom);
     }
 
-    public AwSettings(Context context,
-            boolean isAccessFromFileURLsGrantedByDefault,
-            boolean supportsLegacyQuirks,
-            boolean allowEmptyDocumentPersistence,
-            boolean allowGeolocationOnInsecureOrigins) {
+    public AwSettings(Context context, boolean isAccessFromFileURLsGrantedByDefault,
+            boolean supportsLegacyQuirks, boolean allowEmptyDocumentPersistence,
+            boolean allowGeolocationOnInsecureOrigins,
+            boolean doNotUpdateSelectionOnMutatingSelectionRange) {
         boolean hasInternetPermission = context.checkPermission(
                 android.Manifest.permission.INTERNET,
                 Process.myPid(),
@@ -243,6 +246,8 @@ public class AwSettings {
             mSupportLegacyQuirks = supportsLegacyQuirks;
             mAllowEmptyDocumentPersistence = allowEmptyDocumentPersistence;
             mAllowGeolocationOnInsecureOrigins = allowGeolocationOnInsecureOrigins;
+            mDoNotUpdateSelectionOnMutatingSelectionRange =
+                    doNotUpdateSelectionOnMutatingSelectionRange;
         }
         // Defer initializing the native side until a native WebContents instance is set.
     }
@@ -332,12 +337,35 @@ public class AwSettings {
     }
 
     /**
+     * Enable/Disable SafeBrowsing per WebView
+     * @param enabled true if this WebView should have SafeBrowsing
+     */
+    public void setSafeBrowsingEnabled(boolean enabled) {
+        synchronized (mAwSettingsLock) {
+            mSafeBrowsingEnabled = enabled;
+        }
+    }
+
+    /**
      * Return whether third party cookies are enabled for an AwContents
      * @return true if accept third party cookies
      */
     public boolean getAcceptThirdPartyCookies() {
         synchronized (mAwSettingsLock) {
             return mAcceptThirdPartyCookies;
+        }
+    }
+
+    /**
+     * Return whether Safe Browsing has been enabled for the current WebView
+     * @return true if SafeBrowsing is enabled
+     */
+    public boolean getSafeBrowsingEnabled() {
+        synchronized (mAwSettingsLock) {
+            if (mSafeBrowsingEnabled == null) {
+                return AwContentsStatics.getSafeBrowsingEnabled();
+            }
+            return mSafeBrowsingEnabled;
         }
     }
 
@@ -1264,6 +1292,12 @@ public class AwSettings {
         return mAllowGeolocationOnInsecureOrigins;
     }
 
+    @CalledByNative
+    private boolean getDoNotUpdateSelectionOnMutatingSelectionRange() {
+        assert Thread.holdsLock(mAwSettingsLock);
+        return mDoNotUpdateSelectionOnMutatingSelectionRange;
+    }
+
     /**
      * See {@link android.webkit.WebSettings#setUseWideViewPort}.
      */
@@ -1637,10 +1671,9 @@ public class AwSettings {
     }
 
     @CalledByNative
-    private boolean getAllowDisplayingInsecureContentLocked() {
+    private boolean getUseStricMixedContentCheckingLocked() {
         assert Thread.holdsLock(mAwSettingsLock);
-        return mMixedContentMode == WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                || mMixedContentMode == WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE;
+        return mMixedContentMode == WebSettings.MIXED_CONTENT_NEVER_ALLOW;
     }
 
     public boolean getOffscreenPreRaster() {
@@ -1696,46 +1729,6 @@ public class AwSettings {
         }
     }
 
-    /**
-     * Sets whether to use the video overlay for the embedded video.
-     * @param flag whether to enable the video overlay for the embedded video.
-     */
-    public void setVideoOverlayForEmbeddedVideoEnabled(final boolean enabled) {
-        // No-op, see http://crbug.com/616583
-    }
-
-    /**
-     * Gets whether to use the video overlay for the embedded video.
-     * @return true if the WebView enables the video overlay for the embedded video.
-     */
-    public boolean getVideoOverlayForEmbeddedVideoEnabled() {
-        // Always false, see http://crbug.com/616583
-        return false;
-    }
-
-    @CalledByNative
-    private boolean getVideoOverlayForEmbeddedVideoEnabledLocked() {
-        // Always false, see http://crbug.com/616583
-        return false;
-    }
-
-    @VisibleForTesting
-    public void setForceVideoOverlayForTests(final boolean enabled) {
-        synchronized (mAwSettingsLock) {
-            if (mForceVideoOverlayForTests != enabled) {
-                mForceVideoOverlayForTests = enabled;
-                mEventHandler.runOnUiThreadBlockingAndLocked(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (mNativeAwSettings != 0) {
-                            nativeUpdateRendererPreferencesLocked(mNativeAwSettings);
-                        }
-                    }
-                });
-            }
-        }
-    }
-
     @VisibleForTesting
     public void updateAcceptLanguages() {
         synchronized (mAwSettingsLock) {
@@ -1748,12 +1741,6 @@ public class AwSettings {
                 }
             });
         }
-    }
-
-    @CalledByNative
-    private boolean getForceVideoOverlayForTests() {
-        assert Thread.holdsLock(mAwSettingsLock);
-        return mForceVideoOverlayForTests;
     }
 
     @CalledByNative

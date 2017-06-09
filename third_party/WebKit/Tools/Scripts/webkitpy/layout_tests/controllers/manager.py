@@ -44,6 +44,7 @@ import sys
 import time
 
 from webkitpy.common.net.file_uploader import FileUploader
+from webkitpy.common.webkit_finder import WebKitFinder
 from webkitpy.layout_tests.controllers.layout_test_finder import LayoutTestFinder
 from webkitpy.layout_tests.controllers.layout_test_runner import LayoutTestRunner
 from webkitpy.layout_tests.controllers.test_result_writer import TestResultWriter
@@ -53,11 +54,9 @@ from webkitpy.layout_tests.models import test_failures
 from webkitpy.layout_tests.models import test_run_results
 from webkitpy.layout_tests.models.test_input import TestInput
 from webkitpy.tool import grammar
+from webkitpy.w3c.wpt_manifest import WPTManifest
 
 _log = logging.getLogger(__name__)
-
-# Builder base URL where we have the archived test results.
-BUILDER_BASE_URL = "http://build.chromium.org/buildbot/layout_test_results/"
 
 TestExpectations = test_expectations.TestExpectations
 
@@ -91,6 +90,7 @@ class Manager(object):
 
         self._results_directory = self._port.results_directory()
         self._finder = LayoutTestFinder(self._port, self._options)
+        self._webkit_finder = WebKitFinder(port.host.filesystem)
         self._runner = LayoutTestRunner(self._options, self._port, self._printer, self._results_directory, self._test_is_slow)
 
     def run(self, args):
@@ -98,17 +98,36 @@ class Manager(object):
         start_time = time.time()
         self._printer.write_update("Collecting tests ...")
         running_all_tests = False
+
+        # Regenerate MANIFEST.json from template, necessary for web-platform-tests metadata.
+        self._ensure_manifest()
+
         try:
-            paths, test_names, running_all_tests = self._collect_tests(args)
+            paths, all_test_names, running_all_tests = self._collect_tests(args)
         except IOError:
             # This is raised if --test-list doesn't exist
             return test_run_results.RunDetails(exit_code=test_run_results.NO_TESTS_EXIT_STATUS)
+
+        # Create a sorted list of test files so the subset chunk,
+        # if used, contains alphabetically consecutive tests.
+        if self._options.order == 'natural':
+            all_test_names.sort(key=self._port.test_key)
+        elif self._options.order == 'random':
+            all_test_names.sort()
+            random.Random(self._options.seed).shuffle(all_test_names)
+
+        test_names, tests_in_other_chunks = self._finder.split_into_chunks(all_test_names)
 
         self._printer.write_update("Parsing expectations ...")
         self._expectations = test_expectations.TestExpectations(self._port, test_names)
 
         tests_to_run, tests_to_skip = self._prepare_lists(paths, test_names)
-        self._printer.print_found(len(test_names), len(tests_to_run), self._options.repeat_each, self._options.iterations)
+
+        self._expectations.remove_tests(tests_in_other_chunks)
+
+        self._printer.print_found(
+            len(all_test_names), len(test_names), len(tests_to_run),
+            self._options.repeat_each, self._options.iterations)
 
         # Check to make sure we're not skipping every test.
         if not tests_to_run:
@@ -149,9 +168,9 @@ class Manager(object):
                         break
 
                     _log.info('')
-                    _log.info('Retrying %s, attempt %d of %d...' %
-                              (grammar.pluralize('unexpected failure', len(tests_to_retry)),
-                               retry_attempt, self._options.num_retries))
+                    _log.info('Retrying %s, attempt %d of %d...',
+                              grammar.pluralize('unexpected failure', len(tests_to_retry)),
+                              retry_attempt, self._options.num_retries)
 
                     retry_results = self._run_tests(tests_to_retry,
                                                     tests_to_skip=set(),
@@ -186,8 +205,8 @@ class Manager(object):
 
         exit_code = summarized_failing_results['num_regressions']
         if exit_code > test_run_results.MAX_FAILURES_EXIT_STATUS:
-            _log.warning('num regressions (%d) exceeds max exit status (%d)' %
-                         (exit_code, test_run_results.MAX_FAILURES_EXIT_STATUS))
+            _log.warning('num regressions (%d) exceeds max exit status (%d)',
+                         exit_code, test_run_results.MAX_FAILURES_EXIT_STATUS)
             exit_code = test_run_results.MAX_FAILURES_EXIT_STATUS
 
         if not self._options.dry_run:
@@ -245,31 +264,14 @@ class Manager(object):
         tests_to_skip = self._finder.skip_tests(paths, test_names, self._expectations, self._http_tests(test_names))
         tests_to_run = [test for test in test_names if test not in tests_to_skip]
 
-        if not tests_to_run:
-            return tests_to_run, tests_to_skip
-
-        # Create a sorted list of test files so the subset chunk,
-        # if used, contains alphabetically consecutive tests.
-        if self._options.order == 'natural':
-            tests_to_run.sort(key=self._port.test_key)
-        elif self._options.order == 'random':
-            random.shuffle(tests_to_run)
-        elif self._options.order == 'random-seeded':
-            rnd = random.Random()
-            rnd.seed(4)  # http://xkcd.com/221/
-            rnd.shuffle(tests_to_run)
-
-        tests_to_run, tests_in_other_chunks = self._finder.split_into_chunks(tests_to_run)
-        self._expectations.add_extra_skipped_tests(tests_in_other_chunks)
-        tests_to_skip.update(tests_in_other_chunks)
-
         return tests_to_run, tests_to_skip
 
     def _test_input_for_file(self, test_file):
         return TestInput(test_file,
                          self._options.slow_time_out_ms if self._test_is_slow(test_file) else self._options.time_out_ms,
                          self._test_requires_lock(test_file),
-                         should_add_missing_baselines=(self._options.new_test_results and not self._test_is_expected_missing(test_file)))
+                         should_add_missing_baselines=(self._options.new_test_results and
+                                                       not self._test_is_expected_missing(test_file)))
 
     def _test_requires_lock(self, test_file):
         """Return True if the test needs to be locked when running multiple
@@ -282,10 +284,12 @@ class Manager(object):
 
     def _test_is_expected_missing(self, test_file):
         expectations = self._expectations.model().get_expectations(test_file)
-        return test_expectations.MISSING in expectations or test_expectations.NEEDS_REBASELINE in expectations or test_expectations.NEEDS_MANUAL_REBASELINE in expectations
+        return (test_expectations.MISSING in expectations or
+                test_expectations.NEEDS_REBASELINE in expectations or
+                test_expectations.NEEDS_MANUAL_REBASELINE in expectations)
 
     def _test_is_slow(self, test_file):
-        return test_expectations.SLOW in self._expectations.model().get_expectations(test_file)
+        return test_expectations.SLOW in self._expectations.model().get_expectations(test_file) or self._port.is_slow_wpt_test(test_file)
 
     def _needs_servers(self, test_names):
         return any(self._test_requires_lock(test_name) for test_name in test_names)
@@ -293,13 +297,14 @@ class Manager(object):
     def _rename_results_folder(self):
         try:
             timestamp = time.strftime(
-                "%Y-%m-%d-%H-%M-%S", time.localtime(self._filesystem.mtime(self._filesystem.join(self._results_directory, "results.html"))))
-        except (IOError, OSError) as e:
+                "%Y-%m-%d-%H-%M-%S", time.localtime(
+                    self._filesystem.mtime(self._filesystem.join(self._results_directory, "results.html"))))
+        except (IOError, OSError) as error:
             # It might be possible that results.html was not generated in previous run, because the test
             # run was interrupted even before testing started. In those cases, don't archive the folder.
             # Simply override the current folder contents with new results.
             import errno
-            if e.errno == errno.EEXIST or e.errno == errno.ENOENT:
+            if error.errno in (errno.EEXIST, errno.ENOENT):
                 self._printer.write_update("No results.html file found in previous run, skipping it.")
             return None
         archived_name = ''.join((self._filesystem.basename(self._results_directory), "_", timestamp))
@@ -330,18 +335,11 @@ class Manager(object):
                 _log.error("Build check failed")
                 return exit_code
 
-        # This must be started before we check the system dependencies,
-        # since the helper may do things to make the setup correct.
-        if self._options.pixel_tests:
-            self._printer.write_update("Starting pixel test helper ...")
-            self._port.start_helper()
-
         # Check that the system dependencies (themes, fonts, ...) are correct.
         if not self._options.nocheck_sys_deps:
             self._printer.write_update("Checking system dependencies ...")
             exit_code = self._port.check_sys_deps(self._needs_servers(test_names))
             if exit_code:
-                self._port.stop_helper()
                 return exit_code
 
         if self._options.clobber_old_results:
@@ -369,7 +367,7 @@ class Manager(object):
                                       tests_to_skip, num_workers, retry_attempt)
 
     def _start_servers(self, tests_to_run):
-        if self._port.is_wptserve_enabled() and any(self._port.is_wptserve_test(test) for test in tests_to_run):
+        if any(self._port.is_wptserve_test(test) for test in tests_to_run):
             self._printer.write_update('Starting WPTServe ...')
             self._port.start_wptserve()
             self._wptserve_started = True
@@ -404,20 +402,13 @@ class Manager(object):
         sys.stdout.flush()
         _log.debug("Flushing stderr")
         sys.stderr.flush()
-        _log.debug("Stopping helper")
-        self._port.stop_helper()
         _log.debug("Cleaning up port")
         self._port.clean_up_test_run()
 
     def _force_pixel_tests_if_needed(self):
         if self._options.pixel_tests:
             return False
-
-        _log.debug("Restarting helper")
-        self._port.stop_helper()
         self._options.pixel_tests = True
-        self._port.start_helper()
-
         return True
 
     def _look_for_new_crash_logs(self, run_results, start_time):
@@ -445,13 +436,13 @@ class Manager(object):
         sample_files = self._port.look_for_new_samples(crashed_processes, start_time)
         if sample_files:
             for test, sample_file in sample_files.iteritems():
-                writer = TestResultWriter(self._port._filesystem, self._port, self._port.results_directory(), test)
+                writer = TestResultWriter(self._filesystem, self._port, self._port.results_directory(), test)
                 writer.copy_sample_file(sample_file)
 
         crash_logs = self._port.look_for_new_crash_logs(crashed_processes, start_time)
         if crash_logs:
             for test, crash_log in crash_logs.iteritems():
-                writer = TestResultWriter(self._port._filesystem, self._port, self._port.results_directory(), test)
+                writer = TestResultWriter(self._filesystem, self._port, self._port.results_directory(), test)
                 writer.write_crash_log(crash_log)
 
     def _clobber_old_results(self):
@@ -471,13 +462,14 @@ class Manager(object):
         self._port.clobber_old_port_specific_results()
 
     def _tests_to_retry(self, run_results):
-        # TODO(ojan): This should also check that result.type != test_expectations.MISSING since retrying missing expectations is silly.
-        # But that's a bit tricky since we only consider the last retry attempt for the count of unexpected regressions.
+        # TODO(ojan): This should also check that result.type != test_expectations.MISSING
+        # since retrying missing expectations is silly. But that's a bit tricky since we
+        # only consider the last retry attempt for the count of unexpected regressions.
         return [result.test_name for result in run_results.unexpected_results_by_name.values(
         ) if result.type != test_expectations.PASS]
 
     def _write_json_files(self, summarized_full_results, summarized_failing_results, initial_results, running_all_tests):
-        _log.debug("Writing JSON files in %s." % self._results_directory)
+        _log.debug("Writing JSON files in %s.", self._results_directory)
 
         # FIXME: Upload stats.json to the server and delete times_ms.
         times_trie = json_results_generator.test_timings_trie(initial_results.results_by_name.values())
@@ -523,7 +515,7 @@ class Manager(object):
         files = [(file, self._filesystem.join(self._results_directory, file))
                  for file in ["failing_results.json", "full_results.json", "times_ms.json"]]
 
-        url = "http://%s/testfile/upload" % self._options.test_results_server
+        url = "https://%s/testfile/upload" % self._options.test_results_server
         # Set uploading timeout in case appengine server is having problems.
         # 120 seconds are more than enough to upload test results.
         uploader = FileUploader(url, 120)
@@ -533,11 +525,11 @@ class Manager(object):
                 if response.code == 200:
                     _log.debug("JSON uploaded.")
                 else:
-                    _log.debug("JSON upload failed, %d: '%s'" % (response.code, response.read()))
+                    _log.debug("JSON upload failed, %d: '%s'", response.code, response.read())
             else:
                 _log.error("JSON upload failed; no response returned")
         except Exception as err:
-            _log.error("Upload failed: %s" % err)
+            _log.error("Upload failed: %s", err)
 
     def _copy_results_html_file(self, destination_path):
         base_dir = self._port.path_from_webkit_base('LayoutTests', 'fast', 'harness')
@@ -560,3 +552,18 @@ class Manager(object):
         for name, value in stats.iteritems():
             json_results_generator.add_path_to_trie(name, value, stats_trie)
         return stats_trie
+
+    def _ensure_manifest(self):
+        fs = self._filesystem
+        external_path = self._webkit_finder.path_from_webkit_base('LayoutTests', 'external')
+        wpt_path = fs.join(external_path, 'wpt')
+        manifest_path = fs.join(external_path, 'wpt', 'MANIFEST.json')
+        base_manifest_path = fs.join(external_path, 'WPT_BASE_MANIFEST.json')
+
+        if not self._filesystem.exists(manifest_path):
+            fs.copyfile(base_manifest_path, manifest_path)
+
+        self._printer.write_update('Generating MANIFEST.json for web-platform-tests ...')
+
+        # TODO(jeffcarp): handle errors
+        WPTManifest.generate_manifest(self._port.host, wpt_path)

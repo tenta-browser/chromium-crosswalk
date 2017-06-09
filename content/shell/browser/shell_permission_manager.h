@@ -21,12 +21,14 @@ class ShellPermissionManager : public PermissionManager {
       PermissionType permission,
       RenderFrameHost* render_frame_host,
       const GURL& requesting_origin,
+      bool user_gesture,
       const base::Callback<void(blink::mojom::PermissionStatus)>& callback)
       override;
   int RequestPermissions(
       const std::vector<PermissionType>& permission,
       RenderFrameHost* render_frame_host,
       const GURL& requesting_origin,
+      bool user_gesture,
       const base::Callback<
           void(const std::vector<blink::mojom::PermissionStatus>&)>& callback)
       override;
@@ -38,9 +40,6 @@ class ShellPermissionManager : public PermissionManager {
       PermissionType permission,
       const GURL& requesting_origin,
       const GURL& embedding_origin) override;
-  void RegisterPermissionUsage(PermissionType permission,
-                               const GURL& requesting_origin,
-                               const GURL& embedding_origin) override;
   int SubscribePermissionStatusChange(
       PermissionType permission,
       const GURL& requesting_origin,

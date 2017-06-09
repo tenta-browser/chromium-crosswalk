@@ -2,7 +2,12 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/json_schema_api.gni")
+import("//build/config/features.gni")
+import("//extensions/features/features.gni")
+import("//tools/json_schema_compiler/json_features.gni")
+import("//tools/json_schema_compiler/json_schema_api.gni")
+
+assert(enable_extensions)
 
 json_schema_api("api") {
   visibility = [ ":*" ]
@@ -30,11 +35,37 @@ json_schema_api("api") {
 
   schemas = true
   root_namespace = "test::api::%(namespace)s"
+
+  deps = [
+    "//extensions/features",
+  ]
 }
 
-source_set("test") {
+json_features("features_compiler_test") {
+  feature_type = "APIFeature"
+  provider_class = "CompilerTestFeatureProvider"
+  sources = [
+    "features_test.json",
+    "features_test2.json",
+  ]
+}
+
+source_set("unit_tests") {
   testonly = true
   sources = [
+    "additional_properties_unittest.cc",
+    "any_unittest.cc",
+    "arrays_unittest.cc",
+    "callbacks_unittest.cc",
+    "choices_unittest.cc",
+    "crossref_unittest.cc",
+    "enums_unittest.cc",
+    "error_generation_unittest.cc",
+    "functions_as_parameters_unittest.cc",
+    "functions_on_types_unittest.cc",
+    "idl_schemas_unittest.cc",
+    "objects_unittest.cc",
+    "simple_api_unittest.cc",
     "test_util.cc",
     "test_util.h",
   ]
@@ -43,7 +74,12 @@ source_set("test") {
   configs += [ "//build/config/compiler:no_size_t_to_int_warning" ]
 
   public_deps = [
+    ":features_compiler_test",
+  ]
+
+  deps = [
     ":api",
     "//base",
+    "//testing/gtest",
   ]
 }

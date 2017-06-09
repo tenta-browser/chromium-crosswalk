@@ -126,8 +126,7 @@ cr.define('cr.ui', function() {
      * Requests new suggestions. Called when new suggestions are needed.
      * @param {string} query the text to autocomplete from.
      */
-    requestSuggestions: function(query) {
-    },
+    requestSuggestions: function(query) {},
 
     /**
      * Handles the Enter keydown event.
@@ -239,8 +238,8 @@ cr.define('cr.ui', function() {
       if (this.hidden)
         return;
       var handled = false;
-      switch (event.keyIdentifier) {
-        case 'U+001B':  // Esc
+      switch (event.key) {
+        case 'Escape':
           this.suggestions = [];
           handled = true;
           break;
@@ -250,11 +249,9 @@ cr.define('cr.ui', function() {
           // handle the event as well.
           this.handleEnterKeydown();
           break;
-        case 'Up':
-        case 'Down':
-          var newEvent = new Event(event.type);
-          newEvent.keyIdentifier = event.keyIdentifier;
-          this.dispatchEvent(newEvent);
+        case 'ArrowUp':
+        case 'ArrowDown':
+          this.dispatchEvent(new KeyboardEvent(event.type, event));
           handled = true;
           break;
       }
@@ -267,7 +264,5 @@ cr.define('cr.ui', function() {
     },
   };
 
-  return {
-    AutocompleteList: AutocompleteList
-  };
+  return {AutocompleteList: AutocompleteList};
 });

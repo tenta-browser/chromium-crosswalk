@@ -11,16 +11,17 @@
 namespace blink {
 
 class WindowGetComputedStyle {
-    STATIC_ONLY(WindowGetComputedStyle);
-public:
-    static StylePropertyMap* getComputedStyleMap(const DOMWindow&, Element* element, const String& pseudoElement)
-    {
-        DCHECK(element);
-        CSSComputedStyleDeclaration* computedStyleDeclaration = CSSComputedStyleDeclaration::create(element, false, pseudoElement);
-        return ComputedStylePropertyMap::create(computedStyleDeclaration);
-    }
+  STATIC_ONLY(WindowGetComputedStyle);
+
+ public:
+  static StylePropertyMap* getComputedStyleMap(const LocalDOMWindow&,
+                                               Element* element,
+                                               const String& pseudoElement) {
+    DCHECK(element);
+    return ComputedStylePropertyMap::create(element, pseudoElement);
+  }
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // WindowGetComputedStyle_h
+#endif  // WindowGetComputedStyle_h

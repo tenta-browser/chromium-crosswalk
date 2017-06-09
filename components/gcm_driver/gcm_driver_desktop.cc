@@ -66,6 +66,7 @@ class GCMDriverDesktop::IOWorker : public GCMClient::Delegate {
   void OnActivityRecorded() override;
   void OnConnected(const net::IPEndPoint& ip_endpoint) override;
   void OnDisconnected() override;
+  void OnStoreReset() override;
 
   // Called on IO thread.
   void Initialize(
@@ -301,6 +302,11 @@ void GCMDriverDesktop::IOWorker::OnConnected(
 void GCMDriverDesktop::IOWorker::OnDisconnected() {
   ui_thread_->PostTask(FROM_HERE,
                        base::Bind(&GCMDriverDesktop::OnDisconnected, service_));
+}
+
+void GCMDriverDesktop::IOWorker::OnStoreReset() {
+  ui_thread_->PostTask(FROM_HERE,
+                       base::Bind(&GCMDriverDesktop::OnStoreReset, service_));
 }
 
 void GCMDriverDesktop::IOWorker::Start(
@@ -1227,7 +1233,9 @@ void GCMDriverDesktop::MessagesDeleted(const std::string& app_id) {
   if (!gcm_started_)
     return;
 
-  GetAppHandler(app_id)->OnMessagesDeleted(app_id);
+  GCMAppHandler* handler = GetAppHandler(app_id);
+  if (handler)
+    handler->OnMessagesDeleted(app_id);
 }
 
 void GCMDriverDesktop::MessageSendError(
@@ -1239,7 +1247,9 @@ void GCMDriverDesktop::MessageSendError(
   if (!gcm_started_)
     return;
 
-  GetAppHandler(app_id)->OnSendError(app_id, send_error_details);
+  GCMAppHandler* handler = GetAppHandler(app_id);
+  if (handler)
+    handler->OnSendError(app_id, send_error_details);
 }
 
 void GCMDriverDesktop::SendAcknowledged(const std::string& app_id,
@@ -1250,7 +1260,9 @@ void GCMDriverDesktop::SendAcknowledged(const std::string& app_id,
   if (!gcm_started_)
     return;
 
-  GetAppHandler(app_id)->OnSendAcknowledged(app_id, message_id);
+  GCMAppHandler* handler = GetAppHandler(app_id);
+  if (handler)
+    handler->OnSendAcknowledged(app_id, message_id);
 }
 
 void GCMDriverDesktop::GCMClientReady(
@@ -1283,9 +1295,8 @@ void GCMDriverDesktop::OnConnected(const net::IPEndPoint& ip_endpoint) {
   if (!gcm_started_)
     return;
 
-  FOR_EACH_OBSERVER(GCMConnectionObserver,
-                    connection_observer_list_,
-                    OnConnected(ip_endpoint));
+  for (GCMConnectionObserver& observer : connection_observer_list_)
+    observer.OnConnected(ip_endpoint);
 }
 
 void GCMDriverDesktop::OnDisconnected() {
@@ -1297,8 +1308,19 @@ void GCMDriverDesktop::OnDisconnected() {
   if (!gcm_started_)
     return;
 
-  FOR_EACH_OBSERVER(
-      GCMConnectionObserver, connection_observer_list_, OnDisconnected());
+  for (GCMConnectionObserver& observer : connection_observer_list_)
+    observer.OnDisconnected();
+}
+
+void GCMDriverDesktop::OnStoreReset() {
+  // Defensive copy in case OnStoreReset calls Add/RemoveAppHandler.
+  std::vector<GCMAppHandler*> app_handler_values;
+  for (const auto& key_value : app_handlers())
+    app_handler_values.push_back(key_value.second);
+  for (GCMAppHandler* app_handler : app_handler_values) {
+    app_handler->OnStoreReset();
+    // app_handler might now have been deleted.
+  }
 }
 
 void GCMDriverDesktop::GetGCMStatisticsFinished(

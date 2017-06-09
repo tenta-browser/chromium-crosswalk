@@ -5,8 +5,9 @@
 #include "chrome/browser/geolocation/geolocation_permission_context_extensions.h"
 
 #include "base/callback.h"
+#include "extensions/features/features.h"
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/permissions/permission_request_id.h"
 #include "chrome/browser/profiles/profile.h"
 #include "extensions/browser/extension_registry.h"
@@ -22,19 +23,19 @@ using extensions::ExtensionRegistry;
 
 namespace {
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 void CallbackContentSettingWrapper(
     const base::Callback<void(ContentSetting)>& callback,
     bool allowed) {
   callback.Run(allowed ? CONTENT_SETTING_ALLOW : CONTENT_SETTING_BLOCK);
 }
-#endif  // defined(ENABLE_EXTENSIONS)
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
 }  // anonymous namespace
 
 GeolocationPermissionContextExtensions::GeolocationPermissionContextExtensions(
     Profile* profile)
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
     : profile_(profile)
 #endif
 {
@@ -49,17 +50,18 @@ bool GeolocationPermissionContextExtensions::DecidePermission(
     const PermissionRequestID& request_id,
     int bridge_id,
     const GURL& requesting_frame,
+    bool user_gesture,
     const base::Callback<void(ContentSetting)>& callback,
     bool* permission_set,
     bool* new_permission) {
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   GURL requesting_frame_origin = requesting_frame.GetOrigin();
 
   extensions::WebViewPermissionHelper* web_view_permission_helper =
       extensions::WebViewPermissionHelper::FromWebContents(web_contents);
   if (web_view_permission_helper) {
     web_view_permission_helper->RequestGeolocationPermission(
-        bridge_id, requesting_frame,
+        bridge_id, requesting_frame, user_gesture,
         base::Bind(&CallbackContentSettingWrapper, callback));
     *permission_set = false;
     *new_permission = false;
@@ -97,14 +99,14 @@ bool GeolocationPermissionContextExtensions::DecidePermission(
     *new_permission = false;
     return true;
   }
-#endif  // defined(ENABLE_EXTENSIONS)
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
   return false;
 }
 
 bool GeolocationPermissionContextExtensions::CancelPermissionRequest(
     content::WebContents* web_contents,
     int bridge_id) {
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   extensions::WebViewPermissionHelper* web_view_permission_helper =
       web_contents ?
       extensions::WebViewPermissionHelper::FromWebContents(web_contents)
@@ -113,6 +115,6 @@ bool GeolocationPermissionContextExtensions::CancelPermissionRequest(
     web_view_permission_helper->CancelGeolocationPermissionRequest(bridge_id);
     return true;
   }
-#endif  // defined(ENABLE_EXTENSIONS)
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
   return false;
 }

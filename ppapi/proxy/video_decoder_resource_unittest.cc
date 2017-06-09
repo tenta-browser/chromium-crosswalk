@@ -109,7 +109,7 @@ class VideoDecoderResourceTest : public PluginProxyTest {
     HostResource host_resource;
     host_resource.SetHostResource(pp_instance(), kGraphics3D);
     scoped_refptr<ppapi::proxy::Graphics3D> graphics_3d(
-        new ppapi::proxy::Graphics3D(host_resource));
+        new ppapi::proxy::Graphics3D(host_resource, gfx::Size(640, 480)));
     return graphics_3d->GetReference();
   }
 
@@ -147,13 +147,15 @@ class VideoDecoderResourceTest : public PluginProxyTest {
         &sink(), PpapiHostMsg_VideoDecoder_GetShm::ID, PP_OK, shm_msg_reply);
     sink().AddFilter(&shm_msg_handler);
 
+    std::unique_ptr<base::SharedMemoryHandle> shm_handle;
+    std::unique_ptr<SerializedHandle> serialized_handle;
     base::SharedMemory shm;
     if (expected_shm_msg) {
       shm.CreateAnonymous(kShmSize);
-      base::SharedMemoryHandle shm_handle;
-      shm.ShareToProcess(base::GetCurrentProcessHandle(), &shm_handle);
-      SerializedHandle serialized_handle(shm_handle, kShmSize);
-      shm_msg_handler.set_serialized_handle(&serialized_handle);
+      shm_handle.reset(new base::SharedMemoryHandle());
+      shm.ShareToProcess(base::GetCurrentProcessHandle(), shm_handle.get());
+      serialized_handle.reset(new SerializedHandle(*shm_handle, kShmSize));
+      shm_msg_handler.set_serialized_handle(serialized_handle.get());
     }
 
     memset(decode_buffer_, 0x55, kDecodeBufferSize);

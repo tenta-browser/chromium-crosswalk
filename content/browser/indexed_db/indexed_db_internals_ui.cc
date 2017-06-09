@@ -68,6 +68,7 @@ IndexedDBInternalsUI::IndexedDBInternalsUI(WebUI* web_ui)
   source->AddResourcePath("indexeddb_internals.css",
                           IDR_INDEXED_DB_INTERNALS_CSS);
   source->SetDefaultResource(IDR_INDEXED_DB_INTERNALS_HTML);
+  source->UseGzip(std::unordered_set<std::string>());
 
   BrowserContext* browser_context =
       web_ui->GetWebContents()->GetBrowserContext();
@@ -231,8 +232,7 @@ void IndexedDBInternalsUI::DownloadOriginDataOnIndexedDBThread(
   // has completed.
   base::FilePath temp_path = temp_dir.Take();
 
-  std::string origin_id =
-      storage::GetIdentifierFromOrigin(GURL(origin.Serialize()));
+  std::string origin_id = storage::GetIdentifierFromOrigin(origin.GetURL());
   base::FilePath zip_path =
       temp_path.AppendASCII(origin_id).AddExtension(FILE_PATH_LITERAL("zip"));
 
@@ -272,7 +272,7 @@ void IndexedDBInternalsUI::OnForcedClose(const base::FilePath& partition_path,
   web_ui()->CallJavascriptFunctionUnsafe(
       "indexeddb.onForcedClose", base::StringValue(partition_path.value()),
       base::StringValue(origin.Serialize()),
-      base::FundamentalValue(static_cast<double>(connection_count)));
+      base::Value(static_cast<double>(connection_count)));
 }
 
 void IndexedDBInternalsUI::OnDownloadDataReady(
@@ -361,7 +361,7 @@ void IndexedDBInternalsUI::OnDownloadStarted(
       "indexeddb.onOriginDownloadReady",
       base::StringValue(partition_path.value()),
       base::StringValue(origin.Serialize()),
-      base::FundamentalValue(static_cast<double>(connection_count)));
+      base::Value(static_cast<double>(connection_count)));
 }
 
 }  // namespace content

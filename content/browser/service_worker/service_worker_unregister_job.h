@@ -9,6 +9,7 @@
 
 #include <vector>
 
+#include "base/callback_forward.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "content/browser/service_worker/service_worker_register_job_base.h"
@@ -17,11 +18,8 @@
 
 namespace content {
 
-class EmbeddedWorkerRegistry;
 class ServiceWorkerContextCore;
-class ServiceWorkerJobCoordinator;
 class ServiceWorkerRegistration;
-class ServiceWorkerStorage;
 
 // Handles the unregistration of a Service Worker.
 //
@@ -51,7 +49,7 @@ class ServiceWorkerUnregisterJob : public ServiceWorkerRegisterJobBase {
  private:
   void OnRegistrationFound(
       ServiceWorkerStatusCode status,
-      const scoped_refptr<ServiceWorkerRegistration>& registration);
+      scoped_refptr<ServiceWorkerRegistration> registration);
   void Complete(int64_t registration_id, ServiceWorkerStatusCode status);
   void CompleteInternal(int64_t registration_id,
                         ServiceWorkerStatusCode status);

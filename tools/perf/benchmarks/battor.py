@@ -3,6 +3,7 @@
 # found in the LICENSE file.
 
 from core import perf_benchmark
+from telemetry.timeline import chrome_trace_category_filter
 from telemetry.web_perf import timeline_based_measurement
 import page_sets
 from telemetry import benchmark
@@ -13,23 +14,22 @@ from telemetry import benchmark
 class _BattOrBenchmark(perf_benchmark.PerfBenchmark):
 
   def CreateTimelineBasedMeasurementOptions(self):
-    options = timeline_based_measurement.Options()
+    category_filter = chrome_trace_category_filter.ChromeTraceCategoryFilter(
+        filter_string='toplevel')
+    options = timeline_based_measurement.Options(category_filter)
+    options.config.chrome_trace_config.category_filter.AddFilterString('rail')
+    options.config.enable_atrace_trace = True
+    options.config.atrace_config.categories = ['sched']
     options.config.enable_battor_trace = True
     options.config.enable_chrome_trace = True
-    options.config.chrome_trace_config.SetDefaultOverheadFilter()
-    options.SetTimelineBasedMetric('powerMetric')
+    options.config.enable_cpu_trace = True
+    options.SetTimelineBasedMetrics(
+        ['powerMetric', 'clockSyncLatencyMetric', 'cpuTimeMetric'])
     return options
 
   @classmethod
   def ShouldDisable(cls, possible_browser):
-    # Only run if BattOr is detected.
-    if not possible_browser.platform.HasBattOrConnected():
-      return True
-
-    # Galaxy S5s have problems with running system health metrics.
-    # http://crbug.com/600463
-    galaxy_s5_type_name = 'SM-G900H'
-    return possible_browser.platform.GetDeviceTypeName() == galaxy_s5_type_name
+    return not possible_browser.platform.HasBattOrConnected()
 
   @classmethod
   def ShouldTearDownStateAfterEachStoryRun(cls):
@@ -50,64 +50,24 @@ class BattOrToughVideoCases(_BattOrBenchmark):
     return 'battor.tough_video_cases'
 
 
-# TODO(rnephew): Add a version that scrolls.
-class BattOrSystemHealthLoadingDesktop(_BattOrBenchmark):
-  """Desktop Chrome Memory System Health Benchmark."""
+@benchmark.Enabled('mac')
+class BattOrTrivialPages(_BattOrBenchmark):
 
   def CreateStorySet(self, options):
-    return page_sets.DesktopSystemHealthStorySet(take_memory_measurement=False)
-
-  @classmethod
-  def ShouldDisable(cls, possible_browser):
-    return (possible_browser.platform.GetDeviceTypeName() != 'Desktop' or
-            not possible_browser.platform.HasBattOrConnected())
+    # We want it to wait for 30 seconds to be comparable to legacy power tests.
+    return page_sets.TrivialSitesStorySet(wait_in_seconds=30)
 
   @classmethod
   def Name(cls):
-    return 'battor.system_health_loading_desktop'
+    return 'battor.trivial_pages'
 
-
-class BattOrSystemHealthLoadingMobile(_BattOrBenchmark):
-  """Mobile Chrome Memory System Health Benchmark."""
+@benchmark.Enabled('mac')
+class BattOrSteadyStatePages(_BattOrBenchmark):
 
   def CreateStorySet(self, options):
-    return page_sets.MobileSystemHealthStorySet(take_memory_measurement=False)
-
-  @classmethod
-  def ShouldDisable(cls, possible_browser):
-    if possible_browser.platform.GetDeviceTypeName() == 'Desktop':
-      return True
-    if (possible_browser.browser_type == 'reference' and
-        possible_browser.platform.GetDeviceTypeName() == 'Nexus 5X'):
-      return True
-    return not possible_browser.platform.HasBattOrConnected()
+    # We want it to wait for 30 seconds to be comparable to legacy power tests.
+    return page_sets.IdleAfterLoadingStories(wait_in_seconds=30)
 
   @classmethod
   def Name(cls):
-    return 'battor.system_health_loading_mobile'
-
-
-@benchmark.Disabled('android')  # crbug.com/618330
-class BattOrPowerCases(_BattOrBenchmark):
-  page_set = page_sets.power_cases.PowerCasesPageSet
-
-  @classmethod
-  def Name(cls):
-    return 'battor.power_cases'
-
-
-@benchmark.Disabled('android') # crbug.com/618330
-class BattOrPowerCasesNoChromeTrace(_BattOrBenchmark):
-  page_set = page_sets.power_cases.PowerCasesPageSet
-
-  def CreateTimelineBasedMeasurementOptions(self):
-    options = timeline_based_measurement.Options()
-    options.config.enable_battor_trace = True
-    options.config.enable_chrome_trace = False
-    options.config.chrome_trace_config.SetDefaultOverheadFilter()
-    options.SetTimelineBasedMetric('powerMetric')
-    return options
-
-  @classmethod
-  def Name(cls):
-    return 'battor.power_cases_no_chrome_trace'
+    return 'battor.steady_state'

@@ -6,6 +6,8 @@
 
 #include <utility>
 
+#include "base/metrics/histogram_macros.h"
+
 namespace domain_reliability {
 
 DomainReliabilityContextManager::DomainReliabilityContextManager(
@@ -14,7 +16,8 @@ DomainReliabilityContextManager::DomainReliabilityContextManager(
 }
 
 DomainReliabilityContextManager::~DomainReliabilityContextManager() {
-  RemoveAllContexts();
+  RemoveContexts(
+      base::Callback<bool(const GURL&)>() /* no filter - delete everything */);
 }
 
 void DomainReliabilityContextManager::RouteBeacon(
@@ -23,7 +26,16 @@ void DomainReliabilityContextManager::RouteBeacon(
   if (!context)
     return;
 
-  context->OnBeacon(std::move(beacon));
+  bool queued = context->OnBeacon(std::move(beacon));
+  if (!queued)
+    return;
+
+  base::TimeTicks now = base::TimeTicks::Now();
+  if (!last_routed_beacon_time_.is_null()) {
+    UMA_HISTOGRAM_LONG_TIMES("DomainReliability.BeaconIntervalGlobal",
+                             now - last_routed_beacon_time_);
+  }
+  last_routed_beacon_time_ = now;
 }
 
 void DomainReliabilityContextManager::SetConfig(
@@ -44,7 +56,10 @@ void DomainReliabilityContextManager::SetConfig(
     // pending beacons and collector backoff state. Therefore, don't do so
     // needlessly; make sure the config has actually changed before recreating
     // the context.
-    if (contexts_[key]->config().Equals(*config)) {
+    bool config_same = contexts_[key]->config().Equals(*config);
+    UMA_HISTOGRAM_BOOLEAN("DomainReliability.SetConfigRecreatedContext",
+                          !config_same);
+    if (!config_same) {
       DVLOG(1) << "Ignoring unchanged NEL header for existing origin "
                << origin.spec() << ".";
       return;
@@ -69,9 +84,14 @@ void DomainReliabilityContextManager::ClearConfig(const GURL& origin) {
   }
 }
 
-void DomainReliabilityContextManager::ClearBeaconsInAllContexts() {
-  for (auto& context_entry : contexts_)
-    context_entry.second->ClearBeacons();
+void DomainReliabilityContextManager::ClearBeacons(
+    const base::Callback<bool(const GURL&)>& origin_filter) {
+  for (auto& context_entry : contexts_) {
+    if (origin_filter.is_null() ||
+        origin_filter.Run(context_entry.second->config().origin)) {
+      context_entry.second->ClearBeacons();
+    }
+  }
 }
 
 DomainReliabilityContext* DomainReliabilityContextManager::AddContextForConfig(
@@ -89,10 +109,18 @@ DomainReliabilityContext* DomainReliabilityContextManager::AddContextForConfig(
   return *entry;
 }
 
-void DomainReliabilityContextManager::RemoveAllContexts() {
-  STLDeleteContainerPairSecondPointers(
-      contexts_.begin(), contexts_.end());
-  contexts_.clear();
+void DomainReliabilityContextManager::RemoveContexts(
+    const base::Callback<bool(const GURL&)>& origin_filter) {
+  for (ContextMap::iterator it = contexts_.begin(); it != contexts_.end(); ) {
+    if (!origin_filter.is_null() &&
+        !origin_filter.Run(it->second->config().origin)) {
+      ++it;
+      continue;
+    }
+
+    delete it->second;
+    it = contexts_.erase(it);
+  }
 }
 
 std::unique_ptr<base::Value> DomainReliabilityContextManager::GetWebUIData()

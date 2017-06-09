@@ -9,10 +9,10 @@
 
 #include <vector>
 
+#include "cc/paint/paint_record.h"
 #include "cc/playback/clip_display_item.h"
 #include "cc/playback/clip_path_display_item.h"
 #include "cc/playback/compositing_display_item.h"
-#include "cc/playback/display_item_list_settings.h"
 #include "cc/playback/drawing_display_item.h"
 #include "cc/playback/filter_display_item.h"
 #include "cc/playback/float_clip_display_item.h"
@@ -21,7 +21,7 @@
 #include "third_party/WebKit/public/platform/WebRect.h"
 #include "third_party/skia/include/core/SkColorFilter.h"
 #include "third_party/skia/include/core/SkMatrix44.h"
-#include "third_party/skia/include/core/SkPicture.h"
+#include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/geometry/safe_integer_conversions.h"
 #include "ui/gfx/transform.h"
 
@@ -29,18 +29,10 @@ namespace cc_blink {
 
 namespace {
 
-scoped_refptr<cc::DisplayItemList> CreateUncachedDisplayItemListForBlink() {
-  cc::DisplayItemListSettings settings;
-  settings.use_cached_picture = false;
-  gfx::Rect layer_rect;
-  return cc::DisplayItemList::Create(layer_rect, settings);
-}
-
 }  // namespace
 
 WebDisplayItemListImpl::WebDisplayItemListImpl()
-    : display_item_list_(CreateUncachedDisplayItemListForBlink()) {
-}
+    : display_item_list_(new cc::DisplayItemList) {}
 
 WebDisplayItemListImpl::WebDisplayItemListImpl(
     cc::DisplayItemList* display_list)
@@ -49,18 +41,12 @@ WebDisplayItemListImpl::WebDisplayItemListImpl(
 
 void WebDisplayItemListImpl::appendDrawingItem(
     const blink::WebRect& visual_rect,
-    sk_sp<const SkPicture> picture) {
-  if (display_item_list_->RetainsIndividualDisplayItems()) {
-    display_item_list_->CreateAndAppendItem<cc::DrawingDisplayItem>(
-        visual_rect, std::move(picture));
-  } else {
-    cc::DrawingDisplayItem item(std::move(picture));
-    display_item_list_->RasterIntoCanvas(item);
-  }
+    sk_sp<const cc::PaintRecord> record) {
+  display_item_list_->CreateAndAppendDrawingItem<cc::DrawingDisplayItem>(
+      visual_rect, std::move(record));
 }
 
 void WebDisplayItemListImpl::appendClipItem(
-    const blink::WebRect& visual_rect,
     const blink::WebRect& clip_rect,
     const blink::WebVector<SkRRect>& rounded_clip_rects) {
   std::vector<SkRRect> rounded_rects;
@@ -68,100 +54,53 @@ void WebDisplayItemListImpl::appendClipItem(
     rounded_rects.push_back(rounded_clip_rects[i]);
   }
   bool antialias = true;
-  if (display_item_list_->RetainsIndividualDisplayItems()) {
-    display_item_list_->CreateAndAppendItem<cc::ClipDisplayItem>(
-        visual_rect, clip_rect, rounded_rects, antialias);
-  } else {
-    cc::ClipDisplayItem item(clip_rect, rounded_rects, antialias);
-    display_item_list_->RasterIntoCanvas(item);
-  }
+  display_item_list_->CreateAndAppendPairedBeginItem<cc::ClipDisplayItem>(
+      clip_rect, rounded_rects, antialias);
 }
 
-void WebDisplayItemListImpl::appendEndClipItem(
-    const blink::WebRect& visual_rect) {
-  if (display_item_list_->RetainsIndividualDisplayItems()) {
-    display_item_list_->CreateAndAppendItem<cc::EndClipDisplayItem>(
-        visual_rect);
-  } else {
-    display_item_list_->RasterIntoCanvas(cc::EndClipDisplayItem());
-  }
+void WebDisplayItemListImpl::appendEndClipItem() {
+  display_item_list_->CreateAndAppendPairedEndItem<cc::EndClipDisplayItem>();
 }
 
-void WebDisplayItemListImpl::appendClipPathItem(
-    const blink::WebRect& visual_rect,
-    const SkPath& clip_path,
-    SkRegion::Op clip_op,
-    bool antialias) {
-  if (display_item_list_->RetainsIndividualDisplayItems()) {
-    display_item_list_->CreateAndAppendItem<cc::ClipPathDisplayItem>(
-        visual_rect, clip_path, clip_op, antialias);
-  } else {
-    cc::ClipPathDisplayItem item(clip_path, clip_op, antialias);
-    display_item_list_->RasterIntoCanvas(item);
-  }
+void WebDisplayItemListImpl::appendClipPathItem(const SkPath& clip_path,
+                                                bool antialias) {
+  display_item_list_->CreateAndAppendPairedBeginItem<cc::ClipPathDisplayItem>(
+      clip_path, antialias);
 }
 
-void WebDisplayItemListImpl::appendEndClipPathItem(
-    const blink::WebRect& visual_rect) {
-  if (display_item_list_->RetainsIndividualDisplayItems()) {
-    display_item_list_->CreateAndAppendItem<cc::EndClipPathDisplayItem>(
-        visual_rect);
-  } else {
-    display_item_list_->RasterIntoCanvas(cc::EndClipPathDisplayItem());
-  }
+void WebDisplayItemListImpl::appendEndClipPathItem() {
+  display_item_list_
+      ->CreateAndAppendPairedEndItem<cc::EndClipPathDisplayItem>();
 }
 
 void WebDisplayItemListImpl::appendFloatClipItem(
-    const blink::WebRect& visual_rect,
     const blink::WebFloatRect& clip_rect) {
-  if (display_item_list_->RetainsIndividualDisplayItems()) {
-    display_item_list_->CreateAndAppendItem<cc::FloatClipDisplayItem>(
-        visual_rect, clip_rect);
-  } else {
-    cc::FloatClipDisplayItem item(clip_rect);
-    display_item_list_->RasterIntoCanvas(item);
-  }
+  display_item_list_->CreateAndAppendPairedBeginItem<cc::FloatClipDisplayItem>(
+      clip_rect);
 }
 
-void WebDisplayItemListImpl::appendEndFloatClipItem(
-    const blink::WebRect& visual_rect) {
-  if (display_item_list_->RetainsIndividualDisplayItems()) {
-    display_item_list_->CreateAndAppendItem<cc::EndFloatClipDisplayItem>(
-        visual_rect);
-  } else {
-    display_item_list_->RasterIntoCanvas(cc::EndFloatClipDisplayItem());
-  }
+void WebDisplayItemListImpl::appendEndFloatClipItem() {
+  display_item_list_
+      ->CreateAndAppendPairedEndItem<cc::EndFloatClipDisplayItem>();
 }
 
 void WebDisplayItemListImpl::appendTransformItem(
-    const blink::WebRect& visual_rect,
     const SkMatrix44& matrix) {
   gfx::Transform transform(gfx::Transform::kSkipInitialization);
   transform.matrix() = matrix;
 
-  if (display_item_list_->RetainsIndividualDisplayItems()) {
-    display_item_list_->CreateAndAppendItem<cc::TransformDisplayItem>(
-        visual_rect, transform);
-  } else {
-    cc::TransformDisplayItem item(transform);
-    display_item_list_->RasterIntoCanvas(item);
-  }
+  display_item_list_->CreateAndAppendPairedBeginItem<cc::TransformDisplayItem>(
+      transform);
 }
 
-void WebDisplayItemListImpl::appendEndTransformItem(
-    const blink::WebRect& visual_rect) {
-  if (display_item_list_->RetainsIndividualDisplayItems()) {
-    display_item_list_->CreateAndAppendItem<cc::EndTransformDisplayItem>(
-        visual_rect);
-  } else {
-    display_item_list_->RasterIntoCanvas(cc::EndTransformDisplayItem());
-  }
+void WebDisplayItemListImpl::appendEndTransformItem() {
+  display_item_list_
+      ->CreateAndAppendPairedEndItem<cc::EndTransformDisplayItem>();
 }
 
 void WebDisplayItemListImpl::appendCompositingItem(
-    const blink::WebRect& visual_rect,
     float opacity,
-    SkXfermode::Mode xfermode,
+    SkBlendMode xfermode,
     SkRect* bounds,
     SkColorFilter* color_filter) {
   DCHECK_GE(opacity, 0.f);
@@ -170,64 +109,42 @@ void WebDisplayItemListImpl::appendCompositingItem(
   // value, but that breaks slimming paint reftests.
 
   const bool kLcdTextRequiresOpaqueLayer = true;
-  if (display_item_list_->RetainsIndividualDisplayItems()) {
-    display_item_list_->CreateAndAppendItem<cc::CompositingDisplayItem>(
-        visual_rect, static_cast<uint8_t>(gfx::ToFlooredInt(255 * opacity)),
-        xfermode, bounds, sk_ref_sp(color_filter), kLcdTextRequiresOpaqueLayer);
-  } else {
-    cc::CompositingDisplayItem item(
-        static_cast<uint8_t>(gfx::ToFlooredInt(255 * opacity)), xfermode,
-        bounds, sk_ref_sp(color_filter), kLcdTextRequiresOpaqueLayer);
-    display_item_list_->RasterIntoCanvas(item);
-  }
+  display_item_list_
+      ->CreateAndAppendPairedBeginItem<cc::CompositingDisplayItem>(
+          static_cast<uint8_t>(gfx::ToFlooredInt(255 * opacity)), xfermode,
+          bounds, sk_ref_sp(color_filter), kLcdTextRequiresOpaqueLayer);
 }
 
-void WebDisplayItemListImpl::appendEndCompositingItem(
-    const blink::WebRect& visual_rect) {
-  if (display_item_list_->RetainsIndividualDisplayItems()) {
-    display_item_list_->CreateAndAppendItem<cc::EndCompositingDisplayItem>(
-        visual_rect);
-  } else {
-    display_item_list_->RasterIntoCanvas(cc::EndCompositingDisplayItem());
-  }
+void WebDisplayItemListImpl::appendEndCompositingItem() {
+  display_item_list_
+      ->CreateAndAppendPairedEndItem<cc::EndCompositingDisplayItem>();
 }
 
 void WebDisplayItemListImpl::appendFilterItem(
-    const blink::WebRect& visual_rect,
     const cc::FilterOperations& filters,
-    const blink::WebFloatRect& bounds) {
-  if (display_item_list_->RetainsIndividualDisplayItems()) {
-    display_item_list_->CreateAndAppendItem<cc::FilterDisplayItem>(
-        visual_rect, filters, bounds);
-  } else {
-    cc::FilterDisplayItem item(filters, bounds);
-    display_item_list_->RasterIntoCanvas(item);
-  }
+    const blink::WebFloatRect& filter_bounds,
+    const blink::WebFloatPoint& origin) {
+  display_item_list_
+      ->CreateAndAppendPairedBeginItemWithVisualRect<cc::FilterDisplayItem>(
+          gfx::ToEnclosingRect(filter_bounds), filters, filter_bounds, origin);
 }
 
-void WebDisplayItemListImpl::appendEndFilterItem(
-    const blink::WebRect& visual_rect) {
-  if (display_item_list_->RetainsIndividualDisplayItems()) {
-    display_item_list_->CreateAndAppendItem<cc::EndFilterDisplayItem>(
-        visual_rect);
-  } else {
-    display_item_list_->RasterIntoCanvas(cc::EndFilterDisplayItem());
-  }
+void WebDisplayItemListImpl::appendEndFilterItem() {
+  display_item_list_->CreateAndAppendPairedEndItem<cc::EndFilterDisplayItem>();
 }
 
 void WebDisplayItemListImpl::appendScrollItem(
-    const blink::WebRect& visual_rect,
     const blink::WebSize& scroll_offset,
     ScrollContainerId) {
   SkMatrix44 matrix(SkMatrix44::kUninitialized_Constructor);
   matrix.setTranslate(-scroll_offset.width, -scroll_offset.height, 0);
-  // TODO(wkorman): Should we translate the visual rect as well?
-  appendTransformItem(visual_rect, matrix);
+  // TODO(wkorman): http://crbug.com/633636 Should we translate the visual rect
+  // as well? Create a test case and investigate.
+  appendTransformItem(matrix);
 }
 
-void WebDisplayItemListImpl::appendEndScrollItem(
-    const blink::WebRect& visual_rect) {
-  appendEndTransformItem(visual_rect);
+void WebDisplayItemListImpl::appendEndScrollItem() {
+  appendEndTransformItem();
 }
 
 void WebDisplayItemListImpl::setIsSuitableForGpuRasterization(bool isSuitable) {

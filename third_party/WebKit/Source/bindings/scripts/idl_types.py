@@ -139,7 +139,7 @@ class IdlType(IdlTypeBase):
     # FIXME: incorporate Nullable, etc.
     # to support types like short?[] vs. short[]?, instead of treating these
     # as orthogonal properties (via flags).
-    callback_functions = set(STANDARD_CALLBACK_FUNCTIONS)
+    callback_functions = {}
     callback_interfaces = set()
     dictionaries = set()
     enums = {}  # name -> values
@@ -167,8 +167,19 @@ class IdlType(IdlTypeBase):
         return self.base_type in BASIC_TYPES
 
     @property
-    def is_callback_function(self):
-        return self.base_type in IdlType.callback_functions
+    def is_callback_function(self):  # pylint: disable=C0103
+        return self.base_type in IdlType.callback_functions or self.base_type in STANDARD_CALLBACK_FUNCTIONS
+
+    @property
+    def is_custom_callback_function(self):
+        # Treat standard callback functions as custom as they aren't generated.
+        if self.base_type in STANDARD_CALLBACK_FUNCTIONS:
+            return True
+        entry = IdlType.callback_functions.get(self.base_type)
+        callback_function = entry.get('callback_function')
+        if not callback_function:
+            return False
+        return 'Custom' in callback_function.extended_attributes
 
     @property
     def is_callback_interface(self):
@@ -195,6 +206,10 @@ class IdlType(IdlTypeBase):
     @property
     def is_integer_type(self):
         return self.base_type in INTEGER_TYPES
+
+    @property
+    def is_void(self):
+        return self.base_type == 'void'
 
     @property
     def is_numeric_type(self):
@@ -363,6 +378,14 @@ class IdlArrayOrSequenceType(IdlTypeBase):
         return True
 
     @property
+    def is_array_type(self):
+        return False
+
+    @property
+    def is_sequence_type(self):
+        return False
+
+    @property
     def is_frozen_array(self):
         return False
 
@@ -391,6 +414,10 @@ class IdlArrayType(IdlArrayOrSequenceType):
     def name(self):
         return self.element_type.name + 'Array'
 
+    @property
+    def is_array_type(self):
+        return True
+
 
 class IdlSequenceType(IdlArrayOrSequenceType):
     def __init__(self, element_type):
@@ -402,6 +429,10 @@ class IdlSequenceType(IdlArrayOrSequenceType):
     @property
     def name(self):
         return self.element_type.name + 'Sequence'
+
+    @property
+    def is_sequence_type(self):
+        return True
 
 
 class IdlFrozenArrayType(IdlArrayOrSequenceType):
@@ -419,6 +450,49 @@ class IdlFrozenArrayType(IdlArrayOrSequenceType):
     def is_frozen_array(self):
         return True
 
+
+################################################################################
+# IdlRecordType
+################################################################################
+
+class IdlRecordType(IdlTypeBase):
+    def __init__(self, key_type, value_type):
+        super(IdlRecordType, self).__init__()
+        self.key_type = key_type
+        self.value_type = value_type
+
+    def __str__(self):
+        return 'record<%s, %s>' % (self.key_type, self.value_type)
+
+    def __getstate__(self):
+        return {
+            'key_type': self.key_type,
+            'value_type': self.value_type,
+        }
+
+    def __setstate__(self, state):
+        self.key_type = state['key_type']
+        self.value_type = state['value_type']
+
+    def idl_types(self):
+        yield self
+        for idl_type in self.key_type.idl_types():
+            yield idl_type
+        for idl_type in self.value_type.idl_types():
+            yield idl_type
+
+    def resolve_typedefs(self, typedefs):
+        self.key_type = self.key_type.resolve_typedefs(typedefs)
+        self.value_type = self.value_type.resolve_typedefs(typedefs)
+        return self
+
+    @property
+    def is_record_type(self):
+        return True
+
+    @property
+    def name(self):
+        return self.key_type.name + self.value_type.name + 'Record'
 
 
 ################################################################################

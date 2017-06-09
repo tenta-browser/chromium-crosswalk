@@ -4,16 +4,24 @@
 
 package org.chromium.chrome.browser.download;
 
+import org.chromium.base.annotations.CalledByNative;
+
 /**
  * A generic class representing a download item. The item can be either downloaded through the
- * Android DownloadManager, or through Chrome's network stack
+ * Android DownloadManager, or through Chrome's network stack.
+ *
+ * This represents the native DownloadItem at a specific point in time -- the native side
+ * DownloadManager must be queried for the correct status.
  */
 public class DownloadItem {
+    public static final int INDETERMINATE_DOWNLOAD_PERCENTAGE = -1;
     static final long INVALID_DOWNLOAD_ID = -1L;
+
     private boolean mUseAndroidDownloadManager;
     private DownloadInfo mDownloadInfo;
     private long mDownloadId = INVALID_DOWNLOAD_ID;
     private long mStartTime;
+    private boolean mHasBeenExternallyRemoved;
 
     public DownloadItem(boolean useAndroidDownloadManager, DownloadInfo info) {
         mUseAndroidDownloadManager = useAndroidDownloadManager;
@@ -85,5 +93,41 @@ public class DownloadItem {
      */
     public long getStartTime() {
         return mStartTime;
+    }
+
+    /**
+     * Sets whether the file associated with this item has been removed through an external
+     * action.
+     *
+     * @param hasBeenExternallyRemoved Whether the file associated with this item has been removed
+     *                                 from the file system through a means other than the browser
+     *                                 download ui.
+     */
+    public void setHasBeenExternallyRemoved(boolean hasBeenExternallyRemoved) {
+        mHasBeenExternallyRemoved = hasBeenExternallyRemoved;
+    }
+
+    /**
+     * @return Whether the file associated with this item has been removed from the file system
+     *         through a means other than the browser download ui.
+     */
+    public boolean hasBeenExternallyRemoved() {
+        return mHasBeenExternallyRemoved;
+    }
+
+    @CalledByNative
+    private static DownloadItem createDownloadItem(
+            DownloadInfo downloadInfo, long startTimestamp, boolean hasBeenExternallyRemoved) {
+        DownloadItem downloadItem = new DownloadItem(false, downloadInfo);
+        downloadItem.setStartTime(startTimestamp);
+        downloadItem.setHasBeenExternallyRemoved(hasBeenExternallyRemoved);
+        return downloadItem;
+    }
+
+    /**
+     * @return Whether or not the download has an indeterminate percentage.
+     */
+    public boolean isIndeterminate() {
+        return getDownloadInfo().getPercentCompleted() == INDETERMINATE_DOWNLOAD_PERCENTAGE;
     }
 }

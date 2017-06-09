@@ -13,6 +13,7 @@
 #include "base/callback.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
+#include "base/strings/string_piece.h"
 #include "base/threading/non_thread_safe.h"
 #include "base/time/time.h"
 #include "net/base/expiring_cache.h"
@@ -252,11 +253,16 @@ class NET_EXPORT TransportSecurityState
   // An interface for asynchronously sending HPKP violation reports.
   class NET_EXPORT ReportSenderInterface {
    public:
-    // Sends the given serialized |report| to |report_uri|.
-    virtual void Send(const GURL& report_uri, const std::string& report) = 0;
-
-    // Sets a callback to be called when report sending fails.
-    virtual void SetErrorCallback(
+    // Sends the given serialized |report| to |report_uri| with
+    // Content-Type header as specified in
+    // |content_type|. |content_type| should be non-empty.
+    // |report_id| could be any non-negative integer. It's passed back to the
+    // error or success callbacks.
+    virtual void Send(
+        const GURL& report_uri,
+        base::StringPiece content_type,
+        base::StringPiece report,
+        const base::Callback<void()>& success_callback,
         const base::Callback<void(const GURL&, int)>& error_callback) = 0;
 
    protected:
@@ -302,6 +308,21 @@ class NET_EXPORT TransportSecurityState
       const PublicKeyPinReportStatus report_status,
       std::string* failure_log);
   bool HasPublicKeyPins(const std::string& host);
+
+  // Sends an Expect-Staple report containing the raw |ocsp_response| for
+  // |host_port_pair| if the following conditions are true:
+  // 1. Sending Expect-Staple reports is enabled (via
+  //    |enable_static_expect_staple_|)
+  // 2. A report sender was provided via SetReportSender().
+  // 3. The build is timely (i.e. the preload list is fresh).
+  // 4. The given host is present on the Expect-Staple preload list.
+  // 5. |ssl_info| indicates the connection did not provide an OCSP response
+  //    indicating a revocation status of GOOD.
+  // 6. The certificate chain in |ssl_info| chains to a known root. Reports
+  //    for OCSP responses behind MITM proxies are not useful to site owners.
+  void CheckExpectStaple(const HostPortPair& host_port_pair,
+                         const SSLInfo& ssl_info,
+                         base::StringPiece ocsp_response);
 
   // Returns true if connections to |host|, using the validated certificate
   // |validated_certificate_chain|, are expected to be accompanied with
@@ -421,6 +442,14 @@ class NET_EXPORT TransportSecurityState
                const HashValueVector& hashes,
                const GURL& report_uri);
 
+  // Enables or disables public key pinning bypass for local trust anchors.
+  // Disabling the bypass for local trust anchors is highly discouraged.
+  // This method is used by Cronet only and *** MUST NOT *** be used by any
+  // other consumer. For more information see "How does key pinning interact
+  // with local proxies and filters?" at
+  // https://www.chromium.org/Home/chromium-security/security-faq
+  void SetEnablePublicKeyPinningBypassForLocalTrustAnchors(bool value);
+
   // Parses |value| as a Public-Key-Pins-Report-Only header value and
   // sends a HPKP report for |host_port_pair| if |ssl_info| violates the
   // pin. Returns true if |value| parses and includes a valid
@@ -448,6 +477,7 @@ class NET_EXPORT TransportSecurityState
 
  private:
   friend class TransportSecurityStateTest;
+  friend class TransportSecurityStateStaticFuzzer;
   FRIEND_TEST_ALL_PREFIXES(HttpSecurityHeadersTest, UpdateDynamicPKPOnly);
   FRIEND_TEST_ALL_PREFIXES(HttpSecurityHeadersTest, UpdateDynamicPKPMaxAge0);
   FRIEND_TEST_ALL_PREFIXES(HttpSecurityHeadersTest, NoClobberPins);
@@ -556,6 +586,9 @@ class NET_EXPORT TransportSecurityState
 
   // True if static expect-staple state should be used.
   bool enable_static_expect_staple_;
+
+  // True if public key pinning bypass is enabled for local trust anchors.
+  bool enable_pkp_bypass_for_local_trust_anchors_;
 
   ExpectCTReporter* expect_ct_reporter_ = nullptr;
 

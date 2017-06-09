@@ -9,16 +9,14 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/ui/autofill/create_card_unmask_prompt_view.h"
-#include "chrome/browser/ui/views/autofill/decorated_textfield.h"
-#include "chrome/browser/ui/views/autofill/tooltip_icon.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/grit/theme_resources.h"
 #include "components/autofill/core/browser/ui/card_unmask_prompt_controller.h"
 #include "components/constrained_window/constrained_window_views.h"
+#include "components/strings/grit/components_strings.h"
 #include "components/web_modal/web_contents_modal_dialog_host.h"
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "components/web_modal/web_contents_modal_dialog_manager_delegate.h"
-#include "grit/components_strings.h"
-#include "grit/theme_resources.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -29,11 +27,14 @@
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/gfx/vector_icons_public.h"
 #include "ui/views/background.h"
+#include "ui/views/border.h"
+#include "ui/views/bubble/tooltip_icon.h"
 #include "ui/views/controls/button/checkbox.h"
 #include "ui/views/controls/combobox/combobox.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/link.h"
+#include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/controls/throbber.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/widget/widget.h"
@@ -203,7 +204,7 @@ void CardUnmaskPromptViews::ShowNewCardLink() {
 
   new_card_link_ = new views::Link(
       l10n_util::GetStringUTF16(IDS_AUTOFILL_CARD_UNMASK_NEW_CARD_LINK));
-  new_card_link_->SetBorder(views::Border::CreateEmptyBorder(0, 7, 0, 0));
+  new_card_link_->SetBorder(views::CreateEmptyBorder(0, 7, 0, 0));
   new_card_link_->SetUnderline(false);
   new_card_link_->set_listener(this);
   input_row_->AddChildView(new_card_link_);
@@ -224,7 +225,7 @@ views::View* CardUnmaskPromptViews::CreateFootnoteView() {
       views::BoxLayout::kHorizontal, kEdgePadding, kEdgePadding, 0);
   storage_row_->SetLayoutManager(storage_row_layout);
   storage_row_->SetBorder(
-      views::Border::CreateSolidSidedBorder(1, 0, 0, 0, kSubtleBorderColor));
+      views::CreateSolidSidedBorder(1, 0, 0, 0, kSubtleBorderColor));
   storage_row_->set_background(
       views::Background::CreateSolidBackground(kLightShadingColor));
 
@@ -234,8 +235,11 @@ views::View* CardUnmaskPromptViews::CreateFootnoteView() {
   storage_row_->AddChildView(storage_checkbox_);
   storage_row_layout->SetFlexForView(storage_checkbox_, 1);
 
-  storage_row_->AddChildView(new TooltipIcon(l10n_util::GetStringUTF16(
-      IDS_AUTOFILL_CARD_UNMASK_PROMPT_STORAGE_TOOLTIP)));
+  views::TooltipIcon* icon = new views::TooltipIcon(l10n_util::GetStringUTF16(
+      IDS_AUTOFILL_CARD_UNMASK_PROMPT_STORAGE_TOOLTIP));
+  const int kTooltipWidth = 233;
+  icon->set_bubble_width(kTooltipWidth);
+  storage_row_->AddChildView(icon);
 
   return storage_row_;
 }
@@ -390,7 +394,7 @@ void CardUnmaskPromptViews::InitIfNecessary() {
   permanent_error_label_->set_background(
       views::Background::CreateSolidBackground(kWarningColor));
   permanent_error_label_->SetBorder(
-      views::Border::CreateEmptyBorder(12, kEdgePadding, 12, kEdgePadding));
+      views::CreateEmptyBorder(12, kEdgePadding, 12, kEdgePadding));
   permanent_error_label_->SetEnabledColor(SK_ColorWHITE);
   permanent_error_label_->SetAutoColorReadabilityEnabled(false);
   permanent_error_label_->SetVisible(false);
@@ -407,7 +411,7 @@ void CardUnmaskPromptViews::InitIfNecessary() {
   instructions_->SetEnabledColor(kGreyTextColor);
   instructions_->SetMultiLine(true);
   instructions_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-  instructions_->SetBorder(views::Border::CreateEmptyBorder(0, 0, 16, 0));
+  instructions_->SetBorder(views::CreateEmptyBorder(0, 0, 16, 0));
   controls_container->AddChildView(instructions_);
 
   input_row_ = new views::View();
@@ -432,9 +436,10 @@ void CardUnmaskPromptViews::InitIfNecessary() {
       input_row_->child_at(i)->SetVisible(false);
   }
 
-  cvc_input_ = new DecoratedTextfield(
-      base::string16(),
-      l10n_util::GetStringUTF16(IDS_AUTOFILL_DIALOG_PLACEHOLDER_CVC), this);
+  cvc_input_ = new views::Textfield();
+  cvc_input_->set_placeholder_text(
+      l10n_util::GetStringUTF16(IDS_AUTOFILL_DIALOG_PLACEHOLDER_CVC));
+  cvc_input_->set_controller(this);
   cvc_input_->set_default_width_in_chars(8);
   input_row_->AddChildView(cvc_input_);
 
@@ -448,7 +453,7 @@ void CardUnmaskPromptViews::InitIfNecessary() {
   temporary_error->SetLayoutManager(temporary_error_layout);
   temporary_error_layout->set_cross_axis_alignment(
       views::BoxLayout::CROSS_AXIS_ALIGNMENT_START);
-  temporary_error->SetBorder(views::Border::CreateEmptyBorder(8, 0, 0, 0));
+  temporary_error->SetBorder(views::CreateEmptyBorder(8, 0, 0, 0));
   controls_container->AddChildView(temporary_error);
 
   error_icon_ = new views::ImageView();
@@ -507,7 +512,7 @@ CardUnmaskPromptViews::FadeOutView::~FadeOutView() {
 void CardUnmaskPromptViews::FadeOutView::PaintChildren(
     const ui::PaintContext& context) {
   const bool kLcdTextRequiresOpaqueLayer = true;
-  ui::CompositingRecorder recorder(context, size(), alpha_,
+  ui::CompositingRecorder recorder(context, alpha_,
                                    kLcdTextRequiresOpaqueLayer);
   views::View::PaintChildren(context);
 }

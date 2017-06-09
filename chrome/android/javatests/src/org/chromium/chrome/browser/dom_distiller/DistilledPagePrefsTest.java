@@ -4,8 +4,8 @@
 
 package org.chromium.chrome.browser.dom_distiller;
 
+import android.support.test.filters.SmallTest;
 import android.test.UiThreadTest;
-import android.test.suitebuilder.annotation.SmallTest;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.DisabledTest;
@@ -63,9 +63,8 @@ public class DistilledPagePrefsTest extends NativeLibraryTestBase {
     /*
     @SmallTest
     @Feature({"DomDistiller"})
-    crbug.com/458196
     */
-    @DisabledTest
+    @DisabledTest(message = "crbug.com/458196")
     public void testSingleObserverTheme() throws InterruptedException {
         TestingObserver testObserver = new TestingObserver();
         mDistilledPagePrefs.addObserver(testObserver);
@@ -82,9 +81,8 @@ public class DistilledPagePrefsTest extends NativeLibraryTestBase {
     /*
     @SmallTest
     @Feature({"DomDistiller"})
-    crbug.com/458196
     */
-    @DisabledTest
+    @DisabledTest(message = "crbug.com/458196")
     public void testMultipleObserversTheme() throws InterruptedException {
         TestingObserver testObserverOne = new TestingObserver();
         mDistilledPagePrefs.addObserver(testObserverOne);

@@ -12,7 +12,7 @@
 #include <vector>
 
 #include "base/command_line.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -24,16 +24,13 @@
 #include "chrome/renderer/prerender/prerender_helper.h"
 #include "chrome/renderer/safe_browsing/phishing_classifier_delegate.h"
 #include "components/translate/content/renderer/translate_helper.h"
-#include "content/public/common/ssl_status.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_view.h"
 #include "extensions/common/constants.h"
-#include "net/base/url_util.h"
-#include "net/ssl/ssl_cipher_suite_names.h"
-#include "net/ssl/ssl_connection_status_flags.h"
+#include "printing/features/features.h"
 #include "skia/ext/image_operations.h"
 #include "third_party/WebKit/public/platform/WebImage.h"
-#include "third_party/WebKit/public/platform/modules/app_banner/WebAppBannerPromptReply.h"
+#include "third_party/WebKit/public/platform/WebURLRequest.h"
 #include "third_party/WebKit/public/web/WebDataSource.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
 #include "third_party/WebKit/public/web/WebElement.h"
@@ -46,7 +43,7 @@
 #include "ui/gfx/geometry/size_f.h"
 #include "url/gurl.h"
 
-#if defined(ENABLE_PRINTING)
+#if BUILDFLAG(ENABLE_PRINTING)
 #include "components/printing/common/print_messages.h"
 #include "components/printing/renderer/print_web_view_helper.h"
 #endif
@@ -57,7 +54,6 @@ using blink::WebFrameContentDumper;
 using blink::WebLocalFrame;
 using blink::WebNode;
 using blink::WebString;
-using content::SSLStatus;
 using content::RenderFrame;
 
 // Maximum number of characters in the document to index.
@@ -125,7 +121,7 @@ ChromeRenderFrameObserver::ChromeRenderFrameObserver(
   if (!command_line.HasSwitch(switches::kDisableClientSidePhishingDetection))
     OnSetClientSidePhishingDetection(true);
   translate_helper_ = new translate::TranslateHelper(
-      render_frame, chrome::ISOLATED_WORLD_ID_TRANSLATE, 0,
+      render_frame, chrome::ISOLATED_WORLD_ID_TRANSLATE,
       extensions::kExtensionScheme);
 }
 
@@ -149,20 +145,19 @@ bool ChromeRenderFrameObserver::OnMessageReceived(const IPC::Message& message) {
                         OnRequestThumbnailForContextNode)
     IPC_MESSAGE_HANDLER(ChromeViewMsg_SetClientSidePhishingDetection,
                         OnSetClientSidePhishingDetection)
-#if defined(ENABLE_PRINTING)
+#if BUILDFLAG(ENABLE_PRINTING)
     IPC_MESSAGE_HANDLER(PrintMsg_PrintNodeUnderContextMenu,
                         OnPrintNodeUnderContextMenu)
 #endif
-    IPC_MESSAGE_HANDLER(ChromeViewMsg_AppBannerPromptRequest,
-                        OnAppBannerPromptRequest)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
 
   return handled;
 }
 
-void ChromeRenderFrameObserver::OnSetIsPrerendering(bool is_prerendering) {
-  if (is_prerendering) {
+void ChromeRenderFrameObserver::OnSetIsPrerendering(
+    prerender::PrerenderMode mode) {
+  if (mode != prerender::NO_PRERENDER) {
     // If the PrerenderHelper for this frame already exists, don't create it. It
     // can already be created for subframes during handling of
     // RenderFrameCreated, if the parent frame was prerendering at time of
@@ -172,7 +167,7 @@ void ChromeRenderFrameObserver::OnSetIsPrerendering(bool is_prerendering) {
 
     // The PrerenderHelper will destroy itself either after recording histograms
     // or on destruction of the RenderView.
-    new prerender::PrerenderHelper(render_frame());
+    new prerender::PrerenderHelper(render_frame(), mode);
   }
 }
 
@@ -224,9 +219,9 @@ void ChromeRenderFrameObserver::OnRequestThumbnailForContextNode(
 }
 
 void ChromeRenderFrameObserver::OnPrintNodeUnderContextMenu() {
-#if defined(ENABLE_PRINTING)
+#if BUILDFLAG(ENABLE_PRINTING)
   printing::PrintWebViewHelper* helper =
-      printing::PrintWebViewHelper::Get(render_frame()->GetRenderView());
+      printing::PrintWebViewHelper::Get(render_frame());
   if (helper)
     helper->PrintNode(render_frame()->GetWebFrame()->contextMenuNode());
 #endif
@@ -243,80 +238,6 @@ void ChromeRenderFrameObserver::OnSetClientSidePhishingDetection(
 #endif
 }
 
-void ChromeRenderFrameObserver::DidFinishDocumentLoad() {
-  // If the navigation is to a localhost URL (and the flag is set to
-  // allow localhost SSL misconfigurations), print a warning to the
-  // console telling the developer to check their SSL configuration
-  // before going to production.
-  bool allow_localhost = base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kAllowInsecureLocalhost);
-  WebDataSource* ds = render_frame()->GetWebFrame()->dataSource();
-
-  SSLStatus ssl_status = render_frame()->GetRenderView()->GetSSLStatusOfFrame(
-      render_frame()->GetWebFrame());
-
-  if (allow_localhost) {
-    bool is_cert_error = net::IsCertStatusError(ssl_status.cert_status) &&
-                         !net::IsCertStatusMinorError(ssl_status.cert_status);
-    bool is_localhost = net::IsLocalhost(GURL(ds->request().url()).host());
-
-    if (is_cert_error && is_localhost) {
-      render_frame()->GetWebFrame()->addMessageToConsole(
-          blink::WebConsoleMessage(
-              blink::WebConsoleMessage::LevelWarning,
-              base::ASCIIToUTF16(
-                  "This site does not have a valid SSL "
-                  "certificate! Without SSL, your site's and "
-                  "visitors' data is vulnerable to theft and "
-                  "tampering. Get a valid SSL certificate before"
-                  " releasing your website to the public.")));
-    }
-  }
-
-  // DHE is deprecated and will be removed in M52. See https://crbug.com/598109.
-  // TODO(davidben): Remove this logic when DHE is removed.
-  uint16_t cipher_suite =
-      net::SSLConnectionStatusToCipherSuite(ssl_status.connection_status);
-  const char* key_exchange;
-  const char* unused;
-  bool is_aead_unused;
-  net::SSLCipherSuiteToStrings(&key_exchange, &unused, &unused, &is_aead_unused,
-                               cipher_suite);
-  if (strcmp(key_exchange, "DHE_RSA") == 0) {
-    render_frame()->GetWebFrame()->addMessageToConsole(blink::WebConsoleMessage(
-        blink::WebConsoleMessage::LevelWarning,
-        base::ASCIIToUTF16("This site requires a DHE-based SSL cipher suite. "
-                           "These are deprecated and will be removed in M52, "
-                           "around July 2016. See "
-                           "https://www.chromestatus.com/feature/"
-                           "5752033759985664 for more details.")));
-  }
-}
-
-void ChromeRenderFrameObserver::OnAppBannerPromptRequest(
-    int request_id,
-    const std::string& platform) {
-  // App banner prompt requests are handled in the general chrome render frame
-  // observer, not the AppBannerClient, as the AppBannerClient is created lazily
-  // by blink and may not exist when the request is sent.
-  blink::WebAppBannerPromptReply reply = blink::WebAppBannerPromptReply::None;
-  blink::WebString web_platform(base::UTF8ToUTF16(platform));
-  blink::WebVector<blink::WebString> web_platforms(&web_platform, 1);
-
-  blink::WebLocalFrame* frame = render_frame()->GetWebFrame();
-  frame->willShowInstallBannerPrompt(request_id, web_platforms, &reply);
-
-  // Extract the referrer header for this site according to its referrer policy.
-  // Pass in an empty URL as the destination so that it is always treated
-  // as a cross-origin request.
-  std::string referrer = blink::WebSecurityPolicy::generateReferrerHeader(
-      frame->document().referrerPolicy(), GURL(),
-      frame->document().outgoingReferrer()).utf8();
-
-  Send(new ChromeViewHostMsg_AppBannerPromptReply(
-      routing_id(), request_id, reply, referrer));
-}
-
 void ChromeRenderFrameObserver::DidFinishLoad() {
   WebLocalFrame* frame = render_frame()->GetWebFrame();
   // Don't do anything for subframes.
@@ -330,7 +251,8 @@ void ChromeRenderFrameObserver::DidFinishLoad() {
   }
 }
 
-void ChromeRenderFrameObserver::DidStartProvisionalLoad() {
+void ChromeRenderFrameObserver::DidStartProvisionalLoad(
+    blink::WebDataSource* data_source) {
   // Let translate_helper do any preparatory work for loading a URL.
   if (!translate_helper_)
     return;
@@ -383,7 +305,8 @@ void ChromeRenderFrameObserver::CapturePageText(TextCaptureType capture_type) {
   // testing purposes. See http://crbug.com/585164.
   base::string16 contents =
       WebFrameContentDumper::deprecatedDumpFrameTreeAsText(frame,
-                                                           kMaxIndexChars);
+                                                           kMaxIndexChars)
+          .utf16();
 
   UMA_HISTOGRAM_TIMES(kTranslateCaptureText,
                       base::TimeTicks::Now() - capture_begin_time);

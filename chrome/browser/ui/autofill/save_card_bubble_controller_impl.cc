@@ -13,8 +13,8 @@
 #include "chrome/browser/ui/location_bar/location_bar.h"
 #include "components/autofill/core/browser/autofill_metrics.h"
 #include "components/autofill/core/common/autofill_constants.h"
-#include "content/public/browser/navigation_details.h"
-#include "grit/components_strings.h"
+#include "components/strings/grit/components_strings.h"
+#include "content/public/browser/navigation_handle.h"
 #include "ui/base/l10n/l10n_util.h"
 
 DEFINE_WEB_CONTENTS_USER_DATA_KEY(autofill::SaveCardBubbleControllerImpl);
@@ -47,6 +47,8 @@ void SaveCardBubbleControllerImpl::ShowBubbleForLocalSave(
     const base::Closure& save_card_callback) {
   is_uploading_ = false;
   is_reshow_ = false;
+  legal_message_lines_.clear();
+
   AutofillMetrics::LogSaveCardPromptMetric(
       AutofillMetrics::SAVE_CARD_PROMPT_SHOW_REQUESTED, is_uploading_,
       is_reshow_);
@@ -161,15 +163,17 @@ base::TimeDelta SaveCardBubbleControllerImpl::Elapsed() const {
   return timer_->Elapsed();
 }
 
-void SaveCardBubbleControllerImpl::DidNavigateMainFrame(
-    const content::LoadCommittedDetails& details,
-    const content::FrameNavigateParams& params) {
+void SaveCardBubbleControllerImpl::DidFinishNavigation(
+    content::NavigationHandle* navigation_handle) {
+  if (!navigation_handle->IsInMainFrame() || !navigation_handle->HasCommitted())
+    return;
+
   // Nothing to do if there's no bubble available.
   if (save_card_callback_.is_null())
     return;
 
   // Don't react to in-page (fragment) navigations.
-  if (details.is_in_page)
+  if (navigation_handle->IsSamePage())
     return;
 
   // Don't do anything if a navigation occurs before a user could reasonably
@@ -225,9 +229,9 @@ void SaveCardBubbleControllerImpl::UpdateIcon() {
 }
 
 void SaveCardBubbleControllerImpl::OpenUrl(const GURL& url) {
-  web_contents()->OpenURL(
-      content::OpenURLParams(url, content::Referrer(), NEW_FOREGROUND_TAB,
-                             ui::PAGE_TRANSITION_LINK, false));
+  web_contents()->OpenURL(content::OpenURLParams(
+      url, content::Referrer(), WindowOpenDisposition::NEW_FOREGROUND_TAB,
+      ui::PAGE_TRANSITION_LINK, false));
 }
 
 }  // namespace autofill

@@ -10,13 +10,12 @@
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "chrome/browser/renderer_context_menu/render_view_context_menu.h"
+#include "extensions/features/features.h"
 #include "url/gurl.h"
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/extensions/context_menu_matcher.h"
 #endif
-
-class Browser;
 
 namespace content {
 class WebContents;
@@ -40,10 +39,6 @@ class TestRenderViewContextMenu : public RenderViewContextMenu {
                                            const GURL& link_url,
                                            const GURL& frame_url);
 
-  // Implementation of pure virtuals in RenderViewContextMenu.
-  bool GetAcceleratorForCommandId(int command_id,
-                                  ui::Accelerator* accelerator) override;
-
   // Returns true if the command specified by |command_id| is present
   // in the menu.
   // A list of command ids can be found in chrome/app/chrome_command_ids.h.
@@ -64,7 +59,7 @@ class TestRenderViewContextMenu : public RenderViewContextMenu {
   // Returns the command id of the menu item with the specified |path|.
   int GetCommandIDByProfilePath(const base::FilePath& path);
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   extensions::ContextMenuMatcher& extension_items() { return extension_items_; }
 #endif
 

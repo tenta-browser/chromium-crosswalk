@@ -58,8 +58,9 @@ class BASE_EXPORT MemoryPressureMonitor : public base::MemoryPressureMonitor {
   void ScheduleEarlyCheck();
 
   // Get the current memory pressure level.
-  MemoryPressureListener::MemoryPressureLevel GetCurrentPressureLevel() const
+  MemoryPressureListener::MemoryPressureLevel GetCurrentPressureLevel()
       override;
+  void SetDispatchCallback(const DispatchCallback& callback) override;
 
   // Returns a type-casted version of the current memory pressure monitor. A
   // simple wrapper to base::MemoryPressureMonitor::Get.
@@ -100,12 +101,21 @@ class BASE_EXPORT MemoryPressureMonitor : public base::MemoryPressureMonitor {
   // gets used to count the number of events since the last event occured.
   int moderate_pressure_repeat_count_;
 
+  // The "Memory.PressureLevel" statistic is recorded every
+  // 5 seconds, but the timer to report "ChromeOS.MemoryPressureLevel"
+  // fires every second. This counter is used to allow reporting
+  // "Memory.PressureLevel" correctly without adding another
+  // timer.
+  int seconds_since_reporting_;
+
   // The thresholds for moderate and critical pressure.
   const int moderate_pressure_threshold_percent_;
   const int critical_pressure_threshold_percent_;
 
   // File descriptor used to detect low memory condition.
   ScopedFD low_mem_file_;
+
+  DispatchCallback dispatch_callback_;
 
   base::WeakPtrFactory<MemoryPressureMonitor> weak_ptr_factory_;
 

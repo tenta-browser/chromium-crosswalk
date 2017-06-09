@@ -3,6 +3,13 @@ interface Blob
     getter type
     method constructor
     method slice
+interface BroadcastChannel : EventTarget
+    getter name
+    getter onmessage
+    method close
+    method constructor
+    method postMessage
+    setter onmessage
 interface ByteLengthQueuingStrategy
     method constructor
     method size
@@ -87,6 +94,11 @@ interface DOMException
     getter name
     method constructor
     method toString
+interface DOMStringList
+    getter length
+    method constructor
+    method contains
+    method item
 interface DataView
     getter buffer
     getter byteLength
@@ -110,25 +122,9 @@ interface DataView
     method setUint8
 interface Event
     attribute AT_TARGET
-    attribute BLUR
     attribute BUBBLING_PHASE
     attribute CAPTURING_PHASE
-    attribute CHANGE
-    attribute CLICK
-    attribute DBLCLICK
-    attribute DRAGDROP
-    attribute FOCUS
-    attribute KEYDOWN
-    attribute KEYPRESS
-    attribute KEYUP
-    attribute MOUSEDOWN
-    attribute MOUSEDRAG
-    attribute MOUSEMOVE
-    attribute MOUSEOUT
-    attribute MOUSEOVER
-    attribute MOUSEUP
     attribute NONE
-    attribute SELECT
     getter bubbles
     getter cancelBubble
     getter cancelable
@@ -191,21 +187,6 @@ interface File : Blob
     getter lastModifiedDate
     getter name
     getter webkitRelativePath
-    method constructor
-interface FileError : DOMError
-    attribute ABORT_ERR
-    attribute ENCODING_ERR
-    attribute INVALID_MODIFICATION_ERR
-    attribute INVALID_STATE_ERR
-    attribute NOT_FOUND_ERR
-    attribute NOT_READABLE_ERR
-    attribute NO_MODIFICATION_ALLOWED_ERR
-    attribute PATH_EXISTS_ERR
-    attribute QUOTA_EXCEEDED_ERR
-    attribute SECURITY_ERR
-    attribute SYNTAX_ERR
-    attribute TYPE_MISMATCH_ERR
-    getter code
     method constructor
 interface FileList
     getter length
@@ -274,6 +255,7 @@ interface IDBCursor
     method advance
     method constructor
     method continue
+    method continuePrimaryKey
     method delete
     method update
 interface IDBCursorWithValue : IDBCursor
@@ -316,6 +298,7 @@ interface IDBIndex
     method getKey
     method openCursor
     method openKeyCursor
+    setter name
 interface IDBKeyRange
     static method bound
     static method lowerBound
@@ -343,10 +326,12 @@ interface IDBObjectStore
     method get
     method getAll
     method getAllKeys
+    method getKey
     method index
     method openCursor
     method openKeyCursor
     method put
+    setter name
 interface IDBOpenDBRequest : IDBRequest
     getter onblocked
     getter onupgradeneeded
@@ -390,8 +375,12 @@ interface ImageBitmap
     method close
     method constructor
 interface ImageData
+    getter colorSpace
+    getter data
     getter height
     getter width
+    method constructor
+interface InstallEvent : ExtendableEvent
     method constructor
 interface MessageChannel
     getter port1
@@ -421,6 +410,7 @@ interface Notification : EventTarget
     getter data
     getter dir
     getter icon
+    getter image
     getter lang
     getter onclick
     getter onclose
@@ -476,10 +466,15 @@ interface PushMessageData
     method text
 interface PushSubscription
     getter endpoint
+    getter options
     method constructor
     method getKey
     method toJSON
     method unsubscribe
+interface PushSubscriptionOptions
+    getter applicationServerKey
+    getter userVisibleOnly
+    method constructor
 interface ReadableStream
     getter locked
     method cancel
@@ -510,6 +505,7 @@ interface Response
     getter bodyUsed
     getter headers
     getter ok
+    getter redirected
     getter status
     getter statusText
     getter type
@@ -523,16 +519,22 @@ interface Response
 interface ServiceWorkerGlobalScope : WorkerGlobalScope
     method constructor
 interface ServiceWorkerRegistration : EventTarget
+    getter active
+    getter installing
     getter onupdatefound
     getter pushManager
     getter scope
     getter sync
+    getter waiting
     method constructor
     method getNotifications
     method showNotification
     method unregister
     method update
     setter onupdatefound
+interface StorageManager
+    method constructor
+    method persisted
 interface SubtleCrypto
     method constructor
     method decrypt
@@ -633,8 +635,10 @@ interface WindowClient : Client
     method focus
     method navigate
 interface WorkerGlobalScope : EventTarget
+    getter caches
     getter crypto
     getter indexedDB
+    getter isSecureContext
     getter location
     getter navigator
     getter onerror
@@ -642,7 +646,6 @@ interface WorkerGlobalScope : EventTarget
     getter onunhandledrejection
     getter performance
     getter self
-    getter webkitIndexedDB
     method atob
     method btoa
     method clearInterval
@@ -677,115 +680,12 @@ interface WorkerNavigator
     getter permissions
     getter platform
     getter product
+    getter storage
     getter userAgent
     method constructor
-interface webkitIDBCursor
-    getter direction
-    getter key
-    getter primaryKey
-    getter source
-    method advance
-    method constructor
-    method continue
-    method delete
-    method update
-interface webkitIDBDatabase : EventTarget
-    getter name
-    getter objectStoreNames
-    getter onabort
-    getter onclose
-    getter onerror
-    getter onversionchange
-    getter version
-    method close
-    method constructor
-    method createObjectStore
-    method deleteObjectStore
-    method transaction
-    setter onabort
-    setter onclose
-    setter onerror
-    setter onversionchange
-interface webkitIDBFactory
-    method cmp
-    method constructor
-    method deleteDatabase
-    method open
-    method webkitGetDatabaseNames
-interface webkitIDBIndex
-    getter keyPath
-    getter multiEntry
-    getter name
-    getter objectStore
-    getter unique
-    method constructor
-    method count
-    method get
-    method getAll
-    method getAllKeys
-    method getKey
-    method openCursor
-    method openKeyCursor
-interface webkitIDBKeyRange
-    static method bound
-    static method lowerBound
-    static method only
-    static method upperBound
-    getter lower
-    getter lowerOpen
-    getter upper
-    getter upperOpen
-    method constructor
-    method includes
-interface webkitIDBObjectStore
-    getter autoIncrement
-    getter indexNames
-    getter keyPath
-    getter name
-    getter transaction
-    method add
-    method clear
-    method constructor
-    method count
-    method createIndex
-    method delete
-    method deleteIndex
-    method get
-    method getAll
-    method getAllKeys
-    method index
-    method openCursor
-    method openKeyCursor
-    method put
-interface webkitIDBRequest : EventTarget
-    getter error
-    getter onerror
-    getter onsuccess
-    getter readyState
-    getter result
-    getter source
-    getter transaction
-    method constructor
-    setter onerror
-    setter onsuccess
-interface webkitIDBTransaction : EventTarget
-    getter db
-    getter error
-    getter mode
-    getter objectStoreNames
-    getter onabort
-    getter oncomplete
-    getter onerror
-    method abort
-    method constructor
-    method objectStore
-    setter onabort
-    setter oncomplete
-    setter onerror
 global object
     attribute console
     attribute internals
-    getter caches
     getter clients
     getter onactivate
     getter onfetch

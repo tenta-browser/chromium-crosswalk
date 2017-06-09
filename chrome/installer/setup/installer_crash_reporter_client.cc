@@ -14,7 +14,9 @@
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_version.h"
 #include "chrome/common/env_vars.h"
+#include "chrome/install_static/install_util.h"
 #include "chrome/installer/setup/installer_crash_reporting.h"
+#include "chrome/installer/util/browser_distribution.h"
 #include "chrome/installer/util/google_update_settings.h"
 
 InstallerCrashReporterClient::InstallerCrashReporterClient(
@@ -53,8 +55,7 @@ void InstallerCrashReporterClient::GetProductNameAndVersion(
     *version = L"0.0.0.0-devel";
   }
 
-  GoogleUpdateSettings::GetChromeChannelAndModifiers(
-      !GetIsPerUserInstall(exe_path), channel_name);
+  *channel_name = install_static::GetChromeChannelName();
 }
 
 bool InstallerCrashReporterClient::ShouldShowRestartDialog(
@@ -76,18 +77,13 @@ bool InstallerCrashReporterClient::GetDeferredUploadsSupported(
   return false;
 }
 
-bool InstallerCrashReporterClient::GetIsPerUserInstall(
-    const base::string16& exe_path) {
+bool InstallerCrashReporterClient::GetIsPerUserInstall() {
   return is_per_user_install_;
 }
 
-bool InstallerCrashReporterClient::GetShouldDumpLargerDumps(
-    bool is_per_user_install) {
-  DCHECK_EQ(is_per_user_install_, is_per_user_install);
-  base::string16 channel =
-      GoogleUpdateSettings::GetChromeChannel(!is_per_user_install);
+bool InstallerCrashReporterClient::GetShouldDumpLargerDumps() {
   // Use large dumps for all but the stable channel.
-  return !channel.empty();
+  return !install_static::GetChromeChannelName().empty();
 }
 
 int InstallerCrashReporterClient::GetResultCodeRespawnFailed() {
@@ -121,6 +117,21 @@ bool InstallerCrashReporterClient::GetCollectStatsConsent() {
 #else
   return false;
 #endif
+}
+
+bool InstallerCrashReporterClient::GetCollectStatsInSample() {
+  // TODO(grt): remove duplication of code.
+  BrowserDistribution* dist = BrowserDistribution::GetDistribution();
+  base::win::RegKey key(HKEY_CURRENT_USER, dist->GetRegistryPath().c_str(),
+                        KEY_QUERY_VALUE | KEY_WOW64_32KEY);
+  if (!key.Valid())
+    return true;
+  DWORD out_value = 0;
+  if (key.ReadValueDW(install_static::kRegValueChromeStatsSample, &out_value) !=
+      ERROR_SUCCESS) {
+    return true;
+  }
+  return out_value == 1;
 }
 
 bool InstallerCrashReporterClient::ReportingIsEnforcedByPolicy(bool* enabled) {

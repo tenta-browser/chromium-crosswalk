@@ -42,7 +42,7 @@ const int kMaxMemCacheSize = 100 * 1024 * 1024;
 // operations. It also tracks the open disk_cache::Entry
 // and ensures that the entry is closed.
 class PnaclTranslationCacheEntry
-    : public base::RefCounted<PnaclTranslationCacheEntry> {
+    : public base::RefCountedThreadSafe<PnaclTranslationCacheEntry> {
  public:
   static PnaclTranslationCacheEntry* GetReadEntry(
       base::WeakPtr<PnaclTranslationCache> cache,
@@ -76,7 +76,7 @@ class PnaclTranslationCacheEntry
   };
 
  private:
-  friend class base::RefCounted<PnaclTranslationCacheEntry>;
+  friend class base::RefCountedThreadSafe<PnaclTranslationCacheEntry>;
   PnaclTranslationCacheEntry(base::WeakPtr<PnaclTranslationCache> cache,
                              const std::string& key,
                              bool is_read);
@@ -338,12 +338,9 @@ int PnaclTranslationCache::Init(net::CacheType cache_type,
                                 int cache_size,
                                 const CompletionCallback& callback) {
   int rv = disk_cache::CreateCacheBackend(
-      cache_type,
-      net::CACHE_BACKEND_DEFAULT,
-      cache_dir,
-      cache_size,
+      cache_type, net::CACHE_BACKEND_DEFAULT, cache_dir, cache_size,
       true /* force_initialize */,
-      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::CACHE).get(),
+      BrowserThread::GetTaskRunnerForThread(BrowserThread::CACHE).get(),
       NULL, /* dummy net log */
       &disk_cache_,
       base::Bind(&PnaclTranslationCache::OnCreateBackendComplete, AsWeakPtr()));

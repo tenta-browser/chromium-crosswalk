@@ -2,14 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/logging.h"
-#include "chrome/browser/extensions/api/file_handlers/app_file_handler_util.h"
-#include "chrome/browser/extensions/api/image_writer_private/error_messages.h"
 #include "chrome/browser/extensions/api/image_writer_private/image_writer_private_api.h"
+
+#include "base/logging.h"
+#include "chrome/browser/extensions/api/image_writer_private/error_messages.h"
 #include "chrome/browser/extensions/api/image_writer_private/operation_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
+#include "extensions/browser/api/file_handlers/app_file_handler_util.h"
 
 namespace image_writer_api = extensions::api::image_writer_private;
 
@@ -177,9 +178,8 @@ void ImageWriterPrivateListRemovableStorageDevicesFunction::OnDeviceListReady(
     scoped_refptr<StorageDeviceList> device_list,
     bool success) {
   if (success) {
-    results_ =
-      image_writer_api::ListRemovableStorageDevices::Results::Create(
-        device_list.get()->data);
+    results_ = image_writer_api::ListRemovableStorageDevices::Results::Create(
+        device_list->data);
     SendResponse(true);
   } else {
     error_ = image_writer::error::kDeviceListError;

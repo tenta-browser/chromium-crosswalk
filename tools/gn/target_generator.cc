@@ -305,15 +305,16 @@ bool TargetGenerator::FillOutputs(bool allow_substitutions) {
     if (!outputs.required_types().empty()) {
       *err_ = Err(*value, "Source expansions not allowed here.",
           "The outputs of this target used source {{expansions}} but this "
-          "targe type\ndoesn't support them. Just express the outputs "
+          "target type\ndoesn't support them. Just express the outputs "
           "literally.");
       return false;
     }
   }
 
   // Check the substitutions used are valid for this purpose.
-  if (!EnsureValidSourcesSubstitutions(outputs.required_types(),
-                                       value->origin(), err_))
+  if (!EnsureValidSubstitutions(outputs.required_types(),
+                                &IsValidSourceSubstitution,
+                                value->origin(), err_))
     return false;
 
   // Validate that outputs are in the output dir.

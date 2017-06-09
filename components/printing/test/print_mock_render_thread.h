@@ -15,6 +15,7 @@
 #include "base/single_thread_task_runner.h"
 #include "build/build_config.h"
 #include "content/public/test/mock_render_thread.h"
+#include "printing/features/features.h"
 
 namespace base {
 class DictionaryValue;
@@ -35,16 +36,15 @@ class PrintMockRenderThread : public content::MockRenderThread {
   ~PrintMockRenderThread() override;
 
   // content::RenderThread overrides.
-  scoped_refptr<base::SingleThreadTaskRunner> GetIOMessageLoopProxy() override;
+  scoped_refptr<base::SingleThreadTaskRunner> GetIOTaskRunner() override;
 
   //////////////////////////////////////////////////////////////////////////
   // The following functions are called by the test itself.
 
-  // Set IO message loop proxy.
-  void set_io_message_loop_proxy(
+  void set_io_task_runner(
       const scoped_refptr<base::SingleThreadTaskRunner>& task_runner);
 
-#if defined(ENABLE_PRINTING)
+#if BUILDFLAG(ENABLE_PRINTING)
   // Returns the pseudo-printer instance.
   MockPrinter* printer();
 
@@ -63,14 +63,7 @@ class PrintMockRenderThread : public content::MockRenderThread {
   // Overrides base class implementation to add custom handling for print
   bool OnMessageReceived(const IPC::Message& msg) override;
 
-#if defined(ENABLE_PRINTING)
-#if defined(OS_CHROMEOS) || defined(OS_ANDROID)
-  void OnAllocateTempFileForPrinting(int render_view_id,
-                                     base::FileDescriptor* renderer_fd,
-                                     int* browser_fd);
-  void OnTempFileForPrintingWritten(int render_view_id, int browser_fd);
-#endif
-
+#if BUILDFLAG(ENABLE_PRINTING)
   // PrintWebViewHelper expects default print settings.
   void OnGetDefaultPrintSettings(PrintMsg_Print_Params* setting);
 
@@ -80,7 +73,7 @@ class PrintMockRenderThread : public content::MockRenderThread {
 
   void OnDidGetPrintedPagesCount(int cookie, int number_pages);
   void OnDidPrintPage(const PrintHostMsg_DidPrintPage_Params& params);
-#if defined(ENABLE_PRINT_PREVIEW)
+#if BUILDFLAG(ENABLE_PRINT_PREVIEW)
   void OnDidGetPreviewPageCount(
       const PrintHostMsg_DidGetPreviewPageCount_Params& params);
   void OnDidPreviewPage(const PrintHostMsg_DidPreviewPage_Params& params);

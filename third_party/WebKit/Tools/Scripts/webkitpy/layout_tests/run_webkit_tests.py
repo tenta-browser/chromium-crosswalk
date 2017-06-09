@@ -30,18 +30,16 @@
 
 import logging
 import optparse
-import os
 import sys
 import traceback
 
 from webkitpy.common.host import Host
-from webkitpy.common.system.executive import Executive
 from webkitpy.layout_tests.controllers.manager import Manager
+from webkitpy.layout_tests.generate_results_dashboard import DashBoardGenerator
 from webkitpy.layout_tests.models import test_run_results
 from webkitpy.layout_tests.port.factory import configuration_options, platform_options
 from webkitpy.layout_tests.views import buildbot_results
 from webkitpy.layout_tests.views import printing
-from webkitpy.layout_tests.generate_results_dashboard import DashBoardGenerator
 
 _log = logging.getLogger(__name__)
 
@@ -60,9 +58,9 @@ def main(argv, stdout, stderr):
 
     try:
         port = host.port_factory.get(options.platform, options)
-    except (NotImplementedError, ValueError) as e:
+    except (NotImplementedError, ValueError) as error:
         # FIXME: is this the best way to handle unsupported port names?
-        print >> stderr, str(e)
+        print >> stderr, str(error)
         return test_run_results.UNEXPECTED_ERROR_EXIT_STATUS
 
     try:
@@ -71,12 +69,12 @@ def main(argv, stdout, stderr):
     # We need to still handle KeyboardInterrupt, at least for webkitpy unittest cases.
     except KeyboardInterrupt:
         return test_run_results.INTERRUPTED_EXIT_STATUS
-    except test_run_results.TestRunException as e:
-        print >> stderr, e.msg
-        return e.code
-    except BaseException as e:
-        if isinstance(e, Exception):
-            print >> stderr, '\n%s raised: %s' % (e.__class__.__name__, str(e))
+    except test_run_results.TestRunException as error:
+        print >> stderr, error.msg
+        return error.code
+    except BaseException as error:
+        if isinstance(error, Exception):
+            print >> stderr, '\n%s raised: %s' % (error.__class__.__name__, error)
             traceback.print_exc(file=stderr)
         return test_run_results.UNEXPECTED_ERROR_EXIT_STATUS
 
@@ -99,6 +97,7 @@ def parse_args(args):
                 "--adb-device",
                 action="append",
                 default=[],
+                dest='adb_devices',
                 help="Run Android layout tests on these devices."),
             # FIXME: Flip this to be off by default once we can log the
             # device setup more cleanly.
@@ -174,10 +173,6 @@ def parse_args(args):
                 help=("Save generated results as new baselines into the *most-specific-platform* "
                       "directory, overwriting whatever's already there. Equivalent to "
                       "--reset-results --add-platform-exceptions")),
-            # TODO(ojan): Remove once bots stop using it.
-            optparse.make_option(
-                "--no-new-test-results",
-                help="This doesn't do anything. TODO(ojan): Remove once bots stop using it."),
             optparse.make_option(
                 "--new-test-results",
                 action="store_true",
@@ -270,12 +265,6 @@ def parse_args(args):
                 "--child-processes",
                 help="Number of drivers to run in parallel."),
             optparse.make_option(
-                "--enable-wptserve",
-                dest="enable_wptserve",
-                action="store_true",
-                default=False,
-                help="Enable running web-platform-tests using WPTserve instead of Apache."),
-            optparse.make_option(
                 "--disable-breakpad",
                 action="store_true",
                 help="Don't use breakpad to symbolize unexpected crashes."),
@@ -319,6 +308,9 @@ def parse_args(args):
                 default=1,
                 help="Number of times to run the set of tests (e.g. ABCABCABC)"),
             optparse.make_option(
+                "--layout-tests-directory",
+                help=("Path to a custom layout tests directory")),
+            optparse.make_option(
                 "--max-locked-shards",
                 type="int",
                 default=0,
@@ -331,13 +323,13 @@ def parse_args(args):
             optparse.make_option(
                 "--order",
                 action="store",
-                default="natural",
-                help=("determine the order in which the test cases will be run. "
+                default="random",
+                help=("Determine the order in which the test cases will be run. "
                       "'none' == use the order in which the tests were listed "
                       "either in arguments or test list, "
-                      "'natural' == use the natural order (default), "
-                      "'random-seeded' == randomize the test order using a fixed seed, "
-                      "'random' == randomize the test order.")),
+                      "'random' == pseudo-random order (default). Seed can be specified "
+                      "via --seed, otherwise it will default to the current unix timestamp. "
+                      "'natural' == use the natural order")),
             optparse.make_option(
                 "--profile",
                 action="store_true",
@@ -370,16 +362,27 @@ def parse_args(args):
                 help=("Number of times to retry failures, default is 3. Only relevant when "
                       "failure retries are enabled.")),
             optparse.make_option(
-                "--run-chunk",
-                help="Run a specified chunk (n:l), the nth of len l, of the layout tests"),
+                "--total-shards",
+                type=int,
+                help=('Total number of shards being used for this test run. '
+                      'Must be used with --shard-index. '
+                      '(The user of this script is responsible for spawning '
+                      'all of the shards.)')),
             optparse.make_option(
-                "--run-part",
-                help="Run a specified part (n:m), the nth of m parts, of the layout tests"),
+                "--shard-index",
+                type=int,
+                help=('Shard index [0..total_shards) of this test run. '
+                      'Must be used with --total-shards.')),
             optparse.make_option(
                 "--run-singly",
                 action="store_true",
                 default=False,
                 help="DEPRECATED, same as --batch-size=1 --verbose"),
+            optparse.make_option(
+                "--seed",
+                type="int",
+                help=("Seed to use for random test order (default: %default). "
+                      "Only applicable in combination with --order=random.")),
             optparse.make_option(
                 "--skipped",
                 action="store",
@@ -473,11 +476,11 @@ def _set_up_derived_options(port, options, args):
         options.batch_size = port.default_batch_size()
 
     if not options.child_processes:
-        options.child_processes = os.environ.get("WEBKIT_TEST_CHILD_PROCESSES",
-                                                 str(port.default_child_processes()))
+        options.child_processes = port.host.environ.get("WEBKIT_TEST_CHILD_PROCESSES",
+                                                        str(port.default_child_processes()))
     if not options.max_locked_shards:
-        options.max_locked_shards = int(os.environ.get("WEBKIT_TEST_MAX_LOCKED_SHARDS",
-                                                       str(port.default_max_locked_shards())))
+        options.max_locked_shards = int(port.host.environ.get("WEBKIT_TEST_MAX_LOCKED_SHARDS",
+                                                              str(port.default_max_locked_shards())))
 
     if not options.configuration:
         options.configuration = port.default_configuration()
@@ -510,7 +513,7 @@ def _set_up_derived_options(port, options, args):
             # to Port.
             filesystem = port.host.filesystem
             if not filesystem.isdir(filesystem.join(port.layout_tests_dir(), directory)):
-                _log.warning("'%s' was passed to --pixel-test-directories, which doesn't seem to be a directory" % str(directory))
+                _log.warning("'%s' was passed to --pixel-test-directories, which doesn't seem to be a directory", str(directory))
             else:
                 verified_dirs.add(directory)
 
@@ -536,6 +539,13 @@ def _set_up_derived_options(port, options, args):
     if not options.skipped:
         options.skipped = 'default'
 
+    if not options.total_shards and 'GTEST_TOTAL_SHARDS' in port.host.environ:
+        options.total_shards = int(port.host.environ['GTEST_TOTAL_SHARDS'])
+    if not options.shard_index and 'GTEST_SHARD_INDEX' in port.host.environ:
+        options.shard_index = int(port.host.environ['GTEST_SHARD_INDEX'])
+
+    if not options.seed:
+        options.seed = port.host.time()
 
 def _run_tests(port, options, args, printer):
     _set_up_derived_options(port, options, args)
@@ -567,13 +577,13 @@ def run(port, options, args, logging_stream, stdout):
             _log.debug("Dashboard generated.")
 
         _log.debug("")
-        _log.debug("Testing completed, Exit status: %d" % run_details.exit_code)
+        _log.debug("Testing completed, Exit status: %d", run_details.exit_code)
 
         # Temporary process dump for debugging windows timeout issues, see crbug.com/522396.
         _log.debug("")
         _log.debug("Process dump:")
         for process in port.host.executive.process_dump():
-            _log.debug("\t%s" % process)
+            _log.debug("\t%s", process)
 
         return run_details
 

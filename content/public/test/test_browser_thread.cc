@@ -15,44 +15,59 @@ namespace content {
 class TestBrowserThreadImpl : public BrowserThreadImpl {
  public:
   explicit TestBrowserThreadImpl(BrowserThread::ID identifier)
-      : BrowserThreadImpl(identifier),
-        notification_service_(NULL) {
-  }
+      : BrowserThreadImpl(identifier) {}
 
   TestBrowserThreadImpl(BrowserThread::ID identifier,
                         base::MessageLoop* message_loop)
-      : BrowserThreadImpl(identifier, message_loop),
-        notification_service_(NULL) {}
+      : BrowserThreadImpl(identifier, message_loop) {}
 
   ~TestBrowserThreadImpl() override { Stop(); }
 
   void Init() override {
-    notification_service_ = new NotificationServiceImpl;
+    notification_service_.reset(new NotificationServiceImpl);
     BrowserThreadImpl::Init();
   }
 
   void CleanUp() override {
-    delete notification_service_;
-    notification_service_ = NULL;
+    notification_service_.reset();
     BrowserThreadImpl::CleanUp();
   }
 
  private:
-  NotificationService* notification_service_;
+  std::unique_ptr<NotificationService> notification_service_;
 
   DISALLOW_COPY_AND_ASSIGN(TestBrowserThreadImpl);
 };
 
 TestBrowserThread::TestBrowserThread(BrowserThread::ID identifier)
-    : impl_(new TestBrowserThreadImpl(identifier)) {
-}
+    : impl_(new TestBrowserThreadImpl(identifier)), identifier_(identifier) {}
 
 TestBrowserThread::TestBrowserThread(BrowserThread::ID identifier,
                                      base::MessageLoop* message_loop)
-    : impl_(new TestBrowserThreadImpl(identifier, message_loop)) {}
+    : impl_(new TestBrowserThreadImpl(identifier, message_loop)),
+      identifier_(identifier) {}
 
 TestBrowserThread::~TestBrowserThread() {
-  Stop();
+  // The upcoming BrowserThreadImpl::ResetGlobalsForTesting() call requires that
+  // |impl_| have triggered the shutdown phase for its BrowserThread::ID. This
+  // either happens when the thread is stopped (if real) or destroyed (when fake
+  // -- i.e. using an externally provided MessageLoop).
+  impl_.reset();
+
+  // Resets BrowserThreadImpl's globals so that |impl_| is no longer bound to
+  // |identifier_|. This is fine since the underlying MessageLoop has already
+  // been flushed and deleted in Stop(). In the case of an externally provided
+  // MessageLoop however, this means that TaskRunners obtained through
+  // |BrowserThreadImpl::GetTaskRunnerForThread(identifier_)| will no longer
+  // recognize their BrowserThreadImpl for RunsTasksOnCurrentThread(). This
+  // happens most often when such verifications are made from
+  // MessageLoop::DestructionObservers. Callers that care to work around that
+  // should instead use this shutdown sequence:
+  //   1) TestBrowserThread::Stop()
+  //   2) ~MessageLoop()
+  //   3) ~TestBrowserThread()
+  // (~TestBrowserThreadBundle() does this).
+  BrowserThreadImpl::ResetGlobalsForTesting(identifier_);
 }
 
 bool TestBrowserThread::Start() {
@@ -75,10 +90,6 @@ void TestBrowserThread::Stop() {
 
 bool TestBrowserThread::IsRunning() {
   return impl_->IsRunning();
-}
-
-base::Thread* TestBrowserThread::DeprecatedGetThreadObject() {
-  return impl_.get();
 }
 
 }  // namespace content

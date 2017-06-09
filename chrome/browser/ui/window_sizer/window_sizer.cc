@@ -23,9 +23,10 @@
 #include "ui/display/screen.h"
 
 #if defined(USE_ASH)
-#include "ash/common/wm/window_positioner.h"
-#include "ash/shell.h"
-#include "chrome/browser/ui/ash/ash_util.h"
+#include "ash/common/ash_switches.h"
+#include "ash/common/wm/window_positioner.h"  // nogncheck
+#include "ash/shell.h"  // nogncheck
+#include "chrome/browser/ui/ash/ash_util.h"  // nogncheck
 #endif
 
 namespace {
@@ -80,11 +81,14 @@ class DefaultStateProvider : public WindowSizer::StateProvider {
       if (*show_state == ui::SHOW_STATE_DEFAULT && maximized)
         *show_state = ui::SHOW_STATE_MAXIMIZED;
 #if defined(USE_ASH)
-      bool docked = false;
-      wp_pref->GetBoolean("docked", &docked);
-      if (*show_state == ui::SHOW_STATE_DEFAULT && docked &&
-          !browser_->is_type_tabbed()) {
-        *show_state = ui::SHOW_STATE_DOCKED;
+      // TODO(afakhry): Remove Docked Windows in M58.
+      if (ash::switches::DockedWindowsEnabled()) {
+        bool docked = false;
+        wp_pref->GetBoolean("docked", &docked);
+        if (*show_state == ui::SHOW_STATE_DEFAULT && docked &&
+            !browser_->is_type_tabbed()) {
+          *show_state = ui::SHOW_STATE_DOCKED;
+        }
       }
 #endif  // USE_ASH
     }
@@ -156,7 +160,7 @@ class DefaultTargetDisplayProvider : public WindowSizer::TargetDisplayProvider {
                                     const gfx::Rect& bounds) const override {
 #if defined(USE_ASH)
     // Use the target display on ash.
-    if (chrome::ShouldOpenAshOnStartup()) {
+    if (ash_util::ShouldOpenAshOnStartup()) {
       aura::Window* target = ash::Shell::GetTargetRootWindow();
       return screen->GetDisplayNearestWindow(target);
     }
@@ -297,7 +301,7 @@ void WindowSizer::GetDefaultWindowBounds(const display::Display& display,
   DCHECK(default_bounds);
 #if defined(USE_ASH)
   // TODO(beng): insufficient but currently necessary. http://crbug.com/133312
-  if (chrome::ShouldOpenAshOnStartup()) {
+  if (ash_util::ShouldOpenAshOnStartup()) {
     *default_bounds = ash::WindowPositioner::GetDefaultWindowBounds(display);
     return;
   }

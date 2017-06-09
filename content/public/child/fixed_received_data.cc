@@ -6,22 +6,14 @@
 
 namespace content {
 
-FixedReceivedData::FixedReceivedData(const char* data,
-                                     size_t length,
-                                     int encoded_length)
-    : data_(data, data + length), encoded_length_(encoded_length) {
-}
+FixedReceivedData::FixedReceivedData(const char* data, size_t length)
+    : data_(data, data + length) {}
 
 FixedReceivedData::FixedReceivedData(ReceivedData* data)
-    : FixedReceivedData(data->payload(),
-                        data->length(),
-                        data->encoded_length()) {
-}
+    : FixedReceivedData(data->payload(), data->length()) {}
 
-FixedReceivedData::FixedReceivedData(const std::vector<char>& data,
-                                     int encoded_length)
-    : data_(data), encoded_length_(encoded_length) {
-}
+FixedReceivedData::FixedReceivedData(const std::vector<char>& data)
+    : data_(data) {}
 
 FixedReceivedData::~FixedReceivedData() {
 }
@@ -32,10 +24,6 @@ const char* FixedReceivedData::payload() const {
 
 int FixedReceivedData::length() const {
   return static_cast<int>(data_.size());
-}
-
-int FixedReceivedData::encoded_length() const {
-  return encoded_length_;
 }
 
 }  // namespace content

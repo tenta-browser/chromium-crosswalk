@@ -4,6 +4,7 @@
 
 #include "chrome/browser/pepper_broker_infobar_delegate.h"
 
+#include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/content_settings/tab_specific_content_settings.h"
 #include "chrome/browser/infobars/infobar_service.h"
@@ -13,6 +14,7 @@
 #include "chrome/grit/generated_resources.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/infobars/core/infobar.h"
+#include "components/strings/grit/components_strings.h"
 #include "components/url_formatter/elide_url.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/plugin_service.h"
@@ -20,10 +22,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/referrer.h"
 #include "content/public/common/webplugininfo.h"
-#include "grit/components_strings.h"
-#include "grit/theme_resources.h"
 #include "ui/base/l10n/l10n_util.h"
-
 
 // static
 void PepperBrokerInfoBarDelegate::Create(
@@ -93,8 +92,8 @@ PepperBrokerInfoBarDelegate::GetIdentifier() const {
   return PEPPER_BROKER_INFOBAR_DELEGATE;
 }
 
-int PepperBrokerInfoBarDelegate::GetIconId() const {
-  return IDR_INFOBAR_PLUGIN_INSTALL;
+const gfx::VectorIcon& PepperBrokerInfoBarDelegate::GetVectorIcon() const {
+  return kExtensionIcon;
 }
 
 base::string16 PepperBrokerInfoBarDelegate::GetMessageText() const {

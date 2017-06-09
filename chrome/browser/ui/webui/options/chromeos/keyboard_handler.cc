@@ -6,12 +6,16 @@
 
 #include <stddef.h>
 
-#include "ash/new_window_delegate.h"
-#include "ash/shell.h"
+#include <memory>
+#include <utility>
+
+#include "ash/common/new_window_controller.h"
+#include "ash/common/wm_shell.h"
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/chromeos_switches.h"
@@ -47,6 +51,8 @@ const char* kDataValuesNames[] = {
   "remapAltKeyToValue",
   "remapCapsLockKeyToValue",
   "remapDiamondKeyToValue",
+  "remapEscapeKeyToValue",
+  "remapBackspaceKeyToValue",
 };
 
 bool HasExternalKeyboard() {
@@ -92,6 +98,12 @@ void KeyboardHandler::GetLocalizedValues(
   localized_strings->SetString("remapDiamondKeyToContent",
       l10n_util::GetStringUTF16(
           IDS_OPTIONS_SETTINGS_LANGUAGES_KEY_DIAMOND_KEY_LABEL));
+  localized_strings->SetString("remapBackspaceKeyToContent",
+      l10n_util::GetStringUTF16(
+          IDS_OPTIONS_SETTINGS_LANGUAGES_KEY_BACKSPACE_KEY_LABEL));
+  localized_strings->SetString("remapEscapeKeyToContent",
+      l10n_util::GetStringUTF16(
+          IDS_OPTIONS_SETTINGS_LANGUAGES_KEY_ESCAPE_KEY_LABEL));
   localized_strings->SetString("sendFunctionKeys",
       l10n_util::GetStringUTF16(
           IDS_OPTIONS_SETTINGS_LANGUAGES_SEND_FUNCTION_KEYS));
@@ -132,19 +144,10 @@ void KeyboardHandler::GetLocalizedValues(
       const input_method::ModifierKey value =
           kModifierKeysSelectItems[j].value;
       const int message_id = kModifierKeysSelectItems[j].message_id;
-      // Only the seach/caps-lock key can be remapped to the
-      // caps-lock/backspace key.
-      if (kDataValuesNames[i] != std::string("remapSearchKeyToValue") &&
-          kDataValuesNames[i] != std::string("remapCapsLockKeyToValue") &&
-          (value == input_method::kCapsLockKey ||
-           value == input_method::kBackspaceKey)) {
-        continue;
-      }
-      base::ListValue* option = new base::ListValue();
-      option->Append(new base::FundamentalValue(value));
-      option->Append(new base::StringValue(l10n_util::GetStringUTF16(
-          message_id)));
-      list_value->Append(option);
+      auto option = base::MakeUnique<base::ListValue>();
+      option->AppendInteger(value);
+      option->AppendString(l10n_util::GetStringUTF16(message_id));
+      list_value->Append(std::move(option));
     }
     localized_strings->Set(kDataValuesNames[i], list_value);
   }
@@ -153,7 +156,7 @@ void KeyboardHandler::GetLocalizedValues(
 void KeyboardHandler::InitializePage() {
   bool has_diamond_key = base::CommandLine::ForCurrentProcess()->HasSwitch(
       chromeos::switches::kHasChromeOSDiamondKey);
-  const base::FundamentalValue show_diamond_key_options(has_diamond_key);
+  const base::Value show_diamond_key_options(has_diamond_key);
 
   web_ui()->CallJavascriptFunctionUnsafe(
       "options.KeyboardOverlay.showDiamondKeyOptions",
@@ -175,11 +178,11 @@ void KeyboardHandler::OnKeyboardDeviceConfigurationChanged() {
 }
 
 void KeyboardHandler::HandleShowKeyboardShortcuts(const base::ListValue* args) {
-  ash::Shell::GetInstance()->new_window_delegate()->ShowKeyboardOverlay();
+  ash::WmShell::Get()->new_window_controller()->ShowKeyboardOverlay();
 }
 
 void KeyboardHandler::UpdateCapsLockOptions() const {
-  const base::FundamentalValue show_caps_lock_options(HasExternalKeyboard());
+  const base::Value show_caps_lock_options(HasExternalKeyboard());
   web_ui()->CallJavascriptFunctionUnsafe(
       "options.KeyboardOverlay.showCapsLockOptions", show_caps_lock_options);
 }

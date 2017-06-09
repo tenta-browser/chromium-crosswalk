@@ -35,9 +35,10 @@
 #include "platform/graphics/GraphicsTypes.h"
 #include "platform/graphics/GraphicsTypes3D.h"
 #include "platform/graphics/ImageBufferSurface.h"
+#include "platform/graphics/paint/PaintFlags.h"
+#include "platform/graphics/paint/PaintRecord.h"
 #include "platform/transforms/AffineTransform.h"
-#include "third_party/skia/include/core/SkPaint.h"
-#include "third_party/skia/include/core/SkPicture.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
 #include "wtf/Forward.h"
 #include "wtf/PassRefPtr.h"
 #include "wtf/Vector.h"
@@ -55,7 +56,7 @@ namespace WTF {
 
 class ArrayBufferContents;
 
-} // namespace WTF
+}  // namespace WTF
 
 namespace blink {
 
@@ -66,117 +67,158 @@ class ImageBufferClient;
 class IntPoint;
 class IntRect;
 
-enum Multiply {
-    Premultiplied,
-    Unmultiplied
-};
+enum Multiply { Premultiplied, Unmultiplied };
 
 class PLATFORM_EXPORT ImageBuffer {
-    WTF_MAKE_NONCOPYABLE(ImageBuffer);
-    USING_FAST_MALLOC(ImageBuffer);
-public:
-    static std::unique_ptr<ImageBuffer> create(const IntSize&, OpacityMode = NonOpaque, ImageInitializationMode = InitializeImagePixels);
-    static std::unique_ptr<ImageBuffer> create(std::unique_ptr<ImageBufferSurface>);
+  WTF_MAKE_NONCOPYABLE(ImageBuffer);
+  USING_FAST_MALLOC(ImageBuffer);
 
-    virtual ~ImageBuffer();
+ public:
+  static std::unique_ptr<ImageBuffer> create(
+      const IntSize&,
+      OpacityMode = NonOpaque,
+      ImageInitializationMode = InitializeImagePixels,
+      sk_sp<SkColorSpace> = nullptr);
+  static std::unique_ptr<ImageBuffer> create(
+      std::unique_ptr<ImageBufferSurface>);
 
-    void setClient(ImageBufferClient* client) { m_client = client; }
+  virtual ~ImageBuffer();
 
-    const IntSize& size() const { return m_surface->size(); }
-    bool isAccelerated() const { return m_surface->isAccelerated(); }
-    bool isRecording() const { return m_surface->isRecording(); }
-    void setHasExpensiveOp() { m_surface->setHasExpensiveOp(); }
-    bool isExpensiveToPaint() const { return m_surface->isExpensiveToPaint(); }
-    void prepareSurfaceForPaintingIfNeeded() { m_surface->prepareSurfaceForPaintingIfNeeded(); }
-    bool isSurfaceValid() const;
-    bool restoreSurface() const;
-    void didDraw(const FloatRect&) const;
-    bool wasDrawnToAfterSnapshot() const { return m_snapshotState == DrawnToAfterSnapshot; }
+  void setClient(ImageBufferClient* client) { m_client = client; }
 
-    void setFilterQuality(SkFilterQuality filterQuality) { m_surface->setFilterQuality(filterQuality); }
-    void setIsHidden(bool hidden) { m_surface->setIsHidden(hidden); }
+  static bool canCreateImageBuffer(const IntSize&);
+  const IntSize& size() const { return m_surface->size(); }
+  bool isAccelerated() const { return m_surface->isAccelerated(); }
+  bool isRecording() const { return m_surface->isRecording(); }
+  void setHasExpensiveOp() { m_surface->setHasExpensiveOp(); }
+  bool isExpensiveToPaint() const { return m_surface->isExpensiveToPaint(); }
+  void prepareSurfaceForPaintingIfNeeded() {
+    m_surface->prepareSurfaceForPaintingIfNeeded();
+  }
+  bool isSurfaceValid() const;
+  bool restoreSurface() const;
+  void didDraw(const FloatRect&) const;
+  bool wasDrawnToAfterSnapshot() const {
+    return m_snapshotState == DrawnToAfterSnapshot;
+  }
 
-    // Called by subclasses of ImageBufferSurface to install a new canvas object.
-    // Virtual for mocking
-    virtual void resetCanvas(SkCanvas*) const;
+  void setFilterQuality(SkFilterQuality filterQuality) {
+    m_surface->setFilterQuality(filterQuality);
+  }
+  void setIsHidden(bool hidden) { m_surface->setIsHidden(hidden); }
 
-    SkCanvas* canvas() const;
-    void disableDeferral(DisableDeferralReason) const;
+  // Called by subclasses of ImageBufferSurface to install a new canvas object.
+  // Virtual for mocking
+  virtual void resetCanvas(PaintCanvas*) const;
 
-    // Called at the end of a task that rendered a whole frame
-    void finalizeFrame(const FloatRect &dirtyRect);
-    void didFinalizeFrame();
+  PaintCanvas* canvas() const;
+  void disableDeferral(DisableDeferralReason) const;
 
-    bool isDirty();
+  // Called at the end of a task that rendered a whole frame
+  void finalizeFrame();
+  void doPaintInvalidation(const FloatRect& dirtyRect);
 
-    bool writePixels(const SkImageInfo&, const void* pixels, size_t rowBytes, int x, int y);
+  bool writePixels(const SkImageInfo&,
+                   const void* pixels,
+                   size_t rowBytes,
+                   int x,
+                   int y);
 
-    void willOverwriteCanvas() { m_surface->willOverwriteCanvas(); }
+  void willOverwriteCanvas() { m_surface->willOverwriteCanvas(); }
 
-    bool getImageData(Multiply, const IntRect&, WTF::ArrayBufferContents&) const;
+  bool getImageData(Multiply, const IntRect&, WTF::ArrayBufferContents&) const;
 
-    void putByteArray(Multiply, const unsigned char* source, const IntSize& sourceSize, const IntRect& sourceRect, const IntPoint& destPoint);
+  void putByteArray(Multiply,
+                    const unsigned char* source,
+                    const IntSize& sourceSize,
+                    const IntRect& sourceRect,
+                    const IntPoint& destPoint);
 
-    AffineTransform baseTransform() const { return AffineTransform(); }
-    WebLayer* platformLayer() const;
+  AffineTransform baseTransform() const { return AffineTransform(); }
+  WebLayer* platformLayer() const;
 
-    // FIXME: current implementations of this method have the restriction that they only work
-    // with textures that are RGB or RGBA format, UNSIGNED_BYTE type and level 0, as specified in
-    // Extensions3D::canUseCopyTextureCHROMIUM().
-    // Destroys the TEXTURE_2D binding for the active texture unit of the passed context
-    bool copyToPlatformTexture(gpu::gles2::GLES2Interface*, GLuint texture, GLenum internalFormat, GLenum destType, GLint level, bool premultiplyAlpha, bool flipY);
+  // Destroys the TEXTURE_2D binding for the active texture unit of the passed
+  // context. Assumes the destination texture has already been allocated.
+  // FIXME: Current implementations of this method only work with textures that
+  // are RGB or RGBA format, UNSIGNED_BYTE type and level 0, as specified in
+  // Extensions3D::canUseCopyTextureCHROMIUM().
+  bool copyToPlatformTexture(SnapshotReason,
+                             gpu::gles2::GLES2Interface*,
+                             GLuint texture,
+                             GLenum internalFormat,
+                             GLenum destType,
+                             GLint level,
+                             bool premultiplyAlpha,
+                             bool flipY,
+                             const IntPoint& destPoint,
+                             const IntRect& sourceSubRectangle);
 
-    bool copyRenderingResultsFromDrawingBuffer(DrawingBuffer*, SourceDrawingBuffer);
+  bool copyRenderingResultsFromDrawingBuffer(DrawingBuffer*,
+                                             SourceDrawingBuffer);
 
-    void flush(FlushReason); // process deferred draw commands immediately
-    void flushGpu(FlushReason); // Like flush(), but flushes all the way down to the Gpu context if the surface is accelerated
+  void flush(FlushReason);     // Process deferred draw commands immediately.
+  void flushGpu(FlushReason);  // Like flush(), but flushes all the way down to
+                               // the GPU context if the surface is accelerated.
 
-    void notifySurfaceInvalid();
+  void notifySurfaceInvalid();
 
-    PassRefPtr<SkImage> newSkImageSnapshot(AccelerationHint, SnapshotReason) const;
-    PassRefPtr<Image> newImageSnapshot(AccelerationHint = PreferNoAcceleration, SnapshotReason = SnapshotReasonUnknown) const;
+  sk_sp<SkImage> newSkImageSnapshot(AccelerationHint, SnapshotReason) const;
+  PassRefPtr<Image> newImageSnapshot(
+      AccelerationHint = PreferNoAcceleration,
+      SnapshotReason = SnapshotReasonUnknown) const;
 
-    PassRefPtr<SkPicture> getPicture() { return m_surface->getPicture(); }
+  sk_sp<PaintRecord> getRecord() { return m_surface->getRecord(); }
 
-    void draw(GraphicsContext&, const FloatRect&, const FloatRect*, SkXfermode::Mode);
+  void draw(GraphicsContext&, const FloatRect&, const FloatRect*, SkBlendMode);
 
-    void updateGPUMemoryUsage() const;
-    static intptr_t getGlobalGPUMemoryUsage() { return s_globalGPUMemoryUsage; }
-    static unsigned getGlobalAcceleratedImageBufferCount() { return s_globalAcceleratedImageBufferCount; }
-    intptr_t getGPUMemoryUsage() { return m_gpuMemoryUsage; }
+  void updateGPUMemoryUsage() const;
+  static intptr_t getGlobalGPUMemoryUsage() { return s_globalGPUMemoryUsage; }
+  static unsigned getGlobalAcceleratedImageBufferCount() {
+    return s_globalAcceleratedImageBufferCount;
+  }
+  intptr_t getGPUMemoryUsage() { return m_gpuMemoryUsage; }
 
-protected:
-    ImageBuffer(std::unique_ptr<ImageBufferSurface>);
+  void disableAcceleration();
+  void setSurface(std::unique_ptr<ImageBufferSurface>);
 
-private:
-    enum SnapshotState {
-        InitialSnapshotState,
-        DidAcquireSnapshot,
-        DrawnToAfterSnapshot,
-    };
-    mutable SnapshotState m_snapshotState;
-    std::unique_ptr<ImageBufferSurface> m_surface;
-    ImageBufferClient* m_client;
+  WeakPtrFactory<ImageBuffer> m_weakPtrFactory;
 
-    mutable intptr_t m_gpuMemoryUsage;
-    static intptr_t s_globalGPUMemoryUsage;
-    static unsigned s_globalAcceleratedImageBufferCount;
+ protected:
+  ImageBuffer(std::unique_ptr<ImageBufferSurface>);
+
+ private:
+  enum SnapshotState {
+    InitialSnapshotState,
+    DidAcquireSnapshot,
+    DrawnToAfterSnapshot,
+  };
+  mutable SnapshotState m_snapshotState;
+  std::unique_ptr<ImageBufferSurface> m_surface;
+  ImageBufferClient* m_client;
+
+  mutable intptr_t m_gpuMemoryUsage;
+  static intptr_t s_globalGPUMemoryUsage;
+  static unsigned s_globalAcceleratedImageBufferCount;
 };
 
 struct ImageDataBuffer {
-    STACK_ALLOCATED();
-    ImageDataBuffer(const IntSize& size, const unsigned char* data) : m_data(data), m_size(size) { }
-    String PLATFORM_EXPORT toDataURL(const String& mimeType, const double& quality) const;
-    bool PLATFORM_EXPORT encodeImage(const String& mimeType, const double& quality, Vector<unsigned char>* encodedImage) const;
-    const unsigned char* pixels() const { return m_data; }
-    const IntSize& size() const { return m_size; }
-    int height() const { return m_size.height(); }
-    int width() const { return m_size.width(); }
+  STACK_ALLOCATED();
+  ImageDataBuffer(const IntSize& size, const unsigned char* data)
+      : m_data(data), m_size(size) {}
+  String PLATFORM_EXPORT toDataURL(const String& mimeType,
+                                   const double& quality) const;
+  bool PLATFORM_EXPORT encodeImage(const String& mimeType,
+                                   const double& quality,
+                                   Vector<unsigned char>* encodedImage) const;
+  const unsigned char* pixels() const { return m_data; }
+  const IntSize& size() const { return m_size; }
+  int height() const { return m_size.height(); }
+  int width() const { return m_size.width(); }
 
-    const unsigned char* m_data;
-    const IntSize m_size;
+  const unsigned char* m_data;
+  const IntSize m_size;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // ImageBuffer_h
+#endif  // ImageBuffer_h

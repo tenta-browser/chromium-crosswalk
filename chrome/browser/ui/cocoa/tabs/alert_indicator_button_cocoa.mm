@@ -8,6 +8,7 @@
 #include "base/mac/foundation_util.h"
 #include "base/macros.h"
 #include "base/threading/thread_task_runner_handle.h"
+#import "chrome/browser/ui/cocoa/l10n_util.h"
 #import "chrome/browser/ui/cocoa/tabs/tab_view.h"
 #include "content/public/browser/user_metrics.h"
 #include "ui/gfx/animation/animation.h"
@@ -73,16 +74,27 @@ class FadeAnimationDelegate : public gfx::AnimationDelegate {
   [super removeFromSuperview];
 }
 
+- (void)viewDidMoveToWindow {
+  // In Material Design, the icon color depends on the theme. When the tab
+  // is moved into another window, make sure that it updates the theme.
+  [self updateIconForState:showingAlertState_];
+}
+
 - (void)updateIconForState:(TabAlertState)aState {
   if (aState != TabAlertState::NONE) {
     TabView* const tabView = base::mac::ObjCCast<TabView>([self superview]);
-    SkColor iconColor = [tabView closeButtonColor];
+    SkColor iconColor = [tabView iconColor];
     NSImage* tabIndicatorImage =
         chrome::GetTabAlertIndicatorImage(aState, iconColor).ToNSImage();
+    NSImage* affordanceImage =
+        chrome::GetTabAlertIndicatorAffordanceImage(aState, iconColor)
+            .ToNSImage();
+    if (cocoa_l10n_util::ShouldDoExperimentalRTLLayout()) {
+      tabIndicatorImage = cocoa_l10n_util::FlippedImage(tabIndicatorImage);
+      affordanceImage = cocoa_l10n_util::FlippedImage(affordanceImage);
+    }
     [self setImage:tabIndicatorImage];
-    affordanceImage_.reset(
-        [chrome::GetTabAlertIndicatorAffordanceImage(aState, iconColor)
-               .ToNSImage() retain]);
+    affordanceImage_.reset([affordanceImage retain]);
   }
 }
 

@@ -15,7 +15,6 @@
 #include "net/url_request/url_request_job_factory.h"
 
 class ChromeURLRequestContextFactory;
-class IOThread;
 class Profile;
 class ProfileIOData;
 struct StoragePartitionDescriptor;
@@ -35,7 +34,7 @@ class ChromeURLRequestContextGetter : public net::URLRequestContextGetter {
 
   // Note that GetURLRequestContext() can only be called from the IO
   // thread (it will assert otherwise).
-  // GetIOMessageLoopProxy however can be called from any thread.
+  // GetIOTaskRunner however can be called from any thread.
   //
   // net::URLRequestContextGetter implementation.
   net::URLRequestContext* GetURLRequestContext() override;

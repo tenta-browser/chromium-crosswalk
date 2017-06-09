@@ -34,6 +34,8 @@ class CompositedAnimationTestCommon {
   createStaticElements() {
     this.error = document.createElement('span');
     this.error.style.color = 'red';
+    // The element must have some painted content in order to be composited.
+    this.error.textContent = 'x';
     document.body.appendChild(this.error);
 
     this.wrapper = document.createElement('div');
@@ -139,15 +141,21 @@ class CompositedAnimationTestCommon {
     this.error.textContent += `${test.name}: ${message} `;
   }
 
+  waitForCompositor() {
+    return this.error.animate({opacity: ['1', '1']}, 1).ready;
+  }
+
   layoutAndPaint() {
     if (window.testRunner)
       testRunner.waitUntilDone();
 
-    requestAnimationFrame(() => {
-      if (window.internals)
-        this.assertAnimationCompositedState();
-      if (window.testRunner)
-        testRunner.notifyDone();
+    this.waitForCompositor().then(() => {
+      requestAnimationFrame(() => {
+        if (window.internals)
+          this.assertAnimationCompositedState();
+        if (window.testRunner)
+          testRunner.notifyDone();
+      });
     });
   }
 

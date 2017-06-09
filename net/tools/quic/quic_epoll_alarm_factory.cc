@@ -4,7 +4,6 @@
 
 #include "net/tools/quic/quic_epoll_alarm_factory.h"
 
-#include "base/logging.h"
 #include "net/tools/epoll_server/epoll_server.h"
 
 namespace net {
@@ -23,8 +22,7 @@ class QuicEpollAlarm : public QuicAlarm {
   void SetImpl() override {
     DCHECK(deadline().IsInitialized());
     epoll_server_->RegisterAlarm(
-        deadline().Subtract(QuicTime::Zero()).ToMicroseconds(),
-        &epoll_alarm_impl_);
+        (deadline() - QuicTime::Zero()).ToMicroseconds(), &epoll_alarm_impl_);
   }
 
   void CancelImpl() override {

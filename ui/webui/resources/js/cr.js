@@ -280,8 +280,8 @@ var cr = cr || function() {
       // Maybe we should check the prototype chain here? The current usage
       // pattern is always using an object literal so we only care about own
       // properties.
-      var propertyDescriptor = Object.getOwnPropertyDescriptor(exports,
-                                                               propertyName);
+      var propertyDescriptor =
+          Object.getOwnPropertyDescriptor(exports, propertyName);
       if (propertyDescriptor)
         Object.defineProperty(obj, propertyName, propertyDescriptor);
     }
@@ -311,7 +311,7 @@ var cr = cr || function() {
     methods.forEach(function(method) {
       ctor[method] = function() {
         var target = opt_target ? document.getElementById(opt_target) :
-                     ctor.getInstance();
+                                  ctor.getInstance();
         return target[method + '_'].apply(target, arguments);
       };
     });
@@ -475,6 +475,11 @@ var cr = cr || function() {
     /** Whether this is on Android. */
     get isAndroid() {
       return /Android/.test(navigator.userAgent);
+    },
+
+    /** Whether this is on iOS. */
+    get isIOS() {
+      return /iPad|iPhone|iPod/.test(navigator.platform);
     }
   };
 }();

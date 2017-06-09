@@ -361,8 +361,8 @@ function strf(id, var_args) {
 }
 
 /**
- * @return {boolean} True if Files.app is running as an open files or a select
- *     folder dialog. False otherwise.
+ * @return {boolean} True if the Files app is running as an open files or a
+ *     select folder dialog. False otherwise.
  */
 util.runningInBrowser = function() {
   return !window.appID;
@@ -387,7 +387,11 @@ util.saveAppState = function() {
   var items = {};
 
   items[window.appID] = JSON.stringify(window.appState);
-  chrome.storage.local.set(items);
+  chrome.storage.local.set(items, function() {
+    if (chrome.runtime.lastError)
+      console.error('Failed to save app state: ' +
+          chrome.runtime.lastError.message);
+  });
 };
 
 /**
@@ -550,7 +554,7 @@ util.addIsFocusedMethod = function() {
 };
 
 /**
- * Checks, if the Files.app's window is in a full screen mode.
+ * Checks, if the Files app's window is in a full screen mode.
  *
  * @param {chrome.app.window.AppWindow} appWindow App window to be maximized.
  * @return {boolean} True if the full screen mode is enabled.
@@ -885,45 +889,6 @@ util.isTeleported = function(window) {
 };
 
 /**
- * Sets up and shows the alert to inform a user the task is opened in the
- * desktop of the running profile.
- *
- * TODO(hirono): Move the function from the util namespace.
- * @param {cr.ui.dialogs.AlertDialog} alertDialog Alert dialog to be shown.
- * @param {Array<Entry>} entries List of opened entries.
- */
-util.showOpenInOtherDesktopAlert = function(alertDialog, entries) {
-  if (!entries.length)
-    return;
-  chrome.fileManagerPrivate.getProfiles(
-      function(profiles, currentId, displayedId) {
-        // Find strings.
-        var displayName;
-        for (var i = 0; i < profiles.length; i++) {
-          if (profiles[i].profileId === currentId) {
-            displayName = profiles[i].displayName;
-            break;
-          }
-        }
-        if (!displayName) {
-          console.warn('Display name is not found.');
-          return;
-        }
-
-        var title = entries.length > 1 ?
-            entries[0].name + '\u2026' /* ellipsis */ : entries[0].name;
-        var message = strf(entries.length > 1 ?
-                           'OPEN_IN_OTHER_DESKTOP_MESSAGE_PLURAL' :
-                           'OPEN_IN_OTHER_DESKTOP_MESSAGE',
-                           displayName,
-                           currentId);
-
-        // Show the dialog.
-        alertDialog.showWithTitle(title, message, null, null, null);
-      }.bind(this));
-};
-
-/**
  * Runs chrome.test.sendMessage in test environment. Does nothing if running
  * in production environment.
  *
@@ -975,6 +940,20 @@ util.getRootTypeLabel = function(locationInfo) {
       return str('DRIVE_SHARED_WITH_ME_COLLECTION_LABEL');
     case VolumeManagerCommon.RootType.DRIVE_RECENT:
       return str('DRIVE_RECENT_COLLECTION_LABEL');
+    case VolumeManagerCommon.RootType.MEDIA_VIEW:
+      var mediaViewRootType =
+          VolumeManagerCommon.getMediaViewRootTypeFromVolumeId(
+              locationInfo.volumeInfo.volumeId);
+      switch (mediaViewRootType) {
+        case VolumeManagerCommon.MediaViewRootType.IMAGES:
+          return str('MEDIA_VIEW_IMAGES_ROOT_LABEL');
+        case VolumeManagerCommon.MediaViewRootType.VIDEOS:
+          return str('MEDIA_VIEW_VIDEOS_ROOT_LABEL');
+        case VolumeManagerCommon.MediaViewRootType.AUDIO:
+          return str('MEDIA_VIEW_AUDIO_ROOT_LABEL');
+      }
+      console.error('Unsupported media view root type: ' + mediaViewRootType);
+      return locationInfo.volumeInfo.label;
     case VolumeManagerCommon.RootType.DRIVE_OTHER:
     case VolumeManagerCommon.RootType.ARCHIVE:
     case VolumeManagerCommon.RootType.REMOVABLE:

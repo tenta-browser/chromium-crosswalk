@@ -23,7 +23,7 @@
 namespace {
 
 // Maximum time (in milliseconds) to wait to the search providers to finish.
-const int kStopTimeMS = 1500;
+constexpr int kStopTimeMS = 1500;
 }
 
 namespace app_list {
@@ -43,11 +43,9 @@ void SearchController::Start(bool is_voice_query) {
   base::TrimWhitespace(search_box_->text(), base::TRIM_ALL, &query);
 
   dispatching_query_ = true;
-  for (Providers::iterator it = providers_.begin();
-       it != providers_.end();
-       ++it) {
-    (*it)->Start(is_voice_query, query);
-  }
+  for (const auto& provider : providers_)
+    provider->Start(is_voice_query, query);
+
   dispatching_query_ = false;
   query_for_recommendation_ = query.empty() ? true : false;
 
@@ -64,11 +62,8 @@ void SearchController::Start(bool is_voice_query) {
 void SearchController::Stop() {
   stop_timer_.Stop();
 
-  for (Providers::iterator it = providers_.begin();
-       it != providers_.end();
-       ++it) {
-    (*it)->Stop();
-  }
+  for (const auto& provider : providers_)
+    provider->Stop();
 }
 
 void SearchController::OpenResult(SearchResult* result, int event_flags) {
@@ -108,16 +103,8 @@ void SearchController::InvokeResultAction(SearchResult* result,
   result->InvokeAction(action_index, event_flags);
 }
 
-size_t SearchController::AddGroup(size_t max_results,
-                                  double boost,
-                                  double multiplier) {
-  return mixer_->AddGroup(max_results, boost, multiplier);
-}
-
-size_t SearchController::AddOmniboxGroup(size_t max_results,
-                                         double boost,
-                                         double multiplier) {
-  return mixer_->AddOmniboxGroup(max_results, boost, multiplier);
+size_t SearchController::AddGroup(size_t max_results, double multiplier) {
+  return mixer_->AddGroup(max_results, multiplier);
 }
 
 void SearchController::AddProvider(size_t group_id,
@@ -125,7 +112,7 @@ void SearchController::AddProvider(size_t group_id,
   provider->set_result_changed_callback(
       base::Bind(&SearchController::OnResultsChanged, base::Unretained(this)));
   mixer_->AddProviderToGroup(group_id, provider.get());
-  providers_.push_back(std::move(provider));
+  providers_.emplace_back(std::move(provider));
 }
 
 void SearchController::OnResultsChanged() {

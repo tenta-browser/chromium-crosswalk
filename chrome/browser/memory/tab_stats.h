@@ -33,6 +33,7 @@ struct TabStats {
   bool has_form_entry;  // User has entered text in a form.
   int discard_count;
   base::TimeTicks last_active;
+  base::TimeTicks last_hidden;
   content::RenderProcessHost* render_process_host;
   base::ProcessHandle renderer_handle;
   int child_process_host_id;
@@ -41,6 +42,7 @@ struct TabStats {
   int oom_score;
 #endif
   int64_t tab_contents_id;  // Unique ID per WebContents.
+  bool is_auto_discardable;
 };
 
 typedef std::vector<TabStats> TabStatsList;

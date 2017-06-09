@@ -5,20 +5,16 @@
 #ifndef UI_VIEWS_MUS_WINDOW_MANAGER_CONSTANTS_CONVERTERS_H_
 #define UI_VIEWS_MUS_WINDOW_MANAGER_CONSTANTS_CONVERTERS_H_
 
-#include "components/mus/public/interfaces/window_manager_constants.mojom.h"
+#include "services/ui/public/interfaces/window_manager_constants.mojom.h"
 #include "ui/views/mus/mus_export.h"
 #include "ui/views/widget/widget.h"
-
-namespace mus {
-class Window;
-}
 
 namespace mojo {
 
 template <>
 struct VIEWS_MUS_EXPORT
-    TypeConverter<mus::mojom::WindowType, views::Widget::InitParams::Type> {
-  static mus::mojom::WindowType Convert(views::Widget::InitParams::Type type);
+    TypeConverter<ui::mojom::WindowType, views::Widget::InitParams::Type> {
+  static ui::mojom::WindowType Convert(views::Widget::InitParams::Type type);
 };
 
 }  // namespace mojo

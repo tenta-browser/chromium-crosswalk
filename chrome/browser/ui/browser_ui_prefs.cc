@@ -14,6 +14,7 @@
 #include "components/prefs/scoped_user_pref_update.h"
 #include "components/translate/core/common/translate_pref_names.h"
 #include "content/public/common/webrtc_ip_handling_policy.h"
+#include "media/media_features.h"
 
 #if defined(OS_WIN)
 #include "base/win/windows_version.h"
@@ -47,45 +48,7 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
       GetHomeButtonAndHomePageIsNewTabPageFlags());
   registry->RegisterBooleanPref(prefs::kShowHomeButton, false,
                                 GetHomeButtonAndHomePageIsNewTabPageFlags());
-  registry->RegisterBooleanPref(
-      prefs::kDeleteBrowsingHistory,
-      true,
-      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
-  registry->RegisterBooleanPref(
-      prefs::kDeleteDownloadHistory,
-      true,
-      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
-  registry->RegisterBooleanPref(
-      prefs::kDeleteCache,
-      true,
-      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
-  registry->RegisterBooleanPref(
-      prefs::kDeleteCookies,
-      true,
-      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
-  registry->RegisterBooleanPref(
-      prefs::kDeletePasswords,
-      false,
-      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
-  registry->RegisterBooleanPref(
-      prefs::kDeleteFormData,
-      false,
-      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
-  registry->RegisterBooleanPref(
-      prefs::kDeleteHostedAppsData,
-      false,
-      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
-  registry->RegisterBooleanPref(
-      prefs::kDeleteMediaLicenses,
-      false,
-      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
-  registry->RegisterIntegerPref(
-      prefs::kDeleteTimePeriod,
-      0,
-      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
-  registry->RegisterIntegerPref(
-      prefs::kClearBrowsingDataHistoryNoticeShownTimes, 0);
-  registry->RegisterInt64Pref(prefs::kLastClearBrowsingDataTime, 0);
+
   registry->RegisterIntegerPref(prefs::kModuleConflictBubbleShown, 0);
   registry->RegisterInt64Pref(prefs::kDefaultBrowserLastDeclined, 0);
   bool reset_check_default = false;
@@ -118,12 +81,13 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
       prefs::kEnableDoNotTrack,
       false,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
-#if defined(ENABLE_WEBRTC)
+#if BUILDFLAG(ENABLE_WEBRTC)
   // TODO(guoweis): Remove next 2 options at M50.
   registry->RegisterBooleanPref(prefs::kWebRTCMultipleRoutesEnabled, true);
   registry->RegisterBooleanPref(prefs::kWebRTCNonProxiedUdpEnabled, true);
   registry->RegisterStringPref(prefs::kWebRTCIPHandlingPolicy,
                                content::kWebRTCIPHandlingDefault);
+  registry->RegisterStringPref(prefs::kWebRTCUDPPortRange, std::string());
 #endif
 
   // Dictionaries to keep track of default tasks in the file browser.

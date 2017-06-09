@@ -4,15 +4,15 @@
 
 #include "chrome/browser/ui/webui/chromeos/emulator/device_emulator_ui.h"
 
+#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/chromeos/emulator/device_emulator_message_handler.h"
 #include "chrome/common/url_constants.h"
+#include "chrome/grit/browser_resources.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
-#include "grit/browser_resources.h"
-#include "grit/generated_resources.h"
 
 namespace {
 
@@ -35,6 +35,10 @@ content::WebUIDataSource* CreateDeviceEmulatorUIDataSource() {
   html->AddResourcePath("bluetooth_settings.js",
                         IDR_DEVICE_EMULATOR_BLUETOOTH_SETTINGS_JS);
   html->AddResourcePath("icons.html", IDR_DEVICE_EMULATOR_ICONS_HTML);
+  html->AddResourcePath("input_device_settings.html",
+                        IDR_DEVICE_EMULATOR_INPUT_DEVICE_SETTINGS_HTML);
+  html->AddResourcePath("input_device_settings.js",
+                        IDR_DEVICE_EMULATOR_INPUT_DEVICE_SETTINGS_JS);
   html->AddResourcePath("device_emulator_pages.html",
                         IDR_DEVICE_EMULATOR_PAGES_HTML);
   html->AddResourcePath("device_emulator_pages.js",
@@ -52,7 +56,8 @@ content::WebUIDataSource* CreateDeviceEmulatorUIDataSource() {
 
 DeviceEmulatorUI::DeviceEmulatorUI(content::WebUI* web_ui)
     : WebUIController(web_ui) {
-  web_ui->AddMessageHandler(new chromeos::DeviceEmulatorMessageHandler());
+  web_ui->AddMessageHandler(
+      base::MakeUnique<chromeos::DeviceEmulatorMessageHandler>());
 
   content::WebUIDataSource::Add(web_ui->GetWebContents()->GetBrowserContext(),
                                 CreateDeviceEmulatorUIDataSource());

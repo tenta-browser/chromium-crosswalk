@@ -8,7 +8,6 @@
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/version.h"
-#include "base/win/windows_version.h"
 #include "build/build_config.h"
 #include "chrome/browser/extensions/devtools_util.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
@@ -25,6 +24,10 @@
 #include "extensions/test/extension_test_message_listener.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "testing/gmock/include/gmock/gmock.h"
+
+#if defined(OS_WIN)
+#include "base/win/windows_version.h"
+#endif
 
 namespace extensions {
 namespace {
@@ -101,12 +104,6 @@ IN_PROC_BROWSER_TEST_F(ExtensionLoadingTest,
 // Tests the behavior described in http://crbug.com/532088.
 IN_PROC_BROWSER_TEST_F(ExtensionLoadingTest,
                        KeepAliveWithDevToolsOpenOnReload) {
-#if defined(OS_WIN)
-  // Flaky on Win XP SP3. http://crbug.com/560716.
-  if (base::win::GetVersion() <= base::win::VERSION_SERVER_2003)
-    return;
-#endif
-
   embedded_test_server()->ServeFilesFromDirectory(
       base::FilePath(FILE_PATH_LITERAL("chrome/test/data")));
   ASSERT_TRUE(embedded_test_server()->Start());
@@ -207,10 +204,10 @@ IN_PROC_BROWSER_TEST_F(ExtensionLoadingTest, RuntimeValidWhileDevToolsOpen) {
 
   inspect_dir.WriteManifestWithSingleQuotes(kTargetManifest);
   inspect_dir.WriteFile(FILE_PATH_LITERAL("background.js"), kTargetJs);
-  const Extension* devtools_ext = LoadExtension(devtools_dir.unpacked_path());
+  const Extension* devtools_ext = LoadExtension(devtools_dir.UnpackedPath());
   ASSERT_TRUE(devtools_ext);
 
-  const Extension* inspect_ext = LoadExtension(inspect_dir.unpacked_path());
+  const Extension* inspect_ext = LoadExtension(inspect_dir.UnpackedPath());
   ASSERT_TRUE(inspect_ext);
   const std::string inspect_ext_id = inspect_ext->id();
 

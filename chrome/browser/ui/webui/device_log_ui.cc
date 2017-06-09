@@ -9,16 +9,16 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chrome/common/url_constants.h"
-#include "chrome/grit/chromium_strings.h"
+#include "chrome/grit/browser_resources.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/device_event_log/device_event_log.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "content/public/browser/web_ui_message_handler.h"
-#include "grit/browser_resources.h"
 
 namespace chromeos {
 
@@ -51,7 +51,7 @@ class DeviceLogMessageHandler : public content::WebUIMessageHandler {
 
 DeviceLogUI::DeviceLogUI(content::WebUI* web_ui)
     : content::WebUIController(web_ui) {
-  web_ui->AddMessageHandler(new DeviceLogMessageHandler());
+  web_ui->AddMessageHandler(base::MakeUnique<DeviceLogMessageHandler>());
 
   content::WebUIDataSource* html =
       content::WebUIDataSource::Create(chrome::kChromeUIDeviceLogHost);
@@ -72,8 +72,6 @@ DeviceLogUI::DeviceLogUI(content::WebUI* web_ui)
   html->AddLocalizedString("logTypeLoginText", IDS_DEVICE_LOG_TYPE_LOGIN);
   html->AddLocalizedString("logTypeNetworkText", IDS_DEVICE_LOG_TYPE_NETWORK);
   html->AddLocalizedString("logTypePowerText", IDS_DEVICE_LOG_TYPE_POWER);
-  html->AddLocalizedString("logTypeBluetoothText",
-                           IDS_DEVICE_LOG_TYPE_BLUETOOTH);
   html->AddLocalizedString("logTypeUsbText", IDS_DEVICE_LOG_TYPE_USB);
   html->AddLocalizedString("logTypeHidText", IDS_DEVICE_LOG_TYPE_HID);
 

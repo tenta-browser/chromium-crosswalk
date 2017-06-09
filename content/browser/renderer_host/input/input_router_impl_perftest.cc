@@ -12,12 +12,13 @@
 #include "content/browser/renderer_host/input/input_ack_handler.h"
 #include "content/browser/renderer_host/input/input_router_client.h"
 #include "content/browser/renderer_host/input/input_router_impl.h"
-#include "content/common/input/web_input_event_traits.h"
 #include "content/common/input_messages.h"
 #include "content/common/view_messages.h"
 #include "ipc/ipc_sender.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/perf/perf_test.h"
+#include "ui/events/base_event_utils.h"
+#include "ui/events/blink/web_input_event_traits.h"
 #include "ui/gfx/geometry/vector2d_f.h"
 
 using base::TimeDelta;
@@ -83,11 +84,12 @@ class NullInputRouterClient : public InputRouterClient {
       const ui::LatencyInfo& latency_info) override {
     return INPUT_EVENT_ACK_STATE_NOT_CONSUMED;
   }
-  void IncrementInFlightEventCount() override {}
-  void DecrementInFlightEventCount() override {}
+  void IncrementInFlightEventCount(
+      blink::WebInputEvent::Type event_type) override {}
+  void DecrementInFlightEventCount(InputEventAckSource ack_source) override {}
   void OnHasTouchEventHandlers(bool has_handlers) override {}
   void DidFlush() override {}
-  void DidOverscroll(const DidOverscrollParams& params) override {}
+  void DidOverscroll(const ui::DidOverscrollParams& params) override {}
   void DidStopFlinging() override {}
   void ForwardGestureEventWithLatencyInfo(
       const blink::WebGestureEvent& event,
@@ -124,13 +126,14 @@ Gestures BuildScrollSequence(size_t steps,
   Gestures gestures;
   const gfx::Vector2dF delta = ScaleVector2d(distance, 1.f / steps);
 
-  WebGestureEvent gesture;
-  gesture.type = WebInputEvent::GestureScrollBegin;
+  WebGestureEvent gesture(WebInputEvent::GestureScrollBegin,
+                          WebInputEvent::NoModifiers,
+                          ui::EventTimeStampToSeconds(ui::EventTimeForNow()));
   gesture.x = origin.x();
   gesture.y = origin.y();
   gestures.push_back(gesture);
 
-  gesture.type = WebInputEvent::GestureScrollUpdate;
+  gesture.setType(WebInputEvent::GestureScrollUpdate);
   gesture.data.scrollUpdate.deltaX = delta.x();
   gesture.data.scrollUpdate.deltaY = delta.y();
   for (size_t i = 0; i < steps; ++i) {
@@ -139,7 +142,7 @@ Gestures BuildScrollSequence(size_t steps,
     gestures.push_back(gesture);
   }
 
-  gesture.type = WebInputEvent::GestureScrollEnd;
+  gesture.setType(WebInputEvent::GestureScrollEnd);
   gestures.push_back(gesture);
   return gestures;
 }
@@ -151,9 +154,9 @@ Touches BuildTouchSequence(size_t steps,
   Touches touches;
   const gfx::Vector2dF delta = ScaleVector2d(distance, 1.f / steps);
 
-  WebTouchEvent touch;
+  WebTouchEvent touch(WebInputEvent::TouchStart, WebInputEvent::NoModifiers,
+                      ui::EventTimeStampToSeconds(ui::EventTimeForNow()));
   touch.touchesLength = 1;
-  touch.type = WebInputEvent::TouchStart;
   touch.touches[0].id = 0;
   touch.touches[0].state = WebTouchPoint::StatePressed;
   touch.touches[0].position.x = origin.x();
@@ -162,7 +165,7 @@ Touches BuildTouchSequence(size_t steps,
   touch.touches[0].screenPosition.y = origin.y();
   touches.push_back(touch);
 
-  touch.type = WebInputEvent::TouchMove;
+  touch.setType(WebInputEvent::TouchMove);
   touch.touches[0].state = WebTouchPoint::StateMoved;
   for (size_t i = 0; i < steps; ++i) {
     touch.touches[0].position.x += delta.x();
@@ -172,7 +175,7 @@ Touches BuildTouchSequence(size_t steps,
     touches.push_back(touch);
   }
 
-  touch.type = WebInputEvent::TouchEnd;
+  touch.setType(WebInputEvent::TouchEnd);
   touch.touches[0].state = WebTouchPoint::StateReleased;
   touches.push_back(touch);
   return touches;
@@ -244,9 +247,10 @@ class InputRouterImplPerfTest : public testing::Test {
 
   void SendEventAckIfNecessary(const blink::WebInputEvent& event,
                                InputEventAckState ack_result) {
-    if (!WebInputEventTraits::ShouldBlockEventStream(event))
+    if (!ui::WebInputEventTraits::ShouldBlockEventStream(event))
       return;
-    InputEventAck ack(event.type, ack_result);
+    InputEventAck ack(InputEventAckSource::COMPOSITOR_THREAD, event.type(),
+                      ack_result);
     InputHostMsg_HandleInputEvent_ACK response(0, ack);
     input_router_->OnMessageReceived(response);
   }

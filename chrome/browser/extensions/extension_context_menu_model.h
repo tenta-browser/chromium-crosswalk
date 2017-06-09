@@ -22,7 +22,6 @@ class WebContents;
 namespace extensions {
 class Extension;
 class ContextMenuMatcher;
-class ExtensionContextMenuModelTest;
 
 // The context menu model for extension icons.
 class ExtensionContextMenuModel : public ui::SimpleMenuModel,
@@ -80,8 +79,6 @@ class ExtensionContextMenuModel : public ui::SimpleMenuModel,
   // SimpleMenuModel::Delegate:
   bool IsCommandIdChecked(int command_id) const override;
   bool IsCommandIdEnabled(int command_id) const override;
-  bool GetAcceleratorForCommandId(int command_id,
-                                  ui::Accelerator* accelerator) override;
   void ExecuteCommand(int command_id, int event_flags) override;
 
   ui::SimpleMenuModel* page_access_submenu_for_testing() {

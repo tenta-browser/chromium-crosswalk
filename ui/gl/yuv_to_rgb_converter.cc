@@ -7,8 +7,7 @@
 #include "base/strings/stringize_macros.h"
 #include "base/strings/stringprintf.h"
 #include "ui/gl/gl_helper.h"
-#include "ui/gl/gl_implementation.h"
-#include "ui/gl/scoped_api.h"
+#include "ui/gl/gl_version_info.h"
 #include "ui/gl/scoped_binders.h"
 
 namespace gl {
@@ -70,10 +69,8 @@ STRINGIZE(
 
 }  // namespace
 
-YUVToRGBConverter::YUVToRGBConverter() {
-  bool use_core_profile =
-      GetGLImplementation() == kGLImplementationDesktopGLCoreProfile;
-  ScopedSetGLToRealGLApi scoped_set_gl_api;
+YUVToRGBConverter::YUVToRGBConverter(const GLVersionInfo& gl_version_info) {
+  bool use_core_profile = gl_version_info.is_desktop_core_profile;
   glGenFramebuffersEXT(1, &framebuffer_);
   vertex_buffer_ = GLHelper::SetupQuadVertexBuffer();
   vertex_shader_ = GLHelper::LoadShader(
@@ -108,7 +105,6 @@ YUVToRGBConverter::YUVToRGBConverter() {
 }
 
 YUVToRGBConverter::~YUVToRGBConverter() {
-  ScopedSetGLToRealGLApi scoped_set_gl_api;
   glDeleteTextures(1, &y_texture_);
   glDeleteTextures(1, &uv_texture_);
   glDeleteProgram(program_);
@@ -121,10 +117,6 @@ YUVToRGBConverter::~YUVToRGBConverter() {
 void YUVToRGBConverter::CopyYUV420ToRGB(unsigned target,
                                         const gfx::Size& size,
                                         unsigned rgb_texture) {
-  // Only support for rectangle targets exists so far.
-  DCHECK_EQ(static_cast<GLenum>(GL_TEXTURE_RECTANGLE_ARB), target);
-  ScopedSetGLToRealGLApi scoped_set_gl_api;
-
   // Note that state restoration is done explicitly instead of scoped binders to
   // avoid https://crbug.com/601729.
   GLint old_active_texture = -1;
@@ -137,8 +129,8 @@ void YUVToRGBConverter::CopyYUV420ToRGB(unsigned target,
   glGetIntegerv(GL_TEXTURE_BINDING_RECTANGLE_ARB, &old_texture1_binding);
 
   // Allocate the rgb texture.
-  glBindTexture(GL_TEXTURE_RECTANGLE_ARB, rgb_texture);
-  glTexImage2D(GL_TEXTURE_RECTANGLE_ARB, 0, GL_RGB, size.width(), size.height(),
+  glBindTexture(target, rgb_texture);
+  glTexImage2D(target, 0, GL_RGB, size.width(), size.height(),
                0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
 
   // Set up and issue the draw call.
@@ -146,10 +138,10 @@ void YUVToRGBConverter::CopyYUV420ToRGB(unsigned target,
   glBindTexture(GL_TEXTURE_RECTANGLE_ARB, y_texture_);
   glActiveTexture(GL_TEXTURE1);
   glBindTexture(GL_TEXTURE_RECTANGLE_ARB, uv_texture_);
-  ScopedFrameBufferBinder framebuffer_binder(framebuffer_);
+  ScopedFramebufferBinder framebuffer_binder(framebuffer_);
   ScopedViewport viewport(0, 0, size.width(), size.height());
   glFramebufferTexture2DEXT(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                            GL_TEXTURE_RECTANGLE_ARB, rgb_texture, 0);
+                            target, rgb_texture, 0);
   DCHECK_EQ(static_cast<GLenum>(GL_FRAMEBUFFER_COMPLETE),
             glCheckFramebufferStatusEXT(GL_FRAMEBUFFER));
   ScopedUseProgram use_program(program_);
@@ -158,7 +150,7 @@ void YUVToRGBConverter::CopyYUV420ToRGB(unsigned target,
 
   // Restore previous state.
   glFramebufferTexture2DEXT(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                            GL_TEXTURE_RECTANGLE_ARB, 0, 0);
+                            target, 0, 0);
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_RECTANGLE_ARB, old_texture0_binding);
   glActiveTexture(GL_TEXTURE1);

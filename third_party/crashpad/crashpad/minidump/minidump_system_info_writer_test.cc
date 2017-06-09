@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "minidump/minidump_system_info_writer.h"
+
 #include <string.h>
 
 #include <algorithm>
@@ -22,7 +24,6 @@
 #include "base/memory/ptr_util.h"
 #include "gtest/gtest.h"
 #include "minidump/minidump_file_writer.h"
-#include "minidump/minidump_system_info_writer.h"
 #include "minidump/test/minidump_file_writer_test_util.h"
 #include "minidump/test/minidump_string_writer_test_util.h"
 #include "minidump/test/minidump_writable_test_util.h"
@@ -404,7 +405,8 @@ TEST(MinidumpSystemInfoWriter, InitializeFromSnapshot_AMD64) {
       (1 << PF_COMPARE_EXCHANGE128) |
       (1 << PF_XSAVE_ENABLED) |
       (1 << PF_RDWRFSGSBASE_AVAILABLE) |
-      (1 << PF_RDRAND_INSTRUCTION_AVAILABLE);
+      (1 << PF_RDRAND_INSTRUCTION_AVAILABLE) |
+      (UINT64_C(1) << PF_RDTSCP_INSTRUCTION_AVAILABLE);
   expect_system_info.Cpu.OtherCpuInfo.ProcessorFeatures[1] = 0;
   const char kOSVersionBuild[] = "13F34";
 

@@ -9,7 +9,6 @@
 #include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/stringprintf.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "chrome/common/chrome_paths.h"
@@ -17,7 +16,8 @@
 #include "components/prefs/mock_pref_change_callback.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/scoped_user_pref_update.h"
-#include "components/syncable_prefs/pref_service_syncable.h"
+#include "components/sync/model/string_ordinal.h"
+#include "components/sync_preferences/pref_service_syncable.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/test/mock_notification_observer.h"
@@ -29,7 +29,6 @@
 #include "extensions/common/manifest_constants.h"
 #include "extensions/common/permissions/permission_set.h"
 #include "extensions/common/permissions/permissions_info.h"
-#include "sync/api/string_ordinal.h"
 
 using base::Time;
 using base::TimeDelta;
@@ -851,7 +850,8 @@ class ExtensionPrefsBlacklistState : public ExtensionPrefsTest {
     ExtensionIdSet empty_ids;
     EXPECT_EQ(empty_ids, prefs()->GetBlacklistedExtensions());
 
-    prefs()->SetExtensionBlacklisted(extension_a_->id(), true);
+    prefs()->SetExtensionBlacklistState(extension_a_->id(),
+                                        BLACKLISTED_MALWARE);
     EXPECT_EQ(BLACKLISTED_MALWARE,
               prefs()->GetExtensionBlacklistState(extension_a_->id()));
 
@@ -862,7 +862,8 @@ class ExtensionPrefsBlacklistState : public ExtensionPrefsTest {
     EXPECT_FALSE(prefs()->IsExtensionBlacklisted(extension_a_->id()));
     EXPECT_EQ(empty_ids, prefs()->GetBlacklistedExtensions());
 
-    prefs()->SetExtensionBlacklisted(extension_a_->id(), true);
+    prefs()->SetExtensionBlacklistState(extension_a_->id(),
+                                        BLACKLISTED_MALWARE);
     EXPECT_TRUE(prefs()->IsExtensionBlacklisted(extension_a_->id()));
     EXPECT_EQ(BLACKLISTED_MALWARE,
               prefs()->GetExtensionBlacklistState(extension_a_->id()));

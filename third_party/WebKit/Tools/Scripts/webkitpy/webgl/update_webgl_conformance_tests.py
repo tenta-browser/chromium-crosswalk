@@ -26,14 +26,12 @@ import logging
 import optparse
 import os
 import re
-import sys
-
-from webkitpy.common.checkout.scm.detection import SCMDetector
-from webkitpy.common.system.executive import Executive
-from webkitpy.common.system.filesystem import FileSystem
 
 
 _log = logging.getLogger(__name__)
+
+
+# TODO(qyearsley): Remove this module if update-webgl-conformance-tests is now unused.
 
 
 def remove_first_line_comment(text):
@@ -61,9 +59,7 @@ def translate_includes(text):
 
 
 def translate_khronos_test(text):
-    """
-    This method translates the contents of a Khronos test to a WebKit test.
-    """
+    """This method translates the contents of a Khronos test to a WebKit test."""
 
     translateFuncs = [
         remove_first_line_comment,
@@ -93,16 +89,6 @@ def update_directory(in_dir, out_dir):
 
 
 def default_out_dir():
-    detector = SCMDetector(FileSystem(), Executive())
-    current_scm = detector.detect_scm_system(os.path.dirname(sys.argv[0]))
-    if not current_scm:
-        return os.getcwd()
-    root_dir = current_scm.checkout_root
-    if not root_dir:
-        return os.getcwd()
-    out_dir = os.path.join(root_dir, "LayoutTests/fast/canvas/webgl")
-    if os.path.isdir(out_dir):
-        return out_dir
     return os.getcwd()
 
 

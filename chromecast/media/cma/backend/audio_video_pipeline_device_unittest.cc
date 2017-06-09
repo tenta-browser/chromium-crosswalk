@@ -19,7 +19,9 @@
 #include "base/memory/scoped_vector.h"
 #include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/test/scoped_task_scheduler.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_checker.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -231,6 +233,7 @@ class AudioVideoPipelineDeviceTest : public testing::Test {
 
   void OnPauseCompleted();
 
+  base::test::ScopedTaskScheduler task_scheduler_;
   MediaPipelineDeviceParams::MediaSyncType sync_type_;
   MediaPipelineDeviceParams::AudioStreamType audio_type_;
   std::unique_ptr<TaskRunnerImpl> task_runner_;
@@ -394,7 +397,9 @@ void BufferFeeder::OnPushBufferComplete(BufferStatus status) {
   EXPECT_TRUE(expecting_buffer_complete_)
       << "OnPushBufferComplete() called unexpectedly";
   expecting_buffer_complete_ = false;
-  ASSERT_NE(status, MediaPipelineBackend::kBufferFailed);
+  if (!feed_continuous_pcm_ || !feeding_completed_) {
+    ASSERT_NE(status, MediaPipelineBackend::kBufferFailed);
+  }
   EXPECT_FALSE(eos_) << "Got OnPushBufferComplete() after OnEndOfStream()";
 
   if (test_config_after_next_push_) {
@@ -749,9 +754,8 @@ void AudioVideoPipelineDeviceTest::OnEndOfStream() {
   if ((!audio_feeder_ || audio_feeder_->eos()) &&
       (!video_feeder_ || video_feeder_->eos())) {
     RunPlaybackChecks();
-    bool success = backend_->Stop();
+    backend_->Stop();
     stopped_ = true;
-    ASSERT_TRUE(success);
     RunStoppedChecks();
 
     for (auto& feeder : effects_feeders_)
@@ -848,36 +852,36 @@ void AudioVideoPipelineDeviceTest::OnPauseCompleted() {
 
 void AudioVideoPipelineDeviceTest::TestBackendStates() {
   ASSERT_TRUE(backend()->Initialize());
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   RunStoppedChecks();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   const int64_t start_pts = 222;
   ASSERT_TRUE(backend()->Start(start_pts));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   RunPlaybackChecks();
 
   ASSERT_TRUE(backend()->Pause());
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   RunPlaybackChecks();
 
   ASSERT_TRUE(backend()->Resume());
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   RunPlaybackChecks();
 
-  ASSERT_TRUE(backend()->Stop());
-  base::MessageLoop::current()->RunUntilIdle();
+  backend()->Stop();
+  base::RunLoop().RunUntilIdle();
 
   RunStoppedChecks();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 void AudioVideoPipelineDeviceTest::StartImmediateEosTest() {
   RunStoppedChecks();
 
   ASSERT_TRUE(backend()->Initialize());
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   Start();
 }
@@ -887,13 +891,13 @@ void AudioVideoPipelineDeviceTest::EndImmediateEosTest() {
   RunPlaybackChecks();
 
   ASSERT_TRUE(backend_->Pause());
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(kStartPts, backend_->GetCurrentPts());
   RunPlaybackChecks();
 
-  ASSERT_TRUE(backend_->Stop());
-  base::MessageLoop::current()->RunUntilIdle();
+  backend_->Stop();
+  base::RunLoop().RunUntilIdle();
 
   RunStoppedChecks();
 
@@ -901,69 +905,55 @@ void AudioVideoPipelineDeviceTest::EndImmediateEosTest() {
 }
 
 TEST_F(AudioVideoPipelineDeviceTest, Mp3Playback) {
-  std::unique_ptr<base::MessageLoop> message_loop(new base::MessageLoop());
-
   set_sync_type(MediaPipelineDeviceParams::kModeSyncPts);
   ConfigureForAudioOnly("sfx.mp3");
   PauseBeforeEos();
   Start();
-  message_loop->Run();
+  base::RunLoop().Run();
 }
 
 TEST_F(AudioVideoPipelineDeviceTest, AacPlayback) {
-  std::unique_ptr<base::MessageLoop> message_loop(new base::MessageLoop());
-
   set_sync_type(MediaPipelineDeviceParams::kModeSyncPts);
   ConfigureForAudioOnly("sfx.m4a");
   PauseBeforeEos();
   Start();
-  message_loop->Run();
+  base::RunLoop().Run();
 }
 
 TEST_F(AudioVideoPipelineDeviceTest, VorbisPlayback) {
-  std::unique_ptr<base::MessageLoop> message_loop(new base::MessageLoop());
-
   set_sync_type(MediaPipelineDeviceParams::kModeIgnorePts);
   ConfigureForAudioOnly("sfx.ogg");
   Start();
-  message_loop->Run();
+  base::RunLoop().Run();
 }
 
 // TODO(kmackay) FFmpegDemuxForTest can't handle AC3 or EAC3.
 
 TEST_F(AudioVideoPipelineDeviceTest, OpusPlayback_Optional) {
-  std::unique_ptr<base::MessageLoop> message_loop(new base::MessageLoop());
-
   set_sync_type(MediaPipelineDeviceParams::kModeSyncPts);
   ConfigureForAudioOnly("bear-opus.ogg");
   PauseBeforeEos();
   Start();
-  message_loop->Run();
+  base::RunLoop().Run();
 }
 
 TEST_F(AudioVideoPipelineDeviceTest, FlacPlayback_Optional) {
-  std::unique_ptr<base::MessageLoop> message_loop(new base::MessageLoop());
-
   set_sync_type(MediaPipelineDeviceParams::kModeSyncPts);
   ConfigureForAudioOnly("bear.flac");
   PauseBeforeEos();
   Start();
-  message_loop->Run();
+  base::RunLoop().Run();
 }
 
 TEST_F(AudioVideoPipelineDeviceTest, H264Playback) {
-  std::unique_ptr<base::MessageLoop> message_loop(new base::MessageLoop());
-
-  set_sync_type(MediaPipelineDeviceParams::kModeIgnorePtsAndVSync);
+  set_sync_type(MediaPipelineDeviceParams::kModeSyncPts);
   ConfigureForVideoOnly("bear.h264", true /* raw_h264 */);
   PauseBeforeEos();
   Start();
-  message_loop->Run();
+  base::RunLoop().Run();
 }
 
 TEST_F(AudioVideoPipelineDeviceTest, WebmPlaybackWithPause) {
-  std::unique_ptr<base::MessageLoop> message_loop(new base::MessageLoop());
-
   set_sync_type(MediaPipelineDeviceParams::kModeSyncPts);
   // Setup to pause for 100ms every 500ms
   AddPause(base::TimeDelta::FromMilliseconds(500),
@@ -971,32 +961,27 @@ TEST_F(AudioVideoPipelineDeviceTest, WebmPlaybackWithPause) {
 
   ConfigureForVideoOnly("bear-640x360.webm", false /* raw_h264 */);
   Start();
-  message_loop->Run();
+  base::RunLoop().Run();
 }
 
 TEST_F(AudioVideoPipelineDeviceTest, Vp8Playback) {
-  std::unique_ptr<base::MessageLoop> message_loop(new base::MessageLoop());
-
   set_sync_type(MediaPipelineDeviceParams::kModeSyncPts);
   ConfigureForVideoOnly("bear-vp8a.webm", false /* raw_h264 */);
   Start();
-  message_loop->Run();
+  base::RunLoop().Run();
 }
 
 TEST_F(AudioVideoPipelineDeviceTest, WebmPlayback) {
-  std::unique_ptr<base::MessageLoop> message_loop(new base::MessageLoop());
-
-  set_sync_type(MediaPipelineDeviceParams::kModeIgnorePtsAndVSync);
+  set_sync_type(MediaPipelineDeviceParams::kModeSyncPts);
   ConfigureForFile("bear-640x360.webm");
   PauseBeforeEos();
   Start();
-  message_loop->Run();
+  base::RunLoop().Run();
 }
 
 // TODO(kmackay) FFmpegDemuxForTest can't handle HEVC or VP9.
 
 TEST_F(AudioVideoPipelineDeviceTest, AudioBackendStates) {
-  std::unique_ptr<base::MessageLoop> message_loop(new base::MessageLoop());
   Initialize();
   MediaPipelineBackend::AudioDecoder* audio_decoder =
       backend()->CreateAudioDecoder();
@@ -1013,7 +998,6 @@ TEST_F(AudioVideoPipelineDeviceTest, AudioBackendStates) {
 }
 
 TEST_F(AudioVideoPipelineDeviceTest, AudioEffectsBackendStates) {
-  std::unique_ptr<base::MessageLoop> message_loop(new base::MessageLoop());
   set_audio_type(MediaPipelineDeviceParams::kAudioStreamSoundEffects);
   set_sync_type(MediaPipelineDeviceParams::kModeIgnorePts);
   Initialize();
@@ -1031,7 +1015,6 @@ TEST_F(AudioVideoPipelineDeviceTest, AudioEffectsBackendStates) {
 }
 
 TEST_F(AudioVideoPipelineDeviceTest, VideoBackendStates) {
-  std::unique_ptr<base::MessageLoop> message_loop(new base::MessageLoop());
   Initialize();
   MediaPipelineBackend::VideoDecoder* video_decoder =
       backend()->CreateVideoDecoder();
@@ -1048,7 +1031,6 @@ TEST_F(AudioVideoPipelineDeviceTest, VideoBackendStates) {
 }
 
 TEST_F(AudioVideoPipelineDeviceTest, AudioImmediateEos) {
-  std::unique_ptr<base::MessageLoop> message_loop(new base::MessageLoop());
   Initialize();
   MediaPipelineBackend::AudioDecoder* audio_decoder =
       backend()->CreateAudioDecoder();
@@ -1061,10 +1043,10 @@ TEST_F(AudioVideoPipelineDeviceTest, AudioImmediateEos) {
   SetAudioFeeder(std::move(feeder));
 
   StartImmediateEosTest();
+  base::RunLoop().RunUntilIdle();
 }
 
 TEST_F(AudioVideoPipelineDeviceTest, VideoImmediateEos) {
-  std::unique_ptr<base::MessageLoop> message_loop(new base::MessageLoop());
   Initialize();
   MediaPipelineBackend::VideoDecoder* video_decoder =
       backend()->CreateVideoDecoder();
@@ -1077,78 +1059,65 @@ TEST_F(AudioVideoPipelineDeviceTest, VideoImmediateEos) {
   SetVideoFeeder(std::move(feeder));
 
   StartImmediateEosTest();
+  base::RunLoop().RunUntilIdle();
 }
 
 TEST_F(AudioVideoPipelineDeviceTest, Mp3Playback_WithEffectsStreams) {
-  std::unique_ptr<base::MessageLoop> message_loop(new base::MessageLoop());
-
   set_sync_type(MediaPipelineDeviceParams::kModeSyncPts);
   ConfigureForAudioOnly("sfx.mp3");
   PauseBeforeEos();
   AddEffectsStreams();
   Start();
-  message_loop->Run();
+  base::RunLoop().Run();
 }
 
 TEST_F(AudioVideoPipelineDeviceTest, AacPlayback_WithEffectsStreams) {
-  std::unique_ptr<base::MessageLoop> message_loop(new base::MessageLoop());
-
   set_sync_type(MediaPipelineDeviceParams::kModeSyncPts);
   ConfigureForAudioOnly("sfx.m4a");
   PauseBeforeEos();
   AddEffectsStreams();
   Start();
-  message_loop->Run();
+  base::RunLoop().Run();
 }
 
 TEST_F(AudioVideoPipelineDeviceTest, VorbisPlayback_WithEffectsStreams) {
-  std::unique_ptr<base::MessageLoop> message_loop(new base::MessageLoop());
-
   set_sync_type(MediaPipelineDeviceParams::kModeIgnorePts);
   ConfigureForAudioOnly("sfx.ogg");
   AddEffectsStreams();
   Start();
-  message_loop->Run();
+  base::RunLoop().Run();
 }
 
 // TODO(kmackay) FFmpegDemuxForTest can't handle AC3 or EAC3.
 
 TEST_F(AudioVideoPipelineDeviceTest, OpusPlayback_WithEffectsStreams_Optional) {
-  std::unique_ptr<base::MessageLoop> message_loop(new base::MessageLoop());
-
   set_sync_type(MediaPipelineDeviceParams::kModeSyncPts);
   ConfigureForAudioOnly("bear-opus.ogg");
   PauseBeforeEos();
   AddEffectsStreams();
   Start();
-  message_loop->Run();
+  base::RunLoop().Run();
 }
 
 TEST_F(AudioVideoPipelineDeviceTest, FlacPlayback_WithEffectsStreams_Optional) {
-  std::unique_ptr<base::MessageLoop> message_loop(new base::MessageLoop());
-
   set_sync_type(MediaPipelineDeviceParams::kModeSyncPts);
   ConfigureForAudioOnly("bear.flac");
   PauseBeforeEos();
   AddEffectsStreams();
   Start();
-  message_loop->Run();
+  base::RunLoop().Run();
 }
 
 TEST_F(AudioVideoPipelineDeviceTest, H264Playback_WithEffectsStreams) {
-  std::unique_ptr<base::MessageLoop> message_loop(new base::MessageLoop());
-
-  set_sync_type(MediaPipelineDeviceParams::kModeIgnorePtsAndVSync);
+  set_sync_type(MediaPipelineDeviceParams::kModeSyncPts);
   ConfigureForVideoOnly("bear.h264", true /* raw_h264 */);
   PauseBeforeEos();
   AddEffectsStreams();
   Start();
-  message_loop->Run();
+  base::RunLoop().Run();
 }
 
 TEST_F(AudioVideoPipelineDeviceTest, WebmPlaybackWithPause_WithEffectsStreams) {
-  std::unique_ptr<base::MessageLoop> message_loop(new base::MessageLoop());
-
   set_sync_type(MediaPipelineDeviceParams::kModeSyncPts);
   // Setup to pause for 100ms every 500ms
   AddPause(base::TimeDelta::FromMilliseconds(500),
@@ -1157,28 +1126,24 @@ TEST_F(AudioVideoPipelineDeviceTest, WebmPlaybackWithPause_WithEffectsStreams) {
   ConfigureForVideoOnly("bear-640x360.webm", false /* raw_h264 */);
   AddEffectsStreams();
   Start();
-  message_loop->Run();
+  base::RunLoop().Run();
 }
 
 TEST_F(AudioVideoPipelineDeviceTest, Vp8Playback_WithEffectsStreams) {
-  std::unique_ptr<base::MessageLoop> message_loop(new base::MessageLoop());
-
   set_sync_type(MediaPipelineDeviceParams::kModeSyncPts);
   ConfigureForVideoOnly("bear-vp8a.webm", false /* raw_h264 */);
   AddEffectsStreams();
   Start();
-  message_loop->Run();
+  base::RunLoop().Run();
 }
 
 TEST_F(AudioVideoPipelineDeviceTest, WebmPlayback_WithEffectsStreams) {
-  std::unique_ptr<base::MessageLoop> message_loop(new base::MessageLoop());
-
-  set_sync_type(MediaPipelineDeviceParams::kModeIgnorePtsAndVSync);
+  set_sync_type(MediaPipelineDeviceParams::kModeSyncPts);
   ConfigureForFile("bear-640x360.webm");
   PauseBeforeEos();
   AddEffectsStreams();
   Start();
-  message_loop->Run();
+  base::RunLoop().Run();
 }
 
 }  // namespace media

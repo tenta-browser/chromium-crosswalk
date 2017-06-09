@@ -6,25 +6,29 @@
 
 #include <utility>
 
-#include "base/win/windows_version.h"
 #include "build/build_config.h"
+#include "chrome/app/vector_icons/vector_icons.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile_attributes_entry.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profiles_state.h"
 #include "chrome/browser/ui/views/profiles/avatar_button_delegate.h"
 #include "chrome/browser/ui/views/profiles/profile_chooser_view.h"
+#include "chrome/grit/theme_resources.h"
 #include "components/signin/core/common/profile_management_switches.h"
-#include "grit/theme_resources.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/geometry/vector2d.h"
 #include "ui/gfx/paint_vector_icon.h"
-#include "ui/gfx/vector_icons_public.h"
+#include "ui/vector_icons/vector_icons.h"
 #include "ui/views/border.h"
 #include "ui/views/controls/button/label_button_border.h"
 #include "ui/views/painter.h"
+
+#if defined(OS_WIN)
+#include "base/win/windows_version.h"
+#endif
 
 namespace {
 
@@ -56,8 +60,8 @@ NewAvatarButton::NewAvatarButton(AvatarButtonDelegate* delegate,
                                  Profile* profile)
     : LabelButton(delegate, base::string16()),
       delegate_(delegate),
+      error_controller_(this, profile),
       profile_(profile),
-      has_auth_error_(false),
       suppress_mouse_released_action_(false) {
   set_triggerable_event_flags(
       ui::EF_LEFT_MOUSE_BUTTON | ui::EF_RIGHT_MOUSE_BUTTON);
@@ -70,7 +74,8 @@ NewAvatarButton::NewAvatarButton(AvatarButtonDelegate* delegate,
   // is larger than this, it will be shrunk to match it.
   // TODO(noms): Calculate this constant algorithmically from the button's size.
   const int kDisplayFontHeight = 16;
-  SetFontList(GetFontList().DeriveWithHeightUpperBound(kDisplayFontHeight));
+  SetFontList(
+      label()->font_list().DeriveWithHeightUpperBound(kDisplayFontHeight));
 
   ui::ResourceBundle* rb = &ui::ResourceBundle::GetSharedInstance();
   if (button_style == AvatarButtonStyle::THEMED) {
@@ -103,26 +108,13 @@ NewAvatarButton::NewAvatarButton(AvatarButtonDelegate* delegate,
 
   g_browser_process->profile_manager()->
       GetProfileAttributesStorage().AddObserver(this);
-
-  // Subscribe to authentication error changes so that the avatar button can
-  // update itself.  Note that guest mode profiles won't have a token service.
-  SigninErrorController* error = profiles::GetSigninErrorController(profile_);
-  if (error) {
-    error->AddObserver(this);
-    OnErrorChanged();  // This calls Update().
-  } else {
-    Update();
-  }
+  Update();
   SchedulePaint();
 }
 
 NewAvatarButton::~NewAvatarButton() {
   g_browser_process->profile_manager()->
       GetProfileAttributesStorage().RemoveObserver(this);
-  SigninErrorController* error =
-      profiles::GetSigninErrorController(profile_);
-  if (error)
-    error->RemoveObserver(this);
 }
 
 bool NewAvatarButton::OnMousePressed(const ui::MouseEvent& event) {
@@ -147,6 +139,10 @@ void NewAvatarButton::OnGestureEvent(ui::GestureEvent* event) {
     NotifyClick(*event);
   else
     LabelButton::OnGestureEvent(event);
+}
+
+void NewAvatarButton::OnAvatarErrorChanged() {
+  Update();
 }
 
 void NewAvatarButton::OnProfileAdded(const base::FilePath& profile_path) {
@@ -175,15 +171,6 @@ void NewAvatarButton::OnProfileSupervisedUserIdChanged(
     Update();
 }
 
-void NewAvatarButton::OnErrorChanged() {
-  // If there is an error, show an warning icon.
-  const SigninErrorController* error =
-      profiles::GetSigninErrorController(profile_);
-  has_auth_error_ = error && error->HasError();
-
-  Update();
-}
-
 void NewAvatarButton::Update() {
   ProfileAttributesStorage& storage =
       g_browser_process->profile_manager()->GetProfileAttributesStorage();
@@ -206,22 +193,21 @@ void NewAvatarButton::Update() {
       use_generic_button
           ? gfx::ShadowValues()
           : gfx::ShadowValues(
-                10, gfx::ShadowValue(gfx::Vector2d(), 1.0f, SK_ColorDKGRAY)));
+                10, gfx::ShadowValue(gfx::Vector2d(), 2.0f, SK_ColorDKGRAY)));
 
   // We want the button to resize if the new text is shorter.
   SetMinSize(gfx::Size());
 
   if (use_generic_button) {
     SetImage(views::Button::STATE_NORMAL, generic_avatar_);
-  } else if (has_auth_error_) {
+  } else if (error_controller_.HasAvatarError()) {
     if (switches::IsMaterialDesignUserMenu()) {
       SetImage(views::Button::STATE_NORMAL,
-               gfx::CreateVectorIcon(gfx::VectorIconId::SYNC_PROBLEM, 13,
-                                     gfx::kGoogleRed700));
+               gfx::CreateVectorIcon(kSyncProblemIcon, 16, gfx::kGoogleRed700));
     } else {
-      SetImage(views::Button::STATE_NORMAL,
-               gfx::CreateVectorIcon(gfx::VectorIconId::WARNING, 13,
-                                     gfx::kGoogleYellow700));
+      SetImage(
+          views::Button::STATE_NORMAL,
+          gfx::CreateVectorIcon(ui::kWarningIcon, 13, gfx::kGoogleYellow700));
     }
   } else {
     SetImage(views::Button::STATE_NORMAL, gfx::ImageSkia());

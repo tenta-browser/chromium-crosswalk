@@ -15,14 +15,13 @@
 #include "jingle/glue/thread_wrapper.h"
 #include "net/socket/client_socket_factory.h"
 #include "remoting/base/chromium_url_request.h"
+#include "remoting/base/chromoting_event.h"
 #include "remoting/client/audio_player_android.h"
 #include "remoting/client/client_telemetry_logger.h"
 #include "remoting/client/jni/android_keymap.h"
 #include "remoting/client/jni/chromoting_jni_runtime.h"
-#include "remoting/client/jni/display_updater_factory.h"
 #include "remoting/client/jni/jni_client.h"
 #include "remoting/client/jni/jni_pairing_secret_fetcher.h"
-#include "remoting/client/jni/jni_video_renderer.h"
 #include "remoting/protocol/chromium_port_allocator_factory.h"
 #include "remoting/protocol/chromium_socket_factory.h"
 #include "remoting/protocol/client_authentication_config.h"
@@ -55,40 +54,33 @@ ChromotingJniInstance::ChromotingJniInstance(
     base::WeakPtr<JniPairingSecretFetcher> secret_fetcher,
     std::unique_ptr<protocol::CursorShapeStub> cursor_shape_stub,
     std::unique_ptr<protocol::VideoRenderer> video_renderer,
-    const std::string& username,
-    const std::string& auth_token,
-    const std::string& host_jid,
-    const std::string& host_id,
-    const std::string& host_pubkey,
-    const std::string& pairing_id,
-    const std::string& pairing_secret,
-    const std::string& capabilities,
-    const std::string& flags)
+    const ConnectToHostInfo& info)
     : jni_runtime_(jni_runtime),
       jni_client_(jni_client),
       secret_fetcher_(secret_fetcher),
-      host_jid_(host_jid),
-      flags_(flags),
+      connection_info_(info),
       cursor_shape_stub_(std::move(cursor_shape_stub)),
       video_renderer_(std::move(video_renderer)),
-      capabilities_(capabilities),
+      capabilities_(info.capabilities),
       weak_factory_(this) {
   DCHECK(jni_runtime_->ui_task_runner()->BelongsToCurrentThread());
+  weak_ptr_ = weak_factory_.GetWeakPtr();
 
   // Initialize XMPP config.
   xmpp_config_.host = kXmppServer;
   xmpp_config_.port = kXmppPort;
   xmpp_config_.use_tls = kXmppUseTls;
-  xmpp_config_.username = username;
-  xmpp_config_.auth_token = auth_token;
+  xmpp_config_.username = info.username;
+  xmpp_config_.auth_token = info.auth_token;
 
-  client_auth_config_.host_id = host_id;
-  client_auth_config_.pairing_client_id = pairing_id;
-  client_auth_config_.pairing_secret = pairing_secret;
+  client_auth_config_.host_id = info.host_id;
+  client_auth_config_.pairing_client_id = info.pairing_id;
+  client_auth_config_.pairing_secret = info.pairing_secret;
   client_auth_config_.fetch_secret_callback =
       base::Bind(&JniPairingSecretFetcher::FetchSecret, secret_fetcher);
   client_auth_config_.fetch_third_party_token_callback = base::Bind(
-      &ChromotingJniInstance::FetchThirdPartyToken, GetWeakPtr(), host_pubkey);
+      &ChromotingJniInstance::FetchThirdPartyToken, GetWeakPtr(),
+      info.host_pubkey);
 }
 
 ChromotingJniInstance::~ChromotingJniInstance() {
@@ -123,7 +115,7 @@ void ChromotingJniInstance::Disconnect() {
   // Remote disconnection will trigger OnConnectionState(...) and later trigger
   // Disconnect().
   if (connected_) {
-    jni_runtime_->logger()->LogSessionStateChange(
+    logger_->LogSessionStateChange(
         ChromotingEvent::SessionState::CLOSED,
         ChromotingEvent::ConnectionError::NONE);
     connected_ = false;
@@ -300,7 +292,7 @@ void ChromotingJniInstance::OnConnectionState(
   connected_ = state == protocol::ConnectionToHost::CONNECTED;
   EnableStatsLogging(connected_);
 
-  jni_runtime_->logger()->LogSessionStateChange(
+  logger_->LogSessionStateChange(
       ClientTelemetryLogger::TranslateState(state),
       ClientTelemetryLogger::TranslateError(error));
 
@@ -369,7 +361,7 @@ void ChromotingJniInstance::InjectClipboardEvent(
 }
 
 base::WeakPtr<ChromotingJniInstance> ChromotingJniInstance::GetWeakPtr() {
-  return weak_factory_.GetWeakPtr();
+  return weak_ptr_;
 }
 
 void ChromotingJniInstance::ConnectToHostOnNetworkThread() {
@@ -389,6 +381,13 @@ void ChromotingJniInstance::ConnectToHostOnNetworkThread() {
     audio_player_.reset(new AudioPlayerAndroid());
   }
 
+  logger_.reset(new ClientTelemetryLogger(jni_runtime_->GetLogWriter(),
+                                          ChromotingEvent::Mode::ME2ME));
+  logger_->SetHostInfo(
+      connection_info_.host_version,
+      ChromotingEvent::ParseOsFromString(connection_info_.host_os),
+      connection_info_.host_os_version);
+
   client_.reset(new ChromotingClient(client_context_.get(), this,
                                      video_renderer_.get(),
                                      audio_player_->GetWeakPtr()));
@@ -400,15 +399,15 @@ void ChromotingJniInstance::ConnectToHostOnNetworkThread() {
   scoped_refptr<protocol::TransportContext> transport_context =
       new protocol::TransportContext(
           signaling_.get(),
-          base::WrapUnique(new protocol::ChromiumPortAllocatorFactory()),
-          base::WrapUnique(
-              new ChromiumUrlRequestFactory(jni_runtime_->url_requester())),
+          base::MakeUnique<protocol::ChromiumPortAllocatorFactory>(),
+          base::MakeUnique<ChromiumUrlRequestFactory>(
+              jni_runtime_->url_requester()),
           protocol::NetworkSettings(
               protocol::NetworkSettings::NAT_TRAVERSAL_FULL),
           protocol::TransportRole::CLIENT);
 
 #if defined(ENABLE_WEBRTC_REMOTING_CLIENT)
-  if (flags_.find("useWebrtc") != std::string::npos) {
+  if (connection_info_.flags.find("useWebrtc") != std::string::npos) {
     VLOG(0) << "Attempting to connect using WebRTC.";
     std::unique_ptr<protocol::CandidateSessionConfig> protocol_config =
         protocol::CandidateSessionConfig::CreateEmpty();
@@ -418,7 +417,7 @@ void ChromotingJniInstance::ConnectToHostOnNetworkThread() {
   }
 #endif  // defined(ENABLE_WEBRTC_REMOTING_CLIENT)
   client_->Start(signaling_.get(), client_auth_config_, transport_context,
-                 host_jid_, capabilities_);
+                 connection_info_.host_jid, capabilities_);
 }
 
 void ChromotingJniInstance::SetDeviceName(const std::string& device_name) {
@@ -482,7 +481,7 @@ void ChromotingJniInstance::LogPerfStats() {
       perf_tracker_->round_trip_ms().Average(),
       perf_tracker_->round_trip_ms().Max());
 
-  jni_runtime_->logger()->LogStatistics(perf_tracker_.get());
+  logger_->LogStatistics(perf_tracker_.get());
 
   jni_runtime_->network_task_runner()->PostDelayedTask(
       FROM_HERE, base::Bind(&ChromotingJniInstance::LogPerfStats, GetWeakPtr()),
@@ -490,6 +489,8 @@ void ChromotingJniInstance::LogPerfStats() {
 }
 
 void ChromotingJniInstance::ReleaseResources() {
+  logger_.reset();
+
   // |client_| must be torn down before |signaling_|.
   client_.reset();
   audio_player_.reset();

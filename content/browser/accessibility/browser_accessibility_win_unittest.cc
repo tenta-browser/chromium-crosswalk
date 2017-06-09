@@ -239,7 +239,6 @@ TEST_F(BrowserAccessibilityTest, TestChildrenChange) {
   text2.id = 2;
   text2.role = ui::AX_ROLE_STATIC_TEXT;
   text2.SetName("new text");
-  text2.SetName("old text");
   AXEventNotificationDetails param;
   param.event_type = ui::AX_EVENT_CHILDREN_CHANGED;
   param.update.nodes.push_back(text2);
@@ -340,12 +339,12 @@ TEST_F(BrowserAccessibilityTest, TestTextBoundaries) {
   ui::AXNodeData text_field;
   text_field.id = 2;
   text_field.role = ui::AX_ROLE_TEXT_FIELD;
-  text_field.state = ui::AX_STATE_EDITABLE;
-  text_field.AddStringAttribute(ui::AX_ATTR_VALUE, text_value);
+  text_field.state = 1 << ui::AX_STATE_EDITABLE;
+  text_field.SetValue(text_value);
   std::vector<int32_t> line_start_offsets;
   line_start_offsets.push_back(15);
-  text_field.AddIntListAttribute(
-      ui::AX_ATTR_LINE_BREAKS, line_start_offsets);
+  text_field.AddIntListAttribute(ui::AX_ATTR_CACHED_LINE_STARTS,
+                                 line_start_offsets);
   text_field.child_ids.push_back(3);
   text_field.child_ids.push_back(5);
   text_field.child_ids.push_back(6);
@@ -353,15 +352,15 @@ TEST_F(BrowserAccessibilityTest, TestTextBoundaries) {
   ui::AXNodeData static_text1;
   static_text1.id = 3;
   static_text1.role = ui::AX_ROLE_STATIC_TEXT;
-  static_text1.state = ui::AX_STATE_EDITABLE;
-  static_text1.AddStringAttribute(ui::AX_ATTR_NAME, line1);
+  static_text1.state = 1 << ui::AX_STATE_EDITABLE;
+  static_text1.SetName(line1);
   static_text1.child_ids.push_back(4);
 
   ui::AXNodeData inline_box1;
   inline_box1.id = 4;
   inline_box1.role = ui::AX_ROLE_INLINE_TEXT_BOX;
-  inline_box1.state = ui::AX_STATE_EDITABLE;
-  inline_box1.AddStringAttribute(ui::AX_ATTR_NAME, line1);
+  inline_box1.state = 1 << ui::AX_STATE_EDITABLE;
+  inline_box1.SetName(line1);
   std::vector<int32_t> word_start_offsets1;
   word_start_offsets1.push_back(0);
   word_start_offsets1.push_back(4);
@@ -372,21 +371,21 @@ TEST_F(BrowserAccessibilityTest, TestTextBoundaries) {
   ui::AXNodeData line_break;
   line_break.id = 5;
   line_break.role = ui::AX_ROLE_LINE_BREAK;
-  line_break.state = ui::AX_STATE_EDITABLE;
-  line_break.AddStringAttribute(ui::AX_ATTR_NAME, "\n");
+  line_break.state = 1 << ui::AX_STATE_EDITABLE;
+  line_break.SetName("\n");
 
   ui::AXNodeData static_text2;
   static_text2.id = 6;
   static_text2.role = ui::AX_ROLE_STATIC_TEXT;
-  static_text2.state = ui::AX_STATE_EDITABLE;
-  static_text2.AddStringAttribute(ui::AX_ATTR_NAME, line2);
+  static_text2.state = 1 << ui::AX_STATE_EDITABLE;
+  static_text2.SetName(line2);
   static_text2.child_ids.push_back(7);
 
   ui::AXNodeData inline_box2;
   inline_box2.id = 7;
   inline_box2.role = ui::AX_ROLE_INLINE_TEXT_BOX;
-  inline_box2.state = ui::AX_STATE_EDITABLE;
-  inline_box2.AddStringAttribute(ui::AX_ATTR_NAME, line2);
+  inline_box2.state = 1 << ui::AX_STATE_EDITABLE;
+  inline_box2.SetName(line2);
   std::vector<int32_t> word_start_offsets2;
   word_start_offsets2.push_back(0);
   word_start_offsets2.push_back(5);
@@ -410,7 +409,6 @@ TEST_F(BrowserAccessibilityTest, TestTextBoundaries) {
   BrowserAccessibilityWin* text_field_obj =
       ToBrowserAccessibilityWin(root_obj->PlatformGetChild(0));
   ASSERT_NE(nullptr, text_field_obj);
-  ASSERT_EQ(0U, text_field_obj->PlatformChildCount());
 
   long text_len;
   EXPECT_EQ(S_OK, text_field_obj->get_nCharacters(&text_len));
@@ -733,7 +731,6 @@ TEST_F(BrowserAccessibilityTest, TestCreateEmptyDocument) {
   CountedBrowserAccessibility::reset();
   const int32_t busy_state = 1 << ui::AX_STATE_BUSY;
   const int32_t readonly_state = 1 << ui::AX_STATE_READ_ONLY;
-  const int32_t enabled_state = 1 << ui::AX_STATE_ENABLED;
   std::unique_ptr<BrowserAccessibilityManager> manager(
       new BrowserAccessibilityManagerWin(
           BrowserAccessibilityManagerWin::GetEmptyDocument(), nullptr,
@@ -743,7 +740,7 @@ TEST_F(BrowserAccessibilityTest, TestCreateEmptyDocument) {
   BrowserAccessibility* root = manager->GetRoot();
   EXPECT_EQ(0, root->GetId());
   EXPECT_EQ(ui::AX_ROLE_ROOT_WEB_AREA, root->GetRole());
-  EXPECT_EQ(busy_state | readonly_state | enabled_state, root->GetState());
+  EXPECT_EQ(busy_state | readonly_state, root->GetState());
 
   // Tree with a child textfield.
   ui::AXNodeData tree1_1;
@@ -823,9 +820,7 @@ TEST_F(BrowserAccessibilityTest, EmptyDocHasUniqueIdWin) {
   BrowserAccessibility* root = manager->GetRoot();
   EXPECT_EQ(0, root->GetId());
   EXPECT_EQ(ui::AX_ROLE_ROOT_WEB_AREA, root->GetRole());
-  EXPECT_EQ(1 << ui::AX_STATE_BUSY |
-            1 << ui::AX_STATE_READ_ONLY |
-            1 << ui::AX_STATE_ENABLED,
+  EXPECT_EQ(1 << ui::AX_STATE_BUSY | 1 << ui::AX_STATE_READ_ONLY,
             root->GetState());
 
   int32_t unique_id = ToBrowserAccessibilityWin(root)->unique_id();
@@ -1281,9 +1276,6 @@ TEST_F(BrowserAccessibilityTest, TestCaretAndSelectionInSimpleFields) {
   hr = combo_box_accessible->get_selection(
       0L /* selection_index */, &selection_start, &selection_end);
   EXPECT_EQ(E_INVALIDARG, hr); // No selections available.
-  // Invalid in_args should not modify out_args.
-  EXPECT_EQ(-2, selection_start);
-  EXPECT_EQ(-2, selection_end);
   hr = text_field_accessible->get_selection(
       0L /* selection_index */, &selection_start, &selection_end);
   EXPECT_EQ(S_OK, hr);
@@ -2004,7 +1996,7 @@ TEST_F(BrowserAccessibilityTest, TestMisspellingsInSimpleTextFields) {
   BrowserAccessibilityWin* ax_combo_box =
       ToBrowserAccessibilityWin(ax_root->PlatformGetChild(0));
   ASSERT_NE(nullptr, ax_combo_box);
-  ASSERT_EQ(0U, ax_combo_box->PlatformChildCount());
+  ASSERT_EQ(1U, ax_combo_box->PlatformChildCount());
 
   HRESULT hr;
   LONG start_offset, end_offset;

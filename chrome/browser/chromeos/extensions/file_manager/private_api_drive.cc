@@ -38,6 +38,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "google_apis/drive/auth_service.h"
 #include "google_apis/drive/drive_api_url_generator.h"
+#include "google_apis/drive/drive_switches.h"
 #include "storage/common/fileapi/file_system_info.h"
 #include "storage/common/fileapi/file_system_util.h"
 #include "url/gurl.h"
@@ -83,6 +84,7 @@ void FillEntryPropertiesValueForDrive(const drive::ResourceEntry& entry_proto,
                                       EntryProperties* properties) {
   properties->shared_with_me.reset(new bool(shared_with_me));
   properties->shared.reset(new bool(entry_proto.shared()));
+  properties->starred.reset(new bool(entry_proto.starred()));
 
   const drive::PlatformFileInfoProto& file_info = entry_proto.file_info();
   properties->size.reset(new double(file_info.size()));
@@ -99,7 +101,8 @@ void FillEntryPropertiesValueForDrive(const drive::ResourceEntry& entry_proto,
     DriveApiUrlGenerator url_generator(
         (GURL(google_apis::DriveApiUrlGenerator::kBaseUrlForProduction)),
         (GURL(google_apis::DriveApiUrlGenerator::
-                  kBaseThumbnailUrlForProduction)));
+                  kBaseThumbnailUrlForProduction)),
+        google_apis::GetTeamDrivesIntegrationSwitch());
     properties->thumbnail_url.reset(new std::string(
         url_generator.GetThumbnailUrl(entry_proto.resource_id(),
                                       500 /* width */, 500 /* height */,
@@ -356,7 +359,8 @@ class SingleEntryPropertiesGetterForDrive {
       for (size_t i = 0; i < drive_apps.size(); ++i) {
         const drive::DriveAppInfo& app_info = drive_apps[i];
         if (default_task.app_id == app_info.app_id) {
-          // The drive app is set as default. Files.app should use the doc icon.
+          // The drive app is set as default. The Files app should use the doc
+          // icon.
           const GURL doc_icon = drive::util::FindPreferredIcon(
               app_info.document_icons, drive::util::kPreferredIconSize);
           properties_->custom_icon_url.reset(new std::string(doc_icon.spec()));
@@ -762,12 +766,12 @@ void FileManagerPrivateSearchDriveFunction::OnEntryDefinitionList(
   for (EntryDefinitionList::const_iterator it = entry_definition_list->begin();
        it != entry_definition_list->end();
        ++it) {
-    base::DictionaryValue* entry = new base::DictionaryValue();
+    auto entry = base::MakeUnique<base::DictionaryValue>();
     entry->SetString("fileSystemName", it->file_system_name);
     entry->SetString("fileSystemRoot", it->file_system_root_url);
     entry->SetString("fileFullPath", "/" + it->full_path.AsUTF8Unsafe());
     entry->SetBoolean("fileIsDirectory", it->is_directory);
-    entries->Append(entry);
+    entries->Append(std::move(entry));
   }
 
   std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue());
@@ -862,7 +866,7 @@ void FileManagerPrivateSearchDriveMetadataFunction::OnEntryDefinitionList(
   // file_manager_private_custom_bindings.js for how this is magically
   // converted to a FileEntry.
   for (size_t i = 0; i < entry_definition_list->size(); ++i) {
-    base::DictionaryValue* result_dict = new base::DictionaryValue();
+    auto result_dict = base::MakeUnique<base::DictionaryValue>();
 
     // FileEntry fields.
     base::DictionaryValue* entry = new base::DictionaryValue();
@@ -880,17 +884,19 @@ void FileManagerPrivateSearchDriveMetadataFunction::OnEntryDefinitionList(
     result_dict->SetString(
         "highlightedBaseName",
         search_result_info_list->at(i).highlighted_base_name);
-    results_list->Append(result_dict);
+    results_list->Append(std::move(result_dict));
   }
 
   SetResult(std::move(results_list));
   SendResponse(true);
 }
 
-bool FileManagerPrivateGetDriveConnectionStateFunction::RunSync() {
+ExtensionFunction::ResponseAction
+FileManagerPrivateGetDriveConnectionStateFunction::Run() {
   api::file_manager_private::DriveConnectionState result;
 
-  switch (drive::util::GetDriveConnectionStatus(GetProfile())) {
+  switch (drive::util::GetDriveConnectionStatus(
+      Profile::FromBrowserContext(browser_context()))) {
     case drive::util::DRIVE_DISCONNECTED_NOSERVICE:
       result.type = kDriveConnectionTypeOffline;
       result.reason.reset(new std::string(kDriveConnectionReasonNoService));
@@ -915,13 +921,14 @@ bool FileManagerPrivateGetDriveConnectionStateFunction::RunSync() {
       chromeos::NetworkHandler::Get()
           ->network_state_handler()
           ->FirstNetworkByType(chromeos::NetworkTypePattern::Mobile());
-  results_ = api::file_manager_private::GetDriveConnectionState::Results::
-      Create(result);
 
-  drive::EventLogger* logger = file_manager::util::GetLogger(GetProfile());
+  drive::EventLogger* logger = file_manager::util::GetLogger(
+      Profile::FromBrowserContext(browser_context()));
   if (logger)
     logger->Log(logging::LOG_INFO, "%s succeeded.", name());
-  return true;
+  return RespondNow(ArgumentList(
+      api::file_manager_private::GetDriveConnectionState::Results::Create(
+          result)));
 }
 
 bool FileManagerPrivateRequestAccessTokenFunction::RunAsync() {
@@ -1038,9 +1045,10 @@ bool FileManagerPrivateInternalRequestDriveShareFunction::RunAsync() {
       break;
   }
 
-  // Share |drive_path| in |owner_file_system| to |user->email()|.
+  // Share |drive_path| in |owner_file_system| to
+  // |user->GetAccountId().GetUserEmail()|.
   owner_file_system->AddPermission(
-      drive_path, user->email(), role,
+      drive_path, user->GetAccountId().GetUserEmail(), role,
       base::Bind(
           &FileManagerPrivateInternalRequestDriveShareFunction::OnAddPermission,
           this));
@@ -1108,7 +1116,8 @@ void FileManagerPrivateInternalGetDownloadUrlFunction::OnGetResourceEntry(
   DriveApiUrlGenerator url_generator(
       (GURL(google_apis::DriveApiUrlGenerator::kBaseUrlForProduction)),
       (GURL(
-          google_apis::DriveApiUrlGenerator::kBaseThumbnailUrlForProduction)));
+          google_apis::DriveApiUrlGenerator::kBaseThumbnailUrlForProduction)),
+      google_apis::GetTeamDrivesIntegrationSwitch());
   download_url_ = url_generator.GenerateDownloadFileUrl(entry->resource_id());
 
   ProfileOAuth2TokenService* oauth2_token_service =

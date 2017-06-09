@@ -14,12 +14,7 @@ namespace test {
 namespace {
 
 RectPtr CreateRect() {
-  RectPtr r = Rect::New();
-  r->x = 1;
-  r->y = 2;
-  r->width = 3;
-  r->height = 4;
-  return r;
+  return Rect::New(1, 2, 3, 4);
 }
 
 using EqualsTest = testing::Test;
@@ -48,9 +43,7 @@ TEST_F(EqualsTest, Struct) {
 }
 
 TEST_F(EqualsTest, StructNested) {
-  RectPairPtr p1(RectPair::New());
-  p1->first = CreateRect();
-  p1->second = CreateRect();
+  RectPairPtr p1(RectPair::New(CreateRect(), CreateRect()));
   RectPairPtr p2(p1.Clone());
   EXPECT_TRUE(p1.Equals(p2));
   p2->second->width = 0;
@@ -60,57 +53,27 @@ TEST_F(EqualsTest, StructNested) {
 }
 
 TEST_F(EqualsTest, Array) {
-  NamedRegionPtr n1(NamedRegion::New());
-  n1->name = "n1";
-  n1->rects.push_back(CreateRect());
+  std::vector<RectPtr> rects;
+  rects.push_back(CreateRect());
+  NamedRegionPtr n1(NamedRegion::New(std::string("n1"), std::move(rects)));
   NamedRegionPtr n2(n1.Clone());
   EXPECT_TRUE(n1.Equals(n2));
 
-  n2->rects = nullptr;
+  n2->rects = base::nullopt;
   EXPECT_FALSE(n1.Equals(n2));
-  n2->rects.resize(0);
-  EXPECT_FALSE(n1.Equals(n2));
-
-  n2->rects.push_back(CreateRect());
-  n2->rects.push_back(CreateRect());
+  n2->rects.emplace();
   EXPECT_FALSE(n1.Equals(n2));
 
-  n2->rects.resize(1);
-  n2->rects[0]->width = 0;
+  n2->rects->push_back(CreateRect());
+  n2->rects->push_back(CreateRect());
   EXPECT_FALSE(n1.Equals(n2));
 
-  n2->rects[0] = CreateRect();
+  n2->rects->resize(1);
+  (*n2->rects)[0]->width = 0;
+  EXPECT_FALSE(n1.Equals(n2));
+
+  (*n2->rects)[0] = CreateRect();
   EXPECT_TRUE(n1.Equals(n2));
-}
-
-TEST_F(EqualsTest, Map) {
-  auto n1(NamedRegion::New());
-  n1->name = "foo";
-  n1->rects.push_back(CreateRect());
-
-  Map<std::string, NamedRegionPtr> m1;
-  m1.insert("foo", std::move(n1));
-
-  decltype(m1) m2;
-  EXPECT_FALSE(m1.Equals(m2));
-
-  m2.insert("bar", m1.at("foo").Clone());
-  EXPECT_FALSE(m1.Equals(m2));
-
-  m2 = m1.Clone();
-  m2.at("foo")->name = "monkey";
-  EXPECT_FALSE(m1.Equals(m2));
-
-  m2 = m1.Clone();
-  m2.at("foo")->rects.push_back(Rect::New());
-  EXPECT_FALSE(m1.Equals(m2));
-
-  m2.at("foo")->rects.resize(1);
-  m2.at("foo")->rects[0]->width = 1;
-  EXPECT_FALSE(m1.Equals(m2));
-
-  m2 = m1.Clone();
-  EXPECT_TRUE(m1.Equals(m2));
 }
 
 TEST_F(EqualsTest, InterfacePtr) {
@@ -122,13 +85,13 @@ TEST_F(EqualsTest, InterfacePtr) {
   EXPECT_TRUE(inf1.Equals(inf1));
   EXPECT_TRUE(inf1.Equals(inf2));
 
-  auto inf1_request = GetProxy(&inf1);
+  auto inf1_request = MakeRequest(&inf1);
   ALLOW_UNUSED_LOCAL(inf1_request);
 
   EXPECT_TRUE(inf1.Equals(inf1));
   EXPECT_FALSE(inf1.Equals(inf2));
 
-  auto inf2_request = GetProxy(&inf2);
+  auto inf2_request = MakeRequest(&inf2);
   ALLOW_UNUSED_LOCAL(inf2_request);
 
   EXPECT_FALSE(inf1.Equals(inf2));
@@ -144,13 +107,13 @@ TEST_F(EqualsTest, InterfaceRequest) {
   EXPECT_TRUE(req1.Equals(req2));
 
   SomeInterfacePtr inf1;
-  req1 = GetProxy(&inf1);
+  req1 = MakeRequest(&inf1);
 
   EXPECT_TRUE(req1.Equals(req1));
   EXPECT_FALSE(req1.Equals(req2));
 
   SomeInterfacePtr inf2;
-  req2 = GetProxy(&inf2);
+  req2 = MakeRequest(&inf2);
 
   EXPECT_FALSE(req1.Equals(req2));
 }

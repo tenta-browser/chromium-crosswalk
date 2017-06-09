@@ -13,7 +13,7 @@ cr.define('cr.ui.overlay', function() {
    * @return {HTMLElement} The overlay.
    */
   function getTopOverlay() {
-    var overlays = /** @type !NodeList<!HTMLElement> */(
+    var overlays = /** @type !NodeList<!HTMLElement> */ (
         document.querySelectorAll('.overlay:not([hidden])'));
     return overlays[overlays.length - 1];
   }
@@ -26,8 +26,10 @@ cr.define('cr.ui.overlay', function() {
    * @return {HTMLElement} The default button.
    */
   function getDefaultButton(overlay) {
-    function isHidden(node) { return node.hidden; }
-    var defaultButtons = /** @type !NodeList<!HTMLElement> */(
+    function isHidden(node) {
+      return node.hidden;
+    }
+    var defaultButtons = /** @type !NodeList<!HTMLElement> */ (
         overlay.querySelectorAll('.page .button-strip > .default-button'));
     for (var i = 0; i < defaultButtons.length; i++) {
       if (!findAncestor(defaultButtons[i], isHidden))
@@ -50,13 +52,13 @@ cr.define('cr.ui.overlay', function() {
           return;
 
         // Close the overlay on escape.
-        if (e.keyIdentifier == 'U+001B')
+        if (e.key == 'Escape')
           cr.dispatchSimpleEvent(overlay, 'cancelOverlay');
 
         // Execute the overlay's default button on enter, unless focus is on an
         // element that has standard behavior for the enter key.
         var forbiddenTagNames = /^(A|BUTTON|SELECT|TEXTAREA)$/;
-        if (e.keyIdentifier == 'Enter' &&
+        if (e.key == 'Enter' &&
             !forbiddenTagNames.test(document.activeElement.tagName)) {
           var button = getDefaultButton(overlay);
           if (button) {
@@ -81,8 +83,7 @@ cr.define('cr.ui.overlay', function() {
    * height.
    */
   function setMaxHeightAllPages() {
-    var pages = document.querySelectorAll(
-        '.overlay .page:not(.not-resizable)');
+    var pages = document.querySelectorAll('.overlay .page:not(.not-resizable)');
 
     var maxHeight = Math.min(0.9 * window.innerHeight, 640) + 'px';
     for (var i = 0; i < pages.length; i++)
@@ -127,7 +128,7 @@ cr.define('cr.ui.overlay', function() {
       if (overlayPage)
         overlayPage.classList.add('pulse');
     });
-    overlay.addEventListener('webkitAnimationEnd', function(e) {
+    overlay.addEventListener('animationend', function(e) {
       e.target.classList.remove('pulse');
     });
   }

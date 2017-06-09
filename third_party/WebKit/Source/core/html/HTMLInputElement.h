@@ -26,7 +26,7 @@
 #define HTMLInputElement_h
 
 #include "core/CoreExport.h"
-#include "core/html/HTMLTextFormControlElement.h"
+#include "core/html/TextControlElement.h"
 #include "core/html/forms/StepRange.h"
 #include "platform/FileChooser.h"
 
@@ -45,365 +45,390 @@ class ListAttributeTargetObserver;
 class RadioButtonGroupScope;
 struct DateTimeChooserParameters;
 
-class CORE_EXPORT HTMLInputElement : public HTMLTextFormControlElement {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static HTMLInputElement* create(Document&, HTMLFormElement*, bool createdByParser);
-    ~HTMLInputElement() override;
-    DECLARE_VIRTUAL_TRACE();
-
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(webkitspeechchange);
-
-    bool shouldAutocomplete() const final;
-
-    // For ValidityState
-    bool hasBadInput() const final;
-    bool patternMismatch() const final;
-    bool rangeUnderflow() const final;
-    bool rangeOverflow() const final;
-    bool stepMismatch() const final;
-    bool tooLong() const final;
-    bool tooShort() const final;
-    bool typeMismatch() const final;
-    bool valueMissing() const final;
-    String validationMessage() const final;
-    String validationSubMessage() const final;
-
-    // Returns the minimum value for type=date, number, or range.  Don't call this for other types.
-    double minimum() const;
-    // Returns the maximum value for type=date, number, or range.  Don't call this for other types.
-    // This always returns a value which is >= minimum().
-    double maximum() const;
-    // Sets the "allowed value step" defined in the HTML spec to the specified double pointer.
-    // Returns false if there is no "allowed value step."
-    bool getAllowedValueStep(Decimal*) const;
-    StepRange createStepRange(AnyStepHandling) const;
-
-    Decimal findClosestTickMarkValue(const Decimal&);
-
-    // Implementations of HTMLInputElement::stepUp() and stepDown().
-    void stepUp(int, ExceptionState&);
-    void stepDown(int, ExceptionState&);
-    // stepUp()/stepDown() for user-interaction.
-    bool isSteppable() const;
-
-    // Returns true if the type is button, reset, or submit.
-    bool isTextButton() const;
-    // Returns true if the type is email, number, password, search, tel, text,
-    // or url.
-    bool isTextField() const;
-    // Do not add type check predicates for concrete input types; e.g.  isImage,
-    // isRadio, isFile.  If you want to check the input type, you may use
-    // |input->type() == InputTypeNames::image|, etc.
-
-    bool checked() const;
-    void setChecked(bool, TextFieldEventBehavior = DispatchNoEvent);
-    void dispatchChangeEventIfNeeded();
-
-    // 'indeterminate' is a state independent of the checked state that causes the control to draw in a way that hides the actual state.
-    bool indeterminate() const { return m_isIndeterminate; }
-    void setIndeterminate(bool);
-    // shouldAppearChecked is used by the layout tree/CSS while checked() is used by JS to determine checked state
-    bool shouldAppearChecked() const;
-    bool shouldAppearIndeterminate() const override;
-
-    int size() const;
-    bool sizeShouldIncludeDecoration(int& preferredSize) const;
-
-    void setType(const AtomicString&);
-
-    String value() const override;
-    void setValue(const String&, ExceptionState&, TextFieldEventBehavior = DispatchNoEvent);
-    void setValue(const String&, TextFieldEventBehavior = DispatchNoEvent) override;
-    void setValueForUser(const String&);
-    // Checks if the specified string would be a valid value.
-    // We should not call this for types with no string value such as CHECKBOX and RADIO.
-    bool isValidValue(const String&) const;
-    bool hasDirtyValue() const { return !m_valueIfDirty.isNull(); }
-
-    String sanitizeValue(const String&) const;
-
-    String localizeValue(const String&) const;
-
-    const String& suggestedValue() const;
-    void setSuggestedValue(const String&);
-
-    void setEditingValue(const String&);
-
-    double valueAsDate(bool& isNull) const;
-    void setValueAsDate(double, ExceptionState&);
-
-    double valueAsNumber() const;
-    void setValueAsNumber(double, ExceptionState&, TextFieldEventBehavior = DispatchNoEvent);
-
-    String valueWithDefault() const;
+class CORE_EXPORT HTMLInputElement : public TextControlElement {
+  DEFINE_WRAPPERTYPEINFO();
+
+ public:
+  static HTMLInputElement* create(Document&,
+                                  bool createdByParser);
+  ~HTMLInputElement() override;
+  DECLARE_VIRTUAL_TRACE();
+
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(webkitspeechchange);
+
+  bool shouldAutocomplete() const final;
+
+  // For ValidityState
+  bool hasBadInput() const final;
+  bool patternMismatch() const final;
+  bool rangeUnderflow() const final;
+  bool rangeOverflow() const final;
+  bool stepMismatch() const final;
+  bool tooLong() const final;
+  bool tooShort() const final;
+  bool typeMismatch() const final;
+  bool valueMissing() const final;
+  String validationMessage() const final;
+  String validationSubMessage() const final;
+
+  // Returns the minimum value for type=date, number, or range.  Don't call this
+  // for other types.
+  double minimum() const;
+  // Returns the maximum value for type=date, number, or range.  Don't call this
+  // for other types.  This always returns a value which is >= minimum().
+  double maximum() const;
+  // Sets the "allowed value step" defined in the HTML spec to the specified
+  // double pointer.  Returns false if there is no "allowed value step."
+  bool getAllowedValueStep(Decimal*) const;
+  StepRange createStepRange(AnyStepHandling) const;
+
+  Decimal findClosestTickMarkValue(const Decimal&);
+
+  // Implementations of HTMLInputElement::stepUp() and stepDown().
+  void stepUp(int, ExceptionState&);
+  void stepDown(int, ExceptionState&);
+  // stepUp()/stepDown() for user-interaction.
+  bool isSteppable() const;
+
+  // Returns true if the type is button, reset, or submit.
+  bool isTextButton() const;
+  // Returns true if the type is email, number, password, search, tel, text,
+  // or url.
+  bool isTextField() const;
+  // Do not add type check predicates for concrete input types; e.g.  isImage,
+  // isRadio, isFile.  If you want to check the input type, you may use
+  // |input->type() == InputTypeNames::image|, etc.
+
+  bool checked() const;
+  void setChecked(bool, TextFieldEventBehavior = DispatchNoEvent);
+  void dispatchChangeEventIfNeeded();
+
+  // 'indeterminate' is a state independent of the checked state that causes the
+  // control to draw in a way that hides the actual state.
+  bool indeterminate() const { return m_isIndeterminate; }
+  void setIndeterminate(bool);
+  // shouldAppearChecked is used by the layout tree/CSS while checked() is used
+  // by JS to determine checked state
+  bool shouldAppearChecked() const;
+  bool shouldAppearIndeterminate() const override;
+
+  int size() const;
+  bool sizeShouldIncludeDecoration(int& preferredSize) const;
+
+  void setType(const AtomicString&);
+
+  String value() const override;
+  void setValue(const String&,
+                ExceptionState&,
+                TextFieldEventBehavior = DispatchNoEvent);
+  void setValue(const String&,
+                TextFieldEventBehavior = DispatchNoEvent) override;
+  void setValueForUser(const String&);
+  // Update the value, and clear hasDirtyValue() flag.
+  void setNonDirtyValue(const String&);
+  // Checks if the specified string would be a valid value.
+  // We should not call this for types with no string value such as CHECKBOX and
+  // RADIO.
+  bool isValidValue(const String&) const;
+  bool hasDirtyValue() const;
+
+  String sanitizeValue(const String&) const;
+
+  String localizeValue(const String&) const;
+
+  const String& suggestedValue() const;
+  void setSuggestedValue(const String&);
+
+  void setEditingValue(const String&);
+
+  double valueAsDate(bool& isNull) const;
+  void setValueAsDate(double, ExceptionState&);
+
+  double valueAsNumber() const;
+  void setValueAsNumber(double,
+                        ExceptionState&,
+                        TextFieldEventBehavior = DispatchNoEvent);
+
+  String valueOrDefaultLabel() const;
+
+  // This function dispatches 'input' event for non-textfield types. Callers
+  // need to handle any DOM structure changes by event handlers, or need to
+  // delay the 'input' event with EventQueueScope.
+  void setValueFromRenderer(const String&);
 
-    // This function dispatches 'input' event for non-textfield types. Callers
-    // need to handle any DOM structure changes by event handlers, or need to
-    // delay the 'input' event with EventQueueScope.
-    void setValueFromRenderer(const String&);
+  unsigned selectionStartForBinding(bool&, ExceptionState&) const;
+  unsigned selectionEndForBinding(bool&, ExceptionState&) const;
+  String selectionDirectionForBinding(ExceptionState&) const;
+  void setSelectionStartForBinding(unsigned, ExceptionState&);
+  void setSelectionEndForBinding(unsigned, ExceptionState&);
+  void setSelectionDirectionForBinding(const String&, ExceptionState&);
+  void setSelectionRangeForBinding(unsigned start,
+                                   unsigned end,
+                                   ExceptionState&);
+  void setSelectionRangeForBinding(unsigned start,
+                                   unsigned end,
+                                   const String& direction,
+                                   ExceptionState&);
+
+  bool layoutObjectIsNeeded(const ComputedStyle&) final;
+  LayoutObject* createLayoutObject(const ComputedStyle&) override;
+  void detachLayoutTree(const AttachContext& = AttachContext()) final;
+  void updateFocusAppearance(SelectionBehaviorOnFocus) final;
 
-    int selectionStartForBinding(ExceptionState&) const;
-    int selectionEndForBinding(ExceptionState&) const;
-    String selectionDirectionForBinding(ExceptionState&) const;
-    void setSelectionStartForBinding(int, ExceptionState&);
-    void setSelectionEndForBinding(int, ExceptionState&);
-    void setSelectionDirectionForBinding(const String&, ExceptionState&);
-    void setSelectionRangeForBinding(int start, int end, ExceptionState&);
-    void setSelectionRangeForBinding(int start, int end, const String& direction, ExceptionState&);
+  // FIXME: For isActivatedSubmit and setActivatedSubmit, we should use the
+  // NVI-idiom here by making it private virtual in all classes and expose a
+  // public method in HTMLFormControlElement to call
+  // the private virtual method.
+  bool isActivatedSubmit() const final;
+  void setActivatedSubmit(bool flag) final;
 
-    bool layoutObjectIsNeeded(const ComputedStyle&) final;
-    LayoutObject* createLayoutObject(const ComputedStyle&) override;
-    void detach(const AttachContext& = AttachContext()) final;
-    void updateFocusAppearance(SelectionBehaviorOnFocus) final;
+  String altText() const final;
 
-    // FIXME: For isActivatedSubmit and setActivatedSubmit, we should use the NVI-idiom here by making
-    // it private virtual in all classes and expose a public method in HTMLFormControlElement to call
-    // the private virtual method.
-    bool isActivatedSubmit() const final;
-    void setActivatedSubmit(bool flag) final;
+  const AtomicString& defaultValue() const;
 
-    String altText() const final;
+  Vector<String> acceptMIMETypes();
+  Vector<String> acceptFileExtensions();
+  const AtomicString& alt() const;
 
-    const AtomicString& defaultValue() const;
+  void setSize(unsigned);
+  void setSize(unsigned, ExceptionState&);
 
-    Vector<String> acceptMIMETypes();
-    Vector<String> acceptFileExtensions();
-    const AtomicString& alt() const;
+  KURL src() const;
+  bool multiple() const;
 
-    void setSize(unsigned);
-    void setSize(unsigned, ExceptionState&);
+  FileList* files() const;
+  void setFiles(FileList*);
 
-    KURL src() const;
+  void setFilesFromPaths(const Vector<String>&);
 
-    int maxLength() const;
-    int minLength() const;
-    void setMaxLength(int, ExceptionState&);
-    void setMinLength(int, ExceptionState&);
+  // Returns true if the given DragData has more than one dropped files.
+  bool receiveDroppedFiles(const DragData*);
 
-    bool multiple() const;
+  String droppedFileSystemId();
 
-    FileList* files();
-    void setFiles(FileList*);
+  // These functions are used for laying out the input active during a
+  // drag-and-drop operation.
+  bool canReceiveDroppedFiles() const;
+  void setCanReceiveDroppedFiles(bool);
 
-    // Returns true if the given DragData has more than one dropped files.
-    bool receiveDroppedFiles(const DragData*);
+  void onSearch();
 
-    String droppedFileSystemId();
+  void updateClearButtonVisibility();
 
-    // These functions are used for laying out the input active during a
-    // drag-and-drop operation.
-    bool canReceiveDroppedFiles() const;
-    void setCanReceiveDroppedFiles(bool);
+  bool willRespondToMouseClickEvents() override;
 
-    void onSearch();
+  HTMLElement* list() const;
+  HTMLDataListElement* dataList() const;
+  bool hasValidDataListOptions() const;
+  void listAttributeTargetChanged();
+  // Associated <datalist> options which match to the current INPUT value.
+  HeapVector<Member<HTMLOptionElement>> filteredDataListOptions() const;
 
-    void updateClearButtonVisibility();
+  HTMLInputElement* checkedRadioButtonForGroup();
+  bool isInRequiredRadioButtonGroup();
 
-    bool willRespondToMouseClickEvents() override;
+  // Functions for InputType classes.
+  void setNonAttributeValue(const String&);
+  bool valueAttributeWasUpdatedAfterParsing() const {
+    return m_valueAttributeWasUpdatedAfterParsing;
+  }
+  void updateView();
+  bool needsToUpdateViewValue() const { return m_needsToUpdateViewValue; }
+  void setInnerEditorValue(const String&) override;
 
-    HTMLElement* list() const;
-    HTMLDataListElement* dataList() const;
-    bool hasValidDataListOptions() const;
-    void listAttributeTargetChanged();
+  // For test purposes.
+  void selectColorInColorChooser(const Color&);
+  void endColorChooser();
 
-    HTMLInputElement* checkedRadioButtonForGroup();
-    bool isInRequiredRadioButtonGroup();
+  String defaultToolTip() const override;
 
-    // Functions for InputType classes.
-    void setValueInternal(const String&, TextFieldEventBehavior);
-    bool valueAttributeWasUpdatedAfterParsing() const { return m_valueAttributeWasUpdatedAfterParsing; }
-    void updateView();
-    bool needsToUpdateViewValue() const { return m_needsToUpdateViewValue; }
-    void setInnerEditorValue(const String&) override;
+  unsigned height() const;
+  unsigned width() const;
+  void setHeight(unsigned);
+  void setWidth(unsigned);
 
-    void cacheSelectionInResponseToSetValue(int caretOffset) { cacheSelection(caretOffset, caretOffset, SelectionHasNoDirection); }
+  void blur() final;
+  void defaultBlur();
 
-    // For test purposes.
-    void selectColorInColorChooser(const Color&);
-    void endColorChooser();
+  const AtomicString& name() const final;
 
-    String defaultToolTip() const override;
+  void beginEditing();
+  void endEditing();
 
-    static const int maximumLength;
+  static Vector<FileChooserFileInfo> filesFromFileInputFormControlState(
+      const FormControlState&);
 
-    unsigned height() const;
-    unsigned width() const;
-    void setHeight(unsigned);
-    void setWidth(unsigned);
+  bool matchesReadOnlyPseudoClass() const final;
+  bool matchesReadWritePseudoClass() const final;
+  void setRangeText(const String& replacement, ExceptionState&) final;
+  void setRangeText(const String& replacement,
+                    unsigned start,
+                    unsigned end,
+                    const String& selectionMode,
+                    ExceptionState&) final;
 
-    void blur() final;
-    void defaultBlur();
+  HTMLImageLoader* imageLoader() const { return m_imageLoader.get(); }
+  HTMLImageLoader& ensureImageLoader();
 
-    const AtomicString& name() const final;
+  bool setupDateTimeChooserParameters(DateTimeChooserParameters&);
 
-    void beginEditing();
-    void endEditing();
+  bool supportsInputModeAttribute() const;
 
-    static Vector<FileChooserFileInfo> filesFromFileInputFormControlState(const FormControlState&);
+  void setShouldRevealPassword(bool value);
+  bool shouldRevealPassword() const { return m_shouldRevealPassword; }
+  AXObject* popupRootAXObject();
+  void didNotifySubtreeInsertionsToDocument() override;
 
-    bool matchesReadOnlyPseudoClass() const final;
-    bool matchesReadWritePseudoClass() const final;
-    void setRangeText(const String& replacement, ExceptionState&) final;
-    void setRangeText(const String& replacement, unsigned start, unsigned end, const String& selectionMode, ExceptionState&) final;
+  virtual void ensureFallbackContent();
+  virtual void ensurePrimaryContent();
+  bool hasFallbackContent() const;
 
-    HTMLImageLoader* imageLoader() const { return m_imageLoader.get(); }
-    HTMLImageLoader& ensureImageLoader();
+  bool isPlaceholderVisible() const override { return m_isPlaceholderVisible; }
+  void setPlaceholderVisibility(bool) override;
 
-    bool setupDateTimeChooserParameters(DateTimeChooserParameters&);
+  unsigned sizeOfRadioGroup() const;
 
-    bool supportsInputModeAttribute() const;
+ protected:
+  HTMLInputElement(Document&, bool createdByParser);
 
-    void setShouldRevealPassword(bool value);
-    bool shouldRevealPassword() const { return m_shouldRevealPassword; }
-    AXObject* popupRootAXObject();
-    void didNotifySubtreeInsertionsToDocument() override;
+  void defaultEventHandler(Event*) override;
 
-    virtual void ensureFallbackContent();
-    virtual void ensurePrimaryContent();
-    bool hasFallbackContent() const;
+ private:
+  enum AutoCompleteSetting { Uninitialized, On, Off };
 
-    bool isPlaceholderVisible() const override { return m_isPlaceholderVisible; }
-    void setPlaceholderVisibility(bool) override;
+  void didAddUserAgentShadowRoot(ShadowRoot&) final;
 
-    unsigned sizeOfRadioGroup() const;
+  void willChangeForm() final;
+  void didChangeForm() final;
+  InsertionNotificationRequest insertedInto(ContainerNode*) override;
+  void removedFrom(ContainerNode*) final;
+  void didMoveToNewDocument(Document& oldDocument) final;
 
-protected:
-    HTMLInputElement(Document&, HTMLFormElement*, bool createdByParser);
-
-    void defaultEventHandler(Event*) override;
-
-private:
-    enum AutoCompleteSetting { Uninitialized, On, Off };
-
-    void didAddUserAgentShadowRoot(ShadowRoot&) final;
-
-    void willChangeForm() final;
-    void didChangeForm() final;
-    InsertionNotificationRequest insertedInto(ContainerNode*) override;
-    void removedFrom(ContainerNode*) final;
-    void didMoveToNewDocument(Document& oldDocument) final;
-    void removeAllEventListeners() final;
-
-    bool hasCustomFocusLogic() const final;
-    bool isKeyboardFocusable() const final;
-    bool shouldShowFocusRingOnMouseFocus() const final;
-    bool isEnumeratable() const final;
-    bool isInteractiveContent() const final;
-    bool supportLabels() const final;
-    bool matchesDefaultPseudoClass() const override;
-
-    bool isTextFormControl() const final { return isTextField(); }
-
-    bool canTriggerImplicitSubmission() const final { return isTextField(); }
-
-    const AtomicString& formControlType() const final;
-
-    bool shouldSaveAndRestoreFormControlState() const final;
-    FormControlState saveFormControlState() const final;
-    void restoreFormControlState(const FormControlState&) final;
-
-    bool canStartSelection() const final;
-
-    void accessKeyAction(bool sendMouseEvents) final;
-
-    void parseAttribute(const QualifiedName&, const AtomicString&, const AtomicString&) override;
-    bool isPresentationAttribute(const QualifiedName&) const final;
-    void collectStyleForPresentationAttribute(const QualifiedName&, const AtomicString&, MutableStylePropertySet*) final;
-    void finishParsingChildren() final;
-    void parserDidSetAttributes() final;
-
-    void copyNonAttributePropertiesFromElement(const Element&) final;
-
-    void attach(const AttachContext& = AttachContext()) final;
-
-    void appendToFormData(FormData&) final;
-    String resultForDialogSubmit() final;
-
-    bool canBeSuccessfulSubmitButton() const final;
-
-    void resetImpl() final;
-    bool supportsAutofocus() const final;
-
-    EventDispatchHandlingState* preDispatchEventHandler(Event*) final;
-    void postDispatchEventHandler(Event*, EventDispatchHandlingState*) final;
-
-    bool isURLAttribute(const Attribute&) const final;
-    bool hasLegalLinkAttribute(const QualifiedName&) const final;
-    const QualifiedName& subResourceAttributeName() const final;
-    bool isInRange() const final;
-    bool isOutOfRange() const final;
-
-    bool tooLong(const String&, NeedsToCheckDirtyFlag) const;
-    bool tooShort(const String&, NeedsToCheckDirtyFlag) const;
-
-    bool supportsPlaceholder() const final;
-    void updatePlaceholderText() final;
-    bool isEmptyValue() const final { return innerEditorValue().isEmpty(); }
-    bool isEmptySuggestedValue() const final { return suggestedValue().isEmpty(); }
-    void handleFocusEvent(Element* oldFocusedElement, WebFocusType) final;
-    void handleBlurEvent() final;
-    void dispatchFocusInEvent(const AtomicString& eventType, Element* oldFocusedElement, WebFocusType, InputDeviceCapabilities* sourceCapabilities) final;
-    bool supportsAutocapitalize() const final;
-    const AtomicString& defaultAutocapitalize() const final;
-
-    bool isOptionalFormControl() const final { return !isRequiredFormControl(); }
-    bool isRequiredFormControl() const final;
-    bool recalcWillValidate() const final;
-    void requiredAttributeChanged() final;
-    void disabledAttributeChanged() final;
-
-    void updateTouchEventHandlerRegistry();
-    void initializeTypeInParsing();
-    void updateType();
-
-    void subtreeHasChanged() final;
-
-    void setListAttributeTargetObserver(ListAttributeTargetObserver*);
-    void resetListAttributeTargetObserver();
-    void parseMaxLengthAttribute(const AtomicString&);
-    void parseMinLengthAttribute(const AtomicString&);
-    void updateValueIfNeeded();
-
-    // Returns null if this isn't associated with any radio button group.
-    RadioButtonGroupScope* radioButtonGroupScope() const;
-    void addToRadioButtonGroup();
-    void removeFromRadioButtonGroup();
-    PassRefPtr<ComputedStyle> customStyleForLayoutObject() override;
-
-    bool shouldDispatchFormControlChangeEvent(String&, String&) override;
-
-    AtomicString m_name;
-    String m_valueIfDirty;
-    String m_suggestedValue;
-    int m_size;
-    int m_maxLength;
-    int m_minLength;
-    // https://html.spec.whatwg.org/multipage/forms.html#concept-fe-checked
-    unsigned m_isChecked : 1;
-    // https://html.spec.whatwg.org/multipage/forms.html#concept-input-checked-dirty-flag
-    unsigned m_dirtyCheckedness : 1;
-    unsigned m_isIndeterminate : 1;
-    unsigned m_isActivatedSubmit : 1;
-    unsigned m_autocomplete : 2; // AutoCompleteSetting
-    unsigned m_hasNonEmptyList : 1;
-    unsigned m_stateRestored : 1;
-    unsigned m_parsingInProgress : 1;
-    unsigned m_valueAttributeWasUpdatedAfterParsing : 1;
-    unsigned m_canReceiveDroppedFiles : 1;
-    unsigned m_hasTouchEventHandler : 1;
-    unsigned m_shouldRevealPassword : 1;
-    unsigned m_needsToUpdateViewValue : 1;
-    unsigned m_isPlaceholderVisible : 1;
-    Member<InputType> m_inputType;
-    Member<InputTypeView> m_inputTypeView;
-    // The ImageLoader must be owned by this element because the loader code assumes
-    // that it lives as long as its owning element lives. If we move the loader into
-    // the ImageInput object we may delete the loader while this element lives on.
-    Member<HTMLImageLoader> m_imageLoader;
-    Member<ListAttributeTargetObserver> m_listAttributeTargetObserver;
+  bool hasCustomFocusLogic() const final;
+  bool isKeyboardFocusable() const final;
+  bool shouldShowFocusRingOnMouseFocus() const final;
+  bool isEnumeratable() const final;
+  bool isInteractiveContent() const final;
+  bool supportLabels() const final;
+  bool matchesDefaultPseudoClass() const override;
+
+  bool isTextControl() const final { return isTextField(); }
+
+  bool canTriggerImplicitSubmission() const final { return isTextField(); }
+
+  const AtomicString& formControlType() const final;
+
+  bool shouldSaveAndRestoreFormControlState() const final;
+  FormControlState saveFormControlState() const final;
+  void restoreFormControlState(const FormControlState&) final;
+
+  bool canStartSelection() const final;
+
+  void accessKeyAction(bool sendMouseEvents) final;
+
+  void parseAttribute(const AttributeModificationParams&) override;
+  bool isPresentationAttribute(const QualifiedName&) const final;
+  void collectStyleForPresentationAttribute(const QualifiedName&,
+                                            const AtomicString&,
+                                            MutableStylePropertySet*) final;
+  void finishParsingChildren() final;
+  void parserDidSetAttributes() final;
+
+  void copyNonAttributePropertiesFromElement(const Element&) final;
+
+  void attachLayoutTree(const AttachContext& = AttachContext()) final;
+
+  void appendToFormData(FormData&) final;
+  String resultForDialogSubmit() final;
+
+  bool canBeSuccessfulSubmitButton() const final;
+
+  void resetImpl() final;
+  bool supportsAutofocus() const final;
+
+  EventDispatchHandlingState* preDispatchEventHandler(Event*) final;
+  void postDispatchEventHandler(Event*, EventDispatchHandlingState*) final;
+
+  bool isURLAttribute(const Attribute&) const final;
+  bool hasLegalLinkAttribute(const QualifiedName&) const final;
+  const QualifiedName& subResourceAttributeName() const final;
+  bool isInRange() const final;
+  bool isOutOfRange() const final;
+
+  bool tooLong(const String&, NeedsToCheckDirtyFlag) const;
+  bool tooShort(const String&, NeedsToCheckDirtyFlag) const;
+
+  bool supportsPlaceholder() const final;
+  void updatePlaceholderText() final;
+  bool isEmptyValue() const final { return innerEditorValue().isEmpty(); }
+  bool isEmptySuggestedValue() const final {
+    return suggestedValue().isEmpty();
+  }
+  void handleFocusEvent(Element* oldFocusedElement, WebFocusType) final;
+  void handleBlurEvent() final;
+  void dispatchFocusInEvent(const AtomicString& eventType,
+                            Element* oldFocusedElement,
+                            WebFocusType,
+                            InputDeviceCapabilities* sourceCapabilities) final;
+  bool supportsAutocapitalize() const final;
+  const AtomicString& defaultAutocapitalize() const final;
+
+  bool isOptionalFormControl() const final { return !isRequiredFormControl(); }
+  bool isRequiredFormControl() const final;
+  bool recalcWillValidate() const final;
+  void requiredAttributeChanged() final;
+  void disabledAttributeChanged() final;
+
+  void initializeTypeInParsing();
+  void updateType();
+
+  void subtreeHasChanged() final;
+
+  void setListAttributeTargetObserver(ListAttributeTargetObserver*);
+  void resetListAttributeTargetObserver();
+  void parseMaxLengthAttribute(const AtomicString&);
+  void parseMinLengthAttribute(const AtomicString&);
+
+  // Returns null if this isn't associated with any radio button group.
+  RadioButtonGroupScope* radioButtonGroupScope() const;
+  void addToRadioButtonGroup();
+  void removeFromRadioButtonGroup();
+  PassRefPtr<ComputedStyle> customStyleForLayoutObject() override;
+
+  bool shouldDispatchFormControlChangeEvent(String&, String&) override;
+
+  AtomicString m_name;
+  // The value string in |value| value mode.
+  String m_nonAttributeValue;
+  String m_suggestedValue;
+  int m_size;
+  // https://html.spec.whatwg.org/multipage/forms.html#concept-input-value-dirty-flag
+  unsigned m_hasDirtyValue : 1;
+  // https://html.spec.whatwg.org/multipage/forms.html#concept-fe-checked
+  unsigned m_isChecked : 1;
+  // https://html.spec.whatwg.org/multipage/forms.html#concept-input-checked-dirty-flag
+  unsigned m_dirtyCheckedness : 1;
+  unsigned m_isIndeterminate : 1;
+  unsigned m_isActivatedSubmit : 1;
+  unsigned m_autocomplete : 2;  // AutoCompleteSetting
+  unsigned m_hasNonEmptyList : 1;
+  unsigned m_stateRestored : 1;
+  unsigned m_parsingInProgress : 1;
+  unsigned m_valueAttributeWasUpdatedAfterParsing : 1;
+  unsigned m_canReceiveDroppedFiles : 1;
+  unsigned m_shouldRevealPassword : 1;
+  unsigned m_needsToUpdateViewValue : 1;
+  unsigned m_isPlaceholderVisible : 1;
+  Member<InputType> m_inputType;
+  Member<InputTypeView> m_inputTypeView;
+  // The ImageLoader must be owned by this element because the loader code
+  // assumes that it lives as long as its owning element lives. If we move the
+  // loader into the ImageInput object we may delete the loader while this
+  // element lives on.
+  Member<HTMLImageLoader> m_imageLoader;
+  Member<ListAttributeTargetObserver> m_listAttributeTargetObserver;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // HTMLInputElement_h
+#endif  // HTMLInputElement_h

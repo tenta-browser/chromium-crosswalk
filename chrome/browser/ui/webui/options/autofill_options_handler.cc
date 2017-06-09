@@ -25,21 +25,21 @@
 #include "chrome/browser/autofill/personal_data_manager_factory.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/autofill/country_combobox_model.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/autofill/core/browser/autofill_country.h"
 #include "components/autofill/core/browser/autofill_data_util.h"
 #include "components/autofill/core/browser/autofill_profile.h"
+#include "components/autofill/core/browser/country_combobox_model.h"
 #include "components/autofill/core/browser/credit_card.h"
 #include "components/autofill/core/browser/payments/payments_service_url.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
 #include "components/autofill/core/browser/phone_number_i18n.h"
 #include "components/autofill/core/common/autofill_constants.h"
 #include "components/autofill/core/common/autofill_switches.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/web_ui.h"
-#include "grit/components_strings.h"
 #include "third_party/libaddressinput/messages.h"
 #include "third_party/libaddressinput/src/cpp/include/libaddressinput/address_ui.h"
 #include "third_party/libaddressinput/src/cpp/include/libaddressinput/address_ui_component.h"
@@ -168,10 +168,13 @@ void GetAddressComponents(const std::string& country_code,
 
 // Sets data related to the country <select>.
 void SetCountryData(const PersonalDataManager& manager,
-                    base::DictionaryValue* localized_strings) {
+                    base::DictionaryValue* localized_strings,
+                    const std::string& ui_language_code) {
   autofill::CountryComboboxModel model;
-  model.SetCountries(manager, base::Callback<bool(const std::string&)>());
-  const std::vector<AutofillCountry*>& countries = model.countries();
+  model.SetCountries(manager, base::Callback<bool(const std::string&)>(),
+                     ui_language_code);
+  const std::vector<std::unique_ptr<autofill::AutofillCountry>>& countries =
+      model.countries();
   localized_strings->SetString("defaultCountryCode",
                                countries.front()->country_code());
 
@@ -191,8 +194,7 @@ void SetCountryData(const PersonalDataManager& manager,
   std::unique_ptr<base::ListValue> default_country_components(
       new base::ListValue);
   std::string default_country_language_code;
-  GetAddressComponents(countries.front()->country_code(),
-                       g_browser_process->GetApplicationLocale(),
+  GetAddressComponents(countries.front()->country_code(), ui_language_code,
                        default_country_components.get(),
                        &default_country_language_code);
   localized_strings->Set("autofillDefaultCountryComponents",
@@ -311,7 +313,8 @@ void AutofillOptionsHandler::SetAddressOverlayStrings(
       l10n_util::GetStringUTF16(IDS_AUTOFILL_FIELD_LABEL_PHONE));
   localized_strings->SetString("autofillEmailLabel",
       l10n_util::GetStringUTF16(IDS_AUTOFILL_FIELD_LABEL_EMAIL));
-  SetCountryData(*personal_data_, localized_strings);
+  SetCountryData(*personal_data_, localized_strings,
+                 g_browser_process->GetApplicationLocale());
 }
 
 void AutofillOptionsHandler::SetCreditCardOverlayStrings(
@@ -346,8 +349,8 @@ void AutofillOptionsHandler::LoadAutofillData() {
 
     base::string16 separator =
         l10n_util::GetStringUTF16(IDS_AUTOFILL_ADDRESS_SUMMARY_SEPARATOR);
-    std::vector<base::string16> label_parts;
-    base::SplitStringUsingSubstr(labels[i], separator, &label_parts);
+    std::vector<base::string16> label_parts = base::SplitStringUsingSubstr(
+        labels[i], separator, base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
 
     std::unique_ptr<base::DictionaryValue> value(new base::DictionaryValue);
     value->SetString("guid", profiles[i]->guid());

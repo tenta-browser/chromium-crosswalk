@@ -6,9 +6,12 @@
 
 #include "gpu/command_buffer/common/capabilities.h"
 #include "gpu/command_buffer/common/constants.h"
+#include "gpu/command_buffer/common/gles2_cmd_utils.h"
 #include "gpu/gpu_export.h"
 #include "ipc/ipc_message_utils.h"
 #include "ipc/param_traits_macros.h"
+#include "ui/gfx/ipc/geometry/gfx_param_traits.h"
+#include "ui/gl/gpu_preference.h"
 
 #undef IPC_MESSAGE_EXPORT
 #define IPC_MESSAGE_EXPORT GPU_EXPORT
@@ -18,6 +21,9 @@ IPC_ENUM_TRAITS_MIN_MAX_VALUE(
     gpu::CommandBufferNamespace,
     gpu::CommandBufferNamespace::INVALID,
     gpu::CommandBufferNamespace::NUM_COMMAND_BUFFER_NAMESPACES - 1)
+IPC_ENUM_TRAITS_MAX_VALUE(gl::GpuPreference, gl::GpuPreferenceLast)
+IPC_ENUM_TRAITS_MAX_VALUE(gpu::gles2::ContextType,
+                          gpu::gles2::CONTEXT_TYPE_LAST)
 
 IPC_STRUCT_TRAITS_BEGIN(gpu::Capabilities::ShaderPrecision)
   IPC_STRUCT_TRAITS_MEMBER(min_range)
@@ -49,6 +55,7 @@ IPC_STRUCT_TRAITS_BEGIN(gpu::Capabilities)
   IPC_STRUCT_TRAITS_MEMBER(max_vertex_uniform_vectors)
   IPC_STRUCT_TRAITS_MEMBER(num_compressed_texture_formats)
   IPC_STRUCT_TRAITS_MEMBER(num_shader_binary_formats)
+  IPC_STRUCT_TRAITS_MEMBER(num_stencil_bits)
   IPC_STRUCT_TRAITS_MEMBER(bind_generates_resource_chromium)
 
   IPC_STRUCT_TRAITS_MEMBER(max_3d_texture_size)
@@ -84,6 +91,7 @@ IPC_STRUCT_TRAITS_BEGIN(gpu::Capabilities)
   IPC_STRUCT_TRAITS_MEMBER(uniform_buffer_offset_alignment)
 
   IPC_STRUCT_TRAITS_MEMBER(post_sub_buffer)
+  IPC_STRUCT_TRAITS_MEMBER(swap_buffers_with_bounds)
   IPC_STRUCT_TRAITS_MEMBER(commit_overlay_planes)
   IPC_STRUCT_TRAITS_MEMBER(egl_image_external)
   IPC_STRUCT_TRAITS_MEMBER(texture_format_atc)
@@ -98,25 +106,49 @@ IPC_STRUCT_TRAITS_BEGIN(gpu::Capabilities)
   IPC_STRUCT_TRAITS_MEMBER(texture_storage)
   IPC_STRUCT_TRAITS_MEMBER(discard_framebuffer)
   IPC_STRUCT_TRAITS_MEMBER(sync_query)
-  IPC_STRUCT_TRAITS_MEMBER(image)
   IPC_STRUCT_TRAITS_MEMBER(future_sync_points)
   IPC_STRUCT_TRAITS_MEMBER(blend_equation_advanced)
   IPC_STRUCT_TRAITS_MEMBER(blend_equation_advanced_coherent)
   IPC_STRUCT_TRAITS_MEMBER(texture_rg)
   IPC_STRUCT_TRAITS_MEMBER(texture_half_float_linear)
+  IPC_STRUCT_TRAITS_MEMBER(color_buffer_half_float_rgba)
   IPC_STRUCT_TRAITS_MEMBER(image_ycbcr_422)
   IPC_STRUCT_TRAITS_MEMBER(image_ycbcr_420v)
   IPC_STRUCT_TRAITS_MEMBER(render_buffer_format_bgra8888)
+  IPC_STRUCT_TRAITS_MEMBER(occlusion_query)
   IPC_STRUCT_TRAITS_MEMBER(occlusion_query_boolean)
   IPC_STRUCT_TRAITS_MEMBER(timer_queries)
   IPC_STRUCT_TRAITS_MEMBER(surfaceless)
   IPC_STRUCT_TRAITS_MEMBER(flips_vertically)
-  IPC_STRUCT_TRAITS_MEMBER(disable_webgl_multisampling_color_mask_usage)
+  IPC_STRUCT_TRAITS_MEMBER(disable_multisampling_color_mask_usage)
   IPC_STRUCT_TRAITS_MEMBER(disable_webgl_rgb_multisampling_usage)
   IPC_STRUCT_TRAITS_MEMBER(msaa_is_slow)
+  IPC_STRUCT_TRAITS_MEMBER(disable_one_component_textures)
+  IPC_STRUCT_TRAITS_MEMBER(gpu_rasterization)
   IPC_STRUCT_TRAITS_MEMBER(chromium_image_rgb_emulation)
   IPC_STRUCT_TRAITS_MEMBER(emulate_rgb_buffer_with_rgba)
+  IPC_STRUCT_TRAITS_MEMBER(set_draw_rectangle)
 
   IPC_STRUCT_TRAITS_MEMBER(major_version)
   IPC_STRUCT_TRAITS_MEMBER(minor_version)
+IPC_STRUCT_TRAITS_END()
+
+IPC_STRUCT_TRAITS_BEGIN(gpu::gles2::ContextCreationAttribHelper)
+  IPC_STRUCT_TRAITS_MEMBER(offscreen_framebuffer_size)
+  IPC_STRUCT_TRAITS_MEMBER(gpu_preference)
+  IPC_STRUCT_TRAITS_MEMBER(alpha_size)
+  IPC_STRUCT_TRAITS_MEMBER(blue_size)
+  IPC_STRUCT_TRAITS_MEMBER(green_size)
+  IPC_STRUCT_TRAITS_MEMBER(red_size)
+  IPC_STRUCT_TRAITS_MEMBER(depth_size)
+  IPC_STRUCT_TRAITS_MEMBER(stencil_size)
+  IPC_STRUCT_TRAITS_MEMBER(samples)
+  IPC_STRUCT_TRAITS_MEMBER(sample_buffers)
+  IPC_STRUCT_TRAITS_MEMBER(buffer_preserved)
+  IPC_STRUCT_TRAITS_MEMBER(bind_generates_resource)
+  IPC_STRUCT_TRAITS_MEMBER(fail_if_major_perf_caveat)
+  IPC_STRUCT_TRAITS_MEMBER(lose_context_when_out_of_memory)
+  IPC_STRUCT_TRAITS_MEMBER(context_type)
+  IPC_STRUCT_TRAITS_MEMBER(should_use_native_gmb_for_backbuffer)
+  IPC_STRUCT_TRAITS_MEMBER(own_offscreen_surface)
 IPC_STRUCT_TRAITS_END()

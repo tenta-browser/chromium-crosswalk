@@ -5,10 +5,13 @@
 #ifndef ASH_COMMON_SYSTEM_TRAY_SYSTEM_TRAY_ITEM_H_
 #define ASH_COMMON_SYSTEM_TRAY_SYSTEM_TRAY_ITEM_H_
 
+#include <memory>
+
 #include "ash/ash_export.h"
 #include "ash/common/login_status.h"
-#include "ash/common/shelf/shelf_types.h"
+#include "ash/public/cpp/shelf_types.h"
 #include "base/macros.h"
+#include "base/timer/timer.h"
 
 namespace views {
 class View;
@@ -19,6 +22,10 @@ class SystemTray;
 class SystemTrayBubble;
 class TrayItemView;
 
+// Controller for an item in the system tray. Each item can create these views:
+// Tray view - The icon in the status area in the shelf.
+// Default view - The row in the top-level menu.
+// Detailed view - The submenu shown when the top-level menu row is clicked.
 class ASH_EXPORT SystemTrayItem {
  public:
   // The different types of SystemTrayItems.
@@ -79,17 +86,12 @@ class ASH_EXPORT SystemTrayItem {
   // Returns a detailed view for the item. This view is displayed standalone.
   virtual views::View* CreateDetailedView(LoginStatus status);
 
-  // Returns a notification view for the item. This view is displayed with
-  // other notifications and should be the same size as default views.
-  virtual views::View* CreateNotificationView(LoginStatus status);
-
   // These functions are called when the corresponding view item is about to be
   // removed. An item should do appropriate cleanup in these functions.
   // The default implementation does nothing.
   virtual void DestroyTrayView();
   virtual void DestroyDefaultView();
   virtual void DestroyDetailedView();
-  virtual void DestroyNotificationView();
 
   // Updates the tray view (if applicable) when the user's login status changes.
   // It is not necessary the update the default or detailed view, since the
@@ -105,8 +107,9 @@ class ASH_EXPORT SystemTrayItem {
   // currently visible, then making this call would use the existing window to
   // display the detailed item. The detailed item will inherit the bounds of the
   // existing window.
-  // If there is no existing view, then this is equivalent to calling
-  // PopupDetailedView(0, true).
+  //
+  // In Material Design the actual transition is intentionally delayed to allow
+  // the user to perceive the ink drop animation on the clicked target.
   void TransitionDetailedView();
 
   // Pops up the detailed view for this item. An item can request to show its
@@ -121,17 +124,9 @@ class ASH_EXPORT SystemTrayItem {
   // currently-shown view is for this item.
   void SetDetailedViewCloseDelay(int for_seconds);
 
-  // Hides the detailed view for this item.
-  void HideDetailedView();
-
-  // Shows a notification for this item.
-  void ShowNotificationView();
-
-  // Hides the notification for this item.
-  void HideNotificationView();
-
-  // Returns true if item should hide the arrow.
-  virtual bool ShouldHideArrow() const;
+  // Hides the detailed view for this item. Disable hiding animation if
+  // |animate| is false.
+  void HideDetailedView(bool animate);
 
   // Returns true if this item needs to force the shelf to be visible when
   // the shelf is in the auto-hide state. Default is true.
@@ -152,6 +147,9 @@ class ASH_EXPORT SystemTrayItem {
   SystemTray* system_tray_;
   UmaType uma_type_;
   bool restore_focus_;
+
+  // Used to delay the transition to the detailed view.
+  base::OneShotTimer transition_delay_timer_;
 
   DISALLOW_COPY_AND_ASSIGN(SystemTrayItem);
 };

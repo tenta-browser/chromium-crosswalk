@@ -16,16 +16,34 @@
 #include "media/base/timestamp_constants.h"
 #include "media/base/video_frame.h"
 #include "media/base/video_util.h"
-#include "third_party/webrtc/media/base/videoframe.h"
 #include "third_party/webrtc/media/base/videosinkinterface.h"
 
 namespace content {
+
+namespace {
+
+media::VideoRotation WebRTCToMediaVideoRotation(
+    webrtc::VideoRotation rotation) {
+  switch (rotation) {
+    case webrtc::kVideoRotation_0:
+      return media::VIDEO_ROTATION_0;
+    case webrtc::kVideoRotation_90:
+      return media::VIDEO_ROTATION_90;
+    case webrtc::kVideoRotation_180:
+      return media::VIDEO_ROTATION_180;
+    case webrtc::kVideoRotation_270:
+      return media::VIDEO_ROTATION_270;
+  }
+  return media::VIDEO_ROTATION_0;
+}
+
+}  // anonymous namespace
 
 // Internal class used for receiving frames from the webrtc track on a
 // libjingle thread and forward it to the IO-thread.
 class MediaStreamRemoteVideoSource::RemoteVideoSourceDelegate
     : public base::RefCountedThreadSafe<RemoteVideoSourceDelegate>,
-      public rtc::VideoSinkInterface<cricket::VideoFrame> {
+      public rtc::VideoSinkInterface<webrtc::VideoFrame> {
  public:
   RemoteVideoSourceDelegate(
       scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
@@ -38,7 +56,7 @@ class MediaStreamRemoteVideoSource::RemoteVideoSourceDelegate
   // Implements rtc::VideoSinkInterface used for receiving video frames
   // from the PeerConnection video track. May be called on a libjingle internal
   // thread.
-  void OnFrame(const cricket::VideoFrame& frame) override;
+  void OnFrame(const webrtc::VideoFrame& frame) override;
 
   void DoRenderFrameOnIOThread(
       const scoped_refptr<media::VideoFrame>& video_frame);
@@ -61,7 +79,7 @@ MediaStreamRemoteVideoSource::RemoteVideoSourceDelegate::
         const VideoCaptureDeliverFrameCB& new_frame_callback)
     : io_task_runner_(io_task_runner),
       frame_callback_(new_frame_callback),
-      start_timestamp_(media::kNoTimestamp()),
+      start_timestamp_(media::kNoTimestamp),
       // TODO(qiangchen): There can be two differences between clocks: 1)
       // the offset, 2) the rate (i.e., one clock runs faster than the other).
       // See http://crbug/516700
@@ -77,17 +95,17 @@ void DoNothing(const scoped_refptr<rtc::RefCountInterface>& ref) {}
 }  // anonymous
 
 void MediaStreamRemoteVideoSource::RemoteVideoSourceDelegate::OnFrame(
-    const cricket::VideoFrame& incoming_frame) {
+    const webrtc::VideoFrame& incoming_frame) {
   const base::TimeDelta incoming_timestamp = base::TimeDelta::FromMicroseconds(
-      incoming_frame.GetTimeStamp() / rtc::kNumNanosecsPerMicrosec);
+      incoming_frame.timestamp_us());
   const base::TimeTicks render_time =
       base::TimeTicks() + incoming_timestamp + time_diff_;
 
   TRACE_EVENT1("webrtc", "RemoteVideoSourceDelegate::RenderFrame",
                "Ideal Render Instant", render_time.ToInternalValue());
 
-  CHECK_NE(media::kNoTimestamp(), incoming_timestamp);
-  if (start_timestamp_ == media::kNoTimestamp())
+  CHECK_NE(media::kNoTimestamp, incoming_timestamp);
+  if (start_timestamp_ == media::kNoTimestamp)
     start_timestamp_ = incoming_timestamp;
   const base::TimeDelta elapsed_timestamp =
       incoming_timestamp - start_timestamp_;
@@ -97,14 +115,17 @@ void MediaStreamRemoteVideoSource::RemoteVideoSourceDelegate::OnFrame(
       incoming_frame.video_frame_buffer());
 
   if (buffer->native_handle() != NULL) {
-    video_frame =
-        static_cast<media::VideoFrame*>(buffer->native_handle());
+    video_frame = static_cast<media::VideoFrame*>(buffer->native_handle());
     video_frame->set_timestamp(elapsed_timestamp);
+    if (incoming_frame.rotation() != webrtc::kVideoRotation_0) {
+      video_frame->metadata()->SetRotation(
+          media::VideoFrameMetadata::ROTATION,
+          WebRTCToMediaVideoRotation(incoming_frame.rotation()));
+    }
   } else {
-    // Note that the GetCopyWithRotationApplied returns a pointer to a
-    // frame owned by incoming_frame.
-    buffer =
-        incoming_frame.GetCopyWithRotationApplied()->video_frame_buffer();
+    buffer = webrtc::I420Buffer::Rotate(incoming_frame.video_frame_buffer(),
+                                        incoming_frame.rotation());
+
     gfx::Size size(buffer->width(), buffer->height());
 
     // Make a shallow copy. Both |frame| and |video_frame| will share a single
@@ -204,7 +225,7 @@ void MediaStreamRemoteVideoSource::StopSourceImpl() {
   observer_.reset();
 }
 
-rtc::VideoSinkInterface<cricket::VideoFrame>*
+rtc::VideoSinkInterface<webrtc::VideoFrame>*
 MediaStreamRemoteVideoSource::SinkInterfaceForTest() {
   return delegate_.get();
 }

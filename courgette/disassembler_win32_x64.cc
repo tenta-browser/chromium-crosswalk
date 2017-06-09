@@ -18,7 +18,7 @@
 
 namespace courgette {
 
-DisassemblerWin32X64::DisassemblerWin32X64(const void* start, size_t length)
+DisassemblerWin32X64::DisassemblerWin32X64(const uint8_t* start, size_t length)
     : DisassemblerWin32(start, length) {}
 
 RVA DisassemblerWin32X64::PointerToTargetRVA(const uint8_t* p) const {
@@ -32,8 +32,8 @@ RVA DisassemblerWin32X64::Address64ToRVA(uint64_t address) const {
 }
 
 CheckBool DisassemblerWin32X64::EmitAbs(Label* label,
-                                        AssemblyProgram* program) {
-  return program->EmitAbs64(label);
+                                        InstructionReceptor* receptor) const {
+  return receptor->EmitAbs64(label);
 }
 
 void DisassemblerWin32X64::ParseRel32RelocsFromSection(const Section* section) {

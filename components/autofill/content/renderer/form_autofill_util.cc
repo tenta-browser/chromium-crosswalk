@@ -5,11 +5,14 @@
 #include "components/autofill/content/renderer/form_autofill_util.h"
 
 #include <map>
+#include <memory>
 #include <set>
+#include <vector>
 
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "base/memory/scoped_vector.h"
+#include "base/memory/ptr_util.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -99,13 +102,6 @@ bool HasTagName(const WebNode& node, const blink::WebString& tag) {
   return node.isElementNode() && node.toConst<WebElement>().hasHTMLTagName(tag);
 }
 
-bool IsAutofillableElement(const WebFormControlElement& element) {
-  const WebInputElement* input_element = toWebInputElement(&element);
-  return IsAutofillableInputElement(input_element) ||
-         IsSelectElement(element) ||
-         IsTextAreaElement(element);
-}
-
 bool IsElementInControlElementSet(
     const WebElement& element,
     const std::vector<WebFormControlElement>& control_elements) {
@@ -155,7 +151,7 @@ size_t CalculateTableCellColumnSpan(const WebElement& element) {
 
   size_t span = 1;
   if (element.hasAttribute("colspan")) {
-    base::string16 colspan = element.getAttribute("colspan");
+    base::string16 colspan = element.getAttribute("colspan").utf16();
     // Do not check return value to accept imperfect conversions.
     base::StringToSizeT(colspan, &span);
     // Handle overflow.
@@ -229,12 +225,12 @@ base::string16 FindChildTextInner(const WebNode& node,
       return base::string16();
     }
 
-    if (element.hasHTMLTagName("div") && ContainsKey(divs_to_skip, node))
+    if (element.hasHTMLTagName("div") && base::ContainsKey(divs_to_skip, node))
       return base::string16();
   }
 
   // Extract the text exactly at this node.
-  base::string16 node_text = node.nodeValue();
+  base::string16 node_text = node.nodeValue().utf16();
 
   // Recursively compute the children's text.
   // Preserve inter-element whitespace separation.
@@ -259,7 +255,7 @@ base::string16 FindChildTextWithIgnoreList(
     const WebNode& node,
     const std::set<WebNode>& divs_to_skip) {
   if (node.isTextNode())
-    return node.nodeValue();
+    return node.nodeValue().utf16();
 
   WebNode child = node.firstChild();
 
@@ -367,7 +363,7 @@ base::string16 InferLabelFromNext(const WebFormControlElement& element) {
 base::string16 InferLabelFromPlaceholder(const WebFormControlElement& element) {
   CR_DEFINE_STATIC_LOCAL(WebString, kPlaceholder, ("placeholder"));
   if (element.hasAttribute(kPlaceholder))
-    return element.getAttribute(kPlaceholder);
+    return element.getAttribute(kPlaceholder).utf16();
 
   return base::string16();
 }
@@ -379,7 +375,7 @@ base::string16 InferLabelFromValueAttr(const WebFormControlElement& element) {
   CR_DEFINE_STATIC_LOCAL(WebString, kValue, ("value"));
   if (element.hasAttribute(kValue) && element.getAttribute(kValue) ==
       element.value()) {
-    return element.getAttribute(kValue);
+    return element.getAttribute(kValue).utf16();
   }
 
   return base::string16();
@@ -675,10 +671,11 @@ std::vector<std::string> AncestorTagNames(
 bool IsLabelValid(base::StringPiece16 inferred_label,
     const std::vector<base::char16>& stop_words) {
   // If |inferred_label| has any character other than those in |stop_words|.
-  auto first_non_stop_word = std::find_if(inferred_label.begin(),
-      inferred_label.end(), [&stop_words](base::char16 c) {
-          return !ContainsValue(stop_words, c);
-      });
+  auto* first_non_stop_word =
+      std::find_if(inferred_label.begin(), inferred_label.end(),
+                   [&stop_words](base::char16 c) {
+                     return !base::ContainsValue(stop_words, c);
+                   });
   return first_non_stop_word != inferred_label.end();
 }
 
@@ -708,7 +705,7 @@ base::string16 InferLabelForElement(const WebFormControlElement& element,
   std::vector<std::string> tag_names = AncestorTagNames(element);
   std::set<std::string> seen_tag_names;
   for (const std::string& tag_name : tag_names) {
-    if (ContainsKey(seen_tag_names, tag_name))
+    if (base::ContainsKey(seen_tag_names, tag_name))
       continue;
 
     seen_tag_names.insert(tag_name);
@@ -762,8 +759,8 @@ void GetOptionStringsFromElement(const WebSelectElement& select_element,
   for (size_t i = 0; i < list_items.size(); ++i) {
     if (IsOptionElement(list_items[i])) {
       const WebOptionElement option = list_items[i].toConst<WebOptionElement>();
-      option_values->push_back(option.value());
-      option_contents->push_back(option.text());
+      option_values->push_back(option.value().utf16());
+      option_contents->push_back(option.text().utf16());
     }
   }
 }
@@ -796,7 +793,7 @@ void ForEachMatchingFormFieldCommon(
   for (size_t i = 0; i < control_elements->size(); ++i) {
     WebFormControlElement* element = &(*control_elements)[i];
 
-    if (base::string16(element->nameForAutofill()) != data.fields[i].name) {
+    if (element->nameForAutofill().utf16() != data.fields[i].name) {
       // This case should be reachable only for pathological websites, which
       // rename form fields while the user is interacting with the Autofill
       // popup.  I (isherman) am not aware of any such websites, and so am
@@ -897,7 +894,7 @@ void FillFormField(const FormFieldData& data,
       // returns the default maxlength value.
       TruncateString(&value, input_element->maxLength());
     }
-    field->setAutofillValue(value);
+    field->setAutofillValue(blink::WebString::fromUTF16(value));
   }
   // Setting the form might trigger JavaScript, which is capable of
   // destroying the frame.
@@ -935,18 +932,19 @@ void PreviewFormField(const FormFieldData& data,
   if (IsTextInput(input_element) || IsMonthInput(input_element)) {
     // If the maxlength attribute contains a negative value, maxLength()
     // returns the default maxlength value.
-    input_element->setSuggestedValue(
-      data.value.substr(0, input_element->maxLength()));
+    input_element->setSuggestedValue(blink::WebString::fromUTF16(
+        data.value.substr(0, input_element->maxLength())));
     input_element->setAutofilled(true);
   } else if (IsTextAreaElement(*field) || IsSelectElement(*field)) {
-    field->setSuggestedValue(data.value);
+    field->setSuggestedValue(blink::WebString::fromUTF16(data.value));
     field->setAutofilled(true);
   }
 
   if (is_initiating_node &&
       (IsTextInput(input_element) || IsTextAreaElement(*field))) {
     // Select the part of the text that the user didn't type.
-    PreviewSuggestion(field->suggestedValue(), field->value(), field);
+    PreviewSuggestion(field->suggestedValue().utf16(), field->value().utf16(),
+                      field);
   }
 }
 
@@ -959,8 +957,9 @@ void PreviewFormField(const FormFieldData& data,
 // [1, kMaxParseableFields].
 bool ExtractFieldsFromControlElements(
     const WebVector<WebFormControlElement>& control_elements,
+    const FieldValueAndPropertiesMaskMap* field_value_and_properties_map,
     ExtractMask extract_mask,
-    ScopedVector<FormFieldData>* form_fields,
+    std::vector<std::unique_ptr<FormFieldData>>* form_fields,
     std::vector<bool>* fields_extracted,
     std::map<WebFormControlElement, FormFieldData*>* element_map) {
   DCHECK(form_fields->empty());
@@ -975,8 +974,10 @@ bool ExtractFieldsFromControlElements(
 
     // Create a new FormFieldData, fill it out and map it to the field's name.
     FormFieldData* form_field = new FormFieldData;
-    WebFormControlElementToFormField(control_element, extract_mask, form_field);
-    form_fields->push_back(form_field);
+    WebFormControlElementToFormField(control_element,
+                                     field_value_and_properties_map,
+                                     extract_mask, form_field);
+    form_fields->push_back(base::WrapUnique(form_field));
     (*element_map)[control_element] = form_field;
     (*fields_extracted)[i] = true;
 
@@ -1010,7 +1011,7 @@ void MatchLabelsAndFields(
     if (control.isNull()) {
       // Sometimes site authors will incorrectly specify the corresponding
       // field element's name rather than its id, so we compensate here.
-      base::string16 element_name = label.getAttribute(kFor);
+      base::string16 element_name = label.getAttribute(kFor).utf16();
       if (element_name.empty())
         continue;
       // Look through the list for elements with this name. There can actually
@@ -1062,6 +1063,7 @@ bool FormOrFieldsetsToFormData(
     const blink::WebFormControlElement* form_control_element,
     const std::vector<blink::WebElement>& fieldsets,
     const WebVector<WebFormControlElement>& control_elements,
+    const FieldValueAndPropertiesMaskMap* field_value_and_properties_map,
     ExtractMask extract_mask,
     FormData* form,
     FormFieldData* field) {
@@ -1077,15 +1079,15 @@ bool FormOrFieldsetsToFormData(
 
   // The extracted FormFields. We use pointers so we can store them in
   // |element_map|.
-  ScopedVector<FormFieldData> form_fields;
+  std::vector<std::unique_ptr<FormFieldData>> form_fields;
 
   // A vector of bools that indicate whether each field in the form meets the
   // requirements and thus will be in the resulting |form|.
   std::vector<bool> fields_extracted(control_elements.size(), false);
 
-  if (!ExtractFieldsFromControlElements(control_elements, extract_mask,
-                                        &form_fields, &fields_extracted,
-                                        &element_map)) {
+  if (!ExtractFieldsFromControlElements(
+          control_elements, field_value_and_properties_map, extract_mask,
+          &form_fields, &fields_extracted, &element_map)) {
     return false;
   }
 
@@ -1146,8 +1148,8 @@ bool FormOrFieldsetsToFormData(
   }
 
   // Copy the created FormFields into the resulting FormData object.
-  for (const auto& iter : form_fields)
-    form->fields.push_back(*iter);
+  for (const auto& field : form_fields)
+    form->fields.push_back(*field);
   return true;
 }
 
@@ -1156,25 +1158,16 @@ bool UnownedFormElementsAndFieldSetsToFormData(
     const std::vector<blink::WebFormControlElement>& control_elements,
     const blink::WebFormControlElement* element,
     const blink::WebDocument& document,
+    const FieldValueAndPropertiesMaskMap* field_value_and_properties_map,
     ExtractMask extract_mask,
     FormData* form,
     FormFieldData* field) {
   form->origin = GetCanonicalOriginForDocument(document);
   form->is_form_tag = false;
 
-  return FormOrFieldsetsToFormData(nullptr, element, fieldsets,
-                                   control_elements, extract_mask, form, field);
-}
-
-GURL StripAuthAndParams(const GURL& gurl) {
-  // We want to keep the path but strip any authentication data, as well as
-  // query and ref portions of URL, for the form action and form origin.
-  GURL::Replacements rep;
-  rep.ClearUsername();
-  rep.ClearPassword();
-  rep.ClearQuery();
-  rep.ClearRef();
-  return gurl.ReplaceComponents(rep);
+  return FormOrFieldsetsToFormData(
+      nullptr, element, fieldsets, control_elements,
+      field_value_and_properties_map, extract_mask, form, field);
 }
 
 }  // namespace
@@ -1191,9 +1184,18 @@ ScopedLayoutPreventer::~ScopedLayoutPreventer() {
   g_prevent_layout = false;
 }
 
+GURL StripAuthAndParams(const GURL& gurl) {
+  GURL::Replacements rep;
+  rep.ClearUsername();
+  rep.ClearPassword();
+  rep.ClearQuery();
+  rep.ClearRef();
+  return gurl.ReplaceComponents(rep);
+}
+
 bool ExtractFormData(const WebFormElement& form_element, FormData* data) {
   return WebFormElementToFormData(
-      form_element, WebFormControlElement(),
+      form_element, WebFormControlElement(), nullptr,
       static_cast<form_util::ExtractMask>(form_util::EXTRACT_VALUE |
                                           form_util::EXTRACT_OPTION_TEXT |
                                           form_util::EXTRACT_OPTIONS),
@@ -1208,13 +1210,11 @@ bool IsFormVisible(blink::WebFrame* frame,
   blink::WebVector<WebFormElement> forms;
   frame->document().forms(forms);
 
-#if !defined(OS_ANDROID)
   // Omitting the action attribute would result in |canonical_origin| for
   // hierarchical schemes like http:, and in an empty URL for non-hierarchical
   // schemes like about: or data: etc.
   const bool action_is_empty = canonical_action.is_empty()
                                || canonical_action == canonical_origin;
-#endif
 
   // Since empty or unspecified action fields are automatically set to page URL,
   // action field for forms cannot be used for comparing (all forms with
@@ -1227,7 +1227,6 @@ bool IsFormVisible(blink::WebFrame* frame,
       continue;
 
     GURL iter_canonical_action = GetCanonicalActionForForm(form);
-#if !defined(OS_ANDROID)
     bool form_action_is_empty = iter_canonical_action.is_empty() ||
                                 iter_canonical_action == frame_origin;
     if (action_is_empty != form_action_is_empty)
@@ -1235,8 +1234,8 @@ bool IsFormVisible(blink::WebFrame* frame,
 
     if (action_is_empty) {  // Both actions are empty, compare all fields.
       FormData extracted_form_data;
-      WebFormElementToFormData(form, WebFormControlElement(), EXTRACT_NONE,
-                               &extracted_form_data, nullptr);
+      WebFormElementToFormData(form, WebFormControlElement(), nullptr,
+                               EXTRACT_NONE, &extracted_form_data, nullptr);
       if (form_data.SameFormAs(extracted_form_data)) {
         return true;  // Form still exists.
       }
@@ -1245,11 +1244,6 @@ bool IsFormVisible(blink::WebFrame* frame,
         return true;  // Form still exists.
       }
     }
-#else  // OS_ANDROID
-    if (canonical_action == iter_canonical_action) {
-      return true;  // Form still exists.
-    }
-#endif
   }
 
   return false;
@@ -1318,11 +1312,17 @@ bool IsAutofillableInputElement(const WebInputElement* element) {
          IsCheckableElement(element);
 }
 
+bool IsAutofillableElement(const WebFormControlElement& element) {
+  const WebInputElement* input_element = toWebInputElement(&element);
+  return IsAutofillableInputElement(input_element) ||
+         IsSelectElement(element) || IsTextAreaElement(element);
+}
+
 const base::string16 GetFormIdentifier(const WebFormElement& form) {
-  base::string16 identifier = form.name();
+  base::string16 identifier = form.name().utf16();
   CR_DEFINE_STATIC_LOCAL(WebString, kId, ("id"));
   if (identifier.empty())
-    identifier = form.getAttribute(kId);
+    identifier = form.getAttribute(kId).utf16();
 
   return identifier;
 }
@@ -1358,20 +1358,26 @@ std::vector<WebFormControlElement> ExtractAutofillableElementsInForm(
   return ExtractAutofillableElementsFromSet(control_elements);
 }
 
-void WebFormControlElementToFormField(const WebFormControlElement& element,
-                                      ExtractMask extract_mask,
-                                      FormFieldData* field) {
+void WebFormControlElementToFormField(
+    const WebFormControlElement& element,
+    const FieldValueAndPropertiesMaskMap* field_value_and_properties_map,
+    ExtractMask extract_mask,
+    FormFieldData* field) {
   DCHECK(field);
   DCHECK(!element.isNull());
   CR_DEFINE_STATIC_LOCAL(WebString, kAutocomplete, ("autocomplete"));
+  CR_DEFINE_STATIC_LOCAL(WebString, kId, ("id"));
   CR_DEFINE_STATIC_LOCAL(WebString, kRole, ("role"));
   CR_DEFINE_STATIC_LOCAL(WebString, kPlaceholder, ("placeholder"));
   CR_DEFINE_STATIC_LOCAL(WebString, kClass, ("class"));
 
-  // The label is not officially part of a WebFormControlElement; however, the
-  // labels for all form control elements are scraped from the DOM and set in
-  // WebFormElementToFormData.
-  field->name = element.nameForAutofill();
+  // Save both id and name attributes, if present. If there is only one of them,
+  // it will be saved to |name|. See HTMLFormControlElement::nameForAutofill.
+  field->name = element.nameForAutofill().utf16();
+  base::string16 id = element.getAttribute(kId).utf16();
+  if (id != field->name)
+    field->id = id;
+
   field->form_control_type = element.formControlType().utf8();
   field->autocomplete_attribute = element.getAttribute(kAutocomplete).utf8();
   if (field->autocomplete_attribute.size() > kMaxDataLength) {
@@ -1380,13 +1386,20 @@ void WebFormControlElementToFormField(const WebFormControlElement& element,
     // attribute was present.
     field->autocomplete_attribute = "x-max-data-length-exceeded";
   }
-  if (base::LowerCaseEqualsASCII(
-          base::StringPiece16(element.getAttribute(kRole)), "presentation"))
+  if (base::LowerCaseEqualsASCII(element.getAttribute(kRole).utf16(),
+                                 "presentation"))
     field->role = FormFieldData::ROLE_ATTRIBUTE_PRESENTATION;
 
-  field->placeholder = element.getAttribute(kPlaceholder);
+  field->placeholder = element.getAttribute(kPlaceholder).utf16();
   if (element.hasAttribute(kClass))
-    field->css_classes = element.getAttribute(kClass);
+    field->css_classes = element.getAttribute(kClass).utf16();
+
+  if (field_value_and_properties_map) {
+    FieldValueAndPropertiesMaskMap::const_iterator it =
+        field_value_and_properties_map->find(element);
+    if (it != field_value_and_properties_map->end())
+      field->properties_mask = it->second.second;
+  }
 
   if (!IsAutofillableElement(element))
     return;
@@ -1399,8 +1412,15 @@ void WebFormControlElementToFormField(const WebFormControlElement& element,
     if (!g_prevent_layout)
       field->is_focusable = element.isFocusable();
     field->should_autocomplete = element.autoComplete();
+
+    // Use 'text-align: left|right' if set or 'direction' otherwise.
+    // See crbug.com/482339
     field->text_direction = element.directionForFormData() ==
         "rtl" ? base::i18n::RIGHT_TO_LEFT : base::i18n::LEFT_TO_RIGHT;
+    if (element.alignmentForFormData() == "left")
+        field->text_direction = base::i18n::LEFT_TO_RIGHT;
+    else if (element.alignmentForFormData() == "right")
+        field->text_direction = base::i18n::RIGHT_TO_LEFT;
   }
 
   if (IsAutofillableInputElement(input_element)) {
@@ -1423,7 +1443,7 @@ void WebFormControlElementToFormField(const WebFormControlElement& element,
   if (!(extract_mask & EXTRACT_VALUE))
     return;
 
-  base::string16 value = element.value();
+  base::string16 value = element.value().utf16();
 
   if (IsSelectElement(element) && (extract_mask & EXTRACT_OPTION_TEXT)) {
     const WebSelectElement select_element = element.toConst<WebSelectElement>();
@@ -1433,8 +1453,8 @@ void WebFormControlElementToFormField(const WebFormControlElement& element,
       if (IsOptionElement(list_items[i])) {
         const WebOptionElement option_element =
             list_items[i].toConst<WebOptionElement>();
-        if (option_element.value() == value) {
-          value = option_element.text();
+        if (option_element.value().utf16() == value) {
+          value = option_element.text().utf16();
           break;
         }
       }
@@ -1451,6 +1471,7 @@ void WebFormControlElementToFormField(const WebFormControlElement& element,
 bool WebFormElementToFormData(
     const blink::WebFormElement& form_element,
     const blink::WebFormControlElement& form_control_element,
+    const FieldValueAndPropertiesMaskMap* field_value_and_properties_map,
     ExtractMask extract_mask,
     FormData* form,
     FormFieldData* field) {
@@ -1471,9 +1492,9 @@ bool WebFormElementToFormData(
   form_element.getFormControlElements(control_elements);
 
   std::vector<blink::WebElement> dummy_fieldset;
-  return FormOrFieldsetsToFormData(&form_element, &form_control_element,
-                                   dummy_fieldset, control_elements,
-                                   extract_mask, form, field);
+  return FormOrFieldsetsToFormData(
+      &form_element, &form_control_element, dummy_fieldset, control_elements,
+      field_value_and_properties_map, extract_mask, form, field);
 }
 
 std::vector<WebFormControlElement> GetUnownedFormFieldElements(
@@ -1526,14 +1547,14 @@ bool UnownedCheckoutFormElementsAndFieldSetsToFormData(
   if (!lang.empty() &&
       !base::StartsWith(lang, "en", base::CompareCase::INSENSITIVE_ASCII)) {
     return UnownedFormElementsAndFieldSetsToFormData(
-        fieldsets, control_elements, element, document, extract_mask, form,
-        field);
+        fieldsets, control_elements, element, document, nullptr, extract_mask,
+        form, field);
   }
 
   // A potential problem is that this only checks document.title(), but should
   // actually check the main frame's title. Thus it may make bad decisions for
   // iframes.
-  base::string16 title(base::ToLowerASCII(base::string16(document.title())));
+  base::string16 title(base::ToLowerASCII(document.title().utf16()));
 
   // Don't check the path for url's without a standard format path component,
   // such as data:.
@@ -1551,7 +1572,7 @@ bool UnownedCheckoutFormElementsAndFieldSetsToFormData(
     "wallet"
   };
 
-  for (const auto& keyword : kKeywords) {
+  for (const auto* keyword : kKeywords) {
     // Compare char16 elements of |title| with char elements of |keyword| using
     // operator==.
     auto title_pos = std::search(title.begin(), title.end(),
@@ -1561,8 +1582,8 @@ bool UnownedCheckoutFormElementsAndFieldSetsToFormData(
       form->is_formless_checkout = true;
       // Found a keyword: treat this as an unowned form.
       return UnownedFormElementsAndFieldSetsToFormData(
-          fieldsets, control_elements, element, document, extract_mask, form,
-          field);
+          fieldsets, control_elements, element, document, nullptr, extract_mask,
+          form, field);
     }
   }
 
@@ -1580,8 +1601,8 @@ bool UnownedCheckoutFormElementsAndFieldSetsToFormData(
     return false;
 
   return UnownedFormElementsAndFieldSetsToFormData(
-      fieldsets, elements_with_autocomplete, element, document, extract_mask,
-      form, field);
+      fieldsets, elements_with_autocomplete, element, document, nullptr,
+      extract_mask, form, field);
 }
 
 bool UnownedPasswordFormElementsAndFieldSetsToFormData(
@@ -1589,18 +1610,21 @@ bool UnownedPasswordFormElementsAndFieldSetsToFormData(
     const std::vector<blink::WebFormControlElement>& control_elements,
     const blink::WebFormControlElement* element,
     const blink::WebDocument& document,
+    const FieldValueAndPropertiesMaskMap* field_value_and_properties_map,
     ExtractMask extract_mask,
     FormData* form,
     FormFieldData* field) {
   return UnownedFormElementsAndFieldSetsToFormData(
-      fieldsets, control_elements, element, document, extract_mask, form,
-      field);
+      fieldsets, control_elements, element, document,
+      field_value_and_properties_map, extract_mask, form, field);
 }
 
 
 bool FindFormAndFieldForFormControlElement(const WebFormControlElement& element,
                                            FormData* form,
                                            FormFieldData* field) {
+  DCHECK(!element.isNull());
+
   if (!IsAutofillableElement(element))
     return false;
 
@@ -1618,11 +1642,8 @@ bool FindFormAndFieldForFormControlElement(const WebFormControlElement& element,
         form, field);
   }
 
-  return WebFormElementToFormData(form_element,
-                                  element,
-                                  extract_mask,
-                                  form,
-                                  field);
+  return WebFormElementToFormData(form_element, element, nullptr, extract_mask,
+                                  form, field);
 }
 
 void FillForm(const FormData& form, const WebFormControlElement& element) {

@@ -33,54 +33,67 @@
 
 namespace blink {
 
-std::unique_ptr<WebScrollbarThemeGeometryNative> WebScrollbarThemeGeometryNative::create(ScrollbarTheme& theme)
-{
-    return wrapUnique(new WebScrollbarThemeGeometryNative(theme));
+std::unique_ptr<WebScrollbarThemeGeometryNative>
+WebScrollbarThemeGeometryNative::create(ScrollbarTheme& theme) {
+  return WTF::wrapUnique(new WebScrollbarThemeGeometryNative(theme));
 }
 
-WebScrollbarThemeGeometryNative::WebScrollbarThemeGeometryNative(ScrollbarTheme& theme)
-    : m_theme(theme)
-{
+WebScrollbarThemeGeometryNative::WebScrollbarThemeGeometryNative(
+    ScrollbarTheme& theme)
+    : m_theme(theme) {}
+
+bool WebScrollbarThemeGeometryNative::hasButtons(WebScrollbar* scrollbar) {
+  return m_theme.hasButtons(WebScrollbarThemeClientImpl(*scrollbar));
 }
 
-bool WebScrollbarThemeGeometryNative::hasButtons(WebScrollbar* scrollbar)
-{
-    return m_theme.hasButtons(WebScrollbarThemeClientImpl(*scrollbar));
+bool WebScrollbarThemeGeometryNative::hasThumb(WebScrollbar* scrollbar) {
+  return m_theme.hasThumb(WebScrollbarThemeClientImpl(*scrollbar));
 }
 
-bool WebScrollbarThemeGeometryNative::hasThumb(WebScrollbar* scrollbar)
-{
-    return m_theme.hasThumb(WebScrollbarThemeClientImpl(*scrollbar));
+WebRect WebScrollbarThemeGeometryNative::trackRect(WebScrollbar* scrollbar) {
+  return m_theme.trackRect(WebScrollbarThemeClientImpl(*scrollbar));
 }
 
-WebRect WebScrollbarThemeGeometryNative::trackRect(WebScrollbar* scrollbar)
-{
-    return m_theme.trackRect(WebScrollbarThemeClientImpl(*scrollbar));
+WebRect WebScrollbarThemeGeometryNative::thumbRect(WebScrollbar* scrollbar) {
+  return m_theme.thumbRect(WebScrollbarThemeClientImpl(*scrollbar));
 }
 
-WebRect WebScrollbarThemeGeometryNative::thumbRect(WebScrollbar* scrollbar)
-{
-    return m_theme.thumbRect(WebScrollbarThemeClientImpl(*scrollbar));
+WebRect WebScrollbarThemeGeometryNative::backButtonStartRect(
+    WebScrollbar* scrollbar) {
+  return m_theme.backButtonRect(WebScrollbarThemeClientImpl(*scrollbar),
+                                BackButtonStartPart, false);
 }
 
-WebRect WebScrollbarThemeGeometryNative::backButtonStartRect(WebScrollbar* scrollbar)
-{
-    return m_theme.backButtonRect(WebScrollbarThemeClientImpl(*scrollbar), BackButtonStartPart, false);
+WebRect WebScrollbarThemeGeometryNative::backButtonEndRect(
+    WebScrollbar* scrollbar) {
+  return m_theme.backButtonRect(WebScrollbarThemeClientImpl(*scrollbar),
+                                BackButtonEndPart, false);
 }
 
-WebRect WebScrollbarThemeGeometryNative::backButtonEndRect(WebScrollbar* scrollbar)
-{
-    return m_theme.backButtonRect(WebScrollbarThemeClientImpl(*scrollbar), BackButtonEndPart, false);
+WebRect WebScrollbarThemeGeometryNative::forwardButtonStartRect(
+    WebScrollbar* scrollbar) {
+  return m_theme.forwardButtonRect(WebScrollbarThemeClientImpl(*scrollbar),
+                                   ForwardButtonStartPart, false);
 }
 
-WebRect WebScrollbarThemeGeometryNative::forwardButtonStartRect(WebScrollbar* scrollbar)
-{
-    return m_theme.forwardButtonRect(WebScrollbarThemeClientImpl(*scrollbar), ForwardButtonStartPart, false);
+WebRect WebScrollbarThemeGeometryNative::forwardButtonEndRect(
+    WebScrollbar* scrollbar) {
+  return m_theme.forwardButtonRect(WebScrollbarThemeClientImpl(*scrollbar),
+                                   ForwardButtonEndPart, false);
 }
 
-WebRect WebScrollbarThemeGeometryNative::forwardButtonEndRect(WebScrollbar* scrollbar)
-{
-    return m_theme.forwardButtonRect(WebScrollbarThemeClientImpl(*scrollbar), ForwardButtonEndPart, false);
+WebSize WebScrollbarThemeGeometryNative::ninePatchThumbCanvasSize(
+    WebScrollbar* scrollbar) {
+  DCHECK(m_theme.usesNinePatchThumbResource());
+  return m_theme.ninePatchThumbCanvasSize(
+      WebScrollbarThemeClientImpl(*scrollbar));
 }
 
-} // namespace blink
+WebRect WebScrollbarThemeGeometryNative::ninePatchThumbAperture(
+    WebScrollbar* scrollbar) {
+  DCHECK(m_theme.usesNinePatchThumbResource());
+  return m_theme.ninePatchThumbAperture(
+      WebScrollbarThemeClientImpl(*scrollbar));
+}
+
+}  // namespace blink

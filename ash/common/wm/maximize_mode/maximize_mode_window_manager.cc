@@ -6,7 +6,6 @@
 
 #include "ash/common/ash_switches.h"
 #include "ash/common/session/session_state_delegate.h"
-#include "ash/common/shell_window_ids.h"
 #include "ash/common/wm/maximize_mode/maximize_mode_event_handler.h"
 #include "ash/common/wm/maximize_mode/maximize_mode_window_state.h"
 #include "ash/common/wm/maximize_mode/workspace_backdrop_delegate.h"
@@ -14,13 +13,18 @@
 #include "ash/common/wm/overview/window_selector_controller.h"
 #include "ash/common/wm/window_state.h"
 #include "ash/common/wm/wm_event.h"
-#include "ash/common/wm_root_window_controller.h"
+#include "ash/common/wm/workspace_controller.h"
 #include "ash/common/wm_shell.h"
 #include "ash/common/wm_window.h"
 #include "ash/common/wm_window_property.h"
+#include "ash/public/cpp/shell_window_ids.h"
+#include "ash/root_window_controller.h"
+#include "ash/shell.h"
+#include "ash/wm/window_state_aura.h"
 #include "base/command_line.h"
 #include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
+#include "ui/aura/client/aura_constants.h"
 #include "ui/display/screen.h"
 
 namespace ash {
@@ -42,7 +46,7 @@ MaximizeModeWindowManager::~MaximizeModeWindowManager() {
   // transforming windows which are currently in
   // overview: http://crbug.com/366605
   CancelOverview();
-  for (auto* window : added_windows_)
+  for (aura::Window* window : added_windows_)
     window->RemoveObserver(this);
   added_windows_.clear();
   WmShell::Get()->RemoveShellObserver(this);
@@ -59,8 +63,9 @@ int MaximizeModeWindowManager::GetNumberOfManagedWindows() {
 void MaximizeModeWindowManager::AddWindow(WmWindow* window) {
   // Only add the window if it is a direct dependent of a container window
   // and not yet tracked.
-  if (!ShouldHandleWindow(window) || ContainsKey(window_state_map_, window) ||
-      !IsContainerWindow(window->GetParent())) {
+  if (!ShouldHandleWindow(window) ||
+      base::ContainsKey(window_state_map_, window) ||
+      !IsContainerWindow(window->GetParent()->aura_window())) {
     return;
   }
 
@@ -70,7 +75,7 @@ void MaximizeModeWindowManager::AddWindow(WmWindow* window) {
 void MaximizeModeWindowManager::WindowStateDestroyed(WmWindow* window) {
   // At this time ForgetWindow() should already have been called. If not,
   // someone else must have replaced the "window manager's state object".
-  DCHECK(!window->HasObserver(this));
+  DCHECK(!window->aura_window()->HasObserver(this));
 
   auto it = window_state_map_.find(window);
   DCHECK(it != window_state_map_.end());
@@ -95,58 +100,59 @@ void MaximizeModeWindowManager::OnOverviewModeEnded() {
   SetDeferBoundsUpdates(false);
 }
 
-void MaximizeModeWindowManager::OnWindowDestroying(WmWindow* window) {
+void MaximizeModeWindowManager::OnWindowDestroying(aura::Window* window) {
   if (IsContainerWindow(window)) {
     // container window can be removed on display destruction.
     window->RemoveObserver(this);
     observed_container_windows_.erase(window);
-  } else if (ContainsValue(added_windows_, window)) {
+  } else if (base::ContainsValue(added_windows_, window)) {
     // Added window was destroyed before being shown.
     added_windows_.erase(window);
     window->RemoveObserver(this);
   } else {
     // If a known window gets destroyed we need to remove all knowledge about
     // it.
-    ForgetWindow(window);
+    ForgetWindow(WmWindow::Get(window));
   }
 }
 
-void MaximizeModeWindowManager::OnWindowTreeChanged(
-    WmWindow* window,
-    const TreeChangeParams& params) {
+void MaximizeModeWindowManager::OnWindowHierarchyChanged(
+    const HierarchyChangeParams& params) {
   // A window can get removed and then re-added by a drag and drop operation.
   if (params.new_parent && IsContainerWindow(params.new_parent) &&
-      !ContainsKey(window_state_map_, params.target)) {
+      !base::ContainsKey(window_state_map_, WmWindow::Get(params.target))) {
     // Don't register the window if the window is invisible. Instead,
     // wait until it becomes visible because the client may update the
     // flag to control if the window should be added.
     if (!params.target->IsVisible()) {
-      if (!ContainsValue(added_windows_, params.target)) {
+      if (!base::ContainsValue(added_windows_, params.target)) {
         added_windows_.insert(params.target);
         params.target->AddObserver(this);
       }
       return;
     }
-    MaximizeAndTrackWindow(params.target);
+    MaximizeAndTrackWindow(WmWindow::Get(params.target));
     // When the state got added, the "WM_EVENT_ADDED_TO_WORKSPACE" event got
     // already sent and we have to notify our state again.
-    if (ContainsKey(window_state_map_, params.target)) {
+    if (base::ContainsKey(window_state_map_, WmWindow::Get(params.target))) {
       wm::WMEvent event(wm::WM_EVENT_ADDED_TO_WORKSPACE);
-      params.target->GetWindowState()->OnWMEvent(&event);
+      wm::GetWindowState(params.target)->OnWMEvent(&event);
     }
   }
 }
 
-void MaximizeModeWindowManager::OnWindowPropertyChanged(
-    WmWindow* window,
-    WmWindowProperty property) {
+void MaximizeModeWindowManager::OnWindowPropertyChanged(aura::Window* window,
+                                                        const void* key,
+                                                        intptr_t old) {
   // Stop managing |window| if the always-on-top property is added.
-  if (property == WmWindowProperty::ALWAYS_ON_TOP && window->IsAlwaysOnTop())
-    ForgetWindow(window);
+  if (key == aura::client::kAlwaysOnTopKey &&
+      window->GetProperty(aura::client::kAlwaysOnTopKey)) {
+    ForgetWindow(WmWindow::Get(window));
+  }
 }
 
 void MaximizeModeWindowManager::OnWindowBoundsChanged(
-    WmWindow* window,
+    aura::Window* window,
     const gfx::Rect& old_bounds,
     const gfx::Rect& new_bounds) {
   if (!IsContainerWindow(window))
@@ -156,22 +162,22 @@ void MaximizeModeWindowManager::OnWindowBoundsChanged(
     pair.second->UpdateWindowPosition(pair.first->GetWindowState());
 }
 
-void MaximizeModeWindowManager::OnWindowVisibilityChanging(WmWindow* window,
-                                                           bool visible) {
+void MaximizeModeWindowManager::OnWindowVisibilityChanged(aura::Window* window,
+                                                          bool visible) {
   // Skip if it's already managed.
-  if (ContainsKey(window_state_map_, window))
+  if (base::ContainsKey(window_state_map_, WmWindow::Get(window)))
     return;
 
-  if (IsContainerWindow(window->GetParent()) &&
-      ContainsValue(added_windows_, window) && visible) {
+  if (IsContainerWindow(window->parent()) &&
+      base::ContainsValue(added_windows_, window) && visible) {
     added_windows_.erase(window);
     window->RemoveObserver(this);
-    MaximizeAndTrackWindow(window);
+    MaximizeAndTrackWindow(WmWindow::Get(window));
     // When the state got added, the "WM_EVENT_ADDED_TO_WORKSPACE" event got
     // already sent and we have to notify our state again.
-    if (ContainsKey(window_state_map_, window)) {
+    if (base::ContainsKey(window_state_map_, WmWindow::Get(window))) {
       wm::WMEvent event(wm::WM_EVENT_ADDED_TO_WORKSPACE);
-      window->GetWindowState()->OnWMEvent(&event);
+      wm::GetWindowState(window)->OnWMEvent(&event);
     }
   }
 }
@@ -228,8 +234,8 @@ void MaximizeModeWindowManager::MaximizeAndTrackWindow(WmWindow* window) {
   if (!ShouldHandleWindow(window))
     return;
 
-  DCHECK(!ContainsKey(window_state_map_, window));
-  window->AddObserver(this);
+  DCHECK(!base::ContainsKey(window_state_map_, window));
+  window->aura_window()->AddObserver(this);
 
   // We create and remember a maximize mode state which will attach itself to
   // the provided state object.
@@ -243,12 +249,12 @@ void MaximizeModeWindowManager::ForgetWindow(WmWindow* window) {
   // earlier by someone else. However - at this point there is no other client
   // which replaces the state object and therefore this should not happen.
   DCHECK(it != window_state_map_.end());
-  window->RemoveObserver(this);
+  window->aura_window()->RemoveObserver(this);
 
   // By telling the state object to revert, it will switch back the old
   // State object and destroy itself, calling WindowStateDestroyed().
   it->second->LeaveMaximizeMode(it->first->GetWindowState());
-  DCHECK(!ContainsKey(window_state_map_, window));
+  DCHECK(!base::ContainsKey(window_state_map_, window));
 }
 
 bool MaximizeModeWindowManager::ShouldHandleWindow(WmWindow* window) {
@@ -265,7 +271,7 @@ bool MaximizeModeWindowManager::ShouldHandleWindow(WmWindow* window) {
 
   // If the changing bounds in the maximized/fullscreen is allowed, then
   // let the client manage it even in maximized mode.
-  if (window->GetWindowState()->allow_set_bounds_in_maximized())
+  if (window->GetWindowState()->allow_set_bounds_direct())
     return false;
 
   return window->GetType() == ui::wm::WINDOW_TYPE_NORMAL;
@@ -275,17 +281,17 @@ void MaximizeModeWindowManager::AddWindowCreationObservers() {
   DCHECK(observed_container_windows_.empty());
   // Observe window activations/creations in the default containers on all root
   // windows.
-  for (WmWindow* root : WmShell::Get()->GetAllRootWindows()) {
-    WmWindow* default_container =
-        root->GetChildByShellWindowId(kShellWindowId_DefaultContainer);
-    DCHECK(!ContainsKey(observed_container_windows_, default_container));
+  for (aura::Window* root : Shell::GetInstance()->GetAllRootWindows()) {
+    aura::Window* default_container =
+        root->GetChildById(kShellWindowId_DefaultContainer);
+    DCHECK(!base::ContainsKey(observed_container_windows_, default_container));
     default_container->AddObserver(this);
     observed_container_windows_.insert(default_container);
   }
 }
 
 void MaximizeModeWindowManager::RemoveWindowCreationObservers() {
-  for (WmWindow* window : observed_container_windows_)
+  for (aura::Window* window : observed_container_windows_)
     window->RemoveObserver(this);
   observed_container_windows_.clear();
 }
@@ -297,8 +303,8 @@ void MaximizeModeWindowManager::DisplayConfigurationChanged() {
   EnableBackdropBehindTopWindowOnEachDisplay(true);
 }
 
-bool MaximizeModeWindowManager::IsContainerWindow(WmWindow* window) {
-  return ContainsKey(observed_container_windows_, window);
+bool MaximizeModeWindowManager::IsContainerWindow(aura::Window* window) {
+  return base::ContainsKey(observed_container_windows_, window);
 }
 
 void MaximizeModeWindowManager::EnableBackdropBehindTopWindowOnEachDisplay(
@@ -315,11 +321,12 @@ void MaximizeModeWindowManager::EnableBackdropBehindTopWindowOnEachDisplay(
   // Inform the WorkspaceLayoutManager that we want to show a backdrop behind
   // the topmost window of its container.
   for (WmWindow* root : WmShell::Get()->GetAllRootWindows()) {
-    WmRootWindowController* controller = root->GetRootWindowController();
+    RootWindowController* controller = root->GetRootWindowController();
     WmWindow* default_container =
         root->GetChildByShellWindowId(kShellWindowId_DefaultContainer);
-    controller->SetMaximizeBackdropDelegate(base::WrapUnique(
-        enable ? new WorkspaceBackdropDelegate(default_container) : nullptr));
+    controller->workspace_controller()->SetMaximizeBackdropDelegate(
+        enable ? base::MakeUnique<WorkspaceBackdropDelegate>(default_container)
+               : nullptr);
   }
 }
 

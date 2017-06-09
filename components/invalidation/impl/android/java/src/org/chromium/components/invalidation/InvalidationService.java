@@ -10,13 +10,15 @@ import android.content.Intent;
 
 import com.google.protos.ipc.invalidation.Types;
 
+import org.chromium.base.BuildInfo;
+import org.chromium.base.Log;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
-import org.chromium.sync.notifier.InvalidationClientNameProvider;
-import org.chromium.sync.notifier.InvalidationIntentProtocol;
-import org.chromium.sync.notifier.InvalidationPreferences;
+import org.chromium.components.sync.notifier.InvalidationClientNameProvider;
+import org.chromium.components.sync.notifier.InvalidationIntentProtocol;
+import org.chromium.components.sync.notifier.InvalidationPreferences;
 
 /**
  * Wrapper for invalidations::InvalidationServiceAndroid.
@@ -28,6 +30,8 @@ public class InvalidationService {
     private final Context mContext;
 
     private final long mNativeInvalidationServiceAndroid;
+
+    private static final String TAG = "cr_invalidation";
 
     private InvalidationService(Context context, long nativeInvalidationServiceAndroid) {
         mContext = context.getApplicationContext();
@@ -69,8 +73,23 @@ public class InvalidationService {
         Account account = invalidationPreferences.getSavedSyncedAccount();
         Intent registerIntent = InvalidationIntentProtocol.createRegisterIntent(
                 account, objectSources, objectNames);
-        registerIntent.setClass(mContext, InvalidationClientService.class);
-        mContext.startService(registerIntent);
+        registerIntent.setClass(
+                mContext, InvalidationClientService.getRegisteredClass());
+        startServiceIfPossible(registerIntent);
+    }
+
+    private void startServiceIfPossible(Intent intent) {
+        // The use of background services is restricted when the application is not in foreground
+        // for O. See crbug.com/680812.
+        if (BuildInfo.isAtLeastO()) {
+            try {
+                mContext.startService(intent);
+            } catch (IllegalStateException exception) {
+                Log.e(TAG, "Failed to start service from exception: ", exception);
+            }
+        } else {
+            mContext.startService(intent);
+        }
     }
 
     /**

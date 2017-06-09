@@ -8,6 +8,7 @@
 
 #include "base/logging.h"
 #include "mojo/edk/system/ports/event.h"
+#include "mojo/edk/system/ports/message_filter.h"
 
 namespace mojo {
 namespace edk {
@@ -35,7 +36,7 @@ MessageQueue::~MessageQueue() {
   size_t num_leaked_ports = 0;
   for (const auto& message : heap_)
     num_leaked_ports += message->num_ports();
-  DLOG_IF(WARNING, num_leaked_ports > 0)
+  DVLOG_IF(1, num_leaked_ports > 0)
       << "Leaking " << num_leaked_ports << " ports in unreceived messages";
 #endif
 }
@@ -44,10 +45,9 @@ bool MessageQueue::HasNextMessage() const {
   return !heap_.empty() && GetSequenceNum(heap_[0]) == next_sequence_num_;
 }
 
-void MessageQueue::GetNextMessageIf(
-    std::function<bool(const Message&)> selector,
-    ScopedMessage* message) {
-  if (!HasNextMessage() || (selector && !selector(*heap_[0].get()))) {
+void MessageQueue::GetNextMessage(ScopedMessage* message,
+                                  MessageFilter* filter) {
+  if (!HasNextMessage() || (filter && !filter->Match(*heap_[0].get()))) {
     message->reset();
     return;
   }

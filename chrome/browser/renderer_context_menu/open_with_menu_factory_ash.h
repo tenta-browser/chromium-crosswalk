@@ -36,8 +36,6 @@ class OpenWithMenuObserver : public RenderViewContextMenuObserver,
 
     bool IsCommandIdChecked(int command_id) const override;
     bool IsCommandIdEnabled(int command_id) const override;
-    bool GetAcceleratorForCommandId(int command_id,
-                                    ui::Accelerator* accelerator) override;
     void ExecuteCommand(int command_id, int event_flags) override;
 
    private:
@@ -55,7 +53,6 @@ class OpenWithMenuObserver : public RenderViewContextMenuObserver,
   bool IsCommandIdChecked(int command_id) override;
   bool IsCommandIdEnabled(int command_id) override;
   void ExecuteCommand(int command_id) override;
-  void OnMenuCancel() override {}
 
   // ash::OpenWithItems::Delegate overrides:
   void ModelChanged(const std::vector<ash::LinkHandlerInfo>& handlers) override;

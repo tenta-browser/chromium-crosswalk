@@ -4,6 +4,7 @@
 
 import("//build/config/ui.gni")
 import("//media/media_options.gni")
+import("//ui/ozone/ozone.gni")
 
 # See //content/BUILD.gn for how this works.
 group("gpu") {
@@ -20,7 +21,12 @@ group("gpu") {
   }
 }
 
-source_set("gpu_sources") {
+if (is_component_build) {
+  link_target_type = "source_set"
+} else {
+  link_target_type = "static_library"
+}
+target(link_target_type, "gpu_sources") {
   # This is an internal content API. Code outside of the content "component"
   # (like content/test and content/shell) should depend on ":gpu" above.
   visibility = [ "//content/*" ]
@@ -31,10 +37,8 @@ source_set("gpu_sources") {
     "gpu_main.cc",
     "gpu_process.cc",
     "gpu_process.h",
-    "gpu_process_control_impl.cc",
-    "gpu_process_control_impl.h",
-    "gpu_watchdog_thread.cc",
-    "gpu_watchdog_thread.h",
+    "gpu_service_factory.cc",
+    "gpu_service_factory.h",
     "in_process_gpu_thread.cc",
     "in_process_gpu_thread.h",
   ]
@@ -46,7 +50,6 @@ source_set("gpu_sources") {
     "//base/third_party/dynamic_annotations",
     "//components/tracing",
     "//content:export",
-    "//content:export",
     "//content/child",
     "//content/common",
     "//content/public/child:child_sources",
@@ -57,7 +60,10 @@ source_set("gpu_sources") {
     "//ipc",
     "//media/gpu",
     "//media/gpu/ipc/service",
-    "//services/shell/public/interfaces",
+    "//services/service_manager/public/cpp",
+    "//services/service_manager/public/interfaces",
+    "//services/ui/gpu",
+    "//services/ui/gpu/interfaces",
     "//skia",
     "//ui/events/ipc",
     "//ui/gfx/ipc",

@@ -4,14 +4,15 @@
 
 #include "ash/common/accessibility_types.h"
 #include "ash/common/login_status.h"
+#include "ash/common/system/tray/system_tray.h"
 #include "ash/common/system/tray_accessibility.h"
+#include "ash/common/test/test_session_state_delegate.h"
 #include "ash/magnifier/magnification_controller.h"
 #include "ash/shell.h"
-#include "ash/system/tray/system_tray.h"
 #include "ash/test/shell_test_api.h"
-#include "ash/test/test_session_state_delegate.h"
 #include "base/callback.h"
 #include "base/command_line.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -32,11 +33,13 @@
 #include "components/policy/core/common/mock_configuration_policy_provider.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/policy_types.h"
+#include "components/policy/policy_constants.h"
 #include "components/prefs/pref_service.h"
-#include "components/user_manager/user_manager.h"
+#include "components/session_manager/core/session_manager.h"
 #include "content/public/test/test_utils.h"
-#include "policy/policy_constants.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/views/controls/button/button.h"
+#include "ui/views/controls/button/custom_button.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/widget/widget.h"
 
@@ -105,8 +108,7 @@ class TrayAccessibilityTest
       policy_map.Set(policy::key::kShowAccessibilityOptionsInSystemTrayMenu,
                      policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
                      policy::POLICY_SOURCE_CLOUD,
-                     base::WrapUnique(new base::FundamentalValue(value)),
-                     nullptr);
+                     base::MakeUnique<base::Value>(value), nullptr);
       provider_.UpdateChromePolicy(policy_map);
       base::RunLoop().RunUntilIdle();
     } else {
@@ -236,12 +238,18 @@ class TrayAccessibilityTest
     return tray()->detailed_menu_->virtual_keyboard_view_;
   }
 
-  bool IsHelpShownOnDetailMenu() const {
-    return tray()->detailed_menu_->help_view_;
+  // In material design we show the help button but theme it as disabled if
+  // it is not possible to load the help page.
+  bool IsHelpAvailableOnDetailMenu() const {
+    return tray()->detailed_menu_->help_view_->state() ==
+           views::Button::STATE_NORMAL;
   }
 
-  bool IsSettingsShownOnDetailMenu() const {
-    return tray()->detailed_menu_->settings_view_;
+  // In material design we show the settings button but theme it as disabled if
+  // it is not possible to load the settings page.
+  bool IsSettingsAvailableOnDetailMenu() const {
+    return tray()->detailed_menu_->settings_view_->state() ==
+           views::Button::STATE_NORMAL;
   }
 
   bool IsNotificationShown() const {
@@ -269,10 +277,9 @@ class TrayAccessibilityTest
 IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, LoginStatus) {
   EXPECT_EQ(ash::LoginStatus::NOT_LOGGED_IN, GetLoginStatus());
 
-  user_manager::UserManager::Get()->UserLoggedIn(
-      AccountId::FromUserEmail("owner@invalid.domain"), "owner@invalid.domain",
-      true);
-  user_manager::UserManager::Get()->SessionStarted();
+  session_manager::SessionManager::Get()->CreateSession(
+      AccountId::FromUserEmail("owner@invalid.domain"), "owner@invalid.domain");
+  session_manager::SessionManager::Get()->SessionStarted();
 
   EXPECT_EQ(ash::LoginStatus::USER, GetLoginStatus());
 }
@@ -283,10 +290,9 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, ShowTrayIcon) {
   // Confirms that the icon is invisible before login.
   EXPECT_FALSE(IsTrayIconVisible());
 
-  user_manager::UserManager::Get()->UserLoggedIn(
-      AccountId::FromUserEmail("owner@invalid.domain"), "owner@invalid.domain",
-      true);
-  user_manager::UserManager::Get()->SessionStarted();
+  session_manager::SessionManager::Get()->CreateSession(
+      AccountId::FromUserEmail("owner@invalid.domain"), "owner@invalid.domain");
+  session_manager::SessionManager::Get()->SessionStarted();
 
   // Confirms that the icon is invisible just after login.
   EXPECT_FALSE(IsTrayIconVisible());
@@ -349,10 +355,9 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, ShowTrayIcon) {
 
 IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, ShowMenu) {
   // Login
-  user_manager::UserManager::Get()->UserLoggedIn(
-      AccountId::FromUserEmail("owner@invalid.domain"), "owner@invalid.domain",
-      true);
-  user_manager::UserManager::Get()->SessionStarted();
+  session_manager::SessionManager::Get()->CreateSession(
+      AccountId::FromUserEmail("owner@invalid.domain"), "owner@invalid.domain");
+  session_manager::SessionManager::Get()->SessionStarted();
 
   SetShowAccessibilityOptionsInSystemTrayMenu(false);
 
@@ -418,10 +423,9 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, ShowMenu) {
 
 IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, ShowMenuWithShowMenuOption) {
   // Login
-  user_manager::UserManager::Get()->UserLoggedIn(
-      AccountId::FromUserEmail("owner@invalid.domain"), "owner@invalid.domain",
-      true);
-  user_manager::UserManager::Get()->SessionStarted();
+  session_manager::SessionManager::Get()->CreateSession(
+      AccountId::FromUserEmail("owner@invalid.domain"), "owner@invalid.domain");
+  session_manager::SessionManager::Get()->SessionStarted();
 
   SetShowAccessibilityOptionsInSystemTrayMenu(true);
 
@@ -858,8 +862,8 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, CheckMenuVisibilityOnDetailMenu) {
   EXPECT_TRUE(IsLargeCursorMenuShownOnDetailMenu());
   EXPECT_FALSE(IsAutoclickMenuShownOnDetailMenu());
   EXPECT_TRUE(IsVirtualKeyboardMenuShownOnDetailMenu());
-  EXPECT_FALSE(IsHelpShownOnDetailMenu());
-  EXPECT_FALSE(IsSettingsShownOnDetailMenu());
+  EXPECT_FALSE(IsHelpAvailableOnDetailMenu());
+  EXPECT_FALSE(IsSettingsAvailableOnDetailMenu());
   CloseDetailMenu();
 
   SetLoginStatus(ash::LoginStatus::USER);
@@ -870,8 +874,8 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, CheckMenuVisibilityOnDetailMenu) {
   EXPECT_FALSE(IsLargeCursorMenuShownOnDetailMenu());
   EXPECT_TRUE(IsAutoclickMenuShownOnDetailMenu());
   EXPECT_TRUE(IsVirtualKeyboardMenuShownOnDetailMenu());
-  EXPECT_TRUE(IsHelpShownOnDetailMenu());
-  EXPECT_TRUE(IsSettingsShownOnDetailMenu());
+  EXPECT_TRUE(IsHelpAvailableOnDetailMenu());
+  EXPECT_TRUE(IsSettingsAvailableOnDetailMenu());
   CloseDetailMenu();
 
   SetLoginStatus(ash::LoginStatus::LOCKED);
@@ -882,8 +886,8 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, CheckMenuVisibilityOnDetailMenu) {
   EXPECT_FALSE(IsLargeCursorMenuShownOnDetailMenu());
   EXPECT_TRUE(IsAutoclickMenuShownOnDetailMenu());
   EXPECT_TRUE(IsVirtualKeyboardMenuShownOnDetailMenu());
-  EXPECT_FALSE(IsHelpShownOnDetailMenu());
-  EXPECT_FALSE(IsSettingsShownOnDetailMenu());
+  EXPECT_FALSE(IsHelpAvailableOnDetailMenu());
+  EXPECT_FALSE(IsSettingsAvailableOnDetailMenu());
   CloseDetailMenu();
 
   ash::test::TestSessionStateDelegate* session_state_delegate =
@@ -899,8 +903,8 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, CheckMenuVisibilityOnDetailMenu) {
   EXPECT_FALSE(IsLargeCursorMenuShownOnDetailMenu());
   EXPECT_TRUE(IsAutoclickMenuShownOnDetailMenu());
   EXPECT_TRUE(IsVirtualKeyboardMenuShownOnDetailMenu());
-  EXPECT_FALSE(IsHelpShownOnDetailMenu());
-  EXPECT_FALSE(IsSettingsShownOnDetailMenu());
+  EXPECT_FALSE(IsHelpAvailableOnDetailMenu());
+  EXPECT_FALSE(IsSettingsAvailableOnDetailMenu());
   CloseDetailMenu();
 }
 

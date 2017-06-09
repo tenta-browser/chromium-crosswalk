@@ -14,10 +14,19 @@
 
 #define IPC_MESSAGE_START ManifestManagerMsgStart
 
+IPC_ENUM_TRAITS_MAX_VALUE(
+    content::Manifest::Icon::IconPurpose,
+    content::Manifest::Icon::IconPurpose::ICON_PURPOSE_LAST)
+
 IPC_STRUCT_TRAITS_BEGIN(content::Manifest::Icon)
   IPC_STRUCT_TRAITS_MEMBER(src)
   IPC_STRUCT_TRAITS_MEMBER(type)
   IPC_STRUCT_TRAITS_MEMBER(sizes)
+  IPC_STRUCT_TRAITS_MEMBER(purpose)
+IPC_STRUCT_TRAITS_END()
+
+IPC_STRUCT_TRAITS_BEGIN(content::Manifest::ShareTarget)
+  IPC_STRUCT_TRAITS_MEMBER(url_template)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(content::Manifest::RelatedApplication)
@@ -30,9 +39,11 @@ IPC_STRUCT_TRAITS_BEGIN(content::Manifest)
   IPC_STRUCT_TRAITS_MEMBER(name)
   IPC_STRUCT_TRAITS_MEMBER(short_name)
   IPC_STRUCT_TRAITS_MEMBER(start_url)
+  IPC_STRUCT_TRAITS_MEMBER(scope)
   IPC_STRUCT_TRAITS_MEMBER(display)
   IPC_STRUCT_TRAITS_MEMBER(orientation)
   IPC_STRUCT_TRAITS_MEMBER(icons)
+  IPC_STRUCT_TRAITS_MEMBER(share_target)
   IPC_STRUCT_TRAITS_MEMBER(related_applications)
   IPC_STRUCT_TRAITS_MEMBER(prefer_related_applications)
   IPC_STRUCT_TRAITS_MEMBER(theme_color)
@@ -47,23 +58,12 @@ IPC_STRUCT_TRAITS_END()
 IPC_MESSAGE_ROUTED1(ManifestManagerMsg_RequestManifest,
                     int /* request_id */)
 
-// The browser process requests whether the document loaded in the associated
-// RenderFrame has a manifest link URL. The render process will respond with
-// a HasManifestResponse IPC message, along with a bool indicating the presence
-// of a manifest link, and the |request_id| that was initially given.
-IPC_MESSAGE_ROUTED1(ManifestManagerMsg_HasManifest,
-                    int /* request_id */)
-
 // The render process' response to a RequestManifest. The |request_id| will
-// match the one that was initially received. The |manifest| object will be an
-// empty manifest in case of any failure.
-IPC_MESSAGE_ROUTED2(ManifestManagerHostMsg_RequestManifestResponse,
+// match the one that was initially received. |manifest_url| will be empty if
+// there is no manifest specified in the associated RenderFrame's document.
+// |manifest| will be empty if a manifest was specified, but could not be
+// parsed correctly.
+IPC_MESSAGE_ROUTED3(ManifestManagerHostMsg_RequestManifestResponse,
                     int, /* request_id */
+                    GURL, /* manifest URL */
                     content::Manifest /* manifest */)
-
-// The render process' response to a HasManifest. The |request_id| is the one
-// sent from the browser. The |bool| will be true if the current document has a
-// manifest link URL, and false otherwise.
-IPC_MESSAGE_ROUTED2(ManifestManagerHostMsg_HasManifestResponse,
-                    int, /* request_id */
-                    bool /* true if the document has a manifest link */)

@@ -1,32 +1,8 @@
 <!DOCTYPE html>
 <html>
 <head>
+<script src="resources/test-runner-paint-helper.js"></script>
 <script>
-function runner(tests) {
-    if (window.testRunner) {
-        testRunner.waitUntilDone();
-        testRunner.dumpAsText();
-    }
-
-    tests.reduce(function(chain, obj) {
-        return chain.then(function() {
-            if (obj.expectedError) {
-                console.log('The worklet should throw an error with: "' + obj.expectedError + '"');
-            } else if (obj.expectedMessage) {
-                console.log('The worklet should log a warning with: "' + obj.expectedMessage + '"');
-            } else {
-                console.log('The worklet should not throw an error.');
-            }
-            var blob = new Blob([obj.script], {type: 'text/javascript'});
-            return paintWorklet.import(URL.createObjectURL(blob));
-        });
-    }, Promise.resolve()).then(function() {
-        if (window.testRunner) {
-            testRunner.notifyDone();
-        }
-    });
-}
-
 function runTest() {
     runner([{
         expectedError: "A class with name:'foo' is already registered.",
@@ -58,6 +34,11 @@ function runTest() {
         script: "var c = function() { }; c.prototype.paint = function() { }; registerPaint('foo10', c); console.log('Success for \\'foo10\\'.');",
     }, {
         script: "registerPaint('foo11', class { static get inputProperties() { return ['-webkit-border-radius']; } paint() { } }); console.log('Success for \\'foo11\\'.');"
+    }, {
+        expectedError: "The 'alpha' property on the class is not a boolean.",
+        script: "registerPaint('foo12', class { static get alpha() { return 42; } });",
+    }, {
+        script: "registerPaint('foo13', class { static get alpha() { return true; } paint() { } }); console.log('Success for \\'foo13\\'.');",
     }]);
 }
 </script>

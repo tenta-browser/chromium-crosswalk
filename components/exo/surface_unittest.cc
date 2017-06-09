@@ -4,7 +4,7 @@
 
 #include "base/bind.h"
 #include "cc/output/compositor_frame.h"
-#include "cc/output/delegated_frame_data.h"
+#include "cc/quads/texture_draw_quad.h"
 #include "cc/surfaces/surface.h"
 #include "cc/surfaces/surface_manager.h"
 #include "components/exo/buffer.h"
@@ -50,6 +50,11 @@ TEST_F(SurfaceTest, Attach) {
   // attached buffer.
   surface->Attach(nullptr);
   surface->Commit();
+  // CompositorFrameSinkHolder::ReclaimResources() gets called via
+  // MojoCompositorFrameSinkClient interface. We need to wait here for the mojo
+  // call to finish so that the release callback finishes running before
+  // the assertion below.
+  RunAllPendingInMessageLoop();
   ASSERT_EQ(1, release_buffer_call_count);
 }
 
@@ -88,14 +93,71 @@ TEST_F(SurfaceTest, RequestFrameCallback) {
   EXPECT_TRUE(frame_time.is_null());
 }
 
+const cc::CompositorFrame& GetFrameFromSurface(Surface* surface) {
+  cc::SurfaceId surface_id = surface->GetSurfaceId();
+  cc::SurfaceManager* surface_manager =
+      aura::Env::GetInstance()->context_factory_private()->GetSurfaceManager();
+  const cc::CompositorFrame& frame =
+      surface_manager->GetSurfaceForId(surface_id)->GetActiveFrame();
+  return frame;
+}
+
 TEST_F(SurfaceTest, SetOpaqueRegion) {
+  gfx::Size buffer_size(1, 1);
+  std::unique_ptr<Buffer> buffer(
+      new Buffer(exo_test_helper()->CreateGpuMemoryBuffer(buffer_size)));
   std::unique_ptr<Surface> surface(new Surface);
 
-  // Setting a non-empty opaque region should succeed.
-  surface->SetOpaqueRegion(SkRegion(SkIRect::MakeWH(256, 256)));
+  // Attaching a buffer with alpha channel.
+  surface->Attach(buffer.get());
 
-  // Setting an empty opaque region should succeed.
+  // Setting an opaque region that contains the buffer size doesn't require
+  // draw with blending.
+  surface->SetOpaqueRegion(SkRegion(SkIRect::MakeWH(256, 256)));
+  surface->Commit();
+  RunAllPendingInMessageLoop();
+
+  {
+    const cc::CompositorFrame& frame = GetFrameFromSurface(surface.get());
+    ASSERT_EQ(1u, frame.render_pass_list.size());
+    ASSERT_EQ(1u, frame.render_pass_list.back()->quad_list.size());
+    EXPECT_FALSE(frame.render_pass_list.back()
+                     ->quad_list.back()
+                     ->ShouldDrawWithBlending());
+  }
+
+  // Setting an empty opaque region requires draw with blending.
   surface->SetOpaqueRegion(SkRegion(SkIRect::MakeEmpty()));
+  surface->Commit();
+  RunAllPendingInMessageLoop();
+
+  {
+    const cc::CompositorFrame& frame = GetFrameFromSurface(surface.get());
+    ASSERT_EQ(1u, frame.render_pass_list.size());
+    ASSERT_EQ(1u, frame.render_pass_list.back()->quad_list.size());
+    EXPECT_TRUE(frame.render_pass_list.back()
+                    ->quad_list.back()
+                    ->ShouldDrawWithBlending());
+  }
+
+  std::unique_ptr<Buffer> buffer_without_alpha(
+      new Buffer(exo_test_helper()->CreateGpuMemoryBuffer(
+          buffer_size, gfx::BufferFormat::RGBX_8888)));
+
+  // Attaching a buffer without an alpha channel doesn't require draw with
+  // blending.
+  surface->Attach(buffer_without_alpha.get());
+  surface->Commit();
+  RunAllPendingInMessageLoop();
+
+  {
+    const cc::CompositorFrame& frame = GetFrameFromSurface(surface.get());
+    ASSERT_EQ(1u, frame.render_pass_list.size());
+    ASSERT_EQ(1u, frame.render_pass_list.back()->quad_list.size());
+    EXPECT_FALSE(frame.render_pass_list.back()
+                     ->quad_list.back()
+                     ->ShouldDrawWithBlending());
+  }
 }
 
 TEST_F(SurfaceTest, SetInputRegion) {
@@ -128,7 +190,7 @@ TEST_F(SurfaceTest, SetBufferScale) {
       surface->content_size().ToString());
 }
 
-TEST_F(SurfaceTest, RecreateLayer) {
+TEST_F(SurfaceTest, MirrorLayers) {
   gfx::Size buffer_size(512, 512);
   std::unique_ptr<Buffer> buffer(
       new Buffer(exo_test_helper()->CreateGpuMemoryBuffer(buffer_size)));
@@ -140,7 +202,7 @@ TEST_F(SurfaceTest, RecreateLayer) {
   EXPECT_EQ(buffer_size, surface->window()->bounds().size());
   EXPECT_EQ(buffer_size, surface->window()->layer()->bounds().size());
   std::unique_ptr<ui::LayerTreeOwner> old_layer_owner =
-      ::wm::RecreateLayers(surface->window(), nullptr);
+      ::wm::MirrorLayers(surface->window(), false /* sync_bounds */);
   EXPECT_EQ(buffer_size, surface->window()->bounds().size());
   EXPECT_EQ(buffer_size, surface->window()->layer()->bounds().size());
   EXPECT_EQ(buffer_size, old_layer_owner->root()->bounds().size());
@@ -187,15 +249,6 @@ TEST_F(SurfaceTest, SetCrop) {
   EXPECT_EQ(crop_size.ToString(), surface->content_size().ToString());
 }
 
-const cc::DelegatedFrameData* GetFrameFromSurface(Surface* surface) {
-  cc::SurfaceId surface_id = surface->surface_id();
-  cc::SurfaceManager* surface_manager =
-      aura::Env::GetInstance()->context_factory()->GetSurfaceManager();
-  const cc::CompositorFrame& frame =
-      surface_manager->GetSurfaceForId(surface_id)->GetEligibleFrame();
-  return frame.delegated_frame_data.get();
-}
-
 TEST_F(SurfaceTest, SetBlendMode) {
   gfx::Size buffer_size(1, 1);
   std::unique_ptr<Buffer> buffer(
@@ -203,15 +256,37 @@ TEST_F(SurfaceTest, SetBlendMode) {
   std::unique_ptr<Surface> surface(new Surface);
 
   surface->Attach(buffer.get());
-  surface->SetBlendMode(SkXfermode::kSrc_Mode);
+  surface->SetBlendMode(SkBlendMode::kSrc);
   surface->Commit();
+  RunAllPendingInMessageLoop();
 
-  const cc::DelegatedFrameData* frame_data = GetFrameFromSurface(surface.get());
-  ASSERT_EQ(1u, frame_data->render_pass_list.size());
-  ASSERT_EQ(1u, frame_data->render_pass_list.back()->quad_list.size());
-  EXPECT_FALSE(frame_data->render_pass_list.back()
+  const cc::CompositorFrame& frame = GetFrameFromSurface(surface.get());
+  ASSERT_EQ(1u, frame.render_pass_list.size());
+  ASSERT_EQ(1u, frame.render_pass_list.back()->quad_list.size());
+  EXPECT_FALSE(frame.render_pass_list.back()
                    ->quad_list.back()
                    ->ShouldDrawWithBlending());
+}
+
+TEST_F(SurfaceTest, OverlayCandidate) {
+  gfx::Size buffer_size(1, 1);
+  std::unique_ptr<Buffer> buffer(new Buffer(
+      exo_test_helper()->CreateGpuMemoryBuffer(buffer_size), 0, 0, true, true));
+  std::unique_ptr<Surface> surface(new Surface);
+
+  surface->Attach(buffer.get());
+  surface->Commit();
+  RunAllPendingInMessageLoop();
+
+  const cc::CompositorFrame& frame = GetFrameFromSurface(surface.get());
+  ASSERT_EQ(1u, frame.render_pass_list.size());
+  ASSERT_EQ(1u, frame.render_pass_list.back()->quad_list.size());
+  cc::DrawQuad* draw_quad = frame.render_pass_list.back()->quad_list.back();
+  ASSERT_EQ(cc::DrawQuad::TEXTURE_CONTENT, draw_quad->material);
+
+  const cc::TextureDrawQuad* texture_quad =
+      cc::TextureDrawQuad::MaterialCast(draw_quad);
+  EXPECT_FALSE(texture_quad->resource_size_in_pixels().IsEmpty());
 }
 
 TEST_F(SurfaceTest, SetAlpha) {

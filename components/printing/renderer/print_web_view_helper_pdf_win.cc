@@ -9,12 +9,13 @@
 #include "base/logging.h"
 #include "base/process/process_handle.h"
 #include "components/printing/common/print_messages.h"
+#include "printing/features/features.h"
 #include "printing/metafile_skia_wrapper.h"
 
 namespace printing {
 
-#if defined(ENABLE_BASIC_PRINTING)
-bool PrintWebViewHelper::PrintPagesNative(blink::WebFrame* frame,
+#if BUILDFLAG(ENABLE_BASIC_PRINTING)
+bool PrintWebViewHelper::PrintPagesNative(blink::WebLocalFrame* frame,
                                           int page_count) {
   const PrintMsg_PrintPages_Params& params = *print_pages_params_;
   std::vector<int> printed_pages = GetPrintedPages(params, page_count);
@@ -23,6 +24,7 @@ bool PrintWebViewHelper::PrintPagesNative(blink::WebFrame* frame,
 
   std::vector<gfx::Size> page_size_in_dpi(printed_pages.size());
   std::vector<gfx::Rect> content_area_in_dpi(printed_pages.size());
+  std::vector<gfx::Rect> printable_area_in_dpi(printed_pages.size());
 
   PdfMetafileSkia metafile(PDF_SKIA_DOCUMENT_TYPE);
   CHECK(metafile.Init());
@@ -31,11 +33,8 @@ bool PrintWebViewHelper::PrintPagesNative(blink::WebFrame* frame,
   page_params.params = params.params;
   for (size_t i = 0; i < printed_pages.size(); ++i) {
     page_params.page_number = printed_pages[i];
-    PrintPageInternal(page_params,
-                      frame,
-                      &metafile,
-                      &page_size_in_dpi[i],
-                      &content_area_in_dpi[i]);
+    PrintPageInternal(page_params, frame, &metafile, &page_size_in_dpi[i],
+                      &content_area_in_dpi[i], &printable_area_in_dpi[i]);
   }
 
   // blink::printEnd() for PDF should be called before metafile is closed.
@@ -58,15 +57,16 @@ bool PrintWebViewHelper::PrintPagesNative(blink::WebFrame* frame,
     printed_page_params.page_number = printed_pages[i];
     printed_page_params.page_size = page_size_in_dpi[i];
     printed_page_params.content_area = content_area_in_dpi[i];
+    printed_page_params.physical_offsets =
+        gfx::Point(printable_area_in_dpi[i].x(), printable_area_in_dpi[i].y());
     Send(new PrintHostMsg_DidPrintPage(routing_id(), printed_page_params));
     // Send the rest of the pages with an invalid metafile handle.
-    if (printed_page_params.metafile_data_handle.IsValid()) {
-      printed_page_params.metafile_data_handle.Close();
+    // TODO(erikchen): Fix semantics. See https://crbug.com/640840
+    if (printed_page_params.metafile_data_handle.IsValid())
       printed_page_params.metafile_data_handle = base::SharedMemoryHandle();
-    }
   }
   return true;
 }
-#endif  // defined(ENABLE_BASIC_PRINTING)
+#endif  // BUILDFLAG(ENABLE_BASIC_PRINTING)
 
 }  // namespace printing

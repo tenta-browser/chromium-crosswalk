@@ -38,7 +38,7 @@ import webbrowser
 
 from webkitpy.common.system.executive import Executive
 from webkitpy.common.system.filesystem import FileSystem
-from webkitpy.common.system.platforminfo import PlatformInfo
+from webkitpy.common.system.platform_info import PlatformInfo
 
 
 _log = logging.getLogger(__name__)
@@ -48,10 +48,10 @@ class User(object):
     DEFAULT_NO = 'n'
     DEFAULT_YES = 'y'
 
-    def __init__(self, platforminfo=None):
+    def __init__(self, platform_info=None):
         # We cannot get the PlatformInfo object from a SystemHost because
         # User is part of SystemHost itself.
-        self._platforminfo = platforminfo or PlatformInfo(sys, platform, FileSystem(), Executive())
+        self._platform_info = platform_info or PlatformInfo(sys, platform, FileSystem(), Executive())
 
     # FIXME: These are @classmethods because bugzilla.py doesn't have a Tool object (thus no User instance).
     @classmethod
@@ -90,20 +90,20 @@ class User(object):
 
                 try:
                     indices = []
-                    for value in re.split("\s*,\s*", response):
+                    for value in re.split(r"\s*,\s*", response):
                         parts = value.split('-')
                         if len(parts) == 2:
                             indices += range(int(parts[0]) - 1, int(parts[1]))
                         else:
                             indices.append(int(value) - 1)
-                except ValueError as err:
+                except ValueError:
                     continue
 
                 return [list_items[i] for i in indices]
             else:
                 try:
                     result = int(cls.prompt("Enter a number: ", raw_input=raw_input)) - 1
-                except ValueError as err:
+                except ValueError:
                     continue
                 return list_items[result]
 
@@ -128,7 +128,7 @@ class User(object):
             # Note: Not thread safe: http://bugs.python.org/issue2320
             child_process = subprocess.Popen([pager], stdin=subprocess.PIPE)
             child_process.communicate(input=message)
-        except IOError as e:
+        except IOError:
             pass
 
     def confirm(self, message=None, default=DEFAULT_YES, raw_input=raw_input):
@@ -144,10 +144,10 @@ class User(object):
         try:
             webbrowser.get()
             return True
-        except webbrowser.Error as e:
+        except webbrowser.Error:
             return False
 
     def open_url(self, url):
         if not self.can_open_url():
-            _log.warn("Failed to open %s" % url)
+            _log.warning("Failed to open %s", url)
         webbrowser.open(url)

@@ -340,36 +340,27 @@ void FillUploadField(AutofillUploadContents::Field* field,
                      unsigned signature,
                      const char* name,
                      const char* control_type,
-                     const char* label,
                      const char* autocomplete,
-                     unsigned autofill_type,
-                     const char* css_classes) {
+                     unsigned autofill_type) {
   field->set_signature(signature);
   if (name)
     field->set_name(name);
   if (control_type)
     field->set_type(control_type);
-  if (label)
-    field->set_label(label);
   if (autocomplete)
     field->set_autocomplete(autocomplete);
   field->set_autofill_type(autofill_type);
-  if (css_classes)
-    field->set_css_classes(css_classes);
 }
 
 void FillQueryField(AutofillQueryContents::Form::Field* field,
                     unsigned signature,
                     const char* name,
-                    const char* control_type,
-                    const char* label) {
+                    const char* control_type) {
   field->set_signature(signature);
   if (name)
     field->set_name(name);
   if (control_type)
     field->set_type(control_type);
-  if (label)
-    field->set_label(label);
 }
 
 }  // namespace test

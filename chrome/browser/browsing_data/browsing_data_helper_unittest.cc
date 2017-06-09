@@ -5,14 +5,14 @@
 #include "chrome/browser/browsing_data/browsing_data_helper.h"
 
 #include "base/macros.h"
-#include "base/strings/stringprintf.h"
 #include "chrome/common/url_constants.h"
 #include "extensions/common/constants.h"
+#include "extensions/features/features.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 #include "url/url_constants.h"
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/extensions/mock_extension_special_storage_policy.h"
 #endif
 
@@ -61,18 +61,16 @@ class BrowsingDataHelperTest : public testing::Test {
   DISALLOW_COPY_AND_ASSIGN(BrowsingDataHelperTest);
 };
 
-TEST_F(BrowsingDataHelperTest, WebSafeSchemesAreWebSafe) {
+TEST_F(BrowsingDataHelperTest, WebStorageSchemesAreWebSchemes) {
   EXPECT_TRUE(IsWebScheme(url::kHttpScheme));
   EXPECT_TRUE(IsWebScheme(url::kHttpsScheme));
+  EXPECT_TRUE(IsWebScheme(url::kFileScheme));
   EXPECT_TRUE(IsWebScheme(url::kFtpScheme));
-  EXPECT_TRUE(IsWebScheme(url::kDataScheme));
-  EXPECT_TRUE(IsWebScheme("feed"));
-  EXPECT_TRUE(IsWebScheme(url::kBlobScheme));
-  EXPECT_TRUE(IsWebScheme(url::kFileSystemScheme));
-  EXPECT_FALSE(IsWebScheme("invalid-scheme-i-just-made-up"));
+  EXPECT_TRUE(IsWebScheme(url::kWsScheme));
+  EXPECT_TRUE(IsWebScheme(url::kWssScheme));
 }
 
-TEST_F(BrowsingDataHelperTest, ChromeSchemesAreNotWebSafe) {
+TEST_F(BrowsingDataHelperTest, ChromeSchemesAreNotWebSchemes) {
   EXPECT_FALSE(IsWebScheme(extensions::kExtensionScheme));
   EXPECT_FALSE(IsWebScheme(url::kAboutScheme));
   EXPECT_FALSE(IsWebScheme(content::kChromeDevToolsScheme));
@@ -82,15 +80,13 @@ TEST_F(BrowsingDataHelperTest, ChromeSchemesAreNotWebSafe) {
   EXPECT_FALSE(IsWebScheme(content::kViewSourceScheme));
 }
 
-TEST_F(BrowsingDataHelperTest, WebSafeSchemesAreNotExtensions) {
+TEST_F(BrowsingDataHelperTest, WebStorageSchemesAreNotExtensions) {
   EXPECT_FALSE(IsExtensionScheme(url::kHttpScheme));
   EXPECT_FALSE(IsExtensionScheme(url::kHttpsScheme));
+  EXPECT_FALSE(IsExtensionScheme(url::kFileScheme));
   EXPECT_FALSE(IsExtensionScheme(url::kFtpScheme));
-  EXPECT_FALSE(IsExtensionScheme(url::kDataScheme));
-  EXPECT_FALSE(IsExtensionScheme("feed"));
-  EXPECT_FALSE(IsExtensionScheme(url::kBlobScheme));
-  EXPECT_FALSE(IsExtensionScheme(url::kFileSystemScheme));
-  EXPECT_FALSE(IsExtensionScheme("invalid-scheme-i-just-made-up"));
+  EXPECT_FALSE(IsExtensionScheme(url::kWsScheme));
+  EXPECT_FALSE(IsExtensionScheme(url::kWssScheme));
 }
 
 TEST_F(BrowsingDataHelperTest, ChromeSchemesAreNotAllExtension) {
@@ -104,7 +100,24 @@ TEST_F(BrowsingDataHelperTest, ChromeSchemesAreNotAllExtension) {
   EXPECT_FALSE(IsExtensionScheme(content::kViewSourceScheme));
 }
 
-#if defined(ENABLE_EXTENSIONS)
+TEST_F(BrowsingDataHelperTest, SchemesThatCantStoreDataDontMatchAnything) {
+  EXPECT_FALSE(IsWebScheme(url::kDataScheme));
+  EXPECT_FALSE(IsExtensionScheme(url::kDataScheme));
+
+  EXPECT_FALSE(IsWebScheme("feed"));
+  EXPECT_FALSE(IsExtensionScheme("feed"));
+
+  EXPECT_FALSE(IsWebScheme(url::kBlobScheme));
+  EXPECT_FALSE(IsExtensionScheme(url::kBlobScheme));
+
+  EXPECT_FALSE(IsWebScheme(url::kFileSystemScheme));
+  EXPECT_FALSE(IsExtensionScheme(url::kFileSystemScheme));
+
+  EXPECT_FALSE(IsWebScheme("invalid-scheme-i-just-made-up"));
+  EXPECT_FALSE(IsExtensionScheme("invalid-scheme-i-just-made-up"));
+}
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 TEST_F(BrowsingDataHelperTest, TestMatches) {
   scoped_refptr<MockExtensionSpecialStoragePolicy> mock_policy =
       new MockExtensionSpecialStoragePolicy;

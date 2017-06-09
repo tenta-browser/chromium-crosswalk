@@ -30,7 +30,6 @@
 
 #include "public/platform/WebURLResponse.h"
 
-#include "platform/exported/WebURLResponsePrivate.h"
 #include "platform/network/ResourceLoadTiming.h"
 #include "platform/network/ResourceResponse.h"
 #include "public/platform/WebHTTPHeaderVisitor.h"
@@ -39,6 +38,7 @@
 #include "public/platform/WebURL.h"
 #include "public/platform/WebURLLoadTiming.h"
 #include "wtf/Allocator.h"
+#include "wtf/Assertions.h"
 #include "wtf/PtrUtil.h"
 #include "wtf/RefPtr.h"
 #include <memory>
@@ -48,478 +48,334 @@ namespace blink {
 namespace {
 
 class ExtraDataContainer : public ResourceResponse::ExtraData {
-public:
-    static PassRefPtr<ExtraDataContainer> create(WebURLResponse::ExtraData* extraData) { return adoptRef(new ExtraDataContainer(extraData)); }
+ public:
+  static PassRefPtr<ExtraDataContainer> create(
+      WebURLResponse::ExtraData* extraData) {
+    return adoptRef(new ExtraDataContainer(extraData));
+  }
 
-    ~ExtraDataContainer() override {}
+  ~ExtraDataContainer() override {}
 
-    WebURLResponse::ExtraData* getExtraData() const { return m_extraData.get(); }
+  WebURLResponse::ExtraData* getExtraData() const { return m_extraData.get(); }
 
-private:
-    explicit ExtraDataContainer(WebURLResponse::ExtraData* extraData)
-        : m_extraData(wrapUnique(extraData))
-    {
-    }
+ private:
+  explicit ExtraDataContainer(WebURLResponse::ExtraData* extraData)
+      : m_extraData(WTF::wrapUnique(extraData)) {}
 
-    std::unique_ptr<WebURLResponse::ExtraData> m_extraData;
+  std::unique_ptr<WebURLResponse::ExtraData> m_extraData;
 };
 
-} // namespace
+}  // namespace
 
-// The standard implementation of WebURLResponsePrivate, which maintains
-// ownership of a ResourceResponse instance.
-class WebURLResponsePrivateImpl final : public WebURLResponsePrivate {
-    USING_FAST_MALLOC(WebURLResponsePrivateImpl);
-public:
-    WebURLResponsePrivateImpl()
-    {
-        m_resourceResponse = &m_resourceResponseAllocation;
-    }
+// The purpose of this struct is to permit allocating a ResourceResponse on the
+// heap, which is otherwise disallowed by the DISALLOW_NEW_EXCEPT_PLACEMENT_NEW
+// annotation on ResourceResponse.
+struct WebURLResponse::ResourceResponseContainer {
+  ResourceResponseContainer() {}
 
-    WebURLResponsePrivateImpl(const WebURLResponsePrivate* p)
-        : m_resourceResponseAllocation(*p->m_resourceResponse)
-    {
-        m_resourceResponse = &m_resourceResponseAllocation;
-    }
+  explicit ResourceResponseContainer(const ResourceResponse& r)
+      : resourceResponse(r) {}
 
-    virtual void dispose() { delete this; }
-
-private:
-    virtual ~WebURLResponsePrivateImpl() { }
-
-    ResourceResponse m_resourceResponseAllocation;
+  ResourceResponse resourceResponse;
 };
 
-void WebURLResponse::initialize()
-{
-    assign(new WebURLResponsePrivateImpl());
-}
-
-void WebURLResponse::reset()
-{
-    assign(0);
-}
-
-void WebURLResponse::assign(const WebURLResponse& r)
-{
-    if (&r != this)
-        assign(r.m_private ? new WebURLResponsePrivateImpl(r.m_private) : 0);
-}
-
-bool WebURLResponse::isNull() const
-{
-    return !m_private || m_private->m_resourceResponse->isNull();
-}
-
-WebURL WebURLResponse::url() const
-{
-    return m_private->m_resourceResponse->url();
-}
-
-void WebURLResponse::setURL(const WebURL& url)
-{
-    m_private->m_resourceResponse->setURL(url);
-}
-
-unsigned WebURLResponse::connectionID() const
-{
-    return m_private->m_resourceResponse->connectionID();
-}
-
-void WebURLResponse::setConnectionID(unsigned connectionID)
-{
-    m_private->m_resourceResponse->setConnectionID(connectionID);
-}
-
-bool WebURLResponse::connectionReused() const
-{
-    return m_private->m_resourceResponse->connectionReused();
-}
-
-void WebURLResponse::setConnectionReused(bool connectionReused)
-{
-    m_private->m_resourceResponse->setConnectionReused(connectionReused);
-}
+WebURLResponse::~WebURLResponse() {}
 
-WebURLLoadTiming WebURLResponse::loadTiming()
-{
-    return WebURLLoadTiming(m_private->m_resourceResponse->resourceLoadTiming());
-}
-
-void WebURLResponse::setLoadTiming(const WebURLLoadTiming& timing)
-{
-    RefPtr<ResourceLoadTiming> loadTiming = PassRefPtr<ResourceLoadTiming>(timing);
-    m_private->m_resourceResponse->setResourceLoadTiming(loadTiming.release());
-}
-
-WebHTTPLoadInfo WebURLResponse::httpLoadInfo()
-{
-    return WebHTTPLoadInfo(m_private->m_resourceResponse->resourceLoadInfo());
-}
-
-void WebURLResponse::setHTTPLoadInfo(const WebHTTPLoadInfo& value)
-{
-    m_private->m_resourceResponse->setResourceLoadInfo(value);
-}
-
-void WebURLResponse::setResponseTime(long long responseTime)
-{
-    m_private->m_resourceResponse->setResponseTime(static_cast<int64_t>(responseTime));
-}
+WebURLResponse::WebURLResponse()
+    : m_ownedResourceResponse(new ResourceResponseContainer()),
+      m_resourceResponse(&m_ownedResourceResponse->resourceResponse) {}
 
-WebString WebURLResponse::mimeType() const
-{
-    return m_private->m_resourceResponse->mimeType();
-}
-
-void WebURLResponse::setMIMEType(const WebString& mimeType)
-{
-    m_private->m_resourceResponse->setMimeType(mimeType);
-}
-
-long long WebURLResponse::expectedContentLength() const
-{
-    return m_private->m_resourceResponse->expectedContentLength();
-}
+WebURLResponse::WebURLResponse(const WebURLResponse& r)
+    : m_ownedResourceResponse(
+          new ResourceResponseContainer(*r.m_resourceResponse)),
+      m_resourceResponse(&m_ownedResourceResponse->resourceResponse) {}
 
-void WebURLResponse::setExpectedContentLength(long long expectedContentLength)
-{
-    m_private->m_resourceResponse->setExpectedContentLength(expectedContentLength);
+WebURLResponse::WebURLResponse(const WebURL& url) : WebURLResponse() {
+  setURL(url);
 }
 
-WebString WebURLResponse::textEncodingName() const
-{
-    return m_private->m_resourceResponse->textEncodingName();
+WebURLResponse& WebURLResponse::operator=(const WebURLResponse& r) {
+  // Copying subclasses that have different m_resourceResponse ownership
+  // semantics via this operator is just not supported.
+  DCHECK(m_ownedResourceResponse);
+  DCHECK(m_resourceResponse);
+  if (&r != this)
+    *m_resourceResponse = *r.m_resourceResponse;
+  return *this;
 }
 
-void WebURLResponse::setTextEncodingName(const WebString& textEncodingName)
-{
-    m_private->m_resourceResponse->setTextEncodingName(textEncodingName);
+bool WebURLResponse::isNull() const {
+  return m_resourceResponse->isNull();
 }
 
-WebString WebURLResponse::suggestedFileName() const
-{
-    return m_private->m_resourceResponse->suggestedFilename();
+WebURL WebURLResponse::url() const {
+  return m_resourceResponse->url();
 }
 
-void WebURLResponse::setSuggestedFileName(const WebString& suggestedFileName)
-{
-    m_private->m_resourceResponse->setSuggestedFilename(suggestedFileName);
+void WebURLResponse::setURL(const WebURL& url) {
+  m_resourceResponse->setURL(url);
 }
 
-WebURLResponse::HTTPVersion WebURLResponse::httpVersion() const
-{
-    return static_cast<HTTPVersion>(m_private->m_resourceResponse->httpVersion());
+void WebURLResponse::setConnectionID(unsigned connectionID) {
+  m_resourceResponse->setConnectionID(connectionID);
 }
 
-void WebURLResponse::setHTTPVersion(HTTPVersion version)
-{
-    m_private->m_resourceResponse->setHTTPVersion(static_cast<ResourceResponse::HTTPVersion>(version));
+void WebURLResponse::setConnectionReused(bool connectionReused) {
+  m_resourceResponse->setConnectionReused(connectionReused);
 }
 
-int WebURLResponse::httpStatusCode() const
-{
-    return m_private->m_resourceResponse->httpStatusCode();
+void WebURLResponse::setLoadTiming(const WebURLLoadTiming& timing) {
+  RefPtr<ResourceLoadTiming> loadTiming =
+      PassRefPtr<ResourceLoadTiming>(timing);
+  m_resourceResponse->setResourceLoadTiming(std::move(loadTiming));
 }
 
-void WebURLResponse::setHTTPStatusCode(int httpStatusCode)
-{
-    m_private->m_resourceResponse->setHTTPStatusCode(httpStatusCode);
+void WebURLResponse::setHTTPLoadInfo(const WebHTTPLoadInfo& value) {
+  m_resourceResponse->setResourceLoadInfo(value);
 }
 
-WebString WebURLResponse::httpStatusText() const
-{
-    return m_private->m_resourceResponse->httpStatusText();
+void WebURLResponse::setResponseTime(long long responseTime) {
+  m_resourceResponse->setResponseTime(static_cast<int64_t>(responseTime));
 }
 
-void WebURLResponse::setHTTPStatusText(const WebString& httpStatusText)
-{
-    m_private->m_resourceResponse->setHTTPStatusText(httpStatusText);
+WebString WebURLResponse::mimeType() const {
+  return m_resourceResponse->mimeType();
 }
 
-WebString WebURLResponse::httpHeaderField(const WebString& name) const
-{
-    return m_private->m_resourceResponse->httpHeaderField(name);
+void WebURLResponse::setMIMEType(const WebString& mimeType) {
+  m_resourceResponse->setMimeType(mimeType);
 }
 
-void WebURLResponse::setHTTPHeaderField(const WebString& name, const WebString& value)
-{
-    m_private->m_resourceResponse->setHTTPHeaderField(name, value);
+long long WebURLResponse::expectedContentLength() const {
+  return m_resourceResponse->expectedContentLength();
 }
 
-void WebURLResponse::addHTTPHeaderField(const WebString& name, const WebString& value)
-{
-    if (name.isNull() || value.isNull())
-        return;
-
-    m_private->m_resourceResponse->addHTTPHeaderField(name, value);
+void WebURLResponse::setExpectedContentLength(long long expectedContentLength) {
+  m_resourceResponse->setExpectedContentLength(expectedContentLength);
 }
 
-void WebURLResponse::clearHTTPHeaderField(const WebString& name)
-{
-    m_private->m_resourceResponse->clearHTTPHeaderField(name);
+void WebURLResponse::setTextEncodingName(const WebString& textEncodingName) {
+  m_resourceResponse->setTextEncodingName(textEncodingName);
 }
 
-void WebURLResponse::visitHTTPHeaderFields(WebHTTPHeaderVisitor* visitor) const
-{
-    const HTTPHeaderMap& map = m_private->m_resourceResponse->httpHeaderFields();
-    for (HTTPHeaderMap::const_iterator it = map.begin(); it != map.end(); ++it)
-        visitor->visitHeader(it->key, it->value);
+WebURLResponse::HTTPVersion WebURLResponse::httpVersion() const {
+  return static_cast<HTTPVersion>(m_resourceResponse->httpVersion());
 }
 
-double WebURLResponse::lastModifiedDate() const
-{
-    return static_cast<double>(m_private->m_resourceResponse->lastModifiedDate());
+void WebURLResponse::setHTTPVersion(HTTPVersion version) {
+  m_resourceResponse->setHTTPVersion(
+      static_cast<ResourceResponse::HTTPVersion>(version));
 }
 
-void WebURLResponse::setLastModifiedDate(double lastModifiedDate)
-{
-    m_private->m_resourceResponse->setLastModifiedDate(static_cast<time_t>(lastModifiedDate));
+int WebURLResponse::httpStatusCode() const {
+  return m_resourceResponse->httpStatusCode();
 }
 
-long long WebURLResponse::appCacheID() const
-{
-    return m_private->m_resourceResponse->appCacheID();
+void WebURLResponse::setHTTPStatusCode(int httpStatusCode) {
+  m_resourceResponse->setHTTPStatusCode(httpStatusCode);
 }
 
-void WebURLResponse::setAppCacheID(long long appCacheID)
-{
-    m_private->m_resourceResponse->setAppCacheID(appCacheID);
+WebString WebURLResponse::httpStatusText() const {
+  return m_resourceResponse->httpStatusText();
 }
 
-WebURL WebURLResponse::appCacheManifestURL() const
-{
-    return m_private->m_resourceResponse->appCacheManifestURL();
+void WebURLResponse::setHTTPStatusText(const WebString& httpStatusText) {
+  m_resourceResponse->setHTTPStatusText(httpStatusText);
 }
 
-void WebURLResponse::setAppCacheManifestURL(const WebURL& url)
-{
-    m_private->m_resourceResponse->setAppCacheManifestURL(url);
+WebString WebURLResponse::httpHeaderField(const WebString& name) const {
+  return m_resourceResponse->httpHeaderField(name);
 }
 
-WebCString WebURLResponse::securityInfo() const
-{
-    // FIXME: getSecurityInfo is misnamed.
-    return m_private->m_resourceResponse->getSecurityInfo();
+void WebURLResponse::setHTTPHeaderField(const WebString& name,
+                                        const WebString& value) {
+  m_resourceResponse->setHTTPHeaderField(name, value);
 }
 
-void WebURLResponse::setSecurityInfo(const WebCString& securityInfo)
-{
-    m_private->m_resourceResponse->setSecurityInfo(securityInfo);
-}
+void WebURLResponse::addHTTPHeaderField(const WebString& name,
+                                        const WebString& value) {
+  if (name.isNull() || value.isNull())
+    return;
 
-void WebURLResponse::setHasMajorCertificateErrors(bool value)
-{
-    m_private->m_resourceResponse->setHasMajorCertificateErrors(value);
+  m_resourceResponse->addHTTPHeaderField(name, value);
 }
 
-WebURLResponse::SecurityStyle WebURLResponse::getSecurityStyle() const
-{
-    return static_cast<SecurityStyle>(m_private->m_resourceResponse->getSecurityStyle());
+void WebURLResponse::clearHTTPHeaderField(const WebString& name) {
+  m_resourceResponse->clearHTTPHeaderField(name);
 }
 
-void WebURLResponse::setSecurityStyle(SecurityStyle securityStyle)
-{
-    m_private->m_resourceResponse->setSecurityStyle(static_cast<ResourceResponse::SecurityStyle>(securityStyle));
+void WebURLResponse::visitHTTPHeaderFields(
+    WebHTTPHeaderVisitor* visitor) const {
+  const HTTPHeaderMap& map = m_resourceResponse->httpHeaderFields();
+  for (HTTPHeaderMap::const_iterator it = map.begin(); it != map.end(); ++it)
+    visitor->visitHeader(it->key, it->value);
 }
 
-void WebURLResponse::setSecurityDetails(const WebSecurityDetails& webSecurityDetails)
-{
-    blink::ResourceResponse::SignedCertificateTimestampList sctList;
-    for (const auto& iter : webSecurityDetails.sctList)
-        sctList.append(static_cast<blink::ResourceResponse::SignedCertificateTimestamp>(iter));
-    m_private->m_resourceResponse->setSecurityDetails(
-        webSecurityDetails.protocol,
-        webSecurityDetails.keyExchange,
-        webSecurityDetails.cipher,
-        webSecurityDetails.mac,
-        webSecurityDetails.certId,
-        webSecurityDetails.numUnknownScts,
-        webSecurityDetails.numInvalidScts,
-        webSecurityDetails.numValidScts,
-        sctList);
+long long WebURLResponse::appCacheID() const {
+  return m_resourceResponse->appCacheID();
 }
 
-ResourceResponse& WebURLResponse::toMutableResourceResponse()
-{
-    ASSERT(m_private);
-    ASSERT(m_private->m_resourceResponse);
-
-    return *m_private->m_resourceResponse;
+void WebURLResponse::setAppCacheID(long long appCacheID) {
+  m_resourceResponse->setAppCacheID(appCacheID);
 }
 
-const ResourceResponse& WebURLResponse::toResourceResponse() const
-{
-    ASSERT(m_private);
-    ASSERT(m_private->m_resourceResponse);
-
-    return *m_private->m_resourceResponse;
+WebURL WebURLResponse::appCacheManifestURL() const {
+  return m_resourceResponse->appCacheManifestURL();
 }
 
-bool WebURLResponse::wasCached() const
-{
-    return m_private->m_resourceResponse->wasCached();
+void WebURLResponse::setAppCacheManifestURL(const WebURL& url) {
+  m_resourceResponse->setAppCacheManifestURL(url);
 }
 
-void WebURLResponse::setWasCached(bool value)
-{
-    m_private->m_resourceResponse->setWasCached(value);
+void WebURLResponse::setHasMajorCertificateErrors(bool value) {
+  m_resourceResponse->setHasMajorCertificateErrors(value);
 }
 
-bool WebURLResponse::wasFetchedViaSPDY() const
-{
-    return m_private->m_resourceResponse->wasFetchedViaSPDY();
+void WebURLResponse::setSecurityStyle(WebSecurityStyle securityStyle) {
+  m_resourceResponse->setSecurityStyle(
+      static_cast<ResourceResponse::SecurityStyle>(securityStyle));
 }
 
-void WebURLResponse::setWasFetchedViaSPDY(bool value)
-{
-    m_private->m_resourceResponse->setWasFetchedViaSPDY(value);
+void WebURLResponse::setSecurityDetails(
+    const WebSecurityDetails& webSecurityDetails) {
+  ResourceResponse::SignedCertificateTimestampList sctList;
+  for (const auto& iter : webSecurityDetails.sctList) {
+    sctList.push_back(
+        static_cast<ResourceResponse::SignedCertificateTimestamp>(iter));
+  }
+  Vector<String> sanList;
+  sanList.append(webSecurityDetails.sanList.data(),
+                 webSecurityDetails.sanList.size());
+  Vector<AtomicString> certificate;
+  for (const auto& iter : webSecurityDetails.certificate) {
+    AtomicString cert = iter;
+    certificate.push_back(cert);
+  }
+  m_resourceResponse->setSecurityDetails(
+      webSecurityDetails.protocol, webSecurityDetails.keyExchange,
+      webSecurityDetails.keyExchangeGroup, webSecurityDetails.cipher,
+      webSecurityDetails.mac, webSecurityDetails.subjectName, sanList,
+      webSecurityDetails.issuer,
+      static_cast<time_t>(webSecurityDetails.validFrom),
+      static_cast<time_t>(webSecurityDetails.validTo), certificate, sctList);
 }
 
-bool WebURLResponse::wasNpnNegotiated() const
-{
-    return m_private->m_resourceResponse->wasNpnNegotiated();
+const ResourceResponse& WebURLResponse::toResourceResponse() const {
+  return *m_resourceResponse;
 }
 
-void WebURLResponse::setWasNpnNegotiated(bool value)
-{
-    m_private->m_resourceResponse->setWasNpnNegotiated(value);
+void WebURLResponse::setWasCached(bool value) {
+  m_resourceResponse->setWasCached(value);
 }
 
-bool WebURLResponse::wasAlternateProtocolAvailable() const
-{
-    return m_private->m_resourceResponse->wasAlternateProtocolAvailable();
+void WebURLResponse::setWasFetchedViaSPDY(bool value) {
+  m_resourceResponse->setWasFetchedViaSPDY(value);
 }
 
-void WebURLResponse::setWasAlternateProtocolAvailable(bool value)
-{
-    m_private->m_resourceResponse->setWasAlternateProtocolAvailable(value);
+bool WebURLResponse::wasFetchedViaServiceWorker() const {
+  return m_resourceResponse->wasFetchedViaServiceWorker();
 }
 
-bool WebURLResponse::wasFetchedViaProxy() const
-{
-    return m_private->m_resourceResponse->wasFetchedViaProxy();
+void WebURLResponse::setWasFetchedViaServiceWorker(bool value) {
+  m_resourceResponse->setWasFetchedViaServiceWorker(value);
 }
 
-void WebURLResponse::setWasFetchedViaProxy(bool value)
-{
-    m_private->m_resourceResponse->setWasFetchedViaProxy(value);
+void WebURLResponse::setWasFetchedViaForeignFetch(bool value) {
+  m_resourceResponse->setWasFetchedViaForeignFetch(value);
 }
 
-bool WebURLResponse::wasFetchedViaServiceWorker() const
-{
-    return m_private->m_resourceResponse->wasFetchedViaServiceWorker();
+void WebURLResponse::setWasFallbackRequiredByServiceWorker(bool value) {
+  m_resourceResponse->setWasFallbackRequiredByServiceWorker(value);
 }
 
-void WebURLResponse::setWasFetchedViaServiceWorker(bool value)
-{
-    m_private->m_resourceResponse->setWasFetchedViaServiceWorker(value);
+void WebURLResponse::setServiceWorkerResponseType(
+    WebServiceWorkerResponseType value) {
+  m_resourceResponse->setServiceWorkerResponseType(value);
 }
 
-bool WebURLResponse::wasFallbackRequiredByServiceWorker() const
-{
-    return m_private->m_resourceResponse->wasFallbackRequiredByServiceWorker();
+void WebURLResponse::setURLListViaServiceWorker(
+    const WebVector<WebURL>& urlListViaServiceWorker) {
+  Vector<KURL> urlList(urlListViaServiceWorker.size());
+  std::transform(urlListViaServiceWorker.begin(), urlListViaServiceWorker.end(),
+                 urlList.begin(), [](const WebURL& url) { return url; });
+  m_resourceResponse->setURLListViaServiceWorker(urlList);
 }
 
-void WebURLResponse::setWasFallbackRequiredByServiceWorker(bool value)
-{
-    m_private->m_resourceResponse->setWasFallbackRequiredByServiceWorker(value);
+WebURL WebURLResponse::originalURLViaServiceWorker() const {
+  return m_resourceResponse->originalURLViaServiceWorker();
 }
 
-WebServiceWorkerResponseType WebURLResponse::serviceWorkerResponseType() const
-{
-    return m_private->m_resourceResponse->serviceWorkerResponseType();
+void WebURLResponse::setMultipartBoundary(const char* bytes, size_t size) {
+  m_resourceResponse->setMultipartBoundary(bytes, size);
 }
 
-void WebURLResponse::setServiceWorkerResponseType(WebServiceWorkerResponseType value)
-{
-    m_private->m_resourceResponse->setServiceWorkerResponseType(value);
+void WebURLResponse::setCacheStorageCacheName(
+    const WebString& cacheStorageCacheName) {
+  m_resourceResponse->setCacheStorageCacheName(cacheStorageCacheName);
 }
 
-WebURL WebURLResponse::originalURLViaServiceWorker() const
-{
-    return m_private->m_resourceResponse->originalURLViaServiceWorker();
+void WebURLResponse::setCorsExposedHeaderNames(
+    const WebVector<WebString>& headerNames) {
+  Vector<String> exposedHeaderNames;
+  exposedHeaderNames.append(headerNames.data(), headerNames.size());
+  m_resourceResponse->setCorsExposedHeaderNames(exposedHeaderNames);
 }
 
-void WebURLResponse::setOriginalURLViaServiceWorker(const WebURL& url)
-{
-    m_private->m_resourceResponse->setOriginalURLViaServiceWorker(url);
+void WebURLResponse::setDidServiceWorkerNavigationPreload(bool value) {
+  m_resourceResponse->setDidServiceWorkerNavigationPreload(value);
 }
 
-void WebURLResponse::setMultipartBoundary(const char* bytes, size_t size)
-{
-    m_private->m_resourceResponse->setMultipartBoundary(bytes, size);
+WebString WebURLResponse::downloadFilePath() const {
+  return m_resourceResponse->downloadedFilePath();
 }
 
-WebString WebURLResponse::cacheStorageCacheName() const
-{
-    return m_private->m_resourceResponse->cacheStorageCacheName();
+void WebURLResponse::setDownloadFilePath(const WebString& downloadFilePath) {
+  m_resourceResponse->setDownloadedFilePath(downloadFilePath);
 }
 
-void WebURLResponse::setCacheStorageCacheName(const WebString& cacheStorageCacheName)
-{
-    m_private->m_resourceResponse->setCacheStorageCacheName(cacheStorageCacheName);
+WebString WebURLResponse::remoteIPAddress() const {
+  return m_resourceResponse->remoteIPAddress();
 }
 
-void WebURLResponse::setCorsExposedHeaderNames(const WebVector<WebString>& headerNames)
-{
-    Vector<String> exposedHeaderNames;
-    exposedHeaderNames.append(headerNames.data(), headerNames.size());
-    m_private->m_resourceResponse->setCorsExposedHeaderNames(exposedHeaderNames);
+void WebURLResponse::setRemoteIPAddress(const WebString& remoteIPAddress) {
+  m_resourceResponse->setRemoteIPAddress(remoteIPAddress);
 }
 
-WebString WebURLResponse::downloadFilePath() const
-{
-    return m_private->m_resourceResponse->downloadedFilePath();
+unsigned short WebURLResponse::remotePort() const {
+  return m_resourceResponse->remotePort();
 }
 
-void WebURLResponse::setDownloadFilePath(const WebString& downloadFilePath)
-{
-    m_private->m_resourceResponse->setDownloadedFilePath(downloadFilePath);
+void WebURLResponse::setRemotePort(unsigned short remotePort) {
+  m_resourceResponse->setRemotePort(remotePort);
 }
 
-WebString WebURLResponse::remoteIPAddress() const
-{
-    return m_private->m_resourceResponse->remoteIPAddress();
+void WebURLResponse::setEncodedDataLength(long long length) {
+  m_resourceResponse->setEncodedDataLength(length);
 }
 
-void WebURLResponse::setRemoteIPAddress(const WebString& remoteIPAddress)
-{
-    m_private->m_resourceResponse->setRemoteIPAddress(remoteIPAddress);
+void WebURLResponse::addToEncodedBodyLength(long long length) {
+  m_resourceResponse->addToEncodedBodyLength(length);
 }
 
-unsigned short WebURLResponse::remotePort() const
-{
-    return m_private->m_resourceResponse->remotePort();
+void WebURLResponse::addToDecodedBodyLength(long long bytes) {
+  m_resourceResponse->addToDecodedBodyLength(bytes);
 }
 
-void WebURLResponse::setRemotePort(unsigned short remotePort)
-{
-    m_private->m_resourceResponse->setRemotePort(remotePort);
+WebURLResponse::ExtraData* WebURLResponse::getExtraData() const {
+  RefPtr<ResourceResponse::ExtraData> data = m_resourceResponse->getExtraData();
+  if (!data)
+    return 0;
+  return static_cast<ExtraDataContainer*>(data.get())->getExtraData();
 }
 
-WebURLResponse::ExtraData* WebURLResponse::getExtraData() const
-{
-    RefPtr<ResourceResponse::ExtraData> data = m_private->m_resourceResponse->getExtraData();
-    if (!data)
-        return 0;
-    return static_cast<ExtraDataContainer*>(data.get())->getExtraData();
+void WebURLResponse::setExtraData(WebURLResponse::ExtraData* extraData) {
+  m_resourceResponse->setExtraData(ExtraDataContainer::create(extraData));
 }
 
-void WebURLResponse::setExtraData(WebURLResponse::ExtraData* extraData)
-{
-    m_private->m_resourceResponse->setExtraData(ExtraDataContainer::create(extraData));
+void WebURLResponse::appendRedirectResponse(const WebURLResponse& response) {
+  m_resourceResponse->appendRedirectResponse(response.toResourceResponse());
 }
 
-void WebURLResponse::assign(WebURLResponsePrivate* p)
-{
-    // Subclasses may call this directly so a self-assignment check is needed
-    // here as well as in the public assign method.
-    if (m_private == p)
-        return;
-    if (m_private)
-        m_private->dispose();
-    m_private = p;
-}
+WebURLResponse::WebURLResponse(ResourceResponse& r) : m_resourceResponse(&r) {}
 
-} // namespace blink
+}  // namespace blink

@@ -12,9 +12,14 @@
 #include "base/run_loop.h"
 #include "net/base/net_errors.h"
 #include "net/http/mock_http_cache.h"
-#include "net/quic/crypto/quic_server_info.h"
-#include "net/quic/quic_server_id.h"
+#include "net/quic/chromium/quic_server_info.h"
+#include "net/quic/core/quic_server_id.h"
+#include "net/test/gtest_util.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+using net::test::IsError;
+using net::test::IsOk;
 
 using std::string;
 
@@ -89,22 +94,22 @@ TEST(DiskCacheBasedQuicServerInfo, DeleteInCallback) {
   // Use the blocking mock backend factory to force asynchronous completion
   // of quic_server_info->WaitForDataReady(), so that the callback will run.
   MockBlockingBackendFactory* factory = new MockBlockingBackendFactory();
-  MockHttpCache cache(base::WrapUnique(factory));
+  MockHttpCache cache(base::WrapUnique(factory), true);
   QuicServerId server_id("www.verisign.com", 443, PRIVACY_MODE_DISABLED);
   std::unique_ptr<QuicServerInfo> quic_server_info(
       new DiskCacheBasedQuicServerInfo(server_id, cache.http_cache()));
   quic_server_info->Start();
   TestCompletionCallback callback;
   int rv = quic_server_info->WaitForDataReady(callback.callback());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
   // Now complete the backend creation and let the callback run.
   factory->FinishCreation();
-  EXPECT_EQ(OK, callback.GetResult(rv));
+  EXPECT_THAT(callback.GetResult(rv), IsOk());
 }
 
 // Tests the basic logic of storing, retrieving and updating data.
 TEST(DiskCacheBasedQuicServerInfo, Update) {
-  MockHttpCache cache;
+  MockHttpCache cache(true);
   AddMockTransaction(&kHostInfoTransaction1);
   TestCompletionCallback callback;
 
@@ -113,7 +118,7 @@ TEST(DiskCacheBasedQuicServerInfo, Update) {
       new DiskCacheBasedQuicServerInfo(server_id, cache.http_cache()));
   quic_server_info->Start();
   int rv = quic_server_info->WaitForDataReady(callback.callback());
-  EXPECT_EQ(OK, callback.GetResult(rv));
+  EXPECT_THAT(callback.GetResult(rv), IsOk());
 
   QuicServerInfo::State* state = quic_server_info->mutable_state();
   EXPECT_TRUE(state->certs.empty());
@@ -141,7 +146,7 @@ TEST(DiskCacheBasedQuicServerInfo, Update) {
       new DiskCacheBasedQuicServerInfo(server_id, cache.http_cache()));
   quic_server_info->Start();
   rv = quic_server_info->WaitForDataReady(callback.callback());
-  EXPECT_EQ(OK, callback.GetResult(rv));
+  EXPECT_THAT(callback.GetResult(rv), IsOk());
 
   // And now update the data.
   state = quic_server_info->mutable_state();
@@ -157,7 +162,7 @@ TEST(DiskCacheBasedQuicServerInfo, Update) {
       new DiskCacheBasedQuicServerInfo(server_id, cache.http_cache()));
   quic_server_info->Start();
   rv = quic_server_info->WaitForDataReady(callback.callback());
-  EXPECT_EQ(OK, callback.GetResult(rv));
+  EXPECT_THAT(callback.GetResult(rv), IsOk());
   EXPECT_TRUE(quic_server_info->IsDataReady());
 
   const QuicServerInfo::State& state1 = quic_server_info->state();
@@ -175,7 +180,7 @@ TEST(DiskCacheBasedQuicServerInfo, Update) {
 
 // Test that demonstrates different info is returned when the ports differ.
 TEST(DiskCacheBasedQuicServerInfo, UpdateDifferentPorts) {
-  MockHttpCache cache;
+  MockHttpCache cache(true);
   AddMockTransaction(&kHostInfoTransaction1);
   AddMockTransaction(&kHostInfoTransaction2);
   TestCompletionCallback callback;
@@ -186,7 +191,7 @@ TEST(DiskCacheBasedQuicServerInfo, UpdateDifferentPorts) {
       new DiskCacheBasedQuicServerInfo(server_id1, cache.http_cache()));
   quic_server_info1->Start();
   int rv = quic_server_info1->WaitForDataReady(callback.callback());
-  EXPECT_EQ(OK, callback.GetResult(rv));
+  EXPECT_THAT(callback.GetResult(rv), IsOk());
 
   QuicServerInfo::State* state1 = quic_server_info1->mutable_state();
   EXPECT_TRUE(state1->certs.empty());
@@ -214,7 +219,7 @@ TEST(DiskCacheBasedQuicServerInfo, UpdateDifferentPorts) {
       new DiskCacheBasedQuicServerInfo(server_id2, cache.http_cache()));
   quic_server_info2->Start();
   rv = quic_server_info2->WaitForDataReady(callback.callback());
-  EXPECT_EQ(OK, callback.GetResult(rv));
+  EXPECT_THAT(callback.GetResult(rv), IsOk());
 
   QuicServerInfo::State* state2 = quic_server_info2->mutable_state();
   EXPECT_TRUE(state2->certs.empty());
@@ -241,7 +246,7 @@ TEST(DiskCacheBasedQuicServerInfo, UpdateDifferentPorts) {
       new DiskCacheBasedQuicServerInfo(server_id1, cache.http_cache()));
   quic_server_info->Start();
   rv = quic_server_info->WaitForDataReady(callback.callback());
-  EXPECT_EQ(OK, callback.GetResult(rv));
+  EXPECT_THAT(callback.GetResult(rv), IsOk());
   EXPECT_TRUE(quic_server_info->IsDataReady());
 
   const QuicServerInfo::State& state_a = quic_server_info->state();
@@ -258,7 +263,7 @@ TEST(DiskCacheBasedQuicServerInfo, UpdateDifferentPorts) {
       new DiskCacheBasedQuicServerInfo(server_id2, cache.http_cache()));
   quic_server_info->Start();
   rv = quic_server_info->WaitForDataReady(callback.callback());
-  EXPECT_EQ(OK, callback.GetResult(rv));
+  EXPECT_THAT(callback.GetResult(rv), IsOk());
   EXPECT_TRUE(quic_server_info->IsDataReady());
 
   const QuicServerInfo::State& state_b = quic_server_info->state();
@@ -276,7 +281,7 @@ TEST(DiskCacheBasedQuicServerInfo, UpdateDifferentPorts) {
 
 // Test IsReadyToPersist when there is a pending write.
 TEST(DiskCacheBasedQuicServerInfo, IsReadyToPersist) {
-  MockHttpCache cache;
+  MockHttpCache cache(true);
   AddMockTransaction(&kHostInfoTransaction1);
   TestCompletionCallback callback;
 
@@ -286,7 +291,7 @@ TEST(DiskCacheBasedQuicServerInfo, IsReadyToPersist) {
   EXPECT_FALSE(quic_server_info->IsDataReady());
   quic_server_info->Start();
   int rv = quic_server_info->WaitForDataReady(callback.callback());
-  EXPECT_EQ(OK, callback.GetResult(rv));
+  EXPECT_THAT(callback.GetResult(rv), IsOk());
   EXPECT_TRUE(quic_server_info->IsDataReady());
 
   QuicServerInfo::State* state = quic_server_info->mutable_state();
@@ -321,7 +326,7 @@ TEST(DiskCacheBasedQuicServerInfo, IsReadyToPersist) {
       new DiskCacheBasedQuicServerInfo(server_id, cache.http_cache()));
   quic_server_info->Start();
   rv = quic_server_info->WaitForDataReady(callback.callback());
-  EXPECT_EQ(OK, callback.GetResult(rv));
+  EXPECT_THAT(callback.GetResult(rv), IsOk());
   EXPECT_TRUE(quic_server_info->IsDataReady());
 
   const QuicServerInfo::State& state1 = quic_server_info->state();
@@ -338,7 +343,7 @@ TEST(DiskCacheBasedQuicServerInfo, IsReadyToPersist) {
 
 // Test multiple calls to Persist.
 TEST(DiskCacheBasedQuicServerInfo, MultiplePersist) {
-  MockHttpCache cache;
+  MockHttpCache cache(true);
   AddMockTransaction(&kHostInfoTransaction1);
   TestCompletionCallback callback;
 
@@ -348,7 +353,7 @@ TEST(DiskCacheBasedQuicServerInfo, MultiplePersist) {
   EXPECT_FALSE(quic_server_info->IsDataReady());
   quic_server_info->Start();
   int rv = quic_server_info->WaitForDataReady(callback.callback());
-  EXPECT_EQ(OK, callback.GetResult(rv));
+  EXPECT_THAT(callback.GetResult(rv), IsOk());
   EXPECT_TRUE(quic_server_info->IsDataReady());
 
   // Persist data once.
@@ -411,7 +416,7 @@ TEST(DiskCacheBasedQuicServerInfo, MultiplePersist) {
       new DiskCacheBasedQuicServerInfo(server_id, cache.http_cache()));
   quic_server_info->Start();
   rv = quic_server_info->WaitForDataReady(callback.callback());
-  EXPECT_EQ(OK, callback.GetResult(rv));
+  EXPECT_THAT(callback.GetResult(rv), IsOk());
   EXPECT_TRUE(quic_server_info->IsDataReady());
 
   const QuicServerInfo::State& state1 = quic_server_info->state();
@@ -428,7 +433,7 @@ TEST(DiskCacheBasedQuicServerInfo, MultiplePersist) {
 
 TEST(DiskCacheBasedQuicServerInfo, CancelWaitForDataReady) {
   MockBlockingBackendFactory* factory = new MockBlockingBackendFactory();
-  MockHttpCache cache(base::WrapUnique(factory));
+  MockHttpCache cache(base::WrapUnique(factory), true);
   TestCompletionCallback callback;
   QuicServerId server_id("www.google.com", 443, PRIVACY_MODE_DISABLED);
   std::unique_ptr<QuicServerInfo> quic_server_info(
@@ -436,7 +441,7 @@ TEST(DiskCacheBasedQuicServerInfo, CancelWaitForDataReady) {
   EXPECT_FALSE(quic_server_info->IsDataReady());
   quic_server_info->Start();
   int rv = quic_server_info->WaitForDataReady(callback.callback());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
   // Now cancel the callback.
   quic_server_info->CancelWaitForDataReadyCallback();
   EXPECT_FALSE(quic_server_info->IsDataReady());
@@ -446,7 +451,7 @@ TEST(DiskCacheBasedQuicServerInfo, CancelWaitForDataReady) {
 }
 
 TEST(DiskCacheBasedQuicServerInfo, CancelWaitForDataReadyButDataIsReady) {
-  MockHttpCache cache;
+  MockHttpCache cache(true);
   AddMockTransaction(&kHostInfoTransaction1);
   TestCompletionCallback callback;
 
@@ -457,7 +462,7 @@ TEST(DiskCacheBasedQuicServerInfo, CancelWaitForDataReadyButDataIsReady) {
   quic_server_info->Start();
   int rv = quic_server_info->WaitForDataReady(callback.callback());
   quic_server_info->CancelWaitForDataReadyCallback();
-  EXPECT_EQ(OK, callback.GetResult(rv));
+  EXPECT_THAT(callback.GetResult(rv), IsOk());
   EXPECT_TRUE(quic_server_info->IsDataReady());
   RemoveMockTransaction(&kHostInfoTransaction1);
 }
@@ -465,7 +470,7 @@ TEST(DiskCacheBasedQuicServerInfo, CancelWaitForDataReadyButDataIsReady) {
 TEST(DiskCacheBasedQuicServerInfo, CancelWaitForDataReadyAfterDeleteCache) {
   std::unique_ptr<QuicServerInfo> quic_server_info;
   {
-    MockHttpCache cache;
+    MockHttpCache cache(true);
     AddMockTransaction(&kHostInfoTransaction1);
     TestCompletionCallback callback;
 
@@ -476,7 +481,7 @@ TEST(DiskCacheBasedQuicServerInfo, CancelWaitForDataReadyAfterDeleteCache) {
     quic_server_info->Start();
     int rv = quic_server_info->WaitForDataReady(callback.callback());
     quic_server_info->CancelWaitForDataReadyCallback();
-    EXPECT_EQ(OK, callback.GetResult(rv));
+    EXPECT_THAT(callback.GetResult(rv), IsOk());
     EXPECT_TRUE(quic_server_info->IsDataReady());
     RemoveMockTransaction(&kHostInfoTransaction1);
   }
@@ -486,7 +491,7 @@ TEST(DiskCacheBasedQuicServerInfo, CancelWaitForDataReadyAfterDeleteCache) {
 
 // Test Start() followed by Persist() without calling WaitForDataReady.
 TEST(DiskCacheBasedQuicServerInfo, StartAndPersist) {
-  MockHttpCache cache;
+  MockHttpCache cache(true);
   AddMockTransaction(&kHostInfoTransaction1);
 
   QuicServerId server_id("www.google.com", 443, PRIVACY_MODE_DISABLED);
@@ -533,7 +538,7 @@ TEST(DiskCacheBasedQuicServerInfo, StartAndPersist) {
   quic_server_info->Start();
   TestCompletionCallback callback;
   int rv = quic_server_info->WaitForDataReady(callback.callback());
-  EXPECT_EQ(OK, callback.GetResult(rv));
+  EXPECT_THAT(callback.GetResult(rv), IsOk());
   EXPECT_TRUE(quic_server_info->IsDataReady());
 
   const QuicServerInfo::State& state1 = quic_server_info->state();
@@ -552,7 +557,7 @@ TEST(DiskCacheBasedQuicServerInfo, StartAndPersist) {
 // persists the data when Start() finishes.
 TEST(DiskCacheBasedQuicServerInfo, PersistWhenNotReadyToPersist) {
   MockBlockingBackendFactory* factory = new MockBlockingBackendFactory();
-  MockHttpCache cache(base::WrapUnique(factory));
+  MockHttpCache cache(base::WrapUnique(factory), true);
   AddMockTransaction(&kHostInfoTransaction1);
   TestCompletionCallback callback;
 
@@ -597,7 +602,7 @@ TEST(DiskCacheBasedQuicServerInfo, PersistWhenNotReadyToPersist) {
       new DiskCacheBasedQuicServerInfo(server_id, cache.http_cache()));
   quic_server_info->Start();
   int rv = quic_server_info->WaitForDataReady(callback.callback());
-  EXPECT_EQ(OK, callback.GetResult(rv));
+  EXPECT_THAT(callback.GetResult(rv), IsOk());
   EXPECT_TRUE(quic_server_info->IsDataReady());
 
   const QuicServerInfo::State& state1 = quic_server_info->state();
@@ -613,7 +618,7 @@ TEST(DiskCacheBasedQuicServerInfo, PersistWhenNotReadyToPersist) {
 
 // Test multiple calls to Persist without waiting for the data to be written.
 TEST(DiskCacheBasedQuicServerInfo, MultiplePersistsWithoutWaiting) {
-  MockHttpCache cache;
+  MockHttpCache cache(true);
   AddMockTransaction(&kHostInfoTransaction1);
   TestCompletionCallback callback;
 
@@ -623,7 +628,7 @@ TEST(DiskCacheBasedQuicServerInfo, MultiplePersistsWithoutWaiting) {
   EXPECT_FALSE(quic_server_info->IsDataReady());
   quic_server_info->Start();
   int rv = quic_server_info->WaitForDataReady(callback.callback());
-  EXPECT_EQ(OK, callback.GetResult(rv));
+  EXPECT_THAT(callback.GetResult(rv), IsOk());
   EXPECT_TRUE(quic_server_info->IsDataReady());
 
   // Persist data once.
@@ -677,7 +682,7 @@ TEST(DiskCacheBasedQuicServerInfo, MultiplePersistsWithoutWaiting) {
       new DiskCacheBasedQuicServerInfo(server_id, cache.http_cache()));
   quic_server_info->Start();
   rv = quic_server_info->WaitForDataReady(callback.callback());
-  EXPECT_EQ(OK, callback.GetResult(rv));
+  EXPECT_THAT(callback.GetResult(rv), IsOk());
   EXPECT_TRUE(quic_server_info->IsDataReady());
 
   // Verify the second time persisted data is persisted.
@@ -699,7 +704,7 @@ TEST(DiskCacheBasedQuicServerInfo, DeleteServerInfoInCallback) {
   // Use the blocking mock backend factory to force asynchronous completion
   // of quic_server_info->WaitForDataReady(), so that the callback will run.
   MockBlockingBackendFactory* factory = new MockBlockingBackendFactory();
-  MockHttpCache cache(base::WrapUnique(factory));
+  MockHttpCache cache(base::WrapUnique(factory), true);
   QuicServerId server_id("www.verisign.com", 443, PRIVACY_MODE_DISABLED);
   QuicServerInfo* quic_server_info =
       new DiskCacheBasedQuicServerInfo(server_id, cache.http_cache());
@@ -707,10 +712,10 @@ TEST(DiskCacheBasedQuicServerInfo, DeleteServerInfoInCallback) {
   DeleteCacheCompletionCallback cb(quic_server_info);
   quic_server_info->Start();
   int rv = quic_server_info->WaitForDataReady(cb.callback());
-  EXPECT_EQ(ERR_IO_PENDING, rv);
+  EXPECT_THAT(rv, IsError(ERR_IO_PENDING));
   // Now complete the backend creation and let the callback run.
   factory->FinishCreation();
-  EXPECT_EQ(OK, cb.GetResult(rv));
+  EXPECT_THAT(cb.GetResult(rv), IsOk());
 }
 
 }  // namespace net

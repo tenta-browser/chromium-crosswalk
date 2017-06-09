@@ -20,8 +20,6 @@
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_contents_observer.h"
 
-struct RendererContentSettingRules;
-
 namespace guest_view {
 
 class GuestViewEvent;
@@ -200,6 +198,10 @@ class GuestViewBase : public content::BrowserPluginGuestDelegate,
   void SetAttachParams(const base::DictionaryValue& params);
   void SetOpener(GuestViewBase* opener);
 
+  // BrowserPluginGuestDelegate implementation.
+  content::RenderWidgetHost* GetOwnerRenderWidgetHost() override;
+  content::SiteInstance* GetOwnerSiteInstance() override;
+
  protected:
   explicit GuestViewBase(content::WebContents* owner_web_contents);
 
@@ -207,6 +209,12 @@ class GuestViewBase : public content::BrowserPluginGuestDelegate,
 
   // BrowserPluginGuestDelegate implementation.
   void SetContextMenuPosition(const gfx::Point& position) override;
+
+  // TODO(ekaramad): If a guest is based on BrowserPlugin and is embedded inside
+  // a cross-process frame, we need to notify the destruction of the frame so
+  // that the clean-up on the browser side is done appropriately. Remove this
+  // method when BrowserPlugin is removed (https://crbug.com/535197).
+  virtual void OnRenderFrameHostDeleted(int process_id, int routing_id);
 
   // WebContentsDelegate implementation.
   void HandleKeyboardEvent(
@@ -222,9 +230,8 @@ class GuestViewBase : public content::BrowserPluginGuestDelegate,
                  bool final_update) override;
 
   // WebContentsObserver implementation.
-  void DidNavigateMainFrame(
-      const content::LoadCommittedDetails& details,
-      const content::FrameNavigateParams& params) override;
+  void DidFinishNavigation(
+      content::NavigationHandle* navigation_handle) override;
 
   // Given a set of initialization parameters, a concrete subclass of
   // GuestViewBase can create a specialized WebContents that it returns back to

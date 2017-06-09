@@ -32,30 +32,40 @@
 #define AcceleratedImageBufferSurface_h
 
 #include "platform/graphics/ImageBufferSurface.h"
+#include "platform/graphics/paint/PaintCanvas.h"
+#include "platform/graphics/paint/PaintSurface.h"
 #include "public/platform/WebGraphicsContext3DProvider.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
 #include "third_party/skia/include/core/SkSurface.h"
 #include <memory>
 
 namespace blink {
 
-class PLATFORM_EXPORT AcceleratedImageBufferSurface : public ImageBufferSurface {
-    WTF_MAKE_NONCOPYABLE(AcceleratedImageBufferSurface); USING_FAST_MALLOC(AcceleratedImageBufferSurface);
-public:
-    AcceleratedImageBufferSurface(const IntSize&, OpacityMode = NonOpaque);
-    ~AcceleratedImageBufferSurface() override { }
+class PLATFORM_EXPORT AcceleratedImageBufferSurface
+    : public ImageBufferSurface {
+  WTF_MAKE_NONCOPYABLE(AcceleratedImageBufferSurface);
+  USING_FAST_MALLOC(AcceleratedImageBufferSurface);
 
-    SkCanvas* canvas() override { return m_surface ? m_surface->getCanvas() : nullptr; }
-    bool isValid() const override { return m_surface; }
-    bool isAccelerated() const override { return true; }
-    PassRefPtr<SkImage> newImageSnapshot(AccelerationHint, SnapshotReason) override;
-    GLuint getBackingTextureHandleForOverwrite() override;
+ public:
+  AcceleratedImageBufferSurface(const IntSize&,
+                                OpacityMode = NonOpaque,
+                                sk_sp<SkColorSpace> = nullptr,
+                                SkColorType = kN32_SkColorType);
+  ~AcceleratedImageBufferSurface() override {}
 
-private:
-    std::unique_ptr<WebGraphicsContext3DProvider> m_contextProvider;
-    sk_sp<SkSurface> m_surface; // Uses m_contextProvider.
+  PaintCanvas* canvas() override {
+    return m_surface ? m_surface->getCanvas() : nullptr;
+  }
+  bool isValid() const override;
+  bool isAccelerated() const override { return true; }
+  sk_sp<SkImage> newImageSnapshot(AccelerationHint, SnapshotReason) override;
+  GLuint getBackingTextureHandleForOverwrite() override;
+
+ private:
+  unsigned m_contextId;
+  sk_sp<PaintSurface> m_surface;  // Uses m_contextProvider.
 };
 
-
-} // namespace blink
+}  // namespace blink
 
 #endif

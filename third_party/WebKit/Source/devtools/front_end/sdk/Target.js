@@ -5,237 +5,260 @@
  */
 
 /**
- * @constructor
- * @extends {Protocol.Agents}
- * @param {!WebInspector.TargetManager} targetManager
- * @param {string} name
- * @param {number} type
- * @param {!InspectorBackendClass.Connection} connection
- * @param {?WebInspector.Target} parentTarget
+ * @unrestricted
  */
-WebInspector.Target = function(targetManager, name, type, connection, parentTarget)
-{
-    Protocol.Agents.call(this, connection.agentsMap());
+SDK.Target = class extends Protocol.TargetBase {
+  /**
+   * @param {!SDK.TargetManager} targetManager
+   * @param {string} id
+   * @param {string} name
+   * @param {number} capabilitiesMask
+   * @param {!Protocol.InspectorBackend.Connection.Factory} connectionFactory
+   * @param {?SDK.Target} parentTarget
+   */
+  constructor(targetManager, id, name, capabilitiesMask, connectionFactory, parentTarget) {
+    super(connectionFactory);
     this._targetManager = targetManager;
     this._name = name;
-    this._type = type;
-    this._connection = connection;
+    this._inspectedURL = '';
+    this._capabilitiesMask = capabilitiesMask;
     this._parentTarget = parentTarget;
-    connection.addEventListener(InspectorBackendClass.Connection.Events.Disconnected, this._onDisconnect, this);
-    this._id = WebInspector.Target._nextId++;
-
-    /** @type {!Map.<!Function, !WebInspector.SDKModel>} */
+    this._id = id;
     this._modelByConstructor = new Map();
-}
+  }
+
+  /**
+   * @return {boolean}
+   */
+  isNodeJS() {
+    // TODO(lushnikov): this is an unreliable way to detect Node.js targets.
+    return this._capabilitiesMask === SDK.Target.Capability.JS || this._isNodeJSForTest;
+  }
+
+  setIsNodeJSForTest() {
+    this._isNodeJSForTest = true;
+  }
+
+  /**
+   * @return {string}
+   */
+  id() {
+    return this._id;
+  }
+
+  /**
+   * @return {string}
+   */
+  name() {
+    return this._name || this._inspectedURLName;
+  }
+
+  /**
+   * @return {!SDK.TargetManager}
+   */
+  targetManager() {
+    return this._targetManager;
+  }
+
+  /**
+   * @param {number} capabilitiesMask
+   * @return {boolean}
+   */
+  hasAllCapabilities(capabilitiesMask) {
+    return (this._capabilitiesMask & capabilitiesMask) === capabilitiesMask;
+  }
+
+  /**
+   * @param {string} label
+   * @return {string}
+   */
+  decorateLabel(label) {
+    return !this.hasBrowserCapability() ? '\u2699 ' + label : label;
+  }
+
+  /**
+   * @return {boolean}
+   */
+  hasBrowserCapability() {
+    return this.hasAllCapabilities(SDK.Target.Capability.Browser);
+  }
+
+  /**
+   * @return {boolean}
+   */
+  hasJSCapability() {
+    return this.hasAllCapabilities(SDK.Target.Capability.JS);
+  }
+
+  /**
+   * @return {boolean}
+   */
+  hasLogCapability() {
+    return this.hasAllCapabilities(SDK.Target.Capability.Log);
+  }
+
+  /**
+   * @return {boolean}
+   */
+  hasNetworkCapability() {
+    return this.hasAllCapabilities(SDK.Target.Capability.Network);
+  }
+
+  /**
+   * @return {boolean}
+   */
+  hasTargetCapability() {
+    return this.hasAllCapabilities(SDK.Target.Capability.Target);
+  }
+
+  /**
+   * @return {boolean}
+   */
+  hasDOMCapability() {
+    return this.hasAllCapabilities(SDK.Target.Capability.DOM);
+  }
+
+  /**
+   * @return {?SDK.Target}
+   */
+  parentTarget() {
+    return this._parentTarget;
+  }
+
+  /**
+   * @override
+   */
+  dispose() {
+    this._targetManager.removeTarget(this);
+    for (var model of this._modelByConstructor.valuesArray())
+      model.dispose();
+  }
+
+  /**
+   * @param {function(new:T, !SDK.Target)} modelClass
+   * @return {?T}
+   * @template T
+   */
+  model(modelClass) {
+    if (!this._modelByConstructor.get(modelClass)) {
+      var capabilities = SDK.SDKModel._capabilitiesByModelClass.get(modelClass);
+      if (capabilities === undefined)
+        throw 'Model class is not registered';
+      if ((this._capabilitiesMask & capabilities) === capabilities) {
+        var model = new modelClass(this);
+        this._modelByConstructor.set(modelClass, model);
+        this._targetManager.modelAdded(this, modelClass, model);
+      }
+    }
+    return this._modelByConstructor.get(modelClass) || null;
+  }
+
+  /**
+   * @return {!Map<function(new:SDK.SDKModel, !SDK.Target), !SDK.SDKModel>}
+   */
+  models() {
+    return this._modelByConstructor;
+  }
+
+  /**
+   * @return {string}
+   */
+  inspectedURL() {
+    return this._inspectedURL;
+  }
+
+  /**
+   * @param {string} inspectedURL
+   */
+  setInspectedURL(inspectedURL) {
+    this._inspectedURL = inspectedURL;
+    var parsedURL = inspectedURL.asParsedURL();
+    this._inspectedURLName = parsedURL ? parsedURL.lastPathComponentWithFragment() : '#' + this._id;
+    if (!this.parentTarget())
+      InspectorFrontendHost.inspectedURLChanged(inspectedURL || '');
+    this._targetManager.dispatchEventToListeners(SDK.TargetManager.Events.InspectedURLChanged, this);
+    if (!this._name)
+      this._targetManager.dispatchEventToListeners(SDK.TargetManager.Events.NameChanged, this);
+  }
+};
 
 /**
  * @enum {number}
  */
-WebInspector.Target.Type = {
-    Page: 1,
-    DedicatedWorker: 2,
-    ServiceWorker: 4
-}
+SDK.Target.Capability = {
+  Browser: 1 << 0,
+  DOM: 1 << 1,
+  JS: 1 << 2,
+  Log: 1 << 3,
+  Network: 1 << 4,
+  Target: 1 << 5,
+  ScreenCapture: 1 << 6,
+  Tracing: 1 << 7,
 
-WebInspector.Target._nextId = 1;
+  None: 0,
 
-WebInspector.Target.prototype = {
-    /**
-     * @return {number}
-     */
-    id: function()
-    {
-        return this._id;
-    },
-
-    /**
-     * @return {string}
-     */
-    name: function()
-    {
-        return this._name;
-    },
-
-    /**
-     *
-     * @return {number}
-     */
-    type: function()
-    {
-        return this._type;
-    },
-
-    /**
-     *
-     * @return {!WebInspector.TargetManager}
-     */
-    targetManager: function()
-    {
-        return this._targetManager;
-    },
-
-    /**
-     * @param {string} label
-     * @return {string}
-     */
-    decorateLabel: function(label)
-    {
-        return this.isWorker() ? "\u2699 " + label : label;
-    },
-
-    /**
-     * @override
-     * @param {string} domain
-     * @param {!Object} dispatcher
-     */
-    registerDispatcher: function(domain, dispatcher)
-    {
-        this._connection.registerDispatcher(domain, dispatcher);
-    },
-
-    /**
-     * @return {boolean}
-     */
-    isPage: function()
-    {
-        return this._type === WebInspector.Target.Type.Page;
-    },
-
-    /**
-     * @return {boolean}
-     */
-    isWorker: function()
-    {
-        return this.isDedicatedWorker() || this.isServiceWorker();
-    },
-
-    /**
-     * @return {boolean}
-     */
-    isDedicatedWorker: function()
-    {
-        return this._type === WebInspector.Target.Type.DedicatedWorker;
-    },
-
-    /**
-     * @return {boolean}
-     */
-    isServiceWorker: function()
-    {
-        return this._type === WebInspector.Target.Type.ServiceWorker;
-    },
-
-    /**
-     * @return {boolean}
-     */
-    hasJSContext: function()
-    {
-        return !this.isServiceWorker();
-    },
-
-    /**
-     * @return {?WebInspector.Target}
-     */
-    parentTarget: function()
-    {
-        return this._parentTarget;
-    },
-
-    _onDisconnect: function()
-    {
-        this._targetManager.removeTarget(this);
-        this._dispose();
-    },
-
-    _dispose: function()
-    {
-        this._targetManager.dispatchEventToListeners(WebInspector.TargetManager.Events.TargetDisposed, this);
-        this.networkManager.dispose();
-        this.cpuProfilerModel.dispose();
-        WebInspector.ServiceWorkerCacheModel.fromTarget(this).dispose();
-        if (this.workerManager)
-            this.workerManager.dispose();
-    },
-
-    /**
-     * @return {boolean}
-     */
-    isDetached: function()
-    {
-        return this._connection.isClosed();
-    },
-
-    /**
-     * @param {!Function} modelClass
-     * @return {?WebInspector.SDKModel}
-     */
-    model: function(modelClass)
-    {
-        return this._modelByConstructor.get(modelClass) || null;
-    },
-
-    /**
-     * @return {!Array<!WebInspector.SDKModel>}
-     */
-    models: function()
-    {
-        return this._modelByConstructor.valuesArray();
-    },
-
-    __proto__: Protocol.Agents.prototype
-}
+  AllForTests: (1 << 8) - 1
+};
 
 /**
- * @constructor
- * @extends {WebInspector.Object}
- * @param {!WebInspector.Target} target
+ * @unrestricted
  */
-WebInspector.SDKObject = function(target)
-{
-    WebInspector.Object.call(this);
+SDK.SDKObject = class extends Common.Object {
+  /**
+   * @param {!SDK.Target} target
+   */
+  constructor(target) {
+    super();
     this._target = target;
-}
+  }
 
-WebInspector.SDKObject.prototype = {
-    /**
-     * @return {!WebInspector.Target}
-     */
-    target: function()
-    {
-        return this._target;
-    },
-
-    __proto__: WebInspector.Object.prototype
-}
+  /**
+   * @return {!SDK.Target}
+   */
+  target() {
+    return this._target;
+  }
+};
 
 /**
- * @constructor
- * @extends {WebInspector.SDKObject}
- * @param {!Function} modelClass
- * @param {!WebInspector.Target} target
+ * @unrestricted
  */
-WebInspector.SDKModel = function(modelClass, target)
-{
-    WebInspector.SDKObject.call(this, target);
-    target._modelByConstructor.set(modelClass, this);
-}
+SDK.SDKModel = class extends SDK.SDKObject {
+  /**
+   * @param {!SDK.Target} target
+   */
+  constructor(target) {
+    super(target);
+  }
 
-WebInspector.SDKModel.prototype = {
-    /**
-     * @return {!Promise}
-     */
-    suspendModel: function()
-    {
-        return Promise.resolve();
-    },
+  /**
+   * @return {!Promise}
+   */
+  suspendModel() {
+    return Promise.resolve();
+  }
 
-    /**
-     * @return {!Promise}
-     */
-    resumeModel: function()
-    {
-        return Promise.resolve();
-    },
+  /**
+   * @return {!Promise}
+   */
+  resumeModel() {
+    return Promise.resolve();
+  }
 
-    __proto__: WebInspector.SDKObject.prototype
-}
+  dispose() {
+  }
+};
+
+
+/**
+ * @param {function(new:SDK.SDKModel, !SDK.Target)} modelClass
+ * @param {number} capabilities
+ */
+SDK.SDKModel.register = function(modelClass, capabilities) {
+  if (!SDK.SDKModel._capabilitiesByModelClass)
+    SDK.SDKModel._capabilitiesByModelClass = new Map();
+  SDK.SDKModel._capabilitiesByModelClass.set(modelClass, capabilities);
+};
+
+/** @type {!Map<function(new:SDK.SDKModel, !SDK.Target), number>} */
+SDK.SDKModel._capabilitiesByModelClass;

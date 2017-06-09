@@ -2,11 +2,13 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//mojo/public/mojo_application.gni")
-import("//mojo/public/mojo_application_manifest.gni")
+import("//services/catalog/public/tools/catalog.gni")
+import("//services/service_manager/public/cpp/service.gni")
+import("//services/service_manager/public/service_manifest.gni")
+import("//services/service_manager/public/tools/test/service_test.gni")
 import("//testing/test.gni")
 
-source_set("lib") {
+static_library("lib") {
   sources = [
     "directory_impl.cc",
     "directory_impl.h",
@@ -28,13 +30,13 @@ source_set("lib") {
     "//mojo/common",
     "//mojo/common:common_base",
     "//mojo/public/cpp/system",
-    "//services/shell/public/cpp",
-    "//services/shell/public/interfaces",
+    "//services/service_manager/public/cpp",
+    "//services/service_manager/public/interfaces",
     "//url",
   ]
 }
 
-mojo_native_application("filesystem") {
+service("filesystem") {
   sources = [
     "file_system_app.cc",
     "file_system_app.h",
@@ -48,21 +50,17 @@ mojo_native_application("filesystem") {
     "//mojo/common",
     "//mojo/public/cpp/bindings",
     "//mojo/public/cpp/system",
-    "//services/shell/public/cpp",
+    "//services/service_manager/public/cpp",
     "//services/tracing/public/cpp",
-  ]
-
-  data_deps = [
-    ":manifest",
   ]
 }
 
-mojo_application_manifest("manifest") {
-  application_name = "filesystem"
+service_manifest("manifest") {
+  name = "filesystem"
   source = "manifest.json"
 }
 
-test("filesystem_service_unittests") {
+service_test("filesystem_service_unittests") {
   sources = [
     "directory_impl_unittest.cc",
     "file_impl_unittest.cc",
@@ -70,25 +68,29 @@ test("filesystem_service_unittests") {
     "files_test_base.h",
   ]
 
+  catalog = ":filesystem_service_unittests_catalog"
+
   deps = [
     "//base",
     "//components/filesystem/public/interfaces",
     "//mojo/common",
     "//mojo/public/cpp/bindings",
     "//mojo/public/cpp/system",
-    "//services/shell/public/cpp:shell_test_support",
-    "//services/shell/public/cpp:sources",
-    "//services/shell/public/cpp/test:run_all_shelltests",
+    "//services/service_manager/public/cpp:service_test_support",
+    "//services/service_manager/public/cpp:sources",
   ]
 
   data_deps = [
-    ":test_manifest",
     ":filesystem",
   ]
 }
 
-mojo_application_manifest("test_manifest") {
-  type = "exe"
-  application_name = "filesystem_service_unittests"
+service_manifest("test_manifest") {
+  name = "filesystem_service_unittests"
   source = "test_manifest.json"
+}
+
+catalog("filesystem_service_unittests_catalog") {
+  embedded_services = [ ":test_manifest" ]
+  standalone_services = [ ":manifest" ]
 }

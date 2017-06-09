@@ -47,13 +47,15 @@ sys.path.append(os.path.join(REPOSITORY_ROOT, 'tools', 'perf'))
 from chrome_telemetry_build import chromium_config
 sys.path.append(chromium_config.GetTelemetryDir())
 sys.path.append(os.path.join(REPOSITORY_ROOT, 'build', 'android'))
+sys.path.append(os.path.join(
+    REPOSITORY_ROOT, 'third_party', 'catapult', 'devil'))
 
 import android_rndis_forwarder
+from devil.android import device_utils
+from devil.android.sdk import intent
 import lighttpd_server
 from pylib import constants
 from pylib import pexpect
-from pylib.device import device_utils
-from pylib.device import intent
 from telemetry import android
 from telemetry import benchmark
 from telemetry import benchmark_runner
@@ -140,6 +142,7 @@ class CronetPerfTestAndroidStory(android.AndroidStory):
     device.RunShellCommand('rm %s' % DONE_FILE)
     config = BENCHMARK_CONFIG
     config['HOST_IP'] = GetServersHost(device)
+    self.url ='http://dummy/?'+urllib.urlencode(config)
     start_intent = intent.Intent(
         package=APP_PACKAGE,
         activity=APP_ACTIVITY,
@@ -147,7 +150,7 @@ class CronetPerfTestAndroidStory(android.AndroidStory):
         # |config| maps from configuration value names to the configured values.
         # |config| is encoded as URL parameter names and values and passed to
         # the Cronet perf test app via the Intent data field.
-        data='http://dummy/?'+urllib.urlencode(config),
+        data=self.url,
         extras=None,
         category=None)
     super(CronetPerfTestAndroidStory, self).__init__(
@@ -216,6 +219,9 @@ class QuicServer(object):
     self._quic_server_doc_root = quic_server_doc_root
 
   def StartupQuicServer(self, device):
+    # Chromium's presubmit checks aren't smart enough to understand
+    # the redirect done in build/android/pylib/pexpect.py.
+    # pylint: disable=no-member
     self._process = pexpect.spawn(QUIC_SERVER,
                                   ['--quic_in_memory_cache_dir=%s' %
                                       self._quic_server_doc_root,

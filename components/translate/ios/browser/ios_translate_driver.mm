@@ -5,10 +5,9 @@
 #include "components/translate/ios/browser/ios_translate_driver.h"
 
 #include "base/bind.h"
-#include "base/location.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
 #include "base/strings/sys_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "components/translate/core/browser/translate_client.h"
 #include "components/translate/core/browser/translate_manager.h"
@@ -29,6 +28,10 @@
 #include "ui/base/page_transition_types.h"
 #include "ui/base/window_open_disposition.h"
 #include "url/gurl.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace translate {
 
@@ -166,7 +169,8 @@ bool IOSTranslateDriver::HasCurrentPage() {
 }
 
 void IOSTranslateDriver::OpenUrlInNewTab(const GURL& url) {
-  web::WebState::OpenURLParams params(url, web::Referrer(), NEW_FOREGROUND_TAB,
+  web::WebState::OpenURLParams params(url, web::Referrer(),
+                                      WindowOpenDisposition::NEW_FOREGROUND_TAB,
                                       ui::PAGE_TRANSITION_LINK, false);
   web_state()->OpenURL(params);
 }
@@ -236,7 +240,7 @@ void IOSTranslateDriver::OnTranslateScriptReady(bool success,
                            : kAutoDetectionLanguage;
   translate_controller_->StartTranslation(source_language_, target_language_);
   // Check the status of the translation -- after a delay.
-  base::MessageLoop::current()->PostDelayedTask(
+  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE, base::Bind(&IOSTranslateDriver::CheckTranslateStatus,
                             weak_method_factory_.GetWeakPtr(), source_language_,
                             target_language_, pending_page_seq_no_),

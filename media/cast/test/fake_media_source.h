@@ -40,6 +40,8 @@ class FFmpegGlue;
 class InMemoryUrlProtocol;
 class VideoFrame;
 
+struct ScopedPtrAVFreeContext;
+
 namespace cast {
 
 class AudioFrameInput;
@@ -55,8 +57,8 @@ class FakeMediaSource : public media::AudioConverter::InputCallback {
   // |keep_frames| is true if all VideoFrames are saved in a queue.
   FakeMediaSource(scoped_refptr<base::SingleThreadTaskRunner> task_runner,
                   base::TickClock* clock,
-                  const AudioSenderConfig& audio_config,
-                  const VideoSenderConfig& video_config,
+                  const FrameSenderConfig& audio_config,
+                  const FrameSenderConfig& video_config,
                   bool keep_frames);
   ~FakeMediaSource() final;
 
@@ -71,7 +73,7 @@ class FakeMediaSource : public media::AudioConverter::InputCallback {
   void Start(scoped_refptr<AudioFrameInput> audio_frame_input,
              scoped_refptr<VideoFrameInput> video_frame_input);
 
-  const VideoSenderConfig& get_video_config() const { return video_config_; }
+  const FrameSenderConfig& get_video_config() const { return video_config_; }
 
   scoped_refptr<media::VideoFrame> PopOldestInsertedVideoFrame();
 
@@ -113,12 +115,10 @@ class FakeMediaSource : public media::AudioConverter::InputCallback {
 
   AVStream* av_audio_stream();
   AVStream* av_video_stream();
-  AVCodecContext* av_audio_context();
-  AVCodecContext* av_video_context();
 
   const scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
   const media::AudioParameters output_audio_params_;
-  const VideoSenderConfig video_config_;
+  const FrameSenderConfig video_config_;
   const bool keep_frames_;
   bool variable_frame_size_mode_;
   gfx::Size current_frame_size_;
@@ -142,10 +142,12 @@ class FakeMediaSource : public media::AudioConverter::InputCallback {
   AVFormatContext* av_format_context_;
 
   int audio_stream_index_;
+  std::unique_ptr<AVCodecContext, ScopedPtrAVFreeContext> av_audio_context_;
   AudioParameters source_audio_params_;
   double playback_rate_;
 
   int video_stream_index_;
+  std::unique_ptr<AVCodecContext, ScopedPtrAVFreeContext> av_video_context_;
   int video_frame_rate_numerator_;
   int video_frame_rate_denominator_;
 

@@ -8,8 +8,8 @@
 
 #include "base/bind.h"
 #include "base/files/file_path.h"
-#include "base/files/file_util_proxy.h"
-#include "base/metrics/histogram.h"
+#include "base/files/file_util.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/supports_user_data.h"
 #include "base/task_runner.h"
 #include "chrome/browser/safe_browsing/download_feedback.h"
@@ -81,28 +81,29 @@ DownloadFeedbackService::DownloadFeedbackService(
     : request_context_getter_(request_context_getter),
       file_task_runner_(file_task_runner),
       weak_ptr_factory_(this) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 }
 
 DownloadFeedbackService::~DownloadFeedbackService() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 }
 
 // static
 void DownloadFeedbackService::MaybeStorePingsForDownload(
     DownloadProtectionService::DownloadCheckResult result,
+    bool upload_requested,
     content::DownloadItem* download,
     const std::string& ping,
     const std::string& response) {
-  switch (result) {
-    case DownloadProtectionService::UNKNOWN:
-    case DownloadProtectionService::SAFE:
-    case DownloadProtectionService::DANGEROUS:
-      return;
-    case DownloadProtectionService::UNCOMMON:
-    case DownloadProtectionService::DANGEROUS_HOST:
-    case DownloadProtectionService::POTENTIALLY_UNWANTED:
-      break;  // Fall through.
-  }
+  // We never upload SAFE files.
+  if (result == DownloadProtectionService::SAFE)
+    return;
+
+  UMA_HISTOGRAM_BOOLEAN("SBDownloadFeedback.UploadRequestedByServer",
+                        upload_requested);
+  if (!upload_requested)
+    return;
+
   UMA_HISTOGRAM_COUNTS("SBDownloadFeedback.SizeEligibleKB",
                        download->GetReceivedBytes() / 1024);
   if (download->GetReceivedBytes() > DownloadFeedback::kMaxUploadSize)
@@ -139,11 +140,10 @@ void DownloadFeedbackService::RecordEligibleDownloadShown(
                             content::DOWNLOAD_DANGER_TYPE_MAX);
 }
 
-
 void DownloadFeedbackService::BeginFeedbackForDownload(
-    content::DownloadItem* download) {
-  DCHECK(CalledOnValidThread());
-
+    content::DownloadItem* download,
+    DownloadCommands::Command download_command) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   UMA_HISTOGRAM_ENUMERATION("SBDownloadFeedback.Activations",
                             download->GetDangerType(),
                             content::DOWNLOAD_DANGER_TYPE_MAX);
@@ -152,11 +152,12 @@ void DownloadFeedbackService::BeginFeedbackForDownload(
   DCHECK(pings);
 
   download->StealDangerousDownload(
+      download_command == DownloadCommands::DISCARD,
       base::Bind(&DownloadFeedbackService::BeginFeedbackOrDeleteFile,
-                 file_task_runner_,
-                 weak_ptr_factory_.GetWeakPtr(),
-                 pings->ping_request(),
-                 pings->ping_response()));
+                 file_task_runner_, weak_ptr_factory_.GetWeakPtr(),
+                 pings->ping_request(), pings->ping_response()));
+  if (download_command == DownloadCommands::KEEP)
+    DownloadCommands(download).ExecuteCommand(download_command);
 }
 
 // static
@@ -167,12 +168,16 @@ void DownloadFeedbackService::BeginFeedbackOrDeleteFile(
     const std::string& ping_response,
     const base::FilePath& path) {
   if (service) {
+    bool is_path_empty = path.empty();
+    UMA_HISTOGRAM_BOOLEAN("SBDownloadFeedback.EmptyFilePathFailure",
+                          is_path_empty);
+    if (is_path_empty)
+      return;
     service->BeginFeedback(ping_request, ping_response, path);
   } else {
-    base::FileUtilProxy::DeleteFile(file_task_runner.get(),
-                                    path,
-                                    false,
-                                    base::FileUtilProxy::StatusCallback());
+    file_task_runner->PostTask(
+        FROM_HERE,
+        base::Bind(base::IgnoreResult(&base::DeleteFile), path, false));
   }
 }
 
@@ -182,15 +187,14 @@ void DownloadFeedbackService::StartPendingFeedback() {
       &DownloadFeedbackService::FeedbackComplete, base::Unretained(this)));
 }
 
-void DownloadFeedbackService::BeginFeedback(
-    const std::string& ping_request,
-    const std::string& ping_response,
-    const base::FilePath& path) {
-  DCHECK(CalledOnValidThread());
+void DownloadFeedbackService::BeginFeedback(const std::string& ping_request,
+                                            const std::string& ping_response,
+                                            const base::FilePath& path) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   std::unique_ptr<DownloadFeedback> feedback(DownloadFeedback::Create(
       request_context_getter_.get(), file_task_runner_.get(), path,
       ping_request, ping_response));
-  active_feedback_.push_back(std::move(feedback));
+  active_feedback_.push(std::move(feedback));
   UMA_HISTOGRAM_COUNTS_100("SBDownloadFeedback.ActiveFeedbacks",
                            active_feedback_.size());
 
@@ -199,10 +203,10 @@ void DownloadFeedbackService::BeginFeedback(
 }
 
 void DownloadFeedbackService::FeedbackComplete() {
-  DVLOG(1) << __FUNCTION__;
-  DCHECK(CalledOnValidThread());
+  DVLOG(1) << __func__;
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   DCHECK(!active_feedback_.empty());
-  active_feedback_.erase(active_feedback_.begin());
+  active_feedback_.pop();
   if (!active_feedback_.empty())
     StartPendingFeedback();
 }

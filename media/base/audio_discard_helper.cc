@@ -13,7 +13,7 @@ namespace media {
 
 static void WarnOnNonMonotonicTimestamps(base::TimeDelta last_timestamp,
                                          base::TimeDelta current_timestamp) {
-  if (last_timestamp == kNoTimestamp() || last_timestamp < current_timestamp)
+  if (last_timestamp == kNoTimestamp || last_timestamp < current_timestamp)
     return;
 
   const base::TimeDelta diff = current_timestamp - last_timestamp;
@@ -22,13 +22,15 @@ static void WarnOnNonMonotonicTimestamps(base::TimeDelta last_timestamp,
                 << " diff " << diff.InMicroseconds() << " us";
 }
 
-AudioDiscardHelper::AudioDiscardHelper(int sample_rate, size_t decoder_delay)
+AudioDiscardHelper::AudioDiscardHelper(int sample_rate,
+                                       size_t decoder_delay,
+                                       bool delayed_discard)
     : sample_rate_(sample_rate),
       decoder_delay_(decoder_delay),
       timestamp_helper_(sample_rate_),
       discard_frames_(0),
-      last_input_timestamp_(kNoTimestamp()),
-      delayed_discard_(false),
+      last_input_timestamp_(kNoTimestamp),
+      delayed_discard_(delayed_discard),
       delayed_end_discard_(0) {
   DCHECK_GT(sample_rate_, 0);
 }
@@ -43,9 +45,8 @@ size_t AudioDiscardHelper::TimeDeltaToFrames(base::TimeDelta duration) const {
 
 void AudioDiscardHelper::Reset(size_t initial_discard) {
   discard_frames_ = initial_discard;
-  last_input_timestamp_ = kNoTimestamp();
-  timestamp_helper_.SetBaseTimestamp(kNoTimestamp());
-  delayed_discard_ = false;
+  last_input_timestamp_ = kNoTimestamp;
+  timestamp_helper_.SetBaseTimestamp(kNoTimestamp);
   delayed_discard_padding_ = DecoderBuffer::DiscardPadding();
 }
 
@@ -53,7 +54,7 @@ bool AudioDiscardHelper::ProcessBuffers(
     const scoped_refptr<DecoderBuffer>& encoded_buffer,
     const scoped_refptr<AudioBuffer>& decoded_buffer) {
   DCHECK(!encoded_buffer->end_of_stream());
-  DCHECK(encoded_buffer->timestamp() != kNoTimestamp());
+  DCHECK(encoded_buffer->timestamp() != kNoTimestamp);
 
   // Issue a debug warning when we see non-monotonic timestamps.  Only a warning
   // to allow chained OGG playback.
@@ -62,8 +63,7 @@ bool AudioDiscardHelper::ProcessBuffers(
   last_input_timestamp_ = encoded_buffer->timestamp();
 
   // If this is the first buffer seen, setup the timestamp helper.
-  const bool first_buffer = !initialized();
-  if (first_buffer) {
+  if (!initialized()) {
     // Clamp the base timestamp to zero.
     timestamp_helper_.SetBaseTimestamp(
         std::max(base::TimeDelta(), encoded_buffer->timestamp()));
@@ -73,10 +73,8 @@ bool AudioDiscardHelper::ProcessBuffers(
   if (!decoded_buffer.get()) {
     // If there's a one buffer delay for decoding, we need to save it so it can
     // be processed with the next decoder buffer.
-    if (first_buffer) {
-      delayed_discard_ = true;
+    if (delayed_discard_)
       delayed_discard_padding_ = encoded_buffer->discard_padding();
-    }
     return false;
   }
 
@@ -139,7 +137,7 @@ bool AudioDiscardHelper::ProcessBuffers(
     // we have to estimate the correct number of frames to discard based on the
     // duration of the encoded buffer.
     const size_t start_frames_to_discard =
-        current_discard_padding.first == kInfiniteDuration()
+        current_discard_padding.first == kInfiniteDuration
             ? (decoder_delay_ > 0
                    ? TimeDeltaToFrames(encoded_buffer->duration())
                    : decoded_frames)
@@ -229,7 +227,7 @@ bool AudioDiscardHelper::ProcessBuffers(
     DCHECK(current_discard_padding.second.is_zero());
   }
 
-  DVLOG(3) << __FUNCTION__ << " ts: " << timestamp_helper_.GetTimestamp()
+  DVLOG(3) << __func__ << " ts: " << timestamp_helper_.GetTimestamp()
            << " frames: " << decoded_buffer->frame_count();
 
   // Assign timestamp to the buffer.

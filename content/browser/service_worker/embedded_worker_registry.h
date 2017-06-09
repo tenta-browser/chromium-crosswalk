@@ -18,18 +18,15 @@
 #include "content/common/content_export.h"
 #include "content/common/service_worker/service_worker_status_code.h"
 
-struct EmbeddedWorkerMsg_StartWorker_Params;
 class GURL;
 
 namespace IPC {
 class Message;
-class Sender;
 }
 
 namespace content {
 
 class EmbeddedWorkerInstance;
-class MessagePortMessageFilter;
 class ServiceWorkerContextCore;
 
 // Acts as a thin stub between MessageFilter and each EmbeddedWorkerInstance,
@@ -40,8 +37,6 @@ class ServiceWorkerContextCore;
 class CONTENT_EXPORT EmbeddedWorkerRegistry
     : public NON_EXPORTED_BASE(base::RefCounted<EmbeddedWorkerRegistry>) {
  public:
-  typedef base::Callback<void(ServiceWorkerStatusCode)> StatusCallback;
-
   static scoped_refptr<EmbeddedWorkerRegistry> Create(
       const base::WeakPtr<ServiceWorkerContextCore>& contxet);
 
@@ -58,9 +53,6 @@ class CONTENT_EXPORT EmbeddedWorkerRegistry
   std::unique_ptr<EmbeddedWorkerInstance> CreateWorker();
 
   // Called from EmbeddedWorkerInstance, relayed to the child process.
-  ServiceWorkerStatusCode SendStartWorker(
-      std::unique_ptr<EmbeddedWorkerMsg_StartWorker_Params> params,
-      int process_id);
   ServiceWorkerStatusCode StopWorker(int process_id,
                                      int embedded_worker_id);
 
@@ -92,12 +84,13 @@ class CONTENT_EXPORT EmbeddedWorkerRegistry
                               int line_number,
                               const GURL& source_url);
 
-  // Keeps a map from process_id to sender information.
-  void AddChildProcessSender(
-      int process_id,
-      IPC::Sender* sender,
-      MessagePortMessageFilter* message_port_message_filter);
-  void RemoveChildProcessSender(int process_id);
+  // Removes information about the service workers running on the process and
+  // calls ServiceWorkerVersion::OnDetached() on each. Called when the process
+  // is terminated. Under normal operation, the workers should already have
+  // been stopped before the process is terminated, in which case this function
+  // does nothing. But in some cases the process can be terminated unexpectedly
+  // or the workers can fail to stop cleanly.
+  void RemoveProcess(int process_id);
 
   // Returns an embedded worker instance for given |embedded_worker_id|.
   EmbeddedWorkerInstance* GetWorker(int embedded_worker_id);
@@ -105,19 +98,15 @@ class CONTENT_EXPORT EmbeddedWorkerRegistry
   // Returns true if |embedded_worker_id| is managed by this registry.
   bool CanHandle(int embedded_worker_id) const;
 
-  MessagePortMessageFilter* MessagePortMessageFilterForProcess(int process_id);
-
  private:
   friend class base::RefCounted<EmbeddedWorkerRegistry>;
+  friend class MojoEmbeddedWorkerInstanceTest;
   friend class EmbeddedWorkerInstance;
   friend class EmbeddedWorkerInstanceTest;
   FRIEND_TEST_ALL_PREFIXES(EmbeddedWorkerInstanceTest,
                            RemoveWorkerInSharedProcess);
 
-  typedef std::map<int, EmbeddedWorkerInstance*> WorkerInstanceMap;
-  typedef std::map<int, IPC::Sender*> ProcessToSenderMap;
-  typedef std::map<int, MessagePortMessageFilter*>
-      ProcessToMessagePortMessageFilterMap;
+  using WorkerInstanceMap = std::map<int, EmbeddedWorkerInstance*>;
 
   EmbeddedWorkerRegistry(
       const base::WeakPtr<ServiceWorkerContextCore>& context,
@@ -126,10 +115,19 @@ class CONTENT_EXPORT EmbeddedWorkerRegistry
 
   ServiceWorkerStatusCode Send(int process_id, IPC::Message* message);
 
+  // Called when EmbeddedWorkerInstance is ready for IPC. This function
+  // prepares a route to the child worker thread.
+  // TODO(shimazu): Remove this function once mojofication is completed.
+  void BindWorkerToProcess(int process_id, int embedded_worker_id);
+
   // RemoveWorker is called when EmbeddedWorkerInstance is destructed.
   // |process_id| could be invalid (i.e. ChildProcessHost::kInvalidUniqueID)
   // if it's not running.
   void RemoveWorker(int process_id, int embedded_worker_id);
+  // DetachWorker is called when EmbeddedWorkerInstance releases a process.
+  // |process_id| could be invalid (i.e. ChildProcessHost::kInvalidUniqueID)
+  // if it's not running.
+  void DetachWorker(int process_id, int embedded_worker_id);
 
   EmbeddedWorkerInstance* GetWorkerForMessage(int process_id,
                                               int embedded_worker_id);
@@ -137,8 +135,6 @@ class CONTENT_EXPORT EmbeddedWorkerRegistry
   base::WeakPtr<ServiceWorkerContextCore> context_;
 
   WorkerInstanceMap worker_map_;
-  ProcessToSenderMap process_sender_map_;
-  ProcessToMessagePortMessageFilterMap process_message_port_message_filter_map_;
 
   // Map from process_id to embedded_worker_id.
   // This map only contains starting and running workers.

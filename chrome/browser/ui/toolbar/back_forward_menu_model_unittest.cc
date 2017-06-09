@@ -79,7 +79,8 @@ class BackFwdMenuModelTest : public ChromeRenderViewHostTestHarness {
 
   void LoadURLAndUpdateState(const char* url, const char* title) {
     NavigateAndCommit(GURL(url));
-    controller().GetLastCommittedEntry()->SetTitle(base::UTF8ToUTF16(title));
+    web_contents()->UpdateTitleForEntry(
+        controller().GetLastCommittedEntry(), base::UTF8ToUTF16(title));
   }
 
   // Navigate back or forward the given amount and commits the entry (which
@@ -501,7 +502,7 @@ TEST_F(BackFwdMenuModelTest, EscapeLabel) {
 TEST_F(BackFwdMenuModelTest, FaviconLoadTest) {
   ASSERT_TRUE(profile()->CreateHistoryService(true, false));
   profile()->CreateFaviconService();
-  Browser::CreateParams native_params(profile());
+  Browser::CreateParams native_params(profile(), true);
   std::unique_ptr<Browser> browser(
       chrome::CreateBrowserWithTestWindowForParams(&native_params));
   FaviconDelegate favicon_delegate;
@@ -564,6 +565,4 @@ TEST_F(BackFwdMenuModelTest, FaviconLoadTest) {
 
   // Make sure the browser deconstructor doesn't have problems.
   browser->tab_strip_model()->CloseAllTabs();
-  // This is required to prevent the message loop from hanging.
-  profile()->DestroyHistoryService();
 }

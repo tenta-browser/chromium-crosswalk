@@ -90,8 +90,8 @@ base::TimeTicks EventTimeFromNative(const base::NativeEvent& native_event) {
   return timestamp;
 }
 
-gfx::Point EventLocationFromNative(const base::NativeEvent& native_event) {
-  return EventLocationFromXEvent(*native_event);
+gfx::PointF EventLocationFromNative(const base::NativeEvent& native_event) {
+  return gfx::PointF(EventLocationFromXEvent(*native_event));
 }
 
 gfx::Point EventSystemLocationFromNative(
@@ -160,7 +160,9 @@ PointerDetails GetTouchPointerDetailsFromNative(
                         GetTouchRadiusYFromXEvent(*native_event),
                         GetTouchForceFromXEvent(*native_event),
                         /* tilt_x */ 0.f,
-                        /* tilt_y */ 0.f);
+                        /* tilt_y */ 0.f,
+                        /* tangential_pressure */ 0.0f,
+                        /* twist */ 0, GetTouchIdFromXEvent(*native_event));
 }
 
 bool GetScrollOffsets(const base::NativeEvent& native_event,
@@ -168,7 +170,8 @@ bool GetScrollOffsets(const base::NativeEvent& native_event,
                       float* y_offset,
                       float* x_offset_ordinal,
                       float* y_offset_ordinal,
-                      int* finger_count) {
+                      int* finger_count,
+                      EventMomentumPhase* momentum_phase) {
   return GetScrollOffsetsFromXEvent(*native_event, x_offset, y_offset,
                                     x_offset_ordinal, y_offset_ordinal,
                                     finger_count);

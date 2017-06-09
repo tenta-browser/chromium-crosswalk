@@ -36,7 +36,7 @@ Polymer({
 
   /** @override */
   attached: function() {
-    /** @type {!CrDialogElement} */ (this.$.dialog).open();
+    /** @type {!CrDialogElement} */ (this.$.dialog).showModal();
   },
 
   /** @private */
@@ -56,6 +56,15 @@ Polymer({
               this.$.dialog.close();
               this.fire('certificates-error', error);
             }.bind(this));
+  },
+
+  /**
+   * @param {!KeyboardEvent} e
+   * @private
+   */
+  onKeypress_: function(e) {
+    if (e.key == 'Enter' && !this.$.ok.disabled)
+      this.onOkTap_();
   },
 
   /** @private */

@@ -6,6 +6,7 @@
 
 #include <X11/Xlib.h>
 
+#include "base/bind.h"
 #include "ui/events/event.h"
 #include "ui/events/ozone/events_ozone.h"
 #include "ui/events/platform/x11/x11_event_source.h"
@@ -17,8 +18,9 @@ namespace ui {
 
 X11WindowOzone::X11WindowOzone(X11EventSourceLibevent* event_source,
                                X11WindowManagerOzone* window_manager,
-                               PlatformWindowDelegate* delegate)
-    : X11WindowBase(delegate),
+                               PlatformWindowDelegate* delegate,
+                               const gfx::Rect& bounds)
+    : X11WindowBase(delegate, bounds),
       event_source_(event_source),
       window_manager_(window_manager) {
   DCHECK(event_source_);

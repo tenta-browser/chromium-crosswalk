@@ -23,7 +23,6 @@ namespace dmg {
 
 class ReadStream;
 class UDIFBlock;
-struct UDIFBlockChunk;
 
 // UDIFParser parses a Universal Disk Image Format file, allowing access to the
 // name, types, and data of the partitions held within the file. There is no
@@ -75,11 +74,6 @@ class UDIFParser {
  private:
   // Parses the blkx plist trailer structure.
   bool ParseBlkx();
-
-  // Reads the data pointed to by the block |chunk|, decompressing it as
-  // necessary, into the out-buffer |decompressed_data|.
-  bool ReadBlockChunk(const UDIFBlockChunk* chunk,
-                      std::vector<uint8_t>* decompressed_data);
 
   ReadStream* const stream_;  // The stream backing the UDIF image. Weak.
   std::vector<std::string> partition_names_;  // The names of all partitions.

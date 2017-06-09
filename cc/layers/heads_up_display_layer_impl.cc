@@ -17,7 +17,6 @@
 #include "cc/debug/debug_colors.h"
 #include "cc/debug/frame_rate_counter.h"
 #include "cc/output/begin_frame_args.h"
-#include "cc/output/renderer.h"
 #include "cc/quads/texture_draw_quad.h"
 #include "cc/resources/memory_history.h"
 #include "cc/trees/layer_tree_host_impl.h"
@@ -94,11 +93,10 @@ void HeadsUpDisplayLayerImpl::AcquireResource(
     }
   }
 
-  std::unique_ptr<ScopedResource> resource =
-      ScopedResource::Create(resource_provider);
-  resource->Allocate(internal_content_bounds_,
-                     ResourceProvider::TEXTURE_HINT_IMMUTABLE,
-                     resource_provider->best_texture_format());
+  auto resource = base::MakeUnique<ScopedResource>(resource_provider);
+  resource->Allocate(
+      internal_content_bounds_, ResourceProvider::TEXTURE_HINT_IMMUTABLE,
+      resource_provider->best_texture_format(), gfx::ColorSpace());
   resources_.push_back(std::move(resource));
 }
 
@@ -120,6 +118,9 @@ bool HeadsUpDisplayLayerImpl::WillDraw(DrawMode draw_mode,
   internal_contents_scale_ = GetIdealContentsScale();
   internal_content_bounds_ =
       gfx::ScaleToCeiledSize(bounds(), internal_contents_scale_);
+  internal_content_bounds_.SetToMin(
+      gfx::Size(resource_provider->max_texture_size(),
+                resource_provider->max_texture_size()));
 
   ReleaseUnmatchedSizeResources(resource_provider);
   AcquireResource(resource_provider);
@@ -134,7 +135,8 @@ void HeadsUpDisplayLayerImpl::AppendQuads(
 
   SharedQuadState* shared_quad_state =
       render_pass->CreateAndAppendSharedQuadState();
-  PopulateScaledSharedQuadState(shared_quad_state, internal_contents_scale_);
+  PopulateScaledSharedQuadState(shared_quad_state, internal_contents_scale_,
+                                internal_contents_scale_);
 
   gfx::Rect quad_rect(internal_content_bounds_);
   gfx::Rect opaque_rect(contents_opaque() ? quad_rect : gfx::Rect());
@@ -340,7 +342,7 @@ void HeadsUpDisplayLayerImpl::DrawGraphLines(SkCanvas* canvas,
   // Draw indicator line (additive blend mode to increase contrast when drawn on
   // top of graph).
   paint->setColor(DebugColors::HUDIndicatorLineColor());
-  paint->setXfermodeMode(SkXfermode::kPlus_Mode);
+  paint->setBlendMode(SkBlendMode::kPlus);
   const double indicator_top =
       bounds.height() * (1.0 - graph.indicator / graph.current_upper_bound) -
       1.0;
@@ -349,7 +351,7 @@ void HeadsUpDisplayLayerImpl::DrawGraphLines(SkCanvas* canvas,
                    bounds.right(),
                    bounds.top() + indicator_top,
                    *paint);
-  paint->setXfermode(nullptr);
+  paint->setBlendMode(SkBlendMode::kSrcOver);
 }
 
 SkRect HeadsUpDisplayLayerImpl::DrawFPSDisplay(
@@ -724,11 +726,6 @@ void HeadsUpDisplayLayerImpl::DrawDebugRects(
         stroke_color = DebugColors::SurfaceDamageRectBorderColor();
         fill_color = DebugColors::SurfaceDamageRectFillColor();
         stroke_width = DebugColors::SurfaceDamageRectBorderWidth();
-        break;
-      case REPLICA_SCREEN_SPACE_RECT_TYPE:
-        stroke_color = DebugColors::ScreenSpaceSurfaceReplicaRectBorderColor();
-        fill_color = DebugColors::ScreenSpaceSurfaceReplicaRectFillColor();
-        stroke_width = DebugColors::ScreenSpaceSurfaceReplicaRectBorderWidth();
         break;
       case SCREEN_SPACE_RECT_TYPE:
         stroke_color = DebugColors::ScreenSpaceLayerRectBorderColor();

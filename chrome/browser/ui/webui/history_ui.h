@@ -22,6 +22,8 @@ class HistoryUI : public content::WebUIController {
       ui::ScaleFactor scale_factor);
 
  private:
+  void UpdateDataSource();
+
   DISALLOW_COPY_AND_ASSIGN(HistoryUI);
 };
 

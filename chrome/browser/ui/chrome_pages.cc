@@ -7,11 +7,14 @@
 #include <stddef.h>
 
 #include "base/command_line.h"
+#include "base/feature_list.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
 #include "chrome/browser/download/download_shelf.h"
+#include "chrome/browser/extensions/launch_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/browser.h"
@@ -26,12 +29,14 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/webui/options/content_settings_handler.h"
 #include "chrome/browser/ui/webui/site_settings_helper.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/url_constants.h"
 #include "components/signin/core/browser/signin_header_helper.h"
 #include "components/signin/core/common/profile_management_switches.h"
 #include "content/public/browser/user_metrics.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/browser/extension_prefs.h"
 #include "extensions/common/constants.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "net/base/url_util.h"
@@ -42,8 +47,12 @@
 #endif
 
 #if defined(OS_CHROMEOS)
+#include "base/feature_list.h"
 #include "chrome/browser/chromeos/genius_app/app_id.h"
+#include "chrome/common/chrome_features.h"
+#include "chrome/grit/generated_resources.h"
 #include "extensions/browser/extension_registry.h"
+#include "ui/base/l10n/l10n_util.h"
 #endif
 
 #if !defined(OS_ANDROID)
@@ -102,8 +111,11 @@ void ShowHelpImpl(Browser* browser, Profile* profile, HelpSource source) {
     default:
       NOTREACHED() << "Unhandled help source" << source;
   }
-  OpenApplication(CreateAppLaunchParamsUserContainer(
-      profile, extension, NEW_FOREGROUND_TAB, app_launch_source));
+  OpenApplication(AppLaunchParams(
+      profile, extension,
+      extensions::GetLaunchContainer(extensions::ExtensionPrefs::Get(profile),
+                                     extension),
+      WindowOpenDisposition::NEW_FOREGROUND_TAB, app_launch_source, true));
 #else
   GURL url;
   switch (source) {
@@ -129,9 +141,44 @@ void ShowHelpImpl(Browser* browser, Profile* profile, HelpSource source) {
 }
 
 std::string GenerateContentSettingsExceptionsSubPage(ContentSettingsType type) {
-  return kContentSettingsExceptionsSubPage + std::string(kHashMark) +
-         site_settings::ContentSettingsTypeToGroupName(type);
+  if (!base::FeatureList::IsEnabled(features::kMaterialDesignSettings)) {
+    return kDeprecatedOptionsContentSettingsExceptionsSubPage +
+           std::string(kHashMark) +
+           site_settings::ContentSettingsTypeToGroupName(type);
+  }
+
+  // In MD Settings, the exceptions no longer have a separate subpage.
+  // This list overrides the group names defined in site_settings_helper for the
+  // purposes of URL generation for MD Settings only. We need this because some
+  // of the old group names are no longer appropriate: i.e. "plugins" =>
+  // "flash".
+  //
+  // TODO(tommycli): Update the group names defined in site_settings_helper once
+  // Options is removed from Chrome. Then this list will no longer be needed.
+  typedef std::map<ContentSettingsType, std::string> ContentSettingPathMap;
+  CR_DEFINE_STATIC_LOCAL(
+      ContentSettingPathMap, kSettingsPathOverrides,
+      ({{CONTENT_SETTINGS_TYPE_AUTOMATIC_DOWNLOADS, "automaticDownloads"},
+        {CONTENT_SETTINGS_TYPE_BACKGROUND_SYNC, "backgroundSync"},
+        {CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC, "microphone"},
+        {CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA, "camera"},
+        {CONTENT_SETTINGS_TYPE_PLUGINS, "flash"},
+        {CONTENT_SETTINGS_TYPE_PPAPI_BROKER, "unsandboxedPlugins"}}));
+  const auto it = kSettingsPathOverrides.find(type);
+  const std::string content_type_path =
+      (it == kSettingsPathOverrides.end())
+          ? site_settings::ContentSettingsTypeToGroupName(type)
+          : it->second;
+
+  return std::string(kContentSettingsSubPage) + "/" + content_type_path;
 }
+
+#if defined(OS_CHROMEOS)
+std::string GenerateContentSettingsSearchQueryPath(int query_message_id) {
+  return std::string(chrome::kDeprecatedOptionsSearchSubPage) + kHashMark +
+         l10n_util::GetStringUTF8(query_message_id);
+}
+#endif
 
 }  // namespace
 
@@ -184,13 +231,11 @@ void ShowExtensions(Browser* browser,
 void ShowConflicts(Browser* browser) {
 #if defined(OS_WIN)
   EnumerateModulesModel* model = EnumerateModulesModel::GetInstance();
-  if (model->modules_to_notify_about() > 0) {
-    GURL help_center_url = model->GetFirstNotableConflict();
-    if (help_center_url.is_valid()) {
-      ShowSingletonTab(browser, help_center_url);
-      model->AcknowledgeConflictNotification();
-      return;
-    }
+  GURL conflict_url = model->GetConflictUrl();
+  if (conflict_url.is_valid()) {
+    ShowSingletonTab(browser, conflict_url);
+    model->AcknowledgeConflictNotification();
+    return;
   }
 #endif
 
@@ -217,16 +262,7 @@ void ShowSlow(Browser* browser) {
 }
 
 GURL GetSettingsUrl(const std::string& sub_page) {
-  std::string url = std::string(kChromeUISettingsURL) + sub_page;
-#if defined(OS_CHROMEOS)
-  if (sub_page.find(kInternetOptionsSubPage, 0) != std::string::npos) {
-    std::string::size_type loc = sub_page.find("?", 0);
-    std::string network_page =
-        loc != std::string::npos ? sub_page.substr(loc) : std::string();
-    url = std::string(kChromeUISettingsURL) + network_page;
-  }
-#endif
-  return GURL(url);
+  return GURL(std::string(kChromeUISettingsURL) + sub_page);
 }
 
 bool IsSettingsSubPage(const GURL& url, const std::string& sub_page) {
@@ -265,17 +301,43 @@ void ShowSettingsSubPage(Browser* browser, const std::string& sub_page) {
 
 void ShowSettingsSubPageForProfile(Profile* profile,
                                    const std::string& sub_page) {
+  std::string sub_page_path = sub_page;
+
+#if defined(OS_CHROMEOS)
+  if (!base::FeatureList::IsEnabled(features::kMaterialDesignSettings)) {
+    if (sub_page == chrome::kAccessibilitySubPage) {
+      sub_page_path = GenerateContentSettingsSearchQueryPath(
+          IDS_OPTIONS_SETTINGS_SECTION_TITLE_ACCESSIBILITY);
+    } else if (sub_page == chrome::kBluetoothSubPage) {
+      sub_page_path = GenerateContentSettingsSearchQueryPath(
+          IDS_OPTIONS_SETTINGS_SECTION_TITLE_BLUETOOTH);
+    } else if (sub_page == chrome::kDateTimeSubPage) {
+      sub_page_path = GenerateContentSettingsSearchQueryPath(
+          IDS_OPTIONS_SETTINGS_SECTION_TITLE_DATETIME);
+    } else if (sub_page == chrome::kStylusSubPage ||
+               sub_page == chrome::kPowerSubPage) {
+      sub_page_path += "-overlay";
+    }
+  } else {
+    if (sub_page == chrome::kPowerSubPage) {
+      // TODO(stevenjbj/derat): Remove this once we have a 'power' subpage,
+      // crbug.com/633455.
+      sub_page_path = "device";
+    }
+  }
+#endif
+
   if (::switches::SettingsWindowEnabled()) {
     content::RecordAction(base::UserMetricsAction("ShowOptions"));
     SettingsWindowManager::GetInstance()->ShowChromePageForProfile(
-        profile, GetSettingsUrl(sub_page));
+        profile, GetSettingsUrl(sub_page_path));
     return;
   }
   Browser* browser = chrome::FindTabbedBrowser(profile, false);
   if (!browser) {
-    browser = new Browser(Browser::CreateParams(profile));
+    browser = new Browser(Browser::CreateParams(profile, true));
   }
-  ShowSettingsSubPageInTabbedBrowser(browser, sub_page);
+  ShowSettingsSubPageInTabbedBrowser(browser, sub_page_path);
 }
 
 void ShowSettingsSubPageInTabbedBrowser(Browser* browser,
@@ -375,7 +437,7 @@ void ShowBrowserSignin(Browser* browser,
   if (show_avatar_bubble) {
     browser->window()->ShowAvatarBubbleFromAvatarButton(
         BrowserWindow::AVATAR_BUBBLE_MODE_SIGNIN,
-        signin::ManageAccountsParams(), access_point);
+        signin::ManageAccountsParams(), access_point, false);
   } else {
     NavigateToSingletonTab(
         browser,

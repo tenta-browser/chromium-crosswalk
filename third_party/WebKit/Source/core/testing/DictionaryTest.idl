@@ -2,8 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-[
-] interface DictionaryTest {
+interface DictionaryTest {
     void set(optional InternalDictionary testingDictionary);
     InternalDictionary get();
     [CallWith=ScriptState] object getDictionaryMemberProperties();
@@ -11,5 +10,8 @@
     void setDerived(InternalDictionaryDerived derived);
     InternalDictionaryDerived getDerived();
 
-    [CallWith=ExecutionContext, RaisesException] DOMString stringFromIterable(Dictionary iterableDictionary);
+    void setDerivedDerived(InternalDictionaryDerivedDerived derived);
+    InternalDictionaryDerivedDerived getDerivedDerived();
+
+    [CallWith=ScriptState, RaisesException] DOMString stringFromIterable(Dictionary iterableDictionary);
 };

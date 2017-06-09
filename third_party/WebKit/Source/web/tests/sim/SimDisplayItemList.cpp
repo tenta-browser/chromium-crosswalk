@@ -6,33 +6,32 @@
 
 #include "core/css/parser/CSSParser.h"
 #include "platform/graphics/LoggingCanvas.h"
-#include "third_party/skia/include/core/SkPicture.h"
+#include "platform/graphics/paint/PaintRecord.h"
 #include "third_party/skia/include/core/SkRect.h"
 
 namespace blink {
 
-SimDisplayItemList::SimDisplayItemList()
-{
+SimDisplayItemList::SimDisplayItemList() {}
+
+void SimDisplayItemList::appendDrawingItem(const WebRect&,
+                                           sk_sp<const PaintRecord> record) {
+  SkIRect bounds = record->cullRect().roundOut();
+  SimCanvas canvas(bounds.width(), bounds.height());
+  record->playback(&canvas);
+  m_commands.append(canvas.commands().data(), canvas.commands().size());
 }
 
-void SimDisplayItemList::appendDrawingItem(const WebRect&, sk_sp<const SkPicture> picture)
-{
-    SkIRect bounds = picture->cullRect().roundOut();
-    SimCanvas canvas(bounds.width(), bounds.height());
-    picture->playback(&canvas);
-    m_commands.append(canvas.commands().data(), canvas.commands().size());
+bool SimDisplayItemList::contains(SimCanvas::CommandType type,
+                                  const String& colorString) const {
+  Color color = 0;
+  if (!colorString.isNull())
+    CHECK(CSSParser::parseColor(color, colorString, true));
+  for (auto& command : m_commands) {
+    if (command.type == type &&
+        (colorString.isNull() || command.color == color.rgb()))
+      return true;
+  }
+  return false;
 }
 
-bool SimDisplayItemList::contains(SimCanvas::CommandType type, const String& colorString) const
-{
-    Color color = 0;
-    if (!colorString.isNull())
-        CHECK(CSSParser::parseColor(color, colorString, true));
-    for (auto& command : m_commands) {
-        if (command.type == type && (colorString.isNull() || command.color == color.rgb()))
-            return true;
-    }
-    return false;
-}
-
-} // namespace blink
+}  // namespace blink

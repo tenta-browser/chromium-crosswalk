@@ -43,49 +43,32 @@ namespace WTF {
 extern void initializeThreading();
 
 bool s_initialized;
-bool s_shutdown;
 void (*s_callOnMainThreadFunction)(MainThreadFunction, void*);
 ThreadIdentifier s_mainThreadIdentifier;
 
 namespace internal {
 
-void callOnMainThread(MainThreadFunction* function, void* context)
-{
-    (*s_callOnMainThreadFunction)(function, context);
+void callOnMainThread(MainThreadFunction* function, void* context) {
+  (*s_callOnMainThreadFunction)(function, context);
 }
 
-} // namespace internal
+}  // namespace internal
 
-bool isMainThread()
-{
-    return currentThread() == s_mainThreadIdentifier;
+bool isMainThread() {
+  return currentThread() == s_mainThreadIdentifier;
 }
 
-void initialize(void (*callOnMainThreadFunction)(MainThreadFunction, void*))
-{
-    // WTF, and Blink in general, cannot handle being re-initialized, even if shutdown first.
-    // Make that explicit here.
-    RELEASE_ASSERT(!s_initialized);
-    RELEASE_ASSERT(!s_shutdown);
-    s_initialized = true;
-    initializeThreading();
+void initialize(void (*callOnMainThreadFunction)(MainThreadFunction, void*)) {
+  // WTF, and Blink in general, cannot handle being re-initialized.
+  // Make that explicit here.
+  RELEASE_ASSERT(!s_initialized);
+  s_initialized = true;
+  initializeThreading();
 
-    s_callOnMainThreadFunction = callOnMainThreadFunction;
-    s_mainThreadIdentifier = currentThread();
-    AtomicString::init();
-    StringStatics::init();
+  s_callOnMainThreadFunction = callOnMainThreadFunction;
+  s_mainThreadIdentifier = currentThread();
+  AtomicString::init();
+  StringStatics::init();
 }
 
-void shutdown()
-{
-    RELEASE_ASSERT(s_initialized);
-    RELEASE_ASSERT(!s_shutdown);
-    s_shutdown = true;
-}
-
-bool isShutdown()
-{
-    return s_shutdown;
-}
-
-} // namespace WTF
+}  // namespace WTF

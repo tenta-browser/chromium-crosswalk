@@ -6,22 +6,10 @@
 
 #include <memory>
 
-#include "base/memory/scoped_vector.h"
 #include "components/password_manager/core/browser/credentials_filter.h"
 #include "components/password_manager/core/browser/password_form_manager.h"
 
 namespace password_manager {
-
-ScopedVector<autofill::PasswordForm>
-StubPasswordManagerClient::PassThroughCredentialsFilter::FilterResults(
-    ScopedVector<autofill::PasswordForm> results) const {
-  return results;
-}
-
-bool StubPasswordManagerClient::PassThroughCredentialsFilter::ShouldSave(
-    const autofill::PasswordForm& form) const {
-  return true;
-}
 
 StubPasswordManagerClient::StubPasswordManagerClient() {}
 
@@ -35,15 +23,14 @@ bool StubPasswordManagerClient::PromptUserToSaveOrUpdatePassword(
 }
 
 bool StubPasswordManagerClient::PromptUserToChooseCredentials(
-    ScopedVector<autofill::PasswordForm> local_forms,
-    ScopedVector<autofill::PasswordForm> federated_forms,
+    std::vector<std::unique_ptr<autofill::PasswordForm>> local_forms,
     const GURL& origin,
     const CredentialsCallback& callback) {
   return false;
 }
 
 void StubPasswordManagerClient::NotifyUserAutoSignin(
-    ScopedVector<autofill::PasswordForm> local_forms,
+    std::vector<std::unique_ptr<autofill::PasswordForm>> local_forms,
     const GURL& origin) {}
 
 void StubPasswordManagerClient::NotifyUserCouldBeAutoSignedIn(

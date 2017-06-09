@@ -11,9 +11,8 @@
 #import "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_vector.h"
 #include "base/synchronization/lock.h"
-#include "ios/web/public/test/response_providers/response_provider.h"
+#import "ios/web/public/test/response_providers/response_provider.h"
 
 @class GCDWebServer;
 
@@ -30,7 +29,7 @@ class RefCountedResponseProviderWrapper :
  public:
   // Main constructor.
   explicit RefCountedResponseProviderWrapper(
-      ResponseProvider* response_provider);
+      std::unique_ptr<ResponseProvider> response_provider);
   // Returns the ResponseProvider that backs this object.
   ResponseProvider* GetResponseProvider() { return response_provider_.get(); }
  private:
@@ -48,7 +47,7 @@ class RefCountedResponseProviderWrapper :
 // thread safe.
 class HttpServer {
  public:
-  typedef ScopedVector<ResponseProvider> ProviderList;
+  typedef std::vector<std::unique_ptr<ResponseProvider>> ProviderList;
 
   // Returns the shared HttpServer instance. Thread safe.
   static HttpServer& GetSharedInstance();
@@ -56,7 +55,7 @@ class HttpServer {
   // as well. Takes ownership of the response providers. Must be called from the
   // main thread.
   static HttpServer& GetSharedInstanceWithResponseProviders(
-      const ProviderList& response_providers);
+      ProviderList response_providers);
 
   // A convenience method for the longer form of
   // |web::test::HttpServer::GetSharedInstance().MakeUrlForHttpServer|
@@ -76,13 +75,16 @@ class HttpServer {
   // Must be called from the main thread.
   bool IsRunning() const;
 
+  // Returns the port that the server is running on. Thread Safe
+  NSUInteger GetPort() const;
+
   // Adds a ResponseProvider. Takes ownership of the ResponseProvider.
   // Note for using URLs inside of the |response_provider|:
   // The HttpServer cannot run on default HTTP port 80, so URLs used in
   // ResponseProviders must be converted at runtime after the HttpServer's port
   // is determined. Please use |MakeUrl| to handle converting URLs.
   // Must be called from the main thread.
-  void AddResponseProvider(ResponseProvider* response_provider);
+  void AddResponseProvider(std::unique_ptr<ResponseProvider> response_provider);
   // Removes the |response_provider|. Must be called from the main thread.
   void RemoveResponseProvider(ResponseProvider* response_provider);
   // Removes all the response providers. Must be called from the main thread.
@@ -97,8 +99,6 @@ class HttpServer {
 
   // Sets the port that the server is running on. Thread Safe
   void SetPort(NSUInteger port);
-  // Returns the port that the server is running on. Thread Safe
-  NSUInteger GetPort() const;
 
   // Creates a GURL that the server can service based on the |url|
   // passed in.

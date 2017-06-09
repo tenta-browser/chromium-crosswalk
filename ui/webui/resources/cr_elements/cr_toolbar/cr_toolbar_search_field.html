@@ -1,7 +1,5 @@
 <link rel="import" href="chrome://resources/html/polymer.html">
-<link rel="import" href="chrome://resources/polymer/v1_0/iron-input/iron-input.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/paper-icon-button/paper-icon-button.html">
-<link rel="import" href="chrome://resources/polymer/v1_0/paper-input/paper-input-container.html">
 <link rel="import" href="chrome://resources/polymer/v1_0/paper-spinner/paper-spinner-lite.html">
 <link rel="import" href="chrome://resources/cr_elements/cr_search_field/cr_search_field_behavior.html">
 <link rel="import" href="chrome://resources/cr_elements/icons.html">
@@ -25,51 +23,72 @@
       paper-icon-button {
         height: 32px;
         margin: 6px;
+        min-width: 32px;
         padding: 6px;
         width: 32px;
       }
 
       #icon {
         --paper-icon-button-ink-color: white;
-      }
-
-      #icon,
-      paper-spinner-lite {
-        transition: opacity 200ms;
+        transition: margin 150ms, opacity 200ms;
       }
 
       #prompt {
-        visibility: hidden;
+        opacity: 0;
       }
 
       paper-spinner-lite {
+        @apply(--cr-icon-height-width);
         --paper-spinner-color: white;
-        height: 20px;
         margin: 0 6px;
         opacity: 0;
         padding: 6px;
         position: absolute;
-        width: 20px;
       }
 
       paper-spinner-lite[active] {
         opacity: 1;
       }
 
-      paper-input-container {
-        --paper-input-container-input-color: white;
-        --paper-input-container-underline: {
-          display: none;
-        };
-        --paper-input-container-underline-focus: {
-          display: none;
-        };
-        --paper-input-container-label: {
-          color: inherit;
-          font-size: inherit;
-        };
-        -webkit-padding-start: 2px;
+      #prompt,
+      paper-spinner-lite {
+        transition: opacity 200ms;
+      }
+
+      /* Input field. */
+      #searchTerm {
+        -webkit-font-smoothing: antialiased;
+        -webkit-margin-start: 2px;
         flex: 1;
+        line-height: 185%;
+        position: relative;
+      }
+
+      label {
+        bottom: 0;
+        cursor: text;
+        left: 0;
+        overflow: hidden;
+        position: absolute;
+        right: 0;
+        top: 0;
+        white-space: nowrap;
+      }
+
+      :host([has-search-text]) label {
+        visibility: hidden;
+      }
+
+      input {
+        -webkit-appearance: none;
+        background: transparent;
+        border: none;
+        color: white;
+        font: inherit;
+        outline: none;
+        padding: 0;
+        position: relative;
+        width: 100%;
       }
 
       input[type='search']::-webkit-search-decoration,
@@ -78,53 +97,63 @@
         -webkit-appearance: none;
       }
 
-      /** Wide layout, no search open. */
-      :host(:not([narrow]):not([showing-search])) {
+      /** Wide layout. */
+      :host(:not([narrow])) {
         -webkit-padding-end: 0;
         background: rgba(0, 0, 0, 0.22);
         border-radius: 2px;
         cursor: text;
-        width: 580px;
+        width: var(--cr-toolbar-field-width);
       }
 
       :host(:not([narrow]):not([showing-search])) #icon,
-      :host(:not([narrow]):not([showing-search])) #prompt {
-        opacity: 0.6;
+      :host(:not([narrow])) #prompt {
+        opacity: 0.7;
       }
 
-      :host(:not([narrow]):not([showing-search])) #prompt {
-        visibility: visible;
+      :host([narrow]:not([showing-search])) #searchTerm {
+        display: none;
       }
 
-      /* Any layout, search open. */
-      :host([showing-search]) {
-        width: 100%;
-      }
-
+      /* Search open. */
       :host([showing-search][spinner-active]) #icon {
         opacity: 0;
       }
 
-      :host([narrow][showing-search]) #icon {
+      :host([narrow][showing-search]) {
+        width: 100%;
+      }
+
+      :host([narrow][showing-search]) #icon,
+      :host([narrow][showing-search]) paper-spinner-lite {
         -webkit-margin-start: 18px;
       }
     </style>
-    <paper-spinner-lite
-        active="[[isSpinnerShown_(spinnerActive, showingSearch)]]">
-    </paper-spinner-lite>
+    <template is="dom-if" if="[[isSpinnerShown_]]">
+      <paper-spinner-lite active>
+      </paper-spinner-lite>
+    </template>
     <paper-icon-button id="icon" icon="cr:search" title="[[label]]"
         tabindex$="[[computeIconTabIndex_(narrow)]]">
     </paper-icon-button>
-    <paper-input-container on-search="onSearchTermSearch"
-        on-keydown="onSearchTermKeydown" no-label-float>
+    <div id="searchTerm">
       <label id="prompt" for="searchInput">[[label]]</label>
-      <input is="iron-input" id="searchInput" type="search"
-          on-blur="onInputBlur_" incremental></input>
-    </paper-input-container>
-    <paper-icon-button icon="cr:cancel" id="clearSearch"
-        title="[[clearLabel]]" hidden$="[[!hasSearchText_]]"
-        on-tap="hideSearch_">
-    </paper-icon-button>
+      <input id="searchInput"
+          type="search"
+          on-input="onSearchTermInput"
+          on-search="onSearchTermSearch"
+          on-keydown="onSearchTermKeydown_"
+          on-focus="onInputFocus_"
+          on-blur="onInputBlur_"
+          incremental
+          autofocus>
+      </input>
+    </div>
+    <template is="dom-if" if="[[hasSearchText]]">
+      <paper-icon-button icon="cr:cancel" id="clearSearch"
+          title="[[clearLabel]]" on-tap="clearSearch_">
+      </paper-icon-button>
+    </template>
   </template>
   <script src="cr_toolbar_search_field.js"></script>
 </dom-module>

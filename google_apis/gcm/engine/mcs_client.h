@@ -64,7 +64,7 @@ class GCM_EXPORT MCSClient {
   // Any change made to this enum should have corresponding change in the
   // GetMessageSendStatusString(...) function in mcs_client.cc.
   enum MessageSendStatus {
-    // Message was queued succcessfully.
+    // Message was queued successfully.
     QUEUED,
     // Message was sent to the server and the ACK was received.
     SENT,
@@ -155,7 +155,7 @@ class GCM_EXPORT MCSClient {
 
   // Allows a caller to set a heartbeat interval (in milliseconds) with which
   // the MCS connection will be monitored on both ends, to detect device
-  // presence. In case the newly set interval is less then the current one,
+  // presence. In case the newly set interval is smaller than the current one,
   // connection will be restarted with new heartbeat interval. Valid values have
   // to be between GetMax/GetMinClientHeartbeatIntervalMs of HeartbeatManager,
   // otherwise the setting won't take effect.

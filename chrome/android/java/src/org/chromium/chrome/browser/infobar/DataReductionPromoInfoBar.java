@@ -9,6 +9,7 @@ import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.os.StrictMode;
 
 import org.chromium.base.CommandLine;
 import org.chromium.base.ThreadUtils;
@@ -41,6 +42,7 @@ public class DataReductionPromoInfoBar extends ConfirmInfoBar {
     private static String sText;
     private static String sPrimaryButtonText;
     private static String sSecondaryButtonText;
+
     /**
      * Launch the data reduction infobar promo, if it needs to be displayed.
      *
@@ -73,44 +75,53 @@ public class DataReductionPromoInfoBar extends ConfirmInfoBar {
         if (DataReductionPromoUtils.getDisplayedInfoBarPromo()) return false;
 
         // Only show the promo on HTTP pages.
-        if (!GURLUtils.getScheme(url).concat("://").equals(UrlConstants.HTTP_SCHEME)) return false;
+        if (!GURLUtils.getScheme(url).equals(UrlConstants.HTTP_SCHEME)) return false;
 
         int currentMilestone = VersionNumberGetter.getMilestoneFromVersionNumber(
                 PrefServiceBridge.getInstance().getAboutVersionStrings().getApplicationVersion());
         String freOrSecondRunVersion =
                 DataReductionPromoUtils.getDisplayedFreOrSecondRunPromoVersion();
 
-        Calendar releaseDateOfM48Stable = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
-        releaseDateOfM48Stable.setTime(Date.valueOf(M48_STABLE_RELEASE_DATE));
-        long packageInstallTime = getPackageInstallTime(context);
+        // Temporarily allowing disk access. TODO: Fix. See http://crbug.com/577185
+        StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskReads();
+        try {
+            Calendar releaseDateOfM48Stable = Calendar.getInstance(TimeZone.getTimeZone("UTC"));
 
-        // The boolean pref that stores whether user opted out on the first run experience was
-        // added in M51. If the last promo was shown before M51, then |freOrSecondRunVersion| will
-        // be empty. If Chrome was installed after the FRE promo was added in M48 and before M51,
-        // assume the user opted out from the FRE and don't show the infobar.
-        if (freOrSecondRunVersion.isEmpty()
-                && packageInstallTime > releaseDateOfM48Stable.getTimeInMillis()) {
-            return false;
+            releaseDateOfM48Stable.setTime(Date.valueOf(M48_STABLE_RELEASE_DATE));
+            long packageInstallTime = getPackageInstallTime(context);
+
+            // The boolean pref that stores whether user opted out on the first run experience was
+            // added in M51. If the last promo was shown before M51, then |freOrSecondRunVersion|
+            // will be empty. If Chrome was installed after the FRE promo was added in M48 and
+            // beforeM51,assume the user opted out from the FRE and don't show the infobar.
+            if (freOrSecondRunVersion.isEmpty()
+                    && packageInstallTime > releaseDateOfM48Stable.getTimeInMillis()) {
+                return false;
+            }
+
+            // Only show the promo if the current version is at least two milestones after the last
+            // promo was displayed or the command line switch is on. If the last promo was shown
+            // before M51 then |freOrSecondRunVersion| will be empty and it is safe to show the
+            // infobar promo.
+            if (!CommandLine.getInstance().hasSwitch(ENABLE_INFOBAR_SWITCH)
+                    && !freOrSecondRunVersion.isEmpty()
+                    && currentMilestone < VersionNumberGetter
+                            .getMilestoneFromVersionNumber(freOrSecondRunVersion) + 2) {
+                return false;
+            }
+
+            DataReductionPromoInfoBar.launch(webContents,
+                    BitmapFactory.decodeResource(context.getResources(),
+                            R.drawable.infobar_chrome),
+                    context.getString(R.string.data_reduction_promo_infobar_title),
+                    context.getString(R.string.data_reduction_promo_infobar_text),
+                    context.getString(R.string.data_reduction_promo_infobar_button),
+                    context.getString(R.string.no_thanks));
+
+            return true;
+        } finally {
+            StrictMode.setThreadPolicy(oldPolicy);
         }
-
-        // Only show the promo if the current version is at least two milestones after the last
-        // promo was displayed or the command line switch is on. If the last promo was shown before
-        // M51 then |freOrSecondRunVersion| will be empty and it is safe to show the infobar promo.
-        if (!CommandLine.getInstance().hasSwitch(ENABLE_INFOBAR_SWITCH)
-                && !freOrSecondRunVersion.isEmpty()
-                && currentMilestone < VersionNumberGetter
-                        .getMilestoneFromVersionNumber(freOrSecondRunVersion) + 2) {
-            return false;
-        }
-
-        DataReductionPromoInfoBar.launch(webContents,
-                BitmapFactory.decodeResource(context.getResources(), R.mipmap.app_icon),
-                context.getString(R.string.data_reduction_promo_infobar_title),
-                context.getString(R.string.data_reduction_promo_infobar_text),
-                context.getString(R.string.data_reduction_promo_infobar_button),
-                context.getString(R.string.no_thanks));
-
-        return true;
     }
 
     /**

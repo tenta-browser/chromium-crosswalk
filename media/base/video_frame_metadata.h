@@ -13,6 +13,7 @@
 #include "base/time/time.h"
 #include "base/values.h"
 #include "media/base/media_export.h"
+#include "media/base/video_rotation.h"
 
 namespace media {
 
@@ -106,6 +107,19 @@ class MEDIA_EXPORT VideoFrameMetadata {
     // should use read lock fences.
     READ_LOCK_FENCES_ENABLED,
 
+    // Indicates that the frame is rotated.
+    ROTATION,
+
+    // Android only: if set, then this frame is not suitable for overlay, even
+    // if ALLOW_OVERLAY is set.  However, it allows us to process the overlay
+    // to see if it would have been promoted, if it were backed by a SurfaceView
+    // instead.  This lets us figure out when SurfaceViews are appropriate.
+    SURFACE_TEXTURE,
+
+    // Android only: if set, then this frame's resource would like to be
+    // notified about its promotability to an overlay.
+    WANTS_PROMOTION_HINT,
+
     NUM_KEYS
   };
 
@@ -120,6 +134,7 @@ class MEDIA_EXPORT VideoFrameMetadata {
   void SetBoolean(Key key, bool value);
   void SetInteger(Key key, int value);
   void SetDouble(Key key, double value);
+  void SetRotation(Key key, VideoRotation value);
   void SetString(Key key, const std::string& value);
   void SetTimeDelta(Key key, const base::TimeDelta& value);
   void SetTimeTicks(Key key, const base::TimeTicks& value);
@@ -129,6 +144,7 @@ class MEDIA_EXPORT VideoFrameMetadata {
   bool GetBoolean(Key key, bool* value) const WARN_UNUSED_RESULT;
   bool GetInteger(Key key, int* value) const WARN_UNUSED_RESULT;
   bool GetDouble(Key key, double* value) const WARN_UNUSED_RESULT;
+  bool GetRotation(Key key, VideoRotation* value) const WARN_UNUSED_RESULT;
   bool GetString(Key key, std::string* value) const WARN_UNUSED_RESULT;
   bool GetTimeDelta(Key key, base::TimeDelta* value) const WARN_UNUSED_RESULT;
   bool GetTimeTicks(Key key, base::TimeTicks* value) const WARN_UNUSED_RESULT;
@@ -140,7 +156,7 @@ class MEDIA_EXPORT VideoFrameMetadata {
   bool IsTrue(Key key) const WARN_UNUSED_RESULT;
 
   // For serialization.
-  void MergeInternalValuesInto(base::DictionaryValue* out) const;
+  std::unique_ptr<base::DictionaryValue> CopyInternalValues() const;
   void MergeInternalValuesFrom(const base::DictionaryValue& in);
 
   // Merges internal values from |metadata_source|.

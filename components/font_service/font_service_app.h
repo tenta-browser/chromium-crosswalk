@@ -11,33 +11,33 @@
 #include "base/macros.h"
 #include "components/font_service/public/interfaces/font_service.mojom.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
-#include "services/shell/public/cpp/interface_factory.h"
-#include "services/shell/public/cpp/shell_client.h"
-#include "services/tracing/public/cpp/tracing_impl.h"
+#include "services/service_manager/public/cpp/interface_factory.h"
+#include "services/service_manager/public/cpp/service.h"
+#include "services/tracing/public/cpp/provider.h"
 #include "skia/ext/skia_utils_base.h"
 
 namespace font_service {
 
-class FontServiceApp : public shell::ShellClient,
-                       public shell::InterfaceFactory<mojom::FontService>,
-                       public mojom::FontService {
+class FontServiceApp
+    : public service_manager::Service,
+      public service_manager::InterfaceFactory<mojom::FontService>,
+      public mojom::FontService {
  public:
   FontServiceApp();
   ~FontServiceApp() override;
 
  private:
-  // shell::ShellClient:
-  void Initialize(shell::Connector* connector,
-                  const shell::Identity& identity,
-                  uint32_t id) override;
-  bool AcceptConnection(shell::Connection* connection) override;
+  // service_manager::Service:
+  void OnStart() override;
+  bool OnConnect(const service_manager::ServiceInfo& remote_info,
+                 service_manager::InterfaceRegistry* registry) override;
 
-  // shell::InterfaceFactory<mojom::FontService>:
-  void Create(shell::Connection* connection,
+  // service_manager::InterfaceFactory<mojom::FontService>:
+  void Create(const service_manager::Identity& remote_identity,
               mojo::InterfaceRequest<mojom::FontService> request) override;
 
   // FontService:
-  void MatchFamilyName(const mojo::String& family_name,
+  void MatchFamilyName(const std::string& family_name,
                        mojom::TypefaceStylePtr requested_style,
                        const MatchFamilyNameCallback& callback) override;
   void OpenStream(uint32_t id_number,
@@ -47,7 +47,7 @@ class FontServiceApp : public shell::ShellClient,
 
   mojo::BindingSet<mojom::FontService> bindings_;
 
-  mojo::TracingImpl tracing_;
+  tracing::Provider tracing_;
 
   // We don't want to leak paths to our callers; we thus enumerate the paths of
   // fonts.

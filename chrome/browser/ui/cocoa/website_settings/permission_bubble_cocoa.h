@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef CHROME_BROWSER_UI_COCOA_PERMISSION_BUBBLE_COCOA_H_
-#define CHROME_BROWSER_UI_COCOA_PERMISSION_BUBBLE_COCOA_H_
+#ifndef CHROME_BROWSER_UI_COCOA_WEBSITE_SETTINGS_PERMISSION_BUBBLE_COCOA_H_
+#define CHROME_BROWSER_UI_COCOA_WEBSITE_SETTINGS_PERMISSION_BUBBLE_COCOA_H_
 
 #import <Foundation/Foundation.h>
 
@@ -12,19 +12,19 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/ui/cocoa/info_bubble_view.h"
-#include "chrome/browser/ui/website_settings/permission_bubble_view.h"
+#include "chrome/browser/ui/website_settings/permission_prompt.h"
 #include "content/public/browser/web_contents.h"
 
 class Browser;
 @class PermissionBubbleController;
 
-class PermissionBubbleCocoa : public PermissionBubbleView {
+class PermissionBubbleCocoa : public PermissionPrompt {
  public:
   explicit PermissionBubbleCocoa(Browser* browser);
   ~PermissionBubbleCocoa() override;
 
-  // PermissionBubbleView interface.
-  void Show(const std::vector<PermissionBubbleRequest*>& requests,
+  // PermissionPrompt:
+  void Show(const std::vector<PermissionRequest*>& requests,
             const std::vector<bool>& accept_state) override;
   void Hide() override;
   bool IsVisible() override;
@@ -56,4 +56,4 @@ class PermissionBubbleCocoa : public PermissionBubbleView {
   DISALLOW_COPY_AND_ASSIGN(PermissionBubbleCocoa);
 };
 
-#endif  // CHROME_BROWSER_UI_COCOA_PERMISSION_BUBBLE_COCOA_H_
+#endif  // CHROME_BROWSER_UI_COCOA_WEBSITE_SETTINGS_PERMISSION_BUBBLE_COCOA_H_

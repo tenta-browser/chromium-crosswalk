@@ -75,7 +75,7 @@ TLSSocket::TLSSocket(std::unique_ptr<net::StreamSocket> tls_socket,
       tls_socket_(std::move(tls_socket)) {}
 
 TLSSocket::~TLSSocket() {
-  Disconnect();
+  Disconnect(true /* socket_destroying */);
 }
 
 void TLSSocket::Connect(const net::AddressList& address,
@@ -83,7 +83,7 @@ void TLSSocket::Connect(const net::AddressList& address,
   callback.Run(net::ERR_CONNECTION_FAILED);
 }
 
-void TLSSocket::Disconnect() {
+void TLSSocket::Disconnect(bool socket_destroying) {
   if (tls_socket_) {
     tls_socket_->Disconnect();
     tls_socket_.reset();
@@ -93,18 +93,19 @@ void TLSSocket::Disconnect() {
 void TLSSocket::Read(int count, const ReadCompletionCallback& callback) {
   DCHECK(!callback.is_null());
 
+  const bool socket_destroying = false;
   if (!read_callback_.is_null()) {
-    callback.Run(net::ERR_IO_PENDING, NULL);
+    callback.Run(net::ERR_IO_PENDING, nullptr, socket_destroying);
     return;
   }
 
   if (count <= 0) {
-    callback.Run(net::ERR_INVALID_ARGUMENT, NULL);
+    callback.Run(net::ERR_INVALID_ARGUMENT, nullptr, socket_destroying);
     return;
   }
 
   if (!tls_socket_.get()) {
-    callback.Run(net::ERR_SOCKET_NOT_CONNECTED, NULL);
+    callback.Run(net::ERR_SOCKET_NOT_CONNECTED, nullptr, socket_destroying);
     return;
   }
 
@@ -127,7 +128,8 @@ void TLSSocket::Read(int count, const ReadCompletionCallback& callback) {
 void TLSSocket::OnReadComplete(const scoped_refptr<net::IOBuffer>& io_buffer,
                                int result) {
   DCHECK(!read_callback_.is_null());
-  base::ResetAndReturn(&read_callback_).Run(result, io_buffer);
+  base::ResetAndReturn(&read_callback_)
+      .Run(result, io_buffer, false /* socket_destroying */);
 }
 
 int TLSSocket::WriteImpl(net::IOBuffer* io_buffer,
@@ -253,10 +255,10 @@ void TLSSocket::UpgradeSocketToTLS(
     uint16_t version_min = 0, version_max = 0;
     api::socket::TLSVersionConstraints* versions = options->tls_version.get();
     if (versions->min.get()) {
-      version_min = SSLProtocolVersionFromString(*versions->min.get());
+      version_min = SSLProtocolVersionFromString(*versions->min);
     }
     if (versions->max.get()) {
-      version_max = SSLProtocolVersionFromString(*versions->max.get());
+      version_max = SSLProtocolVersionFromString(*versions->max);
     }
     if (version_min) {
       ssl_config.version_min = version_min;

@@ -10,18 +10,36 @@
 
 #include <memory>
 
+#include "base/environment.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
 #include "base/path_service.h"
-#include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/installer/util/master_preferences_constants.h"
 #include "chrome/installer/util/util_constants.h"
+#include "rlz/features/features.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
+
+// A helper class to set the "GoogleUpdateIsMachine" environment variable.
+class ScopedGoogleUpdateIsMachine {
+ public:
+  explicit ScopedGoogleUpdateIsMachine(const char* value)
+      : env_(base::Environment::Create()) {
+    env_->SetVar("GoogleUpdateIsMachine", value);
+  }
+
+  ~ScopedGoogleUpdateIsMachine() {
+    env_->UnSetVar("GoogleUpdateIsMachine");
+  }
+
+ private:
+  std::unique_ptr<base::Environment> env_;
+};
+
 class MasterPreferencesTest : public testing::Test {
  protected:
   void SetUp() override {
@@ -72,8 +90,7 @@ TEST_F(MasterPreferencesTest, ParseDistroParams) {
       "     \"make_chrome_default_for_user\": true,\n"
       "     \"system_level\": true,\n"
       "     \"verbose_logging\": true,\n"
-      "     \"require_eula\": true,\n"
-      "     \"ping_delay\": 40\n"
+      "     \"require_eula\": true\n"
       "  },\n"
       "  \"blah\": {\n"
       "     \"import_history\": false\n"
@@ -114,11 +131,6 @@ TEST_F(MasterPreferencesTest, ParseDistroParams) {
       installer::master_preferences::kDistroImportBookmarksFromFilePref,
       &str_value));
   EXPECT_STREQ("c:\\foo", str_value.c_str());
-
-  int ping_delay = 90;
-  EXPECT_TRUE(prefs.GetInt(installer::master_preferences::kDistroPingDelay,
-                           &ping_delay));
-  EXPECT_EQ(ping_delay, 40);
 }
 
 TEST_F(MasterPreferencesTest, ParseMissingDistroParams) {
@@ -169,11 +181,6 @@ TEST_F(MasterPreferencesTest, ParseMissingDistroParams) {
   EXPECT_FALSE(prefs.GetString(
       installer::master_preferences::kDistroImportBookmarksFromFilePref,
       &str_value));
-
-  int ping_delay = 90;
-  EXPECT_FALSE(prefs.GetInt(
-      installer::master_preferences::kDistroPingDelay, &ping_delay));
-  EXPECT_EQ(ping_delay, 90);
 }
 
 TEST_F(MasterPreferencesTest, FirstRunTabs) {
@@ -304,55 +311,41 @@ TEST_F(MasterPreferencesTest, TestDefaultInstallConfig) {
       base::CommandLine::FromString(chrome_cmd.str()));
 
   installer::MasterPreferences pref_chrome(chrome_install);
-
-  EXPECT_FALSE(pref_chrome.is_multi_install());
-  EXPECT_TRUE(pref_chrome.install_chrome());
 }
 
-TEST_F(MasterPreferencesTest, TestMultiInstallConfig) {
-  using installer::switches::kMultiInstall;
-  using installer::switches::kChrome;
-
-  std::wstringstream chrome_cmd, cf_cmd, chrome_cf_cmd;
-  chrome_cmd << "setup.exe --" << kMultiInstall << " --" << kChrome;
-
-  base::CommandLine chrome_install(
-      base::CommandLine::FromString(chrome_cmd.str()));
-
-  installer::MasterPreferences pref_chrome(chrome_install);
-
-  EXPECT_TRUE(pref_chrome.is_multi_install());
-  EXPECT_TRUE(pref_chrome.install_chrome());
-}
-
-TEST_F(MasterPreferencesTest, EnforceLegacyCreateAllShortcutsFalse) {
-  static const char kCreateAllShortcutsFalsePrefs[] =
+TEST_F(MasterPreferencesTest, EnforceLegacyPreferences) {
+  static const char kLegacyPrefs[] =
       "{"
       "  \"distribution\": {"
-      "     \"create_all_shortcuts\": false"
+      "     \"create_all_shortcuts\": false,\n"
+      "     \"ping_delay\": 40\n"
       "  }"
       "}";
 
-    installer::MasterPreferences prefs(kCreateAllShortcutsFalsePrefs);
+  installer::MasterPreferences prefs(kLegacyPrefs);
 
-    bool do_not_create_desktop_shortcut = false;
-    bool do_not_create_quick_launch_shortcut = false;
-    bool do_not_create_taskbar_shortcut = false;
-    prefs.GetBool(
-        installer::master_preferences::kDoNotCreateDesktopShortcut,
-        &do_not_create_desktop_shortcut);
-    prefs.GetBool(
-        installer::master_preferences::kDoNotCreateQuickLaunchShortcut,
-        &do_not_create_quick_launch_shortcut);
-    prefs.GetBool(
-        installer::master_preferences::kDoNotCreateTaskbarShortcut,
-        &do_not_create_taskbar_shortcut);
-    // create_all_shortcuts is a legacy preference that should only enforce
-    // do_not_create_desktop_shortcut and do_not_create_quick_launch_shortcut
-    // when set to false.
-    EXPECT_TRUE(do_not_create_desktop_shortcut);
-    EXPECT_TRUE(do_not_create_quick_launch_shortcut);
-    EXPECT_FALSE(do_not_create_taskbar_shortcut);
+  bool do_not_create_desktop_shortcut = false;
+  bool do_not_create_quick_launch_shortcut = false;
+  bool do_not_create_taskbar_shortcut = false;
+  prefs.GetBool(installer::master_preferences::kDoNotCreateDesktopShortcut,
+                &do_not_create_desktop_shortcut);
+  prefs.GetBool(installer::master_preferences::kDoNotCreateQuickLaunchShortcut,
+                &do_not_create_quick_launch_shortcut);
+  prefs.GetBool(installer::master_preferences::kDoNotCreateTaskbarShortcut,
+                &do_not_create_taskbar_shortcut);
+  // create_all_shortcuts is a legacy preference that should only enforce
+  // do_not_create_desktop_shortcut and do_not_create_quick_launch_shortcut
+  // when set to false.
+  EXPECT_TRUE(do_not_create_desktop_shortcut);
+  EXPECT_TRUE(do_not_create_quick_launch_shortcut);
+  EXPECT_FALSE(do_not_create_taskbar_shortcut);
+
+#if BUILDFLAG(ENABLE_RLZ)
+  int rlz_ping_delay = 0;
+  EXPECT_TRUE(prefs.master_dictionary().GetInteger(prefs::kRlzPingDelaySeconds,
+                                                   &rlz_ping_delay));
+  EXPECT_EQ(40, rlz_ping_delay);
+#endif  // BUILDFLAG(ENABLE_RLZ)
 }
 
 TEST_F(MasterPreferencesTest, DontEnforceLegacyCreateAllShortcutsTrue) {
@@ -407,4 +400,39 @@ TEST_F(MasterPreferencesTest, DontEnforceLegacyCreateAllShortcutsNotSpecified) {
     EXPECT_FALSE(do_not_create_desktop_shortcut);
     EXPECT_FALSE(do_not_create_quick_launch_shortcut);
     EXPECT_FALSE(do_not_create_taskbar_shortcut);
+}
+
+TEST_F(MasterPreferencesTest, GoogleUpdateIsMachine) {
+  {
+    ScopedGoogleUpdateIsMachine env_setter("0");
+    installer::MasterPreferences prefs(
+        base::CommandLine(base::FilePath(FILE_PATH_LITERAL("setup.exe"))));
+    bool value = false;
+    prefs.GetBool(installer::master_preferences::kSystemLevel, &value);
+    EXPECT_FALSE(value);
+  }
+  {
+    ScopedGoogleUpdateIsMachine env_setter("1");
+    installer::MasterPreferences prefs(
+        base::CommandLine(base::FilePath(FILE_PATH_LITERAL("setup.exe"))));
+    bool value = false;
+    prefs.GetBool(installer::master_preferences::kSystemLevel, &value);
+    EXPECT_TRUE(value);
+  }
+  {
+    ScopedGoogleUpdateIsMachine env_setter("1bridgetoofar");
+    installer::MasterPreferences prefs(
+        base::CommandLine(base::FilePath(FILE_PATH_LITERAL("setup.exe"))));
+    bool value = false;
+    prefs.GetBool(installer::master_preferences::kSystemLevel, &value);
+    EXPECT_FALSE(value);
+  }
+  {
+    ScopedGoogleUpdateIsMachine env_setter("2");
+    installer::MasterPreferences prefs(
+        base::CommandLine(base::FilePath(FILE_PATH_LITERAL("setup.exe"))));
+    bool value = false;
+    prefs.GetBool(installer::master_preferences::kSystemLevel, &value);
+    EXPECT_FALSE(value);
+  }
 }

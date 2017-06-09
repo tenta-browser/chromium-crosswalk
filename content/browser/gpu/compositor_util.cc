@@ -13,6 +13,7 @@
 #include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/sys_info.h"
@@ -21,9 +22,13 @@
 #include "cc/base/switches.h"
 #include "content/browser/gpu/browser_gpu_memory_buffer_manager.h"
 #include "content/browser/gpu/gpu_data_manager_impl.h"
+#include "content/public/browser/gpu_utils.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
 #include "gpu/config/gpu_feature_type.h"
+#include "gpu/ipc/host/gpu_memory_buffer_support.h"
+#include "media/media_features.h"
+#include "ui/gl/gl_switches.h"
 
 namespace content {
 
@@ -40,6 +45,7 @@ const char kWebGLFeatureName[] = "webgl";
 const char kRasterizationFeatureName[] = "rasterization";
 const char kMultipleRasterThreadsFeatureName[] = "multiple_raster_threads";
 const char kNativeGpuMemoryBuffersFeatureName[] = "native_gpu_memory_buffers";
+const char kWebGL2FeatureName[] = "webgl2";
 
 const int kMinRasterThreads = 1;
 const int kMaxRasterThreads = 4;
@@ -58,14 +64,18 @@ const GpuFeatureInfo GetGpuFeatureInfo(size_t index, bool* eof) {
   const base::CommandLine& command_line =
       *base::CommandLine::ForCurrentProcess();
   GpuDataManagerImpl* manager = GpuDataManagerImpl::GetInstance();
+  gpu::GpuPreferences gpu_preferences = GetGpuPreferencesFromCommandLine();
+
+  bool accelerated_vpx_disabled =
+      command_line.HasSwitch(switches::kDisableAcceleratedVideoDecode);
+#if defined(OS_WIN)
+  accelerated_vpx_disabled |= !gpu_preferences.enable_accelerated_vpx_decode;
+#endif
 
   const GpuFeatureInfo kGpuFeatureInfo[] = {
     {"2d_canvas",
      manager->IsFeatureBlacklisted(gpu::GPU_FEATURE_TYPE_ACCELERATED_2D_CANVAS),
-     command_line.HasSwitch(switches::kDisableAccelerated2dCanvas) ||
-         !GpuDataManagerImpl::GetInstance()
-              ->GetGPUInfo()
-              .SupportsAccelerated2dCanvas(),
+     command_line.HasSwitch(switches::kDisableAccelerated2dCanvas),
      "Accelerated 2D canvas is unavailable: either disabled via blacklist or"
      " the command line.",
      true},
@@ -105,7 +115,7 @@ const GpuFeatureInfo GetGpuFeatureInfo(size_t index, bool* eof) {
      "Accelerated video decode has been disabled, either via blacklist,"
      " about:flags or the command line.",
      true},
-#if defined(ENABLE_WEBRTC)
+#if BUILDFLAG(ENABLE_WEBRTC)
     {"video_encode", manager->IsFeatureBlacklisted(
                          gpu::GPU_FEATURE_TYPE_ACCELERATED_VIDEO_ENCODE),
      command_line.HasSwitch(switches::kDisableWebRtcHWEncoding),
@@ -133,10 +143,22 @@ const GpuFeatureInfo GetGpuFeatureInfo(size_t index, bool* eof) {
      NumberOfRendererRasterThreads() == 1, "Raster is using a single thread.",
      false},
     {kNativeGpuMemoryBuffersFeatureName, false,
-     !BrowserGpuMemoryBufferManager::IsNativeGpuMemoryBuffersEnabled(),
+     !gpu::AreNativeGpuMemoryBuffersEnabled(),
      "Native GpuMemoryBuffers have been disabled, either via about:flags"
      " or command line.",
      true},
+    {"vpx_decode", manager->IsFeatureBlacklisted(
+                       gpu::GPU_FEATURE_TYPE_ACCELERATED_VPX_DECODE) ||
+                       manager->IsFeatureBlacklisted(
+                           gpu::GPU_FEATURE_TYPE_ACCELERATED_VIDEO_DECODE),
+     accelerated_vpx_disabled,
+     "Accelerated VPx video decode has been disabled, either via blacklist"
+     " or the command line.",
+     true},
+    {kWebGL2FeatureName,
+     manager->IsFeatureBlacklisted(gpu::GPU_FEATURE_TYPE_WEBGL2),
+     command_line.HasSwitch(switches::kDisableES3APIs),
+     "WebGL2 has been disabled via blacklist or the command line.", false},
   };
   DCHECK(index < arraysize(kGpuFeatureInfo));
   *eof = (index == arraysize(kGpuFeatureInfo) - 1);
@@ -148,9 +170,11 @@ const GpuFeatureInfo GetGpuFeatureInfo(size_t index, bool* eof) {
 int NumberOfRendererRasterThreads() {
   int num_processors = base::SysInfo::NumberOfProcessors();
 
-#if defined(OS_ANDROID)
-  // Android may report 6 to 8 CPUs for big.LITTLE configurations.
-  // Limit the number of raster threads based on maximum of 4 big cores.
+#if defined(OS_ANDROID) || \
+    (defined(OS_CHROMEOS) && defined(ARCH_CPU_ARM_FAMILY))
+  // Android and ChromeOS ARM devices may report 6 to 8 CPUs for big.LITTLE
+  // configurations. Limit the number of raster threads based on maximum of
+  // 4 big cores.
   num_processors = std::min(num_processors, 4);
 #endif
 
@@ -190,10 +214,6 @@ bool IsZeroCopyUploadEnabled() {
 }
 
 bool IsPartialRasterEnabled() {
-  // Zero copy currently doesn't take advantage of partial raster.
-  if (IsZeroCopyUploadEnabled())
-    return false;
-
   const auto& command_line = *base::CommandLine::ForCurrentProcess();
   return !command_line.HasSwitch(switches::kDisablePartialRaster);
 }
@@ -211,7 +231,7 @@ bool IsGpuMemoryBufferCompositorResourcesEnabled() {
   }
 
   // Native GPU memory buffers are required.
-  if (!BrowserGpuMemoryBufferManager::IsNativeGpuMemoryBuffersEnabled())
+  if (!gpu::AreNativeGpuMemoryBuffersEnabled())
     return false;
 
 #if defined(OS_MACOSX)
@@ -222,25 +242,8 @@ bool IsGpuMemoryBufferCompositorResourcesEnabled() {
 }
 
 bool IsGpuRasterizationEnabled() {
-  const base::CommandLine& command_line =
-      *base::CommandLine::ForCurrentProcess();
-
-  if (command_line.HasSwitch(switches::kDisableGpuRasterization))
-    return false;
-  else if (command_line.HasSwitch(switches::kEnableGpuRasterization))
-    return true;
-
-  if (IsGpuRasterizationBlacklisted()) {
-    return false;
-  }
-
-#if defined(OS_ANDROID)
-  return true;
-#endif
-
-  // Gpu Rasterization on platforms that are not fully enabled is controlled by
-  // a finch experiment.
-  return base::FeatureList::IsEnabled(features::kDefaultEnableGpuRasterization);
+  GpuDataManagerImpl* manager = GpuDataManagerImpl::GetInstance();
+  return manager->IsFeatureEnabled(gpu::GPU_FEATURE_TYPE_GPU_RASTERIZATION);
 }
 
 bool IsAsyncWorkerContextEnabled() {
@@ -299,7 +302,7 @@ bool IsMainFrameBeforeActivationEnabled() {
   if (command_line.HasSwitch(cc::switches::kEnableMainFrameBeforeActivation))
     return true;
 
-  return base::FeatureList::IsEnabled(features::kMainFrameBeforeActivation);
+  return true;
 }
 
 base::DictionaryValue* GetFeatureStatus() {
@@ -367,7 +370,7 @@ base::Value* GetProblems() {
   manager->GetBlacklistReasons(problem_list);
 
   if (gpu_access_blocked) {
-    base::DictionaryValue* problem = new base::DictionaryValue();
+    auto problem = base::MakeUnique<base::DictionaryValue>();
     problem->SetString("description",
         "GPU process was unable to boot: " + gpu_access_blocked_reason);
     problem->Set("crBugs", new base::ListValue());
@@ -376,7 +379,7 @@ base::Value* GetProblems() {
     disabled_features->AppendString("all");
     problem->Set("affectedGpuSettings", disabled_features);
     problem->SetString("tag", "disabledFeatures");
-    problem_list->Insert(0, problem);
+    problem_list->Insert(0, std::move(problem));
   }
 
   bool eof = false;

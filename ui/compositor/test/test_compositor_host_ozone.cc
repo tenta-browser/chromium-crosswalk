@@ -20,7 +20,8 @@ namespace ui {
 class TestCompositorHostOzone : public TestCompositorHost {
  public:
   TestCompositorHostOzone(const gfx::Rect& bounds,
-                          ui::ContextFactory* context_factory);
+                          ui::ContextFactory* context_factory,
+                          ui::ContextFactoryPrivate* context_factory_private);
   ~TestCompositorHostOzone() override;
 
  private:
@@ -37,9 +38,13 @@ class TestCompositorHostOzone : public TestCompositorHost {
 
 TestCompositorHostOzone::TestCompositorHostOzone(
     const gfx::Rect& bounds,
-    ui::ContextFactory* context_factory)
+    ui::ContextFactory* context_factory,
+    ui::ContextFactoryPrivate* context_factory_private)
     : bounds_(bounds),
-      compositor_(context_factory, base::ThreadTaskRunnerHandle::Get()) {}
+      compositor_(context_factory_private->AllocateFrameSinkId(),
+                  context_factory,
+                  context_factory_private,
+                  base::ThreadTaskRunnerHandle::Get()) {}
 
 TestCompositorHostOzone::~TestCompositorHostOzone() {}
 
@@ -53,6 +58,7 @@ void TestCompositorHostOzone::Show() {
   // available: http://crbug.com/255128
   compositor_.SetAcceleratedWidget(1);
   compositor_.SetScaleAndSize(1.0f, bounds_.size());
+  compositor_.SetVisible(true);
 }
 
 ui::Compositor* TestCompositorHostOzone::GetCompositor() {
@@ -62,8 +68,10 @@ ui::Compositor* TestCompositorHostOzone::GetCompositor() {
 // static
 TestCompositorHost* TestCompositorHost::Create(
     const gfx::Rect& bounds,
-    ui::ContextFactory* context_factory) {
-  return new TestCompositorHostOzone(bounds, context_factory);
+    ui::ContextFactory* context_factory,
+    ui::ContextFactoryPrivate* context_factory_private) {
+  return new TestCompositorHostOzone(bounds, context_factory,
+                                     context_factory_private);
 }
 
 }  // namespace ui

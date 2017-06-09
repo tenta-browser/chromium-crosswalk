@@ -7,6 +7,7 @@
 #include <string>
 #include <utility>
 
+#include "base/memory/ptr_util.h"
 #include "components/url_matcher/url_matcher_factory.h"
 #include "ipc/ipc_message.h"
 
@@ -56,19 +57,19 @@ EventFilter::~EventFilter() {
 EventFilter::MatcherID EventFilter::AddEventMatcher(
     const std::string& event_name,
     std::unique_ptr<EventMatcher> matcher) {
-  MatcherID id = next_id_++;
   URLMatcherConditionSet::Vector condition_sets;
-  if (!CreateConditionSets(id, matcher.get(), &condition_sets))
+  if (!CreateConditionSets(matcher.get(), &condition_sets))
     return -1;
 
+  MatcherID id = next_id_++;
   for (URLMatcherConditionSet::Vector::iterator it = condition_sets.begin();
        it != condition_sets.end(); it++) {
     condition_set_id_to_event_matcher_id_.insert(
         std::make_pair((*it)->id(), id));
   }
   id_to_event_name_[id] = event_name;
-  event_matchers_[event_name][id] = linked_ptr<EventMatcherEntry>(
-      new EventMatcherEntry(std::move(matcher), &url_matcher_, condition_sets));
+  event_matchers_[event_name][id] = base::MakeUnique<EventMatcherEntry>(
+      std::move(matcher), &url_matcher_, condition_sets);
   return id;
 }
 
@@ -84,16 +85,16 @@ const std::string& EventFilter::GetEventName(MatcherID id) {
 }
 
 bool EventFilter::CreateConditionSets(
-    MatcherID id,
     EventMatcher* matcher,
     URLMatcherConditionSet::Vector* condition_sets) {
-  if (matcher->GetURLFilterCount() == 0) {
+  int url_filter_count = matcher->GetURLFilterCount();
+  if (url_filter_count == 0) {
     // If there are no URL filters then we want to match all events, so create a
     // URLFilter from an empty dictionary.
     base::DictionaryValue empty_dict;
     return AddDictionaryAsConditionSet(&empty_dict, condition_sets);
   }
-  for (int i = 0; i < matcher->GetURLFilterCount(); i++) {
+  for (int i = 0; i < url_filter_count; i++) {
     base::DictionaryValue* url_filter;
     if (!matcher->GetURLFilter(i, &url_filter))
       return false;
@@ -176,7 +177,7 @@ std::set<EventFilter::MatcherID> EventFilter::MatchEvent(
   return matchers;
 }
 
-int EventFilter::GetMatcherCountForEvent(const std::string& name) {
+int EventFilter::GetMatcherCountForEventForTesting(const std::string& name) {
   EventMatcherMultiMap::const_iterator it = event_matchers_.find(name);
   if (it == event_matchers_.end())
     return 0;

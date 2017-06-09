@@ -37,6 +37,7 @@ class CONTENT_EXPORT PermissionManager {
       PermissionType permission,
       RenderFrameHost* render_frame_host,
       const GURL& requesting_origin,
+      bool user_gesture,
       const base::Callback<void(blink::mojom::PermissionStatus)>& callback) = 0;
 
   // Requests multiple permissions on behalf of a frame identified by
@@ -53,6 +54,7 @@ class CONTENT_EXPORT PermissionManager {
       const std::vector<PermissionType>& permission,
       RenderFrameHost* render_frame_host,
       const GURL& requesting_origin,
+      bool user_gesture,
       const base::Callback<void(
           const std::vector<blink::mojom::PermissionStatus>&)>& callback) = 0;
 
@@ -74,12 +76,6 @@ class CONTENT_EXPORT PermissionManager {
   virtual void ResetPermission(PermissionType permission,
                                const GURL& requesting_origin,
                                const GURL& embedding_origin) = 0;
-
-  // Registers a permission usage.
-  // TODO(mlamouri): see if we can remove this from the PermissionManager.
-  virtual void RegisterPermissionUsage(PermissionType permission,
-                                       const GURL& requesting_origin,
-                                       const GURL& embedding_origin) = 0;
 
   // Runs the given |callback| whenever the |permission| associated with the
   // pair { requesting_origin, embedding_origin } changes.

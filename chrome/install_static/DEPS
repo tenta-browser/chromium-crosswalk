@@ -1,10 +1,20 @@
 include_rules = [
-  # Nothing from base except the includes listed below.
+  # Nothing from base.
   "-base",
-  "+base/macros.h",
-  "+base/strings/string16.h",
-  "+build/build_config.h",
   # Nothing from chrome.
   "-chrome",
-  "+chrome/install_static/install_util.h",
+  # For the app icon resource indices.
+  "+chrome/app/chrome_dll_resource.h",
+  # Anything from this dir.
+  "+chrome/install_static",
+  # All registry access should go through nt_registry.
+  "+chrome_elf/nt_registry/nt_registry.h",
+  # For the compile-time PRODUCT_VERSION macro.
+  "+components/version_info/version_info_values.h",
 ]
+
+specific_include_rules = {
+  ".*_unittest\.cc": [
+    "+base",
+  ],
+}

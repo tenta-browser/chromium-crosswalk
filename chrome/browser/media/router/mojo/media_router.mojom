@@ -2,7 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-module media_router.interfaces;
+module media_router.mojom;
+
+import "mojo/common/time.mojom";
+import "url/mojo/origin.mojom";
 
 // Represents an output sink to which media can be routed.
 struct MediaSink {
@@ -46,9 +49,10 @@ struct MediaRoute {
   string? custom_controller_path;
   // Set to true if this route should be displayed for |media_sink_id| in UI.
   bool for_display;
-  // Set to true if this route was created by an off the record (incognito)
-  // profile.
-  bool off_the_record;
+  // Set to true if this route was created by an incognito profile.
+  bool is_incognito;
+  // Set to true if this route corresponds to an offscreen presentation.
+  bool is_offscreen_presentation;
 };
 
 // Notifications or an actionable events to be shown to the user.
@@ -126,6 +130,7 @@ struct SinkSearchCriteria {
 // - RouteRequestResult::ResultCode in route_request_result.h
 // - MediaRouteProviderResult enum in tools/metrics/histograms.xml.
 // - mr.RouteRequestResultCode in route_request_error.js
+// - RouteRequestResultCodeFromMojo in media_router_type_converters.cc
 enum RouteRequestResultCode {
   UNKNOWN_ERROR,
   OK,
@@ -133,8 +138,9 @@ enum RouteRequestResultCode {
   ROUTE_NOT_FOUND,
   SINK_NOT_FOUND,
   INVALID_ORIGIN,
-  OFF_THE_RECORD_MISMATCH,
-  NO_SUPPORTED_PROVIDER
+  INCOGNITO_MISMATCH,
+  NO_SUPPORTED_PROVIDER,
+  CANCELLED
 // New values must be added here.
 };
 
@@ -151,11 +157,10 @@ interface MediaRouteProvider {
   // same-tab scopes. Use -1 as |tab_id| in cases where the request is not
   // made on behalf of a tab.
   //
-  // If |timeout_millis| is positive, it will be used in place of the default
-  // timeout defined by Media Route Provider Manager.
+  // If |timeout| is positive, it will be used in place of the default timeout
+  // defined by Media Route Provider Manager.
   //
-  // If |off_the_record| is true, the request was made by an off the record
-  // (incognito) profile.
+  // If |incognito| is true, the request was made by an incognito profile.
   //
   // If the operation was successful, |route| will be defined and
   //     |error_text| will be null.
@@ -166,10 +171,10 @@ interface MediaRouteProvider {
   CreateRoute(string media_source,
               string sink_id,
               string original_presentation_id,
-              string origin,
+              url.mojom.Origin origin,
               int32 tab_id,
-              int64 timeout_millis,
-              bool off_the_record) =>
+              mojo.common.mojom.TimeDelta timeout,
+              bool incognito) =>
                   (MediaRoute? route,
                    string? error_text,
                    RouteRequestResultCode result_code);
@@ -180,11 +185,11 @@ interface MediaRouteProvider {
   // |origin| and |tab_id| are used for validating same-origin/tab scopes;
   // see CreateRoute for additional documentation.
   //
-  // If |timeout_millis| is positive, it will be used in place of the default
-  // timeout defined by Media Route Provider Manager.
+  // If |timeout| is positive, it will be used in place of the default timeout
+  // defined by Media Route Provider Manager.
   //
-  // If the route request was created by an off the record (incognito) profile,
-  // |off_the_record| must be true.
+  // If the route request was created by an incognito profile,
+  // |incognito| must be true.
   //
   // If the operation was successful, |route| will be defined and
   //     |error_text| will be null.
@@ -194,10 +199,10 @@ interface MediaRouteProvider {
   // occurred.
   JoinRoute(string media_source,
             string presentation_id,
-            string origin,
+            url.mojom.Origin origin,
             int32 tab_id,
-            int64 timeout_millis,
-            bool off_the_record) =>
+            mojo.common.mojom.TimeDelta timeout,
+            bool incognito) =>
                 (MediaRoute? route,
                  string? error_text,
                  RouteRequestResultCode result_code);
@@ -212,12 +217,12 @@ interface MediaRouteProvider {
   // |origin| and |tab_id| are used for validating same-origin/tab scopes; see
   // CreateRoute for additional documentation.
   //
-  // If |timeout_millis| is positive, it will be used in place of the default
-  // timeout defined by Media Route Provider Manager; see CreateRoute for
-  // additional documentation.
+  // If |timeout| is positive, it will be used in place of the default timeout
+  // defined by Media Route Provider Manager; see CreateRoute for additional
+  // documentation.
   //
-  // If the route request was created by an off the record (incognito) profile,
-  // |off_the_record| must be true.
+  // If the route request was created by an incognito profile,
+  // |incognito| must be true.
   //
   // If the operation was successful, |route| will be defined and
   // |error_text| will be null. If the operation failed, |route| will be null
@@ -228,10 +233,10 @@ interface MediaRouteProvider {
   ConnectRouteByRouteId(string media_source,
                         string route_id,
                         string presentation_id,
-                        string origin,
+                        url.mojom.Origin origin,
                         int32 tab_id,
-                        int64 timeout_millis,
-                        bool off_the_record) =>
+                        mojo.common.mojom.TimeDelta timeout,
+                        bool incognito) =>
                             (MediaRoute? route,
                              string? error_text,
                              RouteRequestResultCode result_code);
@@ -334,7 +339,7 @@ interface MediaRouter {
     AVAILABLE
   };
 
-  // Keep in sync with content/public/browser/presentation_session.h.
+  // Keep in sync with content/public/common/presentation_session.h.
   enum PresentationConnectionState {
     CONNECTING,
     CONNECTED,
@@ -342,7 +347,7 @@ interface MediaRouter {
     TERMINATED
   };
 
-  // Keep in sync with content/public/browser/presentation_session.h.
+  // Keep in sync with content/public/common/presentation_session.h.
   enum PresentationConnectionCloseReason {
     CONNECTION_ERROR,
     CLOSED,
@@ -359,7 +364,7 @@ interface MediaRouter {
   // compatible with |media_source|. The result is only valid for |origins|. If
   // |origins| is empty, the result is valid for any origin.
   OnSinksReceived(string media_source, array<MediaSink> sinks,
-      array<string> origins);
+      array<url.mojom.Origin> origins);
 
   // Called when issues are reported for media routes.
   OnIssue(Issue issue);
@@ -392,4 +397,3 @@ interface MediaRouter {
   OnRouteMessagesReceived(string route_id,
                           array<RouteMessage> messages);
 };
-

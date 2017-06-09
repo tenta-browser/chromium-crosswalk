@@ -11,6 +11,7 @@
 #include "base/bind.h"
 #include "base/containers/hash_tables.h"
 #include "base/memory/ptr_util.h"
+#include "base/values.h"
 #include "build/build_config.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/resource_context.h"
@@ -30,7 +31,7 @@
 #include "net/base/net_errors.h"
 #include "net/base/network_interfaces.h"
 #include "net/base/url_util.h"
-#include "net/log/net_log.h"
+#include "net/log/net_log_with_source.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
 
@@ -122,7 +123,7 @@ void SocketAsyncApiFunction::OpenFirewallHole(const std::string& address,
     if (!socket->GetLocalAddress(&local_address)) {
       NOTREACHED() << "Cannot get address of recently bound socket.";
       error_ = kFirewallFailure;
-      SetResult(base::MakeUnique<base::FundamentalValue>(-1));
+      SetResult(base::MakeUnique<base::Value>(-1));
       AsyncWorkCompleted();
       return;
     }
@@ -164,7 +165,7 @@ void SocketAsyncApiFunction::OnFirewallHoleOpened(
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   if (!hole) {
     error_ = kFirewallFailure;
-    SetResult(base::MakeUnique<base::FundamentalValue>(-1));
+    SetResult(base::MakeUnique<base::Value>(-1));
     AsyncWorkCompleted();
     return;
   }
@@ -172,7 +173,7 @@ void SocketAsyncApiFunction::OnFirewallHoleOpened(
   Socket* socket = GetSocket(socket_id);
   if (!socket) {
     error_ = kSocketNotFoundError;
-    SetResult(base::MakeUnique<base::FundamentalValue>(-1));
+    SetResult(base::MakeUnique<base::Value>(-1));
     AsyncWorkCompleted();
     return;
   }
@@ -203,14 +204,11 @@ void SocketExtensionWithDnsLookupFunction::StartDnsLookup(
       HostResolverWrapper::GetInstance()->GetHostResolver(resource_context_);
   DCHECK(host_resolver);
 
-  // RequestHandle is not needed because we never need to cancel requests.
-  net::HostResolver::RequestHandle request_handle;
-
   net::HostResolver::RequestInfo request_info(host_port_pair);
   int resolve_result = host_resolver->Resolve(
       request_info, net::DEFAULT_PRIORITY, &addresses_,
       base::Bind(&SocketExtensionWithDnsLookupFunction::OnDnsLookup, this),
-      &request_handle, net::BoundNetLog());
+      &request_, net::NetLogWithSource());
 
   if (resolve_result != net::ERR_IO_PENDING)
     OnDnsLookup(resolve_result);
@@ -293,7 +291,7 @@ void SocketConnectFunction::AsyncWorkStart() {
   Socket* socket = GetSocket(socket_id_);
   if (!socket) {
     error_ = kSocketNotFoundError;
-    SetResult(base::MakeUnique<base::FundamentalValue>(-1));
+    SetResult(base::MakeUnique<base::Value>(-1));
     AsyncWorkCompleted();
     return;
   }
@@ -318,7 +316,7 @@ void SocketConnectFunction::AsyncWorkStart() {
   if (!extension()->permissions_data()->CheckAPIPermissionWithParam(
           APIPermission::kSocket, &param)) {
     error_ = kPermissionError;
-    SetResult(base::MakeUnique<base::FundamentalValue>(-1));
+    SetResult(base::MakeUnique<base::Value>(-1));
     AsyncWorkCompleted();
     return;
   }
@@ -330,7 +328,7 @@ void SocketConnectFunction::AfterDnsLookup(int lookup_result) {
   if (lookup_result == net::OK) {
     StartConnect();
   } else {
-    SetResult(base::MakeUnique<base::FundamentalValue>(lookup_result));
+    SetResult(base::MakeUnique<base::Value>(lookup_result));
     AsyncWorkCompleted();
   }
 }
@@ -339,7 +337,7 @@ void SocketConnectFunction::StartConnect() {
   Socket* socket = GetSocket(socket_id_);
   if (!socket) {
     error_ = kSocketNotFoundError;
-    SetResult(base::MakeUnique<base::FundamentalValue>(-1));
+    SetResult(base::MakeUnique<base::Value>(-1));
     AsyncWorkCompleted();
     return;
   }
@@ -349,7 +347,7 @@ void SocketConnectFunction::StartConnect() {
 }
 
 void SocketConnectFunction::OnConnect(int result) {
-  SetResult(base::MakeUnique<base::FundamentalValue>(result));
+  SetResult(base::MakeUnique<base::Value>(result));
   AsyncWorkCompleted();
 }
 
@@ -361,7 +359,7 @@ bool SocketDisconnectFunction::Prepare() {
 void SocketDisconnectFunction::Work() {
   Socket* socket = GetSocket(socket_id_);
   if (socket)
-    socket->Disconnect();
+    socket->Disconnect(false /* socket_destroying */);
   else
     error_ = kSocketNotFoundError;
   SetResult(base::Value::CreateNullValue());
@@ -384,14 +382,14 @@ void SocketBindFunction::AsyncWorkStart() {
   Socket* socket = GetSocket(socket_id_);
   if (!socket) {
     error_ = kSocketNotFoundError;
-    SetResult(base::MakeUnique<base::FundamentalValue>(-1));
+    SetResult(base::MakeUnique<base::Value>(-1));
     AsyncWorkCompleted();
     return;
   }
 
   if (socket->GetSocketType() == Socket::TYPE_TCP) {
     error_ = kTCPSocketBindError;
-    SetResult(base::MakeUnique<base::FundamentalValue>(-1));
+    SetResult(base::MakeUnique<base::Value>(-1));
     AsyncWorkCompleted();
     return;
   }
@@ -402,13 +400,13 @@ void SocketBindFunction::AsyncWorkStart() {
   if (!extension()->permissions_data()->CheckAPIPermissionWithParam(
           APIPermission::kSocket, &param)) {
     error_ = kPermissionError;
-    SetResult(base::MakeUnique<base::FundamentalValue>(-1));
+    SetResult(base::MakeUnique<base::Value>(-1));
     AsyncWorkCompleted();
     return;
   }
 
   int result = socket->Bind(address_, port_);
-  SetResult(base::MakeUnique<base::FundamentalValue>(result));
+  SetResult(base::MakeUnique<base::Value>(result));
   if (result != net::OK) {
     AsyncWorkCompleted();
     return;
@@ -431,7 +429,7 @@ void SocketListenFunction::AsyncWorkStart() {
   Socket* socket = GetSocket(params_->socket_id);
   if (!socket) {
     error_ = kSocketNotFoundError;
-    SetResult(base::MakeUnique<base::FundamentalValue>(-1));
+    SetResult(base::MakeUnique<base::Value>(-1));
     AsyncWorkCompleted();
     return;
   }
@@ -441,15 +439,15 @@ void SocketListenFunction::AsyncWorkStart() {
   if (!extension()->permissions_data()->CheckAPIPermissionWithParam(
           APIPermission::kSocket, &param)) {
     error_ = kPermissionError;
-    SetResult(base::MakeUnique<base::FundamentalValue>(-1));
+    SetResult(base::MakeUnique<base::Value>(-1));
     AsyncWorkCompleted();
     return;
   }
 
-  int result = socket->Listen(
-      params_->address, params_->port,
-      params_->backlog.get() ? *params_->backlog.get() : 5, &error_);
-  SetResult(base::MakeUnique<base::FundamentalValue>(result));
+  int result =
+      socket->Listen(params_->address, params_->port,
+                     params_->backlog.get() ? *params_->backlog : 5, &error_);
+  SetResult(base::MakeUnique<base::Value>(result));
   if (result != net::OK) {
     AsyncWorkCompleted();
     return;
@@ -507,16 +505,17 @@ void SocketReadFunction::AsyncWorkStart() {
   Socket* socket = GetSocket(params_->socket_id);
   if (!socket) {
     error_ = kSocketNotFoundError;
-    OnCompleted(-1, NULL);
+    OnCompleted(-1, nullptr, false /* socket_destroying */);
     return;
   }
 
-  socket->Read(params_->buffer_size.get() ? *params_->buffer_size.get() : 4096,
+  socket->Read(params_->buffer_size.get() ? *params_->buffer_size : 4096,
                base::Bind(&SocketReadFunction::OnCompleted, this));
 }
 
 void SocketReadFunction::OnCompleted(int bytes_read,
-                                     scoped_refptr<net::IOBuffer> io_buffer) {
+                                     scoped_refptr<net::IOBuffer> io_buffer,
+                                     bool socket_destroying) {
   std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue());
   result->SetInteger(kResultCodeKey, bytes_read);
   if (bytes_read > 0) {
@@ -524,7 +523,7 @@ void SocketReadFunction::OnCompleted(int bytes_read,
                 base::BinaryValue::CreateWithCopiedBuffer(io_buffer->data(),
                                                           bytes_read));
   } else {
-    result->Set(kDataKey, new base::BinaryValue());
+    result->Set(kDataKey, new base::Value(base::Value::Type::BINARY));
   }
   SetResult(std::move(result));
 
@@ -582,7 +581,7 @@ void SocketRecvFromFunction::AsyncWorkStart() {
   Socket* socket = GetSocket(params_->socket_id);
   if (!socket || socket->GetSocketType() != Socket::TYPE_UDP) {
     error_ = kSocketNotFoundError;
-    OnCompleted(-1, NULL, std::string(), 0);
+    OnCompleted(-1, nullptr, false /* socket_destroying*/, std::string(), 0);
     return;
   }
 
@@ -592,6 +591,7 @@ void SocketRecvFromFunction::AsyncWorkStart() {
 
 void SocketRecvFromFunction::OnCompleted(int bytes_read,
                                          scoped_refptr<net::IOBuffer> io_buffer,
+                                         bool socket_destroying,
                                          const std::string& address,
                                          uint16_t port) {
   std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue());
@@ -601,7 +601,7 @@ void SocketRecvFromFunction::OnCompleted(int bytes_read,
                 base::BinaryValue::CreateWithCopiedBuffer(io_buffer->data(),
                                                           bytes_read));
   } else {
-    result->Set(kDataKey, new base::BinaryValue());
+    result->Set(kDataKey, new base::Value(base::Value::Type::BINARY));
   }
   result->SetString(kAddressKey, address);
   result->SetInteger(kPortKey, port);
@@ -638,7 +638,7 @@ void SocketSendToFunction::AsyncWorkStart() {
   Socket* socket = GetSocket(socket_id_);
   if (!socket) {
     error_ = kSocketNotFoundError;
-    SetResult(base::MakeUnique<base::FundamentalValue>(-1));
+    SetResult(base::MakeUnique<base::Value>(-1));
     AsyncWorkCompleted();
     return;
   }
@@ -649,7 +649,7 @@ void SocketSendToFunction::AsyncWorkStart() {
     if (!extension()->permissions_data()->CheckAPIPermissionWithParam(
             APIPermission::kSocket, &param)) {
       error_ = kPermissionError;
-      SetResult(base::MakeUnique<base::FundamentalValue>(-1));
+      SetResult(base::MakeUnique<base::Value>(-1));
       AsyncWorkCompleted();
       return;
     }
@@ -662,7 +662,7 @@ void SocketSendToFunction::AfterDnsLookup(int lookup_result) {
   if (lookup_result == net::OK) {
     StartSendTo();
   } else {
-    SetResult(base::MakeUnique<base::FundamentalValue>(lookup_result));
+    SetResult(base::MakeUnique<base::Value>(lookup_result));
     AsyncWorkCompleted();
   }
 }
@@ -671,7 +671,7 @@ void SocketSendToFunction::StartSendTo() {
   Socket* socket = GetSocket(socket_id_);
   if (!socket) {
     error_ = kSocketNotFoundError;
-    SetResult(base::MakeUnique<base::FundamentalValue>(-1));
+    SetResult(base::MakeUnique<base::Value>(-1));
     AsyncWorkCompleted();
     return;
   }
@@ -709,7 +709,7 @@ void SocketSetKeepAliveFunction::Work() {
   } else {
     error_ = kSocketNotFoundError;
   }
-  SetResult(base::MakeUnique<base::FundamentalValue>(result));
+  SetResult(base::MakeUnique<base::Value>(result));
 }
 
 SocketSetNoDelayFunction::SocketSetNoDelayFunction() {}
@@ -729,7 +729,7 @@ void SocketSetNoDelayFunction::Work() {
     result = socket->SetNoDelay(params_->no_delay);
   else
     error_ = kSocketNotFoundError;
-  SetResult(base::MakeUnique<base::FundamentalValue>(result));
+  SetResult(base::MakeUnique<base::Value>(result));
 }
 
 SocketGetInfoFunction::SocketGetInfoFunction() {}
@@ -843,13 +843,13 @@ void SocketJoinGroupFunction::Work() {
   Socket* socket = GetSocket(params_->socket_id);
   if (!socket) {
     error_ = kSocketNotFoundError;
-    SetResult(base::MakeUnique<base::FundamentalValue>(result));
+    SetResult(base::MakeUnique<base::Value>(result));
     return;
   }
 
   if (socket->GetSocketType() != Socket::TYPE_UDP) {
     error_ = kMulticastSocketTypeError;
-    SetResult(base::MakeUnique<base::FundamentalValue>(result));
+    SetResult(base::MakeUnique<base::Value>(result));
     return;
   }
 
@@ -861,7 +861,7 @@ void SocketJoinGroupFunction::Work() {
   if (!extension()->permissions_data()->CheckAPIPermissionWithParam(
           APIPermission::kSocket, &param)) {
     error_ = kPermissionError;
-    SetResult(base::MakeUnique<base::FundamentalValue>(result));
+    SetResult(base::MakeUnique<base::Value>(result));
     return;
   }
 
@@ -869,7 +869,7 @@ void SocketJoinGroupFunction::Work() {
   if (result != 0) {
     error_ = net::ErrorToString(result);
   }
-  SetResult(base::MakeUnique<base::FundamentalValue>(result));
+  SetResult(base::MakeUnique<base::Value>(result));
 }
 
 SocketLeaveGroupFunction::SocketLeaveGroupFunction() {}
@@ -888,13 +888,13 @@ void SocketLeaveGroupFunction::Work() {
 
   if (!socket) {
     error_ = kSocketNotFoundError;
-    SetResult(base::MakeUnique<base::FundamentalValue>(result));
+    SetResult(base::MakeUnique<base::Value>(result));
     return;
   }
 
   if (socket->GetSocketType() != Socket::TYPE_UDP) {
     error_ = kMulticastSocketTypeError;
-    SetResult(base::MakeUnique<base::FundamentalValue>(result));
+    SetResult(base::MakeUnique<base::Value>(result));
     return;
   }
 
@@ -905,14 +905,14 @@ void SocketLeaveGroupFunction::Work() {
   if (!extension()->permissions_data()->CheckAPIPermissionWithParam(
           APIPermission::kSocket, &param)) {
     error_ = kPermissionError;
-    SetResult(base::MakeUnique<base::FundamentalValue>(result));
+    SetResult(base::MakeUnique<base::Value>(result));
     return;
   }
 
   result = static_cast<UDPSocket*>(socket)->LeaveGroup(params_->address);
   if (result != 0)
     error_ = net::ErrorToString(result);
-  SetResult(base::MakeUnique<base::FundamentalValue>(result));
+  SetResult(base::MakeUnique<base::Value>(result));
 }
 
 SocketSetMulticastTimeToLiveFunction::SocketSetMulticastTimeToLiveFunction() {}
@@ -929,13 +929,13 @@ void SocketSetMulticastTimeToLiveFunction::Work() {
   Socket* socket = GetSocket(params_->socket_id);
   if (!socket) {
     error_ = kSocketNotFoundError;
-    SetResult(base::MakeUnique<base::FundamentalValue>(result));
+    SetResult(base::MakeUnique<base::Value>(result));
     return;
   }
 
   if (socket->GetSocketType() != Socket::TYPE_UDP) {
     error_ = kMulticastSocketTypeError;
-    SetResult(base::MakeUnique<base::FundamentalValue>(result));
+    SetResult(base::MakeUnique<base::Value>(result));
     return;
   }
 
@@ -943,7 +943,7 @@ void SocketSetMulticastTimeToLiveFunction::Work() {
       static_cast<UDPSocket*>(socket)->SetMulticastTimeToLive(params_->ttl);
   if (result != 0)
     error_ = net::ErrorToString(result);
-  SetResult(base::MakeUnique<base::FundamentalValue>(result));
+  SetResult(base::MakeUnique<base::Value>(result));
 }
 
 SocketSetMulticastLoopbackModeFunction::
@@ -963,13 +963,13 @@ void SocketSetMulticastLoopbackModeFunction::Work() {
   Socket* socket = GetSocket(params_->socket_id);
   if (!socket) {
     error_ = kSocketNotFoundError;
-    SetResult(base::MakeUnique<base::FundamentalValue>(result));
+    SetResult(base::MakeUnique<base::Value>(result));
     return;
   }
 
   if (socket->GetSocketType() != Socket::TYPE_UDP) {
     error_ = kMulticastSocketTypeError;
-    SetResult(base::MakeUnique<base::FundamentalValue>(result));
+    SetResult(base::MakeUnique<base::Value>(result));
     return;
   }
 
@@ -977,7 +977,7 @@ void SocketSetMulticastLoopbackModeFunction::Work() {
                ->SetMulticastLoopbackMode(params_->enabled);
   if (result != 0)
     error_ = net::ErrorToString(result);
-  SetResult(base::MakeUnique<base::FundamentalValue>(result));
+  SetResult(base::MakeUnique<base::Value>(result));
 }
 
 SocketGetJoinedGroupsFunction::SocketGetJoinedGroupsFunction() {}
@@ -995,13 +995,13 @@ void SocketGetJoinedGroupsFunction::Work() {
   Socket* socket = GetSocket(params_->socket_id);
   if (!socket) {
     error_ = kSocketNotFoundError;
-    SetResult(base::MakeUnique<base::FundamentalValue>(result));
+    SetResult(base::MakeUnique<base::Value>(result));
     return;
   }
 
   if (socket->GetSocketType() != Socket::TYPE_UDP) {
     error_ = kMulticastSocketTypeError;
-    SetResult(base::MakeUnique<base::FundamentalValue>(result));
+    SetResult(base::MakeUnique<base::Value>(result));
     return;
   }
 
@@ -1012,7 +1012,7 @@ void SocketGetJoinedGroupsFunction::Work() {
   if (!extension()->permissions_data()->CheckAPIPermissionWithParam(
           APIPermission::kSocket, &param)) {
     error_ = kPermissionError;
-    SetResult(base::MakeUnique<base::FundamentalValue>(result));
+    SetResult(base::MakeUnique<base::Value>(result));
     return;
   }
 
@@ -1044,8 +1044,7 @@ void SocketSecureFunction::AsyncWorkStart() {
 
   Socket* socket = GetSocket(params_->socket_id);
   if (!socket) {
-    SetResult(
-        base::MakeUnique<base::FundamentalValue>(net::ERR_INVALID_ARGUMENT));
+    SetResult(base::MakeUnique<base::Value>(net::ERR_INVALID_ARGUMENT));
     error_ = kSocketNotFoundError;
     AsyncWorkCompleted();
     return;
@@ -1054,16 +1053,14 @@ void SocketSecureFunction::AsyncWorkStart() {
   // Make sure that the socket is a TCP client socket.
   if (socket->GetSocketType() != Socket::TYPE_TCP ||
       static_cast<TCPSocket*>(socket)->ClientStream() == NULL) {
-    SetResult(
-        base::MakeUnique<base::FundamentalValue>(net::ERR_INVALID_ARGUMENT));
+    SetResult(base::MakeUnique<base::Value>(net::ERR_INVALID_ARGUMENT));
     error_ = kSecureSocketTypeError;
     AsyncWorkCompleted();
     return;
   }
 
   if (!socket->IsConnected()) {
-    SetResult(
-        base::MakeUnique<base::FundamentalValue>(net::ERR_INVALID_ARGUMENT));
+    SetResult(base::MakeUnique<base::Value>(net::ERR_INVALID_ARGUMENT));
     error_ = kSocketNotConnectedError;
     AsyncWorkCompleted();
     return;

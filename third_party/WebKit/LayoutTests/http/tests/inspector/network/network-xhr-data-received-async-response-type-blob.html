@@ -6,7 +6,7 @@
 
 function test()
 {
-    InspectorTest.addSniffer(WebInspector.NetworkDispatcher.prototype, "dataReceived", dataReceived);
+    InspectorTest.addSniffer(SDK.NetworkDispatcher.prototype, "dataReceived", dataReceived);
 
     InspectorTest.recordNetwork();
     InspectorTest.makeXHR("GET", "resources/resource.php", true, undefined, undefined, [], false, undefined, "blob", function () { });
@@ -14,7 +14,7 @@ function test()
     function dataReceived(requestId, time, dataLength, encodedDataLength)
     {
         var request = InspectorTest.networkLog.requestForId(requestId);
-        if (/resource\.php/.exec(request.url)) {
+        if (/resource\.php/.exec(request.url())) {
             InspectorTest.addResult("Received data for resource.php");
             InspectorTest.addResult("SUCCESS");
             InspectorTest.completeTest();

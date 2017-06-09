@@ -22,6 +22,10 @@ SRC_DIR = os.path.abspath(
 MAX_FAILURES_EXIT_STATUS = 101
 
 
+# Exit code to indicate infrastructure issue.
+INFRA_FAILURE_EXIT_CODE = 87
+
+
 def run_script(argv, funcs):
   def parse_json(path):
     with open(path) as f:
@@ -59,9 +63,25 @@ def run_script(argv, funcs):
   return args.func(args)
 
 
-def run_command(argv, env=None):
-  print 'Running %r' % argv
-  rc = subprocess.call(argv, env=env)
+def run_command(argv, env=None, cwd=None):
+  print 'Running %r in %r (env: %r)' % (argv, cwd, env)
+  rc = subprocess.call(argv, env=env, cwd=cwd)
+  print 'Command %r returned exit code %d' % (argv, rc)
+  return rc
+
+
+def run_command_with_output(argv, env=None, cwd=None, stdoutfile=None):
+  print 'Running %r in %r (env: %r)' % (argv, cwd, env)
+  rc = 1
+  try:
+    output = subprocess.check_output(argv, env=env, cwd=cwd)
+    if stdoutfile:
+      with open(stdoutfile, 'w') as fp:
+        fp.write(output)
+    rc = 0
+  except Exception:
+    # Exit code remains 1 and we don't write output
+    pass
   print 'Command %r returned exit code %d' % (argv, rc)
   return rc
 

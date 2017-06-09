@@ -17,8 +17,10 @@ namespace remoting {
 
 class ChromotingJniRuntime;
 class ChromotingJniInstance;
-class DisplayUpdaterFactory;
+class JniGlDisplayHandler;
 class JniPairingSecretFetcher;
+
+struct ConnectToHostInfo;
 
 // Houses resources scoped to a session and exposes JNI interface to the
 // Java client during a session. All its methods should be invoked exclusively
@@ -32,16 +34,7 @@ class JniClient {
   // Initiates a connection with the specified host. To skip the attempt at
   // pair-based authentication, leave |pairing_id| and |pairing_secret| as
   // empty strings.
-  void ConnectToHost(DisplayUpdaterFactory* updater_factory,
-                     const std::string& username,
-                     const std::string& auth_token,
-                     const std::string& host_jid,
-                     const std::string& host_id,
-                     const std::string& host_pubkey,
-                     const std::string& pairing_id,
-                     const std::string& pairing_secret,
-                     const std::string& capabilities,
-                     const std::string& flags);
+  void ConnectToHost(const ConnectToHostInfo& info);
 
   // Terminates any ongoing connection attempt and cleans up by nullifying
   // |session_|. This is a no-op unless |session| is currently non-null.
@@ -78,17 +71,21 @@ class JniClient {
 
   // The following methods are exposed to Java via JNI.
 
+  // TODO(yuweih): Pass a class/struct from Java holding all these arguments.
   void Connect(JNIEnv* env,
                const base::android::JavaParamRef<jobject>& caller,
                const base::android::JavaParamRef<jstring>& username,
-               const base::android::JavaParamRef<jstring>& authToken,
-               const base::android::JavaParamRef<jstring>& hostJid,
-               const base::android::JavaParamRef<jstring>& hostId,
-               const base::android::JavaParamRef<jstring>& hostPubkey,
-               const base::android::JavaParamRef<jstring>& pairId,
-               const base::android::JavaParamRef<jstring>& pairSecret,
+               const base::android::JavaParamRef<jstring>& auth_token,
+               const base::android::JavaParamRef<jstring>& host_jid,
+               const base::android::JavaParamRef<jstring>& host_id,
+               const base::android::JavaParamRef<jstring>& host_pubkey,
+               const base::android::JavaParamRef<jstring>& pair_id,
+               const base::android::JavaParamRef<jstring>& pair_secret,
                const base::android::JavaParamRef<jstring>& capabilities,
-               const base::android::JavaParamRef<jstring>& flags);
+               const base::android::JavaParamRef<jstring>& flags,
+               const base::android::JavaParamRef<jstring>& host_version,
+               const base::android::JavaParamRef<jstring>& host_os,
+               const base::android::JavaParamRef<jstring>& host_os_version);
 
   void Disconnect(JNIEnv* env,
                   const base::android::JavaParamRef<jobject>& caller);
@@ -157,7 +154,7 @@ class JniClient {
   // Reference to the Java client object.
   base::android::ScopedJavaGlobalRef<jobject> java_client_;
 
-  std::unique_ptr<DisplayUpdaterFactory> display_handler_;
+  std::unique_ptr<JniGlDisplayHandler> display_handler_;
 
   // Deleted on UI thread.
   std::unique_ptr<JniPairingSecretFetcher> secret_fetcher_;
@@ -166,6 +163,7 @@ class JniClient {
   std::unique_ptr<ChromotingJniInstance> session_;
 
   // Holds pointer for the UI thread.
+  base::WeakPtr<JniClient> weak_ptr_;
   base::WeakPtrFactory<JniClient> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(JniClient);

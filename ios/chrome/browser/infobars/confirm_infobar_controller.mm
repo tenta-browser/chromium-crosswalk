@@ -2,23 +2,31 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ios/chrome/browser/infobars/confirm_infobar_controller.h"
+#import "ios/chrome/browser/infobars/confirm_infobar_controller.h"
 
 #include "base/mac/foundation_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "components/infobars/core/confirm_infobar_delegate.h"
-#include "ios/public/provider/chrome/browser/chrome_browser_provider.h"
-#import "ios/public/provider/chrome/browser/ui/infobar_view_delegate.h"
-#import "ios/public/provider/chrome/browser/ui/infobar_view_protocol.h"
+#import "ios/chrome/browser/ui/infobars/infobar_view.h"
+#import "ios/chrome/browser/ui/infobars/infobar_view_delegate.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/gfx/image/image.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 namespace {
 
 // UI Tags for the infobar elements.
-enum ConfirmInfoBarUITags { OK = 1, CANCEL, CLOSE, TITLE_LINK };
+typedef NS_ENUM(NSInteger, ConfirmInfoBarUITags) {
+  OK = 1,
+  CANCEL,
+  CLOSE,
+  TITLE_LINK
+};
 
 // Converts a UI button tag to the corresponding InfoBarButton.
 ConfirmInfoBarDelegate::InfoBarButton UITagToButton(NSUInteger tag) {
@@ -38,41 +46,33 @@ ConfirmInfoBarDelegate::InfoBarButton UITagToButton(NSUInteger tag) {
 
 #pragma mark - ConfirmInfoBarController
 
-@interface ConfirmInfoBarController ()
-
-// Action for any of the user defined buttons.
-- (void)infoBarButtonDidPress:(id)sender;
-// Action for any of the user defined links.
-- (void)infobarLinkDidPress:(NSNumber*)tag;
-- (void)updateInfobarLabel:(UIView<InfoBarViewProtocol>*)view;
+@interface ConfirmInfoBarController () {
+  ConfirmInfoBarDelegate* _confirmInfobarDelegate;
+}
 @end
 
-@implementation ConfirmInfoBarController {
-  ConfirmInfoBarDelegate* confirmInfobarDelegate_;  // weak
-}
+@implementation ConfirmInfoBarController
 
 #pragma mark -
 #pragma mark InfoBarController
 
-- (base::scoped_nsobject<UIView<InfoBarViewProtocol>>)
-    viewForDelegate:(infobars::InfoBarDelegate*)delegate
-              frame:(CGRect)frame {
-  base::scoped_nsobject<UIView<InfoBarViewProtocol>> infoBarView;
-  confirmInfobarDelegate_ = delegate->AsConfirmInfoBarDelegate();
-  infoBarView.reset(
-      ios::GetChromeBrowserProvider()->CreateInfoBarView(frame, self.delegate));
+- (InfoBarView*)viewForDelegate:(infobars::InfoBarDelegate*)delegate
+                          frame:(CGRect)frame {
+  _confirmInfobarDelegate = delegate->AsConfirmInfoBarDelegate();
+  InfoBarView* infoBarView =
+      [[InfoBarView alloc] initWithFrame:frame delegate:self.delegate];
   // Model data.
-  gfx::Image modelIcon = confirmInfobarDelegate_->GetIcon();
-  int buttons = confirmInfobarDelegate_->GetButtons();
+  gfx::Image modelIcon = _confirmInfobarDelegate->GetIcon();
+  int buttons = _confirmInfobarDelegate->GetButtons();
   NSString* buttonOK = nil;
   if (buttons & ConfirmInfoBarDelegate::BUTTON_OK) {
-    buttonOK = base::SysUTF16ToNSString(confirmInfobarDelegate_->GetButtonLabel(
+    buttonOK = base::SysUTF16ToNSString(_confirmInfobarDelegate->GetButtonLabel(
         ConfirmInfoBarDelegate::BUTTON_OK));
   }
   NSString* buttonCancel = nil;
   if (buttons & ConfirmInfoBarDelegate::BUTTON_CANCEL) {
     buttonCancel =
-        base::SysUTF16ToNSString(confirmInfobarDelegate_->GetButtonLabel(
+        base::SysUTF16ToNSString(_confirmInfobarDelegate->GetButtonLabel(
             ConfirmInfoBarDelegate::BUTTON_CANCEL));
   }
 
@@ -101,29 +101,29 @@ ConfirmInfoBarDelegate::InfoBarButton UITagToButton(NSUInteger tag) {
                     action:@selector(infoBarButtonDidPress:)];
   } else {
     // No buttons, only message.
-    DCHECK(!confirmInfobarDelegate_->GetMessageText().empty() && !buttonCancel);
+    DCHECK(!_confirmInfobarDelegate->GetMessageText().empty() && !buttonCancel);
   }
   return infoBarView;
 }
 
-- (void)updateInfobarLabel:(UIView<InfoBarViewProtocol>*)view {
-  if (!confirmInfobarDelegate_->GetMessageText().length())
+- (void)updateInfobarLabel:(InfoBarView*)view {
+  if (!_confirmInfobarDelegate->GetMessageText().length())
     return;
-  if (confirmInfobarDelegate_->GetLinkText().length()) {
-    base::string16 msgLink = base::SysNSStringToUTF16(
-        [[view class] stringAsLink:base::SysUTF16ToNSString(
-                                       confirmInfobarDelegate_->GetLinkText())
-                               tag:ConfirmInfoBarUITags::TITLE_LINK]);
-    base::string16 messageText = confirmInfobarDelegate_->GetMessageText();
+  if (_confirmInfobarDelegate->GetLinkText().length()) {
+    base::string16 msgLink = base::SysNSStringToUTF16([[view class]
+        stringAsLink:base::SysUTF16ToNSString(
+                         _confirmInfobarDelegate->GetLinkText())
+                 tag:ConfirmInfoBarUITags::TITLE_LINK]);
+    base::string16 messageText = _confirmInfobarDelegate->GetMessageText();
     base::ReplaceFirstSubstringAfterOffset(
-        &messageText, 0, confirmInfobarDelegate_->GetLinkText(), msgLink);
+        &messageText, 0, _confirmInfobarDelegate->GetLinkText(), msgLink);
 
     [view addLabel:base::SysUTF16ToNSString(messageText)
             target:self
             action:@selector(infobarLinkDidPress:)];
   } else {
     NSString* label =
-        base::SysUTF16ToNSString(confirmInfobarDelegate_->GetMessageText());
+        base::SysUTF16ToNSString(_confirmInfobarDelegate->GetMessageText());
     [view addLabel:label];
   }
 }
@@ -153,7 +153,8 @@ ConfirmInfoBarDelegate::InfoBarButton UITagToButton(NSUInteger tag) {
     return;
   }
   if ([tag unsignedIntegerValue] == ConfirmInfoBarUITags::TITLE_LINK) {
-    confirmInfobarDelegate_->LinkClicked(NEW_FOREGROUND_TAB);
+    _confirmInfobarDelegate->LinkClicked(
+        WindowOpenDisposition::NEW_FOREGROUND_TAB);
   }
 }
 

@@ -238,3 +238,15 @@ Parent.detach()
   Child.willHide()
   Parent.willHide()
 
+Running: testReparentWithinWidget
+Parent()
+Parent.show()
+  Parent.wasShown()
+  Parent.onResize()
+Child()
+Child.show()
+  Child.wasShown()
+  Child.onResize()
+Child.show()
+  Child.onResize()
+

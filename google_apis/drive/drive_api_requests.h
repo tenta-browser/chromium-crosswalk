@@ -82,7 +82,7 @@ struct MultipartHttpResponse {
 
 // Splits multipart |response| into |parts|. Each part must be HTTP sub-response
 // of drive batch request. |content_type| is a value of Content-Type response
-// header. Returns true on succcess.
+// header. Returns true on success.
 bool ParseMultipartResponse(const std::string& content_type,
                             const std::string& response,
                             std::vector<MultipartHttpResponse>* parts);
@@ -1140,9 +1140,8 @@ class PermissionsInsertRequest : public EntryActionRequest {
 // Request that is operated by single BatchableDelegate.
 class SingleBatchableDelegateRequest : public UrlFetchRequestBase {
  public:
-  // The instance takes ownership of |delegate|.
   SingleBatchableDelegateRequest(RequestSender* sender,
-                                 BatchableDelegate* delegate);
+                                 std::unique_ptr<BatchableDelegate> delegate);
   ~SingleBatchableDelegateRequest() override;
 
  private:
@@ -1227,7 +1226,7 @@ class BatchUploadRequest : public UrlFetchRequestBase {
   typedef void* RequestID;
   // Obtains corresponding child entry of |request_id|. Returns NULL if the
   // entry is not found.
-  ScopedVector<BatchUploadChildEntry>::iterator GetChildEntry(
+  std::vector<std::unique_ptr<BatchUploadChildEntry>>::iterator GetChildEntry(
       RequestID request_id);
 
   // Called after child requests' |Prepare| method.
@@ -1241,7 +1240,7 @@ class BatchUploadRequest : public UrlFetchRequestBase {
 
   RequestSender* const sender_;
   const DriveApiUrlGenerator url_generator_;
-  ScopedVector<BatchUploadChildEntry> child_requests_;
+  std::vector<std::unique_ptr<BatchUploadChildEntry>> child_requests_;
 
   PrepareCallback prepare_callback_;
   bool committed_;

@@ -10,17 +10,20 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "chrome/installer/gcapi/gcapi.h"
+#include "chrome/installer/gcapi/google_update_util.h"
 #include "chrome/installer/util/google_update_constants.h"
-#include "chrome/installer/util/google_update_settings.h"
 #include "components/variations/variations_experiment_util.h"
 
 namespace {
 
 // Returns the number of weeks since 2/3/2003.
 int GetCurrentRlzWeek(const base::Time& current_time) {
-  base::Time::Exploded february_third_2003_exploded =
+  const base::Time::Exploded february_third_2003_exploded =
       {2003, 2, 1, 3, 0, 0, 0, 0};
-  base::Time f = base::Time::FromUTCExploded(february_third_2003_exploded);
+  base::Time f;
+  bool conversion_success =
+      base::Time::FromUTCExploded(february_third_2003_exploded, &f);
+  DCHECK(conversion_success);
   base::TimeDelta delta = current_time - f;
   return delta.InDays() / 7;
 }
@@ -35,10 +38,8 @@ bool SetExperimentLabel(const wchar_t* brand_code,
   const bool system_level = shell_mode == GCAPI_INVOKED_UAC_ELEVATION;
 
   base::string16 original_labels;
-  if (!GoogleUpdateSettings::ReadExperimentLabels(system_level,
-                                                  &original_labels)) {
+  if (!gcapi_internals::ReadExperimentLabels(system_level, &original_labels))
     return false;
-  }
 
   // Split the original labels by the label separator.
   std::vector<base::string16> entries = base::SplitString(
@@ -62,8 +63,7 @@ bool SetExperimentLabel(const wchar_t* brand_code,
   new_labels.append(
       gcapi_internals::GetGCAPIExperimentLabel(brand_code, label));
 
-  return GoogleUpdateSettings::SetExperimentLabels(system_level,
-                                                   new_labels);
+  return gcapi_internals::SetExperimentLabels(system_level, new_labels);
 }
 
 }  // namespace

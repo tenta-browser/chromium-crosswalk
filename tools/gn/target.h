@@ -27,9 +27,7 @@
 #include "tools/gn/unique_vector.h"
 
 class DepsIteratorRange;
-class InputFile;
 class Settings;
-class Token;
 class Toolchain;
 
 class Target : public Item {
@@ -292,8 +290,10 @@ class Target : public Item {
   const OutputFile& dependency_output_file() const {
     return dependency_output_file_;
   }
-  const OutputFile& runtime_link_output_file() const {
-    return runtime_link_output_file_;
+
+  // The subset of computed_outputs that are considered runtime outputs.
+  const std::vector<OutputFile>& runtime_outputs() const {
+    return runtime_outputs_;
   }
 
   // Computes the set of output files resulting from compiling the given source
@@ -313,7 +313,6 @@ class Target : public Item {
 
   // Pulls necessary information from dependencies to this one when all
   // dependencies have been resolved.
-  void PullDependentTargetConfigsFrom(const Target* dep);
   void PullDependentTargetConfigs();
   void PullDependentTargetLibsFrom(const Target* dep, bool is_public);
   void PullDependentTargetLibs();
@@ -393,9 +392,11 @@ class Target : public Item {
   std::vector<OutputFile> computed_outputs_;
   OutputFile link_output_file_;
   OutputFile dependency_output_file_;
-  OutputFile runtime_link_output_file_;
+  std::vector<OutputFile> runtime_outputs_;
 
   DISALLOW_COPY_AND_ASSIGN(Target);
 };
+
+extern const char kExecution_Help[];
 
 #endif  // TOOLS_GN_TARGET_H_

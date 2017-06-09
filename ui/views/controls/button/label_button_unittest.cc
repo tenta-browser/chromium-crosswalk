@@ -6,14 +6,16 @@
 
 #include "base/command_line.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "third_party/skia/include/core/SkBitmap.h"
-#include "ui/accessibility/ax_view_state.h"
+#include "ui/accessibility/ax_node_data.h"
 #include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/test/material_design_controller_test_api.h"
 #include "ui/base/ui_base_switches.h"
 #include "ui/events/test/event_generator.h"
 #include "ui/gfx/canvas.h"
+#include "ui/gfx/color_utils.h"
 #include "ui/gfx/font_list.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/geometry/vector2d.h"
@@ -79,20 +81,22 @@ class LabelButtonTest : public test::WidgetTest {
 
     // Establish the expected text colors for testing changes due to state.
     themed_normal_text_color_ = button_->GetNativeTheme()->GetSystemColor(
-        ui::NativeTheme::kColorId_ButtonEnabledColor);
-#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
-    // The Linux theme provides a non-black highlight text color, but it's not
-    // used for styled buttons.
-    styled_highlight_text_color_ = themed_normal_text_color_;
-    styled_normal_text_color_ = themed_normal_text_color_;
-#else
-    styled_highlight_text_color_ = button_->GetNativeTheme()->GetSystemColor(
-        ui::NativeTheme::kColorId_ButtonHighlightColor);
+        ui::NativeTheme::kColorId_LabelEnabledColor);
 
     // For styled buttons only, platforms other than Desktop Linux either ignore
     // NativeTheme and use a hardcoded black or (on Mac) have a NativeTheme that
     // reliably returns black.
     styled_normal_text_color_ = SK_ColorBLACK;
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
+    // The Linux theme provides a non-black highlight text color, but it's not
+    // used for styled buttons.
+    styled_highlight_text_color_ = styled_normal_text_color_ =
+        button_->GetNativeTheme()->GetSystemColor(
+            ui::NativeTheme::kColorId_ButtonEnabledColor);
+#elif defined(OS_MACOSX)
+    styled_highlight_text_color_ = SK_ColorWHITE;
+#else
+    styled_highlight_text_color_ = styled_normal_text_color_;
 #endif
   }
 
@@ -125,10 +129,10 @@ TEST_F(LabelButtonTest, Init) {
 
   EXPECT_EQ(text, button.GetText());
 
-  ui::AXViewState accessible_state;
-  button.GetAccessibleState(&accessible_state);
-  EXPECT_EQ(ui::AX_ROLE_BUTTON, accessible_state.role);
-  EXPECT_EQ(text, accessible_state.name);
+  ui::AXNodeData accessible_node_data;
+  button.GetAccessibleNodeData(&accessible_node_data);
+  EXPECT_EQ(ui::AX_ROLE_BUTTON, accessible_node_data.role);
+  EXPECT_EQ(text, accessible_node_data.GetString16Attribute(ui::AX_ATTR_NAME));
 
   EXPECT_FALSE(button.is_default());
   EXPECT_EQ(button.style(), Button::STYLE_TEXTBUTTON);
@@ -168,27 +172,31 @@ TEST_F(LabelButtonTest, Label) {
   EXPECT_LT(button_->GetPreferredSize().width(), long_text_width);
 }
 
-// Test behavior of View::GetAccessibleState() for buttons when setting a label.
+// Test behavior of View::GetAccessibleNodeData() for buttons when setting a
+// label.
 TEST_F(LabelButtonTest, AccessibleState) {
-  ui::AXViewState accessible_state;
+  ui::AXNodeData accessible_node_data;
 
-  button_->GetAccessibleState(&accessible_state);
-  EXPECT_EQ(ui::AX_ROLE_BUTTON, accessible_state.role);
-  EXPECT_EQ(base::string16(), accessible_state.name);
+  button_->GetAccessibleNodeData(&accessible_node_data);
+  EXPECT_EQ(ui::AX_ROLE_BUTTON, accessible_node_data.role);
+  EXPECT_EQ(base::string16(),
+            accessible_node_data.GetString16Attribute(ui::AX_ATTR_NAME));
 
   // Without a label (e.g. image-only), the accessible name should automatically
   // be set from the tooltip.
   const base::string16 tooltip_text = ASCIIToUTF16("abc");
   button_->SetTooltipText(tooltip_text);
-  button_->GetAccessibleState(&accessible_state);
-  EXPECT_EQ(tooltip_text, accessible_state.name);
+  button_->GetAccessibleNodeData(&accessible_node_data);
+  EXPECT_EQ(tooltip_text,
+            accessible_node_data.GetString16Attribute(ui::AX_ATTR_NAME));
   EXPECT_EQ(base::string16(), button_->GetText());
 
   // Setting a label overrides the tooltip text.
   const base::string16 label_text = ASCIIToUTF16("def");
   button_->SetText(label_text);
-  button_->GetAccessibleState(&accessible_state);
-  EXPECT_EQ(label_text, accessible_state.name);
+  button_->GetAccessibleNodeData(&accessible_node_data);
+  EXPECT_EQ(label_text,
+            accessible_node_data.GetString16Attribute(ui::AX_ATTR_NAME));
   EXPECT_EQ(label_text, button_->GetText());
 
   base::string16 tooltip;
@@ -284,24 +292,21 @@ TEST_F(LabelButtonTest, LabelAndImage) {
   EXPECT_LT(button_->GetPreferredSize().height(), image_size);
 }
 
-TEST_F(LabelButtonTest, FontList) {
+TEST_F(LabelButtonTest, AdjustFontSize) {
   button_->SetText(base::ASCIIToUTF16("abc"));
 
-  const gfx::FontList original_font_list = button_->GetFontList();
-  const gfx::FontList large_font_list =
-      original_font_list.DeriveWithSizeDelta(100);
   const int original_width = button_->GetPreferredSize().width();
   const int original_height = button_->GetPreferredSize().height();
 
   // The button size increases when the font size is increased.
-  button_->SetFontList(large_font_list);
+  button_->AdjustFontSize(100);
   EXPECT_GT(button_->GetPreferredSize().width(), original_width);
   EXPECT_GT(button_->GetPreferredSize().height(), original_height);
 
   // The button returns to its original size when the minimal size is cleared
   // and the original font size is restored.
   button_->SetMinSize(gfx::Size());
-  button_->SetFontList(original_font_list);
+  button_->AdjustFontSize(-100);
   EXPECT_EQ(original_width, button_->GetPreferredSize().width());
   EXPECT_EQ(original_height, button_->GetPreferredSize().height());
 }
@@ -310,16 +315,29 @@ TEST_F(LabelButtonTest, ChangeTextSize) {
   const base::string16 text(ASCIIToUTF16("abc"));
   const base::string16 longer_text(ASCIIToUTF16("abcdefghijklm"));
   button_->SetText(text);
-
+  button_->SizeToPreferredSize();
+  gfx::Rect bounds(button_->bounds());
   const int original_width = button_->GetPreferredSize().width();
+  EXPECT_EQ(original_width, bounds.width());
 
-  // The button size increases when the text size is increased.
+  // Reserve more space in the button.
+  bounds.set_width(bounds.width() * 10);
+  button_->SetBoundsRect(bounds);
+
+  // Label view in the button is sized to short text.
+  const int original_label_width = button_->label()->bounds().width();
+
+  // The button preferred size and the label size increase when the text size
+  // is increased.
   button_->SetText(longer_text);
-  EXPECT_GT(button_->GetPreferredSize().width(), original_width);
+  EXPECT_GT(button_->label()->bounds().width(), original_label_width * 2);
+  EXPECT_GT(button_->GetPreferredSize().width(), original_width * 2);
 
-  // The button returns to its original size when the original text is restored.
+  // The button and the label view return to its original size when the original
+  // text is restored.
   button_->SetMinSize(gfx::Size());
   button_->SetText(text);
+  EXPECT_EQ(original_label_width, button_->label()->bounds().width());
   EXPECT_EQ(original_width, button_->GetPreferredSize().width());
 }
 
@@ -403,6 +421,21 @@ TEST_F(LabelButtonTest, HighlightedButtonStyle) {
   TestLabelButton* default_before = AddStyledButton("OK", true);
   EXPECT_EQ(styled_highlight_text_color_,
             default_before->label()->enabled_color());
+}
+
+// Ensure the label gets the correct enabled color after
+// LabelButton::ResetColorsFromNativeTheme() is invoked.
+TEST_F(LabelButtonTest, ResetColorsFromNativeTheme) {
+  ASSERT_FALSE(color_utils::IsInvertedColorScheme());
+  ASSERT_NE(button_->label()->background_color(), SK_ColorBLACK);
+  EXPECT_EQ(themed_normal_text_color_, button_->label()->enabled_color());
+
+  button_->label()->SetBackgroundColor(SK_ColorBLACK);
+  button_->label()->SetAutoColorReadabilityEnabled(true);
+  EXPECT_NE(themed_normal_text_color_, button_->label()->enabled_color());
+
+  button_->ResetColorsFromNativeTheme();
+  EXPECT_EQ(themed_normal_text_color_, button_->label()->enabled_color());
 }
 
 // Test fixture for a LabelButton that has an ink drop configured.

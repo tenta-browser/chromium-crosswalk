@@ -23,112 +23,121 @@
 #include "core/layout/svg/SVGLayoutSupport.h"
 #include "core/paint/SVGPaintContext.h"
 #include "core/svg/SVGElement.h"
-#include "platform/graphics/paint/SkPictureBuilder.h"
+#include "platform/graphics/paint/PaintRecord.h"
+#include "platform/graphics/paint/PaintRecordBuilder.h"
 #include "platform/transforms/AffineTransform.h"
-#include "third_party/skia/include/core/SkPicture.h"
 
 namespace blink {
 
 LayoutSVGResourceMasker::LayoutSVGResourceMasker(SVGMaskElement* node)
-    : LayoutSVGResourceContainer(node)
-{
+    : LayoutSVGResourceContainer(node) {}
+
+LayoutSVGResourceMasker::~LayoutSVGResourceMasker() {}
+
+void LayoutSVGResourceMasker::removeAllClientsFromCache(
+    bool markForInvalidation) {
+  m_cachedPaintRecord.reset();
+  m_maskContentBoundaries = FloatRect();
+  markAllClientsForInvalidation(markForInvalidation
+                                    ? LayoutAndBoundariesInvalidation
+                                    : ParentOnlyInvalidation);
 }
 
-LayoutSVGResourceMasker::~LayoutSVGResourceMasker()
-{
+void LayoutSVGResourceMasker::removeClientFromCache(LayoutObject* client,
+                                                    bool markForInvalidation) {
+  ASSERT(client);
+  markClientForInvalidation(client, markForInvalidation
+                                        ? BoundariesInvalidation
+                                        : ParentOnlyInvalidation);
 }
 
-void LayoutSVGResourceMasker::removeAllClientsFromCache(bool markForInvalidation)
-{
-    m_maskContentPicture.clear();
-    m_maskContentBoundaries = FloatRect();
-    markAllClientsForInvalidation(markForInvalidation ? LayoutAndBoundariesInvalidation : ParentOnlyInvalidation);
+sk_sp<const PaintRecord> LayoutSVGResourceMasker::createPaintRecord(
+    AffineTransform& contentTransformation,
+    const FloatRect& targetBoundingBox,
+    GraphicsContext& context) {
+  SVGUnitTypes::SVGUnitType contentUnits = toSVGMaskElement(element())
+                                               ->maskContentUnits()
+                                               ->currentValue()
+                                               ->enumValue();
+  if (contentUnits == SVGUnitTypes::kSvgUnitTypeObjectboundingbox) {
+    contentTransformation.translate(targetBoundingBox.x(),
+                                    targetBoundingBox.y());
+    contentTransformation.scaleNonUniform(targetBoundingBox.width(),
+                                          targetBoundingBox.height());
+  }
+
+  if (m_cachedPaintRecord)
+    return m_cachedPaintRecord;
+
+  SubtreeContentTransformScope contentTransformScope(contentTransformation);
+
+  // Using strokeBoundingBox instead of visualRectInLocalCoordinates
+  // to avoid the intersection with local clips/mask, which may yield incorrect
+  // results when mixing objectBoundingBox and userSpaceOnUse units.
+  // http://crbug.com/294900
+  FloatRect bounds = strokeBoundingBox();
+
+  PaintRecordBuilder builder(bounds, nullptr, &context);
+
+  ColorFilter maskContentFilter =
+      style()->svgStyle().colorInterpolation() == CI_LINEARRGB
+          ? ColorFilterSRGBToLinearRGB
+          : ColorFilterNone;
+  builder.context().setColorFilter(maskContentFilter);
+
+  for (const SVGElement& childElement :
+       Traversal<SVGElement>::childrenOf(*element())) {
+    const LayoutObject* layoutObject = childElement.layoutObject();
+    if (!layoutObject || layoutObject->styleRef().display() == EDisplay::None)
+      continue;
+    SVGPaintContext::paintResourceSubtree(builder.context(), layoutObject);
+  }
+
+  m_cachedPaintRecord = builder.endRecording();
+  return m_cachedPaintRecord;
 }
 
-void LayoutSVGResourceMasker::removeClientFromCache(LayoutObject* client, bool markForInvalidation)
-{
-    ASSERT(client);
-    markClientForInvalidation(client, markForInvalidation ? BoundariesInvalidation : ParentOnlyInvalidation);
+void LayoutSVGResourceMasker::calculateMaskContentVisualRect() {
+  for (const SVGElement& childElement :
+       Traversal<SVGElement>::childrenOf(*element())) {
+    const LayoutObject* layoutObject = childElement.layoutObject();
+    if (!layoutObject || layoutObject->styleRef().display() == EDisplay::None)
+      continue;
+    m_maskContentBoundaries.unite(
+        layoutObject->localToSVGParentTransform().mapRect(
+            layoutObject->visualRectInLocalSVGCoordinates()));
+  }
 }
 
-PassRefPtr<const SkPicture> LayoutSVGResourceMasker::createContentPicture(AffineTransform& contentTransformation, const FloatRect& targetBoundingBox,
-    GraphicsContext& context)
-{
-    SVGUnitTypes::SVGUnitType contentUnits = toSVGMaskElement(element())->maskContentUnits()->currentValue()->enumValue();
-    if (contentUnits == SVGUnitTypes::SVG_UNIT_TYPE_OBJECTBOUNDINGBOX) {
-        contentTransformation.translate(targetBoundingBox.x(), targetBoundingBox.y());
-        contentTransformation.scaleNonUniform(targetBoundingBox.width(), targetBoundingBox.height());
-    }
+FloatRect LayoutSVGResourceMasker::resourceBoundingBox(
+    const LayoutObject* object) {
+  SVGMaskElement* maskElement = toSVGMaskElement(element());
+  ASSERT(maskElement);
 
-    if (m_maskContentPicture)
-        return m_maskContentPicture;
+  FloatRect objectBoundingBox = object->objectBoundingBox();
+  FloatRect maskBoundaries = SVGLengthContext::resolveRectangle<SVGMaskElement>(
+      maskElement, maskElement->maskUnits()->currentValue()->enumValue(),
+      objectBoundingBox);
 
-    SubtreeContentTransformScope contentTransformScope(contentTransformation);
+  // Resource was not layouted yet. Give back clipping rect of the mask.
+  if (selfNeedsLayout())
+    return maskBoundaries;
 
-    // Using strokeBoundingBox (instead of paintInvalidationRectInLocalCoordinates) to avoid the intersection
-    // with local clips/mask, which may yield incorrect results when mixing objectBoundingBox and
-    // userSpaceOnUse units (http://crbug.com/294900).
-    FloatRect bounds = strokeBoundingBox();
+  if (m_maskContentBoundaries.isEmpty())
+    calculateMaskContentVisualRect();
 
-    SkPictureBuilder pictureBuilder(bounds, nullptr, &context);
+  FloatRect maskRect = m_maskContentBoundaries;
+  if (maskElement->maskContentUnits()->currentValue()->value() ==
+      SVGUnitTypes::kSvgUnitTypeObjectboundingbox) {
+    AffineTransform transform;
+    transform.translate(objectBoundingBox.x(), objectBoundingBox.y());
+    transform.scaleNonUniform(objectBoundingBox.width(),
+                              objectBoundingBox.height());
+    maskRect = transform.mapRect(maskRect);
+  }
 
-    ColorFilter maskContentFilter = style()->svgStyle().colorInterpolation() == CI_LINEARRGB
-        ? ColorFilterSRGBToLinearRGB : ColorFilterNone;
-    pictureBuilder.context().setColorFilter(maskContentFilter);
-
-    for (SVGElement* childElement = Traversal<SVGElement>::firstChild(*element()); childElement; childElement = Traversal<SVGElement>::nextSibling(*childElement)) {
-        LayoutObject* layoutObject = childElement->layoutObject();
-        if (!layoutObject)
-            continue;
-        const ComputedStyle* style = layoutObject->style();
-        if (!style || style->display() == NONE || style->visibility() != VISIBLE)
-            continue;
-
-        SVGPaintContext::paintSubtree(pictureBuilder.context(), layoutObject);
-    }
-
-    m_maskContentPicture = pictureBuilder.endRecording();
-    return m_maskContentPicture;
+  maskRect.intersect(maskBoundaries);
+  return maskRect;
 }
 
-void LayoutSVGResourceMasker::calculateMaskContentPaintInvalidationRect()
-{
-    for (SVGElement* childElement = Traversal<SVGElement>::firstChild(*element()); childElement; childElement = Traversal<SVGElement>::nextSibling(*childElement)) {
-        LayoutObject* layoutObject = childElement->layoutObject();
-        if (!layoutObject)
-            continue;
-        const ComputedStyle* style = layoutObject->style();
-        if (!style || style->display() == NONE || style->visibility() != VISIBLE)
-            continue;
-        m_maskContentBoundaries.unite(layoutObject->localToSVGParentTransform().mapRect(layoutObject->paintInvalidationRectInLocalSVGCoordinates()));
-    }
-}
-
-FloatRect LayoutSVGResourceMasker::resourceBoundingBox(const LayoutObject* object)
-{
-    SVGMaskElement* maskElement = toSVGMaskElement(element());
-    ASSERT(maskElement);
-
-    FloatRect objectBoundingBox = object->objectBoundingBox();
-    FloatRect maskBoundaries = SVGLengthContext::resolveRectangle<SVGMaskElement>(maskElement, maskElement->maskUnits()->currentValue()->enumValue(), objectBoundingBox);
-
-    // Resource was not layouted yet. Give back clipping rect of the mask.
-    if (selfNeedsLayout())
-        return maskBoundaries;
-
-    if (m_maskContentBoundaries.isEmpty())
-        calculateMaskContentPaintInvalidationRect();
-
-    FloatRect maskRect = m_maskContentBoundaries;
-    if (maskElement->maskContentUnits()->currentValue()->value() == SVGUnitTypes::SVG_UNIT_TYPE_OBJECTBOUNDINGBOX) {
-        AffineTransform transform;
-        transform.translate(objectBoundingBox.x(), objectBoundingBox.y());
-        transform.scaleNonUniform(objectBoundingBox.width(), objectBoundingBox.height());
-        maskRect = transform.mapRect(maskRect);
-    }
-
-    maskRect.intersect(maskBoundaries);
-    return maskRect;
-}
-
-} // namespace blink
+}  // namespace blink

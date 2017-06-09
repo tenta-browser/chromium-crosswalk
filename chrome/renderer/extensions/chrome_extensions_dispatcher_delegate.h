@@ -23,11 +23,9 @@ class ChromeExtensionsDispatcherDelegate
                               extensions::ScriptContext* context) override;
   void PopulateSourceMap(
       extensions::ResourceBundleSourceMap* source_map) override;
-  void RequireAdditionalModules(extensions::ScriptContext* context,
-                                bool is_within_platform_app) override;
+  void RequireAdditionalModules(extensions::ScriptContext* context) override;
   void OnActiveExtensionsUpdated(
       const std::set<std::string>& extensions_ids) override;
-  void SetChannel(int channel) override;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeExtensionsDispatcherDelegate);
 };

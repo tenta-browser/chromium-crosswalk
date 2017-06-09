@@ -4,7 +4,7 @@ InspectorTest.preloadPanel("resources");
 InspectorTest.dumpIndexedDBTree = function()
 {
     InspectorTest.addResult("Dumping IndexedDB tree:");
-    var indexedDBTreeElement = WebInspector.panels.resources.indexedDBListTreeElement;
+    var indexedDBTreeElement = UI.panels.resources.indexedDBListTreeElement;
     if (!indexedDBTreeElement.childCount()) {
         InspectorTest.addResult("    (empty)");
         return;
@@ -97,6 +97,13 @@ InspectorTest.deleteObjectStoreIndex = function(frameId, databaseName, objectSto
 InspectorTest.addIDBValue = function(frameId, databaseName, objectStoreName, value, key, callback)
 {
     InspectorTest.evaluateWithCallback(frameId, "addIDBValue", [databaseName, objectStoreName, value, key], callback)
+};
+
+InspectorTest.createIndexedDBModel = function()
+{
+    var indexedDBModel = new Resources.IndexedDBModel(SDK.targetManager.mainTarget(), InspectorTest.securityOriginManager);
+    indexedDBModel.enable();
+    return indexedDBModel;
 };
 };
 

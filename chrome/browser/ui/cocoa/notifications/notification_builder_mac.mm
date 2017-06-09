@@ -8,9 +8,8 @@
 
 #include "base/mac/mac_util.h"
 #include "base/mac/scoped_nsobject.h"
+
 #include "chrome/browser/ui/cocoa/notifications/notification_constants_mac.h"
-#include "chrome/grit/generated_resources.h"
-#include "ui/base/l10n/l10n_util_mac.h"
 
 namespace {
 
@@ -33,18 +32,16 @@ NSString* const kNotificationSettingsButtonTag = @"settingsButton";
   base::scoped_nsobject<NSMutableDictionary> notificationData_;
 }
 
-- (instancetype)init {
+- (instancetype)initWithCloseLabel:(NSString*)closeLabel
+                      optionsLabel:(NSString*)optionsLabel
+                     settingsLabel:(NSString*)settingsLabel {
   if ((self = [super init])) {
     notificationData_.reset([[NSMutableDictionary alloc] init]);
-    [notificationData_
-        setObject:l10n_util::GetNSString(IDS_NOTIFICATION_BUTTON_CLOSE)
-           forKey:kNotificationCloseButtonTag];
-    [notificationData_
-        setObject:l10n_util::GetNSString(IDS_NOTIFICATION_BUTTON_OPTIONS)
-           forKey:kNotificationOptionsButtonTag];
-    [notificationData_
-        setObject:l10n_util::GetNSString(IDS_NOTIFICATION_BUTTON_SETTINGS)
-           forKey:kNotificationSettingsButtonTag];
+    [notificationData_ setObject:closeLabel forKey:kNotificationCloseButtonTag];
+    [notificationData_ setObject:optionsLabel
+                          forKey:kNotificationOptionsButtonTag];
+    [notificationData_ setObject:settingsLabel
+                          forKey:kNotificationSettingsButtonTag];
   }
   return self;
 }
@@ -73,8 +70,14 @@ NSString* const kNotificationSettingsButtonTag = @"settingsButton";
 }
 
 - (void)setIcon:(NSImage*)icon {
-  if (icon)
-    [notificationData_ setObject:icon forKey:kNotificationImage];
+  if (icon) {
+    if ([icon conformsToProtocol:@protocol(NSSecureCoding)]) {
+      [notificationData_ setObject:icon forKey:kNotificationImage];
+    } else {  // NSImage only conforms to NSSecureCoding from 10.10 onwards.
+      [notificationData_ setObject:[icon TIFFRepresentation]
+                            forKey:kNotificationImage];
+    }
+  }
 }
 
 - (void)setButtons:(NSString*)primaryButton
@@ -114,6 +117,11 @@ NSString* const kNotificationSettingsButtonTag = @"settingsButton";
                         forKey:notification_constants::kNotificationIncognito];
 }
 
+- (void)setNotificationType:(NSNumber*)notificationType {
+  [notificationData_ setObject:notificationType
+                        forKey:notification_constants::kNotificationType];
+}
+
 - (NSUserNotification*)buildUserNotification {
   base::scoped_nsobject<NSUserNotification> toast(
       [[NSUserNotification alloc] init]);
@@ -125,8 +133,14 @@ NSString* const kNotificationSettingsButtonTag = @"settingsButton";
   // Icon
   if ([notificationData_ objectForKey:kNotificationImage]) {
     if ([toast respondsToSelector:@selector(_identityImage)]) {
-      NSImage* image = [notificationData_ objectForKey:kNotificationImage];
-      [toast setValue:image forKey:@"_identityImage"];
+      if ([[NSImage class] conformsToProtocol:@protocol(NSSecureCoding)]) {
+        NSImage* image = [notificationData_ objectForKey:kNotificationImage];
+        [toast setValue:image forKey:@"_identityImage"];
+      } else {  // NSImage only conforms to NSSecureCoding from 10.10 onwards.
+        base::scoped_nsobject<NSImage> image([[NSImage alloc]
+            initWithData:[notificationData_ objectForKey:kNotificationImage]]);
+        [toast setValue:image forKey:@"_identityImage"];
+      }
       [toast setValue:@NO forKey:@"_identityImageHasBorder"];
     }
   }
@@ -205,12 +219,15 @@ NSString* const kNotificationSettingsButtonTag = @"settingsButton";
       objectForKey:notification_constants::kNotificationIncognito]);
   NSNumber* incognito = [notificationData_
       objectForKey:notification_constants::kNotificationIncognito];
+  NSNumber* type = [notificationData_
+      objectForKey:notification_constants::kNotificationType];
 
   toast.get().userInfo = @{
     notification_constants::kNotificationOrigin : origin,
     notification_constants::kNotificationId : notificationId,
     notification_constants::kNotificationProfileId : profileId,
     notification_constants::kNotificationIncognito : incognito,
+    notification_constants::kNotificationType : type,
   };
 
   return toast.autorelease();

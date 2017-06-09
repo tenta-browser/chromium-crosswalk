@@ -27,24 +27,17 @@
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/native_widget_types.h"
 
-namespace gfx {
-class Size;
-class Transform;
-}
-
 namespace ui {
 class GestureEvent;
 class GestureRecognizer;
-class KeyEvent;
 class MouseEvent;
-class ScrollEvent;
 class TouchEvent;
 }
 
 namespace aura {
+class MusMouseLocationUpdater;
 class TestScreen;
 class EnvInputStateController;
-class WindowTargeter;
 class WindowTreeHost;
 
 namespace test {
@@ -63,8 +56,6 @@ class AURA_EXPORT WindowEventDispatcher : public ui::EventProcessor,
  public:
   explicit WindowEventDispatcher(WindowTreeHost* host);
   ~WindowEventDispatcher() override;
-
-  void set_transform_events(bool value) { transform_events_ = value; }
 
   Window* mouse_pressed_handler() { return mouse_pressed_handler_; }
   Window* mouse_moved_handler() { return mouse_moved_handler_; }
@@ -164,7 +155,7 @@ class AURA_EXPORT WindowEventDispatcher : public ui::EventProcessor,
       WARN_UNUSED_RESULT;
   ui::EventDispatchDetails ProcessGestures(
       Window* target,
-      ui::GestureRecognizer::Gestures* gestures) WARN_UNUSED_RESULT;
+      ui::GestureRecognizer::Gestures gestures) WARN_UNUSED_RESULT;
 
   // Called when a window becomes invisible, either by being removed
   // from root window hierarchy, via SetVisible(false) or being destroyed.
@@ -184,6 +175,7 @@ class AURA_EXPORT WindowEventDispatcher : public ui::EventProcessor,
   // Overridden from ui::EventProcessor:
   ui::EventTarget* GetRootTarget() override;
   void OnEventProcessingStarted(ui::Event* event) override;
+  void OnEventProcessingFinished(ui::Event* event) override;
 
   // Overridden from ui::EventDispatcherDelegate.
   bool CanDispatchToTarget(ui::EventTarget* target) override;
@@ -266,9 +258,9 @@ class AURA_EXPORT WindowEventDispatcher : public ui::EventProcessor,
 
   ScopedObserver<aura::Window, aura::WindowObserver> observer_manager_;
 
-  bool transform_events_;
-
   std::unique_ptr<EnvInputStateController> env_controller_;
+
+  std::unique_ptr<MusMouseLocationUpdater> mus_mouse_location_updater_;
 
   // Used to schedule reposting an event.
   base::WeakPtrFactory<WindowEventDispatcher> repost_event_factory_;

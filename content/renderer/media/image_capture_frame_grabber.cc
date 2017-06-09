@@ -4,6 +4,8 @@
 
 #include "content/renderer/media/image_capture_frame_grabber.h"
 
+#include "cc/paint/paint_canvas.h"
+#include "cc/paint/paint_surface.h"
 #include "media/base/bind_to_current_loop.h"
 #include "media/base/video_frame.h"
 #include "media/base/video_util.h"
@@ -13,7 +15,6 @@
 #include "third_party/WebKit/public/platform/WebMediaStreamTrack.h"
 #include "third_party/libyuv/include/libyuv.h"
 #include "third_party/skia/include/core/SkImage.h"
-#include "third_party/skia/include/core/SkSurface.h"
 
 namespace content {
 
@@ -25,15 +26,43 @@ void OnError(std::unique_ptr<WebImageCaptureGrabFrameCallbacks> callbacks) {
   callbacks->onError();
 }
 
-// This internal method receives a |frame| and converts its pixels into a
-// SkImage via an internal SkSurface and SkPixmap. Alpha channel, if any, is
-// copied.
-void OnVideoFrame(const ImageCaptureFrameGrabber::SkImageDeliverCB& callback,
-                  const scoped_refptr<media::VideoFrame>& frame,
-                  base::TimeTicks /* current_time */) {
+}  // anonymous namespace
+
+// Ref-counted class to receive a single VideoFrame on IO thread, convert it and
+// send it to |main_task_runner_|, where this class is created and destroyed.
+class ImageCaptureFrameGrabber::SingleShotFrameHandler
+    : public base::RefCountedThreadSafe<SingleShotFrameHandler> {
+ public:
+  SingleShotFrameHandler() : first_frame_received_(false) {}
+
+  // Receives a |frame| and converts its pixels into a SkImage via an internal
+  // PaintSurface and SkPixmap. Alpha channel, if any, is copied.
+  void OnVideoFrameOnIOThread(SkImageDeliverCB callback,
+                              const scoped_refptr<media::VideoFrame>& frame,
+                              base::TimeTicks current_time);
+
+ private:
+  friend class base::RefCountedThreadSafe<SingleShotFrameHandler>;
+  virtual ~SingleShotFrameHandler() {}
+
+  // Flag to indicate that the first frames has been processed, and subsequent
+  // ones can be safely discarded.
+  bool first_frame_received_;
+
+  DISALLOW_COPY_AND_ASSIGN(SingleShotFrameHandler);
+};
+
+void ImageCaptureFrameGrabber::SingleShotFrameHandler::OnVideoFrameOnIOThread(
+    SkImageDeliverCB callback,
+    const scoped_refptr<media::VideoFrame>& frame,
+    base::TimeTicks /* current_time */) {
   DCHECK(frame->format() == media::PIXEL_FORMAT_YV12 ||
          frame->format() == media::PIXEL_FORMAT_I420 ||
          frame->format() == media::PIXEL_FORMAT_YV12A);
+
+  if (first_frame_received_)
+    return;
+  first_frame_received_ = true;
 
   const SkAlphaType alpha = media::IsOpaque(frame->format())
                                 ? kOpaque_SkAlphaType
@@ -51,14 +80,19 @@ void OnVideoFrame(const ImageCaptureFrameGrabber::SkImageDeliverCB& callback,
     return;
   }
 
-  libyuv::I420ToARGB(frame->visible_data(media::VideoFrame::kYPlane),
-                     frame->stride(media::VideoFrame::kYPlane),
-                     frame->visible_data(media::VideoFrame::kUPlane),
-                     frame->stride(media::VideoFrame::kUPlane),
-                     frame->visible_data(media::VideoFrame::kVPlane),
-                     frame->stride(media::VideoFrame::kVPlane),
-                     static_cast<uint8*>(pixmap.writable_addr()),
-                     pixmap.width() * 4, pixmap.width(), pixmap.height());
+  const uint32 destination_pixel_format =
+      (kN32_SkColorType == kRGBA_8888_SkColorType) ? libyuv::FOURCC_ABGR
+                                                   : libyuv::FOURCC_ARGB;
+
+  libyuv::ConvertFromI420(frame->visible_data(media::VideoFrame::kYPlane),
+                          frame->stride(media::VideoFrame::kYPlane),
+                          frame->visible_data(media::VideoFrame::kUPlane),
+                          frame->stride(media::VideoFrame::kUPlane),
+                          frame->visible_data(media::VideoFrame::kVPlane),
+                          frame->stride(media::VideoFrame::kVPlane),
+                          static_cast<uint8*>(pixmap.writable_addr()),
+                          pixmap.width() * 4, pixmap.width(), pixmap.height(),
+                          destination_pixel_format);
 
   if (frame->format() == media::PIXEL_FORMAT_YV12A) {
     DCHECK(!info.isOpaque());
@@ -73,9 +107,8 @@ void OnVideoFrame(const ImageCaptureFrameGrabber::SkImageDeliverCB& callback,
   callback.Run(surface->makeImageSnapshot());
 }
 
-}  // anonymous namespace
-
-ImageCaptureFrameGrabber::ImageCaptureFrameGrabber() : weak_factory_(this) {}
+ImageCaptureFrameGrabber::ImageCaptureFrameGrabber()
+    : frame_grab_in_progress_(false), weak_factory_(this) {}
 
 ImageCaptureFrameGrabber::~ImageCaptureFrameGrabber() {
   DCHECK(thread_checker_.CalledOnValidThread());
@@ -84,35 +117,44 @@ ImageCaptureFrameGrabber::~ImageCaptureFrameGrabber() {
 void ImageCaptureFrameGrabber::grabFrame(
     blink::WebMediaStreamTrack* track,
     WebImageCaptureGrabFrameCallbacks* callbacks) {
-  DVLOG(1) << __FUNCTION__;
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(!!callbacks);
 
   DCHECK(track && !track->isNull() && track->getTrackData());
   DCHECK_EQ(blink::WebMediaStreamSource::TypeVideo, track->source().getType());
 
+  if (frame_grab_in_progress_) {
+    // Reject grabFrame()s too close back to back.
+    callbacks->onError();
+    return;
+  }
+
   ScopedWebCallbacks<WebImageCaptureGrabFrameCallbacks> scoped_callbacks =
       make_scoped_web_callbacks(callbacks, base::Bind(&OnError));
 
-  // ConnectToTrack() must happen on render's Main Thread, whereas VideoFrames
-  // are delivered on a background thread though, so we Bind the callback to our
-  // current thread.
+  // A SingleShotFrameHandler is bound and given to the Track to guarantee that
+  // only one VideoFrame is converted and delivered to OnSkImage(), otherwise
+  // SKImages might be sent to resolved |callbacks| while DisconnectFromTrack()
+  // is being processed, which might be further held up if UI is busy, see
+  // https://crbug.com/623042.
+  frame_grab_in_progress_ = true;
   MediaStreamVideoSink::ConnectToTrack(
-      *track,
-      base::Bind(&OnVideoFrame, media::BindToCurrentLoop(base::Bind(
-                                    &ImageCaptureFrameGrabber::OnSkImage,
-                                    weak_factory_.GetWeakPtr(),
-                                    base::Passed(&scoped_callbacks)))),
+      *track, base::Bind(&SingleShotFrameHandler::OnVideoFrameOnIOThread,
+                         make_scoped_refptr(new SingleShotFrameHandler),
+                         media::BindToCurrentLoop(
+                             base::Bind(&ImageCaptureFrameGrabber::OnSkImage,
+                                        weak_factory_.GetWeakPtr(),
+                                        base::Passed(&scoped_callbacks)))),
       false);
 }
 
 void ImageCaptureFrameGrabber::OnSkImage(
-    ScopedWebCallbacks<WebImageCaptureGrabFrameCallbacks> callbacks,
+    ScopedWebCallbacks<blink::WebImageCaptureGrabFrameCallbacks> callbacks,
     sk_sp<SkImage> image) {
-  DVLOG(1) << __FUNCTION__;
   DCHECK(thread_checker_.CalledOnValidThread());
 
   MediaStreamVideoSink::DisconnectFromTrack();
+  frame_grab_in_progress_ = false;
   if (image)
     callbacks.PassCallbacks()->onSuccess(image);
   else

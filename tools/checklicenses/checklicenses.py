@@ -176,6 +176,11 @@ PATH_SPECIFIC_WHITELISTED_LICENSES = {
         'UNKNOWN',
     ],
 
+    # https://bugs.chromium.org/p/swiftshader/issues/detail?id=1
+    'third_party/swiftshader': [
+        'UNKNOWN',
+    ],
+
     # http://code.google.com/p/angleproject/issues/detail?id=217
     'third_party/angle': [
         'UNKNOWN',
@@ -223,11 +228,6 @@ PATH_SPECIFIC_WHITELISTED_LICENSES = {
 
     # http://crbug.com/333508
     'buildtools/clang_format/script': [
-        'UNKNOWN',
-    ],
-
-    # https://mail.python.org/pipermail/cython-devel/2014-July/004062.html
-    'third_party/cython': [
         'UNKNOWN',
     ],
 
@@ -648,10 +648,12 @@ EXCLUDED_PATHS = [
     'build/goma/client',
 
     # Don't check sysroot directories
+    'build/linux/debian_jessie_arm64-sysroot',
     'build/linux/debian_wheezy_amd64-sysroot',
     'build/linux/debian_wheezy_arm-sysroot',
     'build/linux/debian_wheezy_i386-sysroot',
     'build/linux/debian_wheezy_mips-sysroot',
+    'build/linux/ubuntu_precise_amd64-sysroot',
 ]
 
 

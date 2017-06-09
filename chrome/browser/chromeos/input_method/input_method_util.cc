@@ -79,6 +79,9 @@ const struct {
 // The engine ID map for migration. This migration is for input method IDs from
 // VPD so it's NOT a temporary migration.
 const char* const kEngineIdMigrationMap[][2] = {
+    // Workaround for invalid keyboard layout in kefka board vpd.
+    // See https://crbug.com/700625
+    {"ANSI", "xkb:us::eng"},
     {"ime:jp:mozc_jp", "nacl_mozc_jp"},
     {"ime:jp:mozc_us", "nacl_mozc_us"},
     {"ime:ko:hangul_2set", "ko-t-i0-und"},
@@ -392,7 +395,7 @@ std::string InputMethodUtil::GetLocalizedDisplayName(
     const InputMethodDescriptor& descriptor) const {
   // Localizes the input method name.
   const std::string& disp = descriptor.name();
-  if (disp.find("__MSG_") == 0) {
+  if (base::StartsWith(disp, "__MSG_", base::CompareCase::SENSITIVE)) {
     const InputMethodNameMap* map = kInputMethodNameMap;
     size_t map_size = arraysize(kInputMethodNameMap);
     std::string name = base::ToUpperASCII(disp);

@@ -11,7 +11,7 @@
 #include "components/autofill/content/renderer/form_autofill_util.h"
 #include "components/autofill/core/common/autofill_constants.h"
 #include "components/autofill/core/common/form_data_predictions.h"
-#include "grit/components_strings.h"
+#include "components/strings/grit/components_strings.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/platform/WebVector.h"
 #include "third_party/WebKit/public/web/WebConsoleMessage.h"
@@ -41,18 +41,16 @@ namespace {
 
 void LogDeprecationMessages(const WebFormControlElement& element) {
   std::string autocomplete_attribute =
-      base::UTF16ToUTF8(base::StringPiece16(
-          element.getAttribute("autocomplete")));
+      element.getAttribute("autocomplete").utf8();
 
   static const char* const deprecated[] = { "region", "locality" };
-  for (size_t i = 0; i < arraysize(deprecated); ++i) {
-    if (autocomplete_attribute.find(deprecated[i]) == std::string::npos)
+  for (const char* str : deprecated) {
+    if (autocomplete_attribute.find(str) == std::string::npos)
       continue;
-    std::string msg = std::string("autocomplete='") + deprecated[i] +
+    std::string msg = std::string("autocomplete='") + str +
         "' is deprecated and will soon be ignored. See http://goo.gl/YjeSsW";
     WebConsoleMessage console_message = WebConsoleMessage(
-        WebConsoleMessage::LevelWarning,
-        WebString(base::ASCIIToUTF16(msg)));
+        WebConsoleMessage::LevelWarning, WebString::fromASCII(msg));
     element.document().frame()->addMessageToConsole(console_message);
   }
 }
@@ -123,7 +121,7 @@ std::vector<FormData> FormCache::ExtractNewForms() {
 
     FormData form;
     if (!WebFormElementToFormData(form_element, WebFormControlElement(),
-                                  extract_mask, &form, nullptr)) {
+                                  nullptr, extract_mask, &form, nullptr)) {
       continue;
     }
 
@@ -131,7 +129,7 @@ std::vector<FormData> FormCache::ExtractNewForms() {
     if (num_fields_seen > form_util::kMaxParseableFields)
       return forms;
 
-    if (!ContainsKey(parsed_forms_, form) &&
+    if (!base::ContainsKey(parsed_forms_, form) &&
         IsFormInteresting(form, num_editable_elements)) {
       for (auto it = parsed_forms_.begin(); it != parsed_forms_.end(); ++it) {
         if (it->SameFormAs(form)) {
@@ -212,7 +210,7 @@ bool FormCache::ClearFormWithElement(const WebFormControlElement& element) {
     WebInputElement* input_element = toWebInputElement(&control_element);
     if (form_util::IsTextInput(input_element) ||
         form_util::IsMonthInput(input_element)) {
-      input_element->setValue(base::string16(), true);
+      input_element->setValue(blink::WebString(), true);
 
       // Clearing the value in the focused node (above) can cause selection
       // to be lost. We force selection range to restore the text cursor.
@@ -221,15 +219,16 @@ bool FormCache::ClearFormWithElement(const WebFormControlElement& element) {
         input_element->setSelectionRange(length, length);
       }
     } else if (form_util::IsTextAreaElement(control_element)) {
-      control_element.setValue(base::string16(), true);
+      control_element.setValue(blink::WebString(), true);
     } else if (form_util::IsSelectElement(control_element)) {
       WebSelectElement select_element = control_element.to<WebSelectElement>();
 
       std::map<const WebSelectElement, base::string16>::const_iterator
           initial_value_iter = initial_select_values_.find(select_element);
       if (initial_value_iter != initial_select_values_.end() &&
-          select_element.value() != initial_value_iter->second) {
-        select_element.setValue(initial_value_iter->second, true);
+          select_element.value().utf16() != initial_value_iter->second) {
+        select_element.setValue(
+            blink::WebString::fromUTF16(initial_value_iter->second), true);
       }
     } else {
       WebInputElement input_element = control_element.to<WebInputElement>();
@@ -301,7 +300,7 @@ bool FormCache::ShowPredictions(const FormDataPredictions& form) {
     WebFormControlElement& element = control_elements[i];
 
     const FormFieldData& field_data = form.data.fields[i];
-    if (base::string16(element.nameForAutofill()) != field_data.name) {
+    if (element.nameForAutofill().utf16() != field_data.name) {
       // Keep things simple.  Don't show predictions for elements whose names
       // were modified between page load and the server's response to our query.
       continue;
@@ -325,9 +324,10 @@ bool FormCache::ShowPredictions(const FormDataPredictions& form) {
     replacements.push_back(base::UTF8ToUTF16(form.signature));
     const base::string16 title = l10n_util::GetStringFUTF16(
         IDS_AUTOFILL_SHOW_PREDICTIONS_TITLE, replacements, nullptr);
-    element.setAttribute("title", WebString(title));
+    element.setAttribute("title", WebString::fromUTF16(title));
 
-    element.setAttribute("autofill-prediction", WebString(overall_type));
+    element.setAttribute("autofill-prediction",
+                         WebString::fromUTF16(overall_type));
   }
 
   return true;
@@ -364,7 +364,7 @@ void FormCache::SaveInitialValues(
       const WebSelectElement select_element =
           element.toConst<WebSelectElement>();
       initial_select_values_.insert(
-          std::make_pair(select_element, select_element.value()));
+          std::make_pair(select_element, select_element.value().utf16()));
     } else {
       const WebInputElement* input_element = toWebInputElement(&element);
       if (form_util::IsCheckableElement(input_element)) {

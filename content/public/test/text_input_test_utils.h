@@ -6,13 +6,35 @@
 #define CONTENT_PUBLIC_TEST_TEXT_INPUT_TEST_UTILS_H_
 
 #include <string>
+#include <vector>
 
 #include "base/callback.h"
+#include "base/strings/string16.h"
 #include "ui/base/ime/text_input_mode.h"
 #include "ui/base/ime/text_input_type.h"
 
+#ifdef OS_MACOSX
+#include "content/public/browser/browser_message_filter.h"
+#endif
+
+namespace ipc {
+class Message;
+}
+
+namespace gfx {
+class Range;
+}
+
+namespace ui {
+struct CompositionUnderline;
+}
+
 namespace content {
 
+class MessageLoopRunner;
+class RenderFrameHost;
+class RenderProcessHost;
+class RenderWidgetHost;
 class RenderWidgetHostView;
 class RenderWidgetHostViewBase;
 class WebContents;
@@ -38,18 +60,46 @@ size_t GetRegisteredViewsCountFromTextInputManager(WebContents* web_contents);
 // given WebContents.
 RenderWidgetHostView* GetActiveViewFromWebContents(WebContents* web_contents);
 
+// This method will send a request for an immediate update on composition range
+// from TextInputManager's active widget corresponding to the |web_contents|.
+// This function will return false if the request is not successfully sent;
+// either due to missing TextInputManager or lack of an active widget.
+bool RequestCompositionInfoFromActiveWidget(WebContents* web_contents);
+
+// Returns true if |frame| has a focused editable element.
+bool DoesFrameHaveFocusedEditableElement(RenderFrameHost* frame);
+
+// Sends a request to the RenderWidget corresponding to |rwh| to commit the
+// given |text|.
+void SendImeCommitTextToWidget(
+    RenderWidgetHost* rwh,
+    const base::string16& text,
+    const std::vector<ui::CompositionUnderline>& underlines,
+    const gfx::Range& replacement_range,
+    int relative_cursor_pos);
+
 // This class provides the necessary API for accessing the state of and also
 // observing the TextInputManager for WebContents.
 class TextInputManagerTester {
  public:
-  using Callback = base::Callback<void(TextInputManagerTester*)>;
-
   TextInputManagerTester(WebContents* web_contents);
   virtual ~TextInputManagerTester();
 
   // Sets a callback which is invoked when a RWHV calls UpdateTextInputState
   // on the TextInputManager which is being observed.
-  void SetUpdateTextInputStateCalledCallback(const Callback& callback);
+  void SetUpdateTextInputStateCalledCallback(const base::Closure& callback);
+
+  // Sets a callback which is invoked when a RWHV calls SelectionBoundsChanged
+  // on the TextInputManager which is being observed.
+  void SetOnSelectionBoundsChangedCallback(const base::Closure& callback);
+
+  // Sets a callback which is invoked when a RWHV calls
+  // ImeCompositionRangeChanged on the TextInputManager that is being observed.
+  void SetOnImeCompositionRangeChangedCallback(const base::Closure& callback);
+
+  // Sets a callback which is invoked when a RWHV calls SelectionChanged on the
+  // TextInputManager which is being observed.
+  void SetOnTextSelectionChangedCallback(const base::Closure& callback);
 
   // Returns true if there is a focused <input> and populates |type| with
   // |TextInputState.type| of the TextInputManager.
@@ -59,14 +109,17 @@ class TextInputManagerTester {
   // |TextInputState.value| of the TextInputManager.
   bool GetTextInputValue(std::string* value);
 
+  // Returns true if there is a focused <input> and populates |length| with the
+  // length of the selected text range in the focused view.
+  bool GetCurrentTextSelectionLength(size_t* length);
+
   // Returns the RenderWidgetHostView with a focused <input> element or nullptr
   // if none exists.
   const RenderWidgetHostView* GetActiveView();
 
-  // Returns the RenderWidgetHostView which has most recently called
-  // TextInputManager::UpdateTextInputState on the TextInputManager which is
-  // being observed.
-  const RenderWidgetHostView* GetUpdatedView();
+  // Returns the RenderWidgetHostView which has most recently updated any of its
+  // state (e.g., TextInputState or otherwise).
+  RenderWidgetHostView* GetUpdatedView();
 
   // Returns true if a call to TextInputManager::UpdateTextInputState has led
   // to a change in TextInputState (since the time the observer has been
@@ -120,7 +173,6 @@ class TextInputStateSender {
   void SetFlags(int flags);
   void SetCanComposeInline(bool can_compose_inline);
   void SetShowImeIfNeeded(bool show_ime_if_needed);
-  void SetIsNonImeChange(bool is_non_ime_change);
 
  private:
   std::unique_ptr<TextInputState> text_input_state_;
@@ -149,6 +201,48 @@ class TestInputMethodObserver {
  protected:
   TestInputMethodObserver();
 };
+
+#ifdef OS_MACOSX
+// The test message filter for TextInputClientMac incoming messages from the
+// renderer.
+// NOTE: This filter should be added to the intended RenderProcessHost before
+// the actual TextInputClientMessageFilter, otherwise, the messages
+// will be handled and will never receive this filter.
+class TestTextInputClientMessageFilter : public BrowserMessageFilter {
+ public:
+  // Creates the filter and adds itself to |host|.
+  TestTextInputClientMessageFilter(RenderProcessHost* host);
+
+  // Wait until the IPC TextInputClientReplyMsg_GotStringForRange arrives.
+  void WaitForStringFromRange();
+
+  // BrowserMessageFilter overrides.
+  bool OnMessageReceived(const IPC::Message& message) override;
+
+  RenderProcessHost* process() const { return host_; }
+  std::string string_from_range() { return string_from_range_; }
+
+ private:
+  ~TestTextInputClientMessageFilter() override;
+  RenderProcessHost* const host_;
+  std::string string_from_range_;
+  bool received_string_from_range_;
+  scoped_refptr<MessageLoopRunner> message_loop_runner_;
+
+  DISALLOW_COPY_AND_ASSIGN(TestTextInputClientMessageFilter);
+};
+
+// Requests the |tab_view| for the definition of the word identified by the
+// given selection range. |range| identifies a word in the focused
+// RenderWidgetHost underneath |tab_view| which may be different than the
+// RenderWidgetHost corresponding to |tab_view|.
+void AskForLookUpDictionaryForRange(RenderWidgetHostView* tab_view,
+                                    const gfx::Range& range);
+
+// Returns the total count of NSWindows instances which belong to the currently
+// running NSApplication.
+size_t GetOpenNSWindowsCount();
+#endif
 
 }  // namespace content
 

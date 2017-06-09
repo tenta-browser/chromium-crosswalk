@@ -6,11 +6,15 @@
 
 #include "base/logging.h"
 #include "ios/web/interstitials/web_interstitial_facade_delegate.h"
-#include "ios/web/navigation/crw_session_controller.h"
-#include "ios/web/navigation/navigation_manager_impl.h"
-#include "ios/web/public/interstitials/web_interstitial_delegate.h"
+#import "ios/web/navigation/crw_session_controller.h"
+#import "ios/web/navigation/navigation_manager_impl.h"
+#import "ios/web/public/interstitials/web_interstitial_delegate.h"
 #import "ios/web/public/navigation_manager.h"
-#include "ios/web/web_state/web_state_impl.h"
+#import "ios/web/web_state/web_state_impl.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace web {
 
@@ -60,7 +64,7 @@ void WebInterstitialImpl::Show() {
     // SessionController usage here.
     CRWSessionController* sessionController =
         navigation_manager_->GetSessionController();
-    [sessionController addTransientEntryWithURL:url_];
+    [sessionController addTransientItemWithURL:url_];
 
     // Give delegates a chance to set some states on the navigation item.
     GetDelegate()->OverrideItem(navigation_manager_->GetTransientItem());
@@ -79,11 +83,19 @@ void WebInterstitialImpl::DontProceed() {
 
   // Clear the pending entry, since that's the page that's not being
   // proceeded to.
-  GetWebStateImpl()->GetNavigationManager()->DiscardNonCommittedItems();
+  NavigationManager* nav_manager = GetWebStateImpl()->GetNavigationManager();
+  nav_manager->DiscardNonCommittedItems();
 
   Hide();
 
   GetDelegate()->OnDontProceed();
+
+  NSUserDefaults* user_defaults = [NSUserDefaults standardUserDefaults];
+  if (![user_defaults boolForKey:@"PendingIndexNavigationDisabled"]) {
+    // Reload last committed entry.
+    nav_manager->Reload(true /* check_for_repost */);
+  }
+
   delete this;
 }
 

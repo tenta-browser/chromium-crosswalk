@@ -799,6 +799,44 @@ TEST_F(GpuControlListEntryTest, NeedsMoreInfoForExceptionsEntry) {
   EXPECT_FALSE(entry->NeedsMoreInfo(gpu_info, true));
 }
 
+TEST_F(GpuControlListEntryTest, NeedsMoreInfoForGlVersionEntry) {
+  const std::string json = LONG_STRING_CONST(
+      {
+        "id" : 1,
+        "gl_type": "gl",
+        "gl_version": {
+          "op": "<",
+          "value" : "3.5"
+        },
+        "features" : [
+          "test_feature_1"
+        ]
+      }
+  );
+  ScopedEntry entry(GetEntryFromString(json));
+  EXPECT_TRUE(entry.get() != NULL);
+
+  GPUInfo gpu_info;
+  EXPECT_TRUE(entry->NeedsMoreInfo(gpu_info, true));
+  EXPECT_TRUE(
+      entry->Contains(GpuControlList::kOsUnknown, std::string(), gpu_info));
+
+  gpu_info.gl_version = "3.1 Mesa 11.1.0";
+  EXPECT_FALSE(entry->NeedsMoreInfo(gpu_info, false));
+  EXPECT_TRUE(
+      entry->Contains(GpuControlList::kOsUnknown, std::string(), gpu_info));
+
+  gpu_info.gl_version = "4.1 Mesa 12.1.0";
+  EXPECT_FALSE(entry->NeedsMoreInfo(gpu_info, false));
+  EXPECT_FALSE(
+      entry->Contains(GpuControlList::kOsUnknown, std::string(), gpu_info));
+
+  gpu_info.gl_version = "OpenGL ES 2.0 Mesa 12.1.0";
+  EXPECT_FALSE(entry->NeedsMoreInfo(gpu_info, false));
+  EXPECT_FALSE(
+      entry->Contains(GpuControlList::kOsUnknown, std::string(), gpu_info));
+}
+
 TEST_F(GpuControlListEntryTest, FeatureTypeAllEntry) {
   const std::string json = LONG_STRING_CONST(
       {
@@ -1319,6 +1357,20 @@ TEST_F(GpuControlListEntryTest, LinuxKernelVersion) {
   EXPECT_FALSE(entry->Contains(GpuControlList::kOsLinux,
                                "3.19.2-1-generic",
                                gpu_info));
+}
+
+TEST_F(GpuControlListEntryTest, PixelShaderVersion) {
+  const std::string json = LONG_STRING_CONST(
+      {"id" : 1, "pixel_shader_version" : {"op" : "<", "value" : "4.1"}});
+  ScopedEntry entry(GetEntryFromString(json));
+  EXPECT_TRUE(entry.get() != NULL);
+  EXPECT_EQ(GpuControlList::kOsAny, entry->GetOsType());
+
+  GPUInfo gpu_info;
+  gpu_info.pixel_shader_version = "3.2";
+  EXPECT_TRUE(entry->Contains(GpuControlList::kOsMacosx, "10.9", gpu_info));
+  gpu_info.pixel_shader_version = "4.9";
+  EXPECT_FALSE(entry->Contains(GpuControlList::kOsMacosx, "10.9", gpu_info));
 }
 
 }  // namespace gpu

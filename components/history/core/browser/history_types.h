@@ -35,7 +35,6 @@ namespace history {
 // Forward declaration for friend statements.
 class HistoryBackend;
 class PageUsageData;
-class URLDatabase;
 
 // Container for a list of URLs.
 typedef std::vector<GURL> RedirectList;
@@ -332,7 +331,7 @@ struct MostVisitedURL {
 
   RedirectList redirects;
 
-  bool operator==(const MostVisitedURL& other) {
+  bool operator==(const MostVisitedURL& other) const {
     return url == other.url;
   }
 };
@@ -372,7 +371,7 @@ struct HistoryAddPageArgs {
   //   HistoryAddPageArgs(
   //       GURL(), base::Time(), NULL, 0, GURL(),
   //       RedirectList(), ui::PAGE_TRANSITION_LINK,
-  //       SOURCE_BROWSED, false)
+  //       SOURCE_BROWSED, false, true)
   HistoryAddPageArgs();
   HistoryAddPageArgs(const GURL& url,
                      base::Time time,
@@ -382,7 +381,8 @@ struct HistoryAddPageArgs {
                      const RedirectList& redirects,
                      ui::PageTransition transition,
                      VisitSource source,
-                     bool did_replace_entry);
+                     bool did_replace_entry,
+                     bool consider_for_ntp_most_visited);
   HistoryAddPageArgs(const HistoryAddPageArgs& other);
   ~HistoryAddPageArgs();
 
@@ -395,6 +395,11 @@ struct HistoryAddPageArgs {
   ui::PageTransition transition;
   VisitSource visit_source;
   bool did_replace_entry;
+  // Specifies whether a page visit should contribute to the Most Visited tiles
+  // in the New Tab Page. Note that setting this to true (most common case)
+  // doesn't guarantee it's relevant for Most Visited, since other requirements
+  // exist (e.g. certain page transition types).
+  bool consider_for_ntp_most_visited;
 };
 
 // TopSites -------------------------------------------------------------------

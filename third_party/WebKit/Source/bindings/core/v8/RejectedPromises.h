@@ -6,7 +6,7 @@
 #define RejectedPromises_h
 
 #include "bindings/core/v8/SourceLocation.h"
-#include "core/fetch/AccessControlStatus.h"
+#include "platform/loader/fetch/AccessControlStatus.h"
 #include "wtf/Deque.h"
 #include "wtf/Forward.h"
 #include "wtf/RefCounted.h"
@@ -22,36 +22,40 @@ namespace blink {
 class ScriptState;
 
 class RejectedPromises final : public RefCounted<RejectedPromises> {
-    USING_FAST_MALLOC(RejectedPromises);
-public:
-    static PassRefPtr<RejectedPromises> create()
-    {
-        return adoptRef(new RejectedPromises());
-    }
+  USING_FAST_MALLOC(RejectedPromises);
 
-    ~RejectedPromises();
-    void dispose();
+ public:
+  static PassRefPtr<RejectedPromises> create() {
+    return adoptRef(new RejectedPromises());
+  }
 
-    void rejectedWithNoHandler(ScriptState*, v8::PromiseRejectMessage, const String& errorMessage, std::unique_ptr<SourceLocation>, AccessControlStatus);
-    void handlerAdded(v8::PromiseRejectMessage);
+  ~RejectedPromises();
+  void dispose();
 
-    void processQueue();
+  void rejectedWithNoHandler(ScriptState*,
+                             v8::PromiseRejectMessage,
+                             const String& errorMessage,
+                             std::unique_ptr<SourceLocation>,
+                             AccessControlStatus);
+  void handlerAdded(v8::PromiseRejectMessage);
 
-private:
-    class Message;
+  void processQueue();
 
-    RejectedPromises();
+ private:
+  class Message;
 
-    using MessageQueue = Deque<std::unique_ptr<Message>>;
-    std::unique_ptr<MessageQueue> createMessageQueue();
+  RejectedPromises();
 
-    void processQueueNow(std::unique_ptr<MessageQueue>);
-    void revokeNow(std::unique_ptr<Message>);
+  using MessageQueue = Deque<std::unique_ptr<Message>>;
+  std::unique_ptr<MessageQueue> createMessageQueue();
 
-    MessageQueue m_queue;
-    Vector<std::unique_ptr<Message>> m_reportedAsErrors;
+  void processQueueNow(std::unique_ptr<MessageQueue>);
+  void revokeNow(std::unique_ptr<Message>);
+
+  MessageQueue m_queue;
+  Vector<std::unique_ptr<Message>> m_reportedAsErrors;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // RejectedPromises_h
+#endif  // RejectedPromises_h

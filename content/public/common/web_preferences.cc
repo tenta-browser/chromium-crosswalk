@@ -80,9 +80,9 @@ WebPreferences::WebPreferences()
       loads_images_automatically(true),
       images_enabled(true),
       plugins_enabled(true),
+      encrypted_media_enabled(true),
       dom_paste_enabled(false),  // enables execCommand("paste")
       shrinks_standalone_images_to_fit(true),
-      uses_universal_detector(false),  // Disabled: page cycler regression
       text_areas_are_resizable(true),
       allow_scripts_to_close_windows(false),
       remote_fonts_enabled(true),
@@ -95,7 +95,7 @@ WebPreferences::WebPreferences()
       databases_enabled(false),
       application_cache_enabled(false),
       tabs_to_links(true),
-      caret_browsing_enabled(false),
+      history_entry_requires_user_gesture(false),
       hyperlink_auditing_enabled(true),
       allow_universal_access_from_file_urls(false),
       allow_file_access_from_file_urls(false),
@@ -107,17 +107,16 @@ WebPreferences::WebPreferences()
       privileged_webgl_extensions_enabled(false),
       webgl_errors_to_console_enabled(true),
       mock_scrollbars_enabled(false),
-      unified_textchecker_enabled(false),
+      hide_scrollbars(false),
       accelerated_2d_canvas_enabled(false),
       minimum_accelerated_2d_canvas_size(257 * 256),
       disable_2d_canvas_copy_on_write(false),
       antialiased_2d_canvas_disabled(false),
-      antialiased_clips_2d_canvas_enabled(false),
+      antialiased_clips_2d_canvas_enabled(true),
       accelerated_2d_canvas_msaa_sample_count(0),
       accelerated_filters_enabled(false),
       deferred_filters_enabled(false),
       container_culling_enabled(false),
-      allow_displaying_insecure_content(true),
       allow_running_insecure_content(false),
       disable_reading_from_canvas(false),
       strict_mixed_content_checking(false),
@@ -129,9 +128,8 @@ WebPreferences::WebPreferences()
       should_print_backgrounds(false),
       should_clear_document_background(true),
       enable_scroll_animator(false),
-      touch_enabled(false),
+      touch_event_feature_detection_enabled(false),
       device_supports_touch(false),
-      device_supports_mouse(true),
       touch_adjustment_enabled(true),
       pointer_events_max_touch_points(0),
       available_pointer_types(0),
@@ -139,7 +137,6 @@ WebPreferences::WebPreferences()
       available_hover_types(0),
       primary_hover_type(ui::HOVER_TYPE_NONE),
       sync_xhr_in_documents_enabled(true),
-      image_color_profiles_enabled(false),
       should_respect_image_orientation(false),
       number_of_cpu_cores(1),
 #if defined(OS_MACOSX)
@@ -174,7 +171,6 @@ WebPreferences::WebPreferences()
       smart_insert_delete_enabled(false),
 #endif
       spatial_navigation_enabled(false),
-      pinch_overlay_scrollbar_thickness(0),
       use_solid_color_scrollbars(false),
       navigate_on_drag_drop(true),
       v8_cache_options(V8_CACHE_OPTIONS_DEFAULT),
@@ -185,6 +181,10 @@ WebPreferences::WebPreferences()
       animation_policy(IMAGE_ANIMATION_POLICY_ALLOWED),
       user_gesture_required_for_presentation(true),
       text_track_margin_percentage(0.0f),
+      expensive_background_throttling_cpu_budget(-1.0f),
+      expensive_background_throttling_initial_budget(-1.0f),
+      expensive_background_throttling_max_budget(-1.0f),
+      expensive_background_throttling_max_delay(-1.0f),
 #if defined(OS_ANDROID)
       text_autosizing_enabled(true),
       font_scale_factor(1.0f),
@@ -206,20 +206,32 @@ WebPreferences::WebPreferences()
       ignore_main_frame_overflow_hidden_quirk(false),
       report_screen_size_in_physical_pixels_quirk(false),
       resue_global_for_unowned_main_frame(false),
-      autoplay_muted_videos_enabled(false),
       progress_bar_completion(ProgressBarCompletion::LOAD_EVENT),
-#endif
+      spellcheck_enabled_by_default(true),
+      video_fullscreen_orientation_lock_enabled(false),
+      video_fullscreen_detection_enabled(false),
+      embedded_media_experience_enabled(false),
+#else  // defined(OS_ANDROID)
+      cross_origin_media_playback_requires_user_gesture(false),
+#endif  // defined(OS_ANDROID)
 #if defined(OS_ANDROID)
       default_minimum_page_scale_factor(0.25f),
-      default_maximum_page_scale_factor(5.f)
+      default_maximum_page_scale_factor(5.f),
 #elif defined(OS_MACOSX)
       default_minimum_page_scale_factor(1.f),
-      default_maximum_page_scale_factor(3.f)
+      default_maximum_page_scale_factor(3.f),
 #else
       default_minimum_page_scale_factor(1.f),
-      default_maximum_page_scale_factor(4.f)
+      default_maximum_page_scale_factor(4.f),
 #endif
-{
+      hide_download_ui(false),
+      background_video_track_optimization_enabled(false),
+      max_keyframe_distance_to_disable_background_video(
+          base::TimeDelta::FromSeconds(10)),
+      enable_instant_source_buffer_gc(false),
+      presentation_receiver(false),
+      media_controls_enabled(true),
+      do_not_update_selection_on_mutating_selection_range(false) {
   standard_font_family_map[kCommonScript] =
       base::ASCIIToUTF16("Times New Roman");
   fixed_font_family_map[kCommonScript] = base::ASCIIToUTF16("Courier New");

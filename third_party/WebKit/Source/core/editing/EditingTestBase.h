@@ -5,37 +5,48 @@
 #ifndef EditingTestBase_h
 #define EditingTestBase_h
 
-#include "core/editing/Position.h"
-#include "wtf/Forward.h"
 #include <gtest/gtest.h>
 #include <memory>
 #include <string>
+#include "core/editing/Position.h"
+#include "core/testing/DummyPageHolder.h"
+#include "wtf/Forward.h"
 
 namespace blink {
 
-class DummyPageHolder;
+class FrameSelection;
+class LocalFrame;
 
 class EditingTestBase : public ::testing::Test {
-    USING_FAST_MALLOC(EditingTestBase);
-protected:
-    EditingTestBase();
-    ~EditingTestBase() override;
+  USING_FAST_MALLOC(EditingTestBase);
 
-    void SetUp() override;
+ protected:
+  EditingTestBase();
+  ~EditingTestBase() override;
 
-    Document& document() const;
-    DummyPageHolder& dummyPageHolder() const { return *m_dummyPageHolder; }
+  void SetUp() override;
 
-    static ShadowRoot* createShadowRootForElementWithIDAndSetInnerHTML(TreeScope&, const char* hostElementID, const char* shadowRootContent);
+  void setupPageWithClients(Page::PageClients*);
 
-    void setBodyContent(const std::string&);
-    ShadowRoot* setShadowContent(const char* shadowContent, const char* shadowHostId);
-    void updateAllLifecyclePhases();
+  Document& document() const;
+  DummyPageHolder& dummyPageHolder() const { return *m_dummyPageHolder; }
+  LocalFrame& frame() const;
+  FrameSelection& selection() const;
 
-private:
-    std::unique_ptr<DummyPageHolder> m_dummyPageHolder;
+  static ShadowRoot* createShadowRootForElementWithIDAndSetInnerHTML(
+      TreeScope&,
+      const char* hostElementID,
+      const char* shadowRootContent);
+
+  void setBodyContent(const std::string&);
+  ShadowRoot* setShadowContent(const char* shadowContent,
+                               const char* shadowHostId);
+  void updateAllLifecyclePhases();
+
+ private:
+  std::unique_ptr<DummyPageHolder> m_dummyPageHolder;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // EditingTestBase_h
+#endif  // EditingTestBase_h

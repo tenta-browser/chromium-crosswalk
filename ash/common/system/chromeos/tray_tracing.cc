@@ -7,40 +7,48 @@
 #include "ash/common/metrics/user_metrics_action.h"
 #include "ash/common/system/tray/actionable_view.h"
 #include "ash/common/system/tray/fixed_sized_image_view.h"
-#include "ash/common/system/tray/system_tray_delegate.h"
+#include "ash/common/system/tray/system_tray.h"
+#include "ash/common/system/tray/system_tray_controller.h"
 #include "ash/common/system/tray/system_tray_notifier.h"
 #include "ash/common/system/tray/tray_constants.h"
+#include "ash/common/system/tray/tray_popup_item_style.h"
+#include "ash/common/system/tray/tray_popup_utils.h"
+#include "ash/common/system/tray/tri_view.h"
 #include "ash/common/wm_shell.h"
-#include "ash/system/tray/system_tray.h"
-#include "grit/ash_resources.h"
-#include "grit/ash_strings.h"
-#include "ui/base/resource/resource_bundle.h"
+#include "ash/resources/vector_icons/vector_icons.h"
+#include "ash/strings/grit/ash_strings.h"
+#include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/image/image.h"
+#include "ui/gfx/paint_vector_icon.h"
 #include "ui/views/controls/image_view.h"
 #include "ui/views/controls/label.h"
-#include "ui/views/layout/box_layout.h"
+#include "ui/views/layout/fill_layout.h"
 
 namespace ash {
 namespace tray {
 
 class DefaultTracingView : public ActionableView {
  public:
-  DefaultTracingView() {
-    SetLayoutManager(new views::BoxLayout(views::BoxLayout::kHorizontal,
-                                          kTrayPopupPaddingHorizontal, 0,
-                                          kTrayPopupPaddingBetweenItems));
+  explicit DefaultTracingView(SystemTrayItem* owner)
+      : ActionableView(owner, TrayPopupInkDropStyle::FILL_BOUNDS) {
+    SetLayoutManager(new views::FillLayout);
+    TriView* tri_view = TrayPopupUtils::CreateDefaultRowView();
+    AddChildView(tri_view);
 
-    ui::ResourceBundle& bundle = ui::ResourceBundle::GetSharedInstance();
-    image_ = new FixedSizedImageView(0, kTrayPopupItemHeight);
-    image_->SetImage(
-        bundle.GetImageNamed(IDR_AURA_UBER_TRAY_TRACING).ToImageSkia());
-    AddChildView(image_);
+    auto* image = TrayPopupUtils::CreateMainImageView();
+    tri_view->AddView(TriView::Container::START, image);
 
-    label_ = new views::Label();
-    label_->SetMultiLine(true);
-    label_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-    label_->SetText(bundle.GetLocalizedString(IDS_ASH_STATUS_TRAY_TRACING));
-    AddChildView(label_);
+    auto* label = TrayPopupUtils::CreateDefaultLabel();
+    label->SetMultiLine(true);
+    label->SetText(l10n_util::GetStringUTF16(IDS_ASH_STATUS_TRAY_TRACING));
+    tri_view->AddView(TriView::Container::CENTER, label);
+
+    TrayPopupItemStyle style(TrayPopupItemStyle::FontStyle::DEFAULT_VIEW_LABEL);
+    style.SetupLabel(label);
+    image->SetImage(
+        gfx::CreateVectorIcon(kSystemMenuTracingIcon, style.GetIconColor()));
+
+    SetInkDropMode(InkDropHostView::InkDropMode::ON);
   }
 
   ~DefaultTracingView() override {}
@@ -50,12 +58,10 @@ class DefaultTracingView : public ActionableView {
   bool PerformAction(const ui::Event& event) override {
     WmShell::Get()->RecordUserMetricsAction(
         UMA_STATUS_AREA_TRACING_DEFAULT_SELECTED);
-    WmShell::Get()->system_tray_delegate()->ShowChromeSlow();
+    WmShell::Get()->system_tray_controller()->ShowChromeSlow();
+    CloseSystemBubble();
     return true;
   }
-
-  views::ImageView* image_;
-  views::Label* label_;
 
   DISALLOW_COPY_AND_ASSIGN(DefaultTracingView);
 };
@@ -66,7 +72,7 @@ class DefaultTracingView : public ActionableView {
 // ash::TrayTracing
 
 TrayTracing::TrayTracing(SystemTray* system_tray)
-    : TrayImageItem(system_tray, IDR_AURA_UBER_TRAY_TRACING, UMA_TRACING),
+    : TrayImageItem(system_tray, kSystemTrayTracingIcon, UMA_TRACING),
       default_(nullptr) {
   DCHECK(system_tray);
   WmShell::Get()->system_tray_notifier()->AddTracingObserver(this);
@@ -88,7 +94,7 @@ bool TrayTracing::GetInitialVisibility() {
 views::View* TrayTracing::CreateDefaultView(LoginStatus status) {
   CHECK(default_ == NULL);
   if (tray_view() && tray_view()->visible())
-    default_ = new tray::DefaultTracingView();
+    default_ = new tray::DefaultTracingView(this);
   return default_;
 }
 

@@ -20,19 +20,18 @@
 #include "extensions/browser/api/api_resource_manager.h"
 #include "extensions/browser/api/cast_channel/cast_socket.h"
 #include "extensions/browser/api/cast_channel/cast_transport.h"
-#include "extensions/browser/api/cast_channel/logger_util.h"
 #include "extensions/common/api/cast_channel.h"
 #include "extensions/common/api/cast_channel/logging.pb.h"
 #include "net/base/completion_callback.h"
 #include "net/base/io_buffer.h"
 #include "net/base/ip_endpoint.h"
-#include "net/log/net_log.h"
+#include "net/log/net_log_source.h"
 
 namespace net {
-class AddressList;
 class CertVerifier;
 class CTPolicyEnforcer;
 class CTVerifier;
+class NetLog;
 class SSLClientSocket;
 class StreamSocket;
 class TCPClientSocket;
@@ -46,7 +45,6 @@ namespace cast_channel {
 class CastMessage;
 class Logger;
 struct LastErrors;
-class MessageFramer;
 
 // Cast device capabilities.
 enum CastDeviceCapability {
@@ -72,6 +70,9 @@ class CastSocket : public ApiResource {
   // Instead use Close().
   // |callback| will be invoked with any ChannelError that occurred, or
   // CHANNEL_ERROR_NONE if successful.
+  // If the CastSocket is destroyed while the connection is pending, |callback|
+  // will be invoked with CHANNEL_ERROR_UNKNOWN. In this case, invoking
+  // |callback| must not result in any re-entrancy behavior.
   // |delegate| receives message receipt and error events.
   // Ownership of |delegate| is transferred to this CastSocket.
   virtual void Connect(std::unique_ptr<CastTransport::Delegate> delegate,
@@ -296,7 +297,7 @@ class CastSocketImpl : public CastSocket {
   // The NetLog for this service.
   net::NetLog* net_log_;
   // The NetLog source for this service.
-  net::NetLog::Source net_log_source_;
+  net::NetLogSource net_log_source_;
   // True when keep-alive signaling should be handled for this socket.
   bool keep_alive_;
 

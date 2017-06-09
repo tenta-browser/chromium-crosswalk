@@ -9,11 +9,12 @@
 #include <memory>
 
 #include "base/md5.h"
+#include "base/memory/scoped_vector.h"
 #include "base/message_loop/message_loop.h"
+#include "base/test/scoped_task_scheduler.h"
 #include "media/audio/clockless_audio_sink.h"
 #include "media/audio/null_audio_sink.h"
 #include "media/base/demuxer.h"
-#include "media/base/media_keys.h"
 #include "media/base/null_video_sink.h"
 #include "media/base/pipeline_impl.h"
 #include "media/base/pipeline_status.h"
@@ -23,13 +24,11 @@
 #include "media/renderers/video_renderer_impl.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
-namespace base {
-class FilePath;
-}
-
 namespace media {
 
+class AudioDecoder;
 class CdmContext;
+class VideoDecoder;
 
 // Empty MD5 hash string.  Used to verify empty video tracks.
 extern const char kNullVideoHash[];
@@ -70,7 +69,8 @@ class PipelineIntegrationTestBase : public Pipeline::Client {
     kNormal = 0,
     kHashed = 1,
     kClockless = 2,
-    kExpectDemuxerFailure = 4
+    kExpectDemuxerFailure = 4,
+    kUnreliableDuration = 8,
   };
 
   // Starts the pipeline with a file specified by |filename|, optionally with a
@@ -78,7 +78,12 @@ class PipelineIntegrationTestBase : public Pipeline::Client {
   // started. |filename| points at a test file located under media/test/data/.
   PipelineStatus Start(const std::string& filename);
   PipelineStatus Start(const std::string& filename, CdmContext* cdm_context);
-  PipelineStatus Start(const std::string& filename, uint8_t test_type);
+  PipelineStatus Start(const std::string& filename,
+                       uint8_t test_type,
+                       ScopedVector<VideoDecoder> prepend_video_decoders =
+                           ScopedVector<VideoDecoder>(),
+                       ScopedVector<AudioDecoder> prepend_audio_decoders =
+                           ScopedVector<AudioDecoder>());
 
   // Starts the pipeline with |data| (with |size| bytes). The |data| will be
   // valid throughtout the lifetime of this test.
@@ -109,6 +114,10 @@ class PipelineIntegrationTestBase : public Pipeline::Client {
   // enabled.
   std::string GetAudioHash();
 
+  // Reset video hash to restart hashing from scratch (e.g. after a seek or
+  // after disabling a media track).
+  void ResetVideoHash();
+
   // Returns the time taken to render the complete audio file.
   // Pipeline must have been started with clockless playback enabled.
   base::TimeDelta GetAudioTime();
@@ -125,6 +134,9 @@ class PipelineIntegrationTestBase : public Pipeline::Client {
   base::MD5Context md5_context_;
   bool hashing_enabled_;
   bool clockless_playback_;
+
+  // TaskScheduler is used only for FFmpegDemuxer.
+  std::unique_ptr<base::test::ScopedTaskScheduler> task_scheduler_;
   std::unique_ptr<Demuxer> demuxer_;
   std::unique_ptr<DataSource> data_source_;
   std::unique_ptr<PipelineImpl> pipeline_;
@@ -139,14 +151,25 @@ class PipelineIntegrationTestBase : public Pipeline::Client {
   DummyTickClock dummy_clock_;
   PipelineMetadata metadata_;
   scoped_refptr<VideoFrame> last_frame_;
+  base::TimeDelta current_duration_;
 
-  PipelineStatus StartInternal(std::unique_ptr<DataSource> data_source,
-                               CdmContext* cdm_context,
-                               uint8_t test_type);
+  PipelineStatus StartInternal(
+      std::unique_ptr<DataSource> data_source,
+      CdmContext* cdm_context,
+      uint8_t test_type,
+      ScopedVector<VideoDecoder> prepend_video_decoders =
+          ScopedVector<VideoDecoder>(),
+      ScopedVector<AudioDecoder> prepend_audio_decoders =
+          ScopedVector<AudioDecoder>());
 
-  PipelineStatus StartWithFile(const std::string& filename,
-                               CdmContext* cdm_context,
-                               uint8_t test_type);
+  PipelineStatus StartWithFile(
+      const std::string& filename,
+      CdmContext* cdm_context,
+      uint8_t test_type,
+      ScopedVector<VideoDecoder> prepend_video_decoders =
+          ScopedVector<VideoDecoder>(),
+      ScopedVector<AudioDecoder> prepend_audio_decoders =
+          ScopedVector<AudioDecoder>());
 
   void OnSeeked(base::TimeDelta seek_time, PipelineStatus status);
   void OnStatusCallback(PipelineStatus status);
@@ -161,9 +184,18 @@ class PipelineIntegrationTestBase : public Pipeline::Client {
   void CreateDemuxer(std::unique_ptr<DataSource> data_source);
 
   // Creates and returns a Renderer.
-  virtual std::unique_ptr<Renderer> CreateRenderer();
+  virtual std::unique_ptr<Renderer> CreateRenderer(
+      ScopedVector<VideoDecoder> prepend_video_decoders =
+          ScopedVector<VideoDecoder>(),
+      ScopedVector<AudioDecoder> prepend_audio_decoders =
+          ScopedVector<AudioDecoder>());
 
   void OnVideoFramePaint(const scoped_refptr<VideoFrame>& frame);
+
+  void CheckDuration();
+
+  // Return the media start time from |demuxer_|.
+  base::TimeDelta GetStartTime();
 
   MOCK_METHOD1(DecryptorAttached, void(bool));
   // Pipeline::Client overrides.
@@ -178,6 +210,7 @@ class PipelineIntegrationTestBase : public Pipeline::Client {
   MOCK_METHOD0(OnWaitingForDecryptionKey, void(void));
   MOCK_METHOD1(OnVideoNaturalSizeChange, void(const gfx::Size&));
   MOCK_METHOD1(OnVideoOpacityChange, void(bool));
+  MOCK_METHOD0(OnVideoAverageKeyframeDistanceUpdate, void());
 };
 
 }  // namespace media

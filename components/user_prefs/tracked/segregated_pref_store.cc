@@ -24,8 +24,8 @@ void SegregatedPrefStore::AggregatingObserver::OnPrefValueChanged(
   if (failed_sub_initializations_ + successful_sub_initializations_ < 2)
     return;
 
-  FOR_EACH_OBSERVER(PrefStore::Observer, outer_->observers_,
-                    OnPrefValueChanged(key));
+  for (auto& observer : outer_->observers_)
+    observer.OnPrefValueChanged(key);
 }
 
 void SegregatedPrefStore::AggregatingObserver::OnInitializationCompleted(
@@ -44,9 +44,8 @@ void SegregatedPrefStore::AggregatingObserver::OnInitializationCompleted(
         outer_->read_error_delegate_->OnError(read_error);
     }
 
-    FOR_EACH_OBSERVER(
-        PrefStore::Observer, outer_->observers_,
-        OnInitializationCompleted(successful_sub_initializations_ == 2));
+    for (auto& observer : outer_->observers_)
+      observer.OnInitializationCompleted(successful_sub_initializations_ == 2);
   }
 }
 
@@ -82,6 +81,20 @@ bool SegregatedPrefStore::IsInitializationComplete() const {
 bool SegregatedPrefStore::GetValue(const std::string& key,
                                    const base::Value** result) const {
   return StoreForKey(key)->GetValue(key, result);
+}
+
+std::unique_ptr<base::DictionaryValue> SegregatedPrefStore::GetValues() const {
+  auto values = default_pref_store_->GetValues();
+  auto selected_pref_store_values = selected_pref_store_->GetValues();
+  for (const auto& key : selected_preference_names_) {
+    const base::Value* value = nullptr;
+    if (selected_pref_store_values->Get(key, &value)) {
+      values->Set(key, value->CreateDeepCopy());
+    } else {
+      values->Remove(key, nullptr);
+    }
+  }
+  return values;
 }
 
 void SegregatedPrefStore::SetValue(const std::string& key,
@@ -166,14 +179,16 @@ SegregatedPrefStore::~SegregatedPrefStore() {
 }
 
 PersistentPrefStore* SegregatedPrefStore::StoreForKey(const std::string& key) {
-  return (ContainsKey(selected_preference_names_, key)
+  return (base::ContainsKey(selected_preference_names_, key)
               ? selected_pref_store_
-              : default_pref_store_).get();
+              : default_pref_store_)
+      .get();
 }
 
 const PersistentPrefStore* SegregatedPrefStore::StoreForKey(
     const std::string& key) const {
-  return (ContainsKey(selected_preference_names_, key)
+  return (base::ContainsKey(selected_preference_names_, key)
               ? selected_pref_store_
-              : default_pref_store_).get();
+              : default_pref_store_)
+      .get();
 }

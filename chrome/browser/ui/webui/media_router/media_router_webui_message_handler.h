@@ -48,20 +48,22 @@ class MediaRouterWebUIMessageHandler : public content::WebUIMessageHandler {
                                      const MediaRoute* route);
   void ReturnSearchResult(const std::string& sink_id);
 
-  // Does not take ownership of |issue|. Note that |issue| can be nullptr, when
-  // there are no more issues.
-  void UpdateIssue(const Issue* issue);
+  void UpdateIssue(const Issue& issue);
+  void ClearIssue();
 
   // Updates the maximum dialog height to allow the WebUI properly scale when
   // the browser window changes.
   void UpdateMaxDialogHeight(int height);
 
   void SetWebUIForTest(content::WebUI* webui);
-  void set_off_the_record_for_test(bool off_the_record) {
-    off_the_record_ = off_the_record;
-  }
+  void set_incognito_for_test(bool incognito) { incognito_ = incognito; }
 
  private:
+  FRIEND_TEST_ALL_PREFIXES(MediaRouterWebUIMessageHandlerTest,
+                           RecordCastModeSelection);
+  FRIEND_TEST_ALL_PREFIXES(MediaRouterWebUIMessageHandlerTest,
+                           RetrieveCastModeSelection);
+
   // WebUIMessageHandler implementation.
   void RegisterMessages() override;
 
@@ -92,7 +94,7 @@ class MediaRouterWebUIMessageHandler : public content::WebUIMessageHandler {
   // Performs an action for an Issue of |type|.
   // |args| contains additional parameter that varies based on |type|.
   // Returns |true| if the action was successfully performed.
-  bool ActOnIssueType(const IssueAction::Type& type,
+  bool ActOnIssueType(IssueInfo::Action type,
                       const base::DictionaryValue* args);
 
   // May update the first run flow related properties in the WebUI. This is
@@ -120,8 +122,8 @@ class MediaRouterWebUIMessageHandler : public content::WebUIMessageHandler {
   // Marked virtual for tests.
   virtual AccountInfo GetAccountInfo();
 
-  // |true| if the associated Profile is off the record.
-  bool off_the_record_;
+  // |true| if the associated Profile is incognito.
+  bool incognito_;
 
   // Keeps track of whether a command to close the dialog has been issued.
   bool dialog_closing_;

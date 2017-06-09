@@ -4,11 +4,10 @@
 
 #include "chrome/browser/android/logo_service.h"
 
-#include "base/feature_list.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/threading/sequenced_worker_pool.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "chrome/browser/android/chrome_feature_list.h"
 #include "chrome/browser/image_decoder.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
@@ -117,7 +116,7 @@ void LogoService::GetLogo(search_provider_logos::LogoObserver* observer) {
   if (!logo_tracker_) {
     logo_tracker_.reset(new LogoTracker(
         profile_->GetPath().Append(kCachedLogoDirectory),
-        BrowserThread::GetMessageLoopProxyForThread(BrowserThread::FILE),
+        BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE),
         BrowserThread::GetBlockingPool(), profile_->GetRequestContext(),
         std::unique_ptr<search_provider_logos::LogoDelegate>(
             new ChromeLogoDelegate())));
@@ -128,7 +127,7 @@ void LogoService::GetLogo(search_provider_logos::LogoObserver* observer) {
       base::Bind(&search_provider_logos::GoogleParseLogoResponse),
       base::Bind(&search_provider_logos::GoogleAppendQueryparamsToLogoURL),
       true, /* wants_cta */
-      base::FeatureList::IsEnabled(chrome::android::kNTPMaterialDesign));
+      true /* transparent */);
   logo_tracker_->GetLogo(observer);
 }
 

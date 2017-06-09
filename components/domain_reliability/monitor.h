@@ -34,7 +34,6 @@
 #include "net/url_request/url_request_status.h"
 
 namespace base {
-class ThreadChecker;
 class Value;
 }  // namespace base
 
@@ -89,6 +88,10 @@ class DOMAIN_RELIABILITY_EXPORT DomainReliabilityMonitor
       const scoped_refptr<net::URLRequestContextGetter>&
           url_request_context_getter);
 
+  // Shuts down the monitor prior to destruction. Currently, ensures that there
+  // are no pending uploads, to avoid hairy lifetime issues at destruction.
+  void Shutdown();
+
   // Populates the monitor with contexts that were configured at compile time.
   void AddBakedInConfigs();
 
@@ -111,10 +114,14 @@ class DOMAIN_RELIABILITY_EXPORT DomainReliabilityMonitor
   void OnNetworkChanged(
       net::NetworkChangeNotifier::ConnectionType type) override;
 
-  // Called to remove browsing data. With CLEAR_BEACONS, leaves contexts in
-  // place but clears beacons (which betray browsing history); with
-  // CLEAR_CONTEXTS, removes all contexts (which can behave as cookies).
-  void ClearBrowsingData(DomainReliabilityClearMode mode);
+  // Called to remove browsing data for origins matched by |origin_filter|.
+  // With CLEAR_BEACONS, leaves contexts in place but clears beacons (which
+  // betray browsing history); with CLEAR_CONTEXTS, removes entire contexts
+  // (which can behave as cookies). A null |origin_filter| is interpreted
+  // as an always-true filter, indicating complete deletion.
+  void ClearBrowsingData(
+      DomainReliabilityClearMode mode,
+      const base::Callback<bool(const GURL&)>& origin_filter);
 
   // Gets a Value containing data that can be formatted into a web page for
   // debugging purposes.
@@ -126,6 +133,10 @@ class DOMAIN_RELIABILITY_EXPORT DomainReliabilityMonitor
   size_t contexts_size_for_testing() const {
     return context_manager_.contexts_size_for_testing();
   }
+
+  // Forces all pending uploads to run now, even if their minimum delay has not
+  // yet passed.
+  void ForceUploadsForTesting();
 
   // DomainReliabilityContext::Factory implementation:
   std::unique_ptr<DomainReliabilityContext> CreateContextForConfig(

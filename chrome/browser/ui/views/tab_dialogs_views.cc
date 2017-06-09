@@ -9,9 +9,12 @@
 #include "chrome/browser/ui/views/collected_cookies_views.h"
 #include "chrome/browser/ui/views/hung_renderer_view.h"
 #include "chrome/browser/ui/views/passwords/manage_passwords_bubble_view.h"
-#include "chrome/browser/ui/views/sync/profile_signin_confirmation_dialog_views.h"
 #include "chrome/browser/ui/views/validation_message_bubble_view.h"
 #include "content/public/browser/web_contents.h"
+
+#if !defined(OS_CHROMEOS)
+#include "chrome/browser/ui/views/sync/profile_signin_confirmation_dialog_views.h"
+#endif
 
 // static
 void TabDialogs::CreateForWebContents(content::WebContents* contents) {
@@ -37,8 +40,9 @@ void TabDialogsViews::ShowCollectedCookies() {
   new CollectedCookiesViews(web_contents_);
 }
 
-void TabDialogsViews::ShowHungRendererDialog() {
-  HungRendererDialogView::Show(web_contents_);
+void TabDialogsViews::ShowHungRendererDialog(
+    const content::WebContentsUnresponsiveState& unresponsive_state) {
+  HungRendererDialogView::Show(web_contents_, unresponsive_state);
 }
 
 void TabDialogsViews::HideHungRendererDialog() {
@@ -49,9 +53,13 @@ void TabDialogsViews::ShowProfileSigninConfirmation(
     Browser* browser,
     Profile* profile,
     const std::string& username,
-    ui::ProfileSigninConfirmationDelegate* delegate) {
-  ProfileSigninConfirmationDialogViews::ShowDialog(
-      browser, profile, username, delegate);
+    std::unique_ptr<ui::ProfileSigninConfirmationDelegate> delegate) {
+#if !defined(OS_CHROMEOS)
+  ProfileSigninConfirmationDialogViews::ShowDialog(browser, profile, username,
+                                                   std::move(delegate));
+#else
+  NOTREACHED();
+#endif
 }
 
 void TabDialogsViews::ShowManagePasswordsBubble(bool user_action) {

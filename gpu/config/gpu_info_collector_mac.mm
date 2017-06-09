@@ -54,6 +54,12 @@ UInt32 GetEntryProperty(io_registry_entry_t entry, CFStringRef property_name) {
   return value;
 }
 
+// CGDisplayIOServicePort is deprecated as of macOS 10.9, but has no
+// replacement.
+// https://crbug.com/650837
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+
 // Find the info of the current GPU.
 GPUInfo::GPUDevice GetActiveGPU() {
   GPUInfo::GPUDevice gpu;
@@ -62,6 +68,8 @@ GPUInfo::GPUDevice GetActiveGPU() {
   gpu.device_id = GetEntryProperty(dsp_port, CFSTR("device-id"));
   return gpu;
 }
+
+#pragma clang diagnostic pop
 
 // Scan IO registry for PCI video cards.
 CollectInfoResult CollectPCIVideoCardInfo(GPUInfo* gpu_info) {
@@ -169,8 +177,6 @@ CollectInfoResult CollectContextGraphicsInfo(GPUInfo* gpu_info) {
 
   TRACE_EVENT0("gpu", "gpu_info_collector::CollectGraphicsInfo");
 
-  gpu_info->can_lose_context =
-      (gl::GetGLImplementation() == gl::kGLImplementationEGLGLES2);
   CollectInfoResult result = CollectGraphicsInfoGL(gpu_info);
   gpu_info->context_info_state = result;
   return result;

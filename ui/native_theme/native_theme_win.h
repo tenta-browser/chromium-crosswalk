@@ -52,10 +52,12 @@ class NATIVE_THEME_EXPORT NativeThemeWin : public NativeTheme,
     LAST
   };
 
-  bool IsThemingActive() const;
-
   // Returns true if a high contrast theme is being used.
-  bool IsUsingHighContrastTheme() const;
+  static bool IsUsingHighContrastTheme();
+
+  // Closes cached theme handles so we can unload the DLL or update our UI
+  // for a theme change.
+  static void CloseHandles();
 
   HRESULT GetThemeColor(ThemeName theme,
                         int part_id,
@@ -84,15 +86,8 @@ class NATIVE_THEME_EXPORT NativeThemeWin : public NativeTheme,
   // consistent visual results.
   void DisableTheming() const;
 
-  // Closes cached theme handles so we can unload the DLL or update our UI
-  // for a theme change.
-  void CloseHandles() const;
-
   // Returns true if classic theme is in use.
   bool IsClassicTheme(ThemeName name) const;
-
-  // Gets our singleton instance.
-  static NativeThemeWin* instance();
 
   HRESULT PaintTextField(HDC hdc,
                          int part_id,
@@ -107,31 +102,44 @@ class NATIVE_THEME_EXPORT NativeThemeWin : public NativeTheme,
   gfx::Size GetPartSize(Part part,
                         State state,
                         const ExtraParams& extra) const override;
-  void Paint(SkCanvas* canvas,
+  void Paint(cc::PaintCanvas* canvas,
              Part part,
              State state,
              const gfx::Rect& rect,
              const ExtraParams& extra) const override;
   SkColor GetSystemColor(ColorId color_id) const override;
 
+  bool SupportsNinePatch(Part part) const override;
+  gfx::Size GetNinePatchCanvasSize(Part part) const override;
+  gfx::Rect GetNinePatchAperture(Part part) const override;
+
  protected:
+  friend class NativeTheme;
+  // Gets our singleton instance.
+  static NativeThemeWin* instance();
+
   NativeThemeWin();
   ~NativeThemeWin() override;
 
  private:
+  bool IsUsingHighContrastThemeInternal();
+  void CloseHandlesInternal();
+
   // gfx::SysColorChangeListener implementation:
   void OnSysColorChange() override;
 
   // Update the locally cached set of system colors.
   void UpdateSystemColors();
 
-  // Painting functions that paint to SkCanvas.
-  void PaintMenuSeparator(SkCanvas* canvas, const gfx::Rect& rect) const;
-  void PaintMenuGutter(SkCanvas* canvas, const gfx::Rect& rect) const;
-  void PaintMenuBackground(SkCanvas* canvas, const gfx::Rect& rect) const;
+  // Painting functions that paint to PaintCanvas.
+  void PaintMenuSeparator(cc::PaintCanvas* canvas, const gfx::Rect& rect) const;
+  void PaintMenuGutter(cc::PaintCanvas* canvas, const gfx::Rect& rect) const;
+  void PaintMenuBackground(cc::PaintCanvas* canvas,
+                           const gfx::Rect& rect) const;
 
   // Paint directly to canvas' HDC.
-  void PaintDirect(SkCanvas* canvas,
+  void PaintDirect(SkCanvas* destination_canvas,
+                   HDC hdc,
                    Part part,
                    State state,
                    const gfx::Rect& rect,
@@ -140,7 +148,7 @@ class NATIVE_THEME_EXPORT NativeThemeWin : public NativeTheme,
   // Create a temporary HDC, paint to that, clean up the alpha values in the
   // temporary HDC, and then blit the result to canvas.  This is to work around
   // the fact that Windows XP and some classic themes give bogus alpha values.
-  void PaintIndirect(SkCanvas* canvas,
+  void PaintIndirect(cc::PaintCanvas* destination_canvas,
                      Part part,
                      State state,
                      const gfx::Rect& rect,
@@ -161,8 +169,7 @@ class NATIVE_THEME_EXPORT NativeThemeWin : public NativeTheme,
                       int state_id,
                       RECT* rect) const;
 
-  HRESULT PaintMenuSeparator(HDC hdc,
-                             const gfx::Rect& rect) const;
+  HRESULT PaintMenuSeparator(HDC hdc, const gfx::Rect& rect) const;
 
   HRESULT PaintMenuGutter(HDC hdc, const gfx::Rect& rect) const;
 
@@ -351,7 +358,6 @@ class NATIVE_THEME_EXPORT NativeThemeWin : public NativeTheme,
   OpenThemeDataPtr open_theme_;
   CloseThemeDataPtr close_theme_;
   SetThemeAppPropertiesPtr set_theme_properties_;
-  IsThemeActivePtr is_theme_active_;
   GetThemeIntPtr get_theme_int_;
 
   // Handle to uxtheme.dll.

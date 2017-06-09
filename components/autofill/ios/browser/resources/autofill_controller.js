@@ -2,17 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Installs Autofill management functions on the |__gCrWeb| object.
-//
-// It scans the DOM, extracting and storing forms and returns a JSON string
-// representing an array of objects, each of which represents an Autofill form
-// with information about a form to be filled and/or submitted and it can be
-// translated to struct FormData
-// (chromium/src/components/autofill/core/common/form_data.h) for further
-// processing.
+/**
+  * @fileoverview Installs Autofill management functions on the __gCrWeb object.
+  *
+  * It scans the DOM, extracting and storing forms and returns a JSON string
+  * representing an array of objects, each of which represents an Autofill form
+  * with information about a form to be filled and/or submitted and it can be
+  * translated to struct FormData
+  * (chromium/src/components/autofill/core/common/form_data.h) for further
+  * processing.
 
-/** @typedef {HTMLInputElement|HTMLTextAreaElement|HTMLSelectElement} */
-var FormControlElement;
+  * TODO(crbug.com/647084): Enable checkTypes error for this file.
+  * @suppress {checkTypes}
+  */
 
 /**
   * @typedef {{
@@ -43,11 +45,19 @@ var AutofillFormFieldData;
   */
 var AutofillFormData;
 
+/* Beginning of anonymous object. */
+(function() {
+
 /**
  * Namespace for this file. It depends on |__gCrWeb| having already been
  * injected.
  */
-__gCrWeb['autofill'] = {};
+__gCrWeb.autofill = {};
+
+// Store autofill namespace object in a global __gCrWeb object referenced by a
+// string, so it does not get renamed by closure compiler during the
+// minification.
+__gCrWeb['autofill'] = __gCrWeb.autofill;
 
 /**
  * The maximum length allowed for form data.
@@ -71,7 +81,7 @@ __gCrWeb.autofill.MAX_DATA_LENGTH = 1024;
  *
  * @const {number}
  */
-__gCrWeb.autofill.MAX_PARSEABLE_FIELDS = 100;
+__gCrWeb.autofill.MAX_PARSEABLE_FIELDS = 200;
 
 /**
  * A bit field mask to extract data from WebFormControlElement for
@@ -135,13 +145,6 @@ __gCrWeb.autofill.ROLE_ATTRIBUTE_PRESENTATION = 0;
  * @type {Element}
  */
 __gCrWeb.autofill.lastAutoFilledElement = null;
-
-/**
- * The last element that was active (used to restore focus if necessary).
- *
- * @type {Element}
- */
-__gCrWeb.autofill.lastActiveElement = null;
 
 /**
  * Whether CSS for autofilled elements has been injected into the page.
@@ -254,7 +257,7 @@ function scanFormControlElements_(controlElements) {
  * In the C++ version, |fieldsets| can be NULL, in which case we do not try to
  * append to it.
  *
- * @param {Array<FormControlElement>} elements elements to look through.
+ * @param {Array<!FormControlElement>} elements elements to look through.
  * @param {Array<Element>} fieldsets out param for unowned fieldsets.
  * @return {Array<FormControlElement>} The elements that are not part of a form.
  */
@@ -269,7 +272,7 @@ function getUnownedAutofillableFormFieldElements_(elements, fieldsets) {
 
     if (__gCrWeb.autofill.hasTagName(elements[i], 'fieldset') &&
         !isElementInsideFormOrFieldSet(elements[i])) {
-      fieldset.push(elements[i]);
+      fieldsets.push(elements[i]);
     }
   }
   return __gCrWeb.autofill.extractAutofillableElementsFromSet(
@@ -556,34 +559,12 @@ __gCrWeb.autofill['extractForms'] = function(requiredFields) {
 };
 
 /**
- * Stores the current active element. This is used to make the element active
- * again in case the web view loses focus when a dialog is presented over it.
- */
-__gCrWeb.autofill['storeActiveElement'] = function() {
-  __gCrWeb.autofill.lastActiveElement = document.activeElement;
-}
-
-/**
- * Clears the current active element by setting it to null.
- */
-__gCrWeb.autofill['clearActiveElement'] = function() {
-  __gCrWeb.autofill.lastActiveElement = null;
-}
-
-/**
- * Fills data into the active form field. The active form field is either
- * document.activeElement or the value of lastActiveElement if that value is
- * non-null.
+ * Fills data into the active form field.
  *
  * @param {AutofillFormFieldData} data The data to fill in.
  */
 __gCrWeb.autofill['fillActiveFormField'] = function(data) {
   var activeElement = document.activeElement;
-  if (__gCrWeb.autofill.lastActiveElement) {
-    activeElement = __gCrWeb.autofill.lastActiveElement;
-    activeElement.focus();
-    __gCrWeb.autofill.lastActiveElement = null;
-  }
   if (data['name'] !== __gCrWeb['common'].nameForAutofill(activeElement)) {
     return;
   }
@@ -657,7 +638,7 @@ __gCrWeb.autofill['fillForm'] = function(data, forceFillFieldName) {
     // TODO(bondd): Handle __gCrWeb.autofill.isCheckableElement(element) ==
     // true. |is_checked| is not currently passed in by the caller.
 
-    element.setAttribute('chrome-autofilled');
+    element.setAttribute('chrome-autofilled', '');
     element.isAutofilled = true;
     element.addEventListener('input', controlElementInputListener);
   }
@@ -1063,7 +1044,7 @@ __gCrWeb.autofill.findChildTextInner = function(node, depth, divsToSkip) {
         node.tagName === 'NOSCRIPT') {
       return '';
     }
-    if (__gCrWeb.common.isFormControlElement(node)) {
+    if (__gCrWeb.common.isFormControlElement(/** @type {Element} */ (node))) {
       var input = /** @type {FormControlElement} */ (node);
       if (__gCrWeb.autofill.isAutofillableElement(input)) {
         return '';
@@ -2091,3 +2072,5 @@ __gCrWeb.autofill['fillPredictionData'] = function(data) {
     }
   }
 };
+
+}());  // End of anonymous object

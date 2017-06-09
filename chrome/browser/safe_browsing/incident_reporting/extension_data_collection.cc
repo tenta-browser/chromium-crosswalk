@@ -19,6 +19,7 @@
 #include "extensions/browser/extension_registry_factory.h"
 #include "extensions/common/extension_set.h"
 #include "extensions/common/manifest_constants.h"
+#include "extensions/features/features.h"
 
 namespace safe_browsing {
 
@@ -76,10 +77,11 @@ void PopulateExtensionInfo(
     std::unique_ptr<extensions::InstallSignature> signature_from_prefs =
         extensions::InstallSignature::FromValue(*signature);
     if (signature_from_prefs) {
-      if (ContainsKey(signature_from_prefs->ids, extension_id)) {
+      if (base::ContainsKey(signature_from_prefs->ids, extension_id)) {
         extension_info->set_has_signature_validation(true);
         extension_info->set_signature_is_valid(true);
-      } else if (ContainsKey(signature_from_prefs->invalid_ids, extension_id)) {
+      } else if (base::ContainsKey(signature_from_prefs->invalid_ids,
+                                   extension_id)) {
         extension_info->set_has_signature_validation(true);
         extension_info->set_signature_is_valid(false);
       }
@@ -99,7 +101,7 @@ void PopulateExtensionInfo(
 // Finds the last installed extension and adds relevant information to data's
 // last_installed_extension field.
 void CollectExtensionData(ClientIncidentReport_ExtensionData* data) {
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   scoped_refptr<const extensions::Extension> last_installed_extension;
   Profile* profile_for_last_installed_extension = nullptr;
   base::Time last_install_time;

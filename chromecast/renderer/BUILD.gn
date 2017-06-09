@@ -8,10 +8,8 @@ source_set("renderer") {
   sources = [
     "cast_content_renderer_client.cc",
     "cast_content_renderer_client.h",
-    "cast_media_load_deferrer.cc",
-    "cast_media_load_deferrer.h",
-    "cast_render_thread_observer.cc",
-    "cast_render_thread_observer.h",
+    "cast_render_frame_action_deferrer.cc",
+    "cast_render_frame_action_deferrer.h",
     "key_systems_cast.cc",
     "key_systems_cast.h",
   ]
@@ -34,6 +32,7 @@ source_set("renderer") {
     "//chromecast/common/media",
     "//chromecast/crash",
     "//chromecast/media",
+    "//chromecast/media",
     "//components/cdm/renderer",
     "//components/network_hints/renderer",
     "//content/public/common",
@@ -41,6 +40,7 @@ source_set("renderer") {
     "//crypto",
     "//ipc",
     "//media",
-    "//third_party/widevine/cdm:version_h",
+    "//services/service_manager/public/cpp",
+    "//third_party/widevine/cdm:headers",
   ]
 }

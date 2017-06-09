@@ -16,10 +16,13 @@
 #include "jni/QuicTestServer_jni.h"
 #include "net/base/ip_address.h"
 #include "net/base/ip_endpoint.h"
-#include "net/quic/crypto/proof_source_chromium.h"
+#include "net/quic/chromium/crypto/proof_source_chromium.h"
 #include "net/test/test_data_directory.h"
-#include "net/tools/quic/quic_in_memory_cache.h"
+#include "net/tools/quic/quic_http_response_cache.h"
 #include "net/tools/quic/quic_simple_server.h"
+
+using base::android::JavaParamRef;
+using base::android::ScopedJavaLocalRef;
 
 namespace cronet {
 
@@ -28,6 +31,7 @@ namespace {
 static const int kServerPort = 6121;
 
 base::Thread* g_quic_server_thread = nullptr;
+net::QuicHttpResponseCache* g_quic_response_cache = nullptr;
 net::QuicSimpleServer* g_quic_server = nullptr;
 
 void StartOnServerThread(const base::FilePath& test_files_root,
@@ -38,20 +42,22 @@ void StartOnServerThread(const base::FilePath& test_files_root,
   // Set up in-memory cache.
   base::FilePath file_dir = test_files_root.Append("quic_data");
   CHECK(base::PathExists(file_dir)) << "Quic data does not exist";
-  net::QuicInMemoryCache::GetInstance()->InitializeFromDirectory(
-      file_dir.value());
+  g_quic_response_cache = new net::QuicHttpResponseCache();
+  g_quic_response_cache->InitializeFromDirectory(file_dir.value());
   net::QuicConfig config;
 
   // Set up server certs.
   base::FilePath directory = test_data_dir.Append("net/data/ssl/certificates");
-  // TODO(xunjieli): Use scoped_ptr when crbug.com/545474 is fixed.
-  net::ProofSourceChromium* proof_source = new net::ProofSourceChromium();
+  std::unique_ptr<net::ProofSourceChromium> proof_source(
+      new net::ProofSourceChromium());
   CHECK(proof_source->Initialize(
       directory.Append("quic_test.example.com.crt"),
       directory.Append("quic_test.example.com.key.pkcs8"),
       directory.Append("quic_test.example.com.key.sct")));
-  g_quic_server = new net::QuicSimpleServer(proof_source, config,
-                                            net::QuicSupportedVersions());
+  g_quic_server = new net::QuicSimpleServer(
+      std::move(proof_source), config,
+      net::QuicCryptoServerConfig::ConfigOptions(), net::AllSupportedVersions(),
+      g_quic_response_cache);
 
   // Start listening.
   int rv = g_quic_server->Listen(
@@ -65,6 +71,7 @@ void ShutdownOnServerThread() {
   DCHECK(g_quic_server_thread->task_runner()->BelongsToCurrentThread());
   g_quic_server->Shutdown();
   delete g_quic_server;
+  delete g_quic_response_cache;
 }
 
 }  // namespace
@@ -98,12 +105,6 @@ void ShutdownQuicTestServer(JNIEnv* env,
   g_quic_server_thread->task_runner()->PostTask(
       FROM_HERE, base::Bind(&ShutdownOnServerThread));
   delete g_quic_server_thread;
-}
-
-ScopedJavaLocalRef<jstring> GetServerHost(
-    JNIEnv* env,
-    const JavaParamRef<jclass>& /*jcaller*/) {
-  return base::android::ConvertUTF8ToJavaString(env, kFakeQuicDomain);
 }
 
 int GetServerPort(JNIEnv* env, const JavaParamRef<jclass>& /*jcaller*/) {

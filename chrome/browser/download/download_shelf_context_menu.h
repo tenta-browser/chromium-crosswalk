@@ -15,10 +15,6 @@
 #include "content/public/browser/download_item.h"
 #include "ui/base/models/simple_menu_model.h"
 
-namespace content {
-class PageNavigator;
-}
-
 // This class is responsible for the download shelf context menu. Platform
 // specific subclasses are responsible for creating and running the menu.
 //
@@ -43,8 +39,6 @@ class DownloadShelfContextMenu : public ui::SimpleMenuModel::Delegate,
   bool IsCommandIdChecked(int command_id) const override;
   bool IsCommandIdVisible(int command_id) const override;
   void ExecuteCommand(int command_id, int event_flags) override;
-  bool GetAcceleratorForCommandId(int command_id,
-                                  ui::Accelerator* accelerator) override;
   bool IsItemForCommandIdDynamic(int command_id) const override;
   base::string16 GetLabelForCommandId(int command_id) const override;
 

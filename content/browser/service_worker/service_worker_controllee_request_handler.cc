@@ -19,13 +19,46 @@
 #include "content/common/service_worker/service_worker_types.h"
 #include "content/common/service_worker/service_worker_utils.h"
 #include "content/public/browser/content_browser_client.h"
+#include "content/public/browser/render_frame_host.h"
+#include "content/public/browser/resource_request_info.h"
+#include "content/public/browser/web_contents.h"
+#include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/resource_response_info.h"
 #include "net/base/load_flags.h"
 #include "net/base/url_util.h"
 #include "net/url_request/url_request.h"
+#include "ui/base/page_transition_types.h"
 
 namespace content {
+
+namespace {
+
+bool MaybeForwardToServiceWorker(ServiceWorkerURLRequestJob* job,
+                                 const ServiceWorkerVersion* version) {
+  DCHECK(job);
+  DCHECK(version);
+  DCHECK_NE(version->fetch_handler_existence(),
+            ServiceWorkerVersion::FetchHandlerExistence::UNKNOWN);
+  if (version->fetch_handler_existence() ==
+      ServiceWorkerVersion::FetchHandlerExistence::EXISTS) {
+    job->ForwardToServiceWorker();
+    return true;
+  }
+
+  job->FallbackToNetworkOrRenderer();
+  return false;
+}
+
+ui::PageTransition GetPageTransition(net::URLRequest* request) {
+  const ResourceRequestInfo* info = ResourceRequestInfo::ForRequest(request);
+  // ResourceRequestInfo may not be set in some tests.
+  if (!info)
+    return ui::PAGE_TRANSITION_LINK;
+  return info->GetPageTransition();
+}
+
+}  // namespace
 
 ServiceWorkerControlleeRequestHandler::ServiceWorkerControlleeRequestHandler(
     base::WeakPtr<ServiceWorkerContextCore> context,
@@ -106,7 +139,7 @@ net::URLRequestJob* ServiceWorkerControlleeRequestHandler::MaybeCreateJob(
           blob_storage_context_, resource_context, request_mode_,
           credentials_mode_, redirect_mode_, resource_type_,
           request_context_type_, frame_type_, body_,
-          ServiceWorkerFetchType::FETCH, this));
+          ServiceWorkerFetchType::FETCH, base::nullopt, this));
   job_ = job->GetWeakPtr();
 
   resource_context_ = resource_context;
@@ -159,10 +192,10 @@ void ServiceWorkerControlleeRequestHandler::PrepareForMainResource(
                                 weak_factory_.GetWeakPtr()));
 }
 
-void
-ServiceWorkerControlleeRequestHandler::DidLookupRegistrationForMainResource(
-    ServiceWorkerStatusCode status,
-    const scoped_refptr<ServiceWorkerRegistration>& registration) {
+void ServiceWorkerControlleeRequestHandler::
+    DidLookupRegistrationForMainResource(
+        ServiceWorkerStatusCode status,
+        scoped_refptr<ServiceWorkerRegistration> registration) {
   // The job may have been canceled and then destroyed before this was invoked.
   if (!job_)
     return;
@@ -183,10 +216,22 @@ ServiceWorkerControlleeRequestHandler::DidLookupRegistrationForMainResource(
   }
   DCHECK(registration.get());
 
+  base::Callback<WebContents*(void)> web_contents_getter;
+  if (IsBrowserSideNavigationEnabled()) {
+    web_contents_getter = provider_host_->web_contents_getter();
+  } else if (provider_host_->process_id() != -1 &&
+             provider_host_->frame_id() != -1) {
+    web_contents_getter = base::Bind(
+        [](int render_process_id, int render_frame_id) {
+          RenderFrameHost* rfh =
+              RenderFrameHost::FromID(render_process_id, render_frame_id);
+          return WebContents::FromRenderFrameHost(rfh);
+        },
+        provider_host_->process_id(), provider_host_->frame_id());
+  }
   if (!GetContentClient()->browser()->AllowServiceWorker(
           registration->pattern(), provider_host_->topmost_frame_url(),
-          resource_context_, provider_host_->process_id(),
-          provider_host_->frame_id())) {
+          resource_context_, web_contents_getter)) {
     job_->FallbackToNetwork();
     TRACE_EVENT_ASYNC_END2(
         "ServiceWorker",
@@ -263,14 +308,21 @@ ServiceWorkerControlleeRequestHandler::DidLookupRegistrationForMainResource(
     return;
   }
 
+  DCHECK_NE(active_version->fetch_handler_existence(),
+            ServiceWorkerVersion::FetchHandlerExistence::UNKNOWN);
   ServiceWorkerMetrics::CountControlledPageLoad(
-      stripped_url_, active_version->has_fetch_handler(), is_main_frame_load_);
+      active_version->site_for_uma(), stripped_url_, is_main_frame_load_,
+      GetPageTransition(job_->request()), job_->request()->url_chain().size());
 
-  job_->ForwardToServiceWorker();
+  bool is_forwarded =
+      MaybeForwardToServiceWorker(job_.get(), active_version.get());
+
   TRACE_EVENT_ASYNC_END2(
       "ServiceWorker",
       "ServiceWorkerControlleeRequestHandler::PrepareForMainResource",
-      job_.get(), "Status", status, "Info", "Forwarded to the ServiceWorker");
+      job_.get(), "Status", status, "Info",
+      (is_forwarded) ? "Forwarded to the ServiceWorker"
+                     : "Skipped the ServiceWorker which has no fetch handler");
 }
 
 void ServiceWorkerControlleeRequestHandler::OnVersionStatusChanged(
@@ -289,12 +341,16 @@ void ServiceWorkerControlleeRequestHandler::OnVersionStatusChanged(
     return;
   }
 
+  DCHECK_NE(version->fetch_handler_existence(),
+            ServiceWorkerVersion::FetchHandlerExistence::UNKNOWN);
   ServiceWorkerMetrics::CountControlledPageLoad(
-      stripped_url_, version->has_fetch_handler(), is_main_frame_load_);
+      version->site_for_uma(), stripped_url_, is_main_frame_load_,
+      GetPageTransition(job_->request()), job_->request()->url_chain().size());
 
   provider_host_->AssociateRegistration(registration,
                                         false /* notify_controllerchange */);
-  job_->ForwardToServiceWorker();
+
+  MaybeForwardToServiceWorker(job_.get(), version);
 }
 
 void ServiceWorkerControlleeRequestHandler::DidUpdateRegistration(
@@ -324,10 +380,7 @@ void ServiceWorkerControlleeRequestHandler::DidUpdateRegistration(
   DCHECK_EQ(original_registration->id(), registration_id);
   scoped_refptr<ServiceWorkerVersion> new_version =
       original_registration->installing_version();
-  new_version->ReportError(
-      SERVICE_WORKER_OK,
-      "ServiceWorker was updated because \"Force update on page load\" was "
-      "checked in DevTools Source tab.");
+  new_version->ReportForceUpdateToDevTools();
   new_version->set_skip_waiting(true);
   new_version->RegisterStatusChangeCallback(base::Bind(
       &self::OnUpdatedVersionStatusChanged, weak_factory_.GetWeakPtr(),
@@ -363,8 +416,22 @@ void ServiceWorkerControlleeRequestHandler::OnUpdatedVersionStatusChanged(
 void ServiceWorkerControlleeRequestHandler::PrepareForSubResource() {
   DCHECK(job_.get());
   DCHECK(context_);
-  DCHECK(provider_host_->active_version());
-  job_->ForwardToServiceWorker();
+
+  // When this request handler was created, the provider host had a controller
+  // and hence an active version, but by the time MaybeCreateJob() is called
+  // the active version may have been lost. This happens when
+  // ServiceWorkerRegistration::DeleteVersion() was called to delete the worker
+  // because a permanent failure occurred when trying to start it.
+  //
+  // As this is an exceptional case, just error out.
+  // TODO(falken): Figure out if |active_version| can change to
+  // |controlling_version| and do it or document the findings.
+  if (!provider_host_->active_version()) {
+    job_->FailDueToLostController();
+    return;
+  }
+
+  MaybeForwardToServiceWorker(job_.get(), provider_host_->active_version());
 }
 
 void ServiceWorkerControlleeRequestHandler::OnPrepareToRestart() {

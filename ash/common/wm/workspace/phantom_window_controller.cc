@@ -6,12 +6,12 @@
 
 #include <math.h>
 
-#include "ash/common/shell_window_ids.h"
 #include "ash/common/wm/root_window_finder.h"
 #include "ash/common/wm_lookup.h"
-#include "ash/common/wm_root_window_controller.h"
 #include "ash/common/wm_window.h"
-#include "grit/ash_resources.h"
+#include "ash/public/cpp/shell_window_ids.h"
+#include "ash/resources/grit/ash_resources.h"
+#include "ash/root_window_controller.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
 #include "ui/views/background.h"
@@ -130,11 +130,9 @@ std::unique_ptr<views::Widget> PhantomWindowController::CreatePhantomWidget(
   }
 
   const int kImages[] = IMAGE_GRID(IDR_AURA_PHANTOM_WINDOW);
-  views::Painter* background_painter =
-      views::Painter::CreateImageGridPainter(kImages);
   views::View* content_view = new views::View;
-  content_view->set_background(
-      views::Background::CreateBackgroundPainter(true, background_painter));
+  content_view->set_background(views::Background::CreateBackgroundPainter(
+      views::Painter::CreateImageGridPainter(kImages)));
   phantom_widget->SetContentsView(content_view);
 
   // Show the widget after all the setups.

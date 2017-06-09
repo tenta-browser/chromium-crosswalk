@@ -6,7 +6,6 @@
 #define IntersectionObservation_h
 
 #include "core/dom/DOMHighResTimeStamp.h"
-#include "platform/geometry/LayoutRect.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
@@ -14,49 +13,33 @@ namespace blink {
 class Element;
 class IntersectionObserver;
 
-class IntersectionObservation final : public GarbageCollected<IntersectionObservation> {
-public:
-    IntersectionObservation(IntersectionObserver&, Element&, bool shouldReportRootBounds);
+class IntersectionObservation final
+    : public GarbageCollected<IntersectionObservation> {
+ public:
+  IntersectionObservation(IntersectionObserver&,
+                          Element&,
+                          bool shouldReportRootBounds);
 
-    struct IntersectionGeometry {
-        LayoutRect targetRect;
-        LayoutRect intersectionRect;
-        LayoutRect rootRect;
-        bool doesIntersect;
+  IntersectionObserver* observer() const { return m_observer.get(); }
+  Element* target() const { return m_target; }
+  unsigned lastThresholdIndex() const { return m_lastThresholdIndex; }
+  void computeIntersectionObservations(DOMHighResTimeStamp);
+  void disconnect();
 
-        IntersectionGeometry() : doesIntersect(false) {}
-    };
+  DECLARE_TRACE();
 
-    IntersectionObserver& observer() const { return *m_observer; }
-    Element* target() const { return m_target; }
-    unsigned lastThresholdIndex() const { return m_lastThresholdIndex; }
-    void setLastThresholdIndex(unsigned index) { m_lastThresholdIndex = index; }
-    bool shouldReportRootBounds() const { return m_shouldReportRootBounds; }
-    void computeIntersectionObservations(DOMHighResTimeStamp);
-    void disconnect();
-    void clearRootAndRemoveFromTarget();
+ private:
+  void setLastThresholdIndex(unsigned index) { m_lastThresholdIndex = index; }
 
-    DECLARE_TRACE();
+  Member<IntersectionObserver> m_observer;
+  WeakMember<Element> m_target;
 
-private:
-    void applyRootMargin(LayoutRect&) const;
-    void initializeGeometry(IntersectionGeometry&) const;
-    void initializeTargetRect(LayoutRect&) const;
-    void initializeRootRect(LayoutRect&) const;
-    void clipToRoot(IntersectionGeometry&) const;
-    void mapTargetRectToTargetFrameCoordinates(LayoutRect&) const;
-    void mapRootRectToRootFrameCoordinates(LayoutRect&) const;
-    void mapRootRectToTargetFrameCoordinates(LayoutRect&) const;
-    bool computeGeometry(IntersectionGeometry&) const;
+  const unsigned m_shouldReportRootBounds : 1;
 
-    Member<IntersectionObserver> m_observer;
-
-    WeakMember<Element> m_target;
-
-    unsigned m_shouldReportRootBounds : 1;
-    unsigned m_lastThresholdIndex : 30;
+  unsigned m_lastThresholdIndex : 30;
+  static const unsigned kMaxThresholdIndex = (unsigned)0x40000000;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // IntersectionObservation_h
+#endif  // IntersectionObservation_h

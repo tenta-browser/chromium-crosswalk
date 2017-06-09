@@ -9,6 +9,7 @@
 
 #include "base/memory/weak_ptr.h"
 #include "net/base/load_timing_info.h"
+#include "net/base/net_export.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_job.h"
 #include "net/url_request/url_request_job_factory.h"
@@ -62,12 +63,28 @@ class NET_EXPORT_PRIVATE URLRequestTestJob : public URLRequestJob {
 
   // The canned URLs this handler will respond to without having been
   // explicitly initialized with response headers and data.
-  // FIXME(brettw): we should probably also have a redirect one
+
+  // URL that, by default, automatically advances through each state.  Reads
+  // complete synchronously.
   static GURL test_url_1();
+
+  // URLs that, by default, must be manually advanced through each state.
   static GURL test_url_2();
   static GURL test_url_3();
   static GURL test_url_4();
+
+  // URL that, by default, automatically advances through each state.  Reads
+  // complete asynchronously. Has same response body as test_url_1(), which is
+  // (test_data_1()).
+  static GURL test_url_auto_advance_async_reads_1();
+
+  // URL that fails with ERR_INVALID_URL.
   static GURL test_url_error();
+
+  // Redirects to test_url_1().
+  static GURL test_url_redirect_to_url_1();
+
+  // Redirects to test_url_2().
   static GURL test_url_redirect_to_url_2();
 
   // The data that corresponds to each of the URLs above
@@ -81,6 +98,9 @@ class NET_EXPORT_PRIVATE URLRequestTestJob : public URLRequestJob {
 
   // The headers for a redirect response
   static std::string test_redirect_headers();
+
+  // The headers for a redirect response to the first test url.
+  static std::string test_redirect_to_url_1_headers();
 
   // The headers for a redirect response to the second test url.
   static std::string test_redirect_to_url_2_headers();
@@ -119,6 +139,7 @@ class NET_EXPORT_PRIVATE URLRequestTestJob : public URLRequestJob {
   void GetResponseInfo(HttpResponseInfo* info) override;
   void GetLoadTimingInfo(LoadTimingInfo* load_timing_info) const override;
   int GetResponseCode() const override;
+  int64_t GetTotalReceivedBytes() const override;
   bool IsRedirectResponse(GURL* location, int* http_status_code) override;
 
  protected:
@@ -142,15 +163,18 @@ class NET_EXPORT_PRIVATE URLRequestTestJob : public URLRequestJob {
   // Called via InvokeLater to cause callbacks to occur after Start() returns.
   virtual void StartAsync();
 
+  // Assigns |response_headers_| and |response_headers_length_|.
+  void SetResponseHeaders(const std::string& response_headers);
+
+  // Copies as much of the response body as will into |buf|, and returns number
+  // of bytes written.
+  int CopyDataForRead(IOBuffer* buf, int buf_size);
+
   bool auto_advance_;
 
   Stage stage_;
 
   RequestPriority priority_;
-
-  // The headers the job should return, will be set in Start() if not provided
-  // in the explicit ctor.
-  scoped_refptr<HttpResponseHeaders> response_headers_;
 
   // The data to send, will be set in Start() if not provided in the explicit
   // ctor.
@@ -164,6 +188,16 @@ class NET_EXPORT_PRIVATE URLRequestTestJob : public URLRequestJob {
   int async_buf_size_;
 
   LoadTimingInfo load_timing_info_;
+
+ private:
+  // The headers the job should return, will be set in Start() if not provided
+  // in the explicit ctor.
+  scoped_refptr<HttpResponseHeaders> response_headers_;
+
+  // Original size in bytes of the response headers before decoding.
+  int response_headers_length_;
+
+  bool async_reads_;
 
   base::WeakPtrFactory<URLRequestTestJob> weak_factory_;
 };

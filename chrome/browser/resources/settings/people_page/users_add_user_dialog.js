@@ -33,7 +33,7 @@ Polymer({
   is: 'settings-users-add-user-dialog',
 
   open: function() {
-    this.$.dialog.open();
+    this.$.dialog.showModal();
   },
 
   /** @private */
@@ -57,7 +57,9 @@ Polymer({
 
   /** @private */
   addUser_: function() {
-    assert(this.validate_());
+    // May be submitted by the Enter key even if the input value is invalid.
+    if (!this.validate_())
+      return;
 
     var input = this.$.addUserInput.value;
 

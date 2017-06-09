@@ -4,12 +4,19 @@
 
 package org.chromium.chrome.browser.payments.ui;
 
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
+import android.animation.AnimatorSet;
+import android.animation.ObjectAnimator;
 import android.app.Activity;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.os.AsyncTask;
 import android.os.Handler;
+import android.support.v4.view.animation.FastOutLinearInInterpolator;
+import android.support.v4.view.animation.LinearOutSlowInInterpolator;
 import android.support.v7.widget.Toolbar.OnMenuItemClickListener;
 import android.telephony.PhoneNumberFormattingTextWatcher;
 import android.text.InputFilter;
@@ -33,13 +40,14 @@ import android.widget.TextView;
 import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.EmbedContentViewActivity;
+import org.chromium.chrome.browser.customtabs.CustomTabActivity;
 import org.chromium.chrome.browser.payments.ui.PaymentRequestUI.PaymentRequestObserverForTest;
 import org.chromium.chrome.browser.preferences.autofill.CreditCardNumberFormattingTextWatcher;
 import org.chromium.chrome.browser.widget.AlwaysDismissedDialog;
 import org.chromium.chrome.browser.widget.DualControlLayout;
 import org.chromium.chrome.browser.widget.FadingShadow;
 import org.chromium.chrome.browser.widget.FadingShadowView;
+import org.chromium.ui.UiUtils;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -51,20 +59,27 @@ import javax.annotation.Nullable;
  * The PaymentRequest editor dialog. Can be used for editing contact information, shipping address,
  * billing address, and credit cards.
  */
-public class EditorView extends AlwaysDismissedDialog
-        implements OnClickListener, DialogInterface.OnDismissListener {
+public class EditorView extends AlwaysDismissedDialog implements OnClickListener,
+                                                                 DialogInterface.OnShowListener,
+                                                                 DialogInterface.OnDismissListener {
     /** The indicator for input fields that are required. */
     public static final String REQUIRED_FIELD_INDICATOR = "*";
 
     /** Help page that the user is directed to when asking for help. */
     private static final String HELP_URL = "https://support.google.com/chrome/answer/142893?hl=en";
 
+    /** Duration of the animation to show the UI to full height. */
+    private static final int DIALOG_ENTER_ANIMATION_MS = 300;
+
+    /** Duration of the animation to hide the UI. */
+    private static final int DIALOG_EXIT_ANIMATION_MS = 195;
+
     private final Context mContext;
     private final PaymentRequestObserverForTest mObserverForTest;
     private final Handler mHandler;
     private final TextView.OnEditorActionListener mEditorActionListener;
     private final int mHalfRowMargin;
-    private final List<Validatable> mCheckableFields;
+    private final List<EditorFieldView> mFieldViews;
     private final List<EditText> mEditableTextFields;
     private final List<Spinner> mDropdownFields;
     private final InputFilter mCardNumberInputFilter;
@@ -79,6 +94,8 @@ public class EditorView extends AlwaysDismissedDialog
     @Nullable private TextView mCardInput;
     @Nullable private TextView mPhoneInput;
 
+    private Animator mDialogInOutAnimator;
+
     /**
      * Builds the editor view.
      *
@@ -86,7 +103,9 @@ public class EditorView extends AlwaysDismissedDialog
      * @param observerForTest Optional event observer for testing.
      */
     public EditorView(Activity activity, PaymentRequestObserverForTest observerForTest) {
-        super(activity, R.style.FullscreenWhiteDialog);
+        super(activity, R.style.FullscreenWhite);
+        // Sets transparent background for animating content view.
+        getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
         mContext = activity;
         mObserverForTest = observerForTest;
         mHandler = new Handler();
@@ -109,7 +128,7 @@ public class EditorView extends AlwaysDismissedDialog
 
         mHalfRowMargin = activity.getResources().getDimensionPixelSize(
                 R.dimen.payments_section_large_spacing);
-        mCheckableFields = new ArrayList<>();
+        mFieldViews = new ArrayList<>();
         mEditableTextFields = new ArrayList<>();
         mDropdownFields = new ArrayList<>();
 
@@ -150,8 +169,7 @@ public class EditorView extends AlwaysDismissedDialog
 
     /** Launches the Autofill help page on top of the current Context. */
     public static void launchAutofillHelpPage(Context context) {
-        EmbedContentViewActivity.show(
-                context, context.getString(R.string.help), HELP_URL);
+        CustomTabActivity.showInfoPage(context, HELP_URL);
     }
 
     /**
@@ -181,7 +199,7 @@ public class EditorView extends AlwaysDismissedDialog
         toolbar.setNavigationOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                cancelEdit();
+                dismissDialog();
             }
         });
 
@@ -203,18 +221,18 @@ public class EditorView extends AlwaysDismissedDialog
      * @return Whether all fields contain valid information.
      */
     private boolean validateForm() {
-        final List<Validatable> invalidViews = getViewsWithInvalidInformation(true);
+        final List<EditorFieldView> invalidViews = getViewsWithInvalidInformation(true);
 
         // Iterate over all the fields to update what errors are displayed, which is necessary to
         // to clear existing errors on any newly valid fields.
-        for (int i = 0; i < mCheckableFields.size(); i++) {
-            Validatable fieldView = mCheckableFields.get(i);
+        for (int i = 0; i < mFieldViews.size(); i++) {
+            EditorFieldView fieldView = mFieldViews.get(i);
             fieldView.updateDisplayedError(invalidViews.contains(fieldView));
         }
 
         if (!invalidViews.isEmpty()) {
             // Make sure that focus is on an invalid field.
-            Validatable focusedField = getValidatable(getCurrentFocus());
+            EditorFieldView focusedField = getEditorTextField(getCurrentFocus());
             if (invalidViews.contains(focusedField)) {
                 // The focused field is invalid, but it may be scrolled off screen. Scroll to it.
                 focusedField.scrollToAndFocus();
@@ -229,12 +247,12 @@ public class EditorView extends AlwaysDismissedDialog
     }
 
     /** @return The validatable item for the given view. */
-    private Validatable getValidatable(View v) {
+    private EditorFieldView getEditorTextField(View v) {
         if (v instanceof TextView && v.getParent() != null
-                && v.getParent() instanceof EditorTextField) {
-            return (EditorTextField) v.getParent();
+                && v.getParent() instanceof EditorFieldView) {
+            return (EditorFieldView) v.getParent();
         } else if (v instanceof Spinner && v.getTag() != null) {
-            return (Validatable) v.getTag();
+            return (EditorFieldView) v.getTag();
         } else {
             return null;
         }
@@ -245,19 +263,44 @@ public class EditorView extends AlwaysDismissedDialog
         if (view.getId() == R.id.payments_edit_done_button) {
             if (validateForm()) {
                 mEditorModel.done();
-                dismiss();
+                mEditorModel = null;
+                dismissDialog();
                 return;
             }
 
             if (mObserverForTest != null) mObserverForTest.onPaymentRequestEditorValidationError();
         } else if (view.getId() == R.id.payments_edit_cancel_button) {
-            cancelEdit();
+            dismissDialog();
         }
     }
 
-    private void cancelEdit() {
-        mEditorModel.cancel();
-        dismiss();
+    private void dismissDialog() {
+        if (mDialogInOutAnimator != null || !isShowing()) return;
+
+        Animator dropDown =
+                ObjectAnimator.ofFloat(mLayout, View.TRANSLATION_Y, 0f, mLayout.getHeight());
+        Animator fadeOut = ObjectAnimator.ofFloat(mLayout, View.ALPHA, mLayout.getAlpha(), 0f);
+        AnimatorSet animatorSet = new AnimatorSet();
+        animatorSet.playTogether(dropDown, fadeOut);
+
+        mDialogInOutAnimator = animatorSet;
+        mDialogInOutAnimator.setDuration(DIALOG_EXIT_ANIMATION_MS);
+        mDialogInOutAnimator.setInterpolator(new FastOutLinearInInterpolator());
+        mDialogInOutAnimator.addListener(new AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(Animator animation) {
+                mDialogInOutAnimator = null;
+                dismiss();
+            }
+        });
+
+        mDialogInOutAnimator.start();
+    }
+
+    @Override
+    public void onDismiss(DialogInterface dialog) {
+        if (mEditorModel != null) mEditorModel.cancel();
+        removeTextChangedListenersAndInputFilters();
     }
 
     private void prepareButtons() {
@@ -284,7 +327,7 @@ public class EditorView extends AlwaysDismissedDialog
         removeTextChangedListenersAndInputFilters();
         mDataView = (ViewGroup) mLayout.findViewById(R.id.contents);
         mDataView.removeAllViews();
-        mCheckableFields.clear();
+        mFieldViews.clear();
         mEditableTextFields.clear();
         mDropdownFields.clear();
 
@@ -329,6 +372,19 @@ public class EditorView extends AlwaysDismissedDialog
         mDataView.addView(mFooter);
     }
 
+    private void removeTextChangedListenersAndInputFilters() {
+        if (mCardInput != null) {
+            mCardInput.removeTextChangedListener(mCardNumberFormatter);
+            mCardInput.setFilters(new InputFilter[0]); // Null is not allowed.
+            mCardInput = null;
+        }
+
+        if (mPhoneInput != null) {
+            mPhoneInput.removeTextChangedListener(mPhoneFormatter);
+            mPhoneInput = null;
+        }
+    }
+
     private View addFieldViewToEditor(ViewGroup parent, final EditorFieldModel fieldModel) {
         View childView = null;
 
@@ -347,7 +403,7 @@ public class EditorView extends AlwaysDismissedDialog
             };
             EditorDropdownField dropdownView =
                     new EditorDropdownField(mContext, parent, fieldModel, prepareEditorRunnable);
-            mCheckableFields.add(dropdownView);
+            mFieldViews.add(dropdownView);
             mDropdownFields.add(dropdownView.getDropdown());
 
             childView = dropdownView.getLayout();
@@ -377,7 +433,7 @@ public class EditorView extends AlwaysDismissedDialog
 
             EditorTextField inputLayout = new EditorTextField(mContext, fieldModel,
                     mEditorActionListener, filter, formatter, mObserverForTest);
-            mCheckableFields.add(inputLayout);
+            mFieldViews.add(inputLayout);
 
             EditText input = inputLayout.getEditText();
             mEditableTextFields.add(input);
@@ -403,6 +459,7 @@ public class EditorView extends AlwaysDismissedDialog
      * @param editorModel The description of the editor user interface to display.
      */
     public void show(final EditorModel editorModel) {
+        setOnShowListener(this);
         setOnDismissListener(this);
         mEditorModel = editorModel;
 
@@ -416,9 +473,56 @@ public class EditorView extends AlwaysDismissedDialog
         prepareEditor();
         prepareButtons();
         show();
+    }
 
+    /** Rereads the values in the model to update the UI. */
+    public void update() {
+        for (int i = 0; i < mFieldViews.size(); i++) {
+            mFieldViews.get(i).update();
+        }
+    }
+
+    @Override
+    public void onShow(DialogInterface dialog) {
+        assert mDialogInOutAnimator == null;
+
+        // Hide keyboard and disable EditText views for animation efficiency.
+        if (getCurrentFocus() != null) UiUtils.hideKeyboard(getCurrentFocus());
+        for (int i = 0; i < mEditableTextFields.size(); i++) {
+            mEditableTextFields.get(i).setEnabled(false);
+        }
+
+        mLayout.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+        mLayout.buildLayer();
+        Animator popUp =
+                ObjectAnimator.ofFloat(mLayout, View.TRANSLATION_Y, mLayout.getHeight(), 0f);
+        Animator fadeIn = ObjectAnimator.ofFloat(mLayout, View.ALPHA, 0f, 1f);
+        AnimatorSet animatorSet = new AnimatorSet();
+        animatorSet.playTogether(popUp, fadeIn);
+
+        mDialogInOutAnimator = animatorSet;
+        mDialogInOutAnimator.setDuration(DIALOG_ENTER_ANIMATION_MS);
+        mDialogInOutAnimator.setInterpolator(new LinearOutSlowInInterpolator());
+        mDialogInOutAnimator.addListener(new AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(Animator animation) {
+                mLayout.setLayerType(View.LAYER_TYPE_NONE, null);
+                for (int i = 0; i < mEditableTextFields.size(); i++) {
+                    mEditableTextFields.get(i).setEnabled(true);
+                }
+                // Note that keyboard will not show for dropdown field since it's not necessary.
+                if (getCurrentFocus() != null) UiUtils.showKeyboard(getCurrentFocus());
+                mDialogInOutAnimator = null;
+                initFocus();
+            }
+        });
+
+        mDialogInOutAnimator.start();
+    }
+
+    private void initFocus() {
         // Immediately focus the first invalid field to make it faster to edit.
-        final List<Validatable> invalidViews = getViewsWithInvalidInformation(false);
+        final List<EditorFieldView> invalidViews = getViewsWithInvalidInformation(false);
         if (!invalidViews.isEmpty()) {
             mHandler.post(new Runnable() {
                 @Override
@@ -427,32 +531,16 @@ public class EditorView extends AlwaysDismissedDialog
                     if (mObserverForTest != null) mObserverForTest.onPaymentRequestReadyToEdit();
                 }
             });
+        } else {
+            // The first field will be focused, we are ready to edit.
+            if (mObserverForTest != null) mObserverForTest.onPaymentRequestReadyToEdit();
         }
     }
 
-    @Override
-    public void onDismiss(DialogInterface dialog) {
-        removeTextChangedListenersAndInputFilters();
-        mEditorModel.cancel();
-    }
-
-    private void removeTextChangedListenersAndInputFilters() {
-        if (mCardInput != null) {
-            mCardInput.removeTextChangedListener(mCardNumberFormatter);
-            mCardInput.setFilters(new InputFilter[0]);  // Null is not allowed.
-            mCardInput = null;
-        }
-
-        if (mPhoneInput != null) {
-            mPhoneInput.removeTextChangedListener(mPhoneFormatter);
-            mPhoneInput = null;
-        }
-    }
-
-    private List<Validatable> getViewsWithInvalidInformation(boolean findAll) {
-        List<Validatable> invalidViews = new ArrayList<>();
-        for (int i = 0; i < mCheckableFields.size(); i++) {
-            Validatable fieldView = mCheckableFields.get(i);
+    private List<EditorFieldView> getViewsWithInvalidInformation(boolean findAll) {
+        List<EditorFieldView> invalidViews = new ArrayList<>();
+        for (int i = 0; i < mFieldViews.size(); i++) {
+            EditorFieldView fieldView = mFieldViews.get(i);
             if (!fieldView.isValid()) {
                 invalidViews.add(fieldView);
                 if (!findAll) break;

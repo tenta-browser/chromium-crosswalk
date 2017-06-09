@@ -88,9 +88,9 @@ void SerialGetDevicesFunction::Work() {
 
   std::unique_ptr<device::SerialDeviceEnumerator> enumerator =
       device::SerialDeviceEnumerator::Create();
-  mojo::Array<device::serial::DeviceInfoPtr> devices = enumerator->GetDevices();
+  std::vector<device::serial::DeviceInfoPtr> devices = enumerator->GetDevices();
   results_ = serial::GetDevices::Results::Create(
-      devices.To<std::vector<serial::DeviceInfo>>());
+      mojo::ConvertTo<std::vector<serial::DeviceInfo>>(devices));
 }
 
 SerialConnectFunction::SerialConnectFunction() {
@@ -131,7 +131,7 @@ bool SerialConnectFunction::Prepare() {
 void SerialConnectFunction::AsyncWorkStart() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   connection_ = CreateSerialConnection(params_->path, extension_->id());
-  connection_->Open(*params_->options.get(),
+  connection_->Open(*params_->options,
                     base::Bind(&SerialConnectFunction::OnConnected, this));
 }
 
@@ -488,7 +488,7 @@ extensions::api::serial::DeviceInfo TypeConverter<
   if (device->has_product_id)
     info.product_id.reset(new int(static_cast<int>(device->product_id)));
   if (device->display_name)
-    info.display_name.reset(new std::string(device->display_name));
+    info.display_name.reset(new std::string(device->display_name.value()));
   return info;
 }
 

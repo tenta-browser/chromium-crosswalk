@@ -33,6 +33,7 @@
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
 #include "crypto/sha2.h"
+#include "extensions/features/features.h"
 
 namespace safe_browsing {
 
@@ -73,7 +74,7 @@ bool IsBinaryDownloadForCurrentOS(
 #endif
 
 // Extensions are supported where enabled.
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   if (download_type == ClientDownloadRequest::CHROME_EXTENSION)
     return true;
 #endif
@@ -277,7 +278,7 @@ LastDownloadFinder::LastDownloadFinder(
 
 void LastDownloadFinder::SearchInProfile(Profile* profile) {
   // Do not look in OTR profiles or in profiles that do not participate in
-  // safe browsing.
+  // safe browsing extended reporting.
   if (!IncidentReportingService::IsEnabledForProfile(profile))
     return;
 

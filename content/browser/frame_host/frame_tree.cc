@@ -15,6 +15,8 @@
 #include "base/lazy_instance.h"
 #include "base/memory/ptr_util.h"
 #include "content/browser/frame_host/frame_tree_node.h"
+#include "content/browser/frame_host/navigation_controller_impl.h"
+#include "content/browser/frame_host/navigation_entry_impl.h"
 #include "content/browser/frame_host/navigator.h"
 #include "content/browser/frame_host/render_frame_host_factory.h"
 #include "content/browser/frame_host/render_frame_host_impl.h"
@@ -22,6 +24,7 @@
 #include "content/browser/renderer_host/render_view_host_factory.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/common/content_switches_internal.h"
+#include "content/common/frame_owner_properties.h"
 #include "content/common/input_messages.h"
 #include "content/common/site_isolation_policy.h"
 #include "third_party/WebKit/public/web/WebSandboxFlags.h"
@@ -105,8 +108,8 @@ FrameTree::FrameTree(Navigator* navigator,
                               blink::WebTreeScopeType::Document,
                               std::string(),
                               std::string(),
-                              blink::WebFrameOwnerProperties())),
-      focused_frame_tree_node_id_(-1),
+                              FrameOwnerProperties())),
+      focused_frame_tree_node_id_(FrameTreeNode::kFrameTreeNodeInvalidId),
       load_progress_(0.0) {}
 
 FrameTree::~FrameTree() {
@@ -166,15 +169,14 @@ FrameTree::NodeRange FrameTree::NodesExcept(FrameTreeNode* node_to_skip) {
   return NodeRange(root_, node_to_skip);
 }
 
-bool FrameTree::AddFrame(
-    FrameTreeNode* parent,
-    int process_id,
-    int new_routing_id,
-    blink::WebTreeScopeType scope,
-    const std::string& frame_name,
-    const std::string& frame_unique_name,
-    blink::WebSandboxFlags sandbox_flags,
-    const blink::WebFrameOwnerProperties& frame_owner_properties) {
+bool FrameTree::AddFrame(FrameTreeNode* parent,
+                         int process_id,
+                         int new_routing_id,
+                         blink::WebTreeScopeType scope,
+                         const std::string& frame_name,
+                         const std::string& frame_unique_name,
+                         blink::WebSandboxFlags sandbox_flags,
+                         const FrameOwnerProperties& frame_owner_properties) {
   CHECK_NE(new_routing_id, MSG_ROUTING_NONE);
 
   // A child frame always starts with an initial empty document, which means
@@ -191,6 +193,15 @@ bool FrameTree::AddFrame(
           render_widget_delegate_, manager_delegate_, parent, scope, frame_name,
           frame_unique_name, frame_owner_properties)),
       process_id, new_routing_id);
+
+  // The last committed NavigationEntry may have a FrameNavigationEntry with the
+  // same |frame_unique_name|, since we don't remove FrameNavigationEntries if
+  // their frames are deleted.  If there is a stale one, remove it to avoid
+  // conflicts on future updates.
+  NavigationEntryImpl* last_committed_entry = static_cast<NavigationEntryImpl*>(
+      parent->navigator()->GetController()->GetLastCommittedEntry());
+  if (last_committed_entry)
+    last_committed_entry->ClearStaleFrameEntriesForNewFrame(added_node);
 
   // Set sandbox flags and make them effective immediately, since initial
   // sandbox flags should apply to the initial empty document in the frame.
@@ -253,6 +264,7 @@ void FrameTree::SetFocusedFrame(FrameTreeNode* node, SiteInstance* source) {
   if (node == GetFocusedFrame())
     return;
 
+
   std::set<SiteInstance*> frame_tree_site_instances =
       CollectSiteInstances(this);
 
@@ -269,7 +281,7 @@ void FrameTree::SetFocusedFrame(FrameTreeNode* node, SiteInstance* source) {
   // new focused frame (since it initiated the focus change), and we notify the
   // new focused frame's SiteInstance (if it differs from |source|) separately
   // below.
-  for (const auto& instance : frame_tree_site_instances) {
+  for (auto* instance : frame_tree_site_instances) {
     if (instance != source && instance != current_instance) {
       DCHECK(SiteIsolationPolicy::AreCrossProcessFramesPossible());
       RenderFrameProxyHost* proxy =
@@ -357,7 +369,7 @@ void FrameTree::ReleaseRenderViewHostRef(RenderViewHostImpl* render_view_host) {
 
 void FrameTree::FrameRemoved(FrameTreeNode* frame) {
   if (frame->frame_tree_node_id() == focused_frame_tree_node_id_)
-    focused_frame_tree_node_id_ = -1;
+    focused_frame_tree_node_id_ = FrameTreeNode::kFrameTreeNodeInvalidId;
 
   // No notification for the root frame.
   if (!frame->parent()) {
@@ -394,7 +406,7 @@ void FrameTree::UpdateLoadProgress() {
         // Ignore the current frame if it has not started loading,
         // if the frame is cross-origin, or about:blank.
         if (!node->has_started_loading() || !node->HasSameOrigin(*root_) ||
-            node->current_url() == GURL(url::kAboutBlankURL))
+            node->current_url() == url::kAboutBlankURL)
           continue;
         progress += node->loading_progress();
         frame_count++;
@@ -438,7 +450,7 @@ void FrameTree::ReplicatePageFocus(bool is_focused) {
   // about proxies in SiteInstances for frames in a different FrameTree (e.g.,
   // for window.open), so we can't just iterate over its proxy_hosts_ in
   // RenderFrameHostManager.
-  for (const auto& instance : frame_tree_site_instances)
+  for (auto* instance : frame_tree_site_instances)
     SetPageFocus(instance, is_focused);
 }
 

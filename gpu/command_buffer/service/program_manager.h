@@ -31,6 +31,7 @@ namespace gles2 {
 class FeatureInfo;
 class ProgramCache;
 class ProgramManager;
+class ProgressReporter;
 class Shader;
 class ShaderManager;
 
@@ -98,8 +99,28 @@ class GPU_EXPORT Program : public base::RefCounted<Program> {
                 const std::vector<GLint>& service_locations);
     ~UniformInfo();
     bool IsSampler() const {
-      return type == GL_SAMPLER_2D || type == GL_SAMPLER_2D_RECT_ARB ||
-             type == GL_SAMPLER_CUBE || type == GL_SAMPLER_EXTERNAL_OES;
+      switch (type) {
+        case GL_SAMPLER_2D:
+        case GL_SAMPLER_2D_RECT_ARB:
+        case GL_SAMPLER_CUBE:
+        case GL_SAMPLER_EXTERNAL_OES:
+        case GL_SAMPLER_3D:
+        case GL_SAMPLER_2D_SHADOW:
+        case GL_SAMPLER_2D_ARRAY:
+        case GL_SAMPLER_2D_ARRAY_SHADOW:
+        case GL_SAMPLER_CUBE_SHADOW:
+        case GL_INT_SAMPLER_2D:
+        case GL_INT_SAMPLER_3D:
+        case GL_INT_SAMPLER_CUBE:
+        case GL_INT_SAMPLER_2D_ARRAY:
+        case GL_UNSIGNED_INT_SAMPLER_2D:
+        case GL_UNSIGNED_INT_SAMPLER_3D:
+        case GL_UNSIGNED_INT_SAMPLER_CUBE:
+        case GL_UNSIGNED_INT_SAMPLER_2D_ARRAY:
+          return true;
+        default:
+          return false;
+      }
     }
 
     GLsizei size;
@@ -123,6 +144,10 @@ class GPU_EXPORT Program : public base::RefCounted<Program> {
     GLenum type;
     GLint location;
     std::string name;
+  };
+  struct UniformBlockSizeInfo {
+    uint32_t binding;
+    uint32_t data_size;
   };
 
   template <typename T>
@@ -345,6 +370,10 @@ class GPU_EXPORT Program : public base::RefCounted<Program> {
   // conflicting_name if such cases are detected.
   bool DetectUniformsMismatch(std::string* conflicting_name) const;
 
+  // Detects if there are interface blocks of the same name but different
+  // layouts.
+  bool DetectInterfaceBlocksMismatch(std::string* conflicting_name) const;
+
   // Return true if a varying is statically used in fragment shader, but it
   // is not declared in vertex shader.
   bool DetectVaryingsMismatch(std::string* conflicting_name) const;
@@ -378,12 +407,44 @@ class GPU_EXPORT Program : public base::RefCounted<Program> {
     return bind_attrib_location_map_;
   }
 
-  const std::vector<std::string>& transform_feedback_varyings() const {
-    return transform_feedback_varyings_;
+  const std::vector<std::string>& effective_transform_feedback_varyings()
+      const {
+    return effective_transform_feedback_varyings_;
   }
 
-  GLenum transform_feedback_buffer_mode() const {
-    return transform_feedback_buffer_mode_;
+  GLenum effective_transform_feedback_buffer_mode() const {
+    return effective_transform_feedback_buffer_mode_;
+  }
+
+  // See member declaration for details.
+  // The data are only valid after a successful link.
+  uint32_t fragment_output_type_mask() const {
+    return fragment_output_type_mask_;
+  }
+  uint32_t fragment_output_written_mask() const {
+    return fragment_output_written_mask_;
+  }
+
+  // The data are only valid after a successful link.
+  const std::vector<uint32_t>& vertex_input_base_type_mask() const {
+    return vertex_input_base_type_mask_;
+  }
+  const std::vector<uint32_t>& vertex_input_active_mask() const {
+    return vertex_input_active_mask_;
+  }
+
+  // Update uniform block binding after a successful glUniformBlockBinding().
+  void SetUniformBlockBinding(GLuint index, GLuint binding);
+
+  const std::vector<UniformBlockSizeInfo>& uniform_block_size_info() const {
+    return uniform_block_size_info_;
+  }
+
+  // Return the transform feedback varying sizes (per vertex).
+  // Note that if the bufferMode is GL_INTERLEAVED_ATTRIBS, then there is only
+  // one entry and it is the sum of all varying sizes.
+  const std::vector<GLsizeiptr>& GetTransformFeedbackVaryingSizes() const {
+    return transform_feedback_data_size_per_vertex_;
   }
 
  private:
@@ -422,6 +483,10 @@ class GPU_EXPORT Program : public base::RefCounted<Program> {
   void UpdateUniforms();
   void UpdateFragmentInputs();
   void UpdateProgramOutputs();
+  void UpdateFragmentOutputBaseTypes();
+  void UpdateVertexInputBaseTypes();
+  void UpdateUniformBlockSizeInfo();
+  void UpdateTransformFeedbackInfo();
 
   // Process the program log, replacing the hashed names with original names.
   std::string ProcessLogInfo(const std::string& log);
@@ -463,6 +528,8 @@ class GPU_EXPORT Program : public base::RefCounted<Program> {
 
   const FeatureInfo& feature_info() const;
 
+  void ClearVertexInputMasks();
+
   ProgramManager* manager_;
 
   int use_count_;
@@ -493,8 +560,7 @@ class GPU_EXPORT Program : public base::RefCounted<Program> {
   GLuint service_id_;
 
   // Shaders by type of shader.
-  scoped_refptr<Shader>
-      attached_shaders_[kMaxAttachedShaders];
+  scoped_refptr<Shader> attached_shaders_[kMaxAttachedShaders];
 
   // True if this program is marked as deleted.
   bool deleted_;
@@ -517,9 +583,18 @@ class GPU_EXPORT Program : public base::RefCounted<Program> {
   // uniform-location binding map from glBindUniformLocationCHROMIUM() calls.
   LocationMap bind_uniform_location_map_;
 
+  // Set by glTransformFeedbackVaryings().
   std::vector<std::string> transform_feedback_varyings_;
-
   GLenum transform_feedback_buffer_mode_;
+
+  // After a successful link.
+  std::vector<std::string> effective_transform_feedback_varyings_;
+  GLenum effective_transform_feedback_buffer_mode_;
+  // If buffer mode is INTERLEVED, there is only one entry; otherwise there
+  // might be multiple entries, one per transform feedback varying.
+  // The size requirement is per vertex. Total minimum buffer size requirment
+  // is calculated at DrawArrays{Instanced} time by multiplying vertex count.
+  std::vector<GLsizeiptr> transform_feedback_data_size_per_vertex_;
 
   // Fragment input-location binding map from
   // glBindFragmentInputLocationCHROMIUM() calls.
@@ -528,6 +603,26 @@ class GPU_EXPORT Program : public base::RefCounted<Program> {
   // output variable - (location,index) binding map from
   // glBindFragDataLocation() and ..IndexedEXT() calls.
   LocationIndexMap bind_program_output_location_index_map_;
+
+  // It's stored in the order of uniform block indices, i.e., the first
+  // entry is the info about UniformBlock with index 0, etc.
+  std::vector<UniformBlockSizeInfo> uniform_block_size_info_;
+
+  // Fragment output variable base types: FLOAT, INT, or UINT.
+  // We have up to 16 outputs, each is encoded into 2 bits, total 32 bits:
+  // the lowest 2 bits for location 0, the highest 2 bits for location 15.
+  uint32_t fragment_output_type_mask_;
+  // Same layout as above, 2 bits per location, 0x03 if a location is occupied
+  // by an output variable, 0x00 if not.
+  uint32_t fragment_output_written_mask_;
+
+  // Vertex input attrib base types: FLOAT, INT, or UINT.
+  // Each base type is encoded into 2 bits, the lowest 2 bits for location 0,
+  // the highest 2 bits for location (max_vertex_attribs - 1).
+  std::vector<uint32_t> vertex_input_base_type_mask_;
+  // Same layout as above, 2 bits per location, 0x03 if a location is set
+  // by vertexAttrib API, 0x00 if not.
+  std::vector<uint32_t> vertex_input_active_mask_;
 };
 
 // Tracks the Programs.
@@ -538,9 +633,12 @@ class GPU_EXPORT ProgramManager {
  public:
   ProgramManager(ProgramCache* program_cache,
                  uint32_t max_varying_vectors,
+                 uint32_t max_draw_buffers,
                  uint32_t max_dual_source_draw_buffers,
+                 uint32_t max_vertex_attribs,
                  const GpuPreferences& gpu_preferences,
-                 FeatureInfo* feature_info);
+                 FeatureInfo* feature_info,
+                 ProgressReporter* progress_reporter);
   ~ProgramManager();
 
   // Must call before destruction.
@@ -581,9 +679,13 @@ class GPU_EXPORT ProgramManager {
 
   uint32_t max_varying_vectors() const { return max_varying_vectors_; }
 
+  uint32_t max_draw_buffers() const { return max_draw_buffers_; }
+
   uint32_t max_dual_source_draw_buffers() const {
     return max_dual_source_draw_buffers_;
   }
+
+  uint32_t max_vertex_attribs() const { return max_vertex_attribs_; }
 
  private:
   friend class Program;
@@ -611,10 +713,17 @@ class GPU_EXPORT ProgramManager {
   ProgramCache* program_cache_;
 
   uint32_t max_varying_vectors_;
+  uint32_t max_draw_buffers_;
   uint32_t max_dual_source_draw_buffers_;
+  uint32_t max_vertex_attribs_;
 
   const GpuPreferences& gpu_preferences_;
   scoped_refptr<FeatureInfo> feature_info_;
+
+  // Used to notify the watchdog thread of progress during destruction,
+  // preventing time-outs when destruction takes a long time. May be null when
+  // using in-process command buffer.
+  ProgressReporter* progress_reporter_;
 
   DISALLOW_COPY_AND_ASSIGN(ProgramManager);
 };

@@ -6,6 +6,9 @@
 
 #include <stddef.h>
 
+#include <memory>
+#include <utility>
+
 #include "base/compiler_specific.h"
 #include "base/format_macros.h"
 #include "base/json/json_reader.h"
@@ -285,9 +288,15 @@ TEST(PerformanceLogger, TracingStartStop) {
   DevToolsCommand* cmd;
   ASSERT_TRUE(client.PopSentCommand(&cmd));
   EXPECT_EQ("Tracing.start", cmd->method);
-  std::string expected_cats;
-  EXPECT_TRUE(cmd->params->GetString("categories", &expected_cats));
-  EXPECT_EQ("benchmark,blink.console", expected_cats);
+  base::ListValue* categories;
+  EXPECT_TRUE(cmd->params->GetList("traceConfig.includedCategories",
+                                   &categories));
+  EXPECT_EQ(2u, categories->GetSize());
+  std::string category;
+  EXPECT_TRUE(categories->GetString(0, &category));
+  EXPECT_EQ("benchmark", category);
+  EXPECT_TRUE(categories->GetString(1, &category));
+  EXPECT_EQ("blink.console", category);
   int expected_interval = 0;
   EXPECT_TRUE(cmd->params->GetInteger("bufferUsageReportingInterval",
                                       &expected_interval));
@@ -315,12 +324,12 @@ TEST(PerformanceLogger, RecordTraceEvents) {
   logger.OnConnected(&client);
   base::DictionaryValue params;
   base::ListValue* trace_events = new base::ListValue();
-  base::DictionaryValue* event1 = new base::DictionaryValue();
+  std::unique_ptr<base::DictionaryValue> event1(new base::DictionaryValue());
   event1->SetString("cat", "foo");
-  trace_events->Append(event1);
-  base::DictionaryValue* event2 = new base::DictionaryValue();
+  trace_events->Append(event1->CreateDeepCopy());
+  std::unique_ptr<base::DictionaryValue> event2(new base::DictionaryValue());
   event2->SetString("cat", "bar");
-  trace_events->Append(event2);
+  trace_events->Append(event2->CreateDeepCopy());
   params.Set("value", trace_events);
   ASSERT_EQ(kOk, client.TriggerEvent("Tracing.dataCollected", params).code());
 

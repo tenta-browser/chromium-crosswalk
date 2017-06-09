@@ -5,20 +5,18 @@
 var mediaRouter;
 
 define('media_router_bindings', [
-    'mojo/public/js/bindings',
-    'mojo/public/js/core',
-    'content/public/renderer/frame_service_registry',
+    'content/public/renderer/frame_interfaces',
     'chrome/browser/media/router/mojo/media_router.mojom',
     'extensions/common/mojo/keep_alive.mojom',
-    'mojo/public/js/connection',
-    'mojo/public/js/router',
-], function(bindings,
-            core,
-            serviceProvider,
+    'mojo/common/time.mojom',
+    'mojo/public/js/bindings',
+    'url/mojo/origin.mojom',
+], function(frameInterfaces,
             mediaRouterMojom,
             keepAliveMojom,
-            connector,
-            routerModule) {
+            timeMojom,
+            bindings,
+            originMojom) {
   'use strict';
 
   /**
@@ -78,7 +76,8 @@ define('media_router_bindings', [
       // Begin newly added properties, followed by the milestone they were
       // added.  The guard should be safe to remove N+2 milestones later.
       'for_display': route.forDisplay, // M47
-      'off_the_record': !!route.offTheRecord  // M50
+      'is_incognito': !!route.offTheRecord,  // M50
+      'is_offscreen_presentation': !!route.isOffscreenPresentation // M56
     });
   }
 
@@ -146,6 +145,43 @@ define('media_router_bindings', [
     }
   }
 
+  // TODO(crbug.com/688177): remove this conversion.
+  /**
+   * Converts Mojo origin to string.
+   * @param {!originMojom.Origin} Mojo origin
+   * @return {string}
+   */
+  function mojoOriginToString_(origin) {
+    return origin.unique ? '' :
+        `${origin.scheme}:\/\/${origin.host}` +
+        `${origin.port ? `:${origin.port}` : ''}/`
+  }
+
+  // TODO(crbug.com/688177): remove this conversion.
+  /**
+   * Converts string to Mojo origin.
+   * @param {string} origin
+   * @return {!originMojom.Origin}
+   */
+  function stringToMojoOrigin_(origin) {
+    var url = new URL(origin);
+    var mojoOrigin = {};
+    mojoOrigin.scheme = url.protocol.replace(':', '');
+    mojoOrigin.host = url.hostname;
+    var port = url.port ? Number.parseInt(url.port) : 0;
+    switch (mojoOrigin.scheme) {
+      case 'http':
+        mojoOrigin.port = port || 80;
+        break;
+      case 'https':
+        mojoOrigin.port = port || 443;
+        break;
+      default:
+        throw new Error('Scheme must be http or https');
+    }
+    return new originMojom.Origin(mojoOrigin);
+  }
+
   /**
    * Parses the given route request Error object and converts it to the
    * corresponding result code.
@@ -184,14 +220,14 @@ define('media_router_bindings', [
   /**
    * Creates a new MediaRouter.
    * Converts a route struct to its Mojo form.
-   * @param {!MediaRouterService} service
+   * @param {!mediaRouterMojom.MediaRouterPtr} service
    * @constructor
    */
   function MediaRouter(service) {
     /**
      * The Mojo service proxy. Allows extension code to call methods that reside
      * in the browser.
-     * @type {!MediaRouterService}
+     * @type {!mediaRouterMojom.MediaRouterPtr}
      */
     this.service_ = service;
 
@@ -203,15 +239,6 @@ define('media_router_bindings', [
     this.mrpm_ = new MediaRouteProvider(this);
 
     /**
-     * The message pipe that connects the Media Router to mrpm_ across
-     * browser/renderer IPC boundaries. Object must remain in scope for the
-     * lifetime of the connection to prevent the connection from closing
-     * automatically.
-     * @type {!mojo.MessagePipe}
-     */
-    this.pipe_ = core.createMessagePipe();
-
-    /**
      * Handle to a KeepAlive service object, which prevents the extension from
      * being suspended as long as it remains in scope.
      * @type {boolean}
@@ -219,16 +246,13 @@ define('media_router_bindings', [
     this.keepAlive_ = null;
 
     /**
-     * The stub used to bind the service delegate to the Mojo interface.
+     * The bindings to bind the service delegate to the Mojo interface.
      * Object must remain in scope for the lifetime of the connection to
      * prevent the connection from closing automatically.
-     * @type {!mojom.MediaRouter}
+     * @type {!bindings.Binding}
      */
-    this.mediaRouteProviderStub_ = connector.bindHandleToStub(
-        this.pipe_.handle0, mediaRouterMojom.MediaRouteProvider);
-
-    // Link mediaRouteProviderStub_ to the provider manager delegate.
-    bindings.StubBindings(this.mediaRouteProviderStub_).delegate = this.mrpm_;
+    this.mediaRouteProviderBinding_ = new bindings.Binding(
+        mediaRouterMojom.MediaRouteProvider, this.mrpm_);
   }
 
   /**
@@ -236,10 +260,11 @@ define('media_router_bindings', [
    * @return {!Promise<string>} Instance ID for the Media Router.
    */
   MediaRouter.prototype.start = function() {
-    return this.service_.registerMediaRouteProvider(this.pipe_.handle1).then(
-        function(result) {
-          return result.instance_id;
-        }.bind(this));
+    return this.service_.registerMediaRouteProvider(
+        this.mediaRouteProviderBinding_.createInterfacePtrAndBind()).then(
+            function(result) {
+      return result.instance_id;
+    }.bind(this));
   }
 
   /**
@@ -263,13 +288,12 @@ define('media_router_bindings', [
    * updated.
    * @param {!string} sourceUrn
    * @param {!Array<!MediaSink>} sinks
-   * @param {Array<string>=} opt_origins
+   * @param {!Array<string>} origins
    */
   MediaRouter.prototype.onSinksReceived = function(sourceUrn, sinks,
-      opt_origins) {
-    // TODO(imcheng): Make origins required in M52+.
+      origins) {
     this.service_.onSinksReceived(sourceUrn, sinks.map(sinkToMojo_),
-        opt_origins || []);
+        origins.map(stringToMojoOrigin_));
   };
 
   /**
@@ -296,12 +320,11 @@ define('media_router_bindings', [
    */
   MediaRouter.prototype.setKeepAlive = function(keepAlive) {
     if (keepAlive === false && this.keepAlive_) {
-      this.keepAlive_.close();
+      this.keepAlive_.ptr.reset();
       this.keepAlive_ = null;
     } else if (keepAlive === true && !this.keepAlive_) {
-      this.keepAlive_ = new routerModule.Router(
-          serviceProvider.connectToService(
-              keepAliveMojom.KeepAlive.name));
+      this.keepAlive_ = new keepAliveMojom.KeepAlivePtr(
+          frameInterfaces.getInterface(keepAliveMojom.KeepAlive.name));
     }
   };
 
@@ -356,23 +379,17 @@ define('media_router_bindings', [
    * Called by the provider manager when the set of active routes
    * has been updated.
    * @param {!Array<MediaRoute>} routes The active set of media routes.
-   * @param {string=} opt_sourceUrn The sourceUrn associated with this route
-   *     query. This parameter is optional and can be empty.
-   * @param {Array<string>=} opt_joinableRouteIds The active set of joinable
-   *     media routes. This parameter is optional and can be empty.
+   * @param {string=} sourceUrn The sourceUrn associated with this route
+   *     query.
+   * @param {Array<string>=} joinableRouteIds The active set of joinable
+   *     media routes.
    */
   MediaRouter.prototype.onRoutesUpdated =
-      function(routes, opt_sourceUrn, opt_joinableRouteIds) {
-    // TODO(boetger): This check allows backward compatibility with the Cast SDK
-    // and can be removed when the Cast SDK is updated.
-    if (typeof(opt_sourceUrn) != 'string') {
-      opt_sourceUrn = '';
-    }
-
+      function(routes, sourceUrn = '', joinableRouteIds = []) {
     this.service_.onRoutesUpdated(
         routes.map(routeToMojo_),
-        opt_sourceUrn || '',
-        opt_joinableRouteIds || []);
+        sourceUrn,
+        joinableRouteIds);
   };
 
   /**
@@ -461,16 +478,9 @@ define('media_router_bindings', [
     this.sendRouteBinaryMessage = null;
 
     /**
-     * TODO(imcheng): Remove in M55 (crbug.com/626395).
-     * @type {function(string):
-     *     Promise.<{messages: Array.<RouteMessage>, error: boolean}>}
-     */
-    this.listenForRouteMessages = null;
-
-    /**
      * @type {function(string)}
      */
-    this.startlisteningForRouteMessages = null;
+    this.startListeningForRouteMessages = null;
 
     /**
      * @type {function(string)}
@@ -521,8 +531,6 @@ define('media_router_bindings', [
    * @constructor
    */
   function MediaRouteProvider(mediaRouter) {
-    mediaRouterMojom.MediaRouteProvider.stubClass.call(this);
-
     /**
      * Object containing JS callbacks into Provider Manager code.
      * @type {!MediaRouterHandlers}
@@ -535,8 +543,6 @@ define('media_router_bindings', [
      */
     this.mediaRouter_ = mediaRouter;
   }
-  MediaRouteProvider.prototype = Object.create(
-      mediaRouterMojom.MediaRouteProvider.stubClass.prototype);
 
   /*
    * Sets the callback handler used to invoke methods in the provider manager.
@@ -544,6 +550,10 @@ define('media_router_bindings', [
    * @param {!MediaRouterHandlers} handlers
    */
   MediaRouteProvider.prototype.setHandlers = function(handlers) {
+    // TODO(mfoltz): Remove when component that supports this method is
+    // rolled out to all Chrome channels in M56.
+    if (!handlers['onBeforeInvokeHandler'])
+      handlers['onBeforeInvokeHandler'] = () => {};
     this.handlers_ = handlers;
     var requiredHandlers = [
       'stopObservingMediaRoutes',
@@ -562,6 +572,7 @@ define('media_router_bindings', [
       'enableMdnsDiscovery',
       'updateMediaSinks',
       'searchSinks',
+      'onBeforeInvokeHandler'
     ];
     requiredHandlers.forEach(function(nextHandler) {
       if (handlers[nextHandler] === undefined) {
@@ -578,6 +589,7 @@ define('media_router_bindings', [
    */
   MediaRouteProvider.prototype.startObservingMediaSinks =
       function(sourceUrn) {
+    this.handlers_.onBeforeInvokeHandler();
     this.handlers_.startObservingMediaSinks(sourceUrn);
   };
 
@@ -587,6 +599,7 @@ define('media_router_bindings', [
    */
   MediaRouteProvider.prototype.stopObservingMediaSinks =
       function(sourceUrn) {
+    this.handlers_.onBeforeInvokeHandler();
     this.handlers_.stopObservingMediaSinks(sourceUrn);
   };
 
@@ -598,23 +611,23 @@ define('media_router_bindings', [
    * @param {!string} sinkId Media sink ID.
    * @param {!string} presentationId Presentation ID from the site
    *     requesting presentation. TODO(mfoltz): Remove.
-   * @param {!string} origin Origin of site requesting presentation.
+   * @param {!originMojom.Origin} origin Origin of site requesting presentation.
    * @param {!number} tabId ID of tab requesting presentation.
-   * @param {!number} timeoutMillis If positive, the timeout duration for the
-   *     request, measured in seconds. Otherwise, the default duration will be
-   *     used.
-   * @param {!boolean} offTheRecord If true, the route is being requested by
-   *     an off the record (incognito) profile.
+   * @param {!TimeDelta} timeout If positive, the timeout duration for the
+   *     request. Otherwise, the default duration will be used.
+   * @param {!boolean} incognito If true, the route is being requested by
+   *     an incognito profile.
    * @return {!Promise.<!Object>} A Promise resolving to an object describing
    *     the newly created media route, or rejecting with an error message on
    *     failure.
    */
   MediaRouteProvider.prototype.createRoute =
       function(sourceUrn, sinkId, presentationId, origin, tabId,
-          timeoutMillis, offTheRecord) {
+               timeout, incognito) {
+    this.handlers_.onBeforeInvokeHandler();
     return this.handlers_.createRoute(
-        sourceUrn, sinkId, presentationId, origin, tabId, timeoutMillis,
-        offTheRecord)
+        sourceUrn, sinkId, presentationId, mojoOriginToString_(origin), tabId,
+        Math.floor(timeout.microseconds / 1000), incognito)
         .then(function(route) {
           return toSuccessRouteResponse_(route);
         },
@@ -629,22 +642,23 @@ define('media_router_bindings', [
    * validating same-origin/tab scope.
    * @param {!string} sourceUrn Media source to render.
    * @param {!string} presentationId Presentation ID to join.
-   * @param {!string} origin Origin of site requesting join.
+   * @param {!originMojom.Origin} origin Origin of site requesting join.
    * @param {!number} tabId ID of tab requesting join.
-   * @param {!number} timeoutMillis If positive, the timeout duration for the
-   *     request, measured in seconds. Otherwise, the default duration will be
-   *     used.
-   * @param {!boolean} offTheRecord If true, the route is being requested by
-   *     an off the record (incognito) profile.
+   * @param {!TimeDelta} timeout If positive, the timeout duration for the
+   *     request. Otherwise, the default duration will be used.
+   * @param {!boolean} incognito If true, the route is being requested by
+   *     an incognito profile.
    * @return {!Promise.<!Object>} A Promise resolving to an object describing
    *     the newly created media route, or rejecting with an error message on
    *     failure.
    */
   MediaRouteProvider.prototype.joinRoute =
-      function(sourceUrn, presentationId, origin, tabId, timeoutMillis,
-               offTheRecord) {
+      function(sourceUrn, presentationId, origin, tabId, timeout,
+               incognito) {
+    this.handlers_.onBeforeInvokeHandler();
     return this.handlers_.joinRoute(
-        sourceUrn, presentationId, origin, tabId, timeoutMillis, offTheRecord)
+        sourceUrn, presentationId, mojoOriginToString_(origin), tabId,
+        Math.floor(timeout.microseconds / 1000), incognito)
         .then(function(route) {
           return toSuccessRouteResponse_(route);
         },
@@ -660,23 +674,23 @@ define('media_router_bindings', [
    * @param {!string} sourceUrn Media source to render.
    * @param {!string} routeId Route ID to join.
    * @param {!string} presentationId Presentation ID to join.
-   * @param {!string} origin Origin of site requesting join.
+   * @param {!originMojom.Origin} origin Origin of site requesting join.
    * @param {!number} tabId ID of tab requesting join.
-   * @param {!number} timeoutMillis If positive, the timeout duration for the
-   *     request, measured in seconds. Otherwise, the default duration will be
-   *     used.
-   * @param {!boolean} offTheRecord If true, the route is being requested by
-   *     an off the record (incognito) profile.
+   * @param {!TimeDelta} timeout If positive, the timeout duration for the
+   *     request. Otherwise, the default duration will be used.
+   * @param {!boolean} incognito If true, the route is being requested by
+   *     an incognito profile.
    * @return {!Promise.<!Object>} A Promise resolving to an object describing
    *     the newly created media route, or rejecting with an error message on
    *     failure.
    */
   MediaRouteProvider.prototype.connectRouteByRouteId =
       function(sourceUrn, routeId, presentationId, origin, tabId,
-               timeoutMillis, offTheRecord) {
+               timeout, incognito) {
+    this.handlers_.onBeforeInvokeHandler();
     return this.handlers_.connectRouteByRouteId(
-        sourceUrn, routeId, presentationId, origin, tabId, timeoutMillis,
-        offTheRecord)
+        sourceUrn, routeId, presentationId, mojoOriginToString_(origin), tabId,
+        Math.floor(timeout.microseconds / 1000), incognito)
         .then(function(route) {
           return toSuccessRouteResponse_(route);
         },
@@ -693,20 +707,10 @@ define('media_router_bindings', [
    *    message and code if the operation failed.
    */
   MediaRouteProvider.prototype.terminateRoute = function(routeId) {
-    // TODO(crbug.com/627967): Remove code path that doesn't expect a Promise
-    // in M56.
-    var maybePromise = this.handlers_.terminateRoute(routeId);
-    var successResult = {
-        result_code: mediaRouterMojom.RouteRequestResultCode.OK
-    };
-    if (maybePromise) {
-      return maybePromise.then(
-        function() { return successResult; },
-        function(err) { return toErrorRouteResponse_(err); }
-      );
-    } else {
-      return Promise.resolve(successResult);
-    }
+    this.handlers_.onBeforeInvokeHandler();
+    return this.handlers_.terminateRoute(routeId).then(
+        () => ({result_code: mediaRouterMojom.RouteRequestResultCode.OK}),
+        (err) => toErrorRouteResponse_(err));
   };
 
   /**
@@ -717,7 +721,8 @@ define('media_router_bindings', [
    *    or false on failure.
    */
   MediaRouteProvider.prototype.sendRouteMessage = function(
-      routeId, message) {
+    routeId, message) {
+    this.handlers_.onBeforeInvokeHandler();
     return this.handlers_.sendRouteMessage(routeId, message)
         .then(function() {
           return {'sent': true};
@@ -729,13 +734,14 @@ define('media_router_bindings', [
   /**
    * Sends a binary message to the route designated by |routeId|.
    * @param {!string} routeId
-   * @param {!Uint8Array} data
+   * @param {!Array<number>} data
    * @return {!Promise.<boolean>} Resolved with true if the data was sent,
    *    or false on failure.
    */
   MediaRouteProvider.prototype.sendRouteBinaryMessage = function(
-      routeId, data) {
-    return this.handlers_.sendRouteBinaryMessage(routeId, data)
+    routeId, data) {
+    this.handlers_.onBeforeInvokeHandler();
+    return this.handlers_.sendRouteBinaryMessage(routeId, new Uint8Array(data))
         .then(function() {
           return {'sent': true};
         }, function() {
@@ -749,34 +755,8 @@ define('media_router_bindings', [
    */
   MediaRouteProvider.prototype.startListeningForRouteMessages = function(
       routeId) {
-    if (this.handlers_.startListeningForRouteMessages) {
-      this.handlers_.startListeningForRouteMessages(routeId);
-    } else {
-      // Old API.
-      this.listenForRouteMessagesOld(routeId);
-    }
-  };
-
-
-  /**
-   * A hack to adapt new MR messaging API to old extension messaging API.
-   * TODO(imcheng): Remove in M55 (crbug.com/626395).
-   * @param {!string} routeId
-   */
-  MediaRouteProvider.prototype.listenForRouteMessagesOld = function(routeId) {
-    this.handlers_.listenForRouteMessages(routeId)
-        .then(function(messages) {
-          // If messages is empty, then stopListeningForRouteMessages has been
-          // called. We don't need to send it back to MR.
-          if (messages.length > 0) {
-            // Send the messages back to MR, and listen for next batch of
-            // messages.
-            this.mediaRouter_.onRouteMessagesReceived(routeId, messages);
-            this.listenForRouteMessagesOld(routeId);
-          }
-        }.bind(this), function() {
-          // Ignore rejections.
-        }.bind(this));
+    this.handlers_.onBeforeInvokeHandler();
+    this.handlers_.startListeningForRouteMessages(routeId);
   };
 
   /**
@@ -784,6 +764,7 @@ define('media_router_bindings', [
    */
   MediaRouteProvider.prototype.stopListeningForRouteMessages = function(
       routeId) {
+    this.handlers_.onBeforeInvokeHandler();
     this.handlers_.stopListeningForRouteMessages(routeId);
   };
 
@@ -803,6 +784,7 @@ define('media_router_bindings', [
    * @param {!string} sourceUrn
    */
   MediaRouteProvider.prototype.startObservingMediaRoutes = function(sourceUrn) {
+    this.handlers_.onBeforeInvokeHandler();
     this.handlers_.startObservingMediaRoutes(sourceUrn);
   };
 
@@ -812,6 +794,7 @@ define('media_router_bindings', [
    * @param {!string} sourceUrn
    */
   MediaRouteProvider.prototype.stopObservingMediaRoutes = function(sourceUrn) {
+    this.handlers_.onBeforeInvokeHandler();
     this.handlers_.stopObservingMediaRoutes(sourceUrn);
   };
 
@@ -819,6 +802,7 @@ define('media_router_bindings', [
    * Enables mDNS device discovery.
    */
   MediaRouteProvider.prototype.enableMdnsDiscovery = function() {
+    this.handlers_.onBeforeInvokeHandler();
     this.handlers_.enableMdnsDiscovery();
   };
 
@@ -827,6 +811,7 @@ define('media_router_bindings', [
    * @param {!string} sourceUrn
    */
   MediaRouteProvider.prototype.updateMediaSinks = function(sourceUrn) {
+    this.handlers_.onBeforeInvokeHandler();
     this.handlers_.updateMediaSinks(sourceUrn);
   };
 
@@ -851,16 +836,14 @@ define('media_router_bindings', [
     if (!this.handlers_.searchSinks) {
       return Promise.resolve({'sink_id': ''});
     }
+    this.handlers_.onBeforeInvokeHandler();
     return Promise.resolve({
       'sink_id': this.handlers_.searchSinks(sinkId, sourceUrn, searchCriteria)
     });
   };
 
-  mediaRouter = new MediaRouter(connector.bindHandleToProxy(
-      serviceProvider.connectToService(
-          mediaRouterMojom.MediaRouter.name),
-      mediaRouterMojom.MediaRouter));
+  mediaRouter = new MediaRouter(new mediaRouterMojom.MediaRouterPtr(
+      frameInterfaces.getInterface(mediaRouterMojom.MediaRouter.name)));
 
   return mediaRouter;
 });
-

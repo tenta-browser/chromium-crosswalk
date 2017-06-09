@@ -130,8 +130,7 @@ cr.define('cr.ui', function() {
     updateShortcut_: function() {
       this.removeAttribute('shortcutText');
 
-      if (!this.command_ ||
-          !this.command_.shortcut ||
+      if (!this.command_ || !this.command_.shortcut ||
           this.command_.hideShortcutText)
         return;
 
@@ -143,7 +142,7 @@ cr.define('cr.ui', function() {
       var shortcut = shortcuts[0];
       var mods = {};
       var ident = '';
-      shortcut.split('-').forEach(function(part) {
+      shortcut.split('|').forEach(function(part) {
         var partUc = part.toUpperCase();
         switch (partUc) {
           case 'CTRL':
@@ -160,25 +159,19 @@ cr.define('cr.ui', function() {
 
       var shortcutText = '';
 
-      // TODO(zvorygin): if more cornercases appear - optimize following
-      // code. Currently 'Enter' keystroke is passed as 'Enter', but 'Space'
-      // and 'Backspace' are passed as 'U+0020' and 'U+0008'.
-      if (ident == 'U+0020')
-        ident = 'Space';
-      else if (ident == 'U+0008')
-        ident = 'Backspace';
-
       ['CTRL', 'ALT', 'SHIFT', 'META'].forEach(function(mod) {
         if (mods[mod])
           shortcutText += loadTimeData.getString('SHORTCUT_' + mod) + '+';
       });
 
-      if (ident.indexOf('U+') != 0) {
+      if (ident == ' ')
+        ident = 'Space';
+
+      if (ident.length != 1) {
         shortcutText +=
             loadTimeData.getString('SHORTCUT_' + ident.toUpperCase());
       } else {
-        shortcutText +=
-            String.fromCharCode(parseInt(ident.substring(2), 16));
+        shortcutText += ident.toUpperCase();
       }
 
       this.setAttribute('shortcutText', shortcutText);
@@ -191,7 +184,7 @@ cr.define('cr.ui', function() {
      * @private
      */
     handleMouseUp_: function(e) {
-      e = /** @type {!MouseEvent} */(e);
+      e = /** @type {!MouseEvent} */ (e);
       // Only dispatch an activate event for left or middle click.
       if (e.button > 1)
         return;
@@ -199,8 +192,9 @@ cr.define('cr.ui', function() {
       if (!this.disabled && !this.isSeparator() && this.selected) {
         // Store |contextElement| since it'll be removed by {Menu} on handling
         // 'activate' event.
-        var contextElement = /** @type {{contextElement: Element}} */(
-            this.parentNode).contextElement;
+        var contextElement =
+            /** @type {{contextElement: Element}} */ (this.parentNode)
+                .contextElement;
         var activationEvent = cr.doc.createEvent('Event');
         activationEvent.initEvent('activate', true, true);
         activationEvent.originalEvent = e;
@@ -273,7 +267,5 @@ cr.define('cr.ui', function() {
   cr.defineProperty(MenuItem, 'checkable', cr.PropertyKind.BOOL_ATTR);
 
   // Export
-  return {
-    MenuItem: MenuItem
-  };
+  return {MenuItem: MenuItem};
 });

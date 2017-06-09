@@ -23,37 +23,46 @@
 
 namespace remoting {
 
+namespace {
 // The implementation here requires that the decoder allocates at least 3
 // pictures. PPB_VideoDecoder didn't support this parameter prior to
 // 1.1, so we have to pass 0 for backwards compatibility with older versions of
 // the browser. Currently all API implementations allocate more than 3 buffers
 // by default.
 const uint32_t kMinimumPictureCount = 3;
+}  // namespace
 
 class PepperVideoRenderer3D::FrameTracker {
  public:
   FrameTracker(std::unique_ptr<VideoPacket> packet,
-               protocol::PerformanceTracker* perf_tracker,
+               protocol::FrameStatsConsumer* stats_consumer,
                const base::Closure& done)
-      : packet_(std::move(packet)), perf_tracker_(perf_tracker), done_(done) {
-    stats_ = protocol::FrameStats::GetForVideoPacket(*packet_);
+      : packet_(std::move(packet)),
+        stats_consumer_(stats_consumer),
+        done_(done) {
+    stats_.host_stats = protocol::HostFrameStats::GetForVideoPacket(*packet_);
+    stats_.client_stats.time_received = base::TimeTicks::Now();
   }
 
   ~FrameTracker() {
-    if (perf_tracker_)
-      perf_tracker_->RecordVideoFrameStats(stats_);
+    if (stats_consumer_)
+      stats_consumer_->OnVideoFrameStats(stats_);
     if (!done_.is_null())
       done_.Run();
   }
 
-  void OnDecoded() { stats_.time_decoded = base::TimeTicks::Now(); }
-  void OnRendered() { stats_.time_rendered = base::TimeTicks::Now(); }
+  void OnDecoded() {
+    stats_.client_stats.time_decoded = base::TimeTicks::Now();
+  }
+  void OnRendered() {
+    stats_.client_stats.time_rendered = base::TimeTicks::Now();
+  }
 
   VideoPacket* packet() { return packet_.get(); }
 
  private:
   std::unique_ptr<VideoPacket> packet_;
-  protocol::PerformanceTracker* perf_tracker_;
+  protocol::FrameStatsConsumer* stats_consumer_;
   protocol::FrameStats stats_;
   base::Closure done_;
 };
@@ -84,14 +93,22 @@ void PepperVideoRenderer3D::SetPepperContext(
   DCHECK(event_handler);
   DCHECK(!event_handler_);
 
+  fallback_renderer_.SetPepperContext(instance, event_handler);
+
   event_handler_ = event_handler;
   pp_instance_ = instance;
 }
 
 void PepperVideoRenderer3D::OnViewChanged(const pp::View& view) {
+  fallback_renderer_.OnViewChanged(view);
+
   pp::Size size = view.GetRect().size();
   float scale = view.GetDeviceScale();
-  view_size_.set(ceilf(size.width() * scale), ceilf(size.height() * scale));
+  DCHECK_GT(scale, 0.0);
+  view_size_.set(std::min<int>(ceilf(size.width() * scale),
+                               gl_max_viewport_size_[0]),
+                 std::min<int>(ceilf(size.height() * scale),
+                               gl_max_viewport_size_[1]));
   graphics_.ResizeBuffers(view_size_.width(), view_size_.height());
 
   force_repaint_ = true;
@@ -99,13 +116,18 @@ void PepperVideoRenderer3D::OnViewChanged(const pp::View& view) {
 }
 
 void PepperVideoRenderer3D::EnableDebugDirtyRegion(bool enable) {
+  fallback_renderer_.EnableDebugDirtyRegion(enable);
   debug_dirty_region_ = enable;
 }
 
 bool PepperVideoRenderer3D::Initialize(
     const ClientContext& context,
-    protocol::PerformanceTracker* perf_tracker) {
-  perf_tracker_ = perf_tracker;
+    protocol::FrameStatsConsumer* stats_consumer) {
+  if (!fallback_renderer_.Initialize(context, stats_consumer)) {
+    LOG(FATAL) << "Failed to initialize fallback_renderer_";
+  }
+
+  stats_consumer_ = stats_consumer;
 
   const int32_t context_attributes[] = {
       PP_GRAPHICS3DATTRIB_ALPHA_SIZE,     8,
@@ -160,6 +182,11 @@ bool PepperVideoRenderer3D::Initialize(
   gles2_if_->BufferData(graphics_3d, GL_ARRAY_BUFFER, sizeof(kVertices),
                         kVertices, GL_STATIC_DRAW);
 
+  gles2_if_->GetIntegerv(
+      graphics_3d, GL_MAX_TEXTURE_SIZE, &gl_max_texture_size_);
+  gles2_if_->GetIntegerv(
+      graphics_3d, GL_MAX_VIEWPORT_DIMS, gl_max_viewport_size_);
+
   CheckGLError();
 
   return true;
@@ -167,6 +194,8 @@ bool PepperVideoRenderer3D::Initialize(
 
 void PepperVideoRenderer3D::OnSessionConfig(
     const protocol::SessionConfig& config) {
+  fallback_renderer_.OnSessionConfig(config);
+
   PP_VideoProfile video_profile = PP_VIDEOPROFILE_VP8_ANY;
   switch (config.video_config().codec) {
     case protocol::ChannelConfig::CODEC_VP8:
@@ -198,16 +227,43 @@ protocol::FrameConsumer* PepperVideoRenderer3D::GetFrameConsumer() {
   return nullptr;
 }
 
+protocol::FrameStatsConsumer* PepperVideoRenderer3D::GetFrameStatsConsumer() {
+  return stats_consumer_;
+}
+
 void PepperVideoRenderer3D::ProcessVideoPacket(
     std::unique_ptr<VideoPacket> packet,
     const base::Closure& done) {
+  if (!use_fallback_renderer_ &&
+      packet->format().has_screen_width() &&
+      packet->format().has_screen_height() &&
+      (packet->format().screen_width() > gl_max_texture_size_ ||
+       packet->format().screen_height() > gl_max_texture_size_)) {
+    use_fallback_renderer_ = true;
+    // Clear current instance and use fallback_renderer_.
+    current_picture_frames_.clear();
+    current_picture_.reset();
+    next_picture_frames_.clear();
+    next_picture_.reset();
+    decoded_frames_.clear();
+    pending_frames_.clear();
+    graphics_ = pp::Graphics3D();
+    video_decoder_ = pp::VideoDecoder();
+  }
+
+  if (use_fallback_renderer_) {
+    fallback_renderer_.GetVideoStub()->ProcessVideoPacket(
+        std::move(packet), done);
+    return;
+  }
+
   VideoPacket* packet_ptr = packet.get();
   std::unique_ptr<FrameTracker> frame_tracker(
-      new FrameTracker(std::move(packet), perf_tracker_, done));
+      new FrameTracker(std::move(packet), stats_consumer_, done));
 
   // Don't need to do anything if the packet is empty. Host sends empty video
   // packets when the screen is not changing.
-  if (!packet_ptr->data().size())
+  if (packet_ptr->data().empty())
     return;
 
   if (!frame_received_) {
@@ -275,12 +331,18 @@ void PepperVideoRenderer3D::OnDecodeDone(int32_t result) {
                          pending_frames_.begin());
 
   DecodeNextPacket();
-  GetNextPicture();
+  GetNextPictureIfReady();
 }
 
-void PepperVideoRenderer3D::GetNextPicture() {
-  if (get_picture_pending_)
+void PepperVideoRenderer3D::GetNextPictureIfReady() {
+  // Return early if |decoded_frames_| is empty or the decoder is already
+  // preparing a picture.  If we call GetPicture() before a new frame has been
+  // prepared (i.e. |decoded_frames_| is populated), the OnPictureReady callback
+  // could be called before OnDecodeDone() is called which will cause a crash.
+  // See crbug.com/689229 for more details.
+  if (get_picture_pending_ || decoded_frames_.empty()) {
     return;
+  }
 
   int32_t result =
       video_decoder_.GetPicture(callback_factory_.NewCallbackWithOutput(
@@ -325,7 +387,7 @@ void PepperVideoRenderer3D::OnPictureReady(int32_t result,
   next_picture_.reset(new Picture(&video_decoder_, picture));
 
   PaintIfNeeded();
-  GetNextPicture();
+  GetNextPictureIfReady();
 }
 
 void PepperVideoRenderer3D::PaintIfNeeded() {

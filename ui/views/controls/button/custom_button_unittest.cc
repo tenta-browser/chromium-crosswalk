@@ -6,14 +6,15 @@
 
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/run_loop.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/layout.h"
-#include "ui/base/material_design/material_design_controller.h"
 #include "ui/display/screen.h"
 #include "ui/events/event_utils.h"
 #include "ui/events/test/event_generator.h"
 #include "ui/views/animation/ink_drop_host.h"
+#include "ui/views/animation/ink_drop_impl.h"
 #include "ui/views/animation/test/ink_drop_host_view_test_api.h"
 #include "ui/views/animation/test/test_ink_drop.h"
 #include "ui/views/animation/test/test_ink_drop_host.h"
@@ -23,8 +24,10 @@
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/button/menu_button.h"
 #include "ui/views/controls/button/radio_button.h"
+#include "ui/views/controls/button/toggle_button.h"
 #include "ui/views/controls/link.h"
 #include "ui/views/controls/textfield/textfield.h"
+#include "ui/views/style/platform_style.h"
 #include "ui/views/test/views_test_base.h"
 
 #if defined(USE_AURA)
@@ -57,8 +60,9 @@ class TestContextMenuController : public ContextMenuController {
 
 class TestCustomButton : public CustomButton, public ButtonListener {
  public:
-  explicit TestCustomButton()
+  explicit TestCustomButton(bool has_ink_drop_action_on_click)
       : CustomButton(this) {
+    set_has_ink_drop_action_on_click(has_ink_drop_action_on_click);
   }
 
   ~TestCustomButton() override {}
@@ -71,8 +75,20 @@ class TestCustomButton : public CustomButton, public ButtonListener {
     canceled_ = true;
   }
 
+  // InkDropHostView:
+  void AddInkDropLayer(ui::Layer* ink_drop_layer) override {
+    ++ink_drop_layer_add_count_;
+    CustomButton::AddInkDropLayer(ink_drop_layer);
+  }
+  void RemoveInkDropLayer(ui::Layer* ink_drop_layer) override {
+    ++ink_drop_layer_remove_count_;
+    CustomButton::RemoveInkDropLayer(ink_drop_layer);
+  }
+
   bool pressed() { return pressed_; }
   bool canceled() { return canceled_; }
+  int ink_drop_layer_add_count() { return ink_drop_layer_add_count_; }
+  int ink_drop_layer_remove_count() { return ink_drop_layer_remove_count_; }
 
   void Reset() {
     pressed_ = false;
@@ -85,6 +101,9 @@ class TestCustomButton : public CustomButton, public ButtonListener {
  private:
   bool pressed_ = false;
   bool canceled_ = false;
+
+  int ink_drop_layer_add_count_ = 0;
+  int ink_drop_layer_remove_count_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(TestCustomButton);
 };
@@ -108,7 +127,7 @@ class CustomButtonTest : public ViewsTestBase {
     widget_->Init(params);
     widget_->Show();
 
-    button_ = new TestCustomButton();
+    button_ = new TestCustomButton(false);
     widget_->SetContentsView(button_);
   }
 
@@ -117,10 +136,19 @@ class CustomButtonTest : public ViewsTestBase {
     ViewsTestBase::TearDown();
   }
 
-  void CreateButtonWithInkDrop(std::unique_ptr<InkDrop> ink_drop) {
+  void CreateButtonWithInkDrop(std::unique_ptr<InkDrop> ink_drop,
+                               bool has_ink_drop_action_on_click) {
     delete button_;
-    button_ = new TestCustomButton();
+    button_ = new TestCustomButton(has_ink_drop_action_on_click);
     InkDropHostViewTestApi(button_).SetInkDrop(std::move(ink_drop));
+    widget_->SetContentsView(button_);
+  }
+
+  void CreateButtonWithRealInkDrop() {
+    delete button_;
+    button_ = new TestCustomButton(false);
+    InkDropHostViewTestApi(button_).SetInkDrop(
+        base::MakeUnique<InkDropImpl>(button_, button_->size()));
     widget_->SetContentsView(button_);
   }
 
@@ -131,11 +159,9 @@ class CustomButtonTest : public ViewsTestBase {
     widget_->dragged_view_ = dragged_view;
   }
 
-  void SimulateKeyEvent(ui::KeyEvent* event) { widget()->OnKeyEvent(event); }
-
  private:
   std::unique_ptr<Widget> widget_;
-  TestCustomButton* button_;
+  TestCustomButton* button_ = nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(CustomButtonTest);
 };
@@ -194,24 +220,21 @@ TEST_F(CustomButtonTest, HoverStateOnVisibilityChange) {
   aura::test::TestCursorClient cursor_client(
       widget()->GetNativeView()->GetRootWindow());
 
-  // Mus doesn't support disabling mouse events. https://crbug.com/618321
-  if (!IsMus()) {
-    // In Aura views, no new hover effects are invoked if mouse events
-    // are disabled.
-    cursor_client.DisableMouseEvents();
+  // In Aura views, no new hover effects are invoked if mouse events
+  // are disabled.
+  cursor_client.DisableMouseEvents();
 
-    button()->SetEnabled(false);
-    EXPECT_EQ(CustomButton::STATE_DISABLED, button()->state());
+  button()->SetEnabled(false);
+  EXPECT_EQ(CustomButton::STATE_DISABLED, button()->state());
 
-    button()->SetEnabled(true);
-    EXPECT_EQ(CustomButton::STATE_NORMAL, button()->state());
+  button()->SetEnabled(true);
+  EXPECT_EQ(CustomButton::STATE_NORMAL, button()->state());
 
-    button()->SetVisible(false);
-    EXPECT_EQ(CustomButton::STATE_NORMAL, button()->state());
+  button()->SetVisible(false);
+  EXPECT_EQ(CustomButton::STATE_NORMAL, button()->state());
 
-    button()->SetVisible(true);
-    EXPECT_EQ(CustomButton::STATE_NORMAL, button()->state());
-  }
+  button()->SetVisible(true);
+  EXPECT_EQ(CustomButton::STATE_NORMAL, button()->state());
 #endif  // !defined(OS_MACOSX) || defined(USE_AURA)
 }
 
@@ -334,6 +357,9 @@ TEST_F(CustomButtonTest, AsCustomButton) {
   MenuButton menu_button(text, NULL, false);
   EXPECT_TRUE(CustomButton::AsCustomButton(&menu_button));
 
+  ToggleButton toggle_button(NULL);
+  EXPECT_TRUE(CustomButton::AsCustomButton(&toggle_button));
+
   Label label;
   EXPECT_FALSE(CustomButton::AsCustomButton(&label));
 
@@ -350,7 +376,7 @@ TEST_F(CustomButtonTest, AsCustomButton) {
 // may enter a different ink drop state.
 TEST_F(CustomButtonTest, ButtonClickTogglesInkDrop) {
   TestInkDrop* ink_drop = new TestInkDrop();
-  CreateButtonWithInkDrop(base::WrapUnique(ink_drop));
+  CreateButtonWithInkDrop(base::WrapUnique(ink_drop), false);
 
   ui::test::EventGenerator generator(widget()->GetNativeWindow());
   generator.set_current_location(gfx::Point(50, 50));
@@ -365,7 +391,7 @@ TEST_F(CustomButtonTest, ButtonClickTogglesInkDrop) {
 // Releasing capture should also reset PRESSED button state to NORMAL.
 TEST_F(CustomButtonTest, CaptureLossHidesInkDrop) {
   TestInkDrop* ink_drop = new TestInkDrop();
-  CreateButtonWithInkDrop(base::WrapUnique(ink_drop));
+  CreateButtonWithInkDrop(base::WrapUnique(ink_drop), false);
 
   ui::test::EventGenerator generator(widget()->GetNativeWindow());
   generator.set_current_location(gfx::Point(50, 50));
@@ -378,15 +404,12 @@ TEST_F(CustomButtonTest, CaptureLossHidesInkDrop) {
   widget()->ReleaseCapture();
   SetDraggedView(nullptr);
   EXPECT_EQ(InkDropState::HIDDEN, ink_drop->GetTargetInkDropState());
-  EXPECT_EQ(ui::MaterialDesignController::IsModeMaterial()
-                ? Button::ButtonState::STATE_NORMAL
-                : Button::ButtonState::STATE_PRESSED,
-            button()->state());
+  EXPECT_EQ(Button::ButtonState::STATE_NORMAL, button()->state());
 }
 
 TEST_F(CustomButtonTest, HideInkDropWhenShowingContextMenu) {
   TestInkDrop* ink_drop = new TestInkDrop();
-  CreateButtonWithInkDrop(base::WrapUnique(ink_drop));
+  CreateButtonWithInkDrop(base::WrapUnique(ink_drop), false);
   TestContextMenuController context_menu_controller;
   button()->set_context_menu_controller(&context_menu_controller);
   button()->set_hide_ink_drop_when_showing_context_menu(true);
@@ -402,7 +425,7 @@ TEST_F(CustomButtonTest, HideInkDropWhenShowingContextMenu) {
 
 TEST_F(CustomButtonTest, DontHideInkDropWhenShowingContextMenu) {
   TestInkDrop* ink_drop = new TestInkDrop();
-  CreateButtonWithInkDrop(base::WrapUnique(ink_drop));
+  CreateButtonWithInkDrop(base::WrapUnique(ink_drop), false);
   TestContextMenuController context_menu_controller;
   button()->set_context_menu_controller(&context_menu_controller);
   button()->set_hide_ink_drop_when_showing_context_menu(false);
@@ -420,7 +443,7 @@ TEST_F(CustomButtonTest, HideInkDropOnBlur) {
   gfx::Point center(10, 10);
 
   TestInkDrop* ink_drop = new TestInkDrop();
-  CreateButtonWithInkDrop(base::WrapUnique(ink_drop));
+  CreateButtonWithInkDrop(base::WrapUnique(ink_drop), false);
 
   button()->OnFocus();
 
@@ -438,9 +461,22 @@ TEST_F(CustomButtonTest, HideInkDropOnBlur) {
   EXPECT_TRUE(button()->pressed());
 }
 
+TEST_F(CustomButtonTest, HideInkDropHighlightOnDisable) {
+  TestInkDrop* ink_drop = new TestInkDrop();
+  CreateButtonWithInkDrop(base::WrapUnique(ink_drop), false);
+
+  ui::test::EventGenerator generator(widget()->GetNativeWindow());
+  generator.MoveMouseToInHost(10, 10);
+  EXPECT_TRUE(ink_drop->is_hovered());
+  button()->SetEnabled(false);
+  EXPECT_FALSE(ink_drop->is_hovered());
+  button()->SetEnabled(true);
+  EXPECT_TRUE(ink_drop->is_hovered());
+}
+
 TEST_F(CustomButtonTest, InkDropAfterTryingToShowContextMenu) {
   TestInkDrop* ink_drop = new TestInkDrop();
-  CreateButtonWithInkDrop(base::WrapUnique(ink_drop));
+  CreateButtonWithInkDrop(base::WrapUnique(ink_drop), false);
   button()->set_context_menu_controller(nullptr);
 
   ink_drop->SetHovered(true);
@@ -452,12 +488,15 @@ TEST_F(CustomButtonTest, InkDropAfterTryingToShowContextMenu) {
   EXPECT_EQ(InkDropState::ACTION_PENDING, ink_drop->GetTargetInkDropState());
 }
 
-TEST_F(CustomButtonTest, InkDropShowHideOnMouseDragged) {
+// Tests that when button is set to notify on release, dragging mouse out and
+// back transitions ink drop states correctly.
+TEST_F(CustomButtonTest, InkDropShowHideOnMouseDraggedNotifyOnRelease) {
   gfx::Point center(10, 10);
   gfx::Point oob(-1, -1);
 
   TestInkDrop* ink_drop = new TestInkDrop();
-  CreateButtonWithInkDrop(base::WrapUnique(ink_drop));
+  CreateButtonWithInkDrop(base::WrapUnique(ink_drop), false);
+  button()->set_notify_action(CustomButton::NOTIFY_ON_RELEASE);
 
   button()->OnMousePressed(ui::MouseEvent(
       ui::ET_MOUSE_PRESSED, center, center, ui::EventTimeForNow(),
@@ -490,12 +529,54 @@ TEST_F(CustomButtonTest, InkDropShowHideOnMouseDragged) {
   EXPECT_FALSE(button()->pressed());
 }
 
+// Tests that when button is set to notify on press, dragging mouse out and back
+// does not change the ink drop state.
+TEST_F(CustomButtonTest, InkDropShowHideOnMouseDraggedNotifyOnPress) {
+  gfx::Point center(10, 10);
+  gfx::Point oob(-1, -1);
+
+  TestInkDrop* ink_drop = new TestInkDrop();
+  CreateButtonWithInkDrop(base::WrapUnique(ink_drop), true);
+  button()->set_notify_action(CustomButton::NOTIFY_ON_PRESS);
+
+  button()->OnMousePressed(ui::MouseEvent(
+      ui::ET_MOUSE_PRESSED, center, center, ui::EventTimeForNow(),
+      ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON));
+
+  EXPECT_EQ(InkDropState::ACTION_TRIGGERED, ink_drop->GetTargetInkDropState());
+  EXPECT_TRUE(button()->pressed());
+
+  button()->OnMouseDragged(
+      ui::MouseEvent(ui::ET_MOUSE_PRESSED, oob, oob, ui::EventTimeForNow(),
+                     ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON));
+
+  EXPECT_EQ(InkDropState::ACTION_TRIGGERED, ink_drop->GetTargetInkDropState());
+
+  button()->OnMouseDragged(ui::MouseEvent(
+      ui::ET_MOUSE_PRESSED, center, center, ui::EventTimeForNow(),
+      ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON));
+
+  EXPECT_EQ(InkDropState::ACTION_TRIGGERED, ink_drop->GetTargetInkDropState());
+
+  button()->OnMouseDragged(
+      ui::MouseEvent(ui::ET_MOUSE_PRESSED, oob, oob, ui::EventTimeForNow(),
+                     ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON));
+
+  EXPECT_EQ(InkDropState::ACTION_TRIGGERED, ink_drop->GetTargetInkDropState());
+
+  button()->OnMouseReleased(
+      ui::MouseEvent(ui::ET_MOUSE_PRESSED, oob, oob, ui::EventTimeForNow(),
+                     ui::EF_LEFT_MOUSE_BUTTON, ui::EF_LEFT_MOUSE_BUTTON));
+
+  EXPECT_EQ(InkDropState::ACTION_TRIGGERED, ink_drop->GetTargetInkDropState());
+}
+
 TEST_F(CustomButtonTest, InkDropStaysHiddenWhileDragging) {
   gfx::Point center(10, 10);
   gfx::Point oob(-1, -1);
 
   TestInkDrop* ink_drop = new TestInkDrop();
-  CreateButtonWithInkDrop(base::WrapUnique(ink_drop));
+  CreateButtonWithInkDrop(base::WrapUnique(ink_drop), false);
 
   button()->OnMousePressed(ui::MouseEvent(
       ui::ET_MOUSE_PRESSED, center, center, ui::EventTimeForNow(),
@@ -524,24 +605,94 @@ TEST_F(CustomButtonTest, InkDropStaysHiddenWhileDragging) {
   SetDraggedView(nullptr);
 }
 
-// Todo(karandeepb): On Mac, a button should get clicked on a Space key press
-// (and not release). Modify this test after fixing crbug.com/607429.
-// Test that Space Key behaves correctly on a focused button.
-TEST_F(CustomButtonTest, ClickOnSpace) {
+// Test that hiding or closing a Widget doesn't attempt to add a layer due to
+// changed visibility states.
+TEST_F(CustomButtonTest, NoLayerAddedForWidgetVisibilityChanges) {
+  CreateButtonWithRealInkDrop();
+
+  EXPECT_TRUE(button()->visible());
+  EXPECT_FALSE(button()->layer());
+
+  widget()->Hide();
+  EXPECT_FALSE(button()->layer());
+  EXPECT_EQ(0, button()->ink_drop_layer_add_count());
+  EXPECT_EQ(0, button()->ink_drop_layer_remove_count());
+
+  widget()->Show();
+  EXPECT_FALSE(button()->layer());
+  EXPECT_EQ(0, button()->ink_drop_layer_add_count());
+  EXPECT_EQ(0, button()->ink_drop_layer_remove_count());
+
+  // Allow the button to be interrogated after the view hierarchy is torn down.
+  button()->set_owned_by_client();
+  widget()->Close();  // Start an asynchronous close.
+  EXPECT_FALSE(button()->layer());
+  EXPECT_EQ(0, button()->ink_drop_layer_add_count());
+  EXPECT_EQ(0, button()->ink_drop_layer_remove_count());
+
+  base::RunLoop().RunUntilIdle();  // Complete the Close().
+  EXPECT_FALSE(button()->layer());
+  EXPECT_EQ(0, button()->ink_drop_layer_add_count());
+  EXPECT_EQ(0, button()->ink_drop_layer_remove_count());
+
+  delete button();
+}
+
+// Verify that the Space key clicks the button on key-press on Mac, and
+// key-release on other platforms.
+TEST_F(CustomButtonTest, ActionOnSpace) {
   // Give focus to the button.
   button()->SetFocusForPlatform();
   button()->RequestFocus();
-  EXPECT_EQ(button(), widget()->GetFocusManager()->GetFocusedView());
+  EXPECT_TRUE(button()->HasFocus());
 
   ui::KeyEvent space_press(ui::ET_KEY_PRESSED, ui::VKEY_SPACE, ui::EF_NONE);
-  SimulateKeyEvent(&space_press);
-  EXPECT_EQ(CustomButton::STATE_PRESSED, button()->state());
-  EXPECT_FALSE(button()->pressed());
+  EXPECT_TRUE(button()->OnKeyPressed(space_press));
 
-  ui::KeyEvent space_release(ui::ET_KEY_RELEASED, ui::VKEY_SPACE, ui::EF_NONE);
-  SimulateKeyEvent(&space_release);
+#if defined(OS_MACOSX)
   EXPECT_EQ(CustomButton::STATE_NORMAL, button()->state());
   EXPECT_TRUE(button()->pressed());
+#else
+  EXPECT_EQ(CustomButton::STATE_PRESSED, button()->state());
+  EXPECT_FALSE(button()->pressed());
+#endif
+
+  ui::KeyEvent space_release(ui::ET_KEY_RELEASED, ui::VKEY_SPACE, ui::EF_NONE);
+
+#if defined(OS_MACOSX)
+  EXPECT_FALSE(button()->OnKeyReleased(space_release));
+#else
+  EXPECT_TRUE(button()->OnKeyReleased(space_release));
+#endif
+
+  EXPECT_EQ(CustomButton::STATE_NORMAL, button()->state());
+  EXPECT_TRUE(button()->pressed());
+}
+
+// Verify that the Return key clicks the button on key-press on all platforms
+// except Mac. On Mac, the Return key performs the default action associated
+// with a dialog, even if a button has focus.
+TEST_F(CustomButtonTest, ActionOnReturn) {
+  // Give focus to the button.
+  button()->SetFocusForPlatform();
+  button()->RequestFocus();
+  EXPECT_TRUE(button()->HasFocus());
+
+  ui::KeyEvent return_press(ui::ET_KEY_PRESSED, ui::VKEY_RETURN, ui::EF_NONE);
+
+#if defined(OS_MACOSX)
+  EXPECT_FALSE(button()->OnKeyPressed(return_press));
+  EXPECT_EQ(CustomButton::STATE_NORMAL, button()->state());
+  EXPECT_FALSE(button()->pressed());
+#else
+  EXPECT_TRUE(button()->OnKeyPressed(return_press));
+  EXPECT_EQ(CustomButton::STATE_NORMAL, button()->state());
+  EXPECT_TRUE(button()->pressed());
+#endif
+
+  ui::KeyEvent return_release(ui::ET_KEY_RELEASED, ui::VKEY_RETURN,
+                              ui::EF_NONE);
+  EXPECT_FALSE(button()->OnKeyReleased(return_release));
 }
 
 }  // namespace views

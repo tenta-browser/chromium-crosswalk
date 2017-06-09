@@ -10,11 +10,7 @@
 #include "chrome/grit/generated_resources.h"
 #include "content/public/browser/user_metrics.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/gfx/vector_icons_public.h"
-
-#if defined(OS_MACOSX)
-#include "grit/theme_resources.h"
-#endif
+#include "ui/vector_icons/vector_icons.h"
 
 namespace {
 
@@ -42,21 +38,9 @@ RegisterProtocolHandlerPermissionRequest
 RegisterProtocolHandlerPermissionRequest::
 ~RegisterProtocolHandlerPermissionRequest() {}
 
-gfx::VectorIconId RegisterProtocolHandlerPermissionRequest::GetVectorIconId()
+PermissionRequest::IconId RegisterProtocolHandlerPermissionRequest::GetIconId()
     const {
-#if defined(OS_MACOSX)
-  return gfx::VectorIconId::VECTOR_ICON_NONE;
-#else
-  return gfx::VectorIconId::PROTOCOL_HANDLER;
-#endif
-}
-
-int RegisterProtocolHandlerPermissionRequest::GetIconId() const {
-#if defined(OS_MACOSX)
-  return IDR_REGISTER_PROTOCOL_HANDLER;
-#else
-  return 0;
-#endif
+  return ui::kProtocolHandlerIcon;
 }
 
 base::string16
@@ -98,7 +82,7 @@ void RegisterProtocolHandlerPermissionRequest::RequestFinished() {
   delete this;
 }
 
-PermissionBubbleType
-RegisterProtocolHandlerPermissionRequest::GetPermissionBubbleType() const {
-  return PermissionBubbleType::REGISTER_PROTOCOL_HANDLER;
+PermissionRequestType
+RegisterProtocolHandlerPermissionRequest::GetPermissionRequestType() const {
+  return PermissionRequestType::REGISTER_PROTOCOL_HANDLER;
 }

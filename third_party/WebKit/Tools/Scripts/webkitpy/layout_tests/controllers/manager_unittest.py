@@ -29,6 +29,7 @@
 
 """Unit tests for manager.py."""
 
+import optparse
 import time
 import unittest
 
@@ -36,7 +37,6 @@ from webkitpy.common.host_mock import MockHost
 from webkitpy.layout_tests.controllers.manager import Manager
 from webkitpy.layout_tests.models import test_expectations
 from webkitpy.layout_tests.models.test_run_results import TestRunResults
-from webkitpy.tool.mock_tool import MockOptions
 
 
 class FakePrinter(object):
@@ -51,7 +51,7 @@ class ManagerTest(unittest.TestCase):
         def get_manager():
             host = MockHost()
             port = host.port_factory.get('test-mac-mac10.10')
-            manager = Manager(port, options=MockOptions(http=True, max_locked_shards=1), printer=FakePrinter())
+            manager = Manager(port, options=optparse.Values({'http': True, 'max_locked_shards': 1}), printer=FakePrinter())
             return manager
 
         manager = get_manager()
@@ -62,7 +62,7 @@ class ManagerTest(unittest.TestCase):
 
     def test_servers_started(self):
         def get_manager(port):
-            manager = Manager(port, options=MockOptions(http=True, max_locked_shards=1), printer=FakePrinter())
+            manager = Manager(port, options=optparse.Values({'http': True, 'max_locked_shards': 1}), printer=FakePrinter())
             return manager
 
         def start_http_server(additional_dirs, number_of_drivers):
@@ -113,7 +113,10 @@ class ManagerTest(unittest.TestCase):
         def get_manager():
             host = MockHost()
             port = host.port_factory.get('test-mac-mac10.10')
-            manager = Manager(port, options=MockOptions(test_list=None, http=True, max_locked_shards=1), printer=FakePrinter())
+            manager = Manager(
+                port,
+                options=optparse.Values({'test_list': None, 'http': True, 'max_locked_shards': 1}),
+                printer=FakePrinter())
             return manager
         host = MockHost()
         port = host.port_factory.get('test-mac-mac10.10')
@@ -132,7 +135,7 @@ class ManagerTest(unittest.TestCase):
         port = host.port_factory.get('test-mac-mac10.10')
 
         def get_manager():
-            manager = Manager(port, options=MockOptions(max_locked_shards=1), printer=FakePrinter())
+            manager = Manager(port, options=optparse.Values({'max_locked_shards': 1}), printer=FakePrinter())
             return manager
         self._make_fake_test_result(port.host, '/tmp/layout-test-results')
         self.assertTrue(port.host.filesystem.exists('/tmp/layout-test-results'))
@@ -149,7 +152,7 @@ class ManagerTest(unittest.TestCase):
         port = host.port_factory.get('test-mac-mac10.10')
 
         def get_manager():
-            manager = Manager(port, options=MockOptions(max_locked_shards=1), printer=FakePrinter())
+            manager = Manager(port, options=optparse.Values({'max_locked_shards': 1}), printer=FakePrinter())
             return manager
         self._make_fake_test_result(port.host, '/tmp/layout-test-results')
         self.assertTrue(port.host.filesystem.exists('/tmp/layout-test-results'))
@@ -162,7 +165,7 @@ class ManagerTest(unittest.TestCase):
         port = host.port_factory.get('test-mac-mac10.10')
 
         def get_manager():
-            manager = Manager(port, options=MockOptions(max_locked_shards=1), printer=FakePrinter())
+            manager = Manager(port, options=optparse.Values({'max_locked_shards': 1}), printer=FakePrinter())
             return manager
         for x in range(1, 31):
             dir_name = '/tmp/layout-test-results' + '_' + str(x)
@@ -175,3 +178,55 @@ class ManagerTest(unittest.TestCase):
             if not port.host.filesystem.exists(dir_name):
                 deleted_dir_count = deleted_dir_count + 1
         self.assertEqual(deleted_dir_count, 5)
+
+    # Tests for protected methods - pylint: disable=protected-access
+
+    def test_ensure_manifest_copies_new_manifest(self):
+        host = MockHost()
+        port = host.port_factory.get()
+
+        manifest_path = '/mock-checkout/third_party/WebKit/LayoutTests/external/wpt/MANIFEST.json'
+        self.assertFalse(port.host.filesystem.exists(manifest_path))
+        manager = Manager(port, options=optparse.Values({'max_locked_shards': 1}), printer=FakePrinter())
+        manager._ensure_manifest()
+        self.assertTrue(port.host.filesystem.exists(manifest_path))
+
+        webkit_base = '/mock-checkout/third_party/WebKit'
+        self.assertEqual(
+            port.host.executive.calls,
+            [
+                [
+                    'python',
+                    webkit_base + '/Tools/Scripts/webkitpy/thirdparty/wpt/wpt/manifest',
+                    '--work',
+                    '--tests-root',
+                    webkit_base + '/LayoutTests/external/wpt',
+                ]
+            ]
+        )
+
+    def test_ensure_manifest_updates_manifest_if_it_exists(self):
+        host = MockHost()
+        port = host.port_factory.get('test-mac-mac10.10')
+        manifest_path = '/mock-checkout/third_party/WebKit/LayoutTests/external/wpt/MANIFEST.json'
+
+        host.filesystem.write_binary_file(manifest_path, '{}')
+        self.assertTrue(port.host.filesystem.exists(manifest_path))
+
+        manager = Manager(port, options=optparse.Values({'max_locked_shards': 1}), printer=FakePrinter())
+        manager._ensure_manifest()
+        self.assertTrue(port.host.filesystem.exists(manifest_path))
+
+        webkit_base = '/mock-checkout/third_party/WebKit'
+        self.assertEqual(
+            port.host.executive.calls,
+            [
+                [
+                    'python',
+                    webkit_base + '/Tools/Scripts/webkitpy/thirdparty/wpt/wpt/manifest',
+                    '--work',
+                    '--tests-root',
+                    webkit_base + '/LayoutTests/external/wpt',
+                ]
+            ]
+        )

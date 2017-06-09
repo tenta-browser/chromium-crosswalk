@@ -5,6 +5,7 @@
 #ifndef NET_ANDROID_NETWORK_CHANGE_NOTIFIER_DELEGATE_ANDROID_H_
 #define NET_ANDROID_NETWORK_CHANGE_NOTIFIER_DELEGATE_ANDROID_H_
 
+#include <map>
 #include <string>
 
 #include "base/android/jni_android.h"
@@ -13,6 +14,7 @@
 #include "base/observer_list_threadsafe.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread_checker.h"
+#include "net/base/net_export.h"
 #include "net/base/network_change_notifier.h"
 
 namespace net {
@@ -54,7 +56,7 @@ class NET_EXPORT_PRIVATE NetworkChangeNotifierDelegateAndroid {
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
       jint new_connection_type,
-      jint default_netid);
+      jlong default_netid);
   jint GetConnectionType(JNIEnv* env, jobject obj) const;
 
   // Called from NetworkChangeNotifier.java on the JNI thread whenever
@@ -77,20 +79,20 @@ class NET_EXPORT_PRIVATE NetworkChangeNotifierDelegateAndroid {
   // NetworkChangeNotifierAutoDetect.Observer functions of the same names.
   void NotifyOfNetworkConnect(JNIEnv* env,
                               const base::android::JavaParamRef<jobject>& obj,
-                              jint net_id,
+                              jlong net_id,
                               jint connection_type);
   void NotifyOfNetworkSoonToDisconnect(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
-      jint net_id);
+      jlong net_id);
   void NotifyOfNetworkDisconnect(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
-      jint net_id);
+      jlong net_id);
   void NotifyPurgeActiveNetworkList(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
-      const base::android::JavaParamRef<jintArray>& active_networks);
+      const base::android::JavaParamRef<jlongArray>& active_networks);
 
   // These methods can be called on any thread. Note that the provided observer
   // will be notified on the thread AddObserver() is called on.
@@ -119,11 +121,11 @@ class NET_EXPORT_PRIVATE NetworkChangeNotifierDelegateAndroid {
   // Map of active connected networks and their connection type.
   typedef std::map<NetworkHandle, ConnectionType> NetworkMap;
 
-  // Converts a Java int[] into a NetworkMap. Expects int[] to contain
+  // Converts a Java long[] into a NetworkMap. Expects long[] to contain
   // repeated instances of: NetworkHandle, ConnectionType
-  static void JavaIntArrayToNetworkMap(JNIEnv* env,
-                                       jintArray int_array,
-                                       NetworkMap* network_map);
+  static void JavaLongArrayToNetworkMap(JNIEnv* env,
+                                        jlongArray long_array,
+                                        NetworkMap* network_map);
 
   // Setters that grab appropriate lock.
   void SetCurrentConnectionType(ConnectionType connection_type);

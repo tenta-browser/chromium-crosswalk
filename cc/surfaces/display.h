@@ -10,10 +10,10 @@
 
 #include "base/macros.h"
 #include "cc/output/output_surface_client.h"
-#include "cc/output/renderer.h"
 #include "cc/resources/returned_resource.h"
 #include "cc/scheduler/begin_frame_source.h"
 #include "cc/surfaces/display_scheduler.h"
+#include "cc/surfaces/frame_sink_id.h"
 #include "cc/surfaces/surface_aggregator.h"
 #include "cc/surfaces/surface_id.h"
 #include "cc/surfaces/surface_manager.h"
@@ -39,10 +39,8 @@ class OutputSurface;
 class RendererSettings;
 class ResourceProvider;
 class SharedBitmapManager;
-class Surface;
+class SoftwareRenderer;
 class SurfaceAggregator;
-class SurfaceIdAllocator;
-class SurfaceFactory;
 class TextureMailboxDeleter;
 
 // A Display produces a surface that can be used to draw to a physical display
@@ -50,98 +48,81 @@ class TextureMailboxDeleter;
 // surface IDs used to draw into the display and deciding when to draw.
 class CC_SURFACES_EXPORT Display : public DisplaySchedulerClient,
                                    public OutputSurfaceClient,
-                                   public RendererClient,
-                                   public SurfaceDamageObserver {
+                                   public SurfaceObserver {
  public:
   // The |begin_frame_source| and |scheduler| may be null (together). In that
   // case, DrawAndSwap must be called externally when needed.
-  Display(SurfaceManager* manager,
-          SharedBitmapManager* bitmap_manager,
+  Display(SharedBitmapManager* bitmap_manager,
           gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager,
           const RendererSettings& settings,
-          uint32_t compositor_surface_namespace,
-          std::unique_ptr<BeginFrameSource> begin_frame_source,
+          const FrameSinkId& frame_sink_id,
+          BeginFrameSource* begin_frame_source,
           std::unique_ptr<OutputSurface> output_surface,
           std::unique_ptr<DisplayScheduler> scheduler,
           std::unique_ptr<TextureMailboxDeleter> texture_mailbox_deleter);
 
   ~Display() override;
 
-  void Initialize(DisplayClient* client);
+  void Initialize(DisplayClient* client, SurfaceManager* surface_manager);
 
   // device_scale_factor is used to communicate to the external window system
   // what scale this was rendered at.
-  void SetSurfaceId(SurfaceId id, float device_scale_factor);
+  void SetLocalSurfaceId(const LocalSurfaceId& id, float device_scale_factor);
+  void SetVisible(bool visible);
   void Resize(const gfx::Size& new_size);
   void SetColorSpace(const gfx::ColorSpace& color_space);
-  void SetExternalClip(const gfx::Rect& clip);
   void SetOutputIsSecure(bool secure);
 
-  SurfaceId CurrentSurfaceId();
+  const SurfaceId& CurrentSurfaceId();
 
   // DisplaySchedulerClient implementation.
   bool DrawAndSwap() override;
 
   // OutputSurfaceClient implementation.
-  void CommitVSyncParameters(base::TimeTicks timebase,
-                             base::TimeDelta interval) override;
-  void SetBeginFrameSource(BeginFrameSource* source) override;
   void SetNeedsRedrawRect(const gfx::Rect& damage_rect) override;
-  void DidSwapBuffers() override;
-  void DidSwapBuffersComplete() override;
+  void DidReceiveSwapBuffersAck() override;
   void DidReceiveTextureInUseResponses(
       const gpu::TextureInUseResponses& responses) override;
-  void ReclaimResources(const CompositorFrameAck* ack) override;
-  void DidLoseOutputSurface() override;
-  void SetExternalTilePriorityConstraints(
-      const gfx::Rect& viewport_rect,
-      const gfx::Transform& transform) override;
-  void SetMemoryPolicy(const ManagedMemoryPolicy& policy) override;
-  void SetTreeActivationCallback(const base::Closure& callback) override;
-  void OnDraw(const gfx::Transform& transform,
-              const gfx::Rect& viewport,
-              const gfx::Rect& clip,
-              bool resourceless_software_draw) override;
 
-  // RendererClient implementation.
-  void SetFullRootLayerDamage() override;
+  // SurfaceObserver implementation.
+  void OnSurfaceDamaged(const SurfaceId& surface, bool* changed) override;
+  void OnSurfaceCreated(const SurfaceInfo& surface_info) override;
 
-  // SurfaceDamageObserver implementation.
-  void OnSurfaceDamaged(SurfaceId surface, bool* changed) override;
+  bool has_scheduler() const { return !!scheduler_; }
+  DirectRenderer* renderer_for_testing() const { return renderer_.get(); }
 
-  void SetEnlargePassTextureAmountForTesting(
-      const gfx::Size& enlarge_texture_amount) {
-    enlarge_texture_amount_ = enlarge_texture_amount;
-  }
+  void ForceImmediateDrawAndSwapIfPossible();
 
  private:
   void InitializeRenderer();
   void UpdateRootSurfaceResourcesLocked();
+  void DidLoseContextProvider();
 
-  DisplayClient* client_;
-  SurfaceManager* surface_manager_;
-  SharedBitmapManager* bitmap_manager_;
-  gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager_;
-  RendererSettings settings_;
+  SharedBitmapManager* const bitmap_manager_;
+  gpu::GpuMemoryBufferManager* const gpu_memory_buffer_manager_;
+  const RendererSettings settings_;
+
+  DisplayClient* client_ = nullptr;
+  SurfaceManager* surface_manager_ = nullptr;
+  const FrameSinkId frame_sink_id_;
   SurfaceId current_surface_id_;
-  uint32_t compositor_surface_namespace_;
   gfx::Size current_surface_size_;
   float device_scale_factor_ = 1.f;
   gfx::ColorSpace device_color_space_;
+  bool visible_ = false;
   bool swapped_since_resize_ = false;
-  gfx::Rect external_clip_;
-  gfx::Size enlarge_texture_amount_;
   bool output_is_secure_ = false;
 
-  // The begin_frame_source_ is often known by the output_surface_ and
-  // the scheduler_.
-  std::unique_ptr<BeginFrameSource> begin_frame_source_;
+  // The begin_frame_source_ is not owned here, and also often known by the
+  // output_surface_ and the scheduler_.
+  BeginFrameSource* begin_frame_source_;
   std::unique_ptr<OutputSurface> output_surface_;
   std::unique_ptr<DisplayScheduler> scheduler_;
   std::unique_ptr<ResourceProvider> resource_provider_;
   std::unique_ptr<SurfaceAggregator> aggregator_;
   std::unique_ptr<TextureMailboxDeleter> texture_mailbox_deleter_;
   std::unique_ptr<DirectRenderer> renderer_;
+  SoftwareRenderer* software_renderer_ = nullptr;
   std::vector<ui::LatencyInfo> stored_latency_info_;
 
  private:

@@ -23,17 +23,14 @@ ASH_EXPORT extern const int kResizeOutsideBoundsSize;
 ASH_EXPORT extern const int kResizeOutsideBoundsScaleForTouch;
 ASH_EXPORT extern const int kResizeInsideBoundsSize;
 
-#if defined(OS_CHROMEOS)
 // Background color used for the Chrome OS boot splash screen.
 extern const SkColor kChromeOsBootColor;
-#endif
 
 // The border color of keyboard focus for launcher items and system tray.
 extern const SkColor kFocusBorderColor;
+extern const int kFocusBorderThickness;
 
-// How many pixels are reserved for touch-events towards the top of an
-// immersive-fullscreen window.
-extern const int kImmersiveFullscreenTopEdgeInset;
+ASH_EXPORT extern const int kDefaultLargeCursorSize;
 
 }  // namespace ash
 

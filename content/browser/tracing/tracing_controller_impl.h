@@ -22,7 +22,6 @@
 
 namespace base {
 class RefCountedString;
-class RefCountedMemory;
 }
 
 namespace content {
@@ -30,11 +29,38 @@ namespace content {
 class TraceMessageFilter;
 class TracingUI;
 
+// An implementation of this interface is passed when constructing a
+// TraceDataSink, and receives chunks of the final trace data as it's being
+// constructed.
+// Methods may be called from any thread.
+class CONTENT_EXPORT TraceDataEndpoint
+    : public base::RefCountedThreadSafe<TraceDataEndpoint> {
+ public:
+  virtual void ReceiveTraceChunk(std::unique_ptr<std::string> chunk) {}
+  virtual void ReceiveTraceFinalContents(
+      std::unique_ptr<const base::DictionaryValue> metadata) {}
+
+ protected:
+  friend class base::RefCountedThreadSafe<TraceDataEndpoint>;
+  virtual ~TraceDataEndpoint() {}
+};
+
 class TracingControllerImpl
     : public TracingController,
       public base::trace_event::MemoryDumpManagerDelegate,
       public base::trace_event::TracingAgent {
  public:
+  // Create an endpoint that may be supplied to any TraceDataSink to
+  // dump the trace data to a callback.
+  CONTENT_EXPORT static scoped_refptr<TraceDataEndpoint> CreateCallbackEndpoint(
+      const base::Callback<void(std::unique_ptr<const base::DictionaryValue>,
+                                base::RefCountedString*)>& callback);
+
+  CONTENT_EXPORT static scoped_refptr<TraceDataSink> CreateCompressedStringSink(
+      scoped_refptr<TraceDataEndpoint> endpoint);
+  static scoped_refptr<TraceDataSink> CreateJSONSink(
+      scoped_refptr<TraceDataEndpoint> endpoint);
+
   static TracingControllerImpl* GetInstance();
 
   // TracingController implementation.
@@ -44,10 +70,8 @@ class TracingControllerImpl
   bool StopTracing(const scoped_refptr<TraceDataSink>& sink) override;
   bool GetTraceBufferUsage(
       const GetTraceBufferUsageCallback& callback) override;
-  bool SetWatchEvent(const std::string& category_name,
-                     const std::string& event_name,
-                     const WatchEventCallback& callback) override;
-  bool CancelWatchEvent() override;
+  void AddMetadata(const base::DictionaryValue& metadata) override;
+
   bool IsTracing() const override;
 
   void RegisterTracingUI(TracingUI* tracing_ui);
@@ -115,10 +139,6 @@ class TracingControllerImpl
     return pending_trace_buffer_usage_callback_.is_null();
   }
 
-  bool can_cancel_watch_event() const {
-    return !watch_event_callback_.is_null();
-  }
-
   void PerformNextQueuedGlobalMemoryDump();
 
   // Methods for use by TraceMessageFilter.
@@ -159,8 +179,6 @@ class TracingControllerImpl
 
   void FinalizeGlobalMemoryDumpIfAllProcessesReplied();
 
-  void OnWatchEventMatched();
-
   void SetEnabledOnFileThread(
       const base::trace_event::TraceConfig& trace_config,
       int mode,
@@ -176,6 +194,10 @@ class TracingControllerImpl
       const std::string& sync_id,
       const base::TimeTicks& issue_ts,
       const base::TimeTicks& issue_end_ts);
+
+  void AddFilteredMetadata(TracingController::TraceDataSink* sink,
+                           std::unique_ptr<base::DictionaryValue> metadata,
+                           const MetadataFilterPredicate& filter);
 
   typedef std::set<scoped_refptr<TraceMessageFilter>> TraceMessageFilterSet;
   TraceMessageFilterSet trace_message_filters_;
@@ -212,10 +234,6 @@ class TracingControllerImpl
   GetCategoriesDoneCallback pending_get_categories_done_callback_;
   GetTraceBufferUsageCallback pending_trace_buffer_usage_callback_;
 
-  std::string watch_category_name_;
-  std::string watch_event_name_;
-  WatchEventCallback watch_event_callback_;
-
   base::ObserverList<TraceMessageFilterObserver>
       trace_message_filter_observers_;
 
@@ -223,6 +241,7 @@ class TracingControllerImpl
   std::set<TracingUI*> tracing_uis_;
   scoped_refptr<TraceDataSink> trace_data_sink_;
   scoped_refptr<TraceDataSink> monitoring_data_sink_;
+  std::unique_ptr<base::DictionaryValue> metadata_;
 
   DISALLOW_COPY_AND_ASSIGN(TracingControllerImpl);
 };

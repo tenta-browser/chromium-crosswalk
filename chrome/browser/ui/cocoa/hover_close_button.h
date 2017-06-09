@@ -20,8 +20,9 @@
   HoverState previousState_;
 }
 
-// Returns the Material Design color of the "x".
-- (SkColor)iconColor;
+// The color of the icon in its idle (not-hovering) state.
+@property(nonatomic) SkColor iconColor;
+
 @end
 
 // A version of HoverCloseButton with the "x" icon changed to match the WebUI

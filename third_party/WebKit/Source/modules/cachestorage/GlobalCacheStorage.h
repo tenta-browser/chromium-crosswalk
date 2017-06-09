@@ -10,17 +10,18 @@
 namespace blink {
 
 class CacheStorage;
-class DOMWindow;
 class ExceptionState;
+class LocalDOMWindow;
 class WorkerGlobalScope;
 
 class GlobalCacheStorage {
-    STATIC_ONLY(GlobalCacheStorage);
-public:
-    static CacheStorage* caches(DOMWindow&, ExceptionState&);
-    static CacheStorage* caches(WorkerGlobalScope&, ExceptionState&);
+  STATIC_ONLY(GlobalCacheStorage);
+
+ public:
+  static CacheStorage* caches(LocalDOMWindow&, ExceptionState&);
+  static CacheStorage* caches(WorkerGlobalScope&, ExceptionState&);
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // GlobalCacheStorage_h
+#endif  // GlobalCacheStorage_h

@@ -10,6 +10,7 @@
 
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/stringprintf.h"
 #include "build/build_config.h"
 #include "gpu/command_buffer/common/gles2_cmd_format.h"
 #include "gpu/command_buffer/common/gles2_cmd_utils.h"
@@ -76,10 +77,7 @@ bool VertexAttrib::CanAccess(GLuint index) const {
     return true;
   }
 
-  if (!buffer_.get() || buffer_->IsDeleted()) {
-    return false;
-  }
-
+  DCHECK(buffer_.get() && !buffer_->IsDeleted());
   // The number of elements that can be accessed.
   GLsizeiptr buffer_size = buffer_->size();
   if (offset_ > buffer_size || real_stride_ == 0) {
@@ -127,6 +125,14 @@ VertexAttribManager::~VertexAttribManager() {
 void VertexAttribManager::Initialize(uint32_t max_vertex_attribs,
                                      bool init_attribs) {
   vertex_attribs_.resize(max_vertex_attribs);
+  uint32_t packed_size = (max_vertex_attribs + 15) / 16;
+  attrib_base_type_mask_.resize(packed_size);
+  attrib_enabled_mask_.resize(packed_size);
+
+  for (uint32_t ii = 0; ii < packed_size; ++ii) {
+    attrib_enabled_mask_[ii] = 0u;
+    attrib_base_type_mask_[ii] = 0u;
+  }
 
   for (uint32_t vv = 0; vv < vertex_attribs_.size(); ++vv) {
     vertex_attribs_[vv].set_index(vv);
@@ -146,10 +152,17 @@ bool VertexAttribManager::Enable(GLuint index, bool enable) {
   if (index >= vertex_attribs_.size()) {
     return false;
   }
+
   VertexAttrib& info = vertex_attribs_[index];
   if (info.enabled() != enable) {
     info.set_enabled(enable);
     info.SetList(enable ? &enabled_vertex_attribs_ : &disabled_vertex_attribs_);
+    GLuint shift_bits = (index % 16) * 2;
+    if (enable) {
+      attrib_enabled_mask_[index / 16] |= (0x3 << shift_bits);
+    } else {
+      attrib_enabled_mask_[index / 16] &= ~(0x3 << shift_bits);
+    }
   }
   return true;
 }
@@ -167,6 +180,7 @@ bool VertexAttribManager::ValidateBindings(
     const char* function_name,
     GLES2Decoder* decoder,
     FeatureInfo* feature_info,
+    BufferManager* buffer_manager,
     Program* current_program,
     GLuint max_vertex_accessed,
     bool instanced,
@@ -187,6 +201,13 @@ bool VertexAttribManager::ValidateBindings(
   for (VertexAttribList::iterator it = enabled_vertex_attribs_.begin();
        it != enabled_vertex_attribs_.end(); ++it) {
     VertexAttrib* attrib = *it;
+    Buffer* buffer = attrib->buffer();
+    if (!buffer_manager->RequestBufferAccess(
+            error_state, buffer, function_name,
+            "attached to enabled attrib %u",
+            attrib->index())) {
+      return false;
+    }
     const Program::VertexAttrib* attrib_info =
         current_program->GetAttribInfoByLocation(attrib->index());
     if (attrib_info) {
@@ -203,7 +224,6 @@ bool VertexAttribManager::ValidateBindings(
         return false;
       }
       if (use_client_side_arrays_for_stream_buffers) {
-        Buffer* buffer = attrib->buffer();
         glEnableVertexAttribArray(attrib->index());
         if (buffer->IsClientSideArray()) {
           if (current_buffer_id != 0) {
@@ -239,16 +259,7 @@ bool VertexAttribManager::ValidateBindings(
       }
     } else {
       // This attrib is not used in the current program.
-      if (!attrib->buffer()) {
-        ERRORSTATE_SET_GL_ERROR(
-            error_state, GL_INVALID_OPERATION, function_name,
-            (std::string(
-                 "attempt to render with no buffer attached to "
-                 "enabled attribute ") +
-                 base::UintToString(attrib->index())).c_str());
-        return false;
-      } else if (use_client_side_arrays_for_stream_buffers) {
-        Buffer* buffer = attrib->buffer();
+      if (use_client_side_arrays_for_stream_buffers) {
         // Disable client side arrays for unused attributes else we'll
         // read bad memory
         if (buffer->IsClientSideArray()) {

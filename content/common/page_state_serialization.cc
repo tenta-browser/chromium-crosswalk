@@ -83,12 +83,12 @@ bool AppendReferencedFilesFromDocumentState(
   if (document_state.empty())
     return true;
 
-  // This algorithm is adapted from Blink's core/html/FormController.cpp code.
+  // This algorithm is adapted from Blink's FormController code.
   // We only care about how that code worked when this code snapshot was taken
   // as this code is only needed for backwards compat.
   //
-  // For reference, see FormController::formStatesFromStateVector at:
-  // http://src.chromium.org/viewvc/blink/trunk/Source/core/html/FormController.cpp?pathrev=152274
+  // For reference, see FormController::formStatesFromStateVector in
+  // third_party/WebKit/Source/core/html/forms/FormController.cpp.
 
   size_t index = 0;
 
@@ -196,12 +196,13 @@ struct SerializeObject {
 // 21: Add frame sequence number.
 // 22: Add scroll restoration type.
 // 23: Remove frame sequence number, there are easier ways.
+// 24: Add did save scroll or scale state.
 //
 // NOTE: If the version is -1, then the pickle contains only a URL string.
 // See ReadPageState.
 //
 const int kMinVersion = 11;
-const int kCurrentVersion = 23;
+const int kCurrentVersion = 24;
 
 // A bunch of convenience functions to read/write to SerializeObjects.  The
 // de-serializers assume the input data will be in the correct format and fall
@@ -505,18 +506,28 @@ void WriteFrameState(
 
   WriteString(state.url_string, obj);
   WriteString(state.target, obj);
-  WriteInteger(state.scroll_offset.x(), obj);
-  WriteInteger(state.scroll_offset.y(), obj);
+  WriteBoolean(state.did_save_scroll_or_scale_state, obj);
+
+  if (state.did_save_scroll_or_scale_state) {
+    WriteInteger(state.scroll_offset.x(), obj);
+    WriteInteger(state.scroll_offset.y(), obj);
+  }
+
   WriteString(state.referrer, obj);
 
   WriteStringVector(state.document_state, obj);
 
-  WriteReal(state.page_scale_factor, obj);
+  if (state.did_save_scroll_or_scale_state)
+    WriteReal(state.page_scale_factor, obj);
+
   WriteInteger64(state.item_sequence_number, obj);
   WriteInteger64(state.document_sequence_number, obj);
-  WriteInteger(state.referrer_policy, obj);
-  WriteReal(state.visual_viewport_scroll_offset.x(), obj);
-  WriteReal(state.visual_viewport_scroll_offset.y(), obj);
+  WriteInteger(static_cast<int>(state.referrer_policy), obj);
+
+  if (state.did_save_scroll_or_scale_state) {
+    WriteReal(state.visual_viewport_scroll_offset.x(), obj);
+    WriteReal(state.visual_viewport_scroll_offset.y(), obj);
+  }
 
   WriteInteger(state.scroll_restoration_type, obj);
 
@@ -557,9 +568,17 @@ void ReadFrameState(SerializeObject* obj, bool is_top,
     ReadReal(obj);    // Skip obsolete visited time field.
   }
 
-  int x = ReadInteger(obj);
-  int y = ReadInteger(obj);
-  state->scroll_offset = gfx::Point(x, y);
+  if (obj->version >= 24) {
+    state->did_save_scroll_or_scale_state = ReadBoolean(obj);
+  } else {
+    state->did_save_scroll_or_scale_state = true;
+  }
+
+  if (state->did_save_scroll_or_scale_state) {
+    int x = ReadInteger(obj);
+    int y = ReadInteger(obj);
+    state->scroll_offset = gfx::Point(x, y);
+  }
 
   if (obj->version < 15) {
     ReadBoolean(obj);  // Skip obsolete target item flag.
@@ -569,7 +588,9 @@ void ReadFrameState(SerializeObject* obj, bool is_top,
 
   ReadStringVector(obj, &state->document_state);
 
-  state->page_scale_factor = ReadReal(obj);
+  if (state->did_save_scroll_or_scale_state)
+    state->page_scale_factor = ReadReal(obj);
+
   state->item_sequence_number = ReadInteger64(obj);
   state->document_sequence_number = ReadInteger64(obj);
   if (obj->version >= 21 && obj->version < 23)
@@ -583,7 +604,7 @@ void ReadFrameState(SerializeObject* obj, bool is_top,
         static_cast<blink::WebReferrerPolicy>(ReadInteger(obj));
   }
 
-  if (obj->version >= 20) {
+  if (obj->version >= 20 && state->did_save_scroll_or_scale_state) {
     double x = ReadReal(obj);
     double y = ReadReal(obj);
     state->visual_viewport_scroll_offset = gfx::PointF(x, y);
@@ -689,11 +710,11 @@ ExplodedHttpBody::~ExplodedHttpBody() {
 
 ExplodedFrameState::ExplodedFrameState()
     : scroll_restoration_type(blink::WebHistoryScrollRestorationAuto),
+      did_save_scroll_or_scale_state(true),
       item_sequence_number(0),
       document_sequence_number(0),
       page_scale_factor(0.0),
-      referrer_policy(blink::WebReferrerPolicyDefault) {
-}
+      referrer_policy(blink::WebReferrerPolicyDefault) {}
 
 ExplodedFrameState::ExplodedFrameState(const ExplodedFrameState& other) {
   assign(other);
@@ -714,6 +735,7 @@ void ExplodedFrameState::assign(const ExplodedFrameState& other) {
   state_object = other.state_object;
   document_state = other.document_state;
   scroll_restoration_type = other.scroll_restoration_type;
+  did_save_scroll_or_scale_state = other.did_save_scroll_or_scale_state;
   visual_viewport_scroll_offset = other.visual_viewport_scroll_offset;
   scroll_offset = other.scroll_offset;
   item_sequence_number = other.item_sequence_number;
@@ -741,12 +763,11 @@ bool DecodePageState(const std::string& encoded, ExplodedPageState* exploded) {
   return !obj.parse_error;
 }
 
-bool EncodePageState(const ExplodedPageState& exploded, std::string* encoded) {
+void EncodePageState(const ExplodedPageState& exploded, std::string* encoded) {
   SerializeObject obj;
   obj.version = kCurrentVersion;
   WritePageState(exploded, &obj);
   *encoded = obj.GetAsString();
-  return true;
 }
 
 #if defined(OS_ANDROID)
@@ -766,6 +787,10 @@ scoped_refptr<ResourceRequestBodyImpl> DecodeResourceRequestBody(
   scoped_refptr<ResourceRequestBodyImpl> result = new ResourceRequestBodyImpl();
   SerializeObject obj(data, static_cast<int>(size));
   ReadResourceRequestBody(&obj, result);
+  // Please see the EncodeResourceRequestBody() function below for information
+  // about why the contains_sensitive_info() field is being explicitly
+  // deserialized.
+  result->set_contains_sensitive_info(ReadBoolean(&obj));
   return obj.parse_error ? nullptr : result;
 }
 
@@ -774,6 +799,11 @@ std::string EncodeResourceRequestBody(
   SerializeObject obj;
   obj.version = kCurrentVersion;
   WriteResourceRequestBody(resource_request_body, &obj);
+  // EncodeResourceRequestBody() is different from WriteResourceRequestBody()
+  // because it covers additional data (e.g.|contains_sensitive_info|) which
+  // is marshaled between native code and java. WriteResourceRequestBody()
+  // serializes data which needs to be saved out to disk.
+  WriteBoolean(resource_request_body.contains_sensitive_info(), &obj);
   return obj.GetAsString();
 }
 

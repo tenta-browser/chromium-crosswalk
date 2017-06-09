@@ -29,6 +29,60 @@ cr.define('extension_test_util', function() {
   };
 
   /**
+   * A mock to test receiving expected events and verify that they were called
+   * with the proper detail values.
+   */
+  function ListenerMock() {
+    this.listeners_ = {};
+  }
+
+  ListenerMock.prototype = {
+    /** @private {Object<{satisfied: boolean, args: !Object}>} */
+    listeners_: undefined,
+
+    /**
+     * @param {string} eventName
+     * @param {Event} e
+     */
+    onEvent_: function(eventName, e) {
+      assert(this.listeners_.hasOwnProperty(eventName));
+      if (this.listeners_[eventName].satisfied) {
+        // Event was already called and checked. We could always make this
+        // more intelligent by allowing for subsequent calls, removing the
+        // listener, etc, but there's no need right now.
+        return;
+      }
+      var expected = this.listeners_[eventName].args || {};
+      expectDeepEquals(e.detail, expected);
+      this.listeners_[eventName].satisfied = true;
+    },
+
+    /**
+     * Adds an expected event.
+     * @param {!EventTarget} target
+     * @param {string} eventName
+     * @param {Object=} opt_eventArgs If omitted, will check that the details
+     *     are empty (i.e., {}).
+     */
+    addListener: function(target, eventName, opt_eventArgs) {
+      assert(!this.listeners_.hasOwnProperty(eventName));
+      this.listeners_[eventName] =
+          {args: opt_eventArgs || {}, satisfied: false};
+      target.addEventListener(eventName, this.onEvent_.bind(this, eventName));
+    },
+
+    /** Verifies the expectations set. */
+    verify: function() {
+      var missingEvents = [];
+      for (var key in this.listeners_) {
+        if (!this.listeners_[key].satisfied)
+          missingEvents.push(key);
+      }
+      expectEquals(0, missingEvents.length, JSON.stringify(missingEvents));
+    },
+  }
+
+  /**
    * A mock delegate for the item, capable of testing functionality.
    * @constructor
    * @extends {ClickMock}
@@ -65,6 +119,9 @@ cr.define('extension_test_util', function() {
 
     /** @override */
     repairItem: function(id) {},
+
+    /** @override */
+    showItemOptionsPage: function(id) {},
   };
 
   /**
@@ -118,11 +175,14 @@ cr.define('extension_test_util', function() {
         corruptInstall: false,
         updateRequired: false,
       },
+      homePage: {specified: false, url: ''},
       iconUrl: 'chrome://extension-icon/' + id + '/24/0',
       id: id,
       incognitoAccess: {isEnabled: true, isActive: false},
       location: 'FROM_STORE',
+      manifestErrors: [],
       name: 'Wonderful Extension',
+      runtimeErrors: [],
       permissions: [],
       state: 'ENABLED',
       type: 'EXTENSION',
@@ -146,6 +206,7 @@ cr.define('extension_test_util', function() {
 
   return {
     ClickMock: ClickMock,
+    ListenerMock: ListenerMock,
     MockItemDelegate: MockItemDelegate,
     isVisible: isVisible,
     testVisible: testVisible,

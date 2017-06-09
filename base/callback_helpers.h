@@ -20,10 +20,13 @@
 
 namespace base {
 
-template <typename Sig>
-base::Callback<Sig> ResetAndReturn(base::Callback<Sig>* cb) {
-  base::Callback<Sig> ret(*cb);
-  cb->Reset();
+template <typename Signature,
+          internal::CopyMode copy_mode,
+          internal::RepeatMode repeat_mode>
+base::Callback<Signature, copy_mode, repeat_mode> ResetAndReturn(
+    base::Callback<Signature, copy_mode, repeat_mode>* cb) {
+  base::Callback<Signature, copy_mode, repeat_mode> ret(std::move(*cb));
+  DCHECK(!*cb);
   return ret;
 }
 
@@ -37,15 +40,15 @@ class BASE_EXPORT ScopedClosureRunner {
 
   ScopedClosureRunner(ScopedClosureRunner&& other);
 
-  // Calls the current closure if it's set and replaces it with the closure from
-  // |other|.
+  // Releases the current closure if it's set and replaces it with the closure
+  // from |other|.
   ScopedClosureRunner& operator=(ScopedClosureRunner&& other);
 
   // Calls the current closure and resets it, so it wont be called again.
-  void Reset();
+  void RunAndReset();
 
-  // Calls the current closure and replaces it with the new one.
-  void Reset(const Closure& closure);
+  // Replaces closure with the new one releasing the old one without calling it.
+  void ReplaceClosure(const Closure& closure);
 
   // Releases the Closure without calling.
   Closure Release() WARN_UNUSED_RESULT;

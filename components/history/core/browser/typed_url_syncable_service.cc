@@ -5,6 +5,7 @@
 #include "components/history/core/browser/typed_url_syncable_service.h"
 
 #include <stddef.h>
+
 #include <utility>
 
 #include "base/auto_reset.h"
@@ -12,9 +13,9 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/history/core/browser/history_backend.h"
+#include "components/sync/protocol/sync.pb.h"
+#include "components/sync/protocol/typed_url_specifics.pb.h"
 #include "net/base/url_util.h"
-#include "sync/protocol/sync.pb.h"
-#include "sync/protocol/typed_url_specifics.pb.h"
 
 namespace history {
 
@@ -70,7 +71,7 @@ TypedUrlSyncableService::TypedUrlSyncableService(
       num_db_errors_(0),
       history_backend_observer_(this) {
   DCHECK(history_backend_);
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK(sequence_checker_.CalledOnValidSequence());
 }
 
 TypedUrlSyncableService::~TypedUrlSyncableService() {
@@ -81,7 +82,7 @@ syncer::SyncMergeResult TypedUrlSyncableService::MergeDataAndStartSyncing(
     const syncer::SyncDataList& initial_sync_data,
     std::unique_ptr<syncer::SyncChangeProcessor> sync_processor,
     std::unique_ptr<syncer::SyncErrorFactory> error_handler) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK(sequence_checker_.CalledOnValidSequence());
   DCHECK(!sync_processor_.get());
   DCHECK(sync_processor.get());
   DCHECK(error_handler.get());
@@ -150,6 +151,9 @@ syncer::SyncMergeResult TypedUrlSyncableService::MergeDataAndStartSyncing(
     const sync_pb::EntitySpecifics& specifics = sync_iter->GetSpecifics();
     const sync_pb::TypedUrlSpecifics& typed_url(specifics.typed_url());
 
+    if (ShouldIgnoreUrl(GURL(typed_url.url())))
+      continue;
+
     // Add url to cache of sync state. Note that this is done irrespective of
     // whether the synced url is ignored locally, so that we know what to delete
     // at a later point.
@@ -207,7 +211,7 @@ syncer::SyncMergeResult TypedUrlSyncableService::MergeDataAndStartSyncing(
 }
 
 void TypedUrlSyncableService::StopSyncing(syncer::ModelType type) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK(sequence_checker_.CalledOnValidSequence());
   DCHECK_EQ(type, syncer::TYPED_URLS);
 
   // Clear cache of server state.
@@ -223,7 +227,7 @@ void TypedUrlSyncableService::StopSyncing(syncer::ModelType type) {
 
 syncer::SyncDataList TypedUrlSyncableService::GetAllSyncData(
     syncer::ModelType type) const {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK(sequence_checker_.CalledOnValidSequence());
   syncer::SyncDataList list;
 
   // TODO(sync): Add implementation
@@ -234,7 +238,7 @@ syncer::SyncDataList TypedUrlSyncableService::GetAllSyncData(
 syncer::SyncError TypedUrlSyncableService::ProcessSyncChanges(
     const tracked_objects::Location& from_here,
     const syncer::SyncChangeList& change_list) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK(sequence_checker_.CalledOnValidSequence());
 
   std::vector<GURL> pending_deleted_urls;
   history::URLRows new_synced_urls;
@@ -284,7 +288,7 @@ syncer::SyncError TypedUrlSyncableService::ProcessSyncChanges(
 void TypedUrlSyncableService::OnURLsModified(
     history::HistoryBackend* history_backend,
     const history::URLRows& changed_urls) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK(sequence_checker_.CalledOnValidSequence());
 
   if (processing_syncer_changes_)
     return;  // These are changes originating from us, ignore.
@@ -314,7 +318,7 @@ void TypedUrlSyncableService::OnURLVisited(
     const history::URLRow& row,
     const history::RedirectList& redirects,
     base::Time visit_time) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK(sequence_checker_.CalledOnValidSequence());
 
   if (processing_syncer_changes_)
     return;  // These are changes originating from us, ignore.
@@ -339,7 +343,7 @@ void TypedUrlSyncableService::OnURLsDeleted(
     bool expired,
     const history::URLRows& deleted_rows,
     const std::set<GURL>& favicon_urls) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK(sequence_checker_.CalledOnValidSequence());
 
   if (processing_syncer_changes_)
     return;  // These are changes originating from us, ignore.
@@ -745,6 +749,12 @@ bool TypedUrlSyncableService::ShouldIgnoreUrl(const GURL& url) {
 
   // Ignore localhost URLs.
   if (net::IsLocalhost(url.host()))
+    return true;
+
+  // Ignore username and password, sonce history backend will remove user name
+  // and password in URLDatabase::GURLToDatabaseURL and send username/password
+  // removed url to sync later.
+  if (url.has_username() || url.has_password())
     return true;
 
   return false;

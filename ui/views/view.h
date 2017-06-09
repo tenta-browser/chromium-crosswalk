@@ -53,14 +53,13 @@ class Transform;
 }
 
 namespace ui {
-struct AXViewState;
+struct AXActionData;
+struct AXNodeData;
 class Compositor;
 class InputMethod;
 class Layer;
 class NativeTheme;
 class PaintContext;
-class TextInputClient;
-class Texture;
 class ThemeProvider;
 }
 
@@ -75,12 +74,15 @@ class FocusTraversable;
 class LayoutManager;
 class NativeViewAccessibility;
 class ScrollView;
+class ViewObserver;
 class Widget;
+class WordLookupClient;
 
 namespace internal {
 class PreEventDispatchHandler;
 class PostEventDispatchHandler;
 class RootView;
+class ScopedChildrenLock;
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -114,7 +116,7 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
                           public ui::EventTarget,
                           public ui::EventHandler {
  public:
-  typedef std::vector<View*> Views;
+  using Views = std::vector<View*>;
 
   enum class FocusBehavior {
     // Use when the View is never focusable. Default.
@@ -190,6 +192,8 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   void RemoveAllChildViews(bool delete_children);
 
   int child_count() const { return static_cast<int>(children_.size()); }
+  // See also |GetChildrenInZOrder()| below that returns |children_|
+  // in reverse z-order.
   bool has_children() const { return !children_.empty(); }
 
   // Returns the child view at |index|.
@@ -236,6 +240,7 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   int y() const { return bounds_.y(); }
   int width() const { return bounds_.width(); }
   int height() const { return bounds_.height(); }
+  const gfx::Point& origin() const { return bounds_.origin(); }
   const gfx::Size& size() const { return bounds_.size(); }
 
   // Returns the bounds of the content area of the view, i.e. the rectangle
@@ -280,10 +285,11 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // windows.
   virtual gfx::Size GetMaximumSize() const;
 
-  // Return the height necessary to display this view with the provided width.
-  // View's implementation returns the value from getPreferredSize.cy.
-  // Override if your View's preferred height depends upon the width (such
-  // as with Labels).
+  // Return the preferred height for a specific width. Override if the
+  // preferred height depends upon the width (such as a multi-line label). If
+  // a LayoutManger has been installed this returns the value of
+  // LayoutManager::GetPreferredHeightForWidth(), otherwise this returns
+  // GetPreferredSize().height().
   virtual int GetHeightForWidth(int w) const;
 
   // Sets whether this view is visible. Painting is scheduled as needed. Also,
@@ -305,6 +311,14 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // Returns whether the view is enabled.
   bool enabled() const { return enabled_; }
 
+  // Returns the child views ordered in reverse z-order. That is, views later in
+  // the returned vector have a higher z-order (are painted later) than those
+  // early in the vector. The returned vector has exactly the same number of
+  // Views as |children_|. The default implementation returns |children_|,
+  // subclass if the paint order should differ from that of |children_|.
+  // This order is taken into account by painting and targeting implementations.
+  virtual View::Views GetChildrenInZOrder();
+
   // Transformations -----------------------------------------------------------
 
   // Methods for setting transformations for a view (e.g. rotation, scaling).
@@ -320,10 +334,15 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // Sets whether this view paints to a layer. A view paints to a layer if
   // either of the following are true:
   // . the view has a non-identity transform.
-  // . SetPaintToLayer(true) has been invoked.
+  // . SetPaintToLayer(ui::LayerType) has been invoked.
   // View creates the Layer only when it exists in a Widget with a non-NULL
   // Compositor.
-  void SetPaintToLayer(bool paint_to_layer);
+  void SetPaintToLayer(ui::LayerType layer_type = ui::LAYER_TEXTURED);
+
+  // Destroys the layer associated with this view, and reparents any descendants
+  // to the destroyed layer's parent. If the view does not currently have a
+  // layer, this has no effect.
+  void DestroyLayer();
 
   // Overridden from ui::LayerOwner:
   std::unique_ptr<ui::Layer> RecreateLayer() override;
@@ -482,7 +501,8 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // Convert a point from a View's coordinate system to that of the screen.
   static void ConvertPointToScreen(const View* src, gfx::Point* point);
 
-  // Convert a point from a View's coordinate system to that of the screen.
+  // Convert a point from the screen coordinate system to that View's coordinate
+  // system.
   static void ConvertPointFromScreen(const View* dst, gfx::Point* point);
 
   // Applies transformation on the rectangle, which is in the view's coordinate
@@ -525,26 +545,25 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
 
   // Returns the NativeTheme to use for this View. This calls through to
   // GetNativeTheme() on the Widget this View is in, or provides a default
-  // theme if there's no widget. Warning: the default theme might not be
-  // correct; you should probably override OnNativeThemeChanged().
+  // theme if there's no widget, or returns |native_theme_| if that's
+  // set. Warning: the default theme might not be correct; you should probably
+  // override OnNativeThemeChanged().
   ui::NativeTheme* GetNativeTheme() {
     return const_cast<ui::NativeTheme*>(
         const_cast<const View*>(this)->GetNativeTheme());
   }
   const ui::NativeTheme* GetNativeTheme() const;
 
+  // Sets the native theme and informs descendants.
+  void SetNativeTheme(ui::NativeTheme* theme);
+
   // RTL painting --------------------------------------------------------------
 
   // This method determines whether the gfx::Canvas object passed to
   // View::Paint() needs to be transformed such that anything drawn on the
   // canvas object during View::Paint() is flipped horizontally.
-  //
-  // By default, this function returns false (which is the initial value of
-  // |flip_canvas_on_paint_for_rtl_ui_|). View subclasses that need to paint on
-  // a flipped gfx::Canvas when the UI layout is right-to-left need to call
-  // EnableCanvasFlippingForRTLUI().
-  bool FlipCanvasOnPaintForRTLUI() const {
-    return flip_canvas_on_paint_for_rtl_ui_ ? base::i18n::IsRTL() : false;
+  bool flip_canvas_on_paint_for_rtl_ui() const {
+    return flip_canvas_on_paint_for_rtl_ui_;
   }
 
   // Enables or disables flipping of the gfx::Canvas during View::Paint().
@@ -597,6 +616,12 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // Returns true if this view or any of its descendants are permitted to
   // be the target of an event.
   virtual bool CanProcessEventsWithinSubtree() const;
+
+  // Sets whether this view or any of its descendants are permitted to be the
+  // target of an event.
+  void set_can_process_events_within_subtree(bool can_process) {
+    can_process_events_within_subtree_ = can_process;
+  }
 
   // Returns true if the mouse cursor is over |view| and mouse events are
   // enabled.
@@ -721,6 +746,9 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   ViewTargeter* GetEffectiveViewTargeter() const;
 
   ViewTargeter* targeter() const { return targeter_.get(); }
+
+  // Returns the WordLookupClient associated with this view.
+  virtual WordLookupClient* GetWordLookupClient();
 
   // Overridden from ui::EventTarget:
   bool CanAcceptEvent(const ui::Event& event) override;
@@ -945,8 +973,15 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
 
   // Accessibility -------------------------------------------------------------
 
-  // Modifies |state| to reflect the current accessible state of this view.
-  virtual void GetAccessibleState(ui::AXViewState* state) { }
+  // Modifies |node_data| to reflect the current accessible state of this view.
+  virtual void GetAccessibleNodeData(ui::AXNodeData* node_data) {}
+
+  // Handle a request from assistive technology to perform an action on this
+  // view. Returns true on success, but note that the success/failure is
+  // not propagated to the client that requested the action, since the
+  // request is sometimes asynchronous. The right way to send a response is
+  // via NotifyAccessibilityEvent(), below.
+  virtual bool HandleAccessibleAction(const ui::AXActionData& action_data);
 
   // Returns an instance of the native accessibility interface for this view.
   virtual gfx::NativeViewAccessible GetNativeViewAccessible();
@@ -993,6 +1028,10 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
                                      bool is_horizontal, bool is_positive);
   virtual int GetLineScrollIncrement(ScrollView* scroll_view,
                                      bool is_horizontal, bool is_positive);
+
+  void AddObserver(ViewObserver* observer);
+  void RemoveObserver(ViewObserver* observer);
+  bool HasObserver(const ViewObserver* observer) const;
 
  protected:
   // Used to track a drag. RootView passes this into
@@ -1125,7 +1164,6 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   void OnPaintLayer(const ui::PaintContext& context) override;
   void OnDelegatedFrameDamage(const gfx::Rect& damage_rect_in_dip) override;
   void OnDeviceScaleFactorChanged(float device_scale_factor) override;
-  base::Closure PrepareForLayerBoundsChange() override;
 
   // Finds the layer that this view paints to (it may belong to an ancestor
   // view), then reorders the immediate children of that layer to match the
@@ -1221,6 +1259,7 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   friend class internal::PreEventDispatchHandler;
   friend class internal::PostEventDispatchHandler;
   friend class internal::RootView;
+  friend class internal::ScopedChildrenLock;
   friend class FocusManager;
   friend class ViewLayerTest;
   friend class Widget;
@@ -1346,7 +1385,7 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // Accelerated painting ------------------------------------------------------
 
   // Creates the layer and related fields for this view.
-  void CreateLayer();
+  void CreateLayer(ui::LayerType layer_type);
 
   // Recursively calls UpdateParentLayers() on all descendants, stopping at any
   // Views that have layers. Calls UpdateParentLayer() for any Views that have
@@ -1368,10 +1407,6 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // Orphans the layers in this subtree that are parented to layers outside of
   // this subtree.
   void OrphanLayers();
-
-  // Destroys the layer associated with this view, and reparents any descendants
-  // to the destroyed layer's parent.
-  void DestroyLayer();
 
   // Input ---------------------------------------------------------------------
 
@@ -1460,6 +1495,14 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // This view's children.
   Views children_;
 
+#if DCHECK_IS_ON()
+  // True while iterating over |children_|. Used to detect and DCHECK when
+  // |children_| is mutated during iteration.
+  mutable bool iterating_;
+#endif
+
+  bool can_process_events_within_subtree_;
+
   // Size and disposition ------------------------------------------------------
 
   // This View's bounds in the parent coordinate system.
@@ -1522,6 +1565,13 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // Cached output of painting to be reused in future frames until invalidated.
   ui::PaintCache paint_cache_;
 
+  // Native theme --------------------------------------------------------------
+
+  // A native theme for this view and its descendants. Typically null, in which
+  // case the native theme is drawn from the parent view (eventually the
+  // widget).
+  ui::NativeTheme* native_theme_ = nullptr;
+
   // RTL painting --------------------------------------------------------------
 
   // Indicates whether or not the gfx::Canvas object passed to View::Paint()
@@ -1573,6 +1623,10 @@ class VIEWS_EXPORT View : public ui::LayerDelegate,
   // Belongs to this view, but it's reference-counted on some platforms
   // so we can't use a scoped_ptr. It's dereferenced in the destructor.
   NativeViewAccessibility* native_view_accessibility_;
+
+  // Observers -------------------------------------------------------------
+
+  base::ObserverList<ViewObserver> observers_;
 
   DISALLOW_COPY_AND_ASSIGN(View);
 };

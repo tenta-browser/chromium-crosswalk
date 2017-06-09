@@ -43,12 +43,11 @@ class InstallUtil {
   // Launches given exe as admin on Vista.
   static bool ExecuteExeAsAdmin(const base::CommandLine& cmd, DWORD* exit_code);
 
-  // Reads the uninstall command for Chromium from registry and returns it.
-  // If system_install is true the command is read from HKLM, otherwise
-  // from HKCU.
-  static base::CommandLine GetChromeUninstallCmd(
-      bool system_install,
-      BrowserDistribution::Type distribution_type);
+  // Reads the uninstall command for Chromium from the Windows registry and
+  // returns it. If |system_install| is true the command is read from HKLM,
+  // otherwise from HKCU. Returns an empty CommandLine if Chrome is not
+  // installed.
+  static base::CommandLine GetChromeUninstallCmd(bool system_install);
 
   // Find the version of Chrome installed on the system by checking the
   // Google Update registry key. Fills |version| with the version or a
@@ -84,21 +83,12 @@ class InstallUtil {
                                       const base::string16* const launch_cmd,
                                       WorkItemList* install_list);
 
-  // Update the installer stage reported by Google Update.  |state_key_path|
-  // should be obtained via the state_key method of an InstallerState instance
-  // created before the machine state is modified by the installer.
-  static void UpdateInstallerStage(bool system_install,
-                                   const base::string16& state_key_path,
-                                   installer::InstallerStage stage);
-
   // Returns true if this installation path is per user, otherwise returns false
   // (per machine install, meaning: the exe_path contains the path to Program
   // Files).
-  static bool IsPerUserInstall(const base::FilePath& exe_path);
-
-  // Returns true if the installation represented by the pair of |dist| and
-  // |system_level| is a multi install.
-  static bool IsMultiInstall(BrowserDistribution* dist, bool system_install);
+  // TODO(grt): consider replacing all callers with direct use of
+  // InstallDetails.
+  static bool IsPerUserInstall();
 
   // Returns true if this is running setup process for Chrome SxS (as
   // indicated by the presence of --chrome-sxs on the command line) or if this
@@ -180,6 +170,10 @@ class InstallUtil {
                                  const base::string16& arguments,
                                  base::CommandLine* command_line);
 
+  // Appends the installer switch that selects the current install mode (see
+  // install_static::InstallDetails).
+  static void AppendModeSwitch(base::CommandLine* command_line);
+
   // Returns a string in the form YYYYMMDD of the current date.
   static base::string16 GetCurrentDate();
 
@@ -204,35 +198,19 @@ class InstallUtil {
   // the same file.
   class ProgramCompare : public RegistryValuePredicate {
    public:
-    enum class ComparisonType {
-      // Evaluation compares existing files.
-      FILE,
-      // Evaluation compares existing files or directories.
-      FILE_OR_DIRECTORY,
-    };
-
-    // Constructs a ProgramCompare with FILE as ComparisonType.
     explicit ProgramCompare(const base::FilePath& path_to_match);
-
-    // Constructs a ProgramCompare with |comparison_type| as ComparisonType.
-    ProgramCompare(const base::FilePath& path_to_match,
-                   ComparisonType comparison_type);
-
     ~ProgramCompare() override;
     bool Evaluate(const base::string16& value) const override;
     bool EvaluatePath(const base::FilePath& path) const;
 
    protected:
-    static bool OpenForInfo(const base::FilePath& path,
-                            base::File* file,
-                            ComparisonType comparison_type);
+    static bool OpenForInfo(const base::FilePath& path, base::File* file);
     static bool GetInfo(const base::File& file,
                         BY_HANDLE_FILE_INFORMATION* info);
 
     base::FilePath path_to_match_;
     base::File file_;
     BY_HANDLE_FILE_INFORMATION file_info_;
-    ComparisonType comparison_type_;
 
    private:
     DISALLOW_COPY_AND_ASSIGN(ProgramCompare);

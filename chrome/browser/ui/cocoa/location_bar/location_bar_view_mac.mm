@@ -5,13 +5,13 @@
 #import "chrome/browser/ui/cocoa/location_bar/location_bar_view_mac.h"
 
 #include "base/bind.h"
-#include "base/command_line.h"
 #import "base/mac/mac_util.h"
-#include "base/message_loop/message_loop.h"
+#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/app/chrome_command_ids.h"
 #import "chrome/browser/app_controller_mac.h"
 #include "chrome/browser/command_updater.h"
@@ -34,12 +34,12 @@
 #import "chrome/browser/ui/cocoa/location_bar/autocomplete_text_field.h"
 #import "chrome/browser/ui/cocoa/location_bar/autocomplete_text_field_cell.h"
 #import "chrome/browser/ui/cocoa/location_bar/content_setting_decoration.h"
-#import "chrome/browser/ui/cocoa/location_bar/ev_bubble_decoration.h"
 #import "chrome/browser/ui/cocoa/location_bar/keyword_hint_decoration.h"
 #import "chrome/browser/ui/cocoa/location_bar/location_icon_decoration.h"
 #import "chrome/browser/ui/cocoa/location_bar/manage_passwords_decoration.h"
 #import "chrome/browser/ui/cocoa/location_bar/page_action_decoration.h"
 #import "chrome/browser/ui/cocoa/location_bar/save_credit_card_decoration.h"
+#import "chrome/browser/ui/cocoa/location_bar/security_state_bubble_decoration.h"
 #import "chrome/browser/ui/cocoa/location_bar/selected_keyword_decoration.h"
 #import "chrome/browser/ui/cocoa/location_bar/star_decoration.h"
 #import "chrome/browser/ui/cocoa/location_bar/translate_decoration.h"
@@ -50,22 +50,25 @@
 #include "chrome/browser/ui/content_settings/content_setting_image_model.h"
 #include "chrome/browser/ui/passwords/manage_passwords_ui_controller.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/grit/chromium_strings.h"
+#include "chrome/grit/theme_resources.h"
 #include "components/bookmarks/common/bookmark_pref_names.h"
+#include "components/grit/components_scaled_resources.h"
 #import "components/omnibox/browser/omnibox_popup_model.h"
+#include "components/omnibox/browser/vector_icons.h"
 #include "components/prefs/pref_service.h"
 #include "components/search_engines/template_url.h"
 #include "components/search_engines/template_url_service.h"
-#include "components/security_state/security_state_model.h"
+#include "components/toolbar/vector_icons.h"
 #include "components/translate/core/browser/language_state.h"
+#include "components/variations/variations_associated_data.h"
 #include "components/zoom/zoom_controller.h"
 #include "components/zoom/zoom_event_manager.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/url_constants.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/extension.h"
-#include "grit/components_scaled_resources.h"
-#include "grit/theme_resources.h"
 #include "skia/ext/skia_utils_mac.h"
 #import "ui/base/cocoa/cocoa_base_utils.h"
 #include "ui/base/l10n/l10n_util_mac.h"
@@ -75,7 +78,6 @@
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_skia_util_mac.h"
 #include "ui/gfx/paint_vector_icon.h"
-#include "ui/gfx/vector_icons_public.h"
 
 using content::WebContents;
 
@@ -87,183 +89,14 @@ const static int kFirstRunBubbleYOffset = 1;
 
 const int kDefaultIconSize = 16;
 
+// The minimum width the URL should have for the verbose state to be shown.
+const int kMinURLWidth = 120;
+
 // Color of the vector graphic icons when the location bar is dark.
 // SkColorSetARGB(0xCC, 0xFF, 0xFF 0xFF);
 const SkColor kMaterialDarkVectorIconColor = SK_ColorWHITE;
 
 }  // namespace
-
-// A temporary class that draws hardcoded HTTP graphic icons for Material
-// design. This class will be removed once the Material icons are available
-// in M53.
-@interface LocationBarImageRep : NSCustomImageRep
-@property(assign, nonatomic) gfx::VectorIconId iconId;
-@property(retain, nonatomic) NSColor* fillColor;
-
-+ (NSImage*)imageForId:(gfx::VectorIconId)vectorIconId
-                 color:(SkColor)vectorIconColor;
-
-// NSCustomImageRep delegate method that performs the drawing.
-+ (void)drawLocationBarIcon:(LocationBarImageRep*)imageRep;
-
-@end
-
-@implementation LocationBarImageRep
-
-@synthesize iconId = iconId_;
-@synthesize fillColor = fillColor_;
-
-- (void)dealloc {
-  [fillColor_ release];
-  [super dealloc];
-}
-
-+ (NSImage*)imageForId:(gfx::VectorIconId)vectorIconId
-                 color:(SkColor)vectorIconColor {
-  if (vectorIconId != gfx::VectorIconId::LOCATION_BAR_HTTP &&
-      vectorIconId != gfx::VectorIconId::LOCATION_BAR_HTTPS_INVALID &&
-      vectorIconId != gfx::VectorIconId::LOCATION_BAR_HTTPS_VALID) {
-    return NSImageFromImageSkiaWithColorSpace(
-        gfx::CreateVectorIcon(vectorIconId, kDefaultIconSize, vectorIconColor),
-        base::mac::GetSRGBColorSpace());
-  }
-
-  base::scoped_nsobject<LocationBarImageRep> imageRep(
-      [[LocationBarImageRep alloc]
-          initWithDrawSelector:@selector(drawLocationBarIcon:)
-                      delegate:[LocationBarImageRep class]]);
-  [imageRep setIconId:vectorIconId];
-  [imageRep setFillColor:skia::SkColorToSRGBNSColor(vectorIconColor)];
-
-  // Create the image from the image rep.
-  const NSSize kImageSize = NSMakeSize(kDefaultIconSize, kDefaultIconSize);
-  NSImage* locationBarImage =
-      [[[NSImage alloc] initWithSize:kImageSize] autorelease];
-  [locationBarImage setCacheMode:NSImageCacheAlways];
-  [locationBarImage addRepresentation:imageRep];
-
-  return locationBarImage;
-}
-
-+ (void)drawLocationBarIcon:(LocationBarImageRep*)imageRep {
-  [[imageRep fillColor] set];
-
-  // Determine the scale factor.
-  CGContextRef context = static_cast<CGContextRef>(
-      [[NSGraphicsContext currentContext] graphicsPort]);
-  CGRect unitRect = CGRectMake(0.0, 0.0, 1.0, 1.0);
-  CGRect deviceRect = CGContextConvertRectToDeviceSpace(context, unitRect);
-  int scaleFactor = deviceRect.size.height;
-
-  switch ([imageRep iconId]) {
-    case gfx::VectorIconId::LOCATION_BAR_HTTP:
-      [self drawLocationBarIconHTTPForScale:scaleFactor];
-      break;
-    case gfx::VectorIconId::LOCATION_BAR_HTTPS_INVALID:
-      [self drawLocationBarIconHTTPSInvalidForScale:scaleFactor];
-      break;
-    case gfx::VectorIconId::LOCATION_BAR_HTTPS_VALID:
-      [self drawLocationBarIconHTTPSValidForScale:scaleFactor];
-      break;
-    default:
-      // Make it obvious that there's a problem.
-      [[NSColor redColor] set];
-      NSRectFill(NSMakeRect(0, 0, kDefaultIconSize, kDefaultIconSize));
-      break;
-  }
-}
-
-+ (void)drawLocationBarIconHTTPForScale:(int)scaleFactor {
-  if (scaleFactor > 1) {
-    NSRect ovalRect = NSMakeRect(2.25, 1.75, 12, 12);
-    NSBezierPath* circlePath =
-        [NSBezierPath bezierPathWithOvalInRect:ovalRect];
-    [circlePath setLineWidth:1.5];
-    [circlePath stroke];
-
-    NSRectFill(NSMakeRect(7.5, 4.5, 1.5, 4));
-    NSRectFill(NSMakeRect(7.5, 9.5, 1.5, 1.5));
-  } else {
-    NSRect ovalRect = NSMakeRect(2, 2, 12, 12);
-    NSBezierPath* circlePath =
-        [NSBezierPath bezierPathWithOvalInRect:ovalRect];
-    [circlePath setLineWidth:1.5];
-    [circlePath stroke];
-
-    NSRectFill(NSMakeRect(7, 4, 2, 5));
-    NSRectFill(NSMakeRect(7, 10, 2, 2));
-  }
-}
-
-+ (void)drawLocationBarIconHTTPSInvalidForScale:(int)scaleFactor {
-  // The vector icon is upside down relative to the default OS X coordinate
-  // system so rotate by 180 degrees.
-  CGContextRef context = static_cast<CGContextRef>(
-      [[NSGraphicsContext currentContext] graphicsPort]);
-  const int kHalfDefaultIconSize = kDefaultIconSize / 2;
-  CGContextTranslateCTM(context, kHalfDefaultIconSize, kHalfDefaultIconSize);
-  CGContextRotateCTM(context, M_PI);
-  CGContextTranslateCTM(context, -kHalfDefaultIconSize, -kHalfDefaultIconSize);
-
-  // If Retina, nudge the icon up 1/2pt.
-  if (scaleFactor == 2) {
-    CGContextTranslateCTM(context, 0, -0.5);
-  }
-
-  NSBezierPath* trianglePath = [NSBezierPath bezierPath];
-  [trianglePath moveToPoint:NSMakePoint(0.5f, 14)];
-  [trianglePath relativeLineToPoint:NSMakePoint(15, 0)];
-  [trianglePath lineToPoint:NSMakePoint(8, 1)];
-  [trianglePath closePath];
-
-  NSBezierPath* cutOutPath = [NSBezierPath bezierPath];
-  [cutOutPath moveToPoint:NSMakePoint(9, 12)];
-  [cutOutPath relativeLineToPoint:NSMakePoint(-2, 0)];
-  [cutOutPath relativeLineToPoint:NSMakePoint(0, -2)];
-  [cutOutPath relativeLineToPoint:NSMakePoint(2, 0)];
-  [cutOutPath relativeLineToPoint:NSMakePoint(0, 2)];
-  [cutOutPath closePath];
-  [cutOutPath relativeMoveToPoint:NSMakePoint(0, -3)];
-  [cutOutPath relativeLineToPoint:NSMakePoint(-2, 0)];
-  [cutOutPath relativeLineToPoint:NSMakePoint(0, -3)];
-  [cutOutPath relativeLineToPoint:NSMakePoint(2, 0)];
-  [cutOutPath relativeLineToPoint:NSMakePoint(0, 3)];
-  [cutOutPath closePath];
-
-  [trianglePath appendBezierPath:cutOutPath];
-  [trianglePath fill];
-}
-
-+ (void)drawLocationBarIconHTTPSValidForScale:(int)scaleFactor {
-  NSAffineTransform* transform = [NSAffineTransform transform];
-  // Adjust down 1px in Retina, so that the lock sits on the text baseline.
-  if (scaleFactor > 1) {
-    [transform translateXBy:0 yBy:-0.5];
-  }
-
-  NSBezierPath* rectPath =
-      [NSBezierPath bezierPathWithRoundedRect:NSMakeRect(4, 3, 8, 7)
-                                      xRadius:1
-                                      yRadius:1];
-  [rectPath transformUsingAffineTransform:transform];
-  [rectPath fill];
-
-  NSBezierPath* curvePath = [NSBezierPath bezierPath];
-  [curvePath moveToPoint:NSMakePoint(5.5, 9.75)];
-  [curvePath lineToPoint:NSMakePoint(5.5, 10)];
-  [curvePath curveToPoint:NSMakePoint(8, 13)
-            controlPoint1:NSMakePoint(5.5, 13)
-            controlPoint2:NSMakePoint(7.5, 13)];
-  [curvePath curveToPoint:NSMakePoint(10.5, 10)
-            controlPoint1:NSMakePoint(8.5, 13)
-            controlPoint2:NSMakePoint(10.5, 13)];
-  [curvePath lineToPoint:NSMakePoint(10.5, 9.75)];
-  [curvePath setLineWidth:1.25];
-  [curvePath transformUsingAffineTransform:transform];
-  [curvePath stroke];
-}
-
-@end
 
 // TODO(shess): This code is mostly copied from the gtk
 // implementation.  Make sure it's all appropriate and flesh it out.
@@ -278,8 +111,9 @@ LocationBarViewMac::LocationBarViewMac(AutocompleteTextField* field,
       field_(field),
       location_icon_decoration_(new LocationIconDecoration(this)),
       selected_keyword_decoration_(new SelectedKeywordDecoration()),
-      ev_bubble_decoration_(
-          new EVBubbleDecoration(location_icon_decoration_.get())),
+      security_state_bubble_decoration_(
+          new SecurityStateBubbleDecoration(location_icon_decoration_.get(),
+                                            this)),
       save_credit_card_decoration_(
           new SaveCreditCardDecoration(command_updater)),
       star_decoration_(new StarDecoration(command_updater)),
@@ -290,15 +124,16 @@ LocationBarViewMac::LocationBarViewMac(AutocompleteTextField* field,
           new ManagePasswordsDecoration(command_updater, this)),
       browser_(browser),
       location_bar_visible_(true),
+      is_width_available_for_security_verbose_(false),
+      security_level_(security_state::NONE),
       weak_ptr_factory_(this) {
-  ScopedVector<ContentSettingImageModel> models =
+  std::vector<std::unique_ptr<ContentSettingImageModel>> models =
       ContentSettingImageModel::GenerateContentSettingImageModels();
-  for (ContentSettingImageModel* model : models.get()) {
-    // ContentSettingDecoration takes ownership of its model.
+  for (auto& model : models) {
     content_setting_decorations_.push_back(
-        new ContentSettingDecoration(model, this, profile));
+        base::MakeUnique<ContentSettingDecoration>(std::move(model), this,
+                                                   profile));
   }
-  models.weak_clear();
 
   edit_bookmarks_enabled_.Init(
       bookmarks::prefs::kEditBookmarksEnabled, profile->GetPrefs(),
@@ -327,7 +162,7 @@ LocationBarViewMac::~LocationBarViewMac() {
 void LocationBarViewMac::ShowFirstRunBubble() {
   // We need the browser window to be shown before we can show the bubble, but
   // we get called before that's happened.
-  base::MessageLoop::current()->PostTask(
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE, base::Bind(&LocationBarViewMac::ShowFirstRunBubbleInternal,
                             weak_ptr_factory_.GetWeakPtr()));
 }
@@ -414,17 +249,11 @@ void LocationBarViewMac::UpdateLocationBarVisibility(bool visible,
 
 bool LocationBarViewMac::ShowPageActionPopup(
     const extensions::Extension* extension, bool grant_active_tab) {
-  for (ScopedVector<PageActionDecoration>::iterator iter =
-           page_action_decorations_.begin();
-       iter != page_action_decorations_.end(); ++iter) {
-    if ((*iter)->GetExtension() == extension)
-      return (*iter)->ActivatePageAction(grant_active_tab);
+  for (const auto& decoration : page_action_decorations_) {
+    if (decoration->GetExtension() == extension)
+      return decoration->ActivatePageAction(grant_active_tab);
   }
   return false;
-}
-
-void LocationBarViewMac::UpdateOpenPDFInReaderPrompt() {
-  // Not implemented on Mac.
 }
 
 void LocationBarViewMac::SaveStateToContents(WebContents* contents) {
@@ -455,8 +284,8 @@ int LocationBarViewMac::PageActionCount() {
 
 int LocationBarViewMac::PageActionVisibleCount() {
   int result = 0;
-  for (size_t i = 0; i < page_action_decorations_.size(); ++i) {
-    if (page_action_decorations_[i]->IsVisible())
+  for (const auto& decoration : page_action_decorations_) {
+    if (decoration->IsVisible())
       ++result;
   }
   return result;
@@ -471,10 +300,10 @@ ExtensionAction* LocationBarViewMac::GetPageAction(size_t index) {
 
 ExtensionAction* LocationBarViewMac::GetVisiblePageAction(size_t index) {
   size_t current = 0;
-  for (size_t i = 0; i < page_action_decorations_.size(); ++i) {
-    if (page_action_decorations_[i]->IsVisible()) {
+  for (const auto& decoration : page_action_decorations_) {
+    if (decoration->IsVisible()) {
       if (current == index)
-        return page_action_decorations_[i]->GetPageAction();
+        return decoration->GetPageAction();
 
       ++current;
     }
@@ -487,7 +316,7 @@ ExtensionAction* LocationBarViewMac::GetVisiblePageAction(size_t index) {
 void LocationBarViewMac::TestPageActionPressed(size_t index) {
   DCHECK_LT(index, static_cast<size_t>(PageActionVisibleCount()));
   size_t current = 0;
-  for (PageActionDecoration* decoration : page_action_decorations_) {
+  for (const auto& decoration : page_action_decorations_) {
     if (decoration->IsVisible()) {
       if (current == index) {
         decoration->OnMousePressed(NSZeroRect, NSZeroPoint);
@@ -501,6 +330,19 @@ void LocationBarViewMac::TestPageActionPressed(size_t index) {
 bool LocationBarViewMac::GetBookmarkStarVisibility() {
   DCHECK(star_decoration_.get());
   return star_decoration_->IsVisible();
+}
+
+bool LocationBarViewMac::TestContentSettingImagePressed(size_t index) {
+  if (index >= content_setting_decorations_.size())
+    return false;
+
+  // TODO(tapted): Use OnAccessibilityViewAction() here. Currently it's broken.
+  ContentSettingDecoration* decoration =
+      content_setting_decorations_[index].get();
+  AutocompleteTextFieldCell* cell = [field_ cell];
+  NSRect frame = [cell frameForDecoration:decoration inFrame:[field_ bounds]];
+  decoration->OnMousePressed(frame, NSZeroPoint);
+  return true;
 }
 
 void LocationBarViewMac::SetEditable(bool editable) {
@@ -546,36 +388,27 @@ bool LocationBarViewMac::IsStarEnabled() const {
          !IsBookmarkStarHiddenByExtension();
 }
 
-NSPoint LocationBarViewMac::GetBookmarkBubblePoint() const {
-  DCHECK(IsStarEnabled());
-  return [field_ bubblePointForDecoration:star_decoration_.get()];
+NSPoint LocationBarViewMac::GetBubblePointForDecoration(
+    LocationBarDecoration* decoration) const {
+  if (decoration == star_decoration_.get())
+    DCHECK(IsStarEnabled());
+
+  return [field_ bubblePointForDecoration:decoration];
 }
 
 NSPoint LocationBarViewMac::GetSaveCreditCardBubblePoint() const {
   return [field_ bubblePointForDecoration:save_credit_card_decoration_.get()];
 }
 
-NSPoint LocationBarViewMac::GetTranslateBubblePoint() const {
-  return [field_ bubblePointForDecoration:translate_decoration_.get()];
-}
-
-NSPoint LocationBarViewMac::GetManagePasswordsBubblePoint() const {
-  return [field_ bubblePointForDecoration:manage_passwords_decoration_.get()];
-}
-
 NSPoint LocationBarViewMac::GetPageInfoBubblePoint() const {
-  if (ev_bubble_decoration_->IsVisible()) {
-    return [field_ bubblePointForDecoration:ev_bubble_decoration_.get()];
-  } else {
-    return [field_ bubblePointForDecoration:location_icon_decoration_.get()];
-  }
+  return [field_ bubblePointForDecoration:GetPageInfoDecoration()];
 }
 
 void LocationBarViewMac::OnDecorationsChanged() {
   // TODO(shess): The field-editor frame and cursor rects should not
   // change, here.
   std::vector<LocationBarDecoration*> decorations = GetDecorations();
-  for (const auto& decoration : decorations)
+  for (auto* decoration : decorations)
     UpdateAccessibilityViewPosition(decoration);
   [field_ updateMouseTracking];
   [field_ resetFieldEditorFrameIfNeeded];
@@ -587,38 +420,36 @@ void LocationBarViewMac::OnDecorationsChanged() {
 void LocationBarViewMac::Layout() {
   AutocompleteTextFieldCell* cell = [field_ cell];
 
-  // Reset the left-hand decorations.
+  // Reset the leading decorations.
   // TODO(shess): Shortly, this code will live somewhere else, like in
   // the constructor.  I am still wrestling with how best to deal with
   // right-hand decorations, which are not a static set.
   [cell clearDecorations];
-  [cell addLeftDecoration:location_icon_decoration_.get()];
-  [cell addLeftDecoration:selected_keyword_decoration_.get()];
-  [cell addLeftDecoration:ev_bubble_decoration_.get()];
-  [cell addRightDecoration:star_decoration_.get()];
-  [cell addRightDecoration:translate_decoration_.get()];
-  [cell addRightDecoration:zoom_decoration_.get()];
-  [cell addRightDecoration:save_credit_card_decoration_.get()];
-  [cell addRightDecoration:manage_passwords_decoration_.get()];
+  [cell addLeadingDecoration:location_icon_decoration_.get()];
+  [cell addLeadingDecoration:selected_keyword_decoration_.get()];
+  [cell addLeadingDecoration:security_state_bubble_decoration_.get()];
+  [cell addTrailingDecoration:star_decoration_.get()];
+  [cell addTrailingDecoration:translate_decoration_.get()];
+  [cell addTrailingDecoration:zoom_decoration_.get()];
+  [cell addTrailingDecoration:save_credit_card_decoration_.get()];
+  [cell addTrailingDecoration:manage_passwords_decoration_.get()];
 
-  // Note that display order is right to left.
-  for (size_t i = 0; i < page_action_decorations_.size(); ++i) {
-    [cell addRightDecoration:page_action_decorations_[i]];
+  // Note that display order is front to back.
+  for (const auto& decoration : page_action_decorations_) {
+    [cell addTrailingDecoration:decoration.get()];
   }
 
-  for (ScopedVector<ContentSettingDecoration>::iterator i =
-       content_setting_decorations_.begin();
-       i != content_setting_decorations_.end(); ++i) {
-    [cell addRightDecoration:*i];
+  for (const auto& decoration : content_setting_decorations_) {
+    [cell addTrailingDecoration:decoration.get()];
   }
 
-  [cell addRightDecoration:keyword_hint_decoration_.get()];
+  [cell addTrailingDecoration:keyword_hint_decoration_.get()];
 
   // By default only the location icon is visible.
   location_icon_decoration_->SetVisible(true);
   selected_keyword_decoration_->SetVisible(false);
-  ev_bubble_decoration_->SetVisible(false);
   keyword_hint_decoration_->SetVisible(false);
+  security_state_bubble_decoration_->SetVisible(false);
 
   // Get the keyword to use for keyword-search and hinting.
   const base::string16 keyword = omnibox_view_->model()->keyword();
@@ -630,6 +461,15 @@ void LocationBarViewMac::Layout() {
   }
 
   const bool is_keyword_hint = omnibox_view_->model()->is_keyword_hint();
+
+  // This is true for EV certificate since the certificate should be
+  // displayed, even if the width is narrow.
+  CGFloat available_width =
+      [cell availableWidthInFrame:[[cell controlView] frame]];
+  is_width_available_for_security_verbose_ =
+      available_width >= kMinURLWidth || ShouldShowEVBubble() ||
+      ShouldShowExtensionBubble() || ShouldShowChromeBubble();
+
   if (!keyword.empty() && !is_keyword_hint) {
     // Switch from location icon to keyword mode.
     location_icon_decoration_->SetVisible(false);
@@ -640,18 +480,51 @@ void LocationBarViewMac::Layout() {
     // Design we need to set its color, which we cannot do until we know the
     // theme (by being installed in a browser window).
     selected_keyword_decoration_->SetImage(GetKeywordImage(keyword));
+  } else if (!keyword.empty() && is_keyword_hint) {
+    keyword_hint_decoration_->SetKeyword(short_name, is_extension_keyword);
+    keyword_hint_decoration_->SetVisible(true);
   } else if (ShouldShowEVBubble()) {
     // Switch from location icon to show the EV bubble instead.
     location_icon_decoration_->SetVisible(false);
-    ev_bubble_decoration_->SetVisible(true);
+    security_state_bubble_decoration_->SetVisible(true);
 
     base::string16 label(GetToolbarModel()->GetEVCertName());
-    ev_bubble_decoration_->SetFullLabel(base::SysUTF16ToNSString(label));
-  } else if (!keyword.empty() && is_keyword_hint) {
-    keyword_hint_decoration_->SetKeyword(short_name,
-                                         is_extension_keyword);
-    keyword_hint_decoration_->SetVisible(true);
+    security_state_bubble_decoration_->SetFullLabel(
+        base::SysUTF16ToNSString(label));
+  } else if (ShouldShowExtensionBubble()) {
+    // Switch from location icon to show the extension bubble instead.
+    location_icon_decoration_->SetVisible(false);
+    security_state_bubble_decoration_->SetVisible(true);
+
+    base::string16 label(
+        GetExtensionName(GetToolbarModel()->GetURL(), GetWebContents()));
+    security_state_bubble_decoration_->SetFullLabel(
+        base::SysUTF16ToNSString(label));
+  } else if (ShouldShowChromeBubble()) {
+    // Switch from location icon to show Chrome bubble instead.
+    location_icon_decoration_->SetVisible(false);
+    security_state_bubble_decoration_->SetVisible(true);
+    security_state_bubble_decoration_->SetFullLabel(
+        l10n_util::GetNSString(IDS_SHORT_PRODUCT_NAME));
+  } else if (ShouldShowSecurityState() ||
+             security_state_bubble_decoration_->AnimatingOut()) {
+    bool is_security_state_visible =
+        is_width_available_for_security_verbose_ ||
+        security_state_bubble_decoration_->AnimatingOut();
+    location_icon_decoration_->SetVisible(!is_security_state_visible);
+    security_state_bubble_decoration_->SetVisible(is_security_state_visible);
+
+    // Don't change the label if the bubble is in the process of animating
+    // out the old one.
+    base::string16 label(GetToolbarModel()->GetSecureVerboseText());
+    if (!security_state_bubble_decoration_->AnimatingOut()) {
+      security_state_bubble_decoration_->SetFullLabel(
+          base::SysUTF16ToNSString(label));
+    }
   }
+
+  if (!security_state_bubble_decoration_->IsVisible())
+    security_state_bubble_decoration_->ResetAnimation();
 
   // These need to change anytime the layout changes.
   // TODO(shess): Anytime the field editor might have changed, the
@@ -666,24 +539,6 @@ void LocationBarViewMac::RedrawDecoration(LocationBarDecoration* decoration) {
                                   inFrame:[field_ bounds]];
   if (!NSIsEmptyRect(frame))
     [field_ setNeedsDisplayInRect:frame];
-}
-
-void LocationBarViewMac::SetPreviewEnabledPageAction(
-    ExtensionAction* page_action, bool preview_enabled) {
-  DCHECK(page_action);
-  WebContents* contents = GetWebContents();
-  if (!contents)
-    return;
-  RefreshPageActionDecorations();
-  Layout();
-
-  PageActionDecoration* decoration = GetPageActionDecoration(page_action);
-  DCHECK(decoration);
-  if (!decoration)
-    return;
-
-  decoration->set_preview_enabled(preview_enabled);
-  decoration->UpdateVisibility(contents);
 }
 
 NSRect LocationBarViewMac::GetPageActionFrame(ExtensionAction* page_action) {
@@ -727,10 +582,13 @@ void LocationBarViewMac::Update(const WebContents* contents) {
   UpdateZoomDecoration(/*default_zoom_changed=*/false);
   RefreshPageActionDecorations();
   RefreshContentSettingsDecorations();
-  if (contents)
+  if (contents) {
     omnibox_view_->OnTabChanged(contents);
-  else
+    UpdateSecurityState(contents);
+  } else {
     omnibox_view_->Update();
+  }
+
   OnChanged();
 }
 
@@ -739,48 +597,23 @@ void LocationBarViewMac::UpdateWithoutTabRestore() {
 }
 
 void LocationBarViewMac::UpdateLocationIcon() {
-  bool in_dark_mode = IsLocationBarDark();
+  SkColor vector_icon_color = GetLocationBarIconColor();
+  const gfx::VectorIcon& vector_icon_id = ShouldShowEVBubble()
+                                              ? toolbar::kHttpsValidIcon
+                                              : omnibox_view_->GetVectorIcon();
 
-  SkColor vector_icon_color = gfx::kPlaceholderColor;
-  gfx::VectorIconId vector_icon_id = gfx::VectorIconId::VECTOR_ICON_NONE;
-  if (ShouldShowEVBubble()) {
-    vector_icon_id = gfx::VectorIconId::LOCATION_BAR_HTTPS_VALID;
-    vector_icon_color = gfx::kGoogleGreen700;
-  } else {
-    vector_icon_id = omnibox_view_->GetVectorIcon();
-    security_state::SecurityStateModel::SecurityLevel security_level =
-        GetToolbarModel()->GetSecurityLevel(false);
-    if (security_level == security_state::SecurityStateModel::NONE) {
-      vector_icon_color = gfx::kChromeIconGrey;
-    } else {
-      NSColor* sRGBColor =
-          OmniboxViewMac::GetSecureTextColor(security_level, in_dark_mode);
-      NSColor* deviceColor =
-          [sRGBColor colorUsingColorSpace:[NSColorSpace deviceRGBColorSpace]];
-      vector_icon_color = skia::NSDeviceColorToSkColor(deviceColor);
-    }
-  }
-
-  // If the theme is dark, then the color should always be
-  // kMaterialDarkVectorIconColor.
-  if (in_dark_mode)
-    vector_icon_color = kMaterialDarkVectorIconColor;
-
-  DCHECK(vector_icon_id != gfx::VectorIconId::VECTOR_ICON_NONE);
-  NSImage* image =
-      [LocationBarImageRep imageForId:vector_icon_id color:vector_icon_color];
-
+  NSImage* image = NSImageFromImageSkiaWithColorSpace(
+      gfx::CreateVectorIcon(vector_icon_id, kDefaultIconSize,
+                            vector_icon_color),
+      base::mac::GetSRGBColorSpace());
   location_icon_decoration_->SetImage(image);
-  ev_bubble_decoration_->SetImage(image);
+  security_state_bubble_decoration_->SetImage(image);
+  security_state_bubble_decoration_->SetLabelColor(vector_icon_color);
+
   Layout();
 }
 
 void LocationBarViewMac::UpdateColorsToMatchTheme() {
-  if (!ui::MaterialDesignController::IsModeMaterial() ||
-      ![[field_ window] inIncognitoMode]) {
-    return;
-  }
-
   // Update the location-bar icon.
   UpdateLocationIcon();
 
@@ -803,19 +636,8 @@ void LocationBarViewMac::OnThemeChanged() {
 }
 
 void LocationBarViewMac::OnChanged() {
-  if (!ui::MaterialDesignController::IsModeMaterial()) {
-    const int resource_id = omnibox_view_->GetIcon();
-    NSImage* image = OmniboxViewMac::ImageForResource(resource_id);
-    location_icon_decoration_->SetImage(image);
-    ev_bubble_decoration_->SetImage(image);
-    Layout();
-    return;
-  }
+  UpdateSecurityState(false);
   UpdateLocationIcon();
-}
-
-void LocationBarViewMac::ShowURL() {
-  omnibox_view_->ShowURL();
 }
 
 ToolbarModel* LocationBarViewMac::GetToolbarModel() {
@@ -831,33 +653,83 @@ WebContents* LocationBarViewMac::GetWebContents() {
 }
 
 bool LocationBarViewMac::ShouldShowEVBubble() const {
-  return (GetToolbarModel()->GetSecurityLevel(false) ==
-          security_state::SecurityStateModel::EV_SECURE);
+  return GetToolbarModel()->GetSecurityLevel(false) ==
+         security_state::EV_SECURE;
+}
+
+bool LocationBarViewMac::ShouldShowExtensionBubble() const {
+  return !GetOmniboxView()->IsEditingOrEmpty() &&
+         GetToolbarModel()->GetURL().SchemeIs(extensions::kExtensionScheme);
+}
+
+bool LocationBarViewMac::ShouldShowChromeBubble() const {
+  return !GetOmniboxView()->IsEditingOrEmpty() &&
+         GetToolbarModel()->GetURL().SchemeIs(content::kChromeUIScheme);
+}
+
+bool LocationBarViewMac::ShouldShowSecurityState() const {
+  if (omnibox_view_->IsEditingOrEmpty() ||
+      omnibox_view_->model()->is_keyword_hint()) {
+    return false;
+  }
+
+  security_state::SecurityLevel security =
+      GetToolbarModel()->GetSecurityLevel(false);
+
+  return security == security_state::EV_SECURE ||
+         security == security_state::SECURE ||
+         security == security_state::DANGEROUS ||
+         security == security_state::HTTP_SHOW_WARNING;
 }
 
 bool LocationBarViewMac::IsLocationBarDark() const {
   return [[field_ window] inIncognitoModeWithSystemTheme];
 }
 
+LocationBarDecoration* LocationBarViewMac::GetPageInfoDecoration() const {
+  if (security_state_bubble_decoration_->IsVisible())
+    return security_state_bubble_decoration_.get();
+
+  return location_icon_decoration_.get();
+}
+
 NSImage* LocationBarViewMac::GetKeywordImage(const base::string16& keyword) {
   const TemplateURL* template_url = TemplateURLServiceFactory::GetForProfile(
       profile())->GetTemplateURLForKeyword(keyword);
   if (template_url &&
-      (template_url->GetType() == TemplateURL::OMNIBOX_API_EXTENSION)) {
+      (template_url->type() == TemplateURL::OMNIBOX_API_EXTENSION)) {
     return extensions::OmniboxAPI::Get(profile())->
         GetOmniboxIcon(template_url->GetExtensionId()).AsNSImage();
   }
 
-  if (ui::MaterialDesignController::IsModeMaterial()) {
-    SkColor icon_color = IsLocationBarDark() ? kMaterialDarkVectorIconColor
-                                             : gfx::kGoogleBlue700;
-    return NSImageFromImageSkiaWithColorSpace(
-        gfx::CreateVectorIcon(gfx::VectorIconId::OMNIBOX_SEARCH,
-                              kDefaultIconSize, icon_color),
-        base::mac::GetSRGBColorSpace());
+  SkColor icon_color =
+      IsLocationBarDark() ? kMaterialDarkVectorIconColor : gfx::kGoogleBlue700;
+  return NSImageFromImageSkiaWithColorSpace(
+      gfx::CreateVectorIcon(omnibox::kSearchIcon, kDefaultIconSize, icon_color),
+      base::mac::GetSRGBColorSpace());
+}
+
+SkColor LocationBarViewMac::GetLocationBarIconColor() const {
+  bool in_dark_mode = IsLocationBarDark();
+  if (in_dark_mode)
+    return kMaterialDarkVectorIconColor;
+
+  if (ShouldShowEVBubble())
+    return gfx::kGoogleGreen700;
+
+  security_state::SecurityLevel security_level =
+      GetToolbarModel()->GetSecurityLevel(false);
+
+  if (security_level == security_state::NONE ||
+      security_level == security_state::HTTP_SHOW_WARNING) {
+    return gfx::kChromeIconGrey;
   }
 
-  return OmniboxViewMac::ImageForResource(IDR_OMNIBOX_SEARCH);
+  NSColor* srgb_color =
+      OmniboxViewMac::GetSecureTextColor(security_level, in_dark_mode);
+  NSColor* device_color =
+      [srgb_color colorUsingColorSpace:[NSColorSpace deviceRGBColorSpace]];
+  return skia::NSDeviceColorToSkColor(device_color);
 }
 
 void LocationBarViewMac::PostNotification(NSString* notification) {
@@ -868,9 +740,9 @@ void LocationBarViewMac::PostNotification(NSString* notification) {
 PageActionDecoration* LocationBarViewMac::GetPageActionDecoration(
     ExtensionAction* page_action) {
   DCHECK(page_action);
-  for (size_t i = 0; i < page_action_decorations_.size(); ++i) {
-    if (page_action_decorations_[i]->GetPageAction() == page_action)
-      return page_action_decorations_[i];
+  for (const auto& decoration : page_action_decorations_) {
+    if (decoration->GetPageAction() == page_action)
+      return decoration.get();
   }
   // If |page_action| is the browser action of an extension, no element in
   // |page_action_decorations_| will match.
@@ -910,15 +782,15 @@ void LocationBarViewMac::RefreshPageActionDecorations() {
 
   if (PageActionsDiffer(new_page_actions)) {
     DeletePageActionDecorations();
-    for (size_t i = 0; i < new_page_actions.size(); ++i) {
-      page_action_decorations_.push_back(
-          new PageActionDecoration(this, browser_, new_page_actions[i]));
+    for (auto* new_page_action : new_page_actions) {
+      page_action_decorations_.push_back(base::MakeUnique<PageActionDecoration>(
+          this, browser_, new_page_action));
     }
   }
 
   GURL url = GetToolbarModel()->GetURL();
-  for (size_t i = 0; i < page_action_decorations_.size(); ++i) {
-    page_action_decorations_[i]->UpdateVisibility(
+  for (const auto& decoration : page_action_decorations_) {
+    decoration->UpdateVisibility(
         GetToolbarModel()->input_in_progress() ? NULL : web_contents);
   }
 }
@@ -929,7 +801,7 @@ bool LocationBarViewMac::PageActionsDiffer(
     return true;
 
   for (size_t index = 0; index < page_actions.size(); ++index) {
-    PageActionDecoration* decoration = page_action_decorations_[index];
+    PageActionDecoration* decoration = page_action_decorations_[index].get();
     if (decoration->GetPageAction() != page_actions[index])
       return true;
   }
@@ -942,10 +814,8 @@ bool LocationBarViewMac::RefreshContentSettingsDecorations() {
   WebContents* web_contents = input_in_progress ?
       NULL : browser_->tab_strip_model()->GetActiveWebContents();
   bool icons_updated = false;
-  for (size_t i = 0; i < content_setting_decorations_.size(); ++i) {
-    icons_updated |=
-        content_setting_decorations_[i]->UpdateFromWebContents(web_contents);
-  }
+  for (const auto& decoration : content_setting_decorations_)
+    icons_updated |= decoration->UpdateFromWebContents(web_contents);
   return icons_updated;
 }
 
@@ -994,6 +864,57 @@ bool LocationBarViewMac::UpdateZoomDecoration(bool default_zoom_changed) {
       IsLocationBarDark());
 }
 
+void LocationBarViewMac::UpdateSecurityState(bool tab_changed) {
+  using SecurityLevel = security_state::SecurityLevel;
+  SecurityLevel new_security_level = GetToolbarModel()->GetSecurityLevel(false);
+
+  if (tab_changed)
+    security_state_bubble_decoration_->ResetAnimation();
+
+  // If there's enough space, but the secure state decoration had animated
+  // out, animate it back in. Otherwise, if the security state has changed,
+  // animate the decoration if animation is enabled and the state changed is
+  // not from a tab switch.
+  if ((ShouldShowSecurityState() || ShouldShowExtensionBubble() ||
+       ShouldShowChromeBubble()) &&
+      is_width_available_for_security_verbose_) {
+    if (tab_changed) {
+      security_state_bubble_decoration_->ShowWithoutAnimation();
+    } else {
+      bool is_secure_to_secure = IsSecureConnection(new_security_level) &&
+                                 IsSecureConnection(security_level_);
+      bool is_new_security_level =
+          security_level_ != new_security_level && !is_secure_to_secure;
+      if (!is_new_security_level &&
+          security_state_bubble_decoration_->HasAnimatedOut()) {
+        security_state_bubble_decoration_->AnimateIn(false);
+      } else if (!CanAnimateSecurityLevel(new_security_level)) {
+        security_state_bubble_decoration_->ShowWithoutAnimation();
+      } else if (is_new_security_level) {
+        security_state_bubble_decoration_->AnimateIn();
+      }
+    }
+  } else if (!is_width_available_for_security_verbose_ ||
+             (!tab_changed && CanAnimateSecurityLevel(security_level_))) {
+    security_state_bubble_decoration_->AnimateOut();
+  }
+
+  security_level_ = new_security_level;
+}
+
+bool LocationBarViewMac::CanAnimateSecurityLevel(
+    security_state::SecurityLevel level) const {
+  return !GetOmniboxView()->IsEditingOrEmpty() &&
+         (level == security_state::DANGEROUS ||
+          level == security_state::HTTP_SHOW_WARNING);
+}
+
+bool LocationBarViewMac::IsSecureConnection(
+    security_state::SecurityLevel level) const {
+  return level == security_state::SECURE ||
+         level == security_state::EV_SECURE;
+}
+
 void LocationBarViewMac::UpdateAccessibilityViewPosition(
     LocationBarDecoration* decoration) {
   if (!decoration->IsVisible())
@@ -1010,7 +931,7 @@ std::vector<LocationBarDecoration*> LocationBarViewMac::GetDecorations() {
   // are page actions and the keyword hint.
   decorations.push_back(location_icon_decoration_.get());
   decorations.push_back(selected_keyword_decoration_.get());
-  decorations.push_back(ev_bubble_decoration_.get());
+  decorations.push_back(security_state_bubble_decoration_.get());
   decorations.push_back(save_credit_card_decoration_.get());
   decorations.push_back(star_decoration_.get());
   decorations.push_back(translate_decoration_.get());
@@ -1027,7 +948,7 @@ void LocationBarViewMac::OnDefaultZoomLevelChanged() {
 std::vector<NSView*> LocationBarViewMac::GetDecorationAccessibilityViews() {
   std::vector<LocationBarDecoration*> decorations = GetDecorations();
   std::vector<NSView*> views;
-  for (const auto& decoration : decorations)
+  for (auto* decoration : decorations)
     views.push_back(decoration->GetAccessibilityView());
   return views;
 }

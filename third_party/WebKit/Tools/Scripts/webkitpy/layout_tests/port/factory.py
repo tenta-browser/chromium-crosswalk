@@ -35,29 +35,95 @@ import re
 from webkitpy.common.webkit_finder import WebKitFinder
 
 
+class PortFactory(object):
+    PORT_CLASSES = (
+        'android.AndroidPort',
+        'linux.LinuxPort',
+        'mac.MacPort',
+        'win.WinPort',
+        'mock_drt.MockDRTPort',
+        'test.TestPort',
+    )
+
+    def __init__(self, host):
+        self._host = host
+
+    def _default_port(self):
+        platform = self._host.platform
+        if platform.is_linux() or platform.is_freebsd():
+            return 'linux'
+        elif platform.is_mac():
+            return 'mac'
+        elif platform.is_win():
+            return 'win'
+        raise NotImplementedError('unknown platform: %s' % platform)
+
+    def get(self, port_name=None, options=None, **kwargs):
+        """Returns an object implementing the Port interface.
+
+        If port_name is None, this routine attempts to guess at the most
+        appropriate port on this platform.
+        """
+        port_name = port_name or self._default_port()
+
+        _check_configuration_and_target(self._host.filesystem, options)
+
+        if 'browser_test' in port_name:
+            module_name, class_name = port_name.rsplit('.', 1)
+            module = __import__(module_name, globals(), locals(), [], -1)
+            port_class_name = module.get_port_class_name(class_name)
+            if port_class_name is not None:
+                cls = module.__dict__[port_class_name]
+                port_name = cls.determine_full_port_name(self._host, options, class_name)
+                return cls(self._host, port_name, options=options, **kwargs)
+        else:
+            for port_class in self.PORT_CLASSES:
+                module_name, class_name = port_class.rsplit('.', 1)
+                module = __import__(module_name, globals(), locals(), [], -1)
+                cls = module.__dict__[class_name]
+                if port_name.startswith(cls.port_name):
+                    port_name = cls.determine_full_port_name(self._host, options, port_name)
+                    return cls(self._host, port_name, options=options, **kwargs)
+        raise NotImplementedError('unsupported platform: "%s"' % port_name)
+
+    def all_port_names(self, platform=None):
+        """Returns a list of all valid, fully-specified, "real" port names.
+
+        This is the list of directories that are used as actual baseline_paths()
+        by real ports. This does not include any "fake" names like "test"
+        or "mock-mac", and it does not include any directories that are not
+        port names.
+
+        If platform is not specified, all known port names will be returned.
+        """
+        platform = platform or '*'
+        return fnmatch.filter(self._host.builders.all_port_names(), platform)
+
+    def get_from_builder_name(self, builder_name):
+        port_name = self._host.builders.port_name_for_builder_name(builder_name)
+        assert port_name, 'unrecognized builder name: "%s"' % builder_name
+        return self.get(port_name, options=_builder_options(builder_name))
+
+
 def platform_options(use_globs=False):
     return [
         optparse.make_option('--android', action='store_const', dest='platform',
                              const=('android*' if use_globs else 'android'),
                              help=('Alias for --platform=android*' if use_globs else 'Alias for --platform=android')),
 
-        # FIXME: Update run_webkit_tests.sh, any other callers to no longer pass --chromium, then remove this flag.
-        optparse.make_option('--chromium', action='store_const', dest='platform',
-                             const=('chromium*' if use_globs else 'chromium'),
-                             help=('Alias for --platform=chromium*' if use_globs else 'Alias for --platform=chromium')),
-
         optparse.make_option('--platform', action='store',
-                             help=('Glob-style list of platform/ports to use (e.g., "mac*")' if use_globs else 'Platform to use (e.g., "mac-lion")')),
+                             help=('Glob-style list of platform/ports to use (e.g., "mac*")'
+                                   if use_globs else 'Platform to use (e.g., "mac-lion")')),
     ]
 
 
 def configuration_options():
     return [
-        optparse.make_option('--debug', action='store_const', const='Debug', dest="configuration",
+        optparse.make_option('--debug', action='store_const', const='Debug', dest='configuration',
                              help='Set the configuration to Debug'),
-        optparse.make_option("-t", "--target", dest="target",
-                             help="specify the target configuration to use (Debug/Release)"),
-        optparse.make_option('--release', action='store_const', const='Release', dest="configuration",
+        optparse.make_option('-t', '--target', dest='target',
+                             help='Specify the target build subdirectory under src/out/'),
+        optparse.make_option('--release', action='store_const', const='Release', dest='configuration',
                              help='Set the configuration to Release'),
     ]
 
@@ -65,12 +131,13 @@ def configuration_options():
 def _builder_options(builder_name):
     return optparse.Values({
         'builder_name': builder_name,
-        'configuration': "Debug" if re.search(r"[d|D](ebu|b)g", builder_name) else "Release",
+        'configuration': 'Debug' if re.search(r'[d|D](ebu|b)g', builder_name) else 'Release',
         'target': None,
     })
 
 
 def _check_configuration_and_target(host, options):
+    """Updates options.configuration based on options.target."""
     if not options or not getattr(options, 'target', None):
         return
 
@@ -93,10 +160,9 @@ def _check_configuration_and_target(host, options):
 
 
 def _read_configuration_from_gn(fs, options):
-    """Return the configuration to used based on args.gn, if possible."""
+    """Returns the configuration to used based on args.gn, if possible."""
 
-    # We should really default to 'out' everywhere at this point, but
-    # that's a separate cleanup CL.
+    # TODO(qyearsley): Default to 'out' everywhere.
     build_directory = getattr(options, 'build_directory', None) or 'out'
 
     target = options.target
@@ -114,82 +180,10 @@ def _read_configuration_from_gn(fs, options):
         return 'Debug'
 
     args = fs.read_text_file(path)
-    for l in args.splitlines():
-        m = re.match('^\s*is_debug\s*=\s*false(\s*$|\s*#.*$)', l)
-        if m:
+    for line in args.splitlines():
+        if re.match(r'^\s*is_debug\s*=\s*false(\s*$|\s*#.*$)', line):
             return 'Release'
 
-    # if is_debug is set to anything other than false, or if it
+    # If is_debug is set to anything other than false, or if it
     # does not exist at all, we should use the default value (True).
     return 'Debug'
-
-
-class PortFactory(object):
-    PORT_CLASSES = (
-        'android.AndroidPort',
-        'linux.LinuxPort',
-        'mac.MacPort',
-        'win.WinPort',
-        'mock_drt.MockDRTPort',
-        'test.TestPort',
-    )
-
-    def __init__(self, host):
-        self._host = host
-
-    def _default_port(self, options):
-        platform = self._host.platform
-        if platform.is_linux() or platform.is_freebsd():
-            return 'linux'
-        elif platform.is_mac():
-            return 'mac'
-        elif platform.is_win():
-            return 'win'
-        raise NotImplementedError('unknown platform: %s' % platform)
-
-    def get(self, port_name=None, options=None, **kwargs):
-        """Returns an object implementing the Port interface. If
-        port_name is None, this routine attempts to guess at the most
-        appropriate port on this platform."""
-        port_name = port_name or self._default_port(options)
-
-        _check_configuration_and_target(self._host.filesystem, options)
-
-        # FIXME(steveblock): There's no longer any need to pass '--platform
-        # chromium' on the command line so we can remove this logic.
-        if port_name == 'chromium':
-            port_name = self._host.platform.os_name
-
-        if 'browser_test' in port_name:
-            module_name, class_name = port_name.rsplit('.', 1)
-            module = __import__(module_name, globals(), locals(), [], -1)
-            port_class_name = module.get_port_class_name(class_name)
-            if port_class_name is not None:
-                cls = module.__dict__[port_class_name]
-                port_name = cls.determine_full_port_name(self._host, options, class_name)
-                return cls(self._host, port_name, options=options, **kwargs)
-        else:
-            for port_class in self.PORT_CLASSES:
-                module_name, class_name = port_class.rsplit('.', 1)
-                module = __import__(module_name, globals(), locals(), [], -1)
-                cls = module.__dict__[class_name]
-                if port_name.startswith(cls.port_name):
-                    port_name = cls.determine_full_port_name(self._host, options, port_name)
-                    return cls(self._host, port_name, options=options, **kwargs)
-        raise NotImplementedError('unsupported platform: "%s"' % port_name)
-
-    def all_port_names(self, platform=None):
-        """Return a list of all valid, fully-specified, "real" port names.
-
-        This is the list of directories that are used as actual baseline_paths()
-        by real ports. This does not include any "fake" names like "test"
-        or "mock-mac", and it does not include any directories that are not.
-
-        If platform is not specified, we will glob-match all ports"""
-        platform = platform or '*'
-        return fnmatch.filter(self._host.builders.all_port_names(), platform)
-
-    def get_from_builder_name(self, builder_name):
-        port_name = self._host.builders.port_name_for_builder_name(builder_name)
-        assert port_name, "unrecognized builder name '%s'" % builder_name
-        return self.get(port_name, _builder_options(builder_name))

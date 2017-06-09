@@ -10,11 +10,16 @@
 #include <string>
 
 #include "base/gtest_prod_util.h"
+#include "mojo/public/cpp/bindings/struct_traits.h"
 
 class GURL;
 
 namespace content_settings {
 class PatternParser;
+
+namespace mojom {
+class ContentSettingsPatternDataView;
+}
 }
 
 // A pattern used in content setting rules. See |IsValid| for a description of
@@ -142,6 +147,7 @@ class ContentSettingsPattern {
 
   // Returns a pattern that matches the scheme and host of this URL, as well as
   // all subdomains and ports.
+  // TODO(lshang): Remove this when crbug.com/604612 is done.
   static ContentSettingsPattern FromURL(const GURL& url);
 
   // Returns a pattern that matches exactly this URL.
@@ -157,6 +163,13 @@ class ContentSettingsPattern {
   //   - a.b.c.d (matches an exact IPv4 ip)
   //   - [a:b:c:d:e:f:g:h] (matches an exact IPv6 ip)
   static ContentSettingsPattern FromString(const std::string& pattern_spec);
+
+  // Migrate domain scoped settings generated using FromURL() to be origin
+  // scoped. Return false if domain_pattern is not generated using FromURL().
+  // TODO(lshang): Remove this when migration is done. https://crbug.com/604612
+  static bool MigrateFromDomainToOrigin(
+      const ContentSettingsPattern& domain_pattern,
+      ContentSettingsPattern* origin_pattern);
 
   // Sets the scheme that doesn't support domain wildcard and port.
   // Needs to be called by the embedder before using ContentSettingsPattern.
@@ -186,6 +199,10 @@ class ContentSettingsPattern {
   // Returns scheme type of pattern.
   ContentSettingsPattern::SchemeType GetScheme() const;
 
+  // True if this pattern has a non-empty path.  Can only be used for patterns
+  // with file: schemes.
+  bool HasPath() const;
+
   // Compares the pattern with a given |other| pattern and returns the
   // |Relation| of the two patterns.
   Relation Compare(const ContentSettingsPattern& other) const;
@@ -204,7 +221,9 @@ class ContentSettingsPattern {
 
  private:
   friend class content_settings::PatternParser;
-  friend class ContentSettingsPatternSerializer;
+  friend struct mojo::StructTraits<
+      content_settings::mojom::ContentSettingsPatternDataView,
+      ContentSettingsPattern>;
   FRIEND_TEST_ALL_PREFIXES(ContentSettingsPatternParserTest, SerializePatterns);
 
   class Builder;

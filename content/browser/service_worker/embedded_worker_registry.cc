@@ -11,6 +11,7 @@
 #include "content/browser/service_worker/embedded_worker_instance.h"
 #include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
+#include "content/browser/service_worker/service_worker_dispatcher_host.h"
 #include "content/common/service_worker/embedded_worker_messages.h"
 #include "content/public/browser/browser_thread.h"
 #include "ipc/ipc_message.h"
@@ -32,7 +33,6 @@ scoped_refptr<EmbeddedWorkerRegistry> EmbeddedWorkerRegistry::Create(
       new EmbeddedWorkerRegistry(
           context,
           old_registry->next_embedded_worker_id_);
-  registry->process_sender_map_.swap(old_registry->process_sender_map_);
   return registry;
 }
 
@@ -134,8 +134,8 @@ void EmbeddedWorkerRegistry::OnWorkerStarted(
   if (!worker)
     return;
 
-  if (!ContainsKey(worker_process_map_, process_id) ||
-      worker_process_map_[process_id].count(embedded_worker_id) == 0) {
+  if (!base::ContainsKey(worker_process_map_, process_id) ||
+      !base::ContainsKey(worker_process_map_[process_id], embedded_worker_id)) {
     return;
   }
 
@@ -179,19 +179,7 @@ void EmbeddedWorkerRegistry::OnReportConsoleMessage(
                                  line_number, source_url);
 }
 
-void EmbeddedWorkerRegistry::AddChildProcessSender(
-    int process_id,
-    IPC::Sender* sender,
-    MessagePortMessageFilter* message_port_message_filter) {
-  process_sender_map_[process_id] = sender;
-  process_message_port_message_filter_map_[process_id] =
-      message_port_message_filter;
-  DCHECK(!ContainsKey(worker_process_map_, process_id));
-}
-
-void EmbeddedWorkerRegistry::RemoveChildProcessSender(int process_id) {
-  process_sender_map_.erase(process_id);
-  process_message_port_message_filter_map_.erase(process_id);
+void EmbeddedWorkerRegistry::RemoveProcess(int process_id) {
   std::map<int, std::set<int> >::iterator found =
       worker_process_map_.find(process_id);
   if (found != worker_process_map_.end()) {
@@ -200,11 +188,14 @@ void EmbeddedWorkerRegistry::RemoveChildProcessSender(int process_id) {
          it != worker_set.end();
          ++it) {
       int embedded_worker_id = *it;
-      DCHECK(ContainsKey(worker_map_, embedded_worker_id));
-      // Somehow the worker thread has lost contact with the browser process.
-      // The renderer may have been killed.  Set the worker's status to STOPPED
-      // so a new thread can be created for this version. Use OnDetached rather
-      // than OnStopped so UMA doesn't record it as a normal stoppage.
+      DCHECK(base::ContainsKey(worker_map_, embedded_worker_id));
+      // RemoveProcess is typically called after the running workers on the
+      // process have been stopped, so if there is a running worker at this
+      // point somehow the worker thread has lost contact with the browser
+      // process.
+      // Set the worker's status to STOPPED so a new thread can be created for
+      // this version. Use OnDetached rather than OnStopped so UMA doesn't
+      // record it as a normal stoppage.
       worker_map_[embedded_worker_id]->OnDetached();
     }
     worker_process_map_.erase(found);
@@ -227,11 +218,6 @@ bool EmbeddedWorkerRegistry::CanHandle(int embedded_worker_id) const {
   return true;
 }
 
-MessagePortMessageFilter*
-EmbeddedWorkerRegistry::MessagePortMessageFilterForProcess(int process_id) {
-  return process_message_port_message_filter_map_[process_id];
-}
-
 EmbeddedWorkerRegistry::EmbeddedWorkerRegistry(
     const base::WeakPtr<ServiceWorkerContextCore>& context,
     int initial_embedded_worker_id)
@@ -244,30 +230,15 @@ EmbeddedWorkerRegistry::~EmbeddedWorkerRegistry() {
   Shutdown();
 }
 
-ServiceWorkerStatusCode EmbeddedWorkerRegistry::SendStartWorker(
-    std::unique_ptr<EmbeddedWorkerMsg_StartWorker_Params> params,
-    int process_id) {
-  if (!context_)
-    return SERVICE_WORKER_ERROR_ABORT;
+void EmbeddedWorkerRegistry::BindWorkerToProcess(int process_id,
+                                                 int embedded_worker_id) {
+  DCHECK(GetWorker(embedded_worker_id));
+  DCHECK_EQ(GetWorker(embedded_worker_id)->process_id(), process_id);
+  DCHECK(
+      !base::ContainsKey(worker_process_map_, process_id) ||
+      !base::ContainsKey(worker_process_map_[process_id], embedded_worker_id));
 
-  // The ServiceWorkerDispatcherHost is supposed to be created when the process
-  // is created, and keep an entry in process_sender_map_ for its whole
-  // lifetime.
-  DCHECK(ContainsKey(process_sender_map_, process_id));
-
-  int embedded_worker_id = params->embedded_worker_id;
-  WorkerInstanceMap::iterator found = worker_map_.find(embedded_worker_id);
-  DCHECK(found != worker_map_.end());
-  DCHECK_EQ(found->second->process_id(), process_id);
-
-  DCHECK(!ContainsKey(worker_process_map_, process_id) ||
-         worker_process_map_[process_id].count(embedded_worker_id) == 0);
-
-  ServiceWorkerStatusCode status =
-      Send(process_id, new EmbeddedWorkerMsg_StartWorker(*params));
-  if (status == SERVICE_WORKER_OK)
-    worker_process_map_[process_id].insert(embedded_worker_id);
-  return status;
+  worker_process_map_[process_id].insert(embedded_worker_id);
 }
 
 ServiceWorkerStatusCode EmbeddedWorkerRegistry::Send(
@@ -275,19 +246,25 @@ ServiceWorkerStatusCode EmbeddedWorkerRegistry::Send(
   std::unique_ptr<IPC::Message> message(message_ptr);
   if (!context_)
     return SERVICE_WORKER_ERROR_ABORT;
-  ProcessToSenderMap::iterator found = process_sender_map_.find(process_id);
-  if (found == process_sender_map_.end())
+  IPC::Sender* sender = context_->GetDispatcherHost(process_id);
+  if (!sender)
     return SERVICE_WORKER_ERROR_PROCESS_NOT_FOUND;
-  if (!found->second->Send(message.release()))
+  if (!sender->Send(message.release()))
     return SERVICE_WORKER_ERROR_IPC_FAILED;
   return SERVICE_WORKER_OK;
 }
 
 void EmbeddedWorkerRegistry::RemoveWorker(int process_id,
                                           int embedded_worker_id) {
-  DCHECK(ContainsKey(worker_map_, embedded_worker_id));
+  DCHECK(base::ContainsKey(worker_map_, embedded_worker_id));
+  DetachWorker(process_id, embedded_worker_id);
   worker_map_.erase(embedded_worker_id);
-  if (!ContainsKey(worker_process_map_, process_id))
+}
+
+void EmbeddedWorkerRegistry::DetachWorker(int process_id,
+                                          int embedded_worker_id) {
+  DCHECK(base::ContainsKey(worker_map_, embedded_worker_id));
+  if (!base::ContainsKey(worker_process_map_, process_id))
     return;
   worker_process_map_[process_id].erase(embedded_worker_id);
   if (worker_process_map_[process_id].empty())

@@ -12,7 +12,6 @@
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/scoped_vector.h"
 #include "base/values.h"
 #include "components/policy/core/common/schema.h"
 #include "components/policy/policy_export.h"
@@ -36,8 +35,6 @@ struct POLICY_EXPORT PolicyToPreferenceMapEntry {
 // their corresponding preferences, and to check whether the policies are valid.
 class POLICY_EXPORT ConfigurationPolicyHandler {
  public:
-  static std::string ValueTypeToString(base::Value::Type type);
-
   ConfigurationPolicyHandler();
   virtual ~ConfigurationPolicyHandler();
 
@@ -180,7 +177,8 @@ class POLICY_EXPORT StringMappingListPolicyHandler
   };
 
   // Callback that generates the map for this instance.
-  typedef base::Callback<void(ScopedVector<MappingEntry>*)> GenerateMapCallback;
+  using GenerateMapCallback =
+      base::Callback<void(std::vector<std::unique_ptr<MappingEntry>>*)>;
 
   StringMappingListPolicyHandler(const char* policy_name,
                                  const char* pref_path,
@@ -212,7 +210,7 @@ class POLICY_EXPORT StringMappingListPolicyHandler
 
   // Map of string policy values to local pref values. This is generated lazily
   // so the generation does not have to happen if no policy is present.
-  ScopedVector<MappingEntry> map_;
+  std::vector<std::unique_ptr<MappingEntry>> map_;
 
   DISALLOW_COPY_AND_ASSIGN(StringMappingListPolicyHandler);
 };
@@ -335,7 +333,8 @@ class POLICY_EXPORT LegacyPoliciesDeprecatingPolicyHandler
     : public ConfigurationPolicyHandler {
  public:
   LegacyPoliciesDeprecatingPolicyHandler(
-      ScopedVector<ConfigurationPolicyHandler> legacy_policy_handlers,
+      std::vector<std::unique_ptr<ConfigurationPolicyHandler>>
+          legacy_policy_handlers,
       std::unique_ptr<SchemaValidatingPolicyHandler> new_policy_handler);
   ~LegacyPoliciesDeprecatingPolicyHandler() override;
 
@@ -352,7 +351,8 @@ class POLICY_EXPORT LegacyPoliciesDeprecatingPolicyHandler
                            PrefValueMap* prefs) override;
 
  private:
-  ScopedVector<ConfigurationPolicyHandler> legacy_policy_handlers_;
+  std::vector<std::unique_ptr<ConfigurationPolicyHandler>>
+      legacy_policy_handlers_;
   std::unique_ptr<SchemaValidatingPolicyHandler> new_policy_handler_;
 
   DISALLOW_COPY_AND_ASSIGN(LegacyPoliciesDeprecatingPolicyHandler);

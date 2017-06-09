@@ -31,11 +31,9 @@
 import math
 import optparse
 
-from webkitpy.tool import grammar
 from webkitpy.layout_tests.models import test_expectations
-from webkitpy.layout_tests.models.test_expectations import TestExpectationParser
-from webkitpy.layout_tests.models.test_expectations import TestExpectations
 from webkitpy.layout_tests.views.metered_stream import MeteredStream
+from webkitpy.tool import grammar
 
 
 NUM_SLOW_TESTS_TO_LOG = 10
@@ -80,10 +78,12 @@ class Printer(object):
         self._print_default("Test configuration: %s" % self._port.test_configuration())
         self._print_default("View the test results at file://%s/results.html" % results_directory)
         self._print_default("View the archived results dashboard at file://%s/dashboard.html" % results_directory)
+        if self._options.order == 'random':
+            self._print_default("Using random order with seed: %d" % self._options.seed)
 
         # FIXME: should these options be in printing_options?
         if self._options.new_baseline:
-            self._print_default("Placing new baselines in %s" % self._port.baseline_path())
+            self._print_default("Placing new baselines in %s" % self._port.baseline_version_dir())
 
         fs = self._port.host.filesystem
         fallback_path = [fs.split(x)[1] for x in self._port.baseline_search_path()]
@@ -101,11 +101,14 @@ class Printer(object):
         self._print_default('Command line: ' + ' '.join(self._port.driver_cmd_line()))
         self._print_default('')
 
-    def print_found(self, num_all_test_files, num_to_run, repeat_each, iterations):
-        found_str = 'Found %s; running %d' % (grammar.pluralize('test', num_all_test_files), num_to_run)
+    def print_found(self, num_all_test_files, num_shard_test_files, num_to_run, repeat_each, iterations):
+        found_str = 'Found %s' % grammar.pluralize('test', num_shard_test_files)
+        if num_all_test_files != num_shard_test_files:
+            found_str += ' (total %d)' % num_all_test_files
+        found_str += '; running %d' % num_to_run
         if repeat_each * iterations > 1:
             found_str += ' (%d times each: --repeat-each=%d --iterations=%d)' % (repeat_each * iterations, repeat_each, iterations)
-        found_str += ', skipping %d' % (num_all_test_files - num_to_run)
+        found_str += ', skipping %d' % (num_shard_test_files - num_to_run)
         self._print_default(found_str + '.')
 
     def print_expected(self, run_results, tests_with_result_type_callback):
@@ -412,7 +415,7 @@ class Printer(object):
 
     def _print_baseline(self, test_name, extension):
         baseline = self._port.expected_filename(test_name, extension)
-        if self._port._filesystem.exists(baseline):
+        if self._port.host.filesystem.exists(baseline):
             relpath = self._port.relative_test_filename(baseline)
         else:
             relpath = '<none>'

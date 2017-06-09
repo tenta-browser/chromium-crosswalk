@@ -18,7 +18,7 @@ const char kSoftwareRenderingListJson[] = LONG_STRING_CONST(
 {
   "name": "software rendering list",
   // Please update the version number whenever you change this file.
-  "version": "11.7",
+  "version": "12.20",
   "entries": [
     {
       "id": 1,
@@ -227,42 +227,6 @@ const char kSoftwareRenderingListJson[] = LONG_STRING_CONST(
       ]
     },
     {
-      "id": 23,
-      "description": "Mesa drivers in linux older than 7.11 are assumed to be buggy",
-      "os": {
-        "type": "linux"
-      },
-      "driver_vendor": "Mesa",
-      "driver_version": {
-        "op": "<",
-        "value": "7.11"
-      },
-      "exceptions": [
-        {
-          "driver_vendor": "osmesa"
-        }
-      ],
-      "features": [
-        "all"
-      ]
-    },
-    {
-      "id": 24,
-      "description": "Accelerated 2d canvas is unstable in Linux at the moment",
-      "os": {
-        "type": "linux"
-      },
-      "exceptions": [
-        {
-          "gl_vendor": "Vivante Corporation", 
-          "gl_renderer": "Vivante GC1000"
-        }
-      ],
-      "features": [
-        "accelerated_2d_canvas"
-      ]
-    },
-    {
       "id": 27,
       "description": "ATI/AMD cards with older drivers in Linux are crash-prone",
       "cr_bugs": [95934, 94973, 136240, 357314],
@@ -444,7 +408,7 @@ const char kSoftwareRenderingListJson[] = LONG_STRING_CONST(
     {
       "id": 50,
       "description": "Disable VMware software renderer on older Mesa",
-      "cr_bugs": [145531, 332596, 571899],
+      "cr_bugs": [145531, 332596, 571899, 629434],
       "os": {
         "type": "linux"
       },
@@ -709,6 +673,7 @@ LONG_STRING_CONST(
     {
       "id": 82,
       "description": "MediaCodec is still too buggy to use for encoding (b/11536167)",
+      "cr_bugs": [615108],
       "os": {
         "type": "android"
       },
@@ -1085,6 +1050,7 @@ LONG_STRING_CONST(
       },
       "vendor_id": "0x8086",
       "device_id": ["0x0116", "0x0126"],
+      "multi_gpu_category": "any",
       "features": [
         "all"
       ]
@@ -1228,6 +1194,316 @@ LONG_STRING_CONST(
       },
       "features": [
         "gpu_rasterization"
+      ]
+    },
+    {
+      "id": 120,
+      "description": "VPx decoding isn't supported before Windows 10 anniversary update.",
+      "cr_bugs": [616318],
+      "os": {
+        "type": "win",
+        "version": {
+          "op": "<",
+          "value": "10.0.14393"
+        }
+      },
+      "features": [
+        "accelerated_vpx_decode"
+      ]
+    },
+    {
+      "id": 121,
+      "description": "VPx decoding is too slow on Intel Broadwell, Skylake, and CherryView",
+      "cr_bugs": [616318],
+      "os": {
+        "type": "win"
+      },
+      "vendor_id": "0x8086",
+      "device_id": ["0x1602", "0x1606", "0x160a", "0x160b", "0x160d",
+                    "0x160e", "0x1612", "0x1616", "0x161a", "0x161b",
+                    "0x161d", "0x161e", "0x1622", "0x1626", "0x162a",
+                    "0x162b", "0x162d", "0x162e", "0x22b0", "0x22b1",
+                    "0x22b2", "0x22b3", "0x1902", "0x1906", "0x190a",
+                    "0x190b", "0x190e", "0x1912", "0x1913", "0x1915",
+                    "0x1916", "0x1917", "0x191a", "0x191b", "0x191d",
+                    "0x191e", "0x1921", "0x1923", "0x1926", "0x1927",
+                    "0x192a", "0x192b", "0x192d", "0x1932", "0x193a",
+                    "0x193b", "0x193d"],
+      "features": [
+        "accelerated_vpx_decode"
+      ]
+    },
+    {
+      "id": 122,
+      "description": "GPU rasterization should only be enabled on NVIDIA and Intel DX11+, and AMD RX-R2 GPUs for now.",
+      "cr_bugs": [643850],
+      "os": {
+        "type": "win"
+      },
+      "features": [
+        "gpu_rasterization"
+      ],
+      "exceptions": [
+        {
+          "vendor_id": "0x10de",
+          "pixel_shader_version": {
+            "op": ">=",
+            "value": "5.0"
+          }
+        },
+        {
+          "vendor_id": "0x8086",
+          "pixel_shader_version": {
+            "op": ">=",
+            "value": "5.0"
+          }
+        },
+        {
+          "vendor_id": "0x1002",
+          "pixel_shader_version": {
+            "op": ">=",
+            "value": "5.0"
+          },
+          "device_id": ["0x1309", "0x130a", "0x130b", "0x130c", "0x130d",
+                        "0x130e", "0x130f", "0x1313", "0x1315", "0x1316",
+                        "0x1318", "0x131b", "0x131c", "0x131d", "0x6600",
+                        "0x6604", "0x6605", "0x6610", "0x6611", "0x6617",
+                        "0x6640", "0x6646", "0x6647", "0x6647", "0x6658",
+                        "0x665d", "0x665f", "0x6660", "0x6663", "0x6664",
+                        "0x6665", "0x6667", "0x67b0", "0x67b1", "0x67b9",
+                        "0x67df", "0x67ef", "0x6810", "0x6811", "0x6820",
+                        "0x6821", "0x682b", "0x6835", "0x6900", "0x6901",
+                        "0x6907", "0x6920", "0x6921", "0x6938", "0x6939",
+                        "0x7300", "0x9851", "0x9852", "0x9853", "0x9854",
+                        "0x9855", "0x9856", "0x9874", "0x98e4"]
+        }
+      ]
+    },
+    {
+      "id": 123,
+      "description": "Accelerated VPx decoding is hanging on some videos.",
+      "cr_bugs": [654111],
+      "os": {
+        "type": "win"
+      },
+      "vendor_id": "0x8086",
+      "driver_version": {
+        "op": "<",
+        "value": "21.20.16.4542"
+      },
+      "features": [
+        "accelerated_vpx_decode"
+      ]
+    },
+    {
+      "id": 124,
+      "description": "Some AMD drivers have rendering glitches with GPU Rasterization",
+      "cr_bugs": [653538],
+      "os" : {
+        "type": "win"
+      },
+      "vendor_id": "0x1002",
+      "driver_version": {
+        "op": ">",
+        "value": "16.200.1035.1001"
+      },
+      "exceptions": [
+        {
+          "driver_version": {
+            "op": ">=",
+            "value": "21.19.384.0"
+          }
+        }
+      ],
+      "features": [
+        "gpu_rasterization"
+      ]
+    },
+)  // String split to avoid MSVC char limit.
+LONG_STRING_CONST(
+    {
+      "id": 125,
+      "description": "VirtualBox driver is unstable on linux.",
+      "cr_bugs": [656572, 658668],
+      "os": {
+        "type": "linux"
+      },
+      "vendor_id": "0x80ee",
+      "device_id": ["0xbeef"],
+      "features": [
+        "all"
+      ]
+    },
+    {
+      "id": 126,
+      "description": "Don't allow ES3 on Mac core profile < 4.1",
+      "cr_bugs": [295792],
+      "os": {
+        "type": "macosx"
+      },
+      "gl_version": {
+        "op": "<",
+        "value": "4.1"
+      },
+      "features": [
+        "webgl2"
+      ]
+    },
+    {
+      "id":129,
+      "description": "Intel drivers are buggy on Linux 2.x",
+      "cr_bugs": [662909],
+      "os": {
+        "type": "linux",
+        "version": {
+          "op": "<",
+          "value": "3.0"
+        }
+      },
+      "vendor_id": "0x8086",
+      "features": [
+        "all"
+      ]
+    },
+    {
+      "id": 130,
+      "description": "Older NVIDIA GPUs on macOS render incorrectly",
+      "cr_bugs": [676829, 676975],
+      "os": {
+        "type": "macosx"
+      },
+      "vendor_id": "0x10de",
+      "device_id": ["0x0407", "0x0647", "0x0863"],
+      "multi_gpu_category": "any",
+      "features": [
+        "all"
+      ]
+    },
+    {
+      "id": 131,
+      "description": "Mesa drivers older than 10.4.3 is crash prone on Linux Intel i965gm",
+      "cr_bugs": [462426],
+      "os": {
+        "type": "linux"
+      },
+      "driver_vendor": "Mesa",
+      "driver_version": {
+        "op": "<",
+        "value": "10.4.3"
+      },
+      "vendor_id": "8086",
+      "device_id": ["0x2a02"],
+      "features": [
+        "all"
+      ]
+    },
+    {
+      "id": 132,
+      "description": "Mali accelerated 2d canvas is slow on Linux",
+      "cr_bugs": [691601],
+      "os": {
+        "type": "linux"
+      },
+      "gl_renderer": "Mali-4.*",
+      "features": [
+        "accelerated_2d_canvas"
+      ]
+    },
+    {
+      "id": 133,
+      "description": "MediaCodec on VideoCore IV HW crashes on JB",
+      "cr_bugs": [654905],
+      "os": {
+        "type": "android",
+        "version": {
+          "op": "<",
+          "value": "4.4"
+        }
+      },
+      "gl_renderer": ".*VideoCore IV.*",
+      "features": [
+        "accelerated_video_decode"
+      ]
+    },
+    {
+      "id": 134,
+      "description": "Mesa driver 10.1.3 renders incorrectly and crashes on multiple vendors",
+      "cr_bugs": [629434],
+      "os": {
+        "type": "linux"
+      },
+      "driver_vendor": "Mesa",
+      "driver_version": {
+        "op": "<=",
+        "value": "10.1.3"
+      },
+      "exceptions": [
+        {
+          "gl_renderer": ".*SVGA3D.*"
+        },
+        {
+          "gl_renderer": ".*Gallium.*llvmpipe.*"
+        }
+      ],
+      "features": [
+        "all"
+      ]
+    },
+    {
+      "id": 135,
+      "description": "Key parts of WebGL 2 broken on old Qualcomm drivers (depth texture, MSAA)",
+      "cr_bugs": [682753, 682075],
+      "os": {
+        "type": "android",
+        "version": {
+          "op": "<",
+          "value": "6.0"
+        }
+      },
+      "gl_renderer": "Adreno \\(TM\\) 4.*",
+      "features": [
+        "webgl2"
+      ]
+    },
+    {
+      "id": 136,
+      "description": "GPU rasterization is blacklisted on NVidia Fermi architecture for now.",
+      "cr_bugs": [643850],
+      "os": {
+        "type": "win"
+      },
+      "vendor_id": "0x10de",
+      "device_id": ["0x06c0", "0x06c4", "0x06ca", "0x06cb", "0x06cd", "0x06d1",
+                    "0x06d2", "0x06d8", "0x06d9", "0x06da", "0x06dc", "0x06dd",
+                    "0x06de", "0x06df", "0x0e22", "0x0e23", "0x0e24", "0x0e30",
+                    "0x0e31", "0x0e3a", "0x0e3b", "0x1200", "0x1201", "0x1202",
+                    "0x1203", "0x1205", "0x1206", "0x1207", "0x1208", "0x1210",
+                    "0x1211", "0x1212", "0x1213", "0x0dc0", "0x0dc4", "0x0dc5",
+                    "0x0dc6", "0x0dcd", "0x0dce", "0x0dd1", "0x0dd2", "0x0dd3",
+                    "0x0dd6", "0x0dd8", "0x0dda", "0x1241", "0x1243", "0x1244",
+                    "0x1245", "0x1246", "0x1247", "0x1248", "0x1249", "0x124b",
+                    "0x124d", "0x1251", "0x0de0", "0x0de1", "0x0de2", "0x0de3",
+                    "0x0de4", "0x0de5", "0x0de8", "0x0de9", "0x0dea", "0x0deb",
+                    "0x0dec", "0x0ded", "0x0dee", "0x0def", "0x0df0", "0x0df1",
+                    "0x0df2", "0x0df3", "0x0df4", "0x0df5", "0x0df6", "0x0df7",
+                    "0x0df8", "0x0df9", "0x0dfa", "0x0dfc", "0x0f00", "0x0f01",
+                    "0x1080", "0x1081", "0x1082", "0x1084", "0x1086", "0x1087",
+                    "0x1088", "0x1089", "0x108b", "0x1091", "0x109a", "0x109b",
+                    "0x1040", "0x1042", "0x1048", "0x1049", "0x104a", "0x1050",
+                    "0x1051", "0x1052", "0x1054", "0x1055", "0x1056", "0x1057",
+                    "0x1058", "0x1059", "0x105a", "0x107d", "0x1140"],
+      "features": [
+        "gpu_rasterization"
+      ]
+    },
+    {
+      // Corresponds to GPU driver bug #214.
+      "id": 140,
+      "description": "Some old Qualcomm scissor bug workaround needs disabling MSAA to work, which is a core part of WebGL 2.",
+      "cr_bugs": [670607, 696627, 698197],
+      "gl_renderer": "Adreno \\(TM\\) 3.*",
+      "features": [
+        "webgl2"
       ]
     }
   ]

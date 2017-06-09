@@ -15,6 +15,7 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/timer/timer.h"
+#include "net/base/net_export.h"
 #include "net/disk_cache/blockfile/block_files.h"
 #include "net/disk_cache/blockfile/eviction.h"
 #include "net/disk_cache/blockfile/in_flight_backend_io.h"
@@ -292,6 +293,7 @@ class NET_EXPORT_PRIVATE BackendImpl : public Backend {
   std::unique_ptr<Iterator> CreateIterator() override;
   void GetStats(StatsItems* stats) override;
   void OnExternalCacheHit(const std::string& key) override;
+  size_t EstimateMemoryUsage() const override;
 
  private:
   using EntriesMap = std::unordered_map<CacheAddr, EntryImpl*>;

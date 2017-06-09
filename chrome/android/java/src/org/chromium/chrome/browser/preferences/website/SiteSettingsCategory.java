@@ -39,13 +39,13 @@ public class SiteSettingsCategory {
     public static final String CATEGORY_CAMERA = "camera";
     public static final String CATEGORY_COOKIES = "cookies";
     public static final String CATEGORY_DEVICE_LOCATION = "device_location";
-    public static final String CATEGORY_FULLSCREEN = "fullscreen";
     public static final String CATEGORY_JAVASCRIPT = "javascript";
     public static final String CATEGORY_MICROPHONE = "microphone";
     public static final String CATEGORY_NOTIFICATIONS = "notifications";
     public static final String CATEGORY_POPUPS = "popups";
     public static final String CATEGORY_PROTECTED_MEDIA = "protected_content";
     public static final String CATEGORY_USE_STORAGE = "use_storage";
+    public static final String CATEGORY_USB = "usb";
 
     // The id of this category.
     private String mCategory;
@@ -107,10 +107,6 @@ public class SiteSettingsCategory {
         if (CATEGORY_DEVICE_LOCATION.equals(category)) {
             return new LocationCategory();
         }
-        if (CATEGORY_FULLSCREEN.equals(category)) {
-            return new SiteSettingsCategory(CATEGORY_FULLSCREEN, "",
-                    ContentSettingsType.CONTENT_SETTINGS_TYPE_FULLSCREEN);
-        }
         if (CATEGORY_MICROPHONE.equals(category)) {
             return new SiteSettingsCategory(
                     SiteSettingsCategory.CATEGORY_MICROPHONE,
@@ -131,6 +127,10 @@ public class SiteSettingsCategory {
         }
         if (CATEGORY_USE_STORAGE.equals(category)) {
             return new SiteSettingsCategory(CATEGORY_USE_STORAGE, "", -1);
+        }
+        if (CATEGORY_USB.equals(category)) {
+            return new SiteSettingsCategory(
+                    CATEGORY_USB, "", ContentSettingsType.CONTENT_SETTINGS_TYPE_USB_CHOOSER_DATA);
         }
 
         return null;
@@ -160,9 +160,6 @@ public class SiteSettingsCategory {
         if (contentSettingsType == ContentSettingsType.CONTENT_SETTINGS_TYPE_GEOLOCATION) {
             return fromString(CATEGORY_DEVICE_LOCATION);
         }
-        if (contentSettingsType == ContentSettingsType.CONTENT_SETTINGS_TYPE_FULLSCREEN) {
-            return fromString(CATEGORY_FULLSCREEN);
-        }
         if (contentSettingsType == ContentSettingsType.CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC) {
             return fromString(CATEGORY_MICROPHONE);
         }
@@ -175,6 +172,9 @@ public class SiteSettingsCategory {
         if (contentSettingsType
                 == ContentSettingsType.CONTENT_SETTINGS_TYPE_PROTECTED_MEDIA_IDENTIFIER) {
             return fromString(CATEGORY_PROTECTED_MEDIA);
+        }
+        if (contentSettingsType == ContentSettingsType.CONTENT_SETTINGS_TYPE_USB_CHOOSER_DATA) {
+            return fromString(CATEGORY_USB);
         }
 
         return null;
@@ -221,13 +221,6 @@ public class SiteSettingsCategory {
     public boolean showCameraSites() {
         return mContentSettingsType
                 == ContentSettingsType.CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA;
-    }
-
-    /**
-     * Returns whether this category is the Fullscreen category.
-     */
-    public boolean showFullscreenSites() {
-        return mContentSettingsType == ContentSettingsType.CONTENT_SETTINGS_TYPE_FULLSCREEN;
     }
 
     /**
@@ -282,19 +275,25 @@ public class SiteSettingsCategory {
     }
 
     /**
+     * Returns whether this category is the USB category.
+     */
+    public boolean showUsbDevices() {
+        return mContentSettingsType == ContentSettingsType.CONTENT_SETTINGS_TYPE_USB_CHOOSER_DATA;
+    }
+
+    /**
      * Returns whether the current category is managed either by enterprise policy or by the
      * custodian of a supervised account.
      */
     public boolean isManaged() {
         PrefServiceBridge prefs = PrefServiceBridge.getInstance();
         if (showBackgroundSyncSites()) return prefs.isBackgroundSyncManaged();
-        if (showCameraSites()) return !prefs.isCameraUserModifiable();
-        if (showCookiesSites()) return prefs.isAcceptCookiesManaged();
-        if (showFullscreenSites()) return prefs.isFullscreenManaged();
+        if (showCookiesSites()) return !prefs.isAcceptCookiesUserModifiable();
         if (showGeolocationSites()) {
             return !prefs.isAllowLocationUserModifiable();
         }
         if (showJavaScriptSites()) return prefs.javaScriptManaged();
+        if (showCameraSites()) return !prefs.isCameraUserModifiable();
         if (showMicrophoneSites()) return !prefs.isMicUserModifiable();
         if (showPopupSites()) return prefs.isPopupsManaged();
         return false;
@@ -306,6 +305,7 @@ public class SiteSettingsCategory {
      */
     public boolean isManagedByCustodian() {
         PrefServiceBridge prefs = PrefServiceBridge.getInstance();
+        if (showCookiesSites()) return prefs.isAcceptCookiesManagedByCustodian();
         if (showGeolocationSites()) {
             return prefs.isAllowLocationManagedByCustodian();
         }

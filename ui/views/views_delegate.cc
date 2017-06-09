@@ -6,6 +6,7 @@
 
 #include "base/command_line.h"
 #include "build/build_config.h"
+#include "ui/views/layout/layout_constants.h"
 #include "ui/views/views_touch_selection_controller_factory.h"
 #include "ui/views/widget/native_widget_private.h"
 
@@ -93,7 +94,7 @@ content::WebContents* ViewsDelegate::CreateWebContents(
   return nullptr;
 }
 
-base::TimeDelta ViewsDelegate::GetDefaultTextfieldObscuredRevealDuration() {
+base::TimeDelta ViewsDelegate::GetTextfieldPasswordRevealDuration() {
   return base::TimeDelta();
 }
 
@@ -102,6 +103,10 @@ bool ViewsDelegate::WindowManagerProvidesTitleBar(bool maximized) {
 }
 
 ui::ContextFactory* ViewsDelegate::GetContextFactory() {
+  return nullptr;
+}
+
+ui::ContextFactoryPrivate* ViewsDelegate::GetContextFactoryPrivate() {
   return nullptr;
 }
 
@@ -119,6 +124,44 @@ int ViewsDelegate::GetAppbarAutohideEdges(HMONITOR monitor,
 
 scoped_refptr<base::TaskRunner> ViewsDelegate::GetBlockingPoolTaskRunner() {
   return nullptr;
+}
+
+gfx::Insets ViewsDelegate::GetDialogButtonInsets() const {
+  return gfx::Insets(0, kButtonHEdgeMarginNew, kButtonVEdgeMarginNew,
+                     kButtonHEdgeMarginNew);
+}
+
+int ViewsDelegate::GetDialogCloseButtonMargin() const {
+  return kCloseButtonMargin;
+}
+
+int ViewsDelegate::GetDialogRelatedButtonHorizontalSpacing() const {
+  return kRelatedButtonHSpacing;
+}
+
+int ViewsDelegate::GetDialogRelatedControlVerticalSpacing() const {
+  return kRelatedControlVerticalSpacing;
+}
+
+gfx::Insets ViewsDelegate::GetDialogFrameViewInsets() const {
+  return gfx::Insets(kPanelVertMargin, kButtonHEdgeMarginNew, 0,
+                     kButtonHEdgeMarginNew);
+}
+
+gfx::Insets ViewsDelegate::GetBubbleDialogMargins() const {
+  return gfx::Insets(kPanelVertMargin, kPanelHorizMargin);
+}
+
+int ViewsDelegate::GetButtonMinimumWidth() const {
+  return kMinimumButtonWidth;
+}
+
+int ViewsDelegate::GetDialogButtonMinimumWidth() const {
+  return kDialogMinimumButtonWidth;
+}
+
+int ViewsDelegate::GetButtonHorizontalPadding() const {
+  return kButtonHorizontalPadding;
 }
 
 ViewsDelegate::ViewsDelegate()

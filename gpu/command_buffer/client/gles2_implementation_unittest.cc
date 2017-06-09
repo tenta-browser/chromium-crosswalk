@@ -404,6 +404,8 @@ class GLES2ImplementationTest : public testing::Test {
   static const GLint kMaxVertexAttribs = 8;
   static const GLint kMaxVertexTextureImageUnits = 0;
   static const GLint kMaxVertexUniformVectors = 128;
+  static const GLint kMaxViewportWidth = 8192;
+  static const GLint kMaxViewportHeight = 6144;
   static const GLint kNumCompressedTextureFormats = 0;
   static const GLint kNumShaderBinaryFormats = 0;
   static const GLuint kMaxTransformFeedbackSeparateAttribs = 4;
@@ -467,6 +469,8 @@ class GLES2ImplementationTest : public testing::Test {
       capabilities.max_vertex_attribs = kMaxVertexAttribs;
       capabilities.max_vertex_texture_image_units = kMaxVertexTextureImageUnits;
       capabilities.max_vertex_uniform_vectors = kMaxVertexUniformVectors;
+      capabilities.max_viewport_width = kMaxViewportWidth;
+      capabilities.max_viewport_height = kMaxViewportHeight;
       capabilities.num_compressed_texture_formats =
           kNumCompressedTextureFormats;
       capabilities.num_shader_binary_formats = kNumShaderBinaryFormats;
@@ -2680,8 +2684,8 @@ TEST_F(GLES3ImplementationTest, SubImage3DUnpack) {
   static const GLint kSrcHeight = 7;
   static const GLint kSrcSubImageX0 = 11;
   static const GLint kSrcSubImageX1 = 16;
-  static const GLint kSrcSubImageY0 = 20;
-  static const GLint kSrcSubImageY1 = 23;
+  static const GLint kSrcSubImageY0 = 1;
+  static const GLint kSrcSubImageY1 = 4;
   static const GLint kSrcSubImageZ0 = 2;
   static const GLint kSrcSubImageZ1 = 5;
   static const GLint kSrcSubImageWidth = kSrcSubImageX1 - kSrcSubImageX0;
@@ -2712,7 +2716,7 @@ TEST_F(GLES3ImplementationTest, SubImage3DUnpack) {
   // Makes sure the pixels size is large enough for all tests.
   pixel_params.alignment = 8;
   ASSERT_TRUE(GLES2Util::ComputeImageDataSizesES3(
-      kSrcWidth, kSrcSubImageY1, kSrcSubImageZ1, kFormat, kType,
+      kSrcWidth, kSrcHeight, kSrcSubImageZ1, kFormat, kType,
       pixel_params, &pixel_size, nullptr, nullptr, nullptr, nullptr));
   std::unique_ptr<uint8_t[]> src_pixels;
   src_pixels.reset(new uint8_t[pixel_size]);
@@ -3198,7 +3202,8 @@ TEST_F(GLES2ImplementationTest, GetString) {
   const char* expected_str =
       "foobar "
       "GL_EXT_unpack_subimage "
-      "GL_CHROMIUM_map_sub";
+      "GL_CHROMIUM_map_sub "
+      "GL_CHROMIUM_image";
   const char kBad = 0x12;
   struct Cmds {
     cmd::SetBucketSize set_bucket_size1;
@@ -3719,7 +3724,7 @@ TEST_F(GLES2ImplementationTest, Enable) {
 TEST_F(GLES2ImplementationTest, ConsumeTextureCHROMIUM) {
   struct Cmds {
     cmds::ConsumeTextureCHROMIUMImmediate cmd;
-    GLbyte data[64];
+    GLbyte data[GL_MAILBOX_SIZE_CHROMIUM];
   };
 
   Mailbox mailbox = Mailbox::Generate();
@@ -3731,8 +3736,8 @@ TEST_F(GLES2ImplementationTest, ConsumeTextureCHROMIUM) {
 
 TEST_F(GLES2ImplementationTest, CreateAndConsumeTextureCHROMIUM) {
   struct Cmds {
-    cmds::CreateAndConsumeTextureCHROMIUMImmediate cmd;
-    GLbyte data[64];
+    cmds::CreateAndConsumeTextureINTERNALImmediate cmd;
+    GLbyte data[GL_MAILBOX_SIZE_CHROMIUM];
   };
 
   Mailbox mailbox = Mailbox::Generate();
@@ -3746,7 +3751,7 @@ TEST_F(GLES2ImplementationTest, CreateAndConsumeTextureCHROMIUM) {
 TEST_F(GLES2ImplementationTest, ProduceTextureCHROMIUM) {
   struct Cmds {
     cmds::ProduceTextureCHROMIUMImmediate cmd;
-    GLbyte data[64];
+    GLbyte data[GL_MAILBOX_SIZE_CHROMIUM];
   };
 
   Mailbox mailbox = Mailbox::Generate();
@@ -3759,7 +3764,7 @@ TEST_F(GLES2ImplementationTest, ProduceTextureCHROMIUM) {
 TEST_F(GLES2ImplementationTest, ProduceTextureDirectCHROMIUM) {
   struct Cmds {
     cmds::ProduceTextureDirectCHROMIUMImmediate cmd;
-    GLbyte data[64];
+    GLbyte data[GL_MAILBOX_SIZE_CHROMIUM];
   };
 
   Mailbox mailbox = Mailbox::Generate();
@@ -4428,6 +4433,59 @@ TEST_F(GLES2ImplementationTest, DeleteBuffersUnmapsDataStore) {
   EXPECT_EQ(GL_INVALID_OPERATION, CheckError());
 }
 
+TEST_F(GLES3ImplementationTest, GetBufferSubDataAsyncCHROMIUM) {
+  const GLuint kBufferId = 123;
+  void* mem;
+
+  const int TARGET_COUNT = 8;
+  GLenum targets[TARGET_COUNT] = {
+    GL_ARRAY_BUFFER,
+    GL_ELEMENT_ARRAY_BUFFER,
+    GL_COPY_READ_BUFFER,
+    GL_COPY_WRITE_BUFFER,
+    GL_TRANSFORM_FEEDBACK_BUFFER,
+    GL_UNIFORM_BUFFER,
+    GL_PIXEL_PACK_BUFFER,
+    GL_PIXEL_UNPACK_BUFFER,
+  };
+
+  // Positive tests
+  for (int i = 0; i < TARGET_COUNT; i++) {
+    gl_->BindBuffer(targets[i], kBufferId);
+    mem = gl_->GetBufferSubDataAsyncCHROMIUM(targets[i], 10, 64);
+    EXPECT_TRUE(mem != nullptr);
+    EXPECT_EQ(GL_NO_ERROR, CheckError());
+    gl_->FreeSharedMemory(mem);
+    EXPECT_EQ(GL_NO_ERROR, CheckError());
+    gl_->BindBuffer(targets[i], 0);
+  }
+
+  // Negative tests: invalid target
+  for (int i = 0; i < TARGET_COUNT; i++) {
+    GLenum wrong_target = targets[(i + 1) % TARGET_COUNT];
+    gl_->BindBuffer(targets[i], kBufferId);
+    mem = gl_->GetBufferSubDataAsyncCHROMIUM(wrong_target, 10, 64);
+    EXPECT_TRUE(mem == nullptr);
+    EXPECT_EQ(GL_INVALID_OPERATION, CheckError());
+    gl_->BindBuffer(targets[i], 0);
+  }
+}
+
+TEST_F(GLES3ImplementationTest, GetBufferSubDataAsyncCHROMIUMInvalidValue) {
+  const GLuint kBufferId = 123;
+  void* mem;
+
+  gl_->BindBuffer(GL_ARRAY_BUFFER, kBufferId);
+
+  mem = gl_->GetBufferSubDataAsyncCHROMIUM(GL_ARRAY_BUFFER, -1, 64);
+  EXPECT_TRUE(mem == nullptr);
+  EXPECT_EQ(GL_INVALID_VALUE, CheckError());
+
+  mem = gl_->GetBufferSubDataAsyncCHROMIUM(GL_ARRAY_BUFFER, 0, -1);
+  EXPECT_TRUE(mem == nullptr);
+  EXPECT_EQ(GL_INVALID_VALUE, CheckError());
+}
+
 TEST_F(GLES2ImplementationTest, GetInternalformativ) {
   const GLint kNumSampleCounts = 8;
   struct Cmds {
@@ -4548,43 +4606,6 @@ TEST_F(GLES2ImplementationTest, ReportLossReentrant) {
   // The lost context callback should not be run yet to avoid calling back into
   // clients re-entrantly, and having them re-enter GLES2Implementation.
   EXPECT_EQ(0, lost_count);
-}
-
-TEST_F(GLES2ImplementationManualInitTest, LoseContextOnOOM) {
-  ContextInitOptions init_options;
-  init_options.lose_context_when_out_of_memory = true;
-  ASSERT_TRUE(Initialize(init_options));
-
-  struct Cmds {
-    cmds::LoseContextCHROMIUM cmd;
-  };
-
-  GLsizei max = std::numeric_limits<GLsizei>::max();
-  EXPECT_CALL(*gpu_control_, CreateGpuMemoryBufferImage(max, max, _, _))
-      .WillOnce(Return(-1));
-  gl_->CreateGpuMemoryBufferImageCHROMIUM(max, max, GL_RGBA,
-                                          GL_READ_WRITE_CHROMIUM);
-  // The context should be lost.
-  Cmds expected;
-  expected.cmd.Init(GL_GUILTY_CONTEXT_RESET_ARB, GL_UNKNOWN_CONTEXT_RESET_ARB);
-  EXPECT_EQ(0, memcmp(&expected, commands_, sizeof(expected)));
-}
-
-TEST_F(GLES2ImplementationManualInitTest, NoLoseContextOnOOM) {
-  ContextInitOptions init_options;
-  ASSERT_TRUE(Initialize(init_options));
-
-  struct Cmds {
-    cmds::LoseContextCHROMIUM cmd;
-  };
-
-  GLsizei max = std::numeric_limits<GLsizei>::max();
-  EXPECT_CALL(*gpu_control_, CreateGpuMemoryBufferImage(max, max, _, _))
-      .WillOnce(Return(-1));
-  gl_->CreateGpuMemoryBufferImageCHROMIUM(max, max, GL_RGBA,
-                                          GL_READ_WRITE_CHROMIUM);
-  // The context should not be lost.
-  EXPECT_TRUE(NoCommandsWritten());
 }
 
 TEST_F(GLES2ImplementationManualInitTest, FailInitOnBGRMismatch1) {

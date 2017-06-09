@@ -13,10 +13,6 @@
 #include "ui/views/widget/widget_delegate.h"
 #include "ui/views/widget/widget_observer.h"
 
-namespace content {
-class WebContents;
-}
-
 namespace gfx {
 class Point;
 }
@@ -28,14 +24,6 @@ namespace autofill {
 class AutofillPopupBaseView : public views::WidgetDelegateView,
                               public views::WidgetFocusChangeListener,
                               public views::WidgetObserver {
- public:
-  static const SkColor kBorderColor;
-  static const SkColor kHoveredBackgroundColor;
-  static const SkColor kItemTextColor;
-  static const SkColor kPopupBackground;
-  static const SkColor kValueTextColor;
-  static const SkColor kWarningTextColor;
-
  protected:
   explicit AutofillPopupBaseView(AutofillPopupViewDelegate* delegate,
                                  views::Widget* parent_widget);

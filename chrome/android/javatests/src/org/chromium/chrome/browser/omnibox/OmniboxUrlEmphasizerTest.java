@@ -5,8 +5,8 @@
 package org.chromium.chrome.browser.omnibox;
 
 import android.content.res.Resources;
+import android.support.test.filters.MediumTest;
 import android.test.UiThreadTest;
-import android.test.suitebuilder.annotation.MediumTest;
 import android.text.Spannable;
 import android.text.SpannableStringBuilder;
 
@@ -173,8 +173,8 @@ public class OmniboxUrlEmphasizerTest extends NativeLibraryTestBase {
     public void testLongInsecureHTTPSUrl() {
         Spannable url = new SpannableStringBuilder(
                 "https://www.google.com/q?query=abc123&results=1");
-        OmniboxUrlEmphasizer.emphasizeUrl(url, mResources, mProfile,
-                ConnectionSecurityLevel.SECURITY_ERROR, false, true, true);
+        OmniboxUrlEmphasizer.emphasizeUrl(
+                url, mResources, mProfile, ConnectionSecurityLevel.DANGEROUS, false, true, true);
         EmphasizedUrlSpanHelper[] spans = EmphasizedUrlSpanHelper.getSpansForEmphasizedUrl(url);
 
         assertEquals("Unexpected number of spans:", 5, spans.length);
@@ -246,12 +246,15 @@ public class OmniboxUrlEmphasizerTest extends NativeLibraryTestBase {
         Spannable url = new SpannableStringBuilder(
                 "data:text/plain;charset=utf-8;base64,VGVzdCBVUkw=");
         OmniboxUrlEmphasizer.emphasizeUrl(
-                url, mResources, mProfile, ConnectionSecurityLevel.NONE, true, true, true);
+                url, mResources, mProfile, ConnectionSecurityLevel.NONE, false, true, true);
         EmphasizedUrlSpanHelper[] spans = EmphasizedUrlSpanHelper.getSpansForEmphasizedUrl(url);
 
-        assertEquals("Unexpected number of spans:", 1, spans.length);
-        spans[0].assertIsColoredSpan("data", 0, ApiCompatibilityUtils.getColor(mResources,
-                R.color.url_emphasis_non_emphasized_text));
+        assertEquals("Unexpected number of spans:", 2, spans.length);
+        spans[0].assertIsColoredSpan("data", 0,
+                ApiCompatibilityUtils.getColor(mResources, R.color.url_emphasis_default_text));
+        spans[1].assertIsColoredSpan(":text/plain;charset=utf-8;base64,VGVzdCBVUkw=", 4,
+                ApiCompatibilityUtils.getColor(
+                        mResources, R.color.url_emphasis_non_emphasized_text));
     }
 
     /**
@@ -314,6 +317,22 @@ public class OmniboxUrlEmphasizerTest extends NativeLibraryTestBase {
         assertEquals("Unexpected number of spans:", 1, spans.length);
         spans[0].assertIsColoredSpan("invalidurl", 0, ApiCompatibilityUtils.getColor(mResources,
                 R.color.url_emphasis_domain_and_registry));
+    }
+
+    /**
+     * Verify that an empty URL is processed correctly by
+     * OmniboxUrlEmphasizer.emphasizeUrl(). Regression test for crbug.com/700769
+     */
+    @UiThreadTest
+    @MediumTest
+    @Feature({"Browser", "Main"})
+    public void testEmptyUrl() {
+        Spannable url = new SpannableStringBuilder("");
+        OmniboxUrlEmphasizer.emphasizeUrl(
+                url, mResources, mProfile, ConnectionSecurityLevel.NONE, false, true, true);
+        EmphasizedUrlSpanHelper[] spans = EmphasizedUrlSpanHelper.getSpansForEmphasizedUrl(url);
+
+        assertEquals("Unexpected number of spans:", 0, spans.length);
     }
 
     /**

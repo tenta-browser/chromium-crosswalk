@@ -31,7 +31,7 @@ class SearchIPCRouterPolicyTest : public BrowserWithTestWindowTest {
     SearchTabHelper* search_tab_helper =
         SearchTabHelper::FromWebContents(web_contents());
     EXPECT_NE(static_cast<SearchTabHelper*>(NULL), search_tab_helper);
-    return search_tab_helper->ipc_router().policy_for_testing();
+    return search_tab_helper->ipc_router_for_testing().policy_for_testing();
   }
 
   void SetIncognitoProfile() {
@@ -50,17 +50,6 @@ TEST_F(SearchIPCRouterPolicyTest, DoNotProcessFocusOmnibox) {
   // Process message only if the underlying page is an InstantNTP.
   NavigateAndCommitActiveTab(GURL("chrome-search://foo/bar"));
   EXPECT_FALSE(GetSearchIPCRouterPolicy()->ShouldProcessFocusOmnibox(true));
-}
-
-TEST_F(SearchIPCRouterPolicyTest, SendSetPromoInformation) {
-  NavigateAndCommitActiveTab(GURL(chrome::kChromeSearchLocalNtpUrl));
-  EXPECT_TRUE(GetSearchIPCRouterPolicy()->ShouldSendSetPromoInformation());
-}
-
-TEST_F(SearchIPCRouterPolicyTest, DoNotSendSetPromoInformation) {
-  // Send promo information only if the underlying page is an InstantNTP.
-  NavigateAndCommitActiveTab(GURL("chrome-search://foo/bar"));
-  EXPECT_FALSE(GetSearchIPCRouterPolicy()->ShouldSendSetPromoInformation());
 }
 
 TEST_F(SearchIPCRouterPolicyTest, ProcessDeleteMostVisitedItem) {
@@ -147,11 +136,6 @@ TEST_F(SearchIPCRouterPolicyTest, DoNotProcessMessagesForInactiveTab) {
   EXPECT_FALSE(router_policy->ShouldSendSetInputInProgress(false));
 }
 
-TEST_F(SearchIPCRouterPolicyTest, SendSetDisplayInstantResults) {
-  NavigateAndCommitActiveTab(GURL("chrome-search://foo/bar"));
-  EXPECT_TRUE(GetSearchIPCRouterPolicy()->ShouldSendSetDisplayInstantResults());
-}
-
 TEST_F(SearchIPCRouterPolicyTest, SendSetSuggestionToPrefetch) {
   NavigateAndCommitActiveTab(GURL("chrome-search://foo/bar"));
   EXPECT_TRUE(GetSearchIPCRouterPolicy()->ShouldSendSetSuggestionToPrefetch());
@@ -164,8 +148,6 @@ TEST_F(SearchIPCRouterPolicyTest,
 
   SearchIPCRouter::Policy* router_policy = GetSearchIPCRouterPolicy();
   EXPECT_FALSE(router_policy->ShouldSendSetSuggestionToPrefetch());
-  EXPECT_FALSE(router_policy->ShouldSendSetDisplayInstantResults());
-  EXPECT_FALSE(router_policy->ShouldSendSetPromoInformation());
   EXPECT_FALSE(router_policy->ShouldSendThemeBackgroundInfo());
   EXPECT_FALSE(router_policy->ShouldSendMostVisitedItems());
   EXPECT_FALSE(router_policy->ShouldSendSetInputInProgress(true));

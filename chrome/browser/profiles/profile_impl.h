@@ -19,11 +19,12 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_impl_io_data.h"
 #include "chrome/browser/ui/zoom/chrome_zoom_level_prefs.h"
+#include "chrome/common/features.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/host_zoom_map.h"
+#include "extensions/features/features.h"
 
-class NetPrefObserver;
 class PrefService;
 
 class TrackedPreferenceValidationDelegate;
@@ -45,12 +46,8 @@ namespace domain_reliability {
 class DomainReliabilityMonitor;
 }
 
-namespace extensions {
-class ExtensionSystem;
-}
-
 namespace policy {
-class CloudPolicyManager;
+class ConfigurationPolicyProvider;
 class ProfilePolicyConnector;
 class SchemaRegistryService;
 }
@@ -59,7 +56,7 @@ namespace ssl_config {
 class SSLConfigServiceManager;
 }
 
-namespace syncable_prefs {
+namespace sync_preferences {
 class PrefServiceSyncable;
 }
 
@@ -173,7 +170,7 @@ class ProfileImpl : public Profile {
   // Does final prefs initialization and calls Init().
   void OnLocaleReady();
 
-#if defined(ENABLE_SESSION_SERVICE)
+#if BUILDFLAG(ENABLE_SESSION_SERVICE)
   void StopCreateSessionServiceTimer();
 
   void EnsureSessionServiceCreated();
@@ -206,12 +203,14 @@ class ProfileImpl : public Profile {
   //  happens in reverse order of declaration.
 
   // TODO(mnissler, joaodasilva): The |profile_policy_connector_| provides the
-  // PolicyService that the |prefs_| depend on, and must outlive |prefs_|.
-// This can be removed once |prefs_| becomes a KeyedService too.
-// |profile_policy_connector_| in turn depends on |cloud_policy_manager_|,
-// which depends on |schema_registry_service_|.
+  // PolicyService that the |prefs_| depend on, and must outlive |prefs_|. This
+  // can be removed once |prefs_| becomes a KeyedService too.
+  // |profile_policy_connector_| in turn depends on
+  // |configuration_policy_provider_|, which depends on
+  // |schema_registry_service_|.
   std::unique_ptr<policy::SchemaRegistryService> schema_registry_service_;
-  std::unique_ptr<policy::CloudPolicyManager> cloud_policy_manager_;
+  std::unique_ptr<policy::ConfigurationPolicyProvider>
+      configuration_policy_provider_;
   std::unique_ptr<policy::ProfilePolicyConnector> profile_policy_connector_;
 
   // Keep |pref_validation_delegate_| above |prefs_| so that the former outlives
@@ -220,17 +219,16 @@ class ProfileImpl : public Profile {
       pref_validation_delegate_;
 
   // Keep |prefs_| on top for destruction order because |extension_prefs_|,
-  // |net_pref_observer_|, |io_data_| and others store pointers to |prefs_| and
-  // shall be destructed first.
+  // |io_data_| and others store pointers to |prefs_| and shall be destructed
+  // first.
   scoped_refptr<user_prefs::PrefRegistrySyncable> pref_registry_;
-  std::unique_ptr<syncable_prefs::PrefServiceSyncable> prefs_;
-  std::unique_ptr<syncable_prefs::PrefServiceSyncable> otr_prefs_;
+  std::unique_ptr<sync_preferences::PrefServiceSyncable> prefs_;
+  std::unique_ptr<sync_preferences::PrefServiceSyncable> otr_prefs_;
   ProfileImplIOData::Handle io_data_;
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   scoped_refptr<ExtensionSpecialStoragePolicy>
       extension_special_storage_policy_;
 #endif
-  std::unique_ptr<NetPrefObserver> net_pref_observer_;
   std::unique_ptr<ssl_config::SSLConfigServiceManager>
       ssl_config_service_manager_;
 
@@ -238,7 +236,7 @@ class ProfileImpl : public Profile {
   // prefs.
   ExitType last_session_exit_type_;
 
-#if defined(ENABLE_SESSION_SERVICE)
+#if BUILDFLAG(ENABLE_SESSION_SERVICE)
   base::OneShotTimer create_session_service_timer_;
 #endif
 

@@ -29,10 +29,11 @@ extern const base::FilePath::CharType kHelperProcessExecutablePathChromium[];
 // TODO(tfarina): Remove the comment above, when you fix components to use plist
 // on Mac.
 extern const base::FilePath::CharType kFrameworkName[];
+extern const base::FilePath::CharType kFrameworkExecutableName[];
 #endif  // OS_MACOSX
 #if defined(OS_WIN)
 extern const base::FilePath::CharType kBrowserResourcesDll[];
-extern const base::FilePath::CharType kMetroDriverDll[];
+extern const base::FilePath::CharType kChromeElfDllName[];
 extern const base::FilePath::CharType kStatusTrayWindowClass[];
 #endif  // defined(OS_WIN)
 
@@ -59,9 +60,9 @@ extern const base::FilePath::CharType kOfflinePageArchivesDirname[];
 extern const base::FilePath::CharType kOfflinePageMetadataDirname[];
 extern const base::FilePath::CharType kOfflinePageRequestQueueDirname[];
 extern const base::FilePath::CharType kPreferencesFilename[];
+extern const base::FilePath::CharType kPreviewsOptOutDBFilename[];
 extern const base::FilePath::CharType kProtectedPreferencesFilenameDeprecated[];
 extern const base::FilePath::CharType kReadmeFilename[];
-extern const base::FilePath::CharType kSafeBrowsingBaseFilename[];
 extern const base::FilePath::CharType kSecurePreferencesFilename[];
 extern const base::FilePath::CharType kServiceStateFileName[];
 extern const base::FilePath::CharType kSingletonCookieFilename[];
@@ -69,7 +70,6 @@ extern const base::FilePath::CharType kSingletonLockFilename[];
 extern const base::FilePath::CharType kSingletonSocketFilename[];
 extern const base::FilePath::CharType kSupervisedUserSettingsFilename[];
 extern const base::FilePath::CharType kThemePackFilename[];
-extern const base::FilePath::CharType kThemePackMaterialDesignFilename[];
 extern const base::FilePath::CharType kWebAppDirname[];
 
 #if defined(OS_WIN)
@@ -96,13 +96,6 @@ extern const float kMaxShareOfExtensionProcesses;
 // (oom_score_adj) used by the OomPriority Manager.
 extern const int kLowestRendererOomScore;
 extern const int kHighestRendererOomScore;
-#endif
-
-#if defined(OS_WIN)
-// Used by Metro Chrome to initiate navigation and search requests.
-extern const wchar_t kMetroNavigationAndSearchMessage[];
-// Used by Metro Chrome to get information about the current tab.
-extern const wchar_t kMetroGetCurrentTabInfoMessage[];
 #endif
 
 #if defined(OS_CHROMEOS)

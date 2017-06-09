@@ -148,7 +148,7 @@ TEST(PrefServiceTest, GetValueChangedType) {
   ASSERT_TRUE(pref);
   const base::Value* value = pref->GetValue();
   ASSERT_TRUE(value);
-  EXPECT_EQ(base::Value::TYPE_INTEGER, value->GetType());
+  EXPECT_EQ(base::Value::Type::INTEGER, value->GetType());
   int actual_int_value = -1;
   EXPECT_TRUE(value->GetAsInteger(&actual_int_value));
   EXPECT_EQ(kTestValue, actual_int_value);
@@ -168,7 +168,7 @@ TEST(PrefServiceTest, GetValueAndGetRecommendedValue) {
   // Check that GetValue() returns the default value.
   const base::Value* value = pref->GetValue();
   ASSERT_TRUE(value);
-  EXPECT_EQ(base::Value::TYPE_INTEGER, value->GetType());
+  EXPECT_EQ(base::Value::Type::INTEGER, value->GetType());
   int actual_int_value = -1;
   EXPECT_TRUE(value->GetAsInteger(&actual_int_value));
   EXPECT_EQ(kDefaultValue, actual_int_value);
@@ -178,12 +178,12 @@ TEST(PrefServiceTest, GetValueAndGetRecommendedValue) {
   ASSERT_FALSE(value);
 
   // Set a user-set value.
-  prefs.SetUserPref(kPrefName, new base::FundamentalValue(kUserValue));
+  prefs.SetUserPref(kPrefName, new base::Value(kUserValue));
 
   // Check that GetValue() returns the user-set value.
   value = pref->GetValue();
   ASSERT_TRUE(value);
-  EXPECT_EQ(base::Value::TYPE_INTEGER, value->GetType());
+  EXPECT_EQ(base::Value::Type::INTEGER, value->GetType());
   actual_int_value = -1;
   EXPECT_TRUE(value->GetAsInteger(&actual_int_value));
   EXPECT_EQ(kUserValue, actual_int_value);
@@ -193,13 +193,12 @@ TEST(PrefServiceTest, GetValueAndGetRecommendedValue) {
   ASSERT_FALSE(value);
 
   // Set a recommended value.
-  prefs.SetRecommendedPref(kPrefName,
-                           new base::FundamentalValue(kRecommendedValue));
+  prefs.SetRecommendedPref(kPrefName, new base::Value(kRecommendedValue));
 
   // Check that GetValue() returns the user-set value.
   value = pref->GetValue();
   ASSERT_TRUE(value);
-  EXPECT_EQ(base::Value::TYPE_INTEGER, value->GetType());
+  EXPECT_EQ(base::Value::Type::INTEGER, value->GetType());
   actual_int_value = -1;
   EXPECT_TRUE(value->GetAsInteger(&actual_int_value));
   EXPECT_EQ(kUserValue, actual_int_value);
@@ -207,7 +206,7 @@ TEST(PrefServiceTest, GetValueAndGetRecommendedValue) {
   // Check that GetRecommendedValue() returns the recommended value.
   value = pref->GetRecommendedValue();
   ASSERT_TRUE(value);
-  EXPECT_EQ(base::Value::TYPE_INTEGER, value->GetType());
+  EXPECT_EQ(base::Value::Type::INTEGER, value->GetType());
   actual_int_value = -1;
   EXPECT_TRUE(value->GetAsInteger(&actual_int_value));
   EXPECT_EQ(kRecommendedValue, actual_int_value);
@@ -218,7 +217,7 @@ TEST(PrefServiceTest, GetValueAndGetRecommendedValue) {
   // Check that GetValue() returns the recommended value.
   value = pref->GetValue();
   ASSERT_TRUE(value);
-  EXPECT_EQ(base::Value::TYPE_INTEGER, value->GetType());
+  EXPECT_EQ(base::Value::Type::INTEGER, value->GetType());
   actual_int_value = -1;
   EXPECT_TRUE(value->GetAsInteger(&actual_int_value));
   EXPECT_EQ(kRecommendedValue, actual_int_value);
@@ -226,7 +225,7 @@ TEST(PrefServiceTest, GetValueAndGetRecommendedValue) {
   // Check that GetRecommendedValue() returns the recommended value.
   value = pref->GetRecommendedValue();
   ASSERT_TRUE(value);
-  EXPECT_EQ(base::Value::TYPE_INTEGER, value->GetType());
+  EXPECT_EQ(base::Value::Type::INTEGER, value->GetType());
   actual_int_value = -1;
   EXPECT_TRUE(value->GetAsInteger(&actual_int_value));
   EXPECT_EQ(kRecommendedValue, actual_int_value);
@@ -321,7 +320,7 @@ TEST(PrefServiceTest, WriteablePrefStoreFlags) {
     SCOPED_TRACE("Currently testing pref with name: " +
                  std::string(entry.pref_name));
 
-    prefs->GetMutableUserPref(entry.pref_name, base::Value::TYPE_DICTIONARY);
+    prefs->GetMutableUserPref(entry.pref_name, base::Value::Type::DICTIONARY);
     EXPECT_TRUE(flag_checker->last_write_flags_set());
     EXPECT_EQ(entry.write_flags, flag_checker->GetLastFlagsAndClear());
 

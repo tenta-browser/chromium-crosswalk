@@ -187,8 +187,9 @@ class EXTBlendFuncExtendedDrawTest : public testing::TestWithParam<bool> {
                          GL_ONE_MINUS_SRC1_ALPHA_EXT>(kDst, kSrc, kSrc1, color);
 
     EXPECT_TRUE(GLTestHelper::CheckPixels(kWidth / 4, (3 * kHeight) / 4, 1, 1,
-                                          1, color));
-    EXPECT_TRUE(GLTestHelper::CheckPixels(kWidth - 1, 0, 1, 1, 1, color));
+                                          1, color, nullptr));
+    EXPECT_TRUE(
+        GLTestHelper::CheckPixels(kWidth - 1, 0, 1, 1, 1, color, nullptr));
   }
 
  protected:
@@ -254,7 +255,6 @@ class EXTBlendFuncExtendedES3DrawTest : public EXTBlendFuncExtendedDrawTest {
     options.context_type = gles2::CONTEXT_TYPE_OPENGLES3;
     options.force_shader_name_hashing = GetParam();
     base::CommandLine command_line(*base::CommandLine::ForCurrentProcess());
-    command_line.AppendSwitch(switches::kEnableUnsafeES3APIs);
     gl_.InitializeWithCommandLine(options, command_line);
   }
   bool IsApplicable() const {
@@ -300,6 +300,15 @@ TEST_P(EXTBlendFuncExtendedES3DrawTest, ESSL3Var) {
 TEST_P(EXTBlendFuncExtendedES3DrawTest, ESSL3BindArrayWithSimpleName) {
   if (!IsApplicable())
     return;
+
+  // Fails on the Intel Mesa driver, see
+  // https://bugs.freedesktop.org/show_bug.cgi?id=96765
+  gpu::GPUTestBotConfig bot_config;
+  if (bot_config.LoadCurrentConfig(nullptr) &&
+      bot_config.Matches("linux intel")) {
+    return;
+  }
+
   // clang-format off
   static const char* kFragDataShader =
       "#version 300 es\n"
@@ -359,6 +368,15 @@ TEST_P(EXTBlendFuncExtendedES3DrawTest, ESSL3BindSimpleVarAsArrayNoBind) {
 TEST_P(EXTBlendFuncExtendedES3DrawTest, ESSL3BindArrayAsArray) {
   if (!IsApplicable())
     return;
+
+  // Fails on the Intel Mesa driver, see
+  // https://bugs.freedesktop.org/show_bug.cgi?id=96765
+  gpu::GPUTestBotConfig bot_config;
+  if (bot_config.LoadCurrentConfig(nullptr) &&
+      bot_config.Matches("linux intel")) {
+    return;
+  }
+
   // clang-format off
   static const char* kFragDataShader =
       "#version 300 es\n"
@@ -479,9 +497,12 @@ TEST_P(EXTBlendFuncExtendedES3DrawTest, ES3GettersArray) {
     return;
 
   // TODO(zmo): Figure out why this fails on AMD. crbug.com/585132.
+  // Also fails on the Intel Mesa driver, see
+  // https://bugs.freedesktop.org/show_bug.cgi?id=96765
   gpu::GPUTestBotConfig bot_config;
   if (bot_config.LoadCurrentConfig(nullptr) &&
-      bot_config.Matches("linux amd")) {
+      (bot_config.Matches("linux amd") ||
+      bot_config.Matches("linux intel"))) {
     return;
   }
 

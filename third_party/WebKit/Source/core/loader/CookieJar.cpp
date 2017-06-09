@@ -32,42 +32,41 @@
 
 #include "core/dom/Document.h"
 #include "core/frame/LocalFrame.h"
-#include "core/loader/FrameLoaderClient.h"
+#include "core/frame/LocalFrameClient.h"
 #include "public/platform/Platform.h"
 #include "public/platform/WebCookieJar.h"
 #include "public/platform/WebURL.h"
 
 namespace blink {
 
-static WebCookieJar* toCookieJar(const Document* document)
-{
-    if (!document || !document->frame())
-        return 0;
-    return document->frame()->loader().client()->cookieJar();
+static WebCookieJar* toCookieJar(const Document* document) {
+  if (!document || !document->frame())
+    return 0;
+  return document->frame()->loader().client()->cookieJar();
 }
 
-String cookies(const Document* document, const KURL& url)
-{
-    WebCookieJar* cookieJar = toCookieJar(document);
-    if (!cookieJar)
-        return String();
-    return cookieJar->cookies(url, document->firstPartyForCookies());
+String cookies(const Document* document, const KURL& url) {
+  WebCookieJar* cookieJar = toCookieJar(document);
+  if (!cookieJar)
+    return String();
+  return cookieJar->cookies(url, document->firstPartyForCookies());
 }
 
-void setCookies(Document* document, const KURL& url, const String& cookieString)
-{
-    WebCookieJar* cookieJar = toCookieJar(document);
-    if (!cookieJar)
-        return;
-    cookieJar->setCookie(url, document->firstPartyForCookies(), cookieString);
+void setCookies(Document* document,
+                const KURL& url,
+                const String& cookieString) {
+  WebCookieJar* cookieJar = toCookieJar(document);
+  if (!cookieJar)
+    return;
+  cookieJar->setCookie(url, document->firstPartyForCookies(), cookieString);
 }
 
-bool cookiesEnabled(const Document* document)
-{
-    WebCookieJar* cookieJar = toCookieJar(document);
-    if (!cookieJar)
-        return false;
-    return cookieJar->cookiesEnabled(document->cookieURL(), document->firstPartyForCookies());
+bool cookiesEnabled(const Document* document) {
+  WebCookieJar* cookieJar = toCookieJar(document);
+  if (!cookieJar)
+    return false;
+  return cookieJar->cookiesEnabled(document->cookieURL(),
+                                   document->firstPartyForCookies());
 }
 
-} // namespace blink
+}  // namespace blink

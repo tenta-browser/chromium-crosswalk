@@ -8,6 +8,7 @@ traits_headers = [ "//ui/events/mojo/event_struct_traits.h" ]
 deps = [
   "//ui//events",
   "//ui/events:dom_keycode_converter",
+  "//ui/events/mojo:struct_traits",
 ]
 sources = [
   "//ui/events/mojo/event_struct_traits.cc",
@@ -15,4 +16,4 @@ sources = [
 ]
 
 # TODO(moshayedi): crbug.com/617167. Map mojom.Event directly to ui::Event.
-type_mappings = [ "ui.mojom.Event=std::unique_ptr<ui::Event>[pass_by_value]" ]
+type_mappings = [ "ui.mojom.Event=std::unique_ptr<ui::Event>[move_only]" ]

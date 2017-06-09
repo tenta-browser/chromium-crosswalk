@@ -33,8 +33,10 @@ function startWorkerAndRunTest()
     }
 }
 
-function startSecondWorker(onActionComplete)
+function startSecondWorker()
 {
+    var callback;
+    var promise = new Promise((fulfill) => callback = fulfill);
     // Make sure there is at least one trace event recorded for the first worker.
     worker1.onmessage = gotResponseFromFirstWorker;
     worker1.postMessage("");
@@ -50,9 +52,10 @@ function startSecondWorker(onActionComplete)
         {
             worker2.onmessage = null;
             makeDOMEvent();
-            onActionComplete();
+            callback();
         }
     }
+    return promise;
 }
 
 function test()
@@ -85,7 +88,9 @@ function test()
 
     function processEvent(expectedFunctions, event)
     {
-        if (event.name === WebInspector.TimelineModel.RecordType.JSFrame)
+        if (event.name === TimelineModel.TimelineModel.RecordType.EvaluateScript)
+            InspectorTest.printTraceEventProperties(event);
+        if (event.name === TimelineModel.TimelineModel.RecordType.JSFrame)
             expectedFunctions.delete(event.args.data.functionName);
         return expectedFunctions;
     }

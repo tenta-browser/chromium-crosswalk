@@ -51,8 +51,10 @@ class PrettyDiff(Command):
                                        "includes the working copy changes. UPSTREAM can be used for the upstream/tracking branch."))
         ]
         super(PrettyDiff, self).__init__(options)
+        self._tool = None
 
     def execute(self, options, args, tool):
+        self._tool = tool
         pretty_diff_file = self._show_pretty_diff(options)
         if pretty_diff_file:
             diff_correct = tool.user.confirm("Was that diff correct?")
@@ -71,16 +73,16 @@ class PrettyDiff(Command):
             # We return the pretty_diff_file here because we need to keep the
             # file alive until the user has had a chance to confirm the diff.
             return pretty_diff_file
-        except ScriptError as e:
+        except ScriptError as error:
             _log.warning("PrettyPatch failed.  :(")
-            _log.error(e.message_with_output())
-            self._exit(e.exit_code or 2)
+            _log.error(error.message_with_output())
+            self._exit(error.exit_code or 2)
         except OSError:
             _log.warning("PrettyPatch unavailable.")
 
     def _diff(self, options):
-        changed_files = self._tool.scm().changed_files(options.git_commit)
-        return self._tool.scm().create_patch(options.git_commit,
+        changed_files = self._tool.git().changed_files(options.git_commit)
+        return self._tool.git().create_patch(options.git_commit,
                                              changed_files=changed_files)
 
     def _open_pretty_diff(self, file_path):

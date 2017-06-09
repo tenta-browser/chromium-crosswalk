@@ -21,7 +21,7 @@ public interface ChromiumBaseInputConnection extends InputConnection {
      */
     public interface Factory {
         ChromiumBaseInputConnection initializeAndGet(View view, ImeAdapter imeAdapter,
-                int inputType, int inputFlags, int selectionStart, int selectionEnd,
+                int inputType, int inputFlags, int inputMode, int selectionStart, int selectionEnd,
                 EditorInfo outAttrs);
 
         @VisibleForTesting
@@ -46,10 +46,10 @@ public interface ChromiumBaseInputConnection extends InputConnection {
      *                         composition.
      * @param compositionEnd The character offset of the composition end, or -1 if there is no
      *                       selection.
-     * @param isNonImeChange True when the update was caused by non-IME (e.g. Javascript).
+     * @param replyToRequest True when the update was made in a reply to IME's request.
      */
     void updateStateOnUiThread(String text, int selectionStart, int selectionEnd,
-            int compositionStart, int compositionEnd, boolean singleLine, boolean isNonImeChange);
+            int compositionStart, int compositionEnd, boolean singleLine, boolean replyToRequest);
 
     /**
      * Send key event on UI thread.
@@ -67,11 +67,6 @@ public interface ChromiumBaseInputConnection extends InputConnection {
      */
     @VisibleForTesting
     Handler getHandler();
-
-    /**
-     * Move cursor to the end of the current selection.
-     */
-    void moveCursorToSelectionEndOnUiThread();
 
     /**
      * Unblock thread function if needed, e.g. we found that we will

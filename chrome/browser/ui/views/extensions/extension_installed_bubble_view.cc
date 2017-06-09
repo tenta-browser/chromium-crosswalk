@@ -121,24 +121,13 @@ void ExtensionInstalledBubbleView::UpdateAnchorView() {
 
   views::View* reference_view = nullptr;
   switch (controller_->anchor_position()) {
-    case ExtensionInstalledBubble::ANCHOR_BROWSER_ACTION: {
+    case ExtensionInstalledBubble::ANCHOR_ACTION: {
       BrowserActionsContainer* container =
-          browser_view->GetToolbarView()->browser_actions();
+          browser_view->toolbar()->browser_actions();
       // Hitting this DCHECK means |ShouldShow| failed.
       DCHECK(!container->animating());
 
       reference_view = container->GetViewForId(controller_->extension()->id());
-      break;
-    }
-    case ExtensionInstalledBubble::ANCHOR_PAGE_ACTION: {
-      LocationBarView* location_bar_view = browser_view->GetLocationBarView();
-      ExtensionAction* page_action =
-          extensions::ExtensionActionManager::Get(browser()->profile())
-              ->GetPageAction(*controller_->extension());
-      location_bar_view->SetPreviewEnabledPageAction(page_action,
-                                                     true);  // preview_enabled
-      reference_view = location_bar_view->GetPageActionView(page_action);
-      DCHECK(reference_view);
       break;
     }
     case ExtensionInstalledBubble::ANCHOR_OMNIBOX: {
@@ -152,21 +141,13 @@ void ExtensionInstalledBubbleView::UpdateAnchorView() {
 
   // Default case.
   if (!reference_view || !reference_view->visible())
-    reference_view = browser_view->GetToolbarView()->app_menu_button();
+    reference_view = browser_view->toolbar()->app_menu_button();
   SetAnchorView(reference_view);
 }
 
 void ExtensionInstalledBubbleView::CloseBubble() {
-  if (controller_ && controller_->anchor_position() ==
-      ExtensionInstalledBubble::ANCHOR_PAGE_ACTION) {
-    BrowserView* browser_view =
-        BrowserView::GetBrowserViewForBrowser(browser());
-    browser_view->GetLocationBarView()->SetPreviewEnabledPageAction(
-        extensions::ExtensionActionManager::Get(browser()->profile())
-            ->GetPageAction(*controller_->extension()),
-        false);  // preview_enabled
-  }
-  controller_ = nullptr;
+  if (GetWidget()->IsClosed())
+    return;
   GetWidget()->Close();
 }
 
@@ -346,10 +327,10 @@ void ExtensionInstalledBubbleUi::OnWidgetClosing(views::Widget* widget) {
 
 // Views specific implementation.
 bool ExtensionInstalledBubble::ShouldShow() {
-  if (anchor_position() == ANCHOR_BROWSER_ACTION) {
+  if (anchor_position() == ANCHOR_ACTION) {
     BrowserActionsContainer* container =
         BrowserView::GetBrowserViewForBrowser(browser())
-            ->GetToolbarView()
+            ->toolbar()
             ->browser_actions();
     return !container->animating();
   }

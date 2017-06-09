@@ -97,6 +97,7 @@ class ASH_EXPORT WindowState {
   bool IsFullscreen() const;
   bool IsSnapped() const;
   bool IsPinned() const;
+  bool IsTrustedPinned() const;
 
   // True if the window's state type is WINDOW_STATE_TYPE_MAXIMIZED,
   // WINDOW_STATE_TYPE_FULLSCREEN or WINDOW_STATE_TYPE_PINNED.
@@ -114,10 +115,6 @@ class ASH_EXPORT WindowState {
   // Returns true if the window's location can be controlled by the user.
   bool IsUserPositionable() const;
 
-  // Returns true is the window should be excluded from the most recently used
-  // windows list.
-  bool ShouldBeExcludedFromMru() const;
-
   // Checks if the window can change its state accordingly.
   bool CanMaximize() const;
   bool CanMinimize() const;
@@ -134,7 +131,6 @@ class ASH_EXPORT WindowState {
   void Maximize();
   void Minimize();
   void Unminimize();
-  void SetExcludedFromMru(bool excluded_from_mru);
 
   void Activate();
   void Deactivate();
@@ -196,21 +192,26 @@ class ASH_EXPORT WindowState {
     unminimize_to_restore_bounds_ = value;
   }
 
-  // Controls the shelf mode when this window is in fullscreen state.
-  // This enum is temporary until MD immersive is launched.
-  // TODO(oshima): Remove this when MD immersive is launched.
-  enum FullscreenShelfMode {
-    SHELF_HIDDEN,
-    SHELF_AUTO_HIDE_VISIBLE,
-    SHELF_AUTO_HIDE_INVISIBLE,
-  };
   // Gets/sets whether the shelf should be hidden when this window is
   // fullscreen.
-  FullscreenShelfMode shelf_mode_in_fullscreen() const {
-    return shelf_mode_in_fullscreen_;
+  bool hide_shelf_when_fullscreen() const {
+    return hide_shelf_when_fullscreen_;
   }
-  void set_shelf_mode_in_fullscreen(FullscreenShelfMode value) {
-    shelf_mode_in_fullscreen_ = value;
+
+  void set_hide_shelf_when_fullscreen(bool value) {
+    hide_shelf_when_fullscreen_ = value;
+  }
+
+  // Gets/sets whether the shelf should be autohidden when this window is
+  // fullscreen or active.
+  // Note: if true, this will override the logic controlled by
+  // hide_shelf_when_fullscreen.
+  bool autohide_shelf_when_maximized_or_fullscreen() const {
+    return autohide_shelf_when_maximized_or_fullscreen_;
+  }
+
+  void set_autohide_shelf_when_maximized_or_fullscreen(bool value) {
+    autohide_shelf_when_maximized_or_fullscreen_ = value;
   }
 
   // If the minimum visibility is true, ash will try to keep a
@@ -255,12 +256,6 @@ class ASH_EXPORT WindowState {
   bool bounds_changed_by_user() const { return bounds_changed_by_user_; }
   void set_bounds_changed_by_user(bool bounds_changed_by_user);
 
-  // True if this window is an attached panel.
-  bool panel_attached() const { return panel_attached_; }
-  void set_panel_attached(bool panel_attached) {
-    panel_attached_ = panel_attached;
-  }
-
   // True if the window is ignored by the shelf layout manager for
   // purposes of darkening the shelf.
   bool ignored_by_shelf() const { return ignored_by_shelf_; }
@@ -276,15 +271,6 @@ class ASH_EXPORT WindowState {
     can_consume_system_keys_ = can_consume_system_keys;
   }
 
-  // True if this window has requested that the top-row keys (back, forward,
-  // brightness, volume) should be treated as function keys.
-  bool top_row_keys_are_function_keys() const {
-    return top_row_keys_are_function_keys_;
-  }
-  void set_top_row_keys_are_function_keys(bool value) {
-    top_row_keys_are_function_keys_ = value;
-  }
-
   // True if the window is in "immersive full screen mode" which is slightly
   // different from the normal fullscreen mode by allowing the user to reveal
   // the top portion of the window through a touch / mouse gesture. It might
@@ -297,7 +283,7 @@ class ASH_EXPORT WindowState {
   // True if the window should not adjust the window's bounds when
   // virtual keyboard bounds changes.
   // TODO(oshima): This is hack. Replace this with proper
-  // implementation based on EnsureCaretInRect.
+  // implementation based on EnsureCaretNotInRect.
   bool ignore_keyboard_bounds_change() const {
     return ignore_keyboard_bounds_change_;
   }
@@ -305,14 +291,11 @@ class ASH_EXPORT WindowState {
     ignore_keyboard_bounds_change_ = ignore_keyboard_bounds_change;
   }
 
-  // True if the window's bounds can be updated using SET_BOUNDS event in
-  // maiximzed/fullscreen mode.
-  void set_allow_set_bounds_in_maximized(bool value) {
-    allow_set_bounds_in_maximized_ = value;
+  // True if the window bounds can be updated directly using SET_BOUNDS event.
+  void set_allow_set_bounds_direct(bool value) {
+    allow_set_bounds_direct_ = value;
   }
-  bool allow_set_bounds_in_maximized() const {
-    return allow_set_bounds_in_maximized_;
-  }
+  bool allow_set_bounds_direct() const { return allow_set_bounds_direct_; }
 
   // Creates and takes ownership of a pointer to DragDetails when resizing is
   // active. This should be done before a resizer gets created.
@@ -388,20 +371,19 @@ class ASH_EXPORT WindowState {
 
   bool window_position_managed_;
   bool bounds_changed_by_user_;
-  bool panel_attached_;
   bool ignored_by_shelf_;
   bool can_consume_system_keys_;
-  bool top_row_keys_are_function_keys_;
   std::unique_ptr<DragDetails> drag_details_;
 
   bool unminimize_to_restore_bounds_;
   bool in_immersive_fullscreen_;
   bool ignore_keyboard_bounds_change_ = false;
-  FullscreenShelfMode shelf_mode_in_fullscreen_ = SHELF_HIDDEN;
+  bool hide_shelf_when_fullscreen_;
+  bool autohide_shelf_when_maximized_or_fullscreen_;
   bool minimum_visibility_;
   bool can_be_dragged_;
   bool cached_always_on_top_;
-  bool allow_set_bounds_in_maximized_ = false;
+  bool allow_set_bounds_direct_ = false;
 
   // A property to remember the window position which was set before the
   // auto window position manager changed the window bounds, so that it can get

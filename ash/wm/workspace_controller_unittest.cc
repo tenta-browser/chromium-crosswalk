@@ -2,24 +2,27 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "ash/wm/workspace_controller.h"
+#include "ash/common/wm/workspace_controller.h"
 
 #include <map>
 
-#include "ash/aura/wm_window_aura.h"
-#include "ash/common/shell_window_ids.h"
+#include "ash/common/session/session_controller.h"
+#include "ash/common/shelf/shelf_layout_manager.h"
+#include "ash/common/shelf/shelf_widget.h"
+#include "ash/common/shelf/wm_shelf.h"
+#include "ash/common/system/status_area_widget.h"
+#include "ash/common/test/test_shelf_delegate.h"
 #include "ash/common/wm/panels/panel_layout_manager.h"
 #include "ash/common/wm/window_state.h"
+#include "ash/common/wm/wm_event.h"
 #include "ash/common/wm/workspace/workspace_window_resizer.h"
-#include "ash/root_window_controller.h"
+#include "ash/common/wm_shell.h"
+#include "ash/common/wm_window.h"
+#include "ash/public/cpp/shell_window_ids.h"
 #include "ash/screen_util.h"
-#include "ash/shelf/shelf_layout_manager.h"
-#include "ash/shelf/shelf_widget.h"
 #include "ash/shell.h"
-#include "ash/system/status_area_widget.h"
 #include "ash/test/ash_test_base.h"
 #include "ash/test/shell_test_api.h"
-#include "ash/test/test_shelf_delegate.h"
 #include "ash/wm/window_state_aura.h"
 #include "ash/wm/window_util.h"
 #include "base/strings/string_number_conversions.h"
@@ -50,7 +53,7 @@ std::string GetWindowNames(const aura::Window* window) {
   for (size_t i = 0; i < window->children().size(); ++i) {
     if (i != 0)
       result += " ";
-    result += window->children()[i]->name();
+    result += window->children()[i]->GetName();
   }
   return result;
 }
@@ -64,7 +67,7 @@ std::string GetLayerNames(const aura::Window* window) {
   LayerToWindowNameMap window_names;
   for (size_t i = 0; i < window->children().size(); ++i) {
     window_names[window->children()[i]->layer()] =
-        window->children()[i]->name();
+        window->children()[i]->GetName();
   }
 
   std::string result;
@@ -121,12 +124,9 @@ class WorkspaceControllerTest : public test::AshTestBase {
                                 const gfx::Rect& bounds) {
     aura::Window* window = CreateTestWindowInShellWithDelegateAndType(
         delegate, ui::wm::WINDOW_TYPE_PANEL, 0, bounds);
-    test::TestShelfDelegate* shelf_delegate =
-        test::TestShelfDelegate::instance();
-    shelf_delegate->AddShelfItem(window);
-    PanelLayoutManager* manager =
-        PanelLayoutManager::Get(WmWindowAura::Get(window));
-    manager->Relayout();
+    WmWindow* wm_window = WmWindow::Get(window);
+    test::TestShelfDelegate::instance()->AddShelfItem(wm_window);
+    PanelLayoutManager::Get(wm_window)->Relayout();
     return window;
   }
 
@@ -141,12 +141,10 @@ class WorkspaceControllerTest : public test::AshTestBase {
         .bounds();
   }
 
-  ShelfWidget* shelf_widget() {
-    return Shell::GetPrimaryRootWindowController()->shelf_widget();
-  }
+  ShelfWidget* shelf_widget() { return GetPrimaryShelf()->shelf_widget(); }
 
   ShelfLayoutManager* shelf_layout_manager() {
-    return Shell::GetPrimaryRootWindowController()->GetShelfLayoutManager();
+    return GetPrimaryShelf()->shelf_layout_manager();
   }
 
   bool GetWindowOverlapsShelf() {
@@ -371,7 +369,7 @@ TEST_F(WorkspaceControllerTest, ShelfStateUpdated) {
 
   std::unique_ptr<Window> w1(CreateTestWindow());
   const gfx::Rect w1_bounds(0, 1, 101, 102);
-  Shelf* shelf = Shelf::ForPrimaryDisplay();
+  WmShelf* shelf = GetPrimaryShelf();
   shelf->SetAutoHideBehavior(ash::SHELF_AUTO_HIDE_BEHAVIOR_ALWAYS);
   const gfx::Rect touches_shelf_bounds(
       0, shelf_layout_manager()->GetIdealBounds().y() - 10, 101, 102);
@@ -440,7 +438,7 @@ TEST_F(WorkspaceControllerTest, ShelfStateUpdated) {
   wm::WindowState* window_state = wm::GetWindowState(w1.get());
 
   gfx::Rect restore = window_state->GetRestoreBoundsInScreen();
-  EXPECT_EQ("0,0 800x597", w1->bounds().ToString());
+  EXPECT_EQ(gfx::Rect(0, 0, 800, 600).ToString(), w1->bounds().ToString());
   EXPECT_EQ("0,1 101x102", restore.ToString());
   window_state->ClearRestoreBounds();
   w1->SetBounds(restore);
@@ -502,6 +500,12 @@ TEST_F(WorkspaceControllerTest, ShelfStateUpdated) {
 // Verifies going from maximized to minimized sets the right state for painting
 // the background of the launcher.
 TEST_F(WorkspaceControllerTest, MinimizeResetsVisibility) {
+  // TODO(bruthig|xiyuan): Move SessionState setup into AshTestBase or
+  // AshTestHelper.
+  mojom::SessionInfoPtr info = mojom::SessionInfo::New();
+  info->state = session_manager::SessionState::ACTIVE;
+  ash::WmShell::Get()->session_controller()->SetSessionInfo(std::move(info));
+
   std::unique_ptr<Window> w1(CreateTestWindow());
   w1->Show();
   wm::ActivateWindow(w1.get());
@@ -509,8 +513,7 @@ TEST_F(WorkspaceControllerTest, MinimizeResetsVisibility) {
   EXPECT_EQ(SHELF_BACKGROUND_MAXIMIZED, shelf_widget()->GetBackgroundType());
 
   w1->SetProperty(aura::client::kShowStateKey, ui::SHOW_STATE_MINIMIZED);
-  Shelf* shelf = Shelf::ForPrimaryDisplay();
-  EXPECT_EQ(SHELF_VISIBLE, shelf->GetVisibilityState());
+  EXPECT_EQ(SHELF_VISIBLE, GetPrimaryShelf()->GetVisibilityState());
   EXPECT_EQ(SHELF_BACKGROUND_DEFAULT, shelf_widget()->GetBackgroundType());
 }
 
@@ -666,7 +669,7 @@ class DontCrashOnChangeAndActivateDelegate
 // . show the window and during the bounds change activate it.
 TEST_F(WorkspaceControllerTest, DontCrashOnChangeAndActivate) {
   // Force the shelf
-  Shelf* shelf = Shelf::ForPrimaryDisplay();
+  WmShelf* shelf = GetPrimaryShelf();
   shelf->SetAutoHideBehavior(SHELF_AUTO_HIDE_BEHAVIOR_NEVER);
 
   DontCrashOnChangeAndActivateDelegate delegate;
@@ -715,8 +718,6 @@ TEST_F(WorkspaceControllerTest, TransientParent) {
 
 // Test the placement of newly created windows.
 TEST_F(WorkspaceControllerTest, BasicAutoPlacingOnCreate) {
-  if (!SupportsHostWindowResize())
-    return;
   UpdateDisplay("1600x1200");
   // Creating a popup handler here to make sure it does not interfere with the
   // existing windows.
@@ -1031,9 +1032,6 @@ TEST_F(WorkspaceControllerTest, TestUserHandledWindowRestore) {
 
 // Solo window should be restored to the bounds where a user moved to.
 TEST_F(WorkspaceControllerTest, TestRestoreToUserModifiedBounds) {
-  if (!SupportsHostWindowResize())
-    return;
-
   UpdateDisplay("400x300");
   gfx::Rect default_bounds(10, 0, 100, 100);
   std::unique_ptr<aura::Window> window1(
@@ -1061,8 +1059,8 @@ TEST_F(WorkspaceControllerTest, TestRestoreToUserModifiedBounds) {
 
   // A user moved the window.
   std::unique_ptr<WindowResizer> resizer(
-      CreateWindowResizer(WmWindowAura::Get(window1.get()), gfx::Point(),
-                          HTCAPTION, aura::client::WINDOW_MOVE_SOURCE_MOUSE)
+      CreateWindowResizer(WmWindow::Get(window1.get()), gfx::Point(), HTCAPTION,
+                          aura::client::WINDOW_MOVE_SOURCE_MOUSE)
           .release());
   gfx::Point location = resizer->GetInitialLocation();
   location.Offset(-50, 0);
@@ -1313,6 +1311,38 @@ TEST_F(WorkspaceControllerTest, VerifyLayerOrdering) {
   EXPECT_EQ(GetWindowNames(parent), GetLayerNames(parent));
 }
 
+// Test that minimizing and restoring a snapped window should restore to the
+// snapped bounds. When a window is created and snapped, it must be a
+// user-initiated operation, no need to do rearrangement for restoring this
+// window (crbug.com/692175).
+TEST_F(WorkspaceControllerTest, RestoreMinimizedSnappedWindow) {
+  // Create an auto-positioned window.
+  std::unique_ptr<aura::Window> window(CreateTestWindowInShellWithId(0));
+  wm::WindowState* window_state = wm::GetWindowState(window.get());
+  window_state->set_window_position_managed(true);
+  window->SetBounds(gfx::Rect(10, 20, 100, 200));
+  window->Show();
+
+  // Left snap |window|.
+  EXPECT_FALSE(window_state->bounds_changed_by_user());
+  const wm::WMEvent snap_left(wm::WM_EVENT_SNAP_LEFT);
+  window_state->OnWMEvent(&snap_left);
+  const gfx::Rect work_area =
+      display::Screen::GetScreen()
+          ->GetDisplayNearestPoint(window->bounds().origin())
+          .work_area();
+  gfx::Rect snapped_bounds(work_area.x(), work_area.y(), work_area.width() / 2,
+                           work_area.height());
+  EXPECT_EQ(snapped_bounds, window->bounds());
+  EXPECT_TRUE(window_state->bounds_changed_by_user());
+
+  // Minimize and Restore |window|, the restored bounds should be equal to the
+  // bounds of left snapped state.
+  window_state->Minimize();
+  window_state->Restore();
+  EXPECT_EQ(snapped_bounds, window->bounds());
+}
+
 namespace {
 
 // Used by DragMaximizedNonTrackedWindow to track how many times the window
@@ -1392,8 +1422,7 @@ TEST_F(WorkspaceControllerTestDragging, DragWindowOverlapShelf) {
       &delegate, ui::wm::WINDOW_TYPE_NORMAL, gfx::Rect(5, 5, 100, 50), NULL));
   ParentWindowInPrimaryRootWindow(w1.get());
 
-  Shelf* shelf = Shelf::ForPrimaryDisplay();
-  shelf->SetAutoHideBehavior(SHELF_AUTO_HIDE_BEHAVIOR_NEVER);
+  GetPrimaryShelf()->SetAutoHideBehavior(SHELF_AUTO_HIDE_BEHAVIOR_NEVER);
 
   // Drag near the shelf.
   ui::test::EventGenerator generator(Shell::GetPrimaryRootWindow(),
@@ -1422,7 +1451,7 @@ TEST_F(WorkspaceControllerTestDragging, DragWindowKeepsShelfAutohidden) {
       &delegate, ui::wm::WINDOW_TYPE_NORMAL, gfx::Rect(5, 5, 100, 50), NULL));
   ParentWindowInPrimaryRootWindow(w1.get());
 
-  Shelf* shelf = Shelf::ForPrimaryDisplay();
+  WmShelf* shelf = GetPrimaryShelf();
   shelf->SetAutoHideBehavior(SHELF_AUTO_HIDE_BEHAVIOR_ALWAYS);
   EXPECT_EQ(SHELF_AUTO_HIDE_HIDDEN, shelf->GetAutoHideState());
 

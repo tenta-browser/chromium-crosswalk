@@ -142,16 +142,39 @@ void ExternalBeginFrameSource::RemoveObserver(cc::BeginFrameObserver* obs) {
     compositor_->OnNeedsBeginFramesChange(false);
 }
 
-void ExternalBeginFrameSource::OnVSync(base::TimeTicks frame_time,
-                                       base::TimeDelta vsync_period) {
-  // frame time is in the past, so give the next vsync period as the deadline.
-  base::TimeTicks deadline = frame_time + vsync_period;
-  last_begin_frame_args_ =
-      cc::BeginFrameArgs::Create(BEGINFRAME_FROM_HERE, frame_time, deadline,
-                                 vsync_period, cc::BeginFrameArgs::NORMAL);
-  std::unordered_set<cc::BeginFrameObserver*> observers(observers_);
-  for (auto* obs : observers)
-    obs->OnBeginFrame(last_begin_frame_args_);
+gpu::gles2::ContextCreationAttribHelper GetCompositorContextAttributes(
+    bool has_transparent_background) {
+  // This is used for the browser compositor (offscreen) and for the display
+  // compositor (onscreen), so ask for capabilities needed by either one.
+  // The default framebuffer for an offscreen context is not used, so it does
+  // not need alpha, stencil, depth, antialiasing. The display compositor does
+  // not use these things either, except for alpha when it has a transparent
+  // background.
+  gpu::gles2::ContextCreationAttribHelper attributes;
+  attributes.alpha_size = -1;
+  attributes.stencil_size = 0;
+  attributes.depth_size = 0;
+  attributes.samples = 0;
+  attributes.sample_buffers = 0;
+  attributes.bind_generates_resource = false;
+
+  if (has_transparent_background) {
+    attributes.alpha_size = 8;
+  } else if (base::SysInfo::IsLowEndDevice()) {
+    // In this case we prefer to use RGB565 format instead of RGBA8888 if
+    // possible.
+    // TODO(danakj): GpuCommandBufferStub constructor checks for alpha == 0 in
+    // order to enable 565, but it should avoid using 565 when -1s are
+    // specified
+    // (IOW check that a <= 0 && rgb > 0 && rgb <= 565) then alpha should be
+    // -1.
+    attributes.alpha_size = 0;
+    attributes.red_size = 5;
+    attributes.green_size = 6;
+    attributes.blue_size = 5;
+  }
+
+  return attributes;
 }
 
 // Used to override capabilities_.adjust_deadline_for_parent to false
@@ -777,10 +800,6 @@ void CompositorImpl::DidAbortSwapBuffers() {
 
 void CompositorImpl::DidCommit() {
   root_window_->OnCompositingDidCommit();
-}
-
-void CompositorImpl::AttachLayerForReadback(scoped_refptr<cc::Layer> layer) {
-  root_layer_->AddChild(layer);
 }
 
 void CompositorImpl::RequestCopyOfOutputOnRootLayer(

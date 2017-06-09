@@ -155,8 +155,8 @@ class DownloadUIControllerTest : public ChromeRenderViewHostTestHarness {
 std::unique_ptr<KeyedService>
 DownloadUIControllerTest::TestingDownloadServiceFactory(
     content::BrowserContext* browser_context) {
-  return base::WrapUnique(
-      new TestDownloadService(Profile::FromBrowserContext(browser_context)));
+  return base::MakeUnique<TestDownloadService>(
+      Profile::FromBrowserContext(browser_context));
 }
 
 DownloadUIControllerTest::DownloadUIControllerTest()
@@ -234,6 +234,8 @@ DownloadUIControllerTest::CreateMockInProgressDownload() {
   EXPECT_CALL(*item, GetLastReason())
       .WillRepeatedly(Return(content::DOWNLOAD_INTERRUPT_REASON_NONE));
   EXPECT_CALL(*item, GetReceivedBytes()).WillRepeatedly(Return(0));
+  EXPECT_CALL(*item, GetReceivedSlices()).WillRepeatedly(
+      ReturnRefOfCopy(std::vector<content::DownloadItem::ReceivedSlice>()));
   EXPECT_CALL(*item, GetTotalBytes()).WillRepeatedly(Return(0));
   EXPECT_CALL(*item, GetTargetDisposition()).WillRepeatedly(
       Return(content::DownloadItem::TARGET_DISPOSITION_OVERWRITE));

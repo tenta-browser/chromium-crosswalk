@@ -9,12 +9,8 @@
 #include <list>
 
 #include "base/lazy_instance.h"
-#include "base/memory/linked_ptr.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread_local.h"
-// gl_stream_texture_image.h is included to work around crbug.com/595189, a
-// compiler bug in VS 2015 Update 2 RC.
-#include "gpu/command_buffer/service/gl_stream_texture_image.h"
 #include "gpu/command_buffer/service/texture_manager.h"
 #include "ui/gl/gl_image.h"
 #include "ui/gl/gl_implementation.h"
@@ -36,7 +32,6 @@ class GLImageSync : public gl::GLImage {
                        const gfx::Size& size);
 
   // Implement GLImage.
-  void Destroy(bool have_context) override;
   gfx::Size GetSize() override;
   unsigned GetInternalFormat() override;
   bool BindTexImage(unsigned target) override;
@@ -50,6 +45,7 @@ class GLImageSync : public gl::GLImage {
                             gfx::OverlayTransform transform,
                             const gfx::Rect& bounds_rect,
                             const gfx::RectF& crop_rect) override;
+  void Flush() override {}
   void OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd,
                     uint64_t process_tracing_id,
                     const std::string& dump_name) override;
@@ -74,9 +70,6 @@ GLImageSync::GLImageSync(const scoped_refptr<NativeImageBuffer>& buffer,
 GLImageSync::~GLImageSync() {
   if (buffer_.get())
     buffer_->RemoveClient(this);
-}
-
-void GLImageSync::Destroy(bool have_context) {
 }
 
 gfx::Size GLImageSync::GetSize() {
@@ -163,7 +156,7 @@ scoped_refptr<NativeImageBufferEGL> NativeImageBufferEGL::Create(
 
   DCHECK(gl::g_driver_egl.ext.b_EGL_KHR_image_base &&
          gl::g_driver_egl.ext.b_EGL_KHR_gl_texture_2D_image &&
-         gl::g_driver_gl.ext.b_GL_OES_EGL_image);
+         gl::g_current_gl_driver->ext.b_GL_OES_EGL_image);
 
   const EGLint egl_attrib_list[] = {
       EGL_GL_TEXTURE_LEVEL_KHR, 0, EGL_IMAGE_PRESERVED_KHR, EGL_TRUE, EGL_NONE};
@@ -269,6 +262,7 @@ scoped_refptr<NativeImageBuffer> NativeImageBuffer::Create(GLuint texture_id) {
       return NativeImageBufferEGL::Create(texture_id);
 #endif
     case gl::kGLImplementationMockGL:
+    case gl::kGLImplementationStubGL:
       return new NativeImageBufferStub;
     default:
       NOTREACHED();

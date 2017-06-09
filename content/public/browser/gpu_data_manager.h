@@ -16,7 +16,6 @@ class GURL;
 
 namespace base {
 class FilePath;
-class ListValue;
 }
 
 namespace gpu {
@@ -40,6 +39,7 @@ class GpuDataManager {
                                     const gpu::GPUInfo& gpu_info) = 0;
 
   virtual bool IsFeatureBlacklisted(int feature) const = 0;
+  virtual bool IsFeatureEnabled(int feature) const = 0;
 
   virtual gpu::GPUInfo GetGPUInfo() const = 0;
 
@@ -86,9 +86,6 @@ class GpuDataManager {
   // to access them again.
   virtual void UnblockDomainFrom3DAPIs(const GURL& url) = 0;
 
-  // Disable the gpu process watchdog thread.
-  virtual void DisableGpuWatchdog() = 0;
-
   // Set GL strings. This triggers a re-calculation of GPU blacklist
   // decision.
   virtual void SetGLStrings(const std::string& gl_vendor,
@@ -109,6 +106,10 @@ class GpuDataManager {
   // Extensions that are currently disabled.
   virtual void GetDisabledExtensions(
       std::string* disabled_extensions) const = 0;
+
+  // Sets the initial GPU information. This should happen before calculating
+  // the backlists decision and applying commandline switches.
+  virtual void SetGpuInfo(const gpu::GPUInfo& gpu_info) = 0;
 
  protected:
   virtual ~GpuDataManager() {}

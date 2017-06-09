@@ -11,7 +11,6 @@ import android.graphics.Color;
 import android.os.Build;
 import android.support.v4.view.ViewCompat;
 import android.text.TextUtils;
-import android.util.AttributeSet;
 import android.view.ViewGroup;
 import android.view.accessibility.AccessibilityEvent;
 import android.widget.FrameLayout.LayoutParams;
@@ -78,7 +77,7 @@ public class ToolbarProgressBar extends ClipDrawableProgressBar {
     private AnimationLogic mAnimationLogic;
     private boolean mAnimationInitialized;
     private int mMarginTop;
-    private ViewGroup mControlContainer;
+    private ViewGroup mProgressBarContainer;
     private int mProgressStartCount;
     private int mThemeColor;
 
@@ -95,6 +94,7 @@ public class ToolbarProgressBar extends ClipDrawableProgressBar {
         public void run() {
             animateAlphaTo(0.0f);
             mIsRunningSmoothIndeterminate = false;
+            if (mAnimatingView != null) mAnimatingView.cancelAnimation();
         }
     };
 
@@ -142,34 +142,31 @@ public class ToolbarProgressBar extends ClipDrawableProgressBar {
     /**
      * Creates a toolbar progress bar.
      *
-     * @param context the application environment.
-     * @param attrs the xml attributes that should be used to initialize this view.
+     * @param context The application environment.
+     * @param topMargin The top margin of the progress bar.
      */
-    public ToolbarProgressBar(Context context, AttributeSet attrs) {
-        super(context, attrs);
+    public ToolbarProgressBar(Context context, int topMargin) {
+        super(context);
         setAlpha(0.0f);
+        mMarginTop = topMargin;
 
         // This tells accessibility services that progress bar changes are important enough to
         // announce to the user even when not focused.
         ViewCompat.setAccessibilityLiveRegion(this, ViewCompat.ACCESSIBILITY_LIVE_REGION_POLITE);
     }
 
-    /**
-     * Prepare the progress bar for being attached to the window.
-     * @param toolbarHeight The height of the toolbar.
-     */
-    public void prepareForAttach(int toolbarHeight) {
-        LayoutParams curParams = new LayoutParams(getLayoutParams());
-        mMarginTop = toolbarHeight - curParams.height;
-        curParams.topMargin = mMarginTop;
-        setLayoutParams(curParams);
+    @Override
+    public void onAttachedToWindow() {
+        super.onAttachedToWindow();
+
+        ((ViewGroup.MarginLayoutParams) getLayoutParams()).topMargin = mMarginTop;
     }
 
     /**
-     * @param container This View's container.
+     * @param container The view containing the progress bar.
      */
-    public void setControlContainer(ViewGroup container) {
-        mControlContainer = container;
+    public void setProgressBarContainer(ViewGroup container) {
+        mProgressBarContainer = container;
     }
 
     @Override
@@ -224,7 +221,7 @@ public class ToolbarProgressBar extends ClipDrawableProgressBar {
             } else {
                 setForegroundColor(getForegroundColor());
             }
-            UiUtils.insertAfter(mControlContainer, mAnimatingView, this);
+            UiUtils.insertAfter(mProgressBarContainer, mAnimatingView, this);
         } else if (TextUtils.equals(animation, "fast-start")) {
             mAnimationLogic = new ProgressAnimationFastStart();
         } else if (TextUtils.equals(animation, "linear")) {
@@ -399,18 +396,12 @@ public class ToolbarProgressBar extends ClipDrawableProgressBar {
             return;
         }
 
-        // All other theme colors are computed.
-        if (!ColorUtils.shouldUseLightForegroundOnBackground(color) && !isIncognito) {
-            // Light theme.
-            setForegroundColor(ColorUtils.getColorWithOverlay(color, Color.BLACK,
-                    THEMED_FOREGROUND_BLACK_FRACTION));
-        } else {
-            // Dark theme.
-            setForegroundColor(Color.WHITE);
-            if (mAnimatingView != null) {
-                mAnimatingView.setColor(ColorUtils.getColorWithOverlay(color, Color.WHITE,
-                        ANIMATION_WHITE_FRACTION));
-            }
+        setForegroundColor(ColorUtils.getThemedAssetColor(color, isIncognito));
+
+        if (mAnimatingView != null
+                && (ColorUtils.shouldUseLightForegroundOnBackground(color) || isIncognito)) {
+            mAnimatingView.setColor(ColorUtils.getColorWithOverlay(color, Color.WHITE,
+                    ANIMATION_WHITE_FRACTION));
         }
 
         setBackgroundColor(ColorUtils.getColorWithOverlay(color, Color.WHITE,

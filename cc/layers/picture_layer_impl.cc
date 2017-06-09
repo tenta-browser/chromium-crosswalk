@@ -12,6 +12,7 @@
 #include <limits>
 #include <set>
 
+#include "base/metrics/histogram_macros.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event_argument.h"
 #include "cc/base/math_util.h"
@@ -59,13 +60,39 @@ const int kGpuDefaultTileRoundUp = 32;
 // width and height should be an even multiple of 4 in size.
 const int kTileMinimalAlignment = 4;
 
+// Large contents scale can cause overflow issues. Cap the ideal contents scale
+// by this constant, since scales larger than this are usually not correct or
+// their scale doesn't matter as long as it's large. See
+// Renderer4.IdealContentsScale UMA for distribution of existing contents
+// scales.
+const float kMaxIdealContentsScale = 10000.f;
+
+// Intersect rects which may have right() and bottom() that overflow integer
+// boundaries. This code is similar to gfx::Rect::Intersect with the exception
+// that the types are promoted to int64_t when there is a chance of overflow.
+gfx::Rect SafeIntersectRects(const gfx::Rect& one, const gfx::Rect& two) {
+  if (one.IsEmpty() || two.IsEmpty())
+    return gfx::Rect();
+
+  int rx = std::max(one.x(), two.x());
+  int ry = std::max(one.y(), two.y());
+  int64_t rr = std::min(static_cast<int64_t>(one.x()) + one.width(),
+                        static_cast<int64_t>(two.x()) + two.width());
+  int64_t rb = std::min(static_cast<int64_t>(one.y()) + one.height(),
+                        static_cast<int64_t>(two.y()) + two.height());
+  if (rx > rr || ry > rb)
+    return gfx::Rect();
+  return gfx::Rect(rx, ry, static_cast<int>(rr - rx),
+                   static_cast<int>(rb - ry));
+}
+
 }  // namespace
 
 namespace cc {
 
 PictureLayerImpl::PictureLayerImpl(LayerTreeImpl* tree_impl,
                                    int id,
-                                   bool is_mask)
+                                   Layer::LayerMaskType mask_type)
     : LayerImpl(tree_impl, id),
       twin_layer_(nullptr),
       tilings_(CreatePictureLayerTilingSet()),
@@ -80,7 +107,7 @@ PictureLayerImpl::PictureLayerImpl(LayerTreeImpl* tree_impl,
       low_res_raster_contents_scale_(0.f),
       was_screen_space_transform_animating_(false),
       only_used_low_res_last_append_quads_(false),
-      is_mask_(is_mask),
+      mask_type_(mask_type),
       nearest_neighbor_(false),
       is_directly_composited_image_(false) {
   layer_tree_impl()->RegisterPictureLayerImpl(this);
@@ -98,12 +125,12 @@ const char* PictureLayerImpl::LayerTypeAsString() const {
 
 std::unique_ptr<LayerImpl> PictureLayerImpl::CreateLayerImpl(
     LayerTreeImpl* tree_impl) {
-  return PictureLayerImpl::Create(tree_impl, id(), is_mask_);
+  return PictureLayerImpl::Create(tree_impl, id(), mask_type());
 }
 
 void PictureLayerImpl::PushPropertiesTo(LayerImpl* base_layer) {
   PictureLayerImpl* layer_impl = static_cast<PictureLayerImpl*>(base_layer);
-  DCHECK_EQ(layer_impl->is_mask_, is_mask_);
+  DCHECK_EQ(layer_impl->mask_type_, mask_type_);
 
   LayerImpl::PushPropertiesTo(base_layer);
 
@@ -175,7 +202,8 @@ void PictureLayerImpl::AppendQuads(RenderPass* render_pass,
   }
 
   float max_contents_scale = MaximumTilingContentsScale();
-  PopulateScaledSharedQuadState(shared_quad_state, max_contents_scale);
+  PopulateScaledSharedQuadState(shared_quad_state, max_contents_scale,
+                                max_contents_scale);
   Occlusion scaled_occlusion =
       draw_properties()
           .occlusion_in_content_space.GetOcclusionWithGivenDrawTransform(
@@ -295,8 +323,10 @@ void PictureLayerImpl::AppendQuads(RenderPass* render_pass,
     if (visible_geometry_rect.IsEmpty())
       continue;
 
-    append_quads_data->visible_layer_area +=
-        visible_geometry_rect.width() * visible_geometry_rect.height();
+    int64_t visible_geometry_area =
+        static_cast<int64_t>(visible_geometry_rect.width()) *
+        visible_geometry_rect.height();
+    append_quads_data->visible_layer_area += visible_geometry_area;
 
     bool has_draw_quad = false;
     if (*iter && iter->draw_info().IsReadyToDraw()) {
@@ -324,7 +354,6 @@ void PictureLayerImpl::AppendQuads(RenderPass* render_pass,
                        texture_rect, draw_info.resource_size(),
                        draw_info.contents_swizzled(), nearest_neighbor_);
           ValidateQuadResources(quad);
-          iter->draw_info().set_was_ever_used_to_draw();
           has_draw_quad = true;
           break;
         }
@@ -334,7 +363,6 @@ void PictureLayerImpl::AppendQuads(RenderPass* render_pass,
           quad->SetNew(shared_quad_state, geometry_rect, visible_geometry_rect,
                        draw_info.solid_color(), false);
           ValidateQuadResources(quad);
-          iter->draw_info().set_was_ever_used_to_draw();
           has_draw_quad = true;
           break;
         }
@@ -360,10 +388,8 @@ void PictureLayerImpl::AppendQuads(RenderPass* render_pass,
         append_quads_data->num_missing_tiles++;
         ++missing_tile_count;
       }
-      int64_t checkerboarded_area =
-          visible_geometry_rect.width() * visible_geometry_rect.height();
       append_quads_data->checkerboarded_visible_content_area +=
-          checkerboarded_area;
+          visible_geometry_area;
       // Intersect checkerboard rect with interest rect to generate rect where
       // we checkerboarded and has recording. The area where we don't have
       // recording is not necessarily a Rect, and its area is calculated using
@@ -371,18 +397,18 @@ void PictureLayerImpl::AppendQuads(RenderPass* render_pass,
       gfx::Rect visible_rect_has_recording = visible_geometry_rect;
       visible_rect_has_recording.Intersect(scaled_recorded_viewport);
       int64_t checkerboarded_has_recording_area =
-          visible_rect_has_recording.width() *
+          static_cast<int64_t>(visible_rect_has_recording.width()) *
           visible_rect_has_recording.height();
       append_quads_data->checkerboarded_needs_raster_content_area +=
           checkerboarded_has_recording_area;
       append_quads_data->checkerboarded_no_recording_content_area +=
-          checkerboarded_area - checkerboarded_has_recording_area;
+          visible_geometry_area - checkerboarded_has_recording_area;
       continue;
     }
 
     if (iter.resolution() != HIGH_RESOLUTION) {
       append_quads_data->approximated_visible_content_area +=
-          visible_geometry_rect.width() * visible_geometry_rect.height();
+          visible_geometry_area;
     }
 
     // If we have a draw quad, but it's not low resolution, then
@@ -450,9 +476,6 @@ bool PictureLayerImpl::UpdateTiles() {
   was_screen_space_transform_animating_ =
       draw_properties().screen_space_transform_is_animating;
 
-  if (screen_space_transform_is_animating())
-    raster_source_->SetShouldAttemptToUseDistanceFieldText();
-
   double current_frame_time_in_seconds =
       (layer_tree_impl()->CurrentBeginFrameArgs().frame_time -
        base::TimeTicks()).InSecondsF();
@@ -518,7 +541,8 @@ void PictureLayerImpl::UpdateViewportRectForTilePriorityInContentSpace() {
                                .skewport_extrapolation_limit_in_screen_pixels *
                            MaximumTilingContentsScale();
       padded_bounds.Inset(-padding_amount, -padding_amount);
-      visible_rect_in_content_space.Intersect(padded_bounds);
+      visible_rect_in_content_space =
+          SafeIntersectRects(visible_rect_in_content_space, padded_bounds);
     }
   }
   viewport_rect_for_tile_priority_in_content_space_ =
@@ -549,7 +573,7 @@ void PictureLayerImpl::UpdateRasterSource(
 
   // Only set the image decode controller when we're committing.
   if (!pending_set) {
-    raster_source_->set_image_decode_controller(
+    raster_source_->SetImageDecodeController(
         layer_tree_impl()->image_decode_controller());
   }
 
@@ -625,7 +649,7 @@ void PictureLayerImpl::NotifyTileStateChanged(const Tile* tile) {
   }
   if (tile->draw_info().NeedsRaster()) {
     PictureLayerTiling* tiling =
-        tilings_->FindTilingWithScale(tile->contents_scale());
+        tilings_->FindTilingWithScaleKey(tile->contents_scale());
     if (tiling)
       tiling->set_all_tiles_done(false);
   }
@@ -642,17 +666,17 @@ void PictureLayerImpl::ReleaseResources() {
   ResetRasterScale();
 }
 
-void PictureLayerImpl::RecreateResources() {
+void PictureLayerImpl::ReleaseTileResources() {
+  // All resources are tile resources.
+  ReleaseResources();
+}
+
+void PictureLayerImpl::RecreateTileResources() {
   tilings_ = CreatePictureLayerTilingSet();
   if (raster_source_) {
-    raster_source_->set_image_decode_controller(
-        layer_tree_impl()->image_decode_controller());
+    raster_source_->set_image_decode_cache(
+        layer_tree_impl()->image_decode_cache());
   }
-
-  // To avoid an edge case after lost context where the tree is up to date but
-  // the tilings have not been managed, request an update draw properties
-  // to force tilings to get managed.
-  layer_tree_impl()->set_needs_update_draw_properties();
 }
 
 Region PictureLayerImpl::GetInvalidationRegionForDebugging() {
@@ -664,12 +688,15 @@ Region PictureLayerImpl::GetInvalidationRegionForDebugging() {
   return IntersectRegions(invalidation_, update_rect());
 }
 
-ScopedTilePtr PictureLayerImpl::CreateTile(const Tile::CreateInfo& info) {
+std::unique_ptr<Tile> PictureLayerImpl::CreateTile(
+    const Tile::CreateInfo& info) {
   int flags = 0;
 
-  // We don't handle solid color masks, so we shouldn't bother analyzing those.
+  // We don't handle solid color masks if mask tiling is disabled, we also don't
+  // handle solid color single texture masks if the flag is enabled, so we
+  // shouldn't bother analyzing those.
   // Otherwise, always analyze to maximize memory savings.
-  if (!is_mask_)
+  if (mask_type_ != Layer::LayerMaskType::SINGLE_TEXTURE_MASK)
     flags = Tile::USE_PICTURE_ANALYSIS;
 
   if (contents_opaque())
@@ -695,7 +722,7 @@ const PictureLayerTiling* PictureLayerImpl::GetPendingOrActiveTwinTiling(
   PictureLayerImpl* twin_layer = GetPendingOrActiveTwinLayer();
   if (!twin_layer)
     return nullptr;
-  return twin_layer->tilings_->FindTilingWithScale(tiling->contents_scale());
+  return twin_layer->tilings_->FindTilingWithScaleKey(tiling->contents_scale());
 }
 
 bool PictureLayerImpl::RequiresHighResToDraw() const {
@@ -711,7 +738,7 @@ gfx::Size PictureLayerImpl::CalculateTileSize(
   int max_texture_size =
       layer_tree_impl()->resource_provider()->max_texture_size();
 
-  if (is_mask_) {
+  if (mask_type_ == Layer::LayerMaskType::SINGLE_TEXTURE_MASK) {
     // Masks are not tiled, so if we can't cover the whole mask with one tile,
     // we shouldn't have such a tiling at all.
     DCHECK_LE(content_bounds.width(), max_texture_size);
@@ -807,9 +834,11 @@ void PictureLayerImpl::GetContentsResourceId(ResourceId* resource_id,
          bounds() == raster_source_->GetSize())
       << " bounds " << bounds().ToString() << " pile "
       << raster_source_->GetSize().ToString();
-  gfx::Rect content_rect(bounds());
+  float dest_scale = MaximumTilingContentsScale();
+  gfx::Rect content_rect =
+      gfx::ScaleToEnclosingRect(gfx::Rect(bounds()), dest_scale);
   PictureLayerTilingSet::CoverageIterator iter(
-      tilings_.get(), 1.f, content_rect, ideal_contents_scale_);
+      tilings_.get(), dest_scale, content_rect, ideal_contents_scale_);
 
   // Mask resource not ready yet.
   if (!iter || !*iter) {
@@ -861,7 +890,7 @@ void PictureLayerImpl::AddTilingsForRasterScale() {
   tilings_->MarkAllTilingsNonIdeal();
 
   PictureLayerTiling* high_res =
-      tilings_->FindTilingWithScale(raster_contents_scale_);
+      tilings_->FindTilingWithScaleKey(raster_contents_scale_);
   if (!high_res) {
     // We always need a high res tiling, so create one if it doesn't exist.
     high_res = AddTiling(raster_contents_scale_);
@@ -896,11 +925,6 @@ bool PictureLayerImpl::ShouldAdjustRasterScale() const {
 
   if (was_screen_space_transform_animating_ !=
       draw_properties().screen_space_transform_is_animating)
-    return true;
-
-  if (draw_properties().screen_space_transform_is_animating &&
-      raster_contents_scale_ != ideal_contents_scale_ &&
-      ShouldAdjustRasterScaleDuringScaleAnimations())
     return true;
 
   bool is_pinching = layer_tree_impl()->PinchGestureActive();
@@ -956,7 +980,7 @@ void PictureLayerImpl::AddLowResolutionTilingIfNeeded() {
     return;
 
   PictureLayerTiling* low_res =
-      tilings_->FindTilingWithScale(low_res_raster_contents_scale_);
+      tilings_->FindTilingWithScaleKey(low_res_raster_contents_scale_);
   DCHECK(!low_res || low_res->resolution() != HIGH_RESOLUTION);
 
   // Only create new low res tilings when the transform is static.  This
@@ -1020,20 +1044,19 @@ void PictureLayerImpl::RecalculateRasterScales() {
       while (desired_contents_scale < ideal_contents_scale_)
         desired_contents_scale *= kMaxScaleRatioDuringPinch;
     }
-    raster_contents_scale_ = tilings_->GetSnappedContentsScale(
+    raster_contents_scale_ = tilings_->GetSnappedContentsScaleKey(
         desired_contents_scale, kSnapToExistingTilingRatio);
     raster_page_scale_ =
         raster_contents_scale_ / raster_device_scale_ / raster_source_scale_;
   }
 
-  // If we're not re-rasterizing during animation, rasterize at the maximum
-  // scale that will occur during the animation, if the maximum scale is
-  // known. However we want to avoid excessive memory use. If the scale is
-  // smaller than what we would choose otherwise, then it's always better off
-  // for us memory-wise. But otherwise, we don't choose a scale at which this
-  // layer's rastered content would become larger than the viewport.
-  if (draw_properties().screen_space_transform_is_animating &&
-      !ShouldAdjustRasterScaleDuringScaleAnimations()) {
+  // We rasterize at the maximum scale that will occur during the animation, if
+  // the maximum scale is known. However we want to avoid excessive memory use.
+  // If the scale is smaller than what we would choose otherwise, then it's
+  // always better off for us memory-wise. But otherwise, we don't choose a
+  // scale at which this layer's rastered content would become larger than the
+  // viewport.
+  if (draw_properties().screen_space_transform_is_animating) {
     bool can_raster_at_maximum_scale = false;
     bool should_raster_at_starting_scale = false;
     CombinedAnimationScale animation_scales =
@@ -1149,25 +1172,24 @@ float PictureLayerImpl::MinimumContentsScale() const {
 }
 
 float PictureLayerImpl::MaximumContentsScale() const {
-  // Masks can not have tilings that would become larger than the
-  // max_texture_size since they use a single tile for the entire
-  // tiling. Other layers can have tilings of any scale.
-  if (!is_mask_)
-    return std::numeric_limits<float>::max();
-
-  int max_texture_size =
-      layer_tree_impl()->resource_provider()->max_texture_size();
-  float max_scale_width =
-      static_cast<float>(max_texture_size) / bounds().width();
-  float max_scale_height =
-      static_cast<float>(max_texture_size) / bounds().height();
+  // When mask tiling is disabled or the mask is single textured, masks can not
+  // have tilings that would become larger than the max_texture_size since they
+  // use a single tile for the entire tiling. Other layers can have tilings such
+  // that dimension * scale does not overflow.
+  float max_dimension = static_cast<float>(
+      mask_type_ == Layer::LayerMaskType::SINGLE_TEXTURE_MASK
+          ? layer_tree_impl()->resource_provider()->max_texture_size()
+          : std::numeric_limits<int>::max());
+  float max_scale_width = max_dimension / bounds().width();
+  float max_scale_height = max_dimension / bounds().height();
   float max_scale = std::min(max_scale_width, max_scale_height);
+
   // We require that multiplying the layer size by the contents scale and
-  // ceiling produces a value <= |max_texture_size|. Because for large layer
+  // ceiling produces a value <= |max_dimension|. Because for large layer
   // sizes floating point ambiguity may crop up, making the result larger or
   // smaller than expected, we use a slightly smaller floating point value for
   // the scale, to help ensure that the resulting content bounds will never end
-  // up larger than |max_texture_size|.
+  // up larger than |max_dimension|.
   return nextafterf(max_scale, 0.f);
 }
 
@@ -1207,10 +1229,6 @@ void PictureLayerImpl::SanityCheckTilingState() const {
 #endif
 }
 
-bool PictureLayerImpl::ShouldAdjustRasterScaleDuringScaleAnimations() const {
-  return layer_tree_impl()->use_gpu_rasterization();
-}
-
 float PictureLayerImpl::MaximumTilingContentsScale() const {
   float max_contents_scale = tilings_->GetMaximumContentsScale();
   return std::max(max_contents_scale, MinimumContentsScale());
@@ -1224,7 +1242,8 @@ PictureLayerImpl::CreatePictureLayerTilingSet() {
       layer_tree_impl()->use_gpu_rasterization()
           ? settings.gpu_rasterization_skewport_target_time_in_seconds
           : settings.skewport_target_time_in_seconds,
-      settings.skewport_extrapolation_limit_in_screen_pixels);
+      settings.skewport_extrapolation_limit_in_screen_pixels,
+      settings.max_preraster_distance_in_screen_pixels);
 }
 
 void PictureLayerImpl::UpdateIdealScales() {
@@ -1237,9 +1256,13 @@ void PictureLayerImpl::UpdateIdealScales() {
                           ? layer_tree_impl()->current_page_scale_factor()
                           : 1.f;
   ideal_device_scale_ = layer_tree_impl()->device_scale_factor();
-  ideal_contents_scale_ = std::max(GetIdealContentsScale(), min_contents_scale);
+  ideal_contents_scale_ =
+      std::min(kMaxIdealContentsScale,
+               std::max(GetIdealContentsScale(), min_contents_scale));
   ideal_source_scale_ =
       ideal_contents_scale_ / ideal_page_scale_ / ideal_device_scale_;
+  UMA_HISTOGRAM_CUSTOM_COUNTS("Renderer4.IdealContentsScale",
+                              ideal_contents_scale_, 1, 10000, 50);
 }
 
 void PictureLayerImpl::GetDebugBorderProperties(
@@ -1285,8 +1308,8 @@ void PictureLayerImpl::AsValueInto(
 
   state->BeginArray("coverage_tiles");
   for (PictureLayerTilingSet::CoverageIterator iter(
-           tilings_.get(), 1.f, gfx::Rect(raster_source_->GetSize()),
-           ideal_contents_scale_);
+           tilings_.get(), MaximumTilingContentsScale(),
+           gfx::Rect(raster_source_->GetSize()), ideal_contents_scale_);
        iter; ++iter) {
     state->BeginDictionary();
 
@@ -1298,6 +1321,32 @@ void PictureLayerImpl::AsValueInto(
     state->EndDictionary();
   }
   state->EndArray();
+
+  state->BeginDictionary("can_have_tilings_state");
+  state->SetBoolean("can_have_tilings", CanHaveTilings());
+  state->SetBoolean("raster_source_solid_color",
+                    raster_source_->IsSolidColor());
+  state->SetBoolean("draws_content", DrawsContent());
+  state->SetBoolean("raster_source_has_recordings",
+                    raster_source_->HasRecordings());
+  state->SetDouble("max_contents_scale", MaximumTilingContentsScale());
+  state->SetDouble("min_contents_scale", MinimumContentsScale());
+  state->EndDictionary();
+
+  state->BeginDictionary("raster_scales");
+  state->SetDouble("page_scale", raster_page_scale_);
+  state->SetDouble("device_scale", raster_device_scale_);
+  state->SetDouble("source_scale", raster_source_scale_);
+  state->SetDouble("contents_scale", raster_contents_scale_);
+  state->SetDouble("low_res_contents_scale", low_res_raster_contents_scale_);
+  state->EndDictionary();
+
+  state->BeginDictionary("ideal_scales");
+  state->SetDouble("page_scale", ideal_page_scale_);
+  state->SetDouble("device_scale", ideal_device_scale_);
+  state->SetDouble("source_scale", ideal_source_scale_);
+  state->SetDouble("contents_scale", ideal_contents_scale_);
+  state->EndDictionary();
 }
 
 size_t PictureLayerImpl::GPUMemoryUsageInBytes() const {
@@ -1319,6 +1368,29 @@ bool PictureLayerImpl::IsOnActiveOrPendingTree() const {
 bool PictureLayerImpl::HasValidTilePriorities() const {
   return IsOnActiveOrPendingTree() &&
          is_drawn_render_surface_layer_list_member();
+}
+
+void PictureLayerImpl::InvalidateRegionForImages(
+    const ImageIdFlatSet& images_to_invalidate) {
+  TRACE_EVENT_BEGIN0("cc", "PictureLayerImpl::InvalidateRegionForImages");
+
+  InvalidationRegion image_invalidation;
+  for (auto image_id : images_to_invalidate)
+    image_invalidation.Union(raster_source_->GetRectForImage(image_id));
+  Region invalidation;
+  image_invalidation.Swap(&invalidation);
+
+  if (invalidation.IsEmpty()) {
+    TRACE_EVENT_END1("cc", "PictureLayerImpl::InvalidateRegionForImages",
+                     "Invalidation", invalidation.ToString());
+    return;
+  }
+
+  invalidation_.Union(invalidation);
+  tilings_->UpdateTilingsForImplSideInvalidation(invalidation);
+  SetNeedsPushProperties();
+  TRACE_EVENT_END1("cc", "PictureLayerImpl::InvalidateRegionForImages",
+                   "Invalidation", invalidation.ToString());
 }
 
 }  // namespace cc

@@ -6,39 +6,48 @@
 #define CHROME_BROWSER_UI_APP_LIST_ARC_ARC_PACKAGE_SYNC_DATA_TYPE_CONTROLLER_H_
 
 #include "base/macros.h"
+#include "chrome/browser/ui/app_list/arc/arc_app_list_prefs.h"
 #include "components/prefs/pref_change_registrar.h"
-#include "components/sync_driver/data_type_controller.h"
-#include "components/sync_driver/ui_data_type_controller.h"
-
-namespace sync_driver {
-class SyncClient;
-}
+#include "components/sync/driver/async_directory_type_controller.h"
+#include "components/sync/driver/data_type_controller.h"
 
 class Profile;
 
-// A UIDataTypeController for arc package sync datatypes, which enables or
+namespace syncer {
+class SyncClient;
+}
+
+// A DataTypeController for arc package sync datatypes, which enables or
 // disables these types based on whether ArcAppInstance is ready.
 class ArcPackageSyncDataTypeController
-    : public sync_driver::UIDataTypeController {
+    : public syncer::AsyncDirectoryTypeController,
+      public ArcAppListPrefs::Observer {
  public:
+  // |dump_stack| is called when an unrecoverable error occurs.
   ArcPackageSyncDataTypeController(syncer::ModelType type,
-                                   const base::Closure& error_callback,
-                                   sync_driver::SyncClient* sync_client,
+                                   const base::Closure& dump_stack,
+                                   syncer::SyncClient* sync_client,
                                    Profile* profile);
-
-  bool ReadyForStart() const override;
-
- private:
-  // DataTypeController is RefCounted.
   ~ArcPackageSyncDataTypeController() override;
 
-  void OnArcAppsSyncPrefChanged();
+  // AsyncDirectoryTypeController implementation.
+  bool ReadyForStart() const override;
+  bool StartModels() override;
+  void StopModels() override;
+
+ private:
+  // ArcAppListPrefs::Observer:
+  void OnPackageListInitialRefreshed() override;
 
   void OnArcEnabledPrefChanged();
 
-  Profile* const profile_;
+  void EnableDataType();
 
-  sync_driver::SyncClient* sync_client_;
+  bool ShouldSyncArc() const;
+
+  bool model_normal_start_ = true;
+
+  Profile* const profile_;
 
   PrefChangeRegistrar pref_registrar_;
 

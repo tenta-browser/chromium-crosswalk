@@ -56,6 +56,10 @@ body {
   width: 100%;
 }
 
+.content #additional-info-label {
+  -webkit-margin-start: 10px;
+}
+
 .content .text-field-container {
   -webkit-align-items: center;
   -webkit-padding-start: 10px;
@@ -67,6 +71,14 @@ body {
 .content .text-field-container > label {
   -webkit-flex: 0 1 auto;
   width: 100px;
+}
+
+.content .text-field-container > select {
+  -webkit-padding-start: 5px;
+  border: 1px solid #c8c8c8;
+  color: #585858;
+  flex: 1 1 auto;
+  height: 100%;
 }
 
 .content .text-field-container > input[type=text] {
@@ -130,8 +142,11 @@ body {
   display: -webkit-flex;
   justify-content: flex-end;
   left: 20px;
-  position: absolute;
   right: 20px;
+}
+
+.content .top-buttons {
+  position: absolute;
 }
 
 .content .remove-file-button {

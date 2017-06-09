@@ -8,9 +8,12 @@
 
 #include "base/files/file_util.h"
 #include "base/run_loop.h"
+#include "platform/loader/fetch/MemoryCache.h"
+#include "platform/testing/TestingPlatformSupport.h"
 #include "platform/testing/UnitTestHelpers.h"
 #include "platform/testing/weburl_loader_mock.h"
 #include "public/platform/FilePathConversion.h"
+#include "public/platform/Platform.h"
 #include "public/platform/WebString.h"
 #include "public/platform/WebURLError.h"
 #include "public/platform/WebURLRequest.h"
@@ -21,16 +24,17 @@ namespace blink {
 
 std::unique_ptr<WebURLLoaderMockFactory> WebURLLoaderMockFactory::create()
 {
-    return wrapUnique(new WebURLLoaderMockFactoryImpl);
+  return WTF::wrapUnique(new WebURLLoaderMockFactoryImpl(nullptr));
 }
 
-WebURLLoaderMockFactoryImpl::WebURLLoaderMockFactoryImpl() {}
+WebURLLoaderMockFactoryImpl::WebURLLoaderMockFactoryImpl(
+    TestingPlatformSupport* platform)
+    : m_platform(platform) {}
 
 WebURLLoaderMockFactoryImpl::~WebURLLoaderMockFactoryImpl() {}
 
 WebURLLoader* WebURLLoaderMockFactoryImpl::createURLLoader(
     WebURLLoader* default_loader) {
-  DCHECK(default_loader);
   return new WebURLLoaderMock(this, default_loader);
 }
 
@@ -45,8 +49,8 @@ void WebURLLoaderMockFactoryImpl::registerURL(const WebURL& url,
         << response_info.file_path.MaybeAsASCII() << " does not exist.";
   }
 
-  DCHECK(url_to_reponse_info_.find(url) == url_to_reponse_info_.end());
-  url_to_reponse_info_.set(url, response_info);
+  DCHECK(url_to_response_info_.find(url) == url_to_response_info_.end());
+  url_to_response_info_.set(url, response_info);
 }
 
 
@@ -54,24 +58,25 @@ void WebURLLoaderMockFactoryImpl::registerErrorURL(
     const WebURL& url,
     const WebURLResponse& response,
     const WebURLError& error) {
-  DCHECK(url_to_reponse_info_.find(url) == url_to_reponse_info_.end());
+  DCHECK(url_to_response_info_.find(url) == url_to_response_info_.end());
   registerURL(url, response, WebString());
   url_to_error_info_.set(url, error);
 }
 
 void WebURLLoaderMockFactoryImpl::unregisterURL(const blink::WebURL& url) {
-  URLToResponseMap::iterator iter = url_to_reponse_info_.find(url);
-  DCHECK(iter != url_to_reponse_info_.end());
-  url_to_reponse_info_.remove(iter);
+  URLToResponseMap::iterator iter = url_to_response_info_.find(url);
+  DCHECK(iter != url_to_response_info_.end());
+  url_to_response_info_.remove(iter);
 
   URLToErrorMap::iterator error_iter = url_to_error_info_.find(url);
   if (error_iter != url_to_error_info_.end())
     url_to_error_info_.remove(error_iter);
 }
 
-void WebURLLoaderMockFactoryImpl::unregisterAllURLs() {
-  url_to_reponse_info_.clear();
+void WebURLLoaderMockFactoryImpl::unregisterAllURLsAndClearMemoryCache() {
+  url_to_response_info_.clear();
   url_to_error_info_.clear();
+  memoryCache()->evictResources();
 }
 
 void WebURLLoaderMockFactoryImpl::serveAsynchronousRequests() {
@@ -81,7 +86,7 @@ void WebURLLoaderMockFactoryImpl::serveAsynchronousRequests() {
     LoaderToRequestMap::iterator iter = pending_loaders_.begin();
     WeakPtr<WebURLLoaderMock> loader(iter->key->GetWeakPtr());
     const WebURLRequest request = iter->value;
-    pending_loaders_.remove(loader.get());
+    pending_loaders_.erase(loader.get());
 
     WebURLResponse response;
     WebURLError error;
@@ -91,31 +96,36 @@ void WebURLLoaderMockFactoryImpl::serveAsynchronousRequests() {
     while (response.httpStatusCode() >= 300 &&
            response.httpStatusCode() < 400) {
       WebURLRequest newRequest = loader->ServeRedirect(request, response);
+      RunUntilIdle();
       if (!loader || loader->is_cancelled() || loader->is_deferred())
         break;
       LoadRequest(newRequest, &response, &error, &data);
     }
     // Serve the request if the loader is still active.
-    if (loader && !loader->is_cancelled() && !loader->is_deferred())
+    if (loader && !loader->is_cancelled() && !loader->is_deferred()) {
       loader->ServeAsynchronousRequest(delegate_, response, data, error);
+      RunUntilIdle();
+    }
   }
-  base::RunLoop().RunUntilIdle();
+  RunUntilIdle();
 }
 
 bool WebURLLoaderMockFactoryImpl::IsMockedURL(const blink::WebURL& url) {
-  return url_to_reponse_info_.find(url) != url_to_reponse_info_.end();
+  return url_to_response_info_.find(url) != url_to_response_info_.end();
 }
 
 void WebURLLoaderMockFactoryImpl::CancelLoad(WebURLLoaderMock* loader) {
-  pending_loaders_.remove(loader);
+  pending_loaders_.erase(loader);
 }
 
 void WebURLLoaderMockFactoryImpl::LoadSynchronously(
     const WebURLRequest& request,
     WebURLResponse* response,
     WebURLError* error,
-    WebData* data) {
+    WebData* data,
+    int64_t* encoded_data_length) {
   LoadRequest(request, response, error, data);
+  *encoded_data_length = data->size();
 }
 
 void WebURLLoaderMockFactoryImpl::LoadAsynchronouly(
@@ -123,6 +133,13 @@ void WebURLLoaderMockFactoryImpl::LoadAsynchronouly(
     WebURLLoaderMock* loader) {
   DCHECK(!pending_loaders_.contains(loader));
   pending_loaders_.set(loader, request);
+}
+
+void WebURLLoaderMockFactoryImpl::RunUntilIdle() {
+  if (m_platform)
+    m_platform->runUntilIdle();
+  else
+    base::RunLoop().RunUntilIdle();
 }
 
 void WebURLLoaderMockFactoryImpl::LoadRequest(const WebURLRequest& request,
@@ -135,8 +152,8 @@ void WebURLLoaderMockFactoryImpl::LoadRequest(const WebURLRequest& request,
     *error = error_iter->value;
 
   URLToResponseMap::const_iterator iter =
-      url_to_reponse_info_.find(request.url());
-  if (iter == url_to_reponse_info_.end()) {
+      url_to_response_info_.find(request.url());
+  if (iter == url_to_response_info_.end()) {
     // Non mocked URLs should not have been passed to the default URLLoader.
     NOTREACHED();
     return;

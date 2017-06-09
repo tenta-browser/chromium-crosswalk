@@ -33,7 +33,6 @@ extern const char kContentCapabilities[];
 extern const char kContentScripts[];
 extern const char kContentSecurityPolicy[];
 extern const char kConvertedFromUserScript[];
-extern const char kCopresence[];
 extern const char kCss[];
 extern const char kCtrlKey[];
 extern const char kCurrentLocale[];
@@ -73,6 +72,7 @@ extern const char kJs[];
 extern const char kKey[];
 extern const char kKeycode[];
 extern const char kKiosk[];
+extern const char kKioskAlwaysUpdate[];
 extern const char kKioskEnabled[];
 extern const char kKioskOnly[];
 extern const char kKioskMode[];
@@ -133,7 +133,6 @@ extern const char kPluginsPath[];
 extern const char kPluginsPublic[];
 extern const char kPublicKey[];
 extern const char kRemoveButton[];
-extern const char kRequiredPlatformVersion[];
 extern const char kRequirements[];
 extern const char kRunAt[];
 extern const char kSandboxedPages[];
@@ -190,6 +189,7 @@ extern const char kWebviewAccessibleResources[];
 extern const char kWebviewPartitions[];
 extern const char kWhitelist[];
 #if defined(OS_CHROMEOS)
+extern const char kActionHandlers[];
 extern const char kFileSystemProviderCapabilities[];
 #endif
 }  // namespace manifest_keys
@@ -295,8 +295,6 @@ extern const char kInvalidContentCapabilitiesPermission[];
 extern const char kInvalidContentScript[];
 extern const char kInvalidContentScriptsList[];
 extern const char kInvalidContentSecurityPolicy[];
-extern const char kInvalidCopresenceConfig[];
-extern const char kInvalidCopresenceApiKey[];
 extern const char kInvalidCSPInsecureValue[];
 extern const char kInvalidCSPMissingSecureSrc[];
 extern const char kInvalidCss[];
@@ -360,6 +358,7 @@ extern const char kInvalidKeyBindingMediaKeyWithModifier[];
 extern const char kInvalidKeyBindingMissingPlatform[];
 extern const char kInvalidKeyBindingTooMany[];
 extern const char kInvalidKeyBindingUnknownPlatform[];
+extern const char kInvalidKioskAlwaysUpdate[];
 extern const char kInvalidKioskEnabled[];
 extern const char kInvalidKioskOnly[];
 extern const char kInvalidKioskOnlyButNotEnabled[];
@@ -492,6 +491,8 @@ extern const char kUnrecognizedManifestProperty[];
 extern const char kWebRequestConflictsWithLazyBackground[];
 #if defined(OS_CHROMEOS)
 extern const char kIllegalPlugins[];
+extern const char kInvalidActionHandlersActionType[];
+extern const char kInvalidActionHandlersType[];
 extern const char kInvalidFileSystemProviderMissingCapabilities[];
 extern const char kInvalidFileSystemProviderMissingPermission[];
 #endif

@@ -13,6 +13,7 @@
 
 class ChromeLauncherController;
 
+// Shelf item delegate for ARC app windows.
 class ArcAppWindowLauncherItemController
     : public AppWindowLauncherItemController {
  public:
@@ -22,14 +23,16 @@ class ArcAppWindowLauncherItemController
   ~ArcAppWindowLauncherItemController() override;
 
   // LauncherItemController overrides:
-  base::string16 GetTitle() override;
-  ash::ShelfItemDelegate::PerformedAction ItemSelected(
-      const ui::Event& event) override;
-  ash::ShelfMenuModel* CreateApplicationMenu(int event_flags) override;
-  ChromeLauncherAppMenuItems GetApplicationList(int event_flags) override;
+  ash::ShelfAction ItemSelected(ui::EventType event_type,
+                                int event_flags,
+                                int64_t display_id,
+                                ash::ShelfLaunchSource source) override;
+  ash::ShelfAppMenuItemList GetAppMenuItems(int event_flags) override;
+  void ExecuteCommand(uint32_t command_id, int32_t event_flags) override;
 
   void AddTaskId(int task_id);
   void RemoveTaskId(int task_id);
+  bool HasAnyTasks() const;
 
  private:
   std::unordered_set<int> task_ids_;

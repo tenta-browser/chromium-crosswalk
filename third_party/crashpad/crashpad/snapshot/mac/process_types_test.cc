@@ -24,6 +24,7 @@
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
 #include "gtest/gtest.h"
+#include "snapshot/mac/process_types/internal.h"
 #include "test/mac/dyld.h"
 #include "util/mac/mac_util.h"
 #include "util/misc/implicit_cast.h"
@@ -47,7 +48,9 @@ TEST(ProcessTypes, DyldImagesSelf) {
   const struct dyld_all_image_infos* self_image_infos =
       _dyld_get_all_image_infos();
   int mac_os_x_minor_version = MacOSXMinorVersion();
-  if (mac_os_x_minor_version >= 9) {
+  if (mac_os_x_minor_version >= 12) {
+    EXPECT_GE(self_image_infos->version, 15u);
+  } else if (mac_os_x_minor_version >= 9) {
     EXPECT_GE(self_image_infos->version, 13u);
   } else if (mac_os_x_minor_version >= 7) {
     EXPECT_GE(self_image_infos->version, 8u);
@@ -81,8 +84,8 @@ TEST(ProcessTypes, DyldImagesSelf) {
             dyld_info.all_image_info_addr);
   EXPECT_GT(dyld_info.all_image_info_size, 1u);
 
-  // This field is only present in the Mac OS X 10.7 SDK (at build time) and
-  // kernel (at run time).
+  // This field is only present in the OS X 10.7 SDK (at build time) and kernel
+  // (at run time).
 #if MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_7
   if (MacOSXMinorVersion() >= 7) {
 #if !defined(ARCH_CPU_64_BITS)
@@ -95,6 +98,60 @@ TEST(ProcessTypes, DyldImagesSelf) {
 
   ProcessReader process_reader;
   ASSERT_TRUE(process_reader.Initialize(mach_task_self()));
+
+#if MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_12
+  const uint32_t kDyldAllImageInfosVersionInSDK = 15;
+#elif MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_9
+  const uint32_t kDyldAllImageInfosVersionInSDK = 14;
+#elif MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_7
+  const uint32_t kDyldAllImageInfosVersionInSDK = 12;
+#elif MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_6
+  const uint32_t kDyldAllImageInfosVersionInSDK = 7;
+#else
+  const uint32_t kDyldAllImageInfosVersionInSDK = 1;
+#endif
+
+  // Make sure that the size of the structure as declared in the SDK matches the
+  // size expected for the version of the structure that the SDK describes.
+  EXPECT_EQ(sizeof(dyld_all_image_infos),
+            process_types::dyld_all_image_infos::ExpectedSizeForVersion(
+                &process_reader, kDyldAllImageInfosVersionInSDK));
+
+  // Make sure that the computed sizes of various versions of this structure are
+  // correct at different bitnessses.
+  const struct {
+    uint32_t version;
+    size_t size_32;
+    size_t size_64;
+  } kVersionsAndSizes[] = {
+      {1, 17, 25},
+      {2, 24, 40},
+      {3, 28, 48},
+      {5, 40, 72},
+      {6, 44, 80},
+      {7, 48, 88},
+      {8, 56, 104},
+      {9, 60, 112},
+      {10, 64, 120},
+      {11, 80, 152},
+      {12, 84, 160},
+      {13, 104, 184},
+      {14, 164, 304},
+      {15, 164, 304},
+  };
+  for (size_t index = 0; index < arraysize(kVersionsAndSizes); ++index) {
+    uint32_t version = kVersionsAndSizes[index].version;
+    SCOPED_TRACE(base::StringPrintf("index %zu, version %u", index, version));
+
+    EXPECT_EQ(kVersionsAndSizes[index].size_32,
+              process_types::internal::dyld_all_image_infos<
+                  process_types::internal::Traits32>::
+                  ExpectedSizeForVersion(version));
+    EXPECT_EQ(kVersionsAndSizes[index].size_64,
+              process_types::internal::dyld_all_image_infos<
+                  process_types::internal::Traits64>::
+                  ExpectedSizeForVersion(version));
+  }
 
   process_types::dyld_all_image_infos proctype_image_infos;
   ASSERT_TRUE(proctype_image_infos.Read(&process_reader,
@@ -194,13 +251,49 @@ TEST(ProcessTypes, DyldImagesSelf) {
                      proctype_image_infos.sharedCacheUUID,
                      sizeof(self_image_infos->sharedCacheUUID)));
   }
+#endif
+#if MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_12
+  if (proctype_image_infos.version >= 15) {
+    EXPECT_EQ(self_image_infos->infoArrayChangeTimestamp,
+              proctype_image_infos.infoArrayChangeTimestamp);
+    EXPECT_EQ(self_image_infos->sharedCacheBaseAddress,
+              proctype_image_infos.sharedCacheBaseAddress);
+    EXPECT_EQ(reinterpret_cast<uint64_t>(self_image_infos->dyldPath),
+              proctype_image_infos.dyldPath);
+    for (size_t index = 0;
+         index < arraysize(self_image_infos->notifyPorts);
+         ++index) {
+      EXPECT_EQ(self_image_infos->notifyPorts[index],
+                proctype_image_infos.notifyPorts[index]) << "index " << index;
+    }
+
+    TEST_STRING(
+        process_reader, self_image_infos, proctype_image_infos, dyldPath);
+  }
+#endif
+
+#if MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_12
+  // As dyld_all_image_infos has evolved over time, new fields were added to the
+  // reserved region. process_types::dyld_all_image_infos declares a recent
+  // version of the structure, but an older SDK may declare an older version
+  // whose |reserved| member appears at a different (smaller) offset than the
+  // process_types version. It’s difficult to compare the reserved fields in
+  // these older SDKs, so only do it where the declarations match.
   if (proctype_image_infos.version >= 14) {
-    for (size_t index = 0; index < arraysize(self_image_infos->reserved);
+    for (size_t index = 0;
+         index < arraysize(proctype_image_infos.reserved);
          ++index) {
       EXPECT_EQ(implicit_cast<uint64_t>(self_image_infos->reserved[index]),
                 proctype_image_infos.reserved[index])
           << "index " << index;
     }
+#if defined(ARCH_CPU_64_BITS)
+    EXPECT_EQ(self_image_infos->reserved[4], proctype_image_infos.reserved_4);
+    EXPECT_EQ(self_image_infos->reserved[5], proctype_image_infos.reserved_5);
+    EXPECT_EQ(self_image_infos->reserved[6], proctype_image_infos.reserved_6);
+    EXPECT_EQ(self_image_infos->reserved[7], proctype_image_infos.reserved_7);
+    EXPECT_EQ(self_image_infos->reserved[8], proctype_image_infos.reserved_8);
+#endif
   }
 #endif
 
@@ -213,7 +306,8 @@ TEST(ProcessTypes, DyldImagesSelf) {
         proctype_image_info_vector.size(),
         &proctype_image_info_vector[0]));
 
-    for (size_t index = 0; index < proctype_image_infos.infoArrayCount;
+    for (size_t index = 0;
+         index < proctype_image_infos.infoArrayCount;
          ++index) {
       const dyld_image_info* self_image_info =
           &self_image_infos->infoArray[index];
@@ -245,7 +339,8 @@ TEST(ProcessTypes, DyldImagesSelf) {
         proctype_uuid_info_vector.size(),
         &proctype_uuid_info_vector[0]));
 
-    for (size_t index = 0; index < proctype_image_infos.uuidArrayCount;
+    for (size_t index = 0;
+         index < proctype_image_infos.uuidArrayCount;
          ++index) {
       const dyld_uuid_info* self_uuid_info =
           &self_image_infos->uuidArray[index];

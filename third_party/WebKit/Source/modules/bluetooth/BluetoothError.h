@@ -6,24 +6,36 @@
 #define BluetoothError_h
 
 #include "platform/heap/Handle.h"
-#include "public/platform/modules/bluetooth/WebBluetoothError.h"
+#include "third_party/WebKit/public/platform/modules/bluetooth/web_bluetooth.mojom-blink.h"
 #include "wtf/Allocator.h"
 
 namespace blink {
 
-class DOMException;
-class ScriptPromiseResolver;
-
-// BluetoothError is used with CallbackPromiseAdapter to receive
-// WebBluetoothError responses. See CallbackPromiseAdapter class comments.
-class BluetoothError {
-    STATIC_ONLY(BluetoothError);
-public:
-    // Interface required by CallbackPromiseAdapter:
-    using WebType = const WebBluetoothError&;
-    static DOMException* take(ScriptPromiseResolver*, const WebBluetoothError&);
+// These error codes requires detailed error messages.
+enum class BluetoothErrorCode {
+  InvalidService,
+  InvalidCharacteristic,
+  InvalidDescriptor,
+  ServiceNotFound,
+  CharacteristicNotFound,
+  DescriptorNotFound
 };
 
-} // namespace blink
+class DOMException;
 
-#endif // BluetoothError_h
+// BluetoothError is used with CallbackPromiseAdapter to receive
+// WebBluetoothResult responses. See CallbackPromiseAdapter class comments.
+class BluetoothError {
+  STATIC_ONLY(BluetoothError);
+
+ public:
+  static DOMException* createDOMException(BluetoothErrorCode,
+                                          const String& detailedMessage);
+
+  static DOMException* createDOMException(
+      mojom::blink::WebBluetoothResult error);
+};
+
+}  // namespace blink
+
+#endif  // BluetoothError_h

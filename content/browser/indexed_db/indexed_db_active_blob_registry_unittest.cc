@@ -7,6 +7,7 @@
 #include <set>
 
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/test/test_simple_task_runner.h"
 #include "content/browser/indexed_db/indexed_db_active_blob_registry.h"
 #include "content/browser/indexed_db/indexed_db_backing_store.h"
@@ -41,7 +42,7 @@ class RegistryTestMockFactory : public MockIndexedDBFactory {
   }
 
   bool CheckNoOriginsInUse() const {
-    return !duplicate_calls_ && !origins_.size();
+    return !duplicate_calls_ && origins_.empty();
   }
 
   bool CheckSingleOriginInUse(const url::Origin& origin) const {
@@ -107,7 +108,8 @@ class IndexedDBActiveBlobRegistryTest : public testing::Test {
         factory_(new RegistryTestMockFactory),
         backing_store_(
             new MockIDBBackingStore(factory_.get(), task_runner_.get())),
-        registry_(new IndexedDBActiveBlobRegistry(backing_store_.get())) {}
+        registry_(base::MakeUnique<IndexedDBActiveBlobRegistry>(
+            backing_store_.get())) {}
 
   void RunUntilIdle() { task_runner_->RunUntilIdle(); }
   RegistryTestMockFactory* factory() const { return factory_.get(); }

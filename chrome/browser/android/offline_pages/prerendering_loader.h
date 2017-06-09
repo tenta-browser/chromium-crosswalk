@@ -9,20 +9,15 @@
 
 #include "base/callback.h"
 #include "chrome/browser/android/offline_pages/prerender_adapter.h"
-#include "components/offline_pages/background/offliner.h"
-#include "components/offline_pages/snapshot_controller.h"
+#include "components/offline_pages/core/background/offliner.h"
+#include "components/offline_pages/core/snapshot_controller.h"
 
 class GURL;
 
 namespace content {
 class BrowserContext;
 class WebContents;
-class SessionStorageNamespace;
 }  // namespace content
-
-namespace gfx {
-class Size;
-}  // namespace gfx
 
 namespace offline_pages {
 
@@ -37,6 +32,8 @@ class PrerenderingLoader : public PrerenderAdapter::Observer,
   typedef base::Callback<void(Offliner::RequestStatus, content::WebContents*)>
       LoadPageCallback;
 
+  typedef base::Callback<void(int64_t)> ProgressCallback;
+
   explicit PrerenderingLoader(content::BrowserContext* browser_context);
   ~PrerenderingLoader() override;
 
@@ -48,7 +45,9 @@ class PrerenderingLoader : public PrerenderAdapter::Observer,
   // once - first for a successful load and then if canceled after the
   // load (which may be from resources being reclaimed) at which point
   // the retrieved WebContents should no longer be used.
-  virtual bool LoadPage(const GURL& url, const LoadPageCallback& callback);
+  virtual bool LoadPage(const GURL& url,
+                        const LoadPageCallback& load_done_callback,
+                        const ProgressCallback& progress_callback);
 
   // Stops (completes or cancels) the load request. Must be called when
   // LoadPageCallback is done with consuming the contents. May be called
@@ -57,10 +56,6 @@ class PrerenderingLoader : public PrerenderAdapter::Observer,
   // This loader should also be responsible for stopping offline
   // prerenders when Chrome is transitioned to foreground.
   virtual void StopLoading();
-
-  // Returns whether prerendering is possible for this device's configuration
-  // and the browser context.
-  virtual bool CanPrerender();
 
   // Returns whether the loader is idle and able to accept new LoadPage
   // request.
@@ -76,13 +71,16 @@ class PrerenderingLoader : public PrerenderAdapter::Observer,
       std::unique_ptr<PrerenderAdapter> prerender_adapter);
 
   // PrerenderAdapter::Observer implementation:
-  void OnPrerenderStart() override;
   void OnPrerenderStopLoading() override;
   void OnPrerenderDomContentLoaded() override;
   void OnPrerenderStop() override;
+  void OnPrerenderNetworkBytesChanged(int64_t bytes) override;
 
   // SnapshotController::Client implementation:
   void StartSnapshot() override;
+
+  // Returns true if the lowbar of snapshotting a page is met.
+  virtual bool IsLowbarMet();
 
  private:
   // State of the loader (only one request may be active at a time).
@@ -124,7 +122,13 @@ class PrerenderingLoader : public PrerenderAdapter::Observer,
 
   // Callback to call when the active load request completes, fails, or is
   // canceled.
-  LoadPageCallback callback_;
+  LoadPageCallback load_done_callback_;
+
+  // Callback to call when we know more bytes have loaded from the network.
+  ProgressCallback progress_callback_;
+
+  // True if the lowbar of snapshotting a page is met.
+  bool is_lowbar_met_;
 
   DISALLOW_COPY_AND_ASSIGN(PrerenderingLoader);
 };

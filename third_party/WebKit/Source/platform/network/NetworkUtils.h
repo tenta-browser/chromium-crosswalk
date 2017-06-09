@@ -10,12 +10,33 @@
 
 namespace blink {
 
+class KURL;
+class SharedBuffer;
+
 namespace NetworkUtils {
+
+enum PrivateRegistryFilter {
+  IncludePrivateRegistries,
+  ExcludePrivateRegistries,
+};
 
 PLATFORM_EXPORT bool isReservedIPAddress(const String& host);
 
-} // NetworkUtils
+PLATFORM_EXPORT bool isLocalHostname(const String& host, bool* isLocal6);
 
-} // namespace blink
+PLATFORM_EXPORT String getDomainAndRegistry(const String& host,
+                                            PrivateRegistryFilter);
 
-#endif // NetworkUtils_h
+// Returns the decoded data url if url had a supported mimetype and parsing was
+// successful.
+PLATFORM_EXPORT PassRefPtr<SharedBuffer> parseDataURL(const KURL&,
+                                                      AtomicString& mimetype,
+                                                      AtomicString& charset);
+
+PLATFORM_EXPORT bool isRedirectResponseCode(int);
+
+}  // NetworkUtils
+
+}  // namespace blink
+
+#endif  // NetworkUtils_h

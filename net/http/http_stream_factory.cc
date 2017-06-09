@@ -15,24 +15,13 @@
 #include "net/base/port_util.h"
 #include "net/http/http_network_session.h"
 #include "net/http/http_response_headers.h"
-#include "net/quic/quic_protocol.h"
+#include "net/quic/core/quic_packets.h"
 #include "net/spdy/spdy_alt_svc_wire_format.h"
 #include "url/gurl.h"
 
 namespace net {
 
-// WARNING: If you modify or add any static flags, you must keep them in sync
-// with |ResetStaticSettingsToInit|. This is critical for unit test isolation.
-
-// static
-bool HttpStreamFactory::spdy_enabled_ = true;
-
 HttpStreamFactory::~HttpStreamFactory() {}
-
-// static
-void HttpStreamFactory::ResetStaticSettingsToInit() {
-  spdy_enabled_ = true;
-}
 
 void HttpStreamFactory::ProcessAlternativeServices(
     HttpNetworkSession* session,
@@ -55,15 +44,15 @@ void HttpStreamFactory::ProcessAlternativeServices(
   AlternativeServiceInfoVector alternative_service_info_vector;
   for (const SpdyAltSvcWireFormat::AlternativeService&
            alternative_service_entry : alternative_service_vector) {
-    AlternateProtocol protocol =
-        AlternateProtocolFromString(alternative_service_entry.protocol_id);
+    NextProto protocol =
+        NextProtoFromString(alternative_service_entry.protocol_id);
     if (!IsAlternateProtocolValid(protocol) ||
         !session->IsProtocolEnabled(protocol) ||
         !IsPortValid(alternative_service_entry.port)) {
       continue;
     }
     // Check if QUIC version is supported.
-    if (protocol == QUIC && !alternative_service_entry.version.empty()) {
+    if (protocol == kProtoQUIC && !alternative_service_entry.version.empty()) {
       bool match_found = false;
       for (QuicVersion supported : session->params().quic_supported_versions) {
         for (uint16_t advertised : alternative_service_entry.version) {

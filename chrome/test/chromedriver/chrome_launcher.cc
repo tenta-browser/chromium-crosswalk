@@ -62,32 +62,29 @@
 namespace {
 
 const char* const kCommonSwitches[] = {
-  "disable-popup-blocking",
-  "ignore-certificate-errors",
-  "metrics-recording-only"
+    "disable-popup-blocking", "enable-automation", "ignore-certificate-errors",
+    "metrics-recording-only",
 };
 
 const char* const kDesktopSwitches[] = {
-  "disable-hang-monitor",
-  "disable-prompt-on-repost",
-  "disable-sync",
-  "no-first-run",
-  "disable-background-networking",
-  "disable-web-resources",
-  "safebrowsing-disable-auto-update",
-  "disable-client-side-phishing-detection",
-  "disable-component-update",
-  "disable-default-apps",
-  "enable-logging",
-  "log-level=0",
-  "password-store=basic",
-  "use-mock-keychain",
-  "test-type=webdriver"
+    "disable-hang-monitor",
+    "disable-prompt-on-repost",
+    "disable-sync",
+    "no-first-run",
+    "disable-background-networking",
+    "disable-web-resources",
+    "safebrowsing-disable-auto-update",
+    "disable-client-side-phishing-detection",
+    "disable-default-apps",
+    "enable-logging",
+    "log-level=0",
+    "password-store=basic",
+    "use-mock-keychain",
+    "test-type=webdriver",
 };
 
 const char* const kAndroidSwitches[] = {
-  "disable-fre",
-  "enable-remote-debugging"
+    "disable-fre", "enable-remote-debugging",
 };
 
 #if defined(OS_LINUX)
@@ -133,9 +130,9 @@ Status PrepareCommandLine(uint16_t port,
   base::CommandLine command(program);
   Switches switches;
 
-  for (const auto& common_switch : kCommonSwitches)
+  for (auto* common_switch : kCommonSwitches)
     switches.SetUnparsedSwitch(common_switch);
-  for (const auto& desktop_switch : kDesktopSwitches)
+  for (auto* desktop_switch : kDesktopSwitches)
     switches.SetUnparsedSwitch(desktop_switch);
   switches.SetSwitch("remote-debugging-port", base::UintToString(port));
   for (const auto& excluded_switch : capabilities.exclude_switches) {
@@ -151,8 +148,8 @@ Status PrepareCommandLine(uint16_t port,
     command.AppendArg("data:,");
     if (!user_data_dir->CreateUniqueTempDir())
       return Status(kUnknownError, "cannot create temp dir for user data dir");
-    switches.SetSwitch("user-data-dir", user_data_dir->path().value());
-    user_data_dir_path = user_data_dir->path();
+    switches.SetSwitch("user-data-dir", user_data_dir->GetPath().value());
+    user_data_dir_path = user_data_dir->GetPath();
   }
 
   Status status = internal::PrepareUserDataDir(user_data_dir_path,
@@ -166,10 +163,8 @@ Status PrepareCommandLine(uint16_t port,
                   "cannot create temp dir for unpacking extensions");
   }
   status = internal::ProcessExtensions(capabilities.extensions,
-                                       extension_dir->path(),
-                                       true,
-                                       &switches,
-                                       extension_bg_pages);
+                                       extension_dir->GetPath(), true,
+                                       &switches, extension_bg_pages);
   if (status.IsError())
     return status;
   switches.AppendToCommandLine(&command);
@@ -197,20 +192,36 @@ Status WaitForDevToolsAndCheckVersion(
 
   std::unique_ptr<DevToolsHttpClient> client(new DevToolsHttpClient(
       address, context_getter, socket_factory, std::move(device_metrics),
-      std::move(window_types)));
+      std::move(window_types), capabilities->page_load_strategy));
   base::TimeTicks deadline =
       base::TimeTicks::Now() + base::TimeDelta::FromSeconds(60);
   Status status = client->Init(deadline - base::TimeTicks::Now());
   if (status.IsError())
     return status;
 
+  const BrowserInfo* browser_info = client->browser_info();
+  if (browser_info->is_android &&
+      browser_info->android_package != capabilities->android_package) {
+    // DevTools from Chrome 30 and earlier did not provide an Android-Package
+    // key, so skip the package check for WebView on KitKat and older.
+    // TODO(samuong): Make this unconditional once we stop supporting Android
+    // KitKat WebView apps.
+    if (!(browser_info->browser_name == "webview" &&
+          browser_info->major_version <= 30 &&
+          browser_info->android_package.empty())) {
+      return Status(
+          kSessionNotCreatedException,
+          base::StringPrintf("please close '%s' and try again",
+                             browser_info->android_package.c_str()));
+    }
+  }
+
   base::CommandLine* cmd_line = base::CommandLine::ForCurrentProcess();
   if (cmd_line->HasSwitch("disable-build-check")) {
     LOG(WARNING) << "You are using an unsupported command-line switch: "
                     "--disable-build-check. Please don't report bugs that "
                     "cannot be reproduced with this switch removed.";
-  } else if (client->browser_info()->build_no <
-             kMinimumSupportedChromeBuildNo) {
+  } else if (browser_info->build_no < kMinimumSupportedChromeBuildNo) {
     return Status(kUnknownError, "Chrome version must be >= " +
         GetMinimumSupportedChromeVersion());
   }
@@ -273,7 +284,7 @@ Status LaunchRemoteChromeSession(
   std::unique_ptr<DevToolsHttpClient> devtools_http_client;
   status = WaitForDevToolsAndCheckVersion(
       capabilities.debugger_address, context_getter, socket_factory,
-      NULL, &devtools_http_client);
+      &capabilities, &devtools_http_client);
   if (status.IsError()) {
     return Status(kUnknownError, "cannot connect to chrome at " +
                       capabilities.debugger_address.ToString(),
@@ -291,7 +302,8 @@ Status LaunchRemoteChromeSession(
 
   chrome->reset(new ChromeRemoteImpl(std::move(devtools_http_client),
                                      std::move(devtools_websocket_client),
-                                     *devtools_event_listeners));
+                                     *devtools_event_listeners,
+                                     capabilities.page_load_strategy));
   return Status(kOk);
 }
 
@@ -302,7 +314,8 @@ Status LaunchDesktopChrome(
     const SyncWebSocketFactory& socket_factory,
     const Capabilities& capabilities,
     ScopedVector<DevToolsEventListener>* devtools_event_listeners,
-    std::unique_ptr<Chrome>* chrome) {
+    std::unique_ptr<Chrome>* chrome,
+    bool w3c_compliant) {
   base::CommandLine command(base::CommandLine::NO_PROGRAM);
   base::ScopedTempDir user_data_dir;
   base::ScopedTempDir extension_dir;
@@ -356,7 +369,7 @@ Status LaunchDesktopChrome(
   }
 #elif defined(OS_WIN)
   if (!SwitchToUSKeyboardLayout())
-    VLOG(0) << "Can not set to US keyboard layout - Some keycodes may be"
+    VLOG(0) << "Cannot switch to US keyboard layout - some keys may be "
         "interpreted incorrectly";
 #endif
 
@@ -425,15 +438,23 @@ Status LaunchDesktopChrome(
                  << status.message();
   }
 
-  std::unique_ptr<ChromeDesktopImpl> chrome_desktop(new ChromeDesktopImpl(
-      std::move(devtools_http_client), std::move(devtools_websocket_client),
-      *devtools_event_listeners, std::move(port_reservation),
-      std::move(process), command, &user_data_dir, &extension_dir));
+  std::unique_ptr<ChromeDesktopImpl> chrome_desktop(
+      new ChromeDesktopImpl(std::move(devtools_http_client),
+                            std::move(devtools_websocket_client),
+                            *devtools_event_listeners,
+                            std::move(port_reservation),
+                            capabilities.page_load_strategy,
+                            std::move(process),
+                            command,
+                            &user_data_dir,
+                            &extension_dir,
+                            capabilities.network_emulation_enabled));
   for (size_t i = 0; i < extension_bg_pages.size(); ++i) {
     VLOG(0) << "Waiting for extension bg page load: " << extension_bg_pages[i];
     std::unique_ptr<WebView> web_view;
     Status status = chrome_desktop->WaitForPageToLoad(
-        extension_bg_pages[i], base::TimeDelta::FromSeconds(10), &web_view);
+        extension_bg_pages[i], base::TimeDelta::FromSeconds(10),
+        &web_view, w3c_compliant);
     if (status.IsError()) {
       return Status(kUnknownError,
                     "failed to wait for extension background page to load: " +
@@ -466,9 +487,9 @@ Status LaunchAndroidChrome(
     return status;
 
   Switches switches(capabilities.switches);
-  for (auto common_switch : kCommonSwitches)
+  for (auto* common_switch : kCommonSwitches)
     switches.SetUnparsedSwitch(common_switch);
-  for (auto android_switch : kAndroidSwitches)
+  for (auto* android_switch : kAndroidSwitches)
     switches.SetUnparsedSwitch(android_switch);
   for (auto excluded_switch : capabilities.exclude_switches)
     switches.RemoveSwitch(excluded_switch);
@@ -494,23 +515,6 @@ Status LaunchAndroidChrome(
     return status;
   }
 
-  const BrowserInfo* browser_info = devtools_http_client->browser_info();
-  if (browser_info->android_package != capabilities.android_package) {
-    // DevTools from Chrome 30 and earlier did not provide an Android-Package
-    // key, so skip the package check for WebView on KitKat and older.
-    // TODO(samuong): Make this unconditional once we stop supporting Android
-    // KitKat WebView apps.
-    if (!(browser_info->browser_name == "webview" &&
-          browser_info->major_version <= 30 &&
-          browser_info->android_package.empty())) {
-      device->TearDown();
-      return Status(
-          kSessionNotCreatedException,
-          base::StringPrintf("please close '%s' and try again",
-                             browser_info->android_package.c_str()));
-    }
-  }
-
   std::unique_ptr<DevToolsClient> devtools_websocket_client;
   status = CreateBrowserwideDevToolsClientAndConnect(
       NetAddress(port), capabilities.perf_logging_prefs, socket_factory,
@@ -520,10 +524,12 @@ Status LaunchAndroidChrome(
                  << status.message();
   }
 
-  chrome->reset(new ChromeAndroidImpl(
-      std::move(devtools_http_client), std::move(devtools_websocket_client),
-      *devtools_event_listeners, std::move(port_reservation),
-      std::move(device)));
+  chrome->reset(new ChromeAndroidImpl(std::move(devtools_http_client),
+                                      std::move(devtools_websocket_client),
+                                      *devtools_event_listeners,
+                                      std::move(port_reservation),
+                                      capabilities.page_load_strategy,
+                                      std::move(device)));
   return Status(kOk);
 }
 
@@ -537,7 +543,8 @@ Status LaunchChrome(
     PortManager* port_manager,
     const Capabilities& capabilities,
     ScopedVector<DevToolsEventListener>* devtools_event_listeners,
-    std::unique_ptr<Chrome>* chrome) {
+    std::unique_ptr<Chrome>* chrome,
+    bool w3c_compliant) {
   if (capabilities.IsRemoteBrowser()) {
     return LaunchRemoteChromeSession(
         context_getter, socket_factory,
@@ -569,7 +576,8 @@ Status LaunchChrome(
                     port_status);
     return LaunchDesktopChrome(context_getter, port,
                                std::move(port_reservation), socket_factory,
-                               capabilities, devtools_event_listeners, chrome);
+                               capabilities, devtools_event_listeners, chrome,
+                               w3c_compliant);
   }
 }
 
@@ -666,7 +674,7 @@ Status ProcessExtension(const std::string& extension,
   base::ScopedTempDir temp_crx_dir;
   if (!temp_crx_dir.CreateUniqueTempDir())
     return Status(kUnknownError, "cannot create temp dir");
-  base::FilePath extension_crx = temp_crx_dir.path().AppendASCII("temp.crx");
+  base::FilePath extension_crx = temp_crx_dir.GetPath().AppendASCII("temp.crx");
   int size = static_cast<int>(decoded_extension.length());
   if (base::WriteFile(extension_crx, decoded_extension.c_str(), size) !=
       size) {
@@ -768,10 +776,23 @@ Status ProcessExtensions(const std::vector<std::string>& extensions,
     if (status.IsError())
       return status;
     if (switches->HasSwitch("disable-extensions")) {
+      UpdateExtensionSwitch(switches, "disable-extensions-except",
+                            automation_extension.value());
+      // TODO(samuong): Stop using --load-component-extension when ChromeDriver
+      // stops supporting Chrome 56. For backwards compatibility, Chrome 57 and
+      // 58 interprets --load-component-extension as --load-extension.
       UpdateExtensionSwitch(switches, "load-component-extension",
                             automation_extension.value());
     } else {
+#if defined(OS_WIN) || defined(OS_MACOSX)
+      // On Chrome 56 for Windows and Mac, a "Disable developer
+      // mode extensions" dialog appears for the automation extension. Suppress
+      // this by loading it as a component extension.
+      UpdateExtensionSwitch(switches, "load-component-extension",
+                            automation_extension.value());
+#else
       extension_paths.push_back(automation_extension.value());
+#endif
     }
   }
 

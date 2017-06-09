@@ -85,7 +85,7 @@ CookieMap GetRequestCookies(const HttpRequest& request) {
         continue;
 
       std::string value = name_value[1];
-      if (value.size() && value[value.size() - 1] == ';')
+      if (value.size() && value.back() == ';')
         value = value.substr(0, value.size() -1);
 
       result.insert(std::make_pair(name_value[0], value));
@@ -298,6 +298,11 @@ void FakeGaia::Initialize() {
   // Handles /oauth2/v1/userinfo call.
   REGISTER_RESPONSE_HANDLER(
       gaia_urls->oauth_user_info_url(), HandleOAuthUserInfo);
+
+  // Handles /GetCheckConnectionInfo GAIA call.
+  REGISTER_RESPONSE_HANDLER(
+      gaia_urls->GetCheckConnectionInfoURLWithSource(std::string()),
+      HandleGetCheckConnectionInfo);
 }
 
 std::unique_ptr<HttpResponse> FakeGaia::HandleRequest(
@@ -443,10 +448,10 @@ void FakeGaia::HandleProgramaticAuth(
   http_response->set_content_type("text/html");
 }
 
-void FakeGaia::FormatJSONResponse(const base::DictionaryValue& response_dict,
+void FakeGaia::FormatJSONResponse(const base::Value& value,
                                   BasicHttpResponse* http_response) {
   std::string response_json;
-  base::JSONWriter::Write(response_dict, &response_json);
+  base::JSONWriter::Write(value, &response_json);
   http_response->set_content(response_json);
   http_response->set_code(net::HTTP_OK);
 }
@@ -839,4 +844,11 @@ void FakeGaia::HandleSAMLRedirect(
   http_response->set_code(net::HTTP_TEMPORARY_REDIRECT);
   http_response->AddCustomHeader("Google-Accounts-SAML", "Start");
   http_response->AddCustomHeader("Location", redirect_url);
+}
+
+void FakeGaia::HandleGetCheckConnectionInfo(
+    const net::test_server::HttpRequest& request,
+    net::test_server::BasicHttpResponse* http_response) {
+  base::ListValue connection_list;
+  FormatJSONResponse(connection_list, http_response);
 }

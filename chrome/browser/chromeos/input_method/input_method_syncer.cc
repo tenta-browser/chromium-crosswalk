@@ -12,11 +12,11 @@
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/task_runner.h"
-#include "base/task_runner_util.h"
+#include "base/task_scheduler/post_task.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/common/pref_names.h"
 #include "components/pref_registry/pref_registry_syncable.h"
-#include "components/syncable_prefs/pref_service_syncable.h"
+#include "components/sync_preferences/pref_service_syncable.h"
 #include "content/public/browser/browser_thread.h"
 #include "ui/base/ime/chromeos/component_extension_ime_manager.h"
 #include "ui/base/ime/chromeos/extension_ime_util.h"
@@ -55,7 +55,6 @@ void CheckAndResolveInputMethodIDs(
 // Checks whether each language is supported, replacing locales with variants
 // if they are available. Must be called on a thread that allows IO.
 std::string CheckAndResolveLocales(const std::string& languages) {
-  DCHECK(content::BrowserThread::GetBlockingPool()->RunsTasksOnCurrentThread());
   if (languages.empty())
     return languages;
   std::vector<std::string> values = base::SplitString(
@@ -113,7 +112,7 @@ void MergeLists(std::vector<std::string>* dest,
 }  // anonymous namespace
 
 InputMethodSyncer::InputMethodSyncer(
-    syncable_prefs::PrefServiceSyncable* prefs,
+    sync_preferences::PrefServiceSyncable* prefs,
     scoped_refptr<input_method::InputMethodManager::State> ime_state)
     : prefs_(prefs),
       ime_state_(ime_state),
@@ -236,12 +235,11 @@ void InputMethodSyncer::MergeSyncedPrefs() {
       AddSupportedInputMethodValues(preferred_languages_.GetValue(),
                                     preferred_languages_syncable,
                                     prefs::kLanguagePreferredLanguages));
-  base::PostTaskAndReplyWithResult(
-      content::BrowserThread::GetBlockingPool(),
-      FROM_HERE,
+  base::PostTaskWithTraitsAndReplyWithResult(
+      FROM_HERE, base::TaskTraits().MayBlock().WithPriority(
+                     base::TaskPriority::BACKGROUND),
       base::Bind(&CheckAndResolveLocales, languages),
-      base::Bind(&InputMethodSyncer::FinishMerge,
-                 weak_factory_.GetWeakPtr()));
+      base::Bind(&InputMethodSyncer::FinishMerge, weak_factory_.GetWeakPtr()));
 }
 
 std::string InputMethodSyncer::AddSupportedInputMethodValues(

@@ -25,7 +25,6 @@
 
 namespace gpu {
 class TransferBuffer;
-class TransferBufferManagerInterface;
 
 namespace gles2 {
 class GLES2CmdHelper;
@@ -64,11 +63,6 @@ class Context : public base::RefCountedThreadSafe<Context>,
                       size_t height,
                       unsigned internalformat) override;
   void DestroyImage(int32_t id) override;
-  int32_t CreateGpuMemoryBufferImage(size_t width,
-                                     size_t height,
-                                     unsigned internalformat,
-                                     unsigned usage) override;
-  int32_t GetImageGpuMemoryBufferId(unsigned image_id) override;
   void SignalQuery(uint32_t query, const base::Closure& callback) override;
   void SetLock(base::Lock*) override;
   void EnsureWorkVisible() override;
@@ -79,6 +73,7 @@ class Context : public base::RefCountedThreadSafe<Context>,
   bool IsFenceSyncRelease(uint64_t release) override;
   bool IsFenceSyncFlushed(uint64_t release) override;
   bool IsFenceSyncFlushReceived(uint64_t release) override;
+  bool IsFenceSyncReleased(uint64_t release) override;
   void SignalSyncToken(const gpu::SyncToken& sync_token,
                        const base::Closure& callback) override;
   bool CanWaitUnverifiedSyncToken(const gpu::SyncToken* sync_token) override;

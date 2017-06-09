@@ -14,11 +14,11 @@
 #include "components/policy/core/browser/policy_error_map.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/schema.h"
+#include "components/policy/policy_constants.h"
 #include "components/prefs/pref_value_map.h"
+#include "components/strings/grit/components_strings.h"
 #include "extensions/browser/pref_names.h"
 #include "extensions/common/extension.h"
-#include "grit/components_strings.h"
-#include "policy/policy_constants.h"
 #include "url/gurl.h"
 
 namespace extensions {
@@ -28,7 +28,7 @@ namespace extensions {
 ExtensionListPolicyHandler::ExtensionListPolicyHandler(const char* policy_name,
                                                        const char* pref_path,
                                                        bool allow_wildcards)
-    : policy::TypeCheckingPolicyHandler(policy_name, base::Value::TYPE_LIST),
+    : policy::TypeCheckingPolicyHandler(policy_name, base::Value::Type::LIST),
       pref_path_(pref_path),
       allow_wildcards_(allow_wildcards) {}
 
@@ -79,10 +79,9 @@ bool ExtensionListPolicyHandler::CheckAndGetList(
        entry != list_value->end(); ++entry) {
     std::string id;
     if (!(*entry)->GetAsString(&id)) {
-      errors->AddError(policy_name(),
-                       entry - list_value->begin(),
+      errors->AddError(policy_name(), entry - list_value->begin(),
                        IDS_POLICY_TYPE_ERROR,
-                       ValueTypeToString(base::Value::TYPE_STRING));
+                       base::Value::GetTypeName(base::Value::Type::STRING));
       continue;
     }
     if (!(allow_wildcards_ && id == "*") && !crx_file::id_util::IdIsValid(id)) {
@@ -104,7 +103,7 @@ bool ExtensionListPolicyHandler::CheckAndGetList(
 
 ExtensionInstallForcelistPolicyHandler::ExtensionInstallForcelistPolicyHandler()
     : policy::TypeCheckingPolicyHandler(policy::key::kExtensionInstallForcelist,
-                                        base::Value::TYPE_LIST) {}
+                                        base::Value::Type::LIST) {}
 
 ExtensionInstallForcelistPolicyHandler::
     ~ExtensionInstallForcelistPolicyHandler() {}
@@ -148,10 +147,9 @@ bool ExtensionInstallForcelistPolicyHandler::ParseList(
     std::string entry_string;
     if (!(*entry)->GetAsString(&entry_string)) {
       if (errors) {
-        errors->AddError(policy_name(),
-                         entry - policy_list_value->begin(),
+        errors->AddError(policy_name(), entry - policy_list_value->begin(),
                          IDS_POLICY_TYPE_ERROR,
-                         ValueTypeToString(base::Value::TYPE_STRING));
+                         base::Value::GetTypeName(base::Value::Type::STRING));
       }
       continue;
     }
@@ -195,7 +193,7 @@ bool ExtensionInstallForcelistPolicyHandler::ParseList(
 ExtensionURLPatternListPolicyHandler::ExtensionURLPatternListPolicyHandler(
     const char* policy_name,
     const char* pref_path)
-    : policy::TypeCheckingPolicyHandler(policy_name, base::Value::TYPE_LIST),
+    : policy::TypeCheckingPolicyHandler(policy_name, base::Value::Type::LIST),
       pref_path_(pref_path) {}
 
 ExtensionURLPatternListPolicyHandler::~ExtensionURLPatternListPolicyHandler() {}
@@ -221,10 +219,9 @@ bool ExtensionURLPatternListPolicyHandler::CheckPolicySettings(
        entry != list_value->end(); ++entry) {
     std::string url_pattern_string;
     if (!(*entry)->GetAsString(&url_pattern_string)) {
-      errors->AddError(policy_name(),
-                       entry - list_value->begin(),
+      errors->AddError(policy_name(), entry - list_value->begin(),
                        IDS_POLICY_TYPE_ERROR,
-                       ValueTypeToString(base::Value::TYPE_STRING));
+                       base::Value::GetTypeName(base::Value::Type::STRING));
       return false;
     }
 
@@ -275,14 +272,14 @@ bool ExtensionSettingsPolicyHandler::CheckPolicySettings(
   // |policy_value| is expected to conform to the defined schema. But it's
   // not strictly valid since there are additional restrictions.
   const base::DictionaryValue* dict_value = NULL;
-  DCHECK(policy_value->IsType(base::Value::TYPE_DICTIONARY));
+  DCHECK(policy_value->IsType(base::Value::Type::DICTIONARY));
   policy_value->GetAsDictionary(&dict_value);
 
   for (base::DictionaryValue::Iterator it(*dict_value); !it.IsAtEnd();
        it.Advance()) {
     DCHECK(it.key() == schema_constants::kWildcard ||
            crx_file::id_util::IdIsValid(it.key()));
-    DCHECK(it.value().IsType(base::Value::TYPE_DICTIONARY));
+    DCHECK(it.value().IsType(base::Value::Type::DICTIONARY));
 
     // Extracts sub dictionary.
     const base::DictionaryValue* sub_dict = NULL;

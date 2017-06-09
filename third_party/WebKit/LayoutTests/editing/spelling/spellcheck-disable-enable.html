@@ -16,10 +16,12 @@ description("Spell check markers should be removed from the whole page when disa
     + "Having the editable focused, turn spell checker on. Misspellings in the editable should be marked.");
 
 jsTestIsAsync = true;
+if (window.testRunner)
+    testRunner.setMockSpellCheckerEnabled(true);
 
 function hasSpellingMarkerOnSetting(element, enableSpellChecking)
 {
-    internals.setContinuousSpellCheckingEnabled(enableSpellChecking);
+    internals.setSpellCheckingEnabled(enableSpellChecking);
     return !!internals.markerCountForNode(element.firstChild, "spelling");
 }
 
@@ -41,8 +43,6 @@ function test(div, frameDocument)
         debug("Automatic testing impossible. Test manually.");
         return;
     }
-
-    internals.settings.setUnifiedTextCheckerEnabled(true);
 
     shouldBecomeEqual('hasSpellingMarkerOnSetting(editableDiv, true)', 'true', function() {
         shouldBecomeEqual('hasSpellingMarkerOnSetting(editableBodyInFrame, true)', 'true', function() {

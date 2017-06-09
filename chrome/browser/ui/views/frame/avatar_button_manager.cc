@@ -29,7 +29,7 @@ void AvatarButtonManager::Update(AvatarButtonStyle style) {
            ->GetProfileAttributesStorage()
            .GetProfileAttributesWithPath(profile->GetPath(), &unused)) ||
       // Desktop guest shows the avatar button.
-      browser_view->IsOffTheRecord()) {
+      browser_view->IsIncognito()) {
     if (!view_) {
       view_ = new NewAvatarButton(this, style, profile);
       view_->set_id(VIEW_ID_AVATAR_BUTTON);
@@ -65,5 +65,5 @@ void AvatarButtonManager::ButtonPressed(views::Button* sender,
   }
   frame_view_->browser_view()->ShowAvatarBubbleFromAvatarButton(
       mode, signin::ManageAccountsParams(),
-      signin_metrics::AccessPoint::ACCESS_POINT_AVATAR_BUBBLE_SIGN_IN);
+      signin_metrics::AccessPoint::ACCESS_POINT_AVATAR_BUBBLE_SIGN_IN, false);
 }

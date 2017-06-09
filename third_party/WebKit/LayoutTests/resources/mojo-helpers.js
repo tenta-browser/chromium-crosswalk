@@ -12,10 +12,10 @@ let define = (function(){
   return function(name, deps, factory) {
     let promise = moduleCache.get(name);
     if (promise === undefined) {
-      // This promise must be cached as mojo.define will only call the factory
+      // This promise must be cached as gin.define will only call the factory
       // function the first time the module is defined.
       promise = new Promise(resolve => {
-        mojo.define(name, deps, (...modules) => {
+        gin.define(name, deps, (...modules) => {
           let result = factory(...modules);
           resolve(result);
           return result;
@@ -31,12 +31,15 @@ define('Mojo Helpers', [
     'mojo/public/js/core',
     'mojo/public/js/router',
     'mojo/public/js/support',
-    'content/public/renderer/frame_service_registry',
-    'content/public/renderer/service_registry',
-], (core, router, support, frameServiceRegistry, serviceRegistry) => {
+    'content/public/renderer/frame_interfaces',
+    'content/public/renderer/interfaces',
+    'content/shell/renderer/layout_test/frame_interface_registry',
+    'content/shell/renderer/layout_test/interface_registry',
+], (core, router, support, frameInterfaces, interfaces, frameInterfaceRegistry,
+    interfaceRegistry) => {
   let tearDown = () => {
-    frameServiceRegistry.clearServiceOverridesForTesting();
-    serviceRegistry.clearServiceOverridesForTesting();
+    frameInterfaces.clearInterfaceOverridesForTesting();
+    interfaces.clearInterfaceOverridesForTesting();
   };
   addEventListener('unload', tearDown);
   if (window.add_completion_callback)
@@ -46,8 +49,10 @@ define('Mojo Helpers', [
     core,
     router,
     support,
-    frameServiceRegistry,
-    serviceRegistry,
+    frameInterfaces,
+    frameInterfaceRegistry,
+    interfaces,
+    interfaceRegistry,
   };
 });
 

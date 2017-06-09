@@ -5,6 +5,11 @@
 #import "ios/chrome/app/safe_mode_crashing_modules_config.h"
 
 #include "base/logging.h"
+#include "base/mac/foundation_util.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace {
 
@@ -13,7 +18,9 @@ NSString* const kModuleFriendlyNameKey = @"ModuleFriendlyName";
 
 }  // namespace
 
-@implementation SafeModeCrashingModulesConfig
+@implementation SafeModeCrashingModulesConfig {
+  NSDictionary* _configuration;
+}
 
 + (SafeModeCrashingModulesConfig*)sharedInstance {
   static SafeModeCrashingModulesConfig* instance =
@@ -22,25 +29,22 @@ NSString* const kModuleFriendlyNameKey = @"ModuleFriendlyName";
 }
 
 - (instancetype)init {
-  self = [super initWithAppId:nil version:nil plist:@"CrashingModules.plist"];
+  self = [super init];
   if (self) {
-    self.stopsUpdateChecksOnAppTermination = YES;
+    NSString* configPath =
+        [[NSBundle mainBundle] pathForResource:@"SafeModeCrashingModules"
+                                        ofType:@"plist"];
+    _configuration = [[NSDictionary alloc] initWithContentsOfFile:configPath];
   }
   return self;
 }
 
 - (NSString*)startupCrashModuleFriendlyName:(NSString*)modulePath {
-  NSDictionary* configData = [self dictionaryFromConfig];
-  NSDictionary* modules = [configData objectForKey:kStartupCrashModulesKey];
-  if (modules) {
-    DCHECK([modules isKindOfClass:[NSDictionary class]]);
-    NSDictionary* module = modules[modulePath];
-    if (module) {
-      DCHECK([module isKindOfClass:[NSDictionary class]]);
-      return module[kModuleFriendlyNameKey];
-    }
-  }
-  return nil;
+  NSDictionary* modules = base::mac::ObjCCastStrict<NSDictionary>(
+      [_configuration objectForKey:kStartupCrashModulesKey]);
+  NSDictionary* module =
+      base::mac::ObjCCastStrict<NSDictionary>(modules[modulePath]);
+  return base::mac::ObjCCast<NSString>(module[kModuleFriendlyNameKey]);
 }
 
 @end

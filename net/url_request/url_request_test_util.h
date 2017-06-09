@@ -154,10 +154,6 @@ class TestDelegate : public URLRequest::Delegate {
   // Enables quitting the message loop in response to auth requests, as opposed
   // to returning credentials or cancelling the request.
   void set_quit_on_auth_required(bool val) { quit_on_auth_required_ = val; }
-  void set_quit_on_network_start(bool val) {
-    quit_on_before_network_start_ = val;
-  }
-
   void set_allow_certificate_errors(bool val) {
     allow_certificate_errors_ = val;
   }
@@ -169,10 +165,8 @@ class TestDelegate : public URLRequest::Delegate {
   const std::string& data_received() const { return data_received_; }
   int bytes_received() const { return static_cast<int>(data_received_.size()); }
   int response_started_count() const { return response_started_count_; }
+  int received_bytes_count() const { return received_bytes_count_; }
   int received_redirect_count() const { return received_redirect_count_; }
-  int received_before_network_start_count() const {
-    return received_before_network_start_count_;
-  }
   bool received_data_before_response() const {
     return received_data_before_response_;
   }
@@ -183,16 +177,17 @@ class TestDelegate : public URLRequest::Delegate {
   }
   bool auth_required_called() const { return auth_required_; }
   bool have_full_request_headers() const { return have_full_request_headers_; }
+  bool response_completed() const { return response_completed_; }
   const HttpRequestHeaders& full_request_headers() const {
     return full_request_headers_;
   }
   void ClearFullRequestHeaders();
+  int request_status() const { return request_status_; }
 
   // URLRequest::Delegate:
   void OnReceivedRedirect(URLRequest* request,
                           const RedirectInfo& redirect_info,
                           bool* defer_redirect) override;
-  void OnBeforeNetworkStart(URLRequest* request, bool* defer) override;
   void OnAuthRequired(URLRequest* request,
                       AuthChallengeInfo* auth_info) override;
   // NOTE: |fatal| causes |certificate_errors_are_fatal_| to be set to true.
@@ -201,7 +196,7 @@ class TestDelegate : public URLRequest::Delegate {
   void OnSSLCertificateError(URLRequest* request,
                              const SSLInfo& ssl_info,
                              bool fatal) override;
-  void OnResponseStarted(URLRequest* request) override;
+  void OnResponseStarted(URLRequest* request, int net_error) override;
   void OnReadCompleted(URLRequest* request, int bytes_read) override;
 
  private:
@@ -217,7 +212,6 @@ class TestDelegate : public URLRequest::Delegate {
   bool quit_on_complete_;
   bool quit_on_redirect_;
   bool quit_on_auth_required_;
-  bool quit_on_before_network_start_;
   bool allow_certificate_errors_;
   AuthCredentials credentials_;
 
@@ -225,7 +219,6 @@ class TestDelegate : public URLRequest::Delegate {
   int response_started_count_;
   int received_bytes_count_;
   int received_redirect_count_;
-  int received_before_network_start_count_;
   bool received_data_before_response_;
   bool request_failed_;
   bool have_certificate_errors_;
@@ -234,6 +227,10 @@ class TestDelegate : public URLRequest::Delegate {
   std::string data_received_;
   bool have_full_request_headers_;
   HttpRequestHeaders full_request_headers_;
+  bool response_completed_;
+
+  // tracks status of request
+  int request_status_;
 
   // our read buffer
   scoped_refptr<IOBuffer> buf_;
@@ -316,6 +313,10 @@ class TestNetworkDelegate : public NetworkDelegateImpl {
     will_be_intercepted_on_next_error_ = can_be_intercepted_on_error;
   }
 
+  void set_before_start_transaction_fails() {
+    before_start_transaction_fails_ = true;
+  }
+
  protected:
   // NetworkDelegate:
   int OnBeforeURLRequest(URLRequest* request,
@@ -337,11 +338,11 @@ class TestNetworkDelegate : public NetworkDelegateImpl {
       scoped_refptr<HttpResponseHeaders>* override_response_headers,
       GURL* allowed_unsafe_redirect_url) override;
   void OnBeforeRedirect(URLRequest* request, const GURL& new_location) override;
-  void OnResponseStarted(URLRequest* request) override;
+  void OnResponseStarted(URLRequest* request, int net_error) override;
   void OnNetworkBytesReceived(URLRequest* request,
                               int64_t bytes_received) override;
   void OnNetworkBytesSent(URLRequest* request, int64_t bytes_sent) override;
-  void OnCompleted(URLRequest* request, bool started) override;
+  void OnCompleted(URLRequest* request, bool started, int net_error) override;
   void OnURLRequestDestroyed(URLRequest* request) override;
   void OnPACScriptError(int line_number, const base::string16& error) override;
   NetworkDelegate::AuthRequiredResponse OnAuthRequired(
@@ -357,7 +358,6 @@ class TestNetworkDelegate : public NetworkDelegateImpl {
   bool OnCanAccessFile(const URLRequest& request,
                        const base::FilePath& path) const override;
   bool OnAreExperimentalCookieFeaturesEnabled() const override;
-  bool OnAreStrictSecureCookiesEnabled() const override;
   bool OnCancelURLRequestWithPolicyViolatingReferrerHeader(
       const URLRequest& request,
       const GURL& target_url,
@@ -407,6 +407,7 @@ class TestNetworkDelegate : public NetworkDelegateImpl {
   bool experimental_cookie_features_enabled_;           // false by default
   bool cancel_request_with_policy_violating_referrer_;  // false by default
   bool will_be_intercepted_on_next_error_;
+  bool before_start_transaction_fails_;
 };
 
 //-----------------------------------------------------------------------------

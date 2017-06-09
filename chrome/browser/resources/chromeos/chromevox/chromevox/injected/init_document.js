@@ -86,20 +86,20 @@ cvox.ChromeVox.initDocument = function() {
   // Look for ChromeVox-specific meta attributes.
   var disableContentScript = false;
   if (document.head) {
-    document.head.querySelectorAll('meta[name="chromevox"]').forEach(
-      function(meta) {
-        var contentScript = meta.getAttribute('content-script');
-        if (contentScript && contentScript.toLowerCase() == 'no') {
-          disableContentScript = true;
-        }
-      });
+    var metaNodes = document.head.querySelectorAll('meta[name="chromevox"]');
+    for (var i = 0, meta; meta = metaNodes[i]; i++) {
+      var contentScript = meta.getAttribute('content-script');
+      if (contentScript && contentScript.toLowerCase() == 'no') {
+        disableContentScript = true;
+      }
+    }
   }
   if (disableContentScript) {
     var url = location.href;
     url = url.substring(0, url.indexOf('#')) || url;
     cvox.ExtensionBridge.send({
       target: 'next',
-      action: 'enableCompatForUrl',
+      action: 'enableClassicCompatForUrl',
       url: url
     });
     return;

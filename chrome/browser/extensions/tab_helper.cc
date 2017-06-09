@@ -5,11 +5,13 @@
 #include "chrome/browser/extensions/tab_helper.h"
 
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/activity_log/activity_log.h"
+#include "chrome/browser/extensions/api/bookmark_manager_private/bookmark_manager_private_api.h"
 #include "chrome/browser/extensions/api/declarative_content/chrome_content_rules_registry.h"
 #include "chrome/browser/extensions/api/extension_action/extension_action_api.h"
 #include "chrome/browser/extensions/bookmark_app_helper.h"
@@ -38,8 +40,8 @@
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/invalidate_type.h"
 #include "content/public/browser/navigation_controller.h"
-#include "content/public/browser/navigation_details.h"
 #include "content/public/browser/navigation_entry.h"
+#include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/notification_types.h"
@@ -62,6 +64,7 @@
 #include "extensions/common/extension_urls.h"
 #include "extensions/common/feature_switch.h"
 #include "extensions/common/manifest_handlers/icons_handler.h"
+#include "url/url_constants.h"
 
 #if defined(OS_WIN)
 #include "chrome/browser/web_applications/web_app_win.h"
@@ -82,7 +85,7 @@ class TabHelper::InlineInstallObserver : public InstallObserver {
   InlineInstallObserver(TabHelper* tab_helper,
                         content::BrowserContext* browser_context,
                         int routing_id,
-                        const std::string& extension_id,
+                        const ExtensionId& extension_id,
                         bool observe_download_progress,
                         bool observe_install_stage)
       : tab_helper_(tab_helper),
@@ -102,24 +105,24 @@ class TabHelper::InlineInstallObserver : public InstallObserver {
 
  private:
   // InstallObserver:
-  void OnBeginExtensionDownload(const std::string& extension_id) override {
+  void OnBeginExtensionDownload(const ExtensionId& extension_id) override {
     SendInstallStageChangedMessage(extension_id,
                                    api::webstore::INSTALL_STAGE_DOWNLOADING);
   }
-  void OnDownloadProgress(const std::string& extension_id,
+  void OnDownloadProgress(const ExtensionId& extension_id,
                           int percent_downloaded) override {
     if (observe_download_progress_ && extension_id == extension_id_) {
       tab_helper_->Send(new ExtensionMsg_InlineInstallDownloadProgress(
           routing_id_, percent_downloaded));
     }
   }
-  void OnBeginCrxInstall(const std::string& extension_id) override {
+  void OnBeginCrxInstall(const ExtensionId& extension_id) override {
     SendInstallStageChangedMessage(extension_id,
                                    api::webstore::INSTALL_STAGE_INSTALLING);
   }
   void OnShutdown() override { install_observer_.RemoveAll(); }
 
-  void SendInstallStageChangedMessage(const std::string& extension_id,
+  void SendInstallStageChangedMessage(const ExtensionId& extension_id,
                                       api::webstore::InstallStage stage) {
     if (observe_install_stage_ && extension_id == extension_id_) {
       tab_helper_->Send(
@@ -134,7 +137,7 @@ class TabHelper::InlineInstallObserver : public InstallObserver {
   int routing_id_;
 
   // The id of the extension to observe.
-  std::string extension_id_;
+  ExtensionId extension_id_;
 
   // Whether or not to observe download/install progress.
   const bool observe_download_progress_;
@@ -182,6 +185,8 @@ TabHelper::TabHelper(content::WebContents* web_contents)
   ChromeExtensionWebContentsObserver::CreateForWebContents(web_contents);
   ExtensionWebContentsObserver::GetForWebContents(web_contents)->dispatcher()->
       set_delegate(this);
+
+  BookmarkManagerPrivateDragEventRouter::CreateForWebContents(web_contents);
 
   registrar_.Add(this,
                  content::NOTIFICATION_LOAD_STOP,
@@ -258,13 +263,13 @@ void TabHelper::SetExtensionApp(const Extension* extension) {
       content::NotificationService::NoDetails());
 }
 
-void TabHelper::SetExtensionAppById(const std::string& extension_app_id) {
+void TabHelper::SetExtensionAppById(const ExtensionId& extension_app_id) {
   const Extension* extension = GetExtension(extension_app_id);
   if (extension)
     SetExtensionApp(extension);
 }
 
-void TabHelper::SetExtensionAppIconById(const std::string& extension_app_id) {
+void TabHelper::SetExtensionAppIconById(const ExtensionId& extension_app_id) {
   const Extension* extension = GetExtension(extension_app_id);
   if (extension)
     UpdateExtensionAppIcon(extension);
@@ -311,12 +316,14 @@ void TabHelper::RenderFrameCreated(content::RenderFrameHost* host) {
   SetTabId(host);
 }
 
-void TabHelper::DidNavigateMainFrame(
-    const content::LoadCommittedDetails& details,
-    const content::FrameNavigateParams& params) {
+void TabHelper::DidFinishNavigation(
+    content::NavigationHandle* navigation_handle) {
+  if (!navigation_handle->IsInMainFrame() || !navigation_handle->HasCommitted())
+    return;
+
   InvokeForContentRulesRegistries(
-      [this, &details, &params](ContentRulesRegistry* registry) {
-    registry->DidNavigateMainFrame(web_contents(), details, params);
+      [this, navigation_handle](ContentRulesRegistry* registry) {
+    registry->DidFinishNavigation(web_contents(), navigation_handle);
   });
 
   content::BrowserContext* context = web_contents()->GetBrowserContext();
@@ -333,14 +340,15 @@ void TabHelper::DidNavigateMainFrame(
         SetExtensionApp(extension);
     } else {
       UpdateExtensionAppIcon(
-          enabled_extensions.GetExtensionOrAppByURL(params.url));
+          enabled_extensions.GetExtensionOrAppByURL(
+              navigation_handle->GetURL()));
     }
   } else {
     UpdateExtensionAppIcon(
-        enabled_extensions.GetExtensionOrAppByURL(params.url));
+        enabled_extensions.GetExtensionOrAppByURL(navigation_handle->GetURL()));
   }
 
-  if (!details.is_in_page)
+  if (!navigation_handle->IsSamePage())
     ExtensionActionAPI::Get(context)->ClearAllValuesForTab(web_contents());
 }
 
@@ -432,13 +440,16 @@ void TabHelper::OnInlineWebstoreInstall(content::RenderFrameHost* host,
                                         int install_id,
                                         int return_route_id,
                                         const std::string& webstore_item_id,
-                                        const GURL& requestor_url,
                                         int listeners_mask) {
+  GURL requestor_url(host->GetLastCommittedURL());
   // Check that the listener is reasonable. We should never get anything other
   // than an install stage listener, a download listener, or both.
+  // The requestor_url should also be valid, and the renderer should disallow
+  // child frames from sending the IPC.
   if ((listeners_mask & ~(api::webstore::INSTALL_STAGE_LISTENER |
                           api::webstore::DOWNLOAD_PROGRESS_LISTENER)) != 0 ||
-      requestor_url.is_empty()) {
+      !requestor_url.is_valid() || requestor_url == url::kAboutBlankURL ||
+      host->GetParent()) {
     NOTREACHED();
     return;
   }
@@ -524,13 +535,11 @@ void TabHelper::OnContentScriptsExecuting(
     content::RenderFrameHost* host,
     const ScriptExecutionObserver::ExecutingScriptsMap& executing_scripts_map,
     const GURL& on_url) {
-  FOR_EACH_OBSERVER(
-      ScriptExecutionObserver,
-      script_execution_observers_,
-      OnScriptsExecuted(web_contents(), executing_scripts_map, on_url));
+  for (auto& observer : script_execution_observers_)
+    observer.OnScriptsExecuted(web_contents(), executing_scripts_map, on_url);
 }
 
-const Extension* TabHelper::GetExtension(const std::string& extension_app_id) {
+const Extension* TabHelper::GetExtension(const ExtensionId& extension_app_id) {
   if (extension_app_id.empty())
     return NULL;
 
@@ -582,7 +591,7 @@ WindowController* TabHelper::GetExtensionWindowController() const  {
 
 void TabHelper::OnReenableComplete(int install_id,
                                    int return_route_id,
-                                   const std::string& extension_id,
+                                   const ExtensionId& extension_id,
                                    ExtensionReenabler::ReenableResult result) {
   // Map the re-enable results to webstore-install results.
   webstore_install::Result webstore_result = webstore_install::SUCCESS;
@@ -614,7 +623,7 @@ void TabHelper::OnReenableComplete(int install_id,
 
 void TabHelper::OnInlineInstallComplete(int install_id,
                                         int return_route_id,
-                                        const std::string& extension_id,
+                                        const ExtensionId& extension_id,
                                         bool success,
                                         const std::string& error,
                                         webstore_install::Result result) {

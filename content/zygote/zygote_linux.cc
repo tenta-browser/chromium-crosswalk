@@ -32,17 +32,16 @@
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
-#include "content/common/child_process_sandbox_support_impl_linux.h"
 #include "content/common/sandbox_linux/sandbox_linux.h"
 #include "content/common/set_process_title.h"
 #include "content/common/zygote_commands_linux.h"
 #include "content/public/common/content_descriptors.h"
+#include "content/public/common/mojo_channel_switches.h"
 #include "content/public/common/result_codes.h"
 #include "content/public/common/sandbox_linux.h"
 #include "content/public/common/send_zygote_child_ping_linux.h"
 #include "content/public/common/zygote_fork_delegate_linux.h"
 #include "ipc/ipc_channel.h"
-#include "ipc/ipc_switches.h"
 #include "sandbox/linux/services/credentials.h"
 #include "sandbox/linux/services/namespace_sandbox.h"
 
@@ -91,7 +90,7 @@ void KillAndReap(pid_t pid, ZygoteForkDelegate* helper) {
 }  // namespace
 
 Zygote::Zygote(int sandbox_flags,
-               ScopedVector<ZygoteForkDelegate> helpers,
+               std::vector<std::unique_ptr<ZygoteForkDelegate>> helpers,
                const std::vector<base::ProcessHandle>& extra_children,
                const std::vector<int>& extra_fds)
     : sandbox_flags_(sandbox_flags),
@@ -418,11 +417,9 @@ int Zygote::ForkWithRealPid(const std::string& process_type,
                             int* uma_sample,
                             int* uma_boundary_value) {
   ZygoteForkDelegate* helper = NULL;
-  for (ScopedVector<ZygoteForkDelegate>::iterator i = helpers_.begin();
-       i != helpers_.end();
-       ++i) {
+  for (auto i = helpers_.begin(); i != helpers_.end(); ++i) {
     if ((*i)->CanHelp(process_type, uma_name, uma_sample, uma_boundary_value)) {
-      helper = *i;
+      helper = i->get();
       break;
     }
   }
@@ -430,20 +427,14 @@ int Zygote::ForkWithRealPid(const std::string& process_type,
   base::ScopedFD read_pipe, write_pipe;
   base::ProcessId pid = 0;
   if (helper) {
-    int ipc_channel_fd = LookUpFd(fd_mapping, kPrimaryIPCChannel);
-    if (ipc_channel_fd < 0) {
-      DLOG(ERROR) << "Failed to find kPrimaryIPCChannel in FD mapping";
-      return -1;
-    }
     int mojo_channel_fd = LookUpFd(fd_mapping, kMojoIPCChannel);
     if (mojo_channel_fd < 0) {
       DLOG(ERROR) << "Failed to find kMojoIPCChannel in FD mapping";
       return -1;
     }
     std::vector<int> fds;
-    fds.push_back(ipc_channel_fd);  // kBrowserFDIndex
+    fds.push_back(mojo_channel_fd);  // kBrowserFDIndex
     fds.push_back(pid_oracle.get());  // kPIDOracleFDIndex
-    fds.push_back(mojo_channel_fd);  // kMojoParentFDIndex
     pid = helper->Fork(process_type, fds, channel_id);
 
     // Helpers should never return in the child process.
@@ -568,8 +559,9 @@ base::ProcessId Zygote::ReadArgsAndFork(base::PickleIterator iter,
   base::GlobalDescriptors::Mapping mapping;
   std::string process_type;
   std::string channel_id;
-  const std::string channel_id_prefix = std::string("--")
-      + switches::kProcessChannelID + std::string("=");
+  const std::string channel_id_prefix = std::string("--") +
+                                        switches::kServiceRequestChannelToken +
+                                        std::string("=");
 
   if (!iter.ReadString(&process_type))
     return -1;

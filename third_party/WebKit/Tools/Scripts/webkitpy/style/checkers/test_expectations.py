@@ -30,12 +30,9 @@
 
 import logging
 
-from common import TabChecker
 from webkitpy.common.host import Host
 from webkitpy.layout_tests.models.test_expectations import TestExpectationParser
-
-
-_log = logging.getLogger(__name__)
+from webkitpy.style.checkers.common import TabChecker
 
 
 class TestExpectationsChecker(object):
@@ -50,7 +47,6 @@ class TestExpectationsChecker(object):
 
         # FIXME: host should be a required parameter, not an optional one.
         host = host or Host()
-        host.initialize_scm()
 
         self._port_obj = host.port_factory.get()
 

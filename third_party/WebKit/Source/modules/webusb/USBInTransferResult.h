@@ -15,36 +15,44 @@
 namespace blink {
 
 class USBInTransferResult final
-    : public GarbageCollectedFinalized<USBInTransferResult>
-    , public ScriptWrappable {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static USBInTransferResult* create(const String& status, const Vector<uint8_t>& data)
-    {
-        return new USBInTransferResult(status, data);
+    : public GarbageCollectedFinalized<USBInTransferResult>,
+      public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
+
+ public:
+  static USBInTransferResult* create(const String& status,
+                                     const Optional<Vector<uint8_t>>& data) {
+    DOMDataView* dataView = nullptr;
+    if (data) {
+      dataView = DOMDataView::create(
+          DOMArrayBuffer::create(data->data(), data->size()), 0, data->size());
     }
+    return new USBInTransferResult(status, dataView);
+  }
 
-    USBInTransferResult(const String& status, const Vector<uint8_t>& data)
-        : m_status(status)
-        , m_data(DOMDataView::create(DOMArrayBuffer::create(data.data(), data.size()), 0, data.size()))
-    {
-    }
+  static USBInTransferResult* create(const String& status) {
+    return new USBInTransferResult(status, nullptr);
+  }
 
-    virtual ~USBInTransferResult() { }
+  static USBInTransferResult* create(const String& status, DOMDataView* data) {
+    return new USBInTransferResult(status, data);
+  }
 
-    String status() const { return m_status; }
-    DOMDataView* data() const { return m_data; }
+  USBInTransferResult(const String& status, DOMDataView* data)
+      : m_status(status), m_data(data) {}
 
-    DEFINE_INLINE_TRACE()
-    {
-        visitor->trace(m_data);
-    }
+  virtual ~USBInTransferResult() {}
 
-private:
-    const String m_status;
-    const Member<DOMDataView> m_data;
+  String status() const { return m_status; }
+  DOMDataView* data() const { return m_data; }
+
+  DEFINE_INLINE_TRACE() { visitor->trace(m_data); }
+
+ private:
+  const String m_status;
+  const Member<DOMDataView> m_data;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // USBInTransferResult_h
+#endif  // USBInTransferResult_h

@@ -4,38 +4,57 @@
 
 #include <map>
 
+#include "base/bind.h"
 #include "base/macros.h"
+#include "base/run_loop.h"
 #include "components/leveldb/public/cpp/remote_iterator.h"
+#include "components/leveldb/public/cpp/util.h"
 #include "components/leveldb/public/interfaces/leveldb.mojom.h"
-#include "mojo/common/common_type_converters.h"
-#include "services/shell/public/cpp/shell_connection.h"
-#include "services/shell/public/cpp/shell_test.h"
+#include "services/service_manager/public/cpp/service_context.h"
+#include "services/service_manager/public/cpp/service_test.h"
 
 namespace leveldb {
 namespace {
 
-template <typename T>
-void DoCapture(T* t, T got_t) { *t = std::move(got_t); }
+template <typename... Args>
+void IgnoreAllArgs(Args&&...) {}
 
-template <typename T1>
-base::Callback<void(T1)> Capture(T1* t1) {
-  return base::Bind(&DoCapture<T1>, t1);
+template <typename... Args>
+void DoCaptures(typename std::decay<Args>::type*... out_args,
+                const base::Closure& quit_closure,
+                Args... in_args) {
+  IgnoreAllArgs((*out_args = std::move(in_args))...);
+  quit_closure.Run();
 }
 
-class RemoteIteratorTest : public shell::test::ShellTest {
+template <typename T1>
+base::Callback<void(T1)> Capture(T1* t1, const base::Closure& quit_closure) {
+  return base::Bind(&DoCaptures<T1>, t1, quit_closure);
+}
+
+base::Callback<void(const base::UnguessableToken&)> CaptureToken(
+    base::UnguessableToken* t1,
+    const base::Closure& quit_closure) {
+  return base::Bind(&DoCaptures<const base::UnguessableToken&>, t1,
+                    quit_closure);
+}
+
+class RemoteIteratorTest : public service_manager::test::ServiceTest {
  public:
-  RemoteIteratorTest() : ShellTest("exe:leveldb_service_unittests") {}
+  RemoteIteratorTest() : ServiceTest("leveldb_service_unittests") {}
   ~RemoteIteratorTest() override {}
 
  protected:
   // Overridden from mojo::test::ApplicationTestBase:
   void SetUp() override {
-    ShellTest::SetUp();
-    connector()->ConnectToInterface("mojo:leveldb", &leveldb_);
+    ServiceTest::SetUp();
+    connector()->BindInterface("leveldb", &leveldb_);
 
     mojom::DatabaseError error;
-    leveldb()->OpenInMemory(GetProxy(&database_), Capture(&error));
-    ASSERT_TRUE(leveldb().WaitForIncomingResponse());
+    base::RunLoop run_loop;
+    leveldb()->OpenInMemory(MakeRequest(&database_),
+                            Capture(&error, run_loop.QuitClosure()));
+    run_loop.Run();
     EXPECT_EQ(mojom::DatabaseError::OK, error);
 
     std::map<std::string, std::string> data{
@@ -44,35 +63,38 @@ class RemoteIteratorTest : public shell::test::ShellTest {
     for (auto p : data) {
       // Write a key to the database.
       error = mojom::DatabaseError::INVALID_ARGUMENT;
-      database_->Put(mojo::Array<uint8_t>::From(p.first),
-                     mojo::Array<uint8_t>::From(p.second), Capture(&error));
-      ASSERT_TRUE(database_.WaitForIncomingResponse());
+      base::RunLoop run_loop;
+      database_->Put(StdStringToUint8Vector(p.first),
+                     StdStringToUint8Vector(p.second),
+                     Capture(&error, run_loop.QuitClosure()));
+      run_loop.Run();
       EXPECT_EQ(mojom::DatabaseError::OK, error);
     }
   }
 
   void TearDown() override {
     leveldb_.reset();
-    ShellTest::TearDown();
+    ServiceTest::TearDown();
   }
 
   mojom::LevelDBServicePtr& leveldb() { return leveldb_; }
-  mojom::LevelDBDatabasePtr& database() { return database_; }
+  mojom::LevelDBDatabaseAssociatedPtr& database() { return database_; }
 
  private:
   mojom::LevelDBServicePtr leveldb_;
-  mojom::LevelDBDatabasePtr database_;
+  mojom::LevelDBDatabaseAssociatedPtr database_;
 
   DISALLOW_COPY_AND_ASSIGN(RemoteIteratorTest);
 };
 
 TEST_F(RemoteIteratorTest, Seeking) {
-  uint64_t iterator_id = 0;
-  database()->NewIterator(Capture(&iterator_id));
-  ASSERT_TRUE(database().WaitForIncomingResponse());
-  EXPECT_NE(0u, iterator_id);
+  base::UnguessableToken iterator;
+  base::RunLoop run_loop;
+  database()->NewIterator(CaptureToken(&iterator, run_loop.QuitClosure()));
+  run_loop.Run();
+  EXPECT_FALSE(iterator.is_empty());
 
-  RemoteIterator it(database().get(), iterator_id);
+  RemoteIterator it(database().get(), iterator);
   EXPECT_FALSE(it.Valid());
 
   it.SeekToFirst();
@@ -92,12 +114,13 @@ TEST_F(RemoteIteratorTest, Seeking) {
 }
 
 TEST_F(RemoteIteratorTest, Next) {
-  uint64_t iterator_id = 0;
-  database()->NewIterator(Capture(&iterator_id));
-  ASSERT_TRUE(database().WaitForIncomingResponse());
-  EXPECT_NE(0u, iterator_id);
+  base::UnguessableToken iterator;
+  base::RunLoop run_loop;
+  database()->NewIterator(CaptureToken(&iterator, run_loop.QuitClosure()));
+  run_loop.Run();
+  EXPECT_FALSE(iterator.is_empty());
 
-  RemoteIterator it(database().get(), iterator_id);
+  RemoteIterator it(database().get(), iterator);
   EXPECT_FALSE(it.Valid());
 
   it.SeekToFirst();
@@ -120,12 +143,13 @@ TEST_F(RemoteIteratorTest, Next) {
 }
 
 TEST_F(RemoteIteratorTest, Prev) {
-  uint64_t iterator_id = 0;
-  database()->NewIterator(Capture(&iterator_id));
-  ASSERT_TRUE(database().WaitForIncomingResponse());
-  EXPECT_NE(0u, iterator_id);
+  base::UnguessableToken iterator;
+  base::RunLoop run_loop;
+  database()->NewIterator(CaptureToken(&iterator, run_loop.QuitClosure()));
+  run_loop.Run();
+  EXPECT_FALSE(iterator.is_empty());
 
-  RemoteIterator it(database().get(), iterator_id);
+  RemoteIterator it(database().get(), iterator);
   EXPECT_FALSE(it.Valid());
 
   it.SeekToLast();

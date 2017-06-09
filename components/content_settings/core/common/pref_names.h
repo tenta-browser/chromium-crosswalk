@@ -16,6 +16,7 @@ namespace prefs {
 extern const char kBlockThirdPartyCookies[];
 extern const char kContentSettingsVersion[];
 extern const char kContentSettingsWindowLastTabIndex[];
+extern const char kDomainToOriginMigrationStatus[];
 
 extern const char kManagedDefaultCookiesSetting[];
 extern const char kManagedDefaultImagesSetting[];
@@ -25,7 +26,6 @@ extern const char kManagedDefaultPopupsSetting[];
 extern const char kManagedDefaultGeolocationSetting[];
 extern const char kManagedDefaultNotificationsSetting[];
 extern const char kManagedDefaultMediaStreamSetting[];
-extern const char kManagedDefaultKeygenSetting[];
 extern const char kManagedDefaultWebBluetoothGuardSetting[];
 
 extern const char kManagedCookiesAllowedForUrls[];
@@ -42,8 +42,6 @@ extern const char kManagedPopupsBlockedForUrls[];
 extern const char kManagedNotificationsAllowedForUrls[];
 extern const char kManagedNotificationsBlockedForUrls[];
 extern const char kManagedAutoSelectCertificateForUrls[];
-extern const char kManagedKeygenAllowedForUrls[];
-extern const char kManagedKeygenBlockedForUrls[];
 
 }  // namespace prefs
 

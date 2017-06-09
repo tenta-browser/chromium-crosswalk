@@ -13,7 +13,6 @@
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/strings/string_split.h"
-#include "base/strings/stringprintf.h"
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
 #include "base/values.h"
@@ -473,7 +472,7 @@ Status ExecuteGetElementLocationOnceScrolledIntoView(
       session, web_view, element_id, &offset, &location);
   if (status.IsError())
     return status;
-  value->reset(CreateValueFrom(location));
+  *value = CreateValueFrom(location);
   return Status(kOk);
 }
 
@@ -528,6 +527,6 @@ Status ExecuteElementEquals(Session* session,
   std::string other_element_id;
   if (!params.GetString("other", &other_element_id))
     return Status(kUnknownError, "'other' must be a string");
-  value->reset(new base::FundamentalValue(element_id == other_element_id));
+  value->reset(new base::Value(element_id == other_element_id));
   return Status(kOk);
 }

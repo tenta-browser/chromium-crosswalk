@@ -21,15 +21,13 @@ import android.view.WindowManager;
 import org.chromium.base.CommandLine;
 import org.chromium.base.Log;
 import org.chromium.base.TraceEvent;
-import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.base.annotations.UsedByReflection;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.compositor.layouts.Layout;
 import org.chromium.chrome.browser.compositor.layouts.LayoutProvider;
 import org.chromium.chrome.browser.compositor.layouts.LayoutRenderHost;
-import org.chromium.chrome.browser.compositor.layouts.components.LayoutTab;
-import org.chromium.chrome.browser.compositor.layouts.content.ContentOffsetProvider;
 import org.chromium.chrome.browser.compositor.layouts.content.TabContentManager;
 import org.chromium.chrome.browser.compositor.resources.StaticResourcePreloads;
 import org.chromium.chrome.browser.compositor.scene_layer.SceneLayer;
@@ -42,27 +40,25 @@ import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.resources.AndroidResourceType;
 import org.chromium.ui.resources.ResourceManager;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * The is the {@link View} displaying the ui compositor results; including webpages and tabswitcher.
  */
-@JNINamespace("chrome::android")
-public class CompositorView
-        extends SurfaceView implements ContentOffsetProvider, SurfaceHolder.Callback {
+@JNINamespace("android")
+public class CompositorView extends SurfaceView implements SurfaceHolder.Callback2 {
     private static final String TAG = "CompositorView";
     private static final long NANOSECONDS_PER_MILLISECOND = 1000000;
 
     // Cache objects that should not be created every frame
-    private final Rect mCacheViewport = new Rect();
     private final Rect mCacheAppRect = new Rect();
-    private final Rect mCacheVisibleViewport = new Rect();
     private final int[] mCacheViewPosition = new int[2];
 
     private long mNativeCompositorView;
     private final LayoutRenderHost mRenderHost;
     private boolean mEnableTabletTabStack;
     private int mPreviousWindowTop = -1;
-
-    private int mLastLayerCount;
 
     // A conservative estimate of when a frame is guaranteed to be presented after being submitted.
     private long mFramePresentationDelay;
@@ -80,6 +76,7 @@ public class CompositorView
     private int mSurfaceWidth;
     private int mSurfaceHeight;
     private boolean mPreloadedResources;
+    private List<Runnable> mDrawingFinishedCallbacks;
 
     // The current SurfaceView pixel format. Defaults to OPAQUE.
     private int mCurrentPixelFormat = PixelFormat.OPAQUE;
@@ -207,6 +204,9 @@ public class CompositorView
 
         // Grab the Resource Manager
         mResourceManager = nativeGetResourceManager(mNativeCompositorView);
+
+        // Redraw in case there are callbacks pending |mDrawingFinishedCallbacks|.
+        nativeSetNeedsComposite(mNativeCompositorView);
     }
 
     @Override
@@ -222,6 +222,19 @@ public class CompositorView
         mCurrentPixelFormat = enabled ? PixelFormat.TRANSLUCENT : PixelFormat.OPAQUE;
         getHolder().setFormat(mCurrentPixelFormat);
         nativeSetOverlayVideoMode(mNativeCompositorView, enabled);
+    }
+
+    @Override
+    public void surfaceRedrawNeeded(SurfaceHolder holder) {
+        // Intentionally not implemented.
+    }
+
+    // TODO(boliu): Mark this override instead.
+    @UsedByReflection("Android")
+    public void surfaceRedrawNeededAsync(SurfaceHolder holder, Runnable drawingFinished) {
+        if (mDrawingFinishedCallbacks == null) mDrawingFinishedCallbacks = new ArrayList<>();
+        mDrawingFinishedCallbacks.add(drawingFinished);
+        if (mNativeCompositorView != 0) nativeSetNeedsComposite(mNativeCompositorView);
     }
 
     @Override
@@ -304,7 +317,7 @@ public class CompositorView
     }
 
     @CalledByNative
-    private void onSwapBuffersCompleted(int pendingSwapBuffersCount) {
+    private void didSwapFrame(int pendingFrameCount) {
         // Clear the color used to cover the uninitialized surface.
         if (getBackground() != null) {
             postDelayed(new Runnable() {
@@ -315,7 +328,17 @@ public class CompositorView
             }, mFramePresentationDelay);
         }
 
-        mRenderHost.onSwapBuffersCompleted(pendingSwapBuffersCount);
+        mRenderHost.didSwapFrame(pendingFrameCount);
+    }
+
+    @CalledByNative
+    private void didSwapBuffers() {
+        List<Runnable> runnables = mDrawingFinishedCallbacks;
+        mDrawingFinishedCallbacks = null;
+        if (runnables == null) return;
+        for (Runnable r : runnables) {
+            r.run();
+        }
     }
 
     /**
@@ -345,44 +368,17 @@ public class CompositorView
         // If you do, you could inadvertently trigger follow up renders.  For further information
         // see dtrainor@, tedchoc@, or klobag@.
 
-        // TODO(jscholler): change 1.0f to dpToPx once the native part is fully supporting dp.
-        mRenderHost.getVisibleViewport(mCacheVisibleViewport);
-        mCacheVisibleViewport.right = mCacheVisibleViewport.left + mSurfaceWidth;
-        mCacheVisibleViewport.bottom = mCacheVisibleViewport.top + mSurfaceHeight;
-
-        provider.getViewportPixel(mCacheViewport);
-        nativeSetLayoutViewport(mNativeCompositorView, mCacheViewport.left, mCacheViewport.top,
-                mCacheViewport.width(), mCacheViewport.height(), mCacheVisibleViewport.left,
-                mCacheVisibleViewport.top, 1.0f);
+        nativeSetLayoutBounds(mNativeCompositorView);
 
         SceneLayer sceneLayer =
-                provider.getUpdatedActiveSceneLayer(mCacheViewport, mCacheVisibleViewport,
-                        mLayerTitleCache, mTabContentManager, mResourceManager,
-                        provider.getFullscreenManager());
+                provider.getUpdatedActiveSceneLayer(mLayerTitleCache, mTabContentManager,
+                mResourceManager, provider.getFullscreenManager());
 
         nativeSetSceneLayer(mNativeCompositorView, sceneLayer);
 
-        final LayoutTab[] tabs = layout.getLayoutTabsToRender();
-        final int tabsCount = tabs != null ? tabs.length : 0;
-        mLastLayerCount = tabsCount;
         TabModelImpl.flushActualTabSwitchLatencyMetric();
         nativeFinalizeLayers(mNativeCompositorView);
         TraceEvent.end("CompositorView:finalizeLayers");
-    }
-
-    /**
-     * @return The number of layer put the last frame.
-     */
-    @VisibleForTesting
-    public int getLastLayerCount() {
-        return mLastLayerCount;
-    }
-
-    @Override
-    public int getOverlayTranslateY() {
-        return mRenderHost.areTopControlsPermanentlyHidden()
-                ? mRenderHost.getTopControlsHeightPixels()
-                : mRenderHost.getVisibleViewport(mCacheVisibleViewport).top;
     }
 
     // Implemented in native
@@ -396,9 +392,7 @@ public class CompositorView
             long nativeCompositorView, int format, int width, int height, Surface surface);
     private native void nativeFinalizeLayers(long nativeCompositorView);
     private native void nativeSetNeedsComposite(long nativeCompositorView);
-    private native void nativeSetLayoutViewport(long nativeCompositorView, float x, float y,
-            float width, float height, float visibleXOffset, float visibleYOffset,
-            float dpToPixel);
+    private native void nativeSetLayoutBounds(long nativeCompositorView);
     private native void nativeSetOverlayVideoMode(long nativeCompositorView, boolean enabled);
     private native void nativeSetSceneLayer(long nativeCompositorView, SceneLayer sceneLayer);
 }

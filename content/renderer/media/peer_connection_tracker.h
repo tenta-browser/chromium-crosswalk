@@ -12,6 +12,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "content/public/renderer/render_thread_observer.h"
+#include "ipc/ipc_platform_file.h"
 #include "third_party/WebKit/public/platform/WebMediaStream.h"
 #include "third_party/WebKit/public/platform/WebRTCPeerConnectionHandlerClient.h"
 #include "third_party/WebKit/public/platform/WebRTCSessionDescription.h"
@@ -23,7 +24,6 @@ class WebMediaConstraints;
 class WebRTCAnswerOptions;
 class WebRTCICECandidate;
 class WebRTCOfferOptions;
-class WebString;
 class WebRTCSessionDescription;
 class WebUserMediaRequest;
 }  // namespace blink
@@ -102,8 +102,8 @@ class CONTENT_EXPORT PeerConnectionTracker
       RTCPeerConnectionHandler* pc_handler,
       const std::string& sdp, const std::string& type, Source source);
 
-  // Sends an update when Ice candidates are updated.
-  virtual void TrackUpdateIce(
+  // Sends an update when setConfiguration is called.
+  virtual void TrackSetConfiguration(
       RTCPeerConnectionHandler* pc_handler,
       const webrtc::PeerConnectionInterface::RTCConfiguration& config);
 
@@ -185,6 +185,13 @@ class CONTENT_EXPORT PeerConnectionTracker
 
   // Called when the browser process reports a suspend event from the OS.
   void OnSuspend();
+
+  // IPC Message handler for starting event log.
+  void OnStartEventLog(int peer_connection_id,
+                       IPC::PlatformFileForTransit file);
+
+  // IPC Message handler for stopping event log.
+  void OnStopEventLog(int peer_connection_id);
 
   // Called to deliver an update to the host (PeerConnectionTrackerHost).
   // |local_id| - The id of the registered RTCPeerConnectionHandler.

@@ -28,6 +28,7 @@ import android.widget.Button;
 import android.widget.ListView;
 import android.widget.TextView;
 
+import org.chromium.base.BuildInfo;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.help.HelpAndFeedback;
@@ -48,11 +49,9 @@ import org.chromium.chrome.browser.widget.TintedDrawable;
 import org.chromium.ui.widget.Toast;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 
 /**
  * Shows a list of sites in a particular Site Settings category. For example, this could show all
@@ -80,15 +79,15 @@ public class SingleCategoryPreferences extends PreferenceFragment
     // If not blank, represents a substring to use to search for site names.
     private String mSearch = "";
     // Whether to group by allowed/blocked list.
-    private boolean mGroupByAllowBlock = false;
+    private boolean mGroupByAllowBlock;
     // Whether the Blocked list should be shown expanded.
-    private boolean mBlockListExpanded = false;
+    private boolean mBlockListExpanded;
     // Whether the Allowed list should be shown expanded.
     private boolean mAllowListExpanded = true;
     // Whether this is the first time this screen is shown.
     private boolean mIsInitialRun = true;
     // The number of sites that are on the Allowed list.
-    private int mAllowedSiteCount = 0;
+    private int mAllowedSiteCount;
     // The websites that are currently displayed to the user.
     private List<WebsitePreference> mWebsites;
 
@@ -122,33 +121,17 @@ public class SingleCategoryPreferences extends PreferenceFragment
 
     private class ResultsPopulator implements WebsitePermissionsFetcher.WebsitePermissionsCallback {
         @Override
-        public void onWebsitePermissionsAvailable(
-                Map<String, Set<Website>> sitesByOrigin, Map<String, Set<Website>> sitesByHost) {
+        public void onWebsitePermissionsAvailable(Collection<Website> sites) {
             // This method may be called after the activity has been destroyed.
             // In that case, bail out.
             if (getActivity() == null) return;
             mWebsites = null;
 
-            // First we scan origins to get settings from there.
+            // Find origins matching the current search.
             List<WebsitePreference> websites = new ArrayList<>();
-            Set<Website> displayedSites = new HashSet<>();
-            for (Map.Entry<String, Set<Website>> element : sitesByOrigin.entrySet()) {
-                for (Website site : element.getValue()) {
-                    if (mSearch.isEmpty() || site.getTitle().contains(mSearch)) {
-                        websites.add(new WebsitePreference(getActivity(), site, mCategory));
-                        displayedSites.add(site);
-                    }
-                }
-            }
-            // Next we add sites that are only accessible by host name.
-            for (Map.Entry<String, Set<Website>> element : sitesByHost.entrySet()) {
-                for (Website site : element.getValue()) {
-                    if (!displayedSites.contains(site)) {
-                        if (mSearch.isEmpty() || site.getTitle().contains(mSearch)) {
-                            websites.add(new WebsitePreference(getActivity(), site, mCategory));
-                            displayedSites.add(site);
-                        }
-                    }
+            for (Website site : sites) {
+                if (mSearch.isEmpty() || site.getTitle().contains(mSearch)) {
+                    websites.add(new WebsitePreference(getActivity(), site, mCategory));
                 }
             }
 
@@ -233,8 +216,6 @@ public class SingleCategoryPreferences extends PreferenceFragment
             return website.site().getCameraPermission() == ContentSetting.BLOCK;
         } else if (mCategory.showCookiesSites()) {
             return website.site().getCookiePermission() == ContentSetting.BLOCK;
-        } else if (mCategory.showFullscreenSites()) {
-            return website.site().getFullscreenPermission() == ContentSetting.ASK;
         } else if (mCategory.showGeolocationSites()) {
             return website.site().getGeolocationPermission() == ContentSetting.BLOCK;
         } else if (mCategory.showJavaScriptSites()) {
@@ -484,7 +465,7 @@ public class SingleCategoryPreferences extends PreferenceFragment
     @Override
     public boolean onPreferenceChange(Preference preference, Object newValue) {
         if (READ_WRITE_TOGGLE_KEY.equals(preference.getKey())) {
-            if (mCategory.isManaged()) return false;
+            assert !mCategory.isManaged();
 
             if (mCategory.showAutoplaySites()) {
                 PrefServiceBridge.getInstance().setAutoplayEnabled((boolean) newValue);
@@ -495,8 +476,6 @@ public class SingleCategoryPreferences extends PreferenceFragment
             } else if (mCategory.showCookiesSites()) {
                 PrefServiceBridge.getInstance().setAllowCookiesEnabled((boolean) newValue);
                 updateThirdPartyCookiesCheckBox();
-            } else if (mCategory.showFullscreenSites()) {
-                PrefServiceBridge.getInstance().setFullscreenAllowed((boolean) newValue);
             } else if (mCategory.showGeolocationSites()) {
                 PrefServiceBridge.getInstance().setAllowLocationEnabled((boolean) newValue);
             } else if (mCategory.showJavaScriptSites()) {
@@ -631,7 +610,7 @@ public class SingleCategoryPreferences extends PreferenceFragment
         // Configure/hide the notifications vibrate toggle, as needed.
         Preference notificationsVibrate =
                 getPreferenceScreen().findPreference(NOTIFICATIONS_VIBRATE_TOGGLE_KEY);
-        if (mCategory.showNotificationsSites()) {
+        if (mCategory.showNotificationsSites() && !BuildInfo.isAtLeastO()) {
             notificationsVibrate.setOnPreferenceChangeListener(this);
             updateNotificationsVibrateCheckBox();
         } else {
@@ -699,9 +678,19 @@ public class SingleCategoryPreferences extends PreferenceFragment
                 }
                 globalToggle.setSummaryOff(
                         ContentSettingsResources.getDisabledSummary(contentType));
-                if (mCategory.isManaged() && !mCategory.isManagedByCustodian()) {
-                    globalToggle.setIcon(R.drawable.controlled_setting_mandatory);
-                }
+                globalToggle.setManagedPreferenceDelegate(new ManagedPreferenceDelegate() {
+                    @Override
+                    public boolean isPreferenceControlledByPolicy(Preference preference) {
+                        // TODO(bauerb): Align the ManagedPreferenceDelegate and
+                        // SiteSettingsCategory interfaces better to avoid this indirection.
+                        return mCategory.isManaged() && !mCategory.isManagedByCustodian();
+                    }
+
+                    @Override
+                    public boolean isPreferenceControlledByCustodian(Preference preference) {
+                        return mCategory.isManagedByCustodian();
+                    }
+                });
                 if (mCategory.showAutoplaySites()) {
                     globalToggle.setChecked(
                             PrefServiceBridge.getInstance().isAutoplayEnabled());
@@ -713,13 +702,6 @@ public class SingleCategoryPreferences extends PreferenceFragment
                 } else if (mCategory.showCookiesSites()) {
                     globalToggle.setChecked(
                             PrefServiceBridge.getInstance().isAcceptCookiesEnabled());
-                } else if (mCategory.showFullscreenSites()) {
-                    globalToggle.setChecked(
-                            PrefServiceBridge.getInstance().isFullscreenAllowed());
-                    // The fullscreen global toggle cannot be disabled.
-                    // TODO(mgiuca): Remove this setting entirely (requires deleting all the data;
-                    // see https://crbug.com/591896).
-                    globalToggle.setEnabled(false);
                 } else if (mCategory.showGeolocationSites()) {
                     globalToggle.setChecked(
                             LocationSettings.getInstance().isChromeLocationSettingEnabled());
@@ -756,7 +738,9 @@ public class SingleCategoryPreferences extends PreferenceFragment
         ChromeBaseCheckBoxPreference preference =
                 (ChromeBaseCheckBoxPreference) getPreferenceScreen().findPreference(
                         NOTIFICATIONS_VIBRATE_TOGGLE_KEY);
-        preference.setEnabled(PrefServiceBridge.getInstance().isNotificationsEnabled());
+        if (preference != null) {
+            preference.setEnabled(PrefServiceBridge.getInstance().isNotificationsEnabled());
+        }
     }
 
     private void showManagedToast() {

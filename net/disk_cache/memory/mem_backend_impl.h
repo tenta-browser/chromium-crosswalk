@@ -18,6 +18,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string_split.h"
 #include "base/time/time.h"
+#include "net/base/net_export.h"
 #include "net/disk_cache/disk_cache.h"
 #include "net/disk_cache/memory/mem_entry_impl.h"
 
@@ -90,9 +91,14 @@ class NET_EXPORT_PRIVATE MemBackendImpl final : public Backend {
   int DoomEntriesSince(base::Time initial_time,
                        const CompletionCallback& callback) override;
   int CalculateSizeOfAllEntries(const CompletionCallback& callback) override;
+  int CalculateSizeOfEntriesBetween(
+      base::Time initial_time,
+      base::Time end_time,
+      const CompletionCallback& callback) override;
   std::unique_ptr<Iterator> CreateIterator() override;
   void GetStats(base::StringPairs* stats) override {}
   void OnExternalCacheHit(const std::string& key) override;
+  size_t EstimateMemoryUsage() const override;
 
  private:
   class MemIterator;

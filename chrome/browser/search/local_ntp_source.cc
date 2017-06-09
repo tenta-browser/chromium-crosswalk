@@ -28,11 +28,11 @@
 #include "chrome/browser/themes/theme_service_factory.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/url_constants.h"
+#include "chrome/grit/browser_resources.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/grit/theme_resources.h"
 #include "components/search_engines/template_url_service.h"
 #include "components/strings/grit/components_strings.h"
-#include "grit/browser_resources.h"
-#include "grit/theme_resources.h"
 #include "net/url_request/url_request.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -61,10 +61,6 @@ const struct Resource{
     {kConfigDataFilename, kLocalResource, "application/javascript"},
     {kThemeCSSFilename, kLocalResource, "text/css"},
     {"local-ntp.css", IDR_LOCAL_NTP_CSS, "text/css"},
-    {"images/close_2.png", IDR_CLOSE_2, "image/png"},
-    {"images/close_2_hover.png", IDR_CLOSE_2_H, "image/png"},
-    {"images/close_2_active.png", IDR_CLOSE_2_P, "image/png"},
-    {"images/close_2_white.png", IDR_CLOSE_2_MASK, "image/png"},
     {"images/close_3_mask.png", IDR_CLOSE_3_MASK, "image/png"},
     {"images/close_4_button.png", IDR_CLOSE_4_BUTTON, "image/png"},
     {"images/ntp_default_favicon.png", IDR_NTP_DEFAULT_FAVICON, "image/png"},
@@ -92,21 +88,6 @@ bool DefaultSearchProviderIsGoogle(Profile* profile) {
        SEARCH_ENGINE_GOOGLE);
 }
 
-// Returns whether icon NTP is enabled by experiment.
-// TODO(huangs): Remove all 3 copies of this routine once Icon NTP launches.
-bool IsIconNTPEnabled() {
-  // Note: It's important to query the field trial state first, to ensure that
-  // UMA reports the correct group.
-  const std::string group_name = base::FieldTrialList::FindFullName("IconNTP");
-  using base::CommandLine;
-  if (CommandLine::ForCurrentProcess()->HasSwitch(switches::kDisableIconNtp))
-    return false;
-  if (CommandLine::ForCurrentProcess()->HasSwitch(switches::kEnableIconNtp))
-    return true;
-
-  return base::StartsWith(group_name, "Enabled", base::CompareCase::SENSITIVE);
-}
-
 // Adds a localized string keyed by resource id to the dictionary.
 void AddString(base::DictionaryValue* dictionary,
                const std::string& key,
@@ -116,6 +97,8 @@ void AddString(base::DictionaryValue* dictionary,
 
 // Adds a localized string for the Google searchbox placeholder text.
 void AddGoogleSearchboxPlaceholderString(base::DictionaryValue* dictionary) {
+  // TODO(treib): Remove the param from the string; it's only ever used with
+  // "Google".
   base::string16 placeholder = l10n_util::GetStringFUTF16(
       IDS_SEARCH_BOX_EMPTY_HINT,
       base::ASCIIToUTF16("Google"));
@@ -148,12 +131,10 @@ std::unique_ptr<base::DictionaryValue> GetTranslatedStrings(bool is_google) {
 // Returns a JS dictionary of configuration data for the local NTP.
 std::string GetConfigData(Profile* profile) {
   base::DictionaryValue config_data;
-  bool is_google = DefaultSearchProviderIsGoogle(profile) &&
-                   search::ShouldShowGoogleLocalNTP();
+  bool is_google = DefaultSearchProviderIsGoogle(profile);
   config_data.Set("translatedStrings",
                   GetTranslatedStrings(is_google).release());
   config_data.SetBoolean("isGooglePage", is_google);
-  config_data.SetBoolean("useIcons", IsIconNTPEnabled());
 
   // Serialize the dictionary.
   std::string js_text;
@@ -197,8 +178,7 @@ std::string LocalNtpSource::GetSource() const {
 
 void LocalNtpSource::StartDataRequest(
     const std::string& path,
-    int render_process_id,
-    int render_frame_id,
+    const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
     const content::URLDataSource::GotDataCallback& callback) {
   std::string stripped_path = StripParameters(path);
   if (stripped_path == kConfigDataFilename) {
@@ -252,9 +232,17 @@ std::string LocalNtpSource::GetMimeType(
   return std::string();
 }
 
+bool LocalNtpSource::AllowCaching() const {
+  // Some resources served by LocalNtpSource, i.e. config.js, are dynamically
+  // generated and could differ on each access. To avoid using old cached
+  // content on reload, disallow caching here. Otherwise, it fails to reflect
+  // newly revised user configurations in the page.
+  return false;
+}
+
 bool LocalNtpSource::ShouldServiceRequest(
     const net::URLRequest* request) const {
-  DCHECK(request->url().host() == chrome::kChromeSearchLocalNtpHost);
+  DCHECK(request->url().host_piece() == chrome::kChromeSearchLocalNtpHost);
   if (!InstantIOContext::ShouldServiceRequest(request))
     return false;
 

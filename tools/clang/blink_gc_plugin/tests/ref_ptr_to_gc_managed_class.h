@@ -12,14 +12,14 @@ namespace blink {
 class HeapObject;
 
 class PartObject {
-    DISALLOW_ALLOCATION();
+    DISALLOW_NEW();
 private:
     RefPtr<HeapObject> m_obj;
 };
 
 class HeapObject : public GarbageCollectedFinalized<HeapObject> {
 public:
-    void trace(Visitor*);
+    void Trace(Visitor*);
 private:
     PartObject m_part;
     Vector<RefPtr<HeapObject> > m_objs;

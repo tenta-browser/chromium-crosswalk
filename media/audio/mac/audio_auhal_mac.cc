@@ -6,18 +6,48 @@
 
 #include <CoreServices/CoreServices.h>
 
+#include <algorithm>
+#include <cstddef>
+#include <string>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/logging.h"
 #include "base/mac/mac_logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/stringprintf.h"
-#include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
 #include "media/audio/mac/audio_manager_mac.h"
 #include "media/base/audio_pull_fifo.h"
+#include "media/base/audio_timestamp_helper.h"
 
 namespace media {
+
+// Mapping from Chrome's channel layout to CoreAudio layout. This must match the
+// layout of the Channels enum in |channel_layout.h|
+static const AudioChannelLabel kCoreAudioChannelMapping[] = {
+    kAudioChannelLabel_Left,
+    kAudioChannelLabel_Right,
+    kAudioChannelLabel_Center,
+    kAudioChannelLabel_LFEScreen,
+    kAudioChannelLabel_LeftSurround,
+    kAudioChannelLabel_RightSurround,
+    kAudioChannelLabel_LeftCenter,
+    kAudioChannelLabel_RightCenter,
+    kAudioChannelLabel_CenterSurround,
+    kAudioChannelLabel_LeftSurroundDirect,
+    kAudioChannelLabel_RightSurroundDirect,
+};
+static_assert(0 == LEFT && 1 == RIGHT && 2 == CENTER && 3 == LFE &&
+                  4 == BACK_LEFT &&
+                  5 == BACK_RIGHT &&
+                  6 == LEFT_OF_CENTER &&
+                  7 == RIGHT_OF_CENTER &&
+                  8 == BACK_CENTER &&
+                  9 == SIDE_LEFT &&
+                  10 == SIDE_RIGHT &&
+                  10 == CHANNELS_MAX,
+              "Channel positions must match CoreAudio channel order.");
 
 static void WrapBufferList(AudioBufferList* buffer_list,
                            AudioBus* bus,
@@ -51,9 +81,7 @@ AUHALStream::AUHALStream(AudioManagerMac* manager,
       device_(device),
       audio_unit_(0),
       volume_(1),
-      hardware_latency_frames_(0),
       stopped_(true),
-      current_hardware_pending_bytes_(0),
       current_lost_frames_(0),
       last_sample_time_(0.0),
       last_number_of_frames_(0),
@@ -117,7 +145,7 @@ bool AUHALStream::Open() {
 
   bool configured = ConfigureAUHAL();
   if (configured)
-    hardware_latency_frames_ = GetHardwareLatency();
+    hardware_latency_ = GetHardwareLatency();
 
   return configured;
 }
@@ -211,7 +239,8 @@ OSStatus AUHALStream::Render(
     UInt32 bus_number,
     UInt32 number_of_frames,
     AudioBufferList* data) {
-  TRACE_EVENT0("audio", "AUHALStream::Render");
+  TRACE_EVENT2("audio", "AUHALStream::Render", "input buffer size",
+               number_of_frames_, "output buffer size", number_of_frames);
 
   UpdatePlayoutTimestamp(output_time_stamp);
 
@@ -236,10 +265,7 @@ OSStatus AUHALStream::Render(
   // Make |output_bus_| wrap the output AudioBufferList.
   WrapBufferList(data, output_bus_.get(), number_of_frames);
 
-  // Update the playout latency.
-  const double playout_latency_frames = GetPlayoutLatency(output_time_stamp);
-  current_hardware_pending_bytes_ = static_cast<uint32_t>(
-      (playout_latency_frames + 0.5) * params_.GetBytesPerFrame());
+  current_playout_time_ = GetPlayoutTime(output_time_stamp);
 
   if (audio_fifo_)
     audio_fifo_->Consume(output_bus_.get(), output_bus_->frames());
@@ -258,10 +284,14 @@ void AUHALStream::ProvideInput(int frame_delay, AudioBus* dest) {
     return;
   }
 
+  const base::TimeTicks playout_time =
+      current_playout_time_ +
+      AudioTimestampHelper::FramesToTime(frame_delay, params_.sample_rate());
+  const base::TimeTicks now = base::TimeTicks::Now();
+  const base::TimeDelta delay = playout_time - now;
+
   // Supply the input data and render the output data.
-  source_->OnMoreData(dest, current_hardware_pending_bytes_ +
-                                frame_delay * params_.GetBytesPerFrame(),
-                      current_lost_frames_);
+  source_->OnMoreData(delay, now, current_lost_frames_, dest);
   dest->Scale(volume_);
   current_lost_frames_ = 0;
 }
@@ -288,10 +318,10 @@ OSStatus AUHALStream::InputProc(
       io_data);
 }
 
-double AUHALStream::GetHardwareLatency() {
+base::TimeDelta AUHALStream::GetHardwareLatency() {
   if (!audio_unit_ || device_ == kAudioObjectUnknown) {
     DLOG(WARNING) << "AudioUnit is NULL or device ID is unknown";
-    return 0.0;
+    return base::TimeDelta();
   }
 
   // Get audio unit latency.
@@ -306,7 +336,7 @@ double AUHALStream::GetHardwareLatency() {
       &size);
   if (result != noErr) {
     OSSTATUS_DLOG(WARNING, result) << "Could not get AudioUnit latency";
-    return 0.0;
+    return base::TimeDelta();
   }
 
   // Get output audio device latency.
@@ -327,34 +357,29 @@ double AUHALStream::GetHardwareLatency() {
       &device_latency_frames);
   if (result != noErr) {
     OSSTATUS_DLOG(WARNING, result) << "Could not get audio device latency";
-    return 0.0;
+    return base::TimeDelta();
   }
 
-  return static_cast<double>((audio_unit_latency_sec *
-      output_format_.mSampleRate) + device_latency_frames);
+  int latency_frames = audio_unit_latency_sec * output_format_.mSampleRate +
+                       device_latency_frames;
+
+  return AudioTimestampHelper::FramesToTime(latency_frames,
+                                            params_.sample_rate());
 }
 
-double AUHALStream::GetPlayoutLatency(
+base::TimeTicks AUHALStream::GetPlayoutTime(
     const AudioTimeStamp* output_time_stamp) {
-  // Ensure mHostTime is valid.
+  // A platform bug has been observed where the platform sometimes reports that
+  // the next frames will be output at an invalid time or a time in the past.
+  // Because the target playout time cannot be invalid or in the past, return
+  // "now" in these cases.
   if ((output_time_stamp->mFlags & kAudioTimeStampHostTimeValid) == 0)
-    return 0;
+    return base::TimeTicks::Now();
 
-  // Get the delay between the moment getting the callback and the scheduled
-  // time stamp that tells when the data is going to be played out.
-  UInt64 output_time_ns = AudioConvertHostTimeToNanos(
-      output_time_stamp->mHostTime);
-  UInt64 now_ns = AudioConvertHostTimeToNanos(AudioGetCurrentHostTime());
-
-  // Prevent overflow leading to huge delay information; occurs regularly on
-  // the bots, probably less so in the wild.
-  if (now_ns > output_time_ns)
-    return 0;
-
-  double delay_frames = static_cast<double>
-      (1e-9 * (output_time_ns - now_ns) * output_format_.mSampleRate);
-
-  return (delay_frames + hardware_latency_frames_);
+  return std::max(base::TimeTicks::FromMachAbsoluteTime(
+                      output_time_stamp->mHostTime),
+                  base::TimeTicks::Now()) +
+         hardware_latency_;
 }
 
 void AUHALStream::UpdatePlayoutTimestamp(const AudioTimeStamp* timestamp) {
@@ -392,7 +417,7 @@ void AUHALStream::ReportAndResetStats() {
   // Even if there aren't any glitches, we want to record it to get a feel for
   // how often we get no glitches vs the alternative.
   UMA_HISTOGRAM_CUSTOM_COUNTS("Media.Audio.Render.Glitches", glitches_detected_,
-                              0, 999999, 100);
+                              1, 999999, 100);
 
   auto lost_frames_ms = (total_lost_frames_ * 1000) / params_.sample_rate();
   std::string log_message = base::StringPrintf(
@@ -537,6 +562,8 @@ bool AUHALStream::ConfigureAUHAL() {
     return false;
   }
 
+  SetAudioChannelLayout();
+
   result = AudioUnitInitialize(audio_unit_);
   if (result != noErr) {
     OSSTATUS_DLOG(ERROR, result) << "AudioUnitInitialize() failed.";
@@ -559,6 +586,61 @@ void AUHALStream::CloseAudioUnit() {
   OSSTATUS_DLOG_IF(ERROR, result != noErr, result)
       << "AudioComponentInstanceDispose() failed.";
   audio_unit_ = 0;
+}
+
+void AUHALStream::SetAudioChannelLayout() {
+  DCHECK(audio_unit_);
+
+  // AudioChannelLayout is structure ending in a variable length array, so we
+  // can't directly allocate one. Instead compute the size and and allocate one
+  // inside of a byte array.
+  //
+  // Code modeled after example from Apple documentation here:
+  // https://developer.apple.com/library/content/qa/qa1627/_index.html
+  const size_t layout_size =
+      offsetof(AudioChannelLayout, mChannelDescriptions[params_.channels()]);
+  std::unique_ptr<uint8_t[]> layout_storage(new uint8_t[layout_size]);
+  memset(layout_storage.get(), 0, layout_size);
+  AudioChannelLayout* channel_layout =
+      reinterpret_cast<AudioChannelLayout*>(layout_storage.get());
+
+  channel_layout->mNumberChannelDescriptions = params_.channels();
+  channel_layout->mChannelLayoutTag =
+      kAudioChannelLayoutTag_UseChannelDescriptions;
+  AudioChannelDescription* descriptions = channel_layout->mChannelDescriptions;
+
+  if (params_.channel_layout() == CHANNEL_LAYOUT_DISCRETE) {
+    // For the discrete case just assume common input mappings; once we run out
+    // of known channels mark them as unknown.
+    for (int ch = 0; ch < params_.channels(); ++ch) {
+      descriptions[ch].mChannelLabel = ch > CHANNELS_MAX
+                                           ? kAudioChannelLabel_Unknown
+                                           : kCoreAudioChannelMapping[ch];
+      descriptions[ch].mChannelFlags = kAudioChannelFlags_AllOff;
+    }
+  } else if (params_.channel_layout() == CHANNEL_LAYOUT_MONO) {
+    // CoreAudio has a special label for mono.
+    DCHECK_EQ(params_.channels(), 1);
+    descriptions[0].mChannelLabel = kAudioChannelLabel_Mono;
+    descriptions[0].mChannelFlags = kAudioChannelFlags_AllOff;
+  } else {
+    for (int ch = 0; ch <= CHANNELS_MAX; ++ch) {
+      const int order =
+          ChannelOrder(params_.channel_layout(), static_cast<Channels>(ch));
+      if (order == -1)
+        continue;
+      descriptions[order].mChannelLabel = kCoreAudioChannelMapping[ch];
+      descriptions[order].mChannelFlags = kAudioChannelFlags_AllOff;
+    }
+  }
+
+  OSStatus result = AudioUnitSetProperty(
+      audio_unit_, kAudioUnitProperty_AudioChannelLayout, kAudioUnitScope_Input,
+      0, channel_layout, layout_size);
+  if (result != noErr) {
+    OSSTATUS_DLOG(ERROR, result)
+        << "Failed to set audio channel layout. Using default layout.";
+  }
 }
 
 }  // namespace media

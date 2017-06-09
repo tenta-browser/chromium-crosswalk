@@ -2,8 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <string>
+
+#include "ash/common/shelf/wm_shelf.h"
+#include "ash/common/system/tray/system_tray.h"
+#include "ash/common/wm_window.h"
 #include "ash/shell.h"
-#include "ash/system/tray/system_tray.h"
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
@@ -23,17 +27,18 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/interactive_test_utils.h"
-#include "chrome/test/base/tracing.h"
 #include "chromeos/chromeos_switches.h"
-#include "chromeos/login/user_names.h"
 #include "chromeos/settings/cros_settings_names.h"
 #include "components/signin/core/account_id/account_id.h"
+#include "components/user_manager/user_names.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/extension_system.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/gfx/geometry/test/rect_test_util.h"
 
+using ::gfx::test::RectContains;
 using ::testing::_;
 using ::testing::AnyNumber;
 using ::testing::Return;
@@ -59,8 +64,8 @@ class LoginGuestTest : public InProcessBrowserTest {
     command_line->AppendSwitch(switches::kGuestSession);
     command_line->AppendSwitch(::switches::kIncognito);
     command_line->AppendSwitchASCII(switches::kLoginProfile, "hash");
-    command_line->AppendSwitchASCII(switches::kLoginUser,
-                                    login::GuestAccountId().GetUserEmail());
+    command_line->AppendSwitchASCII(
+        switches::kLoginUser, user_manager::GuestAccountId().GetUserEmail());
   }
 };
 
@@ -86,9 +91,6 @@ class LoginSigninTest : public InProcessBrowserTest {
 
   void SetUpOnMainThread() override {
     LoginDisplayHostImpl::DisableRestrictiveProxyCheckForTest();
-
-    ASSERT_TRUE(tracing::BeginTracingWithWatch(
-        "ui", "ui", "ShowLoginWebUI", 1));
   }
 };
 
@@ -182,8 +184,13 @@ class LoginTest : public LoginManagerTest {
 void TestSystemTrayIsVisible() {
   ash::SystemTray* tray = ash::Shell::GetInstance()->GetPrimarySystemTray();
   aura::Window* primary_win = ash::Shell::GetPrimaryRootWindow();
+  ash::WmWindow* wm_primary_win = ash::WmWindow::Get(primary_win);
+  ash::WmShelf* wm_shelf = ash::WmShelf::ForWindow(wm_primary_win);
+  SCOPED_TRACE(testing::Message()
+               << "ShelfVisibilityState=" << wm_shelf->GetVisibilityState()
+               << " ShelfAutoHideBehavior=" << wm_shelf->auto_hide_behavior());
   EXPECT_TRUE(tray->visible());
-  EXPECT_TRUE(primary_win->bounds().Contains(tray->GetBoundsInScreen()));
+  EXPECT_TRUE(RectContains(primary_win->bounds(), tray->GetBoundsInScreen()));
 }
 
 }  // namespace
@@ -209,7 +216,8 @@ IN_PROC_BROWSER_TEST_F(LoginUserTest, CursorShown) {
 }
 
 // After a guest login, we should get the OTR default profile.
-IN_PROC_BROWSER_TEST_F(LoginGuestTest, GuestIsOTR) {
+// Test is flaky https://crbug.com/693106
+IN_PROC_BROWSER_TEST_F(LoginGuestTest, DISABLED_GuestIsOTR) {
   Profile* profile = browser()->profile();
   EXPECT_TRUE(profile->IsOffTheRecord());
   // Ensure there's extension service for this profile.
@@ -219,7 +227,8 @@ IN_PROC_BROWSER_TEST_F(LoginGuestTest, GuestIsOTR) {
 }
 
 // Verifies the cursor is not hidden at startup when running guest session.
-IN_PROC_BROWSER_TEST_F(LoginGuestTest, CursorShown) {
+// Test is flaky https://crbug.com/693106
+IN_PROC_BROWSER_TEST_F(LoginGuestTest, DISABLED_CursorShown) {
   EXPECT_TRUE(ash::Shell::GetInstance()->cursor_manager()->IsCursorVisible());
 
   TestSystemTrayIsVisible();
@@ -228,7 +237,7 @@ IN_PROC_BROWSER_TEST_F(LoginGuestTest, CursorShown) {
 // Verifies the cursor is hidden at startup on login screen.
 IN_PROC_BROWSER_TEST_F(LoginCursorTest, CursorHidden) {
   // Login screen needs to be shown explicitly when running test.
-  ShowLoginWizard(WizardController::kLoginScreenName);
+  ShowLoginWizard(OobeScreen::SCREEN_SPECIAL_LOGIN);
 
   // Cursor should be hidden at startup
   EXPECT_FALSE(ash::Shell::GetInstance()->cursor_manager()->IsCursorVisible());
@@ -245,10 +254,10 @@ IN_PROC_BROWSER_TEST_F(LoginCursorTest, CursorHidden) {
 
 // Verifies that the webui for login comes up successfully.
 IN_PROC_BROWSER_TEST_F(LoginSigninTest, WebUIVisible) {
-  base::TimeDelta no_timeout;
-  EXPECT_TRUE(tracing::WaitForWatchEvent(no_timeout));
-  std::string json_events;
-  ASSERT_TRUE(tracing::EndTracing(&json_events));
+  content::WindowedNotificationObserver(
+      chrome::NOTIFICATION_LOGIN_OR_LOCK_WEBUI_VISIBLE,
+      content::NotificationService::AllSources())
+      .Wait();
 }
 
 
@@ -258,7 +267,8 @@ IN_PROC_BROWSER_TEST_F(LoginTest, PRE_GaiaAuthOffline) {
   CrosSettings::Get()->SetBoolean(kAccountsPrefShowUserNamesOnSignIn, false);
 }
 
-IN_PROC_BROWSER_TEST_F(LoginTest, GaiaAuthOffline) {
+// Flaky, see http://crbug/692364.
+IN_PROC_BROWSER_TEST_F(LoginTest, DISABLED_GaiaAuthOffline) {
   PrepareOfflineLogin();
   content::WindowedNotificationObserver session_start_waiter(
       chrome::NOTIFICATION_SESSION_STARTED,

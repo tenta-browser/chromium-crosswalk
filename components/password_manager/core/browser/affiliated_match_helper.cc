@@ -33,13 +33,12 @@ bool IsAndroidApplicationCredential(const autofill::PasswordForm& form,
 }  // namespace
 
 // static
-const int64_t AffiliatedMatchHelper::kInitializationDelayOnStartupInSeconds;
+constexpr base::TimeDelta AffiliatedMatchHelper::kInitializationDelayOnStartup;
 
 AffiliatedMatchHelper::AffiliatedMatchHelper(
     PasswordStore* password_store,
     std::unique_ptr<AffiliationService> affiliation_service)
     : password_store_(password_store),
-      task_runner_for_waiting_(base::ThreadTaskRunnerHandle::Get()),
       affiliation_service_(std::move(affiliation_service)),
       weak_ptr_factory_(this) {}
 
@@ -51,14 +50,15 @@ AffiliatedMatchHelper::~AffiliatedMatchHelper() {
 void AffiliatedMatchHelper::Initialize() {
   DCHECK(password_store_);
   DCHECK(affiliation_service_);
-  task_runner_for_waiting_->PostDelayedTask(
-      FROM_HERE, base::Bind(&AffiliatedMatchHelper::DoDeferredInitialization,
-                            weak_ptr_factory_.GetWeakPtr()),
-      base::TimeDelta::FromSeconds(kInitializationDelayOnStartupInSeconds));
+  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+      FROM_HERE,
+      base::Bind(&AffiliatedMatchHelper::DoDeferredInitialization,
+                 weak_ptr_factory_.GetWeakPtr()),
+      kInitializationDelayOnStartup);
 }
 
 void AffiliatedMatchHelper::GetAffiliatedAndroidRealms(
-    const autofill::PasswordForm& observed_form,
+    const PasswordStore::FormDigest& observed_form,
     const AffiliatedRealmsCallback& result_callback) {
   if (IsValidWebCredential(observed_form)) {
     FacetURI facet_uri(
@@ -73,7 +73,7 @@ void AffiliatedMatchHelper::GetAffiliatedAndroidRealms(
 }
 
 void AffiliatedMatchHelper::GetAffiliatedWebRealms(
-    const autofill::PasswordForm& android_form,
+    const PasswordStore::FormDigest& android_form,
     const AffiliatedRealmsCallback& result_callback) {
   if (IsValidAndroidCredential(android_form)) {
     affiliation_service_->GetAffiliations(
@@ -87,12 +87,12 @@ void AffiliatedMatchHelper::GetAffiliatedWebRealms(
 }
 
 void AffiliatedMatchHelper::InjectAffiliatedWebRealms(
-    ScopedVector<autofill::PasswordForm> forms,
+    std::vector<std::unique_ptr<autofill::PasswordForm>> forms,
     const PasswordFormsCallback& result_callback) {
   std::vector<autofill::PasswordForm*> android_credentials;
-  for (auto* form : forms) {
-    if (IsValidAndroidCredential(*form))
-      android_credentials.push_back(form);
+  for (const auto& form : forms) {
+    if (IsValidAndroidCredential(PasswordStore::FormDigest(*form)))
+      android_credentials.push_back(form.get());
   }
   base::Closure on_get_all_realms(
       base::Bind(result_callback, base::Passed(&forms)));
@@ -131,22 +131,17 @@ void AffiliatedMatchHelper::TrimAffiliationCache() {
 
 // static
 bool AffiliatedMatchHelper::IsValidAndroidCredential(
-    const autofill::PasswordForm& form) {
+    const PasswordStore::FormDigest& form) {
   return form.scheme == autofill::PasswordForm::SCHEME_HTML &&
          IsValidAndroidFacetURI(form.signon_realm);
 }
 
 // static
 bool AffiliatedMatchHelper::IsValidWebCredential(
-    const autofill::PasswordForm& form) {
+    const PasswordStore::FormDigest& form) {
   FacetURI facet_uri(FacetURI::FromPotentiallyInvalidSpec(form.signon_realm));
-  return form.scheme == autofill::PasswordForm::SCHEME_HTML && form.ssl_valid &&
+  return form.scheme == autofill::PasswordForm::SCHEME_HTML &&
          facet_uri.IsValidWebFacetURI();
-}
-
-void AffiliatedMatchHelper::SetTaskRunnerUsedForWaitingForTesting(
-    const scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
-  task_runner_for_waiting_ = task_runner;
 }
 
 void AffiliatedMatchHelper::DoDeferredInitialization() {
@@ -217,8 +212,8 @@ void AffiliatedMatchHelper::OnLoginsChanged(
 }
 
 void AffiliatedMatchHelper::OnGetPasswordStoreResults(
-    ScopedVector<autofill::PasswordForm> results) {
-  for (autofill::PasswordForm* form : results) {
+    std::vector<std::unique_ptr<autofill::PasswordForm>> results) {
+  for (const auto& form : results) {
     FacetURI facet_uri;
     if (IsAndroidApplicationCredential(*form, &facet_uri))
       affiliation_service_->Prefetch(facet_uri, base::Time::Max());

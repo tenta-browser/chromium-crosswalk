@@ -23,15 +23,14 @@
 #include "base/gtest_prod_util.h"
 #include "base/lazy_instance.h"
 #include "base/macros.h"
+#include "base/memory/weak_ptr.h"
 #include "base/metrics/histogram_base.h"
 #include "base/strings/string_piece.h"
-
-class SubprocessMetricsProviderTest;
+#include "base/synchronization/lock.h"
 
 namespace base {
 
 class BucketRanges;
-class Lock;
 
 class BASE_EXPORT StatisticsRecorder {
  public:
@@ -64,8 +63,17 @@ class BASE_EXPORT StatisticsRecorder {
     }
   };
 
+  // An interface class that allows the StatisticsRecorder to forcibly merge
+  // histograms from providers when necessary.
+  class HistogramProvider {
+   public:
+    // Merges all histogram information into the global versions.
+    virtual void MergeHistogramDeltas() = 0;
+  };
+
   typedef std::map<StringKey, HistogramBase*> HistogramMap;
   typedef std::vector<HistogramBase*> Histograms;
+  typedef std::vector<WeakPtr<HistogramProvider>> HistogramProviders;
 
   // A class for iterating over the histograms held within this global resource.
   class BASE_EXPORT HistogramIterator {
@@ -103,6 +111,12 @@ class BASE_EXPORT StatisticsRecorder {
   // Find out if histograms can now be registered into our list.
   static bool IsActive();
 
+  // Register a provider of histograms that can be called to merge those into
+  // the global StatisticsRecorder. Calls to ImportProvidedHistograms() will
+  // fetch from registered providers.
+  static void RegisterHistogramProvider(
+      const WeakPtr<HistogramProvider>& provider);
+
   // Register, or add a new histogram to the collection of statistics. If an
   // identically named histogram is already registered, then the argument
   // |histogram| will deleted.  The returned value is always the registered
@@ -136,6 +150,9 @@ class BASE_EXPORT StatisticsRecorder {
   // safe.  It returns NULL if a matching histogram is not found.
   static HistogramBase* FindHistogram(base::StringPiece name);
 
+  // Imports histograms from providers. This must be called on the UI thread.
+  static void ImportProvidedHistograms();
+
   // Support for iterating over known histograms.
   static HistogramIterator begin(bool include_persistent);
   static HistogramIterator end();
@@ -167,6 +184,12 @@ class BASE_EXPORT StatisticsRecorder {
   // Returns the number of known histograms.
   static size_t GetHistogramCount();
 
+  // Initializes logging histograms with --v=1. Safe to call multiple times.
+  // Is called from ctor but for browser it seems that it is more useful to
+  // start logging after statistics recorder, so we need to init log-on-shutdown
+  // later.
+  static void InitLogOnShutdown();
+
   // Removes a histogram from the internal set of known ones. This can be
   // necessary during testing persistent histograms where the underlying
   // memory is being released.
@@ -195,6 +218,7 @@ class BASE_EXPORT StatisticsRecorder {
   typedef std::map<uint32_t, std::list<const BucketRanges*>*> RangesMap;
 
   friend struct DefaultLazyInstanceTraits<StatisticsRecorder>;
+  friend class StatisticsRecorderTest;
 
   // Imports histograms from global persistent memory. The global lock must
   // not be held during this call.
@@ -205,12 +229,19 @@ class BASE_EXPORT StatisticsRecorder {
   // call the constructor to get a clean StatisticsRecorder.
   StatisticsRecorder();
 
+  // Initialize implementation but without lock. Caller should guard
+  // StatisticsRecorder by itself if needed (it isn't in unit tests).
+  void InitLogOnShutdownWithoutLock();
+
   // These are copies of everything that existed when the (test) Statistics-
   // Recorder was created. The global ones have to be moved aside to create a
   // clean environment.
   std::unique_ptr<HistogramMap> existing_histograms_;
   std::unique_ptr<CallbackMap> existing_callbacks_;
   std::unique_ptr<RangesMap> existing_ranges_;
+  std::unique_ptr<HistogramProviders> existing_providers_;
+
+  bool vlog_initialized_ = false;
 
   static void Reset();
   static void DumpHistogramsToVlog(void* instance);
@@ -218,9 +249,13 @@ class BASE_EXPORT StatisticsRecorder {
   static HistogramMap* histograms_;
   static CallbackMap* callbacks_;
   static RangesMap* ranges_;
+  static HistogramProviders* providers_;
 
-  // Lock protects access to above maps.
-  static base::Lock* lock_;
+  // Lock protects access to above maps. This is a LazyInstance to avoid races
+  // when the above methods are used before Initialize(). Previously each method
+  // would do |if (!lock_) return;| which would race with
+  // |lock_ = new Lock;| in StatisticsRecorder(). http://crbug.com/672852.
+  static base::LazyInstance<base::Lock>::Leaky lock_;
 
   DISALLOW_COPY_AND_ASSIGN(StatisticsRecorder);
 };

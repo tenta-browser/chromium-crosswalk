@@ -4,10 +4,8 @@
 
 #import "ios/web/net/crw_ssl_status_updater.h"
 
-#import "base/ios/weak_nsobject.h"
 #import "base/mac/scoped_nsobject.h"
 #import "base/strings/sys_string_conversions.h"
-#include "ios/web/public/cert_store.h"
 #import "ios/web/public/navigation_item.h"
 #import "ios/web/public/navigation_manager.h"
 #include "ios/web/public/ssl_status.h"
@@ -15,36 +13,36 @@
 #include "net/cert/x509_certificate.h"
 #include "url/gurl.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
+using base::ScopedCFTypeRef;
 using net::CertStatus;
 using web::SecurityStyle;
 
 @interface CRWSSLStatusUpdater () {
   // DataSource for CRWSSLStatusUpdater.
-  base::WeakNSProtocol<id<CRWSSLStatusUpdaterDataSource>> _dataSource;
-  // Backs up property of the same name.
-  base::WeakNSProtocol<id<CRWSSLStatusUpdaterDelegate>> _delegate;
+  __weak id<CRWSSLStatusUpdaterDataSource> _dataSource;
 }
 
 // Unowned pointer to web::NavigationManager.
 @property(nonatomic, readonly) web::NavigationManager* navigationManager;
 
-// Identifier used for storing and retrieving certificates.
-@property(nonatomic, readonly) int certGroupID;
-
 // Updates |security_style| and |cert_status| for the NavigationItem with ID
 // |navigationItemID|, if URL and certificate chain still match |host| and
 // |certChain|.
-- (void)updateSSLStatusForNavigationItemWithID:(int)navigationItemID
-                                     certChain:(NSArray*)chain
-                                          host:(NSString*)host
-                             withSecurityStyle:(SecurityStyle)style
-                                    certStatus:(CertStatus)certStatus;
+- (void)updateSSLStatusForItemWithID:(int)navigationItemID
+                               trust:(ScopedCFTypeRef<SecTrustRef>)trust
+                                host:(NSString*)host
+                   withSecurityStyle:(SecurityStyle)style
+                          certStatus:(CertStatus)certStatus;
 
-// Asynchronously obtains SSL status from given |certChain| and |host| and
+// Asynchronously obtains SSL status from given |secTrust| and |host| and
 // updates current navigation item. Before scheduling update changes SSLStatus'
 // cert_status and security_style to default.
-- (void)scheduleSSLStatusUpdateUsingCertChain:(NSArray*)chain
-                                         host:(NSString*)host;
+- (void)scheduleSSLStatusUpdateUsingTrust:(ScopedCFTypeRef<SecTrustRef>)trust
+                                     host:(NSString*)host;
 
 // Notifies delegate about SSLStatus change.
 - (void)didChangeSSLStatusForNavigationItem:(web::NavigationItem*)navItem;
@@ -53,35 +51,24 @@ using web::SecurityStyle;
 
 @implementation CRWSSLStatusUpdater
 @synthesize navigationManager = _navigationManager;
-@synthesize certGroupID = _certGroupID;
+@synthesize delegate = _delegate;
 
 #pragma mark - Public
 
 - (instancetype)initWithDataSource:(id<CRWSSLStatusUpdaterDataSource>)dataSource
-                 navigationManager:(web::NavigationManager*)navigationManager
-                       certGroupID:(int)certGroupID {
+                 navigationManager:(web::NavigationManager*)navigationManager {
   DCHECK(dataSource);
   DCHECK(navigationManager);
-  DCHECK(certGroupID);
   if (self = [super init]) {
-    _dataSource.reset(dataSource);
+    _dataSource = dataSource;
     _navigationManager = navigationManager;
-    _certGroupID = certGroupID;
   }
   return self;
 }
 
-- (id<CRWSSLStatusUpdaterDelegate>)delegate {
-  return _delegate.get();
-}
-
-- (void)setDelegate:(id<CRWSSLStatusUpdaterDelegate>)delegate {
-  _delegate.reset(delegate);
-}
-
 - (void)updateSSLStatusForNavigationItem:(web::NavigationItem*)item
                             withCertHost:(NSString*)host
-                               certChain:(NSArray*)chain
+                                   trust:(ScopedCFTypeRef<SecTrustRef>)trust
                     hasOnlySecureContent:(BOOL)hasOnlySecureContent {
   web::SSLStatus previousSSLStatus = item->GetSSL();
 
@@ -94,30 +81,29 @@ using web::SecurityStyle;
   // Try updating SSLStatus for current NavigationItem asynchronously.
   scoped_refptr<net::X509Certificate> cert;
   if (item->GetURL().SchemeIsCryptographic()) {
-    cert = web::CreateCertFromChain(chain);
+    cert = web::CreateCertFromTrust(trust);
     if (cert) {
-      int oldCertID = item->GetSSL().cert_id;
+      scoped_refptr<net::X509Certificate> oldCert = item->GetSSL().certificate;
       std::string oldHost = item->GetSSL().cert_status_host;
-      item->GetSSL().cert_id = web::CertStore::GetInstance()->StoreCert(
-          cert.get(), self.certGroupID);
+      item->GetSSL().certificate = cert;
       item->GetSSL().cert_status_host = base::SysNSStringToUTF8(host);
       // Only recompute the SSLStatus information if the certificate or host has
       // since changed. Host can be changed in case of redirect.
-      if (oldCertID != item->GetSSL().cert_id ||
+      if (!oldCert || !oldCert->Equals(cert.get()) ||
           oldHost != item->GetSSL().cert_status_host) {
         // Real SSL status is unknown, reset cert status and security style.
         // They will be asynchronously updated in
-        // |scheduleSSLStatusUpdateUsingCertChain|.
+        // |scheduleSSLStatusUpdateUsingTrust:host:|.
         item->GetSSL().cert_status = CertStatus();
         item->GetSSL().security_style = web::SECURITY_STYLE_UNKNOWN;
 
-        [self scheduleSSLStatusUpdateUsingCertChain:chain host:host];
+        [self scheduleSSLStatusUpdateUsingTrust:std::move(trust) host:host];
       }
     }
   }
 
   if (!cert) {
-    item->GetSSL().cert_id = 0;
+    item->GetSSL().certificate = nullptr;
     if (!item->GetURL().SchemeIsCryptographic()) {
       // HTTP or other non-secure connection.
       item->GetSSL().security_style = web::SECURITY_STYLE_UNAUTHENTICATED;
@@ -134,11 +120,11 @@ using web::SecurityStyle;
 
 #pragma mark - Private
 
-- (void)updateSSLStatusForNavigationItemWithID:(int)navigationItemID
-                                     certChain:(NSArray*)chain
-                                          host:(NSString*)host
-                             withSecurityStyle:(SecurityStyle)style
-                                    certStatus:(CertStatus)certStatus {
+- (void)updateSSLStatusForItemWithID:(int)navigationItemID
+                               trust:(ScopedCFTypeRef<SecTrustRef>)trust
+                                host:(NSString*)host
+                   withSecurityStyle:(SecurityStyle)style
+                          certStatus:(CertStatus)certStatus {
   // The searched item almost always be the last one, so walk backward rather
   // than forward.
   for (int i = _navigationManager->GetItemCount() - 1; 0 <= i; i--) {
@@ -148,12 +134,11 @@ using web::SecurityStyle;
 
     // NavigationItem's UniqueID is preserved even after redirects, so
     // checking that cert and URL match is necessary.
-    scoped_refptr<net::X509Certificate> cert(web::CreateCertFromChain(chain));
-    int certID =
-        web::CertStore::GetInstance()->StoreCert(cert.get(), self.certGroupID);
+    scoped_refptr<net::X509Certificate> cert(web::CreateCertFromTrust(trust));
     std::string GURLHost = base::SysNSStringToUTF8(host);
     web::SSLStatus& SSLStatus = item->GetSSL();
-    if (item->GetURL().SchemeIsCryptographic() && SSLStatus.cert_id == certID &&
+    if (item->GetURL().SchemeIsCryptographic() && !!SSLStatus.certificate &&
+        SSLStatus.certificate->Equals(cert.get()) &&
         item->GetURL().host() == GURLHost) {
       web::SSLStatus previousSSLStatus = item->GetSSL();
       SSLStatus.cert_status = certStatus;
@@ -166,24 +151,24 @@ using web::SecurityStyle;
   }
 }
 
-- (void)scheduleSSLStatusUpdateUsingCertChain:(NSArray*)chain
-                                         host:(NSString*)host {
+- (void)scheduleSSLStatusUpdateUsingTrust:(ScopedCFTypeRef<SecTrustRef>)trust
+                                     host:(NSString*)host {
   // Use Navigation Item's unique ID to locate requested item after
   // obtaining cert status asynchronously.
   int itemID = _navigationManager->GetLastCommittedItem()->GetUniqueID();
 
   DCHECK(_dataSource);
-  base::WeakNSObject<CRWSSLStatusUpdater> weakSelf(self);
+  __weak CRWSSLStatusUpdater* weakSelf = self;
   [_dataSource SSLStatusUpdater:self
-      querySSLStatusForCertChain:chain
-                            host:host
-               completionHandler:^(SecurityStyle style, CertStatus certStatus) {
-                 [weakSelf updateSSLStatusForNavigationItemWithID:itemID
-                                                        certChain:chain
-                                                             host:host
-                                                withSecurityStyle:style
-                                                       certStatus:certStatus];
-               }];
+         querySSLStatusForTrust:trust
+                           host:host
+              completionHandler:^(SecurityStyle style, CertStatus certStatus) {
+                [weakSelf updateSSLStatusForItemWithID:itemID
+                                                 trust:std::move(trust)
+                                                  host:host
+                                     withSecurityStyle:style
+                                            certStatus:certStatus];
+              }];
 }
 
 - (void)didChangeSSLStatusForNavigationItem:(web::NavigationItem*)navItem {

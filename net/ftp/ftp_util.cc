@@ -45,12 +45,12 @@ std::string FtpUtil::UnixFilePathToVMS(const std::string& unix_path) {
     // It's an absolute path.
 
     if (tokens.empty()) {
-      DCHECK_EQ(1U, unix_path.length());
+      // It's just "/" or a series of slashes, which all mean the same thing.
       return "[]";
     }
 
     if (tokens.size() == 1)
-      return unix_path.substr(1);  // Drop the leading slash.
+      return tokens.front();  // Return without leading slashes.
 
     std::string result(tokens[0] + ":[");
     if (tokens.size() == 2) {
@@ -61,7 +61,7 @@ std::string FtpUtil::UnixFilePathToVMS(const std::string& unix_path) {
       for (size_t i = 2; i < tokens.size() - 1; i++)
         result.append("." + tokens[i]);
     }
-    result.append("]" + tokens[tokens.size() - 1]);
+    result.append("]" + tokens.back());
     return result;
   }
 
@@ -71,7 +71,7 @@ std::string FtpUtil::UnixFilePathToVMS(const std::string& unix_path) {
   std::string result("[");
   for (size_t i = 0; i < tokens.size() - 1; i++)
     result.append("." + tokens[i]);
-  result.append("]" + tokens[tokens.size() - 1]);
+  result.append("]" + tokens.back());
   return result;
 }
 
@@ -272,7 +272,7 @@ bool FtpUtil::LsDateListingToTime(const base::string16& month,
 
     // Guess the year.
     base::Time::Exploded current_exploded;
-    current_time.LocalExplode(&current_exploded);
+    current_time.UTCExplode(&current_exploded);
 
     // If it's not possible for the parsed date to be in the current year,
     // use the previous year.
@@ -285,9 +285,8 @@ bool FtpUtil::LsDateListingToTime(const base::string16& month,
     }
   }
 
-  // We don't know the time zone of the listing, so just use local time.
-  *result = base::Time::FromLocalExploded(time_exploded);
-  return true;
+  // We don't know the time zone of the listing, so just use UTC.
+  return base::Time::FromUTCExploded(time_exploded, result);
 }
 
 // static
@@ -348,9 +347,8 @@ bool FtpUtil::WindowsDateListingToTime(const base::string16& date,
     }
   }
 
-  // We don't know the time zone of the server, so just use local time.
-  *result = base::Time::FromLocalExploded(time_exploded);
-  return true;
+  // We don't know the time zone of the server, so just use UTC.
+  return base::Time::FromUTCExploded(time_exploded, result);
 }
 
 // static
@@ -373,4 +371,4 @@ base::string16 FtpUtil::GetStringPartAfterColumns(const base::string16& text,
   return result;
 }
 
-}  // namespace
+}  // namespace net

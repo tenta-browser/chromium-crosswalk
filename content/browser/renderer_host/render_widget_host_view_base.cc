@@ -13,9 +13,10 @@
 #include "content/browser/renderer_host/render_widget_host_delegate.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_view_base_observer.h"
+#include "content/browser/renderer_host/render_widget_host_view_frame_subscriber.h"
 #include "content/browser/renderer_host/text_input_manager.h"
 #include "content/common/content_switches_internal.h"
-#include "content/public/browser/render_widget_host_view_frame_subscriber.h"
+#include "media/base/video_frame.h"
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/gfx/geometry/point_conversions.h"
@@ -32,18 +33,17 @@ const int kFlushInputRateInUs = 16666;
 }
 
 RenderWidgetHostViewBase::RenderWidgetHostViewBase()
-    : popup_type_(blink::WebPopupTypeNone),
+    : is_fullscreen_(false),
+      popup_type_(blink::WebPopupTypeNone),
       background_color_(SK_ColorWHITE),
       mouse_locked_(false),
       showing_context_menu_(false),
-      selection_text_offset_(0),
-      selection_range_(gfx::Range::InvalidRange()),
       current_device_scale_factor_(0),
       current_display_rotation_(display::Display::ROTATE_0),
-      pinch_zoom_enabled_(content::IsPinchToZoomEnabled()),
       text_input_manager_(nullptr),
       renderer_frame_number_(0),
-      weak_factory_(this) {}
+      weak_factory_(this) {
+}
 
 RenderWidgetHostViewBase::~RenderWidgetHostViewBase() {
   DCHECK(!mouse_locked_);
@@ -61,12 +61,24 @@ RenderWidgetHostViewBase::~RenderWidgetHostViewBase() {
     text_input_manager_->Unregister(this);
 }
 
+RenderWidgetHostImpl* RenderWidgetHostViewBase::GetFocusedWidget() const {
+  RenderWidgetHostImpl* host =
+      RenderWidgetHostImpl::From(GetRenderWidgetHost());
+
+  return host && host->delegate()
+             ? host->delegate()->GetFocusedRenderWidgetHost(host)
+             : nullptr;
+}
+
+RenderWidgetHost* RenderWidgetHostViewBase::GetRenderWidgetHost() const {
+  return nullptr;
+}
+
 void RenderWidgetHostViewBase::NotifyObserversAboutShutdown() {
   // Note: RenderWidgetHostInputEventRouter is an observer, and uses the
   // following notification to remove this view from its surface owners map.
-  FOR_EACH_OBSERVER(RenderWidgetHostViewBaseObserver,
-                    observers_,
-                    OnRenderWidgetHostViewBaseDestroyed(this));
+  for (auto& observer : observers_)
+    observer.OnRenderWidgetHostViewBaseDestroyed(this);
   // All observers are required to disconnect after they are notified.
   DCHECK(!observers_.might_have_observers());
 }
@@ -77,6 +89,10 @@ bool RenderWidgetHostViewBase::OnMessageReceived(const IPC::Message& msg){
 
 void RenderWidgetHostViewBase::SetBackgroundColor(SkColor color) {
   background_color_ = color;
+}
+
+SkColor RenderWidgetHostViewBase::background_color() {
+  return background_color_;
 }
 
 void RenderWidgetHostViewBase::SetBackgroundColorToDefault() {
@@ -94,7 +110,7 @@ gfx::Size RenderWidgetHostViewBase::GetPhysicalBackingSize() const {
                                 display.device_scale_factor());
 }
 
-bool RenderWidgetHostViewBase::DoTopControlsShrinkBlinkSize() const {
+bool RenderWidgetHostViewBase::DoBrowserControlsShrinkBlinkSize() const {
   return false;
 }
 
@@ -102,13 +118,25 @@ float RenderWidgetHostViewBase::GetTopControlsHeight() const {
   return 0.f;
 }
 
+void RenderWidgetHostViewBase::SelectionBoundsChanged(
+    const ViewHostMsg_SelectionBounds_Params& params) {
+#if !defined(OS_ANDROID)
+  if (GetTextInputManager())
+    GetTextInputManager()->SelectionBoundsChanged(this, params);
+#else
+  NOTREACHED() << "Selection bounds should be routed through the compositor.";
+#endif
+}
+
+float RenderWidgetHostViewBase::GetBottomControlsHeight() const {
+  return 0.f;
+}
+
 void RenderWidgetHostViewBase::SelectionChanged(const base::string16& text,
                                                 size_t offset,
                                                 const gfx::Range& range) {
-  selection_text_ = text;
-  selection_text_offset_ = offset;
-  selection_range_.set_start(range.start());
-  selection_range_.set_end(range.end());
+  if (GetTextInputManager())
+    GetTextInputManager()->SelectionChanged(this, text, offset, range);
 }
 
 gfx::Size RenderWidgetHostViewBase::GetRequestedRendererSize() const {
@@ -120,6 +148,36 @@ ui::TextInputClient* RenderWidgetHostViewBase::GetTextInputClient() {
   return NULL;
 }
 
+void RenderWidgetHostViewBase::SetIsInVR(bool is_in_vr) {
+  NOTIMPLEMENTED();
+}
+
+bool RenderWidgetHostViewBase::IsInVR() const {
+  NOTIMPLEMENTED();
+  return false;
+}
+
+bool RenderWidgetHostViewBase::IsSurfaceAvailableForCopy() const {
+  return false;
+}
+
+void RenderWidgetHostViewBase::CopyFromSurface(
+    const gfx::Rect& src_rect,
+    const gfx::Size& output_size,
+    const ReadbackRequestCallback& callback,
+    const SkColorType color_type) {
+  NOTIMPLEMENTED();
+  callback.Run(SkBitmap(), READBACK_SURFACE_UNAVAILABLE);
+}
+
+void RenderWidgetHostViewBase::CopyFromSurfaceToVideoFrame(
+    const gfx::Rect& src_rect,
+    scoped_refptr<media::VideoFrame> target,
+    const base::Callback<void(const gfx::Rect&, bool)>& callback) {
+  NOTIMPLEMENTED();
+  callback.Run(gfx::Rect(), false);
+}
+
 bool RenderWidgetHostViewBase::IsShowingContextMenu() const {
   return showing_context_menu_;
 }
@@ -129,12 +187,10 @@ void RenderWidgetHostViewBase::SetShowingContextMenu(bool showing) {
   showing_context_menu_ = showing;
 }
 
-base::string16 RenderWidgetHostViewBase::GetSelectedText() const {
-  if (!selection_range_.IsValid())
+base::string16 RenderWidgetHostViewBase::GetSelectedText() {
+  if (!GetTextInputManager())
     return base::string16();
-  return selection_text_.substr(
-      selection_range_.GetMin() - selection_text_offset_,
-      selection_range_.length());
+  return GetTextInputManager()->GetTextSelection(this)->selected_text();
 }
 
 bool RenderWidgetHostViewBase::IsMouseLocked() {
@@ -286,13 +342,6 @@ void RenderWidgetHostViewBase::FlushInput() {
   impl->FlushInput();
 }
 
-void RenderWidgetHostViewBase::OnTextSurroundingSelectionResponse(
-    const base::string16& content,
-    size_t start_offset,
-    size_t end_offset) {
-  NOTIMPLEMENTED();
-}
-
 void RenderWidgetHostViewBase::ShowDisambiguationPopup(
     const gfx::Rect& rect_pixels,
     const SkBitmap& zoomed_bitmap) {
@@ -308,8 +357,7 @@ void RenderWidgetHostViewBase::SetInsets(const gfx::Insets& insets) {
 }
 
 // static
-blink::WebScreenOrientationType
-RenderWidgetHostViewBase::GetOrientationTypeForMobile(
+ScreenOrientationValues RenderWidgetHostViewBase::GetOrientationTypeForMobile(
     const display::Display& display) {
   int angle = display.RotationAsDegree();
   const gfx::Rect& bounds = display.bounds();
@@ -323,26 +371,25 @@ RenderWidgetHostViewBase::GetOrientationTypeForMobile(
 
   switch (angle) {
   case 0:
-    return natural_portrait ? blink::WebScreenOrientationPortraitPrimary
-                           : blink::WebScreenOrientationLandscapePrimary;
+    return natural_portrait ? SCREEN_ORIENTATION_VALUES_PORTRAIT_PRIMARY
+                            : SCREEN_ORIENTATION_VALUES_LANDSCAPE_PRIMARY;
   case 90:
-    return natural_portrait ? blink::WebScreenOrientationLandscapePrimary
-                           : blink::WebScreenOrientationPortraitSecondary;
+    return natural_portrait ? SCREEN_ORIENTATION_VALUES_LANDSCAPE_PRIMARY
+                            : SCREEN_ORIENTATION_VALUES_PORTRAIT_SECONDARY;
   case 180:
-    return natural_portrait ? blink::WebScreenOrientationPortraitSecondary
-                           : blink::WebScreenOrientationLandscapeSecondary;
+    return natural_portrait ? SCREEN_ORIENTATION_VALUES_PORTRAIT_SECONDARY
+                            : SCREEN_ORIENTATION_VALUES_LANDSCAPE_SECONDARY;
   case 270:
-    return natural_portrait ? blink::WebScreenOrientationLandscapeSecondary
-                           : blink::WebScreenOrientationPortraitPrimary;
+    return natural_portrait ? SCREEN_ORIENTATION_VALUES_LANDSCAPE_SECONDARY
+                            : SCREEN_ORIENTATION_VALUES_PORTRAIT_PRIMARY;
   default:
     NOTREACHED();
-    return blink::WebScreenOrientationPortraitPrimary;
+    return SCREEN_ORIENTATION_VALUES_PORTRAIT_PRIMARY;
   }
 }
 
 // static
-blink::WebScreenOrientationType
-RenderWidgetHostViewBase::GetOrientationTypeForDesktop(
+ScreenOrientationValues RenderWidgetHostViewBase::GetOrientationTypeForDesktop(
     const display::Display& display) {
   static int primary_landscape_angle = -1;
   static int primary_portrait_angle = -1;
@@ -359,28 +406,28 @@ RenderWidgetHostViewBase::GetOrientationTypeForDesktop(
 
   if (is_portrait) {
     return primary_portrait_angle == angle
-        ? blink::WebScreenOrientationPortraitPrimary
-        : blink::WebScreenOrientationPortraitSecondary;
+        ? SCREEN_ORIENTATION_VALUES_PORTRAIT_PRIMARY
+        : SCREEN_ORIENTATION_VALUES_PORTRAIT_SECONDARY;
   }
 
   return primary_landscape_angle == angle
-      ? blink::WebScreenOrientationLandscapePrimary
-      : blink::WebScreenOrientationLandscapeSecondary;
+      ? SCREEN_ORIENTATION_VALUES_LANDSCAPE_PRIMARY
+      : SCREEN_ORIENTATION_VALUES_LANDSCAPE_SECONDARY;
 }
 
 void RenderWidgetHostViewBase::OnDidNavigateMainFrameToNewPage() {
 }
 
-uint32_t RenderWidgetHostViewBase::GetSurfaceIdNamespace() {
-  return 0;
+cc::FrameSinkId RenderWidgetHostViewBase::GetFrameSinkId() {
+  return cc::FrameSinkId();
 }
 
-uint32_t RenderWidgetHostViewBase::SurfaceIdNamespaceAtPoint(
+cc::FrameSinkId RenderWidgetHostViewBase::FrameSinkIdAtPoint(
     cc::SurfaceHittestDelegate* delegate,
     const gfx::Point& point,
     gfx::Point* transformed_point) {
   NOTREACHED();
-  return 0;
+  return cc::FrameSinkId();
 }
 
 gfx::Point RenderWidgetHostViewBase::TransformPointToRootCoordSpace(
@@ -394,28 +441,48 @@ gfx::PointF RenderWidgetHostViewBase::TransformPointToRootCoordSpaceF(
       gfx::ToRoundedPoint(point)));
 }
 
-void RenderWidgetHostViewBase::TransformPointToLocalCoordSpace(
+bool RenderWidgetHostViewBase::TransformPointToLocalCoordSpace(
     const gfx::Point& point,
-    cc::SurfaceId original_surface,
+    const cc::SurfaceId& original_surface,
     gfx::Point* transformed_point) {
   *transformed_point = point;
+  return true;
+}
+
+bool RenderWidgetHostViewBase::TransformPointToCoordSpaceForView(
+    const gfx::Point& point,
+    RenderWidgetHostViewBase* target_view,
+    gfx::Point* transformed_point) {
+  NOTREACHED();
+  return true;
+}
+
+bool RenderWidgetHostViewBase::IsRenderWidgetHostViewGuest() {
+  return false;
+}
+
+bool RenderWidgetHostViewBase::IsRenderWidgetHostViewChildFrame() {
+  return false;
 }
 
 void RenderWidgetHostViewBase::TextInputStateChanged(
     const TextInputState& text_input_state) {
-// TODO(ekaramad): Use TextInputManager code paths for IME on other platforms.
-#if defined(USE_AURA)
   if (GetTextInputManager())
     GetTextInputManager()->UpdateTextInputState(this, text_input_state);
-#endif
 }
 
 void RenderWidgetHostViewBase::ImeCancelComposition() {
-// TODO(ekaramad): Use TextInputManager code paths for IME on other platforms.
-#if defined(USE_AURA)
   if (GetTextInputManager())
     GetTextInputManager()->ImeCancelComposition(this);
-#endif
+}
+
+void RenderWidgetHostViewBase::ImeCompositionRangeChanged(
+    const gfx::Range& range,
+    const std::vector<gfx::Rect>& character_bounds) {
+  if (GetTextInputManager()) {
+    GetTextInputManager()->ImeCompositionRangeChanged(this, range,
+                                                      character_bounds);
+  }
 }
 
 TextInputManager* RenderWidgetHostViewBase::GetTextInputManager() {

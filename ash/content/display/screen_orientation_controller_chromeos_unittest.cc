@@ -8,17 +8,22 @@
 #include <vector>
 
 #include "ash/common/ash_switches.h"
-#include "ash/common/display/display_info.h"
+#include "ash/common/test/test_system_tray_delegate.h"
+#include "ash/common/wm/maximize_mode/maximize_mode_controller.h"
+#include "ash/common/wm/window_state.h"
+#include "ash/common/wm_shell.h"
+#include "ash/common/wm_window.h"
 #include "ash/content/shell_content_state.h"
-#include "ash/display/display_manager.h"
+#include "ash/display/screen_orientation_controller_chromeos.h"
+#include "ash/shared/app_types.h"
 #include "ash/shell.h"
+#include "ash/system/chromeos/screen_layout_observer.h"
 #include "ash/test/ash_test_base.h"
+#include "ash/test/ash_test_environment_content.h"
 #include "ash/test/ash_test_helper.h"
 #include "ash/test/content/test_shell_content_state.h"
-#include "ash/test/display_manager_test_api.h"
+#include "ash/test/screen_orientation_controller_test_api.h"
 #include "ash/test/test_shell_delegate.h"
-#include "ash/test/test_system_tray_delegate.h"
-#include "ash/wm/maximize_mode/maximize_mode_controller.h"
 #include "base/command_line.h"
 #include "chromeos/accelerometer/accelerometer_reader.h"
 #include "chromeos/accelerometer/accelerometer_types.h"
@@ -28,6 +33,10 @@
 #include "third_party/WebKit/public/platform/modules/screen_orientation/WebScreenOrientationLockType.h"
 #include "ui/aura/window.h"
 #include "ui/display/display.h"
+#include "ui/display/display_switches.h"
+#include "ui/display/manager/display_manager.h"
+#include "ui/display/manager/managed_display_info.h"
+#include "ui/display/test/display_manager_test_api.h"
 #include "ui/message_center/message_center.h"
 #include "ui/views/test/webview_test_helper.h"
 #include "ui/views/view.h"
@@ -41,22 +50,28 @@ namespace {
 const float kDegreesToRadians = 3.1415926f / 180.0f;
 const float kMeanGravity = -9.8066f;
 
-DisplayInfo CreateDisplayInfo(int64_t id, const gfx::Rect& bounds) {
-  DisplayInfo info(id, "dummy", false);
+display::ManagedDisplayInfo CreateDisplayInfo(int64_t id,
+                                              const gfx::Rect& bounds) {
+  display::ManagedDisplayInfo info(id, "dummy", false);
   info.SetBounds(bounds);
   return info;
 }
 
 void EnableMaximizeMode(bool enable) {
-  Shell::GetInstance()
-      ->maximize_mode_controller()
-      ->EnableMaximizeModeWindowManager(enable);
+  WmShell::Get()->maximize_mode_controller()->EnableMaximizeModeWindowManager(
+      enable);
 }
 
 bool RotationLocked() {
   return Shell::GetInstance()
       ->screen_orientation_controller()
       ->rotation_locked();
+}
+
+bool UserRotationLocked() {
+  return Shell::GetInstance()
+      ->screen_orientation_controller()
+      ->user_rotation_locked();
 }
 
 void SetDisplayRotationById(int64_t display_id,
@@ -67,11 +82,6 @@ void SetDisplayRotationById(int64_t display_id,
 
 void SetInternalDisplayRotation(display::Display::Rotation rotation) {
   SetDisplayRotationById(display::Display::InternalDisplayId(), rotation);
-}
-
-void SetRotationLocked(bool rotation_locked) {
-  Shell::GetInstance()->screen_orientation_controller()->SetRotationLocked(
-      rotation_locked);
 }
 
 void TriggerLidUpdate(const gfx::Vector3dF& lid) {
@@ -107,8 +117,10 @@ class ScreenOrientationControllerTest : public test::AshTestBase {
   ~ScreenOrientationControllerTest() override;
 
   content::ScreenOrientationDelegate* delegate() {
-    return ash_test_helper()
-        ->test_shell_content_state()
+    test::AshTestEnvironmentContent* test_environment_content =
+        static_cast<test::AshTestEnvironmentContent*>(
+            ash_test_helper()->ash_test_environment());
+    return test_environment_content->test_shell_content_state()
         ->screen_orientation_delegate();
   }
 
@@ -122,6 +134,35 @@ class ScreenOrientationControllerTest : public test::AshTestBase {
 
   // test::AshTestBase:
   void SetUp() override;
+
+ protected:
+  aura::Window* CreateAppWindowInShellWithId(int id) {
+    aura::Window* window = CreateTestWindowInShellWithId(id);
+    WmWindow::Get(window)->SetAppType(static_cast<int>(AppType::CHROME_APP));
+    return window;
+  }
+
+  void SetSystemRotationLocked(bool rotation_locked) {
+    test::ScreenOrientationControllerTestApi(
+        Shell::GetInstance()->screen_orientation_controller())
+        .SetRotationLocked(rotation_locked);
+  }
+
+  void SetUserRotationLocked(bool rotation_locked) {
+    if (Shell::GetInstance()
+            ->screen_orientation_controller()
+            ->user_rotation_locked() != rotation_locked) {
+      Shell::GetInstance()
+          ->screen_orientation_controller()
+          ->ToggleUserRotationLock();
+    }
+  }
+
+  blink::WebScreenOrientationLockType UserLockedOrientation() const {
+    test::ScreenOrientationControllerTestApi test_api(
+        Shell::GetInstance()->screen_orientation_controller());
+    return test_api.UserLockedOrientation();
+  }
 
  private:
   // Optional content::BrowserContext used for two window tests.
@@ -154,16 +195,14 @@ ScreenOrientationControllerTest::CreateSecondaryWebContents() {
 
 void ScreenOrientationControllerTest::SetUp() {
   base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      switches::kAshUseFirstDisplayAsInternal);
-  base::CommandLine::ForCurrentProcess()->AppendSwitch(
-      switches::kAshEnableTouchViewTesting);
+      ::switches::kUseFirstDisplayAsInternal);
   test::AshTestBase::SetUp();
 }
 
 // Tests that a content::WebContents can lock rotation.
 TEST_F(ScreenOrientationControllerTest, LockOrientation) {
   std::unique_ptr<content::WebContents> content(CreateWebContents());
-  std::unique_ptr<aura::Window> focus_window(CreateTestWindowInShellWithId(0));
+  std::unique_ptr<aura::Window> focus_window(CreateAppWindowInShellWithId(0));
   ASSERT_NE(nullptr, content->GetNativeView());
   ASSERT_EQ(display::Display::ROTATE_0, GetCurrentInternalDisplayRotation());
   ASSERT_FALSE(RotationLocked());
@@ -177,7 +216,7 @@ TEST_F(ScreenOrientationControllerTest, LockOrientation) {
 // Tests that a content::WebContents can unlock rotation.
 TEST_F(ScreenOrientationControllerTest, Unlock) {
   std::unique_ptr<content::WebContents> content(CreateWebContents());
-  std::unique_ptr<aura::Window> focus_window(CreateTestWindowInShellWithId(0));
+  std::unique_ptr<aura::Window> focus_window(CreateAppWindowInShellWithId(0));
   ASSERT_NE(nullptr, content->GetNativeView());
   ASSERT_EQ(display::Display::ROTATE_0, GetCurrentInternalDisplayRotation());
   ASSERT_FALSE(RotationLocked());
@@ -195,7 +234,7 @@ TEST_F(ScreenOrientationControllerTest, Unlock) {
 // display after having locked rotation.
 TEST_F(ScreenOrientationControllerTest, OrientationChanges) {
   std::unique_ptr<content::WebContents> content(CreateWebContents());
-  std::unique_ptr<aura::Window> focus_window(CreateTestWindowInShellWithId(0));
+  std::unique_ptr<aura::Window> focus_window(CreateAppWindowInShellWithId(0));
   ASSERT_NE(nullptr, content->GetNativeView());
   ASSERT_EQ(display::Display::ROTATE_0, GetCurrentInternalDisplayRotation());
   ASSERT_FALSE(RotationLocked());
@@ -214,8 +253,8 @@ TEST_F(ScreenOrientationControllerTest, OrientationChanges) {
 TEST_F(ScreenOrientationControllerTest, SecondContentCannotChangeOrientation) {
   std::unique_ptr<content::WebContents> content1(CreateWebContents());
   std::unique_ptr<content::WebContents> content2(CreateSecondaryWebContents());
-  std::unique_ptr<aura::Window> focus_window1(CreateTestWindowInShellWithId(0));
-  std::unique_ptr<aura::Window> focus_window2(CreateTestWindowInShellWithId(1));
+  std::unique_ptr<aura::Window> focus_window1(CreateAppWindowInShellWithId(0));
+  std::unique_ptr<aura::Window> focus_window2(CreateAppWindowInShellWithId(1));
   ASSERT_NE(content1->GetNativeView(), content2->GetNativeView());
 
   AttachAndActivateWebContents(content1.get(), focus_window1.get());
@@ -230,8 +269,8 @@ TEST_F(ScreenOrientationControllerTest, SecondContentCannotChangeOrientation) {
 TEST_F(ScreenOrientationControllerTest, SecondContentCannotUnlock) {
   std::unique_ptr<content::WebContents> content1(CreateWebContents());
   std::unique_ptr<content::WebContents> content2(CreateSecondaryWebContents());
-  std::unique_ptr<aura::Window> focus_window1(CreateTestWindowInShellWithId(0));
-  std::unique_ptr<aura::Window> focus_window2(CreateTestWindowInShellWithId(1));
+  std::unique_ptr<aura::Window> focus_window1(CreateAppWindowInShellWithId(0));
+  std::unique_ptr<aura::Window> focus_window2(CreateAppWindowInShellWithId(1));
   ASSERT_NE(content1->GetNativeView(), content2->GetNativeView());
 
   AttachAndActivateWebContents(content1.get(), focus_window1.get());
@@ -245,8 +284,8 @@ TEST_F(ScreenOrientationControllerTest, SecondContentCannotUnlock) {
 // a part of the active window.
 TEST_F(ScreenOrientationControllerTest, ActiveWindowChangesUpdateLock) {
   std::unique_ptr<content::WebContents> content(CreateWebContents());
-  std::unique_ptr<aura::Window> focus_window1(CreateTestWindowInShellWithId(0));
-  std::unique_ptr<aura::Window> focus_window2(CreateTestWindowInShellWithId(1));
+  std::unique_ptr<aura::Window> focus_window1(CreateAppWindowInShellWithId(0));
+  std::unique_ptr<aura::Window> focus_window2(CreateAppWindowInShellWithId(1));
 
   AttachAndActivateWebContents(content.get(), focus_window1.get());
   delegate()->Lock(content.get(), blink::WebScreenOrientationLockLandscape);
@@ -266,8 +305,8 @@ TEST_F(ScreenOrientationControllerTest, ActiveWindowChangesUpdateLock) {
 TEST_F(ScreenOrientationControllerTest, ActiveWindowChangesUpdateOrientation) {
   std::unique_ptr<content::WebContents> content1(CreateWebContents());
   std::unique_ptr<content::WebContents> content2(CreateSecondaryWebContents());
-  std::unique_ptr<aura::Window> focus_window1(CreateTestWindowInShellWithId(0));
-  std::unique_ptr<aura::Window> focus_window2(CreateTestWindowInShellWithId(1));
+  std::unique_ptr<aura::Window> focus_window1(CreateAppWindowInShellWithId(0));
+  std::unique_ptr<aura::Window> focus_window2(CreateAppWindowInShellWithId(1));
   AttachAndActivateWebContents(content1.get(), focus_window1.get());
   AttachWebContents(content2.get(), focus_window2.get());
 
@@ -290,7 +329,7 @@ TEST_F(ScreenOrientationControllerTest, ActiveWindowChangesUpdateOrientation) {
 // that it is reapplied when the window becomes visible.
 TEST_F(ScreenOrientationControllerTest, VisibilityChangesLock) {
   std::unique_ptr<content::WebContents> content(CreateWebContents());
-  std::unique_ptr<aura::Window> focus_window(CreateTestWindowInShellWithId(0));
+  std::unique_ptr<aura::Window> focus_window(CreateAppWindowInShellWithId(0));
   AttachAndActivateWebContents(content.get(), focus_window.get());
   delegate()->Lock(content.get(), blink::WebScreenOrientationLockLandscape);
   EXPECT_TRUE(RotationLocked());
@@ -307,8 +346,8 @@ TEST_F(ScreenOrientationControllerTest, VisibilityChangesLock) {
 // window activations no longer change the lock
 TEST_F(ScreenOrientationControllerTest, WindowDestructionRemovesLock) {
   std::unique_ptr<content::WebContents> content(CreateWebContents());
-  std::unique_ptr<aura::Window> focus_window1(CreateTestWindowInShellWithId(0));
-  std::unique_ptr<aura::Window> focus_window2(CreateTestWindowInShellWithId(1));
+  std::unique_ptr<aura::Window> focus_window1(CreateAppWindowInShellWithId(0));
+  std::unique_ptr<aura::Window> focus_window2(CreateAppWindowInShellWithId(1));
 
   AttachAndActivateWebContents(content.get(), focus_window1.get());
   delegate()->Lock(content.get(), blink::WebScreenOrientationLockLandscape);
@@ -394,7 +433,7 @@ TEST_F(ScreenOrientationControllerTest, RotationSticky) {
 // rotation lock has been set.
 TEST_F(ScreenOrientationControllerTest, RotationLockPreventsRotation) {
   EnableMaximizeMode(true);
-  SetRotationLocked(true);
+  SetUserRotationLocked(true);
 
   // Turn past the threshold for rotation.
   float degrees = 90.0;
@@ -404,20 +443,22 @@ TEST_F(ScreenOrientationControllerTest, RotationLockPreventsRotation) {
   TriggerLidUpdate(gravity);
   EXPECT_EQ(display::Display::ROTATE_0, GetCurrentInternalDisplayRotation());
 
-  SetRotationLocked(false);
+  SetUserRotationLocked(false);
   TriggerLidUpdate(gravity);
   EXPECT_EQ(display::Display::ROTATE_90, GetCurrentInternalDisplayRotation());
 }
 
-// The TrayDisplay class that is responsible for adding/updating MessageCenter
-// notifications is only added to the SystemTray on ChromeOS.
+// The ScreenLayoutObserver class that is responsible for adding/updating
+// MessageCenter notifications is only added to the SystemTray on ChromeOS.
 // Tests that the screen rotation notifications are suppressed when
 // triggered by the accelerometer.
 TEST_F(ScreenOrientationControllerTest, BlockRotationNotifications) {
   EnableMaximizeMode(true);
-  test::TestSystemTrayDelegate* tray_delegate = GetSystemTrayDelegate();
-  tray_delegate->set_should_show_display_notification(true);
-  test::DisplayManagerTestApi().SetFirstDisplayAsInternalDisplay();
+  Shell::GetInstance()
+      ->screen_layout_observer()
+      ->set_show_notifications_for_testing(true);
+  display::test::DisplayManagerTestApi(display_manager())
+      .SetFirstDisplayAsInternalDisplay();
 
   message_center::MessageCenter* message_center =
       message_center::MessageCenter::Get();
@@ -429,7 +470,7 @@ TEST_F(ScreenOrientationControllerTest, BlockRotationNotifications) {
   // adjusting the screen rotation directly when in maximize mode
   ASSERT_NE(display::Display::ROTATE_270, GetCurrentInternalDisplayRotation());
   SetInternalDisplayRotation(display::Display::ROTATE_270);
-  SetRotationLocked(false);
+  SetSystemRotationLocked(false);
   EXPECT_EQ(display::Display::ROTATE_270, GetCurrentInternalDisplayRotation());
   EXPECT_EQ(1u, message_center->NotificationCount());
   EXPECT_TRUE(message_center->HasPopupNotifications());
@@ -443,7 +484,7 @@ TEST_F(ScreenOrientationControllerTest, BlockRotationNotifications) {
   // Make sure notifications are blocked when adjusting the screen rotation
   // via the accelerometer while in maximize mode
   // Rotate the screen 90 degrees
-  ASSERT_NE(display::Display::ROTATE_90, GetCurrentInternalDisplayRotation());
+  ASSERT_EQ(display::Display::ROTATE_270, GetCurrentInternalDisplayRotation());
   TriggerLidUpdate(gfx::Vector3dF(-kMeanGravity, 0.0f, 0.0f));
   ASSERT_EQ(display::Display::ROTATE_90, GetCurrentInternalDisplayRotation());
   EXPECT_EQ(0u, message_center->NotificationCount());
@@ -469,7 +510,8 @@ TEST_F(ScreenOrientationControllerTest, BlockRotationNotifications) {
 // Tests that if a user has set a display rotation that it is restored upon
 // exiting maximize mode.
 TEST_F(ScreenOrientationControllerTest, ResetUserRotationUponExit) {
-  test::DisplayManagerTestApi().SetFirstDisplayAsInternalDisplay();
+  display::test::DisplayManagerTestApi(display_manager())
+      .SetFirstDisplayAsInternalDisplay();
 
   SetInternalDisplayRotation(display::Display::ROTATE_90);
   EnableMaximizeMode(true);
@@ -508,7 +550,7 @@ TEST_F(ScreenOrientationControllerTest, UpdateUserRotationWhileRotationLocked) {
 // be done between the two angles of the orientation.
 TEST_F(ScreenOrientationControllerTest, LandscapeOrientationAllowsRotation) {
   std::unique_ptr<content::WebContents> content(CreateWebContents());
-  std::unique_ptr<aura::Window> focus_window(CreateTestWindowInShellWithId(0));
+  std::unique_ptr<aura::Window> focus_window(CreateAppWindowInShellWithId(0));
   EnableMaximizeMode(true);
 
   AttachAndActivateWebContents(content.get(), focus_window.get());
@@ -531,7 +573,7 @@ TEST_F(ScreenOrientationControllerTest, LandscapeOrientationAllowsRotation) {
 // done between the two angles of the orientation.
 TEST_F(ScreenOrientationControllerTest, PortraitOrientationAllowsRotation) {
   std::unique_ptr<content::WebContents> content(CreateWebContents());
-  std::unique_ptr<aura::Window> focus_window(CreateTestWindowInShellWithId(0));
+  std::unique_ptr<aura::Window> focus_window(CreateAppWindowInShellWithId(0));
   EnableMaximizeMode(true);
 
   AttachAndActivateWebContents(content.get(), focus_window.get());
@@ -554,7 +596,7 @@ TEST_F(ScreenOrientationControllerTest, PortraitOrientationAllowsRotation) {
 // display rotation remains constant.
 TEST_F(ScreenOrientationControllerTest, OrientationLockDisallowsRotation) {
   std::unique_ptr<content::WebContents> content(CreateWebContents());
-  std::unique_ptr<aura::Window> focus_window(CreateTestWindowInShellWithId(0));
+  std::unique_ptr<aura::Window> focus_window(CreateAppWindowInShellWithId(0));
   EnableMaximizeMode(true);
 
   AttachAndActivateWebContents(content.get(), focus_window.get());
@@ -576,17 +618,18 @@ TEST_F(ScreenOrientationControllerTest, OrientationLockDisallowsRotation) {
 // supports rotation, that a user rotation lock does not allow rotation.
 TEST_F(ScreenOrientationControllerTest, UserRotationLockDisallowsRotation) {
   std::unique_ptr<content::WebContents> content(CreateWebContents());
-  std::unique_ptr<aura::Window> focus_window(CreateTestWindowInShellWithId(0));
+  std::unique_ptr<aura::Window> focus_window(CreateAppWindowInShellWithId(0));
   EnableMaximizeMode(true);
 
   AttachAndActivateWebContents(content.get(), focus_window.get());
   delegate()->Lock(content.get(), blink::WebScreenOrientationLockLandscape);
   delegate()->Unlock(content.get());
 
-  SetRotationLocked(true);
+  SetUserRotationLocked(true);
   EXPECT_TRUE(RotationLocked());
-  EXPECT_EQ(display::Display::ROTATE_0, GetCurrentInternalDisplayRotation());
+  EXPECT_TRUE(UserRotationLocked());
 
+  EXPECT_EQ(display::Display::ROTATE_0, GetCurrentInternalDisplayRotation());
   TriggerLidUpdate(gfx::Vector3dF(0.0f, kMeanGravity, 0.0f));
   EXPECT_EQ(display::Display::ROTATE_0, GetCurrentInternalDisplayRotation());
 }
@@ -595,10 +638,11 @@ TEST_F(ScreenOrientationControllerTest, UserRotationLockDisallowsRotation) {
 // ready, that ScreenOrientationController still begins listening to events,
 // which require an internal display to be acted upon.
 TEST_F(ScreenOrientationControllerTest, InternalDisplayNotAvailableAtStartup) {
-  test::DisplayManagerTestApi().SetFirstDisplayAsInternalDisplay();
+  display::test::DisplayManagerTestApi(display_manager())
+      .SetFirstDisplayAsInternalDisplay();
 
   int64_t internal_display_id = display::Display::InternalDisplayId();
-  display::Display::SetInternalDisplayId(display::Display::kInvalidDisplayID);
+  display::Display::SetInternalDisplayId(display::kInvalidDisplayId);
 
   EnableMaximizeMode(true);
 
@@ -607,7 +651,7 @@ TEST_F(ScreenOrientationControllerTest, InternalDisplayNotAvailableAtStartup) {
   EXPECT_FALSE(RotationLocked());
 
   // Should not crash, even though the invalid display id is requested.
-  SetDisplayRotationById(display::Display::kInvalidDisplayID,
+  SetDisplayRotationById(display::kInvalidDisplayId,
                          display::Display::ROTATE_180);
   EXPECT_FALSE(RotationLocked());
 
@@ -623,37 +667,145 @@ TEST_F(ScreenOrientationControllerTest, RotateInactiveDisplay) {
   const int64_t kExternalDisplayId = 10;
   const display::Display::Rotation kNewRotation = display::Display::ROTATE_180;
 
-  const DisplayInfo internal_display_info =
+  const display::ManagedDisplayInfo internal_display_info =
       CreateDisplayInfo(kInternalDisplayId, gfx::Rect(0, 0, 500, 500));
-  const DisplayInfo external_display_info =
+  const display::ManagedDisplayInfo external_display_info =
       CreateDisplayInfo(kExternalDisplayId, gfx::Rect(1, 1, 500, 500));
 
-  std::vector<DisplayInfo> display_info_list_two_active;
+  std::vector<display::ManagedDisplayInfo> display_info_list_two_active;
   display_info_list_two_active.push_back(internal_display_info);
   display_info_list_two_active.push_back(external_display_info);
 
-  std::vector<DisplayInfo> display_info_list_one_active;
+  std::vector<display::ManagedDisplayInfo> display_info_list_one_active;
   display_info_list_one_active.push_back(external_display_info);
 
-  // The DisplayInfo list with two active displays needs to be added first so
-  // that the DisplayManager can track the |internal_display_info| as inactive
-  // instead of non-existent.
-  DisplayManager* display_manager = Shell::GetInstance()->display_manager();
-  display_manager->UpdateDisplaysWith(display_info_list_two_active);
-  display_manager->UpdateDisplaysWith(display_info_list_one_active);
+  // The display::ManagedDisplayInfo list with two active displays needs to be
+  // added first so that the DisplayManager can track the
+  // |internal_display_info| as inactive instead of non-existent.
+  display_manager()->UpdateDisplaysWith(display_info_list_two_active);
+  display_manager()->UpdateDisplaysWith(display_info_list_one_active);
 
-  test::ScopedSetInternalDisplayId set_internal(kInternalDisplayId);
+  display::test::ScopedSetInternalDisplayId set_internal(display_manager(),
+                                                         kInternalDisplayId);
 
-  ASSERT_NE(
-      kNewRotation,
-      display_manager->GetDisplayInfo(kInternalDisplayId).GetActiveRotation());
+  ASSERT_NE(kNewRotation, display_manager()
+                              ->GetDisplayInfo(kInternalDisplayId)
+                              .GetActiveRotation());
+  test::ScreenOrientationControllerTestApi(
+      Shell::GetInstance()->screen_orientation_controller())
+      .SetDisplayRotation(kNewRotation,
+                          display::Display::ROTATION_SOURCE_ACTIVE);
 
-  Shell::GetInstance()->screen_orientation_controller()->SetDisplayRotation(
-      kNewRotation, display::Display::ROTATION_SOURCE_ACTIVE);
+  EXPECT_EQ(kNewRotation, display_manager()
+                              ->GetDisplayInfo(kInternalDisplayId)
+                              .GetActiveRotation());
+}
 
-  EXPECT_EQ(
-      kNewRotation,
-      display_manager->GetDisplayInfo(kInternalDisplayId).GetActiveRotation());
+TEST_F(ScreenOrientationControllerTest, UserRotationLockedOrientation) {
+  ScreenOrientationController* orientation_controller =
+      Shell::GetInstance()->screen_orientation_controller();
+  orientation_controller->ToggleUserRotationLock();
+  EXPECT_TRUE(orientation_controller->user_rotation_locked());
+  EXPECT_EQ(blink::WebScreenOrientationLockLandscapePrimary,
+            UserLockedOrientation());
+
+  orientation_controller->ToggleUserRotationLock();
+  SetInternalDisplayRotation(display::Display::ROTATE_90);
+  orientation_controller->ToggleUserRotationLock();
+  EXPECT_EQ(blink::WebScreenOrientationLockPortraitPrimary,
+            UserLockedOrientation());
+
+  orientation_controller->ToggleUserRotationLock();
+  SetInternalDisplayRotation(display::Display::ROTATE_180);
+  orientation_controller->ToggleUserRotationLock();
+  EXPECT_EQ(blink::WebScreenOrientationLockLandscapeSecondary,
+            UserLockedOrientation());
+
+  orientation_controller->ToggleUserRotationLock();
+  SetInternalDisplayRotation(display::Display::ROTATE_270);
+  orientation_controller->ToggleUserRotationLock();
+  EXPECT_EQ(blink::WebScreenOrientationLockPortraitSecondary,
+            UserLockedOrientation());
+  orientation_controller->ToggleUserRotationLock();
+
+  SetInternalDisplayRotation(display::Display::ROTATE_270);
+
+  UpdateDisplay("800x1280");
+  orientation_controller->ToggleUserRotationLock();
+  EXPECT_TRUE(orientation_controller->user_rotation_locked());
+  EXPECT_EQ(blink::WebScreenOrientationLockPortraitPrimary,
+            UserLockedOrientation());
+
+  orientation_controller->ToggleUserRotationLock();
+  SetInternalDisplayRotation(display::Display::ROTATE_90);
+  orientation_controller->ToggleUserRotationLock();
+  EXPECT_EQ(blink::WebScreenOrientationLockLandscapePrimary,
+            UserLockedOrientation());
+
+  orientation_controller->ToggleUserRotationLock();
+  SetInternalDisplayRotation(display::Display::ROTATE_180);
+  orientation_controller->ToggleUserRotationLock();
+  EXPECT_EQ(blink::WebScreenOrientationLockPortraitSecondary,
+            UserLockedOrientation());
+
+  orientation_controller->ToggleUserRotationLock();
+  SetInternalDisplayRotation(display::Display::ROTATE_270);
+  orientation_controller->ToggleUserRotationLock();
+  EXPECT_EQ(blink::WebScreenOrientationLockLandscapeSecondary,
+            UserLockedOrientation());
+  orientation_controller->ToggleUserRotationLock();
+}
+
+TEST_F(ScreenOrientationControllerTest, UserRotationLock) {
+  std::unique_ptr<content::WebContents> content1(CreateWebContents());
+  std::unique_ptr<content::WebContents> content2(CreateSecondaryWebContents());
+  std::unique_ptr<aura::Window> focus_window1(CreateAppWindowInShellWithId(0));
+  std::unique_ptr<aura::Window> focus_window2(CreateAppWindowInShellWithId(1));
+  ASSERT_NE(content1->GetNativeView(), content2->GetNativeView());
+
+  AttachAndActivateWebContents(content2.get(), focus_window2.get());
+  AttachAndActivateWebContents(content1.get(), focus_window1.get());
+
+  ASSERT_EQ(display::Display::ROTATE_0, GetCurrentInternalDisplayRotation());
+  ASSERT_FALSE(RotationLocked());
+  ASSERT_FALSE(UserRotationLocked());
+
+  ScreenOrientationController* orientation_controller =
+      Shell::GetInstance()->screen_orientation_controller();
+  ASSERT_FALSE(orientation_controller->user_rotation_locked());
+  orientation_controller->ToggleUserRotationLock();
+  ASSERT_TRUE(orientation_controller->user_rotation_locked());
+
+  delegate()->Lock(content1.get(), blink::WebScreenOrientationLockPortrait);
+
+  EXPECT_EQ(display::Display::ROTATE_90, GetCurrentInternalDisplayRotation());
+
+  aura::client::ActivationClient* activation_client =
+      Shell::GetInstance()->activation_client();
+  // Activating any will switch to the natural orientation.
+  activation_client->ActivateWindow(focus_window2.get());
+  EXPECT_EQ(display::Display::ROTATE_0, GetCurrentInternalDisplayRotation());
+
+  // Activating the portrait window will rotate to the portrait.
+  activation_client->ActivateWindow(focus_window1.get());
+  EXPECT_EQ(display::Display::ROTATE_90, GetCurrentInternalDisplayRotation());
+
+  // User locked to the 90 dig.
+  orientation_controller->ToggleUserRotationLock();
+  orientation_controller->ToggleUserRotationLock();
+
+  // Switching to Any orientation will stay to the user locked orientation.
+  activation_client->ActivateWindow(focus_window2.get());
+  EXPECT_EQ(display::Display::ROTATE_90, GetCurrentInternalDisplayRotation());
+
+  // Application forced to be landscape.
+  delegate()->Lock(content2.get(), blink::WebScreenOrientationLockLandscape);
+  EXPECT_EQ(display::Display::ROTATE_0, GetCurrentInternalDisplayRotation());
+
+  delegate()->Lock(content1.get(), blink::WebScreenOrientationLockAny);
+  activation_client->ActivateWindow(focus_window1.get());
+  // Switching back to any will rotate to user rotation.
+  EXPECT_EQ(display::Display::ROTATE_90, GetCurrentInternalDisplayRotation());
 }
 
 }  // namespace ash

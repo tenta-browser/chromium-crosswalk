@@ -1,7 +1,13 @@
 include_rules = [
-  "-ash",
-  "+ash/ash_export.h",
-  "+ash/common",
+  "+components/prefs",
+  "+components/ui_devtools",
+  "+mojo/public/cpp",
+  "+services/preferences/public",
   "+ui",
-  "-ui/aura",
 ]
+
+specific_include_rules = {
+  ".*test\.cc": [
+    "+ash/test",
+  ]
+}

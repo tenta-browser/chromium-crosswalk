@@ -5,18 +5,15 @@
 #include "ash/display/display_configuration_controller.h"
 
 #include "ash/display/display_animator.h"
-#include "ash/display/display_manager.h"
+#include "ash/display/display_animator_chromeos.h"
 #include "ash/display/display_util.h"
 #include "ash/rotator/screen_rotation_animator.h"
-#include "ash/screen_util.h"
+#include "ash/strings/grit/ash_strings.h"
 #include "base/time/time.h"
-#include "ui/display/manager/display_layout.h"
-
-#if defined(OS_CHROMEOS)
-#include "ash/display/display_animator_chromeos.h"
-#include "base/sys_info.h"
-#include "grit/ash_strings.h"
-#endif
+#include "chromeos/system/devicemode.h"
+#include "ui/base/l10n/l10n_util.h"
+#include "ui/display/display_layout.h"
+#include "ui/display/manager/display_manager.h"
 
 namespace {
 
@@ -52,17 +49,15 @@ class DisplayConfigurationController::DisplayChangeLimiter {
 };
 
 DisplayConfigurationController::DisplayConfigurationController(
-    DisplayManager* display_manager,
+    display::DisplayManager* display_manager,
     WindowTreeHostManager* window_tree_host_manager)
     : display_manager_(display_manager),
       window_tree_host_manager_(window_tree_host_manager),
       weak_ptr_factory_(this) {
   window_tree_host_manager_->AddObserver(this);
-#if defined(OS_CHROMEOS)
-  if (base::SysInfo::IsRunningOnChromeOS())
+  if (chromeos::IsRunningAsSystemCompositor())
     limiter_.reset(new DisplayChangeLimiter);
   display_animator_.reset(new DisplayAnimatorChromeOS());
-#endif
 }
 
 DisplayConfigurationController::~DisplayConfigurationController() {
@@ -84,10 +79,11 @@ void DisplayConfigurationController::SetDisplayLayout(
 void DisplayConfigurationController::SetMirrorMode(bool mirror,
                                                    bool user_action) {
   if (display_manager_->num_connected_displays() > 2) {
-#if defined(OS_CHROMEOS)
-    if (user_action)
-      ShowDisplayErrorNotification(IDS_ASH_DISPLAY_MIRRORING_NOT_SUPPORTED);
-#endif
+    if (user_action) {
+      ShowDisplayErrorNotification(
+          l10n_util::GetStringUTF16(IDS_ASH_DISPLAY_MIRRORING_NOT_SUPPORTED),
+          false);
+    }
     return;
   }
   if (display_manager_->num_connected_displays() <= 1 ||
@@ -107,10 +103,9 @@ void DisplayConfigurationController::SetMirrorMode(bool mirror,
 void DisplayConfigurationController::SetDisplayRotation(
     int64_t display_id,
     display::Display::Rotation rotation,
-    display::Display::RotationSource source,
-    bool user_action) {
+    display::Display::RotationSource source) {
   ash::ScreenRotationAnimator screen_rotation_animator(display_id);
-  if (user_action && screen_rotation_animator.CanAnimate())
+  if (screen_rotation_animator.CanAnimate())
     screen_rotation_animator.Rotate(rotation, source);
   else
     display_manager_->SetDisplayRotation(display_id, rotation, source);
@@ -157,7 +152,6 @@ bool DisplayConfigurationController::IsLimited() {
 
 void DisplayConfigurationController::SetDisplayLayoutImpl(
     std::unique_ptr<display::DisplayLayout> layout) {
-  // TODO(oshima/stevenjb): Add support for 3+ displays.
   display_manager_->SetLayoutForCurrentDisplays(std::move(layout));
   if (display_animator_)
     display_animator_->StartFadeInAnimation();

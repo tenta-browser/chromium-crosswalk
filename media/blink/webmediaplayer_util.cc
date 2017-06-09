@@ -9,7 +9,7 @@
 #include <string>
 #include <utility>
 
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "media/base/bind_to_current_loop.h"
 #include "media/base/media_client.h"
 #include "third_party/WebKit/public/platform/URLConversion.h"
@@ -37,6 +37,7 @@ blink::WebMediaPlayer::NetworkState PipelineErrorToNetworkState(
 
     case PIPELINE_ERROR_INITIALIZATION_FAILED:
     case PIPELINE_ERROR_COULD_NOT_RENDER:
+    case PIPELINE_ERROR_EXTERNAL_RENDERER_FAILED:
     case DEMUXER_ERROR_COULD_NOT_OPEN:
     case DEMUXER_ERROR_COULD_NOT_PARSE:
     case DEMUXER_ERROR_NO_SUPPORTED_STREAMS:
@@ -49,7 +50,6 @@ blink::WebMediaPlayer::NetworkState PipelineErrorToNetworkState(
     case CHUNK_DEMUXER_ERROR_APPEND_FAILED:
     case CHUNK_DEMUXER_ERROR_EOS_STATUS_DECODE_ERROR:
     case AUDIO_RENDERER_ERROR:
-    case AUDIO_RENDERER_ERROR_SPLICE_FAILED:
       return blink::WebMediaPlayer::NetworkStateDecodeError;
 
     case PIPELINE_OK:
@@ -120,8 +120,7 @@ void ReportMetrics(blink::WebMediaPlayer::LoadType load_type,
 
   // Report the origin from where the media player is created.
   if (GetMediaClient()) {
-    GURL security_origin_url(
-        blink::WebStringToGURL(security_origin.toString()));
+    GURL security_origin_url(url::Origin(security_origin).GetURL());
 
     GetMediaClient()->RecordRapporURL(
         "Media.OriginUrl." + LoadTypeToString(load_type), security_origin_url);
@@ -150,7 +149,7 @@ void ReportPipelineError(blink::WebMediaPlayer::LoadType load_type,
 
   GetMediaClient()->RecordRapporURL(
       "Media.OriginUrl." + LoadTypeToString(load_type) + ".PipelineError",
-      blink::WebStringToGURL(security_origin.toString()));
+      url::Origin(security_origin).GetURL());
 }
 
 void RecordOriginOfHLSPlayback(const GURL& origin_url) {

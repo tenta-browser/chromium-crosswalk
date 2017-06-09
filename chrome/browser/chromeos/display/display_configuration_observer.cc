@@ -6,8 +6,9 @@
 
 #include "ash/display/window_tree_host_manager.h"
 #include "ash/shell.h"
-#include "ash/shell_delegate.h"
+#include "base/command_line.h"
 #include "chrome/browser/chromeos/display/display_preferences.h"
+#include "chromeos/chromeos_switches.h"
 
 namespace chromeos {
 
@@ -21,7 +22,8 @@ DisplayConfigurationObserver::~DisplayConfigurationObserver() {
 
 void DisplayConfigurationObserver::OnDisplaysInitialized() {
   // Update the display pref with the initial power state.
-  if (ash::Shell::GetInstance()->delegate()->IsFirstRunAfterBoot())
+  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+  if (command_line->HasSwitch(chromeos::switches::kFirstExecAfterBoot))
     StoreDisplayPrefs();
 }
 

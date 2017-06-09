@@ -4,10 +4,9 @@
 
 // https://github.com/WICG/indexed-db-observers/blob/gh-pages/EXPLAINER.md#options-argument
 
-[
-    RuntimeEnabled=IDBObserver
-] dictionary IDBObserverInit {
+dictionary IDBObserverInit {
     boolean transaction = false;
     boolean values = false;
     boolean noRecords = false;
+    sequence<IDBObservationType> operationTypes = [];
 };

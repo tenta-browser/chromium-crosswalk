@@ -7,6 +7,7 @@
 #include <queue>
 #include <utility>
 
+#include "base/lazy_instance.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
@@ -51,16 +52,23 @@ void RecordUniqueNameLength(size_t length) {
 // owner's opener if the opener is destroyed.
 class FrameTreeNode::OpenerDestroyedObserver : public FrameTreeNode::Observer {
  public:
-  OpenerDestroyedObserver(FrameTreeNode* owner) : owner_(owner) {}
+  OpenerDestroyedObserver(FrameTreeNode* owner, bool observing_original_opener)
+      : owner_(owner), observing_original_opener_(observing_original_opener) {}
 
   // FrameTreeNode::Observer
   void OnFrameTreeNodeDestroyed(FrameTreeNode* node) override {
-    CHECK_EQ(owner_->opener(), node);
-    owner_->SetOpener(nullptr);
+    if (observing_original_opener_) {
+      CHECK_EQ(owner_->original_opener(), node);
+      owner_->SetOriginalOpener(nullptr);
+    } else {
+      CHECK_EQ(owner_->opener(), node);
+      owner_->SetOpener(nullptr);
+    }
   }
 
  private:
   FrameTreeNode* owner_;
+  bool observing_original_opener_;
 
   DISALLOW_COPY_AND_ASSIGN(OpenerDestroyedObserver);
 };
@@ -75,17 +83,16 @@ FrameTreeNode* FrameTreeNode::GloballyFindByID(int frame_tree_node_id) {
   return it == nodes->end() ? nullptr : it->second;
 }
 
-FrameTreeNode::FrameTreeNode(
-    FrameTree* frame_tree,
-    Navigator* navigator,
-    RenderFrameHostDelegate* render_frame_delegate,
-    RenderWidgetHostDelegate* render_widget_delegate,
-    RenderFrameHostManager::Delegate* manager_delegate,
-    FrameTreeNode* parent,
-    blink::WebTreeScopeType scope,
-    const std::string& name,
-    const std::string& unique_name,
-    const blink::WebFrameOwnerProperties& frame_owner_properties)
+FrameTreeNode::FrameTreeNode(FrameTree* frame_tree,
+                             Navigator* navigator,
+                             RenderFrameHostDelegate* render_frame_delegate,
+                             RenderWidgetHostDelegate* render_widget_delegate,
+                             RenderFrameHostManager::Delegate* manager_delegate,
+                             FrameTreeNode* parent,
+                             blink::WebTreeScopeType scope,
+                             const std::string& name,
+                             const std::string& unique_name,
+                             const FrameOwnerProperties& frame_owner_properties)
     : frame_tree_(frame_tree),
       navigator_(navigator),
       render_manager_(this,
@@ -96,6 +103,8 @@ FrameTreeNode::FrameTreeNode(
       parent_(parent),
       opener_(nullptr),
       opener_observer_(nullptr),
+      original_opener_(nullptr),
+      original_opener_observer_(nullptr),
       has_committed_real_load_(false),
       replication_state_(
           scope,
@@ -103,7 +112,8 @@ FrameTreeNode::FrameTreeNode(
           unique_name,
           blink::WebSandboxFlags::None,
           false /* should enforce strict mixed content checking */,
-          false /* is a potentially trustworthy unique origin */),
+          false /* is a potentially trustworthy unique origin */,
+          false /* has received a user gesture */),
       pending_sandbox_flags_(blink::WebSandboxFlags::None),
       frame_owner_properties_(frame_owner_properties),
       loading_progress_(kLoadingProgressNotStarted),
@@ -122,12 +132,22 @@ FrameTreeNode::FrameTreeNode(
 FrameTreeNode::~FrameTreeNode() {
   std::vector<std::unique_ptr<FrameTreeNode>>().swap(children_);
   frame_tree_->FrameRemoved(this);
-  FOR_EACH_OBSERVER(Observer, observers_, OnFrameTreeNodeDestroyed(this));
+  for (auto& observer : observers_)
+    observer.OnFrameTreeNodeDestroyed(this);
 
   if (opener_)
     opener_->RemoveObserver(opener_observer_.get());
+  if (original_opener_)
+    original_opener_->RemoveObserver(original_opener_observer_.get());
 
   g_frame_tree_node_id_map.Get().erase(frame_tree_node_id_);
+
+  if (navigation_request_) {
+    // PlzNavigate: if a frame with a pending navigation is detached, make sure
+    // the WebContents (and its observers) update their loading state.
+    navigation_request_.reset();
+    DidStopLoading();
+  }
 }
 
 void FrameTreeNode::AddObserver(Observer* observer) {
@@ -154,7 +174,7 @@ FrameTreeNode* FrameTreeNode::AddChild(std::unique_ptr<FrameTreeNode> child,
   child->render_manager()->Init(
       render_manager_.current_host()->GetSiteInstance(),
       render_manager_.current_host()->GetRoutingID(), frame_routing_id,
-      MSG_ROUTING_NONE);
+      MSG_ROUTING_NONE, false);
 
   // Other renderer processes in this BrowsingInstance may need to find out
   // about the new frame.  Create a proxy for the child frame in all
@@ -200,13 +220,27 @@ void FrameTreeNode::SetOpener(FrameTreeNode* opener) {
 
   if (opener_) {
     if (!opener_observer_)
-      opener_observer_ = base::WrapUnique(new OpenerDestroyedObserver(this));
+      opener_observer_ = base::MakeUnique<OpenerDestroyedObserver>(this, false);
     opener_->AddObserver(opener_observer_.get());
   }
 }
 
+void FrameTreeNode::SetOriginalOpener(FrameTreeNode* opener) {
+  DCHECK(!original_opener_ || !opener);
+  DCHECK(opener == nullptr || !opener->parent());
+
+  original_opener_ = opener;
+
+  if (original_opener_) {
+    DCHECK(!original_opener_observer_);
+    original_opener_observer_ =
+        base::MakeUnique<OpenerDestroyedObserver>(this, true);
+    original_opener_->AddObserver(original_opener_observer_.get());
+  }
+}
+
 void FrameTreeNode::SetCurrentURL(const GURL& url) {
-  if (!has_committed_real_load_ && url != GURL(url::kAboutBlankURL))
+  if (!has_committed_real_load_ && url != url::kAboutBlankURL)
     has_committed_real_load_ = true;
   current_frame_host()->set_last_committed_url(url);
   blame_context_.TakeSnapshot();
@@ -233,21 +267,42 @@ void FrameTreeNode::SetFrameName(const std::string& name,
     DCHECK_EQ(unique_name, replication_state_.unique_name);
     return;
   }
+
+  if (parent()) {
+    // Non-main frames should have a non-empty unique name.
+    DCHECK(!unique_name.empty());
+  } else {
+    // Unique name of main frames should always stay empty.
+    DCHECK(unique_name.empty());
+  }
+
   RecordUniqueNameLength(unique_name.size());
   render_manager_.OnDidUpdateName(name, unique_name);
   replication_state_.name = name;
   replication_state_.unique_name = unique_name;
 }
 
+void FrameTreeNode::SetFeaturePolicyHeader(
+    const ParsedFeaturePolicyHeader& parsed_header) {
+  replication_state_.feature_policy_header = parsed_header;
+}
+
+void FrameTreeNode::ResetFeaturePolicyHeader() {
+  replication_state_.feature_policy_header.clear();
+}
+
 void FrameTreeNode::AddContentSecurityPolicy(
-    const ContentSecurityPolicyHeader& header) {
+    const ContentSecurityPolicyHeader& header,
+    const std::vector<ContentSecurityPolicy>& policies) {
   replication_state_.accumulated_csp_headers.push_back(header);
   render_manager_.OnDidAddContentSecurityPolicy(header);
+  csp_policies_.insert(csp_policies_.end(), policies.begin(), policies.end());
 }
 
 void FrameTreeNode::ResetContentSecurityPolicy() {
   replication_state_.accumulated_csp_headers.clear();
   render_manager_.OnDidResetContentSecurityPolicy();
+  csp_policies_.clear();
 }
 
 void FrameTreeNode::SetInsecureRequestPolicy(
@@ -321,6 +376,12 @@ void FrameTreeNode::CreatedNavigationRequest(
     std::unique_ptr<NavigationRequest> navigation_request) {
   CHECK(IsBrowserSideNavigationEnabled());
 
+  // This is never called when navigating to a Javascript URL. For the loading
+  // state, this matches what Blink is doing: Blink doesn't send throbber
+  // notifications for Javascript URLS.
+  DCHECK(!navigation_request->common_params().url.SchemeIs(
+      url::kJavaScriptScheme));
+
   bool was_previously_loading = frame_tree()->IsLoading();
 
   // There's no need to reset the state: there's still an ongoing load, and the
@@ -332,15 +393,10 @@ void FrameTreeNode::CreatedNavigationRequest(
   navigation_request_ = std::move(navigation_request);
   render_manager()->DidCreateNavigationRequest(navigation_request_.get());
 
-  // Force the throbber to start to keep it in sync with what is happening in
-  // the UI. Blink doesn't send throb notifications for JavaScript URLs, so it
-  // is not done here either.
-  if (!navigation_request_->common_params().url.SchemeIs(
-          url::kJavaScriptScheme)) {
-    // TODO(fdegans): Check if this is a same-document navigation and set the
-    // proper argument.
-    DidStartLoading(true, was_previously_loading);
-  }
+  bool to_different_document = !FrameMsg_Navigate_Type::IsSameDocument(
+      navigation_request_->common_params().navigation_type);
+
+  DidStartLoading(to_different_document, was_previously_loading);
 }
 
 void FrameTreeNode::ResetNavigationRequest(bool keep_state) {
@@ -457,7 +513,8 @@ bool FrameTreeNode::StopLoading() {
 
 void FrameTreeNode::DidFocus() {
   last_focus_time_ = base::TimeTicks::Now();
-  FOR_EACH_OBSERVER(Observer, observers_, OnFrameTreeNodeFocused(this));
+  for (auto& observer : observers_)
+    observer.OnFrameTreeNodeFocused(this);
 }
 
 void FrameTreeNode::BeforeUnloadCanceled() {
@@ -481,6 +538,11 @@ void FrameTreeNode::BeforeUnloadCanceled() {
     if (pending_frame_host)
       pending_frame_host->ResetLoadingState();
   }
+}
+
+void FrameTreeNode::OnSetHasReceivedUserGesture() {
+  render_manager_.OnSetHasReceivedUserGesture();
+  replication_state_.has_received_user_gesture = true;
 }
 
 FrameTreeNode* FrameTreeNode::GetSibling(int relative_offset) const {

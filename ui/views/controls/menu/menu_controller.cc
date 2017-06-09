@@ -46,7 +46,7 @@
 #endif
 
 #if defined(USE_AURA)
-#include "ui/views/controls/menu/menu_key_event_handler.h"
+#include "ui/views/controls/menu/menu_pre_target_handler.h"
 #endif
 
 using base::Time;
@@ -401,13 +401,9 @@ MenuItemView* MenuController::Run(Widget* parent,
   menu_start_time_ = base::TimeTicks::Now();
   menu_start_mouse_press_loc_ = gfx::Point();
 
-  // If we are shown on mouse press, we will eat the subsequent mouse down and
-  // the parent widget will not be able to reset its state (it might have mouse
-  // capture from the mouse down). So we clear its state here.
   if (parent) {
     View* root_view = parent->GetRootView();
     if (root_view) {
-      root_view->SetMouseHandler(NULL);
       const ui::Event* event =
           static_cast<internal::RootView*>(root_view)->current_event();
       if (event && event->type() == ui::ET_MOUSE_PRESSED) {
@@ -420,7 +416,8 @@ MenuItemView* MenuController::Run(Widget* parent,
     }
   }
 
-  bool nested_menu = showing_;
+  // If we are already showing, this new menu is being nested. Such as context
+  // menus on top of normal menus.
   if (showing_) {
     // Only support nesting of blocking_run menus, nesting of
     // blocking/non-blocking shouldn't be needed.
@@ -429,18 +426,23 @@ MenuItemView* MenuController::Run(Widget* parent,
     state_.hot_button = hot_button_;
     hot_button_ = nullptr;
     // We're already showing, push the current state.
-    menu_stack_.push_back(
-        std::make_pair(state_, make_linked_ptr(pressed_lock_.release())));
+    menu_stack_.push_back(std::make_pair(state_, std::move(pressed_lock_)));
 
     // The context menu should be owned by the same parent.
     DCHECK_EQ(owner_, parent);
   } else {
     showing_ = true;
 
+    if (owner_)
+      owner_->RemoveObserver(this);
+    owner_ = parent;
+    if (owner_)
+      owner_->AddObserver(this);
+
 #if defined(USE_AURA)
-    // Only create a MenuKeyEventHandler for non-nested menus. Nested menus will
-    // use the existing one.
-    key_event_handler_.reset(new MenuKeyEventHandler);
+    // Only create a MenuPreTargetHandler for non-nested menus. Nested menus
+    // will use the existing one.
+    menu_pre_target_handler_.reset(new MenuPreTargetHandler(this, owner_));
 #endif
   }
 
@@ -448,12 +450,6 @@ MenuItemView* MenuController::Run(Widget* parent,
   pending_state_ = State();
   state_ = State();
   UpdateInitialLocation(bounds, position, context_menu);
-
-  if (owner_)
-    owner_->RemoveObserver(this);
-  owner_ = parent;
-  if (owner_)
-    owner_->AddObserver(this);
 
   // Set the selection, which opens the initial menu.
   SetSelection(root, SELECTION_OPEN_SUBMENU | SELECTION_UPDATE_IMMEDIATELY);
@@ -483,7 +479,7 @@ MenuItemView* MenuController::Run(Widget* parent,
   // appears totally broken.
   message_loop_depth_++;
   DCHECK_LE(message_loop_depth_, 2);
-  RunMessageLoop(nested_menu);
+  RunMessageLoop();
   message_loop_depth_--;
 
   if (ViewsDelegate::GetInstance())
@@ -509,7 +505,8 @@ void MenuController::Cancel(ExitType type) {
 
   if (!showing_) {
     // This occurs if we're in the process of notifying the delegate for a drop
-    // and the delegate cancels us.
+    // and the delegate cancels us. Or if the releasing of ViewsDelegate causes
+    // an immediate shutdown.
     return;
   }
 
@@ -531,7 +528,22 @@ void MenuController::Cancel(ExitType type) {
     // WARNING: the call to MenuClosed deletes us.
     return;
   }
-  ExitAsyncRun();
+
+  // If |type| is EXIT_ALL we update the state of the menu to not showing. For
+  // dragging this ensures that the correct visual state is reported until the
+  // drag operation completes. For non-dragging cases it is possible that the
+  // release of ViewsDelegate leads immediately to shutdown, which can trigger
+  // nested calls to Cancel. We want to reject these to prevent attempting a
+  // nested tear down of this and |delegate_|.
+  if (type == EXIT_ALL)
+    showing_ = false;
+
+  // On Windows and Linux the destruction of this menu's Widget leads to the
+  // teardown of the platform specific drag-and-drop Widget. Do not shutdown
+  // while dragging, leave the Widget hidden until drag-and-drop has completed,
+  // at which point all menus will be destroyed.
+  if (!drag_in_progress_)
+    ExitAsyncRun();
 }
 
 void MenuController::AddNestedDelegate(
@@ -847,7 +859,7 @@ void MenuController::ViewHierarchyChanged(
     // removed while a menu is up.
     if (details.child == hot_button_) {
       hot_button_ = nullptr;
-      for (auto nested_state : menu_stack_) {
+      for (auto&& nested_state : menu_stack_) {
         State& state = nested_state.first;
         if (details.child == state.hot_button)
           state.hot_button = nullptr;
@@ -1014,11 +1026,27 @@ void MenuController::OnDragComplete(bool should_close) {
   // the event target.
   current_mouse_pressed_state_ = 0;
   current_mouse_event_target_ = nullptr;
-  if (showing_ && should_close && GetActiveInstance() == this) {
-    CloseAllNestedMenus();
-    Cancel(EXIT_ALL);
-  } else if (async_run_) {
-    ExitAsyncRun();
+
+  // Only attempt to close if the MenuHost said to.
+  if (should_close) {
+    if (showing_) {
+      // During a drag operation there are several ways in which this can be
+      // canceled and deleted. Verify that this is still active before closing
+      // the widgets.
+      if (GetActiveInstance() == this) {
+        base::WeakPtr<MenuController> this_ref = AsWeakPtr();
+        CloseAllNestedMenus();
+        Cancel(EXIT_ALL);
+        // The above may have deleted us. If not perform a full shutdown.
+        if (!this_ref)
+          return;
+        ExitAsyncRun();
+      }
+    } else if (exit_type_ == EXIT_ALL) {
+      // We may have been canceled during the drag. If so we still need to fully
+      // shutdown.
+      ExitAsyncRun();
+    }
   }
 }
 
@@ -1042,9 +1070,10 @@ ui::PostDispatchAction MenuController::OnWillDispatchKeyEvent(
   event->StopPropagation();
 
   if (event->type() == ui::ET_KEY_PRESSED) {
+    base::WeakPtr<MenuController> this_ref = AsWeakPtr();
     OnKeyDown(event->key_code());
-    // Menu controller might have been deleted.
-    if (!GetActiveInstance())
+    // Key events can lead to this being deleted.
+    if (!this_ref)
       return ui::POST_DISPATCH_NONE;
 
     // Do not check mnemonics if the Alt or Ctrl modifiers are pressed. For
@@ -1054,8 +1083,8 @@ ui::PostDispatchAction MenuController::OnWillDispatchKeyEvent(
     if (exit_type() == EXIT_NONE && (flags & kKeyFlagsMask) == 0) {
       base::char16 c = event->GetCharacter();
       SelectByChar(c);
-      // Menu controller might have been deleted.
-      if (!GetActiveInstance())
+      // SelectByChar can lead to this being deleted.
+      if (!this_ref)
         return ui::POST_DISPATCH_NONE;
     }
   }
@@ -1086,11 +1115,15 @@ void MenuController::OnWidgetDestroying(Widget* widget) {
   DCHECK_EQ(owner_, widget);
   owner_->RemoveObserver(this);
   owner_ = NULL;
-  message_loop_->ClearOwner();
 }
 
 bool MenuController::IsCancelAllTimerRunningForTest() {
   return cancel_all_timer_.IsRunning();
+}
+
+void MenuController::ClearStateForTest() {
+  state_ = State();
+  pending_state_ = State();
 }
 
 // static
@@ -1230,12 +1263,13 @@ void MenuController::StartDrag(SubmenuView* source,
   StopScrolling();
   int drag_ops = item->GetDelegate()->GetDragOperations(item);
   did_initiate_drag_ = true;
+  base::WeakPtr<MenuController> this_ref = AsWeakPtr();
   // TODO(varunjain): Properly determine and send DRAG_EVENT_SOURCE below.
   item->GetWidget()->RunShellDrag(NULL, data, widget_loc, drag_ops,
       ui::DragDropTypes::DRAG_EVENT_SOURCE_MOUSE);
-  // MenuController may have been deleted if |async_run_| so check for an active
-  // instance before accessing member variables.
-  if (GetActiveInstance())
+  // MenuController may have been deleted if |async_run_| so check before
+  // accessing member variables.
+  if (this_ref)
     did_initiate_drag_ = false;
 }
 
@@ -1387,8 +1421,8 @@ MenuController::~MenuController() {
   StopCancelAllTimer();
 }
 
-void MenuController::RunMessageLoop(bool nested_menu) {
-  message_loop_->Run(this, owner_, nested_menu);
+void MenuController::RunMessageLoop() {
+  message_loop_->Run();
 }
 
 bool MenuController::SendAcceleratorToHotTrackedView() {
@@ -1396,10 +1430,14 @@ bool MenuController::SendAcceleratorToHotTrackedView() {
   if (!hot_view)
     return false;
 
+  base::WeakPtr<MenuController> this_ref = AsWeakPtr();
   ui::Accelerator accelerator(ui::VKEY_RETURN, ui::EF_NONE);
   hot_view->AcceleratorPressed(accelerator);
-  CustomButton* button = static_cast<CustomButton*>(hot_view);
-  SetHotTrackedButton(button);
+  // An accelerator may have canceled the menu after activation.
+  if (this_ref) {
+    CustomButton* button = static_cast<CustomButton*>(hot_view);
+    SetHotTrackedButton(button);
+  }
   return true;
 }
 
@@ -1516,7 +1554,7 @@ bool MenuController::ShowSiblingMenu(SubmenuView* source,
   alt_menu->PrepareForRun(
       false, has_mnemonics,
       source->GetMenuItem()->GetRootMenuItem()->show_mnemonics_);
-  alt_menu->controller_ = this;
+  alt_menu->controller_ = AsWeakPtr();
   SetSelection(alt_menu, SELECTION_OPEN_SUBMENU | SELECTION_UPDATE_IMMEDIATELY);
   return true;
 }
@@ -1540,9 +1578,8 @@ bool MenuController::ShowContextMenu(MenuItemView* menu_item,
 }
 
 void MenuController::CloseAllNestedMenus() {
-  for (std::list<NestedState>::iterator i = menu_stack_.begin();
-       i != menu_stack_.end(); ++i) {
-    State& state = i->first;
+  for (auto&& nested_menu : menu_stack_) {
+    State& state = nested_menu.first;
     MenuItemView* last_item = state.item;
     for (MenuItemView* item = last_item; item;
          item = item->GetParentMenuItem()) {
@@ -2363,9 +2400,13 @@ void MenuController::RepostEventAndCancel(SubmenuView* source,
 
 #if defined(OS_WIN)
   if (event->IsMouseEvent() || event->IsTouchEvent()) {
+    base::WeakPtr<MenuController> this_ref = AsWeakPtr();
     bool async_run = async_run_;
     if (state_.item) {
       state_.item->GetRootMenuItem()->GetSubmenu()->ReleaseCapture();
+      // We're going to close and we own the event capture. We need to repost
+      // the event, otherwise the window the user clicked on won't get the
+      // event.
       RepostEventImpl(event, screen_loc, native_view, window);
     } else {
       // We some times get an event after closing all the menus. Ignore it. Make
@@ -2374,13 +2415,8 @@ void MenuController::RepostEventAndCancel(SubmenuView* source,
       DCHECK(!source->GetWidget()->IsVisible());
     }
 
-    // We're going to close and we own the event capture. We need to repost the
-    // event, otherwise the window the user clicked on won't get the event.
-    //  RepostEvent(source, event, screen_loc, native_view, window);
-    // MenuController may have been deleted if |async_run_| so check for an
-    // active
-    // instance before accessing member variables.
-    if (!GetActiveInstance()) {
+    // Reposting the event may have deleted this, if so exit.
+    if (!this_ref) {
       DCHECK(async_run);
       return;
     }
@@ -2554,19 +2590,30 @@ void MenuController::ExitAsyncRun() {
   bool nested = delegate_stack_.size() > 1;
   // ExitMenuRun unwinds nested delegates
   internal::MenuControllerDelegate* delegate = delegate_;
+  // MenuController may have been deleted when releasing ViewsDelegate ref.
+  // However as |delegate| can outlive this, it must still be notified of the
+  // menu closing so that it can perform teardown.
+  int accept_event_flags = accept_event_flags_;
+  base::WeakPtr<MenuController> this_ref = AsWeakPtr();
   MenuItemView* result = ExitMenuRun();
   delegate->OnMenuClosed(internal::MenuControllerDelegate::NOTIFY_DELEGATE,
-                         result, accept_event_flags_);
-  // MenuController may have been deleted by |delegate|.
-  if (GetActiveInstance() && nested && exit_type_ == EXIT_ALL)
+                         result, accept_event_flags);
+  // |delegate| may have deleted this.
+  if (this_ref && nested && exit_type_ == EXIT_ALL)
     ExitAsyncRun();
 }
 
 MenuItemView* MenuController::ExitMenuRun() {
+  base::WeakPtr<MenuController> this_ref = AsWeakPtr();
+
   // Release the lock which prevents Chrome from shutting down while the menu is
   // showing.
   if (async_run_ && ViewsDelegate::GetInstance())
     ViewsDelegate::GetInstance()->ReleaseRef();
+
+  // Releasing the lock can result in Chrome shutting down, deleting this.
+  if (!this_ref)
+    return nullptr;
 
   // Close any open menus.
   SetSelection(nullptr, SELECTION_UPDATE_IMMEDIATELY | SELECTION_EXIT);
@@ -2591,7 +2638,7 @@ MenuItemView* MenuController::ExitMenuRun() {
   }
 #endif
 
-  linked_ptr<MenuButton::PressedLock> nested_pressed_lock;
+  std::unique_ptr<MenuButton::PressedLock> nested_pressed_lock;
   bool nested_menu = !menu_stack_.empty();
   if (nested_menu) {
     DCHECK(!menu_stack_.empty());
@@ -2600,7 +2647,7 @@ MenuItemView* MenuController::ExitMenuRun() {
     state_ = menu_stack_.back().first;
     pending_state_ = menu_stack_.back().first;
     hot_button_ = state_.hot_button;
-    nested_pressed_lock = menu_stack_.back().second;
+    nested_pressed_lock = std::move(menu_stack_.back().second);
     menu_stack_.pop_back();
     // Even though the menus are nested, there may not be nested delegates.
     if (delegate_stack_.size() > 1) {
@@ -2610,7 +2657,7 @@ MenuItemView* MenuController::ExitMenuRun() {
     }
   } else {
 #if defined(USE_AURA)
-    key_event_handler_.reset();
+    menu_pre_target_handler_.reset();
 #endif
 
     showing_ = false;
@@ -2641,7 +2688,7 @@ MenuItemView* MenuController::ExitMenuRun() {
 
   // Reset our pressed lock and hot-tracked state to the previous state's, if
   // they were active. The lock handles the case if the button was destroyed.
-  pressed_lock_.reset(nested_pressed_lock.release());
+  pressed_lock_ = std::move(nested_pressed_lock);
   if (hot_button_)
     hot_button_->SetHotTracked(true);
 

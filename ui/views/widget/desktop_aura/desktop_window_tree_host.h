@@ -19,15 +19,11 @@ class Window;
 namespace client {
 class DragDropClient;
 }
-}
+}  // namespace aura
 
 namespace gfx {
 class ImageSkia;
 class Rect;
-}
-
-namespace ui {
-class NativeTheme;
 }
 
 namespace views {
@@ -50,15 +46,19 @@ class VIEWS_EXPORT DesktopWindowTreeHost {
       internal::NativeWidgetDelegate* native_widget_delegate,
       DesktopNativeWidgetAura* desktop_native_widget_aura);
 
-  // Return the NativeTheme to use for |window|. WARNING: |window| may be NULL.
-  static ui::NativeTheme* GetNativeTheme(aura::Window* window);
-
   // Sets up resources needed before the WindowEventDispatcher has been created.
+  // It is expected this calls InitHost() on the WindowTreeHost.
   virtual void Init(aura::Window* content_window,
                     const Widget::InitParams& params) = 0;
 
   // Invoked once the DesktopNativeWidgetAura has been created.
   virtual void OnNativeWidgetCreated(const Widget::InitParams& params) = 0;
+
+  // Called from DesktopNativeWidgetAura::OnWidgetInitDone().
+  virtual void OnWidgetInitDone() = 0;
+
+  // Called from DesktopNativeWidgetAura::OnWindowActivated().
+  virtual void OnNativeWidgetActivationChanged(bool active) = 0;
 
   // Creates and returns the Tooltip implementation to use. Return value is
   // owned by DesktopNativeWidgetAura and lives as long as
@@ -95,8 +95,8 @@ class VIEWS_EXPORT DesktopWindowTreeHost {
   virtual gfx::Rect GetWorkAreaBoundsInScreen() const = 0;
 
   // Sets the shape of the root window. If |native_region| is NULL then the
-  // window reverts to rectangular. Takes ownership of |native_region|.
-  virtual void SetShape(SkRegion* native_region) = 0;
+  // window reverts to rectangular.
+  virtual void SetShape(std::unique_ptr<SkRegion> native_region) = 0;
 
   virtual void Activate() = 0;
   virtual void Deactivate() = 0;
@@ -113,6 +113,7 @@ class VIEWS_EXPORT DesktopWindowTreeHost {
   virtual bool IsAlwaysOnTop() const = 0;
 
   virtual void SetVisibleOnAllWorkspaces(bool always_visible) = 0;
+  virtual bool IsVisibleOnAllWorkspaces() const = 0;
 
   // Returns true if the title changed.
   virtual bool SetWindowTitle(const base::string16& title) = 0;
@@ -126,6 +127,8 @@ class VIEWS_EXPORT DesktopWindowTreeHost {
   virtual void EndMoveLoop() = 0;
 
   virtual void SetVisibilityChangedAnimationsEnabled(bool value) = 0;
+
+  virtual NonClientFrameView* CreateNonClientFrameView() = 0;
 
   // Determines whether the window should use native title bar and borders.
   virtual bool ShouldUseNativeFrame() const = 0;
@@ -146,13 +149,6 @@ class VIEWS_EXPORT DesktopWindowTreeHost {
 
   virtual void FlashFrame(bool flash_frame) = 0;
 
-  virtual void OnRootViewLayout() = 0;
-
-  // Called when the DesktopNativeWidgetAura's aura::Window is focused and
-  // blurred.
-  virtual void OnNativeWidgetFocus() = 0;
-  virtual void OnNativeWidgetBlur() = 0;
-
   // Returns true if the Widget was closed but is still showing because of
   // animations.
   virtual bool IsAnimatingClosed() const = 0;
@@ -162,6 +158,18 @@ class VIEWS_EXPORT DesktopWindowTreeHost {
 
   // Called when the window's size constraints change.
   virtual void SizeConstraintsChanged() = 0;
+
+  // Returns true if the transparency of the DesktopNativeWidgetAura's
+  // |content_window_| should change.
+  virtual bool ShouldUpdateWindowTransparency() const = 0;
+
+  // A return value of true indicates DesktopNativeCursorManager should be
+  // used, a return value of false indicates the DesktopWindowTreeHost manages
+  // cursors itself.
+  virtual bool ShouldUseDesktopNativeCursorManager() const = 0;
+
+  // Returns whether a VisibilityController should be created.
+  virtual bool ShouldCreateVisibilityController() const = 0;
 };
 
 }  // namespace views

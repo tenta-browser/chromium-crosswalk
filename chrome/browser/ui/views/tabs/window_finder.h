@@ -9,19 +9,20 @@
 
 #include "ui/gfx/native_widget_types.h"
 
-namespace aura {
-class Window;
-}
-
 namespace gfx {
 class Point;
 }
 
+// Class used by the tabstrip to find chrome windows that we can attach tabs to.
 class WindowFinder {
  public:
   WindowFinder();
   virtual ~WindowFinder();
 
+  // Finds the topmost visible chrome window at |screen_point|. This should
+  // return nullptr if |screen_point| is in another program's window which
+  // occludes the topmost chrome window. Ignores the windows in |ignore|, which
+  // contain windows such as the tab being dragged right now.
   virtual gfx::NativeWindow GetLocalProcessWindowAtPoint(
       const gfx::Point& screen_point,
       const std::set<gfx::NativeWindow>& ignore);

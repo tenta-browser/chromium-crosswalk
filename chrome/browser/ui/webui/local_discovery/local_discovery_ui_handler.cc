@@ -34,9 +34,10 @@
 #include "components/signin/core/browser/profile_oauth2_token_service.h"
 #include "content/public/browser/user_metrics.h"
 #include "content/public/browser/web_ui.h"
+#include "printing/features/features.h"
 #include "ui/base/l10n/l10n_util.h"
 
-#if defined(ENABLE_PRINT_PREVIEW) && !defined(OS_CHROMEOS)
+#if BUILDFLAG(ENABLE_PRINT_PREVIEW) && !defined(OS_CHROMEOS)
 #define CLOUD_PRINT_CONNECTOR_UI_AVAILABLE
 #endif
 
@@ -79,13 +80,13 @@ void ReadDevicesList(const CloudPrintPrinterList::DeviceList& devices,
                      const std::set<std::string>& local_ids,
                      base::ListValue* devices_list) {
   for (const auto& i : devices) {
-    if (ContainsKey(local_ids, i.id)) {
+    if (base::ContainsKey(local_ids, i.id)) {
       devices_list->Append(CreateDeviceInfo(i));
     }
   }
 
   for (const auto& i : devices) {
-    if (!ContainsKey(local_ids, i.id)) {
+    if (!base::ContainsKey(local_ids, i.id)) {
       devices_list->Append(CreateDeviceInfo(i));
     }
   }
@@ -277,7 +278,8 @@ void LocalDiscoveryUIHandler::OnPrivetRegisterClaimToken(
     const GURL& url) {
   web_ui()->CallJavascriptFunctionUnsafe(
       "local_discovery.onRegistrationConfirmedOnPrinter");
-  if (!ContainsKey(device_descriptions_, current_http_client_->GetName())) {
+  if (!base::ContainsKey(device_descriptions_,
+                         current_http_client_->GetName())) {
     SendRegisterError();
     return;
   }
@@ -471,8 +473,8 @@ void LocalDiscoveryUIHandler::ResetCurrentRegistration() {
 }
 
 void LocalDiscoveryUIHandler::CheckUserLoggedIn() {
-  base::FundamentalValue logged_in_value(!GetSyncAccount().empty());
-  base::FundamentalValue is_supervised_value(IsUserSupervisedOrOffTheRecord());
+  base::Value logged_in_value(!GetSyncAccount().empty());
+  base::Value is_supervised_value(IsUserSupervisedOrOffTheRecord());
   web_ui()->CallJavascriptFunctionUnsafe("local_discovery.setUserLoggedIn",
                                          logged_in_value, is_supervised_value);
 }
@@ -560,7 +562,8 @@ void LocalDiscoveryUIHandler::ShowCloudPrintSetupDialog(
   // Open the connector enable page in the current tab.
   content::OpenURLParams params(cloud_devices::GetCloudPrintEnableURL(
                                     GetCloudPrintProxyService()->proxy_id()),
-                                content::Referrer(), CURRENT_TAB,
+                                content::Referrer(),
+                                WindowOpenDisposition::CURRENT_TAB,
                                 ui::PAGE_TRANSITION_LINK, false);
   web_ui()->GetWebContents()->OpenURL(params);
 }
@@ -576,7 +579,7 @@ void LocalDiscoveryUIHandler::SetupCloudPrintConnectorSection() {
   bool cloud_print_connector_allowed =
       !cloud_print_connector_enabled_.IsManaged() ||
       cloud_print_connector_enabled_.GetValue();
-  base::FundamentalValue allowed(cloud_print_connector_allowed);
+  base::Value allowed(cloud_print_connector_allowed);
 
   std::string email;
   Profile* profile = Profile::FromWebUI(web_ui());
@@ -584,7 +587,7 @@ void LocalDiscoveryUIHandler::SetupCloudPrintConnectorSection() {
       cloud_print_connector_allowed) {
     email = profile->GetPrefs()->GetString(prefs::kCloudPrintEmail);
   }
-  base::FundamentalValue disabled(email.empty());
+  base::Value disabled(email.empty());
 
   base::string16 label_str;
   if (email.empty()) {

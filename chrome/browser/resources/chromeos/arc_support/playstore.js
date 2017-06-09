@@ -89,6 +89,9 @@ function processLangZoneTerms() {
  * Formats current document in order to display it correctly.
  */
 function formatDocument() {
+  if (document.viewMode) {
+    document.body.classList.add(document.viewMode);
+  }
   // playstore.css is injected into the document and it is applied first.
   // Need to remove existing links that contain references to external
   // stylesheets which override playstore.css.
@@ -110,6 +113,23 @@ function formatDocument() {
   // Hide content at this point. We might want to redirect our view to terms
   // that exactly match current language and country code.
   document.body.hidden = true;
+}
+
+/**
+ * Searches in footer for a privacy policy link.
+ * @return {string} Link to Google Privacy Policy detected from the current
+ *                  document or link to the default policy if it is not found.
+ */
+function getPrivacyPolicyLink() {
+  var doc = document;
+  var links = doc.getElementById('play-footer').getElementsByTagName('a');
+  for (var i = 0; i < links.length; ++i) {
+    var targetURL = links[i].href;
+    if (targetURL.endsWith('/policies/privacy/')) {
+      return targetURL;
+    }
+  }
+  return 'https://www.google.com/policies/privacy/';
 }
 
 formatDocument();

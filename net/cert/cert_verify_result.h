@@ -10,6 +10,7 @@
 #include "base/memory/ref_counted.h"
 #include "net/base/net_export.h"
 #include "net/cert/cert_status_flags.h"
+#include "net/cert/ocsp_verify_result.h"
 #include "net/cert/x509_cert_types.h"
 
 namespace net {
@@ -27,12 +28,22 @@ class NET_EXPORT CertVerifyResult {
 
   bool operator==(const CertVerifyResult& other) const;
 
-  // The certificate and chain that was constructed during verification.
-  // Note that the though the verified certificate will match the originally
-  // supplied certificate, the intermediate certificates stored within may
-  // be substantially different. In the event of a verification failure, this
-  // will contain the chain as supplied by the server. This may be NULL if
-  // running within the sandbox.
+  // The certificate chain that was constructed during verification.
+  //
+  // Note: Although |verified_cert| will match the originally supplied
+  // certificate to be validated, the results of GetIntermediateCertificates()
+  // may be substantially different, both in order and in content, then the
+  // originally supplied intermediates.
+  //
+  // In the event of validation failures, this may contain the originally
+  // supplied certificate chain or a partially constructed path, depending on
+  // the implementation.
+  //
+  // In the event of validation success, the trust anchor will be
+  // |verified_cert->GetIntermediateCertificates().back()| if
+  // there was a certificate chain to the trust anchor, and will
+  // be |verified_cert->os_cert_handle()| if the certificate was
+  // the trust anchor.
   scoped_refptr<X509Certificate> verified_cert;
 
   // Bitmask of CERT_STATUS_* from net/cert/cert_status_flags.h. Note that
@@ -41,7 +52,8 @@ class NET_EXPORT CertVerifyResult {
   // chain.
   CertStatus cert_status;
 
-  // Properties of the certificate chain.
+  // Hash algorithms used by the certificate chain, excluding the trust
+  // anchor.
   bool has_md2;
   bool has_md4;
   bool has_md5;
@@ -49,8 +61,11 @@ class NET_EXPORT CertVerifyResult {
   bool has_sha1_leaf;
 
   // If the certificate was successfully verified then this contains the
-  // hashes, in several hash algorithms, of the SubjectPublicKeyInfos of the
-  // chain.
+  // hashes for all of the SubjectPublicKeyInfos of the chain (target,
+  // intermediates, and trust anchor)
+  //
+  // The ordering of the hashes in this vector is unspecified. Both the SHA1
+  // and SHA256 hash will be present for each certificate.
   HashValueVector public_key_hashes;
 
   // is_issued_by_known_root is true if we recognise the root CA as a standard
@@ -66,6 +81,9 @@ class NET_EXPORT CertVerifyResult {
   // True if a fallback to the common name was used when matching the host
   // name, rather than using the subjectAltName.
   bool common_name_fallback_used;
+
+  // Verification of stapled OCSP response, if present.
+  OCSPVerifyResult ocsp_result;
 };
 
 }  // namespace net

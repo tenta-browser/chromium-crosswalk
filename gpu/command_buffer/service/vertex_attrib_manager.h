@@ -20,6 +20,7 @@
 namespace gpu {
 namespace gles2 {
 
+class BufferManager;
 class FeatureInfo;
 class GLES2Decoder;
 class Program;
@@ -200,6 +201,21 @@ class GPU_EXPORT VertexAttribManager :
     return NULL;
   }
 
+  void UpdateAttribBaseTypeAndMask(GLuint loc, GLenum base_type) {
+    DCHECK(loc < vertex_attribs_.size());
+    int shift_bits = (loc % 16) * 2;
+    attrib_enabled_mask_[loc / 16] |= (0x3 << shift_bits);
+    attrib_base_type_mask_[loc / 16] &= ~(0x3 << shift_bits);
+    attrib_base_type_mask_[loc / 16] |= base_type << shift_bits;
+  }
+
+  const std::vector<uint32_t>& attrib_base_type_mask() const {
+    return attrib_base_type_mask_;
+  }
+  const std::vector<uint32_t>& attrib_enabled_mask() const {
+    return attrib_enabled_mask_;
+  }
+
   void SetAttribInfo(
       GLuint index,
       Buffer* buffer,
@@ -256,6 +272,7 @@ class GPU_EXPORT VertexAttribManager :
       const char* function_name,
       GLES2Decoder* decoder,
       FeatureInfo* feature_info,
+      BufferManager* buffer_manager,
       Program* current_program,
       GLuint max_vertex_accessed,
       bool instanced,
@@ -284,6 +301,15 @@ class GPU_EXPORT VertexAttribManager :
   // if it is safe to draw.
   std::vector<VertexAttrib> vertex_attribs_;
 
+  // Vertex attrib base types: FLOAT, INT, or UINT.
+  // Each base type is encoded into 2 bits, the lowest 2 bits for location 0,
+  // the highest 2 bits for location (max_vertex_attribs - 1).
+  std::vector<uint32_t> attrib_base_type_mask_;
+  // Same layout as above, 2 bits per location, 0x03 if a location for an
+  // vertex attrib is enabled by enabbleVertexAttribArray, 0x00 if it is
+  // disabled by disableVertexAttribArray. Every location is 0x00 by default.
+  std::vector<uint32_t> attrib_enabled_mask_;
+
   // The currently bound element array buffer. If this is 0 it is illegal
   // to call glDrawElements.
   scoped_refptr<Buffer> element_array_buffer_;
@@ -306,4 +332,3 @@ class GPU_EXPORT VertexAttribManager :
 }  // namespace gpu
 
 #endif  // GPU_COMMAND_BUFFER_SERVICE_VERTEX_ATTRIB_MANAGER_H_
-

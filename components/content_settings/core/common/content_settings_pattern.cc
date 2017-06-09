@@ -42,7 +42,7 @@ std::string GetDefaultPort(const std::string& scheme) {
   return std::string();
 }
 
-// Returns true if |sub_domain| is a sub domain or equls |domain|.  E.g.
+// Returns true if |sub_domain| is a sub domain or equals |domain|.  E.g.
 // "mail.google.com" is a sub domain of "google.com" but "evilhost.com" is not a
 // subdomain of "host.com".
 bool IsSubDomainOrEqual(const std::string& sub_domain,
@@ -374,11 +374,12 @@ BuilderInterface* ContentSettingsPattern::CreateBuilder(
 
 // static
 ContentSettingsPattern ContentSettingsPattern::Wildcard() {
-  std::unique_ptr<ContentSettingsPattern::BuilderInterface> builder(
-      ContentSettingsPattern::CreateBuilder(true));
-  builder->WithSchemeWildcard()->WithDomainWildcard()->WithPortWildcard()->
-           WithPathWildcard();
-  return builder->Build();
+  PatternParts parts;
+  parts.is_scheme_wildcard = true;
+  parts.has_domain_wildcard = true;
+  parts.is_port_wildcard = true;
+  parts.is_path_wildcard = true;
+  return ContentSettingsPattern(parts, true);
 }
 
 // static
@@ -449,6 +450,60 @@ ContentSettingsPattern ContentSettingsPattern::FromString(
   content_settings::PatternParser::Parse(pattern_spec,
                                          builder.get());
   return builder->Build();
+}
+
+// static
+bool ContentSettingsPattern::MigrateFromDomainToOrigin(
+    const ContentSettingsPattern& domain_pattern,
+    ContentSettingsPattern* origin_pattern) {
+  DCHECK(origin_pattern);
+
+  // Generated patterns with ::FromURL (which we want to migrate) must either
+  // have a scheme wildcard or be https.
+  if (domain_pattern.parts_.scheme != url::kHttpsScheme &&
+      !domain_pattern.parts_.is_scheme_wildcard) {
+    return false;
+  }
+
+  // Generated patterns using ::FromURL with the HTTPs scheme can not have a
+  // port wildcard.
+  if (domain_pattern.parts_.is_port_wildcard &&
+      domain_pattern.parts_.scheme == url::kHttpsScheme) {
+    return false;
+  }
+
+  // Patterns generated with ::FromURL will always have a domain wildcard. Those
+  // generated with ::FromURLNoWildcard don't.
+  if (!domain_pattern.parts_.has_domain_wildcard)
+    return false;
+
+  // Generated patterns with ::FromURL will always have a host.
+  if (domain_pattern.parts_.host.empty())
+    return false;
+
+  std::unique_ptr<ContentSettingsPattern::BuilderInterface> builder(
+      ContentSettingsPattern::CreateBuilder(false));
+
+  if (domain_pattern.parts_.is_scheme_wildcard)
+    builder->WithScheme(url::kHttpScheme);
+  else
+    builder->WithScheme(domain_pattern.parts_.scheme);
+
+  builder->WithHost(domain_pattern.parts_.host);
+
+  if (domain_pattern.parts_.is_port_wildcard) {
+    if (domain_pattern.parts_.scheme == url::kHttpsScheme) {
+      builder->WithPort(GetDefaultPort(url::kHttpsScheme));
+    } else {
+      builder->WithPort(GetDefaultPort(url::kHttpScheme));
+    }
+  } else {
+    builder->WithPort(domain_pattern.parts_.port);
+  }
+
+  *origin_pattern = builder->Build();
+
+  return true;
 }
 
 // static
@@ -547,17 +602,6 @@ std::string ContentSettingsPattern::ToString() const {
     return content_settings::PatternParser::ToString(parts_);
   else
     return std::string();
-}
-
-ContentSettingsPattern::SchemeType ContentSettingsPattern::GetScheme() const {
-  if (parts_.is_scheme_wildcard)
-    return SCHEME_WILDCARD;
-
-  for (size_t i = 2; i < arraysize(kSchemeNames); ++i) {
-    if (parts_.scheme == kSchemeNames[i])
-      return static_cast<SchemeType>(i);
-  }
-  return SCHEME_OTHER;
 }
 
 ContentSettingsPattern::Relation ContentSettingsPattern::Compare(

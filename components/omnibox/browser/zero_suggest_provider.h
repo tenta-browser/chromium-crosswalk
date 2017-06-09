@@ -20,9 +20,9 @@
 #include "net/url_request/url_fetcher_delegate.h"
 
 class AutocompleteProviderListener;
+class HistoryURLProvider;
 
 namespace base {
-class ListValue;
 class Value;
 }
 
@@ -49,6 +49,7 @@ class ZeroSuggestProvider : public BaseSearchProvider,
  public:
   // Creates and returns an instance of this provider.
   static ZeroSuggestProvider* Create(AutocompleteProviderClient* client,
+                                     HistoryURLProvider* history_url_provider,
                                      AutocompleteProviderListener* listener);
 
   // Registers a preference used to cache zero suggest results.
@@ -66,6 +67,7 @@ class ZeroSuggestProvider : public BaseSearchProvider,
 
  private:
   ZeroSuggestProvider(AutocompleteProviderClient* client,
+                      HistoryURLProvider* history_url_provider,
                       AutocompleteProviderListener* listener);
 
   ~ZeroSuggestProvider() override;
@@ -120,9 +122,18 @@ class ZeroSuggestProvider : public BaseSearchProvider,
   bool ShouldShowNonContextualZeroSuggest(const GURL& suggest_url,
                                           const GURL& current_page_url) const;
 
+  // Returns a URL string that should be used to to request contextual
+  // suggestions from the default provider.  Does not take into account whether
+  // sending this request is prohibited (e.g., in an incognito window).  Returns
+  // an empty string in case of an error.
+  std::string GetContextualSuggestionsUrl() const;
+
   // Checks whether we have a set of zero suggest results cached, and if so
   // populates |matches_| with cached results.
   void MaybeUseCachedSuggestions();
+
+  // Used for efficiency when creating the verbatim match.  Can be null.
+  HistoryURLProvider* history_url_provider_;
 
   AutocompleteProviderListener* listener_;
 

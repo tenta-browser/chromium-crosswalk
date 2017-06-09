@@ -10,10 +10,10 @@
 #include "chrome/browser/profiles/profile_avatar_icon_util.h"
 #include "chrome/browser/signin/account_tracker_service_factory.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
-#include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/signin_view_controller_delegate.h"
 #include "chrome/browser/ui/webui/signin/login_ui_service_factory.h"
+#include "chrome/browser/ui/webui/signin/signin_utils.h"
 #include "components/signin/core/browser/account_tracker_service.h"
 #include "content/public/browser/user_metrics.h"
 #include "content/public/browser/web_contents.h"
@@ -64,74 +64,82 @@ void SyncConfirmationHandler::HandleGoToSettings(const base::ListValue* args) {
 void SyncConfirmationHandler::HandleUndo(const base::ListValue* args) {
   did_user_explicitly_interact = true;
   content::RecordAction(base::UserMetricsAction("Signin_Undo_Signin"));
-  Browser* browser = GetDesktopBrowser();
-  LoginUIServiceFactory::GetForProfile(browser->profile())->
-      SyncConfirmationUIClosed(LoginUIService::ABORT_SIGNIN);
-  SigninManagerFactory::GetForProfile(Profile::FromWebUI(web_ui()))->SignOut(
-      signin_metrics::ABORT_SIGNIN,
-      signin_metrics::SignoutDelete::IGNORE_METRIC);
-  browser->CloseModalSigninWindow();
-}
-
-void SyncConfirmationHandler::SetUserImageURL(const std::string& picture_url) {
-  GURL url;
-  if (profiles::GetImageURLWithThumbnailSize(GURL(picture_url),
-                                             kProfileImageSize,
-                                             &url)) {
-    base::StringValue picture_url_value(url.spec());
-    web_ui()->CallJavascriptFunctionUnsafe("sync.confirmation.setUserImageURL",
-                                           picture_url_value);
+  Browser* browser = signin::GetDesktopBrowser(web_ui());
+  if (browser) {
+    LoginUIServiceFactory::GetForProfile(browser->profile())->
+        SyncConfirmationUIClosed(LoginUIService::ABORT_SIGNIN);
+    SigninManagerFactory::GetForProfile(Profile::FromWebUI(web_ui()))->SignOut(
+        signin_metrics::ABORT_SIGNIN,
+        signin_metrics::SignoutDelete::IGNORE_METRIC);
+    browser->CloseModalSigninWindow();
   }
 }
 
-void SyncConfirmationHandler::OnAccountUpdated(const AccountInfo& info) {
-  DCHECK(info.IsValid());
-  Profile* profile = Profile::FromWebUI(web_ui());
-  AccountTrackerServiceFactory::GetForProfile(profile)->RemoveObserver(this);
-
-  SetUserImageURL(info.picture_url);
+void SyncConfirmationHandler::SetUserImageURL(const std::string& picture_url) {
+  std::string picture_url_to_load;
+  GURL url;
+  if (picture_url != AccountTrackerService::kNoPictureURLFound &&
+      profiles::GetImageURLWithThumbnailSize(GURL(picture_url),
+                                             kProfileImageSize, &url)) {
+    picture_url_to_load = url.spec();
+  } else {
+    // Use the placeholder avatar icon until the account picture URL is fetched.
+    picture_url_to_load = profiles::GetPlaceholderAvatarIconUrl();
+  }
+  base::StringValue picture_url_value(picture_url_to_load);
+  web_ui()->CallJavascriptFunctionUnsafe("sync.confirmation.setUserImageURL",
+                                         picture_url_value);
 }
 
-Browser* SyncConfirmationHandler::GetDesktopBrowser() {
-  Browser* browser = chrome::FindBrowserWithWebContents(
-      web_ui()->GetWebContents());
-  if (!browser)
-    browser = chrome::FindLastActiveWithProfile(Profile::FromWebUI(web_ui()));
-  DCHECK(browser);
-  return browser;
+void SyncConfirmationHandler::OnAccountUpdated(const AccountInfo& info) {
+  if (!info.IsValid())
+    return;
+
+  Profile* profile = Profile::FromWebUI(web_ui());
+  SigninManager* signin_manager = SigninManagerFactory::GetForProfile(profile);
+  if (info.account_id != signin_manager->GetAuthenticatedAccountId())
+    return;
+
+  AccountTrackerServiceFactory::GetForProfile(profile)->RemoveObserver(this);
+  SetUserImageURL(info.picture_url);
 }
 
 void SyncConfirmationHandler::CloseModalSigninWindow(
     LoginUIService::SyncConfirmationUIClosedResult result) {
-  Browser* browser = GetDesktopBrowser();
-  LoginUIServiceFactory::GetForProfile(browser->profile())->
-      SyncConfirmationUIClosed(result);
-  browser->CloseModalSigninWindow();
+  Browser* browser = signin::GetDesktopBrowser(web_ui());
+  if (browser) {
+    LoginUIServiceFactory::GetForProfile(browser->profile())->
+        SyncConfirmationUIClosed(result);
+    browser->CloseModalSigninWindow();
+  }
 }
 
 void SyncConfirmationHandler::HandleInitializedWithSize(
     const base::ListValue* args) {
-  Browser* browser = GetDesktopBrowser();
-  Profile* profile = browser->profile();
-  std::vector<AccountInfo> accounts =
-      AccountTrackerServiceFactory::GetForProfile(profile)->GetAccounts();
-
-  if (accounts.empty())
+  Browser* browser = signin::GetDesktopBrowser(web_ui());
+  if (!browser)
     return;
 
-  AccountInfo primary_account_info = accounts[0];
+  Profile* profile = browser->profile();
+  std::string account_id =
+      SigninManagerFactory::GetForProfile(profile)->GetAuthenticatedAccountId();
+  if (account_id.empty()) {
+    // No account is signed in, so there is nothing to be displayed in the sync
+    // confirmation dialog.
+    return;
+  }
+  AccountTrackerService* account_tracker =
+      AccountTrackerServiceFactory::GetForProfile(profile);
+  AccountInfo account_info = account_tracker->GetAccountInfo(account_id);
 
-  if (!primary_account_info.IsValid())
-    AccountTrackerServiceFactory::GetForProfile(profile)->AddObserver(this);
-  else
-    SetUserImageURL(primary_account_info.picture_url);
+  if (!account_info.IsValid()) {
+    SetUserImageURL(AccountTrackerService::kNoPictureURLFound);
+    account_tracker->AddObserver(this);
+  } else {
+    SetUserImageURL(account_info.picture_url);
+  }
 
-  double height;
-  bool success = args->GetDouble(0, &height);
-  DCHECK(success);
-
-  browser->signin_view_controller()->SetModalSigninHeight(
-      static_cast<int>(height));
+  signin::SetInitializedModalHeight(web_ui(), args);
 
   // After the dialog is shown, some platforms might have an element focused.
   // To be consistent, clear the focused element on all platforms.

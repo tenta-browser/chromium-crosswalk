@@ -10,121 +10,79 @@
 #include <memory>
 #include <set>
 
-#include "ash/mus/window_manager_observer.h"
-#include "ash/public/interfaces/shelf_layout.mojom.h"
-#include "ash/public/interfaces/user_window_controller.mojom.h"
+#include "ash/public/interfaces/wallpaper.mojom.h"
 #include "base/macros.h"
-#include "components/mus/common/types.h"
-#include "components/mus/public/interfaces/accelerator_registrar.mojom.h"
-#include "mash/session/public/interfaces/session.mojom.h"
+#include "base/memory/ref_counted.h"
 #include "mojo/public/cpp/bindings/binding.h"
-#include "mojo/public/cpp/bindings/binding_set.h"
-#include "services/shell/public/cpp/shell_client.h"
-#include "services/tracing/public/cpp/tracing_impl.h"
+#include "services/service_manager/public/cpp/service.h"
+#include "services/tracing/public/cpp/provider.h"
+#include "services/ui/common/types.h"
 
-namespace mus {
+namespace aura {
 class WindowTreeClient;
+}
+
+namespace base {
+class SequencedWorkerPool;
+}
+
+namespace chromeos {
+namespace system {
+class ScopedFakeStatisticsProvider;
+}
 }
 
 namespace views {
 class AuraInit;
 }
 
-namespace ui {
-class Event;
-}
-
 namespace ash {
+namespace test {
+class AshTestHelper;
+}
 namespace mus {
 
-class AcceleratorRegistrarImpl;
-class RootWindowController;
-class ShelfLayoutImpl;
-class UserWindowControllerImpl;
+class NetworkConnectDelegateMus;
 class WindowManager;
 
-class WindowManagerApplication
-    : public shell::ShellClient,
-      public shell::InterfaceFactory<mojom::ShelfLayout>,
-      public shell::InterfaceFactory<mojom::UserWindowController>,
-      public shell::InterfaceFactory<::mus::mojom::AcceleratorRegistrar>,
-      public mash::session::mojom::ScreenlockStateListener,
-      public WindowManagerObserver {
+// Hosts the window manager and the ash system user interface for mash.
+class WindowManagerApplication : public service_manager::Service {
  public:
   WindowManagerApplication();
   ~WindowManagerApplication() override;
 
-  shell::Connector* connector() { return connector_; }
-
   WindowManager* window_manager() { return window_manager_.get(); }
 
-  mash::session::mojom::Session* session() { return session_.get(); }
-
  private:
+  friend class ash::test::AshTestHelper;
   friend class WmTestBase;
   friend class WmTestHelper;
 
-  void OnAcceleratorRegistrarDestroyed(AcceleratorRegistrarImpl* registrar);
+  void InitWindowManager(
+      std::unique_ptr<aura::WindowTreeClient> window_tree_client,
+      const scoped_refptr<base::SequencedWorkerPool>& blocking_pool);
 
-  void InitWindowManager(::mus::WindowTreeClient* window_tree_client);
+  // Initializes lower-level OS-specific components (e.g. D-Bus services).
+  void InitializeComponents();
+  void ShutdownComponents();
 
-  // shell::ShellClient:
-  void Initialize(shell::Connector* connector,
-                  const shell::Identity& identity,
-                  uint32_t id) override;
-  bool AcceptConnection(shell::Connection* connection) override;
+  // service_manager::Service:
+  void OnStart() override;
+  bool OnConnect(const service_manager::ServiceInfo& remote_info,
+                 service_manager::InterfaceRegistry* registry) override;
 
-  // shell::InterfaceFactory<mojom::ShelfLayout>:
-  void Create(shell::Connection* connection,
-              mojo::InterfaceRequest<mojom::ShelfLayout> request) override;
-
-  // shell::InterfaceFactory<mojom::UserWindowController>:
-  void Create(
-      shell::Connection* connection,
-      mojo::InterfaceRequest<mojom::UserWindowController> request) override;
-
-  // shell::InterfaceFactory<mus::mojom::AcceleratorRegistrar>:
-  void Create(shell::Connection* connection,
-              mojo::InterfaceRequest<::mus::mojom::AcceleratorRegistrar>
-                  request) override;
-
-  // session::mojom::ScreenlockStateListener:
-  void ScreenlockStateChanged(bool locked) override;
-
-  // WindowManagerObserver:
-  void OnRootWindowControllerAdded(RootWindowController* controller) override;
-  void OnWillDestroyRootWindowController(
-      RootWindowController* controller) override;
-
-  shell::Connector* connector_;
-
-  mojo::TracingImpl tracing_;
+  tracing::Provider tracing_;
 
   std::unique_ptr<views::AuraInit> aura_init_;
 
-  // The |shelf_layout_| object is created once OnEmbed() is called. Until that
-  // time |shelf_layout_requests_| stores pending interface requests.
-  std::unique_ptr<ShelfLayoutImpl> shelf_layout_;
-  mojo::BindingSet<mojom::ShelfLayout> shelf_layout_bindings_;
-  std::vector<mojo::InterfaceRequest<mojom::ShelfLayout>>
-      shelf_layout_requests_;
-
-  // |user_window_controller_| is created once OnEmbed() is called. Until that
-  // time |user_window_controller_requests_| stores pending interface requests.
-  std::unique_ptr<UserWindowControllerImpl> user_window_controller_;
-  mojo::BindingSet<mojom::UserWindowController>
-      user_window_controller_bindings_;
-  std::vector<mojo::InterfaceRequest<mojom::UserWindowController>>
-      user_window_controller_requests_;
-
   std::unique_ptr<WindowManager> window_manager_;
 
-  std::set<AcceleratorRegistrarImpl*> accelerator_registrars_;
+  // A blocking pool used by the WindowManager's shell; not used in tests.
+  scoped_refptr<base::SequencedWorkerPool> blocking_pool_;
 
-  mash::session::mojom::SessionPtr session_;
-
-  mojo::Binding<mash::session::mojom::ScreenlockStateListener>
-      screenlock_state_listener_binding_;
+  std::unique_ptr<NetworkConnectDelegateMus> network_connect_delegate_;
+  std::unique_ptr<chromeos::system::ScopedFakeStatisticsProvider>
+      statistics_provider_;
 
   DISALLOW_COPY_AND_ASSIGN(WindowManagerApplication);
 };

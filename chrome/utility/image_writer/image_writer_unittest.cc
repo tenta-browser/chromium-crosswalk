@@ -32,9 +32,10 @@ class ImageWriterUtilityTest : public testing::Test {
  protected:
   void SetUp() override {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
-    ASSERT_TRUE(base::CreateTemporaryFileInDir(temp_dir_.path(), &image_path_));
     ASSERT_TRUE(
-        base::CreateTemporaryFileInDir(temp_dir_.path(), &device_path_));
+        base::CreateTemporaryFileInDir(temp_dir_.GetPath(), &image_path_));
+    ASSERT_TRUE(
+        base::CreateTemporaryFileInDir(temp_dir_.GetPath(), &device_path_));
   }
 
   void TearDown() override {}
@@ -61,7 +62,6 @@ class MockHandler : public ImageWriterHandler {
   MOCK_METHOD1(SendProgress, void(int64_t));
   MOCK_METHOD1(SendFailed, void(const std::string& message));
   MOCK_METHOD0(SendSucceeded, void());
-  MOCK_METHOD1(OnMessageReceived, bool(const IPC::Message& message));
 };
 
 // This Mock has the additional feature that it will start verification when

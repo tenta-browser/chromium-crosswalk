@@ -30,6 +30,7 @@ class TestAXNodeWrapper : public AXPlatformNodeDelegate {
 
   // AXPlatformNodeDelegate.
   const AXNodeData& GetData() override;
+  gfx::NativeWindow GetTopLevelWidget() override;
   gfx::NativeViewAccessible GetParent() override;
   int GetChildCount() override;
   gfx::NativeViewAccessible ChildAtIndex(int index) override;
@@ -37,8 +38,8 @@ class TestAXNodeWrapper : public AXPlatformNodeDelegate {
   gfx::NativeViewAccessible HitTestSync(int x, int y) override;
   gfx::NativeViewAccessible GetFocus() override;
   gfx::AcceleratedWidget GetTargetForNativeAccessibilityEvent() override;
+  bool AccessibilityPerformAction(const ui::AXActionData& data) override;
   void DoDefaultAction() override;
-  bool SetStringValue(const base::string16& new_value) override;
 
  private:
   TestAXNodeWrapper(AXTree* tree, AXNode* node);

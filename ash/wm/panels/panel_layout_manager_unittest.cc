@@ -4,43 +4,59 @@
 
 #include "ash/common/wm/panels/panel_layout_manager.h"
 
-#include "ash/aura/wm_window_aura.h"
-#include "ash/common/ash_switches.h"
+#include "ash/common/shelf/shelf_button.h"
+#include "ash/common/shelf/shelf_layout_manager.h"
 #include "ash/common/shelf/shelf_model.h"
-#include "ash/common/shelf/shelf_types.h"
-#include "ash/common/shell_window_ids.h"
+#include "ash/common/shelf/shelf_view.h"
+#include "ash/common/shelf/shelf_widget.h"
+#include "ash/common/shelf/wm_shelf.h"
 #include "ash/common/system/web_notification/web_notification_tray.h"
+#include "ash/common/test/test_shelf_delegate.h"
 #include "ash/common/wm/mru_window_tracker.h"
 #include "ash/common/wm/window_state.h"
 #include "ash/common/wm_shell.h"
-#include "ash/screen_util.h"
-#include "ash/shelf/shelf.h"
-#include "ash/shelf/shelf_button.h"
-#include "ash/shelf/shelf_layout_manager.h"
-#include "ash/shelf/shelf_util.h"
-#include "ash/shelf/shelf_view.h"
-#include "ash/shelf/shelf_widget.h"
+#include "ash/common/wm_window.h"
+#include "ash/common/wm_window_property.h"
+#include "ash/public/cpp/shelf_types.h"
+#include "ash/public/cpp/shell_window_ids.h"
+#include "ash/root_window_controller.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
-#include "ash/test/shelf_test_api.h"
 #include "ash/test/shelf_view_test_api.h"
-#include "ash/test/shell_test_api.h"
-#include "ash/test/test_shelf_delegate.h"
 #include "ash/wm/window_state_aura.h"
 #include "ash/wm/window_util.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/i18n/rtl.h"
 #include "base/run_loop.h"
+#include "base/strings/string_number_conversions.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/test/test_windows.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_event_dispatcher.h"
+#include "ui/display/manager/display_manager.h"
+#include "ui/display/manager/managed_display_info.h"
+#include "ui/display/test/display_manager_test_api.h"
 #include "ui/events/event_utils.h"
 #include "ui/events/test/event_generator.h"
 #include "ui/views/widget/widget.h"
 
 namespace ash {
+
+namespace {
+
+std::string ToDisplayName(int64_t id) {
+  return "x-" + base::Int64ToString(id);
+}
+
+display::ManagedDisplayInfo CreateDisplayInfo(int64_t id,
+                                              const gfx::Rect& bounds) {
+  display::ManagedDisplayInfo info(id, ToDisplayName(id), false);
+  info.SetBounds(bounds);
+  return info;
+}
+
+}  // namespace
 
 using aura::test::WindowIsAbove;
 
@@ -51,10 +67,9 @@ class PanelLayoutManagerTest : public test::AshTestBase {
 
   void SetUp() override {
     test::AshTestBase::SetUp();
-    ASSERT_TRUE(test::TestShelfDelegate::instance());
 
-    shelf_view_test_.reset(
-        new test::ShelfViewTestAPI(GetShelfView(Shelf::ForPrimaryDisplay())));
+    shelf_view_test_.reset(new test::ShelfViewTestAPI(
+        GetPrimaryShelf()->GetShelfViewForTesting()));
     shelf_view_test_->SetAnimationDuration(1);
 
     WebNotificationTray::DisableAnimationsForTest(true);
@@ -74,9 +89,7 @@ class PanelLayoutManagerTest : public test::AshTestBase {
                                               const gfx::Rect& bounds) {
     aura::Window* window = CreateTestWindowInShellWithDelegateAndType(
         delegate, ui::wm::WINDOW_TYPE_PANEL, 0, bounds);
-    test::TestShelfDelegate* shelf_delegate =
-        test::TestShelfDelegate::instance();
-    shelf_delegate->AddShelfItem(window);
+    test::TestShelfDelegate::instance()->AddShelfItem(WmWindow::Get(window));
     shelf_view_test()->RunMessageLoopUntilAnimationsDone();
     return window;
   }
@@ -91,7 +104,7 @@ class PanelLayoutManagerTest : public test::AshTestBase {
   }
 
   views::Widget* GetCalloutWidgetForPanel(aura::Window* panel) {
-    WmWindow* wm_panel = WmWindowAura::Get(panel);
+    WmWindow* wm_panel = WmWindow::Get(panel);
     PanelLayoutManager* manager = PanelLayoutManager::Get(wm_panel);
     DCHECK(manager);
     PanelLayoutManager::PanelList::iterator found =
@@ -106,7 +119,7 @@ class PanelLayoutManagerTest : public test::AshTestBase {
     gfx::Rect panel_bounds = panel->GetBoundsInRootWindow();
     gfx::Point root_point = gfx::Point(panel_bounds.x(), panel_bounds.y());
     display::Display display =
-        ScreenUtil::FindDisplayContainingPoint(root_point);
+        display_manager()->FindDisplayContainingPoint(root_point);
 
     gfx::Rect panel_bounds_in_screen = panel->GetBoundsInScreen();
     gfx::Point screen_bottom_right = gfx::Point(
@@ -125,19 +138,20 @@ class PanelLayoutManagerTest : public test::AshTestBase {
     EXPECT_FALSE(window1_bounds.Intersects(window2_bounds));
   }
 
-  void IsPanelAboveLauncherIcon(const aura::Window* panel) {
+  void IsPanelAboveLauncherIcon(aura::Window* panel) {
     // Waits until all shelf view animations are done.
     shelf_view_test()->RunMessageLoopUntilAnimationsDone();
 
-    Shelf* shelf = Shelf::ForWindow(panel);
-    gfx::Rect icon_bounds = shelf->GetScreenBoundsOfItemIconForWindow(panel);
+    WmWindow* wm_panel = WmWindow::Get(panel);
+    WmShelf* shelf = wm_panel->GetRootWindowController()->GetShelf();
+    gfx::Rect icon_bounds = shelf->GetScreenBoundsOfItemIconForWindow(wm_panel);
     ASSERT_FALSE(icon_bounds.width() == 0 && icon_bounds.height() == 0);
 
     gfx::Rect window_bounds = panel->GetBoundsInScreen();
     ASSERT_LT(icon_bounds.width(), window_bounds.width());
     ASSERT_LT(icon_bounds.height(), window_bounds.height());
     gfx::Rect shelf_bounds = shelf->shelf_widget()->GetWindowBoundsInScreen();
-    ShelfAlignment alignment = GetAlignment(panel->GetRootWindow());
+    const ShelfAlignment alignment = shelf->alignment();
 
     if (IsHorizontal(alignment)) {
       // The horizontal bounds of the panel window should contain the bounds of
@@ -164,8 +178,9 @@ class PanelLayoutManagerTest : public test::AshTestBase {
     base::RunLoop().RunUntilIdle();
     views::Widget* widget = GetCalloutWidgetForPanel(panel);
 
-    Shelf* shelf = Shelf::ForWindow(panel);
-    gfx::Rect icon_bounds = shelf->GetScreenBoundsOfItemIconForWindow(panel);
+    WmWindow* wm_panel = WmWindow::Get(panel);
+    WmShelf* shelf = wm_panel->GetRootWindowController()->GetShelf();
+    gfx::Rect icon_bounds = shelf->GetScreenBoundsOfItemIconForWindow(wm_panel);
     ASSERT_FALSE(icon_bounds.IsEmpty());
 
     gfx::Rect panel_bounds = panel->GetBoundsInScreen();
@@ -174,7 +189,7 @@ class PanelLayoutManagerTest : public test::AshTestBase {
 
     EXPECT_TRUE(widget->IsVisible());
 
-    ShelfAlignment alignment = GetAlignment(panel->GetRootWindow());
+    const ShelfAlignment alignment = shelf->alignment();
     if (alignment == SHELF_ALIGNMENT_LEFT)
       EXPECT_EQ(panel_bounds.x(), callout_bounds.right());
     else if (alignment == SHELF_ALIGNMENT_RIGHT)
@@ -204,8 +219,8 @@ class PanelLayoutManagerTest : public test::AshTestBase {
     test::ShelfViewTestAPI test_api(shelf_view);
     test_api.SetAnimationDuration(1);
     test_api.RunMessageLoopUntilAnimationsDone();
-    ShelfModel* model = test::ShellTestApi(Shell::GetInstance()).shelf_model();
-    int index = model->ItemIndexByID(GetShelfIDForWindow(window));
+    int index = WmShell::Get()->shelf_model()->ItemIndexByID(
+        WmWindow::Get(window)->GetIntProperty(WmWindowProperty::SHELF_ID));
     gfx::Rect bounds = test_api.GetButton(index)->GetBoundsInScreen();
 
     ui::test::EventGenerator& event_generator = GetEventGenerator();
@@ -215,30 +230,26 @@ class PanelLayoutManagerTest : public test::AshTestBase {
     test_api.RunMessageLoopUntilAnimationsDone();
   }
 
-  void SetAlignment(aura::Window* root_window, ShelfAlignment alignment) {
-    Shelf::ForWindow(root_window)->SetAlignment(alignment);
+  WmShelf* GetShelfForWindow(aura::Window* window) {
+    return WmWindow::Get(window)->GetRootWindowController()->GetShelf();
   }
 
-  ShelfAlignment GetAlignment(const aura::Window* root_window) {
-    return Shelf::ForWindow(root_window)->alignment();
+  void SetAlignment(aura::Window* root_window, ShelfAlignment alignment) {
+    GetShelfForWindow(root_window)->SetAlignment(alignment);
   }
 
   void SetShelfAutoHideBehavior(aura::Window* window,
                                 ShelfAutoHideBehavior behavior) {
-    Shelf* shelf = Shelf::ForWindow(window);
+    WmShelf* shelf = GetShelfForWindow(window);
     shelf->SetAutoHideBehavior(behavior);
-    test::ShelfViewTestAPI test_api(GetShelfView(shelf));
+    test::ShelfViewTestAPI test_api(shelf->GetShelfViewForTesting());
     test_api.RunMessageLoopUntilAnimationsDone();
   }
 
   void SetShelfVisibilityState(aura::Window* window,
                                ShelfVisibilityState visibility_state) {
-    Shelf* shelf = Shelf::ForWindow(window);
+    WmShelf* shelf = GetShelfForWindow(window);
     shelf->shelf_layout_manager()->SetState(visibility_state);
-  }
-
-  ShelfView* GetShelfView(Shelf* shelf) {
-    return test::ShelfTestAPI(shelf).shelf_view();
   }
 
  private:
@@ -288,6 +299,80 @@ TEST_P(PanelLayoutManagerTextDirectionTest, AddOnePanel) {
   EXPECT_NO_FATAL_FAILURE(IsCalloutAboveLauncherIcon(window.get()));
 }
 
+// Tests for crashes during undocking.
+// See https://crbug.com/632755
+TEST_F(PanelLayoutManagerTest, UndockTest) {
+  std::vector<display::ManagedDisplayInfo> info_list;
+
+  const int64_t internal_display_id =
+      display::test::DisplayManagerTestApi(
+          Shell::GetInstance()->display_manager())
+          .SetFirstDisplayAsInternalDisplay();
+
+  // Create the primary display info.
+  display::ManagedDisplayInfo internal_display =
+      CreateDisplayInfo(internal_display_id, gfx::Rect(0, 0, 1280, 720));
+  // Create the secondary external display info. This will be docked display.
+  display::ManagedDisplayInfo external_display_info =
+      CreateDisplayInfo(2, gfx::Rect(0, 0, 1920, 1080));
+
+  info_list.push_back(external_display_info);
+  // Docked state.
+  display_manager()->OnNativeDisplaysChanged(info_list);
+
+  // Create a panel in the docked state
+  std::unique_ptr<aura::Window> p1_d2(
+      CreatePanelWindow(gfx::Rect(1555, 800, 50, 50)));
+
+  info_list.clear();
+  info_list.push_back(internal_display);
+
+  // Undock and bring back the native device display as primary display.
+  display_manager()->OnNativeDisplaysChanged(info_list);
+}
+
+// Tests for any crash during docking and then undocking.
+// See https://crbug.com/632755
+TEST_F(PanelLayoutManagerTest, DockUndockTest) {
+  std::vector<display::ManagedDisplayInfo> info_list;
+
+  const int64_t internal_display_id =
+      display::test::DisplayManagerTestApi(
+          Shell::GetInstance()->display_manager())
+          .SetFirstDisplayAsInternalDisplay();
+
+  // Create the primary display info.
+  display::ManagedDisplayInfo internal_display =
+      CreateDisplayInfo(internal_display_id, gfx::Rect(0, 0, 1280, 720));
+
+  info_list.push_back(internal_display);
+  display_manager()->OnNativeDisplaysChanged(info_list);
+
+  // Create a panel in the undocked state.
+  std::unique_ptr<aura::Window> p1_d2(
+      CreatePanelWindow(gfx::Rect(600, 200, 50, 50)));
+
+  // Create the secondary external display info. This will be docked display.
+  display::ManagedDisplayInfo external_display_info =
+      CreateDisplayInfo(2, gfx::Rect(0, 0, 1920, 1080));
+
+  info_list.push_back(external_display_info);
+  // Adding external Display
+  display_manager()->OnNativeDisplaysChanged(info_list);
+
+  info_list.clear();
+  info_list.push_back(external_display_info);
+
+  // Docked state.
+  display_manager()->OnNativeDisplaysChanged(info_list);
+
+  info_list.clear();
+  info_list.push_back(internal_display);
+
+  // Undock and bring back the native device display as primary display.
+  display_manager()->OnNativeDisplaysChanged(info_list);
+}
+
 // Tests that a created panel window is successfully aligned over a hidden
 // shelf icon.
 TEST_F(PanelLayoutManagerTest, PanelAlignsToHiddenLauncherIcon) {
@@ -301,9 +386,6 @@ TEST_F(PanelLayoutManagerTest, PanelAlignsToHiddenLauncherIcon) {
 }
 
 TEST_F(PanelLayoutManagerTest, PanelAlignsToHiddenLauncherIconSecondDisplay) {
-  if (!SupportsMultipleDisplays())
-    return;
-
   // Keep the displays wide so that shelves have enough space for shelves
   // buttons.
   UpdateDisplay("400x400,600x400");
@@ -497,14 +579,7 @@ TEST_F(PanelLayoutManagerTest, SplitView) {
   EXPECT_NO_FATAL_FAILURE(PanelsNotOverlapping(w1.get(), w2.get()));
 }
 
-#if defined(OS_WIN)
-// RootWindow and Display can't resize on Windows Ash. http://crbug.com/165962
-#define MAYBE_SplitViewOverlapWhenLarge DISABLED_SplitViewOverlapWhenLarge
-#else
-#define MAYBE_SplitViewOverlapWhenLarge SplitViewOverlapWhenLarge
-#endif
-
-TEST_F(PanelLayoutManagerTest, MAYBE_SplitViewOverlapWhenLarge) {
+TEST_F(PanelLayoutManagerTest, SplitViewOverlapWhenLarge) {
   gfx::Rect bounds(0, 0, 600, 201);
   std::unique_ptr<aura::Window> w1(CreatePanelWindow(bounds));
   std::unique_ptr<aura::Window> w2(CreatePanelWindow(bounds));
@@ -523,9 +598,11 @@ TEST_F(PanelLayoutManagerTest, FanWindows) {
   int window_x1 = w1->GetBoundsInRootWindow().CenterPoint().x();
   int window_x2 = w2->GetBoundsInRootWindow().CenterPoint().x();
   int window_x3 = w3->GetBoundsInRootWindow().CenterPoint().x();
-  Shelf* shelf = Shelf::ForPrimaryDisplay();
-  int icon_x1 = shelf->GetScreenBoundsOfItemIconForWindow(w1.get()).x();
-  int icon_x2 = shelf->GetScreenBoundsOfItemIconForWindow(w2.get()).x();
+  WmShelf* shelf = GetPrimaryShelf();
+  int icon_x1 =
+      shelf->GetScreenBoundsOfItemIconForWindow(WmWindow::Get(w1.get())).x();
+  int icon_x2 =
+      shelf->GetScreenBoundsOfItemIconForWindow(WmWindow::Get(w2.get())).x();
   EXPECT_EQ(window_x2 - window_x1, window_x3 - window_x2);
   int spacing = window_x2 - window_x1;
   EXPECT_GT(spacing, icon_x2 - icon_x1);
@@ -571,9 +648,6 @@ TEST_F(PanelLayoutManagerTest, MinimizeRestorePanel) {
 }
 
 TEST_F(PanelLayoutManagerTest, PanelMoveBetweenMultipleDisplays) {
-  if (!SupportsMultipleDisplays())
-    return;
-
   // Keep the displays wide so that shelves have enough space for launcher
   // buttons.
   UpdateDisplay("600x400,600x400");
@@ -588,8 +662,9 @@ TEST_F(PanelLayoutManagerTest, PanelMoveBetweenMultipleDisplays) {
   std::unique_ptr<aura::Window> p2_d2(
       CreatePanelWindow(gfx::Rect(600, 0, 50, 50)));
 
-  ShelfView* shelf_view_1st = GetShelfView(Shelf::ForPrimaryDisplay());
-  ShelfView* shelf_view_2nd = GetShelfView(Shelf::ForWindow(root_windows[1]));
+  ShelfView* shelf_view_1st = GetPrimaryShelf()->GetShelfViewForTesting();
+  ShelfView* shelf_view_2nd =
+      GetShelfForWindow(root_windows[1])->GetShelfViewForTesting();
 
   EXPECT_EQ(root_windows[0], p1_d1->GetRootWindow());
   EXPECT_EQ(root_windows[0], p2_d1->GetRootWindow());
@@ -653,9 +728,6 @@ TEST_F(PanelLayoutManagerTest, PanelMoveBetweenMultipleDisplays) {
 }
 
 TEST_F(PanelLayoutManagerTest, PanelAttachPositionMultipleDisplays) {
-  if (!SupportsMultipleDisplays())
-    return;
-
   // Keep the displays wide so that shelves have enough space for shelf buttons.
   // Use differently sized displays so the shelf is in a different
   // position on second display.
@@ -677,9 +749,6 @@ TEST_F(PanelLayoutManagerTest, PanelAttachPositionMultipleDisplays) {
 }
 
 TEST_F(PanelLayoutManagerTest, PanelAlignmentSecondDisplay) {
-  if (!SupportsMultipleDisplays())
-    return;
-
   UpdateDisplay("600x400,600x400");
   aura::Window::Windows root_windows = Shell::GetAllRootWindows();
 
@@ -742,7 +811,7 @@ TEST_F(PanelLayoutManagerTest, PanelsHideAndRestoreWithShelf) {
 
   // While in full-screen mode, the panel windows should still be in the
   // switchable window list - http://crbug.com/313919.
-  aura::Window::Windows switchable_window_list = WmWindowAura::ToAuraWindows(
+  aura::Window::Windows switchable_window_list = WmWindow::ToAuraWindows(
       WmShell::Get()->mru_window_tracker()->BuildMruWindowList());
   EXPECT_EQ(3u, switchable_window_list.size());
   EXPECT_NE(switchable_window_list.end(),

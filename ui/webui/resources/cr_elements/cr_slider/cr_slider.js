@@ -22,7 +22,7 @@ Polymer({
     },
 
     /** @type {!Array<number>} Values corresponding to each tick. */
-    tickValues: Array,
+    tickValues: {type: Array, value: []},
 
     disabled: {
       type: Boolean,
@@ -30,12 +30,13 @@ Polymer({
       reflectToAttribute: true,
     },
 
-    snaps: {
-      type: Boolean,
-      value: false,
-    },
+    min: Number,
 
-    maxMarkers: Number,
+    max: Number,
+
+    labelMin: String,
+
+    labelMax: String,
   },
 
   observers: [
@@ -47,8 +48,11 @@ Polymer({
    * after a user action.
    * @private
    */
-  onSliderChange_: function() {
-    this.value = this.tickValues[this.$.slider.immediateValue];
+  onSliderChanged_: function() {
+    if (this.tickValues && this.tickValues.length > 0)
+      this.value = this.tickValues[this.$.slider.immediateValue];
+    else
+      this.value = this.$.slider.immediateValue;
   },
 
   /**
@@ -57,10 +61,21 @@ Polymer({
    * @private
    */
   valueChanged_: function() {
-    // First update the slider settings if |tickValues| was set.
-    this.$.slider.max = this.tickValues.length - 1;
+    // If |tickValues| is empty, simply set current value to the slider.
+    if (this.tickValues.length == 0) {
+      this.$.slider.value = this.value;
+      return;
+    }
 
-    if (this.$.slider.dragging &&
+    // First update the slider settings if |tickValues| was set.
+    var numTicks = Math.max(1, this.tickValues.length);
+    this.$.slider.max = numTicks - 1;
+    // Limit the number of ticks to 10 to keep the slider from looking too busy.
+    /** @const */ var MAX_TICKS = 10;
+    this.$.slider.snaps = numTicks < MAX_TICKS;
+    this.$.slider.maxMarkers = numTicks < MAX_TICKS ? numTicks : 0;
+
+    if (this.$.slider.dragging && this.tickValues.length > 0 &&
         this.value != this.tickValues[this.$.slider.immediateValue]) {
       // The value changed outside cr-slider but we're still holding the knob,
       // so set the value back to where the knob was.
@@ -73,7 +88,8 @@ Polymer({
 
     // Convert from the public |value| to the slider index (where the knob
     // should be positioned on the slider).
-    var sliderIndex = this.tickValues.indexOf(this.value);
+    var sliderIndex =
+        this.tickValues.length > 0 ? this.tickValues.indexOf(this.value) : 0;
     if (sliderIndex == -1) {
       // No exact match.
       sliderIndex = this.findNearestIndex_(this.tickValues, this.value);

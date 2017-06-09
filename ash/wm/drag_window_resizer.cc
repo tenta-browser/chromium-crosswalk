@@ -4,11 +4,10 @@
 
 #include "ash/wm/drag_window_resizer.h"
 
-#include "ash/aura/wm_window_aura.h"
 #include "ash/common/wm/window_positioning_utils.h"
 #include "ash/common/wm/window_state.h"
+#include "ash/common/wm_window.h"
 #include "ash/display/mouse_cursor_event_filter.h"
-#include "ash/screen_util.h"
 #include "ash/shell.h"
 #include "ash/wm/drag_window_controller.h"
 #include "ash/wm/window_util.h"
@@ -91,8 +90,8 @@ void DragWindowResizer::CompleteDrag() {
     if (bounds.height() > size.height())
       bounds.set_height(size.height());
 
-    gfx::Rect dst_bounds =
-        ScreenUtil::ConvertRectToScreen(GetAuraTarget()->parent(), bounds);
+    gfx::Rect dst_bounds = bounds;
+    ::wm::ConvertRectToScreen(GetAuraTarget()->parent(), &dst_bounds);
 
     // Adjust the position so that the cursor is on the window.
     if (!dst_bounds.Contains(last_mouse_location_in_screen)) {
@@ -144,8 +143,8 @@ void DragWindowResizer::UpdateDragWindow(
   if (!drag_window_controller_)
     drag_window_controller_.reset(new DragWindowController(GetAuraTarget()));
 
-  const gfx::Rect bounds_in_screen = ScreenUtil::ConvertRectToScreen(
-      GetAuraTarget()->parent(), bounds_in_parent);
+  gfx::Rect bounds_in_screen = bounds_in_parent;
+  ::wm::ConvertRectToScreen(GetAuraTarget()->parent(), &bounds_in_screen);
 
   gfx::Rect root_bounds_in_screen =
       GetAuraTarget()->GetRootWindow()->GetBoundsInScreen();
@@ -167,7 +166,7 @@ bool DragWindowResizer::ShouldAllowMouseWarp() {
 }
 
 aura::Window* DragWindowResizer::GetAuraTarget() {
-  return WmWindowAura::GetAuraWindow(GetTarget());
+  return WmWindow::GetAuraWindow(GetTarget());
 }
 
 }  // namespace ash

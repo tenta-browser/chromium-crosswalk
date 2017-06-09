@@ -12,6 +12,7 @@
 #include "base/memory/ref_counted_memory.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/url_constants.h"
 #include "ui/base/layout.h"
@@ -69,6 +70,12 @@ const ResourcesMap& GetResourcesMap() {
   return *resources_map;
 }
 
+int GetIdrForPath(const std::string& path) {
+  const ResourcesMap& resources_map = GetResourcesMap();
+  auto it = resources_map.find(path);
+  return it != resources_map.end() ? it->second : -1;
+}
+
 }  // namespace
 
 SharedResourcesDataSource::SharedResourcesDataSource() {
@@ -83,12 +90,9 @@ std::string SharedResourcesDataSource::GetSource() const {
 
 void SharedResourcesDataSource::StartDataRequest(
     const std::string& path,
-    int render_process_id,
-    int render_frame_id,
+    const ResourceRequestInfo::WebContentsGetter& wc_getter,
     const URLDataSource::GotDataCallback& callback) {
-  const ResourcesMap& resources_map = GetResourcesMap();
-  auto it = resources_map.find(path);
-  int idr = (it != resources_map.end()) ? it->second : -1;
+  int idr = GetIdrForPath(path);
   DCHECK_NE(-1, idr) << " path: " << path;
   scoped_refptr<base::RefCountedMemory> bytes;
 
@@ -146,8 +150,17 @@ std::string SharedResourcesDataSource::GetMimeType(
   return "text/plain";
 }
 
-base::MessageLoop* SharedResourcesDataSource::MessageLoopForRequestPath(
+scoped_refptr<base::SingleThreadTaskRunner>
+SharedResourcesDataSource::TaskRunnerForRequestPath(
     const std::string& path) const {
+  int idr = GetIdrForPath(path);
+  if (idr == IDR_WEBUI_CSS_TEXT_DEFAULTS ||
+      idr == IDR_WEBUI_CSS_TEXT_DEFAULTS_MD) {
+    // Use UI thread to load CSS since its construction touches non-thread-safe
+    // gfx::Font names in ui::ResourceBundle.
+    return BrowserThread::GetTaskRunnerForThread(BrowserThread::UI);
+  }
+
   return nullptr;
 }
 
@@ -160,8 +173,10 @@ SharedResourcesDataSource::GetAccessControlAllowOriginForOrigin(
   // back.
   std::string allowed_origin_prefix = kChromeUIScheme;
   allowed_origin_prefix += "://";
-  if (origin.find(allowed_origin_prefix) != 0)
+  if (!base::StartsWith(origin, allowed_origin_prefix,
+                        base::CompareCase::SENSITIVE)) {
     return "null";
+  }
   return origin;
 }
 

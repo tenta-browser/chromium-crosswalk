@@ -156,8 +156,10 @@ void TouchSelectionControllerClientAura::OnScrollCompleted() {
 
 bool TouchSelectionControllerClientAura::HandleContextMenu(
     const ContextMenuParams& params) {
-  if (params.source_type == ui::MENU_SOURCE_TOUCH && params.is_editable &&
-      params.selection_text.empty() && IsQuickMenuAvailable()) {
+  if (params.source_type == ui::MENU_SOURCE_LONG_PRESS &&
+      params.is_editable &&
+      params.selection_text.empty() &&
+      IsQuickMenuAvailable()) {
     quick_menu_requested_ = true;
     UpdateQuickMenu();
     return true;
@@ -296,9 +298,6 @@ void TouchSelectionControllerClientAura::OnSelectionEvent(
     case ui::INSERTION_HANDLE_TAPPED:
       quick_menu_requested_ = !quick_menu_requested_;
       UpdateQuickMenu();
-      break;
-    case ui::SELECTION_ESTABLISHED:
-    case ui::SELECTION_DISSOLVED:
       break;
   };
 }

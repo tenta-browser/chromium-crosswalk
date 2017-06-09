@@ -8,24 +8,24 @@
 #include <stdint.h>
 
 #include "base/command_line.h"
+#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "cc/base/switches.h"
 #include "cc/layers/solid_color_layer.h"
 #include "cc/layers/texture_layer.h"
 #include "cc/output/copy_output_request.h"
 #include "cc/output/copy_output_result.h"
-#include "cc/output/direct_renderer.h"
+#include "cc/output/software_output_device.h"
 #include "cc/resources/texture_mailbox.h"
 #include "cc/test/paths.h"
 #include "cc/test/pixel_comparator.h"
-#include "cc/test/pixel_test_delegating_output_surface.h"
 #include "cc/test/pixel_test_output_surface.h"
-#include "cc/test/pixel_test_software_output_device.h"
 #include "cc/test/pixel_test_utils.h"
+#include "cc/test/test_compositor_frame_sink.h"
 #include "cc/test/test_in_process_context_provider.h"
 #include "cc/trees/layer_tree_impl.h"
-#include "gpu/command_buffer/client/gl_in_process_context.h"
 #include "gpu/command_buffer/client/gles2_implementation.h"
+#include "gpu/ipc/gl_in_process_context.h"
 
 using gpu::gles2::GLES2Interface;
 
@@ -38,34 +38,53 @@ LayerTreePixelTest::LayerTreePixelTest()
 
 LayerTreePixelTest::~LayerTreePixelTest() {}
 
-void LayerTreePixelTest::InitializeSettings(LayerTreeSettings* settings) {
-  // The PixelTestDelegatingOutputSurface will provide a BeginFrameSource.
-  settings->use_output_surface_begin_frame_source = true;
-}
-
-std::unique_ptr<OutputSurface> LayerTreePixelTest::CreateOutputSurface() {
-  scoped_refptr<TestInProcessContextProvider> compositor;
-  scoped_refptr<TestInProcessContextProvider> worker;
-  scoped_refptr<TestInProcessContextProvider> display;
+std::unique_ptr<TestCompositorFrameSink>
+    LayerTreePixelTest::CreateCompositorFrameSink(
+        scoped_refptr<ContextProvider>,
+        scoped_refptr<ContextProvider>) {
+  scoped_refptr<TestInProcessContextProvider> compositor_context_provider;
+  scoped_refptr<TestInProcessContextProvider> worker_context_provider;
   if (test_type_ == PIXEL_TEST_GL) {
-    compositor = new TestInProcessContextProvider(nullptr);
-    worker = new TestInProcessContextProvider(compositor.get());
-    display = new TestInProcessContextProvider(nullptr);
+    compositor_context_provider = new TestInProcessContextProvider(nullptr);
+    worker_context_provider =
+        new TestInProcessContextProvider(compositor_context_provider.get());
   }
-  const bool allow_force_reclaim_resources = !HasImplThread();
-  const bool synchronous_composite =
-      !layer_tree_host()->settings().single_thread_proxy_scheduler;
-  // Always test Webview shenanigans.
-  const gfx::Size surface_expansion_size(40, 60);
-  std::unique_ptr<PixelTestDelegatingOutputSurface> delegating_output_surface(
-      new PixelTestDelegatingOutputSurface(
-          std::move(compositor), std::move(worker), std::move(display),
-          RendererSettings(), shared_bitmap_manager(),
-          gpu_memory_buffer_manager(), surface_expansion_size,
-          allow_force_reclaim_resources, synchronous_composite));
+  bool synchronous_composite =
+      !HasImplThread() &&
+      !layer_tree_host()->GetSettings().single_thread_proxy_scheduler;
+  // Allow resource reclaiming for partial raster tests to get back
+  // resources from the Display.
+  bool force_disable_reclaim_resources = false;
+  auto delegating_output_surface = base::MakeUnique<TestCompositorFrameSink>(
+      compositor_context_provider, std::move(worker_context_provider),
+      shared_bitmap_manager(), gpu_memory_buffer_manager(), RendererSettings(),
+      ImplThreadTaskRunner(), synchronous_composite,
+      force_disable_reclaim_resources);
   delegating_output_surface->SetEnlargePassTextureAmount(
       enlarge_texture_amount_);
-  return std::move(delegating_output_surface);
+  return delegating_output_surface;
+}
+
+std::unique_ptr<OutputSurface>
+LayerTreePixelTest::CreateDisplayOutputSurfaceOnThread(
+    scoped_refptr<ContextProvider> compositor_context_provider) {
+  std::unique_ptr<PixelTestOutputSurface> display_output_surface;
+  if (test_type_ == PIXEL_TEST_GL) {
+    // Pixel tests use a separate context for the Display to more closely
+    // mimic texture transport from the renderer process to the Display
+    // compositor.
+    auto display_context_provider =
+        make_scoped_refptr(new TestInProcessContextProvider(nullptr));
+    display_context_provider->BindToCurrentThread();
+
+    bool flipped_output_surface = false;
+    display_output_surface = base::MakeUnique<PixelTestOutputSurface>(
+        std::move(display_context_provider), flipped_output_surface);
+  } else {
+    display_output_surface = base::MakeUnique<PixelTestOutputSurface>(
+        base::MakeUnique<SoftwareOutputDevice>());
+  }
+  return std::move(display_output_surface);
 }
 
 std::unique_ptr<CopyOutputRequest>
@@ -82,8 +101,8 @@ void LayerTreePixelTest::ReadbackResult(
 }
 
 void LayerTreePixelTest::BeginTest() {
-  Layer* target = readback_target_ ? readback_target_
-                                   : layer_tree_host()->root_layer();
+  Layer* target =
+      readback_target_ ? readback_target_ : layer_tree_host()->root_layer();
   target->RequestCopyOfOutput(CreateCopyOutputRequest());
   PostSetNeedsCommitToMainThread();
 }
@@ -166,7 +185,7 @@ void LayerTreePixelTest::RunPixelTest(
   content_root_ = content_root;
   readback_target_ = NULL;
   ref_file_ = file_name;
-  RunTest(CompositorMode::THREADED, false);
+  RunTest(CompositorMode::THREADED);
 }
 
 void LayerTreePixelTest::RunSingleThreadedPixelTest(
@@ -177,7 +196,7 @@ void LayerTreePixelTest::RunSingleThreadedPixelTest(
   content_root_ = content_root;
   readback_target_ = NULL;
   ref_file_ = file_name;
-  RunTest(CompositorMode::SINGLE_THREADED, false);
+  RunTest(CompositorMode::SINGLE_THREADED);
 }
 
 void LayerTreePixelTest::RunPixelTestWithReadbackTarget(
@@ -189,7 +208,7 @@ void LayerTreePixelTest::RunPixelTestWithReadbackTarget(
   content_root_ = content_root;
   readback_target_ = target;
   ref_file_ = file_name;
-  RunTest(CompositorMode::THREADED, false);
+  RunTest(CompositorMode::THREADED);
 }
 
 void LayerTreePixelTest::SetupTree() {

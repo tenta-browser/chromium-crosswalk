@@ -18,7 +18,6 @@
 #include "content/common/content_export.h"
 #include "ipc/message_filter.h"
 #include "media/audio/audio_output_ipc.h"
-#include "media/base/audio_hardware_config.h"
 
 namespace base {
 class SingleThreadTaskRunner;
@@ -67,7 +66,7 @@ class CONTENT_EXPORT AudioMessageFilter : public IPC::MessageFilter {
 
   // IPC::MessageFilter override. Called on |io_task_runner_|.
   bool OnMessageReceived(const IPC::Message& message) override;
-  void OnFilterAdded(IPC::Sender* sender) override;
+  void OnFilterAdded(IPC::Channel* channel) override;
   void OnFilterRemoved() override;
   void OnChannelClosing() override;
 
@@ -86,15 +85,14 @@ class CONTENT_EXPORT AudioMessageFilter : public IPC::MessageFilter {
 
   // Received when internal state of browser process' audio output device has
   // changed.
-  void OnStreamStateChanged(int stream_id,
-                            media::AudioOutputIPCDelegateState state);
+  void OnStreamError(int stream_id);
 
   // IPC sender for Send(); must only be accessed on |io_task_runner_|.
   IPC::Sender* sender_;
 
   // A map of stream ids to delegates; must only be accessed on
   // |io_task_runner_|.
-  IDMap<media::AudioOutputIPCDelegate> delegates_;
+  IDMap<media::AudioOutputIPCDelegate*> delegates_;
 
   // Task runner on which IPC calls are executed.
   const scoped_refptr<base::SingleThreadTaskRunner> io_task_runner_;

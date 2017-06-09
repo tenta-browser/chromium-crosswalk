@@ -15,13 +15,13 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task_scheduler/post_task.h"
 #include "chrome/browser/devtools/devtools_window.h"
 #include "chrome/browser/extensions/api/developer_private/developer_private_mangle.h"
 #include "chrome/browser/extensions/api/developer_private/entry_picker.h"
 #include "chrome/browser/extensions/api/developer_private/extension_info_generator.h"
 #include "chrome/browser/extensions/api/developer_private/show_permissions_dialog_helper.h"
 #include "chrome/browser/extensions/api/extension_action/extension_action_api.h"
-#include "chrome/browser/extensions/api/file_handlers/app_file_handler_util.h"
 #include "chrome/browser/extensions/devtools_util.h"
 #include "chrome/browser/extensions/extension_commands_global_registry.h"
 #include "chrome/browser/extensions/extension_service.h"
@@ -29,6 +29,7 @@
 #include "chrome/browser/extensions/extension_ui_util.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/extensions/install_verifier.h"
+#include "chrome/browser/extensions/scripting_permissions_modifier.h"
 #include "chrome/browser/extensions/shared_module_service.h"
 #include "chrome/browser/extensions/unpacked_installer.h"
 #include "chrome/browser/extensions/updater/extension_updater.h"
@@ -53,6 +54,7 @@
 #include "content/public/browser/site_instance.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/browser/api/file_handlers/app_file_handler_util.h"
 #include "extensions/browser/app_window/app_window.h"
 #include "extensions/browser/app_window/app_window_registry.h"
 #include "extensions/browser/error_map.h"
@@ -163,9 +165,12 @@ std::unique_ptr<developer::ProfileInfo> CreateProfileInfo(Profile* profile) {
   std::unique_ptr<developer::ProfileInfo> info(new developer::ProfileInfo());
   info->is_supervised = profile->IsSupervised();
   PrefService* prefs = profile->GetPrefs();
+  const PrefService::Preference* pref =
+      prefs->FindPreference(prefs::kExtensionsUIDeveloperMode);
   info->is_incognito_available =
       IncognitoModePrefs::GetAvailability(prefs) !=
           IncognitoModePrefs::DISABLED;
+  info->is_developer_mode_controlled_by_policy = pref->IsManaged();
   info->in_developer_mode =
       !info->is_supervised &&
       prefs->GetBoolean(prefs::kExtensionsUIDeveloperMode);
@@ -642,8 +647,14 @@ DeveloperPrivateUpdateExtensionConfigurationFunction::Run() {
         extension->id(), *update.error_collection);
   }
   if (update.run_on_all_urls) {
-    util::SetAllowedScriptingOnAllUrls(
-        extension->id(), browser_context(), *update.run_on_all_urls);
+    ScriptingPermissionsModifier modifier(browser_context(), extension);
+    if (!modifier.CanAffectExtension(
+            extension->permissions_data()->active_permissions()) &&
+        !modifier.HasAffectedExtension()) {
+      return RespondNow(
+          Error("Cannot modify all urls of extension: " + extension->id()));
+    }
+    modifier.SetAllowedOnAllUrls(*update.run_on_all_urls);
   }
   if (update.show_action_button) {
     ExtensionActionAPI::Get(browser_context())->SetBrowserActionVisibility(
@@ -1156,10 +1167,10 @@ void DeveloperPrivateChoosePathFunction::FileSelectionCanceled() {
 
 DeveloperPrivateChoosePathFunction::~DeveloperPrivateChoosePathFunction() {}
 
-bool DeveloperPrivateIsProfileManagedFunction::RunSync() {
-  SetResult(
-      base::MakeUnique<base::FundamentalValue>(GetProfile()->IsSupervised()));
-  return true;
+ExtensionFunction::ResponseAction
+DeveloperPrivateIsProfileManagedFunction::Run() {
+  return RespondNow(OneArgument(base::MakeUnique<base::Value>(
+      Profile::FromBrowserContext(browser_context())->IsSupervised())));
 }
 
 DeveloperPrivateIsProfileManagedFunction::
@@ -1193,9 +1204,9 @@ DeveloperPrivateRequestFileSourceFunction::Run() {
   if (properties.path_suffix == kManifestFile && !properties.manifest_key)
     return RespondNow(Error(kManifestKeyIsRequiredError));
 
-  base::PostTaskAndReplyWithResult(
-      content::BrowserThread::GetBlockingPool(),
-      FROM_HERE,
+  base::PostTaskWithTraitsAndReplyWithResult(
+      FROM_HERE, base::TaskTraits().MayBlock().WithPriority(
+                     base::TaskPriority::USER_VISIBLE),
       base::Bind(&ReadFileToString, extension->path().Append(path_suffix)),
       base::Bind(&DeveloperPrivateRequestFileSourceFunction::Finish, this));
 

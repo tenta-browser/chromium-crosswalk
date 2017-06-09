@@ -83,10 +83,9 @@ class CONTENT_EXPORT StoragePartition {
     REMOVE_DATA_MASK_LOCAL_STORAGE = 1 << 4,
     REMOVE_DATA_MASK_SHADER_CACHE = 1 << 5,
     REMOVE_DATA_MASK_WEBSQL = 1 << 6,
-    REMOVE_DATA_MASK_WEBRTC_IDENTITY = 1 << 7,
-    REMOVE_DATA_MASK_SERVICE_WORKERS = 1 << 8,
-    REMOVE_DATA_MASK_CACHE_STORAGE = 1 << 9,
-    REMOVE_DATA_MASK_PLUGIN_PRIVATE_DATA = 1 << 10,
+    REMOVE_DATA_MASK_SERVICE_WORKERS = 1 << 7,
+    REMOVE_DATA_MASK_CACHE_STORAGE = 1 << 8,
+    REMOVE_DATA_MASK_PLUGIN_PRIVATE_DATA = 1 << 9,
     REMOVE_DATA_MASK_ALL = 0xFFFFFFFF,
 
     // Corresponds to storage::kStorageTypeTemporary.
@@ -166,6 +165,9 @@ class CONTENT_EXPORT StoragePartition {
   // Note: this method does not sync the data - it only ensures that any
   // unwritten data has been written out to the filesystem.
   virtual void Flush() = 0;
+
+  // Clear the bluetooth allowed devices map. For test use only.
+  virtual void ClearBluetoothAllowedDevicesMapForTesting() = 0;
 
  protected:
   virtual ~StoragePartition() {}

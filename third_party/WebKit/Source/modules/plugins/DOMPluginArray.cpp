@@ -14,75 +14,72 @@
  *
  *  You should have received a copy of the GNU Lesser General Public
  *  License along with this library; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
+ *  MA 02110-1301 USA
  */
 
 #include "modules/plugins/DOMPluginArray.h"
 
 #include "core/frame/LocalFrame.h"
 #include "core/page/Page.h"
+#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/plugins/PluginData.h"
 #include "wtf/Vector.h"
 #include "wtf/text/AtomicString.h"
 
 namespace blink {
 
-DOMPluginArray::DOMPluginArray(LocalFrame* frame)
-    : DOMWindowProperty(frame)
-{
+DOMPluginArray::DOMPluginArray(LocalFrame* frame) : ContextClient(frame) {}
+
+DEFINE_TRACE(DOMPluginArray) {
+  ContextClient::trace(visitor);
 }
 
-DEFINE_TRACE(DOMPluginArray)
-{
-    DOMWindowProperty::trace(visitor);
+unsigned DOMPluginArray::length() const {
+  PluginData* data = pluginData();
+  if (!data)
+    return 0;
+  return data->plugins().size();
 }
 
-unsigned DOMPluginArray::length() const
-{
-    PluginData* data = pluginData();
-    if (!data)
-        return 0;
-    return data->plugins().size();
-}
-
-DOMPlugin* DOMPluginArray::item(unsigned index)
-{
-    PluginData* data = pluginData();
-    if (!data)
-        return nullptr;
-    const Vector<PluginInfo>& plugins = data->plugins();
-    if (index >= plugins.size())
-        return nullptr;
-    return DOMPlugin::create(data, m_frame, index);
-}
-
-DOMPlugin* DOMPluginArray::namedItem(const AtomicString& propertyName)
-{
-    PluginData* data = pluginData();
-    if (!data)
-        return nullptr;
-    const Vector<PluginInfo>& plugins = data->plugins();
-    for (unsigned i = 0; i < plugins.size(); ++i) {
-        if (plugins[i].name == propertyName)
-            return DOMPlugin::create(data, m_frame, i);
-    }
+DOMPlugin* DOMPluginArray::item(unsigned index) {
+  PluginData* data = pluginData();
+  if (!data)
     return nullptr;
+  const Vector<PluginInfo>& plugins = data->plugins();
+  if (index >= plugins.size())
+    return nullptr;
+  return DOMPlugin::create(data, frame(), index);
 }
 
-void DOMPluginArray::refresh(bool reload)
-{
-    if (!m_frame)
-        return;
-    Page::refreshPlugins();
-    if (reload)
-        m_frame->reload(FrameLoadTypeReload, ClientRedirectPolicy::ClientRedirect);
+DOMPlugin* DOMPluginArray::namedItem(const AtomicString& propertyName) {
+  PluginData* data = pluginData();
+  if (!data)
+    return nullptr;
+  const Vector<PluginInfo>& plugins = data->plugins();
+  for (unsigned i = 0; i < plugins.size(); ++i) {
+    if (plugins[i].name == propertyName)
+      return DOMPlugin::create(data, frame(), i);
+  }
+  return nullptr;
 }
 
-PluginData* DOMPluginArray::pluginData() const
-{
-    if (!m_frame)
-        return nullptr;
-    return m_frame->pluginData();
+void DOMPluginArray::refresh(bool reload) {
+  if (!frame())
+    return;
+  Page::refreshPlugins();
+  if (reload) {
+    frame()->reload(RuntimeEnabledFeatures::fasterLocationReloadEnabled()
+                        ? FrameLoadTypeReloadMainResource
+                        : FrameLoadTypeReload,
+                    ClientRedirectPolicy::ClientRedirect);
+  }
 }
 
-} // namespace blink
+PluginData* DOMPluginArray::pluginData() const {
+  if (!frame())
+    return nullptr;
+  return frame()->pluginData();
+}
+
+}  // namespace blink

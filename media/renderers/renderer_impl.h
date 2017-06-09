@@ -5,6 +5,7 @@
 #ifndef MEDIA_RENDERERS_RENDERER_IMPL_H_
 #define MEDIA_RENDERERS_RENDERER_IMPL_H_
 
+#include <list>
 #include <memory>
 #include <vector>
 
@@ -31,7 +32,7 @@ class SingleThreadTaskRunner;
 namespace media {
 
 class AudioRenderer;
-class DemuxerStreamProvider;
+class MediaResource;
 class TimeSource;
 class VideoRenderer;
 class WallClockTimeSource;
@@ -49,7 +50,7 @@ class MEDIA_EXPORT RendererImpl : public Renderer {
   ~RendererImpl() final;
 
   // Renderer implementation.
-  void Initialize(DemuxerStreamProvider* demuxer_stream_provider,
+  void Initialize(MediaResource* media_resource,
                   RendererClient* client,
                   const PipelineStatusCB& init_cb) final;
   void SetCdm(CdmContext* cdm_context,
@@ -59,8 +60,10 @@ class MEDIA_EXPORT RendererImpl : public Renderer {
   void SetPlaybackRate(double playback_rate) final;
   void SetVolume(float volume) final;
   base::TimeDelta GetMediaTime() final;
-  bool HasAudio() final;
-  bool HasVideo() final;
+
+  void OnStreamStatusChanged(DemuxerStream* stream,
+                             bool enabled,
+                             base::TimeDelta time);
 
   // Helper functions for testing purposes. Must be called before Initialize().
   void DisableUnderflowForTesting();
@@ -103,6 +106,9 @@ class MEDIA_EXPORT RendererImpl : public Renderer {
   void FlushVideoRenderer();
   void OnVideoRendererFlushDone();
 
+  void RestartAudioRenderer(base::TimeDelta time);
+  void RestartVideoRenderer(base::TimeDelta time);
+
   // Callback executed by filters to update statistics.
   void OnStatisticsUpdate(const PipelineStatistics& stats);
 
@@ -117,6 +123,15 @@ class MEDIA_EXPORT RendererImpl : public Renderer {
   //     and PausePlayback() should be called
   void OnBufferingStateChange(DemuxerStream::Type type,
                               BufferingState new_buffering_state);
+  // Handles the buffering notifications that we might get while an audio or a
+  // video stream is being restarted. In those cases we don't want to report
+  // underflows immediately and instead give decoders a chance to catch up with
+  // currently playing stream. Returns true if the buffering nofication has been
+  // handled and no further processing is necessary, returns false to indicate
+  // that we should fall back to the regular OnBufferingStateChange logic.
+  bool HandleRestartedStreamBufferingChanges(
+      DemuxerStream::Type type,
+      BufferingState new_buffering_state);
   bool WaitingForEnoughData() const;
   void PausePlayback();
   void StartPlayback();
@@ -132,12 +147,14 @@ class MEDIA_EXPORT RendererImpl : public Renderer {
   void OnVideoNaturalSizeChange(const gfx::Size& size);
   void OnVideoOpacityChange(bool opaque);
 
+  void OnStreamRestartCompleted();
+
   State state_;
 
   // Task runner used to execute pipeline tasks.
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 
-  DemuxerStreamProvider* demuxer_stream_provider_;
+  MediaResource* media_resource_;
   RendererClient* client_;
 
   // Temporary callback used for Initialize() and Flush().
@@ -172,11 +189,18 @@ class MEDIA_EXPORT RendererImpl : public Renderer {
   bool clockless_video_playback_enabled_for_testing_;
 
   // Used to defer underflow for video when audio is present.
-  base::CancelableClosure deferred_underflow_cb_;
+  base::CancelableClosure deferred_video_underflow_cb_;
+
+  // Used to defer underflow for audio when restarting audio playback.
+  base::CancelableClosure deferred_audio_restart_underflow_cb_;
 
   // The amount of time to wait before declaring underflow if the video renderer
   // runs out of data but the audio renderer still has enough.
   base::TimeDelta video_underflow_threshold_;
+
+  bool restarting_audio_ = false;
+  bool restarting_video_ = false;
+  std::list<base::Closure> pending_stream_status_notifications_;
 
   base::WeakPtr<RendererImpl> weak_this_;
   base::WeakPtrFactory<RendererImpl> weak_factory_;

@@ -14,6 +14,7 @@
 #include "tools/gn/config_values_extractors.h"
 #include "tools/gn/deps_iterator.h"
 #include "tools/gn/filesystem_utils.h"
+#include "tools/gn/functions.h"
 #include "tools/gn/scheduler.h"
 #include "tools/gn/source_file_type.h"
 #include "tools/gn/substitution_writer.h"
@@ -128,7 +129,7 @@ bool EnsureFileIsGeneratedByDependency(const Target* target,
         return true;  // Found a path.
     }
     if (target->output_type() == Target::CREATE_BUNDLE) {
-      for (const auto& dep : target->bundle_data().bundle_deps()) {
+      for (auto* dep : target->bundle_data().bundle_deps()) {
         if (EnsureFileIsGeneratedByDependency(dep, file, false,
                                               consider_object_files,
                                               check_data_deps, seen_targets))
@@ -196,6 +197,84 @@ bool RecursiveCheckAssertNoDeps(const Target* target,
 
 }  // namespace
 
+const char kExecution_Help[] =
+    R"(Build graph and execution overview
+
+Overall build flow
+
+  1. Look for ".gn" file (see "gn help dotfile") in the current directory and
+     walk up the directory tree until one is found. Set this directory to be
+     the "source root" and interpret this file to find the name of the build
+     config file.
+
+  2. Execute the build config file identified by .gn to set up the global
+     variables and default toolchain name. Any arguments, variables, defaults,
+     etc. set up in this file will be visible to all files in the build.
+
+  3. Load the //BUILD.gn (in the source root directory).
+
+  4. Recursively evaluate rules and load BUILD.gn in other directories as
+     necessary to resolve dependencies. If a BUILD file isn't found in the
+     specified location, GN will look in the corresponding location inside
+     the secondary_source defined in the dotfile (see "gn help dotfile").
+
+  5. When a target's dependencies are resolved, write out the `.ninja`
+     file to disk.
+
+  6. When all targets are resolved, write out the root build.ninja file.
+
+Executing target definitions and templates
+
+  Build files are loaded in parallel. This means it is impossible to
+  interrogate a target from GN code for any information not derivable from its
+  label (see "gn help label"). The exception is the get_target_outputs()
+  function which requires the target being interrogated to have been defined
+  previously in the same file.
+
+  Targets are declared by their type and given a name:
+
+    static_library("my_static_library") {
+      ... target parameter definitions ...
+    }
+
+  There is also a generic "target" function for programatically defined types
+  (see "gn help target"). You can define new types using templates (see "gn
+  help template"). A template defines some custom code that expands to one or
+  more other targets.
+
+  Before executing the code inside the target's { }, the target defaults are
+  applied (see "gn help set_defaults"). It will inject implicit variable
+  definitions that can be overridden by the target code as necessary. Typically
+  this mechanism is used to inject a default set of configs that define the
+  global compiler and linker flags.
+
+Which targets are built
+
+  All targets encountered in the default toolchain (see "gn help toolchain")
+  will have build rules generated for them, even if no other targets reference
+  them. Their dependencies must resolve and they will be added to the implicit
+  "all" rule (see "gn help ninja_rules").
+
+  Targets in non-default toolchains will only be generated when they are
+  required (directly or transitively) to build a target in the default
+  toolchain.
+
+  See also "gn help ninja_rules".
+
+Dependencies
+
+  The only difference between "public_deps" and "deps" except for pushing
+  configs around the build tree and allowing includes for the purposes of "gn
+  check".
+
+  A target's "data_deps" are guaranteed to be built whenever the target is
+  built, but the ordering is not defined. The meaning of this is dependencies
+  required at runtime. Currently data deps will be complete before the target
+  is linked, but this is not semantically guaranteed and this is undesirable
+  from a build performance perspective. Since we hope to change this in the
+  future, do not rely on this behavior.
+)";
+
 Target::Target(const Settings* settings, const Label& label)
     : Item(settings, label),
       output_type_(UNKNOWN),
@@ -215,29 +294,29 @@ Target::~Target() {
 const char* Target::GetStringForOutputType(OutputType type) {
   switch (type) {
     case UNKNOWN:
-      return "Unknown";
+      return "unknown";
     case GROUP:
-      return "Group";
+      return functions::kGroup;
     case EXECUTABLE:
-      return "Executable";
+      return functions::kExecutable;
     case LOADABLE_MODULE:
-      return "Loadable module";
+      return functions::kLoadableModule;
     case SHARED_LIBRARY:
-      return "Shared library";
+      return functions::kSharedLibrary;
     case STATIC_LIBRARY:
-      return "Static library";
+      return functions::kStaticLibrary;
     case SOURCE_SET:
-      return "Source set";
+      return functions::kSourceSet;
     case COPY_FILES:
-      return "Copy";
+      return functions::kCopy;
     case ACTION:
-      return "Action";
+      return functions::kAction;
     case ACTION_FOREACH:
-      return "ActionForEach";
+      return functions::kActionForEach;
     case BUNDLE_DATA:
-      return "Bundle data";
+      return functions::kBundleData;
     case CREATE_BUNDLE:
-      return "Create bundle";
+      return functions::kCreateBundle;
     default:
       return "";
   }
@@ -273,8 +352,10 @@ bool Target::OnResolved(Err* err) {
   // private deps. This step re-exports them as public configs for targets that
   // depend on this one.
   for (const auto& dep : public_deps_) {
-    public_configs_.Append(dep.ptr->public_configs().begin(),
-                           dep.ptr->public_configs().end());
+    if (dep.ptr->toolchain() == toolchain()) {
+      public_configs_.Append(dep.ptr->public_configs().begin(),
+                             dep.ptr->public_configs().end());
+    }
   }
 
   // Copy our own libs and lib_dirs to the final set. This will be from our
@@ -299,15 +380,13 @@ bool Target::OnResolved(Err* err) {
 
   FillOutputFiles();
 
-  if (settings()->build_settings()->check_for_bad_items()) {
-    if (!CheckVisibility(err))
-      return false;
-    if (!CheckTestonly(err))
-      return false;
-    if (!CheckAssertNoDeps(err))
-      return false;
-    CheckSourcesGenerated();
-  }
+  if (!CheckVisibility(err))
+    return false;
+  if (!CheckTestonly(err))
+    return false;
+  if (!CheckAssertNoDeps(err))
+    return false;
+  CheckSourcesGenerated();
 
   if (!write_runtime_deps_output_.value().empty())
     g_scheduler->AddWriteRuntimeDepsTarget(this);
@@ -424,14 +503,18 @@ bool Target::GetOutputFilesForSource(const SourceFile& source,
   return !outputs->empty();
 }
 
-void Target::PullDependentTargetConfigsFrom(const Target* dep) {
-  MergeAllDependentConfigsFrom(dep, &configs_, &all_dependent_configs_);
-  MergePublicConfigsFrom(dep, &configs_);
-}
-
 void Target::PullDependentTargetConfigs() {
-  for (const auto& pair : GetDeps(DEPS_LINKED))
-    PullDependentTargetConfigsFrom(pair.ptr);
+  for (const auto& pair : GetDeps(DEPS_LINKED)) {
+    if (pair.ptr->toolchain() == toolchain()) {
+      MergeAllDependentConfigsFrom(pair.ptr, &configs_,
+                                   &all_dependent_configs_);
+    }
+  }
+  for (const auto& pair : GetDeps(DEPS_LINKED)) {
+    if (pair.ptr->toolchain() == toolchain()) {
+      MergePublicConfigsFrom(pair.ptr, &configs_);
+    }
+  }
 }
 
 void Target::PullDependentTargetLibsFrom(const Target* dep, bool is_public) {
@@ -515,12 +598,16 @@ void Target::PullRecursiveBundleData() {
     if (pair.ptr->output_type() == CREATE_BUNDLE)
       continue;
 
+    // Don't propagate across toolchain.
+    if (pair.ptr->toolchain() != toolchain())
+      continue;
+
     // Direct dependency on a bundle_data target.
     if (pair.ptr->output_type() == BUNDLE_DATA)
       bundle_data_.AddBundleData(pair.ptr);
 
     // Recursive bundle_data informations from all dependencies.
-    for (const auto& target : pair.ptr->bundle_data().bundle_deps())
+    for (auto* target : pair.ptr->bundle_data().bundle_deps())
       bundle_data_.AddBundleData(target);
   }
 
@@ -541,7 +628,8 @@ void Target::FillOutputFiles() {
       // These don't get linked to and use stamps which should be the first
       // entry in the outputs. These stamps are named
       // "<target_out_dir>/<targetname>.stamp".
-      dependency_output_file_ = GetTargetOutputDirAsOutputFile(this);
+      dependency_output_file_ =
+          GetBuildDirForTargetAsOutputFile(this, BuildDirType::OBJ);
       dependency_output_file_.value().append(GetComputedOutputName());
       dependency_output_file_.value().append(".stamp");
       break;
@@ -555,6 +643,14 @@ void Target::FillOutputFiles() {
       dependency_output_file_ =
           SubstitutionWriter::ApplyPatternToLinkerAsOutputFile(
               this, tool, tool->outputs().list()[0]);
+
+      if (tool->runtime_outputs().list().empty()) {
+        // Default to the first output for the runtime output.
+        runtime_outputs_.push_back(dependency_output_file_);
+      } else {
+        SubstitutionWriter::ApplyListToLinkerAsOutputFile(
+            this, tool, tool->runtime_outputs(), &runtime_outputs_);
+      }
       break;
     case STATIC_LIBRARY:
       // Static libraries both have dependencies and linking going off of the
@@ -586,12 +682,12 @@ void Target::FillOutputFiles() {
                   this, tool, tool->depend_output());
         }
       }
-      if (tool->runtime_link_output().empty()) {
-        runtime_link_output_file_ = link_output_file_;
+      if (tool->runtime_outputs().list().empty()) {
+        // Default to the link output for the runtime output.
+        runtime_outputs_.push_back(link_output_file_);
       } else {
-          runtime_link_output_file_ =
-              SubstitutionWriter::ApplyPatternToLinkerAsOutputFile(
-                  this, tool, tool->runtime_link_output());
+        SubstitutionWriter::ApplyListToLinkerAsOutputFile(
+            this, tool, tool->runtime_outputs(), &runtime_outputs_);
       }
       break;
     case UNKNOWN:

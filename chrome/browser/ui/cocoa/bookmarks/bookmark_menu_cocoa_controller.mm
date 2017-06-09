@@ -93,7 +93,7 @@ const NSUInteger kMaximumMenuPixelsWide = 300;
 - (void)openURLForNode:(const BookmarkNode*)node {
   Browser* browser = chrome::FindTabbedBrowser(bridge_->GetProfile(), true);
   if (!browser) {
-    browser = new Browser(Browser::CreateParams(bridge_->GetProfile()));
+    browser = new Browser(Browser::CreateParams(bridge_->GetProfile(), true));
   }
   WindowOpenDisposition disposition =
       ui::WindowOpenDispositionFromNSEvent([NSApp currentEvent]);
@@ -113,7 +113,7 @@ const NSUInteger kMaximumMenuPixelsWide = 300;
 
   Browser* browser = chrome::FindTabbedBrowser(bridge_->GetProfile(), true);
   if (!browser) {
-    browser = new Browser(Browser::CreateParams(bridge_->GetProfile()));
+    browser = new Browser(Browser::CreateParams(bridge_->GetProfile(), true));
   }
   DCHECK(browser);
 
@@ -122,9 +122,9 @@ const NSUInteger kMaximumMenuPixelsWide = 300;
 
   chrome::OpenAll(NULL, browser, node, disposition, browser->profile());
 
-  if (disposition == NEW_FOREGROUND_TAB) {
+  if (disposition == WindowOpenDisposition::NEW_FOREGROUND_TAB) {
     content::RecordAction(UserMetricsAction("OpenAllBookmarks"));
-  } else if (disposition == NEW_WINDOW) {
+  } else if (disposition == WindowOpenDisposition::NEW_WINDOW) {
     content::RecordAction(UserMetricsAction("OpenAllBookmarksNewWindow"));
   } else {
     content::RecordAction(
@@ -144,15 +144,18 @@ const NSUInteger kMaximumMenuPixelsWide = 300;
 }
 
 - (IBAction)openAllBookmarks:(id)sender {
-  [self openAll:[sender tag] withDisposition:NEW_FOREGROUND_TAB];
+  WindowOpenDisposition disposition = WindowOpenDisposition::NEW_FOREGROUND_TAB;
+  [self openAll:[sender tag] withDisposition:disposition];
 }
 
 - (IBAction)openAllBookmarksNewWindow:(id)sender {
-  [self openAll:[sender tag] withDisposition:NEW_WINDOW];
+  WindowOpenDisposition disposition = WindowOpenDisposition::NEW_WINDOW;
+  [self openAll:[sender tag] withDisposition:disposition];
 }
 
 - (IBAction)openAllBookmarksIncognitoWindow:(id)sender {
-  [self openAll:[sender tag] withDisposition:OFF_THE_RECORD];
+  WindowOpenDisposition disposition = WindowOpenDisposition::OFF_THE_RECORD;
+  [self openAll:[sender tag] withDisposition:disposition];
 }
 
 @end  // BookmarkMenuCocoaController

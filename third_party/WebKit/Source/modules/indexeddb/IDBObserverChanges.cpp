@@ -6,34 +6,75 @@
 
 #include "bindings/core/v8/ExceptionState.h"
 #include "bindings/core/v8/ScriptState.h"
+#include "bindings/core/v8/V8Binding.h"
 #include "bindings/modules/v8/ToV8ForModules.h"
 #include "bindings/modules/v8/V8BindingForModules.h"
 #include "modules/indexeddb/IDBAny.h"
+#include "modules/indexeddb/IDBObservation.h"
+#include "public/platform/modules/indexeddb/WebIDBObservation.h"
 
 namespace blink {
 
-ScriptValue IDBObserverChanges::records(ScriptState* scriptState)
-{
-    return ScriptValue::from(scriptState, m_records);
+ScriptValue IDBObserverChanges::records(ScriptState* scriptState) {
+  v8::Local<v8::Context> context(scriptState->context());
+  v8::Isolate* isolate(scriptState->isolate());
+  v8::Local<v8::Map> map = v8::Map::New(isolate);
+  for (const auto& it : m_records) {
+    v8::Local<v8::String> key =
+        v8String(isolate, m_database->getObjectStoreName(it.key));
+    v8::Local<v8::Value> value = ToV8(it.value, context->Global(), isolate);
+    map->Set(context, key, value).ToLocalChecked();
+  }
+  return ScriptValue::from(scriptState, map);
 }
 
-IDBObserverChanges* IDBObserverChanges::create(IDBDatabase* database, IDBTransaction* transaction, IDBAny* records)
-{
-    return new IDBObserverChanges(database, transaction, records);
+IDBObserverChanges* IDBObserverChanges::create(
+    IDBDatabase* database,
+    const WebVector<WebIDBObservation>& observations,
+    const WebVector<int32_t>& observationIndices,
+    v8::Isolate* isolate) {
+  return new IDBObserverChanges(database, nullptr, observations,
+                                observationIndices, isolate);
 }
 
-IDBObserverChanges::IDBObserverChanges(IDBDatabase* database, IDBTransaction* transaction, IDBAny* records)
-    : m_database(database)
-    , m_transaction(transaction)
-    , m_records(records)
-{
+IDBObserverChanges* IDBObserverChanges::create(
+    IDBDatabase* database,
+    IDBTransaction* transaction,
+    const WebVector<WebIDBObservation>& observations,
+    const WebVector<int32_t>& observationIndices,
+    v8::Isolate* isolate) {
+  return new IDBObserverChanges(database, transaction, observations,
+                                observationIndices, isolate);
 }
 
-DEFINE_TRACE(IDBObserverChanges)
-{
-    visitor->trace(m_database);
-    visitor->trace(m_transaction);
-    visitor->trace(m_records);
+IDBObserverChanges::IDBObserverChanges(
+    IDBDatabase* database,
+    IDBTransaction* transaction,
+    const WebVector<WebIDBObservation>& observations,
+    const WebVector<int32_t>& observationIndices,
+    v8::Isolate* isolate)
+    : m_database(database), m_transaction(transaction) {
+  extractChanges(observations, observationIndices, isolate);
 }
 
-} // namespace blink
+void IDBObserverChanges::extractChanges(
+    const WebVector<WebIDBObservation>& observations,
+    const WebVector<int32_t>& observationIndices,
+    v8::Isolate* isolate) {
+  // TODO(dmurph): Avoid getting and setting repeated times.
+  for (const auto& idx : observationIndices) {
+    m_records
+        .insert(observations[idx].objectStoreId,
+                HeapVector<Member<IDBObservation>>())
+        .storedValue->value.push_back(
+            IDBObservation::create(observations[idx], isolate));
+  }
+}
+
+DEFINE_TRACE(IDBObserverChanges) {
+  visitor->trace(m_database);
+  visitor->trace(m_transaction);
+  visitor->trace(m_records);
+}
+
+}  // namespace blink

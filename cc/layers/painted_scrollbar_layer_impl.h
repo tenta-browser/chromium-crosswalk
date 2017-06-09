@@ -14,12 +14,15 @@
 namespace cc {
 
 class LayerTreeImpl;
-class ScrollView;
 
 class CC_EXPORT PaintedScrollbarLayerImpl : public ScrollbarLayerImplBase {
  public:
-  static std::unique_ptr<PaintedScrollbarLayerImpl>
-  Create(LayerTreeImpl* tree_impl, int id, ScrollbarOrientation orientation);
+  static std::unique_ptr<PaintedScrollbarLayerImpl> Create(
+      LayerTreeImpl* tree_impl,
+      int id,
+      ScrollbarOrientation orientation,
+      bool is_left_side_vertical_scrollbar,
+      bool is_overlay);
   ~PaintedScrollbarLayerImpl() override;
 
   // LayerImpl implementation.
@@ -52,13 +55,16 @@ class CC_EXPORT PaintedScrollbarLayerImpl : public ScrollbarLayerImplBase {
     internal_content_bounds_ = content_bounds;
   }
 
+  int ThumbThickness() const override;
+
  protected:
   PaintedScrollbarLayerImpl(LayerTreeImpl* tree_impl,
                             int id,
-                            ScrollbarOrientation orientation);
+                            ScrollbarOrientation orientation,
+                            bool is_left_side_vertical_scrollbar,
+                            bool is_overlay);
 
   // ScrollbarLayerImplBase implementation.
-  int ThumbThickness() const override;
   int ThumbLength() const override;
   float TrackLength() const override;
   int TrackStart() const override;

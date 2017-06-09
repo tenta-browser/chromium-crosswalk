@@ -25,6 +25,7 @@
 
 
 using base::android::ConvertUTF8ToJavaString;
+using base::android::JavaParamRef;
 using base::android::ScopedJavaLocalRef;
 using data_reduction_proxy::DataReductionProxySettings;
 
@@ -32,12 +33,6 @@ DataReductionProxySettingsAndroid::DataReductionProxySettingsAndroid() {
 }
 
 DataReductionProxySettingsAndroid::~DataReductionProxySettingsAndroid() {
-}
-
-jboolean DataReductionProxySettingsAndroid::IsDataReductionProxyAllowed(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj) {
-  return Settings()->Allowed();
 }
 
 jboolean DataReductionProxySettingsAndroid::IsDataReductionProxyPromoAllowed(
@@ -52,48 +47,10 @@ jboolean DataReductionProxySettingsAndroid::IsDataReductionProxyEnabled(
   return Settings()->IsDataReductionProxyEnabled();
 }
 
-jboolean DataReductionProxySettingsAndroid::CanUseDataReductionProxy(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj,
-    const JavaParamRef<jstring>& url) {
-  return Settings()->CanUseDataReductionProxy(
-      GURL(base::android::ConvertJavaStringToUTF16(env, url)));
-}
-
-jboolean DataReductionProxySettingsAndroid::WasLoFiModeActiveOnMainFrame(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj) {
-  return Settings()->WasLoFiModeActiveOnMainFrame();
-}
-
-jboolean DataReductionProxySettingsAndroid::WasLoFiLoadImageRequestedBefore(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj) {
-  return Settings()->WasLoFiLoadImageRequestedBefore();
-}
-
-void DataReductionProxySettingsAndroid::SetLoFiLoadImageRequested(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj) {
-  Settings()->SetLoFiLoadImageRequested();
-}
-
 jboolean DataReductionProxySettingsAndroid::IsDataReductionProxyManaged(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj) {
   return Settings()->IsDataReductionProxyManaged();
-}
-
-void DataReductionProxySettingsAndroid::IncrementLoFiSnackbarShown(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj) {
-  Settings()->IncrementLoFiSnackbarShown();
-}
-
-void DataReductionProxySettingsAndroid::IncrementLoFiUserRequestsForImages(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& obj) {
-  Settings()->IncrementLoFiUserRequestsForImages();
 }
 
 void DataReductionProxySettingsAndroid::SetDataReductionProxyEnabled(
@@ -127,6 +84,12 @@ DataReductionProxySettingsAndroid::GetContentLengths(
                                     received_content_length);
 }
 
+jlong DataReductionProxySettingsAndroid::GetTotalHttpContentLengthSaved(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& obj) {
+  return Settings()->GetTotalHttpContentLengthSaved();
+}
+
 ScopedJavaLocalRef<jlongArray>
 DataReductionProxySettingsAndroid::GetDailyOriginalContentLengths(
     JNIEnv* env,
@@ -152,9 +115,9 @@ jboolean DataReductionProxySettingsAndroid::IsDataReductionProxyUnreachable(
 jboolean DataReductionProxySettingsAndroid::AreLoFiPreviewsEnabled(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj) {
-  return data_reduction_proxy::params::IsIncludedInLoFiPreviewFieldTrial() ||
+  return data_reduction_proxy::params::IsIncludedInLitePageFieldTrial() ||
       (data_reduction_proxy::params::IsLoFiOnViaFlags() &&
-          data_reduction_proxy::params::AreLoFiPreviewsEnabledViaFlags());
+          data_reduction_proxy::params::AreLitePagesEnabledViaFlags());
 }
 
 // static

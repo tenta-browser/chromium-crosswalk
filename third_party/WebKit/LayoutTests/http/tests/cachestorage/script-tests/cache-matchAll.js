@@ -6,7 +6,7 @@ if (self.importScripts) {
 prepopulated_cache_test(simple_entries, function(cache, entries) {
     return cache.matchAll('not-present-in-the-cache')
       .then(function(result) {
-          assert_response_array_equivalent(
+          assert_response_array_equals(
             result, [],
             'Cache.matchAll should resolve with an empty array on failure.');
         });
@@ -39,10 +39,20 @@ prepopulated_cache_test(simple_entries, function(cache, entries) {
   }, 'Cache.matchAll with new Request');
 
 prepopulated_cache_test(simple_entries, function(cache, entries) {
+    return cache.matchAll(new Request(entries.a.request.url, {method: 'HEAD'}),
+                          {ignoreSearch: true})
+      .then(function(result) {
+          assert_response_array_equals(
+            result, [],
+            'Cache.matchAll should not match HEAD Request.');
+        });
+  }, 'Cache.matchAll with HEAD');
+
+prepopulated_cache_test(simple_entries, function(cache, entries) {
     return cache.matchAll(entries.a.request,
                           {ignoreSearch: true})
       .then(function(result) {
-          assert_response_array_equivalent(
+          assert_response_array_equals(
             result,
             [
               entries.a.response,
@@ -59,7 +69,7 @@ prepopulated_cache_test(simple_entries, function(cache, entries) {
     return cache.matchAll(entries.a_with_query.request,
                           {ignoreSearch: true})
       .then(function(result) {
-          assert_response_array_equivalent(
+          assert_response_array_equals(
             result,
             [
               entries.a.response,
@@ -71,10 +81,60 @@ prepopulated_cache_test(simple_entries, function(cache, entries) {
   },
   'Cache.matchAll with ignoreSearch option (request with search parameters)');
 
+cache_test(function(cache) {
+    var request = new Request('http://example.com/');
+    var head_request = new Request('http://example.com/', {method: 'HEAD'});
+    var response = new Response('foo');
+    return cache.put(request.clone(), response.clone())
+      .then(function() {
+          return cache.matchAll(head_request.clone());
+        })
+      .then(function(result) {
+          assert_response_array_equals(
+            result, [],
+            'Cache.matchAll should resolve with empty array for a ' +
+            'mismatched method.');
+          return cache.matchAll(head_request.clone(),
+                                {ignoreMethod: true});
+        })
+      .then(function(result) {
+          assert_response_array_equals(
+            result, [response],
+            'Cache.matchAll with ignoreMethod should ignore the ' +
+            'method of request.');
+        });
+  }, 'Cache.matchAll supports ignoreMethod');
+
+cache_test(function(cache) {
+    var vary_request = new Request('http://example.com/c',
+                                   {headers: {'Cookies': 'is-for-cookie'}});
+    var vary_response = new Response('', {headers: {'Vary': 'Cookies'}});
+    var mismatched_vary_request = new Request('http://example.com/c');
+
+    return cache.put(vary_request.clone(), vary_response.clone())
+      .then(function() {
+          return cache.matchAll(mismatched_vary_request.clone());
+        })
+      .then(function(result) {
+          assert_response_array_equals(
+            result, [],
+            'Cache.matchAll should resolve as undefined with a ' +
+            'mismatched vary.');
+          return cache.matchAll(mismatched_vary_request.clone(),
+                              {ignoreVary: true});
+        })
+      .then(function(result) {
+          assert_response_array_equals(
+            result, [vary_response],
+            'Cache.matchAll with ignoreVary should ignore the ' +
+            'vary of request.');
+        });
+  }, 'Cache.matchAll supports ignoreVary');
+
 prepopulated_cache_test(simple_entries, function(cache, entries) {
     return cache.matchAll(entries.cat.request.url + '#mouse')
       .then(function(result) {
-          assert_response_array_equivalent(
+          assert_response_array_equals(
             result,
             [
               entries.cat.response,
@@ -86,7 +146,7 @@ prepopulated_cache_test(simple_entries, function(cache, entries) {
 prepopulated_cache_test(simple_entries, function(cache, entries) {
     return cache.matchAll('http')
       .then(function(result) {
-          assert_response_array_equivalent(
+          assert_response_array_equals(
             result, [],
             'Cache.matchAll should treat query as a URL and not ' +
             'just a string fragment.');
@@ -96,7 +156,7 @@ prepopulated_cache_test(simple_entries, function(cache, entries) {
 prepopulated_cache_test(simple_entries, function(cache, entries) {
     return cache.matchAll()
       .then(function(result) {
-          assert_response_array_equivalent(
+          assert_response_array_equals(
             result,
             [
               entries.a.response,
@@ -119,7 +179,7 @@ prepopulated_cache_test(simple_entries, function(cache, entries) {
 prepopulated_cache_test(vary_entries, function(cache, entries) {
     return cache.matchAll('http://example.com/c')
       .then(function(result) {
-          assert_response_array_equivalent(
+          assert_response_array_equals(
             result,
             [
               entries.vary_cookie_absent.response
@@ -135,7 +195,7 @@ prepopulated_cache_test(vary_entries, function(cache, entries) {
                         {headers: {'Cookies': 'none-of-the-above'}}));
         })
       .then(function(result) {
-          assert_response_array_equivalent(
+          assert_response_array_equals(
             result,
             [
             ],
@@ -150,7 +210,7 @@ prepopulated_cache_test(vary_entries, function(cache, entries) {
                         {headers: {'Cookies': 'is-for-cookie'}}));
         })
       .then(function(result) {
-          assert_response_array_equivalent(
+          assert_response_array_equals(
             result,
             [entries.vary_cookie_is_cookie.response],
             'Cache.matchAll should match the entire header if a vary header ' +
@@ -162,15 +222,16 @@ prepopulated_cache_test(vary_entries, function(cache, entries) {
     return cache.matchAll('http://example.com/c',
                           {ignoreVary: true})
       .then(function(result) {
-          assert_response_array_equivalent(
+          assert_response_array_equals(
             result,
             [
               entries.vary_cookie_is_cookie.response,
               entries.vary_cookie_is_good.response,
               entries.vary_cookie_absent.response
             ],
-            'Cache.matchAll should honor "ignoreVary" parameter.');
+            'Cache.matchAll should support multiple vary request/response ' +
+            'pairs.');
         });
-  }, 'Cache.matchAll with "ignoreVary" parameter');
+  }, 'Cache.matchAll with multiple vary pairs');
 
 done();

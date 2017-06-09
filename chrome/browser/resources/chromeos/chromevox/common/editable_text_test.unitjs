@@ -220,6 +220,7 @@ TEST_F('CvoxEditableTextUnitTest', 'TypingWords', function() {
   assertEqualStringArrays(['.', 'd', 'l'], tts.get());
 
   // Forward-delete
+  cvox.ChromeVoxEditableTextBase.useIBeamCursor = true;
   obj.changed(new cvox.TextChangeEvent('Hello, Wor', 9, 9));
   obj.changed(new cvox.TextChangeEvent('Hello, Wor', 8, 8));
   obj.changed(new cvox.TextChangeEvent('Hello, Wor', 7, 7));
@@ -227,6 +228,16 @@ TEST_F('CvoxEditableTextUnitTest', 'TypingWords', function() {
   obj.changed(new cvox.TextChangeEvent('Hello, r', 7, 7));
   obj.changed(new cvox.TextChangeEvent('Hello, ', 7, 7));
   assertEqualStringArrays(['r', 'o', 'W', 'W', 'o', 'r'], tts.get());
+
+  obj.changed(new cvox.TextChangeEvent('Hello, Wor', 10, 10));
+  cvox.ChromeVoxEditableTextBase.useIBeamCursor = false;
+  obj.changed(new cvox.TextChangeEvent('Hello, Wor', 9, 9));
+  obj.changed(new cvox.TextChangeEvent('Hello, Wor', 8, 8));
+  obj.changed(new cvox.TextChangeEvent('Hello, Wor', 7, 7));
+  obj.changed(new cvox.TextChangeEvent('Hello, or', 7, 7));
+  obj.changed(new cvox.TextChangeEvent('Hello, r', 7, 7));
+  obj.changed(new cvox.TextChangeEvent('Hello, ', 7, 7));
+  assertEqualStringArrays(['Wor', 'r', 'o', 'W', 'o', 'r'], tts.get());
 
   // Clear all
   obj.changed(new cvox.TextChangeEvent('', 0, 0));
@@ -690,4 +701,15 @@ TEST_F('CvoxEditableTextUnitTest', 'ContentEditableBraille', function() {
   // We should have crossed the line break to the second line which is blank.
   editable.update(true);
   TestBraille.assertContent('', 0, 0);
+});
+
+TEST_F('CvoxEditableTextUnitTest', 'TypingNonBreakingSpaces', function() {
+  var tts = new TestTts();
+  var obj = new cvox.ChromeVoxEditableTextBase('Hello', 0, 0, false, tts);
+
+  obj.changed(new cvox.TextChangeEvent('h', 1, 1));
+  obj.changed(new cvox.TextChangeEvent('hi', 2, 2));
+  obj.changed(new cvox.TextChangeEvent('hi\u00a0', 3, 3));
+  obj.changed(new cvox.TextChangeEvent('hi t', 4, 4));
+  assertEqualStringArrays(['h', 'i', 'hi ', 't'], tts.get());
 });

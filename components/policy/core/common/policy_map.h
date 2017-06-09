@@ -12,6 +12,7 @@
 #include <set>
 #include <string>
 
+#include "base/callback.h"
 #include "base/macros.h"
 #include "base/values.h"
 #include "components/policy/core/common/external_data_fetcher.h"
@@ -26,13 +27,13 @@ class POLICY_EXPORT PolicyMap {
   // Each policy maps to an Entry which keeps the policy value as well as other
   // relevant data about the policy.
   struct POLICY_EXPORT Entry {
-    PolicyLevel level;
-    PolicyScope scope;
+    PolicyLevel level = POLICY_LEVEL_RECOMMENDED;
+    PolicyScope scope = POLICY_SCOPE_USER;
     std::unique_ptr<base::Value> value;
     std::unique_ptr<ExternalDataFetcher> external_data_fetcher;
 
     // For debugging and displaying only. Set by provider delivering the policy.
-    PolicySource source;
+    PolicySource source = POLICY_SOURCE_ENTERPRISE_DEFAULT;
 
     Entry();
     ~Entry();
@@ -43,7 +44,8 @@ class POLICY_EXPORT PolicyMap {
     // Returns a copy of |this|.
     Entry DeepCopy() const;
 
-    // Returns true if |this| has higher priority than |other|.
+    // Returns true if |this| has higher priority than |other|. The priority of
+    // the fields are |level| > |scope| > |source|.
     bool has_higher_priority_than(const Entry& other) const;
 
     // Returns true if |this| equals |other|.
@@ -74,8 +76,18 @@ class POLICY_EXPORT PolicyMap {
            std::unique_ptr<ExternalDataFetcher> external_data_fetcher);
   void Set(const std::string& policy, Entry entry);
 
+  // For all policies, overwrite the PolicySource with |source|.
+  void SetSourceForAll(PolicySource source);
+
   // Erase the given |policy|, if it exists in this map.
   void Erase(const std::string& policy);
+
+  // Erase all entries for which |filter| returns true.
+  void EraseMatching(const base::Callback<bool(const const_iterator)>& filter);
+
+  // Erase all entries for which |filter| returns false.
+  void EraseNonmatching(
+      const base::Callback<bool(const const_iterator)>& filter);
 
   // Swaps the internal representation of |this| with |other|.
   void Swap(PolicyMap* other);
@@ -107,12 +119,6 @@ class POLICY_EXPORT PolicyMap {
   void GetDifferingKeys(const PolicyMap& other,
                         std::set<std::string>* differing_keys) const;
 
-  // Removes all policies that don't have the specified |level|. This is a
-  // temporary helper method, until mandatory and recommended levels are served
-  // by a single provider.
-  // TODO(joaodasilva): Remove this. http://crbug.com/108999
-  void FilterLevel(PolicyLevel level);
-
   bool Equals(const PolicyMap& other) const;
   bool empty() const;
   size_t size() const;
@@ -125,6 +131,10 @@ class POLICY_EXPORT PolicyMap {
   // Helper function for Equals().
   static bool MapEntryEquals(const PolicyMapType::value_type& a,
                              const PolicyMapType::value_type& b);
+
+  // Erase all entries for which |filter| returns |deletion_value|.
+  void FilterErase(const base::Callback<bool(const const_iterator)>& filter,
+                   bool deletion_value);
 
   PolicyMapType map_;
 

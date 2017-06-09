@@ -24,6 +24,7 @@
 #include "content/common/service_worker/service_worker_types.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
+#include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_widget_host_view.h"
@@ -56,17 +57,16 @@ class OpenURLObserver : public WebContentsObserver {
         frame_tree_node_id_(frame_tree_node_id),
         callback_(callback) {}
 
-  void DidCommitProvisionalLoadForFrame(
-      RenderFrameHost* render_frame_host,
-      const GURL& validated_url,
-      ui::PageTransition transition_type) override {
+  void DidFinishNavigation(NavigationHandle* navigation_handle) override {
     DCHECK(web_contents());
-
-    RenderFrameHostImpl* rfhi =
-        static_cast<RenderFrameHostImpl*>(render_frame_host);
-    if (rfhi->frame_tree_node()->frame_tree_node_id() != frame_tree_node_id_)
+    if (!navigation_handle->HasCommitted())
       return;
 
+    if (navigation_handle->GetFrameTreeNodeId() != frame_tree_node_id_)
+      return;
+
+    RenderFrameHost* render_frame_host =
+        navigation_handle->GetRenderFrameHost();
     RunCallback(render_frame_host->GetProcess()->GetID(),
                 render_frame_host->GetRoutingID());
   }
@@ -162,6 +162,13 @@ void DidOpenURLOnUI(const OpenURLCallback& callback,
     return;
   }
 
+  // ContentBrowserClient::OpenURL calls ui::BaseWindow::Show which
+  // makes the destination window the main+key window, but won't make Chrome
+  // the active application (https://crbug.com/470830). Since OpenWindow is
+  // always called from a user gesture (e.g. notification click), we should
+  // explicitly activate the window, which brings Chrome to the front.
+  static_cast<WebContentsImpl*>(web_contents)->Activate();
+
   RenderFrameHostImpl* rfhi =
       static_cast<RenderFrameHostImpl*>(web_contents->GetMainFrame());
   new OpenURLObserver(web_contents,
@@ -197,8 +204,8 @@ void OpenWindowOnUI(
   OpenURLParams params(
       url, Referrer::SanitizeForRequest(
                url, Referrer(script_url, blink::WebReferrerPolicyDefault)),
-      NEW_FOREGROUND_TAB, ui::PAGE_TRANSITION_AUTO_TOPLEVEL,
-      true /* is_renderer_initiated */);
+      WindowOpenDisposition::NEW_FOREGROUND_TAB,
+      ui::PAGE_TRANSITION_AUTO_TOPLEVEL, true /* is_renderer_initiated */);
 
   GetContentClient()->browser()->OpenURL(browser_context, params,
                                          base::Bind(&DidOpenURLOnUI, callback));
@@ -230,7 +237,7 @@ void NavigateClientOnUI(const GURL& url,
   OpenURLParams params(
       url, Referrer::SanitizeForRequest(
                url, Referrer(script_url, blink::WebReferrerPolicyDefault)),
-      frame_tree_node_id, CURRENT_TAB, transition,
+      frame_tree_node_id, WindowOpenDisposition::CURRENT_TAB, transition,
       true /* is_renderer_initiated */);
   web_contents->OpenURL(params);
   new OpenURLObserver(web_contents, frame_tree_node_id, callback);

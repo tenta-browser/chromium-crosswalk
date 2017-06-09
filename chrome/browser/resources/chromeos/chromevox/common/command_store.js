@@ -350,7 +350,8 @@ cvox.CommandStore.CMD_WHITELIST = {
            category: 'help_commands'},
   'contextMenu': {announce: false,
                   msgId: 'show_context_menu',
-                  disallowContinuation: true},
+                  disallowContinuation: true,
+                  category: 'information'},
 
   'showOptionsPage': {announce: false,
                       disallowContinuation: true,
@@ -362,6 +363,12 @@ cvox.CommandStore.CMD_WHITELIST = {
                          msgId: 'show_kb_explorer_page',
                          'disallowOOBE': true,
                          category: 'help_commands'},
+  'toggleBrailleCaptions': {announce: false,
+                            msgId: 'braille_captions',
+                            category: 'help_commands'},
+  'reportIssue': {announce: false,
+                  msgId: 'panel_menu_item_report_issue',
+                  category: 'help_commands'},
 
   'showFormsList': {announce: false,
                     disallowContinuation: true,
@@ -662,14 +669,14 @@ cvox.CommandStore.CMD_WHITELIST = {
                 announce: true,
                 msgId: 'braille_bottom',
                 category: 'braille'},
+  'viewGraphicAsBraille': {announce: true,
+                         msgId: 'view_graphic_as_braille',
+                         category: 'braille'},
 
   // Developer commands.
   'enableConsoleTts': {announce: false,
                       msgId: 'enable_tts_log',
                       category: 'developer'},
-  'toggleBrailleCaptions': {announce: false,
-                            msgId: 'braille_captions',
-                            category: 'developer'},
 
   'startHistoryRecording': {announce: false},
   'stopHistoryRecording': {announce: false},

@@ -4,6 +4,10 @@
  * found in the LICENSE file.
  */
 
+.sidebar-pane.accessibility-computed {
+    background-color: rgba(0, 0, 0, 0.03);
+}
+
 .ax-computed-text {
     background-image: url(Images/speech.png);
     background-repeat: no-repeat;
@@ -54,7 +58,12 @@ span.ax-internal-role {
 }
 
 .ax-ignored-node-pane {
-    background-color: hsl(0, 0%, 96%);
+    flex: none;
+}
+
+.ax-tree-ignored-node {
+    font-style: italic;
+    opacity: 0.7;
 }
 
 .tree-outline li {
@@ -69,6 +78,18 @@ span.ax-internal-role {
 .tree-outline li.invalid {
     position: relative;
     left: -2px;
+}
+
+.tree-outline li.no-dom-node {
+    opacity: 0.5;
+}
+
+.tree-outline li.children-unloaded::before {
+    opacity: 0.2;
+}
+
+.tree-outline li.partially-expanded::before {
+    -webkit-mask-position: -19px -108px;
 }
 
 .invalid {
@@ -103,4 +124,28 @@ span.ax-value-undefined {
 
 .sidebar-pane-stack .sidebar-pane {
     padding-left: 4px;
+}
+
+button.expand-siblings {
+    border-radius: 1px;
+    background-color: #f3f3f3;
+    border: 1px solid #ddd;
+    margin-left: 5px;
+    margin-bottom: 1px;
+}
+
+li.siblings-expanded button.expand-siblings {
+    display: none;
+}
+
+.tree-outline li.preselected:not(.selected) .selection (
+    display: block;
+    left: 3px;
+    right: 3px;
+    background-color: rgba(56, 121, 217, 0.1);
+    border-radius: 5px;
+}
+
+.tree-outline li.inspected .selection {
+    background-color: rgb(56, 121, 217);
 }

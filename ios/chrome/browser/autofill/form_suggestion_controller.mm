@@ -13,7 +13,6 @@
 #include "base/mac/scoped_nsobject.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
-#include "components/autofill/core/browser/autofill_field_trial_ios.h"
 #include "components/autofill/core/browser/autofill_popup_delegate.h"
 #import "components/autofill/ios/browser/form_suggestion.h"
 #import "ios/chrome/browser/autofill/form_input_accessory_view_controller.h"
@@ -92,7 +91,7 @@ AutofillSuggestionState::AutofillSuggestionState(const std::string& form_name,
   base::scoped_nsobject<JsSuggestionManager> _jsSuggestionManager;
 
   // The provider for the current set of suggestions.
-  id<FormSuggestionProvider> _provider;  // weak
+  __unsafe_unretained id<FormSuggestionProvider> _provider;  // weak
 }
 
 - (instancetype)initWithWebState:(web::WebState*)webState
@@ -134,7 +133,7 @@ AutofillSuggestionState::AutofillSuggestionState(const std::string& form_name,
   [self detachFromWebState];
 }
 
-- (void)webStateDidLoadPage:(web::WebState*)webState {
+- (void)webState:(web::WebState*)webState didLoadPageWithSuccess:(BOOL)success {
   [self processPage:webState];
 }
 
@@ -280,9 +279,9 @@ AutofillSuggestionState::AutofillSuggestionState(const std::string& form_name,
 
 - (UIView*)suggestionViewWithSuggestions:(NSArray*)suggestions {
   CGRect frame = [_webViewProxy keyboardAccessory].frame;
-  // Force the desired height on iPads running iOS 9 or later where the height
-  // of the inputAccessoryView is 0.
-  if (base::ios::IsRunningOnIOS9OrLater() && IsIPadIdiom()) {
+  // Force the desired height on iPad where the height of the
+  // inputAccessoryView is 0.
+  if (IsIPadIdiom()) {
     frame.size.height = autofill::kInputAccessoryHeight;
   }
   base::scoped_nsobject<FormSuggestionView> view([[FormSuggestionView alloc]
@@ -304,12 +303,7 @@ AutofillSuggestionState::AutofillSuggestionState(const std::string& form_name,
                  forField:base::SysUTF8ToNSString(_suggestionState->field_name)
                      form:base::SysUTF8ToNSString(_suggestionState->form_name)
         completionHandler:^{
-          if (autofill::AutofillFieldTrialIOS::IsFullFormAutofillEnabled()) {
-            [[weakSelf accessoryViewDelegate] closeKeyboardWithoutButtonPress];
-          } else {
-            [[weakSelf accessoryViewDelegate]
-                selectNextElementWithoutButtonPress];
-          }
+          [[weakSelf accessoryViewDelegate] closeKeyboardWithoutButtonPress];
         }];
   _provider = nil;
 }

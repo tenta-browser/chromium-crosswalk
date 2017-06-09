@@ -30,7 +30,7 @@
 import sys
 
 import css_properties
-import in_generator
+import json5_generator
 from name_utilities import lower_first
 import template_expander
 
@@ -40,8 +40,8 @@ class StyleBuilderWriter(css_properties.CSSProperties):
         'lower_first': lower_first,
     }
 
-    def __init__(self, in_file_path):
-        super(StyleBuilderWriter, self).__init__(in_file_path)
+    def __init__(self, json5_file_path):
+        super(StyleBuilderWriter, self).__init__(json5_file_path)
         self._outputs = {('StyleBuilderFunctions.h'): self.generate_style_builder_functions_h,
                          ('StyleBuilderFunctions.cpp'): self.generate_style_builder_functions_cpp,
                          ('StyleBuilder.cpp'): self.generate_style_builder,
@@ -59,11 +59,14 @@ class StyleBuilderWriter(css_properties.CSSProperties):
             set_if_none(property, 'type_name', 'E' + name)
             set_if_none(property, 'getter', lower_first(name) if simple_type_name != name else 'get' + name)
             set_if_none(property, 'setter', 'set' + name)
+            set_if_none(property, 'inherited', False)
             set_if_none(property, 'initial', 'initial' + name)
             if property['custom_all']:
                 property['custom_initial'] = True
                 property['custom_inherit'] = True
                 property['custom_value'] = True
+            if property['inherited']:
+                property['is_inherited_setter'] = 'set' + name + 'IsInherited'
             property['should_declare_functions'] = not property['use_handlers_for'] and not property['longhands'] \
                 and not property['direction_aware'] and not property['builder_skip'] \
                 and not property['descriptor_only']
@@ -90,4 +93,4 @@ class StyleBuilderWriter(css_properties.CSSProperties):
 
 
 if __name__ == '__main__':
-    in_generator.Maker(StyleBuilderWriter).main(sys.argv)
+    json5_generator.Maker(StyleBuilderWriter).main()

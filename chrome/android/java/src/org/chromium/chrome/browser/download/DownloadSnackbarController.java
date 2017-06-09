@@ -5,11 +5,15 @@
 package org.chromium.chrome.browser.download;
 
 import android.app.Activity;
-import android.app.NotificationManager;
+import android.app.DownloadManager;
 import android.content.Context;
+import android.content.Intent;
 
 import org.chromium.base.ApplicationStatus;
+import org.chromium.base.BuildInfo;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.customtabs.CustomTabActivity;
+import org.chromium.chrome.browser.offlinepages.downloads.OfflinePageDownloadBridge;
 import org.chromium.chrome.browser.snackbar.Snackbar;
 import org.chromium.chrome.browser.snackbar.SnackbarManager;
 
@@ -25,11 +29,14 @@ public class DownloadSnackbarController implements SnackbarManager.SnackbarContr
         public final DownloadInfo downloadInfo;
         public final int notificationId;
         public final long systemDownloadId;
+        public final boolean usesAndroidDownloadManager;
 
-        ActionDataInfo(DownloadInfo downloadInfo, int notificationId, long systemDownloadId) {
+        ActionDataInfo(DownloadInfo downloadInfo, int notificationId, long systemDownloadId,
+                boolean usesAndroidDownloadManager) {
             this.downloadInfo = downloadInfo;
             this.notificationId = notificationId;
             this.systemDownloadId = systemDownloadId;
+            this.usesAndroidDownloadManager = usesAndroidDownloadManager;
         }
     }
 
@@ -38,20 +45,26 @@ public class DownloadSnackbarController implements SnackbarManager.SnackbarContr
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     public void onAction(Object actionData) {
-        if (actionData == null) {
+        if (!(actionData instanceof ActionDataInfo)) {
             DownloadManagerService.openDownloadsPage(mContext);
             return;
         }
-        ActionDataInfo download = (ActionDataInfo) actionData;
+        final ActionDataInfo download = (ActionDataInfo) actionData;
+        if (download.downloadInfo.isOfflinePage()) {
+            OfflinePageDownloadBridge.openDownloadedPage(download.downloadInfo.getDownloadGuid());
+            return;
+        }
+        if (download.usesAndroidDownloadManager) {
+            mContext.startActivity(new Intent(DownloadManager.ACTION_VIEW_DOWNLOADS).addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK));
+            return;
+        }
         DownloadManagerService manager = DownloadManagerService.getDownloadManagerService(mContext);
-        manager.openDownloadedContent(download.systemDownloadId);
+        manager.openDownloadedContent(download.downloadInfo, download.systemDownloadId);
         if (download.notificationId != INVALID_NOTIFICATION_ID) {
-            NotificationManager notificationManager =
-                    (NotificationManager) mContext.getSystemService(Context.NOTIFICATION_SERVICE);
-            notificationManager.cancel(
-                    DownloadNotificationService.NOTIFICATION_NAMESPACE, download.notificationId);
+            manager.getDownloadNotifier().removeDownloadNotification(
+                    download.notificationId, download.downloadInfo);
         }
     }
 
@@ -66,18 +79,29 @@ public class DownloadSnackbarController implements SnackbarManager.SnackbarContr
      * @param notificationId Notification Id of the successful download.
      * @param downloadId Id of the download from Android DownloadManager.
      * @param canBeResolved Whether the download can be resolved to any activity.
+     * @param usesAndroidDownloadManager Whether the download uses Android DownloadManager.
      */
     public void onDownloadSucceeded(
-            DownloadInfo downloadInfo, int notificationId, long downloadId, boolean canBeResolved) {
+            DownloadInfo downloadInfo, int notificationId, long downloadId, boolean canBeResolved,
+            boolean usesAndroidDownloadManager) {
         if (getSnackbarManager() == null) return;
-        Snackbar snackbar = Snackbar.make(
-                mContext.getString(R.string.download_succeeded_message, downloadInfo.getFileName()),
-                this, Snackbar.TYPE_NOTIFICATION, Snackbar.UMA_DOWNLOAD_SUCCEEDED);
+        Snackbar snackbar;
+        if (getActivity() instanceof CustomTabActivity) {
+            String packageLabel = BuildInfo.getPackageLabel(getActivity());
+            snackbar = Snackbar.make(mContext.getString(R.string.download_succeeded_message,
+                    downloadInfo.getFileName(), packageLabel),
+                    this, Snackbar.TYPE_NOTIFICATION, Snackbar.UMA_DOWNLOAD_SUCCEEDED);
+        } else {
+            snackbar = Snackbar.make(mContext.getString(R.string.download_succeeded_message_default,
+                    downloadInfo.getFileName()),
+                    this, Snackbar.TYPE_NOTIFICATION, Snackbar.UMA_DOWNLOAD_SUCCEEDED);
+        }
         // TODO(qinmin): Coalesce snackbars if multiple downloads finish at the same time.
         snackbar.setDuration(SNACKBAR_DURATION_IN_MILLISECONDS).setSingleLine(false);
         ActionDataInfo info = null;
-        if (canBeResolved) {
-            info = new ActionDataInfo(downloadInfo, notificationId, downloadId);
+        if (canBeResolved || downloadInfo.isOfflinePage() || usesAndroidDownloadManager) {
+            info = new ActionDataInfo(downloadInfo, notificationId, downloadId,
+                    usesAndroidDownloadManager);
         }
         // Show downloads app if the download cannot be resolved to any activity.
         snackbar.setAction(
@@ -107,10 +131,17 @@ public class DownloadSnackbarController implements SnackbarManager.SnackbarContr
         getSnackbarManager().showSnackbar(snackbar);
     }
 
+    private Activity getActivity() {
+        if (ApplicationStatus.hasVisibleActivities()) {
+            return ApplicationStatus.getLastTrackedFocusedActivity();
+        } else {
+            return null;
+        }
+    }
+
     public SnackbarManager getSnackbarManager() {
-        Activity activity = ApplicationStatus.getLastTrackedFocusedActivity();
-        if (activity != null && ApplicationStatus.hasVisibleActivities()
-                && activity instanceof SnackbarManager.SnackbarManageable) {
+        Activity activity = getActivity();
+        if (activity != null && activity instanceof SnackbarManager.SnackbarManageable) {
             return ((SnackbarManager.SnackbarManageable) activity).getSnackbarManager();
         }
         return null;

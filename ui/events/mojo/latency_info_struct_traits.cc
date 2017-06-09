@@ -62,21 +62,9 @@ ui::mojom::LatencyComponentType UILatencyComponentTypeToMojo(
     case ui::INPUT_EVENT_LATENCY_GENERATE_SCROLL_UPDATE_FROM_MOUSE_WHEEL:
       return ui::mojom::LatencyComponentType::
           INPUT_EVENT_LATENCY_GENERATE_SCROLL_UPDATE_FROM_MOUSE_WHEEL;
-    case ui::INPUT_EVENT_LATENCY_TERMINATED_MOUSE_COMPONENT:
+    case ui::INPUT_EVENT_LATENCY_TERMINATED_NO_SWAP_COMPONENT:
       return ui::mojom::LatencyComponentType::
-          INPUT_EVENT_LATENCY_TERMINATED_MOUSE_COMPONENT;
-    case ui::INPUT_EVENT_LATENCY_TERMINATED_MOUSE_WHEEL_COMPONENT:
-      return ui::mojom::LatencyComponentType::
-          INPUT_EVENT_LATENCY_TERMINATED_MOUSE_WHEEL_COMPONENT;
-    case ui::INPUT_EVENT_LATENCY_TERMINATED_KEYBOARD_COMPONENT:
-      return ui::mojom::LatencyComponentType::
-          INPUT_EVENT_LATENCY_TERMINATED_KEYBOARD_COMPONENT;
-    case ui::INPUT_EVENT_LATENCY_TERMINATED_TOUCH_COMPONENT:
-      return ui::mojom::LatencyComponentType::
-          INPUT_EVENT_LATENCY_TERMINATED_TOUCH_COMPONENT;
-    case ui::INPUT_EVENT_LATENCY_TERMINATED_GESTURE_COMPONENT:
-      return ui::mojom::LatencyComponentType::
-          INPUT_EVENT_LATENCY_TERMINATED_GESTURE_COMPONENT;
+          INPUT_EVENT_LATENCY_TERMINATED_NO_SWAP_COMPONENT;
     case ui::INPUT_EVENT_LATENCY_TERMINATED_FRAME_SWAP_COMPONENT:
       return ui::mojom::LatencyComponentType::
           INPUT_EVENT_LATENCY_TERMINATED_FRAME_SWAP_COMPONENT;
@@ -145,20 +133,8 @@ ui::LatencyComponentType MojoLatencyComponentTypeToUI(
         INPUT_EVENT_LATENCY_GENERATE_SCROLL_UPDATE_FROM_MOUSE_WHEEL:
       return ui::INPUT_EVENT_LATENCY_GENERATE_SCROLL_UPDATE_FROM_MOUSE_WHEEL;
     case ui::mojom::LatencyComponentType::
-        INPUT_EVENT_LATENCY_TERMINATED_MOUSE_COMPONENT:
-      return ui::INPUT_EVENT_LATENCY_TERMINATED_MOUSE_COMPONENT;
-    case ui::mojom::LatencyComponentType::
-        INPUT_EVENT_LATENCY_TERMINATED_MOUSE_WHEEL_COMPONENT:
-      return ui::INPUT_EVENT_LATENCY_TERMINATED_MOUSE_WHEEL_COMPONENT;
-    case ui::mojom::LatencyComponentType::
-        INPUT_EVENT_LATENCY_TERMINATED_KEYBOARD_COMPONENT:
-      return ui::INPUT_EVENT_LATENCY_TERMINATED_KEYBOARD_COMPONENT;
-    case ui::mojom::LatencyComponentType::
-        INPUT_EVENT_LATENCY_TERMINATED_TOUCH_COMPONENT:
-      return ui::INPUT_EVENT_LATENCY_TERMINATED_TOUCH_COMPONENT;
-    case ui::mojom::LatencyComponentType::
-        INPUT_EVENT_LATENCY_TERMINATED_GESTURE_COMPONENT:
-      return ui::INPUT_EVENT_LATENCY_TERMINATED_GESTURE_COMPONENT;
+        INPUT_EVENT_LATENCY_TERMINATED_NO_SWAP_COMPONENT:
+      return ui::INPUT_EVENT_LATENCY_TERMINATED_NO_SWAP_COMPONENT;
     case ui::mojom::LatencyComponentType::
         INPUT_EVENT_LATENCY_TERMINATED_FRAME_SWAP_COMPONENT:
       return ui::INPUT_EVENT_LATENCY_TERMINATED_FRAME_SWAP_COMPONENT;
@@ -179,28 +155,28 @@ ui::LatencyComponentType MojoLatencyComponentTypeToUI(
 }  // namespace
 
 // static
-int64_t
-StructTraits<ui::mojom::LatencyComponent, ui::LatencyInfo::LatencyComponent>::
+int64_t StructTraits<ui::mojom::LatencyComponentDataView,
+                     ui::LatencyInfo::LatencyComponent>::
     sequence_number(const ui::LatencyInfo::LatencyComponent& component) {
   return component.sequence_number;
 }
 
 // static
-base::TimeTicks
-StructTraits<ui::mojom::LatencyComponent, ui::LatencyInfo::LatencyComponent>::
+base::TimeTicks StructTraits<ui::mojom::LatencyComponentDataView,
+                             ui::LatencyInfo::LatencyComponent>::
     event_time(const ui::LatencyInfo::LatencyComponent& component) {
   return component.event_time;
 }
 
 // static
-uint32_t
-StructTraits<ui::mojom::LatencyComponent, ui::LatencyInfo::LatencyComponent>::
+uint32_t StructTraits<ui::mojom::LatencyComponentDataView,
+                      ui::LatencyInfo::LatencyComponent>::
     event_count(const ui::LatencyInfo::LatencyComponent& component) {
   return component.event_count;
 }
 
 // static
-bool StructTraits<ui::mojom::LatencyComponent,
+bool StructTraits<ui::mojom::LatencyComponentDataView,
                   ui::LatencyInfo::LatencyComponent>::
     Read(ui::mojom::LatencyComponentDataView data,
          ui::LatencyInfo::LatencyComponent* out) {
@@ -213,21 +189,21 @@ bool StructTraits<ui::mojom::LatencyComponent,
 
 // static
 ui::mojom::LatencyComponentType
-StructTraits<ui::mojom::LatencyComponentId,
+StructTraits<ui::mojom::LatencyComponentIdDataView,
              std::pair<ui::LatencyComponentType, int64_t>>::
     type(const std::pair<ui::LatencyComponentType, int64_t>& id) {
   return UILatencyComponentTypeToMojo(id.first);
 }
 
 // static
-int64_t StructTraits<ui::mojom::LatencyComponentId,
+int64_t StructTraits<ui::mojom::LatencyComponentIdDataView,
                      std::pair<ui::LatencyComponentType, int64_t>>::
     id(const std::pair<ui::LatencyComponentType, int64_t>& id) {
   return id.second;
 }
 
 // static
-bool StructTraits<ui::mojom::LatencyComponentId,
+bool StructTraits<ui::mojom::LatencyComponentIdDataView,
                   std::pair<ui::LatencyComponentType, int64_t>>::
     Read(ui::mojom::LatencyComponentIdDataView data,
          std::pair<ui::LatencyComponentType, int64_t>* out) {
@@ -238,50 +214,56 @@ bool StructTraits<ui::mojom::LatencyComponentId,
 
 // static
 const std::string&
-StructTraits<ui::mojom::LatencyInfo, ui::LatencyInfo>::trace_name(
+StructTraits<ui::mojom::LatencyInfoDataView, ui::LatencyInfo>::trace_name(
     const ui::LatencyInfo& info) {
   return info.trace_name_;
 }
 
 const ui::LatencyInfo::LatencyMap&
-StructTraits<ui::mojom::LatencyInfo, ui::LatencyInfo>::latency_components(
-    const ui::LatencyInfo& info) {
+StructTraits<ui::mojom::LatencyInfoDataView,
+             ui::LatencyInfo>::latency_components(const ui::LatencyInfo& info) {
   return info.latency_components();
 }
 InputCoordinateArray
-StructTraits<ui::mojom::LatencyInfo, ui::LatencyInfo>::input_coordinates(
-    const ui::LatencyInfo& info) {
+StructTraits<ui::mojom::LatencyInfoDataView,
+             ui::LatencyInfo>::input_coordinates(const ui::LatencyInfo& info) {
   return {info.input_coordinates_size_, ui::LatencyInfo::kMaxInputCoordinates,
           const_cast<gfx::PointF*>(info.input_coordinates_)};
 }
 
-int64_t StructTraits<ui::mojom::LatencyInfo, ui::LatencyInfo>::trace_id(
+int64_t StructTraits<ui::mojom::LatencyInfoDataView, ui::LatencyInfo>::trace_id(
     const ui::LatencyInfo& info) {
   return info.trace_id();
 }
 
-bool StructTraits<ui::mojom::LatencyInfo, ui::LatencyInfo>::coalesced(
+bool StructTraits<ui::mojom::LatencyInfoDataView, ui::LatencyInfo>::coalesced(
     const ui::LatencyInfo& info) {
   return info.coalesced();
 }
 
-bool StructTraits<ui::mojom::LatencyInfo, ui::LatencyInfo>::terminated(
+bool StructTraits<ui::mojom::LatencyInfoDataView, ui::LatencyInfo>::terminated(
     const ui::LatencyInfo& info) {
   return info.terminated();
 }
 
-bool StructTraits<ui::mojom::LatencyInfo, ui::LatencyInfo>::Read(
+bool StructTraits<ui::mojom::LatencyInfoDataView, ui::LatencyInfo>::Read(
     ui::mojom::LatencyInfoDataView data,
     ui::LatencyInfo* out) {
   if (!data.ReadTraceName(&out->trace_name_))
     return false;
 
-  // TODO(fsamuel): Figure out how to optimize deserialization.
-  mojo::Array<ui::mojom::LatencyComponentPairPtr> components;
-  if (!data.ReadLatencyComponents(&components))
-    return false;
-  for (uint32_t i = 0; i < components.size(); ++i)
-    out->latency_components_[components[i]->key] = components[i]->value;
+  mojo::ArrayDataView<ui::mojom::LatencyComponentPairDataView> components;
+  data.GetLatencyComponentsDataView(&components);
+  for (uint32_t i = 0; i < components.size(); ++i) {
+    ui::mojom::LatencyComponentPairDataView component_pair;
+    components.GetDataView(i, &component_pair);
+    ui::LatencyInfo::LatencyMap::key_type key;
+    if (!component_pair.ReadKey(&key))
+      return false;
+    auto& value = out->latency_components_[key];
+    if (!component_pair.ReadValue(&value))
+      return false;
+  }
 
   InputCoordinateArray input_coordinate_array = {
       0, ui::LatencyInfo::kMaxInputCoordinates, out->input_coordinates_};

@@ -18,13 +18,24 @@ namespace test {
 // Test API to provide internal access to an InkDropHostView instance.
 class InkDropHostViewTestApi {
  public:
+  // Make the protected enum accessbile.
+  using InkDropMode = InkDropHostView::InkDropMode;
+
   explicit InkDropHostViewTestApi(InkDropHostView* host_view);
   ~InkDropHostViewTestApi();
 
-  void SetHasInkDrop(bool has_an_ink_drop);
+  void SetInkDropMode(InkDropMode ink_drop_mode);
 
+  void SetInkDrop(std::unique_ptr<InkDrop> ink_drop,
+                  bool handles_gesture_events);
   void SetInkDrop(std::unique_ptr<InkDrop> ink_drop);
-  InkDrop* ink_drop() { return host_view_->ink_drop(); }
+
+  InkDrop* ink_drop() { return host_view_->ink_drop_.get(); }
+
+  // Wrapper for InkDropHostView::GetInkDrop() which lazily creates the ink drop
+  // instance if it doesn't already exist. If you need direct access to
+  // InkDropHostView::ink_drop_ use ink_drop() instead.
+  InkDrop* GetInkDrop();
 
   bool HasGestureHandler() const;
 

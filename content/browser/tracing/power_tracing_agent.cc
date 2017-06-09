@@ -69,9 +69,8 @@ void PowerTracingAgent::StartAgentTracingOnIOThread(
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
   battor_agent_.reset(new battor::BattOrAgent(
-      path, this,
-      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::FILE),
-      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::UI)));
+      path, this, BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE),
+      BrowserThread::GetTaskRunnerForThread(BrowserThread::UI)));
 
   start_tracing_callback_ = callback;
   battor_agent_->StartTracing();
@@ -180,6 +179,11 @@ void PowerTracingAgent::OnRecordClockSyncMarkerComplete(
 
 bool PowerTracingAgent::SupportsExplicitClockSync() {
   return battor_agent_->SupportsExplicitClockSync();
+}
+
+void PowerTracingAgent::OnGetFirmwareGitHashComplete(
+    const std::string& version, battor::BattOrError error) {
+  return;
 }
 
 }  // namespace content

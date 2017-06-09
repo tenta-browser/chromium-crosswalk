@@ -10,56 +10,54 @@
 #include <vector>
 
 #include "base/android/jni_weak_ref.h"
+#include "base/strings/string16.h"
+#include "content/common/content_export.h"
 #include "ui/gfx/geometry/rect_f.h"
+
+namespace blink {
+
+struct WebCompositionUnderline;
+
+}  // namespace blink
 
 namespace content {
 
 class RenderFrameHost;
 class RenderWidgetHostImpl;
 class RenderWidgetHostViewAndroid;
-class WebContents;
-struct NativeWebKeyboardEvent;
 
 // This class is in charge of dispatching key events from the java side
 // and forward to renderer along with input method results via
 // corresponding host view.
 // Ownership of these objects remains on the native side (see
 // RenderWidgetHostViewAndroid).
-class ImeAdapterAndroid {
+class CONTENT_EXPORT ImeAdapterAndroid {
  public:
   explicit ImeAdapterAndroid(RenderWidgetHostViewAndroid* rwhva);
   ~ImeAdapterAndroid();
 
   // Called from java -> native
-  // The java side is responsible to translate android KeyEvent various enums
-  // and values into the corresponding blink::WebInputEvent.
   bool SendKeyEvent(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>&,
       const base::android::JavaParamRef<jobject>& original_key_event,
-      int action,
-      int meta_state,
+      int type,
+      int modifiers,
       long event_time,
       int key_code,
       int scan_code,
       bool is_system_key,
       int unicode_text);
-  // |event_type| is a value of WebInputEvent::Type.
-  bool SendSyntheticKeyEvent(JNIEnv*,
-                             const base::android::JavaParamRef<jobject>&,
-                             int event_type,
-                             long timestamp_ms,
-                             int native_key_code,
-                             int modifiers,
-                             int unicode_char);
-  void SetComposingText(JNIEnv*,
+  void SetComposingText(JNIEnv* env,
                         const base::android::JavaParamRef<jobject>& obj,
                         const base::android::JavaParamRef<jobject>& text,
                         const base::android::JavaParamRef<jstring>& text_str,
-                        int new_cursor_pos);
-  void CommitText(JNIEnv*,
-                  const base::android::JavaParamRef<jobject>&,
-                  const base::android::JavaParamRef<jstring>& text_str);
+                        int relative_cursor_pos);
+  void CommitText(JNIEnv* env,
+                  const base::android::JavaParamRef<jobject>& obj,
+                  const base::android::JavaParamRef<jobject>& text,
+                  const base::android::JavaParamRef<jstring>& text_str,
+                  int relative_cursor_pos);
   void FinishComposingText(JNIEnv* env,
                            const base::android::JavaParamRef<jobject>&);
   void AttachImeAdapter(
@@ -77,20 +75,35 @@ class ImeAdapterAndroid {
                              const base::android::JavaParamRef<jobject>&,
                              int before,
                              int after);
+  void DeleteSurroundingTextInCodePoints(
+      JNIEnv*,
+      const base::android::JavaParamRef<jobject>&,
+      int before,
+      int after);
   void ResetImeAdapter(JNIEnv*, const base::android::JavaParamRef<jobject>&);
+  void RequestCursorUpdate(JNIEnv*, const base::android::JavaParamRef<jobject>&,
+                           bool immediateRequest, bool monitorRequest);
   bool RequestTextInputStateUpdate(JNIEnv*,
                                    const base::android::JavaParamRef<jobject>&);
-  bool IsImeThreadEnabled(JNIEnv*, const base::android::JavaParamRef<jobject>&);
 
   // Called from native -> java
   void CancelComposition();
   void FocusedNodeChanged(bool is_editable_node);
   void SetCharacterBounds(const std::vector<gfx::RectF>& rects);
 
+  base::android::ScopedJavaLocalRef<jobject> java_ime_adapter_for_testing(
+      JNIEnv* env) {
+    return java_ime_adapter_.get(env);
+  }
+
  private:
-  RenderWidgetHostImpl* GetRenderWidgetHostImpl();
+  RenderWidgetHostImpl* GetFocusedWidget();
   RenderFrameHost* GetFocusedFrame();
-  WebContents* GetWebContents();
+  std::vector<blink::WebCompositionUnderline> GetUnderlinesFromSpans(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj,
+      const base::android::JavaParamRef<jobject>& text,
+      const base::string16& text16);
 
   RenderWidgetHostViewAndroid* rwhva_;
   JavaObjectWeakGlobalRef java_ime_adapter_;

@@ -70,7 +70,7 @@ void SummarizeParses(std::vector<const TraceItem*>& loads,
   out << "File parse times: (time in ms, name)\n";
 
   std::sort(loads.begin(), loads.end(), &DurationGreater);
-  for (const auto& load : loads) {
+  for (auto* load : loads) {
     out << base::StringPrintf(" %8.2f  ", load->delta().InMillisecondsF());
     out << load->name() << std::endl;
   }
@@ -80,7 +80,7 @@ void SummarizeCoalesced(std::vector<const TraceItem*>& items,
                         std::ostream& out) {
   // Group by file name.
   std::map<std::string, Coalesced> coalesced;
-  for (const auto& item : items) {
+  for (auto* item : items) {
     Coalesced& c = coalesced[item->name()];
     c.name_ptr = &item->name();
     c.total_duration += item->delta().InMillisecondsF();
@@ -170,6 +170,10 @@ void EnableTracing() {
     trace_log = new TraceLog;
 }
 
+bool TracingEnabled() {
+  return !!trace_log;
+}
+
 void AddTrace(TraceItem* item) {
   trace_log->Add(item);
 }
@@ -186,7 +190,7 @@ std::string SummarizeTraces() {
   std::vector<const TraceItem*> script_execs;
   std::vector<const TraceItem*> check_headers;
   int headers_checked = 0;
-  for (const auto& event : events) {
+  for (auto* event : events) {
     switch (event->type()) {
       case TraceItem::TRACE_FILE_PARSE:
         parses.push_back(event);
@@ -203,6 +207,8 @@ std::string SummarizeTraces() {
       case TraceItem::TRACE_CHECK_HEADER:
         headers_checked++;
         break;
+      case TraceItem::TRACE_IMPORT_LOAD:
+      case TraceItem::TRACE_IMPORT_BLOCK:
       case TraceItem::TRACE_SETUP:
       case TraceItem::TRACE_FILE_LOAD:
       case TraceItem::TRACE_FILE_WRITE:
@@ -225,7 +231,7 @@ std::string SummarizeTraces() {
   // parallel. Just report the total of all of them.
   if (!check_headers.empty()) {
     double check_headers_time = 0;
-    for (const auto& cur : check_headers)
+    for (auto* cur : check_headers)
       check_headers_time += cur->delta().InMillisecondsF();
 
     out << "Header check time: (total time in ms, files checked)\n";
@@ -280,6 +286,12 @@ void SaveTraces(const base::FilePath& file_name) {
         break;
       case TraceItem::TRACE_FILE_WRITE:
         out << "\"file_write\"";
+        break;
+      case TraceItem::TRACE_IMPORT_LOAD:
+        out << "\"import_load\"";
+        break;
+      case TraceItem::TRACE_IMPORT_BLOCK:
+        out << "\"import_block\"";
         break;
       case TraceItem::TRACE_SCRIPT_EXECUTE:
         out << "\"script_exec\"";

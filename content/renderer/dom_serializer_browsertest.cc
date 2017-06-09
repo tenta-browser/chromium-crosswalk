@@ -13,6 +13,7 @@
 #include "base/files/file_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
@@ -127,7 +128,7 @@ class DomSerializerTests : public ContentBrowserTest,
 
   WebFrame* FindSubFrameByURL(const GURL& url) {
     for (WebFrame* frame = GetWebView()->mainFrame(); frame;
-        frame = frame->traverseNext(false)) {
+         frame = frame->traverseNext()) {
       if (GURL(frame->document().url()) == url)
         return frame;
     }
@@ -191,8 +192,7 @@ class DomSerializerTests : public ContentBrowserTest,
     // Find corresponding WebFrame according to frame_url.
     WebFrame* web_frame = FindSubFrameByURL(frame_url);
     ASSERT_TRUE(web_frame != NULL);
-    WebString file_path =
-        base::FilePath(FILE_PATH_LITERAL("c:\\dummy.htm")).AsUTF16Unsafe();
+    WebString file_path = WebString::fromUTF8("c:\\dummy.htm");
     SingleLinkRewritingDelegate delegate(frame_url, file_path);
     // Start serializing DOM.
     bool result = WebFrameSerializer::serialize(web_frame->toWebLocalFrame(),
@@ -473,8 +473,8 @@ class DomSerializerTests : public ContentBrowserTest,
     };
     WebString value = body_element.getAttribute("title");
     WebString content = doc.contentAsTextForTesting();
-    ASSERT_TRUE(base::UTF16ToWide(value) == parsed_value);
-    ASSERT_TRUE(base::UTF16ToWide(content) == parsed_value);
+    ASSERT_TRUE(base::UTF16ToWide(value.utf16()) == parsed_value);
+    ASSERT_TRUE(base::UTF16ToWide(content.utf16()) == parsed_value);
 
     // Do serialization.
     SerializeDomForURL(file_url);
@@ -592,7 +592,7 @@ class DomSerializerTests : public ContentBrowserTest,
     ASSERT_TRUE(doc.isHTMLDocument());
     WebElement head_element = doc.head();
     ASSERT_TRUE(!head_element.isNull());
-    ASSERT_TRUE(!head_element.hasChildNodes());
+    ASSERT_TRUE(head_element.firstChild().isNull());
 
     // Do serialization.
     SerializeDomForURL(file_url);
@@ -684,13 +684,19 @@ IN_PROC_BROWSER_TEST_F(DomSerializerTests,
   base::FilePath page_file_path =
       GetTestFilePath("dom_serializer", "note.html");
   base::FilePath xml_file_path = GetTestFilePath("dom_serializer", "note.xml");
-  // Read original contents for later comparison.
+
   std::string original_contents;
-  ASSERT_TRUE(base::ReadFileToString(xml_file_path, &original_contents));
+  {
+    // Read original contents for later comparison.
+    base::ThreadRestrictions::ScopedAllowIO allow_io_for_test_verifications;
+    ASSERT_TRUE(base::ReadFileToString(xml_file_path, &original_contents));
+  }
+
   // Get file URL.
   GURL file_url = net::FilePathToFileURL(page_file_path);
   GURL xml_file_url = net::FilePathToFileURL(xml_file_path);
   ASSERT_TRUE(file_url.SchemeIsFile());
+
   // Load the test file.
   NavigateToURL(shell(), file_url);
 
@@ -704,9 +710,14 @@ IN_PROC_BROWSER_TEST_F(DomSerializerTests,
 IN_PROC_BROWSER_TEST_F(DomSerializerTests, SerializeHTMLDOMWithAddingMOTW) {
   base::FilePath page_file_path =
       GetTestFilePath("dom_serializer", "youtube_2.htm");
-  // Read original contents for later comparison .
+
   std::string original_contents;
-  ASSERT_TRUE(base::ReadFileToString(page_file_path, &original_contents));
+  {
+    // Read original contents for later comparison .
+    base::ThreadRestrictions::ScopedAllowIO allow_io_for_test_verifications;
+    ASSERT_TRUE(base::ReadFileToString(page_file_path, &original_contents));
+  }
+
   // Get file URL.
   GURL file_url = net::FilePathToFileURL(page_file_path);
   ASSERT_TRUE(file_url.SchemeIsFile());

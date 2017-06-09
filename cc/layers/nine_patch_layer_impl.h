@@ -12,6 +12,7 @@
 #include "cc/base/cc_export.h"
 #include "cc/layers/layer_impl.h"
 #include "cc/layers/ui_resource_layer_impl.h"
+#include "cc/quads/nine_patch_generator.h"
 #include "cc/resources/resource_provider.h"
 #include "cc/resources/ui_resource_client.h"
 #include "ui/gfx/geometry/rect.h"
@@ -31,32 +32,10 @@ class CC_EXPORT NinePatchLayerImpl : public UIResourceLayerImpl {
   }
   ~NinePatchLayerImpl() override;
 
-  // The bitmap stretches out the bounds of the layer.  The following picture
-  // illustrates the parameters associated with the dimensions.
-  //
-  // Layer space layout              Bitmap space layout
-  //
-  // ------------------------       ~~~~~~~~~~ W ~~~~~~~~~~
-  // |          :           |       :     :                |
-  // |          C           |       :     Y                |
-  // |          :           |       :     :                |
-  // |     ------------     |       :~~X~~------------     |
-  // |     |          |     |       :     |          :     |
-  // |     |          |     |       :     |          :     |
-  // |~~A~~|          |~~B~~|       H     |          Q     |
-  // |     |          |     |       :     |          :     |
-  // |     ------------     |       :     ~~~~~P~~~~~      |
-  // |          :           |       :                      |
-  // |          D           |       :                      |
-  // |          :           |       :                      |
-  // ------------------------       ------------------------
-  //
-  // |image_bounds| = (W, H)
-  // |image_aperture| = (X, Y, P, Q)
-  // |border| = (A, C, A + B, C + D)
-  // |fill_center| indicates whether to draw the center quad or not.
+  // For parameter meanings, see the declaration of NinePatchGenerator.
   void SetLayout(const gfx::Rect& image_aperture,
                  const gfx::Rect& border,
+                 const gfx::Rect& layer_occlusion,
                  bool fill_center,
                  bool nearest_neighbor);
 
@@ -74,18 +53,7 @@ class CC_EXPORT NinePatchLayerImpl : public UIResourceLayerImpl {
  private:
   const char* LayerTypeAsString() const override;
 
-  void CheckGeometryLimitations();
-
-  // The transparent center region that shows the parent layer's contents in
-  // image space.
-  gfx::Rect image_aperture_;
-
-  // An inset border that the patches will be mapped to.
-  gfx::Rect border_;
-
-  bool fill_center_;
-
-  bool nearest_neighbor_;
+  NinePatchGenerator quad_generator_;
 
   DISALLOW_COPY_AND_ASSIGN(NinePatchLayerImpl);
 };

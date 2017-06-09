@@ -2,45 +2,42 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <vector>
+
 #include "ash/common/system/user/button_from_view.h"
 
 #include "ash/common/ash_constants.h"
 #include "ash/common/system/tray/tray_constants.h"
-#include "ash/common/system/tray/tray_utils.h"
+#include "ash/common/system/tray/tray_popup_utils.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "ui/accessibility/ax_view_state.h"
+#include "ui/accessibility/ax_node_data.h"
 #include "ui/gfx/canvas.h"
-#include "ui/views/background.h"
-#include "ui/views/border.h"
-#include "ui/views/layout/box_layout.h"
+#include "ui/views/animation/flood_fill_ink_drop_ripple.h"
+#include "ui/views/animation/ink_drop.h"
+#include "ui/views/animation/ink_drop_highlight.h"
+#include "ui/views/animation/ink_drop_impl.h"
+#include "ui/views/animation/ink_drop_mask.h"
+#include "ui/views/layout/fill_layout.h"
 
 namespace ash {
-
-namespace {
-
-// The border color of the user button.
-const SkColor kBorderColor = 0xffdcdcdc;
-
-}  // namespace
-
 namespace tray {
 
 ButtonFromView::ButtonFromView(views::View* content,
                                views::ButtonListener* listener,
-                               bool highlight_on_hover,
-                               const gfx::Insets& tab_frame_inset)
+                               TrayPopupInkDropStyle ink_drop_style)
     : CustomButton(listener),
       content_(content),
-      highlight_on_hover_(highlight_on_hover),
+      ink_drop_style_(ink_drop_style),
       button_hovered_(false),
-      show_border_(false),
-      tab_frame_inset_(tab_frame_inset) {
+      ink_drop_container_(nullptr) {
+  set_has_ink_drop_action_on_click(true);
   set_notify_enter_exit_on_child(true);
-  SetLayoutManager(
-      new views::BoxLayout(views::BoxLayout::kHorizontal, 1, 1, 0));
+  ink_drop_container_ = new views::InkDropContainerView();
+  AddChildView(ink_drop_container_);
+  SetLayoutManager(new views::FillLayout());
+  SetInkDropMode(InkDropHostView::InkDropMode::ON);
   AddChildView(content_);
-  ShowActive();
   // Only make it focusable when we are active/interested in clicks.
   if (listener)
     SetFocusForPlatform();
@@ -48,27 +45,19 @@ ButtonFromView::ButtonFromView(views::View* content,
 
 ButtonFromView::~ButtonFromView() {}
 
-void ButtonFromView::ForceBorderVisible(bool show) {
-  show_border_ = show;
-  ShowActive();
-}
-
 void ButtonFromView::OnMouseEntered(const ui::MouseEvent& event) {
   button_hovered_ = true;
-  ShowActive();
 }
 
 void ButtonFromView::OnMouseExited(const ui::MouseEvent& event) {
   button_hovered_ = false;
-  ShowActive();
 }
 
 void ButtonFromView::OnPaint(gfx::Canvas* canvas) {
   View::OnPaint(canvas);
   if (HasFocus()) {
-    gfx::Rect rect(GetLocalBounds());
-    rect.Inset(tab_frame_inset_);
-    canvas->DrawSolidFocusRect(rect, kFocusBorderColor);
+    gfx::RectF rect(GetLocalBounds());
+    canvas->DrawSolidFocusRect(rect, kFocusBorderColor, kFocusBorderThickness);
   }
 }
 
@@ -84,27 +73,60 @@ void ButtonFromView::OnBlur() {
   SchedulePaint();
 }
 
-void ButtonFromView::GetAccessibleState(ui::AXViewState* state) {
-  state->role = ui::AX_ROLE_BUTTON;
-  std::vector<base::string16> labels;
-  for (int i = 0; i < child_count(); ++i)
-    GetAccessibleLabelFromDescendantViews(child_at(i), labels);
-  state->name = base::JoinString(labels, base::ASCIIToUTF16(" "));
+void ButtonFromView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
+  views::CustomButton::GetAccessibleNodeData(node_data);
+  // If no label has been explicitly set via CustomButton::SetAccessibleName(),
+  // use the content's label.
+  if (node_data->GetStringAttribute(ui::AX_ATTR_NAME).empty()) {
+    ui::AXNodeData content_data;
+    content_->GetAccessibleNodeData(&content_data);
+    node_data->SetName(content_data.GetStringAttribute(ui::AX_ATTR_NAME));
+  }
 }
 
-void ButtonFromView::ShowActive() {
-  bool border_visible =
-      (button_hovered_ && highlight_on_hover_) || show_border_;
-  SkColor border_color = border_visible ? kBorderColor : SK_ColorTRANSPARENT;
-  SetBorder(views::Border::CreateSolidBorder(1, border_color));
-  if (highlight_on_hover_) {
-    SkColor background_color =
-        button_hovered_ ? kHoverBackgroundColor : kBackgroundColor;
-    content_->set_background(
-        views::Background::CreateSolidBackground(background_color));
-    set_background(views::Background::CreateSolidBackground(background_color));
-  }
-  SchedulePaint();
+void ButtonFromView::Layout() {
+  CustomButton::Layout();
+  if (ink_drop_container_)
+    ink_drop_container_->SetBoundsRect(GetLocalBounds());
+}
+
+void ButtonFromView::AddInkDropLayer(ui::Layer* ink_drop_layer) {
+  // TODO(bruthig): Rework InkDropHostView so that it can still manage the
+  // creation/application of the mask while allowing subclasses to use an
+  // InkDropContainer.
+  ink_drop_mask_ = CreateInkDropMask();
+  if (ink_drop_mask_)
+    ink_drop_layer->SetMaskLayer(ink_drop_mask_->layer());
+  ink_drop_container_->AddInkDropLayer(ink_drop_layer);
+}
+
+void ButtonFromView::RemoveInkDropLayer(ui::Layer* ink_drop_layer) {
+  // TODO(bruthig): Rework InkDropHostView so that it can still manage the
+  // creation/application of the mask while allowing subclasses to use an
+  // InkDropContainer.
+  // Layers safely handle destroying a mask layer before the masked layer.
+  ink_drop_mask_.reset();
+  ink_drop_container_->RemoveInkDropLayer(ink_drop_layer);
+}
+
+std::unique_ptr<views::InkDrop> ButtonFromView::CreateInkDrop() {
+  return TrayPopupUtils::CreateInkDrop(TrayPopupInkDropStyle::INSET_BOUNDS,
+                                       this);
+}
+
+std::unique_ptr<views::InkDropRipple> ButtonFromView::CreateInkDropRipple()
+    const {
+  return TrayPopupUtils::CreateInkDropRipple(
+      ink_drop_style_, this, GetInkDropCenterBasedOnLastEvent());
+}
+
+std::unique_ptr<views::InkDropHighlight>
+ButtonFromView::CreateInkDropHighlight() const {
+  return TrayPopupUtils::CreateInkDropHighlight(ink_drop_style_, this);
+}
+
+std::unique_ptr<views::InkDropMask> ButtonFromView::CreateInkDropMask() const {
+  return TrayPopupUtils::CreateInkDropMask(ink_drop_style_, this);
 }
 
 }  // namespace tray

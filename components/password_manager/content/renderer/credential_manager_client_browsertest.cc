@@ -10,13 +10,14 @@
 #include <tuple>
 
 #include "base/location.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_view.h"
 #include "content/public/test/render_view_test.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
-#include "services/shell/public/cpp/interface_provider.h"
+#include "services/service_manager/public/cpp/interface_provider.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/WebKit/public/platform/WebCredential.h"
 #include "third_party/WebKit/public/platform/WebCredentialManagerClient.h"
@@ -42,7 +43,7 @@ class FakeCredentialManager : public mojom::CredentialManager {
 
  private:
   // mojom::CredentialManager methods:
-  void Store(mojom::CredentialInfoPtr credential,
+  void Store(const CredentialInfo& credential,
              const StoreCallback& callback) override {
     callback.Run();
   }
@@ -54,20 +55,19 @@ class FakeCredentialManager : public mojom::CredentialManager {
 
   void Get(bool zero_click_only,
            bool include_passwords,
-           mojo::Array<GURL> federations,
+           const std::vector<GURL>& federations,
            const GetCallback& callback) override {
     const std::string& url = federations[0].spec();
 
     if (url == kTestCredentialPassword) {
-      mojom::CredentialInfoPtr info = mojom::CredentialInfo::New();
-      info->type = mojom::CredentialType::PASSWORD;
-      callback.Run(mojom::CredentialManagerError::SUCCESS, std::move(info));
+      CredentialInfo info;
+      info.type = CredentialType::CREDENTIAL_TYPE_PASSWORD;
+      callback.Run(mojom::CredentialManagerError::SUCCESS, info);
     } else if (url == kTestCredentialEmpty) {
-      callback.Run(mojom::CredentialManagerError::SUCCESS,
-                   mojom::CredentialInfo::New());
+      callback.Run(mojom::CredentialManagerError::SUCCESS, CredentialInfo());
     } else if (url == kTestCredentialReject) {
       callback.Run(mojom::CredentialManagerError::PASSWORDSTOREUNAVAILABLE,
-                   nullptr);
+                   base::nullopt);
     }
   }
 
@@ -84,9 +84,9 @@ class CredentialManagerClientTest : public content::RenderViewTest {
     content::RenderViewTest::SetUp();
     client_.reset(new CredentialManagerClient(view_));
 
-    shell::InterfaceProvider* remote_interfaces =
+    service_manager::InterfaceProvider* remote_interfaces =
         view_->GetMainRenderFrame()->GetRemoteInterfaces();
-    shell::InterfaceProvider::TestApi test_api(remote_interfaces);
+    service_manager::InterfaceProvider::TestApi test_api(remote_interfaces);
     test_api.SetBinderForName(
         mojom::CredentialManager::Name_,
         base::Bind(&CredentialManagerClientTest::BindCredentialManager,

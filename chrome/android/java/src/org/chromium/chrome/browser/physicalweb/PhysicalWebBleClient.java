@@ -5,9 +5,17 @@
 package org.chromium.chrome.browser.physicalweb;
 
 import android.app.Activity;
+import android.os.Handler;
+import android.os.Looper;
+
+import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.nearby.Nearby;
+import com.google.android.gms.nearby.messages.Message;
+import com.google.android.gms.nearby.messages.MessageFilter;
+import com.google.android.gms.nearby.messages.MessageListener;
 
 import org.chromium.base.Log;
-import org.chromium.chrome.browser.ChromeApplication;
+import org.chromium.chrome.browser.AppHooks;
 
 /**
  * The Client that harvests URLs from BLE signals.
@@ -16,19 +24,51 @@ import org.chromium.chrome.browser.ChromeApplication;
  * subclass.
  */
 public class PhysicalWebBleClient {
-    private static PhysicalWebBleClient sInstance = null;
+    private static PhysicalWebBleClient sInstance;
     private static final String TAG = "PhysicalWeb";
+
+    // We don't actually listen to any of the onFound or onLost events in the foreground.
+    // The background listener will get these.
+    protected static class ForegroundMessageListener extends MessageListener {
+        @Override
+        public void onFound(Message message) {}
+    }
+
+    protected static class BackgroundMessageListener extends MessageListener {
+        @Override
+        public void onFound(Message message) {
+            final String url = PhysicalWebBleClient.getInstance().getUrlFromMessage(message);
+            if (url != null) {
+                new Handler(Looper.getMainLooper()).post(new Runnable() {
+                    @Override
+                    public void run() {
+                        UrlManager.getInstance().addUrl(new UrlInfo(url));
+                    }
+                });
+            }
+        }
+
+        @Override
+        public void onLost(Message message) {
+            final String url = PhysicalWebBleClient.getInstance().getUrlFromMessage(message);
+            if (url != null) {
+                new Handler(Looper.getMainLooper()).post(new Runnable() {
+                    @Override
+                    public void run() {
+                        UrlManager.getInstance().removeUrl(new UrlInfo(url));
+                    }
+                });
+            }
+        }
+    };
 
     /**
      * Get a singleton instance of this class.
-     * @param chromeApplication An instance of {@link ChromeApplication}, used to get the
-     * appropriate PhysicalWebBleClient implementation.
-     * @return an instance of this class (or subclass) as decided by the
-     * application parameter
+     * @return an instance of this class (or subclass).
      */
-    public static PhysicalWebBleClient getInstance(ChromeApplication chromeApplication) {
+    public static PhysicalWebBleClient getInstance() {
         if (sInstance == null) {
-            sInstance = chromeApplication.createPhysicalWebBleClient();
+            sInstance = AppHooks.get().createPhysicalWebBleClient();
         }
         return sInstance;
     }
@@ -76,6 +116,14 @@ public class PhysicalWebBleClient {
     }
 
     /**
+     * Create a MessageListener that listens during a background scan.
+     * @return the MessageListener.
+     */
+    MessageListener createBackgroundMessageListener() {
+        return new BackgroundMessageListener();
+    }
+
+    /**
      * Begin a foreground subscription to URLs broadcasted from BLE beacons.
      * This currently does nothing and should be overridden by a subclass.
      * @param activity The Activity that is performing the scan.
@@ -90,5 +138,40 @@ public class PhysicalWebBleClient {
      */
     void foregroundUnsubscribe() {
         Log.d(TAG, "foreground unsubscribing in empty client");
+    }
+
+    /**
+     * Create a MessageListener that listens during a foreground scan.
+     * @return the MessageListener.
+     */
+    MessageListener createForegroundMessageListener() {
+        return new ForegroundMessageListener();
+    }
+
+    /**
+     * Get the URLs from a device within a message.
+     * @param message The Nearby message.
+     * @return The URL contained in the message.
+     */
+    String getUrlFromMessage(Message message) {
+        return null;
+    }
+
+    /**
+     * Modify a GoogleApiClient.Builder as necessary for doing Physical Web scanning.
+     * @param builder The builder to be modified.
+     * @return The Builder.
+     */
+    GoogleApiClient.Builder modifyGoogleApiClientBuilder(GoogleApiClient.Builder builder) {
+        return builder.addApi(Nearby.MESSAGES_API);
+    }
+
+    /**
+     * Modify a MessageFilter.Builder as necessary for doing Physical Web scanning.
+     * @param builder The builder to be modified.
+     * @return The Builder.
+     */
+    MessageFilter.Builder modifyMessageFilterBuilder(MessageFilter.Builder builder) {
+        return builder.includeAllMyTypes();
     }
 }

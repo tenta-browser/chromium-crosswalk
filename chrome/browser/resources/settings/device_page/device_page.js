@@ -9,26 +9,87 @@
 Polymer({
   is: 'settings-device-page',
 
-  properties: {
-    /** The current active route. */
-    currentRoute: {
-      type: Object,
-      notify: true,
-    },
+  behaviors: [
+    I18nBehavior,
+    WebUIListenerBehavior,
+    settings.RouteObserverBehavior,
+  ],
 
-    /** Preferences state. */
+  properties: {
     prefs: {
       type: Object,
       notify: true,
     },
+
+    /**
+     * |hasMouse_| and |hasTouchpad_| start undefined so observers don't trigger
+     * until they have been populated.
+     * @private
+     */
+    hasMouse_: Boolean,
+
+    /** @private */
+    hasTouchpad_: Boolean,
+
+    /**
+     * |hasStylus_| is initialized to false so that dom-if behaves correctly.
+     * @private
+     */
+    hasStylus_: {
+      type: Boolean,
+      value: false,
+    },
+
+    /**
+     * Whether power status and settings should be fetched and displayed.
+     * @private
+     */
+    enablePowerSettings_: {
+      type: Boolean,
+      value: function() {
+        return loadTimeData.getBoolean('enablePowerSettings');
+      },
+      readOnly: true,
+    },
+  },
+
+  observers: [
+    'pointersChanged_(hasMouse_, hasTouchpad_)',
+  ],
+
+  /** @override */
+  attached: function() {
+    this.addWebUIListener(
+        'has-mouse-changed', this.set.bind(this, 'hasMouse_'));
+    this.addWebUIListener(
+        'has-touchpad-changed', this.set.bind(this, 'hasTouchpad_'));
+    settings.DevicePageBrowserProxyImpl.getInstance().initializePointers();
+
+    this.addWebUIListener(
+        'has-stylus-changed', this.set.bind(this, 'hasStylus_'));
+    settings.DevicePageBrowserProxyImpl.getInstance().initializeStylus();
   },
 
   /**
-   * Handler for tapping the Touchpad settings menu item.
+   * @return {string}
    * @private
    */
-  onTouchpadTap_: function() {
-    this.$.pages.setSubpageChain(['touchpad']);
+  getPointersTitle_: function() {
+    if (this.hasMouse_ && this.hasTouchpad_)
+      return this.i18n('mouseAndTouchpadTitle');
+    if (this.hasMouse_)
+      return this.i18n('mouseTitle');
+    if (this.hasTouchpad_)
+      return this.i18n('touchpadTitle');
+    return '';
+  },
+
+  /**
+   * Handler for tapping the mouse and touchpad settings menu item.
+   * @private
+   */
+  onPointersTap_: function() {
+    settings.navigateTo(settings.Route.POINTERS);
   },
 
   /**
@@ -36,7 +97,15 @@ Polymer({
    * @private
    */
   onKeyboardTap_: function() {
-    this.$.pages.setSubpageChain(['keyboard']);
+    settings.navigateTo(settings.Route.KEYBOARD);
+  },
+
+  /**
+   * Handler for tapping the Keyboard settings menu item.
+   * @private
+   */
+  onStylusTap_: function() {
+    settings.navigateTo(settings.Route.STYLUS);
   },
 
   /**
@@ -44,6 +113,49 @@ Polymer({
    * @private
    */
   onDisplayTap_: function() {
-    this.$.pages.setSubpageChain(['display']);
+    settings.navigateTo(settings.Route.DISPLAY);
+  },
+
+  /**
+   * Handler for tapping the Storage settings menu item.
+   * @private
+   */
+  onStorageTap_: function() {
+    settings.navigateTo(settings.Route.STORAGE);
+  },
+
+  /**
+   * Handler for tapping the Power settings menu item.
+   * @private
+   */
+  onPowerTap_: function() {
+    settings.navigateTo(settings.Route.POWER);
+  },
+
+  /** @protected */
+  currentRouteChanged: function() {
+    this.checkPointerSubpage_();
+  },
+
+  /**
+   * @param {boolean} hasMouse
+   * @param {boolean} hasTouchpad
+   * @private
+   */
+  pointersChanged_: function(hasMouse, hasTouchpad) {
+    this.$.pointersRow.hidden = !hasMouse && !hasTouchpad;
+    this.checkPointerSubpage_();
+  },
+
+  /**
+   * Leaves the pointer subpage if all pointing devices are detached.
+   * @private
+   */
+  checkPointerSubpage_: function() {
+    // Check that the properties have explicitly been set to false.
+    if (this.hasMouse_ === false && this.hasTouchpad_ === false &&
+        settings.getCurrentRoute() == settings.Route.POINTERS) {
+      settings.navigateTo(settings.Route.DEVICE);
+    }
   },
 });

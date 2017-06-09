@@ -16,8 +16,8 @@
 #include "base/win/scoped_handle.h"
 #include "base/win/scoped_hdc.h"
 #include "skia/ext/image_operations.h"
+#include "skia/ext/skia_utils_win.h"
 #include "third_party/skia/include/core/SkBitmap.h"
-#include "ui/gfx/gdi_util.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/image/image.h"
 #include "ui/gfx/image/image_family.h"
@@ -311,7 +311,11 @@ SkBitmap* IconUtil::CreateSkBitmapFromHICON(HICON icon) {
   if (!::GetObject(icon_info.hbmMask, sizeof(bitmap_info), &bitmap_info))
     return NULL;
 
-  gfx::Size icon_size(bitmap_info.bmWidth, bitmap_info.bmHeight);
+  // For non-color cursors, the mask contains both an AND and an XOR mask and
+  // the height includes both. Thus, the mask width is the same as image width,
+  // but we need to divide mask height by 2 to get the image height.
+  const int height = bitmap_info.bmHeight / (icon_info.hbmColor ? 1 : 2);
+  gfx::Size icon_size(bitmap_info.bmWidth, height);
   return new SkBitmap(CreateSkBitmapFromHICONHelper(icon, icon_size));
 }
 
@@ -320,7 +324,7 @@ base::win::ScopedHICON IconUtil::CreateCursorFromDIB(const gfx::Size& icon_size,
                                                      const void* dib_bits,
                                                      size_t dib_size) {
   BITMAPINFO icon_bitmap_info = {};
-  gfx::CreateBitmapHeader(
+  skia::CreateBitmapHeader(
       icon_size.width(),
       icon_size.height(),
       reinterpret_cast<BITMAPINFOHEADER*>(&icon_bitmap_info));
@@ -365,6 +369,14 @@ base::win::ScopedHICON IconUtil::CreateCursorFromDIB(const gfx::Size& icon_size,
   return base::win::ScopedHICON(CreateIconIndirect(&ii));
 }
 
+gfx::Point IconUtil::GetHotSpotFromHICON(HICON icon) {
+  ScopedICONINFO icon_info;
+  gfx::Point hotspot;
+  if (::GetIconInfo(icon, &icon_info))
+    hotspot = gfx::Point(icon_info.xHotspot, icon_info.yHotspot);
+
+  return hotspot;
+}
 SkBitmap IconUtil::CreateSkBitmapFromHICONHelper(HICON icon,
                                                  const gfx::Size& s) {
   DCHECK(icon);

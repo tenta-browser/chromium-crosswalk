@@ -41,7 +41,7 @@ class CONTENT_EXPORT CategorizedWorkerPool : public base::TaskRunner,
   bool RunsTasksOnCurrentThread() const override;
 
   // Overridden from cc::TaskGraphRunner:
-  cc::NamespaceToken GetNamespaceToken() override;
+  cc::NamespaceToken GenerateNamespaceToken() override;
   void ScheduleTasks(cc::NamespaceToken token, cc::TaskGraph* graph) override;
   void WaitForTasksToFinishRunning(cc::NamespaceToken token) override;
   void CollectCompletedTasks(cc::NamespaceToken token,
@@ -68,6 +68,10 @@ class CONTENT_EXPORT CategorizedWorkerPool : public base::TaskRunner,
 
   // Create a new sequenced task graph runner.
   scoped_refptr<base::SequencedTaskRunner> CreateSequencedTaskRunner();
+
+  base::PlatformThreadId background_worker_thread_id() const {
+    return threads_.back()->tid();
+  }
 
  protected:
   ~CategorizedWorkerPool() override;

@@ -17,11 +17,11 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_vector.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
-#include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/sequenced_worker_pool.h"
@@ -40,6 +40,7 @@
 #include "components/storage_monitor/storage_info.h"
 #include "components/storage_monitor/storage_monitor.h"
 #include "components/storage_monitor/test_storage_monitor.h"
+#include "components/sync/model/string_ordinal.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_process_host_factory.h"
 #include "content/public/browser/web_contents.h"
@@ -48,7 +49,6 @@
 #include "content/public/test/web_contents_tester.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/extension.h"
-#include "sync/api/string_ordinal.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(OS_CHROMEOS)
@@ -133,7 +133,7 @@ bool TestMediaFileSystemContext::RegisterFileSystem(
 }
 
 void TestMediaFileSystemContext::RevokeFileSystem(const std::string& fs_name) {
-  if (!ContainsKey(file_systems_by_name_, fs_name))
+  if (!base::ContainsKey(file_systems_by_name_, fs_name))
     return;
   EXPECT_EQ(1U, file_systems_by_name_.erase(fs_name));
 }
@@ -166,7 +166,7 @@ void GetGalleryInfoCallback(
     FSInfoMap* results,
     const std::vector<MediaFileSystemInfo>& file_systems) {
   for (size_t i = 0; i < file_systems.size(); ++i) {
-    ASSERT_FALSE(ContainsKey(*results, file_systems[i].pref_id));
+    ASSERT_FALSE(base::ContainsKey(*results, file_systems[i].pref_id));
     (*results)[file_systems[i].pref_id] = file_systems[i];
   }
 }
@@ -206,9 +206,9 @@ class MockProfileSharedRenderProcessHostFactory
       content::SiteInstance* site_instance) const override;
 
  private:
-  typedef std::map<content::BrowserContext*, content::MockRenderProcessHost*>
-      ProfileRPHMap;
-  mutable ProfileRPHMap rph_map_;
+  mutable std::map<content::BrowserContext*,
+                   std::unique_ptr<content::MockRenderProcessHost>>
+      rph_map_;
 
   DISALLOW_COPY_AND_ASSIGN(MockProfileSharedRenderProcessHostFactory);
 };
@@ -397,30 +397,30 @@ bool MediaFileSystemInfoComparator(const MediaFileSystemInfo& a,
 
 MockProfileSharedRenderProcessHostFactory::
     ~MockProfileSharedRenderProcessHostFactory() {
-  STLDeleteValues(&rph_map_);
 }
 
 content::MockRenderProcessHost*
 MockProfileSharedRenderProcessHostFactory::ReleaseRPH(
     content::BrowserContext* browser_context) {
-  ProfileRPHMap::iterator existing = rph_map_.find(browser_context);
+  auto existing = rph_map_.find(browser_context);
   if (existing == rph_map_.end())
     return NULL;
-  content::MockRenderProcessHost* result = existing->second;
+  std::unique_ptr<content::MockRenderProcessHost> result =
+      std::move(existing->second);
   rph_map_.erase(existing);
-  return result;
+  return result.release();
 }
 
 content::RenderProcessHost*
 MockProfileSharedRenderProcessHostFactory::CreateRenderProcessHost(
     content::BrowserContext* browser_context,
     content::SiteInstance* site_instance) const {
-  ProfileRPHMap::const_iterator existing = rph_map_.find(browser_context);
+  auto existing = rph_map_.find(browser_context);
   if (existing != rph_map_.end())
-    return existing->second;
+    return existing->second.get();
   rph_map_[browser_context] =
-      new content::MockRenderProcessHost(browser_context);
-  return rph_map_[browser_context];
+      base::MakeUnique<content::MockRenderProcessHost>(browser_context);
+  return rph_map_[browser_context].get();
 }
 
 //////////////////
@@ -718,7 +718,7 @@ void MediaFileSystemRegistryTest::CheckNewGalleryInfo(
   for (FSInfoMap::const_iterator it = new_galleries_info.begin();
        it != new_galleries_info.end();
        ++it) {
-    if (ContainsKey(galleries_info, it->first))
+    if (base::ContainsKey(galleries_info, it->first))
       continue;
 
     ASSERT_FALSE(found_new);
@@ -777,9 +777,9 @@ void MediaFileSystemRegistryTest::SetUp() {
 #endif
 
   ASSERT_TRUE(galleries_dir_.CreateUniqueTempDir());
-  empty_dir_ = galleries_dir_.path().AppendASCII("empty");
+  empty_dir_ = galleries_dir_.GetPath().AppendASCII("empty");
   ASSERT_TRUE(base::CreateDirectory(empty_dir_));
-  dcim_dir_ = galleries_dir_.path().AppendASCII("with_dcim");
+  dcim_dir_ = galleries_dir_.GetPath().AppendASCII("with_dcim");
   ASSERT_TRUE(base::CreateDirectory(dcim_dir_));
   ASSERT_TRUE(base::CreateDirectory(
       dcim_dir_.Append(storage_monitor::kDCIMDirectoryName)));
@@ -790,12 +790,21 @@ void MediaFileSystemRegistryTest::TearDown() {
   MediaFileSystemRegistry* registry =
       g_browser_process->media_file_system_registry();
   EXPECT_EQ(0U, GetExtensionGalleriesHostCount(registry));
-  TestStorageMonitor::Destroy();
+
 #if defined(OS_CHROMEOS)
   test_user_manager_.reset();
 #endif
 
+  // The TestingProfile must be destroyed before the TestingBrowserProcess
+  // because it uses it in its destructor.
   ChromeRenderViewHostTestHarness::TearDown();
+
+  // The MediaFileSystemRegistry owned by the TestingBrowserProcess must be
+  // destroyed before the StorageMonitor because it calls
+  // StorageMonitor::RemoveObserver() in its destructor.
+  TestingBrowserProcess::DeleteInstance();
+
+  TestStorageMonitor::Destroy();
 }
 
 ///////////

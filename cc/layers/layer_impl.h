@@ -18,8 +18,6 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/values.h"
-#include "cc/animation/element_id.h"
-#include "cc/animation/target_property.h"
 #include "cc/base/cc_export.h"
 #include "cc/base/region.h"
 #include "cc/base/synced_property.h"
@@ -30,12 +28,13 @@
 #include "cc/layers/layer_position_constraint.h"
 #include "cc/layers/performance_properties.h"
 #include "cc/layers/render_surface_impl.h"
-#include "cc/output/filter_operations.h"
 #include "cc/quads/shared_quad_state.h"
 #include "cc/resources/resource_provider.h"
 #include "cc/tiles/tile_priority.h"
+#include "cc/trees/element_id.h"
+#include "cc/trees/mutator_host_client.h"
+#include "cc/trees/target_property.h"
 #include "third_party/skia/include/core/SkColor.h"
-#include "third_party/skia/include/core/SkXfermode.h"
 #include "ui/gfx/geometry/point3_f.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_f.h"
@@ -52,20 +51,14 @@ class DictionaryValue;
 
 namespace cc {
 
-class LayerTreeHostImpl;
 class LayerTreeImpl;
 class MicroBenchmarkImpl;
-class Occlusion;
-class EffectTree;
+class MutatorHost;
 class PrioritizedTile;
 class RenderPass;
-class RenderPassId;
-class Renderer;
 class ScrollbarLayerImplBase;
 class SimpleEnclosedRegion;
 class Tile;
-class TransformTree;
-class ScrollState;
 
 struct AppendQuadsData;
 
@@ -92,18 +85,9 @@ class CC_EXPORT LayerImpl {
 
   // Interactions with attached animations.
   gfx::ScrollOffset ScrollOffsetForAnimation() const;
-  void OnFilterAnimated(const FilterOperations& filters);
-  void OnOpacityAnimated(float opacity);
-  void OnTransformAnimated(const gfx::Transform& transform);
-  void OnScrollOffsetAnimated(const gfx::ScrollOffset& scroll_offset);
-  void OnTransformIsCurrentlyAnimatingChanged(bool is_currently_animating);
-  void OnTransformIsPotentiallyAnimatingChanged(bool has_potential_animation);
-  void OnOpacityIsCurrentlyAnimatingChanged(bool is_currently_animating);
-  void OnOpacityIsPotentiallyAnimatingChanged(bool has_potential_animation);
+  void OnIsAnimatingChanged(const PropertyAnimationState& mask,
+                            const PropertyAnimationState& state);
   bool IsActive() const;
-
-  void DistributeScroll(ScrollState* scroll_state);
-  void ApplyScroll(ScrollState* scroll_state);
 
   void set_property_tree_sequence_number(int sequence_number) {}
 
@@ -115,6 +99,7 @@ class CC_EXPORT LayerImpl {
 
   void SetEffectTreeIndex(int index);
   int effect_tree_index() const { return effect_tree_index_; }
+  int render_target_effect_tree_index() const;
 
   void SetScrollTreeIndex(int index);
   int scroll_tree_index() const { return scroll_tree_index_; }
@@ -135,18 +120,15 @@ class CC_EXPORT LayerImpl {
 
   bool is_clipped() const { return draw_properties_.is_clipped; }
 
-  void UpdatePropertyTreeTransform();
   void UpdatePropertyTreeTransformIsAnimated(bool is_animated);
-  void UpdatePropertyTreeOpacity(float opacity);
   void UpdatePropertyTreeScrollOffset();
-
-  // For compatibility with Layer.
-  bool has_render_surface() const { return !!render_surface(); }
 
   LayerTreeImpl* layer_tree_impl() const { return layer_tree_impl_; }
 
   void PopulateSharedQuadState(SharedQuadState* state) const;
-  void PopulateScaledSharedQuadState(SharedQuadState* state, float scale) const;
+  void PopulateScaledSharedQuadState(SharedQuadState* state,
+                                     float layer_to_content_scale_x,
+                                     float layer_to_content_scale_y) const;
   // WillDraw must be called before AppendQuads. If WillDraw returns false,
   // AppendQuads and DidDraw will not be called. If WillDraw returns true,
   // DidDraw is guaranteed to be called before another WillDraw or before
@@ -190,8 +172,6 @@ class CC_EXPORT LayerImpl {
   // non-opaque color.  Tries to return background_color(), if possible.
   SkColor SafeOpaqueBackgroundColor() const;
 
-  void SetFilters(const FilterOperations& filters);
-  const FilterOperations& filters() const { return filters_; }
   bool FilterIsAnimating() const;
   bool HasPotentiallyRunningFilterAnimation() const;
 
@@ -202,8 +182,7 @@ class CC_EXPORT LayerImpl {
   bool contents_opaque() const { return contents_opaque_; }
 
   float Opacity() const;
-  bool OpacityIsAnimating() const;
-  bool HasPotentiallyRunningOpacityAnimation() const;
+  const gfx::Transform& Transform() const;
 
   void SetElementId(ElementId element_id);
   ElementId element_id() const { return element_id_; }
@@ -211,15 +190,10 @@ class CC_EXPORT LayerImpl {
   void SetMutableProperties(uint32_t properties);
   uint32_t mutable_properties() const { return mutable_properties_; }
 
-  void SetBlendMode(SkXfermode::Mode);
-  SkXfermode::Mode blend_mode() const { return blend_mode_; }
-  void set_draw_blend_mode(SkXfermode::Mode blend_mode) {
+  void set_draw_blend_mode(SkBlendMode blend_mode) {
     draw_blend_mode_ = blend_mode;
   }
-  SkXfermode::Mode draw_blend_mode() const { return draw_blend_mode_; }
-  bool uses_default_blend_mode() const {
-    return blend_mode_ == SkXfermode::kSrcOver_Mode;
-  }
+  SkBlendMode draw_blend_mode() const { return draw_blend_mode_; }
 
   void SetPosition(const gfx::PointF& position);
   gfx::PointF position() const { return position_; }
@@ -228,7 +202,7 @@ class CC_EXPORT LayerImpl {
 
   gfx::Vector2dF FixedContainerSizeDelta() const;
 
-  bool Is3dSorted() const { return sorting_context_id_ != 0; }
+  bool Is3dSorted() const { return GetSortingContextId() != 0; }
 
   void SetUseParentBackfaceVisibility(bool use) {
     use_parent_backface_visibility_ = use;
@@ -253,15 +227,7 @@ class CC_EXPORT LayerImpl {
 
   bool ShowDebugBorders() const;
 
-  // These invalidate the host's render surface layer list.  The caller
-  // is responsible for calling set_needs_update_draw_properties on the tree
-  // so that its list can be recreated.
-  void ClearRenderSurfaceLayerList();
-  void SetHasRenderSurface(bool has_render_surface);
-
-  void SetForceRenderSurface(bool has_render_surface);
-
-  RenderSurfaceImpl* render_surface() const { return render_surface_.get(); }
+  RenderSurfaceImpl* GetRenderSurface() const;
 
   // The render surface which this layer draws into. This can be either owned by
   // the same layer or an ancestor of this layer.
@@ -360,19 +326,8 @@ class CC_EXPORT LayerImpl {
     return touch_event_handler_region_;
   }
 
-  void SetTransform(const gfx::Transform& transform);
-  const gfx::Transform& transform() const { return transform_; }
   bool TransformIsAnimating() const;
   bool HasPotentiallyRunningTransformAnimation() const;
-  bool HasOnlyTranslationTransforms() const;
-  bool AnimationsPreserveAxisAlignment() const;
-
-  bool MaximumTargetScale(float* max_scale) const;
-  bool AnimationStartScale(float* start_scale) const;
-
-  // This includes all animations, even those that are finished but haven't yet
-  // been deleted.
-  bool HasAnyAnimationTargetingProperty(TargetProperty::Type property) const;
 
   bool HasFilterAnimationThatInflatesBounds() const;
   bool HasTransformAnimationThatInflatesBounds() const;
@@ -403,14 +358,19 @@ class CC_EXPORT LayerImpl {
   virtual void DidBeginTracing();
 
   // Release resources held by this layer. Called when the output surface
-  // that rendered this layer was lost or a rendering mode switch has occured.
+  // that rendered this layer was lost.
   virtual void ReleaseResources();
 
-  // Recreate resources that are required after they were released by a
-  // ReleaseResources call.
-  virtual void RecreateResources();
+  // Release tile resources held by this layer. Called when a rendering mode
+  // switch has occured and tiles are no longer valid.
+  virtual void ReleaseTileResources();
+
+  // Recreate tile resources held by this layer after they were released by a
+  // ReleaseTileResources call.
+  virtual void RecreateTileResources();
 
   virtual std::unique_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl);
+  virtual bool IsSnapped();
   virtual void PushPropertiesTo(LayerImpl* layer);
 
   virtual void GetAllPrioritizedTilesForTracing(
@@ -434,8 +394,17 @@ class CC_EXPORT LayerImpl {
     return is_drawn_render_surface_layer_list_member_;
   }
 
-  void Set3dSortingContextId(int id);
-  int sorting_context_id() { return sorting_context_id_; }
+  bool IsDrawnScrollbar() {
+    return ToScrollbarLayer() && is_drawn_render_surface_layer_list_member_;
+  }
+
+  void set_may_contain_video(bool yes) { may_contain_video_ = yes; }
+  bool may_contain_video() const { return may_contain_video_; }
+
+  // Layers that share a sorting context id will be sorted together in 3d
+  // space.  0 is a special value that means this layer will not be sorted and
+  // will be drawn in paint order.
+  int GetSortingContextId() const;
 
   // Get the correct invalidation region instead of conservative Rect
   // for layers that provide it.
@@ -443,19 +412,11 @@ class CC_EXPORT LayerImpl {
 
   virtual gfx::Rect GetEnclosingRectInTargetSpace() const;
 
-  void set_scrolls_drawn_descendant(bool scrolls_drawn_descendant) {
-    scrolls_drawn_descendant_ = scrolls_drawn_descendant;
-  }
-
-  bool scrolls_drawn_descendant() { return scrolls_drawn_descendant_; }
-
   int num_copy_requests_in_target_subtree();
 
   void UpdatePropertyTreeForScrollingAndAnimationIfNeeded();
 
   bool IsHidden() const;
-
-  bool InsideReplica() const;
 
   float GetIdealContentsScale() const;
 
@@ -473,6 +434,19 @@ class CC_EXPORT LayerImpl {
   bool has_will_change_transform_hint() const {
     return has_will_change_transform_hint_;
   }
+
+  void SetPreferredRasterBounds(const gfx::Size& preferred_raster_bounds);
+  bool has_preferred_raster_bounds() const {
+    return has_preferred_raster_bounds_;
+  }
+  const gfx::Size& preferred_raster_scale() const {
+    return preferred_raster_bounds_;
+  }
+  void ClearPreferredRasterBounds();
+
+  MutatorHost* GetMutatorHost() const;
+
+  ElementListType GetElementTypeForAnimation() const;
 
  protected:
   LayerImpl(LayerTreeImpl* layer_impl,
@@ -497,6 +471,12 @@ class CC_EXPORT LayerImpl {
   gfx::Rect GetScaledEnclosingRectInTargetSpace(float scale) const;
 
  private:
+  bool HasOnlyTranslationTransforms() const;
+
+  // This includes all animations, even those that are finished but haven't yet
+  // been deleted.
+  bool HasAnyAnimationTargetingProperty(TargetProperty::Type property) const;
+
   void ValidateQuadResourcesInternal(DrawQuad* quad) const;
 
   virtual const char* LayerTypeAsString() const;
@@ -521,6 +501,7 @@ class CC_EXPORT LayerImpl {
 
   // Tracks if drawing-related properties have changed since last redraw.
   bool layer_property_changed_ : 1;
+  bool may_contain_video_ : 1;
 
   bool masks_to_bounds_ : 1;
   bool contents_opaque_ : 1;
@@ -539,12 +520,8 @@ class CC_EXPORT LayerImpl {
   SkColor background_color_;
   SkColor safe_opaque_background_color_;
 
-  SkXfermode::Mode blend_mode_;
-  // draw_blend_mode may be different than blend_mode_,
-  // when a RenderSurface re-parents the layer's blend_mode.
-  SkXfermode::Mode draw_blend_mode_;
+  SkBlendMode draw_blend_mode_;
   gfx::PointF position_;
-  gfx::Transform transform_;
 
   gfx::Rect clip_rect_in_target_space_;
   int transform_tree_index_;
@@ -552,19 +529,17 @@ class CC_EXPORT LayerImpl {
   int clip_tree_index_;
   int scroll_tree_index_;
 
-  FilterOperations filters_;
-
  protected:
   friend class TreeSynchronizer;
-
-  // Layers that share a sorting context id will be sorted together in 3d
-  // space.  0 is a special value that means this layer will not be sorted and
-  // will be drawn in paint order.
-  int sorting_context_id_;
 
   DrawMode current_draw_mode_;
 
  private:
+  PropertyTrees* GetPropertyTrees() const;
+  EffectTree& GetEffectTree() const;
+  ScrollTree& GetScrollTree() const;
+  TransformTree& GetTransformTree() const;
+
   ElementId element_id_;
   uint32_t mutable_properties_;
   // Rect indicating what was repainted/updated during update.
@@ -584,11 +559,17 @@ class CC_EXPORT LayerImpl {
   std::unique_ptr<base::trace_event::ConvertableToTraceFormat>
       owned_debug_info_;
   base::trace_event::ConvertableToTraceFormat* debug_info_;
+  // TODO(http://crbug.com/557160): EffectNode instead of LayerImpl should
+  // own RenderSurfaceImpl. Currently SPv2 creates dummy layers for the sole
+  // purpose of holding a render surface. Once done, remember to remove dummy
+  // layers from PaintArtifactCompositor as well
   std::unique_ptr<RenderSurfaceImpl> render_surface_;
+  gfx::Size preferred_raster_bounds_;
 
-  bool scrolls_drawn_descendant_ : 1;
+  bool has_preferred_raster_bounds_ : 1;
   bool has_will_change_transform_hint_ : 1;
   bool needs_push_properties_ : 1;
+  bool scrollbars_hidden_ : 1;
 
   DISALLOW_COPY_AND_ASSIGN(LayerImpl);
 };

@@ -22,11 +22,14 @@
 #include "base/single_thread_task_runner.h"
 #include "base/time/time.h"
 #include "content/common/content_export.h"
+#include "content/common/url_loader.mojom.h"
 #include "content/public/common/resource_type.h"
 #include "ipc/ipc_listener.h"
 #include "ipc/ipc_sender.h"
 #include "net/base/request_priority.h"
+#include "third_party/WebKit/public/platform/WebURLRequest.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 namespace net {
 struct RedirectInfo;
@@ -35,16 +38,19 @@ struct RedirectInfo;
 namespace content {
 class RequestPeer;
 class ResourceDispatcherDelegate;
-class ResourceRequestBodyImpl;
 class ResourceSchedulingFilter;
 struct ResourceResponseInfo;
-struct RequestInfo;
 struct ResourceRequest;
 struct ResourceRequestCompletionStatus;
 struct ResourceResponseHead;
 class SharedMemoryReceivedDataFactory;
 struct SiteIsolationResponseMetaData;
 struct SyncLoadResponse;
+class URLLoaderClientImpl;
+
+namespace mojom {
+class URLLoaderFactory;
+}  // namespace mojom
 
 // This class serves as a communication interface to the ResourceDispatcherHost
 // in the browser process. It can be used from any child process.
@@ -66,16 +72,33 @@ class CONTENT_EXPORT ResourceDispatcher : public IPC::Listener {
   // use this if you really need it!  There is also no way for the caller to
   // interrupt this method. Errors are reported via the status field of the
   // response parameter.
-  void StartSync(const RequestInfo& request_info,
-                 ResourceRequestBodyImpl* request_body,
-                 SyncLoadResponse* response);
+  //
+  // |routing_id| is used to associated the bridge with a frame's network
+  // context.
+  virtual void StartSync(std::unique_ptr<ResourceRequest> request,
+                         int routing_id,
+                         SyncLoadResponse* response,
+                         blink::WebURLRequest::LoadingIPCType ipc_type,
+                         mojom::URLLoaderFactory* url_loader_factory);
 
   // Call this method to initiate the request. If this method succeeds, then
   // the peer's methods will be called asynchronously to report various events.
-  // Returns the request id.
-  virtual int StartAsync(const RequestInfo& request_info,
-                         ResourceRequestBodyImpl* request_body,
-                         std::unique_ptr<RequestPeer> peer);
+  // Returns the request id. |url_loader_factory| must be non-null if and only
+  // if |ipc_type| is LoadingIPCType::Mojo.
+  //
+  // |routing_id| is used to associated the bridge with a frame's network
+  // context.
+  //
+  // You can pass an optional argument |loading_task_runner| to specify task
+  // queue to execute loading tasks on.
+  virtual int StartAsync(
+      std::unique_ptr<ResourceRequest> request,
+      int routing_id,
+      scoped_refptr<base::SingleThreadTaskRunner> loading_task_runner,
+      const url::Origin& frame_origin,
+      std::unique_ptr<RequestPeer> peer,
+      blink::WebURLRequest::LoadingIPCType ipc_type,
+      mojom::URLLoaderFactory* url_loader_factory);
 
   // Removes a request from the |pending_requests_| list, returning true if the
   // request was found and removed.
@@ -118,7 +141,15 @@ class CONTENT_EXPORT ResourceDispatcher : public IPC::Listener {
   void SetResourceSchedulingFilter(
       scoped_refptr<ResourceSchedulingFilter> resource_scheduling_filter);
 
+  base::WeakPtr<ResourceDispatcher> GetWeakPtr() {
+    return weak_factory_.GetWeakPtr();
+  }
+
+  void OnTransferSizeUpdated(int request_id, int32_t transfer_size_diff);
+
  private:
+  friend class URLLoaderClientImpl;
+  friend class URLResponseBodyConsumer;
   friend class ResourceDispatcherTest;
 
   typedef std::deque<IPC::Message*> MessageQueue;
@@ -126,7 +157,7 @@ class CONTENT_EXPORT ResourceDispatcher : public IPC::Listener {
     PendingRequestInfo(std::unique_ptr<RequestPeer> peer,
                        ResourceType resource_type,
                        int origin_pid,
-                       const GURL& frame_origin,
+                       const url::Origin& frame_origin,
                        const GURL& request_url,
                        bool download_to_file);
 
@@ -143,7 +174,7 @@ class CONTENT_EXPORT ResourceDispatcher : public IPC::Listener {
     // Original requested url.
     GURL url;
     // The security origin of the frame that initiates this request.
-    GURL frame_origin;
+    url::Origin frame_origin;
     // The url of the latest response even in case of redirection.
     GURL response_url;
     bool download_to_file;
@@ -155,6 +186,10 @@ class CONTENT_EXPORT ResourceDispatcher : public IPC::Listener {
     scoped_refptr<SharedMemoryReceivedDataFactory> received_data_factory;
     std::unique_ptr<SiteIsolationResponseMetaData> site_isolation_metadata;
     int buffer_size;
+
+    // For mojo loading.
+    mojom::URLLoaderAssociatedPtr url_loader;
+    std::unique_ptr<URLLoaderClientImpl> url_loader_client;
   };
   using PendingRequestMap = std::map<int, std::unique_ptr<PendingRequestInfo>>;
 
@@ -221,11 +256,6 @@ class CONTENT_EXPORT ResourceDispatcher : public IPC::Listener {
   // ReleaseResourcesInDataMessage and removing them from the queue. Intended
   // for use on deferred message queues that are no longer needed.
   static void ReleaseResourcesInMessageQueue(MessageQueue* queue);
-
-  std::unique_ptr<ResourceRequest> CreateRequest(
-      const RequestInfo& request_info,
-      ResourceRequestBodyImpl* request_body,
-      GURL* frame_origin);
 
   IPC::Sender* message_sender_;
 

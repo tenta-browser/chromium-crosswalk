@@ -41,7 +41,8 @@ void CheckBubbleAndReferenceView(views::BubbleDialogDelegateView* bubble,
   // It should be below the reference view, but not too far below.
   EXPECT_GE(bubble_bounds.y(), reference_bounds.y());
   // The arrow should be poking into the anchor.
-  EXPECT_LE(bubble_bounds.y(), reference_bounds.bottom());
+  const int kShadowWidth = 1;
+  EXPECT_LE(bubble_bounds.y(), reference_bounds.bottom() + kShadowWidth);
   // The bubble should intersect the reference view somewhere along the x-axis.
   EXPECT_FALSE(bubble_bounds.x() > reference_bounds.right());
   EXPECT_FALSE(reference_bounds.x() > bubble_bounds.right());
@@ -72,12 +73,14 @@ class ExtensionMessageBubbleViewBrowserTest
   DISALLOW_COPY_AND_ASSIGN(ExtensionMessageBubbleViewBrowserTest);
 };
 
-class ExtensionMessageBubbleViewBrowserTestRedesign
+class ExtensionMessageBubbleViewBrowserTestLegacy
     : public ExtensionMessageBubbleViewBrowserTest {
  protected:
   void SetUpCommandLine(base::CommandLine* command_line) override {
     ExtensionMessageBubbleViewBrowserTest::SetUpCommandLine(command_line);
     override_redesign_.reset();
+    override_redesign_.reset(new extensions::FeatureSwitch::ScopedOverride(
+        extensions::FeatureSwitch::extension_action_redesign(), false));
   }
 };
 
@@ -141,12 +144,12 @@ IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleViewBrowserTest,
   TestBubbleAnchoredToExtensionAction();
 }
 
-IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleViewBrowserTest,
+IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleViewBrowserTestLegacy,
                        ExtensionBubbleAnchoredToAppMenu) {
   TestBubbleAnchoredToAppMenu();
 }
 
-IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleViewBrowserTest,
+IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleViewBrowserTestLegacy,
                        ExtensionBubbleAnchoredToAppMenuWithOtherAction) {
   TestBubbleAnchoredToAppMenuWithOtherAction();
 }
@@ -174,20 +177,41 @@ IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleViewBrowserTest,
 // Tests for the extension bubble and settings overrides. These bubbles are
 // currently only shown on Windows.
 #if defined(OS_WIN)
-IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleViewBrowserTestRedesign,
+IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleViewBrowserTest,
                        TestControlledNewTabPageMessageBubble) {
   TestControlledNewTabPageBubbleShown();
 }
 
-IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleViewBrowserTestRedesign,
+IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleViewBrowserTest,
                        TestControlledHomeMessageBubble) {
   TestControlledHomeBubbleShown();
 }
 
-IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleViewBrowserTestRedesign,
+IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleViewBrowserTest,
                        TestControlledSearchMessageBubble) {
   TestControlledSearchBubbleShown();
 }
+
+IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleViewBrowserTest,
+                       PRE_TestControlledStartupMessageBubble) {
+  PreTestControlledStartupBubbleShown();
+}
+
+IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleViewBrowserTest,
+                       TestControlledStartupMessageBubble) {
+  TestControlledStartupBubbleShown();
+}
+
+IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleViewBrowserTest,
+                       PRE_TestControlledStartupNotShownOnRestart) {
+  PreTestControlledStartupNotShownOnRestart();
+}
+
+IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleViewBrowserTest,
+                       TestControlledStartupNotShownOnRestart) {
+  TestControlledStartupNotShownOnRestart();
+}
+
 #endif  // defined(OS_WIN)
 
 IN_PROC_BROWSER_TEST_F(ExtensionMessageBubbleViewBrowserTest,

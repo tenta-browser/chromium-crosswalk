@@ -6,9 +6,9 @@
 // accessibility), since they can be inconsistent depending on the environment.
 var RemoveUntestedStates = function(state) {
   var result = JSON.parse(JSON.stringify(state));
-  delete result[StateType.horizontal];
-  delete result[StateType.hovered];
-  delete result[StateType.vertical];
+  delete result[StateType.HORIZONTAL];
+  delete result[StateType.HOVERED];
+  delete result[StateType.VERTICAL];
   return result;
 };
 
@@ -19,32 +19,31 @@ var allTests = [
 
     var state = RemoveUntestedStates(rootNode.state);
     assertEq(
-        {enabled: true, focusable: true, readOnly: true, focused: true},
+        {focusable: true, readOnly: true, focused: true},
         state);
 
     var children = rootNode.children;
-    assertEq(RoleType.rootWebArea, rootNode.role);
+    assertEq(RoleType.ROOT_WEB_AREA, rootNode.role);
     assertEq(1, children.length);
     var body = children[0];
-    assertEq('body', body.htmlTag);
     state = RemoveUntestedStates(body.state);
-    assertEq({enabled: true, readOnly: true}, state);
+    assertEq({readOnly: true}, state);
 
     var contentChildren = body.children;
     assertEq(3, contentChildren.length);
     var okButton = contentChildren[0];
     assertEq('Ok', okButton.name);
     state = RemoveUntestedStates(okButton.state);
-    assertEq({enabled: true, focusable: true, readOnly: true}, state);
+    assertEq({focusable: true, readOnly: true}, state);
     var userNameInput = contentChildren[1];
     assertEq('Username', userNameInput.name);
     state = RemoveUntestedStates(userNameInput.state);
-    assertEq({editable: true, enabled: true, focusable: true}, state);
+    assertEq({editable: true, focusable: true}, state);
     var cancelButton = contentChildren[2];
     assertEq('Cancel',
              cancelButton.name);
     state = RemoveUntestedStates(cancelButton.state);
-    assertEq({enabled: true, focusable: true, readOnly: true}, state);
+    assertEq({focusable: true, readOnly: true}, state);
 
     // Traversal.
     assertEq(undefined, rootNode.parent);

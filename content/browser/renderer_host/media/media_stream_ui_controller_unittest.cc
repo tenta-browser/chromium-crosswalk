@@ -6,12 +6,12 @@
 
 #include "base/bind.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
-#include "content/browser/browser_thread_impl.h"
+#include "base/run_loop.h"
 #include "content/browser/renderer_host/media/media_stream_settings_requester.h"
 #include "content/browser/renderer_host/media/media_stream_ui_controller.h"
 #include "content/common/media/media_stream_options.h"
 #include "content/public/common/media_stream_request.h"
+#include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -44,17 +44,10 @@ class MediaStreamDeviceUIControllerTest
 
  protected:
   virtual void SetUp() {
-    message_loop_.reset(new base::MessageLoopForIO);
-    ui_thread_.reset(new BrowserThreadImpl(BrowserThread::UI,
-                                           message_loop_.get()));
-    io_thread_.reset(new BrowserThreadImpl(BrowserThread::IO,
-                                           message_loop_.get()));
     ui_controller_.reset(new MediaStreamUIController(this));
   }
 
-  virtual void TearDown() {
-    message_loop_->RunUntilIdle();
-  }
+  virtual void TearDown() { base::RunLoop().RunUntilIdle(); }
 
   void CreateDummyRequest(const std::string& label, bool audio, bool video) {
     int dummy_render_process_id = 1;
@@ -70,9 +63,7 @@ class MediaStreamDeviceUIControllerTest
                                   std::string());
   }
 
-  std::unique_ptr<base::MessageLoop> message_loop_;
-  std::unique_ptr<BrowserThreadImpl> ui_thread_;
-  std::unique_ptr<BrowserThreadImpl> io_thread_;
+  TestBrowserThreadBundle thread_bundle_;
   std::unique_ptr<MediaStreamUIController> ui_controller_;
 
  private:
@@ -105,7 +96,7 @@ TEST_F(MediaStreamDeviceUIControllerTest, HandleRequestUsingFakeUI) {
   // Remove the current request, it should not crash.
   EXPECT_CALL(*this, DevicesAccepted(label, _));
 
-  message_loop_->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   ui_controller_->NotifyUIIndicatorDevicesClosed(label);
 }
@@ -132,7 +123,7 @@ TEST_F(MediaStreamDeviceUIControllerTest, CreateRequestsAndCancelTheFirst) {
   EXPECT_CALL(*this, DevicesAccepted(label_2, _));
   EXPECT_CALL(*this, DevicesAccepted(label_3, _));
 
-  message_loop_->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   ui_controller_->NotifyUIIndicatorDevicesClosed(label_2);
   ui_controller_->NotifyUIIndicatorDevicesClosed(label_3);
@@ -160,7 +151,7 @@ TEST_F(MediaStreamDeviceUIControllerTest, CreateRequestsAndCancelTheLast) {
   EXPECT_CALL(*this, DevicesAccepted(label_1, _));
   EXPECT_CALL(*this, DevicesAccepted(label_2, _));
 
-  message_loop_->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   ui_controller_->NotifyUIIndicatorDevicesClosed(label_1);
   ui_controller_->NotifyUIIndicatorDevicesClosed(label_2);

@@ -5,6 +5,7 @@
 #ifndef CHROMEOS_DBUS_FAKE_POWER_MANAGER_CLIENT_H_
 #define CHROMEOS_DBUS_FAKE_POWER_MANAGER_CLIENT_H_
 
+#include <deque>
 #include <string>
 
 #include "base/macros.h"
@@ -35,6 +36,12 @@ class CHROMEOS_EXPORT FakePowerManagerClient : public PowerManagerClient {
     return num_set_is_projecting_calls_;
   }
   bool is_projecting() const { return is_projecting_; }
+  bool have_video_activity_report() const {
+    return !video_activity_reports_.empty();
+  }
+  int num_set_backlights_forced_off_calls() const {
+    return num_set_backlights_forced_off_calls_;
+  }
 
   // PowerManagerClient overrides
   void Init(dbus::Bus* bus) override;
@@ -59,14 +66,25 @@ class CHROMEOS_EXPORT FakePowerManagerClient : public PowerManagerClient {
   void SetPolicy(const power_manager::PowerManagementPolicy& policy) override;
   void SetIsProjecting(bool is_projecting) override;
   void SetPowerSource(const std::string& id) override;
+  void SetBacklightsForcedOff(bool forced_off) override;
+  void GetBacklightsForcedOff(
+      const GetBacklightsForcedOffCallback& callback) override;
   base::Closure GetSuspendReadinessCallback() override;
   int GetNumPendingSuspendReadinessCallbacks() override;
+
+  // Pops the first report from |video_activity_reports_|, returning whether the
+  // activity was fullscreen or not. There must be at least one report.
+  bool PopVideoActivityReport();
 
   // Emulates the power manager announcing that the system is starting or
   // completing a suspend attempt.
   void SendSuspendImminent();
   void SendSuspendDone();
   void SendDarkSuspendImminent();
+
+  // Emulates the power manager announcing that the system is changing
+  // brightness to |level|.
+  void SendBrightnessChanged(int level, bool user_initiated);
 
   // Notifies observers that the power button has been pressed or released.
   void SendPowerButtonEvent(bool down, const base::TimeTicks& timestamp);
@@ -96,12 +114,21 @@ class CHROMEOS_EXPORT FakePowerManagerClient : public PowerManagerClient {
   int num_request_shutdown_calls_;
   int num_set_policy_calls_;
   int num_set_is_projecting_calls_;
+  int num_set_backlights_forced_off_calls_;
 
   // Number of pending suspend readiness callbacks.
   int num_pending_suspend_readiness_callbacks_;
 
   // Last projecting state set in SetIsProjecting().
   bool is_projecting_;
+
+  // Display and keyboard backlights (if present) forced off state set in
+  // SetBacklightsForcedOff().
+  bool backlights_forced_off_;
+
+  // Video activity reports that we were requested to send, in the order they
+  // were requested. True if fullscreen.
+  std::deque<bool> video_activity_reports_;
 
   // Delegate for managing power consumption of Chrome's renderer processes.
   base::WeakPtr<RenderProcessManagerDelegate> render_process_manager_delegate_;

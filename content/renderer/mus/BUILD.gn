@@ -2,17 +2,15 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-source_set("mus") {
+static_library("mus") {
   # Depend on this only via //content/renderer.
   visibility = [ "//content/renderer/*" ]
 
   sources = [
-    "compositor_mus_connection.cc",
-    "compositor_mus_connection.h",
-    "render_widget_mus_connection.cc",
-    "render_widget_mus_connection.h",
     "render_widget_window_tree_client_factory.cc",
     "render_widget_window_tree_client_factory.h",
+    "renderer_window_tree_client.cc",
+    "renderer_window_tree_client.h",
   ]
 
   configs += [ "//content:content_implementation" ]
@@ -20,16 +18,18 @@ source_set("mus") {
   deps = [
     "//base",
     "//cc",
-    "//components/mus/public/cpp",
-    "//components/mus/public/interfaces",
     "//content/common",
+    "//content/public/child:child_sources",
     "//content/public/common:common_sources",
+    "//media/mojo/interfaces:remoting",
     "//mojo/common",
-    "//mojo/converters/blink",
-    "//services/shell/public/cpp",
+    "//services/service_manager/public/cpp",
+    "//services/ui/public/cpp",
+    "//services/ui/public/interfaces",
     "//third_party/WebKit/public:blink",
     "//ui/events:events",
     "//ui/events:events_base",
+    "//ui/events/blink",
     "//ui/gfx/geometry/mojo",
   ]
 }

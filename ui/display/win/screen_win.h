@@ -30,7 +30,7 @@ namespace win {
 class DisplayInfo;
 class ScreenWinDisplay;
 
-class DISPLAY_EXPORT ScreenWin : public display::Screen {
+class DISPLAY_EXPORT ScreenWin : public Screen {
  public:
   ScreenWin();
   ~ScreenWin() override;
@@ -90,7 +90,24 @@ class DISPLAY_EXPORT ScreenWin : public display::Screen {
   static gfx::Size DIPToScreenSize(HWND hwnd, const gfx::Size& dip_size);
 
   // Returns the result of GetSystemMetrics for |metric| scaled to |hwnd|'s DPI.
+  // Use this function if you're already working with screen pixels, as this
+  // helps reduce any cascading rounding errors from DIP to the |hwnd|'s DPI.
   static int GetSystemMetricsForHwnd(HWND hwnd, int metric);
+
+  // Returns the result of GetSystemMetrics for |metric| in DIP.
+  // Use this function if you need to work in DIP and can tolerate cascading
+  // rounding errors towards screen pixels.
+  static int GetSystemMetricsInDIP(int metric);
+
+  // Returns |hwnd|'s scale factor.
+  static float GetScaleFactorForHWND(HWND hwnd);
+
+  // Returns the system's global scale factor, ignoring the value of
+  // --force-device-scale-factor. Only use this if you are working with Windows
+  // metrics global to the system. Otherwise you should call
+  // GetScaleFactorForHWND() to get the correct scale factor for the monitor
+  // you are targeting.
+  static float GetSystemScaleFactor();
 
   // Returns the HWND associated with the NativeView.
   virtual HWND GetHWNDFromNativeView(gfx::NativeView window) const;
@@ -99,21 +116,18 @@ class DISPLAY_EXPORT ScreenWin : public display::Screen {
   virtual gfx::NativeWindow GetNativeWindowFromHWND(HWND hwnd) const;
 
  protected:
-  // display::Screen:
+  // Screen:
   gfx::Point GetCursorScreenPoint() override;
   bool IsWindowUnderCursor(gfx::NativeWindow window) override;
   gfx::NativeWindow GetWindowAtScreenPoint(const gfx::Point& point) override;
   int GetNumDisplays() const override;
-  std::vector<display::Display> GetAllDisplays() const override;
-  display::Display GetDisplayNearestWindow(
-      gfx::NativeView window) const override;
-  display::Display GetDisplayNearestPoint(
-      const gfx::Point& point) const override;
-  display::Display GetDisplayMatching(
-      const gfx::Rect& match_rect) const override;
-  display::Display GetPrimaryDisplay() const override;
-  void AddObserver(display::DisplayObserver* observer) override;
-  void RemoveObserver(display::DisplayObserver* observer) override;
+  const std::vector<Display>& GetAllDisplays() const override;
+  Display GetDisplayNearestWindow(gfx::NativeView window) const override;
+  Display GetDisplayNearestPoint(const gfx::Point& point) const override;
+  Display GetDisplayMatching(const gfx::Rect& match_rect) const override;
+  Display GetPrimaryDisplay() const override;
+  void AddObserver(DisplayObserver* observer) override;
+  void RemoveObserver(DisplayObserver* observer) override;
   gfx::Rect ScreenToDIPRectInWindow(
       gfx::NativeView view, const gfx::Rect& screen_rect) const override;
   gfx::Rect DIPToScreenRectInWindow(
@@ -159,13 +173,13 @@ class DISPLAY_EXPORT ScreenWin : public display::Screen {
 
   ScreenWinDisplay GetScreenWinDisplay(const MONITORINFOEX& monitor_info) const;
 
-  static float GetScaleFactorForHWND(HWND hwnd);
-
   // Returns the result of calling |getter| with |value| on the global
   // ScreenWin if it exists, otherwise return the default ScreenWinDisplay.
   template <typename Getter, typename GetterType>
   static ScreenWinDisplay GetScreenWinDisplayVia(Getter getter,
                                                  GetterType value);
+
+  void RecordDisplayScaleFactors() const;
 
   // Helper implementing the DisplayObserver handling.
   DisplayChangeNotifier change_notifier_;
@@ -174,6 +188,10 @@ class DISPLAY_EXPORT ScreenWin : public display::Screen {
 
   // Current list of ScreenWinDisplays.
   std::vector<ScreenWinDisplay> screen_win_displays_;
+
+  // The Displays corresponding to |screen_win_displays_| for GetAllDisplays().
+  // This must be updated anytime |screen_win_displays_| is updated.
+  std::vector<Display> displays_;
 
   DISALLOW_COPY_AND_ASSIGN(ScreenWin);
 };

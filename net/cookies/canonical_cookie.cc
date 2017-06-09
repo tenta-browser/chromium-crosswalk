@@ -125,35 +125,9 @@ CanonicalCookie::CanonicalCookie()
       httponly_(false) {
 }
 
-CanonicalCookie::CanonicalCookie(const GURL& url,
-                                 const std::string& name,
-                                 const std::string& value,
-                                 const std::string& domain,
-                                 const std::string& path,
-                                 const base::Time& creation,
-                                 const base::Time& expiration,
-                                 const base::Time& last_access,
-                                 bool secure,
-                                 bool httponly,
-                                 CookieSameSite same_site,
-                                 CookiePriority priority)
-    : source_(url.SchemeIsFile() ? url : url.GetOrigin()),
-      name_(name),
-      value_(value),
-      domain_(domain),
-      path_(path),
-      creation_date_(creation),
-      expiry_date_(expiration),
-      last_access_date_(last_access),
-      secure_(secure),
-      httponly_(httponly),
-      same_site_(same_site),
-      priority_(priority) {}
-
 CanonicalCookie::CanonicalCookie(const CanonicalCookie& other) = default;
 
-CanonicalCookie::~CanonicalCookie() {
-}
+CanonicalCookie::~CanonicalCookie() {}
 
 // static
 std::string CanonicalCookie::CanonPath(const GURL& url,
@@ -183,7 +157,8 @@ Time CanonicalCookie::CanonExpiration(const ParsedCookie& pc,
   // Try the Expires attribute.
   if (pc.HasExpires() && !pc.Expires().empty()) {
     // Adjust for clock skew between server and host.
-    base::Time parsed_expiry = cookie_util::ParseCookieTime(pc.Expires());
+    base::Time parsed_expiry =
+        cookie_util::ParseCookieExpirationTime(pc.Expires());
     if (!parsed_expiry.is_null())
       return parsed_expiry + (current - server_time);
   }
@@ -219,9 +194,8 @@ std::unique_ptr<CanonicalCookie> CanonicalCookie::Create(
   // Per 3.2.1 of "Deprecate modification of 'secure' cookies from non-secure
   // origins", if the cookie's "secure-only-flag" is "true" and the requesting
   // URL does not have a secure scheme, the cookie should be thrown away.
-  // https://tools.ietf.org/html/draft-west-leave-secure-cookies-alone
-  if (options.enforce_strict_secure() && parsed_cookie.IsSecure() &&
-      !url.SchemeIsCryptographic()) {
+  // https://tools.ietf.org/html/draft-ietf-httpbis-cookie-alone
+  if (parsed_cookie.IsSecure() && !url.SchemeIsCryptographic()) {
     VLOG(kVlogSetCookies)
         << "Create() is trying to create a secure cookie from an insecure URL";
     return nullptr;
@@ -247,10 +221,10 @@ std::unique_ptr<CanonicalCookie> CanonicalCookie::Create(
   }
 
   return base::WrapUnique(new CanonicalCookie(
-      url, parsed_cookie.Name(), parsed_cookie.Value(), cookie_domain,
-      cookie_path, creation_time, cookie_expires, creation_time,
-      parsed_cookie.IsSecure(), parsed_cookie.IsHttpOnly(),
-      parsed_cookie.SameSite(), parsed_cookie.Priority()));
+      parsed_cookie.Name(), parsed_cookie.Value(), cookie_domain, cookie_path,
+      creation_time, cookie_expires, creation_time, parsed_cookie.IsSecure(),
+      parsed_cookie.IsHttpOnly(), parsed_cookie.SameSite(),
+      parsed_cookie.Priority()));
 }
 
 // static
@@ -265,7 +239,6 @@ std::unique_ptr<CanonicalCookie> CanonicalCookie::Create(
     bool secure,
     bool http_only,
     CookieSameSite same_site,
-    bool enforce_strict_secure,
     CookiePriority priority) {
   // Expect valid attribute tokens and values, as defined by the ParsedCookie
   // logic, otherwise don't create the cookie.
@@ -285,7 +258,7 @@ std::unique_ptr<CanonicalCookie> CanonicalCookie::Create(
     return nullptr;
   }
 
-  if (enforce_strict_secure && secure && !url.SchemeIsCryptographic())
+  if (secure && !url.SchemeIsCryptographic())
     return nullptr;
 
   std::string parsed_path = ParsedCookie::ParseValueString(path);
@@ -306,7 +279,7 @@ std::unique_ptr<CanonicalCookie> CanonicalCookie::Create(
                             canon_path_component.len);
 
   return base::WrapUnique(new CanonicalCookie(
-      url, parsed_name, parsed_value, cookie_domain, cookie_path, creation,
+      parsed_name, parsed_value, cookie_domain, cookie_path, creation,
       expiration, creation, secure, http_only, same_site, priority));
 }
 
@@ -323,9 +296,16 @@ std::unique_ptr<CanonicalCookie> CanonicalCookie::Create(
     bool http_only,
     CookieSameSite same_site,
     CookiePriority priority) {
-  return base::WrapUnique(new CanonicalCookie(
-      GURL(), name, value, domain, path, creation, expiration, last_access,
-      secure, http_only, same_site, priority));
+  return base::WrapUnique(
+      new CanonicalCookie(name, value, domain, path, creation, expiration,
+                          last_access, secure, http_only, same_site, priority));
+}
+
+bool CanonicalCookie::IsEquivalentForSecureCookieMatching(
+    const CanonicalCookie& ecc) const {
+  return (name_ == ecc.Name() && (ecc.IsDomainMatch(DomainWithoutDot()) ||
+                                  IsDomainMatch(ecc.DomainWithoutDot())) &&
+          ecc.IsOnPath(Path()));
 }
 
 bool CanonicalCookie::IsOnPath(const std::string& url_path) const {
@@ -475,14 +455,37 @@ bool CanonicalCookie::FullCompare(const CanonicalCookie& other) const {
   return Priority() < other.Priority();
 }
 
+CanonicalCookie::CanonicalCookie(const std::string& name,
+                                 const std::string& value,
+                                 const std::string& domain,
+                                 const std::string& path,
+                                 const base::Time& creation,
+                                 const base::Time& expiration,
+                                 const base::Time& last_access,
+                                 bool secure,
+                                 bool httponly,
+                                 CookieSameSite same_site,
+                                 CookiePriority priority)
+    : name_(name),
+      value_(value),
+      domain_(domain),
+      path_(path),
+      creation_date_(creation),
+      expiry_date_(expiration),
+      last_access_date_(last_access),
+      secure_(secure),
+      httponly_(httponly),
+      same_site_(same_site),
+      priority_(priority) {}
+
 // static
 CanonicalCookie::CookiePrefix CanonicalCookie::GetCookiePrefix(
     const std::string& name) {
   const char kSecurePrefix[] = "__Secure-";
   const char kHostPrefix[] = "__Host-";
-  if (name.find(kSecurePrefix) == 0)
+  if (base::StartsWith(name, kSecurePrefix, base::CompareCase::SENSITIVE))
     return CanonicalCookie::COOKIE_PREFIX_SECURE;
-  if (name.find(kHostPrefix) == 0)
+  if (base::StartsWith(name, kHostPrefix, base::CompareCase::SENSITIVE))
     return CanonicalCookie::COOKIE_PREFIX_HOST;
   return CanonicalCookie::COOKIE_PREFIX_NONE;
 }
@@ -516,6 +519,12 @@ bool CanonicalCookie::IsCookiePrefixValid(CanonicalCookie::CookiePrefix prefix,
            !parsed_cookie.HasDomain() && parsed_cookie.Path() == "/";
   }
   return true;
+}
+
+std::string CanonicalCookie::DomainWithoutDot() const {
+  if (domain_.empty() || domain_[0] != '.')
+    return domain_;
+  return domain_.substr(1);
 }
 
 }  // namespace net

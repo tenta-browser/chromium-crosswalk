@@ -8,6 +8,7 @@
 #include <stddef.h>
 
 #include <memory>
+#include <string>
 
 #include "base/callback.h"
 #include "base/gtest_prod_util.h"
@@ -18,6 +19,10 @@
 #include "chrome/browser/android/contextualsearch/resolved_search_term.h"
 #include "content/public/browser/android/content_view_core.h"
 #include "net/url_request/url_fetcher_delegate.h"
+
+namespace content {
+class WebContents;
+}
 
 namespace net {
 class URLRequestContextGetter;
@@ -65,16 +70,15 @@ class ContextualSearchDelegate
   // request. The "search term" is the best query to issue for a section of text
   // in the context of a web page. When the response is available the callback
   // specified in the constructor is run.
-  void StartSearchTermResolutionRequest(
-      const std::string& selection,
-      bool use_resolved_search_term,
-      content::ContentViewCore* content_view_core,
-      bool may_send_base_page_url);
+  void StartSearchTermResolutionRequest(const std::string& selection,
+                                        const std::string& home_country,
+                                        content::WebContents* web_contents,
+                                        bool may_send_base_page_url);
 
   // Gathers surrounding text and saves it locally for a future query.
   void GatherAndSaveSurroundingText(const std::string& selection,
-                                    bool use_resolved_search_term,
-                                    content::ContentViewCore* content_view_core,
+                                    const std::string& home_country,
+                                    content::WebContents* web_contents,
                                     bool may_send_base_page_url);
 
   // Continues making a Search Term Resolution request, once the surrounding
@@ -117,8 +121,8 @@ class ContextualSearchDelegate
   // Builds the ContextualSearchContext in the current context from
   // the given parameters.
   void BuildContext(const std::string& selection,
-                    bool use_resolved_search_term,
-                    content::ContentViewCore* content_view_core,
+                    const std::string& home_country,
+                    content::WebContents* web_contents,
                     bool may_send_base_page_url);
 
   // Builds and returns the search term resolution request URL.
@@ -134,12 +138,11 @@ class ContextualSearchDelegate
 
   // Will gather the surrounding text from the |content_view_core| and call the
   // |callback|.
-  void GatherSurroundingTextWithCallback(
-      const std::string& selection,
-      bool use_resolved_search_term,
-      content::ContentViewCore* content_view_core,
-      bool may_send_base_page_url,
-      HandleSurroundingsCallback callback);
+  void GatherSurroundingTextWithCallback(const std::string& selection,
+                                         const std::string& home_country,
+                                         content::WebContents* web_contents,
+                                         bool may_send_base_page_url,
+                                         HandleSurroundingsCallback callback);
 
   // Callback for GatherSurroundingTextWithCallback(). Will start the search
   // term resolution request.
@@ -180,14 +183,20 @@ class ContextualSearchDelegate
       const std::string& json_string);
 
   // Decodes the given json response string and extracts parameters.
-  void DecodeSearchTermFromJsonResponse(const std::string& response,
-                                        std::string* search_term,
-                                        std::string* display_text,
-                                        std::string* alternate_term,
-                                        std::string* prevent_preload,
-                                        int* mention_start,
-                                        int* mention_end,
-                                        std::string* context_language);
+  void DecodeSearchTermFromJsonResponse(
+      const std::string& response,
+      std::string* search_term,
+      std::string* display_text,
+      std::string* alternate_term,
+      std::string* mid,
+      std::string* prevent_preload,
+      int* mention_start,
+      int* mention_end,
+      std::string* context_language,
+      std::string* thumbnail_url,
+      std::string* caption,
+      std::string* quick_action_uri,
+      QuickActionCategory* quick_action_category);
 
   // Extracts the start and end location from a mentions list, and sets the
   // integers referenced by |startResult| and |endResult|.

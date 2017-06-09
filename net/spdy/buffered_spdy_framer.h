@@ -13,7 +13,6 @@
 
 #include "base/macros.h"
 #include "net/base/net_export.h"
-#include "net/socket/next_proto.h"
 #include "net/spdy/header_coalescer.h"
 #include "net/spdy/spdy_alt_svc_wire_format.h"
 #include "net/spdy/spdy_framer.h"
@@ -22,34 +21,16 @@
 
 namespace net {
 
-// Returns the SPDY major version corresponding to the given NextProto
-// value, which must represent a SPDY-like protocol.
-NET_EXPORT_PRIVATE SpdyMajorVersion NextProtoToSpdyMajorVersion(
-    NextProto next_proto);
-
 class NET_EXPORT_PRIVATE BufferedSpdyFramerVisitorInterface {
  public:
   BufferedSpdyFramerVisitorInterface() {}
 
   // Called if an error is detected in the SpdySerializedFrame protocol.
-  virtual void OnError(SpdyFramer::SpdyError error_code) = 0;
+  virtual void OnError(SpdyFramer::SpdyFramerError spdy_framer_error) = 0;
 
-  // Called if an error is detected in a SPDY stream.
+  // Called if an error is detected in a HTTP2 stream.
   virtual void OnStreamError(SpdyStreamId stream_id,
                              const std::string& description) = 0;
-
-  // Called after all the header data for SYN_STREAM control frame is received.
-  virtual void OnSynStream(SpdyStreamId stream_id,
-                           SpdyStreamId associated_stream_id,
-                           SpdyPriority priority,
-                           bool fin,
-                           bool unidirectional,
-                           const SpdyHeaderBlock& headers) = 0;
-
-  // Called after all the header data for SYN_REPLY control frame is received.
-  virtual void OnSynReply(SpdyStreamId stream_id,
-                          bool fin,
-                          const SpdyHeaderBlock& headers) = 0;
 
   // Called after all the header data for HEADERS control frame is received.
   virtual void OnHeaders(SpdyStreamId stream_id,
@@ -58,7 +39,7 @@ class NET_EXPORT_PRIVATE BufferedSpdyFramerVisitorInterface {
                          SpdyStreamId parent_stream_id,
                          bool exclusive,
                          bool fin,
-                         const SpdyHeaderBlock& headers) = 0;
+                         SpdyHeaderBlock headers) = 0;
 
   // Called when a data frame header is received.
   virtual void OnDataFrameHeader(SpdyStreamId stream_id,
@@ -68,8 +49,7 @@ class NET_EXPORT_PRIVATE BufferedSpdyFramerVisitorInterface {
   // Called when data is received.
   // |stream_id| The stream receiving data.
   // |data| A buffer containing the data received.
-  // |len| The length of the data buffer (at most 2^24 - 1 for SPDY/3,
-  // but 2^16 - 1 - 8 for SPDY/4).
+  // |len| The length of the data buffer (at most 2^16 - 1 - 8).
   virtual void OnStreamFrameData(SpdyStreamId stream_id,
                                  const char* data,
                                  size_t len) = 0;
@@ -84,12 +64,11 @@ class NET_EXPORT_PRIVATE BufferedSpdyFramerVisitorInterface {
   virtual void OnStreamPadding(SpdyStreamId stream_id, size_t len) = 0;
 
   // Called when a SETTINGS frame is received.
-  // |clear_persisted| True if the respective flag is set on the SETTINGS frame.
-  virtual void OnSettings(bool clear_persisted) = 0;
+  virtual void OnSettings() = 0;
 
   // Called when an individual setting within a SETTINGS frame has been parsed
   // and validated.
-  virtual void OnSetting(SpdySettingsIds id, uint8_t flags, uint32_t value) = 0;
+  virtual void OnSetting(SpdySettingsIds id, uint32_t value) = 0;
 
   // Called when a SETTINGS frame is received with the ACK flag set.
   virtual void OnSettingsAck() {}
@@ -102,11 +81,11 @@ class NET_EXPORT_PRIVATE BufferedSpdyFramerVisitorInterface {
 
   // Called when a RST_STREAM frame has been parsed.
   virtual void OnRstStream(SpdyStreamId stream_id,
-                           SpdyRstStreamStatus status) = 0;
+                           SpdyErrorCode error_code) = 0;
 
   // Called when a GOAWAY frame has been parsed.
   virtual void OnGoAway(SpdyStreamId last_accepted_stream_id,
-                        SpdyGoAwayStatus status,
+                        SpdyErrorCode error_code,
                         base::StringPiece debug_data) = 0;
 
   // Called when a WINDOW_UPDATE frame has been parsed.
@@ -116,7 +95,7 @@ class NET_EXPORT_PRIVATE BufferedSpdyFramerVisitorInterface {
   // Called when a PUSH_PROMISE frame has been parsed.
   virtual void OnPushPromise(SpdyStreamId stream_id,
                              SpdyStreamId promised_stream_id,
-                             const SpdyHeaderBlock& headers) = 0;
+                             SpdyHeaderBlock headers) = 0;
 
   // Called when an ALTSVC frame has been parsed.
   virtual void OnAltSvc(
@@ -128,7 +107,7 @@ class NET_EXPORT_PRIVATE BufferedSpdyFramerVisitorInterface {
   // Return true if this appears to be a valid extension frame, false otherwise.
   // We distinguish between extension frames and nonsense by checking
   // whether the stream id is valid.
-  virtual bool OnUnknownFrame(SpdyStreamId stream_id, int frame_type) = 0;
+  virtual bool OnUnknownFrame(SpdyStreamId stream_id, uint8_t frame_type) = 0;
 
  protected:
   virtual ~BufferedSpdyFramerVisitorInterface() {}
@@ -140,7 +119,7 @@ class NET_EXPORT_PRIVATE BufferedSpdyFramerVisitorInterface {
 class NET_EXPORT_PRIVATE BufferedSpdyFramer
     : public SpdyFramerVisitorInterface {
  public:
-  explicit BufferedSpdyFramer(SpdyMajorVersion version);
+  BufferedSpdyFramer();
   ~BufferedSpdyFramer() override;
 
   // Sets callbacks to be called from the buffered spdy framer.  A visitor must
@@ -156,12 +135,6 @@ class NET_EXPORT_PRIVATE BufferedSpdyFramer
 
   // SpdyFramerVisitorInterface
   void OnError(SpdyFramer* spdy_framer) override;
-  void OnSynStream(SpdyStreamId stream_id,
-                   SpdyStreamId associated_stream_id,
-                   SpdyPriority priority,
-                   bool fin,
-                   bool unidirectional) override;
-  void OnSynReply(SpdyStreamId stream_id, bool fin) override;
   void OnHeaders(SpdyStreamId stream_id,
                  bool has_priority,
                  int weight,
@@ -169,9 +142,6 @@ class NET_EXPORT_PRIVATE BufferedSpdyFramer
                  bool exclusive,
                  bool fin,
                  bool end) override;
-  bool OnControlFrameHeaderData(SpdyStreamId stream_id,
-                                const char* header_data,
-                                size_t len) override;
   void OnStreamFrameData(SpdyStreamId stream_id,
                          const char* data,
                          size_t len) override;
@@ -181,13 +151,13 @@ class NET_EXPORT_PRIVATE BufferedSpdyFramer
       SpdyStreamId stream_id) override;
   void OnHeaderFrameEnd(SpdyStreamId stream_id, bool end_headers) override;
   void OnSettings(bool clear_persisted) override;
-  void OnSetting(SpdySettingsIds id, uint8_t flags, uint32_t value) override;
+  void OnSetting(SpdySettingsIds id, uint32_t value) override;
   void OnSettingsAck() override;
   void OnSettingsEnd() override;
   void OnPing(SpdyPingId unique_id, bool is_ack) override;
-  void OnRstStream(SpdyStreamId stream_id, SpdyRstStreamStatus status) override;
+  void OnRstStream(SpdyStreamId stream_id, SpdyErrorCode error_code) override;
   void OnGoAway(SpdyStreamId last_accepted_stream_id,
-                SpdyGoAwayStatus status) override;
+                SpdyErrorCode error_code) override;
   bool OnGoAwayFrameData(const char* goaway_data, size_t len) override;
   void OnWindowUpdate(SpdyStreamId stream_id, int delta_window_size) override;
   void OnPushPromise(SpdyStreamId stream_id,
@@ -201,44 +171,35 @@ class NET_EXPORT_PRIVATE BufferedSpdyFramer
                          size_t length,
                          bool fin) override;
   void OnContinuation(SpdyStreamId stream_id, bool end) override;
-  bool OnUnknownFrame(SpdyStreamId stream_id, int frame_type) override;
+  bool OnUnknownFrame(SpdyStreamId stream_id, uint8_t frame_type) override;
 
   // SpdyFramer methods.
   size_t ProcessInput(const char* data, size_t len);
-  SpdyMajorVersion protocol_version();
+  void UpdateHeaderDecoderTableSize(uint32_t value);
   void Reset();
-  SpdyFramer::SpdyError error_code() const;
+  SpdyFramer::SpdyFramerError spdy_framer_error() const;
   SpdyFramer::SpdyState state() const;
   bool MessageFullyRead();
   bool HasError();
-  SpdySerializedFrame* CreateSynStream(SpdyStreamId stream_id,
-                                       SpdyStreamId associated_stream_id,
-                                       SpdyPriority priority,
-                                       SpdyControlFlags flags,
-                                       SpdyHeaderBlock headers);
-  SpdySerializedFrame* CreateSynReply(SpdyStreamId stream_id,
-                                      SpdyControlFlags flags,
-                                      SpdyHeaderBlock headers);
-  SpdySerializedFrame* CreateRstStream(SpdyStreamId stream_id,
-                                       SpdyRstStreamStatus status) const;
-  SpdySerializedFrame* CreateSettings(const SettingsMap& values) const;
-  SpdySerializedFrame* CreatePingFrame(SpdyPingId unique_id, bool is_ack) const;
-  SpdySerializedFrame* CreateGoAway(SpdyStreamId last_accepted_stream_id,
-                                    SpdyGoAwayStatus status,
-                                    base::StringPiece debug_data) const;
-  SpdySerializedFrame* CreateHeaders(SpdyStreamId stream_id,
-                                     SpdyControlFlags flags,
-                                     int weight,
-                                     SpdyHeaderBlock headers);
-  SpdySerializedFrame* CreateWindowUpdate(SpdyStreamId stream_id,
-                                          uint32_t delta_window_size) const;
-  SpdySerializedFrame* CreateDataFrame(SpdyStreamId stream_id,
-                                       const char* data,
-                                       uint32_t len,
-                                       SpdyDataFlags flags);
-  SpdySerializedFrame* CreatePushPromise(SpdyStreamId stream_id,
-                                         SpdyStreamId promised_stream_id,
-                                         SpdyHeaderBlock headers);
+  std::unique_ptr<SpdySerializedFrame> CreateRstStream(
+      SpdyStreamId stream_id,
+      SpdyErrorCode error_code) const;
+  std::unique_ptr<SpdySerializedFrame> CreateSettings(
+      const SettingsMap& values) const;
+  std::unique_ptr<SpdySerializedFrame> CreatePingFrame(SpdyPingId unique_id,
+                                                       bool is_ack) const;
+  std::unique_ptr<SpdySerializedFrame> CreateWindowUpdate(
+      SpdyStreamId stream_id,
+      uint32_t delta_window_size) const;
+  std::unique_ptr<SpdySerializedFrame> CreateDataFrame(SpdyStreamId stream_id,
+                                                       const char* data,
+                                                       uint32_t len,
+                                                       SpdyDataFlags flags);
+  std::unique_ptr<SpdySerializedFrame> CreatePriority(
+      SpdyStreamId stream_id,
+      SpdyStreamId dependency_id,
+      int weight,
+      bool exclusive) const;
 
   // Serialize a frame of unknown type.
   SpdySerializedFrame SerializeFrame(const SpdyFrameIR& frame) {
@@ -251,12 +212,8 @@ class NET_EXPORT_PRIVATE BufferedSpdyFramer
     return spdy_framer_.GetDataFrameMinimumSize();
   }
 
-  size_t GetControlFrameHeaderSize() const {
-    return spdy_framer_.GetControlFrameHeaderSize();
-  }
-
-  size_t GetSynStreamMinimumSize() const {
-    return spdy_framer_.GetSynStreamMinimumSize();
+  size_t GetFrameHeaderSize() const {
+    return spdy_framer_.GetFrameHeaderSize();
   }
 
   size_t GetFrameMinimumSize() const {
@@ -273,16 +230,13 @@ class NET_EXPORT_PRIVATE BufferedSpdyFramer
 
   int frames_received() const { return frames_received_; }
 
- private:
-  void InitHeaderStreaming(SpdyStreamId stream_id);
+  // Returns the estimate of dynamically allocated memory in bytes.
+  size_t EstimateMemoryUsage() const;
 
+ private:
   SpdyFramer spdy_framer_;
   BufferedSpdyFramerVisitorInterface* visitor_;
 
-  // Header block streaming state:
-  std::string header_buffer_;
-  bool header_buffer_valid_;
-  SpdyStreamId header_stream_id_;
   int frames_received_;
 
   // Collection of fields from control frames that we need to
@@ -305,8 +259,11 @@ class NET_EXPORT_PRIVATE BufferedSpdyFramer
   // Collection of fields of a GOAWAY frame that this class needs to buffer.
   struct GoAwayFields {
     SpdyStreamId last_accepted_stream_id;
-    SpdyGoAwayStatus status;
+    SpdyErrorCode error_code;
     std::string debug_data;
+
+    // Returns the estimate of dynamically allocated memory in bytes.
+    size_t EstimateMemoryUsage() const;
   };
   std::unique_ptr<GoAwayFields> goaway_fields_;
 

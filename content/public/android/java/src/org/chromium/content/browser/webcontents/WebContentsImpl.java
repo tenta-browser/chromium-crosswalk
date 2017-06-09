@@ -4,26 +4,33 @@
 
 package org.chromium.content.browser.webcontents;
 
+import android.annotation.SuppressLint;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Message;
 import android.os.Parcel;
 import android.os.ParcelUuid;
 import android.os.Parcelable;
 
-import org.chromium.base.ObserverList;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.content.browser.AppWebMessagePort;
+import org.chromium.content.browser.MediaSessionImpl;
 import org.chromium.content_public.browser.AccessibilitySnapshotCallback;
 import org.chromium.content_public.browser.AccessibilitySnapshotNode;
 import org.chromium.content_public.browser.ContentBitmapCallback;
 import org.chromium.content_public.browser.ImageDownloadCallback;
 import org.chromium.content_public.browser.JavaScriptCallback;
+import org.chromium.content_public.browser.MessagePort;
 import org.chromium.content_public.browser.NavigationController;
+import org.chromium.content_public.browser.SmartClipCallback;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.browser.WebContentsObserver;
+import org.chromium.ui.OverscrollRefreshHandler;
 import org.chromium.ui.accessibility.AXTextStyle;
 
 import java.util.ArrayList;
@@ -59,6 +66,8 @@ import java.util.UUID;
      * A {@link android.os.Parcelable.Creator} instance that is used to build
      * {@link WebContentsImpl} objects from a {@link Parcel}.
      */
+    // TODO(crbug.com/635567): Fix this properly.
+    @SuppressLint("ParcelClassLoader")
     public static final Parcelable.Creator<WebContents> CREATOR =
             new Parcelable.Creator<WebContents>() {
                 @Override
@@ -88,7 +97,11 @@ import java.util.UUID;
     // Lazily created proxy observer for handling all Java-based WebContentsObservers.
     private WebContentsObserverProxy mObserverProxy;
 
-    private boolean mContextMenuOpened;
+    // The media session for this WebContents. It is constructed by the native MediaSession and has
+    // the same life time as native MediaSession.
+    private MediaSessionImpl mMediaSession;
+
+    private SmartClipCallback mSmartClipCallback;
 
     private WebContentsImpl(
             long nativeWebContentsAndroid, NavigationController navigationController) {
@@ -203,18 +216,12 @@ import java.util.UUID;
     }
 
     @Override
-    public void unselect() {
-        // Unselect may get triggered when certain selection-related widgets
+    public void collapseSelection() {
+        // collapseSelection may get triggered when certain selection-related widgets
         // are destroyed. As the timing for such destruction is unpredictable,
         // safely guard against this case.
         if (isDestroyed()) return;
-        nativeUnselect(mNativeWebContentsAndroid);
-    }
-
-    @Override
-    public void insertCSS(String css) {
-        if (isDestroyed()) return;
-        nativeInsertCSS(mNativeWebContentsAndroid, css);
+        nativeCollapseSelection(mNativeWebContentsAndroid);
     }
 
     @Override
@@ -269,18 +276,12 @@ import java.util.UUID;
     }
 
     @Override
-    public void updateTopControlsState(boolean enableHiding, boolean enableShowing,
-            boolean animate) {
-        nativeUpdateTopControlsState(mNativeWebContentsAndroid, enableHiding,
-                enableShowing, animate);
+    public void updateBrowserControlsState(
+            boolean enableHiding, boolean enableShowing, boolean animate) {
+        nativeUpdateBrowserControlsState(
+                mNativeWebContentsAndroid, enableHiding, enableShowing, animate);
     }
 
-    @Override
-    public void showImeIfNeeded() {
-        nativeShowImeIfNeeded(mNativeWebContentsAndroid);
-    }
-
-    @Override
     public void scrollFocusedEditableNodeIntoView() {
         // The native side keeps track of whether the zoom and scroll actually occurred. It is
         // more efficient to do it this way and sometimes fire an unnecessary message rather
@@ -339,8 +340,26 @@ import java.util.UUID;
     }
 
     @Override
-    public void sendMessageToFrame(String frameName, String message, String targetOrigin) {
-        nativeSendMessageToFrame(mNativeWebContentsAndroid, frameName, message, targetOrigin);
+    public void postMessageToFrame(String frameName, String message,
+            String sourceOrigin, String targetOrigin, MessagePort[] ports) {
+        if (ports != null) {
+            for (MessagePort port : ports) {
+                if (port.isClosed() || port.isTransferred()) {
+                    throw new IllegalStateException("Port is already closed or transferred");
+                }
+                if (port.isStarted()) {
+                    throw new IllegalStateException("Port is already started");
+                }
+            }
+        }
+        nativePostMessageToFrame(
+                mNativeWebContentsAndroid, frameName, message, sourceOrigin, targetOrigin, ports);
+    }
+
+    @Override
+    public AppWebMessagePort[] createMessageChannel()
+            throws IllegalStateException {
+        return AppWebMessagePort.createPair();
     }
 
     @Override
@@ -360,28 +379,51 @@ import java.util.UUID;
     }
 
     @Override
+    public void requestSmartClipExtract(int x, int y, int width, int height) {
+        if (mSmartClipCallback == null) return;
+        nativeRequestSmartClipExtract(
+                mNativeWebContentsAndroid, mSmartClipCallback, x, y, width, height);
+    }
+
+    @Override
+    public void setSmartClipResultHandler(final Handler smartClipHandler) {
+        if (smartClipHandler == null) {
+            mSmartClipCallback = null;
+            return;
+        }
+        mSmartClipCallback = new SmartClipCallback() {
+            @Override
+            public void onSmartClipDataExtracted(String text, String html) {
+                Bundle bundle = new Bundle();
+                bundle.putString("url", getVisibleUrl());
+                bundle.putString("title", getTitle());
+                bundle.putString("text", text);
+                bundle.putString("html", html);
+
+                Message msg = Message.obtain(smartClipHandler, 0);
+                msg.setData(bundle);
+                msg.sendToTarget();
+            }
+        };
+    }
+
+    @CalledByNative
+    private static void onSmartClipDataExtracted(
+            String text, String html, SmartClipCallback callback) {
+        callback.onSmartClipDataExtracted(text, html);
+    }
+
+    @Override
     public void requestAccessibilitySnapshot(AccessibilitySnapshotCallback callback) {
         nativeRequestAccessibilitySnapshot(mNativeWebContentsAndroid, callback);
     }
 
     @Override
-    public void resumeMediaSession() {
-        nativeResumeMediaSession(mNativeWebContentsAndroid);
-    }
-
-    @Override
-    public void suspendMediaSession() {
-        nativeSuspendMediaSession(mNativeWebContentsAndroid);
-    }
-
-    @Override
-    public void stopMediaSession() {
-        nativeStopMediaSession(mNativeWebContentsAndroid);
-    }
-
-    @Override
-    public String getEncoding() {
-        return nativeGetEncoding(mNativeWebContentsAndroid);
+    @VisibleForTesting
+    public void simulateRendererKilledForTesting(boolean wasOomProtected) {
+        if (mObserverProxy != null) {
+            mObserverProxy.renderProcessGone(wasOomProtected);
+        }
     }
 
     // root node can be null if parsing fails.
@@ -434,35 +476,14 @@ import java.util.UUID;
         mObserverProxy.removeObserver(observer);
     }
 
-    @VisibleForTesting
     @Override
-    public ObserverList.RewindableIterator<WebContentsObserver> getObserversForTesting() {
-        return mObserverProxy.getObserversForTesting();
+    public void setOverscrollRefreshHandler(OverscrollRefreshHandler handler) {
+        nativeSetOverscrollRefreshHandler(mNativeWebContentsAndroid, handler);
     }
 
     @Override
-    public void getContentBitmapAsync(Bitmap.Config config, float scale, Rect srcRect,
-            ContentBitmapCallback callback) {
-        nativeGetContentBitmap(mNativeWebContentsAndroid, callback, config, scale,
-                srcRect.left, srcRect.top, srcRect.width(), srcRect.height());
-    }
-
-    @Override
-    public void onContextMenuOpened() {
-        mContextMenuOpened = true;
-    }
-
-    @Override
-    public void onContextMenuClosed() {
-        if (!mContextMenuOpened) {
-            return;
-        } else {
-            mContextMenuOpened = false;
-        }
-
-        if (mNativeWebContentsAndroid != 0) {
-            nativeOnContextMenuClosed(mNativeWebContentsAndroid);
-        }
+    public void getContentBitmapAsync(int width, int height, ContentBitmapCallback callback) {
+        nativeGetContentBitmap(mNativeWebContentsAndroid, width, height, callback);
     }
 
     @CalledByNative
@@ -487,6 +508,26 @@ import java.util.UUID;
     private void onDownloadImageFinished(ImageDownloadCallback callback, int id, int httpStatusCode,
             String imageUrl, List<Bitmap> bitmaps, List<Rect> sizes) {
         callback.onFinishDownloadImage(id, httpStatusCode, imageUrl, bitmaps, sizes);
+    }
+
+    @Override
+    public void dismissTextHandles() {
+        nativeDismissTextHandles(mNativeWebContentsAndroid);
+    }
+
+    @Override
+    public void setHasPersistentVideo(boolean value) {
+        nativeSetHasPersistentVideo(mNativeWebContentsAndroid, value);
+    }
+
+    @Override
+    public boolean hasActiveEffectivelyFullscreenVideo() {
+        return nativeHasActiveEffectivelyFullscreenVideo(mNativeWebContentsAndroid);
+    }
+
+    @CalledByNative
+    private final void setMediaSession(MediaSessionImpl mediaSession) {
+        mMediaSession = mediaSession;
     }
 
     @CalledByNative
@@ -524,8 +565,7 @@ import java.util.UUID;
     private native void nativePaste(long nativeWebContentsAndroid);
     private native void nativeReplace(long nativeWebContentsAndroid, String word);
     private native void nativeSelectAll(long nativeWebContentsAndroid);
-    private native void nativeUnselect(long nativeWebContentsAndroid);
-    private native void nativeInsertCSS(long nativeWebContentsAndroid, String css);
+    private native void nativeCollapseSelection(long nativeWebContentsAndroid);
     private native void nativeOnHide(long nativeWebContentsAndroid);
     private native void nativeOnShow(long nativeWebContentsAndroid);
     private native void nativeSuspendAllMediaPlayers(long nativeWebContentsAndroid);
@@ -537,9 +577,8 @@ import java.util.UUID;
     private native boolean nativeFocusLocationBarByDefault(long nativeWebContentsAndroid);
     private native boolean nativeIsRenderWidgetHostViewReady(long nativeWebContentsAndroid);
     private native void nativeExitFullscreen(long nativeWebContentsAndroid);
-    private native void nativeUpdateTopControlsState(long nativeWebContentsAndroid,
+    private native void nativeUpdateBrowserControlsState(long nativeWebContentsAndroid,
             boolean enableHiding, boolean enableShowing, boolean animate);
-    private native void nativeShowImeIfNeeded(long nativeWebContentsAndroid);
     private native void nativeScrollFocusedEditableNodeIntoView(long nativeWebContentsAndroid);
     private native void nativeSelectWordAroundCaret(long nativeWebContentsAndroid);
     private native void nativeAdjustSelectionByCharacterOffset(
@@ -554,23 +593,24 @@ import java.util.UUID;
             String script, JavaScriptCallback callback);
     private native void nativeAddMessageToDevToolsConsole(
             long nativeWebContentsAndroid, int level, String message);
-    private native void nativeSendMessageToFrame(long nativeWebContentsAndroid,
-            String frameName, String message, String targetOrigin);
+    private native void nativePostMessageToFrame(long nativeWebContentsAndroid, String frameName,
+            String message, String sourceOrigin, String targetOrigin, MessagePort[] ports);
     private native boolean nativeHasAccessedInitialDocument(
             long nativeWebContentsAndroid);
     private native int nativeGetThemeColor(long nativeWebContentsAndroid);
+    private native void nativeRequestSmartClipExtract(long nativeWebContentsAndroid,
+            SmartClipCallback callback, int x, int y, int width, int height);
     private native void nativeRequestAccessibilitySnapshot(
             long nativeWebContentsAndroid, AccessibilitySnapshotCallback callback);
-    private native void nativeResumeMediaSession(long nativeWebContentsAndroid);
-    private native void nativeSuspendMediaSession(long nativeWebContentsAndroid);
-    private native void nativeStopMediaSession(long nativeWebContentsAndroid);
-    private native String nativeGetEncoding(long nativeWebContentsAndroid);
-    private native void nativeGetContentBitmap(long nativeWebContentsAndroid,
-            ContentBitmapCallback callback, Bitmap.Config config, float scale,
-            float x, float y, float width, float height);
-    private native void nativeOnContextMenuClosed(long nativeWebContentsAndroid);
+    private native void nativeSetOverscrollRefreshHandler(
+            long nativeWebContentsAndroid, OverscrollRefreshHandler nativeOverscrollRefreshHandler);
+    private native void nativeGetContentBitmap(
+            long nativeWebContentsAndroid, int width, int height, ContentBitmapCallback callback);
     private native void nativeReloadLoFiImages(long nativeWebContentsAndroid);
     private native int nativeDownloadImage(long nativeWebContentsAndroid,
             String url, boolean isFavicon, int maxBitmapSize,
             boolean bypassCache, ImageDownloadCallback callback);
+    private native void nativeDismissTextHandles(long nativeWebContentsAndroid);
+    private native void nativeSetHasPersistentVideo(long nativeWebContentsAndroid, boolean value);
+    private native boolean nativeHasActiveEffectivelyFullscreenVideo(long nativeWebContentsAndroid);
 }

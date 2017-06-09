@@ -7,10 +7,8 @@
 #include <memory>
 #include <set>
 
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
-#include "base/metrics/histogram.h"
-#include "base/strings/string16.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -20,11 +18,9 @@
 #include "chrome/browser/search/search.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
-#include "chrome/browser/ui/app_list/app_list_util.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/location_bar/location_bar.h"
 #include "chrome/browser/ui/omnibox/clipboard_utils.h"
-#include "chrome/browser/ui/search/instant_search_prerenderer.h"
 #include "chrome/browser/ui/search/instant_tab.h"
 #include "chrome/browser/ui/search/search_ipc_router_policy_impl.h"
 #include "chrome/browser/ui/search/search_tab_helper_delegate.h"
@@ -32,7 +28,7 @@
 #include "chrome/browser/ui/webui/ntp/ntp_user_data_logger.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/browser_sync/browser/profile_sync_service.h"
+#include "components/browser_sync/profile_sync_service.h"
 #include "components/google/core/browser/google_util.h"
 #include "components/omnibox/browser/omnibox_edit_model.h"
 #include "components/omnibox/browser/omnibox_popup_model.h"
@@ -40,16 +36,16 @@
 #include "components/search/search.h"
 #include "components/signin/core/browser/signin_manager.h"
 #include "components/strings/grit/components_strings.h"
-#include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/navigation_entry.h"
-#include "content/public/browser/navigation_type.h"
+#include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/user_metrics.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/common/referrer.h"
 #include "google_apis/gaia/gaia_auth_util.h"
 #include "net/base/net_errors.h"
@@ -65,7 +61,7 @@ bool IsCacheableNTP(const content::WebContents* contents) {
   const content::NavigationEntry* entry =
       contents->GetController().GetLastCommittedEntry();
   return search::NavEntryIsInstantNTP(contents, entry) &&
-         entry->GetURL() != GURL(chrome::kChromeSearchLocalNtpUrl);
+         entry->GetURL() != chrome::kChromeSearchLocalNtpUrl;
 }
 
 bool IsNTP(const content::WebContents* contents) {
@@ -73,14 +69,10 @@ bool IsNTP(const content::WebContents* contents) {
   // whereas we want the visible entry.
   const content::NavigationEntry* entry =
       contents->GetController().GetVisibleEntry();
-  if (entry && entry->GetVirtualURL() == GURL(chrome::kChromeUINewTabURL))
+  if (entry && entry->GetVirtualURL() == chrome::kChromeUINewTabURL)
     return true;
 
   return search::IsInstantNTP(contents);
-}
-
-bool IsSearchResults(const content::WebContents* contents) {
-  return !search::GetSearchTerms(contents).empty();
 }
 
 bool IsLocal(const content::WebContents* contents) {
@@ -88,7 +80,7 @@ bool IsLocal(const content::WebContents* contents) {
     return false;
   const content::NavigationEntry* entry =
       contents->GetController().GetVisibleEntry();
-  return entry && entry->GetURL() == GURL(chrome::kChromeSearchLocalNtpUrl);
+  return entry && entry->GetURL() == chrome::kChromeSearchLocalNtpUrl;
 }
 
 // Returns true if |contents| are rendered inside an Instant process.
@@ -133,14 +125,10 @@ void RecordNewTabLoadTime(content::WebContents* contents) {
 // disable a feature that should not be shown to users who prefer not to sync
 // their history.
 bool IsHistorySyncEnabled(Profile* profile) {
-  ProfileSyncService* sync =
+  browser_sync::ProfileSyncService* sync =
       ProfileSyncServiceFactory::GetInstance()->GetForProfile(profile);
   return sync &&
       sync->GetPreferredDataTypes().Has(syncer::HISTORY_DELETE_DIRECTIVES);
-}
-
-bool OmniboxHasFocus(OmniboxView* omnibox) {
-  return omnibox && omnibox->model()->has_focus();
 }
 
 }  // namespace
@@ -154,8 +142,7 @@ SearchTabHelper::SearchTabHelper(content::WebContents* web_contents)
           this,
           base::WrapUnique(new SearchIPCRouterPolicyImpl(web_contents))),
       instant_service_(NULL),
-      delegate_(NULL),
-      omnibox_has_focus_fn_(&OmniboxHasFocus) {
+      delegate_(NULL) {
   if (!is_search_enabled_)
     return;
 
@@ -171,15 +158,11 @@ SearchTabHelper::~SearchTabHelper() {
     instant_service_->RemoveObserver(this);
 }
 
-void SearchTabHelper::InitForPreloadedNTP() {
-  UpdateMode(true, true);
-}
-
 void SearchTabHelper::OmniboxInputStateChanged() {
   if (!is_search_enabled_)
     return;
 
-  UpdateMode(false, false);
+  UpdateMode(false);
 }
 
 void SearchTabHelper::OmniboxFocusChanged(OmniboxFocusState state,
@@ -194,54 +177,15 @@ void SearchTabHelper::OmniboxFocusChanged(OmniboxFocusState state,
   // Don't send oninputstart/oninputend updates in response to focus changes
   // if there's a navigation in progress. This prevents Chrome from sending
   // a spurious oninputend when the user accepts a match in the omnibox.
-  if (web_contents_->GetController().GetPendingEntry() == NULL) {
+  if (web_contents_->GetController().GetPendingEntry() == NULL)
     ipc_router_.SetInputInProgress(IsInputInProgress());
-
-    InstantSearchPrerenderer* prerenderer =
-        InstantSearchPrerenderer::GetForProfile(profile());
-    if (!prerenderer || !search::ShouldPrerenderInstantUrlOnOmniboxFocus())
-      return;
-
-    if (state == OMNIBOX_FOCUS_NONE) {
-      prerenderer->Cancel();
-      return;
-    }
-
-    if (!IsSearchResultsPage()) {
-      prerenderer->Init(
-          web_contents_->GetController().GetDefaultSessionStorageNamespace(),
-          web_contents_->GetContainerBounds().size());
-    }
-  }
 }
 
 void SearchTabHelper::NavigationEntryUpdated() {
   if (!is_search_enabled_)
     return;
 
-  UpdateMode(false, false);
-}
-
-void SearchTabHelper::InstantSupportChanged(bool instant_support) {
-  if (!is_search_enabled_)
-    return;
-
-  InstantSupportState new_state = instant_support ? INSTANT_SUPPORT_YES :
-      INSTANT_SUPPORT_NO;
-
-  model_.SetInstantSupportState(new_state);
-
-  content::NavigationEntry* entry =
-      web_contents_->GetController().GetLastCommittedEntry();
-  if (entry) {
-    search::SetInstantSupportStateInNavigationEntry(new_state, entry);
-    if (delegate_ && !instant_support)
-      delegate_->OnWebContentsInstantSupportDisabled(web_contents_);
-  }
-}
-
-bool SearchTabHelper::SupportsInstant() const {
-  return model_.instant_support() == INSTANT_SUPPORT_YES;
+  UpdateMode(false);
 }
 
 void SearchTabHelper::SetSuggestionToPrefetch(
@@ -257,16 +201,15 @@ void SearchTabHelper::Submit(const base::string16& text,
 void SearchTabHelper::OnTabActivated() {
   ipc_router_.OnTabActivated();
 
-  OmniboxView* omnibox_view = GetOmniboxView();
-  if (search::ShouldPrerenderInstantUrlOnOmniboxFocus() &&
-      omnibox_has_focus_fn_(omnibox_view)) {
-    InstantSearchPrerenderer* prerenderer =
-        InstantSearchPrerenderer::GetForProfile(profile());
-    if (prerenderer && !IsSearchResultsPage()) {
-      prerenderer->Init(
-          web_contents_->GetController().GetDefaultSessionStorageNamespace(),
-          web_contents_->GetContainerBounds().size());
-    }
+  if (search::IsInstantNTP(web_contents_)) {
+    if (instant_service_)
+      instant_service_->OnNewTabPageOpened();
+
+    // Force creation of NTPUserDataLogger, if we loaded an NTP. The
+    // NTPUserDataLogger tries to detect whether the NTP is being created at
+    // startup or from the user opening a new tab, and if we wait until later,
+    // it won't correctly detect this case.
+    NTPUserDataLogger::GetOrCreateFromWebContents(web_contents_);
   }
 }
 
@@ -274,31 +217,55 @@ void SearchTabHelper::OnTabDeactivated() {
   ipc_router_.OnTabDeactivated();
 }
 
-bool SearchTabHelper::IsSearchResultsPage() {
-  return model_.mode().is_origin_search();
-}
-
-void SearchTabHelper::RenderViewCreated(
-    content::RenderViewHost* render_view_host) {
-  ipc_router_.SetPromoInformation(IsAppLauncherEnabled());
-}
-
 void SearchTabHelper::DidStartNavigationToPendingEntry(
     const GURL& url,
-    content::NavigationController::ReloadType /* reload_type */) {
+    content::ReloadType reload_type) {
+  // TODO(jam): delete this method once PlzNavigate is turned on by default.
+  // When PlzNavigate is enabled, DidStartNavigation is called early enough such
+  // that there's no flickering. However when PlzNavigate is disabled,
+  // DidStartNavigation is called too late and "Untitled" shows up momentarily.
+  // The fix is to override this deprecated callback for the non-PlzNavigate
+  // case.
+  if (content::IsBrowserSideNavigationEnabled())
+    return;
+
   if (search::IsNTPURL(url, profile())) {
     // Set the title on any pending entry corresponding to the NTP. This
     // prevents any flickering of the tab title.
     content::NavigationEntry* entry =
         web_contents_->GetController().GetPendingEntry();
-    if (entry)
-      entry->SetTitle(l10n_util::GetStringUTF16(IDS_NEW_TAB_TITLE));
+    if (entry) {
+      web_contents_->UpdateTitleForEntry(
+          entry, l10n_util::GetStringUTF16(IDS_NEW_TAB_TITLE));
+    }
   }
 }
 
-void SearchTabHelper::DidNavigateMainFrame(
-    const content::LoadCommittedDetails& details,
-    const content::FrameNavigateParams& params) {
+void SearchTabHelper::DidStartNavigation(
+    content::NavigationHandle* navigation_handle) {
+  if (!content::IsBrowserSideNavigationEnabled())
+    return;
+
+  if (!navigation_handle->IsInMainFrame() || navigation_handle->IsSamePage())
+    return;
+
+  if (search::IsNTPURL(navigation_handle->GetURL(), profile())) {
+    // Set the title on any pending entry corresponding to the NTP. This
+    // prevents any flickering of the tab title.
+    content::NavigationEntry* entry =
+        web_contents_->GetController().GetPendingEntry();
+    if (entry) {
+      web_contents_->UpdateTitleForEntry(
+          entry, l10n_util::GetStringUTF16(IDS_NEW_TAB_TITLE));
+    }
+  }
+}
+
+void SearchTabHelper::DidFinishNavigation(
+      content::NavigationHandle* navigation_handle) {
+  if (!navigation_handle->IsInMainFrame() || navigation_handle->IsSamePage())
+    return;
+
   if (IsCacheableNTP(web_contents_)) {
     UMA_HISTOGRAM_ENUMERATION("InstantExtended.CacheableNTPLoad",
                               search::CACHEABLE_NTP_LOAD_SUCCEEDED,
@@ -318,9 +285,10 @@ void SearchTabHelper::DidNavigateMainFrame(
   content::NavigationEntry* entry =
       web_contents_->GetController().GetLastCommittedEntry();
   if (entry && entry->GetTitle().empty() &&
-      (entry->GetVirtualURL() == GURL(chrome::kChromeUINewTabURL) ||
+      (entry->GetVirtualURL() == chrome::kChromeUINewTabURL ||
        search::NavEntryIsInstantNTP(web_contents_, entry))) {
-    entry->SetTitle(l10n_util::GetStringUTF16(IDS_NEW_TAB_TITLE));
+    web_contents_->UpdateTitleForEntry(
+        entry, l10n_util::GetStringUTF16(IDS_NEW_TAB_TITLE));
   }
 }
 
@@ -342,11 +310,7 @@ void SearchTabHelper::NavigationEntryCommitted(
   if (!load_details.is_main_frame)
     return;
 
-  if (search::ShouldAssignURLToInstantRenderer(web_contents_->GetURL(),
-                                               profile()))
-    ipc_router_.SetDisplayInstantResults();
-
-  UpdateMode(true, false);
+  UpdateMode(true);
 
   content::NavigationEntry* entry =
       web_contents_->GetController().GetVisibleEntry();
@@ -360,16 +324,12 @@ void SearchTabHelper::NavigationEntryCommitted(
     // support for the navigated page. So, copy over the Instant support from
     // the previous entry. If the page does not support Instant, update the
     // location bar from here to turn off search terms replacement.
-    search::SetInstantSupportStateInNavigationEntry(model_.instant_support(),
-                                                    entry);
     if (delegate_ && model_.instant_support() == INSTANT_SUPPORT_NO)
       delegate_->OnWebContentsInstantSupportDisabled(web_contents_);
     return;
   }
 
   model_.SetInstantSupportState(INSTANT_SUPPORT_UNKNOWN);
-  search::SetInstantSupportStateInNavigationEntry(model_.instant_support(),
-                                                  entry);
 
   if (InInstantProcess(profile(), web_contents_))
     ipc_router_.OnNavigationEntryCommitted();
@@ -385,28 +345,7 @@ void SearchTabHelper::ThemeInfoChanged(const ThemeBackgroundInfo& theme_info) {
 
 void SearchTabHelper::MostVisitedItemsChanged(
     const std::vector<InstantMostVisitedItem>& items) {
-  // When most visited change, the NTP usually reloads the tiles. This means
-  // our metrics get inconsistent. So we'd rather emit stats now.
-  InstantTab::EmitNtpStatistics(web_contents_);
   ipc_router_.SendMostVisitedItems(items);
-  LogMostVisitedItemsSource(items);
-}
-
-void SearchTabHelper::LogMostVisitedItemsSource(
-    const std::vector<InstantMostVisitedItem>& items) {
-  for (auto item : items) {
-    NTPLoggingEventType event;
-    if (item.is_server_side_suggestion) {
-      event = NTP_SERVER_SIDE_SUGGESTION;
-    } else {
-      event = NTP_CLIENT_SIDE_SUGGESTION;
-    }
-    // The metrics are emitted for each suggestion as the design requirement
-    // even the ntp_user_data_logger.cc now only supports the scenario:
-    // all suggestions are provided by server OR
-    // all suggestions are provided by client.
-    this->OnLogEvent(event, base::TimeDelta());
-  }
 }
 
 void SearchTabHelper::FocusOmnibox(OmniboxFocusState state) {
@@ -477,20 +416,22 @@ void SearchTabHelper::OnLogEvent(NTPLoggingEventType event,
 }
 
 void SearchTabHelper::OnLogMostVisitedImpression(
-    int position, const base::string16& provider) {
+    int position,
+    ntp_tiles::NTPTileSource tile_source) {
 // TODO(kmadhusu): Move platform specific code from here and get rid of #ifdef.
 #if !defined(OS_ANDROID)
   NTPUserDataLogger::GetOrCreateFromWebContents(
-      web_contents())->LogMostVisitedImpression(position, provider);
+      web_contents())->LogMostVisitedImpression(position, tile_source);
 #endif
 }
 
 void SearchTabHelper::OnLogMostVisitedNavigation(
-    int position, const base::string16& provider) {
+    int position,
+    ntp_tiles::NTPTileSource tile_source) {
 // TODO(kmadhusu): Move platform specific code from here and get rid of #ifdef.
 #if !defined(OS_ANDROID)
   NTPUserDataLogger::GetOrCreateFromWebContents(
-      web_contents())->LogMostVisitedNavigation(position, provider);
+      web_contents())->LogMostVisitedNavigation(position, tile_source);
 #endif
 }
 
@@ -536,15 +477,27 @@ void SearchTabHelper::OnHistorySyncCheck() {
   ipc_router_.SendHistorySyncCheckResult(IsHistorySyncEnabled(profile()));
 }
 
-void SearchTabHelper::UpdateMode(bool update_origin, bool is_preloaded_ntp) {
+void SearchTabHelper::InstantSupportChanged(bool instant_support) {
+  if (!is_search_enabled_)
+    return;
+
+  InstantSupportState new_state = instant_support ? INSTANT_SUPPORT_YES :
+      INSTANT_SUPPORT_NO;
+
+  model_.SetInstantSupportState(new_state);
+
+  if (web_contents_->GetController().GetLastCommittedEntry() && delegate_ &&
+      !instant_support) {
+    delegate_->OnWebContentsInstantSupportDisabled(web_contents_);
+  }
+}
+
+void SearchTabHelper::UpdateMode(bool update_origin) {
   SearchMode::Type type = SearchMode::MODE_DEFAULT;
   SearchMode::Origin origin = SearchMode::ORIGIN_DEFAULT;
-  if (IsNTP(web_contents_) || is_preloaded_ntp) {
+  if (IsNTP(web_contents_)) {
     type = SearchMode::MODE_NTP;
     origin = SearchMode::ORIGIN_NTP;
-  } else if (IsSearchResults(web_contents_)) {
-    type = SearchMode::MODE_SEARCH_RESULTS;
-    origin = SearchMode::ORIGIN_SEARCH;
   }
   if (!update_origin)
     origin = model_.mode().origin;

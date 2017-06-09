@@ -8,30 +8,19 @@
 #include <memory>
 
 #include "base/macros.h"
-#include "ui/views/controls/styled_label_listener.h"
 #include "ui/views/controls/table/table_view_observer.h"
 #include "ui/views/window/dialog_delegate.h"
-#include "url/origin.h"
 
-class ChooserContentView;
 class ChooserController;
-
-namespace content {
-class WebContents;
-}
-
-namespace views {
-class TableView;
-}
+class DeviceChooserContentView;
 
 // Displays a chooser view as a modal dialog constrained
 // to the window/tab displaying the given web contents.
 class ChooserDialogView : public views::DialogDelegateView,
-                          public views::StyledLabelListener,
                           public views::TableViewObserver {
  public:
-  ChooserDialogView(content::WebContents* web_contents,
-                    std::unique_ptr<ChooserController> chooser_controller);
+  explicit ChooserDialogView(
+      std::unique_ptr<ChooserController> chooser_controller);
   ~ChooserDialogView() override;
 
   // views::WidgetDelegate:
@@ -43,6 +32,9 @@ class ChooserDialogView : public views::DialogDelegateView,
   base::string16 GetDialogButtonLabel(ui::DialogButton button) const override;
   bool IsDialogButtonEnabled(ui::DialogButton button) const override;
   views::View* CreateFootnoteView() override;
+  views::ClientView* CreateClientView(views::Widget* widget) override;
+  views::NonClientFrameView* CreateNonClientFrameView(
+      views::Widget* widget) override;
   bool Accept() override;
   bool Cancel() override;
   bool Close() override;
@@ -52,20 +44,13 @@ class ChooserDialogView : public views::DialogDelegateView,
   views::Widget* GetWidget() override;
   const views::Widget* GetWidget() const override;
 
-  // views::StyledLabelListener:
-  void StyledLabelLinkClicked(views::StyledLabel* label,
-                              const gfx::Range& range,
-                              int event_flags) override;
-
   // views::TableViewObserver:
   void OnSelectionChanged() override;
 
-  views::TableView* table_view_for_test() const;
+  DeviceChooserContentView* device_chooser_content_view_for_test() const;
 
  private:
-  content::WebContents* web_contents_;
-  url::Origin origin_;
-  ChooserContentView* chooser_content_view_;
+  DeviceChooserContentView* device_chooser_content_view_;
 
   DISALLOW_COPY_AND_ASSIGN(ChooserDialogView);
 };

@@ -16,11 +16,11 @@
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/containers/hash_tables.h"
-#include "base/containers/scoped_ptr_hash_map.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
+#include "base/single_thread_task_runner.h"
 #include "base/threading/thread_checker.h"
 #include "gpu/command_buffer/client/gpu_control.h"
 #include "gpu/command_buffer/common/command_buffer.h"
@@ -42,10 +42,6 @@ class GURL;
 
 namespace base {
 class SharedMemory;
-}
-
-namespace gfx {
-class Size;
 }
 
 namespace gpu {
@@ -99,11 +95,10 @@ class GPU_EXPORT CommandBufferProxyImpl
 
   // CommandBuffer implementation:
   State GetLastState() override;
-  int32_t GetLastToken() override;
   void Flush(int32_t put_offset) override;
   void OrderingBarrier(int32_t put_offset) override;
-  void WaitForTokenInRange(int32_t start, int32_t end) override;
-  void WaitForGetOffsetInRange(int32_t start, int32_t end) override;
+  State WaitForTokenInRange(int32_t start, int32_t end) override;
+  State WaitForGetOffsetInRange(int32_t start, int32_t end) override;
   void SetGetBuffer(int32_t shm_id) override;
   scoped_refptr<gpu::Buffer> CreateTransferBuffer(size_t size,
                                                   int32_t* id) override;
@@ -117,11 +112,6 @@ class GPU_EXPORT CommandBufferProxyImpl
                       size_t height,
                       unsigned internal_format) override;
   void DestroyImage(int32_t id) override;
-  int32_t CreateGpuMemoryBufferImage(size_t width,
-                                     size_t height,
-                                     unsigned internal_format,
-                                     unsigned usage) override;
-  int32_t GetImageGpuMemoryBufferId(unsigned image_id) override;
   void SignalQuery(uint32_t query, const base::Closure& callback) override;
   void SetLock(base::Lock* lock) override;
   void EnsureWorkVisible() override;
@@ -132,6 +122,7 @@ class GPU_EXPORT CommandBufferProxyImpl
   bool IsFenceSyncRelease(uint64_t release) override;
   bool IsFenceSyncFlushed(uint64_t release) override;
   bool IsFenceSyncFlushReceived(uint64_t release) override;
+  bool IsFenceSyncReleased(uint64_t release) override;
   void SignalSyncToken(const gpu::SyncToken& sync_token,
                        const base::Closure& callback) override;
   bool CanWaitUnverifiedSyncToken(const gpu::SyncToken* sync_token) override;
@@ -161,11 +152,7 @@ class GPU_EXPORT CommandBufferProxyImpl
   void SetUpdateVSyncParametersCallback(
       const UpdateVSyncParametersCallback& callback);
 
-  // TODO(apatrick): this is a temporary optimization while skia is calling
-  // ContentGLContext::MakeCurrent prior to every GL call. It saves returning 6
-  // ints redundantly when only the error is needed for the
-  // CommandBufferProxyImpl implementation.
-  gpu::error::Error GetLastError() override;
+  void SetNeedsVSync(bool needs_vsync);
 
   int32_t route_id() const { return route_id_; }
 
@@ -210,10 +197,14 @@ class GPU_EXPORT CommandBufferProxyImpl
 
   // Updates the highest verified release fence sync.
   void UpdateVerifiedReleases(uint32_t verified_flush);
+  void CleanupFlushedReleases(uint32_t highest_verified_flush_id);
 
   // Try to read an updated copy of the state from shared memory, and calls
   // OnGpuStateError() if the new state has an error.
   void TryUpdateState();
+  // Like above but calls the error handler and disconnects channel by posting
+  // a task.
+  void TryUpdateStateThreadSafe();
   // Like the above but does not call the error event handler if the new state
   // has an error.
   void TryUpdateStateDontReportError();
@@ -243,6 +234,16 @@ class GPU_EXPORT CommandBufferProxyImpl
   // The shared memory area used to update state.
   gpu::CommandBufferSharedState* shared_state() const;
 
+  // The shared memory area used to update state.
+  std::unique_ptr<base::SharedMemory> shared_state_shm_;
+
+  // The last cached state received from the service.
+  State last_state_;
+
+  // Lock to access shared state e.g. sync token release count across multiple
+  // threads. This allows tracking command buffer progress from another thread.
+  base::Lock last_state_lock_;
+
   // There should be a lock_ if this is going to be used across multiple
   // threads, or we guarantee it is used by a single thread by using a thread
   // checker if no lock_ is set.
@@ -254,12 +255,6 @@ class GPU_EXPORT CommandBufferProxyImpl
 
   // Unowned list of DeletionObservers.
   base::ObserverList<DeletionObserver> deletion_observers_;
-
-  // The last cached state received from the service.
-  State last_state_;
-
-  // The shared memory area used to update state.
-  std::unique_ptr<base::SharedMemory> shared_state_shm_;
 
   scoped_refptr<GpuChannelHost> channel_;
   const gpu::CommandBufferId command_buffer_id_;
@@ -293,20 +288,6 @@ class GPU_EXPORT CommandBufferProxyImpl
 
   SwapBuffersCompletionCallback swap_buffers_completion_callback_;
   UpdateVSyncParametersCallback update_vsync_parameters_completion_callback_;
-
-  // |gpu_memory_buffer_id| will always contain a valid (not -1) id.
-  // If the GpuMemoryBuffer was created through this class, then
-  // |owned_gpu_memory_buffer| will also be not null.
-  struct ImageInfo {
-    ImageInfo();
-    ~ImageInfo();
-    ImageInfo(ImageInfo&& other);
-    ImageInfo& operator=(ImageInfo&& other);
-    int32_t gpu_memory_buffer_id = -1;
-    std::unique_ptr<gfx::GpuMemoryBuffer> owned_gpu_memory_buffer;
-  };
-  // A map from image id to ImageInfo.
-  std::map<int32_t, ImageInfo> image_gmb_map_;
 
   base::WeakPtr<CommandBufferProxyImpl> weak_this_;
   scoped_refptr<base::SequencedTaskRunner> callback_thread_;

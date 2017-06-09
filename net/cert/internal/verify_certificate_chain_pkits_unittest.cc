@@ -8,6 +8,7 @@
 #include "net/cert/internal/signature_policy.h"
 #include "net/cert/internal/trust_store.h"
 #include "net/der/input.h"
+#include "third_party/boringssl/src/include/openssl/pool.h"
 
 // Disable tests that require DSA signatures (DSA signatures are intentionally
 // unsupported). Custom versions of the DSA tests are defined below which expect
@@ -52,35 +53,39 @@ class VerifyCertificateChainPkitsTestDelegate {
       ADD_FAILURE() << "cert_ders is empty";
       return false;
     }
-    // First entry in the PKITS chain is the trust anchor.
-    TrustStore trust_store;
-    scoped_refptr<ParsedCertificate> anchor(
-        ParsedCertificate::CreateFromCertificateCopy(cert_ders[0], {}));
-    EXPECT_TRUE(anchor);
-    if (anchor)
-      trust_store.AddTrustedCertificate(std::move(anchor));
 
     // PKITS lists chains from trust anchor to target, VerifyCertificateChain
     // takes them starting with the target and not including the trust anchor.
     std::vector<scoped_refptr<net::ParsedCertificate>> input_chain;
-    for (size_t i = cert_ders.size() - 1; i > 0; --i) {
+    CertErrors errors;
+    for (auto i = cert_ders.rbegin(); i != cert_ders.rend(); ++i) {
       if (!net::ParsedCertificate::CreateAndAddToVector(
-              reinterpret_cast<const uint8_t*>(cert_ders[i].data()),
-              cert_ders[i].size(),
-              net::ParsedCertificate::DataSource::EXTERNAL_REFERENCE, {},
-              &input_chain)) {
-        ADD_FAILURE() << "cert " << i << " failed to parse";
+              bssl::UniquePtr<CRYPTO_BUFFER>(
+                  CRYPTO_BUFFER_new(reinterpret_cast<const uint8_t*>(i->data()),
+                                    i->size(), nullptr)),
+              {}, &input_chain, &errors)) {
+        ADD_FAILURE() << "Cert failed to parse:\n" << errors.ToDebugString();
         return false;
       }
     }
+
+    scoped_refptr<TrustAnchor> trust_anchor =
+        TrustAnchor::CreateFromCertificateNoConstraints(input_chain.back());
+    input_chain.pop_back();
 
     SimpleSignaturePolicy signature_policy(1024);
 
     // Run all tests at the time the PKITS was published.
     der::GeneralizedTime time = {2011, 4, 15, 0, 0, 0};
 
-    return VerifyCertificateChain(input_chain, trust_store, &signature_policy,
-                                  time, nullptr);
+    bool result = VerifyCertificateChain(input_chain, trust_anchor.get(),
+                                         &signature_policy, time, &errors);
+
+    //  TODO(crbug.com/634443): Test errors on failure?
+    if (!result)
+      EXPECT_FALSE(errors.empty());
+
+    return result;
   }
 };
 

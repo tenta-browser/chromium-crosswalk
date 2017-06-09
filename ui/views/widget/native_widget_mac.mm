@@ -8,9 +8,11 @@
 
 #include <utility>
 
+#import "base/mac/bind_objc_block.h"
 #include "base/mac/foundation_util.h"
 #include "base/mac/scoped_nsobject.h"
 #include "base/strings/sys_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #import "ui/base/cocoa/constrained_window/constrained_window_animation.h"
 #import "ui/base/cocoa/window_size_constants.h"
 #include "ui/gfx/font_list.h"
@@ -94,18 +96,14 @@ BridgedNativeWidget* NativeWidgetMac::GetBridgeForNativeWindow(
 }
 
 bool NativeWidgetMac::IsWindowModalSheet() const {
-  return GetWidget()->widget_delegate()->GetModalType() ==
-         ui::MODAL_TYPE_WINDOW;
+  return bridge_ && bridge_->parent() &&
+         GetWidget()->widget_delegate()->GetModalType() ==
+             ui::MODAL_TYPE_WINDOW;
 }
 
-void NativeWidgetMac::OnWindowWillClose() {
-  // Note: If closed via CloseNow(), |bridge_| will already be reset. If closed
-  // by the user, or via Close() and a RunLoop, notify observers while |bridge_|
-  // is still a valid pointer, then reset it.
-  if (bridge_) {
-    delegate_->OnNativeWidgetDestroying();
-    bridge_.reset();
-  }
+void NativeWidgetMac::OnWindowDestroyed() {
+  DCHECK(bridge_);
+  bridge_.reset();
   delegate_->OnNativeWidgetDestroyed();
   if (ownership_ == Widget::InitParams::NATIVE_WIDGET_OWNS_WIDGET)
     delete this;
@@ -145,7 +143,9 @@ void NativeWidgetMac::InitNativeWidget(const Widget::InitParams& params) {
   bridge_->CreateLayer(params.layer_type, translucent);
 }
 
-void NativeWidgetMac::OnWidgetInitDone() {}
+void NativeWidgetMac::OnWidgetInitDone() {
+  OnSizeConstraintsChanged();
+}
 
 NonClientFrameView* NativeWidgetMac::CreateNonClientFrameView() {
   return new NativeFrameView(GetWidget());
@@ -197,10 +197,8 @@ const ui::Layer* NativeWidgetMac::GetLayer() const {
 }
 
 void NativeWidgetMac::ReorderNativeViews() {
-  if (bridge_) {
-    bridge_->SetRootView(GetWidget()->GetRootView());
+  if (bridge_)
     bridge_->ReorderChildViews();
-  }
 }
 
 void NativeWidgetMac::ViewRemoved(View* view) {
@@ -289,8 +287,13 @@ void NativeWidgetMac::InitModalType(ui::ModalType modal_type) {
 
   // System modal windows not implemented (or used) on Mac.
   DCHECK_NE(ui::MODAL_TYPE_SYSTEM, modal_type);
-  DCHECK(bridge_->parent());
-  // Everyhing happens upon show.
+
+  // A peculiarity of the constrained window framework is that it permits a
+  // dialog of MODAL_TYPE_WINDOW to have a null parent window; falling back to
+  // a non-modal window in this case.
+  DCHECK(bridge_->parent() || modal_type == ui::MODAL_TYPE_WINDOW);
+
+  // Everything happens upon show.
 }
 
 gfx::Rect NativeWidgetMac::GetWindowBoundsInScreen() const {
@@ -330,11 +333,7 @@ void NativeWidgetMac::StackAtTop() {
   NOTIMPLEMENTED();
 }
 
-void NativeWidgetMac::StackBelow(gfx::NativeView native_view) {
-  NOTIMPLEMENTED();
-}
-
-void NativeWidgetMac::SetShape(SkRegion* shape) {
+void NativeWidgetMac::SetShape(std::unique_ptr<SkRegion> shape) {
   NOTIMPLEMENTED();
 }
 
@@ -342,7 +341,10 @@ void NativeWidgetMac::Close() {
   if (!bridge_)
     return;
 
+  // Keep |window| on the stack so that the ObjectiveC block below can capture
+  // it and properly increment the reference count bound to the posted task.
   NSWindow* window = GetNativeWindow();
+
   if (IsWindowModalSheet()) {
     // Sheets can't be closed normally. This starts the sheet closing. Once the
     // sheet has finished animating, it will call sheetDidEnd: on the parent
@@ -367,17 +369,27 @@ void NativeWidgetMac::Close() {
   // like -performClose:, first remove the window from AppKit's display
   // list to avoid crashes like http://crbug.com/156101.
   [window orderOut:nil];
-  [window performSelector:@selector(close) withObject:nil afterDelay:0];
+
+  // Many tests assume that base::RunLoop().RunUntilIdle() is always sufficient
+  // to execute a close. However, in rare cases, -performSelector:..afterDelay:0
+  // does not do this. So post a regular task.
+  base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, base::BindBlock(^{
+    [window close];
+  }));
 }
 
 void NativeWidgetMac::CloseNow() {
   if (!bridge_)
     return;
 
-  // Notify observers while |bridged_| is still valid.
-  delegate_->OnNativeWidgetDestroying();
-  // Reset |bridge_| to NULL before destroying it.
-  std::unique_ptr<BridgedNativeWidget> bridge(std::move(bridge_));
+  // NSWindows must be retained until -[NSWindow close] returns.
+  base::scoped_nsobject<NSWindow> window(GetNativeWindow(),
+                                         base::scoped_policy::RETAIN);
+
+  // If there's a bridge at this point, it means there must be a window as well.
+  DCHECK(window);
+  [window close];
+  // Note: |this| is deleted here when ownership_ == NATIVE_WIDGET_OWNS_WIDGET.
 }
 
 void NativeWidgetMac::Show() {
@@ -453,6 +465,10 @@ bool NativeWidgetMac::IsAlwaysOnTop() const {
 
 void NativeWidgetMac::SetVisibleOnAllWorkspaces(bool always_visible) {
   gfx::SetNSWindowVisibleOnAllWorkspaces(GetNativeWindow(), always_visible);
+}
+
+bool NativeWidgetMac::IsVisibleOnAllWorkspaces() const {
+  return false;
 }
 
 void NativeWidgetMac::Maximize() {
@@ -577,16 +593,6 @@ void NativeWidgetMac::SetVisibilityAnimationTransition(
   NOTIMPLEMENTED();
 }
 
-ui::NativeTheme* NativeWidgetMac::GetNativeTheme() const {
-  return ui::NativeThemeMac::instance();
-}
-
-void NativeWidgetMac::OnRootViewLayout() {
-  // Ensure possible changes to the non-client view (e.g. Minimum/Maximum size)
-  // propagate through to the NSWindow properties.
-  OnSizeConstraintsChanged();
-}
-
 bool NativeWidgetMac::IsTranslucentWindowOpacitySupported() const {
   return false;
 }
@@ -622,6 +628,10 @@ bool Widget::ConvertRect(const Widget* source,
                          const Widget* target,
                          gfx::Rect* rect) {
   return false;
+}
+
+const ui::NativeTheme* Widget::GetNativeTheme() const {
+  return ui::NativeTheme::GetInstanceForNativeUi();
 }
 
 namespace internal {
@@ -673,8 +683,26 @@ void NativeWidgetPrivate::GetAllChildWidgets(gfx::NativeView native_view,
                                              Widget::Widgets* children) {
   BridgedNativeWidget* bridge =
       NativeWidgetMac::GetBridgeForNativeWindow([native_view window]);
-  if (!bridge)
+  if (!bridge) {
+    // The NSWindow is not itself a views::Widget, but it may have children that
+    // are. Support returning Widgets that are parented to the NSWindow, except:
+    // - Ignore requests for children of an NSView that is not a contentView.
+    // - We do not add a Widget for |native_view| to |children| (there is none).
+    if ([[native_view window] contentView] != native_view)
+      return;
+
+    // Collect -sheets and -childWindows. A window should never appear in both,
+    // since that causes AppKit to glitch.
+    NSArray* sheet_children = [[native_view window] sheets];
+    for (NSWindow* native_child in sheet_children)
+      GetAllChildWidgets([native_child contentView], children);
+
+    for (NSWindow* native_child in [[native_view window] childWindows]) {
+      DCHECK(![sheet_children containsObject:native_child]);
+      GetAllChildWidgets([native_child contentView], children);
+    }
     return;
+  }
 
   // If |native_view| is a subview of the contentView, it will share an
   // NSWindow, but will itself be a native child of the Widget. That is, adding
@@ -689,6 +717,10 @@ void NativeWidgetPrivate::GetAllChildWidgets(gfx::NativeView native_view,
   if (bridge->native_widget_mac()->GetWidget())
     children->insert(bridge->native_widget_mac()->GetWidget());
 
+  // When the NSWindow *is* a Widget, only consider child_windows(). I.e. do not
+  // look through -[NSWindow childWindows] as done for the (!bridge) case above.
+  // -childWindows does not support hidden windows, and anything in there which
+  // is not in child_windows() would have been added by AppKit.
   for (BridgedNativeWidget* child : bridge->child_windows())
     GetAllChildWidgets(child->ns_view(), children);
 }
@@ -696,7 +728,16 @@ void NativeWidgetPrivate::GetAllChildWidgets(gfx::NativeView native_view,
 // static
 void NativeWidgetPrivate::GetAllOwnedWidgets(gfx::NativeView native_view,
                                              Widget::Widgets* owned) {
-  NOTIMPLEMENTED();
+  BridgedNativeWidget* bridge =
+      NativeWidgetMac::GetBridgeForNativeWindow([native_view window]);
+  if (!bridge) {
+    GetAllChildWidgets(native_view, owned);
+    return;
+  }
+  if (bridge->ns_view() != native_view)
+    return;
+  for (BridgedNativeWidget* child : bridge->child_windows())
+    GetAllChildWidgets(child->ns_view(), owned);
 }
 
 // static

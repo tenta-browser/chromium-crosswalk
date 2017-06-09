@@ -87,6 +87,10 @@ class NavigationEntry {
   // The caller is responsible for detecting when there is no title and
   // displaying the appropriate "Untitled" label if this is being displayed to
   // the user.
+  // Use WebContents::UpdateTitleForEntry() in most cases, since that notifies
+  // observers when the visible title changes. Only call
+  // NavigationEntry::SetTitle() below directly when this entry is known not to
+  // be visible.
   virtual void SetTitle(const base::string16& title) = 0;
   virtual const base::string16& GetTitle() const = 0;
 
@@ -100,12 +104,6 @@ class NavigationEntry {
   // older versions.
   virtual void SetPageState(const PageState& state) = 0;
   virtual PageState GetPageState() const = 0;
-
-  // Describes the current page that the tab represents. This is the ID that the
-  // renderer generated for the page and is how we can tell new versus
-  // renavigations.
-  virtual void SetPageID(int page_id) = 0;
-  virtual int32_t GetPageID() const = 0;
 
   // Page-related helpers ------------------------------------------------------
 
@@ -221,6 +219,12 @@ class NavigationEntry {
 
   // True if this entry is restored and hasn't been loaded.
   virtual bool IsRestored() const = 0;
+
+  // Returns the extra headers (separated by \r\n) to send during the request.
+  virtual std::string GetExtraHeaders() const = 0;
+
+  // Adds more extra headers (separated by \r\n) to send during the request.
+  virtual void AddExtraHeaders(const std::string& extra_headers) = 0;
 };
 
 }  // namespace content

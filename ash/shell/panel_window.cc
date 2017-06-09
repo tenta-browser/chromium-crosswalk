@@ -4,14 +4,14 @@
 
 #include "ash/shell/panel_window.h"
 
-#include "ash/screen_util.h"
+#include "ash/common/wm/panels/panel_frame_view.h"
+#include "ash/public/cpp/window_properties.h"
 #include "ash/shell.h"
-#include "ash/wm/panels/panel_frame_view.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/aura/window.h"
-#include "ui/aura/window_event_dispatcher.h"
 #include "ui/gfx/canvas.h"
 #include "ui/views/widget/widget.h"
+#include "ui/wm/core/coordinate_conversion.h"
 
 namespace {
 const int kMinWidth = 100;
@@ -44,11 +44,12 @@ views::Widget* PanelWindow::CreateWidget() {
     params().bounds.set_width(kDefaultWidth);
   if (params().bounds.height() == 0)
     params().bounds.set_height(kDefaultHeight);
-  params().bounds = ScreenUtil::ConvertRectToScreen(
-      Shell::GetTargetRootWindow(), params().bounds);
+  ::wm::ConvertRectToScreen(Shell::GetTargetRootWindow(), &params().bounds);
 
   widget->Init(params());
   widget->GetNativeView()->SetName(name_);
+  widget->GetNativeWindow()->SetProperty<int>(kShelfItemTypeKey,
+                                              TYPE_APP_PANEL);
   widget->Show();
 
   return widget;
@@ -64,10 +65,6 @@ void PanelWindow::OnPaint(gfx::Canvas* canvas) {
 
 base::string16 PanelWindow::GetWindowTitle() const {
   return base::ASCIIToUTF16(name_);
-}
-
-views::View* PanelWindow::GetContentsView() {
-  return this;
 }
 
 bool PanelWindow::CanResize() const {

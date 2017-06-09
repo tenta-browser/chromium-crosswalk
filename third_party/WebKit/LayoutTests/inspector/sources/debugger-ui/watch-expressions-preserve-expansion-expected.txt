@@ -4,8 +4,8 @@ Bug 99304
 Watch expressions added.
 expanded foo [object Object]
 expanded bar [object Object]
-expanded <function scope> 
-expanded Closure 
+expanded [[Scopes]] [object Object]
+expanded 0 [object Object]
 expanded a [object Object]
 expanded [200 .. 299] 
 expanded 299 [object Object]
@@ -16,7 +16,7 @@ globalObject: Object
       __proto__: Object
     __proto__: Object
 windowAlias: Window
-array: Array[300]
+array: Array(300)
     [0 .. 99]
     [100 .. 199]
     [200 .. 299]
@@ -121,19 +121,20 @@ array: Array[300]
       298: 298
       299: 299
     length: 300
-    __proto__: Array[0]
+    __proto__: Array(0)
 func: function () {return a + b;}
     arguments: null
     caller: null
     length: 0
     name: 
     prototype: Object
-    __proto__: function () {}
-    <function scope>
-      Closure
+    __proto__: function () { [native code] }
+    [[FunctionLocation]]: Object
+    [[Scopes]]: Scopes[2]
+      0: Closure
         a: 10
         b: 100
-      Global: Window
+      1: Global
 Page reloaded.
 Watch expressions after page reload:
 globalObject: Object
@@ -142,7 +143,7 @@ globalObject: Object
       __proto__: Object
     __proto__: Object
 windowAlias: Window
-array: Array[300]
+array: Array(300)
     [0 .. 99]
     [100 .. 199]
     [200 .. 299]
@@ -247,17 +248,18 @@ array: Array[300]
       298: 298
       299: 299
     length: 300
-    __proto__: Array[0]
+    __proto__: Array(0)
 func: function () {return a + b;}
     arguments: null
     caller: null
     length: 0
     name: 
     prototype: Object
-    __proto__: function () {}
-    <function scope>
-      Closure
+    __proto__: function () { [native code] }
+    [[FunctionLocation]]: Object
+    [[Scopes]]: Scopes[2]
+      0: Closure
         a: 10
         b: 100
-      Global: Window
+      1: Global
 

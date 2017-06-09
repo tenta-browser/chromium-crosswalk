@@ -23,6 +23,7 @@
 
 namespace ui {
 class CALayerTreeCoordinator;
+struct CARendererLayerParams;
 }
 
 namespace gl {
@@ -34,11 +35,11 @@ namespace gpu {
 class ImageTransportSurfaceOverlayMac : public gl::GLSurface,
                                         public ui::GpuSwitchingObserver {
  public:
-  ImageTransportSurfaceOverlayMac(GpuCommandBufferStub* stub,
-                                  SurfaceHandle handle);
+  explicit ImageTransportSurfaceOverlayMac(
+      base::WeakPtr<ImageTransportSurfaceDelegate> delegate);
 
   // GLSurface implementation
-  bool Initialize(gl::GLSurface::Format format) override;
+  bool Initialize(gl::GLSurfaceFormat format) override;
   void Destroy() override;
   bool Resize(const gfx::Size& size,
               float scale_factor,
@@ -49,23 +50,14 @@ class ImageTransportSurfaceOverlayMac : public gl::GLSurface,
   bool SupportsPostSubBuffer() override;
   gfx::Size GetSize() override;
   void* GetHandle() override;
+  gl::GLSurfaceFormat GetFormat() override;
   bool OnMakeCurrent(gl::GLContext* context) override;
   bool ScheduleOverlayPlane(int z_order,
                             gfx::OverlayTransform transform,
                             gl::GLImage* image,
                             const gfx::Rect& bounds_rect,
                             const gfx::RectF& crop_rect) override;
-  bool ScheduleCALayer(gl::GLImage* contents_image,
-                       const gfx::RectF& contents_rect,
-                       float opacity,
-                       unsigned background_color,
-                       unsigned edge_aa_mask,
-                       const gfx::RectF& rect,
-                       bool is_clipped,
-                       const gfx::RectF& clip_rect,
-                       const gfx::Transform& transform,
-                       int sorting_context_id,
-                       unsigned filter) override;
+  bool ScheduleCALayer(const ui::CARendererLayerParams& params) override;
   void ScheduleCALayerInUseQuery(
       std::vector<CALayerInUseQuery> queries) override;
   bool IsSurfaceless() const override;
@@ -78,7 +70,6 @@ class ImageTransportSurfaceOverlayMac : public gl::GLSurface,
 
   void SetLatencyInfo(const std::vector<ui::LatencyInfo>& latency_info);
   void SendAcceleratedSurfaceBuffersSwapped(
-      gpu::SurfaceHandle surface_handle,
       CAContextID ca_context_id,
       bool fullscreen_low_power_ca_context_valid,
       CAContextID fullscreen_low_power_ca_context_id,
@@ -88,8 +79,7 @@ class ImageTransportSurfaceOverlayMac : public gl::GLSurface,
       std::vector<ui::LatencyInfo> latency_info);
   gfx::SwapResult SwapBuffersInternal(const gfx::Rect& pixel_damage_rect);
 
-  base::WeakPtr<GpuCommandBufferStub> stub_;
-  SurfaceHandle handle_;
+  base::WeakPtr<ImageTransportSurfaceDelegate> delegate_;
   std::vector<ui::LatencyInfo> latency_info_;
 
   bool use_remote_layer_api_;
@@ -103,8 +93,7 @@ class ImageTransportSurfaceOverlayMac : public gl::GLSurface,
   std::vector<CALayerInUseQuery> ca_layer_in_use_queries_;
 
   // A GLFence marking the end of the previous frame. Must only be accessed
-  // while in a ScopedSetGLToRealGLApi, and while the associated
-  // |previous_frame_context_| is bound.
+  // while the associated |previous_frame_context_| is bound.
   std::unique_ptr<gl::GLFence> previous_frame_fence_;
   base::ScopedTypeRef<CGLContextObj> fence_context_obj_;
 

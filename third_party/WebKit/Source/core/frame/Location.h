@@ -33,74 +33,119 @@
 #include "bindings/core/v8/ScriptWrappable.h"
 #include "core/CoreExport.h"
 #include "core/dom/DOMStringList.h"
-#include "core/frame/DOMWindowProperty.h"
+#include "core/frame/DOMWindow.h"
 #include "wtf/text/WTFString.h"
 
 namespace blink {
 
+class Document;
 class LocalDOMWindow;
 class ExceptionState;
-class Frame;
 class KURL;
 
-// This class corresponds to the JS Location API, which is the only DOM API besides Window that is operable
-// in a RemoteFrame. Rather than making DOMWindowProperty support RemoteFrames and generating a lot
-// code churn, Location is implemented as a one-off with some custom lifetime management code. Namely,
-// it needs a manual call to reset() from DOMWindow::reset() to ensure it doesn't retain a stale Frame pointer.
-class CORE_EXPORT Location final : public GarbageCollected<Location>, public ScriptWrappable {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static Location* create(Frame* frame)
-    {
-        return new Location(frame);
-    }
+// This class corresponds to the Location interface. Location is the only
+// interface besides Window that is accessible cross-origin and must handle
+// remote frames.
+//
+// HTML standard: https://whatwg.org/C/browsers.html#the-location-interface
+class CORE_EXPORT Location final : public GarbageCollected<Location>,
+                                   public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
 
-    Frame* frame() const { return m_frame.get(); }
-    void reset() { m_frame = nullptr; }
+ public:
+  static Location* create(DOMWindow* domWindow) {
+    return new Location(domWindow);
+  }
 
-    void setHref(LocalDOMWindow* currentWindow, LocalDOMWindow* enteredWindow, const String&);
-    String href() const;
+  DOMWindow* domWindow() const { return m_domWindow.get(); }
+  // TODO(dcheng): Deprecated and will be removed. Do not use in new code!
+  Frame* frame() const { return m_domWindow->frame(); }
 
-    void assign(LocalDOMWindow* currentWindow, LocalDOMWindow* enteredWindow, const String&, ExceptionState&);
-    void replace(LocalDOMWindow* currentWindow, LocalDOMWindow* enteredWindow, const String&, ExceptionState&);
-    void reload(LocalDOMWindow* currentWindow);
+  void setHref(LocalDOMWindow* currentWindow,
+               LocalDOMWindow* enteredWindow,
+               const String&,
+               ExceptionState&);
+  String href() const;
 
-    void setProtocol(LocalDOMWindow* currentWindow, LocalDOMWindow* enteredWindow, const String&, ExceptionState&);
-    String protocol() const;
-    void setHost(LocalDOMWindow* currentWindow, LocalDOMWindow* enteredWindow, const String&);
-    String host() const;
-    void setHostname(LocalDOMWindow* currentWindow, LocalDOMWindow* enteredWindow, const String&);
-    String hostname() const;
-    void setPort(LocalDOMWindow* currentWindow, LocalDOMWindow* enteredWindow, const String&);
-    String port() const;
-    void setPathname(LocalDOMWindow* currentWindow, LocalDOMWindow* enteredWindow, const String&);
-    String pathname() const;
-    void setSearch(LocalDOMWindow* currentWindow, LocalDOMWindow* enteredWindow, const String&);
-    String search() const;
-    void setHash(LocalDOMWindow* currentWindow, LocalDOMWindow* enteredWindow, const String&);
-    String hash() const;
-    String origin() const;
+  void assign(LocalDOMWindow* currentWindow,
+              LocalDOMWindow* enteredWindow,
+              const String&,
+              ExceptionState&);
+  void replace(LocalDOMWindow* currentWindow,
+               LocalDOMWindow* enteredWindow,
+               const String&,
+               ExceptionState&);
+  void reload(LocalDOMWindow* currentWindow);
 
-    DOMStringList* ancestorOrigins() const;
+  void setProtocol(LocalDOMWindow* currentWindow,
+                   LocalDOMWindow* enteredWindow,
+                   const String&,
+                   ExceptionState&);
+  String protocol() const;
+  void setHost(LocalDOMWindow* currentWindow,
+               LocalDOMWindow* enteredWindow,
+               const String&,
+               ExceptionState&);
+  String host() const;
+  void setHostname(LocalDOMWindow* currentWindow,
+                   LocalDOMWindow* enteredWindow,
+                   const String&,
+                   ExceptionState&);
+  String hostname() const;
+  void setPort(LocalDOMWindow* currentWindow,
+               LocalDOMWindow* enteredWindow,
+               const String&,
+               ExceptionState&);
+  String port() const;
+  void setPathname(LocalDOMWindow* currentWindow,
+                   LocalDOMWindow* enteredWindow,
+                   const String&,
+                   ExceptionState&);
+  String pathname() const;
+  void setSearch(LocalDOMWindow* currentWindow,
+                 LocalDOMWindow* enteredWindow,
+                 const String&,
+                 ExceptionState&);
+  String search() const;
+  void setHash(LocalDOMWindow* currentWindow,
+               LocalDOMWindow* enteredWindow,
+               const String&,
+               ExceptionState&);
+  String hash() const;
+  String origin() const;
 
-    // Just return the |this| object the way the normal valueOf function on the Object prototype would.
-    // The valueOf function is only added to make sure that it cannot be overwritten on location
-    // objects, since that would provide a hook to change the string conversion behavior of location objects.
-    ScriptValue valueOf(const ScriptValue& thisObject) { return thisObject; }
+  DOMStringList* ancestorOrigins() const;
 
-    DECLARE_VIRTUAL_TRACE();
+  // Just return the |this| object the way the normal valueOf function on the
+  // Object prototype would.  The valueOf function is only added to make sure
+  // that it cannot be overwritten on location objects, since that would provide
+  // a hook to change the string conversion behavior of location objects.
+  ScriptValue valueOf(const ScriptValue& thisObject) { return thisObject; }
 
-private:
-    explicit Location(Frame*);
+  DECLARE_VIRTUAL_TRACE();
 
-    enum class SetLocation { Normal, ReplaceThisFrame };
-    void setLocation(const String&, LocalDOMWindow* currentWindow, LocalDOMWindow* enteredWindow, ExceptionState* = nullptr, SetLocation = SetLocation::Normal);
+ private:
+  explicit Location(DOMWindow*);
 
-    const KURL& url() const;
+  // Note: it is only valid to call this if this is a Location object for a
+  // LocalDOMWindow.
+  Document* document() const;
 
-    Member<Frame> m_frame;
+  // Returns true if the associated Window is the active Window in the frame.
+  bool isAttached() const;
+
+  enum class SetLocationPolicy { Normal, ReplaceThisFrame };
+  void setLocation(const String&,
+                   LocalDOMWindow* currentWindow,
+                   LocalDOMWindow* enteredWindow,
+                   ExceptionState* = nullptr,
+                   SetLocationPolicy = SetLocationPolicy::Normal);
+
+  const KURL& url() const;
+
+  const Member<DOMWindow> m_domWindow;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // Location_h
+#endif  // Location_h

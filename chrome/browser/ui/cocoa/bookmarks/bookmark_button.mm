@@ -59,6 +59,7 @@ BookmarkButton* gDraggedButton = nil; // Weak
 
 @synthesize delegate = delegate_;
 @synthesize acceptsTrackIn = acceptsTrackIn_;
+@synthesize backgroundColor = backgroundColor_;
 
 - (id)initWithFrame:(NSRect)frameRect {
   // BookmarkButton's ViewID may be changed to VIEW_ID_OTHER_BOOKMARKS in
@@ -81,6 +82,8 @@ BookmarkButton* gDraggedButton = nil; // Weak
     [area_ release];
   }
 
+  [backgroundColor_ release];
+
   [super dealloc];
 }
 
@@ -97,12 +100,12 @@ BookmarkButton* gDraggedButton = nil; // Weak
   return [self bookmarkNode] ? NO : YES;
 }
 
-- (void)setIsContinuousPulsing:(BOOL)flag {
-  [[self cell] setIsContinuousPulsing:flag];
+- (void)setPulseIsStuckOn:(BOOL)flag {
+  [[self cell] setPulseIsStuckOn:flag];
 }
 
-- (BOOL)isContinuousPulsing {
-  return [[self cell] isContinuousPulsing];
+- (BOOL)isPulseStuckOn {
+  return [[self cell] isPulseStuckOn];
 }
 
 - (NSPoint)screenLocationForRemoveAnimation {
@@ -194,9 +197,7 @@ BookmarkButton* gDraggedButton = nil; // Weak
     NSWindow* window = [[self delegate] browserWindow];
     visibilityDelegate_ =
         [BrowserWindowController browserWindowControllerForWindow:window];
-    [visibilityDelegate_ lockBarVisibilityForOwner:self
-                                     withAnimation:NO
-                                             delay:NO];
+    [visibilityDelegate_ lockToolbarVisibilityForOwner:self withAnimation:NO];
   }
   const BookmarkNode* node = [self bookmarkNode];
   const BookmarkNode* parent = node->parent();
@@ -255,9 +256,7 @@ BookmarkButton* gDraggedButton = nil; // Weak
   gDraggedButton = nil;
 
   // visibilityDelegate_ can be nil if we're detached, and that's fine.
-  [visibilityDelegate_ releaseBarVisibilityForOwner:self
-                                      withAnimation:YES
-                                              delay:YES];
+  [visibilityDelegate_ releaseToolbarVisibilityForOwner:self withAnimation:YES];
   visibilityDelegate_ = nil;
 
   return kDraggableButtonImplUseBase;
@@ -370,17 +369,23 @@ BookmarkButton* gDraggedButton = nil; // Weak
     [id(delegate_) mouseDragged:theEvent];
 }
 
-- (void)rightMouseDown:(NSEvent*)event {
-  // Ensure that right-clicking on a button while a context menu is open
+- (void)willOpenMenu:(NSMenu *)menu withEvent:(NSEvent *)event {
+  // Ensure that right-clicking on a button while a context menu is already open
   // highlights the new button.
+  [delegate_ mouseEnteredButton:self event:event];
+
   GradientButtonCell* cell =
       base::mac::ObjCCastStrict<GradientButtonCell>([self cell]);
-  [delegate_ mouseEnteredButton:self event:event];
-  [cell setMouseInside:YES animate:YES];
+  // Opt for animate:NO, otherwise the upcoming contextual menu's modal loop
+  // will block the animation and the button's state will visually never change
+  // ( https://crbug.com/649256 ).
+  [cell setMouseInside:YES animate:NO];
+}
 
-  // Keep a ref to |self|, in case -rightMouseDown: deletes this bookmark.
-  base::scoped_nsobject<BookmarkButton> keepAlive([self retain]);
-  [super rightMouseDown:event];
+- (void)didCloseMenu:(NSMenu *)menu withEvent:(NSEvent *)event {
+  // Update the highlight after the contextual menu closes.
+  GradientButtonCell* cell =
+      base::mac::ObjCCastStrict<GradientButtonCell>([self cell]);
 
   if (![cell isMouseReallyInside]) {
     [cell setMouseInside:NO animate:YES];
@@ -424,15 +429,16 @@ BookmarkButton* gDraggedButton = nil; // Weak
 
 - (void)drawRect:(NSRect)rect {
   NSView* bookmarkBarToolbarView = [[self superview] superview];
-  [self cr_drawUsingAncestor:bookmarkBarToolbarView inRect:(NSRect)rect];
+  if (backgroundColor_) {
+    [backgroundColor_ set];
+    NSRectFill(rect);
+  } else {
+    [self cr_drawUsingAncestor:bookmarkBarToolbarView inRect:(NSRect)rect];
+  }
   [super drawRect:rect];
 }
 
 - (void)updateIconToMatchTheme {
-  if (!ui::MaterialDesignController::IsModeMaterial()) {
-    return;
-  }
-
   // During testing, the window might not be a browser window, and the
   // superview might not be a BookmarkBarView.
   if (![[self window] respondsToSelector:@selector(hasDarkTheme)] ||

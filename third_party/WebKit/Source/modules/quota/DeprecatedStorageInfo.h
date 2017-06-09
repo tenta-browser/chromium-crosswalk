@@ -38,39 +38,46 @@
 
 namespace blink {
 
-class ExecutionContext;
+class ScriptState;
 class StorageErrorCallback;
 class StorageQuotaCallback;
 class StorageUsageCallback;
 
-class DeprecatedStorageInfo final : public GarbageCollected<DeprecatedStorageInfo>, public ScriptWrappable {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    enum {
-        TEMPORARY,
-        PERSISTENT,
-    };
+class DeprecatedStorageInfo final
+    : public GarbageCollected<DeprecatedStorageInfo>,
+      public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
 
-    static DeprecatedStorageInfo* create()
-    {
-        return new DeprecatedStorageInfo();
-    }
+ public:
+  enum {
+    kTemporary,
+    kPersistent,
+  };
 
-    void queryUsageAndQuota(ExecutionContext*, int storageType, StorageUsageCallback*, StorageErrorCallback*);
+  static DeprecatedStorageInfo* create() { return new DeprecatedStorageInfo(); }
 
-    void requestQuota(ExecutionContext*, int storageType, unsigned long long newQuotaInBytes, StorageQuotaCallback*, StorageErrorCallback*);
+  void queryUsageAndQuota(ScriptState*,
+                          int storageType,
+                          StorageUsageCallback*,
+                          StorageErrorCallback*);
 
-    DECLARE_TRACE();
+  void requestQuota(ScriptState*,
+                    int storageType,
+                    unsigned long long newQuotaInBytes,
+                    StorageQuotaCallback*,
+                    StorageErrorCallback*);
 
-private:
-    DeprecatedStorageInfo();
+  DECLARE_TRACE();
 
-    DeprecatedStorageQuota* getStorageQuota(int storageType);
+ private:
+  DeprecatedStorageInfo();
 
-    mutable Member<DeprecatedStorageQuota> m_temporaryStorage;
-    mutable Member<DeprecatedStorageQuota> m_persistentStorage;
+  DeprecatedStorageQuota* getStorageQuota(int storageType);
+
+  mutable Member<DeprecatedStorageQuota> m_temporaryStorage;
+  mutable Member<DeprecatedStorageQuota> m_persistentStorage;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // DeprecatedStorageInfo_h
+#endif  // DeprecatedStorageInfo_h

@@ -2,6 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import json
 import math
 import os
 
@@ -32,36 +33,36 @@ class _DromaeoMeasurement(legacy_page_test.LegacyPageTest):
     self._power_metric.Start(page, tab)
 
   def ValidateAndMeasurePage(self, page, tab, results):
-    tab.WaitForJavaScriptExpression(
+    tab.WaitForJavaScriptCondition(
         'window.document.getElementById("pause") &&' +
         'window.document.getElementById("pause").value == "Run"',
-        120)
+        timeout=120)
 
     # Start spying on POST request that will report benchmark results, and
     # intercept result data.
-    tab.ExecuteJavaScript('(function() {' +
-                          '  var real_jquery_ajax_ = window.jQuery;' +
-                          '  window.results_ = "";' +
-                          '  window.jQuery.ajax = function(request) {' +
-                          '    if (request.url == "store.php") {' +
-                          '      window.results_ =' +
-                          '          decodeURIComponent(request.data);' +
-                          '      window.results_ = window.results_.substring(' +
-                          '          window.results_.indexOf("=") + 1, ' +
-                          '          window.results_.lastIndexOf("&"));' +
-                          '      real_jquery_ajax_(request);' +
-                          '    }' +
-                          '  };' +
-                          '})();')
+    tab.ExecuteJavaScript("""
+        (function() {
+          var real_jquery_ajax_ = window.jQuery;
+          window.results_ = "";
+          window.jQuery.ajax = function(request) {
+            if (request.url == "store.php") {
+              window.results_ = decodeURIComponent(request.data);
+              window.results_ = window.results_.substring(
+                window.results_.indexOf("=") + 1,
+                window.results_.lastIndexOf("&"));
+              real_jquery_ajax_(request);
+            }
+          };
+        })();""")
     # Starts benchmark.
     tab.ExecuteJavaScript('window.document.getElementById("pause").click();')
 
-    tab.WaitForJavaScriptExpression('!!window.results_', 600)
+    tab.WaitForJavaScriptCondition('!!window.results_', timeout=600)
 
     self._power_metric.Stop(page, tab)
     self._power_metric.AddResults(tab, results)
 
-    score = eval(tab.EvaluateJavaScript('window.results_ || "[]"'))
+    score = json.loads(tab.EvaluateJavaScript('window.results_ || "[]"'))
 
     def Escape(k):
       chars = [' ', '.', '-', '/', '(', ')', '*']
@@ -176,7 +177,6 @@ class DromaeoDomCoreTraverse(_DromaeoBenchmark):
     return 'dromaeo.domcoretraverse'
 
 
-@benchmark.Disabled('win')  # crbug.com/523276
 class DromaeoJslibAttrJquery(_DromaeoBenchmark):
   """Dromaeo JSLib attr jquery JavaScript benchmark.
 
@@ -190,6 +190,10 @@ class DromaeoJslibAttrJquery(_DromaeoBenchmark):
   def Name(cls):
     return 'dromaeo.jslibattrjquery'
 
+  @classmethod
+  def ShouldDisable(cls, possible_browser):
+    # http://crbug.com/634055 (Android One).
+    return cls.IsSvelte(possible_browser)
 
 class DromaeoJslibAttrPrototype(_DromaeoBenchmark):
   """Dromaeo JSLib attr prototype JavaScript benchmark.
@@ -205,7 +209,6 @@ class DromaeoJslibAttrPrototype(_DromaeoBenchmark):
     return 'dromaeo.jslibattrprototype'
 
 
-@benchmark.Disabled('win')  # crbug.com/523276
 class DromaeoJslibEventJquery(_DromaeoBenchmark):
   """Dromaeo JSLib event jquery JavaScript benchmark.
 
@@ -234,7 +237,7 @@ class DromaeoJslibEventPrototype(_DromaeoBenchmark):
     return 'dromaeo.jslibeventprototype'
 
 
-# win: http://crbug.com/479796, http://crbug.com/529330, http://crbug.com/598705
+# win-ref: http://crbug.com/598705
 # android: http://crbug.com/503138
 # linux: http://crbug.com/583075
 @benchmark.Disabled('win-reference', 'android', 'linux')
@@ -266,7 +269,6 @@ class DromaeoJslibModifyPrototype(_DromaeoBenchmark):
     return 'dromaeo.jslibmodifyprototype'
 
 
-@benchmark.Disabled('win')  # crbug.com/523276
 class DromaeoJslibStyleJquery(_DromaeoBenchmark):
   """Dromaeo JSLib style jquery JavaScript benchmark.
 

@@ -7,8 +7,11 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/location.h"
+#include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/sequenced_task_runner_helpers.h"
 #include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/browser_thread_impl.h"
 #include "content/public/test/test_browser_thread.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -24,6 +27,8 @@ class BrowserThreadTest : public testing::Test {
                                   base::MessageLoop::QuitWhenIdleClosure());
   }
 
+  void StopUIThread() { ui_thread_->Stop(); }
+
  protected:
   void SetUp() override {
     ui_thread_.reset(new BrowserThreadImpl(BrowserThread::UI));
@@ -33,8 +38,12 @@ class BrowserThreadTest : public testing::Test {
   }
 
   void TearDown() override {
-    ui_thread_->Stop();
+    StopUIThread();
     file_thread_->Stop();
+    ui_thread_ = nullptr;
+    file_thread_ = nullptr;
+    BrowserThreadImpl::ResetGlobalsForTesting(BrowserThread::UI);
+    BrowserThreadImpl::ResetGlobalsForTesting(BrowserThread::FILE);
   }
 
   static void BasicFunction(base::MessageLoop* message_loop) {
@@ -71,17 +80,55 @@ class BrowserThreadTest : public testing::Test {
   mutable base::MessageLoop loop_;
 };
 
+class UIThreadDestructionObserver
+    : public base::MessageLoop::DestructionObserver {
+ public:
+  explicit UIThreadDestructionObserver(bool* did_shutdown,
+                                       const base::Closure& callback)
+      : callback_task_runner_(base::ThreadTaskRunnerHandle::Get()),
+        callback_(callback),
+        ui_task_runner_(
+            BrowserThread::GetTaskRunnerForThread(BrowserThread::UI)),
+        did_shutdown_(did_shutdown) {
+    BrowserThread::GetTaskRunnerForThread(BrowserThread::UI)
+        ->PostTask(FROM_HERE, base::Bind(&Watch, this));
+  }
+
+ private:
+  static void Watch(UIThreadDestructionObserver* observer) {
+    base::MessageLoop::current()->AddDestructionObserver(observer);
+  }
+
+  // base::MessageLoop::DestructionObserver:
+  void WillDestroyCurrentMessageLoop() override {
+    // Ensure that even during MessageLoop teardown the BrowserThread ID is
+    // correctly associated with this thread and the BrowserThreadTaskRunner
+    // knows it's on the right thread.
+    EXPECT_TRUE(BrowserThread::CurrentlyOn(BrowserThread::UI));
+    EXPECT_TRUE(ui_task_runner_->BelongsToCurrentThread());
+
+    base::MessageLoop::current()->RemoveDestructionObserver(this);
+    *did_shutdown_ = true;
+    callback_task_runner_->PostTask(FROM_HERE, callback_);
+  }
+
+  const scoped_refptr<base::SingleThreadTaskRunner> callback_task_runner_;
+  const base::Closure callback_;
+  const scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner_;
+  bool* did_shutdown_;
+};
+
 TEST_F(BrowserThreadTest, PostTask) {
   BrowserThread::PostTask(
       BrowserThread::FILE,
       FROM_HERE,
       base::Bind(&BasicFunction, base::MessageLoop::current()));
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 }
 
 TEST_F(BrowserThreadTest, Release) {
   BrowserThread::ReleaseSoon(BrowserThread::UI, FROM_HERE, this);
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 }
 
 TEST_F(BrowserThreadTest, ReleasedOnCorrectThread) {
@@ -89,22 +136,22 @@ TEST_F(BrowserThreadTest, ReleasedOnCorrectThread) {
     scoped_refptr<DeletedOnFile> test(
         new DeletedOnFile(base::MessageLoop::current()));
   }
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 }
 
 TEST_F(BrowserThreadTest, PostTaskViaTaskRunner) {
   scoped_refptr<base::SingleThreadTaskRunner> task_runner =
-      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::FILE);
+      BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE);
   task_runner->PostTask(
       FROM_HERE, base::Bind(&BasicFunction, base::MessageLoop::current()));
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 }
 
 TEST_F(BrowserThreadTest, ReleaseViaTaskRunner) {
   scoped_refptr<base::SingleThreadTaskRunner> task_runner =
-      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::UI);
+      BrowserThread::GetTaskRunnerForThread(BrowserThread::UI);
   task_runner->ReleaseSoon(FROM_HERE, this);
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 }
 
 TEST_F(BrowserThreadTest, PostTaskAndReply) {
@@ -114,7 +161,19 @@ TEST_F(BrowserThreadTest, PostTaskAndReply) {
       BrowserThread::FILE, FROM_HERE, base::Bind(&base::DoNothing),
       base::Bind(&base::MessageLoop::QuitWhenIdle,
                  base::Unretained(base::MessageLoop::current()->current()))));
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
+}
+
+TEST_F(BrowserThreadTest, RunsTasksOnCurrentThreadDuringShutdown) {
+  bool did_shutdown = false;
+  base::RunLoop loop;
+  UIThreadDestructionObserver observer(&did_shutdown, loop.QuitClosure());
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE,
+      base::Bind(&BrowserThreadTest::StopUIThread, base::Unretained(this)));
+  loop.Run();
+
+  EXPECT_TRUE(did_shutdown);
 }
 
 }  // namespace content

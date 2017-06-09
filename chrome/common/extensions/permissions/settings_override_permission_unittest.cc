@@ -11,9 +11,9 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "build/build_config.h"
-#include "chrome/common/extensions/features/feature_channel.h"
 #include "chrome/common/extensions/manifest_tests/chrome_manifest_test.h"
 #include "components/version_info/version_info.h"
+#include "extensions/common/features/feature_channel.h"
 #include "extensions/common/manifest_constants.h"
 #include "extensions/common/permissions/permission_message_test_util.h"
 #include "extensions/common/permissions/permission_set.h"
@@ -49,7 +49,7 @@ class SettingsOverridePermissionTest : public ChromeManifestTest {
     std::unique_ptr<base::DictionaryValue> settings_override(
         new base::DictionaryValue);
     if (flags & kHomepage)
-      settings_override->SetString("homepage", "http://www.google.com");
+      settings_override->SetString("homepage", "http://www.google.com/home");
     if (flags & kStartupPages) {
       std::unique_ptr<base::ListValue> startup_pages(new base::ListValue);
       startup_pages->AppendString("http://startup.com/startup.html");
@@ -88,7 +88,7 @@ TEST_F(SettingsOverridePermissionTest, HomePage) {
 #if defined(OS_WIN) || defined(OS_MACOSX)
   EXPECT_TRUE(permission_set.HasAPIPermission(APIPermission::kHomepage));
   VerifyOnePermissionMessage(extension->permissions_data(),
-                             "Change your home page to: google.com/");
+                             "Change your home page to: google.com");
 #else
   EXPECT_FALSE(permission_set.HasAPIPermission(APIPermission::kHomepage));
 #endif
@@ -104,9 +104,8 @@ TEST_F(SettingsOverridePermissionTest, StartupPages) {
 
 #if defined(OS_WIN) || defined(OS_MACOSX)
   EXPECT_TRUE(permission_set.HasAPIPermission(APIPermission::kStartupPages));
-  VerifyOnePermissionMessage(
-      extension->permissions_data(),
-      "Change your start page to: startup.com/startup.html");
+  VerifyOnePermissionMessage(extension->permissions_data(),
+                             "Change your start page to: startup.com");
 #else
   EXPECT_FALSE(permission_set.HasAPIPermission(APIPermission::kStartupPages));
 #endif

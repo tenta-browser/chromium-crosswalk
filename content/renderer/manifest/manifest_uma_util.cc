@@ -4,7 +4,7 @@
 
 #include "content/renderer/manifest/manifest_uma_util.h"
 
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "content/public/common/manifest.h"
 
 namespace content {
@@ -44,6 +44,8 @@ void ManifestUmaUtil::ParseSucceeded(const Manifest& manifest) {
   UMA_HISTOGRAM_BOOLEAN("Manifest.HasProperty.orientation",
       manifest.orientation != blink::WebScreenOrientationLockDefault);
   UMA_HISTOGRAM_BOOLEAN("Manifest.HasProperty.icons", !manifest.icons.empty());
+  UMA_HISTOGRAM_BOOLEAN("Manifest.HasProperty.share_target",
+                        manifest.share_target.has_value());
   UMA_HISTOGRAM_BOOLEAN("Manifest.HasProperty.gcm_sender_id",
       !manifest.gcm_sender_id.is_null());
 }

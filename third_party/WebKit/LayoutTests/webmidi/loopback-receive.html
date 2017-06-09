@@ -43,6 +43,7 @@ function verifyData(e) {
     expected = testData[receiveCount];
     actual = e.data;
     shouldBe("actual", "expected");
+    midiMessageEvent = e;
     receiveCount++;
     if (receiveCount == testData.length)
         e.target.resolve();
@@ -71,7 +72,8 @@ function test(useAddEventListener) {
     });
 }
 
-PermissionsHelper.setPermission('midi-sysex', 'granted').then(function() {
+Promise.all([PermissionsHelper.setPermission('midi', 'granted'),
+             PermissionsHelper.setPermission('midi-sysex', 'granted')]).then(function() {
   test(false).then(test.bind(null, true)).then(finishJSTest, finishJSTest);
 });
 

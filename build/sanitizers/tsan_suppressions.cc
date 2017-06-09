@@ -151,9 +151,6 @@ char kTSanDefaultSuppressions[] =
 // http://crbug.com/328868
 "race:PR_Lock\n"
 
-// http://crbug.com/329225
-"race:blink::currentTimeFunction\n"
-
 // http://crbug.com/333244
 "race:content::"
     "VideoCaptureImplTest::MockVideoCaptureImpl::~MockVideoCaptureImpl\n"
@@ -179,9 +176,6 @@ char kTSanDefaultSuppressions[] =
 "race:blink::s_platform\n"
 "race:content::"
     "RendererWebKitPlatformSupportImpl::~RendererWebKitPlatformSupportImpl\n"
-
-// http://crbug.com/345240
-"race:WTF::s_shutdown\n"
 
 // http://crbug.com/345618
 "race:WebCore::AudioDestinationNode::render\n"
@@ -251,9 +245,6 @@ char kTSanDefaultSuppressions[] =
 // https://crbug.com/430533
 "race:TileTaskGraphRunner::Run\n"
 
-// https://crbug.com/448203
-"race:blink::RemoteFrame::detach\n"
-
 // Lock inversion in third party code, won't fix.
 // https://crbug.com/455638
 "deadlock:dbus::Bus::ShutdownAndBlock\n"
@@ -269,6 +260,15 @@ char kTSanDefaultSuppressions[] =
 
 // http://crbug.com/582274
 "race:usrsctp_close\n"
+
+// http://crbug.com/633145
+"race:third_party/libjpeg_turbo/simd/jsimd_x86_64.c\n"
+
+// http://crbug.com/638583
+"race:webrtc/modules/audio_processing/aec/aec_rdft.cc\n"
+
+// http://crbug.com/587199
+"race:base::TimerTest_OneShotTimer_CustomTaskRunner_Test::TestBody\n"
 
 // End of suppressions.
 ;  // Please keep this semicolon.

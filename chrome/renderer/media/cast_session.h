@@ -15,22 +15,18 @@
 #include "net/base/ip_endpoint.h"
 
 namespace base {
-class BinaryValue;
 class DictionaryValue;
 class SingleThreadTaskRunner;
+class Value;
+using BinaryValue = Value;
 }  // namespace base
 
 namespace media {
-class VideoFrame;
 namespace cast {
 class AudioFrameInput;
 class VideoFrameInput;
 }  // namespace cast
 }  // namespace media
-
-namespace content {
-class P2PSocketClient;
-}  // namespace content
 
 class CastSessionDelegate;
 
@@ -39,16 +35,16 @@ class CastSessionDelegate;
 // CastSessionDelegate on the IO thread.
 class CastSession : public base::RefCounted<CastSession> {
  public:
-  typedef base::Callback<void(const scoped_refptr<
-      media::cast::AudioFrameInput>&)> AudioFrameInputAvailableCallback;
-  typedef base::Callback<void(const scoped_refptr<
-      media::cast::VideoFrameInput>&)> VideoFrameInputAvailableCallback;
-  typedef base::Callback<void(const std::vector<char>&)> SendPacketCallback;
-  typedef base::Callback<void(std::unique_ptr<base::BinaryValue>)>
-      EventLogsCallback;
-  typedef base::Callback<void(std::unique_ptr<base::DictionaryValue>)>
-      StatsCallback;
-  typedef base::Callback<void(const std::string&)> ErrorCallback;
+  using AudioFrameInputAvailableCallback =
+      base::Callback<void(const scoped_refptr<media::cast::AudioFrameInput>&)>;
+  using VideoFrameInputAvailableCallback =
+      base::Callback<void(const scoped_refptr<media::cast::VideoFrameInput>&)>;
+  using SendPacketCallback = base::Callback<void(const std::vector<char>&)>;
+  using EventLogsCallback =
+      base::Callback<void(std::unique_ptr<base::BinaryValue>)>;
+  using StatsCallback =
+      base::Callback<void(std::unique_ptr<base::DictionaryValue>)>;
+  using ErrorCallback = base::Callback<void(const std::string&)>;
 
   CastSession();
 
@@ -60,12 +56,18 @@ class CastSession : public base::RefCounted<CastSession> {
   // error message. Both |callback| and |error_callback| will be made on
   // the main thread.
   // |StartUDP()| must be called before these methods.
-  void StartAudio(const media::cast::AudioSenderConfig& config,
+  void StartAudio(const media::cast::FrameSenderConfig& config,
                   const AudioFrameInputAvailableCallback& callback,
                   const ErrorCallback& error_callback);
-  void StartVideo(const media::cast::VideoSenderConfig& config,
+  void StartVideo(const media::cast::FrameSenderConfig& config,
                   const VideoFrameInputAvailableCallback& callback,
                   const ErrorCallback& error_callback);
+
+  // Start remoting a stream. |error_callback| will be invoked when any error
+  // occurs. |StartUDP()| must be called before calling this method.
+  void StartRemotingStream(int32_t stream_id,
+                           const media::cast::FrameSenderConfig& config,
+                           const ErrorCallback& error_callback);
 
   // This will create the Cast transport and connect to |remote_endpoint|.
   // |options| is a dictionary which contain optional configuration for the

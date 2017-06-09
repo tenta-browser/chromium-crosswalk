@@ -10,6 +10,7 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
@@ -31,6 +32,10 @@ void LogErrors(PolicyErrorMap* errors) {
     base::string16 policy = base::ASCIIToUTF16(iter->first);
     DLOG(WARNING) << "Policy " << policy << ": " << iter->second;
   }
+}
+
+bool IsLevel(PolicyLevel level, const PolicyMap::const_iterator iter) {
+  return iter->second.level == level;
 }
 
 }  // namespace
@@ -75,6 +80,13 @@ bool ConfigurationPolicyPrefStore::GetValue(const std::string& key,
   return true;
 }
 
+std::unique_ptr<base::DictionaryValue> ConfigurationPolicyPrefStore::GetValues()
+    const {
+  if (!prefs_)
+    return base::MakeUnique<base::DictionaryValue>();
+  return prefs_->AsDictionaryValue();
+}
+
 void ConfigurationPolicyPrefStore::OnPolicyUpdated(
     const PolicyNamespace& ns,
     const PolicyMap& previous,
@@ -87,8 +99,8 @@ void ConfigurationPolicyPrefStore::OnPolicyUpdated(
 void ConfigurationPolicyPrefStore::OnPolicyServiceInitialized(
     PolicyDomain domain) {
   if (domain == POLICY_DOMAIN_CHROME) {
-    FOR_EACH_OBSERVER(PrefStore::Observer, observers_,
-                      OnInitializationCompleted(true));
+    for (auto& observer : observers_)
+      observer.OnInitializationCompleted(true);
   }
 }
 
@@ -106,8 +118,8 @@ void ConfigurationPolicyPrefStore::Refresh() {
   for (std::vector<std::string>::const_iterator pref(changed_prefs.begin());
        pref != changed_prefs.end();
        ++pref) {
-    FOR_EACH_OBSERVER(PrefStore::Observer, observers_,
-                      OnPrefValueChanged(*pref));
+    for (auto& observer : observers_)
+      observer.OnPrefValueChanged(*pref);
   }
 }
 
@@ -116,7 +128,7 @@ PrefValueMap* ConfigurationPolicyPrefStore::CreatePreferencesFromPolicies() {
   PolicyMap filtered_policies;
   filtered_policies.CopyFrom(policy_service_->GetPolicies(
       PolicyNamespace(POLICY_DOMAIN_CHROME, std::string())));
-  filtered_policies.FilterLevel(level_);
+  filtered_policies.EraseNonmatching(base::Bind(&IsLevel, level_));
 
   std::unique_ptr<PolicyErrorMap> errors(new PolicyErrorMap);
 

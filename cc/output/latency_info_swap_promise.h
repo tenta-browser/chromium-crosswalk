@@ -19,8 +19,9 @@ class CC_EXPORT LatencyInfoSwapPromise : public SwapPromise {
   ~LatencyInfoSwapPromise() override;
 
   void DidActivate() override {}
-  void DidSwap(CompositorFrameMetadata* metadata) override;
-  void DidNotSwap(DidNotSwapReason reason) override;
+  void WillSwap(CompositorFrameMetadata* metadata) override;
+  void DidSwap() override;
+  DidNotSwapAction DidNotSwap(DidNotSwapReason reason) override;
   void OnCommit() override;
 
   int64_t TraceId() const override;

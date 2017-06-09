@@ -24,7 +24,7 @@
 #include "third_party/WebKit/public/platform/WebPoint.h"
 #include "third_party/WebKit/public/platform/WebRect.h"
 #include "third_party/WebKit/public/platform/WebSize.h"
-#include "third_party/WebKit/public/platform/WebURLLoaderClient.h"
+#include "third_party/WebKit/public/web/WebAssociatedURLLoaderClient.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
 #include "third_party/WebKit/public/web/WebElement.h"
 #include "third_party/WebKit/public/web/WebFrame.h"
@@ -67,8 +67,7 @@ PepperWebPluginImpl::PepperWebPluginImpl(
       full_frame_(params.loadManually),
       throttler_(std::move(throttler)),
       instance_object_(PP_MakeUndefined()),
-      container_(nullptr),
-      destroyed_(false) {
+      container_(nullptr) {
   DCHECK(plugin_module);
   init_data_->module = plugin_module;
   init_data_->render_frame = render_frame;
@@ -111,8 +110,6 @@ bool PepperWebPluginImpl::initialize(WebPluginContainer* container) {
     if (!container_)
       return false;
 
-    DCHECK(!destroyed_);
-
     DCHECK(instance_);
     ppapi::PpapiGlobals::Get()->GetVarTracker()->ReleaseVar(instance_object_);
     instance_object_ = PP_MakeUndefined();
@@ -144,10 +141,6 @@ bool PepperWebPluginImpl::initialize(WebPluginContainer* container) {
 }
 
 void PepperWebPluginImpl::destroy() {
-  // TODO(tommycli): Remove once we fix https://crbug.com/588624.
-  CHECK(!destroyed_);
-  destroyed_ = true;
-
   container_ = nullptr;
 
   if (instance_) {
@@ -229,22 +222,24 @@ void PepperWebPluginImpl::didReceiveResponse(
 }
 
 void PepperWebPluginImpl::didReceiveData(const char* data, int data_length) {
-  blink::WebURLLoaderClient* document_loader = instance_->document_loader();
+  blink::WebAssociatedURLLoaderClient* document_loader =
+      instance_->document_loader();
   if (document_loader)
-    document_loader->didReceiveData(nullptr, data, data_length, 0);
+    document_loader->didReceiveData(data, data_length);
 }
 
 void PepperWebPluginImpl::didFinishLoading() {
-  blink::WebURLLoaderClient* document_loader = instance_->document_loader();
+  blink::WebAssociatedURLLoaderClient* document_loader =
+      instance_->document_loader();
   if (document_loader)
-    document_loader->didFinishLoading(
-        nullptr, 0.0, blink::WebURLLoaderClient::kUnknownEncodedDataLength);
+    document_loader->didFinishLoading(0.0);
 }
 
 void PepperWebPluginImpl::didFailLoading(const blink::WebURLError& error) {
-  blink::WebURLLoaderClient* document_loader = instance_->document_loader();
+  blink::WebAssociatedURLLoaderClient* document_loader =
+      instance_->document_loader();
   if (document_loader)
-    document_loader->didFail(nullptr, error);
+    document_loader->didFail(error);
 }
 
 bool PepperWebPluginImpl::hasSelection() const {
@@ -252,11 +247,11 @@ bool PepperWebPluginImpl::hasSelection() const {
 }
 
 WebString PepperWebPluginImpl::selectionAsText() const {
-  return instance_->GetSelectedText(false);
+  return WebString::fromUTF16(instance_->GetSelectedText(false));
 }
 
 WebString PepperWebPluginImpl::selectionAsMarkup() const {
-  return instance_->GetSelectedText(true);
+  return WebString::fromUTF16(instance_->GetSelectedText(true));
 }
 
 WebURL PepperWebPluginImpl::linkAtPosition(const WebPoint& position) const {
@@ -266,7 +261,7 @@ WebURL PepperWebPluginImpl::linkAtPosition(const WebPoint& position) const {
 bool PepperWebPluginImpl::startFind(const blink::WebString& search_text,
                                     bool case_sensitive,
                                     int identifier) {
-  return instance_->StartFind(search_text, case_sensitive, identifier);
+  return instance_->StartFind(search_text.utf8(), case_sensitive, identifier);
 }
 
 void PepperWebPluginImpl::selectFindResult(bool forward, int identifier) {

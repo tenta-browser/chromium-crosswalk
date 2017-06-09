@@ -17,7 +17,7 @@
 #include "base/macros.h"
 #include "base/memory/shared_memory.h"
 #include "base/metrics/field_trial.h"
-#include "base/metrics/sparse_histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/path_service.h"
 #include "base/process/launch.h"
 #include "base/strings/string_number_conversions.h"
@@ -31,6 +31,7 @@
 #include "base/win/windows_version.h"
 #include "content/common/content_switches_internal.h"
 #include "content/public/common/content_client.h"
+#include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/sandbox_init.h"
 #include "content/public/common/sandboxed_process_launcher_delegate.h"
@@ -248,11 +249,10 @@ base::string16 PrependWindowsSessionPath(const base::char16* object) {
   return base::StringPrintf(L"\\Sessions\\%lu%ls", s_session_id, object);
 }
 
-// Checks if the sandbox should be let to run without a job object assigned.
+// Checks if the sandbox can be let to run without a job object assigned.
+// Returns true if the job object has to be applied to the sandbox and false
+// otherwise.
 bool ShouldSetJobLevel(const base::CommandLine& cmd_line) {
-  if (!cmd_line.HasSwitch(switches::kAllowNoSandboxJob))
-    return true;
-
   // Windows 8 allows nested jobs so we don't need to check if we are in other
   // job.
   if (base::win::GetVersion() >= base::win::VERSION_WIN8)
@@ -276,6 +276,25 @@ bool ShouldSetJobLevel(const base::CommandLine& cmd_line) {
   if (job_info.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_BREAKAWAY_OK)
     return true;
 
+  // Lastly in place of the flag which was supposed to be used only for running
+  // Chrome in remote sessions we do this check explicitly here.
+  // According to MS this flag can be false for a remote session only on Windows
+  // Server 2012 and newer so if we do the check last we should be on the safe
+  // side. See: https://msdn.microsoft.com/en-us/library/aa380798.aspx.
+  if (!::GetSystemMetrics(SM_REMOTESESSION)) {
+    // Measure how often we would have decided to apply the sandbox but the
+    // user actually wanted to avoid it.
+    // TODO(pastarmovj): Remove this check and the flag altogether once we are
+    // convinced that the automatic logic is good enough.
+    bool set_job = !cmd_line.HasSwitch(switches::kAllowNoSandboxJob);
+    UMA_HISTOGRAM_BOOLEAN("Process.Sandbox.FlagOverrodeRemoteSessionCheck",
+                          !set_job);
+    return set_job;
+  }
+
+  // Allow running without the sandbox in this case. This slightly reduces the
+  // ability of the sandbox to protect its children from spawning new processes
+  // or preventing them from shutting down Windows or accessing the clipboard.
   return false;
 }
 
@@ -371,6 +390,12 @@ sandbox::ResultCode AddGenericPolicy(sandbox::TargetPolicy* policy) {
   return sandbox::SBOX_ALL_OK;
 }
 
+void LogLaunchWarning(sandbox::ResultCode last_warning, DWORD last_error) {
+  UMA_HISTOGRAM_SPARSE_SLOWLY("Process.Sandbox.Launch.WarningResultCode",
+                              last_warning);
+  UMA_HISTOGRAM_SPARSE_SLOWLY("Process.Sandbox.Launch.Warning", last_error);
+}
+
 sandbox::ResultCode AddPolicyForSandboxedProcess(
     sandbox::TargetPolicy* policy) {
   sandbox::ResultCode result = sandbox::SBOX_ALL_OK;
@@ -410,7 +435,9 @@ sandbox::ResultCode AddPolicyForSandboxedProcess(
 
   result = policy->SetAlternateDesktop(true);
   if (result != sandbox::SBOX_ALL_OK) {
-    // Ignore the result of setting the alternate desktop.
+    // We ignore the result of setting the alternate desktop, however log
+    // a launch warning.
+    LogLaunchWarning(result, ::GetLastError());
     DLOG(WARNING) << "Failed to apply desktop security to the renderer";
     result = sandbox::SBOX_ALL_OK;
   }
@@ -592,7 +619,7 @@ sandbox::ResultCode AddAppContainerPolicy(sandbox::TargetPolicy* policy,
 sandbox::ResultCode AddWin32kLockdownPolicy(sandbox::TargetPolicy* policy,
                                             bool enable_opm) {
 #if !defined(NACL_WIN64)
-  if (!IsWin32kRendererLockdownEnabled())
+  if (!IsWin32kLockdownEnabled())
     return sandbox::SBOX_ALL_OK;
 
   // Enable win32k lockdown if not already.
@@ -699,7 +726,8 @@ sandbox::ResultCode StartSandboxedProcess(
     return sandbox::SBOX_ALL_OK;
   }
 
-  sandbox::TargetPolicy* policy = g_broker_services->CreatePolicy();
+  scoped_refptr<sandbox::TargetPolicy> policy =
+      g_broker_services->CreatePolicy();
 
   // Add any handles to be inherited to the policy.
   for (HANDLE handle : handles_to_inherit)
@@ -716,17 +744,18 @@ sandbox::ResultCode StartSandboxedProcess(
       sandbox::MITIGATION_IMAGE_LOAD_NO_REMOTE |
       sandbox::MITIGATION_IMAGE_LOAD_NO_LOW_LABEL;
 
-  sandbox::ResultCode result = sandbox::SBOX_ERROR_GENERIC;
+  if (base::FeatureList::IsEnabled(features::kWinSboxDisableExtensionPoints))
+    mitigations |= sandbox::MITIGATION_EXTENSION_POINT_DISABLE;
 
+  sandbox::ResultCode result = sandbox::SBOX_ERROR_GENERIC;
   result = policy->SetProcessMitigations(mitigations);
 
   if (result != sandbox::SBOX_ALL_OK)
     return result;
 
 #if !defined(NACL_WIN64)
-  if (type_str == switches::kRendererProcess &&
-      IsWin32kRendererLockdownEnabled()) {
-    result = AddWin32kLockdownPolicy(policy, false);
+  if (type_str == switches::kRendererProcess && IsWin32kLockdownEnabled()) {
+    result = AddWin32kLockdownPolicy(policy.get(), false);
     if (result != sandbox::SBOX_ALL_OK)
       return result;
   }
@@ -740,12 +769,12 @@ sandbox::ResultCode StartSandboxedProcess(
   if (result != sandbox::SBOX_ALL_OK)
     return result;
 
-  result = SetJobLevel(*cmd_line, sandbox::JOB_LOCKDOWN, 0, policy);
+  result = SetJobLevel(*cmd_line, sandbox::JOB_LOCKDOWN, 0, policy.get());
   if (result != sandbox::SBOX_ALL_OK)
     return result;
 
   if (!delegate->DisableDefaultPolicy()) {
-    result = AddPolicyForSandboxedProcess(policy);
+    result = AddPolicyForSandboxedProcess(policy.get());
     if (result != sandbox::SBOX_ALL_OK)
       return result;
   }
@@ -754,7 +783,7 @@ sandbox::ResultCode StartSandboxedProcess(
   if (type_str == switches::kRendererProcess ||
       type_str == switches::kPpapiPluginProcess) {
     AddDirectory(base::DIR_WINDOWS_FONTS, NULL, true,
-                 sandbox::TargetPolicy::FILES_ALLOW_READONLY, policy);
+                 sandbox::TargetPolicy::FILES_ALLOW_READONLY, policy.get());
   }
 #endif
 
@@ -765,7 +794,7 @@ sandbox::ResultCode StartSandboxedProcess(
     cmd_line->AppendSwitchASCII("ignored", " --type=renderer ");
   }
 
-  result = AddGenericPolicy(policy);
+  result = AddGenericPolicy(policy.get());
 
   if (result != sandbox::SBOX_ALL_OK) {
     NOTREACHED();
@@ -792,7 +821,7 @@ sandbox::ResultCode StartSandboxedProcess(
   policy->SetStderrHandle(GetStdHandle(STD_ERROR_HANDLE));
 #endif
 
-  if (!delegate->PreSpawnTarget(policy))
+  if (!delegate->PreSpawnTarget(policy.get()))
     return sandbox::SBOX_ERROR_DELEGATE_PRE_SPAWN;
 
   TRACE_EVENT_BEGIN0("startup", "StartProcessWithAccess::LAUNCHPROCESS");
@@ -820,9 +849,7 @@ sandbox::ResultCode StartSandboxedProcess(
   }
 
   if (sandbox::SBOX_ALL_OK != last_warning) {
-    UMA_HISTOGRAM_SPARSE_SLOWLY("Process.Sandbox.Launch.WarningResultCode",
-                                last_warning);
-    UMA_HISTOGRAM_SPARSE_SLOWLY("Process.Sandbox.Launch.Warning", last_error);
+    LogLaunchWarning(last_warning, last_error);
   }
 
   delegate->PostSpawnTarget(target.process_handle());

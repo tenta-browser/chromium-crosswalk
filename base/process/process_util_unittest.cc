@@ -60,7 +60,6 @@
 #if defined(OS_MACOSX)
 #include <mach/vm_param.h>
 #include <malloc/malloc.h>
-#include "base/mac/mac_util.h"
 #endif
 #if defined(OS_ANDROID)
 #include "third_party/lss/linux_syscall_support.h"
@@ -258,7 +257,7 @@ TEST_F(ProcessUtilTest, GetProcId) {
 }
 #endif  // defined(OS_WIN)
 
-#if !defined(OS_MACOSX)
+#if !defined(OS_MACOSX) && !defined(OS_ANDROID)
 // This test is disabled on Mac, since it's flaky due to ReportCrash
 // taking a variable amount of time to parse and load the debug and
 // symbol data for this unit test's executable before firing the
@@ -267,23 +266,14 @@ TEST_F(ProcessUtilTest, GetProcId) {
 // TODO(gspencer): turn this test process into a very small program
 // with no symbols (instead of using the multiprocess testing
 // framework) to reduce the ReportCrash overhead.
+//
+// It is disabled on Android as MultiprocessTests are started as services that
+// the framework restarts on crashes.
 const char kSignalFileCrash[] = "CrashingChildProcess.die";
 
 MULTIPROCESS_TEST_MAIN(CrashingChildProcess) {
   WaitToDie(ProcessUtilTest::GetSignalFilePath(kSignalFileCrash).c_str());
-#if defined(OS_ANDROID)
-  // Android L+ expose signal and sigaction symbols that override the system
-  // ones. There is a bug in these functions where a request to set the handler
-  // to SIG_DFL is ignored. In that case, an infinite loop is entered as the
-  // signal is repeatedly sent to the crash dump signal handler.
-  // To work around this, directly call the system's sigaction.
-  struct kernel_sigaction sa;
-  memset(&sa, 0, sizeof(sa));
-  sys_sigemptyset(&sa.sa_mask);
-  sa.sa_handler_ = SIG_DFL;
-  sa.sa_flags = SA_RESTART;
-  sys_rt_sigaction(SIGSEGV, &sa, NULL, sizeof(kernel_sigset_t));
-#elif defined(OS_POSIX)
+#if defined(OS_POSIX)
   // Have to disable to signal handler for segv so we can get a crash
   // instead of an abnormal termination through the crash dump handler.
   ::signal(SIGSEGV, SIG_DFL);
@@ -332,7 +322,7 @@ TEST_F(ProcessUtilTest, MAYBE_GetTerminationStatusCrash) {
   base::debug::EnableInProcessStackDumping();
   remove(signal_file.c_str());
 }
-#endif  // !defined(OS_MACOSX)
+#endif  // !defined(OS_MACOSX) && !defined(OS_ANDROID)
 
 MULTIPROCESS_TEST_MAIN(KilledChildProcess) {
   WaitToDie(ProcessUtilTest::GetSignalFilePath(kSignalFileKill).c_str());
@@ -572,10 +562,6 @@ int change_fdguard_np(int fd,
 // <http://crbug.com/338157>.  This function allows querying whether the file
 // descriptor is guarded before attempting to close it.
 bool CanGuardFd(int fd) {
-  // The syscall is first provided in 10.9/Mavericks.
-  if (!base::mac::IsOSMavericksOrLater())
-    return true;
-
   // Saves the original flags to reset later.
   int original_fdflags = 0;
 
@@ -842,118 +828,6 @@ TEST_F(ProcessUtilTest, GetAppOutput) {
   EXPECT_TRUE(base::GetAppOutput(base::CommandLine(argv), &output));
   EXPECT_STREQ("foobar42", output.c_str());
 #endif  // defined(OS_ANDROID)
-}
-
-// Flakes on Android, crbug.com/375840
-#if defined(OS_ANDROID)
-#define MAYBE_GetAppOutputRestricted DISABLED_GetAppOutputRestricted
-#else
-#define MAYBE_GetAppOutputRestricted GetAppOutputRestricted
-#endif
-TEST_F(ProcessUtilTest, MAYBE_GetAppOutputRestricted) {
-  // Unfortunately, since we can't rely on the path, we need to know where
-  // everything is. So let's use /bin/sh, which is on every POSIX system, and
-  // its built-ins.
-  std::vector<std::string> argv;
-  argv.push_back(std::string(kShellPath));  // argv[0]
-  argv.push_back("-c");  // argv[1]
-
-  // On success, should set |output|. We use |/bin/sh -c 'exit 0'| instead of
-  // |true| since the location of the latter may be |/bin| or |/usr/bin| (and we
-  // need absolute paths).
-  argv.push_back("exit 0");   // argv[2]; equivalent to "true"
-  std::string output = "abc";
-  EXPECT_TRUE(base::GetAppOutputRestricted(base::CommandLine(argv), &output,
-                                           100));
-  EXPECT_STREQ("", output.c_str());
-
-  argv[2] = "exit 1";  // equivalent to "false"
-  output = "before";
-  EXPECT_FALSE(base::GetAppOutputRestricted(base::CommandLine(argv), &output,
-                                            100));
-  EXPECT_STREQ("", output.c_str());
-
-  // Amount of output exactly equal to space allowed.
-  argv[2] = "echo 123456789";  // (the sh built-in doesn't take "-n")
-  output.clear();
-  EXPECT_TRUE(base::GetAppOutputRestricted(base::CommandLine(argv), &output,
-                                           10));
-  EXPECT_STREQ("123456789\n", output.c_str());
-
-  // Amount of output greater than space allowed.
-  output.clear();
-  EXPECT_TRUE(base::GetAppOutputRestricted(base::CommandLine(argv), &output,
-                                           5));
-  EXPECT_STREQ("12345", output.c_str());
-
-  // Amount of output less than space allowed.
-  output.clear();
-  EXPECT_TRUE(base::GetAppOutputRestricted(base::CommandLine(argv), &output,
-                                           15));
-  EXPECT_STREQ("123456789\n", output.c_str());
-
-  // Zero space allowed.
-  output = "abc";
-  EXPECT_TRUE(base::GetAppOutputRestricted(base::CommandLine(argv), &output,
-                                           0));
-  EXPECT_STREQ("", output.c_str());
-}
-
-#if !defined(OS_MACOSX) && !defined(OS_OPENBSD)
-// TODO(benwells): GetAppOutputRestricted should terminate applications
-// with SIGPIPE when we have enough output. http://crbug.com/88502
-TEST_F(ProcessUtilTest, GetAppOutputRestrictedSIGPIPE) {
-  std::vector<std::string> argv;
-  std::string output;
-
-  argv.push_back(std::string(kShellPath));  // argv[0]
-  argv.push_back("-c");
-#if defined(OS_ANDROID)
-  argv.push_back("while echo 12345678901234567890; do :; done");
-  EXPECT_TRUE(base::GetAppOutputRestricted(base::CommandLine(argv), &output,
-                                           10));
-  EXPECT_STREQ("1234567890", output.c_str());
-#else  // defined(OS_ANDROID)
-  argv.push_back("yes");
-  EXPECT_TRUE(base::GetAppOutputRestricted(base::CommandLine(argv), &output,
-                                           10));
-  EXPECT_STREQ("y\ny\ny\ny\ny\n", output.c_str());
-#endif  // !defined(OS_ANDROID)
-}
-#endif  // !defined(OS_MACOSX) && !defined(OS_OPENBSD)
-
-#if defined(ADDRESS_SANITIZER) && defined(OS_MACOSX) && \
-    defined(ARCH_CPU_64_BITS)
-// Times out under AddressSanitizer on 64-bit OS X, see
-// http://crbug.com/298197.
-#define MAYBE_GetAppOutputRestrictedNoZombies \
-    DISABLED_GetAppOutputRestrictedNoZombies
-#else
-#define MAYBE_GetAppOutputRestrictedNoZombies GetAppOutputRestrictedNoZombies
-#endif
-TEST_F(ProcessUtilTest, MAYBE_GetAppOutputRestrictedNoZombies) {
-  std::vector<std::string> argv;
-
-  argv.push_back(std::string(kShellPath));  // argv[0]
-  argv.push_back("-c");  // argv[1]
-  argv.push_back("echo 123456789012345678901234567890");  // argv[2]
-
-  // Run |GetAppOutputRestricted()| 300 (> default per-user processes on Mac OS
-  // 10.5) times with an output buffer big enough to capture all output.
-  for (int i = 0; i < 300; i++) {
-    std::string output;
-    EXPECT_TRUE(base::GetAppOutputRestricted(base::CommandLine(argv), &output,
-                                             100));
-    EXPECT_STREQ("123456789012345678901234567890\n", output.c_str());
-  }
-
-  // Ditto, but with an output buffer too small to capture all output.
-  for (int i = 0; i < 300; i++) {
-    std::string output;
-    EXPECT_TRUE(base::GetAppOutputRestricted(base::CommandLine(argv), &output,
-                                             10));
-    EXPECT_STREQ("1234567890", output.c_str());
-  }
 }
 
 TEST_F(ProcessUtilTest, GetAppOutputWithExitCode) {

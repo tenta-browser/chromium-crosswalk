@@ -13,6 +13,7 @@
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
 #include "base/task_runner_util.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/background_sync/background_sync_context.h"
 #include "content/browser/background_sync/background_sync_manager.h"
 #include "content/browser/background_sync/background_sync_network_observer.h"
@@ -90,7 +91,7 @@ void RegistrationPendingDidGetSWRegistration(
     const std::string& tag,
     const base::Callback<void(bool)>& callback,
     ServiceWorkerStatusCode status,
-    const scoped_refptr<ServiceWorkerRegistration>& registration) {
+    scoped_refptr<ServiceWorkerRegistration> registration) {
   ASSERT_EQ(SERVICE_WORKER_OK, status);
   int64_t service_worker_id = registration->id();
   BackgroundSyncManager* sync_manager = sync_context->background_sync_manager();

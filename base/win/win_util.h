@@ -66,6 +66,11 @@ inline uint32_t HandleToUint32(HANDLE h) {
   return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(h));
 }
 
+inline HANDLE Uint32ToHandle(uint32_t h) {
+  return reinterpret_cast<HANDLE>(
+      static_cast<uintptr_t>(static_cast<int32_t>(h)));
+}
+
 BASE_EXPORT void GetNonClientMetrics(NONCLIENTMETRICS_XP* metrics);
 
 // Returns the string representing the current user sid.
@@ -151,6 +156,14 @@ BASE_EXPORT bool IsKeyboardPresentOnSlate(std::string* reason);
 
 // Returns true if the machine is enrolled to a domain.
 BASE_EXPORT bool IsEnrolledToDomain();
+
+// Returns true if the machine is being managed by an MDM system.
+BASE_EXPORT bool IsDeviceRegisteredWithManagement();
+
+// Returns true if the current machine is considered enterprise managed in some
+// fashion.  A machine is considered managed if it is either domain enrolled
+// or registered with an MDM.
+BASE_EXPORT bool IsEnterpriseManaged();
 
 // Used by tests to mock any wanted state. Call with |state| set to true to
 // simulate being in a domain and false otherwise.

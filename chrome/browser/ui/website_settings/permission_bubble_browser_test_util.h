@@ -5,21 +5,25 @@
 #ifndef CHROME_BROWSER_UI_WEBSITE_SETTINGS_PERMISSION_BUBBLE_BROWSER_TEST_UTIL_H_
 #define CHROME_BROWSER_UI_WEBSITE_SETTINGS_PERMISSION_BUBBLE_BROWSER_TEST_UTIL_H_
 
+#include <memory>
+#include <vector>
+
 #include "base/macros.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
-#include "chrome/browser/ui/website_settings/permission_bubble_view.h"
+#include "chrome/browser/ui/website_settings/permission_prompt.h"
 
 namespace base {
 class CommandLine;
 }
-class PermissionBubbleRequest;
+class PermissionRequest;
 class Browser;
 
-class TestPermissionBubbleViewDelegate : public PermissionBubbleView::Delegate {
+class TestPermissionBubbleViewDelegate : public PermissionPrompt::Delegate {
  public:
   TestPermissionBubbleViewDelegate();
 
   void ToggleAccept(int, bool) override {}
+  void TogglePersist(bool) override {}
   void Accept() override {}
   void Deny() override {}
   void Closing() override {}
@@ -41,13 +45,13 @@ class PermissionBubbleBrowserTest : public ExtensionBrowserTest {
   // Opens an app window, and returns the associated browser.
   Browser* OpenExtensionAppWindow();
 
-  std::vector<PermissionBubbleRequest*> requests() { return requests_.get(); }
+  std::vector<PermissionRequest*> requests();
   std::vector<bool> accept_states() { return accept_states_; }
-  PermissionBubbleView::Delegate* test_delegate() { return &test_delegate_; }
+  PermissionPrompt::Delegate* test_delegate() { return &test_delegate_; }
 
  private:
   TestPermissionBubbleViewDelegate test_delegate_;
-  ScopedVector<PermissionBubbleRequest> requests_;
+  std::vector<std::unique_ptr<PermissionRequest>> requests_;
   std::vector<bool> accept_states_;
 
   DISALLOW_COPY_AND_ASSIGN(PermissionBubbleBrowserTest);

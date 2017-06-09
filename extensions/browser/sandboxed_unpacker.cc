@@ -15,7 +15,7 @@
 #include "base/files/file_util.h"
 #include "base/json/json_string_value_serializer.h"
 #include "base/message_loop/message_loop.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/path_service.h"
 #include "base/sequenced_task_runner.h"
@@ -36,7 +36,7 @@
 #include "extensions/common/manifest_constants.h"
 #include "extensions/common/manifest_handlers/icons_handler.h"
 #include "extensions/common/switches.h"
-#include "grit/extensions_strings.h"
+#include "extensions/strings/grit/extensions_strings.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/codec/png_codec.h"
@@ -53,7 +53,7 @@ using crx_file::CrxFile;
 // fail to install. To see if this is happening, see how long the
 // path to the temp unpack directory is. See crbug.com/69693 .
 #define PATH_LENGTH_HISTOGRAM(name, path) \
-  UMA_HISTOGRAM_CUSTOM_COUNTS(name, path.value().length(), 0, 500, 100)
+  UMA_HISTOGRAM_CUSTOM_COUNTS(name, path.value().length(), 1, 500, 100)
 
 // Record a rate (kB per second) at which extensions are unpacked.
 // Range from 1kB/s to 100mB/s.
@@ -210,8 +210,8 @@ bool ReadMessageCatalogsFromFile(const base::FilePath& extension_path,
 }  // namespace
 
 SandboxedUnpackerClient::SandboxedUnpackerClient()
-    : RefCountedDeleteOnMessageLoop<SandboxedUnpackerClient>(
-          content::BrowserThread::GetMessageLoopProxyForThread(
+    : RefCountedDeleteOnSequence<SandboxedUnpackerClient>(
+          content::BrowserThread::GetTaskRunnerForThread(
               content::BrowserThread::UI)) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 }
@@ -228,7 +228,12 @@ SandboxedUnpacker::SandboxedUnpacker(
       location_(location),
       creation_flags_(creation_flags),
       unpacker_io_task_runner_(unpacker_io_task_runner),
-      utility_wrapper_(new UtilityHostWrapper) {}
+      utility_wrapper_(new UtilityHostWrapper) {
+  // Tracking for crbug.com/692069. The location must be valid. If it's invalid,
+  // the utility process kills itself for a bad IPC.
+  CHECK_GT(location, Manifest::INVALID_LOCATION);
+  CHECK_LT(location, Manifest::NUM_LOCATIONS);
+}
 
 bool SandboxedUnpacker::CreateTempDirectory() {
   CHECK(unpacker_io_task_runner_->RunsTasksOnCurrentThread());
@@ -272,7 +277,7 @@ void SandboxedUnpacker::StartWithCrx(const CRXFileInfo& crx_info) {
     return;  // ReportFailure() already called.
 
   // Initialize the path that will eventually contain the unpacked extension.
-  extension_root_ = temp_dir_.path().AppendASCII(kTempExtensionName);
+  extension_root_ = temp_dir_.GetPath().AppendASCII(kTempExtensionName);
   PATH_LENGTH_HISTOGRAM("Extensions.SandboxUnpackUnpackedCrxPathLength",
                         extension_root_);
 
@@ -282,7 +287,7 @@ void SandboxedUnpacker::StartWithCrx(const CRXFileInfo& crx_info) {
 
   // Copy the crx file into our working directory.
   base::FilePath temp_crx_path =
-      temp_dir_.path().Append(crx_info.path.BaseName());
+      temp_dir_.GetPath().Append(crx_info.path.BaseName());
   PATH_LENGTH_HISTOGRAM("Extensions.SandboxUnpackTempCrxPathLength",
                         temp_crx_path);
 
@@ -325,7 +330,7 @@ void SandboxedUnpacker::StartWithDirectory(const std::string& extension_id,
   if (!CreateTempDirectory())
     return;  // ReportFailure() already called.
 
-  extension_root_ = temp_dir_.path().AppendASCII(kTempExtensionName);
+  extension_root_ = temp_dir_.GetPath().AppendASCII(kTempExtensionName);
 
   if (!base::Move(directory, extension_root_)) {
     LOG(ERROR) << "Could not move " << directory.value() << " to "
@@ -380,7 +385,7 @@ void SandboxedUnpacker::OnProcessCrashed(int exit_code) {
 }
 
 void SandboxedUnpacker::StartUnzipOnIOThread(const base::FilePath& crx_path) {
-  if (!utility_wrapper_->StartIfNeeded(temp_dir_.path(), this,
+  if (!utility_wrapper_->StartIfNeeded(temp_dir_.GetPath(), this,
                                        unpacker_io_task_runner_)) {
     ReportFailure(
         COULD_NOT_START_UTILITY_PROCESS,
@@ -389,7 +394,7 @@ void SandboxedUnpacker::StartUnzipOnIOThread(const base::FilePath& crx_path) {
             FailureReasonToString16(COULD_NOT_START_UTILITY_PROCESS)));
     return;
   }
-  DCHECK(crx_path.DirName() == temp_dir_.path());
+  DCHECK(crx_path.DirName() == temp_dir_.GetPath());
   base::FilePath unzipped_dir =
       crx_path.DirName().AppendASCII(kTempExtensionName);
   utility_wrapper_->host()->Send(
@@ -398,7 +403,7 @@ void SandboxedUnpacker::StartUnzipOnIOThread(const base::FilePath& crx_path) {
 
 void SandboxedUnpacker::StartUnpackOnIOThread(
     const base::FilePath& directory_path) {
-  if (!utility_wrapper_->StartIfNeeded(temp_dir_.path(), this,
+  if (!utility_wrapper_->StartIfNeeded(temp_dir_.GetPath(), this,
                                        unpacker_io_task_runner_)) {
     ReportFailure(
         COULD_NOT_START_UTILITY_PROCESS,
@@ -407,7 +412,7 @@ void SandboxedUnpacker::StartUnpackOnIOThread(
             FailureReasonToString16(COULD_NOT_START_UTILITY_PROCESS)));
     return;
   }
-  DCHECK(directory_path.DirName() == temp_dir_.path());
+  DCHECK(directory_path.DirName() == temp_dir_.GetPath());
   utility_wrapper_->host()->Send(new ExtensionUtilityMsg_UnpackExtension(
       directory_path, extension_id_, location_, creation_flags_));
 }
@@ -669,7 +674,7 @@ void SandboxedUnpacker::ReportSuccess(
     RecordSuccessfulUnpackTimeHistograms(
         crx_path_for_histograms_,
         base::TimeTicks::Now() - crx_unpack_start_time_);
-  DCHECK(!temp_dir_.path().empty());
+  DCHECK(!temp_dir_.GetPath().empty());
 
   // Client takes ownership of temporary directory and extension.
   client_->OnUnpackSuccess(temp_dir_.Take(), extension_root_,
@@ -713,9 +718,9 @@ base::DictionaryValue* SandboxedUnpacker::RewriteManifestFile(
 }
 
 bool SandboxedUnpacker::RewriteImageFiles(SkBitmap* install_icon) {
-  DCHECK(!temp_dir_.path().empty());
+  DCHECK(!temp_dir_.GetPath().empty());
   DecodedImages images;
-  if (!ReadImagesFromFile(temp_dir_.path(), &images)) {
+  if (!ReadImagesFromFile(temp_dir_.GetPath(), &images)) {
     // Couldn't read image data from disk.
     ReportFailure(COULD_NOT_READ_IMAGE_DATA_FROM_DISK,
                   l10n_util::GetStringFUTF16(
@@ -823,7 +828,7 @@ bool SandboxedUnpacker::RewriteImageFiles(SkBitmap* install_icon) {
 
 bool SandboxedUnpacker::RewriteCatalogFiles() {
   base::DictionaryValue catalogs;
-  if (!ReadMessageCatalogsFromFile(temp_dir_.path(), &catalogs)) {
+  if (!ReadMessageCatalogsFromFile(temp_dir_.GetPath(), &catalogs)) {
     // Could not read catalog data from disk.
     ReportFailure(COULD_NOT_READ_CATALOG_DATA_FROM_DISK,
                   l10n_util::GetStringFUTF16(
@@ -889,7 +894,7 @@ void SandboxedUnpacker::Cleanup() {
   DCHECK(unpacker_io_task_runner_->RunsTasksOnCurrentThread());
   if (!temp_dir_.Delete()) {
     LOG(WARNING) << "Can not delete temp directory at "
-                 << temp_dir_.path().value();
+                 << temp_dir_.GetPath().value();
   }
 }
 

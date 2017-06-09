@@ -31,10 +31,6 @@ enum class SigninError {
   HANDLED_INTERNALLY  // Has been displayed to the user already.
 };
 
-// Registers and returns the global SigninErrorProvider.
-void SetSigninErrorProvider(SigninErrorProvider* provider);
-SigninErrorProvider* GetSigninErrorProvider();
-
 // Provides utility methods and constants for interpreting signin errors.
 class SigninErrorProvider {
  public:
@@ -46,6 +42,12 @@ class SigninErrorProvider {
 
   // Tests if an NSError is user cancellation error.
   virtual bool IsCanceled(NSError* error);
+
+  // Tests if an NSError is an authorization forbidden error.
+  virtual bool IsForbidden(NSError* error);
+
+  // Tests if an NSError is a bad request error.
+  virtual bool IsBadRequest(NSError* error);
 
   // Constant in JSON error responses to server requests indicating that
   // the authentication was revoked by the server.

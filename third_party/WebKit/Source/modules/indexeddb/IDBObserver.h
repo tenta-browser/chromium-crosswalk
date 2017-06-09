@@ -5,36 +5,46 @@
 #ifndef IDBObserver_h
 #define IDBObserver_h
 
+#include "bindings/core/v8/ScriptState.h"
 #include "bindings/core/v8/ScriptWrappable.h"
-#include "modules/indexeddb/IDBDatabase.h"
-#include "modules/indexeddb/IDBTransaction.h"
+#include "modules/ModulesExport.h"
 #include "platform/heap/Handle.h"
+#include "public/platform/WebVector.h"
+#include "public/platform/modules/indexeddb/WebIDBTypes.h"
 
 namespace blink {
 
+class ExceptionState;
+class IDBDatabase;
 class IDBObserverCallback;
 class IDBObserverInit;
+class IDBTransaction;
 
-class IDBObserver final : public GarbageCollected<IDBObserver>, public ScriptWrappable {
-    DEFINE_WRAPPERTYPEINFO();
+class MODULES_EXPORT IDBObserver final : public GarbageCollected<IDBObserver>,
+                                         public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
 
-public:
-    static IDBObserver* create(IDBObserverCallback&, const IDBObserverInit&);
+ public:
+  static IDBObserver* create(IDBObserverCallback*);
 
-    // API methods
-    void observe(IDBDatabase*, IDBTransaction*, ExceptionState&);
+  IDBObserverCallback* callback() { return m_callback; }
 
-    DECLARE_TRACE();
+  // Implement the IDBObserver IDL.
+  void observe(IDBDatabase*,
+               IDBTransaction*,
+               const IDBObserverInit&,
+               ExceptionState&);
+  void unobserve(IDBDatabase*, ExceptionState&);
 
-private:
-    IDBObserver(IDBObserverCallback&, const IDBObserverInit&);
+  DECLARE_TRACE();
 
-    Member<IDBObserverCallback> m_callback;
-    bool m_transaction;
-    bool m_values;
-    bool m_noRecords;
+ private:
+  explicit IDBObserver(IDBObserverCallback*);
+
+  Member<IDBObserverCallback> m_callback;
+  HeapHashMap<int32_t, WeakMember<IDBDatabase>> m_observerIds;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // IDBObserver_h
+#endif  // IDBObserver_h

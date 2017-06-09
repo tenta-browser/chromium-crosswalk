@@ -1228,6 +1228,52 @@ function testAddContentScriptWithCode() {
   document.body.appendChild(webview);
 }
 
+function testAddMultipleContentScriptsWithCodeAndCheckGeneratedScriptUrl() {
+  var webview = document.createElement('webview');
+
+  console.log('Step 1: call <webview>.addContentScripts.');
+  var getCode = function(id) {
+    return 'var e = new Error();\n' +
+           'var n = document.createElement("span");\n' +
+           'n.id = "textnode' + id + '";\n' +
+           'n.textContent = e.stack;\n' +
+           'document.body.appendChild(n);\n';
+  }
+  var code0 = getCode('0');
+  var code1 = getCode('1');
+  webview.addContentScripts(
+      [{name: 'myrule0',
+        matches: ['http://*/extensions/*'],
+        js: {code: code0},
+        run_at: 'document_end'}]);
+  webview.addContentScripts(
+      [{name: 'myrule1',
+        matches: ['http://*/extensions/*'],
+        js: {code: code1},
+        run_at: 'document_end'}]);
+
+  webview.addEventListener('loadstop', function() {
+    console.log('Step 2: call webview.executeScript() to check result.')
+    webview.executeScript({
+      code: '[document.getElementById("textnode0").textContent,' +
+            'document.getElementById("textnode1").textContent];'},
+      function(results) {
+        embedder.test.assertEq(1, results.length);
+        var contents = results[0];
+        embedder.test.assertEq(2, contents.length);
+        embedder.test.assertTrue(
+            contents[0].indexOf('generated_script_file:') != -1);
+        embedder.test.assertTrue(
+            contents[1].indexOf('generated_script_file:') != -1);
+        embedder.test.assertTrue(contents[0] != contents[1]);
+        embedder.test.succeed();
+    });
+  });
+
+  webview.src = embedder.emptyGuestURL;
+  document.body.appendChild(webview);
+}
+
 function testExecuteScriptFail() {
   var webview = document.createElement('webview');
   document.body.appendChild(webview);
@@ -2913,6 +2959,28 @@ function testMailtoLink() {
   document.body.appendChild(webview);
 }
 
+// This test verifies that an embedder can navigate a WebView to a blob URL it
+// creates.
+function testBlobURL() {
+  var webview = new WebView();
+  var blob = new Blob(['<html><body>Blob content</body></html>'],
+                      {type: 'text/html'});
+  var blobURL = URL.createObjectURL(blob);
+  webview.src = blobURL;
+
+  webview.onloadabort = function() {
+    // The blob: URL load should not trigger a loadabort.
+    window.console.log('Blob URL load was aborted.');
+    embedder.test.fail();
+  };
+  webview.onloadstop = function() {
+    embedder.test.assertTrue(webview.src == blobURL);
+    embedder.test.succeed();
+  };
+
+  document.body.appendChild(webview);
+}
+
 // This test navigates an unattached guest to 'about:blank', then it makes a
 // renderer/ navigation to a URL that results in a server side redirect. In the
 // end we verify that the redirected URL loads in the guest properly.
@@ -2996,6 +3064,8 @@ embedder.test.testList = {
   'testContentScriptExistsAsLongAsWebViewTagExists':
       testContentScriptExistsAsLongAsWebViewTagExists,
   'testAddContentScriptWithCode': testAddContentScriptWithCode,
+  'testAddMultipleContentScriptsWithCodeAndCheckGeneratedScriptUrl':
+      testAddMultipleContentScriptsWithCodeAndCheckGeneratedScriptUrl,
   'testExecuteScriptFail': testExecuteScriptFail,
   'testExecuteScript': testExecuteScript,
   'testExecuteScriptIsAbortedWhenWebViewSourceIsChanged':
@@ -3067,7 +3137,8 @@ embedder.test.testList = {
   'testPDFInWebview': testPDFInWebview,
   'testMailtoLink': testMailtoLink,
   'testRendererNavigationRedirectWhileUnattached':
-       testRendererNavigationRedirectWhileUnattached
+       testRendererNavigationRedirectWhileUnattached,
+  'testBlobURL': testBlobURL
 };
 
 onload = function() {

@@ -22,15 +22,15 @@ class SharedWorkerInstanceTest : public testing::Test {
   SharedWorkerInstanceTest()
       : browser_context_(new TestBrowserContext()),
         partition_(new WorkerStoragePartition(
-            BrowserContext::GetDefaultStoragePartition(browser_context_.get())->
-                GetURLRequestContext(),
-            NULL,
-            NULL,
-            NULL,
-            NULL,
-            NULL,
-            NULL,
-            NULL)),
+            BrowserContext::GetDefaultStoragePartition(browser_context_.get())
+                ->GetURLRequestContext(),
+            nullptr /* media_url_request_context */,
+            nullptr /* appcache_service */,
+            nullptr /* quota_manager */,
+            nullptr /* filesystem_context */,
+            nullptr /* database_tracker */,
+            nullptr /* indexed_db_context */,
+            nullptr /* service_worker_context */)),
         partition_id_(*partition_.get()) {}
 
   bool Matches(const SharedWorkerInstance& instance,
@@ -47,6 +47,7 @@ class SharedWorkerInstanceTest : public testing::Test {
   std::unique_ptr<WorkerStoragePartition> partition_;
   const WorkerStoragePartitionId partition_id_;
 
+ private:
   DISALLOW_COPY_AND_ASSIGN(SharedWorkerInstanceTest);
 };
 
@@ -75,7 +76,7 @@ TEST_F(SharedWorkerInstanceTest, MatchesTest) {
   EXPECT_FALSE(Matches(instance2, "http://example.net/w.js", ""));
   EXPECT_FALSE(Matches(instance2, "http://example.net/w2.js", ""));
   EXPECT_TRUE(Matches(instance2, "http://example.com/w.js", "name"));
-  EXPECT_TRUE(Matches(instance2, "http://example.com/w2.js", "name"));
+  EXPECT_FALSE(Matches(instance2, "http://example.com/w2.js", "name"));
   EXPECT_FALSE(Matches(instance2, "http://example.net/w.js", "name"));
   EXPECT_FALSE(Matches(instance2, "http://example.net/w2.js", "name"));
   EXPECT_FALSE(Matches(instance2, "http://example.com/w.js", "name2"));

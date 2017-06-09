@@ -14,6 +14,20 @@ InspectorTest.TestFileSystem = function(fileSystemPath)
 InspectorTest.TestFileSystem._instances = {};
 
 InspectorTest.TestFileSystem.prototype = {
+    dumpAsText: function() {
+        var result = [];
+        dfs(this.root, '');
+        result[0] = this.fileSystemPath;
+        return result.join('\n');
+
+        function dfs(node, indent) {
+            result.push(indent + node.name);
+            var newIndent = indent + '    ';
+            for (var child of node._children)
+                dfs(child, newIndent);
+        }
+    },
+
     reportCreated: function(callback)
     {
         var fileSystemPath = this.fileSystemPath;
@@ -23,14 +37,14 @@ InspectorTest.TestFileSystem.prototype = {
                           fileSystemName: this.fileSystemPath }
         });
 
-        WebInspector.isolatedFileSystemManager.addEventListener(WebInspector.IsolatedFileSystemManager.Events.FileSystemAdded, created);
+        Workspace.isolatedFileSystemManager.addEventListener(Workspace.IsolatedFileSystemManager.Events.FileSystemAdded, created);
 
         function created(event)
         {
             var fileSystem = event.data;
             if (fileSystem.path() !== fileSystemPath)
                 return;
-            WebInspector.isolatedFileSystemManager.removeEventListener(WebInspector.IsolatedFileSystemManager.Events.FileSystemAdded, created);
+            Workspace.isolatedFileSystemManager.removeEventListener(Workspace.IsolatedFileSystemManager.Events.FileSystemAdded, created);
             callback(fileSystem);
         }
     },
@@ -43,10 +57,34 @@ InspectorTest.TestFileSystem.prototype = {
 
     addFileMapping: function(urlPrefix, pathPrefix)
     {
-        var fileSystemMapping = new WebInspector.FileSystemMapping();
+        var fileSystemMapping = new Workspace.FileSystemMapping(Workspace.isolatedFileSystemManager);
         fileSystemMapping.addFileSystem(this.fileSystemPath);
         fileSystemMapping.addFileMapping(this.fileSystemPath, urlPrefix, pathPrefix);
-        WebInspector.fileSystemMapping._loadFromSettings();
+        fileSystemMapping.dispose();
+        Workspace.fileSystemMapping._loadFromSettings();
+    },
+
+    /**
+     * @param {string} path
+     * @param {string} content
+     * @param {number} lastModified
+     */
+    addFile: function(path, content, lastModified)
+    {
+        var pathTokens = path.split("/");
+        var node = this.root;
+        var folders = pathTokens.slice(0, pathTokens.length - 1);
+        var fileName = pathTokens.peekLast();
+        for (var folder of folders) {
+            var dir = node._childrenMap[folder];
+            if (!dir)
+                dir = node.mkdir(folder);
+            node = dir;
+        }
+        var file = node.addFile(fileName, content);
+        if (lastModified)
+            file._timestamp = lastModified;
+        return file;
     }
 }
 
@@ -83,7 +121,9 @@ InspectorTest.TestFileSystem.Entry.prototype = {
         this._children.splice(index, 1);
         delete this._childrenMap[child.name];
         child.parent = null;
-        InspectorFrontendHost.events.dispatchEventToListeners(InspectorFrontendHostAPI.Events.FileSystemFilesChanged, [fullPath]);
+        InspectorFrontendHost.events.dispatchEventToListeners(
+            InspectorFrontendHostAPI.Events.FileSystemFilesChangedAddedRemoved,
+            {changed: [], added: [], removed: [fullPath]});
         success();
     },
 
@@ -103,7 +143,21 @@ InspectorTest.TestFileSystem.Entry.prototype = {
         this._children.push(child);
         child.parent = this;
         child.content = new Blob([content], {type: 'text/plain'});
+        var fullPath = this._fileSystem.fileSystemPath + child.fullPath;
+        InspectorFrontendHost.events.dispatchEventToListeners(
+            InspectorFrontendHostAPI.Events.FileSystemFilesChangedAddedRemoved,
+            {changed: [], added: [fullPath], removed: []});
         return child;
+    },
+
+    setContent: function(content)
+    {
+        this.content = new Blob([content], {type: 'text/plain'});
+        this._timestamp += 1000;
+        var fullPath = this._fileSystem.fileSystemPath + this.fullPath;
+        InspectorFrontendHost.events.dispatchEventToListeners(
+            InspectorFrontendHostAPI.Events.FileSystemFilesChangedAddedRemoved,
+            {changed: [fullPath], added: [], removed: []});
     },
 
     createReader: function()
@@ -142,7 +196,7 @@ InspectorTest.TestFileSystem.Entry.prototype = {
         var entry = this;
         for (var token of path.split("/"))
             entry = entry._childrenMap[token];
-        entry ? callback(entry) : errorCallback({ code: FileError.NOT_FOUND_ERR});
+        entry ? callback(entry) : errorCallback(new DOMException('Path not found: ' + path, 'NotFoundError'));
     },
 
     getMetadata: function(success, failure)

@@ -9,7 +9,6 @@
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/threading/non_thread_safe.h"
 #include "chrome/browser/captive_portal/captive_portal_service.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
@@ -17,7 +16,6 @@
 #include "content/public/browser/web_contents_user_data.h"
 #include "content/public/common/resource_type.h"
 
-class GURL;
 class Profile;
 
 namespace content {
@@ -35,7 +33,7 @@ class CaptivePortalTabReloader;
 // Along with the classes it owns, responsible for detecting page loads broken
 // by a captive portal, triggering captive portal checks on navigation events
 // that may indicate a captive portal is present, or has been removed / logged
-// in to, and taking any correcting actions.
+// in to, and taking any correcting actions. Lives on the UI thread.
 //
 // It acts as a WebContentsObserver for its CaptivePortalLoginDetector and
 // CaptivePortalTabReloader. It filters out non-main-frame navigations. It is
@@ -57,7 +55,6 @@ class CaptivePortalTabReloader;
 class CaptivePortalTabHelper
     : public content::WebContentsObserver,
       public content::NotificationObserver,
-      public base::NonThreadSafe,
       public content::WebContentsUserData<CaptivePortalTabHelper> {
  public:
   ~CaptivePortalTabHelper() override;

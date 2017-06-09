@@ -10,6 +10,8 @@
 #include <memory>
 #include <string>
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/histogram_tester.h"
@@ -21,9 +23,9 @@
 namespace {
 
 // Tracking labels for tests.
-const std::string kTestLabel1 = "label_1";
-const std::string kTestLabel2 = "label_2";
-const std::string kTestLabel3 = "label_3";
+const char kTestLabel1[] = "label_1";
+const char kTestLabel2[] = "label_2";
+const char kTestLabel3[] = "label_3";
 
 enum TabEntrySessionSize { ZERO = 0, ONE, TWO, THREE };
 
@@ -67,11 +69,19 @@ class SimpleOffsetTestTickClock : public base::TickClock {
 class TabDataUseEntryTest : public testing::Test {
  public:
   TabDataUseEntryTest() {
-    tab_model_.reset(new DataUseTabModel());
+    tab_model_.reset(new DataUseTabModel(
+        base::Bind(&TabDataUseEntryTest::FetchMatchingRules,
+                   base::Unretained(this)),
+        base::Bind(&TabDataUseEntryTest::OnMatchingRulesFetched,
+                   base::Unretained(this))));
     tick_clock_ = new SimpleOffsetTestTickClock();
     tab_model_->tick_clock_.reset(tick_clock_);
     tab_entry_.reset(new TabDataUseEntry(tab_model_.get()));
   }
+
+  void FetchMatchingRules() {}
+
+  void OnMatchingRulesFetched(bool is_valid) {}
 
   size_t GetMaxSessionsPerTab() const {
     return tab_model_->max_sessions_per_tab();
@@ -153,7 +163,7 @@ class TabDataUseEntryTest : public testing::Test {
 };
 
 // Starts a single tracking session and checks if a new active session is added
-// to the deque. Ends the session and checks if it becomes inactive.
+// to the vector. Ends the session and checks if it becomes inactive.
 TEST_F(TabDataUseEntryTest, SingleTabSessionStartEnd) {
   ExpectTabEntrySessionsSize(TabEntrySessionSize::ZERO);
   EXPECT_FALSE(tab_entry_->IsTrackingDataUse());
@@ -168,7 +178,7 @@ TEST_F(TabDataUseEntryTest, SingleTabSessionStartEnd) {
 }
 
 // Starts multiple tracking sessions and checks if new active sessions are added
-// to the deque for each. Ends the sessions and checks if they become inactive.
+// to the vector for each. Ends the sessions and checks if they become inactive.
 TEST_F(TabDataUseEntryTest, MultipleTabSessionStartEnd) {
   ExpectTabEntrySessionsSize(TabEntrySessionSize::ZERO);
   EXPECT_FALSE(tab_entry_->IsTrackingDataUse());

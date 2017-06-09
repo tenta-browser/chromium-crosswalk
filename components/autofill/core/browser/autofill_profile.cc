@@ -33,9 +33,10 @@
 #include "components/autofill/core/browser/phone_number_i18n.h"
 #include "components/autofill/core/browser/state_names.h"
 #include "components/autofill/core/browser/validation.h"
+#include "components/autofill/core/common/autofill_clock.h"
 #include "components/autofill/core/common/autofill_l10n_util.h"
 #include "components/autofill/core/common/form_field_data.h"
-#include "grit/components_strings.h"
+#include "components/strings/grit/components_strings.h"
 #include "third_party/icu/source/common/unicode/uchar.h"
 #include "third_party/icu/source/common/unicode/utypes.h"
 #include "third_party/icu/source/i18n/unicode/translit.h"
@@ -195,22 +196,23 @@ AutofillProfile::AutofillProfile(const std::string& guid,
                                  const std::string& origin)
     : AutofillDataModel(guid, origin),
       record_type_(LOCAL_PROFILE),
-      phone_number_(this) {
-}
+      phone_number_(this),
+      has_converted_(false) {}
 
 AutofillProfile::AutofillProfile(RecordType type, const std::string& server_id)
     : AutofillDataModel(base::GenerateGUID(), std::string()),
       record_type_(type),
       phone_number_(this),
-      server_id_(server_id) {
+      server_id_(server_id),
+      has_converted_(false) {
   DCHECK(type == SERVER_PROFILE);
 }
 
 AutofillProfile::AutofillProfile()
     : AutofillDataModel(base::GenerateGUID(), std::string()),
       record_type_(LOCAL_PROFILE),
-      phone_number_(this) {
-}
+      phone_number_(this),
+      has_converted_(false) {}
 
 AutofillProfile::AutofillProfile(const AutofillProfile& profile)
     : AutofillDataModel(std::string(), std::string()), phone_number_(this) {
@@ -243,6 +245,7 @@ AutofillProfile& AutofillProfile::operator=(const AutofillProfile& profile) {
   set_language_code(profile.language_code());
 
   server_id_ = profile.server_id();
+  has_converted_ = profile.has_converted();
 
   return *this;
 }
@@ -253,8 +256,8 @@ void AutofillProfile::GetMatchingTypes(
     const std::string& app_locale,
     ServerFieldTypeSet* matching_types) const {
   FormGroupList info = FormGroups();
-  for (const auto& it : info) {
-    it->GetMatchingTypes(text, app_locale, matching_types);
+  for (const auto* form_group : info) {
+    form_group->GetMatchingTypes(text, app_locale, matching_types);
   }
 }
 
@@ -354,8 +357,8 @@ int AutofillProfile::Compare(const AutofillProfile& profile) const {
       PHONE_HOME_WHOLE_NUMBER,
   };
 
-  for (size_t i = 0; i < arraysize(types); ++i) {
-    int comparison = GetRawInfo(types[i]).compare(profile.GetRawInfo(types[i]));
+  for (ServerFieldType type : types) {
+    int comparison = GetRawInfo(type).compare(profile.GetRawInfo(type));
     if (comparison != 0) {
       return comparison;
     }
@@ -449,10 +452,11 @@ bool AutofillProfile::MergeDataFrom(const AutofillProfile& profile,
   DVLOG(1) << "Merging profiles:\nSource = " << profile << "\nDest = " << *this;
 
   // The comparator's merge operations are biased to prefer the data in the
-  // first profile parameter when the data is the same modulo case. We pass the
-  // incoming profile in this position to prefer accepting updates instead of
-  // preserving the original data. I.e., passing the incoming profile first
-  // accepts case changes, the other ways does not.
+  // first profile parameter when the data is the same modulo case. We expect
+  // the caller to pass the incoming profile in this position to prefer
+  // accepting updates instead of preserving the original data. I.e., passing
+  // the incoming profile first accepts case and diacritic changes, for example,
+  // the other ways does not.
   if (!comparator.MergeNames(profile, *this, &name) ||
       !comparator.MergeEmailAddresses(profile, *this, &email) ||
       !comparator.MergeCompanyNames(profile, *this, &company) ||
@@ -462,16 +466,24 @@ bool AutofillProfile::MergeDataFrom(const AutofillProfile& profile,
     return false;
   }
 
+  // TODO(rogerm): As implemented, "origin" really denotes "domain of last use".
+  // Find a better merge heuristic. Ditto for language code.
   set_origin(profile.origin());
   set_language_code(profile.language_code());
-  set_use_count(profile.use_count() + use_count());
-  if (profile.use_date() > use_date())
-    set_use_date(profile.use_date());
 
-  // Now that the preferred values have been obtained, update the fields which
-  // need to be modified, if any. Note: that we're comparing the fields for
-  // representational equality below (i.e., are the values byte for byte the
-  // same).
+  // Update the use-count to be the max of the two merge-counts. Alternatively,
+  // we could have summed the two merge-counts. We don't sum because it skews
+  // the frecency value on merge and double counts usage on profile reuse.
+  // Profile reuse is accounted for on RecordUseOf() on selection of a profile
+  // in the autofill drop-down; we don't need to account for that here. Further,
+  // a similar, fully-typed submission that merges to an existing profile should
+  // not be counted as a re-use of that profile.
+  set_use_count(std::max(profile.use_count(), use_count()));
+  set_use_date(std::max(profile.use_date(), use_date()));
+
+  // Update the fields which need to be modified, if any. Note: that we're
+  // comparing the fields for representational equality below (i.e., are the
+  // values byte for byte the same).
 
   bool modified = false;
 
@@ -691,15 +703,15 @@ void AutofillProfile::GenerateServerProfileIdentifier() {
 
 void AutofillProfile::RecordAndLogUse() {
   UMA_HISTOGRAM_COUNTS_1000("Autofill.DaysSinceLastUse.Profile",
-                            (base::Time::Now() - use_date()).InDays());
+                            (AutofillClock::Now() - use_date()).InDays());
   RecordUse();
 }
 
 void AutofillProfile::GetSupportedTypes(
     ServerFieldTypeSet* supported_types) const {
   FormGroupList info = FormGroups();
-  for (const auto& it : info) {
-    it->GetSupportedTypes(supported_types);
+  for (const auto* form_group : info) {
+    form_group->GetSupportedTypes(supported_types);
   }
 }
 

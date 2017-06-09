@@ -221,7 +221,21 @@ TEST(HTTPTransport, ValidFormData) {
   builder.SetFormData("key2", "--abcdefg123");
 
   HTTPHeaders headers;
-  EXPECT_TRUE(headers.insert(builder.GetContentType()).second);
+  builder.PopulateContentHeaders(&headers);
+
+  HTTPTransportTestFixture test(
+      headers, builder.GetBodyStream(), 200, &ValidFormData);
+  test.Run();
+}
+
+TEST(HTTPTransport, ValidFormData_Gzip) {
+  HTTPMultipartBuilder builder;
+  builder.SetGzipEnabled(true);
+  builder.SetFormData("key1", "test");
+  builder.SetFormData("key2", "--abcdefg123");
+
+  HTTPHeaders headers;
+  builder.PopulateContentHeaders(&headers);
 
   HTTPTransportTestFixture test(headers, builder.GetBodyStream(), 200,
       &ValidFormData);
@@ -279,7 +293,7 @@ TEST(HTTPTransport, UnchunkedPlainText) {
 }
 
 void RunUpload33k(bool has_content_length) {
-  // On OS X, NSMutableURLRequest winds up calling into a CFReadStream’s Read()
+  // On macOS, NSMutableURLRequest winds up calling into a CFReadStream’s Read()
   // callback with a 32kB buffer. Make sure that it’s able to get everything
   // when enough is available to fill this buffer, requiring more than one
   // Read().

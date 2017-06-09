@@ -7,11 +7,11 @@
 #include <memory>
 
 #include "base/containers/adapters.h"
+#include "cc/animation/animation_host.h"
+#include "cc/test/fake_compositor_frame_sink.h"
 #include "cc/test/fake_impl_task_runner_provider.h"
 #include "cc/test/fake_layer_tree_host.h"
 #include "cc/test/fake_layer_tree_host_impl.h"
-#include "cc/test/fake_output_surface.h"
-#include "cc/test/test_shared_bitmap_manager.h"
 #include "cc/test/test_task_graph_runner.h"
 #include "cc/trees/layer_tree_impl.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -23,10 +23,11 @@ namespace {
 
 TEST(LayerListIteratorTest, VerifyTraversalOrder) {
   // Unfortunate preamble.
-  FakeLayerTreeHostClient client(FakeLayerTreeHostClient::DIRECT_3D);
+  FakeLayerTreeHostClient client;
   TestTaskGraphRunner task_graph_runner;
-  std::unique_ptr<FakeLayerTreeHost> host_ptr =
-      FakeLayerTreeHost::Create(&client, &task_graph_runner);
+  auto animation_host = AnimationHost::CreateForTesting(ThreadInstance::MAIN);
+  std::unique_ptr<FakeLayerTreeHost> host_ptr = FakeLayerTreeHost::Create(
+      &client, &task_graph_runner, animation_host.get());
   FakeLayerTreeHost* host = host_ptr.get();
 
   // This test constructs the following tree.
@@ -75,10 +76,11 @@ TEST(LayerListIteratorTest, VerifyTraversalOrder) {
 
 TEST(LayerListIteratorTest, VerifySingleLayer) {
   // Unfortunate preamble.
-  FakeLayerTreeHostClient client(FakeLayerTreeHostClient::DIRECT_3D);
+  FakeLayerTreeHostClient client;
   TestTaskGraphRunner task_graph_runner;
-  std::unique_ptr<FakeLayerTreeHost> host_ptr =
-      FakeLayerTreeHost::Create(&client, &task_graph_runner);
+  auto animation_host = AnimationHost::CreateForTesting(ThreadInstance::MAIN);
+  std::unique_ptr<FakeLayerTreeHost> host_ptr = FakeLayerTreeHost::Create(
+      &client, &task_graph_runner, animation_host.get());
   FakeLayerTreeHost* host = host_ptr.get();
 
   // This test constructs a tree consisting of a single layer.
@@ -108,10 +110,11 @@ TEST(LayerListIteratorTest, VerifyNullFirstLayer) {
 
 TEST(LayerListReverseIteratorTest, VerifyTraversalOrder) {
   // Unfortunate preamble.
-  FakeLayerTreeHostClient client(FakeLayerTreeHostClient::DIRECT_3D);
+  FakeLayerTreeHostClient client;
   TestTaskGraphRunner task_graph_runner;
-  std::unique_ptr<FakeLayerTreeHost> host_ptr =
-      FakeLayerTreeHost::Create(&client, &task_graph_runner);
+  auto animation_host = AnimationHost::CreateForTesting(ThreadInstance::MAIN);
+  std::unique_ptr<FakeLayerTreeHost> host_ptr = FakeLayerTreeHost::Create(
+      &client, &task_graph_runner, animation_host.get());
   FakeLayerTreeHost* host = host_ptr.get();
 
   // This test constructs the following tree.
@@ -162,10 +165,11 @@ TEST(LayerListReverseIteratorTest, VerifyTraversalOrder) {
 
 TEST(LayerListReverseIteratorTest, VerifySingleLayer) {
   // Unfortunate preamble.
-  FakeLayerTreeHostClient client(FakeLayerTreeHostClient::DIRECT_3D);
+  FakeLayerTreeHostClient client;
   TestTaskGraphRunner task_graph_runner;
-  std::unique_ptr<FakeLayerTreeHost> host_ptr =
-      FakeLayerTreeHost::Create(&client, &task_graph_runner);
+  auto animation_host = AnimationHost::CreateForTesting(ThreadInstance::MAIN);
+  std::unique_ptr<FakeLayerTreeHost> host_ptr = FakeLayerTreeHost::Create(
+      &client, &task_graph_runner, animation_host.get());
   FakeLayerTreeHost* host = host_ptr.get();
 
   // This test constructs a tree consisting of a single layer.
@@ -198,13 +202,12 @@ TEST(LayerListReverseIteratorTest, VerifyNullFirstLayer) {
 TEST(LayerListIteratorTest, VerifyTraversalOrderImpl) {
   // Unfortunate preamble.
   FakeImplTaskRunnerProvider task_runner_provider;
-  TestSharedBitmapManager shared_bitmap_manager;
   TestTaskGraphRunner task_graph_runner;
-  std::unique_ptr<OutputSurface> output_surface = FakeOutputSurface::Create3d();
-  FakeLayerTreeHostImpl host_impl(&task_runner_provider, &shared_bitmap_manager,
-                                  &task_graph_runner);
+  std::unique_ptr<CompositorFrameSink> compositor_frame_sink =
+      FakeCompositorFrameSink::Create3d();
+  FakeLayerTreeHostImpl host_impl(&task_runner_provider, &task_graph_runner);
   host_impl.SetVisible(true);
-  EXPECT_TRUE(host_impl.InitializeRenderer(output_surface.get()));
+  EXPECT_TRUE(host_impl.InitializeRenderer(compositor_frame_sink.get()));
 
   // This test constructs the following tree.
   // 1
@@ -252,13 +255,12 @@ TEST(LayerListIteratorTest, VerifyTraversalOrderImpl) {
 TEST(LayerListIteratorTest, VerifySingleLayerImpl) {
   // Unfortunate preamble.
   FakeImplTaskRunnerProvider task_runner_provider;
-  TestSharedBitmapManager shared_bitmap_manager;
   TestTaskGraphRunner task_graph_runner;
-  std::unique_ptr<OutputSurface> output_surface = FakeOutputSurface::Create3d();
-  FakeLayerTreeHostImpl host_impl(&task_runner_provider, &shared_bitmap_manager,
-                                  &task_graph_runner);
+  std::unique_ptr<CompositorFrameSink> compositor_frame_sink =
+      FakeCompositorFrameSink::Create3d();
+  FakeLayerTreeHostImpl host_impl(&task_runner_provider, &task_graph_runner);
   host_impl.SetVisible(true);
-  EXPECT_TRUE(host_impl.InitializeRenderer(output_surface.get()));
+  EXPECT_TRUE(host_impl.InitializeRenderer(compositor_frame_sink.get()));
 
   // This test constructs a tree consisting of a single layer.
   std::unique_ptr<LayerImpl> layer1 =
@@ -288,13 +290,12 @@ TEST(LayerListIteratorTest, VerifyNullFirstLayerImpl) {
 TEST(LayerListReverseIteratorTest, VerifyTraversalOrderImpl) {
   // Unfortunate preamble.
   FakeImplTaskRunnerProvider task_runner_provider;
-  TestSharedBitmapManager shared_bitmap_manager;
   TestTaskGraphRunner task_graph_runner;
-  std::unique_ptr<OutputSurface> output_surface = FakeOutputSurface::Create3d();
-  FakeLayerTreeHostImpl host_impl(&task_runner_provider, &shared_bitmap_manager,
-                                  &task_graph_runner);
+  std::unique_ptr<CompositorFrameSink> compositor_frame_sink =
+      FakeCompositorFrameSink::Create3d();
+  FakeLayerTreeHostImpl host_impl(&task_runner_provider, &task_graph_runner);
   host_impl.SetVisible(true);
-  EXPECT_TRUE(host_impl.InitializeRenderer(output_surface.get()));
+  EXPECT_TRUE(host_impl.InitializeRenderer(compositor_frame_sink.get()));
 
   // This test constructs the following tree.
   // 1
@@ -344,13 +345,12 @@ TEST(LayerListReverseIteratorTest, VerifyTraversalOrderImpl) {
 TEST(LayerListReverseIteratorTest, VerifySingleLayerImpl) {
   // Unfortunate preamble.
   FakeImplTaskRunnerProvider task_runner_provider;
-  TestSharedBitmapManager shared_bitmap_manager;
   TestTaskGraphRunner task_graph_runner;
-  std::unique_ptr<OutputSurface> output_surface = FakeOutputSurface::Create3d();
-  FakeLayerTreeHostImpl host_impl(&task_runner_provider, &shared_bitmap_manager,
-                                  &task_graph_runner);
+  std::unique_ptr<CompositorFrameSink> compositor_frame_sink =
+      FakeCompositorFrameSink::Create3d();
+  FakeLayerTreeHostImpl host_impl(&task_runner_provider, &task_graph_runner);
   host_impl.SetVisible(true);
-  EXPECT_TRUE(host_impl.InitializeRenderer(output_surface.get()));
+  EXPECT_TRUE(host_impl.InitializeRenderer(compositor_frame_sink.get()));
 
   // This test constructs a tree consisting of a single layer.
   std::unique_ptr<LayerImpl> layer1 =

@@ -14,6 +14,7 @@
 #include "base/files/file_util.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/task_runner.h"
@@ -24,6 +25,7 @@
 #include "ui/snapshot/snapshot.h"
 
 #if defined(USE_AURA)
+#include "ui/aura/client/cursor_client.h"
 #include "ui/aura/window.h"
 #endif
 
@@ -41,7 +43,7 @@ using ShowNotificationCallback =
 void SaveScreenshot(scoped_refptr<base::TaskRunner> ui_task_runner,
                     const ShowNotificationCallback& callback,
                     const base::FilePath& screenshot_path,
-                    scoped_refptr<base::RefCountedBytes> png_data,
+                    scoped_refptr<base::RefCountedMemory> png_data,
                     ScreenshotGrabberDelegate::FileResult result,
                     const base::FilePath& local_path) {
   DCHECK(!base::MessageLoopForUI::IsCurrent());
@@ -55,7 +57,7 @@ void SaveScreenshot(scoped_refptr<base::TaskRunner> ui_task_runner,
       // Successfully got a local file to write to, write png data.
       DCHECK_GT(static_cast<int>(png_data->size()), 0);
       if (static_cast<size_t>(base::WriteFile(
-              local_path, reinterpret_cast<char*>(&(png_data->data()[0])),
+              local_path, reinterpret_cast<const char*>(png_data->front()),
               static_cast<int>(png_data->size()))) != png_data->size()) {
         LOG(ERROR) << "Failed to save to " << local_path.value();
         screenshot_result =
@@ -108,6 +110,35 @@ void ScreenshotGrabberDelegate::PrepareFileAndRunOnBlockingPool(
       base::Bind(EnsureLocalDirectoryExists, path, callback_on_blocking_pool));
 }
 
+#if defined(USE_AURA)
+class ScreenshotGrabber::ScopedCursorHider {
+ public:
+  // The nullptr might be returned when GetCursorClient is nullptr.
+  static std::unique_ptr<ScopedCursorHider> Create(aura::Window* window) {
+    DCHECK(window->IsRootWindow());
+    aura::client::CursorClient* cursor_client =
+        aura::client::GetCursorClient(window);
+    if (!cursor_client)
+      return nullptr;
+    cursor_client->HideCursor();
+    return std::unique_ptr<ScopedCursorHider>(
+        base::WrapUnique(new ScopedCursorHider(window)));
+  }
+
+  ~ScopedCursorHider() {
+    aura::client::CursorClient* cursor_client =
+        aura::client::GetCursorClient(window_);
+    cursor_client->ShowCursor();
+  }
+
+ private:
+  explicit ScopedCursorHider(aura::Window* window) : window_(window) {}
+  aura::Window* window_;
+
+  DISALLOW_COPY_AND_ASSIGN(ScopedCursorHider);
+};
+#endif
+
 ScreenshotGrabber::ScreenshotGrabber(
     ScreenshotGrabberDelegate* client,
     scoped_refptr<base::TaskRunner> blocking_task_runner)
@@ -134,8 +165,10 @@ void ScreenshotGrabber::TakeScreenshot(gfx::NativeWindow window,
   aura::Window* aura_window = static_cast<aura::Window*>(window);
   is_partial = rect.size() != aura_window->bounds().size();
   window_identifier = aura_window->GetBoundsInScreen().ToString();
+
+  cursor_hider_ = ScopedCursorHider::Create(aura_window->GetRootWindow());
 #endif
-  ui::GrabWindowSnapshotAsync(
+  ui::GrabWindowSnapshotAsyncPNG(
       window, rect, blocking_task_runner_,
       base::Bind(&ScreenshotGrabber::GrabWindowSnapshotAsyncCallback,
                  factory_.GetWeakPtr(), window_identifier, screenshot_path,
@@ -152,8 +185,11 @@ void ScreenshotGrabber::NotifyScreenshotCompleted(
     ScreenshotGrabberObserver::Result screenshot_result,
     const base::FilePath& screenshot_path) {
   DCHECK(base::MessageLoopForUI::IsCurrent());
-  FOR_EACH_OBSERVER(ScreenshotGrabberObserver, observers_,
-                    OnScreenshotCompleted(screenshot_result, screenshot_path));
+#if defined(USE_AURA)
+  cursor_hider_.reset();
+#endif
+  for (ScreenshotGrabberObserver& observer : observers_)
+    observer.OnScreenshotCompleted(screenshot_result, screenshot_path);
 }
 
 void ScreenshotGrabber::AddObserver(ScreenshotGrabberObserver* observer) {
@@ -173,7 +209,7 @@ void ScreenshotGrabber::GrabWindowSnapshotAsyncCallback(
     const std::string& window_identifier,
     base::FilePath screenshot_path,
     bool is_partial,
-    scoped_refptr<base::RefCountedBytes> png_data) {
+    scoped_refptr<base::RefCountedMemory> png_data) {
   DCHECK(base::MessageLoopForUI::IsCurrent());
   if (!png_data.get()) {
     if (is_partial) {

@@ -36,8 +36,8 @@
 #include "bindings/core/v8/ScriptState.h"
 #include "bindings/core/v8/V8PersistentValueVector.h"
 #include "platform/heap/Handle.h"
+#include "v8/include/v8.h"
 #include "wtf/Forward.h"
-#include <v8.h>
 
 namespace blink {
 
@@ -45,31 +45,42 @@ class LocalFrame;
 class ExecutionContext;
 class WorkerGlobalScope;
 
-class ScheduledAction final : public GarbageCollectedFinalized<ScheduledAction> {
-    WTF_MAKE_NONCOPYABLE(ScheduledAction);
-public:
-    static ScheduledAction* create(ScriptState*, const ScriptValue& handler, const Vector<ScriptValue>& arguments);
-    static ScheduledAction* create(ScriptState*, const String& handler);
+class ScheduledAction final
+    : public GarbageCollectedFinalized<ScheduledAction> {
+  WTF_MAKE_NONCOPYABLE(ScheduledAction);
 
-    ~ScheduledAction();
-    DECLARE_TRACE();
+ public:
+  static ScheduledAction* create(ScriptState*,
+                                 ExecutionContext* target,
+                                 const ScriptValue& handler,
+                                 const Vector<ScriptValue>& arguments);
+  static ScheduledAction* create(ScriptState*,
+                                 ExecutionContext* target,
+                                 const String& handler);
 
-    void execute(ExecutionContext*);
+  ~ScheduledAction();
+  void dispose();
 
-private:
-    ScheduledAction(ScriptState*, const ScriptValue& handler, const Vector<ScriptValue>& arguments);
-    ScheduledAction(ScriptState*, const String& handler);
+  DECLARE_TRACE();
 
-    void execute(LocalFrame*);
-    void execute(WorkerGlobalScope*);
-    void createLocalHandlesForArgs(Vector<v8::Local<v8::Value>>* handles);
+  void execute(ExecutionContext*);
 
-    ScriptStateProtectingContext m_scriptState;
-    ScopedPersistent<v8::Function> m_function;
-    V8PersistentValueVector<v8::Value> m_info;
-    ScriptSourceCode m_code;
+ private:
+  ScheduledAction(ScriptState*,
+                  const ScriptValue& handler,
+                  const Vector<ScriptValue>& arguments);
+  ScheduledAction(ScriptState*, const String& handler);
+
+  void execute(LocalFrame*);
+  void execute(WorkerGlobalScope*);
+  void createLocalHandlesForArgs(Vector<v8::Local<v8::Value>>* handles);
+
+  ScriptStateProtectingContext m_scriptState;
+  ScopedPersistent<v8::Function> m_function;
+  V8PersistentValueVector<v8::Value> m_info;
+  ScriptSourceCode m_code;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // ScheduledAction
+#endif  // ScheduledAction

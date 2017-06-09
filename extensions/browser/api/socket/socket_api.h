@@ -35,7 +35,6 @@ class ResourceContext;
 namespace net {
 class IOBuffer;
 class URLRequestContextGetter;
-class SSLClientSocket;
 }
 
 namespace extensions {
@@ -157,6 +156,8 @@ class SocketExtensionWithDnsLookupFunction : public SocketAsyncApiFunction {
   virtual void AfterDnsLookup(int lookup_result) = 0;
 
   net::AddressList addresses_;
+
+  std::unique_ptr<net::HostResolver::Request> request_;
 
  private:
   void OnDnsLookup(int resolve_result);
@@ -306,7 +307,9 @@ class SocketReadFunction : public SocketAsyncApiFunction {
   // AsyncApiFunction:
   bool Prepare() override;
   void AsyncWorkStart() override;
-  void OnCompleted(int result, scoped_refptr<net::IOBuffer> io_buffer);
+  void OnCompleted(int result,
+                   scoped_refptr<net::IOBuffer> io_buffer,
+                   bool socket_destroying);
 
  private:
   std::unique_ptr<api::socket::Read::Params> params_;
@@ -346,6 +349,7 @@ class SocketRecvFromFunction : public SocketAsyncApiFunction {
   void AsyncWorkStart() override;
   void OnCompleted(int result,
                    scoped_refptr<net::IOBuffer> io_buffer,
+                   bool socket_destroying,
                    const std::string& address,
                    uint16_t port);
 

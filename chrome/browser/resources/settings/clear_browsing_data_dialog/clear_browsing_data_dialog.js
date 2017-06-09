@@ -50,7 +50,10 @@ Polymer({
     },
 
     /** @private */
-    clearingInProgress_: Boolean,
+    clearingInProgress_: {
+      type: Boolean,
+      value: false,
+    },
 
     /** @private */
     showHistoryDeletionDialog_: {
@@ -66,31 +69,20 @@ Polymer({
   ready: function() {
     this.$.clearFrom.menuOptions = this.clearFromOptions_;
     this.addWebUIListener(
-        'browsing-history-pref-changed',
-        this.setAllowDeletingHistory_.bind(this));
-    this.addWebUIListener(
         'update-footer',
         this.updateFooter_.bind(this));
     this.addWebUIListener(
         'update-counter-text',
         this.updateCounterText_.bind(this));
-    this.browserProxy_ =
-        settings.ClearBrowsingDataBrowserProxyImpl.getInstance();
-    this.browserProxy_.initialize();
-    this.$.dialog.open();
   },
 
-  /**
-   * @param {boolean} allowed Whether the user is allowed to delete histories.
-   * @private
-   */
-  setAllowDeletingHistory_: function(allowed) {
-    this.$.browsingCheckbox.disabled = !allowed;
-    this.$.downloadCheckbox.disabled = !allowed;
-    if (!allowed) {
-      this.set('prefs.browser.clear_data.browsing_history.value', false);
-      this.set('prefs.browser.clear_data.download_history.value', false);
-    }
+  /** @override */
+  attached: function() {
+    this.browserProxy_ =
+        settings.ClearBrowsingDataBrowserProxyImpl.getInstance();
+    this.browserProxy_.initialize().then(function() {
+      this.$.dialog.showModal();
+    }.bind(this));
   },
 
   /**
@@ -104,7 +96,6 @@ Polymer({
   updateFooter_: function(syncing, otherFormsOfBrowsingHistory) {
     this.$.googleFooter.hidden = !otherFormsOfBrowsingHistory;
     this.$.syncedDataSentence.hidden = !syncing;
-    this.$.dialog.notifyResize();
     this.$.dialog.classList.add('fully-rendered');
   },
 
@@ -122,16 +113,13 @@ Polymer({
     this.set('counters_.' + assert(matches[1]), text);
   },
 
-  open: function() {
-    this.$.dialog.open();
-  },
-
   /**
    * Handles the tap on the Clear Data button.
    * @private
    */
   onClearBrowsingDataTap_: function() {
     this.clearingInProgress_ = true;
+
     this.browserProxy_.clearBrowsingData().then(
       /**
        * @param {boolean} shouldShowNotice Whether we should show the notice
@@ -144,6 +132,11 @@ Polymer({
         if (!shouldShowNotice)
           this.$.dialog.close();
       }.bind(this));
+  },
+
+  /** @private */
+  onCancelTap_: function() {
+    this.$.dialog.cancel();
   },
 
   /**

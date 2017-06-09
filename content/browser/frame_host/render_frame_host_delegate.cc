@@ -15,7 +15,7 @@
 namespace content {
 
 bool RenderFrameHostDelegate::OnMessageReceived(
-    RenderFrameHost* render_view_host,
+    RenderFrameHostImpl* render_frame_host,
     const IPC::Message& message) {
   return false;
 }
@@ -24,7 +24,7 @@ const GURL& RenderFrameHostDelegate::GetMainFrameLastCommittedURL() const {
   return GURL::EmptyGURL();
 }
 
-bool RenderFrameHostDelegate::AddMessageToConsole(
+bool RenderFrameHostDelegate::DidAddMessageToConsole(
     int32_t level,
     const base::string16& message,
     int32_t line_no,
@@ -57,6 +57,11 @@ bool RenderFrameHostDelegate::CheckMediaAccessPermission(
   return false;
 }
 
+std::string RenderFrameHostDelegate::GetDefaultMediaDeviceID(
+    MediaStreamType type) {
+  return std::string();
+}
+
 AccessibilityMode RenderFrameHostDelegate::GetAccessibilityMode() const {
   return AccessibilityModeOff;
 }
@@ -67,12 +72,13 @@ RenderFrameHost* RenderFrameHostDelegate::GetGuestByInstanceID(
   return NULL;
 }
 
-GeolocationServiceContext*
+device::GeolocationServiceContext*
 RenderFrameHostDelegate::GetGeolocationServiceContext() {
-  return NULL;
+  return nullptr;
 }
 
-WakeLockServiceContext* RenderFrameHostDelegate::GetWakeLockServiceContext() {
+device::WakeLockServiceContext*
+RenderFrameHostDelegate::GetWakeLockServiceContext() {
   return nullptr;
 }
 
@@ -85,6 +91,14 @@ bool RenderFrameHostDelegate::ShouldRouteMessageEvent(
 std::unique_ptr<WebUIImpl>
 RenderFrameHostDelegate::CreateWebUIForRenderFrameHost(const GURL& url) {
   return nullptr;
+}
+
+bool RenderFrameHostDelegate::ShouldAllowRunningInsecureContent(
+    WebContents* web_contents,
+    bool allowed_per_prefs,
+    const url::Origin& origin,
+    const GURL& resource_url) {
+  return false;
 }
 
 }  // namespace content

@@ -7,8 +7,10 @@ package org.chromium.content.app;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.SurfaceTexture;
+import android.os.Binder;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.os.Parcel;
 import android.os.Parcelable;
 import android.os.Process;
 import android.os.RemoteException;
@@ -17,17 +19,21 @@ import android.view.Surface;
 import org.chromium.base.BaseSwitches;
 import org.chromium.base.CommandLine;
 import org.chromium.base.ContextUtils;
+import org.chromium.base.JNIUtils;
 import org.chromium.base.Log;
+import org.chromium.base.UnguessableToken;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.base.annotations.MainDex;
 import org.chromium.base.annotations.SuppressFBWarnings;
+import org.chromium.base.annotations.UsedByReflection;
 import org.chromium.base.library_loader.LibraryLoader;
 import org.chromium.base.library_loader.Linker;
 import org.chromium.base.library_loader.ProcessInitException;
 import org.chromium.content.browser.ChildProcessConstants;
 import org.chromium.content.browser.ChildProcessCreationParams;
-import org.chromium.content.browser.FileDescriptorInfo;
 import org.chromium.content.common.ContentSwitches;
+import org.chromium.content.common.FileDescriptorInfo;
 import org.chromium.content.common.IChildProcessCallback;
 import org.chromium.content.common.IChildProcessService;
 import org.chromium.content.common.SurfaceWrapper;
@@ -39,16 +45,23 @@ import java.util.concurrent.atomic.AtomicReference;
  * This class implements all of the functionality for {@link ChildProcessService} which owns an
  * object of {@link ChildProcessServiceImpl}.
  * It makes possible that WebAPK's ChildProcessService owns a ChildProcessServiceImpl object
- * and uses the same functionalities to create renderer process for WebAPKs when "--enable-webapk"
- * flag is turned on.
+ * and uses the same functionalities to create renderer process for WebAPKs when
+ * "--enable-improved-a2hs" flag is turned on.
  */
 @JNINamespace("content")
 @SuppressWarnings("SynchronizeOnNonFinalField")
+@MainDex
+@UsedByReflection("WebApkSandboxedProcessService")
 public class ChildProcessServiceImpl {
     private static final String MAIN_THREAD_NAME = "ChildProcessMain";
     private static final String TAG = "ChildProcessService";
-    protected static final FileDescriptorInfo[] EMPTY_FILE_DESCRIPTOR_INFO = {};
+
+    // Lock that protects the following members.
+    private final Object mBinderLock = new Object();
     private IChildProcessCallback mCallback;
+    private boolean mBindToCallerCheck;
+    // PID of the client of this service, set in bindToCaller(), if mBindToCallerCheck is true.
+    private int mBoundCallingPid;
 
     // This is the native "Main" thread for the renderer / utility process.
     private Thread mMainThread;
@@ -63,12 +76,22 @@ public class ChildProcessServiceImpl {
     // Child library process type.
     private int mLibraryProcessType;
 
-    private static AtomicReference<Context> sContext = new AtomicReference<Context>(null);
-    private boolean mLibraryInitialized = false;
-    // Becomes true once the service is bound. Access must synchronize around mMainThread.
-    private boolean mIsBound = false;
+    private static AtomicReference<Context> sContext = new AtomicReference<>(null);
+    private boolean mLibraryInitialized;
+
+    /**
+     * If >= 0 enables "validation of caller of {@link mBinder}'s methods". A RemoteException
+     * is thrown when an application with a uid other than {@link mAuthorizedCallerUid} calls
+     * {@link mBinder}'s methods.
+     */
+    private int mAuthorizedCallerUid;
 
     private final Semaphore mActivitySemaphore = new Semaphore(1);
+
+    @UsedByReflection("WebApkSandboxedProcessService")
+    public ChildProcessServiceImpl() {
+        KillChildUncaughtExceptionHandler.maybeInstallHandler();
+    }
 
     // Return a Linker instance. If testing, the Linker needs special setup.
     private Linker getLinker() {
@@ -87,7 +110,35 @@ public class ChildProcessServiceImpl {
     private final IChildProcessService.Stub mBinder = new IChildProcessService.Stub() {
         // NOTE: Implement any IChildProcessService methods here.
         @Override
+        public boolean bindToCaller() {
+            assert mBindToCallerCheck;
+            synchronized (mBinderLock) {
+                int callingPid = Binder.getCallingPid();
+                if (mBoundCallingPid == 0) {
+                    mBoundCallingPid = callingPid;
+                } else if (mBoundCallingPid != callingPid) {
+                    Log.e(TAG, "Service is already bound by pid %d, cannot bind for pid %d",
+                            mBoundCallingPid, callingPid);
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        @Override
         public int setupConnection(Bundle args, IChildProcessCallback callback) {
+            int callingPid = Binder.getCallingPid();
+            synchronized (mBinderLock) {
+                if (mBindToCallerCheck && mBoundCallingPid != callingPid) {
+                    if (mBoundCallingPid == 0) {
+                        Log.e(TAG, "Service has not been bound with bindToCaller()");
+                    } else {
+                        Log.e(TAG, "Client pid %d does not match the bound pid %d", callingPid,
+                                mBoundCallingPid);
+                    }
+                    return -1;
+                }
+            }
             mCallback = callback;
             getServiceInfo(args);
             return Process.myPid();
@@ -97,9 +148,22 @@ public class ChildProcessServiceImpl {
         public void crashIntentionallyForTesting() {
             Process.killProcess(Process.myPid());
         }
+
+        @Override
+        public boolean onTransact(int arg0, Parcel arg1, Parcel arg2, int arg3)
+                throws RemoteException {
+            if (mAuthorizedCallerUid >= 0) {
+                int callingUid = Binder.getCallingUid();
+                if (callingUid != mAuthorizedCallerUid) {
+                    throw new RemoteException("Unauthorized caller " + callingUid
+                            + "does not match expected host=" + mAuthorizedCallerUid);
+                }
+            }
+            return super.onTransact(arg0, arg1, arg2, arg3);
+        }
     };
 
-    // The ClassLoader for the host browser context.
+    // The ClassLoader for the host context.
     private ClassLoader mHostClassLoader;
 
     /* package */ static Context getContext() {
@@ -109,10 +173,11 @@ public class ChildProcessServiceImpl {
     /**
      * Loads Chrome's native libraries and initializes a ChildProcessServiceImpl.
      * @param context The application context.
-     * @param hostBrowserContext The context of the host browser (i.e. Chrome).
+     * @param hostContext The host context the library should be loaded with (i.e. Chrome).
      */
-    public void create(final Context context, final Context hostBrowserContext) {
-        mHostClassLoader = hostBrowserContext.getClassLoader();
+    @UsedByReflection("WebApkSandboxedProcessService")
+    public void create(final Context context, final Context hostContext) {
+        mHostClassLoader = hostContext.getClassLoader();
         Log.i(TAG, "Creating new ChildProcessService pid=%d", Process.myPid());
         if (sContext.get() != null) {
             throw new RuntimeException("Illegal child process reuse.");
@@ -135,14 +200,16 @@ public class ChildProcessServiceImpl {
                     }
                     CommandLine.init(mCommandLineParams);
 
+                    if (ContentSwitches.SWITCH_RENDERER_PROCESS.equals(
+                            CommandLine.getInstance().getSwitchValue(
+                                    ContentSwitches.SWITCH_PROCESS_TYPE))) {
+                        JNIUtils.enableSelectiveJniRegistration();
+                    }
+
                     Linker linker = null;
                     boolean requestedSharedRelro = false;
                     if (Linker.isUsed()) {
-                        synchronized (mMainThread) {
-                            while (!mIsBound) {
-                                mMainThread.wait();
-                            }
-                        }
+                        assert mLinkerParams != null;
                         linker = getLinker();
                         if (mLinkerParams.mWaitForSharedRelro) {
                             requestedSharedRelro = true;
@@ -159,7 +226,8 @@ public class ChildProcessServiceImpl {
 
                     boolean loadAtFixedAddressFailed = false;
                     try {
-                        LibraryLoader.get(mLibraryProcessType).loadNow(hostBrowserContext);
+                        LibraryLoader.get(mLibraryProcessType)
+                                .loadNowOverrideApplicationContext(hostContext);
                         isLoaded = true;
                     } catch (ProcessInitException e) {
                         if (requestedSharedRelro) {
@@ -173,7 +241,8 @@ public class ChildProcessServiceImpl {
                     if (!isLoaded && requestedSharedRelro) {
                         linker.disableSharedRelros();
                         try {
-                            LibraryLoader.get(mLibraryProcessType).loadNow(hostBrowserContext);
+                            LibraryLoader.get(mLibraryProcessType)
+                                    .loadNowOverrideApplicationContext(hostContext);
                             isLoaded = true;
                         } catch (ProcessInitException e) {
                             Log.e(TAG, "Failed to load native library on retry", e);
@@ -193,10 +262,19 @@ public class ChildProcessServiceImpl {
                             mMainThread.wait();
                         }
                     }
-                    for (FileDescriptorInfo fdInfo : mFdInfos) {
-                        nativeRegisterGlobalFileDescriptor(
-                                fdInfo.mId, fdInfo.mFd.detachFd(), fdInfo.mOffset, fdInfo.mSize);
+
+                    int[] fileIds = new int[mFdInfos.length];
+                    int[] fds = new int[mFdInfos.length];
+                    long[] regionOffsets = new long[mFdInfos.length];
+                    long[] regionSizes = new long[mFdInfos.length];
+                    for (int i = 0; i < mFdInfos.length; i++) {
+                        FileDescriptorInfo fdInfo = mFdInfos[i];
+                        fileIds[i] = fdInfo.mId;
+                        fds[i] = fdInfo.mFd.detachFd();
+                        regionOffsets[i] = fdInfo.mOffset;
+                        regionSizes[i] = fdInfo.mSize;
                     }
+                    nativeRegisterFileDescriptors(fileIds, fds, regionOffsets, regionSizes);
                     nativeInitChildProcessImpl(ChildProcessServiceImpl.this, mCpuCount,
                             mCpuFeatures);
                     if (mActivitySemaphore.tryAcquire()) {
@@ -240,33 +318,43 @@ public class ChildProcessServiceImpl {
         nativeShutdownMainThread();
     }
 
-    public IBinder bind(Intent intent) {
+    /*
+     * Returns communication channel to service.
+     * @param intent The intent that was used to bind to the service.
+     * @param authorizedCallerUid If >= 0, enables "validation of service caller". A RemoteException
+     *        is thrown when an application with a uid other than
+     *        {@link authorizedCallerUid} calls the service's methods.
+     */
+    @UsedByReflection("WebApkSandboxedProcessService")
+    public IBinder bind(Intent intent, int authorizedCallerUid) {
+        mAuthorizedCallerUid = authorizedCallerUid;
         initializeParams(intent);
         return mBinder;
     }
 
-    void initializeParams(Intent intent) {
+    private void initializeParams(Intent intent) {
         synchronized (mMainThread) {
-            mCommandLineParams =
-                    intent.getStringArrayExtra(ChildProcessConstants.EXTRA_COMMAND_LINE);
             // mLinkerParams is never used if Linker.isUsed() returns false.
             // See onCreate().
-            mLinkerParams = new ChromiumLinkerParams(intent);
+            mLinkerParams = (ChromiumLinkerParams) intent.getParcelableExtra(
+                    ChildProcessConstants.EXTRA_LINKER_PARAMS);
             mLibraryProcessType = ChildProcessCreationParams.getLibraryProcessType(intent);
-            mIsBound = true;
             mMainThread.notifyAll();
+        }
+        synchronized (mBinderLock) {
+            mBindToCallerCheck =
+                    intent.getBooleanExtra(ChildProcessConstants.EXTRA_BIND_TO_CALLER, false);
         }
     }
 
-    void getServiceInfo(Bundle bundle) {
+    private void getServiceInfo(Bundle bundle) {
         // Required to unparcel FileDescriptorInfo.
         bundle.setClassLoader(mHostClassLoader);
         synchronized (mMainThread) {
-            // Allow the command line to be set via bind() intent or setupConnection, but
-            // the FD can only be transferred here.
             if (mCommandLineParams == null) {
                 mCommandLineParams =
                         bundle.getStringArray(ChildProcessConstants.EXTRA_COMMAND_LINE);
+                mMainThread.notifyAll();
             }
             // We must have received the command line by now
             assert mCommandLineParams != null;
@@ -280,11 +368,6 @@ public class ChildProcessServiceImpl {
                 // http://stackoverflow.com/questions/8745893/i-dont-get-why-this-classcastexception-occurs
                 mFdInfos = new FileDescriptorInfo[fdInfosAsParcelable.length];
                 System.arraycopy(fdInfosAsParcelable, 0, mFdInfos, 0, fdInfosAsParcelable.length);
-            } else {
-                String processType = ContentSwitches.getSwitchValue(
-                        mCommandLineParams, ContentSwitches.SWITCH_PROCESS_TYPE);
-                assert ContentSwitches.SWITCH_DOWNLOAD_PROCESS.equals(processType);
-                mFdInfos = EMPTY_FILE_DESCRIPTOR_INFO;
             }
             Bundle sharedRelros = bundle.getBundle(Linker.EXTRA_LINKER_SHARED_RELROS);
             if (sharedRelros != null) {
@@ -295,45 +378,24 @@ public class ChildProcessServiceImpl {
         }
     }
 
-    /**
-     * Called from native code to share a surface texture with another child process.
-     * Through using the callback object the browser is used as a proxy to route the
-     * call to the correct process.
-     *
-     * @param pid Process handle of the child process to share the SurfaceTexture with.
-     * @param surfaceObject The Surface or SurfaceTexture to share with the other child process.
-     * @param primaryID Used to route the call to the correct client instance.
-     * @param secondaryID Used to route the call to the correct client instance.
-     */
     @SuppressWarnings("unused")
     @CalledByNative
-    private void establishSurfaceTexturePeer(
-            int pid, Object surfaceObject, int primaryID, int secondaryID) {
+    private void forwardSurfaceTextureForSurfaceRequest(
+            UnguessableToken requestToken, SurfaceTexture surfaceTexture) {
         if (mCallback == null) {
             Log.e(TAG, "No callback interface has been provided.");
             return;
         }
 
-        Surface surface = null;
-        boolean needRelease = false;
-        if (surfaceObject instanceof Surface) {
-            surface = (Surface) surfaceObject;
-        } else if (surfaceObject instanceof SurfaceTexture) {
-            surface = new Surface((SurfaceTexture) surfaceObject);
-            needRelease = true;
-        } else {
-            Log.e(TAG, "Not a valid surfaceObject: %s", surfaceObject);
-            return;
-        }
+        Surface surface = new Surface(surfaceTexture);
+
         try {
-            mCallback.establishSurfacePeer(pid, surface, primaryID, secondaryID);
+            mCallback.forwardSurfaceForSurfaceRequest(requestToken, surface);
         } catch (RemoteException e) {
-            Log.e(TAG, "Unable to call establishSurfaceTexturePeer: %s", e);
+            Log.e(TAG, "Unable to call forwardSurfaceForSurfaceRequest: %s", e);
             return;
         } finally {
-            if (needRelease) {
-                surface.release();
-            }
+            surface.release();
         }
     }
 
@@ -354,62 +416,14 @@ public class ChildProcessServiceImpl {
         }
     }
 
-    @SuppressWarnings("unused")
-    @CalledByNative
-    private void createSurfaceTextureSurface(
-            int surfaceTextureId, int clientId, SurfaceTexture surfaceTexture) {
-        if (mCallback == null) {
-            Log.e(TAG, "No callback interface has been provided.");
-            return;
-        }
-
-        Surface surface = new Surface(surfaceTexture);
-        try {
-            mCallback.registerSurfaceTextureSurface(surfaceTextureId, clientId, surface);
-        } catch (RemoteException e) {
-            Log.e(TAG, "Unable to call registerSurfaceTextureSurface: %s", e);
-        }
-        surface.release();
-    }
-
-    @SuppressWarnings("unused")
-    @CalledByNative
-    private void destroySurfaceTextureSurface(int surfaceTextureId, int clientId) {
-        if (mCallback == null) {
-            Log.e(TAG, "No callback interface has been provided.");
-            return;
-        }
-
-        try {
-            mCallback.unregisterSurfaceTextureSurface(surfaceTextureId, clientId);
-        } catch (RemoteException e) {
-            Log.e(TAG, "Unable to call unregisterSurfaceTextureSurface: %s", e);
-        }
-    }
-
-    @SuppressWarnings("unused")
-    @CalledByNative
-    private Surface getSurfaceTextureSurface(int surfaceTextureId) {
-        if (mCallback == null) {
-            Log.e(TAG, "No callback interface has been provided.");
-            return null;
-        }
-
-        try {
-            return mCallback.getSurfaceTextureSurface(surfaceTextureId).getSurface();
-        } catch (RemoteException e) {
-            Log.e(TAG, "Unable to call getSurfaceTextureSurface: %s", e);
-            return null;
-        }
-    }
-
     /**
-     * Helper for registering FileDescriptorInfo objects with GlobalFileDescriptors.
+     * Helper for registering FileDescriptorInfo objects with GlobalFileDescriptors or
+     * FileDescriptorStore.
      * This includes the IPC channel, the crash dump signals and resource related
      * files.
      */
-    private static native void nativeRegisterGlobalFileDescriptor(
-            int id, int fd, long offset, long size);
+    private static native void nativeRegisterFileDescriptors(
+            int[] id, int[] fd, long[] offset, long[] size);
 
     /**
      * The main entry point for a child process. This should be called from a new thread since

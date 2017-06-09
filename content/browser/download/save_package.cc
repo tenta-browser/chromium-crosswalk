@@ -13,6 +13,7 @@
 #include "base/i18n/file_util_icu.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/stl_util.h"
 #include "base/strings/string_piece.h"
@@ -192,10 +193,10 @@ SavePackage::~SavePackage() {
                                        completed_count() + in_process_count());
 
   // Free all SaveItems.
-  STLDeleteElements(&waiting_item_queue_);
-  STLDeleteValues(&in_progress_items_);
-  STLDeleteValues(&saved_success_items_);
-  STLDeleteValues(&saved_failed_items_);
+  waiting_item_queue_.clear();
+  in_progress_items_.clear();
+  saved_success_items_.clear();
+  saved_failed_items_.clear();
   // Clear containers that contain (now dangling/invalid) pointers to the
   // save items freed above.  This is not strictly required (as the containers
   // will be destructed soon by ~SavePackage), but seems like good code hygiene.
@@ -235,8 +236,7 @@ void SavePackage::Cancel(bool user_action) {
 void SavePackage::InternalInit() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  ResourceDispatcherHostImpl* rdh = ResourceDispatcherHostImpl::Get();
-  file_manager_ = rdh->save_file_manager();
+  file_manager_ = SaveFileManager::Get();
   DCHECK(file_manager_);
 
   download_manager_ = static_cast<DownloadManagerImpl*>(
@@ -302,10 +302,10 @@ void SavePackage::InitWithDownloadItem(
     DCHECK_EQ(SAVE_PAGE_TYPE_AS_ONLY_HTML, save_type_);
     wait_state_ = NET_FILES;
     // Add this item to waiting list.
-    waiting_item_queue_.push_back(new SaveItem(
+    waiting_item_queue_.push_back(base::WrapUnique(new SaveItem(
         page_url_, Referrer(), this, SaveFileCreateInfo::SAVE_FILE_FROM_NET,
         FrameTreeNode::kFrameTreeNodeInvalidId,
-        web_contents()->GetMainFrame()->GetFrameTreeNodeId()));
+        web_contents()->GetMainFrame()->GetFrameTreeNodeId())));
     all_save_items_count_ = 1;
     download_->SetTotalBytes(1);
 
@@ -489,13 +489,13 @@ void SavePackage::StartSave(const SaveFileCreateInfo* info) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(info);
 
-  SaveItemIdMap::iterator it = in_progress_items_.find(info->save_item_id);
+  auto it = in_progress_items_.find(info->save_item_id);
   if (it == in_progress_items_.end()) {
     // If not found, we must have cancel action.
     DCHECK(canceled());
     return;
   }
-  SaveItem* save_item = it->second;
+  SaveItem* save_item = it->second.get();
 
   DCHECK(!saved_main_file_path_.empty());
 
@@ -557,7 +557,7 @@ SaveItem* SavePackage::LookupInProgressSaveItem(SaveItemId save_item_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   auto it = in_progress_items_.find(save_item_id);
   if (it != in_progress_items_.end()) {
-    SaveItem* save_item = it->second;
+    SaveItem* save_item = it->second.get();
     DCHECK_EQ(SaveItem::IN_PROGRESS, save_item->state());
     return save_item;
   }
@@ -566,15 +566,16 @@ SaveItem* SavePackage::LookupInProgressSaveItem(SaveItemId save_item_id) {
 
 void SavePackage::PutInProgressItemToSavedMap(SaveItem* save_item) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  SaveItemIdMap::iterator it = in_progress_items_.find(save_item->id());
+  auto it = in_progress_items_.find(save_item->id());
   DCHECK(it != in_progress_items_.end());
-  DCHECK_EQ(save_item, it->second);
+  DCHECK_EQ(save_item, it->second.get());
+  std::unique_ptr<SaveItem> owned_item = std::move(it->second);
   in_progress_items_.erase(it);
 
   SaveItemIdMap& map = save_item->success() ?
       saved_success_items_ : saved_failed_items_;
-  DCHECK(!ContainsKey(map, save_item->id()));
-  map[save_item->id()] = save_item;
+  DCHECK(!base::ContainsKey(map, save_item->id()));
+  map[save_item->id()] = std::move(owned_item);
 }
 
 // Called for updating saving state.
@@ -611,7 +612,7 @@ void SavePackage::Stop() {
   DCHECK(canceled());
   if (in_process_count()) {
     for (const auto& it : in_progress_items_) {
-      SaveItem* save_item = it.second;
+      SaveItem* save_item = it.second.get();
       DCHECK_EQ(SaveItem::IN_PROGRESS, save_item->state());
       save_item->Cancel();
     }
@@ -619,7 +620,7 @@ void SavePackage::Stop() {
     // be put into saved_failed_items_, for successful item, they will be put
     // into saved_success_items_.
     while (in_process_count())
-      PutInProgressItemToSavedMap(in_progress_items_.begin()->second);
+      PutInProgressItemToSavedMap(in_progress_items_.begin()->second.get());
   }
 
   // This vector contains the save ids of the save files which SaveFileManager
@@ -693,7 +694,7 @@ void SavePackage::Finish() {
   // needs to remove from its |save_file_map_|.
   std::vector<SaveItemId> list_of_failed_save_item_ids;
   for (const auto& it : saved_failed_items_) {
-    const SaveItem* save_item = it.second;
+    const SaveItem* save_item = it.second.get();
     DCHECK_EQ(it.first, save_item->id());
     list_of_failed_save_item_ids.push_back(save_item->id());
   }
@@ -709,7 +710,9 @@ void SavePackage::Finish() {
     // with SavePackage flow.
     if (download_->GetState() == DownloadItem::IN_PROGRESS) {
       if (save_type_ != SAVE_PAGE_TYPE_AS_MHTML) {
-        download_->DestinationUpdate(all_save_items_count_, CurrentSpeed());
+        download_->DestinationUpdate(
+            all_save_items_count_, CurrentSpeed(),
+            std::vector<DownloadItem::ReceivedSlice>());
         download_->OnAllDataSaved(all_save_items_count_,
                                   std::unique_ptr<crypto::SecureHash>());
       }
@@ -742,7 +745,9 @@ void SavePackage::SaveFinished(SaveItemId save_item_id,
   // TODO(rdsmith/benjhayden): Integrate canceling on DownloadItem
   // with SavePackage flow.
   if (download_ && (download_->GetState() == DownloadItem::IN_PROGRESS)) {
-    download_->DestinationUpdate(completed_count(), CurrentSpeed());
+    download_->DestinationUpdate(
+        completed_count(), CurrentSpeed(),
+        std::vector<DownloadItem::ReceivedSlice>());
   }
 
   if (save_item->save_source() == SaveFileCreateInfo::SAVE_FILE_FROM_DOM &&
@@ -779,37 +784,39 @@ void SavePackage::SaveNextFile(bool process_all_remaining_items) {
 
   do {
     // Pop SaveItem from waiting list.
-    SaveItem* save_item = waiting_item_queue_.front();
+    std::unique_ptr<SaveItem> save_item =
+        std::move(waiting_item_queue_.front());
+    SaveItem* save_item_ptr = save_item.get();
     waiting_item_queue_.pop_front();
 
     // Add the item to |in_progress_items_|.
-    DCHECK(!ContainsKey(in_progress_items_, save_item->id()));
-    in_progress_items_[save_item->id()] = save_item;
-    save_item->Start();
+    DCHECK(!base::ContainsKey(in_progress_items_, save_item->id()));
+    in_progress_items_[save_item_ptr->id()] = std::move(save_item);
+    save_item_ptr->Start();
 
     // Find the frame responsible for making the network request below - it will
     // be used in security checks made later by ResourceDispatcherHostImpl.
     int requester_frame_tree_node_id =
-        save_item->save_source() == SaveFileCreateInfo::SAVE_FILE_FROM_NET
-            ? save_item->container_frame_tree_node_id()
-            : save_item->frame_tree_node_id();
+        save_item_ptr->save_source() == SaveFileCreateInfo::SAVE_FILE_FROM_NET
+            ? save_item_ptr->container_frame_tree_node_id()
+            : save_item_ptr->frame_tree_node_id();
     DCHECK_NE(FrameTreeNode::kFrameTreeNodeInvalidId,
               requester_frame_tree_node_id);
     FrameTreeNode* requester_frame_tree_node =
         FrameTreeNode::GloballyFindByID(requester_frame_tree_node_id);
     if (!requester_frame_tree_node) {
-      save_item->Finish(0, /* is_success = */ false);
+      save_item_ptr->Finish(0, /* is_success = */ false);
       continue;
     }
     RenderFrameHostImpl* requester_frame =
         requester_frame_tree_node->current_frame_host();
 
     file_manager_->SaveURL(
-        save_item->id(), save_item->url(), save_item->referrer(),
+        save_item_ptr->id(), save_item_ptr->url(), save_item_ptr->referrer(),
         requester_frame->GetProcess()->GetID(),
         requester_frame->render_view_host()->GetRoutingID(),
-        requester_frame->routing_id(), save_item->save_source(),
-        save_item->full_path(),
+        requester_frame->routing_id(), save_item_ptr->save_source(),
+        save_item_ptr->full_path(),
         web_contents()->GetBrowserContext()->GetResourceContext(), this);
   } while (process_all_remaining_items && !waiting_item_queue_.empty());
 }
@@ -842,7 +849,7 @@ void SavePackage::DoSavingProcess() {
     // Start a new SaveItem job if we still have job in waiting queue.
     if (waiting_item_queue_.size()) {
       DCHECK_EQ(NET_FILES, wait_state_);
-      const SaveItem* save_item = waiting_item_queue_.front();
+      const SaveItem* save_item = waiting_item_queue_.front().get();
       if (save_item->save_source() != SaveFileCreateInfo::SAVE_FILE_FROM_DOM) {
         SaveNextFile(false);
       } else if (!in_process_count()) {
@@ -1028,7 +1035,7 @@ void SavePackage::OnSerializedHtmlWithLocalLinksResponse(
       }
     }
 
-    if (ContainsKey(saved_failed_items_, save_item->id()))
+    if (base::ContainsKey(saved_failed_items_, save_item->id()))
       wrote_to_failed_file_ = true;
 
     return;
@@ -1049,9 +1056,8 @@ void SavePackage::OnSerializedHtmlWithLocalLinksResponse(
 
   // Current frame is completed saving, call finish in FILE thread.
   if (end_of_data) {
-    DVLOG(20) << " " << __FUNCTION__ << "()"
-              << " save_item_id = " << save_item->id() << " url = \""
-              << save_item->url().spec() << "\"";
+    DVLOG(20) << __func__ << "() save_item_id = " << save_item->id()
+              << " url = \"" << save_item->url().spec() << "\"";
     BrowserThread::PostTask(
         BrowserThread::FILE, FROM_HERE,
         base::Bind(&SaveFileManager::SaveFinished, file_manager_,
@@ -1136,7 +1142,7 @@ SaveItem* SavePackage::CreatePendingSaveItem(
   SaveItem* save_item =
       new SaveItem(url, sanitized_referrer, this, save_source,
                    save_item_frame_tree_node_id, container_frame_tree_node_id);
-  waiting_item_queue_.push_back(save_item);
+  waiting_item_queue_.push_back(base::WrapUnique(save_item));
 
   frame_tree_node_id_to_contained_save_items_[container_frame_tree_node_id]
       .push_back(save_item);
@@ -1210,7 +1216,8 @@ void SavePackage::CompleteSavableResourceLinksResponse() {
   // SAVE_FILE_FROM_DOM in the comparison function below).
   std::stable_sort(
       waiting_item_queue_.begin(), waiting_item_queue_.end(),
-      [](SaveItem* x, SaveItem* y) {
+      [](const std::unique_ptr<SaveItem>& x,
+         const std::unique_ptr<SaveItem>& y) {
         DCHECK(x);
         DCHECK(y);
         return (x->save_source() != SaveFileCreateInfo::SAVE_FILE_FROM_DOM) &&
@@ -1239,11 +1246,13 @@ void SavePackage::CompleteSavableResourceLinksResponse() {
   }
 }
 
+// static
 base::FilePath SavePackage::GetSuggestedNameForSaveAs(
+    const base::string16& title,
+    const GURL& page_url,
     bool can_save_as_complete,
     const std::string& contents_mime_type) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  base::FilePath name_with_proper_ext = base::FilePath::FromUTF16Unsafe(title_);
+  base::FilePath name_with_proper_ext = base::FilePath::FromUTF16Unsafe(title);
 
   // If the page's title matches its URL, use the URL. Try to use the last path
   // component or if there is none, the domain as the file name.
@@ -1254,24 +1263,22 @@ base::FilePath SavePackage::GetSuggestedNameForSaveAs(
   // back to a URL, and if it matches the original page URL, we know the page
   // had no title (or had a title equal to its URL, which is fine to treat
   // similarly).
-  if (title_ == url_formatter::FormatUrl(page_url_)) {
+  if (title == url_formatter::FormatUrl(page_url)) {
     std::string url_path;
-    if (!page_url_.SchemeIs(url::kDataScheme)) {
-      std::vector<std::string> url_parts = base::SplitString(
-          page_url_.path(), "/", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
-      if (!url_parts.empty()) {
-        for (int i = static_cast<int>(url_parts.size()) - 1; i >= 0; --i) {
-          url_path = url_parts[i];
-          if (!url_path.empty())
-            break;
-        }
+    if (!page_url.SchemeIs(url::kDataScheme)) {
+      name_with_proper_ext = net::GenerateFileName(
+          page_url, std::string(), std::string(), std::string(),
+          contents_mime_type, std::string());
+
+      // If host is used as file name, try to decode punycode.
+      if (name_with_proper_ext.AsUTF8Unsafe() == page_url.host()) {
+        name_with_proper_ext = base::FilePath::FromUTF16Unsafe(
+                url_formatter::IDNToUnicode(page_url.host()));
       }
-      if (url_path.empty())
-        url_path = page_url_.host();
     } else {
-      url_path = "dataurl";
+      name_with_proper_ext =
+          base::FilePath::FromUTF8Unsafe(std::string("dataurl"));
     }
-    name_with_proper_ext = base::FilePath::FromUTF8Unsafe(url_path);
   }
 
   // Ask user for getting final saving name.
@@ -1288,6 +1295,8 @@ base::FilePath SavePackage::GetSuggestedNameForSaveAs(
 
 // static
 base::FilePath SavePackage::EnsureHtmlExtension(const base::FilePath& name) {
+  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+
   base::FilePath::StringType ext = name.Extension();
   if (!ext.empty())
     ext.erase(ext.begin());  // Erase preceding '.'.
@@ -1303,6 +1312,8 @@ base::FilePath SavePackage::EnsureHtmlExtension(const base::FilePath& name) {
 // static
 base::FilePath SavePackage::EnsureMimeExtension(const base::FilePath& name,
     const std::string& contents_mime_type) {
+  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+
   // Start extension at 1 to skip over period if non-empty.
   base::FilePath::StringType ext = name.Extension();
   if (!ext.empty())
@@ -1354,23 +1365,28 @@ void SavePackage::GetSaveInfo() {
   }
   std::string mime_type = web_contents()->GetContentsMimeType();
   bool can_save_as_complete = CanSaveAsComplete(mime_type);
-  base::FilePath suggested_filename =
-      GetSuggestedNameForSaveAs(can_save_as_complete, mime_type);
   BrowserThread::PostTaskAndReplyWithResult(
       BrowserThread::FILE, FROM_HERE,
-      base::Bind(&SavePackage::CreateDirectoryOnFileThread, website_save_dir,
-                 download_save_dir, suggested_filename, skip_dir_check),
+      base::Bind(&SavePackage::CreateDirectoryOnFileThread, title_, page_url_,
+                 can_save_as_complete, mime_type, website_save_dir,
+                 download_save_dir, skip_dir_check),
       base::Bind(&SavePackage::ContinueGetSaveInfo, this,
                  can_save_as_complete));
 }
 
 // static
 base::FilePath SavePackage::CreateDirectoryOnFileThread(
+    const base::string16& title,
+    const GURL& page_url,
+    bool can_save_as_complete,
+    const std::string& mime_type,
     const base::FilePath& website_save_dir,
     const base::FilePath& download_save_dir,
-    const base::FilePath& suggested_filename,
     bool skip_dir_check) {
   DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+
+  base::FilePath suggested_filename = GetSuggestedNameForSaveAs(
+      title, page_url, can_save_as_complete, mime_type);
 
   base::FilePath save_dir;
   // If the default html/websites save folder doesn't exist...

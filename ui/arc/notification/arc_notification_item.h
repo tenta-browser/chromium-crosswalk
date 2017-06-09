@@ -29,15 +29,20 @@ class ArcNotificationItem {
   virtual ~ArcNotificationItem();
 
   virtual void UpdateWithArcNotificationData(
-      const mojom::ArcNotificationData& data);
+      mojom::ArcNotificationDataPtr data);
 
   // Methods called from ArcNotificationManager:
-  void OnClosedFromAndroid(bool by_user);
+  void OnClosedFromAndroid();
 
   // Methods called from ArcNotificationItemDelegate:
   void Close(bool by_user);
   void Click();
   void ButtonClick(int button_index);
+  void OpenSettings();
+  bool IsOpeningSettingsSupported() const;
+  void ToggleExpansion();
+
+  const std::string& notification_key() const { return notification_key_; }
 
   const std::string& notification_key() const { return notification_key_; }
 
@@ -46,9 +51,10 @@ class ArcNotificationItem {
   static gfx::Image ConvertAndroidSmallIcon(
       const mojom::ArcBitmapPtr& arc_bitmap);
 
-  // Checks whether there is on-going |notification_|. If so, cache the |data|
-  // in |newer_data_| and returns true. Otherwise, returns false.
-  bool CacheArcNotificationData(const mojom::ArcNotificationData& data);
+  // Checks whether there is on-going |notification_|.
+  bool HasPendingNotification();
+  // Cache the |data| in |newer_data_|.
+  void CacheArcNotificationData(mojom::ArcNotificationDataPtr data);
 
   // Sets the pending |notification_|.
   void SetNotification(

@@ -5,24 +5,20 @@
 #ifndef MEDIA_CAPTURE_VIDEO_MAC_VIDEO_CAPTURE_DEVICE_AVFOUNDATION_MAC_H_
 #define MEDIA_CAPTURE_VIDEO_MAC_VIDEO_CAPTURE_DEVICE_AVFOUNDATION_MAC_H_
 
+#import <AVFoundation/AVFoundation.h>
 #import <Foundation/Foundation.h>
 
 #import "base/mac/scoped_nsobject.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread_checker.h"
-#import "media/base/mac/avfoundation_glue.h"
-#include "media/base/video_capture_types.h"
 #include "media/capture/video/video_capture_device.h"
+#include "media/capture/video_capture_types.h"
 
 namespace media {
 class VideoCaptureDeviceMac;
 }
 
-@class CrAVCaptureDevice;
-@class CrAVCaptureSession;
-@class CrAVCaptureVideoDataOutput;
-
-// Class used by VideoCaptureDeviceMac (VCDM) for video capture using
+// Class used by VideoCaptureDeviceMac (VCDM) for video and image capture using
 // AVFoundation API. This class lives inside the thread created by its owner
 // VCDM.
 //
@@ -55,24 +51,27 @@ class VideoCaptureDeviceMac;
 //
 //
 @interface VideoCaptureDeviceAVFoundation
-    : NSObject<CrAVCaptureVideoDataOutputSampleBufferDelegate> {
+    : NSObject<AVCaptureVideoDataOutputSampleBufferDelegate> {
  @private
   // The following attributes are set via -setCaptureHeight:width:frameRate:.
   int frameWidth_;
   int frameHeight_;
   float frameRate_;
 
-  base::Lock lock_;  // Protects concurrent setting and using of frameReceiver_.
+  base::Lock lock_;  // Protects concurrent setting and using |frameReceiver_|.
   media::VideoCaptureDeviceMac* frameReceiver_;  // weak.
 
-  base::scoped_nsobject<CrAVCaptureSession> captureSession_;
+  base::scoped_nsobject<AVCaptureSession> captureSession_;
 
   // |captureDevice_| is an object coming from AVFoundation, used only to be
   // plugged in |captureDeviceInput_| and to query for session preset support.
-  CrAVCaptureDevice* captureDevice_;
+  AVCaptureDevice* captureDevice_;
   // |captureDeviceInput_| is owned by |captureSession_|.
-  CrAVCaptureDeviceInput* captureDeviceInput_;
-  base::scoped_nsobject<CrAVCaptureVideoDataOutput> captureVideoDataOutput_;
+  AVCaptureDeviceInput* captureDeviceInput_;
+  base::scoped_nsobject<AVCaptureVideoDataOutput> captureVideoDataOutput_;
+
+  // An AVDataOutput specialized for taking pictures out of |captureSession_|.
+  base::scoped_nsobject<AVCaptureStillImageOutput> stillImageOutput_;
 
   base::ThreadChecker main_thread_checker_;
 }
@@ -80,8 +79,8 @@ class VideoCaptureDeviceMac;
 // Returns a dictionary of capture devices with friendly name and unique id.
 + (NSDictionary*)deviceNames;
 
-// Retrieve the capture supported formats for a given device |name|.
-+ (void)getDevice:(const media::VideoCaptureDevice::Name&)name
+// Retrieve the capture supported formats for a given device |descriptor|.
++ (void)getDevice:(const media::VideoCaptureDeviceDescriptor&)descriptor
     supportedFormats:(media::VideoCaptureFormats*)formats;
 
 // Initializes the instance and the underlying capture session and registers the
@@ -113,6 +112,10 @@ class VideoCaptureDeviceMac;
 
 // Stops video capturing and stops listening to notifications.
 - (void)stopCapture;
+
+// Takes a photo. This method should only be called between -startCapture and
+// -stopCapture.
+- (void)takePhoto;
 
 @end
 

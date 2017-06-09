@@ -12,12 +12,7 @@ import android.app.Activity;
 import android.graphics.Bitmap;
 import android.graphics.Rect;
 import android.graphics.drawable.GradientDrawable;
-import android.support.design.widget.CoordinatorLayout;
-import android.support.design.widget.CoordinatorLayout.Behavior;
-import android.support.design.widget.CoordinatorLayout.LayoutParams;
-import android.view.Gravity;
 import android.view.LayoutInflater;
-import android.view.MotionEvent;
 import android.view.SurfaceView;
 import android.view.View;
 import android.view.View.OnClickListener;
@@ -25,7 +20,6 @@ import android.view.View.OnLayoutChangeListener;
 import android.view.ViewGroup;
 import android.view.ViewGroup.MarginLayoutParams;
 import android.view.animation.DecelerateInterpolator;
-import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.TextView;
 
@@ -62,33 +56,6 @@ class SnackbarView {
         public void onLayoutChange(View v, int left, int top, int right, int bottom, int oldLeft,
                 int oldTop, int oldRight, int oldBottom) {
             adjustViewPosition();
-        }
-    };
-
-    /**
-     * Behavior that intercepts touch event from the CompositorViewHoder.
-     */
-    private final Behavior<View> mBehavior = new Behavior<View>() {
-
-        private boolean mShouldIntercept;
-
-        @Override
-        public boolean onInterceptTouchEvent(CoordinatorLayout parent, View child, MotionEvent ev) {
-            mShouldIntercept = isInBounds(ev, child);
-            return mShouldIntercept;
-        }
-
-        @Override
-        public boolean onTouchEvent(CoordinatorLayout parent, View child, MotionEvent ev) {
-            if (!isInBounds(ev, child) || !mShouldIntercept) return false;
-            ev.offsetLocation(-child.getX(), -child.getY());
-            child.dispatchTouchEvent(ev);
-            return true;
-        }
-
-        private boolean isInBounds(MotionEvent ev, View view) {
-            return ev.getX() > view.getX() && ev.getX() - view.getX() < view.getWidth()
-                    && ev.getY() > view.getY() && ev.getY() - view.getY() < view.getHeight();
         }
     };
 
@@ -154,6 +121,9 @@ class SnackbarView {
         startAnimatorOnSurfaceView(animatorSet);
     }
 
+    /**
+     * Adjusts the position of the snackbar on top of the soft keyboard, if any.
+     */
     void adjustViewPosition() {
         mParent.getWindowVisibleDisplayFrame(mCurrentVisibleRect);
         // Only update if the visible frame has changed, otherwise there will be a layout loop.
@@ -198,7 +168,7 @@ class SnackbarView {
      * the mMessageView content description is read aloud if accessibility is enabled.
      */
     void announceforAccessibility() {
-        mMessageView.announceForAccessibility(mMessageView.getContentDescription()
+        mMessageView.announceForAccessibility(mMessageView.getContentDescription() + " "
                 + mView.getResources().getString(R.string.bottom_bar_screen_position));
     }
 
@@ -213,20 +183,7 @@ class SnackbarView {
     }
 
     private void addToParent() {
-        // LayoutParams in CoordinatorLayout and FrameLayout cannot be used interchangeably. Thus
-        // we create new LayoutParams every time.
-        if (mParent instanceof CoordinatorLayout) {
-            CoordinatorLayout.LayoutParams lp = new LayoutParams(getLayoutParams());
-            lp.gravity = Gravity.BOTTOM | Gravity.START;
-            lp.setBehavior(mBehavior);
-            mParent.addView(mView, lp);
-        } else if (mParent instanceof FrameLayout) {
-            FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(getLayoutParams());
-            lp.gravity = Gravity.BOTTOM | Gravity.START;
-            mParent.addView(mView, lp);
-        } else {
-            assert false : "Only FrameLayout and CoordinatorLayout are supported to show snackbars";
-        }
+        mParent.addView(mView);
 
         // Why setting listener on parent? It turns out that if we force a relayout in the layout
         // change listener of the view itself, the force layout flag will be reset to 0 when
@@ -279,7 +236,7 @@ class SnackbarView {
      */
     private ViewGroup findParentView(Activity activity) {
         if (activity instanceof ChromeActivity) {
-            return ((ChromeActivity) activity).getCompositorViewHolder();
+            return (ViewGroup) activity.findViewById(R.id.bottom_container);
         } else {
             return (ViewGroup) activity.findViewById(android.R.id.content);
         }

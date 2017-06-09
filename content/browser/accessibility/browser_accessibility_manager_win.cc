@@ -39,7 +39,6 @@ BrowserAccessibilityManagerWin::BrowserAccessibilityManagerWin(
     BrowserAccessibilityDelegate* delegate,
     BrowserAccessibilityFactory* factory)
     : BrowserAccessibilityManager(delegate, factory),
-      tracked_scroll_object_(NULL),
       load_complete_pending_(false) {
   ui::win::CreateATLModuleIfNeeded();
   Initialize(initial_tree);
@@ -51,11 +50,6 @@ BrowserAccessibilityManagerWin::~BrowserAccessibilityManagerWin() {
   // destructor, otherwise our overrides of functions like
   // OnNodeWillBeDeleted won't be called.
   tree_.reset(NULL);
-
-  if (tracked_scroll_object_) {
-    tracked_scroll_object_->Release();
-    tracked_scroll_object_ = NULL;
-  }
   ui::GetIAccessible2UsageObserverList().RemoveObserver(this);
 }
 
@@ -66,9 +60,7 @@ ui::AXTreeUpdate
   empty_document.id = 0;
   empty_document.role = ui::AX_ROLE_ROOT_WEB_AREA;
   empty_document.state =
-      (1 << ui::AX_STATE_ENABLED) |
-      (1 << ui::AX_STATE_READ_ONLY) |
-      (1 << ui::AX_STATE_BUSY);
+      (1 << ui::AX_STATE_READ_ONLY) | (1 << ui::AX_STATE_BUSY);
 
   ui::AXTreeUpdate update;
   update.root_id = empty_document.id;
@@ -91,7 +83,12 @@ IAccessible* BrowserAccessibilityManagerWin::GetParentIAccessible() {
 }
 
 void BrowserAccessibilityManagerWin::OnIAccessible2Used() {
-  BrowserAccessibilityStateImpl::GetInstance()->OnScreenReaderDetected();
+  // When IAccessible2 APIs have been used elsewhere in the codebase,
+  // enable basic web accessibility support. (Full screen reader support is
+  // detected later when specific more advanced APIs are accessed.)
+  BrowserAccessibilityStateImpl::GetInstance()->AddAccessibilityModeFlags(
+      ACCESSIBILITY_MODE_FLAG_NATIVE_APIS |
+      ACCESSIBILITY_MODE_FLAG_WEB_CONTENTS);
 }
 
 void BrowserAccessibilityManagerWin::UserIsReloading() {
@@ -120,7 +117,7 @@ void BrowserAccessibilityManagerWin::NotifyAccessibilityEvent(
   if (event_type == ui::AX_EVENT_LOAD_COMPLETE && can_fire_events)
     load_complete_pending_ = false;
 
-  if (load_complete_pending_ && can_fire_events) {
+  if (load_complete_pending_ && can_fire_events && GetRoot()) {
     load_complete_pending_ = false;
     NotifyAccessibilityEvent(BrowserAccessibilityEvent::FromPendingLoadComplete,
                              ui::AX_EVENT_LOAD_COMPLETE,
@@ -130,6 +127,7 @@ void BrowserAccessibilityManagerWin::NotifyAccessibilityEvent(
   if (!can_fire_events &&
       !load_complete_pending_ &&
       event_type == ui::AX_EVENT_LOAD_COMPLETE &&
+      GetRoot() &&
       !GetRoot()->HasState(ui::AX_STATE_OFFSCREEN) &&
       GetRoot()->PlatformChildCount() > 0) {
     load_complete_pending_ = true;
@@ -184,9 +182,11 @@ BrowserAccessibilityEvent::Result
   if (target->GetRole() == ui::AX_ROLE_INLINE_TEXT_BOX)
     return BrowserAccessibilityEvent::NotNeededOnThisPlatform;
 
-  if (event_type == ui::AX_EVENT_LIVE_REGION_CHANGED &&
-      target->GetBoolAttribute(ui::AX_ATTR_CONTAINER_LIVE_BUSY))
+  if ((event_type == ui::AX_EVENT_LIVE_REGION_CREATED ||
+       event_type == ui::AX_EVENT_LIVE_REGION_CHANGED) &&
+      target->GetBoolAttribute(ui::AX_ATTR_CONTAINER_LIVE_BUSY)) {
     return BrowserAccessibilityEvent::DiscardedBecauseLiveRegionBusy;
+  }
 
   if (!target)
     return BrowserAccessibilityEvent::FailedBecauseNoFocus;
@@ -206,21 +206,6 @@ BrowserAccessibilityEvent::Result
   // we can use to retrieve the IAccessible for this node.
   LONG child_id = -target->unique_id();
   ::NotifyWinEvent(win_event_type, hwnd, OBJID_CLIENT, child_id);
-
-  // If this is a layout complete notification (sent when a container scrolls)
-  // and there is a descendant tracked object, send a notification on it.
-  // TODO(dmazzoni): remove once http://crbug.com/113483 is fixed.
-  if (event_type == ui::AX_EVENT_LAYOUT_COMPLETE &&
-      tracked_scroll_object_ &&
-      tracked_scroll_object_->IsDescendantOf(target)) {
-    (new BrowserAccessibilityEventWin(
-        BrowserAccessibilityEvent::FromScroll,
-        ui::AX_EVENT_NONE,
-        IA2_EVENT_VISIBLE_DATA_CHANGED,
-        tracked_scroll_object_))->Fire();
-    tracked_scroll_object_->Release();
-    tracked_scroll_object_ = NULL;
-  }
 
   return BrowserAccessibilityEvent::Sent;
 }
@@ -258,22 +243,6 @@ void BrowserAccessibilityManagerWin::OnNodeCreated(ui::AXTree* tree,
     return;
   if (!obj->IsNative())
     return;
-}
-
-void BrowserAccessibilityManagerWin::OnNodeWillBeDeleted(ui::AXTree* tree,
-                                                         ui::AXNode* node) {
-  DCHECK(node);
-  BrowserAccessibility* obj = GetFromAXNode(node);
-  if (obj && obj->IsNative()) {
-    if (obj == tracked_scroll_object_) {
-      tracked_scroll_object_->Release();
-      tracked_scroll_object_ = NULL;
-    }
-  }
-
-  // Call the inherited function at the bottom, otherwise our call to
-  // |GetFromAXNode|, above, will fail!
-  BrowserAccessibilityManager::OnNodeWillBeDeleted(tree, node);
 }
 
 void BrowserAccessibilityManagerWin::OnAtomicUpdateFinished(
@@ -323,14 +292,6 @@ void BrowserAccessibilityManagerWin::OnAtomicUpdateFinished(
           changes[i].type == AXTreeDelegate::SUBTREE_CREATED);
     }
   }
-}
-
-void BrowserAccessibilityManagerWin::TrackScrollingObject(
-    BrowserAccessibilityWin* node) {
-  if (tracked_scroll_object_)
-    tracked_scroll_object_->Release();
-  tracked_scroll_object_ = node;
-  tracked_scroll_object_->AddRef();
 }
 
 }  // namespace content
