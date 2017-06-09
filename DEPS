@@ -1033,38 +1033,6 @@ hooks = [
   },
   {
     'action': [
-      'download_from_google_storage',
-      '--no_resume',
-      '--no_auth',
-      '-u',
-      '--bucket',
-      'v8-wasm-fuzzer',
-      '-s',
-      'src/v8/test/fuzzer/wasm.tar.gz.sha1'
-    ],
-    'pattern':
-      '.',
-    'name':
-      'wasm_fuzzer'
-  },
-  {
-    'action': [
-      'download_from_google_storage',
-      '--no_resume',
-      '--no_auth',
-      '-u',
-      '--bucket',
-      'v8-wasm-asmjs-fuzzer',
-      '-s',
-      'src/v8/test/fuzzer/wasm_asmjs.tar.gz.sha1'
-    ],
-    'pattern':
-      '.',
-    'name':
-      'wasm_asmjs_fuzzer'
-  },
-  {
-    'action': [
       'python',
       'src/tools/clang_format_merge_driver/install_git_hook.py'
     ],
