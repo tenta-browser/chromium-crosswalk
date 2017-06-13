@@ -100,7 +100,7 @@ public class ApplicationStatusManager {
 
             @Override
             public void onActivityDestroyed(Activity activity) {
-                if (BuildConfig.IS_DEBUG) {
+                if (BuildConfig.DCHECK_IS_ON) {
                     assert (Proxy.isProxyClass(activity.getWindow().getCallback().getClass())
                             || activity.getWindow().getCallback().getClass().getName().equals(
                                     TOOLBAR_CALLBACK_WRAPPER_CLASS)
@@ -111,7 +111,7 @@ public class ApplicationStatusManager {
 
             @Override
             public void onActivityPaused(Activity activity) {
-                if (BuildConfig.IS_DEBUG) {
+                if (BuildConfig.DCHECK_IS_ON) {
                     assert (Proxy.isProxyClass(activity.getWindow().getCallback().getClass())
                             || activity.getWindow().getCallback().getClass().getName().equals(
                                     TOOLBAR_CALLBACK_WRAPPER_CLASS)
@@ -122,7 +122,7 @@ public class ApplicationStatusManager {
 
             @Override
             public void onActivityResumed(Activity activity) {
-                if (BuildConfig.IS_DEBUG) {
+                if (BuildConfig.DCHECK_IS_ON) {
                     assert (Proxy.isProxyClass(activity.getWindow().getCallback().getClass())
                             || activity.getWindow().getCallback().getClass().getName().equals(
                                     TOOLBAR_CALLBACK_WRAPPER_CLASS)
@@ -133,7 +133,7 @@ public class ApplicationStatusManager {
 
             @Override
             public void onActivitySaveInstanceState(Activity activity, Bundle outState) {
-                if (BuildConfig.IS_DEBUG) {
+                if (BuildConfig.DCHECK_IS_ON) {
                     assert (Proxy.isProxyClass(activity.getWindow().getCallback().getClass())
                             || activity.getWindow().getCallback().getClass().getName().equals(
                                     TOOLBAR_CALLBACK_WRAPPER_CLASS)
@@ -144,7 +144,7 @@ public class ApplicationStatusManager {
 
             @Override
             public void onActivityStarted(Activity activity) {
-                if (BuildConfig.IS_DEBUG) {
+                if (BuildConfig.DCHECK_IS_ON) {
                     assert (Proxy.isProxyClass(activity.getWindow().getCallback().getClass())
                             || activity.getWindow().getCallback().getClass().getName().equals(
                                     TOOLBAR_CALLBACK_WRAPPER_CLASS)
@@ -155,7 +155,7 @@ public class ApplicationStatusManager {
 
             @Override
             public void onActivityStopped(Activity activity) {
-                if (BuildConfig.IS_DEBUG) {
+                if (BuildConfig.DCHECK_IS_ON) {
                     assert (Proxy.isProxyClass(activity.getWindow().getCallback().getClass())
                             || activity.getWindow().getCallback().getClass().getName().equals(
                                     TOOLBAR_CALLBACK_WRAPPER_CLASS)
