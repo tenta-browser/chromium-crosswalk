@@ -573,8 +573,8 @@ void PictureLayerImpl::UpdateRasterSource(
 
   // Only set the image decode controller when we're committing.
   if (!pending_set) {
-    raster_source_->SetImageDecodeController(
-        layer_tree_impl()->image_decode_controller());
+    raster_source_->set_image_decode_cache(
+        layer_tree_impl()->image_decode_cache());
   }
 
   // The |new_invalidation| must be cleared before updating tilings since they
