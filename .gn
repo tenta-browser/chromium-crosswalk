@@ -285,4 +285,6 @@ exec_script_whitelist =
       # Not gypi-to-gn.
       "//google_apis/BUILD.gn",
       "//printing/BUILD.gn",
+      # xwalk
+      "//xwalk/build/version.gni",
     ]
