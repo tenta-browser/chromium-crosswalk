@@ -19,7 +19,6 @@
 #include "components/webdata/common/web_data_service_base.h"
 #include "components/webdata/common/web_data_service_consumer.h"
 #include "components/webdata/common/web_database.h"
-#include "sync/internal_api/public/base/model_type.h"
 
 class WebDatabaseService;
 

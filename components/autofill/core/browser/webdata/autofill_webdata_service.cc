@@ -296,12 +296,4 @@ void AutofillWebDataService::NotifySyncStartedOnUIThread(
     ui_observer.SyncStarted(model_type);
 }
 
-void AutofillWebDataService::NotifySyncStartedOnUIThread(
-    syncer::ModelType model_type) {
-  DCHECK(ui_thread_->BelongsToCurrentThread());
-  FOR_EACH_OBSERVER(AutofillWebDataServiceObserverOnUIThread,
-                    ui_observer_list_,
-                    SyncStarted(model_type));
-}
-
 }  // namespace autofill

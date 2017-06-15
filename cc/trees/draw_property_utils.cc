@@ -415,7 +415,7 @@ void CalculateVisibleRects(const LayerImplList& visible_layer_list,
 
       const EffectNode* copy_request_effect_node =
           effect_tree.Node(effect_ancestor_with_copy_request);
-      ConditionalClip clip_in_layer_space = ComputeTargetRectInLocalSpace(
+      ConditionalClip clip_in_layer_space = ComputeRectInTargetSpace(
           accumulated_clip_in_copy_request_space, property_trees,
           copy_request_effect_node->transform_id, layer->transform_tree_index(),
           copy_request_effect_node->id);
@@ -1150,7 +1150,7 @@ gfx::Rect ComputeLayerVisibleRectDynamic(const PropertyTrees* property_trees,
           ? property_trees->effect_tree.Node(effect_ancestor_with_copy_request)
           : property_trees->effect_tree.Node(EffectTree::kContentsRootNodeId);
   ConditionalClip accumulated_clip_in_layer_space =
-      ComputeTargetRectInLocalSpace(
+      ComputeRectInTargetSpace(
           accumulated_clip_in_root_space, property_trees,
           root_effect_node->transform_id, layer->transform_tree_index(),
           root_effect_node->id);
