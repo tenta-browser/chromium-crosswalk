@@ -6,7 +6,7 @@ import("//build/config/chromecast_build.gni")
 import("//build/config/features.gni")
 
 declare_args() {
-  enable_plugins = !is_android && !is_ios && !is_chromecast
+#  enable_plugins = !is_android && !is_ios && !is_chromecast
 }
 
 # Enables the use of CDMs in pepper plugins.
