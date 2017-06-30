@@ -22,6 +22,7 @@ Still reading?
   directory path (e.g. out/Debug)
 -->
   <!-- AllowBackup defaults to true, and causes a lint warning if not explicitly set. -->
+  <issue id="UseSparseArrays" severity="ignore"/>
   <issue id="AllowBackup">
     <ignore path="AndroidManifest.xml"/>
   </issue>
@@ -77,6 +78,7 @@ Still reading?
     <ignore regexp="android_webview/glue/java/src/com/android/webview/chromium/WebViewContentsClientAdapter.java" />
     <ignore regexp="chromecast/internal" />
     <ignore regexp="remoting/android/java/src/org/chromium/chromoting/TapGestureDetector.java" />
+    <ignore regexp="xwalk/runtime/android/core_internal/src/org/xwalk/core/internal/XWalkContentsClientBridge.java" />
   </issue>
   <issue id="HardcodedDebugMode" severity="Fatal">
     <ignore path="AndroidManifest.xml"/>
@@ -204,6 +206,7 @@ Still reading?
     <ignore regexp="org/chromium/memconsumer/MemConsumer.*.class"/>
     <ignore regexp="org/chromium/memconsumer/ResidentService.class"/>
     <ignore regexp="org/chromium/mojo/bindings/ValidationTest.class"/>
+    <ignore regexp="org/xwalk/core/internal/XWalkViewDelegate.class"/>
   </issue>
   <issue id="OldTargetApi">
     <ignore path="AndroidManifest.xml"/>

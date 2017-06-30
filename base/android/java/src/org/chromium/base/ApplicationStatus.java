@@ -204,6 +204,9 @@ public class ApplicationStatus {
         }
 
         ActivityInfo info = sActivityInfo.get(activity);
+        // Ignore status from none tracked activitys.
+        if (info == null) return;
+
         info.setStatus(newState);
 
         // Remove before calling listeners so that isEveryActivityDestroyed() returns false when
@@ -348,6 +351,18 @@ public class ApplicationStatus {
      */
     public static void registerStateListenerForAllActivities(ActivityStateListener listener) {
         sGeneralActivityStateListeners.addObserver(listener);
+    }
+
+ 
+     /**
+     * When ApplicationStatus initialized after application started, the onActivityCreated(),
+     * onActivityStarted() and onActivityResumed() callbacks will be missed.
+     * This function will give the chance to simulate these three callbacks.
+     */
+    public static void informActivityStarted(Activity activity) {
+        onStateChange(activity, ActivityState.CREATED);
+        onStateChange(activity, ActivityState.STARTED);
+        onStateChange(activity, ActivityState.RESUMED);
     }
 
     /**

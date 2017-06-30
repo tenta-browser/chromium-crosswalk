@@ -813,6 +813,14 @@ public class ContentViewCore implements AccessibilityStateChangeListener, Displa
         mContentViewClient = client;
     }
 
+    @CalledByNative
+    public void didOverscroll(boolean clampedX, boolean clampedY) {
+        mContentViewClient.onOverScrolled(mRenderCoordinates.getScrollXPixInt(),
+                                          mRenderCoordinates.getScrollYPixInt(),
+                                          clampedX,
+                                          clampedY);
+    }
+
     @VisibleForTesting
     public ContentViewClient getContentViewClient() {
         if (mContentViewClient == null) {

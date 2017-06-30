@@ -96,4 +96,14 @@ jmethodID GetMethodIDFromClassName(JNIEnv* env,
   return id;
 }
 
+jfieldID GetFieldID(JNIEnv* env,
+                    const base::android::JavaRef<jclass>& clazz,
+                    const char* field_name,
+                    const char* jni_signature) {
+  jfieldID field_id = env->GetFieldID(clazz.obj(), field_name, jni_signature);
+  CHECK(!base::android::ClearException(env) && field_id) <<
+      "Failed to find field " << field_name << " " << jni_signature;
+  return field_id;
+}
+
 }  // namespace content

@@ -18,6 +18,12 @@ import android.view.KeyEvent;
  */
 public class ContentViewClient {
     /**
+     * Called when overscroll event has been fired
+     */
+    public void onOverScrolled(int scrollX, int scrollY, boolean clampedX, boolean clampedY) {
+    }
+
+    /**
      * Called when an ImeEvent is sent to the page. Can be used to know when some text is entered
      * in a page.
      */

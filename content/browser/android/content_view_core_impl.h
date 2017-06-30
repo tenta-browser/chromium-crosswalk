@@ -344,6 +344,8 @@ class ContentViewCoreImpl : public ContentViewCore,
   // testing/benchmarking purposes.
   base::android::ScopedJavaLocalRef<jobject> CreateMotionEventSynthesizer();
 
+  void DidOverscroll(bool clampedX, bool clampedY);
+
   void DidStopFlinging();
 
   // Returns the context with which the ContentViewCore was created, typically
