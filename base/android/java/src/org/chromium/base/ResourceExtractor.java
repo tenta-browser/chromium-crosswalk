@@ -34,7 +34,7 @@ public class ResourceExtractor {
     private static final String V8_NATIVES_DATA_FILENAME = "natives_blob.bin";
     private static final String V8_SNAPSHOT_DATA_FILENAME = "snapshot_blob.bin";
     private static final String APP_VERSION_PREF = "org.chromium.base.ResourceExtractor.Version";
-    private static final String FALLBACK_LOCALE = "en-US";
+    public static final String FALLBACK_LOCALE = "en-US";
 
      private static ResourceInterceptor sInterceptor = null;
 
@@ -92,6 +92,7 @@ public class ResourceExtractor {
         }
 
         private void doInBackgroundImpl() {
+            Log.d(TAG, "ResourceExtractor running .... %s", Arrays.toString(mAssetsToExtract));
             final File outputDir = getOutputDir();
             final File appDataDir = getAppDataDir();
 
