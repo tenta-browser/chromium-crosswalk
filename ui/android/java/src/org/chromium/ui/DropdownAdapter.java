@@ -8,7 +8,8 @@ import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.support.annotation.Nullable;
-import android.support.v7.content.res.AppCompatResources;
+//TODO(iotto) remove appcompat depencency for now
+//import android.support.v7.content.res.AppCompatResources;
 import android.text.TextUtils;
 import android.util.TypedValue;
 import android.view.LayoutInflater;
@@ -233,7 +234,8 @@ public class DropdownAdapter extends ArrayAdapter<DropdownItem> {
             ApiCompatibilityUtils.setMarginStart(iconLayoutParams, iconMargin);
             ApiCompatibilityUtils.setMarginEnd(iconLayoutParams, iconMargin);
             iconView.setLayoutParams(iconLayoutParams);
-            iconView.setImageDrawable(AppCompatResources.getDrawable(mContext, item.getIconId()));
+            iconView.setImageResource(item.getIconId());
+//            iconView.setImageDrawable(AppCompatResources.getDrawable(mContext, item.getIconId()));
             iconView.setVisibility(View.VISIBLE);
         }
 

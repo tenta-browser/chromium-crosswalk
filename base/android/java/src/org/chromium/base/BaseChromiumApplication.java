@@ -114,6 +114,7 @@ public class BaseChromiumApplication extends Application {
     @Override
     public void onCreate() {
         super.onCreate();
+        ApplicationStatusManager.init(this);
 
         if (mShouldInitializeApplicationStatusTracking) startTrackingApplicationStatus();
     }
