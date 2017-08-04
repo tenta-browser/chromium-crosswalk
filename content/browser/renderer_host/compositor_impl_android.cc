@@ -417,7 +417,7 @@ void CompositorImpl::SetRootLayer(scoped_refptr<cc::Layer> root_layer) {
     subroot_layer_->RemoveFromParent();
     subroot_layer_ = NULL;
   }
-  if (root_window_->GetLayer()) {
+  if (root_window_->GetLayer() && root_layer != nullptr) {
     subroot_layer_ = root_window_->GetLayer();
     root_window_->GetLayer()->AddChild(root_layer);
   }
