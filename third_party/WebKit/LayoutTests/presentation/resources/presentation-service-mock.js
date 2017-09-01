@@ -25,40 +25,79 @@ let presentationServiceMock = loadMojoModules(
           this.pendingResponse_ = null;
           this.bindingSet_ = new bindings.BindingSet(
               presentationService.PresentationService);
+          this.controllerConnectionPtr_ = null;
+          this.receiverConnectionRequest_ = null;
+
+          this.onSetClient = null;
         }
 
         setClient(client) {
           this.client_ = client;
+
+          if (this.onSetClient)
+            this.onSetClient();
         }
 
-        startSession(urls) {
+        startPresentation(urls) {
           return Promise.resolve({
-              sessionInfo: { url: urls[0], id: 'fakesession' },
+              presentation_info: { url: urls[0], id: 'fakePresentationId' },
               error: null,
           });
         }
 
-        joinSession(urls) {
+        reconnectPresentation(urls) {
           return Promise.resolve({
-              sessionInfo: { url: urls[0], id: 'fakeSessionId' },
+              presentation_info: { url: urls[0], id: 'fakePresentationId' },
               error: null,
           });
         }
 
-        onReceiverConnectionAvailable(strUrl, id) {
+        terminate(presentationUrl, presentationId) {
+          this.client_.onConnectionStateChanged(
+              { url: presentationUrl, id: presentationId },
+              presentationService.PresentationConnectionState.TERMINATED);
+        }
+
+        setPresentationConnection(
+            presentation_info, controllerConnectionPtr,
+            receiverConnectionRequest) {
+          this.controllerConnectionPtr_ = controllerConnectionPtr;
+          this.receiverConnectionRequest_ = receiverConnectionRequest;
+          this.client_.onConnectionStateChanged(
+              presentation_info,
+              presentationService.PresentationConnectionState.CONNECTED);
+        }
+
+        onReceiverConnectionAvailable(
+            strUrl, id, opt_controllerConnectionPtr, opt_receiverConnectionRequest) {
           const mojoUrl = new url.Url();
           mojoUrl.url = strUrl;
-          const controllerConnectionPtr = new presentationService.PresentationConnectionPtr();
-          const connectionBinding = new bindings.Binding(
-              presentationService.PresentationConnection,
-              new MockPresentationConnection(),
-              bindings.makeRequest(controllerConnectionPtr));
-          const receiverConnectionPtr = new presentationService.PresentationConnectionPtr();
+          var controllerConnectionPtr = opt_controllerConnectionPtr;
+          if (!controllerConnectionPtr) {
+            controllerConnectionPtr = new presentationService.PresentationConnectionPtr();
+            const connectionBinding = new bindings.Binding(
+                presentationService.PresentationConnection,
+                new MockPresentationConnection(),
+                bindings.makeRequest(controllerConnectionPtr));
+          }
+
+          var receiverConnectionRequest = opt_receiverConnectionRequest;
+          if (!receiverConnectionRequest) {
+            receiverConnectionRequest = bindings.makeRequest(
+                new presentationService.PresentationConnectionPtr());
+          }
 
           this.client_.onReceiverConnectionAvailable(
               { url: mojoUrl, id: id },
-              controllerConnectionPtr,
-              bindings.makeRequest(receiverConnectionPtr));
+              controllerConnectionPtr, receiverConnectionRequest);
+        }
+
+        getControllerConnectionPtr() {
+          return this.controllerConnectionPtr_;
+        }
+
+        getReceiverConnectionRequest() {
+          return this.receiverConnectionRequest_;
         }
       }
 

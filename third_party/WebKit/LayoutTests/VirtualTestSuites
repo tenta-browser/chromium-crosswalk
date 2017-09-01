@@ -104,22 +104,32 @@
     "args": ["--stable-release-mode"]
   },
   {
+    "prefix": "stable",
+    "base": "svg/transforms/stable",
+    "args": ["--stable-release-mode"]
+  },
+  {
     "prefix": "disable-spinvalidation",
-    "base": "paint/invalidation",
+    "base": "compositing",
+    "args": ["--disable-slimming-paint-invalidation"]
+  },
+  {
+    "prefix": "disable-spinvalidation",
+    "base": "paint",
     "args": ["--disable-slimming-paint-invalidation"]
   },
   {
     "prefix": "origin-trials-runtimeflags-disabled",
     "base": "http/tests/origin_trials/webexposed",
-    "args": ["--disable-blink-features=ForeignFetch,ImageCapture,LinkServiceWorker,LongTaskObserver,ServiceWorkerNavigationPreload,SetRootScroller,WebUSB,WebVR,WebShare"]
+    "args": ["--disable-blink-features=ForeignFetch,InstalledApp,LinkServiceWorker,LongTaskObserver,SetRootScroller,WebUSB,WebVR,WebShare"]
   },
   {
     "prefix": "android",
     "base": "fullscreen",
-    "args": ["--enable-threaded-compositing",
+    "args": ["--enable-features=OverlayScrollbar", "--enable-threaded-compositing",
              "--enable-fixed-position-compositing", "--enable-prefer-compositing-to-lcd-text",
              "--enable-composited-scrolling-for-frames", "--enable-gesture-tap-highlight", "--enable-pinch",
-             "--force-overlay-fullscreen-video", "--enable-overlay-scrollbars", "--enable-overscroll-notifications",
+             "--force-overlay-fullscreen-video", "--enable-overscroll-notifications",
              "--enable-fixed-layout", "--enable-viewport", "--disable-canvas-aa",
              "--disable-composited-antialiasing"]
   },
@@ -206,7 +216,97 @@
   },
   {
     "prefix": "sharedarraybuffer",
+    "base": "fast/beacon",
+    "args": ["--js-flags=--harmony-sharedarraybuffer",
+             "--enable-blink-features=SharedArrayBuffer"]
+  },
+  {
+    "prefix": "sharedarraybuffer",
+    "base": "fast/canvas",
+    "args": ["--js-flags=--harmony-sharedarraybuffer",
+             "--enable-blink-features=SharedArrayBuffer"]
+  },
+  {
+    "prefix": "sharedarraybuffer",
+    "base": "fast/css",
+    "args": ["--js-flags=--harmony-sharedarraybuffer",
+             "--enable-blink-features=SharedArrayBuffer"]
+  },
+  {
+    "prefix": "sharedarraybuffer",
+    "base": "fast/dom",
+    "args": ["--js-flags=--harmony-sharedarraybuffer",
+             "--enable-blink-features=SharedArrayBuffer"]
+  },
+  {
+    "prefix": "sharedarraybuffer",
+    "base": "fast/encoding/api",
+    "args": ["--js-flags=--harmony-sharedarraybuffer",
+             "--enable-blink-features=SharedArrayBuffer"]
+  },
+  {
+    "prefix": "sharedarraybuffer",
+    "base": "fast/events/constructors",
+    "args": ["--js-flags=--harmony-sharedarraybuffer",
+             "--enable-blink-features=SharedArrayBuffer"]
+  },
+  {
+    "prefix": "sharedarraybuffer",
+    "base": "fast/files",
+    "args": ["--js-flags=--harmony-sharedarraybuffer",
+             "--enable-blink-features=SharedArrayBuffer"]
+  },
+  {
+    "prefix": "sharedarraybuffer",
+    "base": "fast/peerconnection",
+    "args": ["--js-flags=--harmony-sharedarraybuffer",
+             "--enable-blink-features=SharedArrayBuffer"]
+  },
+  {
+    "prefix": "sharedarraybuffer",
     "base": "fast/workers",
+    "args": ["--js-flags=--harmony-sharedarraybuffer",
+             "--enable-blink-features=SharedArrayBuffer"]
+  },
+  {
+    "prefix": "sharedarraybuffer",
+    "base": "crypto",
+    "args": ["--js-flags=--harmony-sharedarraybuffer",
+             "--enable-blink-features=SharedArrayBuffer"]
+  },
+  {
+    "prefix": "sharedarraybuffer",
+    "base": "http/tests/media/media-source",
+    "args": ["--js-flags=--harmony-sharedarraybuffer",
+             "--enable-blink-features=SharedArrayBuffer"]
+  },
+  {
+    "prefix": "sharedarraybuffer",
+    "base": "http/tests/push_messaging",
+    "args": ["--js-flags=--harmony-sharedarraybuffer",
+             "--enable-blink-features=SharedArrayBuffer"]
+  },
+  {
+    "prefix": "sharedarraybuffer",
+    "base": "http/tests/websocket",
+    "args": ["--js-flags=--harmony-sharedarraybuffer",
+             "--enable-blink-features=SharedArrayBuffer"]
+  },
+  {
+    "prefix": "sharedarraybuffer",
+    "base": "sensor",
+    "args": ["--js-flags=--harmony-sharedarraybuffer",
+             "--enable-blink-features=SharedArrayBuffer"]
+  },
+  {
+    "prefix": "sharedarraybuffer",
+    "base": "webaudio",
+    "args": ["--js-flags=--harmony-sharedarraybuffer",
+             "--enable-blink-features=SharedArrayBuffer"]
+  },
+  {
+    "prefix": "sharedarraybuffer",
+    "base": "webmidi",
     "args": ["--js-flags=--harmony-sharedarraybuffer",
              "--enable-blink-features=SharedArrayBuffer"]
   },
@@ -286,6 +386,13 @@
     "args": ["--enable-features=TouchpadAndWheelScrollLatching"]
   },
   {
+    "prefix": "wheelscrolllatching",
+    "base": "fast/compositor-wheel-scroll-latching",
+    "args": ["--enable-features=TouchpadAndWheelScrollLatching",
+             "--enable-threaded-compositing",
+             "--disable-smooth-scrolling"]
+  },
+  {
     "prefix": "mojo-loading",
     "base": "webexposed",
     "args": ["--enable-blink-features=LoadingWithMojo"]
@@ -316,34 +423,39 @@
     "args": ["--enable-features=AsmJsToWebAssembly"]
   },
   {
-    "prefix": "service-worker-navigation-preload",
-    "base": "http/tests/serviceworker",
-    "args": ["--enable-features=ServiceWorkerNavigationPreload"]
+    "prefix": "service-worker-navigation-preload-disabled",
+    "base": "webexposed",
+    "args": ["--disable-features=ServiceWorkerNavigationPreload"]
   },
   {
     "prefix": "service-worker-navigation-preload-disabled",
-    "base": "http/tests/serviceworker/chromium",
+    "base": "http/tests/serviceworker/webexposed",
     "args": ["--disable-features=ServiceWorkerNavigationPreload"]
   },
   {
     "prefix": "layout_ng",
     "base": "fast/block/basic",
-    "args": ["--enable-blink-features=LayoutNG, LayoutNGInline"]
+    "args": ["--enable-blink-features=LayoutNG"]
   },
   {
     "prefix": "layout_ng",
     "base": "fast/block/margin-collapse",
-    "args": ["--enable-blink-features=LayoutNG, LayoutNGInline"]
+    "args": ["--enable-blink-features=LayoutNG"]
   },
   {
     "prefix": "layout_ng",
     "base": "css2.1/20110323",
-    "args": ["--enable-blink-features=LayoutNG, LayoutNGInline"]
+    "args": ["--enable-blink-features=LayoutNG"]
   },
   {
     "prefix": "layout_ng",
     "base": "fast/block/float",
-    "args": ["--enable-blink-features=LayoutNG, LayoutNGInline"]
+    "args": ["--enable-blink-features=LayoutNG"]
+  },
+  {
+    "prefix": "layout_ng",
+    "base": "external/wpt/css/css21/linebox",
+    "args": ["--enable-blink-features=LayoutNG"]
   },
   {
     "prefix": "feature-policy",
@@ -364,5 +476,10 @@
     "prefix": "print_browser",
     "base": "print_testharness",
     "args": ["--enable-print-browser"]
+  },
+  {
+    "prefix": "experimental-canvas-features",
+    "base": "fast/canvas-experimental",
+    "args": ["--enable-experimental-canvas-features"]
   }
 ]

@@ -13,7 +13,7 @@
         },
         {
           "object": "LayoutText #text",
-          "rect": [16, 11, 37, 13],
+          "rect": [16, 11, 37, 14],
           "reason": "subtree"
         }
       ]

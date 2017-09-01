@@ -4,6 +4,34 @@
 
 var limit = Math.pow(2, 12);
 
+function NoParameters() {
+  function ExpectTypeError(f) {
+    try {
+      f();
+    } catch (e) {
+      assert_true(e instanceof TypeError)
+      return;
+    }
+    assert_unreached();
+  }
+  ExpectTypeError(() => new WebAssembly.Module());
+  ExpectTypeError(() => new WebAssembly.Module("a"));
+  ExpectTypeError(() => new WebAssembly.Instance());
+  ExpectTypeError(() => new WebAssembly.Instance("a"));
+}
+
+function NoParameters_Promise() {
+  function ExpectTypeError(f) {
+    return f().then(assert_unreached, e => assert_true(e instanceof TypeError));
+  }
+  return Promise.all([
+    ExpectTypeError(() => WebAssembly.compile()),
+    ExpectTypeError(() => WebAssembly.compile("a")),
+    ExpectTypeError(() => WebAssembly.instantiate()),
+    ExpectTypeError(() => WebAssembly.instantiate("a"))
+  ]);
+}
+
 function TestBuffersAreCorrect() {
   var buffs = createTestBuffers(limit);
   assert_equals(buffs.small.byteLength, limit);
@@ -64,4 +92,27 @@ function TestPromiseCompileAsyncInstantiateFromModule() {
              assert_unreached);
     },
     assert_unreached);
+}
+
+
+function TestCompileFromPromise() {
+  return Promise.resolve(createTestBuffers(limit).large)
+    .then(WebAssembly.compile)
+    .then(m => assert_true(m instanceof WebAssembly.Module))
+}
+
+function TestInstantiateFromPromise() {
+  return Promise.resolve(createTestBuffers(limit).large)
+    .then(WebAssembly.instantiate)
+    .then(pair => {
+      assert_true(pair.module instanceof WebAssembly.Module);
+      assert_true(pair.instance instanceof WebAssembly.Instance);
+    });
+}
+
+function TestInstantiateFromPromiseChain() {
+  return Promise.resolve(createTestBuffers(limit).large)
+    .then(WebAssembly.compile)
+    .then(WebAssembly.instantiate)
+    .then(i => assert_true(i instanceof WebAssembly.Instance))
 }

@@ -79,7 +79,7 @@
         .beTrue();
 
       // Resume doesn't actually resume an offline context
-      should(offlineContext.state, "offlineContext.state")
+      should(offlineContext.state, "After resume, offlineContext.state")
         .beEqualTo("suspended");
       should(p2, "p2")
         .beRejected()
@@ -101,7 +101,7 @@
         .notThrow();
 
       p3.then(() => {
-        should(offlineContext.state, "offlineContext.state")
+        should(offlineContext.state, "After close, offlineContext.state")
           .beEqualTo("closed");
 
         // suspend() should be rejected on a closed context.
@@ -115,6 +115,26 @@
               .then(task.done.bind(task));
           })
       });
+    });
+
+    audit.define({
+      label: 'resume-running-context',
+      description: 'Test resuming a running context'
+    }, (task, should) => {
+      let context;
+      should(() => context = new AudioContext(),
+          'Create online context')
+        .notThrow();
+
+      should(context.state, 'context.state')
+        .beEqualTo('running');
+      should(context.resume(), 'context.resume')
+        .beResolved()
+        .then(() => {
+          should(context.state, 'context.state after resume')
+            .beEqualTo('running');
+        })
+        .then(() => task.done());
     });
 
     audit.run();

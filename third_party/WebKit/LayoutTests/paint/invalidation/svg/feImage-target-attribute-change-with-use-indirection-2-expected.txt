@@ -10,11 +10,6 @@
           "object": "LayoutSVGRect rect",
           "rect": [0, 0, 110, 110],
           "reason": "full"
-        },
-        {
-          "object": "LayoutSVGContainer use id='use'",
-          "rect": [0, 0, 100, 100],
-          "reason": "full"
         }
       ]
     }
@@ -26,7 +21,7 @@
     },
     {
       "object": "LayoutSVGRect rect id='rect'",
-      "reason": "location change"
+      "reason": "bounds change"
     },
     {
       "object": "LayoutSVGResourceFilterPrimitive feImage id='feimage'",

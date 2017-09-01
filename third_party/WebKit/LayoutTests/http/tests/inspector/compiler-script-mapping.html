@@ -36,7 +36,7 @@ function test()
             {
                 InspectorTest.addResult("compiled.js UISourceCode arrived");
                 originalUISourceCode = uiSourceCode;
-                for (var s of Object.values(debuggerModel.scripts)) {
+                for (var s of debuggerModel.scripts()) {
                     if (s.sourceURL.endsWith("compiled.js")) {
                         InspectorTest.addResult("compiled.js script found");
                         script = s;
@@ -62,9 +62,9 @@ function test()
                 InspectorTest.checkUILocation(uiSourceCode2, 7, 4, uiLocation(script, 1, 151));
                 InspectorTest.checkUILocation(originalUISourceCode, 1, 200, uiLocation(script, 1, 200));
 
-                InspectorTest.checkRawLocation(script, 0, 42, Bindings.debuggerWorkspaceBinding.uiLocationToRawLocation(debuggerModel, uiSourceCode1, 3, 10));
-                InspectorTest.checkRawLocation(script, 1, 85, Bindings.debuggerWorkspaceBinding.uiLocationToRawLocation(debuggerModel, uiSourceCode2, 1, 0));
-                InspectorTest.checkRawLocation(script, 1, 110, Bindings.debuggerWorkspaceBinding.uiLocationToRawLocation(debuggerModel, uiSourceCode2, 5, 2));
+                InspectorTest.checkRawLocation(script, 0, 42, Bindings.debuggerWorkspaceBinding.uiLocationToRawLocation(uiSourceCode1, 3, 10));
+                InspectorTest.checkRawLocation(script, 1, 85, Bindings.debuggerWorkspaceBinding.uiLocationToRawLocation(uiSourceCode2, 1, 0));
+                InspectorTest.checkRawLocation(script, 1, 110, Bindings.debuggerWorkspaceBinding.uiLocationToRawLocation(uiSourceCode2, 5, 2));
 
                 InspectorTest.addResult("Location checks passed. Requesting content");
                 uiSourceCode1.requestContent().then(didRequestContent1);
@@ -107,7 +107,7 @@ function test()
             function compiledUISourceCodeAdded(uiSourceCode)
             {
                 InspectorTest.addResult("compiled.js UISourceCode arrived");
-                for (var s of Object.values(debuggerModel.scripts)) {
+                for (var s of debuggerModel.scripts()) {
                     if (s.sourceMapURL && s.sourceMapURL.startsWith("data:application")) {
                         InspectorTest.addResult("compiled.js script found");
                         script = s;
@@ -120,7 +120,7 @@ function test()
             {
                 InspectorTest.addResult("source3.js UISourceCode arrived");
                 InspectorTest.checkUILocation(uiSourceCode, 2, 4, uiLocation(script, 0, 18));
-                InspectorTest.checkRawLocation(script, 0, 18, Bindings.debuggerWorkspaceBinding.uiLocationToRawLocation(debuggerModel, uiSourceCode, 2, 4));
+                InspectorTest.checkRawLocation(script, 0, 18, Bindings.debuggerWorkspaceBinding.uiLocationToRawLocation(uiSourceCode, 2, 4));
 
                 InspectorTest.addResult("Location checks passed. Requesting content");
                 uiSourceCode.requestContent().then(didRequestContent);
@@ -137,10 +137,12 @@ function test()
         {
             InspectorTest.addResult("Adding compiled.js");
             InspectorTest.evaluateInPage("\n//# sourceMappingURL=http://127.0.0.1:8000/inspector/resources/source-map.json_\n");
-            InspectorTest.addSniffer(Bindings.CompilerScriptMapping.prototype, "_sourceMapLoaded", onSourceMapLoaded);
+            InspectorTest.debuggerModel.sourceMapManager().addEventListener(
+                    SDK.SourceMapManager.Events.SourceMapFailedToAttach, onSourceMapLoaded, this);
 
-            function onSourceMapLoaded(script, uiSourceCodePath, sourceMap)
+            function onSourceMapLoaded(event)
             {
+                var script = event.data;
                 if (script.sourceMapURL !== "http://127.0.0.1:8000/inspector/resources/source-map.json_")
                     return;
                 InspectorTest.addResult("SourceMap Failed to load.");

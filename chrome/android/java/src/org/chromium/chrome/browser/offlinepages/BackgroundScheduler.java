@@ -75,24 +75,15 @@ public abstract class BackgroundScheduler {
     }
 
     /**
-     * Get the latest power conditions from the android APIs.
+     * If GooglePlayServices upgrades, any outstaning tasks will be lost.
+     * Set a reminder to wake up and check the task queue if an upgrade happens.
      */
-    public static boolean getPowerConditions(Context context) {
-        return OfflinePageUtils.getPowerConditions(context);
-    }
-
-    /**
-     * Get the latest battery conditions from the android APIs.
-     */
-    public static int getBatteryConditions(Context context) {
-        return OfflinePageUtils.getBatteryConditions(context);
-    }
-
-    /**
-     * Get the latest network conditions from the android APIs.
-     */
-    public static int getNetworkConditions(Context context) {
-        return OfflinePageUtils.getNetworkConditions(context);
+    public void rescheduleOfflinePagesTasksOnUpgrade() {
+        // We use the least restrictive trigger conditions.  A wakeup will cause
+        // the queue to be checked, and the trigger conditions will be replaced by
+        // the current trigger conditions needed.
+        TriggerConditions triggerConditions = new TriggerConditions(false, 0, false);
+        scheduleBackup(triggerConditions, FIVE_MINUTES_IN_SECONDS);
     }
 
     /**

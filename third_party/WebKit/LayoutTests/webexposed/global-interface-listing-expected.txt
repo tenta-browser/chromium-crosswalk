@@ -5,9 +5,11 @@ On success, you will see a series of "PASS" messages, followed by "TEST COMPLETE
 
 
 [INTERFACES]
+interface AbsoluteOrientationSensor : OrientationSensor
+    attribute @@toStringTag
+    method constructor
 interface Accelerometer : Sensor
     attribute @@toStringTag
-    getter includesGravity
     getter x
     getter y
     getter z
@@ -136,6 +138,7 @@ interface Attr : Node
     method constructor
     setter value
 interface Audio
+    attribute @@toStringTag
     method constructor
 interface AudioBuffer
     attribute @@toStringTag
@@ -256,6 +259,24 @@ interface AuthenticationAssertion
     getter clientData
     getter credential
     getter signature
+    method constructor
+interface BackgroundFetchFetch
+    attribute @@toStringTag
+    getter request
+    method constructor
+interface BackgroundFetchManager
+    attribute @@toStringTag
+    method constructor
+    method fetch
+    method get
+    method getTags
+interface BackgroundFetchRegistration
+    attribute @@toStringTag
+    getter icons
+    getter tag
+    getter title
+    getter totalDownloadSize
+    method abort
     method constructor
 interface BarProp
     attribute @@toStringTag
@@ -565,6 +586,14 @@ interface CSSNumberValue : CSSStyleValue
     attribute @@toStringTag
     getter value
     method constructor
+interface CSSNumericValue : CSSStyleValue
+    attribute @@toStringTag
+    method add
+    method constructor
+    method div
+    method mul
+    method sub
+    method to
 interface CSSPageRule : CSSRule
     attribute @@toStringTag
     getter selectorText
@@ -700,6 +729,14 @@ interface CSSURLImageValue : CSSImageValue
     attribute @@toStringTag
     getter url
     method constructor
+interface CSSUnitValue : CSSNumericValue
+    attribute @@toStringTag
+    getter type
+    getter unit
+    getter value
+    method constructor
+    setter unit
+    setter value
 interface CSSUnparsedValue : CSSStyleValue
     attribute @@toStringTag
     getter length
@@ -1288,7 +1325,6 @@ interface DeviceMotionEvent : Event
     getter interval
     getter rotationRate
     method constructor
-    method initDeviceMotionEvent
 interface DeviceOrientationEvent : Event
     attribute @@toStringTag
     getter absolute
@@ -1296,7 +1332,6 @@ interface DeviceOrientationEvent : Event
     getter beta
     getter gamma
     method constructor
-    method initDeviceOrientationEvent
 interface Document : Node
     attribute @@toStringTag
     attribute @@unscopables
@@ -1686,6 +1721,7 @@ interface Element : Node
     getter scrollWidth
     getter shadowRoot
     getter slot
+    getter styleMap
     getter tagName
     method after
     method animate
@@ -1862,13 +1898,6 @@ interface FileReader : EventTarget
     setter onloadend
     setter onloadstart
     setter onprogress
-interface Float32ImageData
-    attribute @@toStringTag
-    getter colorSpace
-    getter data
-    getter height
-    getter width
-    method constructor
 interface FocusEvent : UIEvent
     attribute @@toStringTag
     getter relatedTarget
@@ -2329,7 +2358,6 @@ interface HTMLElement : Element
     getter outerText
     getter spellcheck
     getter style
-    getter styleMap
     getter tabIndex
     getter title
     getter translate
@@ -2605,7 +2633,6 @@ interface HTMLIFrameElement : HTMLElement
     getter marginHeight
     getter marginWidth
     getter name
-    getter permissions
     getter referrerPolicy
     getter sandbox
     getter scrolling
@@ -2624,7 +2651,6 @@ interface HTMLIFrameElement : HTMLElement
     setter marginHeight
     setter marginWidth
     setter name
-    setter permissions
     setter referrerPolicy
     setter sandbox
     setter scrolling
@@ -3671,7 +3697,48 @@ interface IdleDeadline
     method constructor
     method timeRemaining
 interface Image
+    attribute @@toStringTag
+    getter align
+    getter alt
+    getter border
+    getter complete
+    getter crossOrigin
+    getter currentSrc
+    getter height
+    getter hspace
+    getter isMap
+    getter longDesc
+    getter lowsrc
+    getter name
+    getter naturalHeight
+    getter naturalWidth
+    getter referrerPolicy
+    getter sizes
+    getter src
+    getter srcset
+    getter useMap
+    getter vspace
+    getter width
+    getter x
+    getter y
     method constructor
+    setter align
+    setter alt
+    setter border
+    setter crossOrigin
+    setter height
+    setter hspace
+    setter isMap
+    setter longDesc
+    setter lowsrc
+    setter name
+    setter referrerPolicy
+    setter sizes
+    setter src
+    setter srcset
+    setter useMap
+    setter vspace
+    setter width
 interface ImageBitmap
     attribute @@toStringTag
     getter height
@@ -3685,7 +3752,7 @@ interface ImageBitmapRenderingContext
     method transferFromImageBitmap
 interface ImageCapture
     attribute @@toStringTag
-    getter videoStreamTrack
+    getter track
     method constructor
     method getPhotoCapabilities
     method grabFrame
@@ -3693,12 +3760,13 @@ interface ImageCapture
     method takePhoto
 interface ImageData
     attribute @@toStringTag
-    getter colorSpace
     getter data
+    getter dataUnion
     getter height
     getter width
     method constructor
     method createImageData
+    method getColorSettings
 interface InputDeviceCapabilities
     attribute @@toStringTag
     getter firesTouchEvents
@@ -3831,8 +3899,8 @@ interface Magnetometer : Sensor
 interface MediaCapabilities
     attribute @@toStringTag
     method constructor
-    method query
-interface MediaDecodingAbility
+    method decodingInfo
+interface MediaCapabilitiesInfo
     attribute @@toStringTag
     getter powerEfficient
     getter smooth
@@ -3870,6 +3938,7 @@ interface MediaError
     attribute MEDIA_ERR_NETWORK
     attribute MEDIA_ERR_SRC_NOT_SUPPORTED
     getter code
+    getter message
     method constructor
 interface MediaKeyMessageEvent : Event
     attribute @@toStringTag
@@ -3985,7 +4054,6 @@ interface MediaSession
     setter playbackState
 interface MediaSettingsRange
     attribute @@toStringTag
-    getter current
     getter max
     getter min
     getter step
@@ -4054,9 +4122,10 @@ interface MediaStreamTrack : EventTarget
     getter onmute
     getter onunmute
     getter readyState
-    getter remote
+    method applyConstraints
     method clone
     method constructor
+    method getCapabilities
     method getConstraints
     method getSettings
     method stop
@@ -4107,7 +4176,9 @@ interface MimeTypeArray
     method item
     method namedItem
 interface Mojo
+    static method createDataPipe
     static method createMessagePipe
+    static method createSharedBuffer
     attribute @@toStringTag
     attribute RESULT_ABORTED
     attribute RESULT_ALREADY_EXISTS
@@ -4132,8 +4203,14 @@ interface MojoHandle
     attribute @@toStringTag
     method close
     method constructor
+    method discardData
+    method duplicateBufferHandle
+    method mapBuffer
+    method queryData
+    method readData
     method readMessage
     method watch
+    method writeData
     method writeMessage
 interface MojoWatcher
     attribute @@toStringTag
@@ -4218,6 +4295,13 @@ interface NamedNodeMap
     method removeNamedItemNS
     method setNamedItem
     method setNamedItemNS
+interface NavigationPreloadManager
+    attribute @@toStringTag
+    method constructor
+    method disable
+    method enable
+    method getState
+    method setHeaderValue
 interface Navigator
     attribute @@toStringTag
     getter appCodeName
@@ -4498,7 +4582,27 @@ interface OffscreenCanvasRenderingContext2D
     setter shadowOffsetY
     setter strokeStyle
 interface Option
+    attribute @@toStringTag
+    getter defaultSelected
+    getter disabled
+    getter form
+    getter index
+    getter label
+    getter selected
+    getter text
+    getter value
     method constructor
+    setter defaultSelected
+    setter disabled
+    setter label
+    setter selected
+    setter text
+    setter value
+interface OrientationSensor : Sensor
+    attribute @@toStringTag
+    getter quaternion
+    method constructor
+    method populateMatrix
 interface OscillatorNode : AudioScheduledSourceNode
     attribute @@toStringTag
     getter detune
@@ -4575,8 +4679,9 @@ interface PaymentAddress
     getter sortingCode
     method constructor
     method toJSON
-interface PaymentAppManager
+interface PaymentManager
     attribute @@toStringTag
+    getter instruments
     method constructor
     method getManifest
     method setManifest
@@ -4750,21 +4855,10 @@ interface Permissions
     method revoke
 interface PhotoCapabilities
     attribute @@toStringTag
-    getter brightness
-    getter colorTemperature
-    getter contrast
-    getter exposureCompensation
-    getter exposureMode
     getter fillLightMode
-    getter focusMode
     getter imageHeight
     getter imageWidth
-    getter iso
     getter redEyeReduction
-    getter saturation
-    getter sharpness
-    getter whiteBalanceMode
-    getter zoom
     method constructor
 interface Plugin
     attribute @@toStringTag
@@ -4952,6 +5046,7 @@ interface RTCPeerConnection : EventTarget
     getter ondatachannel
     getter onicecandidate
     getter oniceconnectionstatechange
+    getter onicegatheringstatechange
     getter onnegotiationneeded
     getter onremovestream
     getter onsignalingstatechange
@@ -4966,6 +5061,7 @@ interface RTCPeerConnection : EventTarget
     method createDataChannel
     method createOffer
     method getLocalStreams
+    method getReceivers
     method getRemoteStreams
     method getStats
     method getStreamById
@@ -4977,6 +5073,7 @@ interface RTCPeerConnection : EventTarget
     setter ondatachannel
     setter onicecandidate
     setter oniceconnectionstatechange
+    setter onicegatheringstatechange
     setter onnegotiationneeded
     setter onremovestream
     setter onsignalingstatechange
@@ -4984,6 +5081,16 @@ interface RTCPeerConnectionIceEvent : Event
     attribute @@toStringTag
     getter candidate
     method constructor
+interface RTCRtpContributingSource
+    attribute @@toStringTag
+    getter source
+    getter timestamp
+    method constructor
+interface RTCRtpReceiver
+    attribute @@toStringTag
+    getter track
+    method constructor
+    method getContributingSources
 interface RTCSessionDescription
     attribute @@toStringTag
     getter sdp
@@ -4994,6 +5101,7 @@ interface RTCSessionDescription
     setter type
 interface RTCStatsReport
     attribute @@toStringTag
+    getter size
     method @@iterator
     method constructor
     method entries
@@ -5073,6 +5181,7 @@ interface RemotePlayback : EventTarget
 interface Request
     attribute @@toStringTag
     getter bodyUsed
+    getter cache
     getter credentials
     getter headers
     getter integrity
@@ -5220,7 +5329,6 @@ interface SVGAnimationElement : SVGElement
     getter onend
     getter onrepeat
     getter requiredExtensions
-    getter requiredFeatures
     getter systemLanguage
     getter targetElement
     method beginElement
@@ -5759,7 +5867,6 @@ interface SVGGraphicsElement : SVGElement
     getter farthestViewportElement
     getter nearestViewportElement
     getter requiredExtensions
-    getter requiredFeatures
     getter systemLanguage
     getter transform
     method constructor
@@ -5855,7 +5962,6 @@ interface SVGMaskElement : SVGElement
     getter maskContentUnits
     getter maskUnits
     getter requiredExtensions
-    getter requiredFeatures
     getter systemLanguage
     getter width
     getter x
@@ -5921,7 +6027,6 @@ interface SVGPatternElement : SVGElement
     getter patternUnits
     getter preserveAspectRatio
     getter requiredExtensions
-    getter requiredFeatures
     getter systemLanguage
     getter viewBox
     getter width
@@ -6288,10 +6393,10 @@ interface Selection
     method toString
 interface Sensor : EventTarget
     attribute @@toStringTag
+    getter activated
     getter onactivate
     getter onchange
     getter onerror
-    getter state
     getter timestamp
     method constructor
     method start
@@ -6328,9 +6433,11 @@ interface ServiceWorkerContainer : EventTarget
 interface ServiceWorkerRegistration : EventTarget
     attribute @@toStringTag
     getter active
+    getter backgroundFetch
     getter installing
+    getter navigationPreload
     getter onupdatefound
-    getter paymentAppManager
+    getter paymentManager
     getter pushManager
     getter scope
     getter sync
@@ -6487,12 +6594,16 @@ interface StorageManager
     method estimate
     method persist
     method persisted
-interface StylePropertyMap
+interface StylePropertyMap : StylePropertyMapReadonly
     attribute @@toStringTag
-    method @@iterator
     method append
     method constructor
     method delete
+    method set
+interface StylePropertyMapReadonly
+    attribute @@toStringTag
+    method @@iterator
+    method constructor
     method entries
     method forEach
     method get
@@ -6500,7 +6611,6 @@ interface StylePropertyMap
     method getProperties
     method has
     method keys
-    method set
     method values
 interface StyleSheet
     attribute @@toStringTag
@@ -6877,7 +6987,6 @@ interface VRDisplay : EventTarget
     getter depthNear
     getter displayId
     getter displayName
-    getter isConnected
     getter isPresenting
     getter stageParameters
     method cancelAnimationFrame
@@ -6886,10 +6995,8 @@ interface VRDisplay : EventTarget
     method getEyeParameters
     method getFrameData
     method getLayers
-    method getPose
     method requestAnimationFrame
     method requestPresent
-    method resetPose
     method submitFrame
     setter depthFar
     setter depthNear
@@ -6897,7 +7004,6 @@ interface VRDisplayCapabilities
     attribute @@toStringTag
     getter canPresent
     getter hasExternalDisplay
-    getter hasOrientation
     getter hasPosition
     getter maxLayers
     method constructor
@@ -6908,22 +7014,10 @@ interface VRDisplayEvent : Event
     method constructor
 interface VREyeParameters
     attribute @@toStringTag
-    getter fieldOfView
     getter offset
     getter renderHeight
     getter renderWidth
     method constructor
-interface VRFieldOfView
-    attribute @@toStringTag
-    getter downDegrees
-    getter leftDegrees
-    getter rightDegrees
-    getter upDegrees
-    method constructor
-    setter downDegrees
-    setter leftDegrees
-    setter rightDegrees
-    setter upDegrees
 interface VRFrameData
     attribute @@toStringTag
     getter leftProjectionMatrix
@@ -6931,7 +7025,6 @@ interface VRFrameData
     getter pose
     getter rightProjectionMatrix
     getter rightViewMatrix
-    getter timestamp
     method constructor
 interface VRPose
     attribute @@toStringTag
@@ -8324,6 +8417,9 @@ interface WebGLSync
     method constructor
 interface WebGLTexture
     attribute @@toStringTag
+    getter lastUploadedVideoHeight
+    getter lastUploadedVideoTimestamp
+    getter lastUploadedVideoWidth
     method constructor
 interface WebGLTransformFeedback
     attribute @@toStringTag
@@ -8599,6 +8695,7 @@ interface webkitRTCPeerConnection : EventTarget
     getter ondatachannel
     getter onicecandidate
     getter oniceconnectionstatechange
+    getter onicegatheringstatechange
     getter onnegotiationneeded
     getter onremovestream
     getter onsignalingstatechange
@@ -8613,6 +8710,7 @@ interface webkitRTCPeerConnection : EventTarget
     method createDataChannel
     method createOffer
     method getLocalStreams
+    method getReceivers
     method getRemoteStreams
     method getStats
     method getStreamById
@@ -8624,6 +8722,7 @@ interface webkitRTCPeerConnection : EventTarget
     setter ondatachannel
     setter onicecandidate
     setter oniceconnectionstatechange
+    setter onicegatheringstatechange
     setter onnegotiationneeded
     setter onremovestream
     setter onsignalingstatechange
@@ -8870,6 +8969,7 @@ interface webkitURL
     getter onwebkitanimationstart
     getter onwebkittransitionend
     getter onwheel
+    getter origin
     getter outerHeight
     getter outerWidth
     getter pageXOffset
@@ -9049,6 +9149,7 @@ interface webkitURL
     setter onwebkitanimationstart
     setter onwebkittransitionend
     setter onwheel
+    setter origin
     setter outerHeight
     setter outerWidth
     setter pageXOffset

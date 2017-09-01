@@ -26,8 +26,13 @@
       ]
     },
     {
+      "name": "Child Containment Layer",
+      "position": [3, 3],
+      "bounds": [64, 18]
+    },
+    {
       "name": "LayoutBlockFlow DIV id='inner-editor'",
-      "position": [3, 4],
+      "position": [0, 1],
       "bounds": [64, 16],
       "shouldFlattenTransform": false,
       "drawsContent": true

@@ -1,14 +1,14 @@
 Test release note
 
-Browser version: 99
+Last release note version seen:
+0
 
 Dumping release note text:
-Chrome has been updated to version 99.
-Here's what's new in DevTools:
+Highlights from Chrome 100 update
 Improved Performance and Memory panels
 Edit cookies directly from the Application panel
+LEARN MORECLOSE
 
-Learn moreClose
 Last version of release note seen should be updated:
 99
 

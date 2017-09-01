@@ -8,10 +8,11 @@ interface NavigationPreloadManager
  method setHeaderValue
 interface ServiceWorkerRegistration
  getter active
+ getter backgroundFetch
  getter installing
  getter navigationPreload
  getter onupdatefound
- getter paymentAppManager
+ getter paymentManager
  getter pushManager
  getter scope
  getter sync
@@ -38,10 +39,11 @@ interface NavigationPreloadManager
  method setHeaderValue
 interface ServiceWorkerRegistration
  getter active
+ getter backgroundFetch
  getter installing
  getter navigationPreload
  getter onupdatefound
- getter paymentAppManager
+ getter paymentManager
  getter pushManager
  getter scope
  getter sync
@@ -68,10 +70,11 @@ interface NavigationPreloadManager
  method setHeaderValue
 interface ServiceWorkerRegistration
  getter active
+ getter backgroundFetch
  getter installing
  getter navigationPreload
  getter onupdatefound
- getter paymentAppManager
+ getter paymentManager
  getter pushManager
  getter scope
  getter sync

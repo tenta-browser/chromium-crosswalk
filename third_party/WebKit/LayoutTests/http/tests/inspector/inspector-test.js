@@ -23,6 +23,10 @@ console.assert = function(condition, object)
     InspectorTest.addResult(new Error(message).stack);
 }
 
+InspectorTest.markStep = function(title) {
+    InspectorTest.addResult('\nRunning: ' + title);
+}
+
 InspectorTest.startDumpingProtocolMessages = function()
 {
     Protocol.InspectorBackend.Connection.prototype._dumpProtocolMessage = testRunner.logToStderr.bind(testRunner);
@@ -50,6 +54,20 @@ InspectorTest.evaluateInPage = function(code, callback)
             callback(InspectorTest.runtimeModel.createRemoteObject(result), exceptionDetails);
     }
     InspectorTest.RuntimeAgent.evaluate(code, "console", false, mycallback);
+}
+
+InspectorTest.addScriptUISourceCode = function(url, content, isContentScript, worldId) {
+    content += '\n//# sourceURL=' + url;
+    if (isContentScript)
+        content = `testRunner.evaluateScriptInIsolatedWorld(${worldId}, \`${content}\`)`;
+    InspectorTest.evaluateInPagePromise(content);
+    return InspectorTest.waitForUISourceCode(url);
+}
+
+InspectorTest.addScriptForFrame = function(url, content, frame) {
+    content += '\n//# sourceURL=' + url;
+    var executionContext = InspectorTest.runtimeModel.executionContexts().find(context => context.frameId === frame.id);
+    InspectorTest.RuntimeAgent.evaluate(content, "console", false, false, executionContext.id, function() { });
 }
 
 InspectorTest.evaluateInPagePromise = function(code)
@@ -409,7 +427,7 @@ InspectorTest.dumpNavigatorViewInMode = function(view, mode)
     InspectorTest.dumpNavigatorView(view);
 }
 
-InspectorTest.waitForUISourceCode = function(url, projectType)
+InspectorTest.waitForUISourceCode = function(urlSuffix, projectType)
 {
     function matches(uiSourceCode)
     {
@@ -417,13 +435,13 @@ InspectorTest.waitForUISourceCode = function(url, projectType)
             return false;
         if (!projectType && uiSourceCode.project().type() === Workspace.projectTypes.Service)
             return false;
-        if (url && !uiSourceCode.url().endsWith(url))
+        if (urlSuffix && !uiSourceCode.url().endsWith(urlSuffix))
             return false;
         return true;
     }
 
     for (var uiSourceCode of Workspace.workspace.uiSourceCodes()) {
-        if (url && matches(uiSourceCode))
+        if (urlSuffix && matches(uiSourceCode))
             return Promise.resolve(uiSourceCode);
     }
 
@@ -451,12 +469,6 @@ InspectorTest.waitForUISourceCodeRemoved = function(callback)
     }
 }
 
-InspectorTest._mockTargetId = 1;
-InspectorTest.createMockTarget = function(name, capabilities, dontAttachToMain)
-{
-    return SDK.targetManager.createTarget('mock-target-' + InspectorTest._mockTargetId++, name, capabilities || SDK.Target.Capability.AllForTests, params => new SDK.StubConnection(params), dontAttachToMain ? null : InspectorTest.mainTarget);
-}
-
 InspectorTest.assertGreaterOrEqual = function(a, b, message)
 {
     if (a < b)
@@ -467,6 +479,14 @@ InspectorTest.navigate = function(url, callback)
 {
     InspectorTest._pageLoadedCallback = InspectorTest.safeWrap(callback);
     InspectorTest.evaluateInPage("window.location.replace('" + url + "')");
+}
+
+InspectorTest.navigatePromise = function(url)
+{
+    var fulfill;
+    var promise = new Promise(callback => fulfill = callback);
+    InspectorTest.navigate(url, fulfill);
+    return promise;
 }
 
 InspectorTest.hardReloadPage = function(callback, scriptToEvaluateOnLoad, scriptPreprocessor)
@@ -660,7 +680,7 @@ InspectorTest.addSnifferPromise = function(receiver, methodName)
 
 InspectorTest.addConsoleSniffer = function(override, opt_sticky)
 {
-    InspectorTest.addSniffer(SDK.ConsoleModel.prototype, "addMessage", override, opt_sticky);
+    InspectorTest.addSniffer(ConsoleModel.ConsoleModel.prototype, "addMessage", override, opt_sticky);
 }
 
 InspectorTest.override = function(receiver, methodName, override, opt_sticky)
@@ -750,7 +770,7 @@ InspectorTest.hideInspectorView = function()
 
 InspectorTest.mainFrame = function()
 {
-    return SDK.ResourceTreeModel.fromTarget(InspectorTest.mainTarget).mainFrame;
+    return InspectorTest.resourceTreeModel.mainFrame;
 }
 
 InspectorTest.StringOutputStream = function(callback)
@@ -963,23 +983,19 @@ SDK.targetManager.observeTargets({
         InspectorTest.RuntimeAgent = target.runtimeAgent();
         InspectorTest.TargetAgent = target.targetAgent();
 
-        InspectorTest.consoleModel = target.consoleModel;
-        InspectorTest.networkManager = SDK.NetworkManager.fromTarget(target);
-        InspectorTest.securityOriginManager = SDK.SecurityOriginManager.fromTarget(target);
-        InspectorTest.resourceTreeModel = SDK.ResourceTreeModel.fromTarget(target);
-        InspectorTest.networkLog = SDK.NetworkLog.fromTarget(target);
-        InspectorTest.debuggerModel = SDK.DebuggerModel.fromTarget(target);
-        InspectorTest.runtimeModel = target.runtimeModel;
-        InspectorTest.domModel = SDK.DOMModel.fromTarget(target);
+        InspectorTest.networkManager = target.model(SDK.NetworkManager);
+        InspectorTest.securityOriginManager = target.model(SDK.SecurityOriginManager);
+        InspectorTest.resourceTreeModel = target.model(SDK.ResourceTreeModel);
+        InspectorTest.debuggerModel = target.model(SDK.DebuggerModel);
+        InspectorTest.runtimeModel = target.model(SDK.RuntimeModel);
+        InspectorTest.domModel = target.model(SDK.DOMModel);
         InspectorTest.cssModel = target.model(SDK.CSSModel);
-        InspectorTest.powerProfiler = target.powerProfiler;
         InspectorTest.cpuProfilerModel = target.model(SDK.CPUProfilerModel);
-        InspectorTest.heapProfilerModel = target.heapProfilerModel;
-        InspectorTest.animationModel = target.animationModel;
-        InspectorTest.serviceWorkerCacheModel = target.serviceWorkerCacheModel;
         InspectorTest.serviceWorkerManager = target.model(SDK.ServiceWorkerManager);
         InspectorTest.tracingManager = target.model(SDK.TracingManager);
         InspectorTest.mainTarget = target;
+        InspectorTest.consoleModel = ConsoleModel.consoleModel;
+        InspectorTest.networkLog = NetworkLog.networkLog;
     },
 
     targetRemoved: function(target) { }

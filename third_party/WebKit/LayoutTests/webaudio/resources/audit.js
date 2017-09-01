@@ -15,7 +15,7 @@
 
   'use strict';
 
-  // Selected properties from testharness.js
+  // Selected methods from testharness.js.
   let testharnessProperties = [
     'test', 'async_test', 'promise_test', 'promise_rejects',
     'generate_tests', 'setup', 'done', 'assert_true', 'assert_false'
@@ -55,6 +55,13 @@ window.Audit = (function () {
     throw new Error(message);
   }
 
+  // TODO(hongchan): remove this hack after confirming all the tests are
+  // finished correctly. (crbug.com/708817)
+  const _testharnessDone = window.done;
+  window.done = () => {
+    _throwException('Do NOT call done() method from the test code.');
+  };
+
   // Generate a descriptive string from a target value in various types.
   function _generateDescription (target, options) {
     let targetString;
@@ -63,7 +70,7 @@ window.Audit = (function () {
       case 'object':
         // Handle Arrays.
         if (target instanceof Array || target instanceof Float32Array ||
-            target instanceof Float64Array) {
+            target instanceof Float64Array || target instanceof Uint8Array) {
           let arrayElements = target.length < options.numberOfArrayElements
               ? String(target)
               : String(target.slice(0, options.numberOfArrayElements)) + '...';
@@ -269,10 +276,15 @@ window.Audit = (function () {
      *   should(() => { let a = b; }, 'A bad code').throw();
      *   should(() => { let c = d; }, 'Assigning d to c.')
      *       .throw('ReferenceError');
+     *   should(() => { let e = f; }, 'Assigning e to f.')
+     *       .throw('ReferenceError', { omitErrorMessage: true });
      *
      * @result
-     *   "PASS   A bad code threw an exception of ReferenceError."
-     *   "PASS   Assigning d to c threw ReferenceError."
+     *   "PASS   A bad code threw an exception of ReferenceError: b is not
+     *       defined."
+     *   "PASS   Assigning d to c threw ReferenceError: d is not defined."
+     *   "PASS   Assigning e to f threw ReferenceError: [error message
+     *       omitted]."
      */
     throw () {
       this._processArguments(arguments);
@@ -287,16 +299,17 @@ window.Audit = (function () {
         // Catch did not happen, so the test is failed.
         failDetail = '${actual} did not throw an exception.';
       } catch (error) {
-        if (this._expected === null) {
+        let errorMessage = this._options.omitErrorMessage
+            ? ': [error message omitted]'
+            : ': "' + error.message + '"';
+        if (this._expected === null || this._expected === undefined) {
           // The expected error type was not given.
           didThrowCorrectly = true;
-          passDetail = '${actual} threw ' + error.name + ': "'
-              + error.message + '".';
+          passDetail = '${actual} threw ' + error.name + errorMessage + '.';
         } else if (error.name === this._expected) {
           // The expected error type match the actual one.
           didThrowCorrectly = true;
-          passDetail = '${actual} threw ${expected}: "'
-              + error.message + '".';
+          passDetail = '${actual} threw ${expected}' + errorMessage + '.';
         } else {
           didThrowCorrectly = false;
           failDetail = '${actual} threw "' + error.name
@@ -566,9 +579,11 @@ window.Audit = (function () {
       let passDetail, failDetail;
       let errors = {};
 
-      for (let index in this._actual) {
-        if (this._actual[index] !== this._expected)
-          errors[index] = this._actual[index];
+      let actual = this._actual;
+      let expected = this._expected;
+      for (let index = 0; index < actual.length; ++index) {
+        if (actual[index] !== expected)
+          errors[index] = actual[index];
       }
 
       let numberOfErrors = Object.keys(errors).length;
@@ -616,9 +631,11 @@ window.Audit = (function () {
       let failDetail;
       let differences = {};
 
-      for (let index in this._actual) {
-        if (this._actual[index] !== this._expected)
-          differences[index] = this._actual[index];
+      let actual = this._actual;
+      let expected = this._expected;
+      for (let index = 0; index < actual.length; ++index) {
+        if (actual[index] !== expected)
+          differences[index] = actual[index];
       }
 
       let numberOfDifferences = Object.keys(differences).length;
@@ -659,8 +676,10 @@ window.Audit = (function () {
         return this._assert(passed, passDetail, failDetail);
       }
 
-      for (let index in this._actual) {
-        if (this._actual[index] !== this._expected[index])
+      let actual = this._actual;
+      let expected = this._expected;
+      for (let index = 0; index < actual.length; ++index) {
+        if (actual[index] !== expected[index])
           errorIndices.push(index);
       }
 
@@ -755,9 +774,11 @@ window.Audit = (function () {
       let passed = true;
       let passDetail, failDetail;
 
-      for (let index in this._actual) {
-        let diff = Math.abs(this._actual[index - 1] - this._actual[index]);
-        if (diff >= this._expected) {
+      let actual = this._actual;
+      let expected = this._expected;
+      for (let index = 0; index < actual.length; ++index) {
+        let diff = Math.abs(actual[index - 1] - actual[index]);
+        if (diff >= expected) {
           passed = false;
           failDetail = '${actual} has a glitch at index ' + index + ' of size '
             + diff + '.';
@@ -838,9 +859,12 @@ window.Audit = (function () {
       // relative error is Infinity because the expected value is 0.
       let maxRelError = -Infinity, maxRelErrorIndex = -1;
 
-      for (let index in this._expected) {
-        let diff = Math.abs(this._actual[index] - this._expected[index]);
-        let absExpected = Math.abs(this._expected[index]);
+      let actual = this._actual;
+      let expected = this._expected;
+
+      for (let index = 0; index < expected.length; ++index) {
+        let diff = Math.abs(actual[index] - expected[index]);
+        let absExpected = Math.abs(expected[index]);
         let relError = diff / absExpected;
 
         if (diff > Math.max(absErrorThreshold,
@@ -883,11 +907,11 @@ window.Audit = (function () {
         let printedIndices = [];
         for (let index in errors) {
           failDetail += '\n' + _formatFailureEntry(
-                                   index, this._actual[index],
-                                   this._expected[index], errors[index],
+                                   index, actual[index],
+                                   expected[index], errors[index],
                                    _closeToThreshold(
                                        absErrorThreshold, relErrorThreshold,
-                                       this._expected[index]));
+                                       expected[index]));
 
           printedIndices.push(index);
           if (++counter > this._options.numberOfErrors) {
@@ -909,11 +933,11 @@ window.Audit = (function () {
           // Print an entry for this index if we haven't already.
           failDetail +=
               _formatFailureEntry(
-                  maxAbsErrorIndex, this._actual[maxAbsErrorIndex],
-                  this._expected[maxAbsErrorIndex], errors[maxAbsErrorIndex],
+                  maxAbsErrorIndex, actual[maxAbsErrorIndex],
+                  expected[maxAbsErrorIndex], errors[maxAbsErrorIndex],
                   _closeToThreshold(
                       absErrorThreshold, relErrorThreshold,
-                      this._expected[maxAbsErrorIndex])) +
+                      expected[maxAbsErrorIndex])) +
               '\n';
         }
         failDetail += '\tMax RelError of ' + maxRelError.toExponential(16) +
@@ -924,11 +948,11 @@ window.Audit = (function () {
           // Print an entry for this index if we haven't already.
           failDetail +=
               _formatFailureEntry(
-                  maxRelErrorIndex, this._actual[maxRelErrorIndex],
-                  this._expected[maxRelErrorIndex], errors[maxRelErrorIndex],
+                  maxRelErrorIndex, actual[maxRelErrorIndex],
+                  expected[maxRelErrorIndex], errors[maxRelErrorIndex],
                   _closeToThreshold(
                       absErrorThreshold, relErrorThreshold,
-                      this._expected[maxRelErrorIndex])) +
+                      expected[maxRelErrorIndex])) +
               '\n';
         }
       }
@@ -952,6 +976,76 @@ window.Audit = (function () {
       return this._assert(this._actual,
                           '${actual} ' + passDetail,
                           '${actual} ' + failDetail);
+    }
+
+    /**
+     * Check if |expected| property is truly owned by |actual| object.
+     *
+     * @example
+     *   should(BaseAudioContext.prototype,
+     *          'BaseAudioContext.prototype').haveOwnProperty('createGain');
+     *
+     * @result
+     *   "PASS   BaseAudioContext.prototype has an own property of
+     *       'createGain'."
+     */
+    haveOwnProperty () {
+      this._processArguments(arguments);
+
+      return this._assert(
+          this._actual.hasOwnProperty(this._expected),
+          '${actual} has an own property of "${expected}".',
+          '${actual} does not own the property of "${expected}".');
+    }
+
+
+    /**
+     * Check if |expected| property is not owned by |actual| object.
+     *
+     * @example
+     *   should(BaseAudioContext.prototype,
+     *          'BaseAudioContext.prototype')
+     *       .notHaveOwnProperty('startRendering');
+     *
+     * @result
+     *   "PASS   BaseAudioContext.prototype does not have an own property of
+     *       'startRendering'."
+     */
+    notHaveOwnProperty () {
+      this._processArguments(arguments);
+
+      return this._assert(
+          !this._actual.hasOwnProperty(this._expected),
+          '${actual} does not have an own property of "${expected}".',
+          '${actual} has an own the property of "${expected}".')
+    }
+
+
+    /**
+     * Check if an object is inherited from a class. This looks up the entire
+     * prototype chain of a given object and tries to find a match.
+     *
+     * @example
+     *   should(sourceNode, 'A buffer source node')
+     *       .inheritFrom('AudioScheduledSourceNode');
+     *
+     * @result
+     *   "PASS   A buffer source node inherits from 'AudioScheduledSourceNode'."
+     */
+    inheritFrom () {
+      this._processArguments(arguments);
+
+      let prototypes = [];
+      let currentPrototype = Object.getPrototypeOf(this._actual);
+      while (currentPrototype) {
+        prototypes.push(currentPrototype.constructor.name);
+        currentPrototype = Object.getPrototypeOf(currentPrototype);
+      }
+
+      return this._assert(
+          prototypes.includes(this._expected),
+          '${actual} inherits from "${expected}".',
+          '${actual} does not inherit from "${expected}".');
     }
   }
 
@@ -1006,10 +1100,6 @@ window.Audit = (function () {
       this._totalAssertions = 0;
       this._failedAssertions = 0;
     }
-
-    // TODO(hongchan): This does not have any effect. Remove this method and fix
-    // layout test files use it.
-    describe (message) {}
 
     get label () {
       return this._label;
@@ -1130,7 +1220,7 @@ window.Audit = (function () {
 
       // From testharness.js, report back to the test infrastructure that
       // the task runner completed all the tasks.
-      done();
+      _testharnessDone();
     }
 
     // |taskLabel| can be either a string or a dictionary. See Task constructor
@@ -1195,15 +1285,19 @@ window.Audit = (function () {
   function loadFileFromUrl (fileUrl) {
     return new Promise((resolve, reject) => {
       let xhr = new XMLHttpRequest();
-      xhr.open('GET', fileUrl);
+      xhr.open('GET', fileUrl, true);
       xhr.responseType = 'arraybuffer';
 
       xhr.onload = () => {
-        if (xhr.status === 200) {
+        // |status = 0| is a workaround for the run-webkit-test server. We are
+        // speculating the server quits the transaction prematurely without
+        // completing the request.
+        if (xhr.status === 200 || xhr.status === 0) {
           resolve(xhr.response);
         } else {
           let errorMessage = 'loadFile: Request failed when loading ' +
-              fileUrl + '. (' + xhr.statusText + ')';
+              fileUrl + '. ' + xhr.statusText + '. (status = ' +
+              xhr.status + ')';
           if (reject) {
             reject(errorMessage);
           } else {
@@ -1232,7 +1326,6 @@ window.Audit = (function () {
    * @example
    *   let audit = Audit.createTaskRunner();
    *   audit.define('first-task', function (task, should) {
-   *     task.describe('the first task');
    *     should(someValue).beEqualTo(someValue);
    *     task.done();
    *   });

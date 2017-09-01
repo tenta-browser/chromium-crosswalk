@@ -10,7 +10,10 @@
 <script src="../../http/tests/inspector/elements-test.js"></script>
 <script>
 function startCSSTransition() {
+    // Force style recalcs that will trigger a transition.
+    getComputedStyle(node).left;
     node.style.left = "100px";
+    getComputedStyle(node).left;
 }
 
 var initialize_Animations = function() {

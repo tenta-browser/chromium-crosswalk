@@ -20,6 +20,8 @@
         should(function () { var foo1 = 0; }, 'Setting foo1 to 0').notThrow();
         should(function () { var foo2 = bar; }).throw();
         should(function () { var foo3 = bar; }).throw('ReferenceError');
+        should(function () { var foo4 = bar; }).throw(null);
+        should(function () { var foo5 = bar; }).throw(undefined);
         should(() => { should(); }, 'Calling should() with no argument')
             .throw('Error');
         should(3 < 5, '3 < 5').beTrue();
@@ -33,6 +35,18 @@
         should(1).beLessThanOrEqualTo(1);
         should(should(1).beEqualTo(1), 'should(1).beEqualTo(1)').beTrue();
         should(true, 'The message is').message('truthful!', 'false!');
+
+        should(BaseAudioContext.prototype, 'BaseAudioContext.prototype')
+            .haveOwnProperty('createGain');
+        should(BaseAudioContext.prototype, 'BaseAudioContext.prototype')
+            .notHaveOwnProperty('startRendering');
+
+        let ac = new AudioContext();
+        let sourceNode = new AudioBufferSourceNode(ac);
+        should(sourceNode, 'An AudioBufferSourceNode')
+            .inheritFrom('AudioScheduledSourceNode');
+        should(sourceNode, 'An AudioBufferSourceNode')
+            .inheritFrom('AudioNode');
 
         let oac = new OfflineAudioContext(1, 128, 44100);
         Promise.all([
@@ -65,6 +79,31 @@
       }
     );
 
+    audit.define({
+        label: 'numerical typed arrays',
+        description: 'Numerical assertion unit test with typed arrays.'
+      }, function (task, should) {
+      let testValues = [1,2,3];
+      should(Uint8Array.from(testValues), 'Uint8Array').beEqualToArray(testValues);
+      should(Float32Array.from(testValues), 'Float32Array').beEqualToArray(testValues);
+      should(Float64Array.from(testValues), 'Float64Array').beEqualToArray(testValues);
+      task.done();
+    });
+
+    // Test Audit.loadFileFromUrl() within |should| assertion.
+    // See: crbug.com/701813
+    audit.define({ 
+        label: 'load-file-in-should',
+        description: 'Test Audit.loadFileFromUrl() within |should| assertion.'
+      }, (task, should) => {
+        let url = '../resources/hyper-reality/laughter.wav';
+        let promise = should(Audit.loadFileFromUrl(url),
+                             'Loading file within should().beResolved()')
+                          .beResolved();
+        promise.then(() => { task.done() });
+      }
+    );
+
 
     // The task headline needs to be printed even if there is no description is
     // given.
@@ -89,7 +128,8 @@
 
     // You can enumerate tasks you want to execute in the order, or simply pass
     // no argument to run all the defined tasks.
-    audit.run('numerical', 'basic', 'dummy-label-string', 'dummy-label-object');
+    audit.run('numerical', 'numerical typed arrays', 'basic',
+              'load-file-in-should', 'dummy-label-string', 'dummy-label-object');
   </script>
 </body>
 </html>

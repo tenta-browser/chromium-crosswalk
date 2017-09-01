@@ -128,16 +128,6 @@
         },
         {
           "object": "LayoutTable TABLE class='outer'",
-          "rect": [61, 366, 58, 28],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutTable TABLE class='outer'",
-          "rect": [61, 360, 58, 28],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutTable TABLE class='outer'",
           "rect": [61, 327, 58, 28],
           "reason": "bounds change"
         },
@@ -154,96 +144,6 @@
         {
           "object": "LayoutTable TABLE class='outer'",
           "rect": [61, 282, 58, 28],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutBlockFlow DIV",
-          "rect": [67, 504, 50, 10],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutBlockFlow DIV",
-          "rect": [67, 498, 50, 10],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutBlockFlow DIV",
-          "rect": [67, 465, 50, 10],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutBlockFlow DIV",
-          "rect": [67, 459, 50, 10],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutBlockFlow DIV",
-          "rect": [67, 426, 50, 10],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutBlockFlow DIV",
-          "rect": [67, 420, 50, 10],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutBlockFlow DIV",
-          "rect": [67, 216, 50, 10],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutBlockFlow DIV",
-          "rect": [67, 210, 50, 10],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutBlockFlow DIV",
-          "rect": [67, 177, 50, 10],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutBlockFlow DIV",
-          "rect": [67, 171, 50, 10],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutBlockFlow DIV",
-          "rect": [67, 138, 50, 10],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutBlockFlow DIV",
-          "rect": [67, 132, 50, 10],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutBlockFlow DIV",
-          "rect": [67, 99, 50, 10],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutBlockFlow DIV",
-          "rect": [67, 93, 50, 10],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutBlockFlow DIV",
-          "rect": [67, 60, 50, 10],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutBlockFlow DIV",
-          "rect": [67, 54, 50, 10],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutBlockFlow DIV",
-          "rect": [67, 21, 50, 10],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutBlockFlow DIV",
-          "rect": [67, 15, 50, 10],
           "reason": "bounds change"
         },
         {
@@ -274,46 +174,6 @@
         {
           "object": "LayoutTableCell TD",
           "rect": [69, 290, 42, 12],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutBlockFlow (floating) DIV",
-          "rect": [70, 375, 40, 10],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutBlockFlow (floating) DIV",
-          "rect": [70, 369, 40, 10],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutBlockFlow (floating) DIV",
-          "rect": [70, 336, 40, 10],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutBlockFlow (floating) DIV",
-          "rect": [70, 330, 40, 10],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutBlockFlow (floating) DIV",
-          "rect": [70, 297, 40, 10],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutBlockFlow (floating) DIV",
-          "rect": [70, 291, 40, 10],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutBlockFlow (floating) DIV",
-          "rect": [67, 138, 40, 10],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutBlockFlow (floating) DIV",
-          "rect": [67, 132, 40, 10],
           "reason": "bounds change"
         },
         {
@@ -417,23 +277,8 @@
           "reason": "bounds change"
         },
         {
-          "object": "LayoutBlockFlow DIV",
-          "rect": [67, 543, 32, 20],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutBlockFlow DIV",
-          "rect": [67, 537, 32, 20],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutBlockFlow DIV",
-          "rect": [67, 255, 32, 10],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutBlockFlow DIV",
-          "rect": [67, 249, 32, 10],
+          "object": "LayoutText #text",
+          "rect": [66, 298, 16, 18],
           "reason": "bounds change"
         },
         {
@@ -442,8 +287,18 @@
           "reason": "bounds change"
         },
         {
+          "object": "LayoutText #text",
+          "rect": [66, 292, 16, 18],
+          "reason": "bounds change"
+        },
+        {
           "object": "LayoutInline SPAN",
           "rect": [66, 291, 16, 18],
+          "reason": "bounds change"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [63, 22, 16, 18],
           "reason": "bounds change"
         },
         {
@@ -452,8 +307,18 @@
           "reason": "bounds change"
         },
         {
+          "object": "LayoutText #text",
+          "rect": [63, 16, 16, 18],
+          "reason": "bounds change"
+        },
+        {
           "object": "LayoutInline SPAN",
           "rect": [63, 15, 16, 18],
+          "reason": "bounds change"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [59, 544, 16, 18],
           "reason": "bounds change"
         },
         {
@@ -462,8 +327,18 @@
           "reason": "bounds change"
         },
         {
+          "object": "LayoutText #text",
+          "rect": [59, 538, 16, 18],
+          "reason": "bounds change"
+        },
+        {
           "object": "LayoutInline SPAN",
           "rect": [59, 537, 16, 18],
+          "reason": "bounds change"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [59, 505, 16, 18],
           "reason": "bounds change"
         },
         {
@@ -472,8 +347,18 @@
           "reason": "bounds change"
         },
         {
+          "object": "LayoutText #text",
+          "rect": [59, 499, 16, 18],
+          "reason": "bounds change"
+        },
+        {
           "object": "LayoutInline SPAN",
           "rect": [59, 498, 16, 18],
+          "reason": "bounds change"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [59, 466, 16, 18],
           "reason": "bounds change"
         },
         {
@@ -482,8 +367,18 @@
           "reason": "bounds change"
         },
         {
+          "object": "LayoutText #text",
+          "rect": [59, 460, 16, 18],
+          "reason": "bounds change"
+        },
+        {
           "object": "LayoutInline SPAN",
           "rect": [59, 459, 16, 18],
+          "reason": "bounds change"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [59, 427, 16, 18],
           "reason": "bounds change"
         },
         {
@@ -492,8 +387,18 @@
           "reason": "bounds change"
         },
         {
+          "object": "LayoutText #text",
+          "rect": [59, 421, 16, 18],
+          "reason": "bounds change"
+        },
+        {
           "object": "LayoutInline SPAN",
           "rect": [59, 420, 16, 18],
+          "reason": "bounds change"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [59, 256, 16, 18],
           "reason": "bounds change"
         },
         {
@@ -502,8 +407,18 @@
           "reason": "bounds change"
         },
         {
+          "object": "LayoutText #text",
+          "rect": [59, 250, 16, 18],
+          "reason": "bounds change"
+        },
+        {
           "object": "LayoutInline SPAN",
           "rect": [59, 249, 16, 18],
+          "reason": "bounds change"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [59, 217, 16, 18],
           "reason": "bounds change"
         },
         {
@@ -512,8 +427,18 @@
           "reason": "bounds change"
         },
         {
+          "object": "LayoutText #text",
+          "rect": [59, 211, 16, 18],
+          "reason": "bounds change"
+        },
+        {
           "object": "LayoutInline SPAN",
           "rect": [59, 210, 16, 18],
+          "reason": "bounds change"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [59, 178, 16, 18],
           "reason": "bounds change"
         },
         {
@@ -522,8 +447,18 @@
           "reason": "bounds change"
         },
         {
+          "object": "LayoutText #text",
+          "rect": [59, 172, 16, 18],
+          "reason": "bounds change"
+        },
+        {
           "object": "LayoutInline SPAN",
           "rect": [59, 171, 16, 18],
+          "reason": "bounds change"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [59, 139, 16, 18],
           "reason": "bounds change"
         },
         {
@@ -532,8 +467,18 @@
           "reason": "bounds change"
         },
         {
+          "object": "LayoutText #text",
+          "rect": [59, 133, 16, 18],
+          "reason": "bounds change"
+        },
+        {
           "object": "LayoutInline SPAN",
           "rect": [59, 132, 16, 18],
+          "reason": "bounds change"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [58, 376, 16, 18],
           "reason": "bounds change"
         },
         {
@@ -542,8 +487,18 @@
           "reason": "bounds change"
         },
         {
+          "object": "LayoutText #text",
+          "rect": [58, 370, 16, 18],
+          "reason": "bounds change"
+        },
+        {
           "object": "LayoutInline SPAN",
           "rect": [58, 369, 16, 18],
+          "reason": "bounds change"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [58, 337, 16, 18],
           "reason": "bounds change"
         },
         {
@@ -552,8 +507,18 @@
           "reason": "bounds change"
         },
         {
+          "object": "LayoutText #text",
+          "rect": [58, 331, 16, 18],
+          "reason": "bounds change"
+        },
+        {
           "object": "LayoutInline SPAN",
           "rect": [58, 330, 16, 18],
+          "reason": "bounds change"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [57, 100, 16, 18],
           "reason": "bounds change"
         },
         {
@@ -562,8 +527,18 @@
           "reason": "bounds change"
         },
         {
+          "object": "LayoutText #text",
+          "rect": [57, 94, 16, 18],
+          "reason": "bounds change"
+        },
+        {
           "object": "LayoutInline SPAN",
           "rect": [57, 93, 16, 18],
+          "reason": "bounds change"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [57, 61, 16, 18],
           "reason": "bounds change"
         },
         {
@@ -572,148 +547,13 @@
           "reason": "bounds change"
         },
         {
+          "object": "LayoutText #text",
+          "rect": [57, 55, 16, 18],
+          "reason": "bounds change"
+        },
+        {
           "object": "LayoutInline SPAN",
           "rect": [57, 54, 16, 18],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [66, 298, 16, 17],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [66, 292, 16, 17],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [63, 22, 16, 17],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [63, 16, 16, 17],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [59, 544, 16, 17],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [59, 538, 16, 17],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [59, 505, 16, 17],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [59, 499, 16, 17],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [59, 466, 16, 17],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [59, 460, 16, 17],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [59, 427, 16, 17],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [59, 421, 16, 17],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [59, 256, 16, 17],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [59, 250, 16, 17],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [59, 217, 16, 17],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [59, 211, 16, 17],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [59, 178, 16, 17],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [59, 172, 16, 17],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [59, 139, 16, 17],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [59, 133, 16, 17],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [58, 376, 16, 17],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [58, 370, 16, 17],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [58, 337, 16, 17],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [58, 331, 16, 17],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [57, 100, 16, 17],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [57, 94, 16, 17],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [57, 61, 16, 17],
-          "reason": "bounds change"
-        },
-        {
-          "object": "LayoutText #text",
-          "rect": [57, 55, 16, 17],
           "reason": "bounds change"
         }
       ]

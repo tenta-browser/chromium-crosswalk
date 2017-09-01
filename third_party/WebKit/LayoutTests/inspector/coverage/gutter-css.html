@@ -2,7 +2,6 @@
 <head>
 <script src="../../http/tests/inspector/inspector-test.js"></script>
 <script src="../../http/tests/inspector/debugger-test.js"></script>
-<script src="../../http/tests/inspector/sources-test.js"></script>
 <script src="coverage-test.js"></script>
 
 <link rel="stylesheet" type="text/css" href="resources/highlight-in-source.css">
@@ -17,11 +16,7 @@ async function test()
     InspectorTest.startCoverage();
     await InspectorTest.evaluateInPagePromise("performActions()");
     await InspectorTest.stopCoverage();
-    await InspectorTest.sourceDecorated("highlight-in-source.css");
-
-    var lines = Array.prototype.map.call(document.querySelectorAll(".text-editor-coverage-unused-marker"),
-                                         e => e.parentElement.previousSibling.textContent);
-    InspectorTest.addResult(lines);
+    await InspectorTest.dumpDecorations("highlight-in-source.css");
     InspectorTest.completeTest();
 }
 </script>

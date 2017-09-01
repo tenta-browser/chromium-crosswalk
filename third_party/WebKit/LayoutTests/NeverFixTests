@@ -28,6 +28,7 @@ fast/harness/sample-fail-mismatch-reftest.html [ WontFix ]
 [ Win Linux ] editing/pasteboard/emacs-ctrl-k-with-move.html [ WontFix ]
 [ Win Linux ] editing/pasteboard/emacs-ctrl-k-y-001.html [ WontFix ]
 [ Win Linux ] editing/input/emacs-ctrl-o.html [ WontFix ]
+[ Win Linux ] fast/events/inputevents/inputevent-yank.html [ WontFix ]
 
 # Chrome Mac doesn't support Ctrl+Up/Down key-bindings.
 [ Mac ] editing/input/ctrl-up-down.html [ WontFix ]
@@ -38,6 +39,7 @@ fast/harness/sample-fail-mismatch-reftest.html [ WontFix ]
 
 # This test only applies to overlay scrollbar platforms.
 [ Win Linux ] fast/dom/partial-layout-overlay-scrollbars.html [ WontFix ]
+[ Win Linux ] virtual/sharedarraybuffer/fast/dom/partial-layout-overlay-scrollbars.html [ WontFix ]
 
 # Mac's popup behavior is different.
 [ Mac ] fast/forms/select/menulist-onchange-fired-with-key-up-down.html [ WontFix ]
@@ -100,6 +102,12 @@ media/stable [ WontFix ]
 [ Android ] virtual/mojo-loading/http/tests/media/media-source/mediasource-config-change-mp4-v-bitrate.html [ WontFix ]
 [ Android ] virtual/mojo-loading/http/tests/media/media-source/mediasource-config-change-mp4-v-framerate.html [ WontFix ]
 [ Android ] virtual/mojo-loading/http/tests/media/media-source/mediasource-config-change-mp4-v-framesize.html [ WontFix ]
+[ Android ] virtual/sharedarraybuffer/http/tests/media/media-source/mediasource-config-change-mp4-av-audio-bitrate.html [ WontFix ]
+[ Android ] virtual/sharedarraybuffer/http/tests/media/media-source/mediasource-config-change-mp4-av-framesize.html [ WontFix ]
+[ Android ] virtual/sharedarraybuffer/http/tests/media/media-source/mediasource-config-change-mp4-av-video-bitrate.html [ WontFix ]
+[ Android ] virtual/sharedarraybuffer/http/tests/media/media-source/mediasource-config-change-mp4-v-bitrate.html [ WontFix ]
+[ Android ] virtual/sharedarraybuffer/http/tests/media/media-source/mediasource-config-change-mp4-v-framerate.html [ WontFix ]
+[ Android ] virtual/sharedarraybuffer/http/tests/media/media-source/mediasource-config-change-mp4-v-framesize.html [ WontFix ]
 
 # Only run fake-Android tests on Linux
 [ Mac Win ] virtual/android [ WontFix ]
@@ -136,23 +144,23 @@ external/wpt/html/the-xhtml-syntax/parsing-xhtml-documents/xhtml-mathml-dtd-enti
 
 # Some CSS2.1 tests pass but cause 1px diff due to old font-size guidelines,
 # or render colors differently for text and images on Mac.
-external/csswg-test/css21/linebox/inline-formatting-context-002.xht [ WontFix ]
-[ Linux Win ] external/csswg-test/css21/linebox/inline-formatting-context-003.xht [ WontFix ]
-[ Linux Win ] external/csswg-test/css21/linebox/inline-formatting-context-004.xht [ WontFix ]
-[ Linux Win ] external/csswg-test/css21/linebox/inline-formatting-context-005.xht [ WontFix ]
-[ Linux Win ] external/csswg-test/css21/linebox/inline-formatting-context-006.xht [ WontFix ]
-[ Linux Win ] external/csswg-test/css21/linebox/inline-formatting-context-007.xht [ WontFix ]
-external/csswg-test/css21/linebox/inline-formatting-context-023.xht [ WontFix ]
-[ Mac ] external/csswg-test/css21/linebox/line-box-height-002.xht [ WontFix ]
-external/csswg-test/css21/linebox/line-height-126.xht [ WontFix ]
-[ Mac ] external/csswg-test/css21/linebox/line-height-129.xht [ WontFix ]
-[ Mac ] external/csswg-test/css21/linebox/vertical-align-117a.xht [ WontFix ]
-[ Mac ] external/csswg-test/css21/linebox/vertical-align-118a.xht [ WontFix ]
-[ Mac Win ] external/csswg-test/css21/linebox/vertical-align-baseline-003.xht [ WontFix ]
-[ Mac ] external/csswg-test/css21/linebox/vertical-align-baseline-004a.xht [ WontFix ]
-[ Mac ] external/csswg-test/css21/linebox/vertical-align-baseline-005a.xht [ WontFix ]
-[ Linux ] external/csswg-test/css21/linebox/vertical-align-sub-001.xht [ WontFix ]
-[ Linux ] external/csswg-test/css21/linebox/vertical-align-super-001.xht [ WontFix ]
+external/wpt/css/CSS2/linebox/inline-formatting-context-002.xht [ WontFix ]
+[ Linux Win ] external/wpt/css/CSS2/linebox/inline-formatting-context-003.xht [ WontFix ]
+[ Linux Win ] external/wpt/css/CSS2/linebox/inline-formatting-context-004.xht [ WontFix ]
+[ Linux Win ] external/wpt/css/CSS2/linebox/inline-formatting-context-005.xht [ WontFix ]
+[ Linux Win ] external/wpt/css/CSS2/linebox/inline-formatting-context-006.xht [ WontFix ]
+[ Linux Win ] external/wpt/css/CSS2/linebox/inline-formatting-context-007.xht [ WontFix ]
+external/wpt/css/CSS2/linebox/inline-formatting-context-023.xht [ WontFix ]
+[ Mac ] external/wpt/css/CSS2/linebox/line-box-height-002.xht [ WontFix ]
+external/wpt/css/CSS2/linebox/line-height-126.xht [ WontFix ]
+[ Mac ] external/wpt/css/CSS2/linebox/line-height-129.xht [ WontFix ]
+[ Mac ] external/wpt/css/CSS2/linebox/vertical-align-117a.xht [ WontFix ]
+[ Mac ] external/wpt/css/CSS2/linebox/vertical-align-118a.xht [ WontFix ]
+[ Mac Win ] external/wpt/css/CSS2/linebox/vertical-align-baseline-003.xht [ WontFix ]
+[ Mac ] external/wpt/css/CSS2/linebox/vertical-align-baseline-004a.xht [ WontFix ]
+[ Mac ] external/wpt/css/CSS2/linebox/vertical-align-baseline-005a.xht [ WontFix ]
+[ Linux ] external/wpt/css/CSS2/linebox/vertical-align-sub-001.xht [ WontFix ]
+[ Linux ] external/wpt/css/CSS2/linebox/vertical-align-super-001.xht [ WontFix ]
 
 # Ref tests that pass but causes 1px diff on images at direction boundaries.
 [ Win ] external/wpt/html/dom/elements/requirements-relating-to-bidirectional-algorithm-formatting-characters/dir-isolation-002c.html [ WontFix ]
@@ -174,11 +182,9 @@ crbug.com/551843 [ Linux Win ] fast/text/emoji-font-weight-mac.html [ WontFix ]
 
 # Variable system font only supported on Mac atm.
 crbug.com/670246 [ Linux Android Win Mac10.9 Mac10.10 ] fast/text/variable-fonts/variable-mac-system-font.html [ WontFix ]
-# OpenType Variations not supported on Windows at the moment
-# Linux disabled until we can ship a statically linked newer version of FreeType
-crbug.com/669453 [ Win Mac10.9 Mac10.10 ] fast/text/variable-fonts/variable-box-font.html [ WontFix ]
-crbug.com/669453 [ Win Mac10.9 Mac10.10 ] http/tests/webfont/variable-box-font-arraybuffer.html [ WontFix ]
-crbug.com/669453 [ Win Mac10.9 Mac10.10 ] virtual/mojo-loading/http/tests/webfont/variable-box-font-arraybuffer.html [ WontFix ]
+crbug.com/669453 [ Mac10.9 Mac10.10 ] fast/text/variable-fonts/variable-box-font.html [ WontFix ]
+crbug.com/669453 [ Mac10.9 Mac10.10 ] http/tests/webfont/variable-box-font-arraybuffer.html [ WontFix ]
+crbug.com/669453 [ Mac10.9 Mac10.10 ] virtual/mojo-loading/http/tests/webfont/variable-box-font-arraybuffer.html [ WontFix ]
 
 # prefer_compositing_to_lcd_text causes things to get composited regardless of their opaqueness, causing the test to fail
 crbug.com/381840 virtual/prefer_compositing_to_lcd_text/compositing/overflow/overflow-scroll-background-opaque-to-transparent.html [ WontFix ]
@@ -195,6 +201,15 @@ crbug.com/665014 virtual/gpu-rasterization/images/cross-fade-svg-size.html [ Won
 crbug.com/484370 [ Win Debug ] svg/custom/gradient-userSpaceOnUse-with-percentage.svg [ WontFix ]
 crbug.com/552433 [ Win7 Debug ] svg/W3C-SVG-1.1/coords-units-02-b.svg [ WontFix ]
 crbug.com/606302 [ Win7 Debug ] compositing/perpendicular-layer-sorting.html [ WontFix ]
+crbug.com/606302 [ Win7 Debug ] transforms/3d/point-mapping/3d-point-mapping-preserve-3d.html [ WontFix ]
+crbug.com/606302 [ Win7 Debug ] transforms/3d/point-mapping/3d-point-mapping-deep.html [ WontFix ]
+crbug.com/702176 [ Win7 Debug ] fast/table/border-collapsing/001-vertical.html [ WontFix ]
+crbug.com/702176 [ Win7 Debug ] fast/table/border-collapsing/001.html [ WontFix ]
+
+# Rendering issue only seen in Layout Tests on Android.
+# R and B color channels switched on decoded images.
+crbug.com/517449 [ Android ] images/optimize-contrast-image.html [ WontFix ]
+crbug.com/676561 [ Android ] images/paletted-png-with-color-profile.html [ WontFix ]
 
 # Only Windows supports Symbol CMAP encoded fonts.
 crbug.com/627953 [ Android Linux Mac ] fast/text/symbol-cmap.html [ WontFix ]
@@ -207,6 +222,8 @@ crbug.com/642912 virtual/mojo-loading/http/tests/wasm/ [ WontFix ]
 # these tests can still be run manually with --skiped=ignore.
 webaudio/codec-tests/mp3 [ WontFix ]
 webaudio/codec-tests/aac [ WontFix ]
+virtual/sharedarraybuffer/webaudio/codec-tests/mp3 [ WontFix ]
+virtual/sharedarraybuffer/webaudio/codec-tests/aac [ WontFix ]
 
 # WPT subdirectories without owners.
 external/wpt/accelerometer [ WontFix ]
@@ -216,8 +233,8 @@ external/wpt/clear-site-data [ WontFix ]
 external/wpt/css-values [ WontFix ]
 external/wpt/gyroscope [ WontFix ]
 external/wpt/magnetometer [ WontFix ]
-external/wpt/preload [ WontFix ]
 external/wpt/upgrade-insecure-requests [ WontFix ]
+external/wpt/longtask-timing [ WontFix ]
 
 # WPT manual tests without automation
 external/wpt/html/semantics/forms/constraints/tooShort-input-email-add-manual.html [ WontFix ]
@@ -331,3 +348,6 @@ crbug.com/672605 external/wpt/encrypted-media [ WontFix ]
 
 # This W3C EME test fetches a file which is not allowed
 #external/wpt/encrypted-media/idlharness.html [ WontFix ]
+
+[ Win7 Debug ] virtual/disable-spinvalidation/compositing/perpendicular-layer-sorting.html [ WontFix ]
+

@@ -6,45 +6,31 @@ function test() {
      Help.releaseNoteText = [
          {
              version: 99,
+             header: 'Highlights from Chrome 100 update',
              highlights: [
                  {
-                     contents: [
-                         {
-                             text: 'Improved',
-                         },
-                         {
-                             text: 'Performance and Memory panels',
-                             link: 'https://developers.google.com/web/tools/chrome-devtools/',
-                         }
-                     ],
-                     featured: true,
+                     title: 'Improved Performance and Memory panels',
+                     subtitle: '',
+                     link: 'https://developers.google.com/web/tools/chrome-devtools/',
                  },
                  {
-                     contents: [
-                         {
-                             text: 'Edit cookies directly',
-                             link: 'https://developers.google.com/web/tools/chrome-devtools/',
-                         },
-                         {
-                             text: 'from the Application panel',
-                         },
-                     ],
+                     title: 'Edit cookies directly from the Application panel',
+                     subtitle: '',
+                     link: 'https://developers.google.com/web/tools/chrome-devtools/',
                  },
              ],
              link: 'https://developers.google.com/web/tools/chrome-devtools/',
-             image: {
-                 src: './resources/test.png',
-             },
          },
     ];
 
-    InspectorTest.addSniffer(UI.inspectorView, "showPanel", onPanelShown);
+    InspectorTest.addSniffer(UI.viewManager, "showView", onShowView);
 
-    InspectorTest.addResult(`Browser version: ${Help.browserVersion()}\n`);
+    InspectorTest.addResult("Last release note version seen:");
+    InspectorTest.addResult(Help.releaseNoteVersionSetting().get() + "\n");
     Help.showReleaseNoteIfNeeded();
 
-    function onPanelShown(viewId, panelPromise) {
-        panelPromise.then(() => {
+    function onShowView(viewId, isUserGesture, viewPromise) {
+      viewPromise.then(() => {
             var releaseNoteView = UI.viewManager.view("release-note");
             var releaseNoteElement = releaseNoteView[UI.View._widgetSymbol].contentElement;
             InspectorTest.addResult("Dumping release note text:");

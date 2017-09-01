@@ -6,6 +6,7 @@ Loaded modules:
     bindings
     common
     components
+    console_model
     dom_extension
     emulation
     extensions
@@ -13,12 +14,13 @@ Loaded modules:
     host
     main
     network_conditions
-    object_ui
+    network_log
     persistence
     platform
     protocol
     sdk
     services
+    text_utils
     ui
     workspace
 
@@ -28,6 +30,7 @@ Loaded modules:
     color_picker
     common
     components
+    console_model
     dom_extension
     elements
     emulation
@@ -38,12 +41,14 @@ Loaded modules:
     inline_editor
     main
     network_conditions
+    network_log
     object_ui
     persistence
     platform
     protocol
     sdk
     services
+    text_utils
     ui
     workspace
 
@@ -55,6 +60,7 @@ Loaded modules:
     color_picker
     common
     components
+    console_model
     cookie_table
     data_grid
     diff
@@ -69,6 +75,7 @@ Loaded modules:
     main
     network
     network_conditions
+    network_log
     object_ui
     perf_ui
     persistence
@@ -78,8 +85,10 @@ Loaded modules:
     services
     source_frame
     text_editor
+    text_utils
     ui
     workspace
+    workspace_diff
 
 Running: testShowSourcesPanel
 Loaded modules:
@@ -89,6 +98,7 @@ Loaded modules:
     color_picker
     common
     components
+    console_model
     cookie_table
     data_grid
     diff
@@ -103,6 +113,7 @@ Loaded modules:
     main
     network
     network_conditions
+    network_log
     object_ui
     perf_ui
     persistence
@@ -115,8 +126,10 @@ Loaded modules:
     source_frame
     sources
     text_editor
+    text_utils
     ui
     workspace
+    workspace_diff
 
 Running: testOpenUISourceCode
 Loaded modules:
@@ -126,6 +139,7 @@ Loaded modules:
     color_picker
     common
     components
+    console_model
     cookie_table
     data_grid
     diff
@@ -140,6 +154,7 @@ Loaded modules:
     main
     network
     network_conditions
+    network_log
     object_ui
     perf_ui
     persistence
@@ -152,6 +167,8 @@ Loaded modules:
     source_frame
     sources
     text_editor
+    text_utils
     ui
     workspace
+    workspace_diff
 

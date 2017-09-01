@@ -4,38 +4,17 @@
 # https://crbug.com/551000: PlzNavigate: DevTools support
 crbug.com/551000 http/tests/inspector/network/x-frame-options-deny.html [ Failure ]
 crbug.com/551000 virtual/mojo-loading/http/tests/inspector/network/x-frame-options-deny.html [ Failure ]
-#  Console error messages are wrongly ordered.
-crbug.com/551000 http/tests/inspector/console-resource-errors.html [ Failure ]
-crbug.com/551000 virtual/mojo-loading/http/tests/inspector/console-resource-errors.html [ Failure ]
 
-# Flipped order between diStartProvisionalLoad & willSendRequest
-crbug.com/647698 http/tests/loading/307-after-303-after-post.html [ Failure ]
-crbug.com/625765 http/tests/loading/redirect-methods.html [ Crash Failure ]
-crbug.com/647698 virtual/mojo-loading/http/tests/loading/307-after-303-after-post.html [ Failure ]
-crbug.com/625765 virtual/mojo-loading/http/tests/loading/redirect-methods.html [ Crash Failure ]
-
-# https://crbug.com/555418: Move `X-Frame-Options` and CSP's `frame-ancestor`
-# checks up out of the renderer.
-crbug.com/555418 http/tests/security/contentSecurityPolicy/1.1/form-action-src-redirect-blocked.html [ Failure ]
-crbug.com/555418 http/tests/security/contentSecurityPolicy/redirect-does-not-match-paths.html [ Timeout ]
-crbug.com/555418 http/tests/security/isolatedWorld/bypass-main-world-csp-iframes.html [ Failure ]
-crbug.com/555418 virtual/mojo-loading/http/tests/security/contentSecurityPolicy/1.1/form-action-src-redirect-blocked.html [ Failure ]
-crbug.com/555418 virtual/mojo-loading/http/tests/security/contentSecurityPolicy/redirect-does-not-match-paths.html [ Timeout ]
-crbug.com/555418 virtual/mojo-loading/http/tests/security/isolatedWorld/bypass-main-world-csp-iframes.html [ Failure ]
-
-# Missing console warning about usage of legacy protocol.
-Bug(none) external/wpt/html/browsers/history/the-location-interface/location-protocol-setter-non-broken-weird.html [ Failure ]
-
-# Missing error messages.
-Bug(none) external/wpt/html/browsers/history/the-location-interface/location-protocol-setter-non-broken.html [ Failure ]
-
-# https://crbug.com/695072: Preserve SourceLocation information.
-# This results in a missing line number in console error messages.
-Bug(695072) http/tests/security/location-href-clears-username-password.html [ Failure ]
-Bug(695072) virtual/mojo-loading/http/tests/security/location-href-clears-username-password.html [ Failure ]
+# https://crbug.com/690946 PlzNavigate: Missing line number in console messages when the 'frame-src' CSP is infringed.
+# SourceLocation is not set when the navigation is initiated outside of a script.
+crbug.com/690946 http/tests/security/contentSecurityPolicy/frame-src-cross-origin-load.html [ Failure ]
+crbug.com/690946 virtual/mojo-loading/http/tests/security/contentSecurityPolicy/frame-src-cross-origin-load.html [ Failure ]
 
 # These tests are flaky.
-Bug(none) external/wpt/service-workers/service-worker/fetch-event-redirect.https.html [ Crash ]
-Bug(none) http/tests/misc/window-open-then-write.html [ Timeout ]
-Bug(none) external/wpt/html/browsers/browsing-the-web/unloading-documents/beforeunload-on-history-back.html [ Failure ]
-Bug(none) virtual/mojo-loading/http/tests/misc/window-open-then-write.html [ Timeout ]
+Bug(none) http/tests/security/popup-allowed-by-sandbox-can-navigate.html [ Failure ]
+Bug(none) virtual/mojo-loading/http/tests/security/popup-allowed-by-sandbox-can-navigate.html [ Failure ]
+
+# These tests are correct with PlzNavigate.
+# Without PlzNavigate, the line number of the console message is missing.
+Bug(none) http/tests/security/contentSecurityPolicy/frame-src-redirect-blocked.html [ Failure ]
+Bug(none) virtual/mojo-loading/http/tests/security/contentSecurityPolicy/frame-src-redirect-blocked.html [ Failure ]

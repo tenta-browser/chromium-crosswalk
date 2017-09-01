@@ -119,17 +119,17 @@
         success = Should("createIIRFilter([1], [1, NaN, Infinity])", function () {
           // Feedback coefficients must be finite.
           context.createIIRFilter([1], [1, Infinity, NaN]);
-        }).throw("InvalidStateError") && success;
+        }).throw("TypeError") && success;
 
         success = Should("createIIRFilter([1, NaN, Infinity], [1])", function () {
           // Feedforward coefficients must be finite.
           context.createIIRFilter([1, Infinity, NaN], [1]);
-        }).throw("InvalidStateError") && success;
+        }).throw("TypeError") && success;
 
         success = Should("createIIRFilter([1, 'abc', []], [1])", function () {
           // Test that random junk in the array is converted to NaN.
           context.createIIRFilter([1, "abc", []], [1]);
-        }).throw("InvalidStateError") && success;
+        }).throw("TypeError") && success;
 
         Should("Exceptions for createIIRFilter", success)
           .summarize("were all correctly thrown",
@@ -187,6 +187,27 @@
             f.getFrequencyResponse(new Float32Array(10), new Float32Array(20), new Float32Array(
               30));
           }).notThrow() && success;
+
+        if (window.SharedArrayBuffer) {
+          var shared_view = new Float32Array(new SharedArrayBuffer(4));
+          var nonshared_view = new Float32Array(1);
+
+          success = Should(
+              "getFrequencyResponse(shared_view, nonshared_view, nonshared_view)",
+              function () {
+                f.getFrequencyResponse(shared_view, nonshared_view, nonshared_view);
+            }).throw("TypeError") && success;
+          success = Should(
+              "getFrequencyResponse(nonshared_view, shared_view, nonshared_view)",
+              function () {
+                f.getFrequencyResponse(nonshared_view, shared_view, nonshared_view);
+            }).throw("TypeError") && success;
+          success = Should(
+              "getFrequencyResponse(nonshared_view, nonshared_view, shared_view)",
+              function () {
+                f.getFrequencyResponse(nonshared_view, nonshared_view, shared_view);
+            }).throw("TypeError") && success;
+        }
 
         Should("getFrequencyResponse exceptions handled", success)
           .summarize("correctly", "incorrectly");

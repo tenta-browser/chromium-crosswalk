@@ -5,7 +5,7 @@ InspectorTest.preloadPanel("console");
 
 InspectorTest.selectMainExecutionContext = function()
 {
-    var executionContexts = InspectorTest.mainTarget.runtimeModel.executionContexts();
+    var executionContexts = InspectorTest.runtimeModel.executionContexts();
     for (var context of executionContexts) {
         if (context.isDefault) {
             UI.context.setFlavor(SDK.ExecutionContext, context);
@@ -93,7 +93,7 @@ InspectorTest.dumpConsoleMessages = function(printOriginatingCommand, dumpClassN
 
 InspectorTest.dumpConsoleMessagesIntoArray = function(printOriginatingCommand, dumpClassNames, formatter)
 {
-    Common.settingForTest('messageLevelFilters2').set(SDK.ConsoleMessage.MessageLevel.Verbose);
+    Common.settingForTest('messageLevelFilters2').set(ConsoleModel.ConsoleMessage.MessageLevel.Verbose);
     formatter = formatter || InspectorTest.prepareConsoleMessageText;
     var result = [];
     InspectorTest.disableConsoleViewport();
@@ -243,7 +243,7 @@ InspectorTest.dumpConsoleCounters = function()
 
 InspectorTest.expandConsoleMessages = function(callback, deepFilter, sectionFilter)
 {
-    Console.ConsoleView.instance()._viewportThrottler.flush();
+    Console.ConsoleView.instance()._invalidateViewport();
     var messageViews = Console.ConsoleView.instance()._visibleViewMessages;
 
     // Initiate round-trips to fetch necessary data for further rendering.

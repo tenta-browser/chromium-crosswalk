@@ -391,7 +391,6 @@ Starting worker: resources/global-interface-listing.js
 [Worker]     method constructor
 [Worker] interface ImageData
 [Worker]     attribute @@toStringTag
-[Worker]     getter colorSpace
 [Worker]     getter data
 [Worker]     getter height
 [Worker]     getter width
@@ -418,6 +417,13 @@ Starting worker: resources/global-interface-listing.js
 [Worker]     method postMessage
 [Worker]     method start
 [Worker]     setter onmessage
+[Worker] interface NavigationPreloadManager
+[Worker]     attribute @@toStringTag
+[Worker]     method constructor
+[Worker]     method disable
+[Worker]     method enable
+[Worker]     method getState
+[Worker]     method setHeaderValue
 [Worker] interface Notification : EventTarget
 [Worker]     static getter maxActions
 [Worker]     static getter permission
@@ -479,6 +485,8 @@ Starting worker: resources/global-interface-listing.js
 [Worker]     method cancel
 [Worker]     method constructor
 [Worker]     method getReader
+[Worker]     method pipeThrough
+[Worker]     method pipeTo
 [Worker]     method tee
 [Worker] interface Request
 [Worker]     attribute @@toStringTag
@@ -521,6 +529,7 @@ Starting worker: resources/global-interface-listing.js
 [Worker]     attribute @@toStringTag
 [Worker]     getter active
 [Worker]     getter installing
+[Worker]     getter navigationPreload
 [Worker]     getter onupdatefound
 [Worker]     getter pushManager
 [Worker]     getter scope
@@ -646,6 +655,7 @@ Starting worker: resources/global-interface-listing.js
 [Worker]     getter onerror
 [Worker]     getter onrejectionhandled
 [Worker]     getter onunhandledrejection
+[Worker]     getter origin
 [Worker]     getter performance
 [Worker]     getter self
 [Worker]     method atob
@@ -661,6 +671,7 @@ Starting worker: resources/global-interface-listing.js
 [Worker]     setter onerror
 [Worker]     setter onrejectionhandled
 [Worker]     setter onunhandledrejection
+[Worker]     setter origin
 [Worker] interface WorkerLocation
 [Worker]     attribute @@toStringTag
 [Worker]     getter hash
@@ -687,6 +698,11 @@ Starting worker: resources/global-interface-listing.js
 [Worker]     getter storage
 [Worker]     getter userAgent
 [Worker]     method constructor
+[Worker] interface WritableStream
+[Worker]     getter locked
+[Worker]     method abort
+[Worker]     method constructor
+[Worker]     method getWriter
 [Worker] interface XMLHttpRequest : XMLHttpRequestEventTarget
 [Worker]     attribute @@toStringTag
 [Worker]     attribute DONE

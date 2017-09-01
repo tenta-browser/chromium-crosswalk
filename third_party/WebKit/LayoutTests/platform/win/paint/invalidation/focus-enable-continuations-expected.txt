@@ -8,7 +8,7 @@
       "paintInvalidations": [
         {
           "object": "LayoutInline SPAN id='outer'",
-          "rect": [7, 87, 86, 22],
+          "rect": [7, 87, 85, 22],
           "reason": "style change"
         }
       ]
@@ -25,10 +25,6 @@
     },
     {
       "object": "LayoutBlockFlow (anonymous)",
-      "reason": "forced by layout"
-    },
-    {
-      "object": "LayoutInline SPAN id='outer'",
       "reason": "forced by layout"
     },
     {
