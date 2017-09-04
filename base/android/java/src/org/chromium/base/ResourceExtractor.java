@@ -4,6 +4,9 @@
 
 package org.chromium.base;
 
+import android.content.SharedPreferences;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
 import android.os.AsyncTask;
 import android.os.Handler;
 import android.os.Looper;
@@ -27,7 +30,34 @@ public class ResourceExtractor {
     private static final String ICU_DATA_FILENAME = "icudtl.dat";
     private static final String V8_NATIVES_DATA_FILENAME = "natives_blob.bin";
     private static final String V8_SNAPSHOT_DATA_FILENAME = "snapshot_blob.bin";
-    private static final String FALLBACK_LOCALE = "en-US";
+    private static final String APP_VERSION_PREF = "org.chromium.base.ResourceExtractor.Version";
+    public static final String FALLBACK_LOCALE = "en-US";
+
+     private static ResourceInterceptor sInterceptor = null;
+
+    public interface ResourceInterceptor {
+        public boolean shouldInterceptLoadRequest(String resource);
+        public InputStream openRawResource(String resource);
+    }
+
+    private static boolean isAppDataFile(String file) {
+        return ICU_DATA_FILENAME.equals(file)
+                || V8_NATIVES_DATA_FILENAME.equals(file)
+                || V8_SNAPSHOT_DATA_FILENAME.equals(file);
+    }
+
+     /**
+     * Allow embedders to intercept the resource loading process. Embedders may
+     * want to load paks from res/raw instead of assets, since assets are not
+     * supported in Android library project.
+     * @param intercepter The instance of intercepter which provides the files list
+     * to intercept and the inputstream for the files it wants to intercept with.
+     */
+    public static void setResourceInterceptor(ResourceInterceptor interceptor) {
+        assert (sInstance == null || sInstance.mExtractTask == null)
+                : "Must be called before startExtractingResources is called";
+        sInterceptor = interceptor;
+    }
 
     private class ExtractTask extends AsyncTask<Void, Void, Void> {
         private static final int BUFFER_SIZE = 16 * 1024;
@@ -56,7 +86,10 @@ public class ResourceExtractor {
         }
 
         private void doInBackgroundImpl() {
+            Log.d(TAG, "ResourceExtractor running .... %s", Arrays.toString(mAssetsToExtract));
             final File outputDir = getOutputDir();
+            final File appDataDir = getAppDataDir();
+
             if (!outputDir.exists() && !outputDir.mkdirs()) {
                 throw new RuntimeException();
             }
@@ -81,11 +114,17 @@ public class ResourceExtractor {
 
             byte[] buffer = new byte[BUFFER_SIZE];
             for (String assetName : mAssetsToExtract) {
-                File output = new File(outputDir, assetName + extractSuffix);
+                File dir = isAppDataFile(assetName) ? appDataDir : outputDir;
+                File output = new File(dir, assetName + extractSuffix);
                 TraceEvent.begin("ExtractResource");
                 try {
-                    InputStream inputStream =
-                            ContextUtils.getApplicationContext().getAssets().open(assetName);
+                    InputStream inputStream;
+                    if (sInterceptor != null
+                            && sInterceptor.shouldInterceptLoadRequest(assetName)) {
+                        inputStream = sInterceptor.openRawResource(assetName);
+                    } else {
+                        inputStream = ContextUtils.getApplicationContext().getAssets().open(assetName);
+                    }
                     extractResourceHelper(inputStream, output, buffer);
                 } catch (IOException e) {
                     // The app would just crash later if files are missing.
@@ -123,10 +162,27 @@ public class ResourceExtractor {
                 TraceEvent.end("ResourceExtractor.ExtractTask.onPostExecute");
             }
         }
+
+        /** Returns a number that is different each time the apk changes. */
+        private long getApkVersion() {
+            PackageManager pm = ContextUtils.getApplicationContext().getPackageManager();
+            try {
+                // Use lastUpdateTime since versionCode does not change when developing locally,
+                // but also use versionCode since it is possible for Chrome to be updated without
+                // the lastUpdateTime being changed (http://crbug.org/673458).
+                PackageInfo pi =
+                        pm.getPackageInfo(ContextUtils.getApplicationContext().getPackageName(), 0);
+                // Xor'ing versionCode into upper half of the long to ensure it doesn't somehow
+                // exactly offset an increase in time.
+                return pi.lastUpdateTime ^ (((long) pi.versionCode) << 32);
+            } catch (PackageManager.NameNotFoundException e) {
+                throw new RuntimeException(e);
+            }
+        }
     }
 
     private ExtractTask mExtractTask;
-    private final String[] mAssetsToExtract = detectFilesToExtract();
+    private static String[] mAssetsToExtract = detectFilesToExtract();
 
     private static ResourceExtractor sInstance;
 
@@ -153,6 +209,16 @@ public class ResourceExtractor {
             activeLocalePakFiles.add(FALLBACK_LOCALE + ".pak");
         }
         return activeLocalePakFiles.toArray(new String[activeLocalePakFiles.size()]);
+    }
+
+    /**
+     * Specifies the files that should be extracted from the APK.
+     * and moved to {@link #getOutputDir()}.
+     */
+    public static void setResourcesToExtract(String[] entries) {
+        assert (sInstance == null || sInstance.mExtractTask == null)
+                : "Must be called before startExtractingResources is called";
+        mAssetsToExtract = entries;
     }
 
     /**

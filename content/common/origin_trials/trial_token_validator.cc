@@ -50,9 +50,6 @@ blink::WebOriginTrialTokenStatus TrialTokenValidator::ValidateToken(
   if (origin_trial_policy->IsTokenDisabled(trial_token->signature()))
     return blink::WebOriginTrialTokenStatus::kTokenDisabled;
 
-  if (origin_trial_policy->IsTokenDisabled(trial_token->signature()))
-    return blink::WebOriginTrialTokenStatus::TokenDisabled;
-
   *feature_name = trial_token->feature_name();
   return blink::WebOriginTrialTokenStatus::kSuccess;
 }
