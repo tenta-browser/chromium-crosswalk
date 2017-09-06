@@ -342,16 +342,6 @@ public class AwSettings {
     }
 
     /**
-     * Enable/Disable SafeBrowsing per WebView
-     * @param enabled true if this WebView should have SafeBrowsing
-     */
-    public void setSafeBrowsingEnabled(boolean enabled) {
-        synchronized (mAwSettingsLock) {
-            mSafeBrowsingEnabled = enabled;
-        }
-    }
-
-    /**
      * Return whether third party cookies are enabled for an AwContents
      * @return true if accept third party cookies
      */

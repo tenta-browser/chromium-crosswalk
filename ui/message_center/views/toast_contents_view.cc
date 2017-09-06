@@ -286,14 +286,6 @@ void ToastContentsView::OnWidgetActivationChanged(views::Widget* widget,
     collection_->RestartPopupTimers();
 }
 
-void ToastContentsView::OnWidgetActivationChanged(views::Widget* widget,
-                                                  bool active) {
-  if (active)
-    collection_->PausePopupTimers();
-  else
-    collection_->RestartPopupTimers();
-}
-
 // views::View
 void ToastContentsView::OnMouseEntered(const ui::MouseEvent& event) {
   if (collection_)

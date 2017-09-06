@@ -678,11 +678,6 @@ int QuicChromiumClientSession::CryptoConnect(
   if (!crypto_stream_->CryptoConnect())
     return ERR_QUIC_HANDSHAKE_FAILED;
 
-  // Check if the connection is still open, issues during CryptoConnect like
-  // packet write error could cause the connection to be torn down.
-  if (!connection()->connected())
-    return ERR_QUIC_HANDSHAKE_FAILED;
-
   if (IsCryptoHandshakeConfirmed()) {
     connect_timing_.connect_end = base::TimeTicks::Now();
     return OK;

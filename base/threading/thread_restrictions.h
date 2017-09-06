@@ -12,6 +12,7 @@
 class BrowserProcessImpl;
 class HistogramSynchronizer;
 class NativeBackendKWallet;
+class ScopedAllowWaitForLegacyWebViewApi;
 
 namespace android_webview {
 class AwFormDatabaseService;
@@ -181,6 +182,7 @@ class BASE_EXPORT ThreadRestrictions {
  private:
   // DO NOT ADD ANY OTHER FRIEND STATEMENTS, talk to jam or brettw first.
   // BEGIN ALLOWED USAGE.
+  friend class ::ScopedAllowWaitForLegacyWebViewApi;
   friend class android_webview::AwFormDatabaseService;
   friend class android_webview::CookieManager;
   friend class content::BrowserShutdownProfileDumper;

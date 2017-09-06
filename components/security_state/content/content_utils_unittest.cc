@@ -279,28 +279,4 @@ TEST(SecurityStateContentUtilsTest, SubjectAltNameWarning) {
   EXPECT_EQ(0u, explanations.insecure_explanations.size());
 }
 
-// Tests that an explanation is provided if a certificate is missing a
-// subjectAltName extension containing a domain name or IP address.
-TEST(SecurityStateContentUtilsTest, SubjectAltNameWarning) {
-  security_state::SecurityInfo security_info;
-  security_info.cert_status = 0;
-  security_info.scheme_is_cryptographic = true;
-
-  security_info.certificate = net::ImportCertFromFile(
-      net::GetTestCertsDirectory(), "salesforce_com_test.pem");
-  ASSERT_TRUE(security_info.certificate);
-
-  content::SecurityStyleExplanations explanations;
-  security_info.cert_missing_subject_alt_name = true;
-  GetSecurityStyle(security_info, &explanations);
-  // Verify that an explanation was shown for a missing subjectAltName.
-  EXPECT_EQ(1u, explanations.broken_explanations.size());
-
-  explanations.broken_explanations.clear();
-  security_info.cert_missing_subject_alt_name = false;
-  GetSecurityStyle(security_info, &explanations);
-  // Verify that no explanation is shown if the subjectAltName is present.
-  EXPECT_EQ(0u, explanations.broken_explanations.size());
-}
-
 }  // namespace

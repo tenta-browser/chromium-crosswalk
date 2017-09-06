@@ -85,16 +85,4 @@ public abstract class BackgroundScheduler {
         TriggerConditions triggerConditions = new TriggerConditions(false, 0, false);
         scheduleBackup(triggerConditions, FIVE_MINUTES_IN_SECONDS);
     }
-
-    /**
-     * If GooglePlayServices upgrades, any outstaning tasks will be lost.
-     * Set a reminder to wake up and check the task queue if an upgrade happens.
-     */
-    public void rescheduleOfflinePagesTasksOnUpgrade() {
-        // We use the least restrictive trigger conditions.  A wakeup will cause
-        // the queue to be checked, and the trigger conditions will be replaced by
-        // the current trigger conditions needed.
-        TriggerConditions triggerConditions = new TriggerConditions(false, 0, false);
-        scheduleBackup(triggerConditions, FIVE_MINUTES_IN_SECONDS);
-    }
 }

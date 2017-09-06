@@ -38,9 +38,6 @@ class VIEWS_EXPORT ViewObserver {
   // Called from ~View.
   virtual void OnViewIsDeleting(View* observed_view) {}
 
-  // Called from ~View.
-  virtual void OnViewIsDeleting(View* observed_view) {}
-
  protected:
   virtual ~ViewObserver() {}
 };

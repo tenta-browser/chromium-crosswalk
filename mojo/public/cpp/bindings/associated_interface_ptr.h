@@ -278,13 +278,6 @@ AssociatedInterfaceRequest<Interface> MakeIsolatedRequest(
 MOJO_CPP_BINDINGS_EXPORT void GetIsolatedInterface(
     ScopedInterfaceEndpointHandle handle);
 
-// |handle| is supposed to be the request of an associated interface. This
-// method associates the interface with a dedicated, disconnected message pipe.
-// That way, the corresponding associated interface pointer of |handle| can
-// safely make calls (although those calls are silently dropped).
-MOJO_CPP_BINDINGS_EXPORT void GetIsolatedInterface(
-    ScopedInterfaceEndpointHandle handle);
-
 }  // namespace mojo
 
 #endif  // MOJO_PUBLIC_CPP_BINDINGS_ASSOCIATED_INTERFACE_PTR_H_

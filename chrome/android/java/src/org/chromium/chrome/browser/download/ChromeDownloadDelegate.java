@@ -13,7 +13,6 @@ import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Environment;
-import android.os.Handler;
 import android.support.v7.app.AlertDialog;
 import android.text.TextUtils;
 import android.view.View;
@@ -343,12 +342,7 @@ public class ChromeDownloadDelegate {
     @CalledByNative
     private void onDownloadStarted(String filename) {
         DownloadUtils.showDownloadStartToast(mContext);
-        new Handler().post(new Runnable() {
-            @Override
-            public void run() {
-                closeBlankTab();
-            }
-        });
+        closeBlankTab();
     }
 
     /**
@@ -441,7 +435,6 @@ public class ChromeDownloadDelegate {
             if (!(activity instanceof ChromeActivity)) return true;
 
             TabModelSelector selector = ((ChromeActivity) activity).getTabModelSelector();
-            if (mTab.isIncognito() && selector.getModel(true).getCount() == 1) return false;
             return selector == null ? true : selector.closeTab(mTab);
         }
         return false;
