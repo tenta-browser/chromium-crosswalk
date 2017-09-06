@@ -736,9 +736,4 @@ void WebSettingsImpl::SetDoNotUpdateSelectionOnMutatingSelectionRange(
   settings_->SetDoNotUpdateSelectionOnMutatingSelectionRange(enabled);
 }
 
-void WebSettingsImpl::setDoNotUpdateSelectionOnMutatingSelectionRange(
-    bool enabled) {
-  m_settings->setDoNotUpdateSelectionOnMutatingSelectionRange(enabled);
-}
-
 }  // namespace blink

@@ -79,9 +79,6 @@ class WebWidget {
   // TODO(crbug.com/704763): Remove the need for this.
   virtual void SetSuppressFrameRequestsWorkaroundFor704763Only(bool) {}
 
-  // TODO(crbug.com/704763): Remove the need for this.
-  virtual void setSuppressFrameRequestsWorkaroundFor704763Only(bool) {}
-
   // Called to update imperative animation state. This should be called before
   // paint, although the client can rate-limit these calls.
   // |lastFrameTimeMonotonic| is in seconds.

@@ -99,10 +99,6 @@ class BLINK_PLATFORM_EXPORT WebMediaPlayerClient {
   // controls and go fullscreen.
   virtual void OnBecamePersistentVideo(bool) = 0;
 
-  // Set the player as the persistent video. Persistent video should hide its
-  // controls and go fullscreen.
-  virtual void onBecamePersistentVideo(bool) = 0;
-
   // After the monitoring is activated, the client will inform WebMediaPlayer
   // when the element becomes/stops being the dominant visible content by
   // calling WebMediaPlayer::becameDominantVisibleContent(bool).

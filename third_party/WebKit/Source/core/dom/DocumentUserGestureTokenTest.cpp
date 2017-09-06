@@ -54,14 +54,4 @@ TEST_F(DocumentUserGestureTokenTest, Navigate) {
   EXPECT_FALSE(GetDocument().GetFrame()->HasReceivedUserGesture());
 }
 
-TEST_F(DocumentUserGestureTokenTest, Navigate) {
-  DocumentUserGestureToken::create(&document());
-  ASSERT_TRUE(document().frame()->hasReceivedUserGesture());
-
-  // Navigate to a different Document. In the main frame, user gesture state
-  // will get reset.
-  document().frame()->loader().load(FrameLoadRequest(nullptr, KURL()));
-  EXPECT_FALSE(document().frame()->hasReceivedUserGesture());
-}
-
 }  // namespace blink
