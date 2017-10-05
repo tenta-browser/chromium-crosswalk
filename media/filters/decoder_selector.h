@@ -79,7 +79,8 @@ class MEDIA_EXPORT DecoderSelector {
                      const base::Closure& waiting_for_decryption_key_cb);
 
  private:
-#if !defined(OS_ANDROID)
+//#if !defined(OS_ANDROID)
+#if !defined(DISABLE_FFMPEG_VIDEO_DECODERS)
   void InitializeDecryptingDecoder();
   void DecryptingDecoderInitDone(bool success);
 #endif
