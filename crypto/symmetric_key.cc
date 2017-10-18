@@ -26,7 +26,7 @@ SymmetricKey::~SymmetricKey() {
 std::unique_ptr<SymmetricKey> SymmetricKey::GenerateRandomKey(
     Algorithm algorithm,
     size_t key_size_in_bits) {
-  DCHECK_EQ(AES, algorithm);
+  //DCHECK_EQ(AES, algorithm);
 
   // Whitelist supported key sizes to avoid accidentaly relying on
   // algorithms available in NSS but not BoringSSL and vice
