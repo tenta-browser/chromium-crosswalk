@@ -15,11 +15,11 @@ namespace content {
 //   org.chromium.content_public.browser)
 // GENERATED_JAVA_PREFIX_TO_STRIP: INVALIDATE_TYPE_
 enum InvalidateTypes {
-  INVALIDATE_TYPE_URL           = 1 << 0,  // The URL has changed.
-  INVALIDATE_TYPE_TAB           = 1 << 1,  // The favicon, app icon, or crashed
+  INVALIDATE_TYPE_URL           = 1 << 0,  // 1 The URL has changed.
+  INVALIDATE_TYPE_TAB           = 1 << 1,  // 2 The favicon, app icon, or crashed
                                            // state changed.
-  INVALIDATE_TYPE_LOAD          = 1 << 2,  // The loading state has changed.
-  INVALIDATE_TYPE_TITLE         = 1 << 3,  // The title changed.
+  INVALIDATE_TYPE_LOAD          = 1 << 2,  // 4 The loading state has changed.
+  INVALIDATE_TYPE_TITLE         = 1 << 3,  // 8 The title changed.
 
   INVALIDATE_TYPE_ALL           = (1 << 4) - 1,
 };
