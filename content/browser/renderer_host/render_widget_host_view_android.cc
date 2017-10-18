@@ -1246,7 +1246,7 @@ void RenderWidgetHostViewAndroid::SetSynchronousCompositorClient(
 }
 
 void RenderWidgetHostViewAndroid::OnOverscrollRefreshHandlerAvailable() {
-  DCHECK(!overscroll_controller_);
+//  DCHECK(!overscroll_controller_);
   CreateOverscrollControllerIfPossible();
 }
 
