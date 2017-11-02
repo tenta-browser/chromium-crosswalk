@@ -4,12 +4,12 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutSVGRect rect",
           "rect": [8, 8, 100, 200],
-          "reason": "forced by layout"
+          "reason": "geometry"
         }
       ]
     }
@@ -17,7 +17,7 @@
   "objectPaintInvalidations": [
     {
       "object": "LayoutSVGRect rect",
-      "reason": "forced by layout"
+      "reason": "geometry"
     }
   ]
 }

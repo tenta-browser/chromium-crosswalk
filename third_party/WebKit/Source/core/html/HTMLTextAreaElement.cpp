@@ -31,14 +31,14 @@
 #include "core/HTMLNames.h"
 #include "core/dom/Document.h"
 #include "core/dom/ExceptionCode.h"
+#include "core/dom/ShadowRoot.h"
 #include "core/dom/StyleChangeReason.h"
 #include "core/dom/Text.h"
-#include "core/dom/shadow/ShadowRoot.h"
+#include "core/dom/events/Event.h"
 #include "core/editing/FrameSelection.h"
 #include "core/editing/iterators/TextIterator.h"
 #include "core/editing/spellcheck/SpellChecker.h"
 #include "core/events/BeforeTextInsertedEvent.h"
-#include "core/events/Event.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/UseCounter.h"
 #include "core/html/FormData.h"
@@ -197,10 +197,10 @@ void HTMLTextAreaElement::ParseAttribute(
   } else if (name == accesskeyAttr) {
     // ignore for the moment
   } else if (name == maxlengthAttr) {
-    UseCounter::Count(GetDocument(), UseCounter::kTextAreaMaxLength);
+    UseCounter::Count(GetDocument(), WebFeature::kTextAreaMaxLength);
     SetNeedsValidityCheck();
   } else if (name == minlengthAttr) {
-    UseCounter::Count(GetDocument(), UseCounter::kTextAreaMinLength);
+    UseCounter::Count(GetDocument(), WebFeature::kTextAreaMinLength);
     SetNeedsValidityCheck();
   } else {
     TextControlElement::ParseAttribute(params);
@@ -284,7 +284,7 @@ void HTMLTextAreaElement::SubtreeHasChanged() {
     if (node.IsTextNode())
       continue;
     DCHECK(isHTMLBRElement(node));
-    DCHECK_EQ(&node, inner_editor->LastChild());
+    DCHECK_EQ(&node, inner_editor->lastChild());
   }
 #endif
   AddPlaceholderBreakElementIfNecessary();
@@ -328,7 +328,7 @@ void HTMLTextAreaElement::HandleBeforeTextInsertedEvent(
   // that case, and nothing in the text field will be removed.
   unsigned selection_length = 0;
   if (IsFocused()) {
-    // TODO(xiaochengh): The use of updateStyleAndLayoutIgnorePendingStylesheets
+    // TODO(editing-dev): Use of updateStyleAndLayoutIgnorePendingStylesheets
     // needs to be audited.  See http://crbug.com/590369 for more details.
     GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
 
@@ -398,9 +398,7 @@ void HTMLTextAreaElement::SetValueCommon(
   normalized_value.Replace('\r', '\n');
 
   // Return early because we don't want to trigger other side effects when the
-  // value isn't changing. This is interoperable though the specification
-  // doesn't define so.
-  // https://github.com/whatwg/html/issues/2412
+  // value isn't changing. This is interoperable.
   if (normalized_value == value())
     return;
 
@@ -445,7 +443,7 @@ String HTMLTextAreaElement::defaultValue() const {
   StringBuilder value;
 
   // Since there may be comments, ignore nodes other than text nodes.
-  for (Node* n = FirstChild(); n; n = n->nextSibling()) {
+  for (Node* n = firstChild(); n; n = n->nextSibling()) {
     if (n->IsTextNode())
       value.Append(ToText(n)->data());
   }
@@ -457,7 +455,7 @@ void HTMLTextAreaElement::setDefaultValue(const String& default_value) {
   // To preserve comments, remove only the text nodes, then add a single text
   // node.
   HeapVector<Member<Node>> text_nodes;
-  for (Node* n = FirstChild(); n; n = n->nextSibling()) {
+  for (Node* n = firstChild(); n; n = n->nextSibling()) {
     if (n->IsTextNode())
       text_nodes.push_back(n);
   }
@@ -469,7 +467,7 @@ void HTMLTextAreaElement::setDefaultValue(const String& default_value) {
   value.Replace("\r\n", "\n");
   value.Replace('\r', '\n');
 
-  InsertBefore(GetDocument().createTextNode(value), FirstChild(),
+  InsertBefore(GetDocument().createTextNode(value), firstChild(),
                IGNORE_EXCEPTION_FOR_TESTING);
 
   if (!is_dirty_)

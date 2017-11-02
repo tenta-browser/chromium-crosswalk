@@ -27,13 +27,12 @@
 
 #include "core/dom/ExecutionContext.h"
 
-#include <memory>
 #include "bindings/core/v8/SourceLocation.h"
-#include "core/dom/ExecutionContextTask.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "core/dom/SuspendableObject.h"
 #include "core/dom/TaskRunnerHelper.h"
+#include "core/dom/events/EventTarget.h"
 #include "core/events/ErrorEvent.h"
-#include "core/events/EventTarget.h"
 #include "core/frame/UseCounter.h"
 #include "core/html/PublicURLManager.h"
 #include "core/inspector/ConsoleMessage.h"
@@ -56,9 +55,22 @@ ExecutionContext::ExecutionContext()
 
 ExecutionContext::~ExecutionContext() {}
 
+// static
 ExecutionContext* ExecutionContext::From(const ScriptState* script_state) {
   v8::HandleScope scope(script_state->GetIsolate());
   return ToExecutionContext(script_state->GetContext());
+}
+
+// static
+ExecutionContext* ExecutionContext::ForCurrentRealm(
+    const v8::FunctionCallbackInfo<v8::Value>& info) {
+  return ToExecutionContext(info.GetIsolate()->GetCurrentContext());
+}
+
+// static
+ExecutionContext* ExecutionContext::ForRelevantRealm(
+    const v8::FunctionCallbackInfo<v8::Value>& info) {
+  return ToExecutionContext(info.Holder()->CreationContext());
 }
 
 void ExecutionContext::SuspendSuspendableObjects() {
@@ -125,7 +137,7 @@ void ExecutionContext::DispatchErrorEvent(ErrorEvent* error_event,
     return;
   for (ErrorEvent* e : pending_exceptions_)
     ExceptionThrown(e);
-  pending_exceptions_.Clear();
+  pending_exceptions_.clear();
 }
 
 bool ExecutionContext::DispatchErrorEventInternal(
@@ -189,10 +201,9 @@ bool ExecutionContext::IsWindowInteractionAllowed() const {
   return window_interaction_tokens_ > 0;
 }
 
-bool ExecutionContext::IsSecureContext(
-    const SecureContextCheck privilege_context_check) const {
+bool ExecutionContext::IsSecureContext() const {
   String unused_error_message;
-  return IsSecureContext(unused_error_message, privilege_context_check);
+  return IsSecureContext(unused_error_message);
 }
 
 String ExecutionContext::OutgoingReferrer() const {
@@ -216,7 +227,9 @@ void ExecutionContext::ParseAndSetReferrerPolicy(const String& policies,
                  ? "'always', 'default', 'never', 'origin-when-crossorigin', "
                  : "") +
             "'no-referrer', 'no-referrer-when-downgrade', 'origin', "
-            "'origin-when-cross-origin', or 'unsafe-url'. The referrer policy "
+            "'origin-when-cross-origin', 'same-origin', 'strict-origin', "
+            "'strict-origin-when-cross-origin', or 'unsafe-url'. The referrer "
+            "policy "
             "has been left unchanged."));
     return;
   }
@@ -227,9 +240,9 @@ void ExecutionContext::ParseAndSetReferrerPolicy(const String& policies,
 void ExecutionContext::SetReferrerPolicy(ReferrerPolicy referrer_policy) {
   // When a referrer policy has already been set, the latest value takes
   // precedence.
-  UseCounter::Count(this, UseCounter::kSetReferrerPolicy);
+  UseCounter::Count(this, WebFeature::kSetReferrerPolicy);
   if (referrer_policy_ != kReferrerPolicyDefault)
-    UseCounter::Count(this, UseCounter::kResetReferrerPolicy);
+    UseCounter::Count(this, WebFeature::kResetReferrerPolicy);
 
   referrer_policy_ = referrer_policy;
 }

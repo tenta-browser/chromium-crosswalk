@@ -25,8 +25,7 @@ using base::TimeDelta;
 using base::TimeTicks;
 
 static base::TimeTicks TicksFromSecondsF(double seconds) {
-  return base::TimeTicks::FromInternalValue(seconds *
-                                            base::Time::kMicrosecondsPerSecond);
+  return base::TimeTicks() + base::TimeDelta::FromSecondsD(seconds);
 }
 
 // An ElementAnimations cannot be ticked at 0.0, since an animation
@@ -283,7 +282,7 @@ class TestAnimationDelegateThatDestroysPlayer : public TestAnimationDelegate {
   TestAnimationDelegateThatDestroysPlayer() {}
 
   void NotifyAnimationStarted(base::TimeTicks monotonic_time,
-                              TargetProperty::Type target_property,
+                              int target_property,
                               int group) override {
     TestAnimationDelegate::NotifyAnimationStarted(monotonic_time,
                                                   target_property, group);
@@ -687,16 +686,6 @@ static std::unique_ptr<Animation> CreateAnimation(
   return Animation::Create(std::move(curve), 0, group_id, property);
 }
 
-static const AnimationEvent* GetMostRecentPropertyUpdateEvent(
-    const AnimationEvents* events) {
-  const AnimationEvent* event = 0;
-  for (size_t i = 0; i < events->events_.size(); ++i)
-    if (events->events_[i].type == AnimationEvent::PROPERTY_UPDATE)
-      event = &events->events_[i];
-
-  return event;
-}
-
 TEST_F(ElementAnimationsTest, TrivialTransition) {
   CreateTestLayer(true, false);
   AttachTimelinePlayerLayer();
@@ -715,15 +704,11 @@ TEST_F(ElementAnimationsTest, TrivialTransition) {
   player_->UpdateState(true, events.get());
   EXPECT_TRUE(player_->HasTickingAnimation());
   EXPECT_EQ(0.f, client_.GetOpacity(element_id_, ElementListType::ACTIVE));
-  // A non-impl-only animation should not generate property updates.
-  const AnimationEvent* event = GetMostRecentPropertyUpdateEvent(events.get());
-  EXPECT_FALSE(event);
+
   player_->Tick(kInitialTickTime + TimeDelta::FromMilliseconds(1000));
   player_->UpdateState(true, events.get());
   EXPECT_EQ(1.f, client_.GetOpacity(element_id_, ElementListType::ACTIVE));
   EXPECT_FALSE(player_->HasTickingAnimation());
-  event = GetMostRecentPropertyUpdateEvent(events.get());
-  EXPECT_FALSE(event);
 }
 
 TEST_F(ElementAnimationsTest, FilterTransition) {
@@ -753,9 +738,6 @@ TEST_F(ElementAnimationsTest, FilterTransition) {
   EXPECT_TRUE(player_->HasTickingAnimation());
   EXPECT_EQ(start_filters,
             client_.GetFilters(element_id_, ElementListType::ACTIVE));
-  // A non-impl-only animation should not generate property updates.
-  const AnimationEvent* event = GetMostRecentPropertyUpdateEvent(events.get());
-  EXPECT_FALSE(event);
 
   player_->Tick(kInitialTickTime + TimeDelta::FromMilliseconds(500));
   player_->UpdateState(true, events.get());
@@ -763,16 +745,12 @@ TEST_F(ElementAnimationsTest, FilterTransition) {
             client_.GetFilters(element_id_, ElementListType::ACTIVE).size());
   EXPECT_EQ(FilterOperation::CreateBrightnessFilter(1.5f),
             client_.GetFilters(element_id_, ElementListType::ACTIVE).at(0));
-  event = GetMostRecentPropertyUpdateEvent(events.get());
-  EXPECT_FALSE(event);
 
   player_->Tick(kInitialTickTime + TimeDelta::FromMilliseconds(1000));
   player_->UpdateState(true, events.get());
   EXPECT_EQ(end_filters,
             client_.GetFilters(element_id_, ElementListType::ACTIVE));
   EXPECT_FALSE(player_->HasTickingAnimation());
-  event = GetMostRecentPropertyUpdateEvent(events.get());
-  EXPECT_FALSE(event);
 }
 
 TEST_F(ElementAnimationsTest, ScrollOffsetTransition) {
@@ -816,9 +794,6 @@ TEST_F(ElementAnimationsTest, ScrollOffsetTransition) {
   EXPECT_TRUE(player_impl_->HasTickingAnimation());
   EXPECT_EQ(initial_value,
             client_impl_.GetScrollOffset(element_id_, ElementListType::ACTIVE));
-  // Scroll offset animations should not generate property updates.
-  const AnimationEvent* event = GetMostRecentPropertyUpdateEvent(events.get());
-  EXPECT_FALSE(event);
 
   player_->NotifyAnimationStarted(events->events_[0]);
   player_->Tick(kInitialTickTime + duration / 2);
@@ -833,16 +808,12 @@ TEST_F(ElementAnimationsTest, ScrollOffsetTransition) {
   EXPECT_VECTOR2DF_EQ(
       gfx::Vector2dF(200.f, 250.f),
       client_impl_.GetScrollOffset(element_id_, ElementListType::ACTIVE));
-  event = GetMostRecentPropertyUpdateEvent(events.get());
-  EXPECT_FALSE(event);
 
   player_impl_->Tick(kInitialTickTime + duration);
   player_impl_->UpdateState(true, events.get());
   EXPECT_VECTOR2DF_EQ(target_value, client_impl_.GetScrollOffset(
                                         element_id_, ElementListType::ACTIVE));
   EXPECT_FALSE(player_impl_->HasTickingAnimation());
-  event = GetMostRecentPropertyUpdateEvent(events.get());
-  EXPECT_FALSE(event);
 
   player_->Tick(kInitialTickTime + duration);
   player_->UpdateState(true, nullptr);
@@ -877,9 +848,6 @@ TEST_F(ElementAnimationsTest, ScrollOffsetTransitionOnImplOnly) {
   EXPECT_TRUE(player_impl_->HasTickingAnimation());
   EXPECT_EQ(initial_value,
             client_impl_.GetScrollOffset(element_id_, ElementListType::ACTIVE));
-  // Scroll offset animations should not generate property updates.
-  const AnimationEvent* event = GetMostRecentPropertyUpdateEvent(events.get());
-  EXPECT_FALSE(event);
 
   TimeDelta duration = TimeDelta::FromMicroseconds(
       duration_in_seconds * base::Time::kMicrosecondsPerSecond);
@@ -889,16 +857,12 @@ TEST_F(ElementAnimationsTest, ScrollOffsetTransitionOnImplOnly) {
   EXPECT_VECTOR2DF_EQ(
       gfx::Vector2dF(200.f, 250.f),
       client_impl_.GetScrollOffset(element_id_, ElementListType::ACTIVE));
-  event = GetMostRecentPropertyUpdateEvent(events.get());
-  EXPECT_FALSE(event);
 
   player_impl_->Tick(kInitialTickTime + duration);
   player_impl_->UpdateState(true, events.get());
   EXPECT_VECTOR2DF_EQ(target_value, client_impl_.GetScrollOffset(
                                         element_id_, ElementListType::ACTIVE));
   EXPECT_FALSE(player_impl_->HasTickingAnimation());
-  event = GetMostRecentPropertyUpdateEvent(events.get());
-  EXPECT_FALSE(event);
 }
 
 // This test verifies that if an animation is added after a layer is animated,
@@ -1009,10 +973,6 @@ TEST_F(ElementAnimationsTest, ScrollOffsetTransitionNoImplProvider) {
   player_impl_->UpdateState(true, events.get());
   DCHECK_EQ(1UL, events->events_.size());
 
-  // Scroll offset animations should not generate property updates.
-  const AnimationEvent* event = GetMostRecentPropertyUpdateEvent(events.get());
-  EXPECT_FALSE(event);
-
   player_->NotifyAnimationStarted(events->events_[0]);
   player_->Tick(kInitialTickTime + duration / 2);
   player_->UpdateState(true, nullptr);
@@ -1026,16 +986,12 @@ TEST_F(ElementAnimationsTest, ScrollOffsetTransitionNoImplProvider) {
   EXPECT_VECTOR2DF_EQ(
       gfx::Vector2dF(400.f, 150.f),
       client_impl_.GetScrollOffset(element_id_, ElementListType::PENDING));
-  event = GetMostRecentPropertyUpdateEvent(events.get());
-  EXPECT_FALSE(event);
 
   player_impl_->Tick(kInitialTickTime + duration);
   player_impl_->UpdateState(true, events.get());
   EXPECT_VECTOR2DF_EQ(target_value, client_impl_.GetScrollOffset(
                                         element_id_, ElementListType::PENDING));
   EXPECT_FALSE(player_impl_->HasTickingAnimation());
-  event = GetMostRecentPropertyUpdateEvent(events.get());
-  EXPECT_FALSE(event);
 
   player_->Tick(kInitialTickTime + duration);
   player_->UpdateState(true, nullptr);
@@ -2006,7 +1962,7 @@ TEST_F(ElementAnimationsTest, ImplThreadTakeoverAnimationGetsDeleted) {
   EXPECT_TRUE(host_impl_->needs_push_properties());
   EXPECT_EQ(1u, events->events_.size());
   EXPECT_EQ(AnimationEvent::TAKEOVER, events->events_[0].type);
-  EXPECT_EQ(123, events->events_[0].animation_start_time);
+  EXPECT_EQ(TicksFromSecondsF(123), events->events_[0].animation_start_time);
   EXPECT_EQ(
       target_value,
       events->events_[0].curve->ToScrollOffsetAnimationCurve()->target_value());
@@ -2696,10 +2652,11 @@ TEST_F(ElementAnimationsTest, ObserverNotifiedWhenTransformAnimationChanges) {
 
   PushProperties();
 
-  // animations_impl hasn't yet ticked at/past the end of the animation.
-  EXPECT_TRUE(client_impl_.GetHasPotentialTransformAnimation(
+  // Finished animations are pushed, but animations_impl hasn't yet ticked
+  // at/past the end of the animation.
+  EXPECT_FALSE(client_impl_.GetHasPotentialTransformAnimation(
       element_id_, ElementListType::PENDING));
-  EXPECT_TRUE(client_impl_.GetTransformIsCurrentlyAnimating(
+  EXPECT_FALSE(client_impl_.GetTransformIsCurrentlyAnimating(
       element_id_, ElementListType::PENDING));
   EXPECT_TRUE(client_impl_.GetHasPotentialTransformAnimation(
       element_id_, ElementListType::ACTIVE));
@@ -2913,10 +2870,11 @@ TEST_F(ElementAnimationsTest, ObserverNotifiedWhenOpacityAnimationChanges) {
 
   PushProperties();
 
-  // animations_impl hasn't yet ticked at/past the end of the animation.
-  EXPECT_TRUE(client_impl_.GetHasPotentialOpacityAnimation(
+  // Finished animations are pushed, but animations_impl hasn't yet ticked
+  // at/past the end of the animation.
+  EXPECT_FALSE(client_impl_.GetHasPotentialOpacityAnimation(
       element_id_, ElementListType::PENDING));
-  EXPECT_TRUE(client_impl_.GetOpacityIsCurrentlyAnimating(
+  EXPECT_FALSE(client_impl_.GetOpacityIsCurrentlyAnimating(
       element_id_, ElementListType::PENDING));
   EXPECT_TRUE(client_impl_.GetHasPotentialOpacityAnimation(
       element_id_, ElementListType::ACTIVE));
@@ -3123,10 +3081,11 @@ TEST_F(ElementAnimationsTest, ObserverNotifiedWhenFilterAnimationChanges) {
 
   PushProperties();
 
-  // animations_impl hasn't yet ticked at/past the end of the animation.
-  EXPECT_TRUE(client_impl_.GetHasPotentialFilterAnimation(
+  // Finished animations are pushed, but animations_impl hasn't yet ticked
+  // at/past the end of the animation.
+  EXPECT_FALSE(client_impl_.GetHasPotentialFilterAnimation(
       element_id_, ElementListType::PENDING));
-  EXPECT_TRUE(client_impl_.GetFilterIsCurrentlyAnimating(
+  EXPECT_FALSE(client_impl_.GetFilterIsCurrentlyAnimating(
       element_id_, ElementListType::PENDING));
   EXPECT_TRUE(client_impl_.GetHasPotentialFilterAnimation(
       element_id_, ElementListType::ACTIVE));
@@ -3304,7 +3263,6 @@ TEST_F(ElementAnimationsTest, PushedDeletedAnimationWaitsForActivation) {
 
   const int animation_id =
       AddOpacityTransitionToPlayer(player_.get(), 1, 0.5f, 1.f, true);
-
   PushProperties();
   player_impl_->ActivateAnimations();
   player_impl_->Tick(kInitialTickTime);
@@ -3342,8 +3300,20 @@ TEST_F(ElementAnimationsTest, PushedDeletedAnimationWaitsForActivation) {
             client_impl_.GetOpacity(element_id_, ElementListType::ACTIVE));
 
   player_impl_->ActivateAnimations();
+  events = CreateEventsForTesting();
+  player_impl_->UpdateState(true, events.get());
 
-  // Activation should cause the animation to be deleted.
+  // After Activation the animation doesn't affect neither active nor pending
+  // thread. UpdateState for this animation would put the animation to wait for
+  // deletion state.
+  EXPECT_EQ(Animation::WAITING_FOR_DELETION,
+            player_impl_->GetAnimationById(animation_id)->run_state());
+  EXPECT_EQ(1u, events->events_.size());
+
+  // The animation is finished on impl thread, and main thread will delete it
+  // during commit.
+  player_->animation_host()->SetAnimationEvents(std::move(events));
+  PushProperties();
   EXPECT_FALSE(player_impl_->has_any_animation());
 }
 
@@ -3402,9 +3372,12 @@ TEST_F(ElementAnimationsTest, StartAnimationsAffectingDifferentObservers) {
 
   player_impl_->ActivateAnimations();
 
-  // The original animation should have been deleted, and the new animation
-  // should now affect both elements.
-  EXPECT_FALSE(player_impl_->GetAnimationById(first_animation_id));
+  // The original animation no longer affect either elements, and the new
+  // animation should now affect both elements.
+  EXPECT_FALSE(player_impl_->GetAnimationById(first_animation_id)
+                   ->affects_pending_elements());
+  EXPECT_FALSE(player_impl_->GetAnimationById(first_animation_id)
+                   ->affects_active_elements());
   EXPECT_TRUE(player_impl_->GetAnimationById(second_animation_id)
                   ->affects_pending_elements());
   EXPECT_TRUE(player_impl_->GetAnimationById(second_animation_id)
@@ -3412,6 +3385,10 @@ TEST_F(ElementAnimationsTest, StartAnimationsAffectingDifferentObservers) {
 
   player_impl_->Tick(kInitialTickTime + TimeDelta::FromMilliseconds(1000));
   player_impl_->UpdateState(true, events.get());
+
+  // The original animation should be marked for waiting for deletion.
+  EXPECT_EQ(Animation::WAITING_FOR_DELETION,
+            player_impl_->GetAnimationById(first_animation_id)->run_state());
 
   // The new animation should be running, and the active observer should have
   // been ticked at the new animation's starting point.

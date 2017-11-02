@@ -16,6 +16,7 @@
 #include "components/strings/grit/components_strings.h"
 #import "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/infobars/infobar.h"
+#include "ios/chrome/browser/infobars/infobar_manager_impl.h"
 #include "ios/chrome/browser/signin/authentication_service.h"
 #include "ios/chrome/browser/signin/authentication_service_factory.h"
 #include "ios/chrome/browser/tabs/tab.h"
@@ -24,10 +25,16 @@
 #include "ios/chrome/grit/ios_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 // static
 bool ReSignInInfoBarDelegate::Create(ios::ChromeBrowserState* browser_state,
                                      Tab* tab) {
-  infobars::InfoBarManager* infobar_manager = [tab infoBarManager];
+  DCHECK(tab.webState);
+  infobars::InfoBarManager* infobar_manager =
+      InfoBarManagerImpl::FromWebState(tab.webState);
   DCHECK(infobar_manager);
 
   std::unique_ptr<infobars::InfoBar> infobar =
@@ -112,10 +119,10 @@ bool ReSignInInfoBarDelegate::Accept() {
       base::UserMetricsAction("Signin_Signin_FromReSigninInfobar"));
   UIView* infobarView = static_cast<InfoBarIOS*>(infobar())->view();
   DCHECK(infobarView);
-  base::scoped_nsobject<ShowSigninCommand> command([[ShowSigninCommand alloc]
+  ShowSigninCommand* command = [[ShowSigninCommand alloc]
       initWithOperation:AUTHENTICATION_OPERATION_REAUTHENTICATE
-      signInAccessPoint:signin_metrics::AccessPoint::
-                            ACCESS_POINT_RESIGNIN_INFOBAR]);
+            accessPoint:signin_metrics::AccessPoint::
+                            ACCESS_POINT_RESIGNIN_INFOBAR];
   [infobarView chromeExecuteCommand:command];
 
   // Stop displaying the infobar once user interacted with it.

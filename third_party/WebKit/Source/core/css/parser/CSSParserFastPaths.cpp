@@ -4,6 +4,7 @@
 
 #include "core/css/parser/CSSParserFastPaths.h"
 
+#include "build/build_config.h"
 #include "core/StylePropertyShorthand.h"
 #include "core/css/CSSColorValue.h"
 #include "core/css/CSSFunctionValue.h"
@@ -14,6 +15,7 @@
 #include "core/css/StyleColor.h"
 #include "core/css/parser/CSSParserIdioms.h"
 #include "core/css/parser/CSSPropertyParser.h"
+#include "core/css/properties/CSSPropertyAPI.h"
 #include "core/html/parser/HTMLParserIdioms.h"
 #include "platform/RuntimeEnabledFeatures.h"
 #include "platform/wtf/text/StringToNumber.h"
@@ -40,6 +42,22 @@ static inline bool IsSimpleLengthPropertyID(CSSPropertyID property_id,
     case CSSPropertyPaddingLeft:
     case CSSPropertyPaddingRight:
     case CSSPropertyPaddingTop:
+    case CSSPropertyScrollPaddingTop:
+    case CSSPropertyScrollPaddingRight:
+    case CSSPropertyScrollPaddingBottom:
+    case CSSPropertyScrollPaddingLeft:
+    case CSSPropertyScrollPaddingBlockStart:
+    case CSSPropertyScrollPaddingBlockEnd:
+    case CSSPropertyScrollPaddingInlineStart:
+    case CSSPropertyScrollPaddingInlineEnd:
+    case CSSPropertyScrollSnapMarginTop:
+    case CSSPropertyScrollSnapMarginRight:
+    case CSSPropertyScrollSnapMarginBottom:
+    case CSSPropertyScrollSnapMarginLeft:
+    case CSSPropertyScrollSnapMarginBlockStart:
+    case CSSPropertyScrollSnapMarginBlockEnd:
+    case CSSPropertyScrollSnapMarginInlineStart:
+    case CSSPropertyScrollSnapMarginInlineEnd:
     case CSSPropertyWebkitLogicalWidth:
     case CSSPropertyWebkitLogicalHeight:
     case CSSPropertyWebkitMinLogicalWidth:
@@ -536,8 +554,7 @@ bool CSSParserFastPaths::IsValidKeywordPropertyAndValue(
       return value_id == CSSValueAuto || value_id == CSSValueDynamic ||
              value_id == CSSValueStatic;
     case CSSPropertyCaptionSide:
-      return value_id == CSSValueLeft || value_id == CSSValueRight ||
-             value_id == CSSValueTop || value_id == CSSValueBottom;
+      return value_id == CSSValueTop || value_id == CSSValueBottom;
     case CSSPropertyClear:
       return value_id == CSSValueNone || value_id == CSSValueLeft ||
              value_id == CSSValueRight || value_id == CSSValueBoth;
@@ -557,9 +574,9 @@ bool CSSParserFastPaths::IsValidKeywordPropertyAndValue(
       return (value_id >= CSSValueInline && value_id <= CSSValueInlineFlex) ||
              value_id == CSSValueWebkitFlex ||
              value_id == CSSValueWebkitInlineFlex || value_id == CSSValueNone ||
-             (RuntimeEnabledFeatures::cssGridLayoutEnabled() &&
+             (RuntimeEnabledFeatures::CSSGridLayoutEnabled() &&
               (value_id == CSSValueGrid || value_id == CSSValueInlineGrid)) ||
-             (RuntimeEnabledFeatures::cssDisplayContentsEnabled() &&
+             (RuntimeEnabledFeatures::CSSDisplayContentsEnabled() &&
               value_id == CSSValueContents);
     case CSSPropertyDominantBaseline:
       return value_id == CSSValueAuto || value_id == CSSValueAlphabetic ||
@@ -571,13 +588,6 @@ bool CSSParserFastPaths::IsValidKeywordPropertyAndValue(
     case CSSPropertyFloat:
       return value_id == CSSValueLeft || value_id == CSSValueRight ||
              value_id == CSSValueNone;
-    case CSSPropertyFontStyle:
-      return value_id == CSSValueNormal || value_id == CSSValueItalic ||
-             value_id == CSSValueOblique;
-    case CSSPropertyFontStretch:
-      return value_id == CSSValueNormal ||
-             (value_id >= CSSValueUltraCondensed &&
-              value_id <= CSSValueUltraExpanded);
     case CSSPropertyImageRendering:
       return value_id == CSSValueAuto ||
              value_id == CSSValueWebkitOptimizeContrast ||
@@ -631,14 +641,14 @@ bool CSSParserFastPaths::IsValidKeywordPropertyAndValue(
     case CSSPropertyPosition:
       return value_id == CSSValueStatic || value_id == CSSValueRelative ||
              value_id == CSSValueAbsolute || value_id == CSSValueFixed ||
-             (RuntimeEnabledFeatures::cssStickyPositionEnabled() &&
+             (RuntimeEnabledFeatures::CSSStickyPositionEnabled() &&
               value_id == CSSValueSticky);
     case CSSPropertyResize:
       return value_id == CSSValueNone || value_id == CSSValueBoth ||
              value_id == CSSValueHorizontal || value_id == CSSValueVertical ||
              value_id == CSSValueAuto;
     case CSSPropertyScrollBehavior:
-      DCHECK(RuntimeEnabledFeatures::cssomSmoothScrollEnabled());
+      DCHECK(RuntimeEnabledFeatures::CSSOMSmoothScrollEnabled());
       return value_id == CSSValueAuto || value_id == CSSValueSmooth;
     case CSSPropertyShapeRendering:
       return value_id == CSSValueAuto || value_id == CSSValueOptimizeSpeed ||
@@ -671,12 +681,12 @@ bool CSSParserFastPaths::IsValidKeywordPropertyAndValue(
     case CSSPropertyTextCombineUpright:
       return value_id == CSSValueNone || value_id == CSSValueAll;
     case CSSPropertyTextDecorationStyle:
-      DCHECK(RuntimeEnabledFeatures::css3TextDecorationsEnabled());
+      DCHECK(RuntimeEnabledFeatures::CSS3TextDecorationsEnabled());
       return value_id == CSSValueSolid || value_id == CSSValueDouble ||
              value_id == CSSValueDotted || value_id == CSSValueDashed ||
              value_id == CSSValueWavy;
     case CSSPropertyTextJustify:
-      DCHECK(RuntimeEnabledFeatures::css3TextEnabled());
+      DCHECK(RuntimeEnabledFeatures::CSS3TextEnabled());
       return value_id == CSSValueInterWord || value_id == CSSValueDistribute ||
              value_id == CSSValueAuto || value_id == CSSValueNone;
     case CSSPropertyTextOrientation:
@@ -770,7 +780,7 @@ bool CSSParserFastPaths::IsValidKeywordPropertyAndValue(
       return value_id == CSSValueNowrap || value_id == CSSValueWrap ||
              value_id == CSSValueWrapReverse;
     case CSSPropertyHyphens:
-#if OS(ANDROID) || OS(MACOSX)
+#if defined(OS_ANDROID) || defined(OS_MACOSX)
       return value_id == CSSValueAuto || value_id == CSSValueNone ||
              value_id == CSSValueManual;
 #else
@@ -790,6 +800,9 @@ bool CSSParserFastPaths::IsValidKeywordPropertyAndValue(
       return value_id == CSSValueAuto || value_id == CSSValueNone ||
              value_id == CSSValueAntialiased ||
              value_id == CSSValueSubpixelAntialiased;
+    case CSSPropertyLineBreak:
+      return value_id == CSSValueAuto || value_id == CSSValueLoose ||
+             value_id == CSSValueNormal || value_id == CSSValueStrict;
     case CSSPropertyWebkitLineBreak:
       return value_id == CSSValueAuto || value_id == CSSValueLoose ||
              value_id == CSSValueNormal || value_id == CSSValueStrict ||
@@ -808,8 +821,6 @@ bool CSSParserFastPaths::IsValidKeywordPropertyAndValue(
       return value_id == CSSValueBefore || value_id == CSSValueAfter;
     case CSSPropertyWebkitTextCombine:
       return value_id == CSSValueNone || value_id == CSSValueHorizontal;
-    case CSSPropertyWebkitTextEmphasisPosition:
-      return value_id == CSSValueOver || value_id == CSSValueUnder;
     case CSSPropertyWebkitTextSecurity:
       return value_id == CSSValueDisc || value_id == CSSValueCircle ||
              value_id == CSSValueSquare || value_id == CSSValueNone;
@@ -842,10 +853,15 @@ bool CSSParserFastPaths::IsValidKeywordPropertyAndValue(
     case CSSPropertyWordBreak:
       return value_id == CSSValueNormal || value_id == CSSValueBreakAll ||
              value_id == CSSValueKeepAll || value_id == CSSValueBreakWord;
-    case CSSPropertyScrollSnapType:
-      DCHECK(RuntimeEnabledFeatures::cssScrollSnapPointsEnabled());
-      return value_id == CSSValueNone || value_id == CSSValueMandatory ||
-             value_id == CSSValueProximity;
+    case CSSPropertyScrollSnapStop:
+      DCHECK(RuntimeEnabledFeatures::CSSScrollSnapPointsEnabled());
+      return value_id == CSSValueNormal || value_id == CSSValueAlways;
+    case CSSPropertyScrollBoundaryBehaviorX:
+      return value_id == CSSValueAuto || value_id == CSSValueContain ||
+             value_id == CSSValueNone;
+    case CSSPropertyScrollBoundaryBehaviorY:
+      return value_id == CSSValueAuto || value_id == CSSValueContain ||
+             value_id == CSSValueNone;
     default:
       NOTREACHED();
       return false;
@@ -879,8 +895,6 @@ bool CSSParserFastPaths::IsKeywordPropertyID(CSSPropertyID property_id) {
     case CSSPropertyEmptyCells:
     case CSSPropertyFillRule:
     case CSSPropertyFloat:
-    case CSSPropertyFontStyle:
-    case CSSPropertyFontStretch:
     case CSSPropertyHyphens:
     case CSSPropertyImageRendering:
     case CSSPropertyListStylePosition:
@@ -899,6 +913,8 @@ bool CSSParserFastPaths::IsKeywordPropertyID(CSSPropertyID property_id) {
     case CSSPropertyPosition:
     case CSSPropertyResize:
     case CSSPropertyScrollBehavior:
+    case CSSPropertyScrollBoundaryBehaviorX:
+    case CSSPropertyScrollBoundaryBehaviorY:
     case CSSPropertyShapeRendering:
     case CSSPropertySpeak:
     case CSSPropertyStrokeLinecap:
@@ -937,6 +953,7 @@ bool CSSParserFastPaths::IsKeywordPropertyID(CSSPropertyID property_id) {
     case CSSPropertyFlexWrap:
     case CSSPropertyFontKerning:
     case CSSPropertyWebkitFontSmoothing:
+    case CSSPropertyLineBreak:
     case CSSPropertyWebkitLineBreak:
     case CSSPropertyWebkitMarginAfterCollapse:
     case CSSPropertyWebkitMarginBeforeCollapse:
@@ -946,7 +963,6 @@ bool CSSParserFastPaths::IsKeywordPropertyID(CSSPropertyID property_id) {
     case CSSPropertyWebkitRtlOrdering:
     case CSSPropertyWebkitRubyPosition:
     case CSSPropertyWebkitTextCombine:
-    case CSSPropertyWebkitTextEmphasisPosition:
     case CSSPropertyWebkitTextSecurity:
     case CSSPropertyTransformBox:
     case CSSPropertyTransformStyle:
@@ -958,13 +974,13 @@ bool CSSParserFastPaths::IsKeywordPropertyID(CSSPropertyID property_id) {
     case CSSPropertyWordBreak:
     case CSSPropertyWordWrap:
     case CSSPropertyWritingMode:
-    case CSSPropertyScrollSnapType:
+    case CSSPropertyScrollSnapStop:
       return true;
     case CSSPropertyJustifyContent:
     case CSSPropertyAlignContent:
     case CSSPropertyAlignItems:
     case CSSPropertyAlignSelf:
-      return !RuntimeEnabledFeatures::cssGridLayoutEnabled();
+      return !RuntimeEnabledFeatures::CSSGridLayoutEnabled();
     default:
       return false;
   }
@@ -986,7 +1002,7 @@ static CSSValue* ParseKeywordValue(CSSPropertyID property_id,
       return nullptr;
 
     // Descriptors do not support css wide keywords.
-    if (!CSSPropertyMetadata::IsProperty(property_id))
+    if (!CSSPropertyAPI::Get(property_id).IsProperty())
       return nullptr;
   }
 

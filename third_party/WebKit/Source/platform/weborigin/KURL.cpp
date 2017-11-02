@@ -105,7 +105,7 @@ class KURLCharsetConverter final : public url::CharsetConverter {
                         url::CanonOutput* output) override {
     CString encoded = encoding_->Encode(
         String(input, input_length), WTF::kURLEncodedEntitiesForUnencodables);
-    output->Append(encoded.Data(), static_cast<int>(encoded.length()));
+    output->Append(encoded.data(), static_cast<int>(encoded.length()));
   }
 
  private:
@@ -191,6 +191,11 @@ bool KURL::IsAboutSrcdocURL() const {
   return *this == SrcdocURL();
 }
 
+const KURL& NullURL() {
+  DEFINE_THREAD_SAFE_STATIC_LOCAL(KURL, static_null_url, ());
+  return static_null_url;
+}
+
 String KURL::ElidedString() const {
   if (GetString().length() <= 1024)
     return GetString();
@@ -207,7 +212,7 @@ KURL::KURL() : is_valid_(false), protocol_is_in_http_family_(false) {}
 // UTF-8 just in case.
 KURL::KURL(ParsedURLStringTag, const String& url) {
   if (!url.IsNull())
-    Init(KURL(), url, 0);
+    Init(NullURL(), url, 0);
   else {
     // WebCore expects us to preserve the nullness of strings when this
     // constructor is used. In all other cases, it expects a non-null
@@ -428,7 +433,7 @@ String KURL::GetPath() const {
 
 bool KURL::SetProtocol(const String& protocol) {
   // Firefox and IE remove everything after the first ':'.
-  int separator_position = protocol.Find(':');
+  int separator_position = protocol.find(':');
   String new_protocol = protocol.Substring(0, separator_position);
   StringUTF8Adaptor new_protocol_utf8(new_protocol);
 
@@ -484,7 +489,7 @@ static String ParsePortFromStringPosition(const String& value,
 }
 
 void KURL::SetHostAndPort(const String& host_and_port) {
-  size_t separator = host_and_port.Find(':');
+  size_t separator = host_and_port.find(':');
   if (!separator)
     return;
 
@@ -649,7 +654,7 @@ String EncodeWithURLEscapeSequences(const String& not_encoded_string) {
   if (buffer.capacity() < input_length * 3)
     buffer.Resize(input_length * 3);
 
-  url::EncodeURIComponent(utf8.Data(), input_length, &buffer);
+  url::EncodeURIComponent(utf8.data(), input_length, &buffer);
   String escaped(buffer.data(), buffer.length());
   // Unescape '/'; it's safe and much prettier.
   escaped.Replace("%2F", "/");
@@ -833,7 +838,7 @@ bool KURL::ProtocolIs(const StringView protocol) const {
   // they are invalid.  The free function protocolIsJavaScript() should be used
   // instead.
   // FIXME: Chromium code needs to be fixed for this assert to be enabled.
-  // ASSERT(strcmp(protocol, "javascript"));
+  // DCHECK(strcmp(protocol, "javascript"));
   return protocol_ == protocol;
 }
 

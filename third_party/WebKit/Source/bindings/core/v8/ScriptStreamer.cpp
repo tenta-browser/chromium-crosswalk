@@ -18,10 +18,10 @@
 #include "platform/SharedBuffer.h"
 #include "platform/instrumentation/tracing/TraceEvent.h"
 #include "platform/loader/fetch/CachedMetadata.h"
+#include "platform/scheduler/child/web_scheduler.h"
 #include "platform/wtf/Deque.h"
 #include "platform/wtf/PtrUtil.h"
 #include "platform/wtf/text/TextEncodingRegistry.h"
-#include "public/platform/WebScheduler.h"
 
 namespace blink {
 
@@ -67,6 +67,7 @@ enum NotStreamingReason {
   kThreadBusy,
   kV8CannotStream,
   kScriptTooSmall,
+  kNoResourceBuffer,
   kNotStreamingReasonEnd
 };
 
@@ -140,7 +141,9 @@ class SourceStreamDataQueue {
 
  private:
   bool TryGetData(const uint8_t** data, size_t* length) {
-    ASSERT(mutex_.Locked());
+#if DCHECK_IS_ON()
+    DCHECK(mutex_.Locked());
+#endif
     if (!data_.IsEmpty()) {
       std::pair<const uint8_t*, size_t> next_data = data_.TakeFirst();
       *data = next_data.first;
@@ -175,13 +178,12 @@ class SourceStream : public v8::ScriptCompiler::ExternalSourceStream {
   WTF_MAKE_NONCOPYABLE(SourceStream);
 
  public:
-  explicit SourceStream(RefPtr<WebTaskRunner> loading_task_runner)
+  SourceStream()
       : v8::ScriptCompiler::ExternalSourceStream(),
         cancelled_(false),
         finished_(false),
         queue_lead_position_(0),
-        queue_tail_position_(0),
-        loading_task_runner_(std::move(loading_task_runner)) {}
+        queue_tail_position_(0) {}
 
   virtual ~SourceStream() override {}
 
@@ -319,8 +321,6 @@ class SourceStream : public v8::ScriptCompiler::ExternalSourceStream {
   SourceStreamDataQueue data_queue_;  // Thread safe.
   size_t queue_lead_position_;        // Only used by v8 thread.
   size_t queue_tail_position_;  // Used by both threads; guarded by m_mutex.
-
-  RefPtr<WebTaskRunner> loading_task_runner_;
 };
 
 size_t ScriptStreamer::small_script_threshold_ = 30 * 1024;
@@ -338,6 +338,57 @@ void ScriptStreamer::StartStreaming(PendingScript* script,
                              std::move(loading_task_runner));
   if (!started_streaming)
     RecordStartedStreamingHistogram(script_type, 0);
+}
+
+void ScriptStreamer::StartStreamingLoadedScript(
+    ClassicPendingScript* script,
+    Type script_type,
+    Settings* settings,
+    ScriptState* script_state,
+    RefPtr<WebTaskRunner> loading_task_runner) {
+  DCHECK(IsMainThread());
+  DCHECK(script_state->ContextIsValid());
+
+  ScriptResource* resource = script->GetResource();
+  if (!resource->Url().ProtocolIsInHTTPFamily()) {
+    RecordNotStreamingReasonHistogram(script_type, kNotHTTP);
+    return;
+  }
+  if (resource->IsCacheValidator()) {
+    RecordNotStreamingReasonHistogram(script_type, kReload);
+    // This happens e.g., during reloads. We're actually not going to load
+    // the current Resource of the ClassicPendingScript but switch to another
+    // Resource -> don't stream.
+    return;
+  }
+  if (!resource->ResourceBuffer()) {
+    // This happens for already loaded resources, e.g. if resource
+    // validation fails. In that case, the loading subsystem will discard
+    // the resource buffer.
+    RecordNotStreamingReasonHistogram(script_type, kNoResourceBuffer);
+    return;
+  }
+
+  // Decide what kind of cached data we should produce while streaming. Only
+  // produce parser cache if the non-streaming compile takes advantage of it.
+  v8::ScriptCompiler::CompileOptions compile_option =
+      v8::ScriptCompiler::kNoCompileOptions;
+  if (settings->GetV8CacheOptions() == kV8CacheOptionsParse)
+    compile_option = v8::ScriptCompiler::kProduceParserCache;
+
+  ScriptStreamer* streamer =
+      ScriptStreamer::Create(script, script_type, script_state, compile_option,
+                             std::move(loading_task_runner));
+
+  // Since the script has already loaded, we will not receive any
+  // notificatations for incoming data. So we will just emulate those right
+  // here.
+  DCHECK(resource->IsLoaded());
+  streamer->NotifyAppendData(resource);
+  if (!streamer->StreamingSuppressed()) {
+    script->SetStreamer(streamer);
+    streamer->NotifyFinished(resource);
+  }
 }
 
 bool ScriptStreamer::ConvertEncoding(
@@ -365,6 +416,11 @@ bool ScriptStreamer::ConvertEncoding(
 bool ScriptStreamer::IsFinished() const {
   DCHECK(IsMainThread());
   return loading_finished_ && (parsing_finished_ || streaming_suppressed_);
+}
+
+bool ScriptStreamer::IsStreamingFinished() const {
+  DCHECK(IsMainThread());
+  return parsing_finished_ || streaming_suppressed_;
 }
 
 void ScriptStreamer::StreamingCompleteOnBackgroundThread() {
@@ -421,14 +477,16 @@ void ScriptStreamer::NotifyAppendData(ScriptResource* resource) {
       // understanding of the data encoding.
       constexpr size_t kMaximumLengthOfBOM = 4;
       char maybe_bom[kMaximumLengthOfBOM] = {};
-      if (!resource->ResourceBuffer()->GetPartAsBytes(
-              maybe_bom, static_cast<size_t>(0), kMaximumLengthOfBOM)) {
+      if (!resource->ResourceBuffer()->GetBytes(maybe_bom,
+                                                kMaximumLengthOfBOM)) {
         NOTREACHED();
         return;
       }
 
-      std::unique_ptr<TextResourceDecoder> decoder(TextResourceDecoder::Create(
-          "application/javascript", resource->Encoding()));
+      std::unique_ptr<TextResourceDecoder> decoder(
+          TextResourceDecoder::Create(TextResourceDecoderOptions(
+              TextResourceDecoderOptions::kPlainTextContent,
+              WTF::TextEncoding(resource->Encoding()))));
       decoder->CheckForBOM(maybe_bom, kMaximumLengthOfBOM);
 
       // The encoding may change when we see the BOM. Check for BOM now
@@ -465,7 +523,7 @@ void ScriptStreamer::NotifyAppendData(ScriptResource* resource) {
 
     DCHECK(!stream_);
     DCHECK(!source_);
-    stream_ = new SourceStream(loading_task_runner_.Get());
+    stream_ = new SourceStream;
     // m_source takes ownership of m_stream.
     source_ = WTF::WrapUnique(
         new v8::ScriptCompiler::StreamedSource(stream_, encoding_));

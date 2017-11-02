@@ -16,10 +16,9 @@ WebGLVertexArrayObjectBase::WebGLVertexArrayObjectBase(
       object_(0),
       type_(type),
       has_ever_been_bound_(false),
-      bound_element_array_buffer_(this, nullptr),
       is_all_enabled_attrib_buffer_bound_(true) {
-  array_buffer_list_.Resize(ctx->MaxVertexAttribs());
-  attrib_enabled_.Resize(ctx->MaxVertexAttribs());
+  array_buffer_list_.resize(ctx->MaxVertexAttribs());
+  attrib_enabled_.resize(ctx->MaxVertexAttribs());
   for (size_t i = 0; i < attrib_enabled_.size(); ++i) {
     attrib_enabled_[i] = false;
   }
@@ -87,7 +86,7 @@ void WebGLVertexArrayObjectBase::SetArrayBufferForAttrib(GLuint index,
   if (array_buffer_list_[index])
     array_buffer_list_[index]->OnDetached(Context()->ContextGL());
 
-  array_buffer_list_[index] = TraceWrapperMember<WebGLBuffer>(this, buffer);
+  array_buffer_list_[index] = buffer;
   UpdateAttribBufferBoundStatus();
 }
 

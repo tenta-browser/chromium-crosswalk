@@ -85,6 +85,8 @@ public class AwSettings {
     private boolean mSpatialNavigationEnabled;  // Default depends on device features.
     private boolean mEnableSupportedHardwareAcceleratedFeatures;
     private int mMixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW;
+    private boolean mCSSHexAlphaColorEnabled = false;
+    private boolean mScrollTopLeftInteropEnabled = false;
 
     private boolean mOffscreenPreRaster;
     private int mDisabledMenuItems = WebSettings.MENU_ITEM_NONE;
@@ -92,7 +94,7 @@ public class AwSettings {
     // Although this bit is stored on AwSettings it is actually controlled via the CookieManager.
     private boolean mAcceptThirdPartyCookies;
 
-    // if null, default to AwContentsStatics.getSafeBrowsingEnabled()
+    // if null, default to AwContentsStatics.getSafeBrowsingEnabledByManifest()
     private Boolean mSafeBrowsingEnabled;
 
     private final boolean mSupportLegacyQuirks;
@@ -195,12 +197,7 @@ public class AwSettings {
         }
 
         void updateWebkitPreferencesLocked() {
-            runOnUiThreadBlockingAndLocked(new Runnable() {
-                @Override
-                public void run() {
-                    updateWebkitPreferencesOnUiThreadLocked();
-                }
-            });
+            runOnUiThreadBlockingAndLocked(() -> updateWebkitPreferencesOnUiThreadLocked());
         }
     }
 
@@ -357,8 +354,14 @@ public class AwSettings {
      */
     public boolean getSafeBrowsingEnabled() {
         synchronized (mAwSettingsLock) {
+            Boolean userOptIn = AwSafeBrowsingConfigHelper.getSafeBrowsingUserOptIn();
+
+            // If we don't know yet what the user's preference is, we go through Safe Browsing logic
+            // anyway and correct the assumption before sending data to GMS.
+            if (userOptIn != null && !userOptIn) return false;
+
             if (mSafeBrowsingEnabled == null) {
-                return AwContentsStatics.getSafeBrowsingEnabled();
+                return AwContentsStatics.getSafeBrowsingEnabledByManifest();
             }
             return mSafeBrowsingEnabled;
         }
@@ -439,12 +442,9 @@ public class AwSettings {
         synchronized (mAwSettingsLock) {
             if (mInitialPageScalePercent != scaleInPercent) {
                 mInitialPageScalePercent = scaleInPercent;
-                mEventHandler.runOnUiThreadBlockingAndLocked(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (mNativeAwSettings != 0) {
-                            nativeUpdateInitialPageScaleLocked(mNativeAwSettings);
-                        }
+                mEventHandler.runOnUiThreadBlockingAndLocked(() -> {
+                    if (mNativeAwSettings != 0) {
+                        nativeUpdateInitialPageScaleLocked(mNativeAwSettings);
                     }
                 });
             }
@@ -538,12 +538,9 @@ public class AwSettings {
         synchronized (mAwSettingsLock) {
             if (mAutoCompleteEnabled != enable) {
                 mAutoCompleteEnabled = enable;
-                mEventHandler.runOnUiThreadBlockingAndLocked(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (mNativeAwSettings != 0) {
-                            nativeUpdateFormDataPreferencesLocked(mNativeAwSettings);
-                        }
+                mEventHandler.runOnUiThreadBlockingAndLocked(() -> {
+                    if (mNativeAwSettings != 0) {
+                        nativeUpdateFormDataPreferencesLocked(mNativeAwSettings);
                     }
                 });
             }
@@ -595,12 +592,9 @@ public class AwSettings {
                 mUserAgent = ua;
             }
             if (!oldUserAgent.equals(mUserAgent)) {
-                mEventHandler.runOnUiThreadBlockingAndLocked(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (mNativeAwSettings != 0) {
-                            nativeUpdateUserAgentLocked(mNativeAwSettings);
-                        }
+                mEventHandler.runOnUiThreadBlockingAndLocked(() -> {
+                    if (mNativeAwSettings != 0) {
+                        nativeUpdateUserAgentLocked(mNativeAwSettings);
                     }
                 });
             }
@@ -630,13 +624,10 @@ public class AwSettings {
         synchronized (mAwSettingsLock) {
             if (mLoadWithOverviewMode != overview) {
                 mLoadWithOverviewMode = overview;
-                mEventHandler.runOnUiThreadBlockingAndLocked(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (mNativeAwSettings != 0) {
-                            updateWebkitPreferencesOnUiThreadLocked();
-                            nativeResetScrollAndScaleState(mNativeAwSettings);
-                        }
+                mEventHandler.runOnUiThreadBlockingAndLocked(() -> {
+                    if (mNativeAwSettings != 0) {
+                        updateWebkitPreferencesOnUiThreadLocked();
+                        nativeResetScrollAndScaleState(mNativeAwSettings);
                     }
                 });
             }
@@ -1262,6 +1253,36 @@ public class AwSettings {
     }
 
     @CalledByNative
+    private boolean getCSSHexAlphaColorEnabledLocked() {
+        assert Thread.holdsLock(mAwSettingsLock);
+        return mCSSHexAlphaColorEnabled;
+    }
+
+    public void setCSSHexAlphaColorEnabled(boolean enabled) {
+        synchronized (mAwSettingsLock) {
+            if (mCSSHexAlphaColorEnabled != enabled) {
+                mCSSHexAlphaColorEnabled = enabled;
+                mEventHandler.updateWebkitPreferencesLocked();
+            }
+        }
+    }
+
+    @CalledByNative
+    private boolean getScrollTopLeftInteropEnabledLocked() {
+        assert Thread.holdsLock(mAwSettingsLock);
+        return mScrollTopLeftInteropEnabled;
+    }
+
+    public void setScrollTopLeftInteropEnabled(boolean enabled) {
+        synchronized (mAwSettingsLock) {
+            if (mScrollTopLeftInteropEnabled != enabled) {
+                mScrollTopLeftInteropEnabled = enabled;
+                mEventHandler.updateWebkitPreferencesLocked();
+            }
+        }
+    }
+
+    @CalledByNative
     private boolean getSupportLegacyQuirksLocked() {
         assert Thread.holdsLock(mAwSettingsLock);
         return mSupportLegacyQuirks;
@@ -1558,14 +1579,11 @@ public class AwSettings {
     private void onGestureZoomSupportChanged(
             final boolean supportsDoubleTapZoom, final boolean supportsMultiTouchZoom) {
         // Always post asynchronously here, to avoid doubling back onto the caller.
-        mEventHandler.maybePostOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                synchronized (mAwSettingsLock) {
-                    if (mZoomChangeListener != null) {
-                        mZoomChangeListener.onGestureZoomSupportChanged(
-                                supportsDoubleTapZoom, supportsMultiTouchZoom);
-                    }
+        mEventHandler.maybePostOnUiThread(() -> {
+            synchronized (mAwSettingsLock) {
+                if (mZoomChangeListener != null) {
+                    mZoomChangeListener.onGestureZoomSupportChanged(
+                            supportsDoubleTapZoom, supportsMultiTouchZoom);
                 }
             }
         });
@@ -1690,12 +1708,9 @@ public class AwSettings {
         synchronized (mAwSettingsLock) {
             if (enabled != mOffscreenPreRaster) {
                 mOffscreenPreRaster = enabled;
-                mEventHandler.runOnUiThreadBlockingAndLocked(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (mNativeAwSettings != 0) {
-                            nativeUpdateOffscreenPreRasterLocked(mNativeAwSettings);
-                        }
+                mEventHandler.runOnUiThreadBlockingAndLocked(() -> {
+                    if (mNativeAwSettings != 0) {
+                        nativeUpdateOffscreenPreRasterLocked(mNativeAwSettings);
                     }
                 });
             }
@@ -1717,12 +1732,9 @@ public class AwSettings {
     @VisibleForTesting
     public void updateAcceptLanguages() {
         synchronized (mAwSettingsLock) {
-            mEventHandler.runOnUiThreadBlockingAndLocked(new Runnable() {
-                @Override
-                public void run() {
-                    if (mNativeAwSettings != 0) {
-                        nativeUpdateRendererPreferencesLocked(mNativeAwSettings);
-                    }
+            mEventHandler.runOnUiThreadBlockingAndLocked(() -> {
+                if (mNativeAwSettings != 0) {
+                    nativeUpdateRendererPreferencesLocked(mNativeAwSettings);
                 }
             });
         }

@@ -74,8 +74,15 @@ class CORE_EXPORT CSSParserToken {
     kBlockEnd,
   };
 
-  CSSParserToken(CSSParserTokenType, BlockType = kNotBlock);
-  CSSParserToken(CSSParserTokenType, StringView, BlockType = kNotBlock);
+  CSSParserToken(CSSParserTokenType type, BlockType block_type = kNotBlock)
+      : type_(type), block_type_(block_type) {}
+  CSSParserToken(CSSParserTokenType type,
+                 StringView value,
+                 BlockType block_type = kNotBlock)
+      : type_(type), block_type_(block_type) {
+    InitValueFromStringView(value);
+    id_ = -1;
+  }
 
   CSSParserToken(CSSParserTokenType, UChar);  // for DelimiterToken
   CSSParserToken(CSSParserTokenType,
@@ -109,6 +116,8 @@ class CORE_EXPORT CSSParserToken {
     return StringView(reinterpret_cast<const UChar*>(value_data_char_raw_),
                       value_length_);
   }
+
+  bool IsEOF() const { return type_ == static_cast<unsigned>(kEOFToken); }
 
   UChar Delimiter() const;
   NumericSign GetNumericSign() const;

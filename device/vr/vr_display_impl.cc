@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "device/vr/vr_display_impl.h"
+
 #include <utility>
 
 #include "base/bind.h"
@@ -12,17 +14,20 @@
 namespace device {
 
 VRDisplayImpl::VRDisplayImpl(device::VRDevice* device,
-                             VRServiceImpl* service,
+                             int render_frame_process_id,
+                             int render_frame_routing_id,
                              mojom::VRServiceClient* service_client,
                              mojom::VRDisplayInfoPtr display_info)
     : binding_(this),
       device_(device),
-      service_(service),
+      render_frame_process_id_(render_frame_process_id),
+      render_frame_routing_id_(render_frame_routing_id),
       weak_ptr_factory_(this) {
   device_->AddDisplay(this);
-  service_client->OnDisplayConnected(binding_.CreateInterfacePtrAndBind(),
-                                     mojo::MakeRequest(&client_),
-                                     std::move(display_info));
+  mojom::VRDisplayPtr display;
+  binding_.Bind(mojo::MakeRequest(&display));
+  service_client->OnDisplayConnected(
+      std::move(display), mojo::MakeRequest(&client_), std::move(display_info));
 }
 
 VRDisplayImpl::~VRDisplayImpl() {
@@ -45,41 +50,34 @@ void VRDisplayImpl::OnFocus() {
   client_->OnFocus();
 }
 
-void VRDisplayImpl::OnActivate(mojom::VRDisplayEventReason reason) {
-  VRDeviceManager* manager = VRDeviceManager::GetInstance();
-  if (!manager->IsMostRecentlyListeningForActivate(service_))
-    return;
-  client_->OnActivate(reason);
+void VRDisplayImpl::OnActivate(mojom::VRDisplayEventReason reason,
+                               const base::Callback<void(bool)>& on_handled) {
+  client_->OnActivate(reason, on_handled);
 }
 
 void VRDisplayImpl::OnDeactivate(mojom::VRDisplayEventReason reason) {
   client_->OnDeactivate(reason);
 }
 
-void VRDisplayImpl::RequestPresent(bool secure_origin,
-                                   mojom::VRSubmitFrameClientPtr submit_client,
-                                   const RequestPresentCallback& callback) {
-  // TODO(mthiesse): Re-enable insecure origin support once webVR content
-  // warnings are fixed. crbug.com/704937
-  if (!device_->IsAccessAllowed(this) || !secure_origin) {
-    callback.Run(false);
+void VRDisplayImpl::RequestPresent(mojom::VRSubmitFrameClientPtr submit_client,
+                                   mojom::VRPresentationProviderRequest request,
+                                   RequestPresentCallback callback) {
+  if (!device_->IsAccessAllowed(this)) {
+    std::move(callback).Run(false);
     return;
   }
 
   device_->RequestPresent(
-      std::move(submit_client),
+      std::move(submit_client), std::move(request),
       base::Bind(&VRDisplayImpl::RequestPresentResult,
-                 weak_ptr_factory_.GetWeakPtr(), callback, secure_origin));
+                 weak_ptr_factory_.GetWeakPtr(), base::Passed(&callback)));
 }
 
-void VRDisplayImpl::RequestPresentResult(const RequestPresentCallback& callback,
-                                         bool secure_origin,
+void VRDisplayImpl::RequestPresentResult(RequestPresentCallback callback,
                                          bool success) {
-  if (success) {
+  if (success)
     device_->SetPresentingDisplay(this);
-    device_->SetSecureOrigin(secure_origin);
-  }
-  callback.Run(success);
+  std::move(callback).Run(success);
 }
 
 void VRDisplayImpl::ExitPresent() {
@@ -87,30 +85,18 @@ void VRDisplayImpl::ExitPresent() {
     device_->ExitPresent();
 }
 
-void VRDisplayImpl::SubmitFrame(int16_t frame_index,
-                                const gpu::MailboxHolder& mailbox) {
-  if (!device_->CheckPresentingDisplay(this))
-    return;
-  device_->SubmitFrame(frame_index, mailbox);
-}
-
-void VRDisplayImpl::UpdateLayerBounds(int16_t frame_index,
-                                      mojom::VRLayerBoundsPtr left_bounds,
-                                      mojom::VRLayerBoundsPtr right_bounds,
-                                      int16_t source_width,
-                                      int16_t source_height) {
-  if (!device_->IsAccessAllowed(this))
-    return;
-
-  device_->UpdateLayerBounds(frame_index, std::move(left_bounds),
-                             std::move(right_bounds), source_width,
-                             source_height);
-}
-
-void VRDisplayImpl::GetVRVSyncProvider(mojom::VRVSyncProviderRequest request) {
+void VRDisplayImpl::GetNextMagicWindowPose(
+    GetNextMagicWindowPoseCallback callback) {
   if (!device_->IsAccessAllowed(this)) {
+    std::move(callback).Run(nullptr);
     return;
   }
-  device_->GetVRVSyncProvider(std::move(request));
+  device_->GetNextMagicWindowPose(this, std::move(callback));
 }
+
+void VRDisplayImpl::SetListeningForActivate(bool listening) {
+  listening_for_activate_ = listening;
+  device_->OnListeningForActivateChanged(this);
 }
+
+}  // namespace device

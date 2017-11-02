@@ -4,17 +4,32 @@
       "name": "LayoutView #document",
       "bounds": [600, 250],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow (positioned) DIV class='container'",
           "rect": [0, 0, 600, 500],
-          "reason": "forced by layout"
+          "reason": "geometry"
         },
         {
           "object": "LayoutView #document",
           "rect": [0, 250, 600, 250],
           "reason": "incremental"
+        },
+        {
+          "object": "LayoutBlockFlow DIV class='parent'",
+          "rect": [0, 0, 6, 500],
+          "reason": "geometry"
+        },
+        {
+          "object": "LayoutBlockFlow (relative positioned) DIV class='child'",
+          "rect": [0, 250, 6, 30],
+          "reason": "geometry"
+        },
+        {
+          "object": "LayoutBlockFlow (relative positioned) DIV class='child'",
+          "rect": [0, 125, 6, 30],
+          "reason": "geometry"
         }
       ]
     }
@@ -26,19 +41,19 @@
     },
     {
       "object": "LayoutBlockFlow (positioned) DIV class='container'",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "LayoutBlockFlow DIV class='parent'",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "RootInlineBox",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "LayoutBlockFlow (relative positioned) DIV class='child'",
-      "reason": "forced by layout"
+      "reason": "geometry"
     }
   ]
 }
@@ -48,17 +63,27 @@
       "name": "LayoutView #document",
       "bounds": [400, 250],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow (positioned) DIV class='container'",
           "rect": [0, 0, 600, 250],
-          "reason": "forced by layout"
+          "reason": "geometry"
         },
         {
           "object": "LayoutView #document",
           "rect": [400, 0, 200, 250],
           "reason": "incremental"
+        },
+        {
+          "object": "LayoutBlockFlow DIV class='parent'",
+          "rect": [0, 0, 6, 250],
+          "reason": "geometry"
+        },
+        {
+          "object": "LayoutBlockFlow (relative positioned) DIV class='child'",
+          "rect": [0, 125, 6, 30],
+          "reason": "geometry"
         }
       ]
     }
@@ -70,19 +95,19 @@
     },
     {
       "object": "LayoutBlockFlow (positioned) DIV class='container'",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "LayoutBlockFlow DIV class='parent'",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "RootInlineBox",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "LayoutBlockFlow (relative positioned) DIV class='child'",
-      "reason": "forced by layout"
+      "reason": "geometry"
     }
   ]
 }
@@ -92,17 +117,32 @@
       "name": "LayoutView #document",
       "bounds": [400, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow (positioned) DIV class='container'",
           "rect": [0, 0, 400, 600],
-          "reason": "full"
+          "reason": "geometry"
         },
         {
           "object": "LayoutView #document",
           "rect": [0, 250, 400, 350],
           "reason": "incremental"
+        },
+        {
+          "object": "LayoutBlockFlow DIV class='parent'",
+          "rect": [0, 0, 6, 600],
+          "reason": "geometry"
+        },
+        {
+          "object": "LayoutBlockFlow (relative positioned) DIV class='child'",
+          "rect": [0, 300, 6, 30],
+          "reason": "geometry"
+        },
+        {
+          "object": "LayoutBlockFlow (relative positioned) DIV class='child'",
+          "rect": [0, 125, 6, 30],
+          "reason": "geometry"
         }
       ]
     }
@@ -114,19 +154,19 @@
     },
     {
       "object": "LayoutBlockFlow (positioned) DIV class='container'",
-      "reason": "full"
+      "reason": "geometry"
     },
     {
       "object": "LayoutBlockFlow DIV class='parent'",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "RootInlineBox",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "LayoutBlockFlow (relative positioned) DIV class='child'",
-      "reason": "forced by layout"
+      "reason": "geometry"
     }
   ]
 }
@@ -136,17 +176,27 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow (positioned) DIV class='container'",
           "rect": [0, 0, 800, 600],
-          "reason": "full"
+          "reason": "geometry"
         },
         {
           "object": "LayoutView #document",
           "rect": [400, 0, 400, 600],
           "reason": "incremental"
+        },
+        {
+          "object": "LayoutBlockFlow DIV class='parent'",
+          "rect": [0, 0, 6, 600],
+          "reason": "geometry"
+        },
+        {
+          "object": "LayoutBlockFlow (relative positioned) DIV class='child'",
+          "rect": [0, 300, 6, 30],
+          "reason": "geometry"
         }
       ]
     }
@@ -158,19 +208,19 @@
     },
     {
       "object": "LayoutBlockFlow (positioned) DIV class='container'",
-      "reason": "full"
+      "reason": "geometry"
     },
     {
       "object": "LayoutBlockFlow DIV class='parent'",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "RootInlineBox",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "LayoutBlockFlow (relative positioned) DIV class='child'",
-      "reason": "forced by layout"
+      "reason": "geometry"
     }
   ]
 }

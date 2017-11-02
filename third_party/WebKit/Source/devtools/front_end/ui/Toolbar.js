@@ -68,6 +68,7 @@ UI.Toolbar = class {
     /** @type {?Element} */
     var longClickGlyph = null;
     toggled();
+    button.setEnabled(action.enabled());
     return button;
 
     /**
@@ -124,7 +125,7 @@ UI.Toolbar = class {
       document.documentElement.addEventListener('mouseup', mouseUp, false);
 
       var optionsGlassPane = new UI.GlassPane();
-      optionsGlassPane.setBlockPointerEvents(true);
+      optionsGlassPane.setPointerEventsBehavior(UI.GlassPane.PointerEventsBehavior.BlockedByGlassPane);
       optionsGlassPane.show(document);
       var optionsBar = new UI.Toolbar('fill', optionsGlassPane.contentElement);
       optionsBar._contentElement.classList.add('floating');
@@ -190,6 +191,13 @@ UI.Toolbar = class {
   static createActionButtonForId(actionId) {
     const action = UI.actionRegistry.action(actionId);
     return UI.Toolbar.createActionButton(/** @type {!UI.Action} */ (action));
+  }
+
+  /**
+   * @return {!Element}
+   */
+  gripElementForResize() {
+    return this._contentElement;
   }
 
   /**
@@ -452,6 +460,13 @@ UI.ToolbarText = class extends UI.ToolbarItem {
   }
 
   /**
+   * @return {string}
+   */
+  text() {
+    return this.element.textContent;
+  }
+
+  /**
    * @param {string} text
    */
   setText(text) {
@@ -581,6 +596,14 @@ UI.ToolbarInput = class extends UI.ToolbarItem {
       this._setupSearchControls();
 
     this._updateEmptyStyles();
+  }
+
+  /**
+   * @override
+   * @param {boolean} enabled
+   */
+  _applyEnabledState(enabled) {
+    this.input.disabled = !enabled;
   }
 
   _setupSearchControls() {
@@ -941,6 +964,13 @@ UI.ToolbarComboBox = class extends UI.ToolbarItem {
    */
   setMaxWidth(width) {
     this._selectElement.style.maxWidth = width + 'px';
+  }
+
+  /**
+   * @param {number} width
+   */
+  setMinWidth(width) {
+    this._selectElement.style.minWidth = width + 'px';
   }
 };
 

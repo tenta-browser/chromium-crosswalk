@@ -4,10 +4,25 @@
       "name": "LayoutView #document",
       "bounds": [785, 1895],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow (positioned) DIV id='scrollpanel'",
+          "rect": [677, 252, 100, 100],
+          "reason": "subtree"
+        },
+        {
+          "object": "LayoutBlockFlow (relative positioned) DIV class='container'",
+          "rect": [677, 252, 100, 100],
+          "reason": "subtree"
+        },
+        {
+          "object": "LayoutBlockFlow (relative positioned) DIV id='ul'",
+          "rect": [677, 252, 100, 100],
+          "reason": "subtree"
+        },
+        {
+          "object": "LayoutBlockFlow DIV",
           "rect": [677, 252, 100, 100],
           "reason": "subtree"
         },

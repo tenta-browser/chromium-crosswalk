@@ -17,12 +17,12 @@ TEST_F(LayoutBlockTest, LayoutNameCalledWithNullStyle) {
   LayoutObject* obj = LayoutBlockFlow::CreateAnonymous(&GetDocument());
   EXPECT_FALSE(obj->Style());
   EXPECT_STREQ("LayoutBlockFlow (anonymous)",
-               obj->DecoratedName().Ascii().Data());
+               obj->DecoratedName().Ascii().data());
   obj->Destroy();
 }
 
 TEST_F(LayoutBlockTest, WidthAvailableToChildrenChanged) {
-  RuntimeEnabledFeatures::setOverlayScrollbarsEnabled(false);
+  RuntimeEnabledFeatures::SetOverlayScrollbarsEnabled(false);
   SetBodyInnerHTML(
       "<!DOCTYPE html>"
       "<div id='list' style='overflow-y:auto; width:150px; height:100px'>"
@@ -33,7 +33,7 @@ TEST_F(LayoutBlockTest, WidthAvailableToChildrenChanged) {
       "  <div style='height:20px'>Item</div>"
       "  <div style='height:20px'>Item</div>"
       "</div>");
-  Element* list_element = GetDocument().GetElementById("list");
+  Element* list_element = GetDocument().getElementById("list");
   ASSERT_TRUE(list_element);
   LayoutBox* list_box = ToLayoutBox(list_element->GetLayoutObject());
   Element* item_element = ElementTraversal::FirstChild(*list_element);
@@ -49,6 +49,18 @@ TEST_F(LayoutBlockTest, WidthAvailableToChildrenChanged) {
   GetDocument().View()->UpdateAllLifecyclePhases();
   ASSERT_EQ(list_box->VerticalScrollbarWidth(), 0);
   ASSERT_EQ(item_element->OffsetWidth(), 150);
+}
+
+TEST_F(LayoutBlockTest, OverflowWithTransformAndPerspective) {
+  SetBodyInnerHTML(
+      "<div id='target' style='width: 100px; height: 100px; overflow: scroll;"
+      "    perspective: 200px;'>"
+      "  <div style='transform: rotateY(-45deg); width: 140px; height: 100px'>"
+      "  </div>"
+      "</div>");
+  LayoutBox* scroller =
+      ToLayoutBox(GetDocument().getElementById("target")->GetLayoutObject());
+  EXPECT_EQ(119.5, scroller->LayoutOverflowRect().Width().ToFloat());
 }
 
 }  // namespace blink

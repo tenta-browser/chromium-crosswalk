@@ -29,22 +29,22 @@
 #include <memory>
 #include <set>
 #include "bindings/core/v8/Nullable.h"
-#include "bindings/core/v8/ScriptState.h"
 #include "bindings/core/v8/ScriptValue.h"
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "bindings/core/v8/ScriptWrappableVisitor.h"
 #include "core/CoreExport.h"
-#include "core/dom/DOMTypedArray.h"
-#include "core/dom/NotShared.h"
-#include "core/dom/TypedFlexibleArrayBufferView.h"
 #include "core/html/canvas/CanvasContextCreationAttributes.h"
 #include "core/html/canvas/CanvasRenderingContext.h"
 #include "core/layout/ContentChangeType.h"
+#include "core/typed_arrays/ArrayBufferViewHelpers.h"
+#include "core/typed_arrays/DOMTypedArray.h"
+#include "core/typed_arrays/TypedFlexibleArrayBufferView.h"
 #include "modules/webgl/WebGLContextAttributes.h"
 #include "modules/webgl/WebGLExtensionName.h"
 #include "modules/webgl/WebGLTexture.h"
 #include "modules/webgl/WebGLVertexArrayObjectBase.h"
 #include "platform/Timer.h"
+#include "platform/bindings/ScriptState.h"
+#include "platform/bindings/ScriptWrappable.h"
+#include "platform/bindings/ScriptWrappableVisitor.h"
 #include "platform/graphics/ImageBuffer.h"
 #include "platform/graphics/gpu/DrawingBuffer.h"
 #include "platform/graphics/gpu/Extensions3DUtil.h"
@@ -127,6 +127,12 @@ class MODULES_EXPORT WebGLRenderingContextBase : public CanvasRenderingContext,
  public:
   ~WebGLRenderingContextBase() override;
 
+  HTMLCanvasElement* canvas() const {
+    if (host()->IsOffscreenCanvas())
+      return nullptr;
+    return static_cast<HTMLCanvasElement*>(host());
+  }
+
   virtual String ContextName() const = 0;
   virtual void RegisterContextExtensions() = 0;
 
@@ -135,11 +141,7 @@ class MODULES_EXPORT WebGLRenderingContextBase : public CanvasRenderingContext,
   static unsigned GetWebGLVersion(const CanvasRenderingContext*);
 
   static std::unique_ptr<WebGraphicsContext3DProvider>
-  CreateWebGraphicsContext3DProvider(HTMLCanvasElement*,
-                                     const CanvasContextCreationAttributes&,
-                                     unsigned web_gl_version);
-  static std::unique_ptr<WebGraphicsContext3DProvider>
-  CreateWebGraphicsContext3DProvider(ScriptState*,
+  CreateWebGraphicsContext3DProvider(CanvasRenderingContextHost*,
                                      const CanvasContextCreationAttributes&,
                                      unsigned web_gl_version);
   static void ForceNextWebGLContextCreationToFail();
@@ -168,7 +170,7 @@ class MODULES_EXPORT WebGLRenderingContextBase : public CanvasRenderingContext,
   void bufferData(GLenum target, long long size, GLenum usage);
   void bufferData(GLenum target, DOMArrayBuffer* data, GLenum usage);
   void bufferData(GLenum target,
-                  NotShared<DOMArrayBufferView> data,
+                  MaybeShared<DOMArrayBufferView> data,
                   GLenum usage);
   void bufferSubData(GLenum target, long long offset, DOMArrayBuffer* data);
   void bufferSubData(GLenum target,
@@ -192,7 +194,7 @@ class MODULES_EXPORT WebGLRenderingContextBase : public CanvasRenderingContext,
                             GLsizei width,
                             GLsizei height,
                             GLint border,
-                            NotShared<DOMArrayBufferView> data);
+                            MaybeShared<DOMArrayBufferView> data);
   void compressedTexSubImage2D(GLenum target,
                                GLint level,
                                GLint xoffset,
@@ -200,7 +202,7 @@ class MODULES_EXPORT WebGLRenderingContextBase : public CanvasRenderingContext,
                                GLsizei width,
                                GLsizei height,
                                GLenum format,
-                               NotShared<DOMArrayBufferView> data);
+                               MaybeShared<DOMArrayBufferView> data);
 
   void copyTexImage2D(GLenum target,
                       GLint level,
@@ -325,7 +327,7 @@ class MODULES_EXPORT WebGLRenderingContextBase : public CanvasRenderingContext,
                           GLsizei height,
                           GLenum format,
                           GLenum type,
-                          NotShared<DOMArrayBufferView> pixels);
+                          MaybeShared<DOMArrayBufferView> pixels);
   void renderbufferStorage(GLenum target,
                            GLenum internalformat,
                            GLsizei width,
@@ -348,7 +350,7 @@ class MODULES_EXPORT WebGLRenderingContextBase : public CanvasRenderingContext,
                   GLint border,
                   GLenum format,
                   GLenum type,
-                  NotShared<DOMArrayBufferView>);
+                  MaybeShared<DOMArrayBufferView>);
   void texImage2D(GLenum target,
                   GLint level,
                   GLint internalformat,
@@ -398,7 +400,7 @@ class MODULES_EXPORT WebGLRenderingContextBase : public CanvasRenderingContext,
                      GLsizei height,
                      GLenum format,
                      GLenum type,
-                     NotShared<DOMArrayBufferView>);
+                     MaybeShared<DOMArrayBufferView>);
   void texSubImage2D(GLenum target,
                      GLint level,
                      GLint xoffset,
@@ -476,19 +478,19 @@ class MODULES_EXPORT WebGLRenderingContextBase : public CanvasRenderingContext,
   void uniform4iv(const WebGLUniformLocation*, Vector<GLint>&);
   void uniformMatrix2fv(const WebGLUniformLocation*,
                         GLboolean transpose,
-                        NotShared<DOMFloat32Array> value);
+                        MaybeShared<DOMFloat32Array> value);
   void uniformMatrix2fv(const WebGLUniformLocation*,
                         GLboolean transpose,
                         Vector<GLfloat>& value);
   void uniformMatrix3fv(const WebGLUniformLocation*,
                         GLboolean transpose,
-                        NotShared<DOMFloat32Array> value);
+                        MaybeShared<DOMFloat32Array> value);
   void uniformMatrix3fv(const WebGLUniformLocation*,
                         GLboolean transpose,
                         Vector<GLfloat>& value);
   void uniformMatrix4fv(const WebGLUniformLocation*,
                         GLboolean transpose,
-                        NotShared<DOMFloat32Array> value);
+                        MaybeShared<DOMFloat32Array> value);
   void uniformMatrix4fv(const WebGLUniformLocation*,
                         GLboolean transpose,
                         Vector<GLfloat>& value);
@@ -497,16 +499,16 @@ class MODULES_EXPORT WebGLRenderingContextBase : public CanvasRenderingContext,
   void validateProgram(WebGLProgram*);
 
   void vertexAttrib1f(GLuint index, GLfloat x);
-  void vertexAttrib1fv(GLuint index, NotShared<const DOMFloat32Array> values);
+  void vertexAttrib1fv(GLuint index, MaybeShared<const DOMFloat32Array> values);
   void vertexAttrib1fv(GLuint index, const Vector<GLfloat>& values);
   void vertexAttrib2f(GLuint index, GLfloat x, GLfloat y);
-  void vertexAttrib2fv(GLuint index, NotShared<const DOMFloat32Array> values);
+  void vertexAttrib2fv(GLuint index, MaybeShared<const DOMFloat32Array> values);
   void vertexAttrib2fv(GLuint index, const Vector<GLfloat>& values);
   void vertexAttrib3f(GLuint index, GLfloat x, GLfloat y, GLfloat z);
-  void vertexAttrib3fv(GLuint index, NotShared<const DOMFloat32Array> values);
+  void vertexAttrib3fv(GLuint index, MaybeShared<const DOMFloat32Array> values);
   void vertexAttrib3fv(GLuint index, const Vector<GLfloat>& values);
   void vertexAttrib4f(GLuint index, GLfloat x, GLfloat y, GLfloat z, GLfloat w);
-  void vertexAttrib4fv(GLuint index, NotShared<const DOMFloat32Array> values);
+  void vertexAttrib4fv(GLuint index, MaybeShared<const DOMFloat32Array> values);
   void vertexAttrib4fv(GLuint index, const Vector<GLfloat>& values);
   void vertexAttribPointer(GLuint index,
                            GLint size,
@@ -582,7 +584,8 @@ class MODULES_EXPORT WebGLRenderingContextBase : public CanvasRenderingContext,
     // object.
   };
 
-  PassRefPtr<Image> GetImage(AccelerationHint, SnapshotReason) const override;
+  RefPtr<StaticBitmapImage> GetImage(AccelerationHint,
+                                     SnapshotReason) const override;
   ImageData* ToImageData(SnapshotReason) override;
   void SetFilterQuality(SkFilterQuality) override;
   bool IsWebGL2OrHigher() { return Version() >= 2; }
@@ -594,6 +597,10 @@ class MODULES_EXPORT WebGLRenderingContextBase : public CanvasRenderingContext,
   // For use by WebVR which doesn't use the normal compositing path.
   // This clears the backbuffer if preserveDrawingBuffer is false.
   void MarkCompositedAndClearBackbufferIfNeeded();
+
+  // For use by WebVR, commits the current canvas content similar
+  // to the "commit" JS API.
+  PassRefPtr<StaticBitmapImage> GetStaticBitmapImage();
 
  protected:
   friend class EXTDisjointTimerQuery;
@@ -618,17 +625,12 @@ class MODULES_EXPORT WebGLRenderingContextBase : public CanvasRenderingContext,
   friend class ScopedFramebufferRestorer;
   friend class ScopedUnpackParametersResetRestore;
 
-  WebGLRenderingContextBase(HTMLCanvasElement*,
-                            std::unique_ptr<WebGraphicsContext3DProvider>,
-                            const CanvasContextCreationAttributes&,
-                            unsigned);
-  WebGLRenderingContextBase(OffscreenCanvas*,
+  WebGLRenderingContextBase(CanvasRenderingContextHost*,
                             std::unique_ptr<WebGraphicsContext3DProvider>,
                             const CanvasContextCreationAttributes&,
                             unsigned);
   PassRefPtr<DrawingBuffer> CreateDrawingBuffer(
-      std::unique_ptr<WebGraphicsContext3DProvider>,
-      DrawingBuffer::ChromiumImageUsage);
+      std::unique_ptr<WebGraphicsContext3DProvider>);
   void SetupFlags();
 
   // CanvasRenderingContext implementation.
@@ -645,18 +647,17 @@ class MODULES_EXPORT WebGLRenderingContextBase : public CanvasRenderingContext,
   bool DrawingBufferClientIsBoundForDraw() override;
   void DrawingBufferClientRestoreScissorTest() override;
   void DrawingBufferClientRestoreMaskAndClearValues() override;
-  void DrawingBufferClientRestorePixelPackAlignment() override;
+  void DrawingBufferClientRestorePixelPackParameters() override;
   void DrawingBufferClientRestoreTexture2DBinding() override;
   void DrawingBufferClientRestoreRenderbufferBinding() override;
   void DrawingBufferClientRestoreFramebufferBinding() override;
   void DrawingBufferClientRestorePixelUnpackBufferBinding() override;
+  void DrawingBufferClientRestorePixelPackBufferBinding() override;
 
   virtual void DestroyContext();
   void MarkContextChanged(ContentChangeType);
 
   void OnErrorMessage(const char*, int32_t id);
-
-  void NotifyCanvasContextChanged();
 
   // Query if depth_stencil buffer is supported.
   bool IsDepthStencilSupported() { return is_depth_stencil_supported_; }
@@ -868,6 +869,7 @@ class MODULES_EXPORT WebGLRenderingContextBase : public CanvasRenderingContext,
 
     DEFINE_INLINE_VIRTUAL_TRACE_WRAPPERS() {
       visitor->TraceWrappers(extension_);
+      ExtensionTracker::TraceWrappers(visitor);
     }
 
    private:
@@ -875,8 +877,7 @@ class MODULES_EXPORT WebGLRenderingContextBase : public CanvasRenderingContext,
                           ExtensionFlags flags,
                           const char* const* prefixes)
         : ExtensionTracker(flags, prefixes),
-          extension_field_(extension_field),
-          extension_(this, nullptr) {}
+          extension_field_(extension_field) {}
 
     GC_PLUGIN_IGNORE("http://crbug.com/519953")
     Member<T>& extension_field_;
@@ -892,9 +893,8 @@ class MODULES_EXPORT WebGLRenderingContextBase : public CanvasRenderingContext,
   void RegisterExtension(Member<T>& extension_ptr,
                          ExtensionFlags flags = kApprovedExtension,
                          const char* const* prefixes = nullptr) {
-    extensions_.push_back(TraceWrapperMember<ExtensionTracker>(
-        this,
-        TypedExtensionTracker<T>::Create(extension_ptr, flags, prefixes)));
+    extensions_.push_back(
+        TypedExtensionTracker<T>::Create(extension_ptr, flags, prefixes));
   }
 
   bool ExtensionSupportedAndAllowed(const ExtensionTracker*);
@@ -944,6 +944,7 @@ class MODULES_EXPORT WebGLRenderingContextBase : public CanvasRenderingContext,
   bool is_oes_texture_half_float_formats_types_added_;
   bool is_web_gl_depth_texture_formats_types_added_;
   bool is_ext_srgb_formats_types_added_;
+  bool is_ext_color_buffer_float_formats_added_;
 
   std::set<GLenum> supported_internal_formats_;
   std::set<GLenum> supported_tex_image_source_internal_formats_;
@@ -1651,16 +1652,14 @@ class MODULES_EXPORT WebGLRenderingContextBase : public CanvasRenderingContext,
                         GLuint offset);
 
  private:
-  WebGLRenderingContextBase(HTMLCanvasElement*,
-                            OffscreenCanvas*,
+  WebGLRenderingContextBase(CanvasRenderingContextHost*,
                             RefPtr<WebTaskRunner>,
                             std::unique_ptr<WebGraphicsContext3DProvider>,
                             const CanvasContextCreationAttributes&,
                             unsigned);
   static bool SupportOwnOffscreenSurface(ExecutionContext*);
   static std::unique_ptr<WebGraphicsContext3DProvider>
-  CreateContextProviderInternal(HTMLCanvasElement*,
-                                ScriptState*,
+  CreateContextProviderInternal(CanvasRenderingContextHost*,
                                 const CanvasContextCreationAttributes&,
                                 unsigned);
   void TexImageCanvasByGPU(TexImageFunctionID,
@@ -1678,12 +1677,13 @@ class MODULES_EXPORT WebGLRenderingContextBase : public CanvasRenderingContext,
                            GLint,
                            const IntRect&);
 
-  sk_sp<SkImage> MakeImageSnapshot(SkImageInfo&);
+  RefPtr<StaticBitmapImage> MakeImageSnapshot(SkImageInfo&);
   const unsigned version_;
 
   bool IsPaintable() const final { return GetDrawingBuffer(); }
 };
 
+// TODO(fserb): remove this.
 DEFINE_TYPE_CASTS(WebGLRenderingContextBase,
                   CanvasRenderingContext,
                   context,

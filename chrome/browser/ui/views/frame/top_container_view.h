@@ -21,7 +21,8 @@ class TopContainerView : public views::View {
 
   // views::View overrides:
   const char* GetClassName() const override;
-  void PaintChildren(const ui::PaintContext& context) override;
+  void PaintChildren(const views::PaintInfo& paint_info) override;
+  void ChildPreferredSizeChanged(views::View* child) override;
 
  private:
   // The parent of this view. Not owned.

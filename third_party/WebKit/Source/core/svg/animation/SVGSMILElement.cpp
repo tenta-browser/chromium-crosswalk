@@ -31,8 +31,9 @@
 #include "core/dom/Document.h"
 #include "core/dom/IdTargetObserver.h"
 #include "core/dom/TaskRunnerHelper.h"
-#include "core/events/Event.h"
-#include "core/events/EventListener.h"
+#include "core/dom/events/Event.h"
+#include "core/dom/events/EventListener.h"
+#include "core/frame/UseCounter.h"
 #include "core/svg/SVGSVGElement.h"
 #include "core/svg/SVGURIReference.h"
 #include "core/svg/animation/SMILTimeContainer.h"
@@ -152,7 +153,7 @@ DEFINE_TRACE(SVGSMILElement::Condition) {
 void SVGSMILElement::Condition::ConnectSyncBase(SVGSMILElement& timed_element) {
   DCHECK(!base_id_.IsEmpty());
   DCHECK_EQ(type_, kSyncbase);
-  Element* element = timed_element.GetTreeScope().GetElementById(base_id_);
+  Element* element = timed_element.GetTreeScope().getElementById(base_id_);
   if (!element || !IsSVGSMILElement(*element)) {
     base_element_ = nullptr;
     return;
@@ -238,7 +239,7 @@ void SVGSMILElement::ClearResourceAndEventBaseReferences() {
 void SVGSMILElement::ClearConditions() {
   DisconnectSyncBaseConditions();
   DisconnectEventBaseConditions();
-  conditions_.Clear();
+  conditions_.clear();
 }
 
 void SVGSMILElement::BuildPendingResource() {
@@ -305,10 +306,11 @@ Node::InsertionNotificationRequest SVGSMILElement::InsertedInto(
   if (!root_parent->isConnected())
     return kInsertionDone;
 
-  UseCounter::Count(GetDocument(), UseCounter::kSVGSMILElementInDocument);
-  if (GetDocument().IsLoadCompleted())
+  UseCounter::Count(GetDocument(), WebFeature::kSVGSMILElementInDocument);
+  if (GetDocument().IsLoadCompleted()) {
     UseCounter::Count(&GetDocument(),
-                      UseCounter::kSVGSMILElementInsertedAfterLoad);
+                      WebFeature::kSVGSMILElementInsertedAfterLoad);
+  }
 
   SVGSVGElement* owner = ownerSVGElement();
   if (!owner)
@@ -377,8 +379,8 @@ SMILTime SVGSMILElement::ParseClockValue(const String& data) {
 
   double result = 0;
   bool ok;
-  size_t double_point_one = parse.Find(':');
-  size_t double_point_two = parse.Find(':', double_point_one + 1);
+  size_t double_point_one = parse.find(':');
+  size_t double_point_two = parse.find(':', double_point_one + 1);
   if (double_point_one == 2 && double_point_two == 5 && parse.length() >= 8) {
     result += parse.Substring(0, 2).ToUIntStrict(&ok) * 60 * 60;
     if (!ok)
@@ -411,9 +413,9 @@ bool SVGSMILElement::ParseCondition(const String& value,
 
   double sign = 1.;
   bool ok;
-  size_t pos = parse_string.Find('+');
+  size_t pos = parse_string.find('+');
   if (pos == kNotFound) {
-    pos = parse_string.Find('-');
+    pos = parse_string.find('-');
     if (pos != kNotFound)
       sign = -1.;
   }
@@ -431,7 +433,7 @@ bool SVGSMILElement::ParseCondition(const String& value,
   }
   if (condition_string.IsEmpty())
     return false;
-  pos = condition_string.Find('.');
+  pos = condition_string.find('.');
 
   String base_id;
   String name_string;
@@ -457,13 +459,13 @@ bool SVGSMILElement::ParseCondition(const String& value,
     if (base_id.IsEmpty())
       return false;
     UseCounter::Count(&GetDocument(),
-                      UseCounter::kSVGSMILBeginOrEndSyncbaseValue);
+                      WebFeature::kSVGSMILBeginOrEndSyncbaseValue);
     type = Condition::kSyncbase;
   } else if (name_string.StartsWith("accesskey(")) {
     // FIXME: accesskey() support.
     type = Condition::kAccessKey;
   } else {
-    UseCounter::Count(&GetDocument(), UseCounter::kSVGSMILBeginOrEndEventValue);
+    UseCounter::Count(&GetDocument(), WebFeature::kSVGSMILBeginOrEndEventValue);
     type = Condition::kEventBase;
   }
 
@@ -1030,8 +1032,15 @@ float SVGSMILElement::CalculateAnimationPercentAndRepeat(
     if (!fmod(repeating_duration.Value(), simple_duration.Value()))
       repeat--;
 
-    double percent = (interval_.end.Value() - interval_.begin.Value()) /
-                     simple_duration.Value();
+    // Use the interval to compute the interval position if we've passed the
+    // interval end, otherwise use the "repeating duration". This prevents a
+    // stale interval (with for instance an 'indefinite' end) from yielding an
+    // invalid interval position.
+    double last_active_duration =
+        elapsed >= interval_.end
+            ? interval_.end.Value() - interval_.begin.Value()
+            : repeating_duration.Value();
+    double percent = last_active_duration / simple_duration.Value();
     percent = percent - floor(percent);
     if (percent < std::numeric_limits<float>::epsilon() ||
         1 - percent < std::numeric_limits<float>::epsilon())

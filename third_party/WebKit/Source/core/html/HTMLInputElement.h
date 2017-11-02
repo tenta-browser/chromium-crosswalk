@@ -28,8 +28,9 @@
 #include "base/gtest_prod_util.h"
 #include "core/CoreExport.h"
 #include "core/html/TextControlElement.h"
+#include "core/html/forms/FileChooser.h"
 #include "core/html/forms/StepRange.h"
-#include "platform/FileChooser.h"
+#include "platform/bindings/ActiveScriptWrappable.h"
 
 namespace blink {
 
@@ -46,13 +47,18 @@ class ListAttributeTargetObserver;
 class RadioButtonGroupScope;
 struct DateTimeChooserParameters;
 
-class CORE_EXPORT HTMLInputElement : public TextControlElement {
+class CORE_EXPORT HTMLInputElement
+    : public TextControlElement,
+      public ActiveScriptWrappable<HTMLInputElement> {
   DEFINE_WRAPPERTYPEINFO();
+  USING_GARBAGE_COLLECTED_MIXIN(HTMLInputElement);
 
  public:
   static HTMLInputElement* Create(Document&, bool created_by_parser);
   ~HTMLInputElement() override;
   DECLARE_VIRTUAL_TRACE();
+
+  bool HasPendingActivity() const final;
 
   DEFINE_ATTRIBUTE_EVENT_LISTENER(webkitspeechchange);
 
@@ -188,8 +194,8 @@ class CORE_EXPORT HTMLInputElement : public TextControlElement {
 
   const AtomicString& DefaultValue() const;
 
-  Vector<String> AcceptMIMETypes();
-  Vector<String> AcceptFileExtensions();
+  Vector<String> AcceptMIMETypes() const;
+  Vector<String> AcceptFileExtensions() const;
   const AtomicString& Alt() const;
 
   void setSize(unsigned);
@@ -232,9 +238,6 @@ class CORE_EXPORT HTMLInputElement : public TextControlElement {
   // Functions for InputType classes.
   void SetNonAttributeValue(const String&);
   void SetNonAttributeValueByUserEdit(const String&);
-  bool ValueAttributeWasUpdatedAfterParsing() const {
-    return value_attribute_was_updated_after_parsing_;
-  }
   void UpdateView();
   bool NeedsToUpdateViewValue() const { return needs_to_update_view_value_; }
   void SetInnerEditorValue(const String&) override;
@@ -306,6 +309,7 @@ class CORE_EXPORT HTMLInputElement : public TextControlElement {
   InsertionNotificationRequest InsertedInto(ContainerNode*) override;
   void RemovedFrom(ContainerNode*) final;
   void DidMoveToNewDocument(Document& old_document) final;
+  bool HasActivationBehavior() const override;
 
   bool HasCustomFocusLogic() const final;
   bool IsKeyboardFocusable() const final;
@@ -339,7 +343,7 @@ class CORE_EXPORT HTMLInputElement : public TextControlElement {
 
   void CopyNonAttributePropertiesFromElement(const Element&) final;
 
-  void AttachLayoutTree(const AttachContext& = AttachContext()) final;
+  void AttachLayoutTree(AttachContext&) final;
 
   void AppendToFormData(FormData&) final;
   String ResultForDialogSubmit() final;
@@ -396,7 +400,7 @@ class CORE_EXPORT HTMLInputElement : public TextControlElement {
   RadioButtonGroupScope* GetRadioButtonGroupScope() const;
   void AddToRadioButtonGroup();
   void RemoveFromRadioButtonGroup();
-  PassRefPtr<ComputedStyle> CustomStyleForLayoutObject() override;
+  RefPtr<ComputedStyle> CustomStyleForLayoutObject() override;
 
   AtomicString name_;
   // The value string in |value| value mode.
@@ -415,7 +419,6 @@ class CORE_EXPORT HTMLInputElement : public TextControlElement {
   unsigned has_non_empty_list_ : 1;
   unsigned state_restored_ : 1;
   unsigned parsing_in_progress_ : 1;
-  unsigned value_attribute_was_updated_after_parsing_ : 1;
   unsigned can_receive_dropped_files_ : 1;
   unsigned should_reveal_password_ : 1;
   unsigned needs_to_update_view_value_ : 1;

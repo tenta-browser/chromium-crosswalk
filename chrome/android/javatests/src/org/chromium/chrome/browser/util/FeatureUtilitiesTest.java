@@ -15,6 +15,7 @@ import android.support.test.filters.SmallTest;
 import android.test.mock.MockContext;
 import android.test.mock.MockPackageManager;
 
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -24,8 +25,9 @@ import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.AdvancedMockContext;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
-import org.chromium.components.signin.AccountManagerHelper;
-import org.chromium.components.signin.test.util.MockAccountManager;
+import org.chromium.components.signin.AccountManagerFacade;
+import org.chromium.components.signin.test.util.AccountHolder;
+import org.chromium.components.signin.test.util.FakeAccountManagerDelegate;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -38,7 +40,7 @@ import java.util.concurrent.Callable;
 public class FeatureUtilitiesTest {
     private IntentTestMockContext mContextWithSpeech;
     private IntentTestMockContext mContextWithoutSpeech;
-    private MockAuthenticationAccountManager mAccountManager;
+    private FakeAuthenticationAccountManager mAccountManager;
     private AdvancedMockContext mAccountTestingContext;
     private Account mTestAccount;
 
@@ -49,7 +51,7 @@ public class FeatureUtilitiesTest {
         mContextWithoutSpeech = new IntentTestMockContext(
                 RecognizerIntent.ACTION_WEB_SEARCH);
 
-        mTestAccount = AccountManagerHelper.createAccountFromName("Dummy");
+        mTestAccount = AccountManagerFacade.createAccountFromName("Dummy");
     }
 
     @Before
@@ -58,6 +60,11 @@ public class FeatureUtilitiesTest {
         // constructor due to external dependencies.
         mAccountTestingContext = new AdvancedMockContext(
                 InstrumentationRegistry.getInstrumentation().getTargetContext());
+    }
+
+    @After
+    public void tearDown() {
+        AccountManagerFacade.resetAccountManagerFacadeForTests();
     }
 
     private static class IntentTestPackageManager extends MockPackageManager {
@@ -99,26 +106,13 @@ public class FeatureUtilitiesTest {
         }
     }
 
-    private static class MockAuthenticationAccountManager extends MockAccountManager {
-
+    private static class FakeAuthenticationAccountManager extends FakeAccountManagerDelegate {
         private final String mAccountType;
 
-        public MockAuthenticationAccountManager(Context localContext, Context testContext,
-                String accountType, Account... accounts) {
-            super(localContext, testContext, accounts);
+        public FakeAuthenticationAccountManager(
+                Context localContext, String accountType, Account... accounts) {
+            super(localContext, accounts);
             mAccountType = accountType;
-        }
-
-        @Override
-        public Account[] getAccountsByType(String accountType) {
-            if (accountType.equals(mAccountType)) {
-                // Calling function uses length of array to determine if
-                // accounts of the requested type are available, so return
-                // a non-empty array to indicate the account type is correct.
-                return new Account[] { AccountManagerHelper.createAccountFromName("Dummy") };
-            }
-
-            return new Account[0];
         }
 
         @Override
@@ -144,14 +138,15 @@ public class FeatureUtilitiesTest {
             });
     }
 
-    private void setUpAccount(final String accountType) {
-        mAccountManager = new MockAuthenticationAccountManager(mAccountTestingContext,
-                InstrumentationRegistry.getInstrumentation().getContext(), accountType,
-                mTestAccount);
+    private void setUpAccountManager(String accountType) {
+        mAccountManager = new FakeAuthenticationAccountManager(mAccountTestingContext, accountType);
+        AccountManagerFacade.overrideAccountManagerFacadeForTests(
+                mAccountTestingContext, mAccountManager);
+    }
 
-        AccountManagerHelper.overrideAccountManagerHelperForTests(
-                mAccountTestingContext,
-                mAccountManager);
+    private void addTestAccount() {
+        mAccountManager.addAccountHolderExplicitly(
+                AccountHolder.builder(mTestAccount).alwaysAccept(true).build());
     }
 
     @Test
@@ -217,7 +212,8 @@ public class FeatureUtilitiesTest {
     public void testHasGoogleAccountCorrectlyDetected() {
         // Set up an account manager mock that returns Google account types
         // when queried.
-        setUpAccount(AccountManagerHelper.GOOGLE_ACCOUNT_TYPE);
+        setUpAccountManager(AccountManagerFacade.GOOGLE_ACCOUNT_TYPE);
+        addTestAccount();
 
         boolean hasAccounts = FeatureUtilities.hasGoogleAccounts(
                 mAccountTestingContext);
@@ -239,9 +235,9 @@ public class FeatureUtilitiesTest {
     @SmallTest
     @Feature({"FeatureUtilities", "GoogleAccounts"})
     public void testHasNoGoogleAccountCorrectlyDetected() {
-        // Set up an account manager mock that doesn't return Google account
-        // types when queried.
-        setUpAccount("Not A Google Account");
+        // Set up an account manager mock that doesn't have any accounts and doesn't have Google
+        // account authenticator.
+        setUpAccountManager("Not A Google Account");
 
         boolean hasAccounts = FeatureUtilities.hasGoogleAccounts(
                 mAccountTestingContext);

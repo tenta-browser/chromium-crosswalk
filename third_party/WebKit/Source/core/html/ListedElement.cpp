@@ -114,7 +114,7 @@ HTMLFormElement* ListedElement::FindAssociatedForm(const HTMLElement* element) {
     // with that form element.
     // 3.2. Abort the "reset the form owner" steps.
     Element* new_form_candidate =
-        element->GetTreeScope().GetElementById(form_id);
+        element->GetTreeScope().getElementById(form_id);
     return isHTMLFormElement(new_form_candidate)
                ? toHTMLFormElement(new_form_candidate)
                : 0;
@@ -283,7 +283,7 @@ bool ListedElement::IsFormControlElementWithState() const {
 const HTMLElement& ToHTMLElement(const ListedElement& listed_element) {
   if (listed_element.IsFormControlElement())
     return ToHTMLFormControlElement(listed_element);
-  return toHTMLObjectElement(listed_element);
+  return ToHTMLObjectElementFromListedElement(listed_element);
 }
 
 const HTMLElement* ToHTMLElement(const ListedElement* listed_element) {

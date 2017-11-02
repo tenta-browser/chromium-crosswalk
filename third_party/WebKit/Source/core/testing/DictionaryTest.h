@@ -8,11 +8,11 @@
 #include "bindings/core/v8/DoubleOrString.h"
 #include "bindings/core/v8/Nullable.h"
 #include "bindings/core/v8/ScriptValue.h"
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/dom/Element.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
-#include "wtf/HashMap.h"
-#include "wtf/text/WTFString.h"
+#include "platform/wtf/HashMap.h"
+#include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
@@ -78,7 +78,6 @@ class DictionaryTest : public GarbageCollectedFinalized<DictionaryTest>,
   String enum_member_;
   String enum_member_with_default_;
   String enum_or_null_member_;
-  Nullable<Vector<String>> enum_array_member_;
   Member<Element> element_member_;
   Member<Element> element_or_null_member_;
   ScriptValue object_member_;

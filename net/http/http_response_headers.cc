@@ -15,6 +15,7 @@
 
 #include "base/format_macros.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/pickle.h"
 #include "base/strings/string_number_conversions.h"
@@ -62,7 +63,8 @@ const char* const kChallengeResponseHeaders[] = {
 // not to be stored by caches or disclosed otherwise.
 const char* const kCookieResponseHeaders[] = {
   "set-cookie",
-  "set-cookie2"
+  "set-cookie2",
+  "clear-site-data",
 };
 
 // By default, do not cache Strict-Transport-Security or Public-Key-Pins.
@@ -578,9 +580,6 @@ bool HttpResponseHeaders::HasHeaderValue(const base::StringPiece& name,
 
 bool HttpResponseHeaders::HasHeader(const base::StringPiece& name) const {
   return FindHeader(0, name) != std::string::npos;
-}
-
-HttpResponseHeaders::HttpResponseHeaders() : response_code_(-1) {
 }
 
 HttpResponseHeaders::~HttpResponseHeaders() {
@@ -1267,8 +1266,8 @@ bool HttpResponseHeaders::GetContentRangeFor206(
 
 std::unique_ptr<base::Value> HttpResponseHeaders::NetLogCallback(
     NetLogCaptureMode capture_mode) const {
-  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
-  base::ListValue* headers = new base::ListValue();
+  auto dict = std::make_unique<base::DictionaryValue>();
+  auto headers = std::make_unique<base::ListValue>();
   headers->AppendString(EscapeNonASCII(GetStatusLine()));
   size_t iterator = 0;
   std::string name;
@@ -1281,39 +1280,8 @@ std::unique_ptr<base::Value> HttpResponseHeaders::NetLogCallback(
     headers->AppendString(base::StringPrintf("%s: %s", escaped_name.c_str(),
                                              escaped_value.c_str()));
   }
-  dict->Set("headers", headers);
+  dict->Set("headers", std::move(headers));
   return std::move(dict);
-}
-
-// static
-bool HttpResponseHeaders::FromNetLogParam(
-    const base::Value* event_param,
-    scoped_refptr<HttpResponseHeaders>* http_response_headers) {
-  *http_response_headers = NULL;
-
-  const base::DictionaryValue* dict = NULL;
-  const base::ListValue* header_list = NULL;
-
-  if (!event_param ||
-      !event_param->GetAsDictionary(&dict) ||
-      !dict->GetList("headers", &header_list)) {
-    return false;
-  }
-
-  std::string raw_headers;
-  for (base::ListValue::const_iterator it = header_list->begin();
-       it != header_list->end();
-       ++it) {
-    std::string header_line;
-    if (!it->GetAsString(&header_line))
-      return false;
-
-    raw_headers.append(header_line);
-    raw_headers.push_back('\0');
-  }
-  raw_headers.push_back('\0');
-  *http_response_headers = new HttpResponseHeaders(raw_headers);
-  return true;
 }
 
 bool HttpResponseHeaders::IsChunkEncoded() const {

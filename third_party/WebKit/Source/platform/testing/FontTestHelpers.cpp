@@ -4,6 +4,7 @@
 
 #include "platform/testing/FontTestHelpers.h"
 
+#include "platform/SharedBuffer.h"
 #include "platform/fonts/Font.h"
 #include "platform/fonts/FontCustomPlatformData.h"
 #include "platform/fonts/FontDescription.h"
@@ -28,12 +29,18 @@ class TestFontSelector : public FontSelector {
 
   ~TestFontSelector() override {}
 
-  PassRefPtr<FontData> GetFontData(const FontDescription& font_description,
-                                   const AtomicString& family_name) override {
+  RefPtr<FontData> GetFontData(const FontDescription& font_description,
+                               const AtomicString& family_name) override {
+    FontSelectionCapabilities normal_capabilities(
+        {NormalWidthValue(), NormalWidthValue()},
+        {NormalSlopeValue(), NormalSlopeValue()},
+        {NormalWeightValue(), NormalWeightValue()});
     FontPlatformData platform_data = custom_platform_data_->GetFontPlatformData(
         font_description.EffectiveFontSize(),
         font_description.IsSyntheticBold(),
-        font_description.IsSyntheticItalic(), font_description.Orientation());
+        font_description.IsSyntheticItalic(),
+        font_description.GetFontSelectionRequest(), normal_capabilities,
+        font_description.Orientation());
     return SimpleFontData::Create(platform_data, CustomFontData::Create());
   }
 
@@ -42,14 +49,20 @@ class TestFontSelector : public FontSelector {
                        const String& text) override {}
   void WillUseRange(const FontDescription&,
                     const AtomicString& family_name,
-                    const FontDataForRangeSet&) override{};
+                    const FontDataForRangeSet&) override {}
 
   unsigned Version() const override { return 0; }
   void FontCacheInvalidated() override {}
+  void ReportNotDefGlyph() const override {}
+
+  void RegisterForInvalidationCallbacks(FontSelectorClient*) override {}
+  void UnregisterForInvalidationCallbacks(FontSelectorClient*) override {}
 
  private:
   TestFontSelector(PassRefPtr<FontCustomPlatformData> custom_platform_data)
-      : custom_platform_data_(std::move(custom_platform_data)) {}
+      : custom_platform_data_(std::move(custom_platform_data)) {
+    DCHECK(custom_platform_data_);
+  }
 
   RefPtr<FontCustomPlatformData> custom_platform_data_;
 };

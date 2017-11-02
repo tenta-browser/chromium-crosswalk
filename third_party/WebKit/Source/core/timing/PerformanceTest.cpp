@@ -17,13 +17,13 @@ class PerformanceTest : public ::testing::Test {
  protected:
   void SetUp() override {
     page_holder_ = DummyPageHolder::Create(IntSize(800, 600));
-    page_holder_->GetDocument().SetURL(KURL(KURL(), "https://example.com"));
+    page_holder_->GetDocument().SetURL(KURL(NullURL(), "https://example.com"));
     performance_ = Performance::Create(&page_holder_->GetFrame());
 
     // Create another dummy page holder and pretend this is the iframe.
     another_page_holder_ = DummyPageHolder::Create(IntSize(400, 300));
     another_page_holder_->GetDocument().SetURL(
-        KURL(KURL(), "https://iframed.com/bar"));
+        KURL(NullURL(), "https://iframed.com/bar"));
   }
 
   bool ObservingLongTasks() {
@@ -45,7 +45,7 @@ class PerformanceTest : public ::testing::Test {
     auto* monitor = GetFrame()->GetPerformanceMonitor();
     monitor->WillExecuteScript(GetDocument());
     monitor->DidExecuteScript();
-    monitor->DidProcessTask(nullptr, 0, 1);
+    monitor->DidProcessTask(0, 1);
   }
 
   LocalFrame* GetFrame() const { return &page_holder_->GetFrame(); }
@@ -116,10 +116,10 @@ TEST_F(PerformanceTest, NavigateAway) {
   EXPECT_TRUE(ObservingLongTasks());
 
   // Simulate navigation commit.
-  DocumentInit init(KURL(), GetFrame());
+  DocumentInit init = DocumentInit::Create().WithFrame(GetFrame());
   GetDocument()->Shutdown();
   GetFrame()->SetDOMWindow(LocalDOMWindow::Create(*GetFrame()));
-  GetFrame()->DomWindow()->InstallNewDocument(AtomicString(), init);
+  GetFrame()->DomWindow()->InstallNewDocument(AtomicString(), init, false);
 
   // m_performance is still alive, and should not crash when notified.
   SimulateDidProcessLongTask();
@@ -150,7 +150,8 @@ TEST(PerformanceLifetimeTest, SurviveContextSwitch) {
   // Simulate changing the document while keeping the window.
   page_holder->GetDocument().Shutdown();
   page_holder->GetFrame().DomWindow()->InstallNewDocument(
-      AtomicString(), DocumentInit(KURL(), &page_holder->GetFrame()));
+      AtomicString(),
+      DocumentInit::Create().WithFrame(&page_holder->GetFrame()), false);
 
   EXPECT_EQ(perf, DOMWindowPerformance::performance(
                       *page_holder->GetFrame().DomWindow()));

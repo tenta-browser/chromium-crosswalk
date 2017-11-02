@@ -26,7 +26,7 @@
 #include "core/dom/PseudoElement.h"
 #include "core/dom/StyleChangeReason.h"
 #include "core/dom/Text.h"
-#include "core/frame/FrameView.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/layout/HitTestResult.h"
 
 namespace blink {
@@ -35,9 +35,7 @@ LayoutTextFragment::LayoutTextFragment(Node* node,
                                        StringImpl* str,
                                        int start_offset,
                                        int length)
-    : LayoutText(node,
-                 str ? str->Substring(start_offset, length)
-                     : PassRefPtr<StringImpl>(nullptr)),
+    : LayoutText(node, str ? str->Substring(start_offset, length) : nullptr),
       start_(start_offset),
       fragment_length_(length),
       is_remaining_text_layout_object_(false),
@@ -76,7 +74,7 @@ void LayoutTextFragment::WillBeDestroyed() {
   LayoutText::WillBeDestroyed();
 }
 
-PassRefPtr<StringImpl> LayoutTextFragment::CompleteText() const {
+RefPtr<StringImpl> LayoutTextFragment::CompleteText() const {
   Text* text = AssociatedTextNode();
   return text ? text->DataImpl() : ContentString();
 }
@@ -86,14 +84,14 @@ void LayoutTextFragment::SetContentString(StringImpl* str) {
   SetText(str);
 }
 
-PassRefPtr<StringImpl> LayoutTextFragment::OriginalText() const {
+RefPtr<StringImpl> LayoutTextFragment::OriginalText() const {
   RefPtr<StringImpl> result = CompleteText();
   if (!result)
     return nullptr;
   return result->Substring(Start(), FragmentLength());
 }
 
-void LayoutTextFragment::SetText(PassRefPtr<StringImpl> text, bool force) {
+void LayoutTextFragment::SetText(RefPtr<StringImpl> text, bool force) {
   LayoutText::SetText(std::move(text), force);
 
   start_ = 0;
@@ -108,7 +106,7 @@ void LayoutTextFragment::SetText(PassRefPtr<StringImpl> text, bool force) {
   }
 }
 
-void LayoutTextFragment::SetTextFragment(PassRefPtr<StringImpl> text,
+void LayoutTextFragment::SetTextFragment(RefPtr<StringImpl> text,
                                          unsigned start,
                                          unsigned length) {
   LayoutText::SetText(std::move(text), false);

@@ -48,8 +48,8 @@
 #include <memory>
 #include "core/layout/LayoutMultiColumnFlowThread.h"
 #include "core/layout/LayoutView.h"
-#include "core/layout/compositing/PaintLayerCompositor.h"
 #include "core/paint/PaintLayer.h"
+#include "core/paint/compositing/PaintLayerCompositor.h"
 #include "platform/wtf/PtrUtil.h"
 #include "public/platform/Platform.h"
 
@@ -107,9 +107,9 @@ void PaintLayerStackingNode::DirtyZOrderLists() {
 #endif
 
   if (pos_z_order_list_)
-    pos_z_order_list_->Clear();
+    pos_z_order_list_->clear();
   if (neg_z_order_list_)
-    neg_z_order_list_->Clear();
+    neg_z_order_list_->clear();
   z_order_lists_dirty_ = true;
 
   if (!GetLayoutObject().DocumentBeingDestroyed() && Compositor())

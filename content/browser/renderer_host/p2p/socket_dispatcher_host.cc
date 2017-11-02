@@ -10,6 +10,7 @@
 
 #include "base/bind.h"
 #include "base/memory/ptr_util.h"
+#include "base/task_scheduler/post_task.h"
 #include "content/browser/bad_message.h"
 #include "content/browser/renderer_host/p2p/socket_host.h"
 #include "content/common/p2p_messages.h"
@@ -119,8 +120,9 @@ P2PSocketDispatcherHost::P2PSocketDispatcherHost(
       url_context_(url_context),
       monitoring_networks_(false),
       dump_incoming_rtp_packet_(false),
-      dump_outgoing_rtp_packet_(false) {
-}
+      dump_outgoing_rtp_packet_(false),
+      network_list_task_runner_(base::CreateSequencedTaskRunnerWithTraits(
+          {base::MayBlock(), base::TaskPriority::USER_VISIBLE})) {}
 
 void P2PSocketDispatcherHost::OnChannelClosing() {
   // Since the IPC sender is gone, close pending connections.
@@ -159,9 +161,9 @@ bool P2PSocketDispatcherHost::OnMessageReceived(const IPC::Message& message) {
 
 void P2PSocketDispatcherHost::OnIPAddressChanged() {
   // Notify the renderer about changes to list of network interfaces.
-  BrowserThread::PostTask(
-      BrowserThread::FILE, FROM_HERE, base::Bind(
-          &P2PSocketDispatcherHost::DoGetNetworkList, this));
+  network_list_task_runner_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&P2PSocketDispatcherHost::DoGetNetworkList, this));
 }
 
 void P2PSocketDispatcherHost::StartRtpDump(
@@ -188,12 +190,9 @@ void P2PSocketDispatcherHost::StopRtpDumpOnUIThread(bool incoming,
                                                     bool outgoing) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   BrowserThread::PostTask(
-      BrowserThread::IO,
-      FROM_HERE,
-      base::Bind(&P2PSocketDispatcherHost::StopRtpDumpOnIOThread,
-                 this,
-                 incoming,
-                 outgoing));
+      BrowserThread::IO, FROM_HERE,
+      base::BindOnce(&P2PSocketDispatcherHost::StopRtpDumpOnIOThread, this,
+                     incoming, outgoing));
 }
 
 P2PSocketDispatcherHost::~P2PSocketDispatcherHost() {
@@ -215,9 +214,9 @@ void P2PSocketDispatcherHost::OnStartNetworkNotifications() {
     monitoring_networks_ = true;
   }
 
-  BrowserThread::PostTask(
-      BrowserThread::FILE, FROM_HERE, base::Bind(
-          &P2PSocketDispatcherHost::DoGetNetworkList, this));
+  network_list_task_runner_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&P2PSocketDispatcherHost::DoGetNetworkList, this));
 }
 
 void P2PSocketDispatcherHost::OnStopNetworkNotifications() {
@@ -351,8 +350,8 @@ void P2PSocketDispatcherHost::DoGetNetworkList() {
   default_ipv6_local_address_ = GetDefaultLocalAddress(AF_INET6);
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&P2PSocketDispatcherHost::SendNetworkList, this, list,
-                 default_ipv4_local_address_, default_ipv6_local_address_));
+      base::BindOnce(&P2PSocketDispatcherHost::SendNetworkList, this, list,
+                     default_ipv4_local_address_, default_ipv6_local_address_));
 }
 
 void P2PSocketDispatcherHost::SendNetworkList(
@@ -367,7 +366,7 @@ net::IPAddress P2PSocketDispatcherHost::GetDefaultLocalAddress(int family) {
   DCHECK(family == AF_INET || family == AF_INET6);
 
   // Creation and connection of a UDP socket might be janky.
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  DCHECK(network_list_task_runner_->RunsTasksInCurrentSequence());
 
   std::unique_ptr<net::DatagramClientSocket> socket(
       net::ClientSocketFactory::GetDefaultFactory()->CreateDatagramClientSocket(

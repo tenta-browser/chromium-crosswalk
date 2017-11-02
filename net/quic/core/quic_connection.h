@@ -141,6 +141,12 @@ class QUIC_EXPORT_PRIVATE QuicConnectionVisitorInterface {
   // been done.
   virtual void PostProcessAfterData() = 0;
 
+  // Called when the connection sends ack after
+  // kMaxConsecutiveNonRetransmittablePackets consecutive not retransmittable
+  // packets sent. To instigate an ack from peer, a retransmittable frame needs
+  // to be added.
+  virtual void OnAckNeedsRetransmittableFrame() = 0;
+
   // Called to ask if the visitor wants to schedule write resumption as it both
   // has pending data to write, and is able to write (e.g. based on flow control
   // limits).
@@ -224,7 +230,8 @@ class QUIC_EXPORT_PRIVATE QuicConnectionDebugVisitor
   virtual void OnConnectionCloseFrame(const QuicConnectionCloseFrame& frame) {}
 
   // Called when a WindowUpdate has been parsed.
-  virtual void OnWindowUpdateFrame(const QuicWindowUpdateFrame& frame) {}
+  virtual void OnWindowUpdateFrame(const QuicWindowUpdateFrame& frame,
+                                   const QuicTime& receive_time) {}
 
   // Called when a BlockedFrame has been parsed.
   virtual void OnBlockedFrame(const QuicBlockedFrame& frame) {}
@@ -276,7 +283,10 @@ class QUIC_EXPORT_PRIVATE QuicConnectionHelperInterface {
   virtual QuicRandom* GetRandomGenerator() = 0;
 
   // Returns a QuicBufferAllocator to be used for all stream frame buffers.
-  virtual QuicBufferAllocator* GetBufferAllocator() = 0;
+  virtual QuicBufferAllocator* GetStreamFrameBufferAllocator() = 0;
+
+  // Returns a QuicBufferAllocator to be used for stream send buffers.
+  virtual QuicBufferAllocator* GetStreamSendBufferAllocator() = 0;
 };
 
 class QUIC_EXPORT_PRIVATE QuicConnection
@@ -345,7 +355,7 @@ class QUIC_EXPORT_PRIVATE QuicConnection
       QuicStreamId id,
       QuicIOVector iov,
       QuicStreamOffset offset,
-      bool fin,
+      StreamSendingState state,
       QuicReferenceCountedPointer<QuicAckListenerInterface> ack_listener);
 
   // Send a RST_STREAM frame to the peer.
@@ -653,6 +663,12 @@ class QUIC_EXPORT_PRIVATE QuicConnection
   // the MTU discovery alarm.
   void DiscoverMtu();
 
+  // Sets the stream notifer on the SentPacketManager.
+  void SetStreamNotifier(StreamNotifierInterface* stream_notifier);
+
+  // Set data producer in framer.
+  void SetDataProducer(QuicStreamFrameDataProducer* data_producer);
+
   // Return the name of the cipher of the primary decrypter of the framer.
   const char* cipher_name() const { return framer_.decrypter()->cipher_name(); }
   // Return the id of the cipher of the primary decrypter of the framer.
@@ -924,6 +940,9 @@ class QUIC_EXPORT_PRIVATE QuicConnection
   // When true, close the QUIC connection after 5 RTOs.  Due to the min rto of
   // 200ms, this is over 5 seconds.
   bool close_connection_after_five_rtos_;
+  // When true, close the QUIC connection when there are no open streams after
+  // 3 consecutive RTOs.
+  bool close_connection_after_three_rtos_;
 
   QuicReceivedPacketManager received_packet_manager_;
 
@@ -942,6 +961,9 @@ class QUIC_EXPORT_PRIVATE QuicConnection
   AckMode ack_mode_;
   // The max delay in fraction of min_rtt to use when sending decimated acks.
   float ack_decimation_delay_;
+  // When true, removes ack decimation's max number of packets(10) before
+  // sending an ack.
+  bool unlimited_ack_decimation_;
 
   // Indicates the retransmit alarm is going to be set by the
   // ScopedRetransmitAlarmDelayer
@@ -1077,10 +1099,13 @@ class QUIC_EXPORT_PRIVATE QuicConnection
 
   // Indicates whether a write error is encountered currently. This is used to
   // avoid infinite write errors.
-  bool write_error_occured_;
+  bool write_error_occurred_;
 
   // Indicates not to send or process stop waiting frames.
   bool no_stop_waiting_frames_;
+
+  // Consecutive number of sent packets which have no retransmittable frames.
+  size_t consecutive_num_packets_with_no_retransmittable_frames_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicConnection);
 };

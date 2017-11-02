@@ -70,6 +70,12 @@ void FakeUpdateEngineClient::NotifyObserversThatStatusChanged(
     observer.UpdateStatusChanged(status);
 }
 
+void FakeUpdateEngineClient::
+    NotifyUpdateOverCellularOneTimePermissionGranted() {
+  for (auto& observer : observers_)
+    observer.OnUpdateOverCellularOneTimePermissionGranted();
+}
+
 void FakeUpdateEngineClient::SetChannel(const std::string& target_channel,
                                         bool is_powerwash_allowed) {
 }
@@ -91,6 +97,13 @@ void FakeUpdateEngineClient::SetUpdateOverCellularPermission(
     bool allowed,
     const base::Closure& callback) {
   base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, callback);
+}
+
+void FakeUpdateEngineClient::SetUpdateOverCellularOneTimePermission(
+    const std::string& target_version,
+    int64_t target_size,
+    const UpdateOverCellularOneTimePermissionCallback& callback) {
+  callback.Run(true);
 }
 
 void FakeUpdateEngineClient::set_default_status(

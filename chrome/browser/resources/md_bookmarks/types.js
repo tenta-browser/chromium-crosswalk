@@ -24,7 +24,7 @@ var BookmarkNode;
 /**
  * @typedef {!Object<string, BookmarkNode>}
  */
-var NodeList;
+var NodeMap;
 
 /**
  * @typedef {{
@@ -37,22 +37,41 @@ var NodeList;
 var SelectionState;
 
 /**
+ * Note:
+ * - If |results| is null, it means no search results have been returned. This
+ *   is different to |results| being [], which means the last search returned 0
+ *   results.
+ * - |term| is the last search that was performed by the user, and |results| are
+ *   the last results that were returned from the backend. We don't clear
+ *   |results| on incremental searches, meaning that |results| can be 'stale'
+ *   data from a previous search term (while |inProgress| is true). If you need
+ *   to know the exact search term used to generate |results|, you'll need to
+ *   add a new field to the state to track it (eg, SearchState.resultsTerm).
  * @typedef {{
  *   term: string,
  *   inProgress: boolean,
- *   results: !Array<string>,
+ *   results: ?Array<string>,
  * }}
  */
 var SearchState;
 
-/** @typedef {!Set<string>} */
-var ClosedFolderState;
+/** @typedef {!Map<string, boolean>} */
+var FolderOpenState;
 
 /**
  * @typedef {{
- *   nodes: NodeList,
+ *   canEdit: boolean,
+ *   incognitoAvailability: IncognitoAvailability,
+ * }}
+ */
+var PreferencesState;
+
+/**
+ * @typedef {{
+ *   nodes: NodeMap,
  *   selectedFolder: string,
- *   closedFolders: ClosedFolderState,
+ *   folderOpenState: FolderOpenState,
+ *   prefs: PreferencesState,
  *   search: SearchState,
  *   selection: SelectionState,
  * }}
@@ -61,6 +80,9 @@ var BookmarksPageState;
 
 /** @typedef {{name: string}} */
 var Action;
+
+/** @typedef {function(function(?Action))} */
+var DeferredAction;
 
 /** @typedef {{element: BookmarkElement, position: DropPosition}} */
 var DropDestination;
@@ -86,7 +108,7 @@ function DragData() {
 }
 
 /** @interface */
-function StoreObserver(){};
+function StoreObserver() {}
 
 /** @param {!BookmarksPageState} newState */
 StoreObserver.prototype.onStateChanged = function(newState) {};

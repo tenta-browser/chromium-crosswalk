@@ -27,7 +27,9 @@
 #include "core/page/DragController.h"
 
 #include <memory>
+
 #include "bindings/core/v8/ExceptionState.h"
+#include "build/build_config.h"
 #include "core/HTMLNames.h"
 #include "core/InputTypeNames.h"
 #include "core/clipboard/DataObject.h"
@@ -35,11 +37,11 @@
 #include "core/clipboard/DataTransferAccessPolicy.h"
 #include "core/dom/Document.h"
 #include "core/dom/DocumentFragment.h"
-#include "core/dom/DocumentUserGestureToken.h"
 #include "core/dom/Element.h"
 #include "core/dom/Node.h"
+#include "core/dom/ShadowRoot.h"
 #include "core/dom/Text.h"
-#include "core/dom/shadow/ShadowRoot.h"
+#include "core/dom/UserGestureIndicator.h"
 #include "core/editing/DragCaret.h"
 #include "core/editing/EditingUtilities.h"
 #include "core/editing/Editor.h"
@@ -47,8 +49,8 @@
 #include "core/editing/commands/DragAndDropCommand.h"
 #include "core/editing/serializers/Serialization.h"
 #include "core/events/TextEvent.h"
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/Settings.h"
 #include "core/html/HTMLAnchorElement.h"
 #include "core/html/HTMLFormElement.h"
@@ -76,12 +78,12 @@
 #include "platform/graphics/BitmapImage.h"
 #include "platform/graphics/Image.h"
 #include "platform/graphics/ImageOrientation.h"
+#include "platform/graphics/paint/PaintRecordBuilder.h"
 #include "platform/loader/fetch/ResourceFetcher.h"
 #include "platform/loader/fetch/ResourceRequest.h"
 #include "platform/weborigin/SecurityOrigin.h"
 #include "platform/wtf/Assertions.h"
 #include "platform/wtf/CurrentTime.h"
-#include "platform/wtf/PassRefPtr.h"
 #include "platform/wtf/RefPtr.h"
 #include "public/platform/WebCommon.h"
 #include "public/platform/WebDragData.h"
@@ -90,7 +92,7 @@
 #include "public/platform/WebPoint.h"
 #include "public/platform/WebScreenInfo.h"
 
-#if OS(WIN)
+#if defined(OS_WIN)
 #include <windows.h>
 #endif
 
@@ -200,6 +202,7 @@ static DocumentFragment* DocumentFragmentFromDragData(
 bool DragController::DragIsMove(FrameSelection& selection,
                                 DragData* drag_data) {
   return document_under_mouse_ == drag_initiator_ &&
+         selection.SelectionHasFocus() &&
          selection.ComputeVisibleSelectionInDOMTreeDeprecated()
              .IsContentEditable() &&
          selection.ComputeVisibleSelectionInDOMTreeDeprecated().IsRange() &&
@@ -221,7 +224,7 @@ void DragController::DragEnded() {
 void DragController::DragExited(DragData* drag_data, LocalFrame& local_root) {
   DCHECK(drag_data);
 
-  FrameView* frame_view(local_root.View());
+  LocalFrameView* frame_view(local_root.View());
   if (frame_view) {
     DataTransferAccessPolicy policy = kDataTransferTypesReadable;
     DataTransfer* data_transfer = CreateDraggingDataTransfer(policy, drag_data);
@@ -237,12 +240,13 @@ void DragController::DragExited(DragData* drag_data, LocalFrame& local_root) {
   file_input_element_under_mouse_ = nullptr;
 }
 
-bool DragController::PerformDrag(DragData* drag_data, LocalFrame& local_root) {
+void DragController::PerformDrag(DragData* drag_data, LocalFrame& local_root) {
   DCHECK(drag_data);
   document_under_mouse_ =
       local_root.DocumentAtPoint(drag_data->ClientPosition());
-  UserGestureIndicator gesture(DocumentUserGestureToken::Create(
-      document_under_mouse_, UserGestureToken::kNewGesture));
+  std::unique_ptr<UserGestureIndicator> gesture = LocalFrame::CreateUserGesture(
+      document_under_mouse_ ? document_under_mouse_->GetFrame() : nullptr,
+      UserGestureToken::kNewGesture);
   if ((drag_destination_action_ & kDragDestinationActionDHTML) &&
       document_is_handling_drag_) {
     bool prevented_default = false;
@@ -273,26 +277,31 @@ bool DragController::PerformDrag(DragData* drag_data, LocalFrame& local_root) {
     if (prevented_default) {
       document_under_mouse_ = nullptr;
       CancelDrag();
-      return true;
+      return;
     }
   }
 
   if ((drag_destination_action_ & kDragDestinationActionEdit) &&
       ConcludeEditDrag(drag_data)) {
     document_under_mouse_ = nullptr;
-    return true;
+    return;
   }
 
   document_under_mouse_ = nullptr;
 
-  if (OperationForLoad(drag_data, local_root) == kDragOperationNone)
-    return false;
+  if (OperationForLoad(drag_data, local_root) != kDragOperationNone) {
+    if (page_->GetSettings().GetNavigateOnDragDrop()) {
+      page_->MainFrame()->Navigate(
+          FrameLoadRequest(nullptr, ResourceRequest(drag_data->AsURL())));
+    }
 
-  if (page_->GetSettings().GetNavigateOnDragDrop()) {
-    page_->MainFrame()->Navigate(
-        FrameLoadRequest(nullptr, ResourceRequest(drag_data->AsURL())));
+    // TODO(bokan): This case happens when we end a URL drag inside a guest
+    // process which doesn't navigate. We assume that since we'll navigate the
+    // page in the general case we don't end up sending `dragleave` and
+    // `dragend` events but for plugins we wont navigate so it seems we should
+    // be sending these events. crbug.com/748243.
+    local_root.GetEventHandler().ClearDragState();
   }
-  return true;
 }
 
 void DragController::MouseMovedIntoDocument(Document* new_document) {
@@ -373,7 +382,7 @@ bool DragController::TryDocumentDrag(DragData* drag_data,
         TryDHTMLDrag(drag_data, drag_session.operation, local_root);
     // Do not continue if m_documentUnderMouse has been reset by tryDHTMLDrag.
     // tryDHTMLDrag fires dragenter event. The event listener that listens
-    // to this event may create a nested message loop (open a modal dialog),
+    // to this event may create a nested run loop (open a modal dialog),
     // which could process dragleave event and reset m_documentUnderMouse in
     // dragExited.
     if (!document_under_mouse_)
@@ -382,7 +391,7 @@ bool DragController::TryDocumentDrag(DragData* drag_data,
 
   // It's unclear why this check is after tryDHTMLDrag.
   // We send drag events in tryDHTMLDrag and that may be the reason.
-  FrameView* frame_view = document_under_mouse_->View();
+  LocalFrameView* frame_view = document_under_mouse_->View();
   if (!frame_view)
     return false;
 
@@ -554,13 +563,13 @@ bool DragController::ConcludeEditDrag(DragData* drag_data) {
 
   // TODO(paulmeyer): Isn't |m_page->dragController()| the same as |this|?
   if (!page_->GetDragController().CanProcessDrag(
-          drag_data, *inner_frame->LocalFrameRoot())) {
+          drag_data, inner_frame->LocalFrameRoot())) {
     page_->GetDragCaret().Clear();
     return false;
   }
 
   if (page_->GetDragCaret().HasCaret()) {
-    // TODO(xiaochengh): The use of updateStyleAndLayoutIgnorePendingStylesheets
+    // TODO(editing-dev): Use of updateStyleAndLayoutIgnorePendingStylesheets
     // needs to be audited.  See http://crbug.com/590369 for more details.
     page_->GetDragCaret()
         .CaretPosition()
@@ -606,7 +615,7 @@ bool DragController::ConcludeEditDrag(DragData* drag_data) {
       DragAndDropCommand::Create(*inner_frame->GetDocument()));
 
   if (DragIsMove(inner_frame->Selection(), drag_data) ||
-      drag_caret.IsContentRichlyEditable()) {
+      IsRichlyEditablePosition(drag_caret.Base())) {
     DragSourceType drag_source_type = DragSourceType::kHTMLSource;
     DocumentFragment* fragment = DocumentFragmentFromDragData(
         drag_data, inner_frame, range, true, drag_source_type);
@@ -623,7 +632,7 @@ bool DragController::ConcludeEditDrag(DragData* drag_data) {
               : DeleteMode::kSimple;
       const InsertMode insert_mode =
           (delete_mode == DeleteMode::kSmart &&
-           inner_frame->Selection().Granularity() == kWordGranularity &&
+           inner_frame->Selection().Granularity() == TextGranularity::kWord &&
            drag_data->CanSmartReplace())
               ? InsertMode::kSmart
               : InsertMode::kSimple;
@@ -802,7 +811,7 @@ Node* DragController::DraggableNode(const LocalFrame* src,
     }
     if (node->IsElementNode()) {
       EUserDrag drag_mode = layout_object->Style()->UserDrag();
-      if (drag_mode == DRAG_NONE)
+      if (drag_mode == EUserDrag::kNone)
         continue;
       // Even if the image is part of a selection, we always only drag the image
       // in this case.
@@ -812,7 +821,7 @@ Node* DragController::DraggableNode(const LocalFrame* src,
         return node;
       }
       // Other draggable elements are considered unselectable.
-      if (drag_mode == DRAG_ELEMENT) {
+      if (drag_mode == EUserDrag::kElement) {
         candidate_drag_type = kDragSourceActionDHTML;
         break;
       }
@@ -983,7 +992,7 @@ static IntPoint DragLocationForSelectionDrag(LocalFrame* source_frame) {
 }
 
 static const IntSize MaxDragImageSize(float device_scale_factor) {
-#if OS(MACOSX)
+#if defined(OS_MACOSX)
   // Match Safari's drag image size.
   static const IntSize kMaxDragImageSize(400, 400);
 #else
@@ -1017,7 +1026,7 @@ static std::unique_ptr<DragImage> DragImageForImage(
 
   InterpolationQuality interpolation_quality =
       element->EnsureComputedStyle()->ImageRendering() ==
-              kImageRenderingPixelated
+              EImageRendering::kPixelated
           ? kInterpolationNone
           : kInterpolationHigh;
   RespectImageOrientationEnum should_respect_image_orientation =
@@ -1079,6 +1088,29 @@ static std::unique_ptr<DragImage> DragImageForLink(
   return drag_image;
 }
 
+// static
+std::unique_ptr<DragImage> DragController::DragImageForSelection(
+    const LocalFrame& frame,
+    float opacity) {
+  if (!frame.Selection().ComputeVisibleSelectionInDOMTreeDeprecated().IsRange())
+    return nullptr;
+
+  frame.View()->UpdateAllLifecyclePhasesExceptPaint();
+  DCHECK(frame.GetDocument()->IsActive());
+
+  FloatRect painting_rect = FloatRect(frame.Selection().Bounds());
+  GlobalPaintFlags paint_flags =
+      kGlobalPaintSelectionOnly | kGlobalPaintFlattenCompositingLayers;
+
+  PaintRecordBuilder builder(
+      DataTransfer::DeviceSpaceBounds(painting_rect, frame));
+  frame.View()->PaintContents(builder.Context(), paint_flags,
+                              EnclosingIntRect(painting_rect));
+  return DataTransfer::CreateDragImageForFrame(
+      frame, opacity, kDoNotRespectImageOrientation, painting_rect, builder,
+      PropertyTreeState::Root());
+}
+
 bool DragController::StartDrag(LocalFrame* src,
                                const DragState& state,
                                const WebMouseEvent& drag_event,
@@ -1123,7 +1155,7 @@ bool DragController::StartDrag(LocalFrame* src,
   Node* node = state.drag_src_.Get();
   if (state.drag_type_ == kDragSourceActionSelection) {
     if (!drag_image) {
-      drag_image = src->DragImageForSelection(kDragImageAlpha);
+      drag_image = DragImageForSelection(*src, kDragImageAlpha);
       drag_location = DragLocationForSelectionDrag(src);
     }
     DoSystemDrag(drag_image.get(), drag_location, drag_origin, data_transfer,
@@ -1212,8 +1244,7 @@ void DragController::DoSystemDrag(DragImage* image,
   did_initiate_drag_ = true;
   drag_initiator_ = frame->GetDocument();
 
-  LocalFrame* main_frame = frame->LocalFrameRoot();
-  FrameView* main_frame_view = main_frame->View();
+  LocalFrameView* main_frame_view = frame->LocalFrameRoot().View();
   IntPoint adjusted_drag_location = main_frame_view->RootFrameToContents(
       frame->View()->ContentsToRootFrame(drag_location));
   IntPoint adjusted_event_pos = main_frame_view->RootFrameToContents(
@@ -1254,7 +1285,7 @@ DragOperation DragController::GetDragOperation(DragData* drag_data) {
 bool DragController::IsCopyKeyDown(DragData* drag_data) {
   int modifiers = drag_data->GetModifiers();
 
-#if OS(MACOSX)
+#if defined(OS_MACOSX)
   return modifiers & WebInputEvent::kAltKey;
 #else
   return modifiers & WebInputEvent::kControlKey;

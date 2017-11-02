@@ -10,10 +10,9 @@
 #include "base/json/json_writer.h"
 #include "base/metrics/user_metrics.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/webui/signin/signin_email_confirmation_ui.h"
 #include "chrome/common/url_constants.h"
-#include "chrome/grit/browser_resources.h"
-#include "chrome/grit/generated_resources.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_ui.h"
@@ -70,7 +69,10 @@ SigninEmailConfirmationDialog::SigninEmailConfirmationDialog(
       profile_(profile),
       last_email_(last_email),
       new_email_(new_email),
-      callback_(callback) {}
+      callback_(callback) {
+  chrome::RecordDialogCreation(
+      chrome::DialogIdentifier::SIGN_IN_EMAIL_CONFIRMATION);
+}
 
 SigninEmailConfirmationDialog::~SigninEmailConfirmationDialog() {}
 

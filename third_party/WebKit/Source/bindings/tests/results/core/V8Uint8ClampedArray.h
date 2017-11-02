@@ -14,16 +14,16 @@
 
 #include "bindings/core/v8/GeneratedCodeHelper.h"
 #include "bindings/core/v8/NativeValueTraits.h"
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "bindings/core/v8/ToV8ForCore.h"
 #include "bindings/core/v8/V8ArrayBufferView.h"
-#include "bindings/core/v8/V8Binding.h"
-#include "bindings/core/v8/V8DOMWrapper.h"
-#include "bindings/core/v8/WrapperTypeInfo.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "core/CoreExport.h"
-#include "core/dom/DOMTypedArray.h"
-#include "core/dom/FlexibleArrayBufferView.h"
-#include "core/dom/NotShared.h"
+#include "core/typed_arrays/ArrayBufferViewHelpers.h"
+#include "core/typed_arrays/DOMTypedArray.h"
+#include "core/typed_arrays/FlexibleArrayBufferView.h"
+#include "platform/bindings/ScriptWrappable.h"
+#include "platform/bindings/V8DOMWrapper.h"
+#include "platform/bindings/WrapperTypeInfo.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
@@ -35,12 +35,12 @@ class V8Uint8ClampedArray {
   CORE_EXPORT static TestUint8ClampedArray* toImplWithTypeCheck(v8::Isolate*, v8::Local<v8::Value>);
   CORE_EXPORT static const WrapperTypeInfo wrapperTypeInfo;
   static void Trace(Visitor* visitor, ScriptWrappable* scriptWrappable) {
-    visitor->Trace(scriptWrappable->ToImpl<TestUint8ClampedArray>());
+    visitor->TraceFromGeneratedCode(scriptWrappable->ToImpl<TestUint8ClampedArray>());
   }
-  static void TraceWrappers(WrapperVisitor* visitor, ScriptWrappable* scriptWrappable) {
-    visitor->TraceWrappers(scriptWrappable->ToImpl<TestUint8ClampedArray>());
+  static void TraceWrappers(ScriptWrappableVisitor* visitor, ScriptWrappable* scriptWrappable) {
+    visitor->TraceWrappersFromGeneratedCode(scriptWrappable->ToImpl<TestUint8ClampedArray>());
   }
-  static const int internalFieldCount = kV8DefaultWrapperInternalFieldCount + 0;
+  static const int internalFieldCount = kV8DefaultWrapperInternalFieldCount;
 
   // Callback functions
 };

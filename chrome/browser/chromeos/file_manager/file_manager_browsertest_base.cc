@@ -11,9 +11,11 @@
 #include "base/json/json_reader.h"
 #include "base/json/json_value_converter.h"
 #include "base/json/json_writer.h"
+#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/string_piece.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/drive/file_system_util.h"
@@ -245,7 +247,7 @@ class FileManagerTestListener : public content::NotificationObserver {
           true;
     }
     messages_.push_back(entry);
-    base::MessageLoopForUI::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
  private:
@@ -624,6 +626,7 @@ void FileManagerBrowserTestBase::RunTestMessageLoop() {
 void FileManagerBrowserTestBase::OnMessage(const std::string& name,
                                            const base::DictionaryValue& value,
                                            std::string* output) {
+  base::ThreadRestrictions::ScopedAllowIO allow_io;
   if (name == "getTestName") {
     // Pass the test case name.
     *output = GetTestCaseNameParam();

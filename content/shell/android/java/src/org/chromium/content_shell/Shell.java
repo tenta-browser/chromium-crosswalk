@@ -24,6 +24,7 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.TextView.OnEditorActionListener;
 
+import org.chromium.base.Callback;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
 import org.chromium.content.browser.ActivityContentVideoViewEmbedder;
@@ -71,6 +72,8 @@ public class Shell extends LinearLayout {
 
     private boolean mLoading;
     private boolean mIsFullscreen;
+
+    private Callback<Boolean> mOverlayModeChangedCallbackForTesting;
 
     /**
      * Constructor for inflating via XML.
@@ -175,7 +178,7 @@ public class Shell extends LinearLayout {
                 mPrevButton.setVisibility(hasFocus ? GONE : VISIBLE);
                 mStopReloadButton.setVisibility(hasFocus ? GONE : VISIBLE);
                 if (!hasFocus) {
-                    mUrlTextView.setText(mWebContents.getUrl());
+                    mUrlTextView.setText(mWebContents.getVisibleUrl());
                 }
             }
         });
@@ -200,7 +203,7 @@ public class Shell extends LinearLayout {
     public void loadUrl(String url) {
         if (url == null) return;
 
-        if (TextUtils.equals(url, mWebContents.getUrl())) {
+        if (TextUtils.equals(url, mWebContents.getLastCommittedUrl())) {
             mNavigationController.reload(true);
         } else {
             mNavigationController.loadUrl(new LoadUrlParams(sanitizeUrl(url)));
@@ -307,8 +310,8 @@ public class Shell extends LinearLayout {
         mWebContents = mContentViewCore.getWebContents();
         mNavigationController = mWebContents.getNavigationController();
         if (getParent() != null) mContentViewCore.onShow();
-        if (mWebContents.getUrl() != null) {
-            mUrlTextView.setText(mWebContents.getUrl());
+        if (mWebContents.getVisibleUrl() != null) {
+            mUrlTextView.setText(mWebContents.getVisibleUrl());
         }
         ((FrameLayout) findViewById(R.id.contentview_holder)).addView(cv,
                 new FrameLayout.LayoutParams(
@@ -369,6 +372,18 @@ public class Shell extends LinearLayout {
                 }
             }
         };
+    }
+
+    @CalledByNative
+    public void setOverlayMode(boolean useOverlayMode) {
+        mContentViewRenderView.setOverlayVideoMode(useOverlayMode);
+        if (mOverlayModeChangedCallbackForTesting != null) {
+            mOverlayModeChangedCallbackForTesting.onResult(useOverlayMode);
+        }
+    }
+
+    public void setOverayModeChangedCallbackForTesting(Callback<Boolean> callback) {
+        mOverlayModeChangedCallbackForTesting = callback;
     }
 
     /**

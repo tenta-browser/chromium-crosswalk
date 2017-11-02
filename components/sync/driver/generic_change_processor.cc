@@ -10,7 +10,6 @@
 #include <utility>
 
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/sequenced_task_runner_handle.h"
@@ -132,7 +131,7 @@ GenericChangeProcessor::GenericChangeProcessor(
             std::move(attachment_store), *user_share, store_birthday, type,
             this);
     attachment_service_weak_ptr_factory_ =
-        base::MakeUnique<base::WeakPtrFactory<AttachmentService>>(
+        std::make_unique<base::WeakPtrFactory<AttachmentService>>(
             attachment_service_.get());
     attachment_service_proxy_ = AttachmentServiceProxy(
         base::SequencedTaskRunnerHandle::Get(),
@@ -161,7 +160,7 @@ void GenericChangeProcessor::ApplyChangesFromSyncModel(
       std::unique_ptr<sync_pb::EntitySpecifics> specifics;
       if (it->specifics.has_password()) {
         DCHECK(it->extra.get());
-        specifics = base::MakeUnique<sync_pb::EntitySpecifics>(it->specifics);
+        specifics = std::make_unique<sync_pb::EntitySpecifics>(it->specifics);
         specifics->mutable_password()
             ->mutable_client_only_encrypted_data()
             ->CopyFrom(it->extra->unencrypted());
@@ -277,10 +276,10 @@ SyncError GenericChangeProcessor::GetAllSyncDataReturnError(
   std::vector<int64_t> child_ids;
   root.GetChildIds(&child_ids);
 
-  for (std::vector<int64_t>::iterator it = child_ids.begin();
-       it != child_ids.end(); ++it) {
+  current_sync_data->reserve(current_sync_data->size() + child_ids.size());
+  for (int64_t child_id : child_ids) {
     ReadNode sync_child_node(&trans);
-    if (sync_child_node.InitByIdLookup(*it) != BaseNode::INIT_OK) {
+    if (sync_child_node.InitByIdLookup(child_id) != BaseNode::INIT_OK) {
       SyncError error(FROM_HERE, SyncError::DATATYPE_ERROR,
                       "Failed to fetch child node for type " + type_name + ".",
                       type_);

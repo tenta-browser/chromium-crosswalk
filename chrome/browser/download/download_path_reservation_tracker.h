@@ -6,9 +6,11 @@
 #define CHROME_BROWSER_DOWNLOAD_DOWNLOAD_PATH_RESERVATION_TRACKER_H_
 
 #include "base/callback_forward.h"
+#include "base/memory/ref_counted.h"
 
 namespace base {
 class FilePath;
+class SequencedTaskRunner;
 }
 
 namespace content {
@@ -19,7 +21,8 @@ enum class PathValidationResult {
   SUCCESS,
   PATH_NOT_WRITABLE,
   NAME_TOO_LONG,
-  CONFLICT
+  CONFLICT,
+  SAME_AS_SOURCE
 };
 
 // Chrome attempts to uniquify filenames that are assigned to downloads in order
@@ -58,8 +61,8 @@ class DownloadPathReservationTracker {
   // reservation that will live until |download_item| is interrupted, cancelled,
   // completes or is removed. This method will not modify |download_item|.
   //
-  // The process of issuing a reservation happens on the FILE thread, and
-  // involves:
+  // The process of issuing a reservation happens on the task runner returned by
+  // DownloadPathReservationTracker::GetTaskRunner(), and involves:
   //
   // - Creating |requested_target_path.DirName()| if it doesn't already exist
   //   and either |create_directory| or |requested_target_path.DirName() ==
@@ -100,8 +103,12 @@ class DownloadPathReservationTracker {
       const ReservedPathCallback& callback);
 
   // Returns true if |path| is in use by an existing path reservation. Should
-  // only be called on the FILE thread. Currently only used by tests.
+  // only be called on the task runner returned by
+  // DownloadPathReservationTracker::GetTaskRunner(). Currently only used by
+  // tests.
   static bool IsPathInUseForTesting(const base::FilePath& path);
+
+  static scoped_refptr<base::SequencedTaskRunner> GetTaskRunner();
 };
 
 #endif  // CHROME_BROWSER_DOWNLOAD_DOWNLOAD_PATH_RESERVATION_TRACKER_H_

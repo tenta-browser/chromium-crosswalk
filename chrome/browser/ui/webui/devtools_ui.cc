@@ -15,8 +15,6 @@
 #include "chrome/common/url_constants.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/devtools_frontend_host.h"
-#include "content/public/browser/site_instance.h"
-#include "content/public/browser/storage_partition.h"
 #include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
@@ -27,7 +25,6 @@
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "net/url_request/url_request_context_getter.h"
-#include "storage/browser/fileapi/file_system_context.h"
 #include "third_party/WebKit/public/public_features.h"
 
 using content::BrowserThread;
@@ -242,13 +239,13 @@ void DevToolsDataSource::StartRemoteDataRequest(
           destination: GOOGLE_OWNED_SERVICE
         }
         policy {
-          cookies_allowed: true
+          cookies_allowed: YES
           cookies_store: "user"
           setting: "This feature cannot be disabled by settings."
           chrome_policy {
             DeveloperToolsDisabled {
               policy_options {mode: MANDATORY}
-              DeveloperToolsDisabled: True
+              DeveloperToolsDisabled: true
             }
           }
         })");
@@ -286,13 +283,13 @@ void DevToolsDataSource::StartCustomDataRequest(
           destination: WEBSITE
         }
         policy {
-          cookies_allowed: true
+          cookies_allowed: YES
           cookies_store: "user"
           setting: "This feature cannot be disabled by settings."
           chrome_policy {
             DeveloperToolsDisabled {
               policy_options {mode: MANDATORY}
-              DeveloperToolsDisabled: True
+              DeveloperToolsDisabled: true
             }
           }
         })");
@@ -351,13 +348,6 @@ DevToolsUI::DevToolsUI(content::WebUI* web_ui)
   content::URLDataSource::Add(
       profile,
       new DevToolsDataSource(profile->GetRequestContext()));
-
-  if (!profile->IsOffTheRecord())
-    return;
-  GURL url = web_ui->GetWebContents()->GetVisibleURL();
-  GURL site = content::SiteInstance::GetSiteForURL(profile, url);
-  content::BrowserContext::GetStoragePartitionForSite(profile, site)->
-      GetFileSystemContext()->EnableTemporaryFileSystemInIncognito();
 }
 
 DevToolsUI::~DevToolsUI() {

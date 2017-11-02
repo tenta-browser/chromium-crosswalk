@@ -1,4 +1,5 @@
 <link rel="import" href="chrome://resources/html/polymer.html">
+
 <link rel="import" href="chrome://resources/polymer/v1_0/paper-styles/shadow.html">
 <link rel="import" href="../animation/animation.html">
 
@@ -60,10 +61,11 @@
       }
     </style>
     <div id="header">
-      <h2 class="title">{{pageTitle}}</h2>
+      <h2 class="title"
+          aria-hidden$="[[getTitleHiddenStatus_(pageTitle)]]">[[pageTitle]]</h2>
     </div>
     <div id="card">
-      <content id="content"></content>
+      <slot></slot>
     </div>
   </template>
   <script src="settings_section.js"></script>

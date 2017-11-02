@@ -5,23 +5,21 @@
 #import "ios/clean/chrome/browser/ui/toolbar/toolbar_view_controller.h"
 
 #import "base/mac/foundation_util.h"
-#import "ios/clean/chrome/browser/ui/actions/tab_grid_actions.h"
-#import "ios/clean/chrome/browser/ui/actions/tab_strip_actions.h"
+#import "ios/chrome/browser/ui/commands/history_popup_commands.h"
+#include "ios/chrome/browser/ui/rtl_geometry.h"
+#import "ios/chrome/browser/ui/uikit_ui_util.h"
 #import "ios/clean/chrome/browser/ui/commands/navigation_commands.h"
+#import "ios/clean/chrome/browser/ui/commands/tab_grid_commands.h"
+#import "ios/clean/chrome/browser/ui/commands/tab_strip_commands.h"
 #import "ios/clean/chrome/browser/ui/commands/tools_menu_commands.h"
 #import "ios/clean/chrome/browser/ui/toolbar/toolbar_button+factory.h"
 #import "ios/clean/chrome/browser/ui/toolbar/toolbar_component_options.h"
+#import "ios/clean/chrome/browser/ui/toolbar/toolbar_constants.h"
+#import "ios/third_party/material_components_ios/src/components/ProgressView/src/MaterialProgressView.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
-
-namespace {
-// Stackview Vertical Margin.
-CGFloat kVerticalMargin = 5.0f;
-// Stackview Horizontal Margin.
-CGFloat kHorizontalMargin = 8.0f;
-}  // namespace
 
 @interface ToolbarViewController ()
 @property(nonatomic, strong) UIView* locationBarContainer;
@@ -34,6 +32,7 @@ CGFloat kHorizontalMargin = 8.0f;
 @property(nonatomic, strong) ToolbarButton* shareButton;
 @property(nonatomic, strong) ToolbarButton* reloadButton;
 @property(nonatomic, strong) ToolbarButton* stopButton;
+@property(nonatomic, strong) MDCProgressView* progressBar;
 @end
 
 @implementation ToolbarViewController
@@ -49,38 +48,58 @@ CGFloat kHorizontalMargin = 8.0f;
 @synthesize shareButton = _shareButton;
 @synthesize reloadButton = _reloadButton;
 @synthesize stopButton = _stopButton;
+@synthesize progressBar = _progressBar;
 
 - (instancetype)init {
   self = [super init];
   if (self) {
     [self setUpToolbarButtons];
     [self setUpLocationBarContainer];
+    [self setUpProgressBar];
   }
   return self;
 }
 
-- (void)viewDidLoad {
-  self.view.backgroundColor = [UIColor lightGrayColor];
+- (instancetype)initWithDispatcher:(id<NavigationCommands,
+                                       TabGridCommands,
+                                       TabHistoryPopupCommands,
+                                       TabStripCommands,
+                                       ToolsMenuCommands>)dispatcher {
+  _dispatcher = dispatcher;
+  return [self init];
+}
 
+#pragma mark - View lifecyle
+
+- (void)viewDidLoad {
+  self.view.backgroundColor = UIColorFromRGB(kToolbarBackgroundColor);
   [self addChildViewController:self.locationBarViewController
                      toSubview:self.locationBarContainer];
+  [self setUpToolbarStackView];
+  [self.view addSubview:self.stackView];
+  [self.view addSubview:self.progressBar];
+  [self setConstraints];
+}
 
-  // Stack view to contain toolbar items.
+#pragma mark - View Setup
+
+// Sets up the StackView that contains toolbar navigation items.
+- (void)setUpToolbarStackView {
   self.stackView = [[UIStackView alloc] initWithArrangedSubviews:@[
     self.backButton, self.forwardButton, self.reloadButton, self.stopButton,
     self.locationBarContainer, self.shareButton, self.tabSwitchStripButton,
     self.tabSwitchGridButton, self.toolsMenuButton
   ]];
-  [self updateAllButtonsVisibility];
   self.stackView.translatesAutoresizingMaskIntoConstraints = NO;
-  self.stackView.spacing = 16.0;
+  self.stackView.spacing = kStackViewSpacing;
   self.stackView.distribution = UIStackViewDistributionFill;
-  [self.view addSubview:self.stackView];
+  [self updateAllButtonsVisibility];
+}
 
-  // Set constraints.
+- (void)setConstraints {
   [self.view setAutoresizingMask:UIViewAutoresizingFlexibleWidth |
                                  UIViewAutoresizingFlexibleHeight];
-  [NSLayoutConstraint activateConstraints:@[
+  NSArray* constraints = @[
     [self.stackView.topAnchor constraintEqualToAnchor:self.view.topAnchor
                                              constant:kVerticalMargin],
     [self.stackView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor
@@ -91,45 +110,96 @@ CGFloat kHorizontalMargin = 8.0f;
     [self.stackView.trailingAnchor
         constraintEqualToAnchor:self.view.trailingAnchor
                        constant:-kHorizontalMargin],
-  ]];
+    [self.progressBar.leadingAnchor
+        constraintEqualToAnchor:self.view.leadingAnchor],
+    [self.progressBar.trailingAnchor
+        constraintEqualToAnchor:self.view.trailingAnchor],
+    [self.progressBar.bottomAnchor
+        constraintEqualToAnchor:self.view.bottomAnchor],
+    [self.progressBar.heightAnchor
+        constraintEqualToConstant:kProgressBarHeight],
+  ];
+
+  // Set the constraints priority to UILayoutPriorityDefaultHigh so these are
+  // not broken when the views are hidden or the VC's view size is 0.
+  [self activateConstraints:constraints
+               withPriority:UILayoutPriorityDefaultHigh];
+}
+
+- (void)viewWillTransitionToSize:(CGSize)size
+       withTransitionCoordinator:
+           (id<UIViewControllerTransitionCoordinator>)coordinator {
+  // We need to dismiss the ToolsMenu every time the Toolbar frame changes
+  // (e.g. Size changes, rotation changes, etc.)
+  [self.dispatcher closeToolsMenu];
 }
 
 #pragma mark - Components Setup
 
 - (void)setUpToolbarButtons {
+  NSMutableArray* buttonConstraints = [[NSMutableArray alloc] init];
+
   // Back button.
   self.backButton = [ToolbarButton backToolbarButton];
   self.backButton.visibilityMask = ToolbarComponentVisibilityCompactWidth |
                                    ToolbarComponentVisibilityRegularWidth;
-  [self.backButton addTarget:self
-                      action:@selector(goBack:)
+  [buttonConstraints
+      addObject:[self.backButton.widthAnchor
+                    constraintEqualToConstant:kToolbarButtonWidth]];
+  [self.backButton addTarget:self.dispatcher
+                      action:@selector(goBack)
             forControlEvents:UIControlEventTouchUpInside];
+  UILongPressGestureRecognizer* backHistoryLongPress =
+      [[UILongPressGestureRecognizer alloc]
+          initWithTarget:self
+                  action:@selector(handleLongPress:)];
+  [self.backButton addGestureRecognizer:backHistoryLongPress];
 
   // Forward button.
   self.forwardButton = [ToolbarButton forwardToolbarButton];
   self.forwardButton.visibilityMask =
       ToolbarComponentVisibilityCompactWidthOnlyWhenEnabled |
       ToolbarComponentVisibilityRegularWidth;
-  [self.forwardButton addTarget:self
-                         action:@selector(goForward:)
+  [buttonConstraints
+      addObject:[self.forwardButton.widthAnchor
+                    constraintEqualToConstant:kToolbarButtonWidth]];
+  [self.forwardButton addTarget:self.dispatcher
+                         action:@selector(goForward)
                forControlEvents:UIControlEventTouchUpInside];
+  UILongPressGestureRecognizer* forwardHistoryLongPress =
+      [[UILongPressGestureRecognizer alloc]
+          initWithTarget:self
+                  action:@selector(handleLongPress:)];
+  [self.forwardButton addGestureRecognizer:forwardHistoryLongPress];
 
   // Tab switcher Strip button.
   self.tabSwitchStripButton = [ToolbarButton tabSwitcherStripToolbarButton];
   self.tabSwitchStripButton.visibilityMask =
       ToolbarComponentVisibilityCompactWidth |
       ToolbarComponentVisibilityRegularWidth;
-  [self.tabSwitchStripButton addTarget:nil
-                                action:@selector(showTabStrip:)
+  [buttonConstraints
+      addObject:[self.tabSwitchStripButton.widthAnchor
+                    constraintEqualToConstant:kToolbarButtonWidth]];
+  [self.tabSwitchStripButton addTarget:self.dispatcher
+                                action:@selector(showTabStrip)
                       forControlEvents:UIControlEventTouchUpInside];
+  [self.tabSwitchStripButton
+      setTitleColor:UIColorFromRGB(kToolbarButtonTitleNormalColor)
+           forState:UIControlStateNormal];
+  [self.tabSwitchStripButton
+      setTitleColor:UIColorFromRGB(kToolbarButtonTitleHighlightedColor)
+           forState:UIControlStateHighlighted];
 
   // Tab switcher Grid button.
   self.tabSwitchGridButton = [ToolbarButton tabSwitcherGridToolbarButton];
   self.tabSwitchGridButton.visibilityMask =
       ToolbarComponentVisibilityCompactWidth |
       ToolbarComponentVisibilityRegularWidth;
-  [self.tabSwitchGridButton addTarget:nil
-                               action:@selector(showTabGrid:)
+  [buttonConstraints
+      addObject:[self.tabSwitchGridButton.widthAnchor
+                    constraintEqualToConstant:kToolbarButtonWidth]];
+  [self.tabSwitchGridButton addTarget:self.dispatcher
+                               action:@selector(showTabGrid)
                      forControlEvents:UIControlEventTouchUpInside];
   self.tabSwitchGridButton.hiddenInCurrentState = YES;
 
@@ -137,40 +207,86 @@ CGFloat kHorizontalMargin = 8.0f;
   self.toolsMenuButton = [ToolbarButton toolsMenuToolbarButton];
   self.toolsMenuButton.visibilityMask = ToolbarComponentVisibilityCompactWidth |
                                         ToolbarComponentVisibilityRegularWidth;
-  [self.toolsMenuButton addTarget:self
-                           action:@selector(showToolsMenu:)
+  [buttonConstraints
+      addObject:[self.toolsMenuButton.widthAnchor
+                    constraintEqualToConstant:kToolbarButtonWidth]];
+  [self.toolsMenuButton addTarget:self.dispatcher
+                           action:@selector(showToolsMenu)
                  forControlEvents:UIControlEventTouchUpInside];
 
   // Share button.
   self.shareButton = [ToolbarButton shareToolbarButton];
   self.shareButton.visibilityMask = ToolbarComponentVisibilityRegularWidth;
+  [buttonConstraints
+      addObject:[self.shareButton.widthAnchor
+                    constraintEqualToConstant:kToolbarButtonWidth]];
+  // TODO(crbug.com/740793): Remove alert once share is implemented.
+  self.shareButton.titleLabel.text = @"Share";
   [self.shareButton addTarget:self
-                       action:@selector(showShareMenu:)
+                       action:@selector(showAlert:)
              forControlEvents:UIControlEventTouchUpInside];
 
   // Reload button.
   self.reloadButton = [ToolbarButton reloadToolbarButton];
   self.reloadButton.visibilityMask = ToolbarComponentVisibilityRegularWidth;
-  [self.reloadButton addTarget:self
-                        action:@selector(reload:)
+  [buttonConstraints
+      addObject:[self.reloadButton.widthAnchor
+                    constraintEqualToConstant:kToolbarButtonWidth]];
+  [self.reloadButton addTarget:self.dispatcher
+                        action:@selector(reloadPage)
               forControlEvents:UIControlEventTouchUpInside];
 
   // Stop button.
   self.stopButton = [ToolbarButton stopToolbarButton];
   self.stopButton.visibilityMask = ToolbarComponentVisibilityRegularWidth;
-  [self.stopButton addTarget:self
-                      action:@selector(stop:)
+  [buttonConstraints
+      addObject:[self.stopButton.widthAnchor
+                    constraintEqualToConstant:kToolbarButtonWidth]];
+  [self.stopButton addTarget:self.dispatcher
+                      action:@selector(stopLoadingPage)
             forControlEvents:UIControlEventTouchUpInside];
+
+  // Set the button constraint priority to UILayoutPriorityDefaultHigh so
+  // these are not broken when being hidden by the StackView.
+  [self activateConstraints:buttonConstraints
+               withPriority:UILayoutPriorityDefaultHigh];
 }
 
 - (void)setUpLocationBarContainer {
   UIView* locationBarContainer = [[UIView alloc] initWithFrame:CGRectZero];
   locationBarContainer.translatesAutoresizingMaskIntoConstraints = NO;
   locationBarContainer.backgroundColor = [UIColor whiteColor];
+  locationBarContainer.layer.borderWidth = kLocationBarBorderWidth;
+  locationBarContainer.layer.borderColor =
+      UIColorFromRGB(kLocationBarBorderColor).CGColor;
+  locationBarContainer.layer.shadowRadius = kLocationBarShadowRadius;
+  locationBarContainer.layer.shadowOpacity = kLocationBarShadowOpacity;
+  locationBarContainer.layer.shadowOffset = CGSizeMake(0.0f, 0.5f);
+
   [locationBarContainer
       setContentHuggingPriority:UILayoutPriorityDefaultLow
                         forAxis:UILayoutConstraintAxisHorizontal];
   self.locationBarContainer = locationBarContainer;
+}
+
+- (void)setUpProgressBar {
+  MDCProgressView* progressBar = [[MDCProgressView alloc] init];
+  progressBar.translatesAutoresizingMaskIntoConstraints = NO;
+  progressBar.hidden = YES;
+  self.progressBar = progressBar;
+}
+
+#pragma mark - Button Actions
+
+- (void)handleLongPress:(UILongPressGestureRecognizer*)gesture {
+  if (gesture.state != UIGestureRecognizerStateBegan)
+    return;
+
+  if (gesture.view == self.backButton) {
+    [self.dispatcher showTabHistoryPopupForBackwardHistory];
+  } else if (gesture.view == self.forwardButton) {
+    [self.dispatcher showTabHistoryPopupForForwardHistory];
+  }
 }
 
 #pragma mark - View Controller Containment
@@ -226,9 +342,6 @@ CGFloat kHorizontalMargin = 8.0f;
 
 #pragma mark - ToolbarWebStateConsumer
 
-- (void)setCurrentPageText:(NSString*)text {
-}
-
 - (void)setCanGoForward:(BOOL)canGoForward {
   self.forwardButton.enabled = canGoForward;
   // Update the visibility since the Forward button will be hidden on
@@ -243,7 +356,52 @@ CGFloat kHorizontalMargin = 8.0f;
 - (void)setIsLoading:(BOOL)isLoading {
   self.reloadButton.hiddenInCurrentState = isLoading;
   self.stopButton.hiddenInCurrentState = !isLoading;
+  [self.progressBar setHidden:!isLoading animated:YES completion:nil];
   [self updateAllButtonsVisibility];
+}
+
+- (void)setLoadingProgressFraction:(double)progress {
+  [self.progressBar setProgress:progress animated:YES completion:nil];
+}
+
+- (void)setTabStripVisible:(BOOL)visible {
+  self.tabSwitchStripButton.hiddenInCurrentState = visible;
+  self.tabSwitchGridButton.hiddenInCurrentState = !visible;
+  [self updateAllButtonsVisibility];
+}
+
+- (void)setTabCount:(int)tabCount {
+  // Return if tabSwitchStripButton wasn't initialized.
+  if (!self.tabSwitchStripButton)
+    return;
+
+  // Update the text shown in the |self.tabSwitchStripButton|. Note that the
+  // button's title may be empty or contain an easter egg, but the accessibility
+  // value will always be equal to |tabCount|.
+  NSString* tabStripButtonValue = [NSString stringWithFormat:@"%d", tabCount];
+  NSString* tabStripButtonTitle;
+  if (tabCount <= 0) {
+    tabStripButtonTitle = @"";
+  } else if (tabCount > kShowTabStripButtonMaxTabCount) {
+    // As an easter egg, show a smiley face instead of the count if the user has
+    // more than 99 tabs open.
+    tabStripButtonTitle = @":)";
+    [[self.tabSwitchStripButton titleLabel]
+        setFont:[UIFont boldSystemFontOfSize:kFontSizeFewerThanTenTabs]];
+  } else {
+    tabStripButtonTitle = tabStripButtonValue;
+    if (tabCount < 10) {
+      [[self.tabSwitchStripButton titleLabel]
+          setFont:[UIFont boldSystemFontOfSize:kFontSizeFewerThanTenTabs]];
+    } else {
+      [[self.tabSwitchStripButton titleLabel]
+          setFont:[UIFont boldSystemFontOfSize:kFontSizeTenTabsOrMore]];
+    }
+  }
+
+  [self.tabSwitchStripButton setTitle:tabStripButtonTitle
+                             forState:UIControlStateNormal];
+  [self.tabSwitchStripButton setAccessibilityValue:tabStripButtonValue];
 }
 
 #pragma mark - ZoomTransitionDelegate
@@ -253,48 +411,38 @@ CGFloat kHorizontalMargin = 8.0f;
                   fromView:self.toolsMenuButton];
 }
 
-#pragma mark - Private Methods
+#pragma mark - TabHistoryPositioner
 
-- (void)showToolsMenu:(id)sender {
-  [self.dispatcher showToolsMenu];
+- (CGPoint)originPointForToolbarButton:(ToolbarButtonType)toolbarButton {
+  UIButton* historyButton =
+      (toolbarButton == ToolbarButtonTypeBack) ? _backButton : _forwardButton;
+
+  // Set the origin for the tools popup to the leading side of the bottom of the
+  // pressed buttons.
+  CGRect buttonBounds = [historyButton.imageView bounds];
+  CGPoint leadingBottomCorner = CGPointMake(CGRectGetLeadingEdge(buttonBounds),
+                                            CGRectGetMaxY(buttonBounds));
+  CGPoint origin = [historyButton.imageView convertPoint:leadingBottomCorner
+                                                  toView:historyButton.window];
+  return origin;
 }
 
-- (void)closeToolsMenu:(id)sender {
-  [self.dispatcher closeToolsMenu];
+#pragma mark - TabHistoryUIUpdater
+
+- (void)updateUIForTabHistoryPresentationFrom:(ToolbarButtonType)button {
+  ToolbarButton* historyButton = button ? self.backButton : self.forwardButton;
+  historyButton.selected = YES;
 }
 
-- (void)showShareMenu:(id)sender {
-  [self.dispatcher showShareMenu];
+- (void)updateUIForTabHistoryWasDismissed {
+  self.backButton.selected = NO;
+  self.forwardButton.selected = NO;
 }
 
-- (void)goBack:(id)sender {
-  [self.dispatcher goBack];
-}
+#pragma mark - TabHistoryPresentation
 
-- (void)goForward:(id)sender {
-  [self.dispatcher goForward];
-}
-
-- (void)stop:(id)sender {
-  [self.dispatcher stopLoadingPage];
-}
-
-- (void)reload:(id)sender {
-  [self.dispatcher reloadPage];
-}
-
-#pragma mark - TabStripEvents
-
-- (void)tabStripDidShow:(id)sender {
-  self.tabSwitchStripButton.hiddenInCurrentState = YES;
-  self.tabSwitchGridButton.hiddenInCurrentState = NO;
-  [self updateAllButtonsVisibility];
-}
-
-- (void)tabStripDidHide:(id)sender {
-  self.tabSwitchStripButton.hiddenInCurrentState = NO;
-  self.tabSwitchGridButton.hiddenInCurrentState = YES;
-  [self updateAllButtonsVisibility];
+- (UIView*)viewForTabHistoryPresentation {
+  return self.parentViewController.view;
 }
 
 #pragma mark - Helper Methods
@@ -307,6 +455,31 @@ CGFloat kHorizontalMargin = 8.0f;
       [button setHiddenForCurrentStateAndSizeClass];
     }
   }
+}
+
+// Sets the priority for an array of constraints and activates them.
+- (void)activateConstraints:(NSArray*)constraintsArray
+               withPriority:(UILayoutPriority)priority {
+  for (NSLayoutConstraint* constraint in constraintsArray) {
+    constraint.priority = priority;
+  }
+  [NSLayoutConstraint activateConstraints:constraintsArray];
+}
+
+// TODO(crbug.com/740793): Remove this method once no item is using it.
+- (void)showAlert:(UIButton*)sender {
+  UIAlertController* alertController =
+      [UIAlertController alertControllerWithTitle:sender.titleLabel.text
+                                          message:nil
+                                   preferredStyle:UIAlertControllerStyleAlert];
+  UIAlertAction* action =
+      [UIAlertAction actionWithTitle:@"Done"
+                               style:UIAlertActionStyleCancel
+                             handler:nil];
+  [alertController addAction:action];
+  [self.parentViewController presentViewController:alertController
+                                          animated:YES
+                                        completion:nil];
 }
 
 @end

@@ -5,6 +5,7 @@
 #include "components/security_state/core/security_state.h"
 
 #include <stdint.h>
+#include <string>
 
 #include "base/command_line.h"
 #include "base/metrics/field_trial.h"
@@ -17,32 +18,68 @@ namespace security_state {
 
 namespace {
 
-// Do not change or reorder this enum, and add new values at the end. It is used
-// in the MarkHttpAs histogram.
+// These values are written to logs. New enum values can be added, but existing
+// enums must never be renumbered or deleted and reused.
 enum MarkHttpStatus {
-  NEUTRAL /* deprecated */,
-  NON_SECURE,
-  HTTP_SHOW_WARNING_ON_SENSITIVE_FIELDS,
+  NEUTRAL = 0,  // Deprecated
+  NON_SECURE = 1,
+  HTTP_SHOW_WARNING_ON_SENSITIVE_FIELDS = 2,
+  NON_SECURE_AFTER_EDITING = 3,
+  NON_SECURE_WHILE_INCOGNITO = 4,
+  NON_SECURE_WHILE_INCOGNITO_OR_EDITING = 5,
   LAST_STATUS
 };
 
 // If |switch_or_field_trial_group| corresponds to a valid
-// MarkHttpAs group, sets |*level| and |*histogram_status| to the
+// MarkHttpAs setting, sets |*level| and |*histogram_status| to the
 // appropriate values and returns true. Otherwise, returns false.
 bool GetSecurityLevelAndHistogramValueForNonSecureFieldTrial(
     std::string switch_or_field_trial_group,
     bool displayed_sensitive_input_on_http,
+    bool is_incognito,
+    const InsecureInputEventData* input_events,
     SecurityLevel* level,
-    MarkHttpStatus* histogram_status) {
-  if (switch_or_field_trial_group != switches::kMarkHttpAsDangerous)
-    return false;
-  *level = DANGEROUS;
-  *histogram_status = NON_SECURE;
-  return true;
+    MarkHttpStatus* mark_http_as) {
+  if (switch_or_field_trial_group ==
+      switches::kMarkHttpAsNonSecureWhileIncognito) {
+    *mark_http_as = NON_SECURE_WHILE_INCOGNITO;
+    *level = (is_incognito || displayed_sensitive_input_on_http)
+                 ? security_state::HTTP_SHOW_WARNING
+                 : NONE;
+    return true;
+  }
+  if (switch_or_field_trial_group ==
+      switches::kMarkHttpAsNonSecureWhileIncognitoOrEditing) {
+    *mark_http_as = NON_SECURE_WHILE_INCOGNITO_OR_EDITING;
+    *level = (is_incognito || displayed_sensitive_input_on_http ||
+              (input_events && input_events->insecure_field_edited))
+                 ? security_state::HTTP_SHOW_WARNING
+                 : NONE;
+    return true;
+  }
+  if (switch_or_field_trial_group ==
+      switches::kMarkHttpAsNonSecureAfterEditing) {
+    *mark_http_as = NON_SECURE_AFTER_EDITING;
+    *level = (displayed_sensitive_input_on_http ||
+              (input_events && input_events->insecure_field_edited))
+                 ? security_state::HTTP_SHOW_WARNING
+                 : NONE;
+    return true;
+  }
+  if (switch_or_field_trial_group == switches::kMarkHttpAsDangerous) {
+    *mark_http_as = NON_SECURE;
+    *level = DANGEROUS;
+    return true;
+  }
+
+  return false;
 }
 
 SecurityLevel GetSecurityLevelForNonSecureFieldTrial(
-    bool displayed_sensitive_input_on_http) {
+    bool displayed_sensitive_input_on_http,
+    bool is_incognito,
+    const InsecureInputEventData* input_events,
+    MarkHttpStatus* mark_http_as) {
   std::string choice =
       base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
           switches::kMarkHttpAs);
@@ -51,22 +88,23 @@ SecurityLevel GetSecurityLevelForNonSecureFieldTrial(
   const char kEnumeration[] = "SSL.MarkHttpAsStatus";
 
   SecurityLevel level = NONE;
-  MarkHttpStatus status;
 
   // If the command-line switch is set, then it takes precedence over
   // the field trial group.
   if (!GetSecurityLevelAndHistogramValueForNonSecureFieldTrial(
-          choice, displayed_sensitive_input_on_http, &level, &status)) {
+          choice, displayed_sensitive_input_on_http, is_incognito, input_events,
+          &level, mark_http_as)) {
     if (!GetSecurityLevelAndHistogramValueForNonSecureFieldTrial(
-            group, displayed_sensitive_input_on_http, &level, &status)) {
-      status = HTTP_SHOW_WARNING_ON_SENSITIVE_FIELDS;
+            group, displayed_sensitive_input_on_http, is_incognito,
+            input_events, &level, mark_http_as)) {
+      *mark_http_as = HTTP_SHOW_WARNING_ON_SENSITIVE_FIELDS;
       level = displayed_sensitive_input_on_http
                   ? security_state::HTTP_SHOW_WARNING
                   : NONE;
     }
   }
 
-  UMA_HISTOGRAM_ENUMERATION(kEnumeration, status, LAST_STATUS);
+  UMA_HISTOGRAM_ENUMERATION(kEnumeration, *mark_http_as, LAST_STATUS);
   return level;
 }
 
@@ -86,7 +124,8 @@ SecurityLevel GetSecurityLevelForRequest(
     const IsOriginSecureCallback& is_origin_secure_callback,
     bool sha1_in_chain,
     ContentStatus mixed_content_status,
-    ContentStatus content_with_cert_errors_status) {
+    ContentStatus content_with_cert_errors_status,
+    MarkHttpStatus* mark_http_as) {
   DCHECK(visible_security_state.connection_info_initialized ||
          visible_security_state.malicious_content_status !=
              MALICIOUS_CONTENT_STATUS_NONE);
@@ -125,7 +164,9 @@ SecurityLevel GetSecurityLevelForRequest(
         (url.IsStandard() || url.SchemeIs(url::kBlobScheme))) {
       return GetSecurityLevelForNonSecureFieldTrial(
           visible_security_state.displayed_password_field_on_http ||
-          visible_security_state.displayed_credit_card_field_on_http);
+              visible_security_state.displayed_credit_card_field_on_http,
+          visible_security_state.is_incognito,
+          &visible_security_state.insecure_input_events, mark_http_as);
     }
     return NONE;
   }
@@ -180,6 +221,11 @@ void SecurityInfoForRequest(
     bool used_policy_installed_certificate,
     const IsOriginSecureCallback& is_origin_secure_callback,
     SecurityInfo* security_info) {
+  // |mark_http_as| will be updated to the value specified by the
+  // field trial or command-line in |GetSecurityLevelForNonSecureFieldTrial|
+  // if that function is reached.
+  MarkHttpStatus mark_http_as = HTTP_SHOW_WARNING_ON_SENSITIVE_FIELDS;
+
   if (!visible_security_state.connection_info_initialized) {
     *security_info = SecurityInfo();
     security_info->malicious_content_status =
@@ -189,7 +235,7 @@ void SecurityInfoForRequest(
       security_info->security_level = GetSecurityLevelForRequest(
           visible_security_state, used_policy_installed_certificate,
           is_origin_secure_callback, false, CONTENT_STATUS_UNKNOWN,
-          CONTENT_STATUS_UNKNOWN);
+          CONTENT_STATUS_UNKNOWN, &mark_http_as);
     }
     return;
   }
@@ -213,8 +259,6 @@ void SecurityInfoForRequest(
   security_info->obsolete_ssl_status =
       net::ObsoleteSSLStatus(security_info->connection_status);
   security_info->pkp_bypassed = visible_security_state.pkp_bypassed;
-  security_info->sct_verify_statuses =
-      visible_security_state.sct_verify_statuses;
 
   security_info->malicious_content_status =
       visible_security_state.malicious_content_status;
@@ -223,11 +267,9 @@ void SecurityInfoForRequest(
       visible_security_state.displayed_password_field_on_http;
   security_info->displayed_credit_card_field_on_http =
       visible_security_state.displayed_credit_card_field_on_http;
-  if (visible_security_state.certificate) {
-    security_info->cert_missing_subject_alt_name =
-        !visible_security_state.certificate->GetSubjectAltName(nullptr,
-                                                               nullptr);
-  }
+  security_info->cert_missing_subject_alt_name =
+      visible_security_state.certificate &&
+      !visible_security_state.certificate->GetSubjectAltName(nullptr, nullptr);
 
   security_info->contained_mixed_form =
       visible_security_state.contained_mixed_form;
@@ -236,7 +278,22 @@ void SecurityInfoForRequest(
       visible_security_state, used_policy_installed_certificate,
       is_origin_secure_callback, security_info->sha1_in_chain,
       security_info->mixed_content_status,
-      security_info->content_with_cert_errors_status);
+      security_info->content_with_cert_errors_status, &mark_http_as);
+
+  security_info->incognito_downgraded_security_level =
+      (visible_security_state.is_incognito &&
+       security_info->security_level == HTTP_SHOW_WARNING &&
+       (mark_http_as == NON_SECURE_WHILE_INCOGNITO ||
+        mark_http_as == NON_SECURE_WHILE_INCOGNITO_OR_EDITING));
+
+  security_info->field_edit_downgraded_security_level =
+      (security_info->security_level == HTTP_SHOW_WARNING &&
+       visible_security_state.insecure_input_events.insecure_field_edited &&
+       (mark_http_as == NON_SECURE_AFTER_EDITING ||
+        mark_http_as == NON_SECURE_WHILE_INCOGNITO_OR_EDITING));
+
+  security_info->insecure_input_events =
+      visible_security_state.insecure_input_events;
 }
 
 }  // namespace
@@ -260,7 +317,9 @@ SecurityInfo::SecurityInfo()
       displayed_password_field_on_http(false),
       displayed_credit_card_field_on_http(false),
       contained_mixed_form(false),
-      cert_missing_subject_alt_name(false) {}
+      cert_missing_subject_alt_name(false),
+      incognito_downgraded_security_level(false),
+      field_edit_downgraded_security_level(false) {}
 
 SecurityInfo::~SecurityInfo() {}
 
@@ -292,30 +351,9 @@ VisibleSecurityState::VisibleSecurityState()
       ran_content_with_cert_errors(false),
       pkp_bypassed(false),
       displayed_password_field_on_http(false),
-      displayed_credit_card_field_on_http(false) {}
+      displayed_credit_card_field_on_http(false),
+      is_incognito(false) {}
 
 VisibleSecurityState::~VisibleSecurityState() {}
-
-bool VisibleSecurityState::operator==(const VisibleSecurityState& other) const {
-  return (url == other.url &&
-          malicious_content_status == other.malicious_content_status &&
-          !!certificate == !!other.certificate &&
-          (certificate ? certificate->Equals(other.certificate.get()) : true) &&
-          connection_status == other.connection_status &&
-          key_exchange_group == other.key_exchange_group &&
-          security_bits == other.security_bits &&
-          sct_verify_statuses == other.sct_verify_statuses &&
-          displayed_mixed_content == other.displayed_mixed_content &&
-          ran_mixed_content == other.ran_mixed_content &&
-          displayed_content_with_cert_errors ==
-              other.displayed_content_with_cert_errors &&
-          ran_content_with_cert_errors == other.ran_content_with_cert_errors &&
-          pkp_bypassed == other.pkp_bypassed &&
-          displayed_password_field_on_http ==
-              other.displayed_password_field_on_http &&
-          displayed_credit_card_field_on_http ==
-              other.displayed_credit_card_field_on_http &&
-          contained_mixed_form == other.contained_mixed_form);
-}
 
 }  // namespace security_state

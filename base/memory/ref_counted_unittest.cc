@@ -415,6 +415,27 @@ TEST(RefCountedUnitTest, MoveAssignmentDifferentInstances) {
   EXPECT_EQ(2, ScopedRefPtrCountBase::destructor_count());
 }
 
+TEST(RefCountedUnitTest, MoveAssignmentSelfMove) {
+  ScopedRefPtrCountBase::reset_count();
+
+  {
+    ScopedRefPtrCountBase* raw = new ScopedRefPtrCountBase;
+    scoped_refptr<ScopedRefPtrCountBase> p1(raw);
+    scoped_refptr<ScopedRefPtrCountBase>& p1_ref = p1;
+
+    EXPECT_EQ(1, ScopedRefPtrCountBase::constructor_count());
+    EXPECT_EQ(0, ScopedRefPtrCountBase::destructor_count());
+
+    p1 = std::move(p1_ref);
+
+    // |p1| is "valid but unspecified", so don't bother inspecting its
+    // contents, just ensure that we don't crash.
+  }
+
+  EXPECT_EQ(1, ScopedRefPtrCountBase::constructor_count());
+  EXPECT_EQ(1, ScopedRefPtrCountBase::destructor_count());
+}
+
 TEST(RefCountedUnitTest, MoveAssignmentDerived) {
   ScopedRefPtrCountBase::reset_count();
   ScopedRefPtrCountDerived::reset_count();
@@ -542,7 +563,7 @@ TEST(RefCountedUnitTest, TestOverloadResolutionMove) {
 
 TEST(RefCountedUnitTest, TestInitialRefCountIsOne) {
   scoped_refptr<InitialRefCountIsOne> obj =
-      base::MakeShared<InitialRefCountIsOne>();
+      base::MakeRefCounted<InitialRefCountIsOne>();
   EXPECT_TRUE(obj->HasOneRef());
   obj = nullptr;
 
@@ -551,7 +572,7 @@ TEST(RefCountedUnitTest, TestInitialRefCountIsOne) {
   EXPECT_TRUE(obj2->HasOneRef());
   obj2 = nullptr;
 
-  scoped_refptr<Other> obj3 = base::MakeShared<Other>();
+  scoped_refptr<Other> obj3 = base::MakeRefCounted<Other>();
   EXPECT_TRUE(obj3->HasOneRef());
   obj3 = nullptr;
 }
@@ -563,6 +584,6 @@ TEST(RefCountedDeathTest, TestAdoptRef) {
   EXPECT_DCHECK_DEATH(base::AdoptRef(ptr));
 
   scoped_refptr<InitialRefCountIsOne> obj =
-      base::MakeShared<InitialRefCountIsOne>();
+      base::MakeRefCounted<InitialRefCountIsOne>();
   EXPECT_DCHECK_DEATH(base::AdoptRef(obj.get()));
 }

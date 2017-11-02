@@ -11,7 +11,6 @@
 #include "base/command_line.h"
 #include "base/debug/debugging_flags.h"
 #include "base/debug/profiler.h"
-#include "base/feature_list.h"
 #include "base/macros.h"
 #include "base/metrics/user_metrics.h"
 #include "build/build_config.h"
@@ -37,7 +36,6 @@
 #include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/webui/inspect_ui.h"
-#include "chrome/common/chrome_features.h"
 #include "chrome/common/content_restriction.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/profiling.h"
@@ -70,7 +68,7 @@
 #endif
 
 #if defined(USE_ASH)
-#include "ash/accelerators/accelerator_commands_aura.h"  // nogncheck
+#include "ash/accelerators/accelerator_commands_classic.h"  // nogncheck
 #include "chrome/browser/ui/ash/ash_util.h"  // nogncheck
 #endif
 
@@ -84,6 +82,11 @@
 #include "ui/base/ime/linux/text_edit_key_bindings_delegate_auralinux.h"
 #endif
 
+#if !defined(OS_ANDROID) && !defined(OS_CHROMEOS) && !defined(OS_MACOSX)
+#include "chrome/browser/feature_engagement/new_tab/new_tab_tracker.h"
+#include "chrome/browser/feature_engagement/new_tab/new_tab_tracker_factory.h"
+#endif
+
 using content::NavigationEntry;
 using content::NavigationController;
 using content::WebContents;
@@ -95,10 +98,7 @@ namespace chrome {
 
 BrowserCommandController::BrowserCommandController(Browser* browser)
     : browser_(browser),
-      command_updater_(this),
-      block_command_execution_(false),
-      last_blocked_command_id_(-1),
-      last_blocked_command_disposition_(WindowOpenDisposition::CURRENT_TAB) {
+      command_updater_(this) {
   browser_->tab_strip_model()->AddObserver(this);
   PrefService* local_state = g_browser_process->local_state();
   if (local_state) {
@@ -229,21 +229,6 @@ bool BrowserCommandController::IsReservedCommandOrKey(
          command_id == IDC_EXIT;
 }
 
-void BrowserCommandController::SetBlockCommandExecution(bool block) {
-  block_command_execution_ = block;
-  if (block) {
-    last_blocked_command_id_ = -1;
-    last_blocked_command_disposition_ = WindowOpenDisposition::CURRENT_TAB;
-  }
-}
-
-int BrowserCommandController::GetLastBlockedCommand(
-    WindowOpenDisposition* disposition) {
-  if (disposition)
-    *disposition = last_blocked_command_disposition_;
-  return last_blocked_command_id_;
-}
-
 void BrowserCommandController::TabStateChanged() {
   UpdateCommandsForTabState();
 }
@@ -293,35 +278,19 @@ void BrowserCommandController::ExecuteCommandWithDisposition(
   DCHECK(command_updater_.IsCommandEnabled(id)) << "Invalid/disabled command "
                                                 << id;
 
-  // If command execution is blocked then just record the command and return.
-  if (block_command_execution_) {
-    // We actually only allow no more than one blocked command, otherwise some
-    // commands maybe lost.
-    DCHECK_EQ(last_blocked_command_id_, -1);
-    last_blocked_command_id_ = id;
-    last_blocked_command_disposition_ = disposition;
-    return;
-  }
-
   // The order of commands in this switch statement must match the function
   // declaration order in browser.h!
   switch (id) {
     // Navigation commands
     case IDC_BACKSPACE_BACK:
-      if (base::FeatureList::IsEnabled(features::kBackspaceGoesBackFeature))
-        GoBack(browser_, disposition);
-      else
-        window()->MaybeShowNewBackShortcutBubble(false);
+      window()->MaybeShowNewBackShortcutBubble(false);
       break;
     case IDC_BACK:
       window()->HideNewBackShortcutBubble();
       GoBack(browser_, disposition);
       break;
     case IDC_BACKSPACE_FORWARD:
-      if (base::FeatureList::IsEnabled(features::kBackspaceGoesBackFeature))
-        GoForward(browser_, disposition);
-      else
-        window()->MaybeShowNewBackShortcutBubble(true);
+      window()->MaybeShowNewBackShortcutBubble(true);
       break;
     case IDC_FORWARD:
       window()->HideNewBackShortcutBubble();
@@ -358,6 +327,13 @@ void BrowserCommandController::ExecuteCommandWithDisposition(
       CloseWindow(browser_);
       break;
     case IDC_NEW_TAB:
+#if !defined(OS_ANDROID) && !defined(OS_CHROMEOS) && !defined(OS_MACOSX)
+      // This is not in NewTab() to avoid tracking programmatic creation of new
+      // tabs by extensions.
+      feature_engagement::NewTabTrackerFactory::GetInstance()
+          ->GetForProfile(profile())
+          ->OnNewTabOpened();
+#endif
       NewTab(browser_);
       break;
     case IDC_CLOSE_TAB:
@@ -559,7 +535,7 @@ void BrowserCommandController::ExecuteCommandWithDisposition(
 #endif
 #if defined(GOOGLE_CHROME_BUILD)
     case IDC_FEEDBACK:
-      OpenFeedbackDialog(browser_);
+      OpenFeedbackDialog(browser_, kFeedbackSourceBrowserCommand);
       break;
 #endif
     case IDC_SHOW_BOOKMARK_BAR:
@@ -621,6 +597,9 @@ void BrowserCommandController::ExecuteCommandWithDisposition(
     case IDC_HELP_PAGE_VIA_MENU:
       ShowHelp(browser_, HELP_SOURCE_MENU);
       break;
+    case IDC_SHOW_BETA_FORUM:
+      ShowBetaForum(browser_);
+      break;
     case IDC_SHOW_SIGNIN:
       ShowBrowserSigninOrSettings(
           browser_, signin_metrics::AccessPoint::ACCESS_POINT_MENU);
@@ -644,6 +623,12 @@ void BrowserCommandController::ExecuteCommandWithDisposition(
 #endif
     case IDC_ROUTE_MEDIA:
       RouteMedia(browser_);
+      break;
+    case IDC_WINDOW_MUTE_TAB:
+      MuteTab(browser_);
+      break;
+    case IDC_WINDOW_PIN_TAB:
+      PinTab(browser_);
       break;
 
     default:
@@ -794,6 +779,7 @@ void BrowserCommandController::InitCommandState() {
   command_updater_.UpdateCommandEnabled(IDC_HELP_MENU, true);
   command_updater_.UpdateCommandEnabled(IDC_HELP_PAGE_VIA_KEYBOARD, true);
   command_updater_.UpdateCommandEnabled(IDC_HELP_PAGE_VIA_MENU, true);
+  command_updater_.UpdateCommandEnabled(IDC_SHOW_BETA_FORUM, true);
   command_updater_.UpdateCommandEnabled(IDC_BOOKMARKS_MENU, !guest_session);
   command_updater_.UpdateCommandEnabled(IDC_RECENT_TABS_MENU,
                                         !guest_session &&
@@ -842,6 +828,9 @@ void BrowserCommandController::InitCommandState() {
   command_updater_.UpdateCommandEnabled(
       IDC_DISTILL_PAGE, base::CommandLine::ForCurrentProcess()->HasSwitch(
                             switches::kEnableDomDistiller));
+
+  command_updater_.UpdateCommandEnabled(IDC_WINDOW_MUTE_TAB, normal_window);
+  command_updater_.UpdateCommandEnabled(IDC_WINDOW_PIN_TAB, normal_window);
 
   // Initialize other commands whose state changes based on various conditions.
   UpdateCommandsForFullscreenMode();
@@ -918,6 +907,10 @@ void BrowserCommandController::UpdateCommandsForTabState() {
   // Window management commands
   command_updater_.UpdateCommandEnabled(IDC_DUPLICATE_TAB,
       !browser_->is_app() && CanDuplicateTab(browser_));
+  command_updater_.UpdateCommandEnabled(IDC_WINDOW_MUTE_TAB,
+                                        !browser_->is_app());
+  command_updater_.UpdateCommandEnabled(IDC_WINDOW_PIN_TAB,
+                                        !browser_->is_app());
 
   // Page-related commands
   window()->SetStarredState(

@@ -8,15 +8,17 @@
 #include "base/callback_forward.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "content/child/request_extra_data.h"
 #include "content/child/resource_dispatcher.h"
 #include "content/common/resource_messages.h"
-#include "content/common/resource_request.h"
-#include "content/common/resource_request_completion_status.h"
-#include "content/common/service_worker/service_worker_types.h"
 #include "content/public/child/request_peer.h"
 #include "content/public/common/request_context_frame_type.h"
+#include "content/public/common/resource_request.h"
+#include "content/public/common/resource_request_completion_status.h"
+#include "content/public/common/service_worker_modes.h"
 #include "net/base/request_priority.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
@@ -62,11 +64,11 @@ class TestRequestPeer : public RequestPeer {
   void OnTransferSizeUpdated(int transfer_size_diff) override {}
 
   void OnCompletedRequest(int error_code,
-                          bool was_ignored_by_handler,
                           bool stale_copy_in_cache,
                           const base::TimeTicks& completion_time,
                           int64_t total_transfer_size,
-                          int64_t encoded_body_size) override {
+                          int64_t encoded_body_size,
+                          int64_t decoded_body_size) override {
     EXPECT_FALSE(context_->complete);
     context_->complete = true;
     context_->error_code = error_code;
@@ -135,9 +137,10 @@ class URLResponseBodyConsumerTest : public ::testing::Test,
   int SetUpRequestPeer(std::unique_ptr<ResourceRequest> request,
                        TestRequestPeer::Context* context) {
     return dispatcher_->StartAsync(
-        std::move(request), 0, nullptr, url::Origin(),
+        std::move(request), 0, nullptr, url::Origin(), false,
         base::MakeUnique<TestRequestPeer>(context, message_loop_.task_runner()),
         blink::WebURLRequest::LoadingIPCType::kChromeIPC, nullptr,
+        std::vector<std::unique_ptr<URLLoaderThrottle>>(),
         mojo::ScopedDataPipeConsumerHandle());
   }
 
@@ -161,13 +164,13 @@ TEST_F(URLResponseBodyConsumerTest, ReceiveData) {
   scoped_refptr<URLResponseBodyConsumer> consumer(new URLResponseBodyConsumer(
       request_id, dispatcher_.get(), std::move(data_pipe.consumer_handle),
       message_loop_.task_runner()));
+  consumer->ArmOrNotify();
 
   mojo::ScopedDataPipeProducerHandle writer =
       std::move(data_pipe.producer_handle);
   std::string buffer = "hello";
   uint32_t size = buffer.size();
-  MojoResult result =
-      mojo::WriteDataRaw(writer.get(), buffer.c_str(), &size, kNone);
+  MojoResult result = writer->WriteData(buffer.c_str(), &size, kNone);
   ASSERT_EQ(MOJO_RESULT_OK, result);
   ASSERT_EQ(buffer.size(), size);
 
@@ -186,14 +189,14 @@ TEST_F(URLResponseBodyConsumerTest, OnCompleteThenClose) {
   scoped_refptr<URLResponseBodyConsumer> consumer(new URLResponseBodyConsumer(
       request_id, dispatcher_.get(), std::move(data_pipe.consumer_handle),
       message_loop_.task_runner()));
+  consumer->ArmOrNotify();
 
   consumer->OnComplete(ResourceRequestCompletionStatus());
   mojo::ScopedDataPipeProducerHandle writer =
       std::move(data_pipe.producer_handle);
   std::string buffer = "hello";
   uint32_t size = buffer.size();
-  MojoResult result =
-      mojo::WriteDataRaw(writer.get(), buffer.c_str(), &size, kNone);
+  MojoResult result = writer->WriteData(buffer.c_str(), &size, kNone);
   ASSERT_EQ(MOJO_RESULT_OK, result);
   ASSERT_EQ(buffer.size(), size);
 
@@ -221,14 +224,14 @@ TEST_F(URLResponseBodyConsumerTest, OnCompleteThenCloseWithAsyncRelease) {
   scoped_refptr<URLResponseBodyConsumer> consumer(new URLResponseBodyConsumer(
       request_id, dispatcher_.get(), std::move(data_pipe.consumer_handle),
       message_loop_.task_runner()));
+  consumer->ArmOrNotify();
 
   consumer->OnComplete(ResourceRequestCompletionStatus());
   mojo::ScopedDataPipeProducerHandle writer =
       std::move(data_pipe.producer_handle);
   std::string buffer = "hello";
   uint32_t size = buffer.size();
-  MojoResult result =
-      mojo::WriteDataRaw(writer.get(), buffer.c_str(), &size, kNone);
+  MojoResult result = writer->WriteData(buffer.c_str(), &size, kNone);
   ASSERT_EQ(MOJO_RESULT_OK, result);
   ASSERT_EQ(buffer.size(), size);
 
@@ -253,6 +256,7 @@ TEST_F(URLResponseBodyConsumerTest, CloseThenOnComplete) {
   scoped_refptr<URLResponseBodyConsumer> consumer(new URLResponseBodyConsumer(
       request_id, dispatcher_.get(), std::move(data_pipe.consumer_handle),
       message_loop_.task_runner()));
+  consumer->ArmOrNotify();
 
   ResourceRequestCompletionStatus status;
   status.error_code = net::ERR_FAILED;
@@ -280,8 +284,7 @@ TEST_F(URLResponseBodyConsumerTest, TooBigChunkShouldBeSplit) {
       std::move(data_pipe.producer_handle);
   void* buffer = nullptr;
   uint32_t size = 0;
-  MojoResult result =
-      mojo::BeginWriteDataRaw(writer.get(), &buffer, &size, kNone);
+  MojoResult result = writer->BeginWriteData(&buffer, &size, kNone);
 
   ASSERT_EQ(MOJO_RESULT_OK, result);
   ASSERT_EQ(options.capacity_num_bytes, size);
@@ -290,12 +293,13 @@ TEST_F(URLResponseBodyConsumerTest, TooBigChunkShouldBeSplit) {
   memset(static_cast<char*>(buffer) + kMaxNumConsumedBytesInTask, 'b',
          kMaxNumConsumedBytesInTask);
 
-  result = mojo::EndWriteDataRaw(writer.get(), size);
+  result = writer->EndWriteData(size);
   ASSERT_EQ(MOJO_RESULT_OK, result);
 
   scoped_refptr<URLResponseBodyConsumer> consumer(new URLResponseBodyConsumer(
       request_id, dispatcher_.get(), std::move(data_pipe.consumer_handle),
       message_loop_.task_runner()));
+  consumer->ArmOrNotify();
 
   Run(&context);
   EXPECT_EQ(std::string(kMaxNumConsumedBytesInTask, 'a'), context.data);

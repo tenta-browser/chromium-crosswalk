@@ -236,16 +236,13 @@ bool DOMStorageArea::Clear() {
 }
 
 void DOMStorageArea::FastClear() {
-  // TODO(marja): Unify clearing localStorage and sessionStorage. The problem is
-  // to make the following 3 to work together: 1) FastClear, 2) PurgeMemory and
-  // 3) not creating events when clearing an empty area.
   if (is_shutdown_)
     return;
 
   map_ = new DOMStorageMap(kPerStorageAreaQuota +
                            kPerStorageAreaOverQuotaAllowance);
   // This ensures no import will happen while we're waiting to clear the data
-  // from the database. This mechanism fails if PurgeMemory is called.
+  // from the database.
   is_initial_import_done_ = true;
 
   if (backing_) {
@@ -308,21 +305,25 @@ void DOMStorageArea::DeleteOrigin() {
 
 void DOMStorageArea::PurgeMemory() {
   DCHECK(!is_shutdown_);
-  // Purging sessionStorage is not supported; it won't work with FastClear.
-  DCHECK(!session_storage_backing_.get());
+
   if (!is_initial_import_done_ ||  // We're not using any memory.
       !backing_.get() ||  // We can't purge anything.
       HasUncommittedChanges())  // We leave things alone with changes pending.
+    return;
+
+  // Recreate the database object, this frees up the open sqlite connection
+  // and its page cache.
+  backing_->Reset();
+
+  // Do not set |is_initial_import_done_| to false if map is empty since
+  // FastClear expects no imports while waiting for clearing database.
+  if (!map_ || !map_->Length())
     return;
 
   // Drop the in memory cache, we'll reload when needed.
   is_initial_import_done_ = false;
   map_ = new DOMStorageMap(kPerStorageAreaQuota +
                            kPerStorageAreaOverQuotaAllowance);
-
-  // Recreate the database object, this frees up the open sqlite connection
-  // and its page cache.
-  backing_->Reset();
 }
 
 void DOMStorageArea::Shutdown() {
@@ -340,9 +341,8 @@ void DOMStorageArea::Shutdown() {
     return;
 
   bool success = task_runner_->PostShutdownBlockingTask(
-      FROM_HERE,
-      DOMStorageTaskRunner::COMMIT_SEQUENCE,
-      base::Bind(&DOMStorageArea::ShutdownInCommitSequence, this));
+      FROM_HERE, DOMStorageTaskRunner::COMMIT_SEQUENCE,
+      base::BindOnce(&DOMStorageArea::ShutdownInCommitSequence, this));
   DCHECK(success);
 }
 
@@ -380,13 +380,13 @@ void DOMStorageArea::OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd) {
     backing_->ReportMemoryUsage(pmd, name + "/local_storage");
 
   // Do not add storage map usage if less than 1KB.
-  if (map_->bytes_used() < 1024)
+  if (map_->memory_usage() < 1024)
     return;
 
   auto* map_mad = pmd->CreateAllocatorDump(name + "/storage_map");
   map_mad->AddScalar(base::trace_event::MemoryAllocatorDump::kNameSize,
                      base::trace_event::MemoryAllocatorDump::kUnitsBytes,
-                     map_->bytes_used());
+                     map_->memory_usage());
   if (system_allocator_name)
     pmd->AddSuballocation(map_mad->guid(), system_allocator_name);
 }
@@ -434,7 +434,7 @@ DOMStorageArea::CommitBatch* DOMStorageArea::CreateCommitBatchIfNeeded() {
     commit_batch_.reset(new CommitBatch());
     BrowserThread::PostAfterStartupTask(
         FROM_HERE, task_runner_,
-        base::Bind(&DOMStorageArea::StartCommitTimer, this));
+        base::BindOnce(&DOMStorageArea::StartCommitTimer, this));
   }
   return commit_batch_.get();
 }
@@ -456,7 +456,7 @@ void DOMStorageArea::StartCommitTimer() {
     return;
 
   task_runner_->PostDelayedTask(
-      FROM_HERE, base::Bind(&DOMStorageArea::OnCommitTimer, this),
+      FROM_HERE, base::BindOnce(&DOMStorageArea::OnCommitTimer, this),
       ComputeCommitDelay());
 }
 
@@ -499,10 +499,9 @@ void DOMStorageArea::PostCommitTask() {
   // a task for immediate execution on the commit sequence.
   task_runner_->AssertIsRunningOnPrimarySequence();
   bool success = task_runner_->PostShutdownBlockingTask(
-      FROM_HERE,
-      DOMStorageTaskRunner::COMMIT_SEQUENCE,
-      base::Bind(&DOMStorageArea::CommitChanges, this,
-                 base::Owned(commit_batch_.release())));
+      FROM_HERE, DOMStorageTaskRunner::COMMIT_SEQUENCE,
+      base::BindOnce(&DOMStorageArea::CommitChanges, this,
+                     base::Owned(commit_batch_.release())));
   ++commit_batches_in_flight_;
   DCHECK(success);
 }
@@ -515,8 +514,7 @@ void DOMStorageArea::CommitChanges(const CommitBatch* commit_batch) {
   // TODO(michaeln): what if CommitChanges returns false (e.g., we're trying to
   // commit to a DB which is in an inconsistent state?)
   task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&DOMStorageArea::OnCommitComplete, this));
+      FROM_HERE, base::BindOnce(&DOMStorageArea::OnCommitComplete, this));
 }
 
 void DOMStorageArea::OnCommitComplete() {
@@ -528,7 +526,7 @@ void DOMStorageArea::OnCommitComplete() {
   if (commit_batch_.get() && !commit_batches_in_flight_) {
     // More changes have accrued, restart the timer.
     task_runner_->PostDelayedTask(
-        FROM_HERE, base::Bind(&DOMStorageArea::OnCommitTimer, this),
+        FROM_HERE, base::BindOnce(&DOMStorageArea::OnCommitTimer, this),
         ComputeCommitDelay());
   }
 }

@@ -11,6 +11,7 @@
 #include "ash/system/tiles/tiles_default_view.h"
 #include "ash/system/tiles/tray_tiles.h"
 #include "ash/system/tray/system_tray.h"
+#include "ash/system/tray/system_tray_test_api.h"
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/macros.h"
@@ -41,7 +42,6 @@
 #include "content/public/test/test_utils.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/compositor/scoped_animation_duration_scale_mode.h"
-#include "ui/views/controls/button/custom_button.h"
 #include "ui/views/view.h"
 
 namespace em = enterprise_management;
@@ -146,18 +146,19 @@ class ShutdownPolicyInSessionTest
   // Opens the system tray menu. This creates the tray views.
   void OpenSystemTrayMenu() {
     ash::Shell::Get()->GetPrimarySystemTray()->ShowDefaultView(
-        ash::BUBBLE_CREATE_NEW);
+        ash::BUBBLE_CREATE_NEW, false /* show_by_click */);
   }
 
   // Closes the system tray menu. This deletes the tray views.
   void CloseSystemTrayMenu() {
-    ash::Shell::Get()->GetPrimarySystemTray()->CloseSystemBubble();
+    ash::Shell::Get()->GetPrimarySystemTray()->CloseBubble();
   }
 
   // Gets the shutdown button view.
   const views::View* GetShutdownButton() {
     ash::SystemTray* tray = ash::Shell::Get()->GetPrimarySystemTray();
-    return tray->GetTrayTilesForTesting()
+    return ash::SystemTrayTestApi(tray)
+        .tray_tiles()
         ->GetDefaultViewForTesting()
         ->GetShutdownButtonViewForTest();
   }
@@ -238,7 +239,8 @@ class ShutdownPolicyLockerTest : public ShutdownPolicyBaseTest {
     if (!tester->IsLocked())
       lock_state_observer.Wait();
     ScreenLocker* screen_locker = ScreenLocker::default_screen_locker();
-    WebUIScreenLocker* web_ui_screen_locker = screen_locker->web_ui();
+    WebUIScreenLocker* web_ui_screen_locker =
+        screen_locker->web_ui_for_testing();
     ASSERT_TRUE(web_ui_screen_locker);
     content::WebUI* web_ui = web_ui_screen_locker->GetWebUI();
     ASSERT_TRUE(web_ui);

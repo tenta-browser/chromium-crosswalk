@@ -3,6 +3,7 @@
 <script src="../inspector-test.js"></script>
 <script src="../network-test.js"></script>
 <script src="../debugger-test.js"></script>
+<script src="../../../../resources/gc.js"></script>
 <script>
 
 var scriptElement;
@@ -18,71 +19,56 @@ function unloadScript()
     scriptElement.parentElement.removeChild(scriptElement);
 }
 
-function gc()
-{
-    // In Oilpan, Resource objects are not destructed until GC.
-    if (window.GCController)
-        GCController.collectAll();
-}
+function test() {
+  var timeZero = 0;
 
-function test()
-{
-    var timeZero = 0;
+  NetworkTestRunner.recordNetwork();
+  TestRunner.NetworkAgent.setCacheDisabled(true).then(step1);
 
-    InspectorTest.recordNetwork();
-    InspectorTest.NetworkAgent.setCacheDisabled(true, step1);
+  function step1() {
+    ConsoleTestRunner.addConsoleSniffer(step2);
+    TestRunner.evaluateInPage('loadScript()');
+  }
 
-    function step1()
-    {
-        InspectorTest.addConsoleSniffer(step2);
-        InspectorTest.evaluateInPage("loadScript()");
-    }
+  function step2(event) {
+    TestRunner.evaluateInPage('unloadScript()', step3);
+  }
 
-    function step2(event)
-    {
-        InspectorTest.evaluateInPage("unloadScript()", step3);
-    }
+  function step3() {
+    TestRunner.evaluateInPage('gc()', step4);
+  }
 
-    function step3()
-    {
-        InspectorTest.evaluateInPage("gc()", step4);
-    }
+  function step4() {
+    TestRunner.NetworkAgent.setCacheDisabled(true).then(step5);
+  }
 
-    function step4()
-    {
-        InspectorTest.NetworkAgent.setCacheDisabled(true, step5);
-    }
+  function step5() {
+    var request = NetworkTestRunner.networkRequests().pop();
+    TestRunner.addResult('URL:' + request.url());
+    TestRunner.addResult('from memory cache: ' + !!request._fromMemoryCache);
+    TestRunner.addResult('from disk cache: ' + !!request._fromDiskCache);
+    TestRunner.addResult('has timing: ' + !!request._timing);
+    TestRunner.addResult('');
+    timeZero = request._timing.requestTime;
+    TestRunner.NetworkAgent.setCacheDisabled(false).then(step6);
+  }
 
-    function step5()
-    {
-        var request = InspectorTest.networkRequests().pop();
-        InspectorTest.addResult("URL:" + request.url());
-        InspectorTest.addResult("from memory cache: " + !!request._fromMemoryCache);
-        InspectorTest.addResult("from disk cache: " + !!request._fromDiskCache);
-        InspectorTest.addResult("has timing: " + !!request._timing);
-        InspectorTest.addResult("");
-        timeZero = request._timing.requestTime;
-        InspectorTest.NetworkAgent.setCacheDisabled(false, step6);
-    }
+  function step6() {
+    ConsoleTestRunner.addConsoleSniffer(step7);
+    TestRunner.evaluateInPage('loadScript()');
+  }
 
-    function step6()
-    {
-        InspectorTest.addConsoleSniffer(step7);
-        InspectorTest.evaluateInPage("loadScript()");
-    }
-
-    function step7()
-    {
-        var request = InspectorTest.networkRequests().pop();
-        InspectorTest.addResult("URL:" + request.url());
-        InspectorTest.addResult("from memory cache: " + !!request._fromMemoryCache);
-        InspectorTest.addResult("from disk cache: " + !!request._fromDiskCache);
-        InspectorTest.addResult("has timing: " + !!request._timing);
-        InspectorTest.addResult("");
-        var time = request._timing.requestTime;
-        InspectorTest.addResult("Second request starts later than first: " + (time > timeZero));
-        InspectorTest.completeTest();
-    }
+  function step7() {
+    var request = NetworkTestRunner.networkRequests().pop();
+    TestRunner.addResult('URL:' + request.url());
+    TestRunner.addResult('from memory cache: ' + !!request._fromMemoryCache);
+    TestRunner.addResult('from disk cache: ' + !!request._fromDiskCache);
+    TestRunner.addResult('has timing: ' + !!request._timing);
+    TestRunner.addResult('');
+    var time = request._timing.requestTime;
+    TestRunner.addResult('Second request starts later than first: ' + (time > timeZero));
+    TestRunner.completeTest();
+  }
 }
 </script>
 </head>

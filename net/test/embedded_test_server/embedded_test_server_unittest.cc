@@ -9,6 +9,7 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
+#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
@@ -162,7 +163,7 @@ class EmbeddedTestServerTest
   void OnURLFetchComplete(const URLFetcher* source) override {
     ++num_responses_received_;
     if (num_responses_received_ == num_responses_expected_)
-      base::MessageLoop::current()->QuitWhenIdle();
+      base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
   // Waits until the specified number of responses are received.
@@ -278,6 +279,27 @@ TEST_P(EmbeddedTestServerTest, ServeFilesFromDirectory) {
   std::unique_ptr<URLFetcher> fetcher =
       URLFetcher::Create(server_->GetURL("/test.html"), URLFetcher::GET, this,
                          TRAFFIC_ANNOTATION_FOR_TESTS);
+  fetcher->SetRequestContext(request_context_getter_.get());
+  fetcher->Start();
+  WaitForResponses(1);
+
+  EXPECT_EQ(URLRequestStatus::SUCCESS, fetcher->GetStatus().status());
+  EXPECT_EQ(HTTP_OK, fetcher->GetResponseCode());
+  EXPECT_EQ("<p>Hello World!</p>", GetContentFromFetcher(*fetcher));
+  EXPECT_EQ("text/html", GetContentTypeFromFetcher(*fetcher));
+}
+
+TEST_P(EmbeddedTestServerTest, MockHeadersWithoutCRLF) {
+  base::FilePath src_dir;
+  ASSERT_TRUE(PathService::Get(base::DIR_SOURCE_ROOT, &src_dir));
+  server_->ServeFilesFromDirectory(
+      src_dir.AppendASCII("net").AppendASCII("data").AppendASCII(
+          "embedded_test_server"));
+  ASSERT_TRUE(server_->Start());
+
+  std::unique_ptr<URLFetcher> fetcher =
+      URLFetcher::Create(server_->GetURL("/mock-headers-without-crlf.html"),
+                         URLFetcher::GET, this, TRAFFIC_ANNOTATION_FOR_TESTS);
   fetcher->SetRequestContext(request_context_getter_.get());
   fetcher->Start();
   WaitForResponses(1);
@@ -444,7 +466,8 @@ std::unique_ptr<HttpResponse> HandleInfiniteRequest(
     const HttpRequest& request) {
   return base::WrapUnique(new InfiniteResponse);
 }
-}
+
+}  // anonymous namespace
 
 // Tests the case the connection is closed while the server is sending a
 // response.  May non-deterministically end up at one of three paths
@@ -458,8 +481,9 @@ TEST_P(EmbeddedTestServerTest, CloseDuringWrite) {
       &HandlePrefixedRequest, "/infinite", base::Bind(&HandleInfiniteRequest)));
   ASSERT_TRUE(server_->Start());
 
-  std::unique_ptr<URLRequest> request = context.CreateRequest(
-      server_->GetURL("/infinite"), DEFAULT_PRIORITY, &cancel_delegate);
+  std::unique_ptr<URLRequest> request =
+      context.CreateRequest(server_->GetURL("/infinite"), DEFAULT_PRIORITY,
+                            &cancel_delegate, TRAFFIC_ANNOTATION_FOR_TESTS);
   request->Start();
   cancel_delegate.WaitUntilDone();
 }
@@ -478,11 +502,6 @@ const CertificateValuesEntry kCertificateValuesEntry[] = {
     {EmbeddedTestServer::CERT_COMMON_NAME_IS_DOMAIN, false, "localhost",
      "Test Root CA"},
     {EmbeddedTestServer::CERT_EXPIRED, true, "127.0.0.1", "Test Root CA"},
-    {EmbeddedTestServer::CERT_CHAIN_WRONG_ROOT, false, "127.0.0.1", "B CA"},
-#if !defined(OS_WIN) && !defined(OS_ANDROID)
-    {EmbeddedTestServer::CERT_BAD_VALIDITY, true, "Leaf Certificate",
-     "Test Root CA"},
-#endif
 };
 
 TEST_P(EmbeddedTestServerTest, GetCertificate) {
@@ -585,7 +604,7 @@ class EmbeddedTestServerThreadingTestDelegate
 
   // URLFetcherDelegate override.
   void OnURLFetchComplete(const URLFetcher* source) override {
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
  private:

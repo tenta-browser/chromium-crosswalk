@@ -7,17 +7,9 @@
 Run with --test to generate an AST and verify that all comments accurately
 reflect the state of the Nodes.
 
-BUILD Type(Name)
-This comment signals that a node of type <Type> is created with the
-name <Name>.
-
 ERROR Error String
 This comment signals that a error of <Error String> is generated.  The error
 is not assigned to a node, but are expected in order.
-
-PROP Key=Value
-This comment signals that a property has been set on the Node such that
-<Key> = <Value>.
 
 TREE
 Type(Name)
@@ -30,35 +22,35 @@ symatics should exist.  This is an exact match.
 */
 
 
-/* TREE
+/** TREE
  *Dictionary(MyDict)
  */
 dictionary MyDict { };
 
-/* TREE
+/** TREE
  *Dictionary(MyDictInherit)
  *  Inherit(Foo)
  */
 dictionary MyDictInherit : Foo {};
 
-/* TREE
+/** TREE
  *Dictionary(MyDictPartial)
  */
 partial dictionary MyDictPartial { };
 
-/* ERROR Unexpected ":" after identifier "MyDictInherit". */
+/** ERROR Unexpected ":" after identifier "MyDictInherit". */
 partial dictionary MyDictInherit : Foo {};
 
-/* TREE
+/** TREE
  *Dictionary(MyDictBig)
  *  Key(setString)
  *    Type()
  *      StringType(DOMString)
- *    Default(Foo)
+ *    Default() = "Foo"
  *  Key(setLong)
  *    Type()
  *      PrimitiveType(unsigned long long)
- *    Default(123)
+ *    Default() = "123"
  *  Key(unsetLong)
  *    Type()
  *      PrimitiveType(long)
@@ -69,7 +61,7 @@ dictionary MyDictBig {
   long unsetLong;
 };
 
-/* TREE
+/** TREE
  *Dictionary(MyDictRequired)
  *  Key(setLong)
  *    Type()
@@ -79,12 +71,12 @@ dictionary MyDictRequired {
   required long setLong;
 };
 
-/* ERROR Unexpected "{" after keyword "dictionary". */
+/** ERROR Unexpected "{" after keyword "dictionary". */
 dictionary {
   DOMString? setString = null;
 };
 
-/* TREE
+/** TREE
  *Dictionary(MyDictionaryInvalidOptional)
  *  Key(mandatory)
  *    Type()
@@ -96,23 +88,23 @@ dictionary MyDictionaryInvalidOptional {
   sequence<DOMString> optional;
 };
 
-/* ERROR Unexpected identifier "NoColon" after identifier "ForParent". */
+/** ERROR Unexpected identifier "NoColon" after identifier "ForParent". */
 dictionary ForParent NoColon {
   DOMString? setString = null;
 };
 
-/* TREE
+/** TREE
  *Dictionary(MyDictNull)
  *  Key(setString)
  *    Type()
  *      StringType(DOMString)
- *    Default(NULL)
+ *    Default() = "NULL"
  */
 dictionary MyDictNull {
   DOMString? setString = null;
 };
 
-/* ERROR Unexpected keyword "attribute" after "{". */
+/** ERROR Unexpected keyword "attribute" after "{". */
 dictionary MyDictUnexpectedAttribute {
   attribute DOMString foo = "";
 };

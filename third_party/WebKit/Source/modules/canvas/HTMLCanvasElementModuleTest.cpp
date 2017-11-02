@@ -4,15 +4,15 @@
 
 #include "modules/canvas/HTMLCanvasElementModule.h"
 
+#include <memory>
 #include "core/dom/DOMNodeIds.h"
 #include "core/dom/Document.h"
-#include "core/frame/FrameView.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/html/HTMLCanvasElement.h"
 #include "core/loader/EmptyClients.h"
 #include "core/offscreencanvas/OffscreenCanvas.h"
 #include "core/testing/DummyPageHolder.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include <memory>
 
 namespace blink {
 
@@ -27,7 +27,7 @@ class HTMLCanvasElementModuleTest : public ::testing::Test {
     document->documentElement()->setInnerHTML(
         "<body><canvas id='c'></canvas></body>");
     document->View()->UpdateAllLifecyclePhases();
-    canvas_element_ = toHTMLCanvasElement(document->GetElementById("c"));
+    canvas_element_ = toHTMLCanvasElement(document->getElementById("c"));
   }
 
   HTMLCanvasElement& CanvasElement() const { return *canvas_element_; }
@@ -50,7 +50,7 @@ TEST_F(HTMLCanvasElementModuleTest, TransferControlToOffscreen) {
   NonThrowableExceptionState exception_state;
   OffscreenCanvas* offscreen_canvas =
       TransferControlToOffscreen(exception_state);
-  int canvas_id = offscreen_canvas->PlaceholderCanvasId();
+  DOMNodeId canvas_id = offscreen_canvas->PlaceholderCanvasId();
   EXPECT_EQ(canvas_id, DOMNodeIds::IdForNode(&(CanvasElement())));
 }
 

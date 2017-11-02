@@ -12,10 +12,14 @@
 #include "ash/login_status.h"
 #include "ash/public/interfaces/session_controller.mojom.h"
 #include "ash/session/session_controller.h"
-#include "ash/session/session_state_observer.h"
+#include "ash/session/session_observer.h"
+#include "ash/session/test_session_controller_client.h"
+#include "ash/shell.h"
+#include "ash/test/ash_test_base.h"
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "components/prefs/testing_pref_service.h"
 #include "components/user_manager/user_type.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -24,21 +28,25 @@ using session_manager::SessionState;
 namespace ash {
 namespace {
 
-class TestSessionStateObserver : public SessionStateObserver {
+class TestSessionObserver : public SessionObserver {
  public:
-  TestSessionStateObserver() : active_account_id_(EmptyAccountId()) {}
-  ~TestSessionStateObserver() override {}
+  TestSessionObserver() : active_account_id_(EmptyAccountId()) {}
+  ~TestSessionObserver() override {}
 
-  // SessionStateObserver:
-  void ActiveUserChanged(const AccountId& account_id) override {
+  // SessionObserver:
+  void OnActiveUserSessionChanged(const AccountId& account_id) override {
     active_account_id_ = account_id;
   }
 
-  void UserAddedToSession(const AccountId& account_id) override {
+  void OnUserSessionAdded(const AccountId& account_id) override {
     user_session_account_ids_.push_back(account_id);
   }
 
-  void SessionStateChanged(SessionState state) override { state_ = state; }
+  void OnSessionStateChanged(SessionState state) override { state_ = state; }
+
+  void OnActiveUserPrefServiceChanged(PrefService* pref_service) override {
+    last_user_pref_service_ = pref_service;
+  }
 
   std::string GetUserSessionEmails() const {
     std::string emails;
@@ -53,18 +61,24 @@ class TestSessionStateObserver : public SessionStateObserver {
   const std::vector<AccountId>& user_session_account_ids() const {
     return user_session_account_ids_;
   }
+  PrefService* last_user_pref_service() const {
+    return last_user_pref_service_;
+  }
+  void clear_last_user_pref_service() { last_user_pref_service_ = nullptr; }
 
  private:
   SessionState state_ = SessionState::UNKNOWN;
   AccountId active_account_id_;
   std::vector<AccountId> user_session_account_ids_;
+  PrefService* last_user_pref_service_ = nullptr;
 
-  DISALLOW_COPY_AND_ASSIGN(TestSessionStateObserver);
+  DISALLOW_COPY_AND_ASSIGN(TestSessionObserver);
 };
 
 void FillDefaultSessionInfo(mojom::SessionInfo* info) {
   info->can_lock_screen = true;
   info->should_lock_screen_automatically = true;
+  info->is_running_in_app_mode = false;
   info->add_user_session_policy = AddUserSessionPolicy::ALLOWED;
   info->state = SessionState::LOGIN_PRIMARY;
 }
@@ -76,13 +90,11 @@ class SessionControllerTest : public testing::Test {
 
   // testing::Test:
   void SetUp() override {
-    controller_ = base::MakeUnique<SessionController>();
-    controller_->AddSessionStateObserver(&observer_);
+    controller_ = base::MakeUnique<SessionController>(nullptr);
+    controller_->AddObserver(&observer_);
   }
 
-  void TearDown() override {
-    controller_->RemoveSessionStateObserver(&observer_);
-  }
+  void TearDown() override { controller_->RemoveObserver(&observer_); }
 
   void SetSessionInfo(const mojom::SessionInfo& info) {
     mojom::SessionInfoPtr info_ptr = mojom::SessionInfo::New();
@@ -93,10 +105,12 @@ class SessionControllerTest : public testing::Test {
   void UpdateSession(uint32_t session_id, const std::string& email) {
     mojom::UserSessionPtr session = mojom::UserSession::New();
     session->session_id = session_id;
-    session->type = user_manager::USER_TYPE_REGULAR;
-    session->account_id = AccountId::FromUserEmail(email);
-    session->display_name = email;
-    session->display_email = email;
+    session->user_info = mojom::UserInfo::New();
+    session->user_info->type = user_manager::USER_TYPE_REGULAR;
+    session->user_info->account_id = AccountId::FromUserEmail(email);
+    session->user_info->display_name = email;
+    session->user_info->display_email = email;
+    session->user_info->is_new_profile = false;
 
     controller_->UpdateUserSession(std::move(session));
   }
@@ -104,17 +118,17 @@ class SessionControllerTest : public testing::Test {
   std::string GetUserSessionEmails() const {
     std::string emails;
     for (const auto& session : controller_->GetUserSessions()) {
-      emails += session->display_email + ",";
+      emails += session->user_info->display_email + ",";
     }
     return emails;
   }
 
   SessionController* controller() { return controller_.get(); }
-  const TestSessionStateObserver* observer() const { return &observer_; }
+  const TestSessionObserver* observer() const { return &observer_; }
 
  private:
   std::unique_ptr<SessionController> controller_;
-  TestSessionStateObserver observer_;
+  TestSessionObserver observer_;
 
   DISALLOW_COPY_AND_ASSIGN(SessionControllerTest);
 };
@@ -126,20 +140,27 @@ TEST_F(SessionControllerTest, SimpleSessionInfo) {
   SetSessionInfo(info);
   UpdateSession(1u, "user1@test.com");
 
-  EXPECT_EQ(session_manager::kMaxmiumNumberOfUserSessions,
-            controller()->GetMaximumNumberOfLoggedInUsers());
   EXPECT_TRUE(controller()->CanLockScreen());
   EXPECT_TRUE(controller()->ShouldLockScreenAutomatically());
+  EXPECT_FALSE(controller()->IsRunningInAppMode());
 
   info.can_lock_screen = false;
   SetSessionInfo(info);
   EXPECT_FALSE(controller()->CanLockScreen());
   EXPECT_TRUE(controller()->ShouldLockScreenAutomatically());
+  EXPECT_FALSE(controller()->IsRunningInAppMode());
 
   info.should_lock_screen_automatically = false;
   SetSessionInfo(info);
   EXPECT_FALSE(controller()->CanLockScreen());
   EXPECT_FALSE(controller()->ShouldLockScreenAutomatically());
+  EXPECT_FALSE(controller()->IsRunningInAppMode());
+
+  info.is_running_in_app_mode = true;
+  SetSessionInfo(info);
+  EXPECT_FALSE(controller()->CanLockScreen());
+  EXPECT_FALSE(controller()->ShouldLockScreenAutomatically());
+  EXPECT_TRUE(controller()->IsRunningInAppMode());
 }
 
 // Tests that the CanLockScreen is only true with an active user session.
@@ -260,10 +281,11 @@ TEST_F(SessionControllerTest, GetLoginStateForActiveSession) {
   for (const auto& test_case : kTestCases) {
     mojom::UserSessionPtr session = mojom::UserSession::New();
     session->session_id = 1u;
-    session->type = test_case.user_type;
-    session->account_id = AccountId::FromUserEmail("user1@test.com");
-    session->display_name = "User 1";
-    session->display_email = "user1@test.com";
+    session->user_info = mojom::UserInfo::New();
+    session->user_info->type = test_case.user_type;
+    session->user_info->account_id = AccountId::FromUserEmail("user1@test.com");
+    session->user_info->display_name = "User 1";
+    session->user_info->display_email = "user1@test.com";
     controller()->UpdateUserSession(std::move(session));
 
     EXPECT_EQ(test_case.expected_status, controller()->login_status())
@@ -279,11 +301,15 @@ TEST_F(SessionControllerTest, UserSessions) {
   EXPECT_TRUE(controller()->IsActiveUserSessionStarted());
   EXPECT_EQ("user1@test.com,", GetUserSessionEmails());
   EXPECT_EQ(GetUserSessionEmails(), observer()->GetUserSessionEmails());
+  EXPECT_EQ("user1@test.com",
+            controller()->GetPrimaryUserSession()->user_info->display_email);
 
   UpdateSession(2u, "user2@test.com");
   EXPECT_TRUE(controller()->IsActiveUserSessionStarted());
   EXPECT_EQ("user1@test.com,user2@test.com,", GetUserSessionEmails());
   EXPECT_EQ(GetUserSessionEmails(), observer()->GetUserSessionEmails());
+  EXPECT_EQ("user1@test.com",
+            controller()->GetPrimaryUserSession()->user_info->display_email);
 
   UpdateSession(1u, "user1_changed@test.com");
   EXPECT_EQ("user1_changed@test.com,user2@test.com,", GetUserSessionEmails());
@@ -294,21 +320,29 @@ TEST_F(SessionControllerTest, UserSessions) {
 TEST_F(SessionControllerTest, ActiveSession) {
   UpdateSession(1u, "user1@test.com");
   UpdateSession(2u, "user2@test.com");
+  EXPECT_EQ("user1@test.com",
+            controller()->GetPrimaryUserSession()->user_info->display_email);
 
   std::vector<uint32_t> order = {1u, 2u};
   controller()->SetUserSessionOrder(order);
   EXPECT_EQ("user1@test.com,user2@test.com,", GetUserSessionEmails());
   EXPECT_EQ("user1@test.com", observer()->active_account_id().GetUserEmail());
+  EXPECT_EQ("user1@test.com",
+            controller()->GetPrimaryUserSession()->user_info->display_email);
 
   order = {2u, 1u};
   controller()->SetUserSessionOrder(order);
   EXPECT_EQ("user2@test.com,user1@test.com,", GetUserSessionEmails());
   EXPECT_EQ("user2@test.com", observer()->active_account_id().GetUserEmail());
+  EXPECT_EQ("user1@test.com",
+            controller()->GetPrimaryUserSession()->user_info->display_email);
 
   order = {1u, 2u};
   controller()->SetUserSessionOrder(order);
   EXPECT_EQ("user1@test.com,user2@test.com,", GetUserSessionEmails());
   EXPECT_EQ("user1@test.com", observer()->active_account_id().GetUserEmail());
+  EXPECT_EQ("user1@test.com",
+            controller()->GetPrimaryUserSession()->user_info->display_email);
 }
 
 // Tests that user session is unblocked with a running unlock animation so that
@@ -348,6 +382,157 @@ TEST_F(SessionControllerTest, UserSessionUnblockedWithRunningUnlockAnimation) {
               controller()->IsUserSessionBlocked())
         << "Test case state=" << static_cast<int>(test_case.state);
   }
+}
+
+TEST_F(SessionControllerTest, IsUserSupervised) {
+  mojom::UserSessionPtr session = mojom::UserSession::New();
+  session->session_id = 1u;
+  session->user_info = mojom::UserInfo::New();
+  session->user_info->type = user_manager::USER_TYPE_SUPERVISED;
+  controller()->UpdateUserSession(std::move(session));
+
+  EXPECT_TRUE(controller()->IsUserSupervised());
+}
+
+TEST_F(SessionControllerTest, IsUserChild) {
+  mojom::UserSessionPtr session = mojom::UserSession::New();
+  session->session_id = 1u;
+  session->user_info = mojom::UserInfo::New();
+  session->user_info->type = user_manager::USER_TYPE_CHILD;
+  controller()->UpdateUserSession(std::move(session));
+
+  EXPECT_TRUE(controller()->IsUserChild());
+
+  // Child accounts are supervised.
+  EXPECT_TRUE(controller()->IsUserSupervised());
+}
+
+using SessionControllerPrefsTest = NoSessionAshTestBase;
+
+// Verifies that ShellObserver is notified for PrefService changes.
+TEST_F(SessionControllerPrefsTest, Observer) {
+  constexpr char kUser1[] = "user1@test.com";
+  constexpr char kUser2[] = "user2@test.com";
+  const AccountId kUserAccount1 = AccountId::FromUserEmail(kUser1);
+  const AccountId kUserAccount2 = AccountId::FromUserEmail(kUser2);
+
+  TestSessionObserver observer;
+  SessionController* controller = Shell::Get()->session_controller();
+  controller->AddObserver(&observer);
+
+  // Setup 2 users.
+  TestSessionControllerClient* session = GetSessionControllerClient();
+  // Disable auto-provision of PrefService for each user.
+  constexpr bool kEnableSettings = true;
+  constexpr bool kProvidePrefService = false;
+  session->AddUserSession(kUser1, user_manager::USER_TYPE_REGULAR,
+                          kEnableSettings, kProvidePrefService);
+  session->AddUserSession(kUser2, user_manager::USER_TYPE_REGULAR,
+                          kEnableSettings, kProvidePrefService);
+
+  // The observer is not notified because the PrefService for kUser1 is not yet
+  // ready.
+  session->SwitchActiveUser(kUserAccount1);
+  EXPECT_EQ(nullptr, observer.last_user_pref_service());
+
+  auto pref_service = base::MakeUnique<TestingPrefServiceSimple>();
+  Shell::RegisterProfilePrefs(pref_service->registry(), true /* for_test */);
+  controller->ProvideUserPrefServiceForTest(kUserAccount1,
+                                            std::move(pref_service));
+  EXPECT_EQ(controller->GetUserPrefServiceForUser(kUserAccount1),
+            observer.last_user_pref_service());
+  EXPECT_EQ(controller->GetUserPrefServiceForUser(kUserAccount1),
+            controller->GetLastActiveUserPrefService());
+
+  observer.clear_last_user_pref_service();
+
+  // Switching to a user for which prefs are not ready does not notify and
+  // GetLastActiveUserPrefService() returns the old PrefService.
+  session->SwitchActiveUser(AccountId::FromUserEmail(kUser2));
+  EXPECT_EQ(nullptr, observer.last_user_pref_service());
+  EXPECT_EQ(controller->GetUserPrefServiceForUser(kUserAccount1),
+            controller->GetLastActiveUserPrefService());
+
+  session->SwitchActiveUser(AccountId::FromUserEmail(kUser1));
+  EXPECT_EQ(controller->GetUserPrefServiceForUser(kUserAccount1),
+            observer.last_user_pref_service());
+  EXPECT_EQ(controller->GetUserPrefServiceForUser(kUserAccount1),
+            controller->GetLastActiveUserPrefService());
+
+  // There should be no notification about a PrefService for an inactive user
+  // becoming initialized.
+  observer.clear_last_user_pref_service();
+  pref_service = base::MakeUnique<TestingPrefServiceSimple>();
+  Shell::RegisterProfilePrefs(pref_service->registry(), true /* for_test */);
+  controller->ProvideUserPrefServiceForTest(kUserAccount2,
+                                            std::move(pref_service));
+  EXPECT_EQ(nullptr, observer.last_user_pref_service());
+
+  session->SwitchActiveUser(AccountId::FromUserEmail(kUser2));
+  EXPECT_EQ(controller->GetUserPrefServiceForUser(kUserAccount2),
+            observer.last_user_pref_service());
+  EXPECT_EQ(controller->GetUserPrefServiceForUser(kUserAccount2),
+            controller->GetLastActiveUserPrefService());
+
+  controller->RemoveObserver(&observer);
+}
+
+TEST_F(SessionControllerTest, GetUserType) {
+  // Child accounts
+  mojom::UserSessionPtr session = mojom::UserSession::New();
+  session->session_id = 1u;
+  session->user_info = mojom::UserInfo::New();
+  session->user_info->type = user_manager::USER_TYPE_CHILD;
+  controller()->UpdateUserSession(std::move(session));
+  EXPECT_EQ(user_manager::USER_TYPE_CHILD, controller()->GetUserType());
+
+  // Regular accounts
+  session = mojom::UserSession::New();
+  session->session_id = 1u;
+  session->user_info = mojom::UserInfo::New();
+  session->user_info->type = user_manager::USER_TYPE_REGULAR;
+  controller()->UpdateUserSession(std::move(session));
+  EXPECT_EQ(user_manager::USER_TYPE_REGULAR, controller()->GetUserType());
+}
+
+TEST_F(SessionControllerTest, IsUserPrimary) {
+  controller()->ClearUserSessionsForTest();
+
+  // The first added user is a primary user
+  mojom::UserSessionPtr session = mojom::UserSession::New();
+  session->session_id = 1u;
+  session->user_info = mojom::UserInfo::New();
+  session->user_info->type = user_manager::USER_TYPE_REGULAR;
+  controller()->UpdateUserSession(std::move(session));
+  EXPECT_TRUE(controller()->IsUserPrimary());
+
+  // The users added thereafter are not primary users
+  session = mojom::UserSession::New();
+  session->session_id = 2u;
+  session->user_info = mojom::UserInfo::New();
+  session->user_info->type = user_manager::USER_TYPE_REGULAR;
+  controller()->UpdateUserSession(std::move(session));
+  // Simulates user switching by changing the order of session_ids.
+  controller()->SetUserSessionOrder({2u, 1u});
+  EXPECT_FALSE(controller()->IsUserPrimary());
+}
+
+TEST_F(SessionControllerTest, IsUserFirstLogin) {
+  mojom::UserSessionPtr session = mojom::UserSession::New();
+  session->session_id = 1u;
+  session->user_info = mojom::UserInfo::New();
+  session->user_info->type = user_manager::USER_TYPE_REGULAR;
+  controller()->UpdateUserSession(std::move(session));
+  EXPECT_FALSE(controller()->IsUserFirstLogin());
+
+  // user_info->is_new_profile being true means the user is first time login.
+  session = mojom::UserSession::New();
+  session->session_id = 1u;
+  session->user_info = mojom::UserInfo::New();
+  session->user_info->type = user_manager::USER_TYPE_REGULAR;
+  session->user_info->is_new_profile = true;
+  controller()->UpdateUserSession(std::move(session));
+  EXPECT_TRUE(controller()->IsUserFirstLogin());
 }
 
 }  // namespace

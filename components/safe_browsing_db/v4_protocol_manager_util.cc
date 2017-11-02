@@ -5,6 +5,7 @@
 #include "components/safe_browsing_db/v4_protocol_manager_util.h"
 
 #include "base/base64.h"
+#include "base/hash.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
 #include "base/sha1.h"
@@ -20,6 +21,10 @@ using base::Time;
 using base::TimeDelta;
 
 namespace safe_browsing {
+const base::FilePath::CharType kStoreSuffix[] = FILE_PATH_LITERAL(".store");
+
+// The Safe Browsing V4 server URL prefix.
+const char kSbV4UrlPrefix[] = "https://safebrowsing.googleapis.com/v4";
 
 namespace {
 
@@ -140,8 +145,11 @@ ListIdentifier GetUrlUwsId() {
   return ListIdentifier(GetCurrentPlatformType(), URL, UNWANTED_SOFTWARE);
 }
 
-// The Safe Browsing V4 server URL prefix.
-const char kSbV4UrlPrefix[] = "https://safebrowsing.googleapis.com/v4";
+std::string GetUmaSuffixForStore(const base::FilePath& file_path) {
+  DCHECK_EQ(kStoreSuffix, file_path.BaseName().Extension());
+  return base::StringPrintf(
+      ".%" PRIsFP, file_path.BaseName().RemoveExtension().value().c_str());
+}
 
 StoreAndHashPrefix::StoreAndHashPrefix(ListIdentifier list_id,
                                        const HashPrefix& hash_prefix)
@@ -162,6 +170,21 @@ size_t StoreAndHashPrefix::hash() const {
   std::size_t second = std::hash<std::string>()(hash_prefix);
 
   return base::HashInts(first, second);
+}
+
+bool SBThreatTypeSetIsValidForCheckBrowseUrl(const SBThreatTypeSet& set) {
+  for (SBThreatType type : set) {
+    switch (type) {
+      case SB_THREAT_TYPE_URL_PHISHING:
+      case SB_THREAT_TYPE_URL_MALWARE:
+      case SB_THREAT_TYPE_URL_UNWANTED:
+        break;
+
+      default:
+        return false;
+    }
+  }
+  return true;
 }
 
 bool ListIdentifier::operator==(const ListIdentifier& other) const {
@@ -304,7 +327,7 @@ bool V4ProtocolManagerUtil::FullHashToHashPrefix(const FullHash& full_hash,
   if (full_hash.size() < prefix_size) {
     return false;
   }
-  *hash_prefix = full_hash.substr(prefix_size);
+  *hash_prefix = full_hash.substr(0, prefix_size);
   return true;
 }
 

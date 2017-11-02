@@ -93,8 +93,8 @@ class TestRunner : public WebTestRunner {
   bool IsRecursiveLayoutDumpRequested() override;
   std::string DumpLayout(blink::WebLocalFrame* frame) override;
   void DumpPixelsAsync(
-      blink::WebView* web_view,
-      const base::Callback<void(const SkBitmap&)>& callback) override;
+      blink::WebLocalFrame* frame,
+      base::OnceCallback<void(const SkBitmap&)> callback) override;
   void ReplicateLayoutTestRuntimeFlagsChanges(
       const base::DictionaryValue& changed_values) override;
   bool HasCustomTextDump(std::string* custom_text_dump) const override;
@@ -135,7 +135,6 @@ class TestRunner : public WebTestRunner {
   bool canOpenWindows() const;
   bool shouldDumpResourceLoadCallbacks() const;
   bool shouldDumpResourceResponseMIMETypes() const;
-  bool shouldDumpStatusCallbacks() const;
   bool shouldDumpSpellCheckCallbacks() const;
   bool shouldWaitUntilExternalURLLoad() const;
   const std::set<std::string>* httpHeadersToClear() const;
@@ -284,8 +283,6 @@ class TestRunner : public WebTestRunner {
                             int max_height);
   bool DisableAutoResizeMode(int new_width, int new_height);
 
-  void SetMockDeviceLight(double value);
-  void ResetDeviceLight();
   // Device Motion / Device Orientation related functions
   void SetMockDeviceMotion(bool has_acceleration_x,
                            double acceleration_x,
@@ -429,11 +426,6 @@ class TestRunner : public WebTestRunner {
   void SetDisallowedSubresourcePathSuffixes(
       const std::vector<std::string>& suffixes);
 
-  // This function sets a flag that tells the test_shell to dump all calls
-  // to window.status().
-  // It takes no arguments, and ignores any that may be present.
-  void DumpWindowStatusChanges();
-
   // This function sets a flag that tells the test_shell to dump all
   // the lines of descriptive text about spellcheck execution.
   void DumpSpellCheckCallbacks();
@@ -560,6 +552,7 @@ class TestRunner : public WebTestRunner {
                                         const std::string& avatar,
                                         const std::string& password);
   void ClearMockCredentialManagerResponse();
+
   void SetMockCredentialManagerError(const std::string& error);
 
   // Takes care of notifying the delegate after a change to layout test runtime

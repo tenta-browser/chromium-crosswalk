@@ -11,13 +11,13 @@
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/time/time.h"
-#include "cc/output/begin_frame_args.h"
 #include "cc/output/output_surface.h"
 #include "cc/output/output_surface_frame.h"
 #include "cc/output/software_output_device.h"
 #include "cc/test/test_context_provider.h"
 #include "cc/test/test_gles2_interface.h"
 #include "cc/test/test_web_graphics_context_3d.h"
+#include "components/viz/common/frame_sinks/begin_frame_args.h"
 
 namespace cc {
 
@@ -32,7 +32,7 @@ class FakeOutputSurface : public OutputSurface {
   }
 
   static std::unique_ptr<FakeOutputSurface> Create3d(
-      scoped_refptr<ContextProvider> context_provider) {
+      scoped_refptr<viz::ContextProvider> context_provider) {
     return base::WrapUnique(new FakeOutputSurface(context_provider));
   }
 
@@ -42,7 +42,7 @@ class FakeOutputSurface : public OutputSurface {
   }
 
   static std::unique_ptr<FakeOutputSurface> CreateOffscreen(
-      scoped_refptr<ContextProvider> context_provider) {
+      scoped_refptr<viz::ContextProvider> context_provider) {
     auto surface =
         base::WrapUnique(new FakeOutputSurface(std::move(context_provider)));
     surface->capabilities_.uses_default_gl_framebuffer = false;
@@ -76,6 +76,7 @@ class FakeOutputSurface : public OutputSurface {
   OverlayCandidateValidator* GetOverlayCandidateValidator() const override;
   bool IsDisplayedAsOverlayPlane() const override;
   unsigned GetOverlayTextureId() const override;
+  gfx::BufferFormat GetOverlayBufferFormat() const override;
 
   void set_framebuffer(GLint framebuffer, GLenum format) {
     framebuffer_ = framebuffer;
@@ -103,7 +104,8 @@ class FakeOutputSurface : public OutputSurface {
   }
 
  protected:
-  explicit FakeOutputSurface(scoped_refptr<ContextProvider> context_provider);
+  explicit FakeOutputSurface(
+      scoped_refptr<viz::ContextProvider> context_provider);
   explicit FakeOutputSurface(
       std::unique_ptr<SoftwareOutputDevice> software_device);
 

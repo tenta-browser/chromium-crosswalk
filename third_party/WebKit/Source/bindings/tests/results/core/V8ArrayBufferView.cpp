@@ -22,14 +22,15 @@
 #include "bindings/core/v8/V8Int16Array.h"
 #include "bindings/core/v8/V8Int32Array.h"
 #include "bindings/core/v8/V8Int8Array.h"
-#include "bindings/core/v8/V8ObjectConstructor.h"
-#include "bindings/core/v8/V8PrivateProperty.h"
 #include "bindings/core/v8/V8SharedArrayBuffer.h"
 #include "bindings/core/v8/V8Uint16Array.h"
 #include "bindings/core/v8/V8Uint32Array.h"
 #include "bindings/core/v8/V8Uint8Array.h"
 #include "bindings/core/v8/V8Uint8ClampedArray.h"
 #include "core/dom/ExecutionContext.h"
+#include "platform/bindings/RuntimeCallStats.h"
+#include "platform/bindings/V8ObjectConstructor.h"
+#include "platform/bindings/V8PrivateProperty.h"
 #include "platform/wtf/GetPtr.h"
 #include "platform/wtf/RefPtr.h"
 
@@ -37,18 +38,30 @@ namespace blink {
 
 // Suppress warning: global constructors, because struct WrapperTypeInfo is trivial
 // and does not depend on another global objects.
-#if defined(COMPONENT_BUILD) && defined(WIN32) && COMPILER(CLANG)
+#if defined(COMPONENT_BUILD) && defined(WIN32) && defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wglobal-constructors"
 #endif
-const WrapperTypeInfo V8ArrayBufferView::wrapperTypeInfo = { gin::kEmbedderBlink, 0, V8ArrayBufferView::Trace, V8ArrayBufferView::TraceWrappers, nullptr, "ArrayBufferView", 0, WrapperTypeInfo::kWrapperTypeObjectPrototype, WrapperTypeInfo::kObjectClassId, WrapperTypeInfo::kNotInheritFromActiveScriptWrappable, WrapperTypeInfo::kIndependent };
-#if defined(COMPONENT_BUILD) && defined(WIN32) && COMPILER(CLANG)
+const WrapperTypeInfo V8ArrayBufferView::wrapperTypeInfo = {
+    gin::kEmbedderBlink,
+    nullptr,
+    V8ArrayBufferView::Trace,
+    V8ArrayBufferView::TraceWrappers,
+    nullptr,
+    "ArrayBufferView",
+    nullptr,
+    WrapperTypeInfo::kWrapperTypeObjectPrototype,
+    WrapperTypeInfo::kObjectClassId,
+    WrapperTypeInfo::kNotInheritFromActiveScriptWrappable,
+    WrapperTypeInfo::kIndependent,
+};
+#if defined(COMPONENT_BUILD) && defined(WIN32) && defined(__clang__)
 #pragma clang diagnostic pop
 #endif
 
 // This static member must be declared by DEFINE_WRAPPERTYPEINFO in TestArrayBufferView.h.
 // For details, see the comment of DEFINE_WRAPPERTYPEINFO in
-// bindings/core/v8/ScriptWrappable.h.
+// platform/bindings/ScriptWrappable.h.
 const WrapperTypeInfo& TestArrayBufferView::wrapper_type_info_ = V8ArrayBufferView::wrapperTypeInfo;
 
 // not [ActiveScriptWrappable]

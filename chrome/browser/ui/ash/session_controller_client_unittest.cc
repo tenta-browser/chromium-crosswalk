@@ -10,6 +10,7 @@
 
 #include "base/macros.h"
 #include "base/run_loop.h"
+#include "base/time/time.h"
 #include "chrome/browser/chromeos/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/chromeos/login/users/multi_profile_user_controller.h"
 #include "chrome/browser/chromeos/login/users/scoped_user_manager_enabler.h"
@@ -17,6 +18,8 @@
 #include "chrome/browser/chromeos/policy/policy_cert_service_factory.h"
 #include "chrome/browser/chromeos/policy/policy_cert_verifier.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
+#include "chrome/browser/supervised_user/supervised_user_service.h"
+#include "chrome/browser/supervised_user/supervised_user_service_factory.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile_manager.h"
@@ -95,7 +98,9 @@ class TestSessionController : public ash::mojom::SessionController {
   ~TestSessionController() override {}
 
   ash::mojom::SessionControllerPtr CreateInterfacePtrAndBind() {
-    return binding_.CreateInterfacePtrAndBind();
+    ash::mojom::SessionControllerPtr ptr;
+    binding_.Bind(mojo::MakeRequest(&ptr));
+    return ptr;
   }
 
   ash::mojom::SessionInfo* last_session_info() {
@@ -119,8 +124,19 @@ class TestSessionController : public ash::mojom::SessionController {
   }
   void SetUserSessionOrder(
       const std::vector<uint32_t>& user_session_order) override {}
-  void RunUnlockAnimation(const RunUnlockAnimationCallback& callback) override {
+  void PrepareForLock(PrepareForLockCallback callback) override {}
+  void StartLock(StartLockCallback callback) override {}
+  void NotifyChromeLockAnimationsComplete() override {}
+  void RunUnlockAnimation(RunUnlockAnimationCallback callback) override {}
+  void NotifyChromeTerminating() override {}
+  void SetSessionLengthLimit(base::TimeDelta length_limit,
+                             base::TimeTicks start_time) override {
+    last_session_length_limit_ = length_limit;
+    last_session_start_time_ = start_time;
   }
+
+  base::TimeDelta last_session_length_limit_;
+  base::TimeTicks last_session_start_time_;
 
  private:
   mojo::Binding<ash::mojom::SessionController> binding_;
@@ -343,7 +359,7 @@ TEST_F(SessionControllerClientTest,
   const AccountId account_id(AccountId::FromUserEmail(kUser));
   user_manager()->LoginUser(account_id);
   while (user_manager()->GetLoggedInUsers().size() <
-         session_manager::kMaxmiumNumberOfUserSessions) {
+         session_manager::kMaximumNumberOfUserSessions) {
     UserAddedToSession("bb@b.b");
   }
   EXPECT_EQ(ash::AddUserSessionPolicy::ERROR_MAXIMUM_USERS_REACHED,
@@ -380,6 +396,98 @@ TEST_F(SessionControllerClientTest,
   user_manager()->AddUser(AccountId::FromUserEmail("bb@b.b"));
   EXPECT_EQ(ash::AddUserSessionPolicy::ERROR_NOT_ALLOWED_PRIMARY_USER,
             SessionControllerClient::GetAddUserSessionPolicy());
+}
+
+TEST_F(SessionControllerClientTest, SendUserSession) {
+  // Create an object to test and connect it to our test interface.
+  SessionControllerClient client;
+  TestSessionController session_controller;
+  client.session_controller_ = session_controller.CreateInterfacePtrAndBind();
+  client.Init();
+  SessionControllerClient::FlushForTesting();
+
+  // No user session sent yet.
+  EXPECT_EQ(0, session_controller.update_user_session_count());
+
+  // Simulate login.
+  const AccountId account_id(AccountId::FromUserEmail("user@test.com"));
+  user_manager()->AddUser(account_id);
+  session_manager_.CreateSession(
+      account_id, chromeos::ProfileHelper::GetUserIdHashByUserIdForTesting(
+                      "user@test.com"));
+  session_manager_.SetSessionState(SessionState::ACTIVE);
+  SessionControllerClient::FlushForTesting();
+
+  // User session was sent.
+  EXPECT_EQ(1, session_controller.update_user_session_count());
+
+  // Simulate a request for an update where nothing changed.
+  client.SendUserSession(*user_manager()->GetLoggedInUsers()[0]);
+  SessionControllerClient::FlushForTesting();
+
+  // Session was not updated because nothing changed.
+  EXPECT_EQ(1, session_controller.update_user_session_count());
+}
+
+TEST_F(SessionControllerClientTest, SupervisedUser) {
+  // Create an object to test and connect it to our test interface.
+  SessionControllerClient client;
+  TestSessionController session_controller;
+  client.session_controller_ = session_controller.CreateInterfacePtrAndBind();
+  client.Init();
+  SessionControllerClient::FlushForTesting();
+
+  // Simulate the login screen. No user session yet.
+  session_manager_.SetSessionState(SessionState::LOGIN_PRIMARY);
+  EXPECT_FALSE(session_controller.last_user_session());
+
+  // Simulate a supervised user logging in.
+  const AccountId account_id(AccountId::FromUserEmail("child@test.com"));
+  const user_manager::User* user =
+      user_manager()->AddSupervisedUser(account_id);
+  ASSERT_TRUE(user);
+
+  // Start session. This logs in the user and sends an active user notification.
+  // The hash must match the one used by FakeChromeUserManager.
+  session_manager_.CreateSession(
+      account_id, chromeos::ProfileHelper::GetUserIdHashByUserIdForTesting(
+                      "child@test.com"));
+  session_manager_.SetSessionState(SessionState::ACTIVE);
+  SessionControllerClient::FlushForTesting();
+
+  // The session controller received session info and user session.
+  EXPECT_LT(0u, session_controller.last_user_session()->session_id);
+  EXPECT_EQ(user_manager::USER_TYPE_SUPERVISED,
+            session_controller.last_user_session()->user_info->type);
+
+  // Simulate profile creation after login.
+  TestingProfile* user_profile = CreateTestingProfile(user);
+  user_profile->SetSupervisedUserId("child-id");
+
+  // Simulate supervised user custodians.
+  PrefService* prefs = user_profile->GetPrefs();
+  prefs->SetString(prefs::kSupervisedUserCustodianEmail, "parent1@test.com");
+  prefs->SetString(prefs::kSupervisedUserSecondCustodianEmail,
+                   "parent2@test.com");
+
+  // Simulate the notification that the profile is ready.
+  client.OnLoginUserProfilePrepared(user_profile);
+  base::RunLoop().RunUntilIdle();  // For PostTask and mojo interface.
+
+  // The custodians were sent over the mojo interface.
+  EXPECT_EQ("parent1@test.com",
+            session_controller.last_user_session()->custodian_email);
+  EXPECT_EQ("parent2@test.com",
+            session_controller.last_user_session()->second_custodian_email);
+
+  // Simulate an update to the custodian information.
+  prefs->SetString(prefs::kSupervisedUserCustodianEmail, "parent3@test.com");
+  client.OnCustodianInfoChanged();
+  SessionControllerClient::FlushForTesting();
+
+  // The updated custodian was sent over the mojo interface.
+  EXPECT_EQ("parent3@test.com",
+            session_controller.last_user_session()->custodian_email);
 }
 
 TEST_F(SessionControllerClientTest, UserPrefsChange) {
@@ -421,4 +529,28 @@ TEST_F(SessionControllerClientTest, UserPrefsChange) {
   SessionControllerClient::FlushForTesting();
   EXPECT_FALSE(
       session_controller.last_session_info()->should_lock_screen_automatically);
+}
+
+TEST_F(SessionControllerClientTest, SessionLengthLimit) {
+  // Create an object to test and connect it to our test interface.
+  SessionControllerClient client;
+  TestSessionController session_controller;
+  client.session_controller_ = session_controller.CreateInterfacePtrAndBind();
+  client.Init();
+  SessionControllerClient::FlushForTesting();
+
+  // By default there is no session length limit.
+  EXPECT_TRUE(session_controller.last_session_length_limit_.is_zero());
+  EXPECT_TRUE(session_controller.last_session_start_time_.is_null());
+
+  // Setting a session length limit in local state sends it to ash.
+  const base::TimeDelta length_limit = base::TimeDelta::FromHours(1);
+  const base::TimeTicks start_time = base::TimeTicks::Now();
+  PrefService* local_state = TestingBrowserProcess::GetGlobal()->local_state();
+  local_state->SetInteger(prefs::kSessionLengthLimit,
+                          length_limit.InMilliseconds());
+  local_state->SetInt64(prefs::kSessionStartTime, start_time.ToInternalValue());
+  SessionControllerClient::FlushForTesting();
+  EXPECT_EQ(length_limit, session_controller.last_session_length_limit_);
+  EXPECT_EQ(start_time, session_controller.last_session_start_time_);
 }

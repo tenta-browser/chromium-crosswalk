@@ -25,14 +25,15 @@
 
 #include "core/CoreExport.h"
 #include "core/dom/Element.h"
+#include "platform/text/TextDirection.h"
 
 namespace blink {
 
+struct AttributeTriggers;
 class DocumentFragment;
 class ExceptionState;
 class FormAssociated;
 class HTMLFormElement;
-class HTMLMenuElement;
 class KeyboardEvent;
 
 enum TranslateAttributeMode {
@@ -107,10 +108,6 @@ class CORE_EXPORT HTMLElement : public Element {
 
   static const AtomicString& EventParameterName();
 
-  HTMLMenuElement* AssignedContextMenu() const;
-  HTMLMenuElement* contextMenu() const;
-  void setContextMenu(HTMLMenuElement*);
-
   virtual String AltText() const { return String(); }
 
   int offsetLeftForBinding();
@@ -152,6 +149,8 @@ class CORE_EXPORT HTMLElement : public Element {
   void ChildrenChanged(const ChildrenChange&) override;
   void CalculateAndAdjustDirectionality();
 
+  InsertionNotificationRequest InsertedInto(ContainerNode*) override;
+
  private:
   String DebugNodeName() const final;
   String nodeName() const final;
@@ -167,7 +166,6 @@ class CORE_EXPORT HTMLElement : public Element {
   DocumentFragment* TextToFragment(const String&, ExceptionState&);
 
   bool SelfOrAncestorHasDirAutoAttribute() const;
-  void DirAttributeChanged(const AtomicString&);
   void AdjustDirectionalityIfNeededAfterChildAttributeChanged(Element* child);
   void AdjustDirectionalityIfNeededAfterChildrenChanged(const ChildrenChange&);
   TextDirection Directionality(
@@ -176,6 +174,16 @@ class CORE_EXPORT HTMLElement : public Element {
   TranslateAttributeMode GetTranslateAttributeMode() const;
 
   void HandleKeypressEvent(KeyboardEvent*);
+
+  static AttributeTriggers* TriggersForAttributeName(
+      const QualifiedName& attr_name);
+
+  void OnDirAttrChanged(const AttributeModificationParams&);
+  void OnInertAttrChanged(const AttributeModificationParams&);
+  void OnLangAttrChanged(const AttributeModificationParams&);
+  void OnNonceAttrChanged(const AttributeModificationParams&);
+  void OnTabIndexAttrChanged(const AttributeModificationParams&);
+  void OnXMLLangAttrChanged(const AttributeModificationParams&);
 };
 
 DEFINE_ELEMENT_TYPE_CASTS(HTMLElement, IsHTMLElement());

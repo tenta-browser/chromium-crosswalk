@@ -11,6 +11,7 @@
 #include "net/quic/core/crypto/crypto_utils.h"
 #include "net/quic/core/quic_socket_address_coder.h"
 #include "net/quic/core/quic_utils.h"
+#include "net/quic/platform/api/quic_endian.h"
 #include "net/quic/platform/api/quic_map_util.h"
 #include "net/quic/platform/api/quic_str_cat.h"
 #include "net/quic/platform/api/quic_text_utils.h"
@@ -78,9 +79,9 @@ void CryptoHandshakeMessage::Erase(QuicTag tag) {
   tag_value_map_.erase(tag);
 }
 
-QuicErrorCode CryptoHandshakeMessage::GetTaglist(QuicTag tag,
-                                                 const QuicTag** out_tags,
-                                                 size_t* out_len) const {
+QuicErrorCode CryptoHandshakeMessage::GetTaglist(
+    QuicTag tag,
+    QuicTagVector* out_tags) const {
   QuicTagValueMap::const_iterator it = tag_value_map_.find(tag);
   QuicErrorCode ret = QUIC_NO_ERROR;
 
@@ -91,13 +92,17 @@ QuicErrorCode CryptoHandshakeMessage::GetTaglist(QuicTag tag,
   }
 
   if (ret != QUIC_NO_ERROR) {
-    *out_tags = nullptr;
-    *out_len = 0;
+    out_tags->clear();
     return ret;
   }
 
-  *out_tags = reinterpret_cast<const QuicTag*>(it->second.data());
-  *out_len = it->second.size() / sizeof(QuicTag);
+  size_t num_tags = it->second.size() / sizeof(QuicTag);
+  out_tags->resize(num_tags);
+  for (size_t i = 0; i < num_tags; ++i) {
+    QuicTag tag;
+    memcpy(&tag, it->second.data() + i * sizeof(tag), sizeof(tag));
+    (*out_tags)[i] = tag;
+  }
   return ret;
 }
 
@@ -246,6 +251,7 @@ string CryptoHandshakeMessage::DebugStringInternal(
         if (it->second.size() == 8) {
           uint64_t value;
           memcpy(&value, it->second.data(), sizeof(value));
+          value = QuicEndian::NetToHost64(value);
           ret += QuicTextUtils::Uint64ToString(value);
           done = true;
         }

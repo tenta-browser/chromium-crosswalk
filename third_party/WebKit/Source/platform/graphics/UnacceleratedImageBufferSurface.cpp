@@ -30,6 +30,7 @@
 
 #include "platform/graphics/UnacceleratedImageBufferSurface.h"
 
+#include "platform/graphics/StaticBitmapImage.h"
 #include "platform/graphics/skia/SkiaUtils.h"
 #include "platform/wtf/PassRefPtr.h"
 #include "third_party/skia/include/core/SkSurface.h"
@@ -40,23 +41,35 @@ UnacceleratedImageBufferSurface::UnacceleratedImageBufferSurface(
     const IntSize& size,
     OpacityMode opacity_mode,
     ImageInitializationMode initialization_mode,
-    sk_sp<SkColorSpace> color_space,
-    SkColorType color_type)
-    : ImageBufferSurface(size, opacity_mode, color_space, color_type) {
+    const CanvasColorParams& color_params)
+    : ImageBufferSurface(size, opacity_mode, color_params) {
   SkAlphaType alpha_type =
       (kOpaque == opacity_mode) ? kOpaque_SkAlphaType : kPremul_SkAlphaType;
-  SkImageInfo info = SkImageInfo::Make(size.Width(), size.Height(), color_type,
-                                       alpha_type, color_space);
+  SkImageInfo info = SkImageInfo::Make(
+      size.Width(), size.Height(), color_params.GetSkColorType(), alpha_type);
+  // In legacy mode the backing SkSurface should not have any color space.
+  // If color correct rendering is enabled only for SRGB, still the backing
+  // surface should not have any color space and the treatment of legacy data
+  // as SRGB will be managed by wrapping the internal SkCanvas inside a
+  // SkColorSpaceXformCanvas. If color correct rendering is enbaled for other
+  // color spaces, we set the color space properly.
+  if (CanvasColorParams::ColorCorrectRenderingInAnyColorSpace())
+    info = info.makeColorSpace(color_params.GetSkColorSpaceForSkSurfaces());
+
   SkSurfaceProps disable_lcd_props(0, kUnknown_SkPixelGeometry);
   surface_ = SkSurface::MakeRaster(
       info, kOpaque == opacity_mode ? 0 : &disable_lcd_props);
-
   if (!surface_)
     return;
 
+  sk_sp<SkColorSpace> xform_canvas_color_space = nullptr;
+  if (color_params.ColorCorrectNoColorSpaceToSRGB())
+    xform_canvas_color_space = color_params.GetSkColorSpace();
+  canvas_ = WTF::WrapUnique(
+      new SkiaPaintCanvas(surface_->getCanvas(), xform_canvas_color_space));
+
   // Always save an initial frame, to support resetting the top level matrix
   // and clip.
-  canvas_ = WTF::WrapUnique(new SkiaPaintCanvas(surface_->getCanvas()));
   canvas_->save();
 
   if (initialization_mode == kInitializeImagePixels)
@@ -73,10 +86,18 @@ bool UnacceleratedImageBufferSurface::IsValid() const {
   return surface_;
 }
 
-sk_sp<SkImage> UnacceleratedImageBufferSurface::NewImageSnapshot(
+bool UnacceleratedImageBufferSurface::WritePixels(const SkImageInfo& orig_info,
+                                                  const void* pixels,
+                                                  size_t row_bytes,
+                                                  int x,
+                                                  int y) {
+  return surface_->getCanvas()->writePixels(orig_info, pixels, row_bytes, x, y);
+}
+
+RefPtr<StaticBitmapImage> UnacceleratedImageBufferSurface::NewImageSnapshot(
     AccelerationHint,
     SnapshotReason) {
-  return surface_->makeImageSnapshot();
+  return StaticBitmapImage::Create(surface_->makeImageSnapshot());
 }
 
 }  // namespace blink

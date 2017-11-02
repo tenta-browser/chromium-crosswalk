@@ -84,6 +84,14 @@ GL_APICALL GLuint GL_APIENTRY glCreateImageCHROMIUM(ClientBuffer buffer,
                                                     GLsizei height,
                                                     GLenum internalformat);
 GL_APICALL void GL_APIENTRY glDestroyImageCHROMIUM(GLuint image_id);
+GL_APICALL void GL_APIENTRY glBindTexImage2DCHROMIUM(GLenum target,
+                                                     GLint imageId);
+GL_APICALL void GL_APIENTRY
+glBindTexImage2DWithInternalformatCHROMIUM(GLenum target,
+                                           GLenum internalformat,
+                                           GLint imageId);
+GL_APICALL void GL_APIENTRY glReleaseTexImage2DCHROMIUM(GLenum target,
+                                                        GLint imageId);
 #endif
 typedef GLuint(GL_APIENTRYP PFNGLCREATEIMAGECHROMIUMPROC)(
     ClientBuffer buffer,
@@ -92,6 +100,14 @@ typedef GLuint(GL_APIENTRYP PFNGLCREATEIMAGECHROMIUMPROC)(
     GLenum internalformat);
 typedef void (
     GL_APIENTRYP PFNGLDESTROYIMAGECHROMIUMPROC)(GLuint image_id);
+typedef void(GL_APIENTRYP PFNGLBINDTEXIMAGE2DCHROMIUMPROC)(GLenum target,
+                                                           GLint imageId);
+typedef void(GL_APIENTRYP PFNGLBINDTEXIMAGE2DWITHINTERNALFORMATCHROMIUMPROC)(
+    GLenum target,
+    GLenum internalformat,
+    GLint imageId);
+typedef void(GL_APIENTRYP PFNGLRELEASETEXIMAGE2DCHROMIUMPROC)(GLenum target,
+                                                              GLint imageId);
 #endif  /* GL_CHROMIUM_image */
 
 #ifndef GL_RGB_YCRCB_420_CHROMIUM
@@ -168,21 +184,6 @@ typedef void (GL_APIENTRYP PFNGLREQUESTEXTENSIONCHROMIUMPROC) (
 #define GL_GET_ERROR_QUERY_CHROMIUM 0x6003
 #endif
 #endif  /* GL_CHROMIUM_get_error_query */
-
-/* GL_CHROMIUM_texture_from_image */
-#ifndef GL_CHROMIUM_texture_from_image
-#define GL_CHROMIUM_texture_from_image 1
-#ifdef GL_GLEXT_PROTOTYPES
-GL_APICALL void GL_APIENTRY glBindTexImage2DCHROMIUM(
-    GLenum target, GLint imageId);
-GL_APICALL void GL_APIENTRY glReleaseTexImage2DCHROMIUM(
-    GLenum target, GLint imageId);
-#endif
-typedef void (GL_APIENTRYP PFNGLBINDTEXIMAGE2DCHROMIUMPROC) (
-    GLenum target, GLint imageId);
-typedef void (GL_APIENTRYP PFNGLRELEASETEXIMAGE2DCHROMIUMPROC) (
-    GLenum target, GLint imageId);
-#endif  /* GL_CHROMIUM_texture_from_image */
 
 /* GL_CHROMIUM_post_sub_buffer */
 #ifndef GL_CHROMIUM_post_sub_buffer
@@ -620,10 +621,32 @@ typedef void (GL_APIENTRYP PFNGLDRAWBUFFERSEXTPROC) (
 GL_APICALL void GL_APIENTRY glResizeCHROMIUM(GLuint width,
                                              GLuint height,
                                              GLfloat scale_factor,
+                                             GLenum color_space,
                                              GLboolean alpha);
+
 #endif
-typedef void (GL_APIENTRYP PFNGLRESIZECHROMIUMPROC) (
-    GLuint width, GLuint height);
+typedef void(GL_APIENTRYP PFNGLRESIZECHROMIUMPROC)(GLuint width,
+                                                   GLuint height,
+                                                   GLfloat scale_factor,
+                                                   GLenum color_space,
+                                                   GLboolean alpha);
+
+#ifndef GL_COLOR_SPACE_UNSPECIFIED_CHROMIUM
+#define GL_COLOR_SPACE_UNSPECIFIED_CHROMIUM 0x8AF1
+#endif
+
+#ifndef GL_COLOR_SPACE_SCRGB_LINEAR_CHROMIUM
+#define GL_COLOR_SPACE_SCRGB_LINEAR_CHROMIUM 0x8AF2
+#endif
+
+#ifndef GL_COLOR_SPACE_SRGB_CHROMIUM
+#define GL_COLOR_SPACE_SRGB_CHROMIUM 0x8AF3
+#endif
+
+#ifndef GL_COLOR_SPACE_DISPLAY_P3_CHROMIUM
+#define GL_COLOR_SPACE_DISPLAY_P3_CHROMIUM 0x8AF4
+#endif
+
 #endif  /* GL_CHROMIUM_resize */
 
 /* GL_CHROMIUM_get_multiple */
@@ -1197,6 +1220,11 @@ GL_APICALL void GL_APIENTRY glCoverageModulationCHROMIUM(GLenum components);
 #define GL_ARB_occlusion_query 1
 #define GL_SAMPLES_PASSED_ARB 0x8914
 #endif /* GL_ARB_occlusion_query */
+
+#ifndef GL_CHROMIUM_texture_filtering_hint
+#define GL_CHROMIUM_texture_filtering_hint 1
+#define GL_TEXTURE_FILTERING_HINT_CHROMIUM 0x8AF0
+#endif /* GL_CHROMIUM_texture_filtering_hint */
 
 #ifdef __cplusplus
 }

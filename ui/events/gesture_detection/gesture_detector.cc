@@ -13,6 +13,7 @@
 #include <cmath>
 
 #include "base/timer/timer.h"
+#include "build/build_config.h"
 #include "ui/events/gesture_detection/gesture_listeners.h"
 #include "ui/events/gesture_detection/motion_event.h"
 
@@ -59,7 +60,8 @@ GestureDetector::Config::Config()
       two_finger_tap_max_separation(300),
       two_finger_tap_timeout(base::TimeDelta::FromMilliseconds(700)),
       single_tap_repeat_interval(1),
-      velocity_tracker_strategy(VelocityTracker::Strategy::STRATEGY_DEFAULT) {}
+      velocity_tracker_strategy(VelocityTracker::Strategy::STRATEGY_DEFAULT) {
+}
 
 GestureDetector::Config::Config(const Config& other) = default;
 
@@ -246,6 +248,7 @@ bool GestureDetector::OnTouchEvent(const MotionEvent& ev) {
       handled = HandleSwipeIfNeeded(ev, vx_total / count, vy_total / count);
 
       if (two_finger_tap_allowed_for_gesture_ && ev.GetPointerCount() == 2 &&
+          secondary_pointer_down_event_ &&
           (ev.GetEventTime() - secondary_pointer_down_event_->GetEventTime() <=
            two_finger_tap_timeout_)) {
         handled = listener_->OnTwoFingerTap(*current_down_event_, ev);
@@ -290,8 +293,8 @@ bool GestureDetector::OnTouchEvent(const MotionEvent& ev) {
       two_finger_tap_allowed_for_gesture_ = two_finger_tap_enabled_;
       maximum_pointer_count_ = 1;
 
-      // Always start the SHOW_PRESS timer before the LONG_PRESS timer to ensure
-      // proper timeout ordering.
+      // Always start the SHOW_PRESS timer before the LONG_PRESS timer to
+      // ensure proper timeout ordering.
       if (showpress_enabled_)
         timeout_handler_->StartTimeout(SHOW_PRESS);
       if (longpress_enabled_)
@@ -554,12 +557,9 @@ bool GestureDetector::IsWithinTouchSlop(const MotionEvent& ev) {
   for (size_t i = 0; i < ev.GetPointerCount(); i++) {
     const int pointer_id = ev.GetPointerId(i);
     const MotionEvent* source_pointer_down_event = GetSourcePointerDownEvent(
-        *current_down_event_,
-        (maximum_pointer_count_ > 1 && secondary_pointer_down_event_)
-            ? *secondary_pointer_down_event_
-            : *current_down_event_,
+        *current_down_event_.get(), secondary_pointer_down_event_.get(),
         pointer_id);
-    DCHECK(source_pointer_down_event);
+
     if (!source_pointer_down_event)
       return false;
 
@@ -580,17 +580,23 @@ bool GestureDetector::IsWithinTouchSlop(const MotionEvent& ev) {
 
 const MotionEvent* GestureDetector::GetSourcePointerDownEvent(
     const MotionEvent& current_down_event,
-    const MotionEvent& secondary_pointer_down_event,
+    const MotionEvent* secondary_pointer_down_event,
     const int pointer_id) {
   if (current_down_event.GetPointerId(0) == pointer_id)
     return &current_down_event;
 
-  for (size_t i = 0; i < secondary_pointer_down_event.GetPointerCount(); i++) {
-    if (secondary_pointer_down_event.GetPointerId(i) == pointer_id)
-      return &secondary_pointer_down_event;
+  // Secondary pointer down event is sometimes missing (crbug.com/704426), the
+  // source pointer down event is not found in these cases.
+  // crbug.com/704426 is the only related bug report and we don't have any
+  // reliable repro of the bug.
+  if (!secondary_pointer_down_event)
+    return nullptr;
+
+  for (size_t i = 0; i < secondary_pointer_down_event->GetPointerCount(); i++) {
+    if (secondary_pointer_down_event->GetPointerId(i) == pointer_id)
+      return secondary_pointer_down_event;
   }
 
-  NOTREACHED();
   return nullptr;
 }
 

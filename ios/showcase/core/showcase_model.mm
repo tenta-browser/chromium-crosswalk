@@ -23,7 +23,7 @@
     },
     @{
       showcase::kClassForDisplayKey : @"MenuViewController",
-      showcase::kClassForInstantiationKey : @"MenuViewController",
+      showcase::kClassForInstantiationKey : @"SCToolsCoordinator",
       showcase::kUseCaseKey : @"Tools menu",
     },
     @{
@@ -40,6 +40,11 @@
       showcase::kClassForDisplayKey : @"PaymentRequestPickerViewController",
       showcase::kClassForInstantiationKey : @"SCPaymentsPickerCoordinator",
       showcase::kUseCaseKey : @"Payment request picker view",
+    },
+    @{
+      showcase::kClassForDisplayKey : @"PaymentRequestSelectorViewController",
+      showcase::kClassForInstantiationKey : @"SCPaymentsSelectorCoordinator",
+      showcase::kUseCaseKey : @"Payment request selector view",
     },
     @{
       showcase::kClassForDisplayKey : @"RootContainerViewController",
@@ -75,6 +80,26 @@
       showcase::kClassForDisplayKey : @"UITableViewCell",
       showcase::kClassForInstantiationKey : @"UIKitTableViewCellViewController",
       showcase::kUseCaseKey : @"UIKit Table Cells",
+    },
+    @{
+      showcase::kClassForDisplayKey : @"SearchWidgetViewController",
+      showcase::kClassForInstantiationKey : @"SCSearchWidgetCoordinator",
+      showcase::kUseCaseKey : @"Search Widget",
+    },
+    @{
+      showcase::kClassForDisplayKey : @"ContentWidgetViewController",
+      showcase::kClassForInstantiationKey : @"SCContentWidgetCoordinator",
+      showcase::kUseCaseKey : @"Content Widget",
+    },
+    @{
+      showcase::kClassForDisplayKey : @"TextBadgeView",
+      showcase::kClassForInstantiationKey : @"SCTextBadgeViewController",
+      showcase::kUseCaseKey : @"Text badge",
+    },
+    @{
+      showcase::kClassForDisplayKey : @"BubbleViewController",
+      showcase::kClassForInstantiationKey : @"SCBubbleCoordinator",
+      showcase::kUseCaseKey : @"Bubble",
     },
   ];
 }

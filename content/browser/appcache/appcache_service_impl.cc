@@ -14,7 +14,8 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/task_scheduler/post_task.h"
+#include "base/threading/sequenced_task_runner_handle.h"
 #include "content/browser/appcache/appcache.h"
 #include "content/browser/appcache/appcache_backend_impl.h"
 #include "content/browser/appcache/appcache_entry.h"
@@ -68,8 +69,8 @@ class AppCacheServiceImpl::AsyncHelper
   void CallCallback(int rv) {
     if (!callback_.is_null()) {
       // Defer to guarantee async completion.
-      base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE, base::Bind(&DeferredCallback, callback_, rv));
+      base::SequencedTaskRunnerHandle::Get()->PostTask(
+          FROM_HERE, base::BindOnce(&DeferredCallback, callback_, rv));
     }
     callback_.Reset();
   }
@@ -399,7 +400,10 @@ AppCacheStorageReference::~AppCacheStorageReference() {}
 
 AppCacheServiceImpl::AppCacheServiceImpl(
     storage::QuotaManagerProxy* quota_manager_proxy)
-    : appcache_policy_(nullptr),
+    : db_task_runner_(base::CreateSequencedTaskRunnerWithTraits(
+          {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
+           base::TaskShutdownBehavior::BLOCK_SHUTDOWN})),
+      appcache_policy_(nullptr),
       quota_client_(nullptr),
       handler_factory_(nullptr),
       quota_manager_proxy_(quota_manager_proxy),
@@ -427,16 +431,11 @@ AppCacheServiceImpl::~AppCacheServiceImpl() {
   storage_.reset();
 }
 
-void AppCacheServiceImpl::Initialize(
-    const base::FilePath& cache_directory,
-    const scoped_refptr<base::SingleThreadTaskRunner>& db_thread,
-    const scoped_refptr<base::SingleThreadTaskRunner>& cache_thread) {
+void AppCacheServiceImpl::Initialize(const base::FilePath& cache_directory) {
   DCHECK(!storage_.get());
   cache_directory_ = cache_directory;
-  db_thread_ = db_thread;
-  cache_thread_ = cache_thread;
   AppCacheStorageImpl* storage = new AppCacheStorageImpl(this);
-  storage->Initialize(cache_directory, db_thread, cache_thread);
+  storage->Initialize(cache_directory, db_task_runner_);
   storage_.reset(storage);
 }
 
@@ -478,7 +477,7 @@ void AppCacheServiceImpl::Reinitialize() {
   for (auto& observer : observers_)
     observer.OnServiceReinitialized(old_storage_ref.get());
 
-  Initialize(cache_directory_, db_thread_, cache_thread_);
+  Initialize(cache_directory_);
 }
 
 void AppCacheServiceImpl::GetAllAppCacheInfo(

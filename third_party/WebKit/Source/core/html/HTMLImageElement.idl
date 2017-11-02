@@ -23,7 +23,7 @@
 [
     ActiveScriptWrappable,
     ConstructorCallWith=Document,
-    NamedConstructor=Image(optional unsigned long width, optional unsigned long height),
+    NamedConstructor=Image(optional unsigned long width, optional unsigned long height)
 ] interface HTMLImageElement : HTMLElement {
     [CEReactions, Reflect] attribute DOMString alt;
     [CEReactions, Reflect, URL] attribute DOMString src;
@@ -52,7 +52,9 @@
     [CEReactions, Reflect, TreatNullAs=EmptyString] attribute DOMString border;
 
     // CSSOM View Module
-    // https://dev.w3.org/csswg/cssom-view/#extensions-to-the-htmlimageelement-interface
+    // https://drafts.csswg.org/cssom-view/#extensions-to-the-htmlimageelement-interface
     [MeasureAs=HTMLImageElementX] readonly attribute long x;
     [MeasureAs=HTMLImageElementY] readonly attribute long y;
+
+    [RuntimeEnabled=JSImageDecode, CallWith=ScriptState, RaisesException] Promise decode();
 };

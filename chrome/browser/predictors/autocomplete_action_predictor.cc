@@ -7,8 +7,6 @@
 #include <math.h>
 #include <stddef.h>
 
-#include <vector>
-
 #include "base/bind.h"
 #include "base/guid.h"
 #include "base/i18n/case_conversion.h"
@@ -92,7 +90,8 @@ AutocompleteActionPredictor::AutocompleteActionPredictor(Profile* profile)
         PredictorDatabaseFactory::GetForProfile(profile_)->autocomplete_table();
 
     // Observe all main frame loads so we can wait for the first to complete
-    // before accessing DB and IO threads to build the local cache.
+    // before accessing DB sequence of the AutocompleteActionPredictorTable and
+    // IO thread to build the local cache.
     notification_registrar_.Add(this,
                                 content::NOTIFICATION_LOAD_COMPLETED_MAIN_FRAME,
                                 content::NotificationService::AllSources());
@@ -327,11 +326,12 @@ void AutocompleteActionPredictor::CreateLocalCachesFromDatabase() {
   // available.
   std::vector<AutocompleteActionPredictorTable::Row>* rows =
       new std::vector<AutocompleteActionPredictorTable::Row>();
-  content::BrowserThread::PostTaskAndReply(
-      content::BrowserThread::DB, FROM_HERE,
-      base::Bind(&AutocompleteActionPredictorTable::GetAllRows, table_, rows),
-      base::Bind(&AutocompleteActionPredictor::CreateCaches, AsWeakPtr(),
-                 base::Owned(rows)));
+  table_->GetTaskRunner()->PostTaskAndReply(
+      FROM_HERE,
+      base::BindOnce(&AutocompleteActionPredictorTable::GetAllRows, table_,
+                     rows),
+      base::BindOnce(&AutocompleteActionPredictor::CreateCaches, AsWeakPtr(),
+                     base::Owned(rows)));
 }
 
 void AutocompleteActionPredictor::DeleteAllRows() {
@@ -341,9 +341,10 @@ void AutocompleteActionPredictor::DeleteAllRows() {
   db_id_cache_.clear();
 
   if (table_.get()) {
-    content::BrowserThread::PostTask(
-        content::BrowserThread::DB, FROM_HERE,
-        base::Bind(&AutocompleteActionPredictorTable::DeleteAllRows, table_));
+    table_->GetTaskRunner()->PostTask(
+        FROM_HERE,
+        base::BindOnce(&AutocompleteActionPredictorTable::DeleteAllRows,
+                       table_));
   }
 
   UMA_HISTOGRAM_ENUMERATION("AutocompleteActionPredictor.DatabaseAction",
@@ -371,10 +372,9 @@ void AutocompleteActionPredictor::DeleteRowsWithURLs(
   }
 
   if (table_.get()) {
-    content::BrowserThread::PostTask(
-        content::BrowserThread::DB, FROM_HERE,
-        base::Bind(&AutocompleteActionPredictorTable::DeleteRows, table_,
-                   id_list));
+    table_->GetTaskRunner()->PostTask(
+        FROM_HERE, base::BindOnce(&AutocompleteActionPredictorTable::DeleteRows,
+                                  table_, id_list));
   }
 
   UMA_HISTOGRAM_ENUMERATION("AutocompleteActionPredictor.DatabaseAction",
@@ -414,9 +414,10 @@ void AutocompleteActionPredictor::AddAndUpdateRows(
   }
 
   if (table_.get()) {
-    content::BrowserThread::PostTask(content::BrowserThread::DB, FROM_HERE,
-        base::Bind(&AutocompleteActionPredictorTable::AddAndUpdateRows,
-                   table_, rows_to_add, rows_to_update));
+    table_->GetTaskRunner()->PostTask(
+        FROM_HERE,
+        base::BindOnce(&AutocompleteActionPredictorTable::AddAndUpdateRows,
+                       table_, rows_to_add, rows_to_update));
   }
 }
 
@@ -472,9 +473,9 @@ void AutocompleteActionPredictor::DeleteOldEntries(
   std::vector<AutocompleteActionPredictorTable::Row::Id> ids_to_delete;
   DeleteOldIdsFromCaches(url_db, &ids_to_delete);
 
-  content::BrowserThread::PostTask(content::BrowserThread::DB, FROM_HERE,
-      base::Bind(&AutocompleteActionPredictorTable::DeleteRows, table_,
-                 ids_to_delete));
+  table_->GetTaskRunner()->PostTask(
+      FROM_HERE, base::BindOnce(&AutocompleteActionPredictorTable::DeleteRows,
+                                table_, ids_to_delete));
 
   FinishInitialization();
   if (incognito_predictor_)

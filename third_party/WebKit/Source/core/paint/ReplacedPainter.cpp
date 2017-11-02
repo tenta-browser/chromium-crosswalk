@@ -6,7 +6,6 @@
 
 #include "core/layout/LayoutReplaced.h"
 #include "core/layout/api/SelectionState.h"
-#include "core/layout/compositing/CompositedLayerMapping.h"
 #include "core/layout/svg/LayoutSVGRoot.h"
 #include "core/paint/BoxPainter.h"
 #include "core/paint/LayoutObjectDrawingRecorder.h"
@@ -14,6 +13,7 @@
 #include "core/paint/PaintInfo.h"
 #include "core/paint/PaintLayer.h"
 #include "core/paint/RoundedInnerRectClipper.h"
+#include "core/paint/compositing/CompositedLayerMapping.h"
 #include "platform/wtf/Optional.h"
 
 namespace blink {
@@ -75,7 +75,7 @@ void ReplacedPainter::Paint(const PaintInfo& paint_info,
     return;
 
   if (paint_info.phase == kPaintPhaseSelection)
-    if (layout_replaced_.GetSelectionState() == SelectionNone)
+    if (layout_replaced_.GetSelectionState() == SelectionState::kNone)
       return;
 
   {
@@ -119,7 +119,7 @@ void ReplacedPainter::Paint(const PaintInfo& paint_info,
   // want it to run right up to the edges of surrounding content.
   bool draw_selection_tint =
       paint_info.phase == kPaintPhaseForeground &&
-      layout_replaced_.GetSelectionState() != SelectionNone &&
+      layout_replaced_.GetSelectionState() != SelectionState::kNone &&
       !paint_info.IsPrinting();
   if (draw_selection_tint &&
       !LayoutObjectDrawingRecorder::UseCachedDrawingIfPossible(
@@ -146,6 +146,9 @@ bool ReplacedPainter::ShouldPaint(
       paint_info.phase != kPaintPhaseMask &&
       paint_info.phase != kPaintPhaseClippingMask &&
       !ShouldPaintSelfBlockBackground(paint_info.phase))
+    return false;
+
+  if (layout_replaced_.IsTruncated())
     return false;
 
   // If we're invisible or haven't received a layout yet, just bail.

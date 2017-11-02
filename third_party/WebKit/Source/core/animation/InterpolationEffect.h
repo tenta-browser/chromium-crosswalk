@@ -27,7 +27,7 @@ class CORE_EXPORT InterpolationEffect {
 
   void Clear() {
     is_populated_ = false;
-    interpolations_.Clear();
+    interpolations_.clear();
   }
 
   void GetActiveInterpolations(double fraction,
@@ -54,8 +54,8 @@ class CORE_EXPORT InterpolationEffect {
 
  private:
   struct InterpolationRecord {
-    InterpolationRecord(PassRefPtr<Interpolation> interpolation,
-                        PassRefPtr<TimingFunction> easing,
+    InterpolationRecord(RefPtr<Interpolation> interpolation,
+                        RefPtr<TimingFunction> easing,
                         double start,
                         double end,
                         double apply_from,

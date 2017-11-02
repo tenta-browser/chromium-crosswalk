@@ -36,8 +36,8 @@
 #include "core/dom/AXObjectCache.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/dom/NodeComputedStyle.h"
+#include "core/dom/events/ScopedEventQueue.h"
 #include "core/events/KeyboardEvent.h"
-#include "core/events/ScopedEventQueue.h"
 #include "core/fileapi/FileList.h"
 #include "core/html/FormData.h"
 #include "core/html/HTMLFormElement.h"
@@ -82,8 +82,7 @@ using blink::WebLocalizedString;
 using namespace HTMLNames;
 
 using InputTypeFactoryFunction = InputType* (*)(HTMLInputElement&);
-using InputTypeFactoryMap =
-    HashMap<AtomicString, InputTypeFactoryFunction, CaseFoldingHash>;
+using InputTypeFactoryMap = HashMap<AtomicString, InputTypeFactoryFunction>;
 
 static std::unique_ptr<InputTypeFactoryMap> CreateInputTypeFactoryMap() {
   std::unique_ptr<InputTypeFactoryMap> map =
@@ -136,7 +135,8 @@ const AtomicString& InputType::NormalizeTypeName(
     const AtomicString& type_name) {
   if (type_name.IsEmpty())
     return InputTypeNames::text;
-  InputTypeFactoryMap::const_iterator it = FactoryMap()->Find(type_name);
+  InputTypeFactoryMap::const_iterator it =
+      FactoryMap()->find(type_name.LowerASCII());
   return it == FactoryMap()->end() ? InputTypeNames::text : it->key;
 }
 
@@ -872,7 +872,7 @@ void InputType::StepUpFromLayoutObject(int n) {
             IGNORE_EXCEPTION_FOR_TESTING);
 }
 
-void InputType::CountUsageIfVisible(UseCounter::Feature feature) const {
+void InputType::CountUsageIfVisible(WebFeature feature) const {
   if (const ComputedStyle* style = GetElement().GetComputedStyle()) {
     if (style->Visibility() != EVisibility::kHidden)
       UseCounter::Count(GetElement().GetDocument(), feature);
@@ -918,7 +918,7 @@ void InputType::AddWarningToConsole(const char* message_format,
   GetElement().GetDocument().AddConsoleMessage(ConsoleMessage::Create(
       kRenderingMessageSource, kWarningMessageLevel,
       String::Format(message_format,
-                     JSONValue::QuoteString(value).Utf8().Data())));
+                     JSONValue::QuoteString(value).Utf8().data())));
 }
 
 }  // namespace blink

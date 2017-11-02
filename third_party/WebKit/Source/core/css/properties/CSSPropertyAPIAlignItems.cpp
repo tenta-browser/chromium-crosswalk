@@ -10,11 +10,12 @@
 
 namespace blink {
 
-const CSSValue* CSSPropertyAPIAlignItems::parseSingleValue(
+const CSSValue* CSSPropertyAPIAlignItems::ParseSingleValue(
+    CSSPropertyID,
     CSSParserTokenRange& range,
     const CSSParserContext& context,
-    CSSPropertyID) {
-  DCHECK(RuntimeEnabledFeatures::cssGridLayoutEnabled());
+    const CSSParserLocalContext&) const {
+  DCHECK(RuntimeEnabledFeatures::CSSGridLayoutEnabled());
   // align-items property does not allow the 'auto' value.
   if (CSSPropertyParserHelpers::IdentMatches<CSSValueAuto>(range.Peek().Id()))
     return nullptr;

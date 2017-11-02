@@ -17,6 +17,7 @@
 #include <errno.h>
 #include <time.h>
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <vector>
@@ -29,11 +30,14 @@
 #include "snapshot/module_snapshot.h"
 #include "util/file/file_reader.h"
 #include "util/misc/metrics.h"
-#include "util/misc/uuid.h"
 #include "util/net/http_body.h"
 #include "util/net/http_multipart_builder.h"
 #include "util/net/http_transport.h"
 #include "util/stdlib/map_insert.h"
+
+#if defined(OS_MACOSX)
+#include "handler/mac/file_limit_annotation.h"
+#endif  // OS_MACOSX
 
 namespace crashpad {
 
@@ -139,15 +143,19 @@ class CallRecordUploadAttempt {
 
 CrashReportUploadThread::CrashReportUploadThread(CrashReportDatabase* database,
                                                  const std::string& url,
+                                                 bool watch_pending_reports,
                                                  bool rate_limit,
                                                  bool upload_gzip)
     : url_(url),
-      // Check for pending reports every 15 minutes, even in the absence of a
-      // signal from the handler thread. This allows for failed uploads to be
-      // retried periodically, and for pending reports written by other
-      // processes to be recognized.
-      thread_(15 * 60, this),
+      // When watching for pending reports, check every 15 minutes, even in the
+      // absence of a signal from the handler thread. This allows for failed
+      // uploads to be retried periodically, and for pending reports written by
+      // other processes to be recognized.
+      thread_(watch_pending_reports ? 15 * 60.0 : WorkerThread::kIndefiniteWait,
+              this),
+      known_pending_report_uuids_(),
       database_(database),
+      watch_pending_reports_(watch_pending_reports),
       rate_limit_(rate_limit),
       upload_gzip_(upload_gzip) {
 }
@@ -156,18 +164,43 @@ CrashReportUploadThread::~CrashReportUploadThread() {
 }
 
 void CrashReportUploadThread::Start() {
-  thread_.Start(0);
+  thread_.Start(watch_pending_reports_ ? 0.0 : WorkerThread::kIndefiniteWait);
 }
 
 void CrashReportUploadThread::Stop() {
   thread_.Stop();
 }
 
-void CrashReportUploadThread::ReportPending() {
+void CrashReportUploadThread::ReportPending(const UUID& report_uuid) {
+  known_pending_report_uuids_.PushBack(report_uuid);
   thread_.DoWorkNow();
 }
 
 void CrashReportUploadThread::ProcessPendingReports() {
+  std::vector<UUID> known_report_uuids = known_pending_report_uuids_.Drain();
+  for (const UUID& report_uuid : known_report_uuids) {
+    CrashReportDatabase::Report report;
+    if (database_->LookUpCrashReport(report_uuid, &report) !=
+        CrashReportDatabase::kNoError) {
+      continue;
+    }
+
+    ProcessPendingReport(report);
+
+    // Respect Stop() being called after at least one attempt to process a
+    // report.
+    if (!thread_.is_running()) {
+      return;
+    }
+  }
+
+  // Known pending reports are always processed (above). The rest of this
+  // function is concerned with scanning for pending reports not already known
+  // to this thread.
+  if (!watch_pending_reports_) {
+    return;
+  }
+
   std::vector<CrashReportDatabase::Report> reports;
   if (database_->GetPendingReports(&reports) != CrashReportDatabase::kNoError) {
     // The database is sick. It might be prudent to stop trying to poke it from
@@ -178,6 +211,15 @@ void CrashReportUploadThread::ProcessPendingReports() {
   }
 
   for (const CrashReportDatabase::Report& report : reports) {
+    if (std::find(known_report_uuids.begin(),
+                  known_report_uuids.end(),
+                  report.uuid) != known_report_uuids.end()) {
+      // An attempt to process the report already occurred above. The report is
+      // still pending, so upload must have failed. Don’t retry it immediately,
+      // it can wait until at least the next pass through this method.
+      continue;
+    }
+
     ProcessPendingReport(report);
 
     // Respect Stop() being called after at least one attempt to process a
@@ -190,6 +232,10 @@ void CrashReportUploadThread::ProcessPendingReports() {
 
 void CrashReportUploadThread::ProcessPendingReport(
     const CrashReportDatabase::Report& report) {
+#if defined(OS_MACOSX)
+  RecordFileLimitAnnotation();
+#endif  // OS_MACOSX
+
   Settings* const settings = database_->GetSettings();
 
   bool uploads_enabled;
@@ -222,7 +268,7 @@ void CrashReportUploadThread::ProcessPendingReport(
         // If the most recent upload attempt occurred within the past hour,
         // don’t attempt to upload the new report. If it happened longer ago,
         // attempt to upload the report.
-        const int kUploadAttemptIntervalSeconds = 60 * 60;  // 1 hour
+        constexpr int kUploadAttemptIntervalSeconds = 60 * 60;  // 1 hour
         if (now - last_upload_attempt_time < kUploadAttemptIntervalSeconds) {
           database_->SkipReportUpload(
               report.uuid, Metrics::CrashSkippedReason::kUploadThrottled);
@@ -234,7 +280,7 @@ void CrashReportUploadThread::ProcessPendingReport(
         // upload attempt time is bogus, and attempt to upload the report. If
         // the most recent upload time is in the future but within one day,
         // accept it and don’t attempt to upload the report.
-        const int kBackwardsClockTolerance = 60 * 60 * 24;  // 1 day
+        constexpr int kBackwardsClockTolerance = 60 * 60 * 24;  // 1 day
         if (last_upload_attempt_time - now < kBackwardsClockTolerance) {
           database_->SkipReportUpload(
               report.uuid, Metrics::CrashSkippedReason::kUnexpectedTime);
@@ -252,9 +298,12 @@ void CrashReportUploadThread::ProcessPendingReport(
       break;
 
     case CrashReportDatabase::kBusyError:
+    case CrashReportDatabase::kReportNotFound:
+      // Someone else may have gotten to it first. If they’re working on it now,
+      // this will be kBusyError. If they’ve already finished with it, it’ll be
+      // kReportNotFound.
       return;
 
-    case CrashReportDatabase::kReportNotFound:
     case CrashReportDatabase::kFileSystemError:
     case CrashReportDatabase::kDatabaseError:
       // In these cases, SkipReportUpload() might not work either, but it’s best
@@ -312,7 +361,7 @@ CrashReportUploadThread::UploadResult CrashReportUploadThread::UploadReport(
   HTTPMultipartBuilder http_multipart_builder;
   http_multipart_builder.SetGzipEnabled(upload_gzip_);
 
-  const char kMinidumpKey[] = "upload_file_minidump";
+  static constexpr char kMinidumpKey[] = "upload_file_minidump";
 
   for (const auto& kv : parameters) {
     if (kv.first == kMinidumpKey) {

@@ -20,9 +20,9 @@ ClipPaintPropertyNode* ClipPaintPropertyNode::Root() {
 String ClipPaintPropertyNode::ToString() const {
   return String::Format(
       "parent=%p localTransformSpace=%p rect=%s directCompositingReasons=%s",
-      parent_.Get(), local_transform_space_.Get(),
-      clip_rect_.ToString().Ascii().Data(),
-      CompositingReasonsAsString(direct_compositing_reasons_).Ascii().Data());
+      Parent(), local_transform_space_.Get(),
+      clip_rect_.ToString().Ascii().data(),
+      CompositingReasonsAsString(direct_compositing_reasons_).Ascii().data());
 }
 
 #if DCHECK_IS_ON()

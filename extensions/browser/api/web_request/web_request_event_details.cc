@@ -4,13 +4,18 @@
 
 #include "extensions/browser/api/web_request/web_request_event_details.h"
 
+#include <utility>
+#include <vector>
+
 #include "base/callback.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/resource_request_info.h"
 #include "content/public/browser/websocket_handshake_request_info.h"
 #include "content/public/common/child_process_host.h"
+#include "extensions/browser/api/extensions_api_client.h"
 #include "extensions/browser/api/web_request/upload_data_presenter.h"
 #include "extensions/browser/api/web_request/web_request_api_constants.h"
 #include "extensions/browser/api/web_request/web_request_api_helpers.h"
@@ -126,10 +131,10 @@ void WebRequestEventDetails::SetAuthInfo(
     dict_.SetString(keys::kSchemeKey, auth_info.scheme);
   if (!auth_info.realm.empty())
     dict_.SetString(keys::kRealmKey, auth_info.realm);
-  base::DictionaryValue* challenger = new base::DictionaryValue();
+  auto challenger = std::make_unique<base::DictionaryValue>();
   challenger->SetString(keys::kHostKey, auth_info.challenger.host());
   challenger->SetInteger(keys::kPortKey, auth_info.challenger.port());
-  dict_.Set(keys::kChallengerKey, challenger);
+  dict_.Set(keys::kChallengerKey, std::move(challenger));
 }
 
 void WebRequestEventDetails::SetResponseHeaders(
@@ -151,8 +156,13 @@ void WebRequestEventDetails::SetResponseHeaders(
       size_t iter = 0;
       std::string name;
       std::string value;
-      while (response_headers->EnumerateHeaderLines(&iter, &name, &value))
+      while (response_headers->EnumerateHeaderLines(&iter, &name, &value)) {
+        if (ExtensionsAPIClient::Get()->ShouldHideResponseHeader(request->url(),
+                                                                 name)) {
+          continue;
+        }
         headers->Append(helpers::CreateHeaderDictionary(name, value));
+      }
     }
     response_headers_.reset(headers);
   }
@@ -193,12 +203,16 @@ void WebRequestEventDetails::DetermineFrameDataOnIO(
 std::unique_ptr<base::DictionaryValue> WebRequestEventDetails::GetFilteredDict(
     int extra_info_spec) const {
   std::unique_ptr<base::DictionaryValue> result = dict_.CreateDeepCopy();
-  if ((extra_info_spec & ExtraInfoSpec::REQUEST_BODY) && request_body_)
-    result->Set(keys::kRequestBodyKey, request_body_->CreateDeepCopy());
-  if ((extra_info_spec & ExtraInfoSpec::REQUEST_HEADERS) && request_headers_)
-    result->Set(keys::kRequestHeadersKey, request_headers_->CreateDeepCopy());
-  if ((extra_info_spec & ExtraInfoSpec::RESPONSE_HEADERS) && response_headers_)
-    result->Set(keys::kResponseHeadersKey, response_headers_->CreateDeepCopy());
+  if ((extra_info_spec & ExtraInfoSpec::REQUEST_BODY) && request_body_) {
+    result->SetKey(keys::kRequestBodyKey, request_body_->Clone());
+  }
+  if ((extra_info_spec & ExtraInfoSpec::REQUEST_HEADERS) && request_headers_) {
+    result->SetKey(keys::kRequestHeadersKey, request_headers_->Clone());
+  }
+  if ((extra_info_spec & ExtraInfoSpec::RESPONSE_HEADERS) &&
+      response_headers_) {
+    result->SetKey(keys::kResponseHeadersKey, response_headers_->Clone());
+  }
   return result;
 }
 

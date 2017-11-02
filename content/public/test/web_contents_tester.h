@@ -18,6 +18,10 @@ namespace gfx {
 class Size;
 }
 
+namespace net {
+class HttpResponseHeaders;
+}
+
 namespace content {
 
 class BrowserContext;
@@ -74,20 +78,6 @@ class WebContentsTester {
   // speculative RenderFrameHost for the main frame if one exists.
   virtual RenderFrameHost* GetPendingMainFrame() const = 0;
 
-  // Creates a pending navigation to |url|. Also simulates the
-  // DidStartProvisionalLoad received from the renderer.  To commit the
-  // navigation, callers should use
-  // RenderFrameHostTester::SimulateNavigationCommit. Callers can then use
-  // RenderFrameHostTester::SimulateNavigationStop to simulate the navigation
-  // stop.
-  // Note that this function is meant for callers that want to control the
-  // timing of navigation events precisely. Other callers should use
-  // NavigateAndCommit.
-  // PlzNavigate: this does not simulate the DidStartProvisionalLoad from the
-  // renderer, as it only should be received after the navigation is ready to
-  // commit.
-  virtual void StartNavigation(const GURL& url) = 0;
-
   // Creates a pending navigation to the given URL with the default parameters
   // and then commits the load with a page ID one larger than any seen. This
   // emulates what happens on a new navigation.
@@ -127,6 +117,11 @@ class WebContentsTester {
       NavigationHandle* navigation_handle,
       std::unique_ptr<NavigationData> navigation_data) = 0;
 
+  // Sets HttpResponseData on |navigation_handle|.
+  virtual void SetHttpResponseHeaders(
+      NavigationHandle* navigation_handle,
+      scoped_refptr<net::HttpResponseHeaders> response_headers) = 0;
+
   // Returns headers that were passed in the previous SaveFrameWithHeaders(...)
   // call.
   virtual const std::string& GetSaveFrameHeaders() = 0;
@@ -142,6 +137,12 @@ class WebContentsTester {
       int http_status_code,
       const std::vector<SkBitmap>& bitmaps,
       const std::vector<gfx::Size>& original_bitmap_sizes) = 0;
+
+  // Sets the return value of GetLastCommittedUrl() of TestWebContents.
+  virtual void SetLastCommittedURL(const GURL& url) = 0;
+
+  // Override WasRecentlyAudible for testing.
+  virtual void SetWasRecentlyAudible(bool audible) = 0;
 };
 
 }  // namespace content

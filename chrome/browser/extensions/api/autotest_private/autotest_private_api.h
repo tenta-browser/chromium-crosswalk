@@ -159,6 +159,17 @@ class AutotestPrivateSetPrimaryButtonRightFunction
   ResponseAction Run() override;
 };
 
+class AutotestPrivateSetMouseReverseScrollFunction
+    : public UIThreadExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("autotestPrivate.setMouseReverseScroll",
+                             AUTOTESTPRIVATE_SETMOUSEREVERSESCROLL)
+
+ private:
+  ~AutotestPrivateSetMouseReverseScrollFunction() override {}
+  ResponseAction Run() override;
+};
+
 class AutotestPrivateGetVisibleNotificationsFunction
     : public UIThreadExtensionFunction {
  public:
@@ -169,6 +180,28 @@ class AutotestPrivateGetVisibleNotificationsFunction
   static std::string ConvertToString(message_center::NotificationType type);
 
   ~AutotestPrivateGetVisibleNotificationsFunction() override {}
+  ResponseAction Run() override;
+};
+
+class AutotestPrivateGetPlayStoreStateFunction
+    : public UIThreadExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("autotestPrivate.getPlayStoreState",
+                             AUTOTESTPRIVATE_GETPLAYSTORESTATE)
+
+ private:
+  ~AutotestPrivateGetPlayStoreStateFunction() override {}
+  ResponseAction Run() override;
+};
+
+class AutotestPrivateSetPlayStoreEnabledFunction
+    : public UIThreadExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("autotestPrivate.setPlayStoreEnabled",
+                             AUTOTESTPRIVATE_SETPLAYSTOREENABLED)
+
+ private:
+  ~AutotestPrivateSetPlayStoreEnabledFunction() override {}
   ResponseAction Run() override;
 };
 

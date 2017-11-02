@@ -18,7 +18,6 @@
 #include "base/guid.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
 #include "base/strings/string16.h"
@@ -38,15 +37,18 @@
 #include "content/public/browser/download_interrupt_reasons.h"
 #include "content/public/browser/download_item.h"
 #include "content/public/browser/download_manager_delegate.h"
-#include "content/public/browser/zoom_level_delegate.h"
 #include "content/public/test/mock_download_item.h"
 #include "content/public/test/test_browser_context.h"
-#include "content/public/test/test_browser_thread.h"
+#include "content/public/test/test_browser_thread_bundle.h"
 #include "net/log/net_log_with_source.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gmock_mutant.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/origin.h"
+
+#if !defined(OS_ANDROID)
+#include "content/public/browser/zoom_level_delegate.h"
+#endif  // !defined(OS_ANDROID)
 
 using ::testing::AllOf;
 using ::testing::DoAll;
@@ -69,6 +71,12 @@ namespace content {
 class ByteStreamReader;
 
 namespace {
+
+// Matches a DownloadCreateInfo* that points to the same object as |info| and
+// has a |default_download_directory| that matches |download_directory|.
+MATCHER_P2(DownloadCreateInfoWithDefaultPath, info, download_directory, "") {
+  return arg == info && arg->default_download_directory == download_directory;
+}
 
 class MockDownloadManagerDelegate : public DownloadManagerDelegate {
  public:
@@ -245,8 +253,7 @@ DownloadItemImpl* MockDownloadItemFactory::CreateActiveItem(
   EXPECT_CALL(*result, GetId())
       .WillRepeatedly(Return(download_id));
   EXPECT_CALL(*result, GetGuid())
-      .WillRepeatedly(
-          ReturnRefOfCopy(base::ToUpperASCII(base::GenerateGUID())));
+      .WillRepeatedly(ReturnRefOfCopy(base::GenerateGUID()));
   items_[download_id] = result;
 
   // Active items are created and then immediately are called to start
@@ -304,8 +311,10 @@ class MockBrowserContext : public BrowserContext {
   ~MockBrowserContext() {}
 
   MOCK_CONST_METHOD0(GetPath, base::FilePath());
+#if !defined(OS_ANDROID)
   MOCK_METHOD1(CreateZoomLevelDelegateMock,
                ZoomLevelDelegate*(const base::FilePath&));
+#endif  // !defined(OS_ANDROID)
   MOCK_CONST_METHOD0(IsOffTheRecord, bool());
   MOCK_METHOD0(GetResourceContext, ResourceContext*());
   MOCK_METHOD0(GetDownloadManagerDelegate, DownloadManagerDelegate*());
@@ -315,6 +324,7 @@ class MockBrowserContext : public BrowserContext {
   MOCK_METHOD0(GetSSLHostStateDelegate, SSLHostStateDelegate*());
   MOCK_METHOD0(GetPermissionManager, PermissionManager*());
   MOCK_METHOD0(GetBackgroundSyncController, BackgroundSyncController*());
+  MOCK_METHOD0(GetBrowsingDataRemoverDelegate, BrowsingDataRemoverDelegate*());
   MOCK_METHOD0(CreateMediaRequestContext,
                net::URLRequestContextGetter*());
   MOCK_METHOD2(CreateMediaRequestContextForStoragePartition,
@@ -338,12 +348,13 @@ class MockBrowserContext : public BrowserContext {
       URLRequestInterceptorScopedVector request_interceptors) override {
     return nullptr;
   }
-
+#if !defined(OS_ANDROID)
   std::unique_ptr<ZoomLevelDelegate> CreateZoomLevelDelegate(
       const base::FilePath& path) override {
     return std::unique_ptr<ZoomLevelDelegate>(
         CreateZoomLevelDelegateMock(path));
   }
+#endif  // !defined(OS_ANDROID)
 };
 
 class MockDownloadManagerObserver : public DownloadManager::Observer {
@@ -376,8 +387,6 @@ class DownloadManagerTest : public testing::Test {
         target_disposition_(DownloadItem::TARGET_DISPOSITION_OVERWRITE),
         danger_type_(DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS),
         interrupt_reason_(DOWNLOAD_INTERRUPT_REASON_NONE),
-        ui_thread_(BrowserThread::UI, &message_loop_),
-        file_thread_(BrowserThread::FILE, &message_loop_),
         next_download_id_(0) {}
 
   // We tear down everything in TearDown().
@@ -514,9 +523,7 @@ class DownloadManagerTest : public testing::Test {
   std::vector<GURL> download_urls_;
 
  private:
-  base::MessageLoopForUI message_loop_;
-  TestBrowserThread ui_thread_;
-  TestBrowserThread file_thread_;
+  TestBrowserThreadBundle thread_bundle_;
   base::WeakPtr<MockDownloadItemFactory> mock_download_item_factory_;
   std::unique_ptr<MockDownloadManagerDelegate> mock_download_manager_delegate_;
   std::unique_ptr<MockBrowserContext> mock_browser_context_;
@@ -540,8 +547,10 @@ TEST_F(DownloadManagerTest, StartDownload) {
   EXPECT_CALL(GetMockDownloadManagerDelegate(), GetNextId(_))
       .WillOnce(RunCallback<0>(local_id));
 
+#if !defined(USE_X11)
   // Doing nothing will set the default download directory to null.
   EXPECT_CALL(GetMockDownloadManagerDelegate(), GetSaveDir(_, _, _, _));
+#endif
   EXPECT_CALL(GetMockDownloadManagerDelegate(),
               ApplicationClientIdForFileScanning())
       .WillRepeatedly(Return("client-id"));

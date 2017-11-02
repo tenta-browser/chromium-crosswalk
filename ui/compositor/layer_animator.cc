@@ -15,7 +15,7 @@
 #include "cc/animation/animation_player.h"
 #include "cc/animation/animation_timeline.h"
 #include "cc/animation/element_animations.h"
-#include "cc/output/begin_frame_args.h"
+#include "components/viz/common/frame_sinks/begin_frame_args.h"
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/layer_animation_delegate.h"
@@ -115,6 +115,7 @@ ANIMATED_PROPERTY(bool, VISIBILITY, Visibility, bool, visibility);
 ANIMATED_PROPERTY(float, BRIGHTNESS, Brightness, float, brightness);
 ANIMATED_PROPERTY(float, GRAYSCALE, Grayscale, float, grayscale);
 ANIMATED_PROPERTY(SkColor, COLOR, Color, SkColor, color);
+ANIMATED_PROPERTY(float, TEMPERATURE, Temperature, float, temperature);
 
 base::TimeDelta LayerAnimator::GetTransitionDuration() const {
   return transition_duration_;
@@ -165,7 +166,7 @@ void LayerAnimator::DetachLayerAndTimeline(Compositor* compositor) {
 
 void LayerAnimator::AttachLayerToAnimationPlayer(int layer_id) {
   // For ui, layer and element ids are equivalent.
-  cc::ElementId element_id(layer_id, 0);
+  cc::ElementId element_id(layer_id);
   if (!animation_player_->element_id())
     animation_player_->AttachElement(element_id);
   else
@@ -214,11 +215,6 @@ void LayerAnimator::StartAnimation(LayerAnimationSequence* animation) {
       case REPLACE_QUEUED_ANIMATIONS:
         ReplaceQueuedAnimations(animation);
         break;
-      case BLEND_WITH_CURRENT_ANIMATION: {
-        // TODO(vollick) Add support for blended sequences and use them here.
-        NOTIMPLEMENTED();
-        break;
-      }
     }
   }
   FinishAnyAnimationWithZeroDuration();
@@ -923,11 +919,12 @@ LayerAnimatorCollection* LayerAnimator::GetLayerAnimatorCollection() {
   return delegate_ ? delegate_->GetLayerAnimatorCollection() : NULL;
 }
 
-void LayerAnimator::NotifyAnimationStarted(
-    base::TimeTicks monotonic_time,
-    cc::TargetProperty::Type target_property,
-    int group) {
-  OnThreadedAnimationStarted(monotonic_time, target_property, group);
+void LayerAnimator::NotifyAnimationStarted(base::TimeTicks monotonic_time,
+                                           int target_property,
+                                           int group) {
+  OnThreadedAnimationStarted(
+      monotonic_time, static_cast<cc::TargetProperty::Type>(target_property),
+      group);
 }
 
 LayerAnimator::RunningAnimation::RunningAnimation(

@@ -32,11 +32,11 @@
 namespace cc {
 namespace {
 
-static constexpr FrameSinkId kArbitraryFrameSinkId(1, 1);
+static constexpr viz::FrameSinkId kArbitraryFrameSinkId(1, 1);
 
 TEST(DrawQuadTest, CopySharedQuadState) {
   gfx::Transform quad_transform = gfx::Transform(1.0, 0.0, 0.5, 1.0, 0.5, 0.0);
-  gfx::Size layer_bounds(26, 28);
+  gfx::Rect layer_rect(26, 28);
   gfx::Rect visible_layer_rect(10, 12, 14, 16);
   gfx::Rect clip_rect(19, 21, 23, 25);
   bool is_clipped = true;
@@ -44,11 +44,11 @@ TEST(DrawQuadTest, CopySharedQuadState) {
   SkBlendMode blend_mode = SkBlendMode::kMultiply;
   int sorting_context_id = 65536;
 
-  std::unique_ptr<SharedQuadState> state(new SharedQuadState);
-  state->SetAll(quad_transform, layer_bounds, visible_layer_rect, clip_rect,
+  auto state = std::make_unique<viz::SharedQuadState>();
+  state->SetAll(quad_transform, layer_rect, visible_layer_rect, clip_rect,
                 is_clipped, opacity, blend_mode, sorting_context_id);
 
-  std::unique_ptr<SharedQuadState> copy(new SharedQuadState(*state));
+  auto copy = std::make_unique<viz::SharedQuadState>(*state);
   EXPECT_EQ(quad_transform, copy->quad_to_target_transform);
   EXPECT_EQ(visible_layer_rect, copy->visible_quad_layer_rect);
   EXPECT_EQ(opacity, copy->opacity);
@@ -57,9 +57,9 @@ TEST(DrawQuadTest, CopySharedQuadState) {
   EXPECT_EQ(blend_mode, copy->blend_mode);
 }
 
-SharedQuadState* CreateSharedQuadState(RenderPass* render_pass) {
+viz::SharedQuadState* CreateSharedQuadState(RenderPass* render_pass) {
   gfx::Transform quad_transform = gfx::Transform(1.0, 0.0, 0.5, 1.0, 0.5, 0.0);
-  gfx::Size layer_bounds(26, 28);
+  gfx::Rect layer_rect(26, 28);
   gfx::Rect visible_layer_rect(10, 12, 14, 16);
   gfx::Rect clip_rect(19, 21, 23, 25);
   bool is_clipped = false;
@@ -67,341 +67,91 @@ SharedQuadState* CreateSharedQuadState(RenderPass* render_pass) {
   int sorting_context_id = 65536;
   SkBlendMode blend_mode = SkBlendMode::kSrcOver;
 
-  SharedQuadState* state = render_pass->CreateAndAppendSharedQuadState();
-  state->SetAll(quad_transform, layer_bounds, visible_layer_rect, clip_rect,
+  viz::SharedQuadState* state = render_pass->CreateAndAppendSharedQuadState();
+  state->SetAll(quad_transform, layer_rect, visible_layer_rect, clip_rect,
                 is_clipped, opacity, blend_mode, sorting_context_id);
   return state;
 }
 
-void CompareDrawQuad(DrawQuad* quad,
-                     DrawQuad* copy,
-                     SharedQuadState* copy_shared_state) {
+void CompareSharedQuadState(const viz::SharedQuadState* source_sqs,
+                            const viz::SharedQuadState* copy_sqs) {
+  EXPECT_EQ(source_sqs->quad_to_target_transform,
+            copy_sqs->quad_to_target_transform);
+  EXPECT_EQ(source_sqs->quad_layer_rect, copy_sqs->quad_layer_rect);
+  EXPECT_EQ(source_sqs->visible_quad_layer_rect,
+            copy_sqs->visible_quad_layer_rect);
+  EXPECT_EQ(source_sqs->clip_rect, copy_sqs->clip_rect);
+  EXPECT_EQ(source_sqs->is_clipped, copy_sqs->is_clipped);
+  EXPECT_EQ(source_sqs->opacity, copy_sqs->opacity);
+  EXPECT_EQ(source_sqs->blend_mode, copy_sqs->blend_mode);
+  EXPECT_EQ(source_sqs->sorting_context_id, copy_sqs->sorting_context_id);
+}
+
+void CompareDrawQuad(DrawQuad* quad, DrawQuad* copy) {
   EXPECT_EQ(quad->material, copy->material);
   EXPECT_EQ(quad->rect, copy->rect);
   EXPECT_EQ(quad->visible_rect, copy->visible_rect);
-  EXPECT_EQ(quad->opaque_rect, copy->opaque_rect);
   EXPECT_EQ(quad->needs_blending, copy->needs_blending);
-  EXPECT_EQ(copy_shared_state, copy->shared_quad_state);
+  CompareSharedQuadState(quad->shared_quad_state, copy->shared_quad_state);
 }
 
-#define CREATE_SHARED_STATE()                                              \
-  std::unique_ptr<RenderPass> render_pass = RenderPass::Create();          \
-  SharedQuadState* shared_state(CreateSharedQuadState(render_pass.get())); \
-  SharedQuadState* copy_shared_state =                                     \
-      render_pass->CreateAndAppendSharedQuadState();                       \
+#define CREATE_SHARED_STATE()                                     \
+  std::unique_ptr<RenderPass> render_pass = RenderPass::Create(); \
+  viz::SharedQuadState* shared_state(                             \
+      CreateSharedQuadState(render_pass.get()));                  \
+  viz::SharedQuadState* copy_shared_state =                       \
+      render_pass->CreateAndAppendSharedQuadState();              \
   *copy_shared_state = *shared_state;
 
 #define QUAD_DATA                              \
   gfx::Rect quad_rect(30, 40, 50, 60);         \
   gfx::Rect quad_visible_rect(40, 50, 30, 20); \
-  gfx::Rect quad_opaque_rect(60, 55, 10, 10);  \
-  ALLOW_UNUSED_LOCAL(quad_opaque_rect);        \
   bool needs_blending = true;                  \
   ALLOW_UNUSED_LOCAL(needs_blending);
 
-#define SETUP_AND_COPY_QUAD_NEW(Type, quad)                                \
-  DrawQuad* copy_new =                                                     \
-      render_pass->CopyFromAndAppendDrawQuad(quad_new, copy_shared_state); \
-  CompareDrawQuad(quad_new, copy_new, copy_shared_state);                  \
-  const Type* copy_quad = Type::MaterialCast(copy_new);                    \
-  ALLOW_UNUSED_LOCAL(copy_quad);
-
-#define SETUP_AND_COPY_QUAD_ALL(Type, quad)                                \
-  DrawQuad* copy_all =                                                     \
-      render_pass->CopyFromAndAppendDrawQuad(quad_all, copy_shared_state); \
-  CompareDrawQuad(quad_all, copy_all, copy_shared_state);                  \
-  copy_quad = Type::MaterialCast(copy_all);
-
-#define SETUP_AND_COPY_QUAD_NEW_RP(Type, quad, a)                        \
-  DrawQuad* copy_new = render_pass->CopyFromAndAppendRenderPassDrawQuad( \
-      quad_new, copy_shared_state, a);                                   \
-  CompareDrawQuad(quad_new, copy_new, copy_shared_state);                \
+#define SETUP_AND_COPY_QUAD_NEW(Type, quad)                              \
+  DrawQuad* copy_new = render_pass->CopyFromAndAppendDrawQuad(quad_new); \
+  CompareDrawQuad(quad_new, copy_new);                                   \
   const Type* copy_quad = Type::MaterialCast(copy_new);                  \
   ALLOW_UNUSED_LOCAL(copy_quad);
 
-#define SETUP_AND_COPY_QUAD_ALL_RP(Type, quad, a)                        \
-  DrawQuad* copy_all = render_pass->CopyFromAndAppendRenderPassDrawQuad( \
-      quad_all, copy_shared_state, a);                                   \
-  CompareDrawQuad(quad_all, copy_all, copy_shared_state);                \
+#define SETUP_AND_COPY_QUAD_ALL(Type, quad)                              \
+  DrawQuad* copy_all = render_pass->CopyFromAndAppendDrawQuad(quad_all); \
+  CompareDrawQuad(quad_all, copy_all);                                   \
   copy_quad = Type::MaterialCast(copy_all);
 
-#define CREATE_QUAD_1_NEW(Type, a)                               \
-  Type* quad_new = render_pass->CreateAndAppendDrawQuad<Type>(); \
-  { QUAD_DATA quad_new->SetNew(shared_state, quad_rect, a); }    \
-  SETUP_AND_COPY_QUAD_NEW(Type, quad_new);
+#define SETUP_AND_COPY_QUAD_NEW_RP(Type, quad, a)                    \
+  DrawQuad* copy_new =                                               \
+      render_pass->CopyFromAndAppendRenderPassDrawQuad(quad_new, a); \
+  CompareDrawQuad(quad_new, copy_new);                               \
+  const Type* copy_quad = Type::MaterialCast(copy_new);              \
+  ALLOW_UNUSED_LOCAL(copy_quad);
 
-#define CREATE_QUAD_1_ALL(Type, a)                               \
-  Type* quad_all = render_pass->CreateAndAppendDrawQuad<Type>(); \
-  {                                                              \
-    QUAD_DATA quad_all->SetAll(shared_state,                     \
-                               quad_rect,                        \
-                               quad_opaque_rect,                 \
-                               quad_visible_rect,                \
-                               needs_blending,                   \
-                               a);                               \
-  }                                                              \
+#define SETUP_AND_COPY_QUAD_ALL_RP(Type, quad, a)                    \
+  DrawQuad* copy_all =                                               \
+      render_pass->CopyFromAndAppendRenderPassDrawQuad(quad_all, a); \
+  CompareDrawQuad(quad_all, copy_all);                               \
+  copy_quad = Type::MaterialCast(copy_all);
+
+#define CREATE_QUAD_ALL(Type, ...)                                         \
+  Type* quad_all = render_pass->CreateAndAppendDrawQuad<Type>();           \
+  {                                                                        \
+    QUAD_DATA quad_all->SetAll(shared_state, quad_rect, quad_visible_rect, \
+                               needs_blending, __VA_ARGS__);               \
+  }                                                                        \
   SETUP_AND_COPY_QUAD_ALL(Type, quad_all);
 
-#define CREATE_QUAD_2_NEW(Type, a, b)                            \
-  Type* quad_new = render_pass->CreateAndAppendDrawQuad<Type>(); \
-  { QUAD_DATA quad_new->SetNew(shared_state, quad_rect, a, b); } \
+#define CREATE_QUAD_NEW(Type, ...)                                      \
+  Type* quad_new = render_pass->CreateAndAppendDrawQuad<Type>();        \
+  { QUAD_DATA quad_new->SetNew(shared_state, quad_rect, __VA_ARGS__); } \
   SETUP_AND_COPY_QUAD_NEW(Type, quad_new);
 
-#define CREATE_QUAD_2_ALL(Type, a, b)                            \
-  Type* quad_all = render_pass->CreateAndAppendDrawQuad<Type>(); \
-  {                                                              \
-    QUAD_DATA quad_all->SetAll(shared_state,                     \
-                               quad_rect,                        \
-                               quad_opaque_rect,                 \
-                               quad_visible_rect,                \
-                               needs_blending,                   \
-                               a,                                \
-                               b);                               \
-  }                                                              \
-  SETUP_AND_COPY_QUAD_ALL(Type, quad_all);
-
-#define CREATE_QUAD_3_NEW(Type, a, b, c)                            \
-  Type* quad_new = render_pass->CreateAndAppendDrawQuad<Type>();    \
-  { QUAD_DATA quad_new->SetNew(shared_state, quad_rect, a, b, c); } \
-  SETUP_AND_COPY_QUAD_NEW(Type, quad_new);
-
-#define CREATE_QUAD_3_ALL(Type, a, b, c)                         \
-  Type* quad_all = render_pass->CreateAndAppendDrawQuad<Type>(); \
-  {                                                              \
-    QUAD_DATA quad_all->SetAll(shared_state,                     \
-                               quad_rect,                        \
-                               quad_opaque_rect,                 \
-                               quad_visible_rect,                \
-                               needs_blending,                   \
-                               a,                                \
-                               b,                                \
-                               c);                               \
-  }                                                              \
-  SETUP_AND_COPY_QUAD_ALL(Type, quad_all);
-
-#define CREATE_QUAD_4_NEW(Type, a, b, c, d)                            \
-  Type* quad_new = render_pass->CreateAndAppendDrawQuad<Type>();       \
-  { QUAD_DATA quad_new->SetNew(shared_state, quad_rect, a, b, c, d); } \
-  SETUP_AND_COPY_QUAD_NEW(Type, quad_new);
-
-#define CREATE_QUAD_4_ALL(Type, a, b, c, d)                      \
-  Type* quad_all = render_pass->CreateAndAppendDrawQuad<Type>(); \
-  {                                                              \
-    QUAD_DATA quad_all->SetAll(shared_state,                     \
-                               quad_rect,                        \
-                               quad_opaque_rect,                 \
-                               quad_visible_rect,                \
-                               needs_blending,                   \
-                               a,                                \
-                               b,                                \
-                               c,                                \
-                               d);                               \
-  }                                                              \
-  SETUP_AND_COPY_QUAD_ALL(Type, quad_all);
-
-#define CREATE_QUAD_5_NEW(Type, a, b, c, d, e)                            \
-  Type* quad_new = render_pass->CreateAndAppendDrawQuad<Type>();          \
-  { QUAD_DATA quad_new->SetNew(shared_state, quad_rect, a, b, c, d, e); } \
-  SETUP_AND_COPY_QUAD_NEW(Type, quad_new);
-
-#define CREATE_QUAD_5_ALL(Type, a, b, c, d, e)                   \
-  Type* quad_all = render_pass->CreateAndAppendDrawQuad<Type>(); \
-  {                                                              \
-    QUAD_DATA quad_all->SetAll(shared_state,                     \
-                               quad_rect,                        \
-                               quad_opaque_rect,                 \
-                               quad_visible_rect,                \
-                               needs_blending,                   \
-                               a,                                \
-                               b,                                \
-                               c,                                \
-                               d,                                \
-                               e);                               \
-  }                                                              \
-  SETUP_AND_COPY_QUAD_ALL(Type, quad_all);
-
-#define CREATE_QUAD_6_NEW(Type, a, b, c, d, e, f)                            \
-  Type* quad_new = render_pass->CreateAndAppendDrawQuad<Type>();             \
-  { QUAD_DATA quad_new->SetNew(shared_state, quad_rect, a, b, c, d, e, f); } \
-  SETUP_AND_COPY_QUAD_NEW(Type, quad_new);
-
-#define CREATE_QUAD_6_ALL(Type, a, b, c, d, e, f)                \
-  Type* quad_all = render_pass->CreateAndAppendDrawQuad<Type>(); \
-  {                                                              \
-    QUAD_DATA quad_all->SetAll(shared_state,                     \
-                               quad_rect,                        \
-                               quad_opaque_rect,                 \
-                               quad_visible_rect,                \
-                               needs_blending,                   \
-                               a,                                \
-                               b,                                \
-                               c,                                \
-                               d,                                \
-                               e,                                \
-                               f);                               \
-  }                                                              \
-  SETUP_AND_COPY_QUAD_ALL(Type, quad_all);
-
-#define CREATE_QUAD_7_NEW(Type, a, b, c, d, e, f, g)                          \
-  Type* quad_new = render_pass->CreateAndAppendDrawQuad<Type>();              \
-  {                                                                           \
-    QUAD_DATA quad_new->SetNew(shared_state, quad_rect, a, b, c, d, e, f, g); \
-  }                                                                           \
-  SETUP_AND_COPY_QUAD_NEW(Type, quad_new);
-
-#define CREATE_QUAD_7_ALL(Type, a, b, c, d, e, f, g)             \
-  Type* quad_all = render_pass->CreateAndAppendDrawQuad<Type>(); \
-  {                                                              \
-    QUAD_DATA quad_all->SetAll(shared_state,                     \
-                               quad_rect,                        \
-                               quad_opaque_rect,                 \
-                               quad_visible_rect,                \
-                               needs_blending,                   \
-                               a,                                \
-                               b,                                \
-                               c,                                \
-                               d,                                \
-                               e,                                \
-                               f,                                \
-                               g);                               \
-  }                                                              \
-  SETUP_AND_COPY_QUAD_ALL(Type, quad_all);
-
-#define CREATE_QUAD_8_NEW(Type, a, b, c, d, e, f, g, h)          \
-  Type* quad_new = render_pass->CreateAndAppendDrawQuad<Type>(); \
-  {                                                              \
-    QUAD_DATA quad_new->SetNew(                                  \
-        shared_state, quad_rect, a, b, c, d, e, f, g, h);        \
-  }                                                              \
-  SETUP_AND_COPY_QUAD_NEW(Type, quad_new);
-
-#define CREATE_QUAD_8_ALL(Type, a, b, c, d, e, f, g, h)          \
-  Type* quad_all = render_pass->CreateAndAppendDrawQuad<Type>(); \
-  {                                                              \
-    QUAD_DATA quad_all->SetAll(shared_state,                     \
-                               quad_rect,                        \
-                               quad_opaque_rect,                 \
-                               quad_visible_rect,                \
-                               needs_blending,                   \
-                               a,                                \
-                               b,                                \
-                               c,                                \
-                               d,                                \
-                               e,                                \
-                               f,                                \
-                               g,                                \
-                               h);                               \
-  }                                                              \
-  SETUP_AND_COPY_QUAD_ALL(Type, quad_all);
-
-#define CREATE_QUAD_9_NEW(Type, a, b, c, d, e, f, g, h, i)       \
-  Type* quad_new = render_pass->CreateAndAppendDrawQuad<Type>(); \
-  {                                                              \
-    QUAD_DATA quad_new->SetNew(                                  \
-        shared_state, quad_rect, a, b, c, d, e, f, g, h, i);     \
-  }                                                              \
-  SETUP_AND_COPY_QUAD_NEW(Type, quad_new);
-
-#define CREATE_QUAD_9_ALL(Type, a, b, c, d, e, f, g, h, i)                    \
-  Type* quad_all = render_pass->CreateAndAppendDrawQuad<Type>();              \
-  {                                                                           \
-    QUAD_DATA quad_all->SetAll(shared_state, quad_rect, quad_opaque_rect,     \
-                               quad_visible_rect, needs_blending, a, b, c, d, \
-                               e, f, g, h, i);                                \
-  }                                                                           \
-  SETUP_AND_COPY_QUAD_ALL(Type, quad_all);
-
-#define CREATE_QUAD_10_NEW(Type, a, b, c, d, e, f, g, h, i, j)   \
-  Type* quad_new = render_pass->CreateAndAppendDrawQuad<Type>(); \
-  {                                                              \
-    QUAD_DATA quad_new->SetNew(                                  \
-        shared_state, quad_rect, a, b, c, d, e, f, g, h, i, j);  \
-  }                                                              \
-  SETUP_AND_COPY_QUAD_NEW(Type, quad_new);
-
-#define CREATE_QUAD_10_ALL(Type, a, b, c, d, e, f, g, h, i, j)                \
-  Type* quad_all = render_pass->CreateAndAppendDrawQuad<Type>();              \
-  {                                                                           \
-    QUAD_DATA quad_all->SetAll(shared_state, quad_rect, quad_opaque_rect,     \
-                               quad_visible_rect, needs_blending, a, b, c, d, \
-                               e, f, g, h, i, j);                             \
-  }                                                                           \
-  SETUP_AND_COPY_QUAD_ALL(Type, quad_all);
-
-#define CREATE_QUAD_11_NEW(Type, a, b, c, d, e, f, g, h, i, j, k)            \
-  Type* quad_new = render_pass->CreateAndAppendDrawQuad<Type>();             \
-  {                                                                          \
-    QUAD_DATA quad_new->SetNew(shared_state, quad_rect, a, b, c, d, e, f, g, \
-                               h, i, j, k);                                  \
-  }                                                                          \
-  SETUP_AND_COPY_QUAD_NEW(Type, quad_new);
-
-#define CREATE_QUAD_11_ALL(Type, a, b, c, d, e, f, g, h, i, j, k)             \
-  Type* quad_all = render_pass->CreateAndAppendDrawQuad<Type>();              \
-  {                                                                           \
-    QUAD_DATA quad_all->SetAll(shared_state, quad_rect, quad_opaque_rect,     \
-                               quad_visible_rect, needs_blending, a, b, c, d, \
-                               e, f, g, h, i, j, k);                          \
-  }                                                                           \
-  SETUP_AND_COPY_QUAD_ALL(Type, quad_all);
-
-#define CREATE_QUAD_12_NEW(Type, a, b, c, d, e, f, g, h, i, j, k, l)         \
-  Type* quad_new = render_pass->CreateAndAppendDrawQuad<Type>();             \
-  {                                                                          \
-    QUAD_DATA quad_new->SetNew(shared_state, quad_rect, a, b, c, d, e, f, g, \
-                               h, i, j, k, l);                               \
-  }                                                                          \
-  SETUP_AND_COPY_QUAD_NEW(Type, quad_new);
-
-#define CREATE_QUAD_12_ALL(Type, a, b, c, d, e, f, g, h, i, j, k, l)          \
-  Type* quad_all = render_pass->CreateAndAppendDrawQuad<Type>();              \
-  {                                                                           \
-    QUAD_DATA quad_all->SetAll(shared_state, quad_rect, quad_opaque_rect,     \
-                               quad_visible_rect, needs_blending, a, b, c, d, \
-                               e, f, g, h, i, j, k, l);                       \
-  }                                                                           \
-  SETUP_AND_COPY_QUAD_ALL(Type, quad_all);
-
-#define CREATE_QUAD_13_NEW(Type, a, b, c, d, e, f, g, h, i, j, k, l, m)      \
-  Type* quad_new = render_pass->CreateAndAppendDrawQuad<Type>();             \
-  {                                                                          \
-    QUAD_DATA quad_new->SetNew(shared_state, quad_rect, a, b, c, d, e, f, g, \
-                               h, i, j, k, l, m);                            \
-  }                                                                          \
-  SETUP_AND_COPY_QUAD_NEW(Type, quad_new);
-
-#define CREATE_QUAD_13_ALL(Type, a, b, c, d, e, f, g, h, i, j, k, l, m)       \
-  Type* quad_all = render_pass->CreateAndAppendDrawQuad<Type>();              \
-  {                                                                           \
-    QUAD_DATA quad_all->SetAll(shared_state, quad_rect, quad_opaque_rect,     \
-                               quad_visible_rect, needs_blending, a, b, c, d, \
-                               e, f, g, h, i, j, k, l, m);                    \
-  }                                                                           \
-  SETUP_AND_COPY_QUAD_ALL(Type, quad_all);
-
-#define CREATE_QUAD_14_NEW(Type, a, b, c, d, e, f, g, h, i, j, k, l, m, n)   \
-  Type* quad_new = render_pass->CreateAndAppendDrawQuad<Type>();             \
-  {                                                                          \
-    QUAD_DATA quad_new->SetNew(shared_state, quad_rect, a, b, c, d, e, f, g, \
-                               h, i, j, k, l, m, n);                         \
-  }                                                                          \
-  SETUP_AND_COPY_QUAD_NEW(Type, quad_new);
-
-#define CREATE_QUAD_15_NEW(Type, a, b, c, d, e, f, g, h, i, j, k, l, m, n, o) \
-  Type* quad_new = render_pass->CreateAndAppendDrawQuad<Type>();              \
-  {                                                                           \
-    QUAD_DATA quad_new->SetNew(shared_state, quad_rect, a, b, c, d, e, f, g,  \
-                               h, i, j, k, l, m, n, o);                       \
-  }                                                                           \
-  SETUP_AND_COPY_QUAD_NEW(Type, quad_new);
-
-#define CREATE_QUAD_ALL_RP(Type, a, b, c, d, e, f, g, copy_a)                 \
-  Type* quad_all = render_pass->CreateAndAppendDrawQuad<Type>();              \
-  {                                                                           \
-    QUAD_DATA quad_all->SetAll(shared_state, quad_rect, quad_opaque_rect,     \
-                               quad_visible_rect, needs_blending, a, b, c, d, \
-                               e, f, g);                                      \
-  }                                                                           \
+#define CREATE_QUAD_ALL_RP(Type, a, b, c, d, e, f, g, copy_a)              \
+  Type* quad_all = render_pass->CreateAndAppendDrawQuad<Type>();           \
+  {                                                                        \
+    QUAD_DATA quad_all->SetAll(shared_state, quad_rect, quad_visible_rect, \
+                               needs_blending, a, b, c, d, e, f, g);       \
+  }                                                                        \
   SETUP_AND_COPY_QUAD_ALL_RP(Type, quad_all, copy_a);
 
 #define CREATE_QUAD_NEW_RP(Type, a, b, c, d, e, f, g, h, copy_a)             \
@@ -418,13 +168,13 @@ TEST(DrawQuadTest, CopyDebugBorderDrawQuad) {
   int width = 99;
   CREATE_SHARED_STATE();
 
-  CREATE_QUAD_3_NEW(DebugBorderDrawQuad, visible_rect, color, width);
+  CREATE_QUAD_NEW(DebugBorderDrawQuad, visible_rect, color, width);
   EXPECT_EQ(DrawQuad::DEBUG_BORDER, copy_quad->material);
   EXPECT_EQ(visible_rect, copy_quad->visible_rect);
   EXPECT_EQ(color, copy_quad->color);
   EXPECT_EQ(width, copy_quad->width);
 
-  CREATE_QUAD_2_ALL(DebugBorderDrawQuad, color, width);
+  CREATE_QUAD_ALL(DebugBorderDrawQuad, color, width);
   EXPECT_EQ(DrawQuad::DEBUG_BORDER, copy_quad->material);
   EXPECT_EQ(color, copy_quad->color);
   EXPECT_EQ(width, copy_quad->width);
@@ -432,15 +182,15 @@ TEST(DrawQuadTest, CopyDebugBorderDrawQuad) {
 
 TEST(DrawQuadTest, CopyRenderPassDrawQuad) {
   gfx::Rect visible_rect(40, 50, 30, 20);
-  int render_pass_id = 61;
-  ResourceId mask_resource_id = 78;
+  RenderPassId render_pass_id = 61;
+  viz::ResourceId mask_resource_id = 78;
   gfx::RectF mask_uv_rect(0, 0, 33.f, 19.f);
   gfx::Size mask_texture_size(128, 134);
   gfx::Vector2dF filters_scale;
   gfx::PointF filters_origin;
   gfx::RectF tex_coord_rect(1, 1, 255, 254);
 
-  int copied_render_pass_id = 235;
+  RenderPassId copied_render_pass_id = 235;
   CREATE_SHARED_STATE();
 
   CREATE_QUAD_NEW_RP(RenderPassDrawQuad, visible_rect, render_pass_id,
@@ -478,38 +228,38 @@ TEST(DrawQuadTest, CopySolidColorDrawQuad) {
   bool force_anti_aliasing_off = false;
   CREATE_SHARED_STATE();
 
-  CREATE_QUAD_3_NEW(
-      SolidColorDrawQuad, visible_rect, color, force_anti_aliasing_off);
+  CREATE_QUAD_NEW(SolidColorDrawQuad, visible_rect, color,
+                  force_anti_aliasing_off);
   EXPECT_EQ(DrawQuad::SOLID_COLOR, copy_quad->material);
   EXPECT_EQ(visible_rect, copy_quad->visible_rect);
   EXPECT_EQ(color, copy_quad->color);
   EXPECT_EQ(force_anti_aliasing_off, copy_quad->force_anti_aliasing_off);
 
-  CREATE_QUAD_2_ALL(SolidColorDrawQuad, color, force_anti_aliasing_off);
+  CREATE_QUAD_ALL(SolidColorDrawQuad, color, force_anti_aliasing_off);
   EXPECT_EQ(DrawQuad::SOLID_COLOR, copy_quad->material);
   EXPECT_EQ(color, copy_quad->color);
   EXPECT_EQ(force_anti_aliasing_off, copy_quad->force_anti_aliasing_off);
 }
 
 TEST(DrawQuadTest, CopyStreamVideoDrawQuad) {
-  gfx::Rect opaque_rect(33, 47, 10, 12);
   gfx::Rect visible_rect(40, 50, 30, 20);
-  ResourceId resource_id = 64;
+  bool needs_blending = true;
+  viz::ResourceId resource_id = 64;
   gfx::Size resource_size_in_pixels = gfx::Size(40, 41);
   gfx::Transform matrix = gfx::Transform(0.5, 0.25, 1, 0.75, 0, 1);
   CREATE_SHARED_STATE();
 
-  CREATE_QUAD_5_NEW(StreamVideoDrawQuad, opaque_rect, visible_rect, resource_id,
-                    resource_size_in_pixels, matrix);
+  CREATE_QUAD_NEW(StreamVideoDrawQuad, visible_rect, needs_blending,
+                  resource_id, resource_size_in_pixels, matrix);
   EXPECT_EQ(DrawQuad::STREAM_VIDEO_CONTENT, copy_quad->material);
   EXPECT_EQ(visible_rect, copy_quad->visible_rect);
-  EXPECT_EQ(opaque_rect, copy_quad->opaque_rect);
+  EXPECT_EQ(needs_blending, copy_quad->needs_blending);
   EXPECT_EQ(resource_id, copy_quad->resource_id());
   EXPECT_EQ(resource_size_in_pixels, copy_quad->resource_size_in_pixels());
   EXPECT_EQ(matrix, copy_quad->matrix);
 
-  CREATE_QUAD_3_ALL(StreamVideoDrawQuad, resource_id, resource_size_in_pixels,
-                    matrix);
+  CREATE_QUAD_ALL(StreamVideoDrawQuad, resource_id, resource_size_in_pixels,
+                  matrix);
   EXPECT_EQ(DrawQuad::STREAM_VIDEO_CONTENT, copy_quad->material);
   EXPECT_EQ(resource_id, copy_quad->resource_id());
   EXPECT_EQ(resource_size_in_pixels, copy_quad->resource_size_in_pixels());
@@ -518,26 +268,27 @@ TEST(DrawQuadTest, CopyStreamVideoDrawQuad) {
 
 TEST(DrawQuadTest, CopySurfaceDrawQuad) {
   gfx::Rect visible_rect(40, 50, 30, 20);
-  SurfaceId surface_id(kArbitraryFrameSinkId,
-                       LocalSurfaceId(1234, base::UnguessableToken::Create()));
+  viz::SurfaceId surface_id(
+      kArbitraryFrameSinkId,
+      viz::LocalSurfaceId(1234, base::UnguessableToken::Create()));
   CREATE_SHARED_STATE();
 
-  CREATE_QUAD_4_NEW(SurfaceDrawQuad, visible_rect, surface_id,
-                    SurfaceDrawQuadType::PRIMARY, nullptr);
+  CREATE_QUAD_NEW(SurfaceDrawQuad, visible_rect, surface_id,
+                  SurfaceDrawQuadType::PRIMARY, nullptr);
   EXPECT_EQ(DrawQuad::SURFACE_CONTENT, copy_quad->material);
   EXPECT_EQ(visible_rect, copy_quad->visible_rect);
   EXPECT_EQ(surface_id, copy_quad->surface_id);
 
-  CREATE_QUAD_3_ALL(SurfaceDrawQuad, surface_id, SurfaceDrawQuadType::PRIMARY,
-                    nullptr);
+  CREATE_QUAD_ALL(SurfaceDrawQuad, surface_id, SurfaceDrawQuadType::PRIMARY,
+                  nullptr);
   EXPECT_EQ(DrawQuad::SURFACE_CONTENT, copy_quad->material);
   EXPECT_EQ(surface_id, copy_quad->surface_id);
 }
 
 
 TEST(DrawQuadTest, CopyTextureDrawQuad) {
-  gfx::Rect opaque_rect(33, 47, 10, 12);
   gfx::Rect visible_rect(40, 50, 30, 20);
+  bool needs_blending = true;
   unsigned resource_id = 82;
   gfx::Size resource_size_in_pixels = gfx::Size(40, 41);
   bool premultiplied_alpha = true;
@@ -549,13 +300,13 @@ TEST(DrawQuadTest, CopyTextureDrawQuad) {
   bool secure_output_only = true;
   CREATE_SHARED_STATE();
 
-  CREATE_QUAD_11_NEW(TextureDrawQuad, opaque_rect, visible_rect, resource_id,
-                     premultiplied_alpha, uv_top_left, uv_bottom_right,
-                     SK_ColorTRANSPARENT, vertex_opacity, y_flipped,
-                     nearest_neighbor, secure_output_only);
+  CREATE_QUAD_NEW(TextureDrawQuad, visible_rect, needs_blending, resource_id,
+                  premultiplied_alpha, uv_top_left, uv_bottom_right,
+                  SK_ColorTRANSPARENT, vertex_opacity, y_flipped,
+                  nearest_neighbor, secure_output_only);
   EXPECT_EQ(DrawQuad::TEXTURE_CONTENT, copy_quad->material);
   EXPECT_EQ(visible_rect, copy_quad->visible_rect);
-  EXPECT_EQ(opaque_rect, copy_quad->opaque_rect);
+  EXPECT_EQ(needs_blending, copy_quad->needs_blending);
   EXPECT_EQ(resource_id, copy_quad->resource_id());
   EXPECT_EQ(premultiplied_alpha, copy_quad->premultiplied_alpha);
   EXPECT_EQ(uv_top_left, copy_quad->uv_top_left);
@@ -565,10 +316,10 @@ TEST(DrawQuadTest, CopyTextureDrawQuad) {
   EXPECT_EQ(nearest_neighbor, copy_quad->nearest_neighbor);
   EXPECT_EQ(secure_output_only, copy_quad->secure_output_only);
 
-  CREATE_QUAD_10_ALL(TextureDrawQuad, resource_id, resource_size_in_pixels,
-                     premultiplied_alpha, uv_top_left, uv_bottom_right,
-                     SK_ColorTRANSPARENT, vertex_opacity, y_flipped,
-                     nearest_neighbor, secure_output_only);
+  CREATE_QUAD_ALL(TextureDrawQuad, resource_id, resource_size_in_pixels,
+                  premultiplied_alpha, uv_top_left, uv_bottom_right,
+                  SK_ColorTRANSPARENT, vertex_opacity, y_flipped,
+                  nearest_neighbor, secure_output_only);
   EXPECT_EQ(DrawQuad::TEXTURE_CONTENT, copy_quad->material);
   EXPECT_EQ(resource_id, copy_quad->resource_id());
   EXPECT_EQ(resource_size_in_pixels, copy_quad->resource_size_in_pixels());
@@ -582,8 +333,8 @@ TEST(DrawQuadTest, CopyTextureDrawQuad) {
 }
 
 TEST(DrawQuadTest, CopyTileDrawQuad) {
-  gfx::Rect opaque_rect(33, 44, 22, 33);
   gfx::Rect visible_rect(40, 50, 30, 20);
+  bool needs_blending = true;
   unsigned resource_id = 104;
   gfx::RectF tex_coord_rect(31.f, 12.f, 54.f, 20.f);
   gfx::Size texture_size(85, 32);
@@ -591,29 +342,20 @@ TEST(DrawQuadTest, CopyTileDrawQuad) {
   bool nearest_neighbor = true;
   CREATE_SHARED_STATE();
 
-  CREATE_QUAD_7_NEW(TileDrawQuad,
-                    opaque_rect,
-                    visible_rect,
-                    resource_id,
-                    tex_coord_rect,
-                    texture_size,
-                    swizzle_contents,
-                    nearest_neighbor);
+  CREATE_QUAD_NEW(TileDrawQuad, visible_rect, needs_blending, resource_id,
+                  tex_coord_rect, texture_size, swizzle_contents,
+                  nearest_neighbor);
   EXPECT_EQ(DrawQuad::TILED_CONTENT, copy_quad->material);
-  EXPECT_EQ(opaque_rect, copy_quad->opaque_rect);
   EXPECT_EQ(visible_rect, copy_quad->visible_rect);
+  EXPECT_EQ(needs_blending, copy_quad->needs_blending);
   EXPECT_EQ(resource_id, copy_quad->resource_id());
   EXPECT_EQ(tex_coord_rect, copy_quad->tex_coord_rect);
   EXPECT_EQ(texture_size, copy_quad->texture_size);
   EXPECT_EQ(swizzle_contents, copy_quad->swizzle_contents);
   EXPECT_EQ(nearest_neighbor, copy_quad->nearest_neighbor);
 
-  CREATE_QUAD_5_ALL(TileDrawQuad,
-                    resource_id,
-                    tex_coord_rect,
-                    texture_size,
-                    swizzle_contents,
-                    nearest_neighbor);
+  CREATE_QUAD_ALL(TileDrawQuad, resource_id, tex_coord_rect, texture_size,
+                  swizzle_contents, nearest_neighbor);
   EXPECT_EQ(DrawQuad::TILED_CONTENT, copy_quad->material);
   EXPECT_EQ(resource_id, copy_quad->resource_id());
   EXPECT_EQ(tex_coord_rect, copy_quad->tex_coord_rect);
@@ -623,32 +365,33 @@ TEST(DrawQuadTest, CopyTileDrawQuad) {
 }
 
 TEST(DrawQuadTest, CopyYUVVideoDrawQuad) {
-  gfx::Rect opaque_rect(33, 47, 10, 12);
   gfx::Rect visible_rect(40, 50, 30, 20);
+  bool needs_blending = true;
   gfx::RectF ya_tex_coord_rect(40, 50, 30, 20);
   gfx::RectF uv_tex_coord_rect(20, 25, 15, 10);
   gfx::Size ya_tex_size(32, 68);
   gfx::Size uv_tex_size(41, 51);
-  ResourceId y_plane_resource_id = 45;
-  ResourceId u_plane_resource_id = 532;
-  ResourceId v_plane_resource_id = 4;
-  ResourceId a_plane_resource_id = 63;
+  viz::ResourceId y_plane_resource_id = 45;
+  viz::ResourceId u_plane_resource_id = 532;
+  viz::ResourceId v_plane_resource_id = 4;
+  viz::ResourceId a_plane_resource_id = 63;
   float resource_offset = 0.5f;
   float resource_multiplier = 2.001f;
   uint32_t bits_per_channel = 5;
+  bool require_overlay = true;
   YUVVideoDrawQuad::ColorSpace color_space = YUVVideoDrawQuad::JPEG;
   gfx::ColorSpace video_color_space = gfx::ColorSpace::CreateJpeg();
   CREATE_SHARED_STATE();
 
-  CREATE_QUAD_15_NEW(YUVVideoDrawQuad, opaque_rect, visible_rect,
-                     ya_tex_coord_rect, uv_tex_coord_rect, ya_tex_size,
-                     uv_tex_size, y_plane_resource_id, u_plane_resource_id,
-                     v_plane_resource_id, a_plane_resource_id, color_space,
-                     video_color_space, resource_offset, resource_multiplier,
-                     bits_per_channel);
+  CREATE_QUAD_NEW(YUVVideoDrawQuad, visible_rect, needs_blending,
+                  ya_tex_coord_rect, uv_tex_coord_rect, ya_tex_size,
+                  uv_tex_size, y_plane_resource_id, u_plane_resource_id,
+                  v_plane_resource_id, a_plane_resource_id, color_space,
+                  video_color_space, resource_offset, resource_multiplier,
+                  bits_per_channel);
   EXPECT_EQ(DrawQuad::YUV_VIDEO_CONTENT, copy_quad->material);
-  EXPECT_EQ(opaque_rect, copy_quad->opaque_rect);
   EXPECT_EQ(visible_rect, copy_quad->visible_rect);
+  EXPECT_EQ(needs_blending, copy_quad->needs_blending);
   EXPECT_EQ(ya_tex_coord_rect, copy_quad->ya_tex_coord_rect);
   EXPECT_EQ(uv_tex_coord_rect, copy_quad->uv_tex_coord_rect);
   EXPECT_EQ(ya_tex_size, copy_quad->ya_tex_size);
@@ -661,12 +404,13 @@ TEST(DrawQuadTest, CopyYUVVideoDrawQuad) {
   EXPECT_EQ(resource_offset, copy_quad->resource_offset);
   EXPECT_EQ(resource_multiplier, copy_quad->resource_multiplier);
   EXPECT_EQ(bits_per_channel, copy_quad->bits_per_channel);
+  EXPECT_FALSE(copy_quad->require_overlay);
 
-  CREATE_QUAD_13_ALL(YUVVideoDrawQuad, ya_tex_coord_rect, uv_tex_coord_rect,
-                     ya_tex_size, uv_tex_size, y_plane_resource_id,
-                     u_plane_resource_id, v_plane_resource_id,
-                     a_plane_resource_id, color_space, video_color_space,
-                     resource_offset, resource_multiplier, bits_per_channel);
+  CREATE_QUAD_ALL(YUVVideoDrawQuad, ya_tex_coord_rect, uv_tex_coord_rect,
+                  ya_tex_size, uv_tex_size, y_plane_resource_id,
+                  u_plane_resource_id, v_plane_resource_id, a_plane_resource_id,
+                  color_space, video_color_space, resource_offset,
+                  resource_multiplier, bits_per_channel, require_overlay);
   EXPECT_EQ(DrawQuad::YUV_VIDEO_CONTENT, copy_quad->material);
   EXPECT_EQ(ya_tex_coord_rect, copy_quad->ya_tex_coord_rect);
   EXPECT_EQ(uv_tex_coord_rect, copy_quad->uv_tex_coord_rect);
@@ -680,27 +424,28 @@ TEST(DrawQuadTest, CopyYUVVideoDrawQuad) {
   EXPECT_EQ(resource_offset, copy_quad->resource_offset);
   EXPECT_EQ(resource_multiplier, copy_quad->resource_multiplier);
   EXPECT_EQ(bits_per_channel, copy_quad->bits_per_channel);
+  EXPECT_EQ(require_overlay, copy_quad->require_overlay);
 }
 
 TEST(DrawQuadTest, CopyPictureDrawQuad) {
-  gfx::Rect opaque_rect(33, 44, 22, 33);
   gfx::Rect visible_rect(40, 50, 30, 20);
+  bool needs_blending = true;
   gfx::RectF tex_coord_rect(31.f, 12.f, 54.f, 20.f);
   gfx::Size texture_size(85, 32);
   bool nearest_neighbor = true;
-  ResourceFormat texture_format = RGBA_8888;
+  viz::ResourceFormat texture_format = viz::RGBA_8888;
   gfx::Rect content_rect(30, 40, 20, 30);
   float contents_scale = 3.141592f;
   scoped_refptr<RasterSource> raster_source =
       FakeRasterSource::CreateEmpty(gfx::Size(100, 100));
   CREATE_SHARED_STATE();
 
-  CREATE_QUAD_9_NEW(PictureDrawQuad, opaque_rect, visible_rect, tex_coord_rect,
-                    texture_size, nearest_neighbor, texture_format,
-                    content_rect, contents_scale, raster_source);
+  CREATE_QUAD_NEW(PictureDrawQuad, visible_rect, needs_blending, tex_coord_rect,
+                  texture_size, nearest_neighbor, texture_format, content_rect,
+                  contents_scale, raster_source);
   EXPECT_EQ(DrawQuad::PICTURE_CONTENT, copy_quad->material);
-  EXPECT_EQ(opaque_rect, copy_quad->opaque_rect);
   EXPECT_EQ(visible_rect, copy_quad->visible_rect);
+  EXPECT_EQ(needs_blending, copy_quad->needs_blending);
   EXPECT_EQ(tex_coord_rect, copy_quad->tex_coord_rect);
   EXPECT_EQ(texture_size, copy_quad->texture_size);
   EXPECT_EQ(nearest_neighbor, copy_quad->nearest_neighbor);
@@ -709,9 +454,9 @@ TEST(DrawQuadTest, CopyPictureDrawQuad) {
   EXPECT_EQ(contents_scale, copy_quad->contents_scale);
   EXPECT_EQ(raster_source, copy_quad->raster_source);
 
-  CREATE_QUAD_7_ALL(PictureDrawQuad, tex_coord_rect, texture_size,
-                    nearest_neighbor, texture_format, content_rect,
-                    contents_scale, raster_source);
+  CREATE_QUAD_ALL(PictureDrawQuad, tex_coord_rect, texture_size,
+                  nearest_neighbor, texture_format, content_rect,
+                  contents_scale, raster_source);
   EXPECT_EQ(DrawQuad::PICTURE_CONTENT, copy_quad->material);
   EXPECT_EQ(tex_coord_rect, copy_quad->tex_coord_rect);
   EXPECT_EQ(texture_size, copy_quad->texture_size);
@@ -726,7 +471,7 @@ class DrawQuadIteratorTest : public testing::Test {
  protected:
   int IterateAndCount(DrawQuad* quad) {
     num_resources_ = 0;
-    for (ResourceId& resource_id : quad->resources) {
+    for (viz::ResourceId& resource_id : quad->resources) {
       ++num_resources_;
       ++resource_id;
     }
@@ -743,14 +488,14 @@ TEST_F(DrawQuadIteratorTest, DebugBorderDrawQuad) {
   int width = 99;
 
   CREATE_SHARED_STATE();
-  CREATE_QUAD_3_NEW(DebugBorderDrawQuad, visible_rect, color, width);
+  CREATE_QUAD_NEW(DebugBorderDrawQuad, visible_rect, color, width);
   EXPECT_EQ(0, IterateAndCount(quad_new));
 }
 
 TEST_F(DrawQuadIteratorTest, RenderPassDrawQuad) {
   gfx::Rect visible_rect(40, 50, 30, 20);
   int render_pass_id = 61;
-  ResourceId mask_resource_id = 78;
+  viz::ResourceId mask_resource_id = 78;
   gfx::RectF mask_uv_rect(0.f, 0.f, 33.f, 19.f);
   gfx::Size mask_texture_size(128, 134);
   gfx::Vector2dF filters_scale(2.f, 3.f);
@@ -768,7 +513,7 @@ TEST_F(DrawQuadIteratorTest, RenderPassDrawQuad) {
   EXPECT_EQ(1, IterateAndCount(quad_new));
   EXPECT_EQ(mask_resource_id + 1, quad_new->mask_resource_id());
 
-  ResourceId new_mask_resource_id = 0;
+  viz::ResourceId new_mask_resource_id = 0;
   gfx::Rect quad_rect(30, 40, 50, 60);
   quad_new->SetNew(shared_state, quad_rect, visible_rect, render_pass_id,
                    new_mask_resource_id, mask_uv_rect, mask_texture_size,
@@ -783,21 +528,20 @@ TEST_F(DrawQuadIteratorTest, SolidColorDrawQuad) {
   bool force_anti_aliasing_off = false;
 
   CREATE_SHARED_STATE();
-  CREATE_QUAD_3_NEW(
-      SolidColorDrawQuad, visible_rect, color, force_anti_aliasing_off);
+  CREATE_QUAD_NEW(SolidColorDrawQuad, visible_rect, color,
+                  force_anti_aliasing_off);
   EXPECT_EQ(0, IterateAndCount(quad_new));
 }
 
 TEST_F(DrawQuadIteratorTest, StreamVideoDrawQuad) {
-  gfx::Rect opaque_rect(33, 47, 10, 12);
   gfx::Rect visible_rect(40, 50, 30, 20);
-  ResourceId resource_id = 64;
+  viz::ResourceId resource_id = 64;
   gfx::Size resource_size_in_pixels = gfx::Size(40, 41);
   gfx::Transform matrix = gfx::Transform(0.5, 0.25, 1, 0.75, 0, 1);
 
   CREATE_SHARED_STATE();
-  CREATE_QUAD_5_NEW(StreamVideoDrawQuad, opaque_rect, visible_rect, resource_id,
-                    resource_size_in_pixels, matrix);
+  CREATE_QUAD_NEW(StreamVideoDrawQuad, visible_rect, needs_blending,
+                  resource_id, resource_size_in_pixels, matrix);
   EXPECT_EQ(resource_id, quad_new->resource_id());
   EXPECT_EQ(resource_size_in_pixels, quad_new->resource_size_in_pixels());
   EXPECT_EQ(1, IterateAndCount(quad_new));
@@ -806,17 +550,17 @@ TEST_F(DrawQuadIteratorTest, StreamVideoDrawQuad) {
 
 TEST_F(DrawQuadIteratorTest, SurfaceDrawQuad) {
   gfx::Rect visible_rect(40, 50, 30, 20);
-  SurfaceId surface_id(kArbitraryFrameSinkId,
-                       LocalSurfaceId(4321, base::UnguessableToken::Create()));
+  viz::SurfaceId surface_id(
+      kArbitraryFrameSinkId,
+      viz::LocalSurfaceId(4321, base::UnguessableToken::Create()));
 
   CREATE_SHARED_STATE();
-  CREATE_QUAD_4_NEW(SurfaceDrawQuad, visible_rect, surface_id,
-                    SurfaceDrawQuadType::PRIMARY, nullptr);
+  CREATE_QUAD_NEW(SurfaceDrawQuad, visible_rect, surface_id,
+                  SurfaceDrawQuadType::PRIMARY, nullptr);
   EXPECT_EQ(0, IterateAndCount(quad_new));
 }
 
 TEST_F(DrawQuadIteratorTest, TextureDrawQuad) {
-  gfx::Rect opaque_rect(33, 47, 10, 12);
   gfx::Rect visible_rect(40, 50, 30, 20);
   unsigned resource_id = 82;
   bool premultiplied_alpha = true;
@@ -828,17 +572,16 @@ TEST_F(DrawQuadIteratorTest, TextureDrawQuad) {
   bool secure_output_only = true;
 
   CREATE_SHARED_STATE();
-  CREATE_QUAD_11_NEW(TextureDrawQuad, opaque_rect, visible_rect, resource_id,
-                     premultiplied_alpha, uv_top_left, uv_bottom_right,
-                     SK_ColorTRANSPARENT, vertex_opacity, y_flipped,
-                     nearest_neighbor, secure_output_only);
+  CREATE_QUAD_NEW(TextureDrawQuad, visible_rect, needs_blending, resource_id,
+                  premultiplied_alpha, uv_top_left, uv_bottom_right,
+                  SK_ColorTRANSPARENT, vertex_opacity, y_flipped,
+                  nearest_neighbor, secure_output_only);
   EXPECT_EQ(resource_id, quad_new->resource_id());
   EXPECT_EQ(1, IterateAndCount(quad_new));
   EXPECT_EQ(resource_id + 1, quad_new->resource_id());
 }
 
 TEST_F(DrawQuadIteratorTest, TileDrawQuad) {
-  gfx::Rect opaque_rect(33, 44, 22, 33);
   gfx::Rect visible_rect(40, 50, 30, 20);
   unsigned resource_id = 104;
   gfx::RectF tex_coord_rect(31.f, 12.f, 54.f, 20.f);
@@ -847,39 +590,33 @@ TEST_F(DrawQuadIteratorTest, TileDrawQuad) {
   bool nearest_neighbor = true;
 
   CREATE_SHARED_STATE();
-  CREATE_QUAD_7_NEW(TileDrawQuad,
-                    opaque_rect,
-                    visible_rect,
-                    resource_id,
-                    tex_coord_rect,
-                    texture_size,
-                    swizzle_contents,
-                    nearest_neighbor);
+  CREATE_QUAD_NEW(TileDrawQuad, visible_rect, needs_blending, resource_id,
+                  tex_coord_rect, texture_size, swizzle_contents,
+                  nearest_neighbor);
   EXPECT_EQ(resource_id, quad_new->resource_id());
   EXPECT_EQ(1, IterateAndCount(quad_new));
   EXPECT_EQ(resource_id + 1, quad_new->resource_id());
 }
 
 TEST_F(DrawQuadIteratorTest, YUVVideoDrawQuad) {
-  gfx::Rect opaque_rect(33, 47, 10, 12);
   gfx::Rect visible_rect(40, 50, 30, 20);
   gfx::RectF ya_tex_coord_rect(0.0f, 0.0f, 0.75f, 0.5f);
   gfx::RectF uv_tex_coord_rect(0.0f, 0.0f, 0.375f, 0.25f);
   gfx::Size ya_tex_size(32, 68);
   gfx::Size uv_tex_size(41, 51);
-  ResourceId y_plane_resource_id = 45;
-  ResourceId u_plane_resource_id = 532;
-  ResourceId v_plane_resource_id = 4;
-  ResourceId a_plane_resource_id = 63;
+  viz::ResourceId y_plane_resource_id = 45;
+  viz::ResourceId u_plane_resource_id = 532;
+  viz::ResourceId v_plane_resource_id = 4;
+  viz::ResourceId a_plane_resource_id = 63;
   YUVVideoDrawQuad::ColorSpace color_space = YUVVideoDrawQuad::JPEG;
   gfx::ColorSpace video_color_space = gfx::ColorSpace::CreateJpeg();
 
   CREATE_SHARED_STATE();
-  CREATE_QUAD_15_NEW(YUVVideoDrawQuad, opaque_rect, visible_rect,
-                     ya_tex_coord_rect, uv_tex_coord_rect, ya_tex_size,
-                     uv_tex_size, y_plane_resource_id, u_plane_resource_id,
-                     v_plane_resource_id, a_plane_resource_id, color_space,
-                     video_color_space, 0.0, 1.0, 5);
+  CREATE_QUAD_NEW(YUVVideoDrawQuad, visible_rect, needs_blending,
+                  ya_tex_coord_rect, uv_tex_coord_rect, ya_tex_size,
+                  uv_tex_size, y_plane_resource_id, u_plane_resource_id,
+                  v_plane_resource_id, a_plane_resource_id, color_space,
+                  video_color_space, 0.0, 1.0, 5);
   EXPECT_EQ(DrawQuad::YUV_VIDEO_CONTENT, copy_quad->material);
   EXPECT_EQ(y_plane_resource_id, quad_new->y_plane_resource_id());
   EXPECT_EQ(u_plane_resource_id, quad_new->u_plane_resource_id());
@@ -895,21 +632,20 @@ TEST_F(DrawQuadIteratorTest, YUVVideoDrawQuad) {
 
 // Disabled until picture draw quad is supported for ubercomp: crbug.com/231715
 TEST_F(DrawQuadIteratorTest, DISABLED_PictureDrawQuad) {
-  gfx::Rect opaque_rect(33, 44, 22, 33);
   gfx::Rect visible_rect(40, 50, 30, 20);
   gfx::RectF tex_coord_rect(31.f, 12.f, 54.f, 20.f);
   gfx::Size texture_size(85, 32);
   bool nearest_neighbor = true;
-  ResourceFormat texture_format = RGBA_8888;
+  viz::ResourceFormat texture_format = viz::RGBA_8888;
   gfx::Rect content_rect(30, 40, 20, 30);
   float contents_scale = 3.141592f;
   scoped_refptr<RasterSource> raster_source =
       FakeRasterSource::CreateEmpty(gfx::Size(100, 100));
 
   CREATE_SHARED_STATE();
-  CREATE_QUAD_9_NEW(PictureDrawQuad, opaque_rect, visible_rect, tex_coord_rect,
-                    texture_size, nearest_neighbor, texture_format,
-                    content_rect, contents_scale, raster_source);
+  CREATE_QUAD_NEW(PictureDrawQuad, visible_rect, needs_blending, tex_coord_rect,
+                  texture_size, nearest_neighbor, texture_format, content_rect,
+                  contents_scale, raster_source);
   EXPECT_EQ(0, IterateAndCount(quad_new));
 }
 

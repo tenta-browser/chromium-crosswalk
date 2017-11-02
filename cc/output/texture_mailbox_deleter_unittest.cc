@@ -6,9 +6,9 @@
 
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "cc/resources/single_release_callback.h"
 #include "cc/test/test_context_provider.h"
 #include "cc/test/test_web_graphics_context_3d.h"
+#include "components/viz/common/quads/single_release_callback.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace cc {
@@ -28,13 +28,13 @@ TEST(TextureMailboxDeleterTest, Destroy) {
   EXPECT_TRUE(context_provider->HasOneRef());
   EXPECT_EQ(1u, context_provider->TestContext3d()->NumTextures());
 
-  std::unique_ptr<SingleReleaseCallback> cb =
+  std::unique_ptr<viz::SingleReleaseCallback> cb =
       deleter->GetReleaseCallback(context_provider, texture_id);
   EXPECT_FALSE(context_provider->HasOneRef());
   EXPECT_EQ(1u, context_provider->TestContext3d()->NumTextures());
 
   // When the deleter is destroyed, it immediately drops its ref on the
-  // ContextProvider, and deletes the texture.
+  // viz::ContextProvider, and deletes the texture.
   deleter = nullptr;
   EXPECT_TRUE(context_provider->HasOneRef());
   EXPECT_EQ(0u, context_provider->TestContext3d()->NumTextures());
@@ -58,7 +58,7 @@ TEST(TextureMailboxDeleterTest, NullTaskRunner) {
   EXPECT_TRUE(context_provider->HasOneRef());
   EXPECT_EQ(1u, context_provider->TestContext3d()->NumTextures());
 
-  std::unique_ptr<SingleReleaseCallback> cb =
+  std::unique_ptr<viz::SingleReleaseCallback> cb =
       deleter->GetReleaseCallback(context_provider, texture_id);
   EXPECT_FALSE(context_provider->HasOneRef());
   EXPECT_EQ(1u, context_provider->TestContext3d()->NumTextures());
@@ -66,7 +66,7 @@ TEST(TextureMailboxDeleterTest, NullTaskRunner) {
   cb->Run(gpu::SyncToken(), false);
 
   // With no task runner the callback will immediately drops its ref on the
-  // ContextProvider and delete the texture.
+  // viz::ContextProvider and delete the texture.
   EXPECT_TRUE(context_provider->HasOneRef());
   EXPECT_EQ(0u, context_provider->TestContext3d()->NumTextures());
 }

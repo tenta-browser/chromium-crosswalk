@@ -5,12 +5,14 @@
 #ifndef COMPONENTS_NTP_TILES_POPULAR_SITES_H_
 #define COMPONENTS_NTP_TILES_POPULAR_SITES_H_
 
+#include <map>
 #include <string>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/strings/string16.h"
+#include "components/ntp_tiles/section_type.h"
 #include "url/gurl.h"
 
 namespace base {
@@ -37,6 +39,7 @@ class PopularSites {
     GURL favicon_url;
     GURL large_icon_url;
     GURL thumbnail_url;
+    bool baked_in;
     int default_icon_resource;  // < 0 if there is none. Used for popular sites.
   };
 
@@ -60,12 +63,13 @@ class PopularSites {
   virtual bool MaybeStartFetch(bool force_download,
                                const FinishedCallback& callback) = 0;
 
-  // Returns the list of available sites.
-  virtual const SitesVector& sites() const = 0;
+  // Returns the cached list of available sections and their sites.
+  virtual const std::map<SectionType, SitesVector>& sections() const = 0;
 
   // Various internals exposed publicly for diagnostic pages only.
   virtual GURL GetLastURLFetched() const = 0;
   virtual GURL GetURLToFetch() = 0;
+  virtual std::string GetDirectoryToFetch() = 0;
   virtual std::string GetCountryToFetch() = 0;
   virtual std::string GetVersionToFetch() = 0;
   virtual const base::ListValue* GetCachedJson() = 0;

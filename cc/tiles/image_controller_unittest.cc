@@ -12,7 +12,9 @@
 #include "base/test/test_simple_task_runner.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "base/threading/thread_checker_impl.h"
+#include "cc/paint/paint_image_builder.h"
 #include "cc/test/skia_common.h"
+#include "cc/test/stub_decode_cache.h"
 #include "cc/tiles/image_decode_cache.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -80,7 +82,7 @@ class WorkerTaskRunner : public base::SequencedTaskRunner {
     return true;
   }
 
-  bool RunsTasksOnCurrentThread() const override { return false; }
+  bool RunsTasksInCurrentSequence() const override { return false; }
 
  protected:
   ~WorkerTaskRunner() override {
@@ -92,7 +94,7 @@ class WorkerTaskRunner : public base::SequencedTaskRunner {
 };
 
 // Image decode cache with introspection!
-class TestableCache : public ImageDecodeCache {
+class TestableCache : public StubDecodeCache {
  public:
   ~TestableCache() override { EXPECT_EQ(number_of_refs_, 0); }
 
@@ -101,8 +103,9 @@ class TestableCache : public ImageDecodeCache {
                              scoped_refptr<TileTask>* task) override {
     // Return false for large images to mimic "won't fit in memory"
     // behavior.
-    if (image.image() &&
-        image.image()->width() * image.image()->height() >= 1000 * 1000) {
+    if (image.paint_image() &&
+        image.paint_image().width() * image.paint_image().height() >=
+            1000 * 1000) {
       return false;
     }
 
@@ -120,15 +123,9 @@ class TestableCache : public ImageDecodeCache {
     ASSERT_GT(number_of_refs_, 0);
     --number_of_refs_;
   }
-  DecodedDrawImage GetDecodedImageForDraw(const DrawImage& image) override {
-    return DecodedDrawImage(nullptr, kNone_SkFilterQuality);
+  size_t GetMaximumMemoryLimitBytes() const override {
+    return 256 * 1024 * 1024;
   }
-  void DrawWithImageFinished(const DrawImage& image,
-                             const DecodedDrawImage& decoded_image) override {}
-  void ReduceCacheUsage() override {}
-  void SetShouldAggressivelyFreeResources(
-      bool aggressively_free_resources) override {}
-  void ClearCache() override {}
 
   int number_of_refs() const { return number_of_refs_; }
   void SetTaskToUse(scoped_refptr<TileTask> task) { task_to_use_ = task; }
@@ -231,10 +228,16 @@ class BlockingTask : public TileTask {
 // to allow the worker thread to do its work.
 int kDefaultTimeoutSeconds = 10;
 
+DrawImage CreateDiscardableDrawImage(gfx::Size size) {
+  return DrawImage(CreateDiscardablePaintImage(size),
+                   SkIRect::MakeWH(size.width(), size.height()),
+                   kNone_SkFilterQuality, SkMatrix::I(), gfx::ColorSpace());
+}
+
 class ImageControllerTest : public testing::Test {
  public:
   ImageControllerTest() : task_runner_(base::SequencedTaskRunnerHandle::Get()) {
-    image_ = CreateDiscardableImage(gfx::Size(1, 1));
+    image_ = CreateDiscardableDrawImage(gfx::Size(1, 1));
   }
   ~ImageControllerTest() override = default;
 
@@ -254,7 +257,7 @@ class ImageControllerTest : public testing::Test {
   base::SequencedTaskRunner* task_runner() { return task_runner_.get(); }
   ImageController* controller() { return controller_.get(); }
   TestableCache* cache() { return &cache_; }
-  sk_sp<const SkImage> image() const { return image_; }
+  const DrawImage& image() const { return image_; }
 
   // Timeout callback, which errors and exits the runloop.
   static void Timeout(base::RunLoop* run_loop) {
@@ -279,7 +282,7 @@ class ImageControllerTest : public testing::Test {
   scoped_refptr<WorkerTaskRunner> worker_task_runner_;
   TestableCache cache_;
   std::unique_ptr<ImageController> controller_;
-  sk_sp<const SkImage> image_;
+  DrawImage image_;
 };
 
 TEST_F(ImageControllerTest, NullControllerUnrefsImages) {
@@ -299,7 +302,7 @@ TEST_F(ImageControllerTest, NullControllerUnrefsImages) {
 TEST_F(ImageControllerTest, QueueImageDecode) {
   base::RunLoop run_loop;
   DecodeClient decode_client;
-  EXPECT_EQ(image()->bounds().width(), 1);
+  EXPECT_EQ(image().paint_image().width(), 1);
   ImageController::ImageDecodeRequestId expected_id =
       controller()->QueueImageDecode(
           image(),
@@ -317,7 +320,12 @@ TEST_F(ImageControllerTest, QueueImageDecodeNonLazy) {
 
   SkBitmap bitmap;
   bitmap.allocN32Pixels(1, 1);
-  sk_sp<const SkImage> image = SkImage::MakeFromBitmap(bitmap);
+  DrawImage image = DrawImage(PaintImageBuilder()
+                                  .set_id(PaintImage::GetNextId())
+                                  .set_image(SkImage::MakeFromBitmap(bitmap))
+                                  .TakePaintImage(),
+                              SkIRect::MakeWH(1, 1), kNone_SkFilterQuality,
+                              SkMatrix::I(), gfx::ColorSpace());
 
   ImageController::ImageDecodeRequestId expected_id =
       controller()->QueueImageDecode(
@@ -334,7 +342,7 @@ TEST_F(ImageControllerTest, QueueImageDecodeTooLarge) {
   base::RunLoop run_loop;
   DecodeClient decode_client;
 
-  sk_sp<const SkImage> image = CreateDiscardableImage(gfx::Size(2000, 2000));
+  DrawImage image = CreateDiscardableDrawImage(gfx::Size(2000, 2000));
   ImageController::ImageDecodeRequestId expected_id =
       controller()->QueueImageDecode(
           image,

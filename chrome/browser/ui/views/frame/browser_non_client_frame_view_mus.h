@@ -38,6 +38,7 @@ class BrowserNonClientFrameViewMus : public BrowserNonClientFrameView,
   void UpdateThrobber(bool running) override;
   views::View* GetProfileSwitcherView() const override;
   void UpdateClientArea() override;
+  void UpdateMinimumSize() override;
 
   // views::NonClientFrameView:
   gfx::Rect GetBoundsForClientView() const override;
@@ -91,8 +92,6 @@ class BrowserNonClientFrameViewMus : public BrowserNonClientFrameView,
   // Returns true if there is anything to paint. Some fullscreen windows do not
   // need their frames painted.
   bool ShouldPaint() const;
-
-  void PaintToolbarBackground(gfx::Canvas* canvas);
 
   // Draws the line under the header for windows without a toolbar and not using
   // the packaged app header style.

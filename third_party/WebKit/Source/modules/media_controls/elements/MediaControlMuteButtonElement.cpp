@@ -5,7 +5,7 @@
 #include "modules/media_controls/elements/MediaControlMuteButtonElement.h"
 
 #include "core/InputTypeNames.h"
-#include "core/events/Event.h"
+#include "core/dom/events/Event.h"
 #include "core/html/HTMLMediaElement.h"
 #include "modules/media_controls/MediaControlsImpl.h"
 #include "public/platform/Platform.h"
@@ -34,15 +34,19 @@ void MediaControlMuteButtonElement::UpdateDisplayType() {
   UpdateOverflowString();
 }
 
-WebLocalizedString::Name
-MediaControlMuteButtonElement::GetOverflowStringName() {
+WebLocalizedString::Name MediaControlMuteButtonElement::GetOverflowStringName()
+    const {
   if (MediaElement().muted())
     return WebLocalizedString::kOverflowMenuUnmute;
   return WebLocalizedString::kOverflowMenuMute;
 }
 
-bool MediaControlMuteButtonElement::HasOverflowButton() {
+bool MediaControlMuteButtonElement::HasOverflowButton() const {
   return true;
+}
+
+const char* MediaControlMuteButtonElement::GetNameForHistograms() const {
+  return IsOverflowElement() ? "MuteOverflowButton" : "MuteButton";
 }
 
 void MediaControlMuteButtonElement::DefaultEventHandler(Event* event) {

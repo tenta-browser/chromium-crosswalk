@@ -59,11 +59,13 @@
 #include "platform/weborigin/KURL.h"
 #include "platform/weborigin/SchemeRegistry.h"
 #include "platform/weborigin/SecurityPolicy.h"
+#include "platform/wtf/allocator/Partitions.h"
+#include "platform/wtf/text/AtomicStringTable.h"
 #include "public/platform/Platform.h"
-#include "wtf/allocator/Partitions.h"
-#include "wtf/text/AtomicStringTable.h"
 
 namespace blink {
+
+CoreInitializer* CoreInitializer::instance_ = nullptr;
 
 void CoreInitializer::RegisterEventFactory() {
   static bool is_registered = false;
@@ -75,8 +77,9 @@ void CoreInitializer::RegisterEventFactory() {
 }
 
 void CoreInitializer::Initialize() {
-  ASSERT(!IsInitialized());
-  is_initialized_ = true;
+  // Initialize must be called once by singleton ModulesInitializer.
+  DCHECK(!instance_);
+  instance_ = this;
   // Note: in order to add core static strings for a new module (1)
   // the value of 'coreStaticStringsCount' must be updated with the
   // added strings count, (2) if the added strings are quialified names

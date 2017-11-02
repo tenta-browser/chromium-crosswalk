@@ -25,6 +25,7 @@
 #include "core/CSSPropertyNames.h"
 #include "core/CSSValueKeywords.h"
 #include "core/HTMLNames.h"
+#include "core/frame/UseCounter.h"
 #include "core/html/parser/HTMLParserIdioms.h"
 #include "core/layout/LayoutListItem.h"
 
@@ -77,12 +78,12 @@ void HTMLOListElement::CollectStyleForPresentationAttribute(
 void HTMLOListElement::ParseAttribute(
     const AttributeModificationParams& params) {
   if (params.name == startAttr) {
-    int old_start = start();
+    int old_start = StartConsideringItemCount();
     int parsed_start = 0;
     bool can_parse = ParseHTMLInteger(params.new_value, parsed_start);
     has_explicit_start_ = can_parse;
     start_ = can_parse ? parsed_start : 0xBADBEEF;
-    if (old_start == start())
+    if (old_start == StartConsideringItemCount())
       return;
     UpdateItemValues();
   } else if (params.name == reversedAttr) {

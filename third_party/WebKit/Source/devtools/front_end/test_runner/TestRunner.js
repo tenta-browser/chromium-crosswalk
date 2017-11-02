@@ -4,13 +4,22 @@
 
 /* eslint-disable no-console */
 
-/** @type {!{notifyDone: function()}|undefined} */
+/** @type {!{logToStderr: function(), notifyDone: function()}|undefined} */
 self.testRunner;
 
 TestRunner.executeTestScript = function() {
-  fetch(`${Runtime.queryParam('test')}`)
+  var testScriptURL = /** @type {string} */ (Runtime.queryParam('test'));
+  fetch(testScriptURL)
       .then(data => data.text())
-      .then(testScript => eval(`(function(){${testScript}})()`))
+      .then(testScript => {
+        if (!self.testRunner || Runtime.queryParam('debugFrontend')) {
+          self.eval(`function test(){${testScript}}\n//# sourceURL=${testScriptURL}`);
+          TestRunner.addResult = console.log;
+          TestRunner.completeTest = () => console.log('Test completed');
+          return;
+        }
+        eval(`(function test(){${testScript}})()\n//# sourceURL=${testScriptURL}`);
+      })
       .catch(error => {
         TestRunner.addResult(`Unable to execute test script because of error: ${error}`);
         TestRunner.completeTest();
@@ -20,15 +29,15 @@ TestRunner.executeTestScript = function() {
 /** @type {!Array<string>} */
 TestRunner._results = [];
 
+TestRunner.completeTest = function() {
+  TestRunner.flushResults();
+  self.testRunner.notifyDone();
+};
+
 /**
  * @suppressGlobalPropertiesCheck
  */
-TestRunner.completeTest = function() {
-  if (!self.testRunner) {
-    console.log('Test Done');
-    return;
-  }
-
+TestRunner.flushResults = function() {
   Array.prototype.forEach.call(document.documentElement.childNodes, x => x.remove());
   var outputElement = document.createElement('div');
   // Support for svg - add to document, not body, check for style.
@@ -43,17 +52,23 @@ TestRunner.completeTest = function() {
     outputElement.appendChild(document.createElement('br'));
   }
   TestRunner._results = [];
-  self.testRunner.notifyDone();
 };
 
 /**
  * @param {*} text
  */
 TestRunner.addResult = function(text) {
-  if (self.testRunner)
-    TestRunner._results.push(String(text));
-  else
-    console.log(text);
+  TestRunner._results.push(String(text));
+};
+
+/**
+ * @param {!Array<string>} textArray
+ */
+TestRunner.addResults = function(textArray) {
+  if (!textArray)
+    return;
+  for (var i = 0, size = textArray.length; i < size; ++i)
+    TestRunner.addResult(textArray[i]);
 };
 
 /**
@@ -79,9 +94,40 @@ TestRunner.runTests = function(tests) {
 /**
  * @param {!Object} receiver
  * @param {string} methodName
+ * @param {!Function} override
+ * @param {boolean=} opt_sticky
+ */
+TestRunner.addSniffer = function(receiver, methodName, override, opt_sticky) {
+  override = TestRunner.safeWrap(override);
+
+  var original = receiver[methodName];
+  if (typeof original !== 'function')
+    throw new Error('Cannot find method to override: ' + methodName);
+
+  receiver[methodName] = function(var_args) {
+    try {
+      var result = original.apply(this, arguments);
+    } finally {
+      if (!opt_sticky)
+        receiver[methodName] = original;
+    }
+    // In case of exception the override won't be called.
+    try {
+      Array.prototype.push.call(arguments, result);
+      override.apply(this, arguments);
+    } catch (e) {
+      throw new Error('Exception in overriden method \'' + methodName + '\': ' + e);
+    }
+    return result;
+  };
+};
+
+/**
+ * @param {!Object} receiver
+ * @param {string} methodName
  * @return {!Promise<*>}
  */
-TestRunner.addSniffer = function(receiver, methodName) {
+TestRunner.addSnifferPromise = function(receiver, methodName) {
   return new Promise(function(resolve, reject) {
     var original = receiver[methodName];
     if (typeof original !== 'function') {
@@ -108,12 +154,41 @@ TestRunner.addSniffer = function(receiver, methodName) {
   });
 };
 
+/** @type {number} */
+TestRunner._pendingInits = 0;
+
+/** @type {function():void} */
+TestRunner._resolveOnFinishInits;
+
 /**
- * @param {!Array<string>} lazyModules
- * @return {!Promise<!Array<undefined>>}
+ * @param {function():!Promise} asyncFunction
  */
-TestRunner.loadLazyModules = function(lazyModules) {
-  return Promise.all(lazyModules.map(lazyModule => self.runtime.loadModulePromise(lazyModule)));
+TestRunner.initAsync = async function(asyncFunction) {
+  TestRunner._pendingInits++;
+  await asyncFunction();
+  TestRunner._pendingInits--;
+  if (!TestRunner._pendingInits)
+    TestRunner._resolveOnFinishInits();
+};
+
+/**
+ * @param {string} module
+ * @return {!Promise<undefined>}
+ */
+TestRunner.loadModule = async function(module) {
+  var promise = new Promise(resolve => TestRunner._resolveOnFinishInits = resolve);
+  await self.runtime.loadModulePromise(module);
+  if (!TestRunner._pendingInits)
+    return;
+  return promise;
+};
+
+/**
+ * @param {string} panel
+ * @return {!Promise.<?UI.Panel>}
+ */
+TestRunner.showPanel = function(panel) {
+  return UI.viewManager.showView(panel);
 };
 
 /**
@@ -134,6 +209,87 @@ TestRunner.createKeyEvent = function(key, ctrlKey, altKey, shiftKey, metaKey) {
     shiftKey: !!shiftKey,
     metaKey: !!metaKey
   });
+};
+
+/**
+ * @param {!Function|undefined} func
+ * @param {!Function=} onexception
+ * @return {!Function}
+ */
+TestRunner.safeWrap = function(func, onexception) {
+  /**
+   * @this {*}
+   */
+  function result() {
+    if (!func)
+      return;
+    var wrapThis = this;
+    try {
+      return func.apply(wrapThis, arguments);
+    } catch (e) {
+      TestRunner.addResult('Exception while running: ' + func + '\n' + (e.stack || e));
+      if (onexception)
+        TestRunner.safeWrap(onexception)();
+      else
+        TestRunner.completeTest();
+    }
+  }
+  return result;
+};
+
+/**
+ * @param {!Node} node
+ * @return {string}
+ */
+TestRunner.textContentWithLineBreaks = function(node) {
+  function padding(currentNode) {
+    var result = 0;
+    while (currentNode && currentNode !== node) {
+      if (currentNode.nodeName === 'OL' &&
+          !(currentNode.classList && currentNode.classList.contains('object-properties-section')))
+        ++result;
+      currentNode = currentNode.parentNode;
+    }
+    return Array(result * 4 + 1).join(' ');
+  }
+
+  var buffer = '';
+  var currentNode = node;
+  var ignoreFirst = false;
+  while (currentNode.traverseNextNode(node)) {
+    currentNode = currentNode.traverseNextNode(node);
+    if (currentNode.nodeType === Node.TEXT_NODE) {
+      buffer += currentNode.nodeValue;
+    } else if (currentNode.nodeName === 'LI' || currentNode.nodeName === 'TR') {
+      if (!ignoreFirst)
+        buffer += '\n' + padding(currentNode);
+      else
+        ignoreFirst = false;
+    } else if (currentNode.nodeName === 'STYLE') {
+      currentNode = currentNode.traverseNextNode(node);
+      continue;
+    } else if (currentNode.classList && currentNode.classList.contains('object-properties-section')) {
+      ignoreFirst = true;
+    }
+  }
+  return buffer;
+};
+
+/**
+ * @param {!Node} node
+ * @return {string}
+ */
+TestRunner.textContentWithoutStyles = function(node) {
+  var buffer = '';
+  var currentNode = node;
+  while (currentNode.traverseNextNode(node)) {
+    currentNode = currentNode.traverseNextNode(node);
+    if (currentNode.nodeType === Node.TEXT_NODE)
+      buffer += currentNode.nodeValue;
+    else if (currentNode.nodeName === 'STYLE')
+      currentNode = currentNode.traverseNextNode(node);
+  }
+  return buffer;
 };
 
 (function() {

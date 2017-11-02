@@ -103,7 +103,8 @@ void IdleSpellCheckCallback::SetNeedsInvocation() {
 }
 
 void IdleSpellCheckCallback::SetNeedsColdModeInvocation() {
-  if (!IsSpellCheckingEnabled()) {
+  if (!RuntimeEnabledFeatures::IdleTimeColdModeSpellCheckingEnabled() ||
+      !IsSpellCheckingEnabled()) {
     Deactivate();
     return;
   }
@@ -121,6 +122,7 @@ void IdleSpellCheckCallback::SetNeedsColdModeInvocation() {
 }
 
 void IdleSpellCheckCallback::ColdModeTimerFired(TimerBase*) {
+  DCHECK(RuntimeEnabledFeatures::IdleTimeColdModeSpellCheckingEnabled());
   DCHECK_EQ(State::kColdModeTimerStarted, state_);
 
   if (!IsSpellCheckingEnabled()) {
@@ -153,12 +155,17 @@ void IdleSpellCheckCallback::HotModeInvocation(IdleDeadline* deadline) {
         std::max(step->SequenceNumber(), last_processed_undo_step_sequence_);
     if (deadline->timeRemaining() == 0)
       break;
+    // The ending selection stored in undo stack can be invalid, disconnected
+    // or have been moved to another document, so we should check its validity
+    // before using it.
+    if (!step->EndingSelection().IsValidFor(*GetFrame().GetDocument()))
+      continue;
     requester.CheckSpellingAt(step->EndingSelection().Extent());
   }
 }
 
 void IdleSpellCheckCallback::handleEvent(IdleDeadline* deadline) {
-  DCHECK(RuntimeEnabledFeatures::idleTimeSpellCheckingEnabled());
+  DCHECK(RuntimeEnabledFeatures::IdleTimeSpellCheckingEnabled());
   DCHECK(GetFrame().GetDocument());
   DCHECK(GetFrame().GetDocument()->IsActive());
   DCHECK_NE(idle_callback_handle_, kInvalidHandle);
@@ -174,6 +181,7 @@ void IdleSpellCheckCallback::handleEvent(IdleDeadline* deadline) {
     HotModeInvocation(deadline);
     SetNeedsColdModeInvocation();
   } else if (state_ == State::kColdModeRequested) {
+    DCHECK(RuntimeEnabledFeatures::IdleTimeColdModeSpellCheckingEnabled());
     state_ = State::kInColdModeInvocation;
     cold_mode_requester_->Invoke(deadline);
     if (cold_mode_requester_->FullDocumentChecked())

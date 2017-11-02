@@ -15,18 +15,19 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/threading/thread.h"
-#include "base/trace_event/memory_dump_manager.h"
-#include "base/trace_event/process_memory_dump.h"
 #include "components/leveldb_proto/leveldb_database.h"
 #include "components/leveldb_proto/testing/proto/test.pb.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/leveldatabase/env_chromium.h"
 #include "third_party/leveldatabase/src/include/leveldb/options.h"
 
 using base::MessageLoop;
 using base::ScopedTempDir;
+using leveldb_env::SharedReadCache;
 using testing::Invoke;
 using testing::Return;
 using testing::UnorderedElementsAre;
@@ -124,13 +125,14 @@ TEST_F(ProtoDatabaseImplTest, TestDBInitSuccess) {
   base::FilePath path(FILE_PATH_LITERAL("/fake/path"));
 
   MockDB* mock_db = new MockDB();
-  EXPECT_CALL(*mock_db, Init(Options(path))).WillOnce(Return(true));
+  EXPECT_CALL(*mock_db, Init(Options(path, SharedReadCache::Default)))
+      .WillOnce(Return(true));
 
   MockDatabaseCaller caller;
   EXPECT_CALL(caller, InitCallback(true));
 
   db_->InitWithDatabase(
-      base::WrapUnique(mock_db), path,
+      base::WrapUnique(mock_db), Options(path, SharedReadCache::Default),
       base::Bind(&MockDatabaseCaller::InitCallback, base::Unretained(&caller)));
 
   base::RunLoop().RunUntilIdle();
@@ -140,13 +142,14 @@ TEST_F(ProtoDatabaseImplTest, TestDBInitFailure) {
   base::FilePath path(FILE_PATH_LITERAL("/fake/path"));
 
   MockDB* mock_db = new MockDB();
-  EXPECT_CALL(*mock_db, Init(Options(path))).WillOnce(Return(false));
+  EXPECT_CALL(*mock_db, Init(Options(path, SharedReadCache::Default)))
+      .WillOnce(Return(false));
 
   MockDatabaseCaller caller;
   EXPECT_CALL(caller, InitCallback(false));
 
   db_->InitWithDatabase(
-      base::WrapUnique(mock_db), path,
+      base::WrapUnique(mock_db), Options(path, SharedReadCache::Default),
       base::Bind(&MockDatabaseCaller::InitCallback, base::Unretained(&caller)));
 
   base::RunLoop().RunUntilIdle();
@@ -179,7 +182,7 @@ TEST_F(ProtoDatabaseImplTest, TestDBLoadSuccess) {
   EXPECT_CALL(*mock_db, Init(_));
   EXPECT_CALL(caller, InitCallback(_));
   db_->InitWithDatabase(
-      base::WrapUnique(mock_db), path,
+      base::WrapUnique(mock_db), Options(path, SharedReadCache::Default),
       base::Bind(&MockDatabaseCaller::InitCallback, base::Unretained(&caller)));
 
   EXPECT_CALL(*mock_db, Load(_)).WillOnce(AppendLoadEntries(model));
@@ -200,7 +203,7 @@ TEST_F(ProtoDatabaseImplTest, TestDBLoadFailure) {
   EXPECT_CALL(*mock_db, Init(_));
   EXPECT_CALL(caller, InitCallback(_));
   db_->InitWithDatabase(
-      base::WrapUnique(mock_db), path,
+      base::WrapUnique(mock_db), Options(path, SharedReadCache::Default),
       base::Bind(&MockDatabaseCaller::InitCallback, base::Unretained(&caller)));
 
   EXPECT_CALL(*mock_db, Load(_)).WillOnce(Return(false));
@@ -240,7 +243,7 @@ TEST_F(ProtoDatabaseImplTest, TestDBGetSuccess) {
   EXPECT_CALL(*mock_db, Init(_));
   EXPECT_CALL(caller, InitCallback(_));
   db_->InitWithDatabase(
-      base::WrapUnique(mock_db), path,
+      base::WrapUnique(mock_db), Options(path, SharedReadCache::Default),
       base::Bind(&MockDatabaseCaller::InitCallback, base::Unretained(&caller)));
 
   std::string key("1");
@@ -314,7 +317,7 @@ TEST_F(ProtoDatabaseImplTest, TestDBGetNotFound) {
   EXPECT_CALL(*mock_db, Init(_));
   EXPECT_CALL(caller, InitCallback(_));
   db_->InitWithDatabase(
-      base::WrapUnique(mock_db), path,
+      base::WrapUnique(mock_db), Options(path, SharedReadCache::Default),
       base::Bind(&MockDatabaseCaller::InitCallback, base::Unretained(&caller)));
 
   std::string key("does_not_exist");
@@ -337,7 +340,7 @@ TEST_F(ProtoDatabaseImplTest, TestDBGetFailure) {
   EXPECT_CALL(*mock_db, Init(_));
   EXPECT_CALL(caller, InitCallback(_));
   db_->InitWithDatabase(
-      base::WrapUnique(mock_db), path,
+      base::WrapUnique(mock_db), Options(path, SharedReadCache::Default),
       base::Bind(&MockDatabaseCaller::InitCallback, base::Unretained(&caller)));
 
   std::string key("does_not_exist");
@@ -382,7 +385,7 @@ TEST_F(ProtoDatabaseImplTest, TestDBSaveSuccess) {
   EXPECT_CALL(*mock_db, Init(_));
   EXPECT_CALL(caller, InitCallback(_));
   db_->InitWithDatabase(
-      base::WrapUnique(mock_db), path,
+      base::WrapUnique(mock_db), Options(path, SharedReadCache::Default),
       base::Bind(&MockDatabaseCaller::InitCallback, base::Unretained(&caller)));
 
   std::unique_ptr<ProtoDatabase<TestProto>::KeyEntryVector> entries(
@@ -413,7 +416,7 @@ TEST_F(ProtoDatabaseImplTest, TestDBSaveFailure) {
   EXPECT_CALL(*mock_db, Init(_));
   EXPECT_CALL(caller, InitCallback(_));
   db_->InitWithDatabase(
-      base::WrapUnique(mock_db), path,
+      base::WrapUnique(mock_db), Options(path, SharedReadCache::Default),
       base::Bind(&MockDatabaseCaller::InitCallback, base::Unretained(&caller)));
 
   EXPECT_CALL(*mock_db, Save(_, _)).WillOnce(Return(false));
@@ -438,7 +441,7 @@ TEST_F(ProtoDatabaseImplTest, TestDBRemoveSuccess) {
   EXPECT_CALL(*mock_db, Init(_));
   EXPECT_CALL(caller, InitCallback(_));
   db_->InitWithDatabase(
-      base::WrapUnique(mock_db), path,
+      base::WrapUnique(mock_db), Options(path, SharedReadCache::Default),
       base::Bind(&MockDatabaseCaller::InitCallback, base::Unretained(&caller)));
 
   std::unique_ptr<ProtoDatabase<TestProto>::KeyEntryVector> entries(
@@ -469,7 +472,7 @@ TEST_F(ProtoDatabaseImplTest, TestDBRemoveFailure) {
   EXPECT_CALL(*mock_db, Init(_));
   EXPECT_CALL(caller, InitCallback(_));
   db_->InitWithDatabase(
-      base::WrapUnique(mock_db), path,
+      base::WrapUnique(mock_db), Options(path, SharedReadCache::Default),
       base::Bind(&MockDatabaseCaller::InitCallback, base::Unretained(&caller)));
 
   EXPECT_CALL(*mock_db, Save(_, _)).WillOnce(Return(false));
@@ -545,8 +548,6 @@ TEST(ProtoDatabaseImplThreadingTest, TestDBDestroy) {
 // entries. If |close_after_save| is true, the database will be closed after
 // saving and then re-opened to ensure that the data is properly persisted.
 void TestLevelDBSaveAndLoad(bool close_after_save) {
-  base::MessageLoop main_loop;
-
   ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
 
@@ -562,12 +563,13 @@ void TestLevelDBSaveAndLoad(bool close_after_save) {
   }
 
   std::unique_ptr<LevelDB> db(new LevelDB(kTestLevelDBClientName));
-  EXPECT_TRUE(db->Init(temp_dir.GetPath()));
+  EXPECT_TRUE(db->Init(Options(temp_dir.GetPath(), SharedReadCache::Default)));
   EXPECT_TRUE(db->Save(save_entries, remove_keys));
 
   if (close_after_save) {
     db.reset(new LevelDB(kTestLevelDBClientName));
-    EXPECT_TRUE(db->Init(temp_dir.GetPath()));
+    EXPECT_TRUE(
+        db->Init(Options(temp_dir.GetPath(), SharedReadCache::Default)));
   }
 
   EXPECT_TRUE(db->Load(&load_entries));
@@ -595,7 +597,7 @@ TEST(ProtoDatabaseImplLevelDBTest, TestDBInitFail) {
   ScopedTempDir temp_dir;
   ASSERT_TRUE(temp_dir.CreateUniqueTempDir());
 
-  leveldb::Options options;
+  leveldb_env::Options options;
   options.create_if_missing = false;
   std::unique_ptr<LevelDB> db(new LevelDB(kTestLevelDBClientName));
 
@@ -609,13 +611,11 @@ TEST(ProtoDatabaseImplLevelDBTest, TestDBInitFail) {
 }
 
 TEST(ProtoDatabaseImplLevelDBTest, TestMemoryDatabase) {
-  base::MessageLoop main_loop;
-
   std::unique_ptr<LevelDB> db(new LevelDB(kTestLevelDBClientName));
 
   std::vector<std::string> load_entries;
 
-  ASSERT_TRUE(db->Init(base::FilePath()));
+  ASSERT_TRUE(db->Init(Options(base::FilePath(), SharedReadCache::Default)));
 
   ASSERT_TRUE(db->Load(&load_entries));
   EXPECT_EQ(0u, load_entries.size());
@@ -629,33 +629,6 @@ TEST(ProtoDatabaseImplLevelDBTest, TestMemoryDatabase) {
 
   ASSERT_TRUE(db->Load(&second_load_entries));
   EXPECT_EQ(1u, second_load_entries.size());
-}
-
-TEST(ProtoDatabaseImplLevelDBTest, TestOnMemoryDumpEmitsData) {
-  base::MessageLoop main_loop;
-  std::unique_ptr<LevelDB> db(new LevelDB(kTestLevelDBClientName));
-  std::vector<std::string> load_entries;
-  ASSERT_TRUE(db->Init(base::FilePath()));
-  KeyValueVector save_entries(1, std::make_pair("foo", "bar"));
-  KeyVector remove_keys;
-  ASSERT_TRUE(db->Save(save_entries, remove_keys));
-
-  base::trace_event::MemoryDumpArgs dump_args = {
-      base::trace_event::MemoryDumpLevelOfDetail::DETAILED};
-  std::unique_ptr<base::trace_event::ProcessMemoryDump> process_memory_dump(
-      new base::trace_event::ProcessMemoryDump(nullptr, dump_args));
-  db->OnMemoryDump(dump_args, process_memory_dump.get());
-
-  const auto& allocator_dumps = process_memory_dump->allocator_dumps();
-  const char* system_allocator_pool_name =
-      base::trace_event::MemoryDumpManager::GetInstance()
-          ->system_allocator_pool_name();
-  size_t expected_dump_count = system_allocator_pool_name ? 2 : 1;
-  EXPECT_EQ(expected_dump_count, allocator_dumps.size());
-  for (const auto& dump : allocator_dumps) {
-    ASSERT_TRUE(dump.first.find("leveldb/leveldb_proto/") == 0 ||
-                dump.first.find(system_allocator_pool_name) == 0);
-  }
 }
 
 }  // namespace leveldb_proto

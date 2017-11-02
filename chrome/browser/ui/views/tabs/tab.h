@@ -12,9 +12,11 @@
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "cc/paint/paint_record.h"
 #include "chrome/browser/ui/views/tabs/tab_renderer_data.h"
 #include "ui/base/layout.h"
 #include "ui/gfx/animation/animation_delegate.h"
+#include "ui/gfx/animation/linear_animation.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/paint_throbber.h"
@@ -52,8 +54,8 @@ class Tab : public gfx::AnimationDelegate,
   // The Tab's class name.
   static const char kViewClassName[];
 
-  // The amount of overlap between two adjacent tabs.
-  static constexpr int kOverlap = 16;
+  // The combined width of the curves at the top and bottom of the endcap.
+  static constexpr float kMinimumEndcapWidth = 4;
 
   Tab(TabController* controller, gfx::AnimationContainer* container);
   ~Tab() override;
@@ -93,16 +95,16 @@ class Tab : public gfx::AnimationDelegate,
   void SetData(const TabRendererData& data);
   const TabRendererData& data() const { return data_; }
 
-  // Sets the network state.
-  void UpdateLoadingAnimation(TabRendererData::NetworkState state);
+  // Redraws the loading animation if one is visible. Otherwise, no-op.
+  void StepLoadingAnimation();
 
   // Starts/Stops a pulse animation.
   void StartPulse();
   void StopPulse();
 
-  // Sets the visibility of the indicator shown when the tab title changes of
-  // an inactive pinned tab.
-  void SetPinnedTabTitleChangedIndicatorVisible(bool value);
+  // Sets the visibility of the indicator shown when the tab needs to indicate
+  // to the user that it needs their attention.
+  void SetTabNeedsAttention(bool value);
 
   // Set the background offset used to match the image in the inactive tab
   // to the frame image.
@@ -130,17 +132,6 @@ class Tab : public gfx::AnimationDelegate,
   // be updated.
   void HideCloseButtonForInactiveTabsChanged() { Layout(); }
 
-  // Returns the inset within the first dragged tab to use when calculating the
-  // "drag insertion point".  If we simply used the x-coordinate of the tab,
-  // we'd be calculating based on a point well before where the user considers
-  // the tab to "be".  The value here is chosen to "feel good" based on the
-  // widths of the tab images and the tab overlap.
-  //
-  // Note that this must return a value smaller than the midpoint of any tab's
-  // width, or else the user won't be able to drag a tab to the left of the
-  // first tab in the strip.
-  static int leading_width_for_drag() { return 16; }
-
   // Returns the minimum possible size of a single unselected Tab.
   static gfx::Size GetMinimumInactiveSize();
 
@@ -166,6 +157,9 @@ class Tab : public gfx::AnimationDelegate,
   // values for the vertical distances between points and then compute the
   // horizontal deltas from those.
   static float GetInverseDiagonalSlope();
+
+  // Returns the overlap between adjacent tabs.
+  static int GetOverlap();
 
  private:
   friend class AlertIndicatorButtonTest;
@@ -235,24 +229,41 @@ class Tab : public gfx::AnimationDelegate,
   // Paints a tab background using the image defined by |fill_id| at the
   // provided offset. If |fill_id| is 0, it will fall back to using the solid
   // color defined by the theme provider and ignore the offset.
-  void PaintTabBackgroundUsingFillId(gfx::Canvas* fill_canvas,
-                                     gfx::Canvas* stroke_canvas,
-                                     bool is_active,
-                                     int fill_id,
-                                     int y_offset);
+  void PaintTabBackground(gfx::Canvas* canvas,
+                          bool active,
+                          int fill_id,
+                          int y_offset,
+                          const gfx::Path* clip);
 
-  // Paints the pinned tab title changed indicator and |favicon_|. |favicon_|
-  // may be null. |favicon_draw_bounds| is |favicon_bounds_| adjusted for rtl
-  // and clipped to the bounds of the tab.
-  void PaintPinnedTabTitleChangedIndicatorAndIcon(
-      gfx::Canvas* canvas,
-      const gfx::Rect& favicon_draw_bounds);
+  // Helper methods for PaintTabBackground.
+  void PaintTabBackgroundFill(gfx::Canvas* canvas,
+                              const gfx::Path& fill_path,
+                              bool active,
+                              bool hover,
+                              SkColor active_color,
+                              SkColor inactive_color,
+                              int fill_id,
+                              int y_offset);
+  void PaintTabBackgroundStroke(gfx::Canvas* canvas,
+                                const gfx::Path& fill_path,
+                                const gfx::Path& stroke_path,
+                                bool active,
+                                SkColor color);
+
+  // Paints the attention indicator and |favicon_|. |favicon_| may be null.
+  // |favicon_draw_bounds| is |favicon_bounds_| adjusted for rtl and clipped to
+  // the bounds of the tab.
+  void PaintAttentionIndicatorAndIcon(gfx::Canvas* canvas,
+                                      const gfx::Rect& favicon_draw_bounds);
 
   // Paints the favicon, mirrored for RTL if needed.
   void PaintIcon(gfx::Canvas* canvas);
 
-  // Invoked if data_.network_state changes, or the network_state is not none.
-  void AdvanceLoadingAnimation();
+  // Updates the throbber.
+  void UpdateThrobber(const TabRendererData& old);
+
+  // Sets the throbber visibility according to the state in |data_|.
+  void RefreshThrobber();
 
   // Returns the number of favicon-size elements that can fit in the tab's
   // current size.
@@ -310,20 +321,26 @@ class Tab : public gfx::AnimationDelegate,
 
   bool should_display_crashed_favicon_;
 
-  bool showing_pinned_tab_title_changed_indicator_ = false;
+  bool showing_attention_indicator_ = false;
 
   // Whole-tab throbbing "pulse" animation.
-  std::unique_ptr<gfx::ThrobAnimation> pulse_animation_;
+  gfx::ThrobAnimation pulse_animation_;
 
   // Crash icon animation (in place of favicon).
-  std::unique_ptr<gfx::LinearAnimation> crash_icon_animation_;
+  std::unique_ptr<FaviconCrashAnimation> crash_icon_animation_;
 
   scoped_refptr<gfx::AnimationContainer> animation_container_;
 
   ThrobberView* throbber_;
   AlertIndicatorButton* alert_indicator_button_;
   views::ImageButton* close_button_;
+
   views::Label* title_;
+  // The title's bounds are animated when switching between showing and hiding
+  // the tab's favicon/throbber.
+  gfx::Rect start_title_bounds_;
+  gfx::Rect target_title_bounds_;
+  gfx::LinearAnimation title_animation_;
 
   bool tab_activated_with_last_tap_down_;
 
@@ -354,6 +371,50 @@ class Tab : public gfx::AnimationDelegate,
   // data().favicon and may be modified for theming. It is created on demand
   // and thus may be null.
   gfx::ImageSkia favicon_;
+
+  class BackgroundCache {
+   public:
+    BackgroundCache();
+    ~BackgroundCache();
+
+    bool CacheKeyMatches(float scale,
+                         const gfx::Size& size,
+                         SkColor active_color,
+                         SkColor inactive_color,
+                         SkColor stroke_color) {
+      return scale_ == scale && size_ == size &&
+             active_color_ == active_color &&
+             inactive_color_ == inactive_color && stroke_color_ == stroke_color;
+    }
+
+    void SetCacheKey(float scale,
+                     const gfx::Size& size,
+                     SkColor active_color,
+                     SkColor inactive_color,
+                     SkColor stroke_color) {
+      scale_ = scale;
+      size_ = size;
+      active_color_ = active_color;
+      inactive_color_ = inactive_color;
+      stroke_color_ = stroke_color;
+    }
+
+    // The PaintRecords being cached based on the input parameters.
+    sk_sp<cc::PaintRecord> fill_record;
+    sk_sp<cc::PaintRecord> stroke_record;
+
+   private:
+    // Parameters used to construct the PaintRecords.
+    float scale_ = 0.f;
+    gfx::Size size_;
+    SkColor active_color_ = 0;
+    SkColor inactive_color_ = 0;
+    SkColor stroke_color_ = 0;
+  };
+
+  // Cache of the paint output for tab backgrounds.
+  BackgroundCache background_active_cache_;
+  BackgroundCache background_inactive_cache_;
 
   DISALLOW_COPY_AND_ASSIGN(Tab);
 };

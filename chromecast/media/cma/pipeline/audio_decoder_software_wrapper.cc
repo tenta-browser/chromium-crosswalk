@@ -15,6 +15,26 @@
 namespace chromecast {
 namespace media {
 
+namespace {
+const int kMonoChannelCount = 1;
+const int kStereoChannelCount = 2;
+const int k5_1ChannelCount = 6;
+
+bool IsChannelLayoutSupported(AudioConfig config) {
+  if (config.channel_number == kMonoChannelCount ||
+      config.channel_number == kStereoChannelCount)
+    return true;
+
+  // Only supports 5.1 for Opus.
+  if (config.channel_number == k5_1ChannelCount &&
+      config.codec == AudioCodec::kCodecOpus)
+    return true;
+
+  return false;
+}
+
+} // namespace
+
 AudioDecoderSoftwareWrapper::AudioDecoderSoftwareWrapper(
     MediaPipelineBackend::AudioDecoder* backend_decoder)
     : backend_decoder_(backend_decoder),
@@ -64,7 +84,7 @@ bool AudioDecoderSoftwareWrapper::SetConfig(const AudioConfig& config) {
   }
 
   if (!CreateSoftwareDecoder(config)) {
-    LOG(INFO) << "Failed to create software decoder";
+    LOG(INFO) << "Failed to create software decoder for " << config.codec;
     return false;
   }
 
@@ -72,7 +92,7 @@ bool AudioDecoderSoftwareWrapper::SetConfig(const AudioConfig& config) {
 
   output_config_.codec = media::kCodecPCM;
   output_config_.sample_format = media::kSampleFormatS16;
-  output_config_.channel_number = 2;
+  output_config_.channel_number = config.channel_number;
   output_config_.bytes_per_channel = 2;
   output_config_.samples_per_second = config.samples_per_second;
   output_config_.encryption_scheme = Unencrypted();
@@ -90,6 +110,11 @@ AudioDecoderSoftwareWrapper::GetRenderingDelay() {
 
 bool AudioDecoderSoftwareWrapper::CreateSoftwareDecoder(
     const AudioConfig& config) {
+  if (!IsChannelLayoutSupported(config)) {
+    LOG(ERROR) << "Software audio decoding is not supported for channel: "
+               << config.channel_number << " with codec: " << config.codec;
+    return false;
+  }
   // TODO(kmackay) Consider using planar float instead.
   software_decoder_ = media::CastAudioDecoder::Create(
       base::ThreadTaskRunnerHandle::Get(), config,

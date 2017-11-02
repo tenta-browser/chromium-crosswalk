@@ -35,6 +35,14 @@
 
 namespace blink {
 
+WebURLError::WebURLError(const WebURL& unreachable_url,
+                         bool stale_copy_in_cache,
+                         int reason) {
+  // This is implemented in ResourceError.h due to a DEPS restriction.
+  ResourceError::InitializeWebURLError(this, unreachable_url,
+                                       stale_copy_in_cache, reason);
+}
+
 WebURLError::WebURLError(const ResourceError& error) {
   *this = error;
 }
@@ -43,14 +51,12 @@ WebURLError& WebURLError::operator=(const ResourceError& error) {
   if (error.IsNull()) {
     *this = WebURLError();
   } else {
-    domain = error.Domain();
+    domain = error.GetDomain();
     reason = error.ErrorCode();
     unreachable_url = KURL(kParsedURLString, error.FailingURL());
-    is_cancellation = error.IsCancellation();
     stale_copy_in_cache = error.StaleCopyInCache();
     localized_description = error.LocalizedDescription();
-    was_ignored_by_handler = error.WasIgnoredByHandler();
-    is_cache_miss = error.IsCacheMiss();
+    is_web_security_violation = error.IsAccessCheck();
   }
   return *this;
 }
@@ -58,13 +64,26 @@ WebURLError& WebURLError::operator=(const ResourceError& error) {
 WebURLError::operator ResourceError() const {
   if (!reason)
     return ResourceError();
-  ResourceError resource_error = ResourceError(
-      domain, reason, unreachable_url.GetString(), localized_description);
-  resource_error.SetIsCancellation(is_cancellation);
+  ResourceError resource_error =
+      ResourceError(domain, reason, unreachable_url, localized_description);
   resource_error.SetStaleCopyInCache(stale_copy_in_cache);
-  resource_error.SetWasIgnoredByHandler(was_ignored_by_handler);
-  resource_error.SetIsCacheMiss(is_cache_miss);
+  resource_error.SetIsAccessCheck(is_web_security_violation);
   return resource_error;
+}
+
+std::ostream& operator<<(std::ostream& out, const WebURLError::Domain domain) {
+  switch (domain) {
+    case WebURLError::Domain::kEmpty:
+      out << "(null)";
+      break;
+    case WebURLError::Domain::kNet:
+      out << "net";
+      break;
+    case WebURLError::Domain::kTest:
+      out << "testing";
+      break;
+  }
+  return out;
 }
 
 }  // namespace blink

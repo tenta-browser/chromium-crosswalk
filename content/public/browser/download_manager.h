@@ -34,7 +34,7 @@
 
 #include "base/callback.h"
 #include "base/files/file_path.h"
-#include "base/sequenced_task_runner_helpers.h"
+#include "base/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "content/public/browser/download_interrupt_reasons.h"
 #include "content/public/browser/download_item.h"
@@ -54,6 +54,10 @@ struct DownloadCreateInfo;
 class CONTENT_EXPORT DownloadManager : public base::SupportsUserData::Data {
  public:
   ~DownloadManager() override {}
+
+  // Returns the task runner that's used for all download-related blocking
+  // tasks, such as file IO.
+  static scoped_refptr<base::SequencedTaskRunner> GetTaskRunner();
 
   // Sets/Gets the delegate for this DownloadManager. The delegate has to live
   // past its Shutdown method being called (by the DownloadManager).
@@ -80,9 +84,8 @@ class CONTENT_EXPORT DownloadManager : public base::SupportsUserData::Data {
     virtual void OnDownloadCreated(
         DownloadManager* manager, DownloadItem* item) {}
 
-    // A SavePackage has successfully finished.
-    virtual void OnSavePackageSuccessfullyFinished(
-        DownloadManager* manager, DownloadItem* item) {}
+    // Called when the download manager has finished loading the data.
+    virtual void OnManagerInitialized() {}
 
     // Called when the DownloadManager is being destroyed to prevent Observers
     // from calling back to a stale pointer.
@@ -154,6 +157,12 @@ class CONTENT_EXPORT DownloadManager : public base::SupportsUserData::Data {
       base::Time last_access_time,
       bool transient,
       const std::vector<DownloadItem::ReceivedSlice>& received_slices) = 0;
+
+  // Called when download manager has loaded all the data.
+  virtual void PostInitialization() = 0;
+
+  // Returns if the manager has been initialized and loaded all the data.
+  virtual bool IsManagerInitialized() const = 0;
 
   // The number of in progress (including paused) downloads.
   // Performance note: this loops over all items. If profiling finds that this

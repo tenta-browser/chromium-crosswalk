@@ -6,7 +6,6 @@
 
 #include <stddef.h>
 
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -17,10 +16,11 @@
 #include "cc/base/math_util.h"
 #include "cc/output/bsp_tree.h"
 #include "cc/output/bsp_walk_action.h"
-#include "cc/output/copy_output_request.h"
-#include "cc/output/renderer_settings.h"
+#include "cc/output/output_surface.h"
 #include "cc/quads/draw_quad.h"
 #include "cc/resources/scoped_resource.h"
+#include "components/viz/common/display/renderer_settings.h"
+#include "components/viz/common/quads/copy_output_request.h"
 #include "ui/gfx/geometry/quad_f.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/transform.h"
@@ -76,9 +76,9 @@ namespace cc {
 DirectRenderer::DrawingFrame::DrawingFrame() = default;
 DirectRenderer::DrawingFrame::~DrawingFrame() = default;
 
-DirectRenderer::DirectRenderer(const RendererSettings* settings,
+DirectRenderer::DirectRenderer(const viz::RendererSettings* settings,
                                OutputSurface* output_surface,
-                               ResourceProvider* resource_provider)
+                               DisplayResourceProvider* resource_provider)
     : settings_(settings),
       output_surface_(output_surface),
       resource_provider_(resource_provider),
@@ -178,31 +178,31 @@ void DirectRenderer::DecideRenderPassAllocationsForFrame(
     const RenderPassList& render_passes_in_draw_order) {
   render_pass_bypass_quads_.clear();
 
-  std::unordered_map<int, gfx::Size> render_passes_in_frame;
-  RenderPass* root_render_pass = render_passes_in_draw_order.back().get();
-  for (size_t i = 0; i < render_passes_in_draw_order.size(); ++i) {
-    RenderPass* pass = render_passes_in_draw_order[i].get();
+  auto& root_render_pass = render_passes_in_draw_order.back();
+
+  base::flat_map<RenderPassId, gfx::Size> render_passes_in_frame;
+  for (const auto& pass : render_passes_in_draw_order) {
     if (pass != root_render_pass) {
-      if (const TileDrawQuad* tile_quad = CanPassBeDrawnDirectly(pass)) {
+      if (const TileDrawQuad* tile_quad = CanPassBeDrawnDirectly(pass.get())) {
+        // If the render pass is drawn directly, it will not be drawn from as
+        // a render pass so it's not added to the map.
         render_pass_bypass_quads_[pass->id] = *tile_quad;
         continue;
       }
     }
-    render_passes_in_frame.insert(
-        std::pair<int, gfx::Size>(pass->id, RenderPassTextureSize(pass)));
+    render_passes_in_frame[pass->id] = RenderPassTextureSize(pass.get());
   }
 
-  std::vector<int> passes_to_delete;
-  for (auto pass_iter = render_pass_textures_.begin();
-       pass_iter != render_pass_textures_.end(); ++pass_iter) {
-    auto it = render_passes_in_frame.find(pass_iter->first);
+  std::vector<RenderPassId> passes_to_delete;
+  for (const auto& pair : render_pass_textures_) {
+    auto it = render_passes_in_frame.find(pair.first);
     if (it == render_passes_in_frame.end()) {
-      passes_to_delete.push_back(pass_iter->first);
+      passes_to_delete.push_back(pair.first);
       continue;
     }
 
     gfx::Size required_size = it->second;
-    ScopedResource* texture = pass_iter->second.get();
+    ScopedResource* texture = pair.second.get();
     DCHECK(texture);
 
     bool size_appropriate = texture->size().width() >= required_size.width() &&
@@ -218,8 +218,15 @@ void DirectRenderer::DecideRenderPassAllocationsForFrame(
 
   for (auto& pass : render_passes_in_draw_order) {
     auto& resource = render_pass_textures_[pass->id];
-    if (!resource)
-      resource = base::MakeUnique<ScopedResource>(resource_provider_);
+    if (!resource) {
+      resource = std::make_unique<ScopedResource>(resource_provider_);
+
+      // |has_damage_from_contributing_content| is used to determine if previous
+      // contents can be reused when caching render pass and as a result needs
+      // to be true when a new resource is created to ensure that it is updated
+      // and not assumed to already contain correct contents.
+      pass->has_damage_from_contributing_content = true;
+    }
   }
 }
 
@@ -290,21 +297,9 @@ void DirectRenderer::DrawFrame(RenderPassList* render_passes_in_draw_order,
 
   for (const auto& pass : *render_passes_in_draw_order) {
     if (!pass->filters.IsEmpty())
-      render_pass_filters_.push_back(std::make_pair(pass->id, &pass->filters));
-    if (!pass->background_filters.IsEmpty()) {
-      render_pass_background_filters_.push_back(
-          std::make_pair(pass->id, &pass->background_filters));
-    }
-    std::sort(render_pass_filters_.begin(), render_pass_filters_.end());
-    std::sort(render_pass_background_filters_.begin(),
-              render_pass_background_filters_.end());
-  }
-
-  // Draw all non-root render passes except for the root render pass.
-  for (const auto& pass : *render_passes_in_draw_order) {
-    if (pass.get() == root_render_pass)
-      break;
-    DrawRenderPassAndExecuteCopyRequests(pass.get());
+      render_pass_filters_[pass->id] = &pass->filters;
+    if (!pass->background_filters.IsEmpty())
+      render_pass_background_filters_[pass->id] = &pass->background_filters;
   }
 
   // Create the overlay candidate for the output surface, and mark it as
@@ -313,8 +308,7 @@ void DirectRenderer::DrawFrame(RenderPassList* render_passes_in_draw_order,
     OverlayCandidate output_surface_plane;
     output_surface_plane.display_rect =
         gfx::RectF(root_render_pass->output_rect);
-    output_surface_plane.quad_rect_in_target_space =
-        root_render_pass->output_rect;
+    output_surface_plane.format = output_surface_->GetOverlayBufferFormat();
     output_surface_plane.use_output_surface_for_resource = true;
     output_surface_plane.overlay_handled = true;
     current_frame()->overlay_list.push_back(output_surface_plane);
@@ -323,12 +317,20 @@ void DirectRenderer::DrawFrame(RenderPassList* render_passes_in_draw_order,
   // Attempt to replace some or all of the quads of the root render pass with
   // overlays.
   overlay_processor_->ProcessForOverlays(
-      resource_provider_, root_render_pass, render_pass_filters_,
+      resource_provider_, render_passes_in_draw_order, render_pass_filters_,
       render_pass_background_filters_, &current_frame()->overlay_list,
       &current_frame()->ca_layer_overlay_list,
       &current_frame()->dc_layer_overlay_list,
       &current_frame()->root_damage_rect,
       &current_frame()->root_content_bounds);
+
+  // Draw all non-root render passes except for the root render pass.
+  for (const auto& pass : *render_passes_in_draw_order) {
+    if (pass.get() == root_render_pass)
+      break;
+    DrawRenderPassAndExecuteCopyRequests(pass.get());
+  }
+
   bool was_using_dc_layers = using_dc_layers_;
   if (!current_frame()->dc_layer_overlay_list.empty()) {
     DCHECK(supports_dc_layers_);
@@ -461,25 +463,15 @@ void DirectRenderer::DoDrawPolygon(const DrawPolygon& poly,
 }
 
 const FilterOperations* DirectRenderer::FiltersForPass(
-    int render_pass_id) const {
-  auto it = std::lower_bound(
-      render_pass_filters_.begin(), render_pass_filters_.end(),
-      std::pair<int, FilterOperations*>(render_pass_id, nullptr));
-  if (it != render_pass_filters_.end() && it->first == render_pass_id)
-    return it->second;
-  return nullptr;
+    RenderPassId render_pass_id) const {
+  auto it = render_pass_filters_.find(render_pass_id);
+  return it == render_pass_filters_.end() ? nullptr : it->second;
 }
 
 const FilterOperations* DirectRenderer::BackgroundFiltersForPass(
-    int render_pass_id) const {
-  auto it = std::lower_bound(
-      render_pass_background_filters_.begin(),
-      render_pass_background_filters_.end(),
-      std::pair<int, FilterOperations*>(render_pass_id, nullptr));
-  if (it != render_pass_background_filters_.end() &&
-      it->first == render_pass_id)
-    return it->second;
-  return nullptr;
+    RenderPassId render_pass_id) const {
+  auto it = render_pass_background_filters_.find(render_pass_id);
+  return it == render_pass_background_filters_.end() ? nullptr : it->second;
 }
 
 void DirectRenderer::FlushPolygons(
@@ -504,7 +496,10 @@ void DirectRenderer::DrawRenderPassAndExecuteCopyRequests(
     return;
   }
 
-  DrawRenderPass(render_pass);
+  // Repeated draw to simulate a slower device for the evaluation of performance
+  // improvements in UI effects.
+  for (int i = 0; i < settings_->slow_down_compositing_scale_factor; ++i)
+    DrawRenderPass(render_pass);
 
   bool first_request = true;
   for (auto& copy_request : render_pass->copy_requests) {
@@ -640,6 +635,11 @@ bool DirectRenderer::UseRenderPass(const RenderPass* render_pass) {
     texture->Allocate(
         size, ResourceProvider::TEXTURE_HINT_IMMUTABLE_FRAMEBUFFER,
         BackbufferFormat(), current_frame()->current_render_pass->color_space);
+  } else if (render_pass->cache_render_pass &&
+             !render_pass->has_damage_from_contributing_content) {
+    return false;
+  } else if (current_frame()->ComputeScissorRectForRenderPass().IsEmpty()) {
+    return false;
   }
   DCHECK(texture->id());
 
@@ -653,7 +653,8 @@ bool DirectRenderer::UseRenderPass(const RenderPass* render_pass) {
   return false;
 }
 
-bool DirectRenderer::HasAllocatedResourcesForTesting(int render_pass_id) const {
+bool DirectRenderer::HasAllocatedResourcesForTesting(
+    RenderPassId render_pass_id) const {
   auto iter = render_pass_textures_.find(render_pass_id);
   return iter != render_pass_textures_.end() && iter->second->id();
 }

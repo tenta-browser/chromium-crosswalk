@@ -11,10 +11,6 @@ package org.chromium.chrome.test.util;
 public final class ChromeRestriction {
     /** Specifies the test is only valid on a device that has up to date play services. */
     public static final String RESTRICTION_TYPE_GOOGLE_PLAY_SERVICES = "Google_Play_Services";
-    /** Specifies the test is only valid on phone form factors. */
-    public static final String RESTRICTION_TYPE_PHONE = "Phone";
-    /** Specifies the test is only valid on tablet form factors. */
-    public static final String RESTRICTION_TYPE_TABLET = "Tablet";
     /** Specifies the test is only valid on official build. */
     public static final String RESTRICTION_TYPE_OFFICIAL_BUILD = "Official_Build";
     /** Specifies the test is only valid on a Daydream-ready device */
@@ -25,8 +21,6 @@ public final class ChromeRestriction {
     public static final String RESTRICTION_TYPE_VIEWER_DAYDREAM = "Daydream_View";
     /** Specifies the test is only valid if the current VR viewer is not Daydream View */
     public static final String RESTRICTION_TYPE_VIEWER_NON_DAYDREAM = "Non_Daydream_View";
-    /** Specifies the test is only valid on devices that support WebVR */
-    public static final String RESTRICTION_TYPE_WEBVR_SUPPORTED = "WebVR_Supported";
-    /** Specifies the test is only valid on devices that do not support WebVR */
-    public static final String RESTRICTION_TYPE_WEBVR_UNSUPPORTED = "WebVR_Unsupported";
+    /** Specifies the test is only valid if the DON flow is not skipped */
+    public static final String RESTRICTION_TYPE_DON_ENABLED = "DON_Enabled";
 }

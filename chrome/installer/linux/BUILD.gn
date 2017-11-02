@@ -2,6 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/config/c++/c++.gni")
 import("//build/config/chrome_build.gni")
 import("//build/config/features.gni")
 import("//build/config/sanitizers/sanitizers.gni")
@@ -50,18 +51,6 @@ group("linux") {
   ]
 }
 
-# This target is provided for compatibility w/ GYP. Users should always
-# depend directly on :linux instead of this target (we set visibility
-# to the empty list to prevent unwanted callers).
-# TODO(GYP_GONE): Delete this target after we've migrated away from GYP and
-# updated the bots to build :linux instead.
-group("linux_packages_all") {
-  visibility = []
-  deps = [
-    ":linux",
-  ]
-}
-
 branding_dir = "//chrome/app/theme/$branding_path_component"
 branding_dir_100 =
     "//chrome/app/theme/default_100_percent/$branding_path_component"
@@ -96,11 +85,7 @@ copy("common_packaging_files") {
     ]
   }
 
-  if (current_cpu == "x86") {
-    sources += [ "//build/linux/bin/eu-strip" ]
-  } else if (current_cpu == "x64") {
-    sources += [ "/usr/bin/eu-strip" ]
-  }
+  sources += [ "//third_party/eu-strip/bin/eu-strip" ]
 
   outputs = [
     "$root_out_dir/installer/common/{{source_file_part}}",
@@ -114,8 +99,7 @@ copy("deb_packaging_files") {
     "debian/changelog.template",
     "debian/control.template",
     "debian/debian.menu",
-    "debian/expected_deps_ia32_jessie",
-    "debian/expected_deps_x64_jessie",
+    "debian/expected_deps_x64",
     "debian/postinst",
     "debian/postrm",
     "debian/prerm",
@@ -150,7 +134,6 @@ if (!is_chromeos) {
     sources = [
       "rpm/build.sh",
       "rpm/chrome.spec.template",
-      "rpm/expected_deps_i386",
       "rpm/expected_deps_x86_64",
     ]
     outputs = [
@@ -205,8 +188,9 @@ group("installer_deps") {
   if (!is_chromeos) {
     public_deps += [ ":rpm_packaging_files" ]
   }
-  if (use_custom_libcxx) {
-    public_deps += [ "//buildtools/third_party/libc++" ]
+
+  if (!libcpp_is_static && use_custom_libcxx) {
+    public_deps += [ "//buildtools/third_party/libc++:libc++" ]
   }
 }
 
@@ -254,7 +238,7 @@ template("linux_package") {
     ]
   }
 
-  if (use_custom_libcxx) {
+  if (!libcpp_is_static && use_custom_libcxx) {
     packaging_files_binaries += [ "$root_out_dir/libc++.so" ]
   }
 
@@ -317,7 +301,7 @@ template("linux_package") {
 
       inputs = packaging_files_binaries
       outputs = [
-        "$root_out_dir/google-chrome-${channel}_${chrome_version_full}-1.${rpm_arch}.rpm",
+        "$root_out_dir/google-chrome-${channel}-${chrome_version_full}-1.${rpm_arch}.rpm",
       ]
 
       args = [

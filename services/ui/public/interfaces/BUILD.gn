@@ -33,9 +33,12 @@ mojom("interfaces") {
     ":constants",
     "//cc/ipc:interfaces",
     "//gpu/ipc/common:interfaces",
+    "//media/gpu/mojo:jpeg_decoder",
+    "//media/mojo/interfaces",
     "//services/ui/public/interfaces/cursor",
     "//services/ui/public/interfaces/display",
     "//services/ui/public/interfaces/ime",
+    "//services/viz/public/interfaces",
     "//skia/public/interfaces",
     "//ui/base/mojo:mojo_bindings",
     "//ui/display/mojo:interfaces",
@@ -44,6 +47,9 @@ mojom("interfaces") {
     "//ui/gfx/mojo",
     "//ui/platform_window/mojo:interfaces",
   ]
+
+  # TODO(crbug.com/714018): Convert the implementation to use OnceCallback.
+  use_once_callback = false
 }
 
 mojom("constants") {
@@ -52,7 +58,7 @@ mojom("constants") {
   ]
 }
 
-test("ui_struct_traits_unittests") {
+source_set("tests") {
   testonly = true
 
   sources = [
@@ -63,7 +69,6 @@ test("ui_struct_traits_unittests") {
   deps = [
     "//base",
     "//base/test:test_support",
-    "//mojo/edk/test:run_all_unittests",
     "//services/ui/public/interfaces/cursor",
     "//services/ui/public/interfaces/ime:test_interfaces",
     "//skia/public/interfaces",

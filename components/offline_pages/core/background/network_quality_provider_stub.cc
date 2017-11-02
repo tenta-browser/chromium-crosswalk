@@ -24,24 +24,10 @@ NetworkQualityProviderStub* NetworkQualityProviderStub::GetUserData(
 // static
 void NetworkQualityProviderStub::SetUserData(
     base::SupportsUserData* supports_user_data,
-    NetworkQualityProviderStub* stub) {
+    std::unique_ptr<NetworkQualityProviderStub> stub) {
   DCHECK(supports_user_data);
   DCHECK(stub);
-  supports_user_data->SetUserData(&kOfflineNQPKey, stub);
-}
-
-void NetworkQualityProviderStub::AddEffectiveConnectionTypeObserver(
-    net::NetworkQualityEstimator::EffectiveConnectionTypeObserver* observer) {}
-
-void NetworkQualityProviderStub::RemoveEffectiveConnectionTypeObserver(
-    net::NetworkQualityEstimator::EffectiveConnectionTypeObserver* observer) {}
-
-void NetworkQualityProviderStub::AddRTTAndThroughputEstimatesObserver(
-    net::NetworkQualityEstimator::RTTAndThroughputEstimatesObserver* observer) {
-}
-
-void NetworkQualityProviderStub::RemoveRTTAndThroughputEstimatesObserver(
-    net::NetworkQualityEstimator::RTTAndThroughputEstimatesObserver* observer) {
+  supports_user_data->SetUserData(&kOfflineNQPKey, std::move(stub));
 }
 
 net::EffectiveConnectionType

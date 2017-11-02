@@ -48,14 +48,14 @@ Polymer({
   /** @override */
   ready: function() {
     this.browserProxy_ = settings.AboutPageBrowserProxyImpl.getInstance();
-    this.browserProxy_.getChannelInfo().then(function(info) {
+    this.browserProxy_.getChannelInfo().then(info => {
       this.currentChannel_ = info.currentChannel;
       this.targetChannel_ = info.targetChannel;
       // Pre-populate radio group with target channel.
       var radioGroup = this.$$('paper-radio-group');
       radioGroup.select(this.targetChannel_);
       radioGroup.focus();
-    }.bind(this));
+    });
   },
 
   /** @override */
@@ -139,7 +139,7 @@ Polymer({
     }
 
     if (settings.isTargetChannelMoreStable(
-        this.currentChannel_, selectedChannel)) {
+            this.currentChannel_, selectedChannel)) {
       // More stable channel selected. For non managed devices, notify the user
       // about powerwash.
       if (loadTimeData.getBoolean('aboutEnterpriseManaged')) {

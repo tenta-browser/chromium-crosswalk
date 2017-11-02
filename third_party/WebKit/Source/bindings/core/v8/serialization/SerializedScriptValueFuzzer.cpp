@@ -2,18 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "bindings/core/v8/SerializedScriptValue.h"
+#include "bindings/core/v8/serialization/SerializedScriptValue.h"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
 
-#include "bindings/core/v8/ScriptState.h"
-#include "bindings/core/v8/V8Binding.h"
-#include "bindings/core/v8/V8PerIsolateData.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "core/dom/MessagePort.h"
 #include "core/frame/Settings.h"
 #include "core/testing/DummyPageHolder.h"
+#include "platform/bindings/ScriptState.h"
+#include "platform/bindings/V8PerIsolateData.h"
 #include "platform/testing/BlinkFuzzerTestSupport.h"
 #include "platform/wtf/StringHasher.h"
 #include "public/platform/WebBlobInfo.h"
@@ -38,10 +38,12 @@ class WebMessagePortChannelImpl final : public WebMessagePortChannel {
  public:
   // WebMessagePortChannel
   void SetClient(WebMessagePortChannelClient* client) override {}
-  void PostMessage(const WebString&, WebMessagePortChannelArray) {
+  void PostMessage(const uint8_t*, size_t, WebMessagePortChannelArray) {
     NOTIMPLEMENTED();
   }
-  bool TryGetMessage(WebString*, WebMessagePortChannelArray&) { return false; }
+  bool TryGetMessage(WebVector<uint8_t>*, WebMessagePortChannelArray&) {
+    return false;
+  }
 };
 
 }  // namespace
@@ -49,7 +51,8 @@ class WebMessagePortChannelImpl final : public WebMessagePortChannel {
 int LLVMFuzzerInitialize(int* argc, char*** argv) {
   const char kExposeGC[] = "--expose_gc";
   v8::V8::SetFlagsFromString(kExposeGC, sizeof(kExposeGC));
-  InitializeBlinkFuzzTest(argc, argv);
+  static BlinkFuzzerTestSupport fuzzer_support =
+      BlinkFuzzerTestSupport(*argc, *argv);
   g_page_holder = DummyPageHolder::Create().release();
   g_page_holder->GetFrame().GetSettings()->SetScriptEnabled(true);
   g_blob_info_array = new WebBlobInfoArray();
@@ -72,14 +75,14 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   SerializedScriptValue::DeserializeOptions options;
 
   // If message ports are requested, make some.
-  MessagePortArray* message_ports = nullptr;
   if (hash & kFuzzMessagePorts) {
-    options.message_ports = new MessagePortArray(3);
+    MessagePortArray* message_ports = new MessagePortArray(3);
     std::generate(message_ports->begin(), message_ports->end(), []() {
       MessagePort* port = MessagePort::Create(g_page_holder->GetDocument());
       port->Entangle(WTF::MakeUnique<WebMessagePortChannelImpl>());
       return port;
     });
+    options.message_ports = message_ports;
   }
 
   // If blobs are requested, supply blob info.

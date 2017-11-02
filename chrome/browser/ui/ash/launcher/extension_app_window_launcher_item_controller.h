@@ -19,15 +19,21 @@ class ExtensionAppWindowLauncherItemController
     : public AppWindowLauncherItemController {
  public:
   explicit ExtensionAppWindowLauncherItemController(
-      const ash::AppLaunchId& app_launch_id);
+      const ash::ShelfID& shelf_id);
 
   ~ExtensionAppWindowLauncherItemController() override;
 
   void AddAppWindow(extensions::AppWindow* app_window);
 
+  // aura::WindowObserver overrides:
+  void OnWindowTitleChanged(aura::Window* window) override;
+
   // AppWindowLauncherItemController:
   ash::MenuItemList GetAppMenuItems(int event_flags) override;
-  void ExecuteCommand(uint32_t command_id, int32_t event_flags) override;
+  void ExecuteCommand(bool from_context_menu,
+                      int64_t command_id,
+                      int32_t event_flags,
+                      int64_t display_id) override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ExtensionAppWindowLauncherItemController);

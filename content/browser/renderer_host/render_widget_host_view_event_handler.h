@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "content/browser/renderer_host/input/mouse_wheel_phase_handler.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/native_web_keyboard_event.h"
 #include "ui/aura/window_tracker.h"
@@ -31,6 +32,7 @@ class TouchSelectionController;
 }
 
 namespace content {
+
 struct ContextMenuParams;
 class OverscrollController;
 class RenderWidgetHostImpl;
@@ -62,8 +64,10 @@ class CONTENT_EXPORT RenderWidgetHostViewEventHandler
     // to the renderer instead. |update_event| (if non-null) is set to indicate
     // whether ui::KeyEvent::SetHandled() should be called on the underlying
     // ui::KeyEvent.
-    virtual void ForwardKeyboardEvent(const NativeWebKeyboardEvent& event,
-                                      bool* update_event) = 0;
+    virtual void ForwardKeyboardEventWithLatencyInfo(
+        const NativeWebKeyboardEvent& event,
+        const ui::LatencyInfo& latency,
+        bool* update_event) = 0;
     // Returns whether the widget needs to grab mouse capture to work properly.
     virtual bool NeedsMouseCapture() = 0;
     virtual void SetTooltipsEnabled(bool enable) = 0;
@@ -106,6 +110,10 @@ class CONTENT_EXPORT RenderWidgetHostViewEventHandler
   // Begin tracking a host window, such as when RenderWidgetHostViewBase is
   // fullscreen.
   void TrackHost(aura::Window* reference_window);
+
+  MouseWheelPhaseHandler& mouse_wheel_phase_handler() {
+    return mouse_wheel_phase_handler_;
+  }
 
 #if defined(OS_WIN)
   // Sets the ContextMenuParams when a context menu is triggered. Required for
@@ -246,6 +254,7 @@ class CONTENT_EXPORT RenderWidgetHostViewEventHandler
   ui::EventHandler* popup_child_event_handler_;
   Delegate* const delegate_;
   aura::Window* window_;
+  MouseWheelPhaseHandler mouse_wheel_phase_handler_;
 
   DISALLOW_COPY_AND_ASSIGN(RenderWidgetHostViewEventHandler);
 };

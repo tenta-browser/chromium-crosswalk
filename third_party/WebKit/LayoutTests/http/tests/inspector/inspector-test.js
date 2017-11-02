@@ -1,3 +1,9 @@
+/**
+ * These test helper APIs are being migrated to
+ * third_party/WebKit/Source/devtools/front_end/integration_test_runner
+ * See crbug.com/667560
+ */
+
 if (window.GCController)
     GCController.collectAll();
 
@@ -44,16 +50,14 @@ InspectorTest.flushResults = function()
     results = [];
 }
 
-InspectorTest.evaluateInPage = function(code, callback)
+InspectorTest.evaluateInPage = async function(code, callback)
 {
-    callback = InspectorTest.safeWrap(callback);
-
-    function mycallback(error, result, exceptionDetails)
-    {
-        if (!error)
-            callback(InspectorTest.runtimeModel.createRemoteObject(result), exceptionDetails);
-    }
-    InspectorTest.RuntimeAgent.evaluate(code, "console", false, mycallback);
+    var response = await InspectorTest.RuntimeAgent.invoke_evaluate({
+        expression: code,
+        objectGroup: "console"
+    });
+    if (!response[Protocol.Error])
+        InspectorTest.safeWrap(callback)(InspectorTest.runtimeModel.createRemoteObject(response.result), response.exceptionDetails);
 }
 
 InspectorTest.addScriptUISourceCode = function(url, content, isContentScript, worldId) {
@@ -67,7 +71,7 @@ InspectorTest.addScriptUISourceCode = function(url, content, isContentScript, wo
 InspectorTest.addScriptForFrame = function(url, content, frame) {
     content += '\n//# sourceURL=' + url;
     var executionContext = InspectorTest.runtimeModel.executionContexts().find(context => context.frameId === frame.id);
-    InspectorTest.RuntimeAgent.evaluate(content, "console", false, false, executionContext.id, function() { });
+    InspectorTest.RuntimeAgent.evaluate(content, "console", false, false, executionContext.id);
 }
 
 InspectorTest.evaluateInPagePromise = function(code)
@@ -75,34 +79,25 @@ InspectorTest.evaluateInPagePromise = function(code)
     return new Promise(succ => InspectorTest.evaluateInPage(code, succ));
 }
 
-InspectorTest.evaluateInPageAsync = function(code)
+InspectorTest.evaluateInPageAsync = async function(code)
 {
-    var callback;
-    var promise = new Promise((fulfill) => { callback = fulfill });
-    InspectorTest.RuntimeAgent.evaluate(code,
-        "console",
-        /* includeCommandLineAPI */ false,
-        /* doNotPauseOnExceptionsAndMuteConsole */ undefined,
-        /* contextId */ undefined,
-        /* returnByValue */ undefined,
-        /* generatePreview */ undefined,
-        /* userGesture */ undefined,
-        /* awaitPromise */ true,
-        mycallback);
+    var response = await InspectorTest.RuntimeAgent.invoke_evaluate({
+        expression: code,
+        objectGroup: "console",
+        includeCommandLineAPI: false,
+        silent: undefined,
+        contextId: undefined,
+        returnByValue: undefined,
+        generatePreview: undefined,
+        userGesture: undefined,
+        awaitPromise: true
+    });
 
-    function mycallback(error, result, exceptionDetails)
-    {
-        if (!error && !exceptionDetails) {
-            callback(InspectorTest.runtimeModel.createRemoteObject(result));
-        } else {
-            if (error)
-                InspectorTest.addResult("Error: " + error);
-            else
-                InspectorTest.addResult("Error: " + (exceptionDetails ? exceptionDetails.text : " exception while evaluation in page."));
-            InspectorTest.completeTest();
-        }
-    }
-    return promise;
+    var error = response[Protocol.Error];
+    if (!error && !response.exceptionDetails)
+        return InspectorTest.runtimeModel.createRemoteObject(response.result);
+    InspectorTest.addResult("Error: " + (error || response.exceptionDetails && response.exceptionDetails.text || "exception while evaluation in page."));
+    InspectorTest.completeTest();
 }
 
 InspectorTest.callFunctionInPageAsync = function(name, args)
@@ -121,12 +116,7 @@ InspectorTest.evaluateFunctionInOverlay = function(func, callback)
 {
     var expression = "testRunner.evaluateInWebInspectorOverlay(\"(\" + " + func + " + \")()\")";
     var mainContext = InspectorTest.runtimeModel.executionContexts()[0];
-    mainContext.evaluate(expression, "", false, false, true, false, false, wrapCallback);
-
-    function wrapCallback(result, exceptionDetails)
-    {
-        callback(result.value)
-    }
+    mainContext.evaluate({expression: expression, returnByValue:true}).then(result => callback(result.object.value));
 }
 
 InspectorTest.check = function(passCondition, failureText)
@@ -159,6 +149,13 @@ InspectorTest.formatters = {};
 InspectorTest.formatters.formatAsTypeName = function(value)
 {
     return "<" + typeof value + ">";
+}
+
+InspectorTest.formatters.formatAsTypeNameOrNull = function(value)
+{
+    if (value === null)
+      return "null";
+    return InspectorTest.formatters.formatAsTypeName(value);
 }
 
 InspectorTest.formatters.formatAsRecentTime = function(value)
@@ -245,6 +242,21 @@ InspectorTest.dumpDeepInnerHTML = function(element)
         InspectorTest.addResult(prefix + "</" + element.nodeName + ">");
     }
     innerHTML("", element)
+}
+
+InspectorTest.deepTextContent = function(element)
+{
+    if (!element)
+        return "";
+    if (element.nodeType === Node.TEXT_NODE && element.nodeValue)
+        return !element.parentElement || element.parentElement.nodeName !== "STYLE" ? element.nodeValue : "";
+    var res = "";
+    var children = element.childNodes;
+    for (var i = 0; i < children.length; ++i)
+        res += InspectorTest.deepTextContent(children[i]);
+    if (element.shadowRoot)
+        res += InspectorTest.deepTextContent(element.shadowRoot);
+    return res;
 }
 
 InspectorTest.dump = function(value, customFormatters, prefix, prefixWithName)
@@ -427,6 +439,27 @@ InspectorTest.dumpNavigatorViewInMode = function(view, mode)
     InspectorTest.dumpNavigatorView(view);
 }
 
+/**
+ * @param {symbol} eventName
+ * @param {!Common.Object} obj
+ * @param {function(?):boolean=} condition
+ * @return {!Promise}
+ */
+InspectorTest.waitForEvent = function(eventName, obj, condition)
+{
+    condition = condition || function() { return true; };
+    return new Promise(resolve => {
+        obj.addEventListener(eventName, onEventFired);
+
+        function onEventFired(event) {
+            if (!condition(event.data))
+                return;
+            obj.removeEventListener(eventName, onEventFired);
+            resolve(event.data);
+        }
+    });
+}
+
 InspectorTest.waitForUISourceCode = function(urlSuffix, projectType)
 {
     function matches(uiSourceCode)
@@ -445,28 +478,48 @@ InspectorTest.waitForUISourceCode = function(urlSuffix, projectType)
             return Promise.resolve(uiSourceCode);
     }
 
-    var fulfill;
-    var promise = new Promise(x => fulfill = x);
-    Workspace.workspace.addEventListener(Workspace.Workspace.Events.UISourceCodeAdded, uiSourceCodeAdded);
-    return promise;
-
-    function uiSourceCodeAdded(event)
-    {
-        if (!matches(event.data))
-            return;
-        Workspace.workspace.removeEventListener(Workspace.Workspace.Events.UISourceCodeAdded, uiSourceCodeAdded);
-        fulfill(event.data);
-    }
+    return InspectorTest.waitForEvent(Workspace.Workspace.Events.UISourceCodeAdded, Workspace.workspace, matches);
 }
 
 InspectorTest.waitForUISourceCodeRemoved = function(callback)
 {
-    Workspace.workspace.addEventListener(Workspace.Workspace.Events.UISourceCodeRemoved, uiSourceCodeRemoved);
-    function uiSourceCodeRemoved(event)
-    {
-        Workspace.workspace.removeEventListener(Workspace.Workspace.Events.UISourceCodeRemoved, uiSourceCodeRemoved);
-        callback(event.data);
+    Workspace.workspace.once(Workspace.Workspace.Events.UISourceCodeRemoved).then(callback);
+}
+
+InspectorTest.waitForTarget = function(filter) {
+    filter = filter || (target => true);
+    for (var target of SDK.targetManager.targets()) {
+        if (filter(target))
+            return Promise.resolve(target);
     }
+    var fulfill;
+    var promise = new Promise(callback => fulfill = callback);
+    var observer = {
+        targetAdded: function(target) {
+            if (filter(target)) {
+                SDK.targetManager.unobserveTargets(observer);
+                fulfill(target);
+            }
+        },
+        targetRemoved: function() {
+        },
+    };
+    SDK.targetManager.observeTargets(observer);
+    return promise;
+}
+
+InspectorTest.waitForExecutionContext = function(runtimeModel) {
+    if (runtimeModel.executionContexts().length)
+        return Promise.resolve(runtimeModel.executionContexts()[0]);
+    return runtimeModel.once(SDK.RuntimeModel.Events.ExecutionContextCreated);
+}
+
+InspectorTest.waitForExecutionContextDestroyed = function(context) {
+    var runtimeModel = context.runtimeModel;
+    if (runtimeModel.executionContexts().indexOf(context) === -1)
+        return Promise.resolve();
+    return InspectorTest.waitForEvent(SDK.RuntimeModel.Events.ExecutionContextDestroyed, runtimeModel,
+        destroyedContext => destroyedContext === context);
 }
 
 InspectorTest.assertGreaterOrEqual = function(a, b, message)
@@ -489,31 +542,31 @@ InspectorTest.navigatePromise = function(url)
     return promise;
 }
 
-InspectorTest.hardReloadPage = function(callback, scriptToEvaluateOnLoad, scriptPreprocessor)
+InspectorTest.hardReloadPage = function(callback, scriptToEvaluateOnLoad)
 {
-    InspectorTest._innerReloadPage(true, callback, scriptToEvaluateOnLoad, scriptPreprocessor);
+    InspectorTest._innerReloadPage(true, callback, scriptToEvaluateOnLoad);
 }
 
-InspectorTest.reloadPage = function(callback, scriptToEvaluateOnLoad, scriptPreprocessor)
+InspectorTest.reloadPage = function(callback, scriptToEvaluateOnLoad)
 {
-    InspectorTest._innerReloadPage(false, callback, scriptToEvaluateOnLoad, scriptPreprocessor);
+    InspectorTest._innerReloadPage(false, callback, scriptToEvaluateOnLoad);
 }
 
-InspectorTest.reloadPagePromise = function(scriptToEvaluateOnLoad, scriptPreprocessor)
+InspectorTest.reloadPagePromise = function(scriptToEvaluateOnLoad)
 {
     var fulfill;
     var promise = new Promise(x => fulfill = x);
-    InspectorTest.reloadPage(fulfill, scriptToEvaluateOnLoad, scriptPreprocessor);
+    InspectorTest.reloadPage(fulfill, scriptToEvaluateOnLoad);
     return promise;
 }
 
-InspectorTest._innerReloadPage = function(hardReload, callback, scriptToEvaluateOnLoad, scriptPreprocessor)
+InspectorTest._innerReloadPage = function(hardReload, callback, scriptToEvaluateOnLoad)
 {
     InspectorTest._pageLoadedCallback = InspectorTest.safeWrap(callback);
 
     if (UI.panels.network)
-        UI.panels.network._networkLogView.reset();
-    InspectorTest.PageAgent.reload(hardReload, scriptToEvaluateOnLoad, scriptPreprocessor);
+        NetworkLog.networkLog.reset();
+    InspectorTest.resourceTreeModel.reloadPage(hardReload, scriptToEvaluateOnLoad);
 }
 
 InspectorTest.pageLoaded = function()
@@ -540,11 +593,9 @@ InspectorTest.runWhenPageLoads = function(callback)
 
 InspectorTest.deprecatedRunAfterPendingDispatches = function(callback)
 {
-    var barrier = new CallbackBarrier();
     var targets = SDK.targetManager.targets();
-    for (var i = 0; i < targets.length; ++i)
-        targets[i]._deprecatedRunAfterPendingDispatches(barrier.createCallback());
-    barrier.callWhenDone(InspectorTest.safeWrap(callback));
+    var promises = targets.map(target => new Promise(resolve => target._deprecatedRunAfterPendingDispatches(resolve)));
+    Promise.all(promises).then(InspectorTest.safeWrap(callback));
 }
 
 InspectorTest.createKeyEvent = function(key, ctrlKey, altKey, shiftKey, metaKey)
@@ -758,6 +809,7 @@ InspectorTest.textContentWithoutStyles = function(node)
 InspectorTest.clearSpecificInfoFromStackFrames = function(text)
 {
     var buffer = text.replace(/\(file:\/\/\/(?:[^)]+\)|[\w\/:-]+)/g, "(...)");
+    buffer = buffer.replace(/\(http:\/\/(?:[^)]+\)|[\w\/:-]+)/g, "(...)");
     buffer = buffer.replace(/\(<anonymous>:[^)]+\)/g, "(...)");
     buffer = buffer.replace(/VM\d+/g, "VM");
     return buffer.replace(/\s*at[^()]+\(native\)/g, "");
@@ -780,16 +832,11 @@ InspectorTest.StringOutputStream = function(callback)
 };
 
 InspectorTest.StringOutputStream.prototype = {
-    open: function(fileName, callback)
-    {
-        callback(true);
-    },
+    open: async fileName => true,
 
-    write: function(chunk, callback)
+    write: async function(chunk)
     {
         this._buffer += chunk;
-        if (callback)
-            callback(this);
     },
 
     close: function()
@@ -813,119 +860,27 @@ InspectorTest.MockSetting.prototype = {
     }
 };
 
-
-/**
- * @constructor
- * @param {!string} dirPath
- * @param {!string} name
- * @param {!function(?Bindings.TempFile)} callback
- */
-InspectorTest.TempFileMock = function(dirPath, name)
+InspectorTest.loadedModules = function()
 {
-    this._chunks = [];
-    this._name = name;
+    return self.runtime._modules.filter(module => module._loadedForTest);
 }
 
-InspectorTest.TempFileMock.prototype = {
-    /**
-     * @param {!Array.<string>} chunks
-     * @param {!function(boolean)} callback
-     */
-    write: function(chunks, callback)
-    {
-        var size = 0;
-        for (var i = 0; i < chunks.length; ++i)
-            size += chunks[i].length;
-        this._chunks.push.apply(this._chunks, chunks);
-        setTimeout(callback.bind(this, size), 1);
-    },
-
-    finishWriting: function() { },
-
-    /**
-     * @param {function(?string)} callback
-     */
-    read: function(callback)
-    {
-        this.readRange(undefined, undefined, callback);
-    },
-
-    /**
-     * @param {number|undefined} startOffset
-     * @param {number|undefined} endOffset
-     * @param {function(?string)} callback
-     */
-    readRange: function(startOffset, endOffset, callback)
-    {
-        var blob = new Blob(this._chunks);
-        blob = blob.slice(startOffset || 0, endOffset || blob.size);
-        reader = new FileReader();
-        var self = this;
-        reader.onloadend = function()
-        {
-            callback(reader.result);
-        }
-        reader.readAsText(blob);
-    },
-
-    /**
-     * @param {!Common.OutputStream} outputStream
-     * @param {!Bindings.OutputStreamDelegate} delegate
-     */
-    copyToOutputStream: function(outputStream, delegate)
-    {
-        var name = this._name;
-        var text = this._chunks.join("");
-        var chunkedReaderMock = {
-            loadedSize: function()
-            {
-                return text.length;
-            },
-
-            fileSize: function()
-            {
-                return text.length;
-            },
-
-            fileName: function()
-            {
-                return name;
-            },
-
-            cancel: function() { }
-        }
-        delegate.onTransferStarted(chunkedReaderMock);
-        outputStream.write(text);
-        delegate.onChunkTransferred(chunkedReaderMock);
-        outputStream.close();
-        delegate.onTransferFinished(chunkedReaderMock);
-    },
-
-    remove: function() { }
-}
-
-InspectorTest.TempFileMock.create = function(dirPath, name)
+InspectorTest.dumpLoadedModules = function(relativeTo)
 {
-    var tempFile = new InspectorTest.TempFileMock(dirPath, name);
-    return Promise.resolve(tempFile);
-}
-
-InspectorTest.dumpLoadedModules = function(next)
-{
+    var previous = new Set(relativeTo || []);
     function moduleSorter(left, right)
     {
         return String.naturalOrderComparator(left._descriptor.name, right._descriptor.name);
     }
 
     InspectorTest.addResult("Loaded modules:");
-    var modules = self.runtime._modules;
-    modules.sort(moduleSorter);
-    for (var i = 0; i < modules.length; ++i) {
-        if (modules[i]._loadedForTest)
-            InspectorTest.addResult("    " + modules[i]._descriptor.name);
+    var loadedModules = InspectorTest.loadedModules().sort(moduleSorter);
+    for (var module of loadedModules) {
+        if (previous.has(module))
+            continue;
+        InspectorTest.addResult("    " + module._descriptor.name);
     }
-    if (next)
-        next();
+    return loadedModules;
 }
 
 InspectorTest.TimeoutMock = function()
@@ -978,6 +933,7 @@ SDK.targetManager.observeTargets({
         InspectorTest.HeapProfilerAgent = target.heapProfilerAgent();
         InspectorTest.InspectorAgent = target.inspectorAgent();
         InspectorTest.NetworkAgent = target.networkAgent();
+        InspectorTest.OverlayAgent = target.overlayAgent();
         InspectorTest.PageAgent = target.pageAgent();
         InspectorTest.ProfilerAgent = target.profilerAgent();
         InspectorTest.RuntimeAgent = target.runtimeAgent();
@@ -989,8 +945,10 @@ SDK.targetManager.observeTargets({
         InspectorTest.debuggerModel = target.model(SDK.DebuggerModel);
         InspectorTest.runtimeModel = target.model(SDK.RuntimeModel);
         InspectorTest.domModel = target.model(SDK.DOMModel);
+        InspectorTest.domDebuggerModel = target.model(SDK.DOMDebuggerModel);
         InspectorTest.cssModel = target.model(SDK.CSSModel);
         InspectorTest.cpuProfilerModel = target.model(SDK.CPUProfilerModel);
+        InspectorTest.overlayModel = target.model(SDK.OverlayModel);
         InspectorTest.serviceWorkerManager = target.model(SDK.ServiceWorkerManager);
         InspectorTest.tracingManager = target.model(SDK.TracingManager);
         InspectorTest.mainTarget = target;
@@ -1017,7 +975,7 @@ InspectorTest.preloadModule = function(moduleName)
 
 InspectorTest.isDedicatedWorker = function(target)
 {
-    return target && !target.hasBrowserCapability() && target.hasJSCapability() && !target.hasNetworkCapability() && !target.hasTargetCapability();
+    return target && !target.hasBrowserCapability() && target.hasJSCapability() && !target.hasTargetCapability();
 }
 
 InspectorTest.isServiceWorker = function(target)
@@ -1099,6 +1057,25 @@ function runTest(pixelTest, enableWatchDogWhileDebugging)
         }
 
         InspectorTest = {};
+
+        self.AccessibilityTestRunner = InspectorTest;
+        self.ApplicationTestRunner = InspectorTest;
+        self.AuditsTestRunner = InspectorTest;
+        self.BindingsTestRunner = InspectorTest;
+        self.ConsoleTestRunner = InspectorTest;
+        self.CoverageTestRunner = InspectorTest;
+        self.DataGridTestRunner = InspectorTest;
+        self.DeviceModeTestRunner = InspectorTest;
+        self.ElementsTestRunner = InspectorTest;
+        self.ExtensionsTestRunner = InspectorTest;
+        self.LayersTestRunner = InspectorTest;
+        self.NetworkTestRunner = InspectorTest;
+        self.PerformanceTestRunner = InspectorTest;
+        self.ProfilerTestRunner = InspectorTest;
+        self.SASSTestRunner = InspectorTest;
+        self.SecurityTestRunner = InspectorTest;
+        self.SourcesTestRunner = InspectorTest;
+        self.TestRunner = InspectorTest;
 
         for (var i = 0; i < initializationFunctions.length; ++i) {
             try {

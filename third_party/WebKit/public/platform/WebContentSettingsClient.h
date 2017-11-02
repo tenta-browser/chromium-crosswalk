@@ -5,6 +5,8 @@
 #ifndef WebContentSettingsClient_h
 #define WebContentSettingsClient_h
 
+#include "base/time/time.h"
+#include "public/platform/WebClientHintsType.h"
 #include "public/platform/WebContentSettingCallbacks.h"
 
 namespace blink {
@@ -42,11 +44,6 @@ class WebContentSettingsClient {
   // Controls whether access to Indexed DB are allowed for this frame.
   virtual bool AllowIndexedDB(const WebString& name, const WebSecurityOrigin&) {
     return true;
-  }
-
-  // Controls whether plugins are allowed for this frame.
-  virtual bool AllowPlugins(bool enabled_per_settings) {
-    return enabled_per_settings;
   }
 
   // Controls whether scripts are allowed to execute for this frame.
@@ -105,6 +102,13 @@ class WebContentSettingsClient {
   // Notifies the client that the frame would have executed script if script
   // were enabled.
   virtual void DidNotAllowScript() {}
+
+  // Called to persist the received client hint preferences when |url| was
+  // fetched. The preferences should be persisted for |duration|.
+  virtual void PersistClientHints(
+      const WebEnabledClientHints& enabled_client_hints,
+      base::TimeDelta duration,
+      const blink::WebURL& url) {}
 
   virtual ~WebContentSettingsClient() {}
 };

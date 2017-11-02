@@ -4,6 +4,7 @@
 
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "components/prefs/testing_pref_service.h"
 #include "components/web_resource/eula_accepted_notifier.h"
@@ -26,7 +27,7 @@ class TestNetworkChangeNotifier : public net::NetworkChangeNotifier {
   void SimulateNetworkConnectionChange(
       net::NetworkChangeNotifier::ConnectionType type) {
     connection_type_to_return_ = type;
-    net::NetworkChangeNotifier::NotifyObserversOfConnectionTypeChangeForTests(
+    net::NetworkChangeNotifier::NotifyObserversOfNetworkChangeForTests(
         connection_type_to_return_);
     base::RunLoop().RunUntilIdle();
   }

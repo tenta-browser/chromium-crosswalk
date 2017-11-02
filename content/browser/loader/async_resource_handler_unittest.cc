@@ -29,11 +29,11 @@
 #include "content/browser/loader/resource_message_filter.h"
 #include "content/browser/loader/resource_request_info_impl.h"
 #include "content/common/resource_messages.h"
-#include "content/common/resource_request.h"
 #include "content/public/browser/resource_context.h"
 #include "content/public/browser/resource_request_info.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/previews_state.h"
+#include "content/public/common/resource_request.h"
 #include "content/public/common/resource_type.h"
 #include "content/public/test/mock_resource_context.h"
 #include "content/public/test/test_browser_thread_bundle.h"
@@ -42,6 +42,7 @@
 #include "net/http/http_response_headers.h"
 #include "net/http/http_util.h"
 #include "net/ssl/client_cert_store.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_job.h"
@@ -160,8 +161,9 @@ class AsyncResourceHandlerTest : public ::testing::Test,
         "test", base::MakeUnique<TestProtocolHandler>(response_data_size));
     context_.set_job_factory(&test_job_factory_);
     context_.Init();
-    std::unique_ptr<net::URLRequest> request = context_.CreateRequest(
-        GURL("test:test"), net::DEFAULT_PRIORITY, nullptr);
+    std::unique_ptr<net::URLRequest> request =
+        context_.CreateRequest(GURL("test:test"), net::DEFAULT_PRIORITY,
+                               nullptr, TRAFFIC_ANNOTATION_FOR_TESTS);
     resource_context_ = base::MakeUnique<MockResourceContext>(&context_);
     filter_ =
         new RecordingResourceMessageFilter(resource_context_.get(), &context_);

@@ -68,7 +68,7 @@ void ImageController::StopWorkerTasks() {
 
   // Unlock all of the locked images (note that this vector would only be
   // populated if we actually need to unref the image.
-  for (auto image_pair : requested_locked_images_)
+  for (auto& image_pair : requested_locked_images_)
     cache_->UnrefImage(image_pair.second);
   requested_locked_images_.clear();
 
@@ -81,8 +81,10 @@ void ImageController::StopWorkerTasks() {
     // The task (if one exists) would have run already, we just need to make
     // sure it was completed. Multiple requests for the same image use the same
     // task so it could have already been completed.
-    if (request.task && !request.task->HasCompleted())
+    if (request.task && !request.task->HasCompleted()) {
+      request.task->OnTaskCompleted();
       request.task->DidComplete();
+    }
 
     if (request.need_unref)
       cache_->UnrefImage(request.draw_image);
@@ -107,8 +109,10 @@ void ImageController::StopWorkerTasks() {
       if (request.task->state().IsNew())
         request.task->state().DidCancel();
 
-      if (!request.task->HasCompleted())
+      if (!request.task->HasCompleted()) {
+        request.task->OnTaskCompleted();
         request.task->DidComplete();
+      }
     }
     cache_->UnrefImage(request.draw_image);
 
@@ -127,12 +131,15 @@ void ImageController::SetImageDecodeCache(ImageDecodeCache* cache) {
     SetPredecodeImages(std::vector<DrawImage>(),
                        ImageDecodeCache::TracingInfo());
     StopWorkerTasks();
+    image_cache_max_limit_bytes_ = 0u;
   }
 
   cache_ = cache;
 
-  if (cache_)
+  if (cache_) {
+    image_cache_max_limit_bytes_ = cache_->GetMaximumMemoryLimitBytes();
     GenerateTasksForOrphanedRequests();
+  }
 }
 
 void ImageController::GetTasksForImagesAndRef(
@@ -155,7 +162,7 @@ void ImageController::GetTasksForImagesAndRef(
 }
 
 void ImageController::UnrefImages(const std::vector<DrawImage>& images) {
-  for (auto image : images)
+  for (auto& image : images)
     cache_->UnrefImage(image);
 }
 
@@ -175,7 +182,7 @@ std::vector<scoped_refptr<TileTask>> ImageController::SetPredecodeImages(
 }
 
 ImageController::ImageDecodeRequestId ImageController::QueueImageDecode(
-    sk_sp<const SkImage> image,
+    const DrawImage& draw_image,
     const ImageDecodedCallback& callback) {
   // We must not receive any image requests if we have no worker.
   CHECK(worker_task_runner_);
@@ -183,17 +190,8 @@ ImageController::ImageDecodeRequestId ImageController::QueueImageDecode(
   // Generate the next id.
   ImageDecodeRequestId id = s_next_image_decode_queue_id_++;
 
-  // TODO(ccameron): The target color space specified here should match the
-  // target color space that will be used at rasterization time. Leave this
-  // unspecified now, since that will match the rasterization-time color
-  // space while color correct rendering is disabled.
-  gfx::ColorSpace target_color_space;
-
-  DCHECK(image);
-  bool is_image_lazy = image->isLazyGenerated();
-  auto image_bounds = image->bounds();
-  DrawImage draw_image(std::move(image), image_bounds, kNone_SkFilterQuality,
-                       SkMatrix::I(), target_color_space);
+  DCHECK(draw_image.paint_image());
+  bool is_image_lazy = draw_image.paint_image().IsLazyGenerated();
 
   // Get the tasks for this decode.
   scoped_refptr<TileTask> task;
@@ -229,7 +227,7 @@ void ImageController::UnlockImageDecode(ImageDecodeRequestId id) {
   if (it == requested_locked_images_.end())
     return;
 
-  UnrefImages({it->second});
+  UnrefImages({std::move(it->second)});
   requested_locked_images_.erase(it);
 }
 
@@ -293,7 +291,7 @@ void ImageController::ImageDecodeCompleted(ImageDecodeRequestId id) {
     // implies that we never attempted the decode. Some of the reasons for this
     // would be that the image is of an empty size, or if the image doesn't fit
     // into memory. In all cases, this implies that the decode was a failure.
-    if (!request.draw_image.image()->isLazyGenerated())
+    if (!request.draw_image.paint_image().IsLazyGenerated())
       result = ImageDecodeResult::DECODE_NOT_REQUIRED;
     else if (!request.need_unref)
       result = ImageDecodeResult::FAILURE;
@@ -336,7 +334,7 @@ void ImageController::GenerateTasksForOrphanedRequests() {
   for (auto& request : orphaned_decode_requests_) {
     DCHECK(!request.task);
     DCHECK(!request.need_unref);
-    if (request.draw_image.image()->isLazyGenerated()) {
+    if (request.draw_image.paint_image().IsLazyGenerated()) {
       // Get the task for this decode.
       request.need_unref = cache_->GetOutOfRasterDecodeTaskForImageAndRef(
           request.draw_image, &request.task);

@@ -24,6 +24,7 @@ import json
 from core import perf_benchmark
 
 from telemetry import benchmark
+from telemetry import story
 from telemetry.page import legacy_page_test
 from telemetry.value import scalar
 
@@ -88,7 +89,6 @@ class _IndexedDbMeasurement(legacy_page_test.LegacyPageTest):
     power.PowerMetric.CustomizeBrowserOptions(options)
 
 
-@benchmark.Disabled('linux') # crbug.com/677972
 @benchmark.Owner(emails=['cmumford@chromium.org'])
 class IndexedDbOriginalSectioned(perf_benchmark.PerfBenchmark):
   """Chromium's IndexedDB Performance tests."""
@@ -99,14 +99,19 @@ class IndexedDbOriginalSectioned(perf_benchmark.PerfBenchmark):
   def Name(cls):
     return 'storage.indexeddb_endure'
 
+  def GetExpectations(self):
+    class StoryExpectations(story.expectations.StoryExpectations):
+      def SetExpectations(self):
+        pass # Nothing disabled.
+    return StoryExpectations()
 
-@benchmark.Disabled('linux') # crbug.com/677972
+
 @benchmark.Owner(emails=['cmumford@chromium.org'])
 class IndexedDbTracing(perf_benchmark.PerfBenchmark):
   """IndexedDB Performance tests that use tracing."""
   page_set = page_sets.IndexedDBEndurePageSet
 
-  def CreateTimelineBasedMeasurementOptions(self):
+  def CreateCoreTimelineBasedMeasurementOptions(self):
     cat_filter = chrome_trace_category_filter.ChromeTraceCategoryFilter()
     cat_filter.AddIncludedCategory(IDB_CATEGORY)
     cat_filter.AddIncludedCategory(TIMELINE_REQUIRED_CATEGORY)
@@ -121,3 +126,9 @@ class IndexedDbTracing(perf_benchmark.PerfBenchmark):
   @classmethod
   def ValueCanBeAddedPredicate(cls, value, is_first_result):
     return 'idb' in value.name
+
+  def GetExpectations(self):
+    class StoryExpectations(story.expectations.StoryExpectations):
+      def SetExpectations(self):
+        pass # Nothing disabled.
+    return StoryExpectations()

@@ -44,7 +44,6 @@ class FakeSensorManagerAndroid : public SensorManagerAndroid {
 class AndroidSensorManagerTest : public testing::Test {
  protected:
   AndroidSensorManagerTest() {
-    light_buffer_.reset(new DeviceLightHardwareBuffer);
     motion_buffer_.reset(new DeviceMotionHardwareBuffer);
     orientation_buffer_.reset(new DeviceOrientationHardwareBuffer);
     orientation_absolute_buffer_.reset(new DeviceOrientationHardwareBuffer);
@@ -64,7 +63,6 @@ class AndroidSensorManagerTest : public testing::Test {
     ASSERT_TRUE(buffer->data.has_gamma);
   }
 
-  std::unique_ptr<DeviceLightHardwareBuffer> light_buffer_;
   std::unique_ptr<DeviceMotionHardwareBuffer> motion_buffer_;
   std::unique_ptr<DeviceOrientationHardwareBuffer> orientation_buffer_;
   std::unique_ptr<DeviceOrientationHardwareBuffer> orientation_absolute_buffer_;
@@ -72,7 +70,6 @@ class AndroidSensorManagerTest : public testing::Test {
 };
 
 TEST_F(AndroidSensorManagerTest, ThreeDeviceMotionSensorsActive) {
-  FakeSensorManagerAndroid::Register(base::android::AttachCurrentThread());
   FakeSensorManagerAndroid sensorManager;
   sensorManager.SetNumberActiveDeviceMotionSensors(3);
 
@@ -113,7 +110,6 @@ TEST_F(AndroidSensorManagerTest, ThreeDeviceMotionSensorsActive) {
 }
 
 TEST_F(AndroidSensorManagerTest, TwoDeviceMotionSensorsActive) {
-  FakeSensorManagerAndroid::Register(base::android::AttachCurrentThread());
   FakeSensorManagerAndroid sensorManager;
   sensorManager.SetNumberActiveDeviceMotionSensors(2);
 
@@ -133,7 +129,6 @@ TEST_F(AndroidSensorManagerTest, TwoDeviceMotionSensorsActive) {
 }
 
 TEST_F(AndroidSensorManagerTest, ZeroDeviceMotionSensorsActive) {
-  FakeSensorManagerAndroid::Register(base::android::AttachCurrentThread());
   FakeSensorManagerAndroid sensorManager;
   sensorManager.SetNumberActiveDeviceMotionSensors(0);
 
@@ -147,7 +142,6 @@ TEST_F(AndroidSensorManagerTest, ZeroDeviceMotionSensorsActive) {
 }
 
 TEST_F(AndroidSensorManagerTest, DeviceOrientationSensorsActive) {
-  FakeSensorManagerAndroid::Register(base::android::AttachCurrentThread());
   FakeSensorManagerAndroid sensorManager;
 
   sensorManager.StartFetchingDeviceOrientationData(orientation_buffer_.get());
@@ -161,7 +155,6 @@ TEST_F(AndroidSensorManagerTest, DeviceOrientationSensorsActive) {
 }
 
 TEST_F(AndroidSensorManagerTest, DeviceOrientationAbsoluteSensorsActive) {
-  FakeSensorManagerAndroid::Register(base::android::AttachCurrentThread());
   FakeSensorManagerAndroid sensorManager;
 
   sensorManager.StartFetchingDeviceOrientationAbsoluteData(
@@ -173,20 +166,6 @@ TEST_F(AndroidSensorManagerTest, DeviceOrientationAbsoluteSensorsActive) {
 
   sensorManager.StopFetchingDeviceOrientationData();
   ASSERT_FALSE(orientation_buffer_->data.all_available_sensors_are_active);
-}
-
-// DeviceLight
-TEST_F(AndroidSensorManagerTest, DeviceLightSensorsActive) {
-  FakeSensorManagerAndroid::Register(base::android::AttachCurrentThread());
-  FakeSensorManagerAndroid sensorManager;
-
-  sensorManager.StartFetchingDeviceLightData(light_buffer_.get());
-
-  sensorManager.GotLight(nullptr, nullptr, 100);
-  ASSERT_EQ(100, light_buffer_->data.value);
-
-  sensorManager.StopFetchingDeviceLightData();
-  ASSERT_EQ(-1, light_buffer_->data.value);
 }
 
 }  // namespace

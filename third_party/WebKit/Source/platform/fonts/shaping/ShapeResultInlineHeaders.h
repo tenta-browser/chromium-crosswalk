@@ -80,6 +80,7 @@ struct ShapeResult::RunInfo {
         width_(other.width_) {}
 
   bool Rtl() const { return HB_DIRECTION_IS_BACKWARD(direction_); }
+  bool IsHorizontal() const { return HB_DIRECTION_IS_HORIZONTAL(direction_); }
   float XPositionForVisualOffset(unsigned, AdjustMidCluster) const;
   float XPositionForOffset(unsigned, AdjustMidCluster) const;
   int CharacterIndexForXPosition(float, bool include_partial_glyphs) const;
@@ -99,7 +100,7 @@ struct ShapeResult::RunInfo {
   }
 
   // Creates a new RunInfo instance representing a subset of the current run.
-  RunInfo* CreateSubRun(unsigned start, unsigned end) {
+  std::unique_ptr<RunInfo> CreateSubRun(unsigned start, unsigned end) {
     DCHECK(end > start);
     unsigned number_of_characters = std::min(end - start, num_characters_);
 
@@ -121,9 +122,9 @@ struct ShapeResult::RunInfo {
           });
     }
 
-    RunInfo* run =
-        new RunInfo(font_data_.Get(), direction_, script_, start_index_ + start,
-                    number_of_glyphs, number_of_characters);
+    auto run = base::MakeUnique<RunInfo>(font_data_.Get(), direction_, script_,
+                                         start_index_ + start, number_of_glyphs,
+                                         number_of_characters);
 
     unsigned sub_glyph_index = 0;
     float total_advance = 0;

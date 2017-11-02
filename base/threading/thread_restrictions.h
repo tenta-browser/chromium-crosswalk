@@ -35,9 +35,11 @@ class Predictor;
 namespace content {
 class BrowserGpuChannelHostFactory;
 class BrowserGpuMemoryBufferManager;
+class BrowserMainLoop;
 class BrowserShutdownProfileDumper;
 class BrowserSurfaceViewManager;
 class BrowserTestBase;
+class CategorizedWorkerPool;
 class NestedMessagePumpAndroid;
 class ScopedAllowWaitForAndroidLayoutTests;
 class ScopedAllowWaitForDebugURL;
@@ -46,7 +48,6 @@ class SynchronousCompositor;
 class SynchronousCompositorBrowserFilter;
 class SynchronousCompositorHost;
 class TextInputClientMac;
-class CategorizedWorkerPool;
 }  // namespace content
 namespace dbus {
 class Bus;
@@ -88,6 +89,10 @@ namespace views {
 class ScreenMus;
 }
 
+namespace viz {
+class ServerGpuMemoryBufferManager;
+}
+
 namespace base {
 
 namespace android {
@@ -100,6 +105,7 @@ class TaskTracker;
 
 class SequencedWorkerPool;
 class SimpleThread;
+class StackSamplingProfiler;
 class Thread;
 class ThreadTestHelper;
 
@@ -114,7 +120,8 @@ class ThreadTestHelper;
 // 1) If a thread should not be allowed to make IO calls, mark it:
 //      base::ThreadRestrictions::SetIOAllowed(false);
 //    By default, threads *are* allowed to make IO calls.
-//    In Chrome browser code, IO calls should be proxied to the File thread.
+//    In Chrome browser code, IO calls should be proxied to a TaskRunner with
+//    the base::MayBlock() trait.
 //
 // 2) If a function makes a call that will go out to disk, check whether the
 //    current thread is allowed:
@@ -185,6 +192,8 @@ class BASE_EXPORT ThreadRestrictions {
   friend class ::ScopedAllowWaitForLegacyWebViewApi;
   friend class android_webview::AwFormDatabaseService;
   friend class android_webview::CookieManager;
+  friend class base::StackSamplingProfiler;
+  friend class content::BrowserMainLoop;
   friend class content::BrowserShutdownProfileDumper;
   friend class content::BrowserSurfaceViewManager;
   friend class content::BrowserTestBase;
@@ -236,6 +245,7 @@ class BASE_EXPORT ThreadRestrictions {
   friend class content::SoftwareOutputDeviceMus;  // Interim non-production code
 #endif
   friend class views::ScreenMus;
+  friend class viz::ServerGpuMemoryBufferManager;
 // END USAGE THAT NEEDS TO BE FIXED.
 
 #if DCHECK_IS_ON()

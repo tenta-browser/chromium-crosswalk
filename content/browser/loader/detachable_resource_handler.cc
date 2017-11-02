@@ -8,6 +8,7 @@
 
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/time/time.h"
 #include "content/browser/loader/null_resource_controller.h"
 #include "content/browser/loader/resource_controller.h"
@@ -42,11 +43,6 @@ class DetachableResourceHandler::Controller : public ResourceController {
   void Cancel() override {
     MarkAsUsed();
     detachable_handler_->Cancel();
-  }
-
-  void CancelAndIgnore() override {
-    MarkAsUsed();
-    detachable_handler_->CancelAndIgnore();
   }
 
   void CancelWithError(int error_code) override {
@@ -240,6 +236,10 @@ void DetachableResourceHandler::OnReadCompleted(
 void DetachableResourceHandler::OnResponseCompleted(
     const net::URLRequestStatus& status,
     std::unique_ptr<ResourceController> controller) {
+  UMA_HISTOGRAM_MEDIUM_TIMES(
+      "Net.DetachableResourceHandler.Duration",
+      base::TimeTicks::Now() - request()->creation_time());
+
   // No DCHECK(!is_deferred_) as the request may have been cancelled while
   // deferred.
 

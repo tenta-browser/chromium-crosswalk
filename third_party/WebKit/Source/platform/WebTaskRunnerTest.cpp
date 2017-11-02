@@ -53,7 +53,8 @@ TEST(WebTaskRunnerTest, PostCancellableTaskTest) {
 
   count = 0;
   handle = task_runner->PostDelayedCancellableTask(
-      BLINK_FROM_HERE, WTF::Bind(&Increment, WTF::Unretained(&count)), 1);
+      BLINK_FROM_HERE, WTF::Bind(&Increment, WTF::Unretained(&count)),
+      TimeDelta::FromMilliseconds(1));
   EXPECT_EQ(0, count);
   EXPECT_TRUE(handle.IsActive());
   task_runner->RunUntilIdle();
@@ -94,14 +95,14 @@ TEST(WebTaskRunnerTest, PostCancellableTaskTest) {
   count = 0;
   handle = task_runner->PostCancellableTask(
       BLINK_FROM_HERE, WTF::Bind(&Increment, WTF::Unretained(&count)));
-#if COMPILER(CLANG)
+#if defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wself-move"
   handle = std::move(handle);
 #pragma GCC diagnostic pop
 #else
   handle = std::move(handle);
-#endif  // COMPILER(CLANG)
+#endif  // defined(__clang__)
   EXPECT_EQ(0, count);
   task_runner->RunUntilIdle();
   EXPECT_EQ(1, count);

@@ -11,6 +11,7 @@
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/threading/thread_restrictions.h"
 #include "chrome/browser/extensions/extension_error_reporter.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
@@ -22,6 +23,7 @@
 #include "components/crx_file/id_util.h"
 #include "components/sync/model/string_ordinal.h"
 #include "content/public/browser/browser_thread.h"
+#include "extensions/browser/extension_file_task_runner.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/install/extension_install_ui.h"
@@ -129,10 +131,8 @@ UnpackedInstaller::~UnpackedInstaller() {
 void UnpackedInstaller::Load(const base::FilePath& path_in) {
   DCHECK(extension_path_.empty());
   extension_path_ = path_in;
-  BrowserThread::PostTask(
-      BrowserThread::FILE,
-      FROM_HERE,
-      base::Bind(&UnpackedInstaller::GetAbsolutePath, this));
+  GetExtensionFileTaskRunner()->PostTask(
+      FROM_HERE, base::BindOnce(&UnpackedInstaller::GetAbsolutePath, this));
 }
 
 bool UnpackedInstaller::LoadFromCommandLine(const base::FilePath& path_in,
@@ -302,21 +302,21 @@ bool UnpackedInstaller::IsLoadingUnpackedAllowed() const {
 }
 
 void UnpackedInstaller::GetAbsolutePath() {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  base::ThreadRestrictions::AssertIOAllowed();
 
   extension_path_ = base::MakeAbsoluteFilePath(extension_path_);
 
   std::string error;
   if (!file_util::CheckForIllegalFilenames(extension_path_, &error)) {
     BrowserThread::PostTask(
-        BrowserThread::UI,
-        FROM_HERE,
-        base::Bind(&UnpackedInstaller::ReportExtensionLoadError, this, error));
+        BrowserThread::UI, FROM_HERE,
+        base::BindOnce(&UnpackedInstaller::ReportExtensionLoadError, this,
+                       error));
     return;
   }
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
-      base::Bind(&UnpackedInstaller::CheckExtensionFileAccess, this));
+      base::BindOnce(&UnpackedInstaller::CheckExtensionFileAccess, this));
 }
 
 void UnpackedInstaller::CheckExtensionFileAccess() {
@@ -329,14 +329,13 @@ void UnpackedInstaller::CheckExtensionFileAccess() {
     return;
   }
 
-  BrowserThread::PostTask(
-      BrowserThread::FILE,
+  GetExtensionFileTaskRunner()->PostTask(
       FROM_HERE,
-      base::Bind(&UnpackedInstaller::LoadWithFileAccess, this, GetFlags()));
+      base::BindOnce(&UnpackedInstaller::LoadWithFileAccess, this, GetFlags()));
 }
 
 void UnpackedInstaller::LoadWithFileAccess(int flags) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  base::ThreadRestrictions::AssertIOAllowed();
 
   std::string error;
   extension_ = file_util::LoadExtension(extension_path_, Manifest::UNPACKED,
@@ -346,16 +345,15 @@ void UnpackedInstaller::LoadWithFileAccess(int flags) {
       !extension_l10n_util::ValidateExtensionLocales(
           extension_path_, extension()->manifest()->value(), &error)) {
     BrowserThread::PostTask(
-        BrowserThread::UI,
-        FROM_HERE,
-        base::Bind(&UnpackedInstaller::ReportExtensionLoadError, this, error));
+        BrowserThread::UI, FROM_HERE,
+        base::BindOnce(&UnpackedInstaller::ReportExtensionLoadError, this,
+                       error));
     return;
   }
 
   BrowserThread::PostTask(
-      BrowserThread::UI,
-      FROM_HERE,
-      base::Bind(&UnpackedInstaller::ShowInstallPrompt, this));
+      BrowserThread::UI, FROM_HERE,
+      base::BindOnce(&UnpackedInstaller::ShowInstallPrompt, this));
 }
 
 void UnpackedInstaller::ReportExtensionLoadError(const std::string &error) {

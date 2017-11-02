@@ -11,7 +11,6 @@
 
 #import "base/ios/block_types.h"
 #include "ios/web/public/favicon_url.h"
-#import "ios/web/public/navigation_manager.h"
 #include "ios/web/public/ssl_status.h"
 #import "ios/web/public/web_state/ui/crw_native_content.h"
 #import "ios/web/public/web_state/web_state.h"
@@ -48,14 +47,10 @@ class GURL;
 // TODO(rohitrao): Eliminate as many of the following delegate methods as
 // possible.  They only exist because the Tab and CRWWebController logic was
 // very intertwined. We should streamline the logic to jump between classes
-// less, then remove any delegate method that becomes unneccessary as a result.
+// less, then remove any delegate method that becomes unnecessary as a result.
 
-// Called when the page is reloaded.
-- (void)webWillReload;
 // Called when a page is loaded using loadWithParams.
-- (void)webDidUpdateSessionForLoadWithParams:
-            (const web::NavigationManager::WebLoadParams&)params
-                        wasInitialNavigation:(BOOL)initialNavigation;
+- (void)webDidUpdateSessionForLoadWithURL:(const GURL&)URL;
 
 @optional
 
@@ -71,18 +66,6 @@ class GURL;
 // cannot be presented by CRWWebController.
 - (BOOL)webController:(CRWWebController*)webController
     shouldOpenExternalURL:(const GURL&)URL;
-
-// Called when |URL| is deemed suitable to be opened in a matching native app.
-// Needs to return whether |URL| was opened in a matching native app.
-// Also triggering user action |linkClicked| is passed to use it when needed.
-// The return value indicates if the native app was launched, not if a native
-// app was found.
-// TODO(shreyasv): Instead of having the CRWWebDelegate handle an external URL,
-// provide a hook/API to steal a URL navigation. That way the logic to determine
-// a URL as triggering a native app launch can also be moved.
-- (BOOL)urlTriggersNativeAppLaunch:(const GURL&)URL
-                         sourceURL:(const GURL&)sourceURL
-                       linkClicked:(BOOL)linkClicked;
 
 // Called to ask the delegate for a controller to display the given url,
 // which contained content that the UIWebView couldn't display. Returns

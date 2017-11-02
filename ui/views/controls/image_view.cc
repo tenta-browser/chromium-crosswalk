@@ -20,9 +20,7 @@ namespace {
 // Returns the pixels for the bitmap in |image| at scale |image_scale|.
 void* GetBitmapPixels(const gfx::ImageSkia& img, float image_scale) {
   DCHECK_NE(0.0f, image_scale);
-  const SkBitmap& bitmap = img.GetRepresentation(image_scale).sk_bitmap();
-  SkAutoLockPixels pixel_lock(bitmap);
-  return bitmap.getPixels();
+  return img.GetRepresentation(image_scale).sk_bitmap().getPixels();
 }
 
 }  // namespace
@@ -77,12 +75,6 @@ gfx::Rect ImageView::GetImageBounds() const {
 
 void ImageView::ResetImageSize() {
   image_size_set_ = false;
-}
-
-gfx::Size ImageView::GetPreferredSize() const {
-  gfx::Size size = GetImageSize();
-  size.Enlarge(GetInsets().width(), GetInsets().height());
-  return size;
 }
 
 bool ImageView::IsImageEqual(const gfx::ImageSkia& img) const {
@@ -180,6 +172,25 @@ bool ImageView::GetTooltipText(const gfx::Point& p,
 
   *tooltip = GetTooltipText();
   return true;
+}
+
+gfx::Size ImageView::CalculatePreferredSize() const {
+  gfx::Size size = GetImageSize();
+  size.Enlarge(GetInsets().width(), GetInsets().height());
+  return size;
+}
+
+views::PaintInfo::ScaleType ImageView::GetPaintScaleType() const {
+  // ImageView contains an image which is rastered at the device scale factor.
+  // By default, the paint commands are recorded at a scale factor slighlty
+  // different from the device scale factor. Re-rastering the image at this
+  // paint recording scale will result in a distorted image. Paint recording
+  // scale might also not be uniform along the x & y axis, thus resulting in
+  // further distortion in the aspect ratio of the final image.
+  // |kUniformScaling| ensures that the paint recording scale is uniform along
+  // the x & y axis and keeps the scale equal to the device scale factor.
+  // See http://crbug.com/754010 for more details.
+  return views::PaintInfo::ScaleType::kUniformScaling;
 }
 
 void ImageView::OnPaintImage(gfx::Canvas* canvas) {

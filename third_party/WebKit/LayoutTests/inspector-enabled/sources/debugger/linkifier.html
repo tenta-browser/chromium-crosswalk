@@ -20,76 +20,65 @@ function onload()
     runTest();
 }
 
-function test()
-{
-    var scriptFormatter;
-    var linkifier;
-    var link;
-    var script;
-    var uiSourceCode;
+function test() {
+  var scriptFormatter;
+  var linkifier;
+  var link;
+  var script;
+  var uiSourceCode;
 
-    InspectorTest.scriptFormatter().then(startDebuggerTest);
+  SourcesTestRunner.scriptFormatter().then(startDebuggerTest);
 
-    function startDebuggerTest(sf)
-    {
-        scriptFormatter = sf;
-        InspectorTest.startDebuggerTest(waitForScripts);
+  function startDebuggerTest(sf) {
+    scriptFormatter = sf;
+    SourcesTestRunner.startDebuggerTest(waitForScripts);
+  }
+
+  function waitForScripts() {
+    SourcesTestRunner.showScriptSource('linkifier.html', debuggerTest);
+  }
+
+  function debuggerTest() {
+    for (var scriptCandidate of TestRunner.debuggerModel.scripts()) {
+      if (scriptCandidate.sourceURL === TestRunner.mainTarget.inspectedURL() && scriptCandidate.lineOffset === 4) {
+        script = scriptCandidate;
+        break;
+      }
     }
 
-    function waitForScripts()
-    {
-        InspectorTest.showScriptSource("linkifier.html", debuggerTest);
-    }
+    uiSourceCode = Workspace.workspace.uiSourceCodeForURL(TestRunner.mainTarget.inspectedURL());
 
-    function debuggerTest()
-    {
-        for (var scriptCandidate of InspectorTest.debuggerModel.scripts()) {
-            if (scriptCandidate.sourceURL === InspectorTest.mainTarget.inspectedURL() && scriptCandidate.lineOffset === 4) {
-                script = scriptCandidate;
-                break;
-            }
-        }
+    linkifier = new Components.Linkifier();
+    var count1 = liveLocationsCount();
+    link = linkifier.linkifyScriptLocation(
+        SDK.targetManager.mainTarget(), null, TestRunner.mainTarget.inspectedURL(), 8, 0, 'dummy-class');
+    var count2 = liveLocationsCount();
 
-        uiSourceCode = Workspace.workspace.uiSourceCodeForURL(InspectorTest.mainTarget.inspectedURL());
-        var linkifyMe = "at triggerError (http://localhost/show/:22:11)";
-        var fragment = Components.linkifyStringAsFragment(linkifyMe);
-        var anchor = fragment.querySelector('.devtools-link');
-        var info = Components.Linkifier._linkInfo(anchor);
-        InspectorTest.addResult("The string \"" + linkifyMe + " \" linkifies to url: " + (info && info.url));
-        InspectorTest.addResult("The lineNumber is " + (info && info.lineNumber));
-        InspectorTest.addResult("The columnNumber is " + (info && info.columnNumber));
+    TestRunner.addResult('listeners added on raw source code: ' + (count2 - count1));
+    TestRunner.addResult('original location: ' + link.textContent);
+    TestRunner.addSniffer(Sources.ScriptFormatterEditorAction.prototype, '_updateButton', uiSourceCodeScriptFormatted);
+    scriptFormatter._toggleFormatScriptSource();
+  }
 
-        linkifier = new Components.Linkifier();
-        var count1 = liveLocationsCount();
-        link = linkifier.linkifyScriptLocation(SDK.targetManager.mainTarget(), null, InspectorTest.mainTarget.inspectedURL(), 8, 0, "dummy-class");
-        var count2 = liveLocationsCount();
+  function uiSourceCodeScriptFormatted() {
+    TestRunner.addResult('pretty printed location: ' + link.textContent);
+    Sources.sourceFormatter.discardFormattedUISourceCode(UI.panels.sources.visibleView.uiSourceCode());
+    TestRunner.addResult('reverted location: ' + link.textContent);
 
-        InspectorTest.addResult("listeners added on raw source code: " + (count2 - count1));
-        InspectorTest.addResult("original location: " + link.textContent);
-        InspectorTest.addSniffer(Sources.ScriptFormatterEditorAction.prototype, "_updateButton", uiSourceCodeScriptFormatted);
-        scriptFormatter._toggleFormatScriptSource();
-    }
+    var count1 = liveLocationsCount();
+    linkifier.reset();
+    var count2 = liveLocationsCount();
 
-    function uiSourceCodeScriptFormatted()
-    {
-        InspectorTest.addResult("pretty printed location: " + link.textContent);
-        Sources.sourceFormatter.discardFormattedUISourceCode(UI.panels.sources.visibleView.uiSourceCode());
-        InspectorTest.addResult("reverted location: " + link.textContent);
+    TestRunner.addResult('listeners removed from raw source code: ' + (count1 - count2));
 
-        var count1 = liveLocationsCount();
-        linkifier.reset();
-        var count2 = liveLocationsCount();
+    SourcesTestRunner.completeDebuggerTest();
+  }
 
-        InspectorTest.addResult("listeners removed from raw source code: " + (count1 - count2));
-
-        InspectorTest.completeDebuggerTest();
-    }
-
-    function liveLocationsCount()
-    {
-        var scriptInfo = Bindings.debuggerWorkspaceBinding._ensureInfoForScript(script);
-        return scriptInfo._locations ? scriptInfo._locations.size : 0;
-    }
+  function liveLocationsCount() {
+    var modelData = Bindings.debuggerWorkspaceBinding._debuggerModelToData.get(script.debuggerModel);
+    var locations = modelData._locations.get(script);
+    return locations.size;
+  }
 }
 
 </script>

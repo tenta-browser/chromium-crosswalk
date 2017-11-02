@@ -4,12 +4,11 @@
 
 #include "ui/views/layout/grid_layout.h"
 
-#include <algorithm>
-
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
-#include "ui/views/layout/layout_constants.h"
+#include "base/stl_util.h"
+#include "ui/views/border.h"
 #include "ui/views/layout/layout_provider.h"
 #include "ui/views/view.h"
 #include "ui/views/window/dialog_delegate.h"
@@ -485,9 +484,7 @@ void ColumnSet::AccumulateMasterColumns() {
   DCHECK(master_columns_.empty());
   for (const auto& column : columns_) {
     Column* master_column = column->GetLastMasterColumn();
-    if (master_column &&
-        std::find(master_columns_.begin(), master_columns_.end(),
-                  master_column) == master_columns_.end()) {
+    if (master_column && !base::ContainsValue(master_columns_, master_column)) {
       master_columns_.push_back(master_column);
     }
     // At this point, GetLastMasterColumn may not == master_column
@@ -652,17 +649,10 @@ GridLayout::~GridLayout() {
 // static
 GridLayout* GridLayout::CreatePanel(View* host) {
   GridLayout* layout = new GridLayout(host);
-  layout->SetInsets(LayoutProvider::Get()->GetInsetsMetric(INSETS_PANEL));
+  host->SetBorder(CreateEmptyBorder(
+      LayoutProvider::Get()->GetInsetsMetric(INSETS_DIALOG_CONTENTS)));
   host->SetLayoutManager(layout);
   return layout;
-}
-
-void GridLayout::SetInsets(int top, int left, int bottom, int right) {
-  insets_.Set(top, left, bottom, right);
-}
-
-void GridLayout::SetInsets(const gfx::Insets& insets) {
-  insets_ = insets;
 }
 
 ColumnSet* GridLayout::AddColumnSet(int id) {
@@ -784,13 +774,14 @@ void GridLayout::Layout(View* host) {
     ColumnSet* column_set = view_state->column_set;
     View* view = view_state->view;
     DCHECK(view);
-    int x = column_set->columns_[view_state->start_col]->Location() +
-            insets_.left();
+    const gfx::Insets& insets = host_->GetInsets();
+    int x =
+        column_set->columns_[view_state->start_col]->Location() + insets.left();
     int width = column_set->GetColumnWidth(view_state->start_col,
                                            view_state->col_span);
     CalculateSize(view_state->pref_width, view_state->h_align,
                   &x, &width);
-    int y = rows_[view_state->start_row]->Location() + insets_.top();
+    int y = rows_[view_state->start_row]->Location() + insets.top();
     int height = LayoutElement::TotalSize(view_state->start_row,
                                           view_state->row_span, &rows_);
     if (view_state->v_align == BASELINE && view_state->baseline != -1) {
@@ -839,14 +830,15 @@ void GridLayout::SizeRowsAndColumns(bool layout, int width, int height,
     column_set->CalculateSize();
     pref->set_width(std::max(pref->width(), column_set->LayoutWidth()));
   }
-  pref->set_width(pref->width() + insets_.width());
+  const gfx::Insets& insets = host_->GetInsets();
+  pref->set_width(pref->width() + insets.width());
 
   // Go over the columns again and set them all to the size we settled for.
   width = width ? width : pref->width();
   for (const auto& column_set : column_sets_) {
     // We're doing a layout, divvy up any extra space.
-    column_set->Resize(width - column_set->LayoutWidth() - insets_.left() -
-                       insets_.right());
+    column_set->Resize(width - column_set->LayoutWidth() - insets.left() -
+                       insets.right());
     // And reset the x coordinates.
     column_set->ResetColumnXCoordinates();
   }
@@ -914,7 +906,7 @@ void GridLayout::SizeRowsAndColumns(bool layout, int width, int height,
 
   // We now know the preferred height, set it here.
   pref->set_height(rows_.back()->Location() + rows_.back()->Size() +
-                   insets_.height());
+                   insets.height());
 
   if (layout && height != pref->height()) {
     // We're doing a layout, and the height differs from the preferred height,

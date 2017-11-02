@@ -41,12 +41,14 @@
 ExclusiveAccessBubbleViews::ExclusiveAccessBubbleViews(
     ExclusiveAccessBubbleViewsContext* context,
     const GURL& url,
-    ExclusiveAccessBubbleType bubble_type)
+    ExclusiveAccessBubbleType bubble_type,
+    ExclusiveAccessBubbleHideCallback bubble_first_hide_callback)
     : ExclusiveAccessBubble(context->GetExclusiveAccessManager(),
                             url,
                             bubble_type),
       bubble_view_context_(context),
       popup_(nullptr),
+      bubble_first_hide_callback_(std::move(bubble_first_hide_callback)),
       animation_(new gfx::SlideAnimation(this)) {
   // With the simplified fullscreen UI flag, initially hide the bubble;
   // otherwise, initially show it.
@@ -89,6 +91,11 @@ ExclusiveAccessBubbleViews::ExclusiveAccessBubbleViews(
 }
 
 ExclusiveAccessBubbleViews::~ExclusiveAccessBubbleViews() {
+  if (bubble_first_hide_callback_) {
+    std::move(bubble_first_hide_callback_)
+        .Run(ExclusiveAccessBubbleHideReason::kInterrupted);
+  }
+
   popup_->RemoveObserver(this);
 
   // This is tricky.  We may be in an ATL message handler stack, in which case
@@ -106,10 +113,19 @@ ExclusiveAccessBubbleViews::~ExclusiveAccessBubbleViews() {
 
 void ExclusiveAccessBubbleViews::UpdateContent(
     const GURL& url,
-    ExclusiveAccessBubbleType bubble_type) {
+    ExclusiveAccessBubbleType bubble_type,
+    ExclusiveAccessBubbleHideCallback bubble_first_hide_callback) {
   DCHECK_NE(EXCLUSIVE_ACCESS_BUBBLE_TYPE_NONE, bubble_type);
   if (bubble_type_ == bubble_type && url_ == url)
     return;
+
+  // Bubble maybe be re-used after timeout.
+  if (bubble_first_hide_callback_) {
+    std::move(bubble_first_hide_callback_)
+        .Run(ExclusiveAccessBubbleHideReason::kInterrupted);
+  }
+
+  bubble_first_hide_callback_ = std::move(bubble_first_hide_callback);
 
   url_ = url;
   bubble_type_ = bubble_type;
@@ -257,6 +273,15 @@ bool ExclusiveAccessBubbleViews::IsWindowActive() {
 }
 
 void ExclusiveAccessBubbleViews::Hide() {
+  // This function is guarded by the |ExclusiveAccessBubble::hide_timeout_|
+  // timer, so the bubble has been displayed for at least
+  // |ExclusiveAccessBubble::kInitialDelayMs|.
+  DCHECK(!IsHideTimeoutRunning());
+  if (bubble_first_hide_callback_) {
+    std::move(bubble_first_hide_callback_)
+        .Run(ExclusiveAccessBubbleHideReason::kTimeout);
+  }
+
   animation_->SetSlideDuration(kSlideOutDurationMs);
   animation_->Hide();
 }
@@ -280,6 +305,23 @@ void ExclusiveAccessBubbleViews::Observe(
     const content::NotificationDetails& details) {
   DCHECK_EQ(chrome::NOTIFICATION_FULLSCREEN_CHANGED, type);
   UpdateMouseWatcher();
+}
+
+void ExclusiveAccessBubbleViews::OnWidgetDestroyed(views::Widget* widget) {
+  // Although SubtleNotificationView uses WIDGET_OWNS_NATIVE_WIDGET, a close can
+  // originate from the OS or some Chrome shutdown codepaths that bypass the
+  // destructor.
+  views::Widget* popup_on_stack = popup_;
+  DCHECK(popup_on_stack->HasObserver(this));
+
+  // Get ourselves destroyed. Calling ExitExclusiveAccess() won't work because
+  // the parent window might be destroyed as well, so asking it to exit
+  // fullscreen would be a bad idea.
+  bubble_view_context_->DestroyAnyExclusiveAccessBubble();
+
+  // Note: |this| is destroyed on the line above. Check that the destructor was
+  // invoked. This is safe to do since |popup_| is deleted via a posted task.
+  DCHECK(!popup_on_stack->HasObserver(this));
 }
 
 void ExclusiveAccessBubbleViews::OnWidgetVisibilityChanged(

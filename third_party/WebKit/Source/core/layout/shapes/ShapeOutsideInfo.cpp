@@ -116,11 +116,10 @@ static bool CheckShapeImageOrigin(Document& document,
 static LayoutRect GetShapeImageMarginRect(
     const LayoutBox& layout_box,
     const LayoutSize& reference_box_logical_size) {
-  LayoutPoint margin_box_origin(-layout_box.MarginLogicalLeft() -
-                                    layout_box.BorderAndPaddingLogicalLeft(),
-                                -layout_box.MarginBefore() -
-                                    layout_box.BorderBefore() -
-                                    layout_box.PaddingBefore());
+  LayoutPoint margin_box_origin(
+      -layout_box.MarginLineLeft() - layout_box.BorderAndPaddingLogicalLeft(),
+      -layout_box.MarginBefore() - layout_box.BorderBefore() -
+          layout_box.PaddingBefore());
   LayoutSize margin_box_size_delta(
       layout_box.MarginLogicalWidth() +
           layout_box.BorderAndPaddingLogicalWidth(),
@@ -149,9 +148,9 @@ std::unique_ptr<Shape> ShapeOutsideInfo::CreateShapeForImage(
     float shape_image_threshold,
     WritingMode writing_mode,
     float margin) const {
-  const LayoutSize& image_size =
-      style_image->ImageSize(layout_box_, layout_box_.Style()->EffectiveZoom(),
-                             reference_box_logical_size_);
+  const LayoutSize& image_size = style_image->ImageSize(
+      layout_box_.GetDocument(), layout_box_.Style()->EffectiveZoom(),
+      reference_box_logical_size_);
 
   const LayoutRect& margin_rect =
       GetShapeImageMarginRect(layout_box_, reference_box_logical_size_);
@@ -170,8 +169,8 @@ std::unique_ptr<Shape> ShapeOutsideInfo::CreateShapeForImage(
 
   DCHECK(!style_image->IsPendingImage());
   RefPtr<Image> image =
-      style_image->GetImage(layout_box_, FlooredIntSize(image_size),
-                            layout_box_.Style()->EffectiveZoom());
+      style_image->GetImage(layout_box_, layout_box_.GetDocument(),
+                            layout_box_.StyleRef(), FlooredIntSize(image_size));
 
   return Shape::CreateRasterShape(image.Get(), shape_image_threshold,
                                   image_rect, margin_rect, writing_mode,

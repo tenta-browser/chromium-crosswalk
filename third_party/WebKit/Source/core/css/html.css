@@ -132,6 +132,8 @@ center {
 
 hr {
     display: block;
+    overflow: hidden;
+    unicode-bidi: isolate;
     -webkit-margin-before: 0.5em;
     -webkit-margin-after: 0.5em;
     -webkit-margin-start: auto;
@@ -421,7 +423,6 @@ input {
     background-color: white;
     border: 2px inset;
     -webkit-rtl-ordering: logical;
-    -webkit-user-select: text;
     cursor: auto;
 }
 
@@ -473,7 +474,6 @@ input::-webkit-inner-spin-button {
     cursor: default;
     flex: none;
     align-self: stretch;
-    -webkit-user-select: none;
     -webkit-user-modify: read-only !important;
     opacity: 0;
     pointer-events: none;
@@ -493,7 +493,6 @@ textarea {
     background-color: white;
     border: 1px solid;
     -webkit-rtl-ordering: logical;
-    -webkit-user-select: text;
     flex-direction: column;
     resize: auto;
     cursor: auto;
@@ -758,7 +757,6 @@ select:-internal-list-box {
     overflow-x: hidden;
     overflow-y: scroll;
     vertical-align: text-bottom;
-    -webkit-user-select: none;
     white-space: nowrap;
 }
 
@@ -805,6 +803,8 @@ select:-internal-list-box option:checked:disabled {
 
 select:-internal-list-box hr {
     border-style: none;
+    -webkit-margin-before: 0.5em;
+    -webkit-margin-after: 0;
 }
 
 output {
@@ -1118,6 +1118,7 @@ slot {
 /* Allows thead sections to print at the top of each page. */
 @media print {
     thead { break-inside:avoid; }
+    tfoot { break-inside:avoid; }
 }
 
 /* noscript is handled internally, as it depends on settings. */

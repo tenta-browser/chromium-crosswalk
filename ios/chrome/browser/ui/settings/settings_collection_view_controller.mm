@@ -6,9 +6,8 @@
 
 #include <memory>
 
-#import "base/ios/weak_nsobject.h"
 #import "base/mac/foundation_util.h"
-#import "base/mac/scoped_nsobject.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/scoped_observer.h"
 #include "base/strings/sys_string_conversions.h"
@@ -17,6 +16,7 @@
 #include "components/keyed_service/core/service_access_type.h"
 #include "components/password_manager/core/browser/password_store.h"
 #include "components/password_manager/core/common/password_manager_pref_names.h"
+#include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/pref_service.h"
 #include "components/search_engines/util.h"
@@ -44,6 +44,7 @@
 #import "ios/chrome/browser/ui/authentication/signin_promo_view.h"
 #import "ios/chrome/browser/ui/authentication/signin_promo_view_configurator.h"
 #import "ios/chrome/browser/ui/authentication/signin_promo_view_consumer.h"
+#import "ios/chrome/browser/ui/authentication/signin_promo_view_delegate.h"
 #import "ios/chrome/browser/ui/authentication/signin_promo_view_mediator.h"
 #import "ios/chrome/browser/ui/collection_view/cells/MDCCollectionViewCell+Chrome.h"
 #import "ios/chrome/browser/ui/collection_view/cells/collection_view_account_item.h"
@@ -52,6 +53,7 @@
 #import "ios/chrome/browser/ui/collection_view/cells/collection_view_text_item.h"
 #import "ios/chrome/browser/ui/collection_view/collection_view_model.h"
 #import "ios/chrome/browser/ui/colors/MDCPalette+CrAdditions.h"
+#import "ios/chrome/browser/ui/commands/application_commands.h"
 #import "ios/chrome/browser/ui/settings/about_chrome_collection_view_controller.h"
 #import "ios/chrome/browser/ui/settings/accounts_collection_view_controller.h"
 #import "ios/chrome/browser/ui/settings/autofill_collection_view_controller.h"
@@ -59,7 +61,6 @@
 #import "ios/chrome/browser/ui/settings/cells/account_signin_item.h"
 #import "ios/chrome/browser/ui/settings/content_settings_collection_view_controller.h"
 #import "ios/chrome/browser/ui/settings/material_cell_catalog_view_controller.h"
-#import "ios/chrome/browser/ui/settings/native_apps_collection_view_controller.h"
 #import "ios/chrome/browser/ui/settings/privacy_collection_view_controller.h"
 #import "ios/chrome/browser/ui/settings/save_passwords_collection_view_controller.h"
 #import "ios/chrome/browser/ui/settings/search_engine_settings_collection_view_controller.h"
@@ -75,7 +76,13 @@
 #import "ios/public/provider/chrome/browser/signin/chrome_identity.h"
 #import "ios/public/provider/chrome/browser/signin/signin_resources_provider.h"
 #include "ios/public/provider/chrome/browser/voice/voice_search_prefs.h"
+#import "ios/shared/chrome/browser/ui/settings/settings_main_page_commands.h"
+#import "ios/third_party/material_components_ios/src/components/Buttons/src/MaterialButtons.h"
 #include "ui/base/l10n/l10n_util_mac.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 NSString* const kSettingsCollectionViewId = @"kSettingsCollectionViewId";
 NSString* const kSettingsSignInCellId = @"kSettingsSignInCellId";
@@ -91,6 +98,8 @@ NSString* const kSettingsVoiceSearchCellId = @"Voice Search Settings";
 namespace {
 
 const CGFloat kAccountProfilePhotoDimension = 40.0f;
+
+const int kAutomaticSigninPromoViewDismissCount = 5;
 
 typedef NS_ENUM(NSInteger, SectionIdentifier) {
   SectionIdentifierSignIn = kSectionIdentifierEnumZero,
@@ -108,7 +117,6 @@ typedef NS_ENUM(NSInteger, ItemType) {
   ItemTypeSearchEngine,
   ItemTypeSavedPasswords,
   ItemTypeAutofill,
-  ItemTypeNativeApps,
   ItemTypeVoiceSearch,
   ItemTypePrivacy,
   ItemTypeContentSettings,
@@ -133,17 +141,16 @@ class SigninObserverBridge : public SigninManagerBase::Observer {
  public:
   SigninObserverBridge(ios::ChromeBrowserState* browserState,
                        SettingsCollectionViewController* owner);
-  ~SigninObserverBridge() override{};
+  ~SigninObserverBridge() override {}
 
   // SigninManagerBase::Observer implementation:
   void GoogleSigninSucceeded(const std::string& account_id,
-                             const std::string& username,
-                             const std::string& password) override;
+                             const std::string& username) override;
   void GoogleSignedOut(const std::string& account_id,
                        const std::string& username) override;
 
  private:
-  base::WeakNSObject<SettingsCollectionViewController> owner_;
+  __weak SettingsCollectionViewController* owner_;
   ScopedObserver<SigninManager, SigninObserverBridge> observer_;
 };
 
@@ -152,16 +159,15 @@ SigninObserverBridge::SigninObserverBridge(
     SettingsCollectionViewController* owner)
     : owner_(owner), observer_(this) {
   DCHECK(owner_);
-  SigninManager* sigin_manager =
+  SigninManager* signin_manager =
       ios::SigninManagerFactory::GetForBrowserState(browserState);
-  if (!sigin_manager)
+  if (!signin_manager)
     return;
-  observer_.Add(sigin_manager);
+  observer_.Add(signin_manager);
 }
 
 void SigninObserverBridge::GoogleSigninSucceeded(const std::string& account_id,
-                                                 const std::string& username,
-                                                 const std::string& password) {
+                                                 const std::string& username) {
   [owner_ onSignInStateChanged];
 }
 
@@ -174,39 +180,37 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
 
 #pragma mark - SettingsCollectionViewController
 
-@interface SettingsCollectionViewController ()<SettingsControllerProtocol,
-                                               SyncObserverModelBridge,
+@interface SettingsCollectionViewController ()<BooleanObserver,
                                                ChromeIdentityServiceObserver,
-                                               BooleanObserver,
                                                PrefObserverDelegate,
-                                               SigninPromoViewConsumer> {
-  // The main browser state that hold the settings. Never off the record.
-  ios::ChromeBrowserState* _mainBrowserState;  // weak
+                                               SettingsControllerProtocol,
+                                               SettingsMainPageCommands,
+                                               SigninPromoViewConsumer,
+                                               SigninPromoViewDelegate,
+                                               SyncObserverModelBridge> {
+  // The current browser state that hold the settings. Never off the record.
+  ios::ChromeBrowserState* _browserState;  // weak
 
-  // The current browser state. It is either |_mainBrowserState|
-  // or |_mainBrowserState->GetOffTheRecordChromeBrowserState()|.
-  ios::ChromeBrowserState* _currentBrowserState;  // weak
   std::unique_ptr<SigninObserverBridge> _notificationBridge;
   std::unique_ptr<SyncObserverBridge> _syncObserverBridge;
-  base::scoped_nsobject<SigninInteractionController>
-      _signinInteractionController;
+  SigninInteractionController* _signinInteractionController;
   // Whether the impression of the Signin button has already been recorded.
   BOOL _hasRecordedSigninImpression;
   // PrefBackedBoolean for ShowMemoryDebugTools switch.
-  base::scoped_nsobject<PrefBackedBoolean> _showMemoryDebugToolsEnabled;
+  PrefBackedBoolean* _showMemoryDebugToolsEnabled;
   // The item related to the switch for the show suggestions setting.
-  base::scoped_nsobject<CollectionViewSwitchItem> _showMemoryDebugToolsItem;
+  CollectionViewSwitchItem* _showMemoryDebugToolsItem;
 
   // Mediator to configure the sign-in promo cell. Also used to received
   // identity update notifications.
-  base::scoped_nsobject<SigninPromoViewMediator> _signinPromoViewMediator;
+  SigninPromoViewMediator* _signinPromoViewMediator;
 
   // Cached resized profile image.
-  base::scoped_nsobject<UIImage> _resizedImage;
-  base::WeakNSObject<UIImage> _oldImage;
+  UIImage* _resizedImage;
+  __weak UIImage* _oldImage;
 
   // Identity object and observer used for Account Item refresh.
-  base::scoped_nsobject<ChromeIdentity> _identity;
+  ChromeIdentity* _identity;
   std::unique_ptr<ChromeIdentityServiceObserverBridge> _identityServiceObserver;
 
   // PrefMember for voice locale code.
@@ -219,11 +223,18 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
   PrefChangeRegistrar _prefChangeRegistrar;
 
   // Updatable Items.
-  base::scoped_nsobject<CollectionViewDetailItem> _voiceSearchDetailItem;
-  base::scoped_nsobject<CollectionViewDetailItem> _defaultSearchEngineItem;
-  base::scoped_nsobject<CollectionViewDetailItem> _savePasswordsDetailItem;
-  base::scoped_nsobject<CollectionViewDetailItem> _autoFillDetailItem;
+  CollectionViewDetailItem* _voiceSearchDetailItem;
+  CollectionViewDetailItem* _defaultSearchEngineItem;
+  CollectionViewDetailItem* _savePasswordsDetailItem;
+  CollectionViewDetailItem* _autoFillDetailItem;
+
+  // YES if the user used at least once the sign-in promo view buttons.
+  BOOL _signinStarted;
+  // YES if view has been dismissed.
+  BOOL _settingsHasBeenDismissed;
 }
+
+@property(nonatomic, readonly, weak) id<ApplicationCommands> dispatcher;
 
 // Stops observing browser state services. This is required during the shutdown
 // phase to avoid observing services for a profile that is being killed.
@@ -232,41 +243,38 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
 @end
 
 @implementation SettingsCollectionViewController
+@synthesize settingsMainPageDispatcher = _settingsMainPageDispatcher;
+@synthesize dispatcher = _dispatcher;
 
 #pragma mark Initialization
 
-- (instancetype)initWithBrowserState:(ios::ChromeBrowserState*)mainBrowserState
-                 currentBrowserState:
-                     (ios::ChromeBrowserState*)currentBrowserState {
-  DCHECK(mainBrowserState);
-  DCHECK(currentBrowserState);
-  DCHECK_EQ(mainBrowserState,
-            currentBrowserState->GetOriginalChromeBrowserState());
-  self = [super initWithStyle:CollectionViewControllerStyleAppBar];
+- (instancetype)initWithBrowserState:(ios::ChromeBrowserState*)browserState
+                          dispatcher:(id<ApplicationCommands>)dispatcher {
+  DCHECK(!browserState->IsOffTheRecord());
+  UICollectionViewLayout* layout = [[MDCCollectionViewFlowLayout alloc] init];
+  self =
+      [super initWithLayout:layout style:CollectionViewControllerStyleAppBar];
   if (self) {
-    _mainBrowserState = mainBrowserState;
-    _currentBrowserState = currentBrowserState;
+    _browserState = browserState;
     self.title = l10n_util::GetNSStringWithFixup(IDS_IOS_SETTINGS_TITLE);
     self.collectionViewAccessibilityIdentifier = kSettingsCollectionViewId;
-    _notificationBridge.reset(
-        new SigninObserverBridge(_mainBrowserState, self));
+    _notificationBridge.reset(new SigninObserverBridge(_browserState, self));
     syncer::SyncService* syncService =
-        IOSChromeProfileSyncServiceFactory::GetForBrowserState(
-            _mainBrowserState);
+        IOSChromeProfileSyncServiceFactory::GetForBrowserState(_browserState);
     _syncObserverBridge.reset(new SyncObserverBridge(self, syncService));
 
-    _showMemoryDebugToolsEnabled.reset([[PrefBackedBoolean alloc]
+    _showMemoryDebugToolsEnabled = [[PrefBackedBoolean alloc]
         initWithPrefService:GetApplicationContext()->GetLocalState()
-                   prefName:prefs::kShowMemoryDebuggingTools]);
+                   prefName:prefs::kShowMemoryDebuggingTools];
     [_showMemoryDebugToolsEnabled setObserver:self];
 
     AuthenticationService* authService =
-        AuthenticationServiceFactory::GetForBrowserState(_mainBrowserState);
-    _identity.reset([authService->GetAuthenticatedIdentity() retain]);
+        AuthenticationServiceFactory::GetForBrowserState(_browserState);
+    _identity = authService->GetAuthenticatedIdentity();
     _identityServiceObserver.reset(
         new ChromeIdentityServiceObserverBridge(self));
 
-    PrefService* prefService = _mainBrowserState->GetPrefs();
+    PrefService* prefService = _browserState->GetPrefs();
 
     _voiceLocaleCode.Init(prefs::kVoiceSearchLocale, prefService);
 
@@ -277,10 +285,13 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
     _prefObserverBridge->ObserveChangesForPreference(prefs::kVoiceSearchLocale,
                                                      &_prefChangeRegistrar);
     _prefObserverBridge->ObserveChangesForPreference(
-        password_manager::prefs::kPasswordManagerSavingEnabled,
+        password_manager::prefs::kCredentialsEnableService,
         &_prefChangeRegistrar);
     _prefObserverBridge->ObserveChangesForPreference(
         autofill::prefs::kAutofillEnabled, &_prefChangeRegistrar);
+
+    _settingsMainPageDispatcher = self;
+    _dispatcher = dispatcher;
 
     [self loadModel];
   }
@@ -288,8 +299,8 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
 }
 
 - (void)dealloc {
-  [self stopBrowserStateServiceObservers];
-  [super dealloc];
+  DCHECK(_settingsHasBeenDismissed)
+      << "-settingsWillBeDismissed must be called before -dealloc";
 }
 
 - (void)stopBrowserStateServiceObservers {
@@ -323,7 +334,7 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
   // Sign in/Account section
   [model addSectionWithIdentifier:SectionIdentifierSignIn];
   AuthenticationService* authService =
-      AuthenticationServiceFactory::GetForBrowserState(_mainBrowserState);
+      AuthenticationServiceFactory::GetForBrowserState(_browserState);
   if (!authService->IsAuthenticated()) {
     if (!_hasRecordedSigninImpression) {
       // Once the Settings are open, this button impression will at most be
@@ -332,22 +343,34 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
           base::UserMetricsAction("Signin_Impression_FromSettings"));
       _hasRecordedSigninImpression = YES;
     }
-    if (experimental_flags::IsSigninPromoEnabled()) {
-      _signinPromoViewMediator.reset([[SigninPromoViewMediator alloc] init]);
-      _signinPromoViewMediator.get().consumer = self;
+    PrefService* prefs = _browserState->GetPrefs();
+    int displayedCount =
+        prefs->GetInteger(prefs::kIosSettingsSigninPromoDisplayedCount);
+    if (experimental_flags::IsSigninPromoEnabled() &&
+        displayedCount < kAutomaticSigninPromoViewDismissCount) {
+      if (!_signinPromoViewMediator) {
+        _signinPromoViewMediator = [[SigninPromoViewMediator alloc]
+            initWithBrowserState:_browserState
+                     accessPoint:signin_metrics::AccessPoint::
+                                     ACCESS_POINT_SETTINGS];
+        _signinPromoViewMediator.consumer = self;
+        prefs->SetInteger(prefs::kIosSettingsSigninPromoDisplayedCount,
+                          displayedCount + 1);
+      }
     }
     [model addItem:[self signInTextItem]
         toSectionWithIdentifier:SectionIdentifierSignIn];
   } else {
-    _signinPromoViewMediator.reset(nil);
+    [_signinPromoViewMediator signinPromoViewRemoved];
+    _signinPromoViewMediator = nil;
     [model addItem:[self accountCellItem]
         toSectionWithIdentifier:SectionIdentifierSignIn];
   }
 
   // Basics section
   [model addSectionWithIdentifier:SectionIdentifierBasics];
-  CollectionViewTextItem* basicsHeader = [
-      [[CollectionViewTextItem alloc] initWithType:ItemTypeHeader] autorelease];
+  CollectionViewTextItem* basicsHeader =
+      [[CollectionViewTextItem alloc] initWithType:ItemTypeHeader];
   basicsHeader.text = l10n_util::GetNSString(IDS_IOS_OPTIONS_GENERAL_TAB_LABEL);
   basicsHeader.textColor = [[MDCPalette greyPalette] tint500];
   [model setHeader:basicsHeader
@@ -358,13 +381,11 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
       toSectionWithIdentifier:SectionIdentifierBasics];
   [model addItem:[self autoFillDetailItem]
       toSectionWithIdentifier:SectionIdentifierBasics];
-  [model addItem:[self nativeAppsDetailItem]
-      toSectionWithIdentifier:SectionIdentifierBasics];
 
   // Advanced Section
   [model addSectionWithIdentifier:SectionIdentifierAdvanced];
-  CollectionViewTextItem* advancedHeader = [
-      [[CollectionViewTextItem alloc] initWithType:ItemTypeHeader] autorelease];
+  CollectionViewTextItem* advancedHeader =
+      [[CollectionViewTextItem alloc] initWithType:ItemTypeHeader];
   advancedHeader.text =
       l10n_util::GetNSString(IDS_IOS_OPTIONS_ADVANCED_TAB_LABEL);
   advancedHeader.textColor = [[MDCPalette greyPalette] tint500];
@@ -387,8 +408,8 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
   // Debug Section
   if ([self hasDebugSection]) {
     [model addSectionWithIdentifier:SectionIdentifierDebug];
-    CollectionViewTextItem* debugHeader = [[[CollectionViewTextItem alloc]
-        initWithType:ItemTypeHeader] autorelease];
+    CollectionViewTextItem* debugHeader =
+        [[CollectionViewTextItem alloc] initWithType:ItemTypeHeader];
     debugHeader.text = @"Debug";
     debugHeader.textColor = [[MDCPalette greyPalette] tint500];
     [model setHeader:debugHeader
@@ -396,7 +417,7 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
   }
 
   if (experimental_flags::IsMemoryDebuggingEnabled()) {
-    _showMemoryDebugToolsItem.reset([[self showMemoryDebugSwitchItem] retain]);
+    _showMemoryDebugToolsItem = [self showMemoryDebugSwitchItem];
     [model addItem:_showMemoryDebugToolsItem
         toSectionWithIdentifier:SectionIdentifierDebug];
   }
@@ -416,16 +437,15 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
 #pragma mark - Model Items
 
 - (CollectionViewItem*)signInTextItem {
-  if (experimental_flags::IsSigninPromoEnabled()) {
-    DCHECK(_signinPromoViewMediator.get());
-    SigninPromoItem* signinPromoItem = [
-        [[SigninPromoItem alloc] initWithType:ItemTypeSigninPromo] autorelease];
+  if (_signinPromoViewMediator) {
+    SigninPromoItem* signinPromoItem =
+        [[SigninPromoItem alloc] initWithType:ItemTypeSigninPromo];
     signinPromoItem.configurator =
         [_signinPromoViewMediator createConfigurator];
     return signinPromoItem;
   }
-  AccountSignInItem* signInTextItem = [[[AccountSignInItem alloc]
-      initWithType:ItemTypeSignInButton] autorelease];
+  AccountSignInItem* signInTextItem =
+      [[AccountSignInItem alloc] initWithType:ItemTypeSignInButton];
   signInTextItem.accessibilityIdentifier = kSettingsSignInCellId;
   UIImage* image = CircularImageFromImage(ios::GetChromeBrowserProvider()
                                               ->GetSigninResourcesProvider()
@@ -437,8 +457,7 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
 
 - (CollectionViewItem*)accountCellItem {
   CollectionViewAccountItem* identityAccountItem =
-      [[[CollectionViewAccountItem alloc] initWithType:ItemTypeAccount]
-          autorelease];
+      [[CollectionViewAccountItem alloc] initWithType:ItemTypeAccount];
   identityAccountItem.accessoryType =
       MDCCollectionViewCellAccessoryDisclosureIndicator;
   identityAccountItem.accessibilityIdentifier = kSettingsAccountCellId;
@@ -449,53 +468,45 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
 - (CollectionViewItem*)searchEngineDetailItem {
   NSString* defaultSearchEngineName =
       base::SysUTF16ToNSString(GetDefaultSearchEngineName(
-          ios::TemplateURLServiceFactory::GetForBrowserState(
-              _mainBrowserState)));
+          ios::TemplateURLServiceFactory::GetForBrowserState(_browserState)));
 
-  _defaultSearchEngineItem.reset(
-      [[self detailItemWithType:ItemTypeSearchEngine
-                           text:l10n_util::GetNSString(
-                                    IDS_IOS_SEARCH_ENGINE_SETTING_TITLE)
-                     detailText:defaultSearchEngineName] retain]);
-  _defaultSearchEngineItem.get().accessibilityIdentifier =
+  _defaultSearchEngineItem =
+      [self detailItemWithType:ItemTypeSearchEngine
+                          text:l10n_util::GetNSString(
+                                   IDS_IOS_SEARCH_ENGINE_SETTING_TITLE)
+                    detailText:defaultSearchEngineName];
+  _defaultSearchEngineItem.accessibilityIdentifier =
       kSettingsSearchEngineCellId;
   return _defaultSearchEngineItem;
 }
 
 - (CollectionViewItem*)savePasswordsDetailItem {
-  BOOL savePasswordsEnabled = _mainBrowserState->GetPrefs()->GetBoolean(
-      password_manager::prefs::kPasswordManagerSavingEnabled);
+  BOOL savePasswordsEnabled = _browserState->GetPrefs()->GetBoolean(
+      password_manager::prefs::kCredentialsEnableService);
   NSString* passwordsDetail = savePasswordsEnabled
                                   ? l10n_util::GetNSString(IDS_IOS_SETTING_ON)
                                   : l10n_util::GetNSString(IDS_IOS_SETTING_OFF);
 
-  _savePasswordsDetailItem.reset(
-      [[self detailItemWithType:ItemTypeSavedPasswords
-                           text:l10n_util::GetNSString(IDS_IOS_SAVE_PASSWORDS)
-                     detailText:passwordsDetail] retain]);
+  _savePasswordsDetailItem =
+      [self detailItemWithType:ItemTypeSavedPasswords
+                          text:l10n_util::GetNSString(IDS_IOS_SAVE_PASSWORDS)
+                    detailText:passwordsDetail];
 
   return _savePasswordsDetailItem;
 }
 
 - (CollectionViewItem*)autoFillDetailItem {
-  BOOL autofillEnabled = _mainBrowserState->GetPrefs()->GetBoolean(
-      autofill::prefs::kAutofillEnabled);
+  BOOL autofillEnabled =
+      _browserState->GetPrefs()->GetBoolean(autofill::prefs::kAutofillEnabled);
   NSString* autofillDetail = autofillEnabled
                                  ? l10n_util::GetNSString(IDS_IOS_SETTING_ON)
                                  : l10n_util::GetNSString(IDS_IOS_SETTING_OFF);
-  _autoFillDetailItem.reset(
-      [[self detailItemWithType:ItemTypeAutofill
-                           text:l10n_util::GetNSString(IDS_IOS_AUTOFILL)
-                     detailText:autofillDetail] retain]);
+  _autoFillDetailItem =
+      [self detailItemWithType:ItemTypeAutofill
+                          text:l10n_util::GetNSString(IDS_IOS_AUTOFILL)
+                    detailText:autofillDetail];
 
   return _autoFillDetailItem;
-}
-
-- (CollectionViewItem*)nativeAppsDetailItem {
-  return [self
-      detailItemWithType:ItemTypeNativeApps
-                    text:l10n_util::GetNSString(IDS_IOS_GOOGLE_APPS_SM_SETTINGS)
-              detailText:nil];
 }
 
 - (CollectionViewItem*)voiceSearchDetailItem {
@@ -506,13 +517,12 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
           ? localeConfig->GetLocaleForCode(_voiceLocaleCode.GetValue())
           : localeConfig->GetDefaultLocale();
   NSString* languageName = base::SysUTF16ToNSString(locale.display_name);
-  _voiceSearchDetailItem.reset(
-      [[self detailItemWithType:ItemTypeVoiceSearch
-                           text:l10n_util::GetNSString(
-                                    IDS_IOS_VOICE_SEARCH_SETTING_TITLE)
-                     detailText:languageName] retain]);
-  _voiceSearchDetailItem.get().accessibilityIdentifier =
-      kSettingsVoiceSearchCellId;
+  _voiceSearchDetailItem =
+      [self detailItemWithType:ItemTypeVoiceSearch
+                          text:l10n_util::GetNSString(
+                                   IDS_IOS_VOICE_SEARCH_SETTING_TITLE)
+                    detailText:languageName];
+  _voiceSearchDetailItem.accessibilityIdentifier = kSettingsVoiceSearchCellId;
   return _voiceSearchDetailItem;
 }
 
@@ -585,12 +595,10 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
 - (void)updateSearchCell {
   NSString* defaultSearchEngineName =
       base::SysUTF16ToNSString(GetDefaultSearchEngineName(
-          ios::TemplateURLServiceFactory::GetForBrowserState(
-              _mainBrowserState)));
+          ios::TemplateURLServiceFactory::GetForBrowserState(_browserState)));
 
-  _defaultSearchEngineItem.get().detailText = defaultSearchEngineName;
-  [self reconfigureCellsForItems:@[ _defaultSearchEngineItem ]
-         inSectionWithIdentifier:SectionIdentifierBasics];
+  _defaultSearchEngineItem.detailText = defaultSearchEngineName;
+  [self reconfigureCellsForItems:@[ _defaultSearchEngineItem ]];
 }
 
 #pragma mark Item Constructors
@@ -599,7 +607,7 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
                                            text:(NSString*)text
                                      detailText:(NSString*)detailText {
   CollectionViewDetailItem* detailItem =
-      [[[CollectionViewDetailItem alloc] initWithType:type] autorelease];
+      [[CollectionViewDetailItem alloc] initWithType:type];
   detailItem.text = text;
   detailItem.detailText = detailText;
   detailItem.accessoryType = MDCCollectionViewCellAccessoryDisclosureIndicator;
@@ -612,7 +620,7 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
                                           title:(NSString*)title
                                 withDefaultsKey:(NSString*)key {
   CollectionViewSwitchItem* switchItem =
-      [[[CollectionViewSwitchItem alloc] initWithType:type] autorelease];
+      [[CollectionViewSwitchItem alloc] initWithType:type];
   switchItem.text = title;
   if (key) {
     NSUserDefaults* defaults = [NSUserDefaults standardUserDefaults];
@@ -637,7 +645,7 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
     if (itemType == ItemTypeSavedPasswords) {
       scoped_refptr<password_manager::PasswordStore> passwordStore =
           IOSChromePasswordStoreFactory::GetForBrowserState(
-              _mainBrowserState, ServiceAccessType::EXPLICIT_ACCESS);
+              _browserState, ServiceAccessType::EXPLICIT_ACCESS);
       if (!passwordStore) {
         // The password store factory returns a NULL password store if something
         // goes wrong during the password store initialization. Disable the save
@@ -668,14 +676,7 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
     case ItemTypeSigninPromo: {
       SigninPromoCell* signinPromoCell =
           base::mac::ObjCCast<SigninPromoCell>(cell);
-      [signinPromoCell.signinPromoView.primaryButton
-                 addTarget:self
-                    action:@selector(signinPromoPrimaryAction:)
-          forControlEvents:UIControlEventTouchUpInside];
-      [signinPromoCell.signinPromoView.secondaryButton
-                 addTarget:self
-                    action:@selector(signinPromoSecondaryAction:)
-          forControlEvents:UIControlEventTouchUpInside];
+      signinPromoCell.signinPromoView.delegate = self;
       break;
     }
     case ItemTypeViewSource: {
@@ -737,53 +738,50 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
   NSInteger itemType =
       [self.collectionViewModel itemTypeForIndexPath:indexPath];
 
-  base::scoped_nsobject<UIViewController> controller;
+  SettingsRootCollectionViewController* controller;
 
   switch (itemType) {
     case ItemTypeSignInButton:
-      [self showSignInWithIdentity:nil];
+      [self showSignInWithIdentity:nil
+                       promoAction:signin_metrics::PromoAction::
+                                       PROMO_ACTION_NO_SIGNIN_PROMO];
       break;
     case ItemTypeAccount:
-      controller.reset([[AccountsCollectionViewController alloc]
-               initWithBrowserState:_mainBrowserState
-          closeSettingsOnAddAccount:NO]);
+      controller = [[AccountsCollectionViewController alloc]
+               initWithBrowserState:_browserState
+          closeSettingsOnAddAccount:NO];
       break;
     case ItemTypeSearchEngine:
-      controller.reset([[SearchEngineSettingsCollectionViewController alloc]
-          initWithBrowserState:_mainBrowserState]);
+      controller = [[SearchEngineSettingsCollectionViewController alloc]
+          initWithBrowserState:_browserState];
       break;
     case ItemTypeSavedPasswords: {
-      controller.reset([[SavePasswordsCollectionViewController alloc]
-          initWithBrowserState:_mainBrowserState]);
+      controller = [[SavePasswordsCollectionViewController alloc]
+          initWithBrowserState:_browserState];
       break;
     }
     case ItemTypeAutofill:
-      controller.reset([[AutofillCollectionViewController alloc]
-          initWithBrowserState:_mainBrowserState]);
-      break;
-    case ItemTypeNativeApps:
-      controller.reset([[NativeAppsCollectionViewController alloc]
-          initWithURLRequestContextGetter:_currentBrowserState
-                                              ->GetRequestContext()]);
+      controller = [[AutofillCollectionViewController alloc]
+          initWithBrowserState:_browserState];
       break;
     case ItemTypeVoiceSearch:
-      controller.reset([[VoicesearchCollectionViewController alloc]
-          initWithPrefs:_mainBrowserState->GetPrefs()]);
+      controller = [[VoicesearchCollectionViewController alloc]
+          initWithPrefs:_browserState->GetPrefs()];
       break;
     case ItemTypePrivacy:
-      controller.reset([[PrivacyCollectionViewController alloc]
-          initWithBrowserState:_mainBrowserState]);
+      controller = [[PrivacyCollectionViewController alloc]
+          initWithBrowserState:_browserState];
       break;
     case ItemTypeContentSettings:
-      controller.reset([[ContentSettingsCollectionViewController alloc]
-          initWithBrowserState:_mainBrowserState]);
+      controller = [[ContentSettingsCollectionViewController alloc]
+          initWithBrowserState:_browserState];
       break;
     case ItemTypeBandwidth:
-      controller.reset([[BandwidthManagementCollectionViewController alloc]
-          initWithBrowserState:_mainBrowserState]);
+      controller = [[BandwidthManagementCollectionViewController alloc]
+          initWithBrowserState:_browserState];
       break;
     case ItemTypeAboutChrome:
-      controller.reset([[AboutChromeCollectionViewController alloc] init]);
+      controller = [[AboutChromeCollectionViewController alloc] init];
       break;
     case ItemTypeMemoryDebugging:
     case ItemTypeViewSource:
@@ -793,13 +791,14 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
       // and only the switch is tappable.
       break;
     case ItemTypeCellCatalog:
-      controller.reset([[MaterialCellCatalogViewController alloc] init]);
+      [self.settingsMainPageDispatcher showMaterialCellCatalog];
       break;
     default:
       break;
   }
 
   if (controller) {
+    controller.dispatcher = self.dispatcher;
     [self.navigationController pushViewController:controller animated:YES];
   }
 }
@@ -931,8 +930,8 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
 - (void)updateIdentityAccountItem:
     (CollectionViewAccountItem*)identityAccountItem {
   AuthenticationService* authService =
-      AuthenticationServiceFactory::GetForBrowserState(_mainBrowserState);
-  _identity.reset([authService->GetAuthenticatedIdentity() retain]);
+      AuthenticationServiceFactory::GetForBrowserState(_browserState);
+  _identity = authService->GetAuthenticatedIdentity();
   if (!_identity) {
     // This could occur during the sign out process. Just ignore as the account
     // cell will be replaced by the "Sign in" button.
@@ -942,7 +941,7 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
   identityAccountItem.text = [_identity userFullName];
 
   SyncSetupService* syncSetupService =
-      SyncSetupServiceFactory::GetForBrowserState(_mainBrowserState);
+      SyncSetupServiceFactory::GetForBrowserState(_browserState);
   if (!syncSetupService->HasFinishedInitialSetup()) {
     identityAccountItem.detailText =
         l10n_util::GetNSString(IDS_IOS_SYNC_SETUP_IN_PROGRESS);
@@ -950,12 +949,10 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
     return;
   }
   identityAccountItem.shouldDisplayError =
-      !ios_internal::sync::IsTransientSyncError(
-          syncSetupService->GetSyncServiceState());
+      !IsTransientSyncError(syncSetupService->GetSyncServiceState());
   if (identityAccountItem.shouldDisplayError) {
     identityAccountItem.detailText =
-        ios_internal::sync::GetSyncErrorDescriptionForBrowserState(
-            _mainBrowserState);
+        GetSyncErrorDescriptionForBrowserState(_browserState);
   } else {
     identityAccountItem.detailText =
         syncSetupService->IsSyncEnabled()
@@ -980,24 +977,26 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
           [self.collectionViewModel itemAtIndexPath:accountCellIndexPath]);
   if (identityAccountItem) {
     [self updateIdentityAccountItem:identityAccountItem];
-    [self reconfigureCellsForItems:@[ identityAccountItem ]
-           inSectionWithIdentifier:SectionIdentifierSignIn];
+    [self reconfigureCellsForItems:@[ identityAccountItem ]];
   }
 }
 
 #pragma mark Sign in
 
-- (void)showSignInWithIdentity:(ChromeIdentity*)identity {
+- (void)showSignInWithIdentity:(ChromeIdentity*)identity
+                   promoAction:(signin_metrics::PromoAction)promoAction {
   base::RecordAction(base::UserMetricsAction("Signin_Signin_FromSettings"));
   DCHECK(!_signinInteractionController);
-  _signinInteractionController.reset([[SigninInteractionController alloc]
-          initWithBrowserState:_mainBrowserState
+  _signinInteractionController = [[SigninInteractionController alloc]
+          initWithBrowserState:_browserState
       presentingViewController:self.navigationController
          isPresentedOnSettings:YES
-             signInAccessPoint:signin_metrics::AccessPoint::
-                                   ACCESS_POINT_SETTINGS]);
+                   accessPoint:signin_metrics::AccessPoint::
+                                   ACCESS_POINT_SETTINGS
+                   promoAction:promoAction
+                    dispatcher:self.dispatcher];
 
-  base::WeakNSObject<SettingsCollectionViewController> weakSelf(self);
+  __weak SettingsCollectionViewController* weakSelf = self;
   [_signinInteractionController
       signInWithViewController:self
                       identity:identity
@@ -1007,29 +1006,51 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
 }
 
 - (void)didFinishSignin:(BOOL)signedIn {
-  _signinInteractionController.reset();
+  _signinInteractionController = nil;
+  // The sign-in is done. The sign-in promo cell or account cell can be
+  // reloaded.
+  if (!_settingsHasBeenDismissed)
+    [self reloadData];
 }
 
-- (void)signinPromoPrimaryAction:(id)unused {
-  [self showSignInWithIdentity:_signinPromoViewMediator.get().defaultIdentity];
-}
+#pragma mark Material Cell Catalog
 
-- (void)signinPromoSecondaryAction:(id)unused {
-  DCHECK(_signinPromoViewMediator.get().defaultIdentity);
-  [self showSignInWithIdentity:nil];
+- (void)showMaterialCellCatalog {
+  [self.navigationController
+      pushViewController:[[MaterialCellCatalogViewController alloc] init]
+                animated:YES];
 }
 
 #pragma mark NotificationBridgeDelegate
 
 - (void)onSignInStateChanged {
-  // Sign in state changes are rare. Just reload the entire collection when this
-  // happens.
-  [self reloadData];
+  // While the sign-in interaction controller is presented, the collection view
+  // should not be updated. Otherwise, it would lead to have an UI glitch either
+  // while the interaction controller is appearing or while it is disappearing.
+  // The collection view will be reloaded once the animation is finished. See:
+  // -[SettingsCollectionViewController didFinishSignin:].
+  if (!_signinInteractionController) {
+    // Sign in state changes are rare. Just reload the entire collection when
+    // this happens.
+    [self reloadData];
+  }
 }
 
 #pragma mark SettingsControllerProtocol
 
 - (void)settingsWillBeDismissed {
+  DCHECK(!_settingsHasBeenDismissed);
+  _settingsHasBeenDismissed = YES;
+  if (!_signinStarted && _signinPromoViewMediator) {
+    PrefService* prefs = _browserState->GetPrefs();
+    int displayedCount =
+        prefs->GetInteger(prefs::kIosSettingsSigninPromoDisplayedCount);
+    UMA_HISTOGRAM_COUNTS_100(
+        "MobileSignInPromo.SettingsManager.ImpressionsTilDismiss",
+        displayedCount);
+  }
+  [_signinPromoViewMediator signinPromoViewRemoved];
+  _signinPromoViewMediator = nil;
   [_signinInteractionController cancel];
   [self stopBrowserStateServiceObservers];
 }
@@ -1060,10 +1081,10 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
   }
 
   // If the currently used image has already been resized, use it.
-  if (_resizedImage && _oldImage.get() == image)
+  if (_resizedImage && _oldImage == image)
     return _resizedImage;
 
-  _oldImage.reset(image);
+  _oldImage = image;
 
   // Resize the profile image.
   CGFloat dimension = kAccountProfilePhotoDimension;
@@ -1071,32 +1092,31 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
     image = ResizeImage(image, CGSizeMake(dimension, dimension),
                         ProjectionMode::kAspectFit);
   }
-  _resizedImage.reset([image retain]);
+  _resizedImage = image;
   return _resizedImage;
 }
 
 #pragma mark ChromeIdentityServiceObserver
 
-- (void)onProfileUpdate:(ChromeIdentity*)identity {
+- (void)profileUpdate:(ChromeIdentity*)identity {
   if (identity == _identity) {
     [self reloadAccountCell];
   }
 }
 
-- (void)onChromeIdentityServiceWillBeDestroyed {
+- (void)chromeIdentityServiceWillBeDestroyed {
   _identityServiceObserver.reset();
 }
 
 #pragma mark - BooleanObserver
 
 - (void)booleanDidChange:(id<ObservableBoolean>)observableBoolean {
-  DCHECK_EQ(observableBoolean, _showMemoryDebugToolsEnabled.get());
+  DCHECK_EQ(observableBoolean, _showMemoryDebugToolsEnabled);
   // Update the Item.
-  _showMemoryDebugToolsItem.get().on = [_showMemoryDebugToolsEnabled value];
+  _showMemoryDebugToolsItem.on = [_showMemoryDebugToolsEnabled value];
 
   // Update the Cell.
-  [self reconfigureCellsForItems:@[ _showMemoryDebugToolsItem ]
-         inSectionWithIdentifier:SectionIdentifierDebug];
+  [self reconfigureCellsForItems:@[ _showMemoryDebugToolsItem ]];
 }
 
 #pragma mark - PrefObserverDelegate
@@ -1110,41 +1130,51 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
             ? localeConfig->GetLocaleForCode(_voiceLocaleCode.GetValue())
             : localeConfig->GetDefaultLocale();
     NSString* languageName = base::SysUTF16ToNSString(locale.display_name);
-    _voiceSearchDetailItem.get().detailText = languageName;
-    [self reconfigureCellsForItems:@[ _voiceSearchDetailItem ]
-           inSectionWithIdentifier:SectionIdentifierAdvanced];
+    _voiceSearchDetailItem.detailText = languageName;
+    [self reconfigureCellsForItems:@[ _voiceSearchDetailItem ]];
   }
 
-  if (preferenceName ==
-      password_manager::prefs::kPasswordManagerSavingEnabled) {
+  if (preferenceName == password_manager::prefs::kCredentialsEnableService) {
     BOOL savePasswordsEnabled =
-        _mainBrowserState->GetPrefs()->GetBoolean(preferenceName);
+        _browserState->GetPrefs()->GetBoolean(preferenceName);
     NSString* passwordsDetail =
         savePasswordsEnabled ? l10n_util::GetNSString(IDS_IOS_SETTING_ON)
                              : l10n_util::GetNSString(IDS_IOS_SETTING_OFF);
 
-    _savePasswordsDetailItem.get().detailText = passwordsDetail;
-    [self reconfigureCellsForItems:@[ _savePasswordsDetailItem ]
-           inSectionWithIdentifier:SectionIdentifierBasics];
+    _savePasswordsDetailItem.detailText = passwordsDetail;
+    [self reconfigureCellsForItems:@[ _savePasswordsDetailItem ]];
   }
 
   if (preferenceName == autofill::prefs::kAutofillEnabled) {
     BOOL autofillEnabled =
-        _mainBrowserState->GetPrefs()->GetBoolean(preferenceName);
+        _browserState->GetPrefs()->GetBoolean(preferenceName);
     NSString* autofillDetail =
         autofillEnabled ? l10n_util::GetNSString(IDS_IOS_SETTING_ON)
                         : l10n_util::GetNSString(IDS_IOS_SETTING_OFF);
-    _autoFillDetailItem.get().detailText = autofillDetail;
-    [self reconfigureCellsForItems:@[ _autoFillDetailItem ]
-           inSectionWithIdentifier:SectionIdentifierBasics];
+    _autoFillDetailItem.detailText = autofillDetail;
+    [self reconfigureCellsForItems:@[ _autoFillDetailItem ]];
   }
 }
 
 #pragma mark - SigninPromoViewConsumer
 
-- (void)configureSigninPromoViewWithNewIdentity:(BOOL)newIdentity
-                                   configurator:(SigninPromoViewConfigurator*)
-                                                    configurator {
+- (void)configureSigninPromoWithConfigurator:
+            (SigninPromoViewConfigurator*)configurator
+                             identityChanged:(BOOL)identityChanged {
+  if (_signinInteractionController) {
+    // When sign-in is started in a cold state (no default account), the sign-in
+    // interaction controller does the sign-in and then asks for sync
+    // authorization. If the user cancels this operation, the controller
+    // signs-out from this new account, and then disappears while removing the
+    // new account asynchronously.
+    // This leads to an UI glitch. The interaction controller disappears before
+    // the newly added account is removed. The user can see the sign-in promo in
+    // warm state quickly before being replaced by the cold state sign-in promo.
+    // To avoid this UI glitch, all notifications from the mediator should be
+    // ignored, while the sign-in is in progress to avoid showing the warm
+    // state.
+    return;
+  }
   if (![self.collectionViewModel hasItemForItemType:ItemTypeSigninPromo
                                   sectionIdentifier:SectionIdentifierSignIn]) {
     return;
@@ -1157,11 +1187,58 @@ void SigninObserverBridge::GoogleSignedOut(const std::string& account_id,
       [self.collectionViewModel itemAtIndexPath:signinPromoCellIndexPath]);
   if (signinPromoItem) {
     signinPromoItem.configurator = configurator;
-    [self reconfigureCellsForItems:@[ signinPromoItem ]
-           inSectionWithIdentifier:SectionIdentifierSignIn];
-    if (newIdentity)
+    [self reconfigureCellsForItems:@[ signinPromoItem ]];
+    if (identityChanged)
       [self.collectionViewLayout invalidateLayout];
   }
+}
+
+#pragma mark - SigninPromoViewDelegate
+
+- (void)signinPromoViewDidTapSigninWithNewAccount:
+    (SigninPromoView*)signinPromoView {
+  [self sendImpressionsTilSigninButtonsHistogram];
+  DCHECK(!_signinPromoViewMediator.defaultIdentity);
+  base::RecordAction(
+      base::UserMetricsAction("Signin_SigninNewAccount_FromSettings"));
+  [self showSignInWithIdentity:nil
+                   promoAction:signin_metrics::PromoAction::
+                                   PROMO_ACTION_NEW_ACCOUNT];
+}
+
+- (void)signinPromoViewDidTapSigninWithDefaultAccount:
+    (SigninPromoView*)signinPromoView {
+  [self sendImpressionsTilSigninButtonsHistogram];
+  ChromeIdentity* identity = _signinPromoViewMediator.defaultIdentity;
+  DCHECK(identity);
+  base::RecordAction(
+      base::UserMetricsAction("Signin_SigninWithDefault_FromSettings"));
+  [self showSignInWithIdentity:identity
+                   promoAction:signin_metrics::PromoAction::
+                                   PROMO_ACTION_WITH_DEFAULT];
+}
+
+- (void)signinPromoViewDidTapSigninWithOtherAccount:
+    (SigninPromoView*)signinPromoView {
+  [self sendImpressionsTilSigninButtonsHistogram];
+  DCHECK(_signinPromoViewMediator.defaultIdentity);
+  base::RecordAction(
+      base::UserMetricsAction("Signin_SigninNotDefault_FromSettings"));
+  [self showSignInWithIdentity:nil
+                   promoAction:signin_metrics::PromoAction::
+                                   PROMO_ACTION_NOT_DEFAULT];
+}
+
+#pragma mark - Metrics
+
+- (void)sendImpressionsTilSigninButtonsHistogram {
+  _signinStarted = YES;
+  PrefService* prefs = _browserState->GetPrefs();
+  int displayedCount =
+      prefs->GetInteger(prefs::kIosSettingsSigninPromoDisplayedCount);
+  UMA_HISTOGRAM_COUNTS_100(
+      "MobileSignInPromo.SettingsManager.ImpressionsTilSigninButtons",
+      displayedCount);
 }
 
 @end

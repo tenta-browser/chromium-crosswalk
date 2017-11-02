@@ -19,11 +19,9 @@
 class PrefChangeRegistrar;
 class Profile;
 
-namespace ash {
-class ScreenshotDelegate;
-}
-
 namespace chromeos {
+
+class VoiceInteractionSelectionObserver;
 
 // A class which allows the Ash palette to perform chrome actions.
 class PaletteDelegateChromeOS
@@ -45,6 +43,8 @@ class PaletteDelegateChromeOS
   void TakeScreenshot() override;
   void TakePartialScreenshot(const base::Closure& done) override;
   void CancelPartialScreenshot() override;
+  void ShowMetalayer(base::OnceClosure done, bool via_button) override;
+  void HideMetalayer() override;
 
   // user_manager::UserManager::UserSessionStateObserver:
   void ActiveUserChanged(const user_manager::User* active_user) override;
@@ -69,8 +69,8 @@ class PaletteDelegateChromeOS
       session_state_observer_;
   content::NotificationRegistrar registrar_;
 
-  std::unique_ptr<ash::ScreenshotDelegate>
-      voice_interaction_screenshot_delegate_;
+  std::unique_ptr<VoiceInteractionSelectionObserver>
+      highlighter_selection_observer_;
 
   base::WeakPtrFactory<PaletteDelegateChromeOS> weak_factory_;
 

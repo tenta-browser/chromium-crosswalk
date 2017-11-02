@@ -30,7 +30,7 @@ void AtomicStringTable::ReserveCapacity(unsigned size) {
 }
 
 template <typename T, typename HashTranslator>
-PassRefPtr<StringImpl> AtomicStringTable::AddToStringTable(const T& value) {
+RefPtr<StringImpl> AtomicStringTable::AddToStringTable(const T& value) {
   HashSet<StringImpl*>::AddResult add_result =
       table_.AddWithTranslator<HashTranslator>(value);
 
@@ -143,7 +143,7 @@ struct HashAndUTF8CharactersTranslator {
   }
 };
 
-PassRefPtr<StringImpl> AtomicStringTable::Add(const UChar* s, unsigned length) {
+RefPtr<StringImpl> AtomicStringTable::Add(const UChar* s, unsigned length) {
   if (!s)
     return nullptr;
 
@@ -173,7 +173,7 @@ struct LCharBufferTranslator {
   }
 };
 
-PassRefPtr<StringImpl> AtomicStringTable::Add(const LChar* s, unsigned length) {
+RefPtr<StringImpl> AtomicStringTable::Add(const LChar* s, unsigned length) {
   if (!s)
     return nullptr;
 
@@ -197,8 +197,8 @@ StringImpl* AtomicStringTable::Add(StringImpl* string) {
   return result;
 }
 
-PassRefPtr<StringImpl> AtomicStringTable::AddUTF8(const char* characters_start,
-                                                  const char* characters_end) {
+RefPtr<StringImpl> AtomicStringTable::AddUTF8(const char* characters_start,
+                                              const char* characters_end) {
   HashAndUTF8Characters buffer;
   buffer.characters = characters_start;
   buffer.hash = CalculateStringHashAndLengthFromUTF8MaskingTop8Bits(
@@ -213,8 +213,8 @@ PassRefPtr<StringImpl> AtomicStringTable::AddUTF8(const char* characters_start,
 
 void AtomicStringTable::Remove(StringImpl* string) {
   DCHECK(string->IsAtomic());
-  auto iterator = table_.Find(string);
-  RELEASE_ASSERT(iterator != table_.end());
+  auto iterator = table_.find(string);
+  CHECK_NE(iterator, table_.end());
   table_.erase(iterator);
 }
 

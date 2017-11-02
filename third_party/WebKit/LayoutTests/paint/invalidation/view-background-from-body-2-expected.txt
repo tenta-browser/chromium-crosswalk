@@ -4,7 +4,6 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
       "backgroundColor": "#0000FF",
       "paintInvalidations": [
         {
@@ -15,7 +14,7 @@
         {
           "object": "LayoutBlockFlow BODY",
           "rect": [50, 50, 700, 500],
-          "reason": "layoutObject insertion"
+          "reason": "appeared"
         }
       ]
     }
@@ -27,7 +26,7 @@
     },
     {
       "object": "LayoutBlockFlow BODY",
-      "reason": "layoutObject insertion"
+      "reason": "appeared"
     }
   ]
 }

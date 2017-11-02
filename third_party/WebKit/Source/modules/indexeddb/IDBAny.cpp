@@ -30,6 +30,7 @@
 #include "modules/indexeddb/IDBDatabase.h"
 #include "modules/indexeddb/IDBIndex.h"
 #include "modules/indexeddb/IDBObjectStore.h"
+#include "platform/wtf/RefPtr.h"
 
 namespace blink {
 
@@ -124,8 +125,8 @@ IDBAny::IDBAny(IDBObjectStore* value)
 IDBAny::IDBAny(const Vector<RefPtr<IDBValue>>& values)
     : type_(kIDBValueArrayType), idb_values_(values) {}
 
-IDBAny::IDBAny(PassRefPtr<IDBValue> value)
-    : type_(kIDBValueType), idb_value_(value) {}
+IDBAny::IDBAny(RefPtr<IDBValue> value)
+    : type_(kIDBValueType), idb_value_(std::move(value)) {}
 
 IDBAny::IDBAny(IDBKey* key) : type_(kKeyType), idb_key_(key) {}
 

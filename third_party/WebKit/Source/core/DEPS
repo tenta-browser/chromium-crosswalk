@@ -10,7 +10,16 @@ include_rules = [
     "+mojo/public/cpp/bindings",
     "+platform",
     "+public/platform",
-    "-public/web",
+    "+public/web",
+    "+services/network/public/interfaces",
     "+third_party/skia/include",
+    "+ui/gfx/geometry",
     "-web",
+    # We do not want any new dependencies into core/exported until we resolve
+    # controller layer.
+    "!core/exported",
+    # We do not want any new dependencies on Web(Local|Remote)FrameBase.h until
+    # we resolve the control layer.
+    "!core/frame/WebLocalFrameImpl.h",
+    "!core/frame/WebRemoteFrameImpl.h",
 ]

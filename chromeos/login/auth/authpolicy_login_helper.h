@@ -27,6 +27,16 @@ class CHROMEOS_EXPORT AuthPolicyLoginHelper {
   AuthPolicyLoginHelper();
   ~AuthPolicyLoginHelper();
 
+  // Try to get Kerberos TGT. To get an error code of this call one should use
+  // last_auth_error_ returned from AuthPolicyClient::GetUserStatus afterwards.
+  // (see https://crbug.com/710452).
+  static void TryAuthenticateUser(const std::string& username,
+                                  const std::string& object_guid,
+                                  const std::string& password);
+
+  // Restarts AuthPolicy service.
+  static void Restart();
+
   // See AuthPolicyClient::JoinAdDomain.
   void JoinAdDomain(const std::string& machine_name,
                     const std::string& username,
@@ -35,6 +45,7 @@ class CHROMEOS_EXPORT AuthPolicyLoginHelper {
 
   // See AuthPolicyClient::AuthenticateUser.
   void AuthenticateUser(const std::string& username,
+                        const std::string& object_guid,
                         const std::string& password,
                         AuthCallback callback);
 
@@ -49,7 +60,7 @@ class CHROMEOS_EXPORT AuthPolicyLoginHelper {
   void OnAuthCallback(
       AuthCallback callback,
       authpolicy::ErrorType error,
-      const authpolicy::ActiveDirectoryAccountData& account_data);
+      const authpolicy::ActiveDirectoryAccountInfo& account_info);
 
   base::WeakPtrFactory<AuthPolicyLoginHelper> weak_factory_;
   DISALLOW_COPY_AND_ASSIGN(AuthPolicyLoginHelper);

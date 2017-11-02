@@ -25,6 +25,8 @@ var bluetoothApis = bluetoothApis || {
 Polymer({
   is: 'settings-bluetooth-page',
 
+  behaviors: [PrefsBehavior],
+
   properties: {
     /** Preferences state. */
     prefs: {
@@ -63,6 +65,20 @@ Polymer({
     adapterState_: {
       type: Object,
       notify: true,
+    },
+
+    /** @private {!Map<string, string>} */
+    focusConfig_: {
+      type: Object,
+      value: function() {
+        var map = new Map();
+        if (settings.routes.BLUETOOTH_DEVICES) {
+          map.set(
+              settings.routes.BLUETOOTH_DEVICES.path,
+              '#bluetoothDevices .subpage-arrow');
+        }
+        return map;
+      },
     },
 
     /**
@@ -152,6 +168,7 @@ Polymer({
     this.adapterState_ = state;
     this.bluetoothToggleState_ = state.powered;
     this.bluetoothToggleDisabled_ = !state.available;
+    this.setPrefValue('ash.user.bluetooth.adapter_enabled', state.powered);
   },
 
   /** @private */
@@ -165,7 +182,7 @@ Polymer({
   },
 
   /**
-   * @param {Event} e
+   * @param {!Event} e
    * @private
    */
   stopTap_: function(e) {
@@ -173,7 +190,7 @@ Polymer({
   },
 
   /**
-   * @param {Event} e
+   * @param {!Event} e
    * @private
    */
   onSubpageArrowTap_: function(e) {
@@ -200,6 +217,6 @@ Polymer({
 
   /** @private */
   openSubpage_: function() {
-    settings.navigateTo(settings.Route.BLUETOOTH_DEVICES);
+    settings.navigateTo(settings.routes.BLUETOOTH_DEVICES);
   }
 });

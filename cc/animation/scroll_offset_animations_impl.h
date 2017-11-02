@@ -31,10 +31,14 @@ class CC_ANIMATION_EXPORT ScrollOffsetAnimationsImpl
 
   ~ScrollOffsetAnimationsImpl() override;
 
+  // |delayed_by| shrinks the duration of the
+  // animation. |animation_start_offset| causes us to start the animation
+  // partway through.
   void ScrollAnimationCreate(ElementId element_id,
                              const gfx::ScrollOffset& target_offset,
                              const gfx::ScrollOffset& current_offset,
-                             base::TimeDelta delayed_by);
+                             base::TimeDelta delayed_by,
+                             base::TimeDelta animation_start_offset);
 
   bool ScrollAnimationUpdateTarget(ElementId element_id,
                                    const gfx::Vector2dF& scroll_delta,
@@ -51,17 +55,17 @@ class CC_ANIMATION_EXPORT ScrollOffsetAnimationsImpl
 
   // AnimationDelegate implementation.
   void NotifyAnimationStarted(base::TimeTicks monotonic_time,
-                              TargetProperty::Type target_property,
+                              int target_property,
                               int group) override {}
   void NotifyAnimationFinished(base::TimeTicks monotonic_time,
-                               TargetProperty::Type target_property,
+                               int target_property,
                                int group) override;
   void NotifyAnimationAborted(base::TimeTicks monotonic_time,
-                              TargetProperty::Type target_property,
+                              int target_property,
                               int group) override {}
   void NotifyAnimationTakeover(base::TimeTicks monotonic_time,
-                               TargetProperty::Type target_property,
-                               double animation_start_time,
+                               int target_property,
+                               base::TimeTicks animation_start_time,
                                std::unique_ptr<AnimationCurve> curve) override {
   }
 

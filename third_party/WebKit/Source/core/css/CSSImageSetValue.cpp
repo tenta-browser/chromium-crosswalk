@@ -29,7 +29,7 @@
 #include "core/css/CSSImageValue.h"
 #include "core/css/CSSPrimitiveValue.h"
 #include "core/dom/Document.h"
-#include "core/frame/Settings.h"
+#include "core/frame/LocalFrame.h"
 #include "core/loader/resource/ImageResourceContent.h"
 #include "core/style/StyleFetchedImageSet.h"
 #include "core/style/StyleInvalidImage.h"
@@ -101,6 +101,7 @@ StyleImage* CSSImageSetValue::CachedImage(float device_scale_factor) const {
 StyleImage* CSSImageSetValue::CacheImage(
     const Document& document,
     float device_scale_factor,
+    FetchParameters::PlaceholderImageRequestType placeholder_image_request_type,
     CrossOriginAttributeValue cross_origin) {
   if (!images_in_set_.size())
     FillImageSet();
@@ -113,15 +114,18 @@ StyleImage* CSSImageSetValue::CacheImage(
     ImageWithScale image = BestImageForScaleFactor(device_scale_factor);
     ResourceRequest resource_request(document.CompleteURL(image.image_url));
     resource_request.SetHTTPReferrer(image.referrer);
-    FetchParameters params(resource_request, FetchInitiatorTypeNames::css);
+    ResourceLoaderOptions options;
+    options.initiator_info.name = FetchInitiatorTypeNames::css;
+    FetchParameters params(resource_request, options);
 
     if (cross_origin != kCrossOriginAttributeNotSet) {
       params.SetCrossOriginAccessControl(document.GetSecurityOrigin(),
                                          cross_origin);
     }
-    if (document.GetSettings() &&
-        document.GetSettings()->GetFetchImagePlaceholders())
-      params.SetAllowImagePlaceholder();
+
+    if (document.GetFrame() &&
+        placeholder_image_request_type == FetchParameters::kAllowPlaceholder)
+      document.GetFrame()->MaybeAllowImagePlaceholder(params);
 
     if (ImageResourceContent* cached_image =
             ImageResourceContent::Fetch(params, document.Fetcher())) {

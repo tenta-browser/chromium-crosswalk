@@ -16,18 +16,14 @@ class View;
 }
 
 namespace ash {
-class WmShelf;
-
-namespace test {
-class OverflowBubbleViewTestAPI;
-}
+class Shelf;
 
 // OverflowBubbleView hosts a ShelfView to display overflown items.
 // Exports to access this class from OverflowBubbleViewTestAPI.
 class ASH_EXPORT OverflowBubbleView : public views::BubbleDialogDelegateView,
                                       public ShelfBackgroundAnimatorObserver {
  public:
-  explicit OverflowBubbleView(WmShelf* wm_shelf);
+  explicit OverflowBubbleView(Shelf* shelf);
   ~OverflowBubbleView() override;
 
   // |anchor| is the overflow button on the main shelf. |shelf_view| is the
@@ -36,18 +32,16 @@ class ASH_EXPORT OverflowBubbleView : public views::BubbleDialogDelegateView,
 
   // views::BubbleDialogDelegateView overrides:
   int GetDialogButtons() const override;
-  void OnBeforeBubbleWidgetInit(views::Widget::InitParams* params,
-                                views::Widget* bubble_widget) const override;
   gfx::Rect GetBubbleBounds() override;
 
  private:
-  friend class test::OverflowBubbleViewTestAPI;
+  friend class OverflowBubbleViewTestAPI;
 
   void ScrollByXOffset(int x_offset);
   void ScrollByYOffset(int y_offset);
 
   // views::View overrides:
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   void Layout() override;
   void ChildPreferredSizeChanged(views::View* child) override;
   bool OnMouseWheel(const ui::MouseWheelEvent& event) override;
@@ -58,7 +52,7 @@ class ASH_EXPORT OverflowBubbleView : public views::BubbleDialogDelegateView,
   // ShelfBackgroundAnimatorObserver:
   void UpdateShelfBackground(SkColor color) override;
 
-  WmShelf* wm_shelf_;
+  Shelf* shelf_;
   views::View* shelf_view_;  // Owned by views hierarchy.
   gfx::Vector2d scroll_offset_;
 

@@ -29,12 +29,12 @@ class ProxyDataTypeController : public DataTypeController {
                            ModelTypeConfigurer* configurer) override;
   void StartAssociating(const StartCallback& start_callback) override;
   void Stop() override;
-  std::string name() const override;
   State state() const override;
   void ActivateDataType(ModelTypeConfigurer* configurer) override;
   void DeactivateDataType(ModelTypeConfigurer* configurer) override;
   void GetAllNodes(const AllNodesCallback& callback) override;
   void GetStatusCounters(const StatusCountersCallback& callback) override;
+  void RecordMemoryUsageHistogram() override;
 
  private:
   State state_;

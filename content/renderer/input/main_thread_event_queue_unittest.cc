@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/auto_reset.h"
 #include "base/macros.h"
 #include "base/metrics/field_trial.h"
 #include "base/strings/string_piece.h"
@@ -46,7 +47,6 @@ const unsigned kRafAlignedEnabledMouse = 1 << 1;
 // Simulate a 16ms frame signal.
 const base::TimeDelta kFrameInterval = base::TimeDelta::FromMilliseconds(16);
 
-const int kTestRoutingID = 13;
 const char* kCoalescedCountHistogram =
     "Event.MainThreadEventQueue.CoalescedCount";
 
@@ -62,8 +62,8 @@ class HandledTask {
 
 class HandledEvent : public HandledTask {
  public:
-  explicit HandledEvent(const blink::WebCoalescedInputEvent* event)
-      : event_(event->Event(), event->GetCoalescedEventsPointers()) {}
+  explicit HandledEvent(const blink::WebCoalescedInputEvent& event)
+      : event_(event.Event(), event.GetCoalescedEventsPointers()) {}
   ~HandledEvent() override {}
 
   blink::WebCoalescedInputEvent* taskAsEvent() override { return &event_; }
@@ -91,6 +91,49 @@ class HandledClosure : public HandledTask {
   unsigned closure_id_;
 };
 
+enum class CallbackReceivedState {
+  kNotReceived,
+  kCalledWhileHandlingEvent,
+  kCalledAfterHandleEvent,
+};
+
+class HandledEventCallbackTracker {
+ public:
+  HandledEventCallbackTracker()
+      : handling_event_(false), weak_ptr_factory_(this) {
+    weak_this_ = weak_ptr_factory_.GetWeakPtr();
+  }
+
+  HandledEventCallback GetCallback() {
+    callbacks_received_.push_back(CallbackReceivedState::kNotReceived);
+    HandledEventCallback callback =
+        base::BindOnce(&HandledEventCallbackTracker::DidHandleEvent, weak_this_,
+                       callbacks_received_.size() - 1);
+    return callback;
+  }
+
+  void DidHandleEvent(size_t index,
+                      InputEventAckState ack_result,
+                      const ui::LatencyInfo& latency,
+                      std::unique_ptr<ui::DidOverscrollParams> params,
+                      base::Optional<cc::TouchAction> touch_action) {
+    callbacks_received_[index] =
+        handling_event_ ? CallbackReceivedState::kCalledWhileHandlingEvent
+                        : CallbackReceivedState::kCalledAfterHandleEvent;
+  }
+
+  const std::vector<CallbackReceivedState>& GetReceivedCallbacks() const {
+    return callbacks_received_;
+  }
+
+  bool handling_event_;
+
+ private:
+  std::vector<CallbackReceivedState> callbacks_received_;
+  base::WeakPtr<HandledEventCallbackTracker> weak_this_;
+  base::WeakPtrFactory<HandledEventCallbackTracker> weak_ptr_factory_;
+};
+
 class MainThreadEventQueueTest : public testing::TestWithParam<unsigned>,
                                  public MainThreadEventQueueClient {
  public:
@@ -114,38 +157,22 @@ class MainThreadEventQueueTest : public testing::TestWithParam<unsigned>,
 
     feature_list_.InitFromCommandLine(base::JoinString(features, ","),
                                       base::JoinString(disabled_features, ","));
+
+    handler_callback_ = base::MakeUnique<HandledEventCallbackTracker>();
   }
 
   void SetUp() override {
-    queue_ = new MainThreadEventQueue(kTestRoutingID, this, main_task_runner_,
-                                      &renderer_scheduler_);
+    queue_ = new MainThreadEventQueue(this, main_task_runner_,
+                                      &renderer_scheduler_, true);
+    queue_->set_use_raf_fallback_timer(false);
   }
 
-  void HandleEventOnMainThread(int routing_id,
-                               const blink::WebCoalescedInputEvent* event,
-                               const ui::LatencyInfo& latency,
-                               InputEventDispatchType type) override {
-    EXPECT_EQ(kTestRoutingID, routing_id);
-
-    std::unique_ptr<HandledTask> handled_event(new HandledEvent(event));
-    handled_tasks_.push_back(std::move(handled_event));
-
-    queue_->EventHandled(event->Event().GetType(),
-                         blink::WebInputEventResult::kHandledApplication,
-                         INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
-  }
-
-  void SendInputEventAck(int routing_id,
-                         blink::WebInputEvent::Type type,
-                         InputEventAckState ack_result,
-                         uint32_t touch_event_id) override {
-    additional_acked_events_.push_back(touch_event_id);
-  }
-
-  bool HandleEvent(WebInputEvent& event, InputEventAckState ack_result) {
-    return queue_->HandleEvent(ui::WebInputEventTraits::Clone(event),
-                               ui::LatencyInfo(), DISPATCH_TYPE_BLOCKING,
-                               ack_result);
+  void HandleEvent(WebInputEvent& event, InputEventAckState ack_result) {
+    base::AutoReset<bool> in_handle_event(&handler_callback_->handling_event_,
+                                          true);
+    queue_->HandleEvent(ui::WebInputEventTraits::Clone(event),
+                        ui::LatencyInfo(), DISPATCH_TYPE_BLOCKING, ack_result,
+                        handler_callback_->GetCallback());
   }
 
   void RunClosure(unsigned closure_id) {
@@ -155,11 +182,9 @@ class MainThreadEventQueueTest : public testing::TestWithParam<unsigned>,
 
   void QueueClosure() {
     unsigned closure_id = ++closure_count_;
-    queue_->QueueClosure(base::Bind(&MainThreadEventQueueTest::RunClosure,
-                                    base::Unretained(this), closure_id));
+    queue_->QueueClosure(base::BindOnce(&MainThreadEventQueueTest::RunClosure,
+                                        base::Unretained(this), closure_id));
   }
-
-  void NeedsMainFrame(int routing_id) override { needs_main_frame_ = true; }
 
   MainThreadEventQueueTaskList& event_queue() {
     return queue_->shared_state_.events_;
@@ -190,14 +215,32 @@ class MainThreadEventQueueTest : public testing::TestWithParam<unsigned>,
     }
   }
 
+  void HandleInputEvent(const blink::WebCoalescedInputEvent& event,
+                        const ui::LatencyInfo& latency,
+                        HandledEventCallback callback) override {
+    std::unique_ptr<HandledTask> handled_event(new HandledEvent(event));
+    handled_tasks_.push_back(std::move(handled_event));
+    std::move(callback).Run(INPUT_EVENT_ACK_STATE_NOT_CONSUMED, latency,
+                            nullptr, base::nullopt);
+  }
+
+  void SetNeedsMainFrame() override { needs_main_frame_ = true; }
+
+  std::vector<CallbackReceivedState> GetAndResetCallbackResults() {
+    std::unique_ptr<HandledEventCallbackTracker> callback =
+        base::MakeUnique<HandledEventCallbackTracker>();
+    handler_callback_.swap(callback);
+    return callback->GetReceivedCallbacks();
+  }
+
  protected:
   base::test::ScopedFeatureList feature_list_;
   scoped_refptr<base::TestSimpleTaskRunner> main_task_runner_;
   blink::scheduler::MockRendererScheduler renderer_scheduler_;
   scoped_refptr<MainThreadEventQueue> queue_;
   std::vector<std::unique_ptr<HandledTask>> handled_tasks_;
+  std::unique_ptr<HandledEventCallbackTracker> handler_callback_;
 
-  std::vector<uint32_t> additional_acked_events_;
   int raf_aligned_input_setting_;
   bool needs_main_frame_;
   base::TimeTicks frame_time_;
@@ -217,6 +260,10 @@ TEST_P(MainThreadEventQueueTest, NonBlockingWheel) {
   EXPECT_FALSE(main_task_runner_->HasPendingTask());
   EXPECT_EQ(0u, event_queue().size());
 
+  EXPECT_CALL(renderer_scheduler_,
+              DidHandleInputEventOnMainThread(testing::_, testing::_))
+      .Times(2);
+
   for (WebMouseWheelEvent& event : kEvents)
     HandleEvent(event, INPUT_EVENT_ACK_STATE_SET_NON_BLOCKING);
 
@@ -224,6 +271,8 @@ TEST_P(MainThreadEventQueueTest, NonBlockingWheel) {
   EXPECT_EQ((raf_aligned_input_setting_ & kRafAlignedEnabledMouse) == 0,
             main_task_runner_->HasPendingTask());
   RunPendingTasksWithSimulatedRaf();
+  EXPECT_THAT(GetAndResetCallbackResults(),
+              testing::Each(CallbackReceivedState::kCalledWhileHandlingEvent));
   EXPECT_FALSE(main_task_runner_->HasPendingTask());
   EXPECT_EQ(0u, event_queue().size());
   EXPECT_EQ(2u, handled_tasks_.size());
@@ -301,6 +350,10 @@ TEST_P(MainThreadEventQueueTest, NonBlockingWheel) {
 TEST_P(MainThreadEventQueueTest, NonBlockingTouch) {
   base::HistogramTester histogram_tester;
 
+  EXPECT_CALL(renderer_scheduler_,
+              DidHandleInputEventOnMainThread(testing::_, testing::_))
+      .Times(3);
+
   SyntheticWebTouchEvent kEvents[4];
   kEvents[0].PressPoint(10, 10);
   kEvents[1].PressPoint(10, 10);
@@ -317,6 +370,8 @@ TEST_P(MainThreadEventQueueTest, NonBlockingTouch) {
   EXPECT_EQ(3u, event_queue().size());
   EXPECT_TRUE(main_task_runner_->HasPendingTask());
   RunPendingTasksWithSimulatedRaf();
+  EXPECT_THAT(GetAndResetCallbackResults(),
+              testing::Each(CallbackReceivedState::kCalledWhileHandlingEvent));
   EXPECT_FALSE(main_task_runner_->HasPendingTask());
   EXPECT_EQ(0u, event_queue().size());
   EXPECT_EQ(3u, handled_tasks_.size());
@@ -405,32 +460,39 @@ TEST_P(MainThreadEventQueueTest, BlockingTouch) {
 
   EXPECT_CALL(renderer_scheduler_,
               DidHandleInputEventOnMainThread(testing::_, testing::_))
-      .Times(2);
-  // Ensure that coalescing takes place.
-  HandleEvent(kEvents[0], INPUT_EVENT_ACK_STATE_SET_NON_BLOCKING);
-  HandleEvent(kEvents[1], INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
-  HandleEvent(kEvents[2], INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
-  HandleEvent(kEvents[3], INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
+      .Times(5);
+  {
+    // Ensure that coalescing takes place.
+    HandleEvent(kEvents[0], INPUT_EVENT_ACK_STATE_SET_NON_BLOCKING);
+    HandleEvent(kEvents[1], INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
+    HandleEvent(kEvents[2], INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
+    HandleEvent(kEvents[3], INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
 
-  EXPECT_EQ(2u, event_queue().size());
-  EXPECT_TRUE(main_task_runner_->HasPendingTask());
-  RunPendingTasksWithSimulatedRaf();
+    EXPECT_EQ(2u, event_queue().size());
+    EXPECT_TRUE(main_task_runner_->HasPendingTask());
+    RunPendingTasksWithSimulatedRaf();
 
-  EXPECT_EQ(0u, event_queue().size());
-  EXPECT_EQ(2u, additional_acked_events_.size());
-  EXPECT_EQ(kEvents[1].unique_touch_event_id, additional_acked_events_.at(0));
-  EXPECT_EQ(kEvents[2].unique_touch_event_id, additional_acked_events_.at(1));
+    EXPECT_THAT(
+        GetAndResetCallbackResults(),
+        testing::ElementsAre(CallbackReceivedState::kCalledWhileHandlingEvent,
+                             CallbackReceivedState::kCalledAfterHandleEvent,
+                             CallbackReceivedState::kCalledAfterHandleEvent,
+                             CallbackReceivedState::kCalledAfterHandleEvent));
+    EXPECT_EQ(0u, event_queue().size());
 
-  const WebTouchEvent* last_touch_event = static_cast<const WebTouchEvent*>(
-      handled_tasks_.at(1)->taskAsEvent()->EventPointer());
-  EXPECT_EQ(kEvents[3].unique_touch_event_id,
-            last_touch_event->unique_touch_event_id);
+    const WebTouchEvent* last_touch_event = static_cast<const WebTouchEvent*>(
+        handled_tasks_.at(1)->taskAsEvent()->EventPointer());
+    EXPECT_EQ(kEvents[1].unique_touch_event_id,
+              last_touch_event->unique_touch_event_id);
+  }
 
   HandleEvent(kEvents[1], INPUT_EVENT_ACK_STATE_SET_NON_BLOCKING);
   HandleEvent(kEvents[2], INPUT_EVENT_ACK_STATE_SET_NON_BLOCKING);
   HandleEvent(kEvents[3], INPUT_EVENT_ACK_STATE_SET_NON_BLOCKING);
   EXPECT_EQ(1u, event_queue().size());
   RunPendingTasksWithSimulatedRaf();
+  EXPECT_THAT(GetAndResetCallbackResults(),
+              testing::Each(CallbackReceivedState::kCalledWhileHandlingEvent));
   histogram_tester.ExpectUniqueSample(kCoalescedCountHistogram, 2, 2);
 }
 
@@ -445,6 +507,10 @@ TEST_P(MainThreadEventQueueTest, InterleavedEvents) {
   kTouchEvents[1].PressPoint(10, 10);
   kTouchEvents[1].MovePoint(0, 30, 30);
 
+  EXPECT_CALL(renderer_scheduler_,
+              DidHandleInputEventOnMainThread(testing::_, testing::_))
+      .Times(2);
+
   EXPECT_FALSE(main_task_runner_->HasPendingTask());
   EXPECT_EQ(0u, event_queue().size());
 
@@ -458,6 +524,8 @@ TEST_P(MainThreadEventQueueTest, InterleavedEvents) {
                 (kRafAlignedEnabledMouse | kRafAlignedEnabledTouch),
             main_task_runner_->HasPendingTask());
   RunPendingTasksWithSimulatedRaf();
+  EXPECT_THAT(GetAndResetCallbackResults(),
+              testing::Each(CallbackReceivedState::kCalledWhileHandlingEvent));
   EXPECT_FALSE(main_task_runner_->HasPendingTask());
   EXPECT_EQ(0u, event_queue().size());
   EXPECT_EQ(2u, handled_tasks_.size());
@@ -515,6 +583,10 @@ TEST_P(MainThreadEventQueueTest, RafAlignedMouseInput) {
   EXPECT_FALSE(main_task_runner_->HasPendingTask());
   EXPECT_EQ(0u, event_queue().size());
 
+  EXPECT_CALL(renderer_scheduler_,
+              DidHandleInputEventOnMainThread(testing::_, testing::_))
+      .Times(11);
+
   // Simulate enqueing a discrete event, followed by continuous events and
   // then a discrete event. The last discrete event should flush the
   // continuous events so the aren't aligned to rAF and are processed
@@ -531,6 +603,8 @@ TEST_P(MainThreadEventQueueTest, RafAlignedMouseInput) {
   main_task_runner_->RunUntilIdle();
   EXPECT_EQ(0u, event_queue().size());
   RunPendingTasksWithSimulatedRaf();
+  EXPECT_THAT(GetAndResetCallbackResults(),
+              testing::Each(CallbackReceivedState::kCalledWhileHandlingEvent));
 
   // Simulate the rAF running before the PostTask occurs. The rAF
   // will consume everything.
@@ -542,6 +616,8 @@ TEST_P(MainThreadEventQueueTest, RafAlignedMouseInput) {
   EXPECT_FALSE(needs_main_frame_);
   EXPECT_EQ(0u, event_queue().size());
   main_task_runner_->RunUntilIdle();
+  EXPECT_THAT(GetAndResetCallbackResults(),
+              testing::Each(CallbackReceivedState::kCalledWhileHandlingEvent));
 
   // Simulate event consumption but no rAF signal. The mouse wheel events
   // should still be in the queue.
@@ -557,6 +633,8 @@ TEST_P(MainThreadEventQueueTest, RafAlignedMouseInput) {
   EXPECT_TRUE(needs_main_frame_);
   EXPECT_EQ(2u, event_queue().size());
   RunSimulatedRafOnce();
+  EXPECT_THAT(GetAndResetCallbackResults(),
+              testing::Each(CallbackReceivedState::kCalledWhileHandlingEvent));
   EXPECT_EQ(wheelEvents[2].GetModifiers(),
             handled_tasks_.at(3)->taskAsEvent()->Event().GetModifiers());
   EXPECT_EQ(wheelEvents[0].GetModifiers(),
@@ -578,6 +656,10 @@ TEST_P(MainThreadEventQueueTest, RafAlignedTouchInput) {
   EXPECT_FALSE(main_task_runner_->HasPendingTask());
   EXPECT_EQ(0u, event_queue().size());
 
+  EXPECT_CALL(renderer_scheduler_,
+              DidHandleInputEventOnMainThread(testing::_, testing::_))
+      .Times(10);
+
   // Simulate enqueing a discrete event, followed by continuous events and
   // then a discrete event. The last discrete event should flush the
   // continuous events so the aren't aligned to rAF and are processed
@@ -591,6 +673,8 @@ TEST_P(MainThreadEventQueueTest, RafAlignedTouchInput) {
   main_task_runner_->RunUntilIdle();
   EXPECT_EQ(0u, event_queue().size());
   RunPendingTasksWithSimulatedRaf();
+  EXPECT_THAT(GetAndResetCallbackResults(),
+              testing::Each(CallbackReceivedState::kCalledWhileHandlingEvent));
 
   // Simulate the rAF running before the PostTask occurs. The rAF
   // will consume everything.
@@ -602,6 +686,8 @@ TEST_P(MainThreadEventQueueTest, RafAlignedTouchInput) {
   EXPECT_FALSE(needs_main_frame_);
   EXPECT_EQ(0u, event_queue().size());
   main_task_runner_->RunUntilIdle();
+  EXPECT_THAT(GetAndResetCallbackResults(),
+              testing::Each(CallbackReceivedState::kCalledWhileHandlingEvent));
 
   // Simulate event consumption but no rAF signal. The touch events
   // should still be in the queue.
@@ -614,6 +700,8 @@ TEST_P(MainThreadEventQueueTest, RafAlignedTouchInput) {
   EXPECT_TRUE(needs_main_frame_);
   EXPECT_EQ(1u, event_queue().size());
   RunSimulatedRafOnce();
+  EXPECT_THAT(GetAndResetCallbackResults(),
+              testing::Each(CallbackReceivedState::kCalledWhileHandlingEvent));
 
   // Simulate the touch move being discrete
   kEvents[0].touch_start_or_first_touch_move = true;
@@ -626,6 +714,8 @@ TEST_P(MainThreadEventQueueTest, RafAlignedTouchInput) {
   EXPECT_TRUE(main_task_runner_->HasPendingTask());
   EXPECT_TRUE(needs_main_frame_);
   main_task_runner_->RunUntilIdle();
+  EXPECT_THAT(GetAndResetCallbackResults(),
+              testing::Each(CallbackReceivedState::kCalledAfterHandleEvent));
 }
 
 TEST_P(MainThreadEventQueueTest, RafAlignedTouchInputCoalescedMoves) {
@@ -640,13 +730,50 @@ TEST_P(MainThreadEventQueueTest, RafAlignedTouchInputCoalescedMoves) {
   kEvents[1].MovePoint(0, 20, 20);
   kEvents[0].dispatch_type = WebInputEvent::kEventNonBlocking;
 
+  EXPECT_CALL(renderer_scheduler_,
+              DidHandleInputEventOnMainThread(testing::_, testing::_))
+      .Times(4);
+
   EXPECT_FALSE(main_task_runner_->HasPendingTask());
   EXPECT_EQ(0u, event_queue().size());
 
-  // Send a discrete input event and then a continuous
-  // (ack required)  event. The events should coalesce together
-  // and a post task should be on the queue at the end.
-  HandleEvent(kEvents[1], INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
+  {
+    // Send a non-blocking input event and then blocking  event.
+    // The events should coalesce together.
+    HandleEvent(kEvents[0], INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
+    EXPECT_EQ(1u, event_queue().size());
+    EXPECT_FALSE(main_task_runner_->HasPendingTask());
+    EXPECT_TRUE(needs_main_frame_);
+    HandleEvent(kEvents[1], INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
+    EXPECT_EQ(1u, event_queue().size());
+    EXPECT_FALSE(main_task_runner_->HasPendingTask());
+    EXPECT_TRUE(needs_main_frame_);
+    RunPendingTasksWithSimulatedRaf();
+    EXPECT_EQ(0u, event_queue().size());
+    EXPECT_THAT(
+        GetAndResetCallbackResults(),
+        testing::ElementsAre(CallbackReceivedState::kCalledWhileHandlingEvent,
+                             CallbackReceivedState::kCalledAfterHandleEvent));
+  }
+
+  // Send a non-cancelable ack required event, and then a non-ack
+  // required event they should be coalesced together.
+  HandleEvent(kEvents[0], INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
+  EXPECT_EQ(1u, event_queue().size());
+  EXPECT_FALSE(main_task_runner_->HasPendingTask());
+  EXPECT_TRUE(needs_main_frame_);
+  HandleEvent(kEvents[1], INPUT_EVENT_ACK_STATE_SET_NON_BLOCKING);
+  EXPECT_EQ(1u, event_queue().size());
+  EXPECT_FALSE(main_task_runner_->HasPendingTask());
+  EXPECT_TRUE(needs_main_frame_);
+  RunPendingTasksWithSimulatedRaf();
+  EXPECT_EQ(0u, event_queue().size());
+  EXPECT_THAT(GetAndResetCallbackResults(),
+              testing::Each(CallbackReceivedState::kCalledWhileHandlingEvent));
+
+  // Send a non-ack required event, and then a non-cancelable ack
+  // required event they should be coalesced together.
+  HandleEvent(kEvents[1], INPUT_EVENT_ACK_STATE_SET_NON_BLOCKING);
   EXPECT_EQ(1u, event_queue().size());
   EXPECT_FALSE(main_task_runner_->HasPendingTask());
   EXPECT_TRUE(needs_main_frame_);
@@ -656,42 +783,18 @@ TEST_P(MainThreadEventQueueTest, RafAlignedTouchInputCoalescedMoves) {
   EXPECT_TRUE(needs_main_frame_);
   RunPendingTasksWithSimulatedRaf();
   EXPECT_EQ(0u, event_queue().size());
-  EXPECT_EQ(1u, additional_acked_events_.size());
-  additional_acked_events_.clear();
-
-  // Send a non-cancelable ack required event, and then a non-ack
-  // required event they should be coalesced together.
-  EXPECT_TRUE(HandleEvent(kEvents[0], INPUT_EVENT_ACK_STATE_NOT_CONSUMED));
-  EXPECT_EQ(1u, event_queue().size());
-  EXPECT_FALSE(main_task_runner_->HasPendingTask());
-  EXPECT_TRUE(needs_main_frame_);
-  EXPECT_TRUE(HandleEvent(kEvents[1], INPUT_EVENT_ACK_STATE_SET_NON_BLOCKING));
-  EXPECT_EQ(1u, event_queue().size());
-  EXPECT_FALSE(main_task_runner_->HasPendingTask());
-  EXPECT_TRUE(needs_main_frame_);
-  RunPendingTasksWithSimulatedRaf();
-  EXPECT_EQ(0u, event_queue().size());
-  EXPECT_EQ(0u, additional_acked_events_.size());
-
-  // Send a non-ack required event, and then a non-cancelable ack
-  // required event they should be coalesced together.
-  EXPECT_TRUE(HandleEvent(kEvents[1], INPUT_EVENT_ACK_STATE_SET_NON_BLOCKING));
-  EXPECT_EQ(1u, event_queue().size());
-  EXPECT_FALSE(main_task_runner_->HasPendingTask());
-  EXPECT_TRUE(needs_main_frame_);
-  EXPECT_TRUE(HandleEvent(kEvents[0], INPUT_EVENT_ACK_STATE_NOT_CONSUMED));
-  EXPECT_EQ(1u, event_queue().size());
-  EXPECT_FALSE(main_task_runner_->HasPendingTask());
-  EXPECT_TRUE(needs_main_frame_);
-  RunPendingTasksWithSimulatedRaf();
-  EXPECT_EQ(0u, event_queue().size());
-  EXPECT_EQ(0u, additional_acked_events_.size());
+  EXPECT_THAT(GetAndResetCallbackResults(),
+              testing::Each(CallbackReceivedState::kCalledWhileHandlingEvent));
 }
 
 TEST_P(MainThreadEventQueueTest, RafAlignedTouchInputThrottlingMoves) {
   // Don't run the test when we aren't supporting rAF aligned input.
   if ((raf_aligned_input_setting_ & kRafAlignedEnabledTouch) == 0)
     return;
+
+  EXPECT_CALL(renderer_scheduler_,
+              DidHandleInputEventOnMainThread(testing::_, testing::_))
+      .Times(2);
 
   SyntheticWebTouchEvent kEvents[2];
   kEvents[0].PressPoint(10, 10);
@@ -706,13 +809,15 @@ TEST_P(MainThreadEventQueueTest, RafAlignedTouchInputThrottlingMoves) {
 
   // Send a non-cancelable touch move and then send it another one. The
   // second one shouldn't go out with the next rAF call and should be throttled.
-  EXPECT_TRUE(HandleEvent(kEvents[0], INPUT_EVENT_ACK_STATE_NOT_CONSUMED));
+  HandleEvent(kEvents[0], INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
   EXPECT_EQ(1u, event_queue().size());
   EXPECT_FALSE(main_task_runner_->HasPendingTask());
   EXPECT_TRUE(needs_main_frame_);
   RunPendingTasksWithSimulatedRaf();
-  EXPECT_TRUE(HandleEvent(kEvents[0], INPUT_EVENT_ACK_STATE_NOT_CONSUMED));
-  EXPECT_TRUE(HandleEvent(kEvents[1], INPUT_EVENT_ACK_STATE_NOT_CONSUMED));
+  EXPECT_THAT(GetAndResetCallbackResults(),
+              testing::Each(CallbackReceivedState::kCalledWhileHandlingEvent));
+  HandleEvent(kEvents[0], INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
+  HandleEvent(kEvents[1], INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
   EXPECT_EQ(1u, event_queue().size());
   EXPECT_FALSE(main_task_runner_->HasPendingTask());
   EXPECT_TRUE(needs_main_frame_);
@@ -725,8 +830,88 @@ TEST_P(MainThreadEventQueueTest, RafAlignedTouchInputThrottlingMoves) {
 
   // And should eventually flush.
   RunPendingTasksWithSimulatedRaf();
+  EXPECT_THAT(GetAndResetCallbackResults(),
+              testing::Each(CallbackReceivedState::kCalledWhileHandlingEvent));
   EXPECT_EQ(0u, event_queue().size());
-  EXPECT_EQ(0u, additional_acked_events_.size());
+}
+
+TEST_P(MainThreadEventQueueTest, LowLatency) {
+  SyntheticWebTouchEvent kEvents[2];
+  kEvents[0].PressPoint(10, 10);
+  kEvents[1].PressPoint(10, 10);
+  kEvents[1].MovePoint(0, 50, 50);
+
+  queue_->SetNeedsLowLatency(true);
+  EXPECT_FALSE(main_task_runner_->HasPendingTask());
+  EXPECT_EQ(0u, event_queue().size());
+
+  EXPECT_CALL(renderer_scheduler_,
+              DidHandleInputEventOnMainThread(testing::_, testing::_))
+      .Times(8);
+
+  for (SyntheticWebTouchEvent& event : kEvents)
+    HandleEvent(event, INPUT_EVENT_ACK_STATE_SET_NON_BLOCKING);
+
+  EXPECT_EQ(2u, event_queue().size());
+  EXPECT_TRUE(main_task_runner_->HasPendingTask());
+  EXPECT_FALSE(needs_main_frame_);
+  main_task_runner_->RunUntilIdle();
+  EXPECT_THAT(GetAndResetCallbackResults(),
+              testing::Each(CallbackReceivedState::kCalledWhileHandlingEvent));
+  EXPECT_EQ(0u, event_queue().size());
+  EXPECT_FALSE(main_task_runner_->HasPendingTask());
+
+  WebMouseEvent mouse_move = SyntheticWebMouseEventBuilder::Build(
+      WebInputEvent::kMouseMove, 10, 10, 0);
+  WebMouseWheelEvent mouse_wheel =
+      SyntheticWebMouseWheelEventBuilder::Build(10, 10, 0, 53, 0, false);
+
+  HandleEvent(mouse_move, INPUT_EVENT_ACK_STATE_SET_NON_BLOCKING);
+  HandleEvent(mouse_wheel, INPUT_EVENT_ACK_STATE_SET_NON_BLOCKING);
+
+  EXPECT_EQ(2u, event_queue().size());
+  EXPECT_TRUE(main_task_runner_->HasPendingTask());
+  EXPECT_FALSE(needs_main_frame_);
+  main_task_runner_->RunUntilIdle();
+  EXPECT_THAT(GetAndResetCallbackResults(),
+              testing::Each(CallbackReceivedState::kCalledWhileHandlingEvent));
+  EXPECT_EQ(0u, event_queue().size());
+
+  // Now turn off low latency mode.
+  queue_->SetNeedsLowLatency(false);
+  for (SyntheticWebTouchEvent& event : kEvents)
+    HandleEvent(event, INPUT_EVENT_ACK_STATE_SET_NON_BLOCKING);
+
+  EXPECT_EQ(2u, event_queue().size());
+  EXPECT_TRUE(main_task_runner_->HasPendingTask());
+  if ((raf_aligned_input_setting_ & kRafAlignedEnabledTouch) == 0) {
+    EXPECT_FALSE(needs_main_frame_);
+    main_task_runner_->RunUntilIdle();
+  } else {
+    EXPECT_TRUE(needs_main_frame_);
+    RunPendingTasksWithSimulatedRaf();
+  }
+  EXPECT_THAT(GetAndResetCallbackResults(),
+              testing::Each(CallbackReceivedState::kCalledWhileHandlingEvent));
+  EXPECT_EQ(0u, event_queue().size());
+  EXPECT_FALSE(main_task_runner_->HasPendingTask());
+
+  HandleEvent(mouse_move, INPUT_EVENT_ACK_STATE_SET_NON_BLOCKING);
+  HandleEvent(mouse_wheel, INPUT_EVENT_ACK_STATE_SET_NON_BLOCKING);
+
+  EXPECT_EQ(2u, event_queue().size());
+  if ((raf_aligned_input_setting_ & kRafAlignedEnabledMouse) == 0) {
+    EXPECT_TRUE(main_task_runner_->HasPendingTask());
+    EXPECT_FALSE(needs_main_frame_);
+    main_task_runner_->RunUntilIdle();
+  } else {
+    EXPECT_FALSE(main_task_runner_->HasPendingTask());
+    EXPECT_TRUE(needs_main_frame_);
+    RunPendingTasksWithSimulatedRaf();
+  }
+  EXPECT_THAT(GetAndResetCallbackResults(),
+              testing::Each(CallbackReceivedState::kCalledWhileHandlingEvent));
+  EXPECT_EQ(0u, event_queue().size());
 }
 
 TEST_P(MainThreadEventQueueTest, BlockingTouchesDuringFling) {
@@ -735,9 +920,15 @@ TEST_P(MainThreadEventQueueTest, BlockingTouchesDuringFling) {
   kEvents.touch_start_or_first_touch_move = true;
   set_enable_fling_passive_listener_flag(true);
 
+  EXPECT_CALL(renderer_scheduler_,
+              DidHandleInputEventOnMainThread(testing::_, testing::_))
+      .Times(4);
+
   EXPECT_FALSE(last_touch_start_forced_nonblocking_due_to_fling());
   HandleEvent(kEvents, INPUT_EVENT_ACK_STATE_SET_NON_BLOCKING_DUE_TO_FLING);
   RunPendingTasksWithSimulatedRaf();
+  EXPECT_THAT(GetAndResetCallbackResults(),
+              testing::Each(CallbackReceivedState::kCalledWhileHandlingEvent));
   EXPECT_FALSE(main_task_runner_->HasPendingTask());
   EXPECT_EQ(0u, event_queue().size());
   EXPECT_EQ(1u, handled_tasks_.size());
@@ -757,6 +948,8 @@ TEST_P(MainThreadEventQueueTest, BlockingTouchesDuringFling) {
   EXPECT_EQ((raf_aligned_input_setting_ & kRafAlignedEnabledTouch) == 0,
             main_task_runner_->HasPendingTask());
   RunPendingTasksWithSimulatedRaf();
+  EXPECT_THAT(GetAndResetCallbackResults(),
+              testing::Each(CallbackReceivedState::kCalledWhileHandlingEvent));
   EXPECT_FALSE(main_task_runner_->HasPendingTask());
   EXPECT_EQ(0u, event_queue().size());
   EXPECT_EQ(2u, handled_tasks_.size());
@@ -774,6 +967,8 @@ TEST_P(MainThreadEventQueueTest, BlockingTouchesDuringFling) {
   kEvents.touch_start_or_first_touch_move = false;
   HandleEvent(kEvents, INPUT_EVENT_ACK_STATE_SET_NON_BLOCKING_DUE_TO_FLING);
   RunPendingTasksWithSimulatedRaf();
+  EXPECT_THAT(GetAndResetCallbackResults(),
+              testing::Each(CallbackReceivedState::kCalledAfterHandleEvent));
   EXPECT_FALSE(main_task_runner_->HasPendingTask());
   EXPECT_EQ(0u, event_queue().size());
   EXPECT_EQ(3u, handled_tasks_.size());
@@ -789,6 +984,8 @@ TEST_P(MainThreadEventQueueTest, BlockingTouchesDuringFling) {
   kEvents.ReleasePoint(0);
   HandleEvent(kEvents, INPUT_EVENT_ACK_STATE_SET_NON_BLOCKING_DUE_TO_FLING);
   RunPendingTasksWithSimulatedRaf();
+  EXPECT_THAT(GetAndResetCallbackResults(),
+              testing::Each(CallbackReceivedState::kCalledAfterHandleEvent));
   EXPECT_FALSE(main_task_runner_->HasPendingTask());
   EXPECT_EQ(0u, event_queue().size());
   EXPECT_EQ(4u, handled_tasks_.size());
@@ -808,8 +1005,14 @@ TEST_P(MainThreadEventQueueTest, BlockingTouchesOutsideFling) {
   kEvents.touch_start_or_first_touch_move = true;
   set_enable_fling_passive_listener_flag(false);
 
+  EXPECT_CALL(renderer_scheduler_,
+              DidHandleInputEventOnMainThread(testing::_, testing::_))
+      .Times(4);
+
   HandleEvent(kEvents, INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
   RunPendingTasksWithSimulatedRaf();
+  EXPECT_THAT(GetAndResetCallbackResults(),
+              testing::Each(CallbackReceivedState::kCalledAfterHandleEvent));
   EXPECT_FALSE(main_task_runner_->HasPendingTask());
   EXPECT_EQ(0u, event_queue().size());
   EXPECT_EQ(1u, handled_tasks_.size());
@@ -826,6 +1029,8 @@ TEST_P(MainThreadEventQueueTest, BlockingTouchesOutsideFling) {
   set_enable_fling_passive_listener_flag(false);
   HandleEvent(kEvents, INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
   RunPendingTasksWithSimulatedRaf();
+  EXPECT_THAT(GetAndResetCallbackResults(),
+              testing::Each(CallbackReceivedState::kCalledAfterHandleEvent));
   EXPECT_FALSE(main_task_runner_->HasPendingTask());
   EXPECT_EQ(0u, event_queue().size());
   EXPECT_EQ(2u, handled_tasks_.size());
@@ -842,6 +1047,8 @@ TEST_P(MainThreadEventQueueTest, BlockingTouchesOutsideFling) {
   set_enable_fling_passive_listener_flag(true);
   HandleEvent(kEvents, INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
   RunPendingTasksWithSimulatedRaf();
+  EXPECT_THAT(GetAndResetCallbackResults(),
+              testing::Each(CallbackReceivedState::kCalledAfterHandleEvent));
   EXPECT_FALSE(main_task_runner_->HasPendingTask());
   EXPECT_EQ(0u, event_queue().size());
   EXPECT_EQ(3u, handled_tasks_.size());
@@ -858,6 +1065,8 @@ TEST_P(MainThreadEventQueueTest, BlockingTouchesOutsideFling) {
   kEvents.MovePoint(0, 30, 30);
   HandleEvent(kEvents, INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
   RunPendingTasksWithSimulatedRaf();
+  EXPECT_THAT(GetAndResetCallbackResults(),
+              testing::Each(CallbackReceivedState::kCalledAfterHandleEvent));
   EXPECT_FALSE(main_task_runner_->HasPendingTask());
   EXPECT_EQ(0u, event_queue().size());
   EXPECT_EQ(4u, handled_tasks_.size());
@@ -880,22 +1089,9 @@ INSTANTIATE_TEST_CASE_P(
     testing::Range(0u,
                    (kRafAlignedEnabledTouch | kRafAlignedEnabledMouse) + 1));
 
-class DummyMainThreadEventQueueClient : public MainThreadEventQueueClient {
-  void HandleEventOnMainThread(int routing_id,
-                               const blink::WebCoalescedInputEvent* event,
-                               const ui::LatencyInfo& latency,
-                               InputEventDispatchType dispatch_type) override {}
-
-  void SendInputEventAck(int routing_id,
-                         blink::WebInputEvent::Type type,
-                         InputEventAckState ack_result,
-                         uint32_t touch_event_id) override {}
-
-  void NeedsMainFrame(int routing_id) override {}
-};
-
 class MainThreadEventQueueInitializationTest
-    : public testing::Test {
+    : public testing::Test,
+      public MainThreadEventQueueClient {
  public:
   MainThreadEventQueueInitializationTest()
       : field_trial_list_(new base::FieldTrialList(nullptr)) {}
@@ -908,13 +1104,21 @@ class MainThreadEventQueueInitializationTest
     return queue_->enable_non_blocking_due_to_main_thread_responsiveness_flag_;
   }
 
+  void HandleInputEvent(const blink::WebCoalescedInputEvent& event,
+                        const ui::LatencyInfo& latency,
+                        HandledEventCallback callback) override {
+    std::move(callback).Run(INPUT_EVENT_ACK_STATE_NOT_CONSUMED, latency,
+                            nullptr, base::nullopt);
+  }
+
+  void SetNeedsMainFrame() override {}
+
  protected:
   scoped_refptr<MainThreadEventQueue> queue_;
   base::test::ScopedFeatureList feature_list_;
   blink::scheduler::MockRendererScheduler renderer_scheduler_;
   scoped_refptr<base::TestSimpleTaskRunner> main_task_runner_;
   std::unique_ptr<base::FieldTrialList> field_trial_list_;
-  DummyMainThreadEventQueueClient dummy_main_thread_event_queue_client_;
 };
 
 TEST_F(MainThreadEventQueueInitializationTest,
@@ -924,9 +1128,8 @@ TEST_F(MainThreadEventQueueInitializationTest,
 
   base::FieldTrialList::CreateFieldTrial(
       "MainThreadResponsivenessScrollIntervention", "Enabled123");
-  queue_ = new MainThreadEventQueue(kTestRoutingID,
-                                    &dummy_main_thread_event_queue_client_,
-                                    main_task_runner_, &renderer_scheduler_);
+  queue_ = new MainThreadEventQueue(this, main_task_runner_,
+                                    &renderer_scheduler_, true);
   EXPECT_TRUE(enable_non_blocking_due_to_main_thread_responsiveness_flag());
   EXPECT_EQ(base::TimeDelta::FromMilliseconds(123),
             main_thread_responsiveness_threshold());
@@ -936,9 +1139,8 @@ TEST_F(MainThreadEventQueueInitializationTest,
        MainThreadResponsivenessThresholdDisabled) {
   base::FieldTrialList::CreateFieldTrial(
       "MainThreadResponsivenessScrollIntervention", "Control");
-  queue_ = new MainThreadEventQueue(kTestRoutingID,
-                                    &dummy_main_thread_event_queue_client_,
-                                    main_task_runner_, &renderer_scheduler_);
+  queue_ = new MainThreadEventQueue(this, main_task_runner_,
+                                    &renderer_scheduler_, true);
   EXPECT_FALSE(enable_non_blocking_due_to_main_thread_responsiveness_flag());
   EXPECT_EQ(base::TimeDelta::FromMilliseconds(0),
             main_thread_responsiveness_threshold());
@@ -972,12 +1174,16 @@ TEST_P(MainThreadEventQueueTest, QueuingClosureWithRafEvent) {
   EXPECT_TRUE(main_task_runner_->HasPendingTask());
   EXPECT_FALSE(needs_main_frame_);
 
-  EXPECT_FALSE(HandleEvent(kEvents[0], INPUT_EVENT_ACK_STATE_NOT_CONSUMED));
+  EXPECT_CALL(renderer_scheduler_,
+              DidHandleInputEventOnMainThread(testing::_, testing::_))
+      .Times(2);
+
+  HandleEvent(kEvents[0], INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
   QueueClosure();
   EXPECT_EQ(3u, event_queue().size());
   EXPECT_TRUE(main_task_runner_->HasPendingTask());
   EXPECT_FALSE(needs_main_frame_);
-  EXPECT_FALSE(HandleEvent(kEvents[1], INPUT_EVENT_ACK_STATE_NOT_CONSUMED));
+  HandleEvent(kEvents[1], INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
   EXPECT_EQ(4u, event_queue().size());
 
   if ((raf_aligned_input_setting_ & kRafAlignedEnabledTouch) != 0) {
@@ -994,6 +1200,8 @@ TEST_P(MainThreadEventQueueTest, QueuingClosureWithRafEvent) {
   }
 
   EXPECT_EQ(0u, event_queue().size());
+  EXPECT_THAT(GetAndResetCallbackResults(),
+              testing::Each(CallbackReceivedState::kCalledAfterHandleEvent));
   EXPECT_FALSE(main_task_runner_->HasPendingTask());
   EXPECT_FALSE(needs_main_frame_);
 
@@ -1014,14 +1222,20 @@ TEST_P(MainThreadEventQueueTest, QueuingClosuresBetweenEvents) {
   EXPECT_FALSE(main_task_runner_->HasPendingTask());
   EXPECT_EQ(0u, event_queue().size());
 
-  EXPECT_FALSE(HandleEvent(kEvents[0], INPUT_EVENT_ACK_STATE_NOT_CONSUMED));
+  EXPECT_CALL(renderer_scheduler_,
+              DidHandleInputEventOnMainThread(testing::_, testing::_))
+      .Times(2);
+
+  HandleEvent(kEvents[0], INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
   QueueClosure();
   QueueClosure();
-  EXPECT_FALSE(HandleEvent(kEvents[1], INPUT_EVENT_ACK_STATE_NOT_CONSUMED));
+  HandleEvent(kEvents[1], INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
   EXPECT_EQ(4u, event_queue().size());
   EXPECT_FALSE(needs_main_frame_);
   main_task_runner_->RunUntilIdle();
   EXPECT_EQ(0u, event_queue().size());
+  EXPECT_THAT(GetAndResetCallbackResults(),
+              testing::Each(CallbackReceivedState::kCalledAfterHandleEvent));
   EXPECT_FALSE(main_task_runner_->HasPendingTask());
   EXPECT_FALSE(needs_main_frame_);
 
@@ -1048,13 +1262,21 @@ TEST_P(MainThreadEventQueueTest, BlockingTouchMoveBecomesNonBlocking) {
   EXPECT_FALSE(main_task_runner_->HasPendingTask());
   EXPECT_EQ(0u, event_queue().size());
 
+  EXPECT_CALL(renderer_scheduler_,
+              DidHandleInputEventOnMainThread(testing::_, testing::_))
+      .Times(3);
   EXPECT_EQ(WebInputEvent::kBlocking, kEvents[0].dispatch_type);
   EXPECT_EQ(WebInputEvent::kEventNonBlocking, kEvents[1].dispatch_type);
-  EXPECT_FALSE(HandleEvent(kEvents[0], INPUT_EVENT_ACK_STATE_NOT_CONSUMED));
-  EXPECT_TRUE(HandleEvent(kEvents[1], INPUT_EVENT_ACK_STATE_NOT_CONSUMED));
-  EXPECT_FALSE(HandleEvent(scroll_start, INPUT_EVENT_ACK_STATE_NOT_CONSUMED));
+  HandleEvent(kEvents[0], INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
+  HandleEvent(kEvents[1], INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
+  HandleEvent(scroll_start, INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
   EXPECT_EQ(3u, event_queue().size());
   RunPendingTasksWithSimulatedRaf();
+  EXPECT_THAT(
+      GetAndResetCallbackResults(),
+      testing::ElementsAre(CallbackReceivedState::kCalledAfterHandleEvent,
+                           CallbackReceivedState::kCalledWhileHandlingEvent,
+                           CallbackReceivedState::kCalledAfterHandleEvent));
   EXPECT_EQ(0u, event_queue().size());
   EXPECT_FALSE(main_task_runner_->HasPendingTask());
   EXPECT_FALSE(needs_main_frame_);
@@ -1082,13 +1304,18 @@ TEST_P(MainThreadEventQueueTest, BlockingTouchMoveWithTouchEnd) {
   EXPECT_FALSE(main_task_runner_->HasPendingTask());
   EXPECT_EQ(0u, event_queue().size());
 
+  EXPECT_CALL(renderer_scheduler_,
+              DidHandleInputEventOnMainThread(testing::_, testing::_))
+      .Times(3);
   EXPECT_EQ(WebInputEvent::kBlocking, kEvents[0].dispatch_type);
   EXPECT_EQ(WebInputEvent::kBlocking, kEvents[1].dispatch_type);
-  EXPECT_FALSE(HandleEvent(kEvents[0], INPUT_EVENT_ACK_STATE_NOT_CONSUMED));
-  EXPECT_FALSE(HandleEvent(kEvents[1], INPUT_EVENT_ACK_STATE_NOT_CONSUMED));
-  EXPECT_FALSE(HandleEvent(scroll_start, INPUT_EVENT_ACK_STATE_NOT_CONSUMED));
+  HandleEvent(kEvents[0], INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
+  HandleEvent(kEvents[1], INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
+  HandleEvent(scroll_start, INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
   EXPECT_EQ(3u, event_queue().size());
   RunPendingTasksWithSimulatedRaf();
+  EXPECT_THAT(GetAndResetCallbackResults(),
+              testing::Each(CallbackReceivedState::kCalledAfterHandleEvent));
   EXPECT_EQ(0u, event_queue().size());
   EXPECT_FALSE(main_task_runner_->HasPendingTask());
   EXPECT_FALSE(needs_main_frame_);

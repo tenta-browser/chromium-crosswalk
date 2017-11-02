@@ -8,8 +8,11 @@
 #include <memory>
 #include <string>
 
+#include "base/feature_list.h"
 #include "base/macros.h"
+#include "chrome/browser/language/url_language_histogram_factory.h"
 #include "chrome/browser/ui/translate/translate_bubble_model.h"
+#include "components/language/core/browser/url_language_histogram.h"
 #include "components/translate/content/browser/content_translate_driver.h"
 #include "components/translate/core/browser/translate_client.h"
 #include "components/translate/core/browser/translate_step.h"
@@ -24,15 +27,23 @@ class WebContents;
 
 class PrefService;
 
+namespace language {
+class UrlLanguageHistogram;
+}  // namespace language
+
 namespace translate {
-class LanguageModel;
 class LanguageState;
 class TranslateAcceptLanguages;
 class TranslatePrefs;
 class TranslateManager;
+
+struct LanguageDetectionDetails;
 }  // namespace translate
 
 enum class ShowTranslateBubbleResult;
+
+// Flag to control the "translate / language" separation feature.
+extern const base::Feature kDecoupleTranslateLanguageFeature;
 
 class ChromeTranslateClient
     : public translate::TranslateClient,
@@ -71,8 +82,8 @@ class ChromeTranslateClient
                                     std::string* target);
 
   static void BindContentTranslateDriver(
-      content::RenderFrameHost* render_frame_host,
-      translate::mojom::ContentTranslateDriverRequest request);
+      translate::mojom::ContentTranslateDriverRequest request,
+      content::RenderFrameHost* render_frame_host);
 
   // Gets the associated TranslateManager.
   translate::TranslateManager* GetTranslateManager();
@@ -87,11 +98,14 @@ class ChromeTranslateClient
   std::unique_ptr<translate::TranslatePrefs> GetTranslatePrefs() override;
   translate::TranslateAcceptLanguages* GetTranslateAcceptLanguages() override;
   int GetInfobarIconID() const override;
+  void RecordTranslateEvent(const metrics::TranslateEventProto&) override;
 #if !defined(USE_AURA)
   std::unique_ptr<infobars::InfoBar> CreateInfoBar(
       std::unique_ptr<translate::TranslateInfoBarDelegate> delegate)
       const override;
 #endif
+  void RecordLanguageDetectionEvent(
+      const translate::LanguageDetectionDetails& details) const override;
   void ShowTranslateUI(translate::TranslateStep step,
                        const std::string& source_language,
                        const std::string& target_language,
@@ -110,6 +124,14 @@ class ChromeTranslateClient
  private:
   explicit ChromeTranslateClient(content::WebContents* web_contents);
   friend class content::WebContentsUserData<ChromeTranslateClient>;
+  FRIEND_TEST_ALL_PREFIXES(ChromeTranslateClientTest,
+                           LanguageEventShouldRecord);
+  FRIEND_TEST_ALL_PREFIXES(ChromeTranslateClientTest,
+                           LanguageEventShouldNotRecord);
+  FRIEND_TEST_ALL_PREFIXES(ChromeTranslateClientTest,
+                           TranslationEventShouldRecord);
+  FRIEND_TEST_ALL_PREFIXES(ChromeTranslateClientTest,
+                           TranslationEventShouldNotRecord);
 
   // content::WebContentsObserver implementation.
   void WebContentsDestroyed() override;
@@ -122,9 +144,9 @@ class ChromeTranslateClient
   translate::ContentTranslateDriver translate_driver_;
   std::unique_ptr<translate::TranslateManager> translate_manager_;
 
-  // Model to be notified about detected language of every page visited. Not
+  // Histogram to be notified about detected language of every page visited. Not
   // owned here.
-  translate::LanguageModel* language_model_;
+  language::UrlLanguageHistogram* language_histogram_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeTranslateClient);
 };

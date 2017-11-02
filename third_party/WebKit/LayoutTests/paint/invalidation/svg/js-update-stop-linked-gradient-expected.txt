@@ -4,7 +4,7 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutSVGRect rect",
@@ -27,11 +27,7 @@
   "objectPaintInvalidations": [
     {
       "object": "LayoutSVGGradientStop stop id='stop1'",
-      "reason": "layoutObject removal"
-    },
-    {
-      "object": "LayoutSVGResourceLinearGradient linearGradient id='gradient'",
-      "reason": "full"
+      "reason": "disappeared"
     },
     {
       "object": "LayoutSVGRect rect",

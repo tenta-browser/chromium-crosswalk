@@ -31,11 +31,11 @@
 #ifndef WebPerformance_h
 #define WebPerformance_h
 
-#include "../platform/WebCommon.h"
-#include "../platform/WebPrivatePtr.h"
+#include "public/platform/WebCommon.h"
+#include "public/platform/WebPrivatePtr.h"
 #include "WebNavigationType.h"
 
-#if BLINK_IMPLEMENTATION
+#if INSIDE_BLINK
 #include "platform/heap/Handle.h"
 #endif
 
@@ -100,9 +100,9 @@ class WebPerformance {
   BLINK_EXPORT double AuthorStyleSheetParseDurationBeforeFCP() const;
   BLINK_EXPORT double UpdateStyleDurationBeforeFCP() const;
 
-#if BLINK_IMPLEMENTATION
-  WebPerformance(Performance*);
-  WebPerformance& operator=(Performance*);
+#if INSIDE_BLINK
+  BLINK_EXPORT WebPerformance(Performance*);
+  BLINK_EXPORT WebPerformance& operator=(Performance*);
 #endif
 
  private:

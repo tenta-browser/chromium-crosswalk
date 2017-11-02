@@ -9,16 +9,17 @@
 
 namespace blink {
 
-const CSSValue* CSSPropertyAPITextUnderlinePosition::parseSingleValue(
+const CSSValue* CSSPropertyAPITextUnderlinePosition::ParseSingleValue(
+    CSSPropertyID,
     CSSParserTokenRange& range,
     const CSSParserContext& context,
-    CSSPropertyID) {
+    const CSSParserLocalContext&) const {
   // auto | [ under || [ left | right ] ], but we only support auto | under
   // for now
-  DCHECK(RuntimeEnabledFeatures::css3TextDecorationsEnabled());
+  DCHECK(RuntimeEnabledFeatures::CSS3TextDecorationsEnabled());
   // auto | [ under || [ left | right ] ], but we only support auto | under
   // for now
-  DCHECK(RuntimeEnabledFeatures::css3TextDecorationsEnabled());
+  DCHECK(RuntimeEnabledFeatures::CSS3TextDecorationsEnabled());
   return CSSPropertyParserHelpers::ConsumeIdent<CSSValueAuto, CSSValueUnder>(
       range);
 }

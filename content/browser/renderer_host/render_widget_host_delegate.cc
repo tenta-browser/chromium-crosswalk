@@ -107,8 +107,20 @@ bool RenderWidgetHostDelegate::AddDomainInfoToRapporSample(
   return false;
 }
 
+void RenderWidgetHostDelegate::UpdateUrlForUkmSource(
+    ukm::UkmRecorder* service,
+    ukm::SourceId ukm_source_id) {}
+
+gfx::Size RenderWidgetHostDelegate::GetAutoResizeSize() {
+  return gfx::Size();
+}
+
 WebContents* RenderWidgetHostDelegate::GetAsWebContents() {
   return nullptr;
+}
+
+bool RenderWidgetHostDelegate::IsShowingContextMenuOnPage() const {
+  return false;
 }
 
 }  // namespace content

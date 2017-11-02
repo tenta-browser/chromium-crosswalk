@@ -103,7 +103,7 @@ void DisableSetUnhandledExceptionFilter() {
           SetUnhandledExceptionFilterPatch) != NO_ERROR) {
 #ifdef _DEBUG
     assert(false);
-#endif  //_DEBUG
+#endif  // _DEBUG
   }
 }
 
@@ -112,6 +112,10 @@ int GenerateCrashDump(EXCEPTION_POINTERS* exception_pointers) {
     crashpad::CrashpadClient::DumpWithoutCrash(
         *(exception_pointers->ContextRecord));
   return EXCEPTION_CONTINUE_SEARCH;
+}
+
+void DumpWithoutCrashing() {
+  crash_reporter::DumpWithoutCrashing();
 }
 
 }  // namespace elf_crash
@@ -128,22 +132,15 @@ int GenerateCrashDump(EXCEPTION_POINTERS* exception_pointers) {
 // NOTE: Since the returned pointer references read-only memory that will be
 // cleaned up when this DLL unloads, be careful not to reference the memory
 // beyond that point (e.g. during tests).
-extern "C" __declspec(dllexport) void GetCrashReportsImpl(
-    const crash_reporter::Report** reports,
-    size_t* report_count) {
-  if (!g_crash_helper_enabled)
-    return;
-  crash_reporter::GetReports(g_crash_reports);
-  *reports = g_crash_reports->data();
-  *report_count = g_crash_reports->size();
-}
+extern "C" {
 
 // This helper is invoked by debugging code in chrome to register the client
 // id.
-extern "C" __declspec(dllexport) void SetMetricsClientId(
-    const char* client_id) {
+void SetMetricsClientId(const char* client_id) {
   if (!g_crash_helper_enabled)
     return;
   if (client_id)
     crash_keys::SetMetricsClientIdFromGUID(client_id);
 }
+
+}  // extern "C"

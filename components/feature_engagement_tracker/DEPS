@@ -1,5 +1,0 @@
-include_rules = [
-  "-content",
-  "+jni",
-  "+components/keyed_service",
-]

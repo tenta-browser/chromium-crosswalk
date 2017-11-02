@@ -18,45 +18,8 @@ YUVVideoDrawQuad::YUVVideoDrawQuad(const YUVVideoDrawQuad& other) = default;
 
 YUVVideoDrawQuad::~YUVVideoDrawQuad() {}
 
-void YUVVideoDrawQuad::SetNew(const SharedQuadState* shared_quad_state,
+void YUVVideoDrawQuad::SetNew(const viz::SharedQuadState* shared_quad_state,
                               const gfx::Rect& rect,
-                              const gfx::Rect& opaque_rect,
-                              const gfx::Rect& visible_rect,
-                              const gfx::RectF& ya_tex_coord_rect,
-                              const gfx::RectF& uv_tex_coord_rect,
-                              const gfx::Size& ya_tex_size,
-                              const gfx::Size& uv_tex_size,
-                              unsigned y_plane_resource_id,
-                              unsigned u_plane_resource_id,
-                              unsigned v_plane_resource_id,
-                              unsigned a_plane_resource_id,
-                              ColorSpace color_space,
-                              const gfx::ColorSpace& video_color_space,
-                              float offset,
-                              float multiplier,
-                              uint32_t bits_per_channel) {
-  bool needs_blending = false;
-  DrawQuad::SetAll(shared_quad_state, DrawQuad::YUV_VIDEO_CONTENT, rect,
-                   opaque_rect, visible_rect, needs_blending);
-  this->ya_tex_coord_rect = ya_tex_coord_rect;
-  this->uv_tex_coord_rect = uv_tex_coord_rect;
-  this->ya_tex_size = ya_tex_size;
-  this->uv_tex_size = uv_tex_size;
-  resources.ids[kYPlaneResourceIdIndex] = y_plane_resource_id;
-  resources.ids[kUPlaneResourceIdIndex] = u_plane_resource_id;
-  resources.ids[kVPlaneResourceIdIndex] = v_plane_resource_id;
-  resources.ids[kAPlaneResourceIdIndex] = a_plane_resource_id;
-  resources.count = a_plane_resource_id ? 4 : 3;
-  this->color_space = color_space;
-  this->video_color_space = video_color_space;
-  this->resource_offset = offset;
-  this->resource_multiplier = multiplier;
-  this->bits_per_channel = bits_per_channel;
-}
-
-void YUVVideoDrawQuad::SetAll(const SharedQuadState* shared_quad_state,
-                              const gfx::Rect& rect,
-                              const gfx::Rect& opaque_rect,
                               const gfx::Rect& visible_rect,
                               bool needs_blending,
                               const gfx::RectF& ya_tex_coord_rect,
@@ -73,7 +36,43 @@ void YUVVideoDrawQuad::SetAll(const SharedQuadState* shared_quad_state,
                               float multiplier,
                               uint32_t bits_per_channel) {
   DrawQuad::SetAll(shared_quad_state, DrawQuad::YUV_VIDEO_CONTENT, rect,
-                   opaque_rect, visible_rect, needs_blending);
+                   visible_rect, needs_blending);
+  this->ya_tex_coord_rect = ya_tex_coord_rect;
+  this->uv_tex_coord_rect = uv_tex_coord_rect;
+  this->ya_tex_size = ya_tex_size;
+  this->uv_tex_size = uv_tex_size;
+  resources.ids[kYPlaneResourceIdIndex] = y_plane_resource_id;
+  resources.ids[kUPlaneResourceIdIndex] = u_plane_resource_id;
+  resources.ids[kVPlaneResourceIdIndex] = v_plane_resource_id;
+  resources.ids[kAPlaneResourceIdIndex] = a_plane_resource_id;
+  resources.count = a_plane_resource_id ? 4 : 3;
+  this->color_space = color_space;
+  this->video_color_space = video_color_space;
+  this->resource_offset = offset;
+  this->resource_multiplier = multiplier;
+  this->bits_per_channel = bits_per_channel;
+}
+
+void YUVVideoDrawQuad::SetAll(const viz::SharedQuadState* shared_quad_state,
+                              const gfx::Rect& rect,
+                              const gfx::Rect& visible_rect,
+                              bool needs_blending,
+                              const gfx::RectF& ya_tex_coord_rect,
+                              const gfx::RectF& uv_tex_coord_rect,
+                              const gfx::Size& ya_tex_size,
+                              const gfx::Size& uv_tex_size,
+                              unsigned y_plane_resource_id,
+                              unsigned u_plane_resource_id,
+                              unsigned v_plane_resource_id,
+                              unsigned a_plane_resource_id,
+                              ColorSpace color_space,
+                              const gfx::ColorSpace& video_color_space,
+                              float offset,
+                              float multiplier,
+                              uint32_t bits_per_channel,
+                              bool require_overlay) {
+  DrawQuad::SetAll(shared_quad_state, DrawQuad::YUV_VIDEO_CONTENT, rect,
+                   visible_rect, needs_blending);
   this->ya_tex_coord_rect = ya_tex_coord_rect;
   this->uv_tex_coord_rect = uv_tex_coord_rect;
   this->ya_tex_size = ya_tex_size;
@@ -88,6 +87,7 @@ void YUVVideoDrawQuad::SetAll(const SharedQuadState* shared_quad_state,
   this->resource_offset = offset;
   this->resource_multiplier = multiplier;
   this->bits_per_channel = bits_per_channel;
+  this->require_overlay = require_overlay;
 }
 
 const YUVVideoDrawQuad* YUVVideoDrawQuad::MaterialCast(
@@ -110,6 +110,7 @@ void YUVVideoDrawQuad::ExtendValue(
                     resources.ids[kVPlaneResourceIdIndex]);
   value->SetInteger("a_plane_resource_id",
                     resources.ids[kAPlaneResourceIdIndex]);
+  value->SetBoolean("require_overlay", require_overlay);
 }
 
 }  // namespace cc

@@ -24,7 +24,7 @@ class FakeV4Store : public V4Store {
               const bool hash_prefix_matches)
       : V4Store(
             task_runner,
-            base::FilePath(store_path.value() + FILE_PATH_LITERAL(".fake"))),
+            base::FilePath(store_path.value() + FILE_PATH_LITERAL(".store"))),
         hash_prefix_should_match_(hash_prefix_matches) {}
 
   HashPrefix GetMatchingHashPrefix(const FullHash& full_hash) override {
@@ -103,13 +103,13 @@ class V4DatabaseTest : public PlatformTest {
                              SB_THREAT_TYPE_URL_MALWARE);
     expected_identifiers_.push_back(win_malware_id_);
     expected_store_paths_.push_back(
-        database_dirname_.AppendASCII("win_url_malware.fake"));
+        database_dirname_.AppendASCII("win_url_malware.store"));
 
     list_infos_.emplace_back(true, "linux_url_malware", linux_malware_id_,
                              SB_THREAT_TYPE_URL_MALWARE);
     expected_identifiers_.push_back(linux_malware_id_);
     expected_store_paths_.push_back(
-        database_dirname_.AppendASCII("linux_url_malware.fake"));
+        database_dirname_.AppendASCII("linux_url_malware.store"));
   }
 
   void DatabaseUpdated() {}
@@ -468,13 +468,22 @@ TEST_F(V4DatabaseTest, TestStoresAvailable) {
   const ListIdentifier bogus_id(LINUX_PLATFORM, CHROME_EXTENSION,
                                 CSD_WHITELIST);
 
-  EXPECT_TRUE(v4_database_->AreStoresAvailable(
+  EXPECT_TRUE(v4_database_->AreAllStoresAvailable(
+      StoresToCheck({linux_malware_id_, win_malware_id_})));
+  EXPECT_TRUE(v4_database_->AreAnyStoresAvailable(
       StoresToCheck({linux_malware_id_, win_malware_id_})));
 
-  EXPECT_FALSE(v4_database_->AreStoresAvailable(
+  EXPECT_TRUE(
+      v4_database_->AreAllStoresAvailable(StoresToCheck({linux_malware_id_})));
+  EXPECT_TRUE(
+      v4_database_->AreAnyStoresAvailable(StoresToCheck({linux_malware_id_})));
+
+  EXPECT_FALSE(v4_database_->AreAllStoresAvailable(
+      StoresToCheck({linux_malware_id_, bogus_id})));
+  EXPECT_TRUE(v4_database_->AreAnyStoresAvailable(
       StoresToCheck({linux_malware_id_, bogus_id})));
 
-  EXPECT_FALSE(v4_database_->AreStoresAvailable(StoresToCheck({bogus_id})));
+  EXPECT_FALSE(v4_database_->AreAllStoresAvailable(StoresToCheck({bogus_id})));
 }
 
 // Test to ensure that the callback to the database is dropped when the database

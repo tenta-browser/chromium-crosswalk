@@ -27,18 +27,18 @@
 #include "media/base/media.h"
 #include "media/media_features.h"
 #include "net/cookies/cookie_monster.h"
-#include "storage/browser/database/vfs_backend.h"
 #include "third_party/WebKit/public/platform/WebConnectionType.h"
 #include "third_party/WebKit/public/platform/WebData.h"
 #include "third_party/WebKit/public/platform/WebNetworkStateNotifier.h"
 #include "third_party/WebKit/public/platform/WebPluginListBuilder.h"
+#include "third_party/WebKit/public/platform/WebRTCCertificateGenerator.h"
+#include "third_party/WebKit/public/platform/WebRuntimeFeatures.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/platform/WebThread.h"
 #include "third_party/WebKit/public/platform/WebURL.h"
 #include "third_party/WebKit/public/platform/scheduler/renderer/renderer_scheduler.h"
 #include "third_party/WebKit/public/platform/scheduler/test/renderer_scheduler_test_support.h"
 #include "third_party/WebKit/public/web/WebKit.h"
-#include "third_party/WebKit/public/web/WebRuntimeFeatures.h"
 #include "v8/include/v8.h"
 
 #if defined(OS_MACOSX)
@@ -52,8 +52,7 @@
 
 #if BUILDFLAG(ENABLE_WEBRTC)
 #include "content/renderer/media/rtc_certificate.h"
-#include "third_party/WebKit/public/platform/WebRTCCertificateGenerator.h"
-#include "third_party/webrtc/base/rtccertificate.h"  // nogncheck
+#include "third_party/webrtc/rtc_base/rtccertificate.h"  // nogncheck
 #endif
 
 using blink::WebString;
@@ -78,7 +77,7 @@ class DummyTaskRunner : public base::SingleThreadTaskRunner {
     return false;
   }
 
-  bool RunsTasksOnCurrentThread() const override {
+  bool RunsTasksInCurrentSequence() const override {
     return thread_id_ == base::PlatformThread::CurrentId();
   }
 
@@ -189,18 +188,22 @@ blink::WebIDBFactory* TestBlinkWebUnitTestSupport::IdbFactory() {
   return NULL;
 }
 
-blink::WebURLLoader* TestBlinkWebUnitTestSupport::CreateURLLoader() {
+std::unique_ptr<blink::WebURLLoader>
+TestBlinkWebUnitTestSupport::CreateURLLoader(
+    const blink::WebURLRequest& request,
+    base::SingleThreadTaskRunner* task_runner) {
   // This loader should be used only for process-local resources such as
   // data URLs.
-  blink::WebURLLoader* default_loader = new WebURLLoaderImpl(nullptr, nullptr);
-  return url_loader_factory_->CreateURLLoader(default_loader);
+  auto default_loader =
+      base::MakeUnique<WebURLLoaderImpl>(nullptr, task_runner, nullptr);
+  return url_loader_factory_->CreateURLLoader(std::move(default_loader));
 }
 
 blink::WebString TestBlinkWebUnitTestSupport::UserAgent() {
   return blink::WebString::FromUTF8("test_runner/0.0.0.0");
 }
 
-std::unique_ptr<cc::SharedBitmap>
+std::unique_ptr<viz::SharedBitmap>
 TestBlinkWebUnitTestSupport::AllocateSharedBitmap(const blink::WebSize& size) {
   return shared_bitmap_manager_
       ->AllocateSharedBitmap(gfx::Size(size.width, size.height));
@@ -214,8 +217,6 @@ blink::WebString TestBlinkWebUnitTestSupport::QueryLocalizedString(
       return WebString::FromASCII("<<OtherDateLabel>>");
     case blink::WebLocalizedString::kOtherMonthLabel:
       return WebString::FromASCII("<<OtherMonthLabel>>");
-    case blink::WebLocalizedString::kOtherTimeLabel:
-      return WebString::FromASCII("<<OtherTimeLabel>>");
     case blink::WebLocalizedString::kOtherWeekLabel:
       return WebString::FromASCII("<<OtherWeekLabel>>");
     case blink::WebLocalizedString::kCalendarClear:
@@ -268,12 +269,12 @@ blink::WebCompositorSupport* TestBlinkWebUnitTestSupport::CompositorSupport() {
   return &compositor_support_;
 }
 
-blink::WebGestureCurve* TestBlinkWebUnitTestSupport::CreateFlingAnimationCurve(
+std::unique_ptr<blink::WebGestureCurve>
+TestBlinkWebUnitTestSupport::CreateFlingAnimationCurve(
     blink::WebGestureDevice device_source,
     const blink::WebFloatPoint& velocity,
     const blink::WebSize& cumulative_scroll) {
-  // Caller will retain and release.
-  return new WebGestureCurveMock(velocity, cumulative_scroll);
+  return base::MakeUnique<WebGestureCurveMock>(velocity, cumulative_scroll);
 }
 
 blink::WebURLLoaderMockFactory*
@@ -329,10 +330,10 @@ class TestWebRTCCertificateGenerator
 }  // namespace
 #endif  // BUILDFLAG(ENABLE_WEBRTC)
 
-blink::WebRTCCertificateGenerator*
+std::unique_ptr<blink::WebRTCCertificateGenerator>
 TestBlinkWebUnitTestSupport::CreateRTCCertificateGenerator() {
 #if BUILDFLAG(ENABLE_WEBRTC)
-  return new TestWebRTCCertificateGenerator();
+  return base::MakeUnique<TestWebRTCCertificateGenerator>();
 #else
   return nullptr;
 #endif

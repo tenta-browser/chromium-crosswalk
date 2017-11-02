@@ -1,5 +1,7 @@
 .. _nacl_io:
 
+.. include:: /migration/deprecation.inc
+
 ###################
 The nacl_io Library
 ###################
@@ -153,7 +155,7 @@ the file ``example.js``. This script is included in the module's html page (see
     navigator.webkitPersistentStorage.requestQuota(window.PERSISTENT, 1024 * 1024,
         function(bytes) {
           common.updateStatus(
-              'Allocated ' + bytes + ' bytes of persistant storage.');
+              'Allocated ' + bytes + ' bytes of persistent storage.');
           common.createNaClModule(name, tc, config, width, height);
           common.attachDefaultListeners();
         },

@@ -15,11 +15,21 @@ const char kNumPersonalTiles[] = "ntp.num_personal_suggestions";
 // overrides for country and version below.
 const char kPopularSitesOverrideURL[] = "popular_sites.override_url";
 
+// If set, this will override the URL path directory for popular sites.
+const char kPopularSitesOverrideDirectory[] =
+    "popular_sites.override_directory";
+
 // If set, this will override the country detection for popular sites.
 const char kPopularSitesOverrideCountry[] = "popular_sites.override_country";
 
 // If set, this will override the default file version for popular sites.
 const char kPopularSitesOverrideVersion[] = "popular_sites.override_version";
+
+// Prefs used to cache suggested sites and store caching meta data.
+const char kPopularSitesLastDownloadPref[] = "popular_sites_last_download";
+const char kPopularSitesURLPref[] = "popular_sites_url";
+const char kPopularSitesJsonPref[] = "suggested_sites_json";
+const char kPopularSitesVersionPref[] = "suggested_sites_version";
 
 }  // namespace prefs
 }  // namespace ntp_tiles

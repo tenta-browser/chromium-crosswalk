@@ -16,6 +16,7 @@ import android.os.Handler;
 import android.os.SystemClock;
 import android.provider.Settings;
 import android.provider.Settings.SettingNotFoundException;
+import android.support.annotation.CallSuper;
 import android.support.annotation.Nullable;
 import android.support.v7.app.AppCompatActivity;
 import android.view.Display;
@@ -34,7 +35,9 @@ import org.chromium.base.library_loader.LoaderErrors;
 import org.chromium.base.library_loader.ProcessInitException;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeApplication;
+import org.chromium.chrome.browser.IntentHandler;
 import org.chromium.chrome.browser.WarmupManager;
+import org.chromium.chrome.browser.firstrun.FirstRunFlowSequencer;
 import org.chromium.chrome.browser.metrics.MemoryUma;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tabmodel.DocumentModeAssassin;
@@ -75,10 +78,14 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
     // first |onResume| call.
     private boolean mFirstResumePending = true;
 
+    private boolean mStartupDelayed;
+    private boolean mFirstDrawComplete;
+
     public AsyncInitializationActivity() {
         mHandler = new Handler();
     }
 
+    @CallSuper
     @Override
     protected void onDestroy() {
         mDestroyed = true;
@@ -91,6 +98,7 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
         super.onDestroy();
     }
 
+    @CallSuper
     @Override
     @TargetApi(Build.VERSION_CODES.N)
     protected void attachBaseContext(Context newBase) {
@@ -100,8 +108,8 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
         // multi-window, if Chrome is launched into a smaller screen Android will load the tab
         // switcher resources. Overriding the smallestScreenWidthDp in the Configuration ensures
         // Android will load the tab strip resources. See crbug.com/588838.
-        if (Build.VERSION.CODENAME.equals("N") || Build.VERSION.SDK_INT > Build.VERSION_CODES.M) {
-            int smallestDeviceWidthDp = DeviceFormFactor.getSmallestDeviceWidthDp(this);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            int smallestDeviceWidthDp = DeviceFormFactor.getSmallestDeviceWidthDp();
 
             if (smallestDeviceWidthDp >= DeviceFormFactor.MINIMUM_TABLET_WIDTH_DP) {
                 Configuration overrideConfiguration = new Configuration();
@@ -111,6 +119,7 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
         }
     }
 
+    @CallSuper
     @Override
     public void preInflationStartup() {
         mHadWarmStart = LibraryLoader.isInitialized();
@@ -126,20 +135,19 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
 
     @Override
     public final void setContentViewAndLoadLibrary() {
-        // Unless it was called before (due to delaying all browser startup on purpose),
-        // {@link #setContentView} inflates the decorView and the basic UI hierarchy as stubs.
-        // This is done here before kicking long running I/O because inflation accesses resource
-        // files (XML, etc) even if we are inflating views defined by the framework. If this
-        // operation gets blocked because other long running I/O are running, we delay onCreate(),
-        // onStart() and first draw consequently.
+        // Unless it was called before, {@link #setContentView} inflates the decorView and the basic
+        // UI hierarchy as stubs. This is done here before kicking long running I/O because
+        // inflation accesses resource files (XML, etc) even if we are inflating views defined by
+        // the framework. If this operation gets blocked because other long running I/O are running,
+        // we delay onCreate(), onStart() and first draw consequently.
 
-        if (!shouldDelayBrowserStartup()) {
-            setContentView();
-            if (mLaunchBehindWorkaround != null) mLaunchBehindWorkaround.onSetContentView();
+        setContentView();
+        if (mLaunchBehindWorkaround != null) mLaunchBehindWorkaround.onSetContentView();
+
+        if (!mStartupDelayed) {
+            // Kick off long running IO tasks that can be done in parallel.
+            mNativeInitializationController.startBackgroundTasks(shouldAllocateChildConnection());
         }
-
-        // Kick off long running IO tasks that can be done in parallel.
-        mNativeInitializationController.startBackgroundTasks(shouldAllocateChildConnection());
     }
 
     /** Controls the parameter of {@link NativeInitializationController#startBackgroundTasks()}.*/
@@ -148,6 +156,7 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
         return true;
     }
 
+    @CallSuper
     @Override
     public void postInflationStartup() {
         final View firstDrawView = getViewToBeDrawnBeforeInitializingNative();
@@ -157,7 +166,10 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
             @Override
             public boolean onPreDraw() {
                 firstDrawView.getViewTreeObserver().removeOnPreDrawListener(this);
-                onFirstDrawComplete();
+                mFirstDrawComplete = true;
+                if (!mStartupDelayed) {
+                    onFirstDrawComplete();
+                }
                 return true;
             }
         };
@@ -174,14 +186,17 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
 
     @Override
     public void maybePreconnect() {
-        TraceEvent.begin("maybePreconnect");
-        Intent intent = getIntent();
-        if (intent != null && Intent.ACTION_VIEW.equals(intent.getAction())) {
-            final String url = intent.getDataString();
-            WarmupManager.getInstance()
-                .maybePreconnectUrlAndSubResources(Profile.getLastUsedProfile(), url);
+        try {
+            TraceEvent.begin("maybePreconnect");
+            Intent intent = getIntent();
+            if (intent == null || !Intent.ACTION_VIEW.equals(intent.getAction())) return;
+            String url = IntentHandler.getUrlFromIntent(intent);
+            if (url == null) return;
+            WarmupManager.getInstance().maybePreconnectUrlAndSubResources(
+                    Profile.getLastUsedProfile(), url);
+        } finally {
+            TraceEvent.end("maybePreconnect");
         }
-        TraceEvent.end("maybePreconnect");
     }
 
     @Override
@@ -190,6 +205,7 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
     @Override
     public void initializeState() { }
 
+    @CallSuper
     @Override
     public void finishNativeInitialization() {
         // Set up the initial orientation of the device.
@@ -206,13 +222,7 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
         mNativeInitializationController.onNativeInitializationComplete();
     }
 
-    /**
-     * Actions that may be run at some point after startup. Place tasks that are not critical to the
-     * startup path here.  This method will be called automatically and should not be called
-     * directly by subclasses.
-     */
-    protected void onDeferredStartup() { }
-
+    @CallSuper
     @Override
     public void onStartupFailure() {
         ProcessInitException e =
@@ -235,6 +245,7 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
     }
 
     private final void onCreateInternal(Bundle savedInstanceState) {
+        setIntent(validateIntent(getIntent()));
         if (DocumentModeAssassin.getInstance().isMigrationNecessary()) {
             super.onCreate(null);
 
@@ -246,9 +257,16 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
             return;
         }
 
-        if (!isStartedUpCorrectly(getIntent())) {
-            super.onCreate(null);
-            ApiCompatibilityUtils.finishAndRemoveTask(this);
+        Intent intent = getIntent();
+        if (!isStartedUpCorrectly(intent)) {
+            abortLaunch();
+            return;
+        }
+
+        if (requiresFirstRunToBeCompleted(intent)
+                && FirstRunFlowSequencer.launch(this, intent, false /* requiresBroadcast */,
+                           shouldPreferLightweightFre(intent))) {
+            abortLaunch();
             return;
         }
 
@@ -262,14 +280,27 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
             getWindowAndroid().restoreInstanceState(getSavedInstanceState());
         }
 
-        if (shouldDelayBrowserStartup()) {
-            // Even if the browser startup is being delayed, the UI still has to be inflated.
-            setContentView();
-            if (mLaunchBehindWorkaround != null) mLaunchBehindWorkaround.onSetContentView();
-        } else {
-            ChromeBrowserInitializer.getInstance(
-                    getApplicationContext()).handlePreNativeStartup(this);
-        }
+        mStartupDelayed = shouldDelayBrowserStartup();
+        ChromeBrowserInitializer.getInstance(this).handlePreNativeStartup(this);
+    }
+
+    private void abortLaunch() {
+        super.onCreate(null);
+        ApiCompatibilityUtils.finishAndRemoveTask(this);
+    }
+
+    /**
+     * Call to begin loading the library, if it was delayed.
+     */
+    @CallSuper
+    protected void startDelayedNativeInitialization() {
+        assert mStartupDelayed;
+        mStartupDelayed = false;
+
+        // Kick off long running IO tasks that can be done in parallel.
+        mNativeInitializationController.startBackgroundTasks(shouldAllocateChildConnection());
+
+        if (mFirstDrawComplete) onFirstDrawComplete();
     }
 
     /**
@@ -297,10 +328,34 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
     }
 
     /**
+     * Overriding this function is almost always wrong.
+     * @return Whether or not the user needs to go through First Run before using this Activity.
+     */
+    protected boolean requiresFirstRunToBeCompleted(Intent intent) {
+        return true;
+    }
+
+    /**
+     * Whether to use the Lightweight First Run Experience instead of the
+     * non-Lightweight First Run Experience.
+     */
+    protected boolean shouldPreferLightweightFre(Intent intent) {
+        return false;
+    }
+
+    /**
      * Whether or not the Activity was started up via a valid Intent.
      */
     protected boolean isStartedUpCorrectly(Intent intent) {
         return true;
+    }
+
+    /**
+     * Validates the intent that started this activity.
+     * @return The validated intent.
+     */
+    protected Intent validateIntent(final Intent intent) {
+        return intent;
     }
 
     /**
@@ -331,12 +386,14 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
         mSavedInstanceState = null;
     }
 
+    @CallSuper
     @Override
     public void onStart() {
         super.onStart();
         mNativeInitializationController.onStart();
     }
 
+    @CallSuper
     @Override
     public void onResume() {
         super.onResume();
@@ -346,6 +403,7 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
         mFirstResumePending = false;
     }
 
+    @CallSuper
     @Override
     public void onPause() {
         mNativeInitializationController.onPause();
@@ -353,6 +411,7 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
         if (mLaunchBehindWorkaround != null) mLaunchBehindWorkaround.onPause();
     }
 
+    @CallSuper
     @Override
     public void onStop() {
         super.onStop();
@@ -360,6 +419,7 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
         mNativeInitializationController.onStop();
     }
 
+    @CallSuper
     @Override
     protected void onNewIntent(Intent intent) {
         if (intent == null) return;
@@ -367,11 +427,13 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
         setIntent(intent);
     }
 
+    @CallSuper
     @Override
     public void onActivityResult(int requestCode, int resultCode, Intent data) {
         mNativeInitializationController.onActivityResult(requestCode, resultCode, data);
     }
 
+    @CallSuper
     @Override
     public final void onCreateWithNative() {
         try {
@@ -406,13 +468,16 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
     @Override
     public abstract boolean shouldStartGpuProcess();
 
+    @CallSuper
     @Override
     public void onContextMenuClosed(Menu menu) {
         if (mWindowAndroid != null) mWindowAndroid.onContextMenuClosed();
     }
 
-    @Override
-    public final void onFirstDrawComplete() {
+    private void onFirstDrawComplete() {
+        assert mFirstDrawComplete;
+        assert !mStartupDelayed;
+
         mHandler.post(new Runnable() {
             @Override
             public void run() {
@@ -441,6 +506,7 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
      * This will handle passing {@link Intent} results back to the {@link WindowAndroid}.  It will
      * return whether or not the {@link WindowAndroid} has consumed the event or not.
      */
+    @CallSuper
     @Override
     public boolean onActivityResultWithNative(int requestCode, int resultCode, Intent intent) {
         if (mWindowAndroid != null) {
@@ -450,6 +516,7 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
         }
     }
 
+    @CallSuper
     @Override
     public void onRequestPermissionsResult(
             int requestCode, String[] permissions, int[] grantResults) {
@@ -461,18 +528,21 @@ public abstract class AsyncInitializationActivity extends AppCompatActivity impl
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
     }
 
+    @CallSuper
     @Override
     protected void onSaveInstanceState(Bundle outState) {
         super.onSaveInstanceState(outState);
         if (mWindowAndroid != null) mWindowAndroid.saveInstanceState(outState);
     }
 
+    @CallSuper
     @Override
     public void onLowMemory() {
         super.onLowMemory();
         if (mMemoryUma != null) mMemoryUma.onLowMemory();
     }
 
+    @CallSuper
     @Override
     public void onTrimMemory(int level) {
         super.onTrimMemory(level);

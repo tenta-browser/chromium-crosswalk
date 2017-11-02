@@ -212,7 +212,9 @@ class PLATFORM_EXPORT JSONObject : public JSONValue {
   bool GetDouble(const String& name, double* output) const;
   bool GetString(const String& name, String* output) const;
 
-  JSONObject* GetObject(const String& name) const;
+  // This function is not "GetObject" in order to avoid replacement by
+  // windows.h.
+  JSONObject* GetJSONObject(const String& name) const;
   JSONArray* GetArray(const String& name) const;
   JSONValue* Get(const String& name) const;
   Entry at(size_t index) const;
@@ -286,6 +288,10 @@ class PLATFORM_EXPORT JSONArray : public JSONValue {
   JSONArray();
   Vector<std::unique_ptr<JSONValue>> data_;
 };
+
+extern const char* kJSONNullString;
+extern const char* kJSONTrueString;
+extern const char* kJSONFalseString;
 
 PLATFORM_EXPORT void EscapeStringForJSON(const String&, StringBuilder*);
 void DoubleQuoteStringForJSON(const String&, StringBuilder*);

@@ -8,22 +8,26 @@
 #include <memory>
 
 #include "base/memory/ref_counted.h"
+#include "base/time/time.h"
 
 namespace gfx {
 class Vector2dF;
 }
 
-namespace cc {
-class CompositorFrameSink;
+namespace viz {
 struct BeginFrameArgs;
+}
+
+namespace cc {
 
 class LayerTreeHostClient {
  public:
   virtual void WillBeginMainFrame() = 0;
   // Marks finishing compositing-related tasks on the main thread. In threaded
   // mode, this corresponds to DidCommit().
-  virtual void BeginMainFrame(const BeginFrameArgs& args) = 0;
+  virtual void BeginMainFrame(const viz::BeginFrameArgs& args) = 0;
   virtual void BeginMainFrameNotExpectedSoon() = 0;
+  virtual void BeginMainFrameNotExpectedUntil(base::TimeTicks time) = 0;
   virtual void DidBeginMainFrame() = 0;
   // A LayerTreeHost is bound to a LayerTreeHostClient. Visual frame-based
   // updates to the state of the LayerTreeHost are expected to happen only in
@@ -46,13 +50,13 @@ class LayerTreeHostClient {
   virtual void RecordWheelAndTouchScrollingCount(
       bool has_scrolled_by_wheel,
       bool has_scrolled_by_touch) = 0;
-  // Request an CompositorFrameSink from the client. When the client has one it
-  // should call LayerTreeHost::SetCompositorFrameSink.  This will result in
-  // either DidFailToInitializeCompositorFrameSink or
-  // DidInitializeCompositorFrameSink being called.
-  virtual void RequestNewCompositorFrameSink() = 0;
-  virtual void DidInitializeCompositorFrameSink() = 0;
-  virtual void DidFailToInitializeCompositorFrameSink() = 0;
+  // Request a LayerTreeFrameSink from the client. When the client has one it
+  // should call LayerTreeHost::SetLayerTreeFrameSink. This will result in
+  // either DidFailToInitializeLayerTreeFrameSink or
+  // DidInitializeLayerTreeFrameSink being called.
+  virtual void RequestNewLayerTreeFrameSink() = 0;
+  virtual void DidInitializeLayerTreeFrameSink() = 0;
+  virtual void DidFailToInitializeLayerTreeFrameSink() = 0;
   virtual void WillCommit() = 0;
   virtual void DidCommit() = 0;
   virtual void DidCommitAndDrawFrame() = 0;

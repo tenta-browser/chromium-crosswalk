@@ -86,7 +86,7 @@ TEST_F(PlatformAppsManifestTest, PlatformAppContentSecurityPolicy) {
 
   // Whitelisted ones can (this is the ID corresponding to the base 64 encoded
   // key in the init_platform_app_csp.json manifest.)
-  extensions::SimpleFeature::ScopedWhitelistForTest whitelist(
+  SimpleFeature::ScopedThreadUnsafeWhitelistForTest whitelist(
       "ahplfneplbnjcflhdgkkjeiglkkfeelb");
   scoped_refptr<Extension> extension =
       LoadAndExpectSuccess("init_platform_app_csp.json");
@@ -124,11 +124,10 @@ TEST_F(PlatformAppsManifestTest, CertainApisRequirePlatformApps) {
   std::vector<std::unique_ptr<ManifestData>> manifests;
   // Create each manifest.
   for (const char* api_name : kPlatformAppExperimentalApis) {
-    // DictionaryValue will take ownership of this ListValue.
-    base::ListValue *permissions = new base::ListValue();
+    auto permissions = base::MakeUnique<base::ListValue>();
     permissions->AppendString("experimental");
     permissions->AppendString(api_name);
-    manifest->Set("permissions", permissions);
+    manifest->Set("permissions", std::move(permissions));
     manifests.push_back(
         base::MakeUnique<ManifestData>(manifest->CreateDeepCopy(), ""));
   }

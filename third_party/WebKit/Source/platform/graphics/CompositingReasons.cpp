@@ -20,6 +20,8 @@ const CompositingReasonStringMap kCompositingReasonStringMap[] = {
     {kCompositingReasonIFrame, "iFrame", "Is an accelerated iFrame"},
     {kCompositingReasonBackfaceVisibilityHidden, "backfaceVisibilityHidden",
      "Has backface-visibility: hidden"},
+    {kCompositingReasonRootScroller, "rootScroller",
+     "Is the document.rootScroller"},
     {kCompositingReasonActiveAnimation, "activeAnimation",
      "Has an active accelerated animation or transition"},
     {kCompositingReasonTransitionProperty, "transitionProperty",
@@ -38,8 +40,6 @@ const CompositingReasonStringMap kCompositingReasonStringMap[] = {
      "Has a will-change compositing hint"},
     {kCompositingReasonBackdropFilter, "backdropFilter",
      "Has a backdrop filter"},
-    {kCompositingReasonCompositorProxy, "compositorProxy",
-     "Has a CompositorProxy object"},
     {kCompositingReasonAssumedOverlap, "assumedOverlap",
      "Might overlap other composited content"},
     {kCompositingReasonOverlap, "overlap", "Overlaps other composited content"},
@@ -88,9 +88,10 @@ const CompositingReasonStringMap kCompositingReasonStringMap[] = {
     {kCompositingReasonIsolateCompositedDescendants,
      "isolateCompositedDescendants",
      "Should isolate descendants to apply a blend effect"},
-    {kCompositingReasonPositionFixedWithCompositedDescendants,
-     "positionFixedWithCompositedDescendants"
-     "Is a position:fixed element with composited descendants"},
+    {kCompositingReasonPositionFixedOrStickyWithCompositedDescendants,
+     "positionFixedOrStickyWithCompositedDescendants"
+     "Is a position:fixed or position:sticky element with composited "
+     "descendants"},
     {kCompositingReasonRoot, "root", "Is the root layer"},
     {kCompositingReasonLayerForAncestorClip, "layerForAncestorClip",
      "Secondary layer, applies a clip due to a sibling in the compositing "

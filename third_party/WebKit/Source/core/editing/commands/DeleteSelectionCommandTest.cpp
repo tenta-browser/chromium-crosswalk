@@ -10,8 +10,8 @@
 #include "core/editing/FrameSelection.h"
 #include "core/editing/Position.h"
 #include "core/editing/VisibleSelection.h"
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/testing/DummyPageHolder.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -54,9 +54,7 @@ TEST_F(DeleteSelectionCommandTest, deleteListFromTable) {
   EXPECT_TRUE(command->Apply()) << "the delete command should have succeeded";
   EXPECT_EQ("<div contenteditable=\"true\"><br></div>",
             GetDocument().body()->innerHTML());
-  EXPECT_TRUE(frame->Selection()
-                  .ComputeVisibleSelectionInDOMTreeDeprecated()
-                  .IsCaret());
+  EXPECT_TRUE(frame->Selection().GetSelectionInDOMTree().IsCaret());
   EXPECT_EQ(Position(div, 0), frame->Selection()
                                   .ComputeVisibleSelectionInDOMTree()
                                   .Base()

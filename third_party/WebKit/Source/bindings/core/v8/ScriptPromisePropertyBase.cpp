@@ -5,10 +5,10 @@
 #include "bindings/core/v8/ScriptPromisePropertyBase.h"
 
 #include <memory>
-#include "bindings/core/v8/ScopedPersistent.h"
-#include "bindings/core/v8/ScriptState.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "core/dom/ExecutionContext.h"
+#include "platform/bindings/ScopedPersistent.h"
+#include "platform/bindings/ScriptState.h"
 #include "platform/wtf/PtrUtil.h"
 
 namespace blink {
@@ -22,6 +22,8 @@ ScriptPromisePropertyBase::ScriptPromisePropertyBase(
       state_(kPending) {}
 
 ScriptPromisePropertyBase::~ScriptPromisePropertyBase() {
+  // TODO(haraken): Stop calling ClearWrappers here, as the dtor is invoked
+  // during oilpan GC, but ClearWrappers potentially runs user script.
   ClearWrappers();
 }
 
@@ -65,9 +67,9 @@ ScriptPromise ScriptPromisePropertyBase::Promise(DOMWrapperWorld& world) {
 }
 
 void ScriptPromisePropertyBase::ResolveOrReject(State target_state) {
-  ASSERT(GetExecutionContext());
-  ASSERT(state_ == kPending);
-  ASSERT(target_state == kResolved || target_state == kRejected);
+  DCHECK(GetExecutionContext());
+  DCHECK_EQ(state_, kPending);
+  DCHECK(target_state == kResolved || target_state == kRejected);
 
   state_ = target_state;
 
@@ -109,7 +111,7 @@ void ScriptPromisePropertyBase::ResolveOrRejectInternal(
   v8::Local<v8::Context> context = resolver->CreationContext();
   switch (state_) {
     case kPending:
-      ASSERT_NOT_REACHED();
+      NOTREACHED();
       break;
     case kResolved:
       resolver->Resolve(context, ResolvedValue(isolate_, context->Global()))
@@ -160,22 +162,23 @@ void ScriptPromisePropertyBase::ClearWrappers() {
        ++i) {
     v8::Local<v8::Object> wrapper = (*i)->NewLocal(isolate_);
     if (!wrapper.IsEmpty()) {
+      v8::Context::Scope scope(wrapper->CreationContext());
       // TODO(peria): Use deleteProperty() if http://crbug.com/v8/6227 is fixed.
       ResolverSymbol().Set(wrapper, v8::Undefined(isolate_));
       PromiseSymbol().Set(wrapper, v8::Undefined(isolate_));
     }
   }
-  wrappers_.Clear();
+  wrappers_.clear();
 }
 
 void ScriptPromisePropertyBase::CheckThis() {
-  RELEASE_ASSERT(this);
+  CHECK(this);
 }
 
 void ScriptPromisePropertyBase::CheckWrappers() {
   for (WeakPersistentSet::iterator i = wrappers_.begin(); i != wrappers_.end();
        ++i) {
-    RELEASE_ASSERT(*i);
+    CHECK(*i);
   }
 }
 

@@ -13,6 +13,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
+#include "chrome/common/chrome_content_client.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/api/api_features.h"
 #include "chrome/common/extensions/api/behavior_features.h"
@@ -27,7 +28,6 @@
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/common_resources.h"
-#include "chrome/grit/generated_resources.h"
 #include "components/version_info/version_info.h"
 #include "content/public/common/url_constants.h"
 #include "extensions/common/api/generated_schemas.h"
@@ -94,7 +94,7 @@ ChromeChannelForHistogram GetChromeChannelForHistogram(
 
 }  // namespace
 
-static base::LazyInstance<ChromeExtensionsClient>::DestructorAtExit g_client =
+static base::LazyInstance<ChromeExtensionsClient>::Leaky g_client =
     LAZY_INSTANCE_INITIALIZER;
 
 ChromeExtensionsClient::ChromeExtensionsClient() {}
@@ -335,6 +335,10 @@ std::set<base::FilePath> ChromeExtensionsClient::GetBrowserImagePaths(
 bool ChromeExtensionsClient::ExtensionAPIEnabledInExtensionServiceWorkers()
     const {
   return GetCurrentChannel() == version_info::Channel::UNKNOWN;
+}
+
+std::string ChromeExtensionsClient::GetUserAgent() const {
+  return ::GetUserAgent();
 }
 
 // static

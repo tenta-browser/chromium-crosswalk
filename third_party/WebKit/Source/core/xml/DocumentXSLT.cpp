@@ -4,20 +4,20 @@
 
 #include "core/xml/DocumentXSLT.h"
 
-#include "bindings/core/v8/DOMWrapperWorld.h"
-#include "bindings/core/v8/ScriptState.h"
 #include "bindings/core/v8/V8AbstractEventListener.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "core/dom/Document.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/dom/Node.h"
 #include "core/dom/ProcessingInstruction.h"
-#include "core/events/Event.h"
-#include "core/events/EventListener.h"
+#include "core/dom/events/Event.h"
+#include "core/dom/events/EventListener.h"
 #include "core/frame/UseCounter.h"
 #include "core/probe/CoreProbes.h"
 #include "core/xml/XSLStyleSheet.h"
 #include "core/xml/XSLTProcessor.h"
+#include "platform/bindings/DOMWrapperWorld.h"
+#include "platform/bindings/ScriptState.h"
 
 namespace blink {
 
@@ -35,11 +35,12 @@ class DOMContentLoadedListener final
   bool operator==(const EventListener&) const override { return true; }
 
   virtual void HandleEvent(ScriptState* script_state, Event* event) {
-    DCHECK(RuntimeEnabledFeatures::xsltEnabled());
+    DCHECK(RuntimeEnabledFeatures::XSLTEnabled());
     DCHECK_EQ(event->type(), "DOMContentLoaded");
     ScriptState::Scope scope(script_state);
 
-    Document& document = *ToDocument(ExecutionContext::From(script_state));
+    Document& document =
+        *ToDocument(ToExecutionContext(script_state->GetContext()));
     DCHECK(!document.Parsing());
 
     // Processing instruction (XML documents only).
@@ -91,7 +92,7 @@ DocumentXSLT::DocumentXSLT(Document& document)
 void DocumentXSLT::ApplyXSLTransform(Document& document,
                                      ProcessingInstruction* pi) {
   DCHECK(!pi->IsLoading());
-  UseCounter::Count(document, UseCounter::kXSLProcessingInstruction);
+  UseCounter::Count(document, WebFeature::kXSLProcessingInstruction);
   XSLTProcessor* processor = XSLTProcessor::Create(document);
   processor->SetXSLStyleSheet(ToXSLStyleSheet(pi->sheet()));
   String result_mime_type;
@@ -113,7 +114,7 @@ void DocumentXSLT::ApplyXSLTransform(Document& document,
 }
 
 ProcessingInstruction* DocumentXSLT::FindXSLStyleSheet(Document& document) {
-  for (Node* node = document.FirstChild(); node; node = node->nextSibling()) {
+  for (Node* node = document.firstChild(); node; node = node->nextSibling()) {
     if (node->getNodeType() != Node::kProcessingInstructionNode)
       continue;
 
@@ -130,7 +131,7 @@ bool DocumentXSLT::ProcessingInstructionInsertedIntoDocument(
   if (!pi->IsXSL())
     return false;
 
-  if (!RuntimeEnabledFeatures::xsltEnabled() || !document.GetFrame())
+  if (!RuntimeEnabledFeatures::XSLTEnabled() || !document.GetFrame())
     return true;
 
   ScriptState* script_state = ToScriptStateForMainWorld(document.GetFrame());
@@ -153,7 +154,7 @@ bool DocumentXSLT::ProcessingInstructionRemovedFromDocument(
   if (!pi->EventListenerForXSLT())
     return true;
 
-  DCHECK(RuntimeEnabledFeatures::xsltEnabled());
+  DCHECK(RuntimeEnabledFeatures::XSLTEnabled());
   document.removeEventListener(EventTypeNames::DOMContentLoaded,
                                pi->EventListenerForXSLT(), false);
   pi->ClearEventListenerForXSLT();
@@ -164,7 +165,7 @@ bool DocumentXSLT::SheetLoaded(Document& document, ProcessingInstruction* pi) {
   if (!pi->IsXSL())
     return false;
 
-  if (RuntimeEnabledFeatures::xsltEnabled() && !document.Parsing() &&
+  if (RuntimeEnabledFeatures::XSLTEnabled() && !document.Parsing() &&
       !pi->IsLoading() && !DocumentXSLT::HasTransformSourceDocument(document)) {
     if (FindXSLStyleSheet(document) == pi)
       ApplyXSLTransform(document, pi);

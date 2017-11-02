@@ -149,12 +149,4 @@ void LayoutSVGInline::RemoveChild(LayoutObject* child) {
   LayoutInline::RemoveChild(child);
 }
 
-void LayoutSVGInline::InvalidateTreeIfNeeded(
-    const PaintInvalidationState& paint_invalidation_state) {
-  // TODO(wangxianzhu): Verify if the inherited
-  // LayoutBoxModelObject::invalidateTreeIfNeeded() is applicable here.
-  // If yes, remove this overriding method.
-  LayoutObject::InvalidateTreeIfNeeded(paint_invalidation_state);
-}
-
 }  // namespace blink

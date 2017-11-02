@@ -30,9 +30,10 @@
 #define WEBPImageDecoder_h
 
 #include "platform/image-decoders/ImageDecoder.h"
-#include "third_party/skia/include/core/SkData.h"
 #include "webp/decode.h"
 #include "webp/demux.h"
+
+class SkData;
 
 namespace blink {
 
@@ -47,7 +48,7 @@ class PLATFORM_EXPORT WEBPImageDecoder final : public ImageDecoder {
   String FilenameExtension() const override { return "webp"; }
   void OnSetData(SegmentReader* data) override;
   int RepetitionCount() const override;
-  bool FrameIsCompleteAtIndex(size_t) const override;
+  bool FrameIsReceivedAtIndex(size_t) const override;
   float FrameDurationAtIndex(size_t) const override;
 
  private:
@@ -63,10 +64,10 @@ class PLATFORM_EXPORT WEBPImageDecoder final : public ImageDecoder {
 
   // For WebP images, the frame status needs to be FrameComplete to decode
   // subsequent frames that depend on frame |index|. The reason for this is that
-  // WebP uses the previous frame for alpha blending, in applyPostProcessing().
+  // WebP uses the previous frame for alpha blending, in ApplyPostProcessing().
   //
   // Before calling this, verify that frame |index| exists by checking that
-  // |index| is smaller than |m_frameBufferCache|.size().
+  // |index| is smaller than |frame_buffer_cache_|.size().
   bool FrameStatusSufficientForSuccessors(size_t index) override {
     DCHECK(index < frame_buffer_cache_.size());
     return frame_buffer_cache_[index].GetStatus() == ImageFrame::kFrameComplete;
@@ -80,13 +81,13 @@ class PLATFORM_EXPORT WEBPImageDecoder final : public ImageDecoder {
   void ReadColorProfile();
   bool UpdateDemuxer();
 
-  // Set |m_frameBackgroundHasAlpha| based on this frame's characteristics.
+  // Set |frame_background_has_alpha_| based on this frame's characteristics.
   // Before calling this method, the caller must verify that the frame exists.
   void OnInitFrameBuffer(size_t frame_index) override;
 
   // When the blending method of this frame is BlendAtopPreviousFrame, the
   // previous frame's buffer is necessary to decode this frame in
-  // applyPostProcessing, so we can't take over the data. Before calling this
+  // ApplyPostProcessing, so we can't take over the data. Before calling this
   // method, the caller must verify that the frame exists.
   bool CanReusePreviousFrameBuffer(size_t frame_index) const override;
 

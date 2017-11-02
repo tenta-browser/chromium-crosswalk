@@ -3,25 +3,34 @@
 <script src="../inspector-test.js"></script>
 <script src="../elements-test.js"></script>
 <script>
-function test()
-{
-    var i = 0;
-    var last = 7;
+function test() {
+  var i = 0;
+  var last = 14;
 
-    function check()
-    {
-        i++;
-        if (i > last)
-            return InspectorTest.completeTest();
+  function check() {
+    i++;
+    if (i > last)
+      return TestRunner.completeTest();
 
-        InspectorTest.selectNodeWithId("linkify-" + i, function()
-        {
-            var treeElement = InspectorTest.firstElementsTreeOutline().selectedTreeElement;
-            InspectorTest.addResult(treeElement.title.outerHTML);
-            check();
-        });
-    }
-    check();
+    ElementsTestRunner.selectNodeWithId('linkify-' + i, function() {
+      var treeElement = ElementsTestRunner.firstElementsTreeOutline().selectedTreeElement;
+
+      TestRunner.addResult('\nRendered text: ' + treeElement.title.textContent);
+
+      // Print the embedded links.
+      var links = treeElement.title.querySelectorAll('.devtools-link');
+      links.forEach(link => {
+        var offset = 0;
+        var node = treeElement.title;
+        while ((node = node.traverseNextTextNode(treeElement.title)) && !node.isSelfOrDescendant(link))
+          offset += node.textContent.length;
+        TestRunner.addResult('Link at offset: ' + offset + ': ' + link.textContent);
+      });
+
+      check();
+    });
+  }
+  check();
 }
 
 </script>
@@ -38,7 +47,14 @@ Tests that you can click and hover on links in attributes.
     <source id="linkify-4" media="(min-width: 465px)" srcset="./kitten-medium.png">
     <source id="linkify-5" media="(min-width: 400px)" srcset="./kitten-large.png 2x">
     <img id="linkify-6" src="./kitten-small.png">
+    <img id="linkify-7" srcset="./kitten-medium.png, ./kitten-large.png 2x">
+    <img id="linkify-8" srcset="./kitten-medium.png 1x, ./kitten-large.png 2x">
+    <img id="linkify-9" srcset="./kitten-medium.png 1x,./kitten-large.png 2x">
+    <img id="linkify-10" srcset="data:,abc">
+    <img id="linkify-11" srcset="data:,abc 1x">
+    <img id="linkify-12" srcset="data:,abc 1x, data:,def 2x">
+    <img id="linkify-13" srcset="data:,abc 1x,data:,def 2x">
 </picture>
-<a id="linkify-7" href="http://www.google.com">a link</a>
+<a id="linkify-14" href="http://www.google.com">a link</a>
 </body>
 </html>

@@ -27,7 +27,6 @@
 #define SpellChecker_h
 
 #include "core/CoreExport.h"
-#include "core/editing/FrameSelection.h"
 #include "core/editing/VisibleSelection.h"
 #include "core/editing/markers/DocumentMarker.h"
 #include "platform/heap/Handle.h"
@@ -40,12 +39,15 @@ class IdleSpellCheckCallback;
 class LocalFrame;
 class ReplaceSelectionCommand;
 class SpellCheckerClient;
+class SpellCheckMarker;
 class SpellCheckRequest;
 class SpellCheckRequester;
 class TextCheckerClient;
 class TextCheckingParagraph;
 struct TextCheckingResult;
 class TypingCommand;
+enum class TypingContinuation;
+class WebSpellCheckPanelHostClient;
 
 class CORE_EXPORT SpellChecker final : public GarbageCollected<SpellChecker> {
   WTF_MAKE_NONCOPYABLE(SpellChecker);
@@ -56,6 +58,7 @@ class CORE_EXPORT SpellChecker final : public GarbageCollected<SpellChecker> {
   DECLARE_TRACE();
 
   SpellCheckerClient& GetSpellCheckerClient() const;
+  WebSpellCheckPanelHostClient& SpellCheckPanelHostClient() const;
   TextCheckerClient& TextChecker() const;
 
   static bool IsSpellCheckingEnabledAt(const Position&);
@@ -71,7 +74,11 @@ class CORE_EXPORT SpellChecker final : public GarbageCollected<SpellChecker> {
   void MarkMisspellingsForMovingParagraphs(const VisibleSelection&);
   void RespondToChangedContents();
   void RespondToChangedSelection(const Position& old_selection_start,
-                                 FrameSelection::SetSelectionOptions);
+                                 TypingContinuation);
+  std::pair<Node*, SpellCheckMarker*> GetSpellCheckMarkerUnderSelection() const;
+  // The first String returned in the pair is the selected text.
+  // The second String is the marker's description.
+  std::pair<String, String> SelectMisspellingAsync();
   void ReplaceMisspelledRange(const String&);
   void RemoveSpellingMarkers();
   void RemoveSpellingMarkersUnderWords(const Vector<String>& words);

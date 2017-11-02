@@ -64,9 +64,6 @@ struct QUIC_EXPORT_PRIVATE QuicPacketPublicHeader {
   // public flags.
   QuicConnectionId connection_id;
   QuicConnectionIdLength connection_id_length;
-  // TODO(fayang): Remove multipath_flag when deprecating
-  // quic_reloadable_flag_quic_remove_multipath_bit.
-  bool multipath_flag;
   bool reset_flag;
   bool version_flag;
   QuicPacketNumberLength packet_number_length;
@@ -96,9 +93,6 @@ struct QUIC_EXPORT_PRIVATE QuicPublicResetPacket {
 
   QuicPacketPublicHeader public_header;
   QuicPublicResetNonceProof nonce_proof;
-  // TODO(fayang): remove rejected_packet_number when deprecating
-  // FLAGS_quic_reloadable_flag_quic_remove_packet_number_from_public_reset.
-  QuicPacketNumber rejected_packet_number;
   QuicSocketAddress client_address;
 };
 
@@ -220,6 +214,8 @@ struct QUIC_EXPORT_PRIVATE SerializedPacket {
                    bool has_ack,
                    bool has_stop_waiting);
   SerializedPacket(const SerializedPacket& other);
+  SerializedPacket& operator=(const SerializedPacket& other);
+  SerializedPacket(SerializedPacket&& other);
   ~SerializedPacket();
 
   // Not owned.

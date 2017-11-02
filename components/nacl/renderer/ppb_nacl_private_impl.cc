@@ -323,23 +323,27 @@ blink::WebAssociatedURLLoader* CreateAssociatedURLLoader(
     const GURL& gurl) {
   blink::WebAssociatedURLLoaderOptions options;
   options.untrusted_http = true;
-
-  // Options settings here follow the original behavior in the trusted
-  // plugin and PepperURLLoaderHost.
-  if (document.GetSecurityOrigin().CanRequest(gurl)) {
-    options.allow_credentials = true;
-  } else {
-    // Allow CORS.
-    options.cross_origin_request_policy = blink::WebAssociatedURLLoaderOptions::
-        kCrossOriginRequestPolicyUseAccessControl;
-  }
   return document.GetFrame()->CreateAssociatedURLLoader(options);
 }
 
 blink::WebURLRequest CreateWebURLRequest(const blink::WebDocument& document,
                                          const GURL& gurl) {
   blink::WebURLRequest request(gurl);
-  request.SetFirstPartyForCookies(document.FirstPartyForCookies());
+  request.SetSiteForCookies(document.SiteForCookies());
+
+  // Follow the original behavior in the trusted plugin and
+  // PepperURLLoaderHost.
+  if (document.GetSecurityOrigin().CanRequest(gurl)) {
+    request.SetFetchRequestMode(
+        blink::WebURLRequest::kFetchRequestModeSameOrigin);
+    request.SetFetchCredentialsMode(
+        blink::WebURLRequest::kFetchCredentialsModeSameOrigin);
+  } else {
+    request.SetFetchRequestMode(blink::WebURLRequest::kFetchRequestModeCORS);
+    request.SetFetchCredentialsMode(
+        blink::WebURLRequest::kFetchCredentialsModeOmit);
+  }
+
   return request;
 }
 
@@ -461,8 +465,7 @@ void PPBNaClPrivate::LaunchSelLdr(
   if (nexe_file_info->handle != PP_kInvalidFileHandle)
     nexe_for_transit = base::FileDescriptor(nexe_file_info->handle, true);
 #elif defined(OS_WIN)
-  nexe_for_transit = IPC::PlatformFileForTransit(nexe_file_info->handle,
-                                                 base::GetCurrentProcId());
+  nexe_for_transit = IPC::PlatformFileForTransit(nexe_file_info->handle);
 #else
 # error Unsupported target platform.
 #endif
@@ -543,9 +546,8 @@ void PPBNaClPrivate::LaunchSelLdr(
     std::unique_ptr<TrustedPluginChannel> trusted_plugin_channel(
         new TrustedPluginChannel(
             load_manager,
-            mojo::MakeRequest<mojom::NaClRendererHost>(
-                mojo::ScopedMessagePipeHandle(
-                    launch_result.trusted_ipc_channel_handle.mojo_handle)),
+            mojom::NaClRendererHostRequest(mojo::ScopedMessagePipeHandle(
+                launch_result.trusted_ipc_channel_handle.mojo_handle)),
             is_helper_nexe));
     load_manager->set_trusted_plugin_channel(std::move(trusted_plugin_channel));
   } else {
@@ -1022,6 +1024,7 @@ void DownloadManifestToBuffer(PP_Instance instance,
         FROM_HERE,
         base::Bind(callback.func, callback.user_data,
                    static_cast<int32_t>(PP_ERROR_FAILED)));
+    return;
   }
   const blink::WebDocument& document =
       plugin_instance->GetContainer()->GetDocument();
@@ -1377,6 +1380,7 @@ void PPBNaClPrivate::DownloadNexe(PP_Instance instance,
         FROM_HERE,
         base::Bind(callback.func, callback.user_data,
                    static_cast<int32_t>(PP_ERROR_FAILED)));
+    return;
   }
   const blink::WebDocument& document =
       plugin_instance->GetContainer()->GetDocument();
@@ -1529,6 +1533,7 @@ void DownloadFile(PP_Instance instance,
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE, base::Bind(callback, static_cast<int32_t>(PP_ERROR_FAILED),
                               kInvalidNaClFileInfo));
+    return;
   }
   const blink::WebDocument& document =
       plugin_instance->GetContainer()->GetDocument();

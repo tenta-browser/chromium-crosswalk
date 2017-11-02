@@ -5,11 +5,11 @@
 #ifndef TrackListBase_h
 #define TrackListBase_h
 
-#include "bindings/core/v8/TraceWrapperMember.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/EventTarget.h"
 #include "core/html/HTMLMediaElement.h"
 #include "core/html/track/TrackEvent.h"
 #include "core/html/track/TrackEventInit.h"
+#include "platform/bindings/TraceWrapperMember.h"
 
 namespace blink {
 
@@ -50,7 +50,7 @@ class TrackListBase : public EventTargetWithInlineData {
 
   void Add(T* track) {
     track->SetMediaElement(media_element_);
-    tracks_.push_back(TraceWrapperMember<T>(this, track));
+    tracks_.push_back(track);
     ScheduleEvent(TrackEvent::Create(EventTypeNames::addtrack, track));
   }
 
@@ -72,7 +72,7 @@ class TrackListBase : public EventTargetWithInlineData {
     for (const auto& track : tracks_)
       track->SetMediaElement(0);
 
-    tracks_.Clear();
+    tracks_.clear();
   }
 
   void ScheduleChangeEvent() {

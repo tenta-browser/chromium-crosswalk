@@ -4,7 +4,16 @@
     "service_manager:connector": {
       "provides": {
         "renderer": [
-          "content::mojom::LayoutTestBluetoothFakeAdapterSetter"
+          "content::mojom::LayoutTestBluetoothFakeAdapterSetter",
+          "content::mojom::MojoLayoutTestHelper",
+          "bluetooth::mojom::FakeBluetooth"
+        ]
+      }
+    },
+    "navigation:frame": {
+      "provides": {
+        "renderer": [
+          "content::mojom::MojoLayoutTestHelper"
         ]
       }
     }

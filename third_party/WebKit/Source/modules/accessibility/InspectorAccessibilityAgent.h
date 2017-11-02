@@ -74,6 +74,11 @@ class MODULES_EXPORT InspectorAccessibilityAgent
       AXObject* inspected_ax_object,
       std::unique_ptr<protocol::Array<AXNode>>& nodes,
       AXObjectCacheImpl&) const;
+  void addChild(std::unique_ptr<protocol::Array<AXNodeId>>& child_ids,
+                AXObject& child_ax_object,
+                AXObject* inspected_ax_object,
+                std::unique_ptr<protocol::Array<AXNode>>& nodes,
+                AXObjectCacheImpl&) const;
   void AddChildren(AXObject&,
                    AXObject* inspected_ax_object,
                    std::unique_ptr<protocol::Array<AXNodeId>>& child_ids,

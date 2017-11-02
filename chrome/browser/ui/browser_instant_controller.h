@@ -30,8 +30,6 @@ class BrowserInstantController : public SearchModelObserver,
   // Returns the Profile associated with the Browser that owns this object.
   Profile* profile() const;
 
-  // Returns the InstantController or NULL if there is no InstantController for
-  // this BrowserInstantController.
   InstantController* instant() { return &instant_; }
 
   // Invoked by |instant_| to get the currently active tab.
@@ -45,17 +43,12 @@ class BrowserInstantController : public SearchModelObserver,
 
  private:
   // SearchModelObserver:
-  void ModelChanged(const SearchModel::State& old_state,
-                    const SearchModel::State& new_state) override;
+  void ModelChanged(SearchModel::Origin old_origin,
+                    SearchModel::Origin new_origin) override;
 
   // InstantServiceObserver:
   void DefaultSearchProviderChanged(
       bool google_base_url_domain_changed) override;
-
-  // Replaces the contents at tab |index| with |new_contents| and deletes the
-  // existing contents.
-  void ReplaceWebContentsAt(int index,
-                            std::unique_ptr<content::WebContents> new_contents);
 
   Browser* const browser_;
 

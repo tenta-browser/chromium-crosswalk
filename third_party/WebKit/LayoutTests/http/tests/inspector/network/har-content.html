@@ -5,67 +5,55 @@
 <script src="../network-test.js"></script>
 
 <script>
-var test = function()
-{
-    InspectorTest.NetworkAgent.setCacheDisabled(true, sendCSSRequest);
+async function test() {
+  await TestRunner.NetworkAgent.setCacheDisabled(true);
 
-    function sendCSSRequest()
-    {
-        InspectorTest.makeSimpleXHR("GET", "resources/initiator.css", false, sendBinaryRequest);
+  NetworkTestRunner.makeSimpleXHR('GET', 'resources/initiator.css', false, sendBinaryRequest);
+
+  function sendBinaryRequest() {
+    NetworkTestRunner.makeSimpleXHR('GET', 'resources/binary.data', false, makeHAR);
+  }
+
+  async function makeHAR() {
+    var stream = new TestRunner.StringOutputStream(onSaved);
+    var progress = new Common.Progress();
+    await Network.HARWriter.write(stream, NetworkTestRunner.networkRequests(), progress);
+    progress.done();
+    stream.close();
+  }
+
+  function dumpContent(content) {
+    if (!content) {
+      TestRunner.addResult('    NOT FOUND');
+      return;
     }
+    var propertyNames = Object.keys(content);
+    propertyNames.sort();
+    for (var prop of propertyNames)
+      TestRunner.addResult(`    ${prop}: ` + JSON.stringify(content[prop]));
+  }
 
-    function sendBinaryRequest()
-    {
-        InspectorTest.makeSimpleXHR("GET", "resources/binary.data", false, makeHAR);
-    }
+  function onSaved(data) {
+    var har = JSON.parse(data);
 
-    function makeHAR()
-    {
-        var writer = new Network.HARWriter();
-        var stream = new InspectorTest.StringOutputStream(onSaved);
-        writer.write(stream, InspectorTest.networkRequests(), new Common.Progress());
-    }
+    TestRunner.addResult('initiator.css:');
+    dumpContent(findEntry(har, /\/initiator\.css$/).response.content);
 
-    function dumpContent(content)
-    {
-        if (!content) {
-            InspectorTest.addResult("    NOT FOUND");
-            return;
-        }
-        var propertyNames = Object.keys(content);
-        propertyNames.sort();
-        for (var i = 0; i < propertyNames.length; ++i) {
-            var prop = propertyNames[i];
-            InspectorTest.addResult("    " + prop + ": " + JSON.stringify(content[prop]));
-        }
-    }
+    TestRunner.addResult('');
 
-    function onSaved(data)
-    {
-        var har = JSON.parse(data);
+    TestRunner.addResult('binary.data:');
+    dumpContent(findEntry(har, /\/binary\.data$/).response.content);
 
-        InspectorTest.addResult("initiator.css:");
-        dumpContent(findEntry(har, /\/initiator\.css$/).response.content);
+    TestRunner.completeTest();
+  }
 
-        InspectorTest.addResult("");
-
-        InspectorTest.addResult("binary.data:");
-        dumpContent(findEntry(har, /\/binary\.data$/).response.content);
-
-        InspectorTest.completeTest();
-    }
-
-    function findEntry(har, regexp)
-    {
-        var entries = har.log.entries;
-        for (var i = 0; i < entries.length; ++i) {
-             var entry = entries[i];
-             if (regexp.test(entry.request.url))
-                 return entry;
-        }
-        InspectorTest.addResult("FAIL: can't find resource for " + regexp);
-        return null;
-    }
+  function findEntry(har, regexp) {
+    var entry = har.log.entries.find(entry => regexp.test(entry.request.url));
+    if (entry)
+      return entry;
+    TestRunner.addResult('FAIL: can\'t find resource for ' + regexp);
+    return null;
+  }
 }
 </script>
 

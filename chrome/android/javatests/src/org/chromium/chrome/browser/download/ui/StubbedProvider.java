@@ -8,7 +8,6 @@ import static junit.framework.Assert.assertEquals;
 import static junit.framework.Assert.assertNull;
 
 import android.content.ComponentName;
-import android.graphics.Bitmap;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils;
@@ -20,6 +19,8 @@ import org.chromium.chrome.browser.download.DownloadItem;
 import org.chromium.chrome.browser.offlinepages.downloads.OfflinePageDownloadBridge;
 import org.chromium.chrome.browser.offlinepages.downloads.OfflinePageDownloadItem;
 import org.chromium.chrome.browser.widget.selection.SelectionDelegate;
+import org.chromium.components.offline_items_collection.OfflineItem.Progress;
+import org.chromium.components.offline_items_collection.OfflineItemProgressUnit;
 import org.chromium.content_public.browser.DownloadState;
 
 import java.text.SimpleDateFormat;
@@ -163,9 +164,7 @@ public class StubbedProvider implements BackendProvider {
         public void destroy() {}
 
         @Override
-        public Bitmap getThumbnail(ThumbnailRequest request) {
-            return null;
-        }
+        public void getThumbnail(ThumbnailRequest request) {}
 
         @Override
         public void cancelRetrieval(ThumbnailRequest request) {}
@@ -314,7 +313,7 @@ public class StubbedProvider implements BackendProvider {
         }
 
         builder.setIsOffTheRecord(isIncognito);
-        builder.setPercentCompleted(percent);
+        builder.setProgress(new Progress(100, 100L, OfflineItemProgressUnit.PERCENTAGE));
         builder.setState(state);
 
         DownloadItem item = new DownloadItem(false, builder.build());

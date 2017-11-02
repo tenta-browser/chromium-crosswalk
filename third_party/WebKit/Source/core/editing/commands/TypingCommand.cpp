@@ -29,6 +29,7 @@
 #include "core/dom/Document.h"
 #include "core/dom/Element.h"
 #include "core/dom/ElementTraversal.h"
+#include "core/dom/events/ScopedEventQueue.h"
 #include "core/editing/EditingUtilities.h"
 #include "core/editing/Editor.h"
 #include "core/editing/PlainTextRange.h"
@@ -43,7 +44,6 @@
 #include "core/editing/commands/InsertTextCommand.h"
 #include "core/editing/spellcheck/SpellChecker.h"
 #include "core/events/BeforeTextInsertedEvent.h"
-#include "core/events/ScopedEventQueue.h"
 #include "core/events/TextEvent.h"
 #include "core/frame/LocalFrame.h"
 #include "core/html/HTMLBRElement.h"
@@ -194,7 +194,7 @@ void TypingCommand::DeleteSelectionIfRange(const VisibleSelection& selection,
 void TypingCommand::DeleteKeyPressed(Document& document,
                                      Options options,
                                      TextGranularity granularity) {
-  if (granularity == kCharacterGranularity) {
+  if (granularity == TextGranularity::kCharacter) {
     LocalFrame* frame = document.GetFrame();
     if (TypingCommand* last_typing_command =
             LastTypingCommandIfStillOpenForTyping(frame)) {
@@ -224,7 +224,7 @@ void TypingCommand::ForwardDeleteKeyPressed(Document& document,
                                             TextGranularity granularity) {
   // FIXME: Forward delete in TextEdit appears to open and close a new typing
   // command.
-  if (granularity == kCharacterGranularity) {
+  if (granularity == TextGranularity::kCharacter) {
     LocalFrame* frame = document.GetFrame();
     if (TypingCommand* last_typing_command =
             LastTypingCommandIfStillOpenForTyping(frame)) {
@@ -254,7 +254,7 @@ void TypingCommand::UpdateSelectionIfDifferentFromCurrentSelection(
   DCHECK(frame);
   VisibleSelection current_selection =
       frame->Selection().ComputeVisibleSelectionInDOMTreeDeprecated();
-  if (current_selection == typing_command->EndingSelection())
+  if (current_selection == typing_command->EndingVisibleSelection())
     return;
 
   typing_command->SetStartingSelection(current_selection);
@@ -280,11 +280,12 @@ void TypingCommand::InsertText(Document& document,
 
 void TypingCommand::AdjustSelectionAfterIncrementalInsertion(
     LocalFrame* frame,
+    const size_t selection_start,
     const size_t text_length) {
   if (!IsIncrementalInsertion())
     return;
 
-  // TODO(xiaochengh): The use of updateStyleAndLayoutIgnorePendingStylesheets
+  // TODO(editing-dev): The use of updateStyleAndLayoutIgnorePendingStylesheets
   // needs to be audited. see http://crbug.com/590369 for more details.
   frame->GetDocument()->UpdateStyleAndLayoutIgnorePendingStylesheets();
 
@@ -293,9 +294,9 @@ void TypingCommand::AdjustSelectionAfterIncrementalInsertion(
                          .RootEditableElement();
   DCHECK(element);
 
-  const size_t end = selection_start_ + text_length;
+  const size_t end = selection_start + text_length;
   const size_t start =
-      CompositionType() == kTextCompositionUpdate ? selection_start_ : end;
+      CompositionType() == kTextCompositionUpdate ? selection_start : end;
   const SelectionInDOMTree& selection =
       CreateSelection(start, end, EndingSelection().IsDirectional(), element);
 
@@ -340,7 +341,7 @@ void TypingCommand::InsertText(
   if (selection_for_insertion.IsCaret() && new_text.IsEmpty())
     return;
 
-  // TODO(xiaochengh): The use of updateStyleAndLayoutIgnorePendingStylesheets
+  // TODO(editing-dev): The use of updateStyleAndLayoutIgnorePendingStylesheets
   // needs to be audited. see http://crbug.com/590369 for more details.
   document.UpdateStyleAndLayoutIgnorePendingStylesheets();
 
@@ -355,7 +356,8 @@ void TypingCommand::InsertText(
   // that can be used by all of the commands.
   if (TypingCommand* last_typing_command =
           LastTypingCommandIfStillOpenForTyping(frame)) {
-    if (last_typing_command->EndingSelection() != selection_for_insertion) {
+    if (last_typing_command->EndingVisibleSelection() !=
+        selection_for_insertion) {
       last_typing_command->SetStartingSelection(selection_for_insertion);
       last_typing_command->SetEndingVisibleSelection(selection_for_insertion);
     }
@@ -457,7 +459,7 @@ void TypingCommand::CloseTyping(LocalFrame* frame) {
 }
 
 void TypingCommand::DoApply(EditingState* editing_state) {
-  if (!EndingSelection().IsNonOrphanedCaretOrRange())
+  if (!EndingVisibleSelection().IsNonOrphanedCaretOrRange())
     return;
 
   if (command_type_ == kDeleteKey) {
@@ -545,6 +547,7 @@ void TypingCommand::InsertText(const String& text,
     InsertTextRunWithoutNewlines(text, select_inserted_text, editing_state);
     return;
   }
+  size_t selection_start = selection_start_;
   // FIXME: Need to implement selectInsertedText for cases where more than one
   // insert is involved. This requires support from insertTextRunWithoutNewlines
   // and insertParagraphSeparator for extending an existing selection; at the
@@ -554,7 +557,7 @@ void TypingCommand::InsertText(const String& text,
   // inserted text.
   unsigned offset = 0;
   size_t newline;
-  while ((newline = text.Find('\n', offset)) != kNotFound) {
+  while ((newline = text.find('\n', offset)) != kNotFound) {
     if (newline > offset) {
       const size_t insertion_length = newline - offset;
       InsertTextRunWithoutNewlines(text.Substring(offset, insertion_length),
@@ -562,8 +565,9 @@ void TypingCommand::InsertText(const String& text,
       if (editing_state->IsAborted())
         return;
 
-      AdjustSelectionAfterIncrementalInsertion(GetDocument().GetFrame(),
-                                               insertion_length);
+      AdjustSelectionAfterIncrementalInsertion(
+          GetDocument().GetFrame(), selection_start, insertion_length);
+      selection_start += insertion_length;
     }
 
     InsertParagraphSeparator(editing_state);
@@ -571,6 +575,7 @@ void TypingCommand::InsertText(const String& text,
       return;
 
     offset = newline + 1;
+    ++selection_start;
   }
 
   if (!offset) {
@@ -579,7 +584,7 @@ void TypingCommand::InsertText(const String& text,
       return;
 
     AdjustSelectionAfterIncrementalInsertion(GetDocument().GetFrame(),
-                                             text.length());
+                                             selection_start, text.length());
     return;
   }
 
@@ -591,7 +596,7 @@ void TypingCommand::InsertText(const String& text,
       return;
 
     AdjustSelectionAfterIncrementalInsertion(GetDocument().GetFrame(),
-                                             insertion_length);
+                                             selection_start, insertion_length);
   }
 }
 
@@ -622,7 +627,7 @@ void TypingCommand::InsertTextRunWithoutNewlines(const String& text,
 }
 
 void TypingCommand::InsertLineBreak(EditingState* editing_state) {
-  if (!CanAppendNewLineFeedToSelection(EndingSelection()))
+  if (!CanAppendNewLineFeedToSelection(EndingVisibleSelection()))
     return;
 
   ApplyCommandToComposite(InsertLineBreakCommand::Create(GetDocument()),
@@ -633,7 +638,7 @@ void TypingCommand::InsertLineBreak(EditingState* editing_state) {
 }
 
 void TypingCommand::InsertParagraphSeparator(EditingState* editing_state) {
-  if (!CanAppendNewLineFeedToSelection(EndingSelection()))
+  if (!CanAppendNewLineFeedToSelection(EndingVisibleSelection()))
     return;
 
   ApplyCommandToComposite(
@@ -661,12 +666,13 @@ void TypingCommand::InsertParagraphSeparatorInQuotedContent(
 }
 
 bool TypingCommand::MakeEditableRootEmpty(EditingState* editing_state) {
-  Element* root = EndingSelection().RootEditableElement();
+  DCHECK(!GetDocument().NeedsLayoutTreeUpdate());
+  Element* root = RootEditableElementOf(EndingSelection().Base());
   if (!root || !root->HasChildren())
     return false;
 
-  if (root->FirstChild() == root->LastChild()) {
-    if (isHTMLBRElement(root->FirstChild())) {
+  if (root->firstChild() == root->lastChild()) {
+    if (isHTMLBRElement(root->firstChild())) {
       // If there is a single child and it could be a placeholder, leave it
       // alone.
       if (root->GetLayoutObject() &&
@@ -675,7 +681,7 @@ bool TypingCommand::MakeEditableRootEmpty(EditingState* editing_state) {
     }
   }
 
-  while (Node* child = root->FirstChild()) {
+  while (Node* child = root->firstChild()) {
     RemoveNode(child, editing_state);
     if (editing_state->IsAborted())
       return false;
@@ -685,11 +691,28 @@ bool TypingCommand::MakeEditableRootEmpty(EditingState* editing_state) {
   if (editing_state->IsAborted())
     return false;
   SetEndingSelection(SelectionInDOMTree::Builder()
-                         .Collapse(Position::FirstPositionInNode(root))
+                         .Collapse(Position::FirstPositionInNode(*root))
                          .SetIsDirectional(EndingSelection().IsDirectional())
                          .Build());
 
   return true;
+}
+
+// If there are multiple Unicode code points to be deleted, adjust the
+// range to match platform conventions.
+static VisibleSelection AdjustSelectionForBackwardDelete(
+    const VisibleSelection& selection) {
+  if (selection.End().ComputeContainerNode() !=
+      selection.Start().ComputeContainerNode())
+    return selection;
+  if (selection.End().ComputeOffsetInContainerNode() -
+          selection.Start().ComputeOffsetInContainerNode() <=
+      1)
+    return selection;
+  return VisibleSelection::CreateWithoutValidationDeprecated(
+      selection.End(),
+      PreviousPositionOf(selection.End(), PositionMoveType::kBackwardDeletion),
+      selection.Affinity());
 }
 
 void TypingCommand::DeleteKeyPressed(TextGranularity granularity,
@@ -701,137 +724,145 @@ void TypingCommand::DeleteKeyPressed(TextGranularity granularity,
 
   frame->GetSpellChecker().UpdateMarkersForWordsAffectedByEditing(false);
 
-  VisibleSelection selection_to_delete;
-  VisibleSelection selection_after_undo;
-
-  switch (EndingSelection().GetSelectionType()) {
-    case kRangeSelection:
-      selection_to_delete = EndingSelection();
-      selection_after_undo = selection_to_delete;
-      break;
-    case kCaretSelection: {
-      // After breaking out of an empty mail blockquote, we still want continue
-      // with the deletion so actual content will get deleted, and not just the
-      // quote style.
-      bool break_out_result =
-          BreakOutOfEmptyMailBlockquotedParagraph(editing_state);
-      if (editing_state->IsAborted())
-        return;
-      if (break_out_result)
-        TypingAddedToOpenCommand(kDeleteKey);
-
-      smart_delete_ = false;
-      GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
-
-      SelectionModifier selection_modifier(*frame, EndingSelection());
-      selection_modifier.Modify(FrameSelection::kAlterationExtend,
-                                kDirectionBackward, granularity);
-      if (kill_ring && selection_modifier.Selection().IsCaret() &&
-          granularity != kCharacterGranularity)
-        selection_modifier.Modify(FrameSelection::kAlterationExtend,
-                                  kDirectionBackward, kCharacterGranularity);
-
-      VisiblePosition visible_start(EndingSelection().VisibleStart());
-      if (PreviousPositionOf(visible_start, kCannotCrossEditingBoundary)
-              .IsNull()) {
-        // When the caret is at the start of the editable area in an empty list
-        // item, break out of the list item.
-        bool break_out_of_empty_list_item_result =
-            BreakOutOfEmptyListItem(editing_state);
-        if (editing_state->IsAborted())
-          return;
-        if (break_out_of_empty_list_item_result) {
-          TypingAddedToOpenCommand(kDeleteKey);
-          return;
-        }
-        // When there are no visible positions in the editing root, delete its
-        // entire contents.
-        if (NextPositionOf(visible_start, kCannotCrossEditingBoundary)
-                .IsNull() &&
-            MakeEditableRootEmpty(editing_state)) {
-          TypingAddedToOpenCommand(kDeleteKey);
-          return;
-        }
-        if (editing_state->IsAborted())
-          return;
-      }
-
-      // If we have a caret selection at the beginning of a cell, we have
-      // nothing to do.
-      Node* enclosing_table_cell =
-          EnclosingNodeOfType(visible_start.DeepEquivalent(), &IsTableCell);
-      if (enclosing_table_cell &&
-          visible_start.DeepEquivalent() ==
-              VisiblePosition::FirstPositionInNode(enclosing_table_cell)
-                  .DeepEquivalent())
-        return;
-
-      // If the caret is at the start of a paragraph after a table, move content
-      // into the last table cell.
-      if (IsStartOfParagraph(visible_start) &&
-          TableElementJustBefore(
-              PreviousPositionOf(visible_start, kCannotCrossEditingBoundary))) {
-        // Unless the caret is just before a table.  We don't want to move a
-        // table into the last table cell.
-        if (TableElementJustAfter(visible_start))
-          return;
-        // Extend the selection backward into the last cell, then deletion will
-        // handle the move.
-        selection_modifier.Modify(FrameSelection::kAlterationExtend,
-                                  kDirectionBackward, granularity);
-        // If the caret is just after a table, select the table and don't delete
-        // anything.
-      } else if (Element* table = TableElementJustBefore(visible_start)) {
-        SetEndingSelection(
-            SelectionInDOMTree::Builder()
-                .Collapse(Position::BeforeNode(table))
-                .Extend(EndingSelection().Start())
-                .SetIsDirectional(EndingSelection().IsDirectional())
-                .Build());
-        TypingAddedToOpenCommand(kDeleteKey);
-        return;
-      }
-
-      selection_to_delete = selection_modifier.Selection();
-
-      if (granularity == kCharacterGranularity &&
-          selection_to_delete.end().ComputeContainerNode() ==
-              selection_to_delete.Start().ComputeContainerNode() &&
-          selection_to_delete.end().ComputeOffsetInContainerNode() -
-                  selection_to_delete.Start().ComputeOffsetInContainerNode() >
-              1) {
-        // If there are multiple Unicode code points to be deleted, adjust the
-        // range to match platform conventions.
-        selection_to_delete.SetWithoutValidation(
-            selection_to_delete.end(),
-            PreviousPositionOf(selection_to_delete.end(),
-                               PositionMoveType::kBackwardDeletion));
-      }
-
-      if (!StartingSelection().IsRange() ||
-          selection_to_delete.Base() != StartingSelection().Start()) {
-        selection_after_undo = selection_to_delete;
-      } else {
-        // It's a little tricky to compute what the starting selection would
-        // have been in the original document. We can't let the VisibleSelection
-        // class's validation kick in or it'll adjust for us based on the
-        // current state of the document and we'll get the wrong result.
-        selection_after_undo.SetWithoutValidation(StartingSelection().end(),
-                                                  selection_to_delete.Extent());
-      }
-      break;
-    }
-    case kNoSelection:
-      NOTREACHED();
-      break;
+  if (EndingSelection().IsRange()) {
+    DeleteKeyPressedInternal(EndingVisibleSelection(), EndingSelection(),
+                             kill_ring, editing_state);
+    return;
   }
 
+  if (!EndingSelection().IsCaret()) {
+    NOTREACHED();
+    return;
+  }
+
+  // After breaking out of an empty mail blockquote, we still want continue
+  // with the deletion so actual content will get deleted, and not just the
+  // quote style.
+  const bool break_out_result =
+      BreakOutOfEmptyMailBlockquotedParagraph(editing_state);
+  if (editing_state->IsAborted())
+    return;
+  if (break_out_result)
+    TypingAddedToOpenCommand(kDeleteKey);
+
+  smart_delete_ = false;
+  GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
+
+  SelectionModifier selection_modifier(*frame, EndingVisibleSelection());
+  selection_modifier.Modify(SelectionModifyAlteration::kExtend,
+                            SelectionModifyDirection::kBackward, granularity);
+  if (kill_ring && selection_modifier.Selection().IsCaret() &&
+      granularity != TextGranularity::kCharacter) {
+    selection_modifier.Modify(SelectionModifyAlteration::kExtend,
+                              SelectionModifyDirection::kBackward,
+                              TextGranularity::kCharacter);
+  }
+
+  const VisiblePosition& visible_start(EndingVisibleSelection().VisibleStart());
+  const VisiblePosition& previous_position =
+      PreviousPositionOf(visible_start, kCannotCrossEditingBoundary);
+  const Node* enclosing_table_cell =
+      EnclosingNodeOfType(visible_start.DeepEquivalent(), &IsTableCell);
+  const Node* enclosing_table_cell_for_previous_position =
+      EnclosingNodeOfType(previous_position.DeepEquivalent(), &IsTableCell);
+  if (previous_position.IsNull() ||
+      enclosing_table_cell != enclosing_table_cell_for_previous_position) {
+    // When the caret is at the start of the editable area, or cell, in an
+    // empty list item, break out of the list item.
+    const bool break_out_of_empty_list_item_result =
+        BreakOutOfEmptyListItem(editing_state);
+    if (editing_state->IsAborted())
+      return;
+    if (break_out_of_empty_list_item_result) {
+      TypingAddedToOpenCommand(kDeleteKey);
+      return;
+    }
+  }
+  if (previous_position.IsNull()) {
+    // When there are no visible positions in the editing root, delete its
+    // entire contents.
+    if (NextPositionOf(visible_start, kCannotCrossEditingBoundary).IsNull() &&
+        MakeEditableRootEmpty(editing_state)) {
+      TypingAddedToOpenCommand(kDeleteKey);
+      return;
+    }
+    if (editing_state->IsAborted())
+      return;
+  }
+
+  // If we have a caret selection at the beginning of a cell, we have
+  // nothing to do.
+  if (enclosing_table_cell && visible_start.DeepEquivalent() ==
+                                  VisiblePosition::FirstPositionInNode(
+                                      *const_cast<Node*>(enclosing_table_cell))
+                                      .DeepEquivalent())
+    return;
+
+  // If the caret is at the start of a paragraph after a table, move content
+  // into the last table cell.
+  if (IsStartOfParagraph(visible_start) &&
+      TableElementJustBefore(
+          PreviousPositionOf(visible_start, kCannotCrossEditingBoundary))) {
+    // Unless the caret is just before a table.  We don't want to move a
+    // table into the last table cell.
+    if (TableElementJustAfter(visible_start))
+      return;
+    // Extend the selection backward into the last cell, then deletion will
+    // handle the move.
+    selection_modifier.Modify(SelectionModifyAlteration::kExtend,
+                              SelectionModifyDirection::kBackward, granularity);
+    // If the caret is just after a table, select the table and don't delete
+    // anything.
+  } else if (Element* table = TableElementJustBefore(visible_start)) {
+    SetEndingSelection(SelectionInDOMTree::Builder()
+                           .Collapse(Position::BeforeNode(*table))
+                           .Extend(EndingSelection().Start())
+                           .SetIsDirectional(EndingSelection().IsDirectional())
+                           .Build());
+    TypingAddedToOpenCommand(kDeleteKey);
+    return;
+  }
+
+  const VisibleSelection& selection_to_delete =
+      granularity == TextGranularity::kCharacter
+          ? AdjustSelectionForBackwardDelete(selection_modifier.Selection())
+          : selection_modifier.Selection();
+
+  if (!StartingSelection().IsRange() ||
+      selection_to_delete.Base() != StartingSelection().Start()) {
+    DeleteKeyPressedInternal(
+        selection_to_delete,
+        SelectionForUndoStep::From(selection_to_delete.AsSelection()),
+        kill_ring, editing_state);
+    return;
+  }
+  // Note: |StartingSelection().End()| can be disconnected.
+  // See editing/deleting/delete_list_item.html on MacOS.
+  const SelectionForUndoStep selection_after_undo =
+      SelectionForUndoStep::Builder()
+          .SetBaseAndExtentAsBackwardSelection(
+              StartingSelection().End(),
+              CreateVisiblePosition(selection_to_delete.Extent())
+                  .DeepEquivalent())
+          .Build();
+  DeleteKeyPressedInternal(selection_to_delete, selection_after_undo, kill_ring,
+                           editing_state);
+}
+
+void TypingCommand::DeleteKeyPressedInternal(
+    const VisibleSelection& selection_to_delete,
+    const SelectionForUndoStep& selection_after_undo,
+    bool kill_ring,
+    EditingState* editing_state) {
   DCHECK(!selection_to_delete.IsNone());
   if (selection_to_delete.IsNone())
     return;
 
   if (selection_to_delete.IsCaret())
     return;
+
+  LocalFrame* frame = GetDocument().GetFrame();
+  DCHECK(frame);
 
   if (kill_ring)
     frame->GetEditor().AddToKillRing(
@@ -851,6 +882,21 @@ void TypingCommand::DeleteKeyPressed(TextGranularity granularity,
   TypingAddedToOpenCommand(kDeleteKey);
 }
 
+static Position ComputeExtentForForwardDeleteUndo(
+    const VisibleSelection& selection,
+    const Position& extent) {
+  if (extent.ComputeContainerNode() != selection.End().ComputeContainerNode())
+    return selection.Extent();
+  const int extra_characters =
+      selection.Start().ComputeContainerNode() ==
+              selection.End().ComputeContainerNode()
+          ? selection.End().ComputeOffsetInContainerNode() -
+                selection.Start().ComputeOffsetInContainerNode()
+          : selection.End().ComputeOffsetInContainerNode();
+  return Position(extent.ComputeContainerNode(),
+                  extent.ComputeOffsetInContainerNode() + extra_characters);
+}
+
 void TypingCommand::ForwardDeleteKeyPressed(TextGranularity granularity,
                                             bool kill_ring,
                                             EditingState* editing_state) {
@@ -860,110 +906,109 @@ void TypingCommand::ForwardDeleteKeyPressed(TextGranularity granularity,
 
   frame->GetSpellChecker().UpdateMarkersForWordsAffectedByEditing(false);
 
-  VisibleSelection selection_to_delete;
-  VisibleSelection selection_after_undo;
-
-  switch (EndingSelection().GetSelectionType()) {
-    case kRangeSelection:
-      selection_to_delete = EndingSelection();
-      selection_after_undo = selection_to_delete;
-      break;
-    case kCaretSelection: {
-      smart_delete_ = false;
-      GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
-
-      // Handle delete at beginning-of-block case.
-      // Do nothing in the case that the caret is at the start of a
-      // root editable element or at the start of a document.
-      SelectionModifier selection_modifier(*frame, EndingSelection());
-      selection_modifier.Modify(FrameSelection::kAlterationExtend,
-                                kDirectionForward, granularity);
-      if (kill_ring && selection_modifier.Selection().IsCaret() &&
-          granularity != kCharacterGranularity)
-        selection_modifier.Modify(FrameSelection::kAlterationExtend,
-                                  kDirectionForward, kCharacterGranularity);
-
-      Position downstream_end =
-          MostForwardCaretPosition(EndingSelection().end());
-      VisiblePosition visible_end = EndingSelection().VisibleEnd();
-      Node* enclosing_table_cell =
-          EnclosingNodeOfType(visible_end.DeepEquivalent(), &IsTableCell);
-      if (enclosing_table_cell &&
-          visible_end.DeepEquivalent() ==
-              VisiblePosition::LastPositionInNode(enclosing_table_cell)
-                  .DeepEquivalent())
-        return;
-      if (visible_end.DeepEquivalent() ==
-          EndOfParagraph(visible_end).DeepEquivalent())
-        downstream_end = MostForwardCaretPosition(
-            NextPositionOf(visible_end, kCannotCrossEditingBoundary)
-                .DeepEquivalent());
-      // When deleting tables: Select the table first, then perform the deletion
-      if (IsDisplayInsideTable(downstream_end.ComputeContainerNode()) &&
-          downstream_end.ComputeOffsetInContainerNode() <=
-              CaretMinOffset(downstream_end.ComputeContainerNode())) {
-        SetEndingSelection(
-            SelectionInDOMTree::Builder()
-                .SetBaseAndExtentDeprecated(
-                    EndingSelection().end(),
-                    Position::AfterNode(downstream_end.ComputeContainerNode()))
-                .SetIsDirectional(EndingSelection().IsDirectional())
-                .Build());
-        TypingAddedToOpenCommand(kForwardDeleteKey);
-        return;
-      }
-
-      // deleting to end of paragraph when at end of paragraph needs to merge
-      // the next paragraph (if any)
-      if (granularity == kParagraphBoundary &&
-          selection_modifier.Selection().IsCaret() &&
-          IsEndOfParagraph(selection_modifier.Selection().VisibleEnd()))
-        selection_modifier.Modify(FrameSelection::kAlterationExtend,
-                                  kDirectionForward, kCharacterGranularity);
-
-      selection_to_delete = selection_modifier.Selection();
-      if (!StartingSelection().IsRange() ||
-          selection_to_delete.Base() != StartingSelection().Start()) {
-        selection_after_undo = selection_to_delete;
-      } else {
-        // It's a little tricky to compute what the starting selection would
-        // have been in the original document. We can't let the VisibleSelection
-        // class's validation kick in or it'll adjust for us based on the
-        // current state of the document and we'll get the wrong result.
-        Position extent = StartingSelection().end();
-        if (extent.ComputeContainerNode() !=
-            selection_to_delete.end().ComputeContainerNode()) {
-          extent = selection_to_delete.Extent();
-        } else {
-          int extra_characters;
-          if (selection_to_delete.Start().ComputeContainerNode() ==
-              selection_to_delete.end().ComputeContainerNode())
-            extra_characters =
-                selection_to_delete.end().ComputeOffsetInContainerNode() -
-                selection_to_delete.Start().ComputeOffsetInContainerNode();
-          else
-            extra_characters =
-                selection_to_delete.end().ComputeOffsetInContainerNode();
-          extent = Position(
-              extent.ComputeContainerNode(),
-              extent.ComputeOffsetInContainerNode() + extra_characters);
-        }
-        selection_after_undo.SetWithoutValidation(StartingSelection().Start(),
-                                                  extent);
-      }
-      break;
-    }
-    case kNoSelection:
-      NOTREACHED();
-      break;
+  if (EndingSelection().IsRange()) {
+    ForwardDeleteKeyPressedInternal(EndingVisibleSelection(), EndingSelection(),
+                                    kill_ring, editing_state);
+    return;
   }
 
+  if (!EndingSelection().IsCaret()) {
+    NOTREACHED();
+    return;
+  }
+
+  smart_delete_ = false;
+  GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
+
+  // Handle delete at beginning-of-block case.
+  // Do nothing in the case that the caret is at the start of a
+  // root editable element or at the start of a document.
+  SelectionModifier selection_modifier(*frame, EndingVisibleSelection());
+  selection_modifier.Modify(SelectionModifyAlteration::kExtend,
+                            SelectionModifyDirection::kForward, granularity);
+  if (kill_ring && selection_modifier.Selection().IsCaret() &&
+      granularity != TextGranularity::kCharacter) {
+    selection_modifier.Modify(SelectionModifyAlteration::kExtend,
+                              SelectionModifyDirection::kForward,
+                              TextGranularity::kCharacter);
+  }
+
+  Position downstream_end = MostForwardCaretPosition(EndingSelection().End());
+  VisiblePosition visible_end = EndingVisibleSelection().VisibleEnd();
+  Node* enclosing_table_cell =
+      EnclosingNodeOfType(visible_end.DeepEquivalent(), &IsTableCell);
+  if (enclosing_table_cell &&
+      visible_end.DeepEquivalent() ==
+          VisiblePosition::LastPositionInNode(*enclosing_table_cell)
+              .DeepEquivalent())
+    return;
+  if (visible_end.DeepEquivalent() ==
+      EndOfParagraph(visible_end).DeepEquivalent()) {
+    downstream_end = MostForwardCaretPosition(
+        NextPositionOf(visible_end, kCannotCrossEditingBoundary)
+            .DeepEquivalent());
+  }
+  // When deleting tables: Select the table first, then perform the deletion
+  if (IsDisplayInsideTable(downstream_end.ComputeContainerNode()) &&
+      downstream_end.ComputeOffsetInContainerNode() <=
+          CaretMinOffset(downstream_end.ComputeContainerNode())) {
+    SetEndingSelection(
+        SelectionInDOMTree::Builder()
+            .SetBaseAndExtentDeprecated(
+                EndingSelection().End(),
+                Position::AfterNode(*downstream_end.ComputeContainerNode()))
+            .SetIsDirectional(EndingSelection().IsDirectional())
+            .Build());
+    TypingAddedToOpenCommand(kForwardDeleteKey);
+    return;
+  }
+
+  // deleting to end of paragraph when at end of paragraph needs to merge
+  // the next paragraph (if any)
+  if (granularity == TextGranularity::kParagraphBoundary &&
+      selection_modifier.Selection().IsCaret() &&
+      IsEndOfParagraph(selection_modifier.Selection().VisibleEnd())) {
+    selection_modifier.Modify(SelectionModifyAlteration::kExtend,
+                              SelectionModifyDirection::kForward,
+                              TextGranularity::kCharacter);
+  }
+
+  const VisibleSelection& selection_to_delete = selection_modifier.Selection();
+  if (!StartingSelection().IsRange() ||
+      MostBackwardCaretPosition(selection_to_delete.Base()) !=
+          StartingSelection().Start()) {
+    ForwardDeleteKeyPressedInternal(
+        selection_to_delete,
+        SelectionForUndoStep::From(selection_to_delete.AsSelection()),
+        kill_ring, editing_state);
+    return;
+  }
+  // Note: |StartingSelection().Start()| can be disconnected.
+  const SelectionForUndoStep selection_after_undo =
+      SelectionForUndoStep::Builder()
+          .SetBaseAndExtentAsForwardSelection(
+              StartingSelection().Start(),
+              ComputeExtentForForwardDeleteUndo(selection_to_delete,
+                                                StartingSelection().End()))
+          .Build();
+  ForwardDeleteKeyPressedInternal(selection_to_delete, selection_after_undo,
+                                  kill_ring, editing_state);
+}
+
+void TypingCommand::ForwardDeleteKeyPressedInternal(
+    const VisibleSelection& selection_to_delete,
+    const SelectionForUndoStep& selection_after_undo,
+    bool kill_ring,
+    EditingState* editing_state) {
   DCHECK(!selection_to_delete.IsNone());
   if (selection_to_delete.IsNone())
     return;
 
   if (selection_to_delete.IsCaret())
     return;
+
+  LocalFrame* frame = GetDocument().GetFrame();
+  DCHECK(frame);
 
   if (kill_ring)
     frame->GetEditor().AddToKillRing(

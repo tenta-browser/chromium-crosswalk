@@ -45,6 +45,7 @@ UI.TextPrompt = class extends Common.Object {
     this._currentSuggestion = '';
     this._completionRequestId = 0;
     this._ghostTextElement = createElementWithClass('span', 'auto-complete-text');
+    this._ghostTextElement.setAttribute('contenteditable', 'false');
   }
 
   /**
@@ -115,6 +116,7 @@ UI.TextPrompt = class extends Common.Object {
     element.parentElement.insertBefore(this._proxyElement, element);
     this._proxyElement.appendChild(element);
     this._element.classList.add('text-prompt');
+    this._element.setAttribute('contenteditable', 'plaintext-only');
     this._element.addEventListener('keydown', this._boundOnKeyDown, false);
     this._element.addEventListener('input', this._boundOnInput, false);
     this._element.addEventListener('mousewheel', this._boundOnMouseWheel, false);
@@ -136,6 +138,7 @@ UI.TextPrompt = class extends Common.Object {
     this._proxyElement.remove();
     delete this._proxyElement;
     this._element.classList.remove('text-prompt');
+    this._element.removeAttribute('contenteditable');
   }
 
   /**
@@ -579,6 +582,9 @@ UI.TextPrompt = class extends Common.Object {
     var node = selectionRange.startContainer;
     if (!node.isSelfOrDescendant(this._element))
       return false;
+
+    if (this._ghostTextElement.isAncestor(node))
+      return true;
 
     if (node.nodeType === Node.TEXT_NODE && selectionRange.startOffset < node.nodeValue.length)
       return false;

@@ -24,10 +24,12 @@
 #include "base/run_loop.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/test/test_timeouts.h"
+#include "build/build_config.h"
 #include "mojo/edk/embedder/embedder.h"
 #include "mojo/edk/embedder/named_platform_handle.h"
 #include "mojo/edk/embedder/named_platform_handle_utils.h"
-#include "mojo/edk/embedder/pending_process_connection.h"
+#include "mojo/edk/embedder/outgoing_broker_client_invitation.h"
+#include "mojo/edk/embedder/peer_connection.h"
 #include "mojo/edk/embedder/platform_channel_pair.h"
 #include "mojo/edk/embedder/test_embedder.h"
 #include "mojo/edk/system/test_utils.h"
@@ -140,31 +142,17 @@ TEST_F(EmbedderTest, ChannelsHandlePassing) {
   ASSERT_EQ(MOJO_RESULT_OK, MojoClose(h1));
 }
 
-TEST_F(EmbedderTest, PipeSetup) {
-  // Ensures that a pending process connection's message pipe can be claimed by
-  // the host process itself.
-  PendingProcessConnection process;
-  std::string pipe_token;
-  ScopedMessagePipeHandle parent_mp = process.CreateMessagePipe(&pipe_token);
-  ScopedMessagePipeHandle child_mp = CreateChildMessagePipe(pipe_token);
-
-  const std::string kHello = "hello";
-  WriteMessage(parent_mp.get().value(), kHello);
-
-  EXPECT_EQ(kHello, ReadMessage(child_mp.get().value()));
-}
-
 TEST_F(EmbedderTest, PipeSetup_LaunchDeath) {
   PlatformChannelPair pair;
 
-  PendingProcessConnection process;
-  std::string pipe_token;
-  ScopedMessagePipeHandle parent_mp = process.CreateMessagePipe(&pipe_token);
-  process.Connect(base::GetCurrentProcessHandle(),
-                  ConnectionParams(pair.PassServerHandle()));
+  OutgoingBrokerClientInvitation invitation;
+  ScopedMessagePipeHandle parent_mp = invitation.AttachMessagePipe("unused");
+  invitation.Send(
+      base::GetCurrentProcessHandle(),
+      ConnectionParams(TransportProtocol::kLegacy, pair.PassServerHandle()));
 
-  // Close the remote end, simulating child death before the child connects to
-  // the reserved port.
+  // Close the remote end, simulating child death before the child extracts the
+  // attached message pipe.
   ignore_result(pair.PassClientHandle());
 
   EXPECT_EQ(MOJO_RESULT_OK, WaitForSignals(parent_mp.get().value(),
@@ -174,13 +162,12 @@ TEST_F(EmbedderTest, PipeSetup_LaunchDeath) {
 TEST_F(EmbedderTest, PipeSetup_LaunchFailure) {
   PlatformChannelPair pair;
 
-  auto process = base::MakeUnique<PendingProcessConnection>();
-  std::string pipe_token;
-  ScopedMessagePipeHandle parent_mp = process->CreateMessagePipe(&pipe_token);
+  auto invitation = std::make_unique<OutgoingBrokerClientInvitation>();
+  ScopedMessagePipeHandle parent_mp = invitation->AttachMessagePipe("unused");
 
-  // Ensure that if a PendingProcessConnection goes away before Connect() is
-  // called, any message pipes associated with it detect peer closure.
-  process.reset();
+  // Ensure that if an OutgoingBrokerClientInvitation goes away before Send() is
+  // called, any message pipes attachde to it detect peer closure.
+  invitation.reset();
 
   EXPECT_EQ(MOJO_RESULT_OK, WaitForSignals(parent_mp.get().value(),
                                            MOJO_HANDLE_SIGNAL_PEER_CLOSED));
@@ -204,7 +191,7 @@ TEST_F(EmbedderTest, PipeSetup_LaunchFailure) {
 #if !defined(OS_IOS)
 
 TEST_F(EmbedderTest, MultiprocessChannels) {
-  RUN_CHILD_ON_PIPE(MultiprocessChannelsClient, server_mp)
+  RunTestClient("MultiprocessChannelsClient", [&](MojoHandle server_mp) {
     // 1. Write a message to |server_mp| (attaching nothing).
     WriteMessage(server_mp, "hello");
 
@@ -243,10 +230,11 @@ TEST_F(EmbedderTest, MultiprocessChannels) {
     ASSERT_EQ(MOJO_HANDLE_SIGNAL_PEER_CLOSED, state.satisfiable_signals);
 
     ASSERT_EQ(MOJO_RESULT_OK, MojoClose(mp2));
-  END_CHILD()
+  });
 }
 
-DEFINE_TEST_CLIENT_TEST_WITH_PIPE(MultiprocessChannelsClient, EmbedderTest,
+DEFINE_TEST_CLIENT_TEST_WITH_PIPE(MultiprocessChannelsClient,
+                                  EmbedderTest,
                                   client_mp) {
   // 1. Read the first message from |client_mp|.
   EXPECT_EQ("hello", ReadMessage(client_mp));
@@ -287,15 +275,15 @@ DEFINE_TEST_CLIENT_TEST_WITH_PIPE(MultiprocessChannelsClient, EmbedderTest,
 }
 
 TEST_F(EmbedderTest, MultiprocessBaseSharedMemory) {
-  RUN_CHILD_ON_PIPE(MultiprocessSharedMemoryClient, server_mp)
+  RunTestClient("MultiprocessSharedMemoryClient", [&](MojoHandle server_mp) {
     // 1. Create a base::SharedMemory object and create a mojo shared buffer
     // from it.
     base::SharedMemoryCreateOptions options;
     options.size = 123;
     base::SharedMemory shared_memory;
     ASSERT_TRUE(shared_memory.Create(options));
-    base::SharedMemoryHandle shm_handle = base::SharedMemory::DuplicateHandle(
-        shared_memory.handle());
+    base::SharedMemoryHandle shm_handle =
+        base::SharedMemory::DuplicateHandle(shared_memory.handle());
     MojoHandle sb1;
     ASSERT_EQ(MOJO_RESULT_OK,
               CreateSharedBufferWrapper(shm_handle, 123, false, &sb1));
@@ -326,10 +314,11 @@ TEST_F(EmbedderTest, MultiprocessBaseSharedMemory) {
               std::string(static_cast<char*>(shared_memory.memory())));
 
     ASSERT_EQ(MOJO_RESULT_OK, MojoClose(sb1));
-  END_CHILD()
+  });
 }
 
-DEFINE_TEST_CLIENT_TEST_WITH_PIPE(MultiprocessSharedMemoryClient, EmbedderTest,
+DEFINE_TEST_CLIENT_TEST_WITH_PIPE(MultiprocessSharedMemoryClient,
+                                  EmbedderTest,
                                   client_mp) {
   // 1. Read the first message from |client_mp|, which should have |sb1| which
   // should be a shared buffer handle.
@@ -366,15 +355,15 @@ DEFINE_TEST_CLIENT_TEST_WITH_PIPE(MultiprocessSharedMemoryClient, EmbedderTest,
 
 #if defined(OS_MACOSX) && !defined(OS_IOS)
 TEST_F(EmbedderTest, MultiprocessMachSharedMemory) {
-  RUN_CHILD_ON_PIPE(MultiprocessSharedMemoryClient, server_mp)
+  RunTestClient("MultiprocessSharedMemoryClient", [&](MojoHandle server_mp) {
     // 1. Create a Mach base::SharedMemory object and create a mojo shared
     // buffer from it.
     base::SharedMemoryCreateOptions options;
     options.size = 123;
     base::SharedMemory shared_memory;
     ASSERT_TRUE(shared_memory.Create(options));
-    base::SharedMemoryHandle shm_handle = base::SharedMemory::DuplicateHandle(
-        shared_memory.handle());
+    base::SharedMemoryHandle shm_handle =
+        base::SharedMemory::DuplicateHandle(shared_memory.handle());
     MojoHandle sb1;
     ASSERT_EQ(MOJO_RESULT_OK,
               CreateSharedBufferWrapper(shm_handle, 123, false, &sb1));
@@ -405,7 +394,7 @@ TEST_F(EmbedderTest, MultiprocessMachSharedMemory) {
               std::string(static_cast<char*>(shared_memory.memory())));
 
     ASSERT_EQ(MOJO_RESULT_OK, MojoClose(sb1));
-  END_CHILD()
+  });
 }
 
 enum class HandleType {
@@ -415,17 +404,14 @@ enum class HandleType {
 };
 
 const HandleType kTestHandleTypes[] = {
-  HandleType::MACH,
-  HandleType::MACH_NULL,
-  HandleType::POSIX,
-  HandleType::POSIX,
-  HandleType::MACH,
+    HandleType::MACH,  HandleType::MACH_NULL, HandleType::POSIX,
+    HandleType::POSIX, HandleType::MACH,
 };
 
 // Test that we can mix file descriptors and mach port handles.
 TEST_F(EmbedderTest, MultiprocessMixMachAndFds) {
   const size_t kShmSize = 1234;
-  RUN_CHILD_ON_PIPE(MultiprocessMixMachAndFdsClient, server_mp)
+  RunTestClient("MultiprocessMixMachAndFdsClient", [&](MojoHandle server_mp) {
     // 1. Create fds or Mach objects and mojo handles from them.
     MojoHandle platform_handles[arraysize(kTestHandleTypes)];
     for (size_t i = 0; i < arraysize(kTestHandleTypes); i++) {
@@ -439,8 +425,8 @@ TEST_F(EmbedderTest, MultiprocessMixMachAndFds) {
         scoped_handle.reset(PlatformHandle(file.TakePlatformFile()));
         EXPECT_EQ(PlatformHandle::Type::POSIX, scoped_handle.get().type);
       } else if (type == HandleType::MACH_NULL) {
-        scoped_handle.reset(PlatformHandle(
-            static_cast<mach_port_t>(MACH_PORT_NULL)));
+        scoped_handle.reset(
+            PlatformHandle(static_cast<mach_port_t>(MACH_PORT_NULL)));
         EXPECT_EQ(PlatformHandle::Type::MACH, scoped_handle.get().type);
       } else {
         base::SharedMemoryCreateOptions options;
@@ -452,8 +438,9 @@ TEST_F(EmbedderTest, MultiprocessMixMachAndFds) {
         scoped_handle.reset(PlatformHandle(shm_handle.GetMemoryObject()));
         EXPECT_EQ(PlatformHandle::Type::MACH, scoped_handle.get().type);
       }
-      ASSERT_EQ(MOJO_RESULT_OK, CreatePlatformHandleWrapper(
-          std::move(scoped_handle), platform_handles + i));
+      ASSERT_EQ(MOJO_RESULT_OK,
+                CreatePlatformHandleWrapper(std::move(scoped_handle),
+                                            platform_handles + i));
     }
 
     // 2. Send all the handles to the child.
@@ -462,10 +449,11 @@ TEST_F(EmbedderTest, MultiprocessMixMachAndFds) {
 
     // 3. Read a message from |server_mp|.
     EXPECT_EQ("bye", ReadMessage(server_mp));
-  END_CHILD()
+  });
 }
 
-DEFINE_TEST_CLIENT_TEST_WITH_PIPE(MultiprocessMixMachAndFdsClient, EmbedderTest,
+DEFINE_TEST_CLIENT_TEST_WITH_PIPE(MultiprocessMixMachAndFdsClient,
+                                  EmbedderTest,
                                   client_mp) {
   const int kNumHandles = arraysize(kTestHandleTypes);
   MojoHandle platform_handles[kNumHandles];
@@ -506,6 +494,9 @@ DEFINE_TEST_CLIENT_TEST_WITH_PIPE(MultiprocessMixMachAndFdsClient, EmbedderTest,
 
 #endif  // !defined(OS_IOS)
 
+#if !defined(OS_FUCHSIA)
+// TODO(fuchsia): Implement NamedPlatformHandles (crbug.com/754038).
+
 NamedPlatformHandle GenerateChannelName() {
 #if defined(OS_POSIX)
   base::FilePath temp_dir;
@@ -525,9 +516,12 @@ void CreateClientHandleOnIoThread(const NamedPlatformHandle& named_handle,
 TEST_F(EmbedderTest, ClosePendingPeerConnection) {
   NamedPlatformHandle named_handle = GenerateChannelName();
   std::string peer_token = GenerateRandomToken();
+
+  auto peer_connection = std::make_unique<PeerConnection>();
   ScopedMessagePipeHandle server_pipe =
-      ConnectToPeerProcess(CreateServerHandle(named_handle), peer_token);
-  ClosePeerConnection(peer_token);
+      peer_connection->Connect(ConnectionParams(
+          TransportProtocol::kLegacy, CreateServerHandle(named_handle)));
+  peer_connection.reset();
   EXPECT_EQ(MOJO_RESULT_OK,
             Wait(server_pipe.get(), MOJO_HANDLE_SIGNAL_PEER_CLOSED));
   base::MessageLoop message_loop;
@@ -544,6 +538,8 @@ TEST_F(EmbedderTest, ClosePendingPeerConnection) {
   run_loop.Run();
   EXPECT_FALSE(client_handle.is_valid());
 }
+
+#endif  // !defined(OS_FUCHSIA)
 
 #if !defined(OS_IOS)
 
@@ -565,7 +561,8 @@ TEST_F(EmbedderTest, ClosePipeToConnectedPeer) {
   EXPECT_EQ(0, controller.WaitForShutdown());
 }
 
-DEFINE_TEST_CLIENT_TEST_WITH_PIPE(ClosePipeToConnectedPeerClient, EmbedderTest,
+DEFINE_TEST_CLIENT_TEST_WITH_PIPE(ClosePipeToConnectedPeerClient,
+                                  EmbedderTest,
                                   client_mp) {
   // 1. Read the first message from |client_mp|.
   EXPECT_EQ("hello", ReadMessage(client_mp));
@@ -590,7 +587,8 @@ TEST_F(EmbedderTest, ClosePipeToConnectingPeer) {
   EXPECT_EQ(0, controller.WaitForShutdown());
 }
 
-DEFINE_TEST_CLIENT_TEST_WITH_PIPE(ClosePipeToConnectingPeerClient, EmbedderTest,
+DEFINE_TEST_CLIENT_TEST_WITH_PIPE(ClosePipeToConnectingPeerClient,
+                                  EmbedderTest,
                                   client_mp) {
   ASSERT_EQ(MOJO_RESULT_OK,
             WaitForSignals(client_mp, MOJO_HANDLE_SIGNAL_PEER_CLOSED));

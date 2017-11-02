@@ -4,8 +4,10 @@
 
 package org.chromium.content_public.browser;
 
+import android.graphics.Rect;
 import android.os.Handler;
 import android.os.Parcelable;
+import android.support.annotation.Nullable;
 
 import org.chromium.base.VisibleForTesting;
 import org.chromium.content.browser.RenderCoordinates;
@@ -109,6 +111,12 @@ public interface WebContents extends Parcelable {
 
     // TODO (amaralp): Only used in content. Should be moved out of public interface.
     /**
+     * Paste content from the clipboard without format.
+     */
+    void pasteAsPlainText();
+
+    // TODO (amaralp): Only used in content. Should be moved out of public interface.
+    /**
      * Replace the selected text with the {@code word}.
      */
     void replace(String word);
@@ -135,6 +143,12 @@ public interface WebContents extends Parcelable {
      */
     void onShow();
 
+    /**
+     * ChildProcessImportance on Android allows controls of the renderer process bindings
+     * independent of visibility.
+     */
+    void setImportance(@ChildProcessImportance int importance);
+
     // TODO (amaralp): Only used in content. Should be moved out of public interface.
     /**
      * Removes handles used in text selection.
@@ -143,9 +157,9 @@ public interface WebContents extends Parcelable {
 
     // TODO (amaralp): Only used in content. Should be moved out of public interface.
     /**
-     * Shows paste popup menu at point
+     * Shows paste popup menu at the touch handle at specified location.
      */
-    void showContextMenuAtPoint(int x, int y);
+    void showContextMenuAtTouchHandle(int x, int y);
 
     /**
      * Suspends all media players for this WebContents.  Note: There may still
@@ -229,13 +243,6 @@ public interface WebContents extends Parcelable {
     public void adjustSelectionByCharacterOffset(int startAdjust, int endAdjust);
 
     /**
-     * Get the URL of the current page.
-     *
-     * @return The URL of the current page.
-     */
-    String getUrl();
-
-    /**
      * Gets the last committed URL. It represents the current page that is
      * displayed in this WebContents. It represents the current security context.
      *
@@ -290,7 +297,15 @@ public interface WebContents extends Parcelable {
     void addMessageToDevToolsConsole(int level, String message);
 
     /**
-     * Dispatches a Message event to the specified frame.
+     * Post a message to a frame.
+     *
+     * @param frameName The name of the frame. If the name is null the message is posted
+     *                  to the main frame.
+     * @param message   The message
+     * @param targetOrigin  The target origin. If the target origin is a "*" or a
+     *                  empty string, it indicates a wildcard target origin.
+     * @param sentPorts The sent message ports, if any. Pass null if there is no
+     *                  message ports to pass.
      */
     void postMessageToFrame(String frameName, String message,
             String sourceOrigin, String targetOrigin, MessagePort[] ports);
@@ -405,9 +420,19 @@ public interface WebContents extends Parcelable {
 
     /**
      * Whether the WebContents has an active fullscreen video with native or custom controls.
-     * The WebContents must be fullscreen when this method is called.
+     * The WebContents must be fullscreen when this method is called. Fullscreen videos may take a
+     * moment to register. This should only be called if AppHooks.shouldDetectVideoFullscreen()
+     * returns true.
      */
     public boolean hasActiveEffectivelyFullscreenVideo();
+
+    /**
+     * Gets a Rect containing the size of the currently playing fullscreen video. The position of
+     * the rectangle is meaningless. Will return null if there is no such video. Fullscreen videos
+     * may take a moment to register. This should only be called if
+     * AppHooks.shouldDetectVideoFullscreen() returns true.
+     */
+    public @Nullable Rect getFullscreenVideoSize();
 
     /**
      * Issues a fake notification about the renderer being killed.

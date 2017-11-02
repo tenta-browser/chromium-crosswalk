@@ -4,4 +4,17 @@
 
 #include "core/css/properties/CSSPropertyAPIFlexGrowOrShrink.h"
 
-namespace blink {}  // namespace blink
+#include "core/css/parser/CSSPropertyParserHelpers.h"
+#include "platform/Length.h"
+
+namespace blink {
+
+const CSSValue* CSSPropertyAPIFlexGrowOrShrink::ParseSingleValue(
+    CSSPropertyID,
+    CSSParserTokenRange& range,
+    const CSSParserContext&,
+    const CSSParserLocalContext&) const {
+  return CSSPropertyParserHelpers::ConsumeNumber(range, kValueRangeNonNegative);
+}
+
+}  // namespace blink

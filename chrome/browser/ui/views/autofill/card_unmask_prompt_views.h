@@ -57,7 +57,7 @@ class CardUnmaskPromptViews : public CardUnmaskPromptView,
   View* CreateFootnoteView() override;
 
   // views::View
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   void Layout() override;
   int GetHeightForWidth(int width) const override;
   void OnNativeThemeChanged(const ui::NativeTheme* theme) override;
@@ -65,7 +65,6 @@ class CardUnmaskPromptViews : public CardUnmaskPromptView,
   base::string16 GetWindowTitle() const override;
   void DeleteDelegate() override;
   base::string16 GetDialogButtonLabel(ui::DialogButton button) const override;
-  bool ShouldDefaultButtonBeBlue() const override;
   bool IsDialogButtonEnabled(ui::DialogButton button) const override;
   View* GetInitiallyFocusedView() override;
   bool Cancel() override;
@@ -94,7 +93,7 @@ class CardUnmaskPromptViews : public CardUnmaskPromptView,
     ~FadeOutView() override;
 
     // views::View
-    void PaintChildren(const ui::PaintContext& context) override;
+    void PaintChildren(const views::PaintInfo& paint_info) override;
     void OnPaint(gfx::Canvas* canvas) override;
 
     void set_fade_everything(bool fade_everything) {

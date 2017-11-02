@@ -8,6 +8,9 @@
 #include "chrome/browser/chromeos/arc/arc_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_utils.h"  // kSettingsAppId
+#include "content/public/browser/web_contents.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/events/event_constants.h"
 
 namespace chromeos {
@@ -71,9 +74,12 @@ AndroidAppsHandler::BuildAndroidAppsInfo() {
   std::unique_ptr<base::DictionaryValue> info(new base::DictionaryValue);
   info->SetBoolean("playStoreEnabled",
                    arc::IsArcPlayStoreEnabledForProfile(profile_));
+  const ArcAppListPrefs* arc_apps_pref = ArcAppListPrefs::Get(profile_);
+  // TODO(khmel): Inverstigate why in some browser tests
+  // playStoreEnabled is true but arc_apps_pref is not set.
   info->SetBoolean(
       "settingsAppAvailable",
-      ArcAppListPrefs::Get(profile_)->IsRegistered(arc::kSettingsAppId));
+      arc_apps_pref && arc_apps_pref->IsRegistered(arc::kSettingsAppId));
   return info;
 }
 
@@ -85,8 +91,7 @@ void AndroidAppsHandler::HandleRequestAndroidAppsInfo(
 void AndroidAppsHandler::SendAndroidAppsInfo() {
   AllowJavascript();
   std::unique_ptr<base::DictionaryValue> info = BuildAndroidAppsInfo();
-  CallJavascriptFunction("cr.webUIListenerCallback",
-                         base::Value("android-apps-info-update"), *info);
+  FireWebUIListener("android-apps-info-update", *info);
 }
 
 void AndroidAppsHandler::ShowAndroidAppsSettings(const base::ListValue* args) {
@@ -97,7 +102,11 @@ void AndroidAppsHandler::ShowAndroidAppsSettings(const base::ListValue* args) {
 
   // Settings in secondary profile cannot access ARC.
   CHECK(arc::IsArcAllowedForProfile(profile_));
-  arc::LaunchAndroidSettingsApp(profile_, flags);
+  const int64_t display_id =
+      display::Screen::GetScreen()
+          ->GetDisplayNearestView(web_ui()->GetWebContents()->GetNativeView())
+          .id();
+  arc::LaunchAndroidSettingsApp(profile_, flags, display_id);
 }
 
 }  // namespace settings

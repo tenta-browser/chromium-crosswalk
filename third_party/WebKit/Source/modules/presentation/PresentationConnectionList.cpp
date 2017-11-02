@@ -29,15 +29,27 @@ void PresentationConnectionList::AddedEventListener(
     RegisteredEventListener& registered_listener) {
   EventTargetWithInlineData::AddedEventListener(event_type,
                                                 registered_listener);
-  if (event_type == EventTypeNames::connectionavailable)
+  if (event_type == EventTypeNames::connectionavailable) {
     UseCounter::Count(
         GetExecutionContext(),
-        UseCounter::kPresentationRequestConnectionAvailableEventListener);
+        WebFeature::kPresentationRequestConnectionAvailableEventListener);
+  }
 }
 
 void PresentationConnectionList::AddConnection(
     PresentationConnection* connection) {
   connections_.push_back(connection);
+}
+
+bool PresentationConnectionList::RemoveConnection(
+    WebPresentationConnection* connection) {
+  for (size_t i = 0; i < connections_.size(); i++) {
+    if (connections_[i] == connection) {
+      connections_.erase(i);
+      return true;
+    }
+  }
+  return false;
 }
 
 void PresentationConnectionList::DispatchConnectionAvailableEvent(

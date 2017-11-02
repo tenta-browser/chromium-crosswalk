@@ -12,8 +12,8 @@
 #include "content/browser/frame_host/cross_process_frame_connector.h"
 #include "content/browser/frame_host/frame_tree.h"
 #include "content/browser/frame_host/render_frame_proxy_host.h"
-#include "content/browser/frame_host/render_widget_host_view_child_frame.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
+#include "content/browser/renderer_host/render_widget_host_view_child_frame.h"
 #include "content/browser/site_per_process_browsertest.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/public/browser/notification_observer.h"
@@ -108,7 +108,7 @@ IN_PROC_BROWSER_TEST_F(MAYBE_SitePerProcessAccessibilityBrowserTest,
   ASSERT_EQ(1U, ax_root->PlatformChildCount());
 
   BrowserAccessibility* ax_group = ax_root->PlatformGetChild(0);
-  EXPECT_EQ(ui::AX_ROLE_GROUP, ax_group->GetRole());
+  EXPECT_EQ(ui::AX_ROLE_GENERIC_CONTAINER, ax_group->GetRole());
   ASSERT_EQ(2U, ax_group->PlatformChildCount());
 
   BrowserAccessibility* ax_iframe = ax_group->PlatformGetChild(0);
@@ -123,7 +123,7 @@ IN_PROC_BROWSER_TEST_F(MAYBE_SitePerProcessAccessibilityBrowserTest,
 
   BrowserAccessibility* ax_child_frame_group =
       ax_child_frame_root->PlatformGetChild(0);
-  EXPECT_EQ(ui::AX_ROLE_GROUP, ax_child_frame_group->GetRole());
+  EXPECT_EQ(ui::AX_ROLE_GENERIC_CONTAINER, ax_child_frame_group->GetRole());
   ASSERT_EQ(1U, ax_child_frame_group->PlatformChildCount());
 
   BrowserAccessibility* ax_child_frame_static_text =

@@ -13,14 +13,14 @@
 
 namespace blink {
 
-enum class TestParam { kAudio, kVideo };
+enum class MediaTestParam { kAudio, kVideo };
 
-class HTMLMediaElementTest : public ::testing::TestWithParam<TestParam> {
+class HTMLMediaElementTest : public ::testing::TestWithParam<MediaTestParam> {
  protected:
   void SetUp() {
     dummy_page_holder_ = DummyPageHolder::Create();
 
-    if (GetParam() == TestParam::kAudio)
+    if (GetParam() == MediaTestParam::kAudio)
       media_ = HTMLAudioElement::Create(dummy_page_holder_->GetDocument());
     else
       media_ = HTMLVideoElement::Create(dummy_page_holder_->GetDocument());
@@ -39,10 +39,10 @@ class HTMLMediaElementTest : public ::testing::TestWithParam<TestParam> {
 
 INSTANTIATE_TEST_CASE_P(Audio,
                         HTMLMediaElementTest,
-                        ::testing::Values(TestParam::kAudio));
+                        ::testing::Values(MediaTestParam::kAudio));
 INSTANTIATE_TEST_CASE_P(Video,
                         HTMLMediaElementTest,
-                        ::testing::Values(TestParam::kVideo));
+                        ::testing::Values(MediaTestParam::kVideo));
 
 TEST_P(HTMLMediaElementTest, effectiveMediaVolume) {
   struct TestData {
@@ -114,8 +114,8 @@ TEST_P(HTMLMediaElementTest, preloadType) {
       {false, false, true, TestURLScheme::kHttp, "auto", "metadata"},
       {false, false, true, TestURLScheme::kHttp, "scheme", "metadata"},
       {false, false, true, TestURLScheme::kHttp, "none", "none"},
-      // Tests that the preload is overriden to "auto"
-      {false, false, false, TestURLScheme::kHttp, "foo", "auto"},
+      // Tests that the preload is overriden to "metadata".
+      {false, false, false, TestURLScheme::kHttp, "foo", "metadata"},
   };
 
   int index = 0;
@@ -125,7 +125,7 @@ TEST_P(HTMLMediaElementTest, preloadType) {
     Media()->GetDocument().GetSettings()->SetForcePreloadNoneForMediaElements(
         data.force_preload_none_for_media_elements);
     if (data.is_cellular) {
-      GetNetworkStateNotifier().SetOverride(
+      GetNetworkStateNotifier().SetNetworkConnectionInfoOverride(
           true, WebConnectionType::kWebConnectionTypeCellular3G, 2.0);
     } else {
       GetNetworkStateNotifier().ClearOverride();

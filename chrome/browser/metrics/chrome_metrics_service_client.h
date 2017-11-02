@@ -15,7 +15,7 @@
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/threading/thread_checker.h"
+#include "base/sequence_checker.h"
 #include "build/build_config.h"
 #include "chrome/browser/metrics/metrics_memory_details.h"
 #include "components/metrics/metrics_log_uploader.h"
@@ -29,19 +29,16 @@
 #include "content/public/browser/notification_registrar.h"
 #include "ppapi/features/features.h"
 
-class AntiVirusMetricsProvider;
-class ChromeOSMetricsProvider;
-class GoogleUpdateMetricsProviderWin;
 class PluginMetricsProvider;
 class Profile;
 class PrefRegistrySimple;
 
-namespace browser_watcher {
-class WatcherMetricsProviderWin;
-}  // namespace browser_watcher
+#if defined(OS_ANDROID)
+class TabModelListObserver;
+#endif  // defined(OS_ANDROID)
+
 
 namespace metrics {
-class DriveMetricsProvider;
 class MetricsService;
 class MetricsStateManager;
 class ProfilerMetricsProvider;
@@ -64,6 +61,9 @@ class ChromeMetricsServiceClient : public metrics::MetricsServiceClient,
   // Registers local state prefs used by this class.
   static void RegisterPrefs(PrefRegistrySimple* registry);
 
+  // Checks if the user has forced metrics collection on via the override flag.
+  static bool IsMetricsReportingForceEnabled();
+
   // metrics::MetricsServiceClient:
   metrics::MetricsService* GetMetricsService() override;
   ukm::UkmService* GetUkmService() override;
@@ -75,8 +75,6 @@ class ChromeMetricsServiceClient : public metrics::MetricsServiceClient,
   std::string GetVersionString() override;
   void OnEnvironmentUpdate(std::string* serialized_environment) override;
   void OnLogCleanShutdown() override;
-  void InitializeSystemProfileMetrics(
-      const base::Closure& done_callback) override;
   void CollectFinalMetricsForLog(const base::Closure& done_callback) override;
   std::unique_ptr<metrics::MetricsLogUploader> CreateUploader(
       base::StringPiece server_url,
@@ -85,7 +83,6 @@ class ChromeMetricsServiceClient : public metrics::MetricsServiceClient,
       const metrics::MetricsLogUploader::UploadCallback& on_upload_complete)
       override;
   base::TimeDelta GetStandardUploadInterval() override;
-  base::string16 GetRegistryBackupKey() override;
   void OnPluginLoadingError(const base::FilePath& plugin_path) override;
   bool IsReportingPolicyManaged() override;
   metrics::EnableMetricsDefault GetMetricsReportingDefaultState() override;
@@ -118,11 +115,6 @@ class ChromeMetricsServiceClient : public metrics::MetricsServiceClient,
   // Registers providers to the UkmService. These provide data from alternate
   // sources.
   void RegisterUKMProviders();
-
-  // Callback to chain init tasks: Pops and executes the next init task from
-  // |initialize_task_queue_|, then passes itself as callback for each init task
-  // to call upon completion.
-  void OnInitNextTask();
 
   // Returns true iff profiler data should be included in the next metrics log.
   // NOTE: This method is probabilistic and also updates internal state as a
@@ -168,7 +160,7 @@ class ChromeMetricsServiceClient : public metrics::MetricsServiceClient,
   void CountBrowserCrashDumpAttempts();
 #endif  // OS_WIN
 
-  base::ThreadChecker thread_checker_;
+  SEQUENCE_CHECKER(sequence_checker_);
 
   // Weak pointer to the MetricsStateManager.
   metrics::MetricsStateManager* metrics_state_manager_;
@@ -181,11 +173,12 @@ class ChromeMetricsServiceClient : public metrics::MetricsServiceClient,
 
   content::NotificationRegistrar registrar_;
 
-#if defined(OS_CHROMEOS)
-  // On ChromeOS, holds a weak pointer to the ChromeOSMetricsProvider instance
-  // that has been registered with MetricsService. On other platforms, is NULL.
-  ChromeOSMetricsProvider* chromeos_metrics_provider_;
-#endif
+#if defined(OS_ANDROID)
+  // Listener for changes in incognito activity.
+  // Desktop platform use BrowserList, and can listen for
+  // chrome::NOTIFICATION_BROWSER_OPENED instead.
+  std::unique_ptr<TabModelListObserver> incognito_observer_;
+#endif  // defined(OS_ANDROID)
 
   // A queue of tasks for initial metrics gathering. These may be asynchronous
   // or synchronous.
@@ -209,24 +202,6 @@ class ChromeMetricsServiceClient : public metrics::MetricsServiceClient,
   // MetricsService. Has the same lifetime as |metrics_service_|.
   PluginMetricsProvider* plugin_metrics_provider_;
 #endif
-
-#if defined(OS_WIN)
-  // The GoogleUpdateMetricsProviderWin instance that was registered with
-  // MetricsService. Has the same lifetime as |metrics_service_|.
-  GoogleUpdateMetricsProviderWin* google_update_metrics_provider_;
-
-  // The WatcherMetricsProviderWin instance that was registered with
-  // MetricsService. Has the same lifetime as |metrics_service_|.
-  browser_watcher::WatcherMetricsProviderWin* watcher_metrics_provider_;
-
-  // The AntiVirusMetricsProvider instance that was registered with
-  // MetricsService. Has the same lifetime as |metrics_service_|.
-  AntiVirusMetricsProvider* antivirus_metrics_provider_;
-#endif
-
-  // The DriveMetricsProvider instance that was registered with MetricsService.
-  // Has the same lifetime as |metrics_service_|.
-  metrics::DriveMetricsProvider* drive_metrics_provider_;
 
   // The MemoryGrowthTracker instance that tracks memory usage growth in
   // MemoryDetails.

@@ -6,28 +6,30 @@
 #define NGTextFragmentBuilder_h
 
 #include "core/layout/ng/geometry/ng_logical_size.h"
-#include "core/layout/ng/inline/ng_line_height_metrics.h"
-#include "platform/text/TextDirection.h"
+#include "core/layout/ng/inline/ng_inline_node.h"
+#include "core/layout/ng/inline/ng_text_end_effect.h"
+#include "core/layout/ng/ng_base_fragment_builder.h"
 #include "platform/wtf/Allocator.h"
 
 namespace blink {
 
-class NGInlineNode;
 class NGPhysicalTextFragment;
+class ShapeResult;
 
-class CORE_EXPORT NGTextFragmentBuilder final {
+class CORE_EXPORT NGTextFragmentBuilder final : public NGBaseFragmentBuilder {
   STACK_ALLOCATED();
 
  public:
-  NGTextFragmentBuilder(NGInlineNode*);
+  NGTextFragmentBuilder(NGInlineNode,
+                        RefPtr<const ComputedStyle>,
+                        NGWritingMode);
+  NGTextFragmentBuilder(NGInlineNode, NGWritingMode);
 
-  NGTextFragmentBuilder& SetDirection(TextDirection);
+  NGTextFragmentBuilder& SetSize(const NGLogicalSize&);
 
-  NGTextFragmentBuilder& SetInlineSize(LayoutUnit);
-  NGTextFragmentBuilder& SetBlockSize(LayoutUnit);
+  NGTextFragmentBuilder& SetShapeResult(RefPtr<const ShapeResult>);
 
-  void UniteMetrics(const NGLineHeightMetrics&);
-  const NGLineHeightMetrics& Metrics() const { return metrics_; }
+  NGTextFragmentBuilder& SetEndEffect(NGTextEndEffect);
 
   // Creates the fragment. Can only be called once.
   RefPtr<NGPhysicalTextFragment> ToTextFragment(unsigned index,
@@ -35,13 +37,13 @@ class CORE_EXPORT NGTextFragmentBuilder final {
                                                 unsigned end_offset);
 
  private:
-  TextDirection direction_;
-
-  Persistent<NGInlineNode> node_;
+  NGInlineNode node_;
 
   NGLogicalSize size_;
 
-  NGLineHeightMetrics metrics_;
+  RefPtr<const ShapeResult> shape_result_;
+
+  NGTextEndEffect end_effect_ = NGTextEndEffect::kNone;
 };
 
 }  // namespace blink

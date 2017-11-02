@@ -51,7 +51,9 @@ typedef NS_ENUM(NSInteger, ItemType) {
 #pragma mark Initialization
 
 - (instancetype)init {
-  self = [super initWithStyle:CollectionViewControllerStyleAppBar];
+  UICollectionViewLayout* layout = [[MDCCollectionViewFlowLayout alloc] init];
+  self =
+      [super initWithLayout:layout style:CollectionViewControllerStyleAppBar];
   if (self) {
     self.title = l10n_util::GetNSString(IDS_IOS_ABOUT_PRODUCT_NAME);
     [self loadModel];
@@ -153,7 +155,7 @@ typedef NS_ENUM(NSInteger, ItemType) {
 #pragma mark Private methods
 
 - (void)openURL:(GURL)URL {
-  ios_internal_settings::BlockToOpenURL(self)(URL);
+  BlockToOpenURL(self, self.dispatcher)(URL);
 }
 
 - (void)copyVersionToPasteboard {

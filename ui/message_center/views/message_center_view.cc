@@ -27,8 +27,8 @@
 #include "ui/message_center/views/message_view.h"
 #include "ui/message_center/views/message_view_context_menu_controller.h"
 #include "ui/message_center/views/message_view_factory.h"
+#include "ui/message_center/views/notification_control_buttons_view.h"
 #include "ui/message_center/views/notifier_settings_view.h"
-#include "ui/resources/grit/ui_resources.h"
 #include "ui/strings/grit/ui_strings.h"
 #include "ui/views/background.h"
 #include "ui/views/border.h"
@@ -81,8 +81,7 @@ MessageCenterView::MessageCenterView(MessageCenter* message_center,
       focus_manager_(nullptr) {
   message_center_->AddObserver(this);
   set_notify_enter_exit_on_child(true);
-  set_background(views::Background::CreateSolidBackground(
-      kMessageCenterBackgroundColor));
+  SetBackground(views::CreateSolidBackground(kMessageCenterBackgroundColor));
 
   NotifierSettingsProvider* notifier_settings_provider =
       message_center_->GetNotifierSettingsProvider();
@@ -94,15 +93,10 @@ MessageCenterView::MessageCenterView(MessageCenter* message_center,
   const int button_height = button_bar_->GetPreferredSize().height();
 
   scroller_ = new views::ScrollView();
+  scroller_->SetBackgroundColor(kMessageCenterBackgroundColor);
   scroller_->ClipHeightTo(kMinScrollViewHeight, max_height - button_height);
   scroller_->SetVerticalScrollBar(new views::OverlayScrollBar(false));
   scroller_->SetHorizontalScrollBar(new views::OverlayScrollBar(true));
-  scroller_->set_background(
-      views::Background::CreateSolidBackground(kMessageCenterBackgroundColor));
-
-  scroller_->SetPaintToLayer();
-  scroller_->layer()->SetFillsBoundsOpaquely(false);
-  scroller_->layer()->SetMasksToBounds(true);
 
   message_list_view_.reset(new MessageListView());
   message_list_view_->set_scroller(scroller_);
@@ -217,12 +211,15 @@ void MessageCenterView::SetIsClosing(bool is_closing) {
 
 void MessageCenterView::OnDidChangeFocus(views::View* before,
                                          views::View* now) {
-  if (message_list_view_ && (message_list_view_->Contains(before) ||
-                             message_list_view_->Contains(now))) {
-    // Focus state of a children of message view center is changed.
-    for (auto pair : notification_views_) {
-      if (pair.second->Contains(before) || pair.second->Contains(now))
-        pair.second->UpdateControlButtonsVisibility();
+  // Update the button visibility when the focus state is changed.
+  for (auto pair : notification_views_) {
+    // ControlButtonsView is not in the same view hierarchy on ARC++
+    // notifications, so check it separately.
+    if (pair.second->Contains(before) || pair.second->Contains(now) ||
+        (pair.second->GetControlButtonsView() &&
+         (pair.second->GetControlButtonsView()->Contains(before) ||
+          pair.second->GetControlButtonsView()->Contains(now)))) {
+      pair.second->UpdateControlButtonsVisibility();
     }
   }
 }
@@ -276,7 +273,7 @@ void MessageCenterView::Layout() {
     GetWidget()->GetRootView()->SchedulePaint();
 }
 
-gfx::Size MessageCenterView::GetPreferredSize() const {
+gfx::Size MessageCenterView::CalculatePreferredSize() const {
   if (settings_transition_animation_ &&
       settings_transition_animation_->is_animating()) {
     int content_width =
@@ -518,7 +515,12 @@ void MessageCenterView::AddNotificationAt(const Notification& notification,
                                           int index) {
   MessageView* view =
       MessageViewFactory::Create(this, notification, false);  // Not top-level.
-  view->set_context_menu_controller(context_menu_controller_.get());
+
+  // TODO(yoshiki): Temporary disable context menu on custom notifications.
+  // See crbug.com/750307 for detail.
+  if (notification.type() != NOTIFICATION_TYPE_CUSTOM)
+    view->set_context_menu_controller(context_menu_controller_.get());
+
   notification_views_[notification.id()] = view;
   view->set_scroller(scroller_);
   message_list_view_->AddNotificationAt(view, index);
@@ -643,7 +645,7 @@ void MessageCenterView::EnableCloseAllIfAppropriate() {
   if (mode_ == Mode::NOTIFICATIONS) {
     bool no_closable_views = true;
     for (const auto& view : notification_views_) {
-      if (!view.second->IsPinned()) {
+      if (!view.second->GetPinned()) {
         no_closable_views = false;
         break;
       }
@@ -666,28 +668,27 @@ void MessageCenterView::UpdateNotification(const std::string& id) {
   if (view_iter == notification_views_.end())
     return;
 
-  // TODO(dimich): add MessageCenter::GetVisibleNotificationById(id)
   MessageView* view = view_iter->second;
-  const NotificationList::Notifications& notifications =
-      message_center_->GetVisibleNotifications();
-  for (NotificationList::Notifications::const_iterator iter =
-           notifications.begin();
-       iter != notifications.end(); ++iter) {
-    if ((*iter)->id() == id) {
-      int old_width = view->width();
-      int old_height = view->height();
-      bool old_pinned = view->IsPinned();
-      message_list_view_->UpdateNotification(view, **iter);
-      if (view->GetHeightForWidth(old_width) != old_height) {
-        Update(true /* animate */);
-      } else if (view->IsPinned() != old_pinned) {
-        // Animate flag is false, since the pinned flag transition doesn't need
-        // animation.
-        Update(false /* animate */);
-      }
-      break;
+  Notification* notification = message_center_->FindVisibleNotificationById(id);
+  if (notification) {
+    int old_width = view->width();
+    int old_height = view->height();
+    bool old_pinned = view->GetPinned();
+    message_list_view_->UpdateNotification(view, *notification);
+    if (view->GetHeightForWidth(old_width) != old_height) {
+      Update(true /* animate */);
+    } else if (view->GetPinned() != old_pinned) {
+      // Animate flag is false, since the pinned flag transition doesn't need
+      // animation.
+      Update(false /* animate */);
     }
   }
+
+  // Checks for investigation of the crash crbug.com/737858. It looks the view
+  // is stale, but we're not sure. These checks are to confirm that assumption.
+  // TODO(yoshiki): remove these after fixing the crash.
+  CHECK(notification_views_.find(id) != notification_views_.end());
+  CHECK(message_list_view_->Contains(view));
 
   // Notify accessibility that the contents have changed.
   view->NotifyAccessibilityEvent(ui::AX_EVENT_CHILDREN_CHANGED, false);

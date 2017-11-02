@@ -12,13 +12,19 @@ namespace ash {
 
 // The LockWindowState implementation which reduces all possible window
 // states to maximized (or normal if can't be maximized)/minimized/full-screen
-// and is applied only on lock (login) window container.
+// and is applied only on lock (login) window container and window containers
+// associated with apps handling lock screen tray actions.
 // LockWindowState implements Ash behavior without state machine.
 class LockWindowState : public wm::WindowState::State {
  public:
   // The |window|'s state object will be modified to use this new window mode
   // state handler.
-  explicit LockWindowState(WmWindow* window);
+  // |exclude_shelf| - if set, the maximized window size will be
+  // restricted to work area defined by ash shelf, rather than taking only
+  // virtual keyboard window into consideration when calculating the window
+  // size.
+  LockWindowState(aura::Window* window, bool exclude_shelf);
+
   ~LockWindowState() override;
 
   // WindowState::State overrides:
@@ -30,7 +36,9 @@ class LockWindowState : public wm::WindowState::State {
   void DetachState(wm::WindowState* window_state) override;
 
   // Creates new LockWindowState instance and attaches it to |window|.
-  static wm::WindowState* SetLockWindowState(WmWindow* window);
+  static wm::WindowState* SetLockWindowState(aura::Window* window);
+  static wm::WindowState* SetLockWindowStateWithShelfExcluded(
+      aura::Window* window);
 
  private:
   // Updates the window to |new_state_type| and resulting bounds:
@@ -44,12 +52,19 @@ class LockWindowState : public wm::WindowState::State {
   wm::WindowStateType GetMaximizedOrCenteredWindowType(
       wm::WindowState* window_state);
 
+  // Returns boudns to be used for the provided window.
+  gfx::Rect GetWindowBounds(aura::Window* window);
+
   // Updates the bounds taking virtual keyboard bounds into consideration.
   void UpdateBounds(wm::WindowState* window_state);
 
   // The current state type. Due to the nature of this state, this can only be
   // WM_STATE_TYPE{NORMAL, MINIMIZED, MAXIMIZED}.
   wm::WindowStateType current_state_type_;
+
+  // Restrict window size to the work area defined by the shelf - i.e. window
+  // bounds exclude system shelf bounds.
+  bool exclude_shelf_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(LockWindowState);
 };

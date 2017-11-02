@@ -38,8 +38,10 @@ class NativeTheme;
 
 namespace views {
 class Border;
+class DeviceScaleFactorObserver;
 class LabelButton;
 class LabelButtonBorder;
+class NavButtonProvider;
 class WindowButtonOrderObserver;
 
 // Adapter class with targets to render like different toolkits. Set by any
@@ -157,6 +159,20 @@ class VIEWS_EXPORT LinuxUI : public ui::LinuxInputMethodContextFactory,
 
   // Determines the device scale factor of the primary screen.
   virtual float GetDeviceScaleFactor() const = 0;
+
+  // Registers |observer| to be notified about changes to the device
+  // scale factor.
+  virtual void AddDeviceScaleFactorObserver(
+      DeviceScaleFactorObserver* observer) = 0;
+
+  // Unregisters |observer| from receiving changes to the device scale
+  // factor.
+  virtual void RemoveDeviceScaleFactorObserver(
+      DeviceScaleFactorObserver* observer) = 0;
+
+  // Returns a new NavButtonProvider, or nullptr if the underlying
+  // toolkit does not support drawing client-side navigation buttons.
+  virtual std::unique_ptr<NavButtonProvider> CreateNavButtonProvider() = 0;
 };
 
 }  // namespace views

@@ -12,6 +12,7 @@
 #include "chrome/browser/profiles/profile_window.h"
 #include "chrome/browser/task_manager/task_manager_interface.h"
 #include "chrome/browser/task_manager/task_manager_observer.h"
+#include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -29,7 +30,6 @@
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/table/table_view.h"
 #include "ui/views/layout/fill_layout.h"
-#include "ui/views/layout/layout_constants.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/window/dialog_client_view.h"
@@ -103,6 +103,11 @@ task_manager::TaskManagerTableModel* TaskManagerView::Show(Browser* browser) {
 
 #if defined(USE_ASH)
   aura::Window* window = g_task_manager_view->GetWidget()->GetNativeWindow();
+  // An app id for task manager windows, also used to identify the shelf item.
+  // Generated as crx_file::id_util::GenerateId("org.chromium.taskmanager")
+  static constexpr char kTaskManagerId[] = "ijaigheoohcacdnplfbdimmcfldnnhdi";
+  const ash::ShelfID shelf_id(kTaskManagerId);
+  window->SetProperty(ash::kShelfIDKey, new std::string(shelf_id.Serialize()));
   window->SetProperty<int>(ash::kShelfItemTypeKey, ash::TYPE_DIALOG);
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
   gfx::ImageSkia* icon = rb.GetImageSkiaNamed(IDR_ASH_SHELF_ICON_TASK_MANAGER);
@@ -150,7 +155,7 @@ void TaskManagerView::SetSortDescriptor(const TableSortDescriptor& descriptor) {
   tab_table_->SetSortDescriptors(descriptor_list);
 }
 
-gfx::Size TaskManagerView::GetPreferredSize() const {
+gfx::Size TaskManagerView::CalculatePreferredSize() const {
   return gfx::Size(460, 270);
 }
 
@@ -268,9 +273,8 @@ void TaskManagerView::ShowContextMenuForView(views::View* source,
                               l10n_util::GetStringUTF16(table_column.id));
   }
 
-  menu_runner_.reset(new views::MenuRunner(
-      menu_model_.get(),
-      views::MenuRunner::CONTEXT_MENU | views::MenuRunner::ASYNC));
+  menu_runner_.reset(new views::MenuRunner(menu_model_.get(),
+                                           views::MenuRunner::CONTEXT_MENU));
 
   menu_runner_->RunMenuAt(GetWidget(), nullptr, gfx::Rect(point, gfx::Size()),
                           views::MENU_ANCHOR_TOPLEFT, source_type);
@@ -298,6 +302,7 @@ TaskManagerView::TaskManagerView()
       tab_table_parent_(nullptr),
       is_always_on_top_(false) {
   Init();
+  chrome::RecordDialogCreation(chrome::DialogIdentifier::TASK_MANAGER);
 }
 
 // static
@@ -332,10 +337,9 @@ void TaskManagerView::Init() {
   AddChildView(tab_table_parent_);
 
   SetLayoutManager(new views::FillLayout());
-  SetBorder(views::CreateEmptyBorder(
-      ChromeLayoutProvider::Get()->GetDistanceMetric(
-          DISTANCE_PANEL_CONTENT_MARGIN),
-      views::kButtonHEdgeMarginNew, 0, views::kButtonHEdgeMarginNew));
+  SetBorder(
+      views::CreateEmptyBorder(ChromeLayoutProvider::Get()->GetInsetsMetric(
+          views::INSETS_DIALOG_CONTENTS)));
 
   table_model_->RetrieveSavedColumnsSettingsAndUpdateTable();
 

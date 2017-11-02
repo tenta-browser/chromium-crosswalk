@@ -4,7 +4,7 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutSVGRect rect",
@@ -18,14 +18,6 @@
     {
       "object": "LayoutSVGRect rect",
       "reason": "style change"
-    },
-    {
-      "object": "LayoutSVGResourceMasker mask id='dynMask'",
-      "reason": "layoutObject insertion"
-    },
-    {
-      "object": "LayoutSVGRect rect",
-      "reason": "layoutObject insertion"
     }
   ]
 }

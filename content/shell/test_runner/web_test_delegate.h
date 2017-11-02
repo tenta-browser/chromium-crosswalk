@@ -23,7 +23,6 @@ class DictionaryValue;
 }
 
 namespace blink {
-class WebFrame;
 class WebInputEvent;
 class WebLocalFrame;
 class WebMediaStream;
@@ -35,13 +34,13 @@ class WebURLResponse;
 class WebView;
 }
 
-namespace cc {
-class SharedBitmapManager;
-}
-
 namespace device {
 class MotionData;
 class OrientationData;
+}
+
+namespace viz {
+class SharedBitmapManager;
 }
 
 namespace test_runner {
@@ -50,6 +49,8 @@ class GamepadController;
 class WebTask;
 class WebWidgetTestProxyBase;
 struct TestPreferences;
+
+constexpr int kDefaultDatabaseQuota = -1;
 
 class WebTestDelegate {
  public:
@@ -62,9 +63,6 @@ class WebTestDelegate {
   // Sets gamepad provider to be used for tests.
   virtual void SetGamepadProvider(GamepadController* controller) = 0;
 
-  // Set data to return when registering via
-  // Platform::setDeviceLightListener().
-  virtual void SetDeviceLightData(const double data) = 0;
   // Set data to return when registering via
   // Platform::setDeviceMotionListener().
   virtual void SetDeviceMotionData(const device::MotionData& data) = 0;
@@ -109,6 +107,7 @@ class WebTestDelegate {
   // Manages the settings to used for layout tests.
   virtual TestPreferences* Preferences() = 0;
   virtual void ApplyPreferences() = 0;
+  virtual void SetPopupBlockingEnabled(bool block_popups) = 0;
 
   // Enables or disables synchronous resize mode. When enabled, all
   // window-sizing machinery is
@@ -145,6 +144,7 @@ class WebTestDelegate {
 
   // Controls WebSQL databases.
   virtual void ClearAllDatabases() = 0;
+  // Setting quota to kDefaultDatabaseQuota will reset it to the default value.
   virtual void SetDatabaseQuota(int quota) = 0;
 
   // Controls Web Notifications.
@@ -184,8 +184,8 @@ class WebTestDelegate {
   // Returns whether or not the use-zoom-for-dsf flag is enabled.
   virtual bool IsUseZoomForDSFEnabled() = 0;
 
-  // Change the device color profile while running a layout test.
-  virtual void SetDeviceColorProfile(const std::string& name) = 0;
+  // Change the device color space while running a layout test.
+  virtual void SetDeviceColorSpace(const std::string& name) = 0;
 
   // Set the bluetooth adapter while running a layout test, uses Mojo to
   // communicate with the browser.
@@ -271,7 +271,7 @@ class WebTestDelegate {
   virtual bool AddMediaStreamAudioSourceAndTrack(
       blink::WebMediaStream* stream) = 0;
 
-  virtual cc::SharedBitmapManager* GetSharedBitmapManager() = 0;
+  virtual viz::SharedBitmapManager* GetSharedBitmapManager() = 0;
 
   // Causes the beforeinstallprompt event to be sent to the renderer.
   // |event_platforms| are the platforms to be sent with the event. Once the
@@ -288,7 +288,6 @@ class WebTestDelegate {
       const std::string& platform) = 0;
 
   virtual blink::WebPlugin* CreatePluginPlaceholder(
-      blink::WebLocalFrame* frame,
       const blink::WebPluginParams& params) = 0;
 
   virtual float GetDeviceScaleFactor() const = 0;
@@ -298,12 +297,15 @@ class WebTestDelegate {
 
   // Forces a text input state update for the client of WebFrameWidget
   // associated with |frame|.
-  virtual void ForceTextInputStateUpdate(blink::WebFrame* frame) = 0;
+  virtual void ForceTextInputStateUpdate(blink::WebLocalFrame* frame) = 0;
 
   // PlzNavigate
   // Indicates if the navigation was initiated by the browser or renderer.
   virtual bool IsNavigationInitiatedByRenderer(
       const blink::WebURLRequest& request) = 0;
+
+ protected:
+  virtual ~WebTestDelegate() {}
 };
 
 }  // namespace test_runner

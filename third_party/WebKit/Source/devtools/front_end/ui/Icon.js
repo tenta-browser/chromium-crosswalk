@@ -78,6 +78,7 @@ UI.Icon = class extends HTMLSpanElement {
     this.classList.toggle('spritesheet-' + this._descriptor.spritesheet, value);
     this.classList.toggle(this._iconType, value);
     this.classList.toggle('icon-mask', value && !!this._descriptor.isMask);
+    this.classList.toggle('icon-invert', value && !!this._descriptor.invert);
   }
 
   /**
@@ -118,7 +119,10 @@ UI.Icon.SpriteSheets = {
 UI.Icon.Descriptors = {
   'smallicon-bezier': {position: 'a5', spritesheet: 'smallicons', isMask: true},
   'smallicon-checkmark': {position: 'b5', spritesheet: 'smallicons'},
+  'smallicon-checkmark-square': {position: 'b6', spritesheet: 'smallicons', isMask: true},
+  'smallicon-checkmark-behind': {position: 'd6', spritesheet: 'smallicons', isMask: true},
   'smallicon-command-result': {position: 'a4', spritesheet: 'smallicons'},
+  'smallicon-contrast-ratio': {position: 'a6', spritesheet: 'smallicons', isMask: true},
   'smallicon-cross': {position: 'b4', spritesheet: 'smallicons'},
   'smallicon-device': {position: 'c5', spritesheet: 'smallicons'},
   'smallicon-error': {position: 'c4', spritesheet: 'smallicons'},
@@ -127,6 +131,7 @@ UI.Icon.Descriptors = {
   'smallicon-info': {position: 'c3', spritesheet: 'smallicons'},
   'smallicon-inline-breakpoint-conditional': {position: 'd5', spritesheet: 'smallicons'},
   'smallicon-inline-breakpoint': {position: 'd4', spritesheet: 'smallicons'},
+  'smallicon-no': {position: 'c6', spritesheet: 'smallicons', isMask: true},
   'smallicon-orange-ball': {position: 'd3', spritesheet: 'smallicons'},
   'smallicon-red-ball': {position: 'a2', spritesheet: 'smallicons'},
   'smallicon-shadow': {position: 'b2', spritesheet: 'smallicons', isMask: true},
@@ -145,12 +150,13 @@ UI.Icon.Descriptors = {
   'mediumicon-clear-storage': {position: 'a4', spritesheet: 'mediumicons', isMask: true},
   'mediumicon-cookie': {position: 'b4', spritesheet: 'mediumicons', isMask: true},
   'mediumicon-database': {position: 'c4', spritesheet: 'mediumicons', isMask: true},
+  'mediumicon-info': {position: 'c1', spritesheet: 'mediumicons', isMask: true},
   'mediumicon-manifest': {position: 'd4', spritesheet: 'mediumicons', isMask: true},
   'mediumicon-service-worker': {position: 'a3', spritesheet: 'mediumicons', isMask: true},
   'mediumicon-table': {position: 'b3', spritesheet: 'mediumicons', isMask: true},
   'mediumicon-arrow-in-circle': {position: 'c3', spritesheet: 'mediumicons', isMask: true},
-  'mediumicon-file-sync': {position: 'd3', spritesheet: 'mediumicons'},
-  'mediumicon-file': {position: 'a2', spritesheet: 'mediumicons'},
+  'mediumicon-file-sync': {position: 'd3', spritesheet: 'mediumicons', invert: true},
+  'mediumicon-file': {position: 'a2', spritesheet: 'mediumicons', invert: true},
   'mediumicon-gray-cross-active': {position: 'b2', spritesheet: 'mediumicons'},
   'mediumicon-gray-cross-hover': {position: 'c2', spritesheet: 'mediumicons'},
   'mediumicon-red-cross-active': {position: 'd2', spritesheet: 'mediumicons'},
@@ -173,6 +179,7 @@ UI.Icon.Descriptors = {
   'largeicon-dock-to-bottom': {position: 'd8', spritesheet: 'largeicons', isMask: true},
   'largeicon-dock-to-left': {position: 'd7', spritesheet: 'largeicons', isMask: true},
   'largeicon-dock-to-right': {position: 'd6', spritesheet: 'largeicons', isMask: true},
+  'largeicon-download': {position: 'h6', spritesheet: 'largeicons', isMask: true},
   'largeicon-edit': {position: 'a5', spritesheet: 'largeicons', isMask: true},
   'largeicon-eyedropper': {position: 'b5', spritesheet: 'largeicons', isMask: true},
   'largeicon-filter': {position: 'c5', spritesheet: 'largeicons', isMask: true},
@@ -183,6 +190,7 @@ UI.Icon.Descriptors = {
   'largeicon-hide-top-sidebar': {position: 'e6', spritesheet: 'largeicons', isMask: true},
   'largeicon-large-list': {position: 'e5', spritesheet: 'largeicons', isMask: true},
   'largeicon-layout-editor': {position: 'a4', spritesheet: 'largeicons', isMask: true},
+  'largeicon-load': {position: 'h5', spritesheet: 'largeicons', isMask: true},
   'largeicon-longclick-triangle': {position: 'b4', spritesheet: 'largeicons', isMask: true},
   'largeicon-menu': {position: 'c4', spritesheet: 'largeicons', isMask: true},
   'largeicon-navigator-domain': {position: 'd4', spritesheet: 'largeicons', isMask: true},

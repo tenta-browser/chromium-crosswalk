@@ -92,15 +92,15 @@ const CSSPropertyID kComputedPropertyArray[] = {
     CSSPropertyMinHeight, CSSPropertyMinWidth, CSSPropertyMixBlendMode,
     CSSPropertyObjectFit, CSSPropertyObjectPosition, CSSPropertyOffsetAnchor,
     CSSPropertyOffsetDistance, CSSPropertyOffsetPath, CSSPropertyOffsetPosition,
-    CSSPropertyOffsetRotate, CSSPropertyOffsetRotation, CSSPropertyOpacity,
-    CSSPropertyOrphans, CSSPropertyOutlineColor, CSSPropertyOutlineOffset,
-    CSSPropertyOutlineStyle, CSSPropertyOutlineWidth, CSSPropertyOverflowAnchor,
-    CSSPropertyOverflowWrap, CSSPropertyOverflowX, CSSPropertyOverflowY,
-    CSSPropertyPaddingBottom, CSSPropertyPaddingLeft, CSSPropertyPaddingRight,
-    CSSPropertyPaddingTop, CSSPropertyPointerEvents, CSSPropertyPosition,
-    CSSPropertyResize, CSSPropertyRight, CSSPropertyScrollBehavior,
-    CSSPropertySpeak, CSSPropertyTableLayout, CSSPropertyTabSize,
-    CSSPropertyTextAlign, CSSPropertyTextAlignLast, CSSPropertyTextDecoration,
+    CSSPropertyOffsetRotate, CSSPropertyOpacity, CSSPropertyOrphans,
+    CSSPropertyOutlineColor, CSSPropertyOutlineOffset, CSSPropertyOutlineStyle,
+    CSSPropertyOutlineWidth, CSSPropertyOverflowAnchor, CSSPropertyOverflowWrap,
+    CSSPropertyOverflowX, CSSPropertyOverflowY, CSSPropertyPaddingBottom,
+    CSSPropertyPaddingLeft, CSSPropertyPaddingRight, CSSPropertyPaddingTop,
+    CSSPropertyPointerEvents, CSSPropertyPosition, CSSPropertyResize,
+    CSSPropertyRight, CSSPropertyScrollBehavior, CSSPropertySpeak,
+    CSSPropertyTableLayout, CSSPropertyTabSize, CSSPropertyTextAlign,
+    CSSPropertyTextAlignLast, CSSPropertyTextDecoration,
     CSSPropertyTextDecorationLine, CSSPropertyTextDecorationStyle,
     CSSPropertyTextDecorationColor, CSSPropertyTextDecorationSkip,
     CSSPropertyTextJustify, CSSPropertyTextUnderlinePosition,
@@ -173,10 +173,8 @@ const CSSPropertyID kComputedPropertyArray[] = {
     CSSPropertyDominantBaseline, CSSPropertyTextAnchor, CSSPropertyWritingMode,
     CSSPropertyVectorEffect, CSSPropertyPaintOrder, CSSPropertyD, CSSPropertyCx,
     CSSPropertyCy, CSSPropertyX, CSSPropertyY, CSSPropertyR, CSSPropertyRx,
-    CSSPropertyRy, CSSPropertyScrollSnapType, CSSPropertyScrollSnapPointsX,
-    CSSPropertyScrollSnapPointsY, CSSPropertyScrollSnapCoordinate,
-    CSSPropertyScrollSnapDestination, CSSPropertyTranslate, CSSPropertyRotate,
-    CSSPropertyScale, CSSPropertyCaretColor};
+    CSSPropertyRy, CSSPropertyTranslate, CSSPropertyRotate, CSSPropertyScale,
+    CSSPropertyCaretColor, CSSPropertyLineBreak};
 
 CSSValueID CssIdentifierForFontSizeKeyword(int keyword_size) {
   DCHECK_NE(keyword_size, 0);
@@ -359,9 +357,20 @@ Node* CSSComputedStyleDeclaration::StyledNode() const {
   return node_.Get();
 }
 
+LayoutObject* CSSComputedStyleDeclaration::StyledLayoutObject() const {
+  auto* node = StyledNode();
+  if (!node)
+    return nullptr;
+
+  if (pseudo_element_specifier_ != kPseudoIdNone && node == node_.Get())
+    return nullptr;
+
+  return node->GetLayoutObject();
+}
+
 const CSSValue* CSSComputedStyleDeclaration::GetPropertyCSSValue(
     AtomicString custom_property_name) const {
-  Node* styled_node = this->StyledNode();
+  Node* styled_node = StyledNode();
   if (!styled_node)
     return nullptr;
 
@@ -370,9 +379,11 @@ const CSSValue* CSSComputedStyleDeclaration::GetPropertyCSSValue(
   const ComputedStyle* style = ComputeComputedStyle();
   if (!style)
     return nullptr;
+  // Don't use styled_node in case it was discarded or replaced in
+  // UpdateStyleAndLayoutTreeForNode.
   return ComputedStyleCSSValueMapping::Get(
       custom_property_name, *style,
-      styled_node->GetDocument().GetPropertyRegistry());
+      StyledNode()->GetDocument().GetPropertyRegistry());
 }
 
 std::unique_ptr<HashMap<AtomicString, RefPtr<CSSVariableData>>>
@@ -385,7 +396,7 @@ CSSComputedStyleDeclaration::GetVariables() const {
 
 const CSSValue* CSSComputedStyleDeclaration::GetPropertyCSSValue(
     CSSPropertyID property_id) const {
-  Node* styled_node = this->StyledNode();
+  Node* styled_node = StyledNode();
   if (!styled_node)
     return nullptr;
 
@@ -394,8 +405,8 @@ const CSSValue* CSSComputedStyleDeclaration::GetPropertyCSSValue(
 
   // The style recalc could have caused the styled node to be discarded or
   // replaced if it was a PseudoElement so we need to update it.
-  styled_node = this->StyledNode();
-  LayoutObject* layout_object = styled_node->GetLayoutObject();
+  styled_node = StyledNode();
+  LayoutObject* layout_object = StyledLayoutObject();
 
   const ComputedStyle* style = ComputeComputedStyle();
 
@@ -407,9 +418,9 @@ const CSSValue* CSSComputedStyleDeclaration::GetPropertyCSSValue(
 
   if (force_full_layout) {
     document.UpdateStyleAndLayoutIgnorePendingStylesheetsForNode(styled_node);
-    styled_node = this->StyledNode();
+    styled_node = StyledNode();
     style = ComputeComputedStyle();
-    layout_object = styled_node->GetLayoutObject();
+    layout_object = StyledLayoutObject();
   }
 
   if (!style)
@@ -480,7 +491,7 @@ MutableStylePropertySet* CSSComputedStyleDeclaration::CopyPropertiesInSet(
     if (value)
       list.push_back(CSSProperty(properties[i], *value, false));
   }
-  return MutableStylePropertySet::Create(list.Data(), list.size());
+  return MutableStylePropertySet::Create(list.data(), list.size());
 }
 
 CSSRule* CSSComputedStyleDeclaration::parentRule() const {

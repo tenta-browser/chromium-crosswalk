@@ -4,9 +4,10 @@
 
 #include "core/origin_trials/OriginTrialContext.h"
 
+#include <memory>
 #include "core/HTMLNames.h"
 #include "core/dom/DOMException.h"
-#include "core/frame/FrameView.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/html/HTMLHeadElement.h"
 #include "core/html/HTMLMetaElement.h"
 #include "core/testing/DummyPageHolder.h"
@@ -14,12 +15,11 @@
 #include "platform/testing/HistogramTester.h"
 #include "platform/weborigin/KURL.h"
 #include "platform/weborigin/SecurityOrigin.h"
+#include "platform/wtf/PtrUtil.h"
+#include "platform/wtf/Vector.h"
 #include "public/platform/WebOriginTrialTokenStatus.h"
 #include "public/platform/WebTrialTokenValidator.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "wtf/PtrUtil.h"
-#include "wtf/Vector.h"
-#include <memory>
 
 namespace blink {
 namespace {
@@ -71,17 +71,17 @@ class MockTokenValidator : public WebTrialTokenValidator {
 class OriginTrialContextTest : public ::testing::Test {
  protected:
   OriginTrialContextTest()
-      : framework_was_enabled_(RuntimeEnabledFeatures::originTrialsEnabled()),
+      : framework_was_enabled_(RuntimeEnabledFeatures::OriginTrialsEnabled()),
         execution_context_(new NullExecutionContext()),
         token_validator_(WTF::MakeUnique<MockTokenValidator>()),
         origin_trial_context_(new OriginTrialContext(*execution_context_,
                                                      token_validator_.get())),
         histogram_tester_(new HistogramTester()) {
-    RuntimeEnabledFeatures::setOriginTrialsEnabled(true);
+    RuntimeEnabledFeatures::SetOriginTrialsEnabled(true);
   }
 
   ~OriginTrialContextTest() {
-    RuntimeEnabledFeatures::setOriginTrialsEnabled(framework_was_enabled_);
+    RuntimeEnabledFeatures::SetOriginTrialsEnabled(framework_was_enabled_);
   }
 
   MockTokenValidator* TokenValidator() { return token_validator_.get(); }

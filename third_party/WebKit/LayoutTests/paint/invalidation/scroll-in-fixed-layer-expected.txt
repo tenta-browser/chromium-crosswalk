@@ -4,8 +4,18 @@
       "name": "LayoutView #document",
       "bounds": [800, 2016],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
+        {
+          "object": "LayoutBlockFlow (positioned) DIV class='absolute green'",
+          "rect": [100, 1150, 100, 100],
+          "reason": "subtree"
+        },
+        {
+          "object": "LayoutBlockFlow (positioned) DIV class='absolute red'",
+          "rect": [100, 1150, 100, 100],
+          "reason": "subtree"
+        },
         {
           "object": "LayoutBlockFlow (positioned) DIV id='moveMe' class='fixed clipped'",
           "rect": [100, 1150, 100, 100],

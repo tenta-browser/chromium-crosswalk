@@ -54,10 +54,6 @@
 
 namespace content {
 
-#if defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_MACOSX)
-ZygoteHandle g_ppapi_zygote;
-#endif  // defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_MACOSX)
-
 // NOTE: changes to this class need to be reviewed by the security team.
 class PpapiPluginSandboxedProcessLauncherDelegate
     : public content::SandboxedProcessLauncherDelegate {
@@ -73,10 +69,6 @@ class PpapiPluginSandboxedProcessLauncherDelegate
   ~PpapiPluginSandboxedProcessLauncherDelegate() override {}
 
 #if defined(OS_WIN)
-  bool ShouldSandbox() override {
-    return !is_broker_;
-  }
-
   bool PreSpawnTarget(sandbox::TargetPolicy* policy) override {
     if (is_broker_)
       return true;
@@ -111,7 +103,7 @@ class PpapiPluginSandboxedProcessLauncherDelegate
   }
 
 #elif defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
-  ZygoteHandle* GetZygote() override {
+  ZygoteHandle GetZygote() override {
     const base::CommandLine& browser_command_line =
         *base::CommandLine::ForCurrentProcess();
     base::CommandLine::StringType plugin_launcher = browser_command_line
@@ -123,6 +115,10 @@ class PpapiPluginSandboxedProcessLauncherDelegate
 #endif  // OS_WIN
 
   SandboxType GetSandboxType() override {
+#if defined(OS_WIN)
+    if (is_broker_)
+      return SANDBOX_TYPE_NO_SANDBOX;
+#endif  // OS_WIN
     return SANDBOX_TYPE_PPAPI;
   }
 
@@ -203,14 +199,6 @@ PpapiPluginProcessHost* PpapiPluginProcessHost::CreateBrokerHost(
   NOTREACHED();  // Init is not expected to fail.
   return NULL;
 }
-
-#if defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_MACOSX)
-// static
-void PpapiPluginProcessHost::EarlyZygoteLaunch() {
-  DCHECK(!g_ppapi_zygote);
-  g_ppapi_zygote = CreateZygote();
-}
-#endif  // defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_MACOSX)
 
 // static
 void PpapiPluginProcessHost::DidCreateOutOfProcessInstance(
@@ -483,8 +471,6 @@ bool PpapiPluginProcessHost::OnMessageReceived(const IPC::Message& msg) {
   IPC_BEGIN_MESSAGE_MAP(PpapiPluginProcessHost, msg)
     IPC_MESSAGE_HANDLER(PpapiHostMsg_ChannelCreated,
                         OnRendererPluginChannelCreated)
-    IPC_MESSAGE_HANDLER(PpapiHostMsg_FieldTrialActivated,
-                        OnFieldTrialActivated);
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
   DCHECK(handled);
@@ -502,14 +488,6 @@ void PpapiPluginProcessHost::OnChannelConnected(int32_t peer_pid) {
   for (size_t i = 0; i < pending_requests_.size(); i++)
     RequestPluginChannel(pending_requests_[i]);
   pending_requests_.clear();
-}
-
-void PpapiPluginProcessHost::OnFieldTrialActivated(
-    const std::string& trial_name) {
-  // Activate the trial in the browser process to match its state in the
-  // PPAPI process. This is done by calling FindFullName which finalizes the
-  // group and activates the trial.
-  base::FieldTrialList::FindFullName(trial_name);
 }
 
 // Called when the browser <--> plugin channel has an error. This normally

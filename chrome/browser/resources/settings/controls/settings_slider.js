@@ -23,6 +23,16 @@ Polymer({
     /** @type {!Array<number>} Values corresponding to each tick. */
     tickValues: {type: Array, value: []},
 
+    /**
+     * A scale factor used to support fractional pref values since paper-slider
+     * only supports integers. This is not compatible with |tickValues|,
+     * i.e. if |scale| is not 1 then |tickValues| must be empty.
+     */
+    scale: {
+      type: Number,
+      value: 1,
+    },
+
     min: Number,
 
     max: Number,
@@ -50,15 +60,15 @@ Polymer({
    * @private
    */
   onSliderChanged_: function() {
-    var sliderValue = isNaN(this.$.slider.immediateValue)
-                         ? this.$.slider.value
-                         : this.$.slider.immediateValue;
+    var sliderValue = isNaN(this.$.slider.immediateValue) ?
+        this.$.slider.value :
+        this.$.slider.immediateValue;
 
     var newValue;
     if (this.tickValues && this.tickValues.length > 0)
       newValue = this.tickValues[sliderValue];
     else
-      newValue = sliderValue;
+      newValue = sliderValue / this.scale;
 
     this.set('pref.value', newValue);
   },
@@ -77,9 +87,11 @@ Polymer({
   valueChanged_: function() {
     // If |tickValues| is empty, simply set current value to the slider.
     if (this.tickValues.length == 0) {
-      this.$.slider.value = this.pref.value;
+      this.$.slider.value =
+          /** @type {number} */ (this.pref.value) * this.scale;
       return;
     }
+    assert(this.scale == 1);
 
     // First update the slider settings if |tickValues| was set.
     var numTicks = Math.max(1, this.tickValues.length);
@@ -135,5 +147,14 @@ Polymer({
 
     assert(typeof closestIndex != 'undefined');
     return closestIndex;
+  },
+
+  /**
+   * TODO(scottchen): temporary fix until polymer gesture bug resolved. See:
+   * https://github.com/PolymerElements/paper-slider/issues/186
+   * @private
+   */
+  resetTrackLock_: function() {
+    Polymer.Gestures.gestures.tap.reset();
   },
 });

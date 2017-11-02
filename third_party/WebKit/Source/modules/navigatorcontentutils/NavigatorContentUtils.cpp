@@ -95,7 +95,7 @@ static bool IsSchemeWhitelisted(const String& scheme) {
     InitCustomSchemeHandlerWhitelist();
 
   StringBuilder builder;
-  builder.Append(scheme.DeprecatedLower().Ascii().Data());
+  builder.Append(scheme.DeprecatedLower().Ascii().data());
 
   return g_scheme_whitelist->Contains(builder.ToString());
 }
@@ -147,7 +147,7 @@ void NavigatorContentUtils::registerProtocolHandler(
     return;
 
   Document* document = navigator.GetFrame()->GetDocument();
-  ASSERT(document);
+  DCHECK(document);
 
   if (!VerifyCustomHandlerURL(*document, url, exception_state))
     return;
@@ -158,8 +158,8 @@ void NavigatorContentUtils::registerProtocolHandler(
   // Count usage; perhaps we can lock this to secure contexts.
   UseCounter::Count(*document,
                     document->IsSecureContext()
-                        ? UseCounter::kRegisterProtocolHandlerSecureOrigin
-                        : UseCounter::kRegisterProtocolHandlerInsecureOrigin);
+                        ? WebFeature::kRegisterProtocolHandlerSecureOrigin
+                        : WebFeature::kRegisterProtocolHandlerInsecureOrigin);
 
   NavigatorContentUtils::From(navigator)->Client()->RegisterProtocolHandler(
       scheme, document->CompleteURL(url), title);
@@ -180,7 +180,7 @@ static String CustomHandlersStateString(
       return declined_handler;
   }
 
-  ASSERT_NOT_REACHED();
+  NOTREACHED();
   return String();
 }
 
@@ -195,7 +195,7 @@ String NavigatorContentUtils::isProtocolHandlerRegistered(
     return declined;
 
   Document* document = navigator.GetFrame()->GetDocument();
-  ASSERT(document);
+  DCHECK(document);
   if (document->IsContextDestroyed())
     return declined;
 
@@ -220,7 +220,7 @@ void NavigatorContentUtils::unregisterProtocolHandler(
     return;
 
   Document* document = navigator.GetFrame()->GetDocument();
-  ASSERT(document);
+  DCHECK(document);
 
   if (!VerifyCustomHandlerURL(*document, url, exception_state))
     return;

@@ -30,6 +30,7 @@
 #include "test/test_paths.h"
 #include "test/win/child_launcher.h"
 #include "util/file/file_io.h"
+#include "util/misc/from_pointer_cast.h"
 #include "util/misc/random_string.h"
 #include "util/misc/uuid.h"
 #include "util/win/command_line.h"
@@ -41,7 +42,7 @@ namespace crashpad {
 namespace test {
 namespace {
 
-const wchar_t kNtdllName[] = L"\\ntdll.dll";
+constexpr wchar_t kNtdllName[] = L"\\ntdll.dll";
 
 bool IsProcessWow64(HANDLE process_handle) {
   static const auto is_wow64_process =
@@ -100,7 +101,7 @@ TEST(ProcessInfo, Self) {
   std::vector<ProcessInfo::Module> modules;
   EXPECT_TRUE(process_info.Modules(&modules));
   ASSERT_GE(modules.size(), 2u);
-  const wchar_t kSelfName[] = L"\\crashpad_util_test.exe";
+  static constexpr wchar_t kSelfName[] = L"\\crashpad_util_test.exe";
   ASSERT_GE(modules[0].name.size(), wcslen(kSelfName));
   EXPECT_EQ(modules[0].name.substr(modules[0].name.size() - wcslen(kSelfName)),
             kSelfName);
@@ -125,7 +126,7 @@ TEST(ProcessInfo, Self) {
   // Find something we know is a code address and confirm expected memory
   // information settings.
   VerifyAddressInInCodePage(process_info,
-                            reinterpret_cast<WinVMAddress>(_ReturnAddress()));
+                            FromPointerCast<WinVMAddress>(_ReturnAddress()));
 }
 
 void TestOtherProcess(const base::string16& directory_modification) {
@@ -151,7 +152,7 @@ void TestOtherProcess(const base::string16& directory_modification) {
   AppendCommandLineArgument(done_uuid.ToString16(), &args);
 
   ChildLauncher child(child_test_executable, args);
-  child.Start();
+  ASSERT_NO_FATAL_FAILURE(child.Start());
 
   // The child sends us a code address we can look up in the memory map.
   WinVMAddress code_address;
@@ -177,7 +178,7 @@ void TestOtherProcess(const base::string16& directory_modification) {
             kNtdllName);
   // lz32.dll is an uncommonly-used-but-always-available module that the test
   // binary manually loads.
-  const wchar_t kLz32dllName[] = L"\\lz32.dll";
+  static constexpr wchar_t kLz32dllName[] = L"\\lz32.dll";
   ASSERT_GE(modules.back().name.size(), wcslen(kLz32dllName));
   EXPECT_EQ(modules.back().name.substr(modules.back().name.size() -
                                        wcslen(kLz32dllName)),
@@ -600,7 +601,7 @@ TEST(ProcessInfo, Handles) {
 
       // OBJ_INHERIT from ntdef.h, but including that conflicts with other
       // headers.
-      const int kObjInherit = 0x2;
+      constexpr int kObjInherit = 0x2;
       EXPECT_EQ(handle.attributes, kObjInherit);
     }
     if (handle.handle == HandleToInt(scoped_key.get())) {
@@ -632,7 +633,7 @@ TEST(ProcessInfo, Handles) {
 }
 
 TEST(ProcessInfo, OutOfRangeCheck) {
-  const size_t kAllocationSize = 12345;
+  constexpr size_t kAllocationSize = 12345;
   std::unique_ptr<char[]> safe_memory(new char[kAllocationSize]);
 
   ProcessInfo info;
@@ -640,7 +641,7 @@ TEST(ProcessInfo, OutOfRangeCheck) {
 
   EXPECT_TRUE(
       info.LoggingRangeIsFullyReadable(CheckedRange<WinVMAddress, WinVMSize>(
-          reinterpret_cast<WinVMAddress>(safe_memory.get()), kAllocationSize)));
+          FromPointerCast<WinVMAddress>(safe_memory.get()), kAllocationSize)));
   EXPECT_FALSE(info.LoggingRangeIsFullyReadable(
       CheckedRange<WinVMAddress, WinVMSize>(0, 1024)));
 }

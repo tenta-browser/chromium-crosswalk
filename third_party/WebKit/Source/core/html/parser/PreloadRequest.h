@@ -12,6 +12,7 @@
 #include "platform/loader/fetch/FetchParameters.h"
 #include "platform/loader/fetch/IntegrityMetadata.h"
 #include "platform/loader/fetch/Resource.h"
+#include "platform/loader/fetch/ResourceFetcher.h"
 #include "platform/weborigin/SecurityPolicy.h"
 #include "platform/wtf/Allocator.h"
 #include "platform/wtf/PtrUtil.h"
@@ -43,6 +44,7 @@ class CORE_EXPORT PreloadRequest {
       Resource::Type resource_type,
       const ReferrerPolicy referrer_policy,
       ReferrerSource referrer_source,
+      ResourceFetcher::IsImageSet is_image_set,
       const FetchParameters::ResourceWidth& resource_width =
           FetchParameters::ResourceWidth(),
       const ClientHintsPreferences& client_hints_preferences =
@@ -59,7 +61,7 @@ class CORE_EXPORT PreloadRequest {
     return WTF::WrapUnique(new PreloadRequest(
         initiator_name, initiator_position, resource_url, base_url,
         resource_type, resource_width, client_hints_preferences, request_type,
-        referrer_policy, referrer_source));
+        referrer_policy, referrer_source, is_image_set));
   }
 
   bool IsSafeToSendToAnotherThread() const;
@@ -92,14 +94,20 @@ class CORE_EXPORT PreloadRequest {
     return client_hints_preferences_;
   }
   ReferrerPolicy GetReferrerPolicy() const { return referrer_policy_; }
+
+  // Only scripts and css stylesheets need to have integrity set on preloads.
+  // This is because neither resource keeps raw data around to redo an
+  // integrity check. A resource in memory cache needs integrity
+  // data cached to match an outgoing request.
   void SetIntegrityMetadata(const IntegrityMetadataSet& metadata_set) {
     integrity_metadata_ = metadata_set;
   }
-  const IntegrityMetadataSet& IntegrityMetadata() const {
-    return integrity_metadata_;
-  }
   void SetFromInsertionScanner(const bool from_insertion_scanner) {
     from_insertion_scanner_ = from_insertion_scanner;
+  }
+
+  bool IsImageSetForTestingOnly() const {
+    return is_image_set_ == ResourceFetcher::kImageIsImageSet;
   }
 
  private:
@@ -112,7 +120,8 @@ class CORE_EXPORT PreloadRequest {
                  const ClientHintsPreferences& client_hints_preferences,
                  RequestType request_type,
                  const ReferrerPolicy referrer_policy,
-                 ReferrerSource referrer_source)
+                 ReferrerSource referrer_source,
+                 ResourceFetcher::IsImageSet is_image_set)
       : initiator_name_(initiator_name),
         initiator_position_(initiator_position),
         resource_url_(resource_url.IsolatedCopy()),
@@ -126,7 +135,8 @@ class CORE_EXPORT PreloadRequest {
         request_type_(request_type),
         referrer_policy_(referrer_policy),
         referrer_source_(referrer_source),
-        from_insertion_scanner_(false) {}
+        from_insertion_scanner_(false),
+        is_image_set_(is_image_set) {}
 
   KURL CompleteURL(Document*);
 
@@ -147,6 +157,7 @@ class CORE_EXPORT PreloadRequest {
   ReferrerSource referrer_source_;
   IntegrityMetadataSet integrity_metadata_;
   bool from_insertion_scanner_;
+  ResourceFetcher::IsImageSet is_image_set_;
 };
 
 typedef Vector<std::unique_ptr<PreloadRequest>> PreloadRequestStream;

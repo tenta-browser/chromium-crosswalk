@@ -6,11 +6,10 @@ package org.chromium.net;
 
 import android.os.ConditionVariable;
 import android.os.ParcelFileDescriptor;
-import android.os.StrictMode;
 import android.support.test.filters.SmallTest;
 
-import org.chromium.base.annotations.SuppressFBWarnings;
 import org.chromium.base.test.util.Feature;
+import org.chromium.net.CronetTestRule.CronetTestFramework;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -24,18 +23,11 @@ public class UploadDataProvidersTest extends CronetTestBase {
             + "lacinia lorem eros vel sapien.";
     private CronetTestFramework mTestFramework;
     private File mFile;
-    private StrictMode.VmPolicy mOldVmPolicy;
     private MockUrlRequestJobFactory mMockUrlRequestJobFactory;
 
     @Override
     protected void setUp() throws Exception {
         super.setUp();
-        mOldVmPolicy = StrictMode.getVmPolicy();
-        StrictMode.setVmPolicy(new StrictMode.VmPolicy.Builder()
-                                       .detectLeakedClosableObjects()
-                                       .penaltyLog()
-                                       .penaltyDeath()
-                                       .build());
         mTestFramework = startCronetTestFramework();
         assertTrue(NativeTestServer.startNativeTestServer(getContext()));
         // Add url interceptors after native application context is initialized.
@@ -49,25 +41,13 @@ public class UploadDataProvidersTest extends CronetTestBase {
         }
     }
 
-    @SuppressFBWarnings("DM_GC") // Used to trigger strictmode detecting leaked closeables
     @Override
     protected void tearDown() throws Exception {
-        try {
-            mMockUrlRequestJobFactory.shutdown();
-            NativeTestServer.shutdownNativeTestServer();
-            mTestFramework.mCronetEngine.shutdown();
-            assertTrue(mFile.delete());
-            // Run GC and finalizers a few times to pick up leaked closeables
-            for (int i = 0; i < 10; i++) {
-                System.gc();
-                System.runFinalization();
-            }
-            System.gc();
-            System.runFinalization();
-            super.tearDown();
-        } finally {
-            StrictMode.setVmPolicy(mOldVmPolicy);
-        }
+        mMockUrlRequestJobFactory.shutdown();
+        NativeTestServer.shutdownNativeTestServer();
+        mTestFramework.mCronetEngine.shutdown();
+        assertTrue(mFile.delete());
+        super.tearDown();
     }
 
     @SmallTest

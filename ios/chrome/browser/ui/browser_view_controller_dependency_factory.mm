@@ -13,11 +13,8 @@
 #include "components/toolbar/toolbar_model_impl.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #import "ios/chrome/browser/tabs/tab_model.h"
-#import "ios/chrome/browser/ui/activity_services/activity_service_controller.h"
-#import "ios/chrome/browser/ui/activity_services/share_protocol.h"
 #import "ios/chrome/browser/ui/alert_coordinator/alert_coordinator.h"
 #import "ios/chrome/browser/ui/key_commands_provider.h"
-#import "ios/chrome/browser/ui/preload_controller.h"
 #include "ios/chrome/browser/ui/toolbar/toolbar_model_delegate_ios.h"
 #include "ios/chrome/browser/ui/toolbar/toolbar_model_impl_ios.h"
 #import "ios/chrome/browser/ui/toolbar/web_toolbar_controller.h"
@@ -45,10 +42,6 @@ NSString* const kBrowserViewControllerSnackbarCategory =
   return self;
 }
 
-- (id<ShareProtocol>)shareControllerInstance {
-  return [ActivityServiceController sharedInstance];
-}
-
 - (PKAddPassesViewController*)newPassKitViewControllerForPass:(PKPass*)pass {
   return [[PKAddPassesViewController alloc] initWithPass:pass];
 }
@@ -62,15 +55,16 @@ NSString* const kBrowserViewControllerSnackbarCategory =
       l10n_util::GetStringUTF16(IDS_IOS_GENERIC_PASSKIT_ERROR), true);
 }
 
-- (PreloadController*)newPreloadController {
-  return [[PreloadController alloc] initWithBrowserState:browserState_];
-}
-
-- (TabStripController*)newTabStripControllerWithTabModel:(TabModel*)model {
+- (TabStripController*)
+newTabStripControllerWithTabModel:(TabModel*)model
+                       dispatcher:(id<ApplicationCommands, BrowserCommands>)
+                                      dispatcher {
   TabStrip::Style style = TabStrip::kStyleDark;
   if (browserState_ && browserState_->IsOffTheRecord())
     style = TabStrip::kStyleIncognito;
-  return [[TabStripController alloc] initWithTabModel:model style:style];
+  return [[TabStripController alloc] initWithTabModel:model
+                                                style:style
+                                           dispatcher:dispatcher];
 }
 
 - (ToolbarModelIOS*)newToolbarModelIOSWithDelegate:
@@ -81,11 +75,14 @@ NSString* const kBrowserViewControllerSnackbarCategory =
 - (WebToolbarController*)
 newWebToolbarControllerWithDelegate:(id<WebToolbarDelegate>)delegate
                           urlLoader:(id<UrlLoader>)urlLoader
-                    preloadProvider:(id<PreloadProvider>)preload {
+                    preloadProvider:(id<PreloadProvider>)preload
+                         dispatcher:(id<ApplicationCommands, BrowserCommands>)
+                                        dispatcher {
   return [[WebToolbarController alloc] initWithDelegate:delegate
                                               urlLoader:urlLoader
                                            browserState:browserState_
-                                        preloadProvider:preload];
+                                        preloadProvider:preload
+                                             dispatcher:dispatcher];
 }
 
 - (KeyCommandsProvider*)newKeyCommandsProvider {

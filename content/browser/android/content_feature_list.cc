@@ -7,6 +7,7 @@
 #include "base/android/jni_string.h"
 #include "base/feature_list.h"
 #include "base/macros.h"
+#include "content/public/common/content_features.h"
 #include "jni/ContentFeatureList_jni.h"
 
 using base::android::ConvertJavaStringToUTF8;
@@ -46,10 +47,6 @@ static jboolean IsEnabled(JNIEnv* env,
   const base::Feature* feature =
       FindFeatureExposedToJava(ConvertJavaStringToUTF8(env, jfeature_name));
   return base::FeatureList::IsEnabled(*feature);
-}
-
-bool RegisterContentFeatureListJni(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 }  // namespace android

@@ -25,20 +25,19 @@ typedef std::pair<bool, bool> SlimmingPaintAndRootLayerScrolling;
 class PrePaintTreeWalkTest
     : public ::testing::WithParamInterface<SlimmingPaintAndRootLayerScrolling>,
       private ScopedSlimmingPaintV2ForTest,
-      private ScopedSlimmingPaintInvalidationForTest,
       private ScopedRootLayerScrollingForTest,
       public RenderingTest {
  public:
   PrePaintTreeWalkTest()
       : ScopedSlimmingPaintV2ForTest(GetParam().second),
-        ScopedSlimmingPaintInvalidationForTest(true),
         ScopedRootLayerScrollingForTest(GetParam().first),
         RenderingTest(EmptyLocalFrameClient::Create()) {}
 
   const TransformPaintPropertyNode* FramePreTranslation() {
-    FrameView* frame_view = GetDocument().View();
-    if (RuntimeEnabledFeatures::rootLayerScrollingEnabled()) {
+    LocalFrameView* frame_view = GetDocument().View();
+    if (RuntimeEnabledFeatures::RootLayerScrollingEnabled()) {
       return frame_view->GetLayoutView()
+          ->FirstFragment()
           ->PaintProperties()
           ->PaintOffsetTranslation();
     }
@@ -46,9 +45,10 @@ class PrePaintTreeWalkTest
   }
 
   const TransformPaintPropertyNode* FrameScrollTranslation() {
-    FrameView* frame_view = GetDocument().View();
-    if (RuntimeEnabledFeatures::rootLayerScrollingEnabled()) {
+    LocalFrameView* frame_view = GetDocument().View();
+    if (RuntimeEnabledFeatures::RootLayerScrollingEnabled()) {
       return frame_view->GetLayoutView()
+          ->FirstFragment()
           ->PaintProperties()
           ->ScrollTranslation();
     }
@@ -94,9 +94,10 @@ TEST_P(PrePaintTreeWalkTest, PropertyTreesRebuiltWithBorderInvalidation) {
       "</style>"
       "<div id='transformed'></div>");
 
-  auto* transformed_element = GetDocument().GetElementById("transformed");
-  const auto* transformed_properties =
-      transformed_element->GetLayoutObject()->PaintProperties();
+  auto* transformed_element = GetDocument().getElementById("transformed");
+  const auto* transformed_properties = transformed_element->GetLayoutObject()
+                                           ->FirstFragment()
+                                           ->PaintProperties();
   EXPECT_EQ(TransformationMatrix().Translate(100, 100),
             transformed_properties->Transform()->Matrix());
 
@@ -135,9 +136,10 @@ TEST_P(PrePaintTreeWalkTest, PropertyTreesRebuiltWithCSSTransformInvalidation) {
       "</style>"
       "<div id='transformed' class='transformA'></div>");
 
-  auto* transformed_element = GetDocument().GetElementById("transformed");
-  const auto* transformed_properties =
-      transformed_element->GetLayoutObject()->PaintProperties();
+  auto* transformed_element = GetDocument().getElementById("transformed");
+  const auto* transformed_properties = transformed_element->GetLayoutObject()
+                                           ->FirstFragment()
+                                           ->PaintProperties();
   EXPECT_EQ(TransformationMatrix().Translate(100, 100),
             transformed_properties->Transform()->Matrix());
 
@@ -152,7 +154,7 @@ TEST_P(PrePaintTreeWalkTest, PropertyTreesRebuiltWithCSSTransformInvalidation) {
 
 TEST_P(PrePaintTreeWalkTest, PropertyTreesRebuiltWithOpacityInvalidation) {
   // In SPv1 mode, we don't need or store property tree nodes for effects.
-  if (!RuntimeEnabledFeatures::slimmingPaintV2Enabled())
+  if (!RuntimeEnabledFeatures::SlimmingPaintV2Enabled())
     return;
   SetBodyInnerHTML(
       "<style>"
@@ -161,9 +163,10 @@ TEST_P(PrePaintTreeWalkTest, PropertyTreesRebuiltWithOpacityInvalidation) {
       "</style>"
       "<div id='transparent' class='opacityA'></div>");
 
-  auto* transparent_element = GetDocument().GetElementById("transparent");
-  const auto* transparent_properties =
-      transparent_element->GetLayoutObject()->PaintProperties();
+  auto* transparent_element = GetDocument().getElementById("transparent");
+  const auto* transparent_properties = transparent_element->GetLayoutObject()
+                                           ->FirstFragment()
+                                           ->PaintProperties();
   EXPECT_EQ(0.9f, transparent_properties->Effect()->Opacity());
 
   // Invalidate the opacity property.
@@ -186,8 +189,8 @@ TEST_P(PrePaintTreeWalkTest, ClearSubsequenceCachingClipChange) {
       "  </div>"
       "</div>");
 
-  auto* parent = GetDocument().GetElementById("parent");
-  auto* child = GetDocument().GetElementById("child");
+  auto* parent = GetDocument().getElementById("parent");
+  auto* child = GetDocument().getElementById("child");
   auto* child_paint_layer =
       ToLayoutBoxModelObject(child->GetLayoutObject())->Layer();
   EXPECT_FALSE(child_paint_layer->NeedsRepaint());
@@ -211,8 +214,8 @@ TEST_P(PrePaintTreeWalkTest, ClearSubsequenceCachingClipChange2DTransform) {
       "  </div>"
       "</div>");
 
-  auto* parent = GetDocument().GetElementById("parent");
-  auto* child = GetDocument().GetElementById("child");
+  auto* parent = GetDocument().getElementById("parent");
+  auto* child = GetDocument().getElementById("child");
   auto* child_paint_layer =
       ToLayoutBoxModelObject(child->GetLayoutObject())->Layer();
   EXPECT_FALSE(child_paint_layer->NeedsRepaint());
@@ -237,8 +240,8 @@ TEST_P(PrePaintTreeWalkTest, ClearSubsequenceCachingClipChangePosAbs) {
       "  </div>"
       "</div>");
 
-  auto* parent = GetDocument().GetElementById("parent");
-  auto* child = GetDocument().GetElementById("child");
+  auto* parent = GetDocument().getElementById("parent");
+  auto* child = GetDocument().getElementById("child");
   auto* child_paint_layer =
       ToLayoutBoxModelObject(child->GetLayoutObject())->Layer();
   EXPECT_FALSE(child_paint_layer->NeedsRepaint());
@@ -265,8 +268,8 @@ TEST_P(PrePaintTreeWalkTest, ClearSubsequenceCachingClipChangePosFixed) {
       "  </div>"
       "</div>");
 
-  auto* parent = GetDocument().GetElementById("parent");
-  auto* child = GetDocument().GetElementById("child");
+  auto* parent = GetDocument().getElementById("parent");
+  auto* child = GetDocument().getElementById("child");
   auto* child_paint_layer =
       ToLayoutBoxModelObject(child->GetLayoutObject())->Layer();
   EXPECT_FALSE(child_paint_layer->NeedsRepaint());
@@ -278,6 +281,56 @@ TEST_P(PrePaintTreeWalkTest, ClearSubsequenceCachingClipChangePosFixed) {
   GetDocument().View()->UpdateAllLifecyclePhasesExceptPaint();
 
   EXPECT_TRUE(child_paint_layer->NeedsRepaint());
+}
+
+TEST_P(PrePaintTreeWalkTest, VisualRectClipForceSubtree) {
+  SetBodyInnerHTML(
+      "<style>"
+      "  #parent { height: 75px; position: relative; width: 100px; }"
+      "</style>"
+      "<div id='parent' style='height: 100px;'>"
+      "  <div id='child' style='overflow: hidden; width: 100%; height: 100%; "
+      "      position: relative'>"
+      "    <div>"
+      "      <div id='grandchild' style='width: 50px; height: 200px; '>"
+      "      </div>"
+      "    </div>"
+      "  </div>"
+      "</div>");
+
+  auto* grandchild = GetLayoutObjectByElementId("grandchild");
+
+  GetDocument().getElementById("parent")->removeAttribute("style");
+  GetDocument().View()->UpdateAllLifecyclePhases();
+
+  // In SPv2 mode, VisualRects are in the space of the containing transform
+  // node without applying any ancestor property nodes, including clip.
+  if (RuntimeEnabledFeatures::SlimmingPaintV2Enabled())
+    EXPECT_EQ(200, grandchild->VisualRect().Height());
+  else
+    EXPECT_EQ(75, grandchild->VisualRect().Height());
+}
+
+TEST_P(PrePaintTreeWalkTest, ClipChangeHasRadius) {
+  SetBodyInnerHTML(
+      "<style>"
+      "  #target {"
+      "    position: absolute;"
+      "    z-index: 0;"
+      "    overflow: hidden;"
+      "    width: 50px;"
+      "    height: 50px;"
+      "  }"
+      "</style>"
+      "<div id='target'></div>");
+
+  auto* target = GetDocument().getElementById("target");
+  auto* target_object = ToLayoutBoxModelObject(target->GetLayoutObject());
+  target->setAttribute(HTMLNames::styleAttr, "border-radius: 5px");
+  GetDocument().View()->UpdateAllLifecyclePhasesExceptPaint();
+  EXPECT_TRUE(target_object->Layer()->NeedsRepaint());
+  // And should not trigger any assert failure.
+  GetDocument().View()->UpdateAllLifecyclePhases();
 }
 
 }  // namespace blink

@@ -8,12 +8,14 @@
 #include <algorithm>
 #include <deque>
 #include <functional>
+#include <string>
+#include <utility>
 
 #include "net/quic/platform/api/quic_bug_tracker.h"
 #include "net/quic/platform/api/quic_export.h"
 #include "net/quic/platform/api/quic_string_piece.h"
-#include "net/spdy/spdy_header_block.h"
-#include "net/spdy/spdy_headers_handler_interface.h"
+#include "net/spdy/core/spdy_header_block.h"
+#include "net/spdy/core/spdy_headers_handler_interface.h"
 
 namespace net {
 
@@ -33,7 +35,6 @@ class QUIC_EXPORT_PRIVATE QuicHeaderList : public SpdyHeadersHandlerInterface {
   // From SpdyHeadersHandlerInteface.
   void OnHeaderBlockStart() override;
   void OnHeader(QuicStringPiece name, QuicStringPiece value) override;
-  void OnHeaderBlockEnd(size_t uncompressed_header_bytes) override;
   void OnHeaderBlockEnd(size_t uncompressed_header_bytes,
                         size_t compressed_header_bytes) override;
 
@@ -48,15 +49,27 @@ class QUIC_EXPORT_PRIVATE QuicHeaderList : public SpdyHeadersHandlerInterface {
   }
   size_t compressed_header_bytes() const { return compressed_header_bytes_; }
 
-  void set_max_uncompressed_header_bytes(size_t max_uncompressed_header_bytes) {
-    max_uncompressed_header_bytes_ = max_uncompressed_header_bytes;
+  void set_max_header_list_size(size_t max_header_list_size) {
+    max_header_list_size_ = max_header_list_size;
   }
+
+  size_t max_header_list_size() const { return max_header_list_size_; }
 
   std::string DebugString() const;
 
  private:
   std::deque<std::pair<std::string, std::string>> header_list_;
-  size_t max_uncompressed_header_bytes_;
+
+  // The limit on the size of the header list (defined by spec as name + value +
+  // overhead for each header field). Headers over this limit will not be
+  // buffered, and the list will be cleared upon OnHeaderBlockEnd.
+  size_t max_header_list_size_;
+
+  // Defined per the spec as the size of all header fields with an additional
+  // overhead for each field.
+  size_t current_header_list_size_;
+
+  // TODO(dahollings) Are these fields necessary?
   size_t uncompressed_header_bytes_;
   size_t compressed_header_bytes_;
 };

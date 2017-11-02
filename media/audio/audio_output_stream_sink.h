@@ -27,7 +27,7 @@ namespace media {
 // TODO(dalecurtis): Delete this class once we have a proper mojo audio service;
 // tracked by http://crbug.com/425368
 class MEDIA_EXPORT AudioOutputStreamSink
-    : NON_EXPORTED_BASE(public RestartableAudioRendererSink),
+    : public RestartableAudioRendererSink,
       public AudioOutputStream::AudioSourceCallback {
  public:
   AudioOutputStreamSink();
@@ -41,6 +41,7 @@ class MEDIA_EXPORT AudioOutputStreamSink
   void Play() override;
   bool SetVolume(double volume) override;
   OutputDeviceInfo GetOutputDeviceInfo() override;
+  bool IsOptimizedForHardwareParameters() override;
   bool CurrentThreadIsRenderingThread() override;
 
   // AudioSourceCallback implementation.
@@ -48,7 +49,7 @@ class MEDIA_EXPORT AudioOutputStreamSink
                  base::TimeTicks delay_timestamp,
                  int prior_frames_skipped,
                  AudioBus* dest) override;
-  void OnError(AudioOutputStream* stream) override;
+  void OnError() override;
 
  private:
   ~AudioOutputStreamSink() override;

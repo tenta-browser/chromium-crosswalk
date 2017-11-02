@@ -5,6 +5,7 @@
 #include "components/signin/ios/browser/profile_oauth2_token_service_ios_delegate.h"
 
 #include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/testing_pref_service.h"
@@ -18,6 +19,10 @@
 #include "google_apis/gaia/oauth2_token_service_test_util.h"
 #include "net/url_request/test_url_fetcher_factory.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 typedef ProfileOAuth2TokenServiceIOSProvider::AccountInfo ProviderAccount;
 

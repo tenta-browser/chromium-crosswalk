@@ -1,5 +1,4 @@
 set noparent
-dfalcantara@chromium.org
 dtrainor@chromium.org
 tedchoc@chromium.org
 twellington@chromium.org
@@ -12,3 +11,4 @@ mvanouwerkerk@chromium.org
 peconn@chromium.org
 
 # COMPONENT: UI>Browser>Mobile
+# OS: Android

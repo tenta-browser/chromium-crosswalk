@@ -15,12 +15,14 @@
 #include "mojo/public/cpp/bindings/strong_binding_set.h"
 #include "services/ui/gpu/gpu_main.h"
 #include "services/ui/gpu/interfaces/gpu_host.mojom.h"
-#include "services/ui/gpu/interfaces/gpu_service.mojom.h"
 #include "services/ui/public/interfaces/gpu.mojom.h"
+#include "services/viz/privileged/interfaces/gl/gpu_service.mojom.h"
+
+namespace viz {
+class ServerGpuMemoryBufferManager;
+}
 
 namespace ui {
-
-class ServerGpuMemoryBufferManager;
 
 namespace ws {
 
@@ -32,27 +34,41 @@ class GpuHostTest;
 
 class GpuHostDelegate;
 
-// Sets up connection from clients to the real service implementation in the GPU
-// process.
-class GpuHost : public mojom::GpuHost {
+// GpuHost sets up connection from clients to the real service implementation in
+// the GPU process.
+class GpuHost {
  public:
-  explicit GpuHost(GpuHostDelegate* delegate);
-  ~GpuHost() override;
+  GpuHost() = default;
+  virtual ~GpuHost() = default;
 
-  void Add(mojom::GpuRequest request);
+  virtual void Add(mojom::GpuRequest request) = 0;
+  virtual void OnAcceleratedWidgetAvailable(gfx::AcceleratedWidget widget) = 0;
+  virtual void OnAcceleratedWidgetDestroyed(gfx::AcceleratedWidget widget) = 0;
 
-  void OnAcceleratedWidgetAvailable(gfx::AcceleratedWidget widget);
-  void OnAcceleratedWidgetDestroyed(gfx::AcceleratedWidget widget);
+  // Requests a viz::mojom::FrameSinkManager interface from mus-gpu.
+  virtual void CreateFrameSinkManager(
+      viz::mojom::FrameSinkManagerRequest request,
+      viz::mojom::FrameSinkManagerClientPtr client) = 0;
+};
 
-  // Requests a cc::mojom::FrameSinkManager interface from mus-gpu.
-  void CreateFrameSinkManager(cc::mojom::FrameSinkManagerRequest request,
-                              cc::mojom::FrameSinkManagerClientPtr client);
+class DefaultGpuHost : public GpuHost, public mojom::GpuHost {
+ public:
+  explicit DefaultGpuHost(GpuHostDelegate* delegate);
+  ~DefaultGpuHost() override;
 
  private:
   friend class test::GpuHostTest;
 
   GpuClient* AddInternal(mojom::GpuRequest request);
   void OnBadMessageFromGpu();
+
+  // GpuHost:
+  void Add(mojom::GpuRequest request) override;
+  void OnAcceleratedWidgetAvailable(gfx::AcceleratedWidget widget) override;
+  void OnAcceleratedWidgetDestroyed(gfx::AcceleratedWidget widget) override;
+  void CreateFrameSinkManager(
+      viz::mojom::FrameSinkManagerRequest request,
+      viz::mojom::FrameSinkManagerClientPtr client) override;
 
   // mojom::GpuHost:
   void DidInitialize(const gpu::GPUInfo& gpu_info,
@@ -76,10 +92,10 @@ class GpuHost : public mojom::GpuHost {
   GpuHostDelegate* const delegate_;
   int32_t next_client_id_;
   scoped_refptr<base::SingleThreadTaskRunner> main_thread_task_runner_;
-  mojom::GpuServicePtr gpu_service_;
+  viz::mojom::GpuServicePtr gpu_service_;
   mojo::Binding<mojom::GpuHost> gpu_host_binding_;
   gpu::GPUInfo gpu_info_;
-  std::unique_ptr<ServerGpuMemoryBufferManager> gpu_memory_buffer_manager_;
+  std::unique_ptr<viz::ServerGpuMemoryBufferManager> gpu_memory_buffer_manager_;
 
   mojom::GpuMainPtr gpu_main_;
 
@@ -89,7 +105,7 @@ class GpuHost : public mojom::GpuHost {
 
   mojo::StrongBindingSet<mojom::Gpu> gpu_bindings_;
 
-  DISALLOW_COPY_AND_ASSIGN(GpuHost);
+  DISALLOW_COPY_AND_ASSIGN(DefaultGpuHost);
 };
 
 }  // namespace ws

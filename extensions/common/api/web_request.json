@@ -106,7 +106,7 @@
           "cancel": {
             "type": "boolean",
             "optional": true,
-            "description": "If true, the request is cancelled. Used in onBeforeRequest, this prevents the request from being sent."
+            "description": "If true, the request is cancelled. This prevents the request from being sent. This can be used as a response to the onBeforeRequest, onBeforeSendHeaders, onHeadersReceived and onAuthRequired events."
           },
           "redirectUrl": {
             "type": "string",
@@ -156,6 +156,7 @@
       {
         "name": "handlerBehaviorChanged",
         "type": "function",
+        "forIOThread": true,
         "description": "Needs to be called when the behavior of the webRequest handlers has changed to prevent incorrect handling due to caching. This function call is expensive. Don't call it often.",
         "parameters": [
           {"type": "function", "name": "callback", "optional": true, "parameters": []}

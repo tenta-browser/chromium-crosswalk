@@ -151,37 +151,6 @@ void TouchDataToValue(
                     touch_calibration_data.bounds.height());
 }
 
-std::string ColorProfileToString(display::ColorCalibrationProfile profile) {
-  switch (profile) {
-    case display::COLOR_PROFILE_STANDARD:
-      return "standard";
-    case display::COLOR_PROFILE_DYNAMIC:
-      return "dynamic";
-    case display::COLOR_PROFILE_MOVIE:
-      return "movie";
-    case display::COLOR_PROFILE_READING:
-      return "reading";
-    case display::NUM_COLOR_PROFILES:
-      break;
-  }
-  NOTREACHED();
-  return "";
-}
-
-display::ColorCalibrationProfile StringToColorProfile(
-    const std::string& value) {
-  if (value == "standard")
-    return display::COLOR_PROFILE_STANDARD;
-  else if (value == "dynamic")
-    return display::COLOR_PROFILE_DYNAMIC;
-  else if (value == "movie")
-    return display::COLOR_PROFILE_MOVIE;
-  else if (value == "reading")
-    return display::COLOR_PROFILE_READING;
-  NOTREACHED();
-  return display::COLOR_PROFILE_STANDARD;
-}
-
 display::DisplayManager* GetDisplayManager() {
   return ash::Shell::Get()->display_manager();
 }
@@ -273,14 +242,9 @@ void LoadDisplayProperties() {
     if (ValueToTouchData(*dict_value, &calibration_data))
       calibration_data_to_set = &calibration_data;
 
-    display::ColorCalibrationProfile color_profile =
-        display::COLOR_PROFILE_STANDARD;
-    std::string color_profile_name;
-    if (dict_value->GetString("color_profile_name", &color_profile_name))
-      color_profile = StringToColorProfile(color_profile_name);
     GetDisplayManager()->RegisterDisplayProperty(
         id, rotation, ui_scale, insets_to_set, resolution_in_pixels,
-        device_scale_factor, color_profile, calibration_data_to_set);
+        device_scale_factor, calibration_data_to_set);
   }
 }
 
@@ -303,6 +267,7 @@ void LoadDisplayRotationState() {
 
 void StoreDisplayLayoutPref(const display::DisplayIdList& list,
                             const display::DisplayLayout& display_layout) {
+  DCHECK(display::DisplayLayout::Validate(list, display_layout));
   std::string name = display::DisplayIdListToString(list);
 
   PrefService* local_state = g_browser_process->local_state();
@@ -328,6 +293,15 @@ void StoreCurrentDisplayLayoutPrefs() {
   display::DisplayIdList list = display_manager->GetCurrentDisplayIdList();
   const display::DisplayLayout& display_layout =
       display_manager->layout_store()->GetRegisteredDisplayLayout(list);
+
+  if (!display::DisplayLayout::Validate(list, display_layout)) {
+    // We should never apply an invalid layout, if we do, it persists and the
+    // user has no way of fixing it except by deleting the local state.
+    LOG(ERROR) << "Attempting to store an invalid display layout in the local"
+               << " state. Skipping.";
+    return;
+  }
+
   StoreDisplayLayoutPref(list, display_layout);
 }
 
@@ -367,10 +341,6 @@ void StoreCurrentDisplayProperties() {
     }
     if (!info.overscan_insets_in_dip().IsEmpty())
       InsetsToValue(info.overscan_insets_in_dip(), property_value.get());
-    if (info.color_profile() != display::COLOR_PROFILE_STANDARD) {
-      property_value->SetString(
-          "color_profile_name", ColorProfileToString(info.color_profile()));
-    }
     if (info.has_touch_calibration_data())
       TouchDataToValue(info.GetTouchCalibrationData(), property_value.get());
     pref_data->Set(base::Int64ToString(id), std::move(property_value));

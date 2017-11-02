@@ -5,65 +5,20 @@
 #ifndef CHROME_BROWSER_CHROMEOS_SYSTEM_INPUT_DEVICE_SETTINGS_H_
 #define CHROME_BROWSER_CHROMEOS_SYSTEM_INPUT_DEVICE_SETTINGS_H_
 
-#include "base/callback.h"
-#include "base/logging.h"
+#include "base/callback_forward.h"
+#include "base/optional.h"
 #include "chromeos/chromeos_export.h"
 
 class PrefRegistrySimple;
+
+namespace ash {
+enum class TouchscreenEnabledSource;
+}  // namespace ash
 
 namespace chromeos {
 namespace system {
 
 class InputDeviceSettings;
-
-namespace internal {
-
-// Objects of this class are intended to store values of type T, but might have
-// "unset" state. Object will be in "unset" state until Set is called first
-// time.
-template <typename T>
-class Optional {
- public:
-  Optional() : value_(), is_set_(false) {}
-
-  Optional& operator=(const Optional& other) {
-    if (&other != this) {
-      value_ = other.value_;
-      is_set_ = other.is_set_;
-    }
-    return *this;
-  }
-
-  void Set(const T& value) {
-    is_set_ = true;
-    value_ = value;
-  }
-
-  bool is_set() const { return is_set_; }
-
-  T value() const {
-    DCHECK(is_set());
-    return value_;
-  }
-
-  // Tries to update |this| with |update|. If |update| is unset or has same
-  // value as |this| method returns false. Otherwise |this| takes value of
-  // |update| and returns true.
-  bool Update(const Optional& update) {
-    if (update.is_set_ && (!is_set_ || value_ != update.value_)) {
-      value_ = update.value_;
-      is_set_ = true;
-      return true;
-    }
-    return false;
-  }
-
- private:
-  T value_;
-  bool is_set_;
-};
-
-}  // namespace internal
 
 // Min/max possible pointer sensitivity values.
 const int kMinPointerSensitivity = 1;
@@ -110,11 +65,11 @@ class TouchpadSettings {
                     InputDeviceSettings* input_device_settings);
 
  private:
-  internal::Optional<int> sensitivity_;
-  internal::Optional<bool> tap_to_click_;
-  internal::Optional<bool> three_finger_click_;
-  internal::Optional<bool> tap_dragging_;
-  internal::Optional<bool> natural_scroll_;
+  base::Optional<int> sensitivity_;
+  base::Optional<bool> tap_to_click_;
+  base::Optional<bool> three_finger_click_;
+  base::Optional<bool> tap_dragging_;
+  base::Optional<bool> natural_scroll_;
 };
 
 // Auxiliary class used to update several mouse settings at a time. User
@@ -137,6 +92,10 @@ class MouseSettings {
   bool GetPrimaryButtonRight() const;
   bool IsPrimaryButtonRightSet() const;
 
+  void SetReverseScroll(bool enabled);
+  bool GetReverseScroll() const;
+  bool IsReverseScrollSet() const;
+
   // Updates |this| with |settings|. If at least one setting was updated returns
   // true.
   bool Update(const MouseSettings& settings);
@@ -146,14 +105,15 @@ class MouseSettings {
                     InputDeviceSettings* input_device_settings);
 
  private:
-  internal::Optional<int> sensitivity_;
-  internal::Optional<bool> primary_button_right_;
+  base::Optional<int> sensitivity_;
+  base::Optional<bool> primary_button_right_;
+  base::Optional<bool> reverse_scroll_;
 };
 
 // Interface for configuring input device settings.
 class CHROMEOS_EXPORT InputDeviceSettings {
  public:
-  typedef base::Callback<void(bool)> DeviceExistsCallback;
+  using DeviceExistsCallback = base::OnceCallback<void(bool)>;
 
   // Interface for faking touchpad and mouse. Accessed through
   // GetFakeInterface(), implemented only in FakeInputDeviceSettings.
@@ -174,9 +134,6 @@ class CHROMEOS_EXPORT InputDeviceSettings {
   // where other input devices like mouse are absent.
   static bool ForceKeyboardDrivenUINavigation();
 
-  // Registers local state pref names for touchscreen status.
-  static void RegisterPrefs(PrefRegistrySimple* registry);
-
   // Registers profile pref names for touchpad and touchscreen statuses.
   static void RegisterProfilePrefs(PrefRegistrySimple* registry);
 
@@ -184,24 +141,23 @@ class CHROMEOS_EXPORT InputDeviceSettings {
   // preferences.
   void UpdateTouchDevicesStatusFromPrefs();
 
-  // If |use_local_state| is true, returns the touchscreen status from local
-  // state, otherwise from user prefs.
-  bool IsTouchscreenEnabledInPrefs(bool use_local_state) const;
+  // Returns the current touchscreen enabled status as specified by |source|.
+  // Note that the actual state of the touchscreen device is automatically
+  // determined based on the requests of multiple sources.
+  bool GetTouchscreenEnabled(ash::TouchscreenEnabledSource source) const;
 
-  // Sets the status of touchscreen to |enabled| in prefs. If |use_local_state|,
-  // pref is set in local state, otherwise in user pref.
-  void SetTouchscreenEnabledInPrefs(bool enabled, bool use_local_state);
-
-  // Updates the enabled/disabled status of the touchscreen from prefs. Enabled
-  // if both local state and user prefs are enabled, otherwise disabled.
-  void UpdateTouchscreenStatusFromPrefs();
+  // Sets |source|'s requested touchscreen enabled status to |enabled|. Note
+  // that the actual state of the touchscreen device is automatically determined
+  // based on the requests of multiple sources.
+  void SetTouchscreenEnabled(bool enabled,
+                             ash::TouchscreenEnabledSource source);
 
   // Toggles the status of touchpad between enabled and disabled.
   void ToggleTouchpad();
 
   // Calls |callback|, possibly asynchronously, after determining if a touchpad
   // is connected.
-  virtual void TouchpadExists(const DeviceExistsCallback& callback) = 0;
+  virtual void TouchpadExists(DeviceExistsCallback callback) = 0;
 
   // Updates several touchpad settings at a time. Updates only settings that
   // are set in |settings| object. It is more efficient to use this method to
@@ -226,7 +182,7 @@ class CHROMEOS_EXPORT InputDeviceSettings {
 
   // Calls |callback|, possibly asynchronously, after determining if a mouse is
   // connected.
-  virtual void MouseExists(const DeviceExistsCallback& callback) = 0;
+  virtual void MouseExists(DeviceExistsCallback callback) = 0;
 
   // Updates several mouse settings at a time. Updates only settings that
   // are set in |settings| object. It is more efficient to use this method to
@@ -240,6 +196,9 @@ class CHROMEOS_EXPORT InputDeviceSettings {
   // Sets the primary mouse button to the right button if |right| is true.
   virtual void SetPrimaryButtonRight(bool right) = 0;
 
+  // Turns mouse reverse scrolling on/off.
+  virtual void SetMouseReverseScroll(bool enabled) = 0;
+
   // Reapplies previously set touchpad settings.
   virtual void ReapplyTouchpadSettings() = 0;
 
@@ -252,6 +211,14 @@ class CHROMEOS_EXPORT InputDeviceSettings {
  private:
   virtual void SetInternalTouchpadEnabled(bool enabled) {}
   virtual void SetTouchscreensEnabled(bool enabled) {}
+
+  // Updates the actual enabled/disabled status of the touchscreen. Touchscreen
+  // is enabled if all the touchscreen enabled sources are enabled.
+  void UpdateTouchscreenEnabled();
+
+  // The touchscreen state which is associated with the global touchscreen
+  // enabled source.
+  bool global_touchscreen_enabled_ = false;
 };
 
 }  // namespace system

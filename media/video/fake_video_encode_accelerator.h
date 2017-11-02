@@ -15,7 +15,6 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "media/base/bitstream_buffer.h"
-#include "media/base/media_export.h"
 #include "media/video/video_encode_accelerator.h"
 
 namespace base {
@@ -26,7 +25,9 @@ class SingleThreadTaskRunner;
 
 namespace media {
 
-class MEDIA_EXPORT FakeVideoEncodeAccelerator : public VideoEncodeAccelerator {
+static const size_t kMinimumOutputBufferSize = 123456;
+
+class FakeVideoEncodeAccelerator : public VideoEncodeAccelerator {
  public:
   explicit FakeVideoEncodeAccelerator(
       const scoped_refptr<base::SingleThreadTaskRunner>& task_runner);
@@ -50,6 +51,8 @@ class MEDIA_EXPORT FakeVideoEncodeAccelerator : public VideoEncodeAccelerator {
   }
   void SendDummyFrameForTesting(bool key_frame);
   void SetWillInitializationSucceed(bool will_initialization_succeed);
+
+  size_t minimum_output_buffer_size() const { return kMinimumOutputBufferSize; }
 
  private:
   void DoRequireBitstreamBuffers(unsigned int input_count,

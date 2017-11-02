@@ -18,9 +18,9 @@
 #include "bindings/core/v8/V8Element.h"
 #include "core/animation/ElementAnimation.h"
 #include "core/dom/ChildNode.h"
-#include "core/dom/ElementFullscreen.h"
 #include "core/dom/NonDocumentTypeChildNode.h"
 #include "core/dom/ParentNode.h"
+#include "core/fullscreen/ElementFullscreen.h"
 
 namespace blink {
 
@@ -76,8 +76,8 @@ void V8ElementSequenceOrByteStringDoubleOrStringRecord::toImpl(v8::Isolate* isol
   if (conversionMode == UnionTypeConversionMode::kNullable && IsUndefinedOrNull(v8Value))
     return;
 
-  if (v8Value->IsArray()) {
-    HeapVector<Member<Element>> cppValue = ToMemberNativeArray<Element>(v8Value, 0, isolate, exceptionState);
+  if (HasCallableIteratorSymbol(isolate, v8Value, exceptionState)) {
+    HeapVector<Member<Element>> cppValue = NativeValueTraits<IDLSequence<Element>>::NativeValue(isolate, v8Value, exceptionState);
     if (exceptionState.HadException())
       return;
     impl.setElementSequence(cppValue);

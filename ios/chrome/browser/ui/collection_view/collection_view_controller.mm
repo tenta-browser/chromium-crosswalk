@@ -22,8 +22,8 @@
 @synthesize appBar = _appBar;
 @synthesize collectionViewModel = _collectionViewModel;
 
-- (instancetype)initWithStyle:(CollectionViewControllerStyle)style {
-  UICollectionViewLayout* layout = [[MDCCollectionViewFlowLayout alloc] init];
+- (instancetype)initWithLayout:(UICollectionViewLayout*)layout
+                         style:(CollectionViewControllerStyle)style {
   self = [super initWithCollectionViewLayout:layout];
   if (self) {
     if (style == CollectionViewControllerStyleAppBar) {
@@ -61,12 +61,9 @@
   _collectionViewModel = [[CollectionViewModel alloc] init];
 }
 
-- (void)reconfigureCellsForItems:(NSArray*)items
-         inSectionWithIdentifier:(NSInteger)sectionIdentifier {
+- (void)reconfigureCellsForItems:(NSArray*)items {
   for (CollectionViewItem* item in items) {
-    NSIndexPath* indexPath =
-        [self.collectionViewModel indexPathForItem:item
-                           inSectionWithIdentifier:sectionIdentifier];
+    NSIndexPath* indexPath = [self.collectionViewModel indexPathForItem:item];
     [self reconfigureCellAtIndexPath:indexPath withItem:item];
   }
 }
@@ -260,6 +257,12 @@
         trackingScrollViewWillEndDraggingWithVelocity:velocity
                                   targetContentOffset:targetContentOffset];
   }
+}
+
+#pragma mark - NSObject
+
+- (NSString*)description {
+  return self.collectionView.accessibilityIdentifier;
 }
 
 #pragma mark - Private

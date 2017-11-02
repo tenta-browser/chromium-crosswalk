@@ -27,8 +27,7 @@ class SingleThreadTaskRunner;
 
 namespace content {
 
-class CONTENT_EXPORT WebIDBCursorImpl
-    : NON_EXPORTED_BASE(public blink::WebIDBCursor) {
+class CONTENT_EXPORT WebIDBCursorImpl : public blink::WebIDBCursor {
  public:
   WebIDBCursorImpl(indexed_db::mojom::CursorAssociatedPtrInfo cursor,
                    int64_t transaction_id,
@@ -36,11 +35,9 @@ class CONTENT_EXPORT WebIDBCursorImpl
   ~WebIDBCursorImpl() override;
 
   void Advance(unsigned long count, blink::WebIDBCallbacks* callback) override;
-  virtual void continueFunction(const blink::WebIDBKey& key,
-                                blink::WebIDBCallbacks* callback);
-  void ContinueFunction(const blink::WebIDBKey& key,
-                        const blink::WebIDBKey& primary_key,
-                        blink::WebIDBCallbacks* callback) override;
+  void Continue(const blink::WebIDBKey& key,
+                const blink::WebIDBKey& primary_key,
+                blink::WebIDBCallbacks* callback) override;
   void PostSuccessHandlerCallback() override;
 
   void SetPrefetchData(const std::vector<IndexedDBKey>& keys,

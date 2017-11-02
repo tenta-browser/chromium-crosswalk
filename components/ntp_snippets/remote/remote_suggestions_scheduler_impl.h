@@ -42,7 +42,7 @@ class RemoteSuggestionsSchedulerImpl : public RemoteSuggestionsScheduler {
                                  PrefService* local_state_prefs,
                                  std::unique_ptr<base::Clock> clock);
 
-  ~RemoteSuggestionsSchedulerImpl();
+  ~RemoteSuggestionsSchedulerImpl() override;
 
   static void RegisterProfilePrefs(PrefRegistrySimple* registry);
 
@@ -52,13 +52,13 @@ class RemoteSuggestionsSchedulerImpl : public RemoteSuggestionsScheduler {
   void OnProviderDeactivated() override;
   void OnSuggestionsCleared() override;
   void OnHistoryCleared() override;
-  void RescheduleFetching() override;
+  void OnBrowserUpgraded() override;
   bool AcquireQuotaForInteractiveFetch() override;
   void OnInteractiveFetchFinished(Status fetch_status) override;
   void OnPersistentSchedulerWakeUp() override;
   void OnBrowserForegrounded() override;
   void OnBrowserColdStart() override;
-  void OnNTPOpened() override;
+  void OnSuggestionsSurfaceOpened() override;
 
  private:
   // Abstract description of the fetching schedule. See the enum
@@ -71,8 +71,10 @@ class RemoteSuggestionsSchedulerImpl : public RemoteSuggestionsScheduler {
 
     base::TimeDelta interval_persistent_wifi;
     base::TimeDelta interval_persistent_fallback;
-    base::TimeDelta interval_soft_wifi;
-    base::TimeDelta interval_soft_fallback;
+    base::TimeDelta interval_startup_wifi;
+    base::TimeDelta interval_startup_fallback;
+    base::TimeDelta interval_shown_wifi;
+    base::TimeDelta interval_shown_fallback;
   };
 
   enum class TriggerType;
@@ -91,12 +93,15 @@ class RemoteSuggestionsSchedulerImpl : public RemoteSuggestionsScheduler {
   // timing is appropriate for another fetch.
   void RefetchInTheBackgroundIfAppropriate(TriggerType trigger);
 
-  // Checks whether it is time to perform a soft background fetch, according to
-  // |schedule|.
-  bool ShouldRefetchInTheBackgroundNow(base::Time last_fetch_attempt_time);
+  // Checks whether it is time to perform a soft background fetch for |trigger|,
+  // according to |schedule|.
+  bool ShouldRefetchInTheBackgroundNow(base::Time last_fetch_attempt_time,
+                                       TriggerType trigger);
 
-  // Returns whether background fetching (for the given |trigger|) is disabled.
-  bool BackgroundFetchesDisabled(TriggerType trigger) const;
+  // Returns whether all components are ready for background fetches.
+  bool IsReadyForBackgroundFetches() const;
+  // Runs any queued triggers if the system is ready for background fetches.
+  void RunQueuedTriggersIfReady();
 
   // Returns true if quota is available for another request.
   bool AcquireQuota(bool interactive_request);
@@ -144,8 +149,10 @@ class RemoteSuggestionsSchedulerImpl : public RemoteSuggestionsScheduler {
   RequestThrottler request_throttler_active_ntp_user_;
   RequestThrottler request_throttler_active_suggestions_consumer_;
 
-  // To make sure we only report the first trigger to UMA.
-  bool time_until_first_trigger_reported_;
+  // Variables to make sure we only report the first trigger of each kind to
+  // UMA.
+  bool time_until_first_shown_trigger_reported_;
+  bool time_until_first_startup_trigger_reported_;
 
   // We should not fetch in background before EULA gets accepted.
   std::unique_ptr<EulaState> eula_state_;
@@ -153,6 +160,7 @@ class RemoteSuggestionsSchedulerImpl : public RemoteSuggestionsScheduler {
   PrefService* profile_prefs_;
   std::unique_ptr<base::Clock> clock_;
   std::set<TriggerType> enabled_triggers_;
+  std::set<TriggerType> queued_triggers_;
 
   base::Time background_fetches_allowed_after_;
 

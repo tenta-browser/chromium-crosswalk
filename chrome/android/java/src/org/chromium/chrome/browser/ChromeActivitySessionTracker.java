@@ -4,10 +4,12 @@
 
 package org.chromium.chrome.browser;
 
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.Application;
 import android.content.SharedPreferences;
 import android.provider.Settings;
+import android.support.annotation.Nullable;
 import android.text.TextUtils;
 
 import org.chromium.base.ApplicationState;
@@ -28,10 +30,11 @@ import org.chromium.chrome.browser.notifications.NotificationPlatformBridge;
 import org.chromium.chrome.browser.partnercustomizations.PartnerBrowserCustomizations;
 import org.chromium.chrome.browser.preferences.PrefServiceBridge;
 import org.chromium.chrome.browser.preferences.privacy.BrowsingDataBridge;
+import org.chromium.chrome.browser.profiles.ProfileManagerUtils;
 import org.chromium.chrome.browser.share.ShareHelper;
 import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.chrome.browser.util.FeatureUtilities;
-import org.chromium.content.browser.ChildProcessLauncher;
+import org.chromium.content.browser.ChildProcessLauncherHelper;
 
 import java.lang.ref.WeakReference;
 
@@ -42,6 +45,7 @@ public class ChromeActivitySessionTracker {
 
     private static final String PREF_LOCALE = "locale";
 
+    @SuppressLint("StaticFieldLeak")
     private static ChromeActivitySessionTracker sInstance;
 
     private final PowerBroadcastReceiver mPowerBroadcastReceiver = new PowerBroadcastReceiver();
@@ -80,6 +84,14 @@ public class ChromeActivitySessionTracker {
      */
     public void getVariationsRestrictModeValue(Callback<String> callback) {
         mVariationsSession.getRestrictModeValue(mApplication, callback);
+    }
+
+    /**
+     * @return The latest country according to the current variations state. Null if not available.
+     */
+    @Nullable
+    public String getVariationsLatestCountry() {
+        return mVariationsSession.getLatestCountry();
     }
 
     /**
@@ -122,7 +134,7 @@ public class ChromeActivitySessionTracker {
      */
     private void onForegroundSessionStart() {
         UmaUtils.recordForegroundStartTime();
-        ChildProcessLauncher.onBroughtToForeground();
+        ChildProcessLauncherHelper.onBroughtToForeground();
         updatePasswordEchoState();
         FontSizePrefs.getInstance(mApplication).onSystemFontScaleChanged();
         updateAcceptLanguages();
@@ -145,11 +157,11 @@ public class ChromeActivitySessionTracker {
     private void onForegroundSessionEnd() {
         if (!mIsStarted) return;
         UmaUtils.recordBackgroundTime();
-        ChromeApplication.flushPersistentData();
+        ProfileManagerUtils.flushPersistentDataForAllProfiles();
         mIsStarted = false;
         mPowerBroadcastReceiver.onForegroundSessionEnd();
 
-        ChildProcessLauncher.onSentToBackground();
+        ChildProcessLauncherHelper.onSentToBackground();
         IntentHandler.clearPendingReferrer();
         IntentHandler.clearPendingIncognitoUrl();
 
@@ -177,14 +189,11 @@ public class ChromeActivitySessionTracker {
     }
 
     private ApplicationStateListener createApplicationStateListener() {
-        return new ApplicationStateListener() {
-            @Override
-            public void onApplicationStateChange(int newState) {
-                if (newState == ApplicationState.HAS_STOPPED_ACTIVITIES) {
-                    onForegroundSessionEnd();
-                } else if (newState == ApplicationState.HAS_DESTROYED_ACTIVITIES) {
-                    onForegroundActivityDestroyed();
-                }
+        return newState -> {
+            if (newState == ApplicationState.HAS_STOPPED_ACTIVITIES) {
+                onForegroundSessionEnd();
+            } else if (newState == ApplicationState.HAS_DESTROYED_ACTIVITIES) {
+                onForegroundActivityDestroyed();
             }
         };
     }

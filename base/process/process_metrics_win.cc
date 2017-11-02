@@ -17,6 +17,10 @@
 #include "base/process/memory.h"
 #include "base/sys_info.h"
 
+#if defined(OS_WIN)
+#include <windows.h>
+#endif
+
 namespace base {
 namespace {
 
@@ -365,6 +369,12 @@ bool GetSystemMemoryInfo(SystemMemoryInfoKB* meminfo) {
   meminfo->swap_free = mem_status.ullAvailPageFile / 1024;
 
   return true;
+}
+
+size_t ProcessMetrics::GetMallocUsage() {
+  // Unsupported as getting malloc usage on Windows requires iterating through
+  // the heap which is slow and crashes.
+  return 0;
 }
 
 }  // namespace base

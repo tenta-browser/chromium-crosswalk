@@ -20,26 +20,23 @@ namespace media {
 namespace {
 
 std::unique_ptr<mojo::DataPipe> CreateDataPipe(DemuxerStream::Type type) {
-  MojoCreateDataPipeOptions options;
-  options.struct_size = sizeof(MojoCreateDataPipeOptions);
-  options.flags = MOJO_CREATE_DATA_PIPE_OPTIONS_FLAG_NONE;
-  options.element_num_bytes = 1;
+  uint32_t capacity = 0;
 
   if (type == DemuxerStream::AUDIO) {
     // TODO(timav): Consider capacity calculation based on AudioDecoderConfig.
-    options.capacity_num_bytes = 512 * 1024;
+    capacity = 512 * 1024;
   } else if (type == DemuxerStream::VIDEO) {
     // Video can get quite large; at 4K, VP9 delivers packets which are ~1MB in
     // size; so allow for some head room.
     // TODO(xhwang, sandersd): Provide a better way to customize this value.
-    options.capacity_num_bytes = 2 * (1024 * 1024);
+    capacity = 2 * (1024 * 1024);
   } else {
     NOTREACHED() << "Unsupported type: " << type;
     // Choose an arbitrary size.
-    options.capacity_num_bytes = 512 * 1024;
+    capacity = 512 * 1024;
   }
 
-  return base::MakeUnique<mojo::DataPipe>(options);
+  return base::MakeUnique<mojo::DataPipe>(capacity);
 }
 
 bool IsPipeReadWriteError(MojoResult result) {
@@ -155,9 +152,9 @@ void MojoDecoderBufferReader::ReadDecoderBufferData() {
   uint32_t num_bytes = buffer_size - bytes_read_;
   DCHECK_GT(num_bytes, 0u);
 
-  MojoResult result = ReadDataRaw(consumer_handle_.get(),
-                                  media_buffer_->writable_data() + bytes_read_,
-                                  &num_bytes, MOJO_WRITE_DATA_FLAG_NONE);
+  MojoResult result =
+      consumer_handle_->ReadData(media_buffer_->writable_data() + bytes_read_,
+                                 &num_bytes, MOJO_WRITE_DATA_FLAG_NONE);
 
   if (IsPipeReadWriteError(result)) {
     OnPipeError(result);
@@ -274,9 +271,9 @@ MojoResult MojoDecoderBufferWriter::WriteDecoderBufferData() {
   uint32_t num_bytes = buffer_size - bytes_written_;
   DCHECK_GT(num_bytes, 0u);
 
-  MojoResult result = WriteDataRaw(producer_handle_.get(),
-                                   media_buffer_->data() + bytes_written_,
-                                   &num_bytes, MOJO_WRITE_DATA_FLAG_NONE);
+  MojoResult result =
+      producer_handle_->WriteData(media_buffer_->data() + bytes_written_,
+                                  &num_bytes, MOJO_WRITE_DATA_FLAG_NONE);
 
   if (IsPipeReadWriteError(result)) {
     OnPipeError(result);

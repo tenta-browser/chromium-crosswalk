@@ -9,18 +9,19 @@ import android.animation.AnimatorListenerAdapter;
 import android.animation.AnimatorSet;
 import android.animation.ObjectAnimator;
 import android.app.Activity;
-import android.graphics.Bitmap;
 import android.graphics.Rect;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.support.annotation.Nullable;
+import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.SurfaceView;
 import android.view.View;
 import android.view.View.OnClickListener;
 import android.view.View.OnLayoutChangeListener;
 import android.view.ViewGroup;
-import android.view.ViewGroup.MarginLayoutParams;
 import android.view.animation.DecelerateInterpolator;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.TextView;
 
@@ -48,10 +49,12 @@ class SnackbarView {
     private ViewGroup mParent;
     private Snackbar mSnackbar;
     private boolean mAnimateOverWebContent;
+    private View mRootContentView;
 
     // Variables used to calculate the virtual keyboard's height.
     private Rect mCurrentVisibleRect = new Rect();
     private Rect mPreviousVisibleRect = new Rect();
+    private int[] mTempLocation = new int[2];
 
     private OnLayoutChangeListener mLayoutListener = new OnLayoutChangeListener() {
         @Override
@@ -73,7 +76,7 @@ class SnackbarView {
     SnackbarView(Activity activity, OnClickListener listener, Snackbar snackbar,
             @Nullable ViewGroup parentView) {
         mActivity = activity;
-        mIsTablet = DeviceFormFactor.isTablet(activity);
+        mIsTablet = DeviceFormFactor.isTablet();
 
         if (parentView == null) {
             mOriginalParent = findParentView(activity);
@@ -82,6 +85,7 @@ class SnackbarView {
             mOriginalParent = parentView;
         }
 
+        mRootContentView = activity.findViewById(android.R.id.content);
         mParent = mOriginalParent;
         mView = (ViewGroup) LayoutInflater.from(activity).inflate(
                 R.layout.snackbar, mParent, false);
@@ -119,7 +123,7 @@ class SnackbarView {
         animatorSet.addListener(new AnimatorListenerAdapter() {
             @Override
             public void onAnimationEnd(Animator animation) {
-                mParent.removeOnLayoutChangeListener(mLayoutListener);
+                mRootContentView.removeOnLayoutChangeListener(mLayoutListener);
                 mParent.removeView(mView);
             }
         });
@@ -142,20 +146,30 @@ class SnackbarView {
         if (!mCurrentVisibleRect.equals(mPreviousVisibleRect)) {
             mPreviousVisibleRect.set(mCurrentVisibleRect);
 
-            int keyboardHeight = mParent.getHeight() - mCurrentVisibleRect.bottom
-                    + mCurrentVisibleRect.top;
-            MarginLayoutParams lp = getLayoutParams();
+            mParent.getLocationInWindow(mTempLocation);
+            int keyboardHeight =
+                    mParent.getHeight() + mTempLocation[1] - mCurrentVisibleRect.bottom;
+            keyboardHeight = Math.max(0, keyboardHeight);
+            FrameLayout.LayoutParams lp = getLayoutParams();
+
+            int prevBottomMargin = lp.bottomMargin;
+            int prevWidth = lp.width;
+            int prevGravity = lp.gravity;
+
             lp.bottomMargin = keyboardHeight;
             if (mIsTablet) {
                 int margin = mParent.getResources()
                         .getDimensionPixelSize(R.dimen.snackbar_margin_tablet);
-                ApiCompatibilityUtils.setMarginStart(lp, margin);
-                lp.bottomMargin += margin;
                 int width = mParent.getResources()
                         .getDimensionPixelSize(R.dimen.snackbar_width_tablet);
                 lp.width = Math.min(width, mParent.getWidth() - 2 * margin);
+                lp.gravity = Gravity.CENTER_HORIZONTAL | Gravity.BOTTOM;
             }
-            mView.setLayoutParams(lp);
+
+            if (prevBottomMargin != lp.bottomMargin || prevWidth != lp.width
+                    || prevGravity != lp.gravity) {
+                mView.setLayoutParams(lp);
+            }
         }
     }
 
@@ -163,7 +177,7 @@ class SnackbarView {
      * @see SnackbarManager#overrideParent(ViewGroup)
      */
     void overrideParent(ViewGroup overridingParent) {
-        mParent.removeOnLayoutChangeListener(mLayoutListener);
+        mRootContentView.removeOnLayoutChangeListener(mLayoutListener);
         mParent = overridingParent == null ? mOriginalParent : overridingParent;
         if (isShowing()) {
             ((ViewGroup) mView.getParent()).removeView(mView);
@@ -173,6 +187,10 @@ class SnackbarView {
 
     boolean isShowing() {
         return mView.isShown();
+    }
+
+    void bringToFront() {
+        mView.bringToFront();
     }
 
     /**
@@ -201,7 +219,7 @@ class SnackbarView {
         // change listener of the view itself, the force layout flag will be reset to 0 when
         // layout() returns. Therefore we have to do request layout on one level above the requested
         // view.
-        mParent.addOnLayoutChangeListener(mLayoutListener);
+        mRootContentView.addOnLayoutChangeListener(mLayoutListener);
     }
 
     private boolean updateInternal(Snackbar snackbar, boolean animate) {
@@ -233,10 +251,10 @@ class SnackbarView {
         } else {
             mActionButtonView.setVisibility(View.GONE);
         }
-        Bitmap profileImage = snackbar.getProfileImage();
+        Drawable profileImage = snackbar.getProfileImage();
         if (profileImage != null) {
             mProfileImageView.setVisibility(View.VISIBLE);
-            mProfileImageView.setImageBitmap(profileImage);
+            mProfileImageView.setImageDrawable(profileImage);
         } else {
             mProfileImageView.setVisibility(View.GONE);
         }
@@ -267,8 +285,8 @@ class SnackbarView {
         }
     }
 
-    private MarginLayoutParams getLayoutParams() {
-        return (MarginLayoutParams) mView.getLayoutParams();
+    private FrameLayout.LayoutParams getLayoutParams() {
+        return (FrameLayout.LayoutParams) mView.getLayoutParams();
     }
 
     private void setViewText(TextView view, CharSequence text, boolean animate) {

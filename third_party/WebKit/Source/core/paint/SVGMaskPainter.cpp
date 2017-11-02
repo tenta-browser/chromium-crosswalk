@@ -27,8 +27,10 @@ bool SVGMaskPainter::PrepareEffect(const LayoutObject& object,
   if (visual_rect.IsEmpty() || !mask_.GetElement()->HasChildren())
     return false;
 
-  context.GetPaintController().CreateAndAppend<BeginCompositingDisplayItem>(
-      object, SkBlendMode::kSrcOver, 1, &visual_rect);
+  if (!RuntimeEnabledFeatures::SlimmingPaintV2Enabled()) {
+    context.GetPaintController().CreateAndAppend<BeginCompositingDisplayItem>(
+        object, SkBlendMode::kSrcOver, 1, &visual_rect);
+  }
   return true;
 }
 
@@ -46,8 +48,10 @@ void SVGMaskPainter::FinishEffect(const LayoutObject& object,
     CompositingRecorder mask_compositing(context, object, SkBlendMode::kDstIn,
                                          1, &visual_rect, mask_layer_filter);
     Optional<ScopedPaintChunkProperties> scoped_paint_chunk_properties;
-    if (RuntimeEnabledFeatures::slimmingPaintV2Enabled()) {
-      const auto* object_paint_properties = object.PaintProperties();
+    if (RuntimeEnabledFeatures::SlimmingPaintV2Enabled()) {
+      DCHECK(object.FirstFragment());
+      const auto* object_paint_properties =
+          object.FirstFragment()->PaintProperties();
       DCHECK(object_paint_properties && object_paint_properties->Mask());
       PaintChunkProperties properties(
           context.GetPaintController().CurrentPaintChunkProperties());
@@ -60,7 +64,8 @@ void SVGMaskPainter::FinishEffect(const LayoutObject& object,
                             visual_rect);
   }
 
-  context.GetPaintController().EndItem<EndCompositingDisplayItem>(object);
+  if (!RuntimeEnabledFeatures::SlimmingPaintV2Enabled())
+    context.GetPaintController().EndItem<EndCompositingDisplayItem>(object);
 }
 
 void SVGMaskPainter::DrawMaskForLayoutObject(

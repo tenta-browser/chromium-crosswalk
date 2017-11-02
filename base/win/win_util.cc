@@ -11,6 +11,7 @@
 #include <initguid.h>
 #include <inspectable.h>
 #include <mdmregistration.h>
+#include <objbase.h>
 #include <propkey.h>
 #include <propvarutil.h>
 #include <psapi.h>
@@ -42,6 +43,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/win/registry.h"
+#include "base/win/scoped_co_mem.h"
 #include "base/win/scoped_comptr.h"
 #include "base/win/scoped_handle.h"
 #include "base/win/scoped_propvariant.h"
@@ -62,7 +64,19 @@ bool SetPropVariantValueForPropertyStore(
   HRESULT result = property_store->SetValue(property_key, property_value.get());
   if (result == S_OK)
     result = property_store->Commit();
-  return SUCCEEDED(result);
+  if (SUCCEEDED(result))
+    return true;
+#if DCHECK_IS_ON()
+  ScopedCoMem<OLECHAR> guidString;
+  ::StringFromCLSID(property_key.fmtid, &guidString);
+  if (HRESULT_FACILITY(result) == FACILITY_WIN32)
+    ::SetLastError(HRESULT_CODE(result));
+  // See third_party/perl/c/i686-w64-mingw32/include/propkey.h for GUID and
+  // PID definitions.
+  DPLOG(ERROR) << "Failed to set property with GUID " << guidString << " PID "
+               << property_key.pid;
+#endif
+  return false;
 }
 
 void __cdecl ForceCrashOnSigAbort(int) {
@@ -129,9 +143,7 @@ bool IsWindows10TabletMode(HWND hwnd) {
   }
 
   base::win::ScopedComPtr<IUIViewSettingsInterop> view_settings_interop;
-  hr = get_factory(view_settings_guid,
-                   __uuidof(IUIViewSettingsInterop),
-                   view_settings_interop.ReceiveVoid());
+  hr = get_factory(view_settings_guid, IID_PPV_ARGS(&view_settings_interop));
   if (FAILED(hr))
     return false;
 
@@ -140,10 +152,7 @@ bool IsWindows10TabletMode(HWND hwnd) {
   // TODO(ananta)
   // Avoid using GetForegroundWindow here and pass in the HWND of the window
   // intiating the request to display the keyboard.
-  hr = view_settings_interop->GetForWindow(
-      hwnd,
-      __uuidof(ABI::Windows::UI::ViewManagement::IUIViewSettings),
-      view_settings.ReceiveVoid());
+  hr = view_settings_interop->GetForWindow(hwnd, IID_PPV_ARGS(&view_settings));
   if (FAILED(hr))
     return false;
 
@@ -456,6 +465,25 @@ bool IsTabletDevice(std::string* reason) {
     }
   }
 
+  // If the device is not supporting rotation, it's unlikely to be a tablet,
+  // a convertible or a detachable.
+  // See
+  // https://msdn.microsoft.com/en-us/library/windows/desktop/dn629263(v=vs.85).aspx
+  typedef decltype(GetAutoRotationState)* GetAutoRotationStateType;
+  GetAutoRotationStateType get_auto_rotation_state_func =
+      reinterpret_cast<GetAutoRotationStateType>(GetProcAddress(
+          GetModuleHandle(L"user32.dll"), "GetAutoRotationState"));
+
+  if (get_auto_rotation_state_func) {
+    AR_STATE rotation_state;
+    ZeroMemory(&rotation_state, sizeof(AR_STATE));
+    if (get_auto_rotation_state_func(&rotation_state)) {
+      if ((rotation_state & AR_NOT_SUPPORTED) || (rotation_state & AR_LAPTOP) ||
+          (rotation_state & AR_NOSENSOR))
+        return false;
+    }
+  }
+
   // PlatformRoleSlate was added in Windows 8+.
   POWER_PLATFORM_ROLE role = GetPlatformRole();
   bool mobile_power_profile = (role == PlatformRoleMobile);
@@ -472,8 +500,8 @@ bool IsTabletDevice(std::string* reason) {
       }
     } else {
       if (reason) {
-        *reason += (role == PlatformRoleMobile) ? "PlatformRoleMobile\n" :
-                                                  "PlatformRoleSlate\n";
+        *reason += (role == PlatformRoleMobile) ? "PlatformRoleMobile\n"
+                                                : "PlatformRoleSlate\n";
       }
     }
   } else {

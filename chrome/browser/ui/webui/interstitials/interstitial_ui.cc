@@ -12,8 +12,10 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/safe_browsing_blocking_page.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
+#include "chrome/browser/safe_browsing/test_safe_browsing_blocking_page_quiet.h"
 #include "chrome/browser/safe_browsing/ui_manager.h"
 #include "chrome/browser/ssl/bad_clock_blocking_page.h"
+#include "chrome/browser/ssl/mitm_software_blocking_page.h"
 #include "chrome/browser/ssl/ssl_blocking_page.h"
 #include "chrome/browser/supervised_user/supervised_user_interstitial.h"
 #include "chrome/common/features.h"
@@ -35,10 +37,13 @@
 #include "net/cert/x509_util.h"
 #include "net/ssl/ssl_info.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/base/webui/web_ui_util.h"
 
 #if BUILDFLAG(ENABLE_CAPTIVE_PORTAL_DETECTION)
 #include "chrome/browser/ssl/captive_portal_blocking_page.h"
 #endif
+
+using security_interstitials::TestSafeBrowsingBlockingPageQuiet;
 
 namespace {
 
@@ -46,7 +51,7 @@ namespace {
 // as all fake certificates will contain the same issuer name, it's
 // necessary to ensure the serial number is unique, as otherwise
 // NSS will fail to parse.
-base::StaticAtomicSequenceNumber g_serial_number;
+base::AtomicSequenceNumber g_serial_number;
 
 scoped_refptr<net::X509Certificate> CreateFakeCert() {
   std::unique_ptr<crypto::RSAPrivateKey> unused_key;
@@ -122,7 +127,8 @@ class CaptivePortalBlockingPageWithNetInfo : public CaptivePortalBlockingPage {
 };
 #endif
 
-SSLBlockingPage* CreateSSLBlockingPage(content::WebContents* web_contents) {
+SSLBlockingPage* CreateSSLBlockingPage(content::WebContents* web_contents,
+                                       bool is_superfish) {
   // Random parameters for SSL blocking page.
   int cert_error = net::ERR_CERT_CONTAINS_ERRORS;
   GURL request_url("https://example.com");
@@ -133,8 +139,9 @@ SSLBlockingPage* CreateSSLBlockingPage(content::WebContents* web_contents) {
   if (net::GetValueForKeyInQuery(web_contents->GetURL(),
                                  "url",
                                  &url_param)) {
-    if (GURL(url_param).is_valid())
+    if (GURL(url_param).is_valid()) {
       request_url = GURL(url_param);
+    }
   }
   std::string overridable_param;
   if (net::GetValueForKeyInQuery(web_contents->GetURL(),
@@ -148,6 +155,12 @@ SSLBlockingPage* CreateSSLBlockingPage(content::WebContents* web_contents) {
                                  &strict_enforcement_param)) {
     strict_enforcement = strict_enforcement_param == "1";
   }
+  std::string type_param;
+  if (net::GetValueForKeyInQuery(web_contents->GetURL(), "type", &type_param)) {
+    if (type_param == "hpkp_failure") {
+      cert_error = net::ERR_SSL_PINNED_KEY_NOT_IN_CERT_CHAIN;
+    }
+  }
   net::SSLInfo ssl_info;
   ssl_info.cert = ssl_info.unverified_cert = CreateFakeCert();
   // This delegate doesn't create an interstitial.
@@ -158,7 +171,28 @@ SSLBlockingPage* CreateSSLBlockingPage(content::WebContents* web_contents) {
     options_mask |= security_interstitials::SSLErrorUI::STRICT_ENFORCEMENT;
   return SSLBlockingPage::Create(
       web_contents, cert_error, ssl_info, request_url, options_mask,
-      time_triggered_, nullptr,
+      time_triggered_, nullptr, is_superfish,
+      base::Callback<void(content::CertificateRequestResultType)>());
+}
+
+MITMSoftwareBlockingPage* CreateMITMSoftwareBlockingPage(
+    content::WebContents* web_contents) {
+  const int cert_error = net::ERR_CERT_AUTHORITY_INVALID;
+  const GURL request_url("https://example.com");
+  const std::string mitm_software_name = "Misconfigured Antivirus";
+  bool is_enterprise_managed = false;
+
+  std::string is_enterprise_managed_param;
+  if (net::GetValueForKeyInQuery(web_contents->GetURL(), "enterprise",
+                                 &is_enterprise_managed_param)) {
+    is_enterprise_managed = is_enterprise_managed_param == "1";
+  }
+
+  net::SSLInfo ssl_info;
+  ssl_info.cert = ssl_info.unverified_cert = CreateFakeCert();
+  return new MITMSoftwareBlockingPage(
+      web_contents, cert_error, request_url, nullptr, ssl_info,
+      mitm_software_name, is_enterprise_managed,
       base::Callback<void(content::CertificateRequestResultType)>());
 }
 
@@ -220,8 +254,9 @@ safe_browsing::SafeBrowsingBlockingPage* CreateSafeBrowsingBlockingPage(
   if (net::GetValueForKeyInQuery(web_contents->GetURL(),
                                  "url",
                                  &url_param)) {
-    if (GURL(url_param).is_valid())
+    if (GURL(url_param).is_valid()) {
       request_url = GURL(url_param);
+    }
   }
   GURL main_frame_url(request_url);
   // TODO(mattm): add flag to change main_frame_url or add dedicated flag to
@@ -236,9 +271,9 @@ safe_browsing::SafeBrowsingBlockingPage* CreateSafeBrowsingBlockingPage(
     } else if (type_param == "phishing") {
       threat_type = safe_browsing::SB_THREAT_TYPE_URL_PHISHING;
     } else if (type_param == "clientside_malware") {
-      threat_type = safe_browsing::SB_THREAT_TYPE_CLIENT_SIDE_MALWARE_URL;
+      threat_type = safe_browsing::SB_THREAT_TYPE_URL_CLIENT_SIDE_MALWARE;
     } else if (type_param == "clientside_phishing") {
-      threat_type = safe_browsing::SB_THREAT_TYPE_CLIENT_SIDE_PHISHING_URL;
+      threat_type = safe_browsing::SB_THREAT_TYPE_URL_CLIENT_SIDE_PHISHING;
     }
   }
   safe_browsing::SafeBrowsingBlockingPage::UnsafeResource resource;
@@ -262,6 +297,52 @@ safe_browsing::SafeBrowsingBlockingPage* CreateSafeBrowsingBlockingPage(
   return safe_browsing::SafeBrowsingBlockingPage::CreateBlockingPage(
       g_browser_process->safe_browsing_service()->ui_manager().get(),
       web_contents, main_frame_url, resource);
+}
+
+TestSafeBrowsingBlockingPageQuiet* CreateSafeBrowsingQuietBlockingPage(
+    content::WebContents* web_contents) {
+  safe_browsing::SBThreatType threat_type =
+      safe_browsing::SB_THREAT_TYPE_URL_MALWARE;
+  GURL request_url("http://example.com");
+  std::string url_param;
+  if (net::GetValueForKeyInQuery(web_contents->GetURL(), "url", &url_param)) {
+    if (GURL(url_param).is_valid())
+      request_url = GURL(url_param);
+  }
+  GURL main_frame_url(request_url);
+  std::string type_param;
+  bool is_giant_webview = false;
+  if (net::GetValueForKeyInQuery(web_contents->GetURL(), "type", &type_param)) {
+    if (type_param == "malware") {
+      threat_type = safe_browsing::SB_THREAT_TYPE_URL_MALWARE;
+    } else if (type_param == "phishing") {
+      threat_type = safe_browsing::SB_THREAT_TYPE_URL_PHISHING;
+    } else if (type_param == "giant") {
+      threat_type = safe_browsing::SB_THREAT_TYPE_URL_MALWARE;
+      is_giant_webview = true;
+    }
+  }
+  safe_browsing::SafeBrowsingBlockingPage::UnsafeResource resource;
+  resource.url = request_url;
+  resource.is_subresource = request_url != main_frame_url;
+  resource.is_subframe = false;
+  resource.threat_type = threat_type;
+  resource.web_contents_getter =
+      security_interstitials::UnsafeResource::GetWebContentsGetter(
+          web_contents->GetRenderProcessHost()->GetID(),
+          web_contents->GetMainFrame()->GetRoutingID());
+  resource.threat_source = safe_browsing::ThreatSource::LOCAL_PVER3;
+
+  // Normally safebrowsing interstitial types which block the main page load
+  // (SB_THREAT_TYPE_URL_MALWARE, SB_THREAT_TYPE_URL_PHISHING, and
+  // SB_THREAT_TYPE_URL_UNWANTED on main-frame loads) would expect there to be a
+  // pending navigation when the SafeBrowsingBlockingPage is created. This demo
+  // creates a SafeBrowsingBlockingPage but does not actually show a real
+  // interstitial. Instead it extracts the html and displays it manually, so the
+  // parts which depend on the NavigationEntry are not hit.
+  return TestSafeBrowsingBlockingPageQuiet::CreateBlockingPage(
+      g_browser_process->safe_browsing_service()->ui_manager().get(),
+      web_contents, main_frame_url, resource, is_giant_webview);
 }
 
 #if BUILDFLAG(ENABLE_CAPTIVE_PORTAL_DETECTION)
@@ -353,8 +434,17 @@ void InterstitialHTMLSource::StartDataRequest(
     return;
   }
   std::unique_ptr<content::InterstitialPageDelegate> interstitial_delegate;
+  std::string html;
   if (base::StartsWith(path, "ssl", base::CompareCase::SENSITIVE)) {
-    interstitial_delegate.reset(CreateSSLBlockingPage(web_contents));
+    interstitial_delegate.reset(
+        CreateSSLBlockingPage(web_contents, false /* is superfish */));
+  } else if (base::StartsWith(path, "superfish-ssl",
+                              base::CompareCase::SENSITIVE)) {
+    interstitial_delegate.reset(
+        CreateSSLBlockingPage(web_contents, true /* is superfish */));
+  } else if (base::StartsWith(path, "mitm-software-ssl",
+                              base::CompareCase::SENSITIVE)) {
+    interstitial_delegate.reset(CreateMITMSoftwareBlockingPage(web_contents));
   } else if (base::StartsWith(path, "safebrowsing",
                               base::CompareCase::SENSITIVE)) {
     interstitial_delegate.reset(CreateSafeBrowsingBlockingPage(web_contents));
@@ -368,15 +458,20 @@ void InterstitialHTMLSource::StartDataRequest(
     interstitial_delegate.reset(CreateCaptivePortalBlockingPage(web_contents));
   }
 #endif
-  std::string html;
   if (base::StartsWith(path, "supervised_user", base::CompareCase::SENSITIVE)) {
     html = GetSupervisedUserInterstitialHTML(path);
+  } else if (base::StartsWith(path, "quietsafebrowsing",
+                              base::CompareCase::SENSITIVE)) {
+    TestSafeBrowsingBlockingPageQuiet* blocking_page =
+        CreateSafeBrowsingQuietBlockingPage(web_contents);
+    interstitial_delegate.reset(blocking_page);
+    html = blocking_page->GetHTML();
   } else if (interstitial_delegate.get()) {
     html = interstitial_delegate.get()->GetHTMLContents();
   } else {
     html = ResourceBundle::GetSharedInstance()
-                          .GetRawDataResource(IDR_SECURITY_INTERSTITIAL_UI_HTML)
-                          .as_string();
+               .GetRawDataResource(IDR_SECURITY_INTERSTITIAL_UI_HTML)
+               .as_string();
   }
   scoped_refptr<base::RefCountedString> html_bytes = new base::RefCountedString;
   html_bytes->data().assign(html.begin(), html.end());
@@ -391,7 +486,7 @@ std::string InterstitialHTMLSource::GetSupervisedUserInterstitialHTML(
   std::string allow_access_requests_string;
   if (net::GetValueForKeyInQuery(url, "allow_access_requests",
                                  &allow_access_requests_string)) {
-    allow_access_requests = allow_access_requests_string == "0";
+    allow_access_requests = allow_access_requests_string == "1";
   }
 
   bool is_child_account = false;
@@ -399,6 +494,12 @@ std::string InterstitialHTMLSource::GetSupervisedUserInterstitialHTML(
   if (net::GetValueForKeyInQuery(url, "is_child_account",
                                  &is_child_account_string)) {
     is_child_account = is_child_account_string == "1";
+  }
+
+  bool is_deprecated = false;
+  std::string is_deprecated_string;
+  if (net::GetValueForKeyInQuery(url, "is_deprecated", &is_deprecated_string)) {
+    is_deprecated = is_deprecated_string == "1" && !is_child_account;
   }
 
   std::string custodian;
@@ -419,8 +520,8 @@ std::string InterstitialHTMLSource::GetSupervisedUserInterstitialHTML(
       supervised_user_error_page::DEFAULT;
   std::string reason_string;
   if (net::GetValueForKeyInQuery(url, "reason", &reason_string)) {
-    if (reason_string == "safe_sites") {
-      reason = supervised_user_error_page::BLACKLIST;
+    if (reason_string == "safe_sites" && is_child_account) {
+      reason = supervised_user_error_page::ASYNC_CHECKER;
     } else if (reason_string == "manual") {
       reason = supervised_user_error_page::MANUAL;
     } else if (reason_string == "not_signed_in") {
@@ -431,5 +532,6 @@ std::string InterstitialHTMLSource::GetSupervisedUserInterstitialHTML(
   return supervised_user_error_page::BuildHtml(
       allow_access_requests, profile_image_url, profile_image_url2, custodian,
       custodian_email, second_custodian, second_custodian_email,
-      is_child_account, reason, g_browser_process->GetApplicationLocale());
+      is_child_account, is_deprecated, reason,
+      g_browser_process->GetApplicationLocale());
 }

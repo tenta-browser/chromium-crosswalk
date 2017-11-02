@@ -33,11 +33,11 @@
 #include "bindings/core/v8/ExceptionState.h"
 #include "bindings/core/v8/HTMLElementOrLong.h"
 #include "bindings/core/v8/HTMLOptionElementOrHTMLOptGroupElement.h"
+#include "build/build_config.h"
 #include "core/HTMLNames.h"
 #include "core/dom/AXObjectCache.h"
 #include "core/dom/Attribute.h"
 #include "core/dom/ElementTraversal.h"
-#include "core/dom/MutationCallback.h"
 #include "core/dom/MutationObserver.h"
 #include "core/dom/MutationObserverInit.h"
 #include "core/dom/MutationRecord.h"
@@ -45,18 +45,20 @@
 #include "core/dom/NodeListsNodeData.h"
 #include "core/dom/NodeTraversal.h"
 #include "core/dom/TaskRunnerHelper.h"
+#include "core/dom/events/ScopedEventQueue.h"
 #include "core/events/GestureEvent.h"
 #include "core/events/KeyboardEvent.h"
 #include "core/events/MouseEvent.h"
-#include "core/events/ScopedEventQueue.h"
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/html/FormData.h"
 #include "core/html/HTMLFormElement.h"
 #include "core/html/HTMLHRElement.h"
 #include "core/html/HTMLOptGroupElement.h"
 #include "core/html/HTMLOptionElement.h"
 #include "core/html/forms/FormController.h"
+#include "core/html/forms/PopupMenu.h"
+#include "core/html/parser/HTMLParserIdioms.h"
 #include "core/input/EventHandler.h"
 #include "core/input/InputDeviceCapabilities.h"
 #include "core/inspector/ConsoleMessage.h"
@@ -69,7 +71,6 @@
 #include "core/page/ChromeClient.h"
 #include "core/page/Page.h"
 #include "core/page/SpatialNavigation.h"
-#include "platform/PopupMenu.h"
 #include "platform/instrumentation/tracing/TraceEvent.h"
 #include "platform/text/PlatformLocale.h"
 
@@ -294,18 +295,8 @@ void HTMLSelectElement::ParseAttribute(
     const AttributeModificationParams& params) {
   if (params.name == sizeAttr) {
     unsigned old_size = size_;
-    // Set the attribute value to a number.
-    // This is important since the style rules for this attribute can
-    // determine the appearance property.
-    unsigned size = params.new_value.GetString().ToUInt();
-    AtomicString attr_size = AtomicString::Number(size);
-    if (attr_size != params.new_value) {
-      // FIXME: This is horribly factored.
-      if (Attribute* size_attribute =
-              EnsureUniqueElementData().Attributes().Find(sizeAttr))
-        size_attribute->SetValue(attr_size);
-    }
-    size_ = size;
+    if (!ParseHTMLNonNegativeInteger(params.new_value, size_))
+      size_ = 0;
     SetNeedsValidityCheck();
     if (size_ != old_size) {
       if (InActiveDocument())
@@ -363,10 +354,6 @@ void HTMLSelectElement::AccessKeyAction(bool send_mouse_events) {
   focus();
   DispatchSimulatedClick(
       nullptr, send_mouse_events ? kSendMouseUpDownEvents : kSendNoEvents);
-}
-
-void HTMLSelectElement::setSize(unsigned size) {
-  SetUnsignedIntegralAttribute(sizeAttr, size);
 }
 
 Element* HTMLSelectElement::namedItem(const AtomicString& name) {
@@ -462,10 +449,9 @@ HTMLOptionElement* HTMLSelectElement::OptionAtListIndex(int list_index) const {
   if (list_index < 0)
     return nullptr;
   const ListItems& items = GetListItems();
-  if (static_cast<size_t>(list_index) >= items.size() ||
-      !isHTMLOptionElement(items[list_index]))
+  if (static_cast<size_t>(list_index) >= items.size())
     return nullptr;
-  return toHTMLOptionElement(items[list_index]);
+  return ToHTMLOptionElementOrNull(items[list_index]);
 }
 
 // Returns the 1st valid OPTION |skip| items from |listIndex| in direction
@@ -573,7 +559,7 @@ void HTMLSelectElement::SaveLastSelection() {
     return;
   }
 
-  last_on_change_selection_.Clear();
+  last_on_change_selection_.clear();
   for (auto& element : GetListItems())
     last_on_change_selection_.push_back(
         isHTMLOptionElement(*element) &&
@@ -597,7 +583,7 @@ void HTMLSelectElement::SaveListboxActiveSelection() {
   // 3. Drag the mouse pointer onto the fourth OPTION
   //   m_activeSelectionEndIndex = 3, options at 1-3 indices are selected.
   //   updateListBoxSelection needs to clear selection of the fifth OPTION.
-  cached_state_for_active_selection_.Resize(0);
+  cached_state_for_active_selection_.resize(0);
   for (const auto& option : GetOptionList()) {
     cached_state_for_active_selection_.push_back(option->Selected());
   }
@@ -750,7 +736,7 @@ void HTMLSelectElement::SetRecalcListItems() {
 
 void HTMLSelectElement::RecalcListItems() const {
   TRACE_EVENT0("blink", "HTMLSelectElement::recalcListItems");
-  list_items_.Resize(0);
+  list_items_.resize(0);
 
   should_recalc_list_items_ = false;
 
@@ -896,11 +882,12 @@ void HTMLSelectElement::ScrollToOption(HTMLOptionElement* option) {
   // the option because the task should work even if unselected option is
   // inserted before executing scrollToOptionTask().
   option_to_scroll_to_ = option;
-  if (!has_pending_task)
+  if (!has_pending_task) {
     TaskRunnerHelper::Get(TaskType::kUserInteraction, &GetDocument())
         ->PostTask(BLINK_FROM_HERE,
                    WTF::Bind(&HTMLSelectElement::ScrollToOptionTask,
                              WrapPersistent(this)));
+  }
 }
 
 void HTMLSelectElement::ScrollToOptionTask() {
@@ -940,7 +927,7 @@ void HTMLSelectElement::OptionInserted(HTMLOptionElement& option,
       ResetToDefaultSelection();
   }
   SetNeedsValidityCheck();
-  last_on_change_selection_.Clear();
+  last_on_change_selection_.clear();
 }
 
 void HTMLSelectElement::OptionRemoved(HTMLOptionElement& option) {
@@ -962,19 +949,19 @@ void HTMLSelectElement::OptionRemoved(HTMLOptionElement& option) {
   if (option.Selected())
     SetAutofilled(false);
   SetNeedsValidityCheck();
-  last_on_change_selection_.Clear();
+  last_on_change_selection_.clear();
 }
 
 void HTMLSelectElement::OptGroupInsertedOrRemoved(
     HTMLOptGroupElement& optgroup) {
   SetRecalcListItems();
   SetNeedsValidityCheck();
-  last_on_change_selection_.Clear();
+  last_on_change_selection_.clear();
 }
 
 void HTMLSelectElement::HrInsertedOrRemoved(HTMLHRElement& hr) {
   SetRecalcListItems();
-  last_on_change_selection_.Clear();
+  last_on_change_selection_.clear();
 }
 
 // TODO(tkent): This function is not efficient.  It contains multiple O(N)
@@ -1072,7 +1059,7 @@ void HTMLSelectElement::DispatchBlurEvent(
   // made.  This matches other browsers' behavior.
   if (UsesMenuList())
     DispatchInputAndChangeEventForMenuList();
-  last_on_change_selection_.Clear();
+  last_on_change_selection_.clear();
   if (PopupIsVisible())
     HidePopup();
   HTMLFormControlElementWithState::DispatchBlurEvent(new_focused_element, type,
@@ -1495,8 +1482,8 @@ void HTMLSelectElement::ListBoxDefaultEventHandler(Event* event) {
     // Convert to coords relative to the list box if needed.
     MouseEvent* mouse_event = ToMouseEvent(event);
     if (HTMLOptionElement* option = EventTargetOption(*mouse_event)) {
-      if (!IsDisabledFormControl()) {
-#if OS(MACOSX)
+      if (!option->IsDisabledFormControl()) {
+#if defined(OS_MACOSX)
         UpdateSelectedState(option, mouse_event->metaKey(),
                             mouse_event->shiftKey());
 #else
@@ -1552,8 +1539,10 @@ void HTMLSelectElement::ListBoxDefaultEventHandler(Event* event) {
                  static_cast<short>(WebPointerProperties::Button::kLeft) &&
              GetLayoutObject()) {
     if (GetDocument().GetPage() &&
-        GetDocument().GetPage()->GetAutoscrollController().AutoscrollInProgress(
-            ToLayoutBox(GetLayoutObject())))
+        GetDocument()
+            .GetPage()
+            ->GetAutoscrollController()
+            .AutoscrollInProgressFor(ToLayoutBox(GetLayoutObject())))
       GetDocument().GetPage()->GetAutoscrollController().StopAutoscroll();
     else
       HandleMouseRelease();
@@ -1840,11 +1829,10 @@ HTMLOptionElement* HTMLSelectElement::SpatialNavigationFocusedOption() {
 
 String HTMLSelectElement::ItemText(const Element& element) const {
   String item_string;
-  if (isHTMLOptGroupElement(element))
-    item_string = toHTMLOptGroupElement(element).GroupLabelText();
-  else if (isHTMLOptionElement(element))
-    item_string =
-        toHTMLOptionElement(element).TextIndentedToRespectGroupLabel();
+  if (auto* optgroup = ToHTMLOptGroupElementOrNull(element))
+    item_string = optgroup->GroupLabelText();
+  else if (auto* option = ToHTMLOptionElementOrNull(element))
+    item_string = option->TextIndentedToRespectGroupLabel();
 
   if (GetLayoutObject())
     ApplyTextTransform(GetLayoutObject()->Style(), item_string, ' ');
@@ -1852,8 +1840,8 @@ String HTMLSelectElement::ItemText(const Element& element) const {
 }
 
 bool HTMLSelectElement::ItemIsDisplayNone(Element& element) const {
-  if (isHTMLOptionElement(element))
-    return toHTMLOptionElement(element).IsDisplayNone();
+  if (auto* option = ToHTMLOptionElementOrNull(element))
+    return option->IsDisplayNone();
   if (const ComputedStyle* style = ItemComputedStyle(element))
     return style->Display() == EDisplay::kNone;
   return false;
@@ -1949,6 +1937,9 @@ void HTMLSelectElement::ShowPopup() {
   if (!popup_)
     popup_ = GetDocument().GetPage()->GetChromeClient().OpenPopupMenu(
         *GetDocument().GetFrame(), *this);
+  if (!popup_)
+    return;
+
   popup_is_visible_ = true;
   ObserveTreeMutation();
 
@@ -1984,17 +1975,29 @@ void HTMLSelectElement::ResetTypeAheadSessionForTesting() {
 
 // PopupUpdater notifies updates of the specified SELECT element subtree to
 // a PopupMenu object.
-class HTMLSelectElement::PopupUpdater : public MutationCallback {
+class HTMLSelectElement::PopupUpdater : public MutationObserver::Delegate {
  public:
-  explicit PopupUpdater(HTMLSelectElement&);
-  DECLARE_VIRTUAL_TRACE();
+  explicit PopupUpdater(HTMLSelectElement& select)
+      : select_(select), observer_(MutationObserver::Create(this)) {
+    MutationObserverInit init;
+    init.setAttributeOldValue(true);
+    init.setAttributes(true);
+    // Observe only attributes which affect popup content.
+    init.setAttributeFilter({"disabled", "label", "selected", "value"});
+    init.setCharacterData(true);
+    init.setCharacterDataOldValue(true);
+    init.setChildList(true);
+    init.setSubtree(true);
+    observer_->observe(select_, init, ASSERT_NO_EXCEPTION);
+  }
 
-  void Dispose() { observer_->disconnect(); }
+  ExecutionContext* GetExecutionContext() const override {
+    return &select_->GetDocument();
+  }
 
- private:
-  void Call(const HeapVector<Member<MutationRecord>>& records,
-            MutationObserver*) override {
-    // We disconnect the MutationObserver when a popuup is closed.  However
+  void Deliver(const MutationRecordVector& records,
+               MutationObserver&) override {
+    // We disconnect the MutationObserver when a popup is closed.  However
     // MutationObserver can call back after disconnection.
     if (!select_->PopupIsVisible())
       return;
@@ -2012,40 +2015,18 @@ class HTMLSelectElement::PopupUpdater : public MutationCallback {
     }
   }
 
-  ExecutionContext* GetExecutionContext() const override {
-    return &select_->GetDocument();
+  void Dispose() { observer_->disconnect(); }
+
+  DEFINE_INLINE_VIRTUAL_TRACE() {
+    visitor->Trace(select_);
+    visitor->Trace(observer_);
+    MutationObserver::Delegate::Trace(visitor);
   }
 
+ private:
   Member<HTMLSelectElement> select_;
   Member<MutationObserver> observer_;
 };
-
-HTMLSelectElement::PopupUpdater::PopupUpdater(HTMLSelectElement& select)
-    : select_(select) {
-  observer_ = MutationObserver::Create(this);
-  Vector<String> filter;
-  filter.ReserveCapacity(4);
-  // Observe only attributes which affect popup content.
-  filter.push_back(String("disabled"));
-  filter.push_back(String("label"));
-  filter.push_back(String("selected"));
-  filter.push_back(String("value"));
-  MutationObserverInit init;
-  init.setAttributeOldValue(true);
-  init.setAttributes(true);
-  init.setAttributeFilter(filter);
-  init.setCharacterData(true);
-  init.setCharacterDataOldValue(true);
-  init.setChildList(true);
-  init.setSubtree(true);
-  observer_->observe(&select, init, ASSERT_NO_EXCEPTION);
-}
-
-DEFINE_TRACE(HTMLSelectElement::PopupUpdater) {
-  visitor->Trace(select_);
-  visitor->Trace(observer_);
-  MutationCallback::Trace(visitor);
-}
 
 void HTMLSelectElement::ObserveTreeMutation() {
   DCHECK(!popup_updater_);

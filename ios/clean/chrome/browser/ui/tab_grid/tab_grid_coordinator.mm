@@ -6,20 +6,30 @@
 
 #include <memory>
 
+#include "base/mac/foundation_util.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
+#import "ios/chrome/browser/snapshots/snapshot_cache_factory.h"
+#import "ios/chrome/browser/ui/browser_list/browser.h"
+#import "ios/chrome/browser/ui/commands/command_dispatcher.h"
+#import "ios/chrome/browser/ui/coordinators/browser_coordinator+internal.h"
+#import "ios/chrome/browser/ui/tools_menu/tools_menu_configuration.h"
 #import "ios/chrome/browser/web_state_list/web_state_list.h"
+#import "ios/chrome/browser/web_state_list/web_state_opener.h"
+#import "ios/clean/chrome/browser/ui/commands/context_menu_commands.h"
 #import "ios/clean/chrome/browser/ui/commands/settings_commands.h"
 #import "ios/clean/chrome/browser/ui/commands/tab_grid_commands.h"
 #import "ios/clean/chrome/browser/ui/commands/tools_menu_commands.h"
+#import "ios/clean/chrome/browser/ui/dialogs/context_menu/context_menu_dialog_request.h"
+#import "ios/clean/chrome/browser/ui/overlays/overlay_service.h"
+#import "ios/clean/chrome/browser/ui/overlays/overlay_service_factory.h"
+#import "ios/clean/chrome/browser/ui/overlays/overlay_service_observer_bridge.h"
 #import "ios/clean/chrome/browser/ui/settings/settings_coordinator.h"
 #import "ios/clean/chrome/browser/ui/tab/tab_coordinator.h"
 #import "ios/clean/chrome/browser/ui/tab_grid/tab_grid_mediator.h"
 #import "ios/clean/chrome/browser/ui/tab_grid/tab_grid_view_controller.h"
 #import "ios/clean/chrome/browser/ui/tools/tools_coordinator.h"
-#import "ios/shared/chrome/browser/ui/browser_list/browser.h"
-#import "ios/shared/chrome/browser/ui/commands/command_dispatcher.h"
-#import "ios/shared/chrome/browser/ui/coordinators/browser_coordinator+internal.h"
 #import "ios/web/public/navigation_manager.h"
 #include "ios/web/public/web_state/web_state.h"
 #import "net/base/mac/url_conversions.h"
@@ -29,38 +39,49 @@
 #error "This file requires ARC support."
 #endif
 
-@interface TabGridCoordinator ()<SettingsCommands,
+@interface TabGridCoordinator ()<ContextMenuCommands,
+                                 OverlayServiceObserving,
+                                 SettingsCommands,
                                  TabGridCommands,
-                                 ToolsMenuCommands>
+                                 ToolsMenuCommands> {
+  // Bridge that handles forwarding OverlayServiceObserver events.
+  std::unique_ptr<OverlayServiceObserverBridge> _overlayObserverBridge;
+}
+
 @property(nonatomic, strong) TabGridViewController* viewController;
 @property(nonatomic, weak) SettingsCoordinator* settingsCoordinator;
 @property(nonatomic, weak) ToolsCoordinator* toolsMenuCoordinator;
+@property(nonatomic, weak) TabCoordinator* activeTabCoordinator;
 @property(nonatomic, readonly) WebStateList& webStateList;
 @property(nonatomic, strong) TabGridMediator* mediator;
+@property(nonatomic, readonly) SnapshotCache* snapshotCache;
+
 @end
 
 @implementation TabGridCoordinator
 @synthesize viewController = _viewController;
 @synthesize settingsCoordinator = _settingsCoordinator;
 @synthesize toolsMenuCoordinator = _toolsMenuCoordinator;
+@synthesize activeTabCoordinator = _activeTabCoordinator;
 @synthesize mediator = _mediator;
+
+- (instancetype)init {
+  if ((self = [super init])) {
+    _overlayObserverBridge =
+        base::MakeUnique<OverlayServiceObserverBridge>(self);
+  }
+  return self;
+}
 
 #pragma mark - Properties
 
-- (void)setBrowser:(Browser*)browser {
-  [super setBrowser:browser];
-
-  for (int i = 0; i < 7; i++) {
-    web::WebState::CreateParams webStateCreateParams(browser->browser_state());
-    std::unique_ptr<web::WebState> webState =
-        web::WebState::Create(webStateCreateParams);
-    self.webStateList.InsertWebState(0, std::move(webState));
-  }
-  self.webStateList.ActivateWebStateAt(0);
-}
-
 - (WebStateList&)webStateList {
   return self.browser->web_state_list();
+}
+
+- (SnapshotCache*)snapshotCache {
+  return SnapshotCacheFactory::GetForBrowserState(
+      self.browser->browser_state());
 }
 
 #pragma mark - BrowserCoordinator
@@ -69,15 +90,20 @@
   self.mediator = [[TabGridMediator alloc] init];
   self.mediator.webStateList = &self.webStateList;
 
+  [self registerForContextMenuCommands];
   [self registerForSettingsCommands];
   [self registerForTabGridCommands];
   [self registerForToolsMenuCommands];
 
   self.viewController = [[TabGridViewController alloc] init];
-  self.viewController.dataSource = self.mediator;
   self.viewController.dispatcher = static_cast<id>(self.browser->dispatcher());
+  self.viewController.snapshotCache = self.snapshotCache;
 
   self.mediator.consumer = self.viewController;
+
+  OverlayServiceFactory::GetInstance()
+      ->GetForBrowserState(self.browser->browser_state())
+      ->AddObserver(_overlayObserverBridge.get());
 
   [super start];
 }
@@ -86,8 +112,14 @@
   [super stop];
   [self.browser->dispatcher() stopDispatchingToTarget:self];
   [self.mediator disconnect];
+
+  OverlayServiceFactory::GetInstance()
+      ->GetForBrowserState(self.browser->browser_state())
+      ->RemoveObserver(_overlayObserverBridge.get());
+
+  // PLACEHOLDER: Remove child coordinators here for now. This might be handled
+  // differently later on.
   for (BrowserCoordinator* child in self.children) {
-    [child stop];
     [self removeChildCoordinator:child];
   }
 }
@@ -110,56 +142,32 @@
                          completion:nil];
 }
 
-#pragma mark - TabGridCommands
+#pragma mark - ContextMenuCommands
 
-- (void)showTabGridTabAtIndex:(int)index {
-  self.webStateList.ActivateWebStateAt(index);
-  // PLACEHOLDER: The tab coordinator should be able to get the active webState
-  // on its own.
-  TabCoordinator* tabCoordinator = [[TabCoordinator alloc] init];
-  tabCoordinator.webState = self.webStateList.GetWebStateAt(index);
-  tabCoordinator.presentationKey =
-      [NSIndexPath indexPathForItem:index inSection:0];
-  [self addChildCoordinator:tabCoordinator];
-  [self deRegisterFromToolsMenuCommands];
-  [tabCoordinator start];
+- (void)openContextMenuLinkInNewTab:(ContextMenuDialogRequest*)request {
+  [self createAndShowNewTabInTabGrid];
+  [self openURL:net::NSURLWithGURL(request.linkURL)];
 }
 
-- (void)closeTabGridTabAtIndex:(int)index {
-  self.webStateList.DetachWebStateAt(index);
+- (void)openContextMenuImageInNewTab:(ContextMenuDialogRequest*)request {
+  [self createAndShowNewTabInTabGrid];
+  [self openURL:net::NSURLWithGURL(request.imageURL)];
 }
 
-- (void)createAndShowNewTabInTabGrid {
-  web::WebState::CreateParams webStateCreateParams(
-      self.browser->browser_state());
-  std::unique_ptr<web::WebState> webState =
-      web::WebState::Create(webStateCreateParams);
-  self.webStateList.InsertWebState(self.webStateList.count(),
-                                   std::move(webState));
-  [self showTabGridTabAtIndex:self.webStateList.count() - 1];
-}
+#pragma mark - OverlayServiceObserving
 
-- (void)showTabGrid {
-  // This object should only ever have at most one child.
-  DCHECK_LE(self.children.count, 1UL);
-  BrowserCoordinator* child = [self.children anyObject];
-  [child stop];
-  [self removeChildCoordinator:child];
-  [self registerForToolsMenuCommands];
-}
-
-#pragma mark - ToolsMenuCommands
-
-- (void)showToolsMenu {
-  ToolsCoordinator* toolsCoordinator = [[ToolsCoordinator alloc] init];
-  [self addChildCoordinator:toolsCoordinator];
-  [toolsCoordinator start];
-  self.toolsMenuCoordinator = toolsCoordinator;
-}
-
-- (void)closeToolsMenu {
-  [self.toolsMenuCoordinator stop];
-  [self removeChildCoordinator:self.toolsMenuCoordinator];
+- (void)overlayService:(OverlayService*)overlayService
+    willShowOverlayForWebState:(web::WebState*)webState
+                     inBrowser:(Browser*)browser {
+  // If |webState| is specified, activate it in the WebStateList and ensure that
+  // its content area is visible.
+  WebStateList& webStateList = self.browser->web_state_list();
+  if (webState && webStateList.GetActiveWebState() != webState) {
+    int newActiveIndex = webStateList.GetIndexOfWebState(webState);
+    DCHECK_NE(newActiveIndex, WebStateList::kInvalidIndex);
+    webStateList.ActivateWebStateAt(newActiveIndex);
+    [self showTabGridTabAtIndex:newActiveIndex];
+  }
 }
 
 #pragma mark - SettingsCommands
@@ -183,6 +191,70 @@
   // self.settingsCoordinator should be presumed to be nil after this point.
 }
 
+#pragma mark - TabGridCommands
+
+- (void)showTabGridTabAtIndex:(int)index {
+  self.webStateList.ActivateWebStateAt(index);
+  // PLACEHOLDER: The tab coordinator should be able to get the active webState
+  // on its own.
+  [self.activeTabCoordinator stop];
+  [self removeChildCoordinator:self.activeTabCoordinator];
+  TabCoordinator* tabCoordinator = [[TabCoordinator alloc] init];
+  self.activeTabCoordinator = tabCoordinator;
+  tabCoordinator.webState = self.webStateList.GetWebStateAt(index);
+  tabCoordinator.presentationKey =
+      [NSIndexPath indexPathForItem:index inSection:0];
+  [self addChildCoordinator:tabCoordinator];
+  [self deRegisterFromToolsMenuCommands];
+  [tabCoordinator start];
+}
+
+- (void)closeTabGridTabAtIndex:(int)index {
+  self.webStateList.DetachWebStateAt(index);
+}
+
+- (void)createAndShowNewTabInTabGrid {
+  web::WebState::CreateParams webStateCreateParams(
+      self.browser->browser_state());
+  std::unique_ptr<web::WebState> webState =
+      web::WebState::Create(webStateCreateParams);
+  webState->SetWebUsageEnabled(true);
+  self.webStateList.InsertWebState(
+      self.webStateList.count(), std::move(webState),
+      WebStateList::INSERT_FORCE_INDEX, WebStateOpener());
+  [self showTabGridTabAtIndex:self.webStateList.count() - 1];
+}
+
+- (void)showTabGrid {
+  [self.mediator takeSnapshotWithCache:self.snapshotCache];
+  // This object should only ever have at most one child.
+  DCHECK_LE(self.children.count, 1UL);
+  BrowserCoordinator* child = [self.children anyObject];
+  [child stop];
+  [self removeChildCoordinator:child];
+  [self registerForToolsMenuCommands];
+}
+
+#pragma mark - ToolsMenuCommands
+
+- (void)showToolsMenu {
+  ToolsCoordinator* toolsCoordinator = [[ToolsCoordinator alloc] init];
+  [self addChildCoordinator:toolsCoordinator];
+  ToolsMenuConfiguration* menuConfiguration =
+      [[ToolsMenuConfiguration alloc] initWithDisplayView:nil];
+  menuConfiguration.inTabSwitcher = YES;
+  menuConfiguration.noOpenedTabs = self.browser->web_state_list().empty();
+  menuConfiguration.inNewTabPage = NO;
+  toolsCoordinator.toolsMenuConfiguration = menuConfiguration;
+  [toolsCoordinator start];
+  self.toolsMenuCoordinator = toolsCoordinator;
+}
+
+- (void)closeToolsMenu {
+  [self.toolsMenuCoordinator stop];
+  [self removeChildCoordinator:self.toolsMenuCoordinator];
+}
+
 #pragma mark - URLOpening
 
 - (void)openURL:(NSURL*)URL {
@@ -202,12 +274,27 @@
 
 #pragma mark - PrivateMethods
 
+- (void)registerForContextMenuCommands {
+  // Right now these are unregistered in |-stop|.  However, once incognito is
+  // implemented, these commands will need to be unregistered before switching
+  // to incognito mode, as "open in new tab" commands are meant to be handled
+  // by the incognito TabGridCoordinator.
+  [self.browser->dispatcher()
+      startDispatchingToTarget:self
+                   forSelector:@selector(openContextMenuLinkInNewTab:)];
+  [self.browser->dispatcher()
+      startDispatchingToTarget:self
+                   forSelector:@selector(openContextMenuImageInNewTab:)];
+}
+
 - (void)registerForSettingsCommands {
   [self.browser->dispatcher() startDispatchingToTarget:self
                                            forSelector:@selector(showSettings)];
 }
 
 - (void)registerForTabGridCommands {
+  [self.browser->dispatcher() startDispatchingToTarget:self
+                                           forSelector:@selector(showTabGrid)];
   [self.browser->dispatcher()
       startDispatchingToTarget:self
                    forSelector:@selector(showTabGridTabAtIndex:)];

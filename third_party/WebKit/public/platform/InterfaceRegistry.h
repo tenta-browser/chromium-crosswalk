@@ -11,7 +11,7 @@
 
 #if INSIDE_BLINK
 #include "mojo/public/cpp/bindings/interface_request.h"
-#include "wtf/Functional.h"
+#include "platform/wtf/Functional.h"
 #endif
 
 namespace blink {
@@ -27,8 +27,7 @@ class BLINK_PLATFORM_EXPORT InterfaceRegistry {
 
   template <typename Interface>
   void AddInterface(
-      std::unique_ptr<WTF::Function<void(mojo::InterfaceRequest<Interface>)>>
-          factory) {
+      WTF::Function<void(mojo::InterfaceRequest<Interface>)> factory) {
     AddInterface(Interface::Name_,
                  ConvertToBaseCallback(WTF::Bind(
                      &InterfaceRegistry::ForwardToInterfaceFactory<Interface>,
@@ -38,10 +37,9 @@ class BLINK_PLATFORM_EXPORT InterfaceRegistry {
  private:
   template <typename Interface>
   static void ForwardToInterfaceFactory(
-      const std::unique_ptr<
-          WTF::Function<void(mojo::InterfaceRequest<Interface>)>>& factory,
+      const WTF::Function<void(mojo::InterfaceRequest<Interface>)>& factory,
       mojo::ScopedMessagePipeHandle handle) {
-    (*factory)(mojo::MakeRequest<Interface>(std::move(handle)));
+    factory(mojo::InterfaceRequest<Interface>(std::move(handle)));
   }
 #endif  // INSIDE_BLINK
 };

@@ -18,19 +18,21 @@ bool PaymentsValidators::IsValidCurrencyCodeFormat(
     const String& system,
     String* optional_error_message) {
   if (system == "urn:iso:std:iso:4217") {
-    if (ScriptRegexp("^[A-Z]{3}$", kTextCaseSensitive).Match(code) == 0)
+    if (ScriptRegexp("^[A-Z]{3}$", kTextCaseUnicodeInsensitive).Match(code) ==
+        0)
       return true;
 
-    if (optional_error_message)
+    if (optional_error_message) {
       *optional_error_message =
           "'" + code +
           "' is not a valid ISO 4217 currency code, should "
-          "be 3 upper case letters [A-Z]";
+          "be well-formed 3-letter alphabetic code.";
+    }
 
     return false;
   }
 
-  if (!KURL(KURL(), system).IsValid()) {
+  if (!KURL(NullURL(), system).IsValid()) {
     if (optional_error_message)
       *optional_error_message = "The currency system is not a valid URL";
 
@@ -48,13 +50,16 @@ bool PaymentsValidators::IsValidCurrencyCodeFormat(
 }
 
 bool PaymentsValidators::IsValidAmountFormat(const String& amount,
+                                             const String& item_name,
                                              String* optional_error_message) {
   if (ScriptRegexp("^-?[0-9]+(\\.[0-9]+)?$", kTextCaseSensitive)
           .Match(amount) == 0)
     return true;
 
-  if (optional_error_message)
-    *optional_error_message = "'" + amount + "' is not a valid amount format";
+  if (optional_error_message) {
+    *optional_error_message =
+        "'" + amount + "' is not a valid amount format for " + item_name;
+  }
 
   return false;
 }

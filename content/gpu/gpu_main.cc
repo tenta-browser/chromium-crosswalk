@@ -18,10 +18,11 @@
 #include "base/strings/stringprintf.h"
 #include "base/third_party/dynamic_annotations/dynamic_annotations.h"
 #include "base/threading/platform_thread.h"
+#include "base/timer/hi_res_timer_manager.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
-#include "content/child/child_process.h"
 #include "content/common/content_constants_internal.h"
+#include "content/common/content_switches_internal.h"
 #include "content/gpu/gpu_child_thread.h"
 #include "content/gpu/gpu_process.h"
 #include "content/public/common/content_client.h"
@@ -37,6 +38,7 @@
 #include "gpu/ipc/service/gpu_config.h"
 #include "gpu/ipc/service/gpu_init.h"
 #include "gpu/ipc/service/gpu_watchdog_thread.h"
+#include "media/gpu/features.h"
 #include "ui/events/platform/platform_event_source.h"
 #include "ui/gfx/switches.h"
 #include "ui/gl/gl_context.h"
@@ -83,13 +85,8 @@
 #include "ui/ozone/public/ozone_platform.h"
 #endif
 
-#if defined(OS_CHROMEOS) && defined(ARCH_CPU_X86_FAMILY)
+#if BUILDFLAG(USE_VAAPI)
 #include "media/gpu/vaapi_wrapper.h"
-#endif
-
-#if defined(SANITIZER_COVERAGE)
-#include <sanitizer/common_interface_defs.h>
-#include <sanitizer/coverage_interface.h>
 #endif
 
 namespace content {
@@ -139,7 +136,7 @@ class ContentSandboxHelper : public gpu::GpuSandboxHelper {
       (void)base::RandUint64();
     }
 
-#if defined(OS_CHROMEOS) && defined(ARCH_CPU_X86_FAMILY)
+#if BUILDFLAG(USE_VAAPI)
     media::VaapiWrapper::PreSandboxInitialization();
 #endif
 #if defined(OS_WIN)
@@ -178,9 +175,8 @@ int GpuMain(const MainFunctionParams& parameters) {
       kTraceEventGpuProcessSortIndex);
 
   const base::CommandLine& command_line = parameters.command_line;
-  if (command_line.HasSwitch(switches::kGpuStartupDialog)) {
-    ChildProcess::WaitForDebugger("Gpu");
-  }
+  if (command_line.HasSwitch(switches::kGpuStartupDialog))
+    WaitForDebugger("Gpu");
 
   base::Time start_time = base::Time::Now();
 
@@ -191,9 +187,12 @@ int GpuMain(const MainFunctionParams& parameters) {
       SEM_FAILCRITICALERRORS |
       SEM_NOGPFAULTERRORBOX |
       SEM_NOOPENFILEERRORBOX);
-#elif defined(USE_X11)
-  ui::SetDefaultX11ErrorHandlers();
 
+  // COM is used by some Windows Media Foundation calls made on this thread and
+  // must be MTA so we don't have to worry about pumping messages to handle
+  // COM callbacks.
+  base::win::ScopedCOMInitializer com_initializer(
+      base::win::ScopedCOMInitializer::kMTA);
 #endif
 
   logging::SetLogMessageHandler(GpuProcessLogMessageHandler);
@@ -211,13 +210,16 @@ int GpuMain(const MainFunctionParams& parameters) {
         new base::MessageLoop(base::MessageLoop::TYPE_DEFAULT));
   } else {
 #if defined(OS_WIN)
-    // OK to use default non-UI message loop because all GPU windows run on
-    // dedicated thread.
+    // The GpuMain thread should not be pumping Windows messages because no UI
+    // is expected to run on this thread.
     main_message_loop.reset(
         new base::MessageLoop(base::MessageLoop::TYPE_DEFAULT));
 #elif defined(USE_X11)
     // We need a UI loop so that we can grab the Expose events. See GLSurfaceGLX
     // and https://crbug.com/326995.
+    ui::SetDefaultX11ErrorHandlers();
+    if (!gfx::GetXDisplay())
+      return RESULT_CODE_GPU_DEAD_ON_ARRIVAL;
     main_message_loop.reset(new base::MessageLoop(base::MessageLoop::TYPE_UI));
     event_source = ui::PlatformEventSource::CreateDefault();
 #elif defined(USE_OZONE)
@@ -264,7 +266,9 @@ int GpuMain(const MainFunctionParams& parameters) {
   // exits early, the browser process will never detect it.  For this reason we
   // defer tearing down the GPU process until receiving the initialization
   // message from the browser (through mojom::GpuMain::CreateGpuService()).
-  const bool init_success = gpu_init.InitializeAndStartSandbox(command_line);
+  constexpr bool kInProcessGpu = false;
+  const bool init_success = gpu_init.InitializeAndStartSandbox(
+      const_cast<base::CommandLine*>(&command_line), kInProcessGpu);
   const bool dead_on_arrival = !init_success;
 
   logging::SetLogMessageHandler(NULL);
@@ -291,6 +295,8 @@ int GpuMain(const MainFunctionParams& parameters) {
       nullptr);
 #endif
 
+  base::HighResolutionTimerManager hi_res_timer_manager;
+
   {
     TRACE_EVENT0("gpu", "Run Message Loop");
     base::RunLoop().Run();
@@ -312,16 +318,6 @@ bool StartSandboxLinux(gpu::GpuWatchdogThread* watchdog_thread) {
     // has really been stopped.
     LinuxSandbox::StopThread(watchdog_thread);
   }
-
-#if defined(SANITIZER_COVERAGE)
-  const std::string sancov_file_name =
-      "gpu." + base::Uint64ToString(base::RandUint64());
-  LinuxSandbox* linux_sandbox = LinuxSandbox::GetInstance();
-  linux_sandbox->sanitizer_args()->coverage_sandboxed = 1;
-  linux_sandbox->sanitizer_args()->coverage_fd =
-      __sanitizer_maybe_open_cov_file(sancov_file_name.c_str());
-  linux_sandbox->sanitizer_args()->coverage_max_block_size = 0;
-#endif
 
   // LinuxSandbox::InitializeSandbox() must always be called
   // with only one thread.

@@ -41,20 +41,20 @@ class AXMenuList final : public AXLayoutObject {
 
   bool IsCollapsed() const override;
   AccessibilityExpanded IsExpanded() const final;
-  bool Press() override;
+  bool OnNativeClickAction() override;
   void ClearChildren() override;
-  bool NameFromContents() const override;
 
   void DidUpdateActiveOption(int option_index);
   void DidShowPopup();
   void DidHidePopup();
 
  private:
+  friend class AXMenuListOption;
+
   AXMenuList(LayoutMenuList*, AXObjectCacheImpl&);
 
   bool IsMenuList() const override { return true; }
   AccessibilityRole DetermineAccessibilityRole() final;
-  bool CanSetFocusAttribute() const override;
 
   void AddChildren() override;
 };

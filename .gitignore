@@ -69,6 +69,10 @@ vs-chromium-project.txt
 /cdm
 /ceee/internal/
 /chrome/angle_unittests_run.xml
+/chrome/build/chrome.x64.orderfile
+/chrome/build/chrome.x86.orderfile
+/chrome/build/chrome_child.x64.orderfile
+/chrome/build/chrome_child.x86.orderfile
 /chrome/content_gl_tests_run.xml
 /chrome/gl_tests_run.xml
 /chrome/gles2_conform_test_run.xml
@@ -107,6 +111,7 @@ vs-chromium-project.txt
 /chrome/installer/mini_installer/support
 /chrome/installer/mini_installer_syzygy.xml
 /chrome/installer/mini_installer_tests_run.xml
+/chrome/installer/zucchini/testdata/*.exe
 /chrome/installer_util_strings.xml
 /chrome/interactive_ui_tests_run.xml
 /chrome/setup.xml
@@ -127,7 +132,6 @@ vs-chromium-project.txt
 /chrome/test/data/gpu/vectortown_endurance/
 /chrome/test/data/gpu/vt/
 /chrome/test/data/layout_tests
-/chrome/test/data/osdd
 /chrome/test/data/pdf_private
 /chrome/test/data/perf/canvas_bench
 /chrome/test/data/perf/frame_rate/content
@@ -135,6 +139,7 @@ vs-chromium-project.txt
 /chrome/test/data/perf/private/
 /chrome/test/data/perf/third_party/
 /chrome/test/data/plugin/
+/chrome/test/data/vr/webvr_info/
 /chrome/test/data/webrtc/resources
 /chrome/test/media_router/internal
 /chrome/tools/memory
@@ -242,7 +247,7 @@ vs-chromium-project.txt
 /remoting/android/internal/
 /remoting/appengine/
 /remoting/host/installer/linux/internal/
-/remoting/ios/
+/remoting/ios/internal/
 /remoting/internal/
 /remoting/proto/chromotocol_proto_lib.xml
 /remoting/remoting_core_resources.xml
@@ -269,8 +274,6 @@ vs-chromium-project.txt
 /sql/sql_unittests_run.xml
 /sync/sync.xml
 /sync_testserver.log
-/testing/gmock
-/testing/gtest
 /testserver.log
 /tools/luci-go/linux64/isolate
 /tools/luci-go/mac64/isolate

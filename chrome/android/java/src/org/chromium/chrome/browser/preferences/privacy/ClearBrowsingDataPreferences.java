@@ -9,6 +9,7 @@ import android.app.ProgressDialog;
 import android.content.Intent;
 import android.graphics.drawable.Drawable;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.preference.Preference;
 import android.preference.PreferenceFragment;
 import android.support.annotation.Nullable;
@@ -41,6 +42,7 @@ import org.chromium.components.signin.ChromeSigninController;
 
 import java.util.Arrays;
 import java.util.EnumSet;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Preference screen that allows the user to clear browsing data.
@@ -153,6 +155,8 @@ public class ClearBrowsingDataPreferences extends PreferenceFragment
     private static final String PREF_CACHE = "clear_cache_checkbox";
     private static final String PREF_PASSWORDS = "clear_passwords_checkbox";
     private static final String PREF_FORM_DATA = "clear_form_data_checkbox";
+    private static final String PREF_SITE_SETTINGS = "clear_site_settings_checkbox";
+    private static final String PREF_MEDIA_LICENSES = "clear_media_licenses_checkbox";
 
     @VisibleForTesting
     public static final String PREF_GOOGLE_SUMMARY = "google_summary";
@@ -187,15 +191,17 @@ public class ClearBrowsingDataPreferences extends PreferenceFragment
      * The various data types that can be cleared via this screen.
      */
     public enum DialogOption {
-        CLEAR_HISTORY(
-                BrowsingDataType.HISTORY, PREF_HISTORY, R.drawable.ic_history_grey600_24dp, true),
+        CLEAR_HISTORY(BrowsingDataType.HISTORY, PREF_HISTORY, R.drawable.ic_watch_later_24dp, true),
         CLEAR_COOKIES_AND_SITE_DATA(
                 BrowsingDataType.COOKIES, PREF_COOKIES, R.drawable.permission_cookie, true),
         CLEAR_CACHE(BrowsingDataType.CACHE, PREF_CACHE, R.drawable.ic_collections_grey, false),
         CLEAR_PASSWORDS(
                 BrowsingDataType.PASSWORDS, PREF_PASSWORDS, R.drawable.ic_vpn_key_grey, false),
-        CLEAR_FORM_DATA(
-                BrowsingDataType.FORM_DATA, PREF_FORM_DATA, R.drawable.bookmark_edit_normal, true);
+        CLEAR_FORM_DATA(BrowsingDataType.FORM_DATA, PREF_FORM_DATA, R.drawable.ic_edit_24dp, true),
+        CLEAR_SITE_SETTINGS(BrowsingDataType.SITE_SETTINGS, PREF_SITE_SETTINGS,
+                R.drawable.ic_tv_options_input_settings_rotated_grey, false),
+        CLEAR_MEDIA_LICENSES(BrowsingDataType.MEDIA_LICENSES, PREF_MEDIA_LICENSES,
+                R.drawable.permission_protected_media, true);
 
         private final int mDataType;
         private final String mPreferenceKey;
@@ -287,6 +293,8 @@ public class ClearBrowsingDataPreferences extends PreferenceFragment
     // This is the dialog we show to the user that lets them 'uncheck' (or exclude) the above
     // important domains from being cleared.
     private ConfirmImportantSitesDialogFragment mConfirmImportantSitesDialog;
+    // Time in ms, when the dialog was created.
+    private long mDialogOpened;
 
     /**
      * @return The currently selected DialogOptions.
@@ -300,13 +308,22 @@ public class ClearBrowsingDataPreferences extends PreferenceFragment
     }
 
     /**
+     * Notifies subclasses that browsing data is about to be cleared.
+     */
+    protected void onClearBrowsingData() {}
+
+    /**
      * Requests the browsing data corresponding to the given dialog options to be deleted.
      * @param options The dialog options whose corresponding data should be deleted.
      */
     private final void clearBrowsingData(EnumSet<DialogOption> options,
             @Nullable String[] blacklistedDomains, @Nullable int[] blacklistedDomainReasons,
             @Nullable String[] ignoredDomains, @Nullable int[] ignoredDomainReasons) {
+        onClearBrowsingData();
         showProgressDialog();
+
+        RecordHistogram.recordMediumTimesHistogram("History.ClearBrowsingData.TimeSpentInDialog",
+                SystemClock.elapsedRealtime() - mDialogOpened, TimeUnit.MILLISECONDS);
 
         int[] dataTypes = new int[options.size()];
         int i = 0;
@@ -343,11 +360,9 @@ public class ClearBrowsingDataPreferences extends PreferenceFragment
      */
     protected DialogOption[] getDialogOptions() {
         return new DialogOption[] {
-                DialogOption.CLEAR_HISTORY,
-                DialogOption.CLEAR_COOKIES_AND_SITE_DATA,
-                DialogOption.CLEAR_CACHE,
-                DialogOption.CLEAR_PASSWORDS,
-                DialogOption.CLEAR_FORM_DATA
+                DialogOption.CLEAR_HISTORY, DialogOption.CLEAR_COOKIES_AND_SITE_DATA,
+                DialogOption.CLEAR_CACHE, DialogOption.CLEAR_PASSWORDS,
+                DialogOption.CLEAR_FORM_DATA, DialogOption.CLEAR_MEDIA_LICENSES,
         };
     }
 
@@ -503,7 +518,13 @@ public class ClearBrowsingDataPreferences extends PreferenceFragment
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        RecordUserAction.record("ClearBrowsingData_DialogCreated");
+
+        mDialogOpened = SystemClock.elapsedRealtime();
+        // Don't record this action if TabsInCBD is enabled because this class is created twice.
+        // The action will be recorded in ClearBrowsingDataTabsFragment instead.
+        if (!ClearBrowsingDataTabsFragment.isFeatureEnabled()) {
+            RecordUserAction.record("ClearBrowsingData_DialogCreated");
+        }
         mMaxImportantSites = BrowsingDataBridge.getMaxImportantSites();
         BrowsingDataBridge.getInstance().requestInfoAboutOtherFormsOfBrowsingHistory(this);
         getActivity().setTitle(R.string.clear_browsing_data_title);
@@ -543,7 +564,6 @@ public class ClearBrowsingDataPreferences extends PreferenceFragment
 
         // The time range selection spinner.
         SpinnerPreference spinner = (SpinnerPreference) findPreference(PREF_TIME_RANGE);
-        spinner.setOnPreferenceChangeListener(this);
         TimePeriodSpinnerOption[] spinnerOptions = getTimePeriodSpinnerOptions();
         int selectedTimePeriod = PrefServiceBridge.getInstance().getBrowsingDataDeletionTimePeriod(
                 getPreferenceType());
@@ -556,6 +576,7 @@ public class ClearBrowsingDataPreferences extends PreferenceFragment
         }
         assert spinnerOptionIndex != -1;
         spinner.setOptions(spinnerOptions, spinnerOptionIndex);
+        spinner.setOnPreferenceChangeListener(this);
 
         initClearButtonPreference();
         initFootnote();
@@ -621,8 +642,11 @@ public class ClearBrowsingDataPreferences extends PreferenceFragment
         // Now that the dialog's view has been created, update the button state.
         updateButtonState();
 
-        // Remove the dividers between checkboxes.
-        ((ListView) getView().findViewById(android.R.id.list)).setDivider(null);
+        // Remove the dividers between checkboxes, and make sure the individual widgets can be
+        // focused.
+        ListView view = (ListView) getView().findViewById(android.R.id.list);
+        view.setDivider(null);
+        view.setItemsCanFocus(true);
     }
 
     @Override

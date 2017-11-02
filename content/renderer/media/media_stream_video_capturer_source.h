@@ -11,6 +11,7 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
+#include "content/common/media/media_stream.mojom.h"
 #include "content/common/media/video_capture.h"
 #include "content/public/renderer/render_frame_observer.h"
 #include "content/renderer/media/media_stream_video_source.h"
@@ -32,10 +33,6 @@ class CONTENT_EXPORT MediaStreamVideoCapturerSource
   MediaStreamVideoCapturerSource(
       const SourceStoppedCallback& stop_callback,
       std::unique_ptr<media::VideoCapturerSource> source);
-  // TODO(guidou): Remove this constructor. http://crbug.com/706408
-  MediaStreamVideoCapturerSource(const SourceStoppedCallback& stop_callback,
-                                 const StreamDeviceInfo& device_info,
-                                 RenderFrame* render_frame);
   MediaStreamVideoCapturerSource(
       const SourceStoppedCallback& stop_callback,
       const StreamDeviceInfo& device_info,
@@ -47,23 +44,18 @@ class CONTENT_EXPORT MediaStreamVideoCapturerSource
   friend class CanvasCaptureHandlerTest;
   friend class MediaStreamVideoCapturerSourceTest;
   friend class MediaStreamVideoCapturerSourceOldConstraintsTest;
+  FRIEND_TEST_ALL_PREFIXES(MediaStreamVideoCapturerSourceTest, StartAndStop);
+  FRIEND_TEST_ALL_PREFIXES(MediaStreamVideoCapturerSourceTest,
+                           CaptureTimeAndMetadataPlumbing);
 
   // MediaStreamVideoSource overrides.
   void RequestRefreshFrame() override;
   void OnHasConsumers(bool has_consumers) override;
   void OnCapturingLinkSecured(bool is_secure) override;
-  void GetCurrentSupportedFormats(
-      int max_requested_width,
-      int max_requested_height,
-      double max_requested_frame_rate,
-      const VideoCaptureDeviceFormatsCB& callback) override;
   void StartSourceImpl(
-      const media::VideoCaptureFormat& format,
-      const blink::WebMediaConstraints& constraints,
       const VideoCaptureDeliverFrameCB& frame_callback) override;
   void StopSourceImpl() override;
-  base::Optional<media::VideoCaptureFormat> GetCurrentFormatImpl()
-      const override;
+  base::Optional<media::VideoCaptureFormat> GetCurrentFormat() const override;
 
   // RenderFrameObserver implementation.
   void OnDestruct() final {}
@@ -71,7 +63,9 @@ class CONTENT_EXPORT MediaStreamVideoCapturerSource
   // Method to bind as RunningCallback in VideoCapturerSource::StartCapture().
   void OnRunStateChanged(bool is_running);
 
-  const char* GetPowerLineFrequencyForTesting() const;
+  const mojom::MediaStreamDispatcherHostPtr& GetMediaStreamDispatcherHost();
+
+  mojom::MediaStreamDispatcherHostPtr dispatcher_host_;
 
   // The source that provides video frames.
   const std::unique_ptr<media::VideoCapturerSource> source_;

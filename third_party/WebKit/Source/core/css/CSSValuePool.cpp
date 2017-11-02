@@ -33,9 +33,8 @@ namespace blink {
 using namespace cssvalue;
 
 CSSValuePool& CssValuePool() {
-  DEFINE_THREAD_SAFE_STATIC_LOCAL(
-      ThreadSpecific<Persistent<CSSValuePool>>, thread_specific_pool,
-      new ThreadSpecific<Persistent<CSSValuePool>>());
+  DEFINE_THREAD_SAFE_STATIC_LOCAL(ThreadSpecific<Persistent<CSSValuePool>>,
+                                  thread_specific_pool, ());
   Persistent<CSSValuePool>& pool_handle = *thread_specific_pool;
   if (!pool_handle) {
     pool_handle = new CSSValuePool;
@@ -51,10 +50,10 @@ CSSValuePool::CSSValuePool()
       color_transparent_(new CSSColorValue(Color::kTransparent)),
       color_white_(new CSSColorValue(Color::kWhite)),
       color_black_(new CSSColorValue(Color::kBlack)) {
-  identifier_value_cache_.Resize(numCSSValueKeywords);
-  pixel_value_cache_.Resize(kMaximumCacheableIntegerValue + 1);
-  percent_value_cache_.Resize(kMaximumCacheableIntegerValue + 1);
-  number_value_cache_.Resize(kMaximumCacheableIntegerValue + 1);
+  identifier_value_cache_.resize(numCSSValueKeywords);
+  pixel_value_cache_.resize(kMaximumCacheableIntegerValue + 1);
+  percent_value_cache_.resize(kMaximumCacheableIntegerValue + 1);
+  number_value_cache_.resize(kMaximumCacheableIntegerValue + 1);
 }
 
 DEFINE_TRACE(CSSValuePool) {

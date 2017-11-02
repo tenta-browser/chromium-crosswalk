@@ -38,7 +38,7 @@ namespace blink {
 
 class AnimatableFilterOperations final : public AnimatableValue {
  public:
-  static PassRefPtr<AnimatableFilterOperations> Create(
+  static RefPtr<AnimatableFilterOperations> Create(
       const FilterOperations& operations) {
     return AdoptRef(new AnimatableFilterOperations(operations));
   }
@@ -50,15 +50,13 @@ class AnimatableFilterOperations final : public AnimatableValue {
   }
 
  protected:
-  PassRefPtr<AnimatableValue> InterpolateTo(const AnimatableValue*,
-                                            double fraction) const override;
-  bool UsesDefaultInterpolationWith(const AnimatableValue*) const override;
+  RefPtr<AnimatableValue> InterpolateTo(const AnimatableValue*,
+                                        double fraction) const override;
 
  private:
   AnimatableFilterOperations(const FilterOperations& operations)
       : operation_wrapper_(FilterOperationsWrapper::Create(operations)) {}
 
-  bool EqualTo(const AnimatableValue*) const override;
   AnimatableType GetType() const override { return kTypeFilterOperations; }
 
   Persistent<FilterOperationsWrapper> operation_wrapper_;

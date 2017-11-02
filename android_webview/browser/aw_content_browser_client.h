@@ -2,22 +2,30 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef ANDROID_WEBVIEW_LIB_AW_CONTENT_BROWSER_CLIENT_H_
-#define ANDROID_WEBVIEW_LIB_AW_CONTENT_BROWSER_CLIENT_H_
+#ifndef ANDROID_WEBVIEW_BROWSER_AW_CONTENT_BROWSER_CLIENT_H_
+#define ANDROID_WEBVIEW_BROWSER_AW_CONTENT_BROWSER_CLIENT_H_
 
 #include <stddef.h>
 
 #include <memory>
 
-#include "android_webview/browser/aw_web_preferences_populater.h"
 #include "base/compiler_specific.h"
 #include "base/macros.h"
+#include "base/memory/ref_counted.h"
 #include "content/public/browser/content_browser_client.h"
+#include "services/service_manager/public/cpp/binder_registry.h"
+
+namespace content {
+class RenderFrameHost;
+}
+
+namespace safe_browsing {
+class UrlCheckerDelegate;
+}
 
 namespace android_webview {
 
 class AwBrowserContext;
-class JniDependencyFactory;
 
 class AwContentBrowserClient : public content::ContentBrowserClient {
  public:
@@ -27,7 +35,7 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
   // Deprecated: use AwBrowserContext::GetDefault() instead.
   static AwBrowserContext* GetAwBrowserContext();
 
-  AwContentBrowserClient(JniDependencyFactory* native_factory);
+  AwContentBrowserClient();
   ~AwContentBrowserClient() override;
 
   // Allows AwBrowserMainParts to initialize a BrowserContext at the right
@@ -75,7 +83,7 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
   void GetQuotaSettings(
       content::BrowserContext* context,
       content::StoragePartition* partition,
-      const storage::OptionalQuotaSettingsCallback& callback) override;
+      storage::OptionalQuotaSettingsCallback callback) override;
   void AllowCertificateError(
       content::WebContents* web_contents,
       int cert_error,
@@ -90,9 +98,9 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
   void SelectClientCertificate(
       content::WebContents* web_contents,
       net::SSLCertRequestInfo* cert_request_info,
+      net::ClientCertIdentityList client_certs,
       std::unique_ptr<content::ClientCertificateDelegate> delegate) override;
-  bool CanCreateWindow(int opener_render_process_id,
-                       int opener_render_frame_id,
+  bool CanCreateWindow(content::RenderFrameHost* opener,
                        const GURL& opener_url,
                        const GURL& opener_top_level_frame_url,
                        const GURL& source_origin,
@@ -104,12 +112,9 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
                        const blink::mojom::WindowFeatures& features,
                        bool user_gesture,
                        bool opener_suppressed,
-                       content::ResourceContext* context,
                        bool* no_javascript_access) override;
   void ResourceDispatcherHostCreated() override;
   net::NetLog* GetNetLog() override;
-  void ClearCache(content::RenderFrameHost* rfh) override;
-  void ClearCookies(content::RenderFrameHost* rfh) override;
   base::FilePath GetDefaultDownloadDirectory() override;
   std::string GetDefaultDownloadName() override;
   void DidCreatePpapiPlugin(content::BrowserPpapiHost* browser_host) override;
@@ -124,7 +129,7 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
   void GetAdditionalMappedFilesForChildProcess(
       const base::CommandLine& command_line,
       int child_process_id,
-      content::FileDescriptorInfo* mappings) override;
+      content::PosixFileDescriptorInfo* mappings) override;
   void OverrideWebkitPrefs(content::RenderViewHost* rvh,
                            content::WebPreferences* web_prefs) override;
   std::vector<std::unique_ptr<content::NavigationThrottle>>
@@ -133,21 +138,34 @@ class AwContentBrowserClient : public content::ContentBrowserClient {
   content::DevToolsManagerDelegate* GetDevToolsManagerDelegate() override;
   std::unique_ptr<base::Value> GetServiceManifestOverlay(
       base::StringPiece name) override;
-  void RegisterRenderFrameMojoInterfaces(
-      service_manager::InterfaceRegistry* registry,
-      content::RenderFrameHost* render_frame_host) override;
+  void BindInterfaceRequestFromFrame(
+      content::RenderFrameHost* render_frame_host,
+      const std::string& interface_name,
+      mojo::ScopedMessagePipeHandle interface_pipe) override;
+  void ExposeInterfacesToRenderer(
+      service_manager::BinderRegistry* registry,
+      content::AssociatedInterfaceRegistry* associated_registry,
+      content::RenderProcessHost* render_process_host) override;
+  std::vector<std::unique_ptr<content::URLLoaderThrottle>>
+  CreateURLLoaderThrottles(
+      const base::Callback<content::WebContents*()>& wc_getter) override;
 
  private:
+  safe_browsing::UrlCheckerDelegate* GetSafeBrowsingUrlCheckerDelegate();
+
   // Android WebView currently has a single global (non-off-the-record) browser
   // context.
   std::unique_ptr<AwBrowserContext> browser_context_;
-  std::unique_ptr<AwWebPreferencesPopulater> preferences_populater_;
 
-  JniDependencyFactory* native_factory_;
+  service_manager::BinderRegistryWithArgs<content::RenderFrameHost*>
+      frame_interfaces_;
+
+  scoped_refptr<safe_browsing::UrlCheckerDelegate>
+      safe_browsing_url_checker_delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(AwContentBrowserClient);
 };
 
 }  // namespace android_webview
 
-#endif  // ANDROID_WEBVIEW_LIB_AW_CONTENT_BROWSER_CLIENT_H_
+#endif  // ANDROID_WEBVIEW_BROWSER_AW_CONTENT_BROWSER_CLIENT_H_

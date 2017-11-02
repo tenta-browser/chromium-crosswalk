@@ -37,6 +37,7 @@
 #include "core/html/track/vtt/VTTRegion.h"
 #include "core/html/track/vtt/VTTScanner.h"
 #include "platform/RuntimeEnabledFeatures.h"
+#include "platform/loader/fetch/TextResourceDecoderOptions.h"
 #include "platform/text/SegmentedString.h"
 #include "platform/wtf/text/CharacterNames.h"
 #include "platform/wtf/text/WTFString.h"
@@ -82,14 +83,16 @@ bool VTTParser::ParseFloatPercentageValuePair(VTTScanner& value_scanner,
 VTTParser::VTTParser(VTTParserClient* client, Document& document)
     : document_(&document),
       state_(kInitial),
-      decoder_(TextResourceDecoder::Create("text/plain", UTF8Encoding())),
+      decoder_(TextResourceDecoder::Create(TextResourceDecoderOptions(
+          TextResourceDecoderOptions::kPlainTextContent,
+          UTF8Encoding()))),
       current_start_time_(0),
       current_end_time_(0),
       client_(client) {}
 
 void VTTParser::GetNewCues(HeapVector<Member<TextTrackCue>>& output_cues) {
   DCHECK(output_cues.IsEmpty());
-  output_cues.Swap(cue_list_);
+  output_cues.swap(cue_list_);
 }
 
 void VTTParser::ParseBytes(const char* data, size_t length) {
@@ -104,7 +107,7 @@ void VTTParser::Flush() {
   line_reader_.SetEndOfStream();
   Parse();
   FlushPendingCue();
-  region_map_.Clear();
+  region_map_.clear();
 }
 
 void VTTParser::Parse() {
@@ -213,13 +216,13 @@ void VTTParser::CollectMetadataHeader(const String& line) {
   // WebVTT header parsing (WebVTT parser algorithm step 12)
 
   // The only currently supported header is the "Region" header.
-  if (!RuntimeEnabledFeatures::webVTTRegionsEnabled())
+  if (!RuntimeEnabledFeatures::WebVTTRegionsEnabled())
     return;
 
   // Step 12.4 If line contains the character ":" (A U+003A COLON), then set
   // metadata's name to the substring of line before the first ":" character and
   // metadata's value to the substring after this character.
-  size_t colon_position = line.Find(':');
+  size_t colon_position = line.find(':');
   if (colon_position == kNotFound)
     return;
 
@@ -347,7 +350,7 @@ DocumentFragment* VTTTreeBuilder::BuildFromString(const String& cue_text) {
   current_node_ = fragment;
 
   VTTTokenizer tokenizer(cue_text);
-  language_stack_.Clear();
+  language_stack_.clear();
 
   while (tokenizer.NextToken(token_))
     ConstructTreeFromToken(GetDocument());

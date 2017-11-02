@@ -31,7 +31,7 @@
 #include "media/base/media_content_type.h"
 
 #if !defined(USE_AURA)
-#include "content/browser/android/content_view_core_impl.h"
+#include "content/browser/android/content_view_core.h"
 #include "content/browser/renderer_host/render_widget_host_view_android.h"
 #endif
 
@@ -79,7 +79,7 @@ BrowserMediaPlayerManager* BrowserMediaPlayerManager::Create(
 
 #if !defined(USE_AURA)
 ContentViewCore* BrowserMediaPlayerManager::GetContentViewCore() const {
-  return ContentViewCoreImpl::FromWebContents(web_contents());
+  return ContentViewCore::FromWebContents(web_contents());
 }
 #endif
 
@@ -93,8 +93,7 @@ BrowserMediaPlayerManager::CreateMediaPlayer(
       const std::string user_agent = GetContentClient()->GetUserAgent();
       auto media_player_bridge = base::MakeUnique<MediaPlayerBridge>(
           media_player_params.player_id, media_player_params.url,
-          media_player_params.first_party_for_cookies, user_agent, hide_url_log,
-          this,
+          media_player_params.site_for_cookies, user_agent, hide_url_log, this,
           base::Bind(&BrowserMediaPlayerManager::OnDecoderResourcesReleased,
                      weak_ptr_factory_.GetWeakPtr()),
           media_player_params.frame_url, media_player_params.allow_credentials);

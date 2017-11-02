@@ -13,6 +13,7 @@
 
 #include "base/bind.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -21,6 +22,7 @@
 #include "components/web_cache/browser/web_cache_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
+#include "extensions/browser/api/extensions_api_client.h"
 #include "extensions/browser/api/web_request/web_request_api_constants.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
@@ -223,26 +225,26 @@ net::NetLogParametersCallback CreateNetLogExtensionIdCallback(
 std::unique_ptr<base::Value> NetLogModificationCallback(
     const EventResponseDelta* delta,
     net::NetLogCaptureMode capture_mode) {
-  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+  auto dict = std::make_unique<base::DictionaryValue>();
   dict->SetString("extension_id", delta->extension_id);
 
-  base::ListValue* modified_headers = new base::ListValue();
+  auto modified_headers = std::make_unique<base::ListValue>();
   net::HttpRequestHeaders::Iterator modification(
       delta->modified_request_headers);
   while (modification.GetNext()) {
     std::string line = modification.name() + ": " + modification.value();
     modified_headers->AppendString(line);
   }
-  dict->Set("modified_headers", modified_headers);
+  dict->Set("modified_headers", std::move(modified_headers));
 
-  base::ListValue* deleted_headers = new base::ListValue();
+  auto deleted_headers = std::make_unique<base::ListValue>();
   for (std::vector<std::string>::const_iterator key =
            delta->deleted_request_headers.begin();
        key != delta->deleted_request_headers.end();
        ++key) {
     deleted_headers->AppendString(*key);
   }
-  dict->Set("deleted_headers", deleted_headers);
+  dict->Set("deleted_headers", std::move(deleted_headers));
   return std::move(dict);
 }
 
@@ -252,8 +254,8 @@ bool InDecreasingExtensionInstallationTimeOrder(
   return a->extension_install_time > b->extension_install_time;
 }
 
-base::ListValue* StringToCharList(const std::string& s) {
-  base::ListValue* result = new base::ListValue;
+std::unique_ptr<base::ListValue> StringToCharList(const std::string& s) {
+  auto result = std::make_unique<base::ListValue>();
   for (size_t i = 0, n = s.size(); i < n; ++i) {
     result->AppendInteger(*reinterpret_cast<const unsigned char*>(&s[i]));
   }
@@ -328,6 +330,7 @@ EventResponseDelta* CalculateOnHeadersReceivedDelta(
     const std::string& extension_id,
     const base::Time& extension_install_time,
     bool cancel,
+    const GURL& old_url,
     const GURL& new_url,
     const net::HttpResponseHeaders* old_response_headers,
     ResponseHeaders* new_response_headers) {
@@ -339,14 +342,18 @@ EventResponseDelta* CalculateOnHeadersReceivedDelta(
   if (!new_response_headers)
     return result;
 
+  extensions::ExtensionsAPIClient* api_client =
+      extensions::ExtensionsAPIClient::Get();
+
   // Find deleted headers (header keys are treated case insensitively).
   {
     size_t iter = 0;
     std::string name;
     std::string value;
     while (old_response_headers->EnumerateHeaderLines(&iter, &name, &value)) {
+      if (api_client->ShouldHideResponseHeader(old_url, name))
+        continue;
       std::string name_lowercase = base::ToLowerASCII(name);
-
       bool header_found = false;
       for (const auto& i : *new_response_headers) {
         if (base::LowerCaseEqualsASCII(i.first, name_lowercase) &&
@@ -363,6 +370,8 @@ EventResponseDelta* CalculateOnHeadersReceivedDelta(
   // Find added headers (header keys are treated case insensitively).
   {
     for (const auto& i : *new_response_headers) {
+      if (api_client->ShouldHideResponseHeader(old_url, i.first))
+        continue;
       std::string name_lowercase = base::ToLowerASCII(i.first);
       size_t iter = 0;
       std::string name;
@@ -1210,7 +1219,7 @@ void ClearCacheOnNavigation() {
 std::unique_ptr<base::DictionaryValue> CreateHeaderDictionary(
     const std::string& name,
     const std::string& value) {
-  std::unique_ptr<base::DictionaryValue> header(new base::DictionaryValue());
+  auto header = std::make_unique<base::DictionaryValue>();
   header->SetString(keys::kHeaderNameKey, name);
   if (base::IsStringUTF8(value)) {
     header->SetString(keys::kHeaderValueKey, value);

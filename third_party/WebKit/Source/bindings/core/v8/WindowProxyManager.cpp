@@ -4,7 +4,7 @@
 
 #include "bindings/core/v8/WindowProxyManager.h"
 
-#include "bindings/core/v8/DOMWrapperWorld.h"
+#include "platform/bindings/DOMWrapperWorld.h"
 
 namespace blink {
 
@@ -24,6 +24,12 @@ void WindowProxyManager::ClearForNavigation() {
   window_proxy_->ClearForNavigation();
   for (auto& entry : isolated_worlds_)
     entry.value->ClearForNavigation();
+}
+
+void WindowProxyManager::ClearForSwap() {
+  window_proxy_->ClearForSwap();
+  for (auto& entry : isolated_worlds_)
+    entry.value->ClearForSwap();
 }
 
 void WindowProxyManager::ReleaseGlobalProxies(
@@ -76,7 +82,7 @@ WindowProxy* WindowProxyManager::WindowProxyMaybeUninitialized(
   if (world.IsMainWorld()) {
     window_proxy = window_proxy_.Get();
   } else {
-    IsolatedWorldMap::iterator iter = isolated_worlds_.Find(world.GetWorldId());
+    IsolatedWorldMap::iterator iter = isolated_worlds_.find(world.GetWorldId());
     if (iter != isolated_worlds_.end()) {
       window_proxy = iter->value.Get();
     } else {

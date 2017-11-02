@@ -29,8 +29,8 @@
 #ifndef StaticNodeList_h
 #define StaticNodeList_h
 
-#include "bindings/core/v8/TraceWrapperMember.h"
 #include "core/dom/NodeList.h"
+#include "platform/bindings/TraceWrapperMember.h"
 #include "platform/wtf/Vector.h"
 
 namespace blink {
@@ -66,7 +66,7 @@ template <typename NodeType>
 StaticNodeTypeList<NodeType>* StaticNodeTypeList<NodeType>::Adopt(
     HeapVector<Member<NodeType>>& nodes) {
   StaticNodeTypeList<NodeType>* node_list = new StaticNodeTypeList<NodeType>;
-  swap(node_list->nodes_, nodes, node_list);
+  swap(node_list->nodes_, nodes);
   return node_list;
 }
 

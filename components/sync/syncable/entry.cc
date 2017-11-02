@@ -6,6 +6,7 @@
 
 #include <iomanip>
 
+#include "base/values.h"
 #include "components/sync/syncable/directory.h"
 #include "components/sync/syncable/syncable_base_transaction.h"
 
@@ -42,8 +43,9 @@ Directory* Entry::dir() const {
   return basetrans_->directory();
 }
 
-base::DictionaryValue* Entry::ToValue(Cryptographer* cryptographer) const {
-  base::DictionaryValue* entry_info = new base::DictionaryValue();
+std::unique_ptr<base::DictionaryValue> Entry::ToValue(
+    Cryptographer* cryptographer) const {
+  auto entry_info = std::make_unique<base::DictionaryValue>();
   entry_info->SetBoolean("good", good());
   if (good()) {
     entry_info->Set("kernel", kernel_->ToValue(cryptographer));

@@ -32,10 +32,11 @@
 #include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/prefs/pref_service.h"
 #include "components/proxy_config/proxy_config_pref_names.h"
-#include "components/safe_browsing_db/safe_browsing_prefs.h"
+#include "components/safe_browsing/common/safe_browsing_prefs.h"
 #include "components/spellcheck/browser/pref_names.h"
-#include "components/translate/core/common/translate_pref_names.h"
+#include "components/translate/core/browser/translate_pref_names.h"
 #include "content/public/browser/notification_details.h"
+#include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
 #include "extensions/browser/extension_pref_value_map.h"
 #include "extensions/browser/extension_pref_value_map_factory.h"
@@ -48,6 +49,10 @@
 #include "extensions/common/permissions/api_permission.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "media/media_features.h"
+
+#if defined(OS_CHROMEOS)
+#include "ash/public/cpp/ash_pref_names.h"  // nogncheck
+#endif
 
 namespace keys = extensions::preference_api_constants;
 namespace helpers = extensions::preference_helpers;
@@ -145,25 +150,25 @@ PrefMappingEntry kPrefMapping[] = {
      APIPermission::kAccessibilityFeaturesRead,
      APIPermission::kAccessibilityFeaturesModify},
 #if defined(OS_CHROMEOS)
-    {"autoclick", prefs::kAccessibilityAutoclickEnabled,
+    {"autoclick", ash::prefs::kAccessibilityAutoclickEnabled,
      APIPermission::kAccessibilityFeaturesRead,
      APIPermission::kAccessibilityFeaturesModify},
-    {"highContrast", prefs::kAccessibilityHighContrastEnabled,
+    {"highContrast", ash::prefs::kAccessibilityHighContrastEnabled,
      APIPermission::kAccessibilityFeaturesRead,
      APIPermission::kAccessibilityFeaturesModify},
-    {"largeCursor", prefs::kAccessibilityLargeCursorEnabled,
+    {"largeCursor", ash::prefs::kAccessibilityLargeCursorEnabled,
      APIPermission::kAccessibilityFeaturesRead,
      APIPermission::kAccessibilityFeaturesModify},
-    {"screenMagnifier", prefs::kAccessibilityScreenMagnifierEnabled,
+    {"screenMagnifier", ash::prefs::kAccessibilityScreenMagnifierEnabled,
      APIPermission::kAccessibilityFeaturesRead,
      APIPermission::kAccessibilityFeaturesModify},
-    {"spokenFeedback", prefs::kAccessibilitySpokenFeedbackEnabled,
+    {"spokenFeedback", ash::prefs::kAccessibilitySpokenFeedbackEnabled,
      APIPermission::kAccessibilityFeaturesRead,
      APIPermission::kAccessibilityFeaturesModify},
-    {"stickyKeys", prefs::kAccessibilityStickyKeysEnabled,
+    {"stickyKeys", ash::prefs::kAccessibilityStickyKeysEnabled,
      APIPermission::kAccessibilityFeaturesRead,
      APIPermission::kAccessibilityFeaturesModify},
-    {"virtualKeyboard", prefs::kAccessibilityVirtualKeyboardEnabled,
+    {"virtualKeyboard", ash::prefs::kAccessibilityVirtualKeyboardEnabled,
      APIPermission::kAccessibilityFeaturesRead,
      APIPermission::kAccessibilityFeaturesModify},
 #endif
@@ -360,17 +365,17 @@ class PrefMapping {
 PreferenceEventRouter::PreferenceEventRouter(Profile* profile)
     : profile_(profile) {
   registrar_.Init(profile_->GetPrefs());
-  incognito_registrar_.Init(profile_->GetOffTheRecordPrefs());
   for (size_t i = 0; i < arraysize(kPrefMapping); ++i) {
     registrar_.Add(kPrefMapping[i].browser_pref,
                    base::Bind(&PreferenceEventRouter::OnPrefChanged,
                               base::Unretained(this),
                               registrar_.prefs()));
-    incognito_registrar_.Add(kPrefMapping[i].browser_pref,
-                             base::Bind(&PreferenceEventRouter::OnPrefChanged,
-                                        base::Unretained(this),
-                                        incognito_registrar_.prefs()));
   }
+  notification_registrar_.Add(this, chrome::NOTIFICATION_PROFILE_CREATED,
+                              content::NotificationService::AllSources());
+  notification_registrar_.Add(this, chrome::NOTIFICATION_PROFILE_DESTROYED,
+                              content::NotificationService::AllSources());
+  OnIncognitoProfileCreated(profile->GetOffTheRecordPrefs());
 }
 
 PreferenceEventRouter::~PreferenceEventRouter() { }
@@ -424,6 +429,43 @@ void PreferenceEventRouter::OnPrefChanged(PrefService* pref_service,
                                      browser_pref);
 }
 
+void PreferenceEventRouter::Observe(
+    int type,
+    const content::NotificationSource& source,
+    const content::NotificationDetails& details) {
+  switch (type) {
+    case chrome::NOTIFICATION_PROFILE_CREATED: {
+      Profile* profile = content::Source<Profile>(source).ptr();
+      if (profile != profile_ && profile->GetOriginalProfile() == profile_) {
+        OnIncognitoProfileCreated(profile->GetPrefs());
+      }
+      break;
+    }
+    case chrome::NOTIFICATION_PROFILE_DESTROYED: {
+      Profile* profile = content::Source<Profile>(source).ptr();
+      if (profile != profile_ && profile->GetOriginalProfile() == profile_) {
+        // The real PrefService is about to be destroyed so we must make sure we
+        // get the "dummy" one.
+        OnIncognitoProfileCreated(profile_->GetReadOnlyOffTheRecordPrefs());
+      }
+      break;
+    }
+    default:
+      NOTREACHED();
+  }
+}
+
+void PreferenceEventRouter::OnIncognitoProfileCreated(PrefService* prefs) {
+  incognito_registrar_.reset(new PrefChangeRegistrar());
+  incognito_registrar_->Init(prefs);
+  for (size_t i = 0; i < arraysize(kPrefMapping); ++i) {
+    incognito_registrar_->Add(
+        kPrefMapping[i].browser_pref,
+        base::Bind(&PreferenceEventRouter::OnPrefChanged,
+                   base::Unretained(this), incognito_registrar_->prefs()));
+  }
+}
+
 void PreferenceAPIBase::SetExtensionControlledPref(
     const std::string& extension_id,
     const std::string& pref_key,
@@ -446,9 +488,7 @@ void PreferenceAPIBase::SetExtensionControlledPref(
     ExtensionPrefs::ScopedDictionaryUpdate update(extension_prefs(),
                                                   extension_id,
                                                   scope_string);
-    base::DictionaryValue* preference = update.Get();
-    if (!preference)
-      preference = update.Create();
+    auto preference = update.Create();
     preference->SetWithoutPathExpansion(pref_key, value->CreateDeepCopy());
   }
   extension_pref_value_map()->SetExtensionPref(
@@ -468,7 +508,7 @@ void PreferenceAPIBase::RemoveExtensionControlledPref(
     ExtensionPrefs::ScopedDictionaryUpdate update(extension_prefs(),
                                                   extension_id,
                                                   scope_string);
-    base::DictionaryValue* preference = update.Get();
+    auto preference = update.Get();
     if (preference)
       preference->RemoveWithoutPathExpansion(pref_key, NULL);
   }
@@ -621,7 +661,7 @@ ExtensionFunction::ResponseAction GetPreferenceFunction::Run() {
     return RespondNow(Error(keys::kPermissionErrorMessage, pref_key));
 
   Profile* profile = Profile::FromBrowserContext(browser_context());
-  PrefService* prefs =
+  const PrefService* prefs =
       incognito ? profile->GetOffTheRecordPrefs() : profile->GetPrefs();
   const PrefService::Preference* pref = prefs->FindPreference(browser_pref);
   CHECK(pref);

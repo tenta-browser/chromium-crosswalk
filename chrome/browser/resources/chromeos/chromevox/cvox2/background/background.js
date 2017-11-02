@@ -93,21 +93,22 @@ Background = function() {
   // Next earcons or the Classic earcons depending on the current mode.
   Object.defineProperty(cvox.ChromeVox, 'earcons', {
     get: (function() {
-      if (this.mode === ChromeVoxMode.FORCE_NEXT ||
-          this.mode === ChromeVoxMode.NEXT) {
-        return this.nextEarcons_;
-      } else {
-        return this.classicEarcons_;
-      }
-    }).bind(this)
+           if (this.mode === ChromeVoxMode.FORCE_NEXT ||
+               this.mode === ChromeVoxMode.NEXT) {
+             return this.nextEarcons_;
+           } else {
+             return this.classicEarcons_;
+           }
+         }).bind(this)
   });
 
   if (cvox.ChromeVox.isChromeOS) {
     Object.defineProperty(cvox.ChromeVox, 'modKeyStr', {
       get: function() {
         return (this.mode == ChromeVoxMode.CLASSIC ||
-            this.mode == ChromeVoxMode.CLASSIC_COMPAT) ?
-                'Search+Shift' : 'Search';
+                this.mode == ChromeVoxMode.CLASSIC_COMPAT) ?
+            'Search+Shift' :
+            'Search';
       }.bind(this)
     });
 
@@ -174,11 +175,13 @@ Background = function() {
   // Record a metric with the mode we're in on startup.
   var useNext = localStorage['useClassic'] != 'true';
   chrome.metricsPrivate.recordValue(
-      { metricName: 'Accessibility.CrosChromeVoxNext',
+      {
+        metricName: 'Accessibility.CrosChromeVoxNext',
         type: chrome.metricsPrivate.MetricTypeType.HISTOGRAM_LINEAR,
         min: 1,  // According to histogram.h, this should be 1 for enums.
         max: 2,  // Maximum should be exclusive.
-        buckets: 3 },  // Number of buckets: 0, 1 and overflowing 2.
+        buckets: 3
+      },  // Number of buckets: 0, 1 and overflowing 2.
       useNext ? 1 : 0);
 };
 
@@ -245,15 +248,13 @@ Background.prototype = {
 
     // Closure complains, but clearly, |target| is not null.
     var topLevelRoot =
-        AutomationUtil.getTopLevelRoot(/** @type {!AutomationNode} */(target));
+        AutomationUtil.getTopLevelRoot(/** @type {!AutomationNode} */ (target));
     if (!topLevelRoot)
-      return useNext ? ChromeVoxMode.FORCE_NEXT :
-          ChromeVoxMode.CLASSIC_COMPAT;
+      return useNext ? ChromeVoxMode.FORCE_NEXT : ChromeVoxMode.CLASSIC_COMPAT;
 
     var docUrl = topLevelRoot.docUrl || '';
     var nextSite = this.isWhitelistedForNext_(docUrl);
-    var classicCompat =
-        this.isWhitelistedForClassicCompat_(docUrl);
+    var classicCompat = this.isWhitelistedForClassicCompat_(docUrl);
     if (classicCompat && !useNext)
       return ChromeVoxMode.CLASSIC_COMPAT;
     else if (nextSite)
@@ -290,8 +291,7 @@ Background.prototype = {
     // async. Save it to ensure we're looking at the currentRange at this moment
     // in time.
     var cur = this.currentRange_;
-    chrome.tabs.query({active: true,
-                       lastFocusedWindow: true}, function(tabs) {
+    chrome.tabs.query({active: true, lastFocusedWindow: true}, function(tabs) {
       if (newMode == ChromeVoxMode.CLASSIC) {
         // Generally, we don't want to inject classic content scripts as it is
         // done by the extension system at document load. The exception is when
@@ -362,8 +362,8 @@ Background.prototype = {
     else
       this.setCurrentRange(null);
 
-    var announce = Msgs.getMsg(useNext ?
-        'switch_to_next' : 'switch_to_classic');
+    var announce =
+        Msgs.getMsg(useNext ? 'switch_to_next' : 'switch_to_classic');
     cvox.ChromeVox.tts.speak(
         announce, cvox.QueueMode.FLUSH, {doNotInterrupt: true});
 
@@ -439,19 +439,19 @@ Background.prototype = {
 
     var o = new Output();
     var selectedRange;
-    if (this.pageSel_ &&
-        this.pageSel_.isValid() &&
-        range.isValid()) {
+    var msg;
+
+    if (this.pageSel_ && this.pageSel_.isValid() && range.isValid()) {
       // Compute the direction of the endpoints of each range.
 
       // Casts are ok because isValid checks node start and end nodes are
       // non-null; Closure just doesn't eval enough to see it.
-      var startDir =
-          AutomationUtil.getDirection(this.pageSel_.start.node,
-              /** @type {!AutomationNode} */ (range.start.node));
-      var endDir =
-          AutomationUtil.getDirection(this.pageSel_.end.node,
-              /** @type {!AutomationNode} */ (range.end.node));
+      var startDir = AutomationUtil.getDirection(
+          this.pageSel_.start.node,
+          /** @type {!AutomationNode} */ (range.start.node));
+      var endDir = AutomationUtil.getDirection(
+          this.pageSel_.end.node,
+          /** @type {!AutomationNode} */ (range.end.node));
 
       // Selection across roots isn't supported.
       var pageRootStart = this.pageSel_.start.node.root;
@@ -460,27 +460,21 @@ Background.prototype = {
       var curRootEnd = range.end.node.root;
 
       // Disallow crossing over the start of the page selection and roots.
-      if (startDir == Dir.BACKWARD ||
-          pageRootStart != pageRootEnd ||
-          pageRootStart != curRootStart ||
-          pageRootEnd != curRootEnd) {
+      if (startDir == Dir.BACKWARD || pageRootStart != pageRootEnd ||
+          pageRootStart != curRootStart || pageRootEnd != curRootEnd) {
         o.format('@end_selection');
         this.pageSel_ = null;
       } else {
         // Expand or shrink requires different feedback.
-        var msg;
         if (endDir == Dir.FORWARD &&
             (this.pageSel_.end.node != range.end.node ||
-                this.pageSel_.end.index <= range.end.index)) {
+             this.pageSel_.end.index <= range.end.index)) {
           msg = '@selected';
         } else {
           msg = '@unselected';
           selectedRange = prevRange;
         }
-        this.pageSel_ = new cursors.Range(
-            this.pageSel_.start,
-            range.end
-            );
+        this.pageSel_ = new cursors.Range(this.pageSel_.start, range.end);
         if (this.pageSel_)
           this.pageSel_.select();
       }
@@ -488,8 +482,8 @@ Background.prototype = {
       // Ensure we don't select the editable when we first encounter it.
       var lca = null;
       if (range.start.node && prevRange.start.node) {
-        lca = AutomationUtil.getLeastCommonAncestor(prevRange.start.node,
-                                                    range.start.node);
+        lca = AutomationUtil.getLeastCommonAncestor(
+            prevRange.start.node, range.start.node);
       }
       if (!lca || lca.state[StateType.EDITABLE] ||
           !range.start.node.state[StateType.EDITABLE])
@@ -497,8 +491,8 @@ Background.prototype = {
     }
 
     o.withRichSpeechAndBraille(
-        selectedRange || range, prevRange, Output.EventType.NAVIGATE)
-            .withQueueMode(cvox.QueueMode.FLUSH);
+         selectedRange || range, prevRange, Output.EventType.NAVIGATE)
+        .withQueueMode(cvox.QueueMode.FLUSH);
 
     if (msg)
       o.format(msg);
@@ -573,8 +567,7 @@ Background.prototype = {
    */
   shouldEnableClassicForUrl_: function(url) {
     return this.mode != ChromeVoxMode.FORCE_NEXT &&
-         !this.isBlacklistedForClassic_(url) &&
-        !this.isWhitelistedForNext_(url);
+        !this.isBlacklistedForClassic_(url) && !this.isWhitelistedForNext_(url);
   },
 
   /**
@@ -585,9 +578,10 @@ Background.prototype = {
    * @return {boolean}
    */
   isWhitelistedForClassicCompat_: function(url) {
-    return (this.isBlacklistedForClassic_(url) || (this.getCurrentRange() &&
-        !this.getCurrentRange().isWebRange() &&
-        this.getCurrentRange().start.node.state[StateType.FOCUSED])) || false;
+    return (this.isBlacklistedForClassic_(url) ||
+            (this.getCurrentRange() && !this.getCurrentRange().isWebRange() &&
+             this.getCurrentRange().start.node.state[StateType.FOCUSED])) ||
+        false;
   },
 
   /**
@@ -641,25 +635,57 @@ Background.prototype = {
   brailleRoutingCommand_: function(text, position) {
     var actionNodeSpan = null;
     var selectionSpan = null;
-    text.getSpans(position).forEach(function(span) {
-      if (span instanceof Output.SelectionSpan) {
-        selectionSpan = span;
-      } else if (span instanceof Output.NodeSpan) {
-        if (!actionNodeSpan ||
-            text.getSpanLength(span) <= text.getSpanLength(actionNodeSpan)) {
-          actionNodeSpan = span;
-        }
+    var selSpans = text.getSpansInstanceOf(Output.SelectionSpan);
+    var nodeSpans = text.getSpansInstanceOf(Output.NodeSpan);
+    for (var i = 0, selSpan; selSpan = selSpans[i]; i++) {
+      if (text.getSpanStart(selSpan) <= position &&
+          position < text.getSpanEnd(selSpan)) {
+        selectionSpan = selSpan;
+        break;
       }
-    });
+    }
+
+    var interval;
+    for (var j = 0, nodeSpan; nodeSpan = nodeSpans[j]; j++) {
+      var intervals = text.getSpanIntervals(nodeSpan);
+      var tempInterval = intervals.find(function(innerInterval) {
+        return innerInterval.start <= position &&
+            position <= innerInterval.end;
+      });
+      if (tempInterval) {
+        actionNodeSpan = nodeSpan;
+        interval = tempInterval;
+      }
+    }
+
     if (!actionNodeSpan)
       return;
+
     var actionNode = actionNodeSpan.node;
+    var offset = actionNodeSpan.offset;
     if (actionNode.role === RoleType.INLINE_TEXT_BOX)
       actionNode = actionNode.parent;
     actionNode.doDefault();
-    if (selectionSpan) {
+
+    if (actionNode.role != RoleType.STATIC_TEXT &&
+        actionNode.role != RoleType.TEXT_FIELD)
+      return;
+
+    if (!selectionSpan)
+      selectionSpan = actionNodeSpan;
+
+    if (actionNode.state.richlyEditable) {
+      var start = interval ? interval.start : text.getSpanStart(selectionSpan);
+      var targetPosition = position - start + offset;
+      chrome.automation.setDocumentSelection({
+        anchorObject: actionNode,
+        anchorOffset: targetPosition,
+        focusObject: actionNode,
+        focusOffset: targetPosition
+      });
+    } else {
       var start = text.getSpanStart(selectionSpan);
-      var targetPosition = position - start;
+      var targetPosition = position - start + offset;
       actionNode.setSelection(targetPosition, targetPosition);
     }
   },
@@ -678,10 +704,8 @@ Background.prototype = {
         if (action == 'getIsClassicEnabled') {
           var url = msg['url'];
           var isClassicEnabled = this.shouldEnableClassicForUrl_(url);
-          port.postMessage({
-            target: 'next',
-            isClassicEnabled: isClassicEnabled
-          });
+          port.postMessage(
+              {target: 'next', isClassicEnabled: isClassicEnabled});
         } else if (action == 'enableClassicCompatForUrl') {
           var url = msg['url'];
           this.classicBlacklist_.add(url);
@@ -741,10 +765,7 @@ Background.prototype = {
     if (!command)
       return false;
 
-    var msg = {
-      'message': 'USER_COMMAND',
-      'command': command
-    };
+    var msg = {'message': 'USER_COMMAND', 'command': command};
     cvox.ExtensionBridge.send(msg);
     return true;
   },
@@ -771,10 +792,11 @@ Background.prototype = {
     // First, see if we've crossed a root. Remove once webview handles focus
     // correctly.
     if (prevRange && prevRange.start.node && start) {
-      var entered = AutomationUtil.getUniqueAncestors(
-          prevRange.start.node, start);
+      var entered =
+          AutomationUtil.getUniqueAncestors(prevRange.start.node, start);
       var embeddedObject = entered.find(function(f) {
-        return f.role == RoleType.EMBEDDED_OBJECT; });
+        return f.role == RoleType.EMBEDDED_OBJECT;
+      });
       if (embeddedObject && !embeddedObject.state[StateType.FOCUSED])
         embeddedObject.focus();
     }
@@ -793,7 +815,8 @@ Background.prototype = {
       if (!start.state[StateType.FOCUSED])
         start.focus();
       return;
-    } else if (!AutomationPredicate.structuralContainer(end) &&
+    } else if (
+        !AutomationPredicate.structuralContainer(end) &&
         end.state[StateType.FOCUSABLE]) {
       if (!end.state[StateType.FOCUSED])
         end.focus();
@@ -827,11 +850,16 @@ Background.prototype = {
  * @private
  */
 Background.globsToRegExp_ = function(globs) {
-  return new RegExp('^(' + globs.map(function(glob) {
-    return glob.replace(/[.+^$(){}|[\]\\]/g, '\\$&')
-        .replace(/\*/g, '.*')
-        .replace(/\?/g, '.');
-  }).join('|') + ')$');
+  return new RegExp(
+      '^(' +
+      globs
+          .map(function(glob) {
+            return glob.replace(/[.+^$(){}|[\]\\]/g, '\\$&')
+                .replace(/\*/g, '.*')
+                .replace(/\?/g, '.');
+          })
+          .join('|') +
+      ')$');
 };
 
 new Background();

@@ -6,10 +6,10 @@
 #define CC_OUTPUT_DIRECT_RENDERER_H_
 
 #include <memory>
-#include <unordered_map>
 #include <vector>
 
 #include "base/callback.h"
+#include "base/containers/flat_map.h"
 #include "base/macros.h"
 #include "cc/base/filter_operations.h"
 #include "cc/cc_export.h"
@@ -17,7 +17,7 @@
 #include "cc/output/dc_layer_overlay.h"
 #include "cc/output/overlay_processor.h"
 #include "cc/quads/tile_draw_quad.h"
-#include "cc/resources/resource_provider.h"
+#include "cc/resources/display_resource_provider.h"
 #include "gpu/command_buffer/common/texture_in_use_response.h"
 #include "ui/gfx/geometry/quad_f.h"
 #include "ui/gfx/geometry/rect.h"
@@ -27,12 +27,15 @@ namespace gfx {
 class ColorSpace;
 }
 
+namespace viz {
+class RendererSettings;
+}
+
 namespace cc {
+class DisplayResourceProvider;
 class DrawPolygon;
 class OutputSurface;
 class RenderPass;
-class RendererSettings;
-class ResourceProvider;
 class ScopedResource;
 
 // This is the base class for code shared between the GL and software
@@ -41,9 +44,9 @@ class ScopedResource;
 // for reference).
 class CC_EXPORT DirectRenderer {
  public:
-  DirectRenderer(const RendererSettings* settings,
+  DirectRenderer(const viz::RendererSettings* settings,
                  OutputSurface* output_surface,
-                 ResourceProvider* resource_provider);
+                 DisplayResourceProvider* resource_provider);
   virtual ~DirectRenderer();
 
   void Initialize();
@@ -53,7 +56,7 @@ class CC_EXPORT DirectRenderer {
   void SetVisible(bool visible);
   void DecideRenderPassAllocationsForFrame(
       const RenderPassList& render_passes_in_draw_order);
-  bool HasAllocatedResourcesForTesting(int render_pass_id) const;
+  bool HasAllocatedResourcesForTesting(RenderPassId render_pass_id) const;
   void DrawFrame(RenderPassList* render_passes_in_draw_order,
                  float device_scale_factor,
                  const gfx::Size& device_viewport_size);
@@ -140,12 +143,13 @@ class CC_EXPORT DirectRenderer {
                      const gfx::Rect& render_pass_scissor,
                      bool use_render_pass_scissor);
 
-  const FilterOperations* FiltersForPass(int render_pass_id) const;
-  const FilterOperations* BackgroundFiltersForPass(int render_pass_id) const;
+  const FilterOperations* FiltersForPass(RenderPassId render_pass_id) const;
+  const FilterOperations* BackgroundFiltersForPass(
+      RenderPassId render_pass_id) const;
 
   // Private interface implemented by subclasses for use by DirectRenderer.
   virtual bool CanPartialSwap() = 0;
-  virtual ResourceFormat BackbufferFormat() const = 0;
+  virtual viz::ResourceFormat BackbufferFormat() const = 0;
   virtual void BindFramebufferToOutputSurface() = 0;
   virtual bool BindFramebufferToTexture(const ScopedResource* resource) = 0;
   virtual void SetScissorTestRect(const gfx::Rect& scissor_rect) = 0;
@@ -169,16 +173,16 @@ class CC_EXPORT DirectRenderer {
   virtual void EnsureScissorTestDisabled() = 0;
   virtual void DidChangeVisibility() = 0;
   virtual void CopyCurrentRenderPassToBitmap(
-      std::unique_ptr<CopyOutputRequest> request) = 0;
+      std::unique_ptr<viz::CopyOutputRequest> request) = 0;
   virtual void SetEnableDCLayers(bool enable) = 0;
 
   gfx::Size surface_size_for_swap_buffers() const {
     return reshape_surface_size_;
   }
 
-  const RendererSettings* const settings_;
+  const viz::RendererSettings* const settings_;
   OutputSurface* const output_surface_;
-  ResourceProvider* const resource_provider_;
+  DisplayResourceProvider* const resource_provider_;
   // This can be replaced by test implementations.
   std::unique_ptr<OverlayProcessor> overlay_processor_;
 
@@ -198,13 +202,17 @@ class CC_EXPORT DirectRenderer {
   // DirectComposition layers needed to be used.
   int frames_since_using_dc_layers_ = 0;
 
-  // TODO(danakj): Just use a vector of pairs here? Hash map is way overkill.
-  std::unordered_map<int, std::unique_ptr<ScopedResource>>
+  // A map from RenderPass id to the texture used to draw the RenderPass from.
+  base::flat_map<RenderPassId, std::unique_ptr<ScopedResource>>
       render_pass_textures_;
-  std::unordered_map<int, TileDrawQuad> render_pass_bypass_quads_;
+  // A map from RenderPass id to the single quad present in and replacing the
+  // RenderPass.
+  base::flat_map<RenderPassId, TileDrawQuad> render_pass_bypass_quads_;
 
-  RenderPassFilterList render_pass_filters_;
-  RenderPassFilterList render_pass_background_filters_;
+  // A map from RenderPass id to the filters used when drawing the RenderPass.
+  base::flat_map<RenderPassId, FilterOperations*> render_pass_filters_;
+  base::flat_map<RenderPassId, FilterOperations*>
+      render_pass_background_filters_;
 
   bool visible_ = false;
   bool disable_color_checks_for_testing_ = false;

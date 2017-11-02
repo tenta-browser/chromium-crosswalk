@@ -9,18 +9,20 @@
           "context_lost",
           "--show-stdout",
           "--browser=android-chromium",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
         ],
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "context_lost_tests",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
             {
+              "android_devices": "1",
               "device_os": "M",
               "device_type": "bullhead",
               "os": "Android"
@@ -33,18 +35,20 @@
           "depth_capture",
           "--show-stdout",
           "--browser=android-chromium",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
         ],
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "depth_capture_tests",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
             {
+              "android_devices": "1",
               "device_os": "M",
               "device_type": "bullhead",
               "os": "Android"
@@ -57,18 +61,20 @@
           "gpu_process",
           "--show-stdout",
           "--browser=android-chromium",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
         ],
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "gpu_process_launch_tests",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
             {
+              "android_devices": "1",
               "device_os": "M",
               "device_type": "bullhead",
               "os": "Android"
@@ -81,18 +87,20 @@
           "hardware_accelerated_feature",
           "--show-stdout",
           "--browser=android-chromium",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
         ],
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "hardware_accelerated_feature_tests",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
             {
+              "android_devices": "1",
               "device_os": "M",
               "device_type": "bullhead",
               "os": "Android"
@@ -105,6 +113,7 @@
           "maps",
           "--show-stdout",
           "--browser=android-chromium",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc",
           "--os-type",
@@ -117,12 +126,13 @@
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "maps_pixel_test",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
             {
+              "android_devices": "1",
               "device_os": "M",
               "device_type": "bullhead",
               "os": "Android"
@@ -135,6 +145,7 @@
           "pixel",
           "--show-stdout",
           "--browser=android-chromium",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc",
           "--refimg-cloud-storage-bucket",
@@ -152,7 +163,7 @@
           "--upload-refimg-to-cloud-storage"
         ],
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "precommit_args": [
           "--download-refimg-from-cloud-storage"
@@ -161,6 +172,7 @@
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
             {
+              "android_devices": "1",
               "device_os": "M",
               "device_type": "bullhead",
               "os": "Android"
@@ -173,18 +185,20 @@
           "screenshot_sync",
           "--show-stdout",
           "--browser=android-chromium",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
         ],
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "screenshot_sync_tests",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
             {
+              "android_devices": "1",
               "device_os": "M",
               "device_type": "bullhead",
               "os": "Android"
@@ -197,18 +211,20 @@
           "trace_test",
           "--show-stdout",
           "--browser=android-chromium",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
         ],
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "trace_test",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
             {
+              "android_devices": "1",
               "device_os": "M",
               "device_type": "bullhead",
               "os": "Android"
@@ -221,23 +237,27 @@
           "webgl_conformance",
           "--show-stdout",
           "--browser=android-chromium",
+          "--passthrough",
           "-v",
-          "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
+          "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc",
+          "--read-abbreviated-json-results-from=../../content/test/data/gpu/webgl_conformance_tests_output.json"
         ],
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "webgl_conformance_tests",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
             {
+              "android_devices": "1",
               "device_os": "M",
               "device_type": "bullhead",
               "os": "Android"
             }
-          ]
+          ],
+          "shards": 6
         }
       }
     ]
@@ -250,13 +270,14 @@
           "context_lost",
           "--show-stdout",
           "--browser=release",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
         ],
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "context_lost_tests",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
@@ -273,13 +294,14 @@
           "depth_capture",
           "--show-stdout",
           "--browser=release",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
         ],
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "depth_capture_tests",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
@@ -296,13 +318,14 @@
           "gpu_process",
           "--show-stdout",
           "--browser=release",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
         ],
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "gpu_process_launch_tests",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
@@ -319,13 +342,14 @@
           "hardware_accelerated_feature",
           "--show-stdout",
           "--browser=release",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
         ],
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "hardware_accelerated_feature_tests",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
@@ -342,6 +366,7 @@
           "maps",
           "--show-stdout",
           "--browser=release",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc",
           "--os-type",
@@ -354,7 +379,7 @@
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "maps_pixel_test",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
@@ -371,6 +396,7 @@
           "pixel",
           "--show-stdout",
           "--browser=release",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc",
           "--refimg-cloud-storage-bucket",
@@ -388,7 +414,7 @@
           "--upload-refimg-to-cloud-storage"
         ],
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "precommit_args": [
           "--download-refimg-from-cloud-storage"
@@ -408,13 +434,14 @@
           "screenshot_sync",
           "--show-stdout",
           "--browser=release",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
         ],
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "screenshot_sync_tests",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
@@ -431,13 +458,14 @@
           "trace_test",
           "--show-stdout",
           "--browser=release",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
         ],
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "trace_test",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
@@ -454,6 +482,7 @@
           "webgl_conformance",
           "--show-stdout",
           "--browser=release",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc",
           "--webgl-conformance-version=2.0.1",
@@ -462,7 +491,7 @@
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "webgl2_conformance_tests",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
@@ -480,13 +509,282 @@
           "webgl_conformance",
           "--show-stdout",
           "--browser=release",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
         ],
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "webgl_conformance_tests",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
+        ],
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "gpu": "10de:104a",
+              "os": "Ubuntu"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "Linux Release - concurrent marking (NVIDIA)": {
+    "gtest_tests": [],
+    "isolated_scripts": [
+      {
+        "args": [
+          "context_lost",
+          "--show-stdout",
+          "--browser=release",
+          "--passthrough",
+          "-v",
+          "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
+        ],
+        "isolate_name": "telemetry_gpu_integration_test",
+        "name": "context_lost_tests",
+        "override_compile_targets": [
+          "telemetry_gpu_integration_test"
+        ],
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "gpu": "10de:104a",
+              "os": "Ubuntu"
+            }
+          ]
+        }
+      },
+      {
+        "args": [
+          "depth_capture",
+          "--show-stdout",
+          "--browser=release",
+          "--passthrough",
+          "-v",
+          "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
+        ],
+        "isolate_name": "telemetry_gpu_integration_test",
+        "name": "depth_capture_tests",
+        "override_compile_targets": [
+          "telemetry_gpu_integration_test"
+        ],
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "gpu": "10de:104a",
+              "os": "Ubuntu"
+            }
+          ]
+        }
+      },
+      {
+        "args": [
+          "gpu_process",
+          "--show-stdout",
+          "--browser=release",
+          "--passthrough",
+          "-v",
+          "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
+        ],
+        "isolate_name": "telemetry_gpu_integration_test",
+        "name": "gpu_process_launch_tests",
+        "override_compile_targets": [
+          "telemetry_gpu_integration_test"
+        ],
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "gpu": "10de:104a",
+              "os": "Ubuntu"
+            }
+          ]
+        }
+      },
+      {
+        "args": [
+          "hardware_accelerated_feature",
+          "--show-stdout",
+          "--browser=release",
+          "--passthrough",
+          "-v",
+          "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
+        ],
+        "isolate_name": "telemetry_gpu_integration_test",
+        "name": "hardware_accelerated_feature_tests",
+        "override_compile_targets": [
+          "telemetry_gpu_integration_test"
+        ],
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "gpu": "10de:104a",
+              "os": "Ubuntu"
+            }
+          ]
+        }
+      },
+      {
+        "args": [
+          "maps",
+          "--show-stdout",
+          "--browser=release",
+          "--passthrough",
+          "-v",
+          "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc",
+          "--os-type",
+          "linux",
+          "--build-revision",
+          "${got_revision}",
+          "--test-machine-name",
+          "${buildername}"
+        ],
+        "isolate_name": "telemetry_gpu_integration_test",
+        "name": "maps_pixel_test",
+        "override_compile_targets": [
+          "telemetry_gpu_integration_test"
+        ],
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "gpu": "10de:104a",
+              "os": "Ubuntu"
+            }
+          ]
+        }
+      },
+      {
+        "args": [
+          "pixel",
+          "--show-stdout",
+          "--browser=release",
+          "--passthrough",
+          "-v",
+          "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc",
+          "--refimg-cloud-storage-bucket",
+          "chromium-gpu-archive/reference-images",
+          "--os-type",
+          "linux",
+          "--build-revision",
+          "${got_revision}",
+          "--test-machine-name",
+          "${buildername}"
+        ],
+        "isolate_name": "telemetry_gpu_integration_test",
+        "name": "pixel_test",
+        "non_precommit_args": [
+          "--upload-refimg-to-cloud-storage"
+        ],
+        "override_compile_targets": [
+          "telemetry_gpu_integration_test"
+        ],
+        "precommit_args": [
+          "--download-refimg-from-cloud-storage"
+        ],
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "gpu": "10de:104a",
+              "os": "Ubuntu"
+            }
+          ]
+        }
+      },
+      {
+        "args": [
+          "screenshot_sync",
+          "--show-stdout",
+          "--browser=release",
+          "--passthrough",
+          "-v",
+          "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
+        ],
+        "isolate_name": "telemetry_gpu_integration_test",
+        "name": "screenshot_sync_tests",
+        "override_compile_targets": [
+          "telemetry_gpu_integration_test"
+        ],
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "gpu": "10de:104a",
+              "os": "Ubuntu"
+            }
+          ]
+        }
+      },
+      {
+        "args": [
+          "trace_test",
+          "--show-stdout",
+          "--browser=release",
+          "--passthrough",
+          "-v",
+          "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
+        ],
+        "isolate_name": "telemetry_gpu_integration_test",
+        "name": "trace_test",
+        "override_compile_targets": [
+          "telemetry_gpu_integration_test"
+        ],
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "gpu": "10de:104a",
+              "os": "Ubuntu"
+            }
+          ]
+        }
+      },
+      {
+        "args": [
+          "webgl_conformance",
+          "--show-stdout",
+          "--browser=release",
+          "--passthrough",
+          "-v",
+          "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc",
+          "--webgl-conformance-version=2.0.1",
+          "--read-abbreviated-json-results-from=../../content/test/data/gpu/webgl2_conformance_tests_output.json"
+        ],
+        "isolate_name": "telemetry_gpu_integration_test",
+        "name": "webgl2_conformance_tests",
+        "override_compile_targets": [
+          "telemetry_gpu_integration_test"
+        ],
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "gpu": "10de:104a",
+              "os": "Ubuntu"
+            }
+          ],
+          "shards": 15
+        }
+      },
+      {
+        "args": [
+          "webgl_conformance",
+          "--show-stdout",
+          "--browser=release",
+          "--passthrough",
+          "-v",
+          "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
+        ],
+        "isolate_name": "telemetry_gpu_integration_test",
+        "name": "webgl_conformance_tests",
+        "override_compile_targets": [
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
@@ -508,13 +806,14 @@
           "context_lost",
           "--show-stdout",
           "--browser=release",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
         ],
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "context_lost_tests",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
@@ -531,13 +830,14 @@
           "depth_capture",
           "--show-stdout",
           "--browser=release",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
         ],
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "depth_capture_tests",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
@@ -554,13 +854,14 @@
           "gpu_process",
           "--show-stdout",
           "--browser=release",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
         ],
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "gpu_process_launch_tests",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
@@ -577,13 +878,14 @@
           "hardware_accelerated_feature",
           "--show-stdout",
           "--browser=release",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
         ],
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "hardware_accelerated_feature_tests",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
@@ -600,6 +902,7 @@
           "maps",
           "--show-stdout",
           "--browser=release",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc",
           "--os-type",
@@ -612,7 +915,7 @@
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "maps_pixel_test",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
@@ -629,6 +932,7 @@
           "pixel",
           "--show-stdout",
           "--browser=release",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc",
           "--refimg-cloud-storage-bucket",
@@ -646,7 +950,7 @@
           "--upload-refimg-to-cloud-storage"
         ],
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "precommit_args": [
           "--download-refimg-from-cloud-storage"
@@ -666,13 +970,14 @@
           "screenshot_sync",
           "--show-stdout",
           "--browser=release",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
         ],
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "screenshot_sync_tests",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
@@ -689,13 +994,14 @@
           "trace_test",
           "--show-stdout",
           "--browser=release",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
         ],
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "trace_test",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
@@ -712,6 +1018,7 @@
           "webgl_conformance",
           "--show-stdout",
           "--browser=release",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc",
           "--webgl-conformance-version=2.0.1",
@@ -720,7 +1027,7 @@
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "webgl2_conformance_tests",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
@@ -738,13 +1045,14 @@
           "webgl_conformance",
           "--show-stdout",
           "--browser=release",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
         ],
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "webgl_conformance_tests",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
@@ -827,13 +1135,14 @@
           "context_lost",
           "--show-stdout",
           "--browser=release",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
         ],
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "context_lost_tests",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
@@ -850,13 +1159,14 @@
           "depth_capture",
           "--show-stdout",
           "--browser=release",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
         ],
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "depth_capture_tests",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
@@ -873,13 +1183,14 @@
           "gpu_process",
           "--show-stdout",
           "--browser=release",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
         ],
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "gpu_process_launch_tests",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
@@ -896,13 +1207,14 @@
           "hardware_accelerated_feature",
           "--show-stdout",
           "--browser=release",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
         ],
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "hardware_accelerated_feature_tests",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
@@ -919,6 +1231,7 @@
           "maps",
           "--show-stdout",
           "--browser=release",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc",
           "--os-type",
@@ -931,7 +1244,7 @@
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "maps_pixel_test",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
@@ -948,6 +1261,7 @@
           "pixel",
           "--show-stdout",
           "--browser=release",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc",
           "--refimg-cloud-storage-bucket",
@@ -965,7 +1279,7 @@
           "--upload-refimg-to-cloud-storage"
         ],
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "precommit_args": [
           "--download-refimg-from-cloud-storage"
@@ -985,13 +1299,14 @@
           "screenshot_sync",
           "--show-stdout",
           "--browser=release",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
         ],
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "screenshot_sync_tests",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
@@ -1008,13 +1323,14 @@
           "trace_test",
           "--show-stdout",
           "--browser=release",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
         ],
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "trace_test",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
@@ -1031,6 +1347,7 @@
           "webgl_conformance",
           "--show-stdout",
           "--browser=release",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc",
           "--webgl-conformance-version=2.0.1",
@@ -1039,7 +1356,7 @@
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "webgl2_conformance_tests",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,
@@ -1057,13 +1374,14 @@
           "webgl_conformance",
           "--show-stdout",
           "--browser=release",
+          "--passthrough",
           "-v",
           "--extra-browser-args=--enable-logging=stderr --js-flags=--expose-gc"
         ],
         "isolate_name": "telemetry_gpu_integration_test",
         "name": "webgl_conformance_tests",
         "override_compile_targets": [
-          "telemetry_gpu_integration_test_run"
+          "telemetry_gpu_integration_test"
         ],
         "swarming": {
           "can_use_on_swarming_builders": true,

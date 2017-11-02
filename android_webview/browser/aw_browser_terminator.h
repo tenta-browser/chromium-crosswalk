@@ -2,12 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef COMPONENTS_CRASH_CONTENT_BROWSER_CRASH_DUMP_BROWSER_TERMINATOR_H_
-#define COMPONENTS_CRASH_CONTENT_BROWSER_CRASH_DUMP_BROWSER_TERMINATOR_H_
+#ifndef ANDROID_WEBVIEW_BROWSER_AW_BROWSER_TERMINATOR_H_
+#define ANDROID_WEBVIEW_BROWSER_AW_BROWSER_TERMINATOR_H_
 
 #include <map>
 
 #include "base/synchronization/lock.h"
+#include "components/crash/content/browser/crash_dump_manager_android.h"
 #include "components/crash/content/browser/crash_dump_observer_android.h"
 
 namespace base {
@@ -26,12 +27,12 @@ namespace android_webview {
 // crash status.
 class AwBrowserTerminator : public breakpad::CrashDumpObserver::Client {
  public:
-  AwBrowserTerminator();
+  AwBrowserTerminator(base::FilePath crash_dump_dir);
   ~AwBrowserTerminator() override;
 
   // breakpad::CrashDumpObserver::Client implementation.
   void OnChildStart(int child_process_id,
-                    content::FileDescriptorInfo* mappings) override;
+                    content::PosixFileDescriptorInfo* mappings) override;
   void OnChildExit(int child_process_id,
                    base::ProcessHandle pid,
                    content::ProcessType process_type,
@@ -39,9 +40,15 @@ class AwBrowserTerminator : public breakpad::CrashDumpObserver::Client {
                    base::android::ApplicationState app_state) override;
 
  private:
-  static void ProcessTerminationStatus(int child_process_id,
-                                       base::ProcessHandle pid,
-                                       std::unique_ptr<base::SyncSocket> pipe);
+  static void OnChildExitAsync(int child_process_id,
+                               base::ProcessHandle pid,
+                               content::ProcessType process_type,
+                               base::TerminationStatus termination_status,
+                               base::android::ApplicationState app_state,
+                               base::FilePath crash_dump_dir,
+                               std::unique_ptr<base::SyncSocket> pipe);
+
+  base::FilePath crash_dump_dir_;
 
   // This map should only be accessed with its lock aquired as it is accessed
   // from the PROCESS_LAUNCHER, FILE, and UI threads.
@@ -51,6 +58,6 @@ class AwBrowserTerminator : public breakpad::CrashDumpObserver::Client {
   DISALLOW_COPY_AND_ASSIGN(AwBrowserTerminator);
 };
 
-}  // namespace breakpad
+}  // namespace android_webview
 
-#endif  // COMPONENTS_CRASH_CONTENT_BROWSER_CRASH_DUMP_BROWSER_TERMINATOR_H_
+#endif  // ANDROID_WEBVIEW_BROWSER_AW_BROWSER_TERMINATOR_H_

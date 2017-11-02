@@ -16,9 +16,6 @@
 // Helper for utilizing native FakeServer infrastructure in Android tests.
 class FakeServerHelperAndroid {
  public:
-  // Registers the native methods.
-  static bool Register(JNIEnv* env);
-
   // Creates a FakeServerHelperAndroid.
   FakeServerHelperAndroid(JNIEnv* env, jobject obj);
 
@@ -144,7 +141,7 @@ class FakeServerHelperAndroid {
                                   sync_pb::EntitySpecifics* entity_specifics);
 
   // Creates a bookmark entity.
-  std::unique_ptr<fake_server::FakeServerEntity> CreateBookmarkEntity(
+  std::unique_ptr<syncer::LoopbackServerEntity> CreateBookmarkEntity(
       JNIEnv* env,
       jstring title,
       jstring url,

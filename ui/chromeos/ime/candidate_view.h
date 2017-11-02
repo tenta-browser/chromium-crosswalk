@@ -9,7 +9,7 @@
 #include "base/macros.h"
 #include "ui/base/ime/candidate_window.h"
 #include "ui/chromeos/ui_chromeos_export.h"
-#include "ui/views/controls/button/custom_button.h"
+#include "ui/views/controls/button/button.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/view.h"
 
@@ -17,7 +17,7 @@ namespace ui {
 namespace ime {
 
 // CandidateView renderes a row of a candidate.
-class UI_CHROMEOS_EXPORT CandidateView : public views::CustomButton {
+class UI_CHROMEOS_EXPORT CandidateView : public views::Button {
  public:
   CandidateView(views::ButtonListener* listener,
                 ui::CandidateWindow::Orientation orientation);
@@ -40,14 +40,14 @@ class UI_CHROMEOS_EXPORT CandidateView : public views::CustomButton {
   friend class CandidateWindowViewTest;
   FRIEND_TEST_ALL_PREFIXES(CandidateWindowViewTest, ShortcutSettingTest);
 
-  // Overridden from views::CustomButton:
+  // Overridden from views::Button:
   void StateChanged(ButtonState old_state) override;
 
   // Overridden from View:
   const char* GetClassName() const override;
   bool OnMouseDragged(const ui::MouseEvent& event) override;
   void Layout() override;
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
 
   // The orientation of the candidate view.
   ui::CandidateWindow::Orientation orientation_;

@@ -25,6 +25,8 @@
 
 #include <memory>
 #include "core/CoreExport.h"
+#include "core/css/parser/CSSParserContext.h"
+#include "core/css/parser/CSSParserMode.h"
 #include "core/dom/QualifiedName.h"
 #include "core/style/ComputedStyleConstants.h"
 #include "platform/wtf/RefCounted.h"
@@ -32,7 +34,7 @@
 namespace blink {
 class CSSSelectorList;
 
-// This class represents a selector for a StyleRule.
+// This class represents a simple selector for a StyleRule.
 
 // CSS selector representation is somewhat complicated and subtle. A
 // representative list of selectors is in CSSSelectorTest; run it in a debug
@@ -40,7 +42,7 @@ class CSSSelectorList;
 //
 // ** TagHistory() and Relation():
 //
-// Selectors are represented as a linked list of simple selectors (defined more
+// Selectors are represented as an array of simple selectors (defined more
 // or less according to
 // http://www.w3.org/TR/css3-selectors/#simple-selectors-dfn). The tagHistory()
 // method returns the next simple selector in the list. The relation() method
@@ -96,7 +98,7 @@ class CORE_EXPORT CSSSelector {
 
   ~CSSSelector();
 
-  String SelectorText(const String& right_side = "") const;
+  String SelectorText() const;
 
   bool operator==(const CSSSelector&) const;
 
@@ -132,6 +134,7 @@ class CORE_EXPORT CSSSelector {
     // Special cases for shadow DOM related selectors.
     kShadowPiercingDescendant,  // >>> combinator
     kShadowDeep,                // /deep/ combinator
+    kShadowDeepAsDescendant,    // /deep/ as an alias for descendant
     kShadowPseudo,              // ::shadow pseudo element
     kShadowSlot                 // ::slotted() pseudo element
   };
@@ -238,7 +241,12 @@ class CORE_EXPORT CSSSelector {
   PseudoType GetPseudoType() const {
     return static_cast<PseudoType>(pseudo_type_);
   }
-  void UpdatePseudoType(const AtomicString&, bool has_arguments);
+
+  void UpdatePseudoType(const AtomicString&,
+                        const CSSParserContext&,
+                        bool has_arguments,
+                        CSSParserMode);
+  void UpdatePseudoPage(const AtomicString&);
 
   static PseudoType ParsePseudoType(const AtomicString&, bool has_arguments);
   static PseudoId ParsePseudoId(const String&);
@@ -284,7 +292,7 @@ class CORE_EXPORT CSSSelector {
   void SetSelectorList(std::unique_ptr<CSSSelectorList>);
 
   void SetNth(int a, int b);
-  bool MatchNth(int count) const;
+  bool MatchNth(unsigned count) const;
 
   bool IsAdjacentSelector() const {
     return relation_ == kDirectAdjacent || relation_ == kIndirectAdjacent;
@@ -299,7 +307,7 @@ class CORE_EXPORT CSSSelector {
     return pseudo_type_ == kPseudoHost || pseudo_type_ == kPseudoHostContext;
   }
   bool IsUserActionPseudoClass() const;
-  bool IsInsertionPointCrossing() const {
+  bool IsV0InsertionPointCrossing() const {
     return pseudo_type_ == kPseudoHostContext || pseudo_type_ == kPseudoContent;
   }
   bool IsIdClassOrAttributeSelector() const;
@@ -368,17 +376,18 @@ class CORE_EXPORT CSSSelector {
 
   unsigned SpecificityForOneSelector() const;
   unsigned SpecificityForPage() const;
+  const CSSSelector* SerializeCompound(StringBuilder&) const;
 
   // Hide.
   CSSSelector& operator=(const CSSSelector&);
 
   struct RareData : public RefCounted<RareData> {
-    static PassRefPtr<RareData> Create(const AtomicString& value) {
+    static RefPtr<RareData> Create(const AtomicString& value) {
       return AdoptRef(new RareData(value));
     }
     ~RareData();
 
-    bool MatchNth(int count);
+    bool MatchNth(unsigned count);
     int NthAValue() const { return bits_.nth_.a_; }
     int NthBValue() const { return bits_.nth_.b_; }
 

@@ -5,7 +5,6 @@
 #ifndef AudioWorkletThread_h
 #define AudioWorkletThread_h
 
-#include "core/workers/WorkerLoaderProxy.h"
 #include "core/workers/WorkerThread.h"
 #include "core/workers/WorkletThreadHolder.h"
 #include "modules/ModulesExport.h"
@@ -13,6 +12,7 @@
 
 namespace blink {
 
+class WebThread;
 class WorkerReportingProxy;
 
 // AudioWorkletThread is a per-frame singleton object that represents the
@@ -21,9 +21,8 @@ class WorkerReportingProxy;
 
 class MODULES_EXPORT AudioWorkletThread final : public WorkerThread {
  public:
-  static std::unique_ptr<AudioWorkletThread> Create(
-      PassRefPtr<WorkerLoaderProxy>,
-      WorkerReportingProxy&);
+  static std::unique_ptr<AudioWorkletThread> Create(ThreadableLoadingContext*,
+                                                    WorkerReportingProxy&);
   ~AudioWorkletThread() override;
 
   WorkerBackingThread& GetWorkerBackingThread() override;
@@ -39,14 +38,23 @@ class MODULES_EXPORT AudioWorkletThread final : public WorkerThread {
 
   static void CreateSharedBackingThreadForTest();
 
+  // This only can be called after EnsureSharedBackingThread() is performed.
+  // Currently AudioWorkletThread owns only one thread and it is shared by all
+  // the customers.
+  static WebThread* GetSharedBackingThread();
+
  protected:
   WorkerOrWorkletGlobalScope* CreateWorkerGlobalScope(
-      std::unique_ptr<WorkerThreadStartupData>) final;
+      std::unique_ptr<GlobalScopeCreationParams>) final;
 
   bool IsOwningBackingThread() const override { return false; }
 
  private:
-  AudioWorkletThread(PassRefPtr<WorkerLoaderProxy>, WorkerReportingProxy&);
+  AudioWorkletThread(ThreadableLoadingContext*, WorkerReportingProxy&);
+
+  // This raw pointer gets assigned in EnsureSharedBackingThread() and manually
+  // released by ClearSharedBackingThread().
+  static WebThread* s_backing_thread_;
 };
 
 }  // namespace blink

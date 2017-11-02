@@ -10,7 +10,6 @@
 #include "core/layout/LayoutBox.h"
 #include "core/layout/LayoutScrollbar.h"
 #include "core/layout/LayoutScrollbarPart.h"
-#include "core/layout/PaintInvalidationState.h"
 #include "core/paint/FindPaintOffsetAndVisualRectNeedingUpdate.h"
 #include "core/paint/ObjectPaintInvalidator.h"
 #include "core/paint/PaintInvalidator.h"
@@ -24,10 +23,11 @@ void PaintInvalidationCapableScrollableArea::WillRemoveScrollbar(
     ScrollbarOrientation orientation) {
   if (!scrollbar.IsCustomScrollbar() &&
       !(orientation == kHorizontalScrollbar ? LayerForHorizontalScrollbar()
-                                            : LayerForVerticalScrollbar()))
+                                            : LayerForVerticalScrollbar())) {
     ObjectPaintInvalidator(*GetLayoutBox())
         .SlowSetPaintingLayerNeedsRepaintAndInvalidateDisplayItemClient(
-            scrollbar, kPaintInvalidationScroll);
+            scrollbar, PaintInvalidationReason::kScrollControl);
+  }
 
   ScrollableArea::WillRemoveScrollbar(scrollbar, orientation);
 }
@@ -49,7 +49,7 @@ static LayoutRect ScrollControlVisualRect(
   // transform space than their contained box (the scrollbarPaintOffset
   // transform node).
   if (!visual_rect.IsEmpty() &&
-      !RuntimeEnabledFeatures::slimmingPaintV2Enabled()) {
+      !RuntimeEnabledFeatures::SlimmingPaintV2Enabled()) {
     // PaintInvalidatorContext::mapLocalRectToPaintInvalidationBacking() treats
     // the rect as in flipped block direction, but scrollbar controls don't
     // flip for block direction, so flip here to undo the flip in the function.
@@ -68,15 +68,23 @@ static bool InvalidatePaintOfScrollControlIfNeeded(
     const LayoutBoxModelObject& paint_invalidation_container) {
   bool should_invalidate_new_rect = needs_paint_invalidation;
   if (new_visual_rect != previous_visual_rect) {
-    ObjectPaintInvalidator(box).InvalidatePaintUsingContainer(
-        paint_invalidation_container, previous_visual_rect,
-        kPaintInvalidationScroll);
+    // TODO(crbug.com/732612)): Implement partial raster invalidation for scroll
+    // controls.
+    if (!RuntimeEnabledFeatures::SlimmingPaintV2Enabled()) {
+      ObjectPaintInvalidator(box).InvalidatePaintUsingContainer(
+          paint_invalidation_container, previous_visual_rect,
+          PaintInvalidationReason::kScrollControl);
+    }
     should_invalidate_new_rect = true;
   }
   if (should_invalidate_new_rect) {
-    ObjectPaintInvalidator(box).InvalidatePaintUsingContainer(
-        paint_invalidation_container, new_visual_rect,
-        kPaintInvalidationScroll);
+    // TODO(crbug.com/732612): Implement partial raster invalidation for scroll
+    // controls.
+    if (!RuntimeEnabledFeatures::SlimmingPaintV2Enabled()) {
+      ObjectPaintInvalidator(box).InvalidatePaintUsingContainer(
+          paint_invalidation_container, new_visual_rect,
+          PaintInvalidationReason::kScrollControl);
+    }
     return true;
   }
   return false;
@@ -132,7 +140,7 @@ static LayoutRect InvalidatePaintOfScrollbarIfNeeded(
   if (new_scrollbar_used_space_in_box != previous_scrollbar_used_space_in_box) {
     context.painting_layer->SetNeedsRepaint();
     ObjectPaintInvalidator(box).InvalidateDisplayItemClient(
-        box, kPaintInvalidationScroll);
+        box, PaintInvalidationReason::kGeometry);
   }
 
   bool invalidated = InvalidatePaintOfScrollControlIfNeeded(
@@ -146,7 +154,7 @@ static LayoutRect InvalidatePaintOfScrollbarIfNeeded(
 
   context.painting_layer->SetNeedsRepaint();
   ObjectPaintInvalidator(box).InvalidateDisplayItemClient(
-      *scrollbar, kPaintInvalidationScroll);
+      *scrollbar, PaintInvalidationReason::kScrollControl);
   if (scrollbar->IsCustomScrollbar()) {
     ToLayoutScrollbar(scrollbar)
         ->InvalidateDisplayItemClientsOfScrollbarParts();
@@ -184,23 +192,16 @@ void PaintInvalidationCapableScrollableArea::
     if (LayoutScrollbarPart* scroll_corner = this->ScrollCorner()) {
       ObjectPaintInvalidator(*scroll_corner)
           .InvalidateDisplayItemClientsIncludingNonCompositingDescendants(
-              kPaintInvalidationScroll);
+              PaintInvalidationReason::kScrollControl);
     }
     if (LayoutScrollbarPart* resizer = this->Resizer()) {
       ObjectPaintInvalidator(*resizer)
           .InvalidateDisplayItemClientsIncludingNonCompositingDescendants(
-              kPaintInvalidationScroll);
+              PaintInvalidationReason::kScrollControl);
     }
   }
 
   ClearNeedsPaintInvalidationForScrollControls();
-}
-
-void PaintInvalidationCapableScrollableArea::
-    InvalidatePaintOfScrollControlsIfNeeded(
-        const PaintInvalidationState& paint_invalidation_state) {
-  InvalidatePaintOfScrollControlsIfNeeded(
-      PaintInvalidatorContextAdapter(paint_invalidation_state));
 }
 
 void PaintInvalidationCapableScrollableArea::ClearPreviousVisualRects() {
@@ -240,7 +241,7 @@ void PaintInvalidationCapableScrollableArea::
 void PaintInvalidationCapableScrollableArea::DidScrollWithScrollbar(
     ScrollbarPart part,
     ScrollbarOrientation orientation) {
-  UseCounter::Feature scrollbar_use_uma;
+  WebFeature scrollbar_use_uma;
   switch (part) {
     case kBackButtonStartPart:
     case kForwardButtonStartPart:
@@ -248,27 +249,33 @@ void PaintInvalidationCapableScrollableArea::DidScrollWithScrollbar(
     case kForwardButtonEndPart:
       scrollbar_use_uma =
           (orientation == kVerticalScrollbar
-               ? UseCounter::kScrollbarUseVerticalScrollbarButton
-               : UseCounter::kScrollbarUseHorizontalScrollbarButton);
+               ? WebFeature::kScrollbarUseVerticalScrollbarButton
+               : WebFeature::kScrollbarUseHorizontalScrollbarButton);
       break;
     case kThumbPart:
       scrollbar_use_uma =
           (orientation == kVerticalScrollbar
-               ? UseCounter::kScrollbarUseVerticalScrollbarThumb
-               : UseCounter::kScrollbarUseHorizontalScrollbarThumb);
+               ? WebFeature::kScrollbarUseVerticalScrollbarThumb
+               : WebFeature::kScrollbarUseHorizontalScrollbarThumb);
       break;
     case kBackTrackPart:
     case kForwardTrackPart:
       scrollbar_use_uma =
           (orientation == kVerticalScrollbar
-               ? UseCounter::kScrollbarUseVerticalScrollbarTrack
-               : UseCounter::kScrollbarUseHorizontalScrollbarTrack);
+               ? WebFeature::kScrollbarUseVerticalScrollbarTrack
+               : WebFeature::kScrollbarUseHorizontalScrollbarTrack);
       break;
     default:
       return;
   }
 
   UseCounter::Count(GetLayoutBox()->GetDocument(), scrollbar_use_uma);
+}
+
+CompositorElementId
+PaintInvalidationCapableScrollableArea::GetCompositorElementId() const {
+  return CompositorElementIdFromUniqueObjectId(
+      GetLayoutBox()->UniqueId(), CompositorElementIdNamespace::kScroll);
 }
 
 }  // namespace blink

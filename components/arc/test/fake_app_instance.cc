@@ -15,6 +15,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
+#include "base/strings/stringprintf.h"
 
 namespace mojo {
 
@@ -42,13 +43,26 @@ FakeAppInstance::FakeAppInstance(mojom::AppHost* app_host)
     : app_host_(app_host) {}
 FakeAppInstance::~FakeAppInstance() {}
 
+void FakeAppInstance::Init(mojom::AppHostPtr host_ptr) {
+  // ARC app instance calls RefreshAppList after Init() successfully. Call
+  // RefreshAppList() here to keep the same behavior.
+  RefreshAppList();
+}
+
 void FakeAppInstance::RefreshAppList() {
   ++refresh_app_list_count_;
 }
 
+void FakeAppInstance::LaunchAppDeprecated(
+    const std::string& package_name,
+    const std::string& activity,
+    const base::Optional<gfx::Rect>& dimension) {
+  LaunchApp(package_name, activity, 0);
+}
+
 void FakeAppInstance::LaunchApp(const std::string& package_name,
                                 const std::string& activity,
-                                const base::Optional<gfx::Rect>& dimension) {
+                                int64_t display_id) {
   launch_requests_.push_back(base::MakeUnique<Request>(package_name, activity));
 }
 
@@ -103,6 +117,16 @@ void FakeAppInstance::SendTaskCreated(int32_t taskId,
                            app.activity,
                            app.name,
                            intent);
+}
+
+void FakeAppInstance::SendTaskDescription(
+    int32_t taskId,
+    const std::string& label,
+    const std::string& icon_png_data_as_string) {
+  app_host_->OnTaskDescriptionUpdated(
+      taskId, label,
+      std::vector<uint8_t>(icon_png_data_as_string.begin(),
+                           icon_png_data_as_string.end()));
 }
 
 void FakeAppInstance::SendTaskDestroyed(int32_t taskId) {
@@ -197,6 +221,11 @@ void FakeAppInstance::SendPackageAdded(const mojom::ArcPackageInfo& package) {
   app_host_->OnPackageAdded(mojom::ArcPackageInfoPtr(package.Clone()));
 }
 
+void FakeAppInstance::SendPackageModified(
+    const mojom::ArcPackageInfo& package) {
+  app_host_->OnPackageModified(mojom::ArcPackageInfoPtr(package.Clone()));
+}
+
 void FakeAppInstance::SendPackageUninstalled(const std::string& package_name) {
   app_host_->OnPackageRemoved(package_name);
 }
@@ -214,11 +243,11 @@ void FakeAppInstance::SendInstallationFinished(const std::string& package_name,
       mojom::InstallationResultPtr(result.Clone()));
 }
 
-void FakeAppInstance::CanHandleResolution(
+void FakeAppInstance::CanHandleResolutionDeprecated(
     const std::string& package_name,
     const std::string& activity,
     const gfx::Rect& dimension,
-    const CanHandleResolutionCallback& callback) {
+    const CanHandleResolutionDeprecatedCallback& callback) {
   callback.Run(true);
 }
 
@@ -245,10 +274,14 @@ void FakeAppInstance::ShowPackageInfoDeprecated(
     const std::string& package_name,
     const gfx::Rect& dimension_on_screen) {}
 
-void FakeAppInstance::ShowPackageInfoOnPage(
+void FakeAppInstance::ShowPackageInfoOnPageDeprecated(
     const std::string& package_name,
     mojom::ShowPackageInfoPage page,
     const gfx::Rect& dimension_on_screen) {}
+
+void FakeAppInstance::ShowPackageInfoOnPage(const std::string& package_name,
+                                            mojom::ShowPackageInfoPage page,
+                                            int64_t display_id) {}
 
 void FakeAppInstance::SetNotificationsEnabled(const std::string& package_name,
                                               bool enabled) {}
@@ -257,9 +290,60 @@ void FakeAppInstance::InstallPackage(mojom::ArcPackageInfoPtr arcPackageInfo) {
   app_host_->OnPackageAdded(std::move(arcPackageInfo));
 }
 
-void FakeAppInstance::LaunchIntent(
+void FakeAppInstance::GetRecentAndSuggestedAppsFromPlayStore(
+    const std::string& query,
+    int32_t max_results,
+    const GetRecentAndSuggestedAppsFromPlayStoreCallback& callback) {
+  // Fake Play Store app info
+  std::vector<arc::mojom::AppDiscoveryResultPtr> fake_apps;
+
+  // Fake icon data.
+  std::string png_data_as_string;
+  GetFakeIcon(mojom::ScaleFactor::SCALE_FACTOR_100P, &png_data_as_string);
+  std::vector<uint8_t> fake_icon_png_data(png_data_as_string.begin(),
+                                          png_data_as_string.end());
+
+  fake_apps.push_back(mojom::AppDiscoveryResult::New(
+      std::string("LauncherIntentUri"),        // launch_intent_uri
+      std::string("InstallIntentUri"),         // install_intent_uri
+      std::string(query),                      // label
+      false,                                   // is_instant_app
+      false,                                   // is_recent
+      std::string("Publisher"),                // publisher_name
+      std::string("$7.22"),                    // formatted_price
+      5,                                       // review_score
+      fake_icon_png_data,                      // icon_png_data
+      std::string("com.google.android.gm")));  // package_name
+
+  for (int i = 0; i < max_results - 1; ++i) {
+    fake_apps.push_back(mojom::AppDiscoveryResult::New(
+        base::StringPrintf("LauncherIntentUri %d", i),  // launch_intent_uri
+        base::StringPrintf("InstallIntentUri %d", i),   // install_intent_uri
+        base::StringPrintf("%s %d", query.c_str(), i),  // label
+        i % 2 == 0,                                     // is_instant_app
+        i % 4 == 0,                                     // is_recent
+        base::StringPrintf("Publisher %d", i),          // publisher_name
+        base::StringPrintf("$%d.22", i),                // formatted_price
+        i,                                              // review_score
+        fake_icon_png_data,                             // icon_png_data
+        base::StringPrintf("test.package.%d", i)));     // package_name
+  }
+  callback.Run(arc::mojom::AppDiscoveryRequestState::SUCCESS,
+               std::move(fake_apps));
+}
+
+void FakeAppInstance::StartPaiFlow() {
+  ++start_pai_request_count_;
+}
+
+void FakeAppInstance::LaunchIntentDeprecated(
     const std::string& intent_uri,
     const base::Optional<gfx::Rect>& dimension_on_screen) {
+  LaunchIntent(intent_uri, 0);
+}
+
+void FakeAppInstance::LaunchIntent(const std::string& intent_uri,
+                                   int64_t display_id) {
   launch_intents_.push_back(intent_uri);
 }
 

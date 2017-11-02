@@ -12,7 +12,7 @@
 #include "base/mac/scoped_nsobject.h"
 #import "ios/chrome/browser/tabs/tab_model_observer.h"
 #import "ios/chrome/browser/ui/ntp/recent_tabs/synced_sessions.h"
-#import "ios/chrome/browser/ui/ntp/recent_tabs/synced_sessions_bridge.h"
+#import "ios/chrome/browser/ui/sync/synced_sessions_bridge.h"
 #import "ios/chrome/browser/ui/tab_switcher/tab_model_snapshot.h"
 
 class ChromeBrowserState;
@@ -98,7 +98,7 @@ bool TabSwitcherSessionTypeIsLocalSession(TabSwitcherSessionType sessionType);
 - (TabSwitcherSignInPanelsType)signInPanelType;
 // Returns the tag of the session at index |index|.
 - (std::string const&)tagOfDistantSessionAtIndex:(int)index;
-// Notifies the delegate that changes occured for the distant sessions.
+// Notifies the delegate that changes occurred for the distant sessions.
 - (void)syncedSessionsChanged;
 @end
 

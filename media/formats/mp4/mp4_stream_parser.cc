@@ -18,6 +18,7 @@
 #include "build/build_config.h"
 #include "media/base/audio_decoder_config.h"
 #include "media/base/encryption_scheme.h"
+#include "media/base/media_switches.h"
 #include "media/base/media_tracks.h"
 #include "media/base/media_util.h"
 #include "media/base/stream_parser_buffer.h"
@@ -74,7 +75,8 @@ EncryptionScheme GetEncryptionScheme(const ProtectionSchemeInfo& sinf) {
 }  // namespace
 
 MP4StreamParser::MP4StreamParser(const std::set<int>& audio_object_types,
-                                 bool has_sbr)
+                                 bool has_sbr,
+                                 bool has_flac)
     : state_(kWaitingForInit),
       moof_head_(0),
       mdat_tail_(0),
@@ -83,7 +85,10 @@ MP4StreamParser::MP4StreamParser(const std::set<int>& audio_object_types,
       has_video_(false),
       audio_object_types_(audio_object_types),
       has_sbr_(has_sbr),
-      num_empty_samples_skipped_(0) {}
+      has_flac_(has_flac),
+      num_empty_samples_skipped_(0) {
+  DCHECK(!has_flac || base::FeatureList::IsEnabled(kMseFlacInIsobmff));
+}
 
 MP4StreamParser::~MP4StreamParser() {}
 
@@ -95,7 +100,7 @@ void MP4StreamParser::Init(
     const EncryptedMediaInitDataCB& encrypted_media_init_data_cb,
     const NewMediaSegmentCB& new_segment_cb,
     const EndMediaSegmentCB& end_of_segment_cb,
-    const scoped_refptr<MediaLog>& media_log) {
+    MediaLog* media_log) {
   DCHECK_EQ(state_, kWaitingForInit);
   DCHECK(init_cb_.is_null());
   DCHECK(!init_cb.is_null());
@@ -240,9 +245,9 @@ bool MP4StreamParser::ParseMoov(BoxReader* reader) {
     const SampleDescription& samp_descr =
         track->media.information.sample_table.description;
 
-    // TODO(strobe): When codec reconfigurations are supported, detect and send
-    // a codec reconfiguration for fragments using a sample description index
-    // different from the previous one
+    // TODO(wolenetz): When codec reconfigurations are supported, detect and
+    // send a codec reconfiguration for fragments using a sample description
+    // index different from the previous one. See https://crbug.com/748250.
     size_t desc_idx = 0;
     for (size_t t = 0; t < moov_->extends.tracks.size(); t++) {
       const TrackExtends& trex = moov_->extends.tracks[t];
@@ -273,10 +278,10 @@ bool MP4StreamParser::ParseMoov(BoxReader* reader) {
                                 : entry.format;
 
 #if BUILDFLAG(ENABLE_AC3_EAC3_AUDIO_DEMUXING)
-      if (audio_format != FOURCC_MP4A && audio_format != FOURCC_AC3 &&
-          audio_format != FOURCC_EAC3) {
+      if (audio_format != FOURCC_MP4A && audio_format != FOURCC_FLAC &&
+          audio_format != FOURCC_AC3 && audio_format != FOURCC_EAC3) {
 #else
-      if (audio_format != FOURCC_MP4A) {
+      if (audio_format != FOURCC_MP4A && audio_format != FOURCC_FLAC) {
 #endif
         MEDIA_LOG(ERROR, media_log_) << "Unsupported audio format 0x"
                                      << std::hex << entry.format
@@ -284,52 +289,69 @@ bool MP4StreamParser::ParseMoov(BoxReader* reader) {
         return false;
       }
 
-      uint8_t audio_type = entry.esds.object_type;
-#if BUILDFLAG(ENABLE_AC3_EAC3_AUDIO_DEMUXING)
-      if (audio_type == kForbidden) {
-        if (audio_format == FOURCC_AC3)
-          audio_type = kAC3;
-        if (audio_format == FOURCC_EAC3)
-          audio_type = kEAC3;
-      }
-#endif
-      DVLOG(1) << "audio_type 0x" << std::hex << static_cast<int>(audio_type);
-      if (audio_object_types_.find(audio_type) == audio_object_types_.end()) {
-        MEDIA_LOG(ERROR, media_log_)
-            << "audio object type 0x" << std::hex
-            << static_cast<int>(audio_type)
-            << " does not match what is specified in the mimetype.";
-        return false;
-      }
-
       AudioCodec codec = kUnknownAudioCodec;
       ChannelLayout channel_layout = CHANNEL_LAYOUT_NONE;
       int sample_per_second = 0;
       std::vector<uint8_t> extra_data;
-      // Check if it is MPEG4 AAC defined in ISO 14496 Part 3 or
-      // supported MPEG2 AAC varients.
-      if (ESDescriptor::IsAAC(audio_type)) {
-        codec = kCodecAAC;
-        channel_layout = aac.GetChannelLayout(has_sbr_);
-        sample_per_second = aac.GetOutputSamplesPerSecond(has_sbr_);
+
+      if (audio_format == FOURCC_FLAC) {
+        // FLAC-in-ISOBMFF does not use object type indication. |audio_format|
+        // is sufficient for identifying FLAC codec.
+        if (!has_flac_) {
+          MEDIA_LOG(ERROR, media_log_) << "FLAC audio stream detected in MP4, "
+                                          "mismatching what is specified in "
+                                          "the mimetype.";
+          return false;
+        }
+
+        codec = kCodecFLAC;
+        channel_layout = GuessChannelLayout(entry.channelcount);
+        sample_per_second = entry.samplerate;
+        extra_data = entry.dfla.stream_info;
+      } else {
+        uint8_t audio_type = entry.esds.object_type;
+#if BUILDFLAG(ENABLE_AC3_EAC3_AUDIO_DEMUXING)
+        if (audio_type == kForbidden) {
+          if (audio_format == FOURCC_AC3)
+            audio_type = kAC3;
+          if (audio_format == FOURCC_EAC3)
+            audio_type = kEAC3;
+        }
+#endif
+        DVLOG(1) << "audio_type 0x" << std::hex << static_cast<int>(audio_type);
+        if (audio_object_types_.find(audio_type) == audio_object_types_.end()) {
+          MEDIA_LOG(ERROR, media_log_)
+              << "audio object type 0x" << std::hex
+              << static_cast<int>(audio_type)
+              << " does not match what is specified in the mimetype.";
+          return false;
+        }
+
+        // Check if it is MPEG4 AAC defined in ISO 14496 Part 3 or
+        // supported MPEG2 AAC varients.
+        if (ESDescriptor::IsAAC(audio_type)) {
+          codec = kCodecAAC;
+          channel_layout = aac.GetChannelLayout(has_sbr_);
+          sample_per_second = aac.GetOutputSamplesPerSecond(has_sbr_);
 #if defined(OS_ANDROID)
-        extra_data = aac.codec_specific_data();
+          extra_data = aac.codec_specific_data();
 #endif
 #if BUILDFLAG(ENABLE_AC3_EAC3_AUDIO_DEMUXING)
-      } else if (audio_type == kAC3) {
-        codec = kCodecAC3;
-        channel_layout = GuessChannelLayout(entry.channelcount);
-        sample_per_second = entry.samplerate;
-      } else if (audio_type == kEAC3) {
-        codec = kCodecEAC3;
-        channel_layout = GuessChannelLayout(entry.channelcount);
-        sample_per_second = entry.samplerate;
+        } else if (audio_type == kAC3) {
+          codec = kCodecAC3;
+          channel_layout = GuessChannelLayout(entry.channelcount);
+          sample_per_second = entry.samplerate;
+        } else if (audio_type == kEAC3) {
+          codec = kCodecEAC3;
+          channel_layout = GuessChannelLayout(entry.channelcount);
+          sample_per_second = entry.samplerate;
 #endif
-      } else {
-        MEDIA_LOG(ERROR, media_log_) << "Unsupported audio object type 0x"
-                                     << std::hex << static_cast<int>(audio_type)
-                                     << " in esds.";
-        return false;
+        } else {
+          MEDIA_LOG(ERROR, media_log_)
+              << "Unsupported audio object type 0x" << std::hex
+              << static_cast<int>(audio_type) << " in esds.";
+          return false;
+        }
       }
 
       SampleFormat sample_format;
@@ -337,6 +359,8 @@ bool MP4StreamParser::ParseMoov(BoxReader* reader) {
         sample_format = kSampleFormatU8;
       } else if (entry.samplesize == 16) {
         sample_format = kSampleFormatS16;
+      } else if (entry.samplesize == 24) {
+        sample_format = kSampleFormatS24;
       } else if (entry.samplesize == 32) {
         sample_format = kSampleFormatS32;
       } else {
@@ -618,9 +642,20 @@ bool MP4StreamParser::EnqueueSample(BufferQueueMap* buffers, bool* err) {
   }
 
   queue_.PeekAt(runs_->sample_offset() + moof_head_, &buf, &buf_size);
-  if (buf_size < runs_->sample_size()) return false;
 
-  if (runs_->sample_size() == 0) {
+  if (runs_->sample_size() >
+      static_cast<uint32_t>(std::numeric_limits<int>::max())) {
+    MEDIA_LOG(ERROR, media_log_) << "Sample size is too large";
+    *err = true;
+    return false;
+  }
+
+  int sample_size = base::checked_cast<int>(runs_->sample_size());
+
+  if (buf_size < sample_size)
+    return false;
+
+  if (sample_size == 0) {
     // Generally not expected, but spec allows it. Code below this block assumes
     // the current sample is not empty.
     LIMITED_MEDIA_LOG(DEBUG, media_log_, num_empty_samples_skipped_,
@@ -641,7 +676,7 @@ bool MP4StreamParser::EnqueueSample(BufferQueueMap* buffers, bool* err) {
     subsamples = decrypt_config->subsamples();
   }
 
-  std::vector<uint8_t> frame_buf(buf, buf + runs_->sample_size());
+  std::vector<uint8_t> frame_buf(buf, buf + sample_size);
   if (video) {
     if (runs_->video_description().video_codec == kCodecH264 ||
         runs_->video_description().video_codec == kCodecHEVC ||
@@ -701,7 +736,7 @@ bool MP4StreamParser::EnqueueSample(BufferQueueMap* buffers, bool* err) {
            << ", dur=" << runs_->duration().InMilliseconds()
            << ", dts=" << runs_->dts().InMilliseconds()
            << ", cts=" << runs_->cts().InMilliseconds()
-           << ", size=" << runs_->sample_size();
+           << ", size=" << sample_size;
 
   (*buffers)[runs_->track_id()].push_back(stream_buf);
   runs_->AdvanceSample();

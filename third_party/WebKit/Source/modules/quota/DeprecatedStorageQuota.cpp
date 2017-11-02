@@ -30,7 +30,6 @@
 
 #include "modules/quota/DeprecatedStorageQuota.h"
 
-#include "bindings/core/v8/ScriptState.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/dom/TaskRunnerHelper.h"
@@ -40,6 +39,7 @@
 #include "modules/quota/StorageUsageCallback.h"
 #include "platform/StorageQuotaCallbacks.h"
 #include "platform/WebTaskRunner.h"
+#include "platform/bindings/ScriptState.h"
 #include "platform/weborigin/KURL.h"
 #include "platform/weborigin/SecurityOrigin.h"
 #include "public/platform/Platform.h"
@@ -76,7 +76,7 @@ void DeprecatedStorageQuota::queryUsageAndQuota(
     return;
   }
 
-  KURL storage_partition = KURL(KURL(), security_origin->ToString());
+  KURL storage_partition = KURL(NullURL(), security_origin->ToString());
   StorageQuotaCallbacks* callbacks =
       DeprecatedStorageQuotaCallbacksImpl::Create(success_callback,
                                                   error_callback);
@@ -113,5 +113,10 @@ void DeprecatedStorageQuota::requestQuota(
   client->RequestQuota(script_state, storage_type, new_quota_in_bytes,
                        success_callback, error_callback);
 }
+
+STATIC_ASSERT_ENUM(kWebStorageQuotaTypeTemporary,
+                   DeprecatedStorageQuota::kTemporary);
+STATIC_ASSERT_ENUM(kWebStorageQuotaTypePersistent,
+                   DeprecatedStorageQuota::kPersistent);
 
 }  // namespace blink

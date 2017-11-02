@@ -29,12 +29,12 @@ PaintRenderingContext2D::PaintRenderingContext2D(
 }
 
 int PaintRenderingContext2D::Width() const {
-  ASSERT(image_buffer_);
+  DCHECK(image_buffer_);
   return image_buffer_->size().Width();
 }
 
 int PaintRenderingContext2D::Height() const {
-  ASSERT(image_buffer_);
+  DCHECK(image_buffer_);
   return image_buffer_->size().Height();
 }
 
@@ -48,26 +48,22 @@ bool PaintRenderingContext2D::ParseColorOrCurrentColor(
   return ::blink::ParseColorOrCurrentColor(color, color_string, nullptr);
 }
 
-ColorBehavior PaintRenderingContext2D::DrawImageColorBehavior() const {
-  return ColorBehavior::TransformToGlobalTarget();
-}
-
 PaintCanvas* PaintRenderingContext2D::DrawingCanvas() const {
   return image_buffer_->Canvas();
 }
 
 PaintCanvas* PaintRenderingContext2D::ExistingDrawingCanvas() const {
-  ASSERT(image_buffer_);
+  DCHECK(image_buffer_);
   return image_buffer_->Canvas();
 }
 
 AffineTransform PaintRenderingContext2D::BaseTransform() const {
-  ASSERT(image_buffer_);
+  DCHECK(image_buffer_);
   return image_buffer_->BaseTransform();
 }
 
 void PaintRenderingContext2D::DidDraw(const SkIRect& dirty_rect) {
-  ASSERT(image_buffer_);
+  DCHECK(image_buffer_);
   return image_buffer_->DidDraw(SkRect::Make(dirty_rect));
 }
 
@@ -78,6 +74,14 @@ void PaintRenderingContext2D::ValidateStateStack() const {
               state_stack_.size() + 1);
   }
 #endif
+}
+
+bool PaintRenderingContext2D::StateHasFilter() {
+  return GetState().HasFilterForOffscreenCanvas(IntSize(Width(), Height()));
+}
+
+sk_sp<SkImageFilter> PaintRenderingContext2D::StateGetFilter() {
+  return GetState().GetFilterForOffscreenCanvas(IntSize(Width(), Height()));
 }
 
 }  // namespace blink

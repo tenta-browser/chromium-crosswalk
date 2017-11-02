@@ -7,11 +7,11 @@
 #include <utility>
 
 #include "ash/public/cpp/config.h"
-#include "ash/shelf/wm_shelf.h"
+#include "ash/shelf/shelf.h"
+#include "ash/shelf/shelf_button_pressed_metric_tracker_test_api.h"
+#include "ash/shelf/shelf_view_test_api.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
-#include "ash/test/shelf_button_pressed_metric_tracker_test_api.h"
-#include "ash/test/shelf_view_test_api.h"
 #include "base/macros.h"
 #include "base/test/histogram_tester.h"
 #include "base/test/simple_test_tick_clock.h"
@@ -21,7 +21,6 @@
 #include "ui/views/controls/button/button.h"
 
 namespace ash {
-namespace test {
 namespace {
 
 // A simple light weight test double dummy for a views::Button.
@@ -106,8 +105,8 @@ ShelfButtonPressedMetricTrackerTest::~ShelfButtonPressedMetricTrackerTest() {}
 void ShelfButtonPressedMetricTrackerTest::SetUp() {
   AshTestBase::SetUp();
 
-  WmShelf* wm_shelf = GetPrimaryShelf();
-  ShelfViewTestAPI shelf_view_test_api(wm_shelf->GetShelfViewForTesting());
+  Shelf* shelf = GetPrimaryShelf();
+  ShelfViewTestAPI shelf_view_test_api(shelf->GetShelfViewForTesting());
 
   metric_tracker_ = shelf_view_test_api.shelf_button_pressed_metric_tracker();
 
@@ -312,5 +311,4 @@ TEST_F(ShelfButtonPressedMetricTrackerTest,
       kTimeDeltaInMilliseconds, 1);
 }
 
-}  // namespace test
 }  // namespace ash

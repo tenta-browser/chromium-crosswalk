@@ -6,43 +6,64 @@
 
 #include "core/layout/ng/inline/ng_inline_node.h"
 #include "core/layout/ng/inline/ng_physical_text_fragment.h"
-#include "core/layout/ng/ng_fragment.h"
-#include "platform/heap/Handle.h"
 
 namespace blink {
 
-NGTextFragmentBuilder::NGTextFragmentBuilder(NGInlineNode* node)
-    : direction_(TextDirection::kLtr), node_(node) {}
+namespace {
 
-NGTextFragmentBuilder& NGTextFragmentBuilder::SetDirection(
-    TextDirection direction) {
-  direction_ = direction;
+NGLineOrientation ToLineOrientation(NGWritingMode writing_mode) {
+  switch (writing_mode) {
+    case NGWritingMode::kHorizontalTopBottom:
+      return NGLineOrientation::kHorizontal;
+    case NGWritingMode::kVerticalRightLeft:
+    case NGWritingMode::kVerticalLeftRight:
+    case NGWritingMode::kSidewaysRightLeft:
+      return NGLineOrientation::kClockWiseVertical;
+    case NGWritingMode::kSidewaysLeftRight:
+      return NGLineOrientation::kCounterClockWiseVertical;
+  }
+  NOTREACHED();
+  return NGLineOrientation::kHorizontal;
+}
+
+}  // namespace
+
+NGTextFragmentBuilder::NGTextFragmentBuilder(NGInlineNode node,
+                                             RefPtr<const ComputedStyle> style,
+                                             NGWritingMode writing_mode)
+    : NGBaseFragmentBuilder(style, writing_mode, TextDirection::kLtr),
+      node_(node) {}
+
+NGTextFragmentBuilder::NGTextFragmentBuilder(NGInlineNode node,
+                                             NGWritingMode writing_mode)
+    : NGBaseFragmentBuilder(writing_mode, TextDirection::kLtr), node_(node) {}
+
+NGTextFragmentBuilder& NGTextFragmentBuilder::SetSize(
+    const NGLogicalSize& size) {
+  size_ = size;
   return *this;
 }
 
-NGTextFragmentBuilder& NGTextFragmentBuilder::SetInlineSize(LayoutUnit size) {
-  size_.inline_size = size;
+NGTextFragmentBuilder& NGTextFragmentBuilder::SetShapeResult(
+    RefPtr<const ShapeResult> shape_result) {
+  shape_result_ = shape_result;
   return *this;
 }
 
-NGTextFragmentBuilder& NGTextFragmentBuilder::SetBlockSize(LayoutUnit size) {
-  size_.block_size = size;
+NGTextFragmentBuilder& NGTextFragmentBuilder::SetEndEffect(
+    NGTextEndEffect end_effect) {
+  end_effect_ = end_effect;
   return *this;
-}
-
-void NGTextFragmentBuilder::UniteMetrics(const NGLineHeightMetrics& metrics) {
-  metrics_.Unite(metrics);
 }
 
 RefPtr<NGPhysicalTextFragment> NGTextFragmentBuilder::ToTextFragment(
     unsigned index,
     unsigned start_offset,
     unsigned end_offset) {
-  NGWritingMode writing_mode(
-      FromPlatformWritingMode(node_->Style().GetWritingMode()));
   return AdoptRef(new NGPhysicalTextFragment(
-      node_->GetLayoutObject(), node_, index, start_offset, end_offset,
-      size_.ConvertToPhysical(writing_mode)));
+      node_.GetLayoutObject(), Style(), node_.Text(), index, start_offset,
+      end_offset, size_.ConvertToPhysical(WritingMode()),
+      ToLineOrientation(WritingMode()), end_effect_, std::move(shape_result_)));
 }
 
 }  // namespace blink

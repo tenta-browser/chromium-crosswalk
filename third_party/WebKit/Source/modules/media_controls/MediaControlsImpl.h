@@ -27,9 +27,9 @@
 #ifndef MediaControlsImpl_h
 #define MediaControlsImpl_h
 
+#include "core/geometry/DOMRectReadOnly.h"
 #include "core/html/HTMLDivElement.h"
 #include "core/html/media/MediaControls.h"
-#include "core/html/shadow/MediaControlElements.h"
 #include "modules/ModulesExport.h"
 
 namespace blink {
@@ -37,12 +37,26 @@ namespace blink {
 class Event;
 class MediaControlsMediaEventListener;
 class MediaControlsOrientationLockDelegate;
+class MediaControlsRotateToFullscreenDelegate;
 class MediaControlsWindowEventListener;
+class MediaControlCastButtonElement;
 class MediaControlCurrentTimeDisplayElement;
+class MediaControlDownloadButtonElement;
+class MediaControlFullscreenButtonElement;
 class MediaControlMuteButtonElement;
+class MediaControlOverflowMenuButtonElement;
+class MediaControlOverflowMenuListElement;
 class MediaControlOverlayEnclosureElement;
+class MediaControlOverlayPlayButtonElement;
+class MediaControlPanelElement;
 class MediaControlPanelEnclosureElement;
+class MediaControlPlayButtonElement;
 class MediaControlRemainingTimeDisplayElement;
+class MediaControlTextTrackListElement;
+class MediaControlTimelineElement;
+class MediaControlToggleClosedCaptionsButtonElement;
+class MediaControlVolumeSliderElement;
+class MediaDownloadInProductHelpManager;
 class ShadowRoot;
 
 // Default implementation of the core/ MediaControls interface used by
@@ -53,11 +67,7 @@ class MODULES_EXPORT MediaControlsImpl final : public HTMLDivElement,
   WTF_MAKE_NONCOPYABLE(MediaControlsImpl);
 
  public:
-  class Factory : public MediaControls::Factory {
-   public:
-    MediaControls* Create(HTMLMediaElement&, ShadowRoot&) override;
-  };
-
+  static MediaControlsImpl* Create(HTMLMediaElement&, ShadowRoot&);
   ~MediaControlsImpl() = default;
 
   // Node override.
@@ -65,7 +75,7 @@ class MODULES_EXPORT MediaControlsImpl final : public HTMLDivElement,
   void RemovedFrom(ContainerNode*) override;
 
   // MediaControls implementation.
-  void Show() override;
+  void MaybeShow() override;
   void Hide() override;
   void Reset() override;
   void OnControlsListUpdated() override;
@@ -73,45 +83,44 @@ class MODULES_EXPORT MediaControlsImpl final : public HTMLDivElement,
   // HTMLTrackElement failed to load because there is no web exposed way to
   // be notified on the TextTrack object. See https://crbug.com/669977
   void OnTrackElementFailedToLoad() override { OnTextTracksAddedOrRemoved(); }
-  // TODO(mlamouri): the following methods will be able to become private when
-  // the controls have to modules/ and have access to RemotePlayback.
-  void OnRemotePlaybackAvailabilityChanged() override {
-    RefreshCastButtonVisibility();
-  }
-  void OnRemotePlaybackConnecting() override { StartedCasting(); }
-  void OnRemotePlaybackDisconnected() override { StoppedCasting(); }
-  // TODO(mlamouri): this method is needed in order to notify the controls that
-  // the attribute have changed.
-  void OnDisableRemotePlaybackAttributeChanged() override {
-    RefreshCastButtonVisibility();
-  }
   // Notify us that the media element's network state has changed.
   void NetworkStateChanged() override;
   LayoutObject* PanelLayoutObject() override;
   LayoutObject* ContainerLayoutObject() override;
   // Return the internal elements, which is used by registering clicking
   // EventHandlers from MediaControlsWindowEventListener.
-  MediaControlPanelElement* PanelElement() override { return panel_; }
-  void BeginScrubbing() override;
-  void EndScrubbing() override;
-  void UpdateCurrentTimeDisplay() override;
-  void ToggleTextTrackList() override;
-  void ShowTextTrackAtIndex(unsigned) override;
-  void DisableShowingTextTracks() override;
-  // Called by the fullscreen buttons to toggle fulllscreen on/off.
-  void EnterFullscreen() override;
-  void ExitFullscreen() override;
-  void ToggleOverflowMenu() override;
-  bool OverflowMenuVisible() override;
+  HTMLDivElement* PanelElement() override;
   // TODO(mlamouri): this method is needed in order to notify the controls that
   // the `MediaControlsEnabled` setting has changed.
   void OnMediaControlsEnabledChange() override {
     // There is no update because only the overlay is expected to change.
     RefreshCastButtonVisibilityWithoutUpdate();
   }
-  Document& OwnerDocument() { return GetDocument(); }
+
+  // Called by the fullscreen buttons to toggle fulllscreen on/off.
+  void EnterFullscreen();
+  void ExitFullscreen();
+
+  // Text track related methods exposed to components handling closed captions.
+  void ToggleTextTrackList();
+  void ShowTextTrackAtIndex(unsigned);
+  void DisableShowingTextTracks();
+
+  // Methods related to the overflow menu.
+  void ToggleOverflowMenu();
+  bool OverflowMenuVisible();
 
   void ShowOverlayCastButtonIfNeeded();
+
+  // Methods call by the scrubber.
+  void BeginScrubbing();
+  void EndScrubbing();
+  void UpdateCurrentTimeDisplay();
+
+  // Methods used for Download In-product help.
+  const MediaControlDownloadButtonElement& DownloadButton() const;
+  void DidDismissDownloadInProductHelp();
+  MediaDownloadInProductHelpManager* DownloadInProductHelp();
 
   DECLARE_VIRTUAL_TRACE();
 
@@ -128,18 +137,20 @@ class MODULES_EXPORT MediaControlsImpl final : public HTMLDivElement,
 
   // For tests.
   friend class MediaControlsOrientationLockDelegateTest;
+  friend class MediaControlsOrientationLockAndRotateToFullscreenDelegateTest;
+  friend class MediaControlsRotateToFullscreenDelegateTest;
   friend class MediaControlsImplTest;
+  friend class MediaControlsImplInProductHelpTest;
 
   // Need to be members of MediaControls for private member access.
   class BatchedControlUpdate;
-  class MediaControlsResizeObserverCallback;
-
-  static MediaControlsImpl* Create(HTMLMediaElement&, ShadowRoot&);
+  class MediaControlsResizeObserverDelegate;
+  class MediaElementMutationCallback;
 
   void Invalidate(Element*);
 
   // Notify us that our controls enclosure has changed size.
-  void NotifyElementSizeChanged(ClientRect* new_size);
+  void NotifyElementSizeChanged(DOMRectReadOnly* new_size);
 
   explicit MediaControlsImpl(HTMLMediaElement&);
 
@@ -161,6 +172,7 @@ class MODULES_EXPORT MediaControlsImpl final : public HTMLDivElement,
 
   bool ShouldHideMediaControls(unsigned behavior_flags = 0) const;
   void HideMediaControlsTimerFired(TimerBase*);
+  void StartHideMediaControlsIfNecessary();
   void StartHideMediaControlsTimer();
   void StopHideMediaControlsTimer();
   void ResetHideMediaControlsTimer();
@@ -181,8 +193,7 @@ class MODULES_EXPORT MediaControlsImpl final : public HTMLDivElement,
   bool ContainsRelatedTarget(Event*);
 
   // Internal cast related methods.
-  void StartedCasting();
-  void StoppedCasting();
+  void RemotePlaybackStateChanged();
   void RefreshCastButtonVisibility();
   void RefreshCastButtonVisibilityWithoutUpdate();
 
@@ -201,6 +212,7 @@ class MODULES_EXPORT MediaControlsImpl final : public HTMLDivElement,
   void OnEnteredFullscreen();
   void OnExitedFullscreen();
   void OnPanelKeypress();
+  void OnMediaKeyboardEvent(Event* event) { DefaultEventHandler(event); }
 
   // Media control elements.
   Member<MediaControlOverlayEnclosureElement> overlay_enclosure_;
@@ -227,6 +239,8 @@ class MODULES_EXPORT MediaControlsImpl final : public HTMLDivElement,
   Member<MediaControlsMediaEventListener> media_event_listener_;
   Member<MediaControlsWindowEventListener> window_event_listener_;
   Member<MediaControlsOrientationLockDelegate> orientation_lock_delegate_;
+  Member<MediaControlsRotateToFullscreenDelegate>
+      rotate_to_fullscreen_delegate_;
 
   TaskRunnerTimer<MediaControlsImpl> hide_media_controls_timer_;
   unsigned hide_timer_behavior_flags_;
@@ -237,10 +251,16 @@ class MODULES_EXPORT MediaControlsImpl final : public HTMLDivElement,
   // necessary.
   Member<ResizeObserver> resize_observer_;
 
+  // Watches the media element for attribute changes and updates media controls
+  // as necessary.
+  Member<MediaElementMutationCallback> element_mutation_callback_;
+
   TaskRunnerTimer<MediaControlsImpl> element_size_changed_timer_;
   IntSize size_;
 
   bool keep_showing_until_timer_fires_ : 1;
+
+  Member<MediaDownloadInProductHelpManager> download_iph_manager_;
 };
 
 DEFINE_ELEMENT_TYPE_CASTS(MediaControlsImpl, IsMediaControls());

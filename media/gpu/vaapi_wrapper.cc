@@ -7,6 +7,8 @@
 #include <dlfcn.h>
 #include <string.h>
 
+#include <va/va.h>
+
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/logging.h"
@@ -16,7 +18,7 @@
 #include "build/build_config.h"
 
 // Auto-generated for dlopen libva libraries
-#include "media/gpu/va_stubs.h"
+#include "media/gpu/vaapi/va_stubs.h"
 
 #include "media/gpu/vaapi_picture.h"
 #include "third_party/libyuv/include/libyuv.h"
@@ -25,21 +27,22 @@
 #if defined(USE_X11)
 #include "ui/gfx/x/x11_types.h"  // nogncheck
 #elif defined(USE_OZONE)
-#include "third_party/libva/va/drm/va_drm.h"
-#include "third_party/libva/va/va_drmcommon.h"
+#include <va/va_drm.h>
+#include <va/va_drmcommon.h>
+#include <va/va_version.h>
 #include "ui/gfx/buffer_format_util.h"
 #include "ui/ozone/public/ozone_platform.h"
 #include "ui/ozone/public/surface_factory_ozone.h"
 #endif  // USE_X11
 
-using media_gpu::kModuleVa;
+using media_gpu_vaapi::kModuleVa;
 #if defined(USE_X11)
-using media_gpu::kModuleVa_x11;
+using media_gpu_vaapi::kModuleVa_x11;
 #elif defined(USE_OZONE)
-using media_gpu::kModuleVa_drm;
+using media_gpu_vaapi::kModuleVa_drm;
 #endif  // USE_X11
-using media_gpu::InitializeStubs;
-using media_gpu::StubPathMap;
+using media_gpu_vaapi::InitializeStubs;
+using media_gpu_vaapi::StubPathMap;
 
 #define LOG_VA_ERROR_AND_REPORT(va_error, err_msg)                  \
   do {                                                              \
@@ -129,9 +132,10 @@ static const ProfileMap kProfileMap[] = {
     // H264PROFILE_HIGH*.
     {H264PROFILE_HIGH, VAProfileH264High},
     {VP8PROFILE_ANY, VAProfileVP8Version0_3},
-    // TODO(servolk): Need to add VP9 profiles 1,2,3 here after rolling
-    // third_party/libva to 1.7. crbug.com/598118
     {VP9PROFILE_PROFILE0, VAProfileVP9Profile0},
+    {VP9PROFILE_PROFILE1, VAProfileVP9Profile1},
+    {VP9PROFILE_PROFILE2, VAProfileVP9Profile2},
+    {VP9PROFILE_PROFILE3, VAProfileVP9Profile3},
 };
 
 static std::vector<VAConfigAttrib> GetRequiredAttribs(
@@ -544,7 +548,7 @@ bool VaapiWrapper::CreateSurfaces(unsigned int va_format,
 
   VA_LOG_ON_ERROR(va_res, "vaCreateContext failed");
   if (va_res != VA_STATUS_SUCCESS) {
-    DestroySurfaces();
+    DestroySurfaces_Locked();
     return false;
   }
 
@@ -556,6 +560,12 @@ bool VaapiWrapper::CreateSurfaces(unsigned int va_format,
 void VaapiWrapper::DestroySurfaces() {
   base::AutoLock auto_lock(*va_lock_);
   DVLOG(2) << "Destroying " << va_surface_ids_.size() << " surfaces";
+
+  DestroySurfaces_Locked();
+}
+
+void VaapiWrapper::DestroySurfaces_Locked() {
+  va_lock_->AssertAcquired();
 
   if (va_context_id_ != VA_INVALID_ID) {
     VAStatus va_res = vaDestroyContext(va_display_, va_context_id_);
@@ -665,31 +675,6 @@ scoped_refptr<VASurface> VaapiWrapper::CreateVASurfaceForPixmap(
 
   return va_surface;
 }
-
-bool VaapiWrapper::ProcessPixmap(
-    const scoped_refptr<gfx::NativePixmap>& source_pixmap,
-    scoped_refptr<gfx::NativePixmap> target_pixmap) {
-  scoped_refptr<VASurface> va_surface = CreateVASurfaceForPixmap(source_pixmap);
-  if (!va_surface) {
-    LOG(ERROR) << "Failed creating VA Surface for source_pixmap";
-    return false;
-  }
-
-  scoped_refptr<VASurface> processed_va_surface =
-      CreateVASurfaceForPixmap(target_pixmap);
-  if (!processed_va_surface) {
-    LOG(ERROR) << "Failed creating processed VA Surface for pixmap";
-    return false;
-  }
-
-  if (!BlitSurface(va_surface, processed_va_surface)) {
-    LOG(ERROR) << "Failed scaling NativePixmap";
-    return false;
-  }
-
-  return true;
-}
-
 #endif
 
 void VaapiWrapper::DestroyUnownedSurface(VASurfaceID va_surface_id) {
@@ -1224,8 +1209,12 @@ bool VaapiWrapper::VADisplayState::Initialize() {
     DVLOG(1) << "VAAPI version: " << major_version_ << "." << minor_version_;
   }
 
-  if (VAAPIVersionLessThan(0, 34)) {
-    LOG(ERROR) << "VAAPI version < 0.34 is not supported.";
+  if (major_version_ != VA_MAJOR_VERSION ||
+      minor_version_ != VA_MINOR_VERSION) {
+    LOG(ERROR) << "This build of Chromium requires VA-API version "
+               << VA_MAJOR_VERSION << "." << VA_MINOR_VERSION
+               << ", system version: " << major_version_ << "."
+               << minor_version_;
     return false;
   }
   return true;
@@ -1253,10 +1242,5 @@ void VaapiWrapper::VADisplayState::SetDrmFd(base::PlatformFile fd) {
   drm_fd_.reset(HANDLE_EINTR(dup(fd)));
 }
 #endif  // USE_OZONE
-
-bool VaapiWrapper::VADisplayState::VAAPIVersionLessThan(int major, int minor) {
-  return (major_version_ < major) ||
-         (major_version_ == major && minor_version_ < minor);
-}
 
 }  // namespace media

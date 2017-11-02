@@ -13,6 +13,7 @@
 #include "base/files/file_util.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/run_loop.h"
 #include "base/strings/string16.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/extensions/api/extension_action/extension_action_api.h"
@@ -43,7 +44,6 @@
 #include "extensions/browser/uninstall_reason.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
-#include "extensions/common/feature_switch.h"
 #include "extensions/common/manifest.h"
 #include "extensions/common/value_builder.h"
 
@@ -268,7 +268,7 @@ testing::AssertionResult ToolbarActionsModelUnitTest::RemoveExtension(
                                        << " not installed!";
   }
   service()->UnloadExtension(extension->id(),
-                             extensions::UnloadedExtensionInfo::REASON_DISABLE);
+                             extensions::UnloadedExtensionReason::DISABLE);
   if (registry()->enabled_extensions().GetByID(extension->id())) {
     return testing::AssertionFailure() << "Failed to unload extension: "
                                        << extension->name();
@@ -494,11 +494,11 @@ TEST_F(ToolbarActionsModelUnitTest, ActionsToolbarUnloadDisableAndUninstall) {
 
   // Disabling extensions should also preserve order.
   service()->DisableExtension(browser_action_b()->id(),
-                              extensions::Extension::DISABLE_USER_ACTION);
+                              extensions::disable_reason::DISABLE_USER_ACTION);
   service()->DisableExtension(browser_action_c()->id(),
-                              extensions::Extension::DISABLE_USER_ACTION);
+                              extensions::disable_reason::DISABLE_USER_ACTION);
   service()->DisableExtension(browser_action_a()->id(),
-                              extensions::Extension::DISABLE_USER_ACTION);
+                              extensions::disable_reason::DISABLE_USER_ACTION);
   service()->EnableExtension(browser_action_c()->id());
   service()->EnableExtension(browser_action_a()->id());
   service()->EnableExtension(browser_action_b()->id());
@@ -737,7 +737,7 @@ TEST_F(ToolbarActionsModelUnitTest, ActionsToolbarHighlightModeRemove) {
 
   // Disable one of them - only one should remain highlighted.
   service()->DisableExtension(browser_action_a()->id(),
-                              extensions::Extension::DISABLE_USER_ACTION);
+                              extensions::disable_reason::DISABLE_USER_ACTION);
   EXPECT_TRUE(toolbar_model()->is_highlighting());
   EXPECT_EQ(1u, num_toolbar_items());
   EXPECT_EQ(browser_action_b()->id(), GetActionIdAtIndex(0u));
@@ -836,24 +836,10 @@ TEST_F(ToolbarActionsModelUnitTest, ActionsToolbarSizeAfterPrefChange) {
   EXPECT_EQ(num_toolbar_items(), toolbar_model()->visible_icon_count());
 }
 
-// Test that, in the absence of the extension-action-redesign switch, the
-// model only contains extensions with browser actions and component actions.
-TEST_F(ToolbarActionsModelUnitTest, TestToolbarExtensionTypesDisabledSwitch) {
-  extensions::FeatureSwitch::ScopedOverride enable_redesign(
-      extensions::FeatureSwitch::extension_action_redesign(), false);
-  Init();
-  ASSERT_TRUE(AddActionExtensions());
-
-  EXPECT_EQ(1u, num_toolbar_items());
-  EXPECT_EQ(browser_action()->id(), GetActionIdAtIndex(0u));
-}
-
 // Test that, with the extension-action-redesign switch, the model contains
 // all types of extensions, except those which should not be displayed on the
 // toolbar (like component extensions).
 TEST_F(ToolbarActionsModelUnitTest, TestToolbarExtensionTypesEnabledSwitch) {
-  extensions::FeatureSwitch::ScopedOverride enable_redesign(
-      extensions::FeatureSwitch::extension_action_redesign(), true);
   Init();
 
   ASSERT_TRUE(AddActionExtensions());
@@ -902,48 +888,6 @@ TEST_F(ToolbarActionsModelUnitTest, TestToolbarExtensionTypesEnabledSwitch) {
   EXPECT_TRUE(AddExtension(internal_extension_no_action.get()));
   EXPECT_EQ(4u, num_toolbar_items());
   EXPECT_TRUE(ModelHasActionForId(internal_extension_no_action->id()));
-}
-
-// Test that hiding actions on the toolbar results in their removal from the
-// model when the redesign switch is not enabled.
-TEST_F(ToolbarActionsModelUnitTest, ActionsToolbarActionsVisibilityNoSwitch) {
-  extensions::FeatureSwitch::ScopedOverride enable_redesign(
-      extensions::FeatureSwitch::extension_action_redesign(), false);
-  Init();
-
-  extensions::ExtensionActionAPI* action_api =
-      extensions::ExtensionActionAPI::Get(profile());
-
-  ASSERT_TRUE(AddBrowserActionExtensions());
-  // Sanity check: Order should start as A , B, C.
-  EXPECT_EQ(3u, num_toolbar_items());
-  EXPECT_EQ(browser_action_a()->id(), GetActionIdAtIndex(0u));
-  EXPECT_EQ(browser_action_b()->id(), GetActionIdAtIndex(1u));
-  EXPECT_EQ(browser_action_c()->id(), GetActionIdAtIndex(2u));
-
-  // By default, all actions should be visible.
-  EXPECT_TRUE(action_api->GetBrowserActionVisibility(browser_action_a()->id()));
-  EXPECT_TRUE(action_api->GetBrowserActionVisibility(browser_action_b()->id()));
-  EXPECT_TRUE(action_api->GetBrowserActionVisibility(browser_action_c()->id()));
-
-  // Hiding an action should result in its removal from the toolbar.
-  action_api->SetBrowserActionVisibility(browser_action_b()->id(), false);
-  EXPECT_FALSE(
-      action_api->GetBrowserActionVisibility(browser_action_b()->id()));
-  // Thus, there should now only be two items on the toolbar - A and C.
-  EXPECT_EQ(2u, num_toolbar_items());
-  EXPECT_EQ(browser_action_a()->id(), GetActionIdAtIndex(0u));
-  EXPECT_EQ(browser_action_c()->id(), GetActionIdAtIndex(1u));
-
-  // Resetting the visibility to 'true' should result in the extension being
-  // added back at its original position.
-  action_api->SetBrowserActionVisibility(browser_action_b()->id(), true);
-  EXPECT_TRUE(action_api->GetBrowserActionVisibility(browser_action_b()->id()));
-  // So the toolbar order should be A, B, C.
-  EXPECT_EQ(3u, num_toolbar_items());
-  EXPECT_EQ(browser_action_a()->id(), GetActionIdAtIndex(0u));
-  EXPECT_EQ(browser_action_b()->id(), GetActionIdAtIndex(1u));
-  EXPECT_EQ(browser_action_c()->id(), GetActionIdAtIndex(2u));
 }
 
 TEST_F(ToolbarActionsModelUnitTest, ActionsToolbarIncognitoModeTest) {
@@ -1120,8 +1064,6 @@ TEST_F(ToolbarActionsModelUnitTest, ActionsToolbarIncognitoEnableExtension) {
 // overflow menu when the redesign switch is enabled.
 TEST_F(ToolbarActionsModelUnitTest,
        ActionsToolbarActionsVisibilityWithSwitchAndComponentActions) {
-  extensions::FeatureSwitch::ScopedOverride enable_redesign(
-      extensions::FeatureSwitch::extension_action_redesign(), true);
   Init();
 
   // We choose to use all types of extensions here, since the misnamed
@@ -1249,8 +1191,6 @@ TEST_F(ToolbarActionsModelUnitTest, ToolbarModelPrefChange) {
 // toolbar with component actions.
 TEST_F(ToolbarActionsModelUnitTest,
        ActionsToolbarReorderAndReinsertWithSwitchAndComponentActions) {
-  extensions::FeatureSwitch::ScopedOverride enable_redesign(
-      extensions::FeatureSwitch::extension_action_redesign(), true);
   InitWithMockActionsFactory();
 
   // One component action was added when the model was initialized.

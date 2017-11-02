@@ -12,6 +12,7 @@
 #include "base/command_line.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
 #include "base/synchronization/condition_variable.h"
@@ -77,7 +78,7 @@ class ThreadPerfTest : public testing::Test {
     // Create threads and collect starting cpu-time for each thread.
     std::vector<base::ThreadTicks> thread_starts;
     while (threads_.size() < num_threads) {
-      threads_.push_back(MakeUnique<base::Thread>("PingPonger"));
+      threads_.push_back(std::make_unique<base::Thread>("PingPonger"));
       threads_.back()->Start();
       if (base::ThreadTicks::IsSupported())
         thread_starts.push_back(ThreadNow(*threads_.back()));
@@ -184,7 +185,7 @@ class EventPerfTest : public ThreadPerfTest {
  public:
   void Init() override {
     for (size_t i = 0; i < threads_.size(); i++) {
-      events_.push_back(MakeUnique<WaitableEventType>(
+      events_.push_back(std::make_unique<WaitableEventType>(
           WaitableEvent::ResetPolicy::AUTOMATIC,
           WaitableEvent::InitialState::NOT_SIGNALED));
     }
@@ -226,8 +227,8 @@ class EventPerfTest : public ThreadPerfTest {
 // using WaitableEvents. We only test four threads (worst-case), but we
 // might want to craft a way to test the best-case (where the thread doesn't
 // end up blocking because the event is already signalled).
-typedef EventPerfTest<base::WaitableEvent> WaitableEventPerfTest;
-TEST_F(WaitableEventPerfTest, EventPingPong) {
+typedef EventPerfTest<base::WaitableEvent> WaitableEventThreadPerfTest;
+TEST_F(WaitableEventThreadPerfTest, EventPingPong) {
   RunPingPongTest("4_WaitableEvent_Threads", 4);
 }
 

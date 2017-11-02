@@ -5,9 +5,9 @@
 #ifndef ModuleMap_h
 #define ModuleMap_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "bindings/core/v8/TraceWrapperMember.h"
 #include "core/CoreExport.h"
+#include "platform/bindings/ScriptWrappable.h"
+#include "platform/bindings/TraceWrapperMember.h"
 #include "platform/heap/Handle.h"
 #include "platform/weborigin/KURL.h"
 #include "platform/weborigin/KURLHash.h"
@@ -41,8 +41,8 @@ class CORE_EXPORT ModuleMap final : public GarbageCollected<ModuleMap>,
                                SingleModuleClient*);
 
   // Synchronously get the ModuleScript for a given URL.
-  // Note: fetchSingleModuleScript of the ModuleScript must be complete before
-  // calling this.
+  // If the URL wasn't fetched, or is currently being fetched, this returns a
+  // nullptr.
   ModuleScript* GetFetchedModuleScript(const KURL&) const;
 
   Modulator* GetModulator() { return modulator_; }

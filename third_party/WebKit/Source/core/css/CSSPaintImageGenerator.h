@@ -16,7 +16,7 @@ namespace blink {
 class CSSSyntaxDescriptor;
 class Document;
 class Image;
-class LayoutObject;
+class ImageResourceObserver;
 
 // Produces a PaintGeneratedImage from a CSS Paint API callback.
 // https://drafts.css-houdini.org/css-paint-api/
@@ -35,22 +35,21 @@ class CORE_EXPORT CSSPaintImageGenerator
   };
 
   static CSSPaintImageGenerator* Create(const String& name,
-                                        Document&,
+                                        const Document&,
                                         Observer*);
   virtual ~CSSPaintImageGenerator();
 
   typedef CSSPaintImageGenerator* (*CSSPaintImageGeneratorCreateFunction)(
       const String&,
-      Document&,
+      const Document&,
       Observer*);
   static void Init(CSSPaintImageGeneratorCreateFunction);
 
   // Invokes the CSS Paint API 'paint' callback. May return a nullptr
   // representing an invalid image if an error occurred.
-  virtual PassRefPtr<Image> Paint(const LayoutObject&,
-                                  const IntSize&,
-                                  float zoom,
-                                  const CSSStyleValueVector*) = 0;
+  virtual RefPtr<Image> Paint(const ImageResourceObserver&,
+                              const IntSize&,
+                              const CSSStyleValueVector*) = 0;
 
   virtual const Vector<CSSPropertyID>& NativeInvalidationProperties() const = 0;
   virtual const Vector<AtomicString>& CustomInvalidationProperties() const = 0;

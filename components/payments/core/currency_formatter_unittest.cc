@@ -9,6 +9,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace payments {
+namespace {
 
 struct TestCase {
   TestCase(const char* amount,
@@ -81,6 +82,11 @@ INSTANTIATE_TEST_CASE_P(
         TestCase("55.00", "CAD", "fr_CA", "55,00 $", "CAD"),
         TestCase("55.00", "CAD", "fr_FR", "55,00 $", "CAD"),
 
+        TestCase("55.00", "AUD", "en_US", "$55.00", "AUD"),
+        TestCase("55.00", "AUD", "en_CA", "$55.00", "AUD"),
+        TestCase("55.00", "AUD", "fr_CA", "55,00 $", "AUD"),
+        TestCase("55.00", "AUD", "fr_FR", "55,00 $", "AUD"),
+
         TestCase("55.00", "BRL", "en_US", "R$55.00", "BRL"),
         TestCase("55.00", "BRL", "fr_CA", "55,00 R$", "BRL"),
         TestCase("55.00", "BRL", "pt_BR", "R$55,00", "BRL"),
@@ -119,8 +125,12 @@ INSTANTIATE_TEST_CASE_P(
             "USD",
             "fr_FR",
             "123 456 789 012 345 678 901 234 567 890,123456789 $",
-            "USD"),
+            "USD")));
 
+INSTANTIATE_TEST_CASE_P(
+    CurrencySystems,
+    PaymentsCurrencyFormatterTest,
+    testing::Values(
         // When the currency system is not ISO4217, only the amount is formatted
         // using the locale (there is no other indication of currency).
         TestCase("55.00",
@@ -173,4 +183,5 @@ INSTANTIATE_TEST_CASE_P(
                  "USD",
                  "http://currsystem.com")));
 
+}  // namespace
 }  // namespace payments

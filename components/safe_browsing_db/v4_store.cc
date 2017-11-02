@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/safe_browsing_db/v4_store.h"
+
 #include "base/base64.h"
 #include "base/bind.h"
 #include "base/files/file_util.h"
@@ -10,8 +12,8 @@
 #include "base/metrics/sparse_histogram.h"
 #include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
+#include "components/safe_browsing/proto/webui.pb.h"
 #include "components/safe_browsing_db/v4_rice.h"
-#include "components/safe_browsing_db/v4_store.h"
 #include "components/safe_browsing_db/v4_store.pb.h"
 #include "crypto/secure_hash.h"
 #include "crypto/sha2.h"
@@ -45,11 +47,6 @@ const char kTime[] = ".Time";
 
 const uint32_t kFileMagic = 0x600D71FE;
 const uint32_t kFileVersion = 9;
-
-std::string GetUmaSuffixForStore(const base::FilePath& file_path) {
-  return base::StringPrintf(
-      ".%" PRIsFP, file_path.BaseName().RemoveExtension().value().c_str());
-}
 
 void RecordTimeWithAndWithoutSuffix(const std::string& metric,
                                     base::TimeDelta time,
@@ -208,7 +205,7 @@ V4Store::V4Store(const scoped_refptr<base::SequencedTaskRunner>& task_runner,
       task_runner_(task_runner) {}
 
 V4Store::~V4Store() {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
 }
 
 std::string V4Store::DebugString() const {
@@ -377,12 +374,18 @@ void V4Store::ApplyUpdate(
 
   if (apply_update_result == APPLY_UPDATE_SUCCESS) {
     new_store->has_valid_data_ = true;
+    new_store->last_apply_update_result_ = apply_update_result;
+    new_store->last_apply_update_time_millis_ = base::Time::Now();
+    new_store->checks_attempted_ = checks_attempted_;
     RecordApplyUpdateTime(metric, TimeTicks::Now() - before, store_path_);
   } else {
     new_store.reset();
     DLOG(WARNING) << "Failure: ApplyUpdate: reason: " << apply_update_result
                   << "; store: " << *this;
   }
+
+  // Record the state of the update to be shown in the Safe Browsing page.
+  last_apply_update_result_ = apply_update_result;
 
   RecordApplyUpdateResult(metric, apply_update_result, store_path_);
 
@@ -533,7 +536,7 @@ ApplyUpdateResult V4Store::MergeUpdate(const HashPrefixMap& old_prefixes_map,
                                        const HashPrefixMap& additions_map,
                                        const RepeatedField<int32>* raw_removals,
                                        const std::string& expected_checksum) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
   DCHECK(hash_prefix_map_.empty());
 
   bool calculate_checksum = !expected_checksum.empty();
@@ -665,7 +668,7 @@ ApplyUpdateResult V4Store::MergeUpdate(const HashPrefixMap& old_prefixes_map,
 }
 
 StoreReadResult V4Store::ReadFromDisk() {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
   V4StoreFileFormat file_format;
   int64_t file_size;
@@ -708,6 +711,7 @@ StoreReadResult V4Store::ReadFromDisk() {
   ApplyUpdateResult apply_update_result = ProcessFullUpdate(
       kReadFromDisk, response, true /* delay_checksum check */);
   RecordApplyUpdateResult(kReadFromDisk, apply_update_result, store_path_);
+  last_apply_update_result_ = apply_update_result;
   if (apply_update_result != APPLY_UPDATE_SUCCESS) {
     hash_prefix_map_.clear();
     return HASH_PREFIX_MAP_GENERATION_FAILURE;
@@ -765,6 +769,7 @@ HashPrefix V4Store::GetMatchingHashPrefix(const FullHash& full_hash) {
   // full hash. However, if that happens, this method returns any one of them.
   // It does not guarantee which one of those will be returned.
   DCHECK(full_hash.size() == 32u || full_hash.size() == 21u);
+  checks_attempted_++;
   for (const auto& pair : hash_prefix_map_) {
     const PrefixSize& prefix_size = pair.first;
     const HashPrefixes& hash_prefixes = pair.second;
@@ -801,7 +806,7 @@ bool V4Store::HashPrefixMatches(const HashPrefix& hash_prefix,
 }
 
 bool V4Store::VerifyChecksum() {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(task_runner_->RunsTasksInCurrentSequence());
 
   if (expected_checksum_.empty()) {
     // Nothing to check here folks!
@@ -865,6 +870,19 @@ int64_t V4Store::RecordAndReturnFileSize(const std::string& base_metric) {
     histogram->Add(file_size_kilobytes);
   }
   return file_size_;
+}
+
+void V4Store::CollectStoreInfo(
+    DatabaseManagerInfo::DatabaseInfo::StoreInfo* store_info,
+    const std::string& base_metric) {
+  store_info->set_file_name(base_metric + GetUmaSuffixForStore(store_path_));
+  store_info->set_file_size_bytes(file_size_);
+  store_info->set_update_status(static_cast<int>(last_apply_update_result_));
+  store_info->set_checks_attempted(checks_attempted_);
+  if (last_apply_update_time_millis_.ToJavaTime()) {
+    store_info->set_last_apply_update_time_millis(
+        last_apply_update_time_millis_.ToJavaTime());
+  }
 }
 
 }  // namespace safe_browsing

@@ -56,10 +56,6 @@ GuestViewBase* ExtensionOptionsGuest::Create(WebContents* owner_web_contents) {
   return new ExtensionOptionsGuest(owner_web_contents);
 }
 
-bool ExtensionOptionsGuest::CanRunInDetachedState() const {
-  return true;
-}
-
 void ExtensionOptionsGuest::CreateWebContents(
     const base::DictionaryValue& create_params,
     const WebContentsCreatedCallback& callback) {
@@ -128,7 +124,7 @@ void ExtensionOptionsGuest::DidInitialize(
 
 void ExtensionOptionsGuest::GuestViewDidStopLoading() {
   std::unique_ptr<base::DictionaryValue> args(new base::DictionaryValue());
-  DispatchEventToView(base::MakeUnique<GuestViewEvent>(
+  DispatchEventToView(std::make_unique<GuestViewEvent>(
       extension_options_internal::OnLoad::kEventName, std::move(args)));
 }
 
@@ -149,13 +145,9 @@ void ExtensionOptionsGuest::OnPreferredSizeChanged(const gfx::Size& pref_size) {
   // Convert the size from physical pixels to logical pixels.
   options.width = PhysicalPixelsToLogicalPixels(pref_size.width());
   options.height = PhysicalPixelsToLogicalPixels(pref_size.height());
-  DispatchEventToView(base::MakeUnique<GuestViewEvent>(
+  DispatchEventToView(std::make_unique<GuestViewEvent>(
       extension_options_internal::OnPreferredSizeChanged::kEventName,
       options.ToValue()));
-}
-
-bool ExtensionOptionsGuest::ShouldHandleFindRequestsForEmbedder() const {
-  return true;
 }
 
 WebContents* ExtensionOptionsGuest::OpenURLFromTab(
@@ -179,7 +171,7 @@ WebContents* ExtensionOptionsGuest::OpenURLFromTab(
 }
 
 void ExtensionOptionsGuest::CloseContents(WebContents* source) {
-  DispatchEventToView(base::MakeUnique<GuestViewEvent>(
+  DispatchEventToView(std::make_unique<GuestViewEvent>(
       extension_options_internal::OnClose::kEventName,
       base::WrapUnique(new base::DictionaryValue())));
 }
@@ -194,6 +186,7 @@ bool ExtensionOptionsGuest::HandleContextMenu(
 
 bool ExtensionOptionsGuest::ShouldCreateWebContents(
     content::WebContents* web_contents,
+    content::RenderFrameHost* opener,
     content::SiteInstance* source_site_instance,
     int32_t route_id,
     int32_t main_frame_route_id,

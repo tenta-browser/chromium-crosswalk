@@ -26,9 +26,9 @@
 #ifndef IDBDatabase_h
 #define IDBDatabase_h
 
-#include "bindings/core/v8/ActiveScriptWrappable.h"
-#include "bindings/core/v8/ScriptState.h"
-#include "bindings/modules/v8/StringOrStringSequenceOrDOMStringList.h"
+#include <memory>
+
+#include "bindings/modules/v8/StringOrStringSequence.h"
 #include "core/dom/ContextLifecycleObserver.h"
 #include "core/dom/DOMStringList.h"
 #include "modules/EventModules.h"
@@ -41,12 +41,12 @@
 #include "modules/indexeddb/IDBObjectStoreParameters.h"
 #include "modules/indexeddb/IDBTransaction.h"
 #include "modules/indexeddb/IndexedDB.h"
+#include "platform/bindings/ActiveScriptWrappable.h"
+#include "platform/bindings/ScriptState.h"
+#include "platform/bindings/TraceWrapperMember.h"
 #include "platform/heap/Handle.h"
-#include "platform/wtf/PassRefPtr.h"
 #include "platform/wtf/RefPtr.h"
 #include "public/platform/modules/indexeddb/WebIDBDatabase.h"
-
-#include <memory>
 
 namespace blink {
 
@@ -70,6 +70,7 @@ class MODULES_EXPORT IDBDatabase final
                              v8::Isolate*);
   ~IDBDatabase() override;
   DECLARE_VIRTUAL_TRACE();
+  DECLARE_VIRTUAL_TRACE_WRAPPERS();
 
   // Overwrites the database metadata, including object store and index
   // metadata. Used to pass metadata to the database when it is opened.
@@ -101,11 +102,10 @@ class MODULES_EXPORT IDBDatabase final
     return createObjectStore(name, IDBKeyPath(options.keyPath()),
                              options.autoIncrement(), exception_state);
   }
-  IDBTransaction* transaction(
-      ScriptState*,
-      const StringOrStringSequenceOrDOMStringList& store_names,
-      const String& mode,
-      ExceptionState&);
+  IDBTransaction* transaction(ScriptState*,
+                              const StringOrStringSequence& store_names,
+                              const String& mode,
+                              ExceptionState&);
   void deleteObjectStore(const String& name, ExceptionState&);
   void close();
 
@@ -193,7 +193,7 @@ class MODULES_EXPORT IDBDatabase final
   std::unique_ptr<WebIDBDatabase> backend_;
   Member<IDBTransaction> version_change_transaction_;
   HeapHashMap<int64_t, Member<IDBTransaction>> transactions_;
-  HeapHashMap<int32_t, Member<IDBObserver>> observers_;
+  HeapHashMap<int32_t, TraceWrapperMember<IDBObserver>> observers_;
 
   bool close_pending_ = false;
 

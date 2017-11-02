@@ -53,7 +53,7 @@ int MapCrashExitCodeForHistogram(int exit_code) {
   return std::abs(exit_code);
 }
 
-void RecordChildKills(int histogram_type) {
+void RecordChildKills(RendererType histogram_type) {
   UMA_HISTOGRAM_ENUMERATION("BrowserRenderProcessHost.ChildKills",
                             histogram_type, RENDERER_TYPE_COUNT);
 }
@@ -170,8 +170,6 @@ void StabilityMetricsHelper::BrowserChildProcessCrashed() {
 
 void StabilityMetricsHelper::LogLoadStarted() {
   base::RecordAction(base::UserMetricsAction("PageLoad"));
-  // TODO(asvitkine): Check if this is used for anything and if not, remove.
-  LOCAL_HISTOGRAM_BOOLEAN("Chrome.UmaPageloadCounter", true);
   IncrementPrefValue(prefs::kStabilityPageLoadCount);
   IncrementLongPrefsValue(prefs::kUninstallMetricsPageLoadCount);
   // We need to save the prefs, as page load count is a critical stat, and it
@@ -181,7 +179,7 @@ void StabilityMetricsHelper::LogLoadStarted() {
 void StabilityMetricsHelper::LogRendererCrash(bool was_extension_process,
                                               base::TerminationStatus status,
                                               int exit_code) {
-  int histogram_type =
+  RendererType histogram_type =
       was_extension_process ? RENDERER_TYPE_EXTENSION : RENDERER_TYPE_RENDERER;
 
   switch (status) {

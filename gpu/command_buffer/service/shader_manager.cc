@@ -51,6 +51,10 @@ void Shader::RequestCompile(scoped_refptr<ShaderTranslatorInterface> translator,
                             TranslatedShaderSourceType type) {
   shader_state_ = kShaderStateCompileRequested;
   translator_ = translator;
+  if (translator_) {
+    options_affecting_compilation_ =
+        translator_->GetStringForOptionsThatWouldAffectCompilation();
+  }
   source_type_ = type;
   last_compiled_source_ = source_;
 }
@@ -75,7 +79,7 @@ void Shader::DoCompile() {
     bool success = translator->Translate(
         last_compiled_source_, &log_info_, &translated_source_,
         &shader_version_, &attrib_map_, &uniform_map_, &varying_map_,
-        &interface_block_map_, &output_variable_list_, &name_map_);
+        &interface_block_map_, &output_variable_list_);
     if (!success) {
       return;
     }
@@ -121,6 +125,9 @@ void Shader::DoCompile() {
         << "\n--translated-shader--\n" << source_for_driver
         << "\n--info-log--\n" << log_info_;
   }
+
+  // Translator is no longer required and can be released
+  translator_ = nullptr;
 }
 
 void Shader::RefreshTranslatedShaderSource() {
@@ -224,19 +231,22 @@ const std::string* Shader::GetOutputVariableMappedName(
 
 const std::string* Shader::GetOriginalNameFromHashedName(
     const std::string& hashed_name) const {
-  NameMap::const_iterator it = name_map_.find(hashed_name);
-  if (it != name_map_.end())
-    return &(it->second);
-  return NULL;
-}
-
-const std::string* Shader::GetMappedName(
-    const std::string& original_name) const {
-  for (const auto& key_value : name_map_) {
-    if (key_value.second == original_name)
-      return &(key_value.first);
+  if (const auto* info = GetAttribInfo(hashed_name)) {
+    return &info->name;
   }
-  return NULL;
+  if (const auto* info = GetUniformInfo(hashed_name)) {
+    return &info->name;
+  }
+  if (const auto* info = GetVaryingInfo(hashed_name)) {
+    return &info->name;
+  }
+  if (const auto* info = GetInterfaceBlockInfo(hashed_name)) {
+    return &info->name;
+  }
+  if (const auto* info = GetOutputVariableInfo(hashed_name)) {
+    return &info->name;
+  }
+  return nullptr;
 }
 
 const sh::Uniform* Shader::GetUniformInfo(const std::string& name) const {

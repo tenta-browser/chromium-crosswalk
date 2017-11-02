@@ -17,8 +17,8 @@
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/memory_dump_manager.h"
-#include "cc/output/context_cache_controller.h"
 #include "cc/output/managed_memory_policy.h"
+#include "components/viz/common/gpu/context_cache_controller.h"
 #include "gpu/command_buffer/client/gles2_cmd_helper.h"
 #include "gpu/command_buffer/client/gles2_implementation.h"
 #include "gpu/command_buffer/client/gles2_trace_implementation.h"
@@ -152,7 +152,7 @@ ContextProviderCommandBuffer::SharedProviders::~SharedProviders() = default;
 ContextProviderCommandBuffer::ContextProviderCommandBuffer(
     scoped_refptr<gpu::GpuChannelHost> channel,
     int32_t stream_id,
-    gpu::GpuStreamPriority stream_priority,
+    gpu::SchedulingPriority stream_priority,
     gpu::SurfaceHandle surface_handle,
     const GURL& active_url,
     bool automatic_flushes,
@@ -284,10 +284,7 @@ bool ContextProviderCommandBuffer::BindToCurrentThread() {
         attributes_.bind_generates_resource,
         attributes_.lose_context_when_out_of_memory, support_client_side_arrays,
         command_buffer_.get()));
-    if (!gles2_impl_->Initialize(memory_limits_.start_transfer_buffer_size,
-                                 memory_limits_.min_transfer_buffer_size,
-                                 memory_limits_.max_transfer_buffer_size,
-                                 memory_limits_.mapped_memory_reclaim_limit)) {
+    if (!gles2_impl_->Initialize(memory_limits_)) {
       DLOG(ERROR) << "Failed to initialize GLES2Implementation.";
       return false;
     }
@@ -317,7 +314,7 @@ bool ContextProviderCommandBuffer::BindToCurrentThread() {
     shared_providers_->list.push_back(this);
 
     cache_controller_.reset(
-        new cc::ContextCacheController(gles2_impl_.get(), task_runner));
+        new viz::ContextCacheController(gles2_impl_.get(), task_runner));
   }
   set_bind_failed.Reset();
   bind_succeeded_ = true;
@@ -392,7 +389,7 @@ class GrContext* ContextProviderCommandBuffer::GrContext() {
   return gr_context_->get();
 }
 
-cc::ContextCacheController* ContextProviderCommandBuffer::CacheController() {
+viz::ContextCacheController* ContextProviderCommandBuffer::CacheController() {
   DCHECK(context_thread_checker_.CalledOnValidThread());
   return cache_controller_.get();
 }

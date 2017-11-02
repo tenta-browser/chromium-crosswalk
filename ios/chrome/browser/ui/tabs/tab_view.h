@@ -9,17 +9,19 @@
 
 #include "base/mac/scoped_nsobject.h"
 #import "ios/chrome/browser/tabs/tab.h"
+#import "ios/chrome/browser/ui/tabs/tab_view_delegate.h"
 
 @class GTMFadeTruncatingLabel;
+@protocol TabViewDelegate;
 
 // View class that draws a Chrome-style tab.
 @interface TabView : UIControl
 
-@property(nonatomic, readonly, retain) UIButton* closeButton;
-@property(nonatomic, readonly, retain) GTMFadeTruncatingLabel* titleLabel;
-@property(nonatomic, retain) UIImage* favicon;
+@property(nonatomic, weak) id<TabViewDelegate> delegate;
+@property(nonatomic, readonly, strong) GTMFadeTruncatingLabel* titleLabel;
+@property(nonatomic, strong) UIImage* favicon;
 @property(nonatomic, assign, getter=isCollapsed) BOOL collapsed;
-@property(nonatomic, retain) UIImage* background;
+@property(nonatomic, strong) UIImage* background;
 @property(nonatomic, assign) BOOL incognitoStyle;
 
 // Designated initializer.  Creates a TabView with frame equal to CGRectZero.

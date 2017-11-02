@@ -13,9 +13,16 @@
 #include <algorithm>
 #include <utility>
 
-#include "base/containers/small_map.h"
+#include "base/containers/flat_map.h"
 #include "base/memory/ptr_util.h"
+#include "ui/display/types/display_mode.h"
+#include "ui/display/types/display_snapshot.h"
 #include "ui/display/util/edid_parser.h"
+
+#if !defined(DRM_FORMAT_R16)
+// TODO(riju): crbug.com/733703
+#define DRM_FORMAT_R16 fourcc_code('R', '1', '6', ' ')
+#endif
 
 namespace ui {
 
@@ -196,7 +203,39 @@ bool HasColorCorrectionMatrix(int fd, drmModeCrtc* crtc) {
   return false;
 }
 
+bool DisplayModeEquals(const DisplayMode_Params& lhs,
+                       const DisplayMode_Params& rhs) {
+  return lhs.size == rhs.size && lhs.is_interlaced == rhs.is_interlaced &&
+         lhs.refresh_rate == rhs.refresh_rate;
+}
+
 }  // namespace
+
+DisplayMode_Params GetDisplayModeParams(const display::DisplayMode& mode) {
+  DisplayMode_Params params;
+  params.size = mode.size();
+  params.is_interlaced = mode.is_interlaced();
+  params.refresh_rate = mode.refresh_rate();
+  return params;
+}
+
+std::unique_ptr<display::DisplayMode> CreateDisplayModeFromParams(
+    const DisplayMode_Params& pmode) {
+  return base::MakeUnique<display::DisplayMode>(pmode.size, pmode.is_interlaced,
+                                                pmode.refresh_rate);
+}
+
+const gfx::Size ModeSize(const drmModeModeInfo& mode) {
+  return gfx::Size(mode.hdisplay, mode.vdisplay);
+}
+
+float ModeRefreshRate(const drmModeModeInfo& mode) {
+  return GetRefreshRate(mode);
+}
+
+bool ModeIsInterlaced(const drmModeModeInfo& mode) {
+  return mode.flags & DRM_MODE_FLAG_INTERLACE;
+}
 
 gfx::Size GetMaximumCursorSize(int fd) {
   uint64_t width = 0, height = 0;
@@ -236,8 +275,7 @@ GetAvailableDisplayControllerInfos(int fd) {
       available_connectors.push_back(std::move(connector));
   }
 
-  base::SmallMap<std::map<ScopedDrmConnectorPtr::element_type*, int>>
-      connector_crtcs;
+  base::flat_map<ScopedDrmConnectorPtr::element_type*, int> connector_crtcs;
   for (auto& c : available_connectors) {
     uint32_t possible_crtcs = 0;
     for (int i = 0; i < c->count_encoders; ++i) {
@@ -292,7 +330,6 @@ DisplayMode_Params CreateDisplayModeParams(const drmModeModeInfo& mode) {
   params.size = gfx::Size(mode.hdisplay, mode.vdisplay);
   params.is_interlaced = mode.flags & DRM_MODE_FLAG_INTERLACE;
   params.refresh_rate = GetRefreshRate(mode);
-
   return params;
 }
 
@@ -360,10 +397,77 @@ DisplaySnapshot_Params CreateDisplaySnapshotParams(
   return params;
 }
 
+// TODO(rjkroege): Remove in a subsequent CL once Mojo IPC is used everywhere.
+std::vector<DisplaySnapshot_Params> CreateParamsFromSnapshot(
+    const MovableDisplaySnapshots& displays) {
+  std::vector<DisplaySnapshot_Params> params;
+  for (auto& d : displays) {
+    DisplaySnapshot_Params p;
+
+    p.display_id = d->display_id();
+    p.origin = d->origin();
+    p.physical_size = d->physical_size();
+    p.type = d->type();
+    p.is_aspect_preserving_scaling = d->is_aspect_preserving_scaling();
+    p.has_overscan = d->has_overscan();
+    p.has_color_correction_matrix = d->has_color_correction_matrix();
+    p.display_name = d->display_name();
+    p.sys_path = d->sys_path();
+
+    std::vector<DisplayMode_Params> mode_params;
+    for (const auto& m : d->modes()) {
+      mode_params.push_back(GetDisplayModeParams(*m));
+    }
+    p.modes = mode_params;
+    p.edid = d->edid();
+
+    if (d->current_mode()) {
+      p.has_current_mode = true;
+      p.current_mode = GetDisplayModeParams(*d->current_mode());
+    }
+
+    if (d->native_mode()) {
+      p.has_native_mode = true;
+      p.native_mode = GetDisplayModeParams(*d->native_mode());
+    }
+
+    p.product_id = d->product_id();
+    p.maximum_cursor_size = d->maximum_cursor_size();
+
+    params.push_back(p);
+  }
+  return params;
+}
+
+std::unique_ptr<display::DisplaySnapshot> CreateDisplaySnapshotFromParams(
+    const DisplaySnapshot_Params& params) {
+  display::DisplaySnapshot::DisplayModeList modes;
+  const display::DisplayMode* current_mode = nullptr;
+  const display::DisplayMode* native_mode = nullptr;
+
+  // Find pointers to current and native mode in the copied data.
+  for (auto& mode : params.modes) {
+    modes.push_back(CreateDisplayModeFromParams(mode));
+    if (params.has_current_mode && DisplayModeEquals(mode, params.current_mode))
+      current_mode = modes.back().get();
+    if (params.has_native_mode && DisplayModeEquals(mode, params.native_mode))
+      native_mode = modes.back().get();
+  }
+
+  return std::make_unique<display::DisplaySnapshot>(
+      params.display_id, params.origin, params.physical_size, params.type,
+      params.is_aspect_preserving_scaling, params.has_overscan,
+      params.has_color_correction_matrix, params.display_name, params.sys_path,
+      std::move(modes), params.edid, current_mode, native_mode,
+      params.product_id, params.maximum_cursor_size);
+}
+
 int GetFourCCFormatFromBufferFormat(gfx::BufferFormat format) {
   switch (format) {
     case gfx::BufferFormat::R_8:
       return DRM_FORMAT_R8;
+    case gfx::BufferFormat::R_16:
+      return DRM_FORMAT_R16;
     case gfx::BufferFormat::RG_88:
       return DRM_FORMAT_GR88;
     case gfx::BufferFormat::RGBA_8888:
@@ -440,4 +544,62 @@ int GetFourCCFormatForOpaqueFramebuffer(gfx::BufferFormat format) {
       return 0;
   }
 }
+
+MovableDisplaySnapshots CreateMovableDisplaySnapshotsFromParams(
+    const std::vector<DisplaySnapshot_Params>& displays) {
+  MovableDisplaySnapshots snapshots;
+  for (const auto& d : displays)
+    snapshots.push_back(CreateDisplaySnapshotFromParams(d));
+  return snapshots;
+}
+
+OverlaySurfaceCandidateList CreateOverlaySurfaceCandidateListFrom(
+    const std::vector<OverlayCheck_Params>& params) {
+  OverlaySurfaceCandidateList candidates;
+  for (auto& p : params) {
+    OverlaySurfaceCandidate osc;
+    osc.transform = p.transform;
+    osc.buffer_size = p.buffer_size;
+    osc.format = p.format;
+    osc.display_rect = gfx::RectF(p.display_rect);
+    osc.crop_rect = p.crop_rect;
+    osc.plane_z_order = p.plane_z_order;
+    osc.overlay_handled = p.is_overlay_candidate;
+    candidates.push_back(osc);
+  }
+
+  return candidates;
+}
+
+std::vector<OverlayCheck_Params> CreateParamsFromOverlaySurfaceCandidate(
+    const OverlaySurfaceCandidateList& candidates) {
+  std::vector<OverlayCheck_Params> overlay_params;
+  for (auto& candidate : candidates) {
+    overlay_params.push_back(OverlayCheck_Params(candidate));
+  }
+
+  return overlay_params;
+}
+
+OverlayStatusList CreateOverlayStatusListFrom(
+    const std::vector<OverlayCheckReturn_Params>& params) {
+  OverlayStatusList returns;
+  for (auto& p : params) {
+    returns.push_back(p.status);
+  }
+
+  return returns;
+}
+
+std::vector<OverlayCheckReturn_Params> CreateParamsFromOverlayStatusList(
+    const OverlayStatusList& returns) {
+  std::vector<OverlayCheckReturn_Params> params;
+  for (auto& s : returns) {
+    OverlayCheckReturn_Params p;
+    p.status = s;
+    params.push_back(p);
+  }
+  return params;
+}
+
 }  // namespace ui

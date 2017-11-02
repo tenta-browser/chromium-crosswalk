@@ -12,6 +12,9 @@ namespace switches {
 // transparent.
 const char kDefaultBackgroundColor[] = "default-background-color";
 
+// Enable chrash reporter for headless.
+const char kEnableCrashReporter[] = "enable-crash-reporter";
+
 // The directory breakpad should store minidumps in.
 const char kCrashDumpsDir[] = "crash-dumps-dir";
 
@@ -29,6 +32,12 @@ const char kHideScrollbars[] = "hide-scrollbars";
 // Save a pdf file of the loaded page.
 const char kPrintToPDF[] = "print-to-pdf";
 
+// Specifies a list of hosts for whom we bypass proxy settings and use direct
+// connections. Ignored unless --proxy-server is also specified. This is a
+// comma-separated list of bypass rules. See: "net/proxy/proxy_bypass_rules.h"
+// for the format of these rules.
+const char kProxyBypassList[] = "proxy-bypass-list";
+
 // Uses a specified proxy server, overrides system settings. This switch only
 // affects HTTP and HTTPS requests.
 const char kProxyServer[] = "proxy-server";
@@ -38,6 +47,15 @@ const char kProxyServer[] = "proxy-server";
 // Note that the remote debugging protocol does not perform any authentication,
 // so exposing it too widely can be a security risk.
 const char kRemoteDebuggingAddress[] = "remote-debugging-address";
+
+// The given value is the fd of a socket already opened by the parent process.
+// This allows automation to provide a listening socket for clients to connect
+// to before chrome is fully fired up. In particular, a parent process can
+// open the port, exec headles chrome, and connect to the devtools port
+// immediately. Waiting for chrome to be ready is then handled by the first
+// read from the port, which will block until chrome is ready. No polling is
+// needed.
+const char kRemoteDebuggingSocketFd[] = "remote-debugging-socket-fd";
 
 // Runs a read-eval-print loop that allows the user to evaluate Javascript
 // expressions.

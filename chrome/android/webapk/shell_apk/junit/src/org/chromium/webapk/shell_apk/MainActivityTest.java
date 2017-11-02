@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -7,87 +7,89 @@ package org.chromium.webapk.shell_apk;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.pm.ResolveInfo;
+import android.net.Uri;
 import android.os.Bundle;
 
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
 import org.robolectric.RuntimeEnvironment;
-import org.robolectric.Shadows;
 import org.robolectric.annotation.Config;
-import org.robolectric.res.builder.RobolectricPackageManager;
 import org.robolectric.shadows.ShadowApplication;
 
 import org.chromium.testing.local.LocalRobolectricTestRunner;
+import org.chromium.webapk.lib.common.WebApkConstants;
 import org.chromium.webapk.lib.common.WebApkMetaDataKeys;
 import org.chromium.webapk.test.WebApkTestHelper;
 
-/**
- * Tests MainActivity.
- */
+/** Unit tests for {@link MainActivity}. */
 @RunWith(LocalRobolectricTestRunner.class)
-@Config(manifest = Config.NONE, packageName = WebApkTestHelper.WEBAPK_PACKAGE_NAME)
-public class MainActivityTest {
-    private static final String HOST_BROWSER_PACKAGE_NAME = "truly.random";
+@Config(manifest = Config.NONE, packageName = WebApkUtilsTest.WEBAPK_PACKAGE_NAME)
+public final class MainActivityTest {
+    /**
+     * Test that MainActivity rewrites the start URL when the start URL from the intent is outside
+     * the scope specified in the Android Manifest.
+     */
+    @Test
+    public void testRewriteStartUrlSchemeAndHost() {
+        final String intentStartUrl = "http://www.google.ca/search_results?q=eh#cr=countryCA";
+        final String expectedRewrittenStartUrl =
+                "https://www.google.com/search_results?q=eh#cr=countryCA";
+        final String manifestStartUrl = "https://www.google.com/";
+        final String manifestScope = "https://www.google.com/";
+        final String browserPackageName = "com.android.chrome";
 
-    private ShadowApplication mShadowApplication;
-    private RobolectricPackageManager mPackageManager;
+        Bundle bundle = new Bundle();
+        bundle.putString(WebApkMetaDataKeys.START_URL, manifestStartUrl);
+        bundle.putString(WebApkMetaDataKeys.SCOPE, manifestScope);
+        bundle.putString(WebApkMetaDataKeys.RUNTIME_HOST, browserPackageName);
+        WebApkTestHelper.registerWebApkWithMetaData(WebApkUtilsTest.WEBAPK_PACKAGE_NAME, bundle);
 
-    @Before
-    public void setUp() {
-        mShadowApplication = Shadows.shadowOf(RuntimeEnvironment.application);
-        mPackageManager =
-                (RobolectricPackageManager) RuntimeEnvironment.application.getPackageManager();
+        installBrowser(browserPackageName);
+
+        Intent launchIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(intentStartUrl));
+        Robolectric.buildActivity(MainActivity.class).withIntent(launchIntent).create();
+
+        Intent startActivityIntent = ShadowApplication.getInstance().getNextStartedActivity();
+        Assert.assertEquals(MainActivity.ACTION_START_WEBAPK, startActivityIntent.getAction());
+        Assert.assertEquals(expectedRewrittenStartUrl,
+                startActivityIntent.getStringExtra(WebApkConstants.EXTRA_URL));
     }
 
     /**
-     * Tests that when the user launches the WebAPK and the user does not have any browser installed
-     * that the WebAPK launches Google Play to install the host browser.
+     * Test that MainActivity rewrites the start URL host so that it matches exactly the scope URL
+     * host. In particular, MainActivity should not escape unicode characters.
      */
     @Test
-    public void testBrowserNotInstalled() {
-        // Throw ActivityNotFoundException if Intent cannot be resolved.
-        mShadowApplication.checkActivities(true);
+    public void testRewriteUnicodeHost() {
+        final String intentStartUrl = "https://www.google.com/";
+        final String expectedStartUrl = "https://www.☺.com/";
+        final String manifestStartUrl = "https://www.☺.com/";
+        final String scope = "https://www.☺.com/";
+        final String browserPackageName = "com.android.chrome";
 
-        // Set WebAPK's meta-data.
-        Bundle metaData = new Bundle();
-        metaData.putString(WebApkMetaDataKeys.RUNTIME_HOST, HOST_BROWSER_PACKAGE_NAME);
-        metaData.putString(WebApkMetaDataKeys.START_URL, "http://random.org");
-        WebApkTestHelper.registerWebApkWithMetaData(metaData);
+        Bundle bundle = new Bundle();
+        bundle.putString(WebApkMetaDataKeys.START_URL, manifestStartUrl);
+        bundle.putString(WebApkMetaDataKeys.SCOPE, scope);
+        bundle.putString(WebApkMetaDataKeys.RUNTIME_HOST, browserPackageName);
+        WebApkTestHelper.registerWebApkWithMetaData(WebApkUtilsTest.WEBAPK_PACKAGE_NAME, bundle);
 
-        // Make intents to Google Play not throw ActivityNotFoundException.
-        mPackageManager.addResolveInfoForIntent(
-                MainActivity.createInstallIntent(HOST_BROWSER_PACKAGE_NAME),
-                newResolveInfo("google.play"));
+        installBrowser(browserPackageName);
 
-        Robolectric.buildActivity(MainActivity.class).create();
+        Intent launchIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(intentStartUrl));
+        Robolectric.buildActivity(MainActivity.class).withIntent(launchIntent).create();
 
-        Intent startActivityIntent = mShadowApplication.getNextStartedActivity();
-        Assert.assertNotNull(startActivityIntent);
-        Assert.assertTrue(startActivityIntent.getDataString().startsWith("market://"));
+        Intent startActivityIntent = ShadowApplication.getInstance().getNextStartedActivity();
+        Assert.assertEquals(MainActivity.ACTION_START_WEBAPK, startActivityIntent.getAction());
+        Assert.assertEquals(
+                expectedStartUrl, startActivityIntent.getStringExtra(WebApkConstants.EXTRA_URL));
     }
 
-    /**
-     * Test that when the user launches the WebAPK and the user has neither a browser nor Google
-     * Play installed that launching the WebAPK silently fails and does not crash.
-     */
-    @Test
-    public void testBrowserNotInstalledAndGooglePlayNotInstalled() {
-        // Throw ActivityNotFoundException if Intent cannot be resolved.
-        mShadowApplication.checkActivities(true);
-
-        // Set WebAPK's meta-data.
-        Bundle metaData = new Bundle();
-        metaData.putString(WebApkMetaDataKeys.RUNTIME_HOST, HOST_BROWSER_PACKAGE_NAME);
-        metaData.putString(WebApkMetaDataKeys.START_URL, "http://random.org");
-        WebApkTestHelper.registerWebApkWithMetaData(metaData);
-
-        Robolectric.buildActivity(MainActivity.class).create();
-
-        Intent startActivityIntent = mShadowApplication.getNextStartedActivity();
-        Assert.assertNull(startActivityIntent);
+    private void installBrowser(String browserPackageName) {
+        Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse("http://"));
+        RuntimeEnvironment.getRobolectricPackageManager().addResolveInfoForIntent(
+                intent, newResolveInfo(browserPackageName));
     }
 
     private static ResolveInfo newResolveInfo(String packageName) {

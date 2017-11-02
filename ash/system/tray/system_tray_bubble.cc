@@ -7,13 +7,14 @@
 #include <utility>
 #include <vector>
 
+#include "ash/session/session_controller.h"
 #include "ash/shell.h"
 #include "ash/shell_port.h"
 #include "ash/system/tray/system_tray.h"
-#include "ash/system/tray/system_tray_delegate.h"
 #include "ash/system/tray/system_tray_item.h"
 #include "ash/system/tray/tray_bubble_wrapper.h"
 #include "ash/system/tray/tray_constants.h"
+#include "ash/wm/tablet_mode/tablet_mode_controller.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "ui/compositor/layer.h"
@@ -83,7 +84,7 @@ SystemTrayBubble::~SystemTrayBubble() {
   DestroyItemViews();
   // Reset the host pointer in bubble_view_ in case its destruction is deferred.
   if (bubble_view_)
-    bubble_view_->reset_delegate();
+    bubble_view_->ResetDelegate();
 }
 
 void SystemTrayBubble::UpdateView(
@@ -142,7 +143,7 @@ void SystemTrayBubble::UpdateView(
 
   items_ = items;
   bubble_type_ = bubble_type;
-  CreateItemViews(Shell::Get()->system_tray_delegate()->GetUserLoginStatus());
+  CreateItemViews(Shell::Get()->session_controller()->login_status());
 
   // Close bubble view if we failed to create the item view.
   if (!bubble_view_->has_children()) {
@@ -182,6 +183,9 @@ void SystemTrayBubble::UpdateView(
       }
     }
   }
+
+  // Update bubble as size might have changed.
+  bubble_view_->UpdateBubble();
 }
 
 void SystemTrayBubble::InitView(views::View* anchor,
@@ -195,7 +199,11 @@ void SystemTrayBubble::InitView(views::View* anchor,
     init_params->max_height = GetDetailedBubbleMaxHeight();
   }
 
-  bubble_view_ = TrayBubbleView::Create(anchor, tray_, init_params);
+  init_params->delegate = tray_;
+  // Place the bubble on same display as this system tray.
+  init_params->parent_window = tray_->GetBubbleWindowContainer();
+  init_params->anchor_view = anchor;
+  bubble_view_ = new TrayBubbleView(*init_params);
   UpdateBottomPadding();
   bubble_view_->set_adjust_if_offscreen(false);
   CreateItemViews(login_status);
@@ -205,26 +213,15 @@ void SystemTrayBubble::InitView(views::View* anchor,
   }
 }
 
-void SystemTrayBubble::FocusDefaultIfNeeded() {
-  views::FocusManager* manager = bubble_view_->GetFocusManager();
-  if (!manager || manager->GetFocusedView())
-    return;
-
-  views::View* view =
-      manager->GetNextFocusableView(nullptr, nullptr, false, false);
-  if (view)
-    view->RequestFocus();
-}
-
 void SystemTrayBubble::DestroyItemViews() {
   for (std::vector<ash::SystemTrayItem*>::iterator it = items_.begin();
        it != items_.end(); ++it) {
     switch (bubble_type_) {
       case BUBBLE_TYPE_DEFAULT:
-        (*it)->DestroyDefaultView();
+        (*it)->OnDefaultViewDestroyed();
         break;
       case BUBBLE_TYPE_DETAILED:
-        (*it)->DestroyDetailedView();
+        (*it)->OnDetailedViewDestroyed();
         break;
     }
   }

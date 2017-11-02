@@ -52,13 +52,13 @@ void AddRenderPassQuad(RenderPass* to_pass, RenderPass* contributing_pass);
 // Adds a render pass quad with the given mask resource, filter, and transform.
 void AddRenderPassQuad(RenderPass* to_pass,
                        RenderPass* contributing_pass,
-                       ResourceId mask_resource_id,
+                       viz::ResourceId mask_resource_id,
                        gfx::Transform transform,
                        SkBlendMode blend_mode);
 
 void AddOneOfEveryQuadType(RenderPass* to_pass,
                            ResourceProvider* resource_provider,
-                           int child_pass_id,
+                           RenderPassId child_pass_id,
                            gpu::SyncToken* sync_token_for_mailbox_texture);
 
 }  // namespace cc

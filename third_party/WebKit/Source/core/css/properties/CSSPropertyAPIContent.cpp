@@ -14,12 +14,10 @@
 
 namespace blink {
 
-using CSSCounterValue = cssvalue::CSSCounterValue;
-
 namespace {
 
 CSSValue* ConsumeAttr(CSSParserTokenRange args,
-                      const CSSParserContext* context) {
+                      const CSSParserContext& context) {
   if (args.Peek().GetType() != kIdentToken)
     return nullptr;
 
@@ -28,9 +26,8 @@ CSSValue* ConsumeAttr(CSSParserTokenRange args,
   if (!args.AtEnd())
     return nullptr;
 
-  // TODO(esprehn): This should be lowerASCII().
-  if (context->IsHTMLDocument())
-    attr_name = attr_name.DeprecatedLower();
+  if (context.IsHTMLDocument())
+    attr_name = attr_name.LowerASCII();
 
   CSSFunctionValue* attr_value = CSSFunctionValue::Create(CSSValueAttr);
   attr_value->Append(*CSSCustomIdentValue::Create(attr_name));
@@ -67,15 +64,16 @@ CSSValue* ConsumeCounterContent(CSSParserTokenRange args, bool counters) {
 
   if (!args.AtEnd())
     return nullptr;
-  return CSSCounterValue::Create(identifier, list_style, separator);
+  return cssvalue::CSSCounterValue::Create(identifier, list_style, separator);
 }
 
 }  // namespace
 
-const CSSValue* CSSPropertyAPIContent::parseSingleValue(
+const CSSValue* CSSPropertyAPIContent::ParseSingleValue(
+    CSSPropertyID,
     CSSParserTokenRange& range,
     const CSSParserContext& context,
-    CSSPropertyID) {
+    const CSSParserLocalContext&) const {
   if (CSSPropertyParserHelpers::IdentMatches<CSSValueNone, CSSValueNormal>(
           range.Peek().Id()))
     return CSSPropertyParserHelpers::ConsumeIdent(range);
@@ -95,7 +93,7 @@ const CSSValue* CSSPropertyAPIContent::parseSingleValue(
     if (!parsed_value) {
       if (range.Peek().FunctionId() == CSSValueAttr) {
         parsed_value = ConsumeAttr(
-            CSSPropertyParserHelpers::ConsumeFunction(range), &context);
+            CSSPropertyParserHelpers::ConsumeFunction(range), context);
       } else if (range.Peek().FunctionId() == CSSValueCounter) {
         parsed_value = ConsumeCounterContent(
             CSSPropertyParserHelpers::ConsumeFunction(range), false);

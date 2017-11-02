@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/callback_helpers.h"
@@ -15,6 +16,7 @@
 #include "net/base/load_flags.h"
 #include "net/base/upload_bytes_element_reader.h"
 #include "net/http/http_response_headers.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/redirect_info.h"
 #include "net/url_request/url_request_context.h"
 #include "url/gurl.h"
@@ -48,8 +50,28 @@ class ReportingUploaderImpl : public ReportingUploader, URLRequest::Delegate {
   void StartUpload(const GURL& url,
                    const std::string& json,
                    const Callback& callback) override {
+    net::NetworkTrafficAnnotationTag traffic_annotation =
+        net::DefineNetworkTrafficAnnotation("reporting", R"(
+        semantics {
+          sender: "Reporting API"
+          description:
+            "The Reporting API reports various issues back to website owners "
+            "to help them detect and fix problems."
+          trigger:
+            "Encountering issues. Examples of these issues are Content "
+            "Security Policy violations and Interventions/Deprecations "
+            "encountered. See draft of reporting spec here: "
+            "https://wicg.github.io/reporting."
+          data: "Details of the issue, depending on issue type."
+          destination: OTHER
+        }
+        policy {
+          cookies_allowed: NO
+          setting: "This feature cannot be disabled by settings."
+          policy_exception_justification: "Not implemented."
+        })");
     std::unique_ptr<URLRequest> request =
-        context_->CreateRequest(url, IDLE, this);
+        context_->CreateRequest(url, IDLE, this, traffic_annotation);
 
     request->set_method("POST");
 
@@ -75,7 +97,7 @@ class ReportingUploaderImpl : public ReportingUploader, URLRequest::Delegate {
     // Have to grab the unique_ptr* first to ensure request.get() happens
     // before std::move(request).
     std::unique_ptr<Upload>* upload = &uploads_[request.get()];
-    *upload = base::MakeUnique<Upload>(std::move(request), callback);
+    *upload = std::make_unique<Upload>(std::move(request), callback);
   }
 
   // URLRequest::Delegate implementation:
@@ -148,7 +170,7 @@ ReportingUploader::~ReportingUploader() {}
 // static
 std::unique_ptr<ReportingUploader> ReportingUploader::Create(
     const URLRequestContext* context) {
-  return base::MakeUnique<ReportingUploaderImpl>(context);
+  return std::make_unique<ReportingUploaderImpl>(context);
 }
 
 }  // namespace net

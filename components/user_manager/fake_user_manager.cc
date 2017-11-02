@@ -24,7 +24,7 @@ class FakeTaskRunner : public base::TaskRunner {
     std::move(task).Run();
     return true;
   }
-  bool RunsTasksOnCurrentThread() const override { return true; }
+  bool RunsTasksInCurrentSequence() const override { return true; }
 
  protected:
   ~FakeTaskRunner() override {}
@@ -88,10 +88,6 @@ user_manager::UserList FakeUserManager::GetUsersAllowedForMultiProfile() const {
   return result;
 }
 
-const user_manager::UserList& FakeUserManager::GetLoggedInUsers() const {
-  return logged_in_users_;
-}
-
 void FakeUserManager::UserLoggedIn(const AccountId& account_id,
                                    const std::string& username_hash,
                                    bool browser_restart) {
@@ -99,14 +95,19 @@ void FakeUserManager::UserLoggedIn(const AccountId& account_id,
        it != users_.end(); ++it) {
     if ((*it)->username_hash() == username_hash) {
       (*it)->set_is_logged_in(true);
-      (*it)->set_profile_is_created();
+      (*it)->SetProfileIsCreated();
       logged_in_users_.push_back(*it);
 
       if (!primary_user_)
         primary_user_ = *it;
+      if (!active_user_)
+        active_user_ = *it;
       break;
     }
   }
+
+  if (!active_user_ && AreEphemeralUsersEnabled())
+    RegularUserLoggedInAsEphemeral(account_id);
 }
 
 user_manager::User* FakeUserManager::GetActiveUserInternal() const {
@@ -261,7 +262,11 @@ bool FakeUserManager::AreSupervisedUsersAllowed() const {
 }
 
 bool FakeUserManager::AreEphemeralUsersEnabled() const {
-  return false;
+  return GetEphemeralUsersEnabled();
+}
+
+void FakeUserManager::SetEphemeralUsersEnabled(bool enabled) {
+  UserManagerBase::SetEphemeralUsersEnabled(enabled);
 }
 
 const std::string& FakeUserManager::GetApplicationLocale() const {
@@ -293,7 +298,7 @@ void FakeUserManager::UpdateLoginState(const user_manager::User* active_user,
 bool FakeUserManager::GetPlatformKnownUserId(const std::string& user_email,
                                              const std::string& gaia_id,
                                              AccountId* out_account_id) const {
-  if (user_email == kStubUser) {
+  if (user_email == kStubUserEmail) {
     *out_account_id = StubAccountId();
     return true;
   }

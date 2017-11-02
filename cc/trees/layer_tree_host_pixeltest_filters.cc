@@ -36,7 +36,8 @@ TEST_F(LayerTreeHostFiltersPixelTest, BackgroundFilterBlur) {
   background->AddChild(blur);
 
   FilterOperations filters;
-  filters.Append(FilterOperation::CreateBlurFilter(2.f));
+  filters.Append(FilterOperation::CreateBlurFilter(
+      2.f, SkBlurImageFilter::kClamp_TileMode));
   blur->SetBackgroundFilters(filters);
 
 #if defined(OS_WIN)
@@ -77,12 +78,13 @@ TEST_F(LayerTreeHostFiltersPixelTest, BackgroundFilterBlurOutsets) {
   background->AddChild(blur);
 
   FilterOperations filters;
-  filters.Append(FilterOperation::CreateBlurFilter(5.f));
+  filters.Append(FilterOperation::CreateBlurFilter(
+      5.f, SkBlurImageFilter::kClamp_TileMode));
   blur->SetBackgroundFilters(filters);
 
 #if defined(OS_WIN)
-  // Windows has 5.6075% pixels by at most 2: crbug.com/259922
-  float percentage_pixels_large_error = 5.7f;
+  // Windows has 5.9325% pixels by at most 2: crbug.com/259922
+  float percentage_pixels_large_error = 6.0f;
   float percentage_pixels_small_error = 0.0f;
   float average_error_allowed_in_bad_pixels = 2.f;
   int large_error_allowed = 2;
@@ -138,7 +140,8 @@ TEST_F(LayerTreeHostFiltersPixelTest, BackgroundFilterBlurOffAxis) {
   blur->SetTransform(blur_transform);
 
   FilterOperations filters;
-  filters.Append(FilterOperation::CreateBlurFilter(2.f));
+  filters.Append(FilterOperation::CreateBlurFilter(
+      2.f, SkBlurImageFilter::kClamp_TileMode));
   blur->SetBackgroundFilters(filters);
 
 #if defined(OS_WIN)
@@ -192,11 +195,11 @@ class LayerTreeHostFiltersScaledPixelTest
     // Add an alpha threshold filter to the blue layer which will filter out
     // everything except the lower right corner.
     FilterOperations filters;
-    SkRegion alpha_region;
-    alpha_region.setRect(
-        half_content, half_content, content_size, content_size);
+    FilterOperation::ShapeRects alpha_shape;
+    alpha_shape.emplace_back(half_content, half_content, content_size,
+                             content_size);
     filters.Append(
-        FilterOperation::CreateAlphaThresholdFilter(alpha_region, 1.f, 0.f));
+        FilterOperation::CreateAlphaThresholdFilter(alpha_shape, 1.f, 0.f));
     foreground->SetFilters(filters);
 
     device_scale_factor_ = device_scale_factor;
@@ -478,7 +481,8 @@ class ImageBackgroundFilter : public LayerTreeHostFiltersPixelTest {
 
     // Add a blur filter to the blue layer.
     FilterOperations filters;
-    filters.Append(FilterOperation::CreateBlurFilter(5.0f));
+    filters.Append(FilterOperation::CreateBlurFilter(
+        5.0f, SkBlurImageFilter::kClamp_TileMode));
     filter->SetBackgroundFilters(filters);
 
     // Allow some fuzziness so that this doesn't fail when Skia makes minor
@@ -834,12 +838,10 @@ class EnlargedTextureWithAlphaThresholdFilter
 
     rect1.Inset(-5, -5);
     rect2.Inset(-5, -5);
-    SkRegion alpha_region;
-    SkIRect rects[2] = {gfx::RectToSkIRect(rect1), gfx::RectToSkIRect(rect2)};
-    alpha_region.setRects(rects, 2);
+    FilterOperation::ShapeRects alpha_shape = {rect1, rect2};
     FilterOperations filters;
     filters.Append(
-        FilterOperation::CreateAlphaThresholdFilter(alpha_region, 0.f, 0.f));
+        FilterOperation::CreateAlphaThresholdFilter(alpha_shape, 0.f, 0.f));
     filter_layer->SetFilters(filters);
 
     background->AddChild(filter_layer);
@@ -935,7 +937,8 @@ class BlurFilterWithClip : public LayerTreeHostFiltersPixelTest {
     filter_layer->AddChild(child4);
 
     FilterOperations filters;
-    filters.Append(FilterOperation::CreateBlurFilter(2.f));
+    filters.Append(FilterOperation::CreateBlurFilter(
+        2.f, SkBlurImageFilter::kClamp_TileMode));
     filter_layer->SetFilters(filters);
 
     // Force the allocation a larger textures.

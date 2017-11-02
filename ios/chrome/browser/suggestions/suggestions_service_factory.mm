@@ -10,6 +10,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
 #include "base/sequenced_task_runner.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "components/browser_sync/profile_sync_service.h"
 #include "components/image_fetcher/core/image_fetcher.h"
@@ -67,12 +68,6 @@ SuggestionsServiceFactory::~SuggestionsServiceFactory() {
 std::unique_ptr<KeyedService>
 SuggestionsServiceFactory::BuildServiceInstanceFor(
     web::BrowserState* context) const {
-  base::SequencedWorkerPool* sequenced_worker_pool =
-      web::WebThread::GetBlockingPool();
-  scoped_refptr<base::SequencedTaskRunner> background_task_runner =
-      sequenced_worker_pool->GetSequencedTaskRunner(
-          sequenced_worker_pool->GetSequenceToken());
-
   ios::ChromeBrowserState* browser_state =
       ios::ChromeBrowserState::FromBrowserState(context);
   SigninManager* signin_manager =
@@ -88,17 +83,20 @@ SuggestionsServiceFactory::BuildServiceInstanceFor(
       new SuggestionsStore(browser_state->GetPrefs()));
   std::unique_ptr<BlacklistStore> blacklist_store(
       new BlacklistStore(browser_state->GetPrefs()));
+
+  scoped_refptr<base::SequencedTaskRunner> db_task_runner =
+      base::CreateSequencedTaskRunnerWithTraits(
+          {base::MayBlock(), base::TaskPriority::BACKGROUND});
   std::unique_ptr<leveldb_proto::ProtoDatabaseImpl<ImageData>> db(
-      new leveldb_proto::ProtoDatabaseImpl<ImageData>(background_task_runner));
+      new leveldb_proto::ProtoDatabaseImpl<ImageData>(db_task_runner));
 
   std::unique_ptr<image_fetcher::ImageFetcher> image_fetcher =
       base::MakeUnique<image_fetcher::ImageFetcherImpl>(
-          image_fetcher::CreateIOSImageDecoder(sequenced_worker_pool),
+          image_fetcher::CreateIOSImageDecoder(),
           browser_state->GetRequestContext());
 
-  std::unique_ptr<ImageManager> thumbnail_manager(new ImageManager(
-      std::move(image_fetcher), std::move(db), database_dir,
-      web::WebThread::GetTaskRunnerForThread(web::WebThread::DB)));
+  std::unique_ptr<ImageManager> thumbnail_manager(
+      new ImageManager(std::move(image_fetcher), std::move(db), database_dir));
 
   return base::MakeUnique<SuggestionsServiceImpl>(
       signin_manager, token_service, sync_service,

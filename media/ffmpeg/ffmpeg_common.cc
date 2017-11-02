@@ -324,8 +324,11 @@ bool AVCodecContextToAudioDecoderConfig(
   SampleFormat sample_format = AVSampleFormatToSampleFormat(
       codec_context->sample_fmt, codec_context->codec_id);
 
-  ChannelLayout channel_layout = ChannelLayoutToChromeChannelLayout(
-      codec_context->channel_layout, codec_context->channels);
+  ChannelLayout channel_layout =
+      codec_context->channels > 8
+          ? CHANNEL_LAYOUT_DISCRETE
+          : ChannelLayoutToChromeChannelLayout(codec_context->channel_layout,
+                                               codec_context->channels);
 
   int sample_rate = codec_context->sample_rate;
   switch (codec) {
@@ -371,6 +374,8 @@ bool AVCodecContextToAudioDecoderConfig(
   config->Initialize(codec, sample_format, channel_layout, sample_rate,
                      extra_data, encryption_scheme, seek_preroll,
                      codec_context->delay);
+  if (channel_layout == CHANNEL_LAYOUT_DISCRETE)
+    config->SetChannelsForDiscrete(codec_context->channels);
 
 #if BUILDFLAG(ENABLE_AC3_EAC3_AUDIO_DEMUXING)
   // These are bitstream formats unknown to ffmpeg, so they don't have
@@ -419,8 +424,7 @@ void AudioDecoderConfigToAVCodecContext(const AudioDecoderConfig& config,
 
   // TODO(scherkus): should we set |channel_layout|? I'm not sure if FFmpeg uses
   // said information to decode.
-  codec_context->channels =
-      ChannelLayoutToChannelCount(config.channel_layout());
+  codec_context->channels = config.channels();
   codec_context->sample_rate = config.samples_per_second();
 
   if (config.extra_data().empty()) {

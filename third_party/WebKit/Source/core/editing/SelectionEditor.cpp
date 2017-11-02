@@ -100,18 +100,6 @@ const SelectionInDOMTree& SelectionEditor::GetSelectionInDOMTree() const {
   return selection_;
 }
 
-bool SelectionEditor::HasEditableStyle() const {
-  return ComputeVisibleSelectionInDOMTree().HasEditableStyle();
-}
-
-bool SelectionEditor::IsContentEditable() const {
-  return ComputeVisibleSelectionInDOMTree().IsContentEditable();
-}
-
-bool SelectionEditor::IsContentRichlyEditable() const {
-  return ComputeVisibleSelectionInDOMTree().IsContentRichlyEditable();
-}
-
 void SelectionEditor::MarkCacheDirty() {
   if (!cached_visible_selection_in_dom_tree_is_dirty_) {
     cached_visible_selection_in_dom_tree_ = VisibleSelection();
@@ -125,14 +113,14 @@ void SelectionEditor::MarkCacheDirty() {
 
 void SelectionEditor::SetSelection(const SelectionInDOMTree& new_selection) {
   new_selection.AssertValidFor(GetDocument());
-  if (selection_ == new_selection)
-    return;
+  DCHECK_NE(selection_, new_selection);
   ClearDocumentCachedRange();
   MarkCacheDirty();
   selection_ = new_selection;
 }
 
 void SelectionEditor::DidChangeChildren(const ContainerNode&) {
+  selection_.ResetDirectionCache();
   MarkCacheDirty();
   DidFinishDOMMutation();
 }
@@ -145,6 +133,7 @@ void SelectionEditor::DidFinishTextChange(const Position& new_base,
   }
   selection_.base_ = new_base;
   selection_.extent_ = new_extent;
+  selection_.ResetDirectionCache();
   MarkCacheDirty();
   DidFinishDOMMutation();
 }
@@ -177,7 +166,7 @@ static Position ComputePositionForChildrenRemoval(const Position& position,
                                                   ContainerNode& container) {
   Node* node = position.ComputeContainerNode();
   if (container.ContainsIncludingHostElements(*node))
-    return Position::FirstPositionInNode(&container);
+    return Position::FirstPositionInNode(container);
   return position;
 }
 
@@ -275,8 +264,6 @@ void SelectionEditor::DidUpdateCharacterData(CharacterData* node,
   DidFinishTextChange(new_base, new_extent);
 }
 
-// TODO(yosin): We should introduce |Position(const Text&, int)| to avoid
-// |const_cast<Text*>|.
 static Position UpdatePostionAfterAdoptingTextNodesMerged(
     const Position& position,
     const Text& merged_node,
@@ -290,21 +277,21 @@ static Position UpdatePostionAfterAdoptingTextNodesMerged(
       return position;
     case PositionAnchorType::kBeforeAnchor:
       if (anchor_node == node_to_be_removed)
-        return Position(const_cast<Text*>(&merged_node), merged_node.length());
+        return Position(merged_node, merged_node.length());
       return position;
     case PositionAnchorType::kAfterAnchor:
       if (anchor_node == node_to_be_removed)
-        return Position(const_cast<Text*>(&merged_node), merged_node.length());
+        return Position(merged_node, merged_node.length());
       if (anchor_node == merged_node)
-        return Position(const_cast<Text*>(&merged_node), old_length);
+        return Position(merged_node, old_length);
       return position;
     case PositionAnchorType::kOffsetInAnchor: {
       const int offset = position.OffsetInContainerNode();
       if (anchor_node == node_to_be_removed)
-        return Position(const_cast<Text*>(&merged_node), old_length + offset);
+        return Position(merged_node, old_length + offset);
       if (anchor_node == node_to_be_removed.parentNode() &&
           offset == node_to_be_removed_with_index.Index()) {
-        return Position(const_cast<Text*>(&merged_node), old_length);
+        return Position(merged_node, old_length);
       }
       return position;
     }
@@ -405,15 +392,19 @@ void SelectionEditor::UpdateCachedVisibleSelectionInFlatTreeIfNeeded() const {
     return;
   style_version_for_flat_tree_ = GetDocument().StyleVersion();
   cached_visible_selection_in_flat_tree_is_dirty_ = false;
-  cached_visible_selection_in_flat_tree_ = CreateVisibleSelection(
-      SelectionInFlatTree::Builder()
-          .SetBaseAndExtent(ToPositionInFlatTree(selection_.Base()),
-                            ToPositionInFlatTree(selection_.Extent()))
-          .SetAffinity(selection_.Affinity())
-          .SetHasTrailingWhitespace(selection_.HasTrailingWhitespace())
-          .SetGranularity(selection_.Granularity())
-          .SetIsDirectional(selection_.IsDirectional())
-          .Build());
+  SelectionInFlatTree::Builder builder;
+  const PositionInFlatTree& base = ToPositionInFlatTree(selection_.Base());
+  const PositionInFlatTree& extent = ToPositionInFlatTree(selection_.Extent());
+  if (base.IsNotNull() && extent.IsNotNull())
+    builder.SetBaseAndExtent(base, extent);
+  else if (base.IsNotNull())
+    builder.Collapse(base);
+  else if (extent.IsNotNull())
+    builder.Collapse(extent);
+  builder.SetAffinity(selection_.Affinity())
+      .SetIsDirectional(selection_.IsDirectional());
+  cached_visible_selection_in_flat_tree_ =
+      CreateVisibleSelection(builder.Build());
   if (!cached_visible_selection_in_flat_tree_.IsNone())
     return;
   style_version_for_dom_tree_ = GetDocument().StyleVersion();

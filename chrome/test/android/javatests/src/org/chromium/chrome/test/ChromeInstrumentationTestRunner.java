@@ -5,25 +5,25 @@
 package org.chromium.chrome.test;
 
 import android.content.Context;
-import android.os.Build;
 import android.os.Bundle;
 import android.text.TextUtils;
 
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.GoogleApiAvailability;
 
+import org.chromium.base.CommandLine;
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.test.BaseChromiumInstrumentationTestRunner;
 import org.chromium.base.test.BaseTestResult;
-import org.chromium.base.test.util.DisableIfSkipCheck;
 import org.chromium.base.test.util.RestrictionSkipCheck;
 import org.chromium.chrome.browser.ChromeVersionInfo;
 import org.chromium.chrome.browser.vr_shell.VrClassesWrapper;
 import org.chromium.chrome.browser.vr_shell.VrDaydreamApi;
-import org.chromium.chrome.test.util.ChromeDisableIf;
 import org.chromium.chrome.test.util.ChromeRestriction;
-import org.chromium.content.browser.test.ContentInstrumentationTestRunner;
+import org.chromium.content.browser.test.ChildProcessAllocatorSettingsHook;
 import org.chromium.policy.test.annotations.Policies;
-import org.chromium.ui.base.DeviceFormFactor;
+import org.chromium.ui.test.util.UiDisableIfSkipCheck;
+import org.chromium.ui.test.util.UiRestrictionSkipCheck;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
@@ -36,9 +36,7 @@ import java.util.concurrent.FutureTask;
  *  An Instrumentation test runner that optionally spawns a test HTTP server.
  *  The server's root directory is the device's external storage directory.
  */
-public class ChromeInstrumentationTestRunner extends ContentInstrumentationTestRunner {
-    private static final String TAG = "ChromeInstrumentationTestRunner";
-
+public class ChromeInstrumentationTestRunner extends BaseChromiumInstrumentationTestRunner {
     @Override
     public void onCreate(Bundle arguments) {
         super.onCreate(arguments);
@@ -48,9 +46,11 @@ public class ChromeInstrumentationTestRunner extends ContentInstrumentationTestR
     protected void addTestHooks(BaseTestResult result) {
         super.addTestHooks(result);
         result.addSkipCheck(new ChromeRestrictionSkipCheck(getTargetContext()));
-        result.addSkipCheck(new ChromeDisableIfSkipCheck(getTargetContext()));
+        result.addSkipCheck(new UiDisableIfSkipCheck(getTargetContext()));
+        result.addSkipCheck(new UiRestrictionSkipCheck(getTargetContext()));
 
         result.addPreTestHook(Policies.getRegistrationHook());
+        result.addPreTestHook(new ChildProcessAllocatorSettingsHook());
     }
 
     static class ChromeRestrictionSkipCheck extends RestrictionSkipCheck {
@@ -109,21 +109,15 @@ public class ChromeInstrumentationTestRunner extends ContentInstrumentationTestR
             }
         }
 
-        private boolean supportsWebVr() {
-            // WebVR support is tied to VR Services support, which is only on K+
-            return Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT;
+        private boolean isDonEnabled() {
+            // We can't directly check whether the VR DON flow is enabled since
+            // we don't have permission to read the VrCore settings file. Instead,
+            // pass a flag.
+            return CommandLine.getInstance().hasSwitch("don-enabled");
         }
 
         @Override
         protected boolean restrictionApplies(String restriction) {
-            if (TextUtils.equals(restriction, ChromeRestriction.RESTRICTION_TYPE_PHONE)
-                    && DeviceFormFactor.isTablet(getTargetContext())) {
-                return true;
-            }
-            if (TextUtils.equals(restriction, ChromeRestriction.RESTRICTION_TYPE_TABLET)
-                    && !DeviceFormFactor.isTablet(getTargetContext())) {
-                return true;
-            }
             if (TextUtils.equals(
                         restriction, ChromeRestriction.RESTRICTION_TYPE_GOOGLE_PLAY_SERVICES)
                     && (ConnectionResult.SUCCESS
@@ -164,44 +158,8 @@ public class ChromeInstrumentationTestRunner extends ContentInstrumentationTestR
                     return true;
                 }
             }
-            if (TextUtils.equals(restriction, ChromeRestriction.RESTRICTION_TYPE_WEBVR_SUPPORTED)
-                    || TextUtils.equals(
-                               restriction, ChromeRestriction.RESTRICTION_TYPE_WEBVR_UNSUPPORTED)) {
-                boolean webvrSupported = supportsWebVr();
-                if (TextUtils.equals(
-                            restriction, ChromeRestriction.RESTRICTION_TYPE_WEBVR_SUPPORTED)
-                        && !webvrSupported) {
-                    return true;
-                } else if (TextUtils.equals(restriction,
-                                   ChromeRestriction.RESTRICTION_TYPE_WEBVR_UNSUPPORTED)
-                        && webvrSupported) {
-                    return true;
-                }
-            }
-            return false;
-        }
-    }
-
-    static class ChromeDisableIfSkipCheck extends DisableIfSkipCheck {
-        private final Context mTargetContext;
-
-        public ChromeDisableIfSkipCheck(Context targetContext) {
-            mTargetContext = targetContext;
-        }
-
-        @Override
-        protected boolean deviceTypeApplies(String type) {
-            if (TextUtils.equals(type, ChromeDisableIf.PHONE)
-                    && !DeviceFormFactor.isTablet(mTargetContext)) {
-                return true;
-            }
-            if (TextUtils.equals(type, ChromeDisableIf.TABLET)
-                    && DeviceFormFactor.isTablet(mTargetContext)) {
-                return true;
-            }
-            if (TextUtils.equals(type, ChromeDisableIf.LARGETABLET)
-                    && DeviceFormFactor.isLargeTablet(mTargetContext)) {
-                return true;
+            if (TextUtils.equals(restriction, ChromeRestriction.RESTRICTION_TYPE_DON_ENABLED)) {
+                return !isDonEnabled();
             }
             return false;
         }

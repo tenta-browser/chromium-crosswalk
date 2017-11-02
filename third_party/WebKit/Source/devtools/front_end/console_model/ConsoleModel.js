@@ -84,8 +84,6 @@ ConsoleModel.ConsoleModel = class extends Common.Object {
     var resourceTreeModel = target.model(SDK.ResourceTreeModel);
     if (resourceTreeModel) {
       eventListeners.push(resourceTreeModel.addEventListener(
-          SDK.ResourceTreeModel.Events.MainFrameStartedLoading, this._mainFrameStartedLoading, this));
-      eventListeners.push(resourceTreeModel.addEventListener(
           SDK.ResourceTreeModel.Events.MainFrameNavigated, this._mainFrameNavigated, this));
     }
 
@@ -97,12 +95,16 @@ ConsoleModel.ConsoleModel = class extends Common.Object {
           SDK.RuntimeModel.Events.ExceptionRevoked, this._exceptionRevoked.bind(this, runtimeModel)));
       eventListeners.push(runtimeModel.addEventListener(
           SDK.RuntimeModel.Events.ConsoleAPICalled, this._consoleAPICalled.bind(this, runtimeModel)));
+      eventListeners.push(runtimeModel.debuggerModel().addEventListener(
+          SDK.DebuggerModel.Events.GlobalObjectCleared, this._clearIfNecessary, this));
+      eventListeners.push(runtimeModel.addEventListener(
+          SDK.RuntimeModel.Events.QueryObjectRequested, this._queryObjectRequested.bind(this, runtimeModel)));
     }
 
     var networkManager = target.model(SDK.NetworkManager);
     if (networkManager) {
       eventListeners.push(networkManager.addEventListener(
-          SDK.NetworkManager.Events.WarningGenerated, this._networkWarningGenerated.bind(this, networkManager)));
+          SDK.NetworkManager.Events.MessageGenerated, this._networkMessageGenerated.bind(this, networkManager)));
     }
 
     target[ConsoleModel.ConsoleModel._events] = eventListeners;
@@ -121,61 +123,43 @@ ConsoleModel.ConsoleModel = class extends Common.Object {
 
   /**
    * @param {!SDK.ExecutionContext} executionContext
-   * @param {string} text
+   * @param {!ConsoleModel.ConsoleMessage} originatingMessage
+   * @param {string} expression
    * @param {boolean} useCommandLineAPI
+   * @param {boolean} awaitPromise
    */
-  evaluateCommandInConsole(executionContext, text, useCommandLineAPI) {
-    var requestedText = text;
+  async evaluateCommandInConsole(executionContext, originatingMessage, expression, useCommandLineAPI, awaitPromise) {
+    var result = await executionContext.evaluate(
+        {
+          expression: expression,
+          objectGroup: 'console',
+          includeCommandLineAPI: useCommandLineAPI,
+          silent: false,
+          returnByValue: false,
+          generatePreview: true
+        },
+        /* userGesture */ true, awaitPromise);
+    Host.userMetrics.actionTaken(Host.UserMetrics.Action.ConsoleEvaluated);
+    if (result.error)
+      return;
+    await Common.console.showPromise();
+    this.dispatchEventToListeners(
+        ConsoleModel.ConsoleModel.Events.CommandEvaluated,
+        {result: result.object, commandMessage: originatingMessage, exceptionDetails: result.exceptionDetails});
+  }
+
+  /**
+   * @param {!SDK.ExecutionContext} executionContext
+   * @param {string} text
+   * @return {!ConsoleModel.ConsoleMessage}
+   */
+  addCommandMessage(executionContext, text) {
     var commandMessage = new ConsoleModel.ConsoleMessage(
         executionContext.runtimeModel, ConsoleModel.ConsoleMessage.MessageSource.JS, null, text,
         ConsoleModel.ConsoleMessage.MessageType.Command);
     commandMessage.setExecutionContextId(executionContext.id);
     this.addMessage(commandMessage);
-
-    /**
-     * @param {?SDK.RemoteObject} result
-     * @param {!Protocol.Runtime.ExceptionDetails=} exceptionDetails
-     * @this {ConsoleModel.ConsoleModel}
-     */
-    function printResult(result, exceptionDetails) {
-      if (!result)
-        return;
-
-      Common.console.showPromise().then(() => {
-        this.dispatchEventToListeners(
-            ConsoleModel.ConsoleModel.Events.CommandEvaluated,
-            {result: result, text: requestedText, commandMessage: commandMessage, exceptionDetails: exceptionDetails});
-      });
-    }
-
-    /**
-     * @param {string} code
-     * @suppress {uselessCode}
-     * @return {boolean}
-     */
-    function looksLikeAnObjectLiteral(code) {
-      // Only parenthesize what appears to be an object literal.
-      if (!(/^\s*\{/.test(code) && /\}\s*$/.test(code)))
-        return false;
-
-      try {
-        // Check if the code can be interpreted as an expression.
-        Function('return ' + code + ';');
-
-        // No syntax error! Does it work parenthesized?
-        Function('(' + code + ')');
-
-        return true;
-      } catch (e) {
-        return false;
-      }
-    }
-
-    if (looksLikeAnObjectLiteral(text))
-      text = '(' + text + ')';
-
-    executionContext.evaluate(text, 'console', useCommandLineAPI, false, false, true, true, printResult.bind(this));
-    Host.userMetrics.actionTaken(Host.UserMetrics.Action.ConsoleEvaluated);
+    return commandMessage;
   }
 
   /**
@@ -187,7 +171,7 @@ ConsoleModel.ConsoleModel = class extends Common.Object {
 
     if (msg.source === ConsoleModel.ConsoleMessage.MessageSource.ConsoleAPI &&
         msg.type === ConsoleModel.ConsoleMessage.MessageType.Clear)
-      this._clear();
+      this._clearIfNecessary();
 
     this._messages.push(msg);
     var runtimeModel = msg.runtimeModel();
@@ -271,14 +255,23 @@ ConsoleModel.ConsoleModel = class extends Common.Object {
         runtimeModel, ConsoleModel.ConsoleMessage.MessageSource.ConsoleAPI, level,
         /** @type {string} */ (message), call.type, callFrame ? callFrame.url : undefined,
         callFrame ? callFrame.lineNumber : undefined, callFrame ? callFrame.columnNumber : undefined, undefined,
-        call.args, call.stackTrace, call.timestamp, call.executionContextId, undefined);
+        call.args, call.stackTrace, call.timestamp, call.executionContextId, undefined, undefined, call.context);
     this.addMessage(consoleMessage);
   }
 
   /**
+   * @param {!SDK.RuntimeModel} runtimeModel
    * @param {!Common.Event} event
    */
-  _mainFrameStartedLoading(event) {
+  _queryObjectRequested(runtimeModel, event) {
+    var consoleMessage = new ConsoleModel.ConsoleMessage(
+        runtimeModel, ConsoleModel.ConsoleMessage.MessageSource.ConsoleAPI,
+        ConsoleModel.ConsoleMessage.MessageLevel.Info, '', undefined, undefined, undefined, undefined, undefined,
+        [event.data.objects], undefined, undefined, undefined, undefined, undefined, undefined);
+    this.addMessage(consoleMessage);
+  }
+
+  _clearIfNecessary() {
     if (!Common.moduleSetting('preserveConsoleLog').get())
       this._clear();
   }
@@ -337,12 +330,13 @@ ConsoleModel.ConsoleModel = class extends Common.Object {
    * @param {!SDK.NetworkManager} networkManager
    * @param {!Common.Event} event
    */
-  _networkWarningGenerated(networkManager, event) {
-    var warning = /** @type {!SDK.NetworkManager.Warning} */ (event.data);
+  _networkMessageGenerated(networkManager, event) {
+    var message = /** @type {!SDK.NetworkManager.Message} */ (event.data);
     this.addMessage(new ConsoleModel.ConsoleMessage(
         networkManager.target().model(SDK.RuntimeModel), ConsoleModel.ConsoleMessage.MessageSource.Network,
-        ConsoleModel.ConsoleMessage.MessageLevel.Warning, warning.message, undefined, undefined, undefined, undefined,
-        warning.requestId));
+        message.warning ? ConsoleModel.ConsoleMessage.MessageLevel.Warning :
+                          ConsoleModel.ConsoleMessage.MessageLevel.Info,
+        message.message, undefined, undefined, undefined, undefined, message.requestId));
   }
 
   /**
@@ -428,10 +422,11 @@ ConsoleModel.ConsoleMessage = class {
    * @param {!Protocol.Runtime.ExecutionContextId=} executionContextId
    * @param {?string=} scriptId
    * @param {?string=} workerId
+   * @param {string=} context
    */
   constructor(
       runtimeModel, source, level, messageText, type, url, line, column, requestId, parameters, stackTrace, timestamp,
-      executionContextId, scriptId, workerId) {
+      executionContextId, scriptId, workerId, context) {
     this._runtimeModel = runtimeModel;
     this.source = source;
     this.level = /** @type {?ConsoleModel.ConsoleMessage.MessageLevel} */ (level);
@@ -451,8 +446,8 @@ ConsoleModel.ConsoleMessage = class {
     this.scriptId = scriptId || null;
     this.workerId = workerId || null;
 
-    var networkManager = (runtimeModel && requestId) ? runtimeModel.target().model(SDK.NetworkManager) : null;
-    this.request = (networkManager && requestId) ? NetworkLog.networkLog.requestForId(networkManager, requestId) : null;
+    var manager = runtimeModel ? runtimeModel.target().model(SDK.NetworkManager) : null;
+    this.request = (manager && requestId) ? NetworkLog.networkLog.requestByManagerAndId(manager, requestId) : null;
 
     if (this.request) {
       var initiator = this.request.initiator();
@@ -464,15 +459,15 @@ ConsoleModel.ConsoleMessage = class {
         }
       }
     }
-  }
+    if (!this.executionContextId && this._runtimeModel) {
+      if (this.scriptId)
+        this.executionContextId = this._runtimeModel.executionContextIdForScriptId(this.scriptId);
+      else if (this.stackTrace)
+        this.executionContextId = this._runtimeModel.executionContextForStackTrace(this.stackTrace);
+    }
 
-  /**
-   * @param {!ConsoleModel.ConsoleMessage} a
-   * @param {!ConsoleModel.ConsoleMessage} b
-   * @return {number}
-   */
-  static timestampComparator(a, b) {
-    return a.timestamp - b.timestamp;
+    if (context)
+      this.context = context.match(/[^#]*/)[0];
   }
 
   /**
@@ -564,9 +559,6 @@ ConsoleModel.ConsoleMessage = class {
     if (!msg)
       return false;
 
-    if (this._exceptionId || msg._exceptionId)
-      return false;
-
     if (!this._isEqualStackTraces(this.stackTrace, msg.stackTrace))
       return false;
 
@@ -575,9 +567,13 @@ ConsoleModel.ConsoleMessage = class {
         return false;
 
       for (var i = 0; i < msg.parameters.length; ++i) {
-        // Never treat objects as equal - their properties might change over time.
-        if (this.parameters[i].type !== msg.parameters[i].type || msg.parameters[i].type === 'object' ||
-            this.parameters[i].value !== msg.parameters[i].value)
+        // Never treat objects as equal - their properties might change over time. Errors can be treated as equal
+        // since they are always formatted as strings.
+        if (msg.parameters[i].type === 'object' && msg.parameters[i].subtype !== 'error')
+          return false;
+        if (this.parameters[i].type !== msg.parameters[i].type ||
+            this.parameters[i].value !== msg.parameters[i].value ||
+            this.parameters[i].description !== msg.parameters[i].description)
           return false;
       }
     }
@@ -665,20 +661,6 @@ ConsoleModel.ConsoleMessage.MessageLevel = {
   Info: 'info',
   Warning: 'warning',
   Error: 'error'
-};
-
-/**
- * @param {!ConsoleModel.ConsoleMessage.MessageLevel} level
- * @return {number}
- */
-ConsoleModel.ConsoleMessage.MessageLevel.ordinal = function(level) {
-  if (level === ConsoleModel.ConsoleMessage.MessageLevel.Verbose)
-    return 0;
-  if (level === ConsoleModel.ConsoleMessage.MessageLevel.Info)
-    return 1;
-  if (level === ConsoleModel.ConsoleMessage.MessageLevel.Warning)
-    return 2;
-  return 3;
 };
 
 ConsoleModel.ConsoleModel._events = Symbol('ConsoleModel.ConsoleModel.events');

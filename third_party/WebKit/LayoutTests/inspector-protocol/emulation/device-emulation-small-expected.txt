@@ -1,13 +1,15 @@
-Tests that device emulation affects media rules, viewport meta tag, body dimensions and window.screen. Emulating small device on a page without viewport set should take UA viewport settings into account.
 
-Page reloaded.
-Emulating device: 380x420x1 viewport='none'
+    Tests that device emulation affects media rules, viewport meta tag, body dimensions and window.screen.
+    Emulating small device on a page without viewport set should take UA viewport settings into account.
+  
+Emulating device: 380x420x1
+Loading page with viewport=none
 Device:
 window.screenX = 0px
 window.screenY = 0px
 Viewport: = ?none
 @media orientation = portrait
-window.orientation
+window.orientation = 0
 @media resolution = 96dpi
 @media device-pixel-ratio = 1
 window.devicePixelRatio = 1
@@ -37,5 +39,4 @@ doc.docElem.scrollHeight = 1083px
 doc.body.clientHeight = 1083px
 doc.body.offsetHeight = 1083px
 doc.body.scrollHeight = 1083px
-
 

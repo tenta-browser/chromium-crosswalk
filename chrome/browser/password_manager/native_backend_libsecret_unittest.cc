@@ -8,13 +8,12 @@
 
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
-#include "base/run_loop.h"
-#include "base/single_thread_task_runner.h"
+#include "base/message_loop/message_loop.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/time/time.h"
 #include "chrome/browser/password_manager/native_backend_libsecret.h"
 #include "chrome/test/base/testing_profile.h"
@@ -273,7 +272,9 @@ class NativeBackendLibsecretTest : public testing::Test {
     SYNCED,
   };
 
-  NativeBackendLibsecretTest() {}
+  NativeBackendLibsecretTest()
+      : scoped_task_environment_(
+            base::test::ScopedTaskEnvironment::MainThreadType::UI) {}
 
   void SetUp() override {
     ASSERT_FALSE(global_mock_libsecret_items);
@@ -337,14 +338,10 @@ class NativeBackendLibsecretTest : public testing::Test {
   }
 
   void TearDown() override {
-    base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::MessageLoop::QuitWhenIdleClosure());
-    base::RunLoop().Run();
+    scoped_task_environment_.RunUntilIdle();
     ASSERT_TRUE(global_mock_libsecret_items);
     global_mock_libsecret_items = nullptr;
   }
-
-  void RunUIThread() { base::RunLoop().Run(); }
 
   void CheckUint32Attribute(const MockSecretItem* item,
                             const std::string& attribute,
@@ -598,7 +595,7 @@ class NativeBackendLibsecretTest : public testing::Test {
     EXPECT_TRUE(global_mock_libsecret_items->empty());
   }
 
-  base::MessageLoopForUI message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 
   // Provide some test forms to avoid having to set them up in each test.
   PasswordForm form_google_;

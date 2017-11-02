@@ -32,23 +32,22 @@
 #define Blob_h
 
 #include "bindings/core/v8/ArrayBufferOrArrayBufferViewOrBlobOrUSVString.h"
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/CoreExport.h"
-#include "core/dom/DOMArrayBuffer.h"
-#include "core/dom/DOMArrayBufferView.h"
 #include "core/html/URLRegistry.h"
 #include "core/imagebitmap/ImageBitmapSource.h"
+#include "core/typed_arrays/DOMArrayBuffer.h"
+#include "core/typed_arrays/DOMArrayBufferView.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/blob/BlobData.h"
 #include "platform/heap/Handle.h"
-#include "wtf/PassRefPtr.h"
-#include "wtf/text/WTFString.h"
+#include "platform/wtf/RefPtr.h"
+#include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
 class BlobPropertyBag;
 class ExceptionState;
 class ExecutionContext;
-class ScriptState;
 
 class CORE_EXPORT Blob : public GarbageCollectedFinalized<Blob>,
                          public ScriptWrappable,
@@ -67,7 +66,7 @@ class CORE_EXPORT Blob : public GarbageCollectedFinalized<Blob>,
       const BlobPropertyBag&,
       ExceptionState&);
 
-  static Blob* Create(PassRefPtr<BlobDataHandle> blob_data_handle) {
+  static Blob* Create(RefPtr<BlobDataHandle> blob_data_handle) {
     return new Blob(std::move(blob_data_handle));
   }
 
@@ -99,18 +98,13 @@ class CORE_EXPORT Blob : public GarbageCollectedFinalized<Blob>,
     return slice(start, end, String(), exception_state);
   }
 
-  virtual void close(ScriptState*, ExceptionState&);
-
   String type() const { return blob_data_handle_->GetType(); }
   String Uuid() const { return blob_data_handle_->Uuid(); }
-  PassRefPtr<BlobDataHandle> GetBlobDataHandle() const {
-    return blob_data_handle_;
-  }
+  RefPtr<BlobDataHandle> GetBlobDataHandle() const { return blob_data_handle_; }
   // True for all File instances, including the user-built ones.
   virtual bool IsFile() const { return false; }
   // Only true for File instances that are backed by platform files.
   virtual bool HasBackingFile() const { return false; }
-  bool isClosed() const { return is_closed_; }
 
   // Used by the JavaScript Blob and File constructors.
   virtual void AppendTo(BlobData&) const;
@@ -124,7 +118,7 @@ class CORE_EXPORT Blob : public GarbageCollectedFinalized<Blob>,
   DEFINE_INLINE_TRACE() {}
 
  protected:
-  explicit Blob(PassRefPtr<BlobDataHandle>);
+  explicit Blob(RefPtr<BlobDataHandle>);
 
   static void PopulateBlobData(
       BlobData*,

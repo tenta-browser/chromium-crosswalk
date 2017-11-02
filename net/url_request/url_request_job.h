@@ -21,6 +21,8 @@
 #include "net/base/request_priority.h"
 #include "net/cookies/canonical_cookie.h"
 #include "net/filter/source_stream.h"
+#include "net/http/http_raw_request_headers.h"
+#include "net/http/http_response_headers.h"
 #include "net/socket/connection_attempts.h"
 #include "net/url_request/redirect_info.h"
 #include "net/url_request/url_request.h"
@@ -180,8 +182,9 @@ class NET_EXPORT URLRequestJob : public base::PowerObserver {
   // Display the error page without asking for credentials again.
   virtual void CancelAuth();
 
-  virtual void ContinueWithCertificate(X509Certificate* client_cert,
-                                       SSLPrivateKey* client_private_key);
+  virtual void ContinueWithCertificate(
+      scoped_refptr<X509Certificate> client_cert,
+      scoped_refptr<SSLPrivateKey> client_private_key);
 
   // Continue processing the request ignoring the last error.
   virtual void ContinueDespiteLastError();
@@ -228,11 +231,21 @@ class NET_EXPORT URLRequestJob : public base::PowerObserver {
   // has failed or the response headers have been received.
   virtual void GetConnectionAttempts(ConnectionAttempts* out) const;
 
-  // Given |policy|, |referrer|, and |redirect_destination|, returns the
+  // Sets a callback that will be invoked each time the request is about to
+  // be actually sent and will receive actual request headers that are about
+  // to hit the wire, including SPDY/QUIC internal headers and any additional
+  // request headers set via BeforeSendHeaders hooks.
+  virtual void SetRequestHeadersCallback(RequestHeadersCallback callback) {}
+
+  // Sets a callback that will be invoked each time the response is received
+  // from the remote party with the actual response headers recieved.
+  virtual void SetResponseHeadersCallback(ResponseHeadersCallback callback) {}
+
+  // Given |policy|, |referrer|, and |destination|, returns the
   // referrer URL mandated by |request|'s referrer policy.
-  static GURL ComputeReferrerForRedirect(URLRequest::ReferrerPolicy policy,
-                                         const GURL& original_referrer,
-                                         const GURL& redirect_destination);
+  static GURL ComputeReferrerForPolicy(URLRequest::ReferrerPolicy policy,
+                                       const GURL& original_referrer,
+                                       const GURL& destination);
 
  protected:
   // Notifies the job that a certificate is requested.
@@ -345,6 +358,10 @@ class NET_EXPORT URLRequestJob : public base::PowerObserver {
                         int buf_size,
                         const CompletionCallback& callback);
 
+  // Returns OK if |new_url| is a valid redirect target and an error code
+  // otherwise.
+  int CanFollowRedirect(const GURL& new_url);
+
   // Called in response to a redirect that was not canceled to follow the
   // redirect. The current job will be replaced with a new job loading the
   // given redirect destination.
@@ -417,7 +434,8 @@ class NET_EXPORT URLRequestJob : public base::PowerObserver {
   // Expected content size
   int64_t expected_content_size_;
 
-  // Set when a redirect is deferred.
+  // Set when a redirect is deferred. Redirects are deferred after validity
+  // checks are performed, so this field must not be modified.
   RedirectInfo deferred_redirect_info_;
 
   // The network delegate to use with this request, if any.

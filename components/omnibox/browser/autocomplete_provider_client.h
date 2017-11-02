@@ -19,6 +19,7 @@ class AutocompleteController;
 struct AutocompleteMatch;
 class AutocompleteClassifier;
 class AutocompleteSchemeClassifier;
+class ContextualSuggestionsService;
 class GURL;
 class InMemoryURLIndex;
 class KeywordProvider;
@@ -60,6 +61,8 @@ class AutocompleteProviderClient {
   virtual InMemoryURLIndex* GetInMemoryURLIndex() = 0;
   virtual TemplateURLService* GetTemplateURLService() = 0;
   virtual const TemplateURLService* GetTemplateURLService() const = 0;
+  virtual ContextualSuggestionsService* GetContextualSuggestionsService(
+      bool create_if_necessary) const = 0;
   virtual const SearchTermsData& GetSearchTermsData() const = 0;
   virtual scoped_refptr<ShortcutsBackend> GetShortcutsBackend() = 0;
   virtual scoped_refptr<ShortcutsBackend> GetShortcutsBackendIfExists() = 0;
@@ -109,6 +112,12 @@ class AutocompleteProviderClient {
       const base::string16& term) = 0;
 
   virtual void PrefetchImage(const GURL& url) = 0;
+
+  // Sends a hint to the service worker context that navigation to
+  // |desination_url| is likely, unless the current profile is in incognito
+  // mode. On platforms where this is supported, the service worker lookup can
+  // be expensive so this method should only be called once per input session.
+  virtual void StartServiceWorker(const GURL& destination_url) {}
 
   // Called by |controller| when its results have changed and all providers are
   // done processing the autocomplete request. At the //chrome level, this

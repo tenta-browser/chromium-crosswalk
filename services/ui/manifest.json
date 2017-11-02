@@ -13,13 +13,14 @@
           "ui::mojom::Clipboard",
           "ui::mojom::DisplayManager",
           "ui::mojom::Gpu",
-          "ui::mojom::IMEServer",
+          "ui::mojom::IMEDriver",
           "ui::mojom::InputDeviceServer",
           "ui::mojom::WindowTreeFactory"
         ],
         // Interfaces provided by mus-gpu for mus-ws.
         "ozone": [
-          "ui::ozone::mojom::DeviceCursor"
+          "ui::ozone::mojom::DeviceCursor",
+          "ui::ozone::mojom::DrmDevice"
         ],
         "test": [
           "ui::mojom::WindowServerTest"
@@ -42,6 +43,9 @@
         "ime_registrar": [
           "ui::mojom::IMERegistrar"
         ],
+        "input_device_controller": [
+          "ui::mojom::InputDeviceController"
+        ],
         "user_access_manager": [
           "ui::mojom::UserAccessManager"
         ],
@@ -53,8 +57,9 @@
           "ui::mojom::Clipboard",
           "ui::mojom::DisplayManager",
           "ui::mojom::Gpu",
-          "ui::mojom::IMEServer",
+          "ui::mojom::IMEDriver",
           "ui::mojom::InputDeviceServer",
+          "ui::mojom::TouchDeviceServer",
           "ui::mojom::UserActivityMonitor",
           "ui::mojom::WindowManagerWindowTreeFactory"
         ],

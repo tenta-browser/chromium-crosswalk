@@ -53,14 +53,14 @@ class ReadingListObserverBridge : public ReadingListModelObserver {
     [owner_ readingListModelCompletedBatchUpdates:model];
   }
 
-  void ReadingListModelBeingDeleted(const ReadingListModel* model) override{};
+  void ReadingListModelBeingDeleted(const ReadingListModel* model) override {}
 
   void ReadingListDidApplyChanges(ReadingListModel* model) override {
     [owner_ readingListModelCompletedBatchUpdates:model];
   }
 
  private:
-  ReadingListMenuNotifier* owner_;  // weak, owns us
+  __weak ReadingListMenuNotifier* owner_;  // weak, owns us
 };
 
 @implementation ReadingListMenuNotifier

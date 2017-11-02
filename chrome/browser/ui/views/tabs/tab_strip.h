@@ -129,6 +129,9 @@ class TabStrip : public views::View,
   // Invoked when the title of a tab changes and the tab isn't loading.
   void TabTitleChangedNotLoading(int model_index);
 
+  // Invoked when a tab needs to show UI that it needs the user's attention.
+  void SetTabNeedsAttention(int model_index);
+
   // Retrieves the ideal bounds for the Tab at the specified index.
   const gfx::Rect& ideal_bounds(int tab_data_index) {
     return tabs_.ideal_bounds(tab_data_index);
@@ -136,10 +139,13 @@ class TabStrip : public views::View,
 
   // Max x-coordinate the tabstrip draws at, which is the right edge of the new
   // tab button.
-  int max_x() const { return newtab_button_bounds_.right(); }
+  int max_x() const { return new_tab_button_bounds_.right(); }
 
   // Returns the Tab at |index|.
   Tab* tab_at(int index) const { return tabs_.view_at(index); }
+
+  // Returns the NewTabButton.
+  NewTabButton* new_tab_button() { return new_tab_button_; }
 
   // Returns the index of the specified tab in the model coordinate system, or
   // -1 if tab is closing or not valid.
@@ -245,9 +251,9 @@ class TabStrip : public views::View,
 
   // views::View overrides:
   void Layout() override;
-  void PaintChildren(const ui::PaintContext& context) override;
+  void PaintChildren(const views::PaintInfo& paint_info) override;
   const char* GetClassName() const override;
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   // NOTE: the drag and drop methods are invoked from FrameView. This is done
   // to allow for a drop region that extends outside the bounds of the TabStrip.
   void OnDragEntered(const ui::DropTargetEvent& event) override;
@@ -422,7 +428,7 @@ class TabStrip : public views::View,
   FindClosingTabResult FindClosingTab(const Tab* tab);
 
   // Paints all the tabs in |tabs_closing_map_[index]|.
-  void PaintClosingTabs(int index, const ui::PaintContext& context);
+  void PaintClosingTabs(int index, const views::PaintInfo& paint_info);
 
   // Invoked when a mouse event occurs over |source|. Potentially switches the
   // |stacked_layout_|.
@@ -572,10 +578,10 @@ class TabStrip : public views::View,
   std::unique_ptr<TabStripController> controller_;
 
   // The "New Tab" button.
-  NewTabButton* newtab_button_;
+  NewTabButton* new_tab_button_;
 
   // Ideal bounds of the new tab button.
-  gfx::Rect newtab_button_bounds_;
+  gfx::Rect new_tab_button_bounds_;
 
   // Returns the current widths of each type of tab.  If the tabstrip width is
   // not evenly divisible into these widths, the initial tabs in the strip will

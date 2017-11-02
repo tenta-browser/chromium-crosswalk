@@ -20,16 +20,17 @@ class FakeInputDeviceSettings : public InputDeviceSettings,
   ~FakeInputDeviceSettings() override;
 
   // Overridden from InputDeviceSettings.
-  void TouchpadExists(const DeviceExistsCallback& callback) override;
+  void TouchpadExists(DeviceExistsCallback callback) override;
   void UpdateTouchpadSettings(const TouchpadSettings& settings) override;
   void SetTouchpadSensitivity(int value) override;
   void SetTapToClick(bool enabled) override;
   void SetThreeFingerClick(bool enabled) override;
   void SetTapDragging(bool enabled) override;
-  void MouseExists(const DeviceExistsCallback& callback) override;
+  void MouseExists(DeviceExistsCallback callback) override;
   void UpdateMouseSettings(const MouseSettings& settings) override;
   void SetMouseSensitivity(int value) override;
   void SetPrimaryButtonRight(bool right) override;
+  void SetMouseReverseScroll(bool enabled) override;
   void SetNaturalScroll(bool enabled) override;
   void ReapplyTouchpadSettings() override;
   void ReapplyMouseSettings() override;

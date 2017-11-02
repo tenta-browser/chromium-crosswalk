@@ -38,6 +38,11 @@
 
 namespace blink {
 
+// When URIs use the "cid" (Content-ID) scheme, the resource refers to a
+// specific body part in an MHTML multipart/related structure.
+// See RFC n°2557, section-8.3: "Use of the Content-ID header and CID URLs".
+const char kContentIdScheme[] = "cid";
+
 class ArchiveResource;
 class KURL;
 class SharedBuffer;
@@ -59,6 +64,7 @@ class PLATFORM_EXPORT MHTMLArchive final
   // generateMHTMLPart and generateMHTMLFooter calls that belong to the same
   // MHTML document (see also rfc1341, section 7.2.1, "boundary" description).
   static void GenerateMHTMLHeader(const String& boundary,
+                                  const KURL&,
                                   const String& title,
                                   const String& mime_type,
                                   Vector<char>& output_buffer);

@@ -8,16 +8,16 @@
 
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/shell.h"
-#include "ash/shell_port.h"
 #include "ash/wm/window_util.h"
-#include "ash/wm_window.h"
 #include "base/memory/ptr_util.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/screen_position_client.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_delegate.h"
 #include "ui/aura/window_event_dispatcher.h"
+#include "ui/aura/window_tree_host.h"
 #include "ui/base/hit_test.h"
+#include "ui/compositor/compositor.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/layer_tree_owner.h"
 #include "ui/compositor/paint_context.h"
@@ -37,9 +37,7 @@ class DragWindowController::DragWindowDetails : public aura::WindowDelegate {
  public:
   DragWindowDetails(const display::Display& display,
                     aura::Window* original_window)
-      : root_window_(ShellPort::Get()
-                         ->GetRootWindowForDisplayId(display.id())
-                         ->aura_window()) {}
+      : root_window_(Shell::GetRootWindowForDisplayId(display.id())) {}
 
   ~DragWindowDetails() override {
     delete drag_window_;
@@ -86,7 +84,7 @@ class DragWindowController::DragWindowDetails : public aura::WindowDelegate {
     int parent_id = original_window->parent()->id();
     aura::Window* container = root_window_->GetChildById(parent_id);
 
-    drag_window_->SetType(ui::wm::WINDOW_TYPE_POPUP);
+    drag_window_->SetType(aura::client::WINDOW_TYPE_POPUP);
     drag_window_->SetTransparent(true);
     drag_window_->Init(ui::LAYER_TEXTURED);
     drag_window_->SetName("DragWindow");
@@ -236,7 +234,8 @@ const ui::LayerTreeOwner* DragWindowController::GetDragLayerOwnerForTest(
 }
 
 void DragWindowController::RequestLayerPaintForTest() {
-  ui::PaintContext context(nullptr, 1.0f, gfx::Rect());
+  ui::PaintContext context(nullptr, 1.0f, gfx::Rect(),
+                           window_->GetHost()->compositor()->is_pixel_canvas());
   for (auto& details : drag_windows_) {
     std::vector<ui::Layer*> layers;
     layers.push_back(details->drag_window_->layer());

@@ -79,7 +79,7 @@ LayoutUnit LayoutTextControlMultiLine::ComputeControlLogicalHeight(
          non_content_height;
 }
 
-int LayoutTextControlMultiLine::BaselinePosition(
+LayoutUnit LayoutTextControlMultiLine::BaselinePosition(
     FontBaseline baseline_type,
     bool first_line,
     LineDirectionMode direction,
@@ -88,7 +88,7 @@ int LayoutTextControlMultiLine::BaselinePosition(
                                      line_position_mode);
 }
 
-PassRefPtr<ComputedStyle> LayoutTextControlMultiLine::CreateInnerEditorStyle(
+RefPtr<ComputedStyle> LayoutTextControlMultiLine::CreateInnerEditorStyle(
     const ComputedStyle& start_style) const {
   RefPtr<ComputedStyle> text_block_style = ComputedStyle::Create();
   text_block_style->InheritFrom(start_style);
@@ -96,7 +96,7 @@ PassRefPtr<ComputedStyle> LayoutTextControlMultiLine::CreateInnerEditorStyle(
   text_block_style->SetDisplay(EDisplay::kBlock);
   text_block_style->SetUnique();
 
-  return text_block_style.Release();
+  return text_block_style;
 }
 
 LayoutObject* LayoutTextControlMultiLine::LayoutSpecialExcludedChild(

@@ -40,11 +40,6 @@ EasyUnlockSettingsHandler* EasyUnlockSettingsHandler::Create(
   if (!allowed)
     return nullptr;
 
-  html_source->AddBoolean(
-      "easyUnlockProximityDetectionAllowed",
-      base::CommandLine::ForCurrentProcess()->HasSwitch(
-          proximity_auth::switches::kEnableProximityDetection));
-
   return new EasyUnlockSettingsHandler(profile);
 }
 
@@ -86,9 +81,8 @@ void EasyUnlockSettingsHandler::OnJavascriptDisallowed() {
 }
 
 void EasyUnlockSettingsHandler::OnTurnOffOperationStatusChanged() {
-  CallJavascriptFunction("cr.webUIListenerCallback",
-                         base::Value("easy-unlock-turn-off-flow-status"),
-                         base::Value(GetTurnOffFlowStatus()));
+  FireWebUIListener("easy-unlock-turn-off-flow-status",
+                    base::Value(GetTurnOffFlowStatus()));
 }
 
 void EasyUnlockSettingsHandler::SendEnabledStatus() {

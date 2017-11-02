@@ -7,6 +7,7 @@
 #include "base/base64.h"
 #include "base/bind.h"
 #include "base/callback_helpers.h"
+#include "base/single_thread_task_runner.h"
 #include "media/base/bind_to_current_loop.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/timestamp_constants.h"
@@ -23,13 +24,7 @@ namespace remoting {
 mojo::DataPipe* DemuxerStreamAdapter::CreateDataPipe() {
   // Capacity in bytes for Mojo data pipe.
   constexpr int kMojoDataPipeCapacityInBytes = 512 * 1024;
-
-  MojoCreateDataPipeOptions options;
-  options.struct_size = sizeof(MojoCreateDataPipeOptions);
-  options.flags = MOJO_WRITE_DATA_FLAG_NONE;
-  options.element_num_bytes = 1;
-  options.capacity_num_bytes = kMojoDataPipeCapacityInBytes;
-  return new mojo::DataPipe(options);
+  return new mojo::DataPipe(kMojoDataPipeCapacityInBytes);
 }
 
 DemuxerStreamAdapter::DemuxerStreamAdapter(
@@ -248,7 +243,12 @@ void DemuxerStreamAdapter::ReadUntil(std::unique_ptr<pb::RpcMessage> message) {
 void DemuxerStreamAdapter::EnableBitstreamConverter() {
   DCHECK(media_task_runner_->BelongsToCurrentThread());
   DEMUXER_VLOG(2) << "Received RPC_DS_ENABLEBITSTREAMCONVERTER";
+#if BUILDFLAG(USE_PROPRIETARY_CODECS)
   demuxer_stream_->EnableBitstreamConverter();
+#else
+  DEMUXER_VLOG(1) << "Ignoring EnableBitstreamConverter() RPC: Proprietary "
+                     "codecs not enabled in this Chromium build.";
+#endif
 }
 
 void DemuxerStreamAdapter::RequestBuffer() {
@@ -275,6 +275,10 @@ void DemuxerStreamAdapter::OnNewBuffer(
     case DemuxerStream::kAborted:
       DCHECK(!input);
       SendReadAck();
+      return;
+    case DemuxerStream::kError:
+      // Currently kError can only happen because of DECRYPTION_ERROR.
+      OnFatalError(DECRYPTION_ERROR);
       return;
     case DemuxerStream::kConfigChanged:
       // TODO(erickung): Notify controller of new decoder config, just in case
@@ -323,10 +327,9 @@ void DemuxerStreamAdapter::TryWriteData(MojoResult result) {
   }
 
   uint32_t num_bytes = pending_frame_.size() - current_pending_frame_offset_;
-  MojoResult mojo_result =
-      WriteDataRaw(producer_handle_.get(),
-                   pending_frame_.data() + current_pending_frame_offset_,
-                   &num_bytes, MOJO_WRITE_DATA_FLAG_NONE);
+  MojoResult mojo_result = producer_handle_->WriteData(
+      pending_frame_.data() + current_pending_frame_offset_, &num_bytes,
+      MOJO_WRITE_DATA_FLAG_NONE);
   if (mojo_result != MOJO_RESULT_OK && mojo_result != MOJO_RESULT_SHOULD_WAIT) {
     DEMUXER_VLOG(1) << "Pipe was closed unexpectedly (or a bug). result:"
                     << mojo_result;

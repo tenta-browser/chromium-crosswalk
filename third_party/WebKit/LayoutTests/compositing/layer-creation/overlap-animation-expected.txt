@@ -4,40 +4,45 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true
+      "backgroundColor": "#FFFFFF"
     },
     {
       "name": "LayoutBlockFlow (relative positioned) DIV class='container'",
       "position": [8, 8],
-      "bounds": [122, 242],
-      "drawsContent": true
+      "bounds": [122, 242]
     },
     {
       "name": "Child Containment Layer",
-      "position": [1, 1],
-      "bounds": [120, 240]
+      "position": [9, 9],
+      "bounds": [120, 240],
+      "drawsContent": false
     },
     {
       "name": "LayoutBlockFlow (relative positioned) DIV id='to-animate' class='animating box'",
       "position": [10, 10],
       "bounds": [100, 100],
       "contentsOpaque": true,
-      "drawsContent": true,
       "backgroundColor": "#0000FF",
+      "transform": 1
+    },
+    {
+      "name": "LayoutBlockFlow (relative positioned) DIV class='box'",
+      "position": [19, 129],
+      "bounds": [100, 100],
+      "contentsOpaque": true,
+      "backgroundColor": "#0000FF"
+    }
+  ],
+  "transforms": [
+    {
+      "id": 1,
       "transform": [
         [...],
         [...],
         [...],
         [...]
-      ]
-    },
-    {
-      "name": "LayoutBlockFlow (relative positioned) DIV class='box'",
-      "position": [10, 120],
-      "bounds": [100, 100],
-      "contentsOpaque": true,
-      "drawsContent": true,
-      "backgroundColor": "#0000FF"
+      ],
+      "origin": [50, 50]
     }
   ]
 }

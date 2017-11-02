@@ -7,15 +7,16 @@
 #include "bindings/core/v8/Dictionary.h"
 #include "bindings/core/v8/V8ArrayBuffer.h"
 #include "bindings/core/v8/V8ArrayBufferView.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/core/v8/V8Blob.h"
 #include "bindings/core/v8/V8FormData.h"
 #include "bindings/core/v8/V8URLSearchParams.h"
-#include "bindings/modules/v8/ByteStringSequenceSequenceOrByteStringByteStringRecordOrHeaders.h"
 #include "bindings/modules/v8/V8PasswordCredential.h"
-#include "core/dom/URLSearchParams.h"
 #include "core/fileapi/Blob.h"
+#include "core/frame/Deprecation.h"
+#include "core/frame/UseCounter.h"
 #include "core/html/FormData.h"
+#include "core/url/URLSearchParams.h"
 #include "modules/fetch/BlobBytesConsumer.h"
 #include "modules/fetch/FormDataBytesConsumer.h"
 #include "modules/fetch/Headers.h"
@@ -46,7 +47,7 @@ RequestInit::RequestInit(ExecutionContext* context,
   are_any_members_set |= is_header_set;
 
   are_any_members_set |= DictionaryHelper::Get(options, "mode", mode);
-  if (RuntimeEnabledFeatures::fetchRequestCacheEnabled())
+  if (RuntimeEnabledFeatures::FetchRequestCacheEnabled())
     are_any_members_set |= DictionaryHelper::Get(options, "cache", cache);
 
   are_any_members_set |= DictionaryHelper::Get(options, "redirect", redirect);
@@ -90,11 +91,13 @@ RequestInit::RequestInit(ExecutionContext* context,
         referrer.referrer_policy = kReferrerPolicyOrigin;
       } else if (referrer_policy_string == "origin-when-cross-origin") {
         referrer.referrer_policy = kReferrerPolicyOriginWhenCrossOrigin;
+      } else if (referrer_policy_string == "same-origin") {
+        referrer.referrer_policy = kReferrerPolicySameOrigin;
+      } else if (referrer_policy_string == "strict-origin") {
+        referrer.referrer_policy = kReferrerPolicyStrictOrigin;
       } else if (referrer_policy_string == "unsafe-url") {
         referrer.referrer_policy = kReferrerPolicyAlways;
-      } else if (referrer_policy_string ==
-                     "no-referrer-when-downgrade-origin-when-cross-origin" &&
-                 RuntimeEnabledFeatures::reducedReferrerGranularityEnabled()) {
+      } else if (referrer_policy_string == "strict-origin-when-cross-origin") {
         referrer.referrer_policy =
             kReferrerPolicyNoReferrerWhenDowngradeOriginWhenCrossOrigin;
       } else {
@@ -107,20 +110,17 @@ RequestInit::RequestInit(ExecutionContext* context,
   v8::Isolate* isolate = ToIsolate(context);
 
   if (is_header_set) {
-    ByteStringSequenceSequenceOrByteStringByteStringRecordOrHeaders
-        headers_init;
-    V8ByteStringSequenceSequenceOrByteStringByteStringRecordOrHeaders::toImpl(
-        isolate, v8_headers, headers_init,
-        UnionTypeConversionMode::kNotNullable, exception_state);
-    if (exception_state.HadException())
-      return;
-    headers = Headers::Create(headers_init, exception_state);
+    V8ByteStringSequenceSequenceOrByteStringByteStringRecord::toImpl(
+        isolate, v8_headers, headers, UnionTypeConversionMode::kNotNullable,
+        exception_state);
     if (exception_state.HadException())
       return;
   }
 
   if (is_credential_set) {
     if (V8PasswordCredential::hasInstance(v8_credential, isolate)) {
+      Deprecation::CountDeprecation(context,
+                                    WebFeature::kCredentialManagerCustomFetch);
       // TODO(mkwst): According to the spec, we'd serialize this once we touch
       // the network. We're serializing it here, ahead of time, because lifetime
       // issues around ResourceRequest make it pretty difficult to pass a
@@ -152,22 +152,22 @@ RequestInit::RequestInit(ExecutionContext* context,
     RefPtr<BlobDataHandle> blob_data_handle =
         V8Blob::toImpl(v8_body.As<v8::Object>())->GetBlobDataHandle();
     content_type = blob_data_handle->GetType();
-    body = new BlobBytesConsumer(context, blob_data_handle.Release());
+    body = new BlobBytesConsumer(context, std::move(blob_data_handle));
   } else if (V8FormData::hasInstance(v8_body, isolate)) {
     RefPtr<EncodedFormData> form_data =
         V8FormData::toImpl(v8_body.As<v8::Object>())->EncodeMultiPartFormData();
     // Here we handle formData->boundary() as a C-style string. See
     // FormDataEncoder::generateUniqueBoundaryString.
     content_type = AtomicString("multipart/form-data; boundary=") +
-                   form_data->Boundary().Data();
-    body = new FormDataBytesConsumer(context, form_data.Release());
+                   form_data->Boundary().data();
+    body = new FormDataBytesConsumer(context, std::move(form_data));
   } else if (V8URLSearchParams::hasInstance(v8_body, isolate)) {
     RefPtr<EncodedFormData> form_data =
         V8URLSearchParams::toImpl(v8_body.As<v8::Object>())
             ->ToEncodedFormData();
     content_type =
         AtomicString("application/x-www-form-urlencoded;charset=UTF-8");
-    body = new FormDataBytesConsumer(context, form_data.Release());
+    body = new FormDataBytesConsumer(context, std::move(form_data));
   } else if (v8_body->IsString()) {
     content_type = "text/plain;charset=UTF-8";
     body = new FormDataBytesConsumer(

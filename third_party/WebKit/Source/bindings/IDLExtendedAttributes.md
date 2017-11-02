@@ -306,6 +306,25 @@ Summary: HTML Elements have special constructor behavior. Interface object of gi
 
 Usage: Must take no arguments, and must not appear on anything other than an interface. It must appear once on an interface, and the interface cannot be annotated with `[Constructor]` or `[NoInterfaceObject]` extended attributes. It must not be used on a callback interface.
 
+### [LegacyUnenumerableNamedProperties] _(i)_
+
+Standard: [LegacyUnenumerableNamedProperties](https://heycam.github.io/webidl/#LegacyUnenumerableNamedProperties)
+
+Summary: If an IDL interface [supports named properties](https://heycam.github.io/webidl/#dfn-support-named-properties), this extended attribute causes those properties not to be enumerable.
+
+```webidl
+[
+    LegacyUnenumerableNamedProperties
+] interface HTMLCollection {
+    ...
+    getter Element? namedItem(DOMString name);
+}
+```
+
+In the example above, named properties in `HTMLCollection` instances (such as those returned by `document.getElementsByTagName()`) are not enumerable. In other words, `for-in` loops do not iterate over them, they are not listed by `Object.keys()` calls and the property descriptor returned by `Object.getPropertyDescriptor()` has its `enumerable` property set to `false`.
+
+The `[LegacyUnenumerableNamedProperties]` extended attribute must be used **only** in interfaces that support named properties.
+
 ### [NamedConstructor] _(i)_
 
 Standard: [NamedConstructor](https://heycam.github.io/webidl/#NamedConstructor)
@@ -671,6 +690,22 @@ This is because if the stored ScriptState is used by some method called by a dif
 world (note that the DOM object is shared among multiple worlds), it leaks the ScriptState
 to the world. ScriptState must be carefully maintained in a way that doesn't leak
 to another world.
+
+### [ContextEnabled] _(i)_
+
+Summary: `[ContextEnabled]` renders the generated interface bindings unavailable by default, but also generates code which allows individual script contexts opt into installing the bindings.
+
+Usage: `[ContextEnabled=FeatureName]`. FeatureName is an arbitrary name used to identify the feature at runtime.
+
+```webidl
+[
+    ContextEnabled=MojoJS
+] interface Mojo { ... };
+```
+
+When applied to an interface, the generated code for the relevant global object will include a public `installFeatureName()` method which can be called to install the interface on the global object.
+
+Note that `[ContextEnabled]` is not mututally exclusive to `[RuntimeEnabled]`, and a feature which may be enabled by either mechanism will be enabled if the appropriate `[RuntimeEnabled]` feature is enabled; _or_ if the appropriate `[ContextEnabled]` feature is enabled; _or_ if both are enabled.
 
 ### [Custom] _(i, m, s, a, f)_
 
@@ -1225,9 +1260,9 @@ These extended attributes are rarely used, generally only in one or two places. 
 
 ### [CachedAttribute] _(a)_
 
-Summary: For performance optimization, `[CachedAttribute]` indicates that a wrapped object should be cached on a DOM object. Rarely used (only by IndexDB).
+Summary: For performance optimization, `[CachedAttribute]` indicates that a wrapped object should be cached on a DOM object. Rarely used.
 
-Usage: `[CachedAttribute]` can be specified on attributes, and takes a required value, generally called is*Dirty (esp. isValueDirty):
+Usage: `[CachedAttribute]` can be specified on attributes, and takes a required value, generally called is*Dirty (e.g. isValueDirty):
 
 ```webidl
 interface HTMLFoo {
@@ -1270,7 +1305,7 @@ In case where `HTMLFoo::serializedValue()`, the deserialization or the operation
 You should cache attributes if and only if it is really important for performance. Not only does caching increase the DOM object size, but also it increases the overhead of "cache-miss"ed getters. In addition, setters always need to invalidate the cache.
 ***
 
-`[CachedAttribute]` takes a required parameter which the name of a method to call on the implementation object. The method should take void and return bool. Before the cached attribute is used, the method will be called. If the method returns true the cached value is not used, which will result in the accessor being called again. This allows the implementation to both gain the performance benefit of caching (when the conversion to a script value can be done lazily) while allowing the value to be updated. The typical use pattern is:
+`[CachedAttribute]` takes a required parameter which the name of a method to call on the implementation object. The method should be const, take void and return bool. Before the cached attribute is used, the method will be called. If the method returns true the cached value is not used, which will result in the accessor being called again. This allows the implementation to both gain the performance benefit of caching (when the conversion to a script value can be done lazily) while allowing the value to be updated. The typical use pattern is:
 
 ```c++
 // Called internally to update value
@@ -1281,7 +1316,7 @@ void Object::setValue(Type data)
 }
 
 // Called by generated binding code
-bool Object::isAttributeDirty()
+bool Object::isAttributeDirty() const
 {
     return m_attributeDirty;
 }
@@ -1425,6 +1460,21 @@ The FlexibleArrayBufferView itself can then either refer to an actual ArrayBuffe
 
 Usage: Applies to arguments of methods. See modules/webgl/WebGLRenderingContextBase.idl for an example.
 
+### [AllowShared] _(p)_
+
+Summary: `[AllowShared]` indicates that a parameter, which must be an ArrayBufferView (or subtype of, e.g. typed arrays), is allowed to be backed by a SharedArrayBuffer.
+
+Usage: `[AllowShared]` must be specified on a parameter to a method:
+
+```webidl
+interface Context {
+    void bufferData1([AllowShared] ArrayBufferView buffer);
+    void bufferData2([AllowShared] Float32Array buffer);
+}
+```
+
+A SharedArrayBuffer is a distinct type from an ArrayBuffer, but both types use ArrayBufferViews to view the data in the buffer. Most methods do not permit an ArrayBufferView that is backed by a SharedArrayBuffer, and will throw an exception. This attribute indicates that this method permits a shared ArrayBufferView.
+
 ### [PermissiveDictionaryConversion] _(p, d)_
 
 Summary: `[PermissiveDictionaryConversion]` relaxes the rules about what types of values may be passed for an argument of dictionary type.
@@ -1432,6 +1482,32 @@ Summary: `[PermissiveDictionaryConversion]` relaxes the rules about what types o
 Ordinarily when passing in a value for a dictionary argument, the value must be either undefined, null, or an object. In other words, passing a boolean value like true or false must raise TypeError. The PermissiveDictionaryConversion extended attribute ignores non-object types, treating them the same as undefined and null. In order to effect this change, this extended attribute must be specified both on the dictionary type as well as the arguments of methods where it is passed. It exists only to eliminate certain custom bindings.
 
 Usage: applies to dictionaries and arguments of methods. Takes no arguments itself.
+
+### [RuntimeCallStatsCounter] _(m, a)_
+
+Summary: Adding `[RuntimeCallStatsCounter=<Counter>]` as an extended attribute to an interface method or attribute results in call counts and run times of the method or attribute getter (and setter if present) using RuntimeCallStats (see Source/platform/bindings/RuntimeCallStats.h for more details about RuntimeCallStats). \<Counter\> is used to identify a group of counters that will be used to keep track of run times for a particular method/attribute.
+
+A counter with id `k<Counter>` will keep track of the execution time and counts for methods (including the time spent in the bindings layer). For attribute getters, it is `k<Counter>_Getter` and for setters, `k<Counter>_Setter`.
+
+Usage:
+
+```webidl
+interface Node {
+  [RuntimeCallStatsCounter=NodeOwnerDocument] readonly attribute Document? ownerDocument;
+  [RuntimeCallStatsCounter=NodeTextContent] attribute DOMString? textContent;
+  [RuntimeCallStatsCounter=NodeHasChildNodes] boolean hasChildNodes();
+}
+```
+
+The counters specified in the IDL file also need to be defined in Source/platform/bindings/RuntimeCallStats.h (under CALLBACK_COUNTERS) as follows:
+
+```cpp
+#define CALLBACK_COUNTERS(V)                         \
+...                                                  \
+  BINDINGS_READ_ONLY_ATTRIBUTE(V, NodeOwnerDocument) \
+  BINDINGS_ATTRIBUTE(V, NodeTextContent)             \
+  BINDINGS_METHOD(V, NodeHasChildNodes)
+```
 
 ### [URL] _(a)_
 

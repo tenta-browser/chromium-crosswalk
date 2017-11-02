@@ -6,12 +6,12 @@
 
 #include <memory>
 #include "bindings/core/v8/ExceptionState.h"
-#include "bindings/core/v8/ScriptState.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/events/MessageEvent.h"
 #include "core/probe/CoreProbes.h"
 #include "core/workers/InProcessWorkerMessagingProxy.h"
 #include "core/workers/WorkerScriptLoader.h"
+#include "platform/bindings/ScriptState.h"
 #include "platform/loader/fetch/ResourceFetcher.h"
 
 namespace blink {
@@ -27,7 +27,7 @@ InProcessWorkerBase::~InProcessWorkerBase() {
 }
 
 void InProcessWorkerBase::postMessage(ScriptState* script_state,
-                                      PassRefPtr<SerializedScriptValue> message,
+                                      RefPtr<SerializedScriptValue> message,
                                       const MessagePortArray& ports,
                                       ExceptionState& exception_state) {
   DCHECK(context_proxy_);
@@ -50,13 +50,19 @@ bool InProcessWorkerBase::Initialize(ExecutionContext* context,
   if (script_url.IsEmpty())
     return false;
 
-  CrossOriginRequestPolicy cross_origin_request_policy =
-      script_url.ProtocolIsData() ? kAllowCrossOriginRequests
-                                  : kDenyCrossOriginRequests;
+  WebURLRequest::FetchRequestMode fetch_request_mode =
+      WebURLRequest::kFetchRequestModeSameOrigin;
+  WebURLRequest::FetchCredentialsMode fetch_credentials_mode =
+      WebURLRequest::kFetchCredentialsModeSameOrigin;
+  if (script_url.ProtocolIsData()) {
+    fetch_request_mode = WebURLRequest::kFetchRequestModeNoCORS;
+    fetch_credentials_mode = WebURLRequest::kFetchCredentialsModeInclude;
+  }
 
   script_loader_ = WorkerScriptLoader::Create();
   script_loader_->LoadAsynchronously(
-      *context, script_url, cross_origin_request_policy,
+      *context, script_url, WebURLRequest::kRequestContextWorker,
+      fetch_request_mode, fetch_credentials_mode,
       context->GetSecurityContext().AddressSpace(),
       WTF::Bind(&InProcessWorkerBase::OnResponse, WrapPersistent(this)),
       WTF::Bind(&InProcessWorkerBase::OnFinished, WrapPersistent(this)));
@@ -105,6 +111,7 @@ void InProcessWorkerBase::OnFinished() {
 }
 
 DEFINE_TRACE(InProcessWorkerBase) {
+  visitor->Trace(context_proxy_);
   AbstractWorker::Trace(visitor);
 }
 

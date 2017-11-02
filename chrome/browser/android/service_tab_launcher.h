@@ -7,7 +7,7 @@
 
 #include "base/android/jni_android.h"
 #include "base/callback_forward.h"
-#include "base/id_map.h"
+#include "base/containers/id_map.h"
 #include "base/macros.h"
 #include "base/memory/singleton.h"
 
@@ -40,15 +40,13 @@ class ServiceTabLauncher {
   // the provisional load for the main frame of the navigation.
   void OnTabLaunched(int request_id, content::WebContents* web_contents);
 
-  static bool Register(JNIEnv* env);
-
  private:
   friend struct base::DefaultSingletonTraits<ServiceTabLauncher>;
 
   ServiceTabLauncher();
   ~ServiceTabLauncher();
 
-  IDMap<std::unique_ptr<TabLaunchedCallback>> tab_launched_callbacks_;
+  base::IDMap<std::unique_ptr<TabLaunchedCallback>> tab_launched_callbacks_;
 
   DISALLOW_COPY_AND_ASSIGN(ServiceTabLauncher);
 };

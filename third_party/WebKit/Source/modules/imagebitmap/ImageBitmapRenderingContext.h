@@ -27,9 +27,9 @@ class MODULES_EXPORT ImageBitmapRenderingContext final
     Factory() {}
     ~Factory() override {}
 
-    CanvasRenderingContext* Create(HTMLCanvasElement*,
-                                   const CanvasContextCreationAttributes&,
-                                   Document&) override;
+    CanvasRenderingContext* Create(
+        CanvasRenderingContextHost*,
+        const CanvasContextCreationAttributes&) override;
     CanvasRenderingContext::ContextType GetContextType() const override {
       return CanvasRenderingContext::kContextImageBitmap;
     }
@@ -40,6 +40,11 @@ class MODULES_EXPORT ImageBitmapRenderingContext final
   // Script API
   void transferFromImageBitmap(ImageBitmap*, ExceptionState&);
 
+  HTMLCanvasElement* canvas() {
+    DCHECK(!host() || !host()->IsOffscreenCanvas());
+    return static_cast<HTMLCanvasElement*>(host());
+  }
+
   // CanvasRenderingContext implementation
   ContextType GetContextType() const override {
     return CanvasRenderingContext::kContextImageBitmap;
@@ -47,7 +52,8 @@ class MODULES_EXPORT ImageBitmapRenderingContext final
   void SetIsHidden(bool) override {}
   bool isContextLost() const override { return false; }
   void SetCanvasGetContextResult(RenderingContext&) final;
-  PassRefPtr<Image> GetImage(AccelerationHint, SnapshotReason) const final;
+  RefPtr<StaticBitmapImage> GetImage(AccelerationHint,
+                                     SnapshotReason) const final;
   bool IsComposited() const final { return true; }
   bool IsAccelerated() const final;
 
@@ -62,9 +68,8 @@ class MODULES_EXPORT ImageBitmapRenderingContext final
   virtual ~ImageBitmapRenderingContext();
 
  private:
-  ImageBitmapRenderingContext(HTMLCanvasElement*,
-                              const CanvasContextCreationAttributes&,
-                              Document&);
+  ImageBitmapRenderingContext(CanvasRenderingContextHost*,
+                              const CanvasContextCreationAttributes&);
 
   Member<ImageLayerBridge> image_layer_bridge_;
 };

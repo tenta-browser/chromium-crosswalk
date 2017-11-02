@@ -18,6 +18,7 @@
 #include "media/base/stream_parser.h"
 #include "media/base/stream_parser_buffer.h"
 #include "media/base/video_codecs.h"
+#include "media/filters/source_buffer_parse_warnings.h"
 
 namespace media {
 
@@ -39,7 +40,7 @@ class MEDIA_EXPORT SourceBufferState {
   SourceBufferState(std::unique_ptr<StreamParser> stream_parser,
                     std::unique_ptr<FrameProcessor> frame_processor,
                     const CreateDemuxerStreamCB& create_demuxer_stream_cb,
-                    const scoped_refptr<MediaLog>& media_log);
+                    MediaLog* media_log);
 
   ~SourceBufferState();
 
@@ -134,6 +135,9 @@ class MEDIA_EXPORT SourceBufferState {
 
   void SetTracksWatcher(const Demuxer::MediaTracksUpdatedCB& tracks_updated_cb);
 
+  void SetParseWarningCallback(
+      const SourceBufferParseWarningCB& parse_warning_cb);
+
  private:
   // State advances through this list. The intent is to ensure at least one
   // config is received prior to parser calling initialization callback, and
@@ -209,7 +213,7 @@ class MEDIA_EXPORT SourceBufferState {
   DemuxerStreamMap text_streams_;
 
   std::unique_ptr<FrameProcessor> frame_processor_;
-  scoped_refptr<MediaLog> media_log_;
+  MediaLog* media_log_;
   StreamParser::InitCB init_cb_;
 
   State state_;

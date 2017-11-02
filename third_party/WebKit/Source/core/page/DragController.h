@@ -27,7 +27,7 @@
 #define DragController_h
 
 #include "core/CoreExport.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/EventTarget.h"
 #include "core/page/DragActions.h"
 #include "platform/geometry/IntPoint.h"
 #include "platform/heap/Handle.h"
@@ -58,7 +58,7 @@ class CORE_EXPORT DragController final
 
   DragSession DragEnteredOrUpdated(DragData*, LocalFrame& local_root);
   void DragExited(DragData*, LocalFrame& local_root);
-  bool PerformDrag(DragData*, LocalFrame& local_root);
+  void PerformDrag(DragData*, LocalFrame& local_root);
 
   enum SelectionDragPolicy {
     kImmediateSelectionDragResolution,
@@ -80,6 +80,9 @@ class CORE_EXPORT DragController final
                  const IntPoint& drag_origin);
 
   DragState& GetDragState();
+
+  static std::unique_ptr<DragImage> DragImageForSelection(const LocalFrame&,
+                                                          float);
 
   DECLARE_TRACE();
 

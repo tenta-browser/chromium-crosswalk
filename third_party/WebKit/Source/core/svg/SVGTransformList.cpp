@@ -168,20 +168,20 @@ SVGTransformType ParseAndSkipTransformType(const CharType*& ptr,
     return kSvgTransformUnknown;
 
   if (*ptr == 's') {
-    if (skipToken(ptr, end, "skewX"))
+    if (SkipToken(ptr, end, "skewX"))
       return kSvgTransformSkewx;
-    if (skipToken(ptr, end, "skewY"))
+    if (SkipToken(ptr, end, "skewY"))
       return kSvgTransformSkewy;
-    if (skipToken(ptr, end, "scale"))
+    if (SkipToken(ptr, end, "scale"))
       return kSvgTransformScale;
 
     return kSvgTransformUnknown;
   }
-  if (skipToken(ptr, end, "translate"))
+  if (SkipToken(ptr, end, "translate"))
     return kSvgTransformTranslate;
-  if (skipToken(ptr, end, "rotate"))
+  if (SkipToken(ptr, end, "rotate"))
     return kSvgTransformRotate;
-  if (skipToken(ptr, end, "matrix"))
+  if (SkipToken(ptr, end, "matrix"))
     return kSvgTransformMatrix;
 
   return kSvgTransformUnknown;
@@ -403,7 +403,7 @@ SVGParsingError SVGTransformList::SetValueAsString(const String& value) {
 
 SVGPropertyBase* SVGTransformList::CloneForAnimation(
     const String& value) const {
-  DCHECK(RuntimeEnabledFeatures::webAnimationsSVGEnabled());
+  DCHECK(RuntimeEnabledFeatures::WebAnimationsSVGEnabled());
   return SVGListPropertyHelper::CloneForAnimation(value);
 }
 

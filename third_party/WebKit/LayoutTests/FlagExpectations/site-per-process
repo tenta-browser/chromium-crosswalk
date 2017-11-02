@@ -1,6 +1,20 @@
 # These tests currently fail when they run with --site-per-process.
 # See https://crbug.com/477150.
 
+# https://crbug.com/758075: Uninvestigated timeout.
+# (apparently https://crbug.com/599670 doesn't affect the Site Isolation bot,
+# so there is no need to carry-over the [ Failure ] expectation from baseline
+# expectations in LayoutTests/TestExpectations).
+crbug.com/758075 http/tests/inspector/resource-parameters-ipv6.html [ Timeout ]
+
+# https://crbug.com/393285: Text-autosizing doesn't support OOPIFs.
+# https://crbug.com/667551: Pixel dumps don't support OOPIFs.
+# Both of the bugs above need to be fixed, before enabling the tests below.
+crbug.com/393285 http/tests/text-autosizing/narrow-iframe.html [ Failure ]
+crbug.com/393285 http/tests/text-autosizing/wide-iframe.html [ Failure ]
+crbug.com/393285 virtual/mojo-loading/http/tests/text-autosizing/narrow-iframe.html [ Failure ]
+crbug.com/393285 virtual/mojo-loading/http/tests/text-autosizing/wide-iframe.html [ Failure ]
+
 # https://crbug.com/700535: Times out after r454488 landed.
 crbug.com/700535 fast/dnd/dropEffect-for-effectAllowed.html [ Timeout ]
 
@@ -34,12 +48,8 @@ crbug.com/582176 virtual/mojo-loading/http/tests/inspector/console-cd-completion
 crbug.com/582176 virtual/mojo-loading/http/tests/inspector/console-cd.html [ Failure ]
 
 # https://crbug.com/608015 - node.contentDocument is undefined.
-crbug.com/608015 http/tests/inspector-protocol/access-inspected-object.html [ Failure Timeout ]
-crbug.com/608015 virtual/mojo-loading/http/tests/inspector-protocol/access-inspected-object.html [ Failure Timeout ]
-
-# https://crbug.com/608023 - does injecting injections work with OOPIFs?
-crbug.com/608023 http/tests/inspector/injected-script-for-origin.html [ Failure ]
-crbug.com/608023 virtual/mojo-loading/http/tests/inspector/injected-script-for-origin.html [ Failure ]
+crbug.com/608015 http/tests/inspector-protocol/access-inspected-object.js [ Failure Timeout ]
+crbug.com/608015 virtual/mojo-loading/http/tests/inspector-protocol/access-inspected-object.js [ Failure Timeout ]
 
 # https://crbug.com/602493 - Layout tests harness doesn't support history dump across OOPIFs
 crbug.com/602493 http/tests/security/mixedContent/insecure-iframe-in-main-frame.html [ Crash ]
@@ -101,30 +111,16 @@ crbug.com/616905 http/tests/history/cross-origin-redirect-on-back.html [ Timeout
 crbug.com/616905 virtual/mojo-loading/http/tests/history/cross-origin-redirect-on-back.html [ Timeout ]
 
 # https://crbug.com/623268 - Can't inspect OOPIFs from main page's DevTools window.
-crbug.com/623268 http/tests/inspector-protocol/request-mixed-content-status-blockable.html [ Timeout ]
-crbug.com/623268 http/tests/inspector-protocol/request-mixed-content-status-none.html [ Timeout ]
-crbug.com/623268 http/tests/inspector-protocol/request-mixed-content-status-optionally-blockable.html [ Timeout ]
-crbug.com/623268 virtual/mojo-loading/http/tests/inspector-protocol/request-mixed-content-status-blockable.html [ Timeout ]
-crbug.com/623268 virtual/mojo-loading/http/tests/inspector-protocol/request-mixed-content-status-none.html [ Timeout ]
-crbug.com/623268 virtual/mojo-loading/http/tests/inspector-protocol/request-mixed-content-status-optionally-blockable.html [ Timeout ]
-crbug.com/623268 http/tests/inspector/change-iframe-src.html [ Timeout ]
-crbug.com/623268 http/tests/inspector/console-cross-origin-iframe-logging.html [ Timeout ]
-crbug.com/623268 http/tests/inspector/inspect-iframe-from-different-domain.html [ Timeout ]
-crbug.com/623268 virtual/mojo-loading/http/tests/inspector/change-iframe-src.html [ Timeout ]
-crbug.com/623268 virtual/mojo-loading/http/tests/inspector/console-cross-origin-iframe-logging.html [ Timeout ]
-crbug.com/623268 virtual/mojo-loading/http/tests/inspector/inspect-iframe-from-different-domain.html [ Timeout ]
-
-# https://crbug.com/623210 - DevTools extensions load in separate process in layout tests.
-crbug.com/623210 http/tests/inspector/extensions-headers.html [ Timeout ]
-crbug.com/623210 http/tests/inspector/extensions-iframe-eval.html [ Timeout ]
-crbug.com/623210 http/tests/inspector/extensions-ignore-cache.html [ Timeout ]
-crbug.com/623210 http/tests/inspector/extensions-network-redirect.html [ Timeout ]
-crbug.com/623210 http/tests/inspector/extensions-useragent.html [ Timeout ]
-crbug.com/623210 virtual/mojo-loading/http/tests/inspector/extensions-headers.html [ Timeout ]
-crbug.com/623210 virtual/mojo-loading/http/tests/inspector/extensions-iframe-eval.html [ Timeout ]
-crbug.com/623210 virtual/mojo-loading/http/tests/inspector/extensions-ignore-cache.html [ Timeout ]
-crbug.com/623210 virtual/mojo-loading/http/tests/inspector/extensions-network-redirect.html [ Timeout ]
-crbug.com/623210 virtual/mojo-loading/http/tests/inspector/extensions-useragent.html [ Timeout ]
+crbug.com/623268 http/tests/inspector-protocol/request-mixed-content-status-blockable.js [ Timeout ]
+crbug.com/623268 http/tests/inspector-protocol/request-mixed-content-status-none.js [ Timeout ]
+crbug.com/623268 http/tests/inspector-protocol/request-mixed-content-status-optionally-blockable.js [ Timeout ]
+crbug.com/623268 http/tests/inspector-protocol/request-referrer-policy.js [ Timeout ]
+crbug.com/623268 virtual/mojo-loading/http/tests/inspector-protocol/request-mixed-content-status-blockable.js [ Timeout ]
+crbug.com/623268 virtual/mojo-loading/http/tests/inspector-protocol/request-mixed-content-status-none.js [ Timeout ]
+crbug.com/623268 virtual/mojo-loading/http/tests/inspector-protocol/request-mixed-content-status-optionally-blockable.js [ Timeout ]
+crbug.com/623268 virtual/mojo-loading/http/tests/inspector-protocol/request-referrer-policy.js [ Timeout ]
+crbug.com/623268 http/tests/inspector/console-cross-origin-iframe-logging.html [ Failure ]
+crbug.com/623268 virtual/mojo-loading/http/tests/inspector/console-cross-origin-iframe-logging.html [ Failure ]
 
 # https://crbug.com/623265 - cross-site navigation in main page breaks test.
 crbug.com/623265 http/tests/inspector/indexeddb/resources-panel.html [ Timeout ]
@@ -158,14 +154,13 @@ crbug.com/451577 virtual/mojo-loading/http/tests/inspector/network/network-datar
 crbug.com/24182 http/tests/perf/large-inlined-script.html [ Timeout Pass ]
 crbug.com/24182 virtual/mojo-loading/http/tests/perf/large-inlined-script.html [ Timeout Pass ]
 
-# https://crbug.com/680307: blob-url-in-iframe.html is missing PASS w/ --site-per-process
-crbug.com/680307 http/tests/security/mixedContent/blob-url-in-iframe.html [ Failure ]
-crbug.com/680307 virtual/mojo-loading/http/tests/security/mixedContent/blob-url-in-iframe.html [ Failure ]
-
 # https://crbug.com/650348: Remove input event forwarding path from RenderFrameProxies
 # This test needs to be modified to not rely on EventSender passing mouse events directly to an OOPIF.
 crbug.com/650348 http/tests/webaudio/autoplay-crossorigin.html [ Timeout ]
 crbug.com/650348 virtual/mojo-loading/http/tests/webaudio/autoplay-crossorigin.html [ Timeout ]
+
+# https://crbug.com/745881: Image diff in test due to font rendering issues.
+crbug.com/745881 [ Win ] fast/text/ellipsis-in-relative-inline.html [ Failure ]
 
 # TODO(lukasza, alexmos): Triage these failures.
 Bug(none) fast/frames/cached-frame-counter.html [ Timeout ]
@@ -217,7 +212,8 @@ Bug(none) external/wpt/html/syntax/parsing/html5lib_tests9.html [ Failure ]
 Bug(none) external/wpt/html/syntax/parsing/html5lib_tricky01.html [ Failure ]
 Bug(none) external/wpt/html/syntax/parsing/html5lib_webkit01.html [ Failure ]
 Bug(none) external/wpt/html/syntax/parsing/html5lib_webkit02.html [ Failure ]
-Bug(none) inspector/sources/debugger-frameworks/frameworks-dom-xhr-event-breakpoints.html [ Timeout ]
+Bug(none) http/tests/devtools/sources/debugger-frameworks/frameworks-dom-xhr-event-breakpoints.html [ Timeout ]
+Bug(none) virtual/mojo-loading/http/tests/devtools/sources/debugger-frameworks/frameworks-dom-xhr-event-breakpoints.html [ Timeout ]
 Bug(none) jquery/manipulation.html [ Timeout ]
 Bug(none) storage/indexeddb/blob-valid-after-deletion.html [ Failure ]
 Bug(none) storage/indexeddb/blob-valid-before-commit.html [ Failure ]

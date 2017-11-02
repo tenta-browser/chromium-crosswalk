@@ -4,7 +4,7 @@
       "name": "LayoutView #document",
       "bounds": [600, 250],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutView #document",
@@ -14,12 +14,12 @@
         {
           "object": "LayoutBlockFlow (positioned) DIV",
           "rect": [0, 460, 20, 20],
-          "reason": "bounds change"
+          "reason": "geometry"
         },
         {
           "object": "LayoutBlockFlow (positioned) DIV",
           "rect": [0, 210, 20, 20],
-          "reason": "bounds change"
+          "reason": "geometry"
         }
       ]
     }
@@ -31,7 +31,7 @@
     },
     {
       "object": "LayoutBlockFlow (positioned) DIV",
-      "reason": "bounds change"
+      "reason": "geometry"
     }
   ]
 }
@@ -41,7 +41,7 @@
       "name": "LayoutView #document",
       "bounds": [400, 250],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutView #document",
@@ -64,7 +64,7 @@
       "name": "LayoutView #document",
       "bounds": [400, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutView #document",
@@ -74,12 +74,12 @@
         {
           "object": "LayoutBlockFlow (positioned) DIV",
           "rect": [0, 560, 20, 20],
-          "reason": "bounds change"
+          "reason": "geometry"
         },
         {
           "object": "LayoutBlockFlow (positioned) DIV",
           "rect": [0, 210, 20, 20],
-          "reason": "bounds change"
+          "reason": "geometry"
         }
       ]
     }
@@ -91,7 +91,7 @@
     },
     {
       "object": "LayoutBlockFlow (positioned) DIV",
-      "reason": "bounds change"
+      "reason": "geometry"
     }
   ]
 }
@@ -101,7 +101,7 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutView #document",

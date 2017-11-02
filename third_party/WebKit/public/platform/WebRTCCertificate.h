@@ -5,6 +5,8 @@
 #ifndef WebRTCCertificate_h
 #define WebRTCCertificate_h
 
+#include "WebVector.h"
+
 #include "public/platform/WebRTCKeyParams.h"
 #include "public/platform/WebString.h"
 
@@ -12,8 +14,22 @@
 
 namespace blink {
 
+// https://w3c.github.io/webrtc-pc/#rtcdtlsfingerprint*
+class WebRTCDtlsFingerprint {
+ public:
+  WebRTCDtlsFingerprint(WebString algorithm, WebString value)
+      : algorithm_(algorithm), value_(value) {}
+
+  WebString Algorithm() const { return algorithm_; }
+  WebString Value() const { return value_; }
+
+ private:
+  WebString algorithm_;
+  WebString value_;
+};
+
 // Corresponds to |rtc::RTCCertificatePEM| in WebRTC.
-// See |WebRTCCertificate::toPEM| and |WebRTCCertificateGenerator::fromPEM|.
+// See |WebRTCCertificate::ToPEM| and |WebRTCCertificateGenerator::FromPEM|.
 class WebRTCCertificatePEM {
  public:
   WebRTCCertificatePEM(WebString private_key, WebString certificate)
@@ -45,8 +61,9 @@ class WebRTCCertificate {
 
   // Returns the expiration time in ms relative to epoch, 1970-01-01T00:00:00Z.
   virtual uint64_t Expires() const = 0;
+  virtual WebVector<WebRTCDtlsFingerprint> GetFingerprints() const = 0;
   // Creates a PEM strings representation of the certificate. See also
-  // |WebRTCCertificateGenerator::fromPEM|.
+  // |WebRTCCertificateGenerator::FromPEM|.
   virtual WebRTCCertificatePEM ToPEM() const = 0;
   // Checks if the two certificate objects represent the same certificate value,
   // as should be the case for a clone and the original.

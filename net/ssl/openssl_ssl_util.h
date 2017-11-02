@@ -10,7 +10,7 @@
 #include "net/base/net_export.h"
 #include "net/cert/x509_certificate.h"
 #include "net/log/net_log_parameters_callback.h"
-#include "third_party/boringssl/src/include/openssl/x509.h"
+#include "third_party/boringssl/src/include/openssl/base.h"
 
 namespace crypto {
 class OpenSSLErrStackTracer;
@@ -78,11 +78,12 @@ NetLogParametersCallback CreateNetLogOpenSSLErrorCallback(
 // this SSL connection.
 int GetNetSSLVersion(SSL* ssl);
 
-bssl::UniquePtr<X509> OSCertHandleToOpenSSL(
-    X509Certificate::OSCertHandle os_handle);
-
-bssl::UniquePtr<STACK_OF(X509)> OSCertHandlesToOpenSSL(
-    const X509Certificate::OSCertHandles& os_handles);
+// Configures |ssl| to send the specified certificate and either |pkey| or
+// |custom_key|. This is a wrapper over |SSL_set_chain_and_key|.
+bool SetSSLChainAndKey(SSL* ssl,
+                       X509Certificate* cert,
+                       EVP_PKEY* pkey,
+                       const SSL_PRIVATE_KEY_METHOD* custom_key);
 
 }  // namespace net
 

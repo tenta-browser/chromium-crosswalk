@@ -6,8 +6,8 @@
 #define CONTENT_BROWSER_RENDERER_HOST_INPUT_TOUCH_ACTION_FILTER_H_
 
 #include "base/macros.h"
+#include "cc/input/touch_action.h"
 #include "content/common/content_export.h"
-#include "content/common/input/touch_action.h"
 
 namespace blink {
 class WebGestureEvent;
@@ -31,7 +31,12 @@ class CONTENT_EXPORT TouchActionFilter {
 
   // Called when a set-touch-action message is received from the renderer
   // for a touch start event that is currently in flight.
-  void OnSetTouchAction(content::TouchAction touch_action);
+  void OnSetTouchAction(cc::TouchAction touch_action);
+
+  // Called at the end of a touch action sequence in order to log when a
+  // whitelisted touch action is or is not equivalent to the allowed touch
+  // action.
+  void ReportAndResetTouchAction();
 
   // Must be called at least once between when the last gesture events for the
   // previous touch sequence have passed through the touch action filter and the
@@ -39,7 +44,13 @@ class CONTENT_EXPORT TouchActionFilter {
   // renderer. It may be called multiple times during this interval.
   void ResetTouchAction();
 
-  TouchAction allowed_touch_action() const { return allowed_touch_action_; }
+  // Called when a set-white-listed-touch-action message is received from the
+  // renderer for a touch start event that is currently in flight.
+  void OnSetWhiteListedTouchAction(cc::TouchAction white_listed_touch_action);
+
+  cc::TouchAction allowed_touch_action() const { return allowed_touch_action_; }
+
+  void SetForceEnableZoom(bool enabled) { force_enable_zoom_ = enabled; }
 
  private:
   bool ShouldSuppressManipulation(const blink::WebGestureEvent&);
@@ -58,8 +69,14 @@ class CONTENT_EXPORT TouchActionFilter {
   // and the next DoubleTap.
   bool allow_current_double_tap_event_;
 
+  // Force enable zoom for Accessibility.
+  bool force_enable_zoom_;
+
   // What touch actions are currently permitted.
-  TouchAction allowed_touch_action_;
+  cc::TouchAction allowed_touch_action_;
+
+  // Whitelisted touch action received from the compositor.
+  cc::TouchAction white_listed_touch_action_;
 
   DISALLOW_COPY_AND_ASSIGN(TouchActionFilter);
 };

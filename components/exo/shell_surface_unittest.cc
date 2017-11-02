@@ -10,11 +10,15 @@
 #include "ash/public/interfaces/window_pin_type.mojom.h"
 #include "ash/shell.h"
 #include "ash/shell_port.h"
+#include "ash/shell_test_api.h"
+#include "ash/system/tray/system_tray.h"
+#include "ash/wm/tablet_mode/tablet_mode_controller.h"
 #include "ash/wm/window_state.h"
-#include "ash/wm/window_state_aura.h"
 #include "ash/wm/wm_event.h"
-#include "ash/wm_window.h"
+#include "ash/wm/workspace/workspace_window_resizer.h"
+#include "ash/wm/workspace_controller_test_api.h"
 #include "base/message_loop/message_loop.h"
+#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/exo/buffer.h"
 #include "components/exo/display.h"
@@ -22,14 +26,17 @@
 #include "components/exo/surface.h"
 #include "components/exo/test/exo_test_base.h"
 #include "components/exo/test/exo_test_helper.h"
+#include "components/exo/wm_helper.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/window.h"
-#include "ui/aura/window_targeter.h"
 #include "ui/base/hit_test.h"
+#include "ui/compositor/compositor.h"
+#include "ui/compositor/layer.h"
 #include "ui/display/display.h"
+#include "ui/display/manager/display_manager.h"
 #include "ui/display/screen.h"
-#include "ui/events/base_event_utils.h"
+#include "ui/events/test/event_generator.h"
 #include "ui/views/widget/widget.h"
 #include "ui/wm/core/shadow.h"
 #include "ui/wm/core/shadow_controller.h"
@@ -61,6 +68,42 @@ bool IsWidgetPinned(views::Widget* widget) {
   return type == ash::mojom::WindowPinType::PINNED ||
          type == ash::mojom::WindowPinType::TRUSTED_PINNED;
 }
+
+class ShellSurfaceBoundsModeTest
+    : public ShellSurfaceTest,
+      public testing::WithParamInterface<ShellSurface::BoundsMode> {
+ public:
+  ShellSurfaceBoundsModeTest() {}
+  ~ShellSurfaceBoundsModeTest() override {}
+
+  bool IsClientBoundsMode() const {
+    return GetParam() == ShellSurface::BoundsMode::CLIENT;
+  }
+
+  bool HasBackdrop() {
+    ash::WorkspaceController* wc =
+        ash::ShellTestApi(ash::Shell::Get()).workspace_controller();
+    return !!ash::WorkspaceControllerTestApi(wc).GetBackdropWindow();
+  }
+
+  std::unique_ptr<ShellSurface> CreateDefaultShellSurface(Surface* surface) {
+    if (IsClientBoundsMode()) {
+      return Display().CreateRemoteShellSurface(
+          surface, ash::kShellWindowId_DefaultContainer,
+          WMHelper::GetInstance()->GetDefaultDeviceScaleFactor());
+    } else {
+      return Display().CreateShellSurface(surface);
+    }
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(ShellSurfaceBoundsModeTest);
+};
+
+INSTANTIATE_TEST_CASE_P(,
+                        ShellSurfaceBoundsModeTest,
+                        testing::Values(ShellSurface::BoundsMode::CLIENT,
+                                        ShellSurface::BoundsMode::SHELL));
 
 TEST_F(ShellSurfaceTest, AcknowledgeConfigure) {
   gfx::Size buffer_size(32, 32);
@@ -121,18 +164,38 @@ TEST_F(ShellSurfaceTest, SetParent) {
       wm::GetTransientParent(shell_surface->GetWidget()->GetNativeWindow()));
 }
 
-TEST_F(ShellSurfaceTest, Maximize) {
+TEST_P(ShellSurfaceBoundsModeTest, Maximize) {
   gfx::Size buffer_size(256, 256);
   std::unique_ptr<Buffer> buffer(
       new Buffer(exo_test_helper()->CreateGpuMemoryBuffer(buffer_size)));
   std::unique_ptr<Surface> surface(new Surface);
-  std::unique_ptr<ShellSurface> shell_surface(new ShellSurface(surface.get()));
+  std::unique_ptr<ShellSurface> shell_surface(
+      CreateDefaultShellSurface(surface.get()));
 
   surface->Attach(buffer.get());
-  shell_surface->Maximize();
   surface->Commit();
-  EXPECT_EQ(CurrentContext()->bounds().width(),
-            shell_surface->GetWidget()->GetWindowBoundsInScreen().width());
+  EXPECT_FALSE(HasBackdrop());
+  shell_surface->Maximize();
+  EXPECT_EQ(IsClientBoundsMode(), HasBackdrop());
+  surface->Commit();
+  EXPECT_EQ(IsClientBoundsMode(), HasBackdrop());
+  if (!IsClientBoundsMode()) {
+    EXPECT_EQ(CurrentContext()->bounds().width(),
+              shell_surface->GetWidget()->GetWindowBoundsInScreen().width());
+  }
+  EXPECT_TRUE(shell_surface->GetWidget()->IsMaximized());
+
+  // Toggle maximize.
+  ash::wm::WMEvent maximize_event(ash::wm::WM_EVENT_TOGGLE_MAXIMIZE);
+  aura::Window* window = shell_surface->GetWidget()->GetNativeWindow();
+
+  ash::wm::GetWindowState(window)->OnWMEvent(&maximize_event);
+  EXPECT_FALSE(shell_surface->GetWidget()->IsMaximized());
+  EXPECT_FALSE(HasBackdrop());
+
+  ash::wm::GetWindowState(window)->OnWMEvent(&maximize_event);
+  EXPECT_TRUE(shell_surface->GetWidget()->IsMaximized());
+  EXPECT_EQ(IsClientBoundsMode(), HasBackdrop());
 }
 
 TEST_F(ShellSurfaceTest, Minimize) {
@@ -158,34 +221,51 @@ TEST_F(ShellSurfaceTest, Minimize) {
   EXPECT_TRUE(shell_surface->GetWidget()->IsMinimized());
 }
 
-TEST_F(ShellSurfaceTest, Restore) {
+TEST_P(ShellSurfaceBoundsModeTest, Restore) {
   gfx::Size buffer_size(256, 256);
   std::unique_ptr<Buffer> buffer(
       new Buffer(exo_test_helper()->CreateGpuMemoryBuffer(buffer_size)));
   std::unique_ptr<Surface> surface(new Surface);
-  std::unique_ptr<ShellSurface> shell_surface(new ShellSurface(surface.get()));
+  std::unique_ptr<ShellSurface> shell_surface(
+      CreateDefaultShellSurface(surface.get()));
 
   surface->Attach(buffer.get());
   surface->Commit();
+  EXPECT_FALSE(HasBackdrop());
   // Note: Remove contents to avoid issues with maximize animations in tests.
   shell_surface->Maximize();
+  EXPECT_EQ(IsClientBoundsMode(), HasBackdrop());
   shell_surface->Restore();
-  EXPECT_EQ(
-      buffer_size.ToString(),
-      shell_surface->GetWidget()->GetWindowBoundsInScreen().size().ToString());
+  EXPECT_FALSE(HasBackdrop());
+  if (!IsClientBoundsMode()) {
+    EXPECT_EQ(buffer_size.ToString(), shell_surface->GetWidget()
+                                          ->GetWindowBoundsInScreen()
+                                          .size()
+                                          .ToString());
+  }
 }
 
-TEST_F(ShellSurfaceTest, SetFullscreen) {
+TEST_P(ShellSurfaceBoundsModeTest, SetFullscreen) {
   gfx::Size buffer_size(256, 256);
   std::unique_ptr<Buffer> buffer(
       new Buffer(exo_test_helper()->CreateGpuMemoryBuffer(buffer_size)));
   std::unique_ptr<Surface> surface(new Surface);
-  std::unique_ptr<ShellSurface> shell_surface(new ShellSurface(surface.get()));
+  std::unique_ptr<ShellSurface> shell_surface(
+      CreateDefaultShellSurface(surface.get()));
 
   shell_surface->SetFullscreen(true);
   surface->Attach(buffer.get());
   surface->Commit();
-  EXPECT_EQ(CurrentContext()->bounds().ToString(),
+  EXPECT_EQ(IsClientBoundsMode(), HasBackdrop());
+  if (!IsClientBoundsMode()) {
+    EXPECT_EQ(CurrentContext()->bounds().ToString(),
+              shell_surface->GetWidget()->GetWindowBoundsInScreen().ToString());
+  }
+
+  shell_surface->SetFullscreen(false);
+  surface->Commit();
+  EXPECT_FALSE(HasBackdrop());
+  EXPECT_NE(CurrentContext()->bounds().ToString(),
             shell_surface->GetWidget()->GetWindowBoundsInScreen().ToString());
 }
 
@@ -244,15 +324,15 @@ TEST_F(ShellSurfaceTest, SetApplicationId) {
   std::unique_ptr<Surface> surface(new Surface);
   std::unique_ptr<ShellSurface> shell_surface(new ShellSurface(surface.get()));
 
-  EXPECT_EQ(nullptr, shell_surface->GetWidget());
+  EXPECT_FALSE(shell_surface->GetWidget());
   shell_surface->SetApplicationId("pre-widget-id");
 
   surface->Attach(buffer.get());
   surface->Commit();
   aura::Window* window = shell_surface->GetWidget()->GetNativeWindow();
-  EXPECT_EQ("pre-widget-id", ShellSurface::GetApplicationId(window));
+  EXPECT_EQ("pre-widget-id", *ShellSurface::GetApplicationId(window));
   shell_surface->SetApplicationId("test");
-  EXPECT_EQ("test", ShellSurface::GetApplicationId(window));
+  EXPECT_EQ("test", *ShellSurface::GetApplicationId(window));
 }
 
 TEST_F(ShellSurfaceTest, Move) {
@@ -299,25 +379,79 @@ TEST_F(ShellSurfaceTest, SetGeometry) {
       shell_surface->GetWidget()->GetWindowBoundsInScreen().size().ToString());
   EXPECT_EQ(gfx::Rect(gfx::Point() - geometry.OffsetFromOrigin(), buffer_size)
                 .ToString(),
-            surface->window()->bounds().ToString());
+            shell_surface->host_window()->bounds().ToString());
 }
 
-TEST_F(ShellSurfaceTest, SetScale) {
+TEST_P(ShellSurfaceBoundsModeTest, DefaultDeviceScaleFactorForcedScaleFactor) {
+  double scale = 1.5;
+  display::Display::SetForceDeviceScaleFactor(scale);
+
+  int64_t display_id = display::Screen::GetScreen()->GetPrimaryDisplay().id();
+  display::Display::SetInternalDisplayId(display_id);
+
   gfx::Size buffer_size(64, 64);
   std::unique_ptr<Buffer> buffer(
       new Buffer(exo_test_helper()->CreateGpuMemoryBuffer(buffer_size)));
   std::unique_ptr<Surface> surface(new Surface);
-  std::unique_ptr<ShellSurface> shell_surface(new ShellSurface(surface.get()));
+  std::unique_ptr<ShellSurface> shell_surface(
+      CreateDefaultShellSurface(surface.get()));
+  surface->Attach(buffer.get());
+  surface->Commit();
+  gfx::Transform transform;
+  if (IsClientBoundsMode())
+    transform.Scale(1.0 / scale, 1.0 / scale);
 
-  double scale = 1.5;
-  shell_surface->SetScale(scale);
+  EXPECT_EQ(
+      transform.ToString(),
+      shell_surface->host_window()->layer()->GetTargetTransform().ToString());
+}
+
+TEST_P(ShellSurfaceBoundsModeTest, DefaultDeviceScaleFactorFromDisplayManager) {
+  int64_t display_id = display::Screen::GetScreen()->GetPrimaryDisplay().id();
+  display::Display::SetInternalDisplayId(display_id);
+  gfx::Size size(1920, 1080);
+
+  display::DisplayManager* display_manager =
+      ash::Shell::Get()->display_manager();
+
+  double scale = 1.25;
+  scoped_refptr<display::ManagedDisplayMode> mode(
+      new display::ManagedDisplayMode(size, 60.f, false /* overscan */,
+                                      true /*native*/, 1.0, scale));
+  mode->set_is_default(true);
+
+  display::ManagedDisplayInfo::ManagedDisplayModeList mode_list;
+  mode_list.push_back(mode);
+
+  display::ManagedDisplayInfo native_display_info(display_id, "test", false);
+  native_display_info.SetManagedDisplayModes(mode_list);
+
+  native_display_info.SetBounds(gfx::Rect(size));
+  native_display_info.set_device_scale_factor(scale);
+
+  std::vector<display::ManagedDisplayInfo> display_info_list;
+  display_info_list.push_back(native_display_info);
+
+  display_manager->OnNativeDisplaysChanged(display_info_list);
+  display_manager->UpdateInternalManagedDisplayModeListForTest();
+
+  gfx::Size buffer_size(64, 64);
+  std::unique_ptr<Buffer> buffer(
+      new Buffer(exo_test_helper()->CreateGpuMemoryBuffer(buffer_size)));
+  std::unique_ptr<Surface> surface(new Surface);
+  std::unique_ptr<ShellSurface> shell_surface(
+      CreateDefaultShellSurface(surface.get()));
+
   surface->Attach(buffer.get());
   surface->Commit();
 
   gfx::Transform transform;
-  transform.Scale(1.0 / scale, 1.0 / scale);
-  EXPECT_EQ(transform.ToString(),
-            surface->window()->layer()->GetTargetTransform().ToString());
+  if (IsClientBoundsMode())
+    transform.Scale(1.0 / scale, 1.0 / scale);
+
+  EXPECT_EQ(
+      transform.ToString(),
+      shell_surface->host_window()->layer()->GetTargetTransform().ToString());
 }
 
 TEST_F(ShellSurfaceTest, SetTopInset) {
@@ -360,10 +494,6 @@ TEST_F(ShellSurfaceTest, CloseCallback) {
   EXPECT_EQ(0, close_call_count);
   shell_surface->GetWidget()->Close();
   EXPECT_EQ(1, close_call_count);
-
-  ui::KeyEvent event(ui::ET_KEY_PRESSED, ui::VKEY_W, ui::EF_CONTROL_DOWN);
-  shell_surface->GetWidget()->OnKeyEvent(&event);
-  EXPECT_EQ(2, close_call_count);
 }
 
 void DestroyShellSurface(std::unique_ptr<ShellSurface>* shell_surface) {
@@ -412,6 +542,11 @@ TEST_F(ShellSurfaceTest, ConfigureCallback) {
       base::Bind(&Configure, base::Unretained(&suggested_size),
                  base::Unretained(&has_state_type),
                  base::Unretained(&is_resizing), base::Unretained(&is_active)));
+  // Commit without contents should result in a configure callback with empty
+  // suggested size as a mechanims to ask the client size itself.
+  surface->Commit();
+  EXPECT_EQ(gfx::Size(), suggested_size);
+
   shell_surface->Maximize();
   shell_surface->AcknowledgeConfigure(0);
   EXPECT_EQ(CurrentContext()->bounds().width(), suggested_size.width());
@@ -628,11 +763,42 @@ TEST_F(ShellSurfaceTest, SurfaceShadow) {
   EXPECT_TRUE(shadow->layer()->visible());
 
   // For surface shadow, the underlay is placed at the bottom of shell surfaces.
-  EXPECT_EQ(surface->window(), shell_surface->shadow_underlay()->parent());
+  EXPECT_EQ(window, shell_surface->shadow_underlay()->parent());
   EXPECT_EQ(window, shell_surface->shadow_overlay()->parent());
 
-  EXPECT_EQ(*surface->window()->children().begin(),
-            shell_surface->shadow_underlay());
+  auto child_it = window->children().begin();
+  EXPECT_EQ(*child_it++, shell_surface->shadow_underlay());
+  EXPECT_EQ(*child_it++, shell_surface->shadow_overlay());
+  EXPECT_EQ(*child_it++, shell_surface->host_window());
+  EXPECT_EQ(child_it, window->children().end());
+
+  // Set the shadow background to 0, and the shadow_underlay should be
+  // destroyed.
+  shell_surface->SetRectangularShadowBackgroundOpacity(0.f);
+  surface->Commit();
+
+  EXPECT_FALSE(shell_surface->shadow_underlay());
+  EXPECT_EQ(window, shell_surface->shadow_overlay()->parent());
+
+  child_it = window->children().begin();
+  EXPECT_EQ(*child_it++, shell_surface->shadow_overlay());
+  EXPECT_EQ(*child_it++, shell_surface->host_window());
+  EXPECT_EQ(child_it, window->children().end());
+
+  // Set the shadow background to 1, and the shadow_underlay should be
+  // recreated.
+  shell_surface->SetRectangularShadowBackgroundOpacity(1.f);
+  surface->Commit();
+
+  EXPECT_TRUE(shell_surface->shadow_underlay());
+  EXPECT_EQ(window, shell_surface->shadow_underlay()->parent());
+  EXPECT_EQ(window, shell_surface->shadow_overlay()->parent());
+
+  child_it = window->children().begin();
+  EXPECT_EQ(*child_it++, shell_surface->shadow_underlay());
+  EXPECT_EQ(*child_it++, shell_surface->shadow_overlay());
+  EXPECT_EQ(*child_it++, shell_surface->host_window());
+  EXPECT_EQ(child_it, window->children().end());
 }
 
 TEST_F(ShellSurfaceTest, NonSurfaceShadow) {
@@ -831,6 +997,18 @@ TEST_F(ShellSurfaceTest, ShadowStartMaximized) {
   // Underlay should be created even without shadow.
   ASSERT_TRUE(shell_surface->shadow_underlay());
   EXPECT_TRUE(shell_surface->shadow_underlay()->IsVisible());
+  shell_surface->SetRectangularSurfaceShadow(gfx::Rect(0, 0, 0, 0));
+  // Underlay should be created even without shadow.
+  ASSERT_TRUE(shell_surface->shadow_underlay());
+  EXPECT_TRUE(shell_surface->shadow_underlay()->IsVisible());
+  shell_surface->SetRectangularShadowEnabled(false);
+  surface->Commit();
+  // No underlay if there is no shadow.
+  EXPECT_FALSE(shell_surface->shadow_underlay());
+
+  shell_surface->SetRectangularShadowEnabled(true);
+  shell_surface->SetRectangularSurfaceShadow(gfx::Rect(10, 10, 100, 100));
+  surface->Commit();
 
   shell_surface->SetRectangularSurfaceShadow(gfx::Rect(0, 0, 0, 0));
   // Underlay should be created even without shadow.
@@ -855,42 +1033,57 @@ TEST_F(ShellSurfaceTest, ShadowStartMaximized) {
   EXPECT_EQ(gfx::Rect(10, 10, 100, 100), shadow->layer()->parent()->bounds());
 }
 
-TEST_F(ShellSurfaceTest, ToggleFullscreen) {
+TEST_P(ShellSurfaceBoundsModeTest, ToggleFullscreen) {
   gfx::Size buffer_size(256, 256);
   std::unique_ptr<Buffer> buffer(
       new Buffer(exo_test_helper()->CreateGpuMemoryBuffer(buffer_size)));
   std::unique_ptr<Surface> surface(new Surface);
-  std::unique_ptr<ShellSurface> shell_surface(new ShellSurface(surface.get()));
+  std::unique_ptr<ShellSurface> shell_surface(
+      CreateDefaultShellSurface(surface.get()));
 
   surface->Attach(buffer.get());
   surface->Commit();
-  EXPECT_EQ(
-      buffer_size.ToString(),
-      shell_surface->GetWidget()->GetWindowBoundsInScreen().size().ToString());
-
+  EXPECT_FALSE(HasBackdrop());
+  if (!IsClientBoundsMode()) {
+    EXPECT_EQ(buffer_size.ToString(), shell_surface->GetWidget()
+                                          ->GetWindowBoundsInScreen()
+                                          .size()
+                                          .ToString());
+  }
   shell_surface->Maximize();
-  EXPECT_EQ(CurrentContext()->bounds().width(),
-            shell_surface->GetWidget()->GetWindowBoundsInScreen().width());
+  EXPECT_EQ(IsClientBoundsMode(), HasBackdrop());
+  if (!IsClientBoundsMode()) {
+    EXPECT_EQ(CurrentContext()->bounds().width(),
+              shell_surface->GetWidget()->GetWindowBoundsInScreen().width());
+  }
 
   ash::wm::WMEvent event(ash::wm::WM_EVENT_TOGGLE_FULLSCREEN);
-  ash::WmWindow* window =
-      ash::WmWindow::Get(shell_surface->GetWidget()->GetNativeWindow());
+  aura::Window* window = shell_surface->GetWidget()->GetNativeWindow();
 
   // Enter fullscreen mode.
-  window->GetWindowState()->OnWMEvent(&event);
+  ash::wm::GetWindowState(window)->OnWMEvent(&event);
 
-  EXPECT_EQ(CurrentContext()->bounds().ToString(),
-            shell_surface->GetWidget()->GetWindowBoundsInScreen().ToString());
+  EXPECT_EQ(IsClientBoundsMode(), HasBackdrop());
+  if (!IsClientBoundsMode()) {
+    EXPECT_EQ(CurrentContext()->bounds().ToString(),
+              shell_surface->GetWidget()->GetWindowBoundsInScreen().ToString());
+  }
 
   // Leave fullscreen mode.
-  window->GetWindowState()->OnWMEvent(&event);
+  ash::wm::GetWindowState(window)->OnWMEvent(&event);
+  EXPECT_EQ(IsClientBoundsMode(), HasBackdrop());
 
   // Check that shell surface is maximized.
-  EXPECT_EQ(CurrentContext()->bounds().width(),
-            shell_surface->GetWidget()->GetWindowBoundsInScreen().width());
+  if (!IsClientBoundsMode()) {
+    EXPECT_EQ(CurrentContext()->bounds().width(),
+              shell_surface->GetWidget()->GetWindowBoundsInScreen().width());
+  }
 }
 
-TEST_F(ShellSurfaceTest, MaximizedAndImmersiveFullscreenBackground) {
+// Make sure that a surface shell started in maximize creates deprecated
+// shadow correctly.
+TEST_F(ShellSurfaceTest,
+       StartMaximizedThenMinimizeWithSetRectangularShadow_DEPRECATED) {
   const gfx::Size display_size =
       display::Screen::GetScreen()->GetPrimaryDisplay().size();
   const gfx::Size buffer_size(display_size);
@@ -901,131 +1094,103 @@ TEST_F(ShellSurfaceTest, MaximizedAndImmersiveFullscreenBackground) {
       surface.get(), nullptr, ShellSurface::BoundsMode::CLIENT, gfx::Point(),
       true, false, ash::kShellWindowId_DefaultContainer));
 
+  // Start in maximized.
+  shell_surface->Maximize();
   surface->Attach(buffer.get());
+  surface->Commit();
 
-  gfx::Rect shadow_bounds(10, 10, 100, 100);
+  gfx::Rect shadow_bounds =
+      display::Screen::GetScreen()->GetPrimaryDisplay().bounds();
   shell_surface->SetGeometry(shadow_bounds);
-  shell_surface->SetRectangularSurfaceShadow(shadow_bounds);
+  shell_surface->SetRectangularShadow_DEPRECATED(shadow_bounds);
   surface->Commit();
   EXPECT_EQ(shadow_bounds,
             shell_surface->GetWidget()->GetWindowBoundsInScreen());
-  ASSERT_EQ(shadow_bounds, shell_surface->shadow_underlay()->bounds());
+  ASSERT_EQ(shadow_bounds,
+            shell_surface->shadow_underlay()->GetBoundsInScreen());
   EXPECT_EQ(display::Screen::GetScreen()->GetPrimaryDisplay().size(),
             shell_surface->surface_for_testing()->window()->bounds().size());
 
-  ash::wm::WMEvent fullscreen_event(ash::wm::WM_EVENT_TOGGLE_FULLSCREEN);
-  ash::WmWindow* window =
-      ash::WmWindow::Get(shell_surface->GetWidget()->GetNativeWindow());
-
-  // Enter immersive fullscreen mode. Shadow underlay is fullscreen.
-  window->GetWindowState()->OnWMEvent(&fullscreen_event);
-
-  EXPECT_TRUE(shell_surface->shadow_underlay()->IsVisible());
-  EXPECT_EQ(1.f, shell_surface->shadow_underlay()->layer()->opacity());
-  EXPECT_EQ(display::Screen::GetScreen()->GetPrimaryDisplay().size(),
-            shell_surface->shadow_underlay()->bounds().size());
-
-  // Leave fullscreen mode. Shadow underlay is restored.
-  window->GetWindowState()->OnWMEvent(&fullscreen_event);
-  EXPECT_TRUE(shell_surface->shadow_underlay()->IsVisible());
-  EXPECT_EQ(shadow_bounds, shell_surface->shadow_underlay()->bounds());
-
-  ash::wm::WMEvent maximize_event(ash::wm::WM_EVENT_TOGGLE_MAXIMIZE);
-
-  // Enter maximized mode. Shadow underlay is fullscreen.
-  window->GetWindowState()->OnWMEvent(&maximize_event);
-  EXPECT_TRUE(shell_surface->shadow_underlay()->IsVisible());
-  EXPECT_EQ(1.f, shell_surface->shadow_underlay()->layer()->opacity());
-  EXPECT_EQ(display::Screen::GetScreen()->GetPrimaryDisplay().size(),
-            shell_surface->shadow_underlay()->bounds().size());
-
-  // Leave maximized mode. Shadow underlay is fullscreen.
-  window->GetWindowState()->OnWMEvent(&maximize_event);
-  EXPECT_TRUE(shell_surface->shadow_underlay()->IsVisible());
-  EXPECT_EQ(1.f, shell_surface->shadow_underlay()->layer()->opacity());
-  EXPECT_EQ(shadow_bounds, shell_surface->shadow_underlay()->bounds());
+  ash::wm::WMEvent minimize_event(ash::wm::WM_EVENT_MINIMIZE);
+  aura::Window* window = shell_surface->GetWidget()->GetNativeWindow();
+  ash::wm::GetWindowState(window)->OnWMEvent(&minimize_event);
 }
 
-TEST_F(ShellSurfaceTest, SpokenFeedbackFullscreenBackground) {
-  const gfx::Size display_size =
-      display::Screen::GetScreen()->GetPrimaryDisplay().size();
-  const gfx::Size buffer_size(display_size);
-  Buffer buffer(exo_test_helper()->CreateGpuMemoryBuffer(buffer_size));
-  Surface surface;
-  ShellSurface shell_surface(&surface, nullptr,
-                             ShellSurface::BoundsMode::CLIENT, gfx::Point(),
-                             true, false, ash::kShellWindowId_DefaultContainer);
-  surface.Attach(&buffer);
+TEST_F(ShellSurfaceTest, CompositorLockInRotation) {
+  UpdateDisplay("800x600");
+  const gfx::Size buffer_size(800, 600);
+  std::unique_ptr<Buffer> buffer(
+      new Buffer(exo_test_helper()->CreateGpuMemoryBuffer(buffer_size)));
+  std::unique_ptr<Surface> surface(new Surface);
+  std::unique_ptr<ShellSurface> shell_surface(new ShellSurface(
+      surface.get(), nullptr, ShellSurface::BoundsMode::CLIENT, gfx::Point(),
+      true, false, ash::kShellWindowId_DefaultContainer));
+  ash::Shell* shell = ash::Shell::Get();
+  shell->tablet_mode_controller()->EnableTabletModeWindowManager(true);
 
-  gfx::Rect shadow_bounds(10, 10, 100, 100);
-  shell_surface.SetGeometry(shadow_bounds);
-  shell_surface.SetRectangularSurfaceShadow(shadow_bounds);
-  surface.Commit();
-  EXPECT_EQ(shadow_bounds,
-            shell_surface.GetWidget()->GetWindowBoundsInScreen());
-  ASSERT_EQ(shadow_bounds, shell_surface.shadow_underlay()->bounds());
+  // Start in maximized.
+  shell_surface->Maximize();
+  surface->Attach(buffer.get());
+  surface->Commit();
 
-  aura::Window* shell_window = shell_surface.GetWidget()->GetNativeWindow();
-  aura::WindowTargeter* targeter = static_cast<aura::WindowTargeter*>(
-      static_cast<ui::EventTarget*>(shell_window)->GetEventTargeter());
+  gfx::Rect maximum_bounds =
+      display::Screen::GetScreen()->GetPrimaryDisplay().bounds();
+  shell_surface->SetGeometry(maximum_bounds);
+  shell_surface->SetOrientation(Orientation::LANDSCAPE);
+  surface->Commit();
 
-  gfx::Point pt_out(300, 300);
-  ui::MouseEvent ev_out(ui::ET_MOUSE_PRESSED, pt_out, pt_out,
-                        ui::EventTimeForNow(), ui::EF_LEFT_MOUSE_BUTTON,
-                        ui::EF_LEFT_MOUSE_BUTTON);
-  gfx::Point pt_in(70, 70);
-  ui::MouseEvent ev_in(ui::ET_MOUSE_PRESSED, pt_in, pt_in,
-                       ui::EventTimeForNow(), ui::EF_LEFT_MOUSE_BUTTON,
-                       ui::EF_LEFT_MOUSE_BUTTON);
+  ui::Compositor* compositor =
+      shell_surface->GetWidget()->GetNativeWindow()->layer()->GetCompositor();
 
-  EXPECT_FALSE(targeter->SubtreeShouldBeExploredForEvent(shell_window, ev_out));
+  EXPECT_FALSE(compositor->IsLocked());
 
-  // Enable spoken feedback.
-  ash::Shell::Get()->accessibility_delegate()->ToggleSpokenFeedback(
-      ash::A11Y_NOTIFICATION_NONE);
-  shell_surface.OnAccessibilityModeChanged();
+  UpdateDisplay("800x600/r");
 
-  EXPECT_EQ(display::Screen::GetScreen()->GetPrimaryDisplay().bounds(),
-            shell_surface.shadow_underlay()->bounds());
-  EXPECT_TRUE(shell_surface.shadow_underlay()->IsVisible());
-  EXPECT_NE(shell_surface.GetWidget()->GetWindowBoundsInScreen(),
-            shell_surface.shadow_underlay()->bounds());
+  EXPECT_TRUE(compositor->IsLocked());
 
-  // Test event capture
-  EXPECT_TRUE(targeter->SubtreeShouldBeExploredForEvent(shell_window, ev_out));
-  EXPECT_EQ(shell_surface.shadow_underlay(),
-            static_cast<ui::EventTargeter*>(targeter)->FindTargetForEvent(
-                shell_window, &ev_out));
-  EXPECT_NE(shell_surface.shadow_underlay(),
-            static_cast<ui::EventTargeter*>(targeter)->FindTargetForEvent(
-                shell_window, &ev_in));
+  shell_surface->SetOrientation(Orientation::PORTRAIT);
+  surface->Commit();
 
-  // Create a new surface
-  Buffer buffer2(exo_test_helper()->CreateGpuMemoryBuffer(buffer_size));
-  Surface surface2;
-  ShellSurface shell_surface2(
-      &surface2, nullptr, ShellSurface::BoundsMode::CLIENT, gfx::Point(), true,
-      false, ash::kShellWindowId_DefaultContainer);
-  surface2.Attach(&buffer2);
-  shell_surface2.SetRectangularSurfaceShadow(shadow_bounds);
-  surface2.Commit();
+  EXPECT_FALSE(compositor->IsLocked());
+}
 
-  // spoken-feedback was already on, so underlay should fill screen
-  EXPECT_EQ(display::Screen::GetScreen()->GetPrimaryDisplay().bounds(),
-            shell_surface2.shadow_underlay()->bounds());
+// If system tray is shown by click. It should be activated if user presses tab
+// key while shell surface is active.
+TEST_F(ShellSurfaceTest, KeyboardNavigationWithSystemTray) {
+  const gfx::Size buffer_size(800, 600);
+  std::unique_ptr<Buffer> buffer(
+      new Buffer(exo_test_helper()->CreateGpuMemoryBuffer(buffer_size)));
+  std::unique_ptr<Surface> surface(new Surface());
+  std::unique_ptr<ShellSurface> shell_surface(new ShellSurface(
+      surface.get(), nullptr, ShellSurface::BoundsMode::CLIENT, gfx::Point(),
+      true, false, ash::kShellWindowId_DefaultContainer));
 
-  // De-activated shell-surface should NOT have fullscreen underlay
-  EXPECT_EQ(shadow_bounds, shell_surface.shadow_underlay()->bounds());
+  surface->Attach(buffer.get());
+  surface->Commit();
 
-  // Disable spoken feedback. Shadow underlay is restored.
-  ash::Shell::Get()->accessibility_delegate()->ToggleSpokenFeedback(
-      ash::A11Y_NOTIFICATION_NONE);
-  shell_surface.OnAccessibilityModeChanged();
-  shell_surface2.OnAccessibilityModeChanged();
+  EXPECT_TRUE(shell_surface->GetWidget()->IsActive());
 
-  EXPECT_TRUE(shell_surface.shadow_underlay()->IsVisible());
-  EXPECT_EQ(shadow_bounds, shell_surface.shadow_underlay()->bounds());
-  EXPECT_EQ(shadow_bounds, shell_surface2.shadow_underlay()->bounds());
+  // Show system tray by perfoming a gesture tap at tray.
+  ash::SystemTray* system_tray = GetPrimarySystemTray();
+  ui::GestureEvent tap(0, 0, 0, base::TimeTicks(),
+                       ui::GestureEventDetails(ui::ET_GESTURE_TAP));
+  system_tray->PerformAction(tap);
+  ASSERT_TRUE(system_tray->GetWidget());
+
+  // Confirm that system tray is not active at this time.
+  EXPECT_TRUE(shell_surface->GetWidget()->IsActive());
+  EXPECT_FALSE(
+      system_tray->GetSystemBubble()->bubble_view()->GetWidget()->IsActive());
+
+  // Send tab key event.
+  ui::test::EventGenerator& event_generator = GetEventGenerator();
+  event_generator.PressKey(ui::VKEY_TAB, ui::EF_NONE);
+  event_generator.ReleaseKey(ui::VKEY_TAB, ui::EF_NONE);
+
+  // Confirm that system tray is activated.
+  EXPECT_FALSE(shell_surface->GetWidget()->IsActive());
+  EXPECT_TRUE(
+      system_tray->GetSystemBubble()->bubble_view()->GetWidget()->IsActive());
 }
 
 // Make sure that a surface shell started in maximize creates deprecated

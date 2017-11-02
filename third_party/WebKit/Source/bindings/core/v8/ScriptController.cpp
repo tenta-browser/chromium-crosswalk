@@ -33,12 +33,13 @@
 #include "bindings/core/v8/ScriptController.h"
 
 #include "bindings/core/v8/ScriptSourceCode.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/core/v8/V8GCController.h"
 #include "bindings/core/v8/V8ScriptRunner.h"
 #include "bindings/core/v8/WindowProxy.h"
 #include "core/dom/Document.h"
 #include "core/dom/ScriptableDocumentParser.h"
+#include "core/dom/UserGestureIndicator.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/LocalFrameClient.h"
 #include "core/frame/Settings.h"
@@ -54,16 +55,16 @@
 #include "core/loader/ProgressTracker.h"
 #include "core/plugins/PluginView.h"
 #include "core/probe/CoreProbes.h"
-#include "platform/FrameViewBase.h"
 #include "platform/Histogram.h"
-#include "platform/UserGestureIndicator.h"
 #include "platform/instrumentation/tracing/TraceEvent.h"
 #include "platform/weborigin/SecurityOrigin.h"
+#include "platform/wtf/Assertions.h"
 #include "platform/wtf/CurrentTime.h"
 #include "platform/wtf/StdLibExtras.h"
 #include "platform/wtf/StringExtras.h"
 #include "platform/wtf/text/CString.h"
 #include "platform/wtf/text/StringBuilder.h"
+#include "public/web/WebSettings.h"
 
 namespace blink {
 
@@ -128,15 +129,14 @@ v8::Local<v8::Value> ScriptController::ExecuteScriptAndReturnValue(
     try_catch.SetVerbose(true);
 
     v8::Local<v8::Script> script;
-    if (!V8Call(
-            V8ScriptRunner::CompileScript(
-                source, GetIsolate(), access_control_status, v8_cache_options),
-            script, try_catch))
+    if (!V8ScriptRunner::CompileScript(ScriptState::From(context), source,
+                                       access_control_status, v8_cache_options)
+             .ToLocal(&script))
       return result;
 
-    if (!V8Call(V8ScriptRunner::RunCompiledScript(GetIsolate(), script,
-                                                  GetFrame()->GetDocument()),
-                result, try_catch))
+    if (!V8ScriptRunner::RunCompiledScript(GetIsolate(), script,
+                                           GetFrame()->GetDocument())
+             .ToLocal(&result))
       return result;
   }
 
@@ -183,18 +183,6 @@ void ScriptController::DisableEval(const String& error_message) {
       V8String(GetIsolate(), error_message));
 }
 
-PassRefPtr<SharedPersistent<v8::Object>> ScriptController::CreatePluginWrapper(
-    PluginView& plugin) {
-  v8::HandleScope handle_scope(GetIsolate());
-  v8::Local<v8::Object> scriptable_object =
-      plugin.ScriptableObject(GetIsolate());
-
-  if (scriptable_object.IsEmpty())
-    return nullptr;
-
-  return SharedPersistent<v8::Object>::Create(scriptable_object, GetIsolate());
-}
-
 V8Extensions& ScriptController::RegisteredExtensions() {
   DEFINE_STATIC_LOCAL(V8Extensions, extensions, ());
   return extensions;
@@ -219,6 +207,7 @@ void ScriptController::ClearWindowProxy() {
 
 void ScriptController::UpdateDocument() {
   window_proxy_manager_->MainWorldProxyMaybeUninitialized()->UpdateDocument();
+  EnableEval();
 }
 
 bool ScriptController::ExecuteScriptIfJavaScriptURL(const KURL& url,
@@ -371,5 +360,30 @@ void ScriptController::ExecuteScriptInIsolatedWorld(
     }
   }
 }
+
+PassRefPtr<DOMWrapperWorld> ScriptController::CreateNewInspectorIsolatedWorld(
+    const String& world_name) {
+  RefPtr<DOMWrapperWorld> world = DOMWrapperWorld::Create(
+      GetIsolate(), DOMWrapperWorld::WorldType::kInspectorIsolated);
+  // Bail out if we could not create an isolated world.
+  if (!world)
+    return nullptr;
+  if (!world_name.IsEmpty()) {
+    DOMWrapperWorld::SetNonMainWorldHumanReadableName(world->GetWorldId(),
+                                                      world_name);
+  }
+  // Make sure the execution context exists.
+  WindowProxy(*world);
+  return world;
+}
+
+STATIC_ASSERT_ENUM(WebSettings::V8CacheStrategiesForCacheStorage::kDefault,
+                   V8CacheStrategiesForCacheStorage::kDefault);
+STATIC_ASSERT_ENUM(WebSettings::V8CacheStrategiesForCacheStorage::kNone,
+                   V8CacheStrategiesForCacheStorage::kNone);
+STATIC_ASSERT_ENUM(WebSettings::V8CacheStrategiesForCacheStorage::kNormal,
+                   V8CacheStrategiesForCacheStorage::kNormal);
+STATIC_ASSERT_ENUM(WebSettings::V8CacheStrategiesForCacheStorage::kAggressive,
+                   V8CacheStrategiesForCacheStorage::kAggressive);
 
 }  // namespace blink

@@ -57,15 +57,13 @@ String ContentAfterPastingHTML(DummyPageHolder* page_holder,
 
   // Make the body editable, and put the caret in it.
   body->setAttribute(HTMLNames::contenteditableAttr, "true");
+  body->focus();
   frame.GetDocument()->UpdateStyleAndLayout();
   frame.Selection().SetSelection(
       SelectionInDOMTree::Builder().SelectAllChildren(*body).Build());
-  EXPECT_EQ(kCaretSelection, frame.Selection()
-                                 .ComputeVisibleSelectionInDOMTreeDeprecated()
-                                 .GetSelectionType());
-  EXPECT_TRUE(frame.Selection()
-                  .ComputeVisibleSelectionInDOMTreeDeprecated()
-                  .IsContentEditable())
+  EXPECT_TRUE(frame.Selection().ComputeVisibleSelectionInDOMTree().IsCaret());
+  EXPECT_TRUE(
+      frame.Selection().ComputeVisibleSelectionInDOMTree().IsContentEditable())
       << "We should be pasting into something editable.";
 
   Pasteboard* pasteboard = Pasteboard::GeneralPasteboard();
@@ -90,11 +88,11 @@ TEST(UnsafeSVGAttributeSanitizationTest, pasteAnchor_javaScriptHrefIsStripped) {
 
   EXPECT_TRUE(sanitized_content.Contains("</a>"))
       << "We should have pasted *something*; the document is: "
-      << sanitized_content.Utf8().Data();
+      << sanitized_content.Utf8().data();
   EXPECT_FALSE(sanitized_content.Contains(":alert()"))
       << "The JavaScript URL is unsafe and should have been stripped; "
          "instead: "
-      << sanitized_content.Utf8().Data();
+      << sanitized_content.Utf8().data();
 }
 
 TEST(UnsafeSVGAttributeSanitizationTest,
@@ -112,11 +110,11 @@ TEST(UnsafeSVGAttributeSanitizationTest,
 
   EXPECT_TRUE(sanitized_content.Contains("</a>"))
       << "We should have pasted *something*; the document is: "
-      << sanitized_content.Utf8().Data();
+      << sanitized_content.Utf8().data();
   EXPECT_FALSE(sanitized_content.Contains(":alert()"))
       << "The JavaScript URL is unsafe and should have been stripped; "
          "instead: "
-      << sanitized_content.Utf8().Data();
+      << sanitized_content.Utf8().data();
 }
 
 TEST(UnsafeSVGAttributeSanitizationTest,
@@ -133,11 +131,11 @@ TEST(UnsafeSVGAttributeSanitizationTest,
 
   EXPECT_TRUE(sanitized_content.Contains("</a>"))
       << "We should have pasted *something*; the document is: "
-      << sanitized_content.Utf8().Data();
+      << sanitized_content.Utf8().data();
   EXPECT_FALSE(sanitized_content.Contains(":alert()"))
       << "The JavaScript URL is unsafe and should have been stripped; "
          "instead: "
-      << sanitized_content.Utf8().Data();
+      << sanitized_content.Utf8().data();
 }
 
 TEST(UnsafeSVGAttributeSanitizationTest,
@@ -155,11 +153,11 @@ TEST(UnsafeSVGAttributeSanitizationTest,
 
   EXPECT_TRUE(sanitized_content.Contains("</a>"))
       << "We should have pasted *something*; the document is: "
-      << sanitized_content.Utf8().Data();
+      << sanitized_content.Utf8().data();
   EXPECT_FALSE(sanitized_content.Contains(":alert()"))
       << "The JavaScript URL is unsafe and should have been stripped; "
          "instead: "
-      << sanitized_content.Utf8().Data();
+      << sanitized_content.Utf8().data();
 }
 
 TEST(UnsafeSVGAttributeSanitizationTest,
@@ -176,11 +174,11 @@ TEST(UnsafeSVGAttributeSanitizationTest,
 
   EXPECT_TRUE(sanitized_content.Contains("</a>"))
       << "We should have pasted *something*; the document is: "
-      << sanitized_content.Utf8().Data();
+      << sanitized_content.Utf8().data();
   EXPECT_FALSE(sanitized_content.Contains(":alert()"))
       << "The JavaScript URL is unsafe and should have been stripped; "
          "instead: "
-      << sanitized_content.Utf8().Data();
+      << sanitized_content.Utf8().data();
 }
 
 TEST(
@@ -199,11 +197,11 @@ TEST(
 
   EXPECT_TRUE(sanitized_content.Contains("</a>"))
       << "We should have pasted *something*; the document is: "
-      << sanitized_content.Utf8().Data();
+      << sanitized_content.Utf8().data();
   EXPECT_FALSE(sanitized_content.Contains(":alert()"))
       << "The JavaScript URL is unsafe and should have been stripped; "
          "instead: "
-      << sanitized_content.Utf8().Data();
+      << sanitized_content.Utf8().data();
 }
 
 // Other sanitization integration tests are layout tests that use
@@ -227,11 +225,11 @@ TEST(UnsafeSVGAttributeSanitizationTest,
 
   EXPECT_TRUE(sanitized_content.Contains("<a href=\"https://www.goo"))
       << "We should have pasted *something*; the document is: "
-      << sanitized_content.Utf8().Data();
+      << sanitized_content.Utf8().data();
   EXPECT_FALSE(sanitized_content.Contains(":alert()"))
       << "The JavaScript URL is unsafe and should have been stripped; "
          "instead: "
-      << sanitized_content.Utf8().Data();
+      << sanitized_content.Utf8().data();
 }
 
 TEST(
@@ -254,11 +252,11 @@ TEST(
 
   EXPECT_TRUE(sanitized_content.Contains("<a xlink:href=\"https://www.goo"))
       << "We should have pasted *something*; the document is: "
-      << sanitized_content.Utf8().Data();
+      << sanitized_content.Utf8().data();
   EXPECT_FALSE(sanitized_content.Contains(":alert()"))
       << "The JavaScript URL is unsafe and should have been stripped; "
          "instead: "
-      << sanitized_content.Utf8().Data();
+      << sanitized_content.Utf8().data();
 }
 
 // Unit tests
@@ -269,7 +267,7 @@ TEST(
 // Element::stripScriptingAttributes, perhaps to strip all
 // SVG animation attributes.
 TEST(UnsafeSVGAttributeSanitizationTest, stringsShouldNotSupportAddition) {
-  Document* document = Document::Create();
+  Document* document = Document::CreateForTest();
   SVGElement* target = SVGAElement::Create(*document);
   SVGAnimateElement* element = SVGAnimateElement::Create(*document);
   element->SetTargetElement(target);
@@ -296,7 +294,7 @@ TEST(UnsafeSVGAttributeSanitizationTest,
   attributes.push_back(Attribute(SVGNames::fromAttr, "/home"));
   attributes.push_back(Attribute(SVGNames::toAttr, "javascript:own3d()"));
 
-  Document* document = Document::Create();
+  Document* document = Document::CreateForTest();
   Element* element = SVGAnimateElement::Create(*document);
   element->StripScriptingAttributes(attributes);
 
@@ -316,7 +314,7 @@ TEST(UnsafeSVGAttributeSanitizationTest,
 TEST(UnsafeSVGAttributeSanitizationTest,
      isJavaScriptURLAttribute_hrefContainingJavascriptURL) {
   Attribute attribute(SVGNames::hrefAttr, "javascript:alert()");
-  Document* document = Document::Create();
+  Document* document = Document::CreateForTest();
   Element* element = SVGAElement::Create(*document);
   EXPECT_TRUE(element->IsJavaScriptURLAttribute(attribute))
       << "The 'a' element should identify an 'href' attribute with a "
@@ -326,7 +324,7 @@ TEST(UnsafeSVGAttributeSanitizationTest,
 TEST(UnsafeSVGAttributeSanitizationTest,
      isJavaScriptURLAttribute_xlinkHrefContainingJavascriptURL) {
   Attribute attribute(XLinkNames::hrefAttr, "javascript:alert()");
-  Document* document = Document::Create();
+  Document* document = Document::CreateForTest();
   Element* element = SVGAElement::Create(*document);
   EXPECT_TRUE(element->IsJavaScriptURLAttribute(attribute))
       << "The 'a' element should identify an 'xlink:href' attribute with a "
@@ -339,7 +337,7 @@ TEST(
   QualifiedName href_alternate_prefix("foo", "href",
                                       XLinkNames::xlinkNamespaceURI);
   Attribute evil_attribute(href_alternate_prefix, "javascript:alert()");
-  Document* document = Document::Create();
+  Document* document = Document::CreateForTest();
   Element* element = SVGAElement::Create(*document);
   EXPECT_TRUE(element->IsJavaScriptURLAttribute(evil_attribute))
       << "The XLink 'href' attribute with a JavaScript URL value should be "
@@ -350,7 +348,7 @@ TEST(
 TEST(UnsafeSVGAttributeSanitizationTest,
      isSVGAnimationAttributeSettingJavaScriptURL_fromContainingJavaScriptURL) {
   Attribute evil_attribute(SVGNames::fromAttr, "javascript:alert()");
-  Document* document = Document::Create();
+  Document* document = Document::CreateForTest();
   Element* element = SVGAnimateElement::Create(*document);
   EXPECT_TRUE(
       element->IsSVGAnimationAttributeSettingJavaScriptURL(evil_attribute))
@@ -361,7 +359,7 @@ TEST(UnsafeSVGAttributeSanitizationTest,
 TEST(UnsafeSVGAttributeSanitizationTest,
      isSVGAnimationAttributeSettingJavaScriptURL_toContainingJavaScripURL) {
   Attribute evil_attribute(SVGNames::toAttr, "javascript:window.close()");
-  Document* document = Document::Create();
+  Document* document = Document::CreateForTest();
   Element* element = SVGSetElement::Create(*document);
   EXPECT_TRUE(
       element->IsSVGAnimationAttributeSettingJavaScriptURL(evil_attribute))
@@ -373,7 +371,7 @@ TEST(
     UnsafeSVGAttributeSanitizationTest,
     isSVGAnimationAttributeSettingJavaScriptURL_valuesContainingJavaScriptURL) {
   Attribute evil_attribute(SVGNames::valuesAttr, "hi!; javascript:confirm()");
-  Document* document = Document::Create();
+  Document* document = Document::CreateForTest();
   Element* element = SVGAnimateElement::Create(*document);
   element = SVGAnimateElement::Create(*document);
   EXPECT_TRUE(
@@ -385,7 +383,7 @@ TEST(
 TEST(UnsafeSVGAttributeSanitizationTest,
      isSVGAnimationAttributeSettingJavaScriptURL_innocuousAnimationAttribute) {
   Attribute fine_attribute(SVGNames::fromAttr, "hello, world!");
-  Document* document = Document::Create();
+  Document* document = Document::CreateForTest();
   Element* element = SVGSetElement::Create(*document);
   EXPECT_FALSE(
       element->IsSVGAnimationAttributeSettingJavaScriptURL(fine_attribute))

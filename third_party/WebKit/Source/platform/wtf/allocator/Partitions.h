@@ -34,6 +34,7 @@
 #include <string.h>
 #include "base/allocator/partition_allocator/partition_alloc.h"
 #include "base/allocator/partition_allocator/spin_lock.h"
+#include "base/numerics/checked_math.h"
 #include "platform/wtf/Assertions.h"
 #include "platform/wtf/WTF.h"
 #include "platform/wtf/WTFExport.h"
@@ -68,9 +69,16 @@ class WTF_EXPORT Partitions {
     NOTREACHED();
     return nullptr;
   }
+
   ALWAYS_INLINE static base::PartitionRoot* LayoutPartition() {
     DCHECK(initialized_);
     return layout_allocator_.root();
+  }
+
+  ALWAYS_INLINE static size_t ComputeAllocationSize(size_t count, size_t size) {
+    base::CheckedNumeric<size_t> total = count;
+    total *= size;
+    return total.ValueOrDie();
   }
 
   static size_t CurrentDOMMemoryUsage() {
@@ -86,6 +94,8 @@ class WTF_EXPORT Partitions {
     total_size += layout_allocator_.root()->total_size_of_committed_pages;
     return total_size;
   }
+
+  static size_t TotalActiveBytes();
 
   static void DecommitFreeableMemory();
 
@@ -130,19 +140,7 @@ class WTF_EXPORT Partitions {
   static base::subtle::SpinLock initialization_lock_;
   static bool initialized_;
 
-  // We have the following four partitions.
-  //   - LayoutObject partition: A partition to allocate LayoutObjects.
-  //     We prepare a dedicated partition for LayoutObjects because they
-  //     are likely to be a source of use-after-frees. Another reason
-  //     is for performance: As LayoutObjects are guaranteed to only be used
-  //     by the main thread, we can bypass acquiring a lock. Also we can
-  //     improve memory locality by putting LayoutObjects together.
-  //   - ArrayBuffer partition: A partition to allocate array buffers.
-  //   - Buffer partition: A partition to allocate other buffers that have
-  //     a strong risk where the length and/or the contents are exploited from
-  //     user scripts. Vectors, HashTables and Strings are allocated in the
-  //      buffer partition.
-  //   - Fast malloc partition: A partition to allocate all other objects.
+  // See Allocator.md for a description of these partitions.
   static base::PartitionAllocatorGeneric fast_malloc_allocator_;
   static base::PartitionAllocatorGeneric array_buffer_allocator_;
   static base::PartitionAllocatorGeneric buffer_allocator_;
@@ -174,6 +172,8 @@ using base::PartitionStatsDumper;
 using base::PartitionMemoryStats;
 using base::PartitionBucketMemoryStats;
 using base::PartitionAllocHooks;
+
+using CheckedSizeT = base::CheckedNumeric<size_t>;
 
 }  // namespace WTF
 

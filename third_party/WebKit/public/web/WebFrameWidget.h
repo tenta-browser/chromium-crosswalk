@@ -31,9 +31,9 @@
 #ifndef WebFrameWidget_h
 #define WebFrameWidget_h
 
-#include "../platform/WebCommon.h"
-#include "../platform/WebDragOperation.h"
-#include "../platform/WebPageVisibilityState.h"
+#include "public/platform/WebCommon.h"
+#include "public/platform/WebDragOperation.h"
+#include "public/platform/WebPageVisibilityState.h"
 #include "public/web/WebWidget.h"
 
 namespace blink {
@@ -41,18 +41,12 @@ namespace blink {
 class WebDragData;
 class WebLocalFrame;
 class WebInputMethodController;
-class WebView;
 class WebWidgetClient;
+struct WebActiveWheelFlingParameters;
 
 class WebFrameWidget : public WebWidget {
  public:
   BLINK_EXPORT static WebFrameWidget* Create(WebWidgetClient*, WebLocalFrame*);
-  // Creates a frame widget for a WebView. Temporary helper to help transition
-  // away from WebView inheriting WebWidget.
-  // TODO(dcheng): Remove once transition is complete.
-  BLINK_EXPORT static WebFrameWidget* Create(WebWidgetClient*,
-                                             WebView*,
-                                             WebLocalFrame* main_frame);
 
   // Sets the visibility of the WebFrameWidget.
   // We still track page-level visibility, but additionally we need to notify a
@@ -124,6 +118,16 @@ class WebFrameWidget : public WebWidget {
   // This is needed for out-of-process iframes to know if they are clipped
   // by ancestor frames in another process.
   virtual void SetRemoteViewportIntersection(const WebRect&) {}
+
+  // Sets the inert bit on an out-of-process iframe, causing it to ignore
+  // input.
+  virtual void SetIsInert(bool) {}
+
+  // Called to inform the WebFrameWidget that a wheel fling animation was
+  // started externally (for instance by the compositor) but must be completed
+  // by the WebFrameWidget.
+  virtual void TransferActiveWheelFlingAnimation(
+      const WebActiveWheelFlingParameters&) = 0;
 };
 
 }  // namespace blink

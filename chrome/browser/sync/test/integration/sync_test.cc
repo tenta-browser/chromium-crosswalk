@@ -18,6 +18,7 @@
 #include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/process/launch.h"
+#include "base/run_loop.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -25,6 +26,7 @@
 #include "base/synchronization/waitable_event.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/platform_thread.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
@@ -82,6 +84,7 @@
 #include "net/base/load_flags.h"
 #include "net/base/network_change_notifier.h"
 #include "net/base/port_util.h"
+#include "net/dns/mock_host_resolver.h"
 #include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/test_url_fetcher_factory.h"
 #include "net/url_request/url_fetcher.h"
@@ -149,7 +152,7 @@ class SyncServerStatusChecker : public net::URLFetcherDelegate {
         (source->GetStatus().status() == net::URLRequestStatus::SUCCESS &&
          source->GetResponseCode() == 200 &&
          base::StartsWith(data, "ok", base::CompareCase::SENSITIVE));
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
   bool running() const { return running_; }
@@ -178,7 +181,7 @@ class EncryptionChecker : public SingleClientStatusChangeChecker {
 
 std::unique_ptr<KeyedService> BuildFakeServerProfileInvalidationProvider(
     content::BrowserContext* context) {
-  return base::MakeUnique<invalidation::ProfileInvalidationProvider>(
+  return std::make_unique<invalidation::ProfileInvalidationProvider>(
       std::unique_ptr<invalidation::InvalidationService>(
           new fake_server::FakeServerInvalidationService));
 }
@@ -187,7 +190,7 @@ std::unique_ptr<KeyedService> BuildP2PProfileInvalidationProvider(
     content::BrowserContext* context,
     syncer::P2PNotificationTarget notification_target) {
   Profile* profile = static_cast<Profile*>(context);
-  return base::MakeUnique<invalidation::ProfileInvalidationProvider>(
+  return std::make_unique<invalidation::ProfileInvalidationProvider>(
       std::unique_ptr<invalidation::InvalidationService>(
           new invalidation::P2PInvalidationService(
               std::unique_ptr<IdentityProvider>(new ProfileIdentityProvider(
@@ -264,7 +267,7 @@ void SyncTest::SetUp() {
     LOG(FATAL) << "Cannot run sync tests without GAIA credentials.";
 
   // Mock the Mac Keychain service.  The real Keychain can block on user input.
-  OSCryptMocker::SetUpWithSingleton();
+  OSCryptMocker::SetUp();
 
   // Start up a sync test server if one is needed and setup mock gaia responses.
   // Note: This must be done prior to the call to SetupClients() because we want
@@ -337,6 +340,7 @@ bool SyncTest::CreateGaiaAccount(const std::string& username,
 }
 
 void SyncTest::CreateProfile(int index) {
+  base::ThreadRestrictions::ScopedAllowIO allow_io;
   tmp_profile_paths_[index] = new base::ScopedTempDir();
   if (UsingExternalServers() && num_clients_ > 1) {
     // For multi profile UI signin, profile paths should be outside user data
@@ -362,7 +366,7 @@ void SyncTest::CreateProfile(int index) {
     // For test profiles, a custom delegate needs to be used to do the
     // initialization work before the profile is registered.
     profile_delegates_[index] =
-        base::MakeUnique<SyncProfileDelegate>(base::Bind(
+        std::make_unique<SyncProfileDelegate>(base::Bind(
             &SyncTest::InitializeProfile, base::Unretained(this), index));
     MakeTestProfile(profile_path, index);
   }
@@ -503,6 +507,7 @@ void SyncTest::DisableVerifier() {
 }
 
 bool SyncTest::SetupClients() {
+  base::ThreadRestrictions::ScopedAllowIO allow_io;
   if (num_clients_ <= 0)
     LOG(FATAL) << "num_clients_ incorrectly initialized.";
   if (!profiles_.empty() || !browsers_.empty() || !clients_.empty())
@@ -547,7 +552,7 @@ bool SyncTest::SetupClients() {
     base::FilePath user_data_dir;
     PathService::Get(chrome::DIR_USER_DATA, &user_data_dir);
     profile_delegates_[num_clients_] =
-        base::MakeUnique<SyncProfileDelegate>(base::Callback<void(Profile*)>());
+        std::make_unique<SyncProfileDelegate>(base::Callback<void(Profile*)>());
     verifier_ = MakeTestProfile(
         user_data_dir.Append(FILE_PATH_LITERAL("Verifier")), num_clients_);
     WaitForDataModels(verifier());
@@ -593,11 +598,9 @@ void SyncTest::InitializeProfile(int index, Profile* profile) {
           : ProfileSyncServiceHarness::SigninType::FAKE_SIGNIN;
 
   DCHECK(!clients_[index]);
-  clients_[index] =
-      ProfileSyncServiceHarness::Create(GetProfile(index),
-                                        username_,
-                                        password_,
-                                        singin_type);
+  clients_[index] = ProfileSyncServiceHarness::Create(
+      GetProfile(index), username_, "gaia-id-" + username_, password_,
+      singin_type);
   EXPECT_NE(nullptr, GetClient(index)) << "Could not create Client " << index;
   InitializeInvalidations(index);
 }
@@ -639,12 +642,13 @@ void SyncTest::InitializeInvalidations(int index) {
     // Start listening for and emitting notifications of commits.
     DCHECK(!invalidation_forwarders_[index]);
     invalidation_forwarders_[index] =
-        base::MakeUnique<P2PInvalidationForwarder>(clients_[index]->service(),
+        std::make_unique<P2PInvalidationForwarder>(clients_[index]->service(),
                                                    p2p_invalidation_service);
   }
 }
 
 bool SyncTest::SetupSync() {
+  base::ThreadRestrictions::ScopedAllowIO allow_io;
   // Create sync profiles and clients if they haven't already been created.
   if (profiles_.empty()) {
     if (!SetupClients()) {
@@ -697,7 +701,7 @@ bool SyncTest::SetupSync() {
   if (UsingExternalServers()) {
     for (int i = 0; i < num_clients_; ++i) {
       DCHECK(!sync_refreshers_[i]);
-      sync_refreshers_[i] = base::MakeUnique<P2PSyncRefresher>(
+      sync_refreshers_[i] = std::make_unique<P2PSyncRefresher>(
           GetProfile(i), clients_[i]->service());
     }
 
@@ -761,28 +765,18 @@ void SyncTest::TearDownOnMainThread() {
   clients_.clear();
 }
 
-void SyncTest::SetUpInProcessBrowserTestFixture() {
-  // We don't take a reference to |resolver|, but mock_host_resolver_override_
-  // does, so effectively assumes ownership.
-  net::RuleBasedHostResolverProc* resolver =
-      new net::RuleBasedHostResolverProc(host_resolver());
-  resolver->AllowDirectLookup("*.google.com");
+void SyncTest::SetUpOnMainThread() {
+  host_resolver()->AllowDirectLookup("*.google.com");
 
   // Allow connection to googleapis.com for oauth token requests in E2E tests.
-  resolver->AllowDirectLookup("*.googleapis.com");
+  host_resolver()->AllowDirectLookup("*.googleapis.com");
 
   // On Linux, we use Chromium's NSS implementation which uses the following
   // hosts for certificate verification. Without these overrides, running the
   // integration tests on Linux causes error as we make external DNS lookups.
-  resolver->AllowDirectLookup("*.thawte.com");
-  resolver->AllowDirectLookup("*.geotrust.com");
-  resolver->AllowDirectLookup("*.gstatic.com");
-  mock_host_resolver_override_ =
-      base::MakeUnique<net::ScopedDefaultHostResolverProc>(resolver);
-}
-
-void SyncTest::TearDownInProcessBrowserTestFixture() {
-  mock_host_resolver_override_.reset();
+  host_resolver()->AllowDirectLookup("*.thawte.com");
+  host_resolver()->AllowDirectLookup("*.geotrust.com");
+  host_resolver()->AllowDirectLookup("*.gstatic.com");
 }
 
 void SyncTest::WaitForDataModels(Profile* profile) {
@@ -814,8 +808,8 @@ void SyncTest::ReadPasswordFile() {
 }
 
 void SyncTest::SetupMockGaiaResponses() {
-  factory_ = base::MakeUnique<net::URLFetcherImplFactory>();
-  fake_factory_ = base::MakeUnique<net::FakeURLFetcherFactory>(factory_.get());
+  factory_ = std::make_unique<net::URLFetcherImplFactory>();
+  fake_factory_ = std::make_unique<net::FakeURLFetcherFactory>(factory_.get());
   fake_factory_->SetFakeResponse(
       GaiaUrls::GetInstance()->get_user_info_url(),
       "email=user@gmail.com\ndisplayEmail=user@gmail.com",
@@ -944,7 +938,7 @@ void SyncTest::SetUpTestServerIfRequired() {
     if (!SetUpLocalTestServer())
       LOG(FATAL) << "Failed to set up local test server";
   } else if (server_type_ == IN_PROCESS_FAKE_SERVER) {
-    fake_server_ = base::MakeUnique<fake_server::FakeServer>();
+    fake_server_ = std::make_unique<fake_server::FakeServer>();
     SetupMockGaiaResponses();
   } else {
     LOG(FATAL) << "Don't know which server environment to run test in.";
@@ -974,7 +968,7 @@ bool SyncTest::SetUpLocalPythonTestServer() {
 
   net::HostPortPair xmpp_host_port_pair(sync_server_.host_port_pair());
   xmpp_host_port_pair.set_port(xmpp_port);
-  xmpp_port_ = base::MakeUnique<net::ScopedPortException>(xmpp_port);
+  xmpp_port_ = std::make_unique<net::ScopedPortException>(xmpp_port);
 
   if (!cl->HasSwitch(invalidation::switches::kSyncNotificationHostPort)) {
     cl->AppendSwitchASCII(invalidation::switches::kSyncNotificationHostPort,

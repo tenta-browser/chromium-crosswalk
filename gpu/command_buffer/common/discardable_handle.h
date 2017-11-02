@@ -36,9 +36,13 @@ class GPU_EXPORT DiscardableHandleBase {
   int32_t shm_id() const { return shm_id_; }
   uint32_t byte_offset() const { return byte_offset_; }
 
+  // Ensures this is a valid allocation for use with a DiscardableHandleBase.
+  static bool ValidateParameters(const Buffer* buffer, uint32_t byte_offset);
+
   // Test only functions.
-  bool IsLockedForTesting();
-  bool IsDeletedForTesting();
+  bool IsLockedForTesting() const;
+  bool IsDeletedForTesting() const;
+  scoped_refptr<Buffer> BufferForTesting() const { return buffer_; }
 
  protected:
   DiscardableHandleBase(scoped_refptr<Buffer> buffer,
@@ -98,6 +102,11 @@ class GPU_EXPORT ServiceDiscardableHandle : public DiscardableHandleBase {
   // Tries to delete the handle. Returns true if successfully deleted. Returns
   // false if the handle is locked client-side and cannot be deleted.
   bool Delete();
+
+  // Deletes the handle, regardless of the handle's state. This should be
+  // called in response to glDeleteTextures, which may be called while the
+  // handle is in the locked or unlocked state.
+  void ForceDelete();
 };
 
 }  // namespace gpu

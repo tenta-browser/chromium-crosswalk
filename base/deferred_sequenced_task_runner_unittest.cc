@@ -8,17 +8,16 @@
 #include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/memory/ref_counted.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/threading/non_thread_safe.h"
 #include "base/threading/thread.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
 
-class DeferredSequencedTaskRunnerTest : public testing::Test,
-                                        public base::NonThreadSafe {
+class DeferredSequencedTaskRunnerTest : public testing::Test {
  public:
   class ExecuteTaskOnDestructor :
       public base::RefCounted<ExecuteTaskOnDestructor> {

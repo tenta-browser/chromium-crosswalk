@@ -4,8 +4,14 @@
 
 #include "core/dom/Modulator.h"
 
-#include "bindings/core/v8/ScriptState.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
+#include "core/dom/Document.h"
+#include "core/dom/ModulatorImpl.h"
+#include "core/frame/LocalDOMWindow.h"
+#include "core/frame/LocalFrame.h"
+#include "core/workers/MainThreadWorkletGlobalScope.h"
+#include "platform/bindings/ScriptState.h"
+#include "platform/bindings/V8PerContextData.h"
 
 namespace blink {
 
@@ -16,10 +22,37 @@ const char kPerContextDataKey[] = "Modulator";
 Modulator* Modulator::From(ScriptState* script_state) {
   if (!script_state)
     return nullptr;
+
   V8PerContextData* per_context_data = script_state->PerContextData();
   if (!per_context_data)
     return nullptr;
-  return static_cast<Modulator*>(per_context_data->GetData(kPerContextDataKey));
+
+  Modulator* modulator =
+      static_cast<Modulator*>(per_context_data->GetData(kPerContextDataKey));
+  if (modulator)
+    return modulator;
+  ExecutionContext* execution_context = ExecutionContext::From(script_state);
+  if (execution_context->IsDocument()) {
+    Document* document = ToDocument(execution_context);
+    modulator = ModulatorImpl::Create(script_state, document->Fetcher());
+    Modulator::SetModulator(script_state, modulator);
+
+    // See comment in LocalDOMWindow::modulator_ for this workaround.
+    LocalDOMWindow* window = document->ExecutingWindow();
+    window->SetModulator(modulator);
+  } else if (execution_context->IsMainThreadWorkletGlobalScope()) {
+    MainThreadWorkletGlobalScope* global_scope =
+        ToMainThreadWorkletGlobalScope(execution_context);
+    modulator = ModulatorImpl::Create(
+        script_state, global_scope->GetFrame()->GetDocument()->Fetcher());
+    Modulator::SetModulator(script_state, modulator);
+
+    // See comment in WorkletGlobalScope::modulator_ for this workaround.
+    global_scope->SetModulator(modulator);
+  } else {
+    NOTREACHED();
+  }
+  return modulator;
 }
 
 Modulator::~Modulator() {}
@@ -42,7 +75,7 @@ KURL Modulator::ResolveModuleSpecifier(const String& module_request,
                                        const KURL& base_url) {
   // Step 1. Apply the URL parser to specifier. If the result is not failure,
   // return the result.
-  KURL url(KURL(), module_request);
+  KURL url(NullURL(), module_request);
   if (url.IsValid())
     return url;
 

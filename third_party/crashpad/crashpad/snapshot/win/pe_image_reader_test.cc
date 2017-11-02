@@ -22,6 +22,7 @@
 #include "gtest/gtest.h"
 #include "snapshot/win/process_reader_win.h"
 #include "test/errors.h"
+#include "util/misc/from_pointer_cast.h"
 #include "util/win/get_module_information.h"
 #include "util/win/module_version.h"
 #include "util/win/process_info.h"
@@ -44,7 +45,7 @@ TEST(PEImageReader, DebugDirectory) {
       << ErrorMessage("GetModuleInformation");
   EXPECT_EQ(module_info.lpBaseOfDll, self);
   ASSERT_TRUE(pe_image_reader.Initialize(&process_reader,
-                                         reinterpret_cast<WinVMAddress>(self),
+                                         FromPointerCast<WinVMAddress>(self),
                                          module_info.SizeOfImage,
                                          "self"));
   UUID uuid;
@@ -127,7 +128,7 @@ TEST(PEImageReader, VSFixedFileInfo_OneModule) {
   ASSERT_TRUE(process_reader.Initialize(GetCurrentProcess(),
                                         ProcessSuspensionState::kRunning));
 
-  const wchar_t kModuleName[] = L"kernel32.dll";
+  static constexpr wchar_t kModuleName[] = L"kernel32.dll";
   const HMODULE module_handle = GetModuleHandle(kModuleName);
   ASSERT_TRUE(module_handle) << ErrorMessage("GetModuleHandle");
 
@@ -139,7 +140,7 @@ TEST(PEImageReader, VSFixedFileInfo_OneModule) {
 
   ProcessInfo::Module module;
   module.name = kModuleName;
-  module.dll_base = reinterpret_cast<WinVMAddress>(module_info.lpBaseOfDll);
+  module.dll_base = FromPointerCast<WinVMAddress>(module_info.lpBaseOfDll);
   module.size = module_info.SizeOfImage;
 
   TestVSFixedFileInfo(&process_reader, module, true);

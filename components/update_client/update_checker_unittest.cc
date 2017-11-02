@@ -15,14 +15,15 @@
 #include "base/memory/ref_counted.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
-#include "base/test/scoped_task_scheduler.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/version.h"
 #include "build/build_config.h"
 #include "components/prefs/testing_pref_service.h"
-#include "components/update_client/crx_update_item.h"
+#include "components/update_client/component.h"
 #include "components/update_client/persisted_data.h"
 #include "components/update_client/test_configurator.h"
+#include "components/update_client/update_engine.h"
 #include "components/update_client/url_request_post_interceptor.h"
 #include "net/url_request/url_request_test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -57,16 +58,13 @@ class UpdateCheckerTest : public testing::Test {
   void SetUp() override;
   void TearDown() override;
 
-  void UpdateCheckComplete(int error,
-                           const UpdateResponse::Results& results,
-                           int retry_after_sec);
+  void UpdateCheckComplete(int error, int retry_after_sec);
 
  protected:
   void Quit();
   void RunThreads();
-  void RunThreadsUntilIdle();
 
-  std::unique_ptr<CrxUpdateItem> BuildCrxUpdateItem();
+  std::unique_ptr<Component> MakeComponent() const;
 
   scoped_refptr<TestConfigurator> config_;
   std::unique_ptr<TestingPrefServiceSimple> pref_;
@@ -75,53 +73,58 @@ class UpdateCheckerTest : public testing::Test {
   std::unique_ptr<UpdateChecker> update_checker_;
 
   std::unique_ptr<InterceptorFactory> interceptor_factory_;
-  URLRequestPostInterceptor* post_interceptor_;  // Owned by the factory.
+  URLRequestPostInterceptor* post_interceptor_ =
+      nullptr;  // Owned by the factory.
 
-  int error_;
-  UpdateResponse::Results results_;
+  int error_ = 0;
+  int retry_after_sec_ = 0;
+
+  std::unique_ptr<UpdateContext> update_context_;
 
  private:
-  base::MessageLoopForIO loop_;
-  base::test::ScopedTaskScheduler scoped_task_scheduler_;
+  std::unique_ptr<UpdateContext> MakeFakeUpdateContext() const;
+
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   base::Closure quit_closure_;
 
   DISALLOW_COPY_AND_ASSIGN(UpdateCheckerTest);
 };
 
 UpdateCheckerTest::UpdateCheckerTest()
-    : post_interceptor_(NULL), error_(0), scoped_task_scheduler_(&loop_) {}
+    : scoped_task_environment_(
+          base::test::ScopedTaskEnvironment::MainThreadType::IO) {}
 
 UpdateCheckerTest::~UpdateCheckerTest() {
 }
 
 void UpdateCheckerTest::SetUp() {
-  config_ = new TestConfigurator(base::ThreadTaskRunnerHandle::Get(),
-                                 base::ThreadTaskRunnerHandle::Get());
-  pref_.reset(new TestingPrefServiceSimple());
+  config_ = base::MakeRefCounted<TestConfigurator>();
+  pref_ = base::MakeUnique<TestingPrefServiceSimple>();
   PersistedData::RegisterPrefs(pref_->registry());
-  metadata_.reset(new PersistedData(pref_.get()));
-  interceptor_factory_.reset(
-      new InterceptorFactory(base::ThreadTaskRunnerHandle::Get()));
+  metadata_ = base::MakeUnique<PersistedData>(pref_.get());
+  interceptor_factory_ =
+      base::MakeUnique<InterceptorFactory>(base::ThreadTaskRunnerHandle::Get());
   post_interceptor_ = interceptor_factory_->CreateInterceptor();
   EXPECT_TRUE(post_interceptor_);
 
-  update_checker_.reset();
+  update_checker_ = nullptr;
 
   error_ = 0;
-  results_ = UpdateResponse::Results();
+  retry_after_sec_ = 0;
+  update_context_ = MakeFakeUpdateContext();
 }
 
 void UpdateCheckerTest::TearDown() {
-  update_checker_.reset();
+  update_checker_ = nullptr;
 
-  post_interceptor_ = NULL;
-  interceptor_factory_.reset();
+  post_interceptor_ = nullptr;
+  interceptor_factory_ = nullptr;
 
   config_ = nullptr;
 
   // The PostInterceptor requires the message loop to run to destruct correctly.
   // TODO(sorin): This is fragile and should be fixed.
-  RunThreadsUntilIdle();
+  scoped_task_environment_.RunUntilIdle();
 }
 
 void UpdateCheckerTest::RunThreads() {
@@ -133,11 +136,7 @@ void UpdateCheckerTest::RunThreads() {
   // intercepts on the IO thread, run the threads until they are
   // idle. The component updater service won't loop again until the loop count
   // is set and the service is started.
-  RunThreadsUntilIdle();
-}
-
-void UpdateCheckerTest::RunThreadsUntilIdle() {
-  base::RunLoop().RunUntilIdle();
+  scoped_task_environment_.RunUntilIdle();
 }
 
 void UpdateCheckerTest::Quit() {
@@ -145,16 +144,21 @@ void UpdateCheckerTest::Quit() {
     quit_closure_.Run();
 }
 
-void UpdateCheckerTest::UpdateCheckComplete(
-    int error,
-    const UpdateResponse::Results& results,
-    int retry_after_sec) {
+void UpdateCheckerTest::UpdateCheckComplete(int error, int retry_after_sec) {
   error_ = error;
-  results_ = results;
+  retry_after_sec_ = retry_after_sec;
   Quit();
 }
 
-std::unique_ptr<CrxUpdateItem> UpdateCheckerTest::BuildCrxUpdateItem() {
+std::unique_ptr<UpdateContext> UpdateCheckerTest::MakeFakeUpdateContext()
+    const {
+  return base::MakeUnique<UpdateContext>(
+      config_, false, std::vector<std::string>(),
+      UpdateClient::CrxDataCallback(), UpdateEngine::NotifyObserversCallback(),
+      UpdateEngine::Callback(), nullptr);
+}
+
+std::unique_ptr<Component> UpdateCheckerTest::MakeComponent() const {
   CrxComponent crx_component;
   crx_component.name = "test_jebg";
   crx_component.pk_hash.assign(jebg_hash, jebg_hash + arraysize(jebg_hash));
@@ -162,13 +166,11 @@ std::unique_ptr<CrxUpdateItem> UpdateCheckerTest::BuildCrxUpdateItem() {
   crx_component.version = base::Version("0.9");
   crx_component.fingerprint = "fp1";
 
-  std::unique_ptr<CrxUpdateItem> crx_update_item =
-      base::MakeUnique<CrxUpdateItem>();
-  crx_update_item->state = CrxUpdateItem::State::kNew;
-  crx_update_item->id = kUpdateItemId;
-  crx_update_item->component = crx_component;
+  auto component = base::MakeUnique<Component>(*update_context_, kUpdateItemId);
+  component->state_ = base::MakeUnique<Component::StateNew>(component.get());
+  component->crx_component_ = crx_component;
 
-  return crx_update_item;
+  return component;
 }
 
 TEST_F(UpdateCheckerTest, UpdateCheckSuccess) {
@@ -177,16 +179,17 @@ TEST_F(UpdateCheckerTest, UpdateCheckSuccess) {
 
   update_checker_ = UpdateChecker::Create(config_, metadata_.get());
 
-  std::unique_ptr<CrxUpdateItem> item = BuildCrxUpdateItem();
-  item->component.installer_attributes["ap"] = "some_ap";
-  IdToCrxUpdateItemMap items_to_check;
-  items_to_check[kUpdateItemId] = std::move(item);
+  IdToComponentPtrMap components;
+  components[kUpdateItemId] = MakeComponent();
+
+  auto& component = components[kUpdateItemId];
+  component->crx_component_.installer_attributes["ap"] = "some_ap";
 
   update_checker_->CheckForUpdates(
-      items_to_check, "extra=\"params\"", true,
+      std::vector<std::string>{kUpdateItemId}, components, "extra=\"params\"",
+      true,
       base::Bind(&UpdateCheckerTest::UpdateCheckComplete,
                  base::Unretained(this)));
-
   RunThreads();
 
   EXPECT_EQ(1, post_interceptor_->GetHitCount())
@@ -197,7 +200,7 @@ TEST_F(UpdateCheckerTest, UpdateCheckSuccess) {
   // Sanity check the request.
   const auto request = post_interceptor_->GetRequests()[0];
   EXPECT_NE(string::npos, post_interceptor_->GetRequests()[0].find(
-                              "request protocol=\"3.0\" extra=\"params\""));
+                              "request protocol=\"3.1\" extra=\"params\""));
   // The request must not contain any "dlpref" in the default case.
   EXPECT_EQ(string::npos, request.find(" dlpref=\""));
   EXPECT_NE(
@@ -218,9 +221,14 @@ TEST_F(UpdateCheckerTest, UpdateCheckSuccess) {
 
   // Sanity check the arguments of the callback after parsing.
   EXPECT_EQ(0, error_);
-  EXPECT_EQ(1ul, results_.list.size());
-  EXPECT_STREQ(kUpdateItemId, results_.list[0].extension_id.c_str());
-  EXPECT_STREQ("1.0", results_.list[0].manifest.version.c_str());
+
+  EXPECT_EQ(base::Version("1.0"), component->next_version_);
+  EXPECT_EQ(1u, component->crx_urls_.size());
+  EXPECT_EQ(
+      GURL("http://localhost/download/jebgalgnebhfojomionfpkfelancnnkf.crx"),
+      component->crx_urls_.front());
+
+  EXPECT_STREQ("this", component->action_run_.c_str());
 
 #if (OS_WIN)
   EXPECT_NE(string::npos, request.find(" domainjoined="));
@@ -239,14 +247,15 @@ TEST_F(UpdateCheckerTest, UpdateCheckInvalidAp) {
 
   update_checker_ = UpdateChecker::Create(config_, metadata_.get());
 
-  std::unique_ptr<CrxUpdateItem> item = BuildCrxUpdateItem();
+  IdToComponentPtrMap components;
+  components[kUpdateItemId] = MakeComponent();
+
   // Make "ap" too long.
-  item->component.installer_attributes["ap"] = std::string(257, 'a');
-  IdToCrxUpdateItemMap items_to_check;
-  items_to_check[kUpdateItemId] = std::move(item);
+  auto& component = components[kUpdateItemId];
+  component->crx_component_.installer_attributes["ap"] = std::string(257, 'a');
 
   update_checker_->CheckForUpdates(
-      items_to_check, "", true,
+      std::vector<std::string>{kUpdateItemId}, components, "", true,
       base::Bind(&UpdateCheckerTest::UpdateCheckComplete,
                  base::Unretained(this)));
 
@@ -268,12 +277,11 @@ TEST_F(UpdateCheckerTest, UpdateCheckSuccessNoBrand) {
   config_->SetBrand("TOOLONG");   // Sets an invalid brand code.
   update_checker_ = UpdateChecker::Create(config_, metadata_.get());
 
-  std::unique_ptr<CrxUpdateItem> item = BuildCrxUpdateItem();
-  IdToCrxUpdateItemMap items_to_check;
-  items_to_check[kUpdateItemId] = std::move(item);
+  IdToComponentPtrMap components;
+  components[kUpdateItemId] = MakeComponent();
 
   update_checker_->CheckForUpdates(
-      items_to_check, "", true,
+      std::vector<std::string>{kUpdateItemId}, components, "", true,
       base::Bind(&UpdateCheckerTest::UpdateCheckComplete,
                  base::Unretained(this)));
 
@@ -295,12 +303,13 @@ TEST_F(UpdateCheckerTest, UpdateCheckError) {
 
   update_checker_ = UpdateChecker::Create(config_, metadata_.get());
 
-  std::unique_ptr<CrxUpdateItem> item = BuildCrxUpdateItem();
-  IdToCrxUpdateItemMap items_to_check;
-  items_to_check[kUpdateItemId] = std::move(item);
+  IdToComponentPtrMap components;
+  components[kUpdateItemId] = MakeComponent();
+
+  auto& component = components[kUpdateItemId];
 
   update_checker_->CheckForUpdates(
-      items_to_check, "", true,
+      std::vector<std::string>{kUpdateItemId}, components, "", true,
       base::Bind(&UpdateCheckerTest::UpdateCheckComplete,
                  base::Unretained(this)));
   RunThreads();
@@ -311,7 +320,7 @@ TEST_F(UpdateCheckerTest, UpdateCheckError) {
       << post_interceptor_->GetRequestsAsString();
 
   EXPECT_EQ(403, error_);
-  EXPECT_EQ(0ul, results_.list.size());
+  EXPECT_FALSE(component->next_version_.IsValid());
 }
 
 TEST_F(UpdateCheckerTest, UpdateCheckDownloadPreference) {
@@ -322,12 +331,12 @@ TEST_F(UpdateCheckerTest, UpdateCheckDownloadPreference) {
 
   update_checker_ = UpdateChecker::Create(config_, metadata_.get());
 
-  std::unique_ptr<CrxUpdateItem> item = BuildCrxUpdateItem();
-  IdToCrxUpdateItemMap items_to_check;
-  items_to_check[kUpdateItemId] = std::move(item);
+  IdToComponentPtrMap components;
+  components[kUpdateItemId] = MakeComponent();
 
   update_checker_->CheckForUpdates(
-      items_to_check, "extra=\"params\"", true,
+      std::vector<std::string>{kUpdateItemId}, components, "extra=\"params\"",
+      true,
       base::Bind(&UpdateCheckerTest::UpdateCheckComplete,
                  base::Unretained(this)));
 
@@ -348,12 +357,13 @@ TEST_F(UpdateCheckerTest, UpdateCheckCupError) {
   config_->SetEnabledCupSigning(true);
   update_checker_ = UpdateChecker::Create(config_, metadata_.get());
 
-  std::unique_ptr<CrxUpdateItem> item = BuildCrxUpdateItem();
-  IdToCrxUpdateItemMap items_to_check;
-  items_to_check[kUpdateItemId] = std::move(item);
+  IdToComponentPtrMap components;
+  components[kUpdateItemId] = MakeComponent();
+
+  const auto& component = components[kUpdateItemId];
 
   update_checker_->CheckForUpdates(
-      items_to_check, "", true,
+      std::vector<std::string>{kUpdateItemId}, components, "", true,
       base::Bind(&UpdateCheckerTest::UpdateCheckComplete,
                  base::Unretained(this)));
 
@@ -375,7 +385,7 @@ TEST_F(UpdateCheckerTest, UpdateCheckCupError) {
 
   // Expect an error since the response is not trusted.
   EXPECT_EQ(-10000, error_);
-  EXPECT_EQ(0ul, results_.list.size());
+  EXPECT_FALSE(component->next_version_.IsValid());
 }
 
 // Tests that the UpdateCheckers will not make an update check for a
@@ -385,19 +395,20 @@ TEST_F(UpdateCheckerTest, UpdateCheckRequiresEncryptionError) {
 
   update_checker_ = UpdateChecker::Create(config_, metadata_.get());
 
-  std::unique_ptr<CrxUpdateItem> item = BuildCrxUpdateItem();
-  item->component.requires_network_encryption = true;
-  IdToCrxUpdateItemMap items_to_check;
-  items_to_check[kUpdateItemId] = std::move(item);
+  IdToComponentPtrMap components;
+  components[kUpdateItemId] = MakeComponent();
+
+  auto& component = components[kUpdateItemId];
+  component->crx_component_.requires_network_encryption = true;
 
   update_checker_->CheckForUpdates(
-      items_to_check, "", true,
+      std::vector<std::string>{kUpdateItemId}, components, "", true,
       base::Bind(&UpdateCheckerTest::UpdateCheckComplete,
                  base::Unretained(this)));
   RunThreads();
 
   EXPECT_EQ(-1, error_);
-  EXPECT_EQ(0u, results_.list.size());
+  EXPECT_FALSE(component->next_version_.IsValid());
 }
 
 // Tests that the PersistedData will get correctly update and reserialize
@@ -410,19 +421,21 @@ TEST_F(UpdateCheckerTest, UpdateCheckDateLastRollCall) {
 
   update_checker_ = UpdateChecker::Create(config_, metadata_.get());
 
-  std::unique_ptr<CrxUpdateItem> item = BuildCrxUpdateItem();
-  IdToCrxUpdateItemMap items_to_check;
-  items_to_check[kUpdateItemId] = std::move(item);
+  IdToComponentPtrMap components;
+  components[kUpdateItemId] = MakeComponent();
 
   // Do two update-checks.
   update_checker_->CheckForUpdates(
-      items_to_check, "extra=\"params\"", true,
+      std::vector<std::string>{kUpdateItemId}, components, "extra=\"params\"",
+      true,
       base::Bind(&UpdateCheckerTest::UpdateCheckComplete,
                  base::Unretained(this)));
   RunThreads();
+
   update_checker_ = UpdateChecker::Create(config_, metadata_.get());
   update_checker_->CheckForUpdates(
-      items_to_check, "extra=\"params\"", true,
+      std::vector<std::string>{kUpdateItemId}, components, "extra=\"params\"",
+      true,
       base::Bind(&UpdateCheckerTest::UpdateCheckComplete,
                  base::Unretained(this)));
   RunThreads();
@@ -444,8 +457,10 @@ TEST_F(UpdateCheckerTest, UpdateCheckUpdateDisabled) {
   config_->SetBrand("");
   update_checker_ = UpdateChecker::Create(config_, metadata_.get());
 
-  std::unique_ptr<CrxUpdateItem> item = BuildCrxUpdateItem();
-  CrxUpdateItem* item_ptr = item.get();
+  IdToComponentPtrMap components;
+  components[kUpdateItemId] = MakeComponent();
+
+  auto& component = components[kUpdateItemId];
 
   // Tests the scenario where:
   //  * the component does not support group policies.
@@ -453,11 +468,10 @@ TEST_F(UpdateCheckerTest, UpdateCheckUpdateDisabled) {
   // Expects the group policy to be ignored and the update check to not
   // include the "updatedisabled" attribute.
   EXPECT_FALSE(
-      item_ptr->component.supports_group_policy_enable_component_updates);
-  IdToCrxUpdateItemMap items_to_check;
-  items_to_check[kUpdateItemId] = std::move(item);
+      component->crx_component_.supports_group_policy_enable_component_updates);
+
   update_checker_->CheckForUpdates(
-      items_to_check, "", false,
+      std::vector<std::string>{kUpdateItemId}, components, "", false,
       base::Bind(&UpdateCheckerTest::UpdateCheckComplete,
                  base::Unretained(this)));
   RunThreads();
@@ -470,10 +484,11 @@ TEST_F(UpdateCheckerTest, UpdateCheckUpdateDisabled) {
   //  * the component supports group policies.
   //  * the component updates are disabled.
   // Expects the update check to include the "updatedisabled" attribute.
-  item_ptr->component.supports_group_policy_enable_component_updates = true;
+  component->crx_component_.supports_group_policy_enable_component_updates =
+      true;
   update_checker_ = UpdateChecker::Create(config_, metadata_.get());
   update_checker_->CheckForUpdates(
-      items_to_check, "", false,
+      std::vector<std::string>{kUpdateItemId}, components, "", false,
       base::Bind(&UpdateCheckerTest::UpdateCheckComplete,
                  base::Unretained(this)));
   RunThreads();
@@ -486,10 +501,11 @@ TEST_F(UpdateCheckerTest, UpdateCheckUpdateDisabled) {
   //  * the component does not support group policies.
   //  * the component updates are enabled.
   // Expects the update check to not include the "updatedisabled" attribute.
-  item_ptr->component.supports_group_policy_enable_component_updates = false;
+  component->crx_component_.supports_group_policy_enable_component_updates =
+      false;
   update_checker_ = UpdateChecker::Create(config_, metadata_.get());
   update_checker_->CheckForUpdates(
-      items_to_check, "", true,
+      std::vector<std::string>{kUpdateItemId}, components, "", true,
       base::Bind(&UpdateCheckerTest::UpdateCheckComplete,
                  base::Unretained(this)));
   RunThreads();
@@ -502,10 +518,11 @@ TEST_F(UpdateCheckerTest, UpdateCheckUpdateDisabled) {
   //  * the component supports group policies.
   //  * the component updates are enabled.
   // Expects the update check to not include the "updatedisabled" attribute.
-  item_ptr->component.supports_group_policy_enable_component_updates = true;
+  component->crx_component_.supports_group_policy_enable_component_updates =
+      true;
   update_checker_ = UpdateChecker::Create(config_, metadata_.get());
   update_checker_->CheckForUpdates(
-      items_to_check, "", true,
+      std::vector<std::string>{kUpdateItemId}, components, "", true,
       base::Bind(&UpdateCheckerTest::UpdateCheckComplete,
                  base::Unretained(this)));
   RunThreads();
@@ -513,6 +530,33 @@ TEST_F(UpdateCheckerTest, UpdateCheckUpdateDisabled) {
                               std::string("<app appid=\"") + kUpdateItemId +
                               "\" version=\"0.9\">"
                               "<updatecheck/>"));
+}
+
+TEST_F(UpdateCheckerTest, NoUpdateActionRun) {
+  EXPECT_TRUE(post_interceptor_->ExpectRequest(
+      new PartialMatch("updatecheck"),
+      test_file("updatecheck_reply_noupdate.xml")));
+
+  update_checker_ = UpdateChecker::Create(config_, metadata_.get());
+
+  IdToComponentPtrMap components;
+  components[kUpdateItemId] = MakeComponent();
+
+  auto& component = components[kUpdateItemId];
+
+  update_checker_->CheckForUpdates(
+      std::vector<std::string>{kUpdateItemId}, components, "", true,
+      base::Bind(&UpdateCheckerTest::UpdateCheckComplete,
+                 base::Unretained(this)));
+  RunThreads();
+
+  EXPECT_EQ(1, post_interceptor_->GetHitCount())
+      << post_interceptor_->GetRequestsAsString();
+  ASSERT_EQ(1, post_interceptor_->GetCount())
+      << post_interceptor_->GetRequestsAsString();
+
+  EXPECT_EQ(0, error_);
+  EXPECT_STREQ("this", component->action_run_.c_str());
 }
 
 }  // namespace update_client

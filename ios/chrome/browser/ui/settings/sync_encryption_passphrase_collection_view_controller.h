@@ -15,7 +15,6 @@ namespace ios {
 class ChromeBrowserState;
 }  // namespace ios
 
-namespace ios_internal {
 namespace sync_encryption_passphrase {
 typedef NS_ENUM(NSInteger, SectionIdentifier) {
   SectionIdentifierPassphrase = kSectionIdentifierEnumZero,
@@ -29,13 +28,12 @@ typedef NS_ENUM(NSInteger, ItemType) {
   ItemTypeFooter,
 };
 }  // namespace sync_encryption_passphrase
-}  // namespace ios_internal
 
 // Controller to allow user to specify encryption passphrase for Sync.
 @interface SyncEncryptionPassphraseCollectionViewController
     : SettingsRootCollectionViewController<SyncObserverModelBridge>
 
-@property(nonatomic, readonly) UITextField* passphrase;
+@property(weak, nonatomic, readonly) UITextField* passphrase;
 @property(nonatomic, copy) NSString* headerMessage;
 @property(nonatomic, copy) NSString* footerMessage;
 @property(nonatomic, copy) NSString* processingMessage;
@@ -44,7 +42,8 @@ typedef NS_ENUM(NSInteger, ItemType) {
 // |browserState| must not be nil.
 - (instancetype)initWithBrowserState:(ios::ChromeBrowserState*)browserState
     NS_DESIGNATED_INITIALIZER;
-- (instancetype)initWithStyle:(CollectionViewControllerStyle)style
+- (instancetype)initWithLayout:(UICollectionViewLayout*)layout
+                         style:(CollectionViewControllerStyle)style
     NS_UNAVAILABLE;
 
 @end

@@ -10,9 +10,9 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/rand_util.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/trace_event/trace_event.h"
-#include "content/renderer/media/media_stream.h"
 #include "content/renderer/media/media_stream_registry_interface.h"
 #include "content/renderer/media/media_stream_video_source.h"
 #include "content/renderer/media/media_stream_video_track.h"
@@ -45,14 +45,7 @@ class PpFrameWriter : public MediaStreamVideoSource,
 
  protected:
   // MediaStreamVideoSource implementation.
-  void GetCurrentSupportedFormats(
-      int max_requested_width,
-      int max_requested_height,
-      double max_requested_frame_rate,
-      const VideoCaptureDeviceFormatsCB& callback) override;
   void StartSourceImpl(
-      const media::VideoCaptureFormat& format,
-      const blink::WebMediaConstraints& constraints,
       const VideoCaptureDeliverFrameCB& frame_callback) override;
   void StopSourceImpl() override;
 
@@ -96,7 +89,7 @@ void PpFrameWriter::FrameWriterDelegate::DeliverFrame(
     const scoped_refptr<media::VideoFrame>& frame) {
   io_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&FrameWriterDelegate::DeliverFrameOnIO, this, frame));
+      base::BindOnce(&FrameWriterDelegate::DeliverFrameOnIO, this, frame));
 }
 
 void PpFrameWriter::FrameWriterDelegate::DeliverFrameOnIO(
@@ -115,24 +108,9 @@ PpFrameWriter::~PpFrameWriter() {
   DVLOG(3) << "PpFrameWriter dtor";
 }
 
-void PpFrameWriter::GetCurrentSupportedFormats(
-    int max_requested_width,
-    int max_requested_height,
-    double max_requested_frame_rate,
-    const VideoCaptureDeviceFormatsCB& callback) {
-  DCHECK(CalledOnValidThread());
-  DVLOG(3) << "PpFrameWriter::GetCurrentSupportedFormats()";
-  // Since the input is free to change the resolution at any point in time
-  // the supported formats are unknown.
-  media::VideoCaptureFormats formats;
-  callback.Run(formats);
-}
-
 void PpFrameWriter::StartSourceImpl(
-    const media::VideoCaptureFormat& format,
-    const blink::WebMediaConstraints& constraints,
     const VideoCaptureDeliverFrameCB& frame_callback) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(!delegate_.get());
   DVLOG(3) << "PpFrameWriter::StartSourceImpl()";
   delegate_ = new FrameWriterDelegate(io_task_runner(), frame_callback);
@@ -140,14 +118,14 @@ void PpFrameWriter::StartSourceImpl(
 }
 
 void PpFrameWriter::StopSourceImpl() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 }
 
 // Note: PutFrame must copy or process image_data directly in this function,
 // because it may be overwritten as soon as we return from this function.
 void PpFrameWriter::PutFrame(PPB_ImageData_Impl* image_data,
                              int64_t time_stamp_ns) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   TRACE_EVENT0("video", "PpFrameWriter::PutFrame");
   DVLOG(3) << "PpFrameWriter::PutFrame()";
 
@@ -168,7 +146,6 @@ void PpFrameWriter::PutFrame(PPB_ImageData_Impl* image_data,
     return;
   }
 
-  SkAutoLockPixels src_lock(bitmap);
   const uint8_t* src_data = static_cast<uint8_t*>(bitmap.getPixels());
   const int src_stride = static_cast<int>(bitmap.rowBytes());
   const int width = bitmap.width();

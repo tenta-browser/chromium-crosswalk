@@ -11,6 +11,7 @@
 #include "base/rand_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
+#include "base/task_runner_util.h"
 #include "base/task_scheduler/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
@@ -23,7 +24,6 @@
 #include "chrome/common/safe_browsing/file_type_policies.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/history/core/browser/history_service.h"
-#include "components/mime_util/mime_util.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
@@ -32,6 +32,7 @@
 #include "extensions/features/features.h"
 #include "net/base/filename_util.h"
 #include "ppapi/features/features.h"
+#include "third_party/WebKit/common/mime_util/mime_util.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/origin.h"
 
@@ -316,6 +317,7 @@ void DownloadTargetDeterminer::ReserveVirtualPathDone(
 
   switch (result) {
     case PathValidationResult::SUCCESS:
+    case PathValidationResult::SAME_AS_SOURCE:
       break;
 
     case PathValidationResult::PATH_NOT_WRITABLE:
@@ -481,14 +483,10 @@ void IsHandledBySafePlugin(content::ResourceContext* resource_context,
     // The GetPlugins call causes the plugin list to be refreshed. Once that's
     // done we can retry the GetPluginInfo call. We break out of this cycle
     // after a single retry in order to avoid retrying indefinitely.
-    plugin_service->GetPlugins(
-        base::Bind(&InvokeClosureAfterGetPluginCallback,
-                   base::Bind(&IsHandledBySafePlugin,
-                              resource_context,
-                              url,
-                              mime_type,
-                              IGNORE_IF_STALE_PLUGIN_LIST,
-                              callback)));
+    plugin_service->GetPlugins(base::BindOnce(
+        &InvokeClosureAfterGetPluginCallback,
+        base::Bind(&IsHandledBySafePlugin, resource_context, url, mime_type,
+                   IGNORE_IF_STALE_PLUGIN_LIST, callback)));
     return;
   }
   // In practice, we assume that retrying once is enough.
@@ -498,8 +496,8 @@ void IsHandledBySafePlugin(content::ResourceContext* resource_context,
       (plugin_info.type == WebPluginInfo::PLUGIN_TYPE_PEPPER_IN_PROCESS ||
        plugin_info.type == WebPluginInfo::PLUGIN_TYPE_PEPPER_OUT_OF_PROCESS ||
        plugin_info.type == WebPluginInfo::PLUGIN_TYPE_BROWSER_PLUGIN);
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE, base::Bind(callback, is_handled_safely));
+  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
+                          base::BindOnce(callback, is_handled_safely));
 }
 
 }  // namespace
@@ -517,20 +515,17 @@ DownloadTargetDeterminer::Result
   if (mime_type_.empty())
     return CONTINUE;
 
-  if (mime_util::IsSupportedMimeType(mime_type_)) {
+  if (blink::IsSupportedMimeType(mime_type_)) {
     is_filetype_handled_safely_ = true;
     return CONTINUE;
   }
 
 #if BUILDFLAG(ENABLE_PLUGINS)
   BrowserThread::PostTask(
-      BrowserThread::IO,
-      FROM_HERE,
-      base::Bind(
-          &IsHandledBySafePlugin,
-          GetProfile()->GetResourceContext(),
-          net::FilePathToFileURL(local_path_),
-          mime_type_,
+      BrowserThread::IO, FROM_HERE,
+      base::BindOnce(
+          &IsHandledBySafePlugin, GetProfile()->GetResourceContext(),
+          net::FilePathToFileURL(local_path_), mime_type_,
           RETRY_IF_STALE_PLUGIN_LIST,
           base::Bind(&DownloadTargetDeterminer::DetermineIfHandledSafelyDone,
                      weak_ptr_factory_.GetWeakPtr())));
@@ -565,9 +560,11 @@ DownloadTargetDeterminer::Result
     return CONTINUE;
   }
 
-  base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, base::TaskTraits().MayBlock(),
-      base::Bind(&::IsAdobeReaderUpToDate),
+  // IsAdobeReaderUpToDate() needs to be run with COM as it makes COM calls via
+  // AssocQueryString() in IsAdobeReaderDefaultPDFViewer().
+  base::PostTaskAndReplyWithResult(
+      base::CreateCOMSTATaskRunnerWithTraits({base::MayBlock()}).get(),
+      FROM_HERE, base::Bind(&::IsAdobeReaderUpToDate),
       base::Bind(&DownloadTargetDeterminer::DetermineIfAdobeReaderUpToDateDone,
                  weak_ptr_factory_.GetWeakPtr()));
   return QUIT_DOLOOP;
@@ -778,7 +775,8 @@ void DownloadTargetDeterminer::ScheduleCallbackAndDeleteSelf(
   target_info->is_filetype_handled_safely = is_filetype_handled_safely_;
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(completion_callback_, base::Passed(&target_info)));
+      FROM_HERE,
+      base::BindOnce(completion_callback_, base::Passed(&target_info)));
   completion_callback_.Reset();
   delete this;
 }

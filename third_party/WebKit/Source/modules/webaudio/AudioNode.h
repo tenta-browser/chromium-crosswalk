@@ -35,7 +35,6 @@
 #include "platform/wtf/RefPtr.h"
 #include "platform/wtf/ThreadSafeRefCounted.h"
 #include "platform/wtf/Vector.h"
-#include "platform/wtf/build_config.h"
 
 #define DEBUG_AUDIONODE_REFERENCES 0
 
@@ -81,7 +80,7 @@ class MODULES_EXPORT AudioHandler : public ThreadSafeRefCounted<AudioHandler> {
     kNodeTypeMediaElementAudioSource = 4,
     kNodeTypeMediaStreamAudioDestination = 5,
     kNodeTypeMediaStreamAudioSource = 6,
-    kNodeTypeJavaScript = 7,
+    kNodeTypeScriptProcessor = 7,
     kNodeTypeBiquadFilter = 8,
     kNodeTypePanner = 9,
     kNodeTypeStereoPanner = 10,
@@ -95,7 +94,8 @@ class MODULES_EXPORT AudioHandler : public ThreadSafeRefCounted<AudioHandler> {
     kNodeTypeWaveShaper = 18,
     kNodeTypeIIRFilter = 19,
     kNodeTypeConstantSource = 20,
-    kNodeTypeEnd = 21
+    kNodeTypeAudioWorklet = 21,
+    kNodeTypeEnd = 22
   };
 
   AudioHandler(NodeType, AudioNode&, float sample_rate);
@@ -106,8 +106,8 @@ class MODULES_EXPORT AudioHandler : public ThreadSafeRefCounted<AudioHandler> {
   // Do not release resources used by an audio rendering thread in dispose().
   virtual void Dispose();
 
-  // node() returns a valid object until dispose() is called.  This returns
-  // nullptr after dispose().  We must not call node() in an audio rendering
+  // GetNode() returns a valid object until dispose() is called.  This returns
+  // nullptr after dispose().  We must not call GetNode() in an audio rendering
   // thread.
   AudioNode* GetNode() const;
   // context() returns a valid object until the BaseAudioContext dies, and
@@ -186,24 +186,24 @@ class MODULES_EXPORT AudioHandler : public ThreadSafeRefCounted<AudioHandler> {
   virtual void CheckNumberOfChannelsForInput(AudioNodeInput*);
 
 #if DEBUG_AUDIONODE_REFERENCES
-  static void printNodeCounts();
+  static void PrintNodeCounts();
 #endif
 
-  // tailTime() is the length of time (not counting latency time) where
+  // TailTime() is the length of time (not counting latency time) where
   // non-zero output may occur after continuous silent input.
-  virtual double TailTime() const;
+  virtual double TailTime() const = 0;
 
-  // latencyTime() is the length of time it takes for non-zero output to
+  // LatencyTime() is the length of time it takes for non-zero output to
   // appear after non-zero input is provided. This only applies to processing
   // delay which is an artifact of the processing algorithm chosen and is
   // *not* part of the intrinsic desired effect. For example, a "delay" effect
   // is expected to delay the signal, and thus would not be considered
   // latency.
-  virtual double LatencyTime() const;
+  virtual double LatencyTime() const = 0;
 
-  // propagatesSilence() should return true if the node will generate silent
-  // output when given silent input. By default, AudioNode will take tailTime()
-  // and latencyTime() into account when determining whether the node will
+  // PropagatesSilence() should return true if the node will generate silent
+  // output when given silent input. By default, AudioNode will take TailTime()
+  // and LatencyTime() into account when determining whether the node will
   // propagate silence.
   virtual bool PropagatesSilence() const;
   bool InputsAreSilent();
@@ -259,8 +259,8 @@ class MODULES_EXPORT AudioHandler : public ThreadSafeRefCounted<AudioHandler> {
   NodeType node_type_;
 
   // The owner AudioNode.  This untraced member is safe because dispose() is
-  // called before the AudioNode death, and it clears m_node.  Do not access
-  // m_node directly, use node() instead.
+  // called before the AudioNode death, and it clears |node_|.  Do not access
+  // |node_| directly, use GetNode() instead.
   // See http://crbug.com/404527 for the detail.
   UntracedMember<AudioNode> node_;
 
@@ -281,8 +281,8 @@ class MODULES_EXPORT AudioHandler : public ThreadSafeRefCounted<AudioHandler> {
   bool is_disabled_;
 
 #if DEBUG_AUDIONODE_REFERENCES
-  static bool s_isNodeCountInitialized;
-  static int s_nodeCount[NodeTypeEnd];
+  static bool is_node_count_initialized_;
+  static int node_count_[kNodeTypeEnd];
 #endif
 
   ChannelCountMode channel_count_mode_;

@@ -38,6 +38,7 @@ class WebServiceWorkerRequestPrivate
   WebURLRequest::FetchRedirectMode redirect_mode_;
   WebURLRequest::RequestContext request_context_;
   WebURLRequest::FrameType frame_type_;
+  WebString integrity_;
   WebString client_id_;
   bool is_reload_;
 };
@@ -55,6 +56,10 @@ void WebServiceWorkerRequest::Assign(const WebServiceWorkerRequest& other) {
 
 void WebServiceWorkerRequest::SetURL(const WebURL& url) {
   private_->url_ = url;
+}
+
+const WebString& WebServiceWorkerRequest::Integrity() const {
+  return private_->integrity_;
 }
 
 const WebURL& WebServiceWorkerRequest::Url() const {
@@ -98,8 +103,20 @@ const HTTPHeaderMap& WebServiceWorkerRequest::Headers() const {
   return private_->headers_;
 }
 
-void WebServiceWorkerRequest::SetBlob(const WebString& uuid, long long size) {
-  private_->blob_data_handle = BlobDataHandle::Create(uuid, String(), size);
+void WebServiceWorkerRequest::SetBlob(const WebString& uuid,
+                                      long long size,
+                                      mojo::ScopedMessagePipeHandle blob_pipe) {
+  SetBlob(uuid, size,
+          storage::mojom::blink::BlobPtrInfo(
+              std::move(blob_pipe), storage::mojom::blink::Blob::Version_));
+}
+
+void WebServiceWorkerRequest::SetBlob(
+    const WebString& uuid,
+    long long size,
+    storage::mojom::blink::BlobPtrInfo blob_info) {
+  private_->blob_data_handle =
+      BlobDataHandle::Create(uuid, String(), size, std::move(blob_info));
 }
 
 PassRefPtr<BlobDataHandle> WebServiceWorkerRequest::GetBlobDataHandle() const {
@@ -149,6 +166,10 @@ bool WebServiceWorkerRequest::IsMainResourceLoad() const {
 void WebServiceWorkerRequest::SetCredentialsMode(
     WebURLRequest::FetchCredentialsMode credentials_mode) {
   private_->credentials_mode_ = credentials_mode;
+}
+
+void WebServiceWorkerRequest::SetIntegrity(const WebString& integrity) {
+  private_->integrity_ = integrity;
 }
 
 WebURLRequest::FetchCredentialsMode WebServiceWorkerRequest::CredentialsMode()

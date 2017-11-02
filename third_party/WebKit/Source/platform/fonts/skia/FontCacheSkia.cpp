@@ -30,10 +30,15 @@
  */
 
 #include <unicode/locid.h>
+
 #include <memory>
+
 #include "SkFontMgr.h"
 #include "SkStream.h"
 #include "SkTypeface.h"
+
+#include "build/build_config.h"
+#include "platform/FontFamilyNames.h"
 #include "platform/Language.h"
 #include "platform/fonts/AlternateFontFamily.h"
 #include "platform/fonts/FontCache.h"
@@ -48,7 +53,7 @@
 #include "public/platform/Platform.h"
 #include "public/platform/linux/WebSandboxSupport.h"
 
-#if !OS(WIN) && !OS(ANDROID)
+#if !defined(OS_WIN) && !defined(OS_ANDROID) && !defined(OS_FUCHSIA)
 #include "SkFontConfigInterface.h"
 
 static sk_sp<SkTypeface> typefaceForFontconfigInterfaceIdAndTtcIndex(
@@ -68,7 +73,7 @@ AtomicString ToAtomicString(const SkString& str) {
   return AtomicString::FromUTF8(str.c_str(), str.size());
 }
 
-#if OS(ANDROID) || OS(LINUX)
+#if defined(OS_ANDROID) || defined(OS_LINUX)
 // Android special locale for retrieving the color emoji font
 // based on the proposed changes in UTR #51 for introducing
 // an Emoji script code:
@@ -120,8 +125,8 @@ PassRefPtr<SimpleFontData> FontCache::FallbackOnStandardFontStyle(
     const FontDescription& font_description,
     UChar32 character) {
   FontDescription substitute_description(font_description);
-  substitute_description.SetStyle(kFontStyleNormal);
-  substitute_description.SetWeight(kFontWeightNormal);
+  substitute_description.SetStyle(NormalSlopeValue());
+  substitute_description.SetWeight(NormalWeightValue());
 
   FontFaceCreationParams creation_params(
       substitute_description.Family().Family());
@@ -131,10 +136,10 @@ PassRefPtr<SimpleFontData> FontCache::FallbackOnStandardFontStyle(
       substitute_platform_data->FontContainsCharacter(character)) {
     FontPlatformData platform_data =
         FontPlatformData(*substitute_platform_data);
-    platform_data.SetSyntheticBold(font_description.Weight() >= kFontWeight600);
-    platform_data.SetSyntheticItalic(
-        font_description.Style() == kFontStyleItalic ||
-        font_description.Style() == kFontStyleOblique);
+    platform_data.SetSyntheticBold(font_description.Weight() >=
+                                   BoldThreshold());
+    platform_data.SetSyntheticItalic(font_description.Style() ==
+                                     ItalicSlopeValue());
     return FontDataFromFontPlatformData(&platform_data, kDoNotRetain);
   }
 
@@ -152,59 +157,63 @@ PassRefPtr<SimpleFontData> FontCache::GetLastResortFallbackFont(
   // We should at least have Sans or Arial which is the last resort fallback of
   // SkFontHost ports.
   if (!font_platform_data) {
-    DEFINE_STATIC_LOCAL(const FontFaceCreationParams, sans_creation_params,
-                        (AtomicString("Sans")));
+    DEFINE_THREAD_SAFE_STATIC_LOCAL(const FontFaceCreationParams,
+                                    sans_creation_params,
+                                    (FontFamilyNames::Sans));
     font_platform_data = GetFontPlatformData(description, sans_creation_params,
                                              AlternateFontName::kLastResort);
   }
   if (!font_platform_data) {
-    DEFINE_STATIC_LOCAL(const FontFaceCreationParams, arial_creation_params,
-                        (AtomicString("Arial")));
+    DEFINE_THREAD_SAFE_STATIC_LOCAL(const FontFaceCreationParams,
+                                    arial_creation_params,
+                                    (FontFamilyNames::Arial));
     font_platform_data = GetFontPlatformData(description, arial_creation_params,
                                              AlternateFontName::kLastResort);
   }
-#if OS(WIN)
+#if defined(OS_WIN)
   // Try some more Windows-specific fallbacks.
   if (!font_platform_data) {
-    DEFINE_STATIC_LOCAL(const FontFaceCreationParams,
-                        msuigothic_creation_params,
-                        (AtomicString("MS UI Gothic")));
+    DEFINE_THREAD_SAFE_STATIC_LOCAL(const FontFaceCreationParams,
+                                    msuigothic_creation_params,
+                                    (FontFamilyNames::MS_UI_Gothic));
     font_platform_data =
         GetFontPlatformData(description, msuigothic_creation_params,
                             AlternateFontName::kLastResort);
   }
   if (!font_platform_data) {
-    DEFINE_STATIC_LOCAL(const FontFaceCreationParams,
-                        mssansserif_creation_params,
-                        (AtomicString("Microsoft Sans Serif")));
+    DEFINE_THREAD_SAFE_STATIC_LOCAL(const FontFaceCreationParams,
+                                    mssansserif_creation_params,
+                                    (FontFamilyNames::Microsoft_Sans_Serif));
     font_platform_data =
         GetFontPlatformData(description, mssansserif_creation_params,
                             AlternateFontName::kLastResort);
   }
   if (!font_platform_data) {
-    DEFINE_STATIC_LOCAL(const FontFaceCreationParams, segoeui_creation_params,
-                        (AtomicString("Segoe UI")));
+    DEFINE_THREAD_SAFE_STATIC_LOCAL(const FontFaceCreationParams,
+                                    segoeui_creation_params,
+                                    (FontFamilyNames::Segoe_UI));
     font_platform_data = GetFontPlatformData(
         description, segoeui_creation_params, AlternateFontName::kLastResort);
   }
   if (!font_platform_data) {
-    DEFINE_STATIC_LOCAL(const FontFaceCreationParams, calibri_creation_params,
-                        (AtomicString("Calibri")));
+    DEFINE_THREAD_SAFE_STATIC_LOCAL(const FontFaceCreationParams,
+                                    calibri_creation_params,
+                                    (FontFamilyNames::Calibri));
     font_platform_data = GetFontPlatformData(
         description, calibri_creation_params, AlternateFontName::kLastResort);
   }
   if (!font_platform_data) {
-    DEFINE_STATIC_LOCAL(const FontFaceCreationParams,
-                        timesnewroman_creation_params,
-                        (AtomicString("Times New Roman")));
+    DEFINE_THREAD_SAFE_STATIC_LOCAL(const FontFaceCreationParams,
+                                    timesnewroman_creation_params,
+                                    (FontFamilyNames::Times_New_Roman));
     font_platform_data =
         GetFontPlatformData(description, timesnewroman_creation_params,
                             AlternateFontName::kLastResort);
   }
   if (!font_platform_data) {
-    DEFINE_STATIC_LOCAL(const FontFaceCreationParams,
-                        couriernew_creation_params,
-                        (AtomicString("Courier New")));
+    DEFINE_THREAD_SAFE_STATIC_LOCAL(const FontFaceCreationParams,
+                                    couriernew_creation_params,
+                                    (FontFamilyNames::Courier_New));
     font_platform_data =
         GetFontPlatformData(description, couriernew_creation_params,
                             AlternateFontName::kLastResort);
@@ -219,12 +228,14 @@ sk_sp<SkTypeface> FontCache::CreateTypeface(
     const FontDescription& font_description,
     const FontFaceCreationParams& creation_params,
     CString& name) {
-#if !OS(WIN) && !OS(ANDROID)
+#if !defined(OS_WIN) && !defined(OS_ANDROID) && !defined(OS_FUCHSIA)
+  // TODO(fuchsia): Revisit this and other font code for Fuchsia.
+
   if (creation_params.CreationType() == kCreateFontByFciIdAndTtcIndex) {
     if (Platform::Current()->GetSandboxSupport())
       return typefaceForFontconfigInterfaceIdAndTtcIndex(
           creation_params.FontconfigInterfaceId(), creation_params.TtcIndex());
-    return SkTypeface::MakeFromFile(creation_params.Filename().Data(),
+    return SkTypeface::MakeFromFile(creation_params.Filename().data(),
                                     creation_params.TtcIndex());
   }
 #endif
@@ -240,33 +251,33 @@ sk_sp<SkTypeface> FontCache::CreateTypeface(
     name = family.Utf8();
   }
 
-#if OS(WIN)
+#if defined(OS_WIN)
   if (sideloaded_fonts_) {
     HashMap<String, sk_sp<SkTypeface>>::iterator sideloaded_font =
-        sideloaded_fonts_->Find(name.Data());
+        sideloaded_fonts_->find(name.data());
     if (sideloaded_font != sideloaded_fonts_->end())
       return sideloaded_font->value;
   }
 #endif
 
-#if OS(LINUX) || OS(WIN)
+#if defined(OS_LINUX) || defined(OS_WIN)
   // On linux if the fontManager has been overridden then we should be calling
   // the embedder provided font Manager rather than calling
   // SkTypeface::CreateFromName which may redirect the call to the default font
   // Manager.  On Windows the font manager is always present.
   if (font_manager_)
     return sk_sp<SkTypeface>(font_manager_->matchFamilyStyle(
-        name.Data(), font_description.SkiaFontStyle()));
+        name.data(), font_description.SkiaFontStyle()));
 #endif
 
   // FIXME: Use m_fontManager, matchFamilyStyle instead of
   // legacyCreateTypeface on all platforms.
   sk_sp<SkFontMgr> fm(SkFontMgr::RefDefault());
   return sk_sp<SkTypeface>(
-      fm->legacyCreateTypeface(name.Data(), font_description.SkiaFontStyle()));
+      fm->legacyCreateTypeface(name.data(), font_description.SkiaFontStyle()));
 }
 
-#if !OS(WIN)
+#if !defined(OS_WIN)
 std::unique_ptr<FontPlatformData> FontCache::CreateFontPlatformData(
     const FontDescription& font_description,
     const FontFaceCreationParams& creation_params,
@@ -278,17 +289,16 @@ std::unique_ptr<FontPlatformData> FontCache::CreateFontPlatformData(
   if (!tf)
     return nullptr;
 
-  return WTF::WrapUnique(
-      new FontPlatformData(tf, name.Data(), font_size,
-                           (NumericFontWeight(font_description.Weight()) >
-                            200 + tf->fontStyle().weight()) ||
-                               font_description.IsSyntheticBold(),
-                           ((font_description.Style() == kFontStyleItalic ||
-                             font_description.Style() == kFontStyleOblique) &&
-                            !tf->isItalic()) ||
-                               font_description.IsSyntheticItalic(),
-                           font_description.Orientation()));
+  return WTF::WrapUnique(new FontPlatformData(
+      tf, name.data(), font_size,
+      (font_description.Weight() >
+           FontSelectionValue(200) +
+               FontSelectionValue(tf->fontStyle().weight()) ||
+       font_description.IsSyntheticBold()),
+      ((font_description.Style() == ItalicSlopeValue()) && !tf->isItalic()) ||
+          font_description.IsSyntheticItalic(),
+      font_description.Orientation()));
 }
-#endif  // !OS(WIN)
+#endif  // !defined(OS_WIN)
 
 }  // namespace blink

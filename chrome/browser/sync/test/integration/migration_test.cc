@@ -7,7 +7,6 @@
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sync/test/integration/bookmarks_helper.h"
 #include "chrome/browser/sync/test/integration/migration_waiter.h"
@@ -85,7 +84,7 @@ class MigrationTest : public SyncTest  {
 
     for (int i = 0; i < num_clients(); ++i) {
       migration_watchers_.push_back(
-          base::MakeUnique<MigrationWatcher>(GetClient(i)));
+          std::make_unique<MigrationWatcher>(GetClient(i)));
     }
     return true;
   }
@@ -111,6 +110,9 @@ class MigrationTest : public SyncTest  {
     // ARC package will be unready during this test, so we should not request
     // that it be migrated.
     preferred_data_types.Remove(syncer::ARC_PACKAGE);
+
+    // Doesn't make sense to migrate commit only types.
+    preferred_data_types.RemoveAll(syncer::CommitOnlyTypes());
 
     // Make sure all clients have the same preferred data types.
     for (int i = 1; i < num_clients(); ++i) {

@@ -26,7 +26,6 @@
 #include "content/browser/media/capture/web_contents_video_capture_device.h"
 #include "content/browser/media/media_internals.h"
 #include "content/browser/renderer_host/media/video_capture_controller.h"
-#include "content/browser/renderer_host/media/video_capture_controller_event_handler.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/desktop_media_id.h"
 #include "content/public/common/media_stream_request.h"
@@ -171,8 +170,8 @@ int VideoCaptureManager::Open(const MediaStreamDevice& device) {
   // |capture_session_id| to the caller of this function before using that same
   // id in a listener event.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&VideoCaptureManager::OnOpened, this, device.type,
-                            capture_session_id));
+      FROM_HERE, base::BindOnce(&VideoCaptureManager::OnOpened, this,
+                                device.type, capture_session_id));
   return capture_session_id;
 }
 
@@ -201,8 +200,8 @@ void VideoCaptureManager::Close(int capture_session_id) {
 
   // Notify listeners asynchronously, and forget the session.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&VideoCaptureManager::OnClosed, this,
-                            session_it->second.type, capture_session_id));
+      FROM_HERE, base::BindOnce(&VideoCaptureManager::OnClosed, this,
+                                session_it->second.type, capture_session_id));
   sessions_.erase(session_it);
 }
 
@@ -259,8 +258,8 @@ void VideoCaptureManager::DoStopDevice(VideoCaptureController* controller) {
   // ReleaseDeviceAsnyc() is executing, we pass it shared ownership to
   // |controller|.
   controller->ReleaseDeviceAsync(
-      base::Bind([](scoped_refptr<VideoCaptureController>) {},
-                 GetControllerSharedRef(controller)));
+      base::BindOnce([](scoped_refptr<VideoCaptureController>) {},
+                     GetControllerSharedRef(controller)));
 }
 
 void VideoCaptureManager::ProcessDeviceStartRequestQueue() {
@@ -287,7 +286,7 @@ void VideoCaptureManager::ProcessDeviceStartRequestQueue() {
     const media::VideoCaptureDeviceInfo* device_info =
         GetDeviceInfoById(controller->device_id());
     if (!device_info) {
-      OnDeviceStartFailed(controller);
+      OnDeviceLaunchFailed(controller);
       return;
     }
     for (auto& observer : capture_observers_)
@@ -302,15 +301,14 @@ void VideoCaptureManager::ProcessDeviceStartRequestQueue() {
   // TODO(chfremer): Check if request->params() can actually be different from
   // controller->parameters, and simplify if this is not the case.
   controller->CreateAndStartDeviceAsync(
-      request->params(),
-      static_cast<BuildableVideoCaptureDevice::Callbacks*>(this),
-      base::Bind([](scoped_refptr<VideoCaptureManager>,
-                    scoped_refptr<VideoCaptureController>) {},
-                 scoped_refptr<VideoCaptureManager>(this),
-                 GetControllerSharedRef(controller)));
+      request->params(), static_cast<VideoCaptureDeviceLaunchObserver*>(this),
+      base::BindOnce([](scoped_refptr<VideoCaptureManager>,
+                        scoped_refptr<VideoCaptureController>) {},
+                     scoped_refptr<VideoCaptureManager>(this),
+                     GetControllerSharedRef(controller)));
 }
 
-void VideoCaptureManager::OnDeviceStarted(VideoCaptureController* controller) {
+void VideoCaptureManager::OnDeviceLaunched(VideoCaptureController* controller) {
   DVLOG(3) << __func__;
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   DCHECK(!device_start_request_queue_.empty());
@@ -339,7 +337,7 @@ void VideoCaptureManager::OnDeviceStarted(VideoCaptureController* controller) {
   ProcessDeviceStartRequestQueue();
 }
 
-void VideoCaptureManager::OnDeviceStartFailed(
+void VideoCaptureManager::OnDeviceLaunchFailed(
     VideoCaptureController* controller) {
   const std::string log_message = base::StringPrintf(
       "Starting device %s has failed. Maybe recently disconnected?",
@@ -352,9 +350,18 @@ void VideoCaptureManager::OnDeviceStartFailed(
   ProcessDeviceStartRequestQueue();
 }
 
-void VideoCaptureManager::OnDeviceStartAborted() {
+void VideoCaptureManager::OnDeviceLaunchAborted() {
   device_start_request_queue_.pop_front();
   ProcessDeviceStartRequestQueue();
+}
+
+void VideoCaptureManager::OnDeviceConnectionLost(
+    VideoCaptureController* controller) {
+  const std::string log_message = base::StringPrintf(
+      "Lost connection to device %d.", controller->serial_id());
+  DLOG(WARNING) << log_message;
+  controller->OnLog(log_message);
+  controller->OnError();
 }
 
 void VideoCaptureManager::ConnectClient(
@@ -584,14 +591,14 @@ void VideoCaptureManager::MaybePostDesktopCaptureWindowId(
 
   existing_device->SetDesktopCaptureWindowIdAsync(
       window_id_it->second,
-      base::Bind([](scoped_refptr<VideoCaptureManager>) {},
-                 scoped_refptr<VideoCaptureManager>(this)));
+      base::BindOnce([](scoped_refptr<VideoCaptureManager>) {},
+                     scoped_refptr<VideoCaptureManager>(this)));
   notification_window_ids_.erase(window_id_it);
 }
 
-void VideoCaptureManager::GetPhotoCapabilities(
+void VideoCaptureManager::GetPhotoState(
     int session_id,
-    media::VideoCaptureDevice::GetPhotoCapabilitiesCallback callback) {
+    media::VideoCaptureDevice::GetPhotoStateCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
   const VideoCaptureController* controller =
@@ -599,13 +606,13 @@ void VideoCaptureManager::GetPhotoCapabilities(
   if (!controller)
     return;
   if (controller->IsDeviceAlive()) {
-    controller->GetPhotoCapabilities(std::move(callback));
+    controller->GetPhotoState(std::move(callback));
     return;
   }
   // Queue up a request for later.
   photo_request_queue_.emplace_back(
       session_id,
-      base::Bind(&VideoCaptureController::GetPhotoCapabilities,
+      base::Bind(&VideoCaptureController::GetPhotoState,
                  base::Unretained(controller), base::Passed(&callback)));
 }
 
@@ -786,10 +793,9 @@ VideoCaptureController* VideoCaptureManager::GetOrCreateController(
     return existing_device;
   }
 
-  VideoCaptureController* new_controller =
-      new VideoCaptureController(device_info.id, device_info.type, params,
-                                 video_capture_provider_->CreateBuildableDevice(
-                                     device_info.id, device_info.type));
+  VideoCaptureController* new_controller = new VideoCaptureController(
+      device_info.id, device_info.type, params,
+      video_capture_provider_->CreateDeviceLauncher());
   controllers_.emplace_back(new_controller);
   return new_controller;
 }

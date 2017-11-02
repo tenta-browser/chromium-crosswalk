@@ -21,6 +21,7 @@
 #include "core/css/CSSProperty.h"
 
 #include "core/StylePropertyShorthand.h"
+#include "core/css/properties/CSSPropertyAPI.h"
 #include "core/style/ComputedStyleConstants.h"
 
 namespace blink {
@@ -227,6 +228,30 @@ CSSPropertyID CSSProperty::ResolveDirectionAwareProperty(
     case CSSPropertyWebkitBorderAfterWidth:
       return ResolveToPhysicalProperty(direction, writing_mode, kAfterSide,
                                        borderWidthShorthand());
+    case CSSPropertyScrollPaddingInlineStart:
+      return ResolveToPhysicalProperty(direction, writing_mode, kStartSide,
+                                       scrollPaddingShorthand());
+    case CSSPropertyScrollPaddingInlineEnd:
+      return ResolveToPhysicalProperty(direction, writing_mode, kEndSide,
+                                       scrollPaddingShorthand());
+    case CSSPropertyScrollPaddingBlockStart:
+      return ResolveToPhysicalProperty(direction, writing_mode, kBeforeSide,
+                                       scrollPaddingShorthand());
+    case CSSPropertyScrollPaddingBlockEnd:
+      return ResolveToPhysicalProperty(direction, writing_mode, kAfterSide,
+                                       scrollPaddingShorthand());
+    case CSSPropertyScrollSnapMarginInlineStart:
+      return ResolveToPhysicalProperty(direction, writing_mode, kStartSide,
+                                       scrollSnapMarginShorthand());
+    case CSSPropertyScrollSnapMarginInlineEnd:
+      return ResolveToPhysicalProperty(direction, writing_mode, kEndSide,
+                                       scrollSnapMarginShorthand());
+    case CSSPropertyScrollSnapMarginBlockStart:
+      return ResolveToPhysicalProperty(direction, writing_mode, kBeforeSide,
+                                       scrollSnapMarginShorthand());
+    case CSSPropertyScrollSnapMarginBlockEnd:
+      return ResolveToPhysicalProperty(direction, writing_mode, kAfterSide,
+                                       scrollSnapMarginShorthand());
     case CSSPropertyInlineSize:
     case CSSPropertyWebkitLogicalWidth: {
       const CSSPropertyID kProperties[2] = {CSSPropertyWidth,
@@ -284,7 +309,7 @@ bool CSSProperty::IsAffectedByAllProperty(CSSPropertyID property_id) {
   if (property_id == CSSPropertyVariable)
     return false;
 
-  if (!CSSPropertyMetadata::IsProperty(property_id))
+  if (!CSSPropertyAPI::Get(property_id).IsProperty())
     return false;
 
   // all shorthand spec says:

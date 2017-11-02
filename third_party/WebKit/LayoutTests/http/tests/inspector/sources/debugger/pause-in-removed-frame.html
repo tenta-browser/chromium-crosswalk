@@ -1,7 +1,7 @@
 <html>
 <head>
-<script src="/inspector/inspector-test.js"></script>
-<script src="/inspector/debugger-test.js"></script>
+<script src="../../inspector-test.js"></script>
+<script src="../../debugger-test.js"></script>
 <script>
 
 window.removeIframe = function()
@@ -17,21 +17,18 @@ function testFunction()
     childWindow.sendRequest();
 }
 
-var test = function()
-{
-    InspectorTest.startDebuggerTest(step1);
+var test = function() {
+  SourcesTestRunner.startDebuggerTest(step1);
 
-    function step1()
-    {
-        InspectorTest.runTestFunctionAndWaitUntilPaused(step2);
-    }
+  function step1() {
+    SourcesTestRunner.runTestFunctionAndWaitUntilPaused(step2);
+  }
 
-    function step2(callFrames)
-    {
-        InspectorTest.captureStackTrace(callFrames);
-        InspectorTest.completeDebuggerTest();
-    }
-}
+  function step2(callFrames) {
+    SourcesTestRunner.captureStackTrace(callFrames);
+    SourcesTestRunner.completeDebuggerTest();
+  }
+};
 
 </script>
 </head>

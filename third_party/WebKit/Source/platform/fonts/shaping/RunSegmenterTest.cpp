@@ -40,7 +40,7 @@ struct SegmenterExpectedRun {
         font_fallback_priority(the_font_fallback_priority) {}
 };
 
-class RunSegmenterTest : public testing::Test {
+class RunSegmenterTest : public ::testing::Test {
  protected:
   void CheckRuns(const Vector<SegmenterTestRun>& runs,
                  FontOrientation orientation) {
@@ -48,7 +48,7 @@ class RunSegmenterTest : public testing::Test {
     Vector<SegmenterExpectedRun> expect;
     for (auto& run : runs) {
       unsigned length_before = text.length();
-      text.Append(String::FromUTF8(run.text.c_str()));
+      text.append(String::FromUTF8(run.text.c_str()));
       expect.push_back(SegmenterExpectedRun(length_before, text.length(),
                                             run.script, run.render_orientation,
                                             run.font_fallback_priority));
@@ -77,17 +77,17 @@ class RunSegmenterTest : public testing::Test {
 };
 
 // Some of our compilers cannot initialize a vector from an array yet.
-#define DECLARE_RUNSVECTOR(...)                             \
+#define DECLARE_SEGMENTER_RUNSVECTOR(...)                   \
   static const SegmenterTestRun kRunsArray[] = __VA_ARGS__; \
   Vector<SegmenterTestRun> runs;                            \
   runs.Append(kRunsArray, sizeof(kRunsArray) / sizeof(*kRunsArray));
 
-#define CHECK_RUNS_MIXED(...)      \
-  DECLARE_RUNSVECTOR(__VA_ARGS__); \
+#define CHECK_RUNS_MIXED(...)                \
+  DECLARE_SEGMENTER_RUNSVECTOR(__VA_ARGS__); \
   CheckRuns(runs, FontOrientation::kVerticalMixed);
 
-#define CHECK_RUNS_HORIZONTAL(...) \
-  DECLARE_RUNSVECTOR(__VA_ARGS__); \
+#define CHECK_RUNS_HORIZONTAL(...)           \
+  DECLARE_SEGMENTER_RUNSVECTOR(__VA_ARGS__); \
   CheckRuns(runs, FontOrientation::kHorizontal);
 
 TEST_F(RunSegmenterTest, Empty) {

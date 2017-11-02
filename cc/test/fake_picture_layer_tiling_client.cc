@@ -27,7 +27,8 @@ FakePictureLayerTilingClient::FakePictureLayerTilingClient(
           ResourcePool::Create(resource_provider,
                                base::ThreadTaskRunnerHandle::Get().get(),
                                ResourceProvider::TEXTURE_HINT_IMMUTABLE,
-                               ResourcePool::kDefaultExpirationDelay)),
+                               ResourcePool::kDefaultExpirationDelay,
+                               false)),
       tile_manager_(
           new FakeTileManager(&tile_manager_client_, resource_pool_.get())),
       raster_source_(FakeRasterSource::CreateInfiniteFilled()),
@@ -40,7 +41,7 @@ FakePictureLayerTilingClient::~FakePictureLayerTilingClient() {
 
 std::unique_ptr<Tile> FakePictureLayerTilingClient::CreateTile(
     const Tile::CreateInfo& info) {
-  return tile_manager_->CreateTile(info, 0, 0, 0);
+  return tile_manager_->CreateTile(info, 0, 0, 0, false);
 }
 
 void FakePictureLayerTilingClient::SetTileSize(const gfx::Size& tile_size) {

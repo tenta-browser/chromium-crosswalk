@@ -17,6 +17,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "components/network_session_configurator/common/network_switches.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
 #include "components/policy/core/common/mock_configuration_policy_provider.h"
 #include "components/policy/core/common/policy_map.h"
@@ -57,8 +58,8 @@ bool IsQuicEnabled(
   bool is_quic_enabled = false;
   content::BrowserThread::PostTaskAndReply(
       content::BrowserThread::IO, FROM_HERE,
-      base::Bind(IsQuicEnabledOnIOThread, request_context_getter,
-                 &is_quic_enabled),
+      base::BindOnce(IsQuicEnabledOnIOThread, request_context_getter,
+                     &is_quic_enabled),
       run_loop.QuitClosure());
   run_loop.Run();
   return is_quic_enabled;
@@ -402,7 +403,7 @@ IN_PROC_BROWSER_TEST_F(QuicAllowedPolicyDynamicTest,
   EXPECT_FALSE(IsQuicEnabled(system_request_context()));
   EXPECT_FALSE(IsQuicEnabled(safe_browsing_service_request_context()));
   EXPECT_FALSE(IsQuicEnabled(profile_1()->GetRequestContext()));
-  EXPECT_TRUE(IsQuicEnabled(profile_2()->GetRequestContext()));
+  EXPECT_FALSE(IsQuicEnabled(profile_2()->GetRequestContext()));
 
   // Disable QUIC in second profile
   SetQuicAllowedPolicy(policy_for_profile_2(), false);

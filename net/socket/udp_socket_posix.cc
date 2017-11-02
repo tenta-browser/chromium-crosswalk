@@ -59,6 +59,10 @@ namespace {
 const int kBindRetries = 10;
 const int kPortStart = 1024;
 const int kPortEnd = 65535;
+const int kActivityMonitorBytesThreshold = 65535;
+const int kActivityMonitorMinimumSamplesForThroughputEstimate = 2;
+const base::TimeDelta kActivityMonitorMsThreshold =
+    base::TimeDelta::FromMilliseconds(100);
 
 #if defined(OS_MACOSX)
 
@@ -179,12 +183,13 @@ UDPSocketPosix::UDPSocketPosix(DatagramSocket::BindType bind_type,
 }
 
 UDPSocketPosix::~UDPSocketPosix() {
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   Close();
   net_log_.EndEvent(NetLogEventType::SOCKET_ALIVE);
 }
 
 int UDPSocketPosix::Open(AddressFamily address_family) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK_EQ(socket_, kInvalidSocket);
 
   addr_family_ = ConvertAddressFamily(address_family);
@@ -203,8 +208,63 @@ int UDPSocketPosix::Open(AddressFamily address_family) {
   return OK;
 }
 
+void UDPSocketPosix::ActivityMonitor::Increment(uint32_t bytes) {
+  if (!bytes)
+    return;
+  bool timer_running = timer_.IsRunning();
+  bytes_ += bytes;
+  increments_++;
+  // Allow initial updates to make sure throughput estimator has
+  // enough samples to generate a value. (low water mark)
+  // Or once the bytes threshold has be met. (high water mark)
+  if (increments_ < kActivityMonitorMinimumSamplesForThroughputEstimate ||
+      bytes_ > kActivityMonitorBytesThreshold) {
+    Update();
+    if (timer_running)
+      timer_.Reset();
+  }
+  if (!timer_running) {
+    timer_.Start(FROM_HERE, kActivityMonitorMsThreshold, this,
+                 &UDPSocketPosix::ActivityMonitor::OnTimerFired);
+  }
+}
+
+void UDPSocketPosix::ActivityMonitor::Update() {
+  if (!bytes_)
+    return;
+  NetworkActivityMonitorIncrement(bytes_);
+  bytes_ = 0;
+}
+
+void UDPSocketPosix::ActivityMonitor::OnClose() {
+  timer_.Stop();
+  Update();
+}
+
+void UDPSocketPosix::ActivityMonitor::OnTimerFired() {
+  increments_ = 0;
+  if (!bytes_) {
+    // Can happen if the socket has been idle and have had no
+    // increments since the timer previously fired.  Don't bother
+    // keeping the timer running in this case.
+    timer_.Stop();
+    return;
+  }
+  Update();
+}
+
+void UDPSocketPosix::SentActivityMonitor::NetworkActivityMonitorIncrement(
+    uint32_t bytes) {
+  NetworkActivityMonitor::GetInstance()->IncrementBytesSent(bytes);
+}
+
+void UDPSocketPosix::ReceivedActivityMonitor::NetworkActivityMonitorIncrement(
+    uint32_t bytes) {
+  NetworkActivityMonitor::GetInstance()->IncrementBytesReceived(bytes);
+}
+
 void UDPSocketPosix::Close() {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   if (socket_ == kInvalidSocket)
     return;
@@ -233,10 +293,13 @@ void UDPSocketPosix::Close() {
   socket_ = kInvalidSocket;
   addr_family_ = 0;
   is_connected_ = false;
+
+  sent_activity_monitor_.OnClose();
+  received_activity_monitor_.OnClose();
 }
 
 int UDPSocketPosix::GetPeerAddress(IPEndPoint* address) const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(address);
   if (!is_connected())
     return ERR_SOCKET_NOT_CONNECTED;
@@ -256,7 +319,7 @@ int UDPSocketPosix::GetPeerAddress(IPEndPoint* address) const {
 }
 
 int UDPSocketPosix::GetLocalAddress(IPEndPoint* address) const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(address);
   if (!is_connected())
     return ERR_SOCKET_NOT_CONNECTED;
@@ -288,7 +351,7 @@ int UDPSocketPosix::RecvFrom(IOBuffer* buf,
                              int buf_len,
                              IPEndPoint* address,
                              const CompletionCallback& callback) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK_NE(kInvalidSocket, socket_);
   CHECK(read_callback_.is_null());
   DCHECK(!recv_from_address_);
@@ -332,7 +395,7 @@ int UDPSocketPosix::SendToOrWrite(IOBuffer* buf,
                                   int buf_len,
                                   const IPEndPoint* address,
                                   const CompletionCallback& callback) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK_NE(kInvalidSocket, socket_);
   CHECK(write_callback_.is_null());
   DCHECK(!callback.is_null());  // Synchronous operation not supported
@@ -372,7 +435,7 @@ int UDPSocketPosix::Connect(const IPEndPoint& address) {
 }
 
 int UDPSocketPosix::InternalConnect(const IPEndPoint& address) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(!is_connected());
   DCHECK(!remote_address_.get());
 
@@ -406,7 +469,7 @@ int UDPSocketPosix::InternalConnect(const IPEndPoint& address) {
 
 int UDPSocketPosix::Bind(const IPEndPoint& address) {
   DCHECK_NE(socket_, kInvalidSocket);
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(!is_connected());
 
   int rv = SetMulticastOptions();
@@ -425,7 +488,7 @@ int UDPSocketPosix::Bind(const IPEndPoint& address) {
 int UDPSocketPosix::BindToNetwork(
     NetworkChangeNotifier::NetworkHandle network) {
   DCHECK_NE(socket_, kInvalidSocket);
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(!is_connected());
   if (network == NetworkChangeNotifier::kInvalidNetworkHandle)
     return ERR_INVALID_ARGUMENT;
@@ -501,19 +564,19 @@ int UDPSocketPosix::BindToNetwork(
 
 int UDPSocketPosix::SetReceiveBufferSize(int32_t size) {
   DCHECK_NE(socket_, kInvalidSocket);
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   return SetSocketReceiveBufferSize(socket_, size);
 }
 
 int UDPSocketPosix::SetSendBufferSize(int32_t size) {
   DCHECK_NE(socket_, kInvalidSocket);
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   return SetSocketSendBufferSize(socket_, size);
 }
 
 int UDPSocketPosix::SetDoNotFragment() {
   DCHECK_NE(socket_, kInvalidSocket);
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
 #if !defined(IP_PMTUDISC_DO)
   return ERR_NOT_IMPLEMENTED;
@@ -544,14 +607,14 @@ int UDPSocketPosix::SetDoNotFragment() {
 
 int UDPSocketPosix::AllowAddressReuse() {
   DCHECK_NE(socket_, kInvalidSocket);
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(!is_connected());
   return SetReuseAddr(socket_, true);
 }
 
 int UDPSocketPosix::SetBroadcast(bool broadcast) {
   DCHECK_NE(socket_, kInvalidSocket);
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   int value = broadcast ? 1 : 0;
   int rv;
 #if defined(OS_MACOSX)
@@ -618,7 +681,7 @@ void UDPSocketPosix::DidCompleteRead() {
 void UDPSocketPosix::LogRead(int result,
                              const char* bytes,
                              socklen_t addr_len,
-                             const sockaddr* addr) const {
+                             const sockaddr* addr) {
   if (result < 0) {
     net_log_.AddEventWithNetErrorCode(NetLogEventType::UDP_RECEIVE_ERROR,
                                       result);
@@ -636,7 +699,7 @@ void UDPSocketPosix::LogRead(int result,
                           result, bytes, is_address_valid ? &address : NULL));
   }
 
-  NetworkActivityMonitor::GetInstance()->IncrementBytesReceived(result);
+  received_activity_monitor_.Increment(result);
 }
 
 void UDPSocketPosix::DidCompleteWrite() {
@@ -654,7 +717,7 @@ void UDPSocketPosix::DidCompleteWrite() {
 
 void UDPSocketPosix::LogWrite(int result,
                               const char* bytes,
-                              const IPEndPoint* address) const {
+                              const IPEndPoint* address) {
   if (result < 0) {
     net_log_.AddEventWithNetErrorCode(NetLogEventType::UDP_SEND_ERROR, result);
     return;
@@ -666,7 +729,7 @@ void UDPSocketPosix::LogWrite(int result,
         CreateNetLogUDPDataTranferCallback(result, bytes, address));
   }
 
-  NetworkActivityMonitor::GetInstance()->IncrementBytesSent(result);
+  sent_activity_monitor_.Increment(result);
 }
 
 int UDPSocketPosix::InternalRecvFrom(IOBuffer* buf,
@@ -825,7 +888,7 @@ int UDPSocketPosix::RandomBind(const IPAddress& address) {
 }
 
 int UDPSocketPosix::JoinGroup(const IPAddress& group_address) const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   if (!is_connected())
     return ERR_SOCKET_NOT_CONNECTED;
 
@@ -873,7 +936,7 @@ int UDPSocketPosix::JoinGroup(const IPAddress& group_address) const {
 }
 
 int UDPSocketPosix::LeaveGroup(const IPAddress& group_address) const {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
 
   if (!is_connected())
     return ERR_SOCKET_NOT_CONNECTED;
@@ -912,7 +975,7 @@ int UDPSocketPosix::LeaveGroup(const IPAddress& group_address) const {
 }
 
 int UDPSocketPosix::SetMulticastInterface(uint32_t interface_index) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   if (is_connected())
     return ERR_SOCKET_IS_CONNECTED;
   multicast_interface_ = interface_index;
@@ -920,7 +983,7 @@ int UDPSocketPosix::SetMulticastInterface(uint32_t interface_index) {
 }
 
 int UDPSocketPosix::SetMulticastTimeToLive(int time_to_live) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   if (is_connected())
     return ERR_SOCKET_IS_CONNECTED;
 
@@ -931,7 +994,7 @@ int UDPSocketPosix::SetMulticastTimeToLive(int time_to_live) {
 }
 
 int UDPSocketPosix::SetMulticastLoopbackMode(bool loopback) {
-  DCHECK(CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   if (is_connected())
     return ERR_SOCKET_IS_CONNECTED;
 
@@ -962,7 +1025,7 @@ int UDPSocketPosix::SetDiffServCodePoint(DiffServCodePoint dscp) {
 }
 
 void UDPSocketPosix::DetachFromThread() {
-  base::NonThreadSafe::DetachFromThread();
+  DETACH_FROM_THREAD(thread_checker_);
 }
 
 }  // namespace net

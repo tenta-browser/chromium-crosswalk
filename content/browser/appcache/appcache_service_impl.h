@@ -16,6 +16,7 @@
 #include "base/observer_list.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "content/browser/url_loader_factory_getter.h"
 #include "content/common/appcache_interfaces.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/appcache_service.h"
@@ -25,7 +26,6 @@
 
 namespace base {
 class FilePath;
-class SingleThreadTaskRunner;
 }  // namespace base
 
 namespace net {
@@ -50,9 +50,10 @@ class AppCacheStorage;
 // during Reinitialization.
 class CONTENT_EXPORT AppCacheStorageReference
     : public base::RefCounted<AppCacheStorageReference> {
-public:
+ public:
   AppCacheStorage* storage() const { return storage_.get(); }
-private:
+
+ private:
   friend class AppCacheServiceImpl;
   friend class base::RefCounted<AppCacheStorageReference>;
   AppCacheStorageReference(std::unique_ptr<AppCacheStorage> storage);
@@ -86,10 +87,7 @@ class CONTENT_EXPORT AppCacheServiceImpl
   explicit AppCacheServiceImpl(storage::QuotaManagerProxy* quota_manager_proxy);
   ~AppCacheServiceImpl() override;
 
-  void Initialize(
-      const base::FilePath& cache_directory,
-      const scoped_refptr<base::SingleThreadTaskRunner>& db_thread,
-      const scoped_refptr<base::SingleThreadTaskRunner>& cache_thread);
+  void Initialize(const base::FilePath& cache_directory);
 
   void AddObserver(Observer* observer) {
     observers_.AddObserver(observer);
@@ -182,6 +180,18 @@ class CONTENT_EXPORT AppCacheServiceImpl
   void set_force_keep_session_state() { force_keep_session_state_ = true; }
   bool force_keep_session_state() const { return force_keep_session_state_; }
 
+  // The following two functions are invoked in the network service world to
+  // set/get a pointer to the URLLoaderFactoryGetter instance which is used to
+  // get to the network URL loader factory.
+  void set_url_loader_factory_getter(
+      URLLoaderFactoryGetter* loader_factory_getter) {
+    url_loader_factory_getter_ = loader_factory_getter;
+  }
+
+  URLLoaderFactoryGetter* url_loader_factory_getter() const {
+    return url_loader_factory_getter_.get();
+  }
+
  protected:
   friend class content::AppCacheServiceImplTest;
   friend class content::AppCacheStorageImplTest;
@@ -201,8 +211,7 @@ class CONTENT_EXPORT AppCacheServiceImpl
   void Reinitialize();
 
   base::FilePath cache_directory_;
-  scoped_refptr<base::SingleThreadTaskRunner> db_thread_;
-  scoped_refptr<base::SingleThreadTaskRunner> cache_thread_;
+  scoped_refptr<base::SequencedTaskRunner> db_task_runner_;
   AppCachePolicy* appcache_policy_;
   AppCacheQuotaClient* quota_client_;
   AppCacheExecutableHandlerFactory* handler_factory_;
@@ -219,6 +228,11 @@ class CONTENT_EXPORT AppCacheServiceImpl
   base::TimeDelta next_reinit_delay_;
   base::OneShotTimer reinit_timer_;
   base::ObserverList<Observer> observers_;
+
+  // In the network service world contains the pointer to the
+  // URLLoaderFactoryGetter instance which is used to get to the network
+  // URL loader factory.
+  scoped_refptr<URLLoaderFactoryGetter> url_loader_factory_getter_;
 
  private:
   base::WeakPtrFactory<AppCacheServiceImpl> weak_factory_;

@@ -67,6 +67,10 @@ void GeolocationProviderImpl::UserDidOptIntoLocationServices() {
     InformProvidersPermissionGranted();
 }
 
+bool GeolocationProviderImpl::HighAccuracyLocationInUse() {
+  return !high_accuracy_callbacks_.empty();
+}
+
 void GeolocationProviderImpl::OverrideLocationForTesting(
     const Geoposition& position) {
   DCHECK(main_task_runner_->BelongsToCurrentThread());
@@ -190,7 +194,7 @@ void GeolocationProviderImpl::Init() {
     if (!g_delegate.Get())
       g_delegate.Get().reset(new GeolocationDelegate);
 
-    arbitrator_ = base::MakeUnique<LocationArbitrator>(
+    arbitrator_ = std::make_unique<LocationArbitrator>(
         base::WrapUnique(g_delegate.Get().get()));
     arbitrator_->SetUpdateCallback(callback);
   }

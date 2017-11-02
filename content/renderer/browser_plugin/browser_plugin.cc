@@ -5,7 +5,11 @@
 #include "content/renderer/browser_plugin/browser_plugin.h"
 
 #include <stddef.h>
+
+#include <map>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "base/command_line.h"
 #include "base/location.h"
@@ -13,8 +17,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "cc/surfaces/surface.h"
-#include "cc/surfaces/surface_info.h"
+#include "components/viz/common/surfaces/surface_info.h"
 #include "content/common/browser_plugin/browser_plugin_constants.h"
 #include "content/common/browser_plugin/browser_plugin_messages.h"
 #include "content/common/view_messages.h"
@@ -29,6 +32,7 @@
 #include "content/renderer/drop_data_builder.h"
 #include "content/renderer/render_thread_impl.h"
 #include "content/renderer/sad_plugin.h"
+#include "third_party/WebKit/public/platform/WebCoalescedInputEvent.h"
 #include "third_party/WebKit/public/platform/WebGestureEvent.h"
 #include "third_party/WebKit/public/platform/WebInputEvent.h"
 #include "third_party/WebKit/public/platform/WebMouseWheelEvent.h"
@@ -121,17 +125,18 @@ bool BrowserPlugin::OnMessageReceived(const IPC::Message& message) {
 
 void BrowserPlugin::OnSetChildFrameSurface(
     int browser_plugin_instance_id,
-    const cc::SurfaceInfo& surface_info,
-    const cc::SurfaceSequence& sequence) {
+    const viz::SurfaceInfo& surface_info,
+    const viz::SurfaceSequence& sequence) {
   if (!attached())
     return;
 
   EnableCompositing(true);
   DCHECK(compositing_helper_.get());
-  compositing_helper_->OnSetSurface(surface_info, sequence);
+  compositing_helper_->SetPrimarySurfaceInfo(surface_info);
+  compositing_helper_->SetFallbackSurfaceInfo(surface_info, sequence);
 }
 
-void BrowserPlugin::SendSatisfySequence(const cc::SurfaceSequence& sequence) {
+void BrowserPlugin::SendSatisfySequence(const viz::SurfaceSequence& sequence) {
   BrowserPluginManager::Get()->Send(new BrowserPluginHostMsg_SatisfySequence(
       render_frame_routing_id_, browser_plugin_instance_id_, sequence));
 }
@@ -158,7 +163,11 @@ void BrowserPlugin::Attach() {
     blink::WebLocalFrame* frame = Container()->GetDocument().GetFrame();
     attach_params.is_full_page_plugin =
         frame->View()->MainFrame()->IsWebLocalFrame() &&
-        frame->View()->MainFrame()->GetDocument().IsPluginDocument();
+        frame->View()
+            ->MainFrame()
+            ->ToWebLocalFrame()
+            ->GetDocument()
+            .IsPluginDocument();
   }
   BrowserPluginManager::Get()->Send(new BrowserPluginHostMsg_Attach(
       render_frame_routing_id_,
@@ -172,7 +181,7 @@ void BrowserPlugin::Attach() {
       RenderFrameImpl::FromRoutingID(render_frame_routing_id());
   if (render_frame && render_frame->render_accessibility() && Container()) {
     blink::WebElement element = Container()->GetElement();
-    blink::WebAXObject ax_element = element.AccessibilityObject();
+    blink::WebAXObject ax_element = blink::WebAXObject::FromWebNode(element);
     if (!ax_element.IsDetached()) {
       render_frame->render_accessibility()->HandleAXEvent(
           ax_element,
@@ -383,7 +392,6 @@ bool BrowserPlugin::ShouldForwardToBrowserPlugin(
 void BrowserPlugin::UpdateGeometry(const WebRect& plugin_rect_in_viewport,
                                    const WebRect& clip_rect,
                                    const WebRect& unobscured_rect,
-                                   const WebVector<WebRect>& cut_outs_rects,
                                    bool is_visible) {
   gfx::Rect old_view_rect = view_rect_;
   // Convert the plugin_rect_in_viewport to window coordinates, which is css.
@@ -441,8 +449,9 @@ void BrowserPlugin::UpdateVisibility(bool visible) {
 }
 
 blink::WebInputEventResult BrowserPlugin::HandleInputEvent(
-    const blink::WebInputEvent& event,
+    const blink::WebCoalescedInputEvent& coalesced_event,
     blink::WebCursorInfo& cursor_info) {
+  const blink::WebInputEvent& event = coalesced_event.Event();
   if (guest_crashed_ || !attached())
     return blink::WebInputEventResult::kNotHandled;
 
@@ -543,7 +552,7 @@ bool BrowserPlugin::ExecuteEditCommand(const blink::WebString& name,
 
 bool BrowserPlugin::SetComposition(
     const blink::WebString& text,
-    const blink::WebVector<blink::WebCompositionUnderline>& underlines,
+    const blink::WebVector<blink::WebImeTextSpan>& ime_text_spans,
     const blink::WebRange& replacementRange,
     int selectionStart,
     int selectionEnd) {
@@ -552,8 +561,8 @@ bool BrowserPlugin::SetComposition(
 
   BrowserPluginHostMsg_SetComposition_Params params;
   params.text = text.Utf16();
-  for (size_t i = 0; i < underlines.size(); ++i) {
-    params.underlines.push_back(underlines[i]);
+  for (size_t i = 0; i < ime_text_spans.size(); ++i) {
+    params.ime_text_spans.push_back(ime_text_spans[i]);
   }
 
   params.replacement_range =
@@ -572,15 +581,15 @@ bool BrowserPlugin::SetComposition(
 
 bool BrowserPlugin::CommitText(
     const blink::WebString& text,
-    const blink::WebVector<blink::WebCompositionUnderline>& underlines,
+    const blink::WebVector<blink::WebImeTextSpan>& ime_text_spans,
     const blink::WebRange& replacementRange,
     int relative_cursor_pos) {
   if (!attached())
     return false;
 
-  std::vector<blink::WebCompositionUnderline> std_underlines;
-  for (size_t i = 0; i < underlines.size(); ++i) {
-    std_underlines.push_back(std_underlines[i]);
+  std::vector<blink::WebImeTextSpan> std_ime_text_spans;
+  for (size_t i = 0; i < ime_text_spans.size(); ++i) {
+    std_ime_text_spans.push_back(ime_text_spans[i]);
   }
   gfx::Range replacement_range =
       replacementRange.IsNull()
@@ -589,7 +598,7 @@ bool BrowserPlugin::CommitText(
                        static_cast<uint32_t>(replacementRange.EndOffset()));
 
   BrowserPluginManager::Get()->Send(new BrowserPluginHostMsg_ImeCommitText(
-      browser_plugin_instance_id_, text.Utf16(), std_underlines,
+      browser_plugin_instance_id_, text.Utf16(), std_ime_text_spans,
       replacement_range, relative_cursor_pos));
   // TODO(kochi): This assumes the IPC handling always succeeds.
   return true;
@@ -603,7 +612,8 @@ bool BrowserPlugin::FinishComposingText(
   bool keep_selection =
       (selection_behavior == blink::WebInputMethodController::kKeepSelection);
   BrowserPluginManager::Get()->Send(
-      new BrowserPluginHostMsg_ImeFinishComposingText(keep_selection));
+      new BrowserPluginHostMsg_ImeFinishComposingText(
+          browser_plugin_instance_id_, keep_selection));
   // TODO(kochi): This assumes the IPC handling always succeeds.
   return true;
 }

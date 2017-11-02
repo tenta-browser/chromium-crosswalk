@@ -54,7 +54,6 @@ public class OverlayPanel extends OverlayPanelAnimation implements ActivityState
 
     /**
      * The reason for a change in the Overlay Panel's state.
-     * TODO(mdjones): Separate generic reasons from Contextual Search reasons.
      */
     public enum StateChangeReason {
         UNKNOWN,
@@ -76,15 +75,7 @@ public class OverlayPanel extends OverlayPanelAnimation implements ActivityState
         OPTOUT,
         CLOSE_BUTTON,
         SUPPRESS,
-        UNSUPPRESS,
-        FULLSCREEN_ENTERED,
-        FULLSCREEN_EXITED,
-        INFOBAR_SHOWN,
-        INFOBAR_HIDDEN,
-        CONTENT_CHANGED,
-        KEYBOARD_SHOWN,
-        KEYBOARD_HIDDEN,
-        TAB_NAVIGATION
+        UNSUPPRESS
     }
 
     /** The activity this panel is in. */
@@ -577,27 +568,25 @@ public class OverlayPanel extends OverlayPanelAnimation implements ActivityState
     /**
      * Handles the click gesture.
      *
-     * @param time The timestamp of the gesture.
      * @param x The x coordinate of the gesture.
      * @param y The y coordinate of the gesture.
      */
-    public void handleClick(long time, float x, float y) {
+    public void handleClick(float x, float y) {
         mHasDetectedTouchGesture = true;
         if (isCoordinateInsideBasePage(x, y)) {
             closePanel(StateChangeReason.BASE_PAGE_TAP, true);
         } else if (isCoordinateInsideBar(x, y) && !onInterceptBarClick()) {
-            handleBarClick(time, x, y);
+            handleBarClick(x, y);
         }
     }
 
     /**
      * Handles the click gesture specifically on the bar.
      *
-     * @param time The timestamp of the gesture.
      * @param x The x coordinate of the gesture.
      * @param y The y coordinate of the gesture.
      */
-    protected void handleBarClick(long time, float x, float y) {
+    protected void handleBarClick(float x, float y) {
         if (isPeeking()) {
             expandPanel(StateChangeReason.SEARCH_BAR_TAP);
         }
@@ -709,8 +698,7 @@ public class OverlayPanel extends OverlayPanelAnimation implements ActivityState
 
     @Override
     public void click(float x, float y, boolean fromMouse, int buttons) {
-        // TODO(mdjones): The time param for handleClick is not used anywhere, remove it.
-        handleClick(0, x, y);
+        handleClick(x, y);
     }
 
     @Override
@@ -811,12 +799,10 @@ public class OverlayPanel extends OverlayPanelAnimation implements ActivityState
      */
     protected void resizePanelContentViewCore(float width, float height) {
         if (!isShowing()) return;
-        ContentViewCore panelContent = getContentViewCore();
-        if (panelContent != null) {
-            panelContent.onSizeChanged((int) (width / mPxToDp),
-                    (int) (height / mPxToDp), panelContent.getViewportWidthPix(),
-                    panelContent.getViewportHeightPix());
-            panelContent.onPhysicalBackingSizeChanged(
+        if (getContentViewCore() != null) {
+            getOverlayPanelContent().onSizeChanged(
+                    (int) (width / mPxToDp), (int) (height / mPxToDp));
+            getOverlayPanelContent().onPhysicalBackingSizeChanged(
                     (int) (width / mPxToDp), (int) (height / mPxToDp));
         }
     }

@@ -5,6 +5,8 @@
 #ifndef MEDIA_MOJO_SERVICES_MOJO_MEDIA_DRM_STORAGE_H_
 #define MEDIA_MOJO_SERVICES_MOJO_MEDIA_DRM_STORAGE_H_
 
+#include <string>
+
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
@@ -15,14 +17,13 @@
 namespace media {
 
 // A MediaDrmStorage that proxies to a mojom::MediaDrmStoragePtr.
-class MEDIA_MOJO_EXPORT MojoMediaDrmStorage
-    : NON_EXPORTED_BASE(public MediaDrmStorage) {
+class MEDIA_MOJO_EXPORT MojoMediaDrmStorage : public MediaDrmStorage {
  public:
   explicit MojoMediaDrmStorage(mojom::MediaDrmStoragePtr media_drm_storage_ptr);
   ~MojoMediaDrmStorage() final;
 
   // MediaDrmStorage implementation:
-  void Initialize(const url::Origin& origin) final;
+  void Initialize(InitCB init_cb) final;
   void OnProvisioned(ResultCB result_cb) final;
   void SavePersistentSession(const std::string& session_id,
                              const SessionData& session_data,
@@ -34,7 +35,6 @@ class MEDIA_MOJO_EXPORT MojoMediaDrmStorage
                                ResultCB result_cb) final;
 
  private:
-  void OnResult(ResultCB result_cb, bool success);
   void OnPersistentSessionLoaded(
       LoadPersistentSessionCB load_persistent_session_cb,
       mojom::SessionDataPtr session_data);

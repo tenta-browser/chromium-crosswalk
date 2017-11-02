@@ -16,25 +16,24 @@ namespace switches {
 
 // Please keep alphabetized.
 // TODO(sky): fix order!
-ASH_EXPORT extern const char kAshAdjustableLargeCursor[];
-ASH_EXPORT extern const char kAshAnimateFromBootSplashScreen[];
-ASH_EXPORT extern const char kAshCopyHostBackgroundAtBoot[];
 ASH_EXPORT extern const char kAshDebugShortcuts[];
 ASH_EXPORT extern const char kAshDeveloperShortcuts[];
-ASH_EXPORT extern const char kAshDisableMaximizeModeWindowBackdrop[];
-ASH_EXPORT extern const char kAshDisableScreenOrientationLock[];
+ASH_EXPORT extern const char kAshDisableSmoothScreenRotation[];
+ASH_EXPORT extern const char kAshDisableTabletAutohideTitlebars[];
 ASH_EXPORT extern const char kAshDisableTouchExplorationMode[];
 ASH_EXPORT extern const char kAshEnableMagnifierKeyScroller[];
+ASH_EXPORT extern const char kAshEnableNightLight[];
 ASH_EXPORT extern const char kAshEnablePaletteOnAllDisplays[];
-ASH_EXPORT extern const char kAshEnableTouchView[];
+ASH_EXPORT extern const char kAshEnableScaleSettingsTray[];
+ASH_EXPORT extern const char kAshEnableTabletSplitView[];
+ASH_EXPORT extern const char kAshEnableTabletMode[];
 ASH_EXPORT extern const char kAshEnableMirroredScreen[];
-ASH_EXPORT extern const char kAshEnableSmoothScreenRotation[];
 ASH_EXPORT extern const char kAshEstimatedPresentationDelay[];
-ASH_EXPORT extern const char kAshForceEnablePalette[];
-ASH_EXPORT extern const char kAshForceTabletMode[];
-ASH_EXPORT extern const char kAshForceTabletModeAuto[];
-ASH_EXPORT extern const char kAshForceTabletModeClamshell[];
-ASH_EXPORT extern const char kAshForceTabletModeTouchView[];
+ASH_EXPORT extern const char kAshForceEnableStylusTools[];
+ASH_EXPORT extern const char kAshUiMode[];
+ASH_EXPORT extern const char kAshUiModeAuto[];
+ASH_EXPORT extern const char kAshUiModeClamshell[];
+ASH_EXPORT extern const char kAshUiModeTablet[];
 ASH_EXPORT extern const char kAshHideNotificationsForFactory[];
 ASH_EXPORT extern const char kAshShelfColor[];
 ASH_EXPORT extern const char kAshShelfColorEnabled[];
@@ -48,6 +47,14 @@ ASH_EXPORT extern const char kAshShelfColorSchemeDarkMuted[];
 ASH_EXPORT extern const char kAshShelfColorSchemeDarkVibrant[];
 ASH_EXPORT extern const char kAshTouchHud[];
 ASH_EXPORT extern const char kAuraLegacyPowerButton[];
+ASH_EXPORT extern const char kForceClamshellPowerButton[];
+ASH_EXPORT extern const char kHasInternalStylus[];
+ASH_EXPORT extern const char kSpuriousPowerButtonWindow[];
+ASH_EXPORT extern const char kSpuriousPowerButtonAccelCount[];
+ASH_EXPORT extern const char kSpuriousPowerButtonScreenAccel[];
+ASH_EXPORT extern const char kSpuriousPowerButtonKeyboardAccel[];
+ASH_EXPORT extern const char kSpuriousPowerButtonLidAngleChange[];
+ASH_EXPORT extern const char kUseIMEService[];
 
 // True if the pointer (cursor) position should be kept inside root windows.
 ASH_EXPORT bool ConstrainPointerToRoot();

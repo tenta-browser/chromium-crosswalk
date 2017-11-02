@@ -17,6 +17,7 @@ import android.location.LocationManager;
 import android.support.graphics.drawable.VectorDrawableCompat;
 import android.support.v4.graphics.drawable.DrawableCompat;
 import android.text.SpannableString;
+import android.text.TextPaint;
 import android.text.TextUtils;
 import android.view.View;
 
@@ -76,6 +77,8 @@ public class BluetoothChooserDialog
     Drawable mConnectedIcon;
     @VisibleForTesting
     String mConnectedIconDescription;
+    @VisibleForTesting
+    Drawable[] mSignalStrengthLevelIcon;
 
     // A pointer back to the native part of the implementation for this dialog.
     long mNativeBluetoothChooserDialogPtr;
@@ -128,15 +131,16 @@ public class BluetoothChooserDialog
         mNativeBluetoothChooserDialogPtr = nativeBluetoothChooserDialogPtr;
         mAdapter = BluetoothAdapter.getDefaultAdapter();
 
-        Resources res = mActivity.getResources();
-
         // Initialize icons.
-        mConnectedIcon = VectorDrawableCompat.create(
-                res, R.drawable.ic_bluetooth_connected, mActivity.getTheme());
-        DrawableCompat.setTintList(mConnectedIcon,
-                ApiCompatibilityUtils.getColorStateList(res, R.color.item_chooser_row_icon_color));
-
+        mConnectedIcon = getIconWithRowIconColorStateList(R.drawable.ic_bluetooth_connected);
         mConnectedIconDescription = mActivity.getString(R.string.bluetooth_device_connected);
+
+        mSignalStrengthLevelIcon = new Drawable[] {
+                getIconWithRowIconColorStateList(R.drawable.ic_signal_cellular_0_bar),
+                getIconWithRowIconColorStateList(R.drawable.ic_signal_cellular_1_bar),
+                getIconWithRowIconColorStateList(R.drawable.ic_signal_cellular_2_bar),
+                getIconWithRowIconColorStateList(R.drawable.ic_signal_cellular_3_bar),
+                getIconWithRowIconColorStateList(R.drawable.ic_signal_cellular_4_bar)};
 
         if (mAdapter == null) {
             Log.i(TAG, "BluetoothChooserDialog: Default Bluetooth adapter not found.");
@@ -145,6 +149,15 @@ public class BluetoothChooserDialog
                 SpanApplier.applySpans(mActivity.getString(R.string.bluetooth_adapter_off_help),
                         new SpanInfo("<link>", "</link>",
                                 new BluetoothClickableSpan(LinkType.ADAPTER_OFF_HELP, mActivity)));
+    }
+
+    private Drawable getIconWithRowIconColorStateList(int icon) {
+        Resources res = mActivity.getResources();
+
+        Drawable drawable = VectorDrawableCompat.create(res, icon, mActivity.getTheme());
+        DrawableCompat.setTintList(drawable,
+                ApiCompatibilityUtils.getColorStateList(res, R.color.item_chooser_row_icon_color));
+        return drawable;
     }
 
     /**
@@ -298,6 +311,13 @@ public class BluetoothChooserDialog
         }
 
         @Override
+        public void updateDrawState(TextPaint textPaint) {
+            super.updateDrawState(textPaint);
+            textPaint.setColor(ApiCompatibilityUtils.getColor(
+                    mContext.getResources(), R.color.google_blue_700));
+        }
+
+        @Override
         public void onClick(View view) {
             if (mNativeBluetoothChooserDialogPtr == 0) {
                 return;
@@ -372,18 +392,19 @@ public class BluetoothChooserDialog
     }
 
     @VisibleForTesting
-    Drawable getConnectedIcon() {
-        return mConnectedIcon.getConstantState().newDrawable().mutate();
-    }
-
-    @VisibleForTesting
     @CalledByNative
-    void addOrUpdateDevice(String deviceId, String deviceName, boolean isGATTConnected) {
+    void addOrUpdateDevice(
+            String deviceId, String deviceName, boolean isGATTConnected, int signalStrengthLevel) {
         Drawable icon = null;
         String iconDescription = null;
         if (isGATTConnected) {
-            icon = getConnectedIcon();
+            icon = mConnectedIcon.getConstantState().newDrawable();
             iconDescription = mConnectedIconDescription;
+        } else if (signalStrengthLevel != -1) {
+            icon = mSignalStrengthLevelIcon[signalStrengthLevel].getConstantState().newDrawable();
+            iconDescription = mActivity.getResources().getQuantityString(
+                    R.plurals.signal_strength_level_n_bars, signalStrengthLevel,
+                    signalStrengthLevel);
         }
 
         mItemChooserDialog.addOrUpdateItem(deviceId, deviceName, icon, iconDescription);

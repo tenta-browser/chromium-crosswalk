@@ -22,7 +22,7 @@
 #include "content/public/browser/browser_child_process_host.h"
 #include "content/public/browser/child_process_data.h"
 #include "content/public/common/child_process_host_delegate.h"
-#include "mojo/edk/embedder/pending_process_connection.h"
+#include "mojo/edk/embedder/outgoing_broker_client_invitation.h"
 
 #if defined(OS_WIN)
 #include "base/win/object_watcher.h"
@@ -44,7 +44,7 @@ class ChildConnection;
 /// class because it lives on the UI thread.
 class CONTENT_EXPORT BrowserChildProcessHostImpl
     : public BrowserChildProcessHost,
-      public NON_EXPORTED_BASE(ChildProcessHostDelegate),
+      public ChildProcessHostDelegate,
 #if defined(OS_WIN)
       public base::win::ObjectWatcher::Delegate,
 #endif
@@ -77,7 +77,7 @@ class CONTENT_EXPORT BrowserChildProcessHostImpl
       override;
   void SetName(const base::string16& name) override;
   void SetHandle(base::ProcessHandle handle) override;
-  std::string GetServiceRequestChannelToken() override;
+  service_manager::mojom::ServiceRequest TakeInProcessServiceRequest() override;
 
   // ChildProcessHostDelegate implementation:
   bool CanShutdown() override;
@@ -101,12 +101,17 @@ class CONTENT_EXPORT BrowserChildProcessHostImpl
   // Adds an IPC message filter.
   void AddFilter(BrowserMessageFilter* filter);
 
-  static void HistogramBadMessageTerminated(int process_type);
+  static void HistogramBadMessageTerminated(ProcessType process_type);
 
   BrowserChildProcessHostDelegate* delegate() const { return delegate_; }
 
   ChildConnection* child_connection() const {
     return child_connection_.get();
+  }
+
+  mojo::edk::OutgoingBrokerClientInvitation*
+  GetInProcessBrokerClientInvitation() {
+    return broker_client_invitation_.get();
   }
 
   IPC::Channel* child_channel() const { return channel_; }
@@ -151,7 +156,8 @@ class CONTENT_EXPORT BrowserChildProcessHostImpl
   BrowserChildProcessHostDelegate* delegate_;
   std::unique_ptr<ChildProcessHost> child_process_host_;
 
-  std::unique_ptr<mojo::edk::PendingProcessConnection> pending_connection_;
+  std::unique_ptr<mojo::edk::OutgoingBrokerClientInvitation>
+      broker_client_invitation_;
   std::unique_ptr<ChildConnection> child_connection_;
 
   std::unique_ptr<ChildProcessLauncher> child_process_;

@@ -18,7 +18,7 @@ function initialize_TracingManagerClient()
 InspectorTest.TracingManagerClient = function(callback)
 {
     this._completionCallback = callback;
-    this._tracingModel = InspectorTest.createTracingModel();
+    this._tracingModel = new SDK.TracingModel(new Bindings.TempFileBackingStorage("tracing"));
 }
 
 InspectorTest.TracingManagerClient.prototype = {
@@ -29,7 +29,8 @@ InspectorTest.TracingManagerClient.prototype = {
 
     tracingComplete: function()
     {
-        InspectorTest.addResult("Tracing complete");
+        TestRunner.addResult("Tracing complete");
+        this._tracingModel.tracingComplete();
         this._completionCallback(this._tracingModel);
     },
 
@@ -45,53 +46,50 @@ function doWork()
     var unused = element.clientWidth;
 }
 
-function test()
-{
-    var tracingClient = new InspectorTest.TracingManagerClient(runEventsSanityCheck);
-    var tracingManager = InspectorTest.tracingManager;
-    tracingManager.start(tracingClient, "", "").then(() => {
-        InspectorTest.addResult("Tracing started");
-        tracingClient._tracingModel.reset();
-        InspectorTest.evaluateInPage("doWork()", tracingManager.stop.bind(tracingManager));
+function test() {
+  var tracingClient = new InspectorTest.TracingManagerClient(runEventsSanityCheck);
+  var tracingManager = TestRunner.tracingManager;
+  tracingManager.start(tracingClient, '', '').then(() => {
+    TestRunner.addResult('Tracing started');
+    TestRunner.evaluateInPage('doWork()', tracingManager.stop.bind(tracingManager));
+  });
+
+  function runEventsSanityCheck(tracingModel) {
+    var events = [];
+    var phaseComplete = 0;
+    var knownEvents = {};
+    var processes = 0;
+    var threads = 0;
+
+    tracingModel.sortedProcesses().forEach(function(process) {
+      processes++;
+      process.sortedThreads().forEach(function(thread) {
+        threads++;
+        events = events.concat(thread.events());
+      });
     });
 
-    function runEventsSanityCheck(tracingModel)
-    {
-        var events = [];
-        var phaseComplete = 0;
-        var knownEvents = {};
-        var processes = 0;
-        var threads = 0;
+    knownEvents['MessageLoop::PostTask'] = 0;
+    knownEvents['v8.callFunction'] = 0;
+    knownEvents['UpdateLayoutTree'] = 0;
+    knownEvents['LocalFrameView::layout'] = 0;
 
-        tracingModel.sortedProcesses().forEach(function(process) {
-            processes++;
-            process.sortedThreads().forEach(function(thread) {
-                threads++;
-                events = events.concat(thread.events());
-            });
-        });
-
-        knownEvents["MessageLoop::PostTask"] = 0;
-        knownEvents["v8.callFunction"] = 0;
-        knownEvents["UpdateLayoutTree"] = 0;
-        knownEvents["FrameView::layout"] = 0;
-
-        for (var i = 0; i < events.length; ++i) {
-            var event = events[i];
-            if (event.phase === SDK.TracingModel.Phase.Complete)
-                ++phaseComplete;
-            if (event.name in knownEvents)
-                ++knownEvents[event.name];
-        }
-        InspectorTest.assertGreaterOrEqual(events.length, 100, "Too few trace events recorded");
-        InspectorTest.assertGreaterOrEqual(knownEvents["UpdateLayoutTree"], 1, "Too few UpdateLayoutTree");
-        InspectorTest.assertGreaterOrEqual(knownEvents["FrameView::layout"], 1, "Too few FrameView::layout");
-        InspectorTest.assertGreaterOrEqual(phaseComplete, 50, "Too few begin events");
-        InspectorTest.assertGreaterOrEqual(processes, 2, "Too few processes");
-        InspectorTest.assertGreaterOrEqual(threads, 4, "Too few threads");
-        InspectorTest.addResult("Event sanity test done");
-        InspectorTest.completeTest();
+    for (var i = 0; i < events.length; ++i) {
+      var event = events[i];
+      if (event.phase === SDK.TracingModel.Phase.Complete)
+        ++phaseComplete;
+      if (event.name in knownEvents)
+        ++knownEvents[event.name];
     }
+    TestRunner.assertGreaterOrEqual(events.length, 100, 'Too few trace events recorded');
+    TestRunner.assertGreaterOrEqual(knownEvents['UpdateLayoutTree'], 1, 'Too few UpdateLayoutTree');
+    TestRunner.assertGreaterOrEqual(knownEvents['LocalFrameView::layout'], 1, 'Too few LocalFrameView::layout');
+    TestRunner.assertGreaterOrEqual(phaseComplete, 50, 'Too few begin events');
+    TestRunner.assertGreaterOrEqual(processes, 2, 'Too few processes');
+    TestRunner.assertGreaterOrEqual(threads, 4, 'Too few threads');
+    TestRunner.addResult('Event sanity test done');
+    TestRunner.completeTest();
+  }
 }
 
 </script>

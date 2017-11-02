@@ -5,6 +5,7 @@
 package org.chromium.android_webview.test;
 
 import android.content.Context;
+import android.os.Looper;
 import android.support.test.filters.MediumTest;
 import android.support.test.filters.SmallTest;
 
@@ -15,6 +16,7 @@ import org.chromium.android_webview.AwWebResourceResponse;
 import org.chromium.android_webview.test.util.CommonResources;
 import org.chromium.android_webview.test.util.CookieUtils;
 import org.chromium.base.ContextUtils;
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.Feature;
 import org.chromium.net.test.util.TestWebServer;
 
@@ -29,6 +31,9 @@ public class CookieManagerStartupTest extends AwTestBase {
 
     @Override
     protected void setUp() throws Exception {
+        ThreadUtils.setUiThread(null);
+        ThreadUtils.setWillOverrideUiThread();
+
         super.setUp();
         // CookieManager assumes that native is loaded, but webview browser should not be loaded for
         // these tests as webview is not necessarily loaded when CookieManager is called.
@@ -38,23 +43,24 @@ public class CookieManagerStartupTest extends AwTestBase {
     }
 
     @Override
-    protected boolean needsBrowserProcessStarted() {
+    public boolean needsAwBrowserContextCreated() {
+        return false;
+    }
+
+    @Override
+    public boolean needsBrowserProcessStarted() {
         return false;
     }
 
     private void startChromium() throws Exception {
+        ThreadUtils.setUiThread(Looper.getMainLooper());
         startChromiumWithClient(new TestAwContentsClient());
     }
 
     private void startChromiumWithClient(TestAwContentsClient contentsClient) throws Exception {
         // The activity must be launched in order for proper webview statics to be setup.
         getActivity();
-        getInstrumentation().runOnMainSync(new Runnable() {
-            @Override
-            public void run() {
-                AwBrowserProcess.start();
-            }
-        });
+        getInstrumentation().runOnMainSync(() -> AwBrowserProcess.start());
 
         mContentsClient = contentsClient;
         final AwTestContainerView testContainerView =
@@ -74,7 +80,7 @@ public class CookieManagerStartupTest extends AwTestBase {
             AwCookieManager cookieManager = new AwCookieManager();
             assertNotNull(cookieManager);
 
-            CookieUtils.clearCookies(this, cookieManager);
+            CookieUtils.clearCookies(getInstrumentation(), cookieManager);
             assertFalse(cookieManager.hasCookies());
 
             cookieManager.setAcceptCookie(true);
@@ -121,6 +127,7 @@ public class CookieManagerStartupTest extends AwTestBase {
     @MediumTest
     @Feature({"AndroidWebView"})
     public void testShouldInterceptRequestDeadlock() throws Throwable {
+        ThreadUtils.setUiThread(Looper.getMainLooper());
         String url = "http://www.example.com";
         TestAwContentsClient contentsClient = new TestAwContentsClient() {
             @Override

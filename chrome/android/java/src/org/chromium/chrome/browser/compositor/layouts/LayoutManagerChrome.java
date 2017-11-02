@@ -20,7 +20,6 @@ import org.chromium.chrome.browser.compositor.overlays.SceneOverlay;
 import org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutHelperManager;
 import org.chromium.chrome.browser.contextualsearch.ContextualSearchManagementDelegate;
 import org.chromium.chrome.browser.device.DeviceClassManager;
-import org.chromium.chrome.browser.dom_distiller.ReaderModeManagerDelegate;
 import org.chromium.chrome.browser.fullscreen.FullscreenManager;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.EmptyTabModelObserver;
@@ -35,6 +34,7 @@ import org.chromium.chrome.browser.tabmodel.TabModelSelector.CloseAllTabsDelegat
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelSelectorTabObserver;
 import org.chromium.chrome.browser.tabmodel.TabModelUtils;
+import org.chromium.chrome.browser.util.AccessibilityUtil;
 import org.chromium.chrome.browser.widget.OverviewListLayout;
 import org.chromium.ui.base.LocalizationUtils;
 import org.chromium.ui.resources.dynamics.DynamicResourceLoader;
@@ -43,10 +43,10 @@ import java.util.List;
 
 /**
  * A {@link Layout} controller for the more complicated Chrome browser.  This is currently a
- * superset of {@link LayoutManagerDocument}.
+ * superset of {@link LayoutManager}.
  */
 public class LayoutManagerChrome
-        extends LayoutManagerDocument implements OverviewModeBehavior, CloseAllTabsDelegate {
+        extends LayoutManager implements OverviewModeBehavior, CloseAllTabsDelegate {
     // Layouts
     /** An {@link Layout} that should be used as the accessibility tab switcher. */
     protected OverviewListLayout mOverviewListLayout;
@@ -195,7 +195,6 @@ public class LayoutManagerChrome
     public void init(TabModelSelector selector, TabCreatorManager creator,
             TabContentManager content, ViewGroup androidContentContainer,
             ContextualSearchManagementDelegate contextualSearchDelegate,
-            ReaderModeManagerDelegate readerModeDelegate,
             DynamicResourceLoader dynamicResourceLoader) {
         // TODO: TitleCache should be a part of the ResourceManager.
         mTitleCache = mHost.getTitleCache();
@@ -206,7 +205,7 @@ public class LayoutManagerChrome
         if (mOverviewLayout != null) mOverviewLayout.setTabModelSelector(selector, content);
 
         super.init(selector, creator, content, androidContentContainer, contextualSearchDelegate,
-                readerModeDelegate, dynamicResourceLoader);
+                dynamicResourceLoader);
 
         mTabModelSelectorObserver = new EmptyTabModelSelectorObserver() {
             @Override
@@ -545,20 +544,12 @@ public class LayoutManagerChrome
     }
 
     /**
-     * @return Whether or not to use the accessibility layout.
-     */
-    protected boolean useAccessibilityLayout() {
-        return DeviceClassManager.isAccessibilityModeEnabled(mHost.getContext())
-                || DeviceClassManager.enableAccessibilityLayout();
-    }
-
-    /**
      * Show the overview {@link Layout}.  This is generally a {@link Layout} that visibly represents
      * all of the {@link Tab}s opened by the user.
      * @param animate Whether or not to animate the transition to overview mode.
      */
     public void showOverview(boolean animate) {
-        boolean useAccessibility = useAccessibilityLayout();
+        boolean useAccessibility = DeviceClassManager.enableAccessibilityLayout();
 
         boolean accessibilityIsVisible =
                 useAccessibility && getActiveLayout() == mOverviewListLayout;
@@ -656,8 +647,7 @@ public class LayoutManagerChrome
             }
 
             if (direction == ScrollDirection.DOWN) {
-                boolean isAccessibility =
-                        DeviceClassManager.isAccessibilityModeEnabled(mHost.getContext());
+                boolean isAccessibility = AccessibilityUtil.isAccessibilityEnabled();
                 return mOverviewLayout != null && !isAccessibility;
             }
 

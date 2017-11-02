@@ -102,14 +102,14 @@ bool IndentOutdentCommand::TryIndentingAsListItem(const Position& start,
   // require proper deletion in that case.
   const bool should_keep_selected_list =
       end.AnchorNode() == selected_list_item ||
-      end.AnchorNode()->IsDescendantOf(selected_list_item->LastChild());
+      end.AnchorNode()->IsDescendantOf(selected_list_item->lastChild());
 
   const VisiblePosition& start_of_paragraph_to_move =
       CreateVisiblePosition(start);
   const VisiblePosition& end_of_paragraph_to_move =
       should_keep_selected_list
           ? CreateVisiblePosition(end)
-          : VisiblePosition::AfterNode(selected_list_item->LastChild());
+          : VisiblePosition::AfterNode(*selected_list_item->lastChild());
 
   // The insertion of |newList| may change the computed style of other
   // elements, resulting in failure in visible canonicalization.
@@ -199,7 +199,7 @@ void IndentOutdentCommand::IndentIntoBlockquote(const Position& start,
 
 void IndentOutdentCommand::OutdentParagraph(EditingState* editing_state) {
   VisiblePosition visible_start_of_paragraph =
-      StartOfParagraph(EndingSelection().VisibleStart());
+      StartOfParagraph(EndingVisibleSelection().VisibleStart());
   VisiblePosition visible_end_of_paragraph =
       EndOfParagraph(visible_start_of_paragraph);
 
@@ -227,7 +227,7 @@ void IndentOutdentCommand::OutdentParagraph(EditingState* editing_state) {
 
   // The selection is inside a blockquote i.e. enclosingNode is a blockquote
   VisiblePosition position_in_enclosing_block =
-      VisiblePosition::FirstPositionInNode(enclosing_element);
+      VisiblePosition::FirstPositionInNode(*enclosing_element);
   // If the blockquote is inline, the start of the enclosing block coincides
   // with positionInEnclosingBlock.
   VisiblePosition start_of_enclosing_block =
@@ -236,7 +236,7 @@ void IndentOutdentCommand::OutdentParagraph(EditingState* editing_state) {
           ? position_in_enclosing_block
           : StartOfBlock(position_in_enclosing_block);
   VisiblePosition last_position_in_enclosing_block =
-      VisiblePosition::LastPositionInNode(enclosing_element);
+      VisiblePosition::LastPositionInNode(*enclosing_element);
   VisiblePosition end_of_enclosing_block =
       EndOfBlock(last_position_in_enclosing_block);
   if (visible_start_of_paragraph.DeepEquivalent() ==
@@ -306,16 +306,18 @@ void IndentOutdentCommand::OutdentParagraph(EditingState* editing_state) {
 
     // Re-canonicalize visible{Start,End}OfParagraph, make them valid again
     // after DOM change.
-    // TODO(xiaochengh): We should not store a VisiblePosition and later inspect
-    // its properties when it is already invalidated.
+    // TODO(editing-dev): We should not store a VisiblePosition and later
+    // inspect its properties when it is already invalidated.
+    // See crbug.com/648949 for details.
     visible_start_of_paragraph = CreateVisiblePosition(
         visible_start_of_paragraph.ToPositionWithAffinity());
     visible_end_of_paragraph = CreateVisiblePosition(
         visible_end_of_paragraph.ToPositionWithAffinity());
   }
 
-  // TODO(xiaochengh): We should not store a VisiblePosition and later inspect
-  // its properties when it is already invalidated.
+  // TODO(editing-dev): We should not store a VisiblePosition and later
+  // inspect its properties when it is already invalidated.
+  // See crbug.com/648949 for details.
   VisiblePosition start_of_paragraph_to_move =
       StartOfParagraph(visible_start_of_paragraph);
   VisiblePosition end_of_paragraph_to_move =
@@ -333,7 +335,7 @@ void IndentOutdentCommand::OutdentParagraph(EditingState* editing_state) {
   end_of_paragraph_to_move =
       CreateVisiblePosition(end_of_paragraph_to_move.ToPositionWithAffinity());
   MoveParagraph(start_of_paragraph_to_move, end_of_paragraph_to_move,
-                VisiblePosition::BeforeNode(placeholder), editing_state,
+                VisiblePosition::BeforeNode(*placeholder), editing_state,
                 kPreserveSelection);
 }
 
@@ -352,7 +354,7 @@ void IndentOutdentCommand::OutdentRegion(
     return;
   }
 
-  Position original_selection_end = EndingSelection().end();
+  Position original_selection_end = EndingVisibleSelection().End();
   Position end_after_selection =
       EndOfParagraph(NextPositionOf(end_of_last_paragraph)).DeepEquivalent();
 
@@ -365,12 +367,12 @@ void IndentOutdentCommand::OutdentRegion(
       SelectionInDOMTree::Builder builder;
       if (original_selection_end.IsNotNull())
         builder.Collapse(original_selection_end);
-      SetEndingSelection(builder.Build());
+      SetEndingSelection(SelectionForUndoStep::From(builder.Build()));
     } else {
-      SetEndingSelection(
+      SetEndingSelection(SelectionForUndoStep::From(
           SelectionInDOMTree::Builder()
               .Collapse(end_of_current_paragraph.DeepEquivalent())
-              .Build());
+              .Build()));
     }
 
     OutdentParagraph(editing_state);
@@ -386,7 +388,8 @@ void IndentOutdentCommand::OutdentRegion(
     GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
     if (end_of_next_paragraph.IsNotNull() &&
         !end_of_next_paragraph.IsConnected()) {
-      end_of_current_paragraph = CreateVisiblePosition(EndingSelection().end());
+      end_of_current_paragraph =
+          CreateVisiblePosition(EndingVisibleSelection().End());
       end_of_next_paragraph =
           EndOfParagraph(NextPositionOf(end_of_current_paragraph))
               .ToPositionWithAffinity();

@@ -11,6 +11,7 @@
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/sys_info.h"
+#include "base/syslog_logging.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_app_manager.h"
 #include "chrome/browser/chromeos/login/auth/chrome_login_performer.h"
@@ -80,14 +81,14 @@ class KioskProfileLoader::CryptohomedChecker
     const int kMaxRetryTimes = 5;
     ++retry_count_;
     if (retry_count_ > kMaxRetryTimes) {
-      LOG(ERROR) << "Could not talk to cryptohomed for launching kiosk app.";
+      SYSLOG(ERROR) << "Could not talk to cryptohomed for launching kiosk app.";
       ReportCheckResult(KioskAppLaunchError::CRYPTOHOMED_NOT_RUNNING);
       return;
     }
 
     const int retry_delay_in_milliseconds = 500 * (1 << retry_count_);
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-        FROM_HERE, base::Bind(&CryptohomedChecker::StartCheck, AsWeakPtr()),
+        FROM_HERE, base::BindOnce(&CryptohomedChecker::StartCheck, AsWeakPtr()),
         base::TimeDelta::FromMilliseconds(retry_delay_in_milliseconds));
   }
 
@@ -109,7 +110,7 @@ class KioskProfileLoader::CryptohomedChecker
     }
 
     if (is_mounted)
-      LOG(ERROR) << "Cryptohome is mounted before launching kiosk app.";
+      SYSLOG(ERROR) << "Cryptohome is mounted before launching kiosk app.";
 
     // Proceed only when cryptohome is not mounded or running on dev box.
     if (!is_mounted || !base::SysInfo::IsRunningOnChromeOS())
@@ -185,7 +186,7 @@ void KioskProfileLoader::OnAuthSuccess(const UserContext& user_context) {
 }
 
 void KioskProfileLoader::OnAuthFailure(const AuthFailure& error) {
-  LOG(ERROR) << "Kiosk auth failure: error=" << error.GetErrorString();
+  SYSLOG(ERROR) << "Kiosk auth failure: error=" << error.GetErrorString();
   KioskAppLaunchError::SaveCryptohomeFailure(error);
   ReportLaunchResult(LoginFailureToKioskAppLaunchError(error));
 }

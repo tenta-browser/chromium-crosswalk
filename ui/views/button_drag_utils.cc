@@ -5,7 +5,6 @@
 #include "ui/views/button_drag_utils.h"
 
 #include "base/strings/utf_string_conversions.h"
-#include "ui/base/dragdrop/drag_utils.h"
 #include "ui/base/dragdrop/os_exchange_data.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/compositor/canvas_painter.h"
@@ -19,7 +18,7 @@
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/button/label_button_border.h"
 #include "ui/views/drag_utils.h"
-#include "ui/views/resources/grit/views_resources.h"
+#include "ui/views/paint_info.h"
 #include "ui/views/widget/widget.h"
 #include "url/gurl.h"
 
@@ -61,7 +60,7 @@ void SetDragImage(const GURL& url,
     button.SetTextShadows(gfx::ShadowValues(
         10, gfx::ShadowValue(gfx::Vector2d(0, 0), 2.0f, bg_color)));
   } else {
-    button.set_background(views::Background::CreateSolidBackground(bg_color));
+    button.SetBackground(views::CreateSolidBackground(bg_color));
     button.SetBorder(button.CreateDefaultBorder());
   }
   button.SetMaxSize(gfx::Size(kLinkDragImageMaxWidth, 0));
@@ -85,9 +84,13 @@ void SetDragImage(const GURL& url,
   SkBitmap bitmap;
   float raster_scale = ScaleFactorForDragFromWidget(&widget);
   SkColor color = SK_ColorTRANSPARENT;
-  button.Paint(ui::CanvasPainter(&bitmap, size, raster_scale, color).context());
+  button.Paint(views::PaintInfo::CreateRootPaintInfo(
+      ui::CanvasPainter(&bitmap, size, raster_scale, color,
+                        widget.GetCompositor()->is_pixel_canvas())
+          .context(),
+      size));
   gfx::ImageSkia image(gfx::ImageSkiaRep(bitmap, raster_scale));
-  drag_utils::SetDragImageOnDataObject(image, press_point, data);
+  data->provider().SetDragImage(image, press_point);
 }
 
 }  // namespace button_drag_utils

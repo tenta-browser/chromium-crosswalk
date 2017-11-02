@@ -14,7 +14,6 @@
 #include "base/version.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_app_manager.h"
 #include "chrome/browser/chromeos/ui/kiosk_external_update_notification.h"
-#include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/browser_thread.h"
@@ -152,15 +151,13 @@ void KioskExternalUpdater::OnMountEvent(
     ExternalUpdateErrorCode* parsing_error = new ExternalUpdateErrorCode;
     backend_task_runner_->PostTaskAndReply(
         FROM_HERE,
-        base::Bind(&ParseExternalUpdateManifest,
-                   base::FilePath(mount_info.mount_path),
-                   parsed_manifest,
-                   parsing_error),
-        base::Bind(&KioskExternalUpdater::ProcessParsedManifest,
-                   weak_factory_.GetWeakPtr(),
-                   base::Owned(parsing_error),
-                   base::FilePath(mount_info.mount_path),
-                   base::Owned(parsed_manifest)));
+        base::BindOnce(&ParseExternalUpdateManifest,
+                       base::FilePath(mount_info.mount_path), parsed_manifest,
+                       parsing_error),
+        base::BindOnce(&KioskExternalUpdater::ProcessParsedManifest,
+                       weak_factory_.GetWeakPtr(), base::Owned(parsing_error),
+                       base::FilePath(mount_info.mount_path),
+                       base::Owned(parsed_manifest)));
   } else {  // unmounting a removable device.
     if (external_update_path_.value().empty()) {
       // Clear any previously displayed message.
@@ -182,6 +179,11 @@ void KioskExternalUpdater::OnFormatEvent(
     FormatError error_code,
     const std::string& device_path) {
 }
+
+void KioskExternalUpdater::OnRenameEvent(
+    disks::DiskMountManager::RenameEvent event,
+    RenameError error_code,
+    const std::string& device_path) {}
 
 void KioskExternalUpdater::OnExtenalUpdateUnpackSuccess(
     const std::string& app_id,
@@ -211,17 +213,11 @@ void KioskExternalUpdater::OnExtenalUpdateUnpackSuccess(
   bool* success = new bool;
   backend_task_runner_->PostTaskAndReply(
       FROM_HERE,
-      base::Bind(&CopyExternalCrxAndDeleteTempDir,
-                 external_crx_path,
-                 temp_crx_path,
-                 temp_dir,
-                 success),
-      base::Bind(&KioskExternalUpdater::PutValidatedExtension,
-                 weak_factory_.GetWeakPtr(),
-                 base::Owned(success),
-                 app_id,
-                 temp_crx_path,
-                 version));
+      base::BindOnce(&CopyExternalCrxAndDeleteTempDir, external_crx_path,
+                     temp_crx_path, temp_dir, success),
+      base::BindOnce(&KioskExternalUpdater::PutValidatedExtension,
+                     weak_factory_.GetWeakPtr(), base::Owned(success), app_id,
+                     temp_crx_path, version));
 }
 
 void KioskExternalUpdater::OnExternalUpdateUnpackFailure(

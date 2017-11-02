@@ -9,10 +9,11 @@
 
 namespace blink {
 
-const CSSValue* CSSPropertyAPIOutlineOffset::parseSingleValue(
+const CSSValue* CSSPropertyAPIOutlineOffset::ParseSingleValue(
+    CSSPropertyID,
     CSSParserTokenRange& range,
     const CSSParserContext& context,
-    CSSPropertyID) {
+    const CSSParserLocalContext&) const {
   return CSSPropertyParserHelpers::ConsumeLength(range, context.Mode(),
                                                  kValueRangeAll);
 }

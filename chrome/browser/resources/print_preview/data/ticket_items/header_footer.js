@@ -23,14 +23,12 @@ cr.define('print_preview.ticket_items', function() {
    * @constructor
    * @extends {print_preview.ticket_items.TicketItem}
    */
-  function HeaderFooter(appState, documentInfo, marginsType, customMargins,
-      mediaSize, landscape) {
+  function HeaderFooter(
+      appState, documentInfo, marginsType, customMargins, mediaSize,
+      landscape) {
     print_preview.ticket_items.TicketItem.call(
-        this,
-        appState,
-        print_preview.AppState.Field.IS_HEADER_FOOTER_ENABLED,
-        null /*destinationStore*/,
-        documentInfo);
+        this, appState, print_preview.AppStateField.IS_HEADER_FOOTER_ENABLED,
+        null /*destinationStore*/, documentInfo);
 
     /**
      * Ticket item that stores which predefined margins to print with.
@@ -57,7 +55,7 @@ cr.define('print_preview.ticket_items', function() {
     this.landscape_ = landscape;
 
     this.addEventListeners_();
-  };
+  }
 
   /**
    * Minimum height of page in microns to allow headers and footers. Should
@@ -82,24 +80,24 @@ cr.define('print_preview.ticket_items', function() {
         return false;
       }
       if (this.marginsType_.getValue() ==
-          print_preview.ticket_items.MarginsType.Value.NO_MARGINS) {
+          print_preview.ticket_items.MarginsTypeValue.NO_MARGINS) {
         return false;
       }
       var microns = this.landscape_.getValue() ?
-                    this.mediaSize_.getValue().width_microns :
-                    this.mediaSize_.getValue().height_microns;
+          this.mediaSize_.getValue().width_microns :
+          this.mediaSize_.getValue().height_microns;
       if (microns < HeaderFooter.MINIMUM_HEIGHT_MICRONS_) {
         // If this is a small paper size, there is not space for headers
         // and footers regardless of the margins.
         return false;
       }
       if (this.marginsType_.getValue() ==
-          print_preview.ticket_items.MarginsType.Value.MINIMUM) {
+          print_preview.ticket_items.MarginsTypeValue.MINIMUM) {
         return true;
       }
       var margins;
       if (this.marginsType_.getValue() ==
-          print_preview.ticket_items.MarginsType.Value.CUSTOM) {
+          print_preview.ticket_items.MarginsTypeValue.CUSTOM) {
         if (!this.customMargins_.isValid()) {
           return false;
         }
@@ -107,10 +105,9 @@ cr.define('print_preview.ticket_items', function() {
       } else {
         margins = this.getDocumentInfoInternal().margins;
       }
-      var orientEnum = print_preview.ticket_items.CustomMargins.Orientation;
-      return margins == null ||
-             margins.get(orientEnum.TOP) > 0 ||
-             margins.get(orientEnum.BOTTOM) > 0;
+      var orientEnum = print_preview.ticket_items.CustomMarginsOrientation;
+      return margins == null || margins.get(orientEnum.TOP) > 0 ||
+          margins.get(orientEnum.BOTTOM) > 0;
     },
 
     /** @override */
@@ -148,7 +145,5 @@ cr.define('print_preview.ticket_items', function() {
   };
 
   // Export
-  return {
-    HeaderFooter: HeaderFooter
-  };
+  return {HeaderFooter: HeaderFooter};
 });

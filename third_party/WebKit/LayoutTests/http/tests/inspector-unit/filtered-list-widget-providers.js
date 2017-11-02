@@ -1,4 +1,4 @@
-TestRunner.loadLazyModules(['quick_open']).then(test);
+TestRunner.loadModule('quick_open').then(test);
 function test() {
   TestRunner.addResult(
       'Test that FilteredListWidget.setProvider changes the provider.');
@@ -36,24 +36,23 @@ function test() {
   ]);
 
   function setProvider(provider) {
-    var promise = TestRunner.addSniffer(filteredListWidget, "_itemsFilteredForTest").then(dump);
+    var promise = TestRunner.addSnifferPromise(filteredListWidget, "_itemsFilteredForTest").then(dump);
     filteredListWidget.setProvider(provider);
     return promise;
   }
 
   function dump() {
-    var list = filteredListWidget._list;
     if (filteredListWidget._bottomElementsContainer.classList.contains('hidden')) {
       TestRunner.addResult('Output: <hidden>');
       return;
     }
-    if (list.element.classList.contains('hidden')) {
+    if (filteredListWidget._list.element.classList.contains('hidden')) {
       TestRunner.addResult('Output: ' + filteredListWidget._notFoundElement.textContent);
       return;
     }
     var output = [];
-    for (var i = 0; i < list.length(); ++i)
-      output.push(filteredListWidget._provider.itemKeyAt(list.itemAtIndex(i)));
+    for (var item of filteredListWidget._items)
+      output.push(filteredListWidget._provider.itemKeyAt(item));
     TestRunner.addResult('Output:' + JSON.stringify(output));
   }
 }

@@ -27,7 +27,6 @@
 #include "core/layout/HitTestResult.h"
 #include "core/layout/LayoutBlockFlow.h"
 #include "core/layout/LayoutState.h"
-#include "core/layout/PaintInvalidationState.h"
 #include "platform/PODFreeListArena.h"
 #include "platform/RuntimeEnabledFeatures.h"
 #include "platform/heap/Handle.h"
@@ -36,9 +35,9 @@
 
 namespace blink {
 
-class FrameView;
-class PaintLayerCompositor;
 class LayoutQuote;
+class LocalFrameView;
+class PaintLayerCompositor;
 class ViewFragmentationContext;
 
 // LayoutView is the root of the layout tree and the Document's LayoutObject.
@@ -92,8 +91,8 @@ class CORE_EXPORT LayoutView final : public LayoutBlockFlow {
                             LayoutUnit logical_top,
                             LogicalExtentComputedValues&) const override;
 
-  // Based on FrameView::layoutSize, but:
-  // - checks for null FrameView
+  // Based on LocalFrameView::LayoutSize, but:
+  // - checks for null LocalFrameView
   // - returns 0x0 if using printing layout
   // - scrollbar exclusion is compatible with root layer scrolling
   IntSize GetLayoutSize(IncludeScrollbarsInRect = kExcludeScrollbars) const;
@@ -114,7 +113,10 @@ class CORE_EXPORT LayoutView final : public LayoutBlockFlow {
 
   float ZoomFactor() const;
 
-  FrameView* GetFrameView() const { return frame_view_; }
+  LocalFrameView* GetFrameView() const { return frame_view_; }
+  const LayoutBox& RootBox() const;
+
+  void UpdateAfterLayout() override;
 
   // See comments for the equivalent method on LayoutObject.
   bool MapToVisualRectInAncestorSpace(const LayoutBoxModelObject* ancestor,
@@ -139,9 +141,7 @@ class CORE_EXPORT LayoutView final : public LayoutBlockFlow {
 
   void InvalidatePaintForViewAndCompositedLayers();
 
-  PaintInvalidationReason InvalidatePaintIfNeeded(
-      const PaintInvalidationState&) override;
-  PaintInvalidationReason InvalidatePaintIfNeeded(
+  PaintInvalidationReason InvalidatePaint(
       const PaintInvalidatorContext&) const override;
 
   void Paint(const PaintInfo&, const LayoutPoint&) const override;
@@ -149,9 +149,7 @@ class CORE_EXPORT LayoutView final : public LayoutBlockFlow {
                                     const LayoutPoint&) const override;
 
   void ClearSelection();
-  bool HasPendingSelection() const;
   void CommitPendingSelection();
-  void SelectionStartEnd(int& start_pos, int& end_pos);
 
   void AbsoluteRects(Vector<IntRect>&,
                      const LayoutPoint& accumulated_offset) const override;
@@ -163,6 +161,9 @@ class CORE_EXPORT LayoutView final : public LayoutBlockFlow {
       const LayoutPoint& location,
       OverlayScrollbarClipBehavior =
           kIgnorePlatformOverlayScrollbarSize) const override;
+
+  void CalculateScrollbarModes(ScrollbarMode& h_mode,
+                               ScrollbarMode& v_mode) const;
 
   LayoutState* GetLayoutState() const { return layout_state_; }
 
@@ -221,7 +222,7 @@ class CORE_EXPORT LayoutView final : public LayoutBlockFlow {
   }
 
   LayoutRect VisualOverflowRect() const override;
-  LayoutRect LocalVisualRect() const override;
+  LayoutRect LocalVisualRectIgnoringVisibility() const override;
 
   // Invalidates paint for the entire view, including composited descendants,
   // but not including child frames.
@@ -239,9 +240,12 @@ class CORE_EXPORT LayoutView final : public LayoutBlockFlow {
     return false;
   }
 
-  // The rootLayerScrolls setting will ultimately determine whether FrameView
-  // or PaintLayerScrollableArea handle the scroll.
+  // The rootLayerScrolls setting will ultimately determine whether
+  // LocalFrameView or PaintLayerScrollableArea handle the scroll.
   ScrollResult Scroll(ScrollGranularity, const FloatSize&) override;
+
+  void StyleWillChange(StyleDifference,
+                       const ComputedStyle& new_style) override;
 
   LayoutRect DebugRect() const override;
 
@@ -275,9 +279,11 @@ class CORE_EXPORT LayoutView final : public LayoutBlockFlow {
   int ViewLogicalWidthForBoxSizing() const;
   int ViewLogicalHeightForBoxSizing() const;
 
+  bool UpdateLogicalWidthAndColumnWidth() override;
+
   bool PaintedOutputOfObjectHasNoEffectRegardlessOfSize() const override;
 
-  UntracedMember<FrameView> frame_view_;
+  UntracedMember<LocalFrameView> frame_view_;
 
   // The page logical height.
   // This is only used during printing to split the content into pages.

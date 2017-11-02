@@ -10,7 +10,7 @@
 #include <map>
 
 #include "ash/ash_export.h"
-#include "ash/wm_display_observer.h"
+#include "ash/display/window_tree_host_manager.h"
 #include "base/macros.h"
 #include "base/strings/string16.h"
 #include "ui/display/manager/managed_display_info.h"
@@ -19,18 +19,18 @@ namespace ash {
 
 // ScreenLayoutObserver is responsible to send notification to users when screen
 // resolution changes or screen rotation changes.
-class ASH_EXPORT ScreenLayoutObserver : public WmDisplayObserver {
+class ASH_EXPORT ScreenLayoutObserver : public WindowTreeHostManager::Observer {
  public:
   ScreenLayoutObserver();
   ~ScreenLayoutObserver() override;
 
-  // Overridden from WmDisplayObserver:
+  // WindowTreeHostManager::Observer:
   void OnDisplayConfigurationChanged() override;
 
   // Notifications are shown in production and are not shown in unit tests.
   // Allow individual unit tests to show notifications.
   void set_show_notifications_for_testing(bool show) {
-    show_notifications_for_testing = show;
+    show_notifications_for_testing_ = show;
   }
 
  private:
@@ -77,7 +77,7 @@ class ASH_EXPORT ScreenLayoutObserver : public WmDisplayObserver {
   DisplayMode old_display_mode_ = DisplayMode::SINGLE;
   DisplayMode current_display_mode_ = DisplayMode::SINGLE;
 
-  bool show_notifications_for_testing = true;
+  bool show_notifications_for_testing_ = true;
 
   DISALLOW_COPY_AND_ASSIGN(ScreenLayoutObserver);
 };

@@ -103,8 +103,8 @@ class ObserverListThreadSafe
       if (current_notification) {
         task_runner->PostTask(
             current_notification->from_here,
-            Bind(&ObserverListThreadSafe<ObserverType>::NotifyWrapper, this,
-                 observer, *current_notification));
+            BindOnce(&ObserverListThreadSafe<ObserverType>::NotifyWrapper, this,
+                     observer, *current_notification));
       }
     }
   }
@@ -170,7 +170,7 @@ class ObserverListThreadSafe
       auto it = observers_.find(observer);
       if (it == observers_.end())
         return;
-      DCHECK(it->second->RunsTasksOnCurrentThread());
+      DCHECK(it->second->RunsTasksInCurrentSequence());
     }
 
     // Keep track of the notification being dispatched on the current thread.

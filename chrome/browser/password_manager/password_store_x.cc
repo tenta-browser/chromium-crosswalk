@@ -18,11 +18,9 @@
 #include "components/password_manager/core/common/password_manager_pref_names.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
-#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 
 using autofill::PasswordForm;
-using content::BrowserThread;
 using password_manager::PasswordStoreChange;
 using password_manager::PasswordStoreChangeList;
 using password_manager::PasswordStoreDefault;
@@ -61,18 +59,21 @@ bool RemoveLoginsByURLAndTimeFromBackend(
 }  // namespace
 
 PasswordStoreX::PasswordStoreX(
-    scoped_refptr<base::SingleThreadTaskRunner> main_thread_runner,
-    scoped_refptr<base::SingleThreadTaskRunner> db_thread_runner,
     std::unique_ptr<password_manager::LoginDatabase> login_db,
-    NativeBackend* backend)
-    : PasswordStoreDefault(main_thread_runner,
-                           db_thread_runner,
-                           std::move(login_db)),
-      backend_(backend),
-      migration_checked_(!backend),
+    std::unique_ptr<NativeBackend> backend)
+    : PasswordStoreDefault(std::move(login_db)),
+      backend_(std::move(backend)),
+      migration_checked_(false),
       allow_fallback_(false) {}
 
 PasswordStoreX::~PasswordStoreX() {}
+
+scoped_refptr<base::SequencedTaskRunner>
+PasswordStoreX::CreateBackgroundTaskRunner() const {
+  scoped_refptr<base::SequencedTaskRunner> result =
+      backend_ ? backend_->GetBackgroundTaskRunner() : nullptr;
+  return result ? result : PasswordStoreDefault::CreateBackgroundTaskRunner();
+}
 
 PasswordStoreChangeList PasswordStoreX::AddLoginImpl(const PasswordForm& form) {
   CheckMigration();
@@ -207,6 +208,13 @@ std::vector<std::unique_ptr<PasswordForm>> PasswordStoreX::FillMatchingLogins(
   return std::vector<std::unique_ptr<PasswordForm>>();
 }
 
+std::vector<std::unique_ptr<PasswordForm>>
+PasswordStoreX::FillLoginsForSameOrganizationName(
+    const std::string& signon_realm) {
+  // Not available on X.
+  return std::vector<std::unique_ptr<PasswordForm>>();
+}
+
 bool PasswordStoreX::FillAutofillableLogins(
     std::vector<std::unique_ptr<PasswordForm>>* forms) {
   CheckMigration();
@@ -238,7 +246,7 @@ bool PasswordStoreX::FillBlacklistLogins(
 }
 
 void PasswordStoreX::CheckMigration() {
-  DCHECK_CURRENTLY_ON(BrowserThread::DB);
+  DCHECK(background_task_runner()->RunsTasksInCurrentSequence());
   if (migration_checked_ || !backend_.get())
     return;
   migration_checked_ = true;

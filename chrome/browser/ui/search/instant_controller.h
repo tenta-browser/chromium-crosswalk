@@ -14,25 +14,19 @@
 
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/strings/string16.h"
 #include "chrome/browser/ui/search/instant_tab.h"
-#include "chrome/common/search/search_types.h"
+#include "chrome/browser/ui/search/search_model.h"
 
 class BrowserInstantController;
-class GURL;
-class InstantService;
 
 namespace content {
 class WebContents;
 }
 
-// InstantController drives Chrome Instant, i.e., the browser implementation of
-// the Embedded Search API (see http://dev.chromium.org/embeddedsearch).
-//
-// In extended mode, InstantController maintains and coordinates an InstantTab.
-// An InstantTab instance points to the currently active tab, if it supports the
-// Embedded Search API. InstantTab is backed by a WebContents and it does not
-// own that WebContents.
+// InstantController is responsible for updating the theme and most visited info
+// of the current tab when
+// * the user switches to an existing NTP tab, or
+// * an open tab navigates to an NTP.
 //
 // InstantController is owned by Browser via BrowserInstantController.
 class InstantController : public InstantTab::Delegate {
@@ -41,17 +35,13 @@ class InstantController : public InstantTab::Delegate {
   ~InstantController() override;
 
   // The search mode in the active tab has changed. Bind |instant_tab_| if the
-  // |new_mode| reflects an Instant search results page.
-  void SearchModeChanged(const SearchMode& old_mode,
-                         const SearchMode& new_mode);
+  // |new_mode| reflects an Instant NTP.
+  void SearchModeChanged(SearchModel::Origin old_origin,
+                         SearchModel::Origin new_origin);
 
   // The user switched tabs. Bind |instant_tab_| if the newly active tab is an
-  // Instant search results page.
+  // Instant NTP.
   void ActiveTabChanged();
-
-  // Used by BrowserInstantController to notify InstantController about the
-  // instant support change event for the active web contents.
-  void InstantSupportChanged(InstantSupportState instant_support);
 
   // Resets list of debug events.
   void ClearDebugEvents();
@@ -62,22 +52,6 @@ class InstantController : public InstantTab::Delegate {
   }
 
  private:
-  friend class InstantExtendedManualTest;
-  friend class InstantTestBase;
-
-  FRIEND_TEST_ALL_PREFIXES(InstantExtendedTest, ExtendedModeIsOn);
-  FRIEND_TEST_ALL_PREFIXES(InstantExtendedTest, MostVisited);
-  FRIEND_TEST_ALL_PREFIXES(InstantExtendedTest, ProcessIsolation);
-  FRIEND_TEST_ALL_PREFIXES(InstantExtendedTest, UnrelatedSiteInstance);
-  FRIEND_TEST_ALL_PREFIXES(InstantExtendedTest, OnDefaultSearchProviderChanged);
-  FRIEND_TEST_ALL_PREFIXES(InstantExtendedTest,
-                           AcceptingURLSearchDoesNotNavigate);
-  FRIEND_TEST_ALL_PREFIXES(InstantExtendedTest, AcceptingJSSearchDoesNotRunJS);
-  FRIEND_TEST_ALL_PREFIXES(InstantExtendedTest,
-                           ReloadSearchAfterBackReloadsCorrectQuery);
-  FRIEND_TEST_ALL_PREFIXES(InstantExtendedTest, KeyboardTogglesVoiceSearch);
-  FRIEND_TEST_ALL_PREFIXES(InstantExtendedTest, HomeButtonAffectsMargin);
-  FRIEND_TEST_ALL_PREFIXES(InstantExtendedTest, SearchReusesInstantTab);
   FRIEND_TEST_ALL_PREFIXES(InstantExtendedTest,
                            SearchDoesntReuseInstantTabWithoutSupport);
   FRIEND_TEST_ALL_PREFIXES(InstantExtendedTest,
@@ -88,8 +62,6 @@ class InstantController : public InstantTab::Delegate {
   // Overridden from InstantTab::Delegate:
   // TODO(shishir): We assume that the WebContent's current RenderViewHost is
   // the RenderViewHost being created which is not always true. Fix this.
-  void InstantSupportDetermined(const content::WebContents* contents,
-                                bool supports_instant) override;
   void InstantTabAboutToNavigateMainFrame(const content::WebContents* contents,
                                           const GURL& url) override;
 
@@ -97,15 +69,12 @@ class InstantController : public InstantTab::Delegate {
   // |debug_events_| doesn't get too large.
   void LogDebugEvent(const std::string& info) const;
 
-  // If the active tab is an Instant search results page, sets |instant_tab_| to
-  // point to it. Else, deletes any existing |instant_tab_|.
+  // If the active tab is an Instant NTP, sets |instant_tab_| to point to it.
+  // Else, deletes any existing |instant_tab_|.
   void ResetInstantTab();
 
-  // Sends theme info and most visited items to the Instant tab.
+  // Sends theme info and most visited items to the Instant renderer process.
   void UpdateInfoForInstantTab();
-
-  // Returns the InstantService for the browser profile.
-  InstantService* GetInstantService() const;
 
   BrowserInstantController* const browser_;
 
@@ -113,7 +82,7 @@ class InstantController : public InstantTab::Delegate {
   std::unique_ptr<InstantTab> instant_tab_;
 
   // The search model mode for the active tab.
-  SearchMode search_mode_;
+  SearchModel::Origin search_origin_;
 
   // List of events and their timestamps, useful in debugging Instant behaviour.
   mutable std::list<std::pair<int64_t, std::string>> debug_events_;

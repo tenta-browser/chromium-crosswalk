@@ -203,8 +203,8 @@ class ProfileLaunchObserver : public content::NotificationObserver {
     // open and activate before trying to activate |profile_to_activate_|.
     BrowserThread::PostTask(
         BrowserThread::UI, FROM_HERE,
-        base::Bind(&ProfileLaunchObserver::ActivateProfile,
-                   base::Unretained(this)));
+        base::BindOnce(&ProfileLaunchObserver::ActivateProfile,
+                       base::Unretained(this)));
     // Avoid posting more than once before ActivateProfile gets called.
     registrar_.Remove(this, chrome::NOTIFICATION_BROWSER_WINDOW_READY,
                       content::NotificationService::AllSources());
@@ -297,8 +297,7 @@ bool ShowUserManagerOnStartupIfNeeded(Profile* last_used_profile,
       command_line.HasSwitch(switches::kShowAppList) ?
           profiles::USER_MANAGER_SELECT_PROFILE_APP_LAUNCHER :
           profiles::USER_MANAGER_SELECT_PROFILE_NO_ACTION;
-  UserManager::Show(
-      base::FilePath(), profiles::USER_MANAGER_NO_TUTORIAL, action);
+  UserManager::Show(base::FilePath(), action);
   return true;
 }
 
@@ -684,11 +683,9 @@ bool StartupBrowserCreator::ProcessCmdLineImpl(
     if (!output_file.empty()) {
       base::PostTaskWithTraits(
           FROM_HERE,
-          base::TaskTraits()
-              .MayBlock()
-              .WithPriority(base::TaskPriority::BACKGROUND)
-              .WithShutdownBehavior(base::TaskShutdownBehavior::BLOCK_SHUTDOWN),
-          base::Bind(&DumpBrowserHistograms, output_file));
+          {base::MayBlock(), base::TaskPriority::BACKGROUND,
+           base::TaskShutdownBehavior::BLOCK_SHUTDOWN},
+          base::BindOnce(&DumpBrowserHistograms, output_file));
     }
     silent_launch = true;
   }
@@ -740,6 +737,11 @@ bool StartupBrowserCreator::ProcessCmdLineImpl(
   if (command_line.HasSwitch(switches::kWinJumplistAction)) {
     jumplist::LogJumplistActionFromSwitchValue(
         command_line.GetSwitchValueASCII(switches::kWinJumplistAction));
+    // Use a non-NULL pointer to indicate JumpList has been used. We re-use
+    // chrome::kJumpListIconDirname as the key to the data.
+    last_used_profile->SetUserData(
+        chrome::kJumpListIconDirname,
+        base::WrapUnique(new base::SupportsUserData::Data()));
   }
 #endif  // defined(OS_WIN)
 

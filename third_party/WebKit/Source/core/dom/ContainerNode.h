@@ -26,10 +26,11 @@
 #define ContainerNode_h
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "bindings/core/v8/ScriptWrappableVisitor.h"
 #include "core/CoreExport.h"
 #include "core/dom/Node.h"
 #include "core/html/CollectionType.h"
+#include "platform/bindings/ScriptWrappableVisitor.h"
+#include "platform/bindings/TraceWrapperMember.h"
 #include "platform/wtf/Vector.h"
 #include "public/platform/WebFocusType.h"
 
@@ -42,7 +43,7 @@ class HTMLCollection;
 class NameNodeList;
 using StaticElementList = StaticNodeTypeList<Element>;
 class RadioNodeList;
-class TagCollection;
+class WhitespaceAttacher;
 
 enum DynamicRestyleFlags {
   kChildrenOrSiblingsAffectedByFocus = 1 << 0,
@@ -80,12 +81,17 @@ enum SubtreeModificationAction {
 const int kInitialNodeVectorSize = 11;
 using NodeVector = HeapVector<Member<Node>, kInitialNodeVectorSize>;
 
+// Note: while ContainerNode itself isn't web-exposed, a number of methods it
+// implements (such as firstChild, lastChild) use web-style naming to shadow
+// the corresponding methods on Node. This is a performance optimization, as it
+// avoids a virtual dispatch if the type is statically known to be
+// ContainerNode.
 class CORE_EXPORT ContainerNode : public Node {
  public:
   ~ContainerNode() override;
 
-  Node* FirstChild() const { return first_child_; }
-  Node* LastChild() const { return last_child_; }
+  Node* firstChild() const { return first_child_; }
+  Node* lastChild() const { return last_child_; }
   bool HasChildren() const { return first_child_; }
 
   bool HasOneChild() const {
@@ -113,11 +119,15 @@ class CORE_EXPORT ContainerNode : public Node {
                      ExceptionState& = ASSERT_NO_EXCEPTION);
   Node* RemoveChild(Node* child, ExceptionState& = ASSERT_NO_EXCEPTION);
   Node* AppendChild(Node* new_child, ExceptionState& = ASSERT_NO_EXCEPTION);
+  bool EnsurePreInsertionValidity(const Node& new_child,
+                                  const Node* next,
+                                  const Node* old_child,
+                                  ExceptionState&) const;
 
   Element* getElementById(const AtomicString& id) const;
-  TagCollection* getElementsByTagName(const AtomicString&);
-  TagCollection* getElementsByTagNameNS(const AtomicString& namespace_uri,
-                                        const AtomicString& local_name);
+  HTMLCollection* getElementsByTagName(const AtomicString&);
+  HTMLCollection* getElementsByTagNameNS(const AtomicString& namespace_uri,
+                                         const AtomicString& local_name);
   NameNodeList* getElementsByName(const AtomicString& element_name);
   ClassCollection* getElementsByClassName(const AtomicString& class_names);
   RadioNodeList* GetRadioNodeList(const AtomicString&,
@@ -135,10 +145,11 @@ class CORE_EXPORT ContainerNode : public Node {
 
   void CloneChildNodes(ContainerNode* clone);
 
-  void AttachLayoutTree(const AttachContext& = AttachContext()) override;
+  void AttachLayoutTree(AttachContext&) override;
   void DetachLayoutTree(const AttachContext& = AttachContext()) override;
   LayoutRect BoundingBox() const final;
   void SetFocused(bool, WebFocusType) override;
+  void SetHasFocusWithinUpToAncestor(bool, Node* ancestor);
   void FocusStateChanged();
   void FocusWithinStateChanged();
   void SetActive(bool = true) override;
@@ -251,9 +262,8 @@ class CORE_EXPORT ContainerNode : public Node {
                                    Node* node_before_change,
                                    Node* node_after_change);
   void RecalcDescendantStyles(StyleRecalcChange);
-  void RebuildChildrenLayoutTrees(Text*& next_text_sibling);
-
-  bool ChildrenSupportStyleSharing() const { return !HasRestyleFlags(); }
+  void RebuildChildrenLayoutTrees(WhitespaceAttacher&);
+  void RebuildLayoutTreeForChild(Node* child, WhitespaceAttacher&);
 
   // -----------------------------------------------------------------------------
   // Notification of document structure changes (see core/dom/Node.h for more
@@ -339,11 +349,9 @@ class CORE_EXPORT ContainerNode : public Node {
 
   void SetFirstChild(Node* child) {
     first_child_ = child;
-    ScriptWrappableVisitor::WriteBarrier(this, first_child_);
   }
   void SetLastChild(Node* child) {
     last_child_ = child;
-    ScriptWrappableVisitor::WriteBarrier(this, last_child_);
   }
 
   // Utility functions for NodeListsNodeData API.
@@ -366,8 +374,18 @@ class CORE_EXPORT ContainerNode : public Node {
 
   NodeListsNodeData& EnsureNodeLists();
   void RemoveBetween(Node* previous_child, Node* next_child, Node& old_child);
+  // Inserts the specified nodes before |next|.
+  // |next| may be nullptr.
+  // |post_insertion_notification_targets| must not be nullptr.
   template <typename Functor>
-  void InsertNodeVector(const NodeVector&, Node* next, const Functor&);
+  void InsertNodeVector(const NodeVector&,
+                        Node* next,
+                        const Functor&,
+                        NodeVector* post_insertion_notification_targets);
+  void DidInsertNodeVector(
+      const NodeVector&,
+      Node* next,
+      const NodeVector& post_insertion_notification_targets);
   class AdoptAndInsertBefore;
   class AdoptAndAppendChild;
   friend class AdoptAndInsertBefore;
@@ -396,26 +414,19 @@ class CORE_EXPORT ContainerNode : public Node {
   bool HasRestyleFlagInternal(DynamicRestyleFlags) const;
   bool HasRestyleFlagsInternal() const;
 
-  bool CollectChildrenAndRemoveFromOldParentWithCheck(const Node* next,
-                                                      const Node* old_child,
-                                                      Node& new_child,
-                                                      NodeVector&,
-                                                      ExceptionState&) const;
-  inline bool CheckAcceptChildGuaranteedNodeTypes(const Node& new_child,
-                                                  const Node* old_child,
-                                                  ExceptionState&) const;
-  inline bool CheckAcceptChild(const Node* new_child,
-                               const Node* old_child,
-                               ExceptionState&) const;
+  bool RecheckNodeInsertionStructuralPrereq(const NodeVector&,
+                                            const Node* next,
+                                            ExceptionState&);
   inline bool CheckParserAcceptChild(const Node& new_child) const;
-  inline bool ContainsConsideringHostElements(const Node&) const;
+  inline bool IsHostIncludingInclusiveAncestorOfThis(const Node&,
+                                                     ExceptionState&) const;
   inline bool IsChildTypeAllowed(const Node& child) const;
 
   bool GetUpperLeftCorner(FloatPoint&) const;
   bool GetLowerRightCorner(FloatPoint&) const;
 
-  Member<Node> first_child_;
-  Member<Node> last_child_;
+  TraceWrapperMember<Node> first_child_;
+  TraceWrapperMember<Node> last_child_;
 };
 
 #if DCHECK_IS_ON()
@@ -455,13 +466,13 @@ inline unsigned Node::CountChildren() const {
 inline Node* Node::firstChild() const {
   if (!IsContainerNode())
     return nullptr;
-  return ToContainerNode(this)->FirstChild();
+  return ToContainerNode(this)->firstChild();
 }
 
 inline Node* Node::lastChild() const {
   if (!IsContainerNode())
     return nullptr;
-  return ToContainerNode(this)->LastChild();
+  return ToContainerNode(this)->lastChild();
 }
 
 inline ContainerNode* Node::ParentElementOrShadowRoot() const {
@@ -484,7 +495,7 @@ inline bool Node::IsTreeScope() const {
 
 inline void GetChildNodes(ContainerNode& node, NodeVector& nodes) {
   DCHECK(!nodes.size());
-  for (Node* child = node.FirstChild(); child; child = child->nextSibling())
+  for (Node* child = node.firstChild(); child; child = child->nextSibling())
     nodes.push_back(child);
 }
 

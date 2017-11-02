@@ -15,9 +15,9 @@
 
 #include "base/format_macros.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_task_environment.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/test/bookmark_test_helpers.h"
 #include "components/bookmarks/test/test_bookmark_client.h"
@@ -102,7 +102,7 @@ class GetURLTask : public history::HistoryDBTask {
   }
 
   void DoneRunOnMainThread() override {
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
  private:
@@ -186,7 +186,7 @@ class HistoryQuickProviderTest : public testing::Test {
   HistoryQuickProvider& provider() { return *provider_; }
 
  private:
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   std::unique_ptr<FakeAutocompleteProviderClient> client_;
 
   ACMatches ac_matches_;  // The resulting matches after running RunTest.
@@ -331,10 +331,10 @@ void HistoryQuickProviderTest::RunTestWithCursor(
     base::string16 expected_autocompletion) {
   SCOPED_TRACE(text);  // Minimal hint to query being run.
   base::RunLoop().RunUntilIdle();
-  AutocompleteInput input(text, cursor_position, std::string(), GURL(),
-                          metrics::OmniboxEventProto::INVALID_SPEC,
-                          prevent_inline_autocomplete, false, true, true, false,
-                          TestSchemeClassifier());
+  AutocompleteInput input(
+      text, cursor_position, std::string(), GURL(), base::string16(),
+      metrics::OmniboxEventProto::INVALID_SPEC, prevent_inline_autocomplete,
+      false, true, true, false, TestSchemeClassifier());
   provider_->Start(input, false);
   EXPECT_TRUE(provider_->done());
 
@@ -746,7 +746,7 @@ TEST_F(HistoryQuickProviderTest, PreventInlineAutocomplete) {
 
 TEST_F(HistoryQuickProviderTest, DoesNotProvideMatchesOnFocus) {
   AutocompleteInput input(ASCIIToUTF16("popularsite"), base::string16::npos,
-                          std::string(), GURL(),
+                          std::string(), GURL(), base::string16(),
                           metrics::OmniboxEventProto::INVALID_SPEC, false,
                           false, true, true, true, TestSchemeClassifier());
   provider().Start(input, false);
@@ -788,7 +788,7 @@ HQPOrderingTest::GetTestData() {
       {"http://store.steampowered.com/", "", 6, 6, 1},
       {"http://techmeme.com/", "techmeme", 111, 110, 4},
       {"http://www.teamliquid.net/tlpd", "team liquid progaming database", 15,
-       15, 2},
+       15, 4},
       {"http://store.steampowered.com/", "the steam summer camp sale", 6, 6, 1},
       {"http://www.teamliquid.net/tlpd/korean/players",
        "tlpd - bw korean - player index", 25, 7, 219},
@@ -823,7 +823,7 @@ TEST_F(HQPOrderingTest, TEAMatch) {
   std::vector<std::string> expected_urls;
   expected_urls.push_back("http://www.teamliquid.net/");
   expected_urls.push_back("http://www.teamliquid.net/tlpd");
-  expected_urls.push_back("http://www.teamliquid.net/tlpd/korean/players");
+  expected_urls.push_back("http://teamliquid.net/");
   RunTest(ASCIIToUTF16("tea"), false, expected_urls, true,
           ASCIIToUTF16("www.teamliquid.net"),
                  ASCIIToUTF16("mliquid.net"));

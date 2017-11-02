@@ -19,24 +19,21 @@ cr.define('print_preview.ticket_items', function() {
    */
   function Scaling(appState, destinationStore, documentInfo) {
     print_preview.ticket_items.TicketItem.call(
-        this,
-        appState,
-        print_preview.AppState.Field.SCALING,
-        destinationStore,
+        this, appState, print_preview.AppStateField.SCALING, destinationStore,
         documentInfo);
-  };
+  }
 
   Scaling.prototype = {
     __proto__: print_preview.ticket_items.TicketItem.prototype,
 
     /** @override */
     wouldValueBeValid: function(value) {
-      return true;
-   },
+      return value != '';
+    },
 
     /** @override */
     isValueEqual: function(value) {
-      return this.getValueAsNumber() == value;
+      return this.getValue() == value;
     },
 
     /** @override */
@@ -46,15 +43,17 @@ cr.define('print_preview.ticket_items', function() {
       var knownSizeToSaveAsPdf =
           (!this.getDocumentInfoInternal().isModifiable ||
            this.getDocumentInfoInternal().hasCssMediaStyles) &&
-           this.getSelectedDestInternal() &&
-           this.getSelectedDestInternal().id ==
-               print_preview.Destination.GooglePromotedId.SAVE_AS_PDF;
+          this.getSelectedDestInternal() &&
+          this.getSelectedDestInternal().id ==
+              print_preview.Destination.GooglePromotedId.SAVE_AS_PDF;
       return !knownSizeToSaveAsPdf;
     },
 
     /** @return {number} The scaling percentage indicated by the ticket item. */
     getValueAsNumber: function() {
-      return parseInt(this.getValue(), 10);
+      var value = this.getValue() == '' ? 0 : parseInt(this.getValue(), 10);
+      assert(!isNaN(value));
+      return value;
     },
 
     /** @override */
@@ -69,7 +68,5 @@ cr.define('print_preview.ticket_items', function() {
   };
 
   // Export
-  return {
-    Scaling: Scaling
-  };
+  return {Scaling: Scaling};
 });

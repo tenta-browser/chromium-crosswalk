@@ -6,8 +6,8 @@
 
 See http://dev.chromium.org/developers/how-tos/depottools/presubmit-scripts
 for more details about the presubmit API built into depot_tools, and see
-http://www.chromium.org/developers/web-development-style-guide for the rules
-we're checking against here.
+https://chromium.googlesource.com/chromium/src/+/master/styleguide/web/web.md
+for the rules we're checking against here.
 """
 
 import os
@@ -15,9 +15,7 @@ import os
 def GetPathsToPrepend(input_api):
   web_dev_style_path = input_api.os_path.join(
       input_api.change.RepositoryRoot(),
-      'chrome',
-      'browser',
-      'resources')
+      'tools')
   return [input_api.PresubmitLocalPath(), web_dev_style_path]
 
 def RunWithPrependedPath(prepended_path, fn, *args):

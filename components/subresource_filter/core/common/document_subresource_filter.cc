@@ -17,36 +17,6 @@
 
 namespace subresource_filter {
 
-ActivationState ComputeActivationState(
-    const GURL& document_url,
-    const url::Origin& parent_document_origin,
-    const ActivationState& parent_activation_state,
-    const MemoryMappedRuleset* ruleset) {
-  DCHECK(ruleset);
-  SCOPED_UMA_HISTOGRAM_MICRO_TIMER(
-      "SubresourceFilter.DocumentLoad.Activation.WallDuration");
-  SCOPED_UMA_HISTOGRAM_MICRO_THREAD_TIMER(
-      "SubresourceFilter.DocumentLoad.Activation.CPUDuration");
-
-  IndexedRulesetMatcher matcher(ruleset->data(), ruleset->length());
-  ActivationState activation_state = parent_activation_state;
-  if (activation_state.filtering_disabled_for_document)
-    return activation_state;
-
-  // TODO(pkalinnikov): Match several activation types in a batch.
-  if (matcher.ShouldDisableFilteringForDocument(
-          document_url, parent_document_origin,
-          proto::ACTIVATION_TYPE_DOCUMENT)) {
-    activation_state.filtering_disabled_for_document = true;
-  } else if (!activation_state.generic_blocking_rules_disabled &&
-             matcher.ShouldDisableFilteringForDocument(
-                 document_url, parent_document_origin,
-                 proto::ACTIVATION_TYPE_GENERICBLOCK)) {
-    activation_state.generic_blocking_rules_disabled = true;
-  }
-  return activation_state;
-}
-
 DocumentSubresourceFilter::DocumentSubresourceFilter(
     url::Origin document_origin,
     ActivationState activation_state,
@@ -63,7 +33,7 @@ DocumentSubresourceFilter::~DocumentSubresourceFilter() = default;
 
 LoadPolicy DocumentSubresourceFilter::GetLoadPolicy(
     const GURL& subresource_url,
-    proto::ElementType subresource_type) {
+    url_pattern_index::proto::ElementType subresource_type) {
   TRACE_EVENT1("loader", "DocumentSubresourceFilter::GetLoadPolicy", "url",
                subresource_url.spec());
 
@@ -75,9 +45,7 @@ LoadPolicy DocumentSubresourceFilter::GetLoadPolicy(
     return LoadPolicy::ALLOW;
 
   auto wall_duration_timer = ScopedTimers::StartIf(
-      activation_state_.measure_performance &&
-          ScopedThreadTimers::IsSupported(),
-      [this](base::TimeDelta delta) {
+      activation_state_.measure_performance, [this](base::TimeDelta delta) {
         statistics_.evaluation_total_wall_duration += delta;
         UMA_HISTOGRAM_MICRO_TIMES(
             "SubresourceFilter.SubresourceLoad.Evaluation.WallDuration", delta);

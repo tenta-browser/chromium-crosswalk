@@ -10,9 +10,13 @@
   <div role="group">
     <a id="link1" href="#">link</a>
     <button id="button1" type="submit" aria-disabled="false">submit</button>
-  <div>
-<div>
+  </div>
 </div>
+<div id="treeitem1" role="treeitem" tabindex="-1" aria-disabled="true">treeitem</div>
+<div id="option1" role="option" tabindex="-1" aria-disabled="true">option</div>
+<div id="tab1" role="tab" tabindex="-1" aria-disabled="true">tab</div>
+<div id="gridcell1" role="gridcell" tabindex="-1" aria-disabled="true">gridcell</div>
+<div id="checkbox1" role="checkbox" tabindex="-1" aria-disabled="true">checkbox</div>
 <p id="description"></p>
 <div id="console"></div>
 
@@ -23,21 +27,36 @@
     if (window.accessibilityController) {
 
           var textField = accessibilityController.accessibleElementById("text1");
-          shouldBe("textField.isEnabled", "false");
+          shouldBeEqualToString("textField.restriction", "disabled");
 
           textField = accessibilityController.accessibleElementById("text2");
-          shouldBe("textField.isEnabled", "true");
+          shouldBeEqualToString("textField.restriction", "none");
 
           var group = accessibilityController.accessibleElementById("group1");
-          shouldBe("group.isEnabled", "false");
+          shouldBeEqualToString("group.restriction", "disabled");
 
           var link = accessibilityController.accessibleElementById("link1");
-          shouldBe("link.isEnabled", "false");
+          shouldBeEqualToString("link.restriction", "disabled");
 
           var button = accessibilityController.accessibleElementById("button1");
-          shouldBe("button.isEnabled", "true");
-    }
+          shouldBeEqualToString("button.restriction", "none");
 
+          var treeitem = accessibilityController.accessibleElementById("treeitem1");
+          shouldBeEqualToString("treeitem.restriction", "disabled");
+
+          var option = accessibilityController.accessibleElementById("option1");
+          shouldBeEqualToString("option.restriction", "disabled");
+
+          var tab = accessibilityController.accessibleElementById("tab1");
+          shouldBeEqualToString("tab.restriction", "disabled");
+
+          var gridcell = accessibilityController.accessibleElementById("gridcell1");
+          shouldBeEqualToString("gridcell.restriction", "disabled");
+
+          var checkbox = accessibilityController.accessibleElementById("checkbox1");
+          shouldBeEqualToString("checkbox.restriction", "disabled");
+
+      }
 </script>
 
 </body>

@@ -30,6 +30,8 @@ namespace content {
 class WebContentsObserverSanityChecker : public WebContentsObserver,
                                          public base::SupportsUserData::Data {
  public:
+  ~WebContentsObserverSanityChecker() override;
+
   // Enables these checks on |web_contents|. Usually ContentBrowserSanityChecker
   // should call this for you.
   static void Enable(WebContents* web_contents);
@@ -54,8 +56,7 @@ class WebContentsObserverSanityChecker : public WebContentsObserver,
   void DidFailLoad(RenderFrameHost* render_frame_host,
                    const GURL& validated_url,
                    int error_code,
-                   const base::string16& error_description,
-                   bool was_ignored_by_handler) override;
+                   const base::string16& error_description) override;
   void DidOpenRequestedURL(WebContents* new_contents,
                            RenderFrameHost* source_render_frame_host,
                            const GURL& url,
@@ -76,7 +77,6 @@ class WebContentsObserverSanityChecker : public WebContentsObserver,
 
  private:
   explicit WebContentsObserverSanityChecker(WebContents* web_contents);
-  ~WebContentsObserverSanityChecker() override;
 
   std::string Format(RenderFrameHost* render_frame_host);
   void AssertRenderFrameExists(RenderFrameHost* render_frame_host);

@@ -33,14 +33,11 @@
 #include <algorithm>
 #include <unordered_map>
 #include <unordered_set>
-#include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "bindings/core/v8/RetainedDOMInfo.h"
-#include "bindings/core/v8/ScriptWrappableVisitor.h"
 #include "bindings/core/v8/V8AbstractEventListener.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/core/v8/V8Node.h"
 #include "bindings/core/v8/V8ScriptRunner.h"
-#include "bindings/core/v8/WrapperTypeInfo.h"
 #include "core/dom/Attr.h"
 #include "core/dom/Element.h"
 #include "core/dom/Node.h"
@@ -48,6 +45,9 @@
 #include "core/inspector/InspectorTraceEvents.h"
 #include "platform/Histogram.h"
 #include "platform/RuntimeEnabledFeatures.h"
+#include "platform/bindings/ActiveScriptWrappable.h"
+#include "platform/bindings/ScriptWrappableVisitor.h"
+#include "platform/bindings/WrapperTypeInfo.h"
 #include "platform/instrumentation/tracing/TraceEvent.h"
 #include "platform/wtf/Vector.h"
 #include "platform/wtf/allocator/Partitions.h"
@@ -57,13 +57,9 @@
 namespace blink {
 
 Node* V8GCController::OpaqueRootForGC(v8::Isolate*, Node* node) {
-  ASSERT(node);
-  if (node->isConnected()) {
-    Document& document = node->GetDocument();
-    if (HTMLImportsController* controller = document.ImportsController())
-      return controller->Master();
-    return &document;
-  }
+  DCHECK(node);
+  if (node->isConnected())
+    return &node->GetDocument().MasterDocument();
 
   if (node->IsAttributeNode()) {
     Node* owner_element = ToAttr(node)->ownerElement();
@@ -99,7 +95,7 @@ class MinorGCUnmodifiedWrapperVisitor : public v8::PersistentHandleVisitor {
 
     v8::Local<v8::Object> wrapper = v8::Local<v8::Object>::New(
         isolate_, v8::Persistent<v8::Object>::Cast(*value));
-    ASSERT(V8DOMWrapper::HasInternalFieldsSet(wrapper));
+    DCHECK(V8DOMWrapper::HasInternalFieldsSet(wrapper));
     if (ToWrapperTypeInfo(wrapper)->IsActiveScriptWrappable() &&
         ToScriptWrappable(wrapper)->HasPendingActivity()) {
       v8::Persistent<v8::Object>::Cast(*value).MarkActive();
@@ -107,7 +103,7 @@ class MinorGCUnmodifiedWrapperVisitor : public v8::PersistentHandleVisitor {
     }
 
     if (class_id == WrapperTypeInfo::kNodeClassId) {
-      ASSERT(V8Node::hasInstance(wrapper, isolate_));
+      DCHECK(V8Node::hasInstance(wrapper, isolate_));
       Node* node = V8Node::toImpl(wrapper);
       if (node->HasEventListeners()) {
         v8::Persistent<v8::Object>::Cast(*value).MarkActive();
@@ -298,6 +294,7 @@ void VisitWeakHandlesForMinorGC(v8::Isolate* isolate) {
 void V8GCController::GcPrologue(v8::Isolate* isolate,
                                 v8::GCType type,
                                 v8::GCCallbackFlags flags) {
+  RUNTIME_CALL_TIMER_SCOPE(isolate, RuntimeCallStats::CounterId::kGcPrologue);
   if (IsMainThread())
     ScriptForbiddenScope::Enter();
 
@@ -345,7 +342,7 @@ void V8GCController::GcPrologue(v8::Isolate* isolate,
                          "weak processing");
       break;
     default:
-      ASSERT_NOT_REACHED();
+      NOTREACHED();
   }
 }
 
@@ -363,6 +360,7 @@ void UpdateCollectedPhantomHandles(v8::Isolate* isolate) {
 void V8GCController::GcEpilogue(v8::Isolate* isolate,
                                 v8::GCType type,
                                 v8::GCCallbackFlags flags) {
+  RUNTIME_CALL_TIMER_SCOPE(isolate, RuntimeCallStats::CounterId::kGcEpilogue);
   UpdateCollectedPhantomHandles(isolate);
   switch (type) {
     case v8::kGCTypeScavenge:
@@ -389,7 +387,7 @@ void V8GCController::GcEpilogue(v8::Isolate* isolate,
                        UsedHeapSize(isolate));
       break;
     default:
-      ASSERT_NOT_REACHED();
+      NOTREACHED();
   }
 
   if (IsMainThread())
@@ -424,7 +422,7 @@ void V8GCController::GcEpilogue(v8::Isolate* isolate,
                                            BlinkGC::kForcedGC);
 
       // Forces a precise GC at the end of the current event loop.
-      RELEASE_ASSERT(!current_thread_state->IsInGC());
+      CHECK(!current_thread_state->IsInGC());
       current_thread_state->SetGCState(ThreadState::kFullGCScheduled);
     }
 
@@ -440,6 +438,11 @@ void V8GCController::GcEpilogue(v8::Isolate* isolate,
       // The conservative GC might have left floating garbage. Schedule
       // precise GC to ensure that we collect all available garbage.
       current_thread_state->SchedulePreciseGC();
+    }
+
+    // Schedules a precise GC for the next idle time period.
+    if (flags & v8::kGCCallbackScheduleIdleGarbageCollection) {
+      current_thread_state->ScheduleIdleGC();
     }
   }
 
@@ -460,7 +463,7 @@ void V8GCController::CollectGarbage(v8::Isolate* isolate, bool only_minor_gc) {
   builder.Append(only_minor_gc ? "true" : "false");
   builder.Append(")");
   V8ScriptRunner::CompileAndRunInternalScript(
-      V8String(isolate, builder.ToString()), isolate);
+      script_state.Get(), V8String(isolate, builder.ToString()), isolate);
   script_state->DisposePerContextData();
 }
 
@@ -472,7 +475,9 @@ void V8GCController::CollectAllGarbageForTesting(v8::Isolate* isolate) {
 
 class DOMWrapperTracer : public v8::PersistentHandleVisitor {
  public:
-  explicit DOMWrapperTracer(Visitor* visitor) : visitor_(visitor) {}
+  explicit DOMWrapperTracer(Visitor* visitor) : visitor_(visitor) {
+    DCHECK(visitor_);
+  }
 
   void VisitPersistentHandle(v8::Persistent<v8::Value>* value,
                              uint16_t class_id) override {
@@ -483,8 +488,8 @@ class DOMWrapperTracer : public v8::PersistentHandleVisitor {
     const v8::Persistent<v8::Object>& wrapper =
         v8::Persistent<v8::Object>::Cast(*value);
 
-    if (visitor_)
-      ToWrapperTypeInfo(wrapper)->Trace(visitor_, ToScriptWrappable(wrapper));
+    if (ScriptWrappable* script_wrappable = ToScriptWrappable(wrapper))
+      ToWrapperTypeInfo(wrapper)->Trace(visitor_, script_wrappable);
   }
 
  private:
@@ -517,7 +522,7 @@ class PendingActivityVisitor : public v8::PersistentHandleVisitor {
 
     v8::Local<v8::Object> wrapper = v8::Local<v8::Object>::New(
         isolate_, v8::Persistent<v8::Object>::Cast(*value));
-    ASSERT(V8DOMWrapper::HasInternalFieldsSet(wrapper));
+    DCHECK(V8DOMWrapper::HasInternalFieldsSet(wrapper));
     // The ExecutionContext check is heavy, so it should be done at the last.
     if (ToWrapperTypeInfo(wrapper)->IsActiveScriptWrappable() &&
         ToScriptWrappable(wrapper)->HasPendingActivity()) {
@@ -542,12 +547,11 @@ bool V8GCController::HasPendingActivity(v8::Isolate* isolate,
                                         ExecutionContext* execution_context) {
   // V8GCController::hasPendingActivity is used only when a worker checks if
   // the worker contains any wrapper that has pending activities.
-  ASSERT(!IsMainThread());
+  DCHECK(!IsMainThread());
 
   DEFINE_THREAD_SAFE_STATIC_LOCAL(
       CustomCountHistogram, scan_pending_activity_histogram,
-      new CustomCountHistogram("Blink.ScanPendingActivityDuration", 1, 1000,
-                               50));
+      ("Blink.ScanPendingActivityDuration", 1, 1000, 50));
   double start_time = WTF::CurrentTimeMS();
   v8::HandleScope scope(isolate);
   PendingActivityVisitor visitor(isolate, execution_context);

@@ -23,8 +23,10 @@ const int kMaxNumTiles = 12;
 // Identifiers for the various tile sources.
 const char kHistogramClientName[] = "client";
 const char kHistogramServerName[] = "server";
-const char kHistogramPopularName[] = "popular";
+const char kHistogramPopularName[] = "popular_fetched";
+const char kHistogramBakedInName[] = "popular_baked_in";
 const char kHistogramWhitelistName[] = "whitelist";
+const char kHistogramHomepageName[] = "homepage";
 
 // Suffixes for the various icon types.
 const char kTileTypeSuffixIconColor[] = "IconsColor";
@@ -50,12 +52,16 @@ std::string GetSourceHistogramName(TileSource source) {
   switch (source) {
     case TileSource::TOP_SITES:
       return kHistogramClientName;
+    case TileSource::POPULAR_BAKED_IN:
+      return kHistogramBakedInName;
     case TileSource::POPULAR:
       return kHistogramPopularName;
     case TileSource::WHITELIST:
       return kHistogramWhitelistName;
     case TileSource::SUGGESTIONS_SERVICE:
       return kHistogramServerName;
+    case TileSource::HOMEPAGE:
+      return kHistogramHomepageName;
   }
   NOTREACHED();
   return std::string();
@@ -82,46 +88,45 @@ const char* GetTileTypeSuffix(TileVisualType type) {
 
 }  // namespace
 
-void RecordPageImpression(const std::vector<TileImpression>& tiles,
+void RecordPageImpression(int number_of_tiles) {
+  UMA_HISTOGRAM_SPARSE_SLOWLY("NewTabPage.NumberOfTiles", number_of_tiles);
+}
+
+void RecordTileImpression(int index,
+                          TileSource source,
+                          TileVisualType type,
+                          const GURL& url,
                           rappor::RapporService* rappor_service) {
-  UMA_HISTOGRAM_SPARSE_SLOWLY("NewTabPage.NumberOfTiles", tiles.size());
+  UMA_HISTOGRAM_ENUMERATION("NewTabPage.SuggestionsImpression", index,
+                            kMaxNumTiles);
 
-  for (int index = 0; index < static_cast<int>(tiles.size()); index++) {
-    TileSource source = tiles[index].source;
-    TileVisualType tile_type = tiles[index].type;
+  std::string source_name = GetSourceHistogramName(source);
+  std::string impression_histogram = base::StringPrintf(
+      "NewTabPage.SuggestionsImpression.%s", source_name.c_str());
+  LogHistogramEvent(impression_histogram, index, kMaxNumTiles);
 
-    UMA_HISTOGRAM_ENUMERATION("NewTabPage.SuggestionsImpression", index,
-                              kMaxNumTiles);
+  if (type > LAST_RECORDED_TILE_TYPE) {
+    return;
+  }
 
-    std::string source_name = GetSourceHistogramName(source);
-    std::string impression_histogram = base::StringPrintf(
-        "NewTabPage.SuggestionsImpression.%s", source_name.c_str());
-    LogHistogramEvent(impression_histogram, index, kMaxNumTiles);
+  UMA_HISTOGRAM_ENUMERATION("NewTabPage.TileType", type,
+                            LAST_RECORDED_TILE_TYPE + 1);
 
-    if (tile_type > LAST_RECORDED_TILE_TYPE) {
-      continue;
-    }
+  std::string tile_type_histogram =
+      base::StringPrintf("NewTabPage.TileType.%s", source_name.c_str());
+  LogHistogramEvent(tile_type_histogram, type, LAST_RECORDED_TILE_TYPE + 1);
 
-    UMA_HISTOGRAM_ENUMERATION("NewTabPage.TileType", tile_type,
-                              LAST_RECORDED_TILE_TYPE + 1);
+  const char* tile_type_suffix = GetTileTypeSuffix(type);
+  if (tile_type_suffix) {
+    // Note: This handles a null |rappor_service|.
+    rappor::SampleDomainAndRegistryFromGURL(
+        rappor_service,
+        base::StringPrintf("NTP.SuggestionsImpressions.%s", tile_type_suffix),
+        url);
 
-    std::string tile_type_histogram =
-        base::StringPrintf("NewTabPage.TileType.%s", source_name.c_str());
-    LogHistogramEvent(tile_type_histogram, tile_type,
-                      LAST_RECORDED_TILE_TYPE + 1);
-
-    const char* tile_type_suffix = GetTileTypeSuffix(tile_type);
-    if (tile_type_suffix) {
-      // Note: This handles a null |rappor_service|.
-      rappor::SampleDomainAndRegistryFromGURL(
-          rappor_service,
-          base::StringPrintf("NTP.SuggestionsImpressions.%s", tile_type_suffix),
-          tiles[index].url);
-
-      std::string icon_impression_histogram = base::StringPrintf(
-          "NewTabPage.SuggestionsImpression.%s", tile_type_suffix);
-      LogHistogramEvent(icon_impression_histogram, index, kMaxNumTiles);
-    }
+    std::string icon_impression_histogram = base::StringPrintf(
+        "NewTabPage.SuggestionsImpression.%s", tile_type_suffix);
+    LogHistogramEvent(icon_impression_histogram, index, kMaxNumTiles);
   }
 }
 

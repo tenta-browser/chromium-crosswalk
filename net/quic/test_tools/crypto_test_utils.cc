@@ -22,6 +22,7 @@
 #include "net/quic/platform/api/quic_clock.h"
 #include "net/quic/platform/api/quic_logging.h"
 #include "net/quic/platform/api/quic_socket_address.h"
+#include "net/quic/platform/api/quic_test.h"
 #include "net/quic/platform/api/quic_text_utils.h"
 #include "net/quic/test_tools/quic_connection_peer.h"
 #include "net/quic/test_tools/quic_framer_peer.h"
@@ -31,7 +32,7 @@
 #include "third_party/boringssl/src/include/openssl/bn.h"
 #include "third_party/boringssl/src/include/openssl/ec.h"
 #include "third_party/boringssl/src/include/openssl/ecdsa.h"
-#include "third_party/boringssl/src/include/openssl/obj_mac.h"
+#include "third_party/boringssl/src/include/openssl/nid.h"
 #include "third_party/boringssl/src/include/openssl/sha.h"
 
 using std::string;
@@ -398,13 +399,21 @@ int HandshakeWithFakeServer(QuicConfig* server_quic_config,
   TestQuicSpdyServerSession server_session(server_conn, *server_quic_config,
                                            &crypto_config,
                                            &compressed_certs_cache);
+  EXPECT_CALL(*server_session.helper(),
+              CanAcceptClientHello(testing::_, testing::_, testing::_))
+      .Times(testing::AnyNumber());
+  EXPECT_CALL(*server_session.helper(),
+              GenerateConnectionIdForReject(testing::_))
+      .Times(testing::AnyNumber());
+  EXPECT_CALL(*server_conn, OnCanWrite()).Times(testing::AnyNumber());
+  EXPECT_CALL(*client_conn, OnCanWrite()).Times(testing::AnyNumber());
 
   // The client's handshake must have been started already.
   CHECK_NE(0u, client_conn->encrypted_packets_.size());
 
   CommunicateHandshakeMessages(client_conn, client, server_conn,
-                               server_session.GetCryptoStream());
-  CompareClientAndServerKeys(client, server_session.GetCryptoStream());
+                               server_session.GetMutableCryptoStream());
+  CompareClientAndServerKeys(client, server_session.GetMutableCryptoStream());
 
   return client->num_sent_client_hellos();
 }
@@ -438,15 +447,18 @@ int HandshakeWithFakeClient(MockQuicConnectionHelper* helper,
 
   EXPECT_CALL(client_session, OnProofValid(testing::_))
       .Times(testing::AnyNumber());
-  client_session.GetCryptoStream()->CryptoConnect();
+  EXPECT_CALL(client_session, OnProofVerifyDetailsAvailable(testing::_))
+      .Times(testing::AnyNumber());
+  EXPECT_CALL(*client_conn, OnCanWrite()).Times(testing::AnyNumber());
+  client_session.GetMutableCryptoStream()->CryptoConnect();
   CHECK_EQ(1u, client_conn->encrypted_packets_.size());
 
   CommunicateHandshakeMessagesAndRunCallbacks(
-      client_conn, client_session.GetCryptoStream(), server_conn, server,
+      client_conn, client_session.GetMutableCryptoStream(), server_conn, server,
       async_channel_id_source);
 
   if (server->handshake_confirmed() && server->encryption_established()) {
-    CompareClientAndServerKeys(client_session.GetCryptoStream(), server);
+    CompareClientAndServerKeys(client_session.GetMutableCryptoStream(), server);
 
     if (options.channel_id_enabled) {
       std::unique_ptr<ChannelIDKey> channel_id_key;
@@ -474,6 +486,15 @@ void SetupCryptoServerConfigForTest(const QuicClock* clock,
   options.token_binding_params = fake_options.token_binding_params;
   std::unique_ptr<CryptoHandshakeMessage> scfg(
       crypto_config->AddDefaultConfig(rand, clock, options));
+}
+
+void SendHandshakeMessageToStream(QuicCryptoStream* stream,
+                                  const CryptoHandshakeMessage& message,
+                                  Perspective perspective) {
+  const QuicData& data = message.GetSerialized(perspective);
+  QuicStreamFrame frame(kCryptoStreamId, false, stream->stream_bytes_read(),
+                        data.AsStringPiece());
+  stream->OnStreamFrame(frame);
 }
 
 void CommunicateHandshakeMessages(PacketSavingConnection* client_conn,
@@ -916,7 +937,10 @@ void MovePackets(PacketSavingConnection* source_conn,
   ASSERT_EQ(0u, crypto_framer.InputBytesRemaining());
 
   for (const CryptoHandshakeMessage& message : crypto_visitor.messages()) {
-    dest_stream->OnHandshakeMessage(message);
+    SendHandshakeMessageToStream(dest_stream, message,
+                                 dest_perspective == Perspective::IS_SERVER
+                                     ? Perspective::IS_CLIENT
+                                     : Perspective::IS_SERVER);
   }
   QuicConnectionPeer::SetCurrentPacket(dest_conn, QuicStringPiece(nullptr, 0));
 }

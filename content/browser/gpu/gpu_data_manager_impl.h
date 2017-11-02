@@ -41,8 +41,7 @@ namespace content {
 class GpuDataManagerImplPrivate;
 struct WebPreferences;
 
-class CONTENT_EXPORT GpuDataManagerImpl
-    : public NON_EXPORTED_BASE(GpuDataManager) {
+class CONTENT_EXPORT GpuDataManagerImpl : public GpuDataManager {
  public:
   // Indicates the guilt level of a domain which caused a GPU reset.
   // If a domain is 100% known to be guilty of resetting the GPU, then
@@ -75,7 +74,9 @@ class CONTENT_EXPORT GpuDataManagerImpl
   void RequestCompleteGpuInfoIfNeeded() override;
   bool IsEssentialGpuInfoAvailable() const override;
   bool IsCompleteGpuInfoAvailable() const override;
-  void RequestVideoMemoryUsageStatsUpdate() const override;
+  void RequestVideoMemoryUsageStatsUpdate(
+      const base::Callback<void(const gpu::VideoMemoryUsageStats& stats)>&
+          callback) const override;
   bool ShouldUseSwiftShader() const override;
   // TODO(kbr): the threading model for the GpuDataManagerObservers is
   // not well defined, and it's impossible for callers to correctly
@@ -113,22 +114,18 @@ class CONTENT_EXPORT GpuDataManagerImpl
   // of GPU rasterization. In the future this will be used for more features.
   void UpdateGpuFeatureInfo(const gpu::GpuFeatureInfo& gpu_feature_info);
 
-  void UpdateVideoMemoryUsageStats(
-      const gpu::VideoMemoryUsageStats& video_memory_usage_stats);
-
   // Insert disable-feature switches corresponding to preliminary gpu feature
   // flags into the renderer process command line.
   void AppendRendererCommandLine(base::CommandLine* command_line) const;
 
   // Insert switches into gpu process command line: kUseGL, etc.
-  // If the gpu_preferences isn't a nullptr, the gpu_preferences will be set
-  // for some GPU switches which have been replaced by GpuPreferences, and those
-  // switches will not be append to the command_line anymore.
-  void AppendGpuCommandLine(base::CommandLine* command_line,
-                            gpu::GpuPreferences* gpu_preferences) const;
+  void AppendGpuCommandLine(base::CommandLine* command_line) const;
 
   // Update WebPreferences for renderer based on blacklisting decisions.
   void UpdateRendererWebPrefs(WebPreferences* prefs) const;
+
+  // Update GpuPreferences based on blacklisting decisions.
+  void UpdateGpuPreferences(gpu::GpuPreferences* gpu_preferences) const;
 
   std::string GetBlacklistVersion() const;
   std::string GetDriverBugListVersion() const;
@@ -148,9 +145,8 @@ class CONTENT_EXPORT GpuDataManagerImpl
 
   void ProcessCrashed(base::TerminationStatus exit_code);
 
-  // Returns a new copy of the ListValue.  Caller is responsible to release
-  // the returned value.
-  base::ListValue* GetLogMessages() const;
+  // Returns a new copy of the ListValue.
+  std::unique_ptr<base::ListValue> GetLogMessages() const;
 
   // Called when switching gpu.
   void HandleGpuSwitch();

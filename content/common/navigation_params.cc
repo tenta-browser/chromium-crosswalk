@@ -9,31 +9,13 @@
 #include "content/common/service_worker/service_worker_types.h"
 #include "content/public/common/appcache_info.h"
 #include "content/public/common/browser_side_navigation_policy.h"
+#include "content/public/common/service_worker_modes.h"
 #include "content/public/common/url_constants.h"
 #include "url/gurl.h"
 #include "url/url_constants.h"
 #include "url/url_util.h"
 
 namespace content {
-
-// PlzNavigate
-bool ShouldMakeNetworkRequestForURL(const GURL& url) {
-  CHECK(IsBrowserSideNavigationEnabled());
-
-  // Javascript URLs, srcdoc, schemes that don't load data should not send a
-  // request to the network stack.
-  if (url.SchemeIs(url::kJavaScriptScheme) || url.is_empty() ||
-      url.SchemeIs(url::kContentIDScheme) || url == content::kAboutSrcDocURL) {
-    return false;
-  }
-
-  for (const auto& scheme : url::GetEmptyDocumentSchemes()) {
-    if (url.SchemeIs(scheme))
-      return false;
-  }
-
-  return true;
-}
 
 SourceLocation::SourceLocation() : line_number(0), column_number(0) {}
 
@@ -69,7 +51,7 @@ CommonNavigationParams::CommonNavigationParams(
     PreviewsState previews_state,
     const base::TimeTicks& navigation_start,
     std::string method,
-    const scoped_refptr<ResourceRequestBodyImpl>& post_data,
+    const scoped_refptr<ResourceRequestBody>& post_data,
     base::Optional<SourceLocation> source_location,
     CSPDisposition should_check_main_world_csp)
     : url(url),

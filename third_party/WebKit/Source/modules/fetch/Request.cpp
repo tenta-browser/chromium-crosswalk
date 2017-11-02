@@ -5,7 +5,6 @@
 #include "modules/fetch/Request.h"
 
 #include "bindings/core/v8/Dictionary.h"
-#include "bindings/core/v8/V8PrivateProperty.h"
 #include "core/dom/Document.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/loader/ThreadableLoader.h"
@@ -14,6 +13,7 @@
 #include "modules/fetch/RequestInit.h"
 #include "platform/HTTPNames.h"
 #include "platform/RuntimeEnabledFeatures.h"
+#include "platform/bindings/V8PrivateProperty.h"
 #include "platform/loader/fetch/FetchUtils.h"
 #include "platform/loader/fetch/ResourceLoaderOptions.h"
 #include "platform/loader/fetch/ResourceRequest.h"
@@ -32,7 +32,6 @@ FetchRequestData* CreateCopyOfFetchRequestDataForFetch(
   request->SetURL(original->Url());
   request->SetMethod(original->Method());
   request->SetHeaderList(original->HeaderList()->Clone());
-  request->SetUnsafeRequestFlag(true);
   // FIXME: Set client.
   DOMWrapperWorld& world = script_state->World();
   if (world.IsIsolatedWorld()) {
@@ -320,16 +319,16 @@ Request* Request::CreateRequestWithRequestOrString(
   // We don't create a copy of r's Headers object when init's headers member
   // is present.
   Headers* headers = nullptr;
-  if (!init.headers) {
+  if (init.headers.isNull()) {
     headers = r->getHeaders()->Clone();
   }
   // "Empty |r|'s request's header list."
   r->request_->HeaderList()->ClearList();
   // "If |r|'s request's mode is "no-cors", run these substeps:
   if (r->GetRequest()->Mode() == WebURLRequest::kFetchRequestModeNoCORS) {
-    // "If |r|'s request's method is not a simple method, throw a
+    // "If |r|'s request's method is not a CORS-safelisted method, throw a
     // TypeError."
-    if (!FetchUtils::IsSimpleMethod(r->GetRequest()->Method())) {
+    if (!FetchUtils::IsCORSSafelistedMethod(r->GetRequest()->Method())) {
       exception_state.ThrowTypeError("'" + r->GetRequest()->Method() +
                                      "' is unsupported in no-cors mode.");
       return nullptr;
@@ -345,10 +344,10 @@ Request* Request::CreateRequestWithRequestOrString(
     r->getHeaders()->SetGuard(Headers::kRequestNoCORSGuard);
   }
   // "Fill |r|'s Headers object with |headers|. Rethrow any exceptions."
-  if (init.headers) {
-    r->getHeaders()->FillWith(init.headers.Get(), exception_state);
+  if (!init.headers.isNull()) {
+    r->getHeaders()->FillWith(init.headers, exception_state);
   } else {
-    ASSERT(headers);
+    DCHECK(headers);
     r->getHeaders()->FillWith(headers, exception_state);
   }
   if (exception_state.HadException())
@@ -437,7 +436,7 @@ Request* Request::Create(ScriptState* script_state,
                          const RequestInfo& input,
                          const Dictionary& init,
                          ExceptionState& exception_state) {
-  ASSERT(!input.isNull());
+  DCHECK(!input.isNull());
   if (input.isUSVString())
     return Create(script_state, input.getAsUSVString(), init, exception_state);
   return Create(script_state, input.getAsRequest(), init, exception_state);
@@ -581,7 +580,7 @@ String Request::Context() const {
     case WebURLRequest::kRequestContextXSLT:
       return "xslt";
   }
-  ASSERT_NOT_REACHED();
+  NOTREACHED();
   return "";
 }
 
@@ -589,9 +588,9 @@ String Request::referrer() const {
   // "The referrer attribute's getter must return the empty string if
   // request's referrer is no referrer, "about:client" if request's referrer
   // is client and request's referrer, serialized, otherwise."
-  ASSERT(FetchRequestData::NoReferrerString() == AtomicString());
-  ASSERT(FetchRequestData::ClientReferrerString() ==
-         AtomicString("about:client"));
+  DCHECK_EQ(FetchRequestData::NoReferrerString(), AtomicString());
+  DCHECK_EQ(FetchRequestData::ClientReferrerString(),
+            AtomicString("about:client"));
   return request_->ReferrerString();
 }
 
@@ -609,11 +608,14 @@ String Request::getReferrerPolicy() const {
       return "origin";
     case kReferrerPolicyOriginWhenCrossOrigin:
       return "origin-when-cross-origin";
+    case kReferrerPolicySameOrigin:
+      return "same-origin";
+    case kReferrerPolicyStrictOrigin:
+      return "strict-origin";
     case kReferrerPolicyNoReferrerWhenDowngradeOriginWhenCrossOrigin:
-      ASSERT(RuntimeEnabledFeatures::reducedReferrerGranularityEnabled());
-      return "no-referrer-when-downgrade-origin-when-cross-origin";
+      return "strict-origin-when-cross-origin";
   }
-  ASSERT_NOT_REACHED();
+  NOTREACHED();
   return String();
 }
 
@@ -631,7 +633,7 @@ String Request::mode() const {
     case WebURLRequest::kFetchRequestModeNavigate:
       return "navigate";
   }
-  ASSERT_NOT_REACHED();
+  NOTREACHED();
   return "";
 }
 
@@ -649,7 +651,7 @@ String Request::credentials() const {
     case WebURLRequest::kFetchCredentialsModePassword:
       return "password";
   }
-  ASSERT_NOT_REACHED();
+  NOTREACHED();
   return "";
 }
 
@@ -683,7 +685,7 @@ String Request::redirect() const {
     case WebURLRequest::kFetchRedirectModeManual:
       return "manual";
   }
-  ASSERT_NOT_REACHED();
+  NOTREACHED();
   return "";
 }
 
@@ -706,7 +708,7 @@ Request* Request::clone(ScriptState* script_state,
 }
 
 FetchRequestData* Request::PassRequestData(ScriptState* script_state) {
-  ASSERT(!bodyUsed());
+  DCHECK(!bodyUsed());
   FetchRequestData* data = request_->Pass(script_state);
   RefreshBody(script_state);
   // |data|'s buffer('s js wrapper) has no retainer, but it's OK because
@@ -722,6 +724,11 @@ bool Request::HasBody() const {
 void Request::PopulateWebServiceWorkerRequest(
     WebServiceWorkerRequest& web_request) const {
   web_request.SetMethod(method());
+  web_request.SetMode(request_->Mode());
+  web_request.SetCredentialsMode(request_->Credentials());
+  web_request.SetCacheMode(request_->CacheMode());
+  web_request.SetRedirectMode(request_->Redirect());
+  web_request.SetIntegrity(request_->Integrity());
   web_request.SetRequestContext(request_->Context());
 
   // Strip off the fragment part of URL. So far, all users of
@@ -732,8 +739,7 @@ void Request::PopulateWebServiceWorkerRequest(
   web_request.SetURL(url);
 
   const FetchHeaderList* header_list = headers_->HeaderList();
-  for (size_t i = 0, size = header_list->size(); i < size; ++i) {
-    const FetchHeaderList::Header& header = header_list->Entry(i);
+  for (const auto& header : header_list->List()) {
     web_request.AppendHeader(header.first, header.second);
   }
 
@@ -747,6 +753,12 @@ void Request::PopulateWebServiceWorkerRequest(
 
 String Request::MimeType() const {
   return request_->MimeType();
+}
+
+String Request::ContentType() const {
+  String result;
+  request_->HeaderList()->Get(HTTPNames::Content_Type, result);
+  return result;
 }
 
 void Request::RefreshBody(ScriptState* script_state) {

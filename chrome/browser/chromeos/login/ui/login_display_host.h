@@ -18,7 +18,6 @@ class AccountId;
 namespace chromeos {
 
 class AppLaunchController;
-class AutoEnrollmentController;
 class LoginScreenContext;
 class OobeUI;
 class WebUILoginView;
@@ -56,17 +55,13 @@ class LoginDisplayHost {
   // instance is gone.
   virtual void Finalize(base::OnceClosure completion_callback) = 0;
 
-  // Called when a login has completed successfully.
-  virtual void OnCompleteLogin() = 0;
-
-  // Open proxy settings dialog.
-  virtual void OpenProxySettings() = 0;
+  // Open proxy settings dialog. If |network_id| is not empty, shows the proxy
+  // settings for that network. Note: The 'proxy' settings also includes other
+  // network settings, e.g. IP config and nameservers.
+  virtual void OpenProxySettings(const std::string& network_id) = 0;
 
   // Toggles status area visibility.
   virtual void SetStatusAreaVisible(bool visible) = 0;
-
-  // Gets the auto-enrollment client.
-  virtual AutoEnrollmentController* GetAutoEnrollmentController() = 0;
 
   // Starts out-of-box-experience flow or shows other screen handled by
   // Wizard controller i.e. camera, recovery.
@@ -109,6 +104,12 @@ class LoginDisplayHost {
 
   // Starts ARC kiosk splash screen.
   virtual void StartArcKiosk(const AccountId& account_id) = 0;
+
+  // Start voice interaction OOBE.
+  virtual void StartVoiceInteractionOobe() = 0;
+
+  // Returns whether current host is for voice interaction OOBE.
+  virtual bool IsVoiceInteractionOobe() = 0;
 
  protected:
   // Default LoginDisplayHost. Child class sets the reference.

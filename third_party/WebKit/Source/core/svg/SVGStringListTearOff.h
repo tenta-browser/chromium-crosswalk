@@ -31,9 +31,9 @@
 #ifndef SVGStringListTearOff_h
 #define SVGStringListTearOff_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/svg/SVGStringList.h"
 #include "core/svg/properties/SVGPropertyTearOff.h"
+#include "platform/bindings/ScriptWrappable.h"
 
 namespace blink {
 
@@ -46,7 +46,7 @@ class SVGStringListTearOff : public SVGPropertyTearOff<SVGStringList>,
       SVGStringList* target,
       SVGElement* context_element,
       PropertyIsAnimValType property_is_anim_val,
-      const QualifiedName& attribute_name = QualifiedName::Null()) {
+      const QualifiedName& attribute_name) {
     return new SVGStringListTearOff(target, context_element,
                                     property_is_anim_val, attribute_name);
   }
@@ -61,7 +61,7 @@ class SVGStringListTearOff : public SVGPropertyTearOff<SVGStringList>,
       ThrowReadOnly(exception_state);
       return;
     }
-    Target()->Clear();
+    Target()->clear();
     CommitChange();
   }
 

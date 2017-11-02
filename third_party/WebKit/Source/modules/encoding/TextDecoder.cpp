@@ -31,8 +31,8 @@
 #include "modules/encoding/TextDecoder.h"
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "core/dom/DOMArrayBuffer.h"
-#include "core/dom/DOMArrayBufferView.h"
+#include "core/typed_arrays/DOMArrayBuffer.h"
+#include "core/typed_arrays/DOMArrayBufferView.h"
 #include "modules/encoding/Encoding.h"
 #include "platform/wtf/StringExtras.h"
 #include "platform/wtf/text/TextEncodingRegistry.h"
@@ -79,14 +79,14 @@ String TextDecoder::encoding() const {
 String TextDecoder::decode(const BufferSource& input,
                            const TextDecodeOptions& options,
                            ExceptionState& exception_state) {
-  ASSERT(!input.isNull());
+  DCHECK(!input.isNull());
   if (input.isArrayBufferView()) {
     const char* start = static_cast<const char*>(
         input.getAsArrayBufferView().View()->BaseAddress());
     size_t length = input.getAsArrayBufferView().View()->byteLength();
     return decode(start, length, options, exception_state);
   }
-  ASSERT(input.isArrayBuffer());
+  DCHECK(input.isArrayBuffer());
   const char* start =
       static_cast<const char*>(input.getAsArrayBuffer()->Data());
   size_t length = input.getAsArrayBuffer()->ByteLength();

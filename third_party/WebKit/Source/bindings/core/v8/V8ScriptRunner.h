@@ -28,11 +28,11 @@
 
 #include <stdint.h>
 
-#include "bindings/core/v8/ScriptState.h"
 #include "bindings/core/v8/ScriptValue.h"
-#include "bindings/core/v8/V8BindingMacros.h"
 #include "bindings/core/v8/V8CacheOptions.h"
 #include "core/CoreExport.h"
+#include "platform/bindings/ScriptState.h"
+#include "platform/bindings/V8BindingMacros.h"
 #include "platform/loader/fetch/AccessControlStatus.h"
 #include "platform/wtf/Allocator.h"
 #include "platform/wtf/text/TextPosition.h"
@@ -53,15 +53,15 @@ class CORE_EXPORT V8ScriptRunner final {
  public:
   // For the following methods, the caller sites have to hold
   // a HandleScope and a ContextScope.
-  static v8::MaybeLocal<v8::Script> CompileScript(const ScriptSourceCode&,
-                                                  v8::Isolate*,
+  static v8::MaybeLocal<v8::Script> CompileScript(ScriptState*,
+                                                  const ScriptSourceCode&,
                                                   AccessControlStatus,
                                                   V8CacheOptions);
-  static v8::MaybeLocal<v8::Script> CompileScript(const String&,
+  static v8::MaybeLocal<v8::Script> CompileScript(ScriptState*,
+                                                  const String&,
                                                   const String& file_name,
                                                   const String& source_map_url,
                                                   const TextPosition&,
-                                                  v8::Isolate*,
                                                   CachedMetadataHandler*,
                                                   AccessControlStatus,
                                                   V8CacheOptions);
@@ -69,11 +69,11 @@ class CORE_EXPORT V8ScriptRunner final {
   // normal scripe resources, CachedMetadataHandler is from ScriptResource.
   // For worker script, ScriptResource is null but CachedMetadataHandler may be
   // set. When ScriptStreamer is set, ScriptResource must be set.
-  static v8::MaybeLocal<v8::Script> CompileScript(v8::Local<v8::String>,
+  static v8::MaybeLocal<v8::Script> CompileScript(ScriptState*,
+                                                  v8::Local<v8::String>,
                                                   const String& file_name,
                                                   const String& source_map_url,
                                                   const TextPosition&,
-                                                  v8::Isolate*,
                                                   ScriptResource*,
                                                   ScriptStreamer*,
                                                   CachedMetadataHandler*,
@@ -82,11 +82,13 @@ class CORE_EXPORT V8ScriptRunner final {
   static v8::MaybeLocal<v8::Module> CompileModule(v8::Isolate*,
                                                   const String& source,
                                                   const String& file_name,
-                                                  AccessControlStatus);
+                                                  AccessControlStatus,
+                                                  const TextPosition&);
   static v8::MaybeLocal<v8::Value> RunCompiledScript(v8::Isolate*,
                                                      v8::Local<v8::Script>,
                                                      ExecutionContext*);
   static v8::MaybeLocal<v8::Value> CompileAndRunInternalScript(
+      ScriptState*,
       v8::Local<v8::String>,
       v8::Isolate*,
       const String& = String(),
@@ -116,6 +118,12 @@ class CORE_EXPORT V8ScriptRunner final {
                                                   v8::Local<v8::Context>,
                                                   v8::Isolate*);
 
+  // Only to be used from ScriptModule::ReportException().
+  static void ReportExceptionForModule(v8::Isolate*,
+                                       v8::Local<v8::Value> exception,
+                                       const String& file_name,
+                                       const TextPosition&);
+
   static uint32_t TagForParserCache(CachedMetadataHandler*);
   static uint32_t TagForCodeCache(CachedMetadataHandler*);
   static void SetCacheTimeStamp(CachedMetadataHandler*);
@@ -137,26 +145,18 @@ class CORE_EXPORT V8ScriptRunner final {
     return CallExtraHelper(script_state, name, N, args).ToLocalChecked();
   }
 
-  // Use V8ThrowException instead of this function unless absolutely needed.
-  static void ThrowException(v8::Isolate*,
-                             v8::Local<v8::Value> exception,
-                             const v8::ScriptOrigin&);
+  // Reports an exception to the message handler, as if it were an uncaught
+  // exception. Can only be called on the main thread.
+  //
+  // TODO(adamk): This should live on V8ThrowException, but it depends on
+  // V8Initializer and so can't trivially move to platform/bindings.
+  static void ReportException(v8::Isolate*, v8::Local<v8::Value> exception);
 
  private:
-  static v8::MaybeLocal<v8::Value> CallExtraHelper(ScriptState* script_state,
+  static v8::MaybeLocal<v8::Value> CallExtraHelper(ScriptState*,
                                                    const char* name,
                                                    size_t num_args,
-                                                   v8::Local<v8::Value>* args) {
-    v8::Isolate* isolate = script_state->GetIsolate();
-    v8::Local<v8::Value> undefined = v8::Undefined(isolate);
-    v8::Local<v8::Value> function_value =
-        script_state->GetFromExtrasExports(name).V8Value();
-    if (function_value.IsEmpty())
-      return v8::MaybeLocal<v8::Value>();
-    v8::Local<v8::Function> function = function_value.As<v8::Function>();
-    return V8ScriptRunner::CallInternalFunction(function, undefined, num_args,
-                                                args, isolate);
-  }
+                                                   v8::Local<v8::Value>* args);
 };
 
 }  // namespace blink

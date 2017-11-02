@@ -31,12 +31,16 @@
 #ifndef RTCCertificate_h
 #define RTCCertificate_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include <memory>
+
 #include "core/dom/DOMTimeStamp.h"
 #include "modules/ModulesExport.h"
+#include "modules/peerconnection/RTCDtlsFingerprint.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/GarbageCollected.h"
+#include "platform/wtf/Vector.h"
+#include "platform/wtf/text/WTFString.h"
 #include "public/platform/WebRTCCertificate.h"
-#include <memory>
 
 namespace blink {
 
@@ -57,6 +61,7 @@ class MODULES_EXPORT RTCCertificate final
 
   // Returns the expiration time in ms relative to epoch, 1970-01-01T00:00:00Z.
   DOMTimeStamp expires() const;
+  HeapVector<RTCDtlsFingerprint> getFingerprints();
 
  private:
   std::unique_ptr<WebRTCCertificate> certificate_;

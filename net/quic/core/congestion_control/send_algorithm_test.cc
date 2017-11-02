@@ -12,6 +12,7 @@
 #include "net/quic/core/quic_utils.h"
 #include "net/quic/platform/api/quic_logging.h"
 #include "net/quic/platform/api/quic_str_cat.h"
+#include "net/quic/platform/api/quic_test.h"
 #include "net/quic/test_tools/mock_clock.h"
 #include "net/quic/test_tools/quic_config_peer.h"
 #include "net/quic/test_tools/quic_connection_peer.h"
@@ -20,7 +21,6 @@
 #include "net/quic/test_tools/simulator/quic_endpoint.h"
 #include "net/quic/test_tools/simulator/simulator.h"
 #include "net/quic/test_tools/simulator/switch.h"
-#include "testing/gtest/include/gtest/gtest.h"
 
 using std::string;
 
@@ -114,6 +114,8 @@ const char* CongestionControlTypeToString(CongestionControlType cc_type) {
       return "RENO_BYTES";
     case kBBR:
       return "BBR";
+    case kPCC:
+      return "PCC";
     default:
       QUIC_DLOG(FATAL) << "Unexpected CongestionControlType";
       return nullptr;
@@ -163,48 +165,22 @@ string TestParamToString(const testing::TestParamInfo<TestParams>& params) {
 std::vector<TestParams> GetTestParams() {
   std::vector<TestParams> params;
   for (const CongestionControlType congestion_control_type :
-       {kBBR, kCubic, kCubicBytes, kReno, kRenoBytes}) {
+       {kBBR, kCubic, kCubicBytes, kReno, kRenoBytes, kPCC}) {
+    params.push_back(
+        TestParams(congestion_control_type, false, false, false, false));
     if (congestion_control_type != kCubic &&
         congestion_control_type != kCubicBytes) {
-      params.push_back(
-          TestParams(congestion_control_type, false, false, false, false));
       continue;
     }
-    for (bool fix_convex_mode : {true, false}) {
-      for (bool fix_cubic_quantization : {true, false}) {
-        for (bool fix_beta_last_max : {true, false}) {
-          for (bool allow_per_ack_updates : {true, false}) {
-            if (!FLAGS_quic_reloadable_flag_quic_fix_cubic_convex_mode &&
-                fix_convex_mode) {
-              continue;
-            }
-            if (!FLAGS_quic_reloadable_flag_quic_fix_cubic_bytes_quantization &&
-                fix_cubic_quantization) {
-              continue;
-            }
-            if (!FLAGS_quic_reloadable_flag_quic_fix_beta_last_max &&
-                fix_beta_last_max) {
-              continue;
-            }
-            if (!FLAGS_quic_reloadable_flag_quic_enable_cubic_per_ack_updates &&
-                allow_per_ack_updates) {
-              continue;
-            }
-            TestParams param(congestion_control_type, fix_convex_mode,
-                             fix_cubic_quantization, fix_beta_last_max,
-                             allow_per_ack_updates);
-            params.push_back(param);
-          }
-        }
-      }
-    }
+    params.push_back(
+        TestParams(congestion_control_type, true, true, true, true));
   }
   return params;
 }
 
 }  // namespace
 
-class SendAlgorithmTest : public ::testing::TestWithParam<TestParams> {
+class SendAlgorithmTest : public QuicTestWithParam<TestParams> {
  protected:
   SendAlgorithmTest()
       : simulator_(),
@@ -230,7 +206,13 @@ class SendAlgorithmTest : public ::testing::TestWithParam<TestParams> {
     SetExperimentalOptionsInServerConfig();
 
     QuicConnectionPeer::SetSendAlgorithm(quic_sender_.connection(), sender_);
-
+    // TODO(jokulik):  Remove once b/38032710 is fixed.
+    // Disable pacing for PCC.
+    if (sender_->GetCongestionControlType() == kPCC) {
+      QuicSentPacketManagerPeer::SetUsingPacing(
+          QuicConnectionPeer::GetSentPacketManager(quic_sender_.connection()),
+          false);
+    }
     clock_ = simulator_.GetClock();
     simulator_.set_random_generator(&random_);
 

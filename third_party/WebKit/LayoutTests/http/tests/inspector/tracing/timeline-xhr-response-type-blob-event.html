@@ -24,16 +24,14 @@ function performActions()
     return promise;
 }
 
-function test()
-{
-    InspectorTest.invokeAsyncWithTimeline("performActions", finish);
+function test() {
+  PerformanceTestRunner.invokeAsyncWithTimeline('performActions', finish);
 
-    function finish()
-    {
-        InspectorTest.printTimelineRecords("XHRReadyStateChange");
-        InspectorTest.printTimelineRecords("XHRLoad");
-        InspectorTest.completeTest();
-    }
+  function finish() {
+    PerformanceTestRunner.printTimelineRecords('XHRReadyStateChange');
+    PerformanceTestRunner.printTimelineRecords('XHRLoad');
+    TestRunner.completeTest();
+  }
 }
 
 </script>

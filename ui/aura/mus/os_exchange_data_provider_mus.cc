@@ -251,7 +251,7 @@ bool OSExchangeDataProviderMus::HasCustomFormat(
 
 // These methods were added in an ad-hoc way to different operating
 // systems. We need to support them until they get cleaned up.
-#if (!defined(OS_CHROMEOS) && defined(USE_X11)) || defined(OS_WIN)
+#if defined(USE_X11) || defined(OS_WIN)
 void OSExchangeDataProviderMus::SetFileContents(
     const base::FilePath& filename,
     const std::string& file_contents) {}
@@ -325,11 +325,11 @@ void OSExchangeDataProviderMus::SetDragImage(
   drag_image_offset_ = cursor_offset;
 }
 
-const gfx::ImageSkia& OSExchangeDataProviderMus::GetDragImage() const {
+gfx::ImageSkia OSExchangeDataProviderMus::GetDragImage() const {
   return drag_image_;
 }
 
-const gfx::Vector2d& OSExchangeDataProviderMus::GetDragImageOffset() const {
+gfx::Vector2d OSExchangeDataProviderMus::GetDragImageOffset() const {
   return drag_image_offset_;
 }
 #endif

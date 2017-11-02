@@ -3,6 +3,7 @@
 # found in the LICENSE file.
 
 import("//chromecast/chromecast.gni")
+import("//media/media_options.gni")
 import("//testing/test.gni")
 
 group("media") {
@@ -16,6 +17,7 @@ group("media") {
 
 test("cast_media_unittests") {
   sources = [
+    "audio/cast_audio_manager_unittest.cc",
     "audio/cast_audio_mixer_unittest.cc",
     "audio/cast_audio_output_stream_unittest.cc",
     "base/media_resource_tracker_unittest.cc",
@@ -23,20 +25,28 @@ test("cast_media_unittests") {
     "test/run_all_unittests.cc",
   ]
 
+  if (use_alsa && !is_cast_desktop_build) {
+    sources += [ "audio/cast_audio_manager_alsa_unittest.cc" ]
+  }
+
   deps = [
     ":media",
     "//base",
     "//base/test:test_support",
     "//chromecast/base",
     "//chromecast/base/metrics:test_support",
+    "//chromecast/media/cma:test_support",
     "//chromecast/public",
-    "//media",
-    "//media/base:test_support",
+    "//media:test_support",
     "//testing/gmock",
     "//testing/gtest",
   ]
 
-  if (!is_android) {
+  if (is_cast_using_cma_backend) {
     deps += [ "//chromecast/media/cma:unittests" ]
+    if (is_android) {
+      deps += [ "//chromecast/media/cma/backend/android:audio_track_java" ]
+      shard_timeout = 300
+    }
   }
 }

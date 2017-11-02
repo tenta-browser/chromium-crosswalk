@@ -458,10 +458,12 @@ class SimulatorTestRunner(TestRunner):
           '-9',
           '-x',
           # The simulator's name varies by Xcode version.
+          'com.apple.CoreSimulator.CoreSimulatorService', # crbug.com/684305
           'iPhone Simulator', # Xcode 5
           'iOS Simulator', # Xcode 6
           'Simulator', # Xcode 7+
           'simctl', # https://crbug.com/637429
+          'xcodebuild', # https://crbug.com/684305
       ])
       # If a signal was sent, wait for the simulators to actually be killed.
       time.sleep(5)
@@ -580,7 +582,7 @@ class SimulatorTestRunner(TestRunner):
         # iossim doesn't support inverted filters for XCTests.
         if not invert:
           for test in test_filter:
-            cmd.extend(['-o', test])
+            cmd.extend(['-t', test])
       else:
         kif_filter = get_kif_test_filter(test_filter, invert=invert)
         gtest_filter = get_gtest_filter(test_filter, invert=invert)

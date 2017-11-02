@@ -25,7 +25,6 @@ class ChromeDevToolsManagerDelegate :
  public:
   static char kTypeApp[];
   static char kTypeBackgroundPage[];
-  static char kTypeWebView[];
 
   ChromeDevToolsManagerDelegate();
   ~ChromeDevToolsManagerDelegate() override;
@@ -40,8 +39,8 @@ class ChromeDevToolsManagerDelegate :
   base::DictionaryValue* HandleCommand(
       content::DevToolsAgentHost* agent_host,
       base::DictionaryValue* command_dict) override;
-  std::string GetTargetType(content::RenderFrameHost* host) override;
-  std::string GetTargetTitle(content::RenderFrameHost* host) override;
+  std::string GetTargetType(content::WebContents* web_contents) override;
+  std::string GetTargetTitle(content::WebContents* web_contents) override;
   scoped_refptr<content::DevToolsAgentHost> CreateNewTarget(
       const GURL& url) override;
   std::string GetDiscoveryPageHTML() override;
@@ -75,6 +74,12 @@ class ChromeDevToolsManagerDelegate :
   static std::unique_ptr<base::DictionaryValue> SetWindowBounds(
       int id,
       base::DictionaryValue* params);
+  std::unique_ptr<base::DictionaryValue> SetAdBlockingEnabled(
+      content::DevToolsAgentHost* agent_host,
+      int id,
+      base::DictionaryValue* params);
+
+  void TogglePageEnable(bool enable, content::DevToolsAgentHost* agent_host);
 
   std::unique_ptr<DevToolsNetworkProtocolHandler> network_protocol_handler_;
   std::map<content::DevToolsAgentHost*, std::unique_ptr<HostData>> host_data_;
@@ -83,6 +88,8 @@ class ChromeDevToolsManagerDelegate :
   std::unique_ptr<DevToolsDeviceDiscovery> device_discovery_;
   content::DevToolsAgentHost::List remote_agent_hosts_;
   RemoteLocations remote_locations_;
+
+  bool page_enable_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeDevToolsManagerDelegate);
 };

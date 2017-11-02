@@ -9,6 +9,7 @@
 #include "base/metrics/user_metrics.h"
 #include "base/task_scheduler/post_task.h"
 #include "base/threading/sequenced_worker_pool.h"
+#include "build/build_config.h"
 #include "chrome/browser/autocomplete/autocomplete_classifier_factory.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -29,7 +30,6 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "components/metrics/proto/omnibox_event.pb.h"
-#include "components/mime_util/mime_util.h"
 #include "components/omnibox/browser/autocomplete_classifier.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/prefs/pref_service.h"
@@ -43,11 +43,17 @@
 #include "content/public/common/webplugininfo.h"
 #include "ipc/ipc_message.h"
 #include "net/base/filename_util.h"
+#include "third_party/WebKit/common/mime_util/mime_util.h"
 #include "ui/base/models/list_selection_model.h"
 #include "ui/gfx/image/image.h"
 #include "ui/views/controls/menu/menu_runner.h"
 #include "ui/views/widget/widget.h"
 #include "url/origin.h"
+
+#if !defined(OS_ANDROID) && !defined(OS_CHROMEOS) && !defined(OS_MACOSX)
+#include "chrome/browser/feature_engagement/new_tab/new_tab_tracker.h"
+#include "chrome/browser/feature_engagement/new_tab/new_tab_tracker_factory.h"
+#endif
 
 using base::UserMetricsAction;
 using content::WebContents;
@@ -56,8 +62,7 @@ namespace {
 
 TabRendererData::NetworkState TabContentsNetworkState(
     WebContents* contents) {
-  if (!contents)
-    return TabRendererData::NETWORK_STATE_NONE;
+  DCHECK(contents);
 
   if (!contents->IsLoadingToDifferentDocument()) {
     content::NavigationEntry* entry =
@@ -125,14 +130,9 @@ class BrowserTabStripController::TabContextMenuContents
   }
 
   void RunMenuAt(const gfx::Point& point, ui::MenuSourceType source_type) {
-    if (menu_runner_->RunMenuAt(tab_->GetWidget(),
-                                NULL,
-                                gfx::Rect(point, gfx::Size()),
-                                views::MENU_ANCHOR_TOPLEFT,
-                                source_type) ==
-        views::MenuRunner::MENU_DELETED) {
-      return;
-    }
+    menu_runner_->RunMenuAt(tab_->GetWidget(), NULL,
+                            gfx::Rect(point, gfx::Size()),
+                            views::MENU_ANCHOR_TOPLEFT, source_type);
   }
 
   // Overridden from ui::SimpleMenuModel::Delegate:
@@ -318,16 +318,8 @@ void BrowserTabStripController::ShowContextMenuForTab(
 }
 
 void BrowserTabStripController::UpdateLoadingAnimations() {
-  // Don't use the model count here as it's possible for this to be invoked
-  // before we've applied an update from the model (Browser::TabInsertedAt may
-  // be processed before us and invokes this).
-  for (int i = 0, tab_count = tabstrip_->tab_count(); i < tab_count; ++i) {
-    if (model_->ContainsIndex(i)) {
-      Tab* tab = tabstrip_->tab_at(i);
-      WebContents* contents = model_->GetWebContentsAt(i);
-      tab->UpdateLoadingAnimation(TabContentsNetworkState(contents));
-    }
-  }
+  for (int i = 0, tab_count = tabstrip_->tab_count(); i < tab_count; ++i)
+    tabstrip_->tab_at(i)->StepLoadingAnimation();
 }
 
 int BrowserTabStripController::HasAvailableDragActions() const {
@@ -365,12 +357,16 @@ void BrowserTabStripController::PerformDrop(bool drop_before,
 }
 
 bool BrowserTabStripController::IsCompatibleWith(TabStrip* other) const {
-  Profile* other_profile =
-      static_cast<BrowserTabStripController*>(other->controller())->profile();
-  return other_profile == profile();
+  Profile* other_profile = other->controller()->GetProfile();
+  return other_profile == GetProfile();
 }
 
 void BrowserTabStripController::CreateNewTab() {
+#if !defined(OS_ANDROID) && !defined(OS_CHROMEOS) && !defined(OS_MACOSX)
+  feature_engagement::NewTabTrackerFactory::GetInstance()
+      ->GetForProfile(browser_view_->browser()->profile())
+      ->OnNewTabOpened();
+#endif
   model_->delegate()->AddTabAt(GURL(), -1, true);
 }
 
@@ -379,8 +375,9 @@ void BrowserTabStripController::CreateNewTabWithLocation(
   // Use autocomplete to clean up the text, going so far as to turn it into
   // a search query if necessary.
   AutocompleteMatch match;
-  AutocompleteClassifierFactory::GetForProfile(profile())->Classify(
-      location, false, false, metrics::OmniboxEventProto::BLANK, &match, NULL);
+  AutocompleteClassifierFactory::GetForProfile(GetProfile())
+      ->Classify(location, false, false, metrics::OmniboxEventProto::BLANK,
+                 &match, NULL);
   if (match.destination_url.is_valid())
     model_->delegate()->AddTabAt(match.destination_url, -1, true);
 }
@@ -419,8 +416,7 @@ void BrowserTabStripController::OnStoppedDraggingTabs() {
 
 void BrowserTabStripController::CheckFileSupported(const GURL& url) {
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, base::TaskTraits().MayBlock().WithPriority(
-                     base::TaskPriority::USER_VISIBLE),
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
       base::Bind(&FindURLMimeType, url),
       base::Bind(&BrowserTabStripController::OnFindURLMimeTypeCompleted,
                  weak_ptr_factory_.GetWeakPtr(), url));
@@ -434,6 +430,10 @@ base::string16 BrowserTabStripController::GetAccessibleTabName(
     const Tab* tab) const {
   return browser_view_->GetAccessibleTabLabel(
       false /* include_app_name */, tabstrip_->GetModelIndexOfTab(tab));
+}
+
+Profile* BrowserTabStripController::GetProfile() const {
+  return model_->profile();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -505,6 +505,10 @@ void BrowserTabStripController::TabBlockedStateChanged(WebContents* contents,
   SetTabDataAt(contents, model_index);
 }
 
+void BrowserTabStripController::TabNeedsAttentionAt(int index) {
+  tabstrip_->SetTabNeedsAttention(index);
+}
+
 void BrowserTabStripController::SetTabRendererDataFromModel(
     WebContents* contents,
     int model_index,
@@ -514,7 +518,6 @@ void BrowserTabStripController::SetTabRendererDataFromModel(
   data->network_state = TabContentsNetworkState(contents);
   data->title = contents->GetTitle();
   data->url = contents->GetURL();
-  data->loading = contents->IsLoading();
   data->crashed_status = contents->GetCrashedStatus();
   data->incognito = contents->GetBrowserContext()->IsOffTheRecord();
   data->pinned = model_->IsTabPinned(model_index);
@@ -587,7 +590,7 @@ void BrowserTabStripController::OnFindURLMimeTypeCompleted(
   content::WebPluginInfo plugin;
   tabstrip_->FileSupported(
       url,
-      mime_type.empty() || mime_util::IsSupportedMimeType(mime_type) ||
+      mime_type.empty() || blink::IsSupportedMimeType(mime_type) ||
           content::PluginService::GetInstance()->GetPluginInfo(
               -1,                // process ID
               MSG_ROUTING_NONE,  // routing ID

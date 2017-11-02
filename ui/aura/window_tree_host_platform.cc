@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/run_loop.h"
 #include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "ui/aura/window_event_dispatcher.h"
@@ -23,7 +24,6 @@
 #endif
 
 #if defined(OS_WIN)
-#include "base/message_loop/message_loop.h"
 #include "ui/base/cursor/cursor_loader_win.h"
 #include "ui/platform_window/win/win_window.h"
 #endif
@@ -39,6 +39,7 @@ WindowTreeHost* WindowTreeHost::Create(const gfx::Rect& bounds) {
 
 WindowTreeHostPlatform::WindowTreeHostPlatform(const gfx::Rect& bounds)
     : WindowTreeHostPlatform() {
+  bounds_ = bounds;
   CreateCompositor();
 #if defined(USE_OZONE)
   platform_window_ =
@@ -59,8 +60,7 @@ WindowTreeHostPlatform::WindowTreeHostPlatform(
     std::unique_ptr<WindowPort> window_port)
     : WindowTreeHost(std::move(window_port)),
       widget_(gfx::kNullAcceleratedWidget),
-      current_cursor_(ui::kCursorNull) {
-}
+      current_cursor_(ui::CursorType::kNull) {}
 
 void WindowTreeHostPlatform::SetPlatformWindow(
     std::unique_ptr<ui::PlatformWindow> window) {
@@ -158,7 +158,7 @@ void WindowTreeHostPlatform::DispatchEvent(ui::Event* event) {
 void WindowTreeHostPlatform::OnCloseRequest() {
 #if defined(OS_WIN)
   // TODO: this obviously shouldn't be here.
-  base::MessageLoopForUI::current()->QuitWhenIdle();
+  base::RunLoop::QuitCurrentWhenIdleDeprecated();
 #else
   OnHostCloseRequested();
 #endif

@@ -26,6 +26,8 @@ struct EnumTraits<gfx::mojom::BufferFormat, gfx::BufferFormat> {
         return gfx::mojom::BufferFormat::ETC1;
       case gfx::BufferFormat::R_8:
         return gfx::mojom::BufferFormat::R_8;
+      case gfx::BufferFormat::R_16:
+        return gfx::mojom::BufferFormat::R_16;
       case gfx::BufferFormat::RG_88:
         return gfx::mojom::BufferFormat::RG_88;
       case gfx::BufferFormat::BGR_565:
@@ -74,6 +76,9 @@ struct EnumTraits<gfx::mojom::BufferFormat, gfx::BufferFormat> {
       case gfx::mojom::BufferFormat::R_8:
         *out = gfx::BufferFormat::R_8;
         return true;
+      case gfx::mojom::BufferFormat::R_16:
+        *out = gfx::BufferFormat::R_16;
+        return true;
       case gfx::mojom::BufferFormat::RG_88:
         *out = gfx::BufferFormat::RG_88;
         return true;
@@ -106,6 +111,7 @@ struct EnumTraits<gfx::mojom::BufferFormat, gfx::BufferFormat> {
         return true;
       case gfx::mojom::BufferFormat::UYVY_422:
         *out = gfx::BufferFormat::UYVY_422;
+        return true;
     }
     NOTREACHED();
     return false;
@@ -120,8 +126,12 @@ struct EnumTraits<gfx::mojom::BufferUsage, gfx::BufferUsage> {
         return gfx::mojom::BufferUsage::GPU_READ;
       case gfx::BufferUsage::SCANOUT:
         return gfx::mojom::BufferUsage::SCANOUT;
+      case gfx::BufferUsage::SCANOUT_CAMERA_READ_WRITE:
+        return gfx::mojom::BufferUsage::SCANOUT_CAMERA_READ_WRITE;
       case gfx::BufferUsage::SCANOUT_CPU_READ_WRITE:
         return gfx::mojom::BufferUsage::SCANOUT_CPU_READ_WRITE;
+      case gfx::BufferUsage::SCANOUT_VDA_WRITE:
+        return gfx::mojom::BufferUsage::SCANOUT_VDA_WRITE;
       case gfx::BufferUsage::GPU_READ_CPU_READ_WRITE:
         return gfx::mojom::BufferUsage::GPU_READ_CPU_READ_WRITE;
       case gfx::BufferUsage::GPU_READ_CPU_READ_WRITE_PERSISTENT:
@@ -139,8 +149,14 @@ struct EnumTraits<gfx::mojom::BufferUsage, gfx::BufferUsage> {
       case gfx::mojom::BufferUsage::SCANOUT:
         *out = gfx::BufferUsage::SCANOUT;
         return true;
+      case gfx::mojom::BufferUsage::SCANOUT_CAMERA_READ_WRITE:
+        *out = gfx::BufferUsage::SCANOUT_CAMERA_READ_WRITE;
+        return true;
       case gfx::mojom::BufferUsage::SCANOUT_CPU_READ_WRITE:
         *out = gfx::BufferUsage::SCANOUT_CPU_READ_WRITE;
+        return true;
+      case gfx::mojom::BufferUsage::SCANOUT_VDA_WRITE:
+        *out = gfx::BufferUsage::SCANOUT_VDA_WRITE;
         return true;
       case gfx::mojom::BufferUsage::GPU_READ_CPU_READ_WRITE:
         *out = gfx::BufferUsage::GPU_READ_CPU_READ_WRITE;
@@ -233,12 +249,6 @@ struct StructTraits<gfx::mojom::NativePixmapPlaneDataView,
 template <>
 struct StructTraits<gfx::mojom::NativePixmapHandleDataView,
                     gfx::NativePixmapHandle> {
-  using PixmapHandleFdList = std::vector<mojo::ScopedHandle>;
-
-  static void* SetUpContext(const gfx::NativePixmapHandle& handle);
-  static void TearDownContext(const gfx::NativePixmapHandle& handle,
-                              void* context);
-
   static bool IsNull(const gfx::NativePixmapHandle& handle) {
 #if defined(OS_LINUX)
     return false;
@@ -247,8 +257,8 @@ struct StructTraits<gfx::mojom::NativePixmapHandleDataView,
     return true;
 #endif
   }
-  static PixmapHandleFdList fds(const gfx::NativePixmapHandle& pixmap_handle,
-                                void* context);
+  static std::vector<mojo::ScopedHandle> fds(
+      const gfx::NativePixmapHandle& pixmap_handle);
 
   static const std::vector<gfx::NativePixmapPlane>& planes(
       const gfx::NativePixmapHandle& pixmap_handle) {
@@ -269,7 +279,7 @@ struct StructTraits<gfx::mojom::GpuMemoryBufferHandleDataView,
   static gfx::GpuMemoryBufferId id(const gfx::GpuMemoryBufferHandle& handle) {
     return handle.id;
   }
-  static mojo::ScopedHandle shared_memory_handle(
+  static mojo::ScopedSharedBufferHandle shared_memory_handle(
       const gfx::GpuMemoryBufferHandle& handle);
   static uint32_t offset(const gfx::GpuMemoryBufferHandle& handle) {
     return handle.offset;

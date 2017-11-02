@@ -31,9 +31,9 @@
 #ifndef SVGAnimatedRect_h
 #define SVGAnimatedRect_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/svg/SVGRectTearOff.h"
 #include "core/svg/properties/SVGAnimatedProperty.h"
+#include "platform/bindings/ScriptWrappable.h"
 
 namespace blink {
 
@@ -48,7 +48,8 @@ class SVGAnimatedRect : public SVGAnimatedProperty<SVGRect>,
   }
 
   DEFINE_INLINE_VIRTUAL_TRACE_WRAPPERS() {
-    visitor->TraceWrappers(contextElement());
+    SVGAnimatedProperty<SVGRect>::TraceWrappers(visitor);
+    ScriptWrappable::TraceWrappers(visitor);
   }
 
  protected:

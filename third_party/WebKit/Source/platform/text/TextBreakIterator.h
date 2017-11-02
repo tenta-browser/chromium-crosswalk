@@ -68,10 +68,24 @@ const int kTextBreakDone = -1;
 
 enum class LineBreakType {
   kNormal,
-  kBreakAll,  // word-break:break-all allows breaks between letters/numbers
-  kKeepAll,   // word-break:keep-all doesn't allow breaks between all kind of
-              // letters/numbers except some south east asians'.
+
+  // word-break:break-all allows breaks between letters/numbers, but prohibits
+  // break before/after certain punctuation.
+  kBreakAll,
+
+  // Allows breaks at every grapheme cluster boundary.
+  // Terminal style line breaks described in UAX#14: Examples of Customization
+  // http://unicode.org/reports/tr14/#Examples
+  // CSS is discussing to add this feature crbug.com/720205
+  // Used internally for word-break:break-word.
+  kBreakCharacter,
+
+  // word-break:keep-all doesn't allow breaks between all kind of
+  // letters/numbers except some south east asians'.
+  kKeepAll,
 };
+
+PLATFORM_EXPORT std::ostream& operator<<(std::ostream&, LineBreakType);
 
 class PLATFORM_EXPORT LazyLineBreakIterator final {
   STACK_ALLOCATED();
@@ -80,17 +94,20 @@ class PLATFORM_EXPORT LazyLineBreakIterator final {
   LazyLineBreakIterator()
       : iterator_(0),
         cached_prior_context_(0),
-        cached_prior_context_length_(0) {
+        cached_prior_context_length_(0),
+        break_type_(LineBreakType::kNormal) {
     ResetPriorContext();
   }
 
   LazyLineBreakIterator(String string,
-                        const AtomicString& locale = AtomicString())
+                        const AtomicString& locale = AtomicString(),
+                        LineBreakType break_type = LineBreakType::kNormal)
       : string_(string),
         locale_(locale),
         iterator_(0),
         cached_prior_context_(0),
-        cached_prior_context_length_(0) {
+        cached_prior_context_length_(0),
+        break_type_(break_type) {
     ResetPriorContext();
   }
 
@@ -99,7 +116,7 @@ class PLATFORM_EXPORT LazyLineBreakIterator final {
       ReleaseLineBreakIterator(iterator_);
   }
 
-  String GetString() const { return string_; }
+  const String& GetString() const { return string_; }
 
   UChar LastCharacter() const {
     static_assert(WTF_ARRAY_LENGTH(prior_context_) == 2,
@@ -150,7 +167,7 @@ class PLATFORM_EXPORT LazyLineBreakIterator final {
   // is (or has been) initialized to use the previously stored string as the
   // primary breaking context and using previously stored prior context if
   // non-empty.
-  TextBreakIterator* Get(unsigned prior_context_length) {
+  TextBreakIterator* Get(unsigned prior_context_length) const {
     DCHECK(prior_context_length <= kPriorContextCapacity);
     const UChar* prior_context =
         prior_context_length
@@ -169,55 +186,93 @@ class PLATFORM_EXPORT LazyLineBreakIterator final {
       cached_prior_context_length_ = prior_context_length;
     } else if (prior_context != cached_prior_context_ ||
                prior_context_length != cached_prior_context_length_) {
-      this->ResetStringAndReleaseIterator(string_, locale_);
-      return this->Get(prior_context_length);
+      ReleaseIterator();
+      return Get(prior_context_length);
     }
     return iterator_;
   }
 
   void ResetStringAndReleaseIterator(String string,
                                      const AtomicString& locale) {
-    if (iterator_)
-      ReleaseLineBreakIterator(iterator_);
-
     string_ = string;
     locale_ = locale;
+
+    ReleaseIterator();
+  }
+
+  void SetLocale(const AtomicString& locale) {
+    if (locale == locale_)
+      return;
+    locale_ = locale;
+    ReleaseIterator();
+  }
+
+  LineBreakType BreakType() const { return break_type_; }
+  void SetBreakType(LineBreakType break_type) { break_type_ = break_type; }
+
+  // By default, this class breaks before spaces. This is a specialized
+  // optimization for CSS, where leading/trailing spaces in each line are
+  // removed, and thus breaking before spaces can save computing hanging spaces.
+  //
+  // When 'white-space:pre-wrap', or when in editing, leaging/trailing spaces
+  // need to be preserved, and this optimization needs to be disabled. This mode
+  // is compatible with UAX#14/ICU. http://unicode.org/reports/tr14/
+  bool BreakAfterSpace() const { return break_after_space_; }
+  void SetBreakAfterSpace(bool break_after_space) {
+    break_after_space_ = break_after_space;
+  }
+
+  inline bool IsBreakable(int pos,
+                          int& next_breakable,
+                          LineBreakType line_break_type) const {
+    if (pos > next_breakable) {
+      next_breakable = NextBreakablePosition(pos, line_break_type);
+    }
+    return pos == next_breakable;
+  }
+
+  inline bool IsBreakable(int pos, int& next_breakable) const {
+    return IsBreakable(pos, next_breakable, break_type_);
+  }
+
+  inline bool IsBreakable(int pos) const {
+    int next_breakable = -1;
+    return IsBreakable(pos, next_breakable, break_type_);
+  }
+
+  // Returns the break opportunity at or after |offset|.
+  unsigned NextBreakOpportunity(unsigned offset) const;
+
+  // Returns the break opportunity at or before |offset|.
+  unsigned PreviousBreakOpportunity(unsigned offset, unsigned min = 0) const;
+
+ private:
+  void ReleaseIterator() const {
+    if (iterator_)
+      ReleaseLineBreakIterator(iterator_);
     iterator_ = 0;
     cached_prior_context_ = 0;
     cached_prior_context_length_ = 0;
   }
 
-  inline bool IsBreakable(
-      int pos,
-      int& next_breakable,
-      LineBreakType line_break_type = LineBreakType::kNormal) {
-    if (pos > next_breakable) {
-      switch (line_break_type) {
-        case LineBreakType::kBreakAll:
-          next_breakable = NextBreakablePositionBreakAll(pos);
-          break;
-        case LineBreakType::kKeepAll:
-          next_breakable = NextBreakablePositionKeepAll(pos);
-          break;
-        default:
-          next_breakable = NextBreakablePositionIgnoringNBSP(pos);
-      }
-    }
-    return pos == next_breakable;
-  }
-
- private:
-  int NextBreakablePositionIgnoringNBSP(int pos);
-  int NextBreakablePositionBreakAll(int pos);
-  int NextBreakablePositionKeepAll(int pos);
+  template <typename CharacterType, LineBreakType, bool>
+  int NextBreakablePosition(int pos, const CharacterType* str) const;
+  template <typename CharacterType, LineBreakType>
+  int NextBreakablePosition(int pos, const CharacterType* str) const;
+  template <LineBreakType>
+  int NextBreakablePosition(int pos) const;
+  int NextBreakablePositionBreakCharacter(int pos) const;
+  int NextBreakablePosition(int pos, LineBreakType) const;
 
   static const unsigned kPriorContextCapacity = 2;
   String string_;
   AtomicString locale_;
-  TextBreakIterator* iterator_;
+  mutable TextBreakIterator* iterator_;
   UChar prior_context_[kPriorContextCapacity];
-  const UChar* cached_prior_context_;
-  unsigned cached_prior_context_length_;
+  mutable const UChar* cached_prior_context_;
+  mutable unsigned cached_prior_context_length_;
+  LineBreakType break_type_;
+  bool break_after_space_ = false;
 };
 
 // Iterates over "extended grapheme clusters", as defined in UAX #29.

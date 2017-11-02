@@ -47,10 +47,10 @@ void V8TestPermissiveDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Valu
   if (booleanMemberValue.IsEmpty() || booleanMemberValue->IsUndefined()) {
     // Do nothing.
   } else {
-    bool booleanMember = NativeValueTraits<IDLBoolean>::NativeValue(isolate, booleanMemberValue, exceptionState);
+    bool booleanMemberCppValue = NativeValueTraits<IDLBoolean>::NativeValue(isolate, booleanMemberValue, exceptionState);
     if (exceptionState.HadException())
       return;
-    impl.setBooleanMember(booleanMember);
+    impl.setBooleanMember(booleanMemberCppValue);
   }
 }
 
@@ -67,7 +67,7 @@ bool toV8TestPermissiveDictionary(const TestPermissiveDictionary& impl, v8::Loca
   v8::Local<v8::Value> booleanMemberValue;
   bool booleanMemberHasValueOrDefault = false;
   if (impl.hasBooleanMember()) {
-    booleanMemberValue = V8Boolean(impl.booleanMember(), isolate);
+    booleanMemberValue = v8::Boolean::New(isolate, impl.booleanMember());
     booleanMemberHasValueOrDefault = true;
   }
   if (booleanMemberHasValueOrDefault &&

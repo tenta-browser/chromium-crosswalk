@@ -82,6 +82,12 @@ AutocompleteProviderClientImpl::GetTemplateURLService() const {
   return ios::TemplateURLServiceFactory::GetForBrowserState(browser_state_);
 }
 
+ContextualSuggestionsService*
+AutocompleteProviderClientImpl::GetContextualSuggestionsService(
+    bool create_if_necessary) const {
+  return nullptr;
+}
+
 const SearchTermsData& AutocompleteProviderClientImpl::GetSearchTermsData()
     const {
   return search_terms_data_;
@@ -119,14 +125,21 @@ AutocompleteProviderClientImpl::GetEmbedderRepresentationOfAboutScheme() {
 }
 
 std::vector<base::string16> AutocompleteProviderClientImpl::GetBuiltinURLs() {
-  // iOS does not supports BuiltinProvider.
-  return std::vector<base::string16>();
+  std::vector<std::string> chrome_builtins(
+      kChromeHostURLs, kChromeHostURLs + kNumberOfChromeHostURLs);
+  std::sort(chrome_builtins.begin(), chrome_builtins.end());
+
+  std::vector<base::string16> builtins;
+  for (auto& url : chrome_builtins) {
+    builtins.push_back(base::ASCIIToUTF16(url));
+  }
+  return builtins;
 }
 
 std::vector<base::string16>
 AutocompleteProviderClientImpl::GetBuiltinsToProvideAsUserTypes() {
-  // iOS does not supports BuiltinProvider.
-  return std::vector<base::string16>();
+  return {base::ASCIIToUTF16(kChromeUIChromeURLsURL),
+          base::ASCIIToUTF16(kChromeUIVersionURL)};
 }
 
 bool AutocompleteProviderClientImpl::IsOffTheRecord() const {

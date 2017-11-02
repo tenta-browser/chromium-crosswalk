@@ -34,6 +34,10 @@ class CC_EXPORT ScrollState {
   double delta_x() const { return data_.delta_x; }
   // Positive when scrolling down.
   double delta_y() const { return data_.delta_y; }
+  // Positive when scrolling right.
+  double delta_x_hint() const { return data_.delta_x_hint; }
+  // Positive when scrolling down.
+  double delta_y_hint() const { return data_.delta_y_hint; }
   // The location associated with this scroll update. For touch, this is the
   // position of the finger. For mouse, the location of the cursor.
   int position_x() const { return data_.position_x; }
@@ -92,6 +96,10 @@ class CC_EXPORT ScrollState {
 
   bool caused_scroll_x() const { return data_.caused_scroll_x; }
   bool caused_scroll_y() const { return data_.caused_scroll_y; }
+
+  void set_is_scroll_chain_cut(bool cut) { data_.is_scroll_chain_cut = cut; }
+
+  bool is_scroll_chain_cut() const { return data_.is_scroll_chain_cut; }
 
   LayerTreeImpl* layer_tree_impl() { return layer_tree_impl_; }
   ScrollStateData* data() { return &data_; }

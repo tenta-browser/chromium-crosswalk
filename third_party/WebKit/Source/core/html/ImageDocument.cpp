@@ -28,13 +28,13 @@
 #include "bindings/core/v8/ExceptionState.h"
 #include "core/HTMLNames.h"
 #include "core/dom/RawDataDocumentParser.h"
-#include "core/events/EventListener.h"
+#include "core/dom/events/EventListener.h"
 #include "core/events/MouseEvent.h"
 #include "core/frame/ContentSettingsClient.h"
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalDOMWindow.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/LocalFrameClient.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/Settings.h"
 #include "core/frame/UseCounter.h"
 #include "core/frame/VisualViewport.h"
@@ -50,7 +50,7 @@
 #include "core/loader/FrameLoader.h"
 #include "core/loader/resource/ImageResource.h"
 #include "core/page/Page.h"
-#include "platform/HostWindow.h"
+#include "platform/PlatformChromeClient.h"
 #include "platform/wtf/text/StringBuilder.h"
 
 namespace {
@@ -212,9 +212,9 @@ ImageDocument::ImageDocument(const DocumentInit& initializer)
                               : kDesktop) {
   SetCompatibilityMode(kQuirksMode);
   LockCompatibilityMode();
-  UseCounter::Count(*this, UseCounter::kImageDocument);
+  UseCounter::Count(*this, WebFeature::kImageDocument);
   if (!IsInMainFrame())
-    UseCounter::Count(*this, UseCounter::kImageDocumentInFrame);
+    UseCounter::Count(*this, WebFeature::kImageDocumentInFrame);
 }
 
 DocumentParser* ImageDocument::CreateParser() {
@@ -299,7 +299,7 @@ float ImageDocument::Scale() const {
   if (!image_element_ || image_element_->GetDocument() != this)
     return 1.0f;
 
-  FrameView* view = GetFrame()->View();
+  LocalFrameView* view = GetFrame()->View();
   if (!view)
     return 1.0f;
 
@@ -313,7 +313,7 @@ float ImageDocument::Scale() const {
   // We want to pretend the viewport is larger when the user has zoomed the
   // page in (but not when the zoom is coming from device scale).
   const float manual_zoom =
-      zoom / view->GetHostWindow()->WindowToViewportScalar(1.f);
+      zoom / view->GetChromeClient()->WindowToViewportScalar(1.f);
   float width_scale =
       view->Width() * manual_zoom / image_size.Width().ToFloat();
   float height_scale =

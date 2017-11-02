@@ -33,6 +33,7 @@
 
 #include "platform/PlatformExport.h"
 #include "platform/geometry/IntSize.h"
+#include "platform/graphics/CanvasColorParams.h"
 #include "platform/graphics/GraphicsTypes.h"
 #include "platform/graphics/paint/PaintCanvas.h"
 #include "platform/graphics/paint/PaintFlags.h"
@@ -43,16 +44,15 @@
 #include "third_party/skia/include/core/SkImageInfo.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 
-class SkColorSpace;
-class SkImage;
 struct SkImageInfo;
 
 namespace blink {
 
-class ImageBuffer;
-class WebLayer;
 class FloatRect;
 class GraphicsContext;
+class ImageBuffer;
+class StaticBitmapImage;
+class WebLayer;
 
 class PLATFORM_EXPORT ImageBufferSurface {
   WTF_MAKE_NONCOPYABLE(ImageBufferSurface);
@@ -96,30 +96,26 @@ class PLATFORM_EXPORT ImageBufferSurface {
                            const void* pixels,
                            size_t row_bytes,
                            int x,
-                           int y);
+                           int y) = 0;
 
   // May return nullptr if the surface is GPU-backed and the GPU context was
   // lost.
-  virtual sk_sp<SkImage> NewImageSnapshot(AccelerationHint, SnapshotReason) = 0;
+  virtual RefPtr<StaticBitmapImage> NewImageSnapshot(AccelerationHint,
+                                                     SnapshotReason) = 0;
 
   OpacityMode GetOpacityMode() const { return opacity_mode_; }
   const IntSize& size() const { return size_; }
-  const sk_sp<SkColorSpace> ColorSpace() const { return color_space_; }
-  SkColorType ColorType() const { return color_type_; }
+  const CanvasColorParams& color_params() const { return color_params_; }
   void NotifyIsValidChanged(bool is_valid) const;
 
  protected:
-  ImageBufferSurface(const IntSize&,
-                     OpacityMode,
-                     sk_sp<SkColorSpace>,
-                     SkColorType);
+  ImageBufferSurface(const IntSize&, OpacityMode, const CanvasColorParams&);
   void Clear();
 
  private:
   OpacityMode opacity_mode_;
   IntSize size_;
-  sk_sp<SkColorSpace> color_space_;
-  SkColorType color_type_;
+  CanvasColorParams color_params_;
 };
 
 }  // namespace blink

@@ -18,8 +18,6 @@ std::unique_ptr<CachedDocumentParameters> CachedDocumentParametersForFuzzing(
   std::unique_ptr<CachedDocumentParameters> document_parameters =
       CachedDocumentParameters::Create();
   document_parameters->do_html_preload_scanning = fuzzed_data.ConsumeBool();
-  document_parameters->do_document_write_preload_scanning =
-      fuzzed_data.ConsumeBool();
   // TODO(csharrison): How should this be fuzzed?
   document_parameters->default_viewport_min_width = Length();
   document_parameters->viewport_meta_zero_values_quirk =
@@ -34,6 +32,7 @@ class MockResourcePreloader : public ResourcePreloader {
 };
 
 int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
+  static BlinkFuzzerTestSupport test_support = BlinkFuzzerTestSupport();
   FuzzedDataProvider fuzzed_data(data, size);
 
   HTMLParserOptions options;
@@ -69,7 +68,7 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 
   TextResourceDecoderForFuzzing decoder(fuzzed_data);
   CString bytes = fuzzed_data.ConsumeRemainingBytes();
-  String decoded_bytes = decoder.Decode(bytes.Data(), bytes.length());
+  String decoded_bytes = decoder.Decode(bytes.data(), bytes.length());
   scanner->AppendToEnd(decoded_bytes);
   PreloadRequestStream requests = scanner->Scan(document_url, nullptr);
   preloader.TakeAndPreload(requests);
@@ -80,9 +79,4 @@ int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   return blink::LLVMFuzzerTestOneInput(data, size);
-}
-
-extern "C" int LLVMFuzzerInitialize(int* argc, char*** argv) {
-  blink::InitializeBlinkFuzzTest(argc, argv);
-  return 0;
 }

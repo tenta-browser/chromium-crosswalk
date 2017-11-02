@@ -56,7 +56,7 @@ bool FakeCompositorDependencies::IsElasticOverscrollEnabled() {
   return true;
 }
 
-const cc::BufferToTextureTargetMap&
+const viz::BufferToTextureTargetMap&
 FakeCompositorDependencies::GetBufferToTextureTargetMap() {
   return buffer_to_texture_target_map_;
 }
@@ -80,19 +80,11 @@ cc::TaskGraphRunner* FakeCompositorDependencies::GetTaskGraphRunner() {
   return &task_graph_runner_;
 }
 
-bool FakeCompositorDependencies::AreImageDecodeTasksEnabled() {
-  return false;
-}
-
 bool FakeCompositorDependencies::IsThreadedAnimationEnabled() {
   return true;
 }
 
 bool FakeCompositorDependencies::IsScrollAnimatorEnabled() {
-  return false;
-}
-
-bool FakeCompositorDependencies::IsSurfaceSynchronizationEnabled() {
   return false;
 }
 

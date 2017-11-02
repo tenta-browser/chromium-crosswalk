@@ -13,7 +13,6 @@
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest.h"
 #include "extensions/common/manifest_handler.h"
-#include "extensions/common/manifest_location_param_traits.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "extensions/common/permissions/permissions_info.h"
 
@@ -64,8 +63,14 @@ ExtensionMsg_Loaded_Params::ExtensionMsg_Loaded_Params(
       location(extension->location()),
       path(extension->path()),
       active_permissions(extension->permissions_data()->active_permissions()),
-      withheld_permissions(extension->permissions_data()
-                               ->withheld_permissions()),
+      withheld_permissions(
+          extension->permissions_data()->withheld_permissions()),
+      policy_blocked_hosts(
+          extension->permissions_data()->policy_blocked_hosts()),
+      policy_allowed_hosts(
+          extension->permissions_data()->policy_allowed_hosts()),
+      uses_default_policy_blocked_allowed_hosts(
+          extension->permissions_data()->UsesDefaultPolicyHostRestrictions()),
       id(extension->id()),
       creation_flags(extension->creation_flags()) {
   if (include_tab_permissions) {
@@ -92,6 +97,12 @@ scoped_refptr<Extension> ExtensionMsg_Loaded_Params::ConvertToExtension(
         extension->permissions_data();
     permissions_data->SetPermissions(active_permissions.ToPermissionSet(),
                                      withheld_permissions.ToPermissionSet());
+    if (uses_default_policy_blocked_allowed_hosts) {
+      permissions_data->SetUsesDefaultHostRestrictions();
+    } else {
+      permissions_data->SetPolicyHostRestrictions(policy_blocked_hosts,
+                                                  policy_allowed_hosts);
+    }
     for (const auto& pair : tab_specific_permissions) {
       permissions_data->UpdateTabSpecificPermissions(
           pair.first, *pair.second.ToPermissionSet());
@@ -128,7 +139,10 @@ bool ParamTraits<URLPattern>::Read(const base::Pickle* m,
   // schemes after parsing the pattern. Update these method calls once we can
   // ignore scheme validation with URLPattern parse options. crbug.com/90544
   p->SetValidSchemes(URLPattern::SCHEME_ALL);
-  URLPattern::ParseResult result = p->Parse(spec);
+  // Allow effective TLD wildcarding since this check is only needed on initial
+  // creation of URLPattern and not as part of deserialization.
+  URLPattern::ParseResult result =
+      p->Parse(spec, URLPattern::ALLOW_WILDCARD_FOR_EFFECTIVE_TLD);
   p->SetValidSchemes(valid_schemes);
   return URLPattern::PARSE_SUCCESS == result;
 }
@@ -359,6 +373,9 @@ void ParamTraits<ExtensionMsg_Loaded_Params>::Write(base::Pickle* m,
   WriteParam(m, p.active_permissions);
   WriteParam(m, p.withheld_permissions);
   WriteParam(m, p.tab_specific_permissions);
+  WriteParam(m, p.policy_blocked_hosts);
+  WriteParam(m, p.policy_allowed_hosts);
+  WriteParam(m, p.uses_default_policy_blocked_allowed_hosts);
 }
 
 bool ParamTraits<ExtensionMsg_Loaded_Params>::Read(const base::Pickle* m,
@@ -370,7 +387,10 @@ bool ParamTraits<ExtensionMsg_Loaded_Params>::Read(const base::Pickle* m,
          ReadParam(m, iter, &p->creation_flags) && ReadParam(m, iter, &p->id) &&
          ReadParam(m, iter, &p->active_permissions) &&
          ReadParam(m, iter, &p->withheld_permissions) &&
-         ReadParam(m, iter, &p->tab_specific_permissions);
+         ReadParam(m, iter, &p->tab_specific_permissions) &&
+         ReadParam(m, iter, &p->policy_blocked_hosts) &&
+         ReadParam(m, iter, &p->policy_allowed_hosts) &&
+         ReadParam(m, iter, &p->uses_default_policy_blocked_allowed_hosts);
 }
 
 void ParamTraits<ExtensionMsg_Loaded_Params>::Log(const param_type& p,

@@ -24,6 +24,7 @@
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
 #include "components/google/core/browser/google_util.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
@@ -106,6 +107,12 @@ content::WebUIDataSource* CreateMdExtensionsSource() {
 
   source->SetJsonPath("strings.js");
 
+  // Add common strings.
+  source->AddLocalizedString("close", IDS_CLOSE);
+  source->AddLocalizedString("ok", IDS_OK);
+  source->AddLocalizedString("cancel", IDS_CANCEL);
+
+  // Add extension-specific strings.
   source->AddLocalizedString("title",
                              IDS_MANAGE_EXTENSIONS_SETTING_WINDOWS_TITLE);
   source->AddLocalizedString("toolbarTitle", IDS_MD_EXTENSIONS_TOOLBAR_TITLE);
@@ -115,6 +122,10 @@ content::WebUIDataSource* CreateMdExtensionsSource() {
   source->AddLocalizedString("sidebarApps", IDS_MD_EXTENSIONS_SIDEBAR_APPS);
   source->AddLocalizedString("sidebarExtensions",
                              IDS_MD_EXTENSIONS_SIDEBAR_EXTENSIONS);
+  source->AddLocalizedString("noExtensionsOrApps",
+                             IDS_MD_EXTENSIONS_NO_INSTALLED_ITEMS);
+  source->AddLocalizedString("noSearchResults",
+                             IDS_MD_EXTENSIONS_NO_SEARCH_RESULTS);
   source->AddLocalizedString("dropToInstall",
                              IDS_EXTENSIONS_INSTALL_DROP_TARGET);
   source->AddLocalizedString("errorsPageHeading",
@@ -198,6 +209,12 @@ content::WebUIDataSource* CreateMdExtensionsSource() {
                              IDS_EXTENSIONS_ERROR_NO_ERRORS_CODE_MESSAGE);
   source->AddLocalizedString("packDialogTitle",
                              IDS_MD_EXTENSIONS_PACK_DIALOG_TITLE);
+  source->AddLocalizedString("packDialogWarningTitle",
+                             IDS_MD_EXTENSIONS_PACK_DIALOG_WARNING_TITLE);
+  source->AddLocalizedString("packDialogErrorTitle",
+                             IDS_MD_EXTENSIONS_PACK_DIALOG_ERROR_TITLE);
+  source->AddLocalizedString("packDialogProceedAnyway",
+                             IDS_MD_EXTENSIONS_PACK_DIALOG_PROCEED_ANYWAY);
   source->AddLocalizedString("packDialogBrowse",
                              IDS_MD_EXTENSIONS_PACK_DIALOG_BROWSE_BUTTON);
   source->AddLocalizedString(
@@ -243,10 +260,6 @@ content::WebUIDataSource* CreateMdExtensionsSource() {
               GURL(extension_urls::GetWebstoreExtensionsCategoryURL()),
               g_browser_process->GetApplicationLocale()).spec()));
 
-  source->AddResourcePath("animation_helper.html",
-                          IDR_MD_EXTENSIONS_ANIMATION_HELPER_HTML);
-  source->AddResourcePath("animation_helper.js",
-                          IDR_MD_EXTENSIONS_ANIMATION_HELPER_JS);
   source->AddResourcePath("code_section.html",
                           IDR_MD_EXTENSIONS_CODE_SECTION_HTML);
   source->AddResourcePath("code_section.js", IDR_MD_EXTENSIONS_CODE_SECTION_JS);
@@ -278,6 +291,10 @@ content::WebUIDataSource* CreateMdExtensionsSource() {
   source->AddResourcePath("item_util.js", IDR_MD_EXTENSIONS_ITEM_UTIL_JS);
   source->AddResourcePath("load_error.html", IDR_MD_EXTENSIONS_LOAD_ERROR_HTML);
   source->AddResourcePath("load_error.js", IDR_MD_EXTENSIONS_LOAD_ERROR_JS);
+  source->AddResourcePath("navigation_helper.html",
+                          IDR_MD_EXTENSIONS_NAVIGATION_HELPER_HTML);
+  source->AddResourcePath("navigation_helper.js",
+                          IDR_MD_EXTENSIONS_NAVIGATION_HELPER_JS);
   source->AddResourcePath("options_dialog.html",
                           IDR_MD_EXTENSIONS_OPTIONS_DIALOG_HTML);
   source->AddResourcePath("options_dialog.js",
@@ -285,6 +302,10 @@ content::WebUIDataSource* CreateMdExtensionsSource() {
   source->AddResourcePath("pack_dialog.html",
                           IDR_MD_EXTENSIONS_PACK_DIALOG_HTML);
   source->AddResourcePath("pack_dialog.js", IDR_MD_EXTENSIONS_PACK_DIALOG_JS);
+  source->AddResourcePath("pack_dialog_alert.html",
+                          IDR_MD_EXTENSIONS_PACK_DIALOG_ALERT_HTML);
+  source->AddResourcePath("pack_dialog_alert.js",
+                          IDR_MD_EXTENSIONS_PACK_DIALOG_ALERT_JS);
   source->AddResourcePath("service.html", IDR_MD_EXTENSIONS_SERVICE_HTML);
   source->AddResourcePath("service.js", IDR_MD_EXTENSIONS_SERVICE_JS);
   source->AddResourcePath("shortcut_input.html",
@@ -299,6 +320,9 @@ content::WebUIDataSource* CreateMdExtensionsSource() {
   source->AddResourcePath("strings.html", IDR_MD_EXTENSIONS_STRINGS_HTML);
   source->AddResourcePath("toolbar.html", IDR_MD_EXTENSIONS_TOOLBAR_HTML);
   source->AddResourcePath("toolbar.js", IDR_MD_EXTENSIONS_TOOLBAR_JS);
+  source->AddResourcePath("view_manager.html",
+                          IDR_MD_EXTENSIONS_VIEW_MANAGER_HTML);
+  source->AddResourcePath("view_manager.js", IDR_MD_EXTENSIONS_VIEW_MANAGER_JS);
   source->SetDefaultResource(IDR_MD_EXTENSIONS_EXTENSIONS_HTML);
 
   return source;
@@ -306,7 +330,7 @@ content::WebUIDataSource* CreateMdExtensionsSource() {
 
 content::WebUIDataSource* CreateExtensionsHTMLSource() {
   content::WebUIDataSource* source =
-      content::WebUIDataSource::Create(chrome::kChromeUIExtensionsFrameHost);
+      content::WebUIDataSource::Create(chrome::kChromeUIExtensionsHost);
 
   source->SetJsonPath("strings.js");
   source->AddResourcePath("extensions.js", IDR_EXTENSIONS_JS);

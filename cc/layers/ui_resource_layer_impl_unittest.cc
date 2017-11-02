@@ -9,8 +9,8 @@
 #include "cc/quads/draw_quad.h"
 #include "cc/resources/ui_resource_bitmap.h"
 #include "cc/resources/ui_resource_client.h"
-#include "cc/test/fake_compositor_frame_sink.h"
 #include "cc/test/fake_impl_task_runner_provider.h"
+#include "cc/test/fake_layer_tree_frame_sink.h"
 #include "cc/test/fake_layer_tree_host_impl.h"
 #include "cc/test/fake_ui_resource_layer_tree_host_impl.h"
 #include "cc/test/layer_test_common.h"
@@ -66,12 +66,12 @@ void QuadSizeTest(FakeUIResourceLayerTreeHostImpl* host_impl,
 TEST(UIResourceLayerImplTest, VerifyDrawQuads) {
   FakeImplTaskRunnerProvider task_runner_provider;
   TestTaskGraphRunner task_graph_runner;
-  std::unique_ptr<CompositorFrameSink> compositor_frame_sink =
-      FakeCompositorFrameSink::Create3d();
+  std::unique_ptr<LayerTreeFrameSink> layer_tree_frame_sink =
+      FakeLayerTreeFrameSink::Create3d();
   FakeUIResourceLayerTreeHostImpl host_impl(&task_runner_provider,
                                             &task_graph_runner);
   host_impl.SetVisible(true);
-  host_impl.InitializeRenderer(compositor_frame_sink.get());
+  host_impl.InitializeRenderer(layer_tree_frame_sink.get());
 
   // Make sure we're appending quads when there are valid values.
   gfx::Size bitmap_size(100, 100);
@@ -94,9 +94,9 @@ TEST(UIResourceLayerImplTest, VerifyDrawQuads) {
   QuadSizeTest(&host_impl, std::move(layer), expected_quad_size);
 }
 
-void OpaqueBoundsTest(FakeUIResourceLayerTreeHostImpl* host_impl,
-                      std::unique_ptr<UIResourceLayerImpl> layer,
-                      const gfx::Rect& expected_opaque_bounds) {
+void NeedsBlendingTest(FakeUIResourceLayerTreeHostImpl* host_impl,
+                       std::unique_ptr<UIResourceLayerImpl> layer,
+                       bool needs_blending) {
   host_impl->active_tree()->SetRootLayerForTesting(std::move(layer));
   host_impl->active_tree()->BuildPropertyTreesForTesting();
 
@@ -106,11 +106,10 @@ void OpaqueBoundsTest(FakeUIResourceLayerTreeHostImpl* host_impl,
   host_impl->active_tree()->root_layer_for_testing()->AppendQuads(
       render_pass.get(), &data);
 
-  // Verify quad rects
+  // Verify needs_blending is set appropriately.
   const QuadList& quads = render_pass->quad_list;
   EXPECT_GE(quads.size(), (size_t)0);
-  gfx::Rect opaque_rect = quads.front()->opaque_rect;
-  EXPECT_EQ(expected_opaque_bounds, opaque_rect);
+  EXPECT_EQ(needs_blending, quads.front()->needs_blending);
 
   host_impl->active_tree()->DetachLayers();
 }
@@ -118,12 +117,12 @@ void OpaqueBoundsTest(FakeUIResourceLayerTreeHostImpl* host_impl,
 TEST(UIResourceLayerImplTest, VerifySetOpaqueOnSkBitmap) {
   FakeImplTaskRunnerProvider task_runner_provider;
   TestTaskGraphRunner task_graph_runner;
-  std::unique_ptr<CompositorFrameSink> compositor_frame_sink =
-      FakeCompositorFrameSink::Create3d();
+  std::unique_ptr<LayerTreeFrameSink> layer_tree_frame_sink =
+      FakeLayerTreeFrameSink::Create3d();
   FakeUIResourceLayerTreeHostImpl host_impl(&task_runner_provider,
                                             &task_graph_runner);
   host_impl.SetVisible(true);
-  host_impl.InitializeRenderer(compositor_frame_sink.get());
+  host_impl.InitializeRenderer(layer_tree_frame_sink.get());
 
   gfx::Size bitmap_size(100, 100);
   gfx::Size layer_size(100, 100);
@@ -131,8 +130,7 @@ TEST(UIResourceLayerImplTest, VerifySetOpaqueOnSkBitmap) {
   UIResourceId uid = 1;
   std::unique_ptr<UIResourceLayerImpl> layer =
       GenerateUIResourceLayer(&host_impl, bitmap_size, layer_size, opaque, uid);
-  gfx::Rect expected_opaque_bounds;
-  OpaqueBoundsTest(&host_impl, std::move(layer), expected_opaque_bounds);
+  NeedsBlendingTest(&host_impl, std::move(layer), !opaque);
 
   opaque = true;
   layer = GenerateUIResourceLayer(&host_impl,
@@ -140,19 +138,18 @@ TEST(UIResourceLayerImplTest, VerifySetOpaqueOnSkBitmap) {
                                   layer_size,
                                   opaque,
                                   uid);
-  expected_opaque_bounds = gfx::Rect(layer->bounds());
-  OpaqueBoundsTest(&host_impl, std::move(layer), expected_opaque_bounds);
+  NeedsBlendingTest(&host_impl, std::move(layer), !opaque);
 }
 
 TEST(UIResourceLayerImplTest, VerifySetOpaqueOnLayer) {
   FakeImplTaskRunnerProvider task_runner_provider;
   TestTaskGraphRunner task_graph_runner;
-  std::unique_ptr<CompositorFrameSink> compositor_frame_sink =
-      FakeCompositorFrameSink::Create3d();
+  std::unique_ptr<LayerTreeFrameSink> layer_tree_frame_sink =
+      FakeLayerTreeFrameSink::Create3d();
   FakeUIResourceLayerTreeHostImpl host_impl(&task_runner_provider,
                                             &task_graph_runner);
   host_impl.SetVisible(true);
-  host_impl.InitializeRenderer(compositor_frame_sink.get());
+  host_impl.InitializeRenderer(layer_tree_frame_sink.get());
 
   gfx::Size bitmap_size(100, 100);
   gfx::Size layer_size(100, 100);
@@ -160,15 +157,15 @@ TEST(UIResourceLayerImplTest, VerifySetOpaqueOnLayer) {
   UIResourceId uid = 1;
   std::unique_ptr<UIResourceLayerImpl> layer = GenerateUIResourceLayer(
       &host_impl, bitmap_size, layer_size, skbitmap_opaque, uid);
-  layer->SetContentsOpaque(false);
-  gfx::Rect expected_opaque_bounds;
-  OpaqueBoundsTest(&host_impl, std::move(layer), expected_opaque_bounds);
+  bool opaque = false;
+  layer->SetContentsOpaque(opaque);
+  NeedsBlendingTest(&host_impl, std::move(layer), !opaque);
 
+  opaque = true;
   layer = GenerateUIResourceLayer(
       &host_impl, bitmap_size, layer_size, skbitmap_opaque, uid);
   layer->SetContentsOpaque(true);
-  expected_opaque_bounds = gfx::Rect(layer->bounds());
-  OpaqueBoundsTest(&host_impl, std::move(layer), expected_opaque_bounds);
+  NeedsBlendingTest(&host_impl, std::move(layer), !opaque);
 }
 
 TEST(UIResourceLayerImplTest, Occlusion) {

@@ -8,6 +8,8 @@ if (is_android) {
 
 source_set("browser") {
   sources = [
+    "child_process_crash_observer_android.cc",
+    "child_process_crash_observer_android.h",
     "crash_dump_manager_android.cc",
     "crash_dump_manager_android.h",
     "crash_dump_observer_android.cc",
@@ -41,5 +43,9 @@ source_set("browser") {
   if (is_posix && !is_ios) {
     configs += [ "//breakpad:client_config" ]
     public_configs = [ "//breakpad:client_config" ]
+  }
+
+  if (is_android) {
+    deps += [ "//components/crash/android:jni_headers" ]
   }
 }

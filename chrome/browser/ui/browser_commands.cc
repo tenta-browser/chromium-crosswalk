@@ -13,20 +13,17 @@
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/browsing_data/browsing_data_helper.h"
-#include "chrome/browser/browsing_data/browsing_data_remover.h"
-#include "chrome/browser/browsing_data/browsing_data_remover_factory.h"
 #include "chrome/browser/browsing_data/chrome_browsing_data_remover_delegate.h"
-#include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/devtools/devtools_window.h"
 #include "chrome/browser/dom_distiller/tab_utils.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
+#include "chrome/browser/media/router/media_router_dialog_controller.h"  // nogncheck
 #include "chrome/browser/media/router/media_router_feature.h"
 #include "chrome/browser/platform_util.h"
 #include "chrome/browser/prefs/incognito_mode_prefs.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/session_service_factory.h"
 #include "chrome/browser/sessions/tab_restore_service_factory.h"
-#include "chrome/browser/ssl/security_state_tab_helper.h"
 #include "chrome/browser/translate/chrome_translate_client.h"
 #include "chrome/browser/ui/accelerator_utils.h"
 #include "chrome/browser/ui/autofill/save_card_bubble_controller_impl.h"
@@ -54,6 +51,7 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/translate/translate_bubble_view_state_transition.h"
 #include "chrome/browser/upgrade_detector.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/content_restriction.h"
 #include "chrome/common/features.h"
 #include "chrome/common/pref_names.h"
@@ -63,7 +61,6 @@
 #include "components/favicon/content/content_favicon_driver.h"
 #include "components/google/core/browser/google_util.h"
 #include "components/prefs/pref_service.h"
-#include "components/security_state/core/security_state.h"
 #include "components/sessions/core/live_tab_context.h"
 #include "components/sessions/core/tab_restore_service.h"
 #include "components/signin/core/browser/signin_header_helper.h"
@@ -72,10 +69,10 @@
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "components/zoom/page_zoom.h"
 #include "components/zoom/zoom_controller.h"
+#include "content/public/browser/browsing_data_remover.h"
 #include "content/public/browser/devtools_agent_host.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
-#include "content/public/browser/notification_service.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_widget_host_view.h"
@@ -114,10 +111,6 @@
 
 #if BUILDFLAG(ENABLE_RLZ)
 #include "components/rlz/rlz_tracker.h"  // nogncheck
-#endif
-
-#if defined(ENABLE_MEDIA_ROUTER)
-#include "chrome/browser/media/router/media_router_dialog_controller.h"  // nogncheck
 #endif
 
 namespace {
@@ -744,6 +737,21 @@ bool CanDuplicateTabAt(const Browser* browser, int index) {
          contents->GetController().GetLastCommittedEntry();
 }
 
+void PinTab(Browser* browser) {
+  browser->tab_strip_model()->ExecuteContextMenuCommand(
+      browser->tab_strip_model()->active_index(),
+      TabStripModel::ContextMenuCommand::CommandTogglePinned);
+}
+
+void MuteTab(Browser* browser) {
+  TabStripModel::ContextMenuCommand command_id =
+      base::FeatureList::IsEnabled(features::kSoundContentSetting)
+          ? TabStripModel::ContextMenuCommand::CommandToggleSiteMuted
+          : TabStripModel::ContextMenuCommand::CommandToggleTabAudioMuted;
+  browser->tab_strip_model()->ExecuteContextMenuCommand(
+      browser->tab_strip_model()->active_index(), command_id);
+}
+
 void ConvertPopupToTabbedBrowser(Browser* browser) {
   base::RecordAction(UserMetricsAction("ShowAsTab"));
   TabStripModel* tab_strip = browser->tab_strip_model();
@@ -856,6 +864,8 @@ void Translate(Browser* browser) {
   if (chrome_translate_client) {
     if (chrome_translate_client->GetLanguageState().translation_pending())
       step = translate::TRANSLATE_STEP_TRANSLATING;
+    else if (chrome_translate_client->GetLanguageState().translation_error())
+      step = translate::TRANSLATE_STEP_TRANSLATE_ERROR;
     else if (chrome_translate_client->GetLanguageState().IsPageTranslated())
       step = translate::TRANSLATE_STEP_AFTER_TRANSLATE;
   }
@@ -895,23 +905,6 @@ bool CanSavePage(const Browser* browser) {
 
 void ShowFindBar(Browser* browser) {
   browser->GetFindBarController()->Show();
-}
-
-bool ShowPageInfo(Browser* browser, content::WebContents* web_contents) {
-  content::NavigationEntry* entry =
-      web_contents->GetController().GetVisibleEntry();
-  if (!entry)
-    return false;
-
-  SecurityStateTabHelper* helper =
-      SecurityStateTabHelper::FromWebContents(web_contents);
-  security_state::SecurityInfo security_info;
-  helper->GetSecurityInfo(&security_info);
-
-  browser->window()->ShowPageInfo(
-      Profile::FromBrowserContext(web_contents->GetBrowserContext()),
-      web_contents, entry->GetVirtualURL(), security_info);
-  return true;
 }
 
 void Print(Browser* browser) {
@@ -963,7 +956,6 @@ bool CanRouteMedia(Browser* browser) {
 }
 
 void RouteMedia(Browser* browser) {
-#if defined(ENABLE_MEDIA_ROUTER)
   DCHECK(CanRouteMedia(browser));
 
   media_router::MediaRouterDialogController* dialog_controller =
@@ -973,7 +965,6 @@ void RouteMedia(Browser* browser) {
     return;
 
   dialog_controller->ShowMediaRouterDialog();
-#endif  // defined(ENABLE_MEDIA_ROUTER)
 }
 
 void EmailPageLocation(Browser* browser) {
@@ -1108,9 +1099,11 @@ void OpenTaskManager(Browser* browser) {
 #endif
 }
 
-void OpenFeedbackDialog(Browser* browser) {
+void OpenFeedbackDialog(Browser* browser, FeedbackSource source) {
   base::RecordAction(UserMetricsAction("Feedback"));
-  chrome::ShowFeedbackPage(browser, std::string(), std::string());
+  chrome::ShowFeedbackPage(
+      browser, source, std::string() /* description_template */,
+      std::string() /* category_tag */, std::string() /* extra_diagnostics */);
 }
 
 void ToggleBookmarkBar(Browser* browser) {
@@ -1131,15 +1124,9 @@ void ShowAvatarMenu(Browser* browser) {
 
 void OpenUpdateChromeDialog(Browser* browser) {
   if (UpgradeDetector::GetInstance()->is_outdated_install()) {
-    content::NotificationService::current()->Notify(
-        chrome::NOTIFICATION_OUTDATED_INSTALL,
-        content::NotificationService::AllSources(),
-        content::NotificationService::NoDetails());
+    UpgradeDetector::GetInstance()->NotifyOutdatedInstall();
   } else if (UpgradeDetector::GetInstance()->is_outdated_install_no_au()) {
-    content::NotificationService::current()->Notify(
-        chrome::NOTIFICATION_OUTDATED_INSTALL_NO_AU,
-        content::NotificationService::AllSources(),
-        content::NotificationService::NoDetails());
+    UpgradeDetector::GetInstance()->NotifyOutdatedInstallNoAutoUpdate();
   } else {
     base::RecordAction(UserMetricsAction("UpdateChrome"));
     browser->window()->ShowUpdateChromeDialog();
@@ -1193,11 +1180,11 @@ void ToggleFullscreenMode(Browser* browser) {
 }
 
 void ClearCache(Browser* browser) {
-  BrowsingDataRemover* remover =
-      BrowsingDataRemoverFactory::GetForBrowserContext(browser->profile());
+  content::BrowsingDataRemover* remover =
+      content::BrowserContext::GetBrowsingDataRemover(browser->profile());
   remover->Remove(base::Time(), base::Time::Max(),
-                  BrowsingDataRemover::DATA_TYPE_CACHE,
-                  BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB);
+                  content::BrowsingDataRemover::DATA_TYPE_CACHE,
+                  content::BrowsingDataRemover::ORIGIN_TYPE_UNPROTECTED_WEB);
   // BrowsingDataRemover takes care of deleting itself when done.
 }
 

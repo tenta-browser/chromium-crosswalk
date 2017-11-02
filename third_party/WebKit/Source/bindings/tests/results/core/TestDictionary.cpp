@@ -15,7 +15,7 @@
 #include "bindings/tests/idls/core/TestInterfaceImplementation.h"
 #include "bindings/tests/idls/core/TestObject.h"
 #include "core/dom/Element.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/EventTarget.h"
 #include "platform/wtf/Vector.h"
 
 namespace blink {
@@ -139,10 +139,10 @@ void TestDictionary::setElementOrNullMemberToNull() {
 bool TestDictionary::hasEnumMember() const {
   return !m_enumMember.IsNull();
 }
-String TestDictionary::enumMember() const {
+const String& TestDictionary::enumMember() const {
   return m_enumMember;
 }
-void TestDictionary::setEnumMember(String value) {
+void TestDictionary::setEnumMember(const String& value) {
   m_enumMember = value;
 }
 bool TestDictionary::hasEnumSequenceMember() const {
@@ -186,6 +186,17 @@ const HeapVector<InternalDictionary>& TestDictionary::internalDictionarySequence
 void TestDictionary::setInternalDictionarySequenceMember(const HeapVector<InternalDictionary>& value) {
   m_internalDictionarySequenceMember = value;
   m_hasInternalDictionarySequenceMember = true;
+}
+bool TestDictionary::hasIsPublic() const {
+  return m_hasIsPublic;
+}
+bool TestDictionary::isPublic() const {
+  DCHECK(m_hasIsPublic);
+  return m_isPublic;
+}
+void TestDictionary::setIsPublic(bool value) {
+  m_isPublic = value;
+  m_hasIsPublic = true;
 }
 bool TestDictionary::hasLongMember() const {
   return m_hasLongMember;
@@ -270,33 +281,22 @@ void TestDictionary::setRuntimeMember(bool value) {
   m_runtimeMember = value;
   m_hasRuntimeMember = true;
 }
-bool TestDictionary::hasStringArrayMember() const {
-  return m_hasStringArrayMember;
-}
-const Vector<String>& TestDictionary::stringArrayMember() const {
-  DCHECK(m_hasStringArrayMember);
-  return m_stringArrayMember;
-}
-void TestDictionary::setStringArrayMember(const Vector<String>& value) {
-  m_stringArrayMember = value;
-  m_hasStringArrayMember = true;
-}
 bool TestDictionary::hasStringMember() const {
   return !m_stringMember.IsNull();
 }
-String TestDictionary::stringMember() const {
+const String& TestDictionary::stringMember() const {
   return m_stringMember;
 }
-void TestDictionary::setStringMember(String value) {
+void TestDictionary::setStringMember(const String& value) {
   m_stringMember = value;
 }
 bool TestDictionary::hasStringOrNullMember() const {
   return !m_stringOrNullMember.IsNull();
 }
-String TestDictionary::stringOrNullMember() const {
+const String& TestDictionary::stringOrNullMember() const {
   return m_stringOrNullMember;
 }
-void TestDictionary::setStringOrNullMember(String value) {
+void TestDictionary::setStringOrNullMember(const String& value) {
   m_stringOrNullMember = value;
 }
 void TestDictionary::setStringOrNullMemberToNull() {

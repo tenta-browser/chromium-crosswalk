@@ -56,7 +56,7 @@ IPC_STRUCT_BEGIN(GPUCreateCommandBufferConfig)
   IPC_STRUCT_MEMBER(gpu::SurfaceHandle, surface_handle)
   IPC_STRUCT_MEMBER(int32_t, share_group_id)
   IPC_STRUCT_MEMBER(int32_t, stream_id)
-  IPC_STRUCT_MEMBER(gpu::GpuStreamPriority, stream_priority)
+  IPC_STRUCT_MEMBER(gpu::SchedulingPriority, stream_priority)
   IPC_STRUCT_MEMBER(gpu::gles2::ContextCreationAttribHelper, attribs)
   IPC_STRUCT_MEMBER(GURL, active_url)
 IPC_STRUCT_END()
@@ -111,6 +111,9 @@ IPC_SYNC_MESSAGE_CONTROL3_2(GpuChannelMsg_CreateCommandBuffer,
 IPC_SYNC_MESSAGE_CONTROL1_0(GpuChannelMsg_DestroyCommandBuffer,
                             int32_t /* instance_id */)
 
+IPC_MESSAGE_CONTROL1(GpuChannelMsg_FlushCommandBuffers,
+                     std::vector<gpu::FlushParams> /* flush_list */)
+
 // Simple NOP message which can be used as fence to ensure all previous sent
 // messages have been received.
 IPC_SYNC_MESSAGE_CONTROL0_0(GpuChannelMsg_Nop)
@@ -145,8 +148,7 @@ IPC_MESSAGE_ROUTED0(GpuStreamTextureMsg_FrameAvailable)
 // a single OpenGL context.
 
 // Sets the shared memory buffer used for commands.
-IPC_SYNC_MESSAGE_ROUTED1_0(GpuCommandBufferMsg_SetGetBuffer,
-                           int32_t /* shm_id */)
+IPC_MESSAGE_ROUTED1(GpuCommandBufferMsg_SetGetBuffer, int32_t /* shm_id */)
 
 // Takes the front buffer into a mailbox. This allows another context to draw
 // the output of this context.
@@ -166,7 +168,8 @@ IPC_SYNC_MESSAGE_ROUTED2_1(GpuCommandBufferMsg_WaitForTokenInRange,
                            gpu::CommandBuffer::State /* state */)
 
 // Wait until the get offset is in a specific range, inclusive.
-IPC_SYNC_MESSAGE_ROUTED2_1(GpuCommandBufferMsg_WaitForGetOffsetInRange,
+IPC_SYNC_MESSAGE_ROUTED3_1(GpuCommandBufferMsg_WaitForGetOffsetInRange,
+                           uint32_t /* set_get_buffer_count */,
                            int32_t /* start */,
                            int32_t /* end */,
                            gpu::CommandBuffer::State /* state */)
@@ -175,11 +178,13 @@ IPC_SYNC_MESSAGE_ROUTED2_1(GpuCommandBufferMsg_WaitForGetOffsetInRange,
 // Caller passes its current put offset. Current state (including get offset)
 // is returned in shared memory. The input latency info for the current
 // frame is also sent to the GPU process.
-IPC_MESSAGE_ROUTED4(GpuCommandBufferMsg_AsyncFlush,
+// TODO(sunnyps): This is an internal implementation detail of the gpu service
+// and is not sent by the client. Remove this once the non-scheduler code path
+// is removed.
+IPC_MESSAGE_ROUTED3(GpuCommandBufferMsg_AsyncFlush,
                     int32_t /* put_offset */,
-                    uint32_t /* flush_count */,
-                    std::vector<ui::LatencyInfo> /* latency_info */,
-                    std::vector<gpu::SyncToken> /* sync_token_fences */)
+                    uint32_t /* flush_id */,
+                    std::vector<ui::LatencyInfo> /* latency_info */)
 
 // Sent by the GPU process to display messages in the console.
 IPC_MESSAGE_ROUTED1(GpuCommandBufferMsg_ConsoleMsg,

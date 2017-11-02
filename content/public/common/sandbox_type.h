@@ -1,9 +1,12 @@
-// Copyright (c) 2012 The Chromium Authors. All rights reserved.
+// Copyright 2017 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef CONTENT_PUBLIC_COMMON_SANDBOX_TYPE_H_
 #define CONTENT_PUBLIC_COMMON_SANDBOX_TYPE_H_
+
+#include "base/command_line.h"
+#include "content/common/content_export.h"
 
 namespace content {
 
@@ -16,7 +19,11 @@ enum SandboxType {
 
   SANDBOX_TYPE_FIRST_TYPE = 0,  // Placeholder to ease iteration.
 
-  SANDBOX_TYPE_RENDERER = SANDBOX_TYPE_FIRST_TYPE,
+  // Do not apply any sandboxing to the process.
+  SANDBOX_TYPE_NO_SANDBOX = SANDBOX_TYPE_FIRST_TYPE,
+
+  // Renderer or worker process. Most common case.
+  SANDBOX_TYPE_RENDERER,
 
   // Utility process is as restrictive as the worker process except full
   // access is allowed to one configurable directory.
@@ -28,8 +35,20 @@ enum SandboxType {
   // The PPAPI plugin process.
   SANDBOX_TYPE_PPAPI,
 
+  // The network process.
+  SANDBOX_TYPE_NETWORK,
+
   SANDBOX_TYPE_AFTER_LAST_TYPE,  // Placeholder to ease iteration.
 };
+
+inline bool IsUnsandboxedSandboxType(SandboxType sandbox_type) {
+  // TODO(tsepez): Sandbox network process.
+  return sandbox_type == SANDBOX_TYPE_NO_SANDBOX ||
+         sandbox_type == SANDBOX_TYPE_NETWORK;
+}
+
+CONTENT_EXPORT SandboxType
+SandboxTypeFromCommandLine(const base::CommandLine& command_line);
 
 }  // namespace content
 

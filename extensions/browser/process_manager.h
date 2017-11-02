@@ -64,7 +64,6 @@ class ProcessManager : public KeyedService,
                                content::RenderFrameHost* render_frame_host,
                                const Extension* extension);
   void UnregisterRenderFrameHost(content::RenderFrameHost* render_frame_host);
-  void DidNavigateRenderFrameHost(content::RenderFrameHost* render_frame_host);
 
   // Returns the SiteInstance that the given URL belongs to.
   // TODO(aa): This only returns correct results for extensions and packaged
@@ -109,10 +108,13 @@ class ProcessManager : public KeyedService,
   // already been sent the unload event and is shutting down.
   bool IsBackgroundHostClosing(const std::string& extension_id);
 
-  // Returns the extension associated with the specified RenderFrameHost/
-  // WebContents, or null.
+  // Returns the extension associated with the specified RenderFrameHost,
+  // or null.
   const Extension* GetExtensionForRenderFrameHost(
       content::RenderFrameHost* render_frame_host);
+
+  // Returns the extension associated with the main frame of the given
+  // |web_contents|, or null if there isn't one.
   const Extension* GetExtensionForWebContents(
       const content::WebContents* web_contents);
 
@@ -211,7 +213,7 @@ class ProcessManager : public KeyedService,
                          const Extension* extension) override;
   void OnExtensionUnloaded(content::BrowserContext* browser_context,
                            const Extension* extension,
-                           UnloadedExtensionInfo::Reason reason) override;
+                           UnloadedExtensionReason reason) override;
 
   // Extra information we keep for each extension's background page.
   struct BackgroundPageData;

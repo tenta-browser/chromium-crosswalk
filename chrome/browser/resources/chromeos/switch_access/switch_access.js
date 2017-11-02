@@ -12,11 +12,18 @@ function SwitchAccess() {
   console.log('Switch access is enabled');
 
   /**
+   * User commands.
+   *
+   * @private {Commands}
+   */
+  this.commands_ = null;
+
+  /**
    * User preferences.
    *
-   * @type {SwitchAccessPrefs}
+   * @private {SwitchAccessPrefs}
    */
-  this.switchAccessPrefs = null;
+  this.switchAccessPrefs_ = null;
 
   /**
    * Handles changes to auto-scan.
@@ -33,47 +40,30 @@ function SwitchAccess() {
   this.keyboardHandler_ = null;
 
   /**
-   * Moves to the appropriate node in the accessibility tree.
+   * Handles interactions with the accessibility tree, including moving to and
+   * selecting nodes.
    *
-   * @private {AutomationTreeWalker}
+   * @private {AutomationManager}
    */
-  this.treeWalker_ = null;
-
-  /**
-   * Currently selected node.
-   *
-   * @private {chrome.automation.AutomationNode}
-   */
-  this.node_ = null;
-
-  /**
-   * Root node (i.e., the desktop).
-   *
-   * @private {chrome.automation.AutomationNode}
-   */
-  this.root_ = null;
+  this.automationManager_ = null;
 
   this.init_();
-};
+}
 
 SwitchAccess.prototype = {
   /**
-   * Set this.node_ and this.root_ to the desktop node, and set up preferences,
-   * controllers, and event listeners.
+   * Set up preferences, controllers, and event listeners.
    *
    * @private
    */
   init_: function() {
-    this.switchAccessPrefs = new SwitchAccessPrefs();
+    this.commands_ = new Commands(this);
+    this.switchAccessPrefs_ = new SwitchAccessPrefs(this);
     this.autoScanManager_ = new AutoScanManager(this);
     this.keyboardHandler_ = new KeyboardHandler(this);
-    this.treeWalker_ = new AutomationTreeWalker();
 
     chrome.automation.getDesktop(function(desktop) {
-      this.node_ = desktop;
-      this.root_ = desktop;
-      console.log('AutomationNode for desktop is loaded');
-      this.printNode_(this.node_);
+      this.automationManager_ = new AutomationManager(desktop);
     }.bind(this));
 
     document.addEventListener(
@@ -81,33 +71,25 @@ SwitchAccess.prototype = {
   },
 
   /**
-   * Set this.node_ to the next/previous interesting node. If no interesting
-   * node is found, set this.node_ to the first/last interesting node. If
-   * |doNext| is true, will search for next node. Otherwise, will search for
-   * previous node.
+   * Move to the next/previous interesting node. If |doNext| is true, move to
+   * the next node. Otherwise, move to the previous node.
    *
    * @param {boolean} doNext
    * @override
    */
   moveToNode: function(doNext) {
-    let node = this.treeWalker_.moveToNode(this.node_, this.root_, doNext);
-    if (node) {
-      this.node_ = node;
-      this.printNode_(this.node_);
-      chrome.accessibilityPrivate.setFocusRing([this.node_.location]);
-    }
+    if (this.automationManager_)
+      this.automationManager_.moveToNode(doNext);
   },
 
   /**
-   * Perform the default action on the currently selected node.
+   * Perform the default action on the current node.
    *
    * @override
    */
-  doDefault: function() {
-    if (!this.node_)
-      return;
-
-    this.node_.doDefault();
+  selectCurrentNode: function() {
+    if (this.automationManager_)
+      this.automationManager_.selectCurrentNode();
   },
 
   /**
@@ -118,6 +100,37 @@ SwitchAccess.prototype = {
   showOptionsPage: function() {
     let optionsPage = {url: 'options.html'};
     chrome.tabs.create(optionsPage);
+  },
+
+  /**
+   * Return a list of the names of all user commands.
+   *
+   * @override
+   * @return {!Array<string>}
+   */
+  getCommands: function() {
+    return this.commands_.getCommands();
+  },
+
+  /**
+   * Return the default key code for a command.
+   *
+   * @override
+   * @param {string} command
+   * @return {number}
+   */
+  getDefaultKeyCodeFor: function(command) {
+    return this.commands_.getDefaultKeyCodeFor(command);
+  },
+
+  /**
+   * Run the function binding for the specified command.
+   *
+   * @override
+   * @param {string} command
+   */
+  runCommand: function(command) {
+    this.commands_.runCommand(command);
   },
 
   /**
@@ -146,92 +159,110 @@ SwitchAccess.prototype = {
         case 'autoScanTime':
           this.autoScanManager_.setScanTime(updatedPrefs[key]);
           break;
+        default:
+          if (this.commands_.getCommands().includes(key))
+            this.keyboardHandler_.updateSwitchAccessKeys();
       }
     }
   },
 
-  // TODO(elichtenberg): Move print functions to a custom logger class. Only
-  // log when debuggingEnabled is true.
   /**
-   * Print out details about a node.
+   * Set the value of the preference |key| to |value| in chrome.storage.sync.
+   * this.prefs_ is not set until handleStorageChange_.
    *
-   * @param {chrome.automation.AutomationNode} node
-   * @private
+   * @override
+   * @param {string} key
+   * @param {boolean|string|number} value
    */
-  printNode_: function(node) {
-    if (node) {
-      console.log('Name = ' + node.name);
-      console.log('Role = ' + node.role);
-      console.log('Root role = ' + node.root.role);
-      if (!node.parent)
-        console.log('At index ' + node.indexInParent + ', has no parent');
-      else {
-        let numSiblings = node.parent.children.length;
-        console.log(
-            'At index ' + node.indexInParent + ', there are '
-            + numSiblings + ' siblings');
-      }
-      console.log('Has ' + node.children.length + ' children');
-    } else {
-      console.log('Node is null');
-    }
-    console.log(node);
-    console.log('\n');
+  setPref: function(key, value) {
+    this.switchAccessPrefs_.setPref(key, value);
   },
 
   /**
-   * Move to the next sibling of this.node_ if it has one.
+   * Get the value of type 'boolean' of the preference |key|. Will throw a type
+   * error if the value of |key| is not 'boolean'.
+   *
+   * @override
+   * @param  {string} key
+   * @return {boolean}
+   */
+  getBooleanPref: function(key) {
+    return this.switchAccessPrefs_.getBooleanPref(key);
+  },
+
+  /**
+   * Get the value of type 'number' of the preference |key|. Will throw a type
+   * error if the value of |key| is not 'number'.
+   *
+   * @override
+   * @param  {string} key
+   * @return {number}
+   */
+  getNumberPref: function(key) {
+    return this.switchAccessPrefs_.getNumberPref(key);
+  },
+
+  /**
+   * Get the value of type 'string' of the preference |key|. Will throw a type
+   * error if the value of |key| is not 'string'.
+   *
+   * @override
+   * @param  {string} key
+   * @return {string}
+   */
+  getStringPref: function(key) {
+    return this.switchAccessPrefs_.getStringPref(key);
+  },
+
+  /**
+   * Returns true if |keyCode| is already used to run a command from the
+   * keyboard.
+   *
+   * @override
+   * @param {number} keyCode
+   * @return {boolean}
+   */
+  keyCodeIsUsed: function(keyCode) {
+    return this.switchAccessPrefs_.keyCodeIsUsed(keyCode);
+  },
+
+  /**
+   * Move to the next sibling of the current node if it has one.
    *
    * @override
    */
   debugMoveToNext: function() {
-    let next = this.treeWalker_.debugMoveToNext(this.node_);
-    if (next) {
-      this.node_ = next;
-      this.printNode_(this.node_);
-      chrome.accessibilityPrivate.setFocusRing([this.node_.location]);
-    }
+    if (this.automationManager_)
+      this.automationManager_.debugMoveToNext();
   },
 
   /**
-   * Move to the previous sibling of this.node_ if it has one.
+   * Move to the previous sibling of the current node if it has one.
    *
    * @override
    */
   debugMoveToPrevious: function() {
-    let prev = this.treeWalker_.debugMoveToPrevious(this.node_);
-    if (prev) {
-      this.node_ = prev;
-      this.printNode_(this.node_);
-      chrome.accessibilityPrivate.setFocusRing([this.node_.location]);
-    }
+    if (this.automationManager_)
+      this.automationManager_.debugMoveToPrevious();
   },
 
   /**
-   * Move to the first child of this.node_ if it has one.
+   * Move to the first child of the current node if it has one.
    *
    * @override
    */
   debugMoveToFirstChild: function() {
-    let child = this.treeWalker_.debugMoveToFirstChild(this.node_);
-    if (child) {
-      this.node_ = child;
-      this.printNode_(this.node_);
-      chrome.accessibilityPrivate.setFocusRing([this.node_.location]);
-    }
+    if (this.automationManager_)
+      this.automationManager_.debugMoveToFirstChild();
   },
 
   /**
-   * Move to the parent of this.node_ if it has one.
+   * Move to the parent of the current node if it has one.
    *
    * @override
    */
   debugMoveToParent: function() {
-    let parent = this.treeWalker_.debugMoveToParent(this.node_);
-    if (parent) {
-      this.node_ = parent;
-      this.printNode_(this.node_);
-      chrome.accessibilityPrivate.setFocusRing([this.node_.location]);
-    }
+    if (this.automationManager_)
+      this.automationManager_.debugMoveToParent();
   }
 };

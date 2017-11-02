@@ -4,25 +4,15 @@
 
 #include "core/frame/RootFrameViewport.h"
 
+#include "core/frame/FrameTestHelpers.h"
 #include "core/layout/ScrollAlignment.h"
 #include "platform/geometry/DoubleRect.h"
 #include "platform/geometry/LayoutRect.h"
+#include "platform/scheduler/child/web_scheduler.h"
 #include "platform/scroll/ScrollableArea.h"
 #include "public/platform/Platform.h"
-#include "public/platform/WebScheduler.h"
 #include "public/platform/WebThread.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
-#define EXPECT_POINT_EQ(expected, actual)    \
-  do {                                       \
-    EXPECT_EQ((expected).X(), (actual).X()); \
-    EXPECT_EQ((expected).Y(), (actual).Y()); \
-  } while (false)
-#define EXPECT_SIZE_EQ(expected, actual)               \
-  do {                                                 \
-    EXPECT_EQ((expected).Width(), (actual).Width());   \
-    EXPECT_EQ((expected).Height(), (actual).Height()); \
-  } while (false)
 
 namespace blink {
 
@@ -66,6 +56,11 @@ class ScrollableAreaStub : public GarbageCollectedFinalized<ScrollableAreaStub>,
     return FlooredIntSize(MaximumScrollOffset());
   }
 
+  IntRect VisibleContentRect(
+      IncludeScrollbarsInRect = kExcludeScrollbars) const override {
+    return IntRect(IntPoint(FlooredIntSize(scroll_offset_)), viewport_size_);
+  }
+
   IntSize ContentsSize() const override { return contents_size_; }
   void SetContentSize(const IntSize& contents_size) {
     contents_size_ = contents_size;
@@ -84,6 +79,9 @@ class ScrollableAreaStub : public GarbageCollectedFinalized<ScrollableAreaStub>,
         viewport_size_(viewport_size),
         contents_size_(contents_size) {}
 
+  CompositorElementId GetCompositorElementId() const override {
+    return CompositorElementId();
+  }
   void UpdateScrollOffset(const ScrollOffset& offset, ScrollType) override {
     scroll_offset_ = offset;
   }
@@ -307,15 +305,15 @@ TEST_F(RootFrameViewportTest, ScrollIntoView) {
   // resized (as is the case when the ChromeOS keyboard comes up) but not
   // scaled.
   visual_viewport->SetViewportSize(IntSize(100, 100));
-  root_frame_viewport->ScrollIntoView(LayoutRect(100, 250, 50, 50),
-                                      ScrollAlignment::kAlignToEdgeIfNeeded,
-                                      ScrollAlignment::kAlignToEdgeIfNeeded);
+  root_frame_viewport->ScrollIntoView(
+      LayoutRect(100, 250, 50, 50), ScrollAlignment::kAlignToEdgeIfNeeded,
+      ScrollAlignment::kAlignToEdgeIfNeeded, false);
   EXPECT_SIZE_EQ(ScrollOffset(50, 150), layout_viewport->GetScrollOffset());
   EXPECT_SIZE_EQ(ScrollOffset(0, 50), visual_viewport->GetScrollOffset());
 
-  root_frame_viewport->ScrollIntoView(LayoutRect(25, 75, 50, 50),
-                                      ScrollAlignment::kAlignToEdgeIfNeeded,
-                                      ScrollAlignment::kAlignToEdgeIfNeeded);
+  root_frame_viewport->ScrollIntoView(
+      LayoutRect(25, 75, 50, 50), ScrollAlignment::kAlignToEdgeIfNeeded,
+      ScrollAlignment::kAlignToEdgeIfNeeded, false);
   EXPECT_SIZE_EQ(ScrollOffset(25, 75), layout_viewport->GetScrollOffset());
   EXPECT_SIZE_EQ(ScrollOffset(0, 0), visual_viewport->GetScrollOffset());
 
@@ -324,15 +322,15 @@ TEST_F(RootFrameViewportTest, ScrollIntoView) {
   visual_viewport->SetScale(2);
   root_frame_viewport->SetScrollOffset(ScrollOffset(), kProgrammaticScroll);
 
-  root_frame_viewport->ScrollIntoView(LayoutRect(50, 75, 50, 75),
-                                      ScrollAlignment::kAlignToEdgeIfNeeded,
-                                      ScrollAlignment::kAlignToEdgeIfNeeded);
+  root_frame_viewport->ScrollIntoView(
+      LayoutRect(50, 75, 50, 75), ScrollAlignment::kAlignToEdgeIfNeeded,
+      ScrollAlignment::kAlignToEdgeIfNeeded, false);
   EXPECT_SIZE_EQ(ScrollOffset(0, 0), layout_viewport->GetScrollOffset());
   EXPECT_SIZE_EQ(ScrollOffset(50, 75), visual_viewport->GetScrollOffset());
 
-  root_frame_viewport->ScrollIntoView(LayoutRect(190, 290, 10, 10),
-                                      ScrollAlignment::kAlignToEdgeIfNeeded,
-                                      ScrollAlignment::kAlignToEdgeIfNeeded);
+  root_frame_viewport->ScrollIntoView(
+      LayoutRect(190, 290, 10, 10), ScrollAlignment::kAlignToEdgeIfNeeded,
+      ScrollAlignment::kAlignToEdgeIfNeeded, false);
   EXPECT_SIZE_EQ(ScrollOffset(100, 150), layout_viewport->GetScrollOffset());
   EXPECT_SIZE_EQ(ScrollOffset(50, 75), visual_viewport->GetScrollOffset());
 
@@ -347,19 +345,21 @@ TEST_F(RootFrameViewportTest, ScrollIntoView) {
   root_frame_viewport->ScrollIntoView(
       LayoutRect(root_frame_viewport->VisibleContentRect(kExcludeScrollbars)),
       ScrollAlignment::kAlignToEdgeIfNeeded,
-      ScrollAlignment::kAlignToEdgeIfNeeded);
+      ScrollAlignment::kAlignToEdgeIfNeeded, false);
   EXPECT_SIZE_EQ(ScrollOffset(50, 50), layout_viewport->GetScrollOffset());
   EXPECT_SIZE_EQ(ScrollOffset(0, 10), visual_viewport->GetScrollOffset());
 
   root_frame_viewport->ScrollIntoView(
       LayoutRect(root_frame_viewport->VisibleContentRect(kExcludeScrollbars)),
-      ScrollAlignment::kAlignCenterAlways, ScrollAlignment::kAlignCenterAlways);
+      ScrollAlignment::kAlignCenterAlways, ScrollAlignment::kAlignCenterAlways,
+      false);
   EXPECT_SIZE_EQ(ScrollOffset(50, 50), layout_viewport->GetScrollOffset());
   EXPECT_SIZE_EQ(ScrollOffset(0, 10), visual_viewport->GetScrollOffset());
 
   root_frame_viewport->ScrollIntoView(
       LayoutRect(root_frame_viewport->VisibleContentRect(kExcludeScrollbars)),
-      ScrollAlignment::kAlignTopAlways, ScrollAlignment::kAlignTopAlways);
+      ScrollAlignment::kAlignTopAlways, ScrollAlignment::kAlignTopAlways,
+      false);
   EXPECT_SIZE_EQ(ScrollOffset(50, 50), layout_viewport->GetScrollOffset());
   EXPECT_SIZE_EQ(ScrollOffset(0, 10), visual_viewport->GetScrollOffset());
 }

@@ -32,15 +32,16 @@
 
 #include <algorithm>
 #include "bindings/core/v8/ExceptionState.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "core/CSSPropertyNames.h"
 #include "core/css/CSSPrimitiveValue.h"
+#include "core/css/CSSPropertyIDTemplates.h"
 #include "core/css/CSSPropertyMetadata.h"
 #include "core/css/CSSStyleDeclaration.h"
 #include "core/css/CSSValue.h"
 #include "core/css/parser/CSSParser.h"
-#include "core/dom/custom/CEReactionsScope.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/EventTarget.h"
+#include "core/html/custom/CEReactionsScope.h"
 #include "platform/wtf/ASCIICType.h"
 #include "platform/wtf/PassRefPtr.h"
 #include "platform/wtf/RefPtr.h"
@@ -48,8 +49,6 @@
 #include "platform/wtf/Vector.h"
 #include "platform/wtf/text/StringBuilder.h"
 #include "platform/wtf/text/StringConcatenate.h"
-
-using namespace WTF;
 
 namespace blink {
 
@@ -62,10 +61,10 @@ namespace blink {
 static bool HasCSSPropertyNamePrefix(const String& property_name,
                                      const char* prefix) {
 #if DCHECK_IS_ON()
-  ASSERT(*prefix);
+  DCHECK(*prefix);
   for (const char* p = prefix; *p; ++p)
-    ASSERT(IsASCIILower(*p));
-  ASSERT(property_name.length());
+    DCHECK(IsASCIILower(*p));
+  DCHECK(property_name.length());
 #endif
 
   if (ToASCIILower(property_name[0]) != prefix[0])
@@ -135,7 +134,7 @@ static CSSPropertyID ParseCSSPropertyID(const String& property_name) {
 static CSSPropertyID CssPropertyInfo(const AtomicString& name) {
   typedef HashMap<String, CSSPropertyID> CSSPropertyIDMap;
   DEFINE_STATIC_LOCAL(CSSPropertyIDMap, map, ());
-  CSSPropertyIDMap::iterator iter = map.Find(name);
+  CSSPropertyIDMap::iterator iter = map.find(name);
   if (iter != map.end())
     return iter->value;
 
@@ -143,7 +142,7 @@ static CSSPropertyID CssPropertyInfo(const AtomicString& name) {
   if (unresolved_property == CSSPropertyVariable)
     unresolved_property = CSSPropertyInvalid;
   map.insert(name, unresolved_property);
-  ASSERT(!unresolved_property ||
+  DCHECK(!unresolved_property ||
          CSSPropertyMetadata::IsEnabledProperty(unresolved_property));
   return unresolved_property;
 }
@@ -161,7 +160,7 @@ void V8CSSStyleDeclaration::namedPropertyEnumeratorCustom(
         property_names.push_back(getJSPropertyName(property_id));
     }
     std::sort(property_names.begin(), property_names.end(),
-              CodePointCompareLessThan);
+              WTF::CodePointCompareLessThan);
     property_names_length = property_names.size();
   }
 
@@ -170,7 +169,7 @@ void V8CSSStyleDeclaration::namedPropertyEnumeratorCustom(
       v8::Array::New(info.GetIsolate(), property_names_length);
   for (unsigned i = 0; i < property_names_length; ++i) {
     String key = property_names.at(i);
-    ASSERT(!key.IsNull());
+    DCHECK(!key.IsNull());
     if (!V8CallBoolean(properties->CreateDataProperty(
             context, i, V8String(info.GetIsolate(), key))))
       return;

@@ -5,11 +5,12 @@
 #ifndef CHROME_BROWSER_SEARCH_IFRAME_SOURCE_H_
 #define CHROME_BROWSER_SEARCH_IFRAME_SOURCE_H_
 
-#include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "content/public/browser/url_data_source.h"
 
 // Base class for URL data sources for chrome-search:// iframed content.
+// TODO(treib): This has only one subclass outside of tests,
+// MostVisitedIframeSource. Merge the two classes?
 class IframeSource : public content::URLDataSource {
  public:
   IframeSource();
@@ -20,7 +21,9 @@ class IframeSource : public content::URLDataSource {
   std::string GetMimeType(const std::string& path_and_query) const override;
   bool AllowCaching() const override;
   bool ShouldDenyXFrameOptions() const override;
-  bool ShouldServiceRequest(const net::URLRequest* request) const override;
+  bool ShouldServiceRequest(const GURL& url,
+                            content::ResourceContext* resource_context,
+                            int render_process_id) const override;
 
   // Returns whether this source should serve data for a particular path.
   virtual bool ServesPath(const std::string& path) const = 0;

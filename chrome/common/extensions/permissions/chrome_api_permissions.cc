@@ -130,8 +130,6 @@ ChromeAPIPermissions::GetAllPermissions() const {
        APIPermissionInfo::kFlagCannotBeOptional},
       {APIPermission::kIdentityPrivate, "identityPrivate",
        APIPermissionInfo::kFlagCannotBeOptional},
-      {APIPermission::kLogPrivate, "logPrivate",
-       APIPermissionInfo::kFlagCannotBeOptional},
       {APIPermission::kWebcamPrivate, "webcamPrivate"},
       {APIPermission::kMediaPlayerPrivate, "mediaPlayerPrivate",
        APIPermissionInfo::kFlagCannotBeOptional},
@@ -149,8 +147,6 @@ ChromeAPIPermissions::GetAllPermissions() const {
       {APIPermission::kInputMethodPrivate, "inputMethodPrivate",
        APIPermissionInfo::kFlagCannotBeOptional},
       {APIPermission::kEchoPrivate, "echoPrivate",
-       APIPermissionInfo::kFlagCannotBeOptional},
-      {APIPermission::kFeedbackPrivate, "feedbackPrivate",
        APIPermissionInfo::kFlagCannotBeOptional},
       {APIPermission::kImageWriterPrivate, "imageWriterPrivate",
        APIPermissionInfo::kFlagCannotBeOptional},
@@ -218,18 +214,7 @@ ChromeAPIPermissions::GetAllPermissions() const {
 
       // Platform-app permissions.
 
-      // The permission string for "fileSystem" is only shown when
-      // "write" or "directory" is present. Read-only access is only
-      // granted after the user has been shown a file or directory
-      // chooser dialog and selected a file or directory. Selecting
-      // the file or directory is considered consent to read it.
-      {APIPermission::kFileSystem, "fileSystem"},
-      {APIPermission::kFileSystemDirectory, "fileSystem.directory"},
       {APIPermission::kFileSystemProvider, "fileSystemProvider"},
-      {APIPermission::kFileSystemRequestFileSystem,
-       "fileSystem.requestFileSystem"},
-      {APIPermission::kFileSystemRetainEntries, "fileSystem.retainEntries"},
-      {APIPermission::kFileSystemWrite, "fileSystem.write"},
       {APIPermission::kMediaGalleries, "mediaGalleries",
        APIPermissionInfo::kFlagNone,
        &CreateAPIPermission<MediaGalleriesPermission>},

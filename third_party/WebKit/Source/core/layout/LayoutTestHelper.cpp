@@ -5,11 +5,11 @@
 #include "core/layout/LayoutTestHelper.h"
 
 #include "bindings/core/v8/StringOrArrayBufferOrArrayBufferView.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "core/css/FontFaceDescriptors.h"
-#include "core/css/FontFaceSet.h"
-#include "core/dom/DOMArrayBuffer.h"
+#include "core/css/FontFaceSetDocument.h"
 #include "core/html/HTMLIFrameElement.h"
+#include "core/typed_arrays/DOMArrayBuffer.h"
 #include "platform/loader/fetch/MemoryCache.h"
 #include "platform/scroll/ScrollbarTheme.h"
 #include "platform/testing/UnitTestHelpers.h"
@@ -17,7 +17,6 @@
 namespace blink {
 
 LocalFrame* SingleChildLocalFrameClient::CreateFrame(
-    const FrameLoadRequest&,
     const AtomicString& name,
     HTMLFrameOwnerElement* owner_element) {
   DCHECK(!child_) << "This test helper only supports one child frame.";
@@ -54,12 +53,15 @@ void RenderingTest::SetUp() {
                               local_frame_client_, SettingOverrider());
 
   Settings::SetMockScrollbarsEnabled(true);
-  RuntimeEnabledFeatures::setOverlayScrollbarsEnabled(true);
+  RuntimeEnabledFeatures::SetOverlayScrollbarsEnabled(true);
   EXPECT_TRUE(ScrollbarTheme::GetTheme().UsesOverlayScrollbars());
 
   // This ensures that the minimal DOM tree gets attached
   // correctly for tests that don't call setBodyInnerHTML.
   GetDocument().View()->UpdateAllLifecyclePhases();
+
+  // Allow ASSERT_DEATH and EXPECT_DEATH for multiple threads.
+  ::testing::FLAGS_gtest_death_test_style = "threadsafe";
 }
 
 void RenderingTest::TearDown() {
@@ -79,19 +81,23 @@ void RenderingTest::SetChildFrameHTML(const String& html) {
 }
 
 void RenderingTest::LoadAhem() {
+  LoadAhem(page_holder_->GetFrame());
+}
+
+void RenderingTest::LoadAhem(LocalFrame& frame) {
+  Document& document = *frame.DomWindow()->document();
   RefPtr<SharedBuffer> shared_buffer =
-      testing::ReadFromFile(testing::WebTestDataPath("Ahem.ttf"));
+      testing::ReadFromFile(testing::CoreTestDataPath("Ahem.ttf"));
   StringOrArrayBufferOrArrayBufferView buffer =
       StringOrArrayBufferOrArrayBufferView::fromArrayBuffer(
-          DOMArrayBuffer::Create(shared_buffer->Data(), shared_buffer->size()));
+          DOMArrayBuffer::Create(shared_buffer));
   FontFace* ahem =
-      FontFace::Create(&GetDocument(), "Ahem", buffer, FontFaceDescriptors());
+      FontFace::Create(&document, "Ahem", buffer, FontFaceDescriptors());
 
-  ScriptState* script_state =
-      ToScriptStateForMainWorld(&page_holder_->GetFrame());
+  ScriptState* script_state = ToScriptStateForMainWorld(&frame);
   DummyExceptionStateForTesting exception_state;
-  FontFaceSet::From(GetDocument())
-      ->addForBinding(script_state, ahem, exception_state);
+  FontFaceSetDocument::From(document)->addForBinding(script_state, ahem,
+                                                     exception_state);
 }
 
 }  // namespace blink

@@ -10,7 +10,6 @@
 #include "base/metrics/statistics_recorder.h"
 #include "base/trace_event/memory_dump_manager.h"
 #include "base/trace_event/trace_event.h"
-#include "components/tracing/common/process_metrics_memory_dump_provider.h"
 #include "components/tracing/common/tracing_messages.h"
 #include "ipc/ipc_channel.h"
 
@@ -34,13 +33,6 @@ ChildTraceMessageFilter::ChildTraceMessageFilter(
 void ChildTraceMessageFilter::OnFilterAdded(IPC::Channel* channel) {
   sender_ = channel;
   sender_->Send(new TracingHostMsg_ChildSupportsTracing());
-
-#if !defined(OS_LINUX) && !defined(OS_NACL)
-  // On linux the browser process takes care of dumping process metrics.
-  // The child process is not allowed to do so due to BPF sandbox.
-  tracing::ProcessMetricsMemoryDumpProvider::RegisterForProcess(
-      base::kNullProcessId);
-#endif
 }
 
 void ChildTraceMessageFilter::SetSenderForTesting(IPC::Sender* sender) {
@@ -202,7 +194,7 @@ void ChildTraceMessageFilter::OnSetUMACallback(
 
   while (!sample_iterator->Done()) {
     base::HistogramBase::Sample min;
-    base::HistogramBase::Sample max;
+    int64_t max;
     base::HistogramBase::Count count;
     sample_iterator->Get(&min, &max, &count);
 

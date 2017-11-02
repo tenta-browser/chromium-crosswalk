@@ -5,11 +5,14 @@
 #ifndef NetworkInformation_h
 #define NetworkInformation_h
 
-#include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "core/dom/ContextLifecycleObserver.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/EventTarget.h"
+#include "platform/bindings/ActiveScriptWrappable.h"
 #include "platform/network/NetworkStateNotifier.h"
+#include "platform/wtf/Optional.h"
+#include "platform/wtf/Time.h"
 #include "public/platform/WebConnectionType.h"
+#include "public/platform/WebEffectiveConnectionType.h"
 
 namespace blink {
 
@@ -29,9 +32,17 @@ class NetworkInformation final
 
   String type() const;
   double downlinkMax() const;
+  String effectiveType() const;
+  unsigned long rtt() const;
+  double downlink() const;
 
   // NetworkStateObserver overrides.
-  void ConnectionChange(WebConnectionType, double downlink_max_mbps) override;
+  void ConnectionChange(WebConnectionType,
+                        double downlink_max_mbps,
+                        WebEffectiveConnectionType effective_type,
+                        const Optional<TimeDelta>& http_rtt,
+                        const Optional<TimeDelta>& transport_rtt,
+                        const Optional<double>& downlink_mbps) override;
 
   // EventTarget overrides.
   const AtomicString& InterfaceName() const override;
@@ -61,11 +72,35 @@ class NetworkInformation final
   void StartObserving();
   void StopObserving();
 
+  // A random number by which the RTT and downlink estimates are multiplied
+  // with. Adding this noise reduces the chances of cross-origin fingerprinting.
+  double GetRandomMultiplier() const;
+
+  // Rounds |rtt| as per the NetInfo spec and to improve privacy.
+  unsigned long RoundRtt(const Optional<TimeDelta>& rtt) const;
+
+  // Rounds |downlink_mbps| as per the NetInfo spec and to improve privacy. The
+  // returned value is in Mbps.
+  double RoundMbps(const Optional<double>& downlink_mbps) const;
+
   // Touched only on context thread.
   WebConnectionType type_;
 
   // Touched only on context thread.
   double downlink_max_mbps_;
+
+  // Current effective connection type, which is the connection type whose
+  // typical performance is most similar to the measured performance of the
+  // network in use.
+  WebEffectiveConnectionType effective_type_;
+
+  // HTTP RTT estimate. Rounded off to the nearest 25 msec. Touched only on
+  // context thread.
+  unsigned long http_rtt_msec_;
+
+  // Downlink throughput estimate. Rounded off to the nearest 25 kbps. Touched
+  // only on context thread.
+  double downlink_mbps_;
 
   // Whether this object is listening for events from NetworkStateNotifier.
   bool observing_;

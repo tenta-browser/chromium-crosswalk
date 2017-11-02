@@ -48,7 +48,7 @@ namespace {
 
 const int kNumOutputChannels = 2;
 const int64_t kMaxInputQueueUs = 90000;
-const int64_t kFadeMs = 15;
+const int64_t kMinFadeMs = 15;
 // Number of samples to report as readable when paused. When paused, the mixer
 // will still pull this many frames each time it tries to write frames, but we
 // fill the frames with silence.
@@ -67,6 +67,10 @@ std::string AudioContentTypeToString(media::AudioContentType type) {
     default:
       return "media";
   }
+}
+
+int RoundUpMultiple(int value, int multiple) {
+  return multiple * ((value + (multiple - 1)) / multiple);
 }
 
 }  // namespace
@@ -186,14 +190,15 @@ void StreamMixerAlsaInputImpl::PrepareToDelete(
     base::AutoLock lock(queue_lock_);
     if (state_ == kStateGotEos) {
       fade_out_frames_total_ =
-          queued_frames_including_resampler_ / resample_ratio_;
-      fade_frames_remaining_ =
-          queued_frames_including_resampler_ / resample_ratio_;
+          RoundUpMultiple(queued_frames_including_resampler_ / resample_ratio_,
+                          mixer_->filter_frame_alignment());
+      fade_frames_remaining_ = fade_out_frames_total_;
     } else if (state_ == kStateNormalPlayback) {
-      fade_out_frames_total_ =
-          std::min(static_cast<int>(queued_frames_including_resampler_ /
-                                    resample_ratio_),
-                   NormalFadeFrames());
+      fade_out_frames_total_ = std::min(
+          RoundUpMultiple(static_cast<int>(queued_frames_including_resampler_ /
+                                           resample_ratio_),
+                          mixer_->filter_frame_alignment()),
+          NormalFadeFrames());
       fade_frames_remaining_ = fade_out_frames_total_;
     }
   }
@@ -335,10 +340,13 @@ int StreamMixerAlsaInputImpl::MaxReadSize() {
   int queued_frames;
   {
     base::AutoLock lock(queue_lock_);
-    if (state_ == kStateGotEos)
-      return std::max(static_cast<int>(queued_frames_including_resampler_ /
-                                       resample_ratio_),
-                      kDefaultReadSize);
+    if (state_ == kStateGotEos) {
+      return RoundUpMultiple(
+          std::max(static_cast<int>(queued_frames_including_resampler_ /
+                                    resample_ratio_),
+                   kDefaultReadSize),
+          mixer_->filter_frame_alignment());
+    }
     queued_frames = queued_frames_;
   }
 
@@ -350,8 +358,9 @@ int StreamMixerAlsaInputImpl::MaxReadSize() {
     available_frames = queued_frames;
   }
 
-  if (state_ == kStateFadingOut)
+  if (state_ == kStateFadingOut) {
     return std::min(available_frames, fade_frames_remaining_);
+  }
   return std::max(0, available_frames - NormalFadeFrames());
 }
 
@@ -454,15 +463,17 @@ void StreamMixerAlsaInputImpl::FillFrames(int frame_delay,
 
 int StreamMixerAlsaInputImpl::NormalFadeFrames() {
   DCHECK(mixer_task_runner_->BelongsToCurrentThread());
-  int frames = (mixer_->output_samples_per_second() * kFadeMs /
+  int frames = (mixer_->output_samples_per_second() * kMinFadeMs /
                 base::Time::kMillisecondsPerSecond) -
                1;
-  return std::max(frames, 0);
+  return frames <= 0
+             ? 0
+             : RoundUpMultiple(frames, mixer_->filter_frame_alignment());
 }
 
 void StreamMixerAlsaInputImpl::FadeIn(::media::AudioBus* dest, int frames) {
   DCHECK(mixer_task_runner_->BelongsToCurrentThread());
-  float fade_in_frames = mixer_->output_samples_per_second() * kFadeMs /
+  float fade_in_frames = mixer_->output_samples_per_second() * kMinFadeMs /
                          base::Time::kMillisecondsPerSecond;
   for (int f = 0; f < frames && fade_frames_remaining_; ++f) {
     float fade_multiplier = 1.0 - fade_frames_remaining_ / fade_in_frames;
@@ -550,9 +561,8 @@ void StreamMixerAlsaInputImpl::SetPaused(bool paused) {
 void StreamMixerAlsaInputImpl::SetVolumeMultiplier(float multiplier) {
   RUN_ON_MIXER_THREAD(SetVolumeMultiplier, multiplier);
   DCHECK(!IsDeleting());
-  stream_volume_multiplier_ = std::max(0.0f, std::min(multiplier, 1.0f));
-  float effective_volume = stream_volume_multiplier_ * type_volume_multiplier_ *
-                           mute_volume_multiplier_;
+  stream_volume_multiplier_ = std::max(0.0f, multiplier);
+  float effective_volume = EffectiveVolume();
   LOG(INFO) << device_id_ << "(" << this
             << "): stream volume = " << stream_volume_multiplier_
             << ", effective multiplier = " << effective_volume;
@@ -563,8 +573,7 @@ void StreamMixerAlsaInputImpl::SetVolumeMultiplier(float multiplier) {
 void StreamMixerAlsaInputImpl::SetContentTypeVolume(float volume, int fade_ms) {
   DCHECK(mixer_task_runner_->BelongsToCurrentThread());
   type_volume_multiplier_ = std::max(0.0f, std::min(volume, 1.0f));
-  float effective_volume = stream_volume_multiplier_ * type_volume_multiplier_ *
-                           mute_volume_multiplier_;
+  float effective_volume = EffectiveVolume();
   LOG(INFO) << device_id_ << "(" << this
             << "): type volume = " << type_volume_multiplier_
             << ", effective multiplier = " << effective_volume;
@@ -580,8 +589,7 @@ void StreamMixerAlsaInputImpl::SetContentTypeVolume(float volume, int fade_ms) {
 void StreamMixerAlsaInputImpl::SetMuted(bool muted) {
   DCHECK(mixer_task_runner_->BelongsToCurrentThread());
   mute_volume_multiplier_ = muted ? 0.0f : 1.0f;
-  float effective_volume = stream_volume_multiplier_ * type_volume_multiplier_ *
-                           mute_volume_multiplier_;
+  float effective_volume = EffectiveVolume();
   LOG(INFO) << device_id_ << "(" << this
             << "): mute volume = " << mute_volume_multiplier_
             << ", effective multiplier = " << effective_volume;
@@ -589,11 +597,17 @@ void StreamMixerAlsaInputImpl::SetMuted(bool muted) {
   slew_volume_.SetVolume(effective_volume);
 }
 
+float StreamMixerAlsaInputImpl::EffectiveVolume() {
+  float volume = stream_volume_multiplier_ * type_volume_multiplier_ *
+                 mute_volume_multiplier_;
+  return std::max(0.0f, std::min(volume, 1.0f));
+}
+
 void StreamMixerAlsaInputImpl::VolumeScaleAccumulate(bool repeat_transition,
                                                      const float* src,
                                                      int frames,
                                                      float* dest) {
-  slew_volume_.ProcessFMAC(repeat_transition, src, frames, dest);
+  slew_volume_.ProcessFMAC(repeat_transition, src, frames, 1, dest);
 }
 
 }  // namespace media

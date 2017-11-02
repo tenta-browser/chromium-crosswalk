@@ -44,10 +44,8 @@
 namespace blink {
 
 WebImage WebImage::FromData(const WebData& data, const WebSize& desired_size) {
-  RefPtr<SharedBuffer> buffer = PassRefPtr<SharedBuffer>(data);
-  std::unique_ptr<ImageDecoder> decoder(
-      ImageDecoder::Create(buffer, true, ImageDecoder::kAlphaPremultiplied,
-                           ColorBehavior::Ignore()));
+  std::unique_ptr<ImageDecoder> decoder(ImageDecoder::Create(
+      data, true, ImageDecoder::kAlphaPremultiplied, ColorBehavior::Ignore()));
   if (!decoder || !decoder->IsSizeAvailable())
     return WebImage();
 
@@ -74,7 +72,7 @@ WebImage WebImage::FromData(const WebData& data, const WebSize& desired_size) {
     }
   }
 
-  ImageFrame* frame = decoder->FrameBufferAtIndex(index);
+  ImageFrame* frame = decoder->DecodeFrameBufferAtIndex(index);
   return (frame && !decoder->Failed()) ? WebImage(frame->Bitmap()) : WebImage();
 }
 
@@ -83,10 +81,8 @@ WebVector<WebImage> WebImage::FramesFromData(const WebData& data) {
   // never hit in practice.
   const size_t kMaxFrameCount = 8;
 
-  RefPtr<SharedBuffer> buffer = PassRefPtr<SharedBuffer>(data);
-  std::unique_ptr<ImageDecoder> decoder(
-      ImageDecoder::Create(buffer, true, ImageDecoder::kAlphaPremultiplied,
-                           ColorBehavior::Ignore()));
+  std::unique_ptr<ImageDecoder> decoder(ImageDecoder::Create(
+      data, true, ImageDecoder::kAlphaPremultiplied, ColorBehavior::Ignore()));
   if (!decoder || !decoder->IsSizeAvailable())
     return WebVector<WebImage>();
 
@@ -102,7 +98,7 @@ WebVector<WebImage> WebImage::FramesFromData(const WebData& data) {
       continue;
     last_size = frame_size;
 
-    ImageFrame* frame = decoder->FrameBufferAtIndex(i);
+    ImageFrame* frame = decoder->DecodeFrameBufferAtIndex(i);
     if (!frame)
       continue;
 
@@ -134,7 +130,7 @@ WebImage::WebImage(PassRefPtr<Image> image) {
   if (!image)
     return;
 
-  if (sk_sp<SkImage> sk_image = image->ImageForCurrentFrame())
+  if (sk_sp<SkImage> sk_image = image->PaintImageForCurrentFrame().GetSkImage())
     sk_image->asLegacyBitmap(&bitmap_, SkImage::kRO_LegacyBitmapMode);
 }
 

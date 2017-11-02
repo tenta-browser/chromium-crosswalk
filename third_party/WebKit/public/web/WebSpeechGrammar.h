@@ -26,9 +26,9 @@
 #ifndef WebSpeechGrammar_h
 #define WebSpeechGrammar_h
 
-#include "../platform/WebCommon.h"
-#include "../platform/WebPrivatePtr.h"
-#include "../platform/WebURL.h"
+#include "public/platform/WebCommon.h"
+#include "public/platform/WebPrivatePtr.h"
+#include "public/platform/WebURL.h"
 
 namespace blink {
 
@@ -46,7 +46,7 @@ class WebSpeechGrammar {
   BLINK_EXPORT void Reset();
   BLINK_EXPORT void Assign(const WebSpeechGrammar&);
 
-#if BLINK_IMPLEMENTATION
+#if INSIDE_BLINK
   WebSpeechGrammar& operator=(SpeechGrammar*);
 #endif
 

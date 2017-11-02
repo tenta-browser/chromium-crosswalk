@@ -22,12 +22,20 @@ struct WebIDBValue;
 
 class MODULES_EXPORT IDBValue final : public RefCounted<IDBValue> {
  public:
-  static PassRefPtr<IDBValue> Create();
-  static PassRefPtr<IDBValue> Create(const WebIDBValue&, v8::Isolate*);
-  static PassRefPtr<IDBValue> Create(const IDBValue*,
-                                     IDBKey*,
-                                     const IDBKeyPath&);
+  static RefPtr<IDBValue> Create();
+  static RefPtr<IDBValue> Create(const WebIDBValue&, v8::Isolate*);
+  static RefPtr<IDBValue> Create(const IDBValue*, IDBKey*, const IDBKeyPath&);
+  // Used by IDBValueUnwrapper and its tests.
+  static RefPtr<IDBValue> Create(
+      RefPtr<SharedBuffer> unwrapped_data,
+      std::unique_ptr<Vector<RefPtr<BlobDataHandle>>>,
+      std::unique_ptr<Vector<WebBlobInfo>>,
+      const IDBKey*,
+      const IDBKeyPath&);
+
   ~IDBValue();
+
+  size_t DataSize() const { return data_ ? data_->size() : 0; }
 
   bool IsNull() const;
   Vector<String> GetUUIDs() const;
@@ -37,20 +45,27 @@ class MODULES_EXPORT IDBValue final : public RefCounted<IDBValue> {
   const IDBKeyPath& KeyPath() const { return key_path_; }
 
  private:
+  friend class IDBValueUnwrapper;
+
   IDBValue();
   IDBValue(const WebIDBValue&, v8::Isolate*);
-  IDBValue(PassRefPtr<SharedBuffer>,
+  IDBValue(RefPtr<SharedBuffer>,
            const WebVector<WebBlobInfo>&,
            IDBKey*,
            const IDBKeyPath&);
   IDBValue(const IDBValue*, IDBKey*, const IDBKeyPath&);
+  IDBValue(RefPtr<SharedBuffer> unwrapped_data,
+           std::unique_ptr<Vector<RefPtr<BlobDataHandle>>>,
+           std::unique_ptr<Vector<WebBlobInfo>>,
+           const IDBKey*,
+           const IDBKeyPath&);
 
   // Keep this private to prevent new refs because we manually bookkeep the
   // memory to V8.
   const RefPtr<SharedBuffer> data_;
   const std::unique_ptr<Vector<RefPtr<BlobDataHandle>>> blob_data_;
   const std::unique_ptr<Vector<WebBlobInfo>> blob_info_;
-  const Persistent<IDBKey> primary_key_;
+  const Persistent<const IDBKey> primary_key_;
   const IDBKeyPath key_path_;
   int64_t external_allocated_size_ = 0;
   // Used to register memory externally allocated by the WebIDBValue, and to

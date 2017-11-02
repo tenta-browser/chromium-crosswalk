@@ -6,7 +6,7 @@
 #define BackgroundFetchRegistration_h
 
 #include "bindings/core/v8/ScriptPromise.h"
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/GarbageCollected.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/text/WTFString.h"
@@ -27,7 +27,7 @@ class BackgroundFetchRegistration final
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  BackgroundFetchRegistration(String tag,
+  BackgroundFetchRegistration(String id,
                               HeapVector<IconDefinition> icons,
                               long long total_download_size,
                               String title);
@@ -37,7 +37,7 @@ class BackgroundFetchRegistration final
   // has been associated with.
   void SetServiceWorkerRegistration(ServiceWorkerRegistration*);
 
-  String tag() const;
+  String id() const;
   HeapVector<IconDefinition> icons() const;
   long long totalDownloadSize() const;
   String title() const;
@@ -51,7 +51,7 @@ class BackgroundFetchRegistration final
 
   Member<ServiceWorkerRegistration> registration_;
 
-  String tag_;
+  String id_;
   HeapVector<IconDefinition> icons_;
   long long total_download_size_;
   String title_;

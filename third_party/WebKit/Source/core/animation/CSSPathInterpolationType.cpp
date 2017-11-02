@@ -50,21 +50,20 @@ InterpolationValue CSSPathInterpolationType::MaybeConvertInitial(
   return PathInterpolationFunctions::ConvertValue(nullptr);
 }
 
-class InheritedPathChecker : public InterpolationType::ConversionChecker {
+class InheritedPathChecker : public CSSInterpolationType::CSSConversionChecker {
  public:
   static std::unique_ptr<InheritedPathChecker> Create(
-      PassRefPtr<StylePath> style_path) {
+      RefPtr<StylePath> style_path) {
     return WTF::WrapUnique(new InheritedPathChecker(std::move(style_path)));
   }
 
  private:
-  InheritedPathChecker(PassRefPtr<StylePath> style_path)
-      : style_path_(style_path) {}
+  InheritedPathChecker(RefPtr<StylePath> style_path)
+      : style_path_(std::move(style_path)) {}
 
-  bool IsValid(const InterpolationEnvironment& environment,
+  bool IsValid(const StyleResolverState& state,
                const InterpolationValue& underlying) const final {
-    return environment.GetState().ParentStyle()->SvgStyle().D() ==
-           style_path_.Get();
+    return state.ParentStyle()->SvgStyle().D() == style_path_.Get();
   }
 
   const RefPtr<StylePath> style_path_;
@@ -92,7 +91,7 @@ InterpolationValue CSSPathInterpolationType::MaybeConvertValue(
     return nullptr;
   }
   return PathInterpolationFunctions::ConvertValue(
-      ToCSSPathValue(value).ByteStream());
+      cssvalue::ToCSSPathValue(value).ByteStream());
 }
 
 InterpolationValue

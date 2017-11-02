@@ -24,7 +24,7 @@
 #include "content/common/content_export.h"
 
 namespace base {
-class SingleThreadTaskRunner;
+class SequencedTaskRunner;
 }  // namespace base
 
 namespace content {
@@ -38,8 +38,7 @@ class AppCacheStorageImpl : public AppCacheStorage {
 
   void Initialize(
       const base::FilePath& cache_directory,
-      const scoped_refptr<base::SingleThreadTaskRunner>& db_thread,
-      const scoped_refptr<base::SingleThreadTaskRunner>& cache_thread);
+      const scoped_refptr<base::SequencedTaskRunner>& db_task_runner);
   void Disable();
   bool is_disabled() const { return is_disabled_; }
 
@@ -73,6 +72,7 @@ class AppCacheStorageImpl : public AppCacheStorage {
                      const std::vector<int64_t>& response_ids) override;
   void DeleteResponses(const GURL& manifest_url,
                        const std::vector<int64_t>& response_ids) override;
+  bool IsInitialized() override;
 
  private:
   // The AppCacheStorageImpl class methods and datamembers may only be
@@ -111,7 +111,7 @@ class AppCacheStorageImpl : public AppCacheStorage {
   void GetPendingForeignMarkingsForCache(int64_t cache_id,
                                          std::vector<GURL>* urls);
 
-  void ScheduleSimpleTask(const base::Closure& task);
+  void ScheduleSimpleTask(base::OnceClosure task);
   void RunOnePendingSimpleTask();
 
   void DelayedStartDeletingUnusedResponses();
@@ -120,8 +120,9 @@ class AppCacheStorageImpl : public AppCacheStorage {
   void DeleteOneResponse();
   void OnDeletedOneResponse(int rv);
   void OnDiskCacheInitialized(int rv);
+  void OnDiskCacheCleanupComplete();
+
   void DeleteAndStartOver();
-  void DeleteAndStartOverPart2();
   void CallScheduleReinitialize();
   void LazilyCommitLastAccessTimes();
   void OnLazyCommitTimer();
@@ -153,10 +154,8 @@ class AppCacheStorageImpl : public AppCacheStorage {
   bool is_incognito_;
 
   // This class operates primarily on the IO thread, but schedules
-  // its DatabaseTasks on the db thread. Separately, the disk_cache uses
-  // the cache thread.
-  scoped_refptr<base::SingleThreadTaskRunner> db_thread_;
-  scoped_refptr<base::SingleThreadTaskRunner> cache_thread_;
+  // its DatabaseTasks on the db thread.
+  scoped_refptr<base::SequencedTaskRunner> db_task_runner_;
 
   // Structures to keep track of DatabaseTasks that are in-flight.
   DatabaseTaskQueue scheduled_database_tasks_;
@@ -179,12 +178,20 @@ class AppCacheStorageImpl : public AppCacheStorage {
   // disk cache and cannot continue.
   bool is_disabled_;
 
+  // This is set when we want to use the post-cleanup callback to initiate
+  // directory deletion.
+  bool delete_and_start_over_pending_;
+
+  // This is set when we know that a call to Disable() will result in
+  // OnDiskCacheCleanupComplete() eventually called.
+  bool expecting_cleanup_complete_on_disable_;
+
   std::unique_ptr<AppCacheDiskCache> disk_cache_;
   base::OneShotTimer lazy_commit_timer_;
 
   // Used to short-circuit certain operations without having to schedule
   // any tasks on the background database thread.
-  std::deque<base::Closure> pending_simple_tasks_;
+  std::deque<base::OnceClosure> pending_simple_tasks_;
   base::WeakPtrFactory<AppCacheStorageImpl> weak_factory_;
 
   friend class content::AppCacheStorageImplTest;

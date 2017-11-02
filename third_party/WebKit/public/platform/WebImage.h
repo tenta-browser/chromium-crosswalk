@@ -37,7 +37,7 @@
 #include "third_party/skia/include/core/SkBitmap.h"
 
 #if INSIDE_BLINK
-#include "wtf/PassRefPtr.h"
+#include "platform/wtf/PassRefPtr.h"
 #endif
 
 namespace blink {
@@ -63,7 +63,7 @@ class WebImage {
   }
 
   // Decodes the given image data. If the image has multiple frames,
-  // then the frame whose size is desiredSize is returned. Otherwise,
+  // then the frame whose size is desired_size is returned. Otherwise,
   // the first frame is returned.
   BLINK_PLATFORM_EXPORT static WebImage FromData(const WebData&,
                                                  const WebSize& desired_size);

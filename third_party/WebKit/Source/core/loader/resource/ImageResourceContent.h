@@ -46,10 +46,15 @@ class CORE_EXPORT ImageResourceContent final
   USING_GARBAGE_COLLECTED_MIXIN(ImageResourceContent);
 
  public:
-  static ImageResourceContent* Create(
-      PassRefPtr<blink::Image> image = nullptr) {
-    return new ImageResourceContent(std::move(image));
+  // Used for loading.
+  // Returned content will be associated immediately later with ImageResource.
+  static ImageResourceContent* CreateNotStarted() {
+    return new ImageResourceContent(nullptr);
   }
+
+  // Creates ImageResourceContent from an already loaded image.
+  static ImageResourceContent* CreateLoaded(RefPtr<blink::Image>);
+
   static ImageResourceContent* Fetch(FetchParameters&, ResourceFetcher*);
 
   // Returns the nullImage() if the image is not available yet.
@@ -88,21 +93,38 @@ class CORE_EXPORT ImageResourceContent final
   void RemoveObserver(ImageResourceObserver*);
 
   bool IsSizeAvailable() const {
-    return size_available_ == Image::kSizeAvailable;
+    return size_available_ != Image::kSizeUnavailable;
   }
 
   DECLARE_TRACE();
+
+  // Content status and deriving predicates.
+  // https://docs.google.com/document/d/1O-fB83mrE0B_V8gzXNqHgmRLCvstTB4MMi3RnVLr8bE/edit#heading=h.6cyqmir0f30h
+  // Normal transitions:
+  //   kNotStarted -> kPending -> kCached|kLoadError|kDecodeError.
+  // Additional transitions in multipart images:
+  //   kCached -> kLoadError|kDecodeError.
+  // Transitions due to revalidation:
+  //   kCached -> kPending.
+  // Transitions due to reload:
+  //   kCached|kLoadError|kDecodeError -> kPending.
+  //
+  // ImageResourceContent::GetContentStatus() can be different from
+  // ImageResource::GetStatus(). Use ImageResourceContent::GetContentStatus().
+  ResourceStatus GetContentStatus() const;
+  bool IsLoaded() const;
+  bool IsLoading() const;
+  bool ErrorOccurred() const;
+  bool LoadFailedOrCanceled() const;
 
   // Redirecting methods to Resource.
   const KURL& Url() const;
   bool IsAccessAllowed(SecurityOrigin*);
   const ResourceResponse& GetResponse() const;
-  bool IsLoaded() const;
-  bool IsLoading() const;
-  bool ErrorOccurred() const;
-  bool LoadFailedOrCanceled() const;
-  ResourceStatus GetStatus() const;
   const ResourceError& GetResourceError() const;
+  // DEPRECATED: ImageResourceContents consumers shouldn't need to worry about
+  // whether the underlying Resource is being revalidated.
+  bool IsCacheValidator() const;
 
   // For FrameSerializer.
   bool HasCacheControlNoStoreHeader() const;
@@ -141,17 +163,20 @@ class CORE_EXPORT ImageResourceContent final
     // Only occurs when UpdateImage or ClearAndUpdateImage is specified.
     kShouldDecodeError,
   };
-  WARN_UNUSED_RESULT UpdateImageResult UpdateImage(PassRefPtr<SharedBuffer>,
+  WARN_UNUSED_RESULT UpdateImageResult UpdateImage(RefPtr<SharedBuffer>,
+                                                   ResourceStatus,
                                                    UpdateImageOption,
-                                                   bool all_data_received);
+                                                   bool all_data_received,
+                                                   bool is_multipart);
 
+  void NotifyStartLoad();
   void DestroyDecodedData();
   void DoResetAnimation();
 
   void SetImageResourceInfo(ImageResourceInfo*);
 
   ResourcePriority PriorityFromObservers() const;
-  PassRefPtr<const SharedBuffer> ResourceBuffer() const;
+  RefPtr<const SharedBuffer> ResourceBuffer() const;
   bool ShouldUpdateImageImmediately() const;
   bool HasObservers() const {
     return !observers_.IsEmpty() || !finished_observers_.IsEmpty();
@@ -161,15 +186,16 @@ class CORE_EXPORT ImageResourceContent final
   }
 
  private:
-  explicit ImageResourceContent(PassRefPtr<blink::Image> = nullptr);
+  explicit ImageResourceContent(RefPtr<blink::Image> = nullptr);
 
   // ImageObserver
   void DecodedSizeChangedTo(const blink::Image*, size_t new_size) override;
   bool ShouldPauseAnimation(const blink::Image*) override;
   void AnimationAdvanced(const blink::Image*) override;
   void ChangedInRect(const blink::Image*, const IntRect&) override;
+  void AsyncLoadCompleted(const blink::Image*) override;
 
-  PassRefPtr<Image> CreateImage();
+  RefPtr<Image> CreateImage(bool is_multipart);
   void ClearImage();
 
   enum NotifyFinishOption { kShouldNotifyFinish, kDoNotNotifyFinish };
@@ -178,6 +204,7 @@ class CORE_EXPORT ImageResourceContent final
   void NotifyObservers(NotifyFinishOption,
                        const IntRect* change_rect = nullptr);
   void MarkObserverFinished(ImageResourceObserver*);
+  void UpdateToLoadedContentStatus(ResourceStatus);
 
   class ProhibitAddRemoveObserverInScope : public AutoReset<bool> {
    public:
@@ -185,20 +212,22 @@ class CORE_EXPORT ImageResourceContent final
         : AutoReset(&content->is_add_remove_observer_prohibited_, true) {}
   };
 
-  Member<ImageResourceInfo> info_;
-
-  RefPtr<blink::Image> image_;
-
-  HashCountedSet<ImageResourceObserver*> observers_;
-  HashCountedSet<ImageResourceObserver*> finished_observers_;
-
-  Image::SizeAvailability size_available_ = Image::kSizeUnavailable;
+  ResourceStatus content_status_ = ResourceStatus::kNotStarted;
 
   // Indicates if this resource's encoded image data can be purged and refetched
   // from disk cache to save memory usage. See crbug/664437.
   bool is_refetchable_data_from_disk_cache_;
 
   mutable bool is_add_remove_observer_prohibited_ = false;
+
+  Image::SizeAvailability size_available_ = Image::kSizeUnavailable;
+
+  Member<ImageResourceInfo> info_;
+
+  RefPtr<blink::Image> image_;
+
+  HashCountedSet<ImageResourceObserver*> observers_;
+  HashCountedSet<ImageResourceObserver*> finished_observers_;
 
 #if DCHECK_IS_ON()
   bool is_update_image_being_called_ = false;

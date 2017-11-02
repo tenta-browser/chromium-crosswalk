@@ -39,19 +39,20 @@
 #include "core/dom/AXObjectCache.h"
 #include "core/dom/Document.h"
 #include "core/dom/IdTargetObserver.h"
+#include "core/dom/ShadowRoot.h"
 #include "core/dom/StyleChangeReason.h"
+#include "core/dom/SyncReattachContext.h"
 #include "core/dom/TaskRunnerHelper.h"
-#include "core/dom/shadow/InsertionPoint.h"
-#include "core/dom/shadow/ShadowRoot.h"
+#include "core/dom/V0InsertionPoint.h"
+#include "core/dom/events/ScopedEventQueue.h"
 #include "core/editing/FrameSelection.h"
 #include "core/editing/spellcheck/SpellChecker.h"
 #include "core/events/BeforeTextInsertedEvent.h"
 #include "core/events/KeyboardEvent.h"
 #include "core/events/MouseEvent.h"
-#include "core/events/ScopedEventQueue.h"
 #include "core/frame/Deprecation.h"
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/UseCounter.h"
 #include "core/html/HTMLCollection.h"
 #include "core/html/HTMLDataListElement.h"
@@ -107,7 +108,6 @@ HTMLInputElement::HTMLInputElement(Document& document, bool created_by_parser)
       has_non_empty_list_(false),
       state_restored_(false),
       parsing_in_progress_(created_by_parser),
-      value_attribute_was_updated_after_parsing_(false),
       can_receive_dropped_files_(false),
       should_reveal_password_(false),
       needs_to_update_view_value_(true),
@@ -136,6 +136,10 @@ DEFINE_TRACE(HTMLInputElement) {
   visitor->Trace(list_attribute_target_observer_);
   visitor->Trace(image_loader_);
   TextControlElement::Trace(visitor);
+}
+
+bool HTMLInputElement::HasPendingActivity() const {
+  return ImageLoader() && ImageLoader()->HasPendingActivity();
 }
 
 HTMLImageLoader& HTMLInputElement::EnsureImageLoader() {
@@ -308,8 +312,10 @@ void HTMLInputElement::UpdateFocusAppearance(
     // TODO(tkent): scrollRectToVisible is a workaround of a bug of
     // FrameSelection::revealSelection().  It doesn't scroll correctly in a
     // case of RangeSelection. crbug.com/443061.
-    if (GetLayoutObject())
+    GetDocument().EnsurePaintLocationDataValidForNode(this);
+    if (GetLayoutObject()) {
       GetLayoutObject()->ScrollRectToVisible(BoundingBox());
+    }
     if (GetDocument().GetFrame())
       GetDocument().GetFrame()->Selection().RevealSelection();
   } else {
@@ -409,11 +415,34 @@ void HTMLInputElement::UpdateType() {
   input_type_view_->DestroyShadowSubtree();
   LazyReattachIfAttached();
 
+  if (input_type_->SupportsRequired() != new_type->SupportsRequired() &&
+      IsRequired()) {
+    PseudoStateChanged(CSSSelector::kPseudoRequired);
+    PseudoStateChanged(CSSSelector::kPseudoOptional);
+  }
+  if (input_type_->SupportsReadOnly() != new_type->SupportsReadOnly()) {
+    PseudoStateChanged(CSSSelector::kPseudoReadOnly);
+    PseudoStateChanged(CSSSelector::kPseudoReadWrite);
+  }
+
+  bool placeholder_changed =
+      input_type_->SupportsPlaceholder() != new_type->SupportsPlaceholder();
+
   input_type_ = new_type;
   input_type_view_ = input_type_->CreateView();
   input_type_view_->CreateShadowSubtree();
 
   SetNeedsWillValidateCheck();
+
+  if (placeholder_changed) {
+    // We need to update the UA shadow and then the placeholder visibility flag
+    // here. Otherwise it would happen as part of attaching the layout tree
+    // which would be too late in order to make style invalidation work for
+    // the upcoming frame.
+    UpdatePlaceholderText();
+    UpdatePlaceholderVisibility();
+    PseudoStateChanged(CSSSelector::kPseudoPlaceholderShown);
+  }
 
   ValueMode new_value_mode = input_type_->GetValueMode();
 
@@ -722,7 +751,6 @@ void HTMLInputElement::ParseAttribute(
     }
     needs_to_update_view_value_ = true;
     SetNeedsValidityCheck();
-    value_attribute_was_updated_after_parsing_ = !parsing_in_progress_;
     input_type_->WarnIfValueIsInvalidAndElementIsVisible(value);
     input_type_->InRangeChanged();
     input_type_view_->ValueAttributeChanged();
@@ -766,29 +794,29 @@ void HTMLInputElement::ParseAttribute(
         EventTypeNames::search,
         CreateAttributeEventListener(this, name, value, EventParameterName()));
   } else if (name == incrementalAttr) {
-    UseCounter::Count(GetDocument(), UseCounter::kIncrementalAttribute);
+    UseCounter::Count(GetDocument(), WebFeature::kIncrementalAttribute);
   } else if (name == minAttr) {
     input_type_view_->MinOrMaxAttributeChanged();
     input_type_->SanitizeValueInResponseToMinOrMaxAttributeChange();
     input_type_->InRangeChanged();
     SetNeedsValidityCheck();
-    UseCounter::Count(GetDocument(), UseCounter::kMinAttribute);
+    UseCounter::Count(GetDocument(), WebFeature::kMinAttribute);
   } else if (name == maxAttr) {
     input_type_view_->MinOrMaxAttributeChanged();
     input_type_->SanitizeValueInResponseToMinOrMaxAttributeChange();
     input_type_->InRangeChanged();
     SetNeedsValidityCheck();
-    UseCounter::Count(GetDocument(), UseCounter::kMaxAttribute);
+    UseCounter::Count(GetDocument(), WebFeature::kMaxAttribute);
   } else if (name == multipleAttr) {
     input_type_view_->MultipleAttributeChanged();
     SetNeedsValidityCheck();
   } else if (name == stepAttr) {
     input_type_view_->StepAttributeChanged();
     SetNeedsValidityCheck();
-    UseCounter::Count(GetDocument(), UseCounter::kStepAttribute);
+    UseCounter::Count(GetDocument(), WebFeature::kStepAttribute);
   } else if (name == patternAttr) {
     SetNeedsValidityCheck();
-    UseCounter::Count(GetDocument(), UseCounter::kPatternAttribute);
+    UseCounter::Count(GetDocument(), WebFeature::kPatternAttribute);
   } else if (name == readonlyAttr) {
     TextControlElement::ParseAttribute(params);
     input_type_view_->ReadonlyAttributeChanged();
@@ -798,10 +826,10 @@ void HTMLInputElement::ParseAttribute(
       ResetListAttributeTargetObserver();
       ListAttributeTargetChanged();
     }
-    UseCounter::Count(GetDocument(), UseCounter::kListAttribute);
+    UseCounter::Count(GetDocument(), WebFeature::kListAttribute);
   } else if (name == webkitdirectoryAttr) {
     TextControlElement::ParseAttribute(params);
-    UseCounter::Count(GetDocument(), UseCounter::kPrefixedDirectoryAttribute);
+    UseCounter::Count(GetDocument(), WebFeature::kPrefixedDirectoryAttribute);
   } else {
     if (name == formactionAttr)
       LogUpdateAttributeIfIsolatedWorldAndInDocument("input", params);
@@ -837,7 +865,8 @@ LayoutObject* HTMLInputElement::CreateLayoutObject(const ComputedStyle& style) {
   return input_type_view_->CreateLayoutObject(style);
 }
 
-void HTMLInputElement::AttachLayoutTree(const AttachContext& context) {
+void HTMLInputElement::AttachLayoutTree(AttachContext& context) {
+  SyncReattachContext reattach_context(context);
   TextControlElement::AttachLayoutTree(context);
   if (GetLayoutObject()) {
     input_type_->OnAttachWithLayoutObject();
@@ -1299,6 +1328,10 @@ void HTMLInputElement::DefaultEventHandler(Event* evt) {
     TextControlElement::DefaultEventHandler(evt);
 }
 
+bool HTMLInputElement::HasActivationBehavior() const {
+  return true;
+}
+
 bool HTMLInputElement::WillRespondToMouseClickEvents() {
   // FIXME: Consider implementing willRespondToMouseClickEvents() in InputType
   // if more accurate results are necessary.
@@ -1334,7 +1367,7 @@ static inline bool IsRFC2616TokenCharacter(UChar ch) {
 }
 
 static bool IsValidMIMEType(const String& type) {
-  size_t slash_position = type.Find('/');
+  size_t slash_position = type.find('/');
   if (slash_position == kNotFound || !slash_position ||
       slash_position == type.length() - 1)
     return false;
@@ -1371,11 +1404,11 @@ static Vector<String> ParseAcceptAttribute(const String& accept_string,
   return types;
 }
 
-Vector<String> HTMLInputElement::AcceptMIMETypes() {
+Vector<String> HTMLInputElement::AcceptMIMETypes() const {
   return ParseAcceptAttribute(FastGetAttribute(acceptAttr), IsValidMIMEType);
 }
 
-Vector<String> HTMLInputElement::AcceptFileExtensions() {
+Vector<String> HTMLInputElement::AcceptFileExtensions() const {
   return ParseAcceptAttribute(FastGetAttribute(acceptAttr),
                               IsValidFileExtension);
 }
@@ -1551,13 +1584,8 @@ HTMLDataListElement* HTMLInputElement::DataList() const {
   if (!input_type_->ShouldRespectListAttribute())
     return nullptr;
 
-  Element* element = GetTreeScope().GetElementById(FastGetAttribute(listAttr));
-  if (!element)
-    return nullptr;
-  if (!isHTMLDataListElement(*element))
-    return nullptr;
-
-  return toHTMLDataListElement(element);
+  return ToHTMLDataListElementOrNull(
+      GetTreeScope().getElementById(FastGetAttribute(listAttr)));
 }
 
 bool HTMLInputElement::HasValidDataListOptions() const {
@@ -1802,7 +1830,7 @@ bool HTMLInputElement::SetupDateTimeChooserParameters(
   parameters.minimum = Minimum();
   parameters.maximum = Maximum();
   parameters.required = IsRequired();
-  if (!RuntimeEnabledFeatures::langAttributeAwareFormControlUIEnabled()) {
+  if (!RuntimeEnabledFeatures::LangAttributeAwareFormControlUIEnabled()) {
     parameters.locale = DefaultLanguage();
   } else {
     AtomicString computed_locale = ComputeInheritedLanguage();
@@ -1864,7 +1892,7 @@ bool HTMLInputElement::SupportsAutofocus() const {
   return input_type_->IsInteractiveContent();
 }
 
-PassRefPtr<ComputedStyle> HTMLInputElement::CustomStyleForLayoutObject() {
+RefPtr<ComputedStyle> HTMLInputElement::CustomStyleForLayoutObject() {
   return input_type_view_->CustomStyleForLayoutObject(
       OriginalStyleForLayoutObject());
 }

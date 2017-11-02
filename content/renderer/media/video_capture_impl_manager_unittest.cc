@@ -9,8 +9,8 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "content/child/child_process.h"
 #include "content/common/media/media_stream_options.h"
 #include "content/common/video_capture.mojom.h"
@@ -82,12 +82,18 @@ class MockVideoCaptureImpl : public VideoCaptureImpl,
   MOCK_METHOD1(RequestRefreshFrame, void(int32_t));
   MOCK_METHOD3(ReleaseBuffer,
                void(int32_t, int32_t, double));
-  MOCK_METHOD3(GetDeviceSupportedFormats,
-               void(int32_t,
-                    int32_t,
-                    const GetDeviceSupportedFormatsCallback&));
-  MOCK_METHOD3(GetDeviceFormatsInUse,
-               void(int32_t, int32_t, const GetDeviceFormatsInUseCallback&));
+
+  void GetDeviceSupportedFormats(int32_t,
+                                 int32_t,
+                                 GetDeviceSupportedFormatsCallback) override {
+    NOTREACHED();
+  }
+
+  void GetDeviceFormatsInUse(int32_t,
+                             int32_t,
+                             GetDeviceFormatsInUseCallback) override {
+    NOTREACHED();
+  }
 
   PauseResumeCallback* const pause_callback_;
   const base::Closure destruct_callback_;
@@ -198,7 +204,7 @@ class VideoCaptureImplManagerTest : public ::testing::Test,
                    base::Unretained(this)));
   }
 
-  const base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   ChildProcess child_process_;
   base::RunLoop cleanup_run_loop_;
   std::unique_ptr<MockVideoCaptureImplManager> manager_;

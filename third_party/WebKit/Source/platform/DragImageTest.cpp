@@ -32,7 +32,6 @@
 
 #include <memory>
 #include "platform/fonts/FontDescription.h"
-#include "platform/fonts/FontTraits.h"
 #include "platform/geometry/IntSize.h"
 #include "platform/graphics/BitmapImage.h"
 #include "platform/graphics/Image.h"
@@ -60,12 +59,10 @@ class TestImage : public Image {
   }
 
   IntSize Size() const override {
-    ASSERT(image_);
+    DCHECK(image_);
 
     return IntSize(image_->width(), image_->height());
   }
-
-  sk_sp<SkImage> ImageForCurrentFrame() override { return image_; }
 
   bool CurrentFrameKnownToBeOpaque(
       MetadataMode = kUseCurrentMetadata) override {
@@ -83,6 +80,13 @@ class TestImage : public Image {
             RespectImageOrientationEnum,
             ImageClampingMode) override {
     // Image pure virtual stub.
+  }
+
+  PaintImage PaintImageForCurrentFrame() override {
+    PaintImageBuilder builder;
+    InitPaintImageBuilder(builder);
+    builder.set_image(image_);
+    return builder.TakePaintImage();
   }
 
  private:
@@ -142,8 +146,8 @@ TEST(DragImageTest, TrimWhitespace) {
   font_description.SetSpecifiedSize(16);
   font_description.SetIsAbsoluteSize(true);
   font_description.SetGenericFamily(FontDescription::kNoFamily);
-  font_description.SetWeight(kFontWeightNormal);
-  font_description.SetStyle(kFontStyleNormal);
+  font_description.SetWeight(NormalWeightValue());
+  font_description.SetStyle(NormalSlopeValue());
 
   std::unique_ptr<DragImage> test_image =
       DragImage::Create(url, test_label, font_description, device_scale_factor);
@@ -156,23 +160,17 @@ TEST(DragImageTest, TrimWhitespace) {
 TEST(DragImageTest, InterpolationNone) {
   SkBitmap expected_bitmap;
   expected_bitmap.allocN32Pixels(4, 4);
-  {
-    SkAutoLockPixels lock(expected_bitmap);
-    expected_bitmap.eraseArea(SkIRect::MakeXYWH(0, 0, 2, 2), 0xFFFFFFFF);
-    expected_bitmap.eraseArea(SkIRect::MakeXYWH(0, 2, 2, 2), 0xFF000000);
-    expected_bitmap.eraseArea(SkIRect::MakeXYWH(2, 0, 2, 2), 0xFF000000);
-    expected_bitmap.eraseArea(SkIRect::MakeXYWH(2, 2, 2, 2), 0xFFFFFFFF);
-  }
+  expected_bitmap.eraseArea(SkIRect::MakeXYWH(0, 0, 2, 2), 0xFFFFFFFF);
+  expected_bitmap.eraseArea(SkIRect::MakeXYWH(0, 2, 2, 2), 0xFF000000);
+  expected_bitmap.eraseArea(SkIRect::MakeXYWH(2, 0, 2, 2), 0xFF000000);
+  expected_bitmap.eraseArea(SkIRect::MakeXYWH(2, 2, 2, 2), 0xFFFFFFFF);
 
   SkBitmap test_bitmap;
   test_bitmap.allocN32Pixels(2, 2);
-  {
-    SkAutoLockPixels lock(test_bitmap);
-    test_bitmap.eraseArea(SkIRect::MakeXYWH(0, 0, 1, 1), 0xFFFFFFFF);
-    test_bitmap.eraseArea(SkIRect::MakeXYWH(0, 1, 1, 1), 0xFF000000);
-    test_bitmap.eraseArea(SkIRect::MakeXYWH(1, 0, 1, 1), 0xFF000000);
-    test_bitmap.eraseArea(SkIRect::MakeXYWH(1, 1, 1, 1), 0xFFFFFFFF);
-  }
+  test_bitmap.eraseArea(SkIRect::MakeXYWH(0, 0, 1, 1), 0xFFFFFFFF);
+  test_bitmap.eraseArea(SkIRect::MakeXYWH(0, 1, 1, 1), 0xFF000000);
+  test_bitmap.eraseArea(SkIRect::MakeXYWH(1, 0, 1, 1), 0xFF000000);
+  test_bitmap.eraseArea(SkIRect::MakeXYWH(1, 1, 1, 1), 0xFFFFFFFF);
 
   RefPtr<TestImage> test_image =
       TestImage::Create(SkImage::MakeFromBitmap(test_bitmap));
@@ -181,13 +179,9 @@ TEST(DragImageTest, InterpolationNone) {
   ASSERT_TRUE(drag_image);
   drag_image->Scale(2, 2);
   const SkBitmap& drag_bitmap = drag_image->Bitmap();
-  {
-    SkAutoLockPixels lock1(drag_bitmap);
-    SkAutoLockPixels lock2(expected_bitmap);
-    for (int x = 0; x < drag_bitmap.width(); ++x)
-      for (int y = 0; y < drag_bitmap.height(); ++y)
-        EXPECT_EQ(expected_bitmap.getColor(x, y), drag_bitmap.getColor(x, y));
-  }
+  for (int x = 0; x < drag_bitmap.width(); ++x)
+    for (int y = 0; y < drag_bitmap.height(); ++y)
+      EXPECT_EQ(expected_bitmap.getColor(x, y), drag_bitmap.getColor(x, y));
 }
 
 }  // namespace blink

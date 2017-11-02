@@ -15,12 +15,14 @@
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "base/test/perf_time_logger.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/test/test_file_util.h"
 #include "base/threading/thread.h"
 #include "net/base/cache_type.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/base/test_completion_callback.h"
+#include "net/disk_cache/backend_cleanup_tracker.h"
 #include "net/disk_cache/blockfile/backend_impl.h"
 #include "net/disk_cache/blockfile/block_files.h"
 #include "net/disk_cache/disk_cache.h"
@@ -91,6 +93,7 @@ class DiskCachePerfTest : public DiskCacheTestWithCache {
 
  private:
   const size_t saved_fd_limit_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 };
 
 // Creates num_entries on the cache, and writes kHeaderSize bytes of metadata
@@ -219,9 +222,9 @@ void DiskCachePerfTest::ResetAndEvictSystemDiskCache() {
        file_path = enumerator.Next()) {
     ASSERT_TRUE(base::EvictFileFromSystemCache(file_path));
   }
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_ANDROID)
   // And, cache directories, on platforms where the eviction utility supports
-  // this (currently Linux only).
+  // this (currently Linux and Android only).
   if (simple_cache_mode_) {
     ASSERT_TRUE(
         base::EvictFileFromSystemCache(cache_path_.AppendASCII("index-dir")));
@@ -323,7 +326,10 @@ TEST(SimpleIndexPerfTest, EvictionPerformance) {
   int iterations = 0;
   while (iterations < 61000) {
     ++iterations;
-    disk_cache::SimpleIndex index(nullptr, &delegate, net::DISK_CACHE, nullptr);
+    disk_cache::SimpleIndex index(/* io_thread = */ nullptr,
+                                  /* cleanup_tracker = */ nullptr, &delegate,
+                                  net::DISK_CACHE,
+                                  /* simple_index_file = */ nullptr);
 
     // Make sure large enough to not evict on insertion.
     index.SetMaxSize(kEntries * 2);

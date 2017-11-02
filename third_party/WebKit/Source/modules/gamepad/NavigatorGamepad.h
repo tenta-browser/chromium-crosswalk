@@ -34,7 +34,6 @@
 #include "platform/AsyncMethodRunner.h"
 #include "platform/Supplementable.h"
 #include "platform/heap/Handle.h"
-#include "public/platform/WebGamepads.h"
 
 namespace blink {
 
@@ -60,10 +59,6 @@ class MODULES_EXPORT NavigatorGamepad final
   GamepadList* Gamepads();
 
   DECLARE_VIRTUAL_TRACE();
-
-  void DidConnectOrDisconnectGamepad(unsigned index,
-                                     const WebGamepad&,
-                                     bool connected);
 
  private:
   explicit NavigatorGamepad(Navigator&);

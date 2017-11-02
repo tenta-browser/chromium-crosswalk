@@ -13,6 +13,7 @@
 #include "base/location.h"
 #include "base/memory/ref_counted.h"
 #include "base/path_service.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_split.h"
 #include "base/strings/utf_string_conversions.h"
@@ -147,9 +148,12 @@ class RenderFrameHostManagerTest : public ContentBrowserTest {
         original_file_path, replacement_text, replacement_path);
   }
 
-  void StartServer() {
+  void SetUpOnMainThread() override {
     // Support multiple sites on the test server.
     host_resolver()->AddRule("*", "127.0.0.1");
+  }
+
+  void StartServer() {
     ASSERT_TRUE(embedded_test_server()->Start());
 
     foo_host_port_ = embedded_test_server()->host_port_pair();
@@ -157,8 +161,6 @@ class RenderFrameHostManagerTest : public ContentBrowserTest {
   }
 
   void StartEmbeddedServer() {
-    // Support multiple sites on the embedded test server.
-    host_resolver()->AddRule("*", "127.0.0.1");
     SetupCrossSiteRedirector(embedded_test_server());
     ASSERT_TRUE(embedded_test_server()->Start());
   }
@@ -1294,11 +1296,67 @@ IN_PROC_BROWSER_TEST_F(RenderFrameHostManagerTest, ClickLinkAfter204Error) {
   EXPECT_EQ(orig_site_instance, new_site_instance);
 }
 
-// Test for crbug.com/9682.  We should show the URL for a pending renderer-
-// initiated navigation in a new tab, until the content of the initial
-// about:blank page is modified by another window.  At that point, we should
-// revert to showing about:blank to prevent a URL spoof.
-IN_PROC_BROWSER_TEST_F(RenderFrameHostManagerTest, ShowLoadingURLUntilSpoof) {
+// A collection of tests to prevent URL spoofs when showing pending URLs above
+// initial empty documents, ensuring that the URL reverts to about:blank if the
+// document is accessed. See https://crbug.com/9682.
+class RenderFrameHostManagerSpoofingTest : public RenderFrameHostManagerTest {
+ public:
+  void SetUpInProcessBrowserTestFixture() override {
+    base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
+
+    base::CommandLine new_command_line(command_line->GetProgram());
+    base::CommandLine::SwitchMap switches = command_line->GetSwitches();
+
+    // Injecting the DOM automation controller causes false positives, since it
+    // triggers the DidAccessInitialDocument() callback by mutating the global
+    // object.
+    switches.erase(switches::kDomAutomationController);
+
+    for (const auto& it : switches)
+      new_command_line.AppendSwitchNative(it.first, it.second);
+
+    *command_line = new_command_line;
+  }
+
+ protected:
+  // Custom ExecuteScript() helper that doesn't depend on DOM automation
+  // controller. This is used to guarantee the script has completed execution,
+  // but the spoofing tests synchronize execution using window title changes.
+  void ExecuteScript(const ToRenderFrameHost& adapter, const char* script) {
+    adapter.render_frame_host()->ExecuteJavaScriptForTests(
+        base::UTF8ToUTF16(script));
+  }
+};
+
+// Helper to wait until a WebContent's NavigationController has a visible entry.
+class VisibleEntryWaiter : public WebContentsObserver {
+ public:
+  explicit VisibleEntryWaiter(WebContents* web_contents)
+      : WebContentsObserver(web_contents) {}
+
+  void Wait() {
+    if (web_contents()->GetController().GetVisibleEntry())
+      return;
+    run_loop_.Run();
+  }
+
+  // WebContentsObserver overrides:
+  void DidStartNavigation(NavigationHandle* navigation_handle) override {
+    run_loop_.Quit();
+  }
+
+ private:
+  base::RunLoop run_loop_;
+};
+
+// Sanity test that a newly opened window shows the pending URL if the initial
+// empty document is not modified. This is intentionally structured as similarly
+// as possible to the subsequent ShowLoadingURLUntil*Spoof tests: it performs
+// the same operations as the subsequent tests except DOM modification. This
+// should help catch instances where the subsequent tests incorrectly pass due
+// to a side effect of the test infrastructure.
+IN_PROC_BROWSER_TEST_F(RenderFrameHostManagerSpoofingTest,
+                       ShowLoadingURLIfNotModified) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
   // Load a page that can open a URL that won't commit in a new window.
@@ -1308,19 +1366,69 @@ IN_PROC_BROWSER_TEST_F(RenderFrameHostManagerTest, ShowLoadingURLUntilSpoof) {
 
   // Click a /nocontent link that opens in a new window but never commits.
   ShellAddedObserver new_shell_observer;
-  bool success = false;
-  EXPECT_TRUE(ExecuteScriptAndExtractBool(
-      orig_contents,
-      "window.domAutomationController.send(clickNoContentTargetedLink());",
-      &success));
-  EXPECT_TRUE(success);
+  ExecuteScript(orig_contents, "clickNoContentTargetedLink();");
 
   // Wait for the window to open.
   Shell* new_shell = new_shell_observer.GetShell();
+  WebContents* contents = new_shell->web_contents();
+
+  // Make sure the new window has started the provisional load, so the
+  // associated navigation controller will have a visible entry.
+  {
+    VisibleEntryWaiter waiter(contents);
+    waiter.Wait();
+  }
 
   // Ensure the destination URL is visible, because it is considered the
   // initial navigation.
+  EXPECT_TRUE(contents->GetController().IsInitialNavigation());
+  EXPECT_EQ("/nocontent",
+            contents->GetController().GetVisibleEntry()->GetURL().path());
+
+  // Now get another reference to the window object, but don't otherwise access
+  // it. This is to ensure that DidAccessInitialDocument() notifications are not
+  // incorrectly generated when nothing is modified.
+  base::string16 expected_title = ASCIIToUTF16("Modified Title");
+  TitleWatcher title_watcher(orig_contents, expected_title);
+  ExecuteScript(orig_contents, "getNewWindowReference();");
+  ASSERT_EQ(expected_title, title_watcher.WaitAndGetTitle());
+
+  // The destination URL should still be visible, since nothing was modified.
+  EXPECT_TRUE(contents->GetController().IsInitialNavigation());
+  EXPECT_EQ("/nocontent",
+            contents->GetController().GetVisibleEntry()->GetURL().path());
+}
+
+// Test for crbug.com/9682.  We should show the URL for a pending renderer-
+// initiated navigation in a new tab, until the content of the initial
+// about:blank page is modified by another window.  At that point, we should
+// revert to showing about:blank to prevent a URL spoof.
+IN_PROC_BROWSER_TEST_F(RenderFrameHostManagerSpoofingTest,
+                       ShowLoadingURLUntilSpoof) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+
+  // Load a page that can open a URL that won't commit in a new window.
+  NavigateToURL(shell(),
+                embedded_test_server()->GetURL("/click-nocontent-link.html"));
+  WebContents* orig_contents = shell()->web_contents();
+
+  // Click a /nocontent link that opens in a new window but never commits.
+  ShellAddedObserver new_shell_observer;
+  ExecuteScript(orig_contents, "clickNoContentTargetedLink();");
+
+  // Wait for the window to open.
+  Shell* new_shell = new_shell_observer.GetShell();
   WebContents* contents = new_shell->web_contents();
+
+  // Make sure the new window has started the provisional load, so the
+  // associated navigation controller will have a visible entry.
+  {
+    VisibleEntryWaiter waiter(contents);
+    waiter.Wait();
+  }
+
+  // Ensure the destination URL is visible, because it is considered the
+  // initial navigation.
   EXPECT_TRUE(contents->GetController().IsInitialNavigation());
   EXPECT_EQ("/nocontent",
             contents->GetController().GetVisibleEntry()->GetURL().path());
@@ -1328,13 +1436,59 @@ IN_PROC_BROWSER_TEST_F(RenderFrameHostManagerTest, ShowLoadingURLUntilSpoof) {
   // Now modify the contents of the new window from the opener.  This will also
   // modify the title of the document to give us something to listen for.
   base::string16 expected_title = ASCIIToUTF16("Modified Title");
-  TitleWatcher title_watcher(contents, expected_title);
-  success = false;
-  EXPECT_TRUE(ExecuteScriptAndExtractBool(
-      orig_contents,
-      "window.domAutomationController.send(modifyNewWindow());",
-      &success));
-  EXPECT_TRUE(success);
+  TitleWatcher title_watcher(orig_contents, expected_title);
+  ExecuteScript(orig_contents, "modifyNewWindow();");
+  ASSERT_EQ(expected_title, title_watcher.WaitAndGetTitle());
+
+  // At this point, we should no longer be showing the destination URL.
+  // The visible entry should be null, resulting in about:blank in the address
+  // bar.
+  EXPECT_FALSE(contents->GetController().GetVisibleEntry());
+}
+
+// Similar but using document.open(): once a Document is opened, subsequent
+// document.write() calls can insert arbitrary content into the target Document.
+// Since this could result in URL spoofing, the pending URL should no longer be
+// shown in the omnibox.
+//
+// Note: document.write() implicitly invokes document.open() if the Document has
+// not already been opened, so there's no need to test document.write()
+// separately.
+IN_PROC_BROWSER_TEST_F(RenderFrameHostManagerSpoofingTest,
+                       ShowLoadingURLUntilDocumentOpenSpoof) {
+  ASSERT_TRUE(embedded_test_server()->Start());
+
+  // Load a page that can open a URL that won't commit in a new window.
+  NavigateToURL(shell(),
+                embedded_test_server()->GetURL("/click-nocontent-link.html"));
+  WebContents* orig_contents = shell()->web_contents();
+
+  // Click a /nocontent link that opens in a new window but never commits.
+  ShellAddedObserver new_shell_observer;
+  ExecuteScript(orig_contents, "clickNoContentTargetedLink();");
+
+  // Wait for the window to open.
+  Shell* new_shell = new_shell_observer.GetShell();
+  WebContents* contents = new_shell->web_contents();
+
+  // Make sure the new window has started the provisional load, so the
+  // associated navigation controller will have a visible entry.
+  {
+    VisibleEntryWaiter waiter(contents);
+    waiter.Wait();
+  }
+
+  // Ensure the destination URL is visible, because it is considered the
+  // initial navigation.
+  EXPECT_TRUE(contents->GetController().IsInitialNavigation());
+  EXPECT_EQ("/nocontent",
+            contents->GetController().GetVisibleEntry()->GetURL().path());
+
+  // Now modify the contents of the new window from the opener.  This will also
+  // modify the title of the document to give us something to listen for.
+  base::string16 expected_title = ASCIIToUTF16("Modified Title");
+  TitleWatcher title_watcher(orig_contents, expected_title);
+  ExecuteScript(orig_contents, "modifyNewWindowWithDocumentOpen();");
   ASSERT_EQ(expected_title, title_watcher.WaitAndGetTitle());
 
   // At this point, we should no longer be showing the destination URL.
@@ -1555,16 +1709,15 @@ IN_PROC_BROWSER_TEST_F(RenderFrameHostManagerTest,
 }
 
 // Test for crbug.com/143155.  Frame tree updates during unload should not
-// interrupt the intended navigation and show swappedout:// instead.
+// interrupt the intended navigation.
 // Specifically:
 // 1) Open 2 tabs in an HTTP SiteInstance, with a subframe in the opener.
 // 2) Send the second tab to a different foo.com SiteInstance.
-//    This creates a swapped out opener for the first tab in the foo process.
+//    This created a swapped out opener for the first tab in the foo process.
 // 3) Navigate the first tab to the foo.com SiteInstance, and have the first
 //    tab's unload handler remove its frame.
-// This used to cause an update to the frame tree of the swapped out RV,
-// just as it was navigating to a real page.  That pre-empted the real
-// navigation and visibly sent the tab to swappedout://.
+// In older versions of Chrome, this caused an update to the frame tree that
+// resulted in showing an internal page rather than the real page.
 IN_PROC_BROWSER_TEST_F(RenderFrameHostManagerTest,
                        DontPreemptNavigationWithFrameTreeUpdate) {
   StartEmbeddedServer();
@@ -1619,7 +1772,7 @@ IN_PROC_BROWSER_TEST_F(RenderFrameHostManagerTest,
 // See http://crbug.com/335503.
 // The test fails on Mac OSX with ASAN.
 // See http://crbug.com/699062.
-#if defined(OS_MACOSX) && defined(ADDRESS_SANITIZER)
+#if defined(OS_MACOSX) && defined(THREAD_SANITIZER)
 #define MAYBE_RendererDebugURLsDontSwap DISABLED_RendererDebugURLsDontSwap
 #else
 #define MAYBE_RendererDebugURLsDontSwap RendererDebugURLsDontSwap
@@ -1730,18 +1883,10 @@ IN_PROC_BROWSER_TEST_F(RenderFrameHostManagerTest,
   EXPECT_TRUE(shell()->web_contents()->GetController().CanGoForward());
 }
 
-// The test fails with Android ASAN with changes in v8 that seem unrelated.
-//   See http://crbug.com/428329.
-#if defined(OS_ANDROID) && defined(THREAD_SANITIZER)
-#define MAYBE_ClearPendingWebUIOnCommit DISABLED_ClearPendingWebUIOnCommit
-#else
-#define MAYBE_ClearPendingWebUIOnCommit ClearPendingWebUIOnCommit
-#endif
 // Ensure that pending_and_current_web_ui_ is cleared when a URL commits.
 // Otherwise it might get picked up by InitRenderView when granting bindings
 // to other RenderViewHosts.  See http://crbug.com/330811.
-IN_PROC_BROWSER_TEST_F(RenderFrameHostManagerTest,
-                       MAYBE_ClearPendingWebUIOnCommit) {
+IN_PROC_BROWSER_TEST_F(RenderFrameHostManagerTest, ClearPendingWebUIOnCommit) {
   // Visit a WebUI page with bindings.
   GURL webui_url(GURL(std::string(kChromeUIScheme) + "://" +
                       std::string(kChromeUIGpuHost)));
@@ -2501,7 +2646,7 @@ IN_PROC_BROWSER_TEST_F(RenderFrameHostManagerTest,
   // message.
   RenderProcessHostWatcher watcher(
       rvh->GetProcess(), RenderProcessHostWatcher::WATCH_FOR_PROCESS_EXIT);
-  rvh->Send(new InputMsg_SetFocus(rvh->GetRoutingID(), true));
+  rvh->GetWidget()->GetWidgetInputHandler()->SetFocus(true);
 
   // The test must wait for a process to exit, but if the IPC message is
   // properly ignored, there will be no crash. Therefore, navigate the

@@ -5,6 +5,9 @@
 #ifndef CHROME_BROWSER_SYNC_SESSIONS_SYNC_SESSIONS_WEB_CONTENTS_ROUTER_H_
 #define CHROME_BROWSER_SYNC_SESSIONS_SYNC_SESSIONS_WEB_CONTENTS_ROUTER_H_
 
+#include <memory>
+#include <set>
+
 #include "base/callback_list.h"
 
 // Android has no BrowserList or TabStripModel, so we exclude code that refers
@@ -36,7 +39,8 @@ class SyncSessionsWebContentsRouter : public LocalSessionEventRouter,
 
   // Notify the router that the tab corresponding to |web_contents| has been
   // modified in some way.
-  void NotifyTabModified(content::WebContents* web_contents);
+  void NotifyTabModified(content::WebContents* web_contents,
+                         bool page_load_completed);
   // Inject a flare that can be used to start sync. See the comment for
   // StartSyncFlare in syncable_service.h for more.
   void InjectStartSyncFlare(syncer::SyncableService::StartSyncFlare flare);

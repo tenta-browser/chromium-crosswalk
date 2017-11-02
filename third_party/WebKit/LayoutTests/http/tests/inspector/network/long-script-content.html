@@ -3,6 +3,7 @@
 <script src="../inspector-test.js"></script>
 <script src="../network-test.js"></script>
 <script src="../debugger-test.js"></script>
+<script src="../../../../resources/gc.js"></script>
 <script>
 
 var scriptElement;
@@ -18,54 +19,40 @@ function unloadScript()
     scriptElement.parentElement.removeChild(scriptElement);
 }
 
-function gc()
-{
-    // In Oilpan, Resource objects are not destructed until GC.
-    if (window.GCController)
-        GCController.collectAll();
-}
+function test() {
+  TestRunner.hardReloadPage(step1);
 
-function test()
-{
-    InspectorTest.hardReloadPage(step1);
+  function step1() {
+    ConsoleTestRunner.addConsoleSniffer(step2);
+    TestRunner.evaluateInPage('loadScript()');
+  }
 
-    function step1()
-    {
-        InspectorTest.addConsoleSniffer(step2);
-        InspectorTest.evaluateInPage("loadScript()");
-    }
+  function step2(event) {
+    TestRunner.evaluateInPage('unloadScript()', step3);
+  }
 
-    function step2(event)
-    {
-        InspectorTest.evaluateInPage("unloadScript()", step3);
-    }
+  function step3() {
+    SourcesTestRunner.waitForScriptSource('long_script.cgi', step4);
+  }
 
-    function step3()
-    {
-        InspectorTest.waitForScriptSource("long_script.cgi", step4);
-    }
+  function step4(uiSourceCode) {
+    TestRunner.evaluateInPage('gc()', step5.bind(null, uiSourceCode));
+  }
 
-    function step4(uiSourceCode)
-    {
-        InspectorTest.evaluateInPage("gc()", step5.bind(null, uiSourceCode));
-    }
+  function step5(uiSourceCode) {
+    uiSourceCode.requestContent().then(step6);
+  }
 
-    function step5(uiSourceCode)
-    {
-        uiSourceCode.requestContent().then(step6);
-    }
+  function step6(loadedScript) {
+    var expected = 'console.log(\'finished\');\n';
+    TestRunner.assertTrue(!!loadedScript, 'No script content');
+    loadedScript = loadedScript.replace(/\r\n/g, '\n');  // on windows we receive additional symbol \r at line end.
+    TestRunner.assertEquals(1024 * 10240 + expected.length, loadedScript.length, 'Loaded script length mismatch');
+    var actual = loadedScript.substring(loadedScript.length - expected.length);
+    TestRunner.assertEquals(expected, actual, 'Loaded script is corrupted');
 
-    function step6(loadedScript)
-    {
-        var expected = "console.log('finished');\n";
-        InspectorTest.assertTrue(!!loadedScript, "No script content");
-        loadedScript = loadedScript.replace(/\r\n/g, '\n');  // on windows we receive additional symbol \r at line end.
-        InspectorTest.assertEquals(1024 * 10240 + expected.length, loadedScript.length, "Loaded script length mismatch");
-        var actual = loadedScript.substring(loadedScript.length - expected.length);
-        InspectorTest.assertEquals(expected, actual, "Loaded script is corrupted");
-
-        InspectorTest.completeTest();
-    }
+    TestRunner.completeTest();
+  }
 }
 </script>
 </head>

@@ -52,7 +52,7 @@ class CORE_EXPORT SVGElement : public Element {
 
  public:
   ~SVGElement() override;
-  void AttachLayoutTree(const AttachContext&) override;
+  void AttachLayoutTree(AttachContext&) override;
   void DetachLayoutTree(const AttachContext&) override;
 
   int tabIndex() const override;
@@ -150,7 +150,7 @@ class CORE_EXPORT SVGElement : public Element {
 
   void SynchronizeAnimatedSVGAttribute(const QualifiedName&) const;
 
-  PassRefPtr<ComputedStyle> CustomStyleForLayoutObject() final;
+  RefPtr<ComputedStyle> CustomStyleForLayoutObject() final;
   bool LayoutObjectIsNeeded(const ComputedStyle&) override;
 
 #if DCHECK_IS_ON()

@@ -1,11 +1,9 @@
 include_rules = [
-    "+../platform",
-    "+core",
     "+mojo/public",
-    "+platform",
     "+public/platform",
     "+public/web",
 
-    # For subdirectories.
-    "+../../platform",
+    # Allowed only inside INSIDE_BLINK
+    "+core",
+    "+platform",
 ]

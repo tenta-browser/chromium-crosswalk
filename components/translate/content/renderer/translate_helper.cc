@@ -4,8 +4,11 @@
 
 #include "components/translate/content/renderer/translate_helper.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/compiler_specific.h"
+#include "base/json/string_escape.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
@@ -127,18 +130,18 @@ void TranslateHelper::PageCaptured(const base::string16& contents) {
   // For the same render frame with the same url, each time when its texts are
   // captured, it should be treated as a new page to do translation.
   ResetPage();
+  mojom::PagePtr page;
+  binding_.Bind(mojo::MakeRequest(&page));
   GetTranslateDriver()->RegisterPage(
-      binding_.CreateInterfacePtrAndBind(), details,
-      !details.has_notranslate && !language.empty());
+      std::move(page), details, !details.has_notranslate && !language.empty());
 }
 
 void TranslateHelper::CancelPendingTranslation() {
   weak_method_factory_.InvalidateWeakPtrs();
   // Make sure to send the cancelled response back.
   if (translate_callback_pending_) {
-    translate_callback_pending_.Run(true, source_lang_, target_lang_,
-                                    TranslateErrors::NONE);
-    translate_callback_pending_.Reset();
+    std::move(translate_callback_pending_)
+        .Run(true, source_lang_, target_lang_, TranslateErrors::NONE);
   }
   source_lang_.clear();
   target_lang_.clear();
@@ -164,13 +167,16 @@ bool TranslateHelper::HasTranslationFailed() {
   return ExecuteScriptAndGetBoolResult("cr.googleTranslate.error", true);
 }
 
+int64_t TranslateHelper::GetErrorCode() {
+  int64_t error_code =
+      ExecuteScriptAndGetIntegerResult("cr.googleTranslate.errorCode");
+  DCHECK_LT(error_code, static_cast<int>(TranslateErrors::TRANSLATE_ERROR_MAX));
+  return error_code;
+}
+
 bool TranslateHelper::StartTranslation() {
-  std::string script = "cr.googleTranslate.translate('" +
-                       source_lang_ +
-                       "','" +
-                       target_lang_ +
-                       "')";
-  return ExecuteScriptAndGetBoolResult(script, false);
+  return ExecuteScriptAndGetBoolResult(
+      BuildTranslationScript(source_lang_, target_lang_), false);
 }
 
 std::string TranslateHelper::GetOriginalPageLanguage() {
@@ -250,22 +256,42 @@ double TranslateHelper::ExecuteScriptAndGetDoubleResult(
   return results[0]->NumberValue();
 }
 
+int64_t TranslateHelper::ExecuteScriptAndGetIntegerResult(
+    const std::string& script) {
+  WebLocalFrame* main_frame = render_frame()->GetWebFrame();
+  if (!main_frame)
+    return 0;
+
+  v8::HandleScope handle_scope(v8::Isolate::GetCurrent());
+  WebVector<v8::Local<v8::Value>> results;
+  WebScriptSource source = WebScriptSource(WebString::FromASCII(script));
+  main_frame->ExecuteScriptInIsolatedWorld(world_id_, &source, 1, &results);
+  if (results.size() != 1 || results[0].IsEmpty() || !results[0]->IsNumber()) {
+    NOTREACHED();
+    return 0;
+  }
+
+  return results[0]->IntegerValue();
+}
+
 // mojom::Page implementations.
 void TranslateHelper::Translate(const std::string& translate_script,
                                 const std::string& source_lang,
                                 const std::string& target_lang,
-                                const TranslateCallback& callback) {
+                                TranslateCallback callback) {
   WebLocalFrame* main_frame = render_frame()->GetWebFrame();
   if (!main_frame) {
     // Cancelled.
-    callback.Run(true, source_lang, target_lang, TranslateErrors::NONE);
+    std::move(callback).Run(true, source_lang, target_lang,
+                            TranslateErrors::NONE);
     return;  // We navigated away, nothing to do.
   }
 
   // A similar translation is already under way, nothing to do.
   if (translate_callback_pending_ && target_lang_ == target_lang) {
     // This request is ignored.
-    callback.Run(true, source_lang, target_lang, TranslateErrors::NONE);
+    std::move(callback).Run(true, source_lang, target_lang,
+                            TranslateErrors::NONE);
     return;
   }
 
@@ -273,7 +299,7 @@ void TranslateHelper::Translate(const std::string& translate_script,
   CancelPendingTranslation();
 
   // Set our states.
-  translate_callback_pending_ = callback;
+  translate_callback_pending_ = std::move(callback);
 
   // If the source language is undetermined, we'll let the translate element
   // detect it.
@@ -321,8 +347,8 @@ void TranslateHelper::RevertTranslation() {
 void TranslateHelper::CheckTranslateStatus() {
   // First check if there was an error.
   if (HasTranslationFailed()) {
-    // TODO(toyoshim): Check |errorCode| of translate.js and notify it here.
-    NotifyBrowserTranslationFailed(TranslateErrors::TRANSLATION_ERROR);
+    NotifyBrowserTranslationFailed(
+        static_cast<translate::TranslateErrors::Type>(GetErrorCode()));
     return;  // There was an error.
   }
 
@@ -353,9 +379,8 @@ void TranslateHelper::CheckTranslateStatus() {
         ExecuteScriptAndGetDoubleResult("cr.googleTranslate.translationTime"));
 
     // Notify the browser we are done.
-    translate_callback_pending_.Run(false, actual_source_lang, target_lang_,
-                                    TranslateErrors::NONE);
-    translate_callback_pending_.Reset();
+    std::move(translate_callback_pending_)
+        .Run(false, actual_source_lang, target_lang_, TranslateErrors::NONE);
     return;
   }
 
@@ -369,10 +394,18 @@ void TranslateHelper::CheckTranslateStatus() {
 void TranslateHelper::TranslatePageImpl(int count) {
   DCHECK_LT(count, kMaxTranslateInitCheckAttempts);
   if (!IsTranslateLibReady()) {
+    // There was an error during initialization of library.
+    TranslateErrors::Type error =
+        static_cast<translate::TranslateErrors::Type>(GetErrorCode());
+    if (error != TranslateErrors::NONE) {
+      NotifyBrowserTranslationFailed(error);
+      return;
+    }
+
     // The library is not ready, try again later, unless we have tried several
     // times unsuccessfully already.
     if (++count >= kMaxTranslateInitCheckAttempts) {
-      NotifyBrowserTranslationFailed(TranslateErrors::INITIALIZATION_ERROR);
+      NotifyBrowserTranslationFailed(TranslateErrors::TRANSLATION_TIMEOUT);
       return;
     }
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
@@ -390,7 +423,7 @@ void TranslateHelper::TranslatePageImpl(int count) {
       ExecuteScriptAndGetDoubleResult("cr.googleTranslate.loadTime"));
 
   if (!StartTranslation()) {
-    NotifyBrowserTranslationFailed(TranslateErrors::TRANSLATION_ERROR);
+    CheckTranslateStatus();
     return;
   }
   // Check the status of the translation.
@@ -404,8 +437,8 @@ void TranslateHelper::NotifyBrowserTranslationFailed(
     TranslateErrors::Type error) {
   DCHECK(translate_callback_pending_);
   // Notify the browser there was an error.
-  translate_callback_pending_.Run(false, source_lang_, target_lang_, error);
-  translate_callback_pending_.Reset();
+  std::move(translate_callback_pending_)
+      .Run(false, source_lang_, target_lang_, error);
 }
 
 const mojom::ContentTranslateDriverPtr& TranslateHelper::GetTranslateDriver() {
@@ -425,6 +458,15 @@ void TranslateHelper::ResetPage() {
 
 void TranslateHelper::OnDestruct() {
   delete this;
+}
+
+/* static */
+std::string TranslateHelper::BuildTranslationScript(
+    const std::string& source_lang,
+    const std::string& target_lang) {
+  return "cr.googleTranslate.translate(" +
+         base::GetQuotedJSONString(source_lang) + "," +
+         base::GetQuotedJSONString(target_lang) + ")";
 }
 
 }  // namespace translate

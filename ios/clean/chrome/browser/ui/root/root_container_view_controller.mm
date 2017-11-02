@@ -69,4 +69,13 @@
   return CGRectNull;
 }
 
+#pragma mark - MenuPresentationDelegate
+
+- (CGRect)boundsForMenuPresentation {
+  return self.view.bounds;
+}
+- (CGRect)originForMenuPresentation {
+  return [self rectForZoomWithKey:nil inView:self.view];
+}
+
 @end

@@ -243,6 +243,104 @@ bool EnumTraits<mojom::PasswordFormScheme, PasswordForm::Scheme>::FromMojom(
 }
 
 // static
+mojom::PasswordFormSubmissionIndicatorEvent
+EnumTraits<mojom::PasswordFormSubmissionIndicatorEvent,
+           PasswordForm::SubmissionIndicatorEvent>::
+    ToMojom(PasswordForm::SubmissionIndicatorEvent input) {
+  switch (input) {
+    case PasswordForm::SubmissionIndicatorEvent::NONE:
+      return mojom::PasswordFormSubmissionIndicatorEvent::NONE;
+    case PasswordForm::SubmissionIndicatorEvent::HTML_FORM_SUBMISSION:
+      return mojom::PasswordFormSubmissionIndicatorEvent::HTML_FORM_SUBMISSION;
+    case PasswordForm::SubmissionIndicatorEvent::SAME_DOCUMENT_NAVIGATION:
+      return mojom::PasswordFormSubmissionIndicatorEvent::
+          SAME_DOCUMENT_NAVIGATION;
+    case PasswordForm::SubmissionIndicatorEvent::XHR_SUCCEEDED:
+      return mojom::PasswordFormSubmissionIndicatorEvent::XHR_SUCCEEDED;
+    case PasswordForm::SubmissionIndicatorEvent::FRAME_DETACHED:
+      return mojom::PasswordFormSubmissionIndicatorEvent::FRAME_DETACHED;
+    case PasswordForm::SubmissionIndicatorEvent::MANUAL_SAVE:
+      return mojom::PasswordFormSubmissionIndicatorEvent::MANUAL_SAVE;
+    case PasswordForm::SubmissionIndicatorEvent::DOM_MUTATION_AFTER_XHR:
+      return mojom::PasswordFormSubmissionIndicatorEvent::
+          DOM_MUTATION_AFTER_XHR;
+    case PasswordForm::SubmissionIndicatorEvent::
+        PROVISIONALLY_SAVED_FORM_ON_START_PROVISIONAL_LOAD:
+      return mojom::PasswordFormSubmissionIndicatorEvent::
+          PROVISIONALLY_SAVED_FORM_ON_START_PROVISIONAL_LOAD;
+    case PasswordForm::SubmissionIndicatorEvent::
+        FILLED_FORM_ON_START_PROVISIONAL_LOAD:
+      return mojom::PasswordFormSubmissionIndicatorEvent::
+          FILLED_FORM_ON_START_PROVISIONAL_LOAD;
+    case PasswordForm::SubmissionIndicatorEvent::
+        FILLED_INPUT_ELEMENTS_ON_START_PROVISIONAL_LOAD:
+      return mojom::PasswordFormSubmissionIndicatorEvent::
+          FILLED_INPUT_ELEMENTS_ON_START_PROVISIONAL_LOAD;
+    case PasswordForm::SubmissionIndicatorEvent::
+        SUBMISSION_INDICATOR_EVENT_COUNT:
+      return mojom::PasswordFormSubmissionIndicatorEvent::
+          SUBMISSION_INDICATOR_EVENT_COUNT;
+  }
+
+  NOTREACHED();
+  return mojom::PasswordFormSubmissionIndicatorEvent::NONE;
+}
+
+// static
+bool EnumTraits<mojom::PasswordFormSubmissionIndicatorEvent,
+                PasswordForm::SubmissionIndicatorEvent>::
+    FromMojom(mojom::PasswordFormSubmissionIndicatorEvent input,
+              PasswordForm::SubmissionIndicatorEvent* output) {
+  switch (input) {
+    case mojom::PasswordFormSubmissionIndicatorEvent::NONE:
+      *output = PasswordForm::SubmissionIndicatorEvent::NONE;
+      return true;
+    case mojom::PasswordFormSubmissionIndicatorEvent::HTML_FORM_SUBMISSION:
+      *output = PasswordForm::SubmissionIndicatorEvent::HTML_FORM_SUBMISSION;
+      return true;
+    case mojom::PasswordFormSubmissionIndicatorEvent::SAME_DOCUMENT_NAVIGATION:
+      *output =
+          PasswordForm::SubmissionIndicatorEvent::SAME_DOCUMENT_NAVIGATION;
+      return true;
+    case mojom::PasswordFormSubmissionIndicatorEvent::XHR_SUCCEEDED:
+      *output = PasswordForm::SubmissionIndicatorEvent::XHR_SUCCEEDED;
+      return true;
+    case mojom::PasswordFormSubmissionIndicatorEvent::FRAME_DETACHED:
+      *output = PasswordForm::SubmissionIndicatorEvent::FRAME_DETACHED;
+      return true;
+    case mojom::PasswordFormSubmissionIndicatorEvent::MANUAL_SAVE:
+      *output = PasswordForm::SubmissionIndicatorEvent::MANUAL_SAVE;
+      return true;
+    case mojom::PasswordFormSubmissionIndicatorEvent::DOM_MUTATION_AFTER_XHR:
+      *output = PasswordForm::SubmissionIndicatorEvent::DOM_MUTATION_AFTER_XHR;
+      return true;
+    case mojom::PasswordFormSubmissionIndicatorEvent::
+        PROVISIONALLY_SAVED_FORM_ON_START_PROVISIONAL_LOAD:
+      *output = PasswordForm::SubmissionIndicatorEvent::
+          PROVISIONALLY_SAVED_FORM_ON_START_PROVISIONAL_LOAD;
+      return true;
+    case mojom::PasswordFormSubmissionIndicatorEvent::
+        FILLED_FORM_ON_START_PROVISIONAL_LOAD:
+      *output = PasswordForm::SubmissionIndicatorEvent::
+          FILLED_FORM_ON_START_PROVISIONAL_LOAD;
+      return true;
+    case mojom::PasswordFormSubmissionIndicatorEvent::
+        FILLED_INPUT_ELEMENTS_ON_START_PROVISIONAL_LOAD:
+      *output = PasswordForm::SubmissionIndicatorEvent::
+          FILLED_INPUT_ELEMENTS_ON_START_PROVISIONAL_LOAD;
+      return true;
+    case mojom::PasswordFormSubmissionIndicatorEvent::
+        SUBMISSION_INDICATOR_EVENT_COUNT:
+      *output = PasswordForm::SubmissionIndicatorEvent::
+          SUBMISSION_INDICATOR_EVENT_COUNT;
+      return true;
+  }
+
+  NOTREACHED();
+  return false;
+}
+
+// static
 mojom::PasswordFormFieldPredictionType EnumTraits<
     mojom::PasswordFormFieldPredictionType,
     PasswordFormFieldPredictionType>::ToMojom(PasswordFormFieldPredictionType
@@ -446,7 +544,8 @@ bool StructTraits<mojom::PasswordFormDataView, PasswordForm>::Read(
       !data.ReadAction(&out->action) ||
       !data.ReadAffiliatedWebRealm(&out->affiliated_web_realm) ||
       !data.ReadSubmitElement(&out->submit_element) ||
-      !data.ReadUsernameElement(&out->username_element))
+      !data.ReadUsernameElement(&out->username_element) ||
+      !data.ReadSubmissionEvent(&out->submission_event))
     return false;
 
   out->username_marked_by_site = data.username_marked_by_site();
@@ -505,24 +604,25 @@ bool StructTraits<mojom::PasswordFormDataView, PasswordForm>::Read(
 }
 
 // static
-void* StructTraits<mojom::PasswordFormFieldPredictionMapDataView,
-                   PasswordFormFieldPredictionMap>::
-    SetUpContext(const PasswordFormFieldPredictionMap& r) {
-  // Extracts keys vector and values vector from the map, saves them as a pair.
-  auto* pair = new KeysValuesPair();
-  for (const auto& i : r) {
-    pair->first.push_back(i.first);
-    pair->second.push_back(i.second);
-  }
-
-  return pair;
+std::vector<autofill::FormFieldData> StructTraits<
+    mojom::PasswordFormFieldPredictionMapDataView,
+    PasswordFormFieldPredictionMap>::keys(const PasswordFormFieldPredictionMap&
+                                              r) {
+  std::vector<autofill::FormFieldData> data;
+  for (const auto& i : r)
+    data.push_back(i.first);
+  return data;
 }
 
 // static
-void StructTraits<mojom::PasswordFormFieldPredictionMapDataView,
-                  PasswordFormFieldPredictionMap>::
-    TearDownContext(const PasswordFormFieldPredictionMap& r, void* context) {
-  delete static_cast<KeysValuesPair*>(context);
+std::vector<autofill::PasswordFormFieldPredictionType>
+StructTraits<mojom::PasswordFormFieldPredictionMapDataView,
+             PasswordFormFieldPredictionMap>::
+    values(const PasswordFormFieldPredictionMap& r) {
+  std::vector<autofill::PasswordFormFieldPredictionType> types;
+  for (const auto& i : r)
+    types.push_back(i.second);
+  return types;
 }
 
 // static
@@ -547,23 +647,23 @@ bool StructTraits<mojom::PasswordFormFieldPredictionMapDataView,
 }
 
 // static
-void* StructTraits<mojom::FormsPredictionsMapDataView,
-                   FormsPredictionsMap>::SetUpContext(const FormsPredictionsMap&
-                                                          r) {
-  // Extracts keys vector and values vector from the map, saves them as a pair.
-  auto* pair = new KeysValuesPair();
-  for (const auto& i : r) {
-    pair->first.push_back(i.first);
-    pair->second.push_back(i.second);
-  }
-
-  return pair;
+std::vector<autofill::FormData>
+StructTraits<mojom::FormsPredictionsMapDataView, FormsPredictionsMap>::keys(
+    const FormsPredictionsMap& r) {
+  std::vector<autofill::FormData> data;
+  for (const auto& i : r)
+    data.push_back(i.first);
+  return data;
 }
 
 // static
-void StructTraits<mojom::FormsPredictionsMapDataView, FormsPredictionsMap>::
-    TearDownContext(const FormsPredictionsMap& r, void* context) {
-  delete static_cast<KeysValuesPair*>(context);
+std::vector<autofill::PasswordFormFieldPredictionMap>
+StructTraits<mojom::FormsPredictionsMapDataView, FormsPredictionsMap>::values(
+    const FormsPredictionsMap& r) {
+  std::vector<autofill::PasswordFormFieldPredictionMap> maps;
+  for (const auto& i : r)
+    maps.push_back(i.second);
+  return maps;
 }
 
 // static

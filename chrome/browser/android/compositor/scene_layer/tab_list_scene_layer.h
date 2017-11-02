@@ -31,7 +31,7 @@ class TabLayer;
 
 class TabListSceneLayer : public SceneLayer {
  public:
-  TabListSceneLayer(JNIEnv* env, jobject jobj);
+  TabListSceneLayer(JNIEnv* env, const base::android::JavaRef<jobject>& jobj);
   ~TabListSceneLayer() override;
 
   void BeginBuildingFrame(JNIEnv* env,
@@ -132,8 +132,6 @@ class TabListSceneLayer : public SceneLayer {
 
   DISALLOW_COPY_AND_ASSIGN(TabListSceneLayer);
 };
-
-bool RegisterTabListSceneLayer(JNIEnv* env);
 
 }  // namespace android
 

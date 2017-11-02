@@ -14,6 +14,7 @@
 
 #include "base/compiler_specific.h"
 #include "base/strings/string16.h"
+#include "base/time/time.h"
 #include "components/autofill/core/browser/address.h"
 #include "components/autofill/core/browser/autofill_data_model.h"
 #include "components/autofill/core/browser/autofill_type.h"
@@ -31,12 +32,23 @@ class AutofillProfile : public AutofillDataModel {
   enum RecordType {
     // A profile stored and editable locally.
     LOCAL_PROFILE,
-
     // A profile synced down from the server. These are read-only locally.
     SERVER_PROFILE,
-
     // An auxiliary profile, such as a Mac address book entry.
     AUXILIARY_PROFILE,
+  };
+
+  enum ValidityState {
+    // The field has not been validated.
+    UNVALIDATED = 0,
+    // The field is empty.
+    EMPTY = 1,
+    // The field is valid.
+    VALID = 2,
+    // The field is invalid.
+    INVALID = 3,
+    // The validation for the field is unsupported.
+    UNSUPPORTED = 4,
   };
 
   AutofillProfile(const std::string& guid, const std::string& origin);
@@ -59,11 +71,8 @@ class AutofillProfile : public AutofillDataModel {
                         ServerFieldTypeSet* matching_types) const override;
   base::string16 GetRawInfo(ServerFieldType type) const override;
   void SetRawInfo(ServerFieldType type, const base::string16& value) override;
-  base::string16 GetInfo(const AutofillType& type,
-                         const std::string& app_locale) const override;
-  bool SetInfo(const AutofillType& type,
-               const base::string16& value,
-               const std::string& app_locale) override;
+
+  void GetSupportedTypes(ServerFieldTypeSet* supported_types) const override;
 
   // How this card is stored.
   RecordType record_type() const { return record_type_; }
@@ -174,19 +183,40 @@ class AutofillProfile : public AutofillDataModel {
   // creates its own. The ID is a hash of the data contained in the profile.
   void GenerateServerProfileIdentifier();
 
-  // Logs the number of days since the profile was last used and records its
-  // use.
+  // Logs the number of days since the profile was last used, records its
+  // use and updates |previous_use_date_| to the last value of |use_date_|.
   void RecordAndLogUse();
 
-  // Valid only when type() == SERVER_PROFILE.
+  const base::Time& previous_use_date() const { return previous_use_date_; }
+  void set_previous_use_date(const base::Time& time) {
+    previous_use_date_ = time;
+  }
+
+  // Valid only when |record_type()| == |SERVER_PROFILE|.
   bool has_converted() const { return has_converted_; }
   void set_has_converted(bool has_converted) { has_converted_ = has_converted; }
+
+  // Returns the validity state of the specified autofill type.
+  ValidityState GetValidityState(ServerFieldType type);
+
+  // Sets the validity state of the specified autofill type.
+  void SetValidityState(ServerFieldType type, ValidityState validity);
+
+  // Returns whether autofill does the validation of the specified |type|.
+  bool IsValidationSupportedForType(ServerFieldType type);
+
+  // Returns the bitfield value representing the validity state of this profile.
+  int GetValidityBitfieldValue();
 
  private:
   typedef std::vector<const FormGroup*> FormGroupList;
 
   // FormGroup:
-  void GetSupportedTypes(ServerFieldTypeSet* supported_types) const override;
+  base::string16 GetInfoImpl(const AutofillType& type,
+                             const std::string& app_locale) const override;
+  bool SetInfoImpl(const AutofillType& type,
+                   const base::string16& value,
+                   const std::string& app_locale) override;
 
   // Creates inferred labels for |profiles| at indices corresponding to
   // |indices|, and stores the results to the corresponding elements of
@@ -210,8 +240,6 @@ class AutofillProfile : public AutofillDataModel {
   // Same as operator==, but ignores differences in GUID.
   bool EqualsSansGuid(const AutofillProfile& profile) const;
 
-  RecordType record_type_;
-
   // Personal information for this profile.
   NameInfo name_;
   EmailInfo email_;
@@ -226,9 +254,17 @@ class AutofillProfile : public AutofillDataModel {
   // a hash of the contents.
   std::string server_id_;
 
+  // Penultimate time model was used, not persisted to database.
+  base::Time previous_use_date_;
+
+  RecordType record_type_;
+
   // Only useful for SERVER_PROFILEs. Whether this server profile has been
   // converted to a local profile.
   bool has_converted_;
+
+  // A map identifying what fields are valid.
+  std::map<ServerFieldType, ValidityState> validity_states_;
 };
 
 // So we can compare AutofillProfiles with EXPECT_EQ().

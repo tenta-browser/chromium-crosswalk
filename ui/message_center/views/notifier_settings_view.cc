@@ -21,6 +21,7 @@
 #include "ui/events/event_utils.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/gfx/canvas.h"
+#include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/image/image.h"
 #include "ui/message_center/message_center_style.h"
@@ -121,7 +122,7 @@ class EntryView : public views::View {
 
   // views::View:
   void Layout() override;
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   void OnFocus() override;
   bool OnKeyPressed(const ui::KeyEvent& event) override;
@@ -151,7 +152,7 @@ void EntryView::Layout() {
   content->SetBounds(0, y, content_width, content_height);
 }
 
-gfx::Size EntryView::GetPreferredSize() const {
+gfx::Size EntryView::CalculatePreferredSize() const {
   DCHECK_EQ(1, child_count());
   gfx::Size size = child_at(0)->GetPreferredSize();
   size.SetToMax(gfx::Size(kWidth, settings::kEntryHeight));
@@ -233,7 +234,7 @@ NotifierSettingsView::NotifierButton::NotifierButton(
     NotifierSettingsProvider* provider,
     std::unique_ptr<Notifier> notifier,
     views::ButtonListener* listener)
-    : views::CustomButton(listener),
+    : views::Button(listener),
       provider_(provider),
       notifier_(std::move(notifier)),
       icon_view_(new views::ImageView()),
@@ -336,7 +337,7 @@ void NotifierSettingsView::NotifierButton::ButtonPressed(
     // the state on NotifierSettingsView::ButtonPressed() too, so here change
     // back to the previous state.
     checkbox_->SetChecked(!checkbox_->checked());
-    CustomButton::NotifyClick(event);
+    Button::NotifyClick(event);
   } else if (button == learn_more_) {
     DCHECK(provider_);
     provider_->OnNotifierAdvancedSettingsRequested(notifier_->notifier_id,
@@ -424,8 +425,7 @@ NotifierSettingsView::NotifierSettingsView(NotifierSettingsProvider* provider)
     provider_->AddObserver(this);
 
   SetFocusBehavior(FocusBehavior::ALWAYS);
-  set_background(
-      views::Background::CreateSolidBackground(kMessageCenterBackgroundColor));
+  SetBackground(views::CreateSolidBackground(kMessageCenterBackgroundColor));
   SetPaintToLayer();
 
   title_label_ = new views::Label(
@@ -440,6 +440,7 @@ NotifierSettingsView::NotifierSettingsView(NotifierSettingsProvider* provider)
   AddChildView(title_label_);
 
   scroller_ = new views::ScrollView();
+  scroller_->SetBackgroundColor(kMessageCenterBackgroundColor);
   scroller_->SetVerticalScrollBar(new views::OverlayScrollBar(false));
   scroller_->SetHorizontalScrollBar(new views::OverlayScrollBar(true));
   AddChildView(scroller_);
@@ -489,12 +490,14 @@ void NotifierSettingsView::UpdateContentsView(
   buttons_.clear();
 
   views::View* contents_view = new views::View();
-  contents_view->SetLayoutManager(new views::BoxLayout(
-      views::BoxLayout::kVertical, settings::kHorizontalMargin, 0, 0));
+  contents_view->SetLayoutManager(
+      new views::BoxLayout(views::BoxLayout::kVertical,
+                           gfx::Insets(0, settings::kHorizontalMargin)));
 
   views::View* contents_title_view = new views::View();
-  contents_title_view->SetLayoutManager(new views::BoxLayout(
-      views::BoxLayout::kVertical, 0, 0, kComputedTitleElementSpacing));
+  contents_title_view->SetLayoutManager(
+      new views::BoxLayout(views::BoxLayout::kVertical, gfx::Insets(),
+                           kComputedTitleElementSpacing));
 
   bool need_account_switcher =
       provider_ && provider_->GetNotifierGroupCount() > 1;
@@ -587,7 +590,7 @@ gfx::Size NotifierSettingsView::GetMinimumSize() const {
   return size;
 }
 
-gfx::Size NotifierSettingsView::GetPreferredSize() const {
+gfx::Size NotifierSettingsView::CalculatePreferredSize() const {
   gfx::Size preferred_size;
   gfx::Size title_size = title_label_->GetPreferredSize();
   gfx::Size content_size = scroller_->contents()->GetPreferredSize();

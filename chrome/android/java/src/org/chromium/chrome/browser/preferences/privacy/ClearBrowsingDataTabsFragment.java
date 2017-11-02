@@ -17,8 +17,10 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 
+import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeFeatureList;
+import org.chromium.chrome.browser.browsing_data.ClearBrowsingDataTab;
 import org.chromium.chrome.browser.preferences.PrefServiceBridge;
 import org.chromium.chrome.browser.preferences.Preferences;
 
@@ -31,7 +33,9 @@ public class ClearBrowsingDataTabsFragment extends Fragment {
     public static final int CBD_TAB_COUNT = 2;
 
     public ClearBrowsingDataTabsFragment() {
-        // TODO(dullweber): Remove this migration after after three milestones (probably M61)
+        // TODO(dullweber): Remove this migration after M62, most users should
+        // be migrated and the others will just get the default settings for
+        // the basic tab.
         PrefServiceBridge.getInstance().migrateBrowsingDataPreferences();
     }
 
@@ -45,6 +49,7 @@ public class ClearBrowsingDataTabsFragment extends Fragment {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        RecordUserAction.record("ClearBrowsingData_DialogCreated");
     }
 
     /*
@@ -76,13 +81,13 @@ public class ClearBrowsingDataTabsFragment extends Fragment {
         // Give the TabLayout the ViewPager.
         TabLayout tabLayout = (TabLayout) view.findViewById(R.id.clear_browsing_data_tabs);
         tabLayout.setupWithViewPager(viewPager);
-        tabLayout.addOnTabSelectedListener(new TabSelectListener());
         int tabIndex = adjustIndexForDirectionality(
                 PrefServiceBridge.getInstance().getLastSelectedClearBrowsingDataTab());
         TabLayout.Tab tab = tabLayout.getTabAt(tabIndex);
         if (tab != null) {
             tab.select();
         }
+        tabLayout.addOnTabSelectedListener(new TabSelectListener());
 
         // Remove elevation to avoid shadow between title and tabs.
         Preferences activity = (Preferences) getActivity();
@@ -136,6 +141,11 @@ public class ClearBrowsingDataTabsFragment extends Fragment {
         public void onTabSelected(TabLayout.Tab tab) {
             int tabIndex = adjustIndexForDirectionality(tab.getPosition());
             PrefServiceBridge.getInstance().setLastSelectedClearBrowsingDataTab(tabIndex);
+            if (tabIndex == ClearBrowsingDataTab.BASIC) {
+                RecordUserAction.record("ClearBrowsingData_SwitchTo_BasicTab");
+            } else {
+                RecordUserAction.record("ClearBrowsingData_SwitchTo_AdvancedTab");
+            }
         }
 
         @Override

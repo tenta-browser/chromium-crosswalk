@@ -20,9 +20,10 @@ WorkQueue::WorkQueue(TaskQueueImpl* task_queue,
       fence_(0),
       queue_type_(queue_type) {}
 
-void WorkQueue::AsValueInto(base::trace_event::TracedValue* state) const {
+void WorkQueue::AsValueInto(base::TimeTicks now,
+                            base::trace_event::TracedValue* state) const {
   for (const TaskQueueImpl::Task& task : work_queue_) {
-    TaskQueueImpl::TaskAsValueInto(task, state);
+    TaskQueueImpl::TaskAsValueInto(task, now, state);
   }
 }
 
@@ -70,6 +71,10 @@ void WorkQueue::Push(TaskQueueImpl::Task task) {
 #ifndef NDEBUG
   DCHECK(task.enqueue_order_set());
 #endif
+
+  // Temporary check for crbug.com/752914.
+  // TODO(skyostil): Remove this.
+  CHECK(task.task);
 
   // Amoritized O(1).
   work_queue_.push_back(std::move(task));

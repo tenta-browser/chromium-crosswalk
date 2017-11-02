@@ -4,129 +4,151 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true
+      "backgroundColor": "#FFFFFF"
     },
     {
       "name": "LayoutBlockFlow (positioned) DIV class='container'",
       "position": [8, 13],
-      "bounds": [100, 100],
-      "shouldFlattenTransform": false,
-      "drawsContent": true
+      "bounds": [100, 100]
     },
     {
       "name": "Scrolling Layer",
+      "position": [8, 13],
       "bounds": [85, 100],
-      "shouldFlattenTransform": false
+      "drawsContent": false
     },
     {
       "name": "Scrolling Contents Layer",
-      "bounds": [85, 200]
+      "position": [8, 13],
+      "bounds": [85, 200],
+      "drawsContent": false
     },
     {
       "name": "LayoutBlockFlow (positioned) DIV id='vertical' class='content tall'",
-      "bounds": [10, 200]
+      "position": [8, 13],
+      "bounds": [10, 200],
+      "drawsContent": false
     },
     {
       "name": "Overflow Controls Host Layer",
-      "bounds": [100, 100]
+      "position": [8, 13],
+      "bounds": [100, 100],
+      "drawsContent": false
     },
     {
       "name": "Vertical Scrollbar Layer",
-      "position": [85, 0],
-      "bounds": [15, 100]
+      "position": [93, 13],
+      "bounds": [15, 100],
+      "drawsContent": false
     },
     {
       "name": "LayoutBlockFlow (positioned) DIV class='container'",
       "position": [8, 13],
-      "bounds": [100, 100],
-      "shouldFlattenTransform": false,
-      "drawsContent": true
+      "bounds": [100, 100]
     },
     {
       "name": "Scrolling Layer",
+      "position": [8, 13],
       "bounds": [100, 85],
-      "shouldFlattenTransform": false
+      "drawsContent": false
     },
     {
       "name": "Scrolling Contents Layer",
-      "bounds": [200, 85]
+      "position": [8, 13],
+      "bounds": [200, 85],
+      "drawsContent": false
     },
     {
       "name": "LayoutBlockFlow (positioned) DIV id='horizontal' class='content wide'",
-      "bounds": [200, 10]
+      "position": [8, 13],
+      "bounds": [200, 10],
+      "drawsContent": false
     },
     {
       "name": "Overflow Controls Host Layer",
-      "bounds": [100, 100]
+      "position": [8, 13],
+      "bounds": [100, 100],
+      "drawsContent": false
     },
     {
       "name": "Horizontal Scrollbar Layer",
-      "position": [0, 85],
-      "bounds": [100, 15]
+      "position": [8, 98],
+      "bounds": [100, 15],
+      "drawsContent": false
     },
     {
       "name": "LayoutBlockFlow (positioned) DIV class='container'",
       "position": [8, 13],
-      "bounds": [100, 100],
-      "shouldFlattenTransform": false,
-      "drawsContent": true
-    },
-    {
-      "name": "Scrolling Layer",
-      "bounds": [85, 85],
-      "shouldFlattenTransform": false
-    },
-    {
-      "name": "Scrolling Contents Layer",
-      "bounds": [200, 200]
-    },
-    {
-      "name": "LayoutBlockFlow (positioned) DIV id='both' class='content wide tall'",
-      "bounds": [200, 200]
-    },
-    {
-      "name": "Overflow Controls Host Layer",
       "bounds": [100, 100]
     },
     {
+      "name": "Scrolling Layer",
+      "position": [8, 13],
+      "bounds": [85, 85],
+      "drawsContent": false
+    },
+    {
+      "name": "Scrolling Contents Layer",
+      "position": [8, 13],
+      "bounds": [200, 200],
+      "drawsContent": false
+    },
+    {
+      "name": "LayoutBlockFlow (positioned) DIV id='both' class='content wide tall'",
+      "position": [8, 13],
+      "bounds": [200, 200],
+      "drawsContent": false
+    },
+    {
+      "name": "Overflow Controls Host Layer",
+      "position": [8, 13],
+      "bounds": [100, 100],
+      "drawsContent": false
+    },
+    {
       "name": "Horizontal Scrollbar Layer",
-      "position": [0, 85],
-      "bounds": [85, 15]
+      "position": [8, 98],
+      "bounds": [85, 15],
+      "drawsContent": false
     },
     {
       "name": "Vertical Scrollbar Layer",
-      "position": [85, 0],
-      "bounds": [15, 85]
+      "position": [93, 13],
+      "bounds": [15, 85],
+      "drawsContent": false
     },
     {
       "name": "Scroll Corner Layer",
-      "position": [85, 85],
-      "bounds": [15, 15],
-      "drawsContent": true
+      "position": [93, 98],
+      "bounds": [15, 15]
     },
     {
       "name": "LayoutBlockFlow (positioned) DIV id='corner' class='container resizeWidget'",
       "position": [8, 13],
-      "bounds": [100, 100],
-      "drawsContent": true
+      "bounds": [100, 100]
     },
     {
       "name": "Child Containment Layer",
-      "bounds": [100, 100]
+      "position": [8, 13],
+      "bounds": [100, 100],
+      "drawsContent": false
     },
     {
       "name": "LayoutBlockFlow (positioned) DIV class='content'",
-      "bounds": [10, 10]
+      "position": [8, 13],
+      "bounds": [10, 10],
+      "drawsContent": false
     },
     {
       "name": "Overflow Controls Host Layer",
-      "bounds": [100, 100]
+      "position": [8, 13],
+      "bounds": [100, 100],
+      "drawsContent": false
     },
     {
       "name": "Scroll Corner Layer",
-      "position": [85, 85],
-      "bounds": [15, 15],
-      "drawsContent": true
+      "position": [93, 98],
+      "bounds": [15, 15]
     }
   ]
 }

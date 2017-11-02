@@ -36,8 +36,8 @@
 #include "core/dom/DOMNodeIds.h"
 #include "core/dom/Element.h"
 #include "core/dom/Node.h"
-#include "core/events/Event.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/Event.h"
+#include "core/dom/events/EventTarget.h"
 #include "core/frame/LocalDOMWindow.h"
 #include "core/inspector/InspectorDOMAgent.h"
 #include "core/inspector/V8InspectorString.h"
@@ -163,9 +163,8 @@ void InspectorDOMDebuggerAgent::EventListenersInfoForTarget(
     if (depth < 0)
       depth = INT_MAX;
     HeapVector<Member<Node>> nodes;
-    InspectorDOMAgent::CollectNodes(node, depth, pierce,
-                                    WTF::Bind(&FilterNodesWithListeners).get(),
-                                    &nodes);
+    InspectorDOMAgent::CollectNodes(
+        node, depth, pierce, WTF::Bind(&FilterNodesWithListeners), &nodes);
     for (Node* n : nodes) {
       // We are only interested in listeners from the current context.
       CollectEventListeners(isolate, n, v8::Local<v8::Value>(), n, pierce,
@@ -201,7 +200,7 @@ DEFINE_TRACE(InspectorDOMDebuggerAgent) {
 
 Response InspectorDOMDebuggerAgent::disable() {
   SetEnabled(false);
-  dom_breakpoints_.Clear();
+  dom_breakpoints_.clear();
   state_->remove(DOMDebuggerAgentState::kEventListenerBreakpoints);
   state_->remove(DOMDebuggerAgentState::kXhrBreakpoints);
   state_->remove(DOMDebuggerAgentState::kPauseOnAllXHRs);
@@ -556,7 +555,7 @@ void InspectorDOMDebuggerAgent::BreakProgramOnDOMEvent(Node* target,
     // Find breakpoint owner node.
     if (!insertion)
       breakpoint_owner = InspectorDOMAgent::InnerParentNode(target);
-    ASSERT(breakpoint_owner);
+    DCHECK(breakpoint_owner);
     while (!(dom_breakpoints_.at(breakpoint_owner) & (1 << breakpoint_type))) {
       Node* parent_node = InspectorDOMAgent::InnerParentNode(breakpoint_owner);
       if (!parent_node)
@@ -569,7 +568,7 @@ void InspectorDOMDebuggerAgent::BreakProgramOnDOMEvent(Node* target,
   }
 
   int breakpoint_owner_node_id = dom_agent_->BoundNodeId(breakpoint_owner);
-  ASSERT(breakpoint_owner_node_id);
+  DCHECK(breakpoint_owner_node_id);
   description->setInteger("nodeId", breakpoint_owner_node_id);
   description->setString("type", DomTypeName(breakpoint_type));
   String json = description->serialize();
@@ -801,7 +800,7 @@ void InspectorDOMDebuggerAgent::SetEnabled(bool enabled) {
 }
 
 void InspectorDOMDebuggerAgent::DidCommitLoadForLocalFrame(LocalFrame*) {
-  dom_breakpoints_.Clear();
+  dom_breakpoints_.clear();
 }
 
 }  // namespace blink

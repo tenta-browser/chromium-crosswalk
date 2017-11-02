@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "components/cronet/android/test/native_test_server.h"
-
 #include <memory>
 #include <string>
 #include <utility>
@@ -311,19 +309,6 @@ ScopedJavaLocalRef<jstring> GetHostPort(JNIEnv* env,
   std::string host_port =
       net::HostPortPair::FromURL(g_test_server->base_url()).ToString();
   return base::android::ConvertUTF8ToJavaString(env, host_port);
-}
-
-jboolean IsDataReductionProxySupported(JNIEnv* env,
-                                       const JavaParamRef<jclass>& jcaller) {
-#if defined(DATA_REDUCTION_PROXY_SUPPORT)
-  return JNI_TRUE;
-#else
-  return JNI_FALSE;
-#endif
-}
-
-bool RegisterNativeTestServer(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 }  // namespace cronet

@@ -13,8 +13,8 @@
 #include "core/editing/FrameSelection.h"
 #include "core/editing/Position.h"
 #include "core/editing/VisibleSelection.h"
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/testing/DummyPageHolder.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -61,7 +61,7 @@ TEST_F(ReplaceSelectionCommandTest, pasteSpanInText) {
   LocalFrame* frame = GetDocument().GetFrame();
   frame->Selection().SetSelection(
       SelectionInDOMTree::Builder()
-          .Collapse(Position(b_element->FirstChild(), 1))
+          .Collapse(Position(b_element->firstChild(), 1))
           .Build());
 
   DocumentFragment* fragment = GetDocument().createDocumentFragment();

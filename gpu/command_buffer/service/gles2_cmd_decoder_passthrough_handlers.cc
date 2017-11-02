@@ -1347,8 +1347,10 @@ error::Error GLES2DecoderPassthroughImpl::HandleResizeCHROMIUM(
   GLuint width = static_cast<GLuint>(c.width);
   GLuint height = static_cast<GLuint>(c.height);
   GLfloat scale_factor = static_cast<GLfloat>(c.scale_factor);
+  GLenum color_space = static_cast<GLenum>(c.color_space);
   GLboolean has_alpha = static_cast<GLboolean>(c.alpha);
-  error::Error error = DoResizeCHROMIUM(width, height, scale_factor, has_alpha);
+  error::Error error =
+      DoResizeCHROMIUM(width, height, scale_factor, color_space, has_alpha);
   if (error != error::kNoError) {
     return error;
   }
@@ -1811,22 +1813,37 @@ error::Error GLES2DecoderPassthroughImpl::HandleScheduleDCLayerCHROMIUM(
   const volatile gles2::cmds::ScheduleDCLayerCHROMIUM& c =
       *static_cast<const volatile gles2::cmds::ScheduleDCLayerCHROMIUM*>(
           cmd_data);
-  const GLfloat* mem = GetSharedMemoryAs<const GLfloat*>(c.shm_id, c.shm_offset,
-                                                         8 * sizeof(GLfloat));
+  unsigned int size;
+  const GLfloat* mem = GetSharedMemoryAndSizeAs<const GLfloat*>(
+      c.shm_id, c.shm_offset, 8 * sizeof(GLfloat), &size);
   if (!mem) {
     return error::kOutOfBounds;
   }
-  GLuint contents_texture_id = static_cast<GLint>(c.contents_texture_id);
+  const GLsizei num_textures = c.num_textures;
+  if (num_textures < 0 || (size - 8 * sizeof(GLfloat)) / sizeof(GLuint) <
+                              static_cast<GLuint>(num_textures)) {
+    return error::kOutOfBounds;
+  }
+  const volatile GLuint* contents_texture_ids =
+      reinterpret_cast<const volatile GLuint*>(mem + 8);
   const GLfloat* contents_rect = mem;
   GLuint background_color = static_cast<GLuint>(c.background_color);
   GLuint edge_aa_mask = static_cast<GLuint>(c.edge_aa_mask);
+  GLenum filter = static_cast<GLenum>(c.filter);
   const GLfloat* bounds_rect = mem + 4;
-  error::Error error =
-      DoScheduleDCLayerCHROMIUM(contents_texture_id, contents_rect,
-                                background_color, edge_aa_mask, bounds_rect);
+  error::Error error = DoScheduleDCLayerCHROMIUM(
+      num_textures, contents_texture_ids, contents_rect, background_color,
+      edge_aa_mask, filter, bounds_rect);
   if (error != error::kNoError) {
     return error;
   }
+  return error::kNoError;
+}
+
+error::Error GLES2DecoderPassthroughImpl::HandleSetColorSpaceForScanoutCHROMIUM(
+    uint32_t immediate_data_size,
+    const volatile void* cmd_data) {
+  NOTIMPLEMENTED();
   return error::kNoError;
 }
 
@@ -2719,6 +2736,26 @@ error::Error GLES2DecoderPassthroughImpl::HandleCompressedTexSubImage3D(
   return DoCompressedTexSubImage3D(target, level, xoffset, yoffset, zoffset,
                                    width, height, depth, format, image_size,
                                    data_size, data);
+}
+
+error::Error
+GLES2DecoderPassthroughImpl::HandleInitializeDiscardableTextureCHROMIUM(
+    uint32_t immediate_data_size,
+    const volatile void* cmd_data) {
+  return error::kNoError;
+}
+
+error::Error
+GLES2DecoderPassthroughImpl::HandleUnlockDiscardableTextureCHROMIUM(
+    uint32_t immediate_data_size,
+    const volatile void* cmd_data) {
+  return error::kNoError;
+}
+
+error::Error GLES2DecoderPassthroughImpl::HandleLockDiscardableTextureCHROMIUM(
+    uint32_t immediate_data_size,
+    const volatile void* cmd_data) {
+  return error::kNoError;
 }
 
 }  // namespace gles2

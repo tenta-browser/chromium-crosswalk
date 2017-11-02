@@ -310,6 +310,8 @@
   GLES2_GET_FUN(CreateAndConsumeTextureCHROMIUM)
 #define glBindUniformLocationCHROMIUM GLES2_GET_FUN(BindUniformLocationCHROMIUM)
 #define glBindTexImage2DCHROMIUM GLES2_GET_FUN(BindTexImage2DCHROMIUM)
+#define glBindTexImage2DWithInternalformatCHROMIUM \
+  GLES2_GET_FUN(BindTexImage2DWithInternalformatCHROMIUM)
 #define glReleaseTexImage2DCHROMIUM GLES2_GET_FUN(ReleaseTexImage2DCHROMIUM)
 #define glTraceBeginCHROMIUM GLES2_GET_FUN(TraceBeginCHROMIUM)
 #define glTraceEndCHROMIUM GLES2_GET_FUN(TraceEndCHROMIUM)
@@ -328,6 +330,8 @@
 #define glScheduleCALayerSharedStateCHROMIUM \
   GLES2_GET_FUN(ScheduleCALayerSharedStateCHROMIUM)
 #define glScheduleCALayerCHROMIUM GLES2_GET_FUN(ScheduleCALayerCHROMIUM)
+#define glSetColorSpaceForScanoutCHROMIUM \
+  GLES2_GET_FUN(SetColorSpaceForScanoutCHROMIUM)
 #define glScheduleCALayerInUseQueryCHROMIUM \
   GLES2_GET_FUN(ScheduleCALayerInUseQueryCHROMIUM)
 #define glCommitOverlayPlanesCHROMIUM GLES2_GET_FUN(CommitOverlayPlanesCHROMIUM)
@@ -389,5 +393,14 @@
   GLES2_GET_FUN(SwapBuffersWithBoundsCHROMIUM)
 #define glSetDrawRectangleCHROMIUM GLES2_GET_FUN(SetDrawRectangleCHROMIUM)
 #define glSetEnableDCLayersCHROMIUM GLES2_GET_FUN(SetEnableDCLayersCHROMIUM)
+#define glInitializeDiscardableTextureCHROMIUM \
+  GLES2_GET_FUN(InitializeDiscardableTextureCHROMIUM)
+#define glUnlockDiscardableTextureCHROMIUM \
+  GLES2_GET_FUN(UnlockDiscardableTextureCHROMIUM)
+#define glLockDiscardableTextureCHROMIUM \
+  GLES2_GET_FUN(LockDiscardableTextureCHROMIUM)
+#define glBeginRasterCHROMIUM GLES2_GET_FUN(BeginRasterCHROMIUM)
+#define glRasterCHROMIUM GLES2_GET_FUN(RasterCHROMIUM)
+#define glEndRasterCHROMIUM GLES2_GET_FUN(EndRasterCHROMIUM)
 
 #endif  // GPU_GLES2_GL2CHROMIUM_AUTOGEN_H_

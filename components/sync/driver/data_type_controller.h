@@ -82,6 +82,8 @@ class DataTypeController : public base::SupportsWeakPtr<DataTypeController> {
   // Returns true if the datatype started successfully.
   static bool IsSuccessfulResult(ConfigureResult result);
 
+  static std::string StateToString(State state);
+
   virtual ~DataTypeController();
 
   // Returns true if DataTypeManager should wait for LoadModels to complete
@@ -135,7 +137,7 @@ class DataTypeController : public base::SupportsWeakPtr<DataTypeController> {
   virtual void Stop() = 0;
 
   // Name of this data type.  For logging purposes only.
-  virtual std::string name() const = 0;
+  std::string name() const { return ModelTypeToString(type()); }
 
   // Current state of the data type controller.
   virtual State state() const = 0;
@@ -159,6 +161,9 @@ class DataTypeController : public base::SupportsWeakPtr<DataTypeController> {
   // which should be wrapped with syncer::BindToCurrentThread already.
   // Used to display entity counts in chrome://sync-internals.
   virtual void GetStatusCounters(const StatusCountersCallback& callback) = 0;
+
+  // Estimates memory usage of type and records it into histogram.
+  virtual void RecordMemoryUsageHistogram() = 0;
 
  protected:
   explicit DataTypeController(ModelType type);

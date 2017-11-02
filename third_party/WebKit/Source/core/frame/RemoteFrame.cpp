@@ -7,17 +7,17 @@
 #include "bindings/core/v8/WindowProxy.h"
 #include "bindings/core/v8/WindowProxyManager.h"
 #include "core/dom/RemoteSecurityContext.h"
+#include "core/dom/UserGestureIndicator.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/RemoteDOMWindow.h"
 #include "core/frame/RemoteFrameClient.h"
 #include "core/frame/RemoteFrameView.h"
 #include "core/html/HTMLFrameOwnerElement.h"
-#include "core/layout/api/LayoutPartItem.h"
+#include "core/layout/api/LayoutEmbeddedContentItem.h"
 #include "core/loader/FrameLoadRequest.h"
 #include "core/loader/FrameLoader.h"
 #include "core/paint/PaintLayer.h"
 #include "platform/PluginScriptForbiddenScope.h"
-#include "platform/UserGestureIndicator.h"
 #include "platform/graphics/GraphicsLayer.h"
 #include "platform/loader/fetch/ResourceRequest.h"
 #include "platform/weborigin/SecurityPolicy.h"
@@ -31,6 +31,7 @@ inline RemoteFrame::RemoteFrame(RemoteFrameClient* client,
     : Frame(client, page, owner, RemoteWindowProxyManager::Create(*this)),
       security_context_(RemoteSecurityContext::Create()) {
   dom_window_ = RemoteDOMWindow::Create(*this);
+  UpdateInertIfPossible();
 }
 
 RemoteFrame* RemoteFrame::Create(RemoteFrameClient* client,
@@ -40,7 +41,7 @@ RemoteFrame* RemoteFrame::Create(RemoteFrameClient* client,
 }
 
 RemoteFrame::~RemoteFrame() {
-  ASSERT(!view_);
+  DCHECK(!view_);
 }
 
 DEFINE_TRACE(RemoteFrame) {
@@ -53,7 +54,7 @@ void RemoteFrame::Navigate(Document& origin_document,
                            const KURL& url,
                            bool replace_current_item,
                            UserGestureStatus user_gesture_status) {
-  FrameLoadRequest frame_request(&origin_document, url);
+  FrameLoadRequest frame_request(&origin_document, ResourceRequest(url));
   frame_request.SetReplacesCurrentItem(replace_current_item);
   frame_request.GetResourceRequest().SetHasUserGesture(
       user_gesture_status == UserGestureStatus::kActive);
@@ -121,24 +122,30 @@ bool RemoteFrame::ShouldClose() {
   return true;
 }
 
+void RemoteFrame::SetIsInert(bool inert) {
+  if (inert != is_inert_)
+    Client()->SetIsInert(inert);
+  is_inert_ = inert;
+}
+
 void RemoteFrame::SetView(RemoteFrameView* view) {
   // Oilpan: as RemoteFrameView performs no finalization actions,
-  // no explicit dispose() of it needed here. (cf. FrameView::dispose().)
+  // no explicit Dispose() of it needed here. (cf. LocalFrameView::Dispose().)
   view_ = view;
 }
 
 void RemoteFrame::CreateView() {
   // If the RemoteFrame does not have a LocalFrame parent, there's no need to
-  // create a widget for it.
+  // create a EmbeddedContentView for it.
   if (!DeprecatedLocalOwner())
     return;
 
-  ASSERT(!DeprecatedLocalOwner()->OwnedWidget());
+  DCHECK(!DeprecatedLocalOwner()->OwnedEmbeddedContentView());
 
   SetView(RemoteFrameView::Create(this));
 
   if (!OwnerLayoutItem().IsNull())
-    DeprecatedLocalOwner()->SetWidget(view_);
+    DeprecatedLocalOwner()->SetEmbeddedContentView(view_);
 }
 
 RemoteFrameClient* RemoteFrame::Client() const {
@@ -152,7 +159,7 @@ void RemoteFrame::SetWebLayer(WebLayer* web_layer) {
   if (web_layer_)
     GraphicsLayer::RegisterContentsLayer(web_layer_);
 
-  ASSERT(Owner());
+  DCHECK(Owner());
   ToHTMLFrameOwnerElement(Owner())->SetNeedsCompositingUpdate();
 }
 

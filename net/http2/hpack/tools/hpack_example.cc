@@ -7,23 +7,20 @@
 #include <ctype.h>
 
 #include "base/logging.h"
-#include "net/spdy/spdy_test_utils.h"
-
-using base::StringPiece;
-using std::string;
+#include "net/http2/platform/api/http2_string_utils.h"
 
 namespace net {
 namespace test {
 namespace {
 
-void HpackExampleToStringOrDie(StringPiece example, string* output) {
+void HpackExampleToStringOrDie(Http2StringPiece example, Http2String* output) {
   while (!example.empty()) {
     const char c0 = example[0];
     if (isxdigit(c0)) {
       CHECK_GT(example.size(), 1u) << "Truncated hex byte?";
       const char c1 = example[1];
       CHECK(isxdigit(c1)) << "Found half a byte?";
-      *output += a2b_hex(example.substr(0, 2).as_string().c_str());
+      *output += Http2HexDecode(example.substr(0, 2));
       example.remove_prefix(2);
       continue;
     }
@@ -34,7 +31,7 @@ void HpackExampleToStringOrDie(StringPiece example, string* output) {
     if (example.starts_with("|")) {
       // Start of a comment. Skip to end of line or of input.
       auto pos = example.find('\n');
-      if (pos == StringPiece::npos) {
+      if (pos == Http2StringPiece::npos) {
         // End of input.
         break;
       }
@@ -51,8 +48,8 @@ void HpackExampleToStringOrDie(StringPiece example, string* output) {
 
 }  // namespace
 
-string HpackExampleToStringOrDie(StringPiece example) {
-  string output;
+Http2String HpackExampleToStringOrDie(Http2StringPiece example) {
+  Http2String output;
   HpackExampleToStringOrDie(example, &output);
   return output;
 }

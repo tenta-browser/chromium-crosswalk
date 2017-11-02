@@ -76,5 +76,19 @@ assertInterpolation({
   {at: 1, is: '10'},
   {at: 1.5, is: '20'}
 ]);
+
+assertInterpolation({
+  property: '--number',
+  from: '10',
+  to: '15',
+}, [
+  {at: -0.3, is: '8.5'},
+  {at: 0, is: '10'},
+  {at: 0.25, is: '11.25'},
+  {at: 0.5, is: '12.5'},
+  {at: 0.75, is: '13.75'},
+  {at: 1, is: '15'},
+  {at: 1.5, is: '17.5'}
+]);
 </script>
 </body>

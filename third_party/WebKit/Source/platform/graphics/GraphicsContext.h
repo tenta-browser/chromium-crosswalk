@@ -34,6 +34,7 @@
 #include "platform/graphics/DashArray.h"
 #include "platform/graphics/DrawLooperBuilder.h"
 #include "platform/graphics/GraphicsContextState.h"
+#include "platform/graphics/HighContrastSettings.h"
 #include "platform/graphics/ImageOrientation.h"
 #include "platform/graphics/paint/PaintRecord.h"
 #include "platform/graphics/paint/PaintRecorder.h"
@@ -82,6 +83,10 @@ class PLATFORM_EXPORT GraphicsContext {
 
   bool ContextDisabled() const { return disabled_state_; }
 
+  const HighContrastSettings& high_contrast_settings() {
+    return high_contrast_settings_;
+  }
+
   // ---------- State management methods -----------------
   void Save();
   void Restore();
@@ -89,6 +94,8 @@ class PLATFORM_EXPORT GraphicsContext {
 #if DCHECK_IS_ON()
   unsigned SaveCount() const;
 #endif
+
+  void SetHighContrast(const HighContrastSettings&);
 
   float StrokeThickness() const {
     return ImmutableState()->GetStrokeData().Thickness();
@@ -161,7 +168,16 @@ class PLATFORM_EXPORT GraphicsContext {
   void DrawLine(const IntPoint&, const IntPoint&);
 
   void FillPath(const Path&);
-  void StrokePath(const Path&);
+  // The length parameter is only used when the path has a dashed or dotted
+  // stroke style, with the default dash/dot path effect. If a non-zero length
+  // is provided the number of dashes/dots on a dashed/dotted
+  // line will be adjusted to start and end that length with a dash/dot.
+  // The dash_thickness parameter is only used when drawing dashed borders,
+  // where the stroke thickness has been set for corner miters but we want the
+  // dash length set from the border width.
+  void StrokePath(const Path&,
+                  const int length = 0,
+                  const int dash_thickness = 0);
 
   void FillEllipse(const FloatRect&);
   void StrokeEllipse(const FloatRect&);
@@ -237,14 +253,26 @@ class PLATFORM_EXPORT GraphicsContext {
                 SkClipOp = SkClipOp::kIntersect);
 
   void DrawText(const Font&, const TextRunPaintInfo&, const FloatPoint&);
+  void DrawText(const Font&, const TextFragmentPaintInfo&, const FloatPoint&);
+
   void DrawText(const Font&,
                 const TextRunPaintInfo&,
                 const FloatPoint&,
                 const PaintFlags&);
+  void DrawText(const Font&,
+                const TextFragmentPaintInfo&,
+                const FloatPoint&,
+                const PaintFlags&);
+
   void DrawEmphasisMarks(const Font&,
                          const TextRunPaintInfo&,
                          const AtomicString& mark,
                          const FloatPoint&);
+  void DrawEmphasisMarks(const Font&,
+                         const TextFragmentPaintInfo&,
+                         const AtomicString& mark,
+                         const FloatPoint&);
+
   void DrawBidiText(
       const Font&,
       const TextRunPaintInfo&,
@@ -259,14 +287,6 @@ class PLATFORM_EXPORT GraphicsContext {
                             int to = -1);
 
   void DrawLineForText(const FloatPoint&, float width);
-  enum DocumentMarkerLineStyle {
-    kDocumentMarkerSpellingLineStyle,
-    kDocumentMarkerGrammarLineStyle
-  };
-  void DrawLineForDocumentMarker(const FloatPoint&,
-                                 float width,
-                                 DocumentMarkerLineStyle,
-                                 float zoom);
 
   // beginLayer()/endLayer() behave like save()/restore() for CTM and clip
   // states. Apply SkBlendMode when the layer is composited on the backdrop
@@ -321,8 +341,13 @@ class PLATFORM_EXPORT GraphicsContext {
                        Edges clipped_edges = kNoEdge);
 
   const PaintFlags& FillFlags() const { return ImmutableState()->FillFlags(); }
-  const PaintFlags& StrokeFlags() const {
-    return ImmutableState()->StrokeFlags();
+  // If the length of the path to be stroked is known, pass it in for correct
+  // dash or dot placement. Border painting uses a stroke thickness determined
+  // by the corner miters. Set the dash_thickness to a non-zero number for
+  // cases where dashes should be based on a different thickness.
+  const PaintFlags& StrokeFlags(const int length = 0,
+                                const int dash_thickness = 0) const {
+    return ImmutableState()->StrokeFlags(length, dash_thickness);
   }
 
   // ---------- Transformation methods -----------------
@@ -370,6 +395,21 @@ class PLATFORM_EXPORT GraphicsContext {
     return paint_state_;
   }
 
+  template <typename TextPaintInfo>
+  void DrawTextInternal(const Font&,
+                        const TextPaintInfo&,
+                        const FloatPoint&,
+                        const PaintFlags&);
+
+  template <typename TextPaintInfo>
+  void DrawTextInternal(const Font&, const TextPaintInfo&, const FloatPoint&);
+
+  template <typename TextPaintInfo>
+  void DrawEmphasisMarksInternal(const Font&,
+                                 const TextPaintInfo&,
+                                 const AtomicString& mark,
+                                 const FloatPoint&);
+
   template <typename DrawTextFunc>
   void DrawTextPasses(const DrawTextFunc&);
 
@@ -412,6 +452,10 @@ class PLATFORM_EXPORT GraphicsContext {
 
   const SkMetaData& MetaData() const { return meta_data_; }
 
+  bool ShouldApplyHighContrastFilterToImage(const Image&) const;
+  Color ApplyHighContrastFilter(const Color& input) const;
+  PaintFlags ApplyHighContrastFilter(const PaintFlags* input) const;
+
   // null indicates painting is contextDisabled. Never delete this object.
   PaintCanvas* canvas_;
 
@@ -441,6 +485,9 @@ class PLATFORM_EXPORT GraphicsContext {
   const DisabledMode disabled_state_;
 
   float device_scale_factor_;
+
+  HighContrastSettings high_contrast_settings_;
+  sk_sp<SkColorFilter> high_contrast_filter_;
 
   unsigned printing_ : 1;
   unsigned has_meta_data_ : 1;

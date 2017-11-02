@@ -11,6 +11,7 @@
 #include "base/metrics/user_metrics.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_task_runner_handle.h"
+#include "base/values.h"
 #include "components/guest_view/browser/guest_view_event.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
@@ -189,10 +190,6 @@ bool WebViewPermissionHelper::OnMessageReceived(
   return web_view_permission_helper_delegate_->OnMessageReceived(
       message, render_frame_host);
 }
-
-bool WebViewPermissionHelper::OnMessageReceived(const IPC::Message& message) {
-  return web_view_permission_helper_delegate_->OnMessageReceived(message);
-}
 #endif  // BUILDFLAG(ENABLE_PLUGINS)
 
 void WebViewPermissionHelper::RequestMediaAccessPermission(
@@ -300,15 +297,6 @@ void WebViewPermissionHelper::FileSystemAccessedAsync(int render_process_id,
       render_process_id, render_frame_id, request_id, url, blocked_by_policy);
 }
 
-void WebViewPermissionHelper::FileSystemAccessedSync(int render_process_id,
-                                                     int render_frame_id,
-                                                     const GURL& url,
-                                                     bool blocked_by_policy,
-                                                     IPC::Message* reply_msg) {
-  web_view_permission_helper_delegate_->FileSystemAccessedSync(
-      render_process_id, render_frame_id, url, blocked_by_policy, reply_msg);
-}
-
 int WebViewPermissionHelper::RequestPermission(
     WebViewPermissionType permission_type,
     const base::DictionaryValue& request_info,
@@ -330,23 +318,23 @@ int WebViewPermissionHelper::RequestPermission(
   pending_permission_requests_[request_id] =
       PermissionResponseInfo(callback, permission_type, allowed_by_default);
   std::unique_ptr<base::DictionaryValue> args(new base::DictionaryValue());
-  args->Set(webview::kRequestInfo, request_info.DeepCopy());
+  args->SetKey(webview::kRequestInfo, request_info.Clone());
   args->SetInteger(webview::kRequestId, request_id);
   switch (permission_type) {
     case WEB_VIEW_PERMISSION_TYPE_NEW_WINDOW: {
-      web_view_guest_->DispatchEventToView(base::MakeUnique<GuestViewEvent>(
+      web_view_guest_->DispatchEventToView(std::make_unique<GuestViewEvent>(
           webview::kEventNewWindow, std::move(args)));
       break;
     }
     case WEB_VIEW_PERMISSION_TYPE_JAVASCRIPT_DIALOG: {
-      web_view_guest_->DispatchEventToView(base::MakeUnique<GuestViewEvent>(
+      web_view_guest_->DispatchEventToView(std::make_unique<GuestViewEvent>(
           webview::kEventDialog, std::move(args)));
       break;
     }
     default: {
       args->SetString(webview::kPermission,
                       PermissionTypeToString(permission_type));
-      web_view_guest_->DispatchEventToView(base::MakeUnique<GuestViewEvent>(
+      web_view_guest_->DispatchEventToView(std::make_unique<GuestViewEvent>(
           webview::kEventPermissionRequest, std::move(args)));
       break;
     }

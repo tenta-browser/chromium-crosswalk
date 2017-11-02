@@ -6,7 +6,6 @@
 
 #include <stddef.h>
 
-#include <algorithm>
 #include <string>
 
 #include "base/at_exit.h"
@@ -14,6 +13,7 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/stl_util.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -82,7 +82,11 @@ GLImplementation GetNamedGLImplementation(const std::string& name) {
 }
 
 GLImplementation GetSoftwareGLImplementation() {
+#if defined(OS_WIN)
+  return kGLImplementationSwiftShaderGL;
+#else
   return kGLImplementationOSMesaGL;
+#endif
 }
 
 const char* GetGLImplementationName(GLImplementation implementation) {
@@ -167,8 +171,7 @@ std::string FilterGLExtensionList(
       extensions, " ", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
 
   auto is_disabled = [&disabled_extensions](const base::StringPiece& ext) {
-    return std::find(disabled_extensions.begin(), disabled_extensions.end(),
-                     ext) != disabled_extensions.end();
+    return base::ContainsValue(disabled_extensions, ext);
   };
   extension_vec.erase(
       std::remove_if(extension_vec.begin(), extension_vec.end(), is_disabled),
@@ -224,14 +227,6 @@ bool WillUseGLGetStringForExtensions(GLApi* api) {
   GLVersionInfo::ParseVersionString(version_str, &major_version, &minor_version,
                                     &is_es, &is_es2, &is_es3);
   return is_es || major_version < 3;
-}
-
-std::unique_ptr<GLVersionInfo> GetVersionInfoFromContext(GLApi* api) {
-  std::string extensions = GetGLExtensionsFromCurrentContext(api);
-  return base::MakeUnique<GLVersionInfo>(
-      reinterpret_cast<const char*>(api->glGetStringFn(GL_VERSION)),
-      reinterpret_cast<const char*>(api->glGetStringFn(GL_RENDERER)),
-      extensions.c_str());
 }
 
 base::NativeLibrary LoadLibraryAndPrintError(

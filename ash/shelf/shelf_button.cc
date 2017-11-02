@@ -8,9 +8,10 @@
 
 #include "ash/ash_constants.h"
 #include "ash/shelf/ink_drop_button_listener.h"
+#include "ash/shelf/shelf.h"
 #include "ash/shelf/shelf_constants.h"
 #include "ash/shelf/shelf_view.h"
-#include "ash/shelf/wm_shelf.h"
+#include "ash/system/tray/tray_popup_utils.h"
 #include "base/memory/ptr_util.h"
 #include "base/time/time.h"
 #include "skia/ext/image_operations.h"
@@ -26,6 +27,7 @@
 #include "ui/views/animation/ink_drop_impl.h"
 #include "ui/views/animation/square_ink_drop_ripple.h"
 #include "ui/views/controls/image_view.h"
+#include "ui/views/painter.h"
 
 namespace {
 
@@ -204,7 +206,7 @@ class ShelfButton::AppStatusIndicatorView
 const char ShelfButton::kViewClassName[] = "ash/ShelfButton";
 
 ShelfButton::ShelfButton(InkDropButtonListener* listener, ShelfView* shelf_view)
-    : CustomButton(nullptr),
+    : Button(nullptr),
       listener_(listener),
       shelf_view_(shelf_view),
       icon_view_(new views::ImageView()),
@@ -233,6 +235,8 @@ ShelfButton::ShelfButton(InkDropButtonListener* listener, ShelfView* shelf_view)
 
   AddChildView(indicator_);
   AddChildView(icon_view_);
+
+  SetFocusPainter(TrayPopupUtils::CreateFocusPainter());
 }
 
 ShelfButton::~ShelfButton() {
@@ -309,14 +313,18 @@ void ShelfButton::ShowContextMenu(const gfx::Point& p,
   bool destroyed = false;
   destroyed_flag_ = &destroyed;
 
-  CustomButton::ShowContextMenu(p, source_type);
+  Button::ShowContextMenu(p, source_type);
 
   if (!destroyed) {
     destroyed_flag_ = nullptr;
     // The menu will not propagate mouse events while its shown. To address,
     // the hover state gets cleared once the menu was shown (and this was not
-    // destroyed).
-    ClearState(STATE_HOVERED);
+    // destroyed). In case context menu is shown target view does not receive
+    // OnMouseReleased events and we need to cancel capture manually.
+    if (shelf_view_->drag_view() == this)
+      OnMouseCaptureLost();
+    else
+      ClearState(STATE_HOVERED);
   }
 }
 
@@ -325,24 +333,24 @@ const char* ShelfButton::GetClassName() const {
 }
 
 bool ShelfButton::OnMousePressed(const ui::MouseEvent& event) {
-  CustomButton::OnMousePressed(event);
+  Button::OnMousePressed(event);
   shelf_view_->PointerPressedOnButton(this, ShelfView::MOUSE, event);
   return true;
 }
 
 void ShelfButton::OnMouseReleased(const ui::MouseEvent& event) {
-  CustomButton::OnMouseReleased(event);
+  Button::OnMouseReleased(event);
   shelf_view_->PointerReleasedOnButton(this, ShelfView::MOUSE, false);
 }
 
 void ShelfButton::OnMouseCaptureLost() {
   ClearState(STATE_HOVERED);
   shelf_view_->PointerReleasedOnButton(this, ShelfView::MOUSE, true);
-  CustomButton::OnMouseCaptureLost();
+  Button::OnMouseCaptureLost();
 }
 
 bool ShelfButton::OnMouseDragged(const ui::MouseEvent& event) {
-  CustomButton::OnMouseDragged(event);
+  Button::OnMouseDragged(event);
   shelf_view_->PointerDraggedOnButton(this, ShelfView::MOUSE, event);
   return true;
 }
@@ -354,8 +362,8 @@ void ShelfButton::GetAccessibleNodeData(ui::AXNodeData* node_data) {
 
 void ShelfButton::Layout() {
   const gfx::Rect button_bounds(GetContentsBounds());
-  WmShelf* wm_shelf = shelf_view_->wm_shelf();
-  const bool is_horizontal_shelf = wm_shelf->IsHorizontalAlignment();
+  Shelf* shelf = shelf_view_->shelf();
+  const bool is_horizontal_shelf = shelf->IsHorizontalAlignment();
   const int icon_pad =
       is_horizontal_shelf ? kIconPaddingHorizontal : kIconPaddingVertical;
   int x_offset = is_horizontal_shelf ? 0 : icon_pad;
@@ -366,7 +374,7 @@ void ShelfButton::Layout() {
 
   // If on the left or top 'invert' the inset so the constant gap is on
   // the interior (towards the center of display) edge of the shelf.
-  if (SHELF_ALIGNMENT_LEFT == wm_shelf->GetAlignment())
+  if (SHELF_ALIGNMENT_LEFT == shelf->alignment())
     x_offset = button_bounds.width() - (kIconSize + icon_pad);
 
   // Center icon with respect to the secondary axis.
@@ -395,7 +403,7 @@ void ShelfButton::Layout() {
   DCHECK_LE(icon_width, kIconSize);
   DCHECK_LE(icon_height, kIconSize);
 
-  switch (wm_shelf->GetAlignment()) {
+  switch (shelf->alignment()) {
     case SHELF_ALIGNMENT_BOTTOM:
     case SHELF_ALIGNMENT_BOTTOM_LOCKED:
       indicator_midpoint.set_y(button_bounds.bottom() - kIndicatorRadiusDip -
@@ -424,30 +432,22 @@ void ShelfButton::ChildPreferredSizeChanged(views::View* child) {
 
 void ShelfButton::OnFocus() {
   AddState(STATE_FOCUSED);
-  CustomButton::OnFocus();
+  Button::OnFocus();
 }
 
 void ShelfButton::OnBlur() {
   ClearState(STATE_FOCUSED);
-  CustomButton::OnBlur();
-}
-
-void ShelfButton::OnPaint(gfx::Canvas* canvas) {
-  CustomButton::OnPaint(canvas);
-  if (HasFocus()) {
-    canvas->DrawSolidFocusRect(gfx::RectF(GetLocalBounds()), kFocusBorderColor,
-                               kFocusBorderThickness);
-  }
+  Button::OnBlur();
 }
 
 void ShelfButton::OnGestureEvent(ui::GestureEvent* event) {
   switch (event->type()) {
     case ui::ET_GESTURE_TAP_DOWN:
       AddState(STATE_HOVERED);
-      return CustomButton::OnGestureEvent(event);
+      return Button::OnGestureEvent(event);
     case ui::ET_GESTURE_END:
       ClearState(STATE_HOVERED);
-      return CustomButton::OnGestureEvent(event);
+      return Button::OnGestureEvent(event);
     case ui::ET_GESTURE_SCROLL_BEGIN:
       shelf_view_->PointerPressedOnButton(this, ShelfView::TOUCH, *event);
       event->SetHandled();
@@ -462,7 +462,7 @@ void ShelfButton::OnGestureEvent(ui::GestureEvent* event) {
       event->SetHandled();
       return;
     default:
-      return CustomButton::OnGestureEvent(event);
+      return Button::OnGestureEvent(event);
   }
 }
 
@@ -479,18 +479,18 @@ bool ShelfButton::ShouldEnterPushedState(const ui::Event& event) {
   if (!shelf_view_->ShouldEventActivateButton(this, event))
     return false;
 
-  return CustomButton::ShouldEnterPushedState(event);
+  return Button::ShouldEnterPushedState(event);
 }
 
 std::unique_ptr<views::InkDrop> ShelfButton::CreateInkDrop() {
   std::unique_ptr<views::InkDropImpl> ink_drop =
-      CustomButton::CreateDefaultInkDropImpl();
+      Button::CreateDefaultInkDropImpl();
   ink_drop->SetShowHighlightOnHover(false);
   return std::move(ink_drop);
 }
 
 void ShelfButton::NotifyClick(const ui::Event& event) {
-  CustomButton::NotifyClick(event);
+  Button::NotifyClick(event);
   if (listener_)
     listener_->ButtonPressed(this, event, GetInkDrop());
 }
@@ -501,7 +501,7 @@ void ShelfButton::UpdateState() {
                           state_ & STATE_RUNNING));
 
   const bool is_horizontal_shelf =
-      shelf_view_->wm_shelf()->IsHorizontalAlignment();
+      shelf_view_->shelf()->IsHorizontalAlignment();
   icon_view_->SetHorizontalAlignment(is_horizontal_shelf
                                          ? views::ImageView::CENTER
                                          : views::ImageView::LEADING);

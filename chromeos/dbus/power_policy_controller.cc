@@ -124,6 +124,16 @@ std::string PowerPolicyController::GetPolicyDebugString(
     str += base::StringPrintf("battery_idle=%d ", policy.battery_idle_action());
   if (policy.has_lid_closed_action())
     str += base::StringPrintf("lid_closed=%d ", policy.lid_closed_action());
+  if (policy.has_screen_wake_lock()) {
+    str +=
+        base::StringPrintf("screen_wake_lock=%d ", policy.screen_wake_lock());
+  }
+  if (policy.has_dim_wake_lock())
+    str += base::StringPrintf("dim_wake_lock=%d ", policy.dim_wake_lock());
+  if (policy.has_system_wake_lock()) {
+    str +=
+        base::StringPrintf("system_wake_lock=%d ", policy.system_wake_lock());
+  }
   if (policy.has_use_audio_activity())
     str += base::StringPrintf("use_audio=%d ", policy.use_audio_activity());
   if (policy.has_use_video_activity())
@@ -276,12 +286,21 @@ void PowerPolicyController::NotifyChromeIsExiting() {
   SendCurrentPolicy();
 }
 
+void PowerPolicyController::SetEncryptionMigrationActive(bool active) {
+  if (encryption_migration_active_ == active)
+    return;
+
+  encryption_migration_active_ = active;
+  SendCurrentPolicy();
+}
+
 PowerPolicyController::PowerPolicyController(PowerManagerClient* client)
     : client_(client),
       prefs_were_set_(false),
       honor_screen_wake_locks_(true),
       next_wake_lock_id_(1),
-      chrome_is_exiting_(false) {
+      chrome_is_exiting_(false),
+      encryption_migration_active_(false) {
   DCHECK(client_);
   client_->AddObserver(this);
 }
@@ -338,33 +357,29 @@ void PowerPolicyController::SendCurrentPolicy() {
     causes += (causes.empty() ? "" : ", ") + it.second.description;
   }
 
-  if (honor_screen_wake_locks_ && have_screen_wake_locks) {
-    policy.mutable_ac_delays()->set_screen_dim_ms(0);
-    policy.mutable_ac_delays()->set_screen_off_ms(0);
-    policy.mutable_ac_delays()->set_screen_lock_ms(0);
-    policy.mutable_battery_delays()->set_screen_dim_ms(0);
-    policy.mutable_battery_delays()->set_screen_off_ms(0);
-    policy.mutable_battery_delays()->set_screen_lock_ms(0);
+  // Downgrade full-brightness and dimmed-brightness locks to system locks if
+  // wake locks aren't allowed to keep the screen on.
+  if (!honor_screen_wake_locks_ &&
+      (have_screen_wake_locks || have_dim_wake_locks)) {
+    have_system_wake_locks = true;
+    have_screen_wake_locks = false;
+    have_dim_wake_locks = false;
   }
 
-  if (honor_screen_wake_locks_ && have_dim_wake_locks) {
-    policy.mutable_ac_delays()->set_screen_off_ms(0);
-    policy.mutable_ac_delays()->set_screen_lock_ms(0);
-    policy.mutable_battery_delays()->set_screen_off_ms(0);
-    policy.mutable_battery_delays()->set_screen_lock_ms(0);
-  }
+  if (have_screen_wake_locks)
+    policy.set_screen_wake_lock(true);
+  if (have_dim_wake_locks)
+    policy.set_dim_wake_lock(true);
+  if (have_system_wake_locks)
+    policy.set_system_wake_lock(true);
 
-  if (have_screen_wake_locks || have_dim_wake_locks || have_system_wake_locks) {
-    if (!policy.has_ac_idle_action() || policy.ac_idle_action() ==
-        power_manager::PowerManagementPolicy_Action_SUSPEND) {
-      policy.set_ac_idle_action(
-          power_manager::PowerManagementPolicy_Action_DO_NOTHING);
-    }
-    if (!policy.has_battery_idle_action() || policy.battery_idle_action() ==
-        power_manager::PowerManagementPolicy_Action_SUSPEND) {
-      policy.set_battery_idle_action(
-          power_manager::PowerManagementPolicy_Action_DO_NOTHING);
-    }
+  if (encryption_migration_active_ &&
+      policy.lid_closed_action() !=
+          power_manager::PowerManagementPolicy_Action_DO_NOTHING) {
+    policy.set_lid_closed_action(
+        power_manager::PowerManagementPolicy_Action_SUSPEND);
+    causes +=
+        std::string((causes.empty() ? "" : ", ")) + "encryption migration";
   }
 
   // To avoid a race in the case where the user asks Chrome to sign out

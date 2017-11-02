@@ -59,7 +59,7 @@ class TestImageDecoder : public ImageDecoder {
                   unsigned width = 100,
                   unsigned height = 100) {
     SetSize(width, height);
-    frame_buffer_cache_.Resize(num_frames);
+    frame_buffer_cache_.resize(num_frames);
     for (size_t i = 0; i < num_frames; ++i)
       frame_buffer_cache_[i].SetOriginalFrameRect(IntRect(0, 0, width, height));
   }
@@ -239,7 +239,7 @@ TEST(ImageDecoderTest, clearCacheExceptFrameAll) {
   decoder->ClearCacheExceptFrame(kNotFound);
 
   for (size_t i = 0; i < kNumFrames; ++i) {
-    SCOPED_TRACE(testing::Message() << i);
+    SCOPED_TRACE(::testing::Message() << i);
     EXPECT_EQ(ImageFrame::kFrameEmpty, frame_buffers[i].GetStatus());
   }
 }
@@ -256,7 +256,7 @@ TEST(ImageDecoderTest, clearCacheExceptFramePreverveClearExceptFrame) {
   decoder->ResetRequiredPreviousFrames();
   decoder->ClearCacheExceptFrame(5);
   for (size_t i = 0; i < kNumFrames; ++i) {
-    SCOPED_TRACE(testing::Message() << i);
+    SCOPED_TRACE(::testing::Message() << i);
     if (i == 5)
       EXPECT_EQ(ImageFrame::kFrameComplete, frame_buffers[i].GetStatus());
     else

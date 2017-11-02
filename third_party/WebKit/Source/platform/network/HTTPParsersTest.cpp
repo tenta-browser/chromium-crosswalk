@@ -112,29 +112,6 @@ TEST(HTTPParsersTest, CommaDelimitedHeaderSet) {
   EXPECT_TRUE(set2.Contains("fo\to"));
 }
 
-TEST(HTTPParsersTest, HTTPFieldContent) {
-  const UChar kHiraganaA[2] = {0x3042, 0};
-
-  EXPECT_TRUE(blink::IsValidHTTPFieldContentRFC7230("\xd0\xa1"));
-  EXPECT_TRUE(blink::IsValidHTTPFieldContentRFC7230("t t"));
-  EXPECT_TRUE(blink::IsValidHTTPFieldContentRFC7230("t\tt"));
-  EXPECT_FALSE(blink::IsValidHTTPFieldContentRFC7230(" "));
-  EXPECT_FALSE(blink::IsValidHTTPFieldContentRFC7230(""));
-  EXPECT_FALSE(blink::IsValidHTTPFieldContentRFC7230("\x7f"));
-  EXPECT_FALSE(blink::IsValidHTTPFieldContentRFC7230("t\rt"));
-  EXPECT_FALSE(blink::IsValidHTTPFieldContentRFC7230("t\nt"));
-  EXPECT_FALSE(blink::IsValidHTTPFieldContentRFC7230("t\bt"));
-  EXPECT_FALSE(blink::IsValidHTTPFieldContentRFC7230("t\vt"));
-  EXPECT_FALSE(blink::IsValidHTTPFieldContentRFC7230(" t"));
-  EXPECT_FALSE(blink::IsValidHTTPFieldContentRFC7230("t "));
-  EXPECT_FALSE(blink::IsValidHTTPFieldContentRFC7230(String("t\0t", 3)));
-  EXPECT_FALSE(blink::IsValidHTTPFieldContentRFC7230(String("\0", 1)));
-  EXPECT_FALSE(blink::IsValidHTTPFieldContentRFC7230(String("test \0, 6")));
-  EXPECT_FALSE(blink::IsValidHTTPFieldContentRFC7230(String("test ")));
-  EXPECT_FALSE(blink::IsValidHTTPFieldContentRFC7230("test\r\n data"));
-  EXPECT_FALSE(blink::IsValidHTTPFieldContentRFC7230(String(kHiraganaA)));
-}
-
 TEST(HTTPParsersTest, HTTPToken) {
   const UChar kHiraganaA[2] = {0x3042, 0};
   const UChar kLatinCapitalAWithMacron[2] = {0x100, 0};
@@ -416,6 +393,9 @@ TEST(HTTPParsersTest, ParseHTTPRefresh) {
   String url;
   EXPECT_FALSE(ParseHTTPRefresh("", nullptr, delay, url));
   EXPECT_FALSE(ParseHTTPRefresh(" ", nullptr, delay, url));
+  EXPECT_FALSE(ParseHTTPRefresh("1.3xyz url=foo", nullptr, delay, url));
+  EXPECT_FALSE(ParseHTTPRefresh("1.3.4xyz url=foo", nullptr, delay, url));
+  EXPECT_FALSE(ParseHTTPRefresh("1e1 url=foo", nullptr, delay, url));
 
   EXPECT_TRUE(ParseHTTPRefresh("123 ", nullptr, delay, url));
   EXPECT_EQ(123.0, delay);
@@ -439,6 +419,19 @@ TEST(HTTPParsersTest, ParseHTTPRefresh) {
   EXPECT_TRUE(
       ParseHTTPRefresh("10\nurl=dest", IsASCIISpace<UChar>, delay, url));
   EXPECT_EQ(10, delay);
+  EXPECT_EQ("dest", url);
+
+  EXPECT_TRUE(
+      ParseHTTPRefresh("1.5; url=dest", IsASCIISpace<UChar>, delay, url));
+  EXPECT_EQ(1.5, delay);
+  EXPECT_EQ("dest", url);
+  EXPECT_TRUE(
+      ParseHTTPRefresh("1.5.9; url=dest", IsASCIISpace<UChar>, delay, url));
+  EXPECT_EQ(1.5, delay);
+  EXPECT_EQ("dest", url);
+  EXPECT_TRUE(
+      ParseHTTPRefresh("7..; url=dest", IsASCIISpace<UChar>, delay, url));
+  EXPECT_EQ(7, delay);
   EXPECT_EQ("dest", url);
 }
 
@@ -498,6 +491,500 @@ TEST(HTTPParsersTest, ParseMultipartHeadersContentCharset) {
   EXPECT_EQ("text/html; charset=utf-8",
             response.HttpHeaderField("content-type"));
   EXPECT_EQ("utf-8", response.TextEncodingName());
+}
+
+void testServerTimingHeader(const char* headerValue,
+                            Vector<Vector<String>> expectedResults) {
+  std::unique_ptr<ServerTimingHeaderVector> results =
+      ParseServerTimingHeader(headerValue);
+  EXPECT_EQ((*results).size(), expectedResults.size());
+  unsigned i = 0;
+  for (const auto& header : *results) {
+    Vector<String> expectedResult = expectedResults[i++];
+    EXPECT_EQ(header->name, expectedResult[0]);
+    EXPECT_EQ(header->duration, expectedResult[1].ToDouble());
+    EXPECT_EQ(header->description, expectedResult[2]);
+  }
+}
+
+TEST(HTTPParsersTest, ParseServerTimingHeader) {
+  testServerTimingHeader("", {});
+  testServerTimingHeader("metric", {{"metric", "0", ""}});
+  testServerTimingHeader("metric,", {{"metric", "0", ""}});
+  testServerTimingHeader("metric ,", {{"metric", "0", ""}});
+  testServerTimingHeader("metric;", {{"metric", "0", ""}});
+  testServerTimingHeader("metric;,", {{"metric", "0", ""}});
+  testServerTimingHeader("metric; ,", {{"metric", "0", ""}});
+  testServerTimingHeader("metric ;", {{"metric", "0", ""}});
+  testServerTimingHeader("metric ;,", {{"metric", "0", ""}});
+  testServerTimingHeader("metric ; ,", {{"metric", "0", ""}});
+  testServerTimingHeader("metric;description",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric;description,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric;description ,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric ;description",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric ;description,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric ;description ,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric; description",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric; description,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric; description ,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric ; description",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric ; description,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric ; description ,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric=", {{"metric", "0", ""}});
+  testServerTimingHeader("metric=,", {{"metric", "0", ""}});
+  testServerTimingHeader("metric= ,", {{"metric", "0", ""}});
+  testServerTimingHeader("metric=;", {{"metric", "0", ""}});
+  testServerTimingHeader("metric=;,", {{"metric", "0", ""}});
+  testServerTimingHeader("metric=; ,", {{"metric", "0", ""}});
+  testServerTimingHeader("metric= ;", {{"metric", "0", ""}});
+  testServerTimingHeader("metric= ;,", {{"metric", "0", ""}});
+  testServerTimingHeader("metric= ; ,", {{"metric", "0", ""}});
+  testServerTimingHeader("metric=;description",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric=;description,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric=;description ,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric= ;description",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric= ;description,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric= ;description ,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric=; description",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric=; description,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric=; description ,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric= ; description",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric= ; description,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric= ; description ,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric =", {{"metric", "0", ""}});
+  testServerTimingHeader("metric =,", {{"metric", "0", ""}});
+  testServerTimingHeader("metric = ,", {{"metric", "0", ""}});
+  testServerTimingHeader("metric =;", {{"metric", "0", ""}});
+  testServerTimingHeader("metric =;,", {{"metric", "0", ""}});
+  testServerTimingHeader("metric =; ,", {{"metric", "0", ""}});
+  testServerTimingHeader("metric = ;", {{"metric", "0", ""}});
+  testServerTimingHeader("metric = ;,", {{"metric", "0", ""}});
+  testServerTimingHeader("metric = ; ,", {{"metric", "0", ""}});
+  testServerTimingHeader("metric =;description",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric =;description,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric =;description ,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric = ;description",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric = ;description,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric = ;description ,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric =; description",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric =; description,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric =; description ,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric = ; description",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric = ; description,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric = ; description ,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader("metric=123.4", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric=123.4,", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric=123.4 ,", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric=123.4;", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric=123.4;,", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric=123.4; ,", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric=123.4 ;", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric=123.4 ;,", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric=123.4 ; ,", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric=123.4;description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric=123.4;description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric=123.4;description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric=123.4 ;description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric=123.4 ;description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric=123.4 ;description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric=123.4; description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric=123.4; description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric=123.4; description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric=123.4 ; description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric=123.4 ; description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric=123.4 ; description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric =123.4", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric =123.4,", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric =123.4 ,", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric =123.4;", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric =123.4;,", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric =123.4; ,", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric =123.4 ;", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric =123.4 ;,", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric =123.4 ; ,", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric =123.4;description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric =123.4;description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric =123.4;description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric =123.4 ;description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric =123.4 ;description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric =123.4 ;description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric =123.4; description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric =123.4; description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric =123.4; description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric =123.4 ; description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric =123.4 ; description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric =123.4 ; description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric= 123.4", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric= 123.4,", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric= 123.4 ,", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric= 123.4;", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric= 123.4;,", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric= 123.4; ,", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric= 123.4 ;", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric= 123.4 ;,", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric= 123.4 ; ,", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric= 123.4;description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric= 123.4;description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric= 123.4;description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric= 123.4 ;description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric= 123.4 ;description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric= 123.4 ;description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric= 123.4; description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric= 123.4; description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric= 123.4; description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric= 123.4 ; description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric= 123.4 ; description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric= 123.4 ; description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric = 123.4", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric = 123.4,", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric = 123.4 ,", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric = 123.4;", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric = 123.4;,", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric = 123.4; ,", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric = 123.4 ;", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric = 123.4 ;,", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric = 123.4 ; ,", {{"metric", "123.4", ""}});
+  testServerTimingHeader("metric = 123.4;description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric = 123.4;description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric = 123.4;description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric = 123.4 ;description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric = 123.4 ;description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric = 123.4 ;description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric = 123.4; description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric = 123.4; description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric = 123.4; description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric = 123.4 ; description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric = 123.4 ; description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader("metric = 123.4 ; description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric", {{"metric", "0", ""}});
+  testServerTimingHeader(" metric,", {{"metric", "0", ""}});
+  testServerTimingHeader(" metric ,", {{"metric", "0", ""}});
+  testServerTimingHeader(" metric;", {{"metric", "0", ""}});
+  testServerTimingHeader(" metric;,", {{"metric", "0", ""}});
+  testServerTimingHeader(" metric; ,", {{"metric", "0", ""}});
+  testServerTimingHeader(" metric ;", {{"metric", "0", ""}});
+  testServerTimingHeader(" metric ;,", {{"metric", "0", ""}});
+  testServerTimingHeader(" metric ; ,", {{"metric", "0", ""}});
+  testServerTimingHeader(" metric;description",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric;description,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric;description ,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric ;description",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric ;description,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric ;description ,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric; description",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric; description,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric; description ,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric ; description",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric ; description,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric ; description ,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric=", {{"metric", "0", ""}});
+  testServerTimingHeader(" metric=,", {{"metric", "0", ""}});
+  testServerTimingHeader(" metric= ,", {{"metric", "0", ""}});
+  testServerTimingHeader(" metric=;", {{"metric", "0", ""}});
+  testServerTimingHeader(" metric=;,", {{"metric", "0", ""}});
+  testServerTimingHeader(" metric=; ,", {{"metric", "0", ""}});
+  testServerTimingHeader(" metric= ;", {{"metric", "0", ""}});
+  testServerTimingHeader(" metric= ;,", {{"metric", "0", ""}});
+  testServerTimingHeader(" metric= ; ,", {{"metric", "0", ""}});
+  testServerTimingHeader(" metric=;description",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric=;description,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric=;description ,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric= ;description",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric= ;description,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric= ;description ,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric=; description",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric=; description,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric=; description ,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric= ; description",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric= ; description,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric= ; description ,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric =", {{"metric", "0", ""}});
+  testServerTimingHeader(" metric =,", {{"metric", "0", ""}});
+  testServerTimingHeader(" metric = ,", {{"metric", "0", ""}});
+  testServerTimingHeader(" metric =;", {{"metric", "0", ""}});
+  testServerTimingHeader(" metric =;,", {{"metric", "0", ""}});
+  testServerTimingHeader(" metric =; ,", {{"metric", "0", ""}});
+  testServerTimingHeader(" metric = ;", {{"metric", "0", ""}});
+  testServerTimingHeader(" metric = ;,", {{"metric", "0", ""}});
+  testServerTimingHeader(" metric = ; ,", {{"metric", "0", ""}});
+  testServerTimingHeader(" metric =;description",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric =;description,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric =;description ,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric = ;description",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric = ;description,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric = ;description ,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric =; description",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric =; description,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric =; description ,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric = ; description",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric = ; description,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric = ; description ,",
+                         {{"metric", "0", "description"}});
+  testServerTimingHeader(" metric=123.4", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric=123.4,", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric=123.4 ,", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric=123.4;", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric=123.4;,", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric=123.4; ,", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric=123.4 ;", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric=123.4 ;,", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric=123.4 ; ,", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric=123.4;description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric=123.4;description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric=123.4;description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric=123.4 ;description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric=123.4 ;description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric=123.4 ;description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric=123.4; description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric=123.4; description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric=123.4; description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric=123.4 ; description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric=123.4 ; description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric=123.4 ; description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric =123.4", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric =123.4,", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric =123.4 ,", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric =123.4;", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric =123.4;,", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric =123.4; ,", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric =123.4 ;", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric =123.4 ;,", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric =123.4 ; ,", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric =123.4;description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric =123.4;description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric =123.4;description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric =123.4 ;description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric =123.4 ;description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric =123.4 ;description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric =123.4; description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric =123.4; description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric =123.4; description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric =123.4 ; description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric =123.4 ; description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric =123.4 ; description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric= 123.4", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric= 123.4,", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric= 123.4 ,", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric= 123.4;", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric= 123.4;,", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric= 123.4; ,", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric= 123.4 ;", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric= 123.4 ;,", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric= 123.4 ; ,", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric= 123.4;description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric= 123.4;description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric= 123.4;description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric= 123.4 ;description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric= 123.4 ;description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric= 123.4 ;description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric= 123.4; description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric= 123.4; description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric= 123.4; description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric= 123.4 ; description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric= 123.4 ; description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric= 123.4 ; description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric = 123.4", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric = 123.4,", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric = 123.4 ,", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric = 123.4;", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric = 123.4;,", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric = 123.4; ,", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric = 123.4 ;", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric = 123.4 ;,", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric = 123.4 ; ,", {{"metric", "123.4", ""}});
+  testServerTimingHeader(" metric = 123.4;description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric = 123.4;description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric = 123.4;description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric = 123.4 ;description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric = 123.4 ;description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric = 123.4 ;description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric = 123.4; description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric = 123.4; description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric = 123.4; description ,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric = 123.4 ; description",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric = 123.4 ; description,",
+                         {{"metric", "123.4", "description"}});
+  testServerTimingHeader(" metric = 123.4 ; description ,",
+                         {{"metric", "123.4", "description"}});
+
+  testServerTimingHeader(
+      "metric1=12.3;description1,metric2=45.6;description2,metric3=78.9;"
+      "description3",
+      {{"metric1", "12.3", "description1"},
+       {"metric2", "45.6", "description2"},
+       {"metric3", "78.9", "description3"}});
+
+  // quoted-string
+  testServerTimingHeader("metric;\"\"", {{"metric", "0", ""}});
+  testServerTimingHeader("metric;\"\"\"", {{"metric", "0", ""}});
+  testServerTimingHeader("metric;\"\\\"\"", {{"metric", "0", "\""}});
+  testServerTimingHeader("metric;\"\\\\\"\"", {{"metric", "0", "\\"}});
+  testServerTimingHeader("metric;\"\\\\\\\"\"", {{"metric", "0", "\\\""}});
 }
 
 }  // namespace blink

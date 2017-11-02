@@ -35,6 +35,8 @@
 #include "platform/animation/CompositorFloatAnimationCurve.h"
 #include "platform/animation/CompositorTargetProperty.h"
 #include "platform/graphics/CompositorElementId.h"
+#include "platform/graphics/test/FakeScrollableArea.h"
+#include "platform/scheduler/child/web_scheduler.h"
 #include "platform/scroll/ScrollableArea.h"
 #include "platform/testing/FakeGraphicsLayer.h"
 #include "platform/testing/FakeGraphicsLayerClient.h"
@@ -47,29 +49,34 @@
 #include "public/platform/WebCompositorSupport.h"
 #include "public/platform/WebLayer.h"
 #include "public/platform/WebLayerTreeView.h"
-#include "public/platform/WebScheduler.h"
 #include "public/platform/WebThread.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace blink {
 
-class GraphicsLayerTest : public testing::Test {
+class GraphicsLayerTest : public ::testing::Test {
  public:
   GraphicsLayerTest() {
     clip_layer_ = WTF::WrapUnique(new FakeGraphicsLayer(&client_));
     scroll_elasticity_layer_ = WTF::WrapUnique(new FakeGraphicsLayer(&client_));
+    page_scale_layer_ = WTF::WrapUnique(new FakeGraphicsLayer(&client_));
     graphics_layer_ = WTF::WrapUnique(new FakeGraphicsLayer(&client_));
     clip_layer_->AddChild(scroll_elasticity_layer_.get());
-    scroll_elasticity_layer_->AddChild(graphics_layer_.get());
-    graphics_layer_->PlatformLayer()->SetScrollClipLayer(
-        clip_layer_->PlatformLayer());
+    scroll_elasticity_layer_->AddChild(page_scale_layer_.get());
+    page_scale_layer_->AddChild(graphics_layer_.get());
+    graphics_layer_->PlatformLayer()->SetScrollable(
+        clip_layer_->PlatformLayer()->Bounds());
     platform_layer_ = graphics_layer_->PlatformLayer();
     layer_tree_view_ = WTF::WrapUnique(new WebLayerTreeViewImplForTesting);
     DCHECK(layer_tree_view_);
     layer_tree_view_->SetRootLayer(*clip_layer_->PlatformLayer());
-    layer_tree_view_->RegisterViewportLayers(
-        scroll_elasticity_layer_->PlatformLayer(), clip_layer_->PlatformLayer(),
-        graphics_layer_->PlatformLayer(), 0);
+    WebLayerTreeView::ViewportLayers viewport_layers;
+    viewport_layers.overscroll_elasticity =
+        scroll_elasticity_layer_->PlatformLayer();
+    viewport_layers.page_scale = page_scale_layer_->PlatformLayer();
+    viewport_layers.inner_viewport_container = clip_layer_->PlatformLayer();
+    viewport_layers.inner_viewport_scroll = graphics_layer_->PlatformLayer();
+    layer_tree_view_->RegisterViewportLayers(viewport_layers);
     layer_tree_view_->SetViewportSize(WebSize(1, 1));
   }
 
@@ -83,11 +90,12 @@ class GraphicsLayerTest : public testing::Test {
  protected:
   WebLayer* platform_layer_;
   std::unique_ptr<FakeGraphicsLayer> graphics_layer_;
+  std::unique_ptr<FakeGraphicsLayer> page_scale_layer_;
   std::unique_ptr<FakeGraphicsLayer> scroll_elasticity_layer_;
   std::unique_ptr<FakeGraphicsLayer> clip_layer_;
 
  private:
-  std::unique_ptr<WebLayerTreeView> layer_tree_view_;
+  std::unique_ptr<WebLayerTreeViewImplForTesting> layer_tree_view_;
   FakeGraphicsLayerClient client_;
 };
 
@@ -127,7 +135,7 @@ TEST_F(GraphicsLayerTest, updateLayerShouldFlattenTransformWithAnimations) {
   host.AddTimeline(*compositor_timeline);
   compositor_timeline->PlayerAttached(player);
 
-  platform_layer_->SetElementId(CompositorElementId(platform_layer_->Id(), 0));
+  platform_layer_->SetElementId(CompositorElementId(platform_layer_->Id()));
 
   player.CompositorPlayer()->AttachElement(platform_layer_->GetElementId());
   ASSERT_TRUE(player.CompositorPlayer()->IsElementAttached());
@@ -158,48 +166,5 @@ TEST_F(GraphicsLayerTest, updateLayerShouldFlattenTransformWithAnimations) {
   compositor_timeline->PlayerDestroyed(player);
   host.RemoveTimeline(*compositor_timeline.get());
 }
-
-class FakeScrollableArea : public GarbageCollectedFinalized<FakeScrollableArea>,
-                           public ScrollableArea {
-  USING_GARBAGE_COLLECTED_MIXIN(FakeScrollableArea);
-
- public:
-  static FakeScrollableArea* Create() { return new FakeScrollableArea; }
-
-  bool IsActive() const override { return false; }
-  int ScrollSize(ScrollbarOrientation) const override { return 100; }
-  bool IsScrollCornerVisible() const override { return false; }
-  IntRect ScrollCornerRect() const override { return IntRect(); }
-  int VisibleWidth() const override { return 10; }
-  int VisibleHeight() const override { return 10; }
-  IntSize ContentsSize() const override { return IntSize(100, 100); }
-  bool ScrollbarsCanBeActive() const override { return false; }
-  IntRect ScrollableAreaBoundingBox() const override { return IntRect(); }
-  void ScrollControlWasSetNeedsPaintInvalidation() override {}
-  bool UserInputScrollable(ScrollbarOrientation) const override { return true; }
-  bool ShouldPlaceVerticalScrollbarOnLeft() const override { return false; }
-  int PageStep(ScrollbarOrientation) const override { return 0; }
-  IntSize MinimumScrollOffsetInt() const override { return IntSize(); }
-  IntSize MaximumScrollOffsetInt() const override {
-    return ContentsSize() - IntSize(VisibleWidth(), VisibleHeight());
-  }
-
-  void UpdateScrollOffset(const ScrollOffset& offset, ScrollType) override {
-    scroll_offset_ = offset;
-  }
-  ScrollOffset GetScrollOffset() const override { return scroll_offset_; }
-  IntSize ScrollOffsetInt() const override {
-    return FlooredIntSize(scroll_offset_);
-  }
-
-  RefPtr<WebTaskRunner> GetTimerTaskRunner() const final {
-    return Platform::Current()->CurrentThread()->Scheduler()->TimerTaskRunner();
-  }
-
-  DEFINE_INLINE_VIRTUAL_TRACE() { ScrollableArea::Trace(visitor); }
-
- private:
-  ScrollOffset scroll_offset_;
-};
 
 }  // namespace blink

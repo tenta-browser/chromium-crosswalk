@@ -321,6 +321,11 @@
     margin-left: 4px;
 }
 
+.console-message-badge {
+    float: right;
+    margin-left: 4px;
+}
+
 .console-message-nowrap-below,
 .console-message-nowrap-below div,
 .console-message-nowrap-below span {
@@ -357,6 +362,10 @@
 
 .console-view-object-properties-section {
     padding: 0px;
+    position: relative;
+    vertical-align: baseline;
+    color: inherit;
+    display: inline-block;
 }
 
 .console-message-stack-trace-toggle {

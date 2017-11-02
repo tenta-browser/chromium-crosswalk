@@ -11,7 +11,9 @@
 #include "base/optional.h"
 #include "base/time/time.h"
 #include "chrome/browser/page_load_metrics/observers/page_load_metrics_observer_test_harness.h"
+#include "chrome/browser/page_load_metrics/page_load_tracker.h"
 #include "chrome/common/page_load_metrics/page_load_timing.h"
+#include "chrome/common/page_load_metrics/test/page_load_metrics_test_util.h"
 #include "content/public/browser/web_contents.h"
 
 namespace previews {
@@ -44,14 +46,16 @@ class PreviewsPageLoadMetricsObserverTest
   PreviewsPageLoadMetricsObserverTest() : is_offline_preview_(false) {}
 
   void ResetTest() {
+    page_load_metrics::InitPageLoadTimingForTest(&timing_);
     // Reset to the default testing state. Does not reset histogram state.
     timing_.navigation_start = base::Time::FromDoubleT(1);
     timing_.response_start = base::TimeDelta::FromSeconds(2);
-    timing_.parse_start = base::TimeDelta::FromSeconds(3);
-    timing_.first_contentful_paint = base::TimeDelta::FromSeconds(4);
-    timing_.first_image_paint = base::TimeDelta::FromSeconds(5);
-    timing_.first_text_paint = base::TimeDelta::FromSeconds(6);
-    timing_.load_event_start = base::TimeDelta::FromSeconds(7);
+    timing_.parse_timing->parse_start = base::TimeDelta::FromSeconds(3);
+    timing_.paint_timing->first_contentful_paint =
+        base::TimeDelta::FromSeconds(4);
+    timing_.paint_timing->first_image_paint = base::TimeDelta::FromSeconds(5);
+    timing_.paint_timing->first_text_paint = base::TimeDelta::FromSeconds(6);
+    timing_.document_timing->load_event_start = base::TimeDelta::FromSeconds(7);
     PopulateRequiredTimingFields(&timing_);
   }
 
@@ -68,16 +72,16 @@ class PreviewsPageLoadMetricsObserverTest
   void ValidateHistograms() {
     ValidateHistogramsFor(
         internal::kHistogramOfflinePreviewsDOMContentLoadedEventFired,
-        timing_.dom_content_loaded_event_start);
+        timing_.document_timing->dom_content_loaded_event_start);
     ValidateHistogramsFor(internal::kHistogramOfflinePreviewsFirstLayout,
-                          timing_.first_layout);
+                          timing_.document_timing->first_layout);
     ValidateHistogramsFor(internal::kHistogramOfflinePreviewsLoadEventFired,
-                          timing_.load_event_start);
+                          timing_.document_timing->load_event_start);
     ValidateHistogramsFor(
         internal::kHistogramOfflinePreviewsFirstContentfulPaint,
-        timing_.first_contentful_paint);
+        timing_.paint_timing->first_contentful_paint);
     ValidateHistogramsFor(internal::kHistogramOfflinePreviewsParseStart,
-                          timing_.parse_start);
+                          timing_.parse_timing->parse_start);
   }
 
   void ValidateHistogramsFor(const std::string& histogram_,
@@ -99,7 +103,7 @@ class PreviewsPageLoadMetricsObserverTest
   }
 
  private:
-  page_load_metrics::PageLoadTiming timing_;
+  page_load_metrics::mojom::PageLoadTiming timing_;
   bool is_offline_preview_;
 
   DISALLOW_COPY_AND_ASSIGN(PreviewsPageLoadMetricsObserverTest);

@@ -85,19 +85,20 @@ String PseudoElement::PseudoElementNameForEvents(PseudoId pseudo_id) {
 PseudoElement::PseudoElement(Element* parent, PseudoId pseudo_id)
     : Element(PseudoElementTagName(pseudo_id),
               &parent->GetDocument(),
-              kCreateElement),
+              kCreatePseudoElement),
       pseudo_id_(pseudo_id) {
   DCHECK_NE(pseudo_id, kPseudoIdNone);
   parent->GetTreeScope().AdoptIfNeeded(*this);
   SetParentOrShadowHostNode(parent);
   SetHasCustomStyleCallbacks();
   if ((pseudo_id == kPseudoIdBefore || pseudo_id == kPseudoIdAfter) &&
-      parent->HasTagName(HTMLNames::inputTag))
+      parent->HasTagName(HTMLNames::inputTag)) {
     UseCounter::Count(parent->GetDocument(),
-                      UseCounter::kPseudoBeforeAfterForInputElement);
+                      WebFeature::kPseudoBeforeAfterForInputElement);
+  }
 }
 
-PassRefPtr<ComputedStyle> PseudoElement::CustomStyleForLayoutObject() {
+RefPtr<ComputedStyle> PseudoElement::CustomStyleForLayoutObject() {
   return ParentOrShadowHostElement()->PseudoStyle(
       PseudoStyleRequest(pseudo_id_));
 }
@@ -117,7 +118,7 @@ void PseudoElement::Dispose() {
   RemovedFrom(parent);
 }
 
-void PseudoElement::AttachLayoutTree(const AttachContext& context) {
+void PseudoElement::AttachLayoutTree(AttachContext& context) {
   DCHECK(!GetLayoutObject());
 
   Element::AttachLayoutTree(context);

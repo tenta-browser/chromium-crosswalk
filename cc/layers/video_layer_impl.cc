@@ -130,13 +130,13 @@ bool VideoLayerImpl::WillDraw(DrawMode draw_mode,
         external_resources.mailboxes[i],
         SingleReleaseCallbackImpl::Create(
             external_resources.release_callbacks[i]),
-        external_resources.read_lock_fences_enabled);
+        external_resources.read_lock_fences_enabled,
+        external_resources.buffer_format);
     frame_resources_.push_back(FrameResource(
         resource_id, external_resources.mailboxes[i].size_in_pixels(),
         external_resources.mailboxes[i].is_overlay_candidate()));
     resource_ids.push_back(resource_id);
   }
-  resource_provider->GenerateSyncTokenForResources(resource_ids);
 
   return true;
 }
@@ -166,18 +166,19 @@ void VideoLayerImpl::AppendQuads(RenderPass* render_pass,
       break;
   }
 
-  SharedQuadState* shared_quad_state =
+  viz::SharedQuadState* shared_quad_state =
       render_pass->CreateAndAppendSharedQuadState();
-  shared_quad_state->SetAll(transform, rotated_size, visible_layer_rect(),
-                            clip_rect(), is_clipped(), draw_opacity(),
-                            SkBlendMode::kSrcOver, GetSortingContextId());
+  shared_quad_state->SetAll(transform, gfx::Rect(rotated_size),
+                            visible_layer_rect(), clip_rect(), is_clipped(),
+                            draw_opacity(), SkBlendMode::kSrcOver,
+                            GetSortingContextId());
 
   AppendDebugBorderQuad(
       render_pass, rotated_size, shared_quad_state, append_quads_data);
 
   gfx::Rect quad_rect(rotated_size);
-  gfx::Rect opaque_rect(contents_opaque() ? quad_rect : gfx::Rect());
   gfx::Rect visible_rect = frame_->visible_rect();
+  bool needs_blending = !contents_opaque();
   gfx::Size coded_size = frame_->coded_size();
 
   Occlusion occlusion_in_video_space =
@@ -189,17 +190,10 @@ void VideoLayerImpl::AppendQuads(RenderPass* render_pass,
   if (visible_quad_rect.IsEmpty())
     return;
 
-  // Pixels for macroblocked formats. To prevent sampling outside the visible
-  // rect, stretch the video if needed.
-  gfx::Rect visible_sample_rect = frame_->visible_rect();
-  if (visible_rect.width() < coded_size.width() && visible_rect.width() > 1)
-    visible_sample_rect.set_width(visible_rect.width() - 1);
-  if (visible_rect.height() < coded_size.height() && visible_rect.height() > 1)
-    visible_sample_rect.set_height(visible_rect.height() - 1);
   const float tex_width_scale =
-      static_cast<float>(visible_sample_rect.width()) / coded_size.width();
+      static_cast<float>(visible_rect.width()) / coded_size.width();
   const float tex_height_scale =
-      static_cast<float>(visible_sample_rect.height()) / coded_size.height();
+      static_cast<float>(visible_rect.height()) / coded_size.height();
 
   switch (frame_resource_type_) {
     // TODO(danakj): Remove this, hide it in the hardware path.
@@ -216,8 +210,8 @@ void VideoLayerImpl::AppendQuads(RenderPass* render_pass,
       bool nearest_neighbor = false;
       TextureDrawQuad* texture_quad =
           render_pass->CreateAndAppendDrawQuad<TextureDrawQuad>();
-      texture_quad->SetNew(shared_quad_state, quad_rect, opaque_rect,
-                           visible_quad_rect, software_resources_[0],
+      texture_quad->SetNew(shared_quad_state, quad_rect, visible_quad_rect,
+                           needs_blending, software_resources_[0],
                            premultiplied_alpha, uv_top_left, uv_bottom_right,
                            SK_ColorTRANSPARENT, opacity, flipped,
                            nearest_neighbor, false);
@@ -265,17 +259,17 @@ void VideoLayerImpl::AppendQuads(RenderPass* render_pass,
           static_cast<float>(ya_tex_size.width()) / uv_tex_size.width();
       float uv_subsampling_factor_y =
           static_cast<float>(ya_tex_size.height()) / uv_tex_size.height();
-      gfx::RectF ya_tex_coord_rect(visible_sample_rect);
+      gfx::RectF ya_tex_coord_rect(visible_rect);
       gfx::RectF uv_tex_coord_rect(
-          visible_sample_rect.x() / uv_subsampling_factor_x,
-          visible_sample_rect.y() / uv_subsampling_factor_y,
-          visible_sample_rect.width() / uv_subsampling_factor_x,
-          visible_sample_rect.height() / uv_subsampling_factor_y);
+          visible_rect.x() / uv_subsampling_factor_x,
+          visible_rect.y() / uv_subsampling_factor_y,
+          visible_rect.width() / uv_subsampling_factor_x,
+          visible_rect.height() / uv_subsampling_factor_y);
 
       YUVVideoDrawQuad* yuv_video_quad =
           render_pass->CreateAndAppendDrawQuad<YUVVideoDrawQuad>();
       yuv_video_quad->SetNew(
-          shared_quad_state, quad_rect, opaque_rect, visible_quad_rect,
+          shared_quad_state, quad_rect, visible_quad_rect, needs_blending,
           ya_tex_coord_rect, uv_tex_coord_rect, ya_tex_size, uv_tex_size,
           frame_resources_[0].id, frame_resources_[1].id,
           frame_resources_.size() > 2 ? frame_resources_[2].id
@@ -283,6 +277,8 @@ void VideoLayerImpl::AppendQuads(RenderPass* render_pass,
           frame_resources_.size() > 3 ? frame_resources_[3].id : 0, color_space,
           frame_->ColorSpace(), frame_resource_offset_,
           frame_resource_multiplier_, frame_bits_per_channel_);
+      yuv_video_quad->require_overlay = frame_->metadata()->IsTrue(
+          media::VideoFrameMetadata::REQUIRE_OVERLAY);
       ValidateQuadResources(yuv_video_quad);
       break;
     }
@@ -302,11 +298,12 @@ void VideoLayerImpl::AppendQuads(RenderPass* render_pass,
       bool nearest_neighbor = false;
       TextureDrawQuad* texture_quad =
           render_pass->CreateAndAppendDrawQuad<TextureDrawQuad>();
-      texture_quad->SetNew(shared_quad_state, quad_rect, opaque_rect,
-                           visible_quad_rect, frame_resources_[0].id,
+      texture_quad->SetNew(shared_quad_state, quad_rect, visible_quad_rect,
+                           needs_blending, frame_resources_[0].id,
                            premultiplied_alpha, uv_top_left, uv_bottom_right,
                            SK_ColorTRANSPARENT, opacity, flipped,
                            nearest_neighbor, false);
+      texture_quad->set_resource_size_in_pixels(coded_size);
       ValidateQuadResources(texture_quad);
       break;
     }
@@ -318,8 +315,8 @@ void VideoLayerImpl::AppendQuads(RenderPass* render_pass,
       scale.Scale(tex_width_scale, tex_height_scale);
       StreamVideoDrawQuad* stream_video_quad =
           render_pass->CreateAndAppendDrawQuad<StreamVideoDrawQuad>();
-      stream_video_quad->SetNew(shared_quad_state, quad_rect, opaque_rect,
-                                visible_quad_rect, frame_resources_[0].id,
+      stream_video_quad->SetNew(shared_quad_state, quad_rect, visible_quad_rect,
+                                needs_blending, frame_resources_[0].id,
                                 frame_resources_[0].size_in_pixels, scale);
       ValidateQuadResources(stream_video_quad);
       break;

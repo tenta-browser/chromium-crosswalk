@@ -4,6 +4,7 @@
 
 #include <stdint.h>
 
+#include "base/callback_helpers.h"
 #include "base/command_line.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
@@ -16,9 +17,6 @@
 #include "ui/gfx/switches.h"
 
 #if BUILDFLAG(ENABLE_PACKAGE_MASH_SERVICES)
-#include "chrome/app/mash/mash_runner.h"
-#include "chrome/common/channel_info.h"
-#include "components/version_info/version_info.h"
 #include "services/service_manager/runner/common/client_util.h"
 #endif
 
@@ -32,6 +30,7 @@
 #include "chrome/common/chrome_constants.h"
 #include "chrome/install_static/initialize_from_primary_module.h"
 #include "chrome/install_static/install_details.h"
+#include "chrome_elf/chrome_elf_main.h"
 
 #define DLLEXPORT __declspec(dllexport)
 
@@ -66,21 +65,19 @@ int ChromeMain(int argc, const char** argv) {
   content::ContentMainParams params(&chrome_main_delegate);
 
 #if defined(OS_WIN)
-  // The process should crash when going through abnormal termination.
+  // The process should crash when going through abnormal termination, but we
+  // must be sure to reset this setting when ChromeMain returns normally.
+  auto crash_on_detach_resetter = base::ScopedClosureRunner(
+      base::Bind(&base::win::SetShouldCrashOnProcessDetach,
+                 base::win::ShouldCrashOnProcessDetach()));
   base::win::SetShouldCrashOnProcessDetach(true);
   base::win::SetAbortBehaviorForCrashReporting();
   params.instance = instance;
   params.sandbox_info = sandbox_info;
 
-  // SetDumpWithoutCrashingFunction must be passed the DumpProcess function
-  // from chrome_elf and not from the DLL in order for DumpWithoutCrashing to
-  // function correctly.
-  typedef void (__cdecl *DumpProcessFunction)();
-  DumpProcessFunction DumpProcess = reinterpret_cast<DumpProcessFunction>(
-      ::GetProcAddress(::GetModuleHandle(chrome::kChromeElfDllName),
-                       "DumpProcessWithoutCrash"));
-  CHECK(DumpProcess);
-  base::debug::SetDumpWithoutCrashingFunction(DumpProcess);
+  // Pass chrome_elf's copy of DumpProcessWithoutCrash resolved via load-time
+  // dynamic linking.
+  base::debug::SetDumpWithoutCrashingFunction(&DumpProcessWithoutCrash);
 
   // Verify that chrome_elf and this module (chrome.dll and chrome_child.dll)
   // have the same version.
@@ -89,42 +86,40 @@ int ChromeMain(int argc, const char** argv) {
 #else
   params.argc = argc;
   params.argv = argv;
-#endif
-
-#if !defined(OS_WIN)
   base::CommandLine::Init(params.argc, params.argv);
+#endif  // defined(OS_WIN)
+  base::CommandLine::Init(0, nullptr);
   const base::CommandLine* command_line(base::CommandLine::ForCurrentProcess());
   ALLOW_UNUSED_LOCAL(command_line);
-#endif
 
-#if defined(OS_LINUX) || defined(OS_MACOSX)
+  // Chrome-specific process modes.
+#if defined(OS_LINUX) || defined(OS_MACOSX) || defined(OS_WIN)
   if (command_line->HasSwitch(switches::kHeadless)) {
 #if defined(OS_MACOSX)
     SetUpBundleOverrides();
 #endif
-    return headless::HeadlessShellMain(argc, argv);
+    return headless::HeadlessShellMain(params);
   }
-#endif  // defined(OS_LINUX) || defined(OS_MACOSX)
+#endif  // defined(OS_LINUX) || defined(OS_MACOSX) || defined(OS_WIN)
 
 #if defined(OS_CHROMEOS) && BUILDFLAG(ENABLE_PACKAGE_MASH_SERVICES)
-  version_info::Channel channel = chrome::GetChannel();
-  if (channel == version_info::Channel::CANARY ||
-      channel == version_info::Channel::UNKNOWN) {
-    if (command_line->HasSwitch(switches::kMash) ||
-        command_line->HasSwitch(switches::kMus)) {
-      return MashMain();
-    }
-    WaitForMashDebuggerIfNecessary();
-    if (service_manager::ServiceManagerIsRemote())
-      params.env_mode = aura::Env::Mode::MUS;
+  if (service_manager::ServiceManagerIsRemote()) {
+    params.create_discardable_memory = false;
+    params.env_mode = aura::Env::Mode::MUS;
+  }
+  // In config==mus the ui service runs in process and is shut down well before
+  // the rest of Chrome. Have Chrome create the DiscardableSharedMemoryManager
+  // to ensure the DiscardableSharedMemoryManager is destroyed later on. Doing
+  // this avoids lifetime issues when internal implementation details of
+  // DiscardableSharedMemoryManager assume DiscardableSharedMemoryManager is
+  // long lived.
+  if (command_line->HasSwitch(switches::kMus)) {
+    params.create_discardable_memory = true;
+    params.env_mode = aura::Env::Mode::MUS;
   }
 #endif  // BUILDFLAG(ENABLE_PACKAGE_MASH_SERVICES)
 
   int rv = content::ContentMain(params);
-
-#if defined(OS_WIN)
-  base::win::SetShouldCrashOnProcessDetach(false);
-#endif
 
   return rv;
 }

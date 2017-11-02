@@ -2,6 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import fnmatch
 import json
 import os
 import re
@@ -17,6 +18,7 @@ class MockInputApi(object):
   """
 
   def __init__(self):
+    self.fnmatch = fnmatch
     self.json = json
     self.re = re
     self.os_path = os.path
@@ -27,6 +29,7 @@ class MockInputApi(object):
     self.files = []
     self.is_committing = False
     self.change = MockChange([])
+    self.presubmit_local_path = os.path.dirname(__file__)
 
   def AffectedFiles(self, file_filter=None, include_deletes=False):
     return self.files
@@ -38,7 +41,7 @@ class MockInputApi(object):
     return self.files
 
   def PresubmitLocalPath(self):
-    return os.path.dirname(__file__)
+    return self.presubmit_local_path
 
   def ReadFile(self, filename, mode='rU'):
     if hasattr(filename, 'AbsoluteLocalPath'):
@@ -94,13 +97,14 @@ class MockFile(object):
   MockInputApi for presubmit unittests.
   """
 
-  def __init__(self, local_path, new_contents, action='A'):
+  def __init__(self, local_path, new_contents, old_contents=None, action='A'):
     self._local_path = local_path
     self._new_contents = new_contents
     self._changed_contents = [(i + 1, l) for i, l in enumerate(new_contents)]
     self._action = action
     self._scm_diff = "--- /dev/null\n+++ %s\n@@ -0,0 +1,%d @@\n" % (local_path,
       len(new_contents))
+    self._old_contents = old_contents
     for l in new_contents:
       self._scm_diff += "+%s\n" % l
 
@@ -121,6 +125,9 @@ class MockFile(object):
 
   def GenerateScmDiff(self):
     return self._scm_diff
+
+  def OldContents(self):
+    return self._old_contents
 
   def rfind(self, p):
     """os.path.basename is called on MockFile so we need an rfind method."""

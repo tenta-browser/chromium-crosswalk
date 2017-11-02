@@ -8,15 +8,17 @@
 #include "ash/public/cpp/shelf_item_delegate.h"
 #include "base/macros.h"
 
-namespace ash {
+namespace aura {
+class Window;
+}
 
-class WmWindow;
+namespace ash {
 
 // ShelfItemDelegate for the items created by ShelfWindowWatcher, for example:
 // The Chrome OS settings window, task manager window, and panel windows.
 class ShelfWindowWatcherItemDelegate : public ShelfItemDelegate {
  public:
-  ShelfWindowWatcherItemDelegate(ShelfID id, WmWindow* window);
+  ShelfWindowWatcherItemDelegate(const ShelfID& id, aura::Window* window);
   ~ShelfWindowWatcherItemDelegate() override;
 
  private:
@@ -24,13 +26,17 @@ class ShelfWindowWatcherItemDelegate : public ShelfItemDelegate {
   void ItemSelected(std::unique_ptr<ui::Event> event,
                     int64_t display_id,
                     ShelfLaunchSource source,
-                    const ItemSelectedCallback& callback) override;
-  void ExecuteCommand(uint32_t command_id, int32_t event_flags) override;
+                    ItemSelectedCallback callback) override;
+  void GetContextMenuItems(int64_t display_id,
+                           GetContextMenuItemsCallback callback) override;
+  void ExecuteCommand(bool from_context_menu,
+                      int64_t command_id,
+                      int32_t event_flags,
+                      int64_t display_id) override;
   void Close() override;
 
-  ShelfID id_;
   // The window associated with this item. Not owned.
-  WmWindow* window_;
+  aura::Window* window_;
 
   DISALLOW_COPY_AND_ASSIGN(ShelfWindowWatcherItemDelegate);
 };

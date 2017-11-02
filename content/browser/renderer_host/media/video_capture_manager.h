@@ -21,6 +21,7 @@
 #include "build/build_config.h"
 #include "content/browser/renderer_host/media/media_stream_provider.h"
 #include "content/browser/renderer_host/media/video_capture_controller_event_handler.h"
+#include "content/browser/renderer_host/media/video_capture_device_launch_observer.h"
 #include "content/browser/renderer_host/media/video_capture_provider.h"
 #include "content/common/content_export.h"
 #include "content/common/media/media_stream_options.h"
@@ -44,7 +45,7 @@ class VideoCaptureControllerEventHandler;
 // the Browser::IO thread. A device can only be opened once.
 class CONTENT_EXPORT VideoCaptureManager
     : public MediaStreamProvider,
-      public BuildableVideoCaptureDevice::Callbacks {
+      public VideoCaptureDeviceLaunchObserver {
  public:
   using VideoCaptureDevice = media::VideoCaptureDevice;
 
@@ -156,9 +157,8 @@ class CONTENT_EXPORT VideoCaptureManager
   void SetDesktopCaptureWindowId(media::VideoCaptureSessionId session_id,
                                  gfx::NativeViewId window_id);
 
-  void GetPhotoCapabilities(
-      int session_id,
-      VideoCaptureDevice::GetPhotoCapabilitiesCallback callback);
+  void GetPhotoState(int session_id,
+                     VideoCaptureDevice::GetPhotoStateCallback callback);
   void SetPhotoOptions(int session_id,
                        media::mojom::PhotoSettingsPtr settings,
                        VideoCaptureDevice::SetPhotoOptionsCallback callback);
@@ -178,10 +178,11 @@ class CONTENT_EXPORT VideoCaptureManager
   // As a side-effect, updates |devices_info_cache_|.
   void EnumerateDevices(const EnumerationCallback& client_callback);
 
-  // Implementation of BuildableVideoCaptureDevice::Callbacks:
-  void OnDeviceStarted(VideoCaptureController* controller) override;
-  void OnDeviceStartFailed(VideoCaptureController* controller) override;
-  void OnDeviceStartAborted() override;
+  // VideoCaptureDeviceLaunchObserver implementation:
+  void OnDeviceLaunched(VideoCaptureController* controller) override;
+  void OnDeviceLaunchFailed(VideoCaptureController* controller) override;
+  void OnDeviceLaunchAborted() override;
+  void OnDeviceConnectionLost(VideoCaptureController* controller) override;
 
   // Retrieves camera calibration information for a particular device. Returns
   // nullopt_t if the |device_id| is not found or camera calibration information

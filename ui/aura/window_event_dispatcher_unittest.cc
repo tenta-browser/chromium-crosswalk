@@ -11,11 +11,14 @@
 
 #include "base/bind.h"
 #include "base/macros.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/stl_util.h"
 #include "base/test/histogram_tester.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
+#include "services/ui/public/interfaces/window_tree_constants.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/aura/client/capture_client.h"
 #include "ui/aura/client/event_client.h"
@@ -163,6 +166,38 @@ TEST_P(WindowEventDispatcherTest, RepostEvent) {
   host()->dispatcher()->RepostEvent(&touch_pressed_event);
   RunAllPendingInMessageLoop();
   EXPECT_TRUE(Env::GetInstance()->is_touch_down());
+}
+
+// Check that we correctly track whether any touch devices are down in response
+// to touch press and release events with two WindowTreeHost.
+TEST_P(WindowEventDispatcherTest, TouchDownState) {
+  std::unique_ptr<WindowTreeHost> second_host(
+      WindowTreeHost::Create(gfx::Rect(20, 30, 100, 50)));
+  second_host->InitHost();
+  second_host->window()->Show();
+
+  ui::TouchEvent touch_pressed_event1(
+      ui::ET_TOUCH_PRESSED, gfx::Point(10, 10), ui::EventTimeForNow(),
+      ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_TOUCH, 1));
+  ui::TouchEvent touch_pressed_event2(
+      ui::ET_TOUCH_PRESSED, gfx::Point(10, 10), ui::EventTimeForNow(),
+      ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_TOUCH, 2));
+  ui::TouchEvent touch_released_event1(
+      ui::ET_TOUCH_RELEASED, gfx::Point(10, 10), ui::EventTimeForNow(),
+      ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_TOUCH, 1));
+  ui::TouchEvent touch_released_event2(
+      ui::ET_TOUCH_RELEASED, gfx::Point(10, 10), ui::EventTimeForNow(),
+      ui::PointerDetails(ui::EventPointerType::POINTER_TYPE_TOUCH, 2));
+
+  EXPECT_FALSE(Env::GetInstance()->is_touch_down());
+  host()->dispatcher()->OnEventFromSource(&touch_pressed_event1);
+  EXPECT_TRUE(Env::GetInstance()->is_touch_down());
+  second_host->dispatcher()->OnEventFromSource(&touch_pressed_event2);
+  EXPECT_TRUE(Env::GetInstance()->is_touch_down());
+  host()->dispatcher()->OnEventFromSource(&touch_released_event1);
+  EXPECT_TRUE(Env::GetInstance()->is_touch_down());
+  second_host->dispatcher()->OnEventFromSource(&touch_released_event2);
+  EXPECT_FALSE(Env::GetInstance()->is_touch_down());
 }
 
 // Check that we correctly track the state of the mouse buttons in response to
@@ -515,7 +550,7 @@ class EventFilterRecorder : public ui::EventHandler {
   }
 
   bool HasReceivedEvent(ui::EventType type) {
-    return std::find(events_.begin(), events_.end(), type) != events_.end();
+    return base::ContainsValue(events_, type);
   }
 
   bool LastTouchMayCauseScrolling() const {
@@ -907,7 +942,9 @@ TEST_P(WindowEventDispatcherTest, CallToProcessedTouchEvent) {
   std::unique_ptr<aura::Window> window(CreateTestWindowWithDelegate(
       &delegate, 1, gfx::Rect(50, 50, 100, 100), root_window()));
 
-  host()->dispatcher()->ProcessedTouchEvent(0, window.get(), ui::ER_UNHANDLED);
+  host()->dispatcher()->ProcessedTouchEvent(
+      0, window.get(), ui::ER_UNHANDLED,
+      false /* is_source_touch_event_set_non_blocking */);
 }
 
 // This event handler requests the dispatcher to start holding pointer-move
@@ -1086,6 +1123,9 @@ TEST_P(WindowEventDispatcherTest, DoNotSynthesizeWhileButtonDown) {
 // Flaky on 32-bit Windows bots.  http://crbug.com/388272
 TEST_P(WindowEventDispatcherTest,
        MAYBE(SynthesizeMouseEventsOnWindowBoundsChanged)) {
+  test::TestCursorClient cursor_client(root_window());
+  cursor_client.ShowCursor();
+
   test::TestWindowDelegate delegate;
   std::unique_ptr<aura::Window> window(CreateTestWindowWithDelegate(
       &delegate, 1234, gfx::Rect(5, 5, 100, 100), root_window()));
@@ -1114,7 +1154,7 @@ TEST_P(WindowEventDispatcherTest,
   recorder.Reset();
 
   // Set window to ignore events.
-  window->set_ignore_events(true);
+  window->SetEventTargetingPolicy(ui::mojom::EventTargetingPolicy::NONE);
 
   // Update the window bounds so that cursor is back inside the window.
   // This should not trigger a synthetic event.
@@ -1125,7 +1165,8 @@ TEST_P(WindowEventDispatcherTest,
   recorder.Reset();
 
   // Set window to accept events but invisible.
-  window->set_ignore_events(false);
+  window->SetEventTargetingPolicy(
+      ui::mojom::EventTargetingPolicy::TARGET_AND_DESCENDANTS);
   window->Hide();
   recorder.Reset();
 
@@ -1134,6 +1175,31 @@ TEST_P(WindowEventDispatcherTest,
   window->SetBounds(bounds1);
   RunAllPendingInMessageLoop();
   EXPECT_TRUE(recorder.events().empty());
+
+  // Hide the cursor. None of the following scenario should trigger
+  // a synthetic event.
+  cursor_client.HideCursor();
+
+  window->Show();
+  RunAllPendingInMessageLoop();
+  EXPECT_TRUE(recorder.events().empty());
+
+  window->SetBounds(bounds2);
+  RunAllPendingInMessageLoop();
+  EXPECT_TRUE(recorder.events().empty());
+
+  window->SetBounds(bounds1);
+  RunAllPendingInMessageLoop();
+  EXPECT_TRUE(recorder.events().empty());
+
+  cursor_client.ShowCursor();
+  window->SetBounds(bounds2);
+  RunAllPendingInMessageLoop();
+  ASSERT_FALSE(recorder.events().empty());
+  ASSERT_FALSE(recorder.mouse_event_flags().empty());
+  EXPECT_EQ(ui::ET_MOUSE_MOVED, recorder.events().back());
+  EXPECT_EQ(ui::EF_IS_SYNTHESIZED, recorder.mouse_event_flags().back());
+  recorder.Reset();
 }
 
 // Tests that a mouse exit is dispatched to the last known cursor location
@@ -1169,6 +1235,9 @@ TEST_P(WindowEventDispatcherTest, DispatchMouseExitWhenCursorHidden) {
   int translated_y = mouse_location.y() - window_origin.y();
   gfx::Point translated_point(translated_x, translated_y);
   EXPECT_EQ(recorder.mouse_location(0).ToString(), translated_point.ToString());
+
+  // Verify the mouse exit with ui::EF_CURSOR_HIDE flags.
+  EXPECT_TRUE(recorder.mouse_event_flags()[0] & ui::EF_CURSOR_HIDE);
   root_window()->RemovePreTargetHandler(&recorder);
 }
 
@@ -2014,7 +2083,7 @@ class ExitMessageLoopOnMousePress : public ui::test::TestEventHandler {
   void OnMouseEvent(ui::MouseEvent* event) override {
     ui::test::TestEventHandler::OnMouseEvent(event);
     if (event->type() == ui::ET_MOUSE_PRESSED)
-      base::MessageLoopForUI::current()->QuitWhenIdle();
+      base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
  private:
@@ -2084,7 +2153,7 @@ class WindowEventDispatcherTestWithMessageLoop
 };
 
 TEST_P(WindowEventDispatcherTestWithMessageLoop, EventRepostedInNonNestedLoop) {
-  CHECK(!message_loop()->is_running());
+  ASSERT_FALSE(base::RunLoop::IsRunningOnCurrentThread());
   // Perform the test in a callback, so that it runs after the message-loop
   // starts.
   message_loop()->task_runner()->PostTask(
@@ -2177,8 +2246,8 @@ TEST_P(WindowEventDispatcherTestInHighDPI, TouchMovesHeldOnScroll) {
   root_window()->RemovePreTargetHandler(&recorder);
 }
 
-// This handler triggers a nested message loop when it receives a right click
-// event, and runs a single callback in the nested message loop.
+// This handler triggers a nested run loop when it receives a right click
+// event, and runs a single callback in the nested run loop.
 class TriggerNestedLoopOnRightMousePress : public ui::test::TestEventHandler {
  public:
   explicit TriggerNestedLoopOnRightMousePress(const base::Closure& callback)
@@ -2212,8 +2281,8 @@ class TriggerNestedLoopOnRightMousePress : public ui::test::TestEventHandler {
   DISALLOW_COPY_AND_ASSIGN(TriggerNestedLoopOnRightMousePress);
 };
 
-// Tests that if dispatching a 'held' event triggers a nested message loop, then
-// the events that are dispatched from the nested message loop are transformed
+// Tests that if dispatching a 'held' event triggers a nested run loop, then
+// the events that are dispatched from the nested run loop are transformed
 // correctly.
 TEST_P(WindowEventDispatcherTestInHighDPI,
        EventsTransformedInRepostedEventTriggeredNestedLoop) {
@@ -2570,8 +2639,9 @@ class AsyncWindowDelegate : public test::TestWindowDelegate {
     // Convert touch event back to root window coordinates.
     event->ConvertLocationToTarget(window_, window_->GetRootWindow());
     event->DisableSynchronousHandling();
-    dispatcher_->ProcessedTouchEvent(event->unique_event_id(), window_,
-                                     ui::ER_UNHANDLED);
+    dispatcher_->ProcessedTouchEvent(
+        event->unique_event_id(), window_, ui::ER_UNHANDLED,
+        false /* is_source_touch_event_set_non_blocking */);
     event->StopPropagation();
   }
 
@@ -2837,6 +2907,65 @@ TEST_F(WindowEventDispatcherMusTest, UseDefaultTargeterToFindTarget2) {
   EXPECT_EQ(gfx::Point(), last_event_location_delegate2.last_mouse_location());
 }
 
+namespace {
+
+class LocationRecordingEventHandler : public ui::EventHandler {
+ public:
+  LocationRecordingEventHandler() = default;
+  ~LocationRecordingEventHandler() override = default;
+
+  const gfx::Point& event_root_location() const { return event_root_location_; }
+
+  const gfx::Point& env_root_location() const { return env_root_location_; }
+
+  int mouse_event_count() const { return mouse_event_count_; }
+
+  // ui::EventHandler:
+  void OnMouseEvent(ui::MouseEvent* event) override {
+    ++mouse_event_count_;
+    event_root_location_ = event->root_location();
+    env_root_location_ = Env::GetInstance()->last_mouse_location();
+  }
+
+ private:
+  int mouse_event_count_ = 0;
+  gfx::Point event_root_location_;
+  gfx::Point env_root_location_;
+
+  DISALLOW_COPY_AND_ASSIGN(LocationRecordingEventHandler);
+};
+
+}  // namespace
+
+TEST_F(WindowEventDispatcherMusTest, RootLocationDoesntChange) {
+  std::unique_ptr<Window> window(
+      test::CreateTestWindowWithBounds(gfx::Rect(0, 0, 10, 20), root_window()));
+  std::unique_ptr<Window> child_window(
+      test::CreateTestWindowWithBounds(gfx::Rect(5, 6, 10, 20), window.get()));
+
+  test::EnvTestHelper().SetAlwaysUseLastMouseLocation(false);
+
+  LocationRecordingEventHandler event_handler;
+  root_window()->AddPreTargetHandler(&event_handler);
+
+  const gfx::Point mouse_location(1, 2);
+  gfx::Point root_location(mouse_location);
+
+  ui::MouseEvent mouse(ui::ET_MOUSE_PRESSED, mouse_location, root_location,
+                       ui::EventTimeForNow(), ui::EF_LEFT_MOUSE_BUTTON,
+                       ui::EF_LEFT_MOUSE_BUTTON);
+  ui::Event::DispatcherApi(&mouse).set_target(child_window.get());
+  DispatchEventUsingWindowDispatcher(&mouse);
+  EXPECT_EQ(1, event_handler.mouse_event_count());
+
+  // The root location during dispatch of the event and Env should match the
+  // one that was dispatched.
+  EXPECT_EQ(root_location, event_handler.event_root_location());
+  EXPECT_EQ(root_location, event_handler.env_root_location());
+
+  root_window()->RemovePreTargetHandler(&event_handler);
+}
+
 class NestedLocationDelegate : public test::TestWindowDelegate {
  public:
   NestedLocationDelegate() {}
@@ -2879,7 +3008,7 @@ class NestedLocationDelegate : public test::TestWindowDelegate {
 
   void InRunMessageLoop(base::RunLoop* run_loop) {
     ++nested_message_loop_count_;
-    // Nested message loops trigger falling back to using the location from
+    // nested run loops trigger falling back to using the location from
     // WindowTreeClient, which is 0,0.
     EXPECT_EQ(gfx::Point(0, 0), Env::GetInstance()->last_mouse_location());
     run_loop->Quit();

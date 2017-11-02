@@ -25,6 +25,10 @@
 #include "components/password_manager/core/browser/webdata/password_web_data_service_win.h"
 #endif
 
+#if defined(OS_ANDROID)
+#include "components/payments/android/payment_manifest_web_data_service.h"
+#endif
+
 using content::BrowserThread;
 
 namespace {
@@ -44,6 +48,9 @@ ProfileErrorType ProfileErrorFromWebDataServiceWrapperError(
 
     case WebDataServiceWrapper::ERROR_LOADING_PASSWORD:
       return ProfileErrorType::DB_WEB_DATA;
+
+    case WebDataServiceWrapper::ERROR_LOADING_PAYMENT_MANIFEST:
+      return ProfileErrorType::DB_PAYMENT_MANIFEST_WEB_DATA;
 
     default:
       NOTREACHED()
@@ -150,6 +157,21 @@ WebDataServiceFactory::GetPasswordWebDataForProfile(
 }
 #endif
 
+#if defined(OS_ANDROID)
+// static
+scoped_refptr<payments::PaymentManifestWebDataService>
+WebDataServiceFactory::GetPaymentManifestWebDataForProfile(
+    Profile* profile,
+    ServiceAccessType access_type) {
+  WebDataServiceWrapper* wrapper =
+      WebDataServiceFactory::GetForProfile(profile, access_type);
+  // |wrapper| can be null in Incognito mode.
+  return wrapper
+             ? wrapper->GetPaymentManifestWebData()
+             : scoped_refptr<payments::PaymentManifestWebDataService>(nullptr);
+}
+#endif
+
 // static
 WebDataServiceFactory* WebDataServiceFactory::GetInstance() {
   return base::Singleton<WebDataServiceFactory>::get();
@@ -166,7 +188,6 @@ KeyedService* WebDataServiceFactory::BuildServiceInstanceFor(
   return new WebDataServiceWrapper(
       profile_path, g_browser_process->GetApplicationLocale(),
       BrowserThread::GetTaskRunnerForThread(BrowserThread::UI),
-      BrowserThread::GetTaskRunnerForThread(BrowserThread::DB),
       sync_start_util::GetFlareForSyncableService(profile_path),
       &ProfileErrorCallback);
 }

@@ -26,32 +26,33 @@ class ShellDelegateMus : public ShellDelegate {
   bool IsIncognitoAllowed() const override;
   bool IsMultiProfilesEnabled() const override;
   bool IsRunningInForcedAppMode() const override;
-  bool CanShowWindowForUser(WmWindow* window) const override;
+  bool CanShowWindowForUser(aura::Window* window) const override;
   bool IsForceMaximizeOnFirstRun() const override;
   void PreInit() override;
   void PreShutdown() override;
   void Exit() override;
-  keyboard::KeyboardUI* CreateKeyboardUI() override;
+  std::unique_ptr<keyboard::KeyboardUI> CreateKeyboardUI() override;
   void OpenUrlFromArc(const GURL& url) override;
-  ShelfDelegate* CreateShelfDelegate(ShelfModel* model) override;
-  SystemTrayDelegate* CreateSystemTrayDelegate() override;
+  void ShelfInit() override;
+  void ShelfShutdown() override;
+  NetworkingConfigDelegate* GetNetworkingConfigDelegate() override;
   std::unique_ptr<WallpaperDelegate> CreateWallpaperDelegate() override;
-  SessionStateDelegate* CreateSessionStateDelegate() override;
   AccessibilityDelegate* CreateAccessibilityDelegate() override;
   std::unique_ptr<PaletteDelegate> CreatePaletteDelegate() override;
-  ui::MenuModel* CreateContextMenu(WmShelf* wm_shelf,
-                                   const ShelfItem* item) override;
   GPUSupport* CreateGPUSupport() override;
   base::string16 GetProductName() const override;
   gfx::Image GetDeprecatedAcceleratorImage() const override;
-  bool IsTouchscreenEnabledInPrefs(bool use_local_state) const override;
-  void SetTouchscreenEnabledInPrefs(bool enabled,
-                                    bool use_local_state) override;
-  void UpdateTouchscreenStatusFromPrefs() override;
+  bool GetTouchscreenEnabled(TouchscreenEnabledSource source) const override;
+  void SetTouchscreenEnabled(bool enabled,
+                             TouchscreenEnabledSource source) override;
+  ui::InputDeviceControllerClient* GetInputDeviceControllerClient() override;
 
  private:
   // |connector_| may be null in tests.
   service_manager::Connector* connector_;
+
+  std::unique_ptr<ui::InputDeviceControllerClient>
+      input_device_controller_client_;
 
   DISALLOW_COPY_AND_ASSIGN(ShellDelegateMus);
 };

@@ -33,54 +33,40 @@
 #include "core/HTMLNames.h"
 #include "core/dom/Document.h"
 #include "core/html/HTMLLinkElement.h"
-#include "core/html/imports/HTMLImportsController.h"
-#include "platform/weborigin/SecurityPolicy.h"
 
 namespace blink {
 
-using namespace HTMLNames;
-
-LinkResource::LinkResource(HTMLLinkElement* owner) : owner_(owner) {}
+LinkResource::LinkResource(HTMLLinkElement* owner) : owner_(owner) {
+  DCHECK(owner_);
+}
 
 LinkResource::~LinkResource() {}
 
 bool LinkResource::ShouldLoadResource() const {
-  return owner_->GetDocument().GetFrame() ||
-         owner_->GetDocument().ImportsController();
+  return GetDocument().GetFrame() || GetDocument().ImportsController();
 }
 
 LocalFrame* LinkResource::LoadingFrame() const {
-  HTMLImportsController* imports_controller =
-      owner_->GetDocument().ImportsController();
-  if (!imports_controller)
-    return owner_->GetDocument().GetFrame();
-  return imports_controller->Master()->GetFrame();
+  return owner_->GetDocument().MasterDocument().GetFrame();
+}
+
+Document& LinkResource::GetDocument() {
+  return owner_->GetDocument();
+}
+
+const Document& LinkResource::GetDocument() const {
+  return owner_->GetDocument();
+}
+
+WTF::TextEncoding LinkResource::GetCharset() const {
+  AtomicString charset = owner_->getAttribute(HTMLNames::charsetAttr);
+  if (charset.IsEmpty() && GetDocument().GetFrame())
+    return GetDocument().Encoding();
+  return WTF::TextEncoding(charset);
 }
 
 DEFINE_TRACE(LinkResource) {
   visitor->Trace(owner_);
-}
-
-LinkRequestBuilder::LinkRequestBuilder(HTMLLinkElement* owner)
-    : owner_(owner), url_(owner->GetNonEmptyURLAttribute(hrefAttr)) {
-  charset_ = owner_->getAttribute(charsetAttr);
-  if (charset_.IsEmpty() && owner_->GetDocument().GetFrame())
-    charset_ = owner_->GetDocument().characterSet();
-}
-
-FetchParameters LinkRequestBuilder::Build(bool low_priority) const {
-  ResourceRequest resource_request(owner_->GetDocument().CompleteURL(url_));
-  ReferrerPolicy referrer_policy = owner_->GetReferrerPolicy();
-  if (referrer_policy != kReferrerPolicyDefault) {
-    resource_request.SetHTTPReferrer(SecurityPolicy::GenerateReferrer(
-        referrer_policy, url_, owner_->GetDocument().OutgoingReferrer()));
-  }
-  FetchParameters params(resource_request, owner_->localName(), charset_);
-  if (low_priority)
-    params.SetDefer(FetchParameters::kLazyLoad);
-  params.SetContentSecurityPolicyNonce(
-      owner_->FastGetAttribute(HTMLNames::nonceAttr));
-  return params;
 }
 
 }  // namespace blink

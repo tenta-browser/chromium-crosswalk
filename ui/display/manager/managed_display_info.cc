@@ -6,11 +6,11 @@
 
 #include <stdio.h>
 
-#include <algorithm>
 #include <string>
 #include <vector>
 
 #include "base/logging.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -33,7 +33,6 @@ const int64_t kSynthesizedDisplayIdStart = 2200000000LL;
 int64_t synthesized_display_id = kSynthesizedDisplayIdStart;
 
 const float kDpi96 = 96.0;
-bool use_125_dsf_for_ui_scaling = true;
 
 // Check the content of |spec| and fill |bounds| and |device_scale_factor|.
 // Returns true when |bounds| is found.
@@ -146,8 +145,7 @@ gfx::Size ManagedDisplayMode::GetSizeInDIP(bool is_internal) const {
   size_dip.Scale(ui_scale_);
   // DSF=1.25 is special on internal display. The screen is drawn with DSF=1.25
   // but it doesn't affect the screen size computation.
-  if (use_125_dsf_for_ui_scaling && is_internal &&
-      device_scale_factor_ == 1.25f)
+  if (is_internal && device_scale_factor_ == 1.25f)
     return gfx::ToFlooredSize(size_dip);
   size_dip.Scale(1.0f / device_scale_factor_);
   return gfx::ToFlooredSize(size_dip);
@@ -294,11 +292,6 @@ ManagedDisplayInfo ManagedDisplayInfo::CreateFromSpecWithID(
   return display_info;
 }
 
-// static
-void ManagedDisplayInfo::SetUse125DSFForUIScalingForTest(bool enable) {
-  use_125_dsf_for_ui_scaling = enable;
-}
-
 ManagedDisplayInfo::ManagedDisplayInfo()
     : id_(kInvalidDisplayId),
       has_overscan_(false),
@@ -311,8 +304,7 @@ ManagedDisplayInfo::ManagedDisplayInfo()
       configured_ui_scale_(1.0f),
       native_(false),
       is_aspect_preserving_scaling_(false),
-      clear_overscan_insets_(false),
-      color_profile_(COLOR_PROFILE_STANDARD) {}
+      clear_overscan_insets_(false) {}
 
 ManagedDisplayInfo::ManagedDisplayInfo(int64_t id,
                                        const std::string& name,
@@ -329,8 +321,7 @@ ManagedDisplayInfo::ManagedDisplayInfo(int64_t id,
       configured_ui_scale_(1.0f),
       native_(false),
       is_aspect_preserving_scaling_(false),
-      clear_overscan_insets_(false),
-      color_profile_(COLOR_PROFILE_STANDARD) {}
+      clear_overscan_insets_(false) {}
 
 ManagedDisplayInfo::ManagedDisplayInfo(const ManagedDisplayInfo& other) =
     default;
@@ -370,7 +361,6 @@ void ManagedDisplayInfo::Copy(const ManagedDisplayInfo& native_info) {
   size_in_pixel_ = native_info.size_in_pixel_;
   is_aspect_preserving_scaling_ = native_info.is_aspect_preserving_scaling_;
   display_modes_ = native_info.display_modes_;
-  available_color_profiles_ = native_info.available_color_profiles_;
   maximum_cursor_size_ = native_info.maximum_cursor_size_;
 
   // Rotation, ui_scale, color_profile and overscan are given by preference,
@@ -390,7 +380,6 @@ void ManagedDisplayInfo::Copy(const ManagedDisplayInfo& native_info) {
 
     rotations_ = native_info.rotations_;
     configured_ui_scale_ = native_info.configured_ui_scale_;
-    color_profile_ = native_info.color_profile();
   }
 }
 
@@ -398,6 +387,12 @@ void ManagedDisplayInfo::SetBounds(const gfx::Rect& new_bounds_in_native) {
   bounds_in_native_ = new_bounds_in_native;
   size_in_pixel_ = new_bounds_in_native.size();
   UpdateDisplaySize();
+}
+
+float ManagedDisplayInfo::GetDensityRatio() const {
+  if (Use125DSFForUIScaling() && device_scale_factor_ == 1.25f)
+    return 1.0f;
+  return device_scale_factor_;
 }
 
 float ManagedDisplayInfo::GetEffectiveDeviceScaleFactor() const {
@@ -500,20 +495,8 @@ std::string ManagedDisplayInfo::ToFullString() const {
   return ToString() + ", display_modes==" + display_modes_str;
 }
 
-void ManagedDisplayInfo::SetColorProfile(ColorCalibrationProfile profile) {
-  if (IsColorProfileAvailable(profile))
-    color_profile_ = profile;
-}
-
-bool ManagedDisplayInfo::IsColorProfileAvailable(
-    ColorCalibrationProfile profile) const {
-  return std::find(available_color_profiles_.begin(),
-                   available_color_profiles_.end(),
-                   profile) != available_color_profiles_.end();
-}
-
 bool ManagedDisplayInfo::Use125DSFForUIScaling() const {
-  return use_125_dsf_for_ui_scaling && Display::IsInternalDisplayId(id_);
+  return Display::IsInternalDisplayId(id_);
 }
 
 void ManagedDisplayInfo::AddInputDevice(int id) {

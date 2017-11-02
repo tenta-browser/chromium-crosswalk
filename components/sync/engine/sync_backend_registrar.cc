@@ -9,7 +9,6 @@
 #include <utility>
 
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "components/sync/model/change_processor.h"
 #include "components/sync/syncable/user_share.h"
 
@@ -264,7 +263,7 @@ bool SyncBackendRegistrar::IsCurrentThreadSafeForModel(
 
   auto it = workers_.find(group);
   DCHECK(it != workers_.end());
-  return it->second->IsOnModelThread();
+  return it->second->IsOnModelSequence();
 }
 
 SyncBackendRegistrar::~SyncBackendRegistrar() {

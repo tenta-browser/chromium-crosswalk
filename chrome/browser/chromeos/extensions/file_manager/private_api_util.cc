@@ -219,6 +219,8 @@ void VolumeToVolumeMetadata(
   }
 
   volume_metadata->volume_label.reset(new std::string(volume.volume_label()));
+  volume_metadata->disk_file_system_type.reset(
+      new std::string(volume.file_system_type()));
 
   switch (volume.type()) {
     case VOLUME_TYPE_GOOGLE_DRIVE:
@@ -357,8 +359,8 @@ void GetSelectedFileInfo(content::RenderFrameHost* render_frame_host,
   }
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::Bind(&GetSelectedFileInfoInternal, profile, base::Passed(&params)));
+      FROM_HERE, base::BindOnce(&GetSelectedFileInfoInternal, profile,
+                                base::Passed(&params)));
 }
 
 void SetupProfileFileAccessPermissions(int render_view_process_id,

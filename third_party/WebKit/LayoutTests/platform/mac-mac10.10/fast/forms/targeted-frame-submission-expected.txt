@@ -4,15 +4,15 @@ layer at (0,0) size 800x600
   LayoutBlockFlow {HTML} at (0,0) size 800x600
     LayoutBlockFlow {BODY} at (8,8) size 784x584
       LayoutBlockFlow {FORM} at (0,0) size 784x18
-        LayoutButton {INPUT} at (0,0) size 38.98x18 [bgcolor=#C0C0C0]
+        LayoutButton {INPUT} at (0,0) size 38.98x18 [bgcolor=#FFFFFF]
           LayoutBlockFlow (anonymous) at (8,2) size 22.98x13
             LayoutText {#text} at (0,0) size 23x13
               text run at (0,0) width 23: "form"
         LayoutText {#text} at (0,0) size 0x0
       LayoutBlockFlow {DIV} at (0,34) size 784x36
-        LayoutText {#text} at (0,0) size 778x36
-          text run at (0,0) width 294: "This tests Targetted frame submission works. "
-          text run at (293,0) width 485: "If the test is successful, the text \"SUCCESS\" should be shown in the iframe"
+        LayoutText {#text} at (0,0) size 773x36
+          text run at (0,0) width 289: "This tests Targeted frame submission works. "
+          text run at (288,0) width 485: "If the test is successful, the text \"SUCCESS\" should be shown in the iframe"
           text run at (0,18) width 43: "below."
       LayoutBlockFlow (anonymous) at (0,70) size 784x154
         LayoutText {#text} at (0,0) size 0x0

@@ -29,8 +29,9 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
-#include "base/threading/thread_task_runner_handle.h"
+#include "base/threading/sequenced_task_runner_handle.h"
 #include "base/trace_event/memory_dump_manager.h"
+#include "build/build_config.h"
 #include "sql/connection_memory_dump_provider.h"
 #include "sql/meta_table.h"
 #include "sql/statement.h"
@@ -164,18 +165,18 @@ void InitializeSqlite() {
     sqlite3_initialize();
 
     // Schedule callback to record memory footprint histograms at 10m, 1h, and
-    // 1d. There may not be a registered thread task runner in tests.
-    if (base::ThreadTaskRunnerHandle::IsSet()) {
-      base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+    // 1d. There may not be a registered task runner in tests.
+    if (base::SequencedTaskRunnerHandle::IsSet()) {
+      base::SequencedTaskRunnerHandle::Get()->PostDelayedTask(
           FROM_HERE, base::Bind(&RecordSqliteMemory10Min),
           base::TimeDelta::FromMinutes(10));
-      base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+      base::SequencedTaskRunnerHandle::Get()->PostDelayedTask(
           FROM_HERE, base::Bind(&RecordSqliteMemoryHour),
           base::TimeDelta::FromHours(1));
-      base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+      base::SequencedTaskRunnerHandle::Get()->PostDelayedTask(
           FROM_HERE, base::Bind(&RecordSqliteMemoryDay),
           base::TimeDelta::FromDays(1));
-      base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+      base::SequencedTaskRunnerHandle::Get()->PostDelayedTask(
           FROM_HERE, base::Bind(&RecordSqliteMemoryWeek),
           base::TimeDelta::FromDays(7));
     }
@@ -1112,6 +1113,15 @@ bool Connection::Raze() {
   // page_size" can be used to query such a database.
   ScopedWritableSchema writable_schema(db_);
 
+#if defined(OS_WIN)
+  // On Windows, truncate silently fails when applied to memory-mapped files.
+  // Disable memory-mapping so that the truncate succeeds.  Note that other
+  // connections may have memory-mapped the file, so this may not entirely
+  // prevent the problem.
+  // [Source: <https://sqlite.org/mmap.html> plus experiments.]
+  ignore_result(Execute("PRAGMA mmap_size = 0"));
+#endif
+
   const char* kMain = "main";
   int rc = BackupDatabase(null_db.db_, db_, kMain);
   UMA_HISTOGRAM_SPARSE_SLOWLY("Sqlite.RazeDatabase",rc);
@@ -1717,7 +1727,7 @@ bool Connection::OpenInternal(const std::string& file_name,
   }
 
   // TODO(shess): OS_WIN support?
-#if defined(OS_POSIX)
+#if defined(OS_POSIX) && !defined(OS_FUCHSIA)
   if (restrict_to_user_) {
     DCHECK_NE(file_name, std::string(":memory"));
     base::FilePath file_path(file_name);
@@ -1738,7 +1748,7 @@ bool Connection::OpenInternal(const std::string& file_name,
       base::SetPosixFilePermissions(wal_path, mode);
     }
   }
-#endif  // defined(OS_POSIX)
+#endif  // defined(OS_POSIX) && !defined(OS_FUCHSIA)
 
   // SQLite uses a lookaside buffer to improve performance of small mallocs.
   // Chromium already depends on small mallocs being efficient, so we disable

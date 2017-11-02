@@ -10,6 +10,7 @@
 #include "base/path_service.h"
 #include "base/scoped_observer.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/extensions/browser_action_test_util.h"
@@ -25,7 +26,7 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "components/app_modal/app_modal_dialog.h"
+#include "components/app_modal/javascript_app_modal_dialog.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/browser/bookmark_utils.h"
 #include "components/bookmarks/test/bookmark_test_helpers.h"
@@ -74,7 +75,7 @@ class LoadedIncognitoObserver : public ExtensionRegistryObserver {
  private:
   void OnExtensionUnloaded(content::BrowserContext* browser_context,
                            const Extension* extension,
-                           UnloadedExtensionInfo::Reason reason) override {
+                           UnloadedExtensionReason reason) override {
     original_complete_.reset(new LazyBackgroundObserver(profile_));
     incognito_complete_.reset(
         new LazyBackgroundObserver(profile_->GetOffTheRecordProfile()));
@@ -107,6 +108,11 @@ class LazyBackgroundPageApiTest : public ExtensionApiTest {
     // Background Page alive.
     command_line->AppendSwitch(::switches::kDisableBackgroundNetworking);
     command_line->AppendSwitch(::switches::kNoProxyServer);
+  }
+
+  void SetUpOnMainThread() override {
+    ExtensionApiTest::SetUpOnMainThread();
+    host_resolver()->AddRule("*", "127.0.0.1");
   }
 
   // Loads the extension, which temporarily starts the lazy background page
@@ -233,7 +239,8 @@ IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, WaitForDialog) {
   ASSERT_TRUE(extension);
 
   // The test extension opens a dialog on installation.
-  app_modal::AppModalDialog* dialog = ui_test_utils::WaitForAppModalDialog();
+  app_modal::JavaScriptAppModalDialog* dialog =
+      ui_test_utils::WaitForAppModalDialog();
   ASSERT_TRUE(dialog);
 
   // With the dialog open the background page is still alive.
@@ -283,7 +290,6 @@ IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, WaitForView) {
 // Tests that the lazy background page stays alive until all network requests
 // are complete.
 IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, WaitForRequest) {
-  host_resolver()->AddRule("*", "127.0.0.1");
   ASSERT_TRUE(StartEmbeddedTestServer());
 
   LazyBackgroundObserver page_complete;
@@ -318,6 +324,7 @@ IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, WaitForRequest) {
 IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, NaClInBackgroundPage) {
   {
     base::FilePath extdir;
+    base::ThreadRestrictions::ScopedAllowIO allow_io;
     ASSERT_TRUE(PathService::Get(chrome::DIR_GEN_TEST_DATA, &extdir));
     extdir = extdir.AppendASCII("ppapi/tests/extensions/load_unload/newlib");
     LazyBackgroundObserver page_complete;
@@ -354,6 +361,7 @@ IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, NaClInView) {
   // page, and the Lazy Background Page stays alive.
   {
     base::FilePath extdir;
+    base::ThreadRestrictions::ScopedAllowIO allow_io;
     ASSERT_TRUE(PathService::Get(chrome::DIR_GEN_TEST_DATA, &extdir));
     extdir = extdir.AppendASCII("ppapi/tests/extensions/popup/newlib");
     ResultCatcher catcher;
@@ -563,6 +571,7 @@ IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, EventDispatchToTab) {
 // when it is destroyed.
 IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, UpdateExtensionsPage) {
   ui_test_utils::NavigateToURL(browser(), GURL(chrome::kChromeUIExtensionsURL));
+  auto* extensions_page = browser()->tab_strip_model()->GetActiveWebContents();
 
   ResultCatcher catcher;
   base::FilePath extdir = test_data_dir_.AppendASCII("lazy_background_page").
@@ -589,13 +598,6 @@ IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, UpdateExtensionsPage) {
   // Lazy Background Page has been shut down.
   EXPECT_FALSE(IsBackgroundPageAlive(last_loaded_extension_id()));
 
-  // Verify that extensions page shows that the lazy background page is
-  // inactive.
-  content::RenderFrameHost* frame = content::FrameMatchingPredicate(
-      browser()->tab_strip_model()->GetActiveWebContents(),
-      base::Bind(&content::FrameHasSourceUrl,
-                 GURL(chrome::kChromeUIExtensionsFrameURL)));
-
   // Updating the extensions page is a process that has back-and-forth
   // communication (i.e., backend tells extensions page something changed,
   // extensions page requests updated data, backend responds with updated data,
@@ -608,7 +610,7 @@ IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, UpdateExtensionsPage) {
   int num_tries = 0;
   while (!is_inactive && num_tries++ < kMaxTries) {
     EXPECT_TRUE(content::ExecuteScriptAndExtractBool(
-        frame,
+        extensions_page,
         "var ele = document.querySelectorAll('div.active-views');"
         "window.domAutomationController.send("
         "    ele[0].innerHTML.search('(Inactive)') > 0);",
@@ -626,35 +628,10 @@ IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, OnSuspendUseStorageApi) {
 // TODO: background page with timer.
 // TODO: background page that interacts with popup.
 
-// Test class to allow test cases to run in --isolate-extensions mode.
-class LazyBackgroundPageIsolatedExtensionsApiTest
-    : public LazyBackgroundPageApiTest {
- public:
-  LazyBackgroundPageIsolatedExtensionsApiTest() {}
-  ~LazyBackgroundPageIsolatedExtensionsApiTest() override {}
-
-  void SetUpInProcessBrowserTestFixture() override {
-    LazyBackgroundPageApiTest::SetUpInProcessBrowserTestFixture();
-
-    // This is needed to allow example.com to actually resolve and load in
-    // tests.
-    host_resolver()->AddRule("*", "127.0.0.1");
-  }
-
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    LazyBackgroundPageApiTest::SetUpCommandLine(command_line);
-    command_line->AppendSwitch(switches::kIsolateExtensions);
-  }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(LazyBackgroundPageIsolatedExtensionsApiTest);
-};
-
 // Ensure that the events page of an extension is properly torn down and the
-// process does not linger around when running in --isolate-extensions mode.
+// process does not linger around.
 // See https://crbug.com/612668.
-IN_PROC_BROWSER_TEST_F(LazyBackgroundPageIsolatedExtensionsApiTest,
-                       EventProcessCleanup) {
+IN_PROC_BROWSER_TEST_F(LazyBackgroundPageApiTest, EventProcessCleanup) {
   ASSERT_TRUE(LoadExtensionAndWait("event_page_with_web_iframe"));
 
   // Lazy Background Page doesn't exist anymore.

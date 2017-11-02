@@ -1,0 +1,38 @@
+rootWebArea
+++genericContainer
+++++link name='  '
+++++++image
+++++++staticText name=' '
+++++++++inlineTextBox name=' '
+++++link name='  '
+++++++image
+++++++staticText name=' '
+++++++++inlineTextBox name=' '
+++++link name='  '
+++++++image
+++++++staticText name=' '
+++++++++inlineTextBox name=' '
+++++link name='  '
+++++++image
+++++++staticText name=' '
+++++++++inlineTextBox name=' '
+++++link name='  '
+++++++image
+++++++staticText name=' '
+++++++++inlineTextBox name=' '
+++++link name='  '
+++++++image
+++++++staticText name=' '
+++++++++inlineTextBox name=' '
+++++link name='  '
+++++++image
+++++++staticText name=' '
+++++++++inlineTextBox name=' '
+++++link name='  '
+++++++image
+++++++staticText name=' '
+++++++++inlineTextBox name=' '
+++++link
+++++++image
+++++link
+++++++image

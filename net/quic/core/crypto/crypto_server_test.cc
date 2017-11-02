@@ -16,19 +16,19 @@
 #include "net/quic/core/crypto/proof_source.h"
 #include "net/quic/core/crypto/quic_crypto_server_config.h"
 #include "net/quic/core/crypto/quic_random.h"
-#include "net/quic/core/quic_flags.h"
 #include "net/quic/core/quic_socket_address_coder.h"
 #include "net/quic/core/quic_utils.h"
+#include "net/quic/platform/api/quic_endian.h"
+#include "net/quic/platform/api/quic_flags.h"
 #include "net/quic/platform/api/quic_string_piece.h"
+#include "net/quic/platform/api/quic_test.h"
 #include "net/quic/platform/api/quic_text_utils.h"
 #include "net/quic/test_tools/crypto_test_utils.h"
-#include "net/quic/test_tools/delayed_verify_strike_register_client.h"
 #include "net/quic/test_tools/failing_proof_source.h"
 #include "net/quic/test_tools/mock_clock.h"
 #include "net/quic/test_tools/mock_random.h"
 #include "net/quic/test_tools/quic_crypto_server_config_peer.h"
 #include "net/quic/test_tools/quic_test_utils.h"
-#include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/boringssl/src/include/openssl/sha.h"
 
 using std::string;
@@ -100,7 +100,7 @@ std::vector<TestParams> GetTestParams() {
   return params;
 }
 
-class CryptoServerTest : public ::testing::TestWithParam<TestParams> {
+class CryptoServerTest : public QuicTestWithParam<TestParams> {
  public:
   CryptoServerTest()
       : rand_(QuicRandom::GetInstance()),
@@ -215,11 +215,10 @@ class CryptoServerTest : public ::testing::TestWithParam<TestParams> {
   };
 
   void CheckServerHello(const CryptoHandshakeMessage& server_hello) {
-    const QuicTag* versions;
-    size_t num_versions;
-    server_hello.GetTaglist(kVER, &versions, &num_versions);
-    ASSERT_EQ(supported_versions_.size(), num_versions);
-    for (size_t i = 0; i < num_versions; ++i) {
+    QuicTagVector versions;
+    server_hello.GetTaglist(kVER, &versions);
+    ASSERT_EQ(supported_versions_.size(), versions.size());
+    for (size_t i = 0; i < versions.size(); ++i) {
       EXPECT_EQ(QuicVersionToQuicTag(supported_versions_[i]), versions[i]);
     }
 
@@ -339,15 +338,13 @@ class CryptoServerTest : public ::testing::TestWithParam<TestParams> {
   void CheckRejectReasons(
       const HandshakeFailureReason* expected_handshake_failures,
       size_t expected_count) {
-    const uint32_t* reject_reasons;
-    size_t num_reject_reasons;
+    QuicTagVector reject_reasons;
     static_assert(sizeof(QuicTag) == sizeof(uint32_t), "header out of sync");
-    QuicErrorCode error_code =
-        out_.GetTaglist(kRREJ, &reject_reasons, &num_reject_reasons);
+    QuicErrorCode error_code = out_.GetTaglist(kRREJ, &reject_reasons);
     ASSERT_EQ(QUIC_NO_ERROR, error_code);
 
-    EXPECT_EQ(expected_count, num_reject_reasons);
-    for (size_t i = 0; i < num_reject_reasons; ++i) {
+    EXPECT_EQ(expected_count, reject_reasons.size());
+    for (size_t i = 0; i < reject_reasons.size(); ++i) {
       EXPECT_EQ(expected_handshake_failures[i], reject_reasons[i]);
     }
   }
@@ -363,6 +360,8 @@ class CryptoServerTest : public ::testing::TestWithParam<TestParams> {
     } else {
       ASSERT_EQ(QUIC_NO_ERROR,
                 out_.GetUint64(kRCID, &server_designated_connection_id));
+      server_designated_connection_id =
+          QuicEndian::NetToHost64(server_designated_connection_id);
       EXPECT_EQ(rand_for_id_generation_.RandUint64(),
                 server_designated_connection_id);
     }
@@ -389,7 +388,6 @@ class CryptoServerTest : public ::testing::TestWithParam<TestParams> {
   }
 
  protected:
-  QuicFlagSaver flags_;  // Save/restore all QUIC flag values.
   QuicRandom* const rand_;
   MockRandom rand_for_id_generation_;
   MockClock clock_;
@@ -942,7 +940,9 @@ TEST_P(CryptoServerTest, ProofSourceFailure) {
   ShouldFailMentioning("", msg);
 }
 
-TEST(CryptoServerConfigGenerationTest, Determinism) {
+class CryptoServerConfigGenerationTest : public QuicTest {};
+
+TEST_F(CryptoServerConfigGenerationTest, Determinism) {
   // Test that using a deterministic PRNG causes the server-config to be
   // deterministic.
 
@@ -963,7 +963,7 @@ TEST(CryptoServerConfigGenerationTest, Determinism) {
             scfg_b->DebugString(Perspective::IS_SERVER));
 }
 
-TEST(CryptoServerConfigGenerationTest, SCIDVaries) {
+TEST_F(CryptoServerConfigGenerationTest, SCIDVaries) {
   // This test ensures that the server config ID varies for different server
   // configs.
 
@@ -988,7 +988,7 @@ TEST(CryptoServerConfigGenerationTest, SCIDVaries) {
   EXPECT_NE(scid_a, scid_b);
 }
 
-TEST(CryptoServerConfigGenerationTest, SCIDIsHashOfServerConfig) {
+TEST_F(CryptoServerConfigGenerationTest, SCIDIsHashOfServerConfig) {
   MockRandom rand_a;
   const QuicCryptoServerConfig::ConfigOptions options;
   MockClock clock;

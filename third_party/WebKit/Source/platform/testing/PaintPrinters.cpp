@@ -9,100 +9,30 @@
 #include <iomanip>  // NOLINT
 #include <ostream>  // NOLINT
 
-namespace {
-class StreamStateSaver : private std::ios {
-  WTF_MAKE_NONCOPYABLE(StreamStateSaver);
-
- public:
-  StreamStateSaver(std::ios& other) : std::ios(nullptr), m_other(other) {
-    copyfmt(other);
-  }
-  ~StreamStateSaver() { m_other.copyfmt(*this); }
-
- private:
-  std::ios& m_other;
-};
-}  // unnamed namespace
-
 namespace blink {
 
 void PrintTo(const PaintChunk& chunk, std::ostream* os) {
-  *os << "PaintChunk(begin=" << chunk.begin_index << ", end=" << chunk.end_index
-      << ", id=";
-  if (!chunk.id) {
-    *os << "null";
-  } else {
-    *os << "(" << &chunk.id->client << ", ";
-#ifndef NDEBUG
-    *os << DisplayItem::TypeAsDebugString(chunk.id->type);
-#else
-    *os << static_cast<int>(chunk.id->type);
-#endif
-    *os << ")";
-  }
-  *os << ", props=";
-  PrintTo(chunk.properties, os);
-  *os << ", bounds=";
-  PrintTo(chunk.bounds, os);
-  *os << ", knownToBeOpaque=" << chunk.known_to_be_opaque << ")";
-
-  *os << ", rerasterizationRects=[";
-  bool first = true;
-  for (auto& r : chunk.raster_invalidation_rects) {
-    if (!first)
-      *os << ", ";
-    first = false;
-    PrintTo(r, os);
-  };
-  *os << "]";
+  *os << "PaintChunk(" << chunk.ToString() << ")";
 }
 
 void PrintTo(const PaintChunkProperties& properties, std::ostream* os) {
-  *os << "PaintChunkProperties(";
-  bool printed_property = false;
-  if (properties.property_tree_state.Transform()) {
-    *os << "transform=";
-    PrintTo(*properties.property_tree_state.Transform(), os);
-    printed_property = true;
-  }
-
-  if (properties.property_tree_state.Clip()) {
-    if (printed_property)
-      *os << ", ";
-    *os << "clip=";
-    PrintTo(*properties.property_tree_state.Clip(), os);
-    printed_property = true;
-  }
-
-  if (properties.property_tree_state.Effect()) {
-    if (printed_property)
-      *os << ", ";
-    *os << "effect=";
-    PrintTo(*properties.property_tree_state.Effect(), os);
-    printed_property = true;
-  }
-
-  if (printed_property)
-    *os << ", ";
-  *os << "backfaceHidden=" << properties.backface_hidden;
-
-  *os << ")";
+  *os << "PaintChunkProperties(" << properties.ToString() << ")";
 }
 
 void PrintTo(const ClipPaintPropertyNode& node, std::ostream* os) {
-  *os << "ClipPaintPropertyNode(" << node.ToString().Ascii().Data() << ")";
+  *os << "ClipPaintPropertyNode(" << node.ToString() << ")";
 }
 
 void PrintTo(const TransformPaintPropertyNode& node, std::ostream* os) {
-  *os << "TransformPaintPropertyNode(" << node.ToString().Ascii().Data() << ")";
+  *os << "TransformPaintPropertyNode(" << node.ToString() << ")";
 }
 
 void PrintTo(const EffectPaintPropertyNode& node, std::ostream* os) {
-  *os << "EffectPaintPropertyNode(" << node.ToString().Ascii().Data() << ")";
+  *os << "EffectPaintPropertyNode(" << node.ToString() << ")";
 }
 
 void PrintTo(const ScrollPaintPropertyNode& node, std::ostream* os) {
-  *os << "ScrollPaintPropertyNode(" << node.ToString().Ascii().Data() << ")";
+  *os << "ScrollPaintPropertyNode(" << node.ToString() << ")";
 }
 
 }  // namespace blink

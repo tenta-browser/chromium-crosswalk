@@ -85,7 +85,6 @@ class MediaFileValidatorTest : public InProcessBrowserTest {
     // FILE thread's tasks being marked as shutdown blocking for legacy
     // reasons).
     file_system_context_ = nullptr;
-    InProcessBrowserTest::TearDownOnMainThread();
   }
 
   // Write |content| into |filename| in a test file system and try to move
@@ -93,10 +92,10 @@ class MediaFileValidatorTest : public InProcessBrowserTest {
   void MoveTest(const std::string& filename, const std::string& content,
                 bool expected_result) {
     content::BrowserThread::PostTask(
-        content::BrowserThread::FILE,
-        FROM_HERE,
-        base::Bind(&MediaFileValidatorTest::SetupOnFileThread,
-                   base::Unretained(this), filename, content, expected_result));
+        content::BrowserThread::FILE, FROM_HERE,
+        base::BindOnce(&MediaFileValidatorTest::SetupOnFileThread,
+                       base::Unretained(this), filename, content,
+                       expected_result));
     loop_runner_ = new content::MessageLoopRunner;
     loop_runner_->Run();
   }
@@ -106,10 +105,10 @@ class MediaFileValidatorTest : public InProcessBrowserTest {
   void MoveTestFromFile(const std::string& filename,
                         const base::FilePath& source, bool expected_result) {
     content::BrowserThread::PostTask(
-        content::BrowserThread::FILE,
-        FROM_HERE,
-        base::Bind(&MediaFileValidatorTest::SetupFromFileOnFileThread,
-                   base::Unretained(this), filename, source, expected_result));
+        content::BrowserThread::FILE, FROM_HERE,
+        base::BindOnce(&MediaFileValidatorTest::SetupFromFileOnFileThread,
+                       base::Unretained(this), filename, source,
+                       expected_result));
     loop_runner_ = new content::MessageLoopRunner;
     loop_runner_->Run();
   }
@@ -129,8 +128,8 @@ class MediaFileValidatorTest : public InProcessBrowserTest {
     additional_providers.push_back(
         base::MakeUnique<content::TestFileSystemBackend>(
             base::ThreadTaskRunnerHandle::Get().get(), src_path));
-    additional_providers.push_back(base::MakeUnique<MediaFileSystemBackend>(
-        base, base::ThreadTaskRunnerHandle::Get().get()));
+    additional_providers.push_back(
+        base::MakeUnique<MediaFileSystemBackend>(base));
     file_system_context_ =
         content::CreateFileSystemContextWithAdditionalProvidersForTesting(
             NULL, std::move(additional_providers), base);
@@ -163,12 +162,11 @@ class MediaFileValidatorTest : public InProcessBrowserTest {
           dest_root_fs_url + "move_dest" + extension));
 
     content::BrowserThread::PostTask(
-        content::BrowserThread::IO,
-        FROM_HERE,
-        base::Bind(&MediaFileValidatorTest::CheckFiles,
-                   base::Unretained(this), true,
-                   base::Bind(&MediaFileValidatorTest::OnTestFilesReady,
-                              base::Unretained(this), expected_result)));
+        content::BrowserThread::IO, FROM_HERE,
+        base::BindOnce(&MediaFileValidatorTest::CheckFiles,
+                       base::Unretained(this), true,
+                       base::Bind(&MediaFileValidatorTest::OnTestFilesReady,
+                                  base::Unretained(this), expected_result)));
   }
 
   void SetupFromFileOnFileThread(const std::string& filename,

@@ -463,8 +463,7 @@ CString TextCodecUTF8::EncodeCommon(const CharType* characters, size_t length) {
   // (3x).
   // Non-BMP characters take two UTF-16 code units and can take up to 4 bytes
   // (2x).
-  if (length > std::numeric_limits<size_t>::max() / 3)
-    CRASH();
+  CHECK_LE(length, std::numeric_limits<size_t>::max() / 3);
   Vector<uint8_t> bytes(length * 3);
 
   size_t i = 0;
@@ -477,10 +476,10 @@ CString TextCodecUTF8::EncodeCommon(const CharType* characters, size_t length) {
     // U+FFFD (REPLACEMENT CHARACTER) here.
     if (0xD800 <= character && character <= 0xDFFF)
       character = kReplacementCharacter;
-    U8_APPEND_UNSAFE(bytes.Data(), bytes_written, character);
+    U8_APPEND_UNSAFE(bytes.data(), bytes_written, character);
   }
 
-  return CString(reinterpret_cast<char*>(bytes.Data()), bytes_written);
+  return CString(reinterpret_cast<char*>(bytes.data()), bytes_written);
 }
 
 CString TextCodecUTF8::Encode(const UChar* characters,

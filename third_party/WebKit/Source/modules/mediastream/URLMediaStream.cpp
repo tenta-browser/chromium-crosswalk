@@ -30,11 +30,11 @@
 
 #include "modules/mediastream/URLMediaStream.h"
 
-#include "bindings/core/v8/ScriptState.h"
-#include "core/dom/DOMURL.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/frame/UseCounter.h"
+#include "core/url/DOMURL.h"
 #include "modules/mediastream/MediaStream.h"
+#include "platform/bindings/ScriptState.h"
 
 namespace blink {
 
@@ -47,7 +47,7 @@ String URLMediaStream::createObjectURL(ScriptState* script_state,
   DCHECK(execution_context);
   DCHECK(stream);
 
-  UseCounter::Count(execution_context, UseCounter::kCreateObjectURLMediaStream);
+  UseCounter::Count(execution_context, WebFeature::kCreateObjectURLMediaStream);
   return DOMURL::CreatePublicURL(execution_context, stream);
 }
 

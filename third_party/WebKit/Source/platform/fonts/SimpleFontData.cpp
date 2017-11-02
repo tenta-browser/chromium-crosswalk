@@ -31,14 +31,20 @@
 
 #include <unicode/unorm.h>
 #include <unicode/utf16.h>
+
 #include <memory>
+
 #include "SkPath.h"
 #include "SkTypeface.h"
 #include "SkTypes.h"
+
+#include "build/build_config.h"
+#include "platform/FontFamilyNames.h"
 #include "platform/fonts/FontDescription.h"
 #include "platform/fonts/VDMXParser.h"
 #include "platform/fonts/skia/SkiaTextMetrics.h"
 #include "platform/geometry/FloatRect.h"
+#include "platform/wtf/ByteOrder.h"
 #include "platform/wtf/MathExtras.h"
 #include "platform/wtf/PtrUtil.h"
 #include "platform/wtf/allocator/Partitions.h"
@@ -50,7 +56,7 @@ namespace blink {
 const float kSmallCapsFontSizeMultiplier = 0.7f;
 const float kEmphasisMarkFontSizeMultiplier = 0.5f;
 
-#if OS(LINUX) || OS(ANDROID)
+#if defined(OS_LINUX) || defined(OS_ANDROID)
 // This is the largest VDMX table which we'll try to load and parse.
 static const size_t kMaxVDMXTableSize = 1024 * 1024;  // 1 MB
 #endif
@@ -80,7 +86,7 @@ SimpleFontData::SimpleFontData(const FontPlatformData& platform_data,
 SimpleFontData::SimpleFontData(const FontPlatformData& platform_data,
                                PassRefPtr<OpenTypeVerticalData> vertical_data)
     : platform_data_(platform_data),
-      vertical_data_(vertical_data),
+      vertical_data_(std::move(vertical_data)),
       is_text_orientation_fallback_(false),
       has_vertical_glyphs_(false),
       visual_overflow_inflation_for_ascent_(0),
@@ -105,7 +111,7 @@ void SimpleFontData::PlatformInit(bool subpixel_ascent_descent) {
   int vdmx_ascent = 0, vdmx_descent = 0;
   bool is_vdmx_valid = false;
 
-#if OS(LINUX) || OS(ANDROID)
+#if defined(OS_LINUX) || defined(OS_ANDROID)
   // Manually digging up VDMX metrics is only applicable when bytecode hinting
   // using FreeType.  With DirectWrite or CoreText, no bytecode hinting is ever
   // done.  This code should be pushed into FreeType (hinted font metrics).
@@ -154,7 +160,7 @@ void SimpleFontData::PlatformInit(bool subpixel_ascent_descent) {
       visual_overflow_inflation_for_ascent_ = 1;
     if (descent < metrics.fDescent) {
       visual_overflow_inflation_for_descent_ = 1;
-#if OS(LINUX) || OS(ANDROID)
+#if defined(OS_LINUX) || defined(OS_ANDROID)
       // When subpixel positioning is enabled, if the descent is rounded down,
       // the descent part of the glyph may be truncated when displayed in a
       // 'overflow: hidden' container.  To avoid that, borrow 1 unit from the
@@ -171,7 +177,7 @@ void SimpleFontData::PlatformInit(bool subpixel_ascent_descent) {
     }
   }
 
-#if OS(MACOSX)
+#if defined(OS_MACOSX)
   // We are preserving this ascent hack to match Safari's ascent adjustment
   // in their SimpleFontDataMac.mm, for details see crbug.com/445830.
   // We need to adjust Times, Helvetica, and Courier to closely match the
@@ -179,12 +185,10 @@ void SimpleFontData::PlatformInit(bool subpixel_ascent_descent) {
   // web standard. The AppKit adjustment of 20% is too big and is
   // incorrectly added to line spacing, so we use a 15% adjustment instead
   // and add it to the ascent.
-  DEFINE_STATIC_LOCAL(AtomicString, times_name, ("Times"));
-  DEFINE_STATIC_LOCAL(AtomicString, helvetica_name, ("Helvetica"));
-  DEFINE_STATIC_LOCAL(AtomicString, courier_name, ("Courier"));
   String family_name = platform_data_.FontFamilyName();
-  if (family_name == times_name || family_name == helvetica_name ||
-      family_name == courier_name)
+  if (family_name == FontFamilyNames::Times ||
+      family_name == FontFamilyNames::Helvetica ||
+      family_name == FontFamilyNames::Courier)
     ascent += floorf(((ascent + descent) * 0.15f) + 0.5f);
 #endif
 
@@ -194,7 +198,7 @@ void SimpleFontData::PlatformInit(bool subpixel_ascent_descent) {
   float x_height;
   if (metrics.fXHeight) {
     x_height = metrics.fXHeight;
-#if OS(MACOSX)
+#if defined(OS_MACOSX)
     // Mac OS CTFontGetXHeight reports the bounding box height of x,
     // including parts extending below the baseline and apparently no x-height
     // value from the OS/2 table. However, the CSS ex unit
@@ -231,7 +235,7 @@ void SimpleFontData::PlatformInit(bool subpixel_ascent_descent) {
 // In WebKit/WebCore/platform/graphics/SimpleFontData.cpp, m_spaceWidth is
 // calculated for us, but we need to calculate m_maxCharWidth and
 // m_avgCharWidth in order for text entry widgets to be sized correctly.
-#if OS(WIN)
+#if defined(OS_WIN)
   max_char_width_ = SkScalarRoundToInt(metrics.fMaxCharWidth);
 
   // Older version of the DirectWrite API doesn't implement support for max
@@ -239,7 +243,7 @@ void SimpleFontData::PlatformInit(bool subpixel_ascent_descent) {
   // arbitrary but comes pretty close to the expected value in most cases.
   if (max_char_width_ < 1)
     max_char_width_ = ascent * 2;
-#elif OS(MACOSX)
+#elif defined(OS_MACOSX)
   // FIXME: The current avg/max character width calculation is not ideal,
   // it should check either the OS2 table or, better yet, query FontMetrics.
   // Sadly FontMetrics provides incorrect data on Mac at the moment.
@@ -252,7 +256,7 @@ void SimpleFontData::PlatformInit(bool subpixel_ascent_descent) {
 
 #endif
 
-#if !OS(MACOSX)
+#if !defined(OS_MACOSX)
   if (metrics.fAvgCharWidth) {
     avg_char_width_ = SkScalarRoundToInt(metrics.fAvgCharWidth);
   } else {
@@ -262,7 +266,7 @@ void SimpleFontData::PlatformInit(bool subpixel_ascent_descent) {
     if (x_glyph) {
       avg_char_width_ = WidthForGlyph(x_glyph);
     }
-#if !OS(MACOSX)
+#if !defined(OS_MACOSX)
   }
 #endif
 
@@ -377,6 +381,90 @@ PassRefPtr<SimpleFontData> SimpleFontData::CreateScaledFontData(
   return SimpleFontData::Create(
       FontPlatformData(platform_data_, scaled_size),
       IsCustomFont() ? CustomFontData::Create() : nullptr);
+}
+
+// Internal leadings can be distributed to ascent and descent.
+// -------------------------------------------
+//           | - Internal Leading (in ascent)
+//           |--------------------------------
+//  Ascent - |              |
+//           |              |
+//           |              | - Em height
+// ----------|--------------|
+//           |              |
+// Descent - |--------------------------------
+//           | - Internal Leading (in descent)
+// -------------------------------------------
+LayoutUnit SimpleFontData::EmHeightAscent(FontBaseline baseline_type) const {
+  if (baseline_type == kAlphabeticBaseline) {
+    if (!em_height_ascent_)
+      ComputeEmHeightMetrics();
+    return em_height_ascent_;
+  }
+  LayoutUnit em_height = LayoutUnit::FromFloatRound(PlatformData().size());
+  return em_height - em_height / 2;
+}
+
+LayoutUnit SimpleFontData::EmHeightDescent(FontBaseline baseline_type) const {
+  if (baseline_type == kAlphabeticBaseline) {
+    if (!em_height_descent_)
+      ComputeEmHeightMetrics();
+    return em_height_descent_;
+  }
+  LayoutUnit em_height = LayoutUnit::FromFloatRound(PlatformData().size());
+  return em_height / 2;
+}
+
+static std::pair<int16_t, int16_t> TypoAscenderAndDescender(
+    SkTypeface* typeface) {
+  // TODO(kojii): This should move to Skia once finalized. We can then move
+  // EmHeightAscender/Descender to FontMetrics.
+  int16_t buffer[2];
+  size_t size = typeface->getTableData(SkSetFourByteTag('O', 'S', '/', '2'), 68,
+                                       sizeof(buffer), buffer);
+  if (size == sizeof(buffer)) {
+    return std::make_pair(static_cast<int16_t>(ntohs(buffer[0])),
+                          -static_cast<int16_t>(ntohs(buffer[1])));
+  }
+  return std::make_pair(0, 0);
+}
+
+void SimpleFontData::ComputeEmHeightMetrics() const {
+  // Compute em height metrics from OS/2 sTypoAscender and sTypoDescender.
+  SkTypeface* typeface = platform_data_.Typeface();
+  int16_t typo_ascender, typo_descender;
+  std::tie(typo_ascender, typo_descender) = TypoAscenderAndDescender(typeface);
+  if (typo_ascender > 0 &&
+      NormalizeEmHeightMetrics(typo_ascender, typo_ascender + typo_descender)) {
+    return;
+  }
+
+  // As the last resort, compute em height metrics from our ascent/descent.
+  const FontMetrics& font_metrics = GetFontMetrics();
+  if (NormalizeEmHeightMetrics(font_metrics.FloatAscent(),
+                               font_metrics.FloatHeight())) {
+    return;
+  }
+  NOTREACHED();
+}
+
+bool SimpleFontData::NormalizeEmHeightMetrics(float ascent,
+                                              float height) const {
+  if (height <= 0 || ascent < 0 || ascent > height)
+    return false;
+  // While the OpenType specification recommends the sum of sTypoAscender and
+  // sTypoDescender to equal 1em, most fonts do not follow. Most Latin fonts
+  // set to smaller than 1em, and many tall scripts set to larger than 1em.
+  // https://www.microsoft.com/typography/otspec/recom.htm#OS2
+  // To ensure the sum of ascent and descent is the "em height", normalize by
+  // keeping the ratio of sTypoAscender:sTypoDescender.
+  // This matches to how Gecko computes "em height":
+  // https://github.com/whatwg/html/issues/2470#issuecomment-291425136
+  float em_height = PlatformData().size();
+  em_height_ascent_ = LayoutUnit::FromFloatRound(ascent * em_height / height);
+  em_height_descent_ =
+      LayoutUnit::FromFloatRound(em_height) - em_height_ascent_;
+  return true;
 }
 
 FloatRect SimpleFontData::PlatformBoundsForGlyph(Glyph glyph) const {

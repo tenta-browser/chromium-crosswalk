@@ -167,6 +167,12 @@ enum class CertificateParserState {
 }  // namespace
 
 bool ParseCertificatesFile(base::StringPiece certs_input, Pinsets* pinsets) {
+  if (certs_input.find("\r\n") != base::StringPiece::npos) {
+    LOG(ERROR) << "CRLF line-endings found in the pins file. All files must "
+                  "use LF (unix style) line-endings.";
+    return false;
+  }
+
   std::string line;
   CertificateParserState current_state = CertificateParserState::PRE_NAME;
 
@@ -272,8 +278,7 @@ bool ParseCertificatesFile(base::StringPiece certs_input, Pinsets* pinsets) {
 
 bool ParseJSON(base::StringPiece json,
                TransportSecurityStateEntries* entries,
-               Pinsets* pinsets,
-               DomainIDList* domain_ids) {
+               Pinsets* pinsets) {
   std::unique_ptr<base::Value> value = base::JSONReader::Read(json);
   base::DictionaryValue* dict_value = nullptr;
   if (!value.get() || !value->GetAsDictionary(&dict_value)) {
@@ -301,6 +306,12 @@ bool ParseJSON(base::StringPiece json,
     if (!parsed->GetString("name", &entry->hostname)) {
       LOG(ERROR) << "Could not extract the hostname for entry "
                  << base::SizeTToString(i) << " from the input JSON";
+      return false;
+    }
+
+    if (entry->hostname.empty()) {
+      LOG(ERROR) << "The hostname for entry " << base::SizeTToString(i)
+                 << " is empty";
       return false;
     }
 
@@ -368,20 +379,6 @@ bool ParseJSON(base::StringPiece json,
     }
 
     pinsets->RegisterPinset(std::move(pinset));
-  }
-
-  // TODO(Martijnc): Remove the domain IDs from the preload format.
-  // https://crbug.com/661206.
-  const base::ListValue* domain_ids_list = nullptr;
-  if (!dict_value->GetList("domain_ids", &domain_ids_list)) {
-    LOG(ERROR) << "Could not parse the domain IDs in the input JSON";
-    return false;
-  }
-
-  for (size_t i = 0; i < domain_ids_list->GetSize(); ++i) {
-    std::string domain;
-    domain_ids_list->GetString(i, &domain);
-    domain_ids->push_back(domain);
   }
 
   return true;

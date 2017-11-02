@@ -2,47 +2,62 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-/**
- * @constructor
- * @implements {settings.CupsPrintersBrowserProxy}
- * @extends {settings.TestBrowserProxy}
- */
-var TestCupsPrintersBrowserProxy = function() {
-  settings.TestBrowserProxy.call(this, [
-    'getCupsPrintersList',
-    'getCupsPrinterManufacturersList',
-    'getCupsPrinterModelsList'
-  ]);
-};
+/** @implements {settings.CupsPrintersBrowserProxy} */
+class TestCupsPrintersBrowserProxy extends TestBrowserProxy {
+  constructor() {
+    super([
+      'getCupsPrintersList',
+      'getCupsPrinterManufacturersList',
+      'getCupsPrinterModelsList',
+      'getPrinterInfo',
+      'startDiscoveringPrinters',
+      'stopDiscoveringPrinters',
+    ]);
 
-TestCupsPrintersBrowserProxy.prototype = {
-  __proto__: settings.TestBrowserProxy.prototype,
-
-  printerList: [],
-  manufacturers: [],
-  models: [],
+    this.printerList = [];
+    this.manufacturers = [];
+    this.models = [];
+    this.printerInfo = {};
+  }
 
   /** @override */
-  getCupsPrintersList: function() {
+  getCupsPrintersList() {
     this.methodCalled('getCupsPrintersList');
     return Promise.resolve(this.printerList);
-  },
+  }
 
   /** @override */
-  getCupsPrinterManufacturersList: function() {
+  getCupsPrinterManufacturersList() {
     this.methodCalled('getCupsPrinterManufacturersList');
     return Promise.resolve(this.manufacturers);
-  },
+  }
 
   /** @override */
-  getCupsPrinterModelsList: function(manufacturer) {
+  getCupsPrinterModelsList(manufacturer) {
     this.methodCalled('getCupsPrinterModelsList', manufacturer);
     return Promise.resolve(this.models);
-  },
-};
+  }
+
+  /** @override */
+  getPrinterInfo(newPrinter) {
+    this.methodCalled('getPrinterInfo', newPrinter);
+    // Reject all calls for now.
+    return Promise.reject();
+  }
+
+  /** @override */
+  startDiscoveringPrinters() {
+    this.methodCalled('startDiscoveringPrinters');
+  }
+
+  /** @override */
+  stopDiscoveringPrinters() {
+    this.methodCalled('stopDiscoveringPrinters');
+  }
+}
 
 suite('CupsAddPrinterDialogTests', function() {
-  function fillDialog(addDialog) {
+  function fillAddManuallyDialog(addDialog) {
     var name = addDialog.$$('#printerNameInput');
     var address = addDialog.$$('#printerAddressInput');
 
@@ -82,38 +97,75 @@ suite('CupsAddPrinterDialogTests', function() {
   });
 
   /**
-   * Test that the manual add dialog is showing.
+   * Test that the discovery dialog is showing when a user initially asks
+   * to add a printer.
    */
-  test('ManualAddShowing', function() {
-    assertFalse(!!dialog.$$('add-printer-manufacturer-model-dialog'));
-    assertFalse(!!dialog.$$('add-printer-configuring-dialog'));
-    assertTrue(!!dialog.$$('add-printer-manually-dialog'));
+  test('DiscoveryShowing', function() {
+    return PolymerTest.flushTasks().then(function() {
+      // Discovery is showing.
+      assertTrue(dialog.showDiscoveryDialog_);
+      assertTrue(!!dialog.$$('add-printer-discovery-dialog'));
+
+      // All other components are hidden.
+      assertFalse(dialog.showManufacturerDialog_);
+      assertFalse(!!dialog.$$('add-printer-manufacturer-model-dialog'));
+      assertFalse(dialog.showConfiguringDialog_);
+      assertFalse(!!dialog.$$('add-printer-configuring-dialog'));
+      assertFalse(dialog.showManuallyAddDialog_);
+      assertFalse(!!dialog.$$('add-printer-manually-dialog'));
+    });
   });
 
   /**
    * Test that clicking on Add opens the model select page.
    */
   test('ValidAddOpensModelSelection', function() {
+    // Starts in discovery dialog, select add manually button.
+    var discoveryDialog = dialog.$$('add-printer-discovery-dialog');
+    assertTrue(!!discoveryDialog);
+    MockInteractions.tap(discoveryDialog.$$('.secondary-button'));
+    Polymer.dom.flush();
+
+    // Now we should be in the manually add dialog.
     var addDialog = dialog.$$('add-printer-manually-dialog');
     assertTrue(!!addDialog);
-
-    fillDialog(addDialog);
+    fillAddManuallyDialog(addDialog);
 
     MockInteractions.tap(addDialog.$$('.action-button'));
     Polymer.dom.flush();
+    // Configure is shown until getPrinterInfo is rejected.
+    assertTrue(!!dialog.$$('add-printer-configuring-dialog'));
 
-    // showing model selection
-    assertFalse(!!dialog.$$('add-printer-configuring-dialog'));
-    assertTrue(!!dialog.$$('add-printer-manufacturer-model-dialog'));
+    // Upon rejection, show model.
+    return cupsPrintersBrowserProxy.
+        whenCalled('getCupsPrinterManufacturersList').
+        then(function() {
+          return PolymerTest.flushTasks();
+        }).
+        then(function() {
+          // Showing model selection.
+          assertFalse(!!dialog.$$('add-printer-configuring-dialog'));
+          assertTrue(!!dialog.$$('add-printer-manufacturer-model-dialog'));
+
+          assertTrue(dialog.showManufacturerDialog_);
+          assertFalse(dialog.showConfiguringDialog_);
+          assertFalse(dialog.showManuallyAddDialog_);
+          assertFalse(dialog.showDiscoveryDialog_);
+        });
   });
 
   /**
    * Test that getModels isn't called with a blank query.
    */
   test('NoBlankQueries', function() {
+    var discoveryDialog = dialog.$$('add-printer-discovery-dialog');
+    assertTrue(!!discoveryDialog);
+    MockInteractions.tap(discoveryDialog.$$('.secondary-button'));
+    Polymer.dom.flush();
+
     var addDialog = dialog.$$('add-printer-manually-dialog');
     assertTrue(!!addDialog);
-    fillDialog(addDialog);
+    fillAddManuallyDialog(addDialog);
 
     cupsPrintersBrowserProxy.whenCalled('getCupsPrinterModelsList')
         .then(function(manufacturer) { assertGT(0, manufacturer.length); });
@@ -123,10 +175,11 @@ suite('CupsAddPrinterDialogTests', function() {
     MockInteractions.tap(addDialog.$$('.action-button'));
     Polymer.dom.flush();
 
-    var modelDialog = dialog.$$('add-printer-manufacturer-model-dialog');
-    assertTrue(!!modelDialog);
-
-    return cupsPrintersBrowserProxy.whenCalled(
-        'getCupsPrinterManufacturersList');
+    return cupsPrintersBrowserProxy.
+        whenCalled('getCupsPrinterManufacturersList').
+        then(function() {
+          var modelDialog = dialog.$$('add-printer-manufacturer-model-dialog');
+          assertTrue(!!modelDialog);
+        });
   });
 });

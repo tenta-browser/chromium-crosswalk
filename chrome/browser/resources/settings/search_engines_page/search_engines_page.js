@@ -13,22 +13,13 @@ Polymer({
 
   properties: {
     /** @type {!Array<!SearchEngine>} */
-    defaultEngines: {
-      type: Array,
-      value: function() { return []; }
-    },
+    defaultEngines: Array,
 
     /** @type {!Array<!SearchEngine>} */
-    otherEngines: {
-      type: Array,
-      value: function() { return []; }
-    },
+    otherEngines: Array,
 
     /** @type {!Array<!SearchEngine>} */
-    extensions: {
-      type: Array,
-      value: function() { return []; }
-    },
+    extensions: Array,
 
     /**
      * Needed by GlobalScrollTargetBehavior.
@@ -36,7 +27,7 @@ Polymer({
      */
     subpageRoute: {
       type: Object,
-      value: settings.Route.SEARCH_ENGINES,
+      value: settings.routes.SEARCH_ENGINES,
     },
 
     /** @private {boolean} */
@@ -46,7 +37,34 @@ Polymer({
     showExtensionsList_: {
       type: Boolean,
       computed: 'computeShowExtensionsList_(extensions)',
-    }
+    },
+
+    /** Filters out all search engines that do not match. */
+    filter: {
+      type: String,
+      value: '',
+    },
+
+    /** @private {!Array<!SearchEngine>} */
+    matchingDefaultEngines_: {
+      type: Array,
+      computed: 'computeMatchingEngines_(defaultEngines, filter)',
+    },
+
+    /** @private {!Array<!SearchEngine>} */
+    matchingOtherEngines_: {
+      type: Array,
+      computed: 'computeMatchingEngines_(otherEngines, filter)',
+    },
+
+    /** @private {!Array<!SearchEngine>} */
+    matchingExtensions_: {
+      type: Array,
+      computed: 'computeMatchingEngines_(extensions, filter)',
+    },
+
+    /** @private {HTMLElement} */
+    omniboxExtensionlastFocused_: Object,
   },
 
   // Since the iron-list for extensions is enclosed in a dom-if, observe both
@@ -55,8 +73,9 @@ Polymer({
 
   /** @override */
   ready: function() {
-    settings.SearchEnginesBrowserProxyImpl.getInstance().
-        getSearchEnginesList().then(this.enginesChanged_.bind(this));
+    settings.SearchEnginesBrowserProxyImpl.getInstance()
+        .getSearchEnginesList()
+        .then(this.enginesChanged_.bind(this));
     this.addWebUIListener(
         'search-engines-changed', this.enginesChanged_.bind(this));
 
@@ -78,7 +97,13 @@ Polymer({
    */
   enginesChanged_: function(searchEnginesInfo) {
     this.defaultEngines = searchEnginesInfo['defaults'];
-    this.otherEngines = searchEnginesInfo['others'];
+
+    // Sort |otherEngines| in alphabetical order.
+    this.otherEngines = searchEnginesInfo['others'].sort(function(a, b) {
+      return a.name.toLocaleLowerCase().localeCompare(
+          b.name.toLocaleLowerCase());
+    });
+
     this.extensions = searchEnginesInfo['extensions'];
   },
 
@@ -89,20 +114,47 @@ Polymer({
   onAddSearchEngineTap_: function(e) {
     e.preventDefault();
     this.showAddSearchEngineDialog_ = true;
-    this.async(function() {
+    this.async(() => {
       var dialog = this.$$('settings-search-engine-dialog');
       // Register listener to detect when the dialog is closed. Flip the boolean
       // once closed to force a restamp next time it is shown such that the
       // previous dialog's contents are cleared.
-      dialog.addEventListener('close', function() {
+      dialog.addEventListener('close', () => {
         this.showAddSearchEngineDialog_ = false;
-        this.$.addSearchEngine.focus();
-      }.bind(this));
-    }.bind(this));
+        cr.ui.focusWithoutInk(assert(this.$.addSearchEngine));
+      });
+    });
   },
 
   /** @private */
   computeShowExtensionsList_: function() {
     return this.extensions.length > 0;
+  },
+
+  /**
+   * Filters the given list based on the currently existing filter string.
+   * @param {!Array<!SearchEngine>} list
+   * @return {!Array<!SearchEngine>}
+   * @private
+   */
+  computeMatchingEngines_: function(list) {
+    if (this.filter == '')
+      return list;
+
+    var filter = this.filter.toLowerCase();
+    return list.filter(e => {
+      return [e.displayName, e.name, e.keyword, e.url].some(
+          term => term.toLowerCase().includes(filter));
+    });
+  },
+
+  /**
+   * @param {!Array<!SearchEngine>} list The original list.
+   * @param {!Array<!SearchEngine>} filteredList The filtered list.
+   * @return {boolean} Whether to show the "no results" message.
+   * @private
+   */
+  showNoResultsMessage_: function(list, filteredList) {
+    return list.length > 0 && filteredList.length == 0;
   },
 });

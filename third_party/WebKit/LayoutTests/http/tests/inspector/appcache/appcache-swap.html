@@ -5,57 +5,53 @@
 <script src="../network-test.js"></script>
 <script src="../resources-test.js"></script>
 <script>
-function test()
-{
-    var frameId1;
-    var frameId2;
+function test() {
+  var frameId1;
+  var frameId2;
 
-    UI.viewManager.showView("resources");
-    InspectorTest.startApplicationCacheStatusesRecording();
-    InspectorTest.dumpApplicationCache();
-    InspectorTest.createAndNavigateIFrame("resources/with-versioned-manifest.php", step1);
+  UI.viewManager.showView('resources');
+  ApplicationTestRunner.startApplicationCacheStatusesRecording();
+  ApplicationTestRunner.dumpApplicationCache();
+  ApplicationTestRunner.createAndNavigateIFrame('resources/with-versioned-manifest.php', step1);
 
-    function step1(frameId)
-    {
-        frameId1 = frameId;
-        InspectorTest.waitForFrameManifestURLAndStatus(frameId1, "resources/versioned-manifest.php", applicationCache.IDLE, step2);
-    }
+  function step1(frameId) {
+    frameId1 = frameId;
+    ApplicationTestRunner.waitForFrameManifestURLAndStatus(
+        frameId1, 'resources/versioned-manifest.php', applicationCache.IDLE, step2);
+  }
 
-    function step2()
-    {
-        InspectorTest.dumpApplicationCache();
-        InspectorTest.makeSimpleXHR("GET", "resources/versioned-manifest.php?command=step", true, step3);
-    }
+  function step2() {
+    ApplicationTestRunner.dumpApplicationCache();
+    NetworkTestRunner.makeSimpleXHR('GET', 'resources/versioned-manifest.php?command=step', true, step3);
+  }
 
-    function step3()
-    {
-        InspectorTest.createAndNavigateIFrame("resources/with-versioned-manifest.php", step4);
-    }
+  function step3() {
+    ApplicationTestRunner.createAndNavigateIFrame('resources/with-versioned-manifest.php', step4);
+  }
 
-    function step4(frameId)
-    {
-        frameId2 = frameId;
-        InspectorTest.waitForFrameManifestURLAndStatus(frameId1, "resources/versioned-manifest.php", applicationCache.UPDATEREADY, step5);
-    }
+  function step4(frameId) {
+    frameId2 = frameId;
+    ApplicationTestRunner.waitForFrameManifestURLAndStatus(
+        frameId1, 'resources/versioned-manifest.php', applicationCache.UPDATEREADY, step5);
+  }
 
-    function step5(frameId)
-    {
-        InspectorTest.waitForFrameManifestURLAndStatus(frameId2, "resources/versioned-manifest.php", applicationCache.UPDATEREADY, step6);
-    }
+  function step5(frameId) {
+    ApplicationTestRunner.waitForFrameManifestURLAndStatus(
+        frameId2, 'resources/versioned-manifest.php', applicationCache.UPDATEREADY, step6);
+  }
 
-    function step6()
-    {
-        InspectorTest.dumpApplicationCache();
+  function step6() {
+    ApplicationTestRunner.dumpApplicationCache();
 
-        InspectorTest.swapFrameCache(frameId1);
-        InspectorTest.waitForFrameManifestURLAndStatus(frameId1, "resources/versioned-manifest.php", applicationCache.IDLE, step7);
-    }
+    ApplicationTestRunner.swapFrameCache(frameId1);
+    ApplicationTestRunner.waitForFrameManifestURLAndStatus(
+        frameId1, 'resources/versioned-manifest.php', applicationCache.IDLE, step7);
+  }
 
-    function step7()
-    {
-        InspectorTest.dumpApplicationCache();
-        InspectorTest.completeTest();
-    }
+  function step7() {
+    ApplicationTestRunner.dumpApplicationCache();
+    TestRunner.completeTest();
+  }
 }
 </script>
 </head>

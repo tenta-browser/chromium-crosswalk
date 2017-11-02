@@ -42,18 +42,6 @@ std::string GenerateFeatureFlag(const std::string& feature, bool enabled) {
   return feature + (enabled ? "-enabled" : "-disabled");
 }
 
-keyboard::KeyboardMode getKeyboardModeEnum(keyboard_api::KeyboardMode mode) {
-  switch (mode) {
-    case keyboard_api::KEYBOARD_MODE_NONE:
-      return keyboard::NONE;
-    case keyboard_api::KEYBOARD_MODE_FULL_WIDTH:
-      return keyboard::FULL_WIDTH;
-    case keyboard_api::KEYBOARD_MODE_FLOATING:
-      return keyboard::FLOATING;
-  }
-  return keyboard::NONE;
-}
-
 keyboard::KeyboardState getKeyboardStateEnum(
     keyboard_api::KeyboardState state) {
   switch (state) {
@@ -83,8 +71,8 @@ void ChromeVirtualKeyboardDelegate::GetKeyboardConfig(
     OnKeyboardSettingsCallback on_settings_callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   media::AudioSystem::Get()->HasInputDevices(
-      base::Bind(&ChromeVirtualKeyboardDelegate::OnHasInputDevices, weak_this_,
-                 std::move(on_settings_callback)));
+      base::BindOnce(&ChromeVirtualKeyboardDelegate::OnHasInputDevices,
+                     weak_this_, std::move(on_settings_callback)));
 }
 
 bool ChromeVirtualKeyboardDelegate::HideKeyboard() {
@@ -93,10 +81,6 @@ bool ChromeVirtualKeyboardDelegate::HideKeyboard() {
       keyboard::KeyboardController::GetInstance();
   if (!controller)
     return false;
-
-  UMA_HISTOGRAM_ENUMERATION("VirtualKeyboard.KeyboardControlEvent",
-                            keyboard::KEYBOARD_CONTROL_HIDE_USER,
-                            keyboard::KEYBOARD_CONTROL_MAX);
 
   // Pass HIDE_REASON_MANUAL since calls to HideKeyboard as part of this API
   // would be user generated.
@@ -111,8 +95,7 @@ bool ChromeVirtualKeyboardDelegate::InsertText(const base::string16& text) {
 
 bool ChromeVirtualKeyboardDelegate::OnKeyboardLoaded() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  keyboard::MarkKeyboardLoadFinished();
-  base::UserMetricsAction("VirtualKeyboardLoaded");
+  base::RecordAction(base::UserMetricsAction("VirtualKeyboardLoaded"));
   return true;
 }
 
@@ -170,15 +153,9 @@ bool ChromeVirtualKeyboardDelegate::ShowLanguageSettings() {
 }
 
 bool ChromeVirtualKeyboardDelegate::SetVirtualKeyboardMode(int mode_enum) {
-  keyboard::KeyboardMode keyboard_mode =
-      getKeyboardModeEnum(static_cast<keyboard_api::KeyboardMode>(mode_enum));
-  keyboard::KeyboardController* controller =
-      keyboard::KeyboardController::GetInstance();
-  if (!controller)
-    return false;
-
-  controller->SetKeyboardMode(keyboard_mode);
-  return true;
+  // TODO(blakeo): remove this. The virtual keyboard's implementation of mode
+  // was removed, and so this should be removed from the JS API side as well.
+  return false;
 }
 
 bool ChromeVirtualKeyboardDelegate::SetRequestedKeyboardState(int state_enum) {
@@ -192,7 +169,7 @@ bool ChromeVirtualKeyboardDelegate::SetRequestedKeyboardState(int state_enum) {
   if (is_enabled)
     ash::Shell::Get()->CreateKeyboard();
   else
-    ash::Shell::Get()->DeactivateKeyboard();
+    ash::Shell::Get()->DestroyKeyboard();
   return true;
 }
 

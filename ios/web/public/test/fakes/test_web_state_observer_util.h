@@ -16,10 +16,22 @@ namespace web {
 class NavigationContext;
 class WebState;
 
-// Arguments passed to |ProvisionalNavigationStarted|.
-struct TestStartProvisionalNavigationInfo {
+// Arguments passed to |WasShown|.
+struct TestWasShownInfo {
   WebState* web_state;
-  GURL url;
+};
+
+// Arguments passed to |WasHidden|.
+struct TestWasHiddenInfo {
+  WebState* web_state;
+};
+
+// Arguments passed to |DidStartNavigation|.
+struct TestDidStartNavigationInfo {
+  TestDidStartNavigationInfo();
+  ~TestDidStartNavigationInfo();
+  WebState* web_state;
+  std::unique_ptr<web::NavigationContext> context;
 };
 
 // Arguments passed to |DidFinishNavigation|.

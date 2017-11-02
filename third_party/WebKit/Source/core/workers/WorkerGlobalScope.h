@@ -6,9 +6,9 @@
  * are met:
  * 1. Redistributions of source code must retain the above copyright
  *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
+ * 2. Redistributions in binary form must reproduce the above copyright
  *
  * THIS SOFTWARE IS PROVIDED BY APPLE COMPUTER, INC. ``AS IS'' AND ANY
  * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
@@ -28,19 +28,18 @@
 #define WorkerGlobalScope_h
 
 #include <memory>
-#include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "bindings/core/v8/V8CacheOptions.h"
-#include "bindings/core/v8/WorkerOrWorkletScriptController.h"
 #include "core/CoreExport.h"
 #include "core/dom/ExecutionContext.h"
-#include "core/events/EventListener.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/EventListener.h"
+#include "core/dom/events/EventTarget.h"
 #include "core/frame/DOMTimerCoordinator.h"
 #include "core/frame/DOMWindowBase64.h"
 #include "core/frame/csp/ContentSecurityPolicy.h"
 #include "core/workers/WorkerEventQueue.h"
 #include "core/workers/WorkerOrWorkletGlobalScope.h"
 #include "core/workers/WorkerSettings.h"
+#include "platform/bindings/ActiveScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/loader/fetch/CachedMetadataHandler.h"
 #include "platform/wtf/ListHashSet.h"
@@ -49,8 +48,8 @@ namespace blink {
 
 class ConsoleMessage;
 class ExceptionState;
+class OffscreenFontSelector;
 class V8AbstractEventListener;
-class WorkerClients;
 class WorkerLocation;
 class WorkerNavigator;
 class WorkerThread;
@@ -81,10 +80,12 @@ class CORE_EXPORT WorkerGlobalScope
   KURL CompleteURL(const String&) const;
 
   // WorkerOrWorkletGlobalScope
+  void EvaluateClassicScript(const KURL& script_url,
+                             String source_code,
+                             std::unique_ptr<Vector<char>> cached_meta_data,
+                             V8CacheOptions) final;
   bool IsClosing() const final { return closing_; }
   virtual void Dispose();
-  void CountFeature(UseCounter::Feature) final;
-  void CountDeprecation(UseCounter::Feature) final;
   WorkerThread* GetThread() const final { return thread_; }
 
   void ExceptionUnhandled(int exception_id);
@@ -98,7 +99,7 @@ class CORE_EXPORT WorkerGlobalScope
   WorkerNavigator* navigator() const;
   void close();
   bool isSecureContextForBindings() const {
-    return ExecutionContext::IsSecureContext(kStandardSecureContextCheck);
+    return ExecutionContext::IsSecureContext();
   }
 
   String origin() const;
@@ -123,18 +124,18 @@ class CORE_EXPORT WorkerGlobalScope
 
   // ExecutionContext
   bool IsWorkerGlobalScope() const final { return true; }
-  bool IsJSExecutionForbidden() const final;
   bool IsContextThread() const final;
-  void DisableEval(const String& error_message) final;
   String UserAgent() const final { return user_agent_; }
 
   DOMTimerCoordinator* Timers() final { return &timers_; }
   SecurityContext& GetSecurityContext() final { return *this; }
   void AddConsoleMessage(ConsoleMessage*) final;
   WorkerEventQueue* GetEventQueue() const final;
-  bool IsSecureContext(
-      String& error_message,
-      const SecureContextCheck = kStandardSecureContextCheck) const override;
+  bool IsSecureContext(String& error_message) const override;
+
+  OffscreenFontSelector* GetFontSelector() { return font_selector_; }
+
+  CoreProbeSink* GetProbeSink() final;
 
   // EventTarget
   ExecutionContext* GetExecutionContext() const final;
@@ -147,12 +148,6 @@ class CORE_EXPORT WorkerGlobalScope
   double TimeOrigin() const { return time_origin_; }
   WorkerSettings* GetWorkerSettings() const { return worker_settings_.get(); }
 
-  WorkerOrWorkletScriptController* ScriptController() final {
-    return script_controller_.Get();
-  }
-
-  WorkerClients* Clients() const { return worker_clients_.Get(); }
-
   DECLARE_VIRTUAL_TRACE();
 
  protected:
@@ -163,6 +158,8 @@ class CORE_EXPORT WorkerGlobalScope
                     std::unique_ptr<SecurityOrigin::PrivilegeData>,
                     WorkerClients*);
   void SetWorkerSettings(std::unique_ptr<WorkerSettings>);
+  void ApplyContentSecurityPolicyFromHeaders(
+      const ContentSecurityPolicyResponseHeaders&);
   void ApplyContentSecurityPolicyFromVector(
       const Vector<CSPHeaderAndType>& headers);
 
@@ -175,6 +172,33 @@ class CORE_EXPORT WorkerGlobalScope
   void RemoveURLFromMemoryCache(const KURL&) final;
 
  private:
+  // |kNotHandled| is used when the script was not in
+  // InstalledScriptsManager, which means either it was not an installed script
+  // or it was already taken.
+  enum class LoadResult { kSuccess, kFailed, kNotHandled };
+
+  // Tries to load the script synchronously from the
+  // InstalledScriptsManager, which holds scripts that are sent from the browser
+  // upon starting an installed worker. This blocks until the script is
+  // received. If the script load could not be handled by the
+  // InstalledScriptsManager, e.g. when the script was not an installed script,
+  // returns LoadResult::kNotHandled.
+  // TODO(crbug.com/753350): Factor out LoadingScriptFrom* into a new class
+  // which provides the worker's scripts.
+  LoadResult LoadingScriptFromInstalledScriptsManager(
+      const KURL& script_url,
+      KURL* out_response_url,
+      String* out_source_code,
+      std::unique_ptr<Vector<char>>* out_cached_meta_data);
+  // Tries to load the script synchronously from the WorkerScriptLoader, which
+  // requests the script from the browser. This
+  // blocks until the script is received.
+  LoadResult LoadingScriptFromWorkerScriptLoader(
+      const KURL& script_url,
+      KURL* out_response_url,
+      String* out_source_code,
+      std::unique_ptr<Vector<char>>* out_cached_meta_data);
+
   // ExecutionContext
   EventTarget* ErrorEventTarget() final { return this; }
   const KURL& VirtualURL() const final { return url_; }
@@ -191,14 +215,11 @@ class CORE_EXPORT WorkerGlobalScope
   mutable Member<WorkerLocation> location_;
   mutable Member<WorkerNavigator> navigator_;
 
-  Member<WorkerOrWorkletScriptController> script_controller_;
   WorkerThread* thread_;
 
-  bool closing_;
+  bool closing_ = false;
 
   Member<WorkerEventQueue> event_queue_;
-
-  CrossThreadPersistent<WorkerClients> worker_clients_;
 
   DOMTimerCoordinator timers_;
 
@@ -207,7 +228,9 @@ class CORE_EXPORT WorkerGlobalScope
   HeapHashSet<Member<V8AbstractEventListener>> event_listeners_;
 
   HeapHashMap<int, Member<ErrorEvent>> pending_error_events_;
-  int last_pending_error_event_id_;
+  int last_pending_error_event_id_ = 0;
+
+  Member<OffscreenFontSelector> font_selector_;
 };
 
 DEFINE_TYPE_CASTS(WorkerGlobalScope,

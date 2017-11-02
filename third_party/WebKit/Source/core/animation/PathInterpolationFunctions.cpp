@@ -21,7 +21,7 @@ class SVGPathNonInterpolableValue : public NonInterpolableValue {
  public:
   virtual ~SVGPathNonInterpolableValue() {}
 
-  static PassRefPtr<SVGPathNonInterpolableValue> Create(
+  static RefPtr<SVGPathNonInterpolableValue> Create(
       Vector<SVGPathSegType>& path_seg_types) {
     return AdoptRef(new SVGPathNonInterpolableValue(path_seg_types));
   }
@@ -32,7 +32,7 @@ class SVGPathNonInterpolableValue : public NonInterpolableValue {
 
  private:
   SVGPathNonInterpolableValue(Vector<SVGPathSegType>& path_seg_types) {
-    path_seg_types_.Swap(path_seg_types);
+    path_seg_types_.swap(path_seg_types);
   }
 
   Vector<SVGPathSegType> path_seg_types_;

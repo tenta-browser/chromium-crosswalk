@@ -7,6 +7,7 @@
 #include "base/bind.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/containers/flat_set.h"
 #include "content/browser/background_sync/background_sync_context.h"
 #include "content/browser/background_sync/background_sync_manager.h"
 #include "content/browser/devtools/service_worker_devtools_agent_host.h"
@@ -28,7 +29,7 @@
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/push_event_payload.h"
-#include "content/public/common/push_messaging_status.h"
+#include "content/public/common/push_messaging_status.mojom.h"
 #include "url/gurl.h"
 
 namespace content {
@@ -47,8 +48,7 @@ void StatusNoOpKeepingRegistration(
     ServiceWorkerStatusCode status) {
 }
 
-void PushDeliveryNoOp(PushDeliveryStatus status) {
-}
+void PushDeliveryNoOp(mojom::PushDeliveryStatus status) {}
 
 const std::string GetVersionRunningStatusString(
     EmbeddedWorkerStatus running_status) {
@@ -104,7 +104,7 @@ void GetDevToolsRouteInfoOnIO(
           context->GetLiveVersion(version_id)) {
     BrowserThread::PostTask(
         BrowserThread::UI, FROM_HERE,
-        base::Bind(
+        base::BindOnce(
             callback, version->embedded_worker()->process_id(),
             version->embedded_worker()->worker_devtools_agent_route_id()));
   }
@@ -249,7 +249,7 @@ Response ServiceWorkerHandler::StopWorker(const std::string& version_id) {
   if (!base::StringToInt64(version_id, &id))
     return CreateInvalidVersionIdErrorResponse();
   BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-                          base::Bind(&StopServiceWorkerOnIO, context_, id));
+                          base::BindOnce(&StopServiceWorkerOnIO, context_, id));
   return Response::OK();
 }
 
@@ -274,9 +274,9 @@ Response ServiceWorkerHandler::InspectWorker(const std::string& version_id) {
     return CreateInvalidVersionIdErrorResponse();
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&GetDevToolsRouteInfoOnIO, context_, id,
-                 base::Bind(&ServiceWorkerHandler::OpenNewDevToolsWindow,
-                            weak_factory_.GetWeakPtr())));
+      base::BindOnce(&GetDevToolsRouteInfoOnIO, context_, id,
+                     base::Bind(&ServiceWorkerHandler::OpenNewDevToolsWindow,
+                                weak_factory_.GetWeakPtr())));
   return Response::OK();
 }
 
@@ -328,9 +328,9 @@ Response ServiceWorkerHandler::DispatchSyncEvent(
   BackgroundSyncContext* sync_context = partition->GetBackgroundSyncContext();
 
   BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-                          base::Bind(&DispatchSyncEventOnIO, context_,
-                                     make_scoped_refptr(sync_context),
-                                     GURL(origin), id, tag, last_chance));
+                          base::BindOnce(&DispatchSyncEventOnIO, context_,
+                                         make_scoped_refptr(sync_context),
+                                         GURL(origin), id, tag, last_chance));
   return Response::OK();
 }
 
@@ -367,19 +367,22 @@ void ServiceWorkerHandler::OnWorkerVersionUpdated(
   std::unique_ptr<protocol::Array<Version>> result =
       protocol::Array<Version>::create();
   for (const auto& version : versions) {
-    std::unique_ptr<protocol::Array<std::string>> clients =
-        protocol::Array<std::string>::create();
+    base::flat_set<std::string> client_set;
+
     for (const auto& client : version.clients) {
       if (client.second.type == SERVICE_WORKER_PROVIDER_FOR_WINDOW) {
-        RenderFrameHostImpl* render_frame_host = RenderFrameHostImpl::FromID(
-            client.second.process_id, client.second.route_id);
+        // PlzNavigate: a navigation may not yet be associated with a
+        // RenderFrameHost. Use the |web_contents_getter| instead.
         WebContents* web_contents =
-            WebContents::FromRenderFrameHost(render_frame_host);
+            client.second.web_contents_getter
+                ? client.second.web_contents_getter.Run()
+                : WebContents::FromRenderFrameHost(RenderFrameHostImpl::FromID(
+                      client.second.process_id, client.second.route_id));
         // There is a possibility that the frame is already deleted
         // because of the thread hopping.
         if (!web_contents)
           continue;
-        clients->addItem(
+        client_set.insert(
             DevToolsAgentHost::GetOrCreateFor(web_contents)->GetId());
       } else if (client.second.type ==
                  SERVICE_WORKER_PROVIDER_FOR_SHARED_WORKER) {
@@ -387,9 +390,14 @@ void ServiceWorkerHandler::OnWorkerVersionUpdated(
             DevToolsAgentHost::GetForWorker(client.second.process_id,
                                             client.second.route_id));
         if (agent_host)
-          clients->addItem(agent_host->GetId());
+          client_set.insert(agent_host->GetId());
       }
     }
+    std::unique_ptr<protocol::Array<std::string>> clients =
+        protocol::Array<std::string>::create();
+    for (auto& c : client_set)
+      clients->addItem(c);
+
     std::unique_ptr<Version> version_value = Version::Create()
         .SetVersionId(base::Int64ToString(version.version_id))
         .SetRegistrationId(
@@ -419,7 +427,7 @@ void ServiceWorkerHandler::OnWorkerVersionUpdated(
 void ServiceWorkerHandler::OnErrorReported(
     int64_t registration_id,
     int64_t version_id,
-    const ServiceWorkerContextObserver::ErrorInfo& info) {
+    const ServiceWorkerContextCoreObserver::ErrorInfo& info) {
   frontend_->WorkerErrorReported(
       ServiceWorker::ServiceWorkerErrorMessage::Create()
           .SetErrorMessage(base::UTF16ToUTF8(info.error_message))

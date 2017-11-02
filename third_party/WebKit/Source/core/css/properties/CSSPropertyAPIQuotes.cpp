@@ -11,10 +11,11 @@
 
 namespace blink {
 
-const CSSValue* CSSPropertyAPIQuotes::parseSingleValue(
+const CSSValue* CSSPropertyAPIQuotes::ParseSingleValue(
+    CSSPropertyID,
     CSSParserTokenRange& range,
     const CSSParserContext& context,
-    CSSPropertyID) {
+    const CSSParserLocalContext&) const {
   if (range.Peek().Id() == CSSValueNone)
     return CSSPropertyParserHelpers::ConsumeIdent(range);
   CSSValueList* values = CSSValueList::CreateSpaceSeparated();

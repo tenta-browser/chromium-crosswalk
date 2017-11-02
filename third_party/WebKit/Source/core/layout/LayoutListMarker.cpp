@@ -75,7 +75,7 @@ LayoutSize LayoutListMarker::ImageBulletSize() const {
   // marker box.
   LayoutUnit bullet_width =
       font_data->GetFontMetrics().Ascent() / LayoutUnit(2);
-  return image_->ImageSize(*this, Style()->EffectiveZoom(),
+  return image_->ImageSize(GetDocument(), Style()->EffectiveZoom(),
                            LayoutSize(bullet_width, bullet_width));
 }
 
@@ -139,7 +139,7 @@ void LayoutListMarker::UpdateLayout() {
   DCHECK(NeedsLayout());
   LayoutAnalyzer::Scope analyzer(*this);
 
-  LayoutUnit block_offset;
+  LayoutUnit block_offset = LogicalTop();
   for (LayoutBox* o = ParentBox(); o && o != ListItem(); o = o->ParentBox()) {
     block_offset += o->LogicalTop();
   }
@@ -354,7 +354,7 @@ LayoutUnit LayoutListMarker::LineHeight(
   return LayoutBox::LineHeight(first_line, direction, line_position_mode);
 }
 
-int LayoutListMarker::BaselinePosition(
+LayoutUnit LayoutListMarker::BaselinePosition(
     FontBaseline baseline_type,
     bool first_line,
     LineDirectionMode direction,
@@ -477,15 +477,6 @@ IntRect LayoutListMarker::GetRelativeMarkerRect() const {
   }
 
   return relative_rect;
-}
-
-void LayoutListMarker::SetSelectionState(SelectionState state) {
-  // The selection state for our containing block hierarchy is updated by the
-  // base class call.
-  LayoutBox::SetSelectionState(state);
-
-  if (InlineBoxWrapper() && CanUpdateSelectionOnRootLineBoxes())
-    InlineBoxWrapper()->Root().SetHasSelectedChildren(state != SelectionNone);
 }
 
 void LayoutListMarker::ListItemStyleDidChange() {

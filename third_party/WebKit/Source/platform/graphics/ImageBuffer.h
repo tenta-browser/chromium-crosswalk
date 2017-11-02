@@ -62,7 +62,6 @@ namespace blink {
 
 class DrawingBuffer;
 class GraphicsContext;
-class Image;
 class ImageBufferClient;
 class IntPoint;
 class IntRect;
@@ -78,7 +77,7 @@ class PLATFORM_EXPORT ImageBuffer {
       const IntSize&,
       OpacityMode = kNonOpaque,
       ImageInitializationMode = kInitializeImagePixels,
-      sk_sp<SkColorSpace> = nullptr);
+      const CanvasColorParams& = CanvasColorParams());
   static std::unique_ptr<ImageBuffer> Create(
       std::unique_ptr<ImageBufferSurface>);
 
@@ -157,8 +156,7 @@ class PLATFORM_EXPORT ImageBuffer {
 
   void NotifySurfaceInvalid();
 
-  sk_sp<SkImage> NewSkImageSnapshot(AccelerationHint, SnapshotReason) const;
-  PassRefPtr<Image> NewImageSnapshot(
+  PassRefPtr<StaticBitmapImage> NewImageSnapshot(
       AccelerationHint = kPreferNoAcceleration,
       SnapshotReason = kSnapshotReasonUnknown) const;
 

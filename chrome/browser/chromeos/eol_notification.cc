@@ -16,12 +16,15 @@
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/update_engine_client.h"
 #include "components/prefs/pref_service.h"
+#include "components/vector_icons/vector_icons.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/paint_vector_icon.h"
-#include "ui/vector_icons/vector_icons.h"
+#include "ui/message_center/message_center.h"
+#include "ui/message_center/message_center_style.h"
 
 using message_center::MessageCenter;
+using l10n_util::GetStringUTF16;
 
 namespace chromeos {
 namespace {
@@ -139,13 +142,12 @@ void EolNotification::OnEolStatus(update_engine::EndOfLifeStatus status) {
 
 void EolNotification::Update() {
   message_center::ButtonInfo learn_more(
-      l10n_util::GetStringUTF16(IDS_EOL_MORE_INFO_BUTTON));
-  learn_more.icon =
-      gfx::Image(CreateVectorIcon(ui::kInfoOutlineIcon, kButtonIconColor));
-  message_center::ButtonInfo dismiss(
-      l10n_util::GetStringUTF16(IDS_EOL_DISMISS_BUTTON));
-  dismiss.icon =
-      gfx::Image(CreateVectorIcon(ui::kNotificationsOffIcon, kButtonIconColor));
+      GetStringUTF16(IDS_EOL_MORE_INFO_BUTTON));
+  learn_more.icon = gfx::Image(
+      CreateVectorIcon(vector_icons::kInfoOutlineIcon, kButtonIconColor));
+  message_center::ButtonInfo dismiss(GetStringUTF16(IDS_EOL_DISMISS_BUTTON));
+  dismiss.icon = gfx::Image(
+      CreateVectorIcon(vector_icons::kNotificationsOffIcon, kButtonIconColor));
 
   message_center::RichNotificationData data;
   data.buttons.push_back(learn_more);
@@ -153,13 +155,23 @@ void EolNotification::Update() {
 
   Notification notification(
       message_center::NOTIFICATION_TYPE_SIMPLE,
-      l10n_util::GetStringUTF16(IDS_EOL_NOTIFICATION_TITLE),
-      l10n_util::GetStringUTF16(IDS_EOL_NOTIFICATION_EOL),
-      gfx::Image(CreateVectorIcon(kEolIcon, kNotificationIconColor)),
+      GetStringUTF16(IDS_EOL_NOTIFICATION_TITLE),
+      GetStringUTF16(IDS_EOL_NOTIFICATION_EOL),
+      MessageCenter::IsNewStyleNotificationEnabled()
+          ? gfx::Image()
+          : gfx::Image(CreateVectorIcon(kEolIcon, kNotificationIconColor)),
       message_center::NotifierId(message_center::NotifierId::SYSTEM_COMPONENT,
                                  kEolNotificationId),
-      base::string16(),  // display_source
-      GURL(), kEolNotificationId, data, new EolNotificationDelegate(profile_));
+      GetStringUTF16(IDS_EOL_NOTIFICATION_DISPLAY_SOURCE), GURL(),
+      kEolNotificationId, data, new EolNotificationDelegate(profile_));
+  if (MessageCenter::IsNewStyleNotificationEnabled()) {
+    notification.set_accent_color(
+        message_center::kSystemNotificationColorCriticalWarning);
+    notification.set_small_image(gfx::Image(gfx::CreateVectorIcon(
+        kNotificationEndOfSupportIcon,
+        message_center::kSystemNotificationColorCriticalWarning)));
+    notification.set_vector_small_image(kNotificationEndOfSupportIcon);
+  }
   g_browser_process->notification_ui_manager()->Add(notification, profile_);
 }
 

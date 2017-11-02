@@ -22,12 +22,11 @@ function showInspectorAndRunTest()
     runTest();
 }
 
-function test()
-{
-    InspectorTest.expandConsoleMessages();
-    InspectorTest.dumpConsoleMessages();
-    InspectorTest.addResult("TEST COMPLETE");
-    InspectorTest.completeTest();
+function test() {
+  ConsoleTestRunner.expandConsoleMessages();
+  ConsoleTestRunner.dumpConsoleMessages();
+  TestRunner.addResult('TEST COMPLETE');
+  TestRunner.completeTest();
 }
 </script>
 </head>

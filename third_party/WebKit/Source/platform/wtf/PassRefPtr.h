@@ -37,10 +37,6 @@ template <typename T>
 class RefPtr;
 template <typename T>
 class PassRefPtr;
-template <typename T>
-PassRefPtr<T> AdoptRef(T*);
-
-inline void Adopted(const void*) {}
 
 // requireAdoption() is not overloaded for WTF::RefCounted, which has a built-in
 // assumption that adoption is required. requireAdoption() is for bootstrapping
@@ -74,7 +70,7 @@ class PassRefPtr {
   PassRefPtr(T* ptr) : ptr_(ptr) { RefIfNotNull(ptr); }
   PassRefPtr(PassRefPtr&& o) : ptr_(o.LeakRef()) {}
   template <typename U>
-  PassRefPtr(const PassRefPtr<U>& o, EnsurePtrConvertibleArgDecl(U, T))
+  PassRefPtr(PassRefPtr<U>&& o, EnsurePtrConvertibleArgDecl(U, T))
       : ptr_(o.LeakRef()) {}
 
   ALWAYS_INLINE ~PassRefPtr() { DerefIfNotNull(ptr_); }
@@ -86,7 +82,7 @@ class PassRefPtr {
 
   T* Get() const { return ptr_; }
 
-  WARN_UNUSED_RESULT T* LeakRef() const;
+  WARN_UNUSED_RESULT T* LeakRef();
 
   T& operator*() const { return *ptr_; }
   T* operator->() const { return ptr_; }
@@ -94,18 +90,13 @@ class PassRefPtr {
   bool operator!() const { return !ptr_; }
   explicit operator bool() const { return ptr_ != nullptr; }
 
-  friend PassRefPtr AdoptRef<T>(T*);
-
  private:
-  enum AdoptRefTag { kAdoptRef };
-  PassRefPtr(T* ptr, AdoptRefTag) : ptr_(ptr) {}
-
   PassRefPtr& operator=(const PassRefPtr&) {
     static_assert(!sizeof(T*), "PassRefPtr should never be assigned to");
     return *this;
   }
 
-  mutable T* ptr_;
+  T* ptr_;
 };
 
 template <typename T>
@@ -129,7 +120,7 @@ inline PassRefPtr<T>::PassRefPtr(RefPtr<U>&& o,
     : ptr_(o.LeakRef()) {}
 
 template <typename T>
-inline T* PassRefPtr<T>::LeakRef() const {
+inline T* PassRefPtr<T>::LeakRef() {
   T* ptr = ptr_;
   ptr_ = nullptr;
   return ptr;
@@ -206,12 +197,6 @@ inline bool operator!=(std::nullptr_t, const PassRefPtr<T>& b) {
 }
 
 template <typename T>
-PassRefPtr<T> AdoptRef(T* p) {
-  Adopted(p);
-  return PassRefPtr<T>(p, PassRefPtr<T>::kAdoptRef);
-}
-
-template <typename T>
 inline T* GetPtr(const PassRefPtr<T>& p) {
   return p.Get();
 }
@@ -219,6 +204,5 @@ inline T* GetPtr(const PassRefPtr<T>& p) {
 }  // namespace WTF
 
 using WTF::PassRefPtr;
-using WTF::AdoptRef;
 
 #endif  // WTF_PassRefPtr_h

@@ -4,12 +4,12 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow (positioned) DIV id='outer'",
           "rect": [8, 293, 285, 15],
-          "reason": "scroll"
+          "reason": "scroll control"
         }
       ]
     },
@@ -17,14 +17,13 @@
       "name": "Ancestor Clipping Layer",
       "position": [8, 8],
       "bounds": [285, 285],
-      "shouldFlattenTransform": false
+      "drawsContent": false
     },
     {
       "name": "LayoutBlockFlow (positioned) DIV id='container'",
-      "position": [-315, 0],
+      "position": [-307, 8],
       "bounds": [600, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
       "backgroundColor": "#FF0000",
       "paintInvalidations": [
         {
@@ -38,7 +37,7 @@
   "objectPaintInvalidations": [
     {
       "object": "HorizontalScrollbar",
-      "reason": "scroll"
+      "reason": "scroll control"
     },
     {
       "object": "LayoutBlockFlow DIV id='inner'",

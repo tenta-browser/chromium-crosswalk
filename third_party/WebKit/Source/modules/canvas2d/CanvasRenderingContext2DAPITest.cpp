@@ -4,8 +4,9 @@
 
 #include "modules/canvas2d/CanvasRenderingContext2D.h"
 
+#include <memory>
 #include "core/dom/Document.h"
-#include "core/frame/FrameView.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/Settings.h"
 #include "core/html/HTMLCanvasElement.h"
 #include "core/html/ImageData.h"
@@ -20,7 +21,6 @@
 #include "platform/graphics/UnacceleratedImageBufferSurface.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include <memory>
 
 using ::testing::Mock;
 
@@ -72,7 +72,7 @@ void CanvasRenderingContext2DAPITest::SetUp() {
   document_->documentElement()->setInnerHTML(
       "<body><canvas id='c'></canvas></body>");
   document_->View()->UpdateAllLifecyclePhases();
-  canvas_element_ = toHTMLCanvasElement(document_->GetElementById("c"));
+  canvas_element_ = toHTMLCanvasElement(document_->getElementById("c"));
 }
 
 TEST_F(CanvasRenderingContext2DAPITest, SetShadowColor_Clamping) {
@@ -301,7 +301,7 @@ void ResetCanvasForAccessibilityRectTest(Document& document) {
       "<button id='button'></button></canvas>");
   document.GetSettings()->SetAccessibilityEnabled(true);
   HTMLCanvasElement* canvas =
-      toHTMLCanvasElement(document.GetElementById("canvas"));
+      toHTMLCanvasElement(document.getElementById("canvas"));
 
   String canvas_type("2d");
   CanvasContextCreationAttributes attributes;
@@ -315,9 +315,9 @@ void ResetCanvasForAccessibilityRectTest(Document& document) {
 TEST_F(CanvasRenderingContext2DAPITest, AccessibilityRectTestForAddHitRegion) {
   ResetCanvasForAccessibilityRectTest(GetDocument());
 
-  Element* button_element = GetDocument().GetElementById("button");
+  Element* button_element = GetDocument().getElementById("button");
   HTMLCanvasElement* canvas =
-      toHTMLCanvasElement(GetDocument().GetElementById("canvas"));
+      toHTMLCanvasElement(GetDocument().getElementById("canvas"));
   CanvasRenderingContext2D* context =
       static_cast<CanvasRenderingContext2D*>(canvas->RenderingContext());
 
@@ -344,9 +344,9 @@ TEST_F(CanvasRenderingContext2DAPITest,
        AccessibilityRectTestForDrawFocusIfNeeded) {
   ResetCanvasForAccessibilityRectTest(GetDocument());
 
-  Element* button_element = GetDocument().GetElementById("button");
+  Element* button_element = GetDocument().getElementById("button");
   HTMLCanvasElement* canvas =
-      toHTMLCanvasElement(GetDocument().GetElementById("canvas"));
+      toHTMLCanvasElement(GetDocument().getElementById("canvas"));
   CanvasRenderingContext2D* context =
       static_cast<CanvasRenderingContext2D*>(canvas->RenderingContext());
 

@@ -8,6 +8,7 @@
 #import <Foundation/Foundation.h>
 
 @class BookmarkHomeViewController;
+@class BookmarkHomeTabletNTPController;
 @protocol NewTabPagePanelProtocol;
 @protocol UrlLoader;
 
@@ -19,16 +20,16 @@ class ChromeBrowserState;
 // controller that can browse and edit the bookmark hierarchy.
 @interface BookmarkControllerFactory : NSObject
 
+// Returns an instance of BookmarkHomeHandsetViewController.
 - (BookmarkHomeViewController*)
 bookmarkControllerWithBrowserState:(ios::ChromeBrowserState*)browserState
                             loader:(id<UrlLoader>)loader;
 
 // Returns an instance of a NewTabPagePanelProtocol that can navigate and edit
 // the bookmark hierarchy.
-- (id<NewTabPagePanelProtocol>)
+- (BookmarkHomeTabletNTPController*)
 bookmarkPanelControllerForBrowserState:(ios::ChromeBrowserState*)browserState
-                                loader:(id<UrlLoader>)loader
-                            colorCache:(NSMutableDictionary*)cache;
+                                loader:(id<UrlLoader>)loader;
 
 @end
 

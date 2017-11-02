@@ -17,7 +17,6 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
-#include "content/browser/loader/netlog_observer.h"
 #include "content/browser/loader/resource_buffer.h"
 #include "content/browser/loader/resource_controller.h"
 #include "content/browser/loader/resource_dispatcher_host_impl.h"
@@ -25,8 +24,8 @@
 #include "content/browser/loader/resource_request_info_impl.h"
 #include "content/browser/loader/upload_progress_tracker.h"
 #include "content/common/resource_messages.h"
-#include "content/common/resource_request_completion_status.h"
 #include "content/common/view_messages.h"
+#include "content/public/common/resource_request_completion_status.h"
 #include "content/public/common/resource_response.h"
 #include "ipc/ipc_message_macros.h"
 #include "net/base/io_buffer.h"
@@ -152,7 +151,6 @@ void AsyncResourceHandler::OnRequestRedirected(
     return;
   }
 
-  NetLogObserver::PopulateResponseInfo(request(), response);
   response->head.encoded_data_length = request()->GetTotalReceivedBytes();
   reported_transfer_size_ = 0;
   response->head.request_start = request()->creation_time();
@@ -196,7 +194,6 @@ void AsyncResourceHandler::OnResponseStarted(
     return;
   }
 
-  NetLogObserver::PopulateResponseInfo(request(), response);
   response->head.encoded_data_length = request()->raw_header_size();
 
   // If the parent handler downloaded the resource to a file, grant the child
@@ -364,23 +361,17 @@ void AsyncResourceHandler::OnResponseCompleted(
         sent_received_response_msg_);
 
   int error_code = status.error();
-  const ResourceRequestInfoImpl* info = GetRequestInfo();
-  bool was_ignored_by_handler = info->WasIgnoredByHandler();
 
   DCHECK(status.status() != net::URLRequestStatus::IO_PENDING);
-  // If this check fails, then we're in an inconsistent state because all
-  // requests ignored by the handler should be canceled (which should result in
-  // the ERR_ABORTED error code).
-  DCHECK(!was_ignored_by_handler || error_code == net::ERR_ABORTED);
 
   ResourceRequestCompletionStatus request_complete_data;
   request_complete_data.error_code = error_code;
-  request_complete_data.was_ignored_by_handler = was_ignored_by_handler;
   request_complete_data.exists_in_cache = request()->response_info().was_cached;
   request_complete_data.completion_time = TimeTicks::Now();
   request_complete_data.encoded_data_length =
       request()->GetTotalReceivedBytes();
   request_complete_data.encoded_body_length = request()->GetRawBodyBytes();
+  request_complete_data.decoded_body_length = total_read_body_bytes_;
   filter->Send(
       new ResourceMsg_RequestComplete(GetRequestID(), request_complete_data));
 

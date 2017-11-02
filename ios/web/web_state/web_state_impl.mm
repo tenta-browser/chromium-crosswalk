@@ -7,14 +7,18 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/sys_string_conversions.h"
+#include "base/threading/sequenced_task_runner_handle.h"
 #import "ios/web/interstitials/web_interstitial_impl.h"
 #import "ios/web/navigation/crw_session_controller.h"
+#import "ios/web/navigation/legacy_navigation_manager_impl.h"
 #import "ios/web/navigation/navigation_item_impl.h"
 #import "ios/web/navigation/session_storage_builder.h"
+#import "ios/web/navigation/wk_based_navigation_manager_impl.h"
 #include "ios/web/public/browser_state.h"
 #import "ios/web/public/crw_session_storage.h"
 #import "ios/web/public/java_script_dialog_presenter.h"
@@ -22,22 +26,27 @@
 #include "ios/web/public/url_util.h"
 #import "ios/web/public/web_client.h"
 #import "ios/web/public/web_state/context_menu_params.h"
-#include "ios/web/public/web_state/credential.h"
 #import "ios/web/public/web_state/ui/crw_content_view.h"
 #import "ios/web/public/web_state/web_state_delegate.h"
+#include "ios/web/public/web_state/web_state_interface_provider.h"
 #include "ios/web/public/web_state/web_state_observer.h"
 #import "ios/web/public/web_state/web_state_policy_decider.h"
 #include "ios/web/public/web_thread.h"
 #include "ios/web/public/webui/web_ui_ios_controller.h"
 #include "ios/web/web_state/global_web_state_event_tracker.h"
-#include "ios/web/web_state/navigation_context_impl.h"
+#import "ios/web/web_state/navigation_context_impl.h"
 #import "ios/web/web_state/session_certificate_policy_cache_impl.h"
 #import "ios/web/web_state/ui/crw_web_controller.h"
 #import "ios/web/web_state/ui/crw_web_controller_container_view.h"
+#import "ios/web/web_state/ui/crw_web_view_navigation_proxy.h"
 #include "ios/web/webui/web_ui_ios_controller_factory_registry.h"
 #include "ios/web/webui/web_ui_ios_impl.h"
 #include "net/http/http_response_headers.h"
-#include "services/service_manager/public/cpp/interface_registry.h"
+#include "ui/gfx/image/image.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace web {
 
@@ -77,11 +86,16 @@ WebStateImpl::WebStateImpl(const CreateParams& params,
       created_with_opener_(params.created_with_opener),
       weak_factory_(this) {
   // Create or deserialize the NavigationManager.
+  if (web::GetWebClient()->IsSlimNavigationManagerEnabled()) {
+    navigation_manager_ = base::MakeUnique<WKBasedNavigationManagerImpl>();
+  } else {
+    navigation_manager_ = base::MakeUnique<LegacyNavigationManagerImpl>();
+  }
+
   if (session_storage) {
     SessionStorageBuilder session_storage_builder;
     session_storage_builder.ExtractSessionState(this, session_storage);
   } else {
-    navigation_manager_ = base::MakeUnique<NavigationManagerImpl>();
     certificate_policy_cache_ =
         base::MakeUnique<SessionCertificatePolicyCacheImpl>();
   }
@@ -163,30 +177,7 @@ CRWWebController* WebStateImpl::GetWebController() {
 
 void WebStateImpl::SetWebController(CRWWebController* web_controller) {
   [web_controller_ close];
-  web_controller_.reset([web_controller retain]);
-}
-
-void WebStateImpl::OnNavigationCommitted(const GURL& url) {
-  std::unique_ptr<NavigationContext> context =
-      NavigationContextImpl::CreateNavigationContext(this, url,
-                                                     GetHttpResponseHeaders());
-  for (auto& observer : observers_)
-    observer.DidFinishNavigation(context.get());
-}
-
-void WebStateImpl::OnSameDocumentNavigation(const GURL& url) {
-  std::unique_ptr<NavigationContext> context =
-      NavigationContextImpl::CreateSameDocumentNavigationContext(this, url);
-  for (auto& observer : observers_)
-    observer.DidFinishNavigation(context.get());
-}
-
-void WebStateImpl::OnErrorPageNavigation(const GURL& url) {
-  std::unique_ptr<NavigationContext> context =
-      NavigationContextImpl::CreateErrorPageNavigationContext(
-          this, url, GetHttpResponseHeaders());
-  for (auto& observer : observers_)
-    observer.DidFinishNavigation(context.get());
+  web_controller_.reset(web_controller);
 }
 
 void WebStateImpl::OnTitleChanged() {
@@ -249,6 +240,14 @@ double WebStateImpl::GetLoadingProgress() const {
   return [web_controller_ loadingProgress];
 }
 
+bool WebStateImpl::IsCrashed() const {
+  return [web_controller_ isWebProcessCrashed];
+}
+
+bool WebStateImpl::IsEvicted() const {
+  return ![web_controller_ isViewAlive];
+}
+
 bool WebStateImpl::IsBeingDestroyed() const {
   return is_being_destroyed_;
 }
@@ -276,47 +275,6 @@ void WebStateImpl::OnFaviconUrlUpdated(
     const std::vector<FaviconURL>& candidates) {
   for (auto& observer : observers_)
     observer.FaviconUrlUpdated(candidates);
-}
-
-void WebStateImpl::OnCredentialsRequested(
-    int request_id,
-    const GURL& source_url,
-    bool unmediated,
-    const std::vector<std::string>& federations,
-    bool user_interaction) {
-  for (auto& observer : observers_) {
-    observer.CredentialsRequested(request_id, source_url, unmediated,
-                                  federations, user_interaction);
-  }
-}
-
-void WebStateImpl::OnSignedIn(int request_id,
-                              const GURL& source_url,
-                              const web::Credential& credential) {
-  for (auto& observer : observers_)
-    observer.SignedIn(request_id, source_url, credential);
-}
-
-void WebStateImpl::OnSignedIn(int request_id, const GURL& source_url) {
-  for (auto& observer : observers_)
-    observer.SignedIn(request_id, source_url);
-}
-
-void WebStateImpl::OnSignedOut(int request_id, const GURL& source_url) {
-  for (auto& observer : observers_)
-    observer.SignedOut(request_id, source_url);
-}
-
-void WebStateImpl::OnSignInFailed(int request_id,
-                                  const GURL& source_url,
-                                  const web::Credential& credential) {
-  for (auto& observer : observers_)
-    observer.SignInFailed(request_id, source_url, credential);
-}
-
-void WebStateImpl::OnSignInFailed(int request_id, const GURL& source_url) {
-  for (auto& observer : observers_)
-    observer.SignInFailed(request_id, source_url);
 }
 
 void WebStateImpl::OnDocumentSubmitted(const std::string& form_name,
@@ -421,7 +379,6 @@ void WebStateImpl::UpdateHttpResponseHeaders(const GURL& url) {
   // Reset the state.
   http_response_headers_ = NULL;
   mime_type_.clear();
-  content_language_header_.clear();
 
   // Discard all the response headers except the ones for |main_page_url|.
   auto it = response_headers_map_.find(GURLByRemovingRefFromGURL(url));
@@ -436,16 +393,6 @@ void WebStateImpl::UpdateHttpResponseHeaders(const GURL& url) {
   std::string mime_type;
   http_response_headers_->GetMimeType(&mime_type);
   mime_type_ = mime_type;
-
-  // Content-Language
-  std::string content_language;
-  http_response_headers_->GetNormalizedHeader("content-language",
-                                              &content_language);
-  // Remove everything after the comma ',' if any.
-  size_t comma_index = content_language.find_first_of(',');
-  if (comma_index != std::string::npos)
-    content_language.resize(comma_index);
-  content_language_header_ = content_language;
 }
 
 void WebStateImpl::ShowWebInterstitial(WebInterstitialImpl* interstitial) {
@@ -455,32 +402,15 @@ void WebStateImpl::ShowWebInterstitial(WebInterstitialImpl* interstitial) {
   ShowTransientContentView(interstitial_->GetContentView());
 }
 
-void WebStateImpl::ClearTransientContentView() {
-  if (interstitial_) {
-    // Store the currently displayed interstitial in a local variable and reset
-    // |interstitial_| early.  This is to prevent an infinite loop, as
-    // |DontProceed()| internally calls |ClearTransientContentView()|.
-    web::WebInterstitial* interstitial = interstitial_;
-    interstitial_ = nullptr;
-    interstitial->DontProceed();
-    // Don't access |interstitial| after calling |DontProceed()|, as it triggers
-    // deletion.
-    for (auto& observer : observers_)
-      observer.InterstitialDismissed();
-  }
-  [web_controller_ clearTransientContentView];
-}
-
 void WebStateImpl::SendChangeLoadProgress(double progress) {
   for (auto& observer : observers_)
     observer.LoadProgressChanged(progress);
 }
 
-bool WebStateImpl::HandleContextMenu(const web::ContextMenuParams& params) {
+void WebStateImpl::HandleContextMenu(const web::ContextMenuParams& params) {
   if (delegate_) {
-    return delegate_->HandleContextMenu(this, params);
+    delegate_->HandleContextMenu(this, params);
   }
-  return false;
 }
 
 void WebStateImpl::ShowRepostFormWarningDialog(
@@ -564,17 +494,19 @@ void WebStateImpl::SetContentsMimeType(const std::string& mime_type) {
   mime_type_ = mime_type;
 }
 
-bool WebStateImpl::ShouldAllowRequest(NSURLRequest* request) {
+bool WebStateImpl::ShouldAllowRequest(NSURLRequest* request,
+                                      ui::PageTransition transition) {
   for (auto& policy_decider : policy_deciders_) {
-    if (!policy_decider.ShouldAllowRequest(request))
+    if (!policy_decider.ShouldAllowRequest(request, transition))
       return false;
   }
   return true;
 }
 
-bool WebStateImpl::ShouldAllowResponse(NSURLResponse* response) {
+bool WebStateImpl::ShouldAllowResponse(NSURLResponse* response,
+                                       bool for_main_frame) {
   for (auto& policy_decider : policy_deciders_) {
-    if (!policy_decider.ShouldAllowResponse(response))
+    if (!policy_decider.ShouldAllowResponse(response, for_main_frame))
       return false;
   }
   return true;
@@ -582,12 +514,22 @@ bool WebStateImpl::ShouldAllowResponse(NSURLResponse* response) {
 
 #pragma mark - RequestTracker management
 
-service_manager::InterfaceRegistry* WebStateImpl::GetMojoInterfaceRegistry() {
-  if (!mojo_interface_registry_) {
-    mojo_interface_registry_ =
-        base::MakeUnique<service_manager::InterfaceRegistry>(std::string());
+WebStateInterfaceProvider* WebStateImpl::GetWebStateInterfaceProvider() {
+  if (!web_state_interface_provider_) {
+    web_state_interface_provider_ =
+        base::MakeUnique<WebStateInterfaceProvider>();
   }
-  return mojo_interface_registry_.get();
+  return web_state_interface_provider_.get();
+}
+
+void WebStateImpl::BindInterfaceRequestFromMainFrame(
+    const std::string& interface_name,
+    mojo::ScopedMessagePipeHandle interface_pipe) {
+  if (!GetWebStateInterfaceProvider()->registry()->TryBindInterface(
+          interface_name, &interface_pipe)) {
+    GetWebClient()->BindInterfaceRequestFromMainFrame(
+        this, interface_name, std::move(interface_pipe));
+  }
 }
 
 base::WeakPtr<WebState> WebStateImpl::AsWeakPtr() {
@@ -616,13 +558,25 @@ UIView* WebStateImpl::GetView() {
   return [web_controller_ view];
 }
 
+void WebStateImpl::WasShown() {
+  [web_controller_ wasShown];
+  for (auto& observer : observers_)
+    observer.WasShown();
+}
+
+void WebStateImpl::WasHidden() {
+  [web_controller_ wasHidden];
+  for (auto& observer : observers_)
+    observer.WasHidden();
+}
+
 BrowserState* WebStateImpl::GetBrowserState() const {
   return navigation_manager_->GetBrowserState();
 }
 
 void WebStateImpl::OpenURL(const WebState::OpenURLParams& params) {
   DCHECK(Configured());
-  ClearTransientContentView();
+  ClearTransientContent();
   if (delegate_)
     delegate_->OpenURLFromWebState(this, params);
 }
@@ -650,6 +604,7 @@ WebStateImpl::GetSessionCertificatePolicyCache() {
 }
 
 CRWSessionStorage* WebStateImpl::BuildSessionStorage() {
+  [web_controller_ recordStateInHistory];
   SessionStorageBuilder session_storage_builder;
   return session_storage_builder.BuildStorage(this);
 }
@@ -678,8 +633,8 @@ void WebStateImpl::ExecuteJavaScript(const base::string16& javascript,
                    }];
 }
 
-const std::string& WebStateImpl::GetContentLanguageHeader() const {
-  return content_language_header_;
+void WebStateImpl::ExecuteUserJavaScript(NSString* javaScript) {
+  [web_controller_ executeUserJavaScript:javaScript completionHandler:nil];
 }
 
 const std::string& WebStateImpl::GetContentsMimeType() const {
@@ -734,20 +689,76 @@ bool WebStateImpl::HasOpener() const {
   return created_with_opener_;
 }
 
-void WebStateImpl::OnProvisionalNavigationStarted(const GURL& url) {
+void WebStateImpl::TakeSnapshot(const SnapshotCallback& callback,
+                                CGSize target_size) const {
+  UIView* view = [web_controller_ view];
+  UIImage* snapshot = nil;
+  if (view && !CGRectIsEmpty(view.bounds)) {
+    CGFloat scaled_height =
+        view.bounds.size.height * target_size.width / view.bounds.size.width;
+    CGRect scaled_rect = CGRectMake(0, 0, target_size.width, scaled_height);
+    UIGraphicsBeginImageContextWithOptions(target_size, YES, 0);
+    [view drawViewHierarchyInRect:scaled_rect afterScreenUpdates:NO];
+    snapshot = UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+  }
+  base::SequencedTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(callback, gfx::Image(snapshot)));
+}
+
+void WebStateImpl::OnNavigationStarted(web::NavigationContext* context) {
   for (auto& observer : observers_)
-    observer.ProvisionalNavigationStarted(url);
+    observer.DidStartNavigation(context);
+}
+
+void WebStateImpl::OnNavigationFinished(web::NavigationContext* context) {
+  for (auto& observer : observers_)
+    observer.DidFinishNavigation(context);
 }
 
 #pragma mark - NavigationManagerDelegate implementation
 
-void WebStateImpl::GoToIndex(int index) {
-  [web_controller_ goToItemAtIndex:index];
+void WebStateImpl::ClearTransientContent() {
+  if (interstitial_) {
+    // Store the currently displayed interstitial in a local variable and reset
+    // |interstitial_| early.  This is to prevent an infinite loop, as
+    // |DontProceed()| internally calls |ClearTransientContent()|.
+    web::WebInterstitial* interstitial = interstitial_;
+    interstitial_ = nullptr;
+    interstitial->DontProceed();
+    // Don't access |interstitial| after calling |DontProceed()|, as it triggers
+    // deletion.
+    for (auto& observer : observers_)
+      observer.InterstitialDismissed();
+  }
+  [web_controller_ clearTransientContentView];
 }
 
-void WebStateImpl::LoadURLWithParams(
-    const NavigationManager::WebLoadParams& params) {
-  [web_controller_ loadWithParams:params];
+void WebStateImpl::RecordPageStateInNavigationItem() {
+  [web_controller_ recordStateInHistory];
+}
+
+void WebStateImpl::UpdateHtml5HistoryState() {
+  [web_controller_ updateHTML5HistoryState];
+}
+
+void WebStateImpl::WillChangeUserAgentType() {
+  // TODO(crbug.com/736103): due to the bug, updating the user agent of web view
+  // requires reconstructing the whole web view, change the behavior to call
+  // [WKWebView setCustomUserAgent] once the bug is fixed.
+  [web_controller_ requirePageReconstruction];
+}
+
+void WebStateImpl::WillLoadCurrentItemWithUrl(const GURL& url) {
+  [web_controller_ willLoadCurrentItemWithURL:url];
+}
+
+void WebStateImpl::LoadCurrentItem() {
+  [web_controller_ loadCurrentURL];
+}
+
+void WebStateImpl::LoadIfNecessary() {
+  [web_controller_ loadCurrentURLIfNecessary];
 }
 
 void WebStateImpl::Reload() {
@@ -772,6 +783,10 @@ void WebStateImpl::OnNavigationItemCommitted(
 
 WebState* WebStateImpl::GetWebState() {
   return this;
+}
+
+id<CRWWebViewNavigationProxy> WebStateImpl::GetWebViewNavigationProxy() const {
+  return [web_controller_ webViewNavigationProxy];
 }
 
 }  // namespace web

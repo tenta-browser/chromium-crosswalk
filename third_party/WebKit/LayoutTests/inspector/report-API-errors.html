@@ -3,25 +3,22 @@
 <script src="../http/tests/inspector/inspector-test.js"></script>
 <script>
 
-function test()
-{
+function test() {
+  console.error = function() {
+    TestRunner.addResult(String.sprintf.apply(this, arguments));
+  };
 
-    console.error = function()
-    {
-        InspectorTest.addResult(String.sprintf.apply(this, arguments));
-    }
+  TestRunner.NetworkAgent.setUserAgentOverride(1);
+  TestRunner.NetworkAgent.setUserAgentOverride();
+  TestRunner.NetworkAgent.setUserAgentOverride('123', 'not a function');
+  TestRunner.NetworkAgent.setUserAgentOverride('123', undefined);
+  TestRunner.RuntimeAgent.evaluate('true', 'test');
+  TestRunner.RuntimeAgent.evaluate('true', 'test', function() {});
+  TestRunner.RuntimeAgent.evaluate('true', 'test', undefined, function() {});
+  TestRunner.mainTarget._onMessage('{"method": "wrongDomain.something-strange", "params": {}}');
+  TestRunner.mainTarget._onMessage('{"method": "Inspector.something-strange", "params": {}}');
 
-    InspectorTest.NetworkAgent.setMonitoringXHREnabled(1);
-    InspectorTest.NetworkAgent.setMonitoringXHREnabled();
-    InspectorTest.NetworkAgent.setMonitoringXHREnabled(false, "not a function");
-    InspectorTest.NetworkAgent.setMonitoringXHREnabled(false, undefined);
-    InspectorTest.RuntimeAgent.evaluate("true", "test");
-    InspectorTest.RuntimeAgent.evaluate("true", "test", function(){});
-    InspectorTest.RuntimeAgent.evaluate("true", "test", undefined, function(){});
-    InspectorTest.mainTarget._onMessage('{"method": "wrongDomain.something-strange", "params": {}}');
-    InspectorTest.mainTarget._onMessage('{"method": "Inspector.something-strange", "params": {}}');
-
-    InspectorTest.completeTest();
+  TestRunner.completeTest();
 }
 
 </script>

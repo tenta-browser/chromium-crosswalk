@@ -17,7 +17,7 @@
 #include "device/hid/hid_connection.h"
 
 namespace base {
-class SingleThreadTaskRunner;
+class SequencedTaskRunner;
 }
 
 namespace net {
@@ -28,25 +28,23 @@ namespace device {
 
 class HidConnectionMac : public HidConnection {
  public:
-  HidConnectionMac(
-      base::ScopedCFTypeRef<IOHIDDeviceRef> device,
-      scoped_refptr<HidDeviceInfo> device_info,
-      scoped_refptr<base::SingleThreadTaskRunner> file_task_runner);
+  HidConnectionMac(base::ScopedCFTypeRef<IOHIDDeviceRef> device,
+                   scoped_refptr<HidDeviceInfo> device_info);
 
  private:
   ~HidConnectionMac() override;
 
   // HidConnection implementation.
   void PlatformClose() override;
-  void PlatformRead(const ReadCallback& callback) override;
+  void PlatformRead(ReadCallback callback) override;
   void PlatformWrite(scoped_refptr<net::IOBuffer> buffer,
                      size_t size,
-                     const WriteCallback& callback) override;
+                     WriteCallback callback) override;
   void PlatformGetFeatureReport(uint8_t report_id,
-                                const ReadCallback& callback) override;
+                                ReadCallback callback) override;
   void PlatformSendFeatureReport(scoped_refptr<net::IOBuffer> buffer,
                                  size_t size,
-                                 const WriteCallback& callback) override;
+                                 WriteCallback callback) override;
 
   static void InputReportCallback(void* context,
                                   IOReturn result,
@@ -57,16 +55,16 @@ class HidConnectionMac : public HidConnection {
                                   CFIndex report_length);
   void ProcessInputReport(scoped_refptr<net::IOBufferWithSize> buffer);
   void ProcessReadQueue();
-  void GetFeatureReportAsync(uint8_t report_id, const ReadCallback& callback);
+  void GetFeatureReportAsync(uint8_t report_id, ReadCallback callback);
   void SetReportAsync(IOHIDReportType report_type,
                       scoped_refptr<net::IOBuffer> buffer,
                       size_t size,
-                      const WriteCallback& callback);
-  void ReturnAsyncResult(const base::Closure& callback);
+                      WriteCallback callback);
+  void ReturnAsyncResult(base::OnceClosure callback);
 
   base::ScopedCFTypeRef<IOHIDDeviceRef> device_;
-  scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
-  scoped_refptr<base::SingleThreadTaskRunner> file_task_runner_;
+  const scoped_refptr<base::SequencedTaskRunner> task_runner_;
+  const scoped_refptr<base::SequencedTaskRunner> blocking_task_runner_;
   std::vector<uint8_t> inbound_buffer_;
 
   std::queue<PendingHidReport> pending_reports_;

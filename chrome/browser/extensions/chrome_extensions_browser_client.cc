@@ -16,15 +16,14 @@
 #include "chrome/browser/extensions/api/chrome_extensions_api_client.h"
 #include "chrome/browser/extensions/api/content_settings/content_settings_service.h"
 #include "chrome/browser/extensions/api/generated_api_registration.h"
-#include "chrome/browser/extensions/api/preference/chrome_direct_setting.h"
 #include "chrome/browser/extensions/api/preference/preference_api.h"
 #include "chrome/browser/extensions/api/runtime/chrome_runtime_api_delegate.h"
 #include "chrome/browser/extensions/chrome_component_extension_resource_manager.h"
 #include "chrome/browser/extensions/chrome_extension_api_frame_id_map_helper.h"
 #include "chrome/browser/extensions/chrome_extension_host_delegate.h"
 #include "chrome/browser/extensions/chrome_extension_web_contents_observer.h"
+#include "chrome/browser/extensions/chrome_extensions_interface_registration.h"
 #include "chrome/browser/extensions/chrome_kiosk_delegate.h"
-#include "chrome/browser/extensions/chrome_mojo_service_registration.h"
 #include "chrome/browser/extensions/chrome_process_manager_delegate.h"
 #include "chrome/browser/extensions/chrome_url_request_util.h"
 #include "chrome/browser/extensions/error_console/error_console.h"
@@ -54,7 +53,7 @@
 #include "extensions/browser/extension_function_registry.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_util.h"
-#include "extensions/browser/mojo/service_registration.h"
+#include "extensions/browser/mojo/interface_registration.h"
 #include "extensions/browser/pref_names.h"
 #include "extensions/browser/url_request_util.h"
 #include "extensions/common/features/feature_channel.h"
@@ -71,12 +70,18 @@
 
 namespace extensions {
 
+namespace {
+
+// If true, the extensions client will behave as though there is always a
+// new chrome update.
+bool g_did_chrome_update_for_testing = false;
+
+}  // namespace
+
 ChromeExtensionsBrowserClient::ChromeExtensionsBrowserClient() {
   process_manager_delegate_.reset(new ChromeProcessManagerDelegate);
   api_client_.reset(new ChromeExtensionsAPIClient);
-  // Only set if it hasn't already been set (e.g. by a test).
-  if (GetCurrentChannel() == GetDefaultChannel())
-    SetCurrentChannel(chrome::GetChannel());
+  SetCurrentChannel(chrome::GetChannel());
   resource_manager_.reset(new ChromeComponentExtensionResourceManager());
 }
 
@@ -210,6 +215,9 @@ bool ChromeExtensionsBrowserClient::DidVersionUpdate(
   if (!extension_prefs)
     return false;
 
+  if (g_did_chrome_update_for_testing)
+    return true;
+
   // If we're inside a browser test, then assume prefs are all up to date.
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(switches::kTestType))
     return false;
@@ -264,11 +272,6 @@ void ChromeExtensionsBrowserClient::RegisterExtensionFunctions(
   registry->RegisterFunction<SetPreferenceFunction>();
   registry->RegisterFunction<ClearPreferenceFunction>();
 
-  // Direct Preference Access for Component Extensions.
-  registry->RegisterFunction<chromedirectsetting::GetDirectSettingFunction>();
-  registry->RegisterFunction<chromedirectsetting::SetDirectSettingFunction>();
-  registry->RegisterFunction<chromedirectsetting::ClearDirectSettingFunction>();
-
   // Generated APIs from lower-level modules.
   api::GeneratedFunctionRegistry::RegisterAll(registry);
 
@@ -276,11 +279,13 @@ void ChromeExtensionsBrowserClient::RegisterExtensionFunctions(
   api::ChromeGeneratedFunctionRegistry::RegisterAll(registry);
 }
 
-void ChromeExtensionsBrowserClient::RegisterMojoServices(
+void ChromeExtensionsBrowserClient::RegisterExtensionInterfaces(
+    service_manager::BinderRegistryWithArgs<content::RenderFrameHost*>*
+        registry,
     content::RenderFrameHost* render_frame_host,
     const Extension* extension) const {
-  RegisterServicesForFrame(render_frame_host, extension);
-  RegisterChromeServicesForFrame(render_frame_host, extension);
+  RegisterInterfacesForExtension(registry, render_frame_host, extension);
+  RegisterChromeInterfacesForExtension(registry, render_frame_host, extension);
 }
 
 std::unique_ptr<RuntimeAPIDelegate>
@@ -439,6 +444,26 @@ KioskDelegate* ChromeExtensionsBrowserClient::GetKioskDelegate() {
   if (!kiosk_delegate_)
     kiosk_delegate_.reset(new ChromeKioskDelegate());
   return kiosk_delegate_.get();
+}
+
+bool ChromeExtensionsBrowserClient::IsLockScreenContext(
+    content::BrowserContext* context) {
+#if defined(OS_CHROMEOS)
+  return chromeos::ProfileHelper::IsLockScreenAppProfile(
+      Profile::FromBrowserContext(context));
+#else
+  return false;
+#endif
+}
+
+std::string ChromeExtensionsBrowserClient::GetApplicationLocale() {
+  return g_browser_process->GetApplicationLocale();
+}
+
+// static
+void ChromeExtensionsBrowserClient::set_did_chrome_update_for_testing(
+    bool did_update) {
+  g_did_chrome_update_for_testing = did_update;
 }
 
 }  // namespace extensions

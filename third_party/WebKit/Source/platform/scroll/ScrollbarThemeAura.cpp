@@ -134,7 +134,7 @@ static int GetScrollbarThickness() {
 }  // namespace
 
 ScrollbarTheme& ScrollbarTheme::NativeTheme() {
-  if (RuntimeEnabledFeatures::overlayScrollbarsEnabled()) {
+  if (RuntimeEnabledFeatures::OverlayScrollbarsEnabled()) {
     DEFINE_STATIC_LOCAL(
         ScrollbarThemeOverlay, theme,
         (GetScrollbarThickness(), 0, ScrollbarThemeOverlay::kAllowHitTest));
@@ -321,7 +321,7 @@ ScrollbarPart ScrollbarThemeAura::InvalidateOnThumbPositionChange(
     float old_position,
     float new_position) const {
   ScrollbarPart invalid_parts = kNoPart;
-  ASSERT(ButtonsPlacement() == kWebScrollbarButtonsPlacementSingle);
+  DCHECK_EQ(ButtonsPlacement(), kWebScrollbarButtonsPlacementSingle);
   static const ScrollbarPart kButtonParts[] = {kBackButtonStartPart,
                                                kForwardButtonEndPart};
   for (ScrollbarPart part : kButtonParts) {

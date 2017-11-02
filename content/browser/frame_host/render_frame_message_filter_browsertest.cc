@@ -54,12 +54,16 @@ class RenderFrameMessageFilterBrowserTest : public ContentBrowserTest {
         switches::kEnableExperimentalWebPlatformFeatures);
     ContentBrowserTest::SetUp();
   }
+
+  void SetUpOnMainThread() override {
+    // Support multiple sites on the test server.
+    host_resolver()->AddRule("*", "127.0.0.1");
+  }
 };
 
 // Exercises basic cookie operations via javascript, including an http page
 // interacting with secure cookies.
 IN_PROC_BROWSER_TEST_F(RenderFrameMessageFilterBrowserTest, Cookies) {
-  host_resolver()->AddRule("*", "127.0.0.1");
   SetupCrossSiteRedirector(embedded_test_server());
   ASSERT_TRUE(embedded_test_server()->Start());
 
@@ -122,7 +126,6 @@ IN_PROC_BROWSER_TEST_F(RenderFrameMessageFilterBrowserTest, Cookies) {
 // SameSite cookies (that aren't marked as http-only) should be available to
 // JavaScript.
 IN_PROC_BROWSER_TEST_F(RenderFrameMessageFilterBrowserTest, SameSiteCookies) {
-  host_resolver()->AddRule("*", "127.0.0.1");
   SetupCrossSiteRedirector(embedded_test_server());
   ASSERT_TRUE(embedded_test_server()->Start());
 
@@ -173,7 +176,6 @@ IN_PROC_BROWSER_TEST_F(RenderFrameMessageFilterBrowserTest,
     return;
   }
 
-  host_resolver()->AddRule("*", "127.0.0.1");
   SetupCrossSiteRedirector(embedded_test_server());
   ASSERT_TRUE(embedded_test_server()->Start());
   NavigateToURL(shell(),
@@ -203,13 +205,13 @@ IN_PROC_BROWSER_TEST_F(RenderFrameMessageFilterBrowserTest,
   // to be killed.
   BrowserThread::GetTaskRunnerForThread(BrowserThread::IO)
       ->PostTask(FROM_HERE,
-                 base::Bind(
+                 base::BindOnce(
                      [](RenderFrameHost* frame) {
                        GetFilterForProcess(frame->GetProcess())
-                           ->GetCookies(frame->GetRoutingID(),
-                                        GURL("http://127.0.0.1/"),
-                                        GURL("http://127.0.0.1/"),
-                                        base::Bind([](const std::string&) {}));
+                           ->GetCookies(
+                               frame->GetRoutingID(), GURL("http://127.0.0.1/"),
+                               GURL("http://127.0.0.1/"),
+                               base::BindOnce([](const std::string&) {}));
                      },
                      iframe));
 
@@ -228,13 +230,16 @@ IN_PROC_BROWSER_TEST_F(RenderFrameMessageFilterBrowserTest,
       tab->GetMainFrame()->GetProcess(),
       RenderProcessHostWatcher::WATCH_FOR_PROCESS_EXIT);
 
-  BrowserThread::GetTaskRunnerForThread(BrowserThread::IO)->PostTask(
-      FROM_HERE,
-      base::Bind([] (RenderFrameHost* frame) {
-        GetFilterForProcess(frame->GetProcess())->SetCookie(
-            frame->GetRoutingID(), GURL("https://baz.com/"),
-            GURL("https://baz.com/"), "pwn=ed");
-      }, main_frame));
+  BrowserThread::GetTaskRunnerForThread(BrowserThread::IO)
+      ->PostTask(FROM_HERE, base::BindOnce(
+                                [](RenderFrameHost* frame) {
+                                  GetFilterForProcess(frame->GetProcess())
+                                      ->SetCookie(frame->GetRoutingID(),
+                                                  GURL("https://baz.com/"),
+                                                  GURL("https://baz.com/"),
+                                                  "pwn=ed");
+                                },
+                                main_frame));
 
   main_frame_killed.Wait();
 

@@ -72,13 +72,7 @@ float SVGPathElement::getTotalLength() {
 SVGPointTearOff* SVGPathElement::getPointAtLength(float length) {
   GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
   FloatPoint point = SVGPathQuery(PathByteStream()).GetPointAtLength(length);
-  return SVGPointTearOff::Create(SVGPoint::Create(point), 0,
-                                 kPropertyIsNotAnimVal);
-}
-
-unsigned SVGPathElement::getPathSegAtLength(float length) {
-  GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
-  return SVGPathQuery(PathByteStream()).GetPathSegIndexAtLength(length);
+  return SVGPointTearOff::CreateDetached(point);
 }
 
 void SVGPathElement::SvgAttributeChanged(const QualifiedName& attr_name) {
@@ -151,8 +145,6 @@ void SVGPathElement::RemovedFrom(ContainerNode* root_parent) {
 }
 
 FloatRect SVGPathElement::GetBBox() {
-  GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
-
   // We want the exact bounds.
   return SVGPathElement::AsPath().BoundingRect(Path::BoundsType::kExact);
 }

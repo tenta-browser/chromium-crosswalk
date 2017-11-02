@@ -4,6 +4,7 @@
 
 #include "cc/animation/animation_player.h"
 
+#include "base/strings/stringprintf.h"
 #include "cc/animation/animation_delegate.h"
 #include "cc/animation/animation_host.h"
 #include "cc/animation/animation_id_provider.h"
@@ -172,7 +173,7 @@ TEST_F(AnimationPlayerTest, PropertiesMutate) {
 
   time += base::TimeDelta::FromSecondsD(duration);
   TickAnimationsTransferEvents(time, 3u);
-  EXPECT_TRUE(CheckPlayerTimelineNeedsPushProperties(false));
+  EXPECT_TRUE(CheckPlayerTimelineNeedsPushProperties(true));
 
   client_.ExpectOpacityPropertyMutated(element_id_, ElementListType::ACTIVE,
                                        end_opacity);
@@ -265,8 +266,8 @@ TEST_F(AnimationPlayerTest, AttachTwoPlayersToOneLayer) {
   EXPECT_TRUE(delegate1.finished());
   EXPECT_TRUE(delegate2.finished());
 
-  EXPECT_FALSE(player1->needs_push_properties());
-  EXPECT_FALSE(player2->needs_push_properties());
+  EXPECT_TRUE(player1->needs_push_properties());
+  EXPECT_TRUE(player2->needs_push_properties());
 
   client_.ExpectOpacityPropertyMutated(element_id_, ElementListType::ACTIVE,
                                        end_opacity);
@@ -394,7 +395,7 @@ TEST_F(AnimationPlayerTest, SwitchToLayer) {
   EXPECT_EQ(player_impl_->element_id(), element_id_);
   EXPECT_TRUE(CheckPlayerTimelineNeedsPushProperties(false));
 
-  const ElementId new_element_id(NextTestLayerId(), 0);
+  const ElementId new_element_id(NextTestLayerId());
   player_->DetachElement();
   player_->AttachElement(new_element_id);
 
@@ -408,6 +409,38 @@ TEST_F(AnimationPlayerTest, SwitchToLayer) {
   EXPECT_EQ(player_impl_, GetImplPlayerForLayerId(new_element_id));
   EXPECT_TRUE(player_impl_->element_animations());
   EXPECT_EQ(player_impl_->element_id(), new_element_id);
+}
+
+TEST_F(AnimationPlayerTest, ToString) {
+  player_->AttachElement(element_id_);
+  EXPECT_EQ(
+      base::StringPrintf("AnimationPlayer{id=%d, element_id=%s, animations=[]}",
+                         player_->id(), element_id_.ToString().c_str()),
+      player_->ToString());
+
+  player_->AddAnimation(
+      Animation::Create(std::make_unique<FakeFloatAnimationCurve>(15), 42, 73,
+                        TargetProperty::OPACITY));
+  EXPECT_EQ(base::StringPrintf("AnimationPlayer{id=%d, element_id=%s, "
+                               "animations=[Animation{id=42, "
+                               "group=73, target_property_id=1, "
+                               "run_state=WAITING_FOR_TARGET_AVAILABILITY}]}",
+                               player_->id(), element_id_.ToString().c_str()),
+            player_->ToString());
+
+  player_->AddAnimation(
+      Animation::Create(std::make_unique<FakeFloatAnimationCurve>(18), 45, 76,
+                        TargetProperty::BOUNDS));
+  EXPECT_EQ(
+      base::StringPrintf(
+          "AnimationPlayer{id=%d, element_id=%s, "
+          "animations=[Animation{id=42, "
+          "group=73, target_property_id=1, "
+          "run_state=WAITING_FOR_TARGET_AVAILABILITY}, Animation{id=45, "
+          "group=76, "
+          "target_property_id=5, run_state=WAITING_FOR_TARGET_AVAILABILITY}]}",
+          player_->id(), element_id_.ToString().c_str()),
+      player_->ToString());
 }
 
 }  // namespace

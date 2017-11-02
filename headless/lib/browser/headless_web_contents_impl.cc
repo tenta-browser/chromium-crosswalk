@@ -27,13 +27,13 @@
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/common/bindings_policy.h"
 #include "content/public/common/origin_util.h"
+#include "content/public/common/renderer_preferences.h"
 #include "headless/lib/browser/headless_browser_context_impl.h"
 #include "headless/lib/browser/headless_browser_impl.h"
 #include "headless/lib/browser/headless_browser_main_parts.h"
 #include "headless/lib/browser/headless_devtools_client_impl.h"
 #include "headless/lib/browser/headless_tab_socket_impl.h"
 #include "printing/features/features.h"
-#include "services/service_manager/public/cpp/interface_registry.h"
 
 #if BUILDFLAG(ENABLE_BASIC_PRINTING)
 #include "headless/lib/browser/headless_print_manager.h"
@@ -49,31 +49,19 @@ HeadlessWebContentsImpl* HeadlessWebContentsImpl::From(
   return static_cast<HeadlessWebContentsImpl*>(web_contents);
 }
 
-class WebContentsObserverAdapter : public content::WebContentsObserver {
- public:
-  WebContentsObserverAdapter(content::WebContents* web_contents,
-                             HeadlessWebContents::Observer* observer)
-      : content::WebContentsObserver(web_contents), observer_(observer) {}
-
-  ~WebContentsObserverAdapter() override {}
-
-  void RenderViewReady() override {
-    DCHECK(web_contents()->GetMainFrame()->IsRenderFrameLive());
-    observer_->DevToolsTargetReady();
-  }
-
-  HeadlessWebContents::Observer* observer() { return observer_; }
-
- private:
-  HeadlessWebContents::Observer* observer_;  // Not owned.
-
-  DISALLOW_COPY_AND_ASSIGN(WebContentsObserverAdapter);
-};
+// static
+HeadlessWebContentsImpl* HeadlessWebContentsImpl::From(
+    HeadlessBrowser* browser,
+    content::WebContents* contents) {
+  return HeadlessWebContentsImpl::From(
+      browser->GetWebContentsForDevToolsAgentHostId(
+          content::DevToolsAgentHost::GetOrCreateFor(contents)->GetId()));
+}
 
 class HeadlessWebContentsImpl::Delegate : public content::WebContentsDelegate {
  public:
-  explicit Delegate(HeadlessBrowserContextImpl* browser_context)
-      : browser_context_(browser_context) {}
+  explicit Delegate(HeadlessWebContentsImpl* headless_web_contents)
+      : headless_web_contents_(headless_web_contents) {}
 
   void WebContentsCreated(content::WebContents* source_contents,
                           int opener_render_process_id,
@@ -81,15 +69,20 @@ class HeadlessWebContentsImpl::Delegate : public content::WebContentsDelegate {
                           const std::string& frame_name,
                           const GURL& target_url,
                           content::WebContents* new_contents) override {
-    std::unique_ptr<HeadlessWebContentsImpl> web_contents =
-        HeadlessWebContentsImpl::CreateFromWebContents(new_contents,
-                                                       browser_context_);
+    DCHECK(new_contents->GetBrowserContext() ==
+           headless_web_contents_->browser_context());
 
-    DCHECK(new_contents->GetBrowserContext() == browser_context_);
-
-    browser_context_->RegisterWebContents(std::move(web_contents));
+    std::unique_ptr<HeadlessWebContentsImpl> child_contents =
+        HeadlessWebContentsImpl::CreateForChildContents(headless_web_contents_,
+                                                        new_contents);
+    HeadlessWebContentsImpl* raw_child_contents = child_contents.get();
+    headless_web_contents_->browser_context()->RegisterWebContents(
+        std::move(child_contents));
+    headless_web_contents_->browser_context()->NotifyChildContentsCreated(
+        headless_web_contents_, raw_child_contents);
   }
 
+#if !defined(CHROME_MULTIPLE_DLL_CHILD)
   // Return the security style of the given |web_contents|, populating
   // |security_style_explanations| to explain why the SecurityStyle was chosen.
   blink::WebSecurityStyle GetSecurityStyle(
@@ -104,35 +97,108 @@ class HeadlessWebContentsImpl::Delegate : public content::WebContentsDelegate {
     return security_state::GetSecurityStyle(security_info,
                                             security_style_explanations);
   }
+#endif  // !defined(CHROME_MULTIPLE_DLL_CHILD)
 
   void ActivateContents(content::WebContents* contents) override {
     contents->GetRenderViewHost()->GetWidget()->Focus();
   }
 
   void CloseContents(content::WebContents* source) override {
-    if (!browser_context_) {
-      return;
+    auto* const headless_contents =
+        HeadlessWebContentsImpl::From(browser(), source);
+    DCHECK(headless_contents);
+    headless_contents->Close();
+  }
+
+  void AddNewContents(content::WebContents* source,
+                      content::WebContents* new_contents,
+                      WindowOpenDisposition disposition,
+                      const gfx::Rect& initial_rect,
+                      bool user_gesture,
+                      bool* was_blocked) override {
+    const gfx::Rect default_rect(
+        headless_web_contents_->browser()->options()->window_size);
+    const gfx::Rect rect = initial_rect.IsEmpty() ? default_rect : initial_rect;
+    auto* const headless_contents =
+        HeadlessWebContentsImpl::From(browser(), new_contents);
+    DCHECK(headless_contents);
+    headless_contents->SetBounds(rect);
+  }
+
+  content::WebContents* OpenURLFromTab(
+      content::WebContents* source,
+      const content::OpenURLParams& params) override {
+    DCHECK_EQ(source, headless_web_contents_->web_contents());
+    content::WebContents* target = nullptr;
+    switch (params.disposition) {
+      case WindowOpenDisposition::CURRENT_TAB:
+        target = source;
+        break;
+
+      case WindowOpenDisposition::NEW_POPUP:
+      case WindowOpenDisposition::NEW_WINDOW:
+      case WindowOpenDisposition::NEW_BACKGROUND_TAB:
+      case WindowOpenDisposition::NEW_FOREGROUND_TAB: {
+        HeadlessWebContentsImpl* child_contents = HeadlessWebContentsImpl::From(
+            headless_web_contents_->browser_context()
+                ->CreateWebContentsBuilder()
+                .SetAllowTabSockets(
+                    !!headless_web_contents_->GetHeadlessTabSocket())
+                .SetWindowSize(source->GetContainerBounds().size())
+                .Build());
+        headless_web_contents_->browser_context()->NotifyChildContentsCreated(
+            headless_web_contents_, child_contents);
+        target = child_contents->web_contents();
+        break;
+      }
+
+      // TODO(veluca): add support for other disposition types.
+      case WindowOpenDisposition::SINGLETON_TAB:
+      case WindowOpenDisposition::OFF_THE_RECORD:
+      case WindowOpenDisposition::SAVE_TO_DISK:
+      case WindowOpenDisposition::IGNORE_ACTION:
+      default:
+        return nullptr;
     }
 
-    std::vector<HeadlessWebContents*> all_contents =
-        browser_context_->GetAllWebContents();
+    content::NavigationController::LoadURLParams load_url_params(params.url);
+    load_url_params.source_site_instance = params.source_site_instance;
+    load_url_params.transition_type = params.transition;
+    load_url_params.frame_tree_node_id = params.frame_tree_node_id;
+    load_url_params.referrer = params.referrer;
+    load_url_params.redirect_chain = params.redirect_chain;
+    load_url_params.extra_headers = params.extra_headers;
+    load_url_params.is_renderer_initiated = params.is_renderer_initiated;
+    load_url_params.should_replace_current_entry =
+        params.should_replace_current_entry;
 
-    for (HeadlessWebContents* wc : all_contents) {
-      if (!wc) {
-        continue;
-      }
-      HeadlessWebContentsImpl* hwc = HeadlessWebContentsImpl::From(wc);
-      if (hwc->web_contents() == source) {
-        wc->Close();
-        return;
-      }
+    if (params.uses_post) {
+      load_url_params.load_type =
+          content::NavigationController::LOAD_TYPE_HTTP_POST;
+      load_url_params.post_data = params.post_data;
     }
+
+    target->GetController().LoadURLWithParams(load_url_params);
+    return target;
   }
 
  private:
-  HeadlessBrowserContextImpl* browser_context_;  // Not owned.
+  HeadlessBrowserImpl* browser() { return headless_web_contents_->browser(); }
+
+  HeadlessWebContentsImpl* headless_web_contents_;  // Not owned.
   DISALLOW_COPY_AND_ASSIGN(Delegate);
 };
+
+namespace {
+
+void CreateTabSocketMojoServiceForContents(
+    HeadlessWebContents* web_contents,
+    mojo::ScopedMessagePipeHandle handle) {
+  HeadlessWebContentsImpl::From(web_contents)
+      ->CreateTabSocketMojoService(std::move(handle));
+}
+
+}  // namespace
 
 // static
 std::unique_ptr<HeadlessWebContentsImpl> HeadlessWebContentsImpl::Create(
@@ -146,16 +212,18 @@ std::unique_ptr<HeadlessWebContentsImpl> HeadlessWebContentsImpl::Create(
           content::WebContents::Create(create_params),
           builder->browser_context_));
 
-  if (builder->create_tab_socket_) {
+  if (builder->tab_sockets_allowed_) {
     headless_web_contents->headless_tab_socket_ =
-        base::MakeUnique<HeadlessTabSocketImpl>();
-    builder->AddMojoService(base::Bind(
-        &HeadlessTabSocketImpl::CreateMojoService,
-        base::Unretained(headless_web_contents->headless_tab_socket_.get())));
+        base::MakeUnique<HeadlessTabSocketImpl>(
+            headless_web_contents->web_contents_.get());
+    headless_web_contents->inject_mojo_services_into_isolated_world_ = true;
+
+    builder->mojo_services_.emplace_back(
+        TabSocket::Name_, base::Bind(&CreateTabSocketMojoServiceForContents));
   }
 
   headless_web_contents->mojo_services_ = std::move(builder->mojo_services_);
-  headless_web_contents->InitializeScreen(builder->window_size_);
+  headless_web_contents->InitializeWindow(gfx::Rect(builder->window_size_));
   if (!headless_web_contents->OpenURL(builder->initial_url_))
     return nullptr;
   return headless_web_contents;
@@ -163,56 +231,143 @@ std::unique_ptr<HeadlessWebContentsImpl> HeadlessWebContentsImpl::Create(
 
 // static
 std::unique_ptr<HeadlessWebContentsImpl>
-HeadlessWebContentsImpl::CreateFromWebContents(
-    content::WebContents* web_contents,
-    HeadlessBrowserContextImpl* browser_context) {
-  std::unique_ptr<HeadlessWebContentsImpl> headless_web_contents =
-      base::WrapUnique(
-          new HeadlessWebContentsImpl(web_contents, browser_context));
+HeadlessWebContentsImpl::CreateForChildContents(
+    HeadlessWebContentsImpl* parent,
+    content::WebContents* child_contents) {
+  auto child = base::WrapUnique(
+      new HeadlessWebContentsImpl(child_contents, parent->browser_context()));
 
-  return headless_web_contents;
+  // Child contents should have their own root window.
+  child->InitializeWindow(child_contents->GetContainerBounds());
+
+  // Copy mojo services and tab socket settings from parent.
+  child->mojo_services_ = parent->mojo_services_;
+  if (parent->headless_tab_socket_) {
+    child->headless_tab_socket_ =
+        base::MakeUnique<HeadlessTabSocketImpl>(child_contents);
+    child->inject_mojo_services_into_isolated_world_ =
+        parent->inject_mojo_services_into_isolated_world_;
+  }
+
+  // There may already be frames, so make sure they also have our services.
+  for (content::RenderFrameHost* frame_host : child_contents->GetAllFrames())
+    child->RenderFrameCreated(frame_host);
+
+  return child;
 }
 
-void HeadlessWebContentsImpl::InitializeScreen(const gfx::Size& initial_size) {
-  browser()->PlatformInitializeWebContents(initial_size, this);
+void HeadlessWebContentsImpl::InitializeWindow(
+    const gfx::Rect& initial_bounds) {
+  static int window_id = 1;
+  window_id_ = window_id++;
+  window_state_ = "normal";
+
+  browser()->PlatformInitializeWebContents(this);
+  SetBounds(initial_bounds);
+}
+
+void HeadlessWebContentsImpl::SetBounds(const gfx::Rect& bounds) {
+  browser()->PlatformSetWebContentsBounds(this, bounds);
 }
 
 HeadlessWebContentsImpl::HeadlessWebContentsImpl(
     content::WebContents* web_contents,
     HeadlessBrowserContextImpl* browser_context)
     : content::WebContentsObserver(web_contents),
-      web_contents_delegate_(
-          new HeadlessWebContentsImpl::Delegate(browser_context)),
+      web_contents_delegate_(new HeadlessWebContentsImpl::Delegate(this)),
       web_contents_(web_contents),
       agent_host_(content::DevToolsAgentHost::GetOrCreateFor(web_contents)),
+      inject_mojo_services_into_isolated_world_(false),
       browser_context_(browser_context),
-      render_process_host_(web_contents->GetRenderProcessHost()) {
-#if BUILDFLAG(ENABLE_BASIC_PRINTING)
-  printing::HeadlessPrintManager::CreateForWebContents(web_contents);
+      render_process_host_(web_contents->GetRenderProcessHost()),
+      weak_ptr_factory_(this) {
+#if BUILDFLAG(ENABLE_BASIC_PRINTING) && !defined(CHROME_MULTIPLE_DLL_CHILD)
+  HeadlessPrintManager::CreateForWebContents(web_contents);
 #endif
+  web_contents->GetMutableRendererPrefs()->accept_languages =
+      browser_context->options()->accept_language();
   web_contents_->SetDelegate(web_contents_delegate_.get());
   render_process_host_->AddObserver(this);
+  agent_host_->AddObserver(this);
 }
 
 HeadlessWebContentsImpl::~HeadlessWebContentsImpl() {
+  agent_host_->RemoveObserver(this);
   if (render_process_host_)
     render_process_host_->RemoveObserver(this);
 }
 
+void HeadlessWebContentsImpl::CreateTabSocketMojoService(
+    mojo::ScopedMessagePipeHandle handle) {
+  headless_tab_socket_->CreateMojoService(TabSocketRequest(std::move(handle)));
+}
+
+void HeadlessWebContentsImpl::CreateMojoService(
+    const MojoService::ServiceFactoryCallback& service_factory,
+    mojo::ScopedMessagePipeHandle handle) {
+  service_factory.Run(this, std::move(handle));
+}
+
 void HeadlessWebContentsImpl::RenderFrameCreated(
     content::RenderFrameHost* render_frame_host) {
-  if (!mojo_services_.empty()) {
-    render_frame_host->AllowBindings(content::BINDINGS_POLICY_HEADLESS);
-  }
-
-  service_manager::InterfaceRegistry* interface_registry =
-      render_frame_host->GetInterfaceRegistry();
-
   for (const MojoService& service : mojo_services_) {
-    interface_registry->AddInterface(service.service_name,
-                                     service.service_factory,
-                                     browser()->BrowserMainThread());
+    registry_.AddInterface(
+        service.service_name,
+        base::Bind(&HeadlessWebContentsImpl::CreateMojoService,
+                   base::Unretained(this), service.service_factory),
+        browser()->BrowserMainThread());
   }
+
+  browser_context_->SetFrameTreeNodeId(render_frame_host->GetProcess()->GetID(),
+                                       render_frame_host->GetRoutingID(),
+                                       render_frame_host->GetFrameTreeNodeId());
+  if (headless_tab_socket_)
+    headless_tab_socket_->RenderFrameCreated(render_frame_host);
+}
+
+void HeadlessWebContentsImpl::OnInterfaceRequestFromFrame(
+    content::RenderFrameHost* render_frame_host,
+    const std::string& interface_name,
+    mojo::ScopedMessagePipeHandle* interface_pipe) {
+  registry_.TryBindInterface(interface_name, interface_pipe);
+}
+
+void HeadlessWebContentsImpl::RenderFrameDeleted(
+    content::RenderFrameHost* render_frame_host) {
+  if (headless_tab_socket_)
+    headless_tab_socket_->RenderFrameDeleted(render_frame_host);
+  browser_context_->RemoveFrameTreeNode(
+      render_frame_host->GetProcess()->GetID(),
+      render_frame_host->GetRoutingID());
+}
+
+void HeadlessWebContentsImpl::RenderViewReady() {
+  DCHECK(web_contents()->GetMainFrame()->IsRenderFrameLive());
+
+  for (auto& observer : observers_)
+    observer.DevToolsTargetReady();
+}
+
+std::string
+HeadlessWebContentsImpl::GetUntrustedDevToolsFrameIdForFrameTreeNodeId(
+    int process_id,
+    int frame_tree_node_id) const {
+  return content::DevToolsAgentHost::
+      GetUntrustedDevToolsFrameIdForFrameTreeNodeId(process_id,
+                                                    frame_tree_node_id);
+}
+
+int HeadlessWebContentsImpl::GetFrameTreeNodeIdForDevToolsFrameId(
+    const std::string& devtools_id) const {
+  return browser_context_->GetFrameTreeNodeIdForDevToolsFrameId(devtools_id);
+}
+
+int HeadlessWebContentsImpl::GetMainFrameRenderProcessId() const {
+  return web_contents()->GetMainFrame()->GetProcess()->GetID();
+}
+
+int HeadlessWebContentsImpl::GetMainFrameTreeNodeId() const {
+  return web_contents()->GetMainFrame()->GetFrameTreeNodeId();
 }
 
 bool HeadlessWebContentsImpl::OpenURL(const GURL& url) {
@@ -237,15 +392,23 @@ std::string HeadlessWebContentsImpl::GetDevToolsAgentHostId() {
 }
 
 void HeadlessWebContentsImpl::AddObserver(Observer* observer) {
-  DCHECK(observer_map_.find(observer) == observer_map_.end());
-  observer_map_[observer] = base::MakeUnique<WebContentsObserverAdapter>(
-      web_contents_.get(), observer);
+  observers_.AddObserver(observer);
 }
 
 void HeadlessWebContentsImpl::RemoveObserver(Observer* observer) {
-  ObserverMap::iterator it = observer_map_.find(observer);
-  DCHECK(it != observer_map_.end());
-  observer_map_.erase(it);
+  observers_.RemoveObserver(observer);
+}
+
+void HeadlessWebContentsImpl::DevToolsAgentHostAttached(
+    content::DevToolsAgentHost* agent_host) {
+  for (auto& observer : observers_)
+    observer.DevToolsClientAttached();
+}
+
+void HeadlessWebContentsImpl::DevToolsAgentHostDetached(
+    content::DevToolsAgentHost* agent_host) {
+  for (auto& observer : observers_)
+    observer.DevToolsClientDetached();
 }
 
 void HeadlessWebContentsImpl::RenderProcessExited(
@@ -253,9 +416,8 @@ void HeadlessWebContentsImpl::RenderProcessExited(
     base::TerminationStatus status,
     int exit_code) {
   DCHECK_EQ(render_process_host_, host);
-  for (const auto& pair : observer_map_) {
-    pair.second->observer()->RenderProcessExited(status, exit_code);
-  }
+  for (auto& observer : observers_)
+    observer.RenderProcessExited(status, exit_code);
 }
 
 void HeadlessWebContentsImpl::RenderProcessHostDestroyed(
@@ -326,17 +488,9 @@ HeadlessWebContents::Builder& HeadlessWebContents::Builder::SetWindowSize(
   return *this;
 }
 
-HeadlessWebContents::Builder& HeadlessWebContents::Builder::AddMojoService(
-    const std::string& service_name,
-    const base::Callback<void(mojo::ScopedMessagePipeHandle)>&
-        service_factory) {
-  mojo_services_.emplace_back(service_name, service_factory);
-  return *this;
-}
-
-HeadlessWebContents::Builder& HeadlessWebContents::Builder::CreateTabSocket(
-    bool create_tab_socket) {
-  create_tab_socket_ = create_tab_socket;
+HeadlessWebContents::Builder& HeadlessWebContents::Builder::SetAllowTabSockets(
+    bool tab_sockets_allowed) {
+  tab_sockets_allowed_ = tab_sockets_allowed;
   return *this;
 }
 
@@ -347,8 +501,11 @@ HeadlessWebContents* HeadlessWebContents::Builder::Build() {
 HeadlessWebContents::Builder::MojoService::MojoService() {}
 
 HeadlessWebContents::Builder::MojoService::MojoService(
+    const MojoService& other) = default;
+
+HeadlessWebContents::Builder::MojoService::MojoService(
     const std::string& service_name,
-    const base::Callback<void(mojo::ScopedMessagePipeHandle)>& service_factory)
+    const ServiceFactoryCallback& service_factory)
     : service_name(service_name), service_factory(service_factory) {}
 
 HeadlessWebContents::Builder::MojoService::~MojoService() {}

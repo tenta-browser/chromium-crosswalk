@@ -92,7 +92,7 @@ class FileSelectHelper : public base::RefCountedThreadSafe<
 
   void RunFileChooser(content::RenderFrameHost* render_frame_host,
                       std::unique_ptr<content::FileChooserParams> params);
-  void GetFileTypesOnFileThread(
+  void GetFileTypesInThreadPool(
       std::unique_ptr<content::FileChooserParams> params);
   void GetSanitizedFilenameOnUIThread(
       std::unique_ptr<content::FileChooserParams> params);
@@ -190,6 +190,10 @@ class FileSelectHelper : public base::RefCountedThreadSafe<
 
   // Cleans up when the initiator of the file chooser is no longer valid.
   void CleanUp();
+
+  // Calls RunFileChooserEnd() if the webcontents was destroyed. Returns true
+  // if the file chooser operation shouldn't proceed.
+  bool AbortIfWebContentsDestroyed();
 
   // Helper method to get allowed extensions for select file dialog from
   // the specified accept types as defined in the spec:

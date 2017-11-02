@@ -9,10 +9,12 @@ import os
 import posixpath
 import time
 
+from devil.android import crash_handler
 from devil.android import device_errors
 from devil.android import device_temp_file
 from devil.android import ports
 from devil.utils import reraiser_thread
+from incremental_install import installer
 from pylib import constants
 from pylib.base import base_test_result
 from pylib.gtest import gtest_test_instance
@@ -105,8 +107,8 @@ class _ApkDelegate(object):
   def __init__(self, test_instance):
     self._activity = test_instance.activity
     self._apk_helper = test_instance.apk_helper
-    self._test_apk_incremental_install_script = (
-        test_instance.test_apk_incremental_install_script)
+    self._test_apk_incremental_install_json = (
+        test_instance.test_apk_incremental_install_json)
     self._package = test_instance.package
     self._runner = test_instance.runner
     self._permissions = test_instance.permissions
@@ -120,9 +122,9 @@ class _ApkDelegate(object):
                           'chromium_tests_root')
 
   def Install(self, device):
-    if self._test_apk_incremental_install_script:
-      local_device_test_run.IncrementalInstall(device, self._apk_helper,
-          self._test_apk_incremental_install_script)
+    if self._test_apk_incremental_install_json:
+      installer.Install(device, self._test_apk_incremental_install_json,
+                        apk=self._apk_helper)
     else:
       device.Install(self._apk_helper, reinstall=True,
                      permissions=self._permissions)
@@ -177,6 +179,10 @@ class _ApkDelegate(object):
       except Exception:
         device.ForceStop(self._package)
         raise
+      # TODO(jbudorick): Remove this after resolving crbug.com/726880
+      logging.info(
+          '%s size on device: %s',
+          stdout_file.name, device.StatPath(stdout_file.name).get('st_size', 0))
       return device.ReadFile(stdout_file.name).splitlines()
 
   def PullAppFiles(self, device, files, directory):
@@ -272,12 +278,12 @@ class LocalDeviceGtestRun(local_device_test_run.LocalDeviceTestRun):
     @local_device_environment.handle_shard_failures_with(
         on_failure=self._env.BlacklistDevice)
     @trace_event.traced
-    def individual_device_set_up(dev, host_device_tuples):
-      def install_apk():
+    def individual_device_set_up(device, host_device_tuples):
+      def install_apk(dev):
         # Install test APK.
         self._delegate.Install(dev)
 
-      def push_test_data():
+      def push_test_data(dev):
         # Push data dependencies.
         device_root = self._delegate.GetTestDataRoot(dev)
         host_device_tuples_substituted = [
@@ -287,10 +293,10 @@ class LocalDeviceGtestRun(local_device_test_run.LocalDeviceTestRun):
             host_device_tuples_substituted,
             delete_device_stale=True)
         if not host_device_tuples:
-          dev.RunShellCommand(['rm', '-rf', device_root], check_return=True)
+          dev.RemovePath(device_root, force=True, recursive=True, rename=True)
           dev.RunShellCommand(['mkdir', '-p', device_root], check_return=True)
 
-      def init_tool_and_start_servers():
+      def init_tool_and_start_servers(dev):
         tool = self.GetTool(dev)
         tool.CopyFiles(dev)
         tool.SetupEnvironment()
@@ -304,7 +310,12 @@ class LocalDeviceGtestRun(local_device_test_run.LocalDeviceTestRun):
         for s in self._servers[str(dev)]:
           s.SetUp()
 
-      steps = (install_apk, push_test_data, init_tool_and_start_servers)
+      def bind_crash_handler(step, dev):
+        return lambda: crash_handler.RetryOnSystemCrash(step, dev)
+
+      steps = [
+          bind_crash_handler(s, device)
+          for s in (install_apk, push_test_data, init_tool_and_start_servers)]
       if self._env.concurrent_adb:
         reraiser_thread.RunAsync(steps)
       else:
@@ -356,8 +367,10 @@ class LocalDeviceGtestRun(local_device_test_run.LocalDeviceTestRun):
     @local_device_environment.handle_shard_failures_with(
         on_failure=self._env.BlacklistDevice)
     def list_tests(dev):
-      raw_test_list = self._delegate.Run(
-          None, dev, flags='--gtest_list_tests', timeout=30)
+      raw_test_list = crash_handler.RetryOnSystemCrash(
+          lambda d: self._delegate.Run(
+              None, d, flags='--gtest_list_tests', timeout=30),
+          device=dev)
       tests = gtest_test_instance.ParseGTestListTests(raw_test_list)
       if not tests:
         logging.info('No tests found. Output:')

@@ -6,7 +6,9 @@
 
 #include <stddef.h>
 
+#include <memory>
 #include <string>
+#include <utility>
 
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
@@ -18,7 +20,6 @@
 #include "chrome/browser/ui/webui/settings/downloads_handler.h"
 #include "chrome/browser/ui/webui/settings/extension_control_handler.h"
 #include "chrome/browser/ui/webui/settings/font_handler.h"
-#include "chrome/browser/ui/webui/settings/languages_handler.h"
 #include "chrome/browser/ui/webui/settings/md_settings_localized_strings_provider.h"
 #include "chrome/browser/ui/webui/settings/metrics_reporting_handler.h"
 #include "chrome/browser/ui/webui/settings/on_startup_handler.h"
@@ -45,6 +46,19 @@
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
 
+#if defined(OS_WIN)
+#include "chrome/browser/safe_browsing/chrome_cleaner/chrome_cleaner_controller_win.h"
+#include "chrome/browser/safe_browsing/chrome_cleaner/srt_field_trial_win.h"
+#include "chrome/browser/ui/webui/settings/chrome_cleanup_handler.h"
+#if defined(GOOGLE_CHROME_BUILD)
+#include "chrome/grit/chrome_unscaled_resources.h"
+#endif
+#endif  // defined(OS_WIN)
+
+#if defined(OS_WIN) || defined(OS_CHROMEOS)
+#include "chrome/browser/ui/webui/settings/languages_handler.h"
+#endif  // defined(OS_WIN) || defined(OS_CHROMEOS)
+
 #if defined(OS_CHROMEOS)
 #include "ash/system/palette/palette_utils.h"
 #include "ash/system/power/power_status.h"
@@ -63,8 +77,10 @@
 #include "chrome/browser/ui/webui/settings/chromeos/device_stylus_handler.h"
 #include "chrome/browser/ui/webui/settings/chromeos/easy_unlock_settings_handler.h"
 #include "chrome/browser/ui/webui/settings/chromeos/fingerprint_handler.h"
+#include "chrome/browser/ui/webui/settings/chromeos/google_assistant_handler.h"
 #include "chrome/browser/ui/webui/settings/chromeos/internet_handler.h"
 #include "chrome/common/chrome_switches.h"
+#include "chromeos/chromeos_switches.h"
 #include "components/arc/arc_util.h"
 #else  // !defined(OS_CHROMEOS)
 #include "chrome/browser/ui/webui/settings/settings_default_browser_handler.h"
@@ -73,10 +89,15 @@
 #endif  // defined(OS_CHROMEOS)
 
 #if defined(USE_NSS_CERTS)
-#include "chrome/browser/ui/webui/settings/certificates_handler.h"
+#include "chrome/browser/ui/webui/certificates_handler.h"
 #elif defined(OS_WIN) || defined(OS_MACOSX)
 #include "chrome/browser/ui/webui/settings/native_certificates_handler.h"
 #endif  // defined(USE_NSS_CERTS)
+
+#if defined(SAFE_BROWSING_DB_LOCAL)
+#include "chrome/browser/safe_browsing/chrome_password_protection_service.h"
+#include "chrome/browser/ui/webui/settings/change_password_handler.h"
+#endif
 
 namespace settings {
 
@@ -90,14 +111,19 @@ void MdSettingsUI::RegisterProfilePrefs(
   registry->RegisterBooleanPref(prefs::kImportDialogSearchEngine, true);
 }
 
-MdSettingsUI::MdSettingsUI(content::WebUI* web_ui, const GURL& url)
+MdSettingsUI::MdSettingsUI(content::WebUI* web_ui)
     : content::WebUIController(web_ui),
       WebContentsObserver(web_ui->GetWebContents()) {
+#if BUILDFLAG(USE_VULCANIZE)
+  std::unordered_set<std::string> exclude_from_gzip;
+#endif
+
   Profile* profile = Profile::FromWebUI(web_ui);
   AddSettingsPageUIHandler(base::MakeUnique<AppearanceHandler>(web_ui));
 
 #if defined(USE_NSS_CERTS)
-  AddSettingsPageUIHandler(base::MakeUnique<CertificatesHandler>(false));
+  AddSettingsPageUIHandler(
+      base::MakeUnique<certificate_manager::CertificatesHandler>());
 #elif defined(OS_WIN) || defined(OS_MACOSX)
   AddSettingsPageUIHandler(base::MakeUnique<NativeCertificatesHandler>());
 #endif  // defined(USE_NSS_CERTS)
@@ -109,13 +135,17 @@ MdSettingsUI::MdSettingsUI(content::WebUI* web_ui, const GURL& url)
   AddSettingsPageUIHandler(base::MakeUnique<ExtensionControlHandler>());
   AddSettingsPageUIHandler(base::MakeUnique<FontHandler>(web_ui));
   AddSettingsPageUIHandler(base::MakeUnique<ImportDataHandler>());
+
+#if defined(OS_WIN) || defined(OS_CHROMEOS)
   AddSettingsPageUIHandler(base::MakeUnique<LanguagesHandler>(web_ui));
+#endif  // defined(OS_WIN) || defined(OS_CHROMEOS)
+
   AddSettingsPageUIHandler(
       base::MakeUnique<MediaDevicesSelectionHandler>(profile));
 #if defined(GOOGLE_CHROME_BUILD) && !defined(OS_CHROMEOS)
   AddSettingsPageUIHandler(base::MakeUnique<MetricsReportingHandler>());
 #endif
-  AddSettingsPageUIHandler(base::MakeUnique<OnStartupHandler>());
+  AddSettingsPageUIHandler(base::MakeUnique<OnStartupHandler>(profile));
   AddSettingsPageUIHandler(base::MakeUnique<PeopleHandler>(profile));
   AddSettingsPageUIHandler(base::MakeUnique<ProfileInfoHandler>(profile));
   AddSettingsPageUIHandler(base::MakeUnique<ProtocolHandlersHandler>());
@@ -136,8 +166,12 @@ MdSettingsUI::MdSettingsUI(content::WebUI* web_ui, const GURL& url)
       base::MakeUnique<chromeos::settings::CupsPrintersHandler>(web_ui));
   AddSettingsPageUIHandler(
       base::MakeUnique<chromeos::settings::FingerprintHandler>(profile));
+  if (chromeos::switches::IsVoiceInteractionEnabled()) {
+    AddSettingsPageUIHandler(
+        base::MakeUnique<chromeos::settings::GoogleAssistantHandler>(profile));
+  }
   AddSettingsPageUIHandler(
-      base::MakeUnique<chromeos::settings::KeyboardHandler>(web_ui));
+      base::MakeUnique<chromeos::settings::KeyboardHandler>());
   AddSettingsPageUIHandler(
       base::MakeUnique<chromeos::settings::PointerHandler>());
   AddSettingsPageUIHandler(
@@ -152,14 +186,40 @@ MdSettingsUI::MdSettingsUI(content::WebUI* web_ui, const GURL& url)
   AddSettingsPageUIHandler(base::MakeUnique<SystemHandler>());
 #endif
 
-  // Host must be derived from the visible URL, since this might be serving
-  // either chrome://settings or chrome://md-settings.
-  CHECK(url.GetOrigin() == GURL(chrome::kChromeUISettingsURL).GetOrigin() ||
-        url.GetOrigin() == GURL(chrome::kChromeUIMdSettingsURL).GetOrigin());
-
   content::WebUIDataSource* html_source =
-      content::WebUIDataSource::Create(url.host());
-  html_source->AddString("hostname", url.host());
+      content::WebUIDataSource::Create(chrome::kChromeUISettingsHost);
+  // This is used by a <base> tag in c/b/r/settings/BUILD.gn. TODO(dbeam): Is
+  // this still needed now that there's only 1 host name?
+  html_source->AddString("hostname", chrome::kChromeUISettingsHost);
+
+#if defined(OS_WIN)
+  if (base::FeatureList::IsEnabled(safe_browsing::kInBrowserCleanerUIFeature)) {
+    AddSettingsPageUIHandler(base::MakeUnique<ChromeCleanupHandler>(profile));
+
+    safe_browsing::ChromeCleanerController* cleaner_controller =
+        safe_browsing::ChromeCleanerController::GetInstance();
+    if (cleaner_controller->ShouldShowCleanupInSettingsUI())
+      html_source->AddBoolean("chromeCleanupEnabled", true);
+
+#if defined(GOOGLE_CHROME_BUILD)
+    if (cleaner_controller->IsPoweredByPartner())
+      html_source->AddBoolean("cleanupPoweredByPartner", true);
+
+    html_source->AddResourcePath("partner-logo.svg",
+                                 IDR_CHROME_CLEANUP_PARTNER);
+#if BUILDFLAG(USE_VULCANIZE)
+    exclude_from_gzip.insert("partner-logo.svg");
+#endif
+#endif  // defined(GOOGLE_CHROME_BUILD)
+  }
+#endif  // defined(OS_WIN)
+
+#if defined(SAFE_BROWSING_DB_LOCAL)
+  AddSettingsPageUIHandler(base::MakeUnique<ChangePasswordHandler>(profile));
+  html_source->AddBoolean("changePasswordEnabled",
+                          safe_browsing::ChromePasswordProtectionService::
+                              ShouldShowChangePasswordSettingUI(profile));
+#endif
 
 #if defined(OS_CHROMEOS)
   chromeos::settings::EasyUnlockSettingsHandler* easy_unlock_handler =
@@ -176,22 +236,32 @@ MdSettingsUI::MdSettingsUI(content::WebUI* web_ui, const GURL& url)
   html_source->AddBoolean(
       "quickUnlockEnabled",
       chromeos::quick_unlock::IsPinEnabled(profile->GetPrefs()));
+  html_source->AddBoolean(
+      "quickUnlockDisabledByPolicy",
+      chromeos::quick_unlock::IsPinDisabledByPolicy(profile->GetPrefs()));
   html_source->AddBoolean("fingerprintUnlockEnabled",
                           chromeos::quick_unlock::IsFingerprintEnabled());
-  html_source->AddBoolean("androidAppsAllowed",
-                          arc::IsArcAllowedForProfile(profile) &&
-                              !arc::IsArcOptInVerificationDisabled());
+  html_source->AddBoolean("hasInternalStylus",
+                          ash::palette_utils::HasInternalStylus());
+
+  // We have 2 variants of Android apps settings. Default case, when the Play
+  // Store app exists we show expandable section that allows as to
+  // enable/disable the Play Store and link to Android settings which is
+  // available once settings app is registered in the system.
+  // For AOSP images we don't have the Play Store app. In last case we Android
+  // apps settings consists only from root link to Android settings and only
+  // visible once settings app is registered.
+  const bool androidAppsVisible = arc::IsArcAllowedForProfile(profile) &&
+                                  !arc::IsArcOptInVerificationDisabled();
+  html_source->AddBoolean("androidAppsVisible", androidAppsVisible);
+  html_source->AddBoolean("havePlayStoreApp", arc::IsPlayStoreAvailable());
 
   // TODO(mash): Support Chrome power settings in Mash. crbug.com/644348
-  bool enable_power_settings =
-      !ash_util::IsRunningInMash() &&
-      (switches::PowerOverlayEnabled() ||
-       (ash::PowerStatus::Get()->IsBatteryPresent() &&
-        ash::PowerStatus::Get()->SupportsDualRoleDevices()));
+  bool enable_power_settings = !ash_util::IsRunningInMash();
   html_source->AddBoolean("enablePowerSettings", enable_power_settings);
   if (enable_power_settings) {
-    AddSettingsPageUIHandler(
-        base::MakeUnique<chromeos::settings::PowerHandler>());
+    AddSettingsPageUIHandler(base::MakeUnique<chromeos::settings::PowerHandler>(
+        profile->GetPrefs()));
   }
 #endif
 
@@ -210,7 +280,7 @@ MdSettingsUI::MdSettingsUI(content::WebUI* web_ui, const GURL& url)
   html_source->AddResourcePath("lazy_load.html",
                                IDR_MD_SETTINGS_LAZY_LOAD_VULCANIZED_HTML);
   html_source->SetDefaultResource(IDR_MD_SETTINGS_VULCANIZED_HTML);
-  html_source->UseGzip(std::unordered_set<std::string>());
+  html_source->UseGzip(exclude_from_gzip);
 #else
   // Add all settings resources.
   for (size_t i = 0; i < kSettingsResourcesSize; ++i) {
@@ -224,15 +294,24 @@ MdSettingsUI::MdSettingsUI(content::WebUI* web_ui, const GURL& url)
 
   content::WebUIDataSource::Add(web_ui->GetWebContents()->GetBrowserContext(),
                                 html_source);
+
+#if defined(OS_WIN)
+  // This needs to be below content::WebUIDataSource::Add to make sure there
+  // is a WebUIDataSource to update if the observer is immediately notified.
+  if (base::FeatureList::IsEnabled(safe_browsing::kInBrowserCleanerUIFeature)) {
+    cleanup_observer_.reset(
+        new safe_browsing::ChromeCleanerStateChangeObserver(base::Bind(
+            &MdSettingsUI::UpdateCleanupDataSource, base::Unretained(this))));
+  }
+#endif  // defined(OS_WIN)
 }
 
 MdSettingsUI::~MdSettingsUI() {
 }
 
 void MdSettingsUI::AddSettingsPageUIHandler(
-    std::unique_ptr<SettingsPageUIHandler> handler) {
+    std::unique_ptr<content::WebUIMessageHandler> handler) {
   DCHECK(handler);
-  handlers_.insert(handler.get());
   web_ui()->AddMessageHandler(std::move(handler));
 }
 
@@ -254,5 +333,20 @@ void MdSettingsUI::DocumentOnLoadCompletedInMainFrame() {
   UMA_HISTOGRAM_TIMES("Settings.LoadCompletedTime.MD",
                       base::Time::Now() - load_start_time_);
 }
+
+#if defined(OS_WIN)
+void MdSettingsUI::UpdateCleanupDataSource(bool cleanupEnabled,
+                                           bool partnerPowered) {
+  DCHECK(web_ui());
+  Profile* profile = Profile::FromWebUI(web_ui());
+
+  std::unique_ptr<base::DictionaryValue> update(new base::DictionaryValue);
+  update->SetBoolean("chromeCleanupEnabled", cleanupEnabled);
+  update->SetBoolean("cleanupPoweredByPartner", partnerPowered);
+
+  content::WebUIDataSource::Update(profile, chrome::kChromeUISettingsHost,
+                                   std::move(update));
+}
+#endif  // defined(OS_WIN)
 
 }  // namespace settings

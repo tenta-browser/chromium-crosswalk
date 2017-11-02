@@ -13,10 +13,10 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-using testing::_;
-using testing::AnyOf;
-using testing::ElementsAre;
-using testing::Invoke;
+using ::testing::_;
+using ::testing::AnyOf;
+using ::testing::ElementsAre;
+using ::testing::Invoke;
 
 namespace blink {
 namespace scheduler {
@@ -70,7 +70,7 @@ void ShutdownOnThread(WebThreadImplForWorkerScheduler* thread) {
 
 }  // namespace
 
-class WebThreadImplForWorkerSchedulerTest : public testing::Test {
+class WebThreadImplForWorkerSchedulerTest : public ::testing::Test {
  public:
   WebThreadImplForWorkerSchedulerTest() {}
 
@@ -151,8 +151,8 @@ TEST_F(WebThreadImplForWorkerSchedulerTest, TestIdleTask) {
 
   thread_->PostIdleTask(BLINK_FROM_HERE, task.release());
   // We need to post a wake-up task or idle work will never happen.
-  thread_->GetWebTaskRunner()->PostDelayedTask(BLINK_FROM_HERE,
-                                               WTF::Bind([] {}), 50ll);
+  thread_->GetWebTaskRunner()->PostDelayedTask(
+      BLINK_FROM_HERE, WTF::Bind([] {}), TimeDelta::FromMilliseconds(50));
 
   completion.Wait();
 }
@@ -173,7 +173,8 @@ TEST_F(WebThreadImplForWorkerSchedulerTest, TestTaskObserver) {
   // Sometimes we get an internal scheduler task running before or after
   // TestTask as well. This is not a bug, and we need to make sure the test
   // doesn't fail when that happens.
-  EXPECT_THAT(calls, testing::HasSubstr("willProcessTask run didProcessTask"));
+  EXPECT_THAT(calls,
+              ::testing::HasSubstr("willProcessTask run didProcessTask"));
 }
 
 TEST_F(WebThreadImplForWorkerSchedulerTest, TestShutdown) {
@@ -188,7 +189,8 @@ TEST_F(WebThreadImplForWorkerSchedulerTest, TestShutdown) {
       BLINK_FROM_HERE, WTF::Bind(&MockTask::Run, WTF::Unretained(&task)));
   thread_->GetWebTaskRunner()->PostDelayedTask(
       BLINK_FROM_HERE,
-      WTF::Bind(&MockTask::Run, WTF::Unretained(&delayed_task)), 50ll);
+      WTF::Bind(&MockTask::Run, WTF::Unretained(&delayed_task)),
+      TimeDelta::FromMilliseconds(50));
   thread_.reset();
 }
 

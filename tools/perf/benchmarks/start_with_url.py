@@ -6,6 +6,7 @@ from core import perf_benchmark
 import page_sets
 
 from telemetry import benchmark
+from telemetry import story
 from telemetry.timeline import chrome_trace_category_filter
 from telemetry.web_perf import timeline_based_measurement
 from telemetry.web_perf.metrics import startup
@@ -19,7 +20,7 @@ class _StartupPerfBenchmark(perf_benchmark.PerfBenchmark):
         '--enable-stats-collection-bindings'
     ])
 
-  def CreateTimelineBasedMeasurementOptions(self):
+  def CreateCoreTimelineBasedMeasurementOptions(self):
     startup_category_filter = (
         chrome_trace_category_filter.ChromeTraceCategoryFilter(
             filter_string='startup,blink.user_timing'))
@@ -30,15 +31,13 @@ class _StartupPerfBenchmark(perf_benchmark.PerfBenchmark):
     return options
 
 
-@benchmark.Enabled('has tabs')
-@benchmark.Enabled('android')
-@benchmark.Disabled('chromeos', 'linux', 'mac', 'win')
 @benchmark.Owner(emails=['pasko@chromium.org'])
 class StartWithUrlColdTBM(_StartupPerfBenchmark):
   """Measures time to start Chrome cold with startup URLs."""
 
   page_set = page_sets.StartupPagesPageSet
   options = {'pageset_repeat': 5}
+  SUPPORTED_PLATFORMS = [story.expectations.ANDROID_NOT_WEBVIEW]
 
   def SetExtraBrowserOptions(self, options):
     options.clear_sytem_cache_for_browser_and_profile_on_start = True
@@ -53,17 +52,22 @@ class StartWithUrlColdTBM(_StartupPerfBenchmark):
   def Name(cls):
     return 'start_with_url.cold.startup_pages'
 
+  # TODO(rnephew): Test if kapook.com fails on both or just one of the configs.
+  def GetExpectations(self):
+    class StoryExpectations(story.expectations.StoryExpectations):
+      def SetExpectations(self):
+        self.DisableStory(
+            'http://kapook.com', [story.expectations.ALL], 'crbug.com/667470')
+    return StoryExpectations()
 
-@benchmark.Enabled('has tabs')
-@benchmark.Enabled('android')
-@benchmark.Disabled('android-reference')  # crbug.com/588786
-@benchmark.Disabled('chromeos', 'linux', 'mac', 'win')
+
 @benchmark.Owner(emails=['pasko@chromium.org'])
 class StartWithUrlWarmTBM(_StartupPerfBenchmark):
   """Measures stimetime to start Chrome warm with startup URLs."""
 
   page_set = page_sets.StartupPagesPageSet
   options = {'pageset_repeat': 11}
+  SUPPORTED_PLATFORMS = [story.expectations.ANDROID_NOT_WEBVIEW]
 
   @classmethod
   def Name(cls):
@@ -75,3 +79,12 @@ class StartWithUrlWarmTBM(_StartupPerfBenchmark):
     # Ignores first results because the first invocation is actualy cold since
     # we are loading the profile for the first time.
     return not is_first_result
+
+  # TODO(rnephew): Test if kapook.com fails on both or just one of the configs.
+  def GetExpectations(self):
+    class StoryExpectations(story.expectations.StoryExpectations):
+      def SetExpectations(self):
+        self.DisableStory(
+            'http://kapook.com', [story.expectations.ALL], 'crbug.com/667470')
+    return StoryExpectations()
+

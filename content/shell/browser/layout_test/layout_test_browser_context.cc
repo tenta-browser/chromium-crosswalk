@@ -12,6 +12,7 @@
 #include "base/logging.h"
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
+#include "base/task_scheduler/post_task.h"
 #include "build/build_config.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/push_messaging_service.h"
@@ -22,6 +23,8 @@
 #include "content/shell/browser/layout_test/layout_test_url_request_context_getter.h"
 #include "content/shell/browser/shell_url_request_context_getter.h"
 #include "content/test/mock_background_sync_controller.h"
+#include "device/geolocation/geolocation_provider.h"
+#include "device/geolocation/geoposition.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_file_job.h"
 
@@ -73,7 +76,9 @@ class MojomProtocolHandler : public net::URLRequestJobFactory::ProtocolHandler {
 
     return new net::URLRequestFileJob(
         request, network_delegate, path,
-        BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE));
+        base::CreateTaskRunnerWithTraits(
+            {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
+             base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN}));
   }
 };
 
@@ -82,10 +87,22 @@ class MojomProtocolHandler : public net::URLRequestJobFactory::ProtocolHandler {
 LayoutTestBrowserContext::LayoutTestBrowserContext(bool off_the_record,
                                                    net::NetLog* net_log)
     : ShellBrowserContext(off_the_record, net_log) {
-  ignore_certificate_errors_ = true;
+  Init();
 }
 
 LayoutTestBrowserContext::~LayoutTestBrowserContext() {
+}
+
+void LayoutTestBrowserContext::Init() {
+  // Fake geolocation coordinates for testing.
+  device::Geoposition position;
+  position.latitude = 0;
+  position.longitude = 0;
+  position.altitude = 0;
+  position.accuracy = 0;
+  position.timestamp = base::Time::Now();
+  device::GeolocationProvider::GetInstance()->OverrideLocationForTesting(
+      position);
 }
 
 ShellURLRequestContextGetter*
@@ -95,9 +112,8 @@ LayoutTestBrowserContext::CreateURLRequestContextGetter(
   protocol_handlers->insert(std::make_pair(
       "layout-test-mojom", make_linked_ptr(new MojomProtocolHandler)));
   return new LayoutTestURLRequestContextGetter(
-      ignore_certificate_errors(), GetPath(),
+      ignore_certificate_errors(), IsOffTheRecord(), GetPath(),
       BrowserThread::GetTaskRunnerForThread(BrowserThread::IO),
-      BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE),
       protocol_handlers, std::move(request_interceptors), net_log());
 }
 

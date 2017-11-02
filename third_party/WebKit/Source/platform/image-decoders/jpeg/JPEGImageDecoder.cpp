@@ -38,6 +38,7 @@
 #include "platform/image-decoders/jpeg/JPEGImageDecoder.h"
 
 #include <memory>
+#include "build/build_config.h"
 #include "platform/instrumentation/PlatformInstrumentation.h"
 #include "platform/wtf/PtrUtil.h"
 
@@ -48,7 +49,7 @@ extern "C" {
 #include <setjmp.h>
 }
 
-#if CPU(BIG_ENDIAN) || CPU(MIDDLE_ENDIAN)
+#if defined(ARCH_CPU_BIG_ENDIAN)
 #error Blink assumes a little-endian target.
 #endif
 
@@ -77,7 +78,7 @@ namespace {
 const int exifMarker = JPEG_APP0 + 1;
 
 // JPEG only supports a denominator of 8.
-const unsigned scaleDenominator = 8;
+const unsigned g_scale_denomiator = 8;
 
 }  // namespace
 
@@ -343,8 +344,8 @@ class JPEGImageReader final {
 
     // This is a valid restart position.
     restart_position_ = next_read_position_ - info_.src->bytes_in_buffer;
-    // We updated |next_input_byte|, so we need to update |m_lastByteSet|
-    // so we know not to update |m_restartPosition| again.
+    // We updated |next_input_byte|, so we need to update |last_byte_set_|
+    // so we know not to update |restart_position_| again.
     last_set_byte_ = info_.src->next_input_byte;
   }
 
@@ -386,20 +387,28 @@ class JPEGImageReader final {
       return;
 
     // Otherwise, empty the buffer, and leave the position the same, so
-    // fillBuffer continues reading from the same position in the new
+    // FillBuffer continues reading from the same position in the new
     // SegmentReader.
     next_read_position_ -= info_.src->bytes_in_buffer;
     ClearBuffer();
   }
 
-  bool Decode(bool only_size) {
+  // Decode the JPEG data. If |only_size| is specified, then only the size
+  // information will be decoded. If |generate_all_sizes| is specified, this
+  // will generate the sizes for all possible numerators up to the desired
+  // numerator as dictated by the decoder class. Note that |generate_all_sizes|
+  // is only valid if |only_size| is set.
+  bool Decode(bool only_size, bool generate_all_sizes) {
     // We need to do the setjmp here. Otherwise bad things will happen
     if (setjmp(err_.setjmp_buffer))
       return decoder_->SetFailed();
 
+    // Generate all sizes implies we only want the size.
+    DCHECK(!generate_all_sizes || only_size);
+
     J_COLOR_SPACE override_color_space = JCS_UNKNOWN;
     switch (state_) {
-      case JPEG_HEADER:
+      case JPEG_HEADER: {
         // Read file parameters with jpeg_read_header().
         if (jpeg_read_header(&info_, true) == JPEG_SUSPENDED)
           return false;  // I/O suspension.
@@ -434,8 +443,9 @@ class JPEGImageReader final {
           return false;
 
         // Calculate and set decoded size.
-        info_.scale_num = decoder_->DesiredScaleNumerator();
-        info_.scale_denom = scaleDenominator;
+        int max_numerator = decoder_->DesiredScaleNumerator();
+        info_.scale_num = max_numerator;
+        info_.scale_denom = g_scale_denomiator;
         // Scaling caused by running low on memory isn't supported by YUV
         // decoding since YUV decoding is performed on full sized images. At
         // this point, buffers and various image info structs have already been
@@ -445,6 +455,16 @@ class JPEGImageReader final {
           override_color_space = JCS_UNKNOWN;
         jpeg_calc_output_dimensions(&info_);
         decoder_->SetDecodedSize(info_.output_width, info_.output_height);
+
+        if (generate_all_sizes) {
+          info_.scale_denom = g_scale_denomiator;
+          for (int numerator = 1; numerator <= max_numerator; ++numerator) {
+            info_.scale_num = numerator;
+            jpeg_calc_output_dimensions(&info_);
+            decoder_->AddSupportedDecodeSize(info_.output_width,
+                                             info_.output_height);
+          }
+        }
 
         decoder_->SetOrientation(ReadImageOrientation(Info()));
 
@@ -481,18 +501,18 @@ class JPEGImageReader final {
           // This exits the function while there is still potentially
           // data in the buffer. Before this function is called again,
           // the SharedBuffer may be collapsed (by a call to
-          // mergeSegmentsIntoBuffer), invalidating the "buffer" (which
+          // MergeSegmentsIntoBuffer), invalidating the "buffer" (which
           // in reality is a pointer into the SharedBuffer's data).
           // Defensively empty the buffer, but first find the latest
           // restart position and signal to restart, so the next call to
-          // fillBuffer will resume from the correct point.
+          // FillBuffer will resume from the correct point.
           needs_restart_ = true;
           UpdateRestartPosition();
           ClearBuffer();
           return true;
         }
+      }
       // FALL THROUGH
-
       case JPEG_START_DECOMPRESS:
         // Set parameters for decompression.
         // FIXME -- Should reset dct_method and dither mode for final pass
@@ -647,7 +667,7 @@ class JPEGImageReader final {
   RefPtr<SegmentReader> data_;
   JPEGImageDecoder* decoder_;
 
-  // Input reading: True if we need to back up to m_restartPosition.
+  // Input reading: True if we need to back up to restart_position_.
   bool needs_restart_;
   // If libjpeg needed to restart, this is the position to restart from.
   size_t restart_position_;
@@ -761,19 +781,19 @@ unsigned JPEGImageDecoder::DesiredScaleNumerator() const {
   size_t original_bytes = Size().Width() * Size().Height() * 4;
 
   if (original_bytes <= max_decoded_bytes_)
-    return scaleDenominator;
+    return g_scale_denomiator;
 
   // Downsample according to the maximum decoded size.
   unsigned scale_numerator = static_cast<unsigned>(floor(sqrt(
       // MSVC needs explicit parameter type for sqrt().
-      static_cast<float>(max_decoded_bytes_ * scaleDenominator *
-                         scaleDenominator / original_bytes))));
+      static_cast<float>(max_decoded_bytes_ * g_scale_denomiator *
+                         g_scale_denomiator / original_bytes))));
 
   return scale_numerator;
 }
 
 bool JPEGImageDecoder::CanDecodeToYUV() {
-  // Calling isSizeAvailable() ensures the reader is created and the output
+  // Calling IsSizeAvailable() ensures the reader is created and the output
   // color space is set.
   return IsSizeAvailable() && reader_->Info()->out_color_space == JCS_YCbCr;
 }
@@ -793,27 +813,44 @@ void JPEGImageDecoder::SetImagePlanes(
   image_planes_ = std::move(image_planes);
 }
 
-template <J_COLOR_SPACE colorSpace>
-void SetPixel(ImageFrame& buffer,
-              ImageFrame::PixelData* pixel,
-              JSAMPARRAY samples,
-              int column) {
-  NOTREACHED();
+void JPEGImageDecoder::AddSupportedDecodeSize(unsigned width, unsigned height) {
+#if DCHECK_IS_ON()
+  DCHECK(decoding_all_sizes_);
+#endif
+  supported_decode_sizes_.push_back(SkISize::Make(width, height));
 }
+
+std::vector<SkISize> JPEGImageDecoder::GetSupportedDecodeSizes() {
+  if (supported_decode_sizes_.empty()) {
+#if DCHECK_IS_ON()
+    decoding_all_sizes_ = true;
+#endif
+    Decode(true, true);
+#if DCHECK_IS_ON()
+    decoding_all_sizes_ = false;
+#endif
+  }
+  return supported_decode_sizes_;
+}
+
+// At the moment we support only JCS_RGB and JCS_CMYK values of the
+// J_COLOR_SPACE enum.
+// If you need a specific implementation for other J_COLOR_SPACE values,
+// please add a full template specialization for this function below.
+template <J_COLOR_SPACE colorSpace>
+void SetPixel(ImageFrame::PixelData*, JSAMPARRAY samples, int column) = delete;
 
 // Used only for debugging with libjpeg (instead of libjpeg-turbo).
 template <>
-void SetPixel<JCS_RGB>(ImageFrame& buffer,
-                       ImageFrame::PixelData* pixel,
+void SetPixel<JCS_RGB>(ImageFrame::PixelData* pixel,
                        JSAMPARRAY samples,
                        int column) {
   JSAMPLE* jsample = *samples + column * 3;
-  buffer.SetRGBARaw(pixel, jsample[0], jsample[1], jsample[2], 255);
+  ImageFrame::SetRGBARaw(pixel, jsample[0], jsample[1], jsample[2], 255);
 }
 
 template <>
-void SetPixel<JCS_CMYK>(ImageFrame& buffer,
-                        ImageFrame::PixelData* pixel,
+void SetPixel<JCS_CMYK>(ImageFrame::PixelData* pixel,
                         JSAMPARRAY samples,
                         int column) {
   JSAMPLE* jsample = *samples + column * 4;
@@ -828,8 +865,8 @@ void SetPixel<JCS_CMYK>(ImageFrame& buffer,
   // From CMY (0..1) to RGB (0..1):
   // R = 1 - C => 1 - (1 - iC*iK) => iC*iK  [G and B similar]
   unsigned k = jsample[3];
-  buffer.SetRGBARaw(pixel, jsample[0] * k / 255, jsample[1] * k / 255,
-                    jsample[2] * k / 255, 255);
+  ImageFrame::SetRGBARaw(pixel, jsample[0] * k / 255, jsample[1] * k / 255,
+                         jsample[2] * k / 255, 255);
 }
 
 // Used only for JCS_CMYK and JCS_RGB output.  Note that JCS_RGB is used only
@@ -850,7 +887,7 @@ bool OutputRows(JPEGImageReader* reader, ImageFrame& buffer) {
 
     ImageFrame::PixelData* pixel = buffer.GetAddr(0, y);
     for (int x = 0; x < width; ++pixel, ++x)
-      SetPixel<colorSpace>(buffer, pixel, samples, x);
+      SetPixel<colorSpace>(pixel, samples, x);
 
     SkColorSpaceXform* xform = reader->Decoder()->ColorTransform();
     if (JCS_RGB == colorSpace && xform) {
@@ -944,7 +981,7 @@ bool JPEGImageDecoder::OutputScanlines() {
 
     buffer.ZeroFillPixelData();
     // The buffer is transparent outside the decoded area while the image is
-    // loading. The image will be marked fully opaque in complete().
+    // loading. The image will be marked fully opaque in Complete().
     buffer.SetStatus(ImageFrame::kFramePartial);
     buffer.SetHasAlpha(true);
 
@@ -995,10 +1032,10 @@ inline bool IsComplete(const JPEGImageDecoder* decoder, bool only_size) {
   if (decoder->HasImagePlanes() && !only_size)
     return true;
 
-  return decoder->FrameIsCompleteAtIndex(0);
+  return decoder->FrameIsDecodedAtIndex(0);
 }
 
-void JPEGImageDecoder::Decode(bool only_size) {
+void JPEGImageDecoder::Decode(bool only_size, bool generate_all_sizes) {
   if (Failed())
     return;
 
@@ -1009,7 +1046,7 @@ void JPEGImageDecoder::Decode(bool only_size) {
 
   // If we couldn't decode the image but have received all the data, decoding
   // has failed.
-  if (!reader_->Decode(only_size) && IsAllDataReceived())
+  if (!reader_->Decode(only_size, generate_all_sizes) && IsAllDataReceived())
     SetFailed();
 
   // If decoding is done or failed, we don't need the JPEGImageReader anymore.

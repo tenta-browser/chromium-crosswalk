@@ -37,7 +37,7 @@
 #include "core/inspector/InspectorPageAgent.h"
 #include "core/inspector/protocol/Network.h"
 #include "platform/heap/Handle.h"
-#include "wtf/text/WTFString.h"
+#include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
@@ -57,15 +57,21 @@ class ResourceResponse;
 class ThreadableLoaderClient;
 class XHRReplayData;
 class XMLHttpRequest;
-
 class WebSocketHandshakeRequest;
 class WebSocketHandshakeResponse;
+class WorkerGlobalScope;
 
 class CORE_EXPORT InspectorNetworkAgent final
     : public InspectorBaseAgent<protocol::Network::Metainfo> {
  public:
   static InspectorNetworkAgent* Create(InspectedFrames* inspected_frames) {
-    return new InspectorNetworkAgent(inspected_frames);
+    return new InspectorNetworkAgent(inspected_frames, nullptr);
+  }
+  static InspectorNetworkAgent* CreateForWorker(
+      WorkerGlobalScope* worker_global_scope) {
+    // TODO(horo): Extract the logc for frames and for workers into different
+    // classes.
+    return new InspectorNetworkAgent(nullptr, worker_global_scope);
   }
 
   void Restore() override;
@@ -74,48 +80,47 @@ class CORE_EXPORT InspectorNetworkAgent final
   DECLARE_VIRTUAL_TRACE();
 
   // Probes.
-  void DidBlockRequest(LocalFrame*,
+  void DidBlockRequest(ExecutionContext*,
                        const ResourceRequest&,
                        DocumentLoader*,
                        const FetchInitiatorInfo&,
                        ResourceRequestBlockedReason);
   void DidChangeResourcePriority(unsigned long identifier,
                                  ResourceLoadPriority);
-  void WillSendRequest(LocalFrame*,
+  void WillSendRequest(ExecutionContext*,
                        unsigned long identifier,
                        DocumentLoader*,
                        ResourceRequest&,
                        const ResourceResponse& redirect_response,
                        const FetchInitiatorInfo&);
   void MarkResourceAsCached(unsigned long identifier);
-  void DidReceiveResourceResponse(LocalFrame*,
-                                  unsigned long identifier,
+  void DidReceiveResourceResponse(unsigned long identifier,
                                   DocumentLoader*,
                                   const ResourceResponse&,
                                   Resource*);
-  void DidReceiveData(LocalFrame*,
-                      unsigned long identifier,
+  void DidReceiveData(unsigned long identifier,
+                      DocumentLoader*,
                       const char* data,
                       int data_length);
-  void DidReceiveEncodedDataLength(LocalFrame*,
-                                   unsigned long identifier,
+  void DidReceiveEncodedDataLength(unsigned long identifier,
                                    int encoded_data_length);
-  void DidFinishLoading(LocalFrame*,
-                        unsigned long identifier,
+  void DidFinishLoading(unsigned long identifier,
+                        DocumentLoader*,
                         double monotonic_finish_time,
                         int64_t encoded_data_length,
                         int64_t decoded_body_length);
-  void DidReceiveCORSRedirectResponse(LocalFrame*,
-                                      unsigned long identifier,
+  void DidReceiveCORSRedirectResponse(unsigned long identifier,
                                       DocumentLoader*,
                                       const ResourceResponse&,
                                       Resource*);
-  void DidFailLoading(unsigned long identifier, const ResourceError&);
+  void DidFailLoading(unsigned long identifier,
+                      DocumentLoader*,
+                      const ResourceError&);
   void DidCommitLoad(LocalFrame*, DocumentLoader*);
   void ScriptImported(unsigned long identifier, const String& source_string);
   void DidReceiveScriptResponse(unsigned long identifier);
   void ShouldForceCORSPreflight(bool* result);
-  void ShouldBlockRequest(const ResourceRequest&, bool* result);
+  void ShouldBlockRequest(const KURL&, bool* result);
 
   void DocumentThreadableLoaderStartedLoadingForClient(unsigned long identifier,
                                                        ThreadableLoaderClient*);
@@ -126,7 +131,7 @@ class CORE_EXPORT InspectorNetworkAgent final
                    const AtomicString& method,
                    const KURL&,
                    bool async,
-                   PassRefPtr<EncodedFormData> body,
+                   RefPtr<EncodedFormData> body,
                    const HTTPHeaderMap& headers,
                    bool include_crendentials);
   void DidFailXHRLoading(ExecutionContext*,
@@ -160,7 +165,7 @@ class CORE_EXPORT InspectorNetworkAgent final
   void WillDestroyResource(Resource*);
 
   void ApplyUserAgentOverride(String* user_agent);
-  void FrameScheduledNavigation(LocalFrame*, double);
+  void FrameScheduledNavigation(LocalFrame*, ScheduledNavigation*);
   void FrameClearedScheduledNavigation(LocalFrame*);
   void FrameScheduledClientNavigation(LocalFrame*);
   void FrameClearedScheduledClientNavigation(LocalFrame*);
@@ -205,7 +210,6 @@ class CORE_EXPORT InspectorNetworkAgent final
   protocol::Response setBlockedURLs(
       std::unique_ptr<protocol::Array<String>> urls) override;
   protocol::Response replayXHR(const String& request_id) override;
-  protocol::Response setMonitoringXHREnabled(bool) override;
   protocol::Response canClearBrowserCache(bool* result) override;
   protocol::Response canClearBrowserCookies(bool* result) override;
   protocol::Response emulateNetworkConditions(
@@ -224,6 +228,9 @@ class CORE_EXPORT InspectorNetworkAgent final
 
   // Called from other agents.
   void SetHostId(const String&);
+  protocol::Response GetResponseBody(const String& request_id,
+                                     String* content,
+                                     bool* base64_encoded);
   bool FetchResourceContent(Document*,
                             const KURL&,
                             String* content,
@@ -231,10 +238,10 @@ class CORE_EXPORT InspectorNetworkAgent final
   bool CacheDisabled();
 
  private:
-  explicit InspectorNetworkAgent(InspectedFrames*);
+  explicit InspectorNetworkAgent(InspectedFrames*, WorkerGlobalScope*);
 
   void Enable(int total_buffer_size, int resource_buffer_size);
-  void WillSendRequestInternal(LocalFrame*,
+  void WillSendRequestInternal(ExecutionContext*,
                                unsigned long identifier,
                                DocumentLoader*,
                                const ResourceRequest&,
@@ -254,7 +261,10 @@ class CORE_EXPORT InspectorNetworkAgent final
                            std::unique_ptr<GetResponseBodyCallback>);
   void ClearPendingRequestData();
 
+  // This is null while inspecting workers.
   Member<InspectedFrames> inspected_frames_;
+  // This is null while inspecting frames.
+  Member<WorkerGlobalScope> worker_global_scope_;
   String host_id_;
   Member<NetworkResourcesData> resources_data_;
 

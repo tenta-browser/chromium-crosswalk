@@ -110,16 +110,12 @@ public class ShareIntentTest extends ChromeTabbedActivityTestBase {
         // Sets a test component as last shared and "shareDirectly" option is set so that the share
         // selector menu is not opened. The start activity is overriden, so the package and class
         // names do not matter.
-        ShareHelper.setLastShareComponentName(new ComponentName("test.package", "test.activity"));
+        ShareHelper.setLastShareComponentName(
+                new ComponentName("test.package", "test.activity"), null);
         // Skips the capture of screenshot and notifies with an empty file.
         mockActivity.setScreenshotCaptureSkippedForTesting(true);
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                mockActivity.onShareMenuItemSelected(
-                        true /* shareDirectly */, false /* isIncognito */);
-            }
-        });
+        ThreadUtils.runOnUiThreadBlocking(() -> mockActivity.onShareMenuItemSelected(
+                true /* shareDirectly */, false /* isIncognito */));
 
         try {
             mockActivity.waitForFileCheck();
@@ -127,7 +123,7 @@ public class ShareIntentTest extends ChromeTabbedActivityTestBase {
             assert false : "Test thread was interrupted while trying to wait.";
         }
 
-        ShareHelper.setLastShareComponentName(new ComponentName("", ""));
+        ShareHelper.setLastShareComponentName(new ComponentName("", ""), null);
     }
 
     @Override

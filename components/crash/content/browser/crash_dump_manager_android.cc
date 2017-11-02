@@ -6,46 +6,44 @@
 
 #include <stdint.h>
 
+#include "base/android/jni_android.h"
+#include "base/android/jni_string.h"
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/format_macros.h"
+#include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/posix/global_descriptors.h"
 #include "base/process/process.h"
 #include "base/rand_util.h"
 #include "base/stl_util.h"
 #include "base/strings/stringprintf.h"
 #include "components/crash/content/app/breakpad_linux.h"
-#include "content/public/browser/browser_thread.h"
-#include "content/public/browser/child_process_data.h"
-#include "content/public/browser/file_descriptor_info.h"
-#include "content/public/browser/notification_service.h"
-#include "content/public/browser/notification_types.h"
-#include "content/public/browser/render_process_host.h"
-
-using content::BrowserThread;
+#include "jni/CrashDumpManager_jni.h"
 
 namespace breakpad {
 
-CrashDumpManager::CrashDumpManager(const base::FilePath& crash_dump_dir,
-                                   int descriptor_id)
-    : crash_dump_dir_(crash_dump_dir), descriptor_id_(descriptor_id) {}
-
-CrashDumpManager::~CrashDumpManager() {
+namespace {
+base::LazyInstance<CrashDumpManager>::Leaky g_instance =
+    LAZY_INSTANCE_INITIALIZER;
 }
 
-void CrashDumpManager::OnChildStart(int child_process_id,
-                                    content::FileDescriptorInfo* mappings) {
-  DCHECK_CURRENTLY_ON(BrowserThread::PROCESS_LAUNCHER);
+// static
+CrashDumpManager* CrashDumpManager::GetInstance() {
+  return g_instance.Pointer();
+}
 
-  if (!breakpad::IsCrashReporterEnabled())
-    return;
+CrashDumpManager::CrashDumpManager() {}
 
+CrashDumpManager::~CrashDumpManager() {}
+
+base::ScopedFD CrashDumpManager::CreateMinidumpFileForChild(
+    int child_process_id) {
+  base::ThreadRestrictions::AssertIOAllowed();
   base::FilePath minidump_path;
   if (!base::CreateTemporaryFile(&minidump_path)) {
     LOG(ERROR) << "Failed to create temporary file, crash won't be reported.";
-    return;
+    return base::ScopedFD();
   }
 
   // We need read permission as the minidump is generated in several phases
@@ -55,28 +53,26 @@ void CrashDumpManager::OnChildStart(int child_process_id,
   base::File minidump_file(minidump_path, flags);
   if (!minidump_file.IsValid()) {
     LOG(ERROR) << "Failed to open temporary file, crash won't be reported.";
-    return;
+    return base::ScopedFD();
   }
 
-  {
-    base::AutoLock auto_lock(child_process_id_to_minidump_path_lock_);
-    DCHECK(!base::ContainsKey(child_process_id_to_minidump_path_,
-                              child_process_id));
-    child_process_id_to_minidump_path_[child_process_id] = minidump_path;
-  }
-  mappings->Transfer(descriptor_id_,
-                     base::ScopedFD(minidump_file.TakePlatformFile()));
+  SetMinidumpPath(child_process_id, minidump_path);
+  return base::ScopedFD(minidump_file.TakePlatformFile());
 }
 
-// static
-void CrashDumpManager::ProcessMinidump(
-    const base::FilePath& minidump_path,
-    const base::FilePath& crash_dump_dir,
+void CrashDumpManager::ProcessMinidumpFileFromChild(
+    base::FilePath crash_dump_dir,
     base::ProcessHandle pid,
     content::ProcessType process_type,
     base::TerminationStatus termination_status,
     base::android::ApplicationState app_state) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  base::ThreadRestrictions::AssertIOAllowed();
+  base::FilePath minidump_path;
+  // If the minidump for a given child process has already been
+  // processed, then there is no more work to do.
+  if (!GetMinidumpPath(pid, &minidump_path))
+    return;
+
   int64_t file_size = 0;
   int r = base::GetFileSize(minidump_path, &file_size);
   DCHECK(r) << "Failed to retrieve size for minidump "
@@ -153,33 +149,36 @@ void CrashDumpManager::ProcessMinidump(
     base::DeleteFile(minidump_path, false);
     return;
   }
-  VLOG(1) << "Crash minidump successfully generated: "
-          << crash_dump_dir.Append(filename).value();
+  VLOG(1) << "Crash minidump successfully generated: " << dest_path.value();
+
+  // Hop over to Java to attempt to attach the logcat to the crash. This may
+  // fail, which is ok -- if it does, the crash will still be uploaded on the
+  // next browser start.
+  JNIEnv* env = base::android::AttachCurrentThread();
+  base::android::ScopedJavaLocalRef<jstring> j_dest_path =
+      base::android::ConvertUTF8ToJavaString(env, dest_path.value());
+  Java_CrashDumpManager_tryToUploadMinidump(env, j_dest_path);
 }
 
-void CrashDumpManager::OnChildExit(int child_process_id,
-                                   base::ProcessHandle pid,
-                                   content::ProcessType process_type,
-                                   base::TerminationStatus termination_status,
-                                   base::android::ApplicationState app_state) {
-  base::FilePath minidump_path;
-  {
-    base::AutoLock auto_lock(child_process_id_to_minidump_path_lock_);
-    ChildProcessIDToMinidumpPath::iterator iter =
-        child_process_id_to_minidump_path_.find(child_process_id);
-    if (iter == child_process_id_to_minidump_path_.end()) {
-      // We might get a NOTIFICATION_RENDERER_PROCESS_TERMINATED and a
-      // NOTIFICATION_RENDERER_PROCESS_CLOSED.
-      return;
-    }
-    minidump_path = iter->second;
-    child_process_id_to_minidump_path_.erase(iter);
+void CrashDumpManager::SetMinidumpPath(int child_process_id,
+                                       const base::FilePath& minidump_path) {
+  base::AutoLock auto_lock(child_process_id_to_minidump_path_lock_);
+  DCHECK(
+      !base::ContainsKey(child_process_id_to_minidump_path_, child_process_id));
+  child_process_id_to_minidump_path_[child_process_id] = minidump_path;
+}
+
+bool CrashDumpManager::GetMinidumpPath(int child_process_id,
+                                       base::FilePath* minidump_path) {
+  base::AutoLock auto_lock(child_process_id_to_minidump_path_lock_);
+  ChildProcessIDToMinidumpPath::iterator iter =
+      child_process_id_to_minidump_path_.find(child_process_id);
+  if (iter == child_process_id_to_minidump_path_.end()) {
+    return false;
   }
-  BrowserThread::PostTask(
-      BrowserThread::FILE, FROM_HERE,
-      base::Bind(&CrashDumpManager::ProcessMinidump, minidump_path,
-                 crash_dump_dir_, pid, process_type, termination_status,
-                 app_state));
+  *minidump_path = iter->second;
+  child_process_id_to_minidump_path_.erase(iter);
+  return true;
 }
 
 }  // namespace breakpad

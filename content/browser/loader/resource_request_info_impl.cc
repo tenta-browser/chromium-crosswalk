@@ -20,15 +20,15 @@ namespace content {
 
 namespace {
 
-WebContents* GetWebContentsFromFTNID(int frame_tree_node_id) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  FrameTreeNode* frame_tree_node =
-      FrameTreeNode::GloballyFindByID(frame_tree_node_id);
-  if (!frame_tree_node)
-    return nullptr;
-
-  return WebContentsImpl::FromFrameTreeNode(frame_tree_node);
+int FrameTreeNodeIdFromHostIds(int render_process_host_id,
+                               int render_frame_host_id) {
+  RenderFrameHost* render_frame_host =
+      RenderFrameHost::FromID(render_process_host_id, render_frame_host_id);
+  return render_frame_host ? render_frame_host->GetFrameTreeNodeId() : -1;
 }
+
+// static
+const void* const kResourceRequestInfoImplKey = &kResourceRequestInfoImplKey;
 
 }  // namespace
 
@@ -119,7 +119,8 @@ bool ResourceRequestInfo::OriginatedFromServiceWorker(
 // static
 ResourceRequestInfoImpl* ResourceRequestInfoImpl::ForRequest(
     net::URLRequest* request) {
-  return static_cast<ResourceRequestInfoImpl*>(request->GetUserData(NULL));
+  return static_cast<ResourceRequestInfoImpl*>(
+      request->GetUserData(kResourceRequestInfoImplKey));
 }
 
 // static
@@ -153,7 +154,7 @@ ResourceRequestInfoImpl::ResourceRequestInfoImpl(
     bool report_raw_headers,
     bool is_async,
     PreviewsState previews_state,
-    const scoped_refptr<ResourceRequestBodyImpl> body,
+    const scoped_refptr<ResourceRequestBody> body,
     bool initiated_in_secure_context)
     : detachable_handler_(NULL),
       requester_info_(std::move(requester_info)),
@@ -172,7 +173,6 @@ ResourceRequestInfoImpl::ResourceRequestInfoImpl(
       enable_load_timing_(enable_load_timing),
       enable_upload_progress_(enable_upload_progress),
       do_not_prompt_for_login_(do_not_prompt_for_login),
-      was_ignored_by_handler_(false),
       counted_as_in_flight_request_(false),
       resource_type_(resource_type),
       transition_type_(transition_type),
@@ -196,7 +196,7 @@ ResourceRequestInfoImpl::GetWebContentsGetterForRequest() const {
   // ID should be used to access the WebContents.
   if (frame_tree_node_id_ != -1) {
     DCHECK(IsBrowserSideNavigationEnabled());
-    return base::Bind(&GetWebContentsFromFTNID, frame_tree_node_id_);
+    return base::Bind(WebContents::FromFrameTreeNodeId, frame_tree_node_id_);
   }
 
   // In other cases, use the RenderProcessHost ID + RenderFrameHost ID to get
@@ -210,6 +210,24 @@ ResourceRequestInfoImpl::GetWebContentsGetterForRequest() const {
 
   return base::Bind(&WebContentsImpl::FromRenderFrameHostID,
                     render_process_host_id, render_frame_host_id);
+}
+
+ResourceRequestInfo::FrameTreeNodeIdGetter
+ResourceRequestInfoImpl::GetFrameTreeNodeIdGetterForRequest() const {
+  if (frame_tree_node_id_ != -1) {
+    DCHECK(IsBrowserSideNavigationEnabled());
+    return base::Bind([](int id) { return id; }, frame_tree_node_id_);
+  }
+
+  int render_process_host_id = -1;
+  int render_frame_host_id = -1;
+  if (!GetAssociatedRenderFrame(&render_process_host_id,
+                                &render_frame_host_id)) {
+    NOTREACHED();
+  }
+
+  return base::Bind(&FrameTreeNodeIdFromHostIds, render_process_host_id,
+                    render_frame_host_id);
 }
 
 ResourceContext* ResourceRequestInfoImpl::GetContext() const {
@@ -274,10 +292,6 @@ bool ResourceRequestInfoImpl::HasUserGesture() const {
   return has_user_gesture_;
 }
 
-bool ResourceRequestInfoImpl::WasIgnoredByHandler() const {
-  return was_ignored_by_handler_;
-}
-
 bool ResourceRequestInfoImpl::GetAssociatedRenderFrame(
     int* render_process_id,
     int* render_frame_id) const {
@@ -307,13 +321,13 @@ NavigationUIData* ResourceRequestInfoImpl::GetNavigationUIData() const {
 }
 
 void ResourceRequestInfoImpl::AssociateWithRequest(net::URLRequest* request) {
-  request->SetUserData(NULL, this);
+  request->SetUserData(kResourceRequestInfoImplKey, base::WrapUnique(this));
   int render_process_id;
   int render_frame_id;
   if (GetAssociatedRenderFrame(&render_process_id, &render_frame_id)) {
-    request->SetUserData(
-        URLRequestUserData::kUserDataKey,
-        new URLRequestUserData(render_process_id, render_frame_id));
+    request->SetUserData(URLRequestUserData::kUserDataKey,
+                         base::MakeUnique<URLRequestUserData>(render_process_id,
+                                                              render_frame_id));
   }
 }
 
@@ -331,7 +345,7 @@ void ResourceRequestInfoImpl::UpdateForTransfer(
     int origin_pid,
     int request_id,
     ResourceRequesterInfo* requester_info,
-    mojom::URLLoaderAssociatedRequest url_loader_request,
+    mojom::URLLoaderRequest url_loader_request,
     mojom::URLLoaderClientPtr url_loader_client) {
   route_id_ = route_id;
   render_frame_id_ = render_frame_id;
@@ -348,6 +362,10 @@ void ResourceRequestInfoImpl::UpdateForTransfer(
 
 void ResourceRequestInfoImpl::ResetBody() {
   body_ = nullptr;
+}
+
+void ResourceRequestInfoImpl::SetBlobHandles(BlobHandles blob_handles) {
+  blob_handles_ = std::move(blob_handles);
 }
 
 }  // namespace content

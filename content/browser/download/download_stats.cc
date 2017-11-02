@@ -343,6 +343,8 @@ const base::FilePath::CharType* kDangerousFileTypes[] = {
 // will be kept in overflow bucket.
 const int64_t kMaxFileSizeKb = 4 * 1024 * 1024; /* 4GB. */
 
+const int64_t kHighBandwidthBytesPerSecond = 30 * 1024 * 1024;
+
 // Maps extensions to their matching UMA histogram int value.
 int GetDangerousFileType(const base::FilePath& file_path) {
   for (size_t i = 0; i < arraysize(kDangerousFileTypes); ++i) {
@@ -638,8 +640,8 @@ void RecordDownloadImageType(const std::string& mime_type_string) {
                             DOWNLOAD_IMAGE_MAX);
 }
 
-DownloadContent DownloadContentFromMimeType(
-    const std::string& mime_type_string) {
+DownloadContent DownloadContentFromMimeType(const std::string& mime_type_string,
+                                            bool record_image_type) {
   DownloadContent download_content = DOWNLOAD_CONTENT_UNRECOGNIZED;
 
   // Look up exact matches.
@@ -659,7 +661,8 @@ DownloadContent DownloadContentFromMimeType(
     } else if (base::StartsWith(mime_type_string, "image/",
                                 base::CompareCase::SENSITIVE)) {
       download_content = DOWNLOAD_CONTENT_IMAGE;
-      RecordDownloadImageType(mime_type_string);
+      if (record_image_type)
+        RecordDownloadImageType(mime_type_string);
     } else if (base::StartsWith(mime_type_string, "audio/",
                                 base::CompareCase::SENSITIVE)) {
       download_content = DOWNLOAD_CONTENT_AUDIO;
@@ -676,15 +679,16 @@ DownloadContent DownloadContentFromMimeType(
 
 void RecordDownloadMimeType(const std::string& mime_type_string) {
   UMA_HISTOGRAM_ENUMERATION("Download.Start.ContentType",
-                            DownloadContentFromMimeType(mime_type_string),
+                            DownloadContentFromMimeType(mime_type_string, true),
                             DOWNLOAD_CONTENT_MAX);
 }
 
 void RecordDownloadMimeTypeForNormalProfile(
     const std::string& mime_type_string) {
-  UMA_HISTOGRAM_ENUMERATION("Download.Start.ContentType.NormalProfile",
-                            DownloadContentFromMimeType(mime_type_string),
-                            DOWNLOAD_CONTENT_MAX);
+  UMA_HISTOGRAM_ENUMERATION(
+      "Download.Start.ContentType.NormalProfile",
+      DownloadContentFromMimeType(mime_type_string, false),
+      DOWNLOAD_CONTENT_MAX);
 }
 
 void RecordDownloadContentDisposition(
@@ -794,6 +798,11 @@ void RecordParallelDownloadAddStreamSuccess(bool success) {
   UMA_HISTOGRAM_BOOLEAN("Download.ParallelDownloadAddStreamSuccess", success);
 }
 
+void RecordParallelizableContentLength(int64_t content_length) {
+  UMA_HISTOGRAM_CUSTOM_COUNTS("Download.ContentLength.Parallelizable",
+                              content_length / 1024, 1, kMaxFileSizeKb, 50);
+}
+
 void RecordParallelizableDownloadStats(
     size_t bytes_downloaded_with_parallel_streams,
     base::TimeDelta time_with_parallel_streams,
@@ -886,6 +895,14 @@ void RecordParallelizableDownloadAverageStats(
   UMA_HISTOGRAM_LONG_TIMES("Download.Parallelizable.DownloadTime", time_span);
   UMA_HISTOGRAM_CUSTOM_COUNTS("Download.Parallelizable.FileSize", file_size_kb,
                               1, kMaxFileSizeKb, 50);
+  if (average_bandwidth > kHighBandwidthBytesPerSecond) {
+    UMA_HISTOGRAM_LONG_TIMES(
+        "Download.Parallelizable.DownloadTime.HighDownloadBandwidth",
+        time_span);
+    UMA_HISTOGRAM_CUSTOM_COUNTS(
+        "Download.Parallelizable.FileSize.HighDownloadBandwidth", file_size_kb,
+        1, kMaxFileSizeKb, 50);
+  }
 }
 
 void RecordParallelDownloadCreationEvent(ParallelDownloadCreationEvent event) {
@@ -912,7 +929,7 @@ void RecordSavePackageEvent(SavePackageEvent event) {
 }
 
 void RecordOriginStateOnResumption(bool is_partial,
-                                   int state) {
+                                   OriginStateOnResumption state) {
   if (is_partial)
     UMA_HISTOGRAM_ENUMERATION("Download.OriginStateOnPartialResumption", state,
                               ORIGIN_STATE_ON_RESUMPTION_MAX);

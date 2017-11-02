@@ -15,10 +15,13 @@ class KeySilkCasesPage(page_module.Page):
       run_no_page_interactions: whether the page will run any interactions after
         navigate steps.
     """
+    name = url
+    if not name.startswith('http'):
+      name = url.split('/')[-1]
     super(KeySilkCasesPage, self).__init__(
         url=url, page_set=page_set, credentials_path = 'data/credentials.json',
-        shared_page_state_class=shared_page_state.SharedMobilePageState)
-    self.archive_data_file = 'data/key_silk_cases.json'
+        shared_page_state_class=shared_page_state.SharedMobilePageState,
+        name=name)
     self._run_no_page_interactions = run_no_page_interactions
 
   def RunNavigateSteps(self, action_runner):
@@ -744,12 +747,12 @@ class KeySilkCasesPageSet(story.StorySet):
     self.AddStory(Page17(self, run_no_page_interactions))
     self.AddStory(Page18(self, run_no_page_interactions))
     # Missing frames during tap interaction; crbug.com/446332
-    # self.AddStory(Page19(self, run_no_page_interactions))
+    self.AddStory(Page19(self, run_no_page_interactions))
     self.AddStory(Page20(self, run_no_page_interactions))
     self.AddStory(GwsGoogleExpansion(self, run_no_page_interactions))
     self.AddStory(GwsBoogieExpansion(self, run_no_page_interactions))
     # Times out on Windows; crbug.com/338838
-    # self.AddStory(Page22(self, run_no_page_interactions))
+    self.AddStory(Page22(self, run_no_page_interactions))
     self.AddStory(Page23(self, run_no_page_interactions))
     self.AddStory(Page24(self, run_no_page_interactions))
     self.AddStory(Page25(self, run_no_page_interactions))
@@ -758,7 +761,7 @@ class KeySilkCasesPageSet(story.StorySet):
     self.AddStory(UpdateHistoryState(self, run_no_page_interactions))
     self.AddStory(SilkFinance(self, run_no_page_interactions))
     # Flaky interaction steps on Android; crbug.com/507865
-    # self.AddStory(PolymerTopeka(self, run_no_page_interactions))
+    self.AddStory(PolymerTopeka(self, run_no_page_interactions))
     self.AddStory(Masonry(self, run_no_page_interactions))
 
     for page in self:

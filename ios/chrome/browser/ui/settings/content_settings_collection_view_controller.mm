@@ -4,6 +4,7 @@
 
 #import "ios/chrome/browser/ui/settings/content_settings_collection_view_controller.h"
 
+#include "base/feature_list.h"
 #include "base/logging.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/content_settings/core/common/content_settings.h"
@@ -11,16 +12,20 @@
 #include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/pref_service.h"
 #include "components/strings/grit/components_strings.h"
-#include "components/translate/core/common/translate_pref_names.h"
+#include "components/translate/core/browser/translate_pref_names.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/content_settings/host_content_settings_map_factory.h"
 #import "ios/chrome/browser/prefs/pref_observer_bridge.h"
 #import "ios/chrome/browser/ui/collection_view/cells/collection_view_detail_item.h"
 #import "ios/chrome/browser/ui/collection_view/collection_view_model.h"
 #import "ios/chrome/browser/ui/settings/block_popups_collection_view_controller.h"
+#import "ios/chrome/browser/ui/settings/compose_email_handler_collection_view_controller.h"
 #import "ios/chrome/browser/ui/settings/settings_navigation_controller.h"
 #import "ios/chrome/browser/ui/settings/translate_collection_view_controller.h"
 #import "ios/chrome/browser/ui/settings/utils/content_setting_backed_boolean.h"
+#include "ios/chrome/browser/web/features.h"
+#import "ios/chrome/browser/web/legacy_mailto_url_rewriter.h"
+#import "ios/chrome/browser/web/nullable_mailto_url_rewriter.h"
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/third_party/material_components_ios/src/components/CollectionCells/src/MaterialCollectionCells.h"
 #import "ios/third_party/material_components_ios/src/components/Palettes/src/MaterialPalettes.h"
@@ -40,6 +45,7 @@ typedef NS_ENUM(NSInteger, SectionIdentifier) {
 typedef NS_ENUM(NSInteger, ItemType) {
   ItemTypeSettingsBlockPopups = kItemTypeEnumZero,
   ItemTypeSettingsTranslate,
+  ItemTypeSettingsComposeEmail,
 };
 
 }  // namespace
@@ -54,9 +60,14 @@ typedef NS_ENUM(NSInteger, ItemType) {
   // The observable boolean that binds to the "Disable Popups" setting state.
   ContentSettingBackedBoolean* _disablePopupsSetting;
 
+  // This object contains the list of available Mail client apps that can
+  // handle mailto: URLs.
+  MailtoURLRewriter* _mailtoURLRewriter;
+
   // Updatable Items
   CollectionViewDetailItem* _blockPopupsDetailItem;
   CollectionViewDetailItem* _translateDetailItem;
+  CollectionViewDetailItem* _composeEmailDetailItem;
 }
 
 // Returns the value for the default setting with ID |settingID|.
@@ -65,6 +76,7 @@ typedef NS_ENUM(NSInteger, ItemType) {
 // Helpers to create collection view items.
 - (id)blockPopupsItem;
 - (id)translateItem;
+- (id)composeEmailItem;
 
 @end
 
@@ -74,7 +86,9 @@ typedef NS_ENUM(NSInteger, ItemType) {
 
 - (instancetype)initWithBrowserState:(ios::ChromeBrowserState*)browserState {
   DCHECK(browserState);
-  self = [super initWithStyle:CollectionViewControllerStyleAppBar];
+  UICollectionViewLayout* layout = [[MDCCollectionViewFlowLayout alloc] init];
+  self =
+      [super initWithLayout:layout style:CollectionViewControllerStyleAppBar];
   if (self) {
     browserState_ = browserState;
     self.title = l10n_util::GetNSString(IDS_IOS_CONTENT_SETTINGS_TITLE);
@@ -93,6 +107,12 @@ typedef NS_ENUM(NSInteger, ItemType) {
                              settingID:CONTENT_SETTINGS_TYPE_POPUPS
                               inverted:YES];
     [_disablePopupsSetting setObserver:self];
+
+    _mailtoURLRewriter =
+        base::FeatureList::IsEnabled(kMailtoPromptForUserChoice)
+            ? [NullableMailtoURLRewriter mailtoURLRewriterWithStandardHandlers]
+            : [LegacyMailtoURLRewriter mailtoURLRewriterWithStandardHandlers];
+    [_mailtoURLRewriter setObserver:self];
 
     [self loadModel];
   }
@@ -117,6 +137,11 @@ typedef NS_ENUM(NSInteger, ItemType) {
       toSectionWithIdentifier:SectionIdentifierSettings];
   [model addItem:[self translateItem]
       toSectionWithIdentifier:SectionIdentifierSettings];
+  // Show Compose Email setting if mailto: URL rewriting feature is enabled.
+  if (base::FeatureList::IsEnabled(kMailtoUrlRewriting)) {
+    [model addItem:[self composeEmailItem]
+        toSectionWithIdentifier:SectionIdentifierSettings];
+  }
 }
 
 - (CollectionViewItem*)blockPopupsItem {
@@ -147,6 +172,18 @@ typedef NS_ENUM(NSInteger, ItemType) {
   return _translateDetailItem;
 }
 
+- (CollectionViewItem*)composeEmailItem {
+  _composeEmailDetailItem = [[CollectionViewDetailItem alloc]
+      initWithType:ItemTypeSettingsComposeEmail];
+  _composeEmailDetailItem.text =
+      l10n_util::GetNSString(IDS_IOS_COMPOSE_EMAIL_SETTING);
+  _composeEmailDetailItem.detailText = [_mailtoURLRewriter defaultHandlerName];
+  _composeEmailDetailItem.accessoryType =
+      MDCCollectionViewCellAccessoryDisclosureIndicator;
+  _composeEmailDetailItem.accessibilityTraits |= UIAccessibilityTraitButton;
+  return _composeEmailDetailItem;
+}
+
 - (ContentSetting)getContentSetting:(ContentSettingsType)settingID {
   return ios::HostContentSettingsMapFactory::GetForBrowserState(browserState_)
       ->GetDefaultContentSetting(settingID, NULL);
@@ -169,8 +206,17 @@ typedef NS_ENUM(NSInteger, ItemType) {
       break;
     }
     case ItemTypeSettingsTranslate: {
-      UIViewController* controller = [[TranslateCollectionViewController alloc]
-          initWithPrefs:browserState_->GetPrefs()];
+      TranslateCollectionViewController* controller =
+          [[TranslateCollectionViewController alloc]
+              initWithPrefs:browserState_->GetPrefs()];
+      controller.dispatcher = self.dispatcher;
+      [self.navigationController pushViewController:controller animated:YES];
+      break;
+    }
+    case ItemTypeSettingsComposeEmail: {
+      UIViewController* controller =
+          [[ComposeEmailHandlerCollectionViewController alloc]
+              initWithRewriter:_mailtoURLRewriter];
       [self.navigationController pushViewController:controller animated:YES];
       break;
     }
@@ -185,8 +231,7 @@ typedef NS_ENUM(NSInteger, ItemType) {
     NSString* subtitle = enabled ? l10n_util::GetNSString(IDS_IOS_SETTING_ON)
                                  : l10n_util::GetNSString(IDS_IOS_SETTING_OFF);
     _translateDetailItem.detailText = subtitle;
-    [self reconfigureCellsForItems:@[ _translateDetailItem ]
-           inSectionWithIdentifier:SectionIdentifierSettings];
+    [self reconfigureCellsForItems:@[ _translateDetailItem ]];
   }
 }
 
@@ -202,8 +247,16 @@ typedef NS_ENUM(NSInteger, ItemType) {
   _blockPopupsDetailItem.detailText = subtitle;
 
   // Update the cell.
-  [self reconfigureCellsForItems:@[ _blockPopupsDetailItem ]
-         inSectionWithIdentifier:SectionIdentifierSettings];
+  [self reconfigureCellsForItems:@[ _blockPopupsDetailItem ]];
+}
+
+#pragma mark - MailtoURLRewriterObserver
+
+- (void)rewriterDidChange:(MailtoURLRewriter*)rewriter {
+  if (rewriter != _mailtoURLRewriter)
+    return;
+  _composeEmailDetailItem.detailText = [rewriter defaultHandlerName];
+  [self reconfigureCellsForItems:@[ _composeEmailDetailItem ]];
 }
 
 @end

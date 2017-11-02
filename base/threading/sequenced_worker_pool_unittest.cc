@@ -81,7 +81,7 @@ class DestructionDeadlockChecker
  protected:
   virtual ~DestructionDeadlockChecker() {
     // This method should not deadlock.
-    pool_->RunsTasksOnCurrentThread();
+    pool_->RunsTasksInCurrentSequence();
   }
 
  private:
@@ -245,11 +245,11 @@ class SequencedWorkerPoolTest
   void SetUp() override {
     if (RedirectedToTaskScheduler()) {
       const SchedulerWorkerPoolParams worker_pool_params(
-          SchedulerWorkerPoolParams::StandbyThreadPolicy::LAZY,
           static_cast<int>(kNumWorkerThreads), TimeDelta::Max());
-      TaskScheduler::CreateAndSetDefaultTaskScheduler(
-          "SequencedWorkerPoolTest", {worker_pool_params, worker_pool_params,
-                                      worker_pool_params, worker_pool_params});
+      TaskScheduler::Create("SequencedWorkerPoolTest");
+      TaskScheduler::GetInstance()->Start(
+          {worker_pool_params, worker_pool_params, worker_pool_params,
+           worker_pool_params});
 
       // Unit tests run in an environment where SequencedWorkerPool is enabled
       // without redirection to TaskScheduler. For the current unit test,
@@ -293,6 +293,7 @@ class SequencedWorkerPoolTest
   // Destroys and unregisters the registered TaskScheduler, if any.
   void DeleteTaskScheduler() {
     if (TaskScheduler::GetInstance()) {
+      TaskScheduler::GetInstance()->FlushForTesting();
       TaskScheduler::GetInstance()->JoinForTesting();
       TaskScheduler::SetInstance(nullptr);
     }
@@ -883,16 +884,16 @@ void VerifyRunsTasksOnCurrentThread(
     scoped_refptr<TaskRunner> test_negative_task_runner,
     SequencedWorkerPool* pool,
     SequencedWorkerPool* unused_pool) {
-  EXPECT_TRUE(test_positive_task_runner->RunsTasksOnCurrentThread());
-  EXPECT_FALSE(test_negative_task_runner->RunsTasksOnCurrentThread());
-  EXPECT_TRUE(pool->RunsTasksOnCurrentThread());
+  EXPECT_TRUE(test_positive_task_runner->RunsTasksInCurrentSequence());
+  EXPECT_FALSE(test_negative_task_runner->RunsTasksInCurrentSequence());
+  EXPECT_TRUE(pool->RunsTasksInCurrentSequence());
 
   // Tasks posted to different SequencedWorkerPools may run on the same
   // TaskScheduler threads.
   if (redirected_to_task_scheduler)
-    EXPECT_TRUE(unused_pool->RunsTasksOnCurrentThread());
+    EXPECT_TRUE(unused_pool->RunsTasksInCurrentSequence());
   else
-    EXPECT_FALSE(unused_pool->RunsTasksOnCurrentThread());
+    EXPECT_FALSE(unused_pool->RunsTasksInCurrentSequence());
 }
 
 // Verify correctness of the RunsTasksOnCurrentThread() method on
@@ -908,11 +909,11 @@ TEST_P(SequencedWorkerPoolTest, RunsTasksOnCurrentThread) {
 
   SequencedWorkerPoolOwner unused_pool_owner(2, "unused_pool");
 
-  EXPECT_FALSE(pool()->RunsTasksOnCurrentThread());
-  EXPECT_FALSE(sequenced_task_runner_1->RunsTasksOnCurrentThread());
-  EXPECT_FALSE(sequenced_task_runner_2->RunsTasksOnCurrentThread());
-  EXPECT_FALSE(unsequenced_task_runner->RunsTasksOnCurrentThread());
-  EXPECT_FALSE(unused_pool_owner.pool()->RunsTasksOnCurrentThread());
+  EXPECT_FALSE(pool()->RunsTasksInCurrentSequence());
+  EXPECT_FALSE(sequenced_task_runner_1->RunsTasksInCurrentSequence());
+  EXPECT_FALSE(sequenced_task_runner_2->RunsTasksInCurrentSequence());
+  EXPECT_FALSE(unsequenced_task_runner->RunsTasksInCurrentSequence());
+  EXPECT_FALSE(unused_pool_owner.pool()->RunsTasksInCurrentSequence());
 
   // From a task posted to |sequenced_task_runner_1|:
   // - sequenced_task_runner_1->RunsTasksOnCurrentThread() returns true.
@@ -990,9 +991,9 @@ TEST_P(SequencedWorkerPoolTest, FlushForTesting) {
 
   // Queue up a bunch of work, including  a long delayed task and
   // a task that produces additional tasks as an artifact.
-  pool()->PostDelayedWorkerTask(
-      FROM_HERE, base::BindOnce(&TestTracker::FastTask, tracker(), 0),
-      TimeDelta::FromMinutes(5));
+  pool()->PostDelayedTask(FROM_HERE,
+                          base::BindOnce(&TestTracker::FastTask, tracker(), 0),
+                          TimeDelta::FromMinutes(5));
   pool()->PostWorkerTask(FROM_HERE,
                          base::BindOnce(&TestTracker::SlowTask, tracker(), 0));
   const size_t kNumFastTasks = 20;

@@ -16,6 +16,7 @@
 #include "ios/chrome/browser/signin/authentication_service.h"
 #include "ios/chrome/browser/signin/authentication_service_factory.h"
 #include "ios/chrome/browser/sync/ios_chrome_profile_sync_service_factory.h"
+#import "ios/chrome/browser/ui/authentication/signin_promo_view.h"
 #import "ios/chrome/browser/ui/settings/settings_collection_view_controller.h"
 #include "ios/chrome/browser/ui/tools_menu/tools_menu_constants.h"
 #import "ios/chrome/browser/ui/tools_menu/tools_popup_controller.h"
@@ -32,11 +33,17 @@
 #import "ios/public/provider/chrome/browser/signin/fake_chrome_identity.h"
 #import "ios/public/provider/chrome/browser/signin/fake_chrome_identity_service.h"
 #import "ios/testing/wait_util.h"
-#import "ios/web/public/test/http_server.h"
-#import "ios/web/public/test/http_server_util.h"
+#import "ios/web/public/test/http_server/http_server.h"
+#include "ios/web/public/test/http_server/http_server_util.h"
 #import "net/base/mac/url_conversions.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
+using chrome_test_util::NavigationBarDoneButton;
 
 namespace {
 
@@ -50,44 +57,16 @@ ChromeIdentity* GetFakeIdentity1() {
                                           name:@"Fake Foo"];
 }
 
-// Opens the signin screen from the settings page. Must be called from the NTP.
-// User must not be signed in.
-// TODO(crbug.com/638674): Evaluate if this can move to shared code.
-void OpenSignInFromSettings() {
-  const CGFloat scroll_displacement = 50.0;
-
-  [ChromeEarlGreyUI openToolsMenu];
-  [[[EarlGrey
-      selectElementWithMatcher:grey_accessibilityID(kToolsMenuSettingsId)]
-         usingSearchAction:grey_scrollInDirection(kGREYDirectionDown,
-                                                  scroll_displacement)
-      onElementWithMatcher:grey_accessibilityID(kToolsMenuTableViewId)]
-      performAction:grey_tap()];
-
-  id<GREYMatcher> matcher =
-      grey_allOf(grey_accessibilityID(kSettingsSignInCellId),
-                 grey_sufficientlyVisible(), nil);
-  [[EarlGrey selectElementWithMatcher:matcher] performAction:grey_tap()];
-}
-
 // Signs in the identity for the specific |userEmail|. This is performed via the
 // UI and must be called from the NTP.
 void SignInIdentity(NSString* userEmail) {
-  OpenSignInFromSettings();
-  [[EarlGrey
-      selectElementWithMatcher:chrome_test_util::ButtonWithAccessibilityLabel(
-                                   userEmail)] performAction:grey_tap()];
-  [[EarlGrey selectElementWithMatcher:
-                 chrome_test_util::ButtonWithAccessibilityLabelId(
-                     IDS_IOS_ACCOUNT_CONSISTENCY_SETUP_SIGNIN_BUTTON)]
+  [ChromeEarlGreyUI openSettingsMenu];
+  [ChromeEarlGreyUI
+      tapSettingsMenuButton:chrome_test_util::SecondarySignInButton()];
+  [ChromeEarlGreyUI signInToIdentityByEmail:userEmail];
+  [ChromeEarlGreyUI confirmSigninConfirmationDialog];
+  [[EarlGrey selectElementWithMatcher:NavigationBarDoneButton()]
       performAction:grey_tap()];
-  [[EarlGrey selectElementWithMatcher:
-                 chrome_test_util::ButtonWithAccessibilityLabelId(
-                     IDS_IOS_ACCOUNT_CONSISTENCY_CONFIRMATION_OK_BUTTON)]
-      performAction:grey_tap()];
-  [[EarlGrey
-      selectElementWithMatcher:chrome_test_util::ButtonWithAccessibilityLabelId(
-                                   IDS_DONE)] performAction:grey_tap()];
 }
 
 // Waits for sync to be initialized or not, based on |isSyncInitialized| and
@@ -464,9 +443,6 @@ void AssertNumberOfEntitiesWithName(int entity_count,
                   }];
   BOOL success = [condition waitWithTimeout:kSyncOperationTimeout];
   DCHECK(success || blockSafeError);
-  if (blockSafeError) {
-    [blockSafeError autorelease];
-  }
   GREYAssertTrue(success, [blockSafeError localizedDescription]);
 }
 
@@ -589,9 +565,6 @@ void AssertNumberOfEntitiesWithName(int entity_count,
                   }];
   BOOL success = [condition waitWithTimeout:kSyncOperationTimeout];
   DCHECK(success || blockSafeError);
-  if (blockSafeError) {
-    [blockSafeError autorelease];
-  }
   GREYAssert(success, [blockSafeError localizedDescription]);
 }
 

@@ -12,6 +12,8 @@
 #include "base/memory/ptr_util.h"
 #include "base/trace_event/trace_event.h"
 #include "base/trace_event/trace_event_argument.h"
+#include "components/exo/data_device.h"
+#include "components/exo/file_helper.h"
 #include "components/exo/notification_surface.h"
 #include "components/exo/notification_surface_manager.h"
 #include "components/exo/shared_memory.h"
@@ -53,10 +55,12 @@ const gfx::BufferFormat kOverlayFormatsForDrmAtomic[] = {
 ////////////////////////////////////////////////////////////////////////////////
 // Display, public:
 
-Display::Display() : Display(nullptr) {}
+Display::Display() : Display(nullptr, std::unique_ptr<FileHelper>()) {}
 
-Display::Display(NotificationSurfaceManager* notification_surface_manager)
-    : notification_surface_manager_(notification_surface_manager)
+Display::Display(NotificationSurfaceManager* notification_surface_manager,
+                 std::unique_ptr<FileHelper> file_helper)
+    : notification_surface_manager_(notification_surface_manager),
+      file_helper_(std::move(file_helper))
 #if defined(USE_OZONE)
       ,
       overlay_formats_(std::begin(kOverlayFormats), std::end(kOverlayFormats))
@@ -179,7 +183,8 @@ std::unique_ptr<ShellSurface> Display::CreatePopupShellSurface(
 
 std::unique_ptr<ShellSurface> Display::CreateRemoteShellSurface(
     Surface* surface,
-    int container) {
+    int container,
+    double default_device_scale_factor) {
   TRACE_EVENT2("exo", "Display::CreateRemoteShellSurface", "surface",
                surface->AsTracedValue(), "container", container);
 
@@ -191,9 +196,12 @@ std::unique_ptr<ShellSurface> Display::CreateRemoteShellSurface(
   // Remote shell surfaces in system modal container cannot be minimized.
   bool can_minimize = container != ash::kShellWindowId_SystemModalContainer;
 
-  return base::MakeUnique<ShellSurface>(
+  std::unique_ptr<ShellSurface> shell_surface(base::MakeUnique<ShellSurface>(
       surface, nullptr, ShellSurface::BoundsMode::CLIENT, gfx::Point(),
-      true /* activatable */, can_minimize, container);
+      true /* activatable */, can_minimize, container));
+  DCHECK_GE(default_device_scale_factor, 1.0);
+  shell_surface->SetScale(default_device_scale_factor);
+  return shell_surface;
 }
 
 std::unique_ptr<SubSurface> Display::CreateSubSurface(Surface* surface,
@@ -216,18 +224,23 @@ std::unique_ptr<SubSurface> Display::CreateSubSurface(Surface* surface,
 
 std::unique_ptr<NotificationSurface> Display::CreateNotificationSurface(
     Surface* surface,
-    const std::string& notification_id) {
+    const std::string& notification_key) {
   TRACE_EVENT2("exo", "Display::CreateNotificationSurface", "surface",
-               surface->AsTracedValue(), "notification_id", notification_id);
+               surface->AsTracedValue(), "notification_key", notification_key);
 
   if (!notification_surface_manager_ ||
-      notification_surface_manager_->GetSurface(notification_id)) {
-    DLOG(ERROR) << "Invalid notification id, id=" << notification_id;
+      notification_surface_manager_->GetSurface(notification_key)) {
+    DLOG(ERROR) << "Invalid notification key, key=" << notification_key;
     return nullptr;
   }
 
   return base::MakeUnique<NotificationSurface>(notification_surface_manager_,
-                                               surface, notification_id);
+                                               surface, notification_key);
+}
+
+std::unique_ptr<DataDevice> Display::CreateDataDevice(
+    DataDeviceDelegate* delegate) {
+  return base::MakeUnique<DataDevice>(delegate, file_helper_.get());
 }
 
 }  // namespace exo

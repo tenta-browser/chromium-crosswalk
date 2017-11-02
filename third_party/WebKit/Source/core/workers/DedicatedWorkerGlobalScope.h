@@ -42,7 +42,7 @@ namespace blink {
 class DedicatedWorkerThread;
 class InProcessWorkerObjectProxy;
 class ScriptState;
-class WorkerThreadStartupData;
+struct GlobalScopeCreationParams;
 
 class CORE_EXPORT DedicatedWorkerGlobalScope final : public WorkerGlobalScope {
   DEFINE_WRAPPERTYPEINFO();
@@ -50,7 +50,7 @@ class CORE_EXPORT DedicatedWorkerGlobalScope final : public WorkerGlobalScope {
  public:
   static DedicatedWorkerGlobalScope* Create(
       DedicatedWorkerThread*,
-      std::unique_ptr<WorkerThreadStartupData>,
+      std::unique_ptr<GlobalScopeCreationParams>,
       double time_origin);
   ~DedicatedWorkerGlobalScope() override;
 
@@ -60,13 +60,14 @@ class CORE_EXPORT DedicatedWorkerGlobalScope final : public WorkerGlobalScope {
   const AtomicString& InterfaceName() const override;
 
   void postMessage(ScriptState*,
-                   PassRefPtr<SerializedScriptValue>,
+                   RefPtr<SerializedScriptValue>,
                    const MessagePortArray&,
                    ExceptionState&);
 
   static bool CanTransferArrayBuffersAndImageBitmaps() { return true; }
 
   DEFINE_ATTRIBUTE_EVENT_LISTENER(message);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(messageerror);
 
   DECLARE_VIRTUAL_TRACE();
 

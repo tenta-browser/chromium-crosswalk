@@ -1,4 +1,805 @@
 {
+  "Android Cronet ARMv6 Builder": {
+    "gtest_tests": [
+      {
+        "merge": {
+          "args": [
+            "--bucket",
+            "chromium-result-details",
+            "--test-name",
+            "cronet_sample_test_apk"
+          ],
+          "script": "//build/android/pylib/results/presentation/test_results_presentation.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/luci/logdog/butler/${platform}",
+              "location": "bin",
+              "revision": "git_revision:ff387eadf445b24c935f1cf7d6ddd279f8a6b04c"
+            }
+          ],
+          "dimension_sets": [
+            {
+              "android_devices": "1",
+              "device_os": "KTU84P",
+              "device_type": "hammerhead"
+            }
+          ],
+          "hard_timeout": 300,
+          "output_links": [
+            {
+              "link": [
+                "https://luci-logdog.appspot.com/v/?s",
+                "=android%2Fswarming%2Flogcats%2F",
+                "${TASK_ID}%2F%2B%2Funified_logcats"
+              ],
+              "name": "shard #${SHARD_INDEX} logcats"
+            }
+          ]
+        },
+        "test": "cronet_sample_test_apk"
+      },
+      {
+        "merge": {
+          "args": [
+            "--bucket",
+            "chromium-result-details",
+            "--test-name",
+            "cronet_smoketests_missing_native_library_instrumentation_apk"
+          ],
+          "script": "//build/android/pylib/results/presentation/test_results_presentation.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/luci/logdog/butler/${platform}",
+              "location": "bin",
+              "revision": "git_revision:ff387eadf445b24c935f1cf7d6ddd279f8a6b04c"
+            }
+          ],
+          "dimension_sets": [
+            {
+              "android_devices": "1",
+              "device_os": "KTU84P",
+              "device_type": "hammerhead"
+            }
+          ],
+          "hard_timeout": 300,
+          "output_links": [
+            {
+              "link": [
+                "https://luci-logdog.appspot.com/v/?s",
+                "=android%2Fswarming%2Flogcats%2F",
+                "${TASK_ID}%2F%2B%2Funified_logcats"
+              ],
+              "name": "shard #${SHARD_INDEX} logcats"
+            }
+          ]
+        },
+        "test": "cronet_smoketests_missing_native_library_instrumentation_apk"
+      },
+      {
+        "merge": {
+          "args": [
+            "--bucket",
+            "chromium-result-details",
+            "--test-name",
+            "cronet_smoketests_platform_only_instrumentation_apk"
+          ],
+          "script": "//build/android/pylib/results/presentation/test_results_presentation.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/luci/logdog/butler/${platform}",
+              "location": "bin",
+              "revision": "git_revision:ff387eadf445b24c935f1cf7d6ddd279f8a6b04c"
+            }
+          ],
+          "dimension_sets": [
+            {
+              "android_devices": "1",
+              "device_os": "KTU84P",
+              "device_type": "hammerhead"
+            }
+          ],
+          "hard_timeout": 300,
+          "output_links": [
+            {
+              "link": [
+                "https://luci-logdog.appspot.com/v/?s",
+                "=android%2Fswarming%2Flogcats%2F",
+                "${TASK_ID}%2F%2B%2Funified_logcats"
+              ],
+              "name": "shard #${SHARD_INDEX} logcats"
+            }
+          ]
+        },
+        "test": "cronet_smoketests_platform_only_instrumentation_apk"
+      },
+      {
+        "merge": {
+          "args": [
+            "--bucket",
+            "chromium-result-details",
+            "--test-name",
+            "cronet_test_instrumentation_apk"
+          ],
+          "script": "//build/android/pylib/results/presentation/test_results_presentation.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/luci/logdog/butler/${platform}",
+              "location": "bin",
+              "revision": "git_revision:ff387eadf445b24c935f1cf7d6ddd279f8a6b04c"
+            }
+          ],
+          "dimension_sets": [
+            {
+              "android_devices": "1",
+              "device_os": "KTU84P",
+              "device_type": "hammerhead"
+            }
+          ],
+          "hard_timeout": 1200,
+          "output_links": [
+            {
+              "link": [
+                "https://luci-logdog.appspot.com/v/?s",
+                "=android%2Fswarming%2Flogcats%2F",
+                "${TASK_ID}%2F%2B%2Funified_logcats"
+              ],
+              "name": "shard #${SHARD_INDEX} logcats"
+            }
+          ],
+          "shards": 2
+        },
+        "test": "cronet_test_instrumentation_apk"
+      },
+      {
+        "merge": {
+          "args": [
+            "--bucket",
+            "chromium-result-details",
+            "--test-name",
+            "cronet_unittests"
+          ],
+          "script": "//build/android/pylib/results/presentation/test_results_presentation.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/luci/logdog/butler/${platform}",
+              "location": "bin",
+              "revision": "git_revision:ff387eadf445b24c935f1cf7d6ddd279f8a6b04c"
+            }
+          ],
+          "dimension_sets": [
+            {
+              "android_devices": "1",
+              "device_os": "KTU84P",
+              "device_type": "hammerhead"
+            }
+          ],
+          "hard_timeout": 300,
+          "output_links": [
+            {
+              "link": [
+                "https://luci-logdog.appspot.com/v/?s",
+                "=android%2Fswarming%2Flogcats%2F",
+                "${TASK_ID}%2F%2B%2Funified_logcats"
+              ],
+              "name": "shard #${SHARD_INDEX} logcats"
+            }
+          ]
+        },
+        "test": "cronet_unittests"
+      },
+      {
+        "merge": {
+          "args": [
+            "--bucket",
+            "chromium-result-details",
+            "--test-name",
+            "net_unittests"
+          ],
+          "script": "//build/android/pylib/results/presentation/test_results_presentation.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/luci/logdog/butler/${platform}",
+              "location": "bin",
+              "revision": "git_revision:ff387eadf445b24c935f1cf7d6ddd279f8a6b04c"
+            }
+          ],
+          "dimension_sets": [
+            {
+              "android_devices": "1",
+              "device_os": "KTU84P",
+              "device_type": "hammerhead"
+            }
+          ],
+          "output_links": [
+            {
+              "link": [
+                "https://luci-logdog.appspot.com/v/?s",
+                "=android%2Fswarming%2Flogcats%2F",
+                "${TASK_ID}%2F%2B%2Funified_logcats"
+              ],
+              "name": "shard #${SHARD_INDEX} logcats"
+            }
+          ],
+          "shards": 4
+        },
+        "test": "net_unittests"
+      }
+    ],
+    "scripts": [
+      {
+        "args": [
+          "--platform",
+          "android-cronet",
+          "--perf-id",
+          "android_cronet_armv6_builder",
+          "cronet-armv6/sizes"
+        ],
+        "name": "sizes",
+        "script": "sizes.py"
+      }
+    ]
+  },
+  "Android Cronet Builder (dbg)": {
+    "gtest_tests": [
+      {
+        "merge": {
+          "args": [
+            "--bucket",
+            "chromium-result-details",
+            "--test-name",
+            "cronet_sample_test_apk"
+          ],
+          "script": "//build/android/pylib/results/presentation/test_results_presentation.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/luci/logdog/butler/${platform}",
+              "location": "bin",
+              "revision": "git_revision:ff387eadf445b24c935f1cf7d6ddd279f8a6b04c"
+            }
+          ],
+          "dimension_sets": [
+            {
+              "android_devices": "1",
+              "device_os": "KTU84P",
+              "device_type": "hammerhead"
+            }
+          ],
+          "hard_timeout": 300,
+          "output_links": [
+            {
+              "link": [
+                "https://luci-logdog.appspot.com/v/?s",
+                "=android%2Fswarming%2Flogcats%2F",
+                "${TASK_ID}%2F%2B%2Funified_logcats"
+              ],
+              "name": "shard #${SHARD_INDEX} logcats"
+            }
+          ]
+        },
+        "test": "cronet_sample_test_apk"
+      },
+      {
+        "merge": {
+          "args": [
+            "--bucket",
+            "chromium-result-details",
+            "--test-name",
+            "cronet_smoketests_missing_native_library_instrumentation_apk"
+          ],
+          "script": "//build/android/pylib/results/presentation/test_results_presentation.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/luci/logdog/butler/${platform}",
+              "location": "bin",
+              "revision": "git_revision:ff387eadf445b24c935f1cf7d6ddd279f8a6b04c"
+            }
+          ],
+          "dimension_sets": [
+            {
+              "android_devices": "1",
+              "device_os": "KTU84P",
+              "device_type": "hammerhead"
+            }
+          ],
+          "hard_timeout": 300,
+          "output_links": [
+            {
+              "link": [
+                "https://luci-logdog.appspot.com/v/?s",
+                "=android%2Fswarming%2Flogcats%2F",
+                "${TASK_ID}%2F%2B%2Funified_logcats"
+              ],
+              "name": "shard #${SHARD_INDEX} logcats"
+            }
+          ]
+        },
+        "test": "cronet_smoketests_missing_native_library_instrumentation_apk"
+      },
+      {
+        "merge": {
+          "args": [
+            "--bucket",
+            "chromium-result-details",
+            "--test-name",
+            "cronet_smoketests_platform_only_instrumentation_apk"
+          ],
+          "script": "//build/android/pylib/results/presentation/test_results_presentation.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/luci/logdog/butler/${platform}",
+              "location": "bin",
+              "revision": "git_revision:ff387eadf445b24c935f1cf7d6ddd279f8a6b04c"
+            }
+          ],
+          "dimension_sets": [
+            {
+              "android_devices": "1",
+              "device_os": "KTU84P",
+              "device_type": "hammerhead"
+            }
+          ],
+          "hard_timeout": 300,
+          "output_links": [
+            {
+              "link": [
+                "https://luci-logdog.appspot.com/v/?s",
+                "=android%2Fswarming%2Flogcats%2F",
+                "${TASK_ID}%2F%2B%2Funified_logcats"
+              ],
+              "name": "shard #${SHARD_INDEX} logcats"
+            }
+          ]
+        },
+        "test": "cronet_smoketests_platform_only_instrumentation_apk"
+      },
+      {
+        "merge": {
+          "args": [
+            "--bucket",
+            "chromium-result-details",
+            "--test-name",
+            "cronet_test_instrumentation_apk"
+          ],
+          "script": "//build/android/pylib/results/presentation/test_results_presentation.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/luci/logdog/butler/${platform}",
+              "location": "bin",
+              "revision": "git_revision:ff387eadf445b24c935f1cf7d6ddd279f8a6b04c"
+            }
+          ],
+          "dimension_sets": [
+            {
+              "android_devices": "1",
+              "device_os": "KTU84P",
+              "device_type": "hammerhead"
+            }
+          ],
+          "hard_timeout": 1200,
+          "output_links": [
+            {
+              "link": [
+                "https://luci-logdog.appspot.com/v/?s",
+                "=android%2Fswarming%2Flogcats%2F",
+                "${TASK_ID}%2F%2B%2Funified_logcats"
+              ],
+              "name": "shard #${SHARD_INDEX} logcats"
+            }
+          ],
+          "shards": 2
+        },
+        "test": "cronet_test_instrumentation_apk"
+      },
+      {
+        "merge": {
+          "args": [
+            "--bucket",
+            "chromium-result-details",
+            "--test-name",
+            "cronet_unittests"
+          ],
+          "script": "//build/android/pylib/results/presentation/test_results_presentation.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/luci/logdog/butler/${platform}",
+              "location": "bin",
+              "revision": "git_revision:ff387eadf445b24c935f1cf7d6ddd279f8a6b04c"
+            }
+          ],
+          "dimension_sets": [
+            {
+              "android_devices": "1",
+              "device_os": "KTU84P",
+              "device_type": "hammerhead"
+            }
+          ],
+          "hard_timeout": 300,
+          "output_links": [
+            {
+              "link": [
+                "https://luci-logdog.appspot.com/v/?s",
+                "=android%2Fswarming%2Flogcats%2F",
+                "${TASK_ID}%2F%2B%2Funified_logcats"
+              ],
+              "name": "shard #${SHARD_INDEX} logcats"
+            }
+          ]
+        },
+        "test": "cronet_unittests"
+      },
+      {
+        "merge": {
+          "args": [
+            "--bucket",
+            "chromium-result-details",
+            "--test-name",
+            "net_unittests"
+          ],
+          "script": "//build/android/pylib/results/presentation/test_results_presentation.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/luci/logdog/butler/${platform}",
+              "location": "bin",
+              "revision": "git_revision:ff387eadf445b24c935f1cf7d6ddd279f8a6b04c"
+            }
+          ],
+          "dimension_sets": [
+            {
+              "android_devices": "1",
+              "device_os": "KTU84P",
+              "device_type": "hammerhead"
+            }
+          ],
+          "output_links": [
+            {
+              "link": [
+                "https://luci-logdog.appspot.com/v/?s",
+                "=android%2Fswarming%2Flogcats%2F",
+                "${TASK_ID}%2F%2B%2Funified_logcats"
+              ],
+              "name": "shard #${SHARD_INDEX} logcats"
+            }
+          ],
+          "shards": 4
+        },
+        "test": "net_unittests"
+      }
+    ]
+  },
+  "Android Cronet Builder Asan": {
+    "gtest_tests": [
+      {
+        "swarming": {
+          "can_use_on_swarming_builders": false
+        },
+        "test": "cronet_sample_test_apk"
+      },
+      {
+        "swarming": {
+          "can_use_on_swarming_builders": false
+        },
+        "test": "cronet_smoketests_missing_native_library_instrumentation_apk"
+      },
+      {
+        "swarming": {
+          "can_use_on_swarming_builders": false
+        },
+        "test": "cronet_smoketests_platform_only_instrumentation_apk"
+      },
+      {
+        "swarming": {
+          "can_use_on_swarming_builders": false
+        },
+        "test": "cronet_test_instrumentation_apk"
+      },
+      {
+        "swarming": {
+          "can_use_on_swarming_builders": false
+        },
+        "test": "cronet_unittests"
+      },
+      {
+        "swarming": {
+          "can_use_on_swarming_builders": false
+        },
+        "test": "net_unittests"
+      }
+    ]
+  },
+  "Android Cronet KitKat Builder": {
+    "gtest_tests": [
+      {
+        "merge": {
+          "args": [
+            "--bucket",
+            "chromium-result-details",
+            "--test-name",
+            "cronet_sample_test_apk"
+          ],
+          "script": "//build/android/pylib/results/presentation/test_results_presentation.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/luci/logdog/butler/${platform}",
+              "location": "bin",
+              "revision": "git_revision:ff387eadf445b24c935f1cf7d6ddd279f8a6b04c"
+            }
+          ],
+          "dimension_sets": [
+            {
+              "android_devices": "1",
+              "device_os": "KTU84P",
+              "device_type": "hammerhead"
+            }
+          ],
+          "hard_timeout": 300,
+          "output_links": [
+            {
+              "link": [
+                "https://luci-logdog.appspot.com/v/?s",
+                "=android%2Fswarming%2Flogcats%2F",
+                "${TASK_ID}%2F%2B%2Funified_logcats"
+              ],
+              "name": "shard #${SHARD_INDEX} logcats"
+            }
+          ]
+        },
+        "test": "cronet_sample_test_apk"
+      },
+      {
+        "merge": {
+          "args": [
+            "--bucket",
+            "chromium-result-details",
+            "--test-name",
+            "cronet_smoketests_missing_native_library_instrumentation_apk"
+          ],
+          "script": "//build/android/pylib/results/presentation/test_results_presentation.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/luci/logdog/butler/${platform}",
+              "location": "bin",
+              "revision": "git_revision:ff387eadf445b24c935f1cf7d6ddd279f8a6b04c"
+            }
+          ],
+          "dimension_sets": [
+            {
+              "android_devices": "1",
+              "device_os": "KTU84P",
+              "device_type": "hammerhead"
+            }
+          ],
+          "hard_timeout": 300,
+          "output_links": [
+            {
+              "link": [
+                "https://luci-logdog.appspot.com/v/?s",
+                "=android%2Fswarming%2Flogcats%2F",
+                "${TASK_ID}%2F%2B%2Funified_logcats"
+              ],
+              "name": "shard #${SHARD_INDEX} logcats"
+            }
+          ]
+        },
+        "test": "cronet_smoketests_missing_native_library_instrumentation_apk"
+      },
+      {
+        "merge": {
+          "args": [
+            "--bucket",
+            "chromium-result-details",
+            "--test-name",
+            "cronet_smoketests_platform_only_instrumentation_apk"
+          ],
+          "script": "//build/android/pylib/results/presentation/test_results_presentation.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/luci/logdog/butler/${platform}",
+              "location": "bin",
+              "revision": "git_revision:ff387eadf445b24c935f1cf7d6ddd279f8a6b04c"
+            }
+          ],
+          "dimension_sets": [
+            {
+              "android_devices": "1",
+              "device_os": "KTU84P",
+              "device_type": "hammerhead"
+            }
+          ],
+          "hard_timeout": 300,
+          "output_links": [
+            {
+              "link": [
+                "https://luci-logdog.appspot.com/v/?s",
+                "=android%2Fswarming%2Flogcats%2F",
+                "${TASK_ID}%2F%2B%2Funified_logcats"
+              ],
+              "name": "shard #${SHARD_INDEX} logcats"
+            }
+          ]
+        },
+        "test": "cronet_smoketests_platform_only_instrumentation_apk"
+      },
+      {
+        "merge": {
+          "args": [
+            "--bucket",
+            "chromium-result-details",
+            "--test-name",
+            "cronet_test_instrumentation_apk"
+          ],
+          "script": "//build/android/pylib/results/presentation/test_results_presentation.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/luci/logdog/butler/${platform}",
+              "location": "bin",
+              "revision": "git_revision:ff387eadf445b24c935f1cf7d6ddd279f8a6b04c"
+            }
+          ],
+          "dimension_sets": [
+            {
+              "android_devices": "1",
+              "device_os": "KTU84P",
+              "device_type": "hammerhead"
+            }
+          ],
+          "hard_timeout": 1200,
+          "output_links": [
+            {
+              "link": [
+                "https://luci-logdog.appspot.com/v/?s",
+                "=android%2Fswarming%2Flogcats%2F",
+                "${TASK_ID}%2F%2B%2Funified_logcats"
+              ],
+              "name": "shard #${SHARD_INDEX} logcats"
+            }
+          ],
+          "shards": 2
+        },
+        "test": "cronet_test_instrumentation_apk"
+      },
+      {
+        "merge": {
+          "args": [
+            "--bucket",
+            "chromium-result-details",
+            "--test-name",
+            "cronet_unittests"
+          ],
+          "script": "//build/android/pylib/results/presentation/test_results_presentation.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/luci/logdog/butler/${platform}",
+              "location": "bin",
+              "revision": "git_revision:ff387eadf445b24c935f1cf7d6ddd279f8a6b04c"
+            }
+          ],
+          "dimension_sets": [
+            {
+              "android_devices": "1",
+              "device_os": "KTU84P",
+              "device_type": "hammerhead"
+            }
+          ],
+          "hard_timeout": 300,
+          "output_links": [
+            {
+              "link": [
+                "https://luci-logdog.appspot.com/v/?s",
+                "=android%2Fswarming%2Flogcats%2F",
+                "${TASK_ID}%2F%2B%2Funified_logcats"
+              ],
+              "name": "shard #${SHARD_INDEX} logcats"
+            }
+          ]
+        },
+        "test": "cronet_unittests"
+      },
+      {
+        "merge": {
+          "args": [
+            "--bucket",
+            "chromium-result-details",
+            "--test-name",
+            "net_unittests"
+          ],
+          "script": "//build/android/pylib/results/presentation/test_results_presentation.py"
+        },
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/luci/logdog/butler/${platform}",
+              "location": "bin",
+              "revision": "git_revision:ff387eadf445b24c935f1cf7d6ddd279f8a6b04c"
+            }
+          ],
+          "dimension_sets": [
+            {
+              "android_devices": "1",
+              "device_os": "KTU84P",
+              "device_type": "hammerhead"
+            }
+          ],
+          "output_links": [
+            {
+              "link": [
+                "https://luci-logdog.appspot.com/v/?s",
+                "=android%2Fswarming%2Flogcats%2F",
+                "${TASK_ID}%2F%2B%2Funified_logcats"
+              ],
+              "name": "shard #${SHARD_INDEX} logcats"
+            }
+          ],
+          "shards": 4
+        },
+        "test": "net_unittests"
+      }
+    ],
+    "scripts": [
+      {
+        "args": [
+          "--platform",
+          "android-cronet",
+          "--perf-id",
+          "android_cronet_builder",
+          "cronet-arm/sizes"
+        ],
+        "name": "sizes",
+        "script": "sizes.py"
+      }
+    ]
+  },
   "Android Tests (trial)(dbg)": {
     "gtest_tests": [
       {
@@ -21,6 +822,24 @@
       }
     ]
   },
+  "Android Tests with Tracing": {
+    "instrumentation_tests": [
+      {
+        "args": [
+          "-f",
+          "ContextualSearchTapEventTest#*"
+        ],
+        "test": "chrome_public_test_apk",
+        "trace_output": true
+      },
+      {
+        "test": "chrome_sync_shell_test_apk"
+      },
+      {
+        "test": "content_shell_test_apk"
+      }
+    ]
+  },
   "Jelly Bean Tester": {
     "gtest_tests": [
       {
@@ -30,9 +849,6 @@
         "test": "base_unittests"
       },
       {
-        "override_compile_targets": [
-          "breakpad_unittests_deps"
-        ],
         "test": "breakpad_unittests"
       },
       {
@@ -78,15 +894,15 @@
         "test": "ipc_tests"
       },
       {
+        "test": "latency_unittests"
+      },
+      {
         "test": "media_unittests"
       },
       {
         "test": "net_unittests"
       },
       {
-        "override_compile_targets": [
-          "sandbox_linux_unittests_deps"
-        ],
         "test": "sandbox_linux_unittests"
       },
       {
@@ -129,9 +945,6 @@
         "test": "base_unittests"
       },
       {
-        "override_compile_targets": [
-          "breakpad_unittests_deps"
-        ],
         "test": "breakpad_unittests"
       },
       {
@@ -177,15 +990,15 @@
         "test": "ipc_tests"
       },
       {
+        "test": "latency_unittests"
+      },
+      {
         "test": "media_unittests"
       },
       {
         "test": "net_unittests"
       },
       {
-        "override_compile_targets": [
-          "sandbox_linux_unittests_deps"
-        ],
         "test": "sandbox_linux_unittests"
       },
       {
@@ -209,9 +1022,6 @@
     ],
     "instrumentation_tests": [
       {
-        "test": "android_webview_test_apk"
-      },
-      {
         "test": "chrome_public_test_apk"
       },
       {
@@ -219,32 +1029,15 @@
       },
       {
         "test": "content_shell_test_apk"
+      },
+      {
+        "test": "webview_instrumentation_test_apk"
       }
     ]
   },
   "Lollipop Low-end Tester": {
     "gtest_tests": [
       {
-        "override_compile_targets": [
-          "android_webview_test_apk"
-        ],
-        "override_isolate_target": "android_webview_test_apk",
-        "swarming": {
-          "can_use_on_swarming_builders": true,
-          "dimension_sets": [
-            {
-              "android_devices": "1",
-              "device_os": "LMY47W",
-              "device_type": "sprout"
-            }
-          ],
-          "expiration": 14400,
-          "shards": 2
-        },
-        "test": "android_webview_test_apk"
-      },
-      {
-        "override_isolate_target": "android_webview_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -259,7 +1052,6 @@
         "test": "android_webview_unittests"
       },
       {
-        "override_isolate_target": "base_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -274,7 +1066,6 @@
         "test": "base_unittests"
       },
       {
-        "override_isolate_target": "blink_heap_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -289,7 +1080,6 @@
         "test": "blink_heap_unittests"
       },
       {
-        "override_isolate_target": "breakpad_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -304,7 +1094,6 @@
         "test": "breakpad_unittests"
       },
       {
-        "override_isolate_target": "capture_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -319,7 +1108,6 @@
         "test": "capture_unittests"
       },
       {
-        "override_isolate_target": "cc_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -334,10 +1122,6 @@
         "test": "cc_unittests"
       },
       {
-        "override_compile_targets": [
-          "chrome_public_test_apk"
-        ],
-        "override_isolate_target": "chrome_public_test_apk",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -353,10 +1137,6 @@
         "test": "chrome_public_test_apk"
       },
       {
-        "override_compile_targets": [
-          "chrome_sync_shell_test_apk"
-        ],
-        "override_isolate_target": "chrome_sync_shell_test_apk",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -371,7 +1151,6 @@
         "test": "chrome_sync_shell_test_apk"
       },
       {
-        "override_isolate_target": "components_browsertests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -386,7 +1165,6 @@
         "test": "components_browsertests"
       },
       {
-        "override_isolate_target": "components_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -401,7 +1179,6 @@
         "test": "components_unittests"
       },
       {
-        "override_isolate_target": "content_browsertests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -417,10 +1194,6 @@
         "test": "content_browsertests"
       },
       {
-        "override_compile_targets": [
-          "content_shell_test_apk"
-        ],
-        "override_isolate_target": "content_shell_test_apk",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -435,7 +1208,6 @@
         "test": "content_shell_test_apk"
       },
       {
-        "override_isolate_target": "content_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -450,7 +1222,6 @@
         "test": "content_unittests"
       },
       {
-        "override_isolate_target": "device_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -465,7 +1236,6 @@
         "test": "device_unittests"
       },
       {
-        "override_isolate_target": "events_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -480,7 +1250,6 @@
         "test": "events_unittests"
       },
       {
-        "override_isolate_target": "gl_tests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -495,7 +1264,6 @@
         "test": "gl_tests"
       },
       {
-        "override_isolate_target": "gl_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -510,7 +1278,6 @@
         "test": "gl_unittests"
       },
       {
-        "override_isolate_target": "gpu_ipc_service_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -525,7 +1292,6 @@
         "test": "gpu_ipc_service_unittests"
       },
       {
-        "override_isolate_target": "gpu_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -540,7 +1306,6 @@
         "test": "gpu_unittests"
       },
       {
-        "override_isolate_target": "ipc_tests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -555,7 +1320,20 @@
         "test": "ipc_tests"
       },
       {
-        "override_isolate_target": "media_unittests",
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "android_devices": "1",
+              "device_os": "LMY47W",
+              "device_type": "sprout"
+            }
+          ],
+          "expiration": 14400
+        },
+        "test": "latency_unittests"
+      },
+      {
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -570,7 +1348,6 @@
         "test": "media_unittests"
       },
       {
-        "override_isolate_target": "net_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -585,7 +1362,6 @@
         "test": "net_unittests"
       },
       {
-        "override_isolate_target": "sandbox_linux_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -600,7 +1376,6 @@
         "test": "sandbox_linux_unittests"
       },
       {
-        "override_isolate_target": "sql_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -615,7 +1390,6 @@
         "test": "sql_unittests"
       },
       {
-        "override_isolate_target": "storage_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -630,7 +1404,6 @@
         "test": "storage_unittests"
       },
       {
-        "override_isolate_target": "ui_android_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -645,7 +1418,6 @@
         "test": "ui_android_unittests"
       },
       {
-        "override_isolate_target": "ui_base_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -660,7 +1432,6 @@
         "test": "ui_base_unittests"
       },
       {
-        "override_isolate_target": "ui_touch_selection_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -675,7 +1446,6 @@
         "test": "ui_touch_selection_unittests"
       },
       {
-        "override_isolate_target": "unit_tests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -688,6 +1458,21 @@
           "expiration": 14400
         },
         "test": "unit_tests"
+      },
+      {
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "android_devices": "1",
+              "device_os": "LMY47W",
+              "device_type": "sprout"
+            }
+          ],
+          "expiration": 14400,
+          "shards": 2
+        },
+        "test": "webview_instrumentation_test_apk"
       }
     ]
   },
@@ -705,19 +1490,16 @@
         ],
         "isolate_name": "telemetry_perf_tests",
         "name": "system_health.memory_mobile",
-        "override_compile_targets": [
-          "telemetry_perf_tests"
-        ],
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
             {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "KTU84P",
               "device_type": "hammerhead"
             }
           ],
-          "hard_timeout": 600
+          "hard_timeout": 960
         }
       }
     ]
@@ -725,10 +1507,6 @@
   "Nougat Phone Tester": {
     "gtest_tests": [
       {
-        "override_compile_targets": [
-          "android_webview_test_apk"
-        ],
-        "override_isolate_target": "android_webview_test_apk",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -740,40 +1518,7 @@
           ],
           "dimension_sets": [
             {
-              "android_devices": "4",
-              "device_os": "NRD91N",
-              "device_type": "bullhead"
-            }
-          ],
-          "expiration": 10800,
-          "hard_timeout": 960,
-          "output_links": [
-            {
-              "link": [
-                "https://luci-logdog.appspot.com/v/?s",
-                "=android%2Fswarming%2Flogcats%2F",
-                "${TASK_ID}%2F%2B%2Funified_logcats"
-              ],
-              "name": "shard #${SHARD_INDEX} logcats"
-            }
-          ]
-        },
-        "test": "android_webview_test_apk"
-      },
-      {
-        "override_isolate_target": "android_webview_unittests",
-        "swarming": {
-          "can_use_on_swarming_builders": true,
-          "cipd_packages": [
-            {
-              "cipd_package": "infra/tools/luci/logdog/butler/${platform}",
-              "location": "bin",
-              "revision": "git_revision:ff387eadf445b24c935f1cf7d6ddd279f8a6b04c"
-            }
-          ],
-          "dimension_sets": [
-            {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "NRD91N",
               "device_type": "bullhead"
             }
@@ -794,7 +1539,6 @@
         "test": "android_webview_unittests"
       },
       {
-        "override_isolate_target": "base_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -806,7 +1550,7 @@
           ],
           "dimension_sets": [
             {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "NRD91N",
               "device_type": "bullhead"
             }
@@ -827,10 +1571,6 @@
         "test": "base_unittests"
       },
       {
-        "override_compile_targets": [
-          "breakpad_unittests_deps"
-        ],
-        "override_isolate_target": "breakpad_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -842,7 +1582,7 @@
           ],
           "dimension_sets": [
             {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "NRD91N",
               "device_type": "bullhead"
             }
@@ -863,7 +1603,6 @@
         "test": "breakpad_unittests"
       },
       {
-        "override_isolate_target": "capture_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -875,7 +1614,7 @@
           ],
           "dimension_sets": [
             {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "NRD91N",
               "device_type": "bullhead"
             }
@@ -896,7 +1635,6 @@
         "test": "capture_unittests"
       },
       {
-        "override_isolate_target": "cc_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -908,7 +1646,7 @@
           ],
           "dimension_sets": [
             {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "NRD91N",
               "device_type": "bullhead"
             }
@@ -929,10 +1667,6 @@
         "test": "cc_unittests"
       },
       {
-        "override_compile_targets": [
-          "chrome_public_test_apk"
-        ],
-        "override_isolate_target": "chrome_public_test_apk",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -944,13 +1678,13 @@
           ],
           "dimension_sets": [
             {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "NRD91N",
               "device_type": "bullhead"
             }
           ],
           "expiration": 10800,
-          "hard_timeout": 960,
+          "hard_timeout": 1200,
           "output_links": [
             {
               "link": [
@@ -960,15 +1694,12 @@
               ],
               "name": "shard #${SHARD_INDEX} logcats"
             }
-          ]
+          ],
+          "shards": 8
         },
         "test": "chrome_public_test_apk"
       },
       {
-        "override_compile_targets": [
-          "chrome_sync_shell_test_apk"
-        ],
-        "override_isolate_target": "chrome_sync_shell_test_apk",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -980,7 +1711,7 @@
           ],
           "dimension_sets": [
             {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "NRD91N",
               "device_type": "bullhead"
             }
@@ -1001,7 +1732,6 @@
         "test": "chrome_sync_shell_test_apk"
       },
       {
-        "override_isolate_target": "components_browsertests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -1013,7 +1743,7 @@
           ],
           "dimension_sets": [
             {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "NRD91N",
               "device_type": "bullhead"
             }
@@ -1034,7 +1764,6 @@
         "test": "components_browsertests"
       },
       {
-        "override_isolate_target": "components_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -1046,7 +1775,7 @@
           ],
           "dimension_sets": [
             {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "NRD91N",
               "device_type": "bullhead"
             }
@@ -1067,7 +1796,6 @@
         "test": "components_unittests"
       },
       {
-        "override_isolate_target": "content_browsertests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -1079,13 +1807,13 @@
           ],
           "dimension_sets": [
             {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "NRD91N",
               "device_type": "bullhead"
             }
           ],
           "expiration": 10800,
-          "hard_timeout": 960,
+          "hard_timeout": 1200,
           "output_links": [
             {
               "link": [
@@ -1095,15 +1823,12 @@
               ],
               "name": "shard #${SHARD_INDEX} logcats"
             }
-          ]
+          ],
+          "shards": 6
         },
         "test": "content_browsertests"
       },
       {
-        "override_compile_targets": [
-          "content_shell_test_apk"
-        ],
-        "override_isolate_target": "content_shell_test_apk",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -1115,13 +1840,13 @@
           ],
           "dimension_sets": [
             {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "NRD91N",
               "device_type": "bullhead"
             }
           ],
           "expiration": 10800,
-          "hard_timeout": 960,
+          "hard_timeout": 1200,
           "output_links": [
             {
               "link": [
@@ -1131,12 +1856,12 @@
               ],
               "name": "shard #${SHARD_INDEX} logcats"
             }
-          ]
+          ],
+          "shards": 4
         },
         "test": "content_shell_test_apk"
       },
       {
-        "override_isolate_target": "content_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -1148,13 +1873,13 @@
           ],
           "dimension_sets": [
             {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "NRD91N",
               "device_type": "bullhead"
             }
           ],
           "expiration": 10800,
-          "hard_timeout": 960,
+          "hard_timeout": 1200,
           "output_links": [
             {
               "link": [
@@ -1164,12 +1889,12 @@
               ],
               "name": "shard #${SHARD_INDEX} logcats"
             }
-          ]
+          ],
+          "shards": 2
         },
         "test": "content_unittests"
       },
       {
-        "override_isolate_target": "device_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -1181,7 +1906,7 @@
           ],
           "dimension_sets": [
             {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "NRD91N",
               "device_type": "bullhead"
             }
@@ -1202,7 +1927,6 @@
         "test": "device_unittests"
       },
       {
-        "override_isolate_target": "events_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -1214,7 +1938,7 @@
           ],
           "dimension_sets": [
             {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "NRD91N",
               "device_type": "bullhead"
             }
@@ -1235,7 +1959,6 @@
         "test": "events_unittests"
       },
       {
-        "override_isolate_target": "gfx_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -1247,7 +1970,7 @@
           ],
           "dimension_sets": [
             {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "NRD91N",
               "device_type": "bullhead"
             }
@@ -1268,7 +1991,6 @@
         "test": "gfx_unittests"
       },
       {
-        "override_isolate_target": "gl_tests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -1280,7 +2002,7 @@
           ],
           "dimension_sets": [
             {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "NRD91N",
               "device_type": "bullhead"
             }
@@ -1301,7 +2023,6 @@
         "test": "gl_tests"
       },
       {
-        "override_isolate_target": "gl_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -1313,7 +2034,7 @@
           ],
           "dimension_sets": [
             {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "NRD91N",
               "device_type": "bullhead"
             }
@@ -1334,7 +2055,6 @@
         "test": "gl_unittests"
       },
       {
-        "override_isolate_target": "gpu_ipc_service_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -1346,7 +2066,7 @@
           ],
           "dimension_sets": [
             {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "NRD91N",
               "device_type": "bullhead"
             }
@@ -1367,7 +2087,6 @@
         "test": "gpu_ipc_service_unittests"
       },
       {
-        "override_isolate_target": "gpu_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -1379,7 +2098,7 @@
           ],
           "dimension_sets": [
             {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "NRD91N",
               "device_type": "bullhead"
             }
@@ -1400,7 +2119,6 @@
         "test": "gpu_unittests"
       },
       {
-        "override_isolate_target": "ipc_tests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -1412,7 +2130,7 @@
           ],
           "dimension_sets": [
             {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "NRD91N",
               "device_type": "bullhead"
             }
@@ -1433,7 +2151,6 @@
         "test": "ipc_tests"
       },
       {
-        "override_isolate_target": "media_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -1445,7 +2162,7 @@
           ],
           "dimension_sets": [
             {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "NRD91N",
               "device_type": "bullhead"
             }
@@ -1466,7 +2183,6 @@
         "test": "media_unittests"
       },
       {
-        "override_isolate_target": "net_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -1478,13 +2194,13 @@
           ],
           "dimension_sets": [
             {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "NRD91N",
               "device_type": "bullhead"
             }
           ],
           "expiration": 10800,
-          "hard_timeout": 960,
+          "hard_timeout": 1200,
           "output_links": [
             {
               "link": [
@@ -1494,15 +2210,12 @@
               ],
               "name": "shard #${SHARD_INDEX} logcats"
             }
-          ]
+          ],
+          "shards": 2
         },
         "test": "net_unittests"
       },
       {
-        "override_compile_targets": [
-          "sandbox_linux_unittests_deps"
-        ],
-        "override_isolate_target": "sandbox_linux_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -1514,7 +2227,7 @@
           ],
           "dimension_sets": [
             {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "NRD91N",
               "device_type": "bullhead"
             }
@@ -1535,7 +2248,6 @@
         "test": "sandbox_linux_unittests"
       },
       {
-        "override_isolate_target": "sql_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -1547,7 +2259,7 @@
           ],
           "dimension_sets": [
             {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "NRD91N",
               "device_type": "bullhead"
             }
@@ -1568,7 +2280,6 @@
         "test": "sql_unittests"
       },
       {
-        "override_isolate_target": "storage_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -1580,7 +2291,7 @@
           ],
           "dimension_sets": [
             {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "NRD91N",
               "device_type": "bullhead"
             }
@@ -1601,7 +2312,6 @@
         "test": "storage_unittests"
       },
       {
-        "override_isolate_target": "ui_android_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -1613,7 +2323,7 @@
           ],
           "dimension_sets": [
             {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "NRD91N",
               "device_type": "bullhead"
             }
@@ -1634,7 +2344,6 @@
         "test": "ui_android_unittests"
       },
       {
-        "override_isolate_target": "ui_base_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -1646,7 +2355,7 @@
           ],
           "dimension_sets": [
             {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "NRD91N",
               "device_type": "bullhead"
             }
@@ -1667,7 +2376,6 @@
         "test": "ui_base_unittests"
       },
       {
-        "override_isolate_target": "ui_touch_selection_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -1679,7 +2387,7 @@
           ],
           "dimension_sets": [
             {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "NRD91N",
               "device_type": "bullhead"
             }
@@ -1700,7 +2408,6 @@
         "test": "ui_touch_selection_unittests"
       },
       {
-        "override_isolate_target": "unit_tests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -1712,13 +2419,13 @@
           ],
           "dimension_sets": [
             {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "NRD91N",
               "device_type": "bullhead"
             }
           ],
           "expiration": 10800,
-          "hard_timeout": 960,
+          "hard_timeout": 1200,
           "output_links": [
             {
               "link": [
@@ -1728,12 +2435,12 @@
               ],
               "name": "shard #${SHARD_INDEX} logcats"
             }
-          ]
+          ],
+          "shards": 2
         },
         "test": "unit_tests"
       },
       {
-        "override_isolate_target": "vr_shell_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "cipd_packages": [
@@ -1745,7 +2452,7 @@
           ],
           "dimension_sets": [
             {
-              "android_devices": "4",
+              "android_devices": "1",
               "device_os": "NRD91N",
               "device_type": "bullhead"
             }
@@ -1763,7 +2470,40 @@
             }
           ]
         },
-        "test": "vr_shell_unittests"
+        "test": "vr_common_unittests"
+      },
+      {
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "cipd_packages": [
+            {
+              "cipd_package": "infra/tools/luci/logdog/butler/${platform}",
+              "location": "bin",
+              "revision": "git_revision:ff387eadf445b24c935f1cf7d6ddd279f8a6b04c"
+            }
+          ],
+          "dimension_sets": [
+            {
+              "android_devices": "1",
+              "device_os": "NRD91N",
+              "device_type": "bullhead"
+            }
+          ],
+          "expiration": 10800,
+          "hard_timeout": 1500,
+          "output_links": [
+            {
+              "link": [
+                "https://luci-logdog.appspot.com/v/?s",
+                "=android%2Fswarming%2Flogcats%2F",
+                "${TASK_ID}%2F%2B%2Funified_logcats"
+              ],
+              "name": "shard #${SHARD_INDEX} logcats"
+            }
+          ],
+          "shards": 6
+        },
+        "test": "webview_instrumentation_test_apk"
       }
     ]
   },
@@ -1782,9 +2522,6 @@
         "test": "base_unittests"
       },
       {
-        "override_compile_targets": [
-          "breakpad_unittests_deps"
-        ],
         "swarming": {
           "can_use_on_swarming_builders": false
         },
@@ -1895,9 +2632,6 @@
         "test": "net_unittests"
       },
       {
-        "override_compile_targets": [
-          "sandbox_linux_unittests_deps"
-        ],
         "swarming": {
           "can_use_on_swarming_builders": false
         },
@@ -1942,9 +2676,6 @@
     ],
     "instrumentation_tests": [
       {
-        "test": "android_webview_test_apk"
-      },
-      {
         "test": "chrome_public_test_apk"
       },
       {
@@ -1952,6 +2683,9 @@
       },
       {
         "test": "content_shell_test_apk"
+      },
+      {
+        "test": "webview_instrumentation_test_apk"
       }
     ],
     "scripts": [
@@ -1976,9 +2710,6 @@
         "test": "base_unittests"
       },
       {
-        "override_compile_targets": [
-          "breakpad_unittests_deps"
-        ],
         "swarming": {
           "can_use_on_swarming_builders": false
         },
@@ -2089,9 +2820,6 @@
         "test": "net_unittests"
       },
       {
-        "override_compile_targets": [
-          "sandbox_linux_unittests_deps"
-        ],
         "swarming": {
           "can_use_on_swarming_builders": false
         },
@@ -2136,9 +2864,6 @@
     ],
     "instrumentation_tests": [
       {
-        "test": "android_webview_test_apk"
-      },
-      {
         "test": "chrome_public_test_apk"
       },
       {
@@ -2146,6 +2871,9 @@
       },
       {
         "test": "content_shell_test_apk"
+      },
+      {
+        "test": "webview_instrumentation_test_apk"
       }
     ],
     "scripts": [
@@ -2158,23 +2886,6 @@
   "x64 Device Tester": {
     "gtest_tests": [
       {
-        "override_compile_targets": [
-          "android_webview_test_apk"
-        ],
-        "override_isolate_target": "android_webview_test_apk",
-        "swarming": {
-          "can_use_on_swarming_builders": true,
-          "dimension_sets": [
-            {
-              "android_devices": "1",
-              "device_type": "coho"
-            }
-          ]
-        },
-        "test": "android_webview_test_apk"
-      },
-      {
-        "override_isolate_target": "angle_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2187,7 +2898,6 @@
         "test": "angle_unittests"
       },
       {
-        "override_isolate_target": "base_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2200,7 +2910,6 @@
         "test": "base_unittests"
       },
       {
-        "override_isolate_target": "blink_heap_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2213,7 +2922,6 @@
         "test": "blink_heap_unittests"
       },
       {
-        "override_isolate_target": "breakpad_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2226,7 +2934,6 @@
         "test": "breakpad_unittests"
       },
       {
-        "override_isolate_target": "cacheinvalidation_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2239,7 +2946,6 @@
         "test": "cacheinvalidation_unittests"
       },
       {
-        "override_isolate_target": "capture_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2252,7 +2958,6 @@
         "test": "capture_unittests"
       },
       {
-        "override_isolate_target": "cast_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2265,7 +2970,6 @@
         "test": "cast_unittests"
       },
       {
-        "override_isolate_target": "cc_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2278,10 +2982,6 @@
         "test": "cc_unittests"
       },
       {
-        "override_compile_targets": [
-          "chrome_public_test_apk"
-        ],
-        "override_isolate_target": "chrome_public_test_apk",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2294,10 +2994,6 @@
         "test": "chrome_public_test_apk"
       },
       {
-        "override_compile_targets": [
-          "chrome_sync_shell_test_apk"
-        ],
-        "override_isolate_target": "chrome_sync_shell_test_apk",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2310,7 +3006,6 @@
         "test": "chrome_sync_shell_test_apk"
       },
       {
-        "override_isolate_target": "components_browsertests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2323,7 +3018,6 @@
         "test": "components_browsertests"
       },
       {
-        "override_isolate_target": "components_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2336,7 +3030,6 @@
         "test": "components_unittests"
       },
       {
-        "override_isolate_target": "content_browsertests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2349,10 +3042,6 @@
         "test": "content_browsertests"
       },
       {
-        "override_compile_targets": [
-          "content_shell_test_apk"
-        ],
-        "override_isolate_target": "content_shell_test_apk",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2365,7 +3054,6 @@
         "test": "content_shell_test_apk"
       },
       {
-        "override_isolate_target": "content_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2378,7 +3066,6 @@
         "test": "content_unittests"
       },
       {
-        "override_isolate_target": "crypto_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2391,7 +3078,6 @@
         "test": "crypto_unittests"
       },
       {
-        "override_isolate_target": "device_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2404,7 +3090,6 @@
         "test": "device_unittests"
       },
       {
-        "override_isolate_target": "display_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2417,7 +3102,6 @@
         "test": "display_unittests"
       },
       {
-        "override_isolate_target": "events_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2430,7 +3114,6 @@
         "test": "events_unittests"
       },
       {
-        "override_isolate_target": "gcm_unit_tests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2443,7 +3126,6 @@
         "test": "gcm_unit_tests"
       },
       {
-        "override_isolate_target": "gfx_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2456,7 +3138,6 @@
         "test": "gfx_unittests"
       },
       {
-        "override_isolate_target": "gl_tests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2469,7 +3150,6 @@
         "test": "gl_tests"
       },
       {
-        "override_isolate_target": "gl_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2482,7 +3162,6 @@
         "test": "gl_unittests"
       },
       {
-        "override_isolate_target": "google_apis_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2495,7 +3174,6 @@
         "test": "google_apis_unittests"
       },
       {
-        "override_isolate_target": "gpu_ipc_service_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2508,7 +3186,6 @@
         "test": "gpu_ipc_service_unittests"
       },
       {
-        "override_isolate_target": "gpu_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2521,7 +3198,6 @@
         "test": "gpu_unittests"
       },
       {
-        "override_isolate_target": "ipc_tests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2534,7 +3210,6 @@
         "test": "ipc_tests"
       },
       {
-        "override_isolate_target": "jingle_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2547,7 +3222,6 @@
         "test": "jingle_unittests"
       },
       {
-        "override_isolate_target": "media_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2560,7 +3234,6 @@
         "test": "media_unittests"
       },
       {
-        "override_isolate_target": "midi_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2573,7 +3246,6 @@
         "test": "midi_unittests"
       },
       {
-        "override_isolate_target": "mojo_common_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2586,20 +3258,6 @@
         "test": "mojo_common_unittests"
       },
       {
-        "override_isolate_target": "mojo_public_application_unittests",
-        "swarming": {
-          "can_use_on_swarming_builders": true,
-          "dimension_sets": [
-            {
-              "android_devices": "1",
-              "device_type": "coho"
-            }
-          ]
-        },
-        "test": "mojo_public_application_unittests"
-      },
-      {
-        "override_isolate_target": "mojo_public_bindings_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2612,7 +3270,6 @@
         "test": "mojo_public_bindings_unittests"
       },
       {
-        "override_isolate_target": "mojo_public_system_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2625,7 +3282,6 @@
         "test": "mojo_public_system_unittests"
       },
       {
-        "override_isolate_target": "mojo_system_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2638,7 +3294,6 @@
         "test": "mojo_system_unittests"
       },
       {
-        "override_isolate_target": "net_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2651,7 +3306,6 @@
         "test": "net_unittests"
       },
       {
-        "override_isolate_target": "remoting_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2664,7 +3318,6 @@
         "test": "remoting_unittests"
       },
       {
-        "override_isolate_target": "sandbox_linux_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2677,7 +3330,6 @@
         "test": "sandbox_linux_unittests"
       },
       {
-        "override_isolate_target": "skia_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2690,7 +3342,6 @@
         "test": "skia_unittests"
       },
       {
-        "override_isolate_target": "sql_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2703,7 +3354,6 @@
         "test": "sql_unittests"
       },
       {
-        "override_isolate_target": "storage_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2716,7 +3366,6 @@
         "test": "storage_unittests"
       },
       {
-        "override_isolate_target": "ui_android_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2729,7 +3378,6 @@
         "test": "ui_android_unittests"
       },
       {
-        "override_isolate_target": "ui_base_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2742,7 +3390,6 @@
         "test": "ui_base_unittests"
       },
       {
-        "override_isolate_target": "ui_touch_selection_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2755,7 +3402,6 @@
         "test": "ui_touch_selection_unittests"
       },
       {
-        "override_isolate_target": "unit_tests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2768,7 +3414,6 @@
         "test": "unit_tests"
       },
       {
-        "override_isolate_target": "url_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2781,7 +3426,6 @@
         "test": "url_unittests"
       },
       {
-        "override_isolate_target": "webkit_unit_tests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2794,7 +3438,18 @@
         "test": "webkit_unit_tests"
       },
       {
-        "override_isolate_target": "wtf_unittests",
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "android_devices": "1",
+              "device_type": "coho"
+            }
+          ]
+        },
+        "test": "webview_instrumentation_test_apk"
+      },
+      {
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2811,24 +3466,6 @@
   "x86 Cloud Tester": {
     "gtest_tests": [
       {
-        "override_compile_targets": [
-          "android_webview_test_apk"
-        ],
-        "override_isolate_target": "android_webview_test_apk",
-        "swarming": {
-          "can_use_on_swarming_builders": true,
-          "dimension_sets": [
-            {
-              "android_devices": "4",
-              "device_type": "gce_x86"
-            }
-          ],
-          "hard_timeout": 960
-        },
-        "test": "android_webview_test_apk"
-      },
-      {
-        "override_isolate_target": "android_webview_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2841,7 +3478,6 @@
         "test": "android_webview_unittests"
       },
       {
-        "override_isolate_target": "base_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2854,7 +3490,6 @@
         "test": "base_unittests"
       },
       {
-        "override_isolate_target": "blink_heap_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2868,7 +3503,6 @@
         "test": "blink_heap_unittests"
       },
       {
-        "override_isolate_target": "breakpad_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2881,7 +3515,6 @@
         "test": "breakpad_unittests"
       },
       {
-        "override_isolate_target": "capture_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2894,7 +3527,6 @@
         "test": "capture_unittests"
       },
       {
-        "override_isolate_target": "cc_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2907,10 +3539,6 @@
         "test": "cc_unittests"
       },
       {
-        "override_compile_targets": [
-          "chrome_public_test_apk"
-        ],
-        "override_isolate_target": "chrome_public_test_apk",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2924,10 +3552,6 @@
         "test": "chrome_public_test_apk"
       },
       {
-        "override_compile_targets": [
-          "chrome_sync_shell_test_apk"
-        ],
-        "override_isolate_target": "chrome_sync_shell_test_apk",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2941,7 +3565,6 @@
         "test": "chrome_sync_shell_test_apk"
       },
       {
-        "override_isolate_target": "components_browsertests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2954,7 +3577,6 @@
         "test": "components_browsertests"
       },
       {
-        "override_isolate_target": "components_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2967,7 +3589,6 @@
         "test": "components_unittests"
       },
       {
-        "override_isolate_target": "content_browsertests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2981,10 +3602,6 @@
         "test": "content_browsertests"
       },
       {
-        "override_compile_targets": [
-          "content_shell_test_apk"
-        ],
-        "override_isolate_target": "content_shell_test_apk",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -2998,7 +3615,6 @@
         "test": "content_shell_test_apk"
       },
       {
-        "override_isolate_target": "content_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -3011,7 +3627,6 @@
         "test": "content_unittests"
       },
       {
-        "override_isolate_target": "device_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -3024,7 +3639,6 @@
         "test": "device_unittests"
       },
       {
-        "override_isolate_target": "events_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -3037,7 +3651,6 @@
         "test": "events_unittests"
       },
       {
-        "override_isolate_target": "gl_tests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -3050,7 +3663,6 @@
         "test": "gl_tests"
       },
       {
-        "override_isolate_target": "gl_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -3064,7 +3676,6 @@
         "test": "gl_unittests"
       },
       {
-        "override_isolate_target": "gpu_ipc_service_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -3077,7 +3688,6 @@
         "test": "gpu_ipc_service_unittests"
       },
       {
-        "override_isolate_target": "gpu_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -3090,7 +3700,6 @@
         "test": "gpu_unittests"
       },
       {
-        "override_isolate_target": "ipc_tests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -3103,7 +3712,6 @@
         "test": "ipc_tests"
       },
       {
-        "override_isolate_target": "media_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -3116,7 +3724,6 @@
         "test": "media_unittests"
       },
       {
-        "override_isolate_target": "mojo_common_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -3130,21 +3737,6 @@
         "test": "mojo_common_unittests"
       },
       {
-        "override_isolate_target": "mojo_public_application_unittests",
-        "swarming": {
-          "can_use_on_swarming_builders": true,
-          "dimension_sets": [
-            {
-              "android_devices": "4",
-              "device_type": "gce_x86"
-            }
-          ],
-          "hard_timeout": 60
-        },
-        "test": "mojo_public_application_unittests"
-      },
-      {
-        "override_isolate_target": "mojo_public_bindings_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -3158,7 +3750,6 @@
         "test": "mojo_public_bindings_unittests"
       },
       {
-        "override_isolate_target": "mojo_public_system_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -3172,7 +3763,6 @@
         "test": "mojo_public_system_unittests"
       },
       {
-        "override_isolate_target": "mojo_system_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -3186,7 +3776,6 @@
         "test": "mojo_system_unittests"
       },
       {
-        "override_isolate_target": "net_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -3199,7 +3788,6 @@
         "test": "net_unittests"
       },
       {
-        "override_isolate_target": "sandbox_linux_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -3212,7 +3800,6 @@
         "test": "sandbox_linux_unittests"
       },
       {
-        "override_isolate_target": "sql_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -3225,7 +3812,6 @@
         "test": "sql_unittests"
       },
       {
-        "override_isolate_target": "storage_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -3238,7 +3824,6 @@
         "test": "storage_unittests"
       },
       {
-        "override_isolate_target": "ui_android_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -3251,7 +3836,6 @@
         "test": "ui_android_unittests"
       },
       {
-        "override_isolate_target": "ui_base_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -3264,7 +3848,6 @@
         "test": "ui_base_unittests"
       },
       {
-        "override_isolate_target": "ui_touch_selection_unittests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -3277,7 +3860,6 @@
         "test": "ui_touch_selection_unittests"
       },
       {
-        "override_isolate_target": "unit_tests",
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [
@@ -3288,6 +3870,19 @@
           ]
         },
         "test": "unit_tests"
+      },
+      {
+        "swarming": {
+          "can_use_on_swarming_builders": true,
+          "dimension_sets": [
+            {
+              "android_devices": "4",
+              "device_type": "gce_x86"
+            }
+          ],
+          "hard_timeout": 960
+        },
+        "test": "webview_instrumentation_test_apk"
       }
     ],
     "isolated_scripts": [
@@ -3298,9 +3893,6 @@
         ],
         "isolate_name": "telemetry_perf_unittests",
         "name": "telemetry_perf_unittests",
-        "override_compile_targets": [
-          "telemetry_perf_unittests"
-        ],
         "swarming": {
           "can_use_on_swarming_builders": true,
           "dimension_sets": [

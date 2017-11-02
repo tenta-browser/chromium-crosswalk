@@ -4,22 +4,17 @@
 
 #include "chrome/browser/upgrade_detector_impl.h"
 
-#include <vector>
-
 #include "base/macros.h"
-#include "content/public/browser/browser_thread.h"
-#include "content/public/browser/notification_details.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
-#include "content/public/browser/notification_service.h"
-#include "content/public/test/test_browser_thread_bundle.h"
-#include "content/public/test/test_utils.h"
+#include "base/test/scoped_task_environment.h"
+#include "chrome/browser/upgrade_observer.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+namespace {
 
 class TestUpgradeDetectorImpl : public UpgradeDetectorImpl {
  public:
-  TestUpgradeDetectorImpl() : trigger_critical_update_call_count_(0) {}
-  ~TestUpgradeDetectorImpl() override {}
+  TestUpgradeDetectorImpl() = default;
+  ~TestUpgradeDetectorImpl() override = default;
 
   // Methods exposed for testing.
   using UpgradeDetectorImpl::OnExperimentChangesDetected;
@@ -27,7 +22,7 @@ class TestUpgradeDetectorImpl : public UpgradeDetectorImpl {
 
   // UpgradeDetector:
   void TriggerCriticalUpdate() override {
-    trigger_critical_update_call_count_++;
+    ++trigger_critical_update_call_count_;
   }
 
   int trigger_critical_update_call_count() const {
@@ -37,86 +32,80 @@ class TestUpgradeDetectorImpl : public UpgradeDetectorImpl {
  private:
   // How many times TriggerCriticalUpdate() has been called. Expected to either
   // be 0 or 1.
-  int trigger_critical_update_call_count_;
+  int trigger_critical_update_call_count_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(TestUpgradeDetectorImpl);
 };
 
-class TestUpgradeNotificationListener : public content::NotificationObserver {
+class TestUpgradeNotificationListener : public UpgradeObserver {
  public:
-  TestUpgradeNotificationListener() {
-    registrar_.Add(this, chrome::NOTIFICATION_UPGRADE_RECOMMENDED,
-                   content::NotificationService::AllSources());
+  explicit TestUpgradeNotificationListener(UpgradeDetector* detector)
+      : notifications_count_(0), detector_(detector) {
+    DCHECK(detector_);
+    detector_->AddObserver(this);
   }
-  ~TestUpgradeNotificationListener() override {}
+  ~TestUpgradeNotificationListener() override {
+    detector_->RemoveObserver(this);
+  }
 
-  const std::vector<int>& notifications_received() const {
-    return notifications_received_;
-  }
+  int notification_count() const { return notifications_count_; }
 
  private:
-  // content::NotificationObserver:
-  void Observe(int type,
-               const content::NotificationSource& source,
-               const content::NotificationDetails& details) override {
-    notifications_received_.push_back(type);
-  }
+  // UpgradeObserver:
+  void OnUpgradeRecommended() override { ++notifications_count_; }
 
-  // Registrar for listening to notifications.
-  content::NotificationRegistrar registrar_;
+  // The number of upgrade recommended notifications received.
+  int notifications_count_;
 
-  // Keeps track of the number and types of notifications that were received.
-  std::vector<int> notifications_received_;
+  UpgradeDetector* detector_;
 
   DISALLOW_COPY_AND_ASSIGN(TestUpgradeNotificationListener);
 };
 
-TEST(UpgradeDetectorImplTest, VariationsChanges) {
-  content::TestBrowserThreadBundle bundle;
+}  // namespace
 
-  TestUpgradeNotificationListener notifications_listener;
+TEST(UpgradeDetectorImplTest, VariationsChanges) {
+  base::test::ScopedTaskEnvironment task_environment;
+
   TestUpgradeDetectorImpl detector;
+  TestUpgradeNotificationListener notifications_listener(&detector);
   EXPECT_FALSE(detector.notify_upgrade());
-  EXPECT_TRUE(notifications_listener.notifications_received().empty());
+  EXPECT_EQ(0, notifications_listener.notification_count());
 
   detector.OnExperimentChangesDetected(
       variations::VariationsService::Observer::BEST_EFFORT);
   EXPECT_FALSE(detector.notify_upgrade());
-  EXPECT_TRUE(notifications_listener.notifications_received().empty());
+  EXPECT_EQ(0, notifications_listener.notification_count());
 
   detector.NotifyOnUpgradeWithTimePassed(base::TimeDelta::FromDays(30));
   EXPECT_TRUE(detector.notify_upgrade());
-  ASSERT_EQ(1U, notifications_listener.notifications_received().size());
-  EXPECT_EQ(chrome::NOTIFICATION_UPGRADE_RECOMMENDED,
-            notifications_listener.notifications_received().front());
+  EXPECT_EQ(1, notifications_listener.notification_count());
   EXPECT_EQ(0, detector.trigger_critical_update_call_count());
 
-  // Execute tasks sent to FILE thread by |detector| referencing it
-  // while it's still in scope.
-  content::RunAllPendingInMessageLoop(content::BrowserThread::FILE);
+  // Execute tasks posted by |detector| referencing it while it's still in
+  // scope.
+  task_environment.RunUntilIdle();
 }
 
 TEST(UpgradeDetectorImplTest, VariationsCriticalChanges) {
-  content::TestBrowserThreadBundle bundle;
+  base::test::ScopedTaskEnvironment task_environment;
 
-  TestUpgradeNotificationListener notifications_listener;
   TestUpgradeDetectorImpl detector;
+  TestUpgradeNotificationListener notifications_listener(&detector);
   EXPECT_FALSE(detector.notify_upgrade());
-  EXPECT_TRUE(notifications_listener.notifications_received().empty());
+  EXPECT_EQ(0, notifications_listener.notification_count());
 
   detector.OnExperimentChangesDetected(
       variations::VariationsService::Observer::CRITICAL);
   EXPECT_FALSE(detector.notify_upgrade());
-  EXPECT_TRUE(notifications_listener.notifications_received().empty());
+  EXPECT_EQ(0, notifications_listener.notification_count());
 
   detector.NotifyOnUpgradeWithTimePassed(base::TimeDelta::FromDays(30));
   EXPECT_TRUE(detector.notify_upgrade());
-  ASSERT_EQ(1U, notifications_listener.notifications_received().size());
-  EXPECT_EQ(chrome::NOTIFICATION_UPGRADE_RECOMMENDED,
-            notifications_listener.notifications_received().front());
+  EXPECT_EQ(1, notifications_listener.notification_count());
   EXPECT_EQ(1, detector.trigger_critical_update_call_count());
 
-  // Execute tasks sent to FILE thread by |detector| referencing it
-  // while it's still in scope.
-  content::RunAllPendingInMessageLoop(content::BrowserThread::FILE);
+  // Execute tasks posted by |detector| referencing it while it's still in
+  // scope.
+  task_environment.RunUntilIdle();
 }

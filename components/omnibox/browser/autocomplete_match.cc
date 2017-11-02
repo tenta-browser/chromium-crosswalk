@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "base/feature_list.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/strings/string16.h"
@@ -15,18 +16,19 @@
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "components/omnibox/browser/autocomplete_provider.h"
+#include "components/omnibox/browser/omnibox_field_trial.h"
 #include "components/omnibox/browser/suggestion_answer.h"
 #include "components/search_engines/template_url.h"
 #include "components/search_engines/template_url_service.h"
-#include "components/url_formatter/url_formatter.h"
 #include "ui/gfx/vector_icon_types.h"
 
 #if !defined(OS_ANDROID) && !defined(OS_IOS)
 #include "components/omnibox/browser/vector_icons.h"  // nogncheck
-#include "ui/vector_icons/vector_icons.h"             // nogncheck
+#include "components/vector_icons/vector_icons.h"     // nogncheck
 #endif
 
 namespace {
@@ -202,7 +204,7 @@ const gfx::VectorIcon& AutocompleteMatch::TypeToVectorIcon(Type type) {
     case Type::SEARCH_OTHER_ENGINE:
     case Type::CONTACT_DEPRECATED:
     case Type::VOICE_SUGGEST:
-      return ui::kSearchIcon;
+      return vector_icons::kSearchIcon;
 
     case Type::EXTENSION_APP:
       return omnibox::kExtensionAppIcon;
@@ -435,7 +437,7 @@ GURL AutocompleteMatch::GURLToStrippedGURL(
   // to eliminate cases like past search URLs from history that differ only
   // by some obscure query param from each other or from the search/keyword
   // provider matches.
-  TemplateURL* template_url = GetTemplateURLWithKeyword(
+  const TemplateURL* template_url = GetTemplateURLWithKeyword(
       template_url_service, keyword, stripped_destination_url.host());
   if (template_url != NULL &&
       template_url->SupportsReplacement(
@@ -483,6 +485,34 @@ GURL AutocompleteMatch::GURLToStrippedGURL(
     stripped_destination_url = stripped_destination_url.ReplaceComponents(
         replacements);
   return stripped_destination_url;
+}
+
+// static
+url_formatter::FormatUrlTypes AutocompleteMatch::GetFormatTypes(
+    bool preserve_scheme,
+    bool preserve_subdomain,
+    bool preserve_after_host) {
+  auto format_types = url_formatter::kFormatUrlOmitDefaults;
+  if (preserve_scheme) {
+    format_types &= ~url_formatter::kFormatUrlOmitHTTP;
+  } else if (base::FeatureList::IsEnabled(
+                 omnibox::kUIExperimentHideSuggestionUrlScheme)) {
+    format_types |= url_formatter::kFormatUrlOmitHTTPS;
+  }
+
+  if (!preserve_subdomain &&
+      base::FeatureList::IsEnabled(
+          omnibox::kUIExperimentHideSuggestionUrlTrivialSubdomains)) {
+    format_types |= url_formatter::kFormatUrlExperimentalOmitTrivialSubdomains;
+  }
+
+  if (!preserve_after_host &&
+      base::FeatureList::IsEnabled(
+          omnibox::kUIExperimentElideSuggestionUrlAfterHost)) {
+    format_types |= url_formatter::kFormatUrlExperimentalElideAfterHost;
+  }
+
+  return format_types;
 }
 
 void AutocompleteMatch::ComputeStrippedDestinationURL(
@@ -589,6 +619,39 @@ void AutocompleteMatch::PossiblySwapContentsAndDescriptionForDisplay() {
   if (swap_contents_and_description) {
     std::swap(contents, description);
     std::swap(contents_class, description_class);
+  }
+}
+
+void AutocompleteMatch::InlineTailPrefix(const base::string16& common_prefix) {
+  if (type == AutocompleteMatchType::SEARCH_SUGGEST_TAIL) {
+    contents = common_prefix + contents;
+    // Shift existing styles.
+    for (ACMatchClassification& classification : contents_class)
+      classification.offset += common_prefix.size();
+    // Prefix with dim text.
+    contents_class.insert(contents_class.begin(),
+                          ACMatchClassification(0, ACMatchClassification::DIM));
+  } else if (base::StartsWith(contents, common_prefix,
+                              base::CompareCase::SENSITIVE)) {
+    // Prefix with dim text.
+    contents_class.insert(contents_class.begin(),
+                          ACMatchClassification(0, ACMatchClassification::DIM));
+    // Find last one that overlaps or starts at common prefix.
+    size_t i = 1;
+    while (i < contents_class.size() &&
+           contents_class[i].offset <= common_prefix.size())
+      ++i;
+    if (i > 1) {
+      // Erase any in-between.
+      contents_class.erase(contents_class.begin() + 1,
+                           contents_class.begin() + i - 1);
+      // Make this classification start after common prefix.
+      contents_class[1].offset = common_prefix.size();
+      // If |common_prefix| and |contents| are equal, we'll end up with a
+      // classification that's outside the range of the string. Remove it here.
+      if (contents_class[1].offset >= contents.size())
+        contents_class.erase(contents_class.begin() + 1, contents_class.end());
+    }
   }
 }
 

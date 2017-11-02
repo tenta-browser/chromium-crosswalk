@@ -41,8 +41,8 @@ class FailingHttpTransaction : public HttpTransaction {
             const CompletionCallback& callback,
             const NetLogWithSource& net_log) override;
   int RestartIgnoringLastError(const CompletionCallback& callback) override;
-  int RestartWithCertificate(X509Certificate* client_cert,
-                             SSLPrivateKey* client_private_key,
+  int RestartWithCertificate(scoped_refptr<X509Certificate> client_cert,
+                             scoped_refptr<SSLPrivateKey> client_private_key,
                              const CompletionCallback& callback) override;
   int RestartWithAuth(const AuthCredentials& credentials,
                       const CompletionCallback& callback) override;
@@ -70,6 +70,8 @@ class FailingHttpTransaction : public HttpTransaction {
       const BeforeHeadersSentCallback& callback) override;
   int ResumeNetworkStart() override;
   void GetConnectionAttempts(ConnectionAttempts* out) const override;
+  void SetRequestHeadersCallback(RequestHeadersCallback) override {}
+  void SetResponseHeadersCallback(ResponseHeadersCallback) override {}
 
  private:
   Error error_;
@@ -96,8 +98,8 @@ int FailingHttpTransaction::RestartIgnoringLastError(
 }
 
 int FailingHttpTransaction::RestartWithCertificate(
-    X509Certificate* client_cert,
-    SSLPrivateKey* client_private_key,
+    scoped_refptr<X509Certificate> client_cert,
+    scoped_refptr<SSLPrivateKey> client_private_key,
     const CompletionCallback& callback) {
   return ERR_FAILED;
 }

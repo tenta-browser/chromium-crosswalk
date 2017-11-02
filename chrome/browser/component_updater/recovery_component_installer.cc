@@ -8,6 +8,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/base_paths.h"
@@ -226,21 +227,17 @@ void DoElevatedInstallRecoveryComponent(const base::FilePath& path) {
 #endif
   // This task joins a process, hence .WithBaseSyncPrimitives().
   base::PostTaskWithTraits(
-      FROM_HERE, base::TaskTraits()
-                     .WithShutdownBehavior(
-                         base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN)
-                     .WithPriority(base::TaskPriority::BACKGROUND)
-                     .WithBaseSyncPrimitives(),
+      FROM_HERE,
+      {base::WithBaseSyncPrimitives(), base::TaskPriority::BACKGROUND,
+       base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
       base::Bind(&WaitForElevatedInstallToComplete, base::Passed(&process)));
 }
 
 void ElevatedInstallRecoveryComponent(const base::FilePath& installer_path) {
   base::PostTaskWithTraits(
-      FROM_HERE, base::TaskTraits()
-                     .WithShutdownBehavior(
-                         base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN)
-                     .WithPriority(base::TaskPriority::BACKGROUND)
-                     .MayBlock(),
+      FROM_HERE,
+      {base::MayBlock(), base::TaskPriority::BACKGROUND,
+       base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
       base::Bind(&DoElevatedInstallRecoveryComponent, installer_path));
 }
 
@@ -263,7 +260,7 @@ class RecoveryComponentInstaller : public update_client::CrxInstaller {
   void OnUpdateError(int error) override;
 
   update_client::CrxInstaller::Result Install(
-      const base::DictionaryValue& manifest,
+      std::unique_ptr<base::DictionaryValue> manifest,
       const base::FilePath& unpack_path) override;
 
   bool GetInstalledFile(const std::string& file,
@@ -372,11 +369,9 @@ bool RecoveryComponentInstaller::RunInstallCommand(
   // Let worker pool thread wait for us so we don't block Chrome shutdown.
   // This task joins a process, hence .WithBaseSyncPrimitives().
   base::PostTaskWithTraits(
-      FROM_HERE, base::TaskTraits()
-                     .WithShutdownBehavior(
-                         base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN)
-                     .WithPriority(base::TaskPriority::BACKGROUND)
-                     .WithBaseSyncPrimitives(),
+      FROM_HERE,
+      {base::WithBaseSyncPrimitives(), base::TaskPriority::BACKGROUND,
+       base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
       base::Bind(&WaitForInstallToComplete, base::Passed(&process),
                  installer_folder, prefs_));
 
@@ -402,11 +397,11 @@ bool SetPosixExecutablePermission(const base::FilePath& path) {
 #endif  // defined(OS_POSIX)
 
 update_client::CrxInstaller::Result RecoveryComponentInstaller::Install(
-    const base::DictionaryValue& manifest,
+    std::unique_ptr<base::DictionaryValue> manifest,
     const base::FilePath& unpack_path) {
-  return update_client::InstallFunctionWrapper(
-      base::Bind(&RecoveryComponentInstaller::DoInstall, base::Unretained(this),
-                 base::ConstRef(manifest), base::ConstRef(unpack_path)));
+  return update_client::InstallFunctionWrapper(base::Bind(
+      &RecoveryComponentInstaller::DoInstall, base::Unretained(this),
+      base::ConstRef(*manifest), base::ConstRef(unpack_path)));
 }
 
 bool RecoveryComponentInstaller::DoInstall(

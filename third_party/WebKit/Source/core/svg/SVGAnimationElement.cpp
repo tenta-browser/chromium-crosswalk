@@ -39,8 +39,8 @@ SVGAnimationElement::SVGAnimationElement(const QualifiedName& tag_name,
       animation_valid_(false),
       calc_mode_(kCalcModeLinear),
       animation_mode_(kNoAnimation) {
-  DCHECK(RuntimeEnabledFeatures::smilEnabled());
-  UseCounter::Count(document, UseCounter::kSVGAnimationElement);
+  DCHECK(RuntimeEnabledFeatures::SMILEnabled());
+  UseCounter::Count(document, WebFeature::kSVGAnimationElement);
 }
 
 bool SVGAnimationElement::ParseValues(const String& value,
@@ -49,7 +49,7 @@ bool SVGAnimationElement::ParseValues(const String& value,
   // space before and after semicolon separators, is allowed and will be
   // ignored.
   // http://www.w3.org/TR/SVG11/animate.html#ValuesAttribute
-  result.Clear();
+  result.clear();
   Vector<String> parse_list;
   value.Split(';', true, parse_list);
   unsigned last = parse_list.size() - 1;
@@ -66,14 +66,14 @@ bool SVGAnimationElement::ParseValues(const String& value,
 
   return true;
 fail:
-  result.Clear();
+  result.clear();
   return false;
 }
 
 static bool ParseKeyTimes(const String& string,
                           Vector<float>& result,
                           bool verify_order) {
-  result.Clear();
+  result.clear();
   Vector<String> parse_list;
   string.Split(';', true, parse_list);
   for (unsigned n = 0; n < parse_list.size(); ++n) {
@@ -94,7 +94,7 @@ static bool ParseKeyTimes(const String& string,
   }
   return true;
 fail:
-  result.Clear();
+  result.clear();
   return false;
 }
 
@@ -137,7 +137,7 @@ static bool ParseKeySplinesInternal(const String& string,
 
 static bool ParseKeySplines(const String& string,
                             Vector<gfx::CubicBezier>& result) {
-  result.Clear();
+  result.clear();
   if (string.IsEmpty())
     return true;
   bool parsed = true;
@@ -146,7 +146,7 @@ static bool ParseKeySplines(const String& string,
   else
     parsed = ParseKeySplinesInternal<UChar>(string, result);
   if (!parsed) {
-    result.Clear();
+    result.clear();
     return false;
   }
   return true;
@@ -287,20 +287,20 @@ void SVGAnimationElement::SetCalcMode(const AtomicString& calc_mode) {
   DEFINE_STATIC_LOCAL(const AtomicString, paced, ("paced"));
   DEFINE_STATIC_LOCAL(const AtomicString, spline, ("spline"));
   if (calc_mode == discrete) {
-    UseCounter::Count(GetDocument(), UseCounter::kSVGCalcModeDiscrete);
+    UseCounter::Count(GetDocument(), WebFeature::kSVGCalcModeDiscrete);
     SetCalcMode(kCalcModeDiscrete);
   } else if (calc_mode == linear) {
     if (isSVGAnimateMotionElement(*this))
-      UseCounter::Count(GetDocument(), UseCounter::kSVGCalcModeLinear);
+      UseCounter::Count(GetDocument(), WebFeature::kSVGCalcModeLinear);
     // else linear is the default.
     SetCalcMode(kCalcModeLinear);
   } else if (calc_mode == paced) {
     if (!isSVGAnimateMotionElement(*this))
-      UseCounter::Count(GetDocument(), UseCounter::kSVGCalcModePaced);
+      UseCounter::Count(GetDocument(), WebFeature::kSVGCalcModePaced);
     // else paced is the default.
     SetCalcMode(kCalcModePaced);
   } else if (calc_mode == spline) {
-    UseCounter::Count(GetDocument(), UseCounter::kSVGCalcModeSpline);
+    UseCounter::Count(GetDocument(), WebFeature::kSVGCalcModeSpline);
     SetCalcMode(kCalcModeSpline);
   } else
     SetCalcMode(isSVGAnimateMotionElement(*this) ? kCalcModePaced
@@ -342,7 +342,7 @@ void SVGAnimationElement::CalculateKeyTimesForCalcModePaced() {
 
   // FIXME, webkit.org/b/109010: m_keyTimes should not be modified in this
   // function.
-  key_times_.Clear();
+  key_times_.clear();
 
   Vector<float> key_times_for_paced;
   float total_distance = 0;
@@ -590,7 +590,7 @@ void SVGAnimationElement::StartedActiveInterval() {
   }
 
   if (animation_valid_ && (IsAdditive() || IsAccumulated()))
-    UseCounter::Count(&GetDocument(), UseCounter::kSVGSMILAdditiveAnimation);
+    UseCounter::Count(&GetDocument(), WebFeature::kSVGSMILAdditiveAnimation);
 }
 
 void SVGAnimationElement::UpdateAnimation(float percent,

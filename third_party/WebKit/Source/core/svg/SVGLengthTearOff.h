@@ -31,9 +31,9 @@
 #ifndef SVGLengthTearOff_h
 #define SVGLengthTearOff_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/svg/SVGLength.h"
 #include "core/svg/properties/SVGPropertyTearOff.h"
+#include "platform/bindings/ScriptWrappable.h"
 
 namespace blink {
 
@@ -57,14 +57,14 @@ class SVGLengthTearOff final : public SVGPropertyTearOff<SVGLength>,
     kSvgLengthtypePc = 10
   };
 
-  static SVGLengthTearOff* Create(
-      SVGLength* target,
-      SVGElement* context_element,
-      PropertyIsAnimValType property_is_anim_val,
-      const QualifiedName& attribute_name = QualifiedName::Null()) {
+  static SVGLengthTearOff* Create(SVGLength* target,
+                                  SVGElement* context_element,
+                                  PropertyIsAnimValType property_is_anim_val,
+                                  const QualifiedName& attribute_name) {
     return new SVGLengthTearOff(target, context_element, property_is_anim_val,
                                 attribute_name);
   }
+  static SVGLengthTearOff* CreateDetached();
 
   unsigned short unitType();
   SVGLengthMode UnitMode();
@@ -87,7 +87,7 @@ class SVGLengthTearOff final : public SVGPropertyTearOff<SVGLength>,
   SVGLengthTearOff(SVGLength*,
                    SVGElement* context_element,
                    PropertyIsAnimValType,
-                   const QualifiedName& attribute_name = QualifiedName::Null());
+                   const QualifiedName& attribute_name);
 };
 
 }  // namespace blink

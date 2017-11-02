@@ -26,10 +26,6 @@
 #include "platform/wtf/Noncopyable.h"
 #include "platform/wtf/WTFExport.h"
 
-#if ENABLE(INSTANCE_COUNTER)
-#include "platform/wtf/InstanceCounter.h"
-#endif
-
 #if DCHECK_IS_ON()
 #define CHECK_REF_COUNTED_LIFECYCLE 1
 #include "platform/wtf/ThreadRestrictionVerifier.h"
@@ -71,7 +67,7 @@ class WTF_EXPORT RefCountedBase {
  protected:
   RefCountedBase()
       : ref_count_(1)
-#if ENABLE(SECURITY_ASSERT)
+#if ENABLE_SECURITY_ASSERT
         ,
         deletion_has_begun_(false)
 #endif
@@ -100,7 +96,7 @@ class WTF_EXPORT RefCountedBase {
     DCHECK_GT(ref_count_, 0);
     --ref_count_;
     if (!ref_count_) {
-#if ENABLE(SECURITY_ASSERT)
+#if ENABLE_SECURITY_ASSERT
       deletion_has_begun_ = true;
 #endif
       return true;
@@ -114,12 +110,12 @@ class WTF_EXPORT RefCountedBase {
 #endif
 
  private:
-#if CHECK_REF_COUNTED_LIFECYCLE || ENABLE(SECURITY_ASSERT)
+#if CHECK_REF_COUNTED_LIFECYCLE || ENABLE_SECURITY_ASSERT
   friend void Adopted(RefCountedBase*);
 #endif
 
   mutable int ref_count_;
-#if ENABLE(SECURITY_ASSERT)
+#if ENABLE_SECURITY_ASSERT
   mutable bool deletion_has_begun_;
 #endif
 #if CHECK_REF_COUNTED_LIFECYCLE
@@ -128,7 +124,7 @@ class WTF_EXPORT RefCountedBase {
 #endif
 };
 
-#if CHECK_REF_COUNTED_LIFECYCLE || ENABLE(SECURITY_ASSERT)
+#if CHECK_REF_COUNTED_LIFECYCLE || ENABLE_SECURITY_ASSERT
 inline void Adopted(RefCountedBase* object) {
   if (!object)
     return;
@@ -155,13 +151,7 @@ class RefCounted : public RefCountedBase {
   }
 
  protected:
-#if ENABLE(INSTANCE_COUNTER)
-  RefCounted() { incrementInstanceCount<T>(static_cast<T*>(this)); }
-
-  ~RefCounted() { decrementInstanceCount<T>(static_cast<T*>(this)); }
-#else
   RefCounted() {}
-#endif
 };
 
 // Allows subclasses to use the default copy constructor.

@@ -48,7 +48,7 @@ class EVENTS_OZONE_EVDEV_EXPORT InputControllerEvdev : public InputController {
                          const base::TimeDelta& interval) override;
   void GetAutoRepeatRate(base::TimeDelta* delay,
                          base::TimeDelta* interval) override;
-  bool SetCurrentLayoutByName(const std::string& layout_name) override;
+  void SetCurrentLayoutByName(const std::string& layout_name) override;
   void SetTouchEventLoggingEnabled(bool enabled) override;
   void SetTouchpadSensitivity(int value) override;
   void SetTapToClick(bool enabled) override;
@@ -57,10 +57,11 @@ class EVENTS_OZONE_EVDEV_EXPORT InputControllerEvdev : public InputController {
   void SetNaturalScroll(bool enabled) override;
   void SetMouseSensitivity(int value) override;
   void SetPrimaryButtonRight(bool right) override;
+  void SetMouseReverseScroll(bool enabled) override;
   void SetTapToClickPaused(bool state) override;
-  void GetTouchDeviceStatus(const GetTouchDeviceStatusReply& reply) override;
+  void GetTouchDeviceStatus(GetTouchDeviceStatusReply reply) override;
   void GetTouchEventLog(const base::FilePath& out_dir,
-                        const GetTouchEventLogReply& reply) override;
+                        GetTouchEventLogReply reply) override;
   void SetInternalTouchpadEnabled(bool enabled) override;
   bool IsInternalTouchpadEnabled() const override;
   void SetTouchscreensEnabled(bool enabled) override;

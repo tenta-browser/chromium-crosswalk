@@ -11,13 +11,15 @@
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/engagement/site_engagement_service.h"
+#include "chrome/browser/notifications/notification_common.h"
 #include "chrome/browser/notifications/notification_display_service_factory.h"
-#include "chrome/browser/notifications/notification_object_proxy.h"
-#include "chrome/browser/notifications/persistent_notification_delegate.h"
+#include "chrome/browser/notifications/web_notification_delegate.h"
+#include "chrome/browser/permissions/permission_decision_auto_blocker.h"
 #include "chrome/browser/permissions/permission_manager.h"
 #include "chrome/browser/permissions/permission_result.h"
 #include "chrome/browser/profiles/profile.h"
@@ -27,6 +29,8 @@
 #include "chrome/browser/safe_browsing/ping_manager.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/common/chrome_features.h"
+#include "chrome/common/features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
@@ -34,7 +38,6 @@
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/desktop_notification_delegate.h"
 #include "content/public/browser/notification_event_dispatcher.h"
 #include "content/public/common/notification_resources.h"
 #include "content/public/common/platform_notification_data.h"
@@ -111,8 +114,7 @@ PlatformNotificationServiceImpl::GetInstance() {
   return base::Singleton<PlatformNotificationServiceImpl>::get();
 }
 
-PlatformNotificationServiceImpl::PlatformNotificationServiceImpl()
-    : test_display_service_(nullptr) {
+PlatformNotificationServiceImpl::PlatformNotificationServiceImpl() {
 #if BUILDFLAG(ENABLE_BACKGROUND)
   pending_click_dispatch_events_ = 0;
 #endif
@@ -120,6 +122,7 @@ PlatformNotificationServiceImpl::PlatformNotificationServiceImpl()
 
 PlatformNotificationServiceImpl::~PlatformNotificationServiceImpl() {}
 
+// TODO(miguelg): Move this to PersistentNotificationHandler
 void PlatformNotificationServiceImpl::OnPersistentNotificationClick(
     BrowserContext* browser_context,
     const std::string& notification_id,
@@ -165,6 +168,7 @@ void PlatformNotificationServiceImpl::OnPersistentNotificationClick(
               base::Unretained(this)));
 }
 
+// TODO(miguelg): Move this to PersistentNotificationHandler
 void PlatformNotificationServiceImpl::OnPersistentNotificationClose(
     BrowserContext* browser_context,
     const std::string& notification_id,
@@ -287,7 +291,18 @@ PlatformNotificationServiceImpl::CheckPermissionOnIOThread(
   if (setting == CONTENT_SETTING_BLOCK)
     return blink::mojom::PermissionStatus::DENIED;
 
-  return blink::mojom::PermissionStatus::ASK;
+  // Check whether the permission has been embargoed (automatically blocked).
+  // TODO(crbug.com/658020): make PermissionManager::GetPermissionStatus thread
+  // safe so it isn't necessary to do this HostContentSettingsMap and embargo
+  // check outside of the permissions code.
+  PermissionResult result = PermissionDecisionAutoBlocker::GetEmbargoResult(
+      host_content_settings_map, origin, CONTENT_SETTINGS_TYPE_NOTIFICATIONS,
+      base::Time::Now());
+  DCHECK(result.content_setting == CONTENT_SETTING_ASK ||
+         result.content_setting == CONTENT_SETTING_BLOCK);
+  return result.content_setting == CONTENT_SETTING_ASK
+             ? blink::mojom::PermissionStatus::ASK
+             : blink::mojom::PermissionStatus::DENIED;
 }
 
 void PlatformNotificationServiceImpl::DisplayNotification(
@@ -296,7 +311,6 @@ void PlatformNotificationServiceImpl::DisplayNotification(
     const GURL& origin,
     const content::PlatformNotificationData& notification_data,
     const content::NotificationResources& notification_resources,
-    std::unique_ptr<content::DesktopNotificationDelegate> delegate,
     base::Closure* cancel_callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
@@ -311,15 +325,15 @@ void PlatformNotificationServiceImpl::DisplayNotification(
   DCHECK_EQ(0u, notification_data.actions.size());
   DCHECK_EQ(0u, notification_resources.action_icons.size());
 
-  NotificationObjectProxy* proxy = new NotificationObjectProxy(
-      browser_context, notification_id, origin, std::move(delegate));
+  NotificationDelegate* notification_delegate = new WebNotificationDelegate(
+      NotificationCommon::NON_PERSISTENT, profile, notification_id, origin);
+
   Notification notification = CreateNotificationFromData(
       profile, GURL() /* service_worker_scope */, origin, notification_data,
-      notification_resources, proxy);
+      notification_resources, notification_delegate);
 
-  GetNotificationDisplayService(profile)->Display(
-      NotificationCommon::NON_PERSISTENT, notification.delegate_id(),
-      notification);
+  NotificationDisplayServiceFactory::GetForProfile(profile)->Display(
+      NotificationCommon::NON_PERSISTENT, notification_id, notification);
   if (cancel_callback) {
 #if defined(OS_WIN)
     std::string profile_id =
@@ -327,9 +341,8 @@ void PlatformNotificationServiceImpl::DisplayNotification(
 #elif defined(OS_POSIX)
     std::string profile_id = profile->GetPath().BaseName().value();
 #endif
-    *cancel_callback =
-        base::Bind(&CancelNotification, notification.delegate_id(), profile_id,
-                   profile->IsOffTheRecord());
+    *cancel_callback = base::Bind(&CancelNotification, notification_id,
+                                  profile_id, profile->IsOffTheRecord());
   }
 }
 
@@ -351,17 +364,14 @@ void PlatformNotificationServiceImpl::DisplayPersistentNotification(
   Profile* profile = Profile::FromBrowserContext(browser_context);
   DCHECK(profile);
 
-  // The notification settings button will be appended after the developer-
-  // supplied buttons, available in |notification_data.actions|.
-  int settings_button_index = notification_data.actions.size();
-  PersistentNotificationDelegate* delegate = new PersistentNotificationDelegate(
-      browser_context, notification_id, origin, settings_button_index);
+  NotificationDelegate* delegate = new WebNotificationDelegate(
+      NotificationCommon::PERSISTENT, profile, notification_id, origin);
 
   Notification notification = CreateNotificationFromData(
       profile, service_worker_scope, origin, notification_data,
       notification_resources, delegate);
 
-  GetNotificationDisplayService(profile)->Display(
+  NotificationDisplayServiceFactory::GetForProfile(profile)->Display(
       NotificationCommon::PERSISTENT, notification_id, notification);
   base::RecordAction(base::UserMetricsAction("Notifications.Persistent.Shown"));
 }
@@ -376,8 +386,8 @@ void PlatformNotificationServiceImpl::ClosePersistentNotification(
 
   closed_notifications_.insert(notification_id);
 
-  GetNotificationDisplayService(profile)->Close(NotificationCommon::PERSISTENT,
-                                                notification_id);
+  NotificationDisplayServiceFactory::GetForProfile(profile)->Close(
+      NotificationCommon::PERSISTENT, notification_id);
 }
 
 void PlatformNotificationServiceImpl::GetDisplayedNotifications(
@@ -393,7 +403,8 @@ void PlatformNotificationServiceImpl::GetDisplayedNotifications(
                  false /* supports_synchronization */);
     return;
   }
-  GetNotificationDisplayService(profile)->GetDisplayed(callback);
+  NotificationDisplayServiceFactory::GetForProfile(profile)->GetDisplayed(
+      callback);
 }
 
 void PlatformNotificationServiceImpl::OnClickEventDispatchComplete(
@@ -452,7 +463,7 @@ Notification PlatformNotificationServiceImpl::CreateNotificationFromData(
     // n.b. this should only be posted once per notification.
     BrowserThread::PostTask(
         BrowserThread::IO, FROM_HERE,
-        base::Bind(
+        base::BindOnce(
             &ReportNotificationImageOnIOThread,
             make_scoped_refptr(g_browser_process->safe_browsing_service()),
             profile, origin, notification_resources.image));
@@ -502,14 +513,6 @@ Notification PlatformNotificationServiceImpl::CreateNotificationFromData(
   return notification;
 }
 
-NotificationDisplayService*
-PlatformNotificationServiceImpl::GetNotificationDisplayService(
-    Profile* profile) {
-  return test_display_service_
-             ? test_display_service_
-             : NotificationDisplayServiceFactory::GetForProfile(profile);
-}
-
 base::string16 PlatformNotificationServiceImpl::DisplayNameForContextMessage(
     Profile* profile,
     const GURL& origin) const {
@@ -526,11 +529,6 @@ base::string16 PlatformNotificationServiceImpl::DisplayNameForContextMessage(
 #endif
 
   return base::string16();
-}
-
-void PlatformNotificationServiceImpl::SetNotificationDisplayServiceForTesting(
-    NotificationDisplayService* display_service) {
-  test_display_service_ = display_service;
 }
 
 void PlatformNotificationServiceImpl::RecordSiteEngagement(

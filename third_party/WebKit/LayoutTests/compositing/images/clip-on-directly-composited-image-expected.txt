@@ -5,14 +5,12 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true
+      "backgroundColor": "#FFFFFF"
     },
     {
       "name": "LayoutImage (positioned) IMG class='composited'",
       "position": [210, 23],
-      "transformOrigin": [90, 90],
-      "bounds": [140, 140],
-      "drawsContent": true
+      "bounds": [140, 140]
     }
   ]
 }

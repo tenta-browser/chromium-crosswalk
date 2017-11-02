@@ -102,6 +102,7 @@ class SerializerMarkupAccumulator : public MarkupAccumulator {
                        Namespaces*) override;
   void AppendStartTag(Node&, Namespaces* = nullptr) override;
   void AppendEndTag(const Element&) override;
+  std::pair<Node*, Element*> GetAuxiliaryDOMTree(const Element&) const override;
 
  private:
   void AppendAttributeValue(StringBuilder& out, const String& attribute_value);
@@ -206,7 +207,7 @@ void SerializerMarkupAccumulator::AppendAttribute(StringBuilder& out,
         AppendRewrittenAttribute(out, element, attribute.GetName().ToString(),
                                  new_link_for_the_element);
       } else {
-        ASSERT(is_src_doc_attribute);
+        DCHECK(is_src_doc_attribute);
         // Emit src instead of srcdoc attribute for frame elements - we want the
         // serialized subframe to use html contents from the link provided by
         // Delegate::rewriteLink rather than html contents from srcdoc
@@ -230,6 +231,11 @@ void SerializerMarkupAccumulator::AppendStartTag(Node& node,
 
 void SerializerMarkupAccumulator::AppendEndTag(const Element& element) {
   MarkupAccumulator::AppendEndTag(element);
+}
+
+std::pair<Node*, Element*> SerializerMarkupAccumulator::GetAuxiliaryDOMTree(
+    const Element& element) const {
+  return delegate_.GetAuxiliaryDOMTree(element);
 }
 
 void SerializerMarkupAccumulator::AppendAttributeValue(
@@ -267,11 +273,18 @@ void SerializerMarkupAccumulator::AppendRewrittenAttribute(
 
 FrameSerializer::FrameSerializer(Deque<SerializedResource>& resources,
                                  Delegate& delegate)
-    : resources_(&resources), is_serializing_css_(false), delegate_(delegate) {}
+    : resources_(&resources),
+      is_serializing_css_(false),
+      delegate_(delegate),
+      total_image_count_(0),
+      loaded_image_count_(0),
+      total_css_count_(0),
+      loaded_css_count_(0),
+      should_collect_problem_metric_(false) {}
 
 void FrameSerializer::SerializeFrame(const LocalFrame& frame) {
   TRACE_EVENT0("page-serialization", "FrameSerializer::serializeFrame");
-  ASSERT(frame.GetDocument());
+  DCHECK(frame.GetDocument());
   Document& document = *frame.GetDocument();
   KURL url = document.Url();
 
@@ -296,11 +309,13 @@ void FrameSerializer::SerializeFrame(const LocalFrame& frame) {
         document.Encoding().Encode(text, WTF::kEntitiesForUnencodables);
     resources_->push_back(SerializedResource(
         url, document.SuggestedMIMEType(),
-        SharedBuffer::Create(frame_html.Data(), frame_html.length())));
+        SharedBuffer::Create(frame_html.data(), frame_html.length())));
   }
 
+  should_collect_problem_metric_ =
+      delegate_.ShouldCollectProblemMetric() && frame.IsMainFrame();
   for (Node* node : serialized_nodes) {
-    ASSERT(node);
+    DCHECK(node);
     if (!node->IsElementNode())
       continue;
 
@@ -338,8 +353,38 @@ void FrameSerializer::SerializeFrame(const LocalFrame& frame) {
     } else if (isHTMLStyleElement(element)) {
       HTMLStyleElement& style_element = toHTMLStyleElement(element);
       if (CSSStyleSheet* sheet = style_element.sheet())
-        SerializeCSSStyleSheet(*sheet, KURL());
+        SerializeCSSStyleSheet(*sheet, NullURL());
     }
+  }
+  if (should_collect_problem_metric_) {
+    // Report detectors through UMA.
+    // We're having exact 21 buckets for percentage because we want to have 5%
+    // in each bucket to avoid potential spikes in the distribution.
+    UMA_HISTOGRAM_COUNTS_100(
+        "PageSerialization.ProblemDetection.TotalImageCount",
+        static_cast<int64_t>(total_image_count_));
+    if (total_image_count_ > 0) {
+      DCHECK_LE(loaded_image_count_, total_image_count_);
+      DEFINE_STATIC_LOCAL(
+          LinearHistogram, image_histogram,
+          ("PageSerialization.ProblemDetection.LoadedImagePercentage", 1, 100,
+           21));
+      image_histogram.Count(
+          static_cast<int64_t>(loaded_image_count_ * 100 / total_image_count_));
+    }
+
+    UMA_HISTOGRAM_COUNTS_100("PageSerialization.ProblemDetection.TotalCSSCount",
+                             static_cast<int64_t>(total_css_count_));
+    if (total_css_count_ > 0) {
+      DCHECK_LE(loaded_css_count_, total_css_count_);
+      DEFINE_STATIC_LOCAL(
+          LinearHistogram, css_histogram,
+          ("PageSerialization.ProblemDetection.LoadedCSSPercentage", 1, 100,
+           21));
+      css_histogram.Count(
+          static_cast<int64_t>(loaded_css_count_ * 100 / total_css_count_));
+    }
+    should_collect_problem_metric_ = false;
   }
 }
 
@@ -354,9 +399,16 @@ void FrameSerializer::SerializeCSSStyleSheet(CSSStyleSheet& style_sheet,
                          delegate_.ShouldSkipResourceWithURL(url))) {
     return;
   }
+  if (!is_inline_css)
+    resource_urls_.insert(url);
+  if (should_collect_problem_metric_ && !is_inline_css) {
+    total_css_count_++;
+    if (style_sheet.LoadCompleted())
+      loaded_css_count_++;
+  }
 
   TRACE_EVENT2("page-serialization", "FrameSerializer::serializeCSSStyleSheet",
-               "type", "CSS", "url", url.ElidedString().Utf8().Data());
+               "type", "CSS", "url", url.ElidedString().Utf8().data());
   // Only report UMA metric if this is not a reentrant CSS serialization call.
   double css_start_time = 0;
   if (!is_serializing_css_) {
@@ -369,7 +421,8 @@ void FrameSerializer::SerializeCSSStyleSheet(CSSStyleSheet& style_sheet,
   if (!is_inline_css) {
     StringBuilder css_text;
     css_text.Append("@charset \"");
-    css_text.Append(style_sheet.Contents()->Charset().DeprecatedLower());
+    css_text.Append(
+        String(style_sheet.Contents()->Charset().GetName()).DeprecatedLower());
     css_text.Append("\";\n\n");
 
     for (unsigned i = 0; i < style_sheet.length(); ++i) {
@@ -383,14 +436,13 @@ void FrameSerializer::SerializeCSSStyleSheet(CSSStyleSheet& style_sheet,
     }
 
     WTF::TextEncoding text_encoding(style_sheet.Contents()->Charset());
-    ASSERT(text_encoding.IsValid());
+    DCHECK(text_encoding.IsValid());
     String text_string = css_text.ToString();
     CString text = text_encoding.Encode(
         text_string, WTF::kCSSEncodedEntitiesForUnencodables);
     resources_->push_back(
         SerializedResource(url, String("text/css"),
-                           SharedBuffer::Create(text.Data(), text.length())));
-    resource_urls_.insert(url);
+                           SharedBuffer::Create(text.data(), text.length())));
   }
 
   // Sub resources need to be serialized even if the CSS definition doesn't
@@ -410,7 +462,7 @@ void FrameSerializer::SerializeCSSStyleSheet(CSSStyleSheet& style_sheet,
 }
 
 void FrameSerializer::SerializeCSSRule(CSSRule* rule) {
-  ASSERT(rule->parentStyleSheet()->OwnerDocument());
+  DCHECK(rule->parentStyleSheet()->OwnerDocument());
   Document& document = *rule->parentStyleSheet()->OwnerDocument();
 
   switch (rule->type()) {
@@ -422,7 +474,7 @@ void FrameSerializer::SerializeCSSRule(CSSRule* rule) {
     case CSSRule::kImportRule: {
       CSSImportRule* import_rule = ToCSSImportRule(rule);
       KURL sheet_base_url = rule->parentStyleSheet()->BaseURL();
-      ASSERT(sheet_base_url.IsValid());
+      DCHECK(sheet_base_url.IsValid());
       KURL import_url = KURL(sheet_base_url, import_rule->href());
       if (import_rule->styleSheet())
         SerializeCSSStyleSheet(*import_rule->styleSheet(), import_url);
@@ -462,7 +514,7 @@ bool FrameSerializer::ShouldAddURL(const KURL& url) {
 void FrameSerializer::AddToResources(
     const String& mime_type,
     ResourceHasCacheControlNoStoreHeader has_cache_control_no_store_header,
-    PassRefPtr<const SharedBuffer> data,
+    RefPtr<const SharedBuffer> data,
     const KURL& url) {
   if (delegate_.ShouldSkipResource(has_cache_control_no_store_header))
     return;
@@ -473,17 +525,22 @@ void FrameSerializer::AddToResources(
   }
 
   resources_->push_back(SerializedResource(url, mime_type, std::move(data)));
-  resource_urls_.insert(url);
 }
 
 void FrameSerializer::AddImageToResources(ImageResourceContent* image,
                                           const KURL& url) {
-  if (!image || !image->HasImage() || image->ErrorOccurred() ||
-      !ShouldAddURL(url))
+  if (!ShouldAddURL(url))
     return;
+  resource_urls_.insert(url);
+  if (should_collect_problem_metric_)
+    total_image_count_++;
+  if (!image || !image->HasImage() || image->ErrorOccurred())
+    return;
+  if (should_collect_problem_metric_ && image->IsLoaded())
+    loaded_image_count_++;
 
   TRACE_EVENT2("page-serialization", "FrameSerializer::addImageToResources",
-               "type", "image", "url", url.ElidedString().Utf8().Data());
+               "type", "image", "url", url.ElidedString().Utf8().data());
   double image_start_time = MonotonicallyIncreasingTime();
 
   RefPtr<const SharedBuffer> data = image->GetImage()->Data();
@@ -506,8 +563,10 @@ void FrameSerializer::AddImageToResources(ImageResourceContent* image,
 }
 
 void FrameSerializer::AddFontToResources(FontResource* font) {
-  if (!font || !font->IsLoaded() || !font->ResourceBuffer() ||
-      !ShouldAddURL(font->Url()))
+  if (!font || !ShouldAddURL(font->Url()))
+    return;
+  resource_urls_.insert(font->Url());
+  if (!font || !font->IsLoaded() || !font->ResourceBuffer())
     return;
 
   RefPtr<const SharedBuffer> data(font->ResourceBuffer());
@@ -569,7 +628,7 @@ String FrameSerializer::MarkOfTheWebDeclaration(const KURL& url) {
   StringBuilder builder;
   bool emits_minus = false;
   CString orignal_url = url.GetString().Ascii();
-  for (const char* string = orignal_url.Data(); *string; ++string) {
+  for (const char* string = orignal_url.data(); *string; ++string) {
     const char ch = *string;
     if (ch == '-' && emits_minus) {
       builder.Append("%2D");
@@ -582,7 +641,7 @@ String FrameSerializer::MarkOfTheWebDeclaration(const KURL& url) {
   CString escaped_url = builder.ToString().Ascii();
   return String::Format("saved from url=(%04d)%s",
                         static_cast<int>(escaped_url.length()),
-                        escaped_url.Data());
+                        escaped_url.data());
 }
 
 }  // namespace blink

@@ -5,8 +5,7 @@
 #include "modules/serviceworkers/ServiceWorkerLinkResource.h"
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "bindings/core/v8/ScriptState.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "core/dom/Document.h"
 #include "core/frame/DOMWindow.h"
 #include "core/frame/LocalFrame.h"
@@ -15,9 +14,11 @@
 #include "core/inspector/ConsoleMessage.h"
 #include "modules/serviceworkers/NavigatorServiceWorker.h"
 #include "modules/serviceworkers/ServiceWorkerContainer.h"
+#include "platform/bindings/ScriptState.h"
+#include "platform/scheduler/child/web_scheduler.h"
 #include "platform/wtf/PtrUtil.h"
 #include "public/platform/Platform.h"
-#include "public/platform/WebScheduler.h"
+#include "public/platform/modules/serviceworker/service_worker_error_type.mojom-blink.h"
 
 namespace blink {
 
@@ -92,7 +93,7 @@ void ServiceWorkerLinkResource::Process() {
         "Cannot register service worker with <link> element. " +
             error_message));
     WTF::MakeUnique<RegistrationCallback>(owner_)->OnError(
-        WebServiceWorkerError(WebServiceWorkerError::kErrorTypeSecurity,
+        WebServiceWorkerError(mojom::blink::ServiceWorkerErrorType::kSecurity,
                               error_message));
     return;
   }

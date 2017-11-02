@@ -109,6 +109,12 @@ shouldBe("computedStyle.transitionProperty", "'solid'");
 shouldBe("style.webkitTransitionProperty", "'solid'");
 shouldBe("computedStyle.webkitTransitionProperty", "'solid'");
 
+style.transitionProperty = "default, top";
+shouldBe("style.transitionProperty", "'default, top'");
+shouldBe("computedStyle.transitionProperty", "'default, top'");
+shouldBe("style.webkitTransitionProperty", "'default, top'");
+shouldBe("computedStyle.webkitTransitionProperty", "'default, top'");
+
 debug("Invalid transition-property values.");
 style.transitionProperty = "";
 
@@ -177,8 +183,6 @@ shouldBe("style.transitionProperty", "''");
 style.transitionProperty = "width, inherit";
 shouldBe("style.transitionProperty", "''");
 style.transitionProperty = "left, unset";
-shouldBe("style.transitionProperty", "''");
-style.transitionProperty = "default, top";
 shouldBe("style.transitionProperty", "''");
 
 style.transitionProperty = "";
@@ -372,6 +376,12 @@ shouldBe("computedStyle.transitionTimingFunction", "'steps(5, start)'");
 shouldBe("style.webkitTransitionTimingFunction", "'steps(5, start)'");
 shouldBe("computedStyle.webkitTransitionTimingFunction", "'steps(5, start)'");
 
+style.transitionTimingFunction = "frames(5)";
+shouldBe("style.transitionTimingFunction", "'frames(5)'");
+shouldBe("computedStyle.transitionTimingFunction", "'frames(5)'");
+shouldBe("style.webkitTransitionTimingFunction", "'frames(5)'");
+shouldBe("computedStyle.webkitTransitionTimingFunction", "'frames(5)'");
+
 style.transitionProperty = "opacity, width";
 
 style.transitionTimingFunction = "ease-in-out, ease-in";
@@ -457,6 +467,30 @@ shouldBe("style.webkitTransitionTimingFunction", "''");
 shouldBe("computedStyle.webkitTransitionTimingFunction", "'ease'");
 
 style.transitionTimingFunction = "step(5)";
+shouldBe("style.transitionTimingFunction", "''");
+shouldBe("computedStyle.transitionTimingFunction", "'ease'");
+shouldBe("style.webkitTransitionTimingFunction", "''");
+shouldBe("computedStyle.webkitTransitionTimingFunction", "'ease'");
+
+style.transitionTimingFunction = "frame(5)";
+shouldBe("style.transitionTimingFunction", "''");
+shouldBe("computedStyle.transitionTimingFunction", "'ease'");
+shouldBe("style.webkitTransitionTimingFunction", "''");
+shouldBe("computedStyle.webkitTransitionTimingFunction", "'ease'");
+
+style.transitionTimingFunction = "frames()";
+shouldBe("style.transitionTimingFunction", "''");
+shouldBe("computedStyle.transitionTimingFunction", "'ease'");
+shouldBe("style.webkitTransitionTimingFunction", "''");
+shouldBe("computedStyle.webkitTransitionTimingFunction", "'ease'");
+
+style.transitionTimingFunction = "frames(1)";
+shouldBe("style.transitionTimingFunction", "''");
+shouldBe("computedStyle.transitionTimingFunction", "'ease'");
+shouldBe("style.webkitTransitionTimingFunction", "''");
+shouldBe("computedStyle.webkitTransitionTimingFunction", "'ease'");
+
+style.transitionTimingFunction = "frames(5, end)";
 shouldBe("style.transitionTimingFunction", "''");
 shouldBe("computedStyle.transitionTimingFunction", "'ease'");
 shouldBe("style.webkitTransitionTimingFunction", "''");

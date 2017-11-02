@@ -22,7 +22,7 @@ namespace content {
 // a separate unit is to make WebRtcAudioDeviceImpl more readable and easier
 // to maintain.
 class CONTENT_EXPORT WebRtcAudioDeviceNotImpl
-    : NON_EXPORTED_BASE(public webrtc::AudioDeviceModule) {
+    : public webrtc::AudioDeviceModule {
  public:
   WebRtcAudioDeviceNotImpl();
 
@@ -114,7 +114,7 @@ class CONTENT_EXPORT WebRtcAudioDeviceNotImpl
 #endif  // OS_IOS
 
  protected:
-  ~WebRtcAudioDeviceNotImpl() override{};
+  ~WebRtcAudioDeviceNotImpl() override {}
 
  private:
   base::TimeTicks last_process_time_;

@@ -66,3 +66,11 @@ std::string SearchTermsData::ForceInstantResultsParam(
 std::string SearchTermsData::GoogleImageSearchSource() const {
   return std::string();
 }
+
+std::string SearchTermsData::GetYandexReferralID() const {
+  return std::string();
+}
+
+std::string SearchTermsData::GetMailRUReferralID() const {
+  return std::string();
+}

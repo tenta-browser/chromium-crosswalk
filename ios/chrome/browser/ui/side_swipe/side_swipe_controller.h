@@ -17,12 +17,10 @@
 @class CardSideSwipeView;
 @class SideSwipeGestureRecognizer;
 
-namespace ios_internal {
 // Notification sent when the user starts a side swipe (on tablet).
 extern NSString* const kSideSwipeWillStartNotification;
 // Notification sent when the user finishes a side swipe (on tablet).
 extern NSString* const kSideSwipeDidStopNotification;
-}  // namespace ios_internal
 
 // A protocol for the Side Swipe controller sources.
 @protocol SideSwipeContentProvider
@@ -78,8 +76,8 @@ extern NSString* const kSideSwipeDidStopNotification;
     : NSObject<CRWSwipeRecognizerProvider, UIGestureRecognizerDelegate>
 
 @property(nonatomic, assign) BOOL inSwipe;
-@property(nonatomic, assign) id<SideSwipeControllerDelegate> swipeDelegate;
-@property(nonatomic, assign) id<TabSnapshottingDelegate> snapshotDelegate;
+@property(nonatomic, weak) id<SideSwipeControllerDelegate> swipeDelegate;
+@property(nonatomic, weak) id<TabSnapshottingDelegate> snapshotDelegate;
 
 // Initializer.
 - (id)initWithTabModel:(TabModel*)model

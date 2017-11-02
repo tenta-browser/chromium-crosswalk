@@ -22,7 +22,7 @@ namespace keyboard {
 class KeyboardUI;
 }
 
-class ChromeLauncherControllerImpl;
+class ChromeLauncherController;
 
 class ChromeShellDelegate : public ash::ShellDelegate,
                             public content::NotificationObserver {
@@ -35,30 +35,30 @@ class ChromeShellDelegate : public ash::ShellDelegate,
   bool IsMultiProfilesEnabled() const override;
   bool IsIncognitoAllowed() const override;
   bool IsRunningInForcedAppMode() const override;
-  bool CanShowWindowForUser(ash::WmWindow* window) const override;
+  bool CanShowWindowForUser(aura::Window* window) const override;
   bool IsForceMaximizeOnFirstRun() const override;
   void PreInit() override;
   void PreShutdown() override;
   void Exit() override;
-  keyboard::KeyboardUI* CreateKeyboardUI() override;
+  std::unique_ptr<keyboard::KeyboardUI> CreateKeyboardUI() override;
   void OpenUrlFromArc(const GURL& url) override;
-  ash::ShelfDelegate* CreateShelfDelegate(ash::ShelfModel* model) override;
-  ash::SystemTrayDelegate* CreateSystemTrayDelegate() override;
+  void ShelfInit() override;
+  void ShelfShutdown() override;
+  ash::NetworkingConfigDelegate* GetNetworkingConfigDelegate() override;
   std::unique_ptr<ash::WallpaperDelegate> CreateWallpaperDelegate() override;
-  ash::SessionStateDelegate* CreateSessionStateDelegate() override;
   ash::AccessibilityDelegate* CreateAccessibilityDelegate() override;
   std::unique_ptr<ash::PaletteDelegate> CreatePaletteDelegate() override;
-  ui::MenuModel* CreateContextMenu(ash::WmShelf* wm_shelf,
-                                   const ash::ShelfItem* item) override;
   ash::GPUSupport* CreateGPUSupport() override;
   base::string16 GetProductName() const override;
   void OpenKeyboardShortcutHelpPage() const override;
   gfx::Image GetDeprecatedAcceleratorImage() const override;
-  bool IsTouchscreenEnabledInPrefs(bool use_local_state) const override;
-  void SetTouchscreenEnabledInPrefs(bool enabled,
-                                    bool use_local_state) override;
-  void UpdateTouchscreenStatusFromPrefs() override;
+  bool GetTouchscreenEnabled(
+      ash::TouchscreenEnabledSource source) const override;
+  void SetTouchscreenEnabled(bool enabled,
+                             ash::TouchscreenEnabledSource source) override;
   void ToggleTouchpad() override;
+  void SuspendMediaSessions() override;
+  ui::InputDeviceControllerClient* GetInputDeviceControllerClient() override;
 
   // content::NotificationObserver override:
   void Observe(int type,
@@ -70,10 +70,12 @@ class ChromeShellDelegate : public ash::ShellDelegate,
 
   content::NotificationRegistrar registrar_;
 
-  ChromeLauncherControllerImpl* shelf_delegate_;
+  std::unique_ptr<ChromeLauncherController> launcher_controller_;
 
   std::unique_ptr<chromeos::DisplayConfigurationObserver>
       display_configuration_observer_;
+
+  std::unique_ptr<ash::NetworkingConfigDelegate> networking_config_delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeShellDelegate);
 };

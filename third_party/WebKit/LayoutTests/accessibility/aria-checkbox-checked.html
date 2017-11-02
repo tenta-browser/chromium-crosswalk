@@ -30,15 +30,15 @@
                          [ "check3", "false" ],
                          [ "check4", "true" ],
                          [ "check5", "false" ],
-                         [ "check6", "true" ],
-                         [ "check7", "false" ],
+                         [ "check6", "false" ],
+                         [ "check7", "true" ],
                          [ "check8", "true" ]];
 
           for (var i = 0; i < answers.length; i++) {
                 var checkbox = document.getElementById(answers[i][0]);
                 checkbox.focus();
                 checkbox = accessibilityController.focusedElement;
-                shouldBe("checkbox.isChecked", answers[i][1]);
+                shouldBeEqualToString("checkbox.checked", answers[i][1]);
           }
     }
 

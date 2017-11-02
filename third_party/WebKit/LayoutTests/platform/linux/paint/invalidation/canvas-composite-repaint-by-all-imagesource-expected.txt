@@ -1,11 +1,9 @@
-CONSOLE WARNING: Resource requests whose URLs contain raw newline characters are deprecated, and may be blocked in M60, around August 2017. Please remove newlines from places like element attribute values in order to continue loading those resources. See https://www.chromestatus.com/features/5735596811091968 for more details.
 {
   "layers": [
     {
       "name": "LayoutView #document",
       "bounds": [785, 933],
       "contentsOpaque": true,
-      "drawsContent": true,
       "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
@@ -233,23 +231,22 @@ CONSOLE WARNING: Resource requests whose URLs contain raw newline characters are
     {
       "name": "LayoutVideo VIDEO id='video'",
       "position": [15, 859],
-      "bounds": [150, 60]
+      "bounds": [150, 60],
+      "drawsContent": false
     },
     {
       "name": "Squashing Containment Layer",
-      "shouldFlattenTransform": false
+      "drawsContent": false
     },
     {
       "name": "LayoutFlexibleBox (relative positioned) DIV",
       "position": [15, 859],
-      "bounds": [150, 60],
-      "drawsContent": true
+      "bounds": [150, 60]
     },
     {
       "name": "Squashing Layer (first squashed layer: LayoutFlexibleBox (relative positioned) DIV)",
       "position": [15, 859],
-      "bounds": [150, 18],
-      "drawsContent": true
+      "bounds": [150, 18]
     }
   ],
   "objectPaintInvalidations": [

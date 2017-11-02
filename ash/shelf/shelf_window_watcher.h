@@ -7,10 +7,10 @@
 
 #include <set>
 
+#include "ash/shell_observer.h"
 #include "base/macros.h"
 #include "base/scoped_observer.h"
 #include "ui/aura/window_observer.h"
-#include "ui/display/display_observer.h"
 #include "ui/wm/public/activation_change_observer.h"
 
 namespace ash {
@@ -23,8 +23,8 @@ class ShelfModel;
 // the ShelfItem when the window is added to the default container and maintains
 // it until the window is closed, even if the window is transiently reparented
 // (e.g. during a drag).
-class ShelfWindowWatcher : public aura::client::ActivationChangeObserver,
-                           public display::DisplayObserver {
+class ShelfWindowWatcher : public ::wm::ActivationChangeObserver,
+                           public ShellObserver {
  public:
   explicit ShelfWindowWatcher(ShelfModel* model);
   ~ShelfWindowWatcher() override;
@@ -73,9 +73,6 @@ class ShelfWindowWatcher : public aura::client::ActivationChangeObserver,
   // Removes a ShelfItem for |window|.
   void RemoveShelfItem(aura::Window* window);
 
-  // Returns the index of ShelfItem associated with |window|, or -1 if none.
-  int GetShelfItemIndexForWindow(aura::Window* window) const;
-
   // Cleans up observers on |container|.
   void OnContainerWindowDestroying(aura::Window* container);
 
@@ -89,16 +86,13 @@ class ShelfWindowWatcher : public aura::client::ActivationChangeObserver,
   // Removes the shelf item when a window closes.
   void OnUserWindowDestroying(aura::Window* window);
 
-  // aura::client::ActivationChangeObserver:
+  // wm::ActivationChangeObserver:
   void OnWindowActivated(ActivationReason reason,
                          aura::Window* gained_active,
                          aura::Window* lost_active) override;
 
-  // display::DisplayObserver overrides:
-  void OnDisplayAdded(const display::Display& display) override;
-  void OnDisplayRemoved(const display::Display& old_display) override;
-  void OnDisplayMetricsChanged(const display::Display& display,
-                               uint32_t metrics) override;
+  // ShellObserver:
+  void OnRootWindowAdded(aura::Window* root_window) override;
 
   ShelfModel* model_;
 

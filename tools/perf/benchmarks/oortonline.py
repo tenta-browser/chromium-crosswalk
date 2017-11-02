@@ -8,6 +8,7 @@ import page_sets
 
 from core import perf_benchmark
 from telemetry import benchmark
+from telemetry import story
 from telemetry.page import legacy_page_test
 from telemetry.value import scalar
 from telemetry.value import improvement_direction
@@ -33,13 +34,14 @@ class _OortOnlineMeasurement(legacy_page_test.LegacyPageTest):
             important=True, improvement_direction=improvement_direction.UP))
 
 
-@benchmark.Disabled('android')
+@benchmark.Owner(emails=['ulan@chromium.org'])
 class OortOnline(perf_benchmark.PerfBenchmark):
   """OortOnline benchmark that measures WebGL and V8 performance.
   URL: http://oortonline.gl/#run
   Info: http://v8project.blogspot.de/2015/10/jank-busters-part-one.html
   """
   test = _OortOnlineMeasurement
+  SUPPORTED_PLATFORMS = [story.expectations.ALL_DESKTOP]
 
   @classmethod
   def Name(cls):
@@ -48,8 +50,13 @@ class OortOnline(perf_benchmark.PerfBenchmark):
   def CreateStorySet(self, options):
     return page_sets.OortOnlinePageSet()
 
+  def GetExpectations(self):
+    class StoryExpectations(story.expectations.StoryExpectations):
+      def SetExpectations(self):
+        pass
+    return StoryExpectations()
 
-@benchmark.Disabled('win')
+@benchmark.Owner(emails=['ulan@chromium.org'])
 class OortOnlineTBMv2(perf_benchmark.PerfBenchmark):
   """OortOnline benchmark that measures WebGL and V8 performance.
   URL: http://oortonline.gl/#run
@@ -64,7 +71,13 @@ class OortOnlineTBMv2(perf_benchmark.PerfBenchmark):
 
   page_set = page_sets.OortOnlineTBMPageSet
 
-  def CreateTimelineBasedMeasurementOptions(self):
+  def GetExpectations(self):
+    class StoryExpectations(story.expectations.StoryExpectations):
+      def SetExpectations(self):
+        pass # http://oortonline.gl/#run not disabled.
+    return StoryExpectations()
+
+  def CreateCoreTimelineBasedMeasurementOptions(self):
     categories = [
       # Implicitly disable all categories.
       '-*',

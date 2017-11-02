@@ -50,7 +50,7 @@ typedef void (^HtmlCallback)(NSString*);
 @interface StaticHtmlViewController : NSObject
 
 // The web view that is displaying the content. It is lazily created.
-@property(nonatomic, readonly) WKWebView* webView;
+@property(nonatomic, readonly, weak) WKWebView* webView;
 
 // Returns the web controller scrollview.
 - (UIScrollView*)scrollView;
@@ -101,10 +101,6 @@ typedef void (^HtmlCallback)(NSString*);
 // bypass the lazy behavior. This is equivalent to calling -webView, but should
 // be used when deliberately pre-triggering a load without displaying.
 - (void)triggerPendingLoad;
-
-// Called when memory is low. Release anything (such as views) that can be
-// easily re-created to free up RAM.
-- (void)handleLowMemory;
 
 // Returns YES if there is currently a live view in the tab (e.g., the view
 // hasn't been discarded due to low memory).

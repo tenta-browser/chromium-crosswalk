@@ -27,7 +27,7 @@ class SingleThreadTaskRunner;
 namespace device {
 
 class DEVICE_GEOLOCATION_EXPORT GeolocationProviderImpl
-    : public NON_EXPORTED_BASE(GeolocationProvider),
+    : public GeolocationProvider,
       public base::Thread {
  public:
   // GeolocationProvider implementation:
@@ -35,6 +35,7 @@ class DEVICE_GEOLOCATION_EXPORT GeolocationProviderImpl
       const LocationUpdateCallback& callback,
       bool enable_high_accuracy) override;
   void UserDidOptIntoLocationServices() override;
+  bool HighAccuracyLocationInUse() override;
   void OverrideLocationForTesting(const Geoposition& position) override;
 
   // Callback from the LocationArbitrator. Public for testing.

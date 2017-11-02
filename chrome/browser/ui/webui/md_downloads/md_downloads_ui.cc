@@ -11,8 +11,6 @@
 #include "base/threading/thread.h"
 #include "base/values.h"
 #include "chrome/browser/defaults.h"
-#include "chrome/browser/download/download_service.h"
-#include "chrome/browser/download/download_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/md_downloads/md_downloads_dom_handler.h"
 #include "chrome/browser/ui/webui/metrics_handler.h"
@@ -120,6 +118,10 @@ content::WebUIDataSource* CreateDownloadsUIHTMLSource(Profile* profile) {
                           IDR_MD_DOWNLOADS_ACTION_SERVICE_HTML);
   source->AddResourcePath("action_service.js",
                           IDR_MD_DOWNLOADS_ACTION_SERVICE_JS);
+  source->AddResourcePath("browser_proxy.html",
+                          IDR_MD_DOWNLOADS_BROWSER_PROXY_HTML);
+  source->AddResourcePath("browser_proxy.js",
+                          IDR_MD_DOWNLOADS_BROWSER_PROXY_JS);
   source->AddResourcePath("constants.html", IDR_MD_DOWNLOADS_CONSTANTS_HTML);
   source->AddResourcePath("constants.js", IDR_MD_DOWNLOADS_CONSTANTS_JS);
   source->AddResourcePath("downloads.js", IDR_MD_DOWNLOADS_DOWNLOADS_JS);

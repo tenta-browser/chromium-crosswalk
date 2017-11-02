@@ -24,6 +24,7 @@
 #import "ios/chrome/browser/reading_list/reading_list_web_state_observer.h"
 #import "ios/chrome/browser/sessions/ios_chrome_session_tab_helper.h"
 #import "ios/chrome/browser/signin/account_consistency_service_factory.h"
+#import "ios/chrome/browser/ssl/captive_portal_detector_tab_helper.h"
 #import "ios/chrome/browser/ssl/ios_security_state_tab_helper.h"
 #import "ios/chrome/browser/store_kit/store_kit_tab_helper.h"
 #import "ios/chrome/browser/sync/ios_chrome_synced_tab_delegate.h"
@@ -33,12 +34,17 @@
 #import "ios/chrome/browser/translate/chrome_ios_translate_client.h"
 #import "ios/chrome/browser/web/blocked_popup_tab_helper.h"
 #import "ios/chrome/browser/web/network_activity_indicator_tab_helper.h"
+#import "ios/chrome/browser/web/page_placeholder_tab_helper.h"
 #import "ios/chrome/browser/web/repost_form_tab_helper.h"
 #import "ios/chrome/browser/web/sad_tab_tab_helper.h"
+#import "ios/chrome/browser/web/tab_id_tab_helper.h"
 #import "ios/public/provider/chrome/browser/chrome_browser_provider.h"
 #import "ios/web/public/web_state/web_state.h"
 
 void AttachTabHelpers(web::WebState* web_state) {
+  // TabIdHelper sets up the tab ID which is required for the creation of the
+  // Tab by LegacyTabHelper.
+  TabIdTabHelper::CreateForWebState(web_state);
   LegacyTabHelper::CreateForWebState(web_state);
   Tab* tab = LegacyTabHelper::GetTabForWebState(web_state);
   DCHECK(tab);
@@ -46,8 +52,8 @@ void AttachTabHelpers(web::WebState* web_state) {
   ios::ChromeBrowserState* browser_state =
       ios::ChromeBrowserState::FromBrowserState(web_state->GetBrowserState());
 
-  // IOSChromeSessionTabHelper comes first because it sets up the tab ID,
-  // and other helpers may rely on that.
+  // IOSChromeSessionTabHelper sets up the session ID used by other helpers,
+  // so it needs to be created before them.
   IOSChromeSessionTabHelper::CreateForWebState(web_state);
 
   NetworkActivityIndicatorTabHelper::CreateForWebState(web_state, tab.tabId);
@@ -59,6 +65,8 @@ void AttachTabHelpers(web::WebState* web_state) {
   FindTabHelper::CreateForWebState(web_state, tab.findInPageControllerDelegate);
   StoreKitTabHelper::CreateForWebState(web_state);
   SadTabTabHelper::CreateForWebState(web_state, tab);
+  PagePlaceholderTabHelper::CreateForWebState(web_state, tab);
+  CaptivePortalDetectorTabHelper::CreateForWebState(web_state);
 
   ReadingListModel* model =
       ReadingListModelFactory::GetForBrowserState(browser_state);

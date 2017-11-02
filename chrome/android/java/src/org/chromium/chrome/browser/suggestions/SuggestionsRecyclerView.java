@@ -27,7 +27,6 @@ import android.view.animation.Interpolator;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 
-import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.Callback;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ntp.ContextMenuManager;
@@ -50,6 +49,8 @@ import java.util.Set;
 public class SuggestionsRecyclerView extends RecyclerView {
     private static final Interpolator DISMISS_INTERPOLATOR = new FastOutLinearInInterpolator();
     private static final int DISMISS_ANIMATION_TIME_MS = 300;
+    private static final int NEW_CONTENT_HIGHLIGHT_DURATION_MS = 3000;
+
     /**
      * A single instance of {@link ResetForDismissCallback} that can be reused as it has no
      * state.
@@ -59,6 +60,7 @@ public class SuggestionsRecyclerView extends RecyclerView {
 
     private final GestureDetector mGestureDetector;
     private final LinearLayoutManager mLayoutManager;
+    private final SuggestionsMetrics.ScrollEventReporter mScrollEventReporter;
 
     /**
      * Total height of the items being dismissed.  Tracked to allow the bottom space to compensate
@@ -77,6 +79,7 @@ public class SuggestionsRecyclerView extends RecyclerView {
      * Whether the {@link SuggestionsRecyclerView} and its children should react to touch events.
      */
     private boolean mTouchEnabled = true;
+    private boolean mScrollEnabled = true;
 
     /** The ui config for this view. */
     private UiConfig mUiConfig;
@@ -92,7 +95,7 @@ public class SuggestionsRecyclerView extends RecyclerView {
         super(new ContextThemeWrapper(context, R.style.NewTabPageRecyclerView), attrs);
 
         Resources res = getContext().getResources();
-        setBackgroundColor(ApiCompatibilityUtils.getColor(res, R.color.ntp_bg));
+        setBackgroundColor(SuggestionsConfig.getBackgroundColor(res));
         setLayoutParams(new LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         setFocusable(true);
@@ -114,6 +117,9 @@ public class SuggestionsRecyclerView extends RecyclerView {
 
         ItemTouchHelper helper = new ItemTouchHelper(new ItemTouchCallbacks());
         helper.attachToRecyclerView(this);
+
+        mScrollEventReporter = new SuggestionsMetrics.ScrollEventReporter();
+        addOnScrollListener(mScrollEventReporter);
     }
 
     public boolean isFirstItemVisible() {
@@ -133,6 +139,24 @@ public class SuggestionsRecyclerView extends RecyclerView {
         mGestureDetector.onTouchEvent(ev);
         if (!mTouchEnabled) return true;
         return super.onInterceptTouchEvent(ev);
+    }
+
+    /**
+     * Toggle whether scrolling is enabled.
+     */
+    public void setScrollEnabled(boolean enabled) {
+        mScrollEnabled = enabled;
+    }
+
+    @Override
+    public boolean dispatchTouchEvent(MotionEvent ev) {
+        if (ev.getActionMasked() == MotionEvent.ACTION_DOWN && !mScrollEnabled) {
+            setLayoutFrozen(true);
+        } else if (ev.getActionMasked() == MotionEvent.ACTION_UP
+                || ev.getActionMasked() == MotionEvent.ACTION_CANCEL) {
+            setLayoutFrozen(false);
+        }
+        return super.dispatchTouchEvent(ev);
     }
 
     @Override
@@ -176,23 +200,27 @@ public class SuggestionsRecyclerView extends RecyclerView {
         mContextMenuManager.closeContextMenu();
     }
 
+    /** Highlights the current length of the view by temporarily showing the scrollbar. */
+    public void highlightContentLength() {
+        int defaultDelay = getScrollBarDefaultDelayBeforeFade();
+        setScrollBarDefaultDelayBeforeFade(NEW_CONTENT_HIGHLIGHT_DURATION_MS);
+        awakenScrollBars();
+        setScrollBarDefaultDelayBeforeFade(defaultDelay);
+    }
+
     @Override
     protected void onLayout(boolean changed, int l, int t, int r, int b) {
         int numberViews = getChildCount();
         for (int i = 0; i < numberViews; ++i) {
             View view = getChildAt(i);
-            NewTabPageViewHolder viewHolder = (NewTabPageViewHolder) getChildViewHolder(view);
-            if (viewHolder == null) return;
-            viewHolder.updateLayoutParams();
+            ((NewTabPageViewHolder) getChildViewHolder(view)).updateLayoutParams();
         }
         super.onLayout(changed, l, t, r, b);
     }
 
-    public void init(
-            UiConfig uiConfig, ContextMenuManager contextMenuManager, NewTabPageAdapter adapter) {
+    public void init(UiConfig uiConfig, ContextMenuManager contextMenuManager) {
         mUiConfig = uiConfig;
         mContextMenuManager = contextMenuManager;
-        setAdapter(adapter);
     }
 
     public NewTabPageAdapter getNewTabPageAdapter() {
@@ -325,10 +353,15 @@ public class SuggestionsRecyclerView extends RecyclerView {
         return mCompensationHeight;
     }
 
+    public SuggestionsMetrics.ScrollEventReporter getScrollEventReporter() {
+        return mScrollEventReporter;
+    }
+
     private class ItemTouchCallbacks extends ItemTouchHelper.Callback {
         @Override
         public void onSwiped(ViewHolder viewHolder, int direction) {
             onItemDismissStarted(viewHolder);
+            SuggestionsMetrics.recordCardSwipedAway();
             dismissItemInternal(viewHolder);
         }
 
@@ -352,8 +385,6 @@ public class SuggestionsRecyclerView extends RecyclerView {
 
         @Override
         public int getMovementFlags(RecyclerView recyclerView, ViewHolder viewHolder) {
-            assert viewHolder instanceof NewTabPageViewHolder;
-
             int swipeFlags = 0;
             if (((NewTabPageViewHolder) viewHolder).isDismissable()) {
                 swipeFlags = ItemTouchHelper.START | ItemTouchHelper.END;
@@ -398,7 +429,6 @@ public class SuggestionsRecyclerView extends RecyclerView {
     private static class ResetForDismissCallback extends NewTabPageViewHolder.PartialBindCallback {
         @Override
         public void onResult(NewTabPageViewHolder holder) {
-            assert holder instanceof CardViewHolder;
             ((CardViewHolder) holder).getRecyclerView().updateViewStateForDismiss(0, holder);
         }
     }

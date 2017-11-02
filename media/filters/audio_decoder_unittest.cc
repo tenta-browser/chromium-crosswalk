@@ -131,8 +131,8 @@ class AudioDecoderTest
         last_decode_status_(DecodeStatus::DECODE_ERROR) {
     switch (decoder_type_) {
       case FFMPEG:
-        decoder_.reset(new FFmpegAudioDecoder(message_loop_.task_runner(),
-                                              new MediaLog()));
+        decoder_.reset(
+            new FFmpegAudioDecoder(message_loop_.task_runner(), &media_log_));
         break;
 #if defined(OS_ANDROID)
       case MEDIA_CODEC:
@@ -391,6 +391,7 @@ class AudioDecoderTest
 
   base::MessageLoop message_loop_;
 
+  MediaLog media_log_;
   scoped_refptr<DecoderBuffer> data_;
   std::unique_ptr<InMemoryUrlProtocol> protocol_;
   std::unique_ptr<AudioFileReader> reader_;
@@ -508,6 +509,8 @@ const TestParams kFFmpegTestParams[] = {
 #if BUILDFLAG(USE_PROPRIETARY_CODECS)
     {kCodecMP3, "sfx.mp3", kSfxMp3Expectations, 0, 44100, CHANNEL_LAYOUT_MONO},
     {kCodecAAC, "sfx.adts", kSfxAdtsExpectations, 0, 44100,
+     CHANNEL_LAYOUT_MONO},
+    {kCodecFLAC, "sfx-flac.mp4", kSfxFlacExpectations, 0, 44100,
      CHANNEL_LAYOUT_MONO},
 #endif
     {kCodecFLAC, "sfx.flac", kSfxFlacExpectations, 0, 44100,

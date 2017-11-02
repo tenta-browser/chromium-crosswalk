@@ -18,19 +18,11 @@ window.onload = function() {
   var image = document.querySelector('img');
 
   image.onload = function() {
-    runAfterLayoutAndPaint(window.testRunner ? changeColorProfile : profileChanged);
+    runAfterLayoutAndPaint(drawImageToCanvas);
   };
 
   image.src = 'resources/red-at-12-oclock-with-color-profile.jpg';
 };
-
-function changeColorProfile() {
-  window.testRunner.setColorProfile('sRGB', profileChanged);
-}
-
-function profileChanged() {
-  setTimeout(drawImageToCanvas, 0);
-}
 
 function drawImageToCanvas() {
   var canvas = document.querySelector('canvas');
@@ -40,11 +32,7 @@ function drawImageToCanvas() {
   canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
 
   if (window.testRunner)
-    window.testRunner.setColorProfile('colorSpin', done);
-}
-
-function done() {
-  setTimeout(function() { window.testRunner.notifyDone() }, 0);
+    setTimeout(function() { window.testRunner.notifyDone() }, 0);
 }
 
 if (window.testRunner) {

@@ -10,11 +10,14 @@
 #include <string>
 
 #include "base/macros.h"
-#include "public/platform/scheduler/base/task_queue.h"
-#include "public/platform/WebCommon.h"
-#include "public/platform/WebScheduler.h"
-#include "public/platform/WebViewScheduler.h"
+#include "base/observer_list.h"
+#include "platform/PlatformExport.h"
+#include "platform/scheduler/base/cancelable_closure_holder.h"
+#include "platform/scheduler/base/task_queue.h"
+#include "platform/scheduler/child/web_scheduler.h"
+#include "platform/scheduler/child/web_task_runner_impl.h"
 #include "platform/scheduler/renderer/task_queue_throttler.h"
+#include "platform/scheduler/renderer/web_view_scheduler.h"
 
 namespace base {
 namespace trace_event {
@@ -30,11 +33,11 @@ class RendererSchedulerImpl;
 class CPUTimeBudgetPool;
 class WebFrameSchedulerImpl;
 
-class BLINK_PLATFORM_EXPORT WebViewSchedulerImpl : public WebViewScheduler {
+class PLATFORM_EXPORT WebViewSchedulerImpl : public WebViewScheduler {
  public:
   WebViewSchedulerImpl(
       WebScheduler::InterventionReporter* intervention_reporter,
-      WebViewScheduler::WebViewSchedulerSettings* settings,
+      WebViewScheduler::WebViewSchedulerDelegate* delegate,
       RendererSchedulerImpl* renderer_scheduler,
       bool disable_background_timer_throttling);
 
@@ -48,8 +51,13 @@ class BLINK_PLATFORM_EXPORT WebViewSchedulerImpl : public WebViewScheduler {
   void DisableVirtualTimeForTesting() override;
   bool VirtualTimeAllowedToAdvance() const override;
   void SetVirtualTimePolicy(VirtualTimePolicy virtual_time_policy) override;
+  void GrantVirtualTimeBudget(base::TimeDelta budget,
+                              WTF::Closure budget_exhausted_callback) override;
   void AudioStateChanged(bool is_audio_playing) override;
   bool HasActiveConnectionForTest() const override;
+  void RequestBeginMainFrameNotExpected(bool new_state) override;
+  void AddVirtualTimeObserver(VirtualTimeObserver*) override;
+  void RemoveVirtualTimeObserver(VirtualTimeObserver*) override;
 
   // Virtual for testing.
   virtual void ReportIntervention(const std::string& message);
@@ -63,6 +71,9 @@ class BLINK_PLATFORM_EXPORT WebViewSchedulerImpl : public WebViewScheduler {
   void DecrementBackgroundParserCount();
   void Unregister(WebFrameSchedulerImpl* frame_scheduler);
   void OnNavigation();
+  void WillNavigateBackForwardSoon(WebFrameSchedulerImpl* frame_scheduler);
+  void DidBeginProvisionalLoad(WebFrameSchedulerImpl* frame_scheduler);
+  void DidEndProvisionalLoad(WebFrameSchedulerImpl* frame_scheduler);
 
   bool IsAudioPlaying() const;
 
@@ -94,27 +105,32 @@ class BLINK_PLATFORM_EXPORT WebViewSchedulerImpl : public WebViewScheduler {
   // number of active connections.
   void UpdateBackgroundBudgetPoolThrottlingState();
 
-  void EnableBackgroundThrottling();
+  void NotifyVirtualTimePaused();
 
   std::set<WebFrameSchedulerImpl*> frame_schedulers_;
   std::set<unsigned long> pending_loads_;
+  std::set<WebFrameSchedulerImpl*> provisional_loads_;
+  std::set<WebFrameSchedulerImpl*> expect_backward_forwards_navigation_;
   WebScheduler::InterventionReporter* intervention_reporter_;  // Not owned.
   RendererSchedulerImpl* renderer_scheduler_;
   VirtualTimePolicy virtual_time_policy_;
+  RefPtr<WebTaskRunnerImpl> virtual_time_control_task_queue_;
+  TaskHandle virtual_time_budget_expired_task_handle_;
   int background_parser_count_;
   bool page_visible_;
-  bool should_throttle_frames_;
   bool disable_background_timer_throttling_;
   bool allow_virtual_time_to_advance_;
-  bool timers_suspended_;
+  bool virtual_time_paused_;
   bool have_seen_loading_task_;
   bool virtual_time_;
   bool is_audio_playing_;
   bool reported_background_throttling_since_navigation_;
   bool has_active_connection_;
   CPUTimeBudgetPool* background_time_budget_pool_;  // Not owned.
-  CancelableClosureHolder delayed_background_throttling_enabler_;
-  WebViewScheduler::WebViewSchedulerSettings* settings_;  // Not owned.
+  WebViewScheduler::WebViewSchedulerDelegate* delegate_;  // Not owned.
+  base::ObserverList<VirtualTimeObserver> virtual_time_observers_;
+  CancelableClosureHolder virtual_time_paused_notification_;
+  base::TimeTicks initial_virtual_time_;
 
   DISALLOW_COPY_AND_ASSIGN(WebViewSchedulerImpl);
 };

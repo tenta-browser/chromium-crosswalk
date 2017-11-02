@@ -7,10 +7,10 @@
 #include "base/i18n/case_conversion.h"
 #include "base/i18n/rtl.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
-#include "ui/base/dragdrop/drag_utils.h"
 #include "ui/base/dragdrop/os_exchange_data.h"
 #include "ui/display/screen.h"
 #include "ui/events/event.h"
@@ -31,10 +31,10 @@
 #include "ui/views/controls/menu/menu_scroll_view_container.h"
 #include "ui/views/controls/menu/submenu_view.h"
 #include "ui/views/drag_utils.h"
-#include "ui/views/focus/view_storage.h"
 #include "ui/views/mouse_constants.h"
 #include "ui/views/view.h"
 #include "ui/views/view_constants.h"
+#include "ui/views/view_tracker.h"
 #include "ui/views/views_delegate.h"
 #include "ui/views/widget/root_view.h"
 #include "ui/views/widget/tooltip_manager.h"
@@ -103,15 +103,15 @@ bool TitleMatchesMnemonic(MenuItemView* menu, base::char16 key) {
 }
 
 // Returns the first descendant of |view| that is hot tracked.
-CustomButton* GetFirstHotTrackedView(View* view) {
+Button* GetFirstHotTrackedView(View* view) {
   if (!view)
     return NULL;
-  CustomButton* button = CustomButton::AsCustomButton(view);
+  Button* button = Button::AsButton(view);
   if (button && button->IsHotTracked())
     return button;
 
   for (int i = 0; i < view->child_count(); ++i) {
-    CustomButton* hot_view = GetFirstHotTrackedView(view->child_at(i));
+    Button* hot_view = GetFirstHotTrackedView(view->child_at(i));
     if (hot_view)
       return hot_view;
   }
@@ -408,14 +408,13 @@ MenuController* MenuController::GetActiveInstance() {
   return active_instance_;
 }
 
-MenuItemView* MenuController::Run(Widget* parent,
-                                  MenuButton* button,
-                                  MenuItemView* root,
-                                  const gfx::Rect& bounds,
-                                  MenuAnchorPosition position,
-                                  bool context_menu,
-                                  bool is_nested_drag,
-                                  int* result_event_flags) {
+void MenuController::Run(Widget* parent,
+                         MenuButton* button,
+                         MenuItemView* root,
+                         const gfx::Rect& bounds,
+                         MenuAnchorPosition position,
+                         bool context_menu,
+                         bool is_nested_drag) {
   exit_type_ = EXIT_NONE;
   possible_drag_ = false;
   drag_in_progress_ = false;
@@ -483,7 +482,7 @@ MenuItemView* MenuController::Run(Widget* parent,
       // notification when the drag has finished.
       StartCancelAllTimer();
     }
-    return NULL;
+    return;
   }
 
   if (button)
@@ -492,8 +491,6 @@ MenuItemView* MenuController::Run(Widget* parent,
   // Make sure Chrome doesn't attempt to shut down while the menu is showing.
   if (ViewsDelegate::GetInstance())
     ViewsDelegate::GetInstance()->AddRef();
-
-  return nullptr;
 }
 
 void MenuController::Cancel(ExitType type) {
@@ -573,7 +570,7 @@ bool MenuController::OnMousePressed(SubmenuView* source,
     ConvertLocatedEventForRootView(source, forward_to_root, &event_for_root);
     View* view =
         forward_to_root->GetEventHandlerForPoint(event_for_root.location());
-    CustomButton* button = CustomButton::AsCustomButton(view);
+    Button* button = Button::AsButton(view);
     if (hot_button_ != button)
       SetHotTrackedButton(button);
 
@@ -630,7 +627,17 @@ bool MenuController::OnMouseDragged(SubmenuView* source,
       SetSelection(part.menu ? part.menu : state_.item, SELECTION_OPEN_SUBMENU);
     }
   } else if (part.type == MenuPart::NONE) {
-    ShowSiblingMenu(source, event.location());
+    // If there is a sibling menu, show it. Otherwise, if the user has selected
+    // a menu item with no accompanying sibling menu or submenu, move selection
+    // back to the parent menu item.
+    if (!ShowSiblingMenu(source, event.location())) {
+      if (!part.is_scroll() && pending_state_.item &&
+          pending_state_.item->GetParentMenuItem() &&
+          !pending_state_.item->SubmenuIsShowing()) {
+        SetSelection(pending_state_.item->GetParentMenuItem(),
+                     SELECTION_OPEN_SUBMENU);
+      }
+    }
   }
   UpdateActiveMouseView(source, event, mouse_menu);
 
@@ -688,7 +695,7 @@ void MenuController::OnMouseReleased(SubmenuView* source,
   if (!part.is_scroll() && part.menu &&
       !(part.menu->HasSubmenu() &&
         (event.flags() & ui::EF_LEFT_MOUSE_BUTTON))) {
-    if (GetActiveMouseView()) {
+    if (active_mouse_view_tracker_->view()) {
       SendMouseReleaseToActiveView(source, event);
       return;
     }
@@ -749,7 +756,7 @@ void MenuController::OnMouseMoved(SubmenuView* source,
     ConvertLocatedEventForRootView(source, root_view, &event_for_root);
     View* view =
         root_view->GetEventHandlerForPoint(event_for_root.location());
-    CustomButton* button = CustomButton::AsCustomButton(view);
+    Button* button = Button::AsButton(view);
     if (button && button->IsHotTracked())
       SetHotTrackedButton(button);
   }
@@ -778,7 +785,7 @@ void MenuController::OnGestureEvent(SubmenuView* source,
     ConvertLocatedEventForRootView(source, root_view, &event_for_root);
     View* view =
         root_view->GetEventHandlerForPoint(event_for_root.location());
-    CustomButton* button = CustomButton::AsCustomButton(view);
+    Button* button = Button::AsButton(view);
     if (hot_button_ && hot_button_ != button)
       SetHotTrackedButton(nullptr);
   }
@@ -1190,7 +1197,7 @@ void MenuController::SetSelectionOnPointerDown(SubmenuView* source,
   if (!blocking_run_)
     return;
 
-  DCHECK(!GetActiveMouseView());
+  DCHECK(!active_mouse_view_tracker_->view());
 
   MenuPart part = GetMenuPart(source, event->location());
   if (part.is_scroll())
@@ -1253,8 +1260,7 @@ void MenuController::StartDrag(SubmenuView* source,
 
   OSExchangeData data;
   item->GetDelegate()->WriteDragData(item, &data);
-  drag_utils::SetDragImageOnDataObject(image, press_loc.OffsetFromOrigin(),
-                                       &data);
+  data.provider().SetDragImage(image, press_loc.OffsetFromOrigin());
 
   StopScrolling();
   int drag_ops = item->GetDelegate()->GetDragOperations(item);
@@ -1333,8 +1339,7 @@ void MenuController::OnKeyDown(ui::KeyboardCode key_code) {
     case ui::VKEY_ESCAPE:
       if (!state_.item->GetParentMenuItem() ||
           (!state_.item->GetParentMenuItem()->GetParentMenuItem() &&
-           (!state_.item->HasSubmenu() ||
-            !state_.item->GetSubmenu()->IsShowing()))) {
+           (!state_.item->SubmenuIsShowing()))) {
         // User pressed escape and current menu has no submenus. If we are
         // nested, close the current menu on the stack. Otherwise fully exit the
         // menu.
@@ -1345,7 +1350,7 @@ void MenuController::OnKeyDown(ui::KeyboardCode key_code) {
       break;
 
     case ui::VKEY_APPS: {
-      CustomButton* hot_view = GetFirstHotTrackedView(pending_state_.item);
+      Button* hot_view = GetFirstHotTrackedView(pending_state_.item);
       if (hot_view) {
         hot_view->ShowContextMenu(hot_view->GetKeyboardContextMenuLocation(),
                                   ui::MENU_SOURCE_KEYBOARD);
@@ -1395,7 +1400,7 @@ MenuController::MenuController(bool blocking,
       valid_drop_coordinates_(false),
       last_drop_operation_(MenuDelegate::DROP_UNKNOWN),
       showing_submenu_(false),
-      active_mouse_view_id_(ViewStorage::GetInstance()->CreateStorageID()),
+      active_mouse_view_tracker_(base::MakeUnique<ViewTracker>()),
       hot_button_(nullptr),
       delegate_(delegate),
       is_combobox_(false),
@@ -1417,7 +1422,7 @@ MenuController::~MenuController() {
 }
 
 bool MenuController::SendAcceleratorToHotTrackedView() {
-  CustomButton* hot_view = GetFirstHotTrackedView(pending_state_.item);
+  Button* hot_view = GetFirstHotTrackedView(pending_state_.item);
   if (!hot_view)
     return false;
 
@@ -1426,7 +1431,7 @@ bool MenuController::SendAcceleratorToHotTrackedView() {
   hot_view->AcceleratorPressed(accelerator);
   // An accelerator may have canceled the menu after activation.
   if (this_ref) {
-    CustomButton* button = static_cast<CustomButton*>(hot_view);
+    Button* button = static_cast<Button*>(hot_view);
     SetHotTrackedButton(button);
   }
   return true;
@@ -1527,8 +1532,7 @@ bool MenuController::ShowSiblingMenu(SubmenuView* source,
 
   // There is a sibling menu, update the button state, hide the current menu
   // and show the new one.
-  pressed_lock_.reset(
-      new MenuButton::PressedLock(button, true /* is_sibling_menu_show */));
+  pressed_lock_.reset(new MenuButton::PressedLock(button, true, nullptr));
 
   // Need to reset capture when we show the menu again, otherwise we aren't
   // going to get any events.
@@ -1638,7 +1642,7 @@ MenuController::MenuPart MenuController::GetMenuPartByScreenCoordinateUsingMenu(
     const gfx::Point& screen_loc) {
   MenuPart part;
   for (; item; item = item->GetParentMenuItem()) {
-    if (item->HasSubmenu() && item->GetSubmenu()->IsShowing() &&
+    if (item->SubmenuIsShowing() &&
         GetMenuPartByScreenCoordinateImpl(item->GetSubmenu(), screen_loc,
                                           &part)) {
       return part;
@@ -1769,8 +1773,7 @@ void MenuController::CommitPendingSelection() {
     } else {
       state_.submenu_open = false;
     }
-  } else if (state_.item->HasSubmenu() &&
-             state_.item->GetSubmenu()->IsShowing()) {
+  } else if (state_.item->SubmenuIsShowing()) {
     state_.item->GetSubmenu()->Hide();
   }
 
@@ -1780,7 +1783,7 @@ void MenuController::CommitPendingSelection() {
     bool found = false;
     for (MenuItemView* item = state_.item; item && !found;
          item = item->GetParentMenuItem()) {
-      found = (item->HasSubmenu() && item->GetSubmenu()->IsShowing() &&
+      found = (item->SubmenuIsShowing() &&
                item->GetSubmenu() == scroll_task_->submenu());
     }
     if (!found)
@@ -1843,7 +1846,7 @@ void MenuController::OpenMenuImpl(MenuItemView* item, bool show) {
 void MenuController::MenuChildrenChanged(MenuItemView* item) {
   DCHECK(item);
   // Menu shouldn't be updated during drag operation.
-  DCHECK(!GetActiveMouseView());
+  DCHECK(!active_mouse_view_tracker_->view());
 
   // If the current item or pending item is a descendant of the item
   // that changed, move the selection back to the changed item.
@@ -1956,15 +1959,19 @@ gfx::Rect MenuController::CalculateMenuBounds(MenuItemView* item,
       if (menu_config.offset_context_menus && state_.context_menu)
         x -= 1;
     } else if (state_.anchor == MENU_ANCHOR_BOTTOMCENTER) {
-      x = x - (pref.width() - state_.initial_bounds.width()) / 2;
+      x += (state_.initial_bounds.width() - pref.width()) / 2;
       if (pref.height() >
           state_.initial_bounds.y() + kCenteredContextMenuYOffset) {
-        // Menu does not fit above the anchor. We move it to below.
+        // Place the menu below if it does not fit above.
         y = state_.initial_bounds.y() - kCenteredContextMenuYOffset;
       } else {
         y = std::max(0, state_.initial_bounds.y() - pref.height()) +
             kCenteredContextMenuYOffset;
       }
+    } else if (state_.anchor == MENU_ANCHOR_FIXED_BOTTOMCENTER) {
+      x += (state_.initial_bounds.width() - pref.width()) / 2;
+    } else if (state_.anchor == MENU_ANCHOR_FIXED_SIDECENTER) {
+      y += (state_.initial_bounds.height() - pref.height()) / 2;
     }
 
     if (!state_.monitor_bounds.IsEmpty() &&
@@ -2185,8 +2192,7 @@ void MenuController::IncrementSelection(
     SelectionIncrementDirectionType direction) {
   MenuItemView* item = pending_state_.item;
   DCHECK(item);
-  if (pending_state_.submenu_open && item->HasSubmenu() &&
-      item->GetSubmenu()->IsShowing()) {
+  if (pending_state_.submenu_open && item->SubmenuIsShowing()) {
     // A menu is selected and open, but none of its children are selected,
     // select the first menu item that is visible and enabled.
     if (item->GetSubmenu()->GetMenuItemCount()) {
@@ -2197,7 +2203,7 @@ void MenuController::IncrementSelection(
   }
 
   if (item->has_children()) {
-    CustomButton* button = GetFirstHotTrackedView(item);
+    Button* button = GetFirstHotTrackedView(item);
     if (button) {
       DCHECK_EQ(hot_button_, button);
       SetHotTrackedButton(nullptr);
@@ -2206,7 +2212,7 @@ void MenuController::IncrementSelection(
     View* to_make_hot = button
         ? GetNextFocusableView(item, button, direction_is_down)
         : GetInitialFocusableView(item, direction_is_down);
-    CustomButton* hot_button = CustomButton::AsCustomButton(to_make_hot);
+    Button* hot_button = Button::AsButton(to_make_hot);
     if (hot_button) {
       SetHotTrackedButton(hot_button);
       return;
@@ -2279,7 +2285,7 @@ void MenuController::CloseSubmenu() {
   DCHECK(item);
   if (!item->GetParentMenuItem())
     return;
-  if (item->HasSubmenu() && item->GetSubmenu()->IsShowing())
+  if (item->SubmenuIsShowing())
     SetSelection(item, SELECTION_UPDATE_IMMEDIATELY);
   else if (item->GetParentMenuItem()->GetParentMenuItem())
     SetSelection(item->GetParentMenuItem(), SELECTION_UPDATE_IMMEDIATELY);
@@ -2347,7 +2353,7 @@ void MenuController::SelectByChar(base::char16 character) {
   base::char16 char_array[] = { character, 0 };
   base::char16 key = base::i18n::ToLower(char_array)[0];
   MenuItemView* item = pending_state_.item;
-  if (!item->HasSubmenu() || !item->GetSubmenu()->IsShowing())
+  if (!item->SubmenuIsShowing())
     item = item->GetParentMenuItem();
   DCHECK(item);
   DCHECK(item->HasSubmenu());
@@ -2401,7 +2407,7 @@ void MenuController::RepostEventAndCancel(SubmenuView* source,
     } else {
       // We some times get an event after closing all the menus. Ignore it. Make
       // sure the menu is in fact not visible. If the menu is visible, then
-      // we're in a bad state where we think the menu isn't visibile but it is.
+      // we're in a bad state where we think the menu isn't visible but it is.
       DCHECK(!source->GetWidget()->IsVisible());
     }
 
@@ -2481,11 +2487,11 @@ void MenuController::UpdateActiveMouseView(SubmenuView* event_source,
     if (target == target_menu || !target->enabled())
       target = NULL;
   }
-  View* active_mouse_view = GetActiveMouseView();
+  View* active_mouse_view = active_mouse_view_tracker_->view();
   if (target != active_mouse_view) {
     SendMouseCaptureLostToActiveView();
     active_mouse_view = target;
-    SetActiveMouseView(active_mouse_view);
+    active_mouse_view_tracker_->SetView(active_mouse_view);
     if (active_mouse_view) {
       gfx::Point target_point(target_menu_loc);
       View::ConvertPointToTarget(
@@ -2514,7 +2520,7 @@ void MenuController::UpdateActiveMouseView(SubmenuView* event_source,
 
 void MenuController::SendMouseReleaseToActiveView(SubmenuView* event_source,
                                                   const ui::MouseEvent& event) {
-  View* active_mouse_view = GetActiveMouseView();
+  View* active_mouse_view = active_mouse_view_tracker_->view();
   if (!active_mouse_view)
     return;
 
@@ -2525,32 +2531,21 @@ void MenuController::SendMouseReleaseToActiveView(SubmenuView* event_source,
   ui::MouseEvent release_event(ui::ET_MOUSE_RELEASED, target_loc, target_loc,
                                ui::EventTimeForNow(), event.flags(),
                                event.changed_button_flags());
-  // Reset active mouse view before sending mouse released. That way if it calls
-  // back to us, we aren't in a weird state.
-  SetActiveMouseView(NULL);
+  // Reset the active mouse view before sending mouse released. That way if it
+  // calls back to us, we aren't in a weird state.
+  active_mouse_view_tracker_->Clear();
   active_mouse_view->OnMouseReleased(release_event);
 }
 
 void MenuController::SendMouseCaptureLostToActiveView() {
-  View* active_mouse_view = GetActiveMouseView();
+  View* active_mouse_view = active_mouse_view_tracker_->view();
   if (!active_mouse_view)
     return;
 
-  // Reset the active_mouse_view_ before sending mouse capture lost. That way if
+  // Reset the active mouse view before sending mouse capture lost. That way if
   // it calls back to us, we aren't in a weird state.
-  SetActiveMouseView(NULL);
+  active_mouse_view_tracker_->Clear();
   active_mouse_view->OnMouseCaptureLost();
-}
-
-void MenuController::SetActiveMouseView(View* view) {
-  if (view)
-    ViewStorage::GetInstance()->StoreView(active_mouse_view_id_, view);
-  else
-    ViewStorage::GetInstance()->RemoveView(active_mouse_view_id_);
-}
-
-View* MenuController::GetActiveMouseView() {
-  return ViewStorage::GetInstance()->RetrieveView(active_mouse_view_id_);
 }
 
 void MenuController::SetExitType(ExitType type) {
@@ -2684,8 +2679,7 @@ void MenuController::HandleMouseLocation(SubmenuView* source,
     SetSelection(part.menu, SELECTION_OPEN_SUBMENU);
   } else if (!part.is_scroll() && pending_state_.item &&
              pending_state_.item->GetParentMenuItem() &&
-             (!pending_state_.item->HasSubmenu() ||
-              !pending_state_.item->GetSubmenu()->IsShowing())) {
+             !pending_state_.item->SubmenuIsShowing()) {
     // On exit if the user hasn't selected an item with a submenu, move the
     // selection back to the parent menu item.
     SetSelection(pending_state_.item->GetParentMenuItem(),
@@ -2701,10 +2695,10 @@ void MenuController::SetInitialHotTrackedView(
   SetSelection(item, SELECTION_DEFAULT);
   View* hot_view =
       GetInitialFocusableView(item, direction == INCREMENT_SELECTION_DOWN);
-  SetHotTrackedButton(CustomButton::AsCustomButton(hot_view));
+  SetHotTrackedButton(Button::AsButton(hot_view));
 }
 
-void MenuController::SetHotTrackedButton(CustomButton* hot_button) {
+void MenuController::SetHotTrackedButton(Button* hot_button) {
   if (hot_button == hot_button_) {
     // Hot-tracked state may change outside of the MenuController. Correct it.
     if (hot_button && !hot_button->IsHotTracked()) {

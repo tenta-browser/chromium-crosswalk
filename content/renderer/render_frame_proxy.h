@@ -7,7 +7,9 @@
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "components/viz/common/surfaces/local_surface_id_allocator.h"
 #include "content/common/content_export.h"
+#include "content/common/feature_policy/feature_policy.h"
 #include "ipc/ipc_listener.h"
 #include "ipc/ipc_sender.h"
 #include "third_party/WebKit/public/platform/WebFocusType.h"
@@ -20,7 +22,7 @@ namespace blink {
 struct WebRect;
 }
 
-namespace cc {
+namespace viz {
 class SurfaceInfo;
 struct SurfaceSequence;
 }
@@ -55,10 +57,9 @@ struct FrameReplicationState;
 // RenderFrameProxy will be deleted when the node in the frame tree is deleted
 // or when navigating the frame causes it to return to this process and a new
 // RenderFrame is created for it.
-class CONTENT_EXPORT RenderFrameProxy
-    : public IPC::Listener,
-      public IPC::Sender,
-      NON_EXPORTED_BASE(public blink::WebRemoteFrameClient) {
+class CONTENT_EXPORT RenderFrameProxy : public IPC::Listener,
+                                        public IPC::Sender,
+                                        public blink::WebRemoteFrameClient {
  public:
   // This method should be used to create a RenderFrameProxy, which will replace
   // an existing RenderFrame during its cross-process navigation from the
@@ -93,8 +94,9 @@ class CONTENT_EXPORT RenderFrameProxy
   // Returns the RenderFrameProxy for the given routing ID.
   static RenderFrameProxy* FromRoutingID(int routing_id);
 
-  // Returns the RenderFrameProxy given a WebFrame.
-  static RenderFrameProxy* FromWebFrame(blink::WebFrame* web_frame);
+  // Returns the RenderFrameProxy given a WebRemoteFrame. |web_frame| must not
+  // be null, nor will this method return null.
+  static RenderFrameProxy* FromWebFrame(blink::WebRemoteFrame* web_frame);
 
   ~RenderFrameProxy() override;
 
@@ -139,6 +141,7 @@ class CONTENT_EXPORT RenderFrameProxy
   void UpdateRemoteViewportIntersection(
       const blink::WebRect& viewportIntersection) override;
   void VisibilityChanged(bool visible) override;
+  void SetIsInert(bool) override;
   void DidChangeOpener(blink::WebFrame* opener) override;
   void AdvanceFocus(blink::WebFocusType type,
                     blink::WebLocalFrame* source) override;
@@ -154,6 +157,8 @@ class CONTENT_EXPORT RenderFrameProxy
             RenderViewImpl* render_view,
             RenderWidget* render_widget);
 
+  void ResendFrameRects();
+
   // IPC::Listener
   bool OnMessageReceived(const IPC::Message& msg) override;
 
@@ -161,12 +166,16 @@ class CONTENT_EXPORT RenderFrameProxy
   void OnDeleteProxy();
   void OnChildFrameProcessGone();
   void OnCompositorFrameSwapped(const IPC::Message& message);
-  void OnSetChildFrameSurface(const cc::SurfaceInfo& surface_info,
-                              const cc::SurfaceSequence& sequence);
+  void OnSetChildFrameSurface(const viz::SurfaceInfo& surface_info,
+                              const viz::SurfaceSequence& sequence);
   void OnUpdateOpener(int opener_routing_id);
+  void OnViewChanged(const viz::FrameSinkId& frame_sink_id);
   void OnDidStopLoading();
-  void OnDidUpdateSandboxFlags(blink::WebSandboxFlags flags);
+  void OnDidUpdateFramePolicy(
+      blink::WebSandboxFlags flags,
+      const ParsedFeaturePolicyHeader& container_policy);
   void OnDispatchLoad();
+  void OnCollapse(bool collapsed);
   void OnDidUpdateName(const std::string& name, const std::string& unique_name);
   void OnAddContentSecurityPolicies(
       const std::vector<ContentSecurityPolicyHeader>& header);
@@ -194,6 +203,13 @@ class CONTENT_EXPORT RenderFrameProxy
 
   RenderViewImpl* render_view_;
   RenderWidget* render_widget_;
+
+  gfx::Rect frame_rect_;
+  viz::FrameSinkId frame_sink_id_;
+  viz::LocalSurfaceId local_surface_id_;
+  viz::LocalSurfaceIdAllocator local_surface_id_allocator_;
+
+  bool enable_surface_synchronization_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(RenderFrameProxy);
 };

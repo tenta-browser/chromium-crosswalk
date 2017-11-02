@@ -160,7 +160,7 @@ void HTMLBodyElement::ParseAttribute(
         EventTypeNames::focus,
         CreateAttributeEventListener(GetDocument().GetFrame(), name, value,
                                      EventParameterName()));
-  } else if (RuntimeEnabledFeatures::orientationEventEnabled() &&
+  } else if (RuntimeEnabledFeatures::OrientationEventEnabled() &&
              name == onorientationchangeAttr) {
     GetDocument().SetWindowAttributeEventListener(
         EventTypeNames::orientationchange,
@@ -176,6 +176,11 @@ void HTMLBodyElement::ParseAttribute(
         EventTypeNames::message,
         CreateAttributeEventListener(GetDocument().GetFrame(), name, value,
                                      EventParameterName()));
+  } else if (name == onmessageerrorAttr) {
+    GetDocument().SetWindowAttributeEventListener(
+        EventTypeNames::messageerror,
+        CreateAttributeEventListener(GetDocument().GetFrame(), name, value,
+                                     EventParameterName()));
   } else if (name == onresizeAttr) {
     GetDocument().SetWindowAttributeEventListener(
         EventTypeNames::resize,
@@ -188,7 +193,7 @@ void HTMLBodyElement::ParseAttribute(
                                      EventParameterName()));
   } else if (name == onselectionchangeAttr) {
     UseCounter::Count(GetDocument(),
-                      UseCounter::kHTMLBodyElementOnSelectionChangeAttribute);
+                      WebFeature::kHTMLBodyElementOnSelectionChangeAttribute);
     GetDocument().SetAttributeEventListener(
         EventTypeNames::selectionchange,
         CreateAttributeEventListener(GetDocument().GetFrame(), name, value,

@@ -17,9 +17,10 @@
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/threading/sequenced_task_runner_handle.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "cc/output/buffer_to_texture_target_map.h"
+#include "components/viz/common/resources/buffer_to_texture_target_map.h"
 #include "content/app/mojo/mojo_init.h"
 #include "content/common/in_process_child_thread_params.h"
 #include "content/common/resource_messages.h"
@@ -45,9 +46,10 @@
 #include "ipc/ipc.mojom.h"
 #include "ipc/ipc_channel_mojo.h"
 #include "mojo/edk/embedder/embedder.h"
-#include "mojo/edk/embedder/pending_process_connection.h"
+#include "mojo/edk/embedder/outgoing_broker_client_invitation.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/WebKit/public/platform/scheduler/renderer/renderer_scheduler.h"
+#include "ui/base/ui_base_switches.h"
 #include "ui/gfx/buffer_format_util.h"
 
 // IPC messages for testing ----------------------------------------------------
@@ -99,7 +101,7 @@ class TestTaskCounter : public base::SingleThreadTaskRunner {
     return true;
   }
 
-  bool RunsTasksOnCurrentThread() const override { return true; }
+  bool RunsTasksInCurrentSequence() const override { return true; }
 
   int NumTasksPosted() const {
     base::AutoLock auto_lock(lock_);
@@ -134,19 +136,15 @@ class RenderThreadImplForTest : public RenderThreadImpl {
 #pragma warning(pop)
 #endif
 
-void QuitTask(base::MessageLoop* message_loop) {
-  message_loop->QuitWhenIdle();
-}
-
 class QuitOnTestMsgFilter : public IPC::MessageFilter {
  public:
-  explicit QuitOnTestMsgFilter(base::MessageLoop* message_loop)
-      : message_loop_(message_loop) {}
+  explicit QuitOnTestMsgFilter(base::OnceClosure quit_closure)
+      : origin_task_runner_(base::SequencedTaskRunnerHandle::Get()),
+        quit_closure_(std::move(quit_closure)) {}
 
   // IPC::MessageFilter overrides:
   bool OnMessageReceived(const IPC::Message& message) override {
-    message_loop_->task_runner()->PostTask(
-        FROM_HERE, base::Bind(&QuitTask, message_loop_));
+    origin_task_runner_->PostTask(FROM_HERE, std::move(quit_closure_));
     return true;
   }
 
@@ -159,7 +157,8 @@ class QuitOnTestMsgFilter : public IPC::MessageFilter {
  private:
   ~QuitOnTestMsgFilter() override {}
 
-  base::MessageLoop* message_loop_;
+  scoped_refptr<base::SequencedTaskRunner> origin_task_runner_;
+  base::OnceClosure quit_closure_;
 };
 
 class RenderThreadImplBrowserTest : public testing::Test {
@@ -183,9 +182,12 @@ class RenderThreadImplBrowserTest : public testing::Test {
 
     InitializeMojo();
     shell_context_.reset(new TestServiceManagerContext);
-    mojo::edk::PendingProcessConnection process_connection;
+    mojo::edk::OutgoingBrokerClientInvitation invitation;
+    service_manager::Identity child_identity(
+        mojom::kRendererServiceName, service_manager::mojom::kInheritUserID,
+        "test");
     child_connection_.reset(new ChildConnection(
-        mojom::kRendererServiceName, "test", &process_connection,
+        child_identity, &invitation,
         ServiceManagerConnection::GetForProcess()->GetConnector(),
         io_task_runner));
 
@@ -205,11 +207,13 @@ class RenderThreadImplBrowserTest : public testing::Test {
     base::CommandLine* cmd = base::CommandLine::ForCurrentProcess();
     base::CommandLine::StringVector old_argv = cmd->argv();
 
+    cmd->AppendSwitchASCII(switches::kLang, "en-US");
+
     cmd->AppendSwitchASCII(switches::kNumRasterThreads, "1");
     cmd->AppendSwitchASCII(
         switches::kContentImageTextureTarget,
-        cc::BufferToTextureTargetMapToString(
-            cc::DefaultBufferToTextureTargetMapForTesting()));
+        viz::BufferToTextureTargetMapToString(
+            viz::DefaultBufferToTextureTargetMapForTesting()));
 
     std::unique_ptr<blink::scheduler::RendererScheduler> renderer_scheduler =
         blink::scheduler::RendererScheduler::Create();
@@ -219,13 +223,14 @@ class RenderThreadImplBrowserTest : public testing::Test {
     base::FieldTrialList::CreateTrialsFromCommandLine(
         *cmd, switches::kFieldTrialHandle, -1);
     thread_ = new RenderThreadImplForTest(
-        InProcessChildThreadParams(io_task_runner,
+        InProcessChildThreadParams(io_task_runner, &invitation,
                                    child_connection_->service_token()),
         std::move(renderer_scheduler), test_task_counter);
     cmd->InitFromArgv(old_argv);
 
+    run_loop_ = base::MakeUnique<base::RunLoop>();
     test_msg_filter_ = make_scoped_refptr(
-        new QuitOnTestMsgFilter(base::MessageLoop::current()));
+        new QuitOnTestMsgFilter(run_loop_->QuitWhenIdleClosure()));
     thread_->AddFilter(test_msg_filter_.get());
   }
 
@@ -256,6 +261,8 @@ class RenderThreadImplBrowserTest : public testing::Test {
   RenderThreadImplForTest* thread_;  // Owned by mock_process_.
 
   base::FieldTrialList field_trial_list_;
+
+  std::unique_ptr<base::RunLoop> run_loop_;
 };
 
 void CheckRenderThreadInputHandlerManager(RenderThreadImpl* thread) {
@@ -265,8 +272,16 @@ void CheckRenderThreadInputHandlerManager(RenderThreadImpl* thread) {
 // Check that InputHandlerManager outlives compositor thread because it uses
 // raw pointers to post tasks.
 // Disabled under LeakSanitizer due to memory leaks. http://crbug.com/348994
+// Disabled on Windows due to flakiness: http://crbug.com/728034.
+#if defined(OS_WIN)
+#define MAYBE_InputHandlerManagerDestroyedAfterCompositorThread \
+  DISABLED_InputHandlerManagerDestroyedAfterCompositorThread
+#else
+#define MAYBE_InputHandlerManagerDestroyedAfterCompositorThread \
+  InputHandlerManagerDestroyedAfterCompositorThread
+#endif
 TEST_F(RenderThreadImplBrowserTest,
-       WILL_LEAK(InputHandlerManagerDestroyedAfterCompositorThread)) {
+       WILL_LEAK(MAYBE_InputHandlerManagerDestroyedAfterCompositorThread)) {
   ASSERT_TRUE(thread_->input_handler_manager());
 
   thread_->compositor_task_runner()->PostTask(
@@ -279,7 +294,7 @@ TEST_F(RenderThreadImplBrowserTest,
   sender()->Send(new ResourceHostMsg_FollowRedirect(0));
   sender()->Send(new TestMsg_QuitRunLoop());
 
-  base::RunLoop().Run();
+  run_loop_->Run();
   EXPECT_EQ(1, test_task_counter_->NumTasksPosted());
 }
 
@@ -291,7 +306,7 @@ TEST_F(RenderThreadImplBrowserTest,
 
   sender()->Send(new TestMsg_QuitRunLoop());
 
-  base::RunLoop().Run();
+  run_loop_->Run();
 
   EXPECT_EQ(0, test_task_counter_->NumTasksPosted());
 }

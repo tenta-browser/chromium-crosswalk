@@ -1092,6 +1092,16 @@ Set.prototype.valuesArray = function() {
 };
 
 /**
+ * @return {?T}
+ * @template T
+ */
+Set.prototype.firstValue = function() {
+  if (!this.size)
+    return null;
+  return this.values().next().value;
+};
+
+/**
  * @param {!Iterable<T>|!Array<!T>} iterable
  * @template T
  */
@@ -1215,8 +1225,10 @@ Multimap.prototype = {
    * @param {V} value
    * @return {boolean}
    */
-  remove: function(key, value) {
+  delete: function(key, value) {
     var values = this.get(key);
+    if (!values)
+      return false;
     var result = values.delete(value);
     if (!values.size)
       this._map.delete(key);
@@ -1226,7 +1238,7 @@ Multimap.prototype = {
   /**
    * @param {K} key
    */
-  removeAll: function(key) {
+  deleteAll: function(key) {
     this._map.delete(key);
   },
 
@@ -1280,64 +1292,6 @@ function loadXHR(url) {
     xhr.send(null);
   }
 }
-
-/**
- * @unrestricted
- */
-var CallbackBarrier = class {
-  constructor() {
-    this._pendingIncomingCallbacksCount = 0;
-  }
-
-  /**
-   * @param {function(...)=} userCallback
-   * @return {function(...)}
-   */
-  createCallback(userCallback) {
-    console.assert(
-        !this._outgoingCallback, 'CallbackBarrier.createCallback() is called after CallbackBarrier.callWhenDone()');
-    ++this._pendingIncomingCallbacksCount;
-    return this._incomingCallback.bind(this, userCallback);
-  }
-
-  /**
-   * @param {function()} callback
-   */
-  callWhenDone(callback) {
-    console.assert(!this._outgoingCallback, 'CallbackBarrier.callWhenDone() is called multiple times');
-    this._outgoingCallback = callback;
-    if (!this._pendingIncomingCallbacksCount)
-      this._outgoingCallback();
-  }
-
-  /**
-   * @return {!Promise.<undefined>}
-   */
-  donePromise() {
-    return new Promise(promiseConstructor.bind(this));
-
-    /**
-     * @param {function()} success
-     * @this {CallbackBarrier}
-     */
-    function promiseConstructor(success) {
-      this.callWhenDone(success);
-    }
-  }
-
-  /**
-   * @param {function(...)=} userCallback
-   */
-  _incomingCallback(userCallback) {
-    console.assert(this._pendingIncomingCallbacksCount > 0);
-    if (userCallback) {
-      var args = Array.prototype.slice.call(arguments, 1);
-      userCallback.apply(null, args);
-    }
-    if (!--this._pendingIncomingCallbacksCount && this._outgoingCallback)
-      this._outgoingCallback();
-  }
-};
 
 /**
  * @param {*} value
@@ -1443,4 +1397,19 @@ function runOnWindowLoad(callback) {
     callback();
   else
     self.addEventListener('DOMContentLoaded', windowLoaded, false);
+}
+
+var _singletonSymbol = Symbol('singleton');
+
+/**
+ * @template T
+ * @param {function(new:T, ...)} constructorFunction
+ * @return {!T}
+ */
+function singleton(constructorFunction) {
+  if (_singletonSymbol in constructorFunction)
+    return constructorFunction[_singletonSymbol];
+  var instance = new constructorFunction();
+  constructorFunction[_singletonSymbol] = instance;
+  return instance;
 }

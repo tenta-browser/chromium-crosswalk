@@ -25,9 +25,10 @@
 #define MouseEvent_h
 
 #include "core/CoreExport.h"
-#include "core/events/EventDispatchMediator.h"
+#include "core/dom/events/EventDispatchMediator.h"
 #include "core/events/MouseEventInit.h"
 #include "core/events/UIEventWithKeyState.h"
+#include "public/platform/WebMenuSourceType.h"
 #include "public/platform/WebMouseEvent.h"
 
 namespace blink {
@@ -91,7 +92,7 @@ class CORE_EXPORT MouseEvent : public UIEventWithKeyState {
 
   // WinIE uses 1,4,2 for left/middle/right but not for click (just for
   // mousedown/up, maybe others), but we will match the standard DOM.
-  virtual short button() const { return button_ == -1 ? 0 : button_; }
+  virtual short button() const;
   unsigned short buttons() const { return buttons_; }
   bool ButtonDown() const { return button_ != -1; }
   EventTarget* relatedTarget() const { return related_target_.Get(); }
@@ -113,7 +114,7 @@ class CORE_EXPORT MouseEvent : public UIEventWithKeyState {
   const AtomicString& InterfaceName() const override;
 
   bool IsMouseEvent() const override;
-  int which() const final;
+  unsigned which() const override;
 
   EventDispatchMediator* CreateMediator() override;
 
@@ -174,6 +175,8 @@ class CORE_EXPORT MouseEvent : public UIEventWithKeyState {
 
   bool HasPosition() const { return position_type_ == PositionType::kPosition; }
 
+  WebMenuSourceType GetMenuSourceType() const { return menu_source_type_; }
+
   // Page point in "absolute" coordinates (i.e. post-zoomed, page-relative
   // coords, usable with LayoutObject::absoluteToLocal) relative to view(), i.e.
   // the local frame.
@@ -210,11 +213,17 @@ class CORE_EXPORT MouseEvent : public UIEventWithKeyState {
              SyntheticEventType,
              const String& region);
 
-  MouseEvent(const AtomicString& type, const MouseEventInit&);
+  MouseEvent(const AtomicString& type,
+             const MouseEventInit&,
+             TimeTicks platform_time_stamp);
+  MouseEvent(const AtomicString& type, const MouseEventInit& init)
+      : MouseEvent(type, init, TimeTicks::Now()) {}
 
   MouseEvent();
 
   short RawButton() const { return button_; }
+
+  void ReceivedTarget() override;
 
  private:
   friend class MouseEventDispatchMediator;
@@ -235,7 +244,6 @@ class CORE_EXPORT MouseEvent : public UIEventWithKeyState {
 
   void InitCoordinates(const double client_x, const double client_y);
   void InitCoordinatesFromRootFrame(int window_x, int window_y);
-  void ReceivedTarget() final;
 
   void ComputePageLocation();
   void ComputeRelativePosition();
@@ -255,6 +263,10 @@ class CORE_EXPORT MouseEvent : public UIEventWithKeyState {
   Member<EventTarget> related_target_;
   SyntheticEventType synthetic_event_type_;
   String region_;
+
+  // Only used for contextmenu events.
+  WebMenuSourceType menu_source_type_;
+
   std::unique_ptr<WebMouseEvent> native_event_;
 };
 

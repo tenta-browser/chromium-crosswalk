@@ -11,6 +11,7 @@
 
 #include "ash/public/cpp/shelf_item_delegate.h"
 #include "base/metrics/histogram_macros.h"
+#include "ui/display/types/display_constants.h"
 #include "ui/gfx/image/image.h"
 
 namespace {
@@ -57,10 +58,13 @@ bool ShelfApplicationMenuModel::IsCommandIdEnabled(int command_id) const {
 
 void ShelfApplicationMenuModel::ExecuteCommand(int command_id,
                                                int event_flags) {
-  DCHECK(delegate_);
   DCHECK(IsCommandIdEnabled(command_id));
   // Have the delegate execute its own custom command id for the given item.
-  delegate_->ExecuteCommand(items_[command_id]->command_id, event_flags);
+  if (delegate_) {
+    // The display hosting the menu is irrelevant, windows activate in-place.
+    delegate_->ExecuteCommand(false, items_[command_id]->command_id,
+                              event_flags, display::kInvalidDisplayId);
+  }
   RecordMenuItemSelectedMetrics(command_id, items_.size());
 }
 

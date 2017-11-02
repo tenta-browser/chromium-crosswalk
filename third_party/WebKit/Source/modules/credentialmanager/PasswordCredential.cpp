@@ -8,10 +8,10 @@
 #include "bindings/core/v8/ExceptionState.h"
 #include "core/HTMLNames.h"
 #include "core/dom/ExecutionContext.h"
-#include "core/dom/URLSearchParams.h"
 #include "core/html/FormData.h"
 #include "core/html/HTMLFormElement.h"
 #include "core/html/ListedElement.h"
+#include "core/url/URLSearchParams.h"
 #include "modules/credentialmanager/FormDataOptions.h"
 #include "modules/credentialmanager/PasswordCredentialData.h"
 #include "platform/credentialmanager/PlatformPasswordCredential.h"
@@ -92,7 +92,7 @@ PasswordCredential* PasswordCredential::Create(
       PasswordCredential::Create(data, exception_state);
   if (exception_state.HadException())
     return nullptr;
-  ASSERT(credential);
+  DCHECK(credential);
 
   // After creating the Credential, populate its 'additionalData', 'idName', and
   // 'passwordName' attributes.  If the form's 'enctype' is anything other than
@@ -108,7 +108,7 @@ PasswordCredential* PasswordCredential::Create(
     URLSearchParams* params = URLSearchParams::Create(String());
     for (const FormData::Entry* entry : form_data->Entries()) {
       if (entry->IsString())
-        params->append(entry->name().Data(), entry->Value().Data());
+        params->append(entry->name().data(), entry->Value().data());
     }
     additional_data.setURLSearchParams(params);
   }
@@ -119,7 +119,7 @@ PasswordCredential* PasswordCredential::Create(
 
 PasswordCredential::PasswordCredential(
     WebPasswordCredential* web_password_credential)
-    : SiteBoundCredential(web_password_credential->GetPlatformCredential()),
+    : Credential(web_password_credential->GetPlatformCredential()),
       id_name_("username"),
       password_name_("password") {}
 
@@ -127,10 +127,24 @@ PasswordCredential::PasswordCredential(const String& id,
                                        const String& password,
                                        const String& name,
                                        const KURL& icon)
-    : SiteBoundCredential(
-          PlatformPasswordCredential::Create(id, password, name, icon)),
+    : Credential(PlatformPasswordCredential::Create(id, password, name, icon)),
       id_name_("username"),
       password_name_("password") {}
+
+const String& PasswordCredential::password() const {
+  return static_cast<PlatformPasswordCredential*>(platform_credential_.Get())
+      ->Password();
+}
+
+const String& PasswordCredential::name() const {
+  return static_cast<PlatformPasswordCredential*>(platform_credential_.Get())
+      ->Name();
+}
+
+const KURL& PasswordCredential::iconURL() const {
+  return static_cast<PlatformPasswordCredential*>(platform_credential_.Get())
+      ->IconURL();
+}
 
 PassRefPtr<EncodedFormData> PasswordCredential::EncodeFormData(
     String& content_type) const {
@@ -145,7 +159,7 @@ PassRefPtr<EncodedFormData> PasswordCredential::EncodeFormData(
         params->append(name, param.second);
     }
     params->append(idName(), id());
-    params->append(passwordName(), Password());
+    params->append(passwordName(), password());
 
     content_type =
         AtomicString("application/x-www-form-urlencoded;charset=UTF-8");
@@ -169,21 +183,16 @@ PassRefPtr<EncodedFormData> PasswordCredential::EncodeFormData(
     }
   }
   form_data->append(idName(), id());
-  form_data->append(passwordName(), Password());
+  form_data->append(passwordName(), password());
 
   RefPtr<EncodedFormData> encoded_data = form_data->EncodeMultiPartFormData();
   content_type = AtomicString("multipart/form-data; boundary=") +
-                 encoded_data->Boundary().Data();
-  return encoded_data.Release();
-}
-
-const String& PasswordCredential::Password() const {
-  return static_cast<PlatformPasswordCredential*>(platform_credential_.Get())
-      ->Password();
+                 encoded_data->Boundary().data();
+  return encoded_data;
 }
 
 DEFINE_TRACE(PasswordCredential) {
-  SiteBoundCredential::Trace(visitor);
+  Credential::Trace(visitor);
   visitor->Trace(additional_data_);
 }
 

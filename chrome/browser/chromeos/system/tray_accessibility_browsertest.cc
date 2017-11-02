@@ -2,16 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "ash/accessibility/accessibility_controller.h"
 #include "ash/accessibility_types.h"
 #include "ash/login_status.h"
 #include "ash/magnifier/magnification_controller.h"
+#include "ash/public/cpp/ash_pref_names.h"
 #include "ash/shell.h"
+#include "ash/shell_test_api.h"
 #include "ash/system/tray/system_tray.h"
+#include "ash/system/tray/system_tray_test_api.h"
 #include "ash/system/tray_accessibility.h"
-#include "ash/test/shell_test_api.h"
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/memory/ptr_util.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -19,12 +23,12 @@
 #include "chrome/browser/chromeos/accessibility/magnification_manager.h"
 #include "chrome/browser/chromeos/login/helper.h"
 #include "chrome/browser/chromeos/login/startup_utils.h"
+#include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/extensions/api/braille_display_private/mock_braille_controller.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/ash/session_controller_client.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/pref_names.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chromeos/chromeos_switches.h"
@@ -38,14 +42,15 @@
 #include "components/session_manager/core/session_manager.h"
 #include "content/public/test/test_utils.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/message_center/message_center.h"
 #include "ui/views/controls/button/button.h"
-#include "ui/views/controls/button/custom_button.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/widget/widget.h"
 
 using extensions::api::braille_display_private::BrailleObserver;
 using extensions::api::braille_display_private::DisplayState;
 using extensions::api::braille_display_private::MockBrailleController;
+using message_center::MessageCenter;
 using testing::Return;
 using testing::_;
 using testing::WithParamInterface;
@@ -59,6 +64,22 @@ enum PrefSettingMechanism {
 
 void SetMagnifierEnabled(bool enabled) {
   MagnificationManager::Get()->SetMagnifierEnabled(enabled);
+}
+
+// Simulates how UserSessionManager creates and starts a user session.
+void CreateAndStartUserSession(const AccountId& account_id) {
+  using session_manager::SessionManager;
+
+  const std::string user_id_hash =
+      ProfileHelper::GetUserIdHashByUserIdForTesting(account_id.GetUserEmail());
+
+  SessionManager::Get()->CreateSession(account_id, user_id_hash);
+  Profile* profile = ProfileHelper::GetProfileByUserIdHashForTest(user_id_hash);
+  ash::Shell::Get()->accessibility_controller()->SetPrefServiceForTest(
+      profile->GetPrefs());
+  SessionManager::Get()->SessionStarted();
+  // Flush to ensure the session state reaches ash and updates login status.
+  SessionControllerClient::FlushForTesting();
 }
 
 class TrayAccessibilityTest
@@ -87,12 +108,10 @@ class TrayAccessibilityTest
   void SetUpOnMainThread() override {
     AccessibilityManager::Get()->SetProfileForTest(GetProfile());
     MagnificationManager::Get()->SetProfileForTest(GetProfile());
-  }
-
-  void RunTestOnMainThreadLoop() override {
+    ash::Shell::Get()->accessibility_controller()->SetPrefServiceForTest(
+        GetProfile()->GetPrefs());
     // Need to mark oobe completed to show detailed views.
     StartupUtils::MarkOobeCompleted();
-    InProcessBrowserTest::RunTestOnMainThreadLoop();
   }
 
   void TearDownOnMainThread() override {
@@ -102,7 +121,7 @@ class TrayAccessibilityTest
   void SetShowAccessibilityOptionsInSystemTrayMenu(bool value) {
     if (GetParam() == PREF_SERVICE) {
       PrefService* prefs = GetProfile()->GetPrefs();
-      prefs->SetBoolean(prefs::kShouldAlwaysShowAccessibilityMenu, value);
+      prefs->SetBoolean(ash::prefs::kShouldAlwaysShowAccessibilityMenu, value);
     } else if (GetParam() == POLICY) {
       policy::PolicyMap policy_map;
       policy_map.Set(policy::key::kShowAccessibilityOptionsInSystemTrayMenu,
@@ -117,15 +136,13 @@ class TrayAccessibilityTest
   }
 
   ash::TrayAccessibility* tray() {
-    return ash::Shell::Get()
-        ->GetPrimarySystemTray()
-        ->GetTrayAccessibilityForTest();
+    return const_cast<ash::TrayAccessibility*>(
+        const_cast<const TrayAccessibilityTest*>(this)->tray());
   }
 
   const ash::TrayAccessibility* tray() const {
-    return ash::Shell::Get()
-        ->GetPrimarySystemTray()
-        ->GetTrayAccessibilityForTest();
+    return ash::SystemTrayTestApi(ash::Shell::Get()->GetPrimarySystemTray())
+        .tray_accessibility();
   }
 
   bool IsTrayIconVisible() const { return tray()->tray_icon_visible_; }
@@ -134,9 +151,7 @@ class TrayAccessibilityTest
     return tray()->CreateDefaultView(GetLoginStatus());
   }
 
-  void DestroyMenuItem() {
-    return tray()->DestroyDefaultView();
-  }
+  void DestroyMenuItem() { return tray()->OnDefaultViewDestroyed(); }
 
   bool CanCreateMenuItem() {
     views::View* menu_item_view = CreateMenuItem();
@@ -156,9 +171,9 @@ class TrayAccessibilityTest
   }
 
   void CloseDetailMenu() {
-    CHECK(tray()->detailed_menu_);
-    tray()->DestroyDetailedView();
-    tray()->detailed_menu_ = NULL;
+    ASSERT_TRUE(tray()->detailed_menu_);
+    tray()->OnDetailedViewDestroyed();
+    EXPECT_FALSE(tray()->detailed_menu_);
   }
 
   void ClickSpokenFeedbackOnDetailMenu() {
@@ -344,18 +359,6 @@ class TrayAccessibilityTest
            views::Button::STATE_NORMAL;
   }
 
-  bool IsNotificationShown() const {
-    return (tray()->detailed_popup_ &&
-            !tray()->detailed_popup_->GetWidget()->IsClosed());
-  }
-
-  base::string16 GetNotificationText() const {
-    if (IsNotificationShown())
-      return tray()->detailed_popup_->label_for_test()->text();
-    else
-      return base::string16();
-  }
-
   void SetBrailleConnected(bool connected) {
     braille_controller_.SetAvailable(connected);
     braille_controller_.GetObserver()->OnBrailleDisplayStateChanged(
@@ -369,11 +372,7 @@ class TrayAccessibilityTest
 IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, LoginStatus) {
   EXPECT_EQ(ash::LoginStatus::NOT_LOGGED_IN, GetLoginStatus());
 
-  session_manager::SessionManager::Get()->CreateSession(
-      AccountId::FromUserEmail("owner@invalid.domain"), "owner@invalid.domain");
-  session_manager::SessionManager::Get()->SessionStarted();
-  // Flush to ensure the session state reaches ash and updates login status.
-  SessionControllerClient::FlushForTesting();
+  CreateAndStartUserSession(AccountId::FromUserEmail("owner@invalid.domain"));
 
   EXPECT_EQ(ash::LoginStatus::USER, GetLoginStatus());
 }
@@ -384,14 +383,12 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, ShowTrayIcon) {
   // Confirms that the icon is invisible before login.
   EXPECT_FALSE(IsTrayIconVisible());
 
-  session_manager::SessionManager::Get()->CreateSession(
-      AccountId::FromUserEmail("owner@invalid.domain"), "owner@invalid.domain");
-  session_manager::SessionManager::Get()->SessionStarted();
+  CreateAndStartUserSession(AccountId::FromUserEmail("owner@invalid.domain"));
 
   // Confirms that the icon is invisible just after login.
   EXPECT_FALSE(IsTrayIconVisible());
 
-  // Toggling spoken feedback changes the visibillity of the icon.
+  // Toggling spoken feedback changes the visibility of the icon.
   AccessibilityManager::Get()->EnableSpokenFeedback(
       true, ash::A11Y_NOTIFICATION_NONE);
   EXPECT_TRUE(IsTrayIconVisible());
@@ -399,19 +396,19 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, ShowTrayIcon) {
       false, ash::A11Y_NOTIFICATION_NONE);
   EXPECT_FALSE(IsTrayIconVisible());
 
-  // Toggling high contrast the visibillity of the icon.
+  // Toggling high contrast changes the visibility of the icon.
   AccessibilityManager::Get()->EnableHighContrast(true);
   EXPECT_TRUE(IsTrayIconVisible());
   AccessibilityManager::Get()->EnableHighContrast(false);
   EXPECT_FALSE(IsTrayIconVisible());
 
-  // Toggling magnifier the visibility of the icon.
+  // Toggling magnifier changes the visibility of the icon.
   SetMagnifierEnabled(true);
   EXPECT_TRUE(IsTrayIconVisible());
   SetMagnifierEnabled(false);
   EXPECT_FALSE(IsTrayIconVisible());
 
-  // Toggling automatic clicks changes the visibility of the icon
+  // Toggling automatic clicks changes the visibility of the icon.
   AccessibilityManager::Get()->EnableAutoclick(true);
   EXPECT_TRUE(IsTrayIconVisible());
   AccessibilityManager::Get()->EnableAutoclick(false);
@@ -424,43 +421,43 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, ShowTrayIcon) {
   AccessibilityManager::Get()->EnableVirtualKeyboard(false);
   EXPECT_FALSE(IsTrayIconVisible());
 
-  // Toggling the higlight large cursor changes the visibility of the icon
+  // Toggling large cursor changes the visibility of the icon.
   AccessibilityManager::Get()->EnableLargeCursor(true);
   EXPECT_TRUE(IsTrayIconVisible());
   AccessibilityManager::Get()->EnableLargeCursor(false);
   EXPECT_FALSE(IsTrayIconVisible());
 
-  // Toggling the mono audio changes the visibility of the icon
+  // Toggling mono audio changes the visibility of the icon.
   AccessibilityManager::Get()->EnableMonoAudio(true);
   EXPECT_TRUE(IsTrayIconVisible());
   AccessibilityManager::Get()->EnableMonoAudio(false);
   EXPECT_FALSE(IsTrayIconVisible());
 
-  // Toggling the caret highlight changes the visibility of the icon
+  // Toggling caret highlight changes the visibility of the icon.
   AccessibilityManager::Get()->SetCaretHighlightEnabled(true);
   EXPECT_TRUE(IsTrayIconVisible());
   AccessibilityManager::Get()->SetCaretHighlightEnabled(false);
   EXPECT_FALSE(IsTrayIconVisible());
 
-  // Toggling the highlight mouse cursor changes the visibility of the icon
+  // Toggling highlight mouse cursor changes the visibility of the icon.
   AccessibilityManager::Get()->SetCursorHighlightEnabled(true);
   EXPECT_TRUE(IsTrayIconVisible());
   AccessibilityManager::Get()->SetCursorHighlightEnabled(false);
   EXPECT_FALSE(IsTrayIconVisible());
 
-  // Toggling the highlight keyboard focus changes the visibility of the icon
+  // Toggling highlight keyboard focus changes the visibility of the icon.
   AccessibilityManager::Get()->SetFocusHighlightEnabled(true);
   EXPECT_TRUE(IsTrayIconVisible());
   AccessibilityManager::Get()->SetFocusHighlightEnabled(false);
   EXPECT_FALSE(IsTrayIconVisible());
 
-  // Toggling the sticky keys changes the visibility of the icon.
+  // Toggling sticky keys changes the visibility of the icon.
   AccessibilityManager::Get()->EnableStickyKeys(true);
   EXPECT_TRUE(IsTrayIconVisible());
   AccessibilityManager::Get()->EnableStickyKeys(false);
   EXPECT_FALSE(IsTrayIconVisible());
 
-  // Toggling the tap dragging changes the visibility of the icon.
+  // Toggling tap dragging changes the visibility of the icon.
   AccessibilityManager::Get()->EnableTapDragging(true);
   EXPECT_TRUE(IsTrayIconVisible());
   AccessibilityManager::Get()->EnableTapDragging(false);
@@ -514,7 +511,7 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, ShowTrayIcon) {
   AccessibilityManager::Get()->EnableTapDragging(false);
   EXPECT_FALSE(IsTrayIconVisible());
 
-  // Confirms that prefs::kShouldAlwaysShowAccessibilityMenu doesn't affect
+  // Confirms that ash::prefs::kShouldAlwaysShowAccessibilityMenu doesn't affect
   // the icon on the tray.
   SetShowAccessibilityOptionsInSystemTrayMenu(true);
   AccessibilityManager::Get()->EnableHighContrast(true);
@@ -525,18 +522,14 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, ShowTrayIcon) {
 
 IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, ShowMenu) {
   // Login
-  session_manager::SessionManager::Get()->CreateSession(
-      AccountId::FromUserEmail("owner@invalid.domain"), "owner@invalid.domain");
-  session_manager::SessionManager::Get()->SessionStarted();
-  // Flush to ensure the session state reaches ash and updates login status.
-  SessionControllerClient::FlushForTesting();
+  CreateAndStartUserSession(AccountId::FromUserEmail("owner@invalid.domain"));
 
   SetShowAccessibilityOptionsInSystemTrayMenu(false);
 
   // Confirms that the menu is hidden.
   EXPECT_FALSE(CanCreateMenuItem());
 
-  // Toggling spoken feedback changes the visibillity of the menu.
+  // Toggling spoken feedback changes the visibility of the menu.
   AccessibilityManager::Get()->EnableSpokenFeedback(
       true, ash::A11Y_NOTIFICATION_NONE);
   EXPECT_TRUE(CanCreateMenuItem());
@@ -544,7 +537,7 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, ShowMenu) {
       false, ash::A11Y_NOTIFICATION_NONE);
   EXPECT_FALSE(CanCreateMenuItem());
 
-  // Toggling high contrast changes the visibillity of the menu.
+  // Toggling high contrast changes the visibility of the menu.
   AccessibilityManager::Get()->EnableHighContrast(true);
   EXPECT_TRUE(CanCreateMenuItem());
   AccessibilityManager::Get()->EnableHighContrast(false);
@@ -665,11 +658,7 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, ShowMenu) {
 
 IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, ShowMenuWithShowMenuOption) {
   // Login
-  session_manager::SessionManager::Get()->CreateSession(
-      AccountId::FromUserEmail("owner@invalid.domain"), "owner@invalid.domain");
-  session_manager::SessionManager::Get()->SessionStarted();
-  // Flush to ensure the session state reaches ash and updates login status.
-  SessionControllerClient::FlushForTesting();
+  CreateAndStartUserSession(AccountId::FromUserEmail("owner@invalid.domain"));
 
   SetShowAccessibilityOptionsInSystemTrayMenu(true);
 
@@ -944,38 +933,52 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, ShowMenuWithShowOnLoginScreen) {
 IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, ShowNotification) {
   const base::string16 BRAILLE_CONNECTED =
       base::ASCIIToUTF16("Braille display connected.");
-  const base::string16 CHROMEVOX_ENABLED = base::ASCIIToUTF16(
-      "ChromeVox (spoken feedback) is enabled.\nPress Ctrl+Alt+Z to disable.");
-  const base::string16 BRAILLE_CONNECTED_AND_CHROMEVOX_ENABLED(
-      BRAILLE_CONNECTED + base::ASCIIToUTF16(" ") + CHROMEVOX_ENABLED);
+  const base::string16 CHROMEVOX_ENABLED_TITLE =
+      base::ASCIIToUTF16("ChromeVox enabled");
+  const base::string16 CHROMEVOX_ENABLED =
+      base::ASCIIToUTF16("Press Ctrl + Alt + Z to disable spoken feedback.");
+  const base::string16 BRAILLE_CONNECTED_AND_CHROMEVOX_ENABLED_TITLE =
+      base::ASCIIToUTF16("Braille and ChromeVox are enabled");
 
   EXPECT_FALSE(AccessibilityManager::Get()->IsSpokenFeedbackEnabled());
 
   // Enabling spoken feedback should show the notification.
   AccessibilityManager::Get()->EnableSpokenFeedback(
       true, ash::A11Y_NOTIFICATION_SHOW);
-  EXPECT_EQ(CHROMEVOX_ENABLED, GetNotificationText());
+  message_center::NotificationList::Notifications notifications =
+      MessageCenter::Get()->GetVisibleNotifications();
+  EXPECT_EQ(1u, notifications.size());
+  EXPECT_EQ(CHROMEVOX_ENABLED_TITLE, (*notifications.begin())->title());
+  EXPECT_EQ(CHROMEVOX_ENABLED, (*notifications.begin())->message());
 
   // Connecting a braille display when spoken feedback is already enabled
   // should only show the message about the braille display.
   SetBrailleConnected(true);
-  EXPECT_EQ(BRAILLE_CONNECTED, GetNotificationText());
+  notifications = MessageCenter::Get()->GetVisibleNotifications();
+  EXPECT_EQ(1u, notifications.size());
+  EXPECT_EQ(base::string16(), (*notifications.begin())->title());
+  EXPECT_EQ(BRAILLE_CONNECTED, (*notifications.begin())->message());
 
   // Neither disconnecting a braille display, nor disabling spoken feedback
   // should show any notification.
   SetBrailleConnected(false);
   EXPECT_TRUE(AccessibilityManager::Get()->IsSpokenFeedbackEnabled());
-  EXPECT_FALSE(IsNotificationShown());
+  notifications = MessageCenter::Get()->GetVisibleNotifications();
+  EXPECT_EQ(0u, notifications.size());
   AccessibilityManager::Get()->EnableSpokenFeedback(
       false, ash::A11Y_NOTIFICATION_SHOW);
-  EXPECT_FALSE(IsNotificationShown());
+  notifications = MessageCenter::Get()->GetVisibleNotifications();
+  EXPECT_EQ(0u, notifications.size());
   EXPECT_FALSE(AccessibilityManager::Get()->IsSpokenFeedbackEnabled());
 
   // Connecting a braille display should enable spoken feedback and show
   // both messages.
   SetBrailleConnected(true);
   EXPECT_TRUE(AccessibilityManager::Get()->IsSpokenFeedbackEnabled());
-  EXPECT_EQ(BRAILLE_CONNECTED_AND_CHROMEVOX_ENABLED, GetNotificationText());
+  notifications = MessageCenter::Get()->GetVisibleNotifications();
+  EXPECT_EQ(BRAILLE_CONNECTED_AND_CHROMEVOX_ENABLED_TITLE,
+            (*notifications.begin())->title());
+  EXPECT_EQ(CHROMEVOX_ENABLED, (*notifications.begin())->message());
 }
 
 IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, KeepMenuVisibilityOnLockScreen) {
@@ -1641,7 +1644,8 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, CheckMenuVisibilityOnDetailMenu) {
   EXPECT_TRUE(IsTapDraggingMenuShownOnDetailMenu());
   CloseDetailMenu();
 
-  SetLoginStatus(ash::LoginStatus::USER);
+  // Simulate login.
+  CreateAndStartUserSession(AccountId::FromUserEmail("owner@invalid.domain"));
   EXPECT_TRUE(CreateDetailedMenu());
   EXPECT_TRUE(IsSpokenFeedbackMenuShownOnDetailMenu());
   EXPECT_TRUE(IsHighContrastMenuShownOnDetailMenu());
@@ -1659,7 +1663,11 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, CheckMenuVisibilityOnDetailMenu) {
   EXPECT_TRUE(IsTapDraggingMenuShownOnDetailMenu());
   CloseDetailMenu();
 
-  SetLoginStatus(ash::LoginStatus::LOCKED);
+  // Simulate screen lock.
+  session_manager::SessionManager::Get()->SetSessionState(
+      session_manager::SessionState::LOCKED);
+  // Flush to ensure the session state reaches ash and updates login status.
+  SessionControllerClient::FlushForTesting();
   EXPECT_TRUE(CreateDetailedMenu());
   EXPECT_TRUE(IsSpokenFeedbackMenuShownOnDetailMenu());
   EXPECT_TRUE(IsHighContrastMenuShownOnDetailMenu());
@@ -1677,11 +1685,11 @@ IN_PROC_BROWSER_TEST_P(TrayAccessibilityTest, CheckMenuVisibilityOnDetailMenu) {
   EXPECT_TRUE(IsTapDraggingMenuShownOnDetailMenu());
   CloseDetailMenu();
 
+  // Simulate adding multiprofile user.
   session_manager::SessionManager::Get()->SetSessionState(
       session_manager::SessionState::LOGIN_SECONDARY);
   // Flush to ensure the session state reaches ash and updates login status.
   SessionControllerClient::FlushForTesting();
-  SetLoginStatus(ash::LoginStatus::USER);
   EXPECT_TRUE(CreateDetailedMenu());
   EXPECT_TRUE(IsSpokenFeedbackMenuShownOnDetailMenu());
   EXPECT_TRUE(IsHighContrastMenuShownOnDetailMenu());

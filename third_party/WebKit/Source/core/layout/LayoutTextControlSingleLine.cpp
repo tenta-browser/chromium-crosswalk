@@ -26,7 +26,7 @@
 
 #include "core/CSSValueKeywords.h"
 #include "core/InputTypeNames.h"
-#include "core/dom/shadow/ShadowRoot.h"
+#include "core/dom/ShadowRoot.h"
 #include "core/editing/FrameSelection.h"
 #include "core/frame/LocalFrame.h"
 #include "core/html/shadow/ShadowElementNames.h"
@@ -51,18 +51,18 @@ LayoutTextControlSingleLine::LayoutTextControlSingleLine(
 LayoutTextControlSingleLine::~LayoutTextControlSingleLine() {}
 
 inline Element* LayoutTextControlSingleLine::ContainerElement() const {
-  return InputElement()->UserAgentShadowRoot()->GetElementById(
+  return InputElement()->UserAgentShadowRoot()->getElementById(
       ShadowElementNames::TextFieldContainer());
 }
 
 inline Element* LayoutTextControlSingleLine::EditingViewPortElement() const {
-  return InputElement()->UserAgentShadowRoot()->GetElementById(
+  return InputElement()->UserAgentShadowRoot()->getElementById(
       ShadowElementNames::EditingViewPort());
 }
 
 inline HTMLElement* LayoutTextControlSingleLine::InnerSpinButtonElement()
     const {
-  return ToHTMLElement(InputElement()->UserAgentShadowRoot()->GetElementById(
+  return ToHTMLElement(InputElement()->UserAgentShadowRoot()->getElementById(
       ShadowElementNames::SpinButton()));
 }
 
@@ -145,14 +145,14 @@ void LayoutTextControlSingleLine::UpdateLayout() {
     if (inner_editor_layout_object) {
       // We use inlineBlockBaseline() for innerEditor because it has no
       // inline boxes when we show the placeholder.
-      int inner_editor_baseline =
+      LayoutUnit inner_editor_baseline =
           inner_editor_layout_object->InlineBlockBaseline(kHorizontalLine);
       // We use firstLineBoxBaseline() for placeholder.
       // TODO(tkent): It's inconsistent with innerEditorBaseline. However
       // placeholderBox->inlineBlockBase() is unexpectedly larger.
-      int placeholder_baseline = placeholder_box->FirstLineBoxBaseline();
-      text_offset +=
-          LayoutSize(0, inner_editor_baseline - placeholder_baseline);
+      LayoutUnit placeholder_baseline = placeholder_box->FirstLineBoxBaseline();
+      text_offset += LayoutSize(LayoutUnit(),
+                                inner_editor_baseline - placeholder_baseline);
     }
     placeholder_box->SetLocation(text_offset);
 
@@ -218,7 +218,7 @@ void LayoutTextControlSingleLine::CapsLockStateMayHaveChanged() {
   if (LocalFrame* frame = GetDocument().GetFrame())
     should_draw_caps_lock_indicator =
         InputElement()->type() == InputTypeNames::password &&
-        frame->Selection().IsFocusedAndActive() &&
+        frame->Selection().FrameIsFocusedAndActive() &&
         GetDocument().FocusedElement() == GetNode() &&
         KeyboardEventManager::CurrentCapsLockState();
 
@@ -298,16 +298,17 @@ LayoutUnit LayoutTextControlSingleLine::ComputeControlLogicalHeight(
   return line_height + non_content_height;
 }
 
-PassRefPtr<ComputedStyle> LayoutTextControlSingleLine::CreateInnerEditorStyle(
+RefPtr<ComputedStyle> LayoutTextControlSingleLine::CreateInnerEditorStyle(
     const ComputedStyle& start_style) const {
   RefPtr<ComputedStyle> text_block_style = ComputedStyle::Create();
   text_block_style->InheritFrom(start_style);
   AdjustInnerEditorStyle(*text_block_style);
 
   text_block_style->SetWhiteSpace(EWhiteSpace::kPre);
-  text_block_style->SetOverflowWrap(kNormalOverflowWrap);
-  text_block_style->SetTextOverflow(
-      TextShouldBeTruncated() ? kTextOverflowEllipsis : kTextOverflowClip);
+  text_block_style->SetOverflowWrap(EOverflowWrap::kNormal);
+  text_block_style->SetTextOverflow(TextShouldBeTruncated()
+                                        ? ETextOverflow::kEllipsis
+                                        : ETextOverflow::kClip);
 
   int computed_line_height =
       LineHeight(true, kHorizontalLine, kPositionOfInteriorLineBoxes).ToInt();
@@ -333,7 +334,7 @@ PassRefPtr<ComputedStyle> LayoutTextControlSingleLine::CreateInnerEditorStyle(
   text_block_style->SetUnique();
 
   if (InputElement()->ShouldRevealPassword())
-    text_block_style->SetTextSecurity(TSNONE);
+    text_block_style->SetTextSecurity(ETextSecurity::kNone);
 
   text_block_style->SetOverflowX(EOverflow::kScroll);
   // overflow-y:visible doesn't work because overflow-x:scroll makes a layer.
@@ -344,12 +345,12 @@ PassRefPtr<ComputedStyle> LayoutTextControlSingleLine::CreateInnerEditorStyle(
   text_block_style->AddCachedPseudoStyle(no_scrollbar_style);
   text_block_style->SetHasPseudoStyle(kPseudoIdScrollbar);
 
-  return text_block_style.Release();
+  return text_block_style;
 }
 
 bool LayoutTextControlSingleLine::TextShouldBeTruncated() const {
   return GetDocument().FocusedElement() != GetNode() &&
-         StyleRef().GetTextOverflow() == kTextOverflowEllipsis;
+         StyleRef().TextOverflow() == ETextOverflow::kEllipsis;
 }
 
 void LayoutTextControlSingleLine::Autoscroll(const IntPoint& position) {

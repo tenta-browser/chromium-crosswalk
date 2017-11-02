@@ -52,6 +52,17 @@ function makeFetch(url, requestInitializer)
     }).catch(e => e);
 }
 
+function makeFetchInWorker(url, requestInitializer)
+{
+    return new Promise((resolve) => {
+      var worker = new Worker('/inspector/network/resources/fetch-worker.js');
+      worker.onmessage = (event) => {
+        resolve(event.data);
+      };
+      worker.postMessage({url: url, init: requestInitializer});
+    });
+}
+
 var initialize_NetworkTest = function() {
 
 InspectorTest.preloadPanel("network");
@@ -62,21 +73,10 @@ InspectorTest.preloadPanel("network");
  */
 InspectorTest.waitForRequestResponse = function(request)
 {
-    return new Promise(resolve => {
-        if (request.responseReceivedTime !== -1) {
-            resolve(request);
-            return;
-        }
-        InspectorTest.networkManager.addEventListener(SDK.NetworkManager.Events.RequestUpdated, checkRequestUpdated);
-
-        function checkRequestUpdated(data)
-        {
-            if (data.data !== request || request.responseReceivedTime === -1)
-                return;
-            InspectorTest.networkManager.removeEventListener(SDK.NetworkManager.Events.RequestUpdated, checkRequestUpdated);
-            resolve(request);
-        }
-    });
+    if (request.responseReceivedTime !== -1)
+        return Promise.resolve(request);
+    return InspectorTest.waitForEvent(SDK.NetworkManager.Events.RequestUpdated, InspectorTest.networkManager,
+        updateRequest => updateRequest === request && request.responseReceivedTime !== -1);
 }
 
 /**
@@ -86,21 +86,16 @@ InspectorTest.waitForRequestResponse = function(request)
 InspectorTest.waitForNetworkLogViewNodeForRequest = function(request)
 {
     var networkLogView = UI.panels.network._networkLogView;
-    var node = networkLogView._nodesByRequestId.get(request.requestId());
+    var node = networkLogView.nodeForRequest(request);
     if (node)
         return Promise.resolve(node);
-    return new Promise(resolve => {
-        networkLogView.addEventToListeners(Network.NetworkLogView.Events.UpdateRequest, requestUpdated);
-        networkLogView._appendRequest;
 
-        function requestUpdated(data) {
-            if (data.data !== request)
-                return;
-            networkLogView.removeEventToListeners(Network.NetworkLogView.Events.UpdateRequest, requestUpdated);
-            var node = networkLogView._nodesByRequestId.get(request.requestId());
-            console.assert(node);
-            resolve(node);
-        }
+    console.assert(networkLogView._staleRequests.has(request));
+
+    return InspectorTest.addSnifferPromise(networkLogView, '_didRefreshForTest').then(() => {
+        var node = networkLogView.nodeForRequest(request);
+        console.assert(node);
+        return node;
     });
 }
 
@@ -111,27 +106,15 @@ InspectorTest.waitForNetworkLogViewNodeForRequest = function(request)
  */
 InspectorTest.waitForWebsocketFrameReceived = function(wsRequest, message)
 {
-    return new Promise(resolve => {
-        for (var frame of wsRequest.frames()) {
-            if (resolveIfNeeded(frame))
-                return;
-        }
-        wsRequest.addEventListener(SDK.NetworkRequest.Events.WebsocketFrameAdded, handleFrameReceived);
+    for (var frame of wsRequest.frames()) {
+        if (checkFrame(frame))
+            return Promise.resolve(frame);
+    }
+    return InspectorTest.waitForEvent(SDK.NetworkRequest.Events.WebsocketFrameAdded, wsRequest, checkFrame);
 
-        function handleFrameReceived(data)
-        {
-            if (resolveIfNeeded(/** @type {!SDK.NetworkRequest.WebSocketFrame} */ (data.data)))
-                wsRequest.removeEventListener(SDK.NetworkRequest.Events.WebsocketFrameAdded, handleFrameReceived);
-        }
-
-        function resolveIfNeeded(frame)
-        {
-            if (frame.type !== SDK.NetworkRequest.WebSocketFrameType.Receive || frame.text !== message)
-                return false;
-            resolve(frame);
-            return true;
-        }
-    });
+    function checkFrame(frame) {
+        return frame.type === SDK.NetworkRequest.WebSocketFrameType.Receive && frame.text === message;
+    }
 }
 
 InspectorTest.recordNetwork = function()
@@ -141,7 +124,7 @@ InspectorTest.recordNetwork = function()
 
 InspectorTest.networkRequests = function()
 {
-    return NetworkLog.networkLog.requests().slice();
+    return Array.from(NetworkLog.networkLog.requests());
 }
 
 InspectorTest.dumpNetworkRequests = function()
@@ -187,10 +170,12 @@ InspectorTest.makeXHR = function(method, url, async, user, password, headers, wi
 
     function innerCallback(msg)
     {
-        if (msg.messageText.indexOf("XHR loaded") !== -1)
-            callback();
-        else
+        if (msg.messageText.indexOf("XHR loaded") !== -1) {
+            if (callback)
+                callback();
+        } else {
             InspectorTest.addConsoleSniffer(innerCallback);
+        }
     }
 
     InspectorTest.addConsoleSniffer(innerCallback);
@@ -202,13 +187,20 @@ InspectorTest.makeFetch = function(url, requestInitializer, callback)
     InspectorTest.callFunctionInPageAsync("makeFetch", [url, requestInitializer]).then(callback);
 }
 
-InspectorTest.clearNetworkCache = function(finishedCallback)
+InspectorTest.makeFetchInWorker = function(url, requestInitializer, callback)
 {
-  // This turns cache off and then on, effectively clearning the cache.
-  var networkAgent = InspectorTest.NetworkAgent;
-  var promise = networkAgent.setCacheDisabled(true);
-  promise.then(networkAgent.setCacheDisabled.bind(networkAgent, false));
-  promise.then(finishedCallback);
+    InspectorTest.callFunctionInPageAsync("makeFetchInWorker", [url, requestInitializer]).then(callback);
+}
+
+/**
+ * @return {!Promise}
+ */
+InspectorTest.clearNetworkCache = function()
+{
+    // This turns cache off and then on, effectively clearning the cache.
+    var networkAgent = InspectorTest.NetworkAgent;
+    var promise = networkAgent.setCacheDisabled(true);
+    return promise.then(() => networkAgent.setCacheDisabled(false));
 }
 
 InspectorTest.HARPropertyFormatters = {

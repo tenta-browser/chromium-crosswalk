@@ -31,9 +31,9 @@
 #include "core/dom/VisitedLinkState.h"
 
 #include "core/HTMLNames.h"
+#include "core/dom/ElementShadow.h"
 #include "core/dom/ElementTraversal.h"
-#include "core/dom/shadow/ElementShadow.h"
-#include "core/dom/shadow/ShadowRoot.h"
+#include "core/dom/ShadowRoot.h"
 #include "core/html/HTMLAnchorElement.h"
 #include "core/svg/SVGURIReference.h"
 #include "public/platform/Platform.h"
@@ -84,8 +84,8 @@ static void InvalidateStyleForAllLinksRecursively(
 
 void VisitedLinkState::InvalidateStyleForAllLinks(
     bool invalidate_visited_link_hashes) {
-  if (!links_checked_for_visited_state_.IsEmpty() && GetDocument().FirstChild())
-    InvalidateStyleForAllLinksRecursively(*GetDocument().FirstChild(),
+  if (!links_checked_for_visited_state_.IsEmpty() && GetDocument().firstChild())
+    InvalidateStyleForAllLinksRecursively(*GetDocument().firstChild(),
                                           invalidate_visited_link_hashes);
 }
 
@@ -106,8 +106,8 @@ static void InvalidateStyleForLinkRecursively(Node& root_node,
 
 void VisitedLinkState::InvalidateStyleForLink(LinkHash link_hash) {
   if (links_checked_for_visited_state_.Contains(link_hash) &&
-      GetDocument().FirstChild())
-    InvalidateStyleForLinkRecursively(*GetDocument().FirstChild(), link_hash);
+      GetDocument().firstChild())
+    InvalidateStyleForLinkRecursively(*GetDocument().firstChild(), link_hash);
 }
 
 EInsideLink VisitedLinkState::DetermineLinkStateSlowCase(

@@ -42,7 +42,7 @@ class PLATFORM_EXPORT DrawingRecorder final {
   ~DrawingRecorder();
 
   void SetKnownToBeOpaque() {
-    DCHECK(RuntimeEnabledFeatures::slimmingPaintV2Enabled());
+    DCHECK(RuntimeEnabledFeatures::SlimmingPaintV2Enabled());
     known_to_be_opaque_ = true;
   }
 
@@ -53,6 +53,8 @@ class PLATFORM_EXPORT DrawingRecorder final {
 
   // True if there are no transparent areas. Only used for SlimmingPaintV2.
   bool known_to_be_opaque_;
+  // The bounds of the area being recorded.
+  IntRect recording_bounds_;
 
 #if DCHECK_IS_ON()
   // Ensures the list size does not change during the recorder's scope.

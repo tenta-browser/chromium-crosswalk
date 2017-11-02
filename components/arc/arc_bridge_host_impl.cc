@@ -76,7 +76,9 @@ ArcBridgeHostImpl::ArcBridgeHostImpl(ArcBridgeService* arc_bridge_service,
   DCHECK(instance_.is_bound());
   instance_.set_connection_error_handler(
       base::Bind(&ArcBridgeHostImpl::OnClosed, base::Unretained(this)));
-  instance_->Init(binding_.CreateInterfacePtrAndBind());
+  mojom::ArcBridgeHostPtr host_proxy;
+  binding_.Bind(mojo::MakeRequest(&host_proxy));
+  instance_->Init(std::move(host_proxy));
 }
 
 ArcBridgeHostImpl::~ArcBridgeHostImpl() {
@@ -111,6 +113,12 @@ void ArcBridgeHostImpl::OnBootPhaseMonitorInstanceReady(
     mojom::BootPhaseMonitorInstancePtr boot_phase_monitor_ptr) {
   OnInstanceReady(arc_bridge_service_->boot_phase_monitor(),
                   std::move(boot_phase_monitor_ptr));
+}
+
+void ArcBridgeHostImpl::OnCastReceiverInstanceReady(
+    mojom::CastReceiverInstancePtr cast_receiver_ptr) {
+  OnInstanceReady(arc_bridge_service_->cast_receiver(),
+                  std::move(cast_receiver_ptr));
 }
 
 void ArcBridgeHostImpl::OnClipboardInstanceReady(
@@ -151,6 +159,12 @@ void ArcBridgeHostImpl::OnKioskInstanceReady(
   OnInstanceReady(arc_bridge_service_->kiosk(), std::move(kiosk_ptr));
 }
 
+void ArcBridgeHostImpl::OnLockScreenInstanceReady(
+    mojom::LockScreenInstancePtr lock_screen_ptr) {
+  OnInstanceReady(arc_bridge_service_->lock_screen(),
+                  std::move(lock_screen_ptr));
+}
+
 void ArcBridgeHostImpl::OnMetricsInstanceReady(
     mojom::MetricsInstancePtr metrics_ptr) {
   OnInstanceReady(arc_bridge_service_->metrics(), std::move(metrics_ptr));
@@ -170,6 +184,11 @@ void ArcBridgeHostImpl::OnObbMounterInstanceReady(
     mojom::ObbMounterInstancePtr obb_mounter_ptr) {
   OnInstanceReady(arc_bridge_service_->obb_mounter(),
                   std::move(obb_mounter_ptr));
+}
+
+void ArcBridgeHostImpl::OnOemCryptoInstanceReady(
+    mojom::OemCryptoInstancePtr oemcrypto_ptr) {
+  OnInstanceReady(arc_bridge_service_->oemcrypto(), std::move(oemcrypto_ptr));
 }
 
 void ArcBridgeHostImpl::OnPolicyInstanceReady(
@@ -212,10 +231,22 @@ void ArcBridgeHostImpl::OnVideoInstanceReady(
   OnInstanceReady(arc_bridge_service_->video(), std::move(video_ptr));
 }
 
+void ArcBridgeHostImpl::OnVoiceInteractionArcHomeInstanceReady(
+    mojom::VoiceInteractionArcHomeInstancePtr home_ptr) {
+  OnInstanceReady(arc_bridge_service_->voice_interaction_arc_home(),
+                  std::move(home_ptr));
+}
+
 void ArcBridgeHostImpl::OnVoiceInteractionFrameworkInstanceReady(
     mojom::VoiceInteractionFrameworkInstancePtr framework_ptr) {
   OnInstanceReady(arc_bridge_service_->voice_interaction_framework(),
                   std::move(framework_ptr));
+}
+
+void ArcBridgeHostImpl::OnVolumeMounterInstanceReady(
+    mojom::VolumeMounterInstancePtr volume_mounter_ptr) {
+  OnInstanceReady(arc_bridge_service_->volume_mounter(),
+                  std::move(volume_mounter_ptr));
 }
 
 void ArcBridgeHostImpl::OnWallpaperInstanceReady(
@@ -224,7 +255,7 @@ void ArcBridgeHostImpl::OnWallpaperInstanceReady(
 }
 
 void ArcBridgeHostImpl::OnClosed() {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   VLOG(1) << "Mojo connection lost";
 
   // Close all mojo channels.
@@ -237,7 +268,7 @@ void ArcBridgeHostImpl::OnClosed() {
 template <typename T>
 void ArcBridgeHostImpl::OnInstanceReady(InstanceHolder<T>* holder,
                                         mojo::InterfacePtr<T> ptr) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   DCHECK(binding_.is_bound());
   DCHECK(ptr.is_bound());
 
@@ -259,7 +290,7 @@ void ArcBridgeHostImpl::OnInstanceReady(InstanceHolder<T>* holder,
 }
 
 void ArcBridgeHostImpl::OnChannelClosed(MojoChannel* channel) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_THREAD(thread_checker_);
   mojo_channels_.erase(
       std::find_if(mojo_channels_.begin(), mojo_channels_.end(),
                    [channel](std::unique_ptr<MojoChannel>& ptr) {

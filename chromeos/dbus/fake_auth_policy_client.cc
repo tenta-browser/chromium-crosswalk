@@ -21,6 +21,7 @@
 #include "components/policy/proto/cloud_policy.pb.h"
 #include "components/policy/proto/device_management_backend.pb.h"
 #include "components/signin/core/account_id/account_id.h"
+#include "dbus/message.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
 namespace em = enterprise_management;
@@ -30,16 +31,13 @@ namespace {
 const size_t kMaxMachineNameLength = 15;
 const char kInvalidMachineNameCharacters[] = "\\/:*?\"<>|";
 
-// Delay operations to be more realistic.
-constexpr int kOperationDelaySeconds = 3;
-
 // Drop stub policy file of |policy_type| at |policy_path| containing
 // |serialized_payload|.
 bool WritePolicyFile(const base::FilePath& policy_path,
                      const std::string& serialized_payload,
-                     const std::string& policy_type) {
-  base::PlatformThread::Sleep(
-      base::TimeDelta::FromSeconds(kOperationDelaySeconds));
+                     const std::string& policy_type,
+                     const base::TimeDelta& delay) {
+  base::PlatformThread::Sleep(delay);
 
   em::PolicyData data;
   data.set_policy_value(serialized_payload);
@@ -63,10 +61,19 @@ bool WritePolicyFile(const base::FilePath& policy_path,
   return bytes_written == static_cast<int>(serialized_response.size());
 }
 
-void PostDelayedClosure(base::OnceClosure closure) {
+// Posts |closure| on the ThreadTaskRunner with |delay|.
+void PostDelayedClosure(base::OnceClosure closure,
+                        const base::TimeDelta& delay) {
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE, std::move(closure),
-      base::TimeDelta::FromSeconds(kOperationDelaySeconds));
+      FROM_HERE, std::move(closure), delay);
+}
+
+// Runs |signal_callback| with Signal*. Needed to own Signal object.
+void RunSignalCallback(const std::string& interface_name,
+                       const std::string& method_name,
+                       dbus::ObjectProxy::SignalCallback signal_callback) {
+  signal_callback.Run(
+      base::MakeUnique<dbus::Signal>(interface_name, method_name).get());
 }
 
 }  // namespace
@@ -92,7 +99,7 @@ void FakeAuthPolicyClient::JoinAdDomain(const std::string& machine_name,
   } else if (machine_name.empty() ||
              machine_name.find_first_of(kInvalidMachineNameCharacters) !=
                  std::string::npos) {
-    error = authpolicy::ERROR_BAD_MACHINE_NAME;
+    error = authpolicy::ERROR_INVALID_MACHINE_NAME;
   } else {
     std::vector<std::string> parts = base::SplitString(
         user_principal_name, "@", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
@@ -100,24 +107,64 @@ void FakeAuthPolicyClient::JoinAdDomain(const std::string& machine_name,
       error = authpolicy::ERROR_PARSE_UPN_FAILED;
     }
   }
-  PostDelayedClosure(base::BindOnce(std::move(callback), error));
+  PostDelayedClosure(base::BindOnce(std::move(callback), error),
+                     dbus_operation_delay_);
 }
 
 void FakeAuthPolicyClient::AuthenticateUser(
     const std::string& user_principal_name,
+    const std::string& object_guid,
     int password_fd,
     AuthCallback callback) {
   authpolicy::ErrorType error = authpolicy::ERROR_NONE;
-  authpolicy::ActiveDirectoryAccountData account_data;
+  authpolicy::ActiveDirectoryAccountInfo account_info;
   if (!started_) {
     LOG(ERROR) << "authpolicyd not started";
     error = authpolicy::ERROR_DBUS_FAILURE;
   } else {
-    if (auth_error_ == authpolicy::ERROR_NONE)
-      account_data.set_account_id(base::MD5String(user_principal_name));
+    if (auth_error_ == authpolicy::ERROR_NONE) {
+      if (object_guid.empty())
+        account_info.set_account_id(base::MD5String(user_principal_name));
+      else
+        account_info.set_account_id(object_guid);
+    }
     error = auth_error_;
   }
-  PostDelayedClosure(base::BindOnce(std::move(callback), error, account_data));
+  PostDelayedClosure(base::BindOnce(std::move(callback), error, account_info),
+                     dbus_operation_delay_);
+}
+
+void FakeAuthPolicyClient::GetUserStatus(const std::string& object_guid,
+                                         GetUserStatusCallback callback) {
+  authpolicy::ActiveDirectoryUserStatus user_status;
+  user_status.set_password_status(password_status_);
+  user_status.set_tgt_status(tgt_status_);
+
+  authpolicy::ActiveDirectoryAccountInfo* const account_info =
+      user_status.mutable_account_info();
+  account_info->set_account_id(object_guid);
+  if (!display_name_.empty())
+    account_info->set_display_name(display_name_);
+  if (!given_name_.empty())
+    account_info->set_given_name(given_name_);
+
+  PostDelayedClosure(
+      base::BindOnce(std::move(callback), authpolicy::ERROR_NONE, user_status),
+      dbus_operation_delay_);
+  if (!on_get_status_closure_.is_null())
+    PostDelayedClosure(std::move(on_get_status_closure_),
+                       dbus_operation_delay_);
+}
+
+void FakeAuthPolicyClient::GetUserKerberosFiles(
+    const std::string& object_guid,
+    GetUserKerberosFilesCallback callback) {
+  authpolicy::KerberosFiles files;
+  files.set_krb5cc("credentials");
+  files.set_krb5conf("configuration");
+  PostDelayedClosure(
+      base::BindOnce(std::move(callback), authpolicy::ERROR_NONE, files),
+      dbus_operation_delay_);
 }
 
 void FakeAuthPolicyClient::RefreshDevicePolicy(RefreshPolicyCallback callback) {
@@ -140,13 +187,10 @@ void FakeAuthPolicyClient::RefreshDevicePolicy(RefreshPolicyCallback callback) {
   // Drop file for SessionManagerClientStubImpl to read.
   base::PostTaskWithTraitsAndReplyWithResult(
       FROM_HERE,
-      base::TaskTraits()
-          .WithShutdownBehavior(
-              base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN)
-          .WithPriority(base::TaskPriority::BACKGROUND)
-          .MayBlock(),
+      {base::MayBlock(), base::TaskPriority::BACKGROUND,
+       base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
       base::BindOnce(&WritePolicyFile, policy_path, payload,
-                     "google/chromeos/device"),
+                     "google/chromeos/device", disk_operation_delay_),
       std::move(callback));
 }
 
@@ -176,14 +220,23 @@ void FakeAuthPolicyClient::RefreshUserPolicy(const AccountId& account_id,
   // Drop file for SessionManagerClientStubImpl to read.
   base::PostTaskWithTraitsAndReplyWithResult(
       FROM_HERE,
-      base::TaskTraits()
-          .WithShutdownBehavior(
-              base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN)
-          .WithPriority(base::TaskPriority::BACKGROUND)
-          .MayBlock(),
+      {base::MayBlock(), base::TaskPriority::BACKGROUND,
+       base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
       base::BindOnce(&WritePolicyFile, policy_path, payload,
-                     "google/chromeos/user"),
+                     "google/chromeos/user", disk_operation_delay_),
       std::move(callback));
+}
+
+void FakeAuthPolicyClient::ConnectToSignal(
+    const std::string& signal_name,
+    dbus::ObjectProxy::SignalCallback signal_callback,
+    dbus::ObjectProxy::OnConnectedCallback on_connected_callback) {
+  on_connected_callback.Run(authpolicy::kAuthPolicyInterface, signal_name,
+                            true /* success */);
+  PostDelayedClosure(
+      base::BindOnce(RunSignalCallback, authpolicy::kAuthPolicyInterface,
+                     signal_name, signal_callback),
+      dbus_operation_delay_);
 }
 
 }  // namespace chromeos

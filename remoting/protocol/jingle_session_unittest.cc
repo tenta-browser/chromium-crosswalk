@@ -44,7 +44,7 @@ using testing::Invoke;
 using testing::InvokeWithoutArgs;
 using testing::Return;
 using testing::SaveArg;
-using testing::SetArgumentPointee;
+using testing::SetArgPointee;
 using testing::WithArg;
 
 namespace remoting {
@@ -223,7 +223,7 @@ class JingleSessionTest : public testing::Test {
     EXPECT_CALL(host_server_listener_, OnIncomingSession(_, _))
         .WillOnce(
             DoAll(WithArg<0>(Invoke(this, &JingleSessionTest::SetHostSession)),
-                  SetArgumentPointee<1>(protocol::SessionManager::ACCEPT)));
+                  SetArgPointee<1>(protocol::SessionManager::ACCEPT)));
 
     {
       InSequence dummy;
@@ -357,7 +357,7 @@ TEST_F(JingleSessionTest, RejectConnection) {
 
   // Reject incoming session.
   EXPECT_CALL(host_server_listener_, OnIncomingSession(_, _))
-      .WillOnce(SetArgumentPointee<1>(protocol::SessionManager::DECLINE));
+      .WillOnce(SetArgPointee<1>(protocol::SessionManager::DECLINE));
 
   {
     InSequence dummy;
@@ -380,7 +380,7 @@ TEST_F(JingleSessionTest, Connect) {
   // Verify that the client specified correct initiator value.
   ASSERT_GT(host_signal_strategy_->received_messages().size(), 0U);
   const buzz::XmlElement* initiate_xml =
-      host_signal_strategy_->received_messages().front();
+      host_signal_strategy_->received_messages().front().get();
   const buzz::XmlElement* jingle_element =
       initiate_xml->FirstNamed(buzz::QName("urn:xmpp:jingle:1", "jingle"));
   ASSERT_TRUE(jingle_element);
@@ -497,9 +497,9 @@ TEST_F(JingleSessionTest, DeleteSessionOnIncomingConnection) {
   CreateSessionManagers(auth_config);
 
   EXPECT_CALL(host_server_listener_, OnIncomingSession(_, _))
-      .WillOnce(DoAll(
-          WithArg<0>(Invoke(this, &JingleSessionTest::SetHostSession)),
-          SetArgumentPointee<1>(protocol::SessionManager::ACCEPT)));
+      .WillOnce(
+          DoAll(WithArg<0>(Invoke(this, &JingleSessionTest::SetHostSession)),
+                SetArgPointee<1>(protocol::SessionManager::ACCEPT)));
 
   EXPECT_CALL(host_session_event_handler_,
       OnSessionStateChange(Session::ACCEPTED))
@@ -526,7 +526,7 @@ TEST_F(JingleSessionTest, DeleteSessionOnAuth) {
   EXPECT_CALL(host_server_listener_, OnIncomingSession(_, _))
       .WillOnce(
           DoAll(WithArg<0>(Invoke(this, &JingleSessionTest::SetHostSession)),
-                SetArgumentPointee<1>(protocol::SessionManager::ACCEPT)));
+                SetArgPointee<1>(protocol::SessionManager::ACCEPT)));
 
   EXPECT_CALL(host_session_event_handler_,
       OnSessionStateChange(Session::ACCEPTED))

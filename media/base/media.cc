@@ -4,6 +4,7 @@
 
 #include "media/base/media.h"
 
+#include "base/allocator/features.h"
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/metrics/field_trial.h"
@@ -13,11 +14,15 @@
 
 #if defined(OS_ANDROID)
 #include "base/android/build_info.h"
-#include "media/base/android/media_codec_util.h"
 #endif
 
 #if !defined(MEDIA_DISABLE_FFMPEG)
-#include "media/ffmpeg/ffmpeg_common.h"
+#include "third_party/ffmpeg/ffmpeg_features.h"  // nogncheck
+extern "C" {
+#include <libavutil/cpu.h>
+#include <libavutil/log.h>
+#include <libavutil/mem.h>
+}
 #endif
 
 namespace media {
@@ -39,10 +44,10 @@ class MediaInitializer {
     // Disable logging as it interferes with layout tests.
     av_log_set_level(AV_LOG_QUIET);
 
-#if defined(ALLOCATOR_SHIM)
+#if BUILDFLAG(USE_ALLOCATOR_SHIM)
     // Remove allocation limit from ffmpeg, so calls go down to shim layer.
     av_max_alloc(0);
-#endif  // defined(ALLOCATOR_SHIM)
+#endif  // BUILDFLAG(USE_ALLOCATOR_SHIM)
 
 #endif  // !defined(MEDIA_DISABLE_FFMPEG)
   }
@@ -57,22 +62,12 @@ class MediaInitializer {
   }
 #endif  // defined(OS_ANDROID)
 
-  void enable_new_vp9_codec_string_support() {
-    has_new_vp9_codec_string_support_ = true;
-  }
-
-  bool has_new_vp9_codec_string_support() {
-    return has_new_vp9_codec_string_support_;
-  }
-
  private:
   ~MediaInitializer() = delete;
 
 #if defined(OS_ANDROID)
   bool has_platform_decoder_support_ = false;
 #endif  // defined(OS_ANDROID)
-
-  bool has_new_vp9_codec_string_support_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(MediaInitializer);
 };
@@ -99,13 +94,5 @@ bool PlatformHasOpusSupport() {
   return base::android::BuildInfo::GetInstance()->sdk_int() >= 21;
 }
 #endif  // defined(OS_ANDROID)
-
-void EnableNewVp9CodecStringSupport() {
-  GetMediaInstance()->enable_new_vp9_codec_string_support();
-}
-
-bool HasNewVp9CodecStringSupport() {
-  return GetMediaInstance()->has_new_vp9_codec_string_support();
-}
 
 }  // namespace media

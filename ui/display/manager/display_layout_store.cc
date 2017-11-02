@@ -72,15 +72,23 @@ void DisplayLayoutStore::RegisterLayoutForDisplayIdList(
       layout->placement_list[0].parent_display_id = list[0];
     }
   }
-  DCHECK(DisplayLayout::Validate(list, *layout.get()))
-      << "ids=" << DisplayIdListToString(list)
-      << ", layout=" << layout->ToString();
+
+  if (!DisplayLayout::Validate(list, *layout.get())) {
+    NOTREACHED() << "Attempting to register an invalid layout: ids="
+                 << DisplayIdListToString(list)
+                 << ", layout=" << layout->ToString();
+    // We never allow to register an invalid layout, instead, we revert back to
+    // a default layout.
+    CreateDefaultDisplayLayout(list);
+    return;
+  }
+
   layouts_[list] = std::move(layout);
 }
 
 const DisplayLayout& DisplayLayoutStore::GetRegisteredDisplayLayout(
     const DisplayIdList& list) {
-  DCHECK_NE(1u, list.size());
+  DCHECK_GT(list.size(), 1u);
   const auto iter = layouts_.find(list);
   const DisplayLayout* layout = iter != layouts_.end()
                                     ? iter->second.get()

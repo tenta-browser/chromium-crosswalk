@@ -16,10 +16,12 @@
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/ui/ash/chrome_shell_content_state.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "components/user_manager/user_manager.h"
+#include "content/public/browser/media_session.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/service_manager_connection.h"
@@ -136,7 +138,7 @@ MediaClient::MediaClient() : binding_(this), weak_ptr_factory_(this) {
 
   // Register this object as the client interface implementation.
   ash::mojom::MediaClientAssociatedPtrInfo ptr_info;
-  binding_.Bind(&ptr_info);
+  binding_.Bind(mojo::MakeRequest(&ptr_info));
   media_controller_->SetClient(std::move(ptr_info));
 }
 
@@ -151,6 +153,20 @@ void MediaClient::HandleMediaNextTrack() {
 }
 
 void MediaClient::HandleMediaPlayPause() {
+  // If there is an active browser, then instead of dispatching this event,
+  // handle active tab's media session play pause.
+  Browser* browser = chrome::FindBrowserWithActiveWindow();
+  if (browser) {
+    content::MediaSession* media_session = content::MediaSession::Get(
+        browser->tab_strip_model()->GetActiveWebContents());
+    if (media_session->IsControllable()) {
+      if (media_session->IsActuallyPaused())
+        media_session->Resume(content::MediaSession::SuspendType::UI);
+      else
+        media_session->Suspend(content::MediaSession::SuspendType::UI);
+      return;
+    }
+  }
   extensions::MediaPlayerAPI::Get(ProfileManager::GetActiveUserProfile())
       ->media_player_event_router()
       ->NotifyTogglePlayState();
@@ -187,8 +203,8 @@ void MediaClient::OnRequestUpdate(int render_process_id,
   // The PostTask is necessary because the state of MediaStreamCaptureIndicator
   // gets updated after this.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&MediaClient::RequestCaptureState,
-                            weak_ptr_factory_.GetWeakPtr()));
+      FROM_HERE, base::BindOnce(&MediaClient::RequestCaptureState,
+                                weak_ptr_factory_.GetWeakPtr()));
 }
 
 MediaCaptureState MediaClient::GetMediaCaptureStateByIndex(int user_index) {

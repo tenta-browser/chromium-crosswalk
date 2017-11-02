@@ -7,7 +7,6 @@
 #include <string>
 #include <utility>
 
-#include "ash/system/devicetype_utils.h"
 #include "base/bind.h"
 #include "base/i18n/timezone.h"
 #include "base/json/json_reader.h"
@@ -19,7 +18,9 @@
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/app_list/arc/arc_app_utils.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_util.h"
+#include "chrome/browser/ui/chrome_pages.h"
 #include "chrome/browser/ui/extensions/app_launch_params.h"
 #include "chrome/browser/ui/extensions/application_launch.h"
 #include "chrome/grit/generated_resources.h"
@@ -27,6 +28,7 @@
 #include "extensions/browser/extension_registry.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/webui/web_ui_util.h"
+#include "ui/chromeos/devicetype_utils.h"
 #include "ui/display/screen.h"
 
 namespace {
@@ -42,9 +44,13 @@ constexpr char kActionSetWindowBounds[] = "setWindowBounds";
 constexpr char kActionCloseWindow[] = "closeWindow";
 
 // Action to show a page. The message should have "page" field, which is one of
-// IDs for section div elements.
+// IDs for section div elements. For the "active-directory-auth" page, the
+// "federationUrl" and "deviceManagementUrlPrefix" options are required.
 constexpr char kActionShowPage[] = "showPage";
 constexpr char kPage[] = "page";
+constexpr char kOptions[] = "options";
+constexpr char kFederationUrl[] = "federationUrl";
+constexpr char kDeviceManagementUrlPrefix[] = "deviceManagementUrlPrefix";
 
 // Action to show the error page. The message should have "errorMessage",
 // which is a localized error text, and "shouldShowSendFeedback" boolean value.
@@ -65,13 +71,15 @@ constexpr char kEvent[] = "event";
 // No data will be provided.
 constexpr char kEventOnWindowClosed[] = "onWindowClosed";
 
-// "onAuthSucceeded" is fired when successfully done to LSO authorization in
-// extension.
-// The auth token is passed via "code" field.
+// "onAuthSucceeded" is fired when LSO or Active Directory authentication
+// succeeds. For LSO, the auth token is passed via "code" field. For Active
+// Directory, "code" is empty.
 constexpr char kEventOnAuthSucceeded[] = "onAuthSucceeded";
-// "onAuthFailed" is fired when LSO authorization has failed in extension.
-constexpr char kEventOnAuthFailed[] = "onAuthFailed";
 constexpr char kCode[] = "code";
+
+// "onAuthFailed" is fired when LSO or Active Directory authentication failed.
+constexpr char kEventOnAuthFailed[] = "onAuthFailed";
+constexpr char kAuthErrorMessage[] = "errorMessage";
 
 // "onAgree" is fired when a user clicks "Agree" button.
 // The message should have the following three fields:
@@ -90,13 +98,15 @@ constexpr char kEventOnRetryClicked[] = "onRetryClicked";
 // "onSendFeedbackClicked" is fired when a user clicks "Send Feedback" button.
 constexpr char kEventOnSendFeedbackClicked[] = "onSendFeedbackClicked";
 
+// "onOpenSettingsPageClicked" is fired when a user clicks settings link.
+constexpr char kEventOnOpenSettingsPageClicked[] = "onOpenSettingsPageClicked";
+
 void RequestOpenApp(Profile* profile) {
   const extensions::Extension* extension =
       extensions::ExtensionRegistry::Get(profile)->GetInstalledExtension(
-          ArcSupportHost::kHostAppId);
+          arc::kPlayStoreAppId);
   DCHECK(extension);
-  DCHECK(
-      extensions::util::IsAppLaunchable(ArcSupportHost::kHostAppId, profile));
+  DCHECK(extensions::util::IsAppLaunchable(arc::kPlayStoreAppId, profile));
   OpenApplication(CreateAppLaunchParamsUserContainer(
       profile, extension, WindowOpenDisposition::NEW_WINDOW,
       extensions::SOURCE_CHROME_INTERNAL));
@@ -112,6 +122,8 @@ std::ostream& operator<<(std::ostream& os, ArcSupportHost::UIPage ui_page) {
       return os << "LSO";
     case ArcSupportHost::UIPage::ARC_LOADING:
       return os << "ARC_LOADING";
+    case ArcSupportHost::UIPage::ACTIVE_DIRECTORY_AUTH:
+      return os << "ACTIVE_DIRECTORY_AUTH";
     case ArcSupportHost::UIPage::ERROR:
       return os << "ERROR";
   }
@@ -153,9 +165,6 @@ std::ostream& operator<<(std::ostream& os, ArcSupportHost::Error error) {
 }  // namespace
 
 // static
-const char ArcSupportHost::kHostAppId[] = "cnbgggchhmkkdmeppjobngjoejnihlei";
-
-// static
 const char ArcSupportHost::kStorageId[] = "arc_support";
 
 ArcSupportHost::ArcSupportHost(Profile* profile)
@@ -165,20 +174,32 @@ ArcSupportHost::ArcSupportHost(Profile* profile)
 }
 
 ArcSupportHost::~ArcSupportHost() {
+  // Delegates should have been reset to nullptr at this point.
+  DCHECK(!auth_delegate_);
+  DCHECK(!tos_delegate_);
+  DCHECK(!error_delegate_);
+
   if (message_host_)
     DisconnectMessageHost();
 }
 
-void ArcSupportHost::AddObserver(Observer* observer) {
-  observer_list_.AddObserver(observer);
+void ArcSupportHost::SetAuthDelegate(AuthDelegate* delegate) {
+  // Since AuthDelegate and TermsOfServiceDelegate should not have overlapping
+  // life cycle, both delegates can't be non-null at the same time.
+  DCHECK(!(delegate && tos_delegate_));
+  auth_delegate_ = delegate;
 }
 
-void ArcSupportHost::RemoveObserver(Observer* observer) {
-  observer_list_.RemoveObserver(observer);
+void ArcSupportHost::SetTermsOfServiceDelegate(
+    TermsOfServiceDelegate* delegate) {
+  // Since AuthDelegate and TermsOfServiceDelegate should not have overlapping
+  // life cycle, both delegates can't be non-null at the same time.
+  DCHECK(!(delegate && auth_delegate_));
+  tos_delegate_ = delegate;
 }
 
-bool ArcSupportHost::HasObserver(Observer* observer) {
-  return observer_list_.HasObserver(observer);
+void ArcSupportHost::SetErrorDelegate(ErrorDelegate* delegate) {
+  error_delegate_ = delegate;
 }
 
 void ArcSupportHost::SetArcManaged(bool is_arc_managed) {
@@ -215,6 +236,15 @@ void ArcSupportHost::ShowArcLoading() {
   ShowPage(UIPage::ARC_LOADING);
 }
 
+void ArcSupportHost::ShowActiveDirectoryAuth(
+    const GURL& federation_url,
+    const std::string& device_management_url_prefix) {
+  active_directory_auth_federation_url_ = federation_url;
+  active_directory_auth_device_management_url_prefix_ =
+      device_management_url_prefix;
+  ShowPage(UIPage::ACTIVE_DIRECTORY_AUTH);
+}
+
 void ArcSupportHost::ShowPage(UIPage ui_page) {
   ui_page_ = ui_page;
   if (!message_host_) {
@@ -240,6 +270,17 @@ void ArcSupportHost::ShowPage(UIPage ui_page) {
       break;
     case UIPage::ARC_LOADING:
       message.SetString(kPage, "arc-loading");
+      break;
+    case UIPage::ACTIVE_DIRECTORY_AUTH:
+      DCHECK(active_directory_auth_federation_url_.is_valid());
+      DCHECK(!active_directory_auth_device_management_url_prefix_.empty());
+      message.SetString(kPage, "active-directory-auth");
+      message.SetPath(
+          {kOptions, kFederationUrl},
+          base::Value(active_directory_auth_federation_url_.spec()));
+      message.SetPath(
+          {kOptions, kDeviceManagementUrlPrefix},
+          base::Value(active_directory_auth_device_management_url_prefix_));
       break;
     default:
       NOTREACHED();
@@ -406,19 +447,25 @@ bool ArcSupportHost::Initialize() {
   DCHECK(message_host_);
 
   auto loadtime_data = base::MakeUnique<base::DictionaryValue>();
-  base::string16 device_name = ash::GetChromeOSDeviceName();
+  loadtime_data->SetString("appWindow", l10n_util::GetStringUTF16(
+                                            IDS_ARC_PLAYSTORE_ICON_TITLE_BETA));
   loadtime_data->SetString(
-      "greetingHeader",
-      l10n_util::GetStringFUTF16(IDS_ARC_OPT_IN_DIALOG_HEADER, device_name));
-  loadtime_data->SetString("greetingDescription",
-                           l10n_util::GetStringFUTF16(
-                               IDS_ARC_OPT_IN_DIALOG_DESCRIPTION, device_name));
+      "greetingHeader", l10n_util::GetStringUTF16(IDS_ARC_OOBE_TERMS_HEADING));
+  loadtime_data->SetString(
+      "loadingDescription",
+      l10n_util::GetStringUTF16(IDS_ARC_OPT_IN_DIALOG_PROGRESS_LSO));
+  loadtime_data->SetString(
+      "greetingDescription",
+      l10n_util::GetStringUTF16(IDS_ARC_OOBE_TERMS_DESCRIPTION));
   loadtime_data->SetString(
       "buttonAgree",
       l10n_util::GetStringUTF16(IDS_ARC_OPT_IN_DIALOG_BUTTON_AGREE));
   loadtime_data->SetString(
       "buttonCancel",
       l10n_util::GetStringUTF16(IDS_ARC_OPT_IN_DIALOG_BUTTON_CANCEL));
+  loadtime_data->SetString(
+      "buttonNext",
+      l10n_util::GetStringUTF16(IDS_ARC_OPT_IN_DIALOG_BUTTON_NEXT));
   loadtime_data->SetString(
       "buttonSendFeedback",
       l10n_util::GetStringUTF16(IDS_ARC_OPT_IN_DIALOG_BUTTON_SEND_FEEDBACK));
@@ -460,7 +507,7 @@ bool ArcSupportHost::Initialize() {
       l10n_util::GetStringUTF16(IDS_ARC_SERVER_COMMUNICATION_ERROR));
   loadtime_data->SetString(
       "controlledByPolicy",
-      l10n_util::GetStringUTF16(IDS_OPTIONS_CONTROLLED_SETTING_POLICY));
+      l10n_util::GetStringUTF16(IDS_CONTROLLED_SETTING_POLICY));
   loadtime_data->SetString(
       "learnMoreStatistics",
       l10n_util::GetStringUTF16(IDS_ARC_OPT_IN_LEARN_MORE_STATISTICS));
@@ -476,6 +523,12 @@ bool ArcSupportHost::Initialize() {
   loadtime_data->SetString(
       "privacyPolicyLink",
       l10n_util::GetStringUTF16(IDS_ARC_OPT_IN_PRIVACY_POLICY_LINK));
+  loadtime_data->SetString(
+      "activeDirectoryAuthTitle",
+      l10n_util::GetStringUTF16(IDS_ARC_OPT_IN_ACTIVE_DIRECTORY_AUTH_TITLE));
+  loadtime_data->SetString(
+      "activeDirectoryAuthDesc",
+      l10n_util::GetStringUTF16(IDS_ARC_OPT_IN_ACTIVE_DIRECTORY_AUTH_DESC));
 
   loadtime_data->SetBoolean(kArcManaged, is_arc_managed_);
   loadtime_data->SetBoolean("isOwnerProfile",
@@ -521,41 +574,64 @@ void ArcSupportHost::OnMessage(const base::DictionaryValue& message) {
   }
 
   if (event == kEventOnWindowClosed) {
-    for (auto& observer : observer_list_)
-      observer.OnWindowClosed();
-  } else if (event == kEventOnAuthSucceeded) {
-    std::string code;
-    if (message.GetString(kCode, &code)) {
-      for (auto& observer : observer_list_)
-        observer.OnAuthSucceeded(code);
+    // If ToS negotiation is ongoing, call the specific function.
+    if (tos_delegate_) {
+      tos_delegate_->OnTermsRejected();
     } else {
-      NOTREACHED();
+      DCHECK(error_delegate_);
+      error_delegate_->OnWindowClosed();
     }
+  } else if (event == kEventOnAuthSucceeded) {
+    DCHECK(auth_delegate_);
+    std::string code;
+    if (!message.GetString(kCode, &code)) {
+      NOTREACHED();
+      return;
+    }
+    auth_delegate_->OnAuthSucceeded(code);
   } else if (event == kEventOnAuthFailed) {
-    for (auto& observer : observer_list_)
-      observer.OnAuthFailed();
+    DCHECK(auth_delegate_);
+    std::string error_message;
+    if (!message.GetString(kAuthErrorMessage, &error_message)) {
+      NOTREACHED();
+      return;
+    }
+    // TODO(https://crbug.com/756144): Remove once reason for crash has been
+    // determined.
+    LOG_IF(ERROR, !auth_delegate_)
+        << "auth_delegate_ is NULL, error: " << error_message;
+    auth_delegate_->OnAuthFailed(error_message);
   } else if (event == kEventOnAgreed) {
+    DCHECK(tos_delegate_);
     bool is_metrics_enabled;
     bool is_backup_restore_enabled;
     bool is_location_service_enabled;
-    if (message.GetBoolean(kIsMetricsEnabled, &is_metrics_enabled) &&
-        message.GetBoolean(kIsBackupRestoreEnabled,
-                           &is_backup_restore_enabled) &&
-        message.GetBoolean(kIsLocationServiceEnabled,
-                           &is_location_service_enabled)) {
-      for (auto& observer : observer_list_) {
-        observer.OnTermsAgreed(is_metrics_enabled, is_backup_restore_enabled,
-                               is_location_service_enabled);
-      }
-    } else {
+    if (!message.GetBoolean(kIsMetricsEnabled, &is_metrics_enabled) ||
+        !message.GetBoolean(kIsBackupRestoreEnabled,
+                            &is_backup_restore_enabled) ||
+        !message.GetBoolean(kIsLocationServiceEnabled,
+                            &is_location_service_enabled)) {
       NOTREACHED();
+      return;
     }
+    tos_delegate_->OnTermsAgreed(is_metrics_enabled, is_backup_restore_enabled,
+                                 is_location_service_enabled);
   } else if (event == kEventOnRetryClicked) {
-    for (auto& observer : observer_list_)
-      observer.OnRetryClicked();
+    // If ToS negotiation or manual authentication is ongoing, call the
+    // corresponding delegate.  Otherwise, call the general retry function.
+    if (tos_delegate_) {
+      tos_delegate_->OnTermsRetryClicked();
+    } else if (auth_delegate_) {
+      auth_delegate_->OnAuthRetryClicked();
+    } else {
+      DCHECK(error_delegate_);
+      error_delegate_->OnRetryClicked();
+    }
   } else if (event == kEventOnSendFeedbackClicked) {
-    for (auto& observer : observer_list_)
-      observer.OnSendFeedbackClicked();
+    DCHECK(error_delegate_);
+    error_delegate_->OnSendFeedbackClicked();
+  } else if (event == kEventOnOpenSettingsPageClicked) {
+    chrome::ShowSettingsSubPageForProfile(profile_, std::string());
   } else {
     LOG(ERROR) << "Unknown message: " << event;
     NOTREACHED();

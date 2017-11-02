@@ -5,11 +5,16 @@
 #include "core/dom/Range.h"
 
 #include "bindings/core/v8/ExceptionState.h"
+#include "bindings/core/v8/StringOrArrayBufferOrArrayBufferView.h"
 #include "bindings/core/v8/V8BindingForTesting.h"
+#include "core/css/FontFaceDescriptors.h"
+#include "core/css/FontFaceSetDocument.h"
 #include "core/dom/Element.h"
 #include "core/dom/NodeList.h"
 #include "core/dom/Text.h"
 #include "core/editing/EditingTestBase.h"
+#include "core/editing/FrameSelection.h"
+#include "core/editing/VisibleUnits.h"
 #include "core/frame/Settings.h"
 #include "core/html/HTMLBodyElement.h"
 #include "core/html/HTMLDivElement.h"
@@ -17,7 +22,9 @@
 #include "core/html/HTMLElement.h"
 #include "core/html/HTMLHtmlElement.h"
 #include "core/html/HTMLTextAreaElement.h"
+#include "core/layout/LayoutTestHelper.h"
 #include "platform/heap/Handle.h"
+#include "platform/testing/UnitTestHelpers.h"
 #include "platform/wtf/Compiler.h"
 #include "platform/wtf/RefPtr.h"
 #include "platform/wtf/text/AtomicString.h"
@@ -31,7 +38,7 @@ TEST_F(RangeTest, createAdjustedToTreeScopeWithPositionInShadowTree) {
   GetDocument().body()->setInnerHTML("<div><select><option>012</option></div>");
   Element* const select_element = GetDocument().QuerySelector("select");
   const Position& position =
-      Position::AfterNode(select_element->UserAgentShadowRoot());
+      Position::AfterNode(*select_element->UserAgentShadowRoot());
   Range* const range =
       Range::CreateAdjustedToTreeScope(GetDocument(), position);
   EXPECT_EQ(range->startContainer(), select_element->parentNode());
@@ -70,7 +77,7 @@ TEST_F(RangeTest, SplitTextNodeRangeWithinText) {
   V8TestingScope scope;
 
   GetDocument().body()->setInnerHTML("1234");
-  Text* old_text = ToText(GetDocument().body()->FirstChild());
+  Text* old_text = ToText(GetDocument().body()->firstChild());
 
   Range* range04 = Range::Create(GetDocument(), old_text, 0, old_text, 4);
   Range* range02 = Range::Create(GetDocument(), old_text, 0, old_text, 2);
@@ -115,11 +122,11 @@ TEST_F(RangeTest, SplitTextNodeRangeOutsideText) {
       "id=\"inner-right\">2</span>3</span>");
 
   Element* outer =
-      GetDocument().GetElementById(AtomicString::FromUTF8("outer"));
+      GetDocument().getElementById(AtomicString::FromUTF8("outer"));
   Element* inner_left =
-      GetDocument().GetElementById(AtomicString::FromUTF8("inner-left"));
+      GetDocument().getElementById(AtomicString::FromUTF8("inner-left"));
   Element* inner_right =
-      GetDocument().GetElementById(AtomicString::FromUTF8("inner-right"));
+      GetDocument().getElementById(AtomicString::FromUTF8("inner-right"));
   Text* old_text = ToText(outer->childNodes()->item(2));
 
   Range* range_outer_outside = Range::Create(GetDocument(), outer, 0, outer, 5);
@@ -183,7 +190,7 @@ TEST_F(RangeTest, updateOwnerDocumentIfNeeded) {
   Range* range =
       Range::Create(GetDocument(), Position(bar, 0), Position(foo, 1));
 
-  Document* another_document = Document::Create();
+  Document* another_document = Document::CreateForTest();
   another_document->AppendChild(foo);
 
   EXPECT_EQ(bar, range->startContainer());
@@ -198,8 +205,8 @@ TEST_F(RangeTest, NotMarkedValidByIrrelevantTextInsert) {
       "<div><span id=span1>foo</span>bar<span id=span2>baz</span></div>");
 
   Element* div = GetDocument().QuerySelector("div");
-  Element* span1 = GetDocument().GetElementById("span1");
-  Element* span2 = GetDocument().GetElementById("span2");
+  Element* span1 = GetDocument().getElementById("span1");
+  Element* span2 = GetDocument().getElementById("span2");
   Text* text = ToText(div->childNodes()->item(1));
 
   Range* range = Range::Create(GetDocument(), span2, 0, div, 3);
@@ -220,8 +227,8 @@ TEST_F(RangeTest, NotMarkedValidByIrrelevantTextRemove) {
       "<div><span id=span1>foofoo</span>bar<span id=span2>baz</span></div>");
 
   Element* div = GetDocument().QuerySelector("div");
-  Element* span1 = GetDocument().GetElementById("span1");
-  Element* span2 = GetDocument().GetElementById("span2");
+  Element* span1 = GetDocument().getElementById("span1");
+  Element* span2 = GetDocument().getElementById("span2");
   Text* text = ToText(div->childNodes()->item(1));
 
   Range* range = Range::Create(GetDocument(), span2, 0, div, 3);
@@ -244,16 +251,6 @@ TEST_F(RangeTest, ExpandNotCrash) {
   range->expand("", ASSERT_NO_EXCEPTION);
 }
 
-TEST_F(RangeTest, MultipleTextQuads) {
-  SetBodyContent("<div><p id='one'>one</p><p id='two'>two</p></div>");
-  Position start(GetDocument().GetElementById("one")->FirstChild(), 0);
-  Position end(GetDocument().GetElementById("two")->FirstChild(), 3);
-  Range* range = Range::Create(GetDocument(), start, end);
-  Vector<FloatQuad> quads;
-  range->TextQuads(quads);
-  EXPECT_EQ(2u, quads.size());
-}
-
 TEST_F(RangeTest, ToPosition) {
   Node& textarea = *HTMLTextAreaElement::Create(GetDocument());
   Range& range = *Range::Create(GetDocument());
@@ -261,6 +258,167 @@ TEST_F(RangeTest, ToPosition) {
   range.setStart(position, ASSERT_NO_EXCEPTION);
   EXPECT_EQ(position, range.StartPosition());
   EXPECT_EQ(position, range.EndPosition());
+}
+
+static void LoadAhem(DummyPageHolder& page_holder, Document& document) {
+  RenderingTest::LoadAhem(page_holder.GetFrame());
+}
+
+TEST_F(RangeTest, BoundingRectMustIndependentFromSelection) {
+  LoadAhem(GetDummyPageHolder(), GetDocument());
+  GetDocument().body()->setInnerHTML(
+      "<div style='font: Ahem; width: 2em;letter-spacing: 5px;'>xx xx </div>");
+  Node* const div = GetDocument().QuerySelector("div");
+  // "x^x
+  //  x|x "
+  Range* const range =
+      Range::Create(GetDocument(), div->firstChild(), 1, div->firstChild(), 4);
+  const FloatRect rect_before = range->BoundingRect();
+  EXPECT_GT(rect_before.Width(), 0);
+  EXPECT_GT(rect_before.Height(), 0);
+  Selection().SetSelection(SelectionInDOMTree::Builder()
+                               .SetBaseAndExtent(EphemeralRange(range))
+                               .Build());
+  GetDocument().View()->UpdateAllLifecyclePhases();
+  EXPECT_EQ(Selection().SelectedText(), "x x");
+  const FloatRect rect_after = range->BoundingRect();
+  EXPECT_EQ(rect_before, rect_after);
+}
+
+// Regression test for crbug.com/681536
+TEST_F(RangeTest, BorderAndTextQuadsWithInputInBetween) {
+  GetDocument().body()->setInnerHTML("<div>foo <u><input> bar</u></div>");
+  GetDocument().UpdateStyleAndLayout();
+
+  Node* foo = GetDocument().QuerySelector("div")->firstChild();
+  Node* bar = GetDocument().QuerySelector("u")->lastChild();
+  Range* range = Range::Create(GetDocument(), foo, 2, bar, 2);
+
+  Vector<FloatQuad> quads;
+  range->GetBorderAndTextQuads(quads);
+
+  // Should get one quad for "o ", <input> and " b", respectively.
+  ASSERT_EQ(3u, quads.size());
+}
+
+static Vector<FloatQuad> GetBorderAndTextQuads(const Position& start,
+                                               const Position& end) {
+  DCHECK_LE(start, end);
+  Range* const range = Range::Create(*start.GetDocument(), start, end);
+  Vector<FloatQuad> quads;
+  range->GetBorderAndTextQuads(quads);
+  return quads;
+}
+
+static Vector<IntSize> ComputeSizesOfQuads(const Vector<FloatQuad>& quads) {
+  Vector<IntSize> sizes;
+  for (const auto& quad : quads)
+    sizes.push_back(quad.EnclosingBoundingBox().Size());
+  return sizes;
+}
+
+TEST_F(RangeTest, GetBorderAndTextQuadsWithFirstLetterOne) {
+  GetDocument().body()->setInnerHTML(
+      "<style>"
+      "  body { font-size: 20px; }"
+      "  #sample::first-letter { font-size: 500%; }"
+      "</style>"
+      "<p id=sample>abc</p>"
+      "<p id=expected><span style='font-size: 500%'>a</span>bc</p>");
+  GetDocument().UpdateStyleAndLayout();
+
+  Element* const expected = GetDocument().getElementById("expected");
+  Element* const sample = GetDocument().getElementById("sample");
+
+  const Vector<FloatQuad> expected_quads =
+      GetBorderAndTextQuads(Position(expected, 0), Position(expected, 2));
+  const Vector<FloatQuad> sample_quads =
+      GetBorderAndTextQuads(Position(sample, 0), Position(sample, 1));
+  ASSERT_EQ(2u, sample_quads.size());
+  ASSERT_EQ(3u, expected_quads.size())
+      << "expected_quads has SPAN, SPAN.firstChild and P.lastChild";
+  EXPECT_EQ(expected_quads[0].EnclosingBoundingBox().Size(),
+            sample_quads[0].EnclosingBoundingBox().Size())
+      << "Check size of first-letter part";
+  EXPECT_EQ(expected_quads[2].EnclosingBoundingBox().Size(),
+            sample_quads[1].EnclosingBoundingBox().Size())
+      << "Check size of first-letter part";
+
+  EXPECT_EQ(ComputeSizesOfQuads(
+                GetBorderAndTextQuads(Position(expected->firstChild(), 0),
+                                      Position(expected->firstChild(), 1))),
+            ComputeSizesOfQuads(
+                GetBorderAndTextQuads(Position(sample->firstChild(), 0),
+                                      Position(sample->firstChild(), 1))))
+      << "All first-letter part";
+
+  EXPECT_EQ(ComputeSizesOfQuads(
+                GetBorderAndTextQuads(Position(expected->lastChild(), 0),
+                                      Position(expected->lastChild(), 2))),
+            ComputeSizesOfQuads(
+                GetBorderAndTextQuads(Position(sample->firstChild(), 1),
+                                      Position(sample->firstChild(), 3))))
+      << "All remaining part";
+}
+
+TEST_F(RangeTest, GetBorderAndTextQuadsWithFirstLetterThree) {
+  GetDocument().body()->setInnerHTML(
+      "<style>"
+      "  body { font-size: 20px; }"
+      "  #sample::first-letter { font-size: 500%; }"
+      "</style>"
+      "<p id=sample>(a)bc</p>"
+      "<p id=expected><span style='font-size: 500%'>(a)</span>bc</p>");
+  GetDocument().UpdateStyleAndLayout();
+
+  Element* const expected = GetDocument().getElementById("expected");
+  Element* const sample = GetDocument().getElementById("sample");
+
+  const Vector<FloatQuad> expected_quads =
+      GetBorderAndTextQuads(Position(expected, 0), Position(expected, 2));
+  const Vector<FloatQuad> sample_quads =
+      GetBorderAndTextQuads(Position(sample, 0), Position(sample, 1));
+  ASSERT_EQ(2u, sample_quads.size());
+  ASSERT_EQ(3u, expected_quads.size())
+      << "expected_quads has SPAN, SPAN.firstChild and P.lastChild";
+  EXPECT_EQ(expected_quads[0].EnclosingBoundingBox().Size(),
+            sample_quads[0].EnclosingBoundingBox().Size())
+      << "Check size of first-letter part";
+  EXPECT_EQ(expected_quads[2].EnclosingBoundingBox().Size(),
+            sample_quads[1].EnclosingBoundingBox().Size())
+      << "Check size of first-letter part";
+
+  EXPECT_EQ(ComputeSizesOfQuads(
+                GetBorderAndTextQuads(Position(expected->firstChild(), 0),
+                                      Position(expected->firstChild(), 1))),
+            ComputeSizesOfQuads(
+                GetBorderAndTextQuads(Position(sample->firstChild(), 0),
+                                      Position(sample->firstChild(), 3))))
+      << "All first-letter part";
+
+  EXPECT_EQ(ComputeSizesOfQuads(
+                GetBorderAndTextQuads(Position(expected->lastChild(), 0),
+                                      Position(expected->lastChild(), 2))),
+            ComputeSizesOfQuads(
+                GetBorderAndTextQuads(Position(sample->firstChild(), 3),
+                                      Position(sample->firstChild(), 5))))
+      << "All remaining part";
+
+  EXPECT_EQ(ComputeSizesOfQuads(GetBorderAndTextQuads(
+                Position(expected->firstChild()->firstChild(), 1),
+                Position(expected->firstChild()->firstChild(), 2))),
+            ComputeSizesOfQuads(
+                GetBorderAndTextQuads(Position(sample->firstChild(), 1),
+                                      Position(sample->firstChild(), 2))))
+      << "Partial first-letter part";
+
+  EXPECT_EQ(ComputeSizesOfQuads(GetBorderAndTextQuads(
+                Position(expected->firstChild()->firstChild(), 1),
+                Position(expected->lastChild(), 1))),
+            ComputeSizesOfQuads(
+                GetBorderAndTextQuads(Position(sample->firstChild(), 1),
+                                      Position(sample->firstChild(), 4))))
+      << "Partial first-letter part and remaining part";
 }
 
 }  // namespace blink

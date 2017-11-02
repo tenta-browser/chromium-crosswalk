@@ -234,7 +234,8 @@ std::string ToString(const MotionEvent& event) {
          << event.GetTouchMinor(pi) << ")"
          << "\n  Orientation: " << event.GetOrientation(pi)
          << "\n  Pressure: " << event.GetPressure(pi)
-         << "\n  Tilt: " << event.GetTilt(pi)
+         << "\n  TiltX: " << event.GetTiltX(pi)
+         << "\n  TiltY: " << event.GetTiltY(pi)
          << "\n  Tool: " << event.GetToolType(pi);
       if (history_size) {
         ss << "\n  History: [";
@@ -242,7 +243,7 @@ std::string ToString(const MotionEvent& event) {
           ss << "\n   { " << event.GetHistoricalX(pi, h) << ", "
              << event.GetHistoricalY(pi, h) << ", "
              << event.GetHistoricalTouchMajor(pi, h) << ", "
-             << event.GetHistoricalEventTime(pi).ToInternalValue() << " }";
+             << event.GetHistoricalEventTime(pi) << " }";
           if (h + 1 < history_size)
             ss << ",";
         }

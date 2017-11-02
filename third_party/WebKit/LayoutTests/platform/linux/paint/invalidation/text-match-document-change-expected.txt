@@ -4,7 +4,7 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow DIV id='to-be-changed'",
@@ -14,12 +14,17 @@
         {
           "object": "LayoutText #text",
           "rect": [18, 130, 251, 39],
-          "reason": "layoutObject removal"
+          "reason": "disappeared"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [18, 130, 82, 19],
+          "reason": "appeared"
         },
         {
           "object": "LayoutView #document",
           "rect": [295, 102, 15, 400],
-          "reason": "scroll"
+          "reason": "scroll control"
         }
       ]
     }
@@ -27,11 +32,11 @@
   "objectPaintInvalidations": [
     {
       "object": "LayoutText #text",
-      "reason": "layoutObject removal"
+      "reason": "disappeared"
     },
     {
       "object": "VerticalScrollbar",
-      "reason": "scroll"
+      "reason": "scroll control"
     },
     {
       "object": "LayoutBlockFlow DIV id='to-be-changed'",
@@ -43,11 +48,11 @@
     },
     {
       "object": "LayoutText #text",
-      "reason": "layoutObject insertion"
+      "reason": "appeared"
     },
     {
       "object": "InlineTextBox 'After change'",
-      "reason": "layoutObject insertion"
+      "reason": "appeared"
     }
   ]
 }

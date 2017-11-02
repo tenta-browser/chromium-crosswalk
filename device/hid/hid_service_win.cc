@@ -22,6 +22,7 @@
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "components/device_event_log/device_event_log.h"
 #include "device/hid/hid_connection_win.h"
@@ -30,10 +31,10 @@
 
 namespace device {
 
-HidServiceWin::HidServiceWin(
-    scoped_refptr<base::SequencedTaskRunner> blocking_task_runner)
+HidServiceWin::HidServiceWin()
     : task_runner_(base::SequencedTaskRunnerHandle::Get()),
-      blocking_task_runner_(std::move(blocking_task_runner)),
+      blocking_task_runner_(
+          base::CreateSequencedTaskRunnerWithTraits(kBlockingTaskTraits)),
       device_observer_(this),
       weak_factory_(this) {
   DeviceMonitorWin* device_monitor =
@@ -48,17 +49,17 @@ HidServiceWin::HidServiceWin(
 
 HidServiceWin::~HidServiceWin() {}
 
-void HidServiceWin::Connect(const HidDeviceId& device_id,
+void HidServiceWin::Connect(const std::string& device_guid,
                             const ConnectCallback& callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  const auto& map_entry = devices().find(device_id);
+  const auto& map_entry = devices().find(device_guid);
   if (map_entry == devices().end()) {
     task_runner_->PostTask(FROM_HERE, base::Bind(callback, nullptr));
     return;
   }
   scoped_refptr<HidDeviceInfo> device_info = map_entry->second;
 
-  base::win::ScopedHandle file(OpenDevice(device_info->device_id()));
+  base::win::ScopedHandle file(OpenDevice(device_info->platform_device_id()));
   if (!file.IsValid()) {
     HID_PLOG(EVENT) << "Failed to open device";
     task_runner_->PostTask(FROM_HERE, base::Bind(callback, nullptr));
@@ -66,9 +67,12 @@ void HidServiceWin::Connect(const HidDeviceId& device_id,
   }
 
   task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(callback, make_scoped_refptr(
-          new HidConnectionWin(device_info, std::move(file)))));
+      FROM_HERE, base::Bind(callback, base::MakeRefCounted<HidConnectionWin>(
+                                          device_info, std::move(file))));
+}
+
+base::WeakPtr<HidService> HidServiceWin::GetWeakPtr() {
+  return weak_factory_.GetWeakPtr();
 }
 
 // static
@@ -256,9 +260,9 @@ void HidServiceWin::AddDeviceBlocking(
   scoped_refptr<HidDeviceInfo> device_info(new HidDeviceInfo(
       device_path, attrib.VendorID, attrib.ProductID, product_name,
       serial_number,
-      kHIDBusTypeUSB,  // TODO(reillyg): Detect Bluetooth. crbug.com/443335
-      collection_info, max_input_report_size, max_output_report_size,
-      max_feature_report_size));
+      // TODO(reillyg): Detect Bluetooth. crbug.com/443335
+      device::mojom::HidBusType::kHIDBusTypeUSB, collection_info,
+      max_input_report_size, max_output_report_size, max_feature_report_size));
 
   HidD_FreePreparsedData(preparsed_data);
   task_runner->PostTask(

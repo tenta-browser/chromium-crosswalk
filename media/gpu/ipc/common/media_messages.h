@@ -12,6 +12,7 @@
 #include "gpu/ipc/common/gpu_param_traits_macros.h"
 #include "ipc/ipc_message_macros.h"
 #include "ipc/param_traits_macros.h"
+#include "media/base/overlay_info.h"
 #include "media/gpu/ipc/common/media_param_traits.h"
 #include "media/video/jpeg_decode_accelerator.h"
 #include "media/video/video_decode_accelerator.h"
@@ -69,9 +70,6 @@ IPC_SYNC_MESSAGE_ROUTED2_1(GpuCommandBufferMsg_CreateVideoDecoder,
                            int32_t /* decoder_route_id */,
                            bool /* succeeded */)
 
-// Set a CDM on the decoder to handle encrypted buffers.
-IPC_MESSAGE_ROUTED1(AcceleratedVideoDecoderMsg_SetCdm, int32_t /* CDM ID */)
-
 // Send input buffer for decoding.
 IPC_MESSAGE_ROUTED1(AcceleratedVideoDecoderMsg_Decode, media::BitstreamBuffer)
 
@@ -92,9 +90,9 @@ IPC_MESSAGE_ROUTED0(AcceleratedVideoDecoderMsg_Flush)
 // Send reset request to the decoder.
 IPC_MESSAGE_ROUTED0(AcceleratedVideoDecoderMsg_Reset)
 
-// Send a surface id to the decoder.
-IPC_MESSAGE_ROUTED1(AcceleratedVideoDecoderMsg_SetSurface,
-                    int32_t) /* Surface ID */
+// Send overlay info to the decoder.
+IPC_MESSAGE_ROUTED1(AcceleratedVideoDecoderMsg_SetOverlayInfo,
+                    media::OverlayInfo)
 
 // Send destroy request to the decoder.
 IPC_MESSAGE_ROUTED0(AcceleratedVideoDecoderMsg_Destroy)

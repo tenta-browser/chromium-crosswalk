@@ -44,6 +44,10 @@ class FakeContentPasswordManagerDriver
     show_pw_suggestions_options_ = -1;
   }
 
+  void reset_called_manual_fallback_suggestion() {
+    called_manual_fallback_suggestion_ = false;
+  }
+
   bool called_show_not_secure_warning() const {
     return called_show_not_secure_warning_;
   }
@@ -93,6 +97,10 @@ class FakeContentPasswordManagerDriver
     return called_record_save_progress_;
   }
 
+  bool called_user_modified_password_field() const {
+    return called_user_modified_password_field_;
+  }
+
   bool called_save_generation_field() const {
     return called_save_generation_field_;
   }
@@ -120,6 +128,18 @@ class FakeContentPasswordManagerDriver
 
   void reset_called_presave_generated_password() {
     called_presave_generated_password_ = false;
+  }
+
+  int called_check_safe_browsing_reputation_cnt() const {
+    return called_check_safe_browsing_reputation_cnt_;
+  }
+
+  int called_show_manual_fallback_for_saving_count() const {
+    return called_show_manual_fallback_for_saving_count_;
+  }
+
+  bool called_manual_fallback_suggestion() {
+    return called_manual_fallback_suggestion_;
   }
 
  private:
@@ -151,11 +171,23 @@ class FakeContentPasswordManagerDriver
   void ShowNotSecureWarning(base::i18n::TextDirection text_direction,
                             const gfx::RectF& bounds) override;
 
+  void ShowManualFallbackSuggestion(base::i18n::TextDirection text_direction,
+                                    const gfx::RectF& bounds) override;
+
   void RecordSavePasswordProgress(const std::string& log) override;
+
+  void UserModifiedPasswordField() override;
 
   void SaveGenerationFieldDetectedByClassifier(
       const autofill::PasswordForm& password_form,
       const base::string16& generation_field) override;
+
+  void CheckSafeBrowsingReputation(const GURL& form_action,
+                                   const GURL& frame_url) override;
+
+  void ShowManualFallbackForSaving(
+      const autofill::PasswordForm& password_form) override;
+  void HideManualFallbackForSaving() override;
 
   // Records whether ShowPasswordSuggestions() gets called.
   bool called_show_pw_suggestions_ = false;
@@ -165,6 +197,8 @@ class FakeContentPasswordManagerDriver
   int show_pw_suggestions_options_ = -1;
   // Records whether ShowNotSecureWarning() gets called.
   bool called_show_not_secure_warning_ = false;
+  // Record whenether ShowManualFallbackSuggestion gets called.
+  bool called_manual_fallback_suggestion_ = false;
   // Records whether PasswordFormSubmitted() gets called.
   bool called_password_form_submitted_ = false;
   // Records data received via PasswordFormSubmitted() call.
@@ -183,6 +217,8 @@ class FakeContentPasswordManagerDriver
   base::Optional<std::vector<autofill::PasswordForm>> password_forms_rendered_;
   // Records whether RecordSavePasswordProgress() gets called.
   bool called_record_save_progress_ = false;
+  // Records whether UserModifiedPasswordField() gets called.
+  bool called_user_modified_password_field_ = false;
   // Records whether SaveGenerationFieldDetectedByClassifier() gets called.
   bool called_save_generation_field_ = false;
   // Records data received via SaveGenerationFieldDetectedByClassifier() call.
@@ -191,6 +227,13 @@ class FakeContentPasswordManagerDriver
   bool called_password_no_longer_generated_ = false;
   // Records whether PresaveGeneratedPassword() gets called.
   bool called_presave_generated_password_ = false;
+
+  // Records number of times CheckSafeBrowsingReputation() gets called.
+  int called_check_safe_browsing_reputation_cnt_ = 0;
+
+  // Records the number of request to show manual fallback for password saving.
+  // If it is zero, the fallback is not available.
+  int called_show_manual_fallback_for_saving_count_ = 0;
 
   mojo::BindingSet<autofill::mojom::PasswordManagerDriver> bindings_;
 };

@@ -15,6 +15,7 @@ namespace offline_items_collection {
 
 struct ContentId;
 struct OfflineItem;
+class ThrottledOfflineContentProvider;
 
 namespace android {
 
@@ -28,9 +29,6 @@ namespace android {
 class OfflineContentAggregatorBridge : public OfflineContentProvider::Observer,
                                        public base::SupportsUserData::Data {
  public:
-  // Helper method to initialize the JNI hooks between Java and C++.
-  static bool Register(JNIEnv* env);
-
   // Returns a Java OfflineContentAggregatorBridge for |aggregator|.  There will
   // be only one bridge per OfflineContentAggregator.
   static base::android::ScopedJavaLocalRef<jobject>
@@ -60,7 +58,8 @@ class OfflineContentAggregatorBridge : public OfflineContentProvider::Observer,
   void ResumeDownload(JNIEnv* env,
                       const base::android::JavaParamRef<jobject>& jobj,
                       const base::android::JavaParamRef<jstring>& j_namespace,
-                      const base::android::JavaParamRef<jstring>& j_id);
+                      const base::android::JavaParamRef<jstring>& j_id,
+                      jboolean j_has_user_gesture);
   base::android::ScopedJavaLocalRef<jobject> GetItemById(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& jobj,
@@ -69,6 +68,12 @@ class OfflineContentAggregatorBridge : public OfflineContentProvider::Observer,
   base::android::ScopedJavaLocalRef<jobject> GetAllItems(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& jobj);
+  void GetVisualsForItem(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& jobj,
+      const base::android::JavaParamRef<jstring>& j_namespace,
+      const base::android::JavaParamRef<jstring>& j_id,
+      const base::android::JavaParamRef<jobject>& j_callback);
 
  private:
   OfflineContentAggregatorBridge(OfflineContentAggregator* aggregator);
@@ -84,7 +89,7 @@ class OfflineContentAggregatorBridge : public OfflineContentProvider::Observer,
   // OfflineContentAggregatorBridge.java.
   base::android::ScopedJavaGlobalRef<jobject> java_ref_;
 
-  OfflineContentAggregator* const aggregator_;
+  std::unique_ptr<ThrottledOfflineContentProvider> provider_;
 
   DISALLOW_COPY_AND_ASSIGN(OfflineContentAggregatorBridge);
 };

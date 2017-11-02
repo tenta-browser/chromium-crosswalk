@@ -38,11 +38,11 @@ class MockCanvasAsyncBlobCreator : public CanvasAsyncBlobCreator {
   MOCK_METHOD0(SignalTaskSwitchInCompleteTimeoutEventForTesting, void());
 
  protected:
-  void CreateBlobAndReturnResult() override{};
-  void CreateNullAndReturnResult() override{};
+  void CreateBlobAndReturnResult() override {}
+  void CreateNullAndReturnResult() override {}
   void SignalAlternativeCodePathFinishedForTesting() override;
   void PostDelayedTaskToCurrentThread(const WebTraceLocation&,
-                                      std::unique_ptr<WTF::Closure>,
+                                      WTF::Closure,
                                       double delay_ms) override;
 };
 
@@ -52,7 +52,7 @@ void MockCanvasAsyncBlobCreator::SignalAlternativeCodePathFinishedForTesting() {
 
 void MockCanvasAsyncBlobCreator::PostDelayedTaskToCurrentThread(
     const WebTraceLocation& location,
-    std::unique_ptr<WTF::Closure> task,
+    WTF::Closure task,
     double delay_ms) {
   DCHECK(IsMainThread());
   Platform::Current()->MainThread()->GetWebTaskRunner()->PostTask(
@@ -72,8 +72,8 @@ class MockCanvasAsyncBlobCreatorWithoutStartPng
       : MockCanvasAsyncBlobCreator(data, size, kMimeTypePng, document) {}
 
  protected:
-  void ScheduleInitiatePngEncoding() override {
-    // Deliberately make scheduleInitiatePngEncoding do nothing so that idle
+  void ScheduleInitiateEncoding(double) override {
+    // Deliberately make scheduleInitiateEncoding do nothing so that idle
     // task never starts
   }
 };
@@ -89,16 +89,16 @@ class MockCanvasAsyncBlobCreatorWithoutCompletePng
       : MockCanvasAsyncBlobCreator(data, size, kMimeTypePng, document) {}
 
  protected:
-  void ScheduleInitiatePngEncoding() override {
+  void ScheduleInitiateEncoding(double quality) override {
     Platform::Current()->MainThread()->GetWebTaskRunner()->PostTask(
         BLINK_FROM_HERE,
         WTF::Bind(
-            &MockCanvasAsyncBlobCreatorWithoutCompletePng::InitiatePngEncoding,
-            WrapPersistent(this), std::numeric_limits<double>::max()));
+            &MockCanvasAsyncBlobCreatorWithoutCompletePng::InitiateEncoding,
+            WrapPersistent(this), quality, std::numeric_limits<double>::max()));
   }
 
-  void IdleEncodeRowsPng(double deadline_seconds) override {
-    // Deliberately make idleEncodeRowsPng do nothing so that idle task never
+  void IdleEncodeRows(double deadline_seconds) override {
+    // Deliberately make idleEncodeRows do nothing so that idle task never
     // completes
   }
 };
@@ -116,8 +116,8 @@ class MockCanvasAsyncBlobCreatorWithoutStartJpeg
       : MockCanvasAsyncBlobCreator(data, size, kMimeTypeJpeg, document) {}
 
  protected:
-  void ScheduleInitiateJpegEncoding(const double&) override {
-    // Deliberately make scheduleInitiateJpegEncoding do nothing so that idle
+  void ScheduleInitiateEncoding(double) override {
+    // Deliberately make scheduleInitiateEncoding do nothing so that idle
     // task never starts
   }
 };
@@ -133,17 +133,16 @@ class MockCanvasAsyncBlobCreatorWithoutCompleteJpeg
       : MockCanvasAsyncBlobCreator(data, size, kMimeTypeJpeg, document) {}
 
  protected:
-  void ScheduleInitiateJpegEncoding(const double& quality) override {
+  void ScheduleInitiateEncoding(double quality) override {
     Platform::Current()->MainThread()->GetWebTaskRunner()->PostTask(
         BLINK_FROM_HERE,
-        WTF::Bind(&MockCanvasAsyncBlobCreatorWithoutCompleteJpeg::
-                      InitiateJpegEncoding,
-                  WrapPersistent(this), quality,
-                  std::numeric_limits<double>::max()));
+        WTF::Bind(
+            &MockCanvasAsyncBlobCreatorWithoutCompleteJpeg::InitiateEncoding,
+            WrapPersistent(this), quality, std::numeric_limits<double>::max()));
   }
 
-  void IdleEncodeRowsJpeg(double deadline_seconds) override {
-    // Deliberately make idleEncodeRowsJpeg do nothing so that idle task never
+  void IdleEncodeRows(double deadline_seconds) override {
+    // Deliberately make idleEncodeRows do nothing so that idle task never
     // completes
   }
 };

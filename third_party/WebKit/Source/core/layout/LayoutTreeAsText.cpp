@@ -30,21 +30,20 @@
 #include "core/dom/Document.h"
 #include "core/dom/PseudoElement.h"
 #include "core/editing/FrameSelection.h"
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/Settings.h"
 #include "core/html/HTMLElement.h"
 #include "core/layout/LayoutBlockFlow.h"
 #include "core/layout/LayoutDetailsMarker.h"
+#include "core/layout/LayoutEmbeddedContent.h"
 #include "core/layout/LayoutFileUploadControl.h"
 #include "core/layout/LayoutInline.h"
 #include "core/layout/LayoutListItem.h"
 #include "core/layout/LayoutListMarker.h"
-#include "core/layout/LayoutPart.h"
 #include "core/layout/LayoutTableCell.h"
 #include "core/layout/LayoutView.h"
 #include "core/layout/api/LayoutViewItem.h"
-#include "core/layout/compositing/CompositedLayerMapping.h"
 #include "core/layout/line/InlineTextBox.h"
 #include "core/layout/svg/LayoutSVGGradientStop.h"
 #include "core/layout/svg/LayoutSVGImage.h"
@@ -56,6 +55,7 @@
 #include "core/layout/svg/SVGLayoutTreeAsText.h"
 #include "core/page/PrintContext.h"
 #include "core/paint/PaintLayer.h"
+#include "core/paint/compositing/CompositedLayerMapping.h"
 #include "platform/LayoutUnit.h"
 #include "platform/wtf/HexNumber.h"
 #include "platform/wtf/Vector.h"
@@ -67,34 +67,34 @@ using namespace HTMLNames;
 
 static void PrintBorderStyle(TextStream& ts, const EBorderStyle border_style) {
   switch (border_style) {
-    case kBorderStyleNone:
+    case EBorderStyle::kNone:
       ts << "none";
       break;
-    case kBorderStyleHidden:
+    case EBorderStyle::kHidden:
       ts << "hidden";
       break;
-    case kBorderStyleInset:
+    case EBorderStyle::kInset:
       ts << "inset";
       break;
-    case kBorderStyleGroove:
+    case EBorderStyle::kGroove:
       ts << "groove";
       break;
-    case kBorderStyleRidge:
+    case EBorderStyle::kRidge:
       ts << "ridge";
       break;
-    case kBorderStyleOutset:
+    case EBorderStyle::kOutset:
       ts << "outset";
       break;
-    case kBorderStyleDotted:
+    case EBorderStyle::kDotted:
       ts << "dotted";
       break;
-    case kBorderStyleDashed:
+    case EBorderStyle::kDashed:
       ts << "dashed";
       break;
-    case kBorderStyleSolid:
+    case EBorderStyle::kSolid:
       ts << "solid";
       break;
-    case kBorderStyleDouble:
+    case EBorderStyle::kDouble:
       ts << "double";
       break;
   }
@@ -218,7 +218,7 @@ void LayoutTreeAsText::WriteLayoutObject(TextStream& ts,
         ts << o.ResolveColor(CSSPropertyBorderTopColor) << ")";
       }
 
-      if (o.Style()->BorderRight() != prev_border) {
+      if (!o.Style()->BorderRightEquals(prev_border)) {
         prev_border = o.Style()->BorderRight();
         if (!box.BorderRight()) {
           ts << " none";
@@ -229,7 +229,7 @@ void LayoutTreeAsText::WriteLayoutObject(TextStream& ts,
         }
       }
 
-      if (o.Style()->BorderBottom() != prev_border) {
+      if (!o.Style()->BorderBottomEquals(prev_border)) {
         prev_border = box.Style()->BorderBottom();
         if (!box.BorderBottom()) {
           ts << " none";
@@ -240,7 +240,7 @@ void LayoutTreeAsText::WriteLayoutObject(TextStream& ts,
         }
       }
 
-      if (o.Style()->BorderLeft() != prev_border) {
+      if (!o.Style()->BorderLeftEquals(prev_border)) {
         prev_border = o.Style()->BorderLeft();
         if (!box.BorderLeft()) {
           ts << " none";
@@ -508,8 +508,8 @@ void Write(TextStream& ts,
     Write(ts, *child, indent + 1, behavior);
   }
 
-  if (o.IsLayoutPart()) {
-    FrameView* frame_view = ToLayoutPart(o).ChildFrameView();
+  if (o.IsLayoutEmbeddedContent()) {
+    LocalFrameView* frame_view = ToLayoutEmbeddedContent(o).ChildFrameView();
     if (frame_view) {
       LayoutViewItem root_item = frame_view->GetLayoutViewItem();
       if (!root_item.IsNull()) {
@@ -546,7 +546,7 @@ static void Write(TextStream& ts,
 
   bool report_frame_scroll_info =
       layer.GetLayoutObject().IsLayoutView() &&
-      !RuntimeEnabledFeatures::rootLayerScrollingEnabled();
+      !RuntimeEnabledFeatures::RootLayerScrollingEnabled();
 
   if (report_frame_scroll_info) {
     LayoutView& layout_view = ToLayoutView(layer.GetLayoutObject());
@@ -673,8 +673,8 @@ void LayoutTreeAsText::WriteLayers(TextStream& ts,
           : layer->IntersectsDamageRect(layer_bounds, damage_rect.Rect(),
                                         offset_from_root);
 
-  if (layer->GetLayoutObject().IsLayoutPart() &&
-      ToLayoutPart(layer->GetLayoutObject()).IsThrottledFrameView())
+  if (layer->GetLayoutObject().IsLayoutEmbeddedContent() &&
+      ToLayoutEmbeddedContent(layer->GetLayoutObject()).IsThrottledFrameView())
     should_paint = false;
 
   Vector<PaintLayerStackingNode*>* neg_list =
@@ -776,8 +776,8 @@ static void WriteSelection(TextStream& ts, const LayoutObject* o) {
   if (!frame)
     return;
 
-  VisibleSelection selection =
-      frame->Selection().ComputeVisibleSelectionInDOMTreeDeprecated();
+  const VisibleSelection& selection =
+      frame->Selection().ComputeVisibleSelectionInDOMTree();
   if (selection.IsCaret()) {
     ts << "caret: position " << selection.Start().ComputeEditingOffset()
        << " of " << NodePosition(selection.Start().AnchorNode());
@@ -788,8 +788,8 @@ static void WriteSelection(TextStream& ts, const LayoutObject* o) {
     ts << "selection start: position "
        << selection.Start().ComputeEditingOffset() << " of "
        << NodePosition(selection.Start().AnchorNode()) << "\n"
-       << "selection end:   position " << selection.end().ComputeEditingOffset()
-       << " of " << NodePosition(selection.end().AnchorNode()) << "\n";
+       << "selection end:   position " << selection.End().ComputeEditingOffset()
+       << " of " << NodePosition(selection.End().AnchorNode()) << "\n";
   }
 }
 
@@ -821,13 +821,13 @@ String ExternalRepresentation(LocalFrame* frame,
   bool is_text_printing_mode = !!(behavior & kLayoutAsTextPrintingMode);
   if (is_text_printing_mode) {
     FloatSize size(ToLayoutBox(layout_object)->Size());
-    print_context.begin(size.Width(), size.Height());
+    print_context.BeginPrintMode(size.Width(), size.Height());
   }
 
   String representation = ExternalRepresentation(ToLayoutBox(layout_object),
                                                  behavior, marked_layer);
   if (is_text_printing_mode)
-    print_context.end();
+    print_context.EndPrintMode();
   return representation;
 }
 

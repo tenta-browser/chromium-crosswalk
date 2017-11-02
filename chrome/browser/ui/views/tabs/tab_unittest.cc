@@ -78,7 +78,7 @@ class FakeTabController : public TabController {
     return IDR_THEME_TAB_BACKGROUND;
   }
   void UpdateTabAccessibilityState(const Tab* tab,
-                                   ui::AXNodeData* node_data) override{};
+                                   ui::AXNodeData* node_data) override {}
   base::string16 GetAccessibleTabName(const Tab* tab) const override {
     return base::string16();
   }
@@ -128,6 +128,7 @@ class TabTest : public views::ViewsTestBase {
         EXPECT_TRUE(tab.ShouldShowIcon());
         EXPECT_FALSE(tab.ShouldShowAlertIndicator());
       }
+      EXPECT_FALSE(tab.title_->visible());
       EXPECT_FALSE(tab.ShouldShowCloseBox());
     } else if (tab.IsActive()) {
       EXPECT_TRUE(tab.ShouldShowCloseBox());
@@ -188,7 +189,7 @@ class TabTest : public views::ViewsTestBase {
     const gfx::Rect contents_bounds = tab.GetContentsBounds();
     if (tab.ShouldShowIcon()) {
       EXPECT_LE(contents_bounds.x(), tab.favicon_bounds_.x());
-      if (tab.title_->width() > 0)
+      if (tab.title_->visible())
         EXPECT_LE(tab.favicon_bounds_.right(), tab.title_->x());
       EXPECT_LE(contents_bounds.y(), tab.favicon_bounds_.y());
       EXPECT_LE(tab.favicon_bounds_.bottom(), contents_bounds.bottom());
@@ -196,7 +197,7 @@ class TabTest : public views::ViewsTestBase {
     if (tab.ShouldShowIcon() && tab.ShouldShowAlertIndicator())
       EXPECT_LE(tab.favicon_bounds_.right(), GetAlertIndicatorBounds(tab).x());
     if (tab.ShouldShowAlertIndicator()) {
-      if (tab.title_->width() > 0) {
+      if (tab.title_->visible()) {
         EXPECT_LE(tab.title_->bounds().right(),
                   GetAlertIndicatorBounds(tab).x());
       }
@@ -215,7 +216,7 @@ class TabTest : public views::ViewsTestBase {
     if (tab.ShouldShowCloseBox()) {
       // Note: The title bounds can overlap the left-insets of the close box,
       // but should otherwise be to the left of the close button.
-      if (tab.title_->width() > 0) {
+      if (tab.title_->visible()) {
         EXPECT_LE(tab.title_->bounds().right(),
                   tab.close_button_->bounds().x() +
                       tab.close_button_->GetInsets().left());
@@ -283,7 +284,8 @@ TEST_F(TabTest, HitTestTopPixel) {
 TEST_F(TabTest, LayoutAndVisibilityOfElements) {
   static const TabAlertState kAlertStatesToTest[] = {
       TabAlertState::NONE, TabAlertState::TAB_CAPTURING,
-      TabAlertState::AUDIO_PLAYING, TabAlertState::AUDIO_MUTING};
+      TabAlertState::AUDIO_PLAYING, TabAlertState::AUDIO_MUTING,
+  };
 
   Widget widget;
   InitWidget(&widget);
@@ -299,20 +301,17 @@ TEST_F(TabTest, LayoutAndVisibilityOfElements) {
 
   // Perform layout over all possible combinations, checking for correct
   // results.
-  for (int is_pinned_tab = 0; is_pinned_tab < 2; ++is_pinned_tab) {
-    for (int is_active_tab = 0; is_active_tab < 2; ++is_active_tab) {
-      for (size_t alert_state_index = 0;
-           alert_state_index < arraysize(kAlertStatesToTest);
-           ++alert_state_index) {
-        const TabAlertState alert_state = kAlertStatesToTest[alert_state_index];
+  for (bool is_pinned_tab : {false, true}) {
+    for (bool is_active_tab : {false, true}) {
+      for (TabAlertState alert_state : kAlertStatesToTest) {
         SCOPED_TRACE(::testing::Message()
-                     << (is_active_tab ? "Active" : "Inactive") << ' '
-                     << (is_pinned_tab ? "Pinned " : "")
-                     << "Tab with alert indicator state "
-                     << static_cast<uint8_t>(alert_state));
+                     << (is_active_tab ? "Active " : "Inactive ")
+                     << (is_pinned_tab ? "pinned " : "")
+                     << "tab with alert indicator state "
+                     << static_cast<int>(alert_state));
 
-        data.pinned = !!is_pinned_tab;
-        controller.set_active_tab(!!is_active_tab);
+        data.pinned = is_pinned_tab;
+        controller.set_active_tab(is_active_tab);
         data.alert_state = alert_state;
         tab.SetData(data);
 
@@ -443,47 +442,63 @@ TEST_F(TabTest, LayeredThrobber) {
   tab.SetBoundsRect(gfx::Rect(Tab::GetStandardSize()));
 
   views::View* throbber = GetThrobberView(tab);
+  TabRendererData data;
+  data.url = GURL("http://example.com");
   EXPECT_FALSE(throbber->visible());
   EXPECT_EQ(TabRendererData::NETWORK_STATE_NONE, tab.data().network_state);
   EXPECT_EQ(throbber->bounds(), GetFaviconBounds(tab));
 
-  tab.UpdateLoadingAnimation(TabRendererData::NETWORK_STATE_NONE);
-  EXPECT_FALSE(throbber->visible());
-
   // Simulate a "normal" tab load: should paint to a layer.
-  tab.UpdateLoadingAnimation(TabRendererData::NETWORK_STATE_WAITING);
+  data.network_state = TabRendererData::NETWORK_STATE_WAITING;
+  tab.SetData(data);
   EXPECT_TRUE(tab_controller.CanPaintThrobberToLayer());
   EXPECT_TRUE(throbber->visible());
   EXPECT_TRUE(throbber->layer());
-  tab.UpdateLoadingAnimation(TabRendererData::NETWORK_STATE_LOADING);
+  data.network_state = TabRendererData::NETWORK_STATE_LOADING;
+  tab.SetData(data);
   EXPECT_TRUE(throbber->visible());
   EXPECT_TRUE(throbber->layer());
-  tab.UpdateLoadingAnimation(TabRendererData::NETWORK_STATE_NONE);
+  data.network_state = TabRendererData::NETWORK_STATE_NONE;
+  tab.SetData(data);
+  EXPECT_FALSE(throbber->visible());
+
+  // After loading is done, simulate another resource starting to load.
+  data.network_state = TabRendererData::NETWORK_STATE_WAITING;
+  tab.SetData(data);
+  EXPECT_TRUE(throbber->visible());
+
+  // Reset.
+  data.network_state = TabRendererData::NETWORK_STATE_NONE;
+  tab.SetData(data);
   EXPECT_FALSE(throbber->visible());
 
   // Simulate a drag started and stopped during a load: layer painting stops
   // temporarily.
-  tab.UpdateLoadingAnimation(TabRendererData::NETWORK_STATE_WAITING);
+  data.network_state = TabRendererData::NETWORK_STATE_WAITING;
+  tab.SetData(data);
   EXPECT_TRUE(throbber->visible());
   EXPECT_TRUE(throbber->layer());
   tab_controller.set_paint_throbber_to_layer(false);
-  tab.UpdateLoadingAnimation(TabRendererData::NETWORK_STATE_WAITING);
+  tab.StepLoadingAnimation();
   EXPECT_TRUE(throbber->visible());
   EXPECT_FALSE(throbber->layer());
   tab_controller.set_paint_throbber_to_layer(true);
-  tab.UpdateLoadingAnimation(TabRendererData::NETWORK_STATE_WAITING);
+  tab.StepLoadingAnimation();
   EXPECT_TRUE(throbber->visible());
   EXPECT_TRUE(throbber->layer());
-  tab.UpdateLoadingAnimation(TabRendererData::NETWORK_STATE_NONE);
+  data.network_state = TabRendererData::NETWORK_STATE_NONE;
+  tab.SetData(data);
   EXPECT_FALSE(throbber->visible());
 
   // Simulate a tab load starting and stopping during tab dragging (or with
   // stacked tabs): no layer painting.
   tab_controller.set_paint_throbber_to_layer(false);
-  tab.UpdateLoadingAnimation(TabRendererData::NETWORK_STATE_WAITING);
+  data.network_state = TabRendererData::NETWORK_STATE_WAITING;
+  tab.SetData(data);
   EXPECT_TRUE(throbber->visible());
   EXPECT_FALSE(throbber->layer());
-  tab.UpdateLoadingAnimation(TabRendererData::NETWORK_STATE_NONE);
+  data.network_state = TabRendererData::NETWORK_STATE_NONE;
+  tab.SetData(data);
   EXPECT_FALSE(throbber->visible());
 }
 

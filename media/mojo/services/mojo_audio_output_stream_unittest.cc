@@ -11,7 +11,6 @@
 #include "base/run_loop.h"
 #include "base/sync_socket.h"
 #include "media/audio/audio_output_controller.h"
-#include "media/mojo/interfaces/audio_output_stream.mojom.h"
 #include "mojo/public/cpp/system/platform_handle.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -55,12 +54,11 @@ class TestCancelableSyncSocket : public base::CancelableSyncSocket {
   DISALLOW_COPY_AND_ASSIGN(TestCancelableSyncSocket);
 };
 
-class MockDelegate : NON_EXPORTED_BASE(public AudioOutputDelegate) {
+class MockDelegate : public AudioOutputDelegate {
  public:
   MockDelegate() {}
   ~MockDelegate() {}
 
-  MOCK_CONST_METHOD0(GetController, scoped_refptr<AudioOutputController>());
   MOCK_CONST_METHOD0(GetStreamId, int());
   MOCK_METHOD0(OnPlayStream, void());
   MOCK_METHOD0(OnPauseStream, void());
@@ -127,6 +125,17 @@ class MockClient {
   std::unique_ptr<base::CancelableSyncSocket> socket_;
 };
 
+std::unique_ptr<AudioOutputDelegate> CreateNoDelegate(
+    AudioOutputDelegate::EventHandler* event_handler) {
+  return nullptr;
+}
+
+void NotCalled(mojo::ScopedSharedBufferHandle shared_buffer,
+               mojo::ScopedHandle socket_handle) {
+  EXPECT_TRUE(false) << "The StreamCreated callback was called despite the "
+                        "test expecting it not to.";
+}
+
 }  // namespace
 
 class MojoAudioOutputStreamTest : public Test {
@@ -143,7 +152,7 @@ class MojoAudioOutputStreamTest : public Test {
                        base::Unretained(&mock_delegate_factory_)),
         base::Bind(&MockClient::Initialized, base::Unretained(&client_)),
         base::BindOnce(&MockDeleter::Finished, base::Unretained(&deleter_)));
-    EXPECT_NE(nullptr, p);
+    EXPECT_TRUE(p.is_bound());
     return p;
   }
 
@@ -170,6 +179,19 @@ class MojoAudioOutputStreamTest : public Test {
   MockClient client_;
   std::unique_ptr<MojoAudioOutputStream> impl_;
 };
+
+TEST_F(MojoAudioOutputStreamTest, NoDelegate_SignalsError) {
+  bool deleter_called = false;
+  mojom::AudioOutputStreamPtr stream_ptr;
+  MojoAudioOutputStream stream(
+      mojo::MakeRequest(&stream_ptr), base::BindOnce(&CreateNoDelegate),
+      base::Bind(&NotCalled),
+      base::BindOnce([](bool* p) { *p = true; }, &deleter_called));
+  EXPECT_FALSE(deleter_called)
+      << "Stream shouldn't call the deleter from its constructor.";
+  base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(deleter_called);
+}
 
 TEST_F(MojoAudioOutputStreamTest, Play_Plays) {
   AudioOutputStreamPtr audio_output_ptr = CreateAudioOutput();

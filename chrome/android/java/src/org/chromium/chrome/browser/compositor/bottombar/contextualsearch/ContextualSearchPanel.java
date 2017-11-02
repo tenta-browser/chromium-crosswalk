@@ -13,7 +13,6 @@ import org.chromium.base.ActivityState;
 import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.compositor.LayerTitleCache;
 import org.chromium.chrome.browser.compositor.bottombar.OverlayContentProgressObserver;
 import org.chromium.chrome.browser.compositor.bottombar.OverlayPanel;
@@ -89,10 +88,13 @@ public class ContextualSearchPanel extends OverlayPanel {
         mSceneLayer = createNewContextualSearchSceneLayer();
         mPanelMetrics = new ContextualSearchPanelMetrics();
 
-        mBarShadowHeightPx = ApiCompatibilityUtils.getDrawable(mContext.getResources(),
-                R.drawable.contextual_search_bar_shadow).getIntrinsicHeight();
-        mEndButtonWidthDp = mPxToDp * (float) mContext.getResources().getDimensionPixelSize(
-                R.dimen.contextual_search_end_button_width);
+        mBarShadowHeightPx =
+                ApiCompatibilityUtils
+                        .getDrawable(mContext.getResources(), R.drawable.modern_toolbar_shadow)
+                        .getIntrinsicHeight();
+        mEndButtonWidthDp = mPxToDp
+                * mContext.getResources().getDimensionPixelSize(
+                          R.dimen.contextual_search_end_button_width);
     }
 
     @Override
@@ -282,7 +284,7 @@ public class ContextualSearchPanel extends OverlayPanel {
      * Handles a bar click. The position is given in dp.
      */
     @Override
-    public void handleBarClick(long time, float x, float y) {
+    public void handleBarClick(float x, float y) {
         getSearchBarControl().onSearchBarClick(x);
 
         if (isPeeking()) {
@@ -293,7 +295,7 @@ public class ContextualSearchPanel extends OverlayPanel {
                         mActivity.getActivityTab());
             } else {
                 // super takes care of expanding the Panel when peeking.
-                super.handleBarClick(time, x, y);
+                super.handleBarClick(x, y);
             }
         } else if (isExpanded() || isMaximized()) {
             if (isCoordinateInsideCloseButton(x)) {
@@ -407,12 +409,12 @@ public class ContextualSearchPanel extends OverlayPanel {
     }
 
     @Override
-    public void setChromeActivity(ChromeActivity activity) {
-        super.setChromeActivity(activity);
-
-        if (mActivity.getBottomSheet() == null) return;
-
-        addBarHandle(mActivity.getToolbarManager().getToolbar().getHeight());
+    protected boolean doesMatchFullWidthCriteria(float containerWidth) {
+        if (!mOverrideIsFullWidthSizePanelForTesting && mActivity != null
+                && mActivity.getBottomSheet() != null) {
+            return true;
+        }
+        return super.doesMatchFullWidthCriteria(containerWidth);
     }
 
     // ============================================================================================
@@ -524,6 +526,16 @@ public class ContextualSearchPanel extends OverlayPanel {
         return super.getPanelState();
     }
 
+    @Override
+    public void requestPanelShow(StateChangeReason reason) {
+        // If a re-tap is causing the panel to show when already shown, the superclass may ignore
+        // that, but we want to be sure to capture search metrics for each tap.
+        if (isShowing() && getPanelState() == PanelState.PEEKED) {
+            peekPanel(reason);
+        }
+        super.requestPanelShow(reason);
+    }
+
     /**
      * Gets whether a touch on the content view has been done yet or not.
      */
@@ -541,6 +553,8 @@ public class ContextualSearchPanel extends OverlayPanel {
         getImageControl().hideCustomImage(true);
         getSearchBarControl().setSearchTerm(searchTerm);
         mPanelMetrics.onSearchRequestStarted();
+        // Make sure the new Search Term draws.
+        requestUpdate();
     }
 
     /**
@@ -577,6 +591,8 @@ public class ContextualSearchPanel extends OverlayPanel {
         mPanelMetrics.onSearchTermResolved();
         getSearchBarControl().setSearchTerm(searchTerm);
         getSearchBarControl().animateSearchTermResolution();
+        if (mActivity == null || mActivity.getToolbarManager() == null) return;
+
         getSearchBarControl().setQuickAction(quickActionUri, quickActionCategory,
                 mActivity.getToolbarManager().getPrimaryColor());
         getImageControl().setThumbnailUrl(thumbnailUrl);
@@ -600,13 +616,6 @@ public class ContextualSearchPanel extends OverlayPanel {
      */
     public void setDidSearchInvolvePromo() {
         mPanelMetrics.setDidSearchInvolvePromo();
-    }
-
-    /**
-     * @param wasPartOfUrl Whether the selected text was part of a URL.
-     */
-    public void setWasSelectionPartOfUrl(boolean wasPartOfUrl) {
-        mPanelMetrics.setWasSelectionPartOfUrl(wasPartOfUrl);
     }
 
     // ============================================================================================
@@ -881,6 +890,6 @@ public class ContextualSearchPanel extends OverlayPanel {
         float yPosition = getOffsetY() + (getHeight() / 2);
 
         // Simulate the tap.
-        handleClick(System.currentTimeMillis(), xPosition, yPosition);
+        handleClick(xPosition, yPosition);
     }
 }

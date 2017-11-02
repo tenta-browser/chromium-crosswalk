@@ -31,9 +31,9 @@
 #ifndef SVGAnimatedLengthList_h
 #define SVGAnimatedLengthList_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/svg/SVGLengthListTearOff.h"
 #include "core/svg/properties/SVGAnimatedProperty.h"
+#include "platform/bindings/ScriptWrappable.h"
 
 namespace blink {
 
@@ -52,7 +52,8 @@ class SVGAnimatedLengthList final : public SVGAnimatedProperty<SVGLengthList>,
   }
 
   DEFINE_INLINE_VIRTUAL_TRACE_WRAPPERS() {
-    visitor->TraceWrappers(contextElement());
+    SVGAnimatedProperty<SVGLengthList>::TraceWrappers(visitor);
+    ScriptWrappable::TraceWrappers(visitor);
   }
 
  protected:

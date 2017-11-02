@@ -43,8 +43,8 @@
 #include "core/dom/DocumentStyleSheetCollection.h"
 #include "core/dom/NodeComputedStyle.h"
 #include "core/dom/ViewportDescription.h"
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/Settings.h"
 #include "core/layout/api/LayoutViewItem.h"
 
@@ -58,8 +58,8 @@ ViewportStyleResolver::ViewportStyleResolver(Document& document)
 }
 
 void ViewportStyleResolver::Reset() {
-  viewport_dependent_media_query_results_.Clear();
-  device_dependent_media_query_results_.Clear();
+  viewport_dependent_media_query_results_.clear();
+  device_dependent_media_query_results_.clear();
   property_set_ = nullptr;
   has_author_style_ = false;
   has_viewport_units_ = false;
@@ -284,7 +284,7 @@ Length ViewportStyleResolver::ViewportLengthValue(CSSPropertyID id) {
   bool document_style_has_viewport_units = document_style->HasViewportUnits();
   document_style->SetHasViewportUnits(false);
 
-  FrameView* view = document_->GetFrame()->View();
+  LocalFrameView* view = document_->GetFrame()->View();
   DCHECK(view);
 
   CSSToLengthConversionData::FontSizes font_sizes(document_style,
@@ -332,7 +332,7 @@ void ViewportStyleResolver::UpdateViewport(
   if (needs_update_ == kCollectRules) {
     Reset();
     CollectViewportRulesFromUASheets();
-    if (RuntimeEnabledFeatures::cssViewportEnabled())
+    if (RuntimeEnabledFeatures::CSSViewportEnabled())
       collection.CollectViewportRules(*this);
   }
   Resolve();

@@ -13,6 +13,7 @@
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/printing/cloud_print/privet_http_impl.h"
 #include "content/public/browser/browser_thread.h"
@@ -354,10 +355,10 @@ class PrivetHTTPTest : public TestWithParam<const char*> {
     callback.Cancel();
   }
 
-  void Stop() { base::MessageLoop::current()->QuitWhenIdle(); }
+  void Stop() { base::RunLoop::QuitCurrentWhenIdleDeprecated(); }
 
  protected:
-  base::MessageLoop loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   scoped_refptr<net::TestURLRequestContextGetter> request_context_;
   net::TestURLFetcherFactory fetcher_factory_;
   std::unique_ptr<PrivetV1HTTPClient> privet_client_;

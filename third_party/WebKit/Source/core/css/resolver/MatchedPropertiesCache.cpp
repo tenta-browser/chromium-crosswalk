@@ -49,7 +49,7 @@ void CachedMatchedProperties::Set(const ComputedStyle& style,
 }
 
 void CachedMatchedProperties::Clear() {
-  matched_properties.Clear();
+  matched_properties.clear();
   computed_style = nullptr;
   parent_computed_style = nullptr;
 }
@@ -62,7 +62,7 @@ const CachedMatchedProperties* MatchedPropertiesCache::Find(
     const MatchedPropertiesVector& properties) {
   DCHECK(hash);
 
-  Cache::iterator it = cache_.Find(hash);
+  Cache::iterator it = cache_.find(hash);
   if (it == cache_.end())
     return nullptr;
   CachedMatchedProperties* cache_item = it->value.Get();
@@ -104,7 +104,7 @@ void MatchedPropertiesCache::Clear() {
   for (auto& cache_entry : cache_) {
     cache_entry.value->Clear();
   }
-  cache_.Clear();
+  cache_.clear();
 }
 
 void MatchedPropertiesCache::ClearViewportDependent() {
@@ -117,24 +117,34 @@ void MatchedPropertiesCache::ClearViewportDependent() {
   cache_.RemoveAll(to_remove);
 }
 
-bool MatchedPropertiesCache::IsCacheable(const StyleResolverState& state) {
-  const ComputedStyle& style = *state.Style();
-  const ComputedStyle& parent_style = *state.ParentStyle();
-
-  if (style.Unique() ||
-      (style.StyleType() != kPseudoIdNone && parent_style.Unique()))
+bool MatchedPropertiesCache::IsStyleCacheable(const ComputedStyle& style) {
+  // unique() styles are not cacheable.
+  if (style.Unique())
     return false;
   if (style.Zoom() != ComputedStyle::InitialZoom())
     return false;
   if (style.GetWritingMode() != ComputedStyle::InitialWritingMode() ||
       style.Direction() != ComputedStyle::InitialDirection())
     return false;
+  // styles with non inherited properties that reference variables are not
+  // cacheable.
+  if (style.HasVariableReferenceFromNonInheritedProperty())
+    return false;
+  return true;
+}
+
+bool MatchedPropertiesCache::IsCacheable(const StyleResolverState& state) {
+  const ComputedStyle& style = *state.Style();
+  const ComputedStyle& parent_style = *state.ParentStyle();
+
+  if (!IsStyleCacheable(style))
+    return false;
+  if (style.StyleType() != kPseudoIdNone && parent_style.Unique())
+    return false;
   // The cache assumes static knowledge about which properties are inherited.
   // Without a flat tree parent, StyleBuilder::ApplyProperty will not
   // SetHasExplicitlyInheritedProperties on the parent style.
   if (!state.ParentNode() || parent_style.HasExplicitlyInheritedProperties())
-    return false;
-  if (style.HasVariableReferenceFromNonInheritedProperty())
     return false;
   return true;
 }

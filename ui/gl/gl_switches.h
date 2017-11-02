@@ -34,7 +34,6 @@ GL_EXPORT extern const char kANGLEImplementationNullName[];
 
 namespace switches {
 
-GL_EXPORT extern const char kCreateDefaultGLContext[];
 GL_EXPORT extern const char kDisableD3D11[];
 GL_EXPORT extern const char kDisableES3GLContext[];
 GL_EXPORT extern const char kDisableGpuVsync[];
@@ -42,8 +41,6 @@ GL_EXPORT extern const char kEnableGPUServiceLogging[];
 GL_EXPORT extern const char kEnableGPUServiceTracing[];
 GL_EXPORT extern const char kGpuNoContextLost[];
 GL_EXPORT extern const char kDisableDirectComposition[];
-
-GL_EXPORT extern const char kSupportsDualGpus[];
 
 GL_EXPORT extern const char kUseANGLE[];
 GL_EXPORT extern const char kUseGL[];
@@ -57,11 +54,13 @@ GL_EXPORT extern const char kEnableSwapBuffersWithBounds[];
 GL_EXPORT extern const char kEnableDirectCompositionLayers[];
 GL_EXPORT extern const char kDisableDirectCompositionLayers[];
 
+GL_EXPORT extern const char kUsePassthroughCmdDecoder[];
+
 // These flags are used by the test harness code, not passed in by users.
 GL_EXPORT extern const char kDisableGLDrawingForTests[];
 GL_EXPORT extern const char kOverrideUseSoftwareGLForTests[];
 
-GL_EXPORT extern const char* kGLSwitchesCopiedFromGpuProcessHost[];
+GL_EXPORT extern const char* const kGLSwitchesCopiedFromGpuProcessHost[];
 GL_EXPORT extern const int kGLSwitchesCopiedFromGpuProcessHostNumSwitches;
 
 }  // namespace switches
@@ -74,6 +73,7 @@ GL_EXPORT extern const base::Feature kD3DVsync;
 
 GL_EXPORT extern const base::Feature kDirectCompositionUnderlays;
 GL_EXPORT extern const base::Feature kDirectCompositionComplexOverlays;
+GL_EXPORT extern const base::Feature kDirectCompositionNonrootOverlays;
 
 }  // namespace features
 

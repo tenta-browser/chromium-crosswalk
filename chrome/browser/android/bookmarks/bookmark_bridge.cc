@@ -38,6 +38,7 @@ using base::android::AttachCurrentThread;
 using base::android::ConvertUTF8ToJavaString;
 using base::android::ConvertUTF16ToJavaString;
 using base::android::JavaParamRef;
+using base::android::JavaRef;
 using base::android::ScopedJavaLocalRef;
 using base::android::ScopedJavaGlobalRef;
 using base::android::ToJavaIntArray;
@@ -86,7 +87,9 @@ std::unique_ptr<icu::Collator> GetICUCollator() {
 
 }  // namespace
 
-BookmarkBridge::BookmarkBridge(JNIEnv* env, jobject obj, jobject j_profile)
+BookmarkBridge::BookmarkBridge(JNIEnv* env,
+                               const JavaRef<jobject>& obj,
+                               const JavaRef<jobject>& j_profile)
     : weak_java_ref_(env, obj),
       bookmark_model_(NULL),
       managed_bookmark_service_(NULL),
@@ -128,11 +131,6 @@ BookmarkBridge::~BookmarkBridge() {
 
 void BookmarkBridge::Destroy(JNIEnv*, const JavaParamRef<jobject>&) {
   delete this;
-}
-
-// static
-bool BookmarkBridge::RegisterBookmarkBridge(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 static jlong Init(JNIEnv* env,
@@ -752,8 +750,9 @@ ScopedJavaLocalRef<jobject> BookmarkBridge::CreateJavaBookmark(
       GetBookmarkType(parent), IsEditable(node), IsManaged(node));
 }
 
-void BookmarkBridge::ExtractBookmarkNodeInformation(const BookmarkNode* node,
-                                                     jobject j_result_obj) {
+void BookmarkBridge::ExtractBookmarkNodeInformation(
+    const BookmarkNode* node,
+    const JavaRef<jobject>& j_result_obj) {
   JNIEnv* env = AttachCurrentThread();
   if (!IsReachable(node))
     return;
@@ -802,7 +801,7 @@ bool BookmarkBridge::IsEditable(const BookmarkNode* node) const {
       node->type() != BookmarkNode::URL)) {
     return false;
   }
-  if (!IsEditBookmarksEnabled())
+  if (!IsEditBookmarksEnabled() || bookmark_model_->is_permanent_node(node))
     return false;
   if (partner_bookmarks_shim_->IsPartnerBookmark(node))
     return partner_bookmarks_shim_->IsEditable(node);

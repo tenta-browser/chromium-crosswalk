@@ -18,15 +18,15 @@ namespace blink {
 namespace {
 
 class UnderlyingFilterListChecker
-    : public InterpolationType::ConversionChecker {
+    : public CSSInterpolationType::CSSConversionChecker {
  public:
   static std::unique_ptr<UnderlyingFilterListChecker> Create(
-      PassRefPtr<NonInterpolableList> non_interpolable_list) {
+      RefPtr<NonInterpolableList> non_interpolable_list) {
     return WTF::WrapUnique(
         new UnderlyingFilterListChecker(std::move(non_interpolable_list)));
   }
 
-  bool IsValid(const InterpolationEnvironment&,
+  bool IsValid(const StyleResolverState&,
                const InterpolationValue& underlying) const final {
     const NonInterpolableList& underlying_non_interpolable_list =
         ToNonInterpolableList(*underlying.non_interpolable_value);
@@ -43,14 +43,14 @@ class UnderlyingFilterListChecker
   }
 
  private:
-  UnderlyingFilterListChecker(
-      PassRefPtr<NonInterpolableList> non_interpolable_list)
+  UnderlyingFilterListChecker(RefPtr<NonInterpolableList> non_interpolable_list)
       : non_interpolable_list_(std::move(non_interpolable_list)) {}
 
   RefPtr<NonInterpolableList> non_interpolable_list_;
 };
 
-class InheritedFilterListChecker : public InterpolationType::ConversionChecker {
+class InheritedFilterListChecker
+    : public CSSInterpolationType::CSSConversionChecker {
  public:
   static std::unique_ptr<InheritedFilterListChecker> Create(
       CSSPropertyID property,
@@ -59,13 +59,12 @@ class InheritedFilterListChecker : public InterpolationType::ConversionChecker {
         new InheritedFilterListChecker(property, filter_operations));
   }
 
-  bool IsValid(const InterpolationEnvironment& environment,
+  bool IsValid(const StyleResolverState& state,
                const InterpolationValue&) const final {
     const FilterOperations& filter_operations =
         filter_operations_wrapper_->Operations();
-    return filter_operations ==
-           FilterListPropertyFunctions::GetFilterList(
-               property_, *environment.GetState().ParentStyle());
+    return filter_operations == FilterListPropertyFunctions::GetFilterList(
+                                    property_, *state.ParentStyle());
   }
 
  private:

@@ -15,7 +15,7 @@ namespace {
 // Additional height threshold added at the toolbar's bottom. This is to mimic
 // threshold the mouse position needs to be at before the menubar automatically
 // hides.
-const CGFloat kTrackingAreaAdditionalThreshold = 20;
+const CGFloat kTrackingAreaAdditionalThreshold = 50;
 
 }  // namespace
 
@@ -88,7 +88,8 @@ initWithFullscreenToolbarController:(FullscreenToolbarController*)owner
 }
 
 - (void)updateToolbarFrame:(NSRect)frame {
-  NSRect contentBounds = [contentView_ bounds];
+  NSRect contentBounds =
+      [[[[owner_ browserWindowController] window] contentView] bounds];
   trackingAreaFrame_ = frame;
   trackingAreaFrame_.origin.y -= kTrackingAreaAdditionalThreshold;
   trackingAreaFrame_.size.height =

@@ -34,6 +34,7 @@ import org.chromium.chrome.browser.ChromeVersionInfo;
 import org.chromium.chrome.browser.init.BrowserParts;
 import org.chromium.chrome.browser.init.ChromeBrowserInitializer;
 import org.chromium.chrome.browser.init.EmptyBrowserParts;
+import org.chromium.chrome.browser.notifications.channels.SiteChannelsManager;
 import org.chromium.chrome.browser.preferences.AboutChromePreferences;
 import org.chromium.chrome.browser.preferences.Preferences;
 import org.chromium.chrome.browser.preferences.PreferencesLauncher;
@@ -73,7 +74,7 @@ public class ManageSpaceActivity extends AppCompatActivity implements View.OnCli
 
     private boolean mIsNativeInitialized;
 
-    @SuppressLint("CommitPrefEdits")
+    @SuppressLint({"ApplySharedPref", "CommitPrefEdits"})
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         ensureActivityNotExported();
@@ -120,8 +121,7 @@ public class ManageSpaceActivity extends AppCompatActivity implements View.OnCli
 
         // Allow reading/writing to disk to check whether the last attempt was successful before
         // kicking off the browser process initialization.
-        StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskReads();
-        StrictMode.allowThreadDiskWrites();
+        StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskWrites();
         try {
             String productVersion = AboutChromePreferences.getApplicationVersion(
                     this, ChromeVersionInfo.getProductVersion());
@@ -260,6 +260,9 @@ public class ManageSpaceActivity extends AppCompatActivity implements View.OnCli
                     }
 
                     SearchWidgetProvider.reset();
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        SiteChannelsManager.getInstance().deleteAllSiteChannels();
+                    }
                     activityManager.clearApplicationUserData();
                 }
             });
@@ -304,7 +307,7 @@ public class ManageSpaceActivity extends AppCompatActivity implements View.OnCli
          * asynchronously, and at the end we update the UI with the new storage numbers.
          */
         public void clearData() {
-            WebsitePermissionsFetcher fetcher = new WebsitePermissionsFetcher(this);
+            WebsitePermissionsFetcher fetcher = new WebsitePermissionsFetcher(this, true);
             fetcher.fetchPreferencesForCategory(
                     SiteSettingsCategory.fromString(SiteSettingsCategory.CATEGORY_USE_STORAGE));
         }
@@ -327,7 +330,7 @@ public class ManageSpaceActivity extends AppCompatActivity implements View.OnCli
                     siteStorageLeft += site.getTotalUsage();
                 }
             }
-            if (sites.size() == 0) {
+            if (mNumSitesClearing == 0) {
                 onStoredDataCleared();
             }
             onSiteStorageSizeCalculated(siteStorageLeft, 0);

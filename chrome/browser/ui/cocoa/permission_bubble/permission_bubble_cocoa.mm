@@ -11,15 +11,9 @@
 #include "content/public/browser/web_contents.h"
 #import "ui/base/cocoa/nsview_additions.h"
 
-PermissionBubbleCocoa::PermissionBubbleCocoa(Browser* browser)
-    : browser_(browser), delegate_(nullptr), bubbleController_(nil) {}
-
-PermissionBubbleCocoa::~PermissionBubbleCocoa() {
-}
-
-void PermissionBubbleCocoa::Show(
-    const std::vector<PermissionRequest*>& requests,
-    const std::vector<bool>& accept_state) {
+PermissionBubbleCocoa::PermissionBubbleCocoa(Browser* browser,
+                                             Delegate* delegate)
+    : browser_(browser), delegate_(delegate), bubbleController_(nil) {
   DCHECK(browser_);
 
   if (!bubbleController_) {
@@ -28,31 +22,15 @@ void PermissionBubbleCocoa::Show(
                                                      bridge:this];
   }
 
-  [bubbleController_ showWithDelegate:delegate_
-                          forRequests:requests
-                         acceptStates:accept_state];
+  [bubbleController_ showWithDelegate:delegate_];
 }
 
-void PermissionBubbleCocoa::Hide() {
+PermissionBubbleCocoa::~PermissionBubbleCocoa() {
   [bubbleController_ close];
-}
-
-bool PermissionBubbleCocoa::IsVisible() {
-  return bubbleController_ != nil;
-}
-
-void PermissionBubbleCocoa::SetDelegate(Delegate* delegate) {
-  if (delegate_ == delegate)
-    return;
-  delegate_ = delegate;
 }
 
 bool PermissionBubbleCocoa::CanAcceptRequestUpdate() {
   return ![[[bubbleController_ window] contentView] cr_isMouseInView];
-}
-
-bool PermissionBubbleCocoa::HidesAutomatically() {
-  return false;
 }
 
 void PermissionBubbleCocoa::UpdateAnchorPosition() {

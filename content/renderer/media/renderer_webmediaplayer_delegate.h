@@ -9,7 +9,7 @@
 #include <memory>
 #include <set>
 
-#include "base/id_map.h"
+#include "base/containers/id_map.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
@@ -32,9 +32,8 @@ enum class MediaContentType;
 // the MediaPlayerDelegateHost.
 class CONTENT_EXPORT RendererWebMediaPlayerDelegate
     : public content::RenderFrameObserver,
-      public NON_EXPORTED_BASE(WebMediaPlayerDelegate),
-      public NON_EXPORTED_BASE(
-          base::SupportsWeakPtr<RendererWebMediaPlayerDelegate>) {
+      public WebMediaPlayerDelegate,
+      public base::SupportsWeakPtr<RendererWebMediaPlayerDelegate> {
  public:
   explicit RendererWebMediaPlayerDelegate(content::RenderFrame* render_frame);
   ~RendererWebMediaPlayerDelegate() override;
@@ -58,6 +57,8 @@ class CONTENT_EXPORT RendererWebMediaPlayerDelegate
   void ClearStaleFlag(int player_id) override;
   bool IsStale(int player_id) override;
   void SetIsEffectivelyFullscreen(int player_id, bool is_fullscreen) override;
+  void DidPlayerSizeChange(int delegate_id, const gfx::Size& size) override;
+  void DidPlayerMutedStatusChange(int delegate_id, bool muted) override;
 
   // content::RenderFrameObserver overrides.
   void WasHidden() override;
@@ -66,11 +67,12 @@ class CONTENT_EXPORT RendererWebMediaPlayerDelegate
   void OnDestruct() override;
 
   // Zeros out |idle_cleanup_interval_|, sets |idle_timeout_| to |idle_timeout|,
-  // and |is_low_end_device_| to |is_low_end_device|. A zero cleanup interval
+  // and |is_jelly_bean_| to |is_jelly_bean|. A zero cleanup interval
   // will cause the idle timer to run with each run of the message loop.
   void SetIdleCleanupParamsForTesting(base::TimeDelta idle_timeout,
+                                      base::TimeDelta idle_cleanup_interval,
                                       base::TickClock* tick_clock,
-                                      bool is_low_end_device);
+                                      bool is_jelly_bean);
   bool IsIdleCleanupTimerRunningForTesting() const;
 
   // Note: Does not call OnFrameHidden()/OnFrameShown().
@@ -110,7 +112,11 @@ class CONTENT_EXPORT RendererWebMediaPlayerDelegate
   bool has_played_video_ = false;
   bool pending_update_task_ = false;
 
-  IDMap<Observer*> id_map_;
+  base::IDMap<Observer*> id_map_;
+
+  // Flag for gating if players should ever transition to a stale state after a
+  // period of inactivity.
+  bool allow_idle_cleanup_ = true;
 
   // Tracks which players have entered an idle state. After some period of
   // inactivity these players will be notified and become stale.
@@ -145,7 +151,7 @@ class CONTENT_EXPORT RendererWebMediaPlayerDelegate
 
   // Determined at construction time based on system information; determines
   // when the idle cleanup timer should be fired more aggressively.
-  bool is_low_end_device_;
+  bool is_jelly_bean_;
 
   DISALLOW_COPY_AND_ASSIGN(RendererWebMediaPlayerDelegate);
 };

@@ -4,8 +4,15 @@
 
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
 
-#include "ios/chrome/browser/ui/tools_menu/tools_menu_constants.h"
+#include "components/strings/grit/components_strings.h"
+#include "ios/chrome/browser/ui/authentication/signin_confirmation_view_controller.h"
+#import "ios/chrome/browser/ui/settings/accounts_collection_view_controller.h"
+#import "ios/chrome/browser/ui/settings/privacy_collection_view_controller.h"
+#import "ios/chrome/browser/ui/settings/settings_collection_view_controller.h"
+#import "ios/chrome/browser/ui/tools_menu/tools_menu_constants.h"
+#import "ios/chrome/browser/ui/tools_menu/tools_popup_controller.h"
 #import "ios/chrome/browser/ui/uikit_ui_util.h"
+#include "ios/chrome/grit/ios_strings.h"
 #import "ios/chrome/test/app/chrome_test_util.h"
 #include "ios/chrome/test/app/navigation_test_util.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
@@ -17,8 +24,26 @@
 #error "This file requires ARC support."
 #endif
 
+using chrome_test_util::AccountConsistencyConfirmationOkButton;
+using chrome_test_util::AccountConsistencySetupSigninButton;
+using chrome_test_util::ButtonWithAccessibilityLabel;
+using chrome_test_util::ClearBrowsingDataCollectionView;
+using chrome_test_util::SettingsMenuButton;
 using testing::WaitUntilConditionOrTimeout;
 using testing::kWaitForPageLoadTimeout;
+
+namespace {
+
+// Returns a GREYAction to scroll down (swipe up) for a reasonably small amount.
+id<GREYAction> ScrollDown() {
+  // 150 is a reasonable value to ensure all menu items are seen, without too
+  // much delay. With a larger value, some menu items could be skipped while
+  // searching. A smaller value increses the area that is searched, but slows
+  // down the scroll.
+  CGFloat const kMenuScrollDisplacement = 150;
+  return grey_scrollInDirection(kGREYDirectionDown, kMenuScrollDisplacement);
+}
+}  // namespace
 
 @implementation ChromeEarlGreyUI
 
@@ -42,6 +67,50 @@ using testing::kWaitForPageLoadTimeout;
       performAction:grey_tap()];
   // TODO(crbug.com/639517): Add webViewScrollView matcher so we don't have
   // to always find it.
+}
+
++ (void)openSettingsMenu {
+  [ChromeEarlGreyUI openToolsMenu];
+  id<GREYMatcher> interactableSettingsButton =
+      grey_allOf(SettingsMenuButton(), grey_interactable(), nil);
+  [[[EarlGrey selectElementWithMatcher:interactableSettingsButton]
+         usingSearchAction:ScrollDown()
+      onElementWithMatcher:grey_accessibilityID(kToolsMenuTableViewId)]
+      performAction:grey_tap()];
+}
+
++ (void)tapSettingsMenuButton:(id<GREYMatcher>)buttonMatcher {
+  id<GREYMatcher> interactableButtonMatcher =
+      grey_allOf(buttonMatcher, grey_interactable(), nil);
+  [[[EarlGrey selectElementWithMatcher:interactableButtonMatcher]
+         usingSearchAction:ScrollDown()
+      onElementWithMatcher:grey_accessibilityID(kSettingsCollectionViewId)]
+      performAction:grey_tap()];
+}
+
++ (void)tapClearBrowsingDataMenuButton:(id<GREYMatcher>)buttonMatcher {
+  id<GREYMatcher> interactableButtonMatcher =
+      grey_allOf(buttonMatcher, grey_interactable(), nil);
+  [[[EarlGrey selectElementWithMatcher:interactableButtonMatcher]
+         usingSearchAction:ScrollDown()
+      onElementWithMatcher:ClearBrowsingDataCollectionView()]
+      performAction:grey_tap()];
+}
+
++ (void)tapPrivacyMenuButton:(id<GREYMatcher>)buttonMatcher {
+  id<GREYMatcher> interactableButtonMatcher =
+      grey_allOf(buttonMatcher, grey_interactable(), nil);
+  [[[EarlGrey selectElementWithMatcher:interactableButtonMatcher]
+         usingSearchAction:ScrollDown()
+      onElementWithMatcher:grey_accessibilityID(kPrivacyCollectionViewId)]
+      performAction:grey_tap()];
+}
+
++ (void)tapAccountsMenuButton:(id<GREYMatcher>)buttonMatcher {
+  [[[EarlGrey selectElementWithMatcher:buttonMatcher]
+         usingSearchAction:ScrollDown()
+      onElementWithMatcher:grey_accessibilityID(kSettingsAccountsId)]
+      performAction:grey_tap()];
 }
 
 + (void)openNewTab {
@@ -94,6 +163,31 @@ using testing::kWaitForPageLoadTimeout;
   GREYAssert(testing::WaitUntilConditionOrTimeout(
                  kWaitForToolbarAnimationTimeout, condition),
              errorMessage);
+}
+
++ (void)signInToIdentityByEmail:(NSString*)userEmail {
+  // Sign in to |userEmail|.
+  [[EarlGrey selectElementWithMatcher:ButtonWithAccessibilityLabel(userEmail)]
+      performAction:grey_tap()];
+  [[EarlGrey selectElementWithMatcher:AccountConsistencySetupSigninButton()]
+      performAction:grey_tap()];
+}
+
++ (void)confirmSigninConfirmationDialog {
+  // Confirm sign in. "More" button is shown on short devices (e.g. iPhone 5s,
+  // iPhone SE), so needs to scroll first to dismiss the "More" button before
+  // taping on "OK".
+  // Cannot directly scroll on |kSignInConfirmationCollectionViewId| because it
+  // is a MDC collection view, not a UICollectionView, so itself is not
+  // scrollable.
+  id<GREYMatcher> signinUICollectionViewMatcher = grey_allOf(
+      grey_ancestor(grey_accessibilityID(kSigninConfirmationCollectionViewId)),
+      grey_kindOfClass([UICollectionView class]), nil);
+  [[EarlGrey selectElementWithMatcher:signinUICollectionViewMatcher]
+      performAction:grey_scrollToContentEdge(kGREYContentEdgeBottom)];
+
+  [[EarlGrey selectElementWithMatcher:AccountConsistencyConfirmationOkButton()]
+      performAction:grey_tap()];
 }
 
 @end

@@ -4,7 +4,7 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutSVGPath polygon",
@@ -32,7 +32,17 @@
           "reason": "style change"
         },
         {
+          "object": "LayoutSVGViewportContainer svg id='poly'",
+          "rect": [47, 166, 133, 132],
+          "reason": "style change"
+        },
+        {
           "object": "LayoutSVGContainer use id='t2'",
+          "rect": [184, 166, 132, 132],
+          "reason": "style change"
+        },
+        {
+          "object": "LayoutSVGViewportContainer svg id='poly'",
           "rect": [184, 166, 132, 132],
           "reason": "style change"
         }
@@ -40,14 +50,6 @@
     }
   ],
   "objectPaintInvalidations": [
-    {
-      "object": "LayoutSVGEllipse circle id='t4'",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutSVGPath polygon",
-      "reason": "style change"
-    },
     {
       "object": "LayoutSVGContainer use id='t1'",
       "reason": "style change"

@@ -5,6 +5,8 @@
 #ifndef UI_VIEWS_BUBBLE_BUBBLE_DIALOG_DELEGATE_H_
 #define UI_VIEWS_BUBBLE_BUBBLE_DIALOG_DELEGATE_H_
 
+#include <memory>
+
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "ui/views/bubble/bubble_border.h"
@@ -13,13 +15,13 @@
 #include "ui/views/window/dialog_delegate.h"
 
 namespace gfx {
-class FontList;
 class Rect;
 }
 
 namespace views {
 
 class BubbleFrameView;
+class ViewTracker;
 
 // BubbleDialogDelegateView is a special DialogDelegateView for bubbles.
 class VIEWS_EXPORT BubbleDialogDelegateView : public DialogDelegateView,
@@ -39,14 +41,14 @@ class VIEWS_EXPORT BubbleDialogDelegateView : public DialogDelegateView,
   // Create and initialize the bubble Widget(s) with proper bounds.
   static Widget* CreateBubble(BubbleDialogDelegateView* bubble_delegate);
 
-  // WidgetDelegateView overrides:
+  // WidgetDelegateView:
   BubbleDialogDelegateView* AsBubbleDialogDelegate() override;
   bool ShouldShowCloseButton() const override;
   ClientView* CreateClientView(Widget* widget) override;
   NonClientFrameView* CreateNonClientFrameView(Widget* widget) override;
   const char* GetClassName() const override;
 
-  // WidgetObserver overrides:
+  // WidgetObserver:
   void OnWidgetDestroying(Widget* widget) override;
   void OnWidgetVisibilityChanging(Widget* widget, bool visible) override;
   void OnWidgetVisibilityChanged(Widget* widget, bool visible) override;
@@ -77,8 +79,6 @@ class VIEWS_EXPORT BubbleDialogDelegateView : public DialogDelegateView,
     color_explicitly_set_ = true;
   }
 
-  const gfx::Insets& margins() const { return margins_; }
-  void set_margins(const gfx::Insets& margins) { margins_ = margins; }
   void set_title_margins(const gfx::Insets& title_margins) {
     title_margins_ = title_margins;
   }
@@ -99,11 +99,10 @@ class VIEWS_EXPORT BubbleDialogDelegateView : public DialogDelegateView,
   virtual gfx::Rect GetAnchorRect() const;
 
   // Allows delegates to provide custom parameters before widget initialization.
-  // For example, mus needs to set a custom ui::Window* parent.
   virtual void OnBeforeBubbleWidgetInit(Widget::InitParams* params,
                                         Widget* widget) const;
 
-  // Sets |margins_| to a default picked for smaller bubbles.
+  // Sets the content margins to a default picked for smaller bubbles.
   void UseCompactMargins();
 
   // Sets the bubble alignment relative to the anchor. This may only be called
@@ -128,10 +127,6 @@ class VIEWS_EXPORT BubbleDialogDelegateView : public DialogDelegateView,
   // Get bubble bounds from the anchor rect and client view's preferred size.
   virtual gfx::Rect GetBubbleBounds();
 
-  // Return a FontList to use for the title of the bubble.
-  // (The default is MediumFont).
-  virtual const gfx::FontList& GetTitleFontList() const;
-
   // View overrides:
   void OnNativeThemeChanged(const ui::NativeTheme* theme) override;
 
@@ -146,7 +141,7 @@ class VIEWS_EXPORT BubbleDialogDelegateView : public DialogDelegateView,
   void SetAnchorRect(const gfx::Rect& rect);
 
   // Resize and potentially move the bubble to fit the content's preferred size.
-  void SizeToContents();
+  virtual void SizeToContents();
 
   BubbleFrameView* GetBubbleFrameView() const;
 
@@ -167,9 +162,9 @@ class VIEWS_EXPORT BubbleDialogDelegateView : public DialogDelegateView,
   bool close_on_deactivate_;
 
   // The view and widget to which this bubble is anchored. Since an anchor view
-  // can be deleted without notice, we store it in the ViewStorage and retrieve
+  // can be deleted without notice, we store it in a ViewTracker and retrieve
   // it from there. It will make sure that the view is still valid.
-  const int anchor_view_storage_id_;
+  std::unique_ptr<ViewTracker> anchor_view_tracker_;
   Widget* anchor_widget_;
 
   // The anchor rect used in the absence of an anchor view.
@@ -187,9 +182,6 @@ class VIEWS_EXPORT BubbleDialogDelegateView : public DialogDelegateView,
   // The background color of the bubble; and flag for when it's explicitly set.
   SkColor color_;
   bool color_explicitly_set_;
-
-  // The margins between the content and the inside of the border.
-  gfx::Insets margins_;
 
   // The margins around the title.
   // TODO(tapted): Investigate deleting this when MD is default.

@@ -31,10 +31,10 @@
 #include "core/html/forms/MultipleFieldsTemporalInputTypeView.h"
 
 #include "core/CSSValueKeywords.h"
+#include "core/dom/ShadowRoot.h"
 #include "core/dom/StyleChangeReason.h"
-#include "core/dom/shadow/ShadowRoot.h"
+#include "core/dom/events/ScopedEventQueue.h"
 #include "core/events/KeyboardEvent.h"
-#include "core/events/ScopedEventQueue.h"
 #include "core/html/HTMLDataListElement.h"
 #include "core/html/HTMLInputElement.h"
 #include "core/html/HTMLOptionElement.h"
@@ -134,28 +134,28 @@ bool DateTimeFormatValidator::ValidateFormat(
 DateTimeEditElement*
 MultipleFieldsTemporalInputTypeView::GetDateTimeEditElement() const {
   return ToDateTimeEditElementOrDie(
-      GetElement().UserAgentShadowRoot()->GetElementById(
+      GetElement().UserAgentShadowRoot()->getElementById(
           ShadowElementNames::DateTimeEdit()));
 }
 
 SpinButtonElement* MultipleFieldsTemporalInputTypeView::GetSpinButtonElement()
     const {
   return ToSpinButtonElementOrDie(
-      GetElement().UserAgentShadowRoot()->GetElementById(
+      GetElement().UserAgentShadowRoot()->getElementById(
           ShadowElementNames::SpinButton()));
 }
 
 ClearButtonElement* MultipleFieldsTemporalInputTypeView::GetClearButtonElement()
     const {
   return ToClearButtonElementOrDie(
-      GetElement().UserAgentShadowRoot()->GetElementById(
+      GetElement().UserAgentShadowRoot()->getElementById(
           ShadowElementNames::ClearButton()));
 }
 
 PickerIndicatorElement*
 MultipleFieldsTemporalInputTypeView::GetPickerIndicatorElement() const {
   return ToPickerIndicatorElementOrDie(
-      GetElement().UserAgentShadowRoot()->GetElementById(
+      GetElement().UserAgentShadowRoot()->getElementById(
           ShadowElementNames::PickerIndicator()));
 }
 
@@ -331,9 +331,9 @@ void MultipleFieldsTemporalInputTypeView::Blur() {
     edit->BlurByOwner();
 }
 
-PassRefPtr<ComputedStyle>
+RefPtr<ComputedStyle>
 MultipleFieldsTemporalInputTypeView::CustomStyleForLayoutObject(
-    PassRefPtr<ComputedStyle> original_style) {
+    RefPtr<ComputedStyle> original_style) {
   EDisplay original_display = original_style->Display();
   EDisplay new_display = original_display;
   if (original_display == EDisplay::kInline ||
@@ -350,7 +350,7 @@ MultipleFieldsTemporalInputTypeView::CustomStyleForLayoutObject(
   style->SetDirection(content_direction);
   style->SetDisplay(new_display);
   style->SetUnique();
-  return style.Release();
+  return style;
 }
 
 void MultipleFieldsTemporalInputTypeView::CreateShadowSubtree() {

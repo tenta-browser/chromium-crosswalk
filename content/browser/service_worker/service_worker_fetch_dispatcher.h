@@ -18,10 +18,12 @@
 #include "content/common/service_worker/service_worker_event_dispatcher.mojom.h"
 #include "content/common/service_worker/service_worker_status_code.h"
 #include "content/common/service_worker/service_worker_types.h"
-#include "content/common/url_loader.mojom.h"
-#include "content/common/url_loader_factory.mojom.h"
 #include "content/public/common/resource_type.h"
+#include "content/public/common/url_loader.mojom.h"
+#include "content/public/common/url_loader_factory.mojom.h"
+#include "mojo/public/cpp/system/data_pipe.h"
 #include "net/log/net_log_with_source.h"
+#include "storage/public/interfaces/blobs.mojom.h"
 
 namespace net {
 class URLRequest;
@@ -38,6 +40,8 @@ class CONTENT_EXPORT ServiceWorkerFetchDispatcher {
       base::Callback<void(ServiceWorkerStatusCode,
                           ServiceWorkerFetchEventResult,
                           const ServiceWorkerResponse&,
+                          blink::mojom::ServiceWorkerStreamHandlePtr,
+                          storage::mojom::BlobPtr,
                           const scoped_refptr<ServiceWorkerVersion>&)>;
 
   ServiceWorkerFetchDispatcher(
@@ -71,14 +75,19 @@ class CONTENT_EXPORT ServiceWorkerFetchDispatcher {
   void DidStartWorker();
   void DidFailToStartWorker(ServiceWorkerStatusCode status);
   void DispatchFetchEvent();
-  void DidFailToDispatch(ServiceWorkerStatusCode status);
+  void DidFailToDispatch(std::unique_ptr<ResponseCallback> callback,
+                         ServiceWorkerStatusCode status);
   void DidFail(ServiceWorkerStatusCode status);
   void DidFinish(int request_id,
                  ServiceWorkerFetchEventResult fetch_result,
-                 const ServiceWorkerResponse& response);
+                 const ServiceWorkerResponse& response,
+                 blink::mojom::ServiceWorkerStreamHandlePtr body_as_stream,
+                 storage::mojom::BlobPtr body_as_blob);
   void Complete(ServiceWorkerStatusCode status,
                 ServiceWorkerFetchEventResult fetch_result,
-                const ServiceWorkerResponse& response);
+                const ServiceWorkerResponse& response,
+                blink::mojom::ServiceWorkerStreamHandlePtr body_as_stream,
+                storage::mojom::BlobPtr body_as_blob);
 
   static void OnFetchEventFinished(
       ServiceWorkerVersion* version,

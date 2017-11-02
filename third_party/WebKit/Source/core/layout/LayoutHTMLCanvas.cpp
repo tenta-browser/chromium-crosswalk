@@ -25,8 +25,8 @@
 
 #include "core/layout/LayoutHTMLCanvas.h"
 
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/html/HTMLCanvasElement.h"
 #include "core/layout/LayoutView.h"
 #include "core/page/Page.h"
@@ -38,7 +38,7 @@ namespace blink {
 using namespace HTMLNames;
 
 LayoutHTMLCanvas::LayoutHTMLCanvas(HTMLCanvasElement* element)
-    : LayoutReplaced(element, LayoutSize(element->size())) {
+    : LayoutReplaced(element, LayoutSize(element->Size())) {
   View()->GetFrameView()->SetIsVisuallyNonEmpty();
 }
 
@@ -52,7 +52,7 @@ void LayoutHTMLCanvas::PaintReplaced(const PaintInfo& paint_info,
 }
 
 void LayoutHTMLCanvas::CanvasSizeChanged() {
-  IntSize canvas_size = toHTMLCanvasElement(GetNode())->size();
+  IntSize canvas_size = toHTMLCanvasElement(GetNode())->Size();
   LayoutSize zoomed_size(canvas_size.Width() * Style()->EffectiveZoom(),
                          canvas_size.Height() * Style()->EffectiveZoom());
 
@@ -83,9 +83,9 @@ void LayoutHTMLCanvas::CanvasSizeChanged() {
     SetNeedsLayout(LayoutInvalidationReason::kSizeChanged);
 }
 
-PaintInvalidationReason LayoutHTMLCanvas::InvalidatePaintIfNeeded(
+PaintInvalidationReason LayoutHTMLCanvas::InvalidatePaint(
     const PaintInvalidatorContext& context) const {
-  return HTMLCanvasPaintInvalidator(*this, context).InvalidatePaintIfNeeded();
+  return HTMLCanvasPaintInvalidator(*this, context).InvalidatePaint();
 }
 
 CompositingReasons LayoutHTMLCanvas::AdditionalCompositingReasons() const {

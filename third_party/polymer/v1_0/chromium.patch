@@ -16,50 +16,89 @@ index 78a2a9ec621c..8b776dd790ea 100644
 @@ -43,8 +43,8 @@ Polymer({
        }
      },
- 
+
 -    _ariaLabelledByChanged: function(ariaLabelledBy) {
 -      this.$.input.textarea.setAttribute('aria-labelledby', ariaLabelledBy);
 +    _ariaLabelledByChanged: function() {
 +      this.$.input.textarea.setAttribute('aria-label', this.label);
      },
- 
+
      _ariaDescribedByChanged: function(ariaDescribedBy) {
-diff --git a/components-chromium/paper-icon-button/paper-icon-button-light-extracted.js b/components-chromium/paper-icon-button/paper-icon-button-light-extracted.js
-index bac589c7274c..bc25f54320fb 100644
---- a/components-chromium/paper-icon-button/paper-icon-button-light-extracted.js
-+++ b/components-chromium/paper-icon-button/paper-icon-button-light-extracted.js
-@@ -14,11 +14,11 @@ Polymer({
-       },
-
-       _rippleDown: function() {
--        this.getRipple().downAction();
-+        this.getRipple().uiDownAction();
-       },
-
-       _rippleUp: function() {
--        this.getRipple().upAction();
-+        this.getRipple().uiUpAction();
-       },
-
-       /**
-diff --git a/components-chromium/paper-radio-button/paper-radio-button.html b/components-chromium/paper-radio-button/paper-radio-button.html
-index 0ff7f4232e57..b62924ef135d 100644
---- a/components-chromium/paper-radio-button/paper-radio-button.html
-+++ b/components-chromium/paper-radio-button/paper-radio-button.html
-@@ -42,6 +42,7 @@ Custom property | Description | Default
- `--paper-radio-button-label-color` | Label color | `--primary-text-color`
- `--paper-radio-button-label-spacing` | Spacing between the label and the button | `10px`
- `--paper-radio-button-radio-container` | A mixin applied to the internal radio container | `{}`
-+`--paper-radio-button-label` | A mixin applied to the internal label | `{}`
- 
- This element applies the mixin `--paper-font-common-base` but does not import `paper-styles/typography.html`.
- In order to apply the `Roboto` font to this element, make sure you've imported `paper-styles/typography.html`.
-@@ -141,6 +142,8 @@ In order to apply the `Roboto` font to this element, make sure you've imported `
-         margin-left: var(--paper-radio-button-label-spacing, 10px);
-         white-space: normal;
-         color: var(--paper-radio-button-label-color, --primary-text-color);
+diff --git a/components-chromium/iron-list/iron-list-extracted.js b/components-chromium/iron-list/iron-list-extracted.js
+index c9e0a9fd5330..bb2f6aad64e8 100644
+--- a/components-chromium/iron-list/iron-list-extracted.js
++++ b/components-chromium/iron-list/iron-list-extracted.js
+@@ -126,6 +126,14 @@
+       scrollOffset: {
+         type: Number,
+         value: 0
++      },
 +
-+        @apply(--paper-radio-button-label);
++      /**
++       * If set to true, focus on an element will be preserved after rerender.
++       */
++      preserveFocus: {
++        type: Boolean,
++        value: false
        }
+     },
  
-       :host-context([dir="rtl"]) #radioLabel {
+@@ -895,6 +903,15 @@
+      * to `items`, splices or updates to a single item.
+      */
+     _itemsChanged: function(change) {
++      var rendering = /^items(\.splices){0,1}$/.test(change.path);
++      var lastFocusedIndex, focusedElement;
++      if (rendering && this.preserveFocus) {
++        lastFocusedIndex = this._focusedIndex;
++        focusedElement = this.querySelector('* /deep/ *:focus');
++      }
++
++      var preservingFocus = rendering && this.preserveFocus && focusedElement;
++
+       if (change.path === 'items') {
+         this._virtualStart = 0;
+         this._physicalTop = 0;
+@@ -907,12 +924,11 @@
+         this._physicalItems = this._physicalItems || [];
+         this._physicalSizes = this._physicalSizes || [];
+         this._physicalStart = 0;
+-        if (this._scrollTop > this._scrollOffset) {
++        if (this._scrollTop > this._scrollOffset && !preservingFocus) {
+           this._resetScrollPosition(0);
+         }
+         this._removeFocusedItem();
+         this._debounceTemplate(this._render);
+-
+       } else if (change.path === 'items.splices') {
+         this._adjustVirtualIndex(change.value.indexSplices);
+         this._virtualCount = this.items ? this.items.length : 0;
+@@ -921,6 +937,17 @@
+       } else {
+         this._forwardItemPath(change.path.split('.').slice(1).join('.'), change.value);
+       }
++
++      // If the list was in focus when updated, preserve the focus on item.
++      if (preservingFocus) {
++        Polymer.dom.flush();
++        focusedElement.blur(); // paper- elements breaks when focused twice.
++        this._focusPhysicalItem(
++            Math.min(this.items.length - 1, lastFocusedIndex));
++        if (!this._isIndexVisible(this._focusedIndex)) {
++          this.scrollToIndex(this._focusedIndex);
++        }
++      }
+     },
+ 
+     /**
+@@ -1466,6 +1493,10 @@
+       return this._physicalIndexForKey[this._collection.getKey(this._getNormalizedItem(idx))];
+     },
+ 
++    focusItem: function(idx) {
++      this._focusPhysicalItem(idx);
++    },
++
+     _focusPhysicalItem: function(idx) {
+       if (idx < 0 || idx >= this._virtualCount) {
+         return;

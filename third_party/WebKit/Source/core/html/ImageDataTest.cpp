@@ -6,57 +6,14 @@
 
 #include "core/dom/ExceptionCode.h"
 #include "platform/geometry/IntSize.h"
+#include "platform/graphics/ColorCorrectionTestUtils.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkColorSpaceXform.h"
 
 namespace blink {
 namespace {
 
-class ImageDataTest : public ::testing::Test {
- protected:
-  virtual void SetUp() {
-    // Save the state of experimental canvas features and color correct
-    // rendering flags to restore them on teardown.
-    experimental_canvas_features =
-        RuntimeEnabledFeatures::experimentalCanvasFeaturesEnabled();
-    color_correct_rendering =
-        RuntimeEnabledFeatures::colorCorrectRenderingEnabled();
-    RuntimeEnabledFeatures::setExperimentalCanvasFeaturesEnabled(true);
-    RuntimeEnabledFeatures::setColorCorrectRenderingEnabled(true);
-  }
-
-  virtual void TearDown() {
-    RuntimeEnabledFeatures::setExperimentalCanvasFeaturesEnabled(
-        experimental_canvas_features);
-    RuntimeEnabledFeatures::setColorCorrectRenderingEnabled(
-        color_correct_rendering);
-  }
-
-  bool experimental_canvas_features;
-  bool color_correct_rendering;
-};
-
-TEST_F(ImageDataTest, NegativeAndZeroIntSizeTest) {
-  ImageData* image_data;
-
-  image_data = ImageData::Create(IntSize(0, 10));
-  EXPECT_EQ(image_data, nullptr);
-
-  image_data = ImageData::Create(IntSize(10, 0));
-  EXPECT_EQ(image_data, nullptr);
-
-  image_data = ImageData::Create(IntSize(0, 0));
-  EXPECT_EQ(image_data, nullptr);
-
-  image_data = ImageData::Create(IntSize(-1, 10));
-  EXPECT_EQ(image_data, nullptr);
-
-  image_data = ImageData::Create(IntSize(10, -1));
-  EXPECT_EQ(image_data, nullptr);
-
-  image_data = ImageData::Create(IntSize(-1, -1));
-  EXPECT_EQ(image_data, nullptr);
-}
+class ImageDataTest : public ::testing::Test {};
 
 // Under asan_clang_phone, the test crashes after the memory allocation
 // is not successful. It is probably related to the value of
@@ -81,20 +38,13 @@ TEST_F(ImageDataTest, MAYBE_CreateImageDataTooBig) {
   }
 }
 
-// Skia conversion does not guarantee to be exact, se we need to do approximate
-// comparisons.
-static inline bool IsNearlyTheSame(float f, float g) {
-  static const float kEpsilonScale = 0.01f;
-  return std::abs(f - g) <
-         kEpsilonScale *
-             std::max(std::max(std::abs(f), std::abs(g)), kEpsilonScale);
-}
-
 // This test verifies the correct behavior of ImageData member function used
 // to convert pixels data from canvas pixel format to image data storage
 // format. This function is used in BaseRenderingContext2D::getImageData.
 TEST_F(ImageDataTest,
        TestConvertPixelsFromCanvasPixelFormatToImageDataStorageFormat) {
+  // Enable color canvas extensions for this test
+  ScopedEnableColorCanvasExtensions color_canvas_extensions_enabler;
   // Source pixels in RGBA32
   unsigned char rgba32_pixels[] = {255, 0,   0,   255,  // Red
                                    0,   0,   0,   0,    // Transparent
@@ -162,7 +112,8 @@ TEST_F(ImageDataTest,
       const_cast<DOMFloat32Array*>(static_cast<const DOMFloat32Array*>(data));
   DCHECK(data_f32);
   for (unsigned i = 0; i < kNumColorComponents; i++) {
-    if (!IsNearlyTheSame(data_f32->Item(i), rgba32_pixels[i] / 255.0)) {
+    if (!ColorCorrectionTestUtils::IsNearlyTheSame(data_f32->Item(i),
+                                                   rgba32_pixels[i] / 255.0)) {
       test_passed = false;
       break;
     }
@@ -177,7 +128,8 @@ TEST_F(ImageDataTest,
       static_cast<const DOMUint8ClampedArray*>(data));
   DCHECK(data_u8);
   for (unsigned i = 0; i < kNumColorComponents; i++) {
-    if (!IsNearlyTheSame(data_u8->Item(i), rgba32_pixels[i])) {
+    if (!ColorCorrectionTestUtils::IsNearlyTheSame(data_u8->Item(i),
+                                                   rgba32_pixels[i])) {
       test_passed = false;
       break;
     }
@@ -192,7 +144,8 @@ TEST_F(ImageDataTest,
       const_cast<DOMFloat32Array*>(static_cast<const DOMFloat32Array*>(data));
   DCHECK(data_f32);
   for (unsigned i = 0; i < kNumColorComponents; i++) {
-    if (!IsNearlyTheSame(data_f32->Item(i), rgba32_pixels[i] / 255.0)) {
+    if (!ColorCorrectionTestUtils::IsNearlyTheSame(data_f32->Item(i),
+                                                   rgba32_pixels[i] / 255.0)) {
       test_passed = false;
       break;
     }
@@ -250,15 +203,18 @@ bool ConvertPixelsToColorSpaceAndPixelFormatForTest(
 
   sk_sp<SkColorSpace> src_sk_color_space = nullptr;
   if (u8_array) {
-    src_sk_color_space = ImageData::GetSkColorSpaceForTest(
-        src_color_space, kRGBA8CanvasPixelFormat);
+    src_sk_color_space =
+        CanvasColorParams(src_color_space, kRGBA8CanvasPixelFormat)
+            .GetSkColorSpaceForSkSurfaces();
   } else {
-    src_sk_color_space = ImageData::GetSkColorSpaceForTest(
-        src_color_space, kF16CanvasPixelFormat);
+    src_sk_color_space =
+        CanvasColorParams(src_color_space, kF16CanvasPixelFormat)
+            .GetSkColorSpaceForSkSurfaces();
   }
 
   sk_sp<SkColorSpace> dst_sk_color_space =
-      ImageData::GetSkColorSpaceForTest(dst_color_space, dst_pixel_format);
+      CanvasColorParams(dst_color_space, dst_pixel_format)
+          .GetSkColorSpaceForSkSurfaces();
 
   // When the input dataArray is in Uint16, we normally should convert the
   // values from Little Endian to Big Endian before passing the buffer to
@@ -279,6 +235,9 @@ bool ConvertPixelsToColorSpaceAndPixelFormatForTest(
 // to convert image data from image data storage format to canvas pixel format.
 // This function is used in BaseRenderingContext2D::putImageData.
 TEST_F(ImageDataTest, TestGetImageDataInCanvasColorSettings) {
+  // Enable color canvas extensions for this test
+  ScopedEnableColorCanvasExtensions color_canvas_extensions_enabler;
+
   unsigned num_image_data_color_spaces = 3;
   CanvasColorSpace image_data_color_spaces[] = {
       kSRGBCanvasColorSpace, kRec2020CanvasColorSpace, kP3CanvasColorSpace,
@@ -398,6 +357,154 @@ TEST_F(ImageDataTest, TestGetImageDataInCanvasColorSettings) {
   }
   delete[] u16_pixels;
   delete[] f32_pixels;
+}
+
+// This test examines ImageData::CropRect()
+TEST_F(ImageDataTest, TestCropRect) {
+  // Enable color canvas extensions for this test
+  ScopedEnableColorCanvasExtensions color_canvas_extensions_enabler;
+
+  const int num_image_data_storage_formats = 3;
+  ImageDataStorageFormat image_data_storage_formats[] = {
+      kUint8ClampedArrayStorageFormat, kUint16ArrayStorageFormat,
+      kFloat32ArrayStorageFormat,
+  };
+  String image_data_storage_format_names[] = {
+      kUint8ClampedArrayStorageFormatName, kUint16ArrayStorageFormatName,
+      kFloat32ArrayStorageFormatName,
+  };
+
+  // Source pixels
+  unsigned width = 20;
+  unsigned height = 20;
+  unsigned data_length = width * height * 4;
+  uint8_t* u8_pixels = new uint8_t[data_length];
+  uint16_t* u16_pixels = new uint16_t[data_length];
+  float* f32_pixels = new float[data_length];
+
+  // Test scenarios
+  const int num_test_cases = 14;
+  const IntRect crop_rects[14] = {
+      IntRect(3, 4, 5, 6),     IntRect(3, 4, 5, 6),    IntRect(10, 10, 20, 20),
+      IntRect(10, 10, 20, 20), IntRect(0, 0, 20, 20),  IntRect(0, 0, 20, 20),
+      IntRect(0, 0, 10, 10),   IntRect(0, 0, 10, 10),  IntRect(0, 0, 10, 0),
+      IntRect(0, 0, 0, 10),    IntRect(10, 0, 10, 10), IntRect(0, 10, 10, 10),
+      IntRect(0, 5, 20, 15),   IntRect(0, 5, 20, 15)};
+  const bool crop_flips[14] = {true,  false, true,  false, true,  false, true,
+                               false, false, false, false, false, true,  false};
+
+  // Fill the pixels with numbers related to their positions
+  unsigned set_value = 0;
+  unsigned expected_value = 0;
+  float fexpected_value = 0;
+  unsigned index = 0, row_index = 0;
+  for (unsigned i = 0; i < height; i++)
+    for (unsigned j = 0; j < width; j++)
+      for (unsigned k = 0; k < 4; k++) {
+        index = i * width * 4 + j * 4 + k;
+        set_value = (i + 1) * (j + 1) * (k + 1);
+        u8_pixels[index] = set_value % 255;
+        u16_pixels[index] = (set_value * 257) % 65535;
+        f32_pixels[index] = (set_value % 255) / 255.0f;
+      }
+
+  // Create ImageData objects
+  DOMArrayBufferView* data_array = nullptr;
+
+  DOMUint8ClampedArray* data_u8 =
+      DOMUint8ClampedArray::Create(u8_pixels, data_length);
+  DCHECK(data_u8);
+  EXPECT_EQ(data_length, data_u8->length());
+  DOMUint16Array* data_u16 = DOMUint16Array::Create(u16_pixels, data_length);
+  DCHECK(data_u16);
+  EXPECT_EQ(data_length, data_u16->length());
+  DOMFloat32Array* data_f32 = DOMFloat32Array::Create(f32_pixels, data_length);
+  DCHECK(data_f32);
+  EXPECT_EQ(data_length, data_f32->length());
+
+  ImageData* image_data = nullptr;
+  ImageData* cropped_image_data = nullptr;
+
+  bool test_passed = true;
+  for (int i = 0; i < num_image_data_storage_formats; i++) {
+    if (image_data_storage_formats[i] == kUint8ClampedArrayStorageFormat)
+      data_array = static_cast<DOMArrayBufferView*>(data_u8);
+    else if (image_data_storage_formats[i] == kUint16ArrayStorageFormat)
+      data_array = static_cast<DOMArrayBufferView*>(data_u16);
+    else
+      data_array = static_cast<DOMArrayBufferView*>(data_f32);
+
+    ImageDataColorSettings color_settings;
+    color_settings.setStorageFormat(image_data_storage_format_names[i]);
+    image_data = ImageData::CreateForTest(IntSize(width, height), data_array,
+                                          &color_settings);
+    for (int j = 0; j < num_test_cases; j++) {
+      // Test the size of the cropped image data
+      IntRect src_rect(IntPoint(), image_data->Size());
+      IntRect crop_rect = Intersection(src_rect, crop_rects[j]);
+
+      cropped_image_data = image_data->CropRect(crop_rects[j], crop_flips[j]);
+      if (crop_rect.IsEmpty()) {
+        EXPECT_FALSE(cropped_image_data);
+        continue;
+      }
+      EXPECT_TRUE(cropped_image_data->Size() == crop_rect.Size());
+
+      // Test the content
+      for (int k = 0; k < crop_rect.Height(); k++)
+        for (int m = 0; m < crop_rect.Width(); m++)
+          for (int n = 0; n < 4; n++) {
+            row_index = crop_flips[j] ? (crop_rect.Height() - k - 1) : k;
+            index =
+                row_index * cropped_image_data->Size().Width() * 4 + m * 4 + n;
+            expected_value =
+                (k + crop_rect.Y() + 1) * (m + crop_rect.X() + 1) * (n + 1);
+            if (image_data_storage_formats[i] ==
+                kUint8ClampedArrayStorageFormat)
+              expected_value %= 255;
+            else if (image_data_storage_formats[i] == kUint16ArrayStorageFormat)
+              expected_value = (expected_value * 257) % 65535;
+            else
+              fexpected_value = (expected_value % 255) / 255.0f;
+
+            if (image_data_storage_formats[i] ==
+                kUint8ClampedArrayStorageFormat) {
+              if (cropped_image_data->data()->Data()[index] != expected_value) {
+                test_passed = false;
+                break;
+              }
+            } else if (image_data_storage_formats[i] ==
+                       kUint16ArrayStorageFormat) {
+              if (cropped_image_data->dataUnion()
+                      .getAsUint16Array()
+                      .View()
+                      ->Data()[index] != expected_value) {
+                test_passed = false;
+                break;
+              }
+            } else {
+              if (cropped_image_data->dataUnion()
+                      .getAsFloat32Array()
+                      .View()
+                      ->Data()[index] != fexpected_value) {
+                test_passed = false;
+                break;
+              }
+            }
+          }
+      EXPECT_TRUE(test_passed);
+    }
+  }
+
+  delete[] u8_pixels;
+  delete[] u16_pixels;
+  delete[] f32_pixels;
+}
+
+TEST_F(ImageDataTest, ImageDataTooBigToAllocateDoesNotCrash) {
+  ImageData* image_data = ImageData::CreateForTest(
+      IntSize(1, (v8::TypedArray::kMaxLength / 4) + 1));
+  EXPECT_EQ(image_data, nullptr);
 }
 
 }  // namspace

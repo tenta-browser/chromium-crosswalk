@@ -8,10 +8,13 @@
 
 #include "base/command_line.h"
 #include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/sys_info.h"
 #include "base/threading/thread.h"
 #include "chromeos/chromeos_switches.h"
+#include "chromeos/dbus/arc_midis_client.h"
 #include "chromeos/dbus/arc_obb_mounter_client.h"
+#include "chromeos/dbus/arc_oemcrypto_client.h"
 #include "chromeos/dbus/auth_policy_client.h"
 #include "chromeos/dbus/biod/biod_client.h"
 #include "chromeos/dbus/cras_audio_client.h"
@@ -26,6 +29,7 @@
 #include "chromeos/dbus/image_burner_client.h"
 #include "chromeos/dbus/image_loader_client.h"
 #include "chromeos/dbus/lorgnette_manager_client.h"
+#include "chromeos/dbus/media_analytics_client.h"
 #include "chromeos/dbus/modem_messaging_client.h"
 #include "chromeos/dbus/permission_broker_client.h"
 #include "chromeos/dbus/power_manager_client.h"
@@ -39,6 +43,7 @@
 #include "chromeos/dbus/sms_client.h"
 #include "chromeos/dbus/system_clock_client.h"
 #include "chromeos/dbus/update_engine_client.h"
+#include "chromeos/dbus/upstart_client.h"
 #include "dbus/bus.h"
 #include "dbus/dbus_statistics.h"
 
@@ -107,8 +112,17 @@ dbus::Bus* DBusThreadManager::GetSystemBus() {
   return system_bus_.get();
 }
 
+ArcMidisClient* DBusThreadManager::GetArcMidisClient() {
+  return clients_browser_ ? clients_browser_->arc_midis_client_.get() : nullptr;
+}
+
 ArcObbMounterClient* DBusThreadManager::GetArcObbMounterClient() {
   return clients_browser_ ? clients_browser_->arc_obb_mounter_client_.get()
+                          : nullptr;
+}
+
+ArcOemCryptoClient* DBusThreadManager::GetArcOemCryptoClient() {
+  return clients_browser_ ? clients_browser_->arc_oemcrypto_client_.get()
                           : nullptr;
 }
 
@@ -185,6 +199,11 @@ ImageBurnerClient* DBusThreadManager::GetImageBurnerClient() {
 
 ImageLoaderClient* DBusThreadManager::GetImageLoaderClient() {
   return clients_browser_ ? clients_browser_->image_loader_client_.get()
+                          : nullptr;
+}
+
+MediaAnalyticsClient* DBusThreadManager::GetMediaAnalyticsClient() {
+  return clients_browser_ ? clients_browser_->media_analytics_client_.get()
                           : nullptr;
 }
 
@@ -301,6 +320,12 @@ DBusThreadManagerSetter::DBusThreadManagerSetter() {}
 
 DBusThreadManagerSetter::~DBusThreadManagerSetter() {}
 
+void DBusThreadManagerSetter::SetAuthPolicyClient(
+    std::unique_ptr<AuthPolicyClient> client) {
+  DBusThreadManager::Get()->clients_browser_->auth_policy_client_ =
+      std::move(client);
+}
+
 void DBusThreadManagerSetter::SetBiodClient(
     std::unique_ptr<BiodClient> client) {
   DBusThreadManager::Get()->clients_common_->biod_client_ = std::move(client);
@@ -379,6 +404,12 @@ void DBusThreadManagerSetter::SetImageLoaderClient(
       std::move(client);
 }
 
+void DBusThreadManagerSetter::SetMediaAnalyticsClient(
+    std::unique_ptr<MediaAnalyticsClient> client) {
+  DBusThreadManager::Get()->clients_browser_->media_analytics_client_ =
+      std::move(client);
+}
+
 void DBusThreadManagerSetter::SetPermissionBrokerClient(
     std::unique_ptr<PermissionBrokerClient> client) {
   DBusThreadManager::Get()->clients_common_->permission_broker_client_ =
@@ -400,6 +431,12 @@ void DBusThreadManagerSetter::SetSessionManagerClient(
 void DBusThreadManagerSetter::SetUpdateEngineClient(
     std::unique_ptr<UpdateEngineClient> client) {
   DBusThreadManager::Get()->clients_common_->update_engine_client_ =
+      std::move(client);
+}
+
+void DBusThreadManagerSetter::SetUpstartClient(
+    std::unique_ptr<UpstartClient> client) {
+  DBusThreadManager::Get()->clients_browser_->upstart_client_ =
       std::move(client);
 }
 

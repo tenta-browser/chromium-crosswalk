@@ -48,7 +48,7 @@ AccessibilityRole AXMenuList::DetermineAccessibilityRole() {
   return kPopUpButtonRole;
 }
 
-bool AXMenuList::Press() {
+bool AXMenuList::OnNativeClickAction() {
   if (!layout_object_)
     return false;
 
@@ -70,10 +70,6 @@ void AXMenuList::ClearChildren() {
   DCHECK(children_.size() == 1);
   children_[0]->ClearChildren();
   children_dirty_ = false;
-}
-
-bool AXMenuList::NameFromContents() const {
-  return false;
 }
 
 void AXMenuList::AddChildren() {
@@ -113,14 +109,9 @@ AccessibilityExpanded AXMenuList::IsExpanded() const {
   return kExpandedExpanded;
 }
 
-bool AXMenuList::CanSetFocusAttribute() const {
-  if (!GetNode())
-    return false;
-
-  return !ToElement(GetNode())->IsDisabledFormControl();
-}
-
 void AXMenuList::DidUpdateActiveOption(int option_index) {
+  bool suppress_notifications =
+      (GetNode() && !GetNode()->IsFinishedParsingChildren());
   const auto& child_objects = Children();
   if (!child_objects.IsEmpty()) {
     DCHECK(child_objects.size() == 1);
@@ -128,7 +119,7 @@ void AXMenuList::DidUpdateActiveOption(int option_index) {
 
     if (child_objects[0]->IsMenuListPopup()) {
       if (AXMenuListPopup* popup = ToAXMenuListPopup(child_objects[0].Get()))
-        popup->DidUpdateActiveOption(option_index);
+        popup->DidUpdateActiveOption(option_index, !suppress_notifications);
     }
   }
 

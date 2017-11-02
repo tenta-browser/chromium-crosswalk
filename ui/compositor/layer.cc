@@ -21,9 +21,9 @@
 #include "cc/layers/solid_color_layer.h"
 #include "cc/layers/surface_layer.h"
 #include "cc/layers/texture_layer.h"
-#include "cc/output/copy_output_request.h"
-#include "cc/resources/transferable_resource.h"
 #include "cc/trees/layer_tree_settings.h"
+#include "components/viz/common/quads/copy_output_request.h"
+#include "components/viz/common/resources/transferable_resource.h"
 #include "ui/compositor/compositor_switches.h"
 #include "ui/compositor/dip_util.h"
 #include "ui/compositor/layer_animator.h"
@@ -40,6 +40,10 @@
 namespace {
 
 const ui::Layer* GetRoot(const ui::Layer* layer) {
+  // Parent walk cannot be done on a layer that is being used as a mask. Get the
+  // layer to which this layer is a mask of.
+  if (layer->layer_mask_back_link())
+    layer = layer->layer_mask_back_link();
   while (layer->parent())
     layer = layer->parent();
   return layer;
@@ -92,11 +96,15 @@ Layer::Layer()
       visible_(true),
       fills_bounds_opaquely_(true),
       fills_bounds_completely_(false),
-      background_blur_radius_(0),
+      background_blur_sigma_(0.0f),
       layer_saturation_(0.0f),
       layer_brightness_(0.0f),
       layer_grayscale_(0.0f),
       layer_inverted_(false),
+      layer_blur_sigma_(0.0f),
+      layer_temperature_(0.0f),
+      layer_blue_scale_(1.0f),
+      layer_green_scale_(1.0f),
       layer_mask_(NULL),
       layer_mask_back_link_(NULL),
       zoom_(1),
@@ -104,7 +112,8 @@ Layer::Layer()
       delegate_(NULL),
       owner_(NULL),
       cc_layer_(NULL),
-      device_scale_factor_(1.0f) {
+      device_scale_factor_(1.0f),
+      cache_render_surface_requests_(0) {
   CreateCcLayer();
 }
 
@@ -115,11 +124,15 @@ Layer::Layer(LayerType type)
       visible_(true),
       fills_bounds_opaquely_(true),
       fills_bounds_completely_(false),
-      background_blur_radius_(0),
+      background_blur_sigma_(0.0f),
       layer_saturation_(0.0f),
       layer_brightness_(0.0f),
       layer_grayscale_(0.0f),
       layer_inverted_(false),
+      layer_blur_sigma_(0.0f),
+      layer_temperature_(0.0f),
+      layer_blue_scale_(1.0f),
+      layer_green_scale_(1.0f),
       layer_mask_(NULL),
       layer_mask_back_link_(NULL),
       zoom_(1),
@@ -127,7 +140,8 @@ Layer::Layer(LayerType type)
       delegate_(NULL),
       owner_(NULL),
       cc_layer_(NULL),
-      device_scale_factor_(1.0f) {
+      device_scale_factor_(1.0f),
+      cache_render_surface_requests_(0) {
   CreateCcLayer();
 }
 
@@ -159,21 +173,27 @@ std::unique_ptr<Layer> Layer::Clone() const {
   auto clone = base::MakeUnique<Layer>(type_);
 
   // Background filters.
-  clone->SetBackgroundBlur(background_blur_radius_);
+  clone->SetBackgroundBlur(background_blur_sigma_);
   clone->SetBackgroundZoom(zoom_, zoom_inset_);
 
   // Filters.
+  clone->SetLayerTemperature(GetTargetTemperature());
   clone->SetLayerSaturation(layer_saturation_);
   clone->SetLayerBrightness(GetTargetBrightness());
   clone->SetLayerGrayscale(GetTargetGrayscale());
   clone->SetLayerInverted(layer_inverted_);
+  clone->SetLayerBlur(layer_blur_sigma_);
   if (alpha_shape_)
-    clone->SetAlphaShape(base::MakeUnique<SkRegion>(*alpha_shape_));
+    clone->SetAlphaShape(base::MakeUnique<ShapeRects>(*alpha_shape_));
 
   // cc::Layer state.
-  if (surface_layer_ && surface_layer_->primary_surface_info().is_valid()) {
-    clone->SetShowPrimarySurface(surface_layer_->primary_surface_info(),
-                                 surface_layer_->surface_reference_factory());
+  if (surface_layer_) {
+    if (surface_layer_->primary_surface_info().is_valid()) {
+      clone->SetShowPrimarySurface(surface_layer_->primary_surface_info(),
+                                   surface_layer_->surface_reference_factory());
+    }
+    if (surface_layer_->fallback_surface_info().is_valid())
+      clone->SetFallbackSurface(surface_layer_->fallback_surface_info());
   } else if (type_ == LAYER_SOLID_COLOR) {
     clone->SetColor(GetTargetColor());
   }
@@ -301,7 +321,7 @@ void Layer::SetAnimator(LayerAnimator* animator) {
   Compositor* compositor = GetCompositor();
 
   if (animator_) {
-    if (compositor)
+    if (compositor && !layer_mask_back_link())
       animator_->DetachLayerAndTimeline(compositor);
     animator_->SetDelegate(nullptr);
   }
@@ -310,7 +330,7 @@ void Layer::SetAnimator(LayerAnimator* animator) {
 
   if (animator_) {
     animator_->SetDelegate(this);
-    if (compositor)
+    if (compositor && !layer_mask_back_link())
       animator_->AttachLayerAndTimeline(compositor);
   }
 }
@@ -372,10 +392,28 @@ float Layer::GetCombinedOpacity() const {
   return opacity;
 }
 
-void Layer::SetBackgroundBlur(int blur_radius) {
-  background_blur_radius_ = blur_radius;
+void Layer::SetLayerTemperature(float value) {
+  GetAnimator()->SetTemperature(value);
+}
+
+float Layer::GetTargetTemperature() const {
+  if (animator_ &&
+      animator_->IsAnimatingProperty(LayerAnimationElement::TEMPERATURE)) {
+    return animator_->GetTargetTemperature();
+  }
+  return layer_temperature();
+}
+
+void Layer::SetBackgroundBlur(float blur_sigma) {
+  background_blur_sigma_ = blur_sigma;
 
   SetLayerBackgroundFilters();
+}
+
+void Layer::SetLayerBlur(float blur_sigma) {
+  layer_blur_sigma_ = blur_sigma;
+
+  SetLayerFilters();
 }
 
 void Layer::SetLayerSaturation(float saturation) {
@@ -413,14 +451,13 @@ void Layer::SetLayerInverted(bool inverted) {
 }
 
 void Layer::SetMaskLayer(Layer* layer_mask) {
-  // The provided mask should not have a layer mask itself.
-  DCHECK(!layer_mask ||
-         (!layer_mask->layer_mask_layer() &&
-          layer_mask->children().empty() &&
-          !layer_mask->layer_mask_back_link_));
-  DCHECK(!layer_mask_back_link_);
   if (layer_mask_ == layer_mask)
     return;
+  // The provided mask should not have a layer mask itself.
+  DCHECK(!layer_mask ||
+         (!layer_mask->layer_mask_layer() && layer_mask->children().empty() &&
+          !layer_mask->layer_mask_back_link_));
+  DCHECK(!layer_mask_back_link_);
   // We need to de-reference the currently linked object so that no problem
   // arises if the mask layer gets deleted before this object.
   if (layer_mask_)
@@ -442,8 +479,8 @@ void Layer::SetBackgroundZoom(float zoom, int inset) {
   SetLayerBackgroundFilters();
 }
 
-void Layer::SetAlphaShape(std::unique_ptr<SkRegion> region) {
-  alpha_shape_ = std::move(region);
+void Layer::SetAlphaShape(std::unique_ptr<ShapeRects> shape) {
+  alpha_shape_ = std::move(shape);
 
   SetLayerFilters();
 }
@@ -458,8 +495,21 @@ void Layer::SetLayerFilters() {
     filters.Append(cc::FilterOperation::CreateGrayscaleFilter(
         layer_grayscale_));
   }
+  if (layer_temperature_) {
+    float color_matrix[] = {
+        1.0f,               0.0f,              0.0f, 0.0f, 0.0f,
+        0.0f, layer_green_scale_,              0.0f, 0.0f, 0.0f,
+        0.0f,               0.0f, layer_blue_scale_, 0.0f, 0.0f,
+        0.0f,               0.0f,              0.0f, 1.0f, 0.0f
+    };
+    filters.Append(cc::FilterOperation::CreateColorMatrixFilter(color_matrix));
+  }
   if (layer_inverted_)
     filters.Append(cc::FilterOperation::CreateInvertFilter(1.0));
+  if (layer_blur_sigma_) {
+    filters.Append(cc::FilterOperation::CreateBlurFilter(
+        layer_blur_sigma_, SkBlurImageFilter::kClamp_TileMode));
+  }
   // Brightness goes last, because the resulting colors neeed clamping, which
   // cause further color matrix filters to be applied separately. In this order,
   // they all can be combined in a single pass.
@@ -480,9 +530,9 @@ void Layer::SetLayerBackgroundFilters() {
   if (zoom_ != 1)
     filters.Append(cc::FilterOperation::CreateZoomFilter(zoom_, zoom_inset_));
 
-  if (background_blur_radius_) {
+  if (background_blur_sigma_) {
     filters.Append(cc::FilterOperation::CreateBlurFilter(
-        background_blur_radius_));
+        background_blur_sigma_, SkBlurImageFilter::kClamp_TileMode));
   }
 
   cc_layer_->SetBackgroundFilters(filters);
@@ -582,6 +632,7 @@ void Layer::SwitchToLayer(scoped_refptr<cc::Layer> new_layer) {
   new_layer->SetTransform(cc_layer_->transform());
   new_layer->SetPosition(cc_layer_->position());
   new_layer->SetBackgroundColor(cc_layer_->background_color());
+  new_layer->SetCacheRenderSurface(cc_layer_->cache_render_surface());
 
   cc_layer_ = new_layer.get();
   content_layer_ = NULL;
@@ -598,7 +649,7 @@ void Layer::SwitchToLayer(scoped_refptr<cc::Layer> new_layer) {
   cc_layer_->SetContentsOpaque(fills_bounds_opaquely_);
   cc_layer_->SetIsDrawable(type_ != LAYER_NOT_DRAWN);
   cc_layer_->SetHideLayerAndSubtree(!visible_);
-  cc_layer_->SetElementId(cc::ElementId(cc_layer_->id(), 0));
+  cc_layer_->SetElementId(cc::ElementId(cc_layer_->id()));
 
   SetLayerFilters();
   SetLayerBackgroundFilters();
@@ -610,9 +661,32 @@ void Layer::SwitchCCLayerForTest() {
   content_layer_ = new_layer;
 }
 
+// Note: The code that sets this flag would be responsible to unset it on that
+// ui::Layer. We do not want to clone this flag to a cloned layer by accident,
+// which could be a supprise. But we want to preserve it after switching to a
+// new cc::Layer. There could be a whole subtree and the root changed, but does
+// not mean we want to treat the cache all different.
+void Layer::AddCacheRenderSurfaceRequest() {
+  ++cache_render_surface_requests_;
+  TRACE_COUNTER_ID1("ui", "CacheRenderSurfaceRequests", this,
+                    cache_render_surface_requests_);
+  if (cache_render_surface_requests_ == 1)
+    cc_layer_->SetCacheRenderSurface(true);
+}
+
+void Layer::RemoveCacheRenderSurfaceRequest() {
+  DCHECK_GT(cache_render_surface_requests_, 0u);
+
+  --cache_render_surface_requests_;
+  TRACE_COUNTER_ID1("ui", "CacheRenderSurfaceRequests", this,
+                    cache_render_surface_requests_);
+  if (cache_render_surface_requests_ == 0)
+    cc_layer_->SetCacheRenderSurface(false);
+}
+
 void Layer::SetTextureMailbox(
-    const cc::TextureMailbox& mailbox,
-    std::unique_ptr<cc::SingleReleaseCallback> release_callback,
+    const viz::TextureMailbox& mailbox,
+    std::unique_ptr<viz::SingleReleaseCallback> release_callback,
     gfx::Size texture_size_in_dip) {
   DCHECK(type_ == LAYER_TEXTURED || type_ == LAYER_SOLID_COLOR);
   DCHECK(mailbox.IsValid());
@@ -654,8 +728,8 @@ bool Layer::TextureFlipped() const {
 }
 
 void Layer::SetShowPrimarySurface(
-    const cc::SurfaceInfo& surface_info,
-    scoped_refptr<cc::SurfaceReferenceFactory> ref_factory) {
+    const viz::SurfaceInfo& surface_info,
+    scoped_refptr<viz::SurfaceReferenceFactory> ref_factory) {
   DCHECK(type_ == LAYER_TEXTURED || type_ == LAYER_SOLID_COLOR);
 
   if (!surface_layer_) {
@@ -675,7 +749,7 @@ void Layer::SetShowPrimarySurface(
     mirror->dest()->SetShowPrimarySurface(surface_info, ref_factory);
 }
 
-void Layer::SetFallbackSurface(const cc::SurfaceInfo& surface_info) {
+void Layer::SetFallbackSurface(const viz::SurfaceInfo& surface_info) {
   DCHECK(type_ == LAYER_TEXTURED || type_ == LAYER_SOLID_COLOR);
   DCHECK(surface_layer_);
 
@@ -686,7 +760,13 @@ void Layer::SetFallbackSurface(const cc::SurfaceInfo& surface_info) {
     mirror->dest()->SetFallbackSurface(surface_info);
 }
 
-const cc::SurfaceInfo* Layer::GetFallbackSurfaceInfo() const {
+const viz::SurfaceInfo* Layer::GetPrimarySurfaceInfo() const {
+  if (surface_layer_)
+    return &surface_layer_->primary_surface_info();
+  return nullptr;
+}
+
+const viz::SurfaceInfo* Layer::GetFallbackSurfaceInfo() const {
   if (surface_layer_)
     return &surface_layer_->fallback_surface_info();
   return nullptr;
@@ -702,7 +782,7 @@ void Layer::SetShowSolidColorContent() {
   SwitchToLayer(new_layer);
   solid_color_layer_ = new_layer;
 
-  mailbox_ = cc::TextureMailbox();
+  mailbox_ = viz::TextureMailbox();
   if (mailbox_release_callback_) {
     mailbox_release_callback_->Run(gpu::SyncToken(), false);
     mailbox_release_callback_.reset();
@@ -840,11 +920,14 @@ void Layer::OnDelegatedFrameDamage(const gfx::Rect& damage_rect_in_dip) {
     delegate_->OnDelegatedFrameDamage(damage_rect_in_dip);
 }
 
-void Layer::SetScrollable(
-    Layer* parent_clip_layer,
-    const base::Callback<void(const gfx::ScrollOffset&)>& on_scroll) {
-  cc_layer_->SetScrollClipLayerId(parent_clip_layer->cc_layer_->id());
-  cc_layer_->set_did_scroll_callback(on_scroll);
+void Layer::SetDidScrollCallback(
+    base::Callback<void(const gfx::ScrollOffset&, const cc::ElementId&)>
+        callback) {
+  cc_layer_->set_did_scroll_callback(std::move(callback));
+}
+
+void Layer::SetScrollable(const gfx::Size& container_bounds) {
+  cc_layer_->SetScrollable(container_bounds);
   cc_layer_->SetUserScrollable(true, true);
 }
 
@@ -870,7 +953,7 @@ void Layer::SetScrollOffset(const gfx::ScrollOffset& offset) {
 }
 
 void Layer::RequestCopyOfOutput(
-    std::unique_ptr<cc::CopyOutputRequest> request) {
+    std::unique_ptr<viz::CopyOutputRequest> request) {
   cc_layer_->RequestCopyOfOutput(std::move(request));
 }
 
@@ -887,8 +970,9 @@ scoped_refptr<cc::DisplayItemList> Layer::PaintContentsToDisplayList(
   paint_region_.Clear();
   auto display_list = make_scoped_refptr(new cc::DisplayItemList);
   if (delegate_) {
-    delegate_->OnPaintLayer(
-        PaintContext(display_list.get(), device_scale_factor_, invalidation));
+    delegate_->OnPaintLayer(PaintContext(display_list.get(),
+                                         device_scale_factor_, invalidation,
+                                         GetCompositor()->is_pixel_canvas()));
   }
   display_list->Finalize();
   // TODO(domlaskowski): Move mirror invalidation to Layer::SchedulePaint.
@@ -906,8 +990,8 @@ size_t Layer::GetApproximateUnsharedMemoryUsage() const {
 }
 
 bool Layer::PrepareTextureMailbox(
-    cc::TextureMailbox* mailbox,
-    std::unique_ptr<cc::SingleReleaseCallback>* release_callback) {
+    viz::TextureMailbox* mailbox,
+    std::unique_ptr<viz::SingleReleaseCallback>* release_callback) {
   if (!mailbox_release_callback_)
     return false;
   *mailbox = mailbox_;
@@ -1054,6 +1138,17 @@ void Layer::SetColorFromAnimation(SkColor color) {
   SetFillsBoundsOpaquely(SkColorGetA(color) == 0xFF);
 }
 
+void Layer::SetTemperatureFromAnimation(float temperature) {
+  layer_temperature_ = temperature;
+
+  // If we only tone down the blue scale, the screen will look very green so we
+  // also need to tone down the green, but with a less value compared to the
+  // blue scale to avoid making things look very red.
+  layer_blue_scale_ = 1.0f - temperature;
+  layer_green_scale_ = 1.0f - 0.3f * temperature;
+  SetLayerFilters();
+}
+
 void Layer::ScheduleDrawForAnimation() {
   ScheduleDraw();
 }
@@ -1090,6 +1185,10 @@ SkColor Layer::GetColorForAnimation() const {
       solid_color_layer_->background_color() : SK_ColorBLACK;
 }
 
+float Layer::GetTemperatureFromAnimation() const {
+  return layer_temperature_;
+}
+
 float Layer::GetDeviceScaleFactor() const {
   return device_scale_factor_;
 }
@@ -1107,6 +1206,10 @@ int Layer::GetFrameNumber() const {
 float Layer::GetRefreshRate() const {
   const Compositor* compositor = GetCompositor();
   return compositor ? compositor->refresh_rate() : 60.0;
+}
+
+ui::Layer* Layer::GetLayer() {
+  return this;
 }
 
 cc::Layer* Layer::GetCcLayer() const {
@@ -1133,7 +1236,7 @@ void Layer::CreateCcLayer() {
   cc_layer_->SetContentsOpaque(true);
   cc_layer_->SetIsDrawable(type_ != LAYER_NOT_DRAWN);
   cc_layer_->SetLayerClient(this);
-  cc_layer_->SetElementId(cc::ElementId(cc_layer_->id(), 0));
+  cc_layer_->SetElementId(cc::ElementId(cc_layer_->id()));
   RecomputePosition();
 }
 

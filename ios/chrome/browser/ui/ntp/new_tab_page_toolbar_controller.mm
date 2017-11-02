@@ -5,20 +5,22 @@
 #import "ios/chrome/browser/ui/ntp/new_tab_page_toolbar_controller.h"
 
 #include "base/logging.h"
-#include "base/mac/scoped_nsobject.h"
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/toolbar/toolbar_model.h"
-#import "ios/chrome/browser/ui/commands/UIKit+ChromeExecuteCommand.h"
-#import "ios/chrome/browser/ui/commands/generic_chrome_command.h"
-#include "ios/chrome/browser/ui/commands/ios_command_ids.h"
+#import "ios/chrome/browser/ui/commands/application_commands.h"
+#import "ios/chrome/browser/ui/commands/browser_commands.h"
+#import "ios/chrome/browser/ui/ntp/google_landing_data_source.h"
 #import "ios/chrome/browser/ui/rtl_geometry.h"
-#import "ios/chrome/browser/ui/toolbar/toolbar_model_ios.h"
 #include "ios/chrome/browser/ui/toolbar/toolbar_resource_macros.h"
 #import "ios/chrome/browser/ui/toolbar/web_toolbar_controller.h"
 #import "ios/chrome/browser/ui/uikit_ui_util.h"
 #include "ui/base/l10n/l10n_util.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 using base::UserMetricsAction;
 
@@ -27,10 +29,9 @@ namespace {
 const CGFloat kButtonYOffset = 4.0;
 const CGFloat kBackButtonLeading = 0;
 const CGFloat kForwardButtonLeading = 48;
-const CGFloat kOmniboxFocuserLeading = 96;
 const CGSize kBackButtonSize = {48, 48};
 const CGSize kForwardButtonSize = {48, 48};
-const CGSize kOmniboxFocuserSize = {128, 48};
+const CGFloat kOmniboxFocuserTrailing = 96;
 
 enum {
   NTPToolbarButtonNameBack = NumberOfToolbarButtonNames,
@@ -41,57 +42,73 @@ enum {
 }  // namespace
 
 @interface NewTabPageToolbarController () {
-  base::scoped_nsobject<UIButton> _backButton;
-  base::scoped_nsobject<UIButton> _forwardButton;
-  base::scoped_nsobject<UIButton> _omniboxFocuser;
-  id<WebToolbarDelegate> _delegate;
-
-  // Delegate to focus and blur the omnibox.
-  base::WeakNSProtocol<id<OmniboxFocuser>> _focuser;
+  UIButton* _backButton;
+  UIButton* _forwardButton;
+  UIButton* _omniboxFocuser;
 }
+
+// |YES| if the google landing toolbar can show the forward arrow.
+@property(nonatomic, assign) BOOL canGoForward;
+
+// |YES| if the google landing toolbar can show the back arrow.
+@property(nonatomic, assign) BOOL canGoBack;
 
 @end
 
 @implementation NewTabPageToolbarController
 
-- (instancetype)initWithToolbarDelegate:(id<WebToolbarDelegate>)delegate
-                                focuser:(id<OmniboxFocuser>)focuser {
-  self = [super initWithStyle:ToolbarControllerStyleLightMode];
+@synthesize canGoForward = _canGoForward;
+@synthesize canGoBack = _canGoBack;
+@dynamic dispatcher;
+
+- (instancetype)initWithDispatcher:(id<ApplicationCommands,
+                                       BrowserCommands,
+                                       OmniboxFocuser,
+                                       UrlLoader,
+                                       WebToolbarDelegate>)dispatcher {
+  self = [super initWithStyle:ToolbarControllerStyleLightMode
+                   dispatcher:dispatcher];
   if (self) {
-    _delegate = delegate;
-    _focuser.reset(focuser);
     [self.backgroundView setHidden:YES];
 
     CGFloat boundingWidth = self.view.bounds.size.width;
     LayoutRect backButtonLayout =
         LayoutRectMake(kBackButtonLeading, boundingWidth, kButtonYOffset,
                        kBackButtonSize.width, kBackButtonSize.height);
-    _backButton.reset(
-        [[UIButton alloc] initWithFrame:LayoutRectGetRect(backButtonLayout)]);
+    _backButton =
+        [[UIButton alloc] initWithFrame:LayoutRectGetRect(backButtonLayout)];
     [_backButton
         setAutoresizingMask:UIViewAutoresizingFlexibleTrailingMargin() |
                             UIViewAutoresizingFlexibleBottomMargin];
     LayoutRect forwardButtonLayout =
         LayoutRectMake(kForwardButtonLeading, boundingWidth, kButtonYOffset,
                        kForwardButtonSize.width, kForwardButtonSize.height);
-    _forwardButton.reset([[UIButton alloc]
-        initWithFrame:LayoutRectGetRect(forwardButtonLayout)]);
+    _forwardButton =
+        [[UIButton alloc] initWithFrame:LayoutRectGetRect(forwardButtonLayout)];
     [_forwardButton
         setAutoresizingMask:UIViewAutoresizingFlexibleTrailingMargin() |
                             UIViewAutoresizingFlexibleBottomMargin];
-    LayoutRect omniboxFocuserLayout =
-        LayoutRectMake(kOmniboxFocuserLeading, boundingWidth, kButtonYOffset,
-                       kOmniboxFocuserSize.width, kOmniboxFocuserSize.height);
-    _omniboxFocuser.reset([[UIButton alloc]
-        initWithFrame:LayoutRectGetRect(omniboxFocuserLayout)]);
+    _omniboxFocuser = [[UIButton alloc] init];
     [_omniboxFocuser
         setAccessibilityLabel:l10n_util::GetNSString(IDS_ACCNAME_LOCATION)];
 
-    [_omniboxFocuser setAutoresizingMask:UIViewAutoresizingFlexibleWidth];
+    _omniboxFocuser.translatesAutoresizingMaskIntoConstraints = NO;
 
     [self.view addSubview:_backButton];
     [self.view addSubview:_forwardButton];
     [self.view addSubview:_omniboxFocuser];
+    [NSLayoutConstraint activateConstraints:@[
+      [_omniboxFocuser.leadingAnchor
+          constraintEqualToAnchor:_forwardButton.trailingAnchor],
+      [_omniboxFocuser.trailingAnchor
+          constraintEqualToAnchor:self.view.trailingAnchor
+                         constant:-kOmniboxFocuserTrailing],
+      [_omniboxFocuser.topAnchor
+          constraintEqualToAnchor:_forwardButton.topAnchor],
+      [_omniboxFocuser.bottomAnchor
+          constraintEqualToAnchor:_forwardButton.bottomAnchor]
+    ]];
+
     [_backButton setImageEdgeInsets:UIEdgeInsetsMakeDirected(0, 0, 0, -10)];
     [_forwardButton setImageEdgeInsets:UIEdgeInsetsMakeDirected(0, -7, 0, 0)];
 
@@ -107,18 +124,23 @@ enum {
         hasDisabledImage:YES
            synchronously:NO];
 
-    base::scoped_nsobject<UILongPressGestureRecognizer> backLongPress(
+    UILongPressGestureRecognizer* backLongPress =
         [[UILongPressGestureRecognizer alloc]
             initWithTarget:self
-                    action:@selector(handleLongPress:)]);
+                    action:@selector(handleLongPress:)];
     [_backButton addGestureRecognizer:backLongPress];
-    base::scoped_nsobject<UILongPressGestureRecognizer> forwardLongPress(
+    [_backButton addTarget:self.dispatcher
+                    action:@selector(goBack)
+          forControlEvents:UIControlEventTouchUpInside];
+
+    UILongPressGestureRecognizer* forwardLongPress =
         [[UILongPressGestureRecognizer alloc]
             initWithTarget:self
-                    action:@selector(handleLongPress:)]);
+                    action:@selector(handleLongPress:)];
     [_forwardButton addGestureRecognizer:forwardLongPress];
-    [_backButton setTag:IDC_BACK];
-    [_forwardButton setTag:IDC_FORWARD];
+    [_forwardButton addTarget:self.dispatcher
+                       action:@selector(goForward)
+             forControlEvents:UIControlEventTouchUpInside];
 
     [_omniboxFocuser addTarget:self
                         action:@selector(focusOmnibox:)
@@ -127,6 +149,10 @@ enum {
     SetA11yLabelAndUiAutomationName(_backButton, IDS_ACCNAME_BACK, @"Back");
     SetA11yLabelAndUiAutomationName(_forwardButton, IDS_ACCNAME_FORWARD,
                                     @"Forward");
+
+    [[self stackButton] addTarget:dispatcher
+                           action:@selector(displayTabSwitcher)
+                 forControlEvents:UIControlEventTouchUpInside];
   }
   return self;
 }
@@ -147,9 +173,9 @@ enum {
 }
 
 - (int)imageEnumForButton:(UIButton*)button {
-  if (button == _backButton.get())
+  if (button == _backButton)
     return NTPToolbarButtonNameBack;
-  if (button == _forwardButton.get())
+  if (button == _forwardButton)
     return NTPToolbarButtonNameForward;
   return [super imageEnumForButton:button];
 }
@@ -178,9 +204,9 @@ enum {
 }
 
 - (IBAction)recordUserMetrics:(id)sender {
-  if (sender == _backButton.get()) {
+  if (sender == _backButton) {
     base::RecordAction(UserMetricsAction("MobileToolbarBack"));
-  } else if (sender == _forwardButton.get()) {
+  } else if (sender == _forwardButton) {
     base::RecordAction(UserMetricsAction("MobileToolbarForward"));
   } else {
     [super recordUserMetrics:sender];
@@ -191,35 +217,24 @@ enum {
   if (gesture.state != UIGestureRecognizerStateBegan)
     return;
 
-  if (gesture.view == _backButton.get()) {
-    base::scoped_nsobject<GenericChromeCommand> command(
-        [[GenericChromeCommand alloc] initWithTag:IDC_SHOW_BACK_HISTORY]);
-    [_backButton chromeExecuteCommand:command];
-  } else if (gesture.view == _forwardButton.get()) {
-    base::scoped_nsobject<GenericChromeCommand> command(
-        [[GenericChromeCommand alloc] initWithTag:IDC_SHOW_FORWARD_HISTORY]);
-    [_forwardButton chromeExecuteCommand:command];
+  if (gesture.view == _backButton) {
+    [self.dispatcher showTabHistoryPopupForBackwardHistory];
+  } else if (gesture.view == _forwardButton) {
+    [self.dispatcher showTabHistoryPopupForForwardHistory];
   }
 }
 
 - (void)hideViewsForNewTabPage:(BOOL)hide {
   [super hideViewsForNewTabPage:hide];
   // Show the back/forward buttons if there is forward history.
-  ToolbarModelIOS* toolbarModelIOS = [_delegate toolbarModelIOS];
-  if (toolbarModelIOS) {
-    BOOL forwardEnabled = toolbarModelIOS->CanGoForward();
-    [_backButton setHidden:!forwardEnabled && hide];
-    [_backButton setEnabled:toolbarModelIOS->CanGoBack()];
-    [_forwardButton setHidden:!forwardEnabled && hide];
-  }
+  BOOL forwardEnabled = self.canGoForward;
+  [_backButton setHidden:!forwardEnabled && hide];
+  [_backButton setEnabled:self.canGoBack];
+  [_forwardButton setHidden:!forwardEnabled && hide];
 }
 
 - (void)focusOmnibox:(id)sender {
-  [_focuser focusFakebox];
-}
-
-- (IBAction)stackButtonTouchDown:(id)sender {
-  [_delegate prepareToEnterTabSwitcher:self];
+  [self.dispatcher focusFakebox];
 }
 
 @end

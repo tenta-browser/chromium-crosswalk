@@ -100,6 +100,9 @@ class IndexedDBDatabase::ConnectionRequest {
   // Called when the upgrade transaction has finished.
   virtual void UpgradeTransactionFinished(bool committed) = 0;
 
+  // Called for pending tasks that we need to clear for a force close.
+  virtual void AbortForForceClose() = 0;
+
  protected:
   scoped_refptr<IndexedDBDatabase> db_;
 
@@ -239,8 +242,8 @@ class IndexedDBDatabase::OpenRequest
 
     DCHECK(db_->transaction_coordinator_.IsRunningVersionChangeTransaction());
     transaction->ScheduleTask(
-        base::Bind(&IndexedDBDatabase::VersionChangeOperation, db_,
-                   pending_->version, pending_->callbacks));
+        base::BindOnce(&IndexedDBDatabase::VersionChangeOperation, db_,
+                       pending_->version, pending_->callbacks));
   }
 
   // Called when the upgrade transaction has started executing.
@@ -267,6 +270,12 @@ class IndexedDBDatabase::OpenRequest
                                  "upgradeneeded event handler."));
     }
     db_->RequestComplete(this);
+  }
+
+  void AbortForForceClose() override {
+    DCHECK(!connection_);
+    pending_->database_callbacks->OnForcedClose();
+    pending_.reset();
   }
 
  private:
@@ -343,6 +352,13 @@ class IndexedDBDatabase::DeleteRequest
   void UpgradeTransactionStarted(int64_t old_version) override { NOTREACHED(); }
 
   void UpgradeTransactionFinished(bool committed) override { NOTREACHED(); }
+
+  void AbortForForceClose() override {
+    IndexedDBDatabaseError error(blink::kWebIDBDatabaseExceptionUnknownError,
+                                 "The request could not be completed.");
+    callbacks_->OnError(error);
+    callbacks_ = nullptr;
+  }
 
  private:
   scoped_refptr<IndexedDBCallbacks> callbacks_;
@@ -575,9 +591,8 @@ void IndexedDBDatabase::CreateObjectStore(IndexedDBTransaction* transaction,
 
   AddObjectStore(object_store_metadata, object_store_id);
   transaction->ScheduleAbortTask(
-      base::Bind(&IndexedDBDatabase::CreateObjectStoreAbortOperation,
-                 this,
-                 object_store_id));
+      base::BindOnce(&IndexedDBDatabase::CreateObjectStoreAbortOperation, this,
+                     object_store_id));
 }
 
 void IndexedDBDatabase::DeleteObjectStore(IndexedDBTransaction* transaction,
@@ -590,10 +605,8 @@ void IndexedDBDatabase::DeleteObjectStore(IndexedDBTransaction* transaction,
   if (!ValidateObjectStoreId(object_store_id))
     return;
 
-  transaction->ScheduleTask(
-      base::Bind(&IndexedDBDatabase::DeleteObjectStoreOperation,
-                 this,
-                 object_store_id));
+  transaction->ScheduleTask(base::BindOnce(
+      &IndexedDBDatabase::DeleteObjectStoreOperation, this, object_store_id));
 }
 
 void IndexedDBDatabase::RenameObjectStore(IndexedDBTransaction* transaction,
@@ -623,10 +636,8 @@ void IndexedDBDatabase::RenameObjectStore(IndexedDBTransaction* transaction,
   }
 
   transaction->ScheduleAbortTask(
-      base::Bind(&IndexedDBDatabase::RenameObjectStoreAbortOperation,
-                 this,
-                 object_store_id,
-                 object_store_metadata.name));
+      base::BindOnce(&IndexedDBDatabase::RenameObjectStoreAbortOperation, this,
+                     object_store_id, object_store_metadata.name));
   SetObjectStoreName(object_store_id, new_name);
 }
 
@@ -673,10 +684,8 @@ void IndexedDBDatabase::CreateIndex(IndexedDBTransaction* transaction,
 
   AddIndex(object_store_id, index_metadata, index_id);
   transaction->ScheduleAbortTask(
-      base::Bind(&IndexedDBDatabase::CreateIndexAbortOperation,
-                 this,
-                 object_store_id,
-                 index_id));
+      base::BindOnce(&IndexedDBDatabase::CreateIndexAbortOperation, this,
+                     object_store_id, index_id));
 }
 
 void IndexedDBDatabase::CreateIndexAbortOperation(int64_t object_store_id,
@@ -696,10 +705,8 @@ void IndexedDBDatabase::DeleteIndex(IndexedDBTransaction* transaction,
     return;
 
   transaction->ScheduleTask(
-      base::Bind(&IndexedDBDatabase::DeleteIndexOperation,
-                 this,
-                 object_store_id,
-                 index_id));
+      base::BindOnce(&IndexedDBDatabase::DeleteIndexOperation, this,
+                     object_store_id, index_id));
 }
 
 leveldb::Status IndexedDBDatabase::DeleteIndexOperation(
@@ -722,10 +729,8 @@ leveldb::Status IndexedDBDatabase::DeleteIndexOperation(
 
   RemoveIndex(object_store_id, index_id);
   transaction->ScheduleAbortTask(
-      base::Bind(&IndexedDBDatabase::DeleteIndexAbortOperation,
-                 this,
-                 object_store_id,
-                 index_metadata));
+      base::BindOnce(&IndexedDBDatabase::DeleteIndexAbortOperation, this,
+                     object_store_id, index_metadata));
   return s;
 }
 
@@ -765,11 +770,8 @@ void IndexedDBDatabase::RenameIndex(IndexedDBTransaction* transaction,
   }
 
   transaction->ScheduleAbortTask(
-      base::Bind(&IndexedDBDatabase::RenameIndexAbortOperation,
-                 this,
-                 object_store_id,
-                 index_id,
-                 index_metadata.name));
+      base::BindOnce(&IndexedDBDatabase::RenameIndexAbortOperation, this,
+                     object_store_id, index_id, index_metadata.name));
   SetIndexName(object_store_id, index_id, new_name);
 }
 
@@ -800,6 +802,12 @@ void IndexedDBDatabase::AddPendingObserver(
     const IndexedDBObserver::Options& options) {
   DCHECK(transaction);
   transaction->AddPendingObserver(observer_id, options);
+}
+
+void IndexedDBDatabase::CallUpgradeTransactionStartedForTesting(
+    int64_t old_version) {
+  DCHECK(active_request_);
+  active_request_->UpgradeTransactionStarted(old_version);
 }
 
 void IndexedDBDatabase::FilterObservation(IndexedDBTransaction* transaction,
@@ -887,7 +895,7 @@ void IndexedDBDatabase::GetAll(IndexedDBTransaction* transaction,
   if (!ValidateObjectStoreId(object_store_id))
     return;
 
-  transaction->ScheduleTask(base::Bind(
+  transaction->ScheduleTask(base::BindOnce(
       &IndexedDBDatabase::GetAllOperation, this, object_store_id, index_id,
       base::Passed(&key_range),
       key_only ? indexed_db::CURSOR_KEY_ONLY : indexed_db::CURSOR_KEY_AND_VALUE,
@@ -906,7 +914,7 @@ void IndexedDBDatabase::Get(IndexedDBTransaction* transaction,
   if (!ValidateObjectStoreIdAndOptionalIndexId(object_store_id, index_id))
     return;
 
-  transaction->ScheduleTask(base::Bind(
+  transaction->ScheduleTask(base::BindOnce(
       &IndexedDBDatabase::GetOperation, this, object_store_id, index_id,
       base::Passed(&key_range),
       key_only ? indexed_db::CURSOR_KEY_ONLY : indexed_db::CURSOR_KEY_AND_VALUE,
@@ -1251,14 +1259,15 @@ void IndexedDBDatabase::Put(
   params->put_mode = put_mode;
   params->callbacks = callbacks;
   params->index_keys = index_keys;
-  transaction->ScheduleTask(base::Bind(
-      &IndexedDBDatabase::PutOperation, this, base::Passed(&params)));
+  transaction->ScheduleTask(base::BindOnce(&IndexedDBDatabase::PutOperation,
+                                           this, base::Passed(&params)));
 }
 
 leveldb::Status IndexedDBDatabase::PutOperation(
     std::unique_ptr<PutOperationParams> params,
     IndexedDBTransaction* transaction) {
-  IDB_TRACE1("IndexedDBDatabase::PutOperation", "txn.id", transaction->id());
+  IDB_TRACE2("IndexedDBDatabase::PutOperation", "txn.id", transaction->id(),
+             "size", params->value.SizeEstimate());
   DCHECK_NE(transaction->mode(), blink::kWebIDBTransactionModeReadOnly);
   bool key_was_generated = false;
   leveldb::Status s = leveldb::Status::OK();
@@ -1449,8 +1458,8 @@ void IndexedDBDatabase::SetIndexesReady(IndexedDBTransaction* transaction,
 
   transaction->ScheduleTask(
       blink::kWebIDBTaskTypePreemptive,
-      base::Bind(&IndexedDBDatabase::SetIndexesReadyOperation, this,
-                 index_ids.size()));
+      base::BindOnce(&IndexedDBDatabase::SetIndexesReadyOperation, this,
+                     index_ids.size()));
 }
 
 leveldb::Status IndexedDBDatabase::SetIndexesReadyOperation(
@@ -1500,7 +1509,7 @@ void IndexedDBDatabase::OpenCursor(
       key_only ? indexed_db::CURSOR_KEY_ONLY : indexed_db::CURSOR_KEY_AND_VALUE;
   params->task_type = task_type;
   params->callbacks = callbacks;
-  transaction->ScheduleTask(base::Bind(
+  transaction->ScheduleTask(base::BindOnce(
       &IndexedDBDatabase::OpenCursorOperation, this, base::Passed(&params)));
 }
 
@@ -1593,12 +1602,9 @@ void IndexedDBDatabase::Count(IndexedDBTransaction* transaction,
   if (!ValidateObjectStoreIdAndOptionalIndexId(object_store_id, index_id))
     return;
 
-  transaction->ScheduleTask(base::Bind(&IndexedDBDatabase::CountOperation,
-                                       this,
-                                       object_store_id,
-                                       index_id,
-                                       base::Passed(&key_range),
-                                       callbacks));
+  transaction->ScheduleTask(
+      base::BindOnce(&IndexedDBDatabase::CountOperation, this, object_store_id,
+                     index_id, base::Passed(&key_range), callbacks));
 }
 
 leveldb::Status IndexedDBDatabase::CountOperation(
@@ -1652,11 +1658,9 @@ void IndexedDBDatabase::DeleteRange(
   if (!ValidateObjectStoreId(object_store_id))
     return;
 
-  transaction->ScheduleTask(base::Bind(&IndexedDBDatabase::DeleteRangeOperation,
-                                       this,
-                                       object_store_id,
-                                       base::Passed(&key_range),
-                                       callbacks));
+  transaction->ScheduleTask(
+      base::BindOnce(&IndexedDBDatabase::DeleteRangeOperation, this,
+                     object_store_id, base::Passed(&key_range), callbacks));
 }
 
 leveldb::Status IndexedDBDatabase::DeleteRangeOperation(
@@ -1687,8 +1691,8 @@ void IndexedDBDatabase::Clear(IndexedDBTransaction* transaction,
   if (!ValidateObjectStoreId(object_store_id))
     return;
 
-  transaction->ScheduleTask(base::Bind(
-      &IndexedDBDatabase::ClearOperation, this, object_store_id, callbacks));
+  transaction->ScheduleTask(base::BindOnce(&IndexedDBDatabase::ClearOperation,
+                                           this, object_store_id, callbacks));
 }
 
 leveldb::Status IndexedDBDatabase::ClearOperation(
@@ -1725,9 +1729,8 @@ leveldb::Status IndexedDBDatabase::DeleteObjectStoreOperation(
 
   RemoveObjectStore(object_store_id);
   transaction->ScheduleAbortTask(
-      base::Bind(&IndexedDBDatabase::DeleteObjectStoreAbortOperation,
-                 this,
-                 object_store_metadata));
+      base::BindOnce(&IndexedDBDatabase::DeleteObjectStoreAbortOperation, this,
+                     object_store_metadata));
   return s;
 }
 
@@ -1744,8 +1747,8 @@ leveldb::Status IndexedDBDatabase::VersionChangeOperation(
       transaction->BackingStoreTransaction(), id(), version);
 
   transaction->ScheduleAbortTask(
-      base::Bind(&IndexedDBDatabase::VersionChangeAbortOperation, this,
-                 metadata_.version));
+      base::BindOnce(&IndexedDBDatabase::VersionChangeAbortOperation, this,
+                     metadata_.version));
   metadata_.version = version;
 
   active_request_->UpgradeTransactionStarted(old_version);
@@ -1846,12 +1849,21 @@ void IndexedDBDatabase::DeleteDatabase(
 void IndexedDBDatabase::ForceClose() {
   // IndexedDBConnection::ForceClose() may delete this database, so hold ref.
   scoped_refptr<IndexedDBDatabase> protect(this);
+
+  while (!pending_requests_.empty()) {
+    std::unique_ptr<ConnectionRequest> request =
+        std::move(pending_requests_.front());
+    pending_requests_.pop();
+    request->AbortForForceClose();
+  }
+
   auto it = connections_.begin();
   while (it != connections_.end()) {
     IndexedDBConnection* connection = *it++;
     connection->ForceClose();
   }
   DCHECK(connections_.empty());
+  DCHECK(!active_request_);
 }
 
 void IndexedDBDatabase::VersionChangeIgnored() {
@@ -1916,6 +1928,16 @@ void IndexedDBDatabase::RenameObjectStoreAbortOperation(
 void IndexedDBDatabase::VersionChangeAbortOperation(int64_t previous_version) {
   IDB_TRACE("IndexedDBDatabase::VersionChangeAbortOperation");
   metadata_.version = previous_version;
+}
+
+void IndexedDBDatabase::AbortAllTransactionsForConnections() {
+  IDB_TRACE("IndexedDBDatabase::AbortAllTransactionsForConnections");
+
+  for (IndexedDBConnection* connection : connections_) {
+    connection->AbortAllTransactions(
+        IndexedDBDatabaseError(blink::kWebIDBDatabaseExceptionUnknownError,
+                               "Database is compacting."));
+  }
 }
 
 void IndexedDBDatabase::ReportError(leveldb::Status status) {

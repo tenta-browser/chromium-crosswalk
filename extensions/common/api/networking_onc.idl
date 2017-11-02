@@ -259,6 +259,7 @@ namespace networking.onc {
   dictionary EAPProperties {
     DOMString? AnonymousIdentity;
     CertificatePattern? ClientCertPattern;
+    DOMString? ClientCertPKCS11Id;
     DOMString? ClientCertRef;
     ClientCertificateType ClientCertType;
     DOMString? Identity;
@@ -270,6 +271,7 @@ namespace networking.onc {
     boolean? SaveCredentials;
     DOMString[]? ServerCAPEMs;
     DOMString[]? ServerCARefs;
+    ManagedDOMString? SubjectMatch;
     boolean? UseProactiveKeyCaching;
     boolean? UseSystemCAs;
   };
@@ -632,10 +634,14 @@ namespace networking.onc {
     DOMString? BSSID;
     // See $(ref:WiFiProperties.Frequency).
     long? Frequency;
+    // See $(ref:WiFiProperties.HexSSID).
+    DOMString? HexSSID;
     // See $(ref:WiFiProperties.Security).
     DOMString Security;
     // See $(ref:WiFiProperties.SignalStrength).
     long? SignalStrength;
+    // See $(ref:WiFiProperties.SSID).
+    DOMString? SSID;
   };
 
   dictionary WiMAXProperties {
@@ -812,12 +818,11 @@ namespace networking.onc {
     // Set if the device is enabled. True if the device is currently scanning.
     boolean? Scanning;
 
-    // Set to the SIM lock type if the device type is Cellular and the device
-    // is locked.
-    DOMString? SimLockType;
+    // The SIM lock status if Type = Cellular and SIMPresent = True.
+    SIMLockStatus? SIMLockStatus;
 
     // Set to the SIM present state if the device type is Cellular.
-    boolean? SimPresent;
+    boolean? SIMPresent;
 
     // The current state of the device.
     DeviceStateType State;

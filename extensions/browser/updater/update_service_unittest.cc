@@ -4,6 +4,8 @@
 
 #include <stddef.h>
 
+#include <memory>
+#include <utility>
 #include <vector>
 
 #include "base/files/file_util.h"
@@ -21,7 +23,6 @@
 #include "extensions/browser/uninstall_ping_sender.h"
 #include "extensions/browser/updater/update_service.h"
 #include "extensions/common/extension_builder.h"
-#include "extensions/common/test_util.h"
 #include "extensions/common/value_builder.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -65,7 +66,8 @@ class FakeUpdateClient : public update_client::UpdateClient {
   void Stop() override {}
   void SendUninstallPing(const std::string& id,
                          const base::Version& version,
-                         int reason) override {
+                         int reason,
+                         const update_client::Callback& callback) override {
     uninstall_pings_.emplace_back(id, version, reason);
   }
 
@@ -148,14 +150,12 @@ class FakeExtensionSystem : public MockExtensionSystem {
 
 class UpdateServiceTest : public ExtensionsTest {
  public:
-  UpdateServiceTest() {}
+  UpdateServiceTest()
+      : ExtensionsTest(std::make_unique<content::TestBrowserThreadBundle>()) {}
   ~UpdateServiceTest() override {}
 
   void SetUp() override {
     ExtensionsTest::SetUp();
-    browser_threads_.reset(new content::TestBrowserThreadBundle(
-        content::TestBrowserThreadBundle::DEFAULT));
-
     extensions_browser_client()->set_extension_system_factory(
         &fake_extension_system_factory_);
     extensions_browser_client()->SetUpdateClientFactory(base::Bind(
@@ -196,7 +196,6 @@ class UpdateServiceTest : public ExtensionsTest {
  private:
   UpdateService* update_service_;
   scoped_refptr<FakeUpdateClient> update_client_;
-  std::unique_ptr<content::TestBrowserThreadBundle> browser_threads_;
   MockExtensionSystemFactory<FakeExtensionSystem>
       fake_extension_system_factory_;
 };
@@ -267,7 +266,7 @@ TEST_F(UpdateServiceTest, BasicUpdateOperations) {
       extension1->manifest()->value()->DeepCopy());
   new_manifest->SetString("version", "2.0");
 
-  installer->Install(*new_manifest, new_version_dir.GetPath());
+  installer->Install(std::move(new_manifest), new_version_dir.GetPath());
 
   scoped_refptr<content::MessageLoopRunner> loop_runner =
       new content::MessageLoopRunner();
@@ -288,18 +287,15 @@ TEST_F(UpdateServiceTest, UninstallPings) {
 
   // Build 3 extensions.
   scoped_refptr<Extension> extension1 =
-      test_util::BuildExtension(ExtensionBuilder())
-          .SetID(crx_file::id_util::GenerateId("1"))
+      ExtensionBuilder("1")
           .MergeManifest(DictionaryBuilder().Set("version", "1.2").Build())
           .Build();
   scoped_refptr<Extension> extension2 =
-      test_util::BuildExtension(ExtensionBuilder())
-          .SetID(crx_file::id_util::GenerateId("2"))
+      ExtensionBuilder("2")
           .MergeManifest(DictionaryBuilder().Set("version", "2.3").Build())
           .Build();
   scoped_refptr<Extension> extension3 =
-      test_util::BuildExtension(ExtensionBuilder())
-          .SetID(crx_file::id_util::GenerateId("3"))
+      ExtensionBuilder("3")
           .MergeManifest(DictionaryBuilder().Set("version", "3.4").Build())
           .Build();
   EXPECT_TRUE(extension1->id() != extension2->id() &&

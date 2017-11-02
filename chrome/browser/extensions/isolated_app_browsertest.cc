@@ -104,6 +104,11 @@ std::unique_ptr<net::test_server::HttpResponse> HandleExpectAndSetCookieRequest(
 
 class IsolatedAppTest : public ExtensionBrowserTest {
  public:
+  void SetUpOnMainThread() override {
+    ExtensionBrowserTest::SetUpOnMainThread();
+    host_resolver()->AddRule("*", "127.0.0.1");
+  }
+
   // Returns whether the given tab's current URL has the given cookie.
   bool WARN_UNUSED_RESULT HasCookie(WebContents* contents,
                                     const std::string& cookie) {
@@ -139,7 +144,6 @@ class IsolatedAppTest : public ExtensionBrowserTest {
 };
 
 IN_PROC_BROWSER_TEST_F(IsolatedAppTest, CrossProcessClientRedirect) {
-  host_resolver()->AddRule("*", "127.0.0.1");
   ASSERT_TRUE(embedded_test_server()->Start());
 
   ASSERT_TRUE(LoadExtension(test_data_dir_.AppendASCII("isolated_apps/app1")));
@@ -202,7 +206,6 @@ IN_PROC_BROWSER_TEST_F(IsolatedAppTest, CrossProcessClientRedirect) {
 // extent.  These origins should also be isolated, but still have origin-based
 // separation as you would expect.
 IN_PROC_BROWSER_TEST_F(IsolatedAppTest, CookieIsolation) {
-  host_resolver()->AddRule("*", "127.0.0.1");
   ASSERT_TRUE(embedded_test_server()->Start());
 
   ASSERT_TRUE(LoadExtension(test_data_dir_.AppendASCII("isolated_apps/app1")));
@@ -299,7 +302,6 @@ IN_PROC_BROWSER_TEST_F(IsolatedAppTest, CookieIsolation) {
 // This test is disabled due to being flaky. http://crbug.com/145588
 // Ensure that cookies are not isolated if the isolated apps are not installed.
 IN_PROC_BROWSER_TEST_F(IsolatedAppTest, DISABLED_NoCookieIsolationWithoutApp) {
-  host_resolver()->AddRule("*", "127.0.0.1");
   ASSERT_TRUE(embedded_test_server()->Start());
 
   // The app under test acts on URLs whose host is "localhost",
@@ -380,7 +382,6 @@ IN_PROC_BROWSER_TEST_F(IsolatedAppTest, MAYBE_SubresourceCookieIsolation) {
   embedded_test_server()->RegisterRequestHandler(
       base::Bind(&HandleExpectAndSetCookieRequest, embedded_test_server()));
 
-  host_resolver()->AddRule("*", "127.0.0.1");
   ASSERT_TRUE(embedded_test_server()->Start());
 
   ASSERT_TRUE(LoadExtension(test_data_dir_.AppendASCII("isolated_apps/app1")));
@@ -453,7 +454,6 @@ IN_PROC_BROWSER_TEST_F(IsolatedAppTest, MAYBE_SubresourceCookieIsolation) {
 // This is true even in the case of the OAuth workaround for hosted apps,
 // where non-app popups may be kept in the hosted app process.
 IN_PROC_BROWSER_TEST_F(IsolatedAppTest, MAYBE_IsolatedAppProcessModel) {
-  host_resolver()->AddRule("*", "127.0.0.1");
   ASSERT_TRUE(embedded_test_server()->Start());
 
   ASSERT_TRUE(LoadExtension(test_data_dir_.AppendASCII("isolated_apps/app1")));
@@ -473,13 +473,13 @@ IN_PROC_BROWSER_TEST_F(IsolatedAppTest, MAYBE_IsolatedAppProcessModel) {
       ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
   // For the third tab, use window.open to keep it in process with an opener.
   OpenWindow(browser()->tab_strip_model()->GetWebContentsAt(0),
-             base_url.Resolve("app1/main.html"), true, NULL);
+             base_url.Resolve("app1/main.html"), true, true, nullptr);
 
   // In a fourth tab, use window.open to a non-app URL.  It should open in a
   // separate process, even though this would trigger the OAuth workaround
   // for hosted apps (from http://crbug.com/59285).
   OpenWindow(browser()->tab_strip_model()->GetWebContentsAt(0),
-             base_url.Resolve("non_app/main.html"), false, NULL);
+             base_url.Resolve("non_app/main.html"), false, true, nullptr);
 
   // We should now have four tabs, the first and third sharing a process.
   // The second one is an independent instance in a separate process.
@@ -511,7 +511,6 @@ IN_PROC_BROWSER_TEST_F(IsolatedAppTest, MAYBE_IsolatedAppProcessModel) {
 // TODO(nasko): If isolated apps is no longer developed, this test should be
 // removed. http://crbug.com/159932
 IN_PROC_BROWSER_TEST_F(IsolatedAppTest, DISABLED_SessionStorage) {
-  host_resolver()->AddRule("*", "127.0.0.1");
   ASSERT_TRUE(embedded_test_server()->Start());
 
   ASSERT_TRUE(LoadExtension(test_data_dir_.AppendASCII("isolated_apps/app1")));

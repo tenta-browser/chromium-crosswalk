@@ -5,7 +5,6 @@
 #include "components/sync/model/stub_model_type_sync_bridge.h"
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "components/sync/model/fake_model_type_change_processor.h"
 
 namespace syncer {
@@ -27,7 +26,7 @@ StubModelTypeSyncBridge::CreateMetadataChangeList() {
 
 base::Optional<ModelError> StubModelTypeSyncBridge::MergeSyncData(
     std::unique_ptr<MetadataChangeList> metadata_change_list,
-    EntityDataMap entity_data_map) {
+    EntityChangeList entity_data) {
   return {};
 }
 

@@ -105,8 +105,29 @@ chrome.test.runTests([
     chrome.autotestPrivate.setPrimaryButtonRight(false);
     chrome.test.succeed();
   },
+  function setMouseReverseScroll() {
+    chrome.autotestPrivate.setMouseReverseScroll(true);
+    chrome.test.succeed();
+  },
   function getVisibleNotifications() {
     chrome.autotestPrivate.getVisibleNotifications(function(){});
     chrome.test.succeed();
+  },
+  function getPlayStoreState() {
+    chrome.autotestPrivate.getPlayStoreState(function(state) {
+      // By default ARC is not available. Field allowed must be set to false;
+      // managed and enabled should be underfined.
+      chrome.test.assertFalse(state.allowed);
+      chrome.test.assertEq(undefined, state.enabled);
+      chrome.test.assertEq(undefined, state.managed);
+      chrome.test.succeed();
+    });
+  },
+  function setPlayStoreEnabled() {
+    chrome.autotestPrivate.setPlayStoreEnabled(false, function() {
+      // By default ARC is not available.
+      chrome.test.assertTrue(chrome.runtime.lastError != undefined);
+      chrome.test.succeed();
+    });
   }
 ]);

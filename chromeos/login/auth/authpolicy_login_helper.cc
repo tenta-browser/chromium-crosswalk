@@ -30,9 +30,31 @@ base::ScopedFD GetDataReadPipe(const std::string& data) {
   return pipe_read_end;
 }
 
+void AuthCallbackDoNothing(
+    authpolicy::ErrorType /* error */,
+    const authpolicy::ActiveDirectoryAccountInfo& /* account_info */) {
+  // Do nothing.
+}
+
 }  // namespace
 
 AuthPolicyLoginHelper::AuthPolicyLoginHelper() : weak_factory_(this) {}
+
+// static
+void AuthPolicyLoginHelper::TryAuthenticateUser(const std::string& username,
+                                                const std::string& object_guid,
+                                                const std::string& password) {
+  chromeos::DBusThreadManager::Get()->GetAuthPolicyClient()->AuthenticateUser(
+      username, object_guid, GetDataReadPipe(password).get(),
+      base::BindOnce(&AuthCallbackDoNothing));
+}
+
+// static
+void AuthPolicyLoginHelper::Restart() {
+  chromeos::DBusThreadManager::Get()
+      ->GetUpstartClient()
+      ->RestartAuthPolicyService();
+}
 
 void AuthPolicyLoginHelper::JoinAdDomain(const std::string& machine_name,
                                          const std::string& username,
@@ -46,20 +68,19 @@ void AuthPolicyLoginHelper::JoinAdDomain(const std::string& machine_name,
 }
 
 void AuthPolicyLoginHelper::AuthenticateUser(const std::string& username,
+                                             const std::string& object_guid,
                                              const std::string& password,
                                              AuthCallback callback) {
   DCHECK(!weak_factory_.HasWeakPtrs()) << "Another operation is in progress";
   chromeos::DBusThreadManager::Get()->GetAuthPolicyClient()->AuthenticateUser(
-      username, GetDataReadPipe(password).get(),
+      username, object_guid, GetDataReadPipe(password).get(),
       base::BindOnce(&AuthPolicyLoginHelper::OnAuthCallback,
                      weak_factory_.GetWeakPtr(), base::Passed(&callback)));
 }
 
 void AuthPolicyLoginHelper::CancelRequestsAndRestart() {
   weak_factory_.InvalidateWeakPtrs();
-  chromeos::DBusThreadManager::Get()
-      ->GetUpstartClient()
-      ->RestartAuthPolicyService();
+  AuthPolicyLoginHelper::Restart();
 }
 
 void AuthPolicyLoginHelper::OnJoinCallback(JoinCallback callback,
@@ -70,8 +91,8 @@ void AuthPolicyLoginHelper::OnJoinCallback(JoinCallback callback,
 void AuthPolicyLoginHelper::OnAuthCallback(
     AuthCallback callback,
     authpolicy::ErrorType error,
-    const authpolicy::ActiveDirectoryAccountData& account_data) {
-  std::move(callback).Run(error, account_data);
+    const authpolicy::ActiveDirectoryAccountInfo& account_info) {
+  std::move(callback).Run(error, account_info);
 }
 
 AuthPolicyLoginHelper::~AuthPolicyLoginHelper() {}

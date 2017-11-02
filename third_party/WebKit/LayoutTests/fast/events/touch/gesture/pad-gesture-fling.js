@@ -41,6 +41,9 @@ function recordWheelEvent(event)
 document.addEventListener("mousewheel", recordWheelEvent);
 
 if (window.testRunner && window.eventSender && window.eventSender.gestureFlingStart) {
+    // At least one wheel event must happen before touchpad fling start.
+    eventSender.mouseMoveTo(10, 11);
+    eventSender.mouseScrollBy(1, 1, false, true, 0, true, "phaseBegan");
     eventSender.gestureFlingStart(positionX, positionY, velocityX, velocityY, "touchpad");
 }
 

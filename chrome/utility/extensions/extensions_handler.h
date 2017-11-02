@@ -14,14 +14,11 @@
 #include "chrome/utility/utility_message_handler.h"
 #include "extensions/features/features.h"
 #include "extensions/utility/utility_handler.h"
+#include "services/service_manager/public/cpp/binder_registry.h"
 
 #if !BUILDFLAG(ENABLE_EXTENSIONS)
 #error "Extensions must be enabled"
 #endif
-
-namespace service_manager {
-class InterfaceRegistry;
-}
 
 namespace extensions {
 
@@ -36,7 +33,7 @@ class ExtensionsHandler : public UtilityMessageHandler {
   static void PreSandboxStartup();
 
   static void ExposeInterfacesToBrowser(
-      service_manager::InterfaceRegistry* registry,
+      service_manager::BinderRegistry* registry,
       bool running_elevated);
 
   // UtilityMessageHandler:

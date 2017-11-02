@@ -868,6 +868,7 @@ void GLES2InterfaceStub::UnmapTexSubImage2DCHROMIUM(const void* /* mem */) {}
 void GLES2InterfaceStub::ResizeCHROMIUM(GLuint /* width */,
                                         GLuint /* height */,
                                         GLfloat /* scale_factor */,
+                                        GLenum /* color_space */,
                                         GLboolean /* alpha */) {}
 const GLchar* GLES2InterfaceStub::GetRequestableExtensionsCHROMIUM() {
   return 0;
@@ -965,6 +966,10 @@ void GLES2InterfaceStub::BindUniformLocationCHROMIUM(GLuint /* program */,
                                                      const char* /* name */) {}
 void GLES2InterfaceStub::BindTexImage2DCHROMIUM(GLenum /* target */,
                                                 GLint /* imageId */) {}
+void GLES2InterfaceStub::BindTexImage2DWithInternalformatCHROMIUM(
+    GLenum /* target */,
+    GLenum /* internalformat */,
+    GLint /* imageId */) {}
 void GLES2InterfaceStub::ReleaseTexImage2DCHROMIUM(GLenum /* target */,
                                                    GLint /* imageId */) {}
 void GLES2InterfaceStub::TraceBeginCHROMIUM(const char* /* category_name */,
@@ -1016,6 +1021,9 @@ void GLES2InterfaceStub::ScheduleCALayerCHROMIUM(
     GLuint /* edge_aa_mask */,
     const GLfloat* /* bounds_rect */,
     GLuint /* filter */) {}
+void GLES2InterfaceStub::SetColorSpaceForScanoutCHROMIUM(
+    GLuint /* texture_id */,
+    GLColorSpace /* color_space */) {}
 void GLES2InterfaceStub::ScheduleCALayerInUseQueryCHROMIUM(
     GLsizei /* count */,
     const GLuint* /* textures */) {}
@@ -1032,7 +1040,8 @@ void GLES2InterfaceStub::ScheduleDCLayerSharedStateCHROMIUM(
     GLint /* z_order */,
     const GLfloat* /* transform */) {}
 void GLES2InterfaceStub::ScheduleDCLayerCHROMIUM(
-    GLuint /* contents_texture_id */,
+    GLsizei /* num_textures */,
+    const GLuint* /* contents_texture_ids */,
     const GLfloat* /* contents_rect */,
     GLuint /* background_color */,
     GLuint /* edge_aa_mask */,
@@ -1179,7 +1188,9 @@ void GLES2InterfaceStub::OverlayPromotionHintCHROMIUM(
     GLuint /* texture */,
     GLboolean /* promotion_hint */,
     GLint /* display_x */,
-    GLint /* display_y */) {}
+    GLint /* display_y */,
+    GLint /* display_width */,
+    GLint /* display_height */) {}
 void GLES2InterfaceStub::SwapBuffersWithBoundsCHROMIUM(
     GLsizei /* count */,
     const GLint* /* rects */) {}
@@ -1188,4 +1199,25 @@ void GLES2InterfaceStub::SetDrawRectangleCHROMIUM(GLint /* x */,
                                                   GLint /* width */,
                                                   GLint /* height */) {}
 void GLES2InterfaceStub::SetEnableDCLayersCHROMIUM(GLboolean /* enabled */) {}
+void GLES2InterfaceStub::InitializeDiscardableTextureCHROMIUM(
+    GLuint /* texture_id */) {}
+void GLES2InterfaceStub::UnlockDiscardableTextureCHROMIUM(
+    GLuint /* texture_id */) {}
+bool GLES2InterfaceStub::LockDiscardableTextureCHROMIUM(
+    GLuint /* texture_id */) {
+  return 0;
+}
+void GLES2InterfaceStub::BeginRasterCHROMIUM(
+    GLuint /* texture_id */,
+    GLuint /* sk_color */,
+    GLuint /* msaa_sample_count */,
+    GLboolean /* can_use_lcd_text */,
+    GLboolean /* use_distance_field_text */,
+    GLint /* pixel_config */) {}
+void GLES2InterfaceStub::RasterCHROMIUM(const cc::DisplayItemList* /* list */,
+                                        GLint /* x */,
+                                        GLint /* y */,
+                                        GLint /* w */,
+                                        GLint /* h */) {}
+void GLES2InterfaceStub::EndRasterCHROMIUM() {}
 #endif  // GPU_COMMAND_BUFFER_CLIENT_GLES2_INTERFACE_STUB_IMPL_AUTOGEN_H_

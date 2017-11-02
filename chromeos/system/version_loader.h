@@ -7,7 +7,9 @@
 
 #include <string>
 
+#include "base/callback_forward.h"
 #include "chromeos/chromeos_export.h"
+#include "chromeos/dbus/cryptohome_client.h"
 
 namespace chromeos {
 namespace version_loader {
@@ -18,11 +20,18 @@ enum VersionFormat {
   VERSION_FULL,
 };
 
+using GetTpmVersionCallback = base::OnceCallback<void(
+    const CryptohomeClient::TpmVersionInfo& tpm_version_info)>;
+
 // Gets the version.
 // If |full_version| is true version string with extra info is extracted,
 // otherwise it's in short format x.x.xx.x.
 // May block.
 CHROMEOS_EXPORT std::string GetVersion(VersionFormat format);
+
+// Gets the TPM version information. Asynchronous, result is passed on to
+// callback.
+CHROMEOS_EXPORT void GetTpmVersion(GetTpmVersionCallback callback);
 
 // Gets the ARC version.
 // May block.

@@ -10,7 +10,7 @@
 #include "platform/graphics/Color.h"
 #include "platform/graphics/paint/DisplayItemList.h"
 #include "platform/graphics/paint/PaintArtifact.h"
-#include "platform/graphics/paint/ScrollPaintPropertyNode.h"
+#include "platform/graphics/paint/TransformPaintPropertyNode.h"
 #include "platform/wtf/Allocator.h"
 #include "platform/wtf/PassRefPtr.h"
 #include "platform/wtf/Vector.h"
@@ -33,12 +33,12 @@ class TransformPaintPropertyNode;
 //
 // Usage:
 //   TestPaintArtifact artifact;
-//   artifact.chunk(paintProperties)
-//       .rectDrawing(bounds, color)
-//       .rectDrawing(bounds2, color2);
-//   artifact.chunk(otherPaintProperties)
-//       .rectDrawing(bounds3, color3);
-//   doSomethingWithArtifact(artifact);
+//   artifact.Chunk(paintProperties)
+//       .RectDrawing(bounds, color)
+//       .RectDrawing(bounds2, color2);
+//   artifact.Chunk(otherPaintProperties)
+//       .RectDrawing(bounds3, color3);
+//   DoSomethingWithArtifact(artifact);
 class TestPaintArtifact {
   STACK_ALLOCATED();
 
@@ -55,6 +55,8 @@ class TestPaintArtifact {
   TestPaintArtifact& ForeignLayer(const FloatPoint&,
                                   const IntSize&,
                                   scoped_refptr<cc::Layer>);
+  TestPaintArtifact& ScrollHitTest(
+      PassRefPtr<const TransformPaintPropertyNode> scroll_offset);
 
   // Can't add more things once this is called.
   const PaintArtifact& Build();

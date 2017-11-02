@@ -4,14 +4,16 @@
 
 #include "bindings/core/v8/GeneratedCodeHelper.h"
 
-#include "bindings/core/v8/SerializedScriptValue.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
+#include "bindings/core/v8/serialization/SerializedScriptValue.h"
 
 namespace blink {
 
 void V8ConstructorAttributeGetter(
     v8::Local<v8::Name> property_name,
     const v8::PropertyCallbackInfo<v8::Value>& info) {
+  RUNTIME_CALL_TIMER_SCOPE_DISABLED_BY_DEFAULT(
+      info.GetIsolate(), "Blink_V8ConstructorAttributeGetter");
   v8::Local<v8::Value> data = info.Data();
   DCHECK(data->IsExternal());
   V8PerContextData* per_context_data =

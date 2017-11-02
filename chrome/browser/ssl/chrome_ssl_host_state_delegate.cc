@@ -16,6 +16,7 @@
 #include "base/command_line.h"
 #include "base/guid.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/clock.h"
@@ -263,9 +264,9 @@ base::DictionaryValue* ChromeSSLHostStateDelegate::GetValidCertDecisionsDict(
     if (create_entries == DO_NOT_CREATE_DICTIONARY_ENTRIES)
       return NULL;
 
-    cert_error_dict = new base::DictionaryValue();
-    // dict takes ownership of cert_error_dict
-    dict->Set(kSSLCertDecisionCertErrorMapKey, cert_error_dict);
+    cert_error_dict =
+        dict->SetDictionary(kSSLCertDecisionCertErrorMapKey,
+                            base::MakeUnique<base::DictionaryValue>());
   }
 
   return cert_error_dict;
@@ -317,9 +318,9 @@ void ChromeSSLHostStateDelegate::AllowCert(const std::string& host,
   if (!cert_dict)
     return;
 
-  dict->SetIntegerWithoutPathExpansion(kSSLCertDecisionVersionKey,
-                                       kDefaultSSLCertDecisionVersion);
-  cert_dict->SetIntegerWithoutPathExpansion(GetKey(cert, error), ALLOWED);
+  dict->SetKey(kSSLCertDecisionVersionKey,
+               base::Value(kDefaultSSLCertDecisionVersion));
+  cert_dict->SetKey(GetKey(cert, error), base::Value(ALLOWED));
 
   // The map takes ownership of the value, so it is released in the call to
   // SetWebsiteSettingDefaultScope.
@@ -333,9 +334,7 @@ void ChromeSSLHostStateDelegate::Clear(
   // Convert host matching to content settings pattern matching. Content
   // settings deletion is done synchronously on the UI thread, so we can use
   // |host_filter| by reference.
-  base::Callback<bool(const ContentSettingsPattern& primary_pattern,
-                      const ContentSettingsPattern& secondary_pattern)>
-      pattern_filter;
+  HostContentSettingsMap::PatternSourcePredicate pattern_filter;
   if (!host_filter.is_null()) {
     pattern_filter =
         base::Bind(&HostFilterToPatternFilter, base::ConstRef(host_filter));
@@ -343,7 +342,8 @@ void ChromeSSLHostStateDelegate::Clear(
 
   HostContentSettingsMapFactory::GetForProfile(profile_)
       ->ClearSettingsForOneTypeWithPredicate(
-          CONTENT_SETTINGS_TYPE_SSL_CERT_DECISIONS, pattern_filter);
+          CONTENT_SETTINGS_TYPE_SSL_CERT_DECISIONS, base::Time(),
+          pattern_filter);
 }
 
 content::SSLHostStateDelegate::CertJudgment
@@ -431,7 +431,7 @@ void ChromeSSLHostStateDelegate::RevokeUserAllowExceptionsHard(
   scoped_refptr<net::URLRequestContextGetter> getter(
       profile_->GetRequestContext());
   getter->GetNetworkTaskRunner()->PostTask(
-      FROM_HERE, base::Bind(&CloseIdleConnections, getter));
+      FROM_HERE, base::BindOnce(&CloseIdleConnections, getter));
 }
 
 bool ChromeSSLHostStateDelegate::HasAllowException(

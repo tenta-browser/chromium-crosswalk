@@ -13,11 +13,11 @@
 #include "cc/output/output_surface.h"
 #include "cc/quads/solid_color_draw_quad.h"
 #include "cc/quads/texture_draw_quad.h"
-#include "cc/resources/platform_color.h"
 #include "cc/resources/scoped_resource.h"
 #include "cc/resources/single_release_callback_impl.h"
 #include "cc/trees/layer_tree_impl.h"
 #include "cc/trees/occlusion.h"
+#include "components/viz/common/resources/platform_color.h"
 
 namespace cc {
 
@@ -41,7 +41,7 @@ TextureLayerImpl::TextureLayerImpl(LayerTreeImpl* tree_impl, int id)
 TextureLayerImpl::~TextureLayerImpl() { FreeTextureMailbox(); }
 
 void TextureLayerImpl::SetTextureMailbox(
-    const TextureMailbox& mailbox,
+    const viz::TextureMailbox& mailbox,
     std::unique_ptr<SingleReleaseCallbackImpl> release_callback) {
   DCHECK_EQ(mailbox.IsValid(), !!release_callback);
   FreeTextureMailbox();
@@ -106,7 +106,7 @@ bool TextureLayerImpl::WillDraw(DrawMode draw_mode,
     // Have to upload a copy to a texture for it to be used in a
     // hardware draw.
     if (!texture_copy_)
-      texture_copy_ = base::MakeUnique<ScopedResource>(resource_provider);
+      texture_copy_ = std::make_unique<ScopedResource>(resource_provider);
     if (texture_copy_->size() != texture_mailbox_.size_in_pixels() ||
         resource_provider->InUseByConsumer(texture_copy_->id()))
       texture_copy_->Free();
@@ -122,7 +122,7 @@ bool TextureLayerImpl::WillDraw(DrawMode draw_mode,
       std::vector<uint8_t> swizzled;
       uint8_t* pixels = texture_mailbox_.shared_bitmap()->pixels();
 
-      if (!PlatformColor::SameComponentOrder(texture_copy_->format())) {
+      if (!viz::PlatformColor::SameComponentOrder(texture_copy_->format())) {
         // Swizzle colors. This is slow, but should be really uncommon.
         size_t bytes = texture_mailbox_.SharedMemorySizeInBytes();
         swizzled.resize(bytes);
@@ -137,8 +137,6 @@ bool TextureLayerImpl::WillDraw(DrawMode draw_mode,
 
       resource_provider->CopyToResource(texture_copy_->id(), pixels,
                                         texture_mailbox_.size_in_pixels());
-      resource_provider->GenerateSyncTokenForResource(texture_copy_->id());
-
       valid_texture_copy_ = true;
     }
   }
@@ -150,7 +148,7 @@ void TextureLayerImpl::AppendQuads(RenderPass* render_pass,
                                    AppendQuadsData* append_quads_data) {
   DCHECK(external_texture_resource_ || valid_texture_copy_);
 
-  SharedQuadState* shared_quad_state =
+  viz::SharedQuadState* shared_quad_state =
       render_pass->CreateAndAppendSharedQuadState();
   PopulateSharedQuadState(shared_quad_state);
 
@@ -162,10 +160,10 @@ void TextureLayerImpl::AppendQuads(RenderPass* render_pass,
   bool opaque = contents_opaque() || (SkColorGetA(bg_color) == 0xFF);
 
   gfx::Rect quad_rect(bounds());
-  gfx::Rect opaque_rect = opaque ? quad_rect : gfx::Rect();
   gfx::Rect visible_quad_rect =
       draw_properties().occlusion_in_content_space.GetUnoccludedContentRect(
           quad_rect);
+  bool needs_blending = !opaque;
   if (visible_quad_rect.IsEmpty())
     return;
 
@@ -175,11 +173,11 @@ void TextureLayerImpl::AppendQuads(RenderPass* render_pass,
 
   TextureDrawQuad* quad =
       render_pass->CreateAndAppendDrawQuad<TextureDrawQuad>();
-  ResourceId id =
+  viz::ResourceId id =
       valid_texture_copy_ ? texture_copy_->id() : external_texture_resource_;
-  quad->SetNew(shared_quad_state, quad_rect, opaque_rect, visible_quad_rect, id,
-               premultiplied_alpha_, uv_top_left_, uv_bottom_right_, bg_color,
-               vertex_opacity_, flipped_, nearest_neighbor_,
+  quad->SetNew(shared_quad_state, quad_rect, visible_quad_rect, needs_blending,
+               id, premultiplied_alpha_, uv_top_left_, uv_bottom_right_,
+               bg_color, vertex_opacity_, flipped_, nearest_neighbor_,
                texture_mailbox_.secure_output_only());
   if (!valid_texture_copy_) {
     quad->set_resource_size_in_pixels(texture_mailbox_.size_in_pixels());
@@ -258,7 +256,7 @@ void TextureLayerImpl::FreeTextureMailbox() {
                                  ->task_runner_provider()
                                  ->blocking_main_thread_task_runner());
     }
-    texture_mailbox_ = TextureMailbox();
+    texture_mailbox_ = viz::TextureMailbox();
     release_callback_ = nullptr;
   } else if (external_texture_resource_) {
     DCHECK(!own_mailbox_);

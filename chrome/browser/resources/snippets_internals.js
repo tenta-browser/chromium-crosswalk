@@ -34,9 +34,34 @@ cr.define('chrome.SnippetsInternals', function() {
     });
 
     $('background-fetch-button').addEventListener('click', function(event) {
-      chrome.send('fetchRemoteSuggestionsInTheBackground');
+      chrome.send('fetchRemoteSuggestionsInTheBackgroundIn2Seconds');
       event.preventDefault();
     });
+
+    $('push-dummy-suggestion-10-seconds-button')
+        .addEventListener('click', function(event) {
+          chrome.send('pushDummySuggestionIn10Seconds');
+          event.preventDefault();
+        });
+
+    if (loadTimeData.getBoolean('contextualSuggestionsEnabled')) {
+      $('contextual-suggestions-section').classList.remove('hidden');
+    }
+
+    $('fetch-contextual-suggestions-button')
+        .addEventListener('click', function(event) {
+          let url = $('contextual-url').value;
+          $('contextual-suggestions-request-result').textContent =
+              'Fetching contextual suggestions for ' + url;
+          chrome.send('fetchContextualSuggestions', [url]);
+          event.preventDefault();
+        });
+
+    $('reset-notifications-state-button')
+        .addEventListener('click', function(event) {
+          chrome.send('resetNotificationsState');
+          event.preventDefault();
+        });
 
     window.addEventListener('focus', refreshContent);
     window.setInterval(refreshContent, 1000);
@@ -48,10 +73,15 @@ cr.define('chrome.SnippetsInternals', function() {
     $(propertyId).textContent = value;
   }
 
+  function receiveContextualSuggestions(suggestions, status_msg) {
+    $('contextual-suggestions-request-result').textContent = status_msg;
+    displayList(
+        suggestions, 'contextual-suggestions', 'contextual-hidden-toggler');
+  }
+
   function receiveContentSuggestions(categoriesList) {
     lastSuggestions = categoriesList;
-    displayList(categoriesList, 'content-suggestions',
-                'hidden-toggler');
+    displayList(categoriesList, 'content-suggestions', 'hidden-toggler');
 
     var clearCachedButtons =
         document.getElementsByClassName('submit-clear-cached-suggestions');
@@ -89,7 +119,8 @@ cr.define('chrome.SnippetsInternals', function() {
     var id = parseInt(event.currentTarget.getAttribute('category-id'), 10);
     var table = $('dismissed-suggestions-' + id);
     table.classList.toggle('hidden');
-    chrome.send('toggleDismissedSuggestions',
+    chrome.send(
+        'toggleDismissedSuggestions',
         [id, !table.classList.contains('hidden')]);
   }
 
@@ -113,9 +144,14 @@ cr.define('chrome.SnippetsInternals', function() {
     receiveProperty('avg-time-to-use', timeToUse);
   }
 
+  function receiveRankerDebugData(itemsList) {
+    displayList(itemsList, 'ranker', 'no-togler');
+  }
+
   function receiveLastRemoteSuggestionsBackgroundFetchTime(
       lastRemoteSuggestionsBackgroundFetchTime) {
-    receiveProperty('last-background-fetch-time-label',
+    receiveProperty(
+        'last-background-fetch-time-label',
         lastRemoteSuggestionsBackgroundFetchTime);
   }
 
@@ -152,8 +188,10 @@ cr.define('chrome.SnippetsInternals', function() {
       display = 'none';
     }
 
-    if ($(domId + '-empty')) $(domId + '-empty').textContent = text;
-    if ($(domId + '-clear')) $(domId + '-clear').style.display = display;
+    if ($(domId + '-empty'))
+      $(domId + '-empty').textContent = text;
+    if ($(domId + '-clear'))
+      $(domId + '-clear').style.display = display;
 
     var links = document.getElementsByClassName(toggleClass);
     for (var link of links) {
@@ -168,10 +206,12 @@ cr.define('chrome.SnippetsInternals', function() {
     receiveContentSuggestions: receiveContentSuggestions,
     receiveJson: receiveJson,
     receiveClassification: receiveClassification,
+    receiveRankerDebugData: receiveRankerDebugData,
     receiveLastRemoteSuggestionsBackgroundFetchTime:
         receiveLastRemoteSuggestionsBackgroundFetchTime,
+    receiveContextualSuggestions: receiveContextualSuggestions,
   };
 });
 
-document.addEventListener('DOMContentLoaded',
-                          chrome.SnippetsInternals.initialize);
+document.addEventListener(
+    'DOMContentLoaded', chrome.SnippetsInternals.initialize);

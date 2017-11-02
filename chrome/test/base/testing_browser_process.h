@@ -63,12 +63,14 @@ class TestingBrowserProcess : public BrowserProcess {
   // BrowserProcess overrides:
   void ResourceDispatcherHostCreated() override;
   void EndSession() override;
+  void FlushLocalStateAndReply(base::OnceClosure reply) override;
   metrics_services_manager::MetricsServicesManager* GetMetricsServicesManager()
       override;
   metrics::MetricsService* metrics_service() override;
   rappor::RapporServiceImpl* rappor_service() override;
-  ukm::UkmService* ukm_service() override;
+  ukm::UkmRecorder* ukm_recorder() override;
   IOThread* io_thread() override;
+  SystemNetworkContextManager* system_network_context_manager() override;
   WatchDogThread* watchdog_thread() override;
   ProfileManager* profile_manager() override;
   PrefService* local_state() override;
@@ -120,7 +122,6 @@ class TestingBrowserProcess : public BrowserProcess {
   component_updater::SupervisedUserWhitelistInstaller*
   supervised_user_whitelist_installer() override;
   MediaFileSystemRegistry* media_file_system_registry() override;
-  bool created_local_state() const override;
 
 #if BUILDFLAG(ENABLE_WEBRTC)
   WebRtcLogUploader* webrtc_log_uploader() override;
@@ -129,10 +130,11 @@ class TestingBrowserProcess : public BrowserProcess {
   network_time::NetworkTimeTracker* network_time_tracker() override;
 
   gcm::GCMDriver* gcm_driver() override;
-  memory::TabManager* GetTabManager() override;
+  resource_coordinator::TabManager* GetTabManager() override;
   shell_integration::DefaultWebClientState CachedDefaultWebClientState()
       override;
   physical_web::PhysicalWebDataSource* GetPhysicalWebDataSource() override;
+  prefs::InProcessPrefServiceFactory* pref_service_factory() const override;
 
   // Set the local state for tests. Consumer is responsible for cleaning it up
   // afterwards (using ScopedTestingLocalState, for example).
@@ -149,7 +151,7 @@ class TestingBrowserProcess : public BrowserProcess {
   void SetNotificationPlatformBridge(
       std::unique_ptr<NotificationPlatformBridge> notification_platform_bridge);
   void SetRapporServiceImpl(rappor::RapporServiceImpl* rappor_service);
-  void SetUkmService(ukm::UkmService* ukm_service);
+  void SetUkmRecorder(ukm::UkmRecorder* ukm_recorder);
   void SetShuttingDown(bool is_shutting_down);
   void ShutdownBrowserPolicyConnector();
 
@@ -188,7 +190,7 @@ class TestingBrowserProcess : public BrowserProcess {
   // |tab_manager_| is null by default and will be created when
   // GetTabManager() is invoked on supported platforms.
 #if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_LINUX)
-  std::unique_ptr<memory::TabManager> tab_manager_;
+  std::unique_ptr<resource_coordinator::TabManager> tab_manager_;
 #endif
 
   // The following objects are not owned by TestingBrowserProcess:
@@ -196,7 +198,7 @@ class TestingBrowserProcess : public BrowserProcess {
   IOThread* io_thread_;
   net::URLRequestContextGetter* system_request_context_;
   rappor::RapporServiceImpl* rappor_service_;
-  ukm::UkmService* ukm_service_;
+  ukm::UkmRecorder* ukm_recorder_;
 
   std::unique_ptr<BrowserProcessPlatformPart> platform_part_;
 

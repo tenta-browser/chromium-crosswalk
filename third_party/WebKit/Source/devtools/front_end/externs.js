@@ -225,12 +225,6 @@ DevToolsHost.ContextMenuDescriptor;
 DevToolsHost.zoomFactor = function() {};
 
 /**
- * @param {string} origin
- * @param {string} script
- */
-DevToolsHost.setInjectedScriptForOrigin = function(origin, script) {};
-
-/**
  * @param {string} text
  */
 DevToolsHost.copyText = function(text) {};
@@ -344,6 +338,21 @@ Adb.PortForwardingRule;
 Adb.DevicePortForwardingStatus;
 /** @typedef {!Object<string, !Adb.DevicePortForwardingStatus>} */
 Adb.PortForwardingStatus;
+/** @typedef {!Array<string>} */
+Adb.NetworkDiscoveryConfig;
+/**
+ * @typedef {!{
+ *   discoverUsbDevices: boolean,
+ *   portForwardingEnabled: boolean,
+ *   portForwardingConfig: !Adb.PortForwardingConfig,
+ *   networkDiscoveryEnabled: boolean,
+ *   networkDiscoveryConfig: !Adb.NetworkDiscoveryConfig
+ * }}
+ */
+Adb.Config;
+
+/** @const */
+var module = {};
 
 /**
  * @constructor
@@ -816,3 +825,9 @@ Terminal.prototype = {
   /** @param {string} eventName * @param {!Function} handler */
   on: function(eventName, handler) {}
 };
+
+/**
+ * @param {string} context
+ * @return {!Console}
+ */
+Console.prototype.context = function(context) {};

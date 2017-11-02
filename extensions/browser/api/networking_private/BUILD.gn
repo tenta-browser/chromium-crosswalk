@@ -2,6 +2,11 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//extensions/features/features.gni")
+
+assert(enable_extensions,
+       "Cannot depend on extensions because enable_extensions=false.")
+
 import("//build/config/features.gni")
 
 source_set("networking_private") {
@@ -23,6 +28,10 @@ source_set("networking_private") {
   deps = [
     "//extensions/common/api",
     "//net",
+  ]
+
+  public_deps = [
+    "//extensions/browser:browser_sources",
   ]
 
   if (!is_chromeos && is_linux) {

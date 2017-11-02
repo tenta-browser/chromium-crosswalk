@@ -20,7 +20,7 @@ suite('<site-data>', function() {
     siteData.sites = [{site: 'Google', id: GOOGLE_ID, localData: 'Cookiez!'}];
     Polymer.dom.flush();
 
-    MockInteractions.tap(siteData.$$('.remove-site'));
+    MockInteractions.tap(siteData.$$('.icon-delete-gray'));
 
     return testBrowserProxy.whenCalled('removeCookie').then(function(path) {
       assertEquals(GOOGLE_ID, path);
@@ -36,22 +36,18 @@ suite('<site-data>', function() {
     Polymer.dom.flush();
     assertEquals(
         siteData.sites.length,
-        siteData.shadowRoot.querySelectorAll('.list-item').length);
+        siteData.shadowRoot.querySelectorAll('#siteItem').length);
 
     // Expecting one result, so the button should be shown.
-    siteData.$.filter.dispatchEvent(
-        new CustomEvent('search-changed', {detail: 'Hello'}));
+    siteData.filter = 'Hello';
     Polymer.dom.flush();
-    assertEquals(
-        1, siteData.shadowRoot.querySelectorAll('.list-item').length);
+    assertEquals(1, siteData.shadowRoot.querySelectorAll('#siteItem').length);
     assertFalse(siteData.$.removeShowingSites.hidden);
 
     // Expecting no results, so the button should be hidden.
-    siteData.$.filter.dispatchEvent(
-        new CustomEvent('search-changed', {detail: 'foo'}));
+    siteData.filter = 'foo';
     Polymer.dom.flush();
-    assertEquals(
-        0, siteData.shadowRoot.querySelectorAll('.list-item').length);
+    assertEquals(0, siteData.shadowRoot.querySelectorAll('#siteItem').length);
     assertTrue(siteData.$.removeShowingSites.hidden);
   });
 });

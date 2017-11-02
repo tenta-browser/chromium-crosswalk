@@ -24,6 +24,7 @@
 #include "ui/ozone/platform/drm/host/drm_device_handle.h"
 #include "ui/ozone/platform/drm/host/drm_display_host.h"
 #include "ui/ozone/platform/drm/host/drm_native_display_delegate.h"
+#include "ui/ozone/platform/drm/host/drm_overlay_manager.h"
 #include "ui/ozone/platform/drm/host/gpu_thread_adapter.h"
 
 namespace ui {
@@ -110,9 +111,11 @@ class FindDrmDisplayHostById {
 DrmDisplayHostManager::DrmDisplayHostManager(
     GpuThreadAdapter* proxy,
     DeviceManager* device_manager,
+    DrmOverlayManager* overlay_manager,
     InputControllerEvdev* input_controller)
     : proxy_(proxy),
       device_manager_(device_manager),
+      overlay_manager_(overlay_manager),
       input_controller_(input_controller),
       primary_graphics_card_path_(GetPrimaryDisplayCardPath()),
       weak_ptr_factory_(this) {
@@ -155,6 +158,7 @@ DrmDisplayHostManager::DrmDisplayHostManager(
 DrmDisplayHostManager::~DrmDisplayHostManager() {
   device_manager_->RemoveObserver(this);
   proxy_->UnRegisterHandlerForDrmDisplayHostManager();
+  proxy_->RemoveGpuThreadObserver(this);
 }
 
 DrmDisplayHost* DrmDisplayHostManager::GetDisplay(int64_t display_id) {
@@ -247,10 +251,8 @@ void DrmDisplayHostManager::ProcessEvent() {
         if (drm_devices_.find(event.path) == drm_devices_.end()) {
           base::PostTaskWithTraits(
               FROM_HERE,
-              base::TaskTraits()
-                  .WithShutdownBehavior(
-                      base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN)
-                  .MayBlock(),
+              {base::MayBlock(),
+               base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
               base::Bind(&OpenDeviceAsync, event.path,
                          base::ThreadTaskRunnerHandle::Get(),
                          base::Bind(&DrmDisplayHostManager::OnAddGraphicsDevice,
@@ -286,8 +288,7 @@ void DrmDisplayHostManager::OnAddGraphicsDevice(
     std::unique_ptr<DrmDeviceHandle> handle) {
   if (handle->IsValid()) {
     drm_devices_[dev_path] = sys_path;
-    proxy_->GpuAddGraphicsDevice(sys_path,
-                                 base::FileDescriptor(handle->PassFD()));
+    proxy_->GpuAddGraphicsDevice(sys_path, handle->PassFD());
     NotifyDisplayDelegate();
   }
 
@@ -330,7 +331,7 @@ void DrmDisplayHostManager::OnGpuProcessLaunched() {
   // Send the primary device first since this is used to initialize graphics
   // state.
   proxy_->GpuAddGraphicsDevice(drm_devices_[primary_graphics_card_path_],
-                               base::FileDescriptor(handle->PassFD()));
+                               handle->PassFD());
 }
 
 void DrmDisplayHostManager::OnGpuThreadReady() {
@@ -392,10 +393,12 @@ void DrmDisplayHostManager::GpuHasUpdatedNativeDisplays(
 void DrmDisplayHostManager::GpuConfiguredDisplay(int64_t display_id,
                                                  bool status) {
   DrmDisplayHost* display = GetDisplay(display_id);
-  if (display)
+  if (display) {
     display->OnDisplayConfigured(status);
-  else
+    overlay_manager_->ResetCache();
+  } else {
     LOG(ERROR) << "Couldn't find display with id=" << display_id;
+  }
 }
 
 void DrmDisplayHostManager::GpuReceivedHDCPState(int64_t display_id,

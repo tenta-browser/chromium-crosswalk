@@ -15,6 +15,7 @@ include_rules = [
   "+components/search",
   "+components/search_engines",
   "+components/sessions",
+  "+components/signin/core/browser",
   "+components/strings/grit/components_strings.h",
   "+components/toolbar",
   "+components/url_formatter",
@@ -26,6 +27,6 @@ include_rules = [
   "+third_party/skia",
   "+ui/base",
   "+ui/gfx",
-  "+ui/vector_icons",
+  "+components/vector_icons",
   "+url",
 ]

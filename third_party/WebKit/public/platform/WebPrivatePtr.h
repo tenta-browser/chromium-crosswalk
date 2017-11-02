@@ -36,8 +36,8 @@
 
 #if INSIDE_BLINK
 #include "platform/heap/Handle.h"
-#include "wtf/PassRefPtr.h"
-#include "wtf/TypeTraits.h"
+#include "platform/wtf/PassRefPtr.h"
+#include "platform/wtf/TypeTraits.h"
 #endif
 
 namespace WTF {
@@ -97,7 +97,7 @@ class PtrStorageImpl<T,
  public:
   typedef PassRefPtr<T> BlinkPtrType;
 
-  void Assign(const BlinkPtrType& val) {
+  void Assign(BlinkPtrType&& val) {
     static_assert(
         crossThreadDestruction == kWebPrivatePtrDestructionSameThread ||
             WTF::IsSubclassOfTemplate<T, WTF::ThreadSafeRefCounted>::value,
@@ -240,17 +240,17 @@ class PtrStorage : public PtrStorageImpl<T,
 //    public:
 //        BLINK_EXPORT ~WebFoo();
 //        WebFoo() { }
-//        WebFoo(const WebFoo& other) { assign(other); }
+//        WebFoo(const WebFoo& other) { Assign(other); }
 //        WebFoo& operator=(const WebFoo& other)
 //        {
-//            assign(other);
+//            Assign(other);
 //            return *this;
 //        }
-//        BLINK_EXPORT void assign(const WebFoo&);  // Implemented in the body.
+//        BLINK_EXPORT void Assign(const WebFoo&);  // Implemented in the body.
 //
 //        // Methods that are exposed to Chromium and which are specific to
 //        // WebFoo go here.
-//        BLINK_EXPORT doWebFooThing();
+//        BLINK_EXPORT DoWebFooThing();
 //
 //        // Methods that are used only by other Blink classes should only be
 //        // declared when INSIDE_BLINK is set.
@@ -259,12 +259,12 @@ class PtrStorage : public PtrStorageImpl<T,
 //    #endif
 //
 //    private:
-//        WebPrivatePtr<Foo> m_private;
+//        WebPrivatePtr<Foo> private_;
 //    };
 //
 //    // WebFoo.cpp
-//    WebFoo::~WebFoo() { m_private.reset(); }
-//    void WebFoo::assign(const WebFoo& other) { ... }
+//    WebFoo::~WebFoo() { private_.Reset(); }
+//    void WebFoo::Assign(const WebFoo& other) { ... }
 //
 template <typename T,
           WebPrivatePtrDestruction crossThreadDestruction =
@@ -274,19 +274,20 @@ class WebPrivatePtr {
  public:
   WebPrivatePtr() : storage_(0) {}
   ~WebPrivatePtr() {
-    // We don't destruct the object pointed by m_ptr here because we don't
+    // We don't destruct the object pointed by storage_ here because we don't
     // want to expose destructors of core classes to embedders. We should
-    // call reset() manually in destructors of classes with WebPrivatePtr
+    // call Reset() manually in destructors of classes with WebPrivatePtr
     // members.
     DCHECK(!storage_);
   }
 
   bool IsNull() const { return !storage_; }
+  explicit operator bool() const { return !IsNull(); }
 
 #if INSIDE_BLINK
   template <typename U>
-  WebPrivatePtr(const U& ptr) : storage_(0) {
-    Storage().Assign(ptr);
+  WebPrivatePtr(U&& ptr) : storage_(0) {
+    Storage().Assign(std::forward<U>(ptr));
   }
 
   void Reset() { Storage().Release(); }
@@ -297,20 +298,20 @@ class WebPrivatePtr {
   }
 
   template <typename U>
-  WebPrivatePtr& operator=(const U& ptr) {
-    Storage().Assign(ptr);
+  WebPrivatePtr& operator=(U&& ptr) {
+    Storage().Assign(std::forward<U>(ptr));
     return *this;
   }
 
   T* Get() const { return Storage().Get(); }
 
   T& operator*() const {
-    ASSERT(storage_);
+    DCHECK(storage_);
     return *Get();
   }
 
   T* operator->() const {
-    ASSERT(storage_);
+    DCHECK(storage_);
     return Get();
   }
 #endif

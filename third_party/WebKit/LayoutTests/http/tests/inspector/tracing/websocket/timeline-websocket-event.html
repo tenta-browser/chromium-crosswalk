@@ -10,18 +10,16 @@ function performActions()
     return new Promise((fulfill) => ws.onclose = fulfill);
 }
 
-function test()
-{
-    InspectorTest.invokeAsyncWithTimeline("performActions", finish);
+function test() {
+  PerformanceTestRunner.invokeAsyncWithTimeline('performActions', finish);
 
-    function finish()
-    {
-        InspectorTest.printTimelineRecordsWithDetails("WebSocketCreate");
-        InspectorTest.printTimelineRecordsWithDetails("WebSocketSendHandshakeRequest");
-        InspectorTest.printTimelineRecordsWithDetails("WebSocketReceiveHandshakeResponse");
-        InspectorTest.printTimelineRecordsWithDetails("WebSocketDestroy");
-        InspectorTest.completeTest();
-    }
+  function finish() {
+    PerformanceTestRunner.printTimelineRecordsWithDetails('WebSocketCreate');
+    PerformanceTestRunner.printTimelineRecordsWithDetails('WebSocketSendHandshakeRequest');
+    PerformanceTestRunner.printTimelineRecordsWithDetails('WebSocketReceiveHandshakeResponse');
+    PerformanceTestRunner.printTimelineRecordsWithDetails('WebSocketDestroy');
+    TestRunner.completeTest();
+  }
 }
 
 if (!window.testRunner)

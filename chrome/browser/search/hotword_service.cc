@@ -50,8 +50,7 @@
 #include "content/public/common/webplugininfo.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/browser/uninstall_reason.h"
-#include "extensions/common/constants.h"
-#include "extensions/common/extension.h"
+#include "extensions/common/disable_reason.h"
 #include "extensions/common/one_shot_event.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -346,7 +345,7 @@ HotwordService::HotwordService(Profile* profile)
   if (extension_service) {
     extension_service->DisableExtension(
         kHotwordOldExtensionId,
-        extensions::Extension::DISABLE_USER_ACTION);
+        extensions::disable_reason::DISABLE_USER_ACTION);
   }
 
   // This will be called during profile initialization which is a good time
@@ -365,8 +364,14 @@ HotwordService::HotwordService(Profile* profile)
           &HotwordService::MaybeReinstallHotwordExtension),
                  weak_factory_.GetWeakPtr()));
 
+// This service is actually used only on ChromeOS, and the next function
+// results in a sequence of calls that triggers
+// HotwordAudioHistoryHandler::GetAudioHistoryEnabled which is not supported
+// on other platforms.
+#if defined(OS_CHROMEOS)
   SetAudioHistoryHandler(new HotwordAudioHistoryHandler(
       profile_, base::ThreadTaskRunnerHandle::Get()));
+#endif
 
   if (HotwordServiceFactory::IsAlwaysOnAvailable() &&
       IsHotwordAllowed()) {
@@ -376,14 +381,16 @@ HotwordService::HotwordService(Profile* profile)
     base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
     if (command_line->HasSwitch(switches::kEnableExperimentalHotwordHardware)) {
       base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-          FROM_HERE, base::Bind(&HotwordService::ShowHotwordNotification,
-                                weak_factory_.GetWeakPtr()),
+          FROM_HERE,
+          base::BindOnce(&HotwordService::ShowHotwordNotification,
+                         weak_factory_.GetWeakPtr()),
           base::TimeDelta::FromSeconds(5));
     } else if (!profile_->GetPrefs()->GetBoolean(
                    prefs::kHotwordAlwaysOnNotificationSeen)) {
       base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-          FROM_HERE, base::Bind(&HotwordService::ShowHotwordNotification,
-                                weak_factory_.GetWeakPtr()),
+          FROM_HERE,
+          base::BindOnce(&HotwordService::ShowHotwordNotification,
+                         weak_factory_.GetWeakPtr()),
           base::TimeDelta::FromMinutes(10));
     }
   }
@@ -400,8 +407,8 @@ HotwordService::HotwordService(Profile* profile)
   // availability.
   content::BrowserThread::PostTask(
       content::BrowserThread::UI, FROM_HERE,
-      base::Bind(&HotwordService::InitializeMicrophoneObserver,
-                 weak_factory_.GetWeakPtr()));
+      base::BindOnce(&HotwordService::InitializeMicrophoneObserver,
+                     weak_factory_.GetWeakPtr()));
 }
 
 HotwordService::~HotwordService() {
@@ -480,11 +487,9 @@ void HotwordService::InstalledFromWebstoreCallback(
   if (result != extensions::webstore_install::SUCCESS && num_tries) {
     // Try again on failure.
     content::BrowserThread::PostDelayedTask(
-        content::BrowserThread::UI,
-        FROM_HERE,
-        base::Bind(&HotwordService::InstallHotwordExtensionFromWebstore,
-                   weak_factory_.GetWeakPtr(),
-                   num_tries),
+        content::BrowserThread::UI, FROM_HERE,
+        base::BindOnce(&HotwordService::InstallHotwordExtensionFromWebstore,
+                       weak_factory_.GetWeakPtr(), num_tries),
         base::TimeDelta::FromSeconds(kInstallRetryDelaySeconds));
   }
 }

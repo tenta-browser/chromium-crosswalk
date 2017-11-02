@@ -9,6 +9,7 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/logging.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -31,11 +32,6 @@
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/url_request/url_request_mock_http_job.h"
 #include "net/url_request/url_request_test_util.h"
-
-#if defined(OS_WIN)
-// For version specific disabled tests below (http://crbug.com/267597).
-#include "base/win/windows_version.h"
-#endif
 
 using base::TimeDelta;
 using content::BrowserThread;
@@ -195,14 +191,19 @@ class UnloadTest : public InProcessBrowserTest {
   // If |accept| is true, simulates user clicking OK, otherwise simulates
   // clicking Cancel.
   void ClickModalDialogButton(bool accept) {
-    app_modal::AppModalDialog* dialog = ui_test_utils::WaitForAppModalDialog();
-    ASSERT_TRUE(dialog->IsJavaScriptModalDialog());
-    app_modal::JavaScriptAppModalDialog* js_dialog =
-        static_cast<app_modal::JavaScriptAppModalDialog*>(dialog);
+    app_modal::JavaScriptAppModalDialog* dialog =
+        ui_test_utils::WaitForAppModalDialog();
     if (accept)
-      js_dialog->native_dialog()->AcceptAppModalDialog();
+      dialog->native_dialog()->AcceptAppModalDialog();
     else
-      js_dialog->native_dialog()->CancelAppModalDialog();
+      dialog->native_dialog()->CancelAppModalDialog();
+  }
+
+  void PrepareForDialog(Browser* browser) {
+    for (int i = 0; i < browser->tab_strip_model()->count(); i++) {
+      content::PrepContentsForBeforeUnloadTest(
+          browser->tab_strip_model()->GetWebContentsAt(i));
+    }
   }
 };
 
@@ -282,13 +283,7 @@ IN_PROC_BROWSER_TEST_F(UnloadTest, DISABLED_BrowserCloseUnload) {
 // OK in the beforeunload confirm dialog.
 IN_PROC_BROWSER_TEST_F(UnloadTest, BrowserCloseBeforeUnloadOK) {
   NavigateToDataURL(BEFORE_UNLOAD_HTML, "beforeunload");
-  // Disable the hang monitor, otherwise there will be a race between the
-  // beforeunload dialog and the beforeunload hang timer.
-  browser()
-      ->tab_strip_model()
-      ->GetActiveWebContents()
-      ->GetMainFrame()
-      ->DisableBeforeUnloadHangMonitorForTesting();
+  PrepareForDialog(browser());
 
   content::WindowedNotificationObserver window_observer(
         chrome::NOTIFICATION_BROWSER_CLOSED,
@@ -303,14 +298,7 @@ IN_PROC_BROWSER_TEST_F(UnloadTest, BrowserCloseBeforeUnloadOK) {
 // If this test flakes, reopen http://crbug.com/123110
 IN_PROC_BROWSER_TEST_F(UnloadTest, BrowserCloseBeforeUnloadCancel) {
   NavigateToDataURL(BEFORE_UNLOAD_HTML, "beforeunload");
-  // Disable the hang monitor, otherwise there will be a race between the
-  // beforeunload dialog and the beforeunload hang timer.
-  browser()
-      ->tab_strip_model()
-      ->GetActiveWebContents()
-      ->GetMainFrame()
-      ->DisableBeforeUnloadHangMonitorForTesting();
-
+  PrepareForDialog(browser());
   chrome::CloseWindow(browser());
 
   // We wait for the title to change after cancelling the closure of browser
@@ -356,13 +344,7 @@ IN_PROC_BROWSER_TEST_F(UnloadTest, BrowserListCloseNoUnloadListeners) {
 // beforeunload handler and clicking Leave in the beforeunload confirm dialog.
 IN_PROC_BROWSER_TEST_F(UnloadTest, BrowserListCloseBeforeUnloadOK) {
   NavigateToDataURL(BEFORE_UNLOAD_HTML, "beforeunload");
-  // Disable the hang monitor, otherwise there will be a race between the
-  // beforeunload dialog and the beforeunload hang timer.
-  browser()
-      ->tab_strip_model()
-      ->GetActiveWebContents()
-      ->GetMainFrame()
-      ->DisableBeforeUnloadHangMonitorForTesting();
+  PrepareForDialog(browser());
 
   content::WindowedNotificationObserver window_observer(
         chrome::NOTIFICATION_BROWSER_CLOSED,
@@ -383,13 +365,7 @@ IN_PROC_BROWSER_TEST_F(UnloadTest, BrowserListCloseBeforeUnloadOK) {
 // beforeunload handler and clicking Stay in the beforeunload confirm dialog.
 IN_PROC_BROWSER_TEST_F(UnloadTest, BrowserListCloseBeforeUnloadCancel) {
   NavigateToDataURL(BEFORE_UNLOAD_HTML, "beforeunload");
-  // Disable the hang monitor, otherwise there will be a race between the
-  // beforeunload dialog and the beforeunload hang timer.
-  browser()
-      ->tab_strip_model()
-      ->GetActiveWebContents()
-      ->GetMainFrame()
-      ->DisableBeforeUnloadHangMonitorForTesting();
+  PrepareForDialog(browser());
 
   UnloadResults unload_results;
   BrowserList::CloseAllBrowsersWithProfile(
@@ -425,13 +401,7 @@ IN_PROC_BROWSER_TEST_F(UnloadTest, BrowserListCloseBeforeUnloadCancel) {
 // beforeunload handler and clicking Leave in the beforeunload confirm dialog.
 IN_PROC_BROWSER_TEST_F(UnloadTest, BrowserListDoubleCloseBeforeUnloadOK) {
   NavigateToDataURL(BEFORE_UNLOAD_HTML, "beforeunload");
-  // Disable the hang monitor, otherwise there will be a race between the
-  // beforeunload dialog and the beforeunload hang timer.
-  browser()
-      ->tab_strip_model()
-      ->GetActiveWebContents()
-      ->GetMainFrame()
-      ->DisableBeforeUnloadHangMonitorForTesting();
+  PrepareForDialog(browser());
 
   content::WindowedNotificationObserver window_observer(
         chrome::NOTIFICATION_BROWSER_CLOSED,
@@ -457,13 +427,7 @@ IN_PROC_BROWSER_TEST_F(UnloadTest, BrowserListDoubleCloseBeforeUnloadOK) {
 // beforeunload handler and clicking Stay in the beforeunload confirm dialog.
 IN_PROC_BROWSER_TEST_F(UnloadTest, BrowserListDoubleCloseBeforeUnloadCancel) {
   NavigateToDataURL(BEFORE_UNLOAD_HTML, "beforeunload");
-  // Disable the hang monitor, otherwise there will be a race between the
-  // beforeunload dialog and the beforeunload hang timer.
-  browser()
-      ->tab_strip_model()
-      ->GetActiveWebContents()
-      ->GetMainFrame()
-      ->DisableBeforeUnloadHangMonitorForTesting();
+  PrepareForDialog(browser());
 
   UnloadResults unload_results;
   BrowserList::CloseAllBrowsersWithProfile(
@@ -500,6 +464,57 @@ IN_PROC_BROWSER_TEST_F(UnloadTest, BrowserListDoubleCloseBeforeUnloadCancel) {
   window_observer.Wait();
 }
 
+// Tests closing the browser by BrowserList::CloseAllBrowsersWithProfile, with
+// a null success callback, a beforeunload handler and clicking Leave in the
+// beforeunload confirm dialog. The test succeed if no crash happens.
+IN_PROC_BROWSER_TEST_F(UnloadTest, BrowserListCloseBeforeUnloadNullCallbackOk) {
+  NavigateToDataURL(BEFORE_UNLOAD_HTML, "beforeunload");
+  PrepareForDialog(browser());
+
+  content::WindowedNotificationObserver window_observer(
+      chrome::NOTIFICATION_BROWSER_CLOSED,
+      content::NotificationService::AllSources());
+  UnloadResults unload_results;
+  BrowserList::CloseAllBrowsersWithProfile(browser()->profile(),
+                                           BrowserList::CloseCallback(),
+                                           BrowserList::CloseCallback(), false);
+  ClickModalDialogButton(true);
+  window_observer.Wait();
+}
+
+// Tests closing the browser by BrowserList::CloseAllBrowsersWithProfile, with
+// a null failure callback, a beforeunload handler and clicking Stay in the
+// beforeunload confirm dialog. The test succeed if no crash happens.
+IN_PROC_BROWSER_TEST_F(UnloadTest,
+                       BrowserListCloseBeforeUnloadNullCallbackCancel) {
+  NavigateToDataURL(BEFORE_UNLOAD_HTML, "beforeunload");
+  PrepareForDialog(browser());
+
+  UnloadResults unload_results;
+  BrowserList::CloseAllBrowsersWithProfile(browser()->profile(),
+                                           BrowserList::CloseCallback(),
+                                           BrowserList::CloseCallback(), false);
+
+  // We wait for the title to change after cancelling the closure of browser
+  // window, to ensure that in-flight IPCs from the renderer reach the browser.
+  // Otherwise the browser won't put up the beforeunload dialog because it's
+  // waiting for an ack from the renderer.
+  base::string16 expected_title = base::ASCIIToUTF16("cancelled");
+  content::TitleWatcher title_watcher(
+      browser()->tab_strip_model()->GetActiveWebContents(), expected_title);
+  ClickModalDialogButton(false);
+  ASSERT_EQ(expected_title, title_watcher.WaitAndGetTitle());
+
+  // The test harness cannot close the window automatically, because it requires
+  // confirmation. We close the window manually instead.
+  content::WindowedNotificationObserver window_observer(
+      chrome::NOTIFICATION_BROWSER_CLOSED,
+      content::NotificationService::AllSources());
+  chrome::CloseWindow(browser());
+  ClickModalDialogButton(true);
+  window_observer.Wait();
+}
+
 // Tests terminating the browser with a beforeunload handler.
 // Currently only ChromeOS shuts down gracefully.
 #if defined(OS_CHROMEOS)
@@ -514,13 +529,7 @@ IN_PROC_BROWSER_TEST_F(UnloadTest, BrowserTerminateBeforeUnload) {
 // If this flakes, use http://crbug.com/32615 and http://crbug.com/45675
 IN_PROC_BROWSER_TEST_F(UnloadTest, BrowserCloseWithInnerFocusedFrame) {
   NavigateToDataURL(INNER_FRAME_WITH_FOCUS_HTML, "innerframewithfocus");
-  // Disable the hang monitor, otherwise there will be a race between the
-  // beforeunload dialog and the beforeunload hang timer.
-  browser()
-      ->tab_strip_model()
-      ->GetActiveWebContents()
-      ->GetMainFrame()
-      ->DisableBeforeUnloadHangMonitorForTesting();
+  PrepareForDialog(browser());
 
   content::WindowedNotificationObserver window_observer(
         chrome::NOTIFICATION_BROWSER_CLOSED,
@@ -799,12 +808,8 @@ IN_PROC_BROWSER_TEST_F(FastUnloadTest, PRE_ClosingLastTabFinishesUnload) {
 }
 
 // Fails on Mac, Linux, Win7 (http://crbug.com/301173).
+// Flaky on Windows bots (http://crbug.com/267597).
 IN_PROC_BROWSER_TEST_F(FastUnloadTest, DISABLED_ClosingLastTabFinishesUnload) {
-#if defined(OS_WIN)
-  // Flaky on Win7+ bots (http://crbug.com/267597).
-  if (base::win::GetVersion() >= base::win::VERSION_WIN7)
-    return;
-#endif
   // Check for cookie set in unload handler of PRE_ test.
   NavigateToPage("no_listeners");
   EXPECT_EQ("unloaded=ohyeah", GetCookies("no_listeners"));
@@ -895,6 +900,7 @@ IN_PROC_BROWSER_TEST_F(FastUnloadTest,
     return;
 
   NavigateToDataURL(BEFORE_UNLOAD_HTML, "beforeunload");
+  PrepareForDialog(browser());
   content::WebContents* beforeunload_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
 
@@ -927,6 +933,7 @@ IN_PROC_BROWSER_TEST_F(FastUnloadTest,
 IN_PROC_BROWSER_TEST_F(FastUnloadTest,
                        BrowserListForceCloseWithBeforeUnloadWithFastUnload) {
   NavigateToDataURL(BEFORE_UNLOAD_HTML, "beforeunload");
+  PrepareForDialog(browser());
 
   content::WindowedNotificationObserver window_observer(
       chrome::NOTIFICATION_BROWSER_CLOSED,
@@ -945,6 +952,7 @@ IN_PROC_BROWSER_TEST_F(FastUnloadTest,
 IN_PROC_BROWSER_TEST_F(FastUnloadTest,
                        BrowserListForceCloseAfterNormalCloseWithFastUnload) {
   NavigateToDataURL(BEFORE_UNLOAD_HTML, "beforeunload");
+  PrepareForDialog(browser());
 
   content::WindowedNotificationObserver window_observer(
       chrome::NOTIFICATION_BROWSER_CLOSED,

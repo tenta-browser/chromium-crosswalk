@@ -129,8 +129,8 @@ bool IOSChromeNetworkDelegate::OnCanGetCookies(
   if (!cookie_settings_)
     return true;
 
-  return cookie_settings_->IsCookieAccessAllowed(
-      request.url(), request.first_party_for_cookies());
+  return cookie_settings_->IsCookieAccessAllowed(request.url(),
+                                                 request.site_for_cookies());
 }
 
 bool IOSChromeNetworkDelegate::OnCanSetCookie(const net::URLRequest& request,
@@ -140,24 +140,25 @@ bool IOSChromeNetworkDelegate::OnCanSetCookie(const net::URLRequest& request,
   if (!cookie_settings_)
     return true;
 
-  return cookie_settings_->IsCookieAccessAllowed(
-      request.url(), request.first_party_for_cookies());
+  return cookie_settings_->IsCookieAccessAllowed(request.url(),
+                                                 request.site_for_cookies());
 }
 
 bool IOSChromeNetworkDelegate::OnCanAccessFile(
     const net::URLRequest& request,
-    const base::FilePath& path) const {
+    const base::FilePath& original_path,
+    const base::FilePath& absolute_path) const {
   return true;
 }
 
 bool IOSChromeNetworkDelegate::OnCanEnablePrivacyMode(
     const GURL& url,
-    const GURL& first_party_for_cookies) const {
+    const GURL& site_for_cookies) const {
   // Null during tests, or when we're running in the system context.
   if (!cookie_settings_.get())
     return false;
 
-  return !cookie_settings_->IsCookieAccessAllowed(url, first_party_for_cookies);
+  return !cookie_settings_->IsCookieAccessAllowed(url, site_for_cookies);
 }
 
 bool IOSChromeNetworkDelegate::

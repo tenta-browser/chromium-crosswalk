@@ -12,9 +12,11 @@
 #include <string>
 #include <vector>
 
+#include "base/strings/utf_offset_string_conversions.h"
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/omnibox/browser/autocomplete_match_type.h"
 #include "components/search_engines/template_url.h"
+#include "components/url_formatter/url_formatter.h"
 #include "ui/base/page_transition_types.h"
 #include "url/gurl.h"
 
@@ -31,7 +33,7 @@ namespace gfx {
 struct VectorIcon;
 }  // namespace gfx
 
-const char kACMatchPropertyInputText[] = "input text";
+const char kACMatchPropertySuggestionText[] = "match suggestion text";
 const char kACMatchPropertyContentsPrefix[] = "match contents prefix";
 const char kACMatchPropertyContentsStartIndex[] = "match contents start index";
 
@@ -207,6 +209,20 @@ struct AutocompleteMatch {
                                  TemplateURLService* template_url_service,
                                  const base::string16& keyword);
 
+  // Gets the formatting flags used for display of suggestions. This method
+  // encapsulates the return of experimental flags too, so any URLs displayed
+  // as an Omnibox suggestion should use this method.
+  //
+  // This function returns flags that may destructively format the URL, and
+  // therefore should never be used for the |fill_into_edit| field.
+  //
+  // |preserve_scheme|, |preserve_subdomain|, and |preserve_after_host| indicate
+  // that these URL components are important (part of the match), and should
+  // not be trimmed or elided.
+  static url_formatter::FormatUrlTypes GetFormatTypes(bool preserve_scheme,
+                                                      bool preserve_subdomain,
+                                                      bool preserve_after_host);
+
   // Computes the stripped destination URL (via GURLToStrippedGURL()) and
   // stores the result in |stripped_destination_url|.  |input| is used for the
   // same purpose as in GURLToStrippedGURL().
@@ -286,6 +302,11 @@ struct AutocompleteMatch {
   // that sets |swap_contents_and_description| for conditions under which
   // it is true.
   void PossiblySwapContentsAndDescriptionForDisplay();
+
+  // If this match is a tail suggestion, prepends the passed |common_prefix|.
+  // If not, but the prefix matches the beginning of the suggestion, dims that
+  // portion in the classification.
+  void InlineTailPrefix(const base::string16& common_prefix);
 
   // The provider of this match, used to remember which provider the user had
   // selected when the input changes. This may be NULL, in which case there is

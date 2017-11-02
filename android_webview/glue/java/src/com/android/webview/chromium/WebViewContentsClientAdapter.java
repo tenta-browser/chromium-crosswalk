@@ -27,6 +27,7 @@ import android.webkit.JsDialogHelper;
 import android.webkit.JsPromptResult;
 import android.webkit.JsResult;
 import android.webkit.PermissionRequest;
+import android.webkit.RenderProcessGoneDetail;
 import android.webkit.SslErrorHandler;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -44,9 +45,11 @@ import org.chromium.android_webview.AwContentsClient;
 import org.chromium.android_webview.AwContentsClientBridge;
 import org.chromium.android_webview.AwHttpAuthHandler;
 import org.chromium.android_webview.AwRenderProcessGoneDetail;
+import org.chromium.android_webview.AwSafeBrowsingResponse;
 import org.chromium.android_webview.AwWebResourceResponse;
 import org.chromium.android_webview.JsPromptResultReceiver;
 import org.chromium.android_webview.JsResultReceiver;
+import org.chromium.android_webview.SafeBrowsingAction;
 import org.chromium.android_webview.permission.AwPermissionRequest;
 import org.chromium.android_webview.permission.Resource;
 import org.chromium.base.Log;
@@ -255,7 +258,7 @@ class WebViewContentsClientAdapter extends AwContentsClient {
         }
     }
 
-    private static class WebResourceRequestImpl implements WebResourceRequest {
+    protected static class WebResourceRequestImpl implements WebResourceRequest {
         private final AwWebResourceRequest mRequest;
 
         public WebResourceRequestImpl(AwWebResourceRequest request) {
@@ -349,8 +352,7 @@ class WebViewContentsClientAdapter extends AwContentsClient {
             TraceEvent.begin("WebViewContentsClientAdapter.shouldOverrideUrlLoading");
             if (TRACE) Log.d(TAG, "shouldOverrideUrlLoading=" + request.url);
             boolean result;
-            if (Build.VERSION.CODENAME.equals("N")
-                    || Build.VERSION.SDK_INT > Build.VERSION_CODES.M) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 result = mWebViewClient.shouldOverrideUrlLoading(
                         mWebView, new WebResourceRequestImpl(request));
             } else {
@@ -629,6 +631,14 @@ class WebViewContentsClientAdapter extends AwContentsClient {
         } finally {
             TraceEvent.end("WebViewContentsClientAdapter.onReceivedError");
         }
+    }
+
+    @Override
+    public void onSafeBrowsingHit(AwWebResourceRequest request, int threatType,
+            ValueCallback<AwSafeBrowsingResponse> callback) {
+        // TODO(ntfschr): invoke the WebViewClient method once the next SDK rolls
+        callback.onReceiveValue(new AwSafeBrowsingResponse(SafeBrowsingAction.SHOW_INTERSTITIAL,
+                /* reporting */ true));
     }
 
     @Override
@@ -1207,8 +1217,26 @@ class WebViewContentsClientAdapter extends AwContentsClient {
     }
 
     @Override
-    public boolean onRenderProcessGone(AwRenderProcessGoneDetail detail) {
-        return false;
+    public boolean onRenderProcessGone(final AwRenderProcessGoneDetail detail) {
+        // WebViewClient.onRenderProcessGone was added in O.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false;
+
+        try {
+            TraceEvent.begin("WebViewContentsClientAdapter.onRenderProcessGone");
+            return mWebViewClient.onRenderProcessGone(mWebView, new RenderProcessGoneDetail() {
+                @Override
+                public boolean didCrash() {
+                    return detail.didCrash();
+                }
+
+                @Override
+                public int rendererPriorityAtExit() {
+                    return detail.rendererPriority();
+                }
+            });
+        } finally {
+            TraceEvent.end("WebViewContentsClientAdapter.onRenderProcessGone");
+        }
     }
 
     // TODO: Move to upstream.
@@ -1252,13 +1280,13 @@ class WebViewContentsClientAdapter extends AwContentsClient {
             long result = 0;
             for (String resource : resources) {
                 if (resource.equals(PermissionRequest.RESOURCE_VIDEO_CAPTURE)) {
-                    result |= Resource.VideoCapture;
+                    result |= Resource.VIDEO_CAPTURE;
                 } else if (resource.equals(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) {
-                    result |= Resource.AudioCapture;
+                    result |= Resource.AUDIO_CAPTURE;
                 } else if (resource.equals(PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID)) {
-                    result |= Resource.ProtectedMediaId;
+                    result |= Resource.PROTECTED_MEDIA_ID;
                 } else if (resource.equals(AwPermissionRequest.RESOURCE_MIDI_SYSEX)) {
-                    result |= Resource.MIDISysex;
+                    result |= Resource.MIDI_SYSEX;
                 }
             }
             return result;
@@ -1266,16 +1294,16 @@ class WebViewContentsClientAdapter extends AwContentsClient {
 
         private static String[] toPermissionResources(long resources) {
             ArrayList<String> result = new ArrayList<String>();
-            if ((resources & Resource.VideoCapture) != 0) {
+            if ((resources & Resource.VIDEO_CAPTURE) != 0) {
                 result.add(PermissionRequest.RESOURCE_VIDEO_CAPTURE);
             }
-            if ((resources & Resource.AudioCapture) != 0) {
+            if ((resources & Resource.AUDIO_CAPTURE) != 0) {
                 result.add(PermissionRequest.RESOURCE_AUDIO_CAPTURE);
             }
-            if ((resources & Resource.ProtectedMediaId) != 0) {
+            if ((resources & Resource.PROTECTED_MEDIA_ID) != 0) {
                 result.add(PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID);
             }
-            if ((resources & Resource.MIDISysex) != 0) {
+            if ((resources & Resource.MIDI_SYSEX) != 0) {
                 result.add(AwPermissionRequest.RESOURCE_MIDI_SYSEX);
             }
             String[] resource_array = new String[result.size()];

@@ -6,14 +6,14 @@
 #define NGConstraintSpace_h
 
 #include "core/CoreExport.h"
-#include "core/layout/ng/geometry/ng_logical_offset.h"
+#include "core/layout/ng/geometry/ng_bfc_offset.h"
 #include "core/layout/ng/geometry/ng_logical_size.h"
 #include "core/layout/ng/geometry/ng_margin_strut.h"
 #include "core/layout/ng/geometry/ng_physical_size.h"
-#include "core/layout/ng/ng_exclusion.h"
-#include "core/layout/ng/ng_layout_opportunity_iterator.h"
+#include "core/layout/ng/inline/ng_baseline.h"
+#include "core/layout/ng/ng_exclusion_space.h"
+#include "core/layout/ng/ng_unpositioned_float.h"
 #include "core/layout/ng/ng_writing_mode.h"
-#include "platform/heap/Handle.h"
 #include "platform/text/TextDirection.h"
 #include "platform/wtf/Optional.h"
 #include "platform/wtf/RefCounted.h"
@@ -35,13 +35,17 @@ enum NGFragmentationType {
 class CORE_EXPORT NGConstraintSpace final
     : public RefCounted<NGConstraintSpace> {
  public:
+  // Creates NGConstraintSpace representing LayoutObject's containing block.
   // This should live on NGBlockNode or another layout bridge and probably take
   // a root NGConstraintSpace.
-  static RefPtr<NGConstraintSpace> CreateFromLayoutObject(const LayoutBox&);
+  // override_logical_width/height are only used if
+  // LayoutObject::OverideLogicalContentWidth/Height is undefined.
+  static RefPtr<NGConstraintSpace> CreateFromLayoutObject(
+      const LayoutBox&,
+      Optional<LayoutUnit> override_logical_width = WTF::nullopt,
+      Optional<LayoutUnit> override_logical_height = WTF::nullopt);
 
-  const std::shared_ptr<NGExclusions>& Exclusions() const {
-    return exclusions_;
-  }
+  const NGExclusionSpace& ExclusionSpace() const { return *exclusion_space_; }
 
   TextDirection Direction() const {
     return static_cast<TextDirection>(direction_);
@@ -51,17 +55,23 @@ class CORE_EXPORT NGConstraintSpace final
     return static_cast<NGWritingMode>(writing_mode_);
   }
 
-  void AddExclusion(const NGExclusion& exclusion);
-
   // The size to use for percentage resolution.
   // See: https://drafts.csswg.org/css-sizing/#percentage-sizing
   NGLogicalSize PercentageResolutionSize() const {
     return percentage_resolution_size_;
   }
 
+  // Parent's PercentageResolutionInlineSize().
+  // This is not always available.
+  Optional<LayoutUnit> ParentPercentageResolutionInlineSize() const;
+
   // The available space size.
   // See: https://drafts.csswg.org/css-sizing/#available
   NGLogicalSize AvailableSize() const { return available_size_; }
+
+  NGPhysicalSize InitialContainingBlockSize() const {
+    return initial_containing_block_size_;
+  }
 
   // Return the block-direction space available in the current fragmentainer.
   LayoutUnit FragmentainerSpaceAvailable() const {
@@ -94,6 +104,7 @@ class CORE_EXPORT NGConstraintSpace final
   // grid). These flags represented whether a layout needs to produce a
   // fragment that satisfies a fixed constraint in the inline and block
   // direction respectively.
+  //
   // If these flags are true, the AvailableSize() is interpreted as the fixed
   // border-box size of this box in the respective dimension.
   bool IsFixedSizeInline() const { return is_fixed_size_inline_; }
@@ -108,12 +119,6 @@ class CORE_EXPORT NGConstraintSpace final
   // blockSize if possible.
   NGFragmentationType BlockFragmentationType() const;
 
-  // Returns a pointer to already existing Layout Opportunity iterator
-  // associated with this constraint space and {@code iter_offset} or creates a
-  // new one.
-  NGLayoutOpportunityIterator* LayoutOpportunityIterator(
-      const NGLogicalOffset& iter_offset);
-
   // Return true if this contraint space participates in a fragmentation
   // context.
   bool HasBlockFragmentation() const {
@@ -122,42 +127,83 @@ class CORE_EXPORT NGConstraintSpace final
 
   NGMarginStrut MarginStrut() const { return margin_strut_; }
 
-  NGLogicalOffset BfcOffset() const { return bfc_offset_; }
+  // The BfcOffset is where the MarginStrut is placed within the block
+  // formatting context.
+  //
+  // The current layout or a descendant layout may "resolve" the BFC offset,
+  // i.e. decide where the current fragment should be placed within the BFC.
+  //
+  // This is done by:
+  //   bfc_block_offset =
+  //     space.BfcOffset().block_offset + space.MarginStrut().Sum();
+  //
+  // The BFC offset can get "resolved" in many circumstances (including, but
+  // not limited to):
+  //   - block_start border or padding in the current layout.
+  //   - Text content, atomic inlines, (see NGLineBreaker).
+  //   - The current layout having a block_size.
+  NGBfcOffset BfcOffset() const { return bfc_offset_; }
+
+  // If present, and the current layout hasn't resolved its BFC offset yet (see
+  // BfcOffset), the layout should position all of its unpositioned floats at
+  // this offset.
+  //
+  // This value should be propogated to child layouts if the current layout
+  // hasn't resolved its BFC offset yet.
+  //
+  // This value is calculated *after* an initial pass of the tree, this value
+  // should only be present during the second pass.
+  WTF::Optional<NGBfcOffset> FloatsBfcOffset() const {
+    return floats_bfc_offset_;
+  }
+
+  const Vector<RefPtr<NGUnpositionedFloat>>& UnpositionedFloats() const {
+    return unpositioned_floats_;
+  }
 
   WTF::Optional<LayoutUnit> ClearanceOffset() const {
     return clearance_offset_;
   }
+
+  const Vector<NGBaselineRequest>& BaselineRequests() const {
+    return baseline_requests_;
+  }
+
+  bool operator==(const NGConstraintSpace&) const;
+  bool operator!=(const NGConstraintSpace&) const;
 
   String ToString() const;
 
  private:
   friend class NGConstraintSpaceBuilder;
   // Default constructor.
-  NGConstraintSpace(NGWritingMode,
-                    TextDirection,
-                    NGLogicalSize available_size,
-                    NGLogicalSize percentage_resolution_size,
-                    NGPhysicalSize initial_containing_block_size,
-                    LayoutUnit fragmentainer_space_available,
-                    bool is_fixed_size_inline,
-                    bool is_fixed_size_block,
-                    bool is_shrink_to_fit,
-                    bool is_inline_direction_triggers_scrollbar,
-                    bool is_block_direction_triggers_scrollbar,
-                    NGFragmentationType block_direction_fragmentation_type,
-                    bool is_new_fc,
-                    bool is_anonymous,
-                    const NGMarginStrut& margin_strut,
-                    const NGLogicalOffset& bfc_offset,
-                    const std::shared_ptr<NGExclusions>& exclusions,
-                    const WTF::Optional<LayoutUnit>& clearance_offset);
-
-  NGPhysicalSize InitialContainingBlockSize() const {
-    return initial_containing_block_size_;
-  }
+  NGConstraintSpace(
+      NGWritingMode,
+      TextDirection,
+      NGLogicalSize available_size,
+      NGLogicalSize percentage_resolution_size,
+      Optional<LayoutUnit> parent_percentage_resolution_inline_size,
+      NGPhysicalSize initial_containing_block_size,
+      LayoutUnit fragmentainer_space_available,
+      bool is_fixed_size_inline,
+      bool is_fixed_size_block,
+      bool is_shrink_to_fit,
+      bool is_inline_direction_triggers_scrollbar,
+      bool is_block_direction_triggers_scrollbar,
+      NGFragmentationType block_direction_fragmentation_type,
+      bool is_new_fc,
+      bool is_anonymous,
+      const NGMarginStrut& margin_strut,
+      const NGBfcOffset& bfc_offset,
+      const WTF::Optional<NGBfcOffset>& floats_bfc_offset,
+      const NGExclusionSpace& exclusion_space,
+      Vector<RefPtr<NGUnpositionedFloat>>& unpositioned_floats,
+      const WTF::Optional<LayoutUnit>& clearance_offset,
+      Vector<NGBaselineRequest>& baseline_requests);
 
   NGLogicalSize available_size_;
   NGLogicalSize percentage_resolution_size_;
+  Optional<LayoutUnit> parent_percentage_resolution_inline_size_;
   NGPhysicalSize initial_containing_block_size_;
 
   LayoutUnit fragmentainer_space_available_;
@@ -182,10 +228,14 @@ class CORE_EXPORT NGConstraintSpace final
   unsigned direction_ : 1;
 
   NGMarginStrut margin_strut_;
-  NGLogicalOffset bfc_offset_;
-  const std::shared_ptr<NGExclusions> exclusions_;
+  NGBfcOffset bfc_offset_;
+  WTF::Optional<NGBfcOffset> floats_bfc_offset_;
+
+  const std::unique_ptr<const NGExclusionSpace> exclusion_space_;
   WTF::Optional<LayoutUnit> clearance_offset_;
-  std::unique_ptr<NGLayoutOpportunityIterator> layout_opp_iter_;
+  Vector<RefPtr<NGUnpositionedFloat>> unpositioned_floats_;
+
+  Vector<NGBaselineRequest> baseline_requests_;
 };
 
 inline std::ostream& operator<<(std::ostream& stream,

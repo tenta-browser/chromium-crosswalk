@@ -20,12 +20,16 @@
 #include "net/http/http_transaction_factory.h"
 #include "net/log/net_log.h"
 #include "net/proxy/proxy_service.h"
-#include "net/reporting/reporting_service.h"
 #include "net/ssl/channel_id_service.h"
 #include "net/url_request/http_user_agent_settings.h"
+#include "net/url_request/network_error_logging_delegate.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_job_factory.h"
 #include "net/url_request/url_request_throttler_manager.h"
+
+#if BUILDFLAG(ENABLE_REPORTING)
+#include "net/reporting/reporting_service.h"
+#endif  // BUILDFLAG(ENABLE_REPORTING)
 
 namespace net {
 
@@ -65,6 +69,17 @@ void URLRequestContextStorage::set_http_auth_handler_factory(
   http_auth_handler_factory_ = std::move(http_auth_handler_factory);
 }
 
+void URLRequestContextStorage::set_proxy_delegate(
+    std::unique_ptr<ProxyDelegate> proxy_delegate) {
+  proxy_delegate_ = std::move(proxy_delegate);
+}
+
+void URLRequestContextStorage::set_network_delegate(
+    std::unique_ptr<NetworkDelegate> network_delegate) {
+  context_->set_network_delegate(network_delegate.get());
+  network_delegate_ = std::move(network_delegate);
+}
+
 void URLRequestContextStorage::set_proxy_service(
     std::unique_ptr<ProxyService> proxy_service) {
   context_->set_proxy_service(proxy_service.get());
@@ -75,17 +90,6 @@ void URLRequestContextStorage::set_ssl_config_service(
     SSLConfigService* ssl_config_service) {
   context_->set_ssl_config_service(ssl_config_service);
   ssl_config_service_ = ssl_config_service;
-}
-
-void URLRequestContextStorage::set_network_delegate(
-    std::unique_ptr<NetworkDelegate> network_delegate) {
-  context_->set_network_delegate(network_delegate.get());
-  network_delegate_ = std::move(network_delegate);
-}
-
-void URLRequestContextStorage::set_proxy_delegate(
-    std::unique_ptr<ProxyDelegate> proxy_delegate) {
-  proxy_delegate_ = std::move(proxy_delegate);
 }
 
 void URLRequestContextStorage::set_http_server_properties(
@@ -153,10 +157,20 @@ void URLRequestContextStorage::set_sdch_manager(
   sdch_manager_ = std::move(sdch_manager);
 }
 
+#if BUILDFLAG(ENABLE_REPORTING)
 void URLRequestContextStorage::set_reporting_service(
     std::unique_ptr<ReportingService> reporting_service) {
   context_->set_reporting_service(reporting_service.get());
   reporting_service_ = std::move(reporting_service);
+}
+#endif  // BUILDFLAG(ENABLE_REPORTING)
+
+void URLRequestContextStorage::set_network_error_logging_delegate(
+    std::unique_ptr<NetworkErrorLoggingDelegate>
+        network_error_logging_delegate) {
+  context_->set_network_error_logging_delegate(
+      network_error_logging_delegate.get());
+  network_error_logging_delegate_ = std::move(network_error_logging_delegate);
 }
 
 }  // namespace net

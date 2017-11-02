@@ -5,6 +5,9 @@
 #include "gpu/command_buffer/service/gles2_cmd_decoder_passthrough.h"
 
 #include "base/strings/string_number_conversions.h"
+#include "gpu/command_buffer/service/gpu_tracer.h"
+#include "ui/gfx/geometry/rect_conversions.h"
+#include "ui/gl/dc_renderer_layer_params.h"
 #include "ui/gl/gl_version_info.h"
 
 namespace gpu {
@@ -193,6 +196,83 @@ void AppendStringToBuffer(std::vector<uint8_t>* data,
   memcpy(data->data() + old_size.ValueOrDie(), str, len);
 }
 
+// In order to minimize the amount of data copied, the command buffer client
+// unpack pixels before sending the glTex[Sub]Image[2|3]D calls. The only
+// parameter it doesn't handle is the alignment. Resetting the unpack state is
+// not needed when uploading from a PBO and for compressed formats which the
+// client sends untouched. This class handles resetting and restoring the unpack
+// state.
+// TODO(cwallez@chromium.org) it would be nicer to handle the resetting /
+// restoring on the client side.
+class ScopedUnpackStateButAlignmentReset {
+ public:
+  ScopedUnpackStateButAlignmentReset(bool enable, bool is_3d) {
+    if (!enable) {
+      return;
+    }
+
+    glGetIntegerv(GL_UNPACK_SKIP_PIXELS, &skip_pixels_);
+    glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+    glGetIntegerv(GL_UNPACK_SKIP_ROWS, &skip_rows_);
+    glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+    glGetIntegerv(GL_UNPACK_ROW_LENGTH, &row_length_);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+
+    if (is_3d) {
+      glGetIntegerv(GL_UNPACK_SKIP_IMAGES, &skip_images_);
+      glPixelStorei(GL_UNPACK_SKIP_IMAGES, 0);
+      glGetIntegerv(GL_UNPACK_IMAGE_HEIGHT, &image_height_);
+      glPixelStorei(GL_UNPACK_IMAGE_HEIGHT, 0);
+    }
+  }
+
+  ~ScopedUnpackStateButAlignmentReset() {
+    if (skip_pixels_ != 0) {
+      glPixelStorei(GL_UNPACK_SKIP_PIXELS, skip_pixels_);
+    }
+    if (skip_rows_ != 0) {
+      glPixelStorei(GL_UNPACK_SKIP_ROWS, skip_rows_);
+    }
+    if (skip_images_ != 0) {
+      glPixelStorei(GL_UNPACK_SKIP_IMAGES, skip_images_);
+    }
+    if (row_length_ != 0) {
+      glPixelStorei(GL_UNPACK_ROW_LENGTH, row_length_);
+    }
+    if (image_height_ != 0) {
+      glPixelStorei(GL_UNPACK_IMAGE_HEIGHT, image_height_);
+    }
+  }
+
+ private:
+  GLint skip_pixels_ = 0;
+  GLint skip_rows_ = 0;
+  GLint skip_images_ = 0;
+  GLint row_length_ = 0;
+  GLint image_height_ = 0;
+};
+
+class ScopedPackStateRowLengthReset {
+ public:
+  ScopedPackStateRowLengthReset(bool enable) {
+    if (!enable) {
+      return;
+    }
+
+    glGetIntegerv(GL_PACK_ROW_LENGTH, &row_length_);
+    glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+  }
+
+  ~ScopedPackStateRowLengthReset() {
+    if (row_length_ != 0) {
+      glPixelStorei(GL_PACK_ROW_LENGTH, row_length_);
+    }
+  }
+
+ private:
+  GLint row_length_ = 0;
+};
+
 }  // anonymous namespace
 
 // Implementations of commands
@@ -231,6 +311,7 @@ error::Error GLES2DecoderPassthroughImpl::DoBindBuffer(GLenum target,
     return error::kNoError;
   }
 
+  DCHECK(bound_buffers_.find(target) != bound_buffers_.end());
   bound_buffers_[target] = buffer;
 
   return error::kNoError;
@@ -239,8 +320,17 @@ error::Error GLES2DecoderPassthroughImpl::DoBindBuffer(GLenum target,
 error::Error GLES2DecoderPassthroughImpl::DoBindBufferBase(GLenum target,
                                                            GLuint index,
                                                            GLuint buffer) {
-  glBindBufferBase(target, index, GetBufferServiceID(buffer, resources_,
-                                                     bind_generates_resource_));
+  FlushErrors();
+  glBindBufferBase(
+      target, index,
+      GetBufferServiceID(buffer, resources_, bind_generates_resource_));
+  if (FlushErrors()) {
+    return error::kNoError;
+  }
+
+  DCHECK(bound_buffers_.find(target) != bound_buffers_.end());
+  bound_buffers_[target] = buffer;
+
   return error::kNoError;
 }
 
@@ -249,9 +339,18 @@ error::Error GLES2DecoderPassthroughImpl::DoBindBufferRange(GLenum target,
                                                             GLuint buffer,
                                                             GLintptr offset,
                                                             GLsizeiptr size) {
-  glBindBufferRange(target, index, GetBufferServiceID(buffer, resources_,
-                                                      bind_generates_resource_),
-                    offset, size);
+  FlushErrors();
+  glBindBufferRange(
+      target, index,
+      GetBufferServiceID(buffer, resources_, bind_generates_resource_), offset,
+      size);
+  if (FlushErrors()) {
+    return error::kNoError;
+  }
+
+  DCHECK(bound_buffers_.find(target) != bound_buffers_.end());
+  bound_buffers_[target] = buffer;
+
   return error::kNoError;
 }
 
@@ -296,20 +395,26 @@ error::Error GLES2DecoderPassthroughImpl::DoBindTexture(GLenum target,
   // Track the currently bound textures
   DCHECK(bound_textures_.find(target) != bound_textures_.end());
   DCHECK(bound_textures_[target].size() > active_texture_unit_);
-  bound_textures_[target][active_texture_unit_] = texture;
+  scoped_refptr<TexturePassthrough> texture_passthrough = nullptr;
 
   if (service_id != 0) {
     // Create a new texture object to track this texture
     auto texture_object_iter = resources_->texture_object_map.find(texture);
     if (texture_object_iter == resources_->texture_object_map.end()) {
+      texture_passthrough = new TexturePassthrough(service_id, target);
       resources_->texture_object_map.insert(
-          std::make_pair(texture, new TexturePassthrough(service_id, target)));
+          std::make_pair(texture, texture_passthrough));
     } else {
+      texture_passthrough = texture_object_iter->second.get();
       // Shouldn't be possible to get here if this texture has a different
       // target than the one it was just bound to
       DCHECK(texture_object_iter->second->target() == target);
     }
   }
+
+  bound_textures_[target][active_texture_unit_].client_id = texture;
+  bound_textures_[target][active_texture_unit_].texture =
+      std::move(texture_passthrough);
 
   return error::kNoError;
 }
@@ -361,7 +466,15 @@ error::Error GLES2DecoderPassthroughImpl::DoBufferData(GLenum target,
                                                        GLsizeiptr size,
                                                        const void* data,
                                                        GLenum usage) {
+  FlushErrors();
   glBufferData(target, size, data, usage);
+  if (FlushErrors()) {
+    return error::kNoError;
+  }
+
+  // Calling buffer data on a mapped buffer will implicitly unmap it
+  resources_->mapped_buffer_map.erase(bound_buffers_[target]);
+
   return error::kNoError;
 }
 
@@ -469,10 +582,9 @@ error::Error GLES2DecoderPassthroughImpl::DoCompressedTexImage2D(
     GLsizei image_size,
     GLsizei data_size,
     const void* data) {
-  // TODO(cwallez@chromium.org): Use data_size with the robust version of the
-  // entry point
-  glCompressedTexImage2D(target, level, internalformat, width, height, border,
-                         image_size, data);
+  glCompressedTexImage2DRobustANGLE(target, level, internalformat, width,
+                                    height, border, image_size, data_size,
+                                    data);
   return error::kNoError;
 }
 
@@ -487,10 +599,9 @@ error::Error GLES2DecoderPassthroughImpl::DoCompressedTexSubImage2D(
     GLsizei image_size,
     GLsizei data_size,
     const void* data) {
-  // TODO(cwallez@chromium.org): Use data_size with the robust version of the
-  // entry point
-  glCompressedTexSubImage2D(target, level, xoffset, yoffset, width, height,
-                            format, image_size, data);
+  glCompressedTexSubImage2DRobustANGLE(target, level, xoffset, yoffset, width,
+                                       height, format, image_size, data_size,
+                                       data);
   return error::kNoError;
 }
 
@@ -505,10 +616,9 @@ error::Error GLES2DecoderPassthroughImpl::DoCompressedTexImage3D(
     GLsizei image_size,
     GLsizei data_size,
     const void* data) {
-  // TODO(cwallez@chromium.org): Use data_size with the robust version of the
-  // entry point
-  glCompressedTexImage3D(target, level, internalformat, width, height, depth,
-                         border, image_size, data);
+  glCompressedTexImage3DRobustANGLE(target, level, internalformat, width,
+                                    height, depth, border, image_size,
+                                    data_size, data);
   return error::kNoError;
 }
 
@@ -525,10 +635,9 @@ error::Error GLES2DecoderPassthroughImpl::DoCompressedTexSubImage3D(
     GLsizei image_size,
     GLsizei data_size,
     const void* data) {
-  // TODO(cwallez@chromium.org): Use data_size with the robust version of the
-  // entry point
-  glCompressedTexSubImage3D(target, level, xoffset, yoffset, zoffset, width,
-                            height, depth, format, image_size, data);
+  glCompressedTexSubImage3DRobustANGLE(target, level, xoffset, yoffset, zoffset,
+                                       width, height, depth, format, image_size,
+                                       data_size, data);
   return error::kNoError;
 }
 
@@ -606,16 +715,26 @@ error::Error GLES2DecoderPassthroughImpl::DoDeleteBuffers(
     InsertError(GL_INVALID_VALUE, "n cannot be negative.");
     return error::kNoError;
   }
-  return DeleteHelper(n, buffers, &resources_->buffer_id_map,
-                      [this](GLsizei n, GLuint* buffers) {
-                        glDeleteBuffersARB(n, buffers);
-                        for (GLsizei i = 0; i < n; i++)
-                          for (auto buffer_binding : bound_buffers_) {
-                            if (buffer_binding.second == buffers[i]) {
-                              buffer_binding.second = 0;
-                            }
-                          }
-                      });
+
+  std::vector<GLuint> service_ids(n, 0);
+  for (GLsizei ii = 0; ii < n; ++ii) {
+    GLuint client_id = buffers[ii];
+
+    // Update the bound and mapped buffer state tracking
+    for (auto& buffer_binding : bound_buffers_) {
+      if (buffer_binding.second == client_id) {
+        buffer_binding.second = 0;
+      }
+      resources_->mapped_buffer_map.erase(client_id);
+    }
+
+    service_ids[ii] =
+        resources_->buffer_id_map.GetServiceIDOrInvalid(client_id);
+    resources_->buffer_id_map.RemoveClientID(client_id);
+  }
+  glDeleteBuffersARB(n, service_ids.data());
+
+  return error::kNoError;
 }
 
 error::Error GLES2DecoderPassthroughImpl::DoDeleteFramebuffers(
@@ -700,8 +819,10 @@ error::Error GLES2DecoderPassthroughImpl::DoDeleteTextures(
       non_mailbox_client_ids.push_back(client_id);
     } else {
       // Deleted when unreferenced
+      scoped_refptr<TexturePassthrough> texture = texture_object_iter->second;
       resources_->texture_id_map.RemoveClientID(client_id);
       resources_->texture_object_map.erase(client_id);
+      UpdateTextureBinding(texture->target(), client_id, nullptr);
     }
   }
   return DeleteHelper(
@@ -1112,7 +1233,12 @@ error::Error GLES2DecoderPassthroughImpl::DoGetBufferParameteri64v(
     GLsizei bufsize,
     GLsizei* length,
     GLint64* params) {
+  FlushErrors();
   glGetBufferParameteri64vRobustANGLE(target, pname, bufsize, length, params);
+  if (FlushErrors()) {
+    return error::kNoError;
+  }
+  PatchGetBufferResults(target, pname, bufsize, length, params);
   return error::kNoError;
 }
 
@@ -1122,7 +1248,12 @@ error::Error GLES2DecoderPassthroughImpl::DoGetBufferParameteriv(
     GLsizei bufsize,
     GLsizei* length,
     GLint* params) {
+  FlushErrors();
   glGetBufferParameterivRobustANGLE(target, pname, bufsize, length, params);
+  if (FlushErrors()) {
+    return error::kNoError;
+  }
+  PatchGetBufferResults(target, pname, bufsize, length, params);
   return error::kNoError;
 }
 
@@ -1704,6 +1835,8 @@ error::Error GLES2DecoderPassthroughImpl::DoReadPixels(GLint x,
                                                        void* pixels,
                                                        int32_t* success) {
   FlushErrors();
+  ScopedPackStateRowLengthReset reset_row_length(
+      bufsize != 0 && feature_info_->gl_version_info().is_es3);
   glReadPixelsRobustANGLE(x, y, width, height, format, type, bufsize, length,
                           columns, rows, pixels);
   *success = FlushErrors() ? 0 : 1;
@@ -1849,10 +1982,12 @@ error::Error GLES2DecoderPassthroughImpl::DoTexImage2D(GLenum target,
                                                        GLint border,
                                                        GLenum format,
                                                        GLenum type,
-                                                       GLsizei imagesize,
+                                                       GLsizei image_size,
                                                        const void* pixels) {
+  ScopedUnpackStateButAlignmentReset reset_unpack(
+      image_size != 0 && feature_info_->gl_version_info().is_es3, false);
   glTexImage2DRobustANGLE(target, level, internalformat, width, height, border,
-                          format, type, imagesize, pixels);
+                          format, type, image_size, pixels);
   return error::kNoError;
 }
 
@@ -1865,10 +2000,12 @@ error::Error GLES2DecoderPassthroughImpl::DoTexImage3D(GLenum target,
                                                        GLint border,
                                                        GLenum format,
                                                        GLenum type,
-                                                       GLsizei imagesize,
+                                                       GLsizei image_size,
                                                        const void* pixels) {
+  ScopedUnpackStateButAlignmentReset reset_unpack(
+      image_size != 0 && feature_info_->gl_version_info().is_es3, true);
   glTexImage3DRobustANGLE(target, level, internalformat, width, height, depth,
-                          border, format, type, imagesize, pixels);
+                          border, format, type, image_size, pixels);
   return error::kNoError;
 }
 
@@ -1926,10 +2063,12 @@ error::Error GLES2DecoderPassthroughImpl::DoTexSubImage2D(GLenum target,
                                                           GLsizei height,
                                                           GLenum format,
                                                           GLenum type,
-                                                          GLsizei imagesize,
+                                                          GLsizei image_size,
                                                           const void* pixels) {
+  ScopedUnpackStateButAlignmentReset reset_unpack(
+      image_size != 0 && feature_info_->gl_version_info().is_es3, false);
   glTexSubImage2DRobustANGLE(target, level, xoffset, yoffset, width, height,
-                             format, type, imagesize, pixels);
+                             format, type, image_size, pixels);
   return error::kNoError;
 }
 
@@ -1943,10 +2082,12 @@ error::Error GLES2DecoderPassthroughImpl::DoTexSubImage3D(GLenum target,
                                                           GLsizei depth,
                                                           GLenum format,
                                                           GLenum type,
-                                                          GLsizei imagesize,
+                                                          GLsizei image_size,
                                                           const void* pixels) {
+  ScopedUnpackStateButAlignmentReset reset_unpack(
+      image_size != 0 && feature_info_->gl_version_info().is_es3, true);
   glTexSubImage3DRobustANGLE(target, level, xoffset, yoffset, zoffset, width,
-                             height, depth, format, type, imagesize, pixels);
+                             height, depth, format, type, image_size, pixels);
   return error::kNoError;
 }
 
@@ -2446,6 +2587,10 @@ error::Error GLES2DecoderPassthroughImpl::DoFramebufferTexture2DMultisampleEXT(
     GLuint texture,
     GLint level,
     GLsizei samples) {
+  if (!feature_info_->feature_flags().multisampled_render_to_texture) {
+    return error::kUnknownCommand;
+  }
+
   glFramebufferTexture2DMultisampleEXT(
       target, attachment, textarget,
       GetTextureServiceID(texture, resources_, false), level, samples);
@@ -2518,6 +2663,14 @@ error::Error GLES2DecoderPassthroughImpl::DoQueryCounterEXT(
     return error::kUnknownCommand;
   }
 
+  scoped_refptr<gpu::Buffer> buffer = GetSharedMemoryBuffer(sync_shm_id);
+  if (!buffer)
+    return error::kInvalidArguments;
+  QuerySync* sync = static_cast<QuerySync*>(
+      buffer->GetDataAddress(sync_shm_offset, sizeof(QuerySync)));
+  if (!sync)
+    return error::kOutOfBounds;
+
   GLuint service_id = GetQueryServiceID(id, &query_id_map_);
 
   // Flush all previous errors
@@ -2540,8 +2693,8 @@ error::Error GLES2DecoderPassthroughImpl::DoQueryCounterEXT(
   PendingQuery pending_query;
   pending_query.target = target;
   pending_query.service_id = service_id;
-  pending_query.shm_id = sync_shm_id;
-  pending_query.shm_offset = sync_shm_offset;
+  pending_query.shm = std::move(buffer);
+  pending_query.sync = sync;
   pending_query.submit_count = submit_count;
   pending_queries_.push_back(pending_query);
 
@@ -2555,6 +2708,14 @@ error::Error GLES2DecoderPassthroughImpl::DoBeginQueryEXT(
     uint32_t sync_shm_offset) {
   GLuint service_id = GetQueryServiceID(id, &query_id_map_);
   QueryInfo* query_info = &query_info_map_[service_id];
+
+  scoped_refptr<gpu::Buffer> buffer = GetSharedMemoryBuffer(sync_shm_id);
+  if (!buffer)
+    return error::kInvalidArguments;
+  QuerySync* sync = static_cast<QuerySync*>(
+      buffer->GetDataAddress(sync_shm_offset, sizeof(QuerySync)));
+  if (!sync)
+    return error::kOutOfBounds;
 
   if (IsEmulatedQueryTarget(target)) {
     if (active_queries_.find(target) != active_queries_.end()) {
@@ -2592,8 +2753,8 @@ error::Error GLES2DecoderPassthroughImpl::DoBeginQueryEXT(
 
   ActiveQuery query;
   query.service_id = service_id;
-  query.shm_id = sync_shm_id;
-  query.shm_offset = sync_shm_offset;
+  query.shm = std::move(buffer);
+  query.sync = sync;
   active_queries_[target] = query;
 
   return error::kNoError;
@@ -2625,14 +2786,14 @@ error::Error GLES2DecoderPassthroughImpl::DoEndQueryEXT(GLenum target,
   }
 
   DCHECK(active_queries_.find(target) != active_queries_.end());
-  ActiveQuery active_query = active_queries_[target];
+  ActiveQuery active_query = std::move(active_queries_[target]);
   active_queries_.erase(target);
 
   PendingQuery pending_query;
   pending_query.target = target;
   pending_query.service_id = active_query.service_id;
-  pending_query.shm_id = active_query.shm_id;
-  pending_query.shm_offset = active_query.shm_offset;
+  pending_query.shm = std::move(active_query.shm);
+  pending_query.sync = active_query.sync;
   pending_query.submit_count = submit_count;
   pending_queries_.push_back(pending_query);
 
@@ -2718,8 +2879,13 @@ error::Error GLES2DecoderPassthroughImpl::DoSwapBuffers() {
   gfx::SwapResult result = surface_->SwapBuffers();
   if (result == gfx::SwapResult::SWAP_FAILED) {
     LOG(ERROR) << "Context lost because SwapBuffers failed.";
+    if (!CheckResetStatus()) {
+      MarkContextLost(error::kUnknown);
+      group_->LoseContexts(error::kUnknown);
+      return error::kLostContext;
+    }
   }
-  // TODO(geofflang): force the context loss?
+
   return error::kNoError;
 }
 
@@ -2787,7 +2953,8 @@ error::Error GLES2DecoderPassthroughImpl::DoMapBufferRange(
 
   MappedBuffer mapped_buffer_info;
   mapped_buffer_info.size = size;
-  mapped_buffer_info.access = filtered_access;
+  mapped_buffer_info.original_access = access;
+  mapped_buffer_info.filtered_access = filtered_access;
   mapped_buffer_info.map_ptr = static_cast<uint8_t*>(mapped_ptr);
   mapped_buffer_info.data_shm_id = data_shm_id;
   mapped_buffer_info.data_shm_offset = data_shm_offset;
@@ -2803,8 +2970,12 @@ error::Error GLES2DecoderPassthroughImpl::DoMapBufferRange(
 
 error::Error GLES2DecoderPassthroughImpl::DoUnmapBuffer(GLenum target) {
   auto bound_buffers_iter = bound_buffers_.find(target);
-  if (bound_buffers_iter == bound_buffers_.end() ||
-      bound_buffers_iter->second == 0) {
+  if (bound_buffers_iter == bound_buffers_.end()) {
+    InsertError(GL_INVALID_ENUM, "Invalid buffer target.");
+    return error::kNoError;
+  }
+
+  if (bound_buffers_iter->second == 0) {
     InsertError(GL_INVALID_OPERATION, "No buffer bound to this target.");
     return error::kNoError;
   }
@@ -2818,8 +2989,8 @@ error::Error GLES2DecoderPassthroughImpl::DoUnmapBuffer(GLenum target) {
   }
 
   const MappedBuffer& map_info = mapped_buffer_info_iter->second;
-  if ((map_info.access & GL_MAP_WRITE_BIT) != 0 &&
-      (map_info.access & GL_MAP_FLUSH_EXPLICIT_BIT) == 0) {
+  if ((map_info.filtered_access & GL_MAP_WRITE_BIT) != 0 &&
+      (map_info.filtered_access & GL_MAP_FLUSH_EXPLICIT_BIT) == 0) {
     uint8_t* mem = GetSharedMemoryAs<uint8_t*>(
         map_info.data_shm_id, map_info.data_shm_offset, map_info.size);
     if (!mem) {
@@ -2839,19 +3010,42 @@ error::Error GLES2DecoderPassthroughImpl::DoUnmapBuffer(GLenum target) {
 error::Error GLES2DecoderPassthroughImpl::DoResizeCHROMIUM(GLuint width,
                                                            GLuint height,
                                                            GLfloat scale_factor,
+                                                           GLenum color_space,
                                                            GLboolean alpha) {
+  gl::GLSurface::ColorSpace surface_color_space =
+      gl::GLSurface::ColorSpace::UNSPECIFIED;
+  switch (color_space) {
+    case GL_COLOR_SPACE_UNSPECIFIED_CHROMIUM:
+      surface_color_space = gl::GLSurface::ColorSpace::UNSPECIFIED;
+      break;
+    case GL_COLOR_SPACE_SCRGB_LINEAR_CHROMIUM:
+      surface_color_space = gl::GLSurface::ColorSpace::SCRGB_LINEAR;
+      break;
+    case GL_COLOR_SPACE_SRGB_CHROMIUM:
+      surface_color_space = gl::GLSurface::ColorSpace::SRGB;
+      break;
+    case GL_COLOR_SPACE_DISPLAY_P3_CHROMIUM:
+      surface_color_space = gl::GLSurface::ColorSpace::DISPLAY_P3;
+      break;
+    default:
+      LOG(ERROR) << "GLES2DecoderPassthroughImpl: Context lost because "
+                    "specified color space was invalid.";
+      return error::kLostContext;
+  }
   if (offscreen_) {
     // TODO: crbug.com/665521
     NOTIMPLEMENTED();
   } else {
-    if (!surface_->Resize(gfx::Size(width, height), scale_factor, !!alpha)) {
-      LOG(ERROR) << "GLES2DecoderImpl: Context lost because resize failed.";
+    if (!surface_->Resize(gfx::Size(width, height), scale_factor,
+                          surface_color_space, !!alpha)) {
+      LOG(ERROR)
+          << "GLES2DecoderPassthroughImpl: Context lost because resize failed.";
       return error::kLostContext;
     }
     DCHECK(context_->IsCurrent(surface_.get()));
     if (!context_->IsCurrent(surface_.get())) {
-      LOG(ERROR) << "GLES2DecoderImpl: Context lost because context no longer "
-                 << "current after resize callback.";
+      LOG(ERROR) << "GLES2DecoderPassthroughImpl: Context lost because context "
+                    "no longer current after resize callback.";
       return error::kLostContext;
     }
   }
@@ -3262,6 +3456,21 @@ error::Error GLES2DecoderPassthroughImpl::DoPostSubBufferCHROMIUM(
     GLint y,
     GLint width,
     GLint height) {
+  if (!surface_->SupportsPostSubBuffer()) {
+    InsertError(GL_INVALID_OPERATION,
+                "glPostSubBufferCHROMIUM is not supported for this surface.");
+    return error::kNoError;
+  }
+
+  gfx::SwapResult result = surface_->PostSubBuffer(x, y, width, height);
+  if (result == gfx::SwapResult::SWAP_FAILED) {
+    LOG(ERROR) << "Context lost because PostSubBuffer failed.";
+    if (!CheckResetStatus()) {
+      MarkContextLost(error::kUnknown);
+      group_->LoseContexts(error::kUnknown);
+      return error::kLostContext;
+    }
+  }
   return error::kNoError;
 }
 
@@ -3363,17 +3572,16 @@ error::Error GLES2DecoderPassthroughImpl::DoProduceTextureCHROMIUM(
     return error::kNoError;
   }
 
-  GLuint texture_client_id = bound_textures_iter->second[active_texture_unit_];
-  auto texture_object_iter =
-      resources_->texture_object_map.find(texture_client_id);
-  if (texture_object_iter == resources_->texture_object_map.end()) {
+  const BoundTexture& bound_texture =
+      bound_textures_iter->second[active_texture_unit_];
+  if (bound_texture.texture == nullptr) {
     InsertError(GL_INVALID_OPERATION, "Unknown texture for target.");
     return error::kNoError;
   }
 
   const Mailbox& mb = Mailbox::FromVolatile(
       *reinterpret_cast<const volatile Mailbox*>(mailbox));
-  mailbox_manager_->ProduceTexture(mb, texture_object_iter->second.get());
+  mailbox_manager_->ProduceTexture(mb, bound_texture.texture.get());
   return error::kNoError;
 }
 
@@ -3409,8 +3617,9 @@ error::Error GLES2DecoderPassthroughImpl::DoConsumeTextureCHROMIUM(
     return error::kNoError;
   }
 
-  GLuint client_id = bound_textures_iter->second[active_texture_unit_];
-  if (client_id == 0) {
+  const BoundTexture& current_texture =
+      bound_textures_iter->second[active_texture_unit_];
+  if (current_texture.client_id == 0) {
     InsertError(GL_INVALID_OPERATION, "Unknown texture for target.");
     return error::kNoError;
   }
@@ -3430,13 +3639,15 @@ error::Error GLES2DecoderPassthroughImpl::DoConsumeTextureCHROMIUM(
   }
 
   // Update id mappings
-  resources_->texture_id_map.RemoveClientID(client_id);
-  resources_->texture_id_map.SetIDMapping(client_id, texture->service_id());
-  resources_->texture_object_map.erase(client_id);
-  resources_->texture_object_map.insert(std::make_pair(client_id, texture));
+  resources_->texture_id_map.RemoveClientID(current_texture.client_id);
+  resources_->texture_id_map.SetIDMapping(current_texture.client_id,
+                                          texture->service_id());
+  resources_->texture_object_map.erase(current_texture.client_id);
+  resources_->texture_object_map.insert(
+      std::make_pair(current_texture.client_id, texture));
 
   // Bind the service id that now represents this texture
-  UpdateTextureBinding(target, client_id, texture->service_id());
+  UpdateTextureBinding(target, current_texture.client_id, texture.get());
 
   return error::kNoError;
 }
@@ -3445,7 +3656,8 @@ error::Error GLES2DecoderPassthroughImpl::DoCreateAndConsumeTextureINTERNAL(
     GLenum target,
     GLuint texture_client_id,
     const volatile GLbyte* mailbox) {
-  if (resources_->texture_id_map.GetServiceID(texture_client_id, nullptr)) {
+  if (!texture_client_id ||
+      resources_->texture_id_map.GetServiceID(texture_client_id, nullptr)) {
     return error::kInvalidArguments;
   }
 
@@ -3472,7 +3684,7 @@ error::Error GLES2DecoderPassthroughImpl::DoCreateAndConsumeTextureINTERNAL(
       std::make_pair(texture_client_id, texture));
 
   // Bind the service id that now represents this texture
-  UpdateTextureBinding(target, texture_client_id, texture->service_id());
+  UpdateTextureBinding(target, texture_client_id, texture.get());
 
   return error::kNoError;
 }
@@ -3489,22 +3701,15 @@ error::Error GLES2DecoderPassthroughImpl::DoBindUniformLocationCHROMIUM(
 error::Error GLES2DecoderPassthroughImpl::DoBindTexImage2DCHROMIUM(
     GLenum target,
     GLint imageId) {
-  if (target != GL_TEXTURE_2D) {
-    InsertError(GL_INVALID_ENUM, "Invalid target");
-    return error::kNoError;
-  }
+  return BindTexImage2DCHROMIUMImpl(target, 0, imageId);
+}
 
-  gl::GLImage* image = image_manager_->LookupImage(imageId);
-  if (image == nullptr) {
-    InsertError(GL_INVALID_OPERATION, "No image found with the given ID");
-    return error::kNoError;
-  }
-
-  if (!image->BindTexImage(target)) {
-    image->CopyTexImage(target);
-  }
-
-  return error::kNoError;
+error::Error
+GLES2DecoderPassthroughImpl::DoBindTexImage2DWithInternalformatCHROMIUM(
+    GLenum target,
+    GLenum internalformat,
+    GLint imageId) {
+  return BindTexImage2DCHROMIUMImpl(target, internalformat, imageId);
 }
 
 error::Error GLES2DecoderPassthroughImpl::DoReleaseTexImage2DCHROMIUM(
@@ -3515,25 +3720,43 @@ error::Error GLES2DecoderPassthroughImpl::DoReleaseTexImage2DCHROMIUM(
     return error::kNoError;
   }
 
-  gl::GLImage* image = image_manager_->LookupImage(imageId);
+  const BoundTexture& bound_texture =
+      bound_textures_[GL_TEXTURE_2D][active_texture_unit_];
+  if (bound_texture.texture == nullptr) {
+    InsertError(GL_INVALID_OPERATION, "No texture bound");
+    return error::kNoError;
+  }
+
+  gl::GLImage* image = group_->image_manager()->LookupImage(imageId);
   if (image == nullptr) {
     InsertError(GL_INVALID_OPERATION, "No image found with the given ID");
     return error::kNoError;
   }
 
-  image->ReleaseTexImage(target);
+  // Only release the image if it is currently bound
+  if (bound_texture.texture->GetLevelImage(target, 0) != image) {
+    image->ReleaseTexImage(target);
+    bound_texture.texture->SetLevelImage(target, 0, nullptr);
+  }
+
   return error::kNoError;
 }
 
 error::Error GLES2DecoderPassthroughImpl::DoTraceBeginCHROMIUM(
     const char* category_name,
     const char* trace_name) {
-  NOTIMPLEMENTED();
+  if (!gpu_tracer_->Begin(category_name, trace_name, kTraceCHROMIUM)) {
+    InsertError(GL_INVALID_OPERATION, "Failed to create begin trace");
+    return error::kNoError;
+  }
   return error::kNoError;
 }
 
 error::Error GLES2DecoderPassthroughImpl::DoTraceEndCHROMIUM() {
-  NOTIMPLEMENTED();
+  if (!gpu_tracer_->End(kTraceCHROMIUM)) {
+    InsertError(GL_INVALID_OPERATION, "No trace to end");
+    return error::kNoError;
+  }
   return error::kNoError;
 }
 
@@ -3563,7 +3786,14 @@ error::Error GLES2DecoderPassthroughImpl::DoDiscardFramebufferEXT(
 
 error::Error GLES2DecoderPassthroughImpl::DoLoseContextCHROMIUM(GLenum current,
                                                                 GLenum other) {
-  NOTIMPLEMENTED();
+  if (!ValidContextLostReason(current) || !ValidContextLostReason(other)) {
+    InsertError(GL_INVALID_ENUM, "invalid context loss reason.");
+    return error::kNoError;
+  }
+
+  MarkContextLost(GetContextLostReasonFromResetStatus(current));
+  group_->LoseContexts(GetContextLostReasonFromResetStatus(other));
+  reset_by_robustness_extension_ = true;
   return error::kNoError;
 }
 
@@ -3574,8 +3804,7 @@ error::Error GLES2DecoderPassthroughImpl::DoDescheduleUntilFinishedCHROMIUM() {
 
 error::Error GLES2DecoderPassthroughImpl::DoInsertFenceSyncCHROMIUM(
     GLuint64 release_count) {
-  if (!fence_sync_release_callback_.is_null())
-    fence_sync_release_callback_.Run(release_count);
+  client_->OnFenceSyncRelease(release_count);
   return error::kNoError;
 }
 
@@ -3583,13 +3812,9 @@ error::Error GLES2DecoderPassthroughImpl::DoWaitSyncTokenCHROMIUM(
     CommandBufferNamespace namespace_id,
     CommandBufferId command_buffer_id,
     GLuint64 release_count) {
-  if (wait_sync_token_callback_.is_null()) {
-    return error::kNoError;
-  }
   SyncToken sync_token(namespace_id, 0, command_buffer_id, release_count);
-  return wait_sync_token_callback_.Run(sync_token)
-             ? error::kDeferCommandUntilLater
-             : error::kNoError;
+  return client_->OnWaitSyncToken(sync_token) ? error::kDeferCommandUntilLater
+                                              : error::kNoError;
 }
 
 error::Error GLES2DecoderPassthroughImpl::DoDrawBuffersEXT(
@@ -3659,17 +3884,93 @@ error::Error GLES2DecoderPassthroughImpl::DoScheduleDCLayerSharedStateCHROMIUM(
     const GLfloat* clip_rect,
     GLint z_order,
     const GLfloat* transform) {
-  NOTIMPLEMENTED();
+  if (!dc_layer_shared_state_) {
+    dc_layer_shared_state_.reset(new DCLayerSharedState);
+  }
+  dc_layer_shared_state_->opacity = opacity;
+  dc_layer_shared_state_->is_clipped = is_clipped ? true : false;
+  dc_layer_shared_state_->clip_rect = gfx::ToEnclosingRect(
+      gfx::RectF(clip_rect[0], clip_rect[1], clip_rect[2], clip_rect[3]));
+  dc_layer_shared_state_->z_order = z_order;
+  dc_layer_shared_state_->transform = gfx::Transform(
+      transform[0], transform[1], transform[2], transform[3], transform[4],
+      transform[5], transform[6], transform[7], transform[8], transform[9],
+      transform[10], transform[11], transform[12], transform[13], transform[14],
+      transform[15]);
   return error::kNoError;
 }
 
 error::Error GLES2DecoderPassthroughImpl::DoScheduleDCLayerCHROMIUM(
-    GLuint contents_texture_id,
+    GLsizei num_textures,
+    const volatile GLuint* contents_texture_ids,
     const GLfloat* contents_rect,
     GLuint background_color,
     GLuint edge_aa_mask,
+    GLenum filter,
     const GLfloat* bounds_rect) {
-  NOTIMPLEMENTED();
+  switch (filter) {
+    case GL_NEAREST:
+    case GL_LINEAR:
+      break;
+    default:
+      InsertError(GL_INVALID_OPERATION, "invalid filter.");
+      return error::kNoError;
+  }
+
+  if (!dc_layer_shared_state_) {
+    InsertError(GL_INVALID_OPERATION,
+                "glScheduleDCLayerSharedStateCHROMIUM has not been called.");
+    return error::kNoError;
+  }
+
+  if (num_textures < 0 || num_textures > 4) {
+    InsertError(GL_INVALID_OPERATION,
+                "number of textures greater than maximum of 4.");
+    return error::kNoError;
+  }
+
+  gfx::RectF contents_rect_object(contents_rect[0], contents_rect[1],
+                                  contents_rect[2], contents_rect[3]);
+  gfx::RectF bounds_rect_object(bounds_rect[0], bounds_rect[1], bounds_rect[2],
+                                bounds_rect[3]);
+
+  std::vector<scoped_refptr<gl::GLImage>> images(num_textures);
+  for (int i = 0; i < num_textures; ++i) {
+    GLuint contents_texture_client_id = contents_texture_ids[i];
+    if (contents_texture_client_id != 0) {
+      auto texture_iter =
+          resources_->texture_object_map.find(contents_texture_client_id);
+      if (texture_iter == resources_->texture_object_map.end()) {
+        InsertError(GL_INVALID_VALUE, "unknown texture.");
+        return error::kNoError;
+      }
+
+      scoped_refptr<TexturePassthrough> passthrough_texture =
+          texture_iter->second;
+      DCHECK(passthrough_texture != nullptr);
+      DCHECK(passthrough_texture->target() == GL_TEXTURE_2D);
+
+      scoped_refptr<gl::GLImage> image =
+          passthrough_texture->GetLevelImage(GL_TEXTURE_2D, 0);
+      if (image == nullptr) {
+        InsertError(GL_INVALID_VALUE, "unsupported texture format");
+        return error::kNoError;
+      }
+      images[i] = image;
+    }
+  }
+
+  ui::DCRendererLayerParams params(
+      dc_layer_shared_state_->is_clipped, dc_layer_shared_state_->clip_rect,
+      dc_layer_shared_state_->z_order, dc_layer_shared_state_->transform,
+      images, contents_rect_object, gfx::ToEnclosingRect(bounds_rect_object),
+      background_color, edge_aa_mask, dc_layer_shared_state_->opacity, filter);
+
+  if (!surface_->ScheduleDCLayer(params)) {
+    InsertError(GL_INVALID_OPERATION, "failed to schedule DCLayer");
+    return error::kNoError;
+  }
+
   return error::kNoError;
 }
 
@@ -3684,7 +3985,12 @@ error::Error GLES2DecoderPassthroughImpl::DoSwapInterval(GLint interval) {
 }
 
 error::Error GLES2DecoderPassthroughImpl::DoFlushDriverCachesCHROMIUM() {
-  NOTIMPLEMENTED();
+  // On Adreno Android devices we need to use a workaround to force caches to
+  // clear.
+  if (feature_info_->workarounds().unbind_egl_context_to_flush_driver_caches) {
+    context_->ReleaseCurrent(nullptr);
+    context_->MakeCurrent(surface_.get());
+  }
   return error::kNoError;
 }
 
@@ -3969,7 +4275,9 @@ error::Error GLES2DecoderPassthroughImpl::DoOverlayPromotionHintCHROMIUM(
     GLuint texture,
     GLboolean promotion_hint,
     GLint display_x,
-    GLint display_y) {
+    GLint display_y,
+    GLint display_width,
+    GLint display_height) {
   NOTIMPLEMENTED();
   return error::kNoError;
 }
@@ -3979,12 +4287,67 @@ error::Error GLES2DecoderPassthroughImpl::DoSetDrawRectangleCHROMIUM(
     GLint y,
     GLint width,
     GLint height) {
-  NOTIMPLEMENTED();
+  FlushErrors();
+
+  GLint current_framebuffer = 0;
+  glGetIntegerv(GL_FRAMEBUFFER_BINDING, &current_framebuffer);
+  if (current_framebuffer != 0) {
+    InsertError(GL_INVALID_OPERATION, "framebuffer must not be bound.");
+    return error::kNoError;
+  }
+
+  if (!surface_->SupportsDCLayers()) {
+    InsertError(GL_INVALID_OPERATION,
+                "surface doesn't support SetDrawRectangle.");
+    return error::kNoError;
+  }
+
+  gfx::Rect rect(x, y, width, height);
+  if (!surface_->SetDrawRectangle(rect)) {
+    InsertError(GL_INVALID_OPERATION, "SetDrawRectangle failed on surface");
+    return error::kNoError;
+  }
+
   return error::kNoError;
 }
 
 error::Error GLES2DecoderPassthroughImpl::DoSetEnableDCLayersCHROMIUM(
     GLboolean enable) {
+  FlushErrors();
+
+  GLint current_framebuffer = 0;
+  glGetIntegerv(GL_FRAMEBUFFER_BINDING, &current_framebuffer);
+  if (current_framebuffer != 0) {
+    InsertError(GL_INVALID_OPERATION, "framebuffer must not be bound.");
+    return error::kNoError;
+  }
+
+  if (!surface_->SupportsDCLayers()) {
+    InsertError(GL_INVALID_OPERATION,
+                "surface doesn't support SetDrawRectangle.");
+    return error::kNoError;
+  }
+
+  if (!surface_->SetEnableDCLayers(!!enable)) {
+    InsertError(GL_INVALID_OPERATION, "SetEnableDCLayers failed on surface.");
+    return error::kNoError;
+  }
+
+  return error::kNoError;
+}
+
+error::Error GLES2DecoderPassthroughImpl::DoBeginRasterCHROMIUM(
+    GLuint texture_id,
+    GLuint sk_color,
+    GLuint msaa_sample_count,
+    GLboolean can_use_lcd_text,
+    GLboolean use_distance_field_text,
+    GLint pixel_config) {
+  NOTIMPLEMENTED();
+  return error::kNoError;
+}
+
+error::Error GLES2DecoderPassthroughImpl::DoEndRasterCHROMIUM() {
   NOTIMPLEMENTED();
   return error::kNoError;
 }

@@ -17,6 +17,8 @@
 
 namespace blink {
 
+// CSSStyleImageValue is the base class for Typed OM representations of images.
+// The corresponding idl file is CSSImageValue.idl.
 class CORE_EXPORT CSSStyleImageValue : public CSSResourceValue,
                                        public CanvasImageSource {
   WTF_MAKE_NONCOPYABLE(CSSStyleImageValue);
@@ -38,10 +40,10 @@ class CORE_EXPORT CSSStyleImageValue : public CSSResourceValue,
     return true;
   }
   FloatSize ElementSize(const FloatSize& default_object_size) const final;
-  PassRefPtr<Image> GetSourceImageForCanvas(SourceImageStatus*,
-                                            AccelerationHint,
-                                            SnapshotReason,
-                                            const FloatSize&) const final {
+  RefPtr<Image> GetSourceImageForCanvas(SourceImageStatus*,
+                                        AccelerationHint,
+                                        SnapshotReason,
+                                        const FloatSize&) final {
     return GetImage();
   }
   bool IsAccelerated() const override;
@@ -70,13 +72,13 @@ class CORE_EXPORT CSSStyleImageValue : public CSSResourceValue,
   ResourceStatus Status() const override {
     if (IsCachePending())
       return ResourceStatus::kNotStarted;
-    return image_value_->CachedImage()->CachedImage()->GetStatus();
+    return image_value_->CachedImage()->CachedImage()->GetContentStatus();
   }
 
   const CSSImageValue* CssImageValue() const { return image_value_.Get(); };
 
  private:
-  PassRefPtr<Image> GetImage() const;
+  RefPtr<Image> GetImage() const;
 
   Member<const CSSImageValue> image_value_;
 };

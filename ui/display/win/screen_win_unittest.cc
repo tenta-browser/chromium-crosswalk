@@ -35,8 +35,7 @@ class TestScreenWin : public ScreenWin {
   TestScreenWin(const std::vector<DisplayInfo>& display_infos,
                 const std::vector<MONITORINFOEX>& monitor_infos,
                 const std::unordered_map<HWND, gfx::Rect>& hwnd_map)
-      : monitor_infos_(monitor_infos),
-        hwnd_map_(hwnd_map) {
+      : ScreenWin(false), monitor_infos_(monitor_infos), hwnd_map_(hwnd_map) {
     UpdateFromDisplayInfos(display_infos);
   }
 
@@ -57,8 +56,6 @@ class TestScreenWin : public ScreenWin {
   }
 
  private:
-  void Initialize() override {}
-
   // Finding the corresponding monitor from a point is generally handled by
   // Windows's MonitorFromPoint. This mocked function requires that the provided
   // point is contained entirely in the monitor.
@@ -146,7 +143,7 @@ class TestScreenWinInitializer {
   virtual HWND CreateFakeHwnd(const gfx::Rect& bounds) = 0;
 };
 
-class TestScreenWinManager : public TestScreenWinInitializer {
+class TestScreenWinManager final : public TestScreenWinInitializer {
  public:
   TestScreenWinManager() = default;
 

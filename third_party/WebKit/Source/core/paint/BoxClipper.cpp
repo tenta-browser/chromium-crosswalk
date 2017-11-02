@@ -43,8 +43,10 @@ BoxClipper::BoxClipper(const LayoutBox& box,
   if (paint_info_.phase == kPaintPhaseMask)
     return;
 
-  if (RuntimeEnabledFeatures::slimmingPaintV2Enabled()) {
-    const auto* object_properties = box_.PaintProperties();
+  if (RuntimeEnabledFeatures::SlimmingPaintV2Enabled()) {
+    const auto* object_properties =
+        box_.FirstFragment() ? box_.FirstFragment()->PaintProperties()
+                             : nullptr;
     if (object_properties && object_properties->OverflowClip()) {
       PaintChunkProperties properties(paint_info.context.GetPaintController()
                                           .CurrentPaintChunkProperties());
@@ -70,7 +72,7 @@ BoxClipper::BoxClipper(const LayoutBox& box,
   // Selection may extend beyond visual overflow, so this optimization is
   // invalid if selection is present.
   if (contents_clip_behavior == kSkipContentsClipIfPossible &&
-      box.GetSelectionState() == SelectionNone) {
+      box.GetSelectionState() == SelectionState::kNone) {
     LayoutRect contents_visual_overflow = box_.ContentsVisualOverflowRect();
     if (contents_visual_overflow.IsEmpty())
       return;

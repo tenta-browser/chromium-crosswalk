@@ -5,12 +5,12 @@
 #include "core/mojo/MojoWatcher.h"
 
 #include "bindings/core/v8/MojoWatchCallback.h"
-#include "bindings/core/v8/ScriptState.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/dom/TaskRunnerHelper.h"
 #include "core/mojo/MojoHandleSignals.h"
 #include "platform/CrossThreadFunctional.h"
 #include "platform/WebTaskRunner.h"
+#include "platform/bindings/ScriptState.h"
 
 namespace blink {
 
@@ -43,9 +43,7 @@ MojoWatcher* MojoWatcher::Create(mojo::Handle handle,
   return watcher;
 }
 
-MojoWatcher::~MojoWatcher() {
-  DCHECK(!handle_.is_valid());
-}
+MojoWatcher::~MojoWatcher() {}
 
 MojoResult MojoWatcher::cancel() {
   if (!watcher_handle_.is_valid())
@@ -75,7 +73,7 @@ void MojoWatcher::ContextDestroyed(ExecutionContext*) {
 MojoWatcher::MojoWatcher(ExecutionContext* context, MojoWatchCallback* callback)
     : ContextLifecycleObserver(context),
       task_runner_(TaskRunnerHelper::Get(TaskType::kUnspecedTimer, context)),
-      callback_(this, callback) {}
+      callback_(callback) {}
 
 MojoResult MojoWatcher::Watch(mojo::Handle handle,
                               const MojoHandleSignals& signals_dict) {
@@ -92,6 +90,7 @@ MojoResult MojoWatcher::Watch(mojo::Handle handle,
   DCHECK_EQ(MOJO_RESULT_OK, result);
 
   result = MojoWatch(watcher_handle_.get().value(), handle.value(), signals,
+                     MOJO_WATCH_CONDITION_SATISFIED,
                      reinterpret_cast<uintptr_t>(this));
   if (result != MOJO_RESULT_OK)
     return result;
@@ -169,6 +168,10 @@ void MojoWatcher::RunReadyCallback(MojoResult result) {
     return;
 
   RunWatchCallback(callback_, this, result);
+
+  // The user callback may have canceled watching.
+  if (!watcher_handle_.is_valid())
+    return;
 
   // Rearm the watcher so another notification can fire.
   //

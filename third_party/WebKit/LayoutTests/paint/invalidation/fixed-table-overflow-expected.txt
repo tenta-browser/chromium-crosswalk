@@ -4,7 +4,7 @@
       "name": "LayoutView #document",
       "bounds": [800, 2016],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutTable (positioned) TABLE",
@@ -12,24 +12,34 @@
           "reason": "style change"
         },
         {
+          "object": "LayoutTableSection TBODY",
+          "rect": [0, 0, 200, 200],
+          "reason": "geometry"
+        },
+        {
+          "object": "LayoutBlockFlow (positioned) TD id='moveMe' class='fixed'",
+          "rect": [100, 100, 100, 100],
+          "reason": "appeared"
+        },
+        {
           "object": "LayoutTableCell (anonymous)",
           "rect": [100, 100, 100, 100],
-          "reason": "layoutObject insertion"
+          "reason": "appeared"
         },
         {
           "object": "LayoutTableCell TD id='moveMe' class='fixed'",
           "rect": [100, 100, 100, 100],
-          "reason": "layoutObject removal"
+          "reason": "disappeared"
         },
         {
           "object": "LayoutBlockFlow (relative positioned) DIV class='green'",
           "rect": [0, 100, 100, 100],
-          "reason": "layoutObject insertion"
+          "reason": "appeared"
         },
         {
           "object": "LayoutBlockFlow (relative positioned) DIV class='green'",
           "rect": [0, 100, 100, 100],
-          "reason": "layoutObject removal"
+          "reason": "disappeared"
         }
       ]
     }
@@ -37,11 +47,11 @@
   "objectPaintInvalidations": [
     {
       "object": "LayoutBlockFlow (relative positioned) DIV class='green'",
-      "reason": "layoutObject removal"
+      "reason": "disappeared"
     },
     {
       "object": "LayoutTableCell TD id='moveMe' class='fixed'",
-      "reason": "layoutObject removal"
+      "reason": "disappeared"
     },
     {
       "object": "LayoutTable (positioned) TABLE",
@@ -49,19 +59,19 @@
     },
     {
       "object": "LayoutTableSection TBODY",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "LayoutTableCell (anonymous)",
-      "reason": "layoutObject insertion"
+      "reason": "appeared"
     },
     {
       "object": "LayoutBlockFlow (positioned) TD id='moveMe' class='fixed'",
-      "reason": "layoutObject insertion"
+      "reason": "appeared"
     },
     {
       "object": "LayoutBlockFlow (relative positioned) DIV class='green'",
-      "reason": "layoutObject insertion"
+      "reason": "appeared"
     }
   ]
 }

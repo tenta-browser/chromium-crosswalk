@@ -35,13 +35,13 @@
 #include <utility>
 #include "platform/PlatformExport.h"
 #include "platform/WebTaskRunner.h"
+#include "platform/scheduler/child/web_scheduler.h"
 #include "platform/wtf/Allocator.h"
 #include "platform/wtf/Assertions.h"
 #include "platform/wtf/PtrUtil.h"
 #include "platform/wtf/Vector.h"
 #include "public/platform/Platform.h"
 #include "public/platform/WebCompositorSupport.h"
-#include "public/platform/WebScheduler.h"
 #include "public/platform/WebThread.h"
 
 namespace base {
@@ -59,7 +59,6 @@ class WebCompositorSupportImpl;
 
 namespace blink {
 namespace scheduler {
-class RendererScheduler;
 class RendererSchedulerImpl;
 }
 class WebCompositorSupport;
@@ -113,9 +112,10 @@ class TestingPlatformSupport : public Platform {
   WebFileUtilities* GetFileUtilities() override;
   WebIDBFactory* IdbFactory() override;
   WebURLLoaderMockFactory* GetURLLoaderMockFactory() override;
-  blink::WebURLLoader* CreateURLLoader() override;
-  WebData LoadResource(const char* name) override;
-  WebURLError CancelledError(const WebURL&) const override;
+  std::unique_ptr<blink::WebURLLoader> CreateURLLoader(
+      const WebURLRequest&,
+      base::SingleThreadTaskRunner*) override;
+  WebData GetDataResource(const char* name) override;
   InterfaceProvider* GetInterfaceProvider() override;
 
   virtual void RunUntilIdle();
@@ -161,7 +161,7 @@ class TestingPlatformSupportWithMockScheduler : public TestingPlatformSupport {
   // Advances |m_clock| by |seconds|.
   void AdvanceClockSeconds(double seconds);
 
-  scheduler::RendererScheduler* GetRendererScheduler() const;
+  scheduler::RendererSchedulerImpl* GetRendererScheduler() const;
 
   // Controls the behavior of |m_mockTaskRunner| if true, then |m_clock| will
   // be advanced to the next timer when there's no more immediate work to do.
@@ -218,6 +218,8 @@ class ScopedTestingPlatformSupport final {
   const T* operator->() const { return testing_platform_support_.get(); }
   T* operator->() { return testing_platform_support_.get(); }
 
+  T* GetTestingPlatformSupport() { return testing_platform_support_.get(); }
+
  private:
   std::unique_ptr<T> testing_platform_support_;
   Platform* original_platform_;
@@ -232,9 +234,12 @@ class ScopedUnittestsEnvironmentSetup final {
 
  private:
   class DummyPlatform;
+  class DummyRendererResourceCoordinator;
   std::unique_ptr<base::TestDiscardableMemoryAllocator>
       discardable_memory_allocator_;
   std::unique_ptr<DummyPlatform> dummy_platform_;
+  std::unique_ptr<DummyRendererResourceCoordinator>
+      dummy_renderer_resource_coordinator_;
   std::unique_ptr<cc_blink::WebCompositorSupportImpl> compositor_support_;
   TestingPlatformSupport::Config testing_platform_config_;
   std::unique_ptr<TestingPlatformSupport> testing_platform_support_;

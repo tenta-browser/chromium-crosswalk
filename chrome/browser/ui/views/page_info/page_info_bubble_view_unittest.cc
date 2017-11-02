@@ -44,12 +44,13 @@ class PageInfoBubbleViewTestApi {
   }
 
   void CreateView() {
-    if (view_)
+    if (view_) {
       view_->GetWidget()->CloseNow();
+    }
 
     security_state::SecurityInfo security_info;
     views::View* anchor_view = nullptr;
-    view_ = new PageInfoBubbleView(anchor_view, parent_, profile_,
+    view_ = new PageInfoBubbleView(anchor_view, gfx::Rect(), parent_, profile_,
                                    web_contents_, GURL(kUrl), security_info);
   }
 
@@ -65,8 +66,9 @@ class PageInfoBubbleViewTestApi {
   // |label_| element isn't actually a |views::Label|.
   base::string16 GetPermissionLabelTextAt(int index) {
     views::View* view = GetPermissionSelectorAt(index)->label_;
-    if (view->GetClassName() == views::Label::kViewClassName)
+    if (view->GetClassName() == views::Label::kViewClassName) {
       return static_cast<views::Label*>(view)->text();
+    }
     return base::string16();
   }
 
@@ -85,8 +87,9 @@ class PageInfoBubbleViewTestApi {
 
   // Simulates recreating the dialog with a new PermissionInfoList.
   void SetPermissionInfo(const PermissionInfoList& list) {
-    for (const PageInfoBubbleView::PermissionInfo& info : list)
+    for (const PageInfoBubbleView::PermissionInfo& info : list) {
       view_->presenter_->OnSitePermissionChanged(info.type, info.setting);
+    }
     CreateView();
   }
 

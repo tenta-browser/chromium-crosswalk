@@ -15,7 +15,6 @@ class GURL;
 class PrefService;
 
 namespace base {
-class SequencedTaskRunner;
 class Version;
 }
 
@@ -116,10 +115,6 @@ class Configurator : public base::RefCountedThreadSafe<Configurator> {
   // True if signing of update checks is enabled.
   virtual bool EnabledCupSigning() const = 0;
 
-  // Gets a task runner to a blocking pool of threads suitable for worker jobs.
-  virtual scoped_refptr<base::SequencedTaskRunner> GetSequencedTaskRunner()
-      const = 0;
-
   // Returns a PrefService that the update_client can use to store persistent
   // update information. The PrefService must outlive the entire update_client,
   // and be safe to access from the thread the update_client is constructed
@@ -132,6 +127,12 @@ class Configurator : public base::RefCountedThreadSafe<Configurator> {
   // if Chrome is installed for all users on the machine. This function must be
   // called only from a blocking pool thread, as it may access the file system.
   virtual bool IsPerUserInstall() const = 0;
+
+  // Returns the key hash corresponding to a CRX trusted by ActionRun. The
+  // CRX payloads are signed with this key, and their integrity is verified
+  // during the unpacking by the action runner. This is a dependency injection
+  // feature to support testing.
+  virtual std::vector<uint8_t> GetRunActionKeyHash() const = 0;
 
  protected:
   friend class base::RefCountedThreadSafe<Configurator>;

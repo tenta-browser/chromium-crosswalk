@@ -46,17 +46,17 @@ class PLATFORM_EXPORT SecurityOrigin : public RefCounted<SecurityOrigin> {
   WTF_MAKE_NONCOPYABLE(SecurityOrigin);
 
  public:
-  static PassRefPtr<SecurityOrigin> Create(const KURL&);
-  static PassRefPtr<SecurityOrigin> CreateUnique();
+  static RefPtr<SecurityOrigin> Create(const KURL&);
+  static RefPtr<SecurityOrigin> CreateUnique();
 
-  static PassRefPtr<SecurityOrigin> CreateFromString(const String&);
-  static PassRefPtr<SecurityOrigin> Create(const String& protocol,
-                                           const String& host,
-                                           int port);
-  static PassRefPtr<SecurityOrigin> Create(const String& protocol,
-                                           const String& host,
-                                           int port,
-                                           const String& suborigin);
+  static RefPtr<SecurityOrigin> CreateFromString(const String&);
+  static RefPtr<SecurityOrigin> Create(const String& protocol,
+                                       const String& host,
+                                       int port);
+  static RefPtr<SecurityOrigin> Create(const String& protocol,
+                                       const String& host,
+                                       int port,
+                                       const String& suborigin);
 
   static void SetMap(URLSecurityOriginMap*);
 
@@ -75,7 +75,7 @@ class PLATFORM_EXPORT SecurityOrigin : public RefCounted<SecurityOrigin> {
 
   // Create a deep copy of this SecurityOrigin. This method is useful
   // when marshalling a SecurityOrigin to another thread.
-  PassRefPtr<SecurityOrigin> IsolatedCopy() const;
+  RefPtr<SecurityOrigin> IsolatedCopy() const;
 
   // Set the domain property of this security origin to newDomain. This
   // function does not check whether newDomain is a suffix of the current
@@ -202,10 +202,15 @@ class PLATFORM_EXPORT SecurityOrigin : public RefCounted<SecurityOrigin> {
   // Assigns a suborigin namespace to the SecurityOrigin. addSuborigin() must
   // only ever be called once per SecurityOrigin(). If it is called on a
   // SecurityOrigin that has already had a suborigin assigned, it will hit a
-  // RELEASE_ASSERT().
+  // CHECK().
   bool HasSuborigin() const { return !suborigin_.GetName().IsNull(); }
   const Suborigin* GetSuborigin() const { return &suborigin_; }
   void AddSuborigin(const Suborigin&);
+
+  // Returns true when this SecurityOrigin has a suborigin, its policy
+  // allows sending credentials to the same physical origin, and the specified
+  // origin is the same physical origin.
+  bool HasSuboriginAndShouldAllowCredentialsFor(const KURL&) const;
 
   // By default 'file:' URLs may access other 'file:' URLs. This method
   // denies access. If either SecurityOrigin sets this flag, the access
@@ -285,6 +290,8 @@ class PLATFORM_EXPORT SecurityOrigin : public RefCounted<SecurityOrigin> {
                                                      String&,
                                                      String&,
                                                      String&);
+
+  bool HasSameSuboriginAs(const SecurityOrigin* other) const;
 
   String protocol_;
   String host_;

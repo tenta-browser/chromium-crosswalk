@@ -38,8 +38,6 @@ void ExportLayoutTestSpecificPreferences(
   to->allow_running_insecure_content = from.allow_running_of_insecure_content;
   to->should_respect_image_orientation = from.should_respect_image_orientation;
   to->allow_file_access_from_file_urls = from.allow_file_access_from_file_urls;
-  to->javascript_can_open_windows_automatically =
-      from.java_script_can_open_windows_automatically;
   to->web_security_enabled =
       from.web_security_enabled;
   to->disable_reading_from_canvas = from.disable_reading_from_canvas;
@@ -100,9 +98,11 @@ void ApplyLayoutTestDefaultPreferences(WebPreferences* prefs) {
 #if defined(OS_ANDROID)
   prefs->text_autosizing_enabled = false;
 #endif
-  prefs->viewport_enabled = false;
+  prefs->viewport_enabled = command_line.HasSwitch(switches::kEnableViewport);
   prefs->default_minimum_page_scale_factor = 1.f;
   prefs->default_maximum_page_scale_factor = 4.f;
+  prefs->presentation_receiver =
+      command_line.HasSwitch(switches::kForcePresentationReceiverForTesting);
 }
 
 base::FilePath GetWebKitRootDirFilePath() {

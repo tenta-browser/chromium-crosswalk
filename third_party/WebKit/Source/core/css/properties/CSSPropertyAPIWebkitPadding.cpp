@@ -10,10 +10,11 @@
 
 namespace blink {
 
-const CSSValue* CSSPropertyAPIWebkitPadding::parseSingleValue(
+const CSSValue* CSSPropertyAPIWebkitPadding::ParseSingleValue(
+    CSSPropertyID,
     CSSParserTokenRange& range,
     const CSSParserContext& context,
-    CSSPropertyID) {
+    const CSSParserLocalContext&) const {
   return ConsumeLengthOrPercent(
       range, context.Mode(), kValueRangeNonNegative,
       CSSPropertyParserHelpers::UnitlessQuirk::kForbid);

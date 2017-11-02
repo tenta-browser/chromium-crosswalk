@@ -16,9 +16,9 @@
 #include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/stringprintf.h"
-#include "base/threading/non_thread_safe.h"
 #include "base/time/clock.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ssl/bad_clock_blocking_page.h"
@@ -37,6 +37,7 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "net/base/net_errors.h"
+#include "third_party/protobuf/src/google/protobuf/io/zero_copy_stream_impl_lite.h"
 #include "ui/base/resource/resource_bundle.h"
 
 #if BUILDFLAG(ENABLE_CAPTIVE_PORTAL_DETECTION)
@@ -44,10 +45,26 @@
 #include "chrome/browser/captive_portal/captive_portal_service_factory.h"
 #include "chrome/browser/captive_portal/captive_portal_tab_helper.h"
 #include "chrome/browser/ssl/captive_portal_blocking_page.h"
-#include "third_party/protobuf/src/google/protobuf/io/zero_copy_stream_impl_lite.h"
 #endif
 
+#if !defined(OS_IOS)
+
+#if defined(OS_WIN)
+#include "base/win/win_util.h"
+#elif defined(OS_CHROMEOS)
+#include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
+#endif  // #if defined(OS_WIN)
+
+#include "chrome/browser/ssl/mitm_software_blocking_page.h"
+#include "third_party/re2/src/re2/re2.h"
+#endif  // if !defined(OS_IOS)
+
 namespace {
+
+#if !defined(OS_IOS)
+const base::Feature kMITMSoftwareInterstitial{
+    "MITMSoftwareInterstitial", base::FEATURE_DISABLED_BY_DEFAULT};
+#endif
 
 #if BUILDFLAG(ENABLE_CAPTIVE_PORTAL_DETECTION)
 const base::Feature kCaptivePortalInterstitial{
@@ -60,6 +77,14 @@ const base::Feature kCaptivePortalCertificateList{
 const base::Feature kSSLCommonNameMismatchHandling{
     "SSLCommonNameMismatchHandling", base::FEATURE_ENABLED_BY_DEFAULT};
 
+#if defined(OS_WIN)
+const base::Feature kSuperfishInterstitial{"SuperfishInterstitial",
+                                           base::FEATURE_ENABLED_BY_DEFAULT};
+#else
+const base::Feature kSuperfishInterstitial{"SuperfishInterstitial",
+                                           base::FEATURE_DISABLED_BY_DEFAULT};
+#endif
+
 // Default delay in milliseconds before displaying the SSL interstitial.
 // This can be changed in tests.
 // - If there is a name mismatch and a suggested URL available result arrives
@@ -71,20 +96,52 @@ const int64_t kInterstitialDelayInMilliseconds = 3000;
 
 const char kHistogram[] = "interstitial.ssl_error_handler";
 
+bool IsSuperfish(const scoped_refptr<net::X509Certificate>& cert) {
+  // This is the fingerprint of the well-known Superfish certificate at
+  // https://pastebin.com/WcXv8QcG. Superfish is identified by certificate
+  // fingerprint rather than SPKI because net::SSLInfo does not guarantee
+  // |public_key_hashes| (the SPKIs) to be populated if the certificate doesn't
+  // verify successfully. It so happens that Superfish uses the same certificate
+  // universally (not just the same public key), and calculating the fingerprint
+  // is more convenient here than calculating the SPKI.
+  const net::SHA256HashValue kSuperfishFingerprint{
+      {0xB6, 0xFE, 0x91, 0x51, 0x40, 0x2B, 0xAD, 0x1C, 0x06, 0xD7, 0xE6,
+       0x6D, 0xB6, 0x7A, 0x26, 0xAA, 0x73, 0x56, 0xF2, 0xE6, 0xC6, 0x44,
+       0xDB, 0xCF, 0x9F, 0x98, 0x96, 0x8F, 0xF6, 0x32, 0xE1, 0xB7}};
+  for (const net::X509Certificate::OSCertHandle& intermediate :
+       cert->GetIntermediateCertificates()) {
+    net::SHA256HashValue hash =
+        net::X509Certificate::CalculateFingerprint256(intermediate);
+    if (hash == kSuperfishFingerprint) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Records an UMA histogram for whether the Superfish certificate was present in
+// the certificate chain.
+void RecordSuperfishUMA(const scoped_refptr<net::X509Certificate>& cert) {
+  UMA_HISTOGRAM_BOOLEAN("interstitial.ssl_error_handler.superfish",
+                        IsSuperfish(cert));
+}
+
 // Adds a message to console after navigation commits and then, deletes itself.
 // Also deletes itself if the navigation is stopped.
 class CommonNameMismatchRedirectObserver
     : public content::WebContentsObserver,
       public content::WebContentsUserData<CommonNameMismatchRedirectObserver> {
  public:
+  ~CommonNameMismatchRedirectObserver() override {}
+
   static void AddToConsoleAfterNavigation(
       content::WebContents* web_contents,
       const std::string& request_url_hostname,
       const std::string& suggested_url_hostname) {
     web_contents->SetUserData(
         UserDataKey(),
-        new CommonNameMismatchRedirectObserver(
-            web_contents, request_url_hostname, suggested_url_hostname));
+        base::WrapUnique(new CommonNameMismatchRedirectObserver(
+            web_contents, request_url_hostname, suggested_url_hostname)));
   }
 
  private:
@@ -95,7 +152,6 @@ class CommonNameMismatchRedirectObserver
         web_contents_(web_contents),
         request_url_hostname_(request_url_hostname),
         suggested_url_hostname_(suggested_url_hostname) {}
-  ~CommonNameMismatchRedirectObserver() override {}
 
   // WebContentsObserver:
   void NavigationStopped() override {
@@ -138,6 +194,62 @@ bool IsCaptivePortalInterstitialEnabled() {
   return base::FeatureList::IsEnabled(kCaptivePortalInterstitial);
 }
 
+std::unique_ptr<std::unordered_set<std::string>> LoadCaptivePortalCertHashes(
+    const chrome_browser_ssl::SSLErrorAssistantConfig& proto) {
+  auto hashes = base::MakeUnique<std::unordered_set<std::string>>();
+  for (const chrome_browser_ssl::CaptivePortalCert& cert :
+       proto.captive_portal_cert()) {
+    hashes.get()->insert(cert.sha256_hash());
+  }
+  return hashes;
+}
+#endif
+
+#if !defined(OS_IOS)
+bool IsMITMSoftwareInterstitialEnabled() {
+  return base::FeatureList::IsEnabled(kMITMSoftwareInterstitial);
+}
+
+// Struct which stores data about a known MITM software pulled from the
+// SSLErrorAssistant proto.
+struct MITMSoftwareType {
+  MITMSoftwareType(const std::string& name,
+                   const std::string& issuer_common_name_regex,
+                   const std::string& issuer_organization_regex)
+      : name(name),
+        issuer_common_name_regex(issuer_common_name_regex),
+        issuer_organization_regex(issuer_organization_regex) {}
+
+  const std::string name;
+  const std::string issuer_common_name_regex;
+  const std::string issuer_organization_regex;
+};
+
+std::unique_ptr<std::vector<MITMSoftwareType>> LoadMITMSoftwareList(
+    const chrome_browser_ssl::SSLErrorAssistantConfig& proto) {
+  auto mitm_software_list = base::MakeUnique<std::vector<MITMSoftwareType>>();
+
+  for (const chrome_browser_ssl::MITMSoftware& proto_entry :
+       proto.mitm_software()) {
+    // The |name| field and at least one of the |issuer_common_name_regex| and
+    // |issuer_organization_regex| fields must be set.
+    DCHECK(!proto_entry.name().empty());
+    DCHECK(!(proto_entry.issuer_common_name_regex().empty() &&
+             proto_entry.issuer_organization_regex().empty()));
+    if (proto_entry.name().empty() ||
+        (proto_entry.issuer_common_name_regex().empty() &&
+         proto_entry.issuer_organization_regex().empty())) {
+      continue;
+    }
+
+    mitm_software_list.get()->push_back(MITMSoftwareType(
+        proto_entry.name(), proto_entry.issuer_common_name_regex(),
+        proto_entry.issuer_organization_regex()));
+  }
+  return mitm_software_list;
+}
+#endif
+
 // Reads the SSL error assistant configuration from the resource bundle.
 std::unique_ptr<chrome_browser_ssl::SSLErrorAssistantConfig>
 ReadErrorAssistantProtoFromResourceBundle() {
@@ -151,23 +263,12 @@ ReadErrorAssistantProtoFromResourceBundle() {
   return proto->ParseFromZeroCopyStream(&stream) ? std::move(proto) : nullptr;
 }
 
-std::unique_ptr<std::unordered_set<std::string>> LoadCaptivePortalCertHashes(
-    const chrome_browser_ssl::SSLErrorAssistantConfig& proto) {
-  auto hashes = base::MakeUnique<std::unordered_set<std::string>>();
-  for (const chrome_browser_ssl::CaptivePortalCert& cert :
-       proto.captive_portal_cert()) {
-    hashes.get()->insert(cert.sha256_hash());
-  }
-  return hashes;
-}
-#endif
-
 bool IsSSLCommonNameMismatchHandlingEnabled() {
   return base::FeatureList::IsEnabled(kSSLCommonNameMismatchHandling);
 }
 
 // Configuration for SSLErrorHandler.
-class ConfigSingleton : public base::NonThreadSafe {
+class ConfigSingleton {
  public:
   ConfigSingleton();
 
@@ -183,6 +284,14 @@ class ConfigSingleton : public base::NonThreadSafe {
   bool IsKnownCaptivePortalCert(const net::SSLInfo& ssl_info);
 #endif
 
+#if !defined(OS_IOS)
+  // Returns the name of a known MITM software provider that matches the
+  // certificate passed in as the |cert| parameter. Returns empty string if
+  // there is no match.
+  const std::string MatchKnownMITMSoftware(
+      const scoped_refptr<net::X509Certificate> cert);
+#endif
+
   // Testing methods:
   void ResetForTesting();
   void SetInterstitialDelayForTesting(const base::TimeDelta& delay);
@@ -191,12 +300,12 @@ class ConfigSingleton : public base::NonThreadSafe {
   void SetClockForTesting(base::Clock* clock);
   void SetNetworkTimeTrackerForTesting(
       network_time::NetworkTimeTracker* tracker);
-
-#if BUILDFLAG(ENABLE_CAPTIVE_PORTAL_DETECTION)
   void SetErrorAssistantProto(
       std::unique_ptr<chrome_browser_ssl::SSLErrorAssistantConfig>
           error_assistant_proto);
-#endif
+  void SetEnterpriseManagedForTesting(bool enterprise_managed);
+  bool IsEnterpriseManagedFlagSetForTesting() const;
+  bool IsEnterpriseManaged() const;
 
  private:
   base::TimeDelta interstitial_delay_;
@@ -211,11 +320,22 @@ class ConfigSingleton : public base::NonThreadSafe {
 
   network_time::NetworkTimeTracker* network_time_tracker_ = nullptr;
 
-#if BUILDFLAG(ENABLE_CAPTIVE_PORTAL_DETECTION)
+#if !defined(OS_IOS)
   // Error assistant configuration.
   std::unique_ptr<chrome_browser_ssl::SSLErrorAssistantConfig>
       error_assistant_proto_;
 
+  std::unique_ptr<std::vector<MITMSoftwareType>> mitm_software_list_;
+
+  enum EnterpriseManaged {
+    ENTERPRISE_MANAGED_STATUS_NOT_SET,
+    ENTERPRISE_MANAGED_STATUS_TRUE,
+    ENTERPRISE_MANAGED_STATUS_FALSE
+  };
+  EnterpriseManaged is_enterprise_managed_for_testing_;
+#endif
+
+#if BUILDFLAG(ENABLE_CAPTIVE_PORTAL_DETECTION)
   // SPKI hashes belonging to certs treated as captive portals. Null until the
   // first time IsKnownCaptivePortalCert() or SetErrorAssistantProto()
   // is called.
@@ -225,8 +345,8 @@ class ConfigSingleton : public base::NonThreadSafe {
 
 ConfigSingleton::ConfigSingleton()
     : interstitial_delay_(
-          base::TimeDelta::FromMilliseconds(kInterstitialDelayInMilliseconds)) {
-}
+          base::TimeDelta::FromMilliseconds(kInterstitialDelayInMilliseconds)),
+      is_enterprise_managed_for_testing_(ENTERPRISE_MANAGED_STATUS_NOT_SET) {}
 
 base::TimeDelta ConfigSingleton::interstitial_delay() const {
   return interstitial_delay_;
@@ -253,8 +373,12 @@ void ConfigSingleton::ResetForTesting() {
   timer_started_callback_ = nullptr;
   network_time_tracker_ = nullptr;
   testing_clock_ = nullptr;
-#if BUILDFLAG(ENABLE_CAPTIVE_PORTAL_DETECTION)
+#if !defined(OS_IOS)
   error_assistant_proto_.reset();
+  mitm_software_list_.reset();
+  is_enterprise_managed_for_testing_ = ENTERPRISE_MANAGED_STATUS_NOT_SET;
+#endif
+#if BUILDFLAG(ENABLE_CAPTIVE_PORTAL_DETECTION)
   captive_portal_spki_hashes_.reset();
 #endif
 }
@@ -279,7 +403,50 @@ void ConfigSingleton::SetNetworkTimeTrackerForTesting(
   network_time_tracker_ = tracker;
 }
 
-#if BUILDFLAG(ENABLE_CAPTIVE_PORTAL_DETECTION)
+void ConfigSingleton::SetEnterpriseManagedForTesting(bool enterprise_managed) {
+  if (enterprise_managed) {
+    is_enterprise_managed_for_testing_ = ENTERPRISE_MANAGED_STATUS_TRUE;
+  } else {
+    is_enterprise_managed_for_testing_ = ENTERPRISE_MANAGED_STATUS_FALSE;
+  }
+}
+
+bool ConfigSingleton::IsEnterpriseManagedFlagSetForTesting() const {
+#if !defined(OS_IOS)
+  if (is_enterprise_managed_for_testing_ == ENTERPRISE_MANAGED_STATUS_NOT_SET) {
+    return false;
+  }
+  return true;
+#endif
+}
+
+bool ConfigSingleton::IsEnterpriseManaged() const {
+#if !defined(OS_IOS)
+  // Return the value of the testing flag if it's set.
+  if (is_enterprise_managed_for_testing_ == ENTERPRISE_MANAGED_STATUS_TRUE) {
+    return true;
+  }
+  if (is_enterprise_managed_for_testing_ == ENTERPRISE_MANAGED_STATUS_FALSE) {
+    return false;
+  }
+
+#if defined(OS_WIN)
+  if (base::win::IsEnterpriseManaged()) {
+    return true;
+  }
+#elif defined(OS_CHROMEOS)
+  if (g_browser_process->platform_part()->browser_policy_connector_chromeos()) {
+    return true;
+  }
+#endif  // #if defined(OS_WIN)
+
+  return false;
+#else
+  NOTREACHED();
+#endif
+}
+
+#if !defined(OS_IOS)
 void ConfigSingleton::SetErrorAssistantProto(
     std::unique_ptr<chrome_browser_ssl::SSLErrorAssistantConfig> proto) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
@@ -290,10 +457,17 @@ void ConfigSingleton::SetErrorAssistantProto(
     return;
   }
   error_assistant_proto_ = std::move(proto);
+
+  mitm_software_list_ = LoadMITMSoftwareList(*error_assistant_proto_);
+
+#if BUILDFLAG(ENABLE_CAPTIVE_PORTAL_DETECTION)
   captive_portal_spki_hashes_ =
       LoadCaptivePortalCertHashes(*error_assistant_proto_);
+#endif  // ENABLE_CAPTIVE_PORTAL_DETECTION
 }
+#endif  // OS_IOS
 
+#if BUILDFLAG(ENABLE_CAPTIVE_PORTAL_DETECTION)
 bool ConfigSingleton::IsKnownCaptivePortalCert(const net::SSLInfo& ssl_info) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   if (!captive_portal_spki_hashes_) {
@@ -313,6 +487,81 @@ bool ConfigSingleton::IsKnownCaptivePortalCert(const net::SSLInfo& ssl_info) {
     }
   }
   return false;
+}
+#endif
+
+#if !defined(OS_IOS)
+
+bool RegexMatchesAny(const std::vector<std::string>& organization_names,
+                     const std::string& pattern) {
+  const re2::RE2 regex(pattern);
+  for (const std::string& organization_name : organization_names) {
+    if (re2::RE2::FullMatch(organization_name, regex)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+const std::string ConfigSingleton::MatchKnownMITMSoftware(
+    const scoped_refptr<net::X509Certificate> cert) {
+  // Ignore if the certificate doesn't have an issuer common name or an
+  // organization name.
+  if (cert->issuer().common_name.empty() &&
+      cert->issuer().organization_names.size() == 0) {
+    return std::string();
+  }
+
+  // Load MITM software data from the SSL error assistant proto.
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  if (!mitm_software_list_) {
+    error_assistant_proto_ = ReadErrorAssistantProtoFromResourceBundle();
+    DCHECK(error_assistant_proto_);
+    mitm_software_list_ = LoadMITMSoftwareList(*error_assistant_proto_);
+  }
+
+  for (const MITMSoftwareType& mitm_software : *mitm_software_list_) {
+    // At least one of the common name or organization name fields should be
+    // populated on the MITM software list entry.
+    DCHECK(!(mitm_software.issuer_common_name_regex.empty() &&
+             mitm_software.issuer_organization_regex.empty()));
+    if (mitm_software.issuer_common_name_regex.empty() &&
+        mitm_software.issuer_organization_regex.empty()) {
+      continue;
+    }
+
+    // If both |issuer_common_name_regex| and |issuer_organization_regex| are
+    // set, the certificate should match both regexes.
+    if (!mitm_software.issuer_common_name_regex.empty() &&
+        !mitm_software.issuer_organization_regex.empty()) {
+      if (re2::RE2::FullMatch(
+              cert->issuer().common_name,
+              re2::RE2(mitm_software.issuer_common_name_regex)) &&
+          RegexMatchesAny(cert->issuer().organization_names,
+                          mitm_software.issuer_organization_regex)) {
+        return mitm_software.name;
+      }
+
+      // If only |issuer_organization_regex| is set, the certificate's issuer
+      // organization name should match.
+    } else if (!mitm_software.issuer_organization_regex.empty()) {
+      if (RegexMatchesAny(cert->issuer().organization_names,
+                          mitm_software.issuer_organization_regex)) {
+        return mitm_software.name;
+      }
+
+      // If only |issuer_common_name_regex| is set, the certificate's issuer
+      // common name should match.
+    } else if (!mitm_software.issuer_common_name_regex.empty()) {
+      if (re2::RE2::FullMatch(
+              cert->issuer().common_name,
+              re2::RE2(mitm_software.issuer_common_name_regex))) {
+        return mitm_software.name;
+      }
+    }
+  }
+
+  return std::string();
 }
 #endif
 
@@ -348,6 +597,8 @@ class SSLErrorHandlerDelegateImpl : public SSLErrorHandler::Delegate {
   void NavigateToSuggestedURL(const GURL& suggested_url) override;
   bool IsErrorOverridable() const override;
   void ShowCaptivePortalInterstitial(const GURL& landing_url) override;
+  void ShowMITMSoftwareInterstitial(const std::string& mitm_software_name,
+                                    bool is_enterprise_managed) override;
   void ShowSSLInterstitial() override;
   void ShowBadClockInterstitial(const base::Time& now,
                                 ssl_errors::ClockState clock_state) override;
@@ -423,11 +674,28 @@ void SSLErrorHandlerDelegateImpl::ShowCaptivePortalInterstitial(
 #endif
 }
 
+void SSLErrorHandlerDelegateImpl::ShowMITMSoftwareInterstitial(
+    const std::string& mitm_software_name,
+    bool is_enterprise_managed) {
+#if !defined(OS_IOS)
+  // Show MITM software blocking page. The interstitial owns the blocking page.
+  (new MITMSoftwareBlockingPage(
+       web_contents_, cert_error_, request_url_, std::move(ssl_cert_reporter_),
+       ssl_info_, mitm_software_name, is_enterprise_managed, callback_))
+      ->Show();
+#else
+  NOTREACHED();
+#endif
+}
+
 void SSLErrorHandlerDelegateImpl::ShowSSLInterstitial() {
   // Show SSL blocking page. The interstitial owns the blocking page.
-  (SSLBlockingPage::Create(web_contents_, cert_error_, ssl_info_, request_url_,
-                           options_mask_, base::Time::NowFromSystemTime(),
-                           std::move(ssl_cert_reporter_), callback_))
+  (SSLBlockingPage::Create(
+       web_contents_, cert_error_, ssl_info_, request_url_, options_mask_,
+       base::Time::NowFromSystemTime(), std::move(ssl_cert_reporter_),
+       base::FeatureList::IsEnabled(kSuperfishInterstitial) &&
+           IsSuperfish(ssl_info_.cert),
+       callback_))
       ->Show();
 }
 
@@ -469,7 +737,7 @@ void SSLErrorHandler::HandleSSLError(
               web_contents, ssl_info, profile, cert_error, options_mask,
               request_url, std::move(ssl_cert_reporter), callback)),
       web_contents, profile, cert_error, ssl_info, request_url, callback);
-  web_contents->SetUserData(UserDataKey(), error_handler);
+  web_contents->SetUserData(UserDataKey(), base::WrapUnique(error_handler));
   error_handler->StartHandlingError();
 }
 
@@ -502,6 +770,16 @@ void SSLErrorHandler::SetNetworkTimeTrackerForTesting(
 }
 
 // static
+void SSLErrorHandler::SetEnterpriseManagedForTesting(bool enterprise_managed) {
+  g_config.Pointer()->SetEnterpriseManagedForTesting(enterprise_managed);
+}
+
+// static
+bool SSLErrorHandler::IsEnterpriseManagedFlagSetForTesting() {
+  return g_config.Pointer()->IsEnterpriseManagedFlagSetForTesting();
+}
+
+// static
 std::string SSLErrorHandler::GetHistogramNameForTesting() {
   return kHistogram;
 }
@@ -512,7 +790,7 @@ bool SSLErrorHandler::IsTimerRunningForTesting() const {
 
 void SSLErrorHandler::SetErrorAssistantProto(
     std::unique_ptr<chrome_browser_ssl::SSLErrorAssistantConfig> config_proto) {
-#if BUILDFLAG(ENABLE_CAPTIVE_PORTAL_DETECTION)
+#if !defined(OS_IOS)
   g_config.Pointer()->SetErrorAssistantProto(std::move(config_proto));
 #endif
 }
@@ -541,18 +819,16 @@ SSLErrorHandler::~SSLErrorHandler() {
 void SSLErrorHandler::StartHandlingError() {
   RecordUMA(HANDLE_ALL);
 
+  RecordSuperfishUMA(ssl_info_.cert);
+
   if (ssl_errors::ErrorInfo::NetErrorToErrorType(cert_error_) ==
       ssl_errors::ErrorInfo::CERT_DATE_INVALID) {
     HandleCertDateInvalidError();
     return;
   }
 
-  const net::CertStatus non_name_mismatch_errors =
-      ssl_info_.cert_status ^ net::CERT_STATUS_COMMON_NAME_INVALID;
   const bool only_error_is_name_mismatch =
-      cert_error_ == net::ERR_CERT_COMMON_NAME_INVALID &&
-      (!net::IsCertStatusError(non_name_mismatch_errors) ||
-       net::IsCertStatusMinorError(ssl_info_.cert_status));
+      IsOnlyCertError(net::CERT_STATUS_COMMON_NAME_INVALID);
 
 #if BUILDFLAG(ENABLE_CAPTIVE_PORTAL_DETECTION)
   // Check known captive portal certificate list if the only error is
@@ -566,6 +842,24 @@ void SSLErrorHandler::StartHandlingError() {
     ShowCaptivePortalInterstitial(
         GURL(captive_portal::CaptivePortalDetector::kDefaultURL));
     return;
+  }
+#endif
+
+#if !defined(OS_IOS)
+  // The MITM software interstitial is displayed if and only if:
+  // - the error thrown is not overridable
+  // - the only certificate error is CERT_STATUS_AUTHORITY_INVALID
+  // - the certificate contains a string that indicates it was issued by a
+  //   MITM software
+  if (IsMITMSoftwareInterstitialEnabled() && !delegate_->IsErrorOverridable() &&
+      IsOnlyCertError(net::CERT_STATUS_AUTHORITY_INVALID)) {
+    const std::string found_mitm_software =
+        g_config.Pointer()->MatchKnownMITMSoftware(ssl_info_.cert);
+    if (!found_mitm_software.empty()) {
+      ShowMITMSoftwareInterstitial(found_mitm_software,
+                                   g_config.Pointer()->IsEnterpriseManaged());
+      return;
+    }
   }
 #endif
 
@@ -638,6 +932,22 @@ void SSLErrorHandler::ShowCaptivePortalInterstitial(const GURL& landing_url) {
   delegate_->ShowCaptivePortalInterstitial(landing_url);
   // Once an interstitial is displayed, no need to keep the handler around.
   // This is the equivalent of "delete this". It also destroys the timer.
+  web_contents_->RemoveUserData(UserDataKey());
+#else
+  NOTREACHED();
+#endif
+}
+
+void SSLErrorHandler::ShowMITMSoftwareInterstitial(
+    const std::string& mitm_software_name,
+    bool is_enterprise_managed) {
+#if !defined(OS_IOS)
+  // Show SSL blocking page. The interstitial owns the blocking page.
+  RecordUMA(SHOW_MITM_SOFTWARE_INTERSTITIAL);
+  delegate_->ShowMITMSoftwareInterstitial(mitm_software_name,
+                                          is_enterprise_managed);
+  // Once an interstitial is displayed, no need to keep the handler around.
+  // This is the equivalent of "delete this".
   web_contents_->RemoveUserData(UserDataKey());
 #else
   NOTREACHED();
@@ -777,4 +1087,21 @@ void SSLErrorHandler::HandleCertDateInvalidErrorImpl(
     return;  // |this| is deleted after showing the interstitial.
   }
   ShowSSLInterstitial();
+}
+
+// Returns true if |only_cert_error_expected| is the only error code present in
+// the certificate. The parameter |only_cert_error_expected| is a
+// net::CertStatus code representing the most serious error identified on the
+// certificate. For example, this could be net::CERT_STATUS_COMMON_NAME_INVALID.
+// This function is useful for rendering interstitials that are triggered by one
+// specific error code only.
+bool SSLErrorHandler::IsOnlyCertError(
+    net::CertStatus only_cert_error_expected) const {
+  const net::CertStatus other_errors =
+      ssl_info_.cert_status ^ only_cert_error_expected;
+
+  return cert_error_ ==
+             net::MapCertStatusToNetError(only_cert_error_expected) &&
+         (!net::IsCertStatusError(other_errors) ||
+          net::IsCertStatusMinorError(ssl_info_.cert_status));
 }

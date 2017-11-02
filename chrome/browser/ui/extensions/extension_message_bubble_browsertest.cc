@@ -24,7 +24,7 @@
 #include "components/omnibox/browser/omnibox_edit_model.h"
 #include "content/public/test/browser_test_utils.h"
 #include "extensions/browser/extension_registry.h"
-#include "extensions/common/extension.h"
+#include "extensions/common/disable_reason.h"
 #include "extensions/common/feature_switch.h"
 #include "extensions/test/extension_test_message_listener.h"
 
@@ -122,8 +122,15 @@ void ExtensionMessageBubbleBrowserTest::TestBubbleAnchoredToAppMenu() {
       extensions::extension_action_test_util::CreateActionExtension(
           "no_action_extension",
           extensions::extension_action_test_util::NO_ACTION,
-          extensions::Manifest::UNPACKED);
+          extensions::Manifest::INTERNAL);
   extension_service()->AddExtension(no_action_extension.get());
+  // The 'suspicious extension' bubble warns the user about extensions that are
+  // disabled for not being from the webstore. This is one of the few bubbles
+  // that lets us test anchoring to the app menu, since we usually anchor to the
+  // extension action now that every extension is given a permanent UI presence.
+  extension_service()->DisableExtension(
+      no_action_extension->id(),
+      extensions::disable_reason::DISABLE_NOT_VERIFIED);
   Browser* second_browser = new Browser(Browser::CreateParams(profile(), true));
   ASSERT_TRUE(second_browser);
   second_browser->window()->Show();
@@ -138,7 +145,7 @@ void ExtensionMessageBubbleBrowserTest::
       extensions::extension_action_test_util::CreateActionExtension(
           "no_action_extension",
           extensions::extension_action_test_util::NO_ACTION,
-          extensions::Manifest::UNPACKED);
+          extensions::Manifest::INTERNAL);
   extension_service()->AddExtension(no_action_extension.get());
 
   scoped_refptr<const extensions::Extension> action_extension =
@@ -148,6 +155,14 @@ void ExtensionMessageBubbleBrowserTest::
           extensions::Manifest::INTERNAL);
   extension_service()->AddExtension(action_extension.get());
 
+  // The 'suspicious extension' bubble warns the user about extensions that are
+  // disabled for not being from the webstore. This is one of the few bubbles
+  // that lets us test anchoring to the app menu, since we usually anchor to the
+  // extension action now that every extension is given a permanent UI presence.
+  extension_service()->DisableExtension(
+      no_action_extension->id(),
+      extensions::disable_reason::DISABLE_NOT_VERIFIED);
+
   Browser* second_browser = new Browser(Browser::CreateParams(profile(), true));
   ASSERT_TRUE(second_browser);
   second_browser->window()->Show();
@@ -155,6 +170,31 @@ void ExtensionMessageBubbleBrowserTest::
 
   CheckBubble(second_browser, ANCHOR_APP_MENU, false);
   CloseBubble(second_browser);
+}
+
+void ExtensionMessageBubbleBrowserTest::
+    TestBubbleClosedAfterExtensionUninstall() {
+  const extensions::Extension* extension =
+      LoadExtension(test_data_dir_.AppendASCII("api_test")
+                        .AppendASCII("override")
+                        .AppendASCII("newtab"));
+  ASSERT_TRUE(extension);
+
+  CheckBubbleIsNotPresent(browser(), false, false);
+  EXPECT_EQ(1, browser()->tab_strip_model()->count());
+  chrome::NewTab(browser());
+  EXPECT_EQ(2, browser()->tab_strip_model()->count());
+  base::RunLoop().RunUntilIdle();
+  CheckBubble(browser(), ANCHOR_BROWSER_ACTION, false);
+
+  extension_service()->UninstallExtension(
+      extension->id(), extensions::UNINSTALL_REASON_FOR_TESTING,
+      base::Bind(&base::DoNothing), nullptr);
+  base::RunLoop().RunUntilIdle();
+
+  // If the only relevant extension was uninstalled, the bubble should
+  // automatically close. See crbug.com/748952.
+  CheckBubbleIsNotPresent(browser(), false, false);
 }
 
 void ExtensionMessageBubbleBrowserTest::TestUninstallDangerousExtension() {

@@ -57,7 +57,7 @@ cr.define('print_preview', function() {
      * @private
      */
     this.customHintEl_ = null;
-  };
+  }
 
   /**
    * CSS classes used by the page settings.
@@ -101,18 +101,19 @@ cr.define('print_preview', function() {
     /** @override */
     enterDocument: function() {
       print_preview.SettingsSection.prototype.enterDocument.call(this);
+      var customInput = assert(this.customInput_);
       this.tracker.add(
-          this.allRadio_, 'click', this.onAllRadioClick_.bind(this));
+          assert(this.allRadio_), 'click', this.onAllRadioClick_.bind(this));
       this.tracker.add(
-          this.customRadio_, 'click', this.onCustomRadioClick_.bind(this));
+          assert(this.customRadio_), 'click',
+          this.onCustomRadioClick_.bind(this));
+      this.tracker.add(customInput, 'blur', this.onCustomInputBlur_.bind(this));
       this.tracker.add(
-          this.customInput_, 'blur', this.onCustomInputBlur_.bind(this));
+          customInput, 'focus', this.onCustomInputFocus_.bind(this));
       this.tracker.add(
-          this.customInput_, 'focus', this.onCustomInputFocus_.bind(this));
+          customInput, 'keydown', this.onCustomInputKeyDown_.bind(this));
       this.tracker.add(
-          this.customInput_, 'keydown', this.onCustomInputKeyDown_.bind(this));
-      this.tracker.add(
-          this.customInput_, 'input', this.onCustomInputChange_.bind(this));
+          customInput, 'input', this.onCustomInputChange_.bind(this));
       this.tracker.add(
           this.pageRangeTicketItem_,
           print_preview.ticket_items.TicketItem.EventType.CHANGE,
@@ -145,29 +146,28 @@ cr.define('print_preview', function() {
      * @private
      */
     setInvalidStateVisible_: function(validity) {
-      if (validity !== PageRangeStatus.NO_ERROR) {
-        var message;
-        if (validity === PageRangeStatus.LIMIT_ERROR) {
-          if (this.pageRangeTicketItem_.getDocumentNumPages()) {
-            message = loadTimeData.getStringF(
-                'pageRangeLimitInstructionWithValue',
-                this.pageRangeTicketItem_.getDocumentNumPages());
-          } else {
-            message = loadTimeData.getString(
-                'pageRangeLimitInstruction');
-          }
-        } else {
-          message = loadTimeData.getStringF(
-              'pageRangeSyntaxInstruction',
-              loadTimeData.getString('examplePageRangeText'));
-        }
-        this.customHintEl_.textContent = message;
-        this.customInput_.classList.add('invalid');
-        fadeInElement(this.customHintEl_);
-      } else {
+      if (validity === PageRangeStatus.NO_ERROR) {
         this.customInput_.classList.remove('invalid');
         fadeOutElement(this.customHintEl_);
+        return;
       }
+      var message;
+      if (validity === PageRangeStatus.LIMIT_ERROR) {
+        if (this.pageRangeTicketItem_.getDocumentNumPages()) {
+          message = loadTimeData.getStringF(
+              'pageRangeLimitInstructionWithValue',
+              this.pageRangeTicketItem_.getDocumentNumPages());
+        } else {
+          message = loadTimeData.getString('pageRangeLimitInstruction');
+        }
+      } else {
+        message = loadTimeData.getStringF(
+            'pageRangeSyntaxInstruction',
+            loadTimeData.getString('examplePageRangeText'));
+      }
+      this.customHintEl_.textContent = message;
+      this.customInput_.classList.add('invalid');
+      fadeInElement(this.customHintEl_);
     },
 
     /**
@@ -193,8 +193,18 @@ cr.define('print_preview', function() {
      */
     onCustomInputBlur_: function(event) {
       if (this.customInput_.value == '' &&
+          event.relatedTarget !=
+              this.getElement().querySelector(
+                  '.page-settings-print-pages-div') &&
           event.relatedTarget != this.customRadio_) {
         this.allRadio_.checked = true;
+        if (!this.pageRangeTicketItem_.isValueEqual(this.customInput_.value)) {
+          // Update ticket item to match, set timeout to avoid losing focus
+          // when the preview regenerates.
+          setTimeout(() => {
+            this.pageRangeTicketItem_.updateValue(this.customInput_.value);
+          });
+        }
       }
     },
 
@@ -272,7 +282,5 @@ cr.define('print_preview', function() {
   };
 
   // Export
-  return {
-    PageSettings: PageSettings
-  };
+  return {PageSettings: PageSettings};
 });

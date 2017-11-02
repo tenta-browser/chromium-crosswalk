@@ -11,6 +11,7 @@
 #include "base/macros.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "chromeos/dbus/session_manager_client.h"
 #include "components/arc/arc_session.h"
 #include "components/arc/arc_stop_reason.h"
 
@@ -18,7 +19,8 @@ namespace arc {
 
 // Accept requests to start/stop ARC instance. Also supports automatic
 // restarting on unexpected ARC instance crash.
-class ArcSessionRunner : public ArcSession::Observer {
+class ArcSessionRunner : public ArcSession::Observer,
+                         public chromeos::SessionManagerClient::Observer {
  public:
   // Observer to notify events across multiple ARC session runs.
   class Observer {
@@ -29,6 +31,11 @@ class ArcSessionRunner : public ArcSession::Observer {
     // CRASH on ARC container, and expected SHUTDOWN of ARC triggered by
     // RequestStop(), so may be called multiple times for one RequestStart().
     virtual void OnSessionStopped(ArcStopReason reason, bool restarting) = 0;
+
+    // Called when ARC session is stopped, but is being restarted automatically.
+    // Unlike OnSessionStopped() with |restarting| == true, this is called
+    // _after_ the container is actually created.
+    virtual void OnSessionRestarting() = 0;
 
    protected:
     virtual ~Observer() = default;
@@ -50,7 +57,8 @@ class ArcSessionRunner : public ArcSession::Observer {
   void RequestStart();
 
   // Stops the ARC service.
-  void RequestStop();
+  // TODO(yusukes): Remove the parameter.
+  void RequestStop(bool always_stop_session);
 
   // OnShutdown() should be called when the browser is shutting down. This can
   // only be called on the thread that this class was created on. We assume that
@@ -62,6 +70,9 @@ class ArcSessionRunner : public ArcSession::Observer {
   // or stopping ARC instance.
   bool IsRunning() const;
   bool IsStopped() const;
+
+  // Returns whether LoginScreen instance is starting.
+  bool IsLoginScreenInstanceStarting() const;
 
   // Returns the current ArcSession instance for testing purpose.
   ArcSession* GetArcSessionForTesting() { return arc_session_.get(); }
@@ -94,6 +105,10 @@ class ArcSessionRunner : public ArcSession::Observer {
     // ARC instance is not currently running.
     STOPPED,
 
+    // Request to start ARC instance for login screen is received. Starting an
+    // ARC instance.
+    STARTING_FOR_LOGIN_SCREEN,
+
     // Request to start ARC instance is received. Starting an ARC instance.
     STARTING,
 
@@ -108,11 +123,17 @@ class ArcSessionRunner : public ArcSession::Observer {
   // Starts to run an ARC instance.
   void StartArcSession();
 
+  // Restarts an ARC instance.
+  void RestartArcSession();
+
   // ArcSession::Observer:
   void OnSessionReady() override;
   void OnSessionStopped(ArcStopReason reason) override;
 
-  base::ThreadChecker thread_checker_;
+  // chromeos::SessionManagerClient::Observer:
+  void EmitLoginPromptVisibleCalled() override;
+
+  THREAD_CHECKER(thread_checker_);
 
   // Observers for the ARC instance state change events.
   base::ObserverList<Observer> observer_list_;

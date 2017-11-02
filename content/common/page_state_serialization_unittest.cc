@@ -41,11 +41,11 @@ void ExpectEquality(const std::vector<T>& a, const std::vector<T>& b) {
 }
 
 template <>
-void ExpectEquality(const ResourceRequestBodyImpl::Element& a,
-                    const ResourceRequestBodyImpl::Element& b) {
+void ExpectEquality(const ResourceRequestBody::Element& a,
+                    const ResourceRequestBody::Element& b) {
   EXPECT_EQ(a.type(), b.type());
-  if (a.type() == ResourceRequestBodyImpl::Element::TYPE_BYTES &&
-      b.type() == ResourceRequestBodyImpl::Element::TYPE_BYTES) {
+  if (a.type() == ResourceRequestBody::Element::TYPE_BYTES &&
+      b.type() == ResourceRequestBody::Element::TYPE_BYTES) {
     EXPECT_EQ(std::string(a.bytes(), a.length()),
               std::string(b.bytes(), b.length()));
   }
@@ -119,7 +119,7 @@ class PageStateSerializationTest : public testing::Test {
 
   void PopulateHttpBody(ExplodedHttpBody* http_body,
                         std::vector<base::NullableString16>* referenced_files) {
-    http_body->request_body = new ResourceRequestBodyImpl();
+    http_body->request_body = new ResourceRequestBody();
     http_body->request_body->set_identifier(12345);
     http_body->contains_passwords = false;
     http_body->http_content_type = NS16("text/foo");
@@ -163,7 +163,7 @@ class PageStateSerializationTest : public testing::Test {
 
     if (!is_child) {
       frame_state->http_body.http_content_type = NS16("foo/bar");
-      frame_state->http_body.request_body = new ResourceRequestBodyImpl();
+      frame_state->http_body.request_body = new ResourceRequestBody();
       frame_state->http_body.request_body->set_identifier(789);
 
       std::string test_body("first data block");
@@ -227,7 +227,7 @@ class PageStateSerializationTest : public testing::Test {
         kPresetDeviceScaleFactor,
         &output));
 #else
-    EXPECT_TRUE(DecodePageState(encoded, &output));
+    EXPECT_EQ(version, DecodePageStateForTesting(encoded, &output));
 #endif
 
     ExplodedPageState expected;
@@ -363,10 +363,17 @@ TEST_F(PageStateSerializationTest, BadMessagesTest2) {
   EXPECT_FALSE(DecodePageState(s, &output));
 }
 
-TEST_F(PageStateSerializationTest, DumpExpectedPageStateForBackwardsCompat) {
-  // Change to #if 1 to enable this code.  Use this code to generate data, based
-  // on the current serialization format, for the BackwardsCompat_vXX tests.
+// Change to #if 1 to enable this code. Run this test to generate data, based on
+// the current serialization format, for the BackwardsCompat_vXX tests. This
+// will generate an expected.dat in the temp directory, which should be moved
+// //content/test/data/page_state/serialization_vXX.dat. A corresponding test
+// case for that version should also then be added below.
+//
+// IMPORTANT: this code dumps the serialization as the *current* version, so if
+// generating a backwards compat test for v23, the tree must be synced to a
+// revision where page_state_serialization.cc:kCurrentVersion == 23.
 #if 0
+TEST_F(PageStateSerializationTest, DumpExpectedPageStateForBackwardsCompat) {
   ExplodedPageState state;
   PopulatePageStateForBackwardsCompatTest(&state);
 
@@ -392,8 +399,8 @@ TEST_F(PageStateSerializationTest, DumpExpectedPageStateForBackwardsCompat) {
   }
 
   fclose(fp);
-#endif
 }
+#endif
 
 #if !defined(OS_ANDROID)
 // TODO(darin): Re-enable for Android once this test accounts for systems with
@@ -441,6 +448,10 @@ TEST_F(PageStateSerializationTest, BackwardsCompat_v22) {
 
 TEST_F(PageStateSerializationTest, BackwardsCompat_v23) {
   TestBackwardsCompat(23);
+}
+
+TEST_F(PageStateSerializationTest, BackwardsCompat_v24) {
+  TestBackwardsCompat(24);
 }
 
 }  // namespace

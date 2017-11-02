@@ -31,17 +31,17 @@
 #include "core/dom/ContainerNode.h"
 #include "core/dom/Document.h"
 #include "core/dom/Element.h"
+#include "core/dom/ElementShadow.h"
 #include "core/dom/ElementTraversal.h"
 #include "core/dom/IdTargetObserverRegistry.h"
 #include "core/dom/NodeComputedStyle.h"
+#include "core/dom/ShadowRoot.h"
 #include "core/dom/StyleChangeReason.h"
 #include "core/dom/TreeScopeAdopter.h"
-#include "core/dom/shadow/ElementShadow.h"
-#include "core/dom/shadow/ShadowRoot.h"
+#include "core/dom/events/EventPath.h"
 #include "core/editing/DOMSelection.h"
-#include "core/events/EventPath.h"
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/html/HTMLAnchorElement.h"
 #include "core/html/HTMLFrameOwnerElement.h"
 #include "core/html/HTMLMapElement.h"
@@ -118,12 +118,12 @@ void TreeScope::ClearScopedStyleResolver() {
   scoped_style_resolver_.Clear();
 }
 
-Element* TreeScope::GetElementById(const AtomicString& element_id) const {
+Element* TreeScope::getElementById(const AtomicString& element_id) const {
   if (element_id.IsEmpty())
     return nullptr;
   if (!elements_by_id_)
     return nullptr;
-  return elements_by_id_->GetElementById(element_id, this);
+  return elements_by_id_->GetElementById(element_id, *this);
 }
 
 const HeapVector<Member<Element>>& TreeScope::GetAllElementsById(
@@ -134,13 +134,13 @@ const HeapVector<Member<Element>>& TreeScope::GetAllElementsById(
     return empty_vector;
   if (!elements_by_id_)
     return empty_vector;
-  return elements_by_id_->GetAllElementsById(element_id, this);
+  return elements_by_id_->GetAllElementsById(element_id, *this);
 }
 
 void TreeScope::AddElementById(const AtomicString& element_id,
                                Element* element) {
   if (!elements_by_id_)
-    elements_by_id_ = DocumentOrderedMap::Create();
+    elements_by_id_ = TreeOrderedMap::Create();
   elements_by_id_->Add(element_id, element);
   id_target_observer_registry_->NotifyObservers(element_id);
 }
@@ -171,7 +171,7 @@ void TreeScope::AddImageMap(HTMLMapElement* image_map) {
   if (!name)
     return;
   if (!image_maps_by_name_)
-    image_maps_by_name_ = DocumentOrderedMap::Create();
+    image_maps_by_name_ = TreeOrderedMap::Create();
   image_maps_by_name_->Add(name, image_map);
 }
 
@@ -189,10 +189,10 @@ HTMLMapElement* TreeScope::GetImageMap(const String& url) const {
     return nullptr;
   if (!image_maps_by_name_)
     return nullptr;
-  size_t hash_pos = url.Find('#');
+  size_t hash_pos = url.find('#');
   String name = hash_pos == kNotFound ? url : url.Substring(hash_pos + 1);
   return toHTMLMapElement(
-      image_maps_by_name_->GetElementByMapName(AtomicString(name), this));
+      image_maps_by_name_->GetElementByMapName(AtomicString(name), *this));
 }
 
 static bool PointWithScrollAndZoomIfPossible(const Document& document,
@@ -200,7 +200,7 @@ static bool PointWithScrollAndZoomIfPossible(const Document& document,
   LocalFrame* frame = document.GetFrame();
   if (!frame)
     return false;
-  FrameView* frame_view = frame->View();
+  LocalFrameView* frame_view = frame->View();
   if (!frame_view)
     return false;
 
@@ -327,7 +327,7 @@ DOMSelection* TreeScope::GetSelection() const {
 Element* TreeScope::FindAnchor(const String& name) {
   if (name.IsEmpty())
     return nullptr;
-  if (Element* element = GetElementById(AtomicString(name)))
+  if (Element* element = getElementById(AtomicString(name)))
     return element;
   for (HTMLAnchorElement& anchor :
        Traversal<HTMLAnchorElement>::StartsAfter(RootNode())) {
@@ -453,11 +453,10 @@ unsigned short TreeScope::ComparePosition(const TreeScope& other_scope) const {
 
   // There was no difference between the two parent chains, i.e., one was a
   // subset of the other. The shorter chain is the ancestor.
-  return index1 < index2
-             ? Node::kDocumentPositionFollowing |
-                   Node::kDocumentPositionContainedBy
-             : Node::kDocumentPositionPreceding |
-                   Node::kDocumentPositionContains;
+  return index1 < index2 ? Node::kDocumentPositionFollowing |
+                               Node::kDocumentPositionContainedBy
+                         : Node::kDocumentPositionPreceding |
+                               Node::kDocumentPositionContains;
 }
 
 const TreeScope* TreeScope::CommonAncestorTreeScope(

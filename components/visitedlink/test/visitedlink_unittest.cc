@@ -529,8 +529,7 @@ class VisitCountingContext : public mojom::VisitedLinkNotificationSink {
         binding_(this) {}
 
   void Bind(mojo::ScopedMessagePipeHandle handle) {
-    binding_.Bind(mojo::MakeRequest<mojom::VisitedLinkNotificationSink>(
-        std::move(handle)));
+    binding_.Bind(mojom::VisitedLinkNotificationSinkRequest(std::move(handle)));
   }
 
   void WaitForUpdate() {
@@ -626,8 +625,7 @@ class VisitedLinkRenderProcessHostFactory
  public:
   VisitedLinkRenderProcessHostFactory() : context_(new VisitCountingContext) {}
   content::RenderProcessHost* CreateRenderProcessHost(
-      content::BrowserContext* browser_context,
-      content::SiteInstance* site_instance) const override {
+      content::BrowserContext* browser_context) const override {
     return new VisitRelayingRenderProcessHost(browser_context, context_.get());
   }
 

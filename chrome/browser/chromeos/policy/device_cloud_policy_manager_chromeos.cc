@@ -110,7 +110,6 @@ DeviceCloudPolicyManagerChromeOS::DeviceCloudPolicyManagerChromeOS(
           std::string(),
           store.get(),
           task_runner,
-          BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE),
           BrowserThread::GetTaskRunnerForThread(BrowserThread::IO)),
       device_store_(std::move(store)),
       state_keys_broker_(state_keys_broker),
@@ -264,8 +263,14 @@ void DeviceCloudPolicyManagerChromeOS::StartConnection(
       new DeviceCommandsFactoryChromeOS()));
   core()->TrackRefreshDelayPref(local_state_,
                                 prefs::kDevicePolicyRefreshRate);
-  attestation_policy_observer_.reset(
-      new chromeos::attestation::AttestationPolicyObserver(client()));
+
+  // Don't start the AttestationPolicyObserver if machine cert requests
+  // are disabled.
+  if (!(base::CommandLine::ForCurrentProcess()->HasSwitch(
+          chromeos::switches::kDisableMachineCertRequest))) {
+    attestation_policy_observer_.reset(
+        new chromeos::attestation::AttestationPolicyObserver(client()));
+  }
 
   // Enable device reporting and status monitoring for cloud managed devices. We
   // want to create these objects even if monitoring is currently inactive, in

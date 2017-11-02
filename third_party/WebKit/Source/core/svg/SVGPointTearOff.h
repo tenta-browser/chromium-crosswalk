@@ -31,9 +31,9 @@
 #ifndef SVGPointTearOff_h
 #define SVGPointTearOff_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/svg/SVGPoint.h"
 #include "core/svg/properties/SVGPropertyTearOff.h"
+#include "platform/bindings/ScriptWrappable.h"
 
 namespace blink {
 
@@ -44,14 +44,14 @@ class SVGPointTearOff : public SVGPropertyTearOff<SVGPoint>,
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static SVGPointTearOff* Create(
-      SVGPoint* target,
-      SVGElement* context_element,
-      PropertyIsAnimValType property_is_anim_val,
-      const QualifiedName& attribute_name = QualifiedName::Null()) {
+  static SVGPointTearOff* Create(SVGPoint* target,
+                                 SVGElement* context_element,
+                                 PropertyIsAnimValType property_is_anim_val,
+                                 const QualifiedName& attribute_name) {
     return new SVGPointTearOff(target, context_element, property_is_anim_val,
                                attribute_name);
   }
+  static SVGPointTearOff* CreateDetached(const FloatPoint&);
 
   void setX(float, ExceptionState&);
   void setY(float, ExceptionState&);
@@ -66,7 +66,7 @@ class SVGPointTearOff : public SVGPropertyTearOff<SVGPoint>,
   SVGPointTearOff(SVGPoint*,
                   SVGElement* context_element,
                   PropertyIsAnimValType,
-                  const QualifiedName& attribute_name = QualifiedName::Null());
+                  const QualifiedName& attribute_name);
 };
 
 }  // namespace blink

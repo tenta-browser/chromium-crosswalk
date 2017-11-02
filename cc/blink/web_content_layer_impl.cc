@@ -47,7 +47,7 @@ PaintingControlToWeb(
 
 WebContentLayerImpl::WebContentLayerImpl(blink::WebContentLayerClient* client)
     : client_(client) {
-  layer_ = base::MakeUnique<WebLayerImpl>(PictureLayer::Create(this));
+  layer_ = std::make_unique<WebLayerImpl>(PictureLayer::Create(this));
   layer_->layer()->SetIsDrawable(true);
 }
 
@@ -59,9 +59,14 @@ blink::WebLayer* WebContentLayerImpl::Layer() {
   return layer_.get();
 }
 
-void WebContentLayerImpl::SetAllowTransformedRasterization(bool allowed) {
+void WebContentLayerImpl::SetTransformedRasterizationAllowed(bool allowed) {
   static_cast<PictureLayer*>(layer_->layer())
-      ->SetAllowTransformedRasterization(allowed);
+      ->SetTransformedRasterizationAllowed(allowed);
+}
+
+bool WebContentLayerImpl::TransformedRasterizationAllowed() const {
+  return static_cast<PictureLayer*>(layer_->layer())
+      ->transformed_rasterization_allowed();
 }
 
 gfx::Rect WebContentLayerImpl::PaintableRegion() {

@@ -11,6 +11,7 @@
 #include "ash/system/tray/tray_popup_utils.h"
 #include "ash/system/tray/tri_view.h"
 #include "base/memory/ptr_util.h"
+#include "ui/gfx/geometry/insets.h"
 #include "ui/views/controls/separator.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/layout/fill_layout.h"
@@ -25,8 +26,7 @@ const int kMinNumTileWidths = 2;
 // horizontally.
 const int kMaxNumTileWidths = 3;
 
-SystemInfoDefaultView::SystemInfoDefaultView(SystemTrayItem* owner,
-                                             LoginStatus login)
+SystemInfoDefaultView::SystemInfoDefaultView(SystemTrayItem* owner)
     : date_view_(nullptr),
       tri_view_(TrayPopupUtils::CreateMultiTargetRowView()) {
   tri_view_->SetMinHeight(kTrayPopupSystemInfoRowHeight);
@@ -39,8 +39,7 @@ SystemInfoDefaultView::SystemInfoDefaultView(SystemTrayItem* owner,
   if (PowerStatus::Get()->IsBatteryPresent()) {
     power_status_view_ = new ash::PowerStatusView();
     std::unique_ptr<views::BoxLayout> box_layout =
-        base::MakeUnique<views::BoxLayout>(views::BoxLayout::kHorizontal, 0, 0,
-                                           0);
+        base::MakeUnique<views::BoxLayout>(views::BoxLayout::kHorizontal);
     box_layout->set_cross_axis_alignment(
         views::BoxLayout::CROSS_AXIS_ALIGNMENT_CENTER);
     box_layout->set_inside_border_insets(
@@ -54,7 +53,7 @@ SystemInfoDefaultView::SystemInfoDefaultView(SystemTrayItem* owner,
   }
   tri_view_->SetContainerVisible(TriView::Container::END, false);
 
-  if (TrayPopupUtils::CanOpenWebUISettings(login))
+  if (TrayPopupUtils::CanOpenWebUISettings())
     date_view_->SetAction(tray::DateView::DateAction::SHOW_DATE_SETTINGS);
 }
 

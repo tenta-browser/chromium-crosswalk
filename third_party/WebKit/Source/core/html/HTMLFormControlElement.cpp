@@ -25,7 +25,8 @@
 #include "core/html/HTMLFormControlElement.h"
 
 #include "core/dom/ElementTraversal.h"
-#include "core/events/Event.h"
+#include "core/dom/TaskRunnerHelper.h"
+#include "core/dom/events/Event.h"
 #include "core/frame/UseCounter.h"
 #include "core/html/HTMLDataListElement.h"
 #include "core/html/HTMLFieldSetElement.h"
@@ -154,7 +155,7 @@ void HTMLFormControlElement::ParseAttribute(
   const QualifiedName& name = params.name;
   if (name == formAttr) {
     FormAttributeChanged();
-    UseCounter::Count(GetDocument(), UseCounter::kFormAttribute);
+    UseCounter::Count(GetDocument(), WebFeature::kFormAttribute);
   } else if (name == readonlyAttr) {
     if (params.old_value.IsNull() != params.new_value.IsNull()) {
       SetNeedsWillValidateCheck();
@@ -167,10 +168,10 @@ void HTMLFormControlElement::ParseAttribute(
   } else if (name == requiredAttr) {
     if (params.old_value.IsNull() != params.new_value.IsNull())
       RequiredAttributeChanged();
-    UseCounter::Count(GetDocument(), UseCounter::kRequiredAttribute);
+    UseCounter::Count(GetDocument(), WebFeature::kRequiredAttribute);
   } else if (name == autofocusAttr) {
     HTMLElement::ParseAttribute(params);
-    UseCounter::Count(GetDocument(), UseCounter::kAutoFocusAttribute);
+    UseCounter::Count(GetDocument(), WebFeature::kAutoFocusAttribute);
   } else {
     HTMLElement::ParseAttribute(params);
   }
@@ -235,7 +236,7 @@ static bool ShouldAutofocusOnAttach(const HTMLFormControlElement* element) {
   return true;
 }
 
-void HTMLFormControlElement::AttachLayoutTree(const AttachContext& context) {
+void HTMLFormControlElement::AttachLayoutTree(AttachContext& context) {
   HTMLElement::AttachLayoutTree(context);
 
   if (!GetLayoutObject())
@@ -465,7 +466,7 @@ void HTMLFormControlElement::UpdateVisibleValidationMessage() {
   Page* page = GetDocument().GetPage();
   if (!page || !page->IsPageVisible() || GetDocument().UnloadStarted())
     return;
-  if (page->Suspended())
+  if (page->Paused())
     return;
   String message;
   if (GetLayoutObject() && willValidate())
@@ -590,9 +591,13 @@ void HTMLFormControlElement::SetNeedsValidityCheck() {
 
   // Updates only if this control already has a validation message.
   if (IsValidationMessageVisible()) {
-    // Calls updateVisibleValidationMessage() even if m_isValid is not
+    // Calls UpdateVisibleValidationMessage() even if is_valid_ is not
     // changed because a validation message can be changed.
-    UpdateVisibleValidationMessage();
+    TaskRunnerHelper::Get(TaskType::kDOMManipulation, &GetDocument())
+        ->PostTask(
+            BLINK_FROM_HERE,
+            WTF::Bind(&HTMLFormControlElement::UpdateVisibleValidationMessage,
+                      WrapPersistent(this)));
   }
 }
 

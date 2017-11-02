@@ -6,6 +6,7 @@ package org.chromium.chrome.browser.payments;
 
 import org.chromium.payments.mojom.PaymentMethodData;
 
+import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -69,10 +70,38 @@ public interface PaymentApp {
     boolean supportsMethodsAndData(Map<String, PaymentMethodData> methodDataMap);
 
     /**
-     * Returns the identifier for this payment app to be saved in user preferences. For example,
-     * this can be "autofill", "https://android.com/pay", or "com.example.app.ExamplePaymentApp".
+     * Gets the preferred related application Ids of this app. This app will be hidden if the
+     * preferred applications are exist. The return, for example, could be {"com.bobpay",
+     * "com.alicepay"}.
+     */
+    @Nullable
+    default Set<String> getPreferredRelatedApplicationIds() {
+        return null;
+    }
+
+    /**
+     * Gets the app Id this application can dedupe. The return, for example, could be
+     * "https://bobpay.com";
+     */
+    @Nullable
+    default URI getCanDedupedApplicationId() {
+        return null;
+    }
+
+    /**
+     * Returns the identifier for this payment app to be saved in user preferences. For
+     * example, this can be "autofill", "https://android.com/pay", or
+     * "com.example.app.ExamplePaymentApp".
      *
      * @return The identifier for this payment app.
      */
     String getAppIdentifier();
+
+    /**
+     * @return The resource identifier for the additional text that should be displayed to the user
+     * when selecting a payment instrument from this payment app or 0 if not needed.
+     */
+    default int getAdditionalAppTextResourceId() {
+        return 0;
+    }
 }

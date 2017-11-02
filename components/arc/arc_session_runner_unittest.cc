@@ -12,7 +12,9 @@
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/test/scoped_task_environment.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
+#include "chromeos/dbus/fake_session_manager_client.h"
 #include "components/arc/arc_session_runner.h"
 #include "components/arc/test/fake_arc_session.h"
 #include "mojo/public/cpp/system/message_pipe.h"
@@ -27,6 +29,9 @@ class DoNothingObserver : public ArcSessionRunner::Observer {
   void OnSessionStopped(ArcStopReason reason, bool restarting) override {
     // Do nothing.
   }
+  void OnSessionRestarting() override {
+    // Do nothing.
+  }
 };
 
 }  // namespace
@@ -34,13 +39,19 @@ class DoNothingObserver : public ArcSessionRunner::Observer {
 class ArcSessionRunnerTest : public testing::Test,
                              public ArcSessionRunner::Observer {
  public:
-  ArcSessionRunnerTest() = default;
+  ArcSessionRunnerTest()
+      : scoped_task_environment_(
+            base::test::ScopedTaskEnvironment::MainThreadType::UI) {}
 
   void SetUp() override {
+    chromeos::DBusThreadManager::GetSetterForTesting()->SetSessionManagerClient(
+        base::MakeUnique<chromeos::FakeSessionManagerClient>());
     chromeos::DBusThreadManager::Initialize();
 
     stop_reason_ = ArcStopReason::SHUTDOWN;
     restarting_ = false;
+    stopped_called_ = false;
+    restarting_called_ = false;
 
     // We inject FakeArcSession here so we do not need task_runner.
     arc_session_runner_ =
@@ -62,8 +73,18 @@ class ArcSessionRunnerTest : public testing::Test,
         arc_session_runner_->GetArcSessionForTesting());
   }
 
-  ArcStopReason stop_reason() { return stop_reason_; }
-  bool restarting() { return restarting_; }
+  ArcStopReason stop_reason() {
+    EXPECT_TRUE(stopped_called());
+    return stop_reason_;
+  }
+
+  bool restarting() {
+    EXPECT_TRUE(stopped_called());
+    return restarting_;
+  }
+
+  bool stopped_called() { return stopped_called_; }
+  bool restarting_called() { return restarting_called_; }
 
   void ResetArcSessionFactory(
       const ArcSessionRunner::ArcSessionFactory& factory) {
@@ -92,12 +113,17 @@ class ArcSessionRunnerTest : public testing::Test,
     // ArcSessionRunner::OnSessionStopped().
     stop_reason_ = stop_reason;
     restarting_ = restarting;
+    stopped_called_ = true;
+    restarting_called_ = false;
   }
+  void OnSessionRestarting() override { restarting_called_ = true; }
 
   ArcStopReason stop_reason_;
   bool restarting_;
+  bool stopped_called_;
+  bool restarting_called_;
   std::unique_ptr<ArcSessionRunner> arc_session_runner_;
-  base::MessageLoopForUI message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 
   DISALLOW_COPY_AND_ASSIGN(ArcSessionRunnerTest);
 };
@@ -115,6 +141,7 @@ TEST_F(ArcSessionRunnerTest, Basic) {
     void OnSessionStopped(ArcStopReason reason, bool restarting) override {
       stopped_called_ = true;
     }
+    void OnSessionRestarting() override {}
 
    private:
     bool stopped_called_ = false;
@@ -135,7 +162,7 @@ TEST_F(ArcSessionRunnerTest, Basic) {
   arc_session_runner()->RequestStart();
   EXPECT_TRUE(arc_session_runner()->IsRunning());
 
-  arc_session_runner()->RequestStop();
+  arc_session_runner()->RequestStop(false);
   EXPECT_TRUE(arc_session_runner()->IsStopped());
   EXPECT_TRUE(observer.stopped_called());
 }
@@ -151,7 +178,7 @@ TEST_F(ArcSessionRunnerTest, StopMidStartup) {
   EXPECT_FALSE(arc_session_runner()->IsStopped());
   EXPECT_FALSE(arc_session_runner()->IsRunning());
 
-  arc_session_runner()->RequestStop();
+  arc_session_runner()->RequestStop(false);
   EXPECT_TRUE(arc_session_runner()->IsStopped());
 }
 
@@ -166,6 +193,43 @@ TEST_F(ArcSessionRunnerTest, BootFailure) {
   arc_session_runner()->RequestStart();
   EXPECT_EQ(ArcStopReason::GENERIC_BOOT_FAILURE, stop_reason());
   EXPECT_TRUE(arc_session_runner()->IsStopped());
+}
+
+// Does the same with the mini instance for login screen.
+TEST_F(ArcSessionRunnerTest, BootFailureForLoginScreen) {
+  ResetArcSessionFactory(
+      base::Bind(&ArcSessionRunnerTest::CreateBootFailureArcSession,
+                 ArcStopReason::CRASH));
+  EXPECT_TRUE(arc_session_runner()->IsStopped());
+
+  chromeos::DBusThreadManager::Get()
+      ->GetSessionManagerClient()
+      ->EmitLoginPromptVisible();
+  // If starting the mini instance fails, arc_session_runner()'s state goes back
+  // to STOPPED, but its observers won't be notified.
+  EXPECT_TRUE(arc_session_runner()->IsStopped());
+  EXPECT_FALSE(stopped_called());
+
+  // Also make sure that RequestStart() works just fine after the boot
+  // failure.
+  ResetArcSessionFactory(base::Bind(FakeArcSession::Create));
+  arc_session_runner()->RequestStart();
+  EXPECT_TRUE(arc_session_runner()->IsRunning());
+}
+
+// Tests that RequestStart() works even after EmitLoginPromptVisibleCalled()
+// is called.
+TEST_F(ArcSessionRunnerTest, StartWithLoginScreenInstance) {
+  EXPECT_TRUE(arc_session_runner()->IsStopped());
+
+  chromeos::DBusThreadManager::Get()
+      ->GetSessionManagerClient()
+      ->EmitLoginPromptVisible();
+  EXPECT_FALSE(arc_session_runner()->IsStopped());
+  EXPECT_FALSE(arc_session_runner()->IsRunning());
+
+  arc_session_runner()->RequestStart();
+  EXPECT_TRUE(arc_session_runner()->IsRunning());
 }
 
 // If the instance is stopped, it should be re-started.
@@ -183,7 +247,7 @@ TEST_F(ArcSessionRunnerTest, Restart) {
   base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(arc_session_runner()->IsRunning());
 
-  arc_session_runner()->RequestStop();
+  arc_session_runner()->RequestStop(false);
   EXPECT_TRUE(arc_session_runner()->IsStopped());
 }
 
@@ -200,8 +264,10 @@ TEST_F(ArcSessionRunnerTest, OnSessionStopped) {
   arc_session()->StopWithReason(ArcStopReason::GENERIC_BOOT_FAILURE);
   EXPECT_EQ(ArcStopReason::GENERIC_BOOT_FAILURE, stop_reason());
   EXPECT_TRUE(restarting());
+  EXPECT_FALSE(restarting_called());
   EXPECT_TRUE(arc_session_runner()->IsStopped());
   base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(restarting_called());
   EXPECT_TRUE(arc_session_runner()->IsRunning());
 
   // Simulate crash.
@@ -209,14 +275,17 @@ TEST_F(ArcSessionRunnerTest, OnSessionStopped) {
   arc_session()->StopWithReason(ArcStopReason::CRASH);
   EXPECT_EQ(ArcStopReason::CRASH, stop_reason());
   EXPECT_TRUE(restarting());
+  EXPECT_FALSE(restarting_called());
   EXPECT_TRUE(arc_session_runner()->IsStopped());
   base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(restarting_called());
   EXPECT_TRUE(arc_session_runner()->IsRunning());
 
   // Graceful stop.
-  arc_session_runner()->RequestStop();
+  arc_session_runner()->RequestStop(false);
   EXPECT_EQ(ArcStopReason::SHUTDOWN, stop_reason());
   EXPECT_FALSE(restarting());
+  EXPECT_FALSE(restarting_called());
   EXPECT_TRUE(arc_session_runner()->IsStopped());
 }
 

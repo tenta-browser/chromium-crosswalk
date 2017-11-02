@@ -4,7 +4,7 @@
       "name": "LayoutView #document",
       "bounds": [785, 2350],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow (positioned) DIV id='absolute'",
@@ -19,6 +19,16 @@
         {
           "object": "LayoutBlockFlow P",
           "rect": [8, 2200, 777, 100],
+          "reason": "subtree"
+        },
+        {
+          "object": "LayoutBlockFlow P",
+          "rect": [8, 2200, 777, 100],
+          "reason": "subtree"
+        },
+        {
+          "object": "LayoutBlockFlow P",
+          "rect": [8, 2050, 777, 100],
           "reason": "subtree"
         },
         {

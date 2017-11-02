@@ -11,7 +11,7 @@
 #include "base/android/scoped_java_ref.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "content/public/browser/android/content_view_core.h"
+#include "content/browser/android/content_view_core.h"
 #include "ui/gl/android/scoped_java_surface.h"
 
 namespace content {
@@ -21,8 +21,6 @@ namespace content {
 // This class must be used on the UI thread.
 class ContentVideoView {
  public:
-  static bool RegisterContentVideoView(JNIEnv* env);
-
   // Returns the singleton object or NULL.
   static ContentVideoView* GetInstance();
 

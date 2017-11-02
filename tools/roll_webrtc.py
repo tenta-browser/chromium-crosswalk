@@ -20,7 +20,6 @@ import find_depot_tools
 find_depot_tools.add_depot_tools_to_path()
 import rietveld
 import roll_dep_svn
-from gclient import GClientKeywords
 from third_party import upload
 
 # Avoid depot_tools/third_party/upload.py print verbose messages.
@@ -62,6 +61,10 @@ CommitInfo = collections.namedtuple('CommitInfo', ['commit_position',
 CLInfo = collections.namedtuple('CLInfo', ['issue', 'url', 'rietveld_server'])
 
 
+def _VarLookup(local_scope):
+  return lambda var_name: local_scope['vars'][var_name]
+
+
 def _PosixPath(path):
   """Convert a possibly-Windows path to a posix-style path."""
   (_, path) = os.path.splitdrive(path)
@@ -94,10 +97,8 @@ def _ParseDepsFile(filename):
 
 def _ParseDepsDict(deps_content):
   local_scope = {}
-  var = GClientKeywords.VarImpl({}, local_scope)
   global_scope = {
-    'From': GClientKeywords.FromImpl,
-    'Var': var.Lookup,
+    'Var': _VarLookup(local_scope),
     'deps_os': {},
   }
   exec(deps_content, global_scope, local_scope)
@@ -270,7 +271,8 @@ class AutoRoller(object):
     readme.write(m)
     readme.truncate()
 
-  def PrepareRoll(self, dry_run, ignore_checks, no_commit, close_previous_roll):
+  def PrepareRoll(self, dry_run, ignore_checks, no_commit, close_previous_roll,
+                  revision):
     # TODO(kjellander): use os.path.normcase, os.path.join etc for all paths for
     # cross platform compatibility.
 
@@ -299,21 +301,22 @@ class AutoRoller(object):
     deps = _ParseDepsFile(deps_filename)
     webrtc_current = self._GetDepsCommitInfo(deps, WEBRTC_PATH)
 
-    # Find ToT revisions.
-    webrtc_latest = self._GetCommitInfo(WEBRTC_PATH)
+    # Get the commit info for the given revision. If it's None, get the commit
+    # info for ToT.
+    revision_info = self._GetCommitInfo(WEBRTC_PATH, revision)
 
     if IS_WIN:
       # Make sure the roll script doesn't use Windows line endings.
       self._RunCommand(['git', 'config', 'core.autocrlf', 'true'])
 
-    self._UpdateDep(deps_filename, WEBRTC_PATH, webrtc_latest)
+    self._UpdateDep(deps_filename, WEBRTC_PATH, revision_info)
 
     if self._IsTreeClean():
       print 'The latest revision is already rolled for WebRTC.'
       self._DeleteRollBranch()
     else:
       description = self._GenerateCLDescriptionCommand(
-        webrtc_current, webrtc_latest)
+        webrtc_current, revision_info)
       logging.debug('Committing changes locally.')
       self._RunCommand(['git', 'add', '--update', '.'])
       self._RunCommand(['git', 'commit', '-m', description])
@@ -415,6 +418,9 @@ def main():
       help=('Skips checks for being on the master branch, dirty workspaces and '
             'the updating of the checkout. Will still delete and create local '
             'Git branches.'))
+  parser.add_argument('-r', '--revision', default=None,
+                      help='WebRTC revision to roll. If not specified,'
+                           'the latest version will be used')
   parser.add_argument('-v', '--verbose', action='store_true', default=False,
       help='Be extra verbose in printing of log messages.')
   args = parser.parse_args()
@@ -431,7 +437,8 @@ def main():
     return autoroller.WaitForTrybots()
   else:
     return autoroller.PrepareRoll(args.dry_run, args.ignore_checks,
-                                  args.no_commit, args.close_previous_roll)
+                                  args.no_commit, args.close_previous_roll,
+                                  args.revision)
 
 if __name__ == '__main__':
   sys.exit(main())

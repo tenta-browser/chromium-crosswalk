@@ -74,6 +74,9 @@ class GPU_EXPORT CommandBufferHelper
   // returns, the command buffer service is aware of all pending commands.
   void Flush();
 
+  // Flushes if the put pointer has changed since the last flush.
+  void FlushLazy();
+
   // Ensures that commands up to the put pointer will be processed in the
   // command buffer service before any future commands on other command buffers
   // sharing a channel.
@@ -255,24 +258,24 @@ class GPU_EXPORT CommandBufferHelper
 
   void FreeRingBuffer();
 
-  bool HaveRingBuffer() const { return ring_buffer_id_ != -1; }
+  bool HaveRingBuffer() const {
+    bool have_ring_buffer = !!ring_buffer_;
+    DCHECK(usable() || !have_ring_buffer);
+    return have_ring_buffer;
+  }
 
   bool usable() const { return usable_; }
-
-  void ClearUsable() {
-    usable_ = false;
-    context_lost_ = true;
-    CalcImmediateEntries(0);
-  }
 
   // Overridden from base::trace_event::MemoryDumpProvider:
   bool OnMemoryDump(const base::trace_event::MemoryDumpArgs& args,
                     base::trace_event::ProcessMemoryDump* pmd) override;
 
+  int32_t GetPutOffsetForTest() const { return put_; }
+
  private:
   void CalcImmediateEntries(int waiting_count);
   bool AllocateRingBuffer();
-  void FreeResources();
+  void SetGetBuffer(int32_t id, scoped_refptr<Buffer> buffer);
 
   // Waits for the get offset to be in a specific range, inclusive. Returns
   // false if there was an error.
@@ -301,6 +304,8 @@ class GPU_EXPORT CommandBufferHelper
   int32_t last_put_sent_;
   int32_t cached_last_token_read_;
   int32_t cached_get_offset_;
+  uint32_t set_get_buffer_count_;
+  bool service_on_old_buffer_;
 
 #if defined(CMD_HELPER_PERIODIC_FLUSH_CHECK)
   int commands_issued_;

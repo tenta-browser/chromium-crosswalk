@@ -25,9 +25,16 @@ function emitExpectedResult(path, expected)
 
     // Skip the properties which are hard to expect a stable result.
     if (path[0] == 'accessibilityController' // we can hardly estimate the states of the cached WebAXObjects.
-        || path[0] == 'localStorage') { // local storage is not reliably cleared between tests.
+        // TODO(https://crbug.com/698610): Web storage APIs are not being
+        // cleared between tests.
+        || path[0] == 'localStorage'
+        || path[0] == 'sessionStorage') {
         return;
     }
+
+    // Skip history, which throws SecurityErrors and is covered by web-platform-tests.
+    if (path[0] == 'history')
+        return;
 
     // FIXME: Skip MemoryInfo for now, since it's not implemented as a DOMWindowProperty, and has
     // no way of knowing when it's detached. Eventually this should have the same behavior.
@@ -46,6 +53,16 @@ function emitExpectedResult(path, expected)
       return;
     if (propertyPath == 'navigator.connection.downlinkMax')
       return;
+    if (propertyPath == 'navigator.connection.effectiveType')
+      return;
+    if (propertyPath == 'navigator.connection.rtt')
+      return;
+    if (propertyPath == 'navigator.connection.downlink')
+      return;
+    // timeOrigin is variable, skip.
+    if (propertyPath == 'performance.timeOrigin')
+      return;
+
 
     switch (propertyPath) {
     case "location.href":
@@ -68,6 +85,7 @@ function emitExpectedResult(path, expected)
         break;
     case "navigator.appCodeName":
     case "navigator.appName":
+    case "navigator.deviceMemory":
     case "navigator.hardwareConcurrency":
     case "navigator.language":
     case "navigator.onLine":

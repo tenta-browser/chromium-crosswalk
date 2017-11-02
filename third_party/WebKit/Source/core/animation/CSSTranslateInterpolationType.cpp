@@ -23,20 +23,21 @@ bool IsNoneValue(const InterpolationValue& value) {
   return ToInterpolableList(*value.interpolable_value).length() == 0;
 }
 
-class InheritedTranslateChecker : public InterpolationType::ConversionChecker {
+class InheritedTranslateChecker
+    : public CSSInterpolationType::CSSConversionChecker {
  public:
   ~InheritedTranslateChecker() {}
 
   static std::unique_ptr<InheritedTranslateChecker> Create(
-      PassRefPtr<TranslateTransformOperation> inherited_translate) {
+      RefPtr<TranslateTransformOperation> inherited_translate) {
     return WTF::WrapUnique(
         new InheritedTranslateChecker(std::move(inherited_translate)));
   }
 
-  bool IsValid(const InterpolationEnvironment& environment,
+  bool IsValid(const StyleResolverState& state,
                const InterpolationValue& underlying) const final {
     const TransformOperation* inherited_translate =
-        environment.GetState().ParentStyle()->Translate();
+        state.ParentStyle()->Translate();
     if (inherited_translate_ == inherited_translate)
       return true;
     if (!inherited_translate_ || !inherited_translate)
@@ -46,7 +47,7 @@ class InheritedTranslateChecker : public InterpolationType::ConversionChecker {
 
  private:
   InheritedTranslateChecker(
-      PassRefPtr<TranslateTransformOperation> inherited_translate)
+      RefPtr<TranslateTransformOperation> inherited_translate)
       : inherited_translate_(std::move(inherited_translate)) {}
 
   RefPtr<TransformOperation> inherited_translate_;

@@ -9,6 +9,8 @@
 
 #include <set>
 #include <tuple>
+#include <utility>
+#include <vector>
 
 #include "base/bind.h"
 #include "base/command_line.h"
@@ -17,10 +19,11 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/path_service.h"
 #include "base/sequenced_task_runner.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "build/build_config.h"
-#include "components/crx_file/crx_file.h"
+#include "components/crx_file/crx_verifier.h"
 #include "content/public/browser/browser_thread.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
@@ -28,6 +31,8 @@
 #include "extensions/common/extension_unpacker.mojom.h"
 #include "extensions/common/extension_utility_types.h"
 #include "extensions/common/extensions_client.h"
+#include "extensions/common/features/feature_channel.h"
+#include "extensions/common/features/feature_session_type.h"
 #include "extensions/common/file_util.h"
 #include "extensions/common/manifest_constants.h"
 #include "extensions/common/manifest_handlers/icons_handler.h"
@@ -39,7 +44,6 @@
 
 using base::ASCIIToUTF16;
 using content::BrowserThread;
-using crx_file::CrxFile;
 
 // The following macro makes histograms that record the length of paths
 // in this file much easier to read.
@@ -233,7 +237,7 @@ SandboxedUnpacker::SandboxedUnpacker(
 }
 
 bool SandboxedUnpacker::CreateTempDirectory() {
-  CHECK(unpacker_io_task_runner_->RunsTasksOnCurrentThread());
+  CHECK(unpacker_io_task_runner_->RunsTasksInCurrentSequence());
 
   base::FilePath temp_dir;
   if (!FindWritableTempLocation(extensions_dir_, &temp_dir)) {
@@ -258,7 +262,7 @@ bool SandboxedUnpacker::CreateTempDirectory() {
 void SandboxedUnpacker::StartWithCrx(const CRXFileInfo& crx_info) {
   // We assume that we are started on the thread that the client wants us
   // to do file IO on.
-  CHECK(unpacker_io_task_runner_->RunsTasksOnCurrentThread());
+  CHECK(unpacker_io_task_runner_->RunsTasksInCurrentSequence());
 
   crx_unpack_start_time_ = base::TimeTicks::Now();
   std::string expected_hash;
@@ -357,7 +361,7 @@ void SandboxedUnpacker::StartUtilityProcessIfNeeded() {
   if (utility_process_mojo_client_)
     return;
 
-  utility_process_mojo_client_ = base::MakeUnique<
+  utility_process_mojo_client_ = std::make_unique<
       content::UtilityProcessMojoClient<mojom::ExtensionUnpacker>>(
       l10n_util::GetStringUTF16(IDS_UTILITY_PROCESS_EXTENSION_UNPACKER_NAME));
   utility_process_mojo_client_->set_error_callback(
@@ -373,13 +377,17 @@ void SandboxedUnpacker::UtilityProcessCrashed() {
 
   utility_process_mojo_client_.reset();
 
-  ReportFailure(
-      UTILITY_PROCESS_CRASHED_WHILE_TRYING_TO_INSTALL,
-      l10n_util::GetStringFUTF16(
-          IDS_EXTENSION_PACKAGE_INSTALL_ERROR,
-          ASCIIToUTF16("UTILITY_PROCESS_CRASHED_WHILE_TRYING_TO_INSTALL")) +
-          ASCIIToUTF16(". ") +
-          l10n_util::GetStringUTF16(IDS_EXTENSION_INSTALL_PROCESS_CRASHED));
+  unpacker_io_task_runner_->PostTask(
+      FROM_HERE,
+      base::Bind(
+          &SandboxedUnpacker::ReportFailure, this,
+          UTILITY_PROCESS_CRASHED_WHILE_TRYING_TO_INSTALL,
+          l10n_util::GetStringFUTF16(
+              IDS_EXTENSION_PACKAGE_INSTALL_ERROR,
+              ASCIIToUTF16("UTILITY_PROCESS_CRASHED_WHILE_TRYING_TO_INSTALL")) +
+              ASCIIToUTF16(". ") +
+              l10n_util::GetStringUTF16(
+                  IDS_EXTENSION_INSTALL_PROCESS_CRASHED)));
 }
 
 void SandboxedUnpacker::Unzip(const base::FilePath& crx_path) {
@@ -402,8 +410,11 @@ void SandboxedUnpacker::UnzipDone(const base::FilePath& directory,
 
   if (!success) {
     utility_process_mojo_client_.reset();
-    ReportFailure(UNZIP_FAILED,
-                  l10n_util::GetStringUTF16(IDS_EXTENSION_PACKAGE_UNZIP_ERROR));
+    unpacker_io_task_runner_->PostTask(
+        FROM_HERE,
+        base::Bind(
+            &SandboxedUnpacker::ReportFailure, this, UNZIP_FAILED,
+            l10n_util::GetStringUTF16(IDS_EXTENSION_PACKAGE_UNZIP_ERROR)));
     return;
   }
 
@@ -420,7 +431,8 @@ void SandboxedUnpacker::Unpack(const base::FilePath& directory) {
   DCHECK(directory.DirName() == temp_dir_.GetPath());
 
   utility_process_mojo_client_->service()->Unpack(
-      directory, extension_id_, location_, creation_flags_,
+      GetCurrentChannel(), GetCurrentFeatureSessionType(), directory,
+      extension_id_, location_, creation_flags_,
       base::Bind(&SandboxedUnpacker::UnpackDone, this));
 }
 
@@ -445,7 +457,7 @@ void SandboxedUnpacker::UnpackDone(
 
 void SandboxedUnpacker::UnpackExtensionSucceeded(
     std::unique_ptr<base::DictionaryValue> manifest) {
-  CHECK(unpacker_io_task_runner_->RunsTasksOnCurrentThread());
+  CHECK(unpacker_io_task_runner_->RunsTasksInCurrentSequence());
 
   std::unique_ptr<base::DictionaryValue> final_manifest(
       RewriteManifestFile(*manifest));
@@ -492,7 +504,7 @@ void SandboxedUnpacker::UnpackExtensionSucceeded(
 }
 
 void SandboxedUnpacker::UnpackExtensionFailed(const base::string16& error) {
-  CHECK(unpacker_io_task_runner_->RunsTasksOnCurrentThread());
+  CHECK(unpacker_io_task_runner_->RunsTasksInCurrentSequence());
 
   ReportFailure(
       UNPACKER_CLIENT_FAILED,
@@ -541,6 +553,10 @@ base::string16 SandboxedUnpacker::FailureReasonToString16(
       return ASCIIToUTF16("CRX_SIGNATURE_VERIFICATION_INITIALIZATION_FAILED");
     case CRX_SIGNATURE_VERIFICATION_FAILED:
       return ASCIIToUTF16("CRX_SIGNATURE_VERIFICATION_FAILED");
+    case CRX_FILE_IS_DELTA_UPDATE:
+      return ASCIIToUTF16("CRX_FILE_IS_DELTA_UPDATE");
+    case CRX_EXPECTED_HASH_INVALID:
+      return ASCIIToUTF16("CRX_EXPECTED_HASH_INVALID");
 
     case ERROR_SERIALIZING_MANIFEST_JSON:
       return ASCIIToUTF16("ERROR_SERIALIZING_MANIFEST_JSON");
@@ -561,8 +577,6 @@ base::string16 SandboxedUnpacker::FailureReasonToString16(
       return ASCIIToUTF16("ERROR_RE_ENCODING_THEME_IMAGE");
     case ERROR_SAVING_THEME_IMAGE:
       return ASCIIToUTF16("ERROR_SAVING_THEME_IMAGE");
-    case ABORTED_DUE_TO_SHUTDOWN:
-      return ASCIIToUTF16("ABORTED_DUE_TO_SHUTDOWN");
 
     case COULD_NOT_READ_CATALOG_DATA_FROM_DISK:
       return ASCIIToUTF16("COULD_NOT_READ_CATALOG_DATA_FROM_DISK");
@@ -583,6 +597,7 @@ base::string16 SandboxedUnpacker::FailureReasonToString16(
     case DIRECTORY_MOVE_FAILED:
       return ASCIIToUTF16("DIRECTORY_MOVE_FAILED");
 
+    case DEPRECATED_ABORTED_DUE_TO_SHUTDOWN:
     case NUM_FAILURE_REASONS:
       NOTREACHED();
       return base::string16();
@@ -600,51 +615,47 @@ void SandboxedUnpacker::FailWithPackageError(FailureReason reason) {
 
 bool SandboxedUnpacker::ValidateSignature(const base::FilePath& crx_path,
                                           const std::string& expected_hash) {
-  CrxFile::ValidateError error = CrxFile::ValidateSignature(
-      crx_path, expected_hash, &public_key_, &extension_id_, nullptr);
+  std::vector<uint8_t> hash;
+  if (!expected_hash.empty()) {
+    if (!base::HexStringToBytes(expected_hash, &hash)) {
+      FailWithPackageError(CRX_EXPECTED_HASH_INVALID);
+      return false;
+    }
+  }
+  const crx_file::VerifierResult result = crx_file::Verify(
+      crx_path, crx_file::VerifierFormat::CRX2_OR_CRX3,
+      std::vector<std::vector<uint8_t>>(), hash, &public_key_, &extension_id_);
 
-  switch (error) {
-    case CrxFile::ValidateError::NONE: {
+  switch (result) {
+    case crx_file::VerifierResult::OK_FULL: {
       if (!expected_hash.empty())
         UMA_HISTOGRAM_BOOLEAN("Extensions.SandboxUnpackHashCheck", true);
       return true;
     }
-
-    case CrxFile::ValidateError::CRX_FILE_NOT_READABLE:
+    case crx_file::VerifierResult::OK_DELTA:
+      FailWithPackageError(CRX_FILE_IS_DELTA_UPDATE);
+      break;
+    case crx_file::VerifierResult::ERROR_FILE_NOT_READABLE:
       FailWithPackageError(CRX_FILE_NOT_READABLE);
       break;
-    case CrxFile::ValidateError::CRX_HEADER_INVALID:
+    case crx_file::VerifierResult::ERROR_HEADER_INVALID:
       FailWithPackageError(CRX_HEADER_INVALID);
       break;
-    case CrxFile::ValidateError::CRX_MAGIC_NUMBER_INVALID:
-      FailWithPackageError(CRX_MAGIC_NUMBER_INVALID);
-      break;
-    case CrxFile::ValidateError::CRX_VERSION_NUMBER_INVALID:
-      FailWithPackageError(CRX_VERSION_NUMBER_INVALID);
-      break;
-    case CrxFile::ValidateError::CRX_EXCESSIVELY_LARGE_KEY_OR_SIGNATURE:
-      FailWithPackageError(CRX_EXCESSIVELY_LARGE_KEY_OR_SIGNATURE);
-      break;
-    case CrxFile::ValidateError::CRX_ZERO_KEY_LENGTH:
-      FailWithPackageError(CRX_ZERO_KEY_LENGTH);
-      break;
-    case CrxFile::ValidateError::CRX_ZERO_SIGNATURE_LENGTH:
-      FailWithPackageError(CRX_ZERO_SIGNATURE_LENGTH);
-      break;
-    case CrxFile::ValidateError::CRX_PUBLIC_KEY_INVALID:
-      FailWithPackageError(CRX_PUBLIC_KEY_INVALID);
-      break;
-    case CrxFile::ValidateError::CRX_SIGNATURE_INVALID:
-      FailWithPackageError(CRX_SIGNATURE_INVALID);
-      break;
-    case CrxFile::ValidateError::
-        CRX_SIGNATURE_VERIFICATION_INITIALIZATION_FAILED:
+    case crx_file::VerifierResult::ERROR_SIGNATURE_INITIALIZATION_FAILED:
       FailWithPackageError(CRX_SIGNATURE_VERIFICATION_INITIALIZATION_FAILED);
       break;
-    case CrxFile::ValidateError::CRX_SIGNATURE_VERIFICATION_FAILED:
+    case crx_file::VerifierResult::ERROR_SIGNATURE_VERIFICATION_FAILED:
       FailWithPackageError(CRX_SIGNATURE_VERIFICATION_FAILED);
       break;
-    case CrxFile::ValidateError::CRX_HASH_VERIFICATION_FAILED:
+    case crx_file::VerifierResult::ERROR_EXPECTED_HASH_INVALID:
+      FailWithPackageError(CRX_EXPECTED_HASH_INVALID);
+      break;
+    case crx_file::VerifierResult::ERROR_REQUIRED_PROOF_MISSING:
+      // We should never get this result, as we do not call
+      // verifier.RequireKeyProof.
+      NOTREACHED();
+      break;
+    case crx_file::VerifierResult::ERROR_FILE_HASH_FAILED:
       // We should never get this result unless we had specifically asked for
       // verification of the crx file's hash.
       CHECK(!expected_hash.empty());
@@ -658,6 +669,8 @@ bool SandboxedUnpacker::ValidateSignature(const base::FilePath& crx_path,
 
 void SandboxedUnpacker::ReportFailure(FailureReason reason,
                                       const base::string16& error) {
+  DCHECK(unpacker_io_task_runner_->RunsTasksInCurrentSequence());
+
   UMA_HISTOGRAM_ENUMERATION("Extensions.SandboxUnpackFailureReason", reason,
                             NUM_FAILURE_REASONS);
   if (!crx_unpack_start_time_.is_null())
@@ -782,15 +795,6 @@ bool SandboxedUnpacker::RewriteImageFiles(SkBitmap* install_icon) {
 
   // Write our parsed images back to disk as well.
   for (size_t i = 0; i < images.size(); ++i) {
-    if (BrowserThread::GetBlockingPool()->IsShutdownInProgress()) {
-      // Abort package installation if shutdown was initiated, crbug.com/235525
-      ReportFailure(
-          ABORTED_DUE_TO_SHUTDOWN,
-          l10n_util::GetStringFUTF16(IDS_EXTENSION_PACKAGE_INSTALL_ERROR,
-                                     ASCIIToUTF16("ABORTED_DUE_TO_SHUTDOWN")));
-      return false;
-    }
-
     const SkBitmap& image = std::get<0>(images[i]);
     base::FilePath path_suffix = std::get<1>(images[i]);
     if (path_suffix.MaybeAsASCII() == install_icon_path)
@@ -903,7 +907,7 @@ bool SandboxedUnpacker::RewriteCatalogFiles() {
 }
 
 void SandboxedUnpacker::Cleanup() {
-  DCHECK(unpacker_io_task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(unpacker_io_task_runner_->RunsTasksInCurrentSequence());
   if (!temp_dir_.Delete()) {
     LOG(WARNING) << "Can not delete temp directory at "
                  << temp_dir_.GetPath().value();

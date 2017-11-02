@@ -5,8 +5,6 @@
 #include "modules/background_fetch/BackgroundFetchManager.h"
 
 #include "bindings/core/v8/ScriptPromiseResolver.h"
-#include "bindings/core/v8/ScriptState.h"
-#include "bindings/core/v8/V8ThrowException.h"
 #include "bindings/modules/v8/RequestOrUSVString.h"
 #include "bindings/modules/v8/RequestOrUSVStringOrRequestOrUSVStringSequence.h"
 #include "core/dom/DOMException.h"
@@ -16,6 +14,8 @@
 #include "modules/background_fetch/BackgroundFetchRegistration.h"
 #include "modules/fetch/Request.h"
 #include "modules/serviceworkers/ServiceWorkerRegistration.h"
+#include "platform/bindings/ScriptState.h"
+#include "platform/bindings/V8ThrowException.h"
 #include "public/platform/modules/serviceworker/WebServiceWorkerRequest.h"
 
 namespace blink {
@@ -40,7 +40,7 @@ BackgroundFetchManager::BackgroundFetchManager(
 
 ScriptPromise BackgroundFetchManager::fetch(
     ScriptState* script_state,
-    const String& tag,
+    const String& id,
     const RequestOrUSVStringOrRequestOrUSVStringSequence& requests,
     const BackgroundFetchOptions& options,
     ExceptionState& exception_state) {
@@ -60,7 +60,7 @@ ScriptPromise BackgroundFetchManager::fetch(
   ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
   ScriptPromise promise = resolver->Promise();
 
-  bridge_->Fetch(tag, std::move(web_requests), options,
+  bridge_->Fetch(id, std::move(web_requests), options,
                  WTF::Bind(&BackgroundFetchManager::DidFetch,
                            WrapPersistent(this), WrapPersistent(resolver)));
 
@@ -76,14 +76,19 @@ void BackgroundFetchManager::DidFetch(
       DCHECK(registration);
       resolver->Resolve(registration);
       return;
-    case mojom::blink::BackgroundFetchError::DUPLICATED_TAG:
+    case mojom::blink::BackgroundFetchError::DUPLICATED_ID:
       DCHECK(!registration);
       resolver->Reject(DOMException::Create(
           kInvalidStateError,
-          "There already is a registration for the given tag."));
+          "There already is a registration for the given id."));
+      return;
+    case mojom::blink::BackgroundFetchError::STORAGE_ERROR:
+      DCHECK(!registration);
+      resolver->Reject(DOMException::Create(
+          kAbortError, "Failed to store registration due to I/O error."));
       return;
     case mojom::blink::BackgroundFetchError::INVALID_ARGUMENT:
-    case mojom::blink::BackgroundFetchError::INVALID_TAG:
+    case mojom::blink::BackgroundFetchError::INVALID_ID:
       // Not applicable for this callback.
       break;
   }
@@ -92,7 +97,7 @@ void BackgroundFetchManager::DidFetch(
 }
 
 ScriptPromise BackgroundFetchManager::get(ScriptState* script_state,
-                                          const String& tag) {
+                                          const String& id) {
   if (!registration_->active()) {
     return ScriptPromise::Reject(
         script_state,
@@ -105,8 +110,8 @@ ScriptPromise BackgroundFetchManager::get(ScriptState* script_state,
   ScriptPromise promise = resolver->Promise();
 
   bridge_->GetRegistration(
-      tag, WTF::Bind(&BackgroundFetchManager::DidGetRegistration,
-                     WrapPersistent(this), WrapPersistent(resolver)));
+      id, WTF::Bind(&BackgroundFetchManager::DidGetRegistration,
+                    WrapPersistent(this), WrapPersistent(resolver)));
 
   return promise;
 }
@@ -128,7 +133,7 @@ Vector<WebServiceWorkerRequest> BackgroundFetchManager::CreateWebRequestVector(
       return Vector<WebServiceWorkerRequest>();
     }
 
-    web_requests.Resize(request_vector.size());
+    web_requests.resize(request_vector.size());
 
     for (size_t i = 0; i < request_vector.size(); ++i) {
       const RequestOrUSVString& request_or_url = request_vector[i];
@@ -151,7 +156,7 @@ Vector<WebServiceWorkerRequest> BackgroundFetchManager::CreateWebRequestVector(
     }
   } else if (requests.isRequest()) {
     DCHECK(requests.getAsRequest());
-    web_requests.Resize(1);
+    web_requests.resize(1);
     requests.getAsRequest()->PopulateWebServiceWorkerRequest(web_requests[0]);
   } else if (requests.isUSVString()) {
     Request* request = Request::Create(script_state, requests.getAsUSVString(),
@@ -160,7 +165,7 @@ Vector<WebServiceWorkerRequest> BackgroundFetchManager::CreateWebRequestVector(
       return Vector<WebServiceWorkerRequest>();
 
     DCHECK(request);
-    web_requests.Resize(1);
+    web_requests.resize(1);
     request->PopulateWebServiceWorkerRequest(web_requests[0]);
   } else {
     exception_state.ThrowTypeError(kNullRequestErrorMessage);
@@ -176,10 +181,15 @@ void BackgroundFetchManager::DidGetRegistration(
     BackgroundFetchRegistration* registration) {
   switch (error) {
     case mojom::blink::BackgroundFetchError::NONE:
-    case mojom::blink::BackgroundFetchError::INVALID_TAG:
+    case mojom::blink::BackgroundFetchError::INVALID_ID:
       resolver->Resolve(registration);
       return;
-    case mojom::blink::BackgroundFetchError::DUPLICATED_TAG:
+    case mojom::blink::BackgroundFetchError::STORAGE_ERROR:
+      DCHECK(!registration);
+      resolver->Reject(DOMException::Create(
+          kAbortError, "Failed to get registration due to I/O error."));
+      return;
+    case mojom::blink::BackgroundFetchError::DUPLICATED_ID:
     case mojom::blink::BackgroundFetchError::INVALID_ARGUMENT:
       // Not applicable for this callback.
       break;
@@ -188,7 +198,7 @@ void BackgroundFetchManager::DidGetRegistration(
   NOTREACHED();
 }
 
-ScriptPromise BackgroundFetchManager::getTags(ScriptState* script_state) {
+ScriptPromise BackgroundFetchManager::getIds(ScriptState* script_state) {
   if (!registration_->active()) {
     return ScriptPromise::Reject(
         script_state,
@@ -200,23 +210,27 @@ ScriptPromise BackgroundFetchManager::getTags(ScriptState* script_state) {
   ScriptPromiseResolver* resolver = ScriptPromiseResolver::Create(script_state);
   ScriptPromise promise = resolver->Promise();
 
-  bridge_->GetTags(WTF::Bind(&BackgroundFetchManager::DidGetTags,
-                             WrapPersistent(this), WrapPersistent(resolver)));
+  bridge_->GetIds(WTF::Bind(&BackgroundFetchManager::DidGetIds,
+                            WrapPersistent(this), WrapPersistent(resolver)));
 
   return promise;
 }
 
-void BackgroundFetchManager::DidGetTags(
-    ScriptPromiseResolver* resolver,
-    mojom::blink::BackgroundFetchError error,
-    const Vector<String>& tags) {
+void BackgroundFetchManager::DidGetIds(ScriptPromiseResolver* resolver,
+                                       mojom::blink::BackgroundFetchError error,
+                                       const Vector<String>& ids) {
   switch (error) {
     case mojom::blink::BackgroundFetchError::NONE:
-      resolver->Resolve(tags);
+      resolver->Resolve(ids);
       return;
-    case mojom::blink::BackgroundFetchError::DUPLICATED_TAG:
+    case mojom::blink::BackgroundFetchError::STORAGE_ERROR:
+      DCHECK(ids.IsEmpty());
+      resolver->Reject(DOMException::Create(
+          kAbortError, "Failed to get registration IDs due to I/O error."));
+      return;
+    case mojom::blink::BackgroundFetchError::DUPLICATED_ID:
     case mojom::blink::BackgroundFetchError::INVALID_ARGUMENT:
-    case mojom::blink::BackgroundFetchError::INVALID_TAG:
+    case mojom::blink::BackgroundFetchError::INVALID_ID:
       // Not applicable for this callback.
       break;
   }

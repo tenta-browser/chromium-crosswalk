@@ -14,6 +14,7 @@
 #include "services/ui/common/types.h"
 #include "services/ui/display/viewport_metrics.h"
 #include "services/ui/public/interfaces/cursor/cursor.mojom.h"
+#include "services/ui/ws/debug_utils.h"
 #include "services/ui/ws/display_binding.h"
 #include "services/ui/ws/display_manager.h"
 #include "services/ui/ws/focus_controller.h"
@@ -36,9 +37,7 @@
 namespace ui {
 namespace ws {
 
-Display::Display(WindowServer* window_server)
-    : window_server_(window_server),
-      last_cursor_(mojom::CursorType::CURSOR_NULL) {
+Display::Display(WindowServer* window_server) : window_server_(window_server) {
   window_server_->window_manager_window_tree_factory_set()->AddObserver(this);
   window_server_->user_id_tracker()->AddObserver(this);
 }
@@ -73,8 +72,10 @@ void Display::Init(const display::ViewportMetrics& metrics,
 
   CreateRootWindow(metrics.bounds_in_pixels.size());
 
-  platform_display_ = PlatformDisplay::Create(root_.get(), metrics);
+  platform_display_ = PlatformDisplay::Create(
+      root_.get(), metrics, window_server_->GetThreadedImageCursorsFactory());
   platform_display_->Init(this);
+  UpdateCursorConfig();
 }
 
 int64_t Display::GetId() const {
@@ -84,6 +85,8 @@ int64_t Display::GetId() const {
 
 void Display::SetDisplay(const display::Display& display) {
   display_ = display;
+
+  UpdateCursorConfig();
 }
 
 const display::Display& Display::GetDisplay() {
@@ -136,6 +139,8 @@ const WindowManagerDisplayRoot* Display::GetActiveWindowManagerDisplayRoot()
 }
 
 bool Display::SetFocusedWindow(ServerWindow* new_focused_window) {
+  DVLOG(3) << "Display::SetFocusedWindow id="
+           << DebugWindowId(new_focused_window);
   ServerWindow* old_focused_window = focus_controller_->GetFocusedWindow();
   if (old_focused_window == new_focused_window)
     return true;
@@ -145,20 +150,6 @@ bool Display::SetFocusedWindow(ServerWindow* new_focused_window) {
 
 ServerWindow* Display::GetFocusedWindow() {
   return focus_controller_->GetFocusedWindow();
-}
-
-void Display::ActivateNextWindow() {
-  // TODO(sky): this is wrong, needs to figure out the next window to activate
-  // and then route setting through WindowServer.
-  focus_controller_->ActivateNextWindow();
-}
-
-void Display::AddActivationParent(ServerWindow* window) {
-  activation_parents_.Add(window);
-}
-
-void Display::RemoveActivationParent(ServerWindow* window) {
-  activation_parents_.Remove(window);
 }
 
 void Display::UpdateTextInputState(ServerWindow* window,
@@ -192,17 +183,20 @@ void Display::RemoveWindowManagerDisplayRoot(
        it != window_manager_display_root_map_.end(); ++it) {
     if (it->second == display_root) {
       window_manager_display_root_map_.erase(it);
+      if (window_manager_display_root_map_.empty())
+        display_manager()->DestroyDisplay(this);
       return;
     }
   }
   NOTREACHED();
 }
 
-void Display::UpdateNativeCursor(mojom::CursorType cursor_id) {
-  if (cursor_id != last_cursor_) {
-    platform_display_->SetCursorById(cursor_id);
-    last_cursor_ = cursor_id;
-  }
+void Display::SetNativeCursor(const ui::CursorData& cursor) {
+  platform_display_->SetCursor(cursor);
+}
+
+void Display::SetNativeCursorSize(ui::CursorSize cursor_size) {
+  platform_display_->SetCursorSize(cursor_size);
 }
 
 void Display::SetSize(const gfx::Size& size) {
@@ -229,7 +223,7 @@ void Display::InitWindowManagerDisplayRoots() {
   } else {
     CreateWindowManagerDisplayRootsFromFactories();
   }
-  display_manager()->OnDisplayUpdate(display_);
+  display_manager()->OnDisplayUpdated(display_);
 }
 
 void Display::CreateWindowManagerDisplayRootsFromFactories() {
@@ -269,8 +263,18 @@ void Display::CreateRootWindow(const gfx::Size& size) {
       mojom::EventTargetingPolicy::DESCENDANTS_ONLY);
   root_->SetBounds(gfx::Rect(size), allocator_.GenerateId());
   root_->SetVisible(true);
-  focus_controller_ = base::MakeUnique<FocusController>(this, root_.get());
+  focus_controller_ = base::MakeUnique<FocusController>(root_.get());
   focus_controller_->AddObserver(this);
+}
+
+void Display::UpdateCursorConfig() {
+  float scale = display_.device_scale_factor();
+
+  if (!display_manager()->IsInternalDisplay(display_))
+    scale *= ui::mojom::kCursorMultiplierForExternalDisplays;
+
+  if (platform_display_)
+    platform_display_->SetCursorConfig(display_.rotation(), scale);
 }
 
 ServerWindow* Display::GetRootWindow() {
@@ -304,10 +308,14 @@ void Display::OnViewportMetricsChanged(
     const display::ViewportMetrics& metrics) {
   platform_display_->UpdateViewportMetrics(metrics);
 
-  if (root_->bounds().size() == metrics.bounds_in_pixels.size())
+  SetBoundsInPixels(metrics.bounds_in_pixels);
+}
+
+void Display::SetBoundsInPixels(const gfx::Rect& bounds_in_pixels) {
+  if (root_->bounds().size() == bounds_in_pixels.size())
     return;
 
-  gfx::Rect new_bounds(metrics.bounds_in_pixels.size());
+  gfx::Rect new_bounds(bounds_in_pixels.size());
   root_->SetBounds(new_bounds, allocator_.GenerateId());
   for (auto& pair : window_manager_display_root_map_)
     pair.second->root()->SetBounds(new_bounds, allocator_.GenerateId());
@@ -318,10 +326,6 @@ ServerWindow* Display::GetActiveRootWindow() {
   if (display_root)
     return display_root->root();
   return nullptr;
-}
-
-bool Display::CanHaveActiveChildren(ServerWindow* window) const {
-  return window && activation_parents_.Contains(window);
 }
 
 void Display::OnActivationChanged(ServerWindow* old_active_window,
@@ -389,8 +393,10 @@ void Display::OnFocusChanged(FocusControllerChangeSource change_source,
     }
   }
 
-  UpdateTextInputState(new_focused_window,
-                       new_focused_window->text_input_state());
+  if (new_focused_window) {
+    UpdateTextInputState(new_focused_window,
+                         new_focused_window->text_input_state());
+  }
 }
 
 void Display::OnUserIdRemoved(const UserId& id) {

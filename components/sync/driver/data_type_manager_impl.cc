@@ -205,7 +205,6 @@ DataTypeManagerImpl::BuildDataTypeConfigStateMap(
   // 3. Flip |types_being_configured| to CONFIGURE_ACTIVE.
   // 4. Set non-enabled user types as DISABLED.
   // 5. Set the fatal, crypto, and unready types to their respective states.
-  ModelTypeSet error_types = data_type_status_table_.GetFailedTypes();
   ModelTypeSet fatal_types = data_type_status_table_.GetFatalErrorTypes();
   ModelTypeSet crypto_types = data_type_status_table_.GetCryptoErrorTypes();
   ModelTypeSet unready_types = data_type_status_table_.GetUnreadyErrorTypes();
@@ -254,9 +253,10 @@ void DataTypeManagerImpl::Restart(ConfigureReason reason) {
       reason == CONFIGURE_REASON_NEWLY_ENABLED_DATA_TYPE) {
     for (ModelTypeSet::Iterator iter = last_requested_types_.First();
          iter.Good(); iter.Inc()) {
+      // TODO(wychen): enum uma should be strongly typed. crbug.com/661401
       UMA_HISTOGRAM_ENUMERATION("Sync.ConfigureDataTypes",
                                 ModelTypeToHistogramInt(iter.Get()),
-                                MODEL_TYPE_COUNT);
+                                static_cast<int>(MODEL_TYPE_COUNT));
     }
   }
 
@@ -389,7 +389,7 @@ void DataTypeManagerImpl::ProcessReconfigure() {
   // the most recent set of desired types, so we just call configure.
   // Note: we do this whether or not GetControllersNeedingStart is true,
   // because we may need to stop datatypes.
-  DVLOG(1) << "Reconfiguring due to previous configure attempt occuring while"
+  DVLOG(1) << "Reconfiguring due to previous configure attempt occurring while"
            << " busy.";
 
   // Note: ConfigureImpl is called directly, rather than posted, in order to
@@ -539,6 +539,7 @@ ModelTypeSet DataTypeManagerImpl::PrepareConfigureParams(
 
   types_to_download.PutAll(clean_types);
   types_to_download.RemoveAll(ProxyTypes());
+  types_to_download.RemoveAll(CommitOnlyTypes());
   if (!types_to_download.Empty())
     types_to_download.Put(NIGORI);
 

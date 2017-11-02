@@ -20,12 +20,17 @@
 #import "ios/chrome/browser/web_state_list/web_state_opener.h"
 #import "ios/chrome/common/material_timing.h"
 #include "ios/web/public/load_committed_details.h"
+#import "ios/web/public/navigation_manager.h"
 #import "ios/web/public/serializable_user_data_manager.h"
 #import "ios/web/public/web_state/ui/crw_native_content_provider.h"
 #import "ios/web/public/web_state/ui/crw_web_view_proxy.h"
 #import "ios/web/public/web_state/ui/crw_web_view_scroll_view_proxy.h"
 #import "ios/web/public/web_state/web_state.h"
 #import "ios/web/web_state/ui/crw_web_controller.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace {
 enum SearchResultsViewVisibility { OFFSCREEN, PRELOAD, VISIBLE };
@@ -39,8 +44,6 @@ enum SearchResultsViewVisibility { OFFSCREEN, PRELOAD, VISIBLE };
 @end
 
 @implementation ContextualSearchResultsView {
-  base::WeakNSProtocol<id<ContextualSearchTabPromoter>> _promoter;
-  base::WeakNSProtocol<id<ContextualSearchPreloadChecker>> _preloadChecker;
   std::unique_ptr<ContextualSearchWebStateObserver> _webStateObserver;
 
   // WebState that loads the search results.
@@ -48,7 +51,7 @@ enum SearchResultsViewVisibility { OFFSCREEN, PRELOAD, VISIBLE };
   std::unique_ptr<WebStateOpener> _webStateOpener;
 
   // Access to the search tab's web view proxy.
-  base::scoped_nsprotocol<id<CRWWebViewProxy>> _webViewProxy;
+  id<CRWWebViewProxy> _webViewProxy;
 
   BOOL _loaded;
   BOOL _displayed;
@@ -67,6 +70,8 @@ enum SearchResultsViewVisibility { OFFSCREEN, PRELOAD, VISIBLE };
 
 @synthesize active = _active;
 @synthesize opener = _opener;
+@synthesize promoter = _promoter;
+@synthesize preloadChecker = _preloadChecker;
 
 - (instancetype)initWithFrame:(CGRect)frame {
   if ((self = [super initWithFrame:frame])) {
@@ -98,7 +103,7 @@ enum SearchResultsViewVisibility { OFFSCREEN, PRELOAD, VISIBLE };
 }
 
 - (void)setPromoter:(id<ContextualSearchTabPromoter>)promoter {
-  _promoter.reset(promoter);
+  _promoter = promoter;
 }
 
 - (id<ContextualSearchPreloadChecker>)preloadChecker {
@@ -106,7 +111,7 @@ enum SearchResultsViewVisibility { OFFSCREEN, PRELOAD, VISIBLE };
 }
 
 - (void)setPreloadChecker:(id<ContextualSearchPreloadChecker>)preloadChecker {
-  _preloadChecker.reset(preloadChecker);
+  _preloadChecker = preloadChecker;
 }
 
 - (BOOL)contentVisible {
@@ -121,13 +126,13 @@ enum SearchResultsViewVisibility { OFFSCREEN, PRELOAD, VISIBLE };
       _webStateObserver->ObserveWebState(_webState.get());
       _webState->SetShouldSuppressDialogs(false);
 
-      _webViewProxy.reset([[[tab webController] webViewProxy] retain]);
+      _webViewProxy = [[tab webController] webViewProxy];
       [[_webViewProxy scrollViewProxy] setBounces:NO];
     }
   } else {
     // Stop watching the embedded Tab's web activity.
     _webStateObserver->ObserveWebState(nullptr);
-    _webViewProxy.reset(nil);
+    _webViewProxy = nil;
   }
 
   _active = active;
@@ -198,7 +203,7 @@ enum SearchResultsViewVisibility { OFFSCREEN, PRELOAD, VISIBLE };
     [[tab webController] setNativeProvider:nil];
   }
   self.active = NO;
-  _webViewProxy.reset();
+  _webViewProxy = nil;
 }
 
 - (void)cancelLoad {

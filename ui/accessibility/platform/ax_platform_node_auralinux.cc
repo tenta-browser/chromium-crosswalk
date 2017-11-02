@@ -8,7 +8,6 @@
 
 #include "base/command_line.h"
 #include "base/strings/sys_string_conversions.h"
-#include "base/task_runner.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/accessibility/platform/atk_util_auralinux.h"
 #include "ui/accessibility/platform/ax_platform_node_delegate.h"
@@ -392,9 +391,8 @@ void AXPlatformNodeAuraLinux::SetApplication(AXPlatformNode* application) {
 }
 
 // static
-void AXPlatformNodeAuraLinux::StaticInitialize(
-    scoped_refptr<base::TaskRunner> init_task_runner) {
-  AtkUtilAuraLinux::GetInstance()->Initialize(init_task_runner);
+void AXPlatformNodeAuraLinux::StaticInitialize() {
+  AtkUtilAuraLinux::GetInstance()->InitializeAsync();
 }
 
 AtkRole AXPlatformNodeAuraLinux::GetAtkRole() {
@@ -421,8 +419,12 @@ AtkRole AXPlatformNodeAuraLinux::GetAtkRole() {
       return ATK_ROLE_COMBO_BOX;
     case ui::AX_ROLE_DIALOG:
       return ATK_ROLE_DIALOG;
+    case ui::AX_ROLE_GENERIC_CONTAINER:
+      return ATK_ROLE_PANEL;
     case ui::AX_ROLE_GROUP:
       return ATK_ROLE_PANEL;
+    case ui::AX_ROLE_IGNORED:
+      return ATK_ROLE_REDUNDANT_OBJECT;
     case ui::AX_ROLE_IMAGE:
       return ATK_ROLE_IMAGE;
     case ui::AX_ROLE_MENU_ITEM:
@@ -461,26 +463,54 @@ AtkRole AXPlatformNodeAuraLinux::GetAtkRole() {
 }
 
 void AXPlatformNodeAuraLinux::GetAtkState(AtkStateSet* atk_state_set) {
-  uint32_t state = GetData().state;
-
-  if (state & (1 << ui::AX_STATE_CHECKED))
-    atk_state_set_add_state(atk_state_set, ATK_STATE_CHECKED);
-  if (state & (1 << ui::AX_STATE_DEFAULT))
+  AXNodeData data = GetData();
+  if (data.HasState(ui::AX_STATE_DEFAULT))
     atk_state_set_add_state(atk_state_set, ATK_STATE_DEFAULT);
-  if (state & (1 << ui::AX_STATE_EDITABLE))
+  if (data.HasState(ui::AX_STATE_EDITABLE))
     atk_state_set_add_state(atk_state_set, ATK_STATE_EDITABLE);
-  if (!(state & (1 << ui::AX_STATE_DISABLED)))
-    atk_state_set_add_state(atk_state_set, ATK_STATE_ENABLED);
-  if (state & (1 << ui::AX_STATE_EXPANDED))
+  if (data.HasState(ui::AX_STATE_EXPANDED))
     atk_state_set_add_state(atk_state_set, ATK_STATE_EXPANDED);
-  if (state & (1 << ui::AX_STATE_FOCUSABLE))
+  if (data.HasState(ui::AX_STATE_FOCUSABLE))
     atk_state_set_add_state(atk_state_set, ATK_STATE_FOCUSABLE);
-  if (state & (1 << ui::AX_STATE_PRESSED))
-    atk_state_set_add_state(atk_state_set, ATK_STATE_PRESSED);
-  if (state & (1 << ui::AX_STATE_SELECTABLE))
-    atk_state_set_add_state(atk_state_set, ATK_STATE_SELECTABLE);
-  if (state & (1 << ui::AX_STATE_SELECTED))
+#if defined(ATK_CHECK_VERSION)
+#if ATK_CHECK_VERSION(2, 11, 2)
+  if (data.HasState(ui::AX_STATE_HASPOPUP))
+    atk_state_set_add_state(atk_state_set, ATK_STATE_HAS_POPUP);
+#endif
+#endif
+  if (data.HasState(ui::AX_STATE_SELECTED))
     atk_state_set_add_state(atk_state_set, ATK_STATE_SELECTED);
+  if (data.HasState(ui::AX_STATE_SELECTABLE))
+    atk_state_set_add_state(atk_state_set, ATK_STATE_SELECTABLE);
+
+  // Checked state
+  const auto checked_state = static_cast<ui::AXCheckedState>(
+      GetIntAttribute(ui::AX_ATTR_CHECKED_STATE));
+  switch (checked_state) {
+    case ui::AX_CHECKED_STATE_MIXED:
+      atk_state_set_add_state(atk_state_set, ATK_STATE_INDETERMINATE);
+      break;
+    case ui::AX_CHECKED_STATE_TRUE:
+      atk_state_set_add_state(atk_state_set,
+                              data.role == ui::AX_ROLE_TOGGLE_BUTTON
+                                  ? ATK_STATE_PRESSED
+                                  : ATK_STATE_CHECKED);
+      break;
+    default:
+      break;
+  }
+
+  switch (GetIntAttribute(ui::AX_ATTR_RESTRICTION)) {
+    case ui::AX_RESTRICTION_NONE:
+      atk_state_set_add_state(atk_state_set, ATK_STATE_ENABLED);
+      break;
+    case ui::AX_RESTRICTION_READ_ONLY:
+      // The following would require ATK 2.16 or later, which many
+      // systems do not have. Since we aren't officially supporting ATK
+      // it's best to leave this out rather than break people's builds:
+      // atk_state_set_add_state(atk_state_set, ATK_STATE_READ_ONLY);
+      break;
+  }
 
   if (delegate_->GetFocus() == GetNativeViewAccessible())
     atk_state_set_add_state(atk_state_set, ATK_STATE_FOCUSED);

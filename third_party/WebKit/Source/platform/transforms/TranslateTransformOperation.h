@@ -47,6 +47,10 @@ class PLATFORM_EXPORT TranslateTransformOperation final
     return AdoptRef(new TranslateTransformOperation(tx, ty, tz, type));
   }
 
+  bool operator==(const TranslateTransformOperation& other) const {
+    return *this == static_cast<const TransformOperation&>(other);
+  }
+
   bool CanBlendWith(const TransformOperation& other) const override;
   bool DependsOnBoxSize() const override {
     return x_.IsPercentOrCalc() || y_.IsPercentOrCalc();
@@ -99,7 +103,7 @@ class PLATFORM_EXPORT TranslateTransformOperation final
                               double tz,
                               OperationType type)
       : x_(tx), y_(ty), z_(tz), type_(type) {
-    ASSERT(IsMatchingOperationType(type));
+    DCHECK(IsMatchingOperationType(type));
   }
 
   Length x_;

@@ -7,16 +7,15 @@
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/ipc/gfx_param_traits.h"
 #include "ui/gfx/ipc/skia/gfx_skia_param_traits.h"
+#include "ui/ozone/public/overlay_surface_candidate.h"
 
 namespace ui {
 
-DisplayMode_Params::DisplayMode_Params() {
-}
+DisplayMode_Params::DisplayMode_Params() {}
 
 DisplayMode_Params::~DisplayMode_Params() {}
 
-DisplaySnapshot_Params::DisplaySnapshot_Params() {
-}
+DisplaySnapshot_Params::DisplaySnapshot_Params() {}
 
 DisplaySnapshot_Params::DisplaySnapshot_Params(
     const DisplaySnapshot_Params& other) = default;
@@ -26,30 +25,18 @@ DisplaySnapshot_Params::~DisplaySnapshot_Params() {}
 OverlayCheck_Params::OverlayCheck_Params() {}
 
 OverlayCheck_Params::OverlayCheck_Params(
-    const OverlayCandidatesOzone::OverlaySurfaceCandidate& candidate)
+    const ui::OverlaySurfaceCandidate& candidate)
     : buffer_size(candidate.buffer_size),
       transform(candidate.transform),
       format(candidate.format),
       display_rect(gfx::ToNearestRect(candidate.display_rect)),
       crop_rect(candidate.crop_rect),
-      plane_z_order(candidate.plane_z_order) {}
+      plane_z_order(candidate.plane_z_order),
+      is_overlay_candidate(candidate.overlay_handled) {}
 
 OverlayCheck_Params::OverlayCheck_Params(const OverlayCheck_Params& other) =
     default;
 
-OverlayCheck_Params::~OverlayCheck_Params() {
-}
-
-bool OverlayCheck_Params::operator<(const OverlayCheck_Params& param) const {
-  int lwidth = buffer_size.width();
-  int lheight = buffer_size.height();
-  int rwidth = param.buffer_size.width();
-  int rheight = param.buffer_size.height();
-
-  return std::tie(plane_z_order, format, display_rect, lwidth, lheight,
-                  transform) < std::tie(param.plane_z_order, param.format,
-                                        param.display_rect, rwidth, rheight,
-                                        param.transform);
-}
+OverlayCheck_Params::~OverlayCheck_Params() {}
 
 }  // namespace ui

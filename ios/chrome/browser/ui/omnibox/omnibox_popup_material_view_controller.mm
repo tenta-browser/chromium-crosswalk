@@ -8,6 +8,8 @@
 
 #include "base/ios/ios_util.h"
 #include "base/mac/scoped_cftyperef.h"
+#include "base/metrics/user_metrics.h"
+#include "base/metrics/user_metrics_action.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #import "components/image_fetcher/ios/ios_image_data_fetcher_wrapper.h"
@@ -25,7 +27,6 @@
 #import "ios/chrome/browser/ui/uikit_ui_util.h"
 #include "ios/chrome/grit/ios_theme_resources.h"
 #import "ios/third_party/material_components_ios/src/components/Typography/src/MaterialTypography.h"
-#import "ios/third_party/material_roboto_font_loader_ios/src/src/MaterialRobotoFontLoader.h"
 #include "net/base/escape.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -178,6 +179,7 @@ initWithPopupView:(OmniboxPopupViewIOS*)view
   self.automaticallyAdjustsScrollViewInsets = NO;
   [self.tableView setContentInset:UIEdgeInsetsMake(kTopAndBottomPadding, 0,
                                                    kTopAndBottomPadding, 0)];
+  self.tableView.estimatedRowHeight = 0;
 }
 
 - (void)didReceiveMemoryWarning {
@@ -251,13 +253,16 @@ initWithPopupView:(OmniboxPopupViewIOS*)view
   }
 
   // DetailTextLabel and textLabel are fading labels placed in each row. The
-  // textLabel is layed out above the detailTextLabel, and vertically centered
+  // textLabel is laid out above the detailTextLabel, and vertically centered
   // if the detailTextLabel is empty.
   // For the detail text label, we use either the regular detail label, which
   // truncates by fading, or the answer label, which uses UILabel's standard
   // truncation by ellipse for the multi-line text sometimes shown in answers.
   row.detailTruncatingLabel.hidden = answerPresent;
   row.detailAnswerLabel.hidden = !answerPresent;
+  // URLs have have special layout requirements that need to be invoked here.
+  row.detailTruncatingLabel.displayAsURL =
+      !AutocompleteMatch::IsSearchType(match.type);
   // TODO(crbug.com/697647): The complexity of managing these two separate
   // labels could probably be encapusulated in the row class if we moved the
   // layout logic there.
@@ -285,7 +290,7 @@ initWithPopupView:(OmniboxPopupViewIOS*)view
   // suggestions. For all other search suggestions, |match.description| is the
   // name of the currently selected search engine, which for mobile we suppress.
   NSString* detailText = nil;
-  if (![self isSearchMatch:match.type])
+  if (!AutocompleteMatch::IsSearchType(match.type))
     detailText = base::SysUTF16ToNSString(match.contents);
   else if (match.type == AutocompleteMatchType::SEARCH_SUGGEST_ENTITY)
     detailText = base::SysUTF16ToNSString(match.description);
@@ -304,7 +309,8 @@ initWithPopupView:(OmniboxPopupViewIOS*)view
       detailTextLabel.numberOfLines = 1;
   } else {
     const ACMatchClassifications* classifications =
-        ![self isSearchMatch:match.type] ? &match.contents_class : nil;
+        !AutocompleteMatch::IsSearchType(match.type) ? &match.contents_class
+                                                     : nil;
     // The suggestion detail color should match the main text color for entity
     // suggestions. For non-search suggestions (URLs), a highlight color is used
     // instead.
@@ -334,12 +340,13 @@ initWithPopupView:(OmniboxPopupViewIOS*)view
 
   // The text should be search term (|match.contents|) for searches, otherwise
   // page title (|match.description|).
-  base::string16 textString =
-      [self isSearchMatch:match.type] ? match.contents : match.description;
+  base::string16 textString = AutocompleteMatch::IsSearchType(match.type)
+                                  ? match.contents
+                                  : match.description;
   NSString* text = base::SysUTF16ToNSString(textString);
   const ACMatchClassifications* textClassifications =
-      [self isSearchMatch:match.type] ? &match.contents_class
-                                      : &match.description_class;
+      AutocompleteMatch::IsSearchType(match.type) ? &match.contents_class
+                                                  : &match.description_class;
 
   // If for some reason the title is empty, copy the detailText.
   if ([text length] == 0 && [detailText length] != 0) {
@@ -467,14 +474,14 @@ initWithPopupView:(OmniboxPopupViewIOS*)view
   switch (type) {
     case SuggestionAnswer::TOP_ALIGNED:
       attributes = @{
-        font : [[MDFRobotoFontLoader sharedInstance] regularFontOfSize:12],
+        font : [[MDCTypography fontLoader] regularFontOfSize:12],
         baselineOffset : @10.0f,
         foregroundColor : [UIColor grayColor],
       };
       break;
     case SuggestionAnswer::DESCRIPTION_POSITIVE:
       attributes = @{
-        font : [[MDFRobotoFontLoader sharedInstance] regularFontOfSize:16],
+        font : [[MDCTypography fontLoader] regularFontOfSize:16],
         foregroundColor : [UIColor colorWithRed:11 / 255.0
                                           green:128 / 255.0
                                            blue:67 / 255.0
@@ -483,7 +490,7 @@ initWithPopupView:(OmniboxPopupViewIOS*)view
       break;
     case SuggestionAnswer::DESCRIPTION_NEGATIVE:
       attributes = @{
-        font : [[MDFRobotoFontLoader sharedInstance] regularFontOfSize:16],
+        font : [[MDCTypography fontLoader] regularFontOfSize:16],
         foregroundColor : [UIColor colorWithRed:197 / 255.0
                                           green:57 / 255.0
                                            blue:41 / 255.0
@@ -492,30 +499,30 @@ initWithPopupView:(OmniboxPopupViewIOS*)view
       break;
     case SuggestionAnswer::PERSONALIZED_SUGGESTION:
       attributes = @{
-        font : [[MDFRobotoFontLoader sharedInstance] regularFontOfSize:16],
+        font : [[MDCTypography fontLoader] regularFontOfSize:16],
       };
       break;
     case SuggestionAnswer::ANSWER_TEXT_MEDIUM:
       attributes = @{
-        font : [[MDFRobotoFontLoader sharedInstance] regularFontOfSize:20],
+        font : [[MDCTypography fontLoader] regularFontOfSize:20],
         foregroundColor : [UIColor grayColor],
       };
       break;
     case SuggestionAnswer::ANSWER_TEXT_LARGE:
       attributes = @{
-        font : [[MDFRobotoFontLoader sharedInstance] regularFontOfSize:24],
+        font : [[MDCTypography fontLoader] regularFontOfSize:24],
         foregroundColor : [UIColor grayColor],
       };
       break;
     case SuggestionAnswer::SUGGESTION_SECONDARY_TEXT_SMALL:
       attributes = @{
-        font : [[MDFRobotoFontLoader sharedInstance] regularFontOfSize:12],
+        font : [[MDCTypography fontLoader] regularFontOfSize:12],
         foregroundColor : [UIColor grayColor],
       };
       break;
     case SuggestionAnswer::SUGGESTION_SECONDARY_TEXT_MEDIUM:
       attributes = @{
-        font : [[MDFRobotoFontLoader sharedInstance] regularFontOfSize:14],
+        font : [[MDCTypography fontLoader] regularFontOfSize:14],
         foregroundColor : [UIColor grayColor],
       };
       break;
@@ -523,7 +530,7 @@ initWithPopupView:(OmniboxPopupViewIOS*)view
     // Fall through.
     default:
       attributes = @{
-        font : [[MDFRobotoFontLoader sharedInstance] regularFontOfSize:16],
+        font : [[MDCTypography fontLoader] regularFontOfSize:16],
       };
   }
 
@@ -642,6 +649,15 @@ initWithPopupView:(OmniboxPopupViewIOS*)view
   NSUInteger row = [sender tag];
   const AutocompleteMatch& match =
       ((const AutocompleteResult&)_currentResult).match_at(row);
+
+  if (AutocompleteMatch::IsSearchType(match.type)) {
+    base::RecordAction(
+        base::UserMetricsAction("MobileOmniboxRefineSuggestion.Search"));
+  } else {
+    base::RecordAction(
+        base::UserMetricsAction("MobileOmniboxRefineSuggestion.Url"));
+  }
+
   // Make a defensive copy of |match.contents|, as CopyToOmnibox() will trigger
   // a new round of autocomplete and modify |_currentResult|.
   base::string16 contents(match.contents);
@@ -652,11 +668,18 @@ initWithPopupView:(OmniboxPopupViewIOS*)view
 #pragma mark UIScrollViewDelegate
 
 - (void)scrollViewDidScroll:(UIScrollView*)scrollView {
-  // Setting the top inset of the scrollView to |kTopAndBottomPadding| causes a
-  // one time scrollViewDidScroll to |-kTopAndBottomPadding|.  It's easier to
-  // just ignore this one scroll tick.
-  if (scrollView.contentOffset.y == 0 - kTopAndBottomPadding)
-    return;
+  // TODO(crbug.com/733650): Default to the dragging check once it's been tested
+  // on trunk.
+  if (base::ios::IsRunningOnIOS11OrLater()) {
+    if (!scrollView.dragging)
+      return;
+  } else {
+    // Setting the top inset of the scrollView to |kTopAndBottomPadding| causes
+    // a one time scrollViewDidScroll to |-kTopAndBottomPadding|.  It's easier
+    // to just ignore this one scroll tick.
+    if (scrollView.contentOffset.y == 0 - kTopAndBottomPadding)
+      return;
+  }
 
   _popupView->DidScroll();
   for (OmniboxPopupMaterialRow* row in _rows) {
@@ -667,15 +690,6 @@ initWithPopupView:(OmniboxPopupViewIOS*)view
 // Set text alignment for popup cells.
 - (void)setTextAlignment:(NSTextAlignment)alignment {
   _alignment = alignment;
-}
-
-- (BOOL)isSearchMatch:(const AutocompleteMatch::Type&)type {
-  return (type == AutocompleteMatchType::NAVSUGGEST ||
-          type == AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED ||
-          type == AutocompleteMatchType::SEARCH_HISTORY ||
-          type == AutocompleteMatchType::SEARCH_SUGGEST ||
-          type == AutocompleteMatchType::SEARCH_SUGGEST_ENTITY ||
-          type == AutocompleteMatchType::SEARCH_OTHER_ENGINE);
 }
 
 - (NSMutableAttributedString*)
@@ -701,8 +715,8 @@ attributedStringWithString:(NSString*)text
   [as addAttributes:dict range:NSMakeRange(0, [text length])];
 
   if (classifications != NULL) {
-    UIFont* boldFontRef = [[MDFRobotoFontLoader sharedInstance]
-        mediumFontOfSize:fontRef.pointSize];
+    UIFont* boldFontRef =
+        [[MDCTypography fontLoader] mediumFontOfSize:fontRef.pointSize];
 
     for (ACMatchClassifications::const_iterator i = classifications->begin();
          i != classifications->end(); ++i) {

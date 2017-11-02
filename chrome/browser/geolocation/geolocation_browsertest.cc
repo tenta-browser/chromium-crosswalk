@@ -8,6 +8,8 @@
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
+#include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -95,7 +97,6 @@ IFrameLoader::IFrameLoader(Browser* browser, int iframe_id, const GURL& url)
   registrar_.Add(this, content::NOTIFICATION_DOM_OPERATION_RESPONSE,
                  content::NotificationService::AllSources());
   std::string script(base::StringPrintf(
-      "window.domAutomationController.setAutomationId(0);"
       "window.domAutomationController.send(addIFrame(%d, \"%s\"));",
       iframe_id, url.spec().c_str()));
   web_contents->GetMainFrame()->ExecuteJavaScriptForTests(
@@ -124,7 +125,7 @@ void IFrameLoader::Observe(int type,
     javascript_completed_ = true;
   }
   if (javascript_completed_ && navigation_completed_)
-    base::MessageLoopForUI::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
 }
 
 // PermissionRequestObserver ---------------------------------------------------
@@ -412,19 +413,16 @@ void GeolocationBrowserTest::ExpectValueFromScript(
 
 bool GeolocationBrowserTest::SetPositionAndWaitUntilUpdated(double latitude,
                                                             double longitude) {
+  content::DOMMessageQueue dom_message_queue;
+
   fake_latitude_ = latitude;
   fake_longitude_ = longitude;
   ui_test_utils::OverrideGeolocation(latitude, longitude);
 
-  // Now wait until the new position gets to the script.
-  // Control will return (a) if the update has already been received, or (b)
-  // when the update is received. This will hang if the position is never
-  // updated. Currently this expects the position to be updated once; if your
-  // test updates it repeatedly, |position_updated| (JS) needs to change to an
-  // int to count how often it's been updated.
-  std::string result =
-      RunScript(render_frame_host_, "checkIfGeopositionUpdated()");
-  return result == "geoposition-updated";
+  std::string result;
+  if (!dom_message_queue.WaitForMessage(&result))
+    return false;
+  return result == "\"geoposition-updated\"";
 }
 
 int GeolocationBrowserTest::GetRequestQueueSize(
@@ -574,9 +572,9 @@ IN_PROC_BROWSER_TEST_F(GeolocationBrowserTest, TogglePersistBlocked) {
                 current_url(), current_url(), CONTENT_SETTINGS_TYPE_GEOLOCATION,
                 std::string()));
 
-  // Expect the block to be remembered at the blink layer, so a second request
-  // on this page doesn't create a request.
-  WatchPositionAndObservePermissionRequest(false);
+  // Expect the page to make another request since we have not persisted the
+  // user's response.
+  WatchPositionAndObservePermissionRequest(true);
 
   // Navigate and ensure that a prompt is shown when we request again.
   ASSERT_NO_FATAL_FAILURE(Initialize(INITIALIZATION_DEFAULT));

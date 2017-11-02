@@ -51,7 +51,7 @@ class MediaLog;
 class MEDIA_EXPORT VideoRendererAlgorithm {
  public:
   VideoRendererAlgorithm(const TimeSource::WallClockTimeCB& wall_clock_time_cb,
-                         scoped_refptr<MediaLog> media_log);
+                         MediaLog* media_log);
   ~VideoRendererAlgorithm();
 
   // Chooses the best frame for the interval [deadline_min, deadline_max] based
@@ -148,6 +148,13 @@ class MEDIA_EXPORT VideoRendererAlgorithm {
   // algorithm will never drop frames and instead always return every frame
   // for display at least once.
   void disable_frame_dropping() { frame_dropping_disabled_ = true; }
+
+  enum : int {
+    // The number of frames to store for moving average calculations.  Value
+    // picked after experimenting with playback of various local media and
+    // YouTube clips.
+    kMovingAverageSamples = 32
+  };
 
  private:
   friend class VideoRendererAlgorithmTest;
@@ -267,7 +274,7 @@ class MEDIA_EXPORT VideoRendererAlgorithm {
   // UpdateEffectiveFramesQueued().
   size_t CountEffectiveFramesQueued() const;
 
-  scoped_refptr<MediaLog> media_log_;
+  MediaLog* media_log_;
   int out_of_order_frame_logs_ = 0;
 
   // Queue of incoming frames waiting for rendering.

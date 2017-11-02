@@ -9,6 +9,7 @@
 #include "ui/aura/mus/focus_synchronizer.h"
 #include "ui/aura/mus/window_tree_client.h"
 #include "ui/aura/window.h"
+#include "ui/display/display.h"
 #include "ui/display/manager/managed_display_info.h"
 #include "ui/views/mus/mus_client.h"
 #include "ui/wm/public/activation_client.h"
@@ -37,13 +38,14 @@ WMHelperMus::~WMHelperMus() {
 ////////////////////////////////////////////////////////////////////////////////
 // WMHelperMus, private:
 
-const display::ManagedDisplayInfo WMHelperMus::GetDisplayInfo(
+const display::ManagedDisplayInfo& WMHelperMus::GetDisplayInfo(
     int64_t display_id) const {
   // TODO(penghuang): Return real display info when it is supported in mus.
-  return display::ManagedDisplayInfo(display_id, "", false);
+  static const display::ManagedDisplayInfo info;
+  return info;
 }
 
-aura::Window* WMHelperMus::GetContainer(int container_id) {
+aura::Window* WMHelperMus::GetPrimaryDisplayContainer(int container_id) {
   NOTIMPLEMENTED();
   return nullptr;
 }
@@ -56,9 +58,16 @@ aura::Window* WMHelperMus::GetFocusedWindow() const {
   return focused_window_;
 }
 
-ui::CursorSetType WMHelperMus::GetCursorSet() const {
+ui::CursorSize WMHelperMus::GetCursorSize() const {
   NOTIMPLEMENTED();
-  return ui::CursorSetType::CURSOR_SET_NORMAL;
+  return ui::CursorSize::kNormal;
+}
+
+const display::Display& WMHelperMus::GetCursorDisplay() const {
+  NOTIMPLEMENTED();
+  // TODO(penghuang): Return real display when supported in mus.
+  static const display::Display display;
+  return display;
 }
 
 void WMHelperMus::AddPreTargetHandler(ui::EventHandler* handler) {
@@ -81,18 +90,14 @@ void WMHelperMus::RemovePostTargetHandler(ui::EventHandler* handler) {
   aura::Env::GetInstance()->RemovePostTargetHandler(handler);
 }
 
-bool WMHelperMus::IsMaximizeModeWindowManagerEnabled() const {
+bool WMHelperMus::IsTabletModeWindowManagerEnabled() const {
   NOTIMPLEMENTED();
   return false;
 }
 
-bool WMHelperMus::IsSpokenFeedbackEnabled() const {
+double WMHelperMus::GetDefaultDeviceScaleFactor() const {
   NOTIMPLEMENTED();
-  return false;
-}
-
-void WMHelperMus::PlayEarcon(int sound_key) const {
-  NOTIMPLEMENTED();
+  return 1.0;
 }
 
 void WMHelperMus::OnActiveFocusClientChanged(
@@ -148,9 +153,9 @@ void WMHelperMus::SetFocusedWindow(aura::Window* window) {
   NotifyWindowFocused(focused_window_, lost_focus);
 }
 
-aura::client::ActivationClient* WMHelperMus::GetActivationClient() {
+wm::ActivationClient* WMHelperMus::GetActivationClient() {
   return root_with_active_focus_client_
-             ? aura::client::GetActivationClient(root_with_active_focus_client_)
+             ? wm::GetActivationClient(root_with_active_focus_client_)
              : nullptr;
 }
 

@@ -11,11 +11,14 @@
 #include "base/macros.h"
 #include "base/time/time.h"
 
+namespace aura {
+class Window;
+}
+
 namespace ash {
 
 class WindowCycleEventFilter;
 class WindowCycleList;
-class WmWindow;
 
 // Controls cycling through windows with the keyboard via alt-tab.
 // Windows are sorted primarily by most recently used, and then by screen order.
@@ -41,7 +44,7 @@ class ASH_EXPORT WindowCycleController {
   // Returns true if we are in the middle of a window cycling gesture.
   bool IsCycling() const { return window_cycle_list_.get() != NULL; }
 
-  // Call to start cycling windows. This funtion adds a pre-target handler to
+  // Call to start cycling windows. This function adds a pre-target handler to
   // listen to the alt key release.
   void StartCycling();
 
@@ -67,7 +70,7 @@ class ASH_EXPORT WindowCycleController {
 
   // Tracks what Window was active when starting to cycle and used to determine
   // if the active Window changed in when ending cycling.
-  WmWindow* active_window_before_window_cycle_ = nullptr;
+  aura::Window* active_window_before_window_cycle_ = nullptr;
 
   // Non-null while actively cycling.
   std::unique_ptr<WindowCycleEventFilter> event_filter_;

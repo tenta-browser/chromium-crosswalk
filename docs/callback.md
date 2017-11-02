@@ -67,18 +67,18 @@ void Baz(OnceCallback<void(int)> cb) {
 
 // |Qux| takes the ownership of |cb| and transfers ownership to PostTask(),
 // which also takes the ownership of |cb|.
-// NOTE: TaskRunner is not actually migrated to OnceClosure yet. Once TaskRunner
-// supports OnceClosure, a OnceCallback can be posted as follows:
 void Qux(OnceCallback<void(int)> cb) {
   PostTask(FROM_HERE,
-           base::BindOnce(std::move(cb), 42));  // not yet implemented!
+           base::BindOnce(std::move(cb), 42));
 }
 ```
 
 When you pass a `Callback` object to a function parameter, use `std::move()` if
 you don't need to keep a reference to it, otherwise, pass the object directly.
 You may see a compile error when the function requires the exclusive ownership,
-and you didn't pass the callback by move.
+and you didn't pass the callback by move. Note that the moved-from `Callback`
+becomes null, as if its `Reset()` method had been called, and its `is_null()`
+method will return true.
 
 ## Quick reference for basic stuff
 

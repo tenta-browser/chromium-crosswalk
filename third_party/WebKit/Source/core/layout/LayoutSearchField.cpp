@@ -25,7 +25,7 @@
 #include "core/layout/LayoutSearchField.h"
 
 #include "core/InputTypeNames.h"
-#include "core/dom/shadow/ShadowRoot.h"
+#include "core/dom/ShadowRoot.h"
 #include "core/html/HTMLInputElement.h"
 #include "core/html/shadow/ShadowElementNames.h"
 
@@ -43,12 +43,12 @@ LayoutSearchField::LayoutSearchField(HTMLInputElement* element)
 LayoutSearchField::~LayoutSearchField() {}
 
 inline Element* LayoutSearchField::SearchDecorationElement() const {
-  return InputElement()->UserAgentShadowRoot()->GetElementById(
+  return InputElement()->UserAgentShadowRoot()->getElementById(
       ShadowElementNames::SearchDecoration());
 }
 
 inline Element* LayoutSearchField::CancelButtonElement() const {
-  return InputElement()->UserAgentShadowRoot()->GetElementById(
+  return InputElement()->UserAgentShadowRoot()->getElementById(
       ShadowElementNames::ClearButton());
 }
 

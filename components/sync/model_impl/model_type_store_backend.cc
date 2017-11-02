@@ -76,8 +76,7 @@ class BackendMap {
   DISALLOW_COPY_AND_ASSIGN(BackendMap);
 };
 
-base::LazyInstance<BackendMap>::DestructorAtExit backend_map =
-    LAZY_INSTANCE_INITIALIZER;
+base::LazyInstance<BackendMap>::Leaky backend_map = LAZY_INSTANCE_INITIALIZER;
 
 scoped_refptr<ModelTypeStoreBackend> BackendMap::GetBackend(
     const std::string& path) const {
@@ -179,24 +178,18 @@ ModelTypeStore::Result ModelTypeStoreBackend::Init(
 
 leveldb::Status ModelTypeStoreBackend::OpenDatabase(const std::string& path,
                                                     leveldb::Env* env) {
-  leveldb::DB* db_raw = nullptr;
-  leveldb::Options options;
+  leveldb_env::Options options;
   options.create_if_missing = true;
-  options.reuse_logs = leveldb_env::kDefaultLogReuseOptionValue;
   options.paranoid_checks = true;
   if (env)
     options.env = env;
 
-  leveldb::Status status = leveldb::DB::Open(options, path, &db_raw);
-  DCHECK(status.ok() != (db_raw == nullptr));
-  if (status.ok())
-    db_.reset(db_raw);
-  return status;
+  return leveldb_env::OpenDB(options, path, &db_);
 }
 
 leveldb::Status ModelTypeStoreBackend::DestroyDatabase(const std::string& path,
                                                        leveldb::Env* env) {
-  leveldb::Options options;
+  leveldb_env::Options options;
   if (env)
     options.env = env;
   return leveldb::DestroyDB(path, options);

@@ -16,11 +16,12 @@
 #include "core/dom/Document.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/dom/ExecutionContext.h"
+#include "core/dom/UserGestureIndicator.h"
 #include "core/frame/LocalFrame.h"
 #include "modules/permissions/PermissionDescriptor.h"
 #include "modules/permissions/PermissionStatus.h"
 #include "modules/permissions/PermissionUtils.h"
-#include "platform/UserGestureIndicator.h"
+#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/wtf/Functional.h"
 #include "platform/wtf/NotFound.h"
 #include "platform/wtf/PtrUtil.h"
@@ -91,6 +92,34 @@ PermissionDescriptorPtr ParsePermission(ScriptState* script_state,
   }
   if (name == "background-sync")
     return CreatePermissionDescriptor(PermissionName::BACKGROUND_SYNC);
+  // TODO(riju): Remove runtime flag check when Generic Sensor feature is
+  // stable.
+  if (name == "ambient-light-sensor" || name == "accelerometer" ||
+      name == "gyroscope" || name == "magnetometer") {
+    if (!RuntimeEnabledFeatures::SensorEnabled()) {
+      exception_state.ThrowTypeError("GenericSensor flag is not enabled.");
+      return nullptr;
+    }
+
+    // Magnetometer and ALS require an extra flag.
+    if (name == "magnetometer" || name == "ambient-light-sensor") {
+      if (!RuntimeEnabledFeatures::SensorExtraClassesEnabled()) {
+        exception_state.ThrowTypeError(
+            "GenericSensorExtraClasses flag is not enabled.");
+        return nullptr;
+      }
+    }
+
+    return CreatePermissionDescriptor(PermissionName::SENSORS);
+  }
+  if (name == "accessibility-events") {
+    if (!RuntimeEnabledFeatures::AccessibilityObjectModelEnabled()) {
+      exception_state.ThrowTypeError(
+          "Accessibility Object Model is not enabled.");
+      return nullptr;
+    }
+    return CreatePermissionDescriptor(PermissionName::ACCESSIBILITY_EVENTS);
+  }
 
   return nullptr;
 }
@@ -207,7 +236,7 @@ ScriptPromise Permissions::requestAll(
                                  "requestAll");
   Vector<PermissionDescriptorPtr> internal_permissions;
   Vector<int> caller_index_to_internal_index;
-  caller_index_to_internal_index.Resize(raw_permissions.size());
+  caller_index_to_internal_index.resize(raw_permissions.size());
   for (size_t i = 0; i < raw_permissions.size(); ++i) {
     const Dictionary& raw_permission = raw_permissions[i];
 

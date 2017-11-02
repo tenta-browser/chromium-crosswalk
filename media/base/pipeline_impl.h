@@ -29,7 +29,7 @@ class MediaLog;
 // Here's a state diagram that describes the lifetime of this object.
 //
 //   [ *Created ]                       [ Any State ]
-//         | Start()                         | Stop() / SetError()
+//         | Start()                         | Stop()
 //         V                                 V
 //   [ Starting ]                       [ Stopping ]
 //         |                                 |
@@ -55,9 +55,9 @@ class MediaLog;
 // a chance to preroll. From then on the normal Seek() transitions are carried
 // out and we start playing the media.
 //
-// If any error ever happens, this object will transition to the "Error" state
-// from any state. If Stop() is ever called, this object will transition to
-// "Stopped" state.
+// If Stop() is ever called, this object will transition to "Stopped" state.
+// Pipeline::Stop() is never called from withing PipelineImpl. It's |client_|'s
+// responsibility to call stop when appropriate.
 //
 // TODO(sandersd): It should be possible to pass through Suspended when going
 // from InitDemuxer to InitRenderer, thereby eliminating the Resuming state.
@@ -133,6 +133,8 @@ class MEDIA_EXPORT PipelineImpl : public Pipeline {
   void OnAddTextTrack(const TextTrackConfig& config,
                       const AddTextTrackDoneCB& done_cb);
   void OnWaitingForDecryptionKey();
+  void OnAudioConfigChange(const AudioDecoderConfig& config);
+  void OnVideoConfigChange(const VideoDecoderConfig& config);
   void OnVideoNaturalSizeChange(const gfx::Size& size);
   void OnVideoOpacityChange(bool opaque);
   void OnVideoAverageKeyframeDistanceUpdate();
@@ -143,7 +145,7 @@ class MEDIA_EXPORT PipelineImpl : public Pipeline {
 
   // Parameters passed in the constructor.
   const scoped_refptr<base::SingleThreadTaskRunner> media_task_runner_;
-  const scoped_refptr<MediaLog> media_log_;
+  MediaLog* const media_log_;
 
   // Pipeline client. Valid only while the pipeline is running.
   Client* client_;

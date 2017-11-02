@@ -48,10 +48,9 @@ class WTF_EXPORT CStringImpl : public RefCounted<CStringImpl> {
   void* operator new(size_t, void* ptr) { return ptr; }
   void operator delete(void*);
 
-  static PassRefPtr<CStringImpl> CreateUninitialized(size_t length,
-                                                     char*& data);
+  static RefPtr<CStringImpl> CreateUninitialized(size_t length, char*& data);
 
-  const char* Data() const { return reinterpret_cast<const char*>(this + 1); }
+  const char* data() const { return reinterpret_cast<const char*>(this + 1); }
   size_t length() const { return length_; }
 
  private:
@@ -76,14 +75,14 @@ class WTF_EXPORT CString {
 
   // Construct a string referencing an existing buffer.
   CString(CStringImpl* buffer) : buffer_(buffer) {}
-  CString(PassRefPtr<CStringImpl> buffer) : buffer_(std::move(buffer)) {}
+  CString(RefPtr<CStringImpl> buffer) : buffer_(std::move(buffer)) {}
 
   static CString CreateUninitialized(size_t length, char*& data) {
     return CStringImpl::CreateUninitialized(length, data);
   }
 
   // The bytes of the string, always NUL terminated. May be null.
-  const char* Data() const { return buffer_ ? buffer_->Data() : 0; }
+  const char* data() const { return buffer_ ? buffer_->data() : 0; }
 
   // The length of the data(), *not* including the NUL terminator.
   size_t length() const { return buffer_ ? buffer_->length() : 0; }

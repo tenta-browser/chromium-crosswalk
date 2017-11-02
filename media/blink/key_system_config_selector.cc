@@ -31,6 +31,13 @@ using EmeFeatureRequirement =
 
 namespace {
 
+// The rejection message when the key system is not supported or when none of
+// the requested configurations is supported should always be the same to help
+// avoid leaking internal information unnecessarily.
+// See https://crbug.com/760720
+const char kUnsupportedKeySystemOrConfigMessage[] =
+    "Unsupported keySystem or supportedConfigurations.";
+
 static EmeConfigRule GetSessionTypeConfigRule(EmeSessionTypeSupport support) {
   switch (support) {
     case EmeSessionTypeSupport::INVALID:
@@ -159,7 +166,6 @@ struct KeySystemConfigSelector::SelectionRequest {
   base::Callback<void(const blink::WebString&)> not_supported_cb;
   bool was_permission_requested = false;
   bool is_permission_granted = false;
-  bool are_secure_codecs_supported = false;
 };
 
 // Accumulates configuration rules to determine if a feature (additional
@@ -298,6 +304,10 @@ KeySystemConfigSelector::~KeySystemConfigSelector() {
 bool IsSupportedMediaFormat(const std::string& container_mime_type,
                             const std::string& codecs,
                             bool use_aes_decryptor) {
+  DVLOG(3) << __func__ << ": container_mime_type=" << container_mime_type
+           << ", codecs=" << codecs
+           << ", use_aes_decryptor=" << use_aes_decryptor;
+
   std::vector<std::string> codec_vector;
   SplitCodecsToVector(codecs, &codec_vector, false);
   // AesDecryptor decrypts the stream in the demuxer before it reaches the
@@ -317,6 +327,8 @@ bool KeySystemConfigSelector::IsSupportedContentType(
     const std::string& container_mime_type,
     const std::string& codecs,
     KeySystemConfigSelector::ConfigState* config_state) {
+  DVLOG(3) << __func__;
+
   // From RFC6838: "Both top-level type and subtype names are case-insensitive."
   std::string container_lower = base::ToLowerASCII(container_mime_type);
 
@@ -324,7 +336,7 @@ bool KeySystemConfigSelector::IsSupportedContentType(
   // particular codec. For EME, none of the currently supported containers
   // imply a codec, so |codecs| must be provided.
   if (codecs.empty()) {
-    DVLOG(3) << __func__ << " KeySystemConfig for " << container_mime_type
+    DVLOG(3) << "KeySystemConfig for " << container_mime_type
              << " does not specify necessary codecs.";
     return false;
   }
@@ -335,6 +347,7 @@ bool KeySystemConfigSelector::IsSupportedContentType(
   // robustness algorithm).
   if (!IsSupportedMediaFormat(container_lower, codecs,
                               CanUseAesDecryptor(key_system))) {
+    DVLOG(3) << "Container mime type and codecs are not supported";
     return false;
   }
 
@@ -392,6 +405,7 @@ bool KeySystemConfigSelector::GetSupportedCapabilities(
         !IsSupportedContentType(
             key_system, media_type, capability.mime_type.Ascii(),
             capability.codecs.Ascii(), &proposed_config_state)) {
+      DVLOG(3) << "The current capability is not supported.";
       continue;
     }
 
@@ -413,8 +427,10 @@ bool KeySystemConfigSelector::GetSupportedCapabilities(
     //       encrypted media data for the combination of container, media types,
     //       robustness and local accumulated configuration in combination with
     //       restrictions:
-    if (!proposed_config_state.IsRuleSupported(robustness_rule))
+    if (!proposed_config_state.IsRuleSupported(robustness_rule)) {
+      DVLOG(3) << "The current robustness rule is not supported.";
       continue;
+    }
 
     // 3.13.1. Add requested media capability to supported media capabilities.
     supported_media_capabilities->push_back(capability);
@@ -454,6 +470,8 @@ KeySystemConfigSelector::GetSupportedConfiguration(
     const blink::WebMediaKeySystemConfiguration& candidate,
     ConfigState* config_state,
     blink::WebMediaKeySystemConfiguration* accumulated_configuration) {
+  DVLOG(3) << __func__;
+
   // From
   // http://w3c.github.io/encrypted-media/#get-supported-configuration-and-consent
   // 1. Let accumulated configuration be a new MediaKeySystemConfiguration
@@ -672,6 +690,8 @@ KeySystemConfigSelector::GetSupportedConfiguration(
     if (!GetSupportedCapabilities(key_system, EmeMediaType::VIDEO,
                                   candidate.video_capabilities, config_state,
                                   &video_capabilities)) {
+      DVLOG(2) << "Rejecting requested configuration because the specified "
+                  "videoCapabilities are not supported.";
       return CONFIGURATION_NOT_SUPPORTED;
     }
 
@@ -696,6 +716,8 @@ KeySystemConfigSelector::GetSupportedConfiguration(
     if (!GetSupportedCapabilities(key_system, EmeMediaType::AUDIO,
                                   candidate.audio_capabilities, config_state,
                                   &audio_capabilities)) {
+      DVLOG(2) << "Rejecting requested configuration because the specified "
+                  "audioCapabilities are not supported.";
       return CONFIGURATION_NOT_SUPPORTED;
     }
 
@@ -834,7 +856,6 @@ void KeySystemConfigSelector::SelectConfig(
     const blink::WebVector<blink::WebMediaKeySystemConfiguration>&
         candidate_configurations,
     const blink::WebSecurityOrigin& security_origin,
-    bool are_secure_codecs_supported,
     base::Callback<void(const blink::WebMediaKeySystemConfiguration&,
                         const CdmConfig&)> succeeded_cb,
     base::Callback<void(const blink::WebString&)> not_supported_cb) {
@@ -851,7 +872,7 @@ void KeySystemConfigSelector::SelectConfig(
 
   std::string key_system_ascii = key_system.Ascii();
   if (!key_systems_->IsSupportedKeySystem(key_system_ascii)) {
-    not_supported_cb.Run("Unsupported keySystem");
+    not_supported_cb.Run(kUnsupportedKeySystemOrConfigMessage);
     return;
   }
 
@@ -861,7 +882,6 @@ void KeySystemConfigSelector::SelectConfig(
   request->key_system = key_system_ascii;
   request->candidate_configurations = candidate_configurations;
   request->security_origin = security_origin;
-  request->are_secure_codecs_supported = are_secure_codecs_supported;
   request->succeeded_cb = succeeded_cb;
   request->not_supported_cb = not_supported_cb;
   SelectConfigInternal(std::move(request));
@@ -869,6 +889,8 @@ void KeySystemConfigSelector::SelectConfig(
 
 void KeySystemConfigSelector::SelectConfigInternal(
     std::unique_ptr<SelectionRequest> request) {
+  DVLOG(3) << __func__;
+
   // Continued from requestMediaKeySystemAccess(), step 6, from
   // https://w3c.github.io/encrypted-media/#requestmediakeysystemaccess
   //
@@ -884,10 +906,6 @@ void KeySystemConfigSelector::SelectConfigInternal(
     //        and return a new MediaKeySystemAccess object.]
     ConfigState config_state(request->was_permission_requested,
                              request->is_permission_granted);
-    DCHECK(config_state.IsRuleSupported(
-        EmeConfigRule::HW_SECURE_CODECS_NOT_ALLOWED));
-    if (!request->are_secure_codecs_supported)
-      config_state.AddRule(EmeConfigRule::HW_SECURE_CODECS_NOT_ALLOWED);
     blink::WebMediaKeySystemConfiguration accumulated_configuration;
     CdmConfig cdm_config;
     ConfigurationSupport support = GetSupportedConfiguration(
@@ -906,6 +924,7 @@ void KeySystemConfigSelector::SelectConfigInternal(
           // Note: the GURL must not be constructed inline because
           // base::Passed(&request) sets |request| to null.
           GURL security_origin(url::Origin(request->security_origin).GetURL());
+          DVLOG(3) << "Request permission.";
           media_permission_->RequestPermission(
               MediaPermission::PROTECTED_MEDIA_IDENTIFIER, security_origin,
               base::Bind(&KeySystemConfigSelector::OnPermissionResult,
@@ -927,13 +946,14 @@ void KeySystemConfigSelector::SelectConfigInternal(
   }
 
   // 6.4. Reject promise with a NotSupportedError.
-  request->not_supported_cb.Run(
-      "None of the requested configurations were supported.");
+  request->not_supported_cb.Run(kUnsupportedKeySystemOrConfigMessage);
 }
 
 void KeySystemConfigSelector::OnPermissionResult(
     std::unique_ptr<SelectionRequest> request,
     bool is_permission_granted) {
+  DVLOG(3) << __func__;
+
   request->was_permission_requested = true;
   request->is_permission_granted = is_permission_granted;
   SelectConfigInternal(std::move(request));

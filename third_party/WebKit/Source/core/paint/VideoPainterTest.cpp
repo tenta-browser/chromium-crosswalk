@@ -4,7 +4,7 @@
 
 #include "core/paint/VideoPainter.h"
 
-#include "core/frame/FrameView.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/Settings.h"
 #include "core/html/HTMLMediaElement.h"
 #include "core/loader/EmptyClients.h"
@@ -49,13 +49,14 @@ class StubWebMediaPlayer : public EmptyWebMediaPlayer {
   ReadyState ready_state_ = kReadyStateHaveNothing;
 };
 
-class StubLocalFrameClient : public EmptyLocalFrameClient {
+class VideoStubLocalFrameClient : public EmptyLocalFrameClient {
  public:
   // LocalFrameClient
   std::unique_ptr<WebMediaPlayer> CreateWebMediaPlayer(
       HTMLMediaElement&,
       const WebMediaPlayerSource&,
-      WebMediaPlayerClient* client) override {
+      WebMediaPlayerClient* client,
+      WebLayerTreeView* view) override {
     return WTF::MakeUnique<StubWebMediaPlayer>(client);
   }
 };
@@ -68,7 +69,7 @@ class VideoPainterTestForSPv2 : public ::testing::Test,
  protected:
   void SetUp() override {
     chrome_client_ = new StubChromeClientForSPv2();
-    local_frame_client_ = new StubLocalFrameClient;
+    local_frame_client_ = new VideoStubLocalFrameClient;
     Page::PageClients clients;
     FillWithEmptyClients(clients);
     clients.chrome_client = chrome_client_.Get();
@@ -79,7 +80,7 @@ class VideoPainterTestForSPv2 : public ::testing::Test,
         });
     GetDocument().View()->SetParentVisible(true);
     GetDocument().View()->SetSelfVisible(true);
-    GetDocument().SetURL(KURL(KURL(), "https://example.com/"));
+    GetDocument().SetURL(KURL(NullURL(), "https://example.com/"));
   }
 
   Document& GetDocument() { return page_holder_->GetDocument(); }
@@ -89,7 +90,7 @@ class VideoPainterTestForSPv2 : public ::testing::Test,
 
  private:
   Persistent<StubChromeClientForSPv2> chrome_client_;
-  Persistent<StubLocalFrameClient> local_frame_client_;
+  Persistent<VideoStubLocalFrameClient> local_frame_client_;
   std::unique_ptr<DummyPageHolder> page_holder_;
 };
 
@@ -105,7 +106,7 @@ TEST_F(VideoPainterTestForSPv2, VideoLayerAppearsInLayerTree) {
   // Fetch the layer associated with the <video>, and check that it was
   // correctly configured in the layer tree.
   HTMLMediaElement* element =
-      ToHTMLMediaElement(GetDocument().body()->FirstChild());
+      ToHTMLMediaElement(GetDocument().body()->firstChild());
   StubWebMediaPlayer* player =
       static_cast<StubWebMediaPlayer*>(element->GetWebMediaPlayer());
   const WebLayer* layer = player->GetWebLayer();

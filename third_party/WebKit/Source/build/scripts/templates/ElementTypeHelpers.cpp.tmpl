@@ -1,11 +1,13 @@
-{% from "macros.tmpl" import license %}
+{% from "templates/macros.tmpl" import license, source_files_for_generated_file %}
 {{ license() }}
+
+{{source_files_for_generated_file(template_file, input_files)}}
 
 #include "{{namespace}}ElementTypeHelpers.h"
 
 #include "core/dom/Document.h"
 #include "platform/RuntimeEnabledFeatures.h"
-#include "wtf/HashMap.h"
+#include "platform/wtf/HashMap.h"
 
 namespace blink {
 {% if namespace == "HTML" %}

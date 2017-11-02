@@ -9,12 +9,14 @@
 #include <string>
 #include <vector>
 
+#include "base/containers/flat_set.h"
 #include "base/macros.h"
 #include "base/scoped_observer.h"
-#include "chrome/browser/browsing_data/browsing_data_remover.h"
+#include "chrome/browser/engagement/important_sites_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/settings/settings_page_ui_handler.h"
 #include "components/browser_sync/profile_sync_service.h"
+#include "components/browsing_data/core/browsing_data_utils.h"
 #include "components/browsing_data/core/counters/browsing_data_counter.h"
 
 namespace base {
@@ -22,6 +24,7 @@ class ListValue;
 }
 
 namespace content {
+class BrowsingDataFilterBuilder;
 class WebUI;
 }
 
@@ -40,16 +43,26 @@ class ClearBrowsingDataHandler : public SettingsPageUIHandler,
   void OnJavascriptDisallowed() override;
 
  private:
-  // Observes one |remover| task initiated from ClearBrowsingDataHandler.
-  // Calls |callback| when the task is finished.
-  class TaskObserver;
-
   // Clears browsing data, called by Javascript.
   void HandleClearBrowsingData(const base::ListValue* value);
 
+  // Parses a ListValue with important site information and creates a
+  // BrowsingDataFilterBuilder.
+  std::unique_ptr<content::BrowsingDataFilterBuilder> ProcessImportantSites(
+      const base::ListValue* important_sites);
+
   // Called when a clearing task finished. |webui_callback_id| is provided
   // by the WebUI action that initiated it.
-  void OnClearingTaskFinished(const std::string& webui_callback_id);
+  void OnClearingTaskFinished(
+      const std::string& webui_callback_id,
+      const base::flat_set<browsing_data::BrowsingDataType>& data_types);
+
+  // Get important sites, called by Javascript.
+  void HandleGetImportantSites(const base::ListValue* value);
+
+  void OnFetchImportantSitesFinished(
+      const std::string& callback_id,
+      std::vector<ImportantSitesUtil::ImportantDomainInfo> sites);
 
   // Initializes the dialog UI. Called by JavaScript when the DOM is ready.
   void HandleInitialize(const base::ListValue* args);
@@ -86,9 +99,6 @@ class ClearBrowsingDataHandler : public SettingsPageUIHandler,
   // Counters that calculate the data volume for individual data types.
   std::vector<std::unique_ptr<browsing_data::BrowsingDataCounter>> counters_;
 
-  // Observes the currently active data clearing task.
-  std::unique_ptr<TaskObserver> task_observer_;
-
   // ProfileSyncService to observe sync state changes.
   browser_sync::ProfileSyncService* sync_service_;
   ScopedObserver<browser_sync::ProfileSyncService, syncer::SyncServiceObserver>
@@ -104,6 +114,8 @@ class ClearBrowsingDataHandler : public SettingsPageUIHandler,
   bool show_history_deletion_dialog_;
 
   // A weak pointer factory for asynchronous calls referencing this class.
+  // The weak pointers are invalidated in |OnJavascriptDisallowed()| and
+  // |HandleInitialize()| to cancel previously initiated tasks.
   base::WeakPtrFactory<ClearBrowsingDataHandler> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ClearBrowsingDataHandler);

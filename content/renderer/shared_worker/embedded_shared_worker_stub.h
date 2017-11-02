@@ -12,8 +12,10 @@
 #include "content/child/child_message_filter.h"
 #include "content/child/scoped_child_process_reference.h"
 #include "ipc/ipc_listener.h"
+#include "mojo/public/cpp/system/message_pipe.h"
 #include "third_party/WebKit/public/platform/WebAddressSpace.h"
 #include "third_party/WebKit/public/platform/WebContentSecurityPolicy.h"
+#include "third_party/WebKit/public/platform/WebContentSettingsClient.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/web/WebSharedWorkerClient.h"
 #include "url/gurl.h"
@@ -22,9 +24,7 @@ namespace blink {
 class WebApplicationCacheHost;
 class WebApplicationCacheHostClient;
 class WebNotificationPresenter;
-class WebSecurityOrigin;
 class WebSharedWorker;
-class WebWorkerContentSettingsClientProxy;
 }
 
 namespace content {
@@ -53,7 +53,9 @@ class EmbeddedSharedWorkerStub : public IPC::Listener,
       blink::WebContentSecurityPolicyType security_policy_type,
       blink::WebAddressSpace creation_address_space,
       bool pause_on_start,
-      int route_id);
+      int route_id,
+      bool data_saver_enabled,
+      mojo::ScopedMessagePipeHandle content_settings_handle);
 
   // IPC::Listener implementation.
   bool OnMessageReceived(const IPC::Message& message) override;
@@ -68,19 +70,18 @@ class EmbeddedSharedWorkerStub : public IPC::Listener,
   void WorkerScriptLoadFailed() override;
   void SelectAppCacheID(long long) override;
   blink::WebNotificationPresenter* NotificationPresenter() override;
-  blink::WebApplicationCacheHost* CreateApplicationCacheHost(
+  std::unique_ptr<blink::WebApplicationCacheHost> CreateApplicationCacheHost(
       blink::WebApplicationCacheHostClient*) override;
-  blink::WebWorkerContentSettingsClientProxy*
-  CreateWorkerContentSettingsClientProxy(
-      const blink::WebSecurityOrigin& origin) override;
-  blink::WebServiceWorkerNetworkProvider* CreateServiceWorkerNetworkProvider()
-      override;
+  std::unique_ptr<blink::WebServiceWorkerNetworkProvider>
+  CreateServiceWorkerNetworkProvider() override;
   void SendDevToolsMessage(int session_id,
                            int call_id,
                            const blink::WebString& message,
                            const blink::WebString& state) override;
   blink::WebDevToolsAgentClient::WebKitClientMessageLoop*
   CreateDevToolsMessageLoop() override;
+  std::unique_ptr<blink::WebWorkerFetchContext> CreateWorkerFetchContext(
+      blink::WebServiceWorkerNetworkProvider*) override;
 
  private:
   ~EmbeddedSharedWorkerStub() override;
@@ -108,7 +109,7 @@ class EmbeddedSharedWorkerStub : public IPC::Listener,
   std::vector<PendingChannel> pending_channels_;
 
   ScopedChildProcessReference process_ref_;
-  WebApplicationCacheHostImpl* app_cache_host_ = nullptr;
+  WebApplicationCacheHostImpl* app_cache_host_ = nullptr;  // Not owned.
   DISALLOW_COPY_AND_ASSIGN(EmbeddedSharedWorkerStub);
 };
 

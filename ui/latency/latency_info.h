@@ -12,7 +12,7 @@
 #include <utility>
 #include <vector>
 
-#include "base/containers/small_map.h"
+#include "base/containers/flat_map.h"
 #include "base/time/time.h"
 #include "ui/gfx/geometry/point_f.h"
 
@@ -109,6 +109,7 @@ enum SourceEventType {
   UNKNOWN,
   WHEEL,
   TOUCH,
+  KEY_PRESS,
   OTHER,
   SOURCE_EVENT_TYPE_LAST = OTHER,
 };
@@ -130,16 +131,12 @@ class LatencyInfo {
     base::TimeTicks last_event_time;
   };
 
-  // Empirically determined constant based on a typical scroll sequence.
-  enum { kTypicalMaxComponentsPerLatencyInfo = 10 };
-
   enum : size_t { kMaxInputCoordinates = 2 };
 
   // Map a Latency Component (with a component-specific int64_t id) to a
   // component info.
-  typedef base::SmallMap<
-      std::map<std::pair<LatencyComponentType, int64_t>, LatencyComponent>,
-      kTypicalMaxComponentsPerLatencyInfo> LatencyMap;
+  using LatencyMap = base::flat_map<std::pair<LatencyComponentType, int64_t>,
+                                    LatencyComponent>;
 
   LatencyInfo();
   LatencyInfo(const LatencyInfo& other);
@@ -202,13 +199,6 @@ class LatencyInfo {
 
   void RemoveLatency(LatencyComponentType type);
 
-  // Returns true if there is still room for keeping the |input_coordinate|,
-  // false otherwise.
-  bool AddInputCoordinate(const gfx::PointF& input_coordinate);
-
-  uint32_t input_coordinates_size() const { return input_coordinates_size_; }
-  const gfx::PointF* input_coordinates() const { return input_coordinates_; }
-
   const LatencyMap& latency_components() const { return latency_components_; }
 
   const SourceEventType& source_event_type() const {
@@ -218,10 +208,21 @@ class LatencyInfo {
     source_event_type_ = type;
   }
 
+  void set_expected_queueing_time_on_dispatch(
+      base::TimeDelta expected_queueing_time) {
+    expected_queueing_time_on_dispatch_ = expected_queueing_time;
+  }
+
+  base::TimeDelta expected_queueing_time_on_dispatch() const {
+    return expected_queueing_time_on_dispatch_;
+  }
+
+  bool began() const { return began_; }
   bool terminated() const { return terminated_; }
   void set_coalesced() { coalesced_ = true; }
   bool coalesced() const { return coalesced_; }
   int64_t trace_id() const { return trace_id_; }
+  void set_trace_id(int64_t trace_id) { trace_id_ = trace_id; }
 
  private:
   void AddLatencyNumberWithTimestampImpl(LatencyComponentType component,
@@ -234,8 +235,6 @@ class LatencyInfo {
   // Converts latencyinfo into format that can be dumped into trace buffer.
   std::unique_ptr<base::trace_event::ConvertableToTraceFormat>
   AsTraceableData();
-  std::unique_ptr<base::trace_event::ConvertableToTraceFormat>
-  CoordinatesAsTraceableData();
 
   // Shown as part of the name of the trace event for this LatencyInfo.
   // String is empty if no tracing is enabled.
@@ -243,18 +242,19 @@ class LatencyInfo {
 
   LatencyMap latency_components_;
 
-  // These coordinates represent window coordinates of the original input event.
-  uint32_t input_coordinates_size_;
-  gfx::PointF input_coordinates_[kMaxInputCoordinates];
-
   // The unique id for matching the ASYNC_BEGIN/END trace event.
   int64_t trace_id_;
   // Whether this event has been coalesced into another event.
   bool coalesced_;
+  // Whether a begin component has been added.
+  bool began_;
   // Whether a terminal component has been added.
   bool terminated_;
   // Stores the type of the first source event.
   SourceEventType source_event_type_;
+  // The expected queueing time on the main thread when this event was
+  // dispatched.
+  base::TimeDelta expected_queueing_time_on_dispatch_;
 
 #if !defined(OS_IOS)
   friend struct IPC::ParamTraits<ui::LatencyInfo>;
@@ -262,6 +262,12 @@ class LatencyInfo {
                                    ui::LatencyInfo>;
 #endif
 };
+
+// This is declared here for use in gtest-based unit tests, but is defined in
+// //ui/latency:test_support target.
+// Without this the default PrintTo template in gtest tries to pass LatencyInfo
+// by value, which leads to an alignment compile error on Windows.
+void PrintTo(const LatencyInfo& latency, ::std::ostream* os);
 
 }  // namespace ui
 

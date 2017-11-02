@@ -22,7 +22,7 @@ AtomicString Id(const HTMLOptionElement* option) {
 class OptionListTest : public ::testing::Test {
  protected:
   void SetUp() override {
-    HTMLDocument* document = HTMLDocument::Create();
+    HTMLDocument* document = HTMLDocument::CreateForTest();
     HTMLSelectElement* select = HTMLSelectElement::Create(*document);
     document->AppendChild(select);
     select_ = select;
@@ -77,7 +77,7 @@ TEST_F(OptionListTest, Optgroup) {
   ++iter;
   EXPECT_EQ(list.end(), iter);
 
-  ToHTMLElement(Select().FirstChild())
+  ToHTMLElement(Select().firstChild())
       ->setInnerHTML(
           "<optgroup><option id=gg11></option></optgroup>"
           "<option id=g11></option>");

@@ -5,15 +5,15 @@
 #ifndef ScrollManager_h
 #define ScrollManager_h
 
+#include <deque>
 #include "core/CoreExport.h"
 #include "core/page/EventWithHitTestResults.h"
 #include "platform/geometry/LayoutSize.h"
 #include "platform/heap/Handle.h"
 #include "platform/heap/Visitor.h"
 #include "platform/scroll/ScrollTypes.h"
+#include "platform/wtf/Allocator.h"
 #include "public/platform/WebInputEventResult.h"
-#include "wtf/Allocator.h"
-#include <deque>
 
 namespace blink {
 
@@ -42,6 +42,7 @@ class CORE_EXPORT ScrollManager
   void Clear();
 
   bool MiddleClickAutoscrollInProgress() const;
+  void StopMiddleClickAutoscroll();
   AutoscrollController* GetAutoscrollController() const;
   void StopAutoscroll();
 
@@ -100,7 +101,7 @@ class CORE_EXPORT ScrollManager
 
   void ClearGestureScrollState();
 
-  void CustomizedScroll(const Node& start_node, ScrollState&);
+  void CustomizedScroll(ScrollState&);
 
   Page* GetPage() const;
 
@@ -109,10 +110,16 @@ class CORE_EXPORT ScrollManager
   bool HandleScrollGestureOnResizer(Node*, const WebGestureEvent&);
 
   void RecomputeScrollChain(const Node& start_node,
+                            const ScrollState&,
                             std::deque<int>& scroll_chain);
+  bool CanScroll(const ScrollState&, const Element& current_element);
 
-  uint32_t ComputeNonCompositedMainThreadScrollingReasons();
-  void RecordNonCompositedMainThreadScrollingReasons(const WebGestureDevice);
+  // scroller_size is set only when scrolling non root scroller.
+  void ComputeScrollRelatedMetrics(
+      uint32_t* non_composited_main_thread_scrolling_reasons,
+      int* scroller_size,
+      bool* scroller_size_updated);
+  void RecordScrollRelatedMetrics(const WebGestureDevice);
 
   // NOTE: If adding a new field to this class please ensure that it is
   // cleared in |ScrollManager::clear()|.
@@ -124,7 +131,7 @@ class CORE_EXPORT ScrollManager
 
   Member<Node> scroll_gesture_handling_node_;
 
-  bool last_gesture_scroll_over_frame_view_base_;
+  bool last_gesture_scroll_over_embedded_content_view_;
 
   // The most recent element to scroll natively during this scroll
   // sequence. Null if no native element has scrolled this scroll

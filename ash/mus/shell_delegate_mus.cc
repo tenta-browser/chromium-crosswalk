@@ -8,45 +8,17 @@
 
 #include "ash/gpu_support_stub.h"
 #include "ash/mus/accessibility_delegate_mus.h"
-#include "ash/mus/context_menu_mus.h"
-#include "ash/mus/shelf_delegate_mus.h"
-#include "ash/mus/system_tray_delegate_mus.h"
 #include "ash/mus/wallpaper_delegate_mus.h"
 #include "ash/palette_delegate.h"
-#include "ash/session/session_state_delegate.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "components/user_manager/user_info_impl.h"
 #include "ui/gfx/image/image.h"
+#include "ui/keyboard/keyboard_ui.h"
+#include "services/ui/public/cpp/input_devices/input_device_controller_client.h"
 
 namespace ash {
-namespace {
-
-class SessionStateDelegateStub : public SessionStateDelegate {
- public:
-  SessionStateDelegateStub() : user_info_(new user_manager::UserInfoImpl()) {}
-
-  ~SessionStateDelegateStub() override {}
-
-  // SessionStateDelegate:
-  bool ShouldShowAvatar(WmWindow* window) const override {
-    NOTIMPLEMENTED();
-    return !user_info_->GetImage().isNull();
-  }
-  gfx::ImageSkia GetAvatarImageForWindow(WmWindow* window) const override {
-    NOTIMPLEMENTED();
-    return gfx::ImageSkia();
-  }
-
- private:
-  // A pseudo user info.
-  std::unique_ptr<user_manager::UserInfo> user_info_;
-
-  DISALLOW_COPY_AND_ASSIGN(SessionStateDelegateStub);
-};
-
-}  // namespace
 
 ShellDelegateMus::ShellDelegateMus(service_manager::Connector* connector)
     : connector_(connector) {}
@@ -64,7 +36,7 @@ bool ShellDelegateMus::IsIncognitoAllowed() const {
 
 bool ShellDelegateMus::IsMultiProfilesEnabled() const {
   NOTIMPLEMENTED();
-  return false;
+  return true;  // For manual testing of multi-profile under mash.
 }
 
 bool ShellDelegateMus::IsRunningInForcedAppMode() const {
@@ -72,7 +44,7 @@ bool ShellDelegateMus::IsRunningInForcedAppMode() const {
   return false;
 }
 
-bool ShellDelegateMus::CanShowWindowForUser(WmWindow* window) const {
+bool ShellDelegateMus::CanShowWindowForUser(aura::Window* window) const {
   NOTIMPLEMENTED();
   return true;
 }
@@ -94,7 +66,7 @@ void ShellDelegateMus::Exit() {
   NOTIMPLEMENTED();
 }
 
-keyboard::KeyboardUI* ShellDelegateMus::CreateKeyboardUI() {
+std::unique_ptr<keyboard::KeyboardUI> ShellDelegateMus::CreateKeyboardUI() {
   NOTIMPLEMENTED();
   return nullptr;
 }
@@ -103,22 +75,23 @@ void ShellDelegateMus::OpenUrlFromArc(const GURL& url) {
   NOTIMPLEMENTED();
 }
 
-ShelfDelegate* ShellDelegateMus::CreateShelfDelegate(ShelfModel* model) {
-  return new ShelfDelegateMus();
+void ShellDelegateMus::ShelfInit() {
+  NOTIMPLEMENTED();
 }
 
-SystemTrayDelegate* ShellDelegateMus::CreateSystemTrayDelegate() {
-  return new SystemTrayDelegateMus();
+void ShellDelegateMus::ShelfShutdown() {
+  NOTIMPLEMENTED();
+}
+
+NetworkingConfigDelegate* ShellDelegateMus::GetNetworkingConfigDelegate() {
+  // TODO(mash): Provide a real implementation, perhaps by folding its behavior
+  // into an ash-side network information cache. http://crbug.com/651157
+  NOTIMPLEMENTED();
+  return nullptr;
 }
 
 std::unique_ptr<WallpaperDelegate> ShellDelegateMus::CreateWallpaperDelegate() {
   return base::MakeUnique<WallpaperDelegateMus>();
-}
-
-SessionStateDelegate* ShellDelegateMus::CreateSessionStateDelegate() {
-  // TODO: http://crbug.com/647416.
-  NOTIMPLEMENTED() << " Using a stub SessionStateDeleagte implementation";
-  return new SessionStateDelegateStub;
 }
 
 AccessibilityDelegate* ShellDelegateMus::CreateAccessibilityDelegate() {
@@ -129,11 +102,6 @@ std::unique_ptr<PaletteDelegate> ShellDelegateMus::CreatePaletteDelegate() {
   // TODO: http://crbug.com/647417.
   NOTIMPLEMENTED();
   return nullptr;
-}
-
-ui::MenuModel* ShellDelegateMus::CreateContextMenu(WmShelf* wm_shelf,
-                                                   const ShelfItem* item) {
-  return new ContextMenuMus(wm_shelf);
 }
 
 GPUSupport* ShellDelegateMus::CreateGPUSupport() {
@@ -152,18 +120,27 @@ gfx::Image ShellDelegateMus::GetDeprecatedAcceleratorImage() const {
   return gfx::Image();
 }
 
-bool ShellDelegateMus::IsTouchscreenEnabledInPrefs(bool use_local_state) const {
+bool ShellDelegateMus::GetTouchscreenEnabled(
+    TouchscreenEnabledSource source) const {
   NOTIMPLEMENTED();
   return true;
 }
 
-void ShellDelegateMus::SetTouchscreenEnabledInPrefs(bool enabled,
-                                                    bool use_local_state) {
+void ShellDelegateMus::SetTouchscreenEnabled(bool enabled,
+                                             TouchscreenEnabledSource source) {
   NOTIMPLEMENTED();
 }
 
-void ShellDelegateMus::UpdateTouchscreenStatusFromPrefs() {
-  NOTIMPLEMENTED();
+ui::InputDeviceControllerClient*
+ShellDelegateMus::GetInputDeviceControllerClient() {
+  if (!connector_)
+    return nullptr;  // Happens in tests.
+
+  if (!input_device_controller_client_) {
+    input_device_controller_client_ =
+        base::MakeUnique<ui::InputDeviceControllerClient>(connector_);
+  }
+  return input_device_controller_client_.get();
 }
 
 }  // namespace ash

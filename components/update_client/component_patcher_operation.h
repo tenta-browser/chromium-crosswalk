@@ -27,6 +27,7 @@ extern const char kInput[];
 extern const char kPatch[];
 
 class CrxInstaller;
+class OutOfProcessPatcher;
 enum class UnpackerError;
 
 class DeltaUpdateOp : public base::RefCountedThreadSafe<DeltaUpdateOp> {
@@ -39,13 +40,10 @@ class DeltaUpdateOp : public base::RefCountedThreadSafe<DeltaUpdateOp> {
            const base::FilePath& input_dir,
            const base::FilePath& unpack_dir,
            const scoped_refptr<CrxInstaller>& installer,
-           const ComponentPatcher::Callback& callback,
-           const scoped_refptr<base::SequencedTaskRunner>& task_runner);
+           const ComponentPatcher::Callback& callback);
 
  protected:
   virtual ~DeltaUpdateOp();
-
-  scoped_refptr<base::SequencedTaskRunner> GetTaskRunner();
 
   std::string output_sha256_;
   base::FilePath output_abs_path_;
@@ -74,7 +72,6 @@ class DeltaUpdateOp : public base::RefCountedThreadSafe<DeltaUpdateOp> {
   void DoneRunning(UnpackerError error, int extended_error);
 
   ComponentPatcher::Callback callback_;
-  scoped_refptr<base::SequencedTaskRunner> task_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(DeltaUpdateOp);
 };
@@ -126,24 +123,6 @@ class DeltaUpdateOpCreate : public DeltaUpdateOp {
   DISALLOW_COPY_AND_ASSIGN(DeltaUpdateOpCreate);
 };
 
-// An interface an embedder may fulfill to enable out-of-process patching.
-class OutOfProcessPatcher
-    : public base::RefCountedThreadSafe<OutOfProcessPatcher> {
- public:
-  virtual void Patch(
-      const std::string& operation,
-      scoped_refptr<base::SequencedTaskRunner> task_runner,
-      const base::FilePath& input_abs_path,
-      const base::FilePath& patch_abs_path,
-      const base::FilePath& output_abs_path,
-      base::Callback<void(int result)> callback) = 0;
-
- protected:
-  friend class base::RefCountedThreadSafe<OutOfProcessPatcher>;
-
-  virtual ~OutOfProcessPatcher() {}
-};
-
 // Both 'bsdiff' and 'courgette' operations take an existing file on disk,
 // and a bsdiff- or Courgette-format patch file provided in the delta update
 // package, and run bsdiff or Courgette to construct an output file in the
@@ -151,8 +130,9 @@ class OutOfProcessPatcher
 class DeltaUpdateOpPatch : public DeltaUpdateOp {
  public:
   // |out_of_process_patcher| may be NULL.
-  DeltaUpdateOpPatch(const std::string& operation,
-                     scoped_refptr<OutOfProcessPatcher> out_of_process_patcher);
+  DeltaUpdateOpPatch(
+      const std::string& operation,
+      const scoped_refptr<OutOfProcessPatcher>& out_of_process_patcher);
 
  private:
   ~DeltaUpdateOpPatch() override;
@@ -170,7 +150,7 @@ class DeltaUpdateOpPatch : public DeltaUpdateOp {
   void DonePatching(const ComponentPatcher::Callback& callback, int result);
 
   std::string operation_;
-  scoped_refptr<OutOfProcessPatcher> out_of_process_patcher_;
+  const scoped_refptr<OutOfProcessPatcher> out_of_process_patcher_;
   base::FilePath patch_abs_path_;
   base::FilePath input_abs_path_;
 

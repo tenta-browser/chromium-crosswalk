@@ -28,13 +28,15 @@
 #include "media/base/media.h"
 #include "services/service_manager/public/cpp/connector.h"
 #include "third_party/WebKit/public/platform/WebColor.h"
+#include "third_party/WebKit/public/platform/WebRuntimeFeatures.h"
 #include "third_party/WebKit/public/web/WebFrameWidget.h"
-#include "third_party/WebKit/public/web/WebRuntimeFeatures.h"
 #include "third_party/WebKit/public/web/WebSettings.h"
 #include "third_party/WebKit/public/web/WebView.h"
 
 #if defined(OS_ANDROID)
 #include "media/base/android/media_codec_util.h"
+#else
+#include "chromecast/renderer/memory_pressure_observer_impl.h"
 #endif  // OS_ANDROID
 
 namespace chromecast {
@@ -80,6 +82,17 @@ void CastContentRendererClient::RenderThreadStarted() {
       new media::MediaCapsObserverImpl(&proxy, supported_profiles_.get()));
   media_caps->AddObserver(std::move(proxy));
 
+#if !defined(OS_ANDROID)
+  // Register to observe memory pressure changes
+  mojom::MemoryPressureControllerPtr memory_pressure_controller;
+  thread->GetConnector()->BindInterface(content::mojom::kBrowserServiceName,
+                                        &memory_pressure_controller);
+  mojom::MemoryPressureObserverPtr memory_pressure_proxy;
+  memory_pressure_observer_.reset(
+      new MemoryPressureObserverImpl(&memory_pressure_proxy));
+  memory_pressure_controller->AddObserver(std::move(memory_pressure_proxy));
+#endif
+
   prescient_networking_dispatcher_.reset(
       new network_hints::PrescientNetworkingDispatcher());
 
@@ -118,6 +131,15 @@ void CastContentRendererClient::AddSupportedKeySystems(
 bool CastContentRendererClient::IsSupportedAudioConfig(
     const ::media::AudioConfig& config) {
 #if defined(OS_ANDROID)
+  media::AudioCodec codec = media::ToCastAudioCodec(config.codec);
+
+  // No ATV device we know of has (E)AC3 decoder, so it relies on the audio sink
+  // device.
+  if (codec == media::kCodecEAC3)
+    return media::MediaCapabilities::HdmiSinkSupportsEAC3();
+  if (codec == media::kCodecAC3)
+    return media::MediaCapabilities::HdmiSinkSupportsAC3();
+
   // TODO(sanfin): Implement this for Android.
   return true;
 #else
@@ -157,6 +179,14 @@ bool CastContentRendererClient::IsSupportedVideoConfig(
 #endif
 }
 
+bool CastContentRendererClient::IsSupportedBitstreamAudioCodec(
+    ::media::AudioCodec codec) {
+  return (codec == ::media::kCodecAC3 &&
+          media::MediaCapabilities::HdmiSinkSupportsAC3()) ||
+         (codec == ::media::kCodecEAC3 &&
+          media::MediaCapabilities::HdmiSinkSupportsEAC3());
+}
+
 blink::WebPrescientNetworking*
 CastContentRendererClient::GetPrescientNetworking() {
   return prescient_networking_dispatcher_.get();
@@ -186,7 +216,7 @@ void CastContentRendererClient::RunWhenInForeground(
   new CastRenderFrameActionDeferrer(render_frame, closure);
 }
 
-bool CastContentRendererClient::AllowMediaSuspend() {
+bool CastContentRendererClient::AllowIdleMediaSuspend() {
   return false;
 }
 

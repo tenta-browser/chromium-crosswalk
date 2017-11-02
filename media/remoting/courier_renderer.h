@@ -14,6 +14,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/optional.h"
+#include "base/single_thread_task_runner.h"
 #include "base/synchronization/lock.h"
 #include "base/timer/timer.h"
 #include "media/base/pipeline_status.h"
@@ -114,6 +115,8 @@ class CourierRenderer : public Renderer {
   void SetCdmCallback(std::unique_ptr<pb::RpcMessage> message);
   void OnTimeUpdate(std::unique_ptr<pb::RpcMessage> message);
   void OnBufferingStateChange(std::unique_ptr<pb::RpcMessage> message);
+  void OnAudioConfigChange(std::unique_ptr<pb::RpcMessage> message);
+  void OnVideoConfigChange(std::unique_ptr<pb::RpcMessage> message);
   void OnVideoNaturalSizeChange(std::unique_ptr<pb::RpcMessage> message);
   void OnVideoOpacityChange(std::unique_ptr<pb::RpcMessage> message);
   void OnStatisticsUpdate(std::unique_ptr<pb::RpcMessage> message);

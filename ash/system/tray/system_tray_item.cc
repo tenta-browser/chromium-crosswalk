@@ -5,7 +5,6 @@
 #include "ash/system/tray/system_tray_item.h"
 
 #include "ash/system/tray/system_tray.h"
-#include "ash/system/tray/system_tray_delegate.h"
 #include "ash/system/tray/tray_constants.h"
 #include "base/timer/timer.h"
 #include "ui/views/view.h"
@@ -29,11 +28,11 @@ views::View* SystemTrayItem::CreateDetailedView(LoginStatus status) {
   return nullptr;
 }
 
-void SystemTrayItem::DestroyTrayView() {}
+void SystemTrayItem::OnTrayViewDestroyed() {}
 
-void SystemTrayItem::DestroyDefaultView() {}
+void SystemTrayItem::OnDefaultViewDestroyed() {}
 
-void SystemTrayItem::DestroyDetailedView() {}
+void SystemTrayItem::OnDetailedViewDestroyed() {}
 
 void SystemTrayItem::TransitionDetailedView() {
   transition_delay_timer_.Start(
@@ -45,8 +44,7 @@ void SystemTrayItem::TransitionDetailedView() {
 
 void SystemTrayItem::UpdateAfterLoginStatusChange(LoginStatus status) {}
 
-void SystemTrayItem::UpdateAfterShelfAlignmentChange(ShelfAlignment alignment) {
-}
+void SystemTrayItem::UpdateAfterShelfAlignmentChange() {}
 
 void SystemTrayItem::ShowDetailedView(int for_seconds, bool activate) {
   system_tray()->ShowDetailedView(this, for_seconds, activate,

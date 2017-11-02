@@ -73,7 +73,7 @@ void CSSPreloadScanner::Scan(const HTMLToken::DataVector& data,
                              const SegmentedString& source,
                              PreloadRequestStream& requests,
                              const KURL& predicted_base_element_url) {
-  ScanCommon(data.Data(), data.Data() + data.size(), source, requests,
+  ScanCommon(data.data(), data.data() + data.size(), source, requests,
              predicted_base_element_url);
 }
 
@@ -241,7 +241,8 @@ void CSSPreloadScanner::EmitRule(const SegmentedString& source) {
     auto request = PreloadRequest::CreateIfNeeded(
         FetchInitiatorTypeNames::css, position, url,
         *predicted_base_element_url_, Resource::kCSSStyleSheet,
-        referrer_policy_, PreloadRequest::kBaseUrlIsReferrer);
+        referrer_policy_, PreloadRequest::kBaseUrlIsReferrer,
+        ResourceFetcher::kImageNotImageSet);
     if (request) {
       // FIXME: Should this be including the charset in the preload request?
       requests_->push_back(std::move(request));
@@ -265,7 +266,7 @@ CSSPreloaderResourceClient::CSSPreloaderResourceClient(
                   : kScanOnly),
       preloader_(preloader),
       resource_(ToCSSStyleSheetResource(resource)) {
-  resource_->AddClient(this, Resource::kDontMarkAsReferenced);
+  resource_->AddClient(this);
 }
 
 CSSPreloaderResourceClient::~CSSPreloaderResourceClient() {}
@@ -274,7 +275,7 @@ void CSSPreloaderResourceClient::SetCSSStyleSheet(
     const String& href,
     const KURL& base_url,
     ReferrerPolicy referrer_policy,
-    const String& charset,
+    const WTF::TextEncoding&,
     const CSSStyleSheetResource*) {
   ClearResource();
 }

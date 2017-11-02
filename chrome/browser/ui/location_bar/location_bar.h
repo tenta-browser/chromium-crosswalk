@@ -29,9 +29,6 @@ class LocationBar {
  public:
   explicit LocationBar(Profile* profile);
 
-  // Shows the first run bubble anchored to the location bar.
-  virtual void ShowFirstRunBubble() = 0;
-
   // The details necessary to open the user's desired omnibox match.
   virtual GURL GetDestinationURL() const = 0;
   virtual WindowOpenDisposition GetWindowOpenDisposition() const = 0;
@@ -57,6 +54,9 @@ class LocationBar {
 
   // Updates the visibility of the bookmark star.
   virtual void UpdateBookmarkStarVisibility() = 0;
+
+  // Updates the visibility of the zoom icon.
+  virtual void UpdateZoomViewVisibility() = 0;
 
   // Updates the visibility of the location bar. Animates the transition if
   // |animate| is true.

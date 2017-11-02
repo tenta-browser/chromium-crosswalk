@@ -7,7 +7,7 @@
 #include "base/trace_event/trace_event_argument.h"
 #include "base/values.h"
 #include "cc/base/math_util.h"
-#include "cc/resources/platform_color.h"
+#include "components/viz/common/resources/platform_color.h"
 
 namespace cc {
 
@@ -19,26 +19,21 @@ PictureDrawQuad::PictureDrawQuad(const PictureDrawQuad& other) = default;
 PictureDrawQuad::~PictureDrawQuad() {
 }
 
-void PictureDrawQuad::SetNew(const SharedQuadState* shared_quad_state,
+void PictureDrawQuad::SetNew(const viz::SharedQuadState* shared_quad_state,
                              const gfx::Rect& rect,
-                             const gfx::Rect& opaque_rect,
                              const gfx::Rect& visible_rect,
+                             bool needs_blending,
                              const gfx::RectF& tex_coord_rect,
                              const gfx::Size& texture_size,
                              bool nearest_neighbor,
-                             ResourceFormat texture_format,
+                             viz::ResourceFormat texture_format,
                              const gfx::Rect& content_rect,
                              float contents_scale,
                              scoped_refptr<RasterSource> raster_source) {
   ContentDrawQuadBase::SetNew(
-      shared_quad_state,
-      DrawQuad::PICTURE_CONTENT,
-      rect,
-      opaque_rect,
-      visible_rect,
-      tex_coord_rect,
-      texture_size,
-      !PlatformColor::SameComponentOrder(texture_format),
+      shared_quad_state, DrawQuad::PICTURE_CONTENT, rect, visible_rect,
+      needs_blending, tex_coord_rect, texture_size,
+      !viz::PlatformColor::SameComponentOrder(texture_format),
       nearest_neighbor);
   this->content_rect = content_rect;
   this->contents_scale = contents_scale;
@@ -46,29 +41,22 @@ void PictureDrawQuad::SetNew(const SharedQuadState* shared_quad_state,
   this->texture_format = texture_format;
 }
 
-void PictureDrawQuad::SetAll(const SharedQuadState* shared_quad_state,
+void PictureDrawQuad::SetAll(const viz::SharedQuadState* shared_quad_state,
                              const gfx::Rect& rect,
-                             const gfx::Rect& opaque_rect,
                              const gfx::Rect& visible_rect,
                              bool needs_blending,
                              const gfx::RectF& tex_coord_rect,
                              const gfx::Size& texture_size,
                              bool nearest_neighbor,
-                             ResourceFormat texture_format,
+                             viz::ResourceFormat texture_format,
                              const gfx::Rect& content_rect,
                              float contents_scale,
                              scoped_refptr<RasterSource> raster_source) {
-  ContentDrawQuadBase::SetAll(shared_quad_state,
-                              DrawQuad::PICTURE_CONTENT,
-                              rect,
-                              opaque_rect,
-                              visible_rect,
-                              needs_blending,
-                              tex_coord_rect,
-                              texture_size,
-                              !PlatformColor::SameComponentOrder(
-                                  texture_format),
-                              nearest_neighbor);
+  ContentDrawQuadBase::SetAll(
+      shared_quad_state, DrawQuad::PICTURE_CONTENT, rect, visible_rect,
+      needs_blending, tex_coord_rect, texture_size,
+      !viz::PlatformColor::SameComponentOrder(texture_format),
+      nearest_neighbor);
   this->content_rect = content_rect;
   this->contents_scale = contents_scale;
   this->raster_source = raster_source;

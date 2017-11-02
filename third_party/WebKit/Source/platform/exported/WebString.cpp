@@ -31,6 +31,7 @@
 #include "public/platform/WebString.h"
 
 #include "base/strings/string_util.h"
+#include "platform/wtf/Assertions.h"
 #include "platform/wtf/text/ASCIIFastPath.h"
 #include "platform/wtf/text/AtomicString.h"
 #include "platform/wtf/text/CString.h"
@@ -38,9 +39,6 @@
 #include "platform/wtf/text/StringView.h"
 #include "platform/wtf/text/WTFString.h"
 
-#define STATIC_ASSERT_ENUM(a, b)                            \
-  static_assert(static_cast<int>(a) == static_cast<int>(b), \
-                "mismatching enums: " #a)
 
 STATIC_ASSERT_ENUM(WTF::kLenientUTF8Conversion,
                    blink::WebString::UTF8ConversionMode::kLenient);
@@ -116,7 +114,7 @@ std::string WebString::Latin1() const {
                        string.length());
 
   CString latin1 = string.Latin1();
-  return std::string(latin1.Data(), latin1.length());
+  return std::string(latin1.data(), latin1.length());
 }
 
 WebString WebString::FromLatin1(const WebLChar* data, size_t length) {

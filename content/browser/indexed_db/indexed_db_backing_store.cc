@@ -25,6 +25,7 @@
 #include "content/browser/indexed_db/indexed_db_blob_info.h"
 #include "content/browser/indexed_db/indexed_db_class_factory.h"
 #include "content/browser/indexed_db/indexed_db_context_impl.h"
+#include "content/browser/indexed_db/indexed_db_data_format_version.h"
 #include "content/browser/indexed_db/indexed_db_database_error.h"
 #include "content/browser/indexed_db/indexed_db_leveldb_coding.h"
 #include "content/browser/indexed_db/indexed_db_tracing.h"
@@ -38,6 +39,8 @@
 #include "content/common/indexed_db/indexed_db_key_path.h"
 #include "content/common/indexed_db/indexed_db_key_range.h"
 #include "content/public/browser/browser_thread.h"
+#include "net/base/load_flags.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/url_request_context.h"
 #include "storage/browser/blob/blob_data_handle.h"
 #include "storage/browser/fileapi/file_stream_writer.h"
@@ -46,7 +49,6 @@
 #include "storage/common/database/database_identifier.h"
 #include "storage/common/fileapi/file_system_mount_option.h"
 #include "third_party/WebKit/public/platform/modules/indexeddb/WebIDBTypes.h"
-#include "third_party/WebKit/public/web/WebSerializedScriptValueVersion.h"
 #include "third_party/leveldatabase/env_chromium.h"
 
 using base::FilePath;
@@ -335,24 +337,19 @@ WARN_UNUSED_RESULT bool IsSchemaKnown(LevelDBDatabase* db, bool* known) {
     return true;
   }
 
-  const uint32_t latest_known_data_version =
-      blink::kSerializedScriptValueVersion;
-  int64_t db_data_version = 0;
-  s = GetInt(db, DataVersionKey::Encode(), &db_data_version, &found);
+  int64_t raw_db_data_version = 0;
+  s = GetInt(db, DataVersionKey::Encode(), &raw_db_data_version, &found);
   if (!s.ok())
     return false;
   if (!found) {
     *known = true;
     return true;
   }
-  if (db_data_version < 0)
+  if (raw_db_data_version < 0)
     return false;  // Only corruption should cause this.
-  if (db_data_version > latest_known_data_version) {
-    *known = false;
-    return true;
-  }
 
-  *known = true;
+  *known = IndexedDBDataFormatVersion::GetCurrent().IsAtLeast(
+      IndexedDBDataFormatVersion::Decode(raw_db_data_version));
   return true;
 }
 
@@ -1117,6 +1114,12 @@ IndexedDBBackingStore::RecordIdentifier::RecordIdentifier()
     : primary_key_(), version_(-1) {}
 IndexedDBBackingStore::RecordIdentifier::~RecordIdentifier() {}
 
+constexpr const int IndexedDBBackingStore::kMaxJournalCleanRequests;
+constexpr const base::TimeDelta
+    IndexedDBBackingStore::kMaxJournalCleaningWindowTime;
+constexpr const base::TimeDelta
+    IndexedDBBackingStore::kInitialJournalCleaningWindowTime;
+
 // static
 scoped_refptr<IndexedDBBackingStore> IndexedDBBackingStore::Open(
     IndexedDBFactory* indexed_db_factory,
@@ -1143,8 +1146,8 @@ Status IndexedDBBackingStore::DestroyBackingStore(const FilePath& path_base,
 }
 
 WARN_UNUSED_RESULT Status IndexedDBBackingStore::SetUpMetadata() {
-  const uint32_t latest_known_data_version =
-      blink::kSerializedScriptValueVersion;
+  const IndexedDBDataFormatVersion latest_known_data_version =
+      IndexedDBDataFormatVersion::GetCurrent();
   const std::string schema_version_key = SchemaVersionKey::Encode();
   const std::string data_version_key = DataVersionKey::Encode();
 
@@ -1152,7 +1155,7 @@ WARN_UNUSED_RESULT Status IndexedDBBackingStore::SetUpMetadata() {
       IndexedDBClassFactory::Get()->CreateLevelDBTransaction(db_.get());
 
   int64_t db_schema_version = 0;
-  int64_t db_data_version = 0;
+  IndexedDBDataFormatVersion db_data_version;
   bool found = false;
   Status s =
       GetInt(transaction.get(), schema_version_key, &db_schema_version, &found);
@@ -1165,7 +1168,7 @@ WARN_UNUSED_RESULT Status IndexedDBBackingStore::SetUpMetadata() {
     db_schema_version = kLatestKnownSchemaVersion;
     PutInt(transaction.get(), schema_version_key, db_schema_version);
     db_data_version = latest_known_data_version;
-    PutInt(transaction.get(), data_version_key, db_data_version);
+    PutInt(transaction.get(), data_version_key, db_data_version.Encode());
     // If a blob directory already exists for this database, blow it away.  It's
     // leftover from a partially-purged previous generation of data.
     if (!base::DeleteFile(blob_path_, true)) {
@@ -1206,8 +1209,8 @@ WARN_UNUSED_RESULT Status IndexedDBBackingStore::SetUpMetadata() {
     if (s.ok() && db_schema_version < 2) {
       db_schema_version = 2;
       PutInt(transaction.get(), schema_version_key, db_schema_version);
-      db_data_version = blink::kSerializedScriptValueVersion;
-      PutInt(transaction.get(), data_version_key, db_data_version);
+      db_data_version = latest_known_data_version;
+      PutInt(transaction.get(), data_version_key, db_data_version.Encode());
     }
     if (db_schema_version < 3) {
       db_schema_version = 3;
@@ -1225,7 +1228,8 @@ WARN_UNUSED_RESULT Status IndexedDBBackingStore::SetUpMetadata() {
 
   // All new values will be written using this serialization version.
   found = false;
-  s = GetInt(transaction.get(), data_version_key, &db_data_version, &found);
+  int64_t raw_db_data_version = 0;
+  s = GetInt(transaction.get(), data_version_key, &raw_db_data_version, &found);
   if (!s.ok()) {
     INTERNAL_READ_ERROR_UNTESTED(SET_UP_METADATA);
     return s;
@@ -1234,18 +1238,47 @@ WARN_UNUSED_RESULT Status IndexedDBBackingStore::SetUpMetadata() {
     INTERNAL_CONSISTENCY_ERROR_UNTESTED(SET_UP_METADATA);
     return InternalInconsistencyStatus();
   }
-  if (db_data_version < latest_known_data_version) {
+  db_data_version = IndexedDBDataFormatVersion::Decode(raw_db_data_version);
+  if (latest_known_data_version == db_data_version) {
+    // Up to date. Nothing to do.
+  } else if (latest_known_data_version.IsAtLeast(db_data_version)) {
     db_data_version = latest_known_data_version;
-    PutInt(transaction.get(), data_version_key, db_data_version);
+    PutInt(transaction.get(), data_version_key, db_data_version.Encode());
+  } else {
+    // |db_data_version| is in the future according to at least one component.
+    INTERNAL_CONSISTENCY_ERROR(SET_UP_METADATA);
+    return InternalInconsistencyStatus();
   }
 
   DCHECK_EQ(db_schema_version, kLatestKnownSchemaVersion);
-  DCHECK_EQ(db_data_version, latest_known_data_version);
+  DCHECK(db_data_version == latest_known_data_version);
 
   s = transaction->Commit();
   if (!s.ok())
     INTERNAL_WRITE_ERROR_UNTESTED(SET_UP_METADATA);
   return s;
+}
+
+leveldb::Status IndexedDBBackingStore::GetCompleteMetadata(
+    std::vector<IndexedDBDatabaseMetadata>* output) {
+  leveldb::Status status = leveldb::Status::OK();
+  std::vector<base::string16> names = GetDatabaseNames(&status);
+  if (!status.ok())
+    return status;
+  for (const base::string16& name : names) {
+    output->emplace_back();
+    bool found = false;
+    status = GetIDBDatabaseMetaData(name, &output->back(), &found);
+    output->back().name = name;
+    if (!found)
+      return Status::NotFound("Metadata not found for \"%s\".",
+                              base::UTF16ToUTF8(name));
+    status = GetObjectStores(output->back().id, &output->back().object_stores);
+    if (!status.ok())
+      return status;
+  }
+
+  return status;
 }
 
 bool IndexedDBBackingStore::ReadCorruptionInfo(const FilePath& path_base,
@@ -2419,7 +2452,7 @@ class IndexedDBBackingStore::Transaction::ChainedBlobWriterImpl
     blobs_.swap(*blobs);
     iter_ = blobs_.begin();
     backing_store->task_runner()->PostTask(
-        FROM_HERE, base::Bind(&ChainedBlobWriterImpl::WriteNextFile, this));
+        FROM_HERE, base::BindOnce(&ChainedBlobWriterImpl::WriteNextFile, this));
   }
 
   void set_delegate(std::unique_ptr<FileWriterDelegate> delegate) override {
@@ -2521,18 +2554,16 @@ class LocalWriteClosure : public FileWriterDelegate::DelegateWriteCallback,
       // LocalFileStreamWriter only creates a file if data is actually written.
       // If none was then create one now.
       task_runner_->PostTask(
-          FROM_HERE, base::Bind(&LocalWriteClosure::CreateEmptyFile, this));
+          FROM_HERE, base::BindOnce(&LocalWriteClosure::CreateEmptyFile, this));
     } else if (success && !last_modified_.is_null()) {
       task_runner_->PostTask(
-          FROM_HERE, base::Bind(&LocalWriteClosure::UpdateTimeStamp, this));
+          FROM_HERE, base::BindOnce(&LocalWriteClosure::UpdateTimeStamp, this));
     } else {
       task_runner_->PostTask(
           FROM_HERE,
-          base::Bind(&IndexedDBBackingStore::Transaction::ChainedBlobWriter::
-                     ReportWriteCompletion,
-                     chained_blob_writer_,
-                     success,
-                     bytes_written_));
+          base::BindOnce(&IndexedDBBackingStore::Transaction::
+                             ChainedBlobWriter::ReportWriteCompletion,
+                         chained_blob_writer_, success, bytes_written_));
     }
   }
 
@@ -2553,10 +2584,36 @@ class LocalWriteClosure : public FileWriterDelegate::DelegateWriteCallback,
     DCHECK(blob_url.is_valid());
     net::URLRequestContext* request_context =
         request_context_getter->GetURLRequestContext();
+    net::NetworkTrafficAnnotationTag traffic_annotation =
+        net::DefineNetworkTrafficAnnotation("persist_blob_to_indexed_db", R"(
+        semantics {
+          sender: "Indexed DB"
+          description:
+            "A web page's script has created a Blob (or File) object (either "
+            "directly via constructors, or by using file upload to a form, or "
+            "via a fetch()). The script has then made a request to store data "
+            "including the Blob via the Indexed DB API. As part of committing "
+            "the database transaction, the content of the Blob is being copied "
+            "into a file in the database's directory."
+          trigger:
+            "The script has made a request to store data including a Blob via "
+            "the Indexed DB API."
+          data:
+            "A Blob or File object referenced by script, either created "
+            "directly via constructors, or by using file upload to a form, or "
+            "drag/drop, or via a fetch() or other APIs that produce Blobs."
+          destination: LOCAL
+        }
+        policy {
+          cookies_allowed: NO
+          setting: "This feature cannot be disabled by settings."
+          policy_exception_justification: "Not implemented."
+        })");
     std::unique_ptr<net::URLRequest> blob_request(
         request_context->CreateRequest(blob_url, net::DEFAULT_PRIORITY,
-                                       delegate.get()));
-
+                                       delegate.get(), traffic_annotation));
+    blob_request->SetLoadFlags(net::LOAD_DO_NOT_SAVE_COOKIES |
+                               net::LOAD_DO_NOT_SEND_COOKIES);
     this->file_path_ = file_path;
     this->last_modified_ = last_modified;
 
@@ -2568,8 +2625,8 @@ class LocalWriteClosure : public FileWriterDelegate::DelegateWriteCallback,
  private:
   virtual ~LocalWriteClosure() {
     // Make sure the last reference to a ChainedBlobWriter is released (and
-    // deleted) on the IDB thread since it owns a transaction which has thread
-    // affinity.
+    // deleted) on the IDB sequence since it owns a transaction which has
+    // sequence affinity.
     IndexedDBBackingStore::Transaction::ChainedBlobWriter* raw_tmp =
         chained_blob_writer_.get();
     raw_tmp->AddRef();
@@ -2581,7 +2638,7 @@ class LocalWriteClosure : public FileWriterDelegate::DelegateWriteCallback,
   // If necessary, update the timestamps on the file as a final
   // step before reporting success.
   void UpdateTimeStamp() {
-    DCHECK(task_runner_->RunsTasksOnCurrentThread());
+    DCHECK(task_runner_->RunsTasksInCurrentSequence());
     if (!base::TouchFile(file_path_, last_modified_, last_modified_)) {
       // TODO(ericu): Complain quietly; timestamp's probably not vital.
     }
@@ -2590,7 +2647,7 @@ class LocalWriteClosure : public FileWriterDelegate::DelegateWriteCallback,
 
   // Create an empty file.
   void CreateEmptyFile() {
-    DCHECK(task_runner_->RunsTasksOnCurrentThread());
+    DCHECK(task_runner_->RunsTasksInCurrentSequence());
     base::File file(file_path_,
                     base::File::FLAG_CREATE_ALWAYS | base::File::FLAG_WRITE);
     bool success = file.created();
@@ -2646,19 +2703,17 @@ bool IndexedDBBackingStore::WriteBlobFile(
 
     task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&Transaction::ChainedBlobWriter::ReportWriteCompletion,
-                   chained_blob_writer,
-                   true,
-                   info.size));
+        base::BindOnce(&Transaction::ChainedBlobWriter::ReportWriteCompletion,
+                       chained_blob_writer, true, info.size));
   } else {
     DCHECK(descriptor.url().is_valid());
     scoped_refptr<LocalWriteClosure> write_closure(
         new LocalWriteClosure(chained_blob_writer, task_runner_.get()));
     content::BrowserThread::PostTask(
         content::BrowserThread::IO, FROM_HERE,
-        base::Bind(&LocalWriteClosure::WriteBlobToFileOnIOThread,
-                   write_closure, path, descriptor.url(),
-                   descriptor.last_modified(), request_context_getter_));
+        base::BindOnce(&LocalWriteClosure::WriteBlobToFileOnIOThread,
+                       write_closure, path, descriptor.url(),
+                       descriptor.last_modified(), request_context_getter_));
   }
   return true;
 }
@@ -2730,10 +2785,37 @@ void IndexedDBBackingStore::ReportBlobUnused(int64_t database_id,
 // HasLastBackingStoreReference.  It's safe because if the backing store is
 // deleted, the timer will automatically be canceled on destruction.
 void IndexedDBBackingStore::StartJournalCleaningTimer() {
+  ++num_aggregated_journal_cleaning_requests_;
+
+  if (execute_journal_cleaning_on_no_txns_)
+    return;
+
+  if (num_aggregated_journal_cleaning_requests_ >= kMaxJournalCleanRequests) {
+    journal_cleaning_timer_.AbandonAndStop();
+    CleanPrimaryJournalIgnoreReturn();
+    return;
+  }
+
+  base::TimeTicks now = base::TimeTicks::Now();
+
+  if (journal_cleaning_timer_window_start_ == base::TimeTicks() ||
+      !journal_cleaning_timer_.IsRunning()) {
+    journal_cleaning_timer_window_start_ = now;
+  }
+
+  base::TimeDelta time_until_max = kMaxJournalCleaningWindowTime -
+                                   (now - journal_cleaning_timer_window_start_);
+  base::TimeDelta delay =
+      std::min(kInitialJournalCleaningWindowTime, time_until_max);
+
+  if (delay <= base::TimeDelta::FromSeconds(0)) {
+    journal_cleaning_timer_.AbandonAndStop();
+    CleanPrimaryJournalIgnoreReturn();
+    return;
+  }
+
   journal_cleaning_timer_.Start(
-      FROM_HERE,
-      base::TimeDelta::FromSeconds(5),
-      this,
+      FROM_HERE, delay, this,
       &IndexedDBBackingStore::CleanPrimaryJournalIgnoreReturn);
 }
 
@@ -2843,6 +2925,9 @@ Status IndexedDBBackingStore::GetIndexes(
 
 bool IndexedDBBackingStore::RemoveBlobFile(int64_t database_id,
                                            int64_t key) const {
+#if DCHECK_IS_ON()
+  ++num_blob_files_deleted_;
+#endif
   FilePath path = GetBlobFileName(database_id, key);
   return base::DeleteFile(path, false);
 }
@@ -2850,6 +2935,31 @@ bool IndexedDBBackingStore::RemoveBlobFile(int64_t database_id,
 bool IndexedDBBackingStore::RemoveBlobDirectory(int64_t database_id) const {
   FilePath path = GetBlobDirectoryName(blob_path_, database_id);
   return base::DeleteFile(path, true);
+}
+
+Status IndexedDBBackingStore::CleanUpBlobJournal(
+    const std::string& level_db_key) const {
+  IDB_TRACE("IndexedDBBackingStore::CleanUpBlobJournal");
+  DCHECK(!committing_transaction_count_);
+  scoped_refptr<LevelDBTransaction> journal_transaction =
+      IndexedDBClassFactory::Get()->CreateLevelDBTransaction(db_.get());
+  BlobJournalType journal;
+
+  Status s = GetBlobJournal(level_db_key, journal_transaction.get(), &journal);
+  if (!s.ok())
+    return s;
+  if (journal.empty())
+    return Status::OK();
+  s = CleanUpBlobJournalEntries(journal);
+  if (!s.ok())
+    return s;
+  ClearBlobJournal(journal_transaction.get(), level_db_key);
+  s = journal_transaction->Commit();
+  // Notify blob files cleaned even if commit fails, as files could still be
+  // deleted. |indexed_db_factory_| is null for in-memory backing stores.
+  if (indexed_db_factory_)
+    indexed_db_factory_->BlobFilesCleaned(origin_);
+  return s;
 }
 
 Status IndexedDBBackingStore::CleanUpBlobJournalEntries(
@@ -2873,24 +2983,18 @@ Status IndexedDBBackingStore::CleanUpBlobJournalEntries(
   return Status::OK();
 }
 
-Status IndexedDBBackingStore::CleanUpBlobJournal(
-    const std::string& level_db_key) const {
-  IDB_TRACE("IndexedDBBackingStore::CleanUpBlobJournal");
-  DCHECK(!committing_transaction_count_);
-  scoped_refptr<LevelDBTransaction> journal_transaction =
-      IndexedDBClassFactory::Get()->CreateLevelDBTransaction(db_.get());
-  BlobJournalType journal;
+void IndexedDBBackingStore::WillCommitTransaction() {
+  ++committing_transaction_count_;
+}
 
-  Status s = GetBlobJournal(level_db_key, journal_transaction.get(), &journal);
-  if (!s.ok())
-    return s;
-  if (journal.empty())
-    return Status::OK();
-  s = CleanUpBlobJournalEntries(journal);
-  if (!s.ok())
-    return s;
-  ClearBlobJournal(journal_transaction.get(), level_db_key);
-  return journal_transaction->Commit();
+void IndexedDBBackingStore::DidCommitTransaction() {
+  DCHECK_GT(committing_transaction_count_, 0UL);
+  --committing_transaction_count_;
+  if (committing_transaction_count_ == 0 &&
+      execute_journal_cleaning_on_no_txns_) {
+    execute_journal_cleaning_on_no_txns_ = false;
+    CleanPrimaryJournalIgnoreReturn();
+  }
 }
 
 Status IndexedDBBackingStore::Transaction::GetBlobInfoForRecord(
@@ -2957,10 +3061,12 @@ Status IndexedDBBackingStore::Transaction::GetBlobInfoForRecord(
 
 void IndexedDBBackingStore::CleanPrimaryJournalIgnoreReturn() {
   // While a transaction is busy it is not safe to clean the journal.
-  if (committing_transaction_count_ > 0)
-    StartJournalCleaningTimer();
-  else
-    CleanUpBlobJournal(BlobJournalKey::Encode());
+  if (committing_transaction_count_ > 0) {
+    execute_journal_cleaning_on_no_txns_ = true;
+    return;
+  }
+  num_aggregated_journal_cleaning_requests_ = 0;
+  CleanUpBlobJournal(BlobJournalKey::Encode());
 }
 
 Status IndexedDBBackingStore::CreateIndex(
@@ -3981,6 +4087,22 @@ IndexedDBBackingStore::OpenIndexCursor(
   return std::move(cursor);
 }
 
+void IndexedDBBackingStore::StartPreCloseTasks() {
+  DCHECK(pre_close_task_queue_);
+  pre_close_task_queue_->Start(base::BindOnce(
+      &IndexedDBBackingStore::GetCompleteMetadata, base::Unretained(this)));
+}
+
+bool IndexedDBBackingStore::IsBlobCleanupPending() {
+  return journal_cleaning_timer_.IsRunning();
+}
+
+void IndexedDBBackingStore::ForceRunBlobCleanup() {
+  base::OnceClosure task = journal_cleaning_timer_.user_task();
+  journal_cleaning_timer_.AbandonAndStop();
+  std::move(task).Run();
+}
+
 IndexedDBBackingStore::Transaction::Transaction(
     IndexedDBBackingStore* backing_store)
     : backing_store_(backing_store),
@@ -4122,7 +4244,7 @@ Status IndexedDBBackingStore::Transaction::CommitPhaseOne(
     scoped_refptr<BlobWriteCallback> callback) {
   IDB_TRACE("IndexedDBBackingStore::Transaction::CommitPhaseOne");
   DCHECK(transaction_.get());
-  DCHECK(backing_store_->task_runner()->RunsTasksOnCurrentThread());
+  DCHECK(backing_store_->task_runner()->RunsTasksInCurrentSequence());
 
   Status s;
 
@@ -4144,7 +4266,7 @@ Status IndexedDBBackingStore::Transaction::CommitPhaseOne(
   }
 
   committing_ = true;
-  ++backing_store_->committing_transaction_count_;
+  backing_store_->WillCommitTransaction();
 
   if (!new_files_to_write.empty()) {
     // This kicks off the writes of the new blobs, if any.
@@ -4163,8 +4285,8 @@ Status IndexedDBBackingStore::Transaction::CommitPhaseTwo() {
 
   DCHECK(committing_);
   committing_ = false;
-  DCHECK_GT(backing_store_->committing_transaction_count_, 0UL);
-  --backing_store_->committing_transaction_count_;
+
+  backing_store_->DidCommitTransaction();
 
   BlobJournalType primary_journal, live_journal, saved_primary_journal,
       dead_blobs;
@@ -4319,8 +4441,7 @@ void IndexedDBBackingStore::Transaction::Rollback() {
   IDB_TRACE("IndexedDBBackingStore::Transaction::Rollback");
   if (committing_) {
     committing_ = false;
-    DCHECK_GT(backing_store_->committing_transaction_count_, 0UL);
-    --backing_store_->committing_transaction_count_;
+    backing_store_->DidCommitTransaction();
   }
 
   if (chained_blob_writer_.get()) {
@@ -4331,6 +4452,11 @@ void IndexedDBBackingStore::Transaction::Rollback() {
     return;
   transaction_->Rollback();
   transaction_ = NULL;
+}
+
+uint64_t IndexedDBBackingStore::Transaction::GetTransactionSize() {
+  DCHECK(transaction_);
+  return transaction_->GetTransactionSize();
 }
 
 IndexedDBBackingStore::BlobChangeRecord::BlobChangeRecord(

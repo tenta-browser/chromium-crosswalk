@@ -78,6 +78,11 @@ public interface LocationBar extends UrlBarDelegate {
     void setToolbarDataProvider(ToolbarDataProvider model);
 
     /**
+     * Gets the {@link ToolbarDataProvider} to be used for accessing {@link Toolbar} state.
+     */
+    ToolbarDataProvider getToolbarDataProvider();
+
+    /**
      * Set the bottom sheet for Chrome Home.
      * @param sheet The bottom sheet for Chrome Home if it exists.
      */
@@ -166,4 +171,14 @@ public interface LocationBar extends UrlBarDelegate {
      * @return Whether or not the {@link UrlBar} has to be explicitly checked for its location.
      */
     boolean mustQueryUrlBarLocationForSuggestions();
+
+    /**
+     * @return Whether suggestions are being shown for the location bar.
+     */
+    boolean isSuggestionsListShown();
+
+    /**
+     * @return Whether the suggestions list is scrolled any amount.
+     */
+    boolean isSuggestionsListScrolled();
 }

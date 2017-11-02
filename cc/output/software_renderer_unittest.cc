@@ -10,8 +10,6 @@
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "cc/output/compositor_frame_metadata.h"
-#include "cc/output/copy_output_request.h"
-#include "cc/output/copy_output_result.h"
 #include "cc/output/software_output_device.h"
 #include "cc/quads/render_pass.h"
 #include "cc/quads/render_pass_draw_quad.h"
@@ -24,9 +22,12 @@
 #include "cc/test/geometry_test_utils.h"
 #include "cc/test/render_pass_test_utils.h"
 #include "cc/test/test_shared_bitmap_manager.h"
+#include "components/viz/common/quads/copy_output_request.h"
+#include "components/viz/common/quads/copy_output_result.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkCanvas.h"
+#include "third_party/skia/include/utils/SkNWayCanvas.h"
 #include "ui/gfx/skia_util.h"
 
 namespace cc {
@@ -41,15 +42,15 @@ class SoftwareRendererTest : public testing::Test {
     output_surface_->BindToClient(&output_surface_client_);
 
     shared_bitmap_manager_.reset(new TestSharedBitmapManager());
-    resource_provider_ =
-        FakeResourceProvider::Create(nullptr, shared_bitmap_manager_.get());
-    renderer_ = base::MakeUnique<SoftwareRenderer>(
+    resource_provider_ = FakeResourceProvider::Create<DisplayResourceProvider>(
+        nullptr, shared_bitmap_manager_.get());
+    renderer_ = std::make_unique<SoftwareRenderer>(
         &settings_, output_surface_.get(), resource_provider());
     renderer_->Initialize();
     renderer_->SetVisible(true);
   }
 
-  ResourceProvider* resource_provider() const {
+  DisplayResourceProvider* resource_provider() const {
     return resource_provider_.get();
   }
 
@@ -62,10 +63,9 @@ class SoftwareRendererTest : public testing::Test {
     base::RunLoop loop;
 
     list->back()->copy_requests.push_back(
-        CopyOutputRequest::CreateBitmapRequest(
-            base::Bind(&SoftwareRendererTest::SaveBitmapResult,
-                       base::Unretained(&bitmap_result),
-                       loop.QuitClosure())));
+        viz::CopyOutputRequest::CreateBitmapRequest(base::BindOnce(
+            &SoftwareRendererTest::SaveBitmapResult,
+            base::Unretained(&bitmap_result), loop.QuitClosure())));
 
     renderer()->DrawFrame(list, device_scale_factor, viewport_size);
     loop.Run();
@@ -74,18 +74,18 @@ class SoftwareRendererTest : public testing::Test {
 
   static void SaveBitmapResult(std::unique_ptr<SkBitmap>* bitmap_result,
                                const base::Closure& quit_closure,
-                               std::unique_ptr<CopyOutputResult> result) {
+                               std::unique_ptr<viz::CopyOutputResult> result) {
     DCHECK(result->HasBitmap());
     *bitmap_result = result->TakeBitmap();
     quit_closure.Run();
   }
 
  protected:
-  RendererSettings settings_;
+  viz::RendererSettings settings_;
   FakeOutputSurfaceClient output_surface_client_;
   std::unique_ptr<FakeOutputSurface> output_surface_;
-  std::unique_ptr<SharedBitmapManager> shared_bitmap_manager_;
-  std::unique_ptr<ResourceProvider> resource_provider_;
+  std::unique_ptr<viz::SharedBitmapManager> shared_bitmap_manager_;
+  std::unique_ptr<DisplayResourceProvider> resource_provider_;
   std::unique_ptr<SoftwareRenderer> renderer_;
 };
 
@@ -102,9 +102,9 @@ TEST_F(SoftwareRendererTest, SolidColorQuad) {
   std::unique_ptr<RenderPass> root_render_pass = RenderPass::Create();
   root_render_pass->SetNew(root_render_pass_id, outer_rect, outer_rect,
                            gfx::Transform());
-  SharedQuadState* shared_quad_state =
+  viz::SharedQuadState* shared_quad_state =
       root_render_pass->CreateAndAppendSharedQuadState();
-  shared_quad_state->SetAll(gfx::Transform(), outer_size, outer_rect,
+  shared_quad_state->SetAll(gfx::Transform(), outer_rect, outer_rect,
                             outer_rect, false, 1.0, SkBlendMode::kSrcOver, 0);
   SolidColorDrawQuad* inner_quad =
       root_render_pass->CreateAndAppendDrawQuad<SolidColorDrawQuad>();
@@ -139,13 +139,14 @@ TEST_F(SoftwareRendererTest, TileQuad) {
   gfx::Size inner_size(98, 98);
   gfx::Rect outer_rect(outer_size);
   gfx::Rect inner_rect(gfx::Point(1, 1), inner_size);
+  bool needs_blending = false;
   InitializeRenderer(base::WrapUnique(new SoftwareOutputDevice));
 
-  ResourceId resource_yellow = resource_provider()->CreateResource(
-      outer_size, ResourceProvider::TEXTURE_HINT_IMMUTABLE, RGBA_8888,
+  viz::ResourceId resource_yellow = resource_provider()->CreateResource(
+      outer_size, ResourceProvider::TEXTURE_HINT_IMMUTABLE, viz::RGBA_8888,
       gfx::ColorSpace());
-  ResourceId resource_cyan = resource_provider()->CreateResource(
-      inner_size, ResourceProvider::TEXTURE_HINT_IMMUTABLE, RGBA_8888,
+  viz::ResourceId resource_cyan = resource_provider()->CreateResource(
+      inner_size, ResourceProvider::TEXTURE_HINT_IMMUTABLE, viz::RGBA_8888,
       gfx::ColorSpace());
 
   SkBitmap yellow_tile;
@@ -168,18 +169,18 @@ TEST_F(SoftwareRendererTest, TileQuad) {
   std::unique_ptr<RenderPass> root_render_pass = RenderPass::Create();
   root_render_pass->SetNew(root_render_pass_id, root_rect, root_rect,
                            gfx::Transform());
-  SharedQuadState* shared_quad_state =
+  viz::SharedQuadState* shared_quad_state =
       root_render_pass->CreateAndAppendSharedQuadState();
-  shared_quad_state->SetAll(gfx::Transform(), outer_size, outer_rect,
+  shared_quad_state->SetAll(gfx::Transform(), outer_rect, outer_rect,
                             outer_rect, false, 1.0, SkBlendMode::kSrcOver, 0);
   TileDrawQuad* inner_quad =
       root_render_pass->CreateAndAppendDrawQuad<TileDrawQuad>();
-  inner_quad->SetNew(shared_quad_state, inner_rect, inner_rect, inner_rect,
+  inner_quad->SetNew(shared_quad_state, inner_rect, inner_rect, needs_blending,
                      resource_cyan, gfx::RectF(gfx::SizeF(inner_size)),
                      inner_size, false, false);
   TileDrawQuad* outer_quad =
       root_render_pass->CreateAndAppendDrawQuad<TileDrawQuad>();
-  outer_quad->SetNew(shared_quad_state, outer_rect, outer_rect, outer_rect,
+  outer_quad->SetNew(shared_quad_state, outer_rect, outer_rect, needs_blending,
                      resource_yellow, gfx::RectF(gfx::SizeF(outer_size)),
                      outer_size, false, false);
 
@@ -204,11 +205,12 @@ TEST_F(SoftwareRendererTest, TileQuadVisibleRect) {
   gfx::Size tile_size(100, 100);
   gfx::Rect tile_rect(tile_size);
   gfx::Rect visible_rect = tile_rect;
+  bool needs_blending = false;
   visible_rect.Inset(1, 2, 3, 4);
   InitializeRenderer(base::WrapUnique(new SoftwareOutputDevice));
 
-  ResourceId resource_cyan = resource_provider()->CreateResource(
-      tile_size, ResourceProvider::TEXTURE_HINT_IMMUTABLE, RGBA_8888,
+  viz::ResourceId resource_cyan = resource_provider()->CreateResource(
+      tile_size, ResourceProvider::TEXTURE_HINT_IMMUTABLE, viz::RGBA_8888,
       gfx::ColorSpace());
 
   SkBitmap cyan_tile;  // The lowest five rows are yellow.
@@ -228,13 +230,13 @@ TEST_F(SoftwareRendererTest, TileQuadVisibleRect) {
   std::unique_ptr<RenderPass> root_render_pass = RenderPass::Create();
   root_render_pass->SetNew(root_render_pass_id, root_rect, root_rect,
                            gfx::Transform());
-  SharedQuadState* shared_quad_state =
+  viz::SharedQuadState* shared_quad_state =
       root_render_pass->CreateAndAppendSharedQuadState();
-  shared_quad_state->SetAll(gfx::Transform(), tile_size, tile_rect, tile_rect,
+  shared_quad_state->SetAll(gfx::Transform(), tile_rect, tile_rect, tile_rect,
                             false, 1.0, SkBlendMode::kSrcOver, 0);
   TileDrawQuad* quad =
       root_render_pass->CreateAndAppendDrawQuad<TileDrawQuad>();
-  quad->SetNew(shared_quad_state, tile_rect, tile_rect, tile_rect,
+  quad->SetNew(shared_quad_state, tile_rect, tile_rect, needs_blending,
                resource_cyan, gfx::RectF(gfx::SizeF(tile_size)), tile_size,
                false, false);
   quad->visible_rect = visible_rect;
@@ -378,26 +380,45 @@ TEST_F(SoftwareRendererTest, RenderPassVisibleRect) {
                              interior_visible_rect.bottom() - 1));
 }
 
+class ClipTrackingCanvas : public SkNWayCanvas {
+ public:
+  ClipTrackingCanvas(int width, int height) : SkNWayCanvas(width, height) {}
+  void onClipRect(const SkRect& rect,
+                  SkClipOp op,
+                  ClipEdgeStyle style) override {
+    last_clip_rect_ = rect;
+    SkNWayCanvas::onClipRect(rect, op, style);
+  }
+
+  SkRect last_clip_rect() const { return last_clip_rect_; }
+
+ private:
+  SkRect last_clip_rect_;
+};
+
 class PartialSwapSoftwareOutputDevice : public SoftwareOutputDevice {
  public:
   // SoftwareOutputDevice overrides.
   SkCanvas* BeginPaint(const gfx::Rect& damage_rect) override {
     damage_rect_at_start_ = damage_rect;
-    canvas_ = SoftwareOutputDevice::BeginPaint(damage_rect);
-    return canvas_;
+    canvas_.reset(new ClipTrackingCanvas(viewport_pixel_size_.width(),
+                                         viewport_pixel_size_.height()));
+    canvas_->addCanvas(SoftwareOutputDevice::BeginPaint(damage_rect));
+    return canvas_.get();
   }
+
   void EndPaint() override {
-    clip_rect_at_end_ = gfx::SkIRectToRect(canvas_->getDeviceClipBounds());
+    clip_rect_at_end_ = gfx::SkRectToRectF(canvas_->last_clip_rect());
     SoftwareOutputDevice::EndPaint();
   }
 
   gfx::Rect damage_rect_at_start() const { return damage_rect_at_start_; }
-  gfx::Rect clip_rect_at_end() const { return clip_rect_at_end_; }
+  gfx::RectF clip_rect_at_end() const { return clip_rect_at_end_; }
 
  private:
-  SkCanvas* canvas_ = nullptr;
+  std::unique_ptr<ClipTrackingCanvas> canvas_;
   gfx::Rect damage_rect_at_start_;
-  gfx::Rect clip_rect_at_end_;
+  gfx::RectF clip_rect_at_end_;
 };
 
 TEST_F(SoftwareRendererTest, PartialSwap) {
@@ -406,7 +427,7 @@ TEST_F(SoftwareRendererTest, PartialSwap) {
 
   settings_.partial_swap_enabled = true;
 
-  auto device_owned = base::MakeUnique<PartialSwapSoftwareOutputDevice>();
+  auto device_owned = std::make_unique<PartialSwapSoftwareOutputDevice>();
   auto* device = device_owned.get();
   InitializeRenderer(std::move(device_owned));
 
@@ -428,7 +449,7 @@ TEST_F(SoftwareRendererTest, PartialSwap) {
   // The damage rect should be reported to the SoftwareOutputDevice.
   EXPECT_EQ(gfx::Rect(2, 2, 3, 3), device->damage_rect_at_start());
   // The SkCanvas should be clipped to the damage rect.
-  EXPECT_EQ(gfx::Rect(2, 2, 3, 3), device->clip_rect_at_end());
+  EXPECT_EQ(gfx::RectF(2, 2, 3, 3), device->clip_rect_at_end());
 }
 
 }  // namespace

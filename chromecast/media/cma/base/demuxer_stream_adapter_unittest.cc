@@ -11,6 +11,7 @@
 #include "base/location.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread.h"
@@ -100,7 +101,7 @@ void DemuxerStreamAdapterTest::Start() {
 void DemuxerStreamAdapterTest::OnTestTimeout() {
   ADD_FAILURE() << "Test timed out";
   if (base::MessageLoop::current())
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
 }
 
 void DemuxerStreamAdapterTest::OnNewFrame(
@@ -146,7 +147,7 @@ void DemuxerStreamAdapterTest::OnNewFrame(
 void DemuxerStreamAdapterTest::OnFlushCompleted() {
   ASSERT_EQ(frame_received_count_, total_expected_frames_);
   ASSERT_FALSE(demuxer_stream_->has_pending_read());
-  base::MessageLoop::current()->QuitWhenIdle();
+  base::RunLoop::QuitCurrentWhenIdleDeprecated();
 }
 
 TEST_F(DemuxerStreamAdapterTest, NoDelay) {

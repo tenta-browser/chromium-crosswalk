@@ -9,17 +9,20 @@
 
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
-#include "cc/output/copy_output_request.h"
-#include "cc/output/copy_output_result.h"
-#include "components/display_compositor/gl_helper.h"
+#include "components/viz/common/gl_helper.h"
+#include "components/viz/common/quads/copy_output_request.h"
+#include "components/viz/common/quads/copy_output_result.h"
 #include "content/browser/compositor/image_transport_factory.h"
 #include "content/browser/media/capture/desktop_capture_device_uma_types.h"
 #include "content/public/browser/browser_thread.h"
-#include "device/power_save_blocker/power_save_blocker.h"
+#include "content/public/common/service_manager_connection.h"
 #include "media/base/video_util.h"
 #include "media/capture/content/thread_safe_capture_oracle.h"
 #include "media/capture/content/video_capture_oracle.h"
 #include "media/capture/video_capture_types.h"
+#include "services/device/public/interfaces/constants.mojom.h"
+#include "services/device/public/interfaces/wake_lock_provider.mojom.h"
+#include "services/service_manager/public/cpp/connector.h"
 #include "skia/ext/image_operations.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/aura/client/screen_position_client.h"
@@ -31,7 +34,6 @@
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/dip_util.h"
 #include "ui/compositor/layer.h"
-#include "ui/wm/public/activation_client.h"
 
 namespace content {
 
@@ -79,6 +81,9 @@ bool AuraWindowCaptureMachine::InternalStart(
   // Update capture size.
   UpdateCaptureSize();
 
+  // Start observing for GL context losses.
+  ImageTransportFactory::GetInstance()->GetContextFactory()->AddObserver(this);
+
   // Start observing compositor updates.
   aura::WindowTreeHost* const host = desktop_window_->GetHost();
   ui::Compositor* const compositor = host ? host->compositor() : nullptr;
@@ -86,19 +91,32 @@ bool AuraWindowCaptureMachine::InternalStart(
     return false;
   compositor->AddAnimationObserver(this);
 
-  power_save_blocker_.reset(new device::PowerSaveBlocker(
-      device::PowerSaveBlocker::kPowerSaveBlockPreventDisplaySleep,
-      device::PowerSaveBlocker::kReasonOther, "DesktopCaptureDevice is running",
-      BrowserThread::GetTaskRunnerForThread(BrowserThread::UI),
-      BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE)));
+  DCHECK(!wake_lock_);
+  // Request Wake Lock. In some testing contexts, the service manager
+  // connection isn't initialized.
+  if (ServiceManagerConnection::GetForProcess()) {
+    service_manager::Connector* connector =
+        ServiceManagerConnection::GetForProcess()->GetConnector();
+    DCHECK(connector);
+    device::mojom::WakeLockProviderPtr wake_lock_provider;
+    connector->BindInterface(device::mojom::kServiceName,
+                             mojo::MakeRequest(&wake_lock_provider));
+    wake_lock_provider->GetWakeLockWithoutContext(
+        device::mojom::WakeLockType::PreventDisplaySleep,
+        device::mojom::WakeLockReason::ReasonOther,
+        "Desktop capturer is running", mojo::MakeRequest(&wake_lock_));
+
+    wake_lock_->RequestWakeLock();
+  }
 
   return true;
 }
 
 void AuraWindowCaptureMachine::Suspend() {
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                          base::Bind(&AuraWindowCaptureMachine::InternalSuspend,
-                                     base::Unretained(this)));
+  BrowserThread::PostTask(
+      BrowserThread::UI, FROM_HERE,
+      base::BindOnce(&AuraWindowCaptureMachine::InternalSuspend,
+                     base::Unretained(this)));
 }
 
 void AuraWindowCaptureMachine::InternalSuspend() {
@@ -108,9 +126,10 @@ void AuraWindowCaptureMachine::InternalSuspend() {
 }
 
 void AuraWindowCaptureMachine::Resume() {
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-                          base::Bind(&AuraWindowCaptureMachine::InternalResume,
-                                     base::Unretained(this)));
+  BrowserThread::PostTask(
+      BrowserThread::UI, FROM_HERE,
+      base::BindOnce(&AuraWindowCaptureMachine::InternalResume,
+                     base::Unretained(this)));
 }
 
 void AuraWindowCaptureMachine::InternalResume() {
@@ -125,10 +144,9 @@ void AuraWindowCaptureMachine::InternalResume() {
 void AuraWindowCaptureMachine::Stop(const base::Closure& callback) {
   // Stops the capture machine asynchronously.
   BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE, base::Bind(
-          &AuraWindowCaptureMachine::InternalStop,
-          base::Unretained(this),
-          callback));
+      BrowserThread::UI, FROM_HERE,
+      base::BindOnce(&AuraWindowCaptureMachine::InternalStop,
+                     base::Unretained(this), callback));
 }
 
 void AuraWindowCaptureMachine::InternalStop(const base::Closure& callback) {
@@ -137,8 +155,8 @@ void AuraWindowCaptureMachine::InternalStop(const base::Closure& callback) {
   // Cancel any and all outstanding callbacks owned by external modules.
   weak_factory_.InvalidateWeakPtrs();
 
-  power_save_blocker_.reset();
-
+  if (wake_lock_)
+    wake_lock_->CancelWakeLock();
   // Stop observing compositor and window events.
   if (desktop_window_) {
     if (aura::WindowTreeHost* host = desktop_window_->GetHost()) {
@@ -150,17 +168,22 @@ void AuraWindowCaptureMachine::InternalStop(const base::Closure& callback) {
     cursor_renderer_.reset();
   }
 
+  // Stop observing for GL context losses.
+  ImageTransportFactory::GetInstance()->GetContextFactory()->RemoveObserver(
+      this);
+  OnLostResources();
+
   callback.Run();
 }
 
 void AuraWindowCaptureMachine::MaybeCaptureForRefresh() {
   BrowserThread::PostTask(
       BrowserThread::UI, FROM_HERE,
-      base::Bind(&AuraWindowCaptureMachine::Capture,
-                 // Use of Unretained() is safe here since this task must run
-                 // before InternalStop().
-                 base::Unretained(this),
-                 base::TimeTicks()));
+      base::BindOnce(
+          &AuraWindowCaptureMachine::Capture,
+          // Use of Unretained() is safe here since this task must run
+          // before InternalStop().
+          base::Unretained(this), base::TimeTicks()));
 }
 
 void AuraWindowCaptureMachine::SetWindow(aura::Window* window) {
@@ -213,11 +236,11 @@ void AuraWindowCaptureMachine::Capture(base::TimeTicks event_time) {
   }
   if (oracle_proxy_->ObserveEventAndDecideCapture(
           event, gfx::Rect(), event_time, &frame, &capture_frame_cb)) {
-    std::unique_ptr<cc::CopyOutputRequest> request =
-        cc::CopyOutputRequest::CreateRequest(
-            base::Bind(&AuraWindowCaptureMachine::DidCopyOutput,
-                       weak_factory_.GetWeakPtr(), std::move(frame), event_time,
-                       start_time, capture_frame_cb));
+    std::unique_ptr<viz::CopyOutputRequest> request =
+        viz::CopyOutputRequest::CreateRequest(
+            base::BindOnce(&AuraWindowCaptureMachine::DidCopyOutput,
+                           weak_factory_.GetWeakPtr(), std::move(frame),
+                           event_time, start_time, capture_frame_cb));
     gfx::Rect window_rect = gfx::Rect(desktop_window_->bounds().width(),
                                       desktop_window_->bounds().height());
     request->set_area(window_rect);
@@ -230,7 +253,7 @@ void AuraWindowCaptureMachine::DidCopyOutput(
     base::TimeTicks event_time,
     base::TimeTicks start_time,
     const CaptureFrameCallback& capture_frame_cb,
-    std::unique_ptr<cc::CopyOutputResult> result) {
+    std::unique_ptr<viz::CopyOutputResult> result) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   static bool first_call = true;
@@ -270,7 +293,7 @@ bool AuraWindowCaptureMachine::ProcessCopyOutputResponse(
     scoped_refptr<media::VideoFrame> video_frame,
     base::TimeTicks event_time,
     const CaptureFrameCallback& capture_frame_cb,
-    std::unique_ptr<cc::CopyOutputResult> result) {
+    std::unique_ptr<viz::CopyOutputResult> result) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   if (!desktop_window_) {
@@ -305,14 +328,14 @@ bool AuraWindowCaptureMachine::ProcessCopyOutputResponse(
   }
 
   ImageTransportFactory* factory = ImageTransportFactory::GetInstance();
-  display_compositor::GLHelper* gl_helper = factory->GetGLHelper();
+  viz::GLHelper* gl_helper = factory->GetGLHelper();
   if (!gl_helper) {
     VLOG(1) << "Aborting capture: No GLHelper available for YUV readback.";
     return false;
   }
 
-  cc::TextureMailbox texture_mailbox;
-  std::unique_ptr<cc::SingleReleaseCallback> release_callback;
+  viz::TextureMailbox texture_mailbox;
+  std::unique_ptr<viz::SingleReleaseCallback> release_callback;
   result->TakeTexture(&texture_mailbox, &release_callback);
   DCHECK(texture_mailbox.IsTexture());
   if (!texture_mailbox.IsTexture()) {
@@ -326,8 +349,8 @@ bool AuraWindowCaptureMachine::ProcessCopyOutputResponse(
       yuv_readback_pipeline_->scaler()->SrcSubrect() != result_rect ||
       yuv_readback_pipeline_->scaler()->DstSize() != region_in_frame.size()) {
     yuv_readback_pipeline_.reset(gl_helper->CreateReadbackPipelineYUV(
-        display_compositor::GLHelper::SCALER_QUALITY_FAST, result_rect.size(),
-        result_rect, region_in_frame.size(), true, true));
+        viz::GLHelper::SCALER_QUALITY_FAST, result_rect.size(), result_rect,
+        region_in_frame.size(), true, true));
   }
 
   cursor_renderer_->SnapshotCursorState(region_in_frame);
@@ -355,7 +378,7 @@ void AuraWindowCaptureMachine::CopyOutputFinishedForVideo(
     base::TimeTicks event_time,
     const CaptureFrameCallback& capture_frame_cb,
     scoped_refptr<media::VideoFrame> target,
-    std::unique_ptr<cc::SingleReleaseCallback> release_callback,
+    std::unique_ptr<viz::SingleReleaseCallback> release_callback,
     bool result) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
@@ -383,9 +406,10 @@ void AuraWindowCaptureMachine::OnWindowBoundsChanged(
   DCHECK(desktop_window_ && window == desktop_window_);
 
   // Post a task to update capture size after first returning to the event loop.
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE, base::Bind(
-      &AuraWindowCaptureMachine::UpdateCaptureSize,
-      weak_factory_.GetWeakPtr()));
+  BrowserThread::PostTask(
+      BrowserThread::UI, FROM_HERE,
+      base::BindOnce(&AuraWindowCaptureMachine::UpdateCaptureSize,
+                     weak_factory_.GetWeakPtr()));
 }
 
 void AuraWindowCaptureMachine::OnWindowDestroying(aura::Window* window) {
@@ -444,6 +468,11 @@ void AuraWindowCaptureMachine::OnCompositingShuttingDown(
     ui::Compositor* compositor) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   compositor->RemoveAnimationObserver(this);
+}
+
+void AuraWindowCaptureMachine::OnLostResources() {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  yuv_readback_pipeline_.reset();
 }
 
 }  // namespace content

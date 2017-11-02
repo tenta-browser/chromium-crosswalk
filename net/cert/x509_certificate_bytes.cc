@@ -6,20 +6,20 @@
 
 #include "base/numerics/safe_conversions.h"
 #include "base/pickle.h"
+#include "base/stl_util.h"
 #include "crypto/openssl_util.h"
 #include "net/base/ip_address.h"
 #include "net/cert/asn1_util.h"
 #include "net/cert/internal/cert_errors.h"
 #include "net/cert/internal/name_constraints.h"
-#include "net/cert/internal/parse_name.h"
 #include "net/cert/internal/parsed_certificate.h"
-#include "net/cert/internal/signature_policy.h"
+#include "net/cert/internal/signature_algorithm.h"
 #include "net/cert/internal/verify_name_match.h"
 #include "net/cert/internal/verify_signed_data.h"
 #include "net/cert/x509_util.h"
-#include "net/cert/x509_util_openssl.h"
 #include "net/der/parser.h"
 #include "third_party/boringssl/src/include/openssl/evp.h"
+#include "third_party/boringssl/src/include/openssl/pkcs7.h"
 #include "third_party/boringssl/src/include/openssl/pool.h"
 #include "third_party/boringssl/src/include/openssl/sha.h"
 
@@ -78,63 +78,8 @@ bool GetNormalizedCertIssuer(CRYPTO_BUFFER* cert,
   if (!GetSequenceValue(tbs.issuer_tlv, &issuer_value))
     return false;
 
-  return NormalizeName(issuer_value, out_normalized_issuer);
-}
-
-// Fills |principal| from the DER encoded |name_tlv|, returning true on success
-// or false if parsing failed or some of the values could not be converted to
-// UTF-8.
-bool ParsePrincipal(const der::Input& name_tlv, CertPrincipal* principal) {
-  RDNSequence rdns;
-  if (!ParseName(name_tlv, &rdns))
-    return false;
-
-  for (const RelativeDistinguishedName& rdn : rdns) {
-    for (const X509NameAttribute& name_attribute : rdn) {
-      if (name_attribute.type == TypeCommonNameOid()) {
-        if (principal->common_name.empty() &&
-            !name_attribute.ValueAsString(&principal->common_name)) {
-          return false;
-        }
-      } else if (name_attribute.type == TypeLocalityNameOid()) {
-        if (principal->locality_name.empty() &&
-            !name_attribute.ValueAsString(&principal->locality_name)) {
-          return false;
-        }
-      } else if (name_attribute.type == TypeStateOrProvinceNameOid()) {
-        if (principal->state_or_province_name.empty() &&
-            !name_attribute.ValueAsString(&principal->state_or_province_name)) {
-          return false;
-        }
-      } else if (name_attribute.type == TypeCountryNameOid()) {
-        if (principal->country_name.empty() &&
-            !name_attribute.ValueAsString(&principal->country_name)) {
-          return false;
-        }
-      } else if (name_attribute.type == TypeStreetAddressOid()) {
-        std::string s;
-        if (!name_attribute.ValueAsString(&s))
-          return false;
-        principal->street_addresses.push_back(s);
-      } else if (name_attribute.type == TypeOrganizationNameOid()) {
-        std::string s;
-        if (!name_attribute.ValueAsString(&s))
-          return false;
-        principal->organization_names.push_back(s);
-      } else if (name_attribute.type == TypeOrganizationUnitNameOid()) {
-        std::string s;
-        if (!name_attribute.ValueAsString(&s))
-          return false;
-        principal->organization_unit_names.push_back(s);
-      } else if (name_attribute.type == TypeDomainComponentOid()) {
-        std::string s;
-        if (!name_attribute.ValueAsString(&s))
-          return false;
-        principal->domain_components.push_back(s);
-      }
-    }
-  }
-  return true;
+  CertErrors errors;
+  return NormalizeName(issuer_value, out_normalized_issuer, &errors);
 }
 
 // Parses certificates from a PKCS#7 SignedData structure, appending them to
@@ -148,21 +93,22 @@ void CreateOSCertHandlesFromPKCS7Bytes(
 
   CBS der_data;
   CBS_init(&der_data, reinterpret_cast<const uint8_t*>(data), length);
-  STACK_OF(X509)* certs = sk_X509_new_null();
+  STACK_OF(CRYPTO_BUFFER)* certs = sk_CRYPTO_BUFFER_new_null();
 
-  if (PKCS7_get_certificates(certs, &der_data)) {
-    for (size_t i = 0; i < sk_X509_num(certs); ++i) {
-      base::StringPiece stringpiece;
-      x509_util::GetDER(sk_X509_value(certs, i), &stringpiece);
-      handles->push_back(x509_util::CreateCryptoBuffer(stringpiece).release());
+  if (PKCS7_get_raw_certificates(certs, &der_data,
+                                 x509_util::GetBufferPool())) {
+    for (size_t i = 0; i < sk_CRYPTO_BUFFER_num(certs); ++i) {
+      handles->push_back(sk_CRYPTO_BUFFER_value(certs, i));
     }
   }
-  sk_X509_pop_free(certs, X509_free);
+  // |handles| took ownership of the individual buffers, so only free the list
+  // itself.
+  sk_CRYPTO_BUFFER_free(certs);
 }
 
 }  // namespace
 
-bool X509Certificate::Initialize() {
+bool X509Certificate::Initialize(UnsafeCreateOptions options) {
   der::Input tbs_certificate_tlv;
   der::Input signature_algorithm_tlv;
   der::BitString signature_value;
@@ -179,8 +125,16 @@ bool X509Certificate::Initialize() {
                            DefaultParseCertificateOptions(), &tbs, nullptr))
     return false;
 
-  if (!ParsePrincipal(tbs.subject_tlv, &subject_) ||
-      !ParsePrincipal(tbs.issuer_tlv, &issuer_)) {
+  CertPrincipal::PrintableStringHandling printable_string_handling =
+      options.printable_string_is_utf8
+          ? CertPrincipal::PrintableStringHandling::kAsUTF8Hack
+          : CertPrincipal::PrintableStringHandling::kDefault;
+  if (!subject_.ParseDistinguishedName(tbs.subject_tlv.UnsafeData(),
+                                       tbs.subject_tlv.Length(),
+                                       printable_string_handling) ||
+      !issuer_.ParseDistinguishedName(tbs.issuer_tlv.UnsafeData(),
+                                      tbs.issuer_tlv.Length(),
+                                      printable_string_handling)) {
     return false;
   }
 
@@ -227,8 +181,9 @@ bool X509Certificate::GetSubjectAltName(
     return false;
   }
 
+  CertErrors errors;
   std::unique_ptr<GeneralNames> subject_alt_names =
-      GeneralNames::Create(subject_alt_names_extension.value);
+      GeneralNames::Create(subject_alt_names_extension.value, &errors);
   if (!subject_alt_names)
     return false;
 
@@ -249,11 +204,12 @@ bool X509Certificate::GetSubjectAltName(
 bool X509Certificate::IsIssuedByEncoded(
     const std::vector<std::string>& valid_issuers) {
   std::vector<std::string> normalized_issuers;
+  CertErrors errors;
   for (const auto& raw_issuer : valid_issuers) {
     der::Input issuer_value;
     std::string normalized_issuer;
     if (!GetSequenceValue(der::Input(&raw_issuer), &issuer_value) ||
-        !NormalizeName(issuer_value, &normalized_issuer)) {
+        !NormalizeName(issuer_value, &normalized_issuer, &errors)) {
       continue;
     }
     normalized_issuers.push_back(std::move(normalized_issuer));
@@ -262,15 +218,13 @@ bool X509Certificate::IsIssuedByEncoded(
   std::string normalized_cert_issuer;
   if (!GetNormalizedCertIssuer(cert_handle_, &normalized_cert_issuer))
     return false;
-  if (std::find(normalized_issuers.begin(), normalized_issuers.end(),
-                normalized_cert_issuer) != normalized_issuers.end())
+  if (base::ContainsValue(normalized_issuers, normalized_cert_issuer))
     return true;
 
   for (CRYPTO_BUFFER* intermediate : intermediate_ca_certs_) {
     if (!GetNormalizedCertIssuer(intermediate, &normalized_cert_issuer))
       return false;
-    if (std::find(normalized_issuers.begin(), normalized_issuers.end(),
-                  normalized_cert_issuer) != normalized_issuers.end())
+    if (base::ContainsValue(normalized_issuers, normalized_cert_issuer))
       return true;
   }
   return false;
@@ -442,15 +396,16 @@ bool X509Certificate::IsSelfSigned(OSCertHandle cert_handle) {
   }
 
   der::Input subject_value;
+  CertErrors errors;
   std::string normalized_subject;
   if (!GetSequenceValue(tbs.subject_tlv, &subject_value) ||
-      !NormalizeName(subject_value, &normalized_subject)) {
+      !NormalizeName(subject_value, &normalized_subject, &errors)) {
     return false;
   }
   der::Input issuer_value;
   std::string normalized_issuer;
   if (!GetSequenceValue(tbs.issuer_tlv, &issuer_value) ||
-      !NormalizeName(issuer_value, &normalized_issuer)) {
+      !NormalizeName(issuer_value, &normalized_issuer, &errors)) {
     return false;
   }
 
@@ -462,11 +417,10 @@ bool X509Certificate::IsSelfSigned(OSCertHandle cert_handle) {
   if (!signature_algorithm)
     return false;
 
-  SimpleSignaturePolicy signature_policy(1024);
-  CertErrors unused_errors;
+  // Don't enforce any minimum key size or restrict the algorithm, since when
+  // self signed not very relevant.
   return VerifySignedData(*signature_algorithm, tbs_certificate_tlv,
-                          signature_value, tbs.spki_tlv, &signature_policy,
-                          &unused_errors);
+                          signature_value, tbs.spki_tlv);
 }
 
 // static

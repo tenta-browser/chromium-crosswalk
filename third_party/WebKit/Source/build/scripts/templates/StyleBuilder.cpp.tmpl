@@ -1,5 +1,7 @@
-{% from 'macros.tmpl' import license %}
+{% from 'templates/macros.tmpl' import license, source_files_for_generated_file %}
 {{license()}}
+
+{{source_files_for_generated_file(template_file, input_files)}}
 
 #include "core/css/resolver/StyleBuilder.h"
 
@@ -33,7 +35,8 @@ void StyleBuilder::ApplyProperty(CSSPropertyID property,
 
     {% endfor %}
     case CSSPropertyVariable:
-      ASSERT(!isInitial && !isInherit);
+      DCHECK(!isInitial);
+      DCHECK(!isInherit);
       StyleBuilderFunctions::applyValueCSSPropertyVariable(state, value);
       return;
     {% for property_id, property in properties.items() if property.direction_aware %}
@@ -41,7 +44,7 @@ void StyleBuilder::ApplyProperty(CSSPropertyID property,
     {% endfor %}
     {
       CSSPropertyID resolvedProperty = CSSProperty::ResolveDirectionAwareProperty(property, state.Style()->Direction(), state.Style()->GetWritingMode());
-      ASSERT(resolvedProperty != property);
+      DCHECK_NE(resolvedProperty, property);
       ApplyProperty(resolvedProperty, state, value);
       return;
     }
@@ -50,7 +53,7 @@ void StyleBuilder::ApplyProperty(CSSPropertyID property,
     {% endfor %}
       return;
     default:
-      ASSERT_NOT_REACHED();
+      NOTREACHED();
   }
 }
 

@@ -32,32 +32,19 @@ namespace {
 
 class TestObserver : public GpuDataManagerObserver {
  public:
-  TestObserver()
-      : gpu_info_updated_(false),
-        video_memory_usage_stats_updated_(false) {
-  }
+  TestObserver() {}
   ~TestObserver() override {}
 
   bool gpu_info_updated() const { return gpu_info_updated_; }
-  bool video_memory_usage_stats_updated() const {
-    return video_memory_usage_stats_updated_;
-  }
 
   void OnGpuInfoUpdate() override { gpu_info_updated_ = true; }
 
-  void OnVideoMemoryUsageStatsUpdate(
-      const gpu::VideoMemoryUsageStats& stats) override {
-    video_memory_usage_stats_updated_ = true;
-  }
-
   void Reset() {
     gpu_info_updated_ = false;
-    video_memory_usage_stats_updated_ = false;
   }
 
  private:
-  bool gpu_info_updated_;
-  bool video_memory_usage_stats_updated_;
+  bool gpu_info_updated_ = false;
 };
 
 static base::Time GetTimeForTesting() {
@@ -404,27 +391,6 @@ TEST_F(GpuDataManagerImplPrivateTest, NoGpuInfoUpdateWithSwiftShader) {
   }
 }
 
-TEST_F(GpuDataManagerImplPrivateTest, GPUVideoMemoryUsageStatsUpdate) {
-  ScopedGpuDataManagerImpl manager;
-
-  TestObserver observer;
-  manager->AddObserver(&observer);
-
-  {
-    base::RunLoop run_loop;
-    run_loop.RunUntilIdle();
-  }
-  EXPECT_FALSE(observer.video_memory_usage_stats_updated());
-
-  gpu::VideoMemoryUsageStats vram_stats;
-  manager->UpdateVideoMemoryUsageStats(vram_stats);
-  {
-    base::RunLoop run_loop;
-    run_loop.RunUntilIdle();
-  }
-  EXPECT_TRUE(observer.video_memory_usage_stats_updated());
-}
-
 base::Time GpuDataManagerImplPrivateTest::JustBeforeExpiration(
     const GpuDataManagerImplPrivate* manager) {
   return GetTimeForTesting() + base::TimeDelta::FromMilliseconds(
@@ -682,33 +648,6 @@ TEST_F(GpuDataManagerImplPrivateTest, SetGLStringsDefered) {
       manager->IsFeatureBlacklisted(gpu::GPU_FEATURE_TYPE_ACCELERATED_WEBGL));
 }
 #endif  // OS_LINUX
-
-TEST_F(GpuDataManagerImplPrivateTest, GpuDriverBugListSingle) {
-  ScopedGpuDataManagerImplPrivate manager;
-  manager->gpu_driver_bugs_.insert(5);
-
-  base::CommandLine command_line(0, NULL);
-  manager->AppendGpuCommandLine(&command_line, nullptr);
-
-  EXPECT_TRUE(command_line.HasSwitch(switches::kGpuDriverBugWorkarounds));
-  std::string args = command_line.GetSwitchValueASCII(
-      switches::kGpuDriverBugWorkarounds);
-  EXPECT_STREQ("5", args.c_str());
-}
-
-TEST_F(GpuDataManagerImplPrivateTest, GpuDriverBugListMultiple) {
-  ScopedGpuDataManagerImplPrivate manager;
-  manager->gpu_driver_bugs_.insert(5);
-  manager->gpu_driver_bugs_.insert(7);
-
-  base::CommandLine command_line(0, NULL);
-  manager->AppendGpuCommandLine(&command_line, nullptr);
-
-  EXPECT_TRUE(command_line.HasSwitch(switches::kGpuDriverBugWorkarounds));
-  std::string args = command_line.GetSwitchValueASCII(
-      switches::kGpuDriverBugWorkarounds);
-  EXPECT_STREQ("5,7", args.c_str());
-}
 
 TEST_F(GpuDataManagerImplPrivateTest, BlacklistAllFeatures) {
   ScopedGpuDataManagerImplPrivate manager;

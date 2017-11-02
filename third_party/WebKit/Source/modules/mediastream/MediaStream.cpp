@@ -26,13 +26,13 @@
 #include "modules/mediastream/MediaStream.h"
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "bindings/core/v8/ScriptState.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/dom/TaskRunnerHelper.h"
 #include "core/frame/Deprecation.h"
 #include "modules/mediastream/MediaStreamRegistry.h"
 #include "modules/mediastream/MediaStreamTrackEvent.h"
+#include "platform/bindings/ScriptState.h"
 #include "platform/mediastream/MediaStreamCenter.h"
 #include "platform/mediastream/MediaStreamSource.h"
 
@@ -154,7 +154,6 @@ MediaStream::MediaStream(ExecutionContext* context,
   descriptor_ =
       MediaStreamDescriptor::Create(audio_components, video_components);
   descriptor_->SetClient(this);
-  MediaStreamCenter::Instance().DidCreateMediaStream(descriptor_);
 
   audio_tracks_ = audio_tracks;
   video_tracks_ = video_tracks;
@@ -220,8 +219,8 @@ void MediaStream::addTrack(MediaStreamTrack* track,
     ScheduleDispatchEvent(Event::Create(EventTypeNames::active));
   }
 
-  MediaStreamCenter::Instance().DidAddMediaStreamTrack(descriptor_,
-                                                       track->Component());
+  for (auto& observer : observers_)
+    observer->OnStreamAddTrack(this, track);
 }
 
 void MediaStream::removeTrack(MediaStreamTrack* track,
@@ -256,8 +255,8 @@ void MediaStream::removeTrack(MediaStreamTrack* track,
     ScheduleDispatchEvent(Event::Create(EventTypeNames::inactive));
   }
 
-  MediaStreamCenter::Instance().DidRemoveMediaStreamTrack(descriptor_,
-                                                          track->Component());
+  for (auto& observer : observers_)
+    observer->OnStreamRemoveTrack(this, track);
 }
 
 MediaStreamTrack* MediaStream::getTrackById(String id) {
@@ -304,6 +303,15 @@ void MediaStream::TrackEnded() {
   StreamEnded();
 }
 
+void MediaStream::RegisterObserver(MediaStreamObserver* observer) {
+  DCHECK(observer);
+  observers_.insert(observer);
+}
+
+void MediaStream::UnregisterObserver(MediaStreamObserver* observer) {
+  observers_.erase(observer);
+}
+
 void MediaStream::StreamEnded() {
   if (!GetExecutionContext())
     return;
@@ -318,11 +326,12 @@ bool MediaStream::AddEventListenerInternal(
     const AtomicString& event_type,
     EventListener* listener,
     const AddEventListenerOptionsResolved& options) {
-  if (event_type == EventTypeNames::active)
-    UseCounter::Count(GetExecutionContext(), UseCounter::kMediaStreamOnActive);
-  else if (event_type == EventTypeNames::inactive)
+  if (event_type == EventTypeNames::active) {
+    UseCounter::Count(GetExecutionContext(), WebFeature::kMediaStreamOnActive);
+  } else if (event_type == EventTypeNames::inactive) {
     UseCounter::Count(GetExecutionContext(),
-                      UseCounter::kMediaStreamOnInactive);
+                      WebFeature::kMediaStreamOnInactive);
+  }
 
   return EventTargetWithInlineData::AddEventListenerInternal(event_type,
                                                              listener, options);
@@ -410,13 +419,13 @@ void MediaStream::ScheduledEventTimerFired(TimerBase*) {
     return;
 
   HeapVector<Member<Event>> events;
-  events.Swap(scheduled_events_);
+  events.swap(scheduled_events_);
 
   HeapVector<Member<Event>>::iterator it = events.begin();
   for (; it != events.end(); ++it)
     DispatchEvent((*it).Release());
 
-  events.Clear();
+  events.clear();
 }
 
 URLRegistry& MediaStream::Registry() const {
@@ -427,6 +436,7 @@ DEFINE_TRACE(MediaStream) {
   visitor->Trace(audio_tracks_);
   visitor->Trace(video_tracks_);
   visitor->Trace(descriptor_);
+  visitor->Trace(observers_);
   visitor->Trace(scheduled_events_);
   EventTargetWithInlineData::Trace(visitor);
   ContextClient::Trace(visitor);

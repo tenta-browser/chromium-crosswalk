@@ -5,9 +5,11 @@
 #import "ios/clean/chrome/browser/ui/tab_grid/tab_grid_mediator.h"
 
 #include "base/memory/ptr_util.h"
+#import "ios/chrome/browser/web/tab_id_tab_helper.h"
 #include "ios/chrome/browser/web_state_list/fake_web_state_list_delegate.h"
 #include "ios/chrome/browser/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/web_state_list/web_state_list_observer_bridge.h"
+#import "ios/chrome/browser/web_state_list/web_state_opener.h"
 #import "ios/clean/chrome/browser/ui/tab_grid/tab_grid_consumer.h"
 #import "ios/web/public/test/fakes/test_navigation_manager.h"
 #import "ios/web/public/test/fakes/test_web_state.h"
@@ -37,11 +39,14 @@ class TabGridMediatorTest : public PlatformTest {
 
   void InsertWebStateAt(int index) {
     auto web_state = base::MakeUnique<web::TestWebState>();
-    web_state_list_->InsertWebState(index, std::move(web_state));
+    TabIdTabHelper::CreateForWebState(web_state.get());
+    web_state_list_->InsertWebState(index, std::move(web_state),
+                                    WebStateList::INSERT_FORCE_INDEX,
+                                    WebStateOpener());
   }
 
   void SetConsumer() {
-    consumer_ = [OCMockObject mockForProtocol:@protocol(TabGridConsumer)];
+    consumer_ = OCMProtocolMock(@protocol(TabGridConsumer));
     mediator_.consumer = consumer_;
   }
 
@@ -55,20 +60,16 @@ class TabGridMediatorTest : public PlatformTest {
 // the list is empty.
 TEST_F(TabGridMediatorTest, TestRemoveNoTabsOverlay) {
   SetConsumer();
-  [[consumer_ expect] insertItemAtIndex:0];
-  [[consumer_ expect] removeNoTabsOverlay];
   InsertWebStateAt(0);
-  EXPECT_OCMOCK_VERIFY(consumer_);
+  [[consumer_ verify] removeNoTabsOverlay];
 }
 
 // Tests that the noTabsOverlay is added when the web state list becomes empty.
 TEST_F(TabGridMediatorTest, TestAddNoTabsOverlay) {
-  InsertWebStateAt(0);
   SetConsumer();
-  [[consumer_ expect] deleteItemAtIndex:0];
-  [[consumer_ expect] addNoTabsOverlay];
+  InsertWebStateAt(0);
   web_state_list_->CloseWebStateAt(0);
-  EXPECT_OCMOCK_VERIFY(consumer_);
+  [[consumer_ verify] addNoTabsOverlay];
 }
 
 }  // namespace

@@ -16,7 +16,7 @@
 #include "ui/app_list/app_list_item_observer.h"
 #include "ui/app_list/views/image_shadow_animator.h"
 #include "ui/views/context_menu_controller.h"
-#include "ui/views/controls/button/custom_button.h"
+#include "ui/views/controls/button/button.h"
 
 namespace views {
 class ImageView;
@@ -30,7 +30,7 @@ namespace app_list {
 class AppListItem;
 class AppsGridView;
 
-class APP_LIST_EXPORT AppListItemView : public views::CustomButton,
+class APP_LIST_EXPORT AppListItemView : public views::Button,
                                         public views::ContextMenuController,
                                         public AppListItemObserver,
                                         public ImageShadowAnimator::Delegate {
@@ -83,7 +83,7 @@ class APP_LIST_EXPORT AppListItemView : public views::CustomButton,
   // having something dropped onto it, enables subpixel AA for the title.
   void SetTitleSubpixelAA();
 
-  // views::CustomButton overrides:
+  // views::Button overrides:
   void OnGestureEvent(ui::GestureEvent* event) override;
 
   // views::View overrides:
@@ -114,21 +114,24 @@ class APP_LIST_EXPORT AppListItemView : public views::CustomButton,
   // Invoked when |mouse_drag_timer_| fires to show dragging UI.
   void OnMouseDragTimer();
 
-  // views::View overrides:
-  const char* GetClassName() const override;
-  void Layout() override;
-  void OnPaint(gfx::Canvas* canvas) override;
+  // Invoked when |touch_drag_timer_| fires to show dragging UI.
+  void OnTouchDragTimer(const gfx::Point& tap_down_location,
+                        const gfx::Point& tap_down_root_location);
 
   // views::ContextMenuController overrides:
   void ShowContextMenuForView(views::View* source,
                               const gfx::Point& point,
                               ui::MenuSourceType source_type) override;
 
-  // views::CustomButton overrides:
+  // views::Button overrides:
   void StateChanged(ButtonState old_state) override;
   bool ShouldEnterPushedState(const ui::Event& event) override;
+  void PaintButtonContents(gfx::Canvas* canvas) override;
 
   // views::View overrides:
+  const char* GetClassName() const override;
+  void Layout() override;
+  gfx::Size CalculatePreferredSize() const override;
   bool OnKeyPressed(const ui::KeyEvent& event) override;
   bool OnMousePressed(const ui::MouseEvent& event) override;
   void OnMouseReleased(const ui::MouseEvent& event) override;
@@ -153,20 +156,24 @@ class APP_LIST_EXPORT AppListItemView : public views::CustomButton,
 
   std::unique_ptr<views::MenuRunner> context_menu_runner_;
 
-  UIState ui_state_;
+  UIState ui_state_ = UI_STATE_NORMAL;
 
   // True if scroll gestures should contribute to dragging.
-  bool touch_dragging_;
+  bool touch_dragging_ = false;
 
-  ImageShadowAnimator shadow_animator_;
+  std::unique_ptr<ImageShadowAnimator> shadow_animator_;
 
-  bool is_installing_;
-  bool is_highlighted_;
+  bool is_installing_ = false;
+  bool is_highlighted_ = false;
+
+  const bool is_fullscreen_app_list_enabled_;
 
   base::string16 tooltip_text_;
 
   // A timer to defer showing drag UI when mouse is pressed.
   base::OneShotTimer mouse_drag_timer_;
+  // A timer to defer showing drag UI when the app item is touch pressed.
+  base::OneShotTimer touch_drag_timer_;
 
   DISALLOW_COPY_AND_ASSIGN(AppListItemView);
 };

@@ -32,8 +32,7 @@ function done() {
   }
 }
 
-function test()
-{
+function test() {
   const fontWidth = 5;
   const fontHeight = 11;
   var requestIds = 0;
@@ -41,19 +40,19 @@ function test()
   var dataGrid = UI.panels.network._networkLogView._dataGrid;
   var waterfall = UI.panels.network._networkLogView._columns._waterfallColumn;
   var splitWidget = UI.panels.network._networkLogView._columns._splitWidget;
-  dataGrid.scrollContainer.style.flex = "none";
-  dataGrid.scrollContainer.style.height = "300px";
-  waterfall.contentElement.style.flex = "none";
-  waterfall.contentElement.style.height = "300px";
+  dataGrid.scrollContainer.style.flex = 'none';
+  dataGrid.scrollContainer.style.height = '300px';
+  waterfall.contentElement.style.flex = 'none';
+  waterfall.contentElement.style.height = '300px';
   splitWidget.setSidebarSize(400);
   dataGrid.onResize();
   waterfall.onResize();
-  dataGrid._update(); // Clears animation frame.
-  InspectorTest.addSniffer(waterfall, "_didDrawForTest", onWaterfallDraw, true);
-  InspectorTest.override(CanvasRenderingContext2D.prototype, "measureText", measureText, true);
-  InspectorTest.override(CanvasRenderingContext2D.prototype, "fillText", fillText, true);
-  
-  InspectorTest.recordNetwork();
+  dataGrid._update();  // Clears animation frame.
+  TestRunner.addSniffer(waterfall, '_didDrawForTest', onWaterfallDraw, true);
+  TestRunner.override(CanvasRenderingContext2D.prototype, 'measureText', measureText, true);
+  TestRunner.override(CanvasRenderingContext2D.prototype, 'fillText', fillText, true);
+
+  NetworkTestRunner.recordNetwork();
   var types = Common.resourceTypes;
   var requests = [
     makeRequest({
@@ -218,9 +217,7 @@ function test()
    * @this {CanvasRenderingContext2D}
    */
   function measureText(text) {
-    return {
-      width: text.length * fontWidth
-    };
+    return {width: text.length * fontWidth};
   }
 
   /**
@@ -229,15 +226,15 @@ function test()
   function fillText(text, textPosition, paddingTop) {
     if (numDraws >= 2 || this.canvas !== waterfall._canvas)
       return;
-    InspectorTest.addResult(text);
+    TestRunner.addResult(text);
     this.save();
-    this.fillStyle = "#F90";
+    this.fillStyle = '#F90';
     this.fillRect(textPosition, paddingTop, text.length * fontWidth, fontHeight);
     this.restore();
   }
 
   function makeRequest(requestData) {
-    var request = new SDK.NetworkRequest(InspectorTest.networkManager, (++requestIds).toString(), requestData.url);
+    var request = new SDK.NetworkRequest((++requestIds).toString(), requestData.url);
     request.setResourceType(requestData.type);
     request.setIssueTime(requestData.issueTime, requestData.wallIssueTime);
     request.timing = requestData.timing;
@@ -281,10 +278,10 @@ function test()
     var imageData = waterfall._canvas.toDataURL();
     var height = waterfall._canvas.height;
     var width = waterfall._canvas.width;
-    var promise = InspectorTest.evaluateInPagePromise(`receiveImage('${imageData}')`);
+    var promise = TestRunner.evaluateInPagePromise(`receiveImage('${imageData}')`);
     if (done) {
       promise.then(
-          InspectorTest.evaluateInPage.bind(InspectorTest, "done()", InspectorTest.completeTest.bind(InspectorTest)));
+          TestRunner.evaluateInPage.bind(InspectorTest, 'done()', TestRunner.completeTest.bind(InspectorTest)));
     }
   }
 }

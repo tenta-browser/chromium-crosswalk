@@ -8,6 +8,8 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "cc/paint/display_item_list.h"
+#include "cc/paint/record_paint_canvas.h"
 #include "ui/compositor/compositor_export.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/geometry/rect.h"
@@ -30,6 +32,8 @@ class COMPOSITOR_EXPORT PaintRecorder {
   // PaintRecorder is in use. Canvas is bounded by |recording_size|.
   PaintRecorder(const PaintContext& context,
                 const gfx::Size& recording_size,
+                float recording_scale_x,
+                float recording_scale_y,
                 PaintCache* cache);
   PaintRecorder(const PaintContext& context, const gfx::Size& recording_size);
   ~PaintRecorder();
@@ -39,9 +43,11 @@ class COMPOSITOR_EXPORT PaintRecorder {
 
  private:
   const PaintContext& context_;
+  scoped_refptr<cc::DisplayItemList> local_list_;
+  cc::RecordPaintCanvas record_canvas_;
   gfx::Canvas canvas_;
   PaintCache* cache_;
-  gfx::Rect bounds_in_layer_;
+  gfx::Size recording_size_;
 
   DISALLOW_COPY_AND_ASSIGN(PaintRecorder);
 };

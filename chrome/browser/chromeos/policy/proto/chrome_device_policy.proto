@@ -779,6 +779,93 @@ message DeviceWallpaperImageProto {
   optional string device_wallpaper_image = 1;
 }
 
+// Migration strategy for the case when ARC(N+) needs the ext4 encryption while
+// the device used ecryptfs in the past.
+message DeviceEcryptfsMigrationStrategyProto {
+  enum MigrationStrategy {
+    // Default value, unspecified.
+    UNSET = 0;
+    // ARC is not allowed, no data migration needed.
+    DISALLOW_ARC = 1;
+    // The data migration is allowed, opening the possibility to use ARC.
+    ALLOW_MIGRATION = 2;
+  };
+
+  optional MigrationStrategy migration_strategy = 1;
+}
+
+// This setting controls how the on-board secure element hardware can be used
+// to provide a second-factor authentication in addition to the TPM
+// functionality.
+message DeviceSecondFactorAuthenticationProto {
+  enum U2fMode {
+    // Default value, unspecified.
+    UNSET = 0;
+    // Feature disabled.
+    DISABLED = 1;
+    // U2F as defined by the FIDO Alliance specification:
+    // https://fidoalliance.org/specs/fido-u2f-v1.1-id-20160915.zip
+    U2F = 2;
+    // U2F plus extensions for individual attestation certificate.
+    U2F_EXTENDED = 3;
+  };
+
+  optional U2fMode mode = 1;
+}
+
+message CastReceiverNameProto {
+  // The name advertised as a Google Cast destination by the device,
+  // up to 24 characters. If the name is empty, the device name will
+  // be used.
+  optional string name = 1;
+}
+
+// Day of the week and time settings for DeviceOffHoursIntervalProto.
+message WeeklyTimeProto {
+  enum DayOfWeek {
+    DAY_OF_WEEK_UNSPECIFIED = 0;
+    MONDAY = 1;
+    TUESDAY = 2;
+    WEDNESDAY = 3;
+    THURSDAY = 4;
+    FRIDAY = 5;
+    SATURDAY = 6;
+    SUNDAY = 7;
+  }
+  // Day of week.
+  optional DayOfWeek day_of_week = 1;
+  // Time of day in milliseconds from beginning of the day
+  // in timezone that is defined in DeviceOffHoursProto.
+  optional int32 time = 2;
+}
+
+// Start and end interval settings for DeviceOffHoursProto.
+message DeviceOffHoursIntervalProto {
+  optional WeeklyTimeProto start = 1;
+  optional WeeklyTimeProto end = 2;
+}
+
+// Allow less restricted using of Chromebooks that are managed by school,
+// while the device is not at school ("OffHours").
+message DeviceOffHoursProto {
+  // List of intervals when ignored policies are not applied.
+  repeated DeviceOffHoursIntervalProto intervals = 1;
+  // Timezone in the same format as SystemTimezoneProto.timezone.
+  // If timezone isn't set then "GMT" will be used
+  optional string timezone = 2;
+  // List of policies which settings are ignored during OffHours mode.
+  // List contains policy names from ChromeDeviceSettingsProto
+  // (i.e. "device_policy_refresh_rate")
+  // During OffHoursMode default settings of ignored policies are used.
+  repeated string ignored_policies = 3;
+}
+
+// Settings to control the behavior of the TPM firmware update functionality.
+message TPMFirmwareUpdateSettingsProto {
+  // Whether the user can invoke the update via powerwash.
+  optional bool allow_user_initiated_powerwash = 1;
+}
+
 message ChromeDeviceSettingsProto {
   optional DevicePolicyRefreshRateProto device_policy_refresh_rate = 1;
   optional UserWhitelistProto user_whitelist = 2;
@@ -837,4 +924,11 @@ message ChromeDeviceSettingsProto {
   optional DeviceWallpaperImageProto device_wallpaper_image = 48;
   optional LoginScreenLocalesProto login_screen_locales = 49;
   optional LoginScreenInputMethodsProto login_screen_input_methods = 50;
+  optional DeviceEcryptfsMigrationStrategyProto
+      device_ecryptfs_migration_strategy = 51;
+  optional DeviceSecondFactorAuthenticationProto
+      device_second_factor_authentication = 52;
+  optional CastReceiverNameProto cast_receiver_name = 53;
+  optional DeviceOffHoursProto device_off_hours = 54;
+  optional TPMFirmwareUpdateSettingsProto tpm_firmware_update_settings = 59;
 }

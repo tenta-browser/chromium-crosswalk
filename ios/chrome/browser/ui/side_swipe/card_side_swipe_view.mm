@@ -21,9 +21,15 @@
 #import "ios/chrome/browser/ui/toolbar/web_toolbar_controller.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #import "ios/chrome/browser/ui/uikit_ui_util.h"
+#import "ios/chrome/browser/ui/util/constraints_ui_util.h"
+#import "ios/chrome/browser/web/page_placeholder_tab_helper.h"
 #include "ios/chrome/grit/ios_theme_resources.h"
 #import "ios/web/web_state/ui/crw_web_controller.h"
 #include "url/gurl.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 using base::UserMetricsAction;
 
@@ -144,8 +150,7 @@ const CGFloat kResizeFactor = 4;
     currentPoint_ = CGPointZero;
     topMargin_ = topMargin;
 
-    base::scoped_nsobject<UIView> background(
-        [[UIView alloc] initWithFrame:CGRectZero]);
+    UIView* background = [[UIView alloc] initWithFrame:CGRectZero];
     [self addSubview:background];
 
     [background setTranslatesAutoresizingMaskIntoConstraints:NO];
@@ -167,8 +172,8 @@ const CGFloat kResizeFactor = 4;
     [leftCard_ setTranslatesAutoresizingMaskIntoConstraints:NO];
     [self addSubview:rightCard_];
     [self addSubview:leftCard_];
-    AddSameSizeConstraint(rightCard_, self);
-    AddSameSizeConstraint(leftCard_, self);
+    AddSameConstraints(rightCard_, self);
+    AddSameConstraints(leftCard_, self);
   }
   return self;
 }
@@ -224,7 +229,7 @@ const CGFloat kResizeFactor = 4;
   [card setHidden:NO];
 
   Tab* tab = [model_ tabAtIndex:index];
-  BOOL isNTP = tab.url.host() == kChromeUINewTabHost;
+  BOOL isNTP = tab.lastCommittedURL.host() == kChromeUINewTabHost;
   [toolbarController updateToolbarForSideSwipeSnapshot:tab];
   UIImage* toolbarView = CaptureViewWithOption([toolbarController view],
                                                [[UIScreen mainScreen] scale],
@@ -237,7 +242,8 @@ const CGFloat kResizeFactor = 4;
   dispatch_queue_t priorityQueue =
       dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0ul);
   [tab retrieveSnapshot:^(UIImage* image) {
-    if (tab.webController.usePlaceholderOverlay &&
+    if (PagePlaceholderTabHelper::FromWebState(tab.webState)
+            ->will_add_placeholder_for_next_navigation() &&
         !ios::device_util::IsSingleCoreDevice()) {
       [card setImage:[CRWWebController defaultSnapshotImage]];
       dispatch_async(priorityQueue, ^{

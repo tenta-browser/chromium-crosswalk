@@ -12,7 +12,6 @@
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/weak_ptr.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/cocoa/omnibox/omnibox_view_mac.h"
 #include "chrome/browser/ui/location_bar/location_bar.h"
@@ -58,7 +57,6 @@ class LocationBarViewMac : public LocationBar,
   ~LocationBarViewMac() override;
 
   // Overridden from LocationBar:
-  void ShowFirstRunBubble() override;
   GURL GetDestinationURL() const override;
   WindowOpenDisposition GetWindowOpenDisposition() const override;
   ui::PageTransition GetPageTransition() const override;
@@ -69,6 +67,7 @@ class LocationBarViewMac : public LocationBar,
   void UpdateManagePasswordsIconAndBubble() override;
   void UpdateSaveCreditCardIcon() override;
   void UpdateBookmarkStarVisibility() override;
+  void UpdateZoomViewVisibility() override;
   void UpdateLocationBarVisibility(bool visible, bool animate) override;
   void SaveStateToContents(content::WebContents* contents) override;
   void Revert() override;
@@ -108,9 +107,12 @@ class LocationBarViewMac : public LocationBar,
   //  save credit card bubble to aim at.
   NSPoint GetSaveCreditCardBubblePoint() const;
 
-  // Get the point in window coordinates in the security icon at which the page
-  // info bubble aims.
+  // Get the point in window coordinates for the page info bubble anchor.
   NSPoint GetPageInfoBubblePoint() const;
+
+  // Get the point in window coordinates in the security icon at which infobar
+  // arrows should point.
+  NSPoint GetInfoBarAnchorPoint() const;
 
   // When any image decorations change, call this to ensure everything is
   // redrawn and laid out if necessary.
@@ -189,6 +191,8 @@ class LocationBarViewMac : public LocationBar,
     return translate_decoration_.get();
   }
 
+  ZoomDecoration* zoom_decoration() const { return zoom_decoration_.get(); }
+
   Browser* browser() const { return browser_; }
 
   // ZoomManagerObserver:
@@ -213,8 +217,6 @@ class LocationBarViewMac : public LocationBar,
   // tab contents state.
   bool RefreshContentSettingsDecorations();
 
-  void ShowFirstRunBubbleInternal();
-
   // Updates the translate decoration in the omnibox with the current translate
   // state.
   void UpdateTranslateDecoration();
@@ -238,8 +240,9 @@ class LocationBarViewMac : public LocationBar,
   std::vector<LocationBarDecoration*> GetDecorations();
 
   // Updates |decoration|'s accessibility view's position to match the computed
-  // position the decoration will be drawn at.
-  void UpdateAccessibilityViewPosition(LocationBarDecoration* decoration);
+  // position the decoration will be drawn at, and update its enabled state
+  // based on whether |decoration| is accepting presses currently.
+  void UpdateAccessibilityView(LocationBarDecoration* decoration);
 
   std::unique_ptr<OmniboxViewMac> omnibox_view_;
 
@@ -293,9 +296,6 @@ class LocationBarViewMac : public LocationBar,
 
   // The security level of the location bar icon.
   security_state::SecurityLevel security_level_;
-
-  // Used to schedule a task for the first run info bubble.
-  base::WeakPtrFactory<LocationBarViewMac> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(LocationBarViewMac);
 };

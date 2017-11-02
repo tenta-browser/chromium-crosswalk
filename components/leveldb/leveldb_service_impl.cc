@@ -5,6 +5,7 @@
 #include "components/leveldb/leveldb_service_impl.h"
 
 #include <memory>
+#include <utility>
 
 #include "base/memory/ptr_util.h"
 #include "components/leveldb/env_mojo.h"
@@ -21,7 +22,7 @@
 namespace leveldb {
 
 LevelDBServiceImpl::LevelDBServiceImpl(
-    scoped_refptr<base::SingleThreadTaskRunner> file_task_runner)
+    scoped_refptr<base::SequencedTaskRunner> file_task_runner)
     : thread_(new LevelDBMojoProxy(std::move(file_task_runner))) {}
 
 LevelDBServiceImpl::~LevelDBServiceImpl() {}
@@ -29,26 +30,30 @@ LevelDBServiceImpl::~LevelDBServiceImpl() {}
 void LevelDBServiceImpl::Open(
     filesystem::mojom::DirectoryPtr directory,
     const std::string& dbname,
+    const base::Optional<base::trace_event::MemoryAllocatorDumpGuid>&
+        memory_dump_id,
     leveldb::mojom::LevelDBDatabaseAssociatedRequest database,
-    const OpenCallback& callback) {
+    OpenCallback callback) {
   OpenWithOptions(leveldb::mojom::OpenOptions::New(), std::move(directory),
-                  dbname, std::move(database), callback);
+                  dbname, memory_dump_id, std::move(database),
+                  std::move(callback));
 }
 
 void LevelDBServiceImpl::OpenWithOptions(
     leveldb::mojom::OpenOptionsPtr open_options,
     filesystem::mojom::DirectoryPtr directory,
     const std::string& dbname,
+    const base::Optional<base::trace_event::MemoryAllocatorDumpGuid>&
+        memory_dump_id,
     leveldb::mojom::LevelDBDatabaseAssociatedRequest database,
-    const OpenCallback& callback) {
-  leveldb::Options options;
+    OpenCallback callback) {
+  leveldb_env::Options options;
   options.create_if_missing = open_options->create_if_missing;
   options.error_if_exists = open_options->error_if_exists;
   options.paranoid_checks = open_options->paranoid_checks;
   options.write_buffer_size = open_options->write_buffer_size;
   options.max_open_files = open_options->max_open_files;
 
-  options.reuse_logs = leveldb_env::kDefaultLogReuseOptionValue;
   options.compression = leveldb::kSnappyCompression;
 
   // Register our directory with the file thread.
@@ -58,23 +63,34 @@ void LevelDBServiceImpl::OpenWithOptions(
   std::unique_ptr<MojoEnv> env_mojo(new MojoEnv(thread_, dir));
   options.env = env_mojo.get();
 
-  leveldb::DB* db = nullptr;
-  leveldb::Status s = leveldb::DB::Open(options, dbname, &db);
+  switch (open_options->shared_block_read_cache) {
+    case leveldb::mojom::SharedReadCache::Web:
+      options.block_cache = leveldb_env::SharedWebBlockCache();
+      break;
+    case leveldb::mojom::SharedReadCache::Default:
+      // fallthrough
+      break;
+  }
+
+  std::unique_ptr<leveldb::DB> db;
+  leveldb::Status s = leveldb_env::OpenDB(options, dbname, &db);
 
   if (s.ok()) {
     mojo::MakeStrongAssociatedBinding(
-        base::MakeUnique<LevelDBDatabaseImpl>(std::move(env_mojo),
-                                              base::WrapUnique(db)),
+        base::MakeUnique<LevelDBDatabaseImpl>(
+            std::move(env_mojo), std::move(db), nullptr, memory_dump_id),
         std::move(database));
   }
 
-  callback.Run(LeveldbStatusToError(s));
+  std::move(callback).Run(LeveldbStatusToError(s));
 }
 
 void LevelDBServiceImpl::OpenInMemory(
+    const base::Optional<base::trace_event::MemoryAllocatorDumpGuid>&
+        memory_dump_id,
     leveldb::mojom::LevelDBDatabaseAssociatedRequest database,
-    const OpenCallback& callback) {
-  leveldb::Options options;
+    OpenCallback callback) {
+  leveldb_env::Options options;
   options.create_if_missing = true;
   options.max_open_files = 0;  // Use minimum.
 
@@ -82,28 +98,30 @@ void LevelDBServiceImpl::OpenInMemory(
       leveldb::NewMemEnv(leveldb::Env::Default()));
   options.env = env.get();
 
-  leveldb::DB* db = nullptr;
-  leveldb::Status s = leveldb::DB::Open(options, "", &db);
+  std::unique_ptr<leveldb::DB> db;
+  leveldb::Status s = leveldb_env::OpenDB(options, "", &db);
 
   if (s.ok()) {
-    mojo::MakeStrongAssociatedBinding(base::MakeUnique<LevelDBDatabaseImpl>(
-                                          std::move(env), base::WrapUnique(db)),
-                                      std::move(database));
+    mojo::MakeStrongAssociatedBinding(
+        base::MakeUnique<LevelDBDatabaseImpl>(std::move(env), std::move(db),
+                                              nullptr, memory_dump_id),
+        std::move(database));
   }
 
-  callback.Run(LeveldbStatusToError(s));
+  std::move(callback).Run(LeveldbStatusToError(s));
 }
 
 void LevelDBServiceImpl::Destroy(filesystem::mojom::DirectoryPtr directory,
                                  const std::string& dbname,
-                                 const DestroyCallback& callback) {
-  leveldb::Options options;
+                                 DestroyCallback callback) {
+  leveldb_env::Options options;
   // Register our directory with the file thread.
   LevelDBMojoProxy::OpaqueDir* dir =
       thread_->RegisterDirectory(std::move(directory));
   std::unique_ptr<MojoEnv> env_mojo(new MojoEnv(thread_, dir));
   options.env = env_mojo.get();
-  callback.Run(LeveldbStatusToError(leveldb::DestroyDB(dbname, options)));
+  std::move(callback).Run(
+      LeveldbStatusToError(leveldb::DestroyDB(dbname, options)));
 }
 
 }  // namespace leveldb

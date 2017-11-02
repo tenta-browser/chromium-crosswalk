@@ -76,8 +76,6 @@ process_template() (
     -e "s#@@REPOCONFIGREGEX@@#${REPOCONFIGREGEX}#g" \
     -e "s#@@SHORTDESC@@#${SHORTDESC}#g" \
     -e "s#@@FULLDESC@@#${FULLDESC}#g" \
-    -e "s#@@DEFAULT_FLAGS@@#${DEFAULT_FLAGS:-}#g" \
-    -e "s#@@SXS_USER_DATA_DIR@@#${SXS_USER_DATA_DIR:-}#g" \
     -e "s#@@USR_BIN_SYMLINK_NAME@@#${USR_BIN_SYMLINK_NAME:-}#g" \
     > "$TMPLOUT" <<< "$TMPLINCL"
 )
@@ -160,13 +158,31 @@ stage_install_common() {
   # Widevine CDM.
   if [ -f "${BUILDDIR}/libwidevinecdmadapter.so" ]; then
     install -m 644 -s "${BUILDDIR}/libwidevinecdmadapter.so" "${STAGEDIR}/${INSTALLDIR}/"
+    # No need to strip; libwidevinecdm.so starts out stripped.
     install -m 644 "${BUILDDIR}/libwidevinecdm.so" "${STAGEDIR}/${INSTALLDIR}/"
   fi
 
   # ANGLE
   if [ "${CHANNEL}" != "stable" ]; then
-    install -m 644 "${BUILDDIR}/libGLESv2.so" "${STAGEDIR}/${INSTALLDIR}/"
-    install -m 644 "${BUILDDIR}/libEGL.so" "${STAGEDIR}/${INSTALLDIR}/"
+    for file in libEGL.so libGLESv2.so; do
+      buildfile="${BUILDDIR}/${file}"
+      strippedfile="${buildfile}.stripped"
+      debugfile="${buildfile}.debug"
+      "${BUILDDIR}/installer/common/eu-strip" -o "${strippedfile}" -f "${debugfile}" "${buildfile}"
+      install -m 644 "${strippedfile}" "${STAGEDIR}/${INSTALLDIR}/${file}"
+    done
+  fi
+
+  # SwiftShader
+  if [ -f "${BUILDDIR}/swiftshader/libEGL.so" ]; then
+    install -m 755 -d "${STAGEDIR}/${INSTALLDIR}/swiftshader/"
+    for file in libEGL.so libGLESv2.so; do
+      buildfile="${BUILDDIR}/swiftshader/${file}"
+      strippedfile="${buildfile}.stripped"
+      debugfile="${buildfile}.debug"
+      "${BUILDDIR}/installer/common/eu-strip" -o "${strippedfile}" -f "${debugfile}" "${buildfile}"
+      install -m 644 "${strippedfile}" "${STAGEDIR}/${INSTALLDIR}/swiftshader/${file}"
+    done
   fi
 
   # SwiftShader
@@ -179,7 +195,6 @@ stage_install_common() {
   # libc++
   if [ -f "${BUILDDIR}/lib/libc++.so" ]; then
     install -m 755 -d "${STAGEDIR}/${INSTALLDIR}/lib/"
-
     install -m 644 -s "${BUILDDIR}/lib/libc++.so" "${STAGEDIR}/${INSTALLDIR}/lib/"
   fi
 
@@ -259,4 +274,12 @@ stage_install_common() {
   # documentation
   install -m 755 "${BUILDDIR}/${PROGNAME}.1" \
     "${STAGEDIR}/usr/share/man/man1/${PACKAGE}.1"
+
+  # Lastly, check to make sure all the ELF binaries are stripped.
+  UNSTRIPPED=$(find "${STAGEDIR}${INSTALLDIR}/" -type f | xargs file |
+      grep ELF | grep -c "not stripped" || true)
+  if [ "${UNSTRIPPED}" != "0" ]; then
+    echo "ERROR: Found ${UNSTRIPPED} unstripped ELF files." 1>&2
+    exit 1
+  fi
 }

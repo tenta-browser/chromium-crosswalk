@@ -16,6 +16,8 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "build/build_config.h"
+#include "cc/output/layer_tree_frame_sink.h"
+#include "services/ui/public/interfaces/window_tree_constants.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/aura/client/capture_client.h"
 #include "ui/aura/client/focus_change_observer.h"
@@ -544,7 +546,7 @@ TEST_P(WindowTest, GetEventHandlerForPoint) {
   EXPECT_EQ(w13.get(), root->GetEventHandlerForPoint(gfx::Point(26, 481)));
 }
 
-TEST_P(WindowTest, GetEventHandlerForPointWithOverride) {
+TEST_P(WindowTest, GetEventHandlerForPointInCornerOfChildBounds) {
   // If our child is flush to our top-left corner it gets events just inside the
   // window edges.
   std::unique_ptr<Window> parent(CreateTestWindow(
@@ -553,12 +555,6 @@ TEST_P(WindowTest, GetEventHandlerForPointWithOverride) {
       CreateTestWindow(SK_ColorRED, 2, gfx::Rect(0, 0, 60, 70), parent.get()));
   EXPECT_EQ(child.get(), parent->GetEventHandlerForPoint(gfx::Point(0, 0)));
   EXPECT_EQ(child.get(), parent->GetEventHandlerForPoint(gfx::Point(1, 1)));
-
-  // We can override the hit test bounds of the parent to make the parent grab
-  // events along that edge.
-  parent->set_hit_test_bounds_override_inner(gfx::Insets(1, 1, 1, 1));
-  EXPECT_EQ(parent.get(), parent->GetEventHandlerForPoint(gfx::Point(0, 0)));
-  EXPECT_EQ(child.get(),  parent->GetEventHandlerForPoint(gfx::Point(1, 1)));
 }
 
 TEST_P(WindowTest, GetEventHandlerForPointWithOverrideDescendingOrder) {
@@ -1550,7 +1546,7 @@ TEST_P(WindowTest, Visibility) {
   EXPECT_EQ(1, d2.shown());
 }
 
-TEST_P(WindowTest, IgnoreEventsTest) {
+TEST_P(WindowTest, EventTargetingPolicy) {
   TestWindowDelegate d11;
   TestWindowDelegate d12;
   TestWindowDelegate d111;
@@ -1566,18 +1562,32 @@ TEST_P(WindowTest, IgnoreEventsTest) {
   std::unique_ptr<Window> w121(CreateTestWindowWithDelegate(
       &d121, 121, gfx::Rect(150, 150, 50, 50), w12.get()));
 
+  EXPECT_EQ(w121.get(), w1->GetEventHandlerForPoint(gfx::Point(160, 160)));
+  w12->SetEventTargetingPolicy(ui::mojom::EventTargetingPolicy::TARGET_ONLY);
+  EXPECT_EQ(w12.get(), w1->GetEventHandlerForPoint(gfx::Point(160, 160)));
+  w12->SetEventTargetingPolicy(
+      ui::mojom::EventTargetingPolicy::TARGET_AND_DESCENDANTS);
+
   EXPECT_EQ(w12.get(), w1->GetEventHandlerForPoint(gfx::Point(10, 10)));
-  w12->set_ignore_events(true);
+  w12->SetEventTargetingPolicy(ui::mojom::EventTargetingPolicy::NONE);
   EXPECT_EQ(w11.get(), w1->GetEventHandlerForPoint(gfx::Point(10, 10)));
-  w12->set_ignore_events(false);
+  w12->SetEventTargetingPolicy(
+      ui::mojom::EventTargetingPolicy::TARGET_AND_DESCENDANTS);
 
   EXPECT_EQ(w121.get(), w1->GetEventHandlerForPoint(gfx::Point(160, 160)));
-  w121->set_ignore_events(true);
+  w121->SetEventTargetingPolicy(ui::mojom::EventTargetingPolicy::NONE);
   EXPECT_EQ(w12.get(), w1->GetEventHandlerForPoint(gfx::Point(160, 160)));
-  w12->set_ignore_events(true);
+  w12->SetEventTargetingPolicy(ui::mojom::EventTargetingPolicy::NONE);
   EXPECT_EQ(w111.get(), w1->GetEventHandlerForPoint(gfx::Point(160, 160)));
-  w111->set_ignore_events(true);
+  w111->SetEventTargetingPolicy(ui::mojom::EventTargetingPolicy::NONE);
   EXPECT_EQ(w11.get(), w1->GetEventHandlerForPoint(gfx::Point(160, 160)));
+
+  w11->SetEventTargetingPolicy(
+      ui::mojom::EventTargetingPolicy::DESCENDANTS_ONLY);
+  EXPECT_EQ(nullptr, w1->GetEventHandlerForPoint(gfx::Point(160, 160)));
+  w111->SetEventTargetingPolicy(
+      ui::mojom::EventTargetingPolicy::TARGET_AND_DESCENDANTS);
+  EXPECT_EQ(w111.get(), w1->GetEventHandlerForPoint(gfx::Point(160, 160)));
 }
 
 // Tests transformation on the root window.
@@ -1777,18 +1787,6 @@ class WindowObserverTest : public WindowTest,
     return result;
   }
 
-  std::string TransformNotificationsAndClear() {
-    std::string result;
-    for (std::vector<std::pair<int, int> >::iterator it =
-            transform_notifications_.begin();
-        it != transform_notifications_.end();
-        ++it) {
-      base::StringAppendF(&result, "(%d,%d)", it->first, it->second);
-    }
-    transform_notifications_.clear();
-    return result;
-  }
-
  private:
   void OnWindowAdded(Window* new_window) override { added_count_++; }
 
@@ -1814,11 +1812,6 @@ class WindowObserverTest : public WindowTest,
                                intptr_t old) override {
     property_key_ = key;
     old_property_value_ = old;
-  }
-
-  void OnAncestorWindowTransformed(Window* source, Window* window) override {
-    transform_notifications_.push_back(
-        std::make_pair(source->id(), window->id()));
   }
 
   int added_count_;
@@ -1953,33 +1946,6 @@ TEST_P(WindowObserverTest, PropertyChanged) {
   // Sanity check to see if |PropertyChangeInfoAndClear| really clears.
   EXPECT_EQ(PropertyChangeInfo(
       reinterpret_cast<const void*>(NULL), -3), PropertyChangeInfoAndClear());
-}
-
-TEST_P(WindowObserverTest, AncestorTransformed) {
-  // Create following window hierarchy:
-  //   root_window
-  //   +-- w1
-  //       +-- w2
-  //       +-- w3
-  //           +-- w4
-  // Then, apply a transform to |w1| and ensure all its descendants are
-  // notified.
-  std::unique_ptr<Window> w1(CreateTestWindowWithId(1, root_window()));
-  w1->AddObserver(this);
-  std::unique_ptr<Window> w2(CreateTestWindowWithId(2, w1.get()));
-  w2->AddObserver(this);
-  std::unique_ptr<Window> w3(CreateTestWindowWithId(3, w1.get()));
-  w3->AddObserver(this);
-  std::unique_ptr<Window> w4(CreateTestWindowWithId(4, w3.get()));
-  w4->AddObserver(this);
-
-  EXPECT_EQ(std::string(), TransformNotificationsAndClear());
-
-  gfx::Transform transform;
-  transform.Translate(10, 10);
-  w1->SetTransform(transform);
-
-  EXPECT_EQ("(1,1)(1,2)(1,3)(1,4)", TransformNotificationsAndClear());
 }
 
 TEST_P(WindowTest, AcquireLayer) {
@@ -2898,6 +2864,33 @@ TEST_P(WindowTest, WindowDestroyCompletesAnimations) {
   EXPECT_TRUE(observer.animation_completed());
   EXPECT_FALSE(observer.animation_aborted());
   animator->RemoveObserver(&observer);
+}
+
+TEST_P(WindowTest, LocalSurfaceIdChanges) {
+  Window window(nullptr);
+  window.Init(ui::LAYER_NOT_DRAWN);
+  std::unique_ptr<cc::LayerTreeFrameSink> frame_sink(
+      window.CreateLayerTreeFrameSink());
+  viz::LocalSurfaceId local_surface_id1 = window.GetLocalSurfaceId();
+  EXPECT_NE(nullptr, frame_sink.get());
+  EXPECT_TRUE(local_surface_id1.is_valid());
+
+  window.SetBounds(gfx::Rect(300, 300));
+  viz::LocalSurfaceId local_surface_id2 = window.GetLocalSurfaceId();
+  EXPECT_TRUE(local_surface_id2.is_valid());
+  EXPECT_NE(local_surface_id1, local_surface_id2);
+
+  window.OnDeviceScaleFactorChanged(3.0f);
+  viz::LocalSurfaceId local_surface_id3 = window.GetLocalSurfaceId();
+  EXPECT_TRUE(local_surface_id3.is_valid());
+  EXPECT_NE(local_surface_id1, local_surface_id3);
+  EXPECT_NE(local_surface_id2, local_surface_id3);
+
+  window.AllocateLocalSurfaceId();
+  viz::LocalSurfaceId local_surface_id4 = window.GetLocalSurfaceId();
+  EXPECT_NE(local_surface_id1, local_surface_id4);
+  EXPECT_NE(local_surface_id2, local_surface_id4);
+  EXPECT_NE(local_surface_id3, local_surface_id4);
 }
 
 INSTANTIATE_TEST_CASE_P(/* no prefix */,

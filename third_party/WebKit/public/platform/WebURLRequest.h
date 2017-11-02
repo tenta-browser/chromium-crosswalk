@@ -31,11 +31,12 @@
 #ifndef WebURLRequest_h
 #define WebURLRequest_h
 
+#include <memory>
 #include "WebAddressSpace.h"
+#include "WebCachePolicy.h"
 #include "WebCommon.h"
 #include "WebHTTPBody.h"
 #include "WebReferrerPolicy.h"
-#include <memory>
 
 namespace blink {
 
@@ -45,7 +46,6 @@ class WebHTTPHeaderVisitor;
 class WebSecurityOrigin;
 class WebString;
 class WebURL;
-enum class WebCachePolicy;
 
 class WebURLRequest {
  public:
@@ -60,7 +60,7 @@ class WebURLRequest {
 
   // Corresponds to Fetch's "context":
   // http://fetch.spec.whatwg.org/#concept-request-context
-  enum RequestContext {
+  enum RequestContext : uint8_t {
     kRequestContextUnspecified = 0,
     kRequestContextAudio,
     kRequestContextBeacon,
@@ -99,14 +99,14 @@ class WebURLRequest {
 
   // Corresponds to Fetch's "context frame type":
   // http://fetch.spec.whatwg.org/#concept-request-context-frame-type
-  enum FrameType {
+  enum FrameType : uint8_t {
     kFrameTypeAuxiliary,
     kFrameTypeNested,
     kFrameTypeNone,
     kFrameTypeTopLevel
   };
 
-  enum FetchRequestMode {
+  enum FetchRequestMode : uint8_t {
     kFetchRequestModeSameOrigin,
     kFetchRequestModeNoCORS,
     kFetchRequestModeCORS,
@@ -114,14 +114,14 @@ class WebURLRequest {
     kFetchRequestModeNavigate
   };
 
-  enum FetchCredentialsMode {
+  enum FetchCredentialsMode : uint8_t {
     kFetchCredentialsModeOmit,
     kFetchCredentialsModeSameOrigin,
     kFetchCredentialsModeInclude,
     kFetchCredentialsModePassword
   };
 
-  enum FetchRequestCacheMode {
+  enum FetchRequestCacheMode : uint8_t {
     kFetchRequestCacheModeDefault,
     kFetchRequestCacheModeNoStore,
     kFetchRequestCacheModeReload,
@@ -130,7 +130,7 @@ class WebURLRequest {
     kFetchRequestCacheModeOnlyIfCached
   };
 
-  enum FetchRedirectMode {
+  enum FetchRedirectMode : uint8_t {
     kFetchRedirectModeFollow,
     kFetchRedirectModeError,
     kFetchRedirectModeManual
@@ -139,7 +139,7 @@ class WebURLRequest {
   // Used to report performance metrics timed from the UI action that
   // triggered them (as opposed to navigation start time used in the
   // Navigation Timing API).
-  enum InputToLoadPerfMetricReportPolicy {
+  enum InputToLoadPerfMetricReportPolicy : uint8_t {
     kNoReport,      // Don't report metrics for this WebURLRequest.
     kReportLink,    // Report metrics with UI action link clicked.
     kReportIntent,  // Report metrics with UI action displayed intent.
@@ -150,24 +150,27 @@ class WebURLRequest {
   // The Previews types which determines whether to request a Preview version of
   // the resource.
   enum PreviewsTypes {
-    kPreviewsUnspecified = 0,       // Let the browser process decide whether or
-                                    // not to request Preview types.
-    kServerLoFiOn = 1 << 0,         // Request a Lo-Fi version of the resource
-                                    // from the server.
-    kClientLoFiOn = 1 << 1,         // Request a Lo-Fi version of the resource
-                                    // from the client.
-    kServerLitePageOn = 1 << 2,     // Request a Lite Page version of the
-                                    // resource from the server.
-    kPreviewsNoTransform = 1 << 3,  // Explicitly forbid Previews
-                                    // transformations.
-    kPreviewsOff = 1 << 4,          // Request a normal (non-Preview) version of
-                                    // the resource. Server transformations may
-                                    // still happen if the page is heavy.
+    kPreviewsUnspecified = 0,  // Let the browser process decide whether or
+                               // not to request Preview types.
+    kServerLoFiOn = 1 << 0,    // Request a Lo-Fi version of the resource
+                               // from the server.
+    kClientLoFiOn = 1 << 1,    // Request a Lo-Fi version of the resource
+                               // from the client.
+    kClientLoFiAutoReload = 1 << 2,  // Request the original version of the
+                                     // resource after a decoding error occurred
+                                     // when attempting to use Client Lo-Fi.
+    kServerLitePageOn = 1 << 3,      // Request a Lite Page version of the
+                                     // resource from the server.
+    kPreviewsNoTransform = 1 << 4,   // Explicitly forbid Previews
+                                     // transformations.
+    kPreviewsOff = 1 << 5,  // Request a normal (non-Preview) version of
+                            // the resource. Server transformations may
+                            // still happen if the page is heavy.
     kPreviewsStateLast = kPreviewsOff
   };
 
   // Indicates which service workers will receive fetch events for this request.
-  enum class ServiceWorkerMode {
+  enum class ServiceWorkerMode : uint8_t {
     // Relevant local and foreign service workers will get a fetch or
     // foreignfetch event for this request.
     kAll,
@@ -179,7 +182,7 @@ class WebURLRequest {
     kNone
   };
 
-  enum class LoadingIPCType {
+  enum class LoadingIPCType : uint8_t {
     kChromeIPC,
     kMojo,
   };
@@ -201,8 +204,8 @@ class WebURLRequest {
   BLINK_PLATFORM_EXPORT void SetURL(const WebURL&);
 
   // Used to implement third-party cookie blocking.
-  BLINK_PLATFORM_EXPORT WebURL FirstPartyForCookies() const;
-  BLINK_PLATFORM_EXPORT void SetFirstPartyForCookies(const WebURL&);
+  BLINK_PLATFORM_EXPORT WebURL SiteForCookies() const;
+  BLINK_PLATFORM_EXPORT void SetSiteForCookies(const WebURL&);
 
   // The origin of the execution context which originated the request. Used to
   // implement First-Party-Only cookie restrictions.
@@ -210,7 +213,7 @@ class WebURLRequest {
   BLINK_PLATFORM_EXPORT void SetRequestorOrigin(const WebSecurityOrigin&);
 
   // Controls whether user name, password, and cookies may be sent with the
-  // request. (If false, this overrides allowCookies.)
+  // request.
   BLINK_PLATFORM_EXPORT bool AllowStoredCredentials() const;
   BLINK_PLATFORM_EXPORT void SetAllowStoredCredentials(bool);
 
@@ -222,7 +225,7 @@ class WebURLRequest {
 
   BLINK_PLATFORM_EXPORT WebString HttpHeaderField(const WebString& name) const;
   // It's not possible to set the referrer header using this method. Use
-  // setHTTPReferrer instead.
+  // SetHTTPReferrer instead.
   BLINK_PLATFORM_EXPORT void SetHTTPHeaderField(const WebString& name,
                                                 const WebString& value);
   BLINK_PLATFORM_EXPORT void SetHTTPReferrer(const WebString& referrer,
@@ -279,13 +282,17 @@ class WebURLRequest {
   BLINK_PLATFORM_EXPORT void SetAppCacheHostID(int);
 
   // If true, the response body will be downloaded to a file managed by the
-  // WebURLLoader. See WebURLResponse::downloadedFilePath.
+  // WebURLLoader. See WebURLResponse::DownloadFilePath.
   BLINK_PLATFORM_EXPORT bool DownloadToFile() const;
   BLINK_PLATFORM_EXPORT void SetDownloadToFile(bool);
 
   // True if the requestor wants to receive the response body as a stream.
   BLINK_PLATFORM_EXPORT bool UseStreamOnResponse() const;
   BLINK_PLATFORM_EXPORT void SetUseStreamOnResponse(bool);
+
+  // True if the request can work after the fetch group is terminated.
+  BLINK_PLATFORM_EXPORT bool GetKeepalive() const;
+  BLINK_PLATFORM_EXPORT void SetKeepalive(bool);
 
   // The service worker mode indicating which service workers should get events
   // for this request.
@@ -307,6 +314,10 @@ class WebURLRequest {
   // The redirect mode which is used in Fetch API.
   BLINK_PLATFORM_EXPORT FetchRedirectMode GetFetchRedirectMode() const;
   BLINK_PLATFORM_EXPORT void SetFetchRedirectMode(FetchRedirectMode);
+
+  // The integrity which is used in Fetch API.
+  BLINK_PLATFORM_EXPORT WebString GetFetchIntegrity() const;
+  BLINK_PLATFORM_EXPORT void SetFetchIntegrity(const WebString&);
 
   // The PreviewsState which determines whether to request a Preview version of
   // the resource. The PreviewsState is a bitmask of potentially several
@@ -343,7 +354,7 @@ class WebURLRequest {
   BLINK_PLATFORM_EXPORT void SetInputPerfMetricReportPolicy(
       WebURLRequest::InputToLoadPerfMetricReportPolicy);
 
-  // https://mikewest.github.io/cors-rfc1918/#external-request
+  // https://wicg.github.io/cors-rfc1918/#external-request
   BLINK_PLATFORM_EXPORT bool IsExternalRequest() const;
 
   BLINK_PLATFORM_EXPORT LoadingIPCType GetLoadingIPCType() const;
@@ -362,15 +373,15 @@ class WebURLRequest {
 
  protected:
   // Permit subclasses to set arbitrary ResourceRequest pointer as
-  // |m_resourceRequest|. |m_ownedResourceRequest| is not set in this case.
+  // |resource_request_|. |owned_resource_request_| is not set in this case.
   BLINK_PLATFORM_EXPORT explicit WebURLRequest(ResourceRequest&);
 #endif
 
  private:
   struct ResourceRequestContainer;
 
-  // If this instance owns a ResourceRequest then |m_ownedResourceRequest|
-  // is non-null and |m_resourceRequest| points to the ResourceRequest
+  // If this instance owns a ResourceRequest then |owned_resource_request_|
+  // is non-null and |resource_request_| points to the ResourceRequest
   // instance it contains.
   std::unique_ptr<ResourceRequestContainer> owned_resource_request_;
 

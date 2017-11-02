@@ -90,10 +90,6 @@ struct Referrer;
     userAgentOverrideOption:(web::NavigationManager::UserAgentOverrideOption)
                                 userAgentOverrideOption;
 
-// Updates the URL of the yet to be committed pending item. Useful for page
-// redirects. Does nothing if there is no pending item.
-- (void)updatePendingItem:(const GURL&)url;
-
 // Commits the current pending item. No changes are made to the item during
 // this process, it is just moved from pending to committed.
 // TODO(pinkerton): Desktop Chrome broadcasts a notification here, should we?
@@ -147,8 +143,8 @@ struct Referrer;
 - (BOOL)isSameDocumentNavigationBetweenItem:(web::NavigationItem*)firstItem
                                     andItem:(web::NavigationItem*)secondItem;
 
-// Returns the index of |item| in |items|.
-- (NSInteger)indexOfItem:(const web::NavigationItem*)item;
+// Returns the index of |item| in |items|, or -1 if it is not present.
+- (int)indexOfItem:(const web::NavigationItem*)item;
 
 // Returns the item at |index| in |items|.
 - (web::NavigationItemImpl*)itemAtIndex:(NSInteger)index;

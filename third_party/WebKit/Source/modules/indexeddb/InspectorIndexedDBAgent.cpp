@@ -32,13 +32,11 @@
 
 #include "bindings/core/v8/ExceptionState.h"
 #include "bindings/core/v8/ScriptController.h"
-#include "bindings/core/v8/ScriptState.h"
-#include "bindings/core/v8/V8Binding.h"
-#include "bindings/core/v8/V8PerIsolateData.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "core/dom/DOMStringList.h"
 #include "core/dom/Document.h"
 #include "core/dom/ExecutionContext.h"
-#include "core/events/EventListener.h"
+#include "core/dom/events/EventListener.h"
 #include "core/frame/LocalFrame.h"
 #include "core/inspector/InspectedFrames.h"
 #include "core/inspector/V8InspectorString.h"
@@ -57,6 +55,8 @@
 #include "modules/indexeddb/IDBOpenDBRequest.h"
 #include "modules/indexeddb/IDBRequest.h"
 #include "modules/indexeddb/IDBTransaction.h"
+#include "platform/bindings/ScriptState.h"
+#include "platform/bindings/V8PerIsolateData.h"
 #include "platform/weborigin/SecurityOrigin.h"
 #include "platform/wtf/Vector.h"
 #include "public/platform/modules/indexeddb/WebIDBCursor.h"
@@ -319,7 +319,7 @@ static IDBTransaction* TransactionForDatabase(
     const String& object_store_name,
     const String& mode = IndexedDBNames::readonly) {
   DummyExceptionStateForTesting exception_state;
-  StringOrStringSequenceOrDOMStringList scope;
+  StringOrStringSequence scope;
   scope.setString(object_store_name);
   IDBTransaction* idb_transaction =
       idb_database->transaction(script_state, scope, mode, exception_state);
@@ -566,7 +566,8 @@ class OpenCursorCallback final : public EventListener {
     // Continue cursor before making injected script calls, otherwise
     // transaction might be finished.
     DummyExceptionStateForTesting exception_state;
-    idb_cursor->Continue(nullptr, nullptr, exception_state);
+    idb_cursor->Continue(nullptr, nullptr, IDBRequest::AsyncTraceState(),
+                         exception_state);
     if (exception_state.HadException()) {
       request_callback_->sendFailure(
           Response::Error("Could not continue cursor."));
@@ -782,7 +783,7 @@ void InspectorIndexedDBAgent::requestDatabaseNames(
   ScriptState::Scope scope(script_state);
   DummyExceptionStateForTesting exception_state;
   IDBRequest* idb_request =
-      idb_factory->getDatabaseNames(script_state, exception_state);
+      idb_factory->GetDatabaseNames(script_state, exception_state);
   if (exception_state.HadException()) {
     request_callback->sendFailure(
         Response::Error("Could not obtain database names."));
@@ -948,7 +949,7 @@ class ClearObjectStore final
       ExceptionCode ec = exception_state.Code();
       request_callback_->sendFailure(Response::Error(
           String::Format("Could not clear object store '%s': %d",
-                         object_store_name_.Utf8().Data(), ec)));
+                         object_store_name_.Utf8().data(), ec)));
       return;
     }
     idb_transaction->addEventListener(

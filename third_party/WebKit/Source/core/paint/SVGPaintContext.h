@@ -54,8 +54,11 @@ class SVGTransformContext : public TransformRecorder {
                       const LayoutObject& object,
                       const AffineTransform& transform)
       : TransformRecorder(context, object, transform) {
-    if (RuntimeEnabledFeatures::slimmingPaintV2Enabled()) {
-      const auto* object_properties = object.PaintProperties();
+    if (RuntimeEnabledFeatures::SlimmingPaintV2Enabled()) {
+      const auto* fragment_data = object.FirstFragment();
+      if (!fragment_data)
+        return;
+      const auto* object_properties = fragment_data->PaintProperties();
       if (!object_properties)
         return;
       if (object.IsSVGRoot()) {

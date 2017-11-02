@@ -27,7 +27,7 @@ ScrollState* CreateScrollState(double delta_x,
   return ScrollState::Create(std::move(scroll_state_data));
 }
 
-class ScrollStateTest : public testing::Test {};
+class ScrollStateTest : public ::testing::Test {};
 
 TEST_F(ScrollStateTest, ConsumeDeltaNative) {
   const float kDeltaX = 12.3;
@@ -68,7 +68,8 @@ TEST_F(ScrollStateTest, ConsumeDeltaNative) {
 
 TEST_F(ScrollStateTest, CurrentNativeScrollingElement) {
   ScrollState* scroll_state = CreateScrollState(0, 0, false, false);
-  Element* element = Element::Create(QualifiedName::Null(), Document::Create());
+  Element* element =
+      Element::Create(QualifiedName::Null(), Document::CreateForTest());
   scroll_state->SetCurrentNativeScrollingElement(element);
 
   EXPECT_EQ(element, scroll_state->CurrentNativeScrollingElement());

@@ -55,10 +55,11 @@ enum FontPackageFormat {
 };
 
 static FontPackageFormat PackageFormatOf(SharedBuffer* buffer) {
-  if (buffer->size() < 4)
+  static constexpr size_t kMaxHeaderSize = 4;
+  char data[kMaxHeaderSize];
+  if (!buffer->GetBytes(data, kMaxHeaderSize))
     return kPackageFormatUnknown;
 
-  const char* data = buffer->Data();
   if (data[0] == 'w' && data[1] == 'O' && data[2] == 'F' && data[3] == 'F')
     return kPackageFormatWOFF;
   if (data[0] == 'w' && data[1] == 'O' && data[2] == 'F' && data[3] == '2')
@@ -69,7 +70,7 @@ static FontPackageFormat PackageFormatOf(SharedBuffer* buffer) {
 static void RecordPackageFormatHistogram(FontPackageFormat format) {
   DEFINE_THREAD_SAFE_STATIC_LOCAL(
       EnumerationHistogram, package_format_histogram,
-      new EnumerationHistogram("WebFont.PackageFormat", kPackageFormatEnumMax));
+      ("WebFont.PackageFormat", kPackageFormatEnumMax));
   package_format_histogram.Count(format);
 }
 
@@ -130,7 +131,7 @@ void FontResource::StartLoadLimitTimers() {
                                            BLINK_FROM_HERE);
 }
 
-PassRefPtr<FontCustomPlatformData> FontResource::GetCustomFontData() {
+RefPtr<FontCustomPlatformData> FontResource::GetCustomFontData() {
   if (!font_data_ && !ErrorOccurred() && !IsLoading()) {
     if (Data())
       font_data_ = FontCustomPlatformData::Create(Data(), ots_parsing_message_);
@@ -202,11 +203,11 @@ void FontResource::AllClientsAndObserversRemoved() {
   Resource::AllClientsAndObserversRemoved();
 }
 
-void FontResource::CheckNotify() {
+void FontResource::NotifyFinished() {
   font_load_short_limit_timer_.Stop();
   font_load_long_limit_timer_.Stop();
 
-  Resource::CheckNotify();
+  Resource::NotifyFinished();
 }
 
 bool FontResource::IsLowPriorityLoadingAllowedForRemoteFont() const {

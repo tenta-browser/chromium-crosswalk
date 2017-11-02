@@ -91,7 +91,8 @@ TaskGroup::TaskGroup(
       cpu_usage_(0.0),
       gpu_memory_(-1),
       memory_state_(base::MemoryState::UNKNOWN),
-      per_process_network_usage_(-1),
+      per_process_network_usage_rate_(-1),
+      cumulative_per_process_network_usage_(0),
 #if defined(OS_WIN)
       gdi_current_handles_(-1),
       gdi_peak_handles_(-1),
@@ -108,32 +109,33 @@ TaskGroup::TaskGroup(
       gpu_memory_has_duplicates_(false),
       is_backgrounded_(false),
       weak_ptr_factory_(this) {
-  scoped_refptr<TaskGroupSampler> sampler(
-      new TaskGroupSampler(base::Process::Open(proc_id),
-                           blocking_pool_runner,
-                           base::Bind(&TaskGroup::OnCpuRefreshDone,
-                                      weak_ptr_factory_.GetWeakPtr()),
-                           base::Bind(&TaskGroup::OnMemoryUsageRefreshDone,
-                                      weak_ptr_factory_.GetWeakPtr()),
-                           base::Bind(&TaskGroup::OnIdleWakeupsRefreshDone,
-                                      weak_ptr_factory_.GetWeakPtr()),
+  if (process_id_ != base::kNullProcessId) {
+    worker_thread_sampler_ = base::MakeRefCounted<TaskGroupSampler>(
+        base::Process::Open(process_id_), blocking_pool_runner,
+        base::Bind(&TaskGroup::OnCpuRefreshDone,
+                   weak_ptr_factory_.GetWeakPtr()),
+        base::Bind(&TaskGroup::OnMemoryUsageRefreshDone,
+                   weak_ptr_factory_.GetWeakPtr()),
+        base::Bind(&TaskGroup::OnIdleWakeupsRefreshDone,
+                   weak_ptr_factory_.GetWeakPtr()),
 #if defined(OS_LINUX)
-                           base::Bind(&TaskGroup::OnOpenFdCountRefreshDone,
-                                      weak_ptr_factory_.GetWeakPtr()),
+        base::Bind(&TaskGroup::OnOpenFdCountRefreshDone,
+                   weak_ptr_factory_.GetWeakPtr()),
 #endif  // defined(OS_LINUX)
-                           base::Bind(&TaskGroup::OnProcessPriorityDone,
-                                      weak_ptr_factory_.GetWeakPtr())));
-  worker_thread_sampler_.swap(sampler);
+        base::Bind(&TaskGroup::OnProcessPriorityDone,
+                   weak_ptr_factory_.GetWeakPtr()));
 
-  shared_sampler_->RegisterCallbacks(
-      process_id_, base::Bind(&TaskGroup::OnIdleWakeupsRefreshDone,
-                              weak_ptr_factory_.GetWeakPtr()),
-      base::Bind(&TaskGroup::OnPhysicalMemoryUsageRefreshDone,
-                 weak_ptr_factory_.GetWeakPtr()),
-      base::Bind(&TaskGroup::OnStartTimeRefreshDone,
-                 weak_ptr_factory_.GetWeakPtr()),
-      base::Bind(&TaskGroup::OnCpuTimeRefreshDone,
-                 weak_ptr_factory_.GetWeakPtr()));
+    shared_sampler_->RegisterCallbacks(
+        process_id_,
+        base::Bind(&TaskGroup::OnIdleWakeupsRefreshDone,
+                   weak_ptr_factory_.GetWeakPtr()),
+        base::Bind(&TaskGroup::OnPhysicalMemoryUsageRefreshDone,
+                   weak_ptr_factory_.GetWeakPtr()),
+        base::Bind(&TaskGroup::OnStartTimeRefreshDone,
+                   weak_ptr_factory_.GetWeakPtr()),
+        base::Bind(&TaskGroup::OnCpuTimeRefreshDone,
+                   weak_ptr_factory_.GetWeakPtr()));
+  }
 }
 
 TaskGroup::~TaskGroup() {
@@ -155,7 +157,6 @@ void TaskGroup::Refresh(const gpu::VideoMemoryUsageStats& gpu_memory_stats,
                         int64_t refresh_flags) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   DCHECK(!empty());
-
   expected_on_bg_done_flags_ = refresh_flags & kBackgroundRefreshTypesMask;
   // If a refresh type was recently disabled, we need to account for that too.
   current_on_bg_done_flags_ &= expected_on_bg_done_flags_;
@@ -165,12 +166,15 @@ void TaskGroup::Refresh(const gpu::VideoMemoryUsageStats& gpu_memory_stats,
   const bool network_usage_refresh_enabled =
       TaskManagerObserver::IsResourceRefreshEnabled(REFRESH_TYPE_NETWORK_USAGE,
                                                     refresh_flags);
-  per_process_network_usage_ = network_usage_refresh_enabled ? 0 : -1;
+
+  per_process_network_usage_rate_ = network_usage_refresh_enabled ? 0 : -1;
+  cumulative_per_process_network_usage_ = 0;
   for (Task* task : tasks_) {
     task->Refresh(update_interval, refresh_flags);
-
-    if (network_usage_refresh_enabled && task->ReportsNetworkUsage())
-      per_process_network_usage_ += task->network_usage();
+    if (network_usage_refresh_enabled) {
+      per_process_network_usage_rate_ += task->network_usage_rate();
+      cumulative_per_process_network_usage_ += task->cumulative_network_usage();
+    }
   }
 
   // 2- Refresh GPU memory (if enabled).
@@ -223,7 +227,8 @@ void TaskGroup::Refresh(const gpu::VideoMemoryUsageStats& gpu_memory_stats,
   // 9-  Idle Wakeups per second.
   // 10-  (Linux and ChromeOS only) The number of file descriptors current open.
   // 11- Process priority (foreground vs. background).
-  worker_thread_sampler_->Refresh(refresh_flags);
+  if (worker_thread_sampler_)
+    worker_thread_sampler_->Refresh(refresh_flags);
 }
 
 Task* TaskGroup::GetTaskById(TaskId task_id) const {

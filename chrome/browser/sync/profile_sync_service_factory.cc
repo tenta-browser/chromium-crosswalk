@@ -6,7 +6,6 @@
 
 #include <utility>
 
-#include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/threading/sequenced_worker_pool.h"
@@ -33,6 +32,7 @@
 #include "chrome/browser/sync/chrome_sync_client.h"
 #include "chrome/browser/sync/sessions/sync_sessions_web_contents_router_factory.h"
 #include "chrome/browser/sync/supervised_user_signin_manager_wrapper.h"
+#include "chrome/browser/sync/user_event_service_factory.h"
 #include "chrome/browser/themes/theme_service_factory.h"
 #include "chrome/browser/undo/bookmark_undo_service_factory.h"
 #include "chrome/browser/web_data_service_factory.h"
@@ -67,7 +67,7 @@
 #endif  // !defined(OS_ANDROID)
 
 #if defined(OS_CHROMEOS)
-#include "chrome/browser/chromeos/printing/printers_manager_factory.h"
+#include "chrome/browser/chromeos/printing/synced_printers_manager_factory.h"
 #include "components/sync_wifi/wifi_credential_syncable_service_factory.h"
 #endif  // defined(OS_CHROMEOS)
 
@@ -88,8 +88,8 @@ void UpdateNetworkTime(const base::Time& network_time,
                        const base::TimeDelta& latency) {
   content::BrowserThread::PostTask(
       content::BrowserThread::UI, FROM_HERE,
-      base::Bind(&UpdateNetworkTimeOnUIThread, network_time, resolution,
-                 latency, base::TimeTicks::Now()));
+      base::BindOnce(&UpdateNetworkTimeOnUIThread, network_time, resolution,
+                     latency, base::TimeTicks::Now()));
 }
 
 }  // anonymous namespace
@@ -102,17 +102,19 @@ ProfileSyncServiceFactory* ProfileSyncServiceFactory::GetInstance() {
 // static
 ProfileSyncService* ProfileSyncServiceFactory::GetForProfile(
     Profile* profile) {
-  if (!ProfileSyncService::IsSyncAllowedByFlag())
-    return nullptr;
-
   return static_cast<ProfileSyncService*>(
-      GetInstance()->GetServiceForBrowserContext(profile, true));
+      GetSyncServiceForBrowserContext(profile));
 }
 
 // static
 syncer::SyncService* ProfileSyncServiceFactory::GetSyncServiceForBrowserContext(
     content::BrowserContext* context) {
-  return GetForProfile(Profile::FromBrowserContext(context));
+  if (!ProfileSyncService::IsSyncAllowedByFlag()) {
+    return nullptr;
+  }
+
+  return static_cast<syncer::SyncService*>(
+      GetInstance()->GetServiceForBrowserContext(context, true));
 }
 
 ProfileSyncServiceFactory::ProfileSyncServiceFactory()
@@ -126,6 +128,7 @@ ProfileSyncServiceFactory::ProfileSyncServiceFactory()
   DependsOn(autofill::PersonalDataManagerFactory::GetInstance());
   DependsOn(BookmarkModelFactory::GetInstance());
   DependsOn(BookmarkUndoServiceFactory::GetInstance());
+  DependsOn(browser_sync::UserEventServiceFactory::GetInstance());
   DependsOn(ChromeSigninClientFactory::GetInstance());
   DependsOn(dom_distiller::DomDistillerServiceFactory::GetInstance());
   DependsOn(GaiaCookieManagerServiceFactory::GetInstance());
@@ -141,8 +144,6 @@ ProfileSyncServiceFactory::ProfileSyncServiceFactory()
   DependsOn(SigninManagerFactory::GetInstance());
   DependsOn(SpellcheckServiceFactory::GetInstance());
 #if BUILDFLAG(ENABLE_SUPERVISED_USERS)
-  // TODO(skym, crbug.com/705545): Fix this circular dependency.
-  // DependsOn(SupervisedUserServiceFactory::GetInstance());
   DependsOn(SupervisedUserSettingsServiceFactory::GetInstance());
 #if !defined(OS_ANDROID)
   DependsOn(SupervisedUserSharedSettingsServiceFactory::GetInstance());
@@ -157,7 +158,7 @@ ProfileSyncServiceFactory::ProfileSyncServiceFactory()
       extensions::ExtensionsBrowserClient::Get()->GetExtensionSystemFactory());
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 #if defined(OS_CHROMEOS)
-  DependsOn(chromeos::PrintersManagerFactory::GetInstance());
+  DependsOn(chromeos::SyncedPrintersManagerFactory::GetInstance());
   DependsOn(sync_wifi::WifiCredentialSyncableServiceFactory::GetInstance());
 #endif  // defined(OS_CHROMEOS)
 
@@ -186,7 +187,7 @@ KeyedService* ProfileSyncServiceFactory::BuildServiceInstanceFor(
 
   if (!client_factory_) {
     init_params.sync_client =
-        base::MakeUnique<browser_sync::ChromeSyncClient>(profile);
+        std::make_unique<browser_sync::ChromeSyncClient>(profile);
   } else {
     init_params.sync_client = client_factory_->Run(profile);
   }
@@ -227,7 +228,7 @@ KeyedService* ProfileSyncServiceFactory::BuildServiceInstanceFor(
     AboutSigninInternalsFactory::GetForProfile(profile);
 
     init_params.signin_wrapper =
-        base::MakeUnique<SupervisedUserSigninManagerWrapper>(profile, signin);
+        std::make_unique<SupervisedUserSigninManagerWrapper>(profile, signin);
     init_params.oauth2_token_service =
         ProfileOAuth2TokenServiceFactory::GetForProfile(profile);
     init_params.gaia_cookie_manager_service =
@@ -244,7 +245,7 @@ KeyedService* ProfileSyncServiceFactory::BuildServiceInstanceFor(
                                      : ProfileSyncService::MANUAL_START;
   }
 
-  auto pss = base::MakeUnique<ProfileSyncService>(std::move(init_params));
+  auto pss = std::make_unique<ProfileSyncService>(std::move(init_params));
 
   // Will also initialize the sync client.
   pss->Initialize();

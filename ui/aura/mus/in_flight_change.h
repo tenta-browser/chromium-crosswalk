@@ -14,10 +14,12 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/optional.h"
-#include "cc/surfaces/local_surface_id.h"
+#include "components/viz/common/surfaces/local_surface_id.h"
 #include "ui/aura/window_observer.h"
+#include "ui/base/cursor/cursor_data.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/transform.h"
 
 namespace ui {
 
@@ -39,6 +41,7 @@ enum class ChangeType {
   ADD_TRANSIENT_WINDOW,
   BOUNDS,
   CAPTURE,
+  CHILD_MODAL_PARENT,
   DELETE_WINDOW,
   DRAG_LOOP,
   FOCUS,
@@ -46,12 +49,13 @@ enum class ChangeType {
   NEW_TOP_LEVEL_WINDOW,
   NEW_WINDOW,
   OPACITY,
-  PREDEFINED_CURSOR,
+  CURSOR,
   PROPERTY,
   REMOVE_CHILD,
   REMOVE_TRANSIENT_WINDOW_FROM_PARENT,
   REORDER,
   SET_MODAL,
+  TRANSFORM,
   VISIBLE,
 };
 
@@ -145,7 +149,7 @@ class InFlightBoundsChange : public InFlightChange {
       WindowTreeClient* window_tree_client,
       WindowMus* window,
       const gfx::Rect& revert_bounds,
-      const base::Optional<cc::LocalSurfaceId>& local_surface_id);
+      const base::Optional<viz::LocalSurfaceId>& local_surface_id);
   ~InFlightBoundsChange() override;
 
   // InFlightChange:
@@ -155,7 +159,7 @@ class InFlightBoundsChange : public InFlightChange {
  private:
   WindowTreeClient* window_tree_client_;
   gfx::Rect revert_bounds_;
-  base::Optional<cc::LocalSurfaceId> revert_local_surface_id_;
+  base::Optional<viz::LocalSurfaceId> revert_local_surface_id_;
 
   DISALLOW_COPY_AND_ASSIGN(InFlightBoundsChange);
 };
@@ -170,6 +174,24 @@ class InFlightDragChange : public InFlightChange {
 
  private:
   DISALLOW_COPY_AND_ASSIGN(InFlightDragChange);
+};
+
+class InFlightTransformChange : public InFlightChange {
+ public:
+  InFlightTransformChange(WindowTreeClient* window_tree_client,
+                          WindowMus* window,
+                          const gfx::Transform& revert_transform);
+  ~InFlightTransformChange() override;
+
+  // InFlightChange:
+  void SetRevertValueFrom(const InFlightChange& change) override;
+  void Revert() override;
+
+ private:
+  WindowTreeClient* window_tree_client_;
+  gfx::Transform revert_transform_;
+
+  DISALLOW_COPY_AND_ASSIGN(InFlightTransformChange);
 };
 
 // Inflight change that crashes on failure. This is useful for changes that are
@@ -271,20 +293,19 @@ class InFlightPropertyChange : public InFlightChange {
   DISALLOW_COPY_AND_ASSIGN(InFlightPropertyChange);
 };
 
-class InFlightPredefinedCursorChange : public InFlightChange {
+class InFlightCursorChange : public InFlightChange {
  public:
-  InFlightPredefinedCursorChange(WindowMus* window,
-                                 ui::mojom::CursorType revert_value);
-  ~InFlightPredefinedCursorChange() override;
+  InFlightCursorChange(WindowMus* window, const ui::CursorData& revert_value);
+  ~InFlightCursorChange() override;
 
   // InFlightChange:
   void SetRevertValueFrom(const InFlightChange& change) override;
   void Revert() override;
 
  private:
-  ui::mojom::CursorType revert_cursor_;
+  ui::CursorData revert_cursor_;
 
-  DISALLOW_COPY_AND_ASSIGN(InFlightPredefinedCursorChange);
+  DISALLOW_COPY_AND_ASSIGN(InFlightCursorChange);
 };
 
 class InFlightVisibleChange : public InFlightChange {

@@ -19,6 +19,8 @@ TestContextSupport::TestContextSupport()
 
 TestContextSupport::~TestContextSupport() {}
 
+void TestContextSupport::FlushPendingWork() {}
+
 void TestContextSupport::SignalSyncToken(const gpu::SyncToken& sync_token,
                                          const base::Closure& callback) {
   sync_point_callbacks_.push_back(callback);
@@ -91,5 +93,16 @@ uint64_t TestContextSupport::ShareGroupTracingGUID() const {
 
 void TestContextSupport::SetErrorMessageCallback(
     const base::Callback<void(const char*, int32_t)>& callback) {}
+
+void TestContextSupport::AddLatencyInfo(
+    const std::vector<ui::LatencyInfo>& latency_info) {}
+
+bool TestContextSupport::ThreadSafeShallowLockDiscardableTexture(
+    uint32_t texture_id) {
+  NOTIMPLEMENTED();
+  return false;
+}
+void TestContextSupport::CompleteLockDiscardableTexureOnContextThread(
+    uint32_t texture_id) {}
 
 }  // namespace cc

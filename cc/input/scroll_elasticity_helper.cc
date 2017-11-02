@@ -7,12 +7,13 @@
 #include "cc/layers/layer_impl.h"
 #include "cc/trees/layer_tree_host_impl.h"
 #include "cc/trees/layer_tree_impl.h"
+#include "cc/trees/scroll_node.h"
 
 namespace cc {
 
 class ScrollElasticityHelperImpl : public ScrollElasticityHelper {
  public:
-  explicit ScrollElasticityHelperImpl(LayerTreeHostImpl* layer_tree_host_impl);
+  explicit ScrollElasticityHelperImpl(LayerTreeHostImpl* host_impl);
   ~ScrollElasticityHelperImpl() override;
 
   bool IsUserScrollable() const override;
@@ -24,28 +25,26 @@ class ScrollElasticityHelperImpl : public ScrollElasticityHelper {
   void RequestOneBeginFrame() override;
 
  private:
-  LayerTreeHostImpl* layer_tree_host_impl_;
+  LayerTreeHostImpl* host_impl_;
 };
 
 ScrollElasticityHelperImpl::ScrollElasticityHelperImpl(
     LayerTreeHostImpl* layer_tree)
-    : layer_tree_host_impl_(layer_tree) {
-}
+    : host_impl_(layer_tree) {}
 
 ScrollElasticityHelperImpl::~ScrollElasticityHelperImpl() {
 }
 
 bool ScrollElasticityHelperImpl::IsUserScrollable() const {
-  LayerImpl* layer = layer_tree_host_impl_->OuterViewportScrollLayer();
-  if (!layer)
+  const auto* scroll_node = host_impl_->OuterViewportScrollNode();
+  if (!scroll_node)
     return false;
-  return layer->user_scrollable_horizontal() ||
-         layer->user_scrollable_vertical();
+  return scroll_node->user_scrollable_horizontal ||
+         scroll_node->user_scrollable_vertical;
 }
 
 gfx::Vector2dF ScrollElasticityHelperImpl::StretchAmount() const {
-  return layer_tree_host_impl_->active_tree()->elastic_overscroll()->Current(
-      true);
+  return host_impl_->active_tree()->elastic_overscroll()->Current(true);
 }
 
 void ScrollElasticityHelperImpl::SetStretchAmount(
@@ -53,39 +52,37 @@ void ScrollElasticityHelperImpl::SetStretchAmount(
   if (stretch_amount == StretchAmount())
     return;
 
-  layer_tree_host_impl_->active_tree()->elastic_overscroll()->SetCurrent(
-      stretch_amount);
-  layer_tree_host_impl_->active_tree()->set_needs_update_draw_properties();
-  layer_tree_host_impl_->SetNeedsCommit();
-  layer_tree_host_impl_->SetNeedsRedraw();
-  layer_tree_host_impl_->SetFullViewportDamage();
+  host_impl_->active_tree()->elastic_overscroll()->SetCurrent(stretch_amount);
+  host_impl_->active_tree()->set_needs_update_draw_properties();
+  host_impl_->SetNeedsCommit();
+  host_impl_->SetNeedsRedraw();
+  host_impl_->SetFullViewportDamage();
 }
 
 gfx::ScrollOffset ScrollElasticityHelperImpl::ScrollOffset() const {
-  return layer_tree_host_impl_->active_tree()->TotalScrollOffset();
+  return host_impl_->active_tree()->TotalScrollOffset();
 }
 
 gfx::ScrollOffset ScrollElasticityHelperImpl::MaxScrollOffset() const {
-  return layer_tree_host_impl_->active_tree()->TotalMaxScrollOffset();
+  return host_impl_->active_tree()->TotalMaxScrollOffset();
 }
 
 void ScrollElasticityHelperImpl::ScrollBy(const gfx::Vector2dF& delta) {
-  LayerImpl* root_scroll_layer =
-      layer_tree_host_impl_->OuterViewportScrollLayer()
-          ? layer_tree_host_impl_->OuterViewportScrollLayer()
-          : layer_tree_host_impl_->InnerViewportScrollLayer();
+  LayerImpl* root_scroll_layer = host_impl_->OuterViewportScrollLayer()
+                                     ? host_impl_->OuterViewportScrollLayer()
+                                     : host_impl_->InnerViewportScrollLayer();
   if (root_scroll_layer)
     root_scroll_layer->ScrollBy(delta);
 }
 
 void ScrollElasticityHelperImpl::RequestOneBeginFrame() {
-  layer_tree_host_impl_->SetNeedsOneBeginImplFrame();
+  host_impl_->SetNeedsOneBeginImplFrame();
 }
 
 // static
 ScrollElasticityHelper* ScrollElasticityHelper::CreateForLayerTreeHostImpl(
-    LayerTreeHostImpl* layer_tree_host_impl) {
-  return new ScrollElasticityHelperImpl(layer_tree_host_impl);
+    LayerTreeHostImpl* host_impl) {
+  return new ScrollElasticityHelperImpl(host_impl);
 }
 
 }  // namespace cc

@@ -68,7 +68,7 @@ sk_sp<SkSurface> WaylandCanvasSurface::GetSurface() {
     return nullptr;
 
   wl::Object<wl_shm_pool> pool(wl_shm_create_pool(
-      connection_->shm(), shared_memory->handle().fd, length));
+      connection_->shm(), shared_memory->handle().GetHandle(), length));
   if (!pool)
     return nullptr;
   wl::Object<wl_buffer> buffer(
@@ -141,7 +141,7 @@ class GLOzoneEGLWayland : public GLOzoneEGL {
 
  protected:
   intptr_t GetNativeDisplay() override;
-  bool LoadGLES2Bindings() override;
+  bool LoadGLES2Bindings(gl::GLImplementation impl) override;
 
  private:
   WaylandConnection* connection_;
@@ -176,9 +176,11 @@ intptr_t GLOzoneEGLWayland::GetNativeDisplay() {
   return reinterpret_cast<intptr_t>(connection_->display());
 }
 
-bool GLOzoneEGLWayland::LoadGLES2Bindings() {
+bool GLOzoneEGLWayland::LoadGLES2Bindings(gl::GLImplementation impl) {
+  // TODO: It may not be necessary to set this environment variable when using
+  // swiftshader.
   setenv("EGL_PLATFORM", "wayland", 0);
-  return LoadDefaultEGLGLES2Bindings();
+  return LoadDefaultEGLGLES2Bindings(impl);
 }
 
 }  // namespace
@@ -204,8 +206,10 @@ WaylandSurfaceFactory::CreateCanvasForWidget(gfx::AcceleratedWidget widget) {
 std::vector<gl::GLImplementation>
 WaylandSurfaceFactory::GetAllowedGLImplementations() {
   std::vector<gl::GLImplementation> impls;
-  if (egl_implementation_)
+  if (egl_implementation_) {
     impls.push_back(gl::kGLImplementationEGLGLES2);
+    impls.push_back(gl::kGLImplementationSwiftShaderGL);
+  }
   impls.push_back(gl::kGLImplementationOSMesaGL);
   return impls;
 }

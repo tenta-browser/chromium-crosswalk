@@ -6,6 +6,7 @@
 
 #include <memory>
 
+#include "base/command_line.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
@@ -13,6 +14,7 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "services/service_manager/public/interfaces/connector.mojom.h"
 #include "services/ui/common/accelerator_util.h"
+#include "services/ui/common/switches.h"
 #include "services/ui/ws/accelerator.h"
 #include "services/ui/ws/display.h"
 #include "services/ui/ws/display_manager.h"
@@ -26,6 +28,7 @@
 #include "services/ui/ws/window_server.h"
 #include "services/ui/ws/window_tree.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/base/cursor/cursor.h"
 #include "ui/events/event.h"
 
 namespace ui {
@@ -46,6 +49,7 @@ class WindowManagerStateTest : public testing::Test {
                            ServerWindow** server_window);
 
   void DispatchInputEventToWindow(ServerWindow* target,
+                                  int64_t display_id,
                                   const ui::Event& event,
                                   Accelerator* accelerator);
   void OnEventAckTimeout(ClientSpecificId client_id);
@@ -68,6 +72,9 @@ class WindowManagerStateTest : public testing::Test {
   WindowServer* window_server() {
     return window_event_targeting_helper_.window_server();
   }
+  ui::CursorType cursor_type() const {
+    return window_event_targeting_helper_.cursor_type();
+  }
 
   void EmbedAt(WindowTree* tree,
                const ClientWindowId& embed_window_id,
@@ -75,7 +82,7 @@ class WindowManagerStateTest : public testing::Test {
                WindowTree** embed_tree,
                TestWindowTreeClient** embed_client_proxy) {
     mojom::WindowTreeClientPtr embed_client;
-    mojom::WindowTreeClientRequest client_request(&embed_client);
+    auto client_request = mojo::MakeRequest(&embed_client);
     ASSERT_TRUE(
         tree->Embed(embed_window_id, std::move(embed_client), embed_flags));
     TestWindowTreeClient* client =
@@ -95,13 +102,15 @@ class WindowManagerStateTest : public testing::Test {
   // testing::Test:
   void SetUp() override;
 
+ protected:
+  // Handles WindowStateManager ack timeouts.
+  scoped_refptr<base::TestSimpleTaskRunner> task_runner_;
+
  private:
   WindowEventTargetingHelper window_event_targeting_helper_;
 
   WindowManagerState* window_manager_state_;
 
-  // Handles WindowStateManager ack timeouts.
-  scoped_refptr<base::TestSimpleTaskRunner> task_runner_;
   TestWindowManager window_manager_;
   ServerWindow* window_ = nullptr;
   WindowTree* window_tree_ = nullptr;
@@ -134,11 +143,13 @@ void WindowManagerStateTest::CreateSecondaryTree(
 
 void WindowManagerStateTest::DispatchInputEventToWindow(
     ServerWindow* target,
+    int64_t display_id,
     const ui::Event& event,
     Accelerator* accelerator) {
   WindowManagerStateTestApi test_api(window_manager_state_);
   ClientSpecificId client_id = test_api.GetEventTargetClientId(target, false);
-  test_api.DispatchInputEventToWindow(target, client_id, event, accelerator);
+  test_api.DispatchInputEventToWindow(target, client_id, display_id, event,
+                                      accelerator);
 }
 
 void WindowManagerStateTest::OnEventAckTimeout(
@@ -171,6 +182,22 @@ void SetCanFocusUp(ServerWindow* window) {
   }
 }
 
+class WindowManagerStateTestAsync : public WindowManagerStateTest {
+ public:
+  WindowManagerStateTestAsync() {}
+  ~WindowManagerStateTestAsync() override {}
+
+  // WindowManagerStateTest:
+  void SetUp() override {
+    base::CommandLine::ForCurrentProcess()->AppendSwitch(
+        switches::kUseAsyncEventTargeting);
+    WindowManagerStateTest::SetUp();
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(WindowManagerStateTestAsync);
+};
+
 // Tests that when an event is dispatched with no accelerator, that post target
 // accelerator is not triggered.
 TEST_F(WindowManagerStateTest, NullAccelerator) {
@@ -178,8 +205,10 @@ TEST_F(WindowManagerStateTest, NullAccelerator) {
   EXPECT_TRUE(state);
 
   ServerWindow* target = window();
+  const Display* display = window_tree()->GetDisplay(target);
+  DCHECK(display);
   ui::KeyEvent key(ui::ET_KEY_PRESSED, ui::VKEY_W, ui::EF_CONTROL_DOWN);
-  DispatchInputEventToWindow(target, key, nullptr);
+  DispatchInputEventToWindow(target, display->GetId(), key, nullptr);
   WindowTree* target_tree = window_tree();
   TestChangeTracker* tracker = window_tree_client()->tracker();
   ASSERT_EQ(1u, tracker->changes()->size());
@@ -197,7 +226,9 @@ TEST_F(WindowManagerStateTest, PostTargetAccelerator) {
   std::unique_ptr<Accelerator> accelerator = CreateAccelerator();
 
   ServerWindow* target = window();
-  DispatchInputEventToWindow(target, key, accelerator.get());
+  const Display* display = window_tree()->GetDisplay(target);
+  DCHECK(display);
+  DispatchInputEventToWindow(target, display->GetId(), key, accelerator.get());
   TestChangeTracker* tracker = window_tree_client()->tracker();
   ASSERT_EQ(1u, tracker->changes()->size());
   EXPECT_EQ("InputEvent window=1,1 event_action=7",
@@ -219,7 +250,7 @@ TEST_F(WindowManagerStateTest, PreTargetConsumed) {
   window_tree()->AddWindow(FirstRootId(window_tree()), child_window_id);
   child_window->SetVisible(true);
   SetCanFocusUp(child_window);
-  tree()->GetDisplay(child_window)->AddActivationParent(child_window->parent());
+  child_window->parent()->set_is_activation_parent(true);
   ASSERT_TRUE(window_tree()->SetFocus(child_window_id));
 
   // Register a pre-accelerator.
@@ -275,7 +306,7 @@ TEST_F(WindowManagerStateTest, AckWithProperties) {
   window_tree()->AddWindow(FirstRootId(window_tree()), child_window_id);
   child_window->SetVisible(true);
   SetCanFocusUp(child_window);
-  tree()->GetDisplay(child_window)->AddActivationParent(child_window->parent());
+  child_window->parent()->set_is_activation_parent(true);
   ASSERT_TRUE(window_tree()->SetFocus(child_window_id));
 
   // Register a pre-accelerator.
@@ -346,13 +377,16 @@ TEST_F(WindowManagerStateTest, ClientHandlesEvent) {
   std::unique_ptr<Accelerator> accelerator = CreateAccelerator();
 
   ServerWindow* target = window();
-  DispatchInputEventToWindow(target, key, accelerator.get());
+  const Display* display = window_tree()->GetDisplay(target);
+  DCHECK(display);
+  DispatchInputEventToWindow(target, display->GetId(), key, accelerator.get());
   TestChangeTracker* tracker = window_tree_client()->tracker();
   ASSERT_EQ(1u, tracker->changes()->size());
   EXPECT_EQ("InputEvent window=1,1 event_action=7",
             ChangesToDescription1(*tracker->changes())[0]);
 
-  window_manager_state()->OnEventAck(tree(), mojom::EventResult::HANDLED);
+  EXPECT_TRUE(WindowManagerStateTestApi(window_manager_state())
+                  .AckInFlightEvent(mojom::EventResult::HANDLED));
   EXPECT_FALSE(window_manager()->on_accelerator_called());
 }
 
@@ -363,14 +397,17 @@ TEST_F(WindowManagerStateTest, AcceleratorDeleted) {
   std::unique_ptr<Accelerator> accelerator(CreateAccelerator());
 
   ServerWindow* target = window();
-  DispatchInputEventToWindow(target, key, accelerator.get());
+  const Display* display = window_tree()->GetDisplay(target);
+  DCHECK(display);
+  DispatchInputEventToWindow(target, display->GetId(), key, accelerator.get());
   TestChangeTracker* tracker = window_tree_client()->tracker();
   ASSERT_EQ(1u, tracker->changes()->size());
   EXPECT_EQ("InputEvent window=1,1 event_action=7",
             ChangesToDescription1(*tracker->changes())[0]);
 
   accelerator.reset();
-  window_manager_state()->OnEventAck(tree(), mojom::EventResult::UNHANDLED);
+  EXPECT_TRUE(WindowManagerStateTestApi(window_manager_state())
+                  .AckInFlightEvent(mojom::EventResult::UNHANDLED));
   EXPECT_FALSE(window_manager()->on_accelerator_called());
 }
 
@@ -381,7 +418,9 @@ TEST_F(WindowManagerStateTest, EnqueuedAccelerators) {
   std::unique_ptr<Accelerator> accelerator(CreateAccelerator());
 
   ServerWindow* target = window();
-  DispatchInputEventToWindow(target, key, accelerator.get());
+  const Display* display = window_tree()->GetDisplay(target);
+  DCHECK(display);
+  DispatchInputEventToWindow(target, display->GetId(), key, accelerator.get());
   TestChangeTracker* tracker = window_tree_client()->tracker();
   ASSERT_EQ(1u, tracker->changes()->size());
   EXPECT_EQ("InputEvent window=1,1 event_action=7",
@@ -395,7 +434,8 @@ TEST_F(WindowManagerStateTest, EnqueuedAccelerators) {
   uint32_t accelerator_id = 2;
   std::unique_ptr<Accelerator> accelerator2(
       new Accelerator(accelerator_id, *matcher));
-  DispatchInputEventToWindow(target, key2, accelerator2.get());
+  DispatchInputEventToWindow(target, display->GetId(), key2,
+                             accelerator2.get());
   EXPECT_TRUE(tracker->changes()->empty());
 
   WindowTreeTestApi(window_tree()).AckOldestEvent();
@@ -412,7 +452,9 @@ TEST_F(WindowManagerStateTest, DeleteTree) {
   std::unique_ptr<Accelerator> accelerator = CreateAccelerator();
 
   ServerWindow* target = window();
-  DispatchInputEventToWindow(target, key, accelerator.get());
+  const Display* display = window_tree()->GetDisplay(target);
+  DCHECK(display);
+  DispatchInputEventToWindow(target, display->GetId(), key, accelerator.get());
   TestChangeTracker* tracker = window_tree_client()->tracker();
   ASSERT_EQ(1u, tracker->changes()->size());
   EXPECT_EQ("InputEvent window=1,1 event_action=7",
@@ -435,10 +477,14 @@ TEST_F(WindowManagerStateTest, DeleteNonRootTree) {
 
   ui::KeyEvent key(ui::ET_KEY_PRESSED, ui::VKEY_W, ui::EF_CONTROL_DOWN);
   std::unique_ptr<Accelerator> accelerator = CreateAccelerator();
-  DispatchInputEventToWindow(target, key, accelerator.get());
+  const Display* display = target_tree->GetDisplay(target);
+  DCHECK(display);
+  DispatchInputEventToWindow(target, display->GetId(), key, accelerator.get());
   TestChangeTracker* tracker = embed_connection->tracker();
   ASSERT_EQ(1u, tracker->changes()->size());
-  EXPECT_EQ("InputEvent window=2,1 event_action=7",
+  // clients that created this window is receiving the event, so client_id part
+  // would be reset to 0 before sending back to clients.
+  EXPECT_EQ("InputEvent window=0,1 event_action=7",
             ChangesToDescription1(*tracker->changes())[0]);
   EXPECT_TRUE(wm_client()->tracker()->changes()->empty());
 
@@ -453,10 +499,12 @@ TEST_F(WindowManagerStateTest, DontSendQueuedEventsToADeadTree) {
   ServerWindow* target = window();
   TestChangeTracker* tracker = window_tree_client()->tracker();
 
+  const Display* display = window_tree()->GetDisplay(target);
+  DCHECK(display);
   ui::MouseEvent press(ui::ET_MOUSE_PRESSED, gfx::Point(5, 5), gfx::Point(5, 5),
                        base::TimeTicks(), EF_LEFT_MOUSE_BUTTON,
                        EF_LEFT_MOUSE_BUTTON);
-  DispatchInputEventToWindow(target, press, nullptr);
+  DispatchInputEventToWindow(target, display->GetId(), press, nullptr);
   ASSERT_EQ(1u, tracker->changes()->size());
   EXPECT_EQ("InputEvent window=1,1 event_action=1",
             ChangesToDescription1(*tracker->changes())[0]);
@@ -468,7 +516,7 @@ TEST_F(WindowManagerStateTest, DontSendQueuedEventsToADeadTree) {
   ui::MouseEvent release(ui::ET_MOUSE_RELEASED, gfx::Point(5, 5),
                          gfx::Point(5, 5), base::TimeTicks(),
                          EF_LEFT_MOUSE_BUTTON, EF_LEFT_MOUSE_BUTTON);
-  DispatchInputEventToWindow(target, release, nullptr);
+  DispatchInputEventToWindow(target, display->GetId(), release, nullptr);
   EXPECT_EQ(0u, tracker->changes()->size());
 
   // Destroying a window tree with an event in queue shouldn't crash.
@@ -479,7 +527,10 @@ TEST_F(WindowManagerStateTest, DontSendQueuedEventsToADeadTree) {
 TEST_F(WindowManagerStateTest, AckTimeout) {
   ui::KeyEvent key(ui::ET_KEY_PRESSED, ui::VKEY_W, ui::EF_CONTROL_DOWN);
   std::unique_ptr<Accelerator> accelerator = CreateAccelerator();
-  DispatchInputEventToWindow(window(), key, accelerator.get());
+  const Display* display = window_tree()->GetDisplay(window());
+  DCHECK(display);
+  DispatchInputEventToWindow(window(), display->GetId(), key,
+                             accelerator.get());
   TestChangeTracker* tracker = window_tree_client()->tracker();
   ASSERT_EQ(1u, tracker->changes()->size());
   EXPECT_EQ("InputEvent window=1,1 event_action=7",
@@ -493,13 +544,13 @@ TEST_F(WindowManagerStateTest, AckTimeout) {
 TEST_F(WindowManagerStateTest, InterceptingEmbedderReceivesEvents) {
   WindowTree* embedder_tree = tree();
   ServerWindow* embedder_root = window();
-  const ClientWindowId embed_window_id(
-      WindowIdToTransportId(WindowId(embedder_tree->id(), 12)));
+  const ClientWindowId embed_window_id(embedder_tree->id(), 12);
   embedder_tree->NewWindow(embed_window_id, ServerWindow::Properties());
   ServerWindow* embedder_window =
       embedder_tree->GetWindowByClientId(embed_window_id);
+  WindowId embedder_root_id = embedder_root->id();
   ASSERT_TRUE(embedder_tree->AddWindow(
-      ClientWindowId(WindowIdToTransportId(embedder_root->id())),
+      ClientWindowId(embedder_root_id.client_id, embedder_root_id.window_id),
       embed_window_id));
 
   TestWindowTreeClient* embedder_client = wm_client();
@@ -514,9 +565,12 @@ TEST_F(WindowManagerStateTest, InterceptingEmbedderReceivesEvents) {
     ASSERT_TRUE(embed_client_proxy);
 
     // Send an event to the embed window. It should go to the embedded client.
+    const Display* display = embed_tree->GetDisplay(embedder_window);
+    DCHECK(display);
     ui::MouseEvent mouse(ui::ET_MOUSE_MOVED, gfx::Point(), gfx::Point(),
                          base::TimeTicks(), 0, 0);
-    DispatchInputEventToWindow(embedder_window, mouse, nullptr);
+    DispatchInputEventToWindow(embedder_window, display->GetId(), mouse,
+                               nullptr);
     ASSERT_EQ(1u, embed_client_proxy->tracker()->changes()->size());
     EXPECT_EQ(CHANGE_TYPE_INPUT_EVENT,
               (*embed_client_proxy->tracker()->changes())[0].type);
@@ -537,9 +591,12 @@ TEST_F(WindowManagerStateTest, InterceptingEmbedderReceivesEvents) {
 
     // Send an event to the embed window. But this time, it should reach the
     // embedder.
+    const Display* display = embed_tree->GetDisplay(embedder_window);
+    DCHECK(display);
     ui::MouseEvent mouse(ui::ET_MOUSE_MOVED, gfx::Point(), gfx::Point(),
                          base::TimeTicks(), 0, 0);
-    DispatchInputEventToWindow(embedder_window, mouse, nullptr);
+    DispatchInputEventToWindow(embedder_window, display->GetId(), mouse,
+                               nullptr);
     ASSERT_EQ(0u, embed_client_proxy->tracker()->changes()->size());
     ASSERT_EQ(1u, embedder_client->tracker()->changes()->size());
     EXPECT_EQ(CHANGE_TYPE_INPUT_EVENT,
@@ -549,11 +606,11 @@ TEST_F(WindowManagerStateTest, InterceptingEmbedderReceivesEvents) {
     embedder_client->tracker()->changes()->clear();
 
     // Embed another tree in the embedded tree.
-    const ClientWindowId nested_embed_window_id(
-        WindowIdToTransportId(WindowId(embed_tree->id(), 23)));
+    const ClientWindowId nested_embed_window_id(embed_tree->id(), 23);
     embed_tree->NewWindow(nested_embed_window_id, ServerWindow::Properties());
-    const ClientWindowId embed_root_id(
-        WindowIdToTransportId((*embed_tree->roots().begin())->id()));
+    WindowId embed_root_window_id = (*embed_tree->roots().begin())->id();
+    const ClientWindowId embed_root_id(embed_root_window_id.client_id,
+                                       embed_root_window_id.window_id);
     ASSERT_TRUE(embed_tree->AddWindow(embed_root_id, nested_embed_window_id));
 
     WindowTree* nested_embed_tree = nullptr;
@@ -571,7 +628,8 @@ TEST_F(WindowManagerStateTest, InterceptingEmbedderReceivesEvents) {
     DCHECK(nested_embed_window->parent());
     mouse = ui::MouseEvent(ui::ET_MOUSE_MOVED, gfx::Point(), gfx::Point(),
                            base::TimeTicks(), 0, 0);
-    DispatchInputEventToWindow(nested_embed_window, mouse, nullptr);
+    DispatchInputEventToWindow(nested_embed_window, display->GetId(), mouse,
+                               nullptr);
     ASSERT_EQ(0u, nested_embed_client_proxy->tracker()->changes()->size());
     ASSERT_EQ(0u, embed_client_proxy->tracker()->changes()->size());
 
@@ -591,7 +649,10 @@ TEST_F(WindowManagerStateTest, PostAcceleratorForgotten) {
                                ui::EF_CONTROL_DOWN);
   std::unique_ptr<Accelerator> accelerator = CreateAccelerator();
   ServerWindow* target = window();
-  DispatchInputEventToWindow(target, accelerator_key, accelerator.get());
+  const Display* display = window_tree()->GetDisplay(target);
+  DCHECK(display);
+  DispatchInputEventToWindow(target, display->GetId(), accelerator_key,
+                             accelerator.get());
   TestChangeTracker* tracker = window_tree_client()->tracker();
   ASSERT_EQ(1u, tracker->changes()->size());
   EXPECT_EQ("InputEvent window=1,1 event_action=7",
@@ -604,7 +665,8 @@ TEST_F(WindowManagerStateTest, PostAcceleratorForgotten) {
   // shouldn't be called.
   ui::KeyEvent non_accelerator_key(ui::ET_KEY_PRESSED, ui::VKEY_T,
                                    ui::EF_CONTROL_DOWN);
-  DispatchInputEventToWindow(target, non_accelerator_key, nullptr);
+  DispatchInputEventToWindow(target, display->GetId(), non_accelerator_key,
+                             nullptr);
   ASSERT_EQ(1u, tracker->changes()->size());
   EXPECT_EQ("InputEvent window=1,1 event_action=7",
             ChangesToDescription1(*tracker->changes())[0]);
@@ -638,8 +700,6 @@ TEST(WindowManagerStateShutdownTest, DestroyTreeBeforeDisplay) {
 
 TEST_F(WindowManagerStateTest, CursorResetOverNoTarget) {
   ASSERT_EQ(1u, window_server()->display_manager()->displays().size());
-  Display* display = *(window_server()->display_manager()->displays().begin());
-  DisplayTestApi display_test_api(display);
   const ClientWindowId child_window_id(11);
   window_tree()->NewWindow(child_window_id, ServerWindow::Properties());
   ServerWindow* child_window =
@@ -647,8 +707,8 @@ TEST_F(WindowManagerStateTest, CursorResetOverNoTarget) {
   window_tree()->AddWindow(FirstRootId(window_tree()), child_window_id);
   child_window->SetVisible(true);
   child_window->SetBounds(gfx::Rect(0, 0, 20, 20));
-  child_window->parent()->SetPredefinedCursor(ui::mojom::CursorType::COPY);
-  EXPECT_EQ(ui::mojom::CursorType::COPY, display_test_api.last_cursor());
+  child_window->parent()->SetCursor(ui::CursorData(ui::CursorType::kCopy));
+  EXPECT_EQ(ui::CursorType::kCopy, cursor_type());
   // Move the mouse outside the bounds of the child, so that the mouse is not
   // over any valid windows. Cursor should change to POINTER.
   ui::PointerEvent move(
@@ -658,7 +718,44 @@ TEST_F(WindowManagerStateTest, CursorResetOverNoTarget) {
   window_manager_state()->ProcessEvent(move, 0);
   // The event isn't over a valid target, which should trigger resetting the
   // cursor to POINTER.
-  EXPECT_EQ(ui::mojom::CursorType::POINTER, display_test_api.last_cursor());
+  EXPECT_EQ(ui::CursorType::kPointer, cursor_type());
+}
+
+TEST_F(WindowManagerStateTestAsync, CursorResetOverNoTargetAsync) {
+  ASSERT_EQ(1u, window_server()->display_manager()->displays().size());
+  const ClientWindowId child_window_id(11);
+  window_tree()->NewWindow(child_window_id, ServerWindow::Properties());
+  ServerWindow* child_window =
+      window_tree()->GetWindowByClientId(child_window_id);
+  window_tree()->AddWindow(FirstRootId(window_tree()), child_window_id);
+  // Setup steps already do hit-test for mouse cursor update so this should go
+  // to the queue in EventTargeter.
+  EventTargeterTestApi event_targeter_test_api(
+      EventDispatcherTestApi(window_manager_state()->event_dispatcher())
+          .event_targeter());
+  EXPECT_TRUE(event_targeter_test_api.HasPendingQueries());
+  // But no events have been generated, so IsProcessingEvent() should be false.
+  EXPECT_FALSE(window_manager_state()->event_dispatcher()->IsProcessingEvent());
+  child_window->SetVisible(true);
+  child_window->SetBounds(gfx::Rect(0, 0, 20, 20));
+  child_window->parent()->SetCursor(ui::CursorData(ui::CursorType::kCopy));
+  // Move the mouse outside the bounds of the child, so that the mouse is not
+  // over any valid windows. Cursor should change to POINTER.
+  ui::PointerEvent move(
+      ui::ET_POINTER_MOVED, gfx::Point(25, 25), gfx::Point(25, 25), 0, 0,
+      ui::PointerDetails(EventPointerType::POINTER_TYPE_MOUSE, 0),
+      base::TimeTicks());
+  WindowManagerStateTestApi test_api(window_manager_state());
+  EXPECT_TRUE(test_api.is_event_queue_empty());
+  window_manager_state()->ProcessEvent(move, 0);
+  EXPECT_FALSE(test_api.tree_awaiting_input_ack());
+  EXPECT_TRUE(window_manager_state()->event_dispatcher()->IsProcessingEvent());
+  EXPECT_TRUE(test_api.is_event_queue_empty());
+  task_runner_->RunUntilIdle();
+  EXPECT_TRUE(test_api.is_event_queue_empty());
+  // The event isn't over a valid target, which should trigger resetting the
+  // cursor to POINTER.
+  EXPECT_EQ(ui::CursorType::kPointer, cursor_type());
 }
 
 }  // namespace test

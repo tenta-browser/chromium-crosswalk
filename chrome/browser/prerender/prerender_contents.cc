@@ -6,13 +6,13 @@
 
 #include <stddef.h>
 
-#include <algorithm>
 #include <functional>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/process/process_metrics.h"
+#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -44,7 +44,7 @@
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/common/frame_navigate_params.h"
 #include "net/http/http_response_headers.h"
-#include "services/service_manager/public/cpp/interface_registry.h"
+#include "services/service_manager/public/cpp/binder_registry.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/gfx/geometry/size.h"
 
@@ -140,6 +140,7 @@ class PrerenderContents::WebContentsDelegateImpl
 
   bool ShouldCreateWebContents(
       content::WebContents* web_contents,
+      content::RenderFrameHost* opener,
       content::SiteInstance* source_site_instance,
       int32_t route_id,
       int32_t main_frame_route_id,
@@ -220,6 +221,8 @@ PrerenderContents::PrerenderContents(
       network_bytes_(0),
       weak_factory_(this) {
   DCHECK(prerender_manager);
+  registry_.AddInterface(base::Bind(
+      &PrerenderContents::OnPrerenderCancelerRequest, base::Unretained(this)));
 }
 
 bool PrerenderContents::Init() {
@@ -518,8 +521,7 @@ bool PrerenderContents::Matches(
       session_storage_namespace_id_ != session_storage_namespace->id()) {
     return false;
   }
-  return std::find(alias_urls_.begin(), alias_urls_.end(), url) !=
-         alias_urls_.end();
+  return base::ContainsValue(alias_urls_, url);
 }
 
 void PrerenderContents::RenderProcessGone(base::TerminationStatus status) {
@@ -531,12 +533,15 @@ void PrerenderContents::RenderProcessGone(base::TerminationStatus status) {
   Destroy(FINAL_STATUS_RENDERER_CRASHED);
 }
 
+void PrerenderContents::OnInterfaceRequestFromFrame(
+    content::RenderFrameHost* render_frame_host,
+    const std::string& interface_name,
+    mojo::ScopedMessagePipeHandle* interface_pipe) {
+  registry_.TryBindInterface(interface_name, interface_pipe);
+}
+
 void PrerenderContents::RenderFrameCreated(
     content::RenderFrameHost* render_frame_host) {
-  render_frame_host->GetInterfaceRegistry()->AddInterface(
-      base::Bind(&PrerenderContents::OnPrerenderCancelerRequest,
-                 weak_factory_.GetWeakPtr()));
-
   // When a new RenderFrame is created for a prerendering WebContents, tell the
   // new RenderFrame it's being used for prerendering before any navigations
   // occur.  Note that this is always triggered before the first navigation, so
@@ -763,7 +768,7 @@ void PrerenderContents::PrepareForUse() {
 
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&ResumeThrottles, resource_throttles_, idle_resources_));
+      base::BindOnce(&ResumeThrottles, resource_throttles_, idle_resources_));
   resource_throttles_.clear();
   idle_resources_.clear();
 }

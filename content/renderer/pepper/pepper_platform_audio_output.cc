@@ -11,10 +11,8 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "content/child/child_process.h"
-#include "content/common/media/audio_messages.h"
-#include "content/renderer/media/audio_message_filter.h"
+#include "content/renderer/media/audio_ipc_factory.h"
 #include "content/renderer/pepper/audio_helper.h"
-#include "content/renderer/render_thread_impl.h"
 #include "ppapi/shared_impl/ppb_audio_config_shared.h"
 
 namespace content {
@@ -43,7 +41,8 @@ bool PepperPlatformAudioOutput::StartPlayback() {
   if (ipc_) {
     io_task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&PepperPlatformAudioOutput::StartPlaybackOnIOThread, this));
+        base::BindOnce(&PepperPlatformAudioOutput::StartPlaybackOnIOThread,
+                       this));
     return true;
   }
   return false;
@@ -53,7 +52,8 @@ bool PepperPlatformAudioOutput::StopPlayback() {
   if (ipc_) {
     io_task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&PepperPlatformAudioOutput::StopPlaybackOnIOThread, this));
+        base::BindOnce(&PepperPlatformAudioOutput::StopPlaybackOnIOThread,
+                       this));
     return true;
   }
   return false;
@@ -63,8 +63,8 @@ bool PepperPlatformAudioOutput::SetVolume(double volume) {
   if (ipc_) {
     io_task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(&PepperPlatformAudioOutput::SetVolumeOnIOThread,
-                   this, volume));
+        base::BindOnce(&PepperPlatformAudioOutput::SetVolumeOnIOThread, this,
+                       volume));
     return true;
   }
   return false;
@@ -76,7 +76,7 @@ void PepperPlatformAudioOutput::ShutDown() {
   client_ = NULL;
   io_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&PepperPlatformAudioOutput::ShutDownOnIOThread, this));
+      base::BindOnce(&PepperPlatformAudioOutput::ShutDownOnIOThread, this));
 }
 
 void PepperPlatformAudioOutput::OnError() {}
@@ -92,11 +92,10 @@ void PepperPlatformAudioOutput::OnStreamCreated(
     base::SharedMemoryHandle handle,
     base::SyncSocket::Handle socket_handle,
     int length) {
-#if defined(OS_WIN)
   DCHECK(handle.IsValid());
+#if defined(OS_WIN)
   DCHECK(socket_handle);
 #else
-  DCHECK(base::SharedMemory::IsHandleValid(handle));
   DCHECK_NE(-1, socket_handle);
 #endif
   DCHECK(length);
@@ -108,8 +107,8 @@ void PepperPlatformAudioOutput::OnStreamCreated(
       client_->StreamCreated(handle, length, socket_handle);
   } else {
     main_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&PepperPlatformAudioOutput::OnStreamCreated, this,
-                              handle, socket_handle, length));
+        FROM_HERE, base::BindOnce(&PepperPlatformAudioOutput::OnStreamCreated,
+                                  this, handle, socket_handle, length));
   }
 }
 
@@ -135,9 +134,7 @@ bool PepperPlatformAudioOutput::Initialize(int sample_rate,
   DCHECK(client);
   client_ = client;
 
-  RenderThreadImpl* const render_thread = RenderThreadImpl::current();
-  ipc_ = render_thread->audio_message_filter()->CreateAudioOutputIPC(
-      source_render_frame_id);
+  ipc_ = AudioIPCFactory::get()->CreateAudioOutputIPC(source_render_frame_id);
   CHECK(ipc_);
 
   media::AudioParameters params(media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
@@ -147,8 +144,9 @@ bool PepperPlatformAudioOutput::Initialize(int sample_rate,
                                 frames_per_buffer);
 
   io_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&PepperPlatformAudioOutput::InitializeOnIOThread,
-                            this, params));
+      FROM_HERE,
+      base::BindOnce(&PepperPlatformAudioOutput::InitializeOnIOThread, this,
+                     params));
   return true;
 }
 

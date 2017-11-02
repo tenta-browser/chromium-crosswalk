@@ -13,15 +13,16 @@
 #include "ios/chrome/test/app/web_view_interaction_test_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
-#import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
 #import "ios/third_party/material_components_ios/src/components/ProgressView/src/MaterialProgressView.h"
-#import "ios/web/public/test/http_server.h"
-#import "ios/web/public/test/http_server_util.h"
-#include "ios/web/public/test/response_providers/html_response_provider.h"
+#include "ios/web/public/test/http_server/html_response_provider.h"
+#import "ios/web/public/test/http_server/http_server.h"
+#import "ios/web/public/test/http_server/http_server_util.h"
 #include "url/gurl.h"
 
-using chrome_test_util::WebViewContainingText;
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace {
 
@@ -61,9 +62,8 @@ id<GREYMatcher> ProgressViewWithProgress(CGFloat progress) {
                                               progress]];
   };
 
-  return [[[GREYElementMatcherBlock alloc] initWithMatchesBlock:matches
-                                               descriptionBlock:describe]
-      autorelease];
+  return [[GREYElementMatcherBlock alloc] initWithMatchesBlock:matches
+                                              descriptionBlock:describe];
 }
 
 // Response provider that serves the page which never finishes loading.
@@ -95,7 +95,7 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
   }
 
  private:
-  // Returns a url for which this responce provider will never reply.
+  // Returns a url for which this response provider will never reply.
   GURL GetInfinitePendingResponseUrl() const {
     GURL::Replacements replacements;
     replacements.SetPathStr("resource");
@@ -149,8 +149,7 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
   chrome_test_util::LoadUrl(infinitePendingURL);
 
   // Wait until the page is half loaded.
-  [[EarlGrey selectElementWithMatcher:WebViewContainingText(kPageText)]
-      assertWithMatcher:grey_notNil()];
+  [ChromeEarlGrey waitForWebViewContainingText:kPageText];
 
   // Verify progress view visible and halfway progress.
   [[EarlGrey selectElementWithMatcher:ProgressViewWithProgress(0.5)]
@@ -181,15 +180,12 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
 
   // Load form first.
   [ChromeEarlGrey loadURL:formURL];
-
-  [[EarlGrey selectElementWithMatcher:WebViewContainingText(kFormPageText)]
-      assertWithMatcher:grey_notNil()];
+  [ChromeEarlGrey waitForWebViewContainingText:kFormPageText];
 
   chrome_test_util::SubmitWebViewFormWithId(kFormID);
 
   // Wait until the page is half loaded.
-  [[EarlGrey selectElementWithMatcher:WebViewContainingText(kPageText)]
-      assertWithMatcher:grey_notNil()];
+  [ChromeEarlGrey waitForWebViewContainingText:kPageText];
 
   // Verify progress view visible and halfway progress.
   [[EarlGrey selectElementWithMatcher:ProgressViewWithProgress(0.5)]
@@ -215,14 +211,12 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
 
   [ChromeEarlGrey loadURL:formURL];
 
-  [[EarlGrey selectElementWithMatcher:WebViewContainingText(kFormPageText)]
-      assertWithMatcher:grey_notNil()];
+  [ChromeEarlGrey waitForWebViewContainingText:kFormPageText];
 
   chrome_test_util::SubmitWebViewFormWithId(kFormID);
 
   // Verify the new page has been loaded.
-  [[EarlGrey selectElementWithMatcher:WebViewContainingText(kPageText)]
-      assertWithMatcher:grey_notNil()];
+  [ChromeEarlGrey waitForWebViewContainingText:kPageText];
 
   // Verify progress view is not visible.
   [[EarlGrey selectElementWithMatcher:ProgressView()]
@@ -245,8 +239,7 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
   [ChromeEarlGrey loadURL:formURL];
 
   // Verify the form page has been loaded.
-  [[EarlGrey selectElementWithMatcher:WebViewContainingText(kFormPageText)]
-      assertWithMatcher:grey_notNil()];
+  [ChromeEarlGrey waitForWebViewContainingText:kFormPageText];
 
   chrome_test_util::SubmitWebViewFormWithId(kFormID);
 

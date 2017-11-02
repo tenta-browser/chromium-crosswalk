@@ -25,6 +25,10 @@ class WebMouseEvent;
 class WebMouseWheelEvent;
 }
 
+namespace ui {
+class LatencyInfo;
+}
+
 namespace content {
 
 struct CursorInfo;
@@ -166,6 +170,9 @@ class CONTENT_EXPORT RenderWidgetHost : public IPC::Sender {
       const blink::WebMouseWheelEvent& wheel_event) = 0;
   virtual void ForwardKeyboardEvent(
       const NativeWebKeyboardEvent& key_event) = 0;
+  virtual void ForwardKeyboardEventWithLatencyInfo(
+      const NativeWebKeyboardEvent& key_event,
+      const ui::LatencyInfo& latency_info) = 0;
   virtual void ForwardGestureEvent(
       const blink::WebGestureEvent& gesture_event) = 0;
 
@@ -216,8 +223,8 @@ class CONTENT_EXPORT RenderWidgetHost : public IPC::Sender {
    public:
     virtual ~InputEventObserver() {}
 
-    virtual void OnInputEvent(const blink::WebInputEvent&) {};
-    virtual void OnInputEventAck(const blink::WebInputEvent&) {};
+    virtual void OnInputEvent(const blink::WebInputEvent&) {}
+    virtual void OnInputEventAck(const blink::WebInputEvent&) {}
   };
 
   // Add/remove an input event observer.

@@ -7,12 +7,12 @@
 #include <limits.h>
 #include <stdint.h>
 
-#include "base/debug/activity_tracker.h"
 #include "base/macros.h"
 #include "build/build_config.h"
 
 #if defined(OS_WIN)
 #include <io.h>
+#include <windows.h>
 typedef HANDLE FileHandle;
 typedef HANDLE MutexHandle;
 // Windows warns on using write().  It prefers _write().
@@ -51,13 +51,18 @@ typedef pthread_mutex_t* MutexHandle;
 #include <ctime>
 #include <iomanip>
 #include <ostream>
+#include <stack>
 #include <string>
+#include <utility>
 
 #include "base/base_switches.h"
+#include "base/callback.h"
 #include "base/command_line.h"
+#include "base/debug/activity_tracker.h"
 #include "base/debug/alias.h"
 #include "base/debug/debugger.h"
 #include "base/debug/stack_trace.h"
+#include "base/lazy_instance.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
@@ -82,8 +87,9 @@ namespace {
 VlogInfo* g_vlog_info = nullptr;
 VlogInfo* g_vlog_info_prev = nullptr;
 
-const char* const log_severity_names[LOG_NUM_SEVERITIES] = {
-  "INFO", "WARNING", "ERROR", "FATAL" };
+const char* const log_severity_names[] = {"INFO", "WARNING", "ERROR", "FATAL"};
+static_assert(LOG_NUM_SEVERITIES == arraysize(log_severity_names),
+              "Incorrect number of log_severity_names");
 
 const char* log_severity_name(int severity) {
   if (severity >= 0 && severity < LOG_NUM_SEVERITIES)
@@ -121,8 +127,11 @@ bool g_log_tickcount = false;
 bool show_error_dialogs = false;
 
 // An assert handler override specified by the client to be called instead of
-// the debug message dialog and process termination.
-LogAssertHandlerFunction log_assert_handler = nullptr;
+// the debug message dialog and process termination. Assert handlers are stored
+// in stack to allow overriding and restoring.
+base::LazyInstance<std::stack<LogAssertHandlerFunction>>::Leaky
+    log_assert_handler_stack = LAZY_INSTANCE_INITIALIZER;
+
 // A log message handler that gets notified of every log message we process.
 LogMessageHandlerFunction log_message_handler = nullptr;
 
@@ -342,6 +351,13 @@ void CloseLogFileUnlocked() {
 
 }  // namespace
 
+#if DCHECK_IS_ON() && defined(SYZYASAN)
+// In DCHECK-enabled SyzyASAN builds, allow the meaning of LOG_DCHECK to be
+// determined at run-time. We default it to INFO, to avoid it triggering
+// crashes before the run-time has explicitly chosen the behaviour.
+BASE_EXPORT logging::LogSeverity LOG_DCHECK = LOG_INFO;
+#endif
+
 // This is never instantiated, it's just used for EAT_STREAM_PARAMETERS to have
 // an object of the correct type on the LHS of the unused part of the ternary
 // operator.
@@ -444,8 +460,13 @@ void SetShowErrorDialogs(bool enable_dialogs) {
   show_error_dialogs = enable_dialogs;
 }
 
-void SetLogAssertHandler(LogAssertHandlerFunction handler) {
-  log_assert_handler = handler;
+ScopedLogAssertHandler::ScopedLogAssertHandler(
+    LogAssertHandlerFunction handler) {
+  log_assert_handler_stack.Get().push(std::move(handler));
+}
+
+ScopedLogAssertHandler::~ScopedLogAssertHandler() {
+  log_assert_handler_stack.Get().pop();
 }
 
 void SetLogMessageHandler(LogMessageHandlerFunction handler) {
@@ -531,7 +552,9 @@ LogMessage::LogMessage(const char* file, int line, LogSeverity severity,
 }
 
 LogMessage::~LogMessage() {
-#if !defined(OFFICIAL_BUILD) && !defined(OS_NACL) && !defined(__UCLIBC__)
+  size_t stack_start = stream_.tellp();
+#if !defined(OFFICIAL_BUILD) && !defined(OS_NACL) && !defined(__UCLIBC__) && \
+    !defined(OS_AIX)
   if (severity_ == LOG_FATAL && !base::debug::BeingDebugged()) {
     // Include a stack trace on a fatal, unless a debugger is attached.
     base::debug::StackTrace trace;
@@ -739,9 +762,18 @@ LogMessage::~LogMessage() {
     str_newline.copy(str_stack, arraysize(str_stack));
     base::debug::Alias(str_stack);
 
-    if (log_assert_handler) {
-      // Make a copy of the string for the handler out of paranoia.
-      log_assert_handler(std::string(stream_.str()));
+    if (!(log_assert_handler_stack == nullptr) &&
+        !log_assert_handler_stack.Get().empty()) {
+      LogAssertHandlerFunction log_assert_handler =
+          log_assert_handler_stack.Get().top();
+
+      if (log_assert_handler) {
+        log_assert_handler.Run(
+            file_, line_,
+            base::StringPiece(str_newline.c_str() + message_start_,
+                              stack_start - message_start_),
+            base::StringPiece(str_newline.c_str() + stack_start));
+      }
     } else {
       // Don't use the string with the newline, get a fresh version to send to
       // the debug message process. We also don't display assertions to the
@@ -847,14 +879,15 @@ BASE_EXPORT std::string SystemErrorCodeToString(SystemErrorCode error_code) {
   if (len) {
     // Messages returned by system end with line breaks.
     return base::CollapseWhitespaceASCII(msgbuf, true) +
-        base::StringPrintf(" (0x%X)", error_code);
+           base::StringPrintf(" (0x%lX)", error_code);
   }
-  return base::StringPrintf("Error (0x%X) while retrieving error. (0x%X)",
+  return base::StringPrintf("Error (0x%lX) while retrieving error. (0x%lX)",
                             GetLastError(), error_code);
 }
 #elif defined(OS_POSIX)
 BASE_EXPORT std::string SystemErrorCodeToString(SystemErrorCode error_code) {
-  return base::safe_strerror(error_code);
+  return base::safe_strerror(error_code) +
+         base::StringPrintf(" (%d)", error_code);
 }
 #else
 #error Not implemented
@@ -888,6 +921,10 @@ ErrnoLogMessage::ErrnoLogMessage(const char* file,
 
 ErrnoLogMessage::~ErrnoLogMessage() {
   stream() << ": " << SystemErrorCodeToString(err_);
+  // We're about to crash (CHECK). Put |err_| on the stack (by placing it in a
+  // field) and use Alias in hopes that it makes it into crash dumps.
+  int last_error = err_;
+  base::debug::Alias(&last_error);
 }
 #endif  // defined(OS_WIN)
 

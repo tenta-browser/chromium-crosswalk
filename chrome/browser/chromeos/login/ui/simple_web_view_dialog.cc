@@ -20,6 +20,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/content_settings/content_setting_bubble_model_delegate.h"
 #include "chrome/browser/ui/view_ids.h"
+#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/toolbar/reload_button.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
@@ -36,7 +37,6 @@
 #include "ui/views/background.h"
 #include "ui/views/controls/webview/webview.h"
 #include "ui/views/layout/grid_layout.h"
-#include "ui/views/layout/layout_constants.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
 
@@ -58,7 +58,7 @@ const SkColor kDialogColor = SK_ColorWHITE;
 class ToolbarRowView : public views::View {
  public:
   ToolbarRowView() {
-    set_background(views::Background::CreateSolidBackground(kDialogColor));
+    SetBackground(views::CreateSolidBackground(kDialogColor));
   }
 
   ~ToolbarRowView() override {}
@@ -70,23 +70,26 @@ class ToolbarRowView : public views::View {
     GridLayout* layout = new GridLayout(this);
     SetLayoutManager(layout);
 
+    const int related_horizontal_spacing =
+        ChromeLayoutProvider::Get()->GetDistanceMetric(
+            views::DISTANCE_RELATED_CONTROL_HORIZONTAL);
     // Back button.
     views::ColumnSet* column_set = layout->AddColumnSet(0);
     column_set->AddColumn(GridLayout::CENTER, GridLayout::CENTER, 0,
                           GridLayout::USE_PREF, 0, 0);
-    column_set->AddPaddingColumn(0, views::kRelatedControlHorizontalSpacing);
+    column_set->AddPaddingColumn(0, related_horizontal_spacing);
     // Forward button.
     column_set->AddColumn(GridLayout::CENTER, GridLayout::CENTER, 0,
                           GridLayout::USE_PREF, 0, 0);
-    column_set->AddPaddingColumn(0, views::kRelatedControlHorizontalSpacing);
+    column_set->AddPaddingColumn(0, related_horizontal_spacing);
     // Reload button.
     column_set->AddColumn(GridLayout::CENTER, GridLayout::CENTER, 0,
                           GridLayout::USE_PREF, 0, 0);
-    column_set->AddPaddingColumn(0, views::kRelatedControlHorizontalSpacing);
+    column_set->AddPaddingColumn(0, related_horizontal_spacing);
     // Location bar.
     column_set->AddColumn(GridLayout::FILL, GridLayout::CENTER, 1,
                           GridLayout::FIXED, kLocationBarHeight, 0);
-    column_set->AddPaddingColumn(0, views::kRelatedControlHorizontalSpacing);
+    column_set->AddPaddingColumn(0, related_horizontal_spacing);
 
     layout->StartRow(0, 0);
     layout->AddView(back);
@@ -168,7 +171,7 @@ void SimpleWebViewDialog::Init() {
   toolbar_model_.reset(
       new ToolbarModelImpl(this, content::kMaxURLDisplayChars));
 
-  set_background(views::Background::CreateSolidBackground(kDialogColor));
+  SetBackground(views::CreateSolidBackground(kDialogColor));
 
   // Back/Forward buttons.
   back_ = new views::ImageButton(this);
@@ -295,11 +298,6 @@ SimpleWebViewDialog::GetContentSettingBubbleModelDelegate() {
   return bubble_model_delegate_.get();
 }
 
-void SimpleWebViewDialog::ShowPageInfo(content::WebContents* web_contents) {
-  NOTIMPLEMENTED();
-  // TODO (markusheintz@): implement this
-}
-
 content::WebContents* SimpleWebViewDialog::GetActiveWebContents() const {
   return web_view_->web_contents();
 }
@@ -340,22 +338,21 @@ void SimpleWebViewDialog::ExecuteCommandWithDisposition(
 void SimpleWebViewDialog::LoadImages() {
   const ui::ThemeProvider* tp = GetThemeProvider();
 
-  back_->SetImage(views::CustomButton::STATE_NORMAL,
-                  tp->GetImageSkiaNamed(IDR_BACK));
-  back_->SetImage(views::CustomButton::STATE_HOVERED,
+  back_->SetImage(views::Button::STATE_NORMAL, tp->GetImageSkiaNamed(IDR_BACK));
+  back_->SetImage(views::Button::STATE_HOVERED,
                   tp->GetImageSkiaNamed(IDR_BACK_H));
-  back_->SetImage(views::CustomButton::STATE_PRESSED,
+  back_->SetImage(views::Button::STATE_PRESSED,
                   tp->GetImageSkiaNamed(IDR_BACK_P));
-  back_->SetImage(views::CustomButton::STATE_DISABLED,
+  back_->SetImage(views::Button::STATE_DISABLED,
                   tp->GetImageSkiaNamed(IDR_BACK_D));
 
-  forward_->SetImage(views::CustomButton::STATE_NORMAL,
+  forward_->SetImage(views::Button::STATE_NORMAL,
                      tp->GetImageSkiaNamed(IDR_FORWARD));
-  forward_->SetImage(views::CustomButton::STATE_HOVERED,
+  forward_->SetImage(views::Button::STATE_HOVERED,
                      tp->GetImageSkiaNamed(IDR_FORWARD_H));
-  forward_->SetImage(views::CustomButton::STATE_PRESSED,
+  forward_->SetImage(views::Button::STATE_PRESSED,
                      tp->GetImageSkiaNamed(IDR_FORWARD_P));
-  forward_->SetImage(views::CustomButton::STATE_DISABLED,
+  forward_->SetImage(views::Button::STATE_DISABLED,
                      tp->GetImageSkiaNamed(IDR_FORWARD_D));
 
   reload_->LoadImages();

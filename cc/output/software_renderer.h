@@ -15,7 +15,7 @@ class DebugBorderDrawQuad;
 class OutputSurface;
 class PictureDrawQuad;
 class RenderPassDrawQuad;
-class ResourceProvider;
+class DisplayResourceProvider;
 class SoftwareOutputDevice;
 class SolidColorDrawQuad;
 class TextureDrawQuad;
@@ -23,9 +23,9 @@ class TileDrawQuad;
 
 class CC_EXPORT SoftwareRenderer : public DirectRenderer {
  public:
-  SoftwareRenderer(const RendererSettings* settings,
+  SoftwareRenderer(const viz::RendererSettings* settings,
                    OutputSurface* output_surface,
-                   ResourceProvider* resource_provider);
+                   DisplayResourceProvider* resource_provider);
 
   ~SoftwareRenderer() override;
 
@@ -37,7 +37,7 @@ class CC_EXPORT SoftwareRenderer : public DirectRenderer {
 
  protected:
   bool CanPartialSwap() override;
-  ResourceFormat BackbufferFormat() const override;
+  viz::ResourceFormat BackbufferFormat() const override;
   void BindFramebufferToOutputSurface() override;
   bool BindFramebufferToTexture(const ScopedResource* texture) override;
   void SetScissorTestRect(const gfx::Rect& scissor_rect) override;
@@ -50,7 +50,7 @@ class CC_EXPORT SoftwareRenderer : public DirectRenderer {
   void EnsureScissorTestEnabled() override;
   void EnsureScissorTestDisabled() override;
   void CopyCurrentRenderPassToBitmap(
-      std::unique_ptr<CopyOutputRequest> request) override;
+      std::unique_ptr<viz::CopyOutputRequest> request) override;
   void SetEnableDCLayers(bool enable) override;
   void DidChangeVisibility() override;
 
@@ -58,7 +58,7 @@ class CC_EXPORT SoftwareRenderer : public DirectRenderer {
   void ClearCanvas(SkColor color);
   void ClearFramebuffer();
   void SetClipRect(const gfx::Rect& rect);
-  bool IsSoftwareResource(ResourceId resource_id) const;
+  bool IsSoftwareResource(viz::ResourceId resource_id) const;
 
   void DrawDebugBorderQuad(const DebugBorderDrawQuad* quad);
   void DrawPictureQuad(const PictureDrawQuad* quad);

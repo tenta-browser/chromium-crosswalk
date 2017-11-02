@@ -34,11 +34,6 @@ class CONTENT_EXPORT SandboxedProcessLauncherDelegate {
   // process (which implies no sandbox).
   virtual bool ShouldLaunchElevated();
 
-  // By default, the process is launched sandboxed. Override this method to
-  // return false if the process should be launched without a sandbox
-  // (i.e. through base::LaunchProcess directly).
-  virtual bool ShouldSandbox();
-
   // Whether to disable the default policy specified in
   // AddPolicyForSandboxedProcess.
   virtual bool DisableDefaultPolicy();
@@ -50,18 +45,21 @@ class CONTENT_EXPORT SandboxedProcessLauncherDelegate {
   virtual void PostSpawnTarget(base::ProcessHandle process) {}
 
 #elif defined(OS_POSIX)
+
 #if !defined(OS_MACOSX) && !defined(OS_ANDROID)
-  // Override this to return true to use the setuid sandbox.
-  virtual ZygoteHandle* GetZygote();
+  // Returns the zygote used to launch the process.
+  // NOTE: For now Chrome always uses the same zygote for performance reasons.
+  // http://crbug.com/569191
+  virtual ZygoteHandle GetZygote();
 #endif  // !defined(OS_MACOSX) && !defined(OS_ANDROID)
 
   // Override this if the process needs a non-empty environment map.
   virtual base::EnvironmentMap GetEnvironment();
 #endif
 
-  // Returns the SandboxType to enforce on the process, or SANDBOX_TYPE_INVALID
-  // for no sandbox policy.
-  virtual SandboxType GetSandboxType();
+  // Returns the SandboxType to enforce on the process, or
+  // SANDBOX_TYPE_NO_SANDBOX to run without a sandbox policy.
+  virtual SandboxType GetSandboxType() = 0;
 };
 
 }  // namespace content

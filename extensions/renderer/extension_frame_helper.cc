@@ -8,6 +8,7 @@
 #include "base/strings/string_util.h"
 #include "base/timer/elapsed_timer.h"
 #include "content/public/renderer/render_frame.h"
+#include "content/public/renderer/render_view.h"
 #include "extensions/common/api/messaging/message.h"
 #include "extensions/common/api/messaging/port_id.h"
 #include "extensions/common/constants.h"
@@ -201,7 +202,7 @@ void ExtensionFrameHelper::DidMatchCSS(
 }
 
 void ExtensionFrameHelper::DidStartProvisionalLoad(
-    blink::WebDataSource* data_source) {
+    blink::WebDocumentLoader* document_loader) {
   if (!delayed_main_world_script_initialization_)
     return;
 
@@ -255,6 +256,7 @@ bool ExtensionFrameHelper::OnMessageReceived(const IPC::Message& message) {
                         OnNotifyRendererViewType)
     IPC_MESSAGE_HANDLER(ExtensionMsg_Response, OnExtensionResponse)
     IPC_MESSAGE_HANDLER(ExtensionMsg_MessageInvoke, OnExtensionMessageInvoke)
+    IPC_MESSAGE_HANDLER(ExtensionMsg_SetFrameName, OnSetFrameName)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
   return handled;
@@ -331,8 +333,31 @@ void ExtensionFrameHelper::OnExtensionMessageInvoke(
       render_frame(), extension_id, module_name, function_name, args);
 }
 
+void ExtensionFrameHelper::OnSetFrameName(const std::string& name) {
+  render_frame()->GetWebFrame()->SetName(blink::WebString::FromUTF8(name));
+}
+
 void ExtensionFrameHelper::OnDestruct() {
   delete this;
+}
+
+void ExtensionFrameHelper::DraggableRegionsChanged() {
+  if (!render_frame()->IsMainFrame())
+    return;
+
+  blink::WebVector<blink::WebDraggableRegion> webregions =
+      render_frame()->GetWebFrame()->GetDocument().DraggableRegions();
+  std::vector<DraggableRegion> regions;
+  for (blink::WebDraggableRegion& webregion : webregions) {
+    render_frame()->GetRenderView()->ConvertViewportToWindowViaWidget(
+        &webregion.bounds);
+
+    regions.push_back(DraggableRegion());
+    DraggableRegion& region = regions.back();
+    region.bounds = webregion.bounds;
+    region.draggable = webregion.draggable;
+  }
+  Send(new ExtensionHostMsg_UpdateDraggableRegions(routing_id(), regions));
 }
 
 }  // namespace extensions

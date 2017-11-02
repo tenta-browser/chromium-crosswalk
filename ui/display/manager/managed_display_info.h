@@ -153,11 +153,6 @@ class DISPLAY_MANAGER_EXPORT ManagedDisplayInfo {
   static ManagedDisplayInfo CreateFromSpecWithID(const std::string& spec,
                                                  int64_t id);
 
-  // When this is set to true on the device whose internal display has
-  // 1.25 dsf, Chrome uses 1.0f as a default scale factor, and uses
-  // dsf 1.25 when UI scaling is set to 0.8f.
-  static void SetUse125DSFForUIScalingForTest(bool enable);
-
   ManagedDisplayInfo();
   ManagedDisplayInfo(int64_t id, const std::string& name, bool has_overscan);
   ManagedDisplayInfo(const ManagedDisplayInfo& other);
@@ -232,6 +227,10 @@ class DISPLAY_MANAGER_EXPORT ManagedDisplayInfo {
   // Returns the rotation set by a given |source|.
   Display::Rotation GetRotation(Display::RotationSource source) const;
 
+  // Returns a measure of density relative to a display with 1.0 DSF. Unlike the
+  // effective DSF, this is independent from the UI scale.
+  float GetDensityRatio() const;
+
   // Returns the ui scale and device scale factor actually used to create
   // display that chrome sees. This can be different from one obtained
   // from dispaly or one specified by a user in following situation.
@@ -285,24 +284,6 @@ class DISPLAY_MANAGER_EXPORT ManagedDisplayInfo {
   // Returns the native mode size. If a native mode is not present, return an
   // empty size.
   gfx::Size GetNativeModeSize() const;
-
-  ColorCalibrationProfile color_profile() const { return color_profile_; }
-
-  // Sets the color profile. It will ignore if the specified |profile| is not in
-  // |available_color_profiles_|.
-  void SetColorProfile(ColorCalibrationProfile profile);
-
-  // Returns true if |profile| is in |available_color_profiles_|.
-  bool IsColorProfileAvailable(ColorCalibrationProfile profile) const;
-
-  const std::vector<ColorCalibrationProfile>& available_color_profiles() const {
-    return available_color_profiles_;
-  }
-
-  void set_available_color_profiles(
-      const std::vector<ColorCalibrationProfile>& profiles) {
-    available_color_profiles_ = profiles;
-  }
 
   bool is_aspect_preserving_scaling() const {
     return is_aspect_preserving_scaling_;
@@ -383,12 +364,6 @@ class DISPLAY_MANAGER_EXPORT ManagedDisplayInfo {
 
   // The list of modes supported by this display.
   ManagedDisplayModeList display_modes_;
-
-  // The current profile of the color calibration.
-  ColorCalibrationProfile color_profile_;
-
-  // The list of available variations for the color calibration.
-  std::vector<ColorCalibrationProfile> available_color_profiles_;
 
   // Maximum cursor size.
   gfx::Size maximum_cursor_size_;

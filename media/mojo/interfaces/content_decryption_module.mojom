@@ -11,6 +11,22 @@ import "url/mojo/url.mojom";
 [Native]
 enum EmeInitDataType;
 
+// See media::CdmSessionType
+[Native]
+enum CdmSessionType;
+
+// See media::CdmMessageType
+[Native]
+enum CdmMessageType;
+
+// See media::CdmKeyInformation::KeyStatus
+[Native]
+enum CdmKeyStatus;
+
+// See media::HdcpVersion
+[Native]
+enum HdcpVersion;
+
 // Transport layer of media::CdmConfig (see media/base/cdm_config.h).
 struct CdmConfig {
   bool allow_distinctive_identifier;
@@ -38,11 +54,8 @@ struct CdmPromiseResult {
 // media/base/cdm_key_information.h). It is used to specify a key_id and it's
 // associated status.
 struct CdmKeyInformation {
-  [Native]
-  enum KeyStatus;
-
   array<uint8> key_id;
-  KeyStatus status;
+  CdmKeyStatus status;
   uint32 system_code;
 };
 
@@ -50,9 +63,6 @@ struct CdmKeyInformation {
 // spec (https://w3c.github.io/encrypted-media/).
 // See media/base/content_decryption_module.h
 interface ContentDecryptionModule {
-  // See media::CdmSessionType
-  [Native]
-  enum SessionType;
 
   // Sets ContentDecryptionModuleClient. Must be called before any other calls.
   SetClient(ContentDecryptionModuleClient client);
@@ -70,10 +80,17 @@ interface ContentDecryptionModule {
   SetServerCertificate(array<uint8> certificate_data)
       => (CdmPromiseResult result);
 
+  // Gets the key status if there's a hypothetical key that requires the
+  // |min_hdcp_version|. Resolve the |promise| with the |key_status| after the
+  // operation completes. Reject the |promise| if this operation is not
+  // supported or unexpected error happened.
+  GetStatusForPolicy(HdcpVersion min_hdcp_version)
+      => (CdmPromiseResult result, CdmKeyStatus key_status);
+
   // Creates a session with the |init_data_type|, |init_data| and |session_type|
   // provided. If |result.success| is false, the output |session_id| will be
   // empty.
-  CreateSessionAndGenerateRequest(SessionType session_type,
+  CreateSessionAndGenerateRequest(CdmSessionType session_type,
                                   EmeInitDataType init_data_type,
                                   array<uint8> init_data)
       => (CdmPromiseResult result, string session_id);
@@ -84,7 +101,7 @@ interface ContentDecryptionModule {
   //   (true, empty) : Session not found.
   //   (false, non-empty): N/A; this combination is not allowed.
   //   (false, empty) : Unexpected error. See other fields in |result|.
-  LoadSession(SessionType session_type, string session_id)
+  LoadSession(CdmSessionType session_type, string session_id)
       => (CdmPromiseResult result, string session_id);
 
   // Updates a session specified by |session_id| with |response|.
@@ -101,11 +118,7 @@ interface ContentDecryptionModule {
 
 // Session callbacks. See media/base/content_decryption_module.h for details.
 interface ContentDecryptionModuleClient {
-  // See media::ContentDecryptionModule::MessageType
-  [Native]
-  enum MessageType;
-
-  OnSessionMessage(string session_id, MessageType message_type,
+  OnSessionMessage(string session_id, CdmMessageType message_type,
                    array<uint8> message);
 
   OnSessionClosed(string session_id);

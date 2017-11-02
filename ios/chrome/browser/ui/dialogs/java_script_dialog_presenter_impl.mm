@@ -5,11 +5,15 @@
 #include "ios/chrome/browser/ui/dialogs/java_script_dialog_presenter_impl.h"
 
 #import "ios/chrome/browser/ui/dialogs/dialog_presenter.h"
-#import "ios/chrome/browser/ui/dialogs/javascript_dialog_blocking_util.h"
+#import "ios/chrome/browser/ui/dialogs/java_script_dialog_blocking_state.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 JavaScriptDialogPresenterImpl::JavaScriptDialogPresenterImpl(
     DialogPresenter* dialogPresenter)
-    : dialog_presenter_([dialogPresenter retain]) {}
+    : dialog_presenter_(dialogPresenter) {}
 
 JavaScriptDialogPresenterImpl::~JavaScriptDialogPresenterImpl() {}
 
@@ -20,7 +24,8 @@ void JavaScriptDialogPresenterImpl::RunJavaScriptDialog(
     NSString* message_text,
     NSString* default_prompt_text,
     const web::DialogClosedCallback& callback) {
-  if (ShouldBlockJavaScriptDialogs(web_state)) {
+  JavaScriptDialogBlockingState::CreateForWebState(web_state);
+  if (JavaScriptDialogBlockingState::FromWebState(web_state)->blocked()) {
     // Block the dialog if needed.
     callback.Run(NO, nil);
     return;

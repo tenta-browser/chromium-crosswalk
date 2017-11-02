@@ -11,9 +11,7 @@ class MockGit(object):
     # Arguments are listed below, even if they're unused, in order to match
     # the Git class. pylint: disable=unused-argument
 
-    executable_name = 'mock-git'
-
-    def __init__(self, cwd=None, filesystem=None, executive=None):
+    def __init__(self, cwd=None, filesystem=None, executive=None, platform=None):
         self.checkout_root = '/mock-checkout'
         self.cwd = cwd or self.checkout_root
         self.added_paths = set()
@@ -32,26 +30,8 @@ class MockGit(object):
     def has_working_directory_changes(self, pathspec=None):
         return False
 
-    def ensure_cleanly_tracking_remote_master(self):
-        pass
-
     def current_branch(self):
         return 'mock-branch-name'
-
-    def current_branch_or_ref(self):
-        return 'mock-branch-name'
-
-    def checkout_branch(self, name):
-        pass
-
-    def create_clean_branch(self, name):
-        pass
-
-    def delete_branch(self, name):
-        pass
-
-    def supports_local_commits(self):
-        return True
 
     def exists(self, path):
         # TestRealMain.test_real_main (and several other rebaseline tests) are sensitive to this return value.
@@ -72,9 +52,6 @@ class MockGit(object):
         if git_commit == '624caaaaaa':
             return 10000
         return None
-
-    def timestamp_of_revision(self, path, revision):
-        return '2013-02-01 08:48:05 +0000'
 
     def commit_locally_with_message(self, message):
         self._local_commits.append([message])

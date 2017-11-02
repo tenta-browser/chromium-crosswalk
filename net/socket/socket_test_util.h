@@ -19,7 +19,6 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_vector.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
@@ -366,6 +365,7 @@ struct SSLSocketDataProvider {
   bool client_cert_sent;
   SSLCertRequestInfo* cert_request_info;
   scoped_refptr<X509Certificate> cert;
+  CertStatus cert_status;
   bool channel_id_sent;
   ChannelIDService* channel_id_service;
   int connection_status;

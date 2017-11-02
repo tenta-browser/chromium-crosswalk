@@ -18,6 +18,9 @@ enum StatusCode {
   kElementNotVisible = 11,
   kInvalidElementState = 12,
   kUnknownError = 13,
+  kInvalidArgument = 14,
+  kElementNotInteractable = 15,
+  kUnsupportedOperation = 16,
   kJavaScriptError = 17,
   kXPathLookupError = 19,
   kTimeout = 21,
@@ -34,6 +37,7 @@ enum StatusCode {
   kDisconnected,
   kForbidden = 103,
   kTabCrashed,
+  kNoSuchCookie,
 };
 
 // Represents a WebDriver status, which may be an error or ok.

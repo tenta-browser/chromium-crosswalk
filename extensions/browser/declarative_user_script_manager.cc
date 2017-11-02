@@ -46,7 +46,7 @@ DeclarativeUserScriptManager::CreateDeclarativeUserScriptMaster(
   // Inserts a new DeclarativeUserScriptManager and returns a ptr to it.
   return declarative_user_script_masters_
       .insert(
-          std::make_pair(host_id, base::MakeUnique<DeclarativeUserScriptMaster>(
+          std::make_pair(host_id, std::make_unique<DeclarativeUserScriptMaster>(
                                       browser_context_, host_id)))
       .first->second.get();
 }
@@ -54,7 +54,7 @@ DeclarativeUserScriptManager::CreateDeclarativeUserScriptMaster(
 void DeclarativeUserScriptManager::OnExtensionUnloaded(
     content::BrowserContext* browser_context,
     const Extension* extension,
-    UnloadedExtensionInfo::Reason reason) {
+    UnloadedExtensionReason reason) {
   for (const auto& val : declarative_user_script_masters_) {
     DeclarativeUserScriptMaster* master = val.second.get();
     if (master->host_id().id() == extension->id())

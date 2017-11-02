@@ -15,7 +15,6 @@
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/strings/grit/components_strings.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
@@ -81,7 +80,7 @@ void SettingsApiBubbleDelegate::AcknowledgeExtension(
 
 void SettingsApiBubbleDelegate::PerformAction(const ExtensionIdList& list) {
   for (size_t i = 0; i < list.size(); ++i) {
-    service()->DisableExtension(list[i], Extension::DISABLE_USER_ACTION);
+    service()->DisableExtension(list[i], disable_reason::DISABLE_USER_ACTION);
   }
 }
 

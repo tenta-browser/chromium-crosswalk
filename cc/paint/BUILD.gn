@@ -3,44 +3,53 @@
 # found in the LICENSE file.
 
 import("//cc/cc.gni")
+import("//testing/libfuzzer/fuzzer_test.gni")
 
 cc_component("paint") {
   output_name = "cc_paint"
   sources = [
-    "clip_display_item.cc",
-    "clip_display_item.h",
-    "clip_path_display_item.cc",
-    "clip_path_display_item.h",
-    "compositing_display_item.cc",
-    "compositing_display_item.h",
+    "decoded_draw_image.cc",
+    "decoded_draw_image.h",
     "discardable_image_map.cc",
     "discardable_image_map.h",
-    "display_item.h",
     "display_item_list.cc",
     "display_item_list.h",
     "draw_image.cc",
     "draw_image.h",
-    "drawing_display_item.cc",
-    "drawing_display_item.h",
-    "filter_display_item.cc",
-    "filter_display_item.h",
-    "float_clip_display_item.cc",
-    "float_clip_display_item.h",
     "image_id.h",
-    "largest_display_item.cc",
-    "largest_display_item.h",
+    "image_provider.cc",
+    "image_provider.h",
     "paint_canvas.cc",
     "paint_canvas.h",
     "paint_export.h",
+    "paint_flags.cc",
     "paint_flags.h",
+    "paint_image.cc",
+    "paint_image.h",
+    "paint_image_builder.cc",
+    "paint_image_builder.h",
+    "paint_image_generator.cc",
+    "paint_image_generator.h",
+    "paint_op_buffer.cc",
+    "paint_op_buffer.h",
+    "paint_op_reader.cc",
+    "paint_op_reader.h",
+    "paint_op_writer.cc",
+    "paint_op_writer.h",
+    "paint_record.cc",
     "paint_record.h",
     "paint_recorder.cc",
     "paint_recorder.h",
+    "paint_shader.cc",
     "paint_shader.h",
+    "record_paint_canvas.cc",
+    "record_paint_canvas.h",
     "skia_paint_canvas.cc",
     "skia_paint_canvas.h",
-    "transform_display_item.cc",
-    "transform_display_item.h",
+    "skia_paint_image_generator.cc",
+    "skia_paint_image_generator.h",
+    "solid_color_analyzer.cc",
+    "solid_color_analyzer.h",
   ]
 
   defines = [ "CC_PAINT_IMPLEMENTATION=1" ]
@@ -59,5 +68,17 @@ cc_component("paint") {
 
   deps = [
     "//base",
+  ]
+}
+
+fuzzer_test("paint_op_buffer_fuzzer") {
+  sources = [
+    "paint_op_buffer_fuzzer.cc",
+  ]
+
+  libfuzzer_options = [ "max_len=4096" ]
+
+  deps = [
+    "//cc/paint",
   ]
 }

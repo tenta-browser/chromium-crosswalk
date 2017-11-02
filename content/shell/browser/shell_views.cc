@@ -99,21 +99,21 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
   void SetWindowTitle(const base::string16& title) { title_ = title; }
   void EnableUIControl(UIControl control, bool is_enabled) {
     if (control == BACK_BUTTON) {
-      back_button_->SetState(is_enabled ? views::CustomButton::STATE_NORMAL
-          : views::CustomButton::STATE_DISABLED);
+      back_button_->SetState(is_enabled ? views::Button::STATE_NORMAL
+                                        : views::Button::STATE_DISABLED);
     } else if (control == FORWARD_BUTTON) {
-      forward_button_->SetState(is_enabled ? views::CustomButton::STATE_NORMAL
-          : views::CustomButton::STATE_DISABLED);
+      forward_button_->SetState(is_enabled ? views::Button::STATE_NORMAL
+                                           : views::Button::STATE_DISABLED);
     } else if (control == STOP_BUTTON) {
-      stop_button_->SetState(is_enabled ? views::CustomButton::STATE_NORMAL
-          : views::CustomButton::STATE_DISABLED);
+      stop_button_->SetState(is_enabled ? views::Button::STATE_NORMAL
+                                        : views::Button::STATE_DISABLED);
     }
   }
 
  private:
   // Initialize the UI control contained in shell window
   void InitShellWindow() {
-    set_background(views::Background::CreateStandardPanelBackground());
+    SetBackground(views::CreateStandardPanelBackground());
 
     views::GridLayout* layout = new views::GridLayout(this);
     SetLayoutManager(layout);
@@ -174,6 +174,7 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
       // URL entry
       url_entry_ = new views::Textfield();
       url_entry_->set_controller(this);
+      url_entry_->SetTextInputType(ui::TextInputType::TEXT_INPUT_TYPE_URL);
       toolbar_column_set->AddColumn(views::GridLayout::FILL,
                                     views::GridLayout::FILL, 1,
                                     views::GridLayout::USE_PREF, 0, 0);
@@ -295,10 +296,10 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
 
   // Toolbar view contains forward/backward/reload button and URL entry
   View* toolbar_view_;
-  views::CustomButton* back_button_;
-  views::CustomButton* forward_button_;
-  views::CustomButton* refresh_button_;
-  views::CustomButton* stop_button_;
+  views::Button* back_button_;
+  views::Button* forward_button_;
+  views::Button* refresh_button_;
+  views::Button* stop_button_;
   views::Textfield* url_entry_;
 
   // Contents view contains the web contents view

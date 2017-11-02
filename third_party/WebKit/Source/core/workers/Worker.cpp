@@ -5,11 +5,15 @@
 #include "core/workers/Worker.h"
 
 #include "bindings/core/v8/ExceptionState.h"
+#include "core/CoreInitializer.h"
 #include "core/dom/Document.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/frame/UseCounter.h"
-#include "core/workers/DedicatedWorkerMessagingProxyProvider.h"
-#include "core/workers/InProcessWorkerMessagingProxy.h"
+#include "core/frame/WebLocalFrameImpl.h"
+#include "core/workers/DedicatedWorkerMessagingProxy.h"
+#include "core/workers/WorkerContentSettingsClient.h"
+#include "public/platform/WebContentSettingsClient.h"
+#include "public/web/WebFrameClient.h"
 
 namespace blink {
 
@@ -20,7 +24,7 @@ Worker* Worker::Create(ExecutionContext* context,
                        ExceptionState& exception_state) {
   DCHECK(IsMainThread());
   Document* document = ToDocument(context);
-  UseCounter::Count(context, UseCounter::kWorkerStart);
+  UseCounter::Count(context, WebFeature::kWorkerStart);
   if (!document->GetPage()) {
     exception_state.ThrowDOMException(kInvalidAccessError,
                                       "The context provided is invalid.");
@@ -43,10 +47,17 @@ const AtomicString& Worker::InterfaceName() const {
 InProcessWorkerMessagingProxy* Worker::CreateInProcessWorkerMessagingProxy(
     ExecutionContext* context) {
   Document* document = ToDocument(context);
-  DedicatedWorkerMessagingProxyProvider* proxy_provider =
-      DedicatedWorkerMessagingProxyProvider::From(*document->GetPage());
-  DCHECK(proxy_provider);
-  return proxy_provider->CreateWorkerMessagingProxy(this);
+  WebLocalFrameImpl* web_frame =
+      WebLocalFrameImpl::FromFrame(document->GetFrame());
+
+  WorkerClients* worker_clients = WorkerClients::Create();
+  CoreInitializer::GetInstance().ProvideLocalFileSystemToWorker(
+      *worker_clients);
+  CoreInitializer::GetInstance().ProvideIndexedDBClientToWorker(
+      *worker_clients);
+  ProvideContentSettingsClientToWorker(
+      worker_clients, web_frame->Client()->CreateWorkerContentSettingsClient());
+  return new DedicatedWorkerMessagingProxy(this, worker_clients);
 }
 
 }  // namespace blink

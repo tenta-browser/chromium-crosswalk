@@ -9,18 +9,15 @@
 #include <vector>
 
 #include "base/macros.h"
-#include "media/base/media_log.h"
 #include "media/blink/media_blink_export.h"
 #include "third_party/WebKit/public/platform/WebMediaSource.h"
 
 namespace media {
 class ChunkDemuxer;
 
-class MEDIA_BLINK_EXPORT WebMediaSourceImpl
-    : NON_EXPORTED_BASE(public blink::WebMediaSource) {
+class MEDIA_BLINK_EXPORT WebMediaSourceImpl : public blink::WebMediaSource {
  public:
-  WebMediaSourceImpl(ChunkDemuxer* demuxer,
-                     const scoped_refptr<MediaLog>& media_log);
+  WebMediaSourceImpl(ChunkDemuxer* demuxer);
   ~WebMediaSourceImpl() override;
 
   // blink::WebMediaSource implementation.
@@ -34,7 +31,6 @@ class MEDIA_BLINK_EXPORT WebMediaSourceImpl
 
  private:
   ChunkDemuxer* demuxer_;  // Owned by WebMediaPlayerImpl.
-  scoped_refptr<MediaLog> media_log_;
 
   DISALLOW_COPY_AND_ASSIGN(WebMediaSourceImpl);
 };

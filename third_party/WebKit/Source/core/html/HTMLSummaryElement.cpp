@@ -22,8 +22,8 @@
 
 #include "bindings/core/v8/ExceptionState.h"
 #include "core/HTMLNames.h"
-#include "core/dom/shadow/FlatTreeTraversal.h"
-#include "core/dom/shadow/ShadowRoot.h"
+#include "core/dom/FlatTreeTraversal.h"
+#include "core/dom/ShadowRoot.h"
 #include "core/events/KeyboardEvent.h"
 #include "core/html/HTMLContentElement.h"
 #include "core/html/HTMLDetailsElement.h"
@@ -72,7 +72,7 @@ HTMLDetailsElement* HTMLSummaryElement::DetailsElement() const {
 }
 
 Element* HTMLSummaryElement::MarkerControl() {
-  return EnsureUserAgentShadowRoot().GetElementById(
+  return EnsureUserAgentShadowRoot().getElementById(
       ShadowElementNames::DetailsMarker());
 }
 
@@ -94,7 +94,7 @@ static bool IsClickableControl(Node* node) {
 }
 
 bool HTMLSummaryElement::SupportsFocus() const {
-  return IsMainSummary();
+  return IsMainSummary() || HTMLElement::SupportsFocus();
 }
 
 void HTMLSummaryElement::DefaultEventHandler(Event* event) {
@@ -137,6 +137,10 @@ void HTMLSummaryElement::DefaultEventHandler(Event* event) {
   }
 
   HTMLElement::DefaultEventHandler(event);
+}
+
+bool HTMLSummaryElement::HasActivationBehavior() const {
+  return true;
 }
 
 bool HTMLSummaryElement::WillRespondToMouseClickEvents() {

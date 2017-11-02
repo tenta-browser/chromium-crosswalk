@@ -137,7 +137,7 @@ bool CryptoUtils::DeriveKeys(QuicStringPiece premaster_secret,
   }
 
   if (subkey_secret != nullptr) {
-    hkdf.subkey_secret().CopyToString(subkey_secret);
+    *subkey_secret = string(hkdf.subkey_secret());
   }
 
   return true;
@@ -168,7 +168,7 @@ bool CryptoUtils::ExportKeyingMaterial(QuicStringPiece subkey_secret,
 
   crypto::HKDF hkdf(subkey_secret, QuicStringPiece() /* no salt */, info,
                     result_len, 0 /* no fixed IV */, 0 /* no subkey secret */);
-  hkdf.client_write_key().CopyToString(result);
+  *result = string(hkdf.client_write_key());
   return true;
 }
 
@@ -188,17 +188,14 @@ QuicErrorCode CryptoUtils::ValidateServerHello(
     return QUIC_INVALID_CRYPTO_MESSAGE_TYPE;
   }
 
-  const QuicTag* supported_version_tags;
-  size_t num_supported_versions;
-
-  if (server_hello.GetTaglist(kVER, &supported_version_tags,
-                              &num_supported_versions) != QUIC_NO_ERROR) {
+  QuicTagVector supported_version_tags;
+  if (server_hello.GetTaglist(kVER, &supported_version_tags) != QUIC_NO_ERROR) {
     *error_details = "server hello missing version list";
     return QUIC_INVALID_CRYPTO_MESSAGE_PARAMETER;
   }
   if (!negotiated_versions.empty()) {
-    bool mismatch = num_supported_versions != negotiated_versions.size();
-    for (size_t i = 0; i < num_supported_versions && !mismatch; ++i) {
+    bool mismatch = supported_version_tags.size() != negotiated_versions.size();
+    for (size_t i = 0; i < supported_version_tags.size() && !mismatch; ++i) {
       mismatch = QuicTagToQuicVersion(supported_version_tags[i]) !=
                  negotiated_versions[i];
     }

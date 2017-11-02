@@ -15,21 +15,21 @@
 #include "base/pickle.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
-#include "cc/surfaces/surface.h"
-#include "cc/surfaces/surface_info.h"
-#include "cc/surfaces/surface_manager.h"
+#include "components/viz/common/surfaces/surface_info.h"
+#include "components/viz/service/frame_sinks/frame_sink_manager_impl.h"
+#include "components/viz/service/surfaces/surface.h"
 #include "content/browser/browser_plugin/browser_plugin_embedder.h"
 #include "content/browser/browser_thread_impl.h"
 #include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/compositor/surface_utils.h"
 #include "content/browser/frame_host/render_frame_host_impl.h"
 #include "content/browser/frame_host/render_frame_proxy_host.h"
-#include "content/browser/frame_host/render_widget_host_view_child_frame.h"
 #include "content/browser/frame_host/render_widget_host_view_guest.h"
 #include "content/browser/loader/resource_dispatcher_host_impl.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
+#include "content/browser/renderer_host/render_widget_host_view_child_frame.h"
 #include "content/browser/web_contents/web_contents_impl.h"
 #include "content/browser/web_contents/web_contents_view_guest.h"
 #include "content/common/browser_plugin/browser_plugin_constants.h"
@@ -59,6 +59,35 @@
 #endif
 
 namespace content {
+
+namespace {
+
+ui::ImeTextSpan::Type ConvertWebTypeToUiType(blink::WebImeTextSpan::Type type) {
+  switch (type) {
+    case blink::WebImeTextSpan::Type::kComposition:
+      return ui::ImeTextSpan::Type::kComposition;
+    case blink::WebImeTextSpan::Type::kSuggestion:
+      return ui::ImeTextSpan::Type::kSuggestion;
+  }
+
+  NOTREACHED();
+  return ui::ImeTextSpan::Type::kComposition;
+}
+
+std::vector<ui::ImeTextSpan> ConvertToUiImeTextSpan(
+    const std::vector<blink::WebImeTextSpan>& ime_text_spans) {
+  std::vector<ui::ImeTextSpan> ui_ime_text_spans;
+  for (const auto& ime_text_span : ime_text_spans) {
+    ui_ime_text_spans.emplace_back(ui::ImeTextSpan(
+        ConvertWebTypeToUiType(ime_text_span.type), ime_text_span.start_offset,
+        ime_text_span.end_offset, ime_text_span.underline_color,
+        ime_text_span.thick, ime_text_span.background_color,
+        ime_text_span.suggestion_highlight_color, ime_text_span.suggestions));
+  }
+  return ui_ime_text_spans;
+}
+
+};  // namespace
 
 class BrowserPluginGuest::EmbedderVisibilityObserver
     : public WebContentsObserver {
@@ -147,6 +176,8 @@ int BrowserPluginGuest::GetGuestProxyRoutingID() {
   // create a RenderFrameProxyHost for the reverse path, or implement
   // MimeHandlerViewGuest using OOPIF (https://crbug.com/659750).
   SiteInstance* owner_site_instance = delegate_->GetOwnerSiteInstance();
+  if (!owner_site_instance)
+    return MSG_ROUTING_NONE;
   int proxy_routing_id = GetWebContents()
                              ->GetFrameTree()
                              ->root()
@@ -178,8 +209,12 @@ void BrowserPluginGuest::SizeContents(const gfx::Size& new_size) {
 
 void BrowserPluginGuest::WillDestroy() {
   is_in_destruction_ = true;
-  owner_web_contents_ = nullptr;
+
+  // It is important that the WebContents is notified before detaching.
+  GetWebContents()->BrowserPluginGuestWillDetach();
+
   attached_ = false;
+  owner_web_contents_ = nullptr;
 }
 
 RenderWidgetHostImpl* BrowserPluginGuest::GetOwnerRenderWidgetHost() const {
@@ -191,12 +226,6 @@ void BrowserPluginGuest::Init() {
   if (initialized_)
     return;
   initialized_ = true;
-
-  // TODO(fsamuel): Initiailization prior to attachment should be behind a
-  // command line flag once we introduce experimental guest types that rely on
-  // this functionality.
-  if (!delegate_->CanRunInDetachedState())
-    return;
 
   WebContentsImpl* owner_web_contents = static_cast<WebContentsImpl*>(
       delegate_->GetOwnerWebContents());
@@ -220,7 +249,7 @@ void BrowserPluginGuest::SetFocus(RenderWidgetHost* rwh,
     static_cast<RenderViewHostImpl*>(RenderViewHost::From(rwh))
         ->SetInitialFocus(focus_type == blink::kWebFocusTypeBackward);
   }
-  rwh->Send(new InputMsg_SetFocus(rwh->GetRoutingID(), focused));
+  RenderWidgetHostImpl::From(rwh)->GetWidgetInputHandler()->SetFocus(focused);
   if (!focused && mouse_locked_)
     OnUnlockMouse();
 
@@ -410,8 +439,8 @@ void BrowserPluginGuest::PointerLockPermissionResponse(bool allow) {
 }
 
 void BrowserPluginGuest::SetChildFrameSurface(
-    const cc::SurfaceInfo& surface_info,
-    const cc::SurfaceSequence& sequence) {
+    const viz::SurfaceInfo& surface_info,
+    const viz::SurfaceSequence& sequence) {
   has_attached_since_surface_set_ = false;
   SendMessageToEmbedder(base::MakeUnique<BrowserPluginMsg_SetChildFrameSurface>(
       browser_plugin_instance_id(), surface_info, sequence));
@@ -419,26 +448,15 @@ void BrowserPluginGuest::SetChildFrameSurface(
 
 void BrowserPluginGuest::OnSatisfySequence(
     int instance_id,
-    const cc::SurfaceSequence& sequence) {
-  GetSurfaceManager()->SatisfySequence(sequence);
+    const viz::SurfaceSequence& sequence) {
+  GetFrameSinkManager()->surface_manager()->SatisfySequence(sequence);
 }
 
 void BrowserPluginGuest::OnRequireSequence(
     int instance_id,
-    const cc::SurfaceId& id,
-    const cc::SurfaceSequence& sequence) {
-  GetSurfaceManager()->RequireSequence(id, sequence);
-}
-
-bool BrowserPluginGuest::HandleFindForEmbedder(
-    int request_id,
-    const base::string16& search_text,
-    const blink::WebFindOptions& options) {
-  return delegate_->HandleFindForEmbedder(request_id, search_text, options);
-}
-
-bool BrowserPluginGuest::HandleStopFindingForEmbedder(StopFindAction action) {
-  return delegate_->HandleStopFindingForEmbedder(action);
+    const viz::SurfaceId& id,
+    const viz::SurfaceSequence& sequence) {
+  GetFrameSinkManager()->surface_manager()->RequireSequence(id, sequence);
 }
 
 void BrowserPluginGuest::ResendEventToEmbedder(
@@ -491,6 +509,14 @@ gfx::Point BrowserPluginGuest::GetCoordinatesInEmbedderWebContents(
   point +=
       owner_rwhv->TransformPointToRootCoordSpace(guest_window_rect_.origin())
           .OffsetFromOrigin();
+  if (embedder_web_contents()->GetBrowserPluginGuest()) {
+    // |point| is currently with respect to the top-most view (outermost
+    // WebContents). We should subtract a displacement to find the point with
+    // resepct to embedder's WebContents.
+    point -= owner_rwhv->TransformPointToRootCoordSpace(gfx::Point())
+                 .OffsetFromOrigin();
+  }
+
   return point;
 }
 
@@ -647,8 +673,21 @@ void BrowserPluginGuest::SendTextInputTypeChangedToView(
     return;
   }
 
-  if (last_text_input_state_.get())
+  if (last_text_input_state_.get()) {
     guest_rwhv->TextInputStateChanged(*last_text_input_state_);
+    if (auto* rwh =
+            RenderWidgetHostImpl::From(guest_rwhv->GetRenderWidgetHost())) {
+      // We need composition range information for some IMEs. To get the
+      // updates, we need to explicitly ask the renderer to monitor and send the
+      // composition information changes. RenderWidgetHostView of the page will
+      // send the request to its process but the machinery for forwarding it to
+      // BrowserPlugin is not there. Therefore, we send a direct request to the
+      // guest process to start monitoring the state (see
+      // https://crbug.com/714771).
+      rwh->RequestCompositionUpdates(
+          false, last_text_input_state_->type != ui::TEXT_INPUT_TYPE_NONE);
+    }
+  }
 }
 
 void BrowserPluginGuest::DidFinishNavigation(
@@ -658,10 +697,15 @@ void BrowserPluginGuest::DidFinishNavigation(
 }
 
 void BrowserPluginGuest::RenderViewReady() {
+  if (GuestMode::IsCrossProcessFrameGuest(GetWebContents()))
+    return;
+
   RenderViewHost* rvh = GetWebContents()->GetRenderViewHost();
   // TODO(fsamuel): Investigate whether it's possible to update state earlier
   // here (see http://crbug.com/158151).
-  Send(new InputMsg_SetFocus(routing_id(), focused_));
+  RenderWidgetHostImpl::From(rvh->GetWidget())
+      ->GetWidgetInputHandler()
+      ->SetFocus(focused_);
   UpdateVisibility();
 
   // In case we've created a new guest render process after a crash, let the
@@ -706,7 +750,7 @@ void BrowserPluginGuest::RenderProcessGone(base::TerminationStatus status) {
 bool BrowserPluginGuest::ShouldForwardToBrowserPluginGuest(
     const IPC::Message& message) {
   return (message.type() != BrowserPluginHostMsg_Attach::ID) &&
-      (IPC_MESSAGE_CLASS(message) == BrowserPluginMsgStart);
+         (IPC_MESSAGE_CLASS(message) == BrowserPluginMsgStart);
 }
 
 bool BrowserPluginGuest::OnMessageReceived(const IPC::Message& message) {
@@ -753,12 +797,10 @@ bool BrowserPluginGuest::OnMessageReceived(const IPC::Message& message,
   bool handled = true;
   IPC_BEGIN_MESSAGE_MAP_WITH_PARAM(BrowserPluginGuest, message,
                                    render_frame_host)
-#if defined(OS_MACOSX)
     // MacOS X creates and populates platform-specific select drop-down menus
     // whereas other platforms merely create a popup window that the guest
     // renderer process paints inside.
     IPC_MESSAGE_HANDLER(FrameHostMsg_ShowPopup, OnShowPopup)
-#endif
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
   return handled;
@@ -823,6 +865,9 @@ void BrowserPluginGuest::OnDetach(int browser_plugin_instance_id) {
   if (!attached())
     return;
 
+  // It is important that the WebContents is notified before detaching.
+  GetWebContents()->BrowserPluginGuestWillDetach();
+
   // This tells BrowserPluginGuest to queue up all IPCs to BrowserPlugin until
   // it's attached again.
   attached_ = false;
@@ -885,34 +930,54 @@ void BrowserPluginGuest::OnDragStatusUpdate(int browser_plugin_instance_id,
 
 void BrowserPluginGuest::OnExecuteEditCommand(int browser_plugin_instance_id,
                                               const std::string& name) {
-  RenderFrameHost* focused_frame = web_contents()->GetFocusedFrame();
+  RenderFrameHostImpl* focused_frame =
+      static_cast<RenderFrameHostImpl*>(web_contents()->GetFocusedFrame());
   if (!focused_frame)
     return;
 
-  focused_frame->Send(new InputMsg_ExecuteNoValueEditCommand(
-      focused_frame->GetRoutingID(), name));
+  focused_frame->GetFrameInputHandler()->ExecuteEditCommand(name,
+                                                            base::nullopt);
 }
 
 void BrowserPluginGuest::OnImeSetComposition(
     int browser_plugin_instance_id,
     const BrowserPluginHostMsg_SetComposition_Params& params) {
-  Send(new InputMsg_ImeSetComposition(
-      routing_id(), params.text, params.underlines, params.replacement_range,
-      params.selection_start, params.selection_end));
+  std::vector<ui::ImeTextSpan> ui_ime_text_spans =
+      ConvertToUiImeTextSpan(params.ime_text_spans);
+  GetWebContents()
+      ->GetRenderViewHost()
+      ->GetWidget()
+      ->GetWidgetInputHandler()
+      ->ImeSetComposition(params.text, ui_ime_text_spans,
+                          params.replacement_range, params.selection_start,
+                          params.selection_end);
 }
 
 void BrowserPluginGuest::OnImeCommitText(
     int browser_plugin_instance_id,
     const base::string16& text,
-    const std::vector<blink::WebCompositionUnderline>& underlines,
+    const std::vector<blink::WebImeTextSpan>& ime_text_spans,
     const gfx::Range& replacement_range,
     int relative_cursor_pos) {
-  Send(new InputMsg_ImeCommitText(routing_id(), text, underlines,
-                                  replacement_range, relative_cursor_pos));
+  std::vector<ui::ImeTextSpan> ui_ime_text_spans =
+      ConvertToUiImeTextSpan(ime_text_spans);
+  GetWebContents()
+      ->GetRenderViewHost()
+      ->GetWidget()
+      ->GetWidgetInputHandler()
+      ->ImeCommitText(text, ui_ime_text_spans, replacement_range,
+                      relative_cursor_pos);
 }
 
-void BrowserPluginGuest::OnImeFinishComposingText(bool keep_selection) {
-  Send(new InputMsg_ImeFinishComposingText(routing_id(), keep_selection));
+void BrowserPluginGuest::OnImeFinishComposingText(
+    int browser_plugin_instance_id,
+    bool keep_selection) {
+  DCHECK_EQ(browser_plugin_instance_id_, browser_plugin_instance_id);
+  GetWebContents()
+      ->GetRenderViewHost()
+      ->GetWidget()
+      ->GetWidgetInputHandler()
+      ->ImeFinishComposingText(keep_selection);
 }
 
 void BrowserPluginGuest::OnExtendSelectionAndDelete(
@@ -922,11 +987,10 @@ void BrowserPluginGuest::OnExtendSelectionAndDelete(
   RenderFrameHostImpl* rfh = static_cast<RenderFrameHostImpl*>(
       web_contents()->GetFocusedFrame());
   if (rfh)
-    rfh->ExtendSelectionAndDelete(before, after);
+    rfh->GetFrameInputHandler()->ExtendSelectionAndDelete(before, after);
 }
 
 void BrowserPluginGuest::OnLockMouse(bool user_gesture,
-                                     bool last_unlocked_by_target,
                                      bool privileged) {
   if (pending_lock_request_) {
     // Immediately reject the lock because only one pointerLock may be active
@@ -937,9 +1001,12 @@ void BrowserPluginGuest::OnLockMouse(bool user_gesture,
 
   pending_lock_request_ = true;
 
+  RenderWidgetHostImpl* owner = GetOwnerRenderWidgetHost();
+  bool is_last_unlocked_by_target =
+      owner ? owner->is_last_unlocked_by_target() : false;
+
   delegate_->RequestPointerLockPermission(
-      user_gesture,
-      last_unlocked_by_target,
+      user_gesture, is_last_unlocked_by_target,
       base::Bind(&BrowserPluginGuest::PointerLockPermissionResponse,
                  weak_ptr_factory_.GetWeakPtr()));
 }
@@ -963,8 +1030,11 @@ void BrowserPluginGuest::OnSetFocus(int browser_plugin_instance_id,
 void BrowserPluginGuest::OnSetEditCommandsForNextKeyEvent(
     int browser_plugin_instance_id,
     const std::vector<EditCommand>& edit_commands) {
-  Send(new InputMsg_SetEditCommandsForNextKeyEvent(routing_id(),
-                                                   edit_commands));
+  GetWebContents()
+      ->GetRenderViewHost()
+      ->GetWidget()
+      ->GetWidgetInputHandler()
+      ->SetEditCommandsForNextKeyEvent(edit_commands);
 }
 
 void BrowserPluginGuest::OnSetVisibility(int browser_plugin_instance_id,
@@ -1013,7 +1083,14 @@ void BrowserPluginGuest::OnShowPopup(
     RenderFrameHost* render_frame_host,
     const FrameHostMsg_ShowPopup_Params& params) {
   gfx::Rect translated_bounds(params.bounds);
-  translated_bounds.Offset(guest_window_rect_.OffsetFromOrigin());
+  WebContents* guest = web_contents();
+  if (GuestMode::IsCrossProcessFrameGuest(guest)) {
+    translated_bounds.set_origin(
+        guest->GetRenderWidgetHostView()->TransformPointToRootCoordSpace(
+            translated_bounds.origin()));
+  } else {
+    translated_bounds.Offset(guest_window_rect_.OffsetFromOrigin());
+  }
   BrowserPluginPopupMenuHelper popup_menu_helper(
       owner_web_contents_->GetMainFrame(), render_frame_host);
   popup_menu_helper.ShowPopupMenu(translated_bounds,

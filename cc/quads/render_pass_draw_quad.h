@@ -12,6 +12,7 @@
 #include "cc/base/filter_operations.h"
 #include "cc/cc_export.h"
 #include "cc/quads/draw_quad.h"
+#include "cc/quads/render_pass.h"
 
 #include "ui/gfx/geometry/point_f.h"
 #include "ui/gfx/geometry/rect_f.h"
@@ -26,31 +27,30 @@ class CC_EXPORT RenderPassDrawQuad : public DrawQuad {
   RenderPassDrawQuad(const RenderPassDrawQuad& other);
   ~RenderPassDrawQuad() override;
 
-  void SetNew(const SharedQuadState* shared_quad_state,
+  void SetNew(const viz::SharedQuadState* shared_quad_state,
               const gfx::Rect& rect,
               const gfx::Rect& visible_rect,
-              int render_pass_id,
-              ResourceId mask_resource_id,
+              RenderPassId render_pass_id,
+              viz::ResourceId mask_resource_id,
               const gfx::RectF& mask_uv_rect,
               const gfx::Size& mask_texture_size,
               const gfx::Vector2dF& filters_scale,
               const gfx::PointF& filters_origin,
               const gfx::RectF& tex_coord_rect);
 
-  void SetAll(const SharedQuadState* shared_quad_state,
+  void SetAll(const viz::SharedQuadState* shared_quad_state,
               const gfx::Rect& rect,
-              const gfx::Rect& opaque_rect,
               const gfx::Rect& visible_rect,
               bool needs_blending,
-              int render_pass_id,
-              ResourceId mask_resource_id,
+              RenderPassId render_pass_id,
+              viz::ResourceId mask_resource_id,
               const gfx::RectF& mask_uv_rect,
               const gfx::Size& mask_texture_size,
               const gfx::Vector2dF& filters_scale,
               const gfx::PointF& filters_origin,
               const gfx::RectF& tex_coord_rect);
 
-  int render_pass_id;
+  RenderPassId render_pass_id;
   gfx::RectF mask_uv_rect;
   gfx::Size mask_texture_size;
 
@@ -66,7 +66,7 @@ class CC_EXPORT RenderPassDrawQuad : public DrawQuad {
 
   gfx::RectF tex_coord_rect;
 
-  ResourceId mask_resource_id() const {
+  viz::ResourceId mask_resource_id() const {
     return resources.ids[kMaskResourceIdIndex];
   }
 

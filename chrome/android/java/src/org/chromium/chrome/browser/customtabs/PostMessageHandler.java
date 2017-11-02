@@ -6,12 +6,16 @@ package org.chromium.chrome.browser.customtabs;
 
 import android.content.Context;
 import android.net.Uri;
+import android.support.annotation.NonNull;
 import android.support.customtabs.CustomTabsService;
+import android.support.customtabs.CustomTabsService.Relation;
 import android.support.customtabs.CustomTabsSessionToken;
 import android.support.customtabs.PostMessageServiceConnection;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.VisibleForTesting;
+import org.chromium.chrome.browser.customtabs.OriginVerifier.OriginVerificationListener;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.content.browser.AppWebMessagePort;
 import org.chromium.content_public.browser.MessagePort;
@@ -22,13 +26,17 @@ import org.chromium.content_public.browser.WebContentsObserver;
 /**
  * A class that handles postMessage communications with a designated {@link CustomTabsSessionToken}.
  */
-public class PostMessageHandler extends PostMessageServiceConnection {
+public class PostMessageHandler
+        extends PostMessageServiceConnection implements OriginVerificationListener {
     private final MessageCallback mMessageCallback;
+    private OriginVerifier mOriginVerifier;
     private WebContents mWebContents;
     private boolean mMessageChannelCreated;
     private boolean mBoundToService;
     private AppWebMessagePort[] mChannel;
     private Uri mOrigin;
+    private String mPackageName;
+    private @Relation int mRelation;
 
     /**
      * Basic constructor. Everytime the given {@link CustomTabsSessionToken} is associated with a
@@ -46,6 +54,14 @@ public class PostMessageHandler extends PostMessageServiceConnection {
                 if (mBoundToService) postMessage(message, null);
             }
         };
+    }
+
+    /**
+     * Sets the package name unique to the session.
+     * @param packageName The package name for the client app for the owning session.
+     */
+    void setPackageName(@NonNull String packageName) {
+        mPackageName = packageName;
     }
 
     /**
@@ -97,6 +113,16 @@ public class PostMessageHandler extends PostMessageServiceConnection {
         };
     }
 
+    /**
+     * See
+     * {@link PostMessageServiceConnection#bindSessionToPostMessageService(Context, String)}.
+     * Attempts to bind with the package name set during initialization.
+     */
+    public boolean bindSessionToPostMessageService() {
+        return super.bindSessionToPostMessageService(
+                ContextUtils.getApplicationContext(), mPackageName);
+    }
+
     private void initializeWithWebContents(final WebContents webContents) {
         mChannel = (AppWebMessagePort[]) webContents.createMessageChannel();
         mChannel[0].setMessageCallback(mMessageCallback, null);
@@ -124,6 +150,23 @@ public class PostMessageHandler extends PostMessageServiceConnection {
         if (mWebContents != null && !mWebContents.isDestroyed()) {
             initializeWithWebContents(mWebContents);
         }
+    }
+
+    /**
+     * Asynchronously verify the postMessage origin for the given package name and initialize with
+     * it if the result is a success. Can be called multiple times. If so, the previous requests
+     * will be overridden.
+     * @param origin The origin to verify for.
+     */
+    public void verifyAndInitializeWithOrigin(final Uri origin, @Relation int relation) {
+        mRelation = relation;
+        mOriginVerifier = new OriginVerifier(this, mPackageName, mRelation);
+        ThreadUtils.postOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                mOriginVerifier.start(origin);
+            }
+        });
     }
 
     /**
@@ -165,5 +208,28 @@ public class PostMessageHandler extends PostMessageServiceConnection {
     @Override
     public void onPostMessageServiceDisconnected() {
         mBoundToService = false;
+    }
+
+    @Override
+    public void onOriginVerified(String packageName, Uri origin, boolean result) {
+        if (!result) return;
+        initializeWithOrigin(origin);
+    }
+
+    /**
+     * @return The origin that has been declared for this handler.
+     */
+    @VisibleForTesting
+    Uri getOriginForTesting() {
+        return mOrigin;
+    }
+
+    /**
+     * Cleans up any dependencies that this handler might have.
+     * @param context Context to use for unbinding if necessary.
+     */
+    void cleanup(Context context) {
+        if (mBoundToService) super.unbindFromContext(context);
+        if (mOriginVerifier != null) mOriginVerifier.cleanUp();
     }
 }

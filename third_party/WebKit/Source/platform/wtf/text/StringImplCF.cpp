@@ -20,9 +20,10 @@
 
 #include "platform/wtf/text/StringImpl.h"
 
-#if OS(MACOSX)
+#include "build/build_config.h"
 
-#include "platform/wtf/PassRefPtr.h"
+#if defined(OS_MACOSX)
+
 #include "platform/wtf/RetainPtr.h"
 #include "platform/wtf/Threading.h"
 #include "platform/wtf/allocator/Partitions.h"
@@ -65,7 +66,7 @@ static void* Allocate(CFIndex size, CFOptionFlags, void*) {
 static void* Reallocate(void* pointer, CFIndex new_size, CFOptionFlags, void*) {
   size_t new_allocation_size = sizeof(StringImpl*) + new_size;
   StringImpl** header = static_cast<StringImpl**>(pointer) - 1;
-  ASSERT(!*header);
+  DCHECK(!*header);
   header = static_cast<StringImpl**>(WTF::Partitions::FastRealloc(
       header, new_allocation_size, WTF_HEAP_PROFILER_TYPE_NAME(StringImpl*)));
   return header + 1;
@@ -161,4 +162,4 @@ RetainPtr<CFStringRef> StringImpl::CreateCFString() {
 
 }  // namespace WTF
 
-#endif  // OS(MACOSX)
+#endif  // defined(OS_MACOSX)

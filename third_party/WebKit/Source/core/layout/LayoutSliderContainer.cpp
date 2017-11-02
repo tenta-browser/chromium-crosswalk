@@ -31,7 +31,7 @@
 
 #include "core/layout/LayoutSliderContainer.h"
 
-#include "core/dom/shadow/ShadowRoot.h"
+#include "core/dom/ShadowRoot.h"
 #include "core/html/HTMLInputElement.h"
 #include "core/html/forms/SliderThumbElement.h"
 #include "core/html/parser/HTMLParserIdioms.h"
@@ -99,7 +99,8 @@ void LayoutSliderContainer::ComputeLogicalHeight(
 void LayoutSliderContainer::UpdateLayout() {
   HTMLInputElement* input = toHTMLInputElement(GetNode()->OwnerShadowHost());
   bool is_vertical = HasVerticalAppearance(input);
-  MutableStyleRef().SetFlexDirection(is_vertical ? kFlowColumn : kFlowRow);
+  MutableStyleRef().SetFlexDirection(is_vertical ? EFlexDirection::kColumn
+                                                 : EFlexDirection::kRow);
   TextDirection old_text_direction = Style()->Direction();
   if (is_vertical) {
     // FIXME: Work around rounding issues in RTL vertical sliders. We want them
@@ -108,9 +109,9 @@ void LayoutSliderContainer::UpdateLayout() {
     MutableStyleRef().SetDirection(TextDirection::kLtr);
   }
 
-  Element* thumb_element = input->UserAgentShadowRoot()->GetElementById(
+  Element* thumb_element = input->UserAgentShadowRoot()->getElementById(
       ShadowElementNames::SliderThumb());
-  Element* track_element = input->UserAgentShadowRoot()->GetElementById(
+  Element* track_element = input->UserAgentShadowRoot()->getElementById(
       ShadowElementNames::SliderTrack());
   LayoutBox* thumb = thumb_element ? thumb_element->GetLayoutBox() : 0;
   LayoutBox* track = track_element ? track_element->GetLayoutBox() : 0;

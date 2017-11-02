@@ -14,8 +14,7 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/strings/grit/components_strings.h"
 #import "ios/chrome/browser/ui/animation_util.h"
-#import "ios/chrome/browser/ui/commands/UIKit+ChromeExecuteCommand.h"
-#include "ios/chrome/browser/ui/commands/ios_command_ids.h"
+#import "ios/chrome/browser/ui/commands/browser_commands.h"
 #import "ios/chrome/browser/ui/fancy_ui/bidi_container_view.h"
 #include "ios/chrome/browser/ui/omnibox/page_info_model.h"
 #import "ios/chrome/browser/ui/popup_menu/popup_menu_view.h"
@@ -25,7 +24,6 @@
 #import "ios/chrome/common/material_timing.h"
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/third_party/material_components_ios/src/components/Typography/src/MaterialTypography.h"
-#import "ios/third_party/material_roboto_font_loader_ios/src/src/MaterialRobotoFontLoader.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 #import "ui/gfx/ios/NSString+CrStringDrawing.h"
@@ -81,7 +79,7 @@ inline UIColor* PageInfoHelpButtonColor() {
 }
 
 inline UIFont* PageInfoHeadlineFont() {
-  return [[MDFRobotoFontLoader sharedInstance] mediumFontOfSize:16];
+  return [[MDCTypography fontLoader] mediumFontOfSize:16];
 }
 
 inline CATransform3D PageInfoAnimationScale() {
@@ -191,9 +189,6 @@ void PageInfoModelBubbleBridge::PerformLayout() {
           toSubviews:(NSMutableArray*)subviews
             atOffset:(CGFloat)offset;
 
-// Sends the IDC_HIDE_PAGE_INFO command to hide the current popup.
-- (void)close;
-
 @property(nonatomic, strong) UIView* containerView;
 @property(nonatomic, strong) UIView* popupContainer;
 @end
@@ -202,10 +197,11 @@ void PageInfoModelBubbleBridge::PerformLayout() {
 
 @synthesize containerView = containerView_;
 @synthesize popupContainer = popupContainer_;
+@synthesize dispatcher = dispatcher_;
 
 - (id)initWithModel:(PageInfoModel*)model
              bridge:(PageInfoModelObserver*)bridge
-        sourceFrame:(CGRect)source
+        sourcePoint:(CGPoint)sourcePoint
          parentView:(UIView*)parent {
   DCHECK(parent);
   self = [super init];
@@ -231,7 +227,7 @@ void PageInfoModelBubbleBridge::PerformLayout() {
 
     model_.reset(model);
     bridge_.reset(bridge);
-    origin_ = CGPointMake(CGRectGetMidX(source), CGRectGetMaxY(source));
+    origin_ = sourcePoint;
 
     UIInterfaceOrientation orientation =
         [[UIApplication sharedApplication] statusBarOrientation];
@@ -256,7 +252,6 @@ void PageInfoModelBubbleBridge::PerformLayout() {
     [containerView_ addGestureRecognizer:touchDownRecognizer];
     [containerView_
         setBackgroundColor:[UIColor colorWithWhite:0 alpha:kShieldAlpha]];
-    [containerView_ setTag:IDC_HIDE_PAGE_INFO];
     [containerView_ setOpaque:NO];
     [containerView_ setAlpha:0];
     [containerView_ setAccessibilityViewIsModal:YES];
@@ -272,7 +267,7 @@ void PageInfoModelBubbleBridge::PerformLayout() {
     [parent addSubview:self.containerView];
     [self performLayout];
 
-    [self animatePageInfoViewIn:source];
+    [self animatePageInfoViewIn:sourcePoint];
     UIAccessibilityPostNotification(UIAccessibilityLayoutChangedNotification,
                                     containerView_);
   }
@@ -406,10 +401,6 @@ void PageInfoModelBubbleBridge::PerformLayout() {
   [scrollView_ setContentSize:innerContainerView_.frame.size];
 }
 
-- (void)close {
-  [containerView_ chromeExecuteCommand:containerView_];
-}
-
 - (void)dismiss {
   [self animatePageInfoViewOut];
   UIAccessibilityPostNotification(UIAccessibilityLayoutChangedNotification,
@@ -472,8 +463,7 @@ void PageInfoModelBubbleBridge::PerformLayout() {
     return nil;
   }
   UIButton* button = [[UIButton alloc] initWithFrame:CGRectZero];
-  int messageId = IDS_IOS_PAGE_INFO_RELOAD;
-  NSInteger tag = IDC_RELOAD;
+  int messageId;
   NSString* accessibilityID = @"Reload button";
   switch (buttonAction) {
     case PageInfoModel::BUTTON_NONE:
@@ -481,15 +471,19 @@ void PageInfoModelBubbleBridge::PerformLayout() {
       return nil;
     case PageInfoModel::BUTTON_SHOW_SECURITY_HELP:
       messageId = IDS_LEARN_MORE;
-      tag = IDC_SHOW_SECURITY_HELP;
       accessibilityID = @"Learn more";
+      [button addTarget:self.dispatcher
+                    action:@selector(showSecurityHelpPage)
+          forControlEvents:UIControlEventTouchUpInside];
       break;
     case PageInfoModel::BUTTON_RELOAD:
       messageId = IDS_IOS_PAGE_INFO_RELOAD;
-      tag = IDC_RELOAD;
       accessibilityID = @"Reload button";
-      [button addTarget:self
-                    action:@selector(close)
+      [button addTarget:self.dispatcher
+                    action:@selector(hidePageInfo)
+          forControlEvents:UIControlEventTouchUpInside];
+      [button addTarget:self.dispatcher
+                    action:@selector(reload)
           forControlEvents:UIControlEventTouchUpInside];
       break;
   };
@@ -497,10 +491,6 @@ void PageInfoModelBubbleBridge::PerformLayout() {
   NSString* title = l10n_util::GetNSStringWithFixup(messageId);
   SetA11yLabelAndUiAutomationName(button, messageId, accessibilityID);
   [button setTitle:title forState:UIControlStateNormal];
-  [button setTag:tag];
-  [button addTarget:nil
-                action:@selector(chromeExecuteCommand:)
-      forControlEvents:UIControlEventTouchUpInside];
   return button;
 }
 
@@ -543,7 +533,7 @@ void PageInfoModelBubbleBridge::PerformLayout() {
 - (void)rootViewTapped:(UIGestureRecognizer*)sender {
   CGPoint pt = [sender locationInView:containerView_];
   if (!CGRectContainsPoint([popupContainer_ frame], pt)) {
-    [self close];
+    [self.dispatcher hidePageInfo];
   }
 }
 
@@ -553,10 +543,9 @@ void PageInfoModelBubbleBridge::PerformLayout() {
   return !CGRectContainsPoint([popupContainer_ frame], pt);
 }
 
-- (void)animatePageInfoViewIn:(CGRect)source {
+- (void)animatePageInfoViewIn:(CGPoint)sourcePoint {
   // Animate the info card itself.
   CATransform3D scaleTransform = PageInfoAnimationScale();
-  CGPoint fromPoint = CGPointMake(CGRectGetMidX(source), CGRectGetMidY(source));
 
   CABasicAnimation* scaleAnimation =
       [CABasicAnimation animationWithKeyPath:@"transform"];
@@ -564,7 +553,7 @@ void PageInfoModelBubbleBridge::PerformLayout() {
 
   CABasicAnimation* positionAnimation =
       [CABasicAnimation animationWithKeyPath:@"position"];
-  [positionAnimation setFromValue:[NSValue valueWithCGPoint:fromPoint]];
+  [positionAnimation setFromValue:[NSValue valueWithCGPoint:sourcePoint]];
 
   CAAnimationGroup* sizeAnimation = [CAAnimationGroup animation];
   [sizeAnimation setAnimations:@[ scaleAnimation, positionAnimation ]];

@@ -10,6 +10,7 @@
 
 #include "base/macros.h"
 #include "base/observer_list.h"
+#include "base/time/clock.h"
 #include "chromeos/components/tether/ble_connection_manager.h"
 #include "chromeos/components/tether/message_transfer_operation.h"
 #include "components/cryptauth/remote_device.h"
@@ -20,6 +21,7 @@ namespace tether {
 
 class HostScanDevicePrioritizer;
 class MessageWrapper;
+class TetherHostResponseRecorder;
 
 // Operation used to perform a host scan. Attempts to connect to each of the
 // devices passed and sends a TetherAvailabilityRequest to each connected device
@@ -35,7 +37,8 @@ class HostScannerOperation : public MessageTransferOperation {
     static std::unique_ptr<HostScannerOperation> NewInstance(
         const std::vector<cryptauth::RemoteDevice>& devices_to_connect,
         BleConnectionManager* connection_manager,
-        HostScanDevicePrioritizer* host_scan_device_prioritizer);
+        HostScanDevicePrioritizer* host_scan_device_prioritizer,
+        TetherHostResponseRecorder* tether_host_response_recorder);
 
     static void SetInstanceForTesting(Factory* factory);
 
@@ -43,7 +46,8 @@ class HostScannerOperation : public MessageTransferOperation {
     virtual std::unique_ptr<HostScannerOperation> BuildInstance(
         const std::vector<cryptauth::RemoteDevice>& devices_to_connect,
         BleConnectionManager* connection_manager,
-        HostScanDevicePrioritizer* host_scan_device_prioritizer);
+        HostScanDevicePrioritizer* host_scan_device_prioritizer,
+        TetherHostResponseRecorder* tether_host_response_recorder);
 
    private:
     static Factory* factory_instance_;
@@ -52,7 +56,7 @@ class HostScannerOperation : public MessageTransferOperation {
   struct ScannedDeviceInfo {
     ScannedDeviceInfo(const cryptauth::RemoteDevice& remote_device,
                       const DeviceStatus& device_status,
-                      bool set_up_required);
+                      bool setup_required);
     ~ScannedDeviceInfo();
 
     friend bool operator==(const ScannedDeviceInfo& first,
@@ -60,7 +64,7 @@ class HostScannerOperation : public MessageTransferOperation {
 
     cryptauth::RemoteDevice remote_device;
     DeviceStatus device_status;
-    bool set_up_required;
+    bool setup_required;
   };
 
   class Observer {
@@ -77,7 +81,8 @@ class HostScannerOperation : public MessageTransferOperation {
   HostScannerOperation(
       const std::vector<cryptauth::RemoteDevice>& devices_to_connect,
       BleConnectionManager* connection_manager,
-      HostScanDevicePrioritizer* host_scan_device_prioritizer);
+      HostScanDevicePrioritizer* host_scan_device_prioritizer,
+      TetherHostResponseRecorder* tether_host_response_recorder);
   ~HostScannerOperation() override;
 
   void AddObserver(Observer* observer);
@@ -100,8 +105,15 @@ class HostScannerOperation : public MessageTransferOperation {
  private:
   friend class HostScannerOperationTest;
 
-  HostScanDevicePrioritizer* host_scan_device_prioritizer_;
+  void SetClockForTest(std::unique_ptr<base::Clock> clock_for_test);
+  void RecordTetherAvailabilityResponseDuration(const std::string device_id);
+
+  TetherHostResponseRecorder* tether_host_response_recorder_;
+  std::unique_ptr<base::Clock> clock_;
   base::ObserverList<Observer> observer_list_;
+
+  std::map<std::string, base::Time>
+      device_id_to_tether_availability_request_start_time_map_;
 
   DISALLOW_COPY_AND_ASSIGN(HostScannerOperation);
 };

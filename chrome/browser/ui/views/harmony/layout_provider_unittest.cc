@@ -2,13 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
 #include "chrome/browser/ui/views/harmony/chrome_typography.h"
+#include "chrome/browser/ui/views/harmony/harmony_typography_provider.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/default_style.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/test/material_design_controller_test_api.h"
 #include "ui/gfx/font_list.h"
+#include "ui/views/controls/label.h"
+#include "ui/views/controls/styled_label.h"
 #include "ui/views/style/typography.h"
 #include "ui/views/style/typography_provider.h"
 
@@ -16,11 +21,39 @@
 #include "base/mac/mac_util.h"
 #endif
 
+#if defined(OS_WIN)
+#include "base/win/windows_version.h"
+#include "ui/gfx/win/direct_write.h"
+#endif
+
+namespace {
+
+// Constant from the Harmony spec.
+constexpr int kHarmonyTitleSize = 15;
+}  // namespace
+
+class LayoutProviderTest : public testing::Test {
+ public:
+  LayoutProviderTest() {}
+
+#if defined(OS_WIN)
+ protected:
+  static void SetUpTestCase() {
+    // The expected case is to have DirectWrite enabled; the fallback gives
+    // different font heights. But the tests should pass either way.
+    gfx::win::MaybeInitializeDirectWrite();
+  }
+#endif
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(LayoutProviderTest);
+};
+
 // Check legacy font sizes. No new code should be using these constants, but if
 // these tests ever fail it probably means something in the old UI will have
 // changed by mistake.
 // Disabled since this relies on machine configuration. http://crbug.com/701241.
-TEST(LayoutProviderTest, DISABLED_LegacyFontSizeConstants) {
+TEST_F(LayoutProviderTest, DISABLED_LegacyFontSizeConstants) {
   ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
   gfx::FontList label_font = rb.GetFontListWithDelta(ui::kLabelFontSizeDelta);
 
@@ -47,7 +80,7 @@ TEST(LayoutProviderTest, DISABLED_LegacyFontSizeConstants) {
 #if defined(OS_WIN)
   EXPECT_EQ(15, title_font.GetFontSize());
   EXPECT_EQ(20, title_font.GetHeight());
-  EXPECT_EQ(16, title_font.GetBaseline());
+  EXPECT_EQ(17, title_font.GetBaseline());
   EXPECT_EQ(11, title_font.GetCapHeight());
 #elif defined(OS_MACOSX)
   EXPECT_EQ(14, title_font.GetFontSize());
@@ -108,7 +141,7 @@ TEST(LayoutProviderTest, DISABLED_LegacyFontSizeConstants) {
 // TypographyProvider must add 4 instead. We do this so that Chrome adapts
 // correctly to _non-standard_ system font configurations on user machines.
 // Disabled since this relies on machine configuration. http://crbug.com/701241.
-TEST(LayoutProviderTest, DISABLED_RequestFontBySize) {
+TEST_F(LayoutProviderTest, DISABLED_RequestFontBySize) {
 #if defined(OS_MACOSX)
   constexpr int kBase = 13;
 #else
@@ -116,7 +149,7 @@ TEST(LayoutProviderTest, DISABLED_RequestFontBySize) {
 #endif
   // Harmony spec.
   constexpr int kHeadline = 20;
-  constexpr int kTitle = 15;  // Leading 22.
+  constexpr int kTitle = kHarmonyTitleSize;  // Leading 22.
   constexpr int kBody1 = 13;  // Leading 20.
   constexpr int kBody2 = 12;  // Leading 20.
   constexpr int kButton = 12;
@@ -148,7 +181,8 @@ TEST(LayoutProviderTest, DISABLED_RequestFontBySize) {
 #if defined(OS_MACOSX)
   EXPECT_EQ(25, headline_font.GetHeight());
 #elif defined(OS_WIN)
-  EXPECT_EQ(28, headline_font.GetHeight());
+  EXPECT_EQ(HarmonyTypographyProvider::GetPlatformFontHeight(CONTEXT_HEADLINE),
+            headline_font.GetHeight());
 #else
   EXPECT_EQ(24, headline_font.GetHeight());
 #endif
@@ -169,26 +203,42 @@ TEST(LayoutProviderTest, DISABLED_RequestFontBySize) {
 // Body1 font leading should be 20.
 #if defined(OS_MACOSX)
   EXPECT_EQ(16, body1_font.GetHeight());  // Add 4.
-#else  // Win and Linux.
+#elif defined(OS_WIN)
+  EXPECT_EQ(
+      HarmonyTypographyProvider::GetPlatformFontHeight(CONTEXT_BODY_TEXT_LARGE),
+      body1_font.GetHeight());
+#else  // Linux.
   EXPECT_EQ(17, body1_font.GetHeight());  // Add 3.
 #endif
 
   EXPECT_EQ(kBody2, body2_font.GetFontSize());
 
   // Body2 font leading should be 20.
-  EXPECT_EQ(15, body2_font.GetHeight());  // All platforms: Add 5.
+#if defined(OS_WIN)
+  EXPECT_EQ(
+      HarmonyTypographyProvider::GetPlatformFontHeight(CONTEXT_BODY_TEXT_SMALL),
+      body2_font.GetHeight());
+#else
+  EXPECT_EQ(15, body2_font.GetHeight());  // Other platforms: Add 5.
+#endif
 
   EXPECT_EQ(kButton, button_font.GetFontSize());
 
   // Button leading not specified (shouldn't be needed: no multiline buttons).
+#if defined(OS_WIN)
+  EXPECT_EQ(
+      HarmonyTypographyProvider::GetPlatformFontHeight(CONTEXT_BODY_TEXT_SMALL),
+      button_font.GetHeight());
+#else
   EXPECT_EQ(15, button_font.GetHeight());
+#endif
 }
 
 // Test that the default TypographyProvider correctly maps TextContexts relative
 // to the "base" font in the manner that legacy toolkit-views code expects. This
 // reads the base font configuration at runtime, and only tests font sizes, so
 // should be robust against platform changes.
-TEST(LayoutProviderTest, FontSizeRelativeToBase) {
+TEST_F(LayoutProviderTest, FontSizeRelativeToBase) {
   using views::style::GetFont;
 
   constexpr int kStyle = views::style::STYLE_PRIMARY;
@@ -237,7 +287,7 @@ TEST(LayoutProviderTest, FontSizeRelativeToBase) {
 // configuration. Generally, for a particular platform configuration, there
 // should be a consistent increase in line height when compared to the height of
 // a given font.
-TEST(LayoutProviderTest, TypographyLineHeight) {
+TEST_F(LayoutProviderTest, TypographyLineHeight) {
   constexpr int kStyle = views::style::STYLE_PRIMARY;
 
   // Only MD overrides the default line spacing.
@@ -253,9 +303,9 @@ TEST(LayoutProviderTest, TypographyLineHeight) {
     int min;
     int max;
   } kExpectedIncreases[] = {{CONTEXT_HEADLINE, 4, 8},
-                            {views::style::CONTEXT_DIALOG_TITLE, 2, 4},
-                            {CONTEXT_BODY_TEXT_LARGE, 3, 4},
-                            {CONTEXT_BODY_TEXT_SMALL, 5, 5}};
+                            {views::style::CONTEXT_DIALOG_TITLE, 1, 4},
+                            {CONTEXT_BODY_TEXT_LARGE, 2, 4},
+                            {CONTEXT_BODY_TEXT_SMALL, 4, 5}};
 
   for (size_t i = 0; i < arraysize(kExpectedIncreases); ++i) {
     SCOPED_TRACE(testing::Message() << "Testing index: " << i);
@@ -270,4 +320,66 @@ TEST(LayoutProviderTest, TypographyLineHeight) {
   // buttons have flexibility to configure their own spacing.
   EXPECT_EQ(0,
             views::style::GetLineHeight(views::style::CONTEXT_BUTTON, kStyle));
+  EXPECT_EQ(
+      0, views::style::GetLineHeight(views::style::CONTEXT_BUTTON_MD, kStyle));
+}
+
+// Ensure that line heights reported in a default bot configuration match the
+// Harmony spec. This test will only run if it detects that the current machine
+// has the default OS configuration.
+TEST_F(LayoutProviderTest, ExplicitTypographyLineHeight) {
+#if defined(OS_WIN)
+  // Flaky on Windows 7. See http://crbug.com/759870.
+  if (base::win::GetVersion() == base::win::VERSION_WIN7)
+    return;
+#endif
+  ui::test::MaterialDesignControllerTestAPI md_test_api(
+      ui::MaterialDesignController::MATERIAL_NORMAL);
+  md_test_api.SetSecondaryUiMaterial(true);
+
+  std::unique_ptr<views::LayoutProvider> layout_provider =
+      ChromeLayoutProvider::CreateLayoutProvider();
+
+  constexpr int kStyle = views::style::STYLE_PRIMARY;
+  if (views::style::GetFont(views::style::CONTEXT_DIALOG_TITLE, kStyle)
+          .GetFontSize() != kHarmonyTitleSize) {
+    LOG(WARNING) << "Skipping: Test machine not in default configuration.";
+    return;
+  }
+
+  // Line heights from the Harmony spec.
+  constexpr int kBodyLineHeight = 20;
+  constexpr struct {
+    int context;
+    int line_height;
+  } kHarmonyHeights[] = {{CONTEXT_HEADLINE, 32},
+                         {views::style::CONTEXT_DIALOG_TITLE, 22},
+                         {CONTEXT_BODY_TEXT_LARGE, kBodyLineHeight},
+                         {CONTEXT_BODY_TEXT_SMALL, kBodyLineHeight}};
+
+  for (size_t i = 0; i < arraysize(kHarmonyHeights); ++i) {
+    SCOPED_TRACE(testing::Message() << "Testing index: " << i);
+    EXPECT_EQ(kHarmonyHeights[i].line_height,
+              views::style::GetLineHeight(kHarmonyHeights[i].context, kStyle));
+
+    views::Label label(base::ASCIIToUTF16("test"), kHarmonyHeights[i].context);
+    label.SizeToPreferredSize();
+    EXPECT_EQ(kHarmonyHeights[i].line_height, label.height());
+  }
+
+  // TODO(tapted): Pass in contexts to StyledLabel instead. Currently they are
+  // stuck on style::CONTEXT_LABEL. That only matches the default line height in
+  // HarmonyTypographyProvider::GetLineHeight(), which is body text.
+  EXPECT_EQ(kBodyLineHeight,
+            views::style::GetLineHeight(views::style::CONTEXT_LABEL, kStyle));
+  views::StyledLabel styled_label(base::ASCIIToUTF16("test"), nullptr);
+  constexpr int kStyledLabelWidth = 200;  // Enough to avoid wrapping.
+  styled_label.SizeToFit(kStyledLabelWidth);
+  EXPECT_EQ(kBodyLineHeight, styled_label.height());
+
+  // Adding a link should not change the size.
+  styled_label.AddStyleRange(
+      gfx::Range(0, 2), views::StyledLabel::RangeStyleInfo::CreateForLink());
+  styled_label.SizeToFit(kStyledLabelWidth);
+  EXPECT_EQ(kBodyLineHeight, styled_label.height());
 }

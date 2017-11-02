@@ -27,16 +27,13 @@
 #include "media/base/bind_to_current_loop.h"
 #include "media/base/channel_layout.h"
 #include "media/base/limits.h"
+#include "media/base/mac/audio_latency_mac.h"
 #include "media/base/media_switches.h"
 
 namespace media {
 
 // Maximum number of output streams that can be open simultaneously.
 static const int kMaxOutputStreams = 50;
-
-// Define bounds for for low-latency input and output streams.
-static const int kMinimumInputOutputBufferSize = 128;
-static const int kMaximumInputOutputBufferSize = 4096;
 
 // Default sample-rate on most Apple hardware.
 static const int kFallbackSampleRate = 44100;
@@ -509,13 +506,9 @@ class AudioManagerMac::AudioPowerObserver : public base::PowerObserver {
   DISALLOW_COPY_AND_ASSIGN(AudioPowerObserver);
 };
 
-AudioManagerMac::AudioManagerMac(
-    scoped_refptr<base::SingleThreadTaskRunner> task_runner,
-    scoped_refptr<base::SingleThreadTaskRunner> worker_task_runner,
-    AudioLogFactory* audio_log_factory)
-    : AudioManagerBase(std::move(task_runner),
-                       std::move(worker_task_runner),
-                       audio_log_factory),
+AudioManagerMac::AudioManagerMac(std::unique_ptr<AudioThread> audio_thread,
+                                 AudioLogFactory* audio_log_factory)
+    : AudioManagerBase(std::move(audio_thread), audio_log_factory),
       current_sample_rate_(0),
       current_output_device_(kAudioDeviceUnknown),
       in_shutdown_(false) {
@@ -529,13 +522,35 @@ AudioManagerMac::AudioManagerMac(
                             base::Unretained(this)));
 }
 
-AudioManagerMac::~AudioManagerMac() {
-  DCHECK(GetTaskRunner()->BelongsToCurrentThread());
+AudioManagerMac::~AudioManagerMac() = default;
+
+void AudioManagerMac::ShutdownOnAudioThread() {
   // We are now in shutdown mode. This flag disables MaybeChangeBufferSize()
   // and IncreaseIOBufferSizeIfPossible() which both touches native Core Audio
   // APIs and they can fail and disrupt tests during shutdown.
   in_shutdown_ = true;
-  Shutdown();
+
+  // Even if tasks to close the streams are enqueued, they would not run
+  // leading to CHECKs getting hit in the destructor about open streams. Close
+  // them explicitly here. crbug.com/608049.
+  for (auto iter = basic_input_streams_.begin();
+       iter != basic_input_streams_.end();) {
+    // Note: Closing the stream will invalidate the iterator.
+    // Increment the iterator before closing the stream.
+    AudioInputStream* stream = *iter++;
+    stream->Close();
+  }
+  for (auto iter = low_latency_input_streams_.begin();
+       iter != low_latency_input_streams_.end();) {
+    // Note: Closing the stream will invalidate the iterator.
+    // Increment the iterator before closing the stream.
+    AudioInputStream* stream = *iter++;
+    stream->Close();
+  }
+  CHECK(basic_input_streams_.empty());
+  CHECK(low_latency_input_streams_.empty());
+
+  AudioManagerBase::ShutdownOnAudioThread();
 }
 
 bool AudioManagerMac::HasAudioOutputDevices() {
@@ -839,11 +854,17 @@ AudioParameters AudioManagerMac::GetPreferredOutputStreamParameters(
   // Allow pass through buffer sizes.  If concurrent input and output streams
   // exist, they will use the smallest buffer size amongst them.  As such, each
   // stream must be able to FIFO requests appropriately when this happens.
-  int buffer_size = ChooseBufferSize(false, hardware_sample_rate);
+  int buffer_size;
   if (has_valid_input_params) {
+    // If passed in via the input_params we allow buffer sizes to go as
+    // low as the the kMinAudioBufferSize, ignoring what
+    // ChooseBufferSize() normally returns.
     buffer_size =
-        std::min(kMaximumInputOutputBufferSize,
-                 std::max(input_params.frames_per_buffer(), buffer_size));
+        std::min(static_cast<int>(limits::kMaxAudioBufferSize),
+                 std::max(input_params.frames_per_buffer(),
+                          static_cast<int>(limits::kMinAudioBufferSize)));
+  } else {
+    buffer_size = ChooseBufferSize(false, hardware_sample_rate);
   }
 
   int hardware_channels;
@@ -890,7 +911,7 @@ void AudioManagerMac::HandleDeviceChanges() {
 }
 
 int AudioManagerMac::ChooseBufferSize(bool is_input, int sample_rate) {
-  // kMinimumInputOutputBufferSize is too small for the output side because
+  // kMinAudioBufferSize is too small for the output side because
   // CoreAudio can get into under-run if the renderer fails delivering data
   // to the browser within the allowed time by the OS. The workaround is to
   // use 256 samples as the default output buffer size for sample rates
@@ -898,20 +919,12 @@ int AudioManagerMac::ChooseBufferSize(bool is_input, int sample_rate) {
   // TODO(xians): Remove this workaround after WebAudio supports user defined
   // buffer size.  See https://github.com/WebAudio/web-audio-api/issues/348
   // for details.
-  int buffer_size = is_input ?
-      kMinimumInputOutputBufferSize : 2 * kMinimumInputOutputBufferSize;
+  int buffer_size =
+      is_input ? limits::kMinAudioBufferSize : 2 * limits::kMinAudioBufferSize;
   const int user_buffer_size = GetUserBufferSize();
-  if (user_buffer_size) {
-    buffer_size = user_buffer_size;
-  } else if (sample_rate > 48000) {
-    // The default buffer size is too small for higher sample rates and may lead
-    // to glitching.  Adjust upwards by multiples of the default size.
-    if (sample_rate <= 96000)
-      buffer_size = 2 * kMinimumInputOutputBufferSize;
-    else if (sample_rate <= 192000)
-      buffer_size = 4 * kMinimumInputOutputBufferSize;
-  }
-
+  buffer_size = user_buffer_size
+                    ? user_buffer_size
+                    : GetMinAudioBufferSizeMacOS(buffer_size, sample_rate);
   return buffer_size;
 }
 
@@ -1185,13 +1198,11 @@ void AudioManagerMac::ReleaseInputStream(AudioInputStream* stream) {
   AudioManagerBase::ReleaseInputStream(stream);
 }
 
-ScopedAudioManagerPtr CreateAudioManager(
-    scoped_refptr<base::SingleThreadTaskRunner> task_runner,
-    scoped_refptr<base::SingleThreadTaskRunner> worker_task_runner,
+std::unique_ptr<AudioManager> CreateAudioManager(
+    std::unique_ptr<AudioThread> audio_thread,
     AudioLogFactory* audio_log_factory) {
-  return ScopedAudioManagerPtr(
-      new AudioManagerMac(std::move(task_runner), std::move(worker_task_runner),
-                          audio_log_factory));
+  return base::MakeUnique<AudioManagerMac>(std::move(audio_thread),
+                                           audio_log_factory);
 }
 
 }  // namespace media

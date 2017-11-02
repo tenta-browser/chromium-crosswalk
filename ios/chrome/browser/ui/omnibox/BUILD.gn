@@ -15,20 +15,6 @@ source_set("omnibox") {
   ]
 }
 
-bundle_data("resources") {
-  sources = [
-    "resources/omnibox_background.png",
-    "resources/omnibox_background@2x.png",
-    "resources/omnibox_background@3x.png",
-    "resources/omnibox_transparent_background.png",
-    "resources/omnibox_transparent_background@2x.png",
-    "resources/omnibox_transparent_background@3x.png",
-  ]
-  outputs = [
-    "{{bundle_resources_dir}}/{{source_file_part}}",
-  ]
-}
-
 source_set("omnibox_internal") {
   configs += [ "//build/config/compiler:enable_arc" ]
   sources = [
@@ -43,8 +29,12 @@ source_set("omnibox_internal") {
     "omnibox_popup_positioner.h",
     "omnibox_popup_view_ios.h",
     "omnibox_popup_view_ios.mm",
+    "omnibox_popup_view_suggestions_delegate.h",
+    "omnibox_text_field_delegate.h",
     "omnibox_text_field_ios.h",
     "omnibox_text_field_ios.mm",
+    "omnibox_text_field_paste_delegate.h",
+    "omnibox_text_field_paste_delegate.mm",
     "omnibox_view_ios.h",
     "omnibox_view_ios.mm",
     "page_info_model.cc",
@@ -52,13 +42,13 @@ source_set("omnibox_internal") {
     "page_info_model_observer.h",
     "page_info_view_controller.h",
     "page_info_view_controller.mm",
-    "preload_provider.h",
     "truncating_attributed_label.h",
     "truncating_attributed_label.mm",
   ]
   deps = [
     ":omnibox",
-    ":resources",
+    "resources:omnibox_background",
+    "resources:omnibox_transparent_background",
     "//base",
     "//base:i18n",
     "//components/favicon/ios",
@@ -79,6 +69,8 @@ source_set("omnibox_internal") {
     "//ios/chrome/browser/bookmarks:bookmarks_utils",
     "//ios/chrome/browser/browser_state",
     "//ios/chrome/browser/net",
+    "//ios/chrome/browser/prerender",
+    "//ios/chrome/browser/prerender:provider",
     "//ios/chrome/browser/search_engines",
     "//ios/chrome/browser/sessions",
     "//ios/chrome/browser/ui",

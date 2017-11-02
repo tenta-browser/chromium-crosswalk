@@ -17,6 +17,7 @@
 #include "ios/chrome/browser/application_context.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state_manager.h"
+#include "ios/chrome/browser/infobars/infobar_manager_impl.h"
 #import "ios/chrome/browser/metrics/previous_session_info.h"
 #import "ios/chrome/browser/metrics/previous_session_info_private.h"
 #import "ios/chrome/browser/tabs/tab.h"
@@ -25,7 +26,12 @@
 #import "ios/chrome/browser/ui/commands/generic_chrome_command.h"
 #import "ios/chrome/browser/ui/main/main_view_controller.h"
 #import "ios/chrome/browser/ui/ntp/new_tab_page_controller.h"
+#import "ios/chrome/browser/ui/tab_switcher/tab_switcher.h"
 #import "ios/web/public/test/native_controller_test_util.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 // Methods to access private members for testing.
 @interface BreakpadController (Testing)
@@ -129,26 +135,43 @@ NSUInteger GetRegisteredKeyCommandsCount() {
   return mainBVC.keyCommands.count;
 }
 
+id<BrowserCommands> BrowserCommandDispatcherForMainBVC() {
+  BrowserViewController* mainBVC =
+      GetMainController().browserViewInformation.mainBVC;
+  return mainBVC.dispatcher;
+}
+
+id<ApplicationCommands, BrowserCommands> DispatcherForActiveViewController() {
+  UIViewController* vc = GetActiveViewController();
+  BrowserViewController* bvc = base::mac::ObjCCast<BrowserViewController>(vc);
+  if (bvc)
+    return bvc.dispatcher;
+  if ([vc conformsToProtocol:@protocol(TabSwitcher)]) {
+    UIViewController<TabSwitcher>* tabSwitcher =
+        static_cast<UIViewController<TabSwitcher>*>(vc);
+    return tabSwitcher.dispatcher;
+  }
+  return nil;
+}
+
 void RunCommandWithActiveViewController(GenericChromeCommand* command) {
   [GetActiveViewController() chromeExecuteCommand:command];
 }
 
 void RemoveAllInfoBars() {
-  infobars::InfoBarManager* info_bar_manager = [GetCurrentTab() infoBarManager];
-  if (info_bar_manager) {
-    info_bar_manager->RemoveAllInfoBars(false /* animate */);
+  web::WebState* webState = [GetCurrentTab() webState];
+  if (webState) {
+    infobars::InfoBarManager* info_bar_manager =
+        InfoBarManagerImpl::FromWebState(webState);
+    if (info_bar_manager) {
+      info_bar_manager->RemoveAllInfoBars(false /* animate */);
+    }
   }
 }
 
 void ClearPresentedState() {
-  [GetMainController() dismissModalDialogsWithCompletion:nil];
-}
-
-void ResetAllWebViews() {
-  id<BrowserViewInformation> browser_view_info =
-      [GetMainController() browserViewInformation];
-  [[browser_view_info mainTabModel] resetAllWebViews];
-  [[browser_view_info otrTabModel] resetAllWebViews];
+  [GetMainController() dismissModalDialogsWithCompletion:nil
+                                          dismissOmnibox:YES];
 }
 
 void SetBooleanLocalStatePref(const char* pref_name, bool value) {

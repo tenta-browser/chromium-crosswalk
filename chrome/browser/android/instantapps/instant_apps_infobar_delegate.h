@@ -11,21 +11,31 @@
 #include "base/strings/string16.h"
 #include "components/infobars/core/confirm_infobar_delegate.h"
 #include "components/infobars/core/infobar_delegate.h"
+#include "content/public/browser/web_contents_observer.h"
 
-class InfoBarService;
-
-class InstantAppsInfoBarDelegate : public ConfirmInfoBarDelegate {
+class InstantAppsInfoBarDelegate : public ConfirmInfoBarDelegate,
+                                   public content::WebContentsObserver {
  public:
   ~InstantAppsInfoBarDelegate() override;
 
-  static void Create(InfoBarService* infobar_service,
+  static void Create(content::WebContents* web_contents,
                      const jobject jdata,
                      const std::string& url);
 
   base::android::ScopedJavaGlobalRef<jobject> data() { return data_; }
 
+  // ConfirmInfoBarDelegate:
+  bool ShouldExpire(const NavigationDetails& details) const override;
+
+  // WebContentsObserver:
+  void DidFinishNavigation(
+      content::NavigationHandle* navigation_handle) override;
+  void DidStartNavigation(
+      content::NavigationHandle* navigation_handle) override;
+
  private:
-  explicit InstantAppsInfoBarDelegate(const jobject jdata,
+  explicit InstantAppsInfoBarDelegate(content::WebContents* web_contents,
+                                      const jobject jdata,
                                       const std::string& url);
 
   // ConfirmInfoBarDelegate:
@@ -38,11 +48,9 @@ class InstantAppsInfoBarDelegate : public ConfirmInfoBarDelegate {
   base::android::ScopedJavaGlobalRef<jobject> java_delegate_;
   base::android::ScopedJavaGlobalRef<jobject> data_;
   std::string url_;
+  bool has_navigated_away_from_launch_url_;
 
   DISALLOW_COPY_AND_ASSIGN(InstantAppsInfoBarDelegate);
 };
-
-// Register native methods.
-bool RegisterInstantAppsInfoBarDelegate(JNIEnv* env);
 
 #endif  // CHROME_BROWSER_ANDROID_INSTANTAPPS_INSTANT_APPS_INFOBAR_DELEGATE_H_

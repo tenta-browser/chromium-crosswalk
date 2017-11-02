@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "net/quic/core/crypto/crypto_handshake_message.h"
+#include "net/quic/core/crypto/crypto_message_parser.h"
 #include "net/quic/core/quic_packets.h"
 #include "net/quic/platform/api/quic_export.h"
 
@@ -34,11 +35,11 @@ class QUIC_EXPORT_PRIVATE CryptoFramerVisitorInterface {
 
 // A class for framing the crypto messages that are exchanged in a QUIC
 // session.
-class QUIC_EXPORT_PRIVATE CryptoFramer {
+class QUIC_EXPORT_PRIVATE CryptoFramer : public CryptoMessageParser {
  public:
   CryptoFramer();
 
-  virtual ~CryptoFramer();
+  ~CryptoFramer() override;
 
   // ParseMessage parses exactly one message from the given QuicStringPiece. If
   // there is an error, the message is truncated, or the message has trailing
@@ -55,16 +56,16 @@ class QUIC_EXPORT_PRIVATE CryptoFramer {
     visitor_ = visitor;
   }
 
-  QuicErrorCode error() const { return error_; }
-  const std::string& error_detail() const { return error_detail_; }
+  QuicErrorCode error() const override;
+  const std::string& error_detail() const override;
 
   // Processes input data, which must be delivered in order. Returns
   // false if there was an error, and true otherwise.
-  bool ProcessInput(QuicStringPiece input, Perspective perspective);
+  bool ProcessInput(QuicStringPiece input, Perspective perspective) override;
 
   // Returns the number of bytes of buffered input data remaining to be
   // parsed.
-  size_t InputBytesRemaining() const { return buffer_.length(); }
+  size_t InputBytesRemaining() const override;
 
   // Returns a new QuicData owned by the caller that contains a serialized
   // |message|, or nullptr if there was an error.

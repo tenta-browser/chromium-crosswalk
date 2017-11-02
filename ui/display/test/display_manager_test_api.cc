@@ -114,13 +114,6 @@ void DisplayManagerTestApi::DisableChangeDisplayUponHostResize() {
   display_manager_->set_change_display_upon_host_resize(false);
 }
 
-void DisplayManagerTestApi::SetAvailableColorProfiles(
-    int64_t display_id,
-    const std::vector<ColorCalibrationProfile>& profiles) {
-  display_manager_->display_info_[display_id].set_available_color_profiles(
-      profiles);
-}
-
 const ManagedDisplayInfo& DisplayManagerTestApi::GetInternalManagedDisplayInfo(
     int64_t display_id) {
   return display_manager_->display_info_[display_id];
@@ -145,14 +138,6 @@ void DisplayManagerTestApi::SetTouchSupport(
     Display::TouchSupport touch_support) {
   display_manager_->FindDisplayForId(display_id)
       ->set_touch_support(touch_support);
-}
-
-ScopedDisable125DSFForUIScaling::ScopedDisable125DSFForUIScaling() {
-  ManagedDisplayInfo::SetUse125DSFForUIScalingForTest(false);
-}
-
-ScopedDisable125DSFForUIScaling::~ScopedDisable125DSFForUIScaling() {
-  ManagedDisplayInfo::SetUse125DSFForUIScalingForTest(true);
 }
 
 ScopedSetInternalDisplayId::ScopedSetInternalDisplayId(

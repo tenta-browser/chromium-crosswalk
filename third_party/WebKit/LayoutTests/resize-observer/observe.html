@@ -56,7 +56,7 @@ function test1() {
 
 function test2() {
   test(() => {
-      assert_throws(null, _=> {
+      assert_throws({name: "TypeError"}, _=> {
         let ro = new ResizeObserver(() => {});
         ro.observe({});
       });
@@ -143,10 +143,8 @@ function test6() {
     switch(event.data) {
     case 'readyToTest':
       if (!testRequested) {
-        //iframe.contentWindow.postMessage('startTest', '*');
+        iframe.contentWindow.postMessage('startTest', '*');
         testRequested = true;
-        test.step(()=>{test.done()});
-        resolvePromise();
       }
     break;
     case 'success':

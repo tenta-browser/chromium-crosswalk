@@ -14,6 +14,7 @@
 namespace blink {
 
 class ClipRect;
+class DisplayItemClient;
 class PaintLayer;
 class GraphicsContext;
 class LayoutPoint;
@@ -54,6 +55,8 @@ class CORE_EXPORT PaintLayerPainter {
                               const GlobalPaintFlags);
 
  private:
+  friend class PaintLayerPainterTest;
+
   enum ClipState { kHasNotClipped, kHasClipped };
 
   inline bool IsFixedPositionObjectInPagedMedia();
@@ -101,13 +104,11 @@ class CORE_EXPORT PaintLayerPainter {
   void PaintBackgroundForFragments(
       const PaintLayerFragments&,
       GraphicsContext&,
-      const LayoutRect& transparency_paint_dirty_rect,
       const PaintLayerPaintingInfo&,
       PaintLayerFlags);
   void PaintForegroundForFragments(
       const PaintLayerFragments&,
       GraphicsContext&,
-      const LayoutRect& transparency_paint_dirty_rect,
       const PaintLayerPaintingInfo&,
       bool selection_only,
       PaintLayerFlags);
@@ -134,10 +135,13 @@ class CORE_EXPORT PaintLayerPainter {
                                           const PaintLayerPaintingInfo&,
                                           PaintLayerFlags);
 
-  void FillMaskingFragment(GraphicsContext&, const ClipRect&);
+  void FillMaskingFragment(GraphicsContext&,
+                           const ClipRect&,
+                           const DisplayItemClient&);
 
   static bool NeedsToClip(const PaintLayerPaintingInfo& local_painting_info,
-                          const ClipRect&);
+                          const ClipRect&,
+                          const PaintLayerFlags&);
 
   // Returns whether this layer should be painted during sofware painting (i.e.,
   // not via calls from CompositedLayerMapping to draw into composited layers).
@@ -149,17 +153,6 @@ class CORE_EXPORT PaintLayerPainter {
   bool PaintedOutputInvisible(const PaintLayerPaintingInfo&);
 
   PaintLayer& paint_layer_;
-
-  FRIEND_TEST_ALL_PREFIXES(PaintLayerPainterTest, DontPaintWithTinyOpacity);
-  FRIEND_TEST_ALL_PREFIXES(PaintLayerPainterTest,
-                           DontPaintWithTinyOpacityAndBackdropFilter);
-  FRIEND_TEST_ALL_PREFIXES(PaintLayerPainterTest,
-                           DoPaintWithCompositedTinyOpacity);
-  FRIEND_TEST_ALL_PREFIXES(PaintLayerPainterTest, DoPaintWithNonTinyOpacity);
-  FRIEND_TEST_ALL_PREFIXES(PaintLayerPainterTest,
-                           DoPaintWithEffectAnimationZeroOpacity);
-  FRIEND_TEST_ALL_PREFIXES(PaintLayerPainterTest,
-                           DoNotPaintWithTransformAnimationZeroOpacity);
 };
 
 }  // namespace blink

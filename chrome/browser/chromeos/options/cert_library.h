@@ -9,6 +9,7 @@
 
 #include "base/macros.h"
 #include "base/strings/string16.h"
+#include "base/threading/thread_checker.h"
 #include "chromeos/cert_loader.h"
 #include "net/cert/x509_certificate.h"
 
@@ -71,7 +72,7 @@ class CertLibrary : public CertLoader::Observer {
   // Returns the index of a Certificate matching |pem_encoded| or -1 if none
   // found. This function may be slow depending on the number of stored
   // certificates.
-  // TOOD(pneubeck): Either make this more efficient, asynchronous or get rid of
+  // TODO(pneubeck): Either make this more efficient, asynchronous or get rid of
   // it.
   int GetServerCACertIndexByPEM(const std::string& pem_encoded) const;
   // Same as above but for a PKCS#11 id.
@@ -95,6 +96,8 @@ class CertLibrary : public CertLoader::Observer {
   net::CertificateList user_certs_;
   net::CertificateList server_certs_;
   net::CertificateList server_ca_certs_;
+
+  THREAD_CHECKER(thread_checker_);
 
   DISALLOW_COPY_AND_ASSIGN(CertLibrary);
 };

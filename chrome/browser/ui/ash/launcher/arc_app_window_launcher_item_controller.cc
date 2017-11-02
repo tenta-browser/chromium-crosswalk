@@ -4,12 +4,9 @@
 
 #include "chrome/browser/ui/ash/launcher/arc_app_window_launcher_item_controller.h"
 
-#include "base/memory/ptr_util.h"
-#include "base/strings/utf_string_conversions.h"
-#include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/app_list/arc/arc_app_list_prefs.h"
+#include <utility>
+
 #include "chrome/browser/ui/app_list/arc/arc_app_utils.h"
-#include "chrome/browser/ui/ash/launcher/arc_app_window_launcher_controller.h"
 #include "chrome/browser/ui/ash/launcher/chrome_launcher_controller.h"
 #include "chrome/browser/ui/ash/launcher/launcher_controller_helper.h"
 #include "ui/aura/window.h"
@@ -17,7 +14,7 @@
 
 ArcAppWindowLauncherItemController::ArcAppWindowLauncherItemController(
     const std::string& arc_app_id)
-    : AppWindowLauncherItemController(ash::AppLaunchId(arc_app_id)) {}
+    : AppWindowLauncherItemController(ash::ShelfID(arc_app_id)) {}
 
 ArcAppWindowLauncherItemController::~ArcAppWindowLauncherItemController() {}
 
@@ -37,25 +34,20 @@ void ArcAppWindowLauncherItemController::ItemSelected(
     std::unique_ptr<ui::Event> event,
     int64_t display_id,
     ash::ShelfLaunchSource source,
-    const ItemSelectedCallback& callback) {
+    ItemSelectedCallback callback) {
   if (window_count()) {
     AppWindowLauncherItemController::ItemSelected(std::move(event), display_id,
-                                                  source, callback);
+                                                  source, std::move(callback));
     return;
   }
 
   if (task_ids_.empty()) {
     NOTREACHED();
-    callback.Run(ash::SHELF_ACTION_NONE, base::nullopt);
+    std::move(callback).Run(ash::SHELF_ACTION_NONE, base::nullopt);
     return;
   }
   arc::SetTaskActive(*task_ids_.begin());
-  callback.Run(ash::SHELF_ACTION_NEW_WINDOW_CREATED, base::nullopt);
-}
-
-void ArcAppWindowLauncherItemController::ExecuteCommand(uint32_t command_id,
-                                                        int32_t event_flags) {
-  ActivateIndexedApp(command_id);
+  std::move(callback).Run(ash::SHELF_ACTION_NEW_WINDOW_CREATED, base::nullopt);
 }
 
 ash::MenuItemList ArcAppWindowLauncherItemController::GetAppMenuItems(
@@ -73,5 +65,16 @@ ash::MenuItemList ArcAppWindowLauncherItemController::GetAppMenuItems(
                                                           : app_title;
     items.push_back(std::move(item));
   }
+
   return items;
+}
+
+void ArcAppWindowLauncherItemController::ExecuteCommand(bool from_context_menu,
+                                                        int64_t command_id,
+                                                        int32_t event_flags,
+                                                        int64_t display_id) {
+  if (from_context_menu && ExecuteContextMenuCommand(command_id, event_flags))
+    return;
+
+  ActivateIndexedApp(command_id);
 }

@@ -6,11 +6,14 @@
 #define COMPONENTS_FEEDBACK_FEEDBACK_UPLOADER_FACTORY_H_
 
 #include "base/macros.h"
+#include "base/memory/ref_counted.h"
 #include "components/keyed_service/content/browser_context_keyed_service_factory.h"
 
 namespace base {
-template<typename T> struct DefaultSingletonTraits;
-}
+template <typename T>
+struct DefaultSingletonTraits;
+class SingleThreadTaskRunner;
+}  // namespace base
 
 namespace content {
 class BrowserContext;
@@ -30,11 +33,24 @@ class FeedbackUploaderFactory : public BrowserContextKeyedServiceFactory {
   static FeedbackUploader* GetForBrowserContext(
       content::BrowserContext* context);
 
+  // Creates a new SingleThreadTaskRunner that is used to run feedback blocking
+  // background work. Tests can use this to create the exact same type of runner
+  // that's actually used in production code to simulate the same behavior.
+  static scoped_refptr<base::SingleThreadTaskRunner> CreateUploaderTaskRunner();
+
+ protected:
+  FeedbackUploaderFactory(const char* service_name);
+  ~FeedbackUploaderFactory() override;
+
+  // The task runner used to handle all blocking background feedback-reports
+  // work. It involves reading / writing reports from / to disk. Those
+  // operations must not interleave and thread affinity is required.
+  scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
+
  private:
   friend struct base::DefaultSingletonTraits<FeedbackUploaderFactory>;
 
   FeedbackUploaderFactory();
-  ~FeedbackUploaderFactory() override;
 
   // BrowserContextKeyedServiceFactory overrides:
   KeyedService* BuildServiceInstanceFor(

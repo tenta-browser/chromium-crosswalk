@@ -44,7 +44,26 @@ class MultiColumnFragmentainerGroup {
   LayoutUnit LogicalTop() const { return logical_top_; }
   void SetLogicalTop(LayoutUnit logical_top) { logical_top_ = logical_top; }
 
-  LayoutUnit LogicalHeight() const { return column_height_; }
+  // Return the amount of block space that this fragmentainer group takes up in
+  // its containing LayoutMultiColumnSet.
+  LayoutUnit GroupLogicalHeight() const {
+    DCHECK(IsLogicalHeightKnown());
+    return logical_height_;
+  }
+
+  // Return the block size of a column (or fragmentainer) in this fragmentainer
+  // group. The spec says that this value must always be >= 1px, to ensure
+  // progress.
+  LayoutUnit ColumnLogicalHeight() const {
+    DCHECK(IsLogicalHeightKnown());
+    return std::max(LayoutUnit(1), logical_height_);
+  }
+
+  // Return whether we have some column height to work with. This doesn't have
+  // to be the final height. It will only return false in the first layout pass,
+  // and even then only if column height is auto and there's no way to even make
+  // a guess (i.e. when there are no usable constraints).
+  bool IsLogicalHeightKnown() const { return is_logical_height_known_; }
 
   LayoutSize OffsetFromColumnSet() const;
 
@@ -147,6 +166,8 @@ class MultiColumnFragmentainerGroup {
   // Returns 1 or greater, never 0.
   unsigned ActualColumnCount() const;
 
+  void UpdateFromNG(LayoutUnit logical_height);
+
  private:
   LayoutUnit HeightAdjustedForRowOffset(LayoutUnit height) const;
   LayoutUnit CalculateMaxColumnHeight() const;
@@ -156,7 +177,7 @@ class MultiColumnFragmentainerGroup {
 
   LayoutRect ColumnRectAt(unsigned column_index) const;
   LayoutUnit LogicalTopInFlowThreadAt(unsigned column_index) const {
-    return logical_top_in_flow_thread_ + column_index * column_height_;
+    return logical_top_in_flow_thread_ + column_index * ColumnLogicalHeight();
   }
 
   // Return the column that the specified visual point belongs to. Only the
@@ -170,9 +191,15 @@ class MultiColumnFragmentainerGroup {
   LayoutUnit logical_top_in_flow_thread_;
   LayoutUnit logical_bottom_in_flow_thread_;
 
-  LayoutUnit column_height_;
+  // Logical height of the group. This will also be the height of each column
+  // in this group, with the difference that, while the logical height can be
+  // 0, the height of a column must be >= 1px.
+  LayoutUnit logical_height_;
 
-  LayoutUnit max_column_height_;  // Maximum column height allowed.
+  // Maximum logical height allowed.
+  LayoutUnit max_logical_height_;
+
+  bool is_logical_height_known_ = false;
 };
 
 // List of all fragmentainer groups within a column set. There will always be at

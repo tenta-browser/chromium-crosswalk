@@ -8,8 +8,7 @@
 #include <utility>
 
 #include "base/bind.h"
-#include "base/task_runner.h"
-#include "cc/output/copy_output_request.h"
+#include "components/viz/common/quads/copy_output_request.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/android/view_android.h"
 #include "ui/android/window_android.h"
@@ -38,9 +37,9 @@ bool GrabWindowSnapshot(gfx::NativeWindow window,
 static void MakeAsyncCopyRequest(
     gfx::NativeWindow window,
     const gfx::Rect& source_rect,
-    const cc::CopyOutputRequest::CopyOutputRequestCallback& callback) {
-  std::unique_ptr<cc::CopyOutputRequest> request =
-      cc::CopyOutputRequest::CreateBitmapRequest(callback);
+    viz::CopyOutputRequest::CopyOutputRequestCallback callback) {
+  std::unique_ptr<viz::CopyOutputRequest> request =
+      viz::CopyOutputRequest::CreateBitmapRequest(std::move(callback));
 
   float scale = ui::GetScaleFactorForNativeView(window);
   request->set_area(gfx::ScaleToEnclosingRect(source_rect, scale));
@@ -51,14 +50,10 @@ void GrabWindowSnapshotAndScaleAsync(
     gfx::NativeWindow window,
     const gfx::Rect& source_rect,
     const gfx::Size& target_size,
-    scoped_refptr<base::TaskRunner> background_task_runner,
     const GrabWindowSnapshotAsyncCallback& callback) {
-  MakeAsyncCopyRequest(window,
-                       source_rect,
-                       base::Bind(&SnapshotAsync::ScaleCopyOutputResult,
-                                  callback,
-                                  target_size,
-                                  background_task_runner));
+  MakeAsyncCopyRequest(window, source_rect,
+                       base::BindOnce(&SnapshotAsync::ScaleCopyOutputResult,
+                                      callback, target_size));
 }
 
 void GrabWindowSnapshotAsync(gfx::NativeWindow window,
@@ -66,7 +61,8 @@ void GrabWindowSnapshotAsync(gfx::NativeWindow window,
                              const GrabWindowSnapshotAsyncCallback& callback) {
   MakeAsyncCopyRequest(
       window, source_rect,
-      base::Bind(&SnapshotAsync::RunCallbackWithCopyOutputResult, callback));
+      base::BindOnce(&SnapshotAsync::RunCallbackWithCopyOutputResult,
+                     callback));
 }
 
 void GrabViewSnapshotAsync(gfx::NativeView view,
@@ -74,7 +70,8 @@ void GrabViewSnapshotAsync(gfx::NativeView view,
                            const GrabWindowSnapshotAsyncCallback& callback) {
   MakeAsyncCopyRequest(
       view->GetWindowAndroid(), source_rect,
-      base::Bind(&SnapshotAsync::RunCallbackWithCopyOutputResult, callback));
+      base::BindOnce(&SnapshotAsync::RunCallbackWithCopyOutputResult,
+                     callback));
 }
 
 }  // namespace ui

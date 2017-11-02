@@ -41,12 +41,8 @@ namespace blink {
 
 ImageBufferSurface::ImageBufferSurface(const IntSize& size,
                                        OpacityMode opacity_mode,
-                                       sk_sp<SkColorSpace> color_space,
-                                       SkColorType color_type)
-    : opacity_mode_(opacity_mode),
-      size_(size),
-      color_space_(color_space),
-      color_type_(color_type) {
+                                       const CanvasColorParams& color_params)
+    : opacity_mode_(opacity_mode), size_(size), color_params_(color_params) {
   SetIsHidden(false);
 }
 
@@ -74,25 +70,20 @@ void ImageBufferSurface::Draw(GraphicsContext& context,
                               const FloatRect& dest_rect,
                               const FloatRect& src_rect,
                               SkBlendMode op) {
-  sk_sp<SkImage> snapshot =
-      NewImageSnapshot(kPreferNoAcceleration, kSnapshotReasonPaint);
+  RefPtr<StaticBitmapImage> snapshot =
+      NewImageSnapshot(kPreferAcceleration, kSnapshotReasonPaint);
   if (!snapshot)
     return;
 
-  RefPtr<Image> image = StaticBitmapImage::Create(std::move(snapshot));
-  context.DrawImage(image.Get(), dest_rect, &src_rect, op);
+  // GraphicsContext cannot handle gpu resource serialization.
+  snapshot = snapshot->MakeUnaccelerated();
+
+  DCHECK(!snapshot->IsTextureBacked());
+  context.DrawImage(snapshot.Get(), dest_rect, &src_rect, op);
 }
 
 void ImageBufferSurface::Flush(FlushReason) {
   Canvas()->flush();
-}
-
-bool ImageBufferSurface::WritePixels(const SkImageInfo& orig_info,
-                                     const void* pixels,
-                                     size_t row_bytes,
-                                     int x,
-                                     int y) {
-  return Canvas()->writePixels(orig_info, pixels, row_bytes, x, y);
 }
 
 }  // namespace blink

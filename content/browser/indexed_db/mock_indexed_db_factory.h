@@ -53,6 +53,25 @@ class MockIndexedDBFactory : public IndexedDBFactory {
            const url::Origin& origin,
            const base::FilePath& data_directory,
            bool force_close));
+  MOCK_METHOD2(AbortTransactionsAndCompactDatabaseProxy,
+               void(base::OnceCallback<void(leveldb::Status)>* callback,
+                    const url::Origin& origin));
+  virtual void AbortTransactionsAndCompactDatabase(
+      base::OnceCallback<void(leveldb::Status)> callback,
+      const url::Origin& origin) {
+    base::OnceCallback<void(leveldb::Status)>* callback_ref = &callback;
+    AbortTransactionsAndCompactDatabaseProxy(callback_ref, origin);
+  }
+  MOCK_METHOD2(AbortTransactionsForDatabaseProxy,
+               void(base::OnceCallback<void(leveldb::Status)>* callback,
+                    const url::Origin& origin));
+  virtual void AbortTransactionsForDatabase(
+      base::OnceCallback<void(leveldb::Status)> callback,
+      const url::Origin& origin) {
+    base::OnceCallback<void(leveldb::Status)>* callback_ref = &callback;
+    AbortTransactionsForDatabaseProxy(callback_ref, origin);
+  }
+
   MOCK_METHOD1(HandleBackingStoreFailure, void(const url::Origin& origin));
   MOCK_METHOD2(HandleBackingStoreCorruption,
                void(const url::Origin& origin,
@@ -64,6 +83,9 @@ class MockIndexedDBFactory : public IndexedDBFactory {
   MOCK_METHOD0(ContextDestroyed, void());
   MOCK_METHOD1(DatabaseDeleted,
                void(const IndexedDBDatabase::Identifier& identifier));
+
+  MOCK_METHOD1(BlobFilesCleaned, void(const url::Origin& origin));
+
   MOCK_CONST_METHOD1(GetConnectionCount, size_t(const url::Origin& origin));
 
   MOCK_METHOD2(ReportOutstandingBlobs,

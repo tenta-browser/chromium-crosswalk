@@ -6,6 +6,7 @@
 #define CONTENT_RENDERER_DEVTOOLS_DEVTOOLS_AGENT_H_
 
 #include <memory>
+#include <set>
 #include <string>
 
 #include "base/callback.h"
@@ -23,7 +24,6 @@ class GURL;
 
 namespace content {
 
-class DevToolsCPUThrottler;
 class RenderFrameImpl;
 struct Manifest;
 struct ManifestDebugInfo;
@@ -31,9 +31,8 @@ struct ManifestDebugInfo;
 // DevToolsAgent belongs to the inspectable RenderFrameImpl and communicates
 // with WebDevToolsAgent. There is a corresponding DevToolsAgentHost
 // on the browser side.
-class CONTENT_EXPORT DevToolsAgent
-    : public RenderFrameObserver,
-      NON_EXPORTED_BASE(public blink::WebDevToolsAgentClient) {
+class CONTENT_EXPORT DevToolsAgent : public RenderFrameObserver,
+                                     public blink::WebDevToolsAgentClient {
  public:
   explicit DevToolsAgent(RenderFrameImpl* frame);
   ~DevToolsAgent() override;
@@ -53,6 +52,7 @@ class CONTENT_EXPORT DevToolsAgent
   blink::WebDevToolsAgent* GetWebAgent();
 
   bool IsAttached();
+  void DetachAllSessions();
 
  private:
   friend class DevToolsAgentTest;
@@ -83,7 +83,7 @@ class CONTENT_EXPORT DevToolsAgent
   void OnReattach(const std::string& host_id,
                   int session_id,
                   const std::string& agent_state);
-  void OnDetach();
+  void OnDetach(int session_id);
   void OnDispatchOnInspectorBackend(int session_id,
                                     int call_id,
                                     const std::string& method,
@@ -91,7 +91,7 @@ class CONTENT_EXPORT DevToolsAgent
   void OnInspectElement(int session_id, int x, int y);
   void OnRequestNewWindowACK(bool success);
   void ContinueProgram();
-  void OnSetupDevToolsClient(const std::string& compatibility_script);
+  void OnSetupDevToolsClient(const std::string& api_script);
 
   void GotManifest(int session_id,
                    int command_id,
@@ -99,14 +99,12 @@ class CONTENT_EXPORT DevToolsAgent
                    const Manifest& manifest,
                    const ManifestDebugInfo& debug_info);
 
-  bool is_attached_;
+  std::set<int> session_ids_;
   bool is_devtools_client_;
-  bool paused_in_mouse_move_;
   bool paused_;
   RenderFrameImpl* frame_;
   base::Callback<void(int, int, const std::string&, const std::string&)>
       send_protocol_message_callback_for_test_;
-  std::unique_ptr<DevToolsCPUThrottler> cpu_throttler_;
   base::WeakPtrFactory<DevToolsAgent> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(DevToolsAgent);

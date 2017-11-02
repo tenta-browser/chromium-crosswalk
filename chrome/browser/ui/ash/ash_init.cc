@@ -5,20 +5,19 @@
 #include "chrome/browser/ui/ash/ash_init.h"
 
 #include "ash/accelerators/accelerator_controller.h"
-#include "ash/accelerators/accelerator_controller_delegate_aura.h"
+#include "ash/accelerators/accelerator_controller_delegate_classic.h"
 #include "ash/accessibility_types.h"
-#include "ash/aura/shell_port_classic.h"
 #include "ash/high_contrast/high_contrast_controller.h"
 #include "ash/magnifier/magnification_controller.h"
-#include "ash/magnifier/partial_magnification_controller.h"
 #include "ash/mus/bridge/shell_port_mash.h"
 #include "ash/mus/window_manager.h"
 #include "ash/public/cpp/config.h"
 #include "ash/shell.h"
 #include "ash/shell_init_params.h"
+#include "ash/shell_port_classic.h"
 #include "base/command_line.h"
 #include "base/memory/ptr_util.h"
-#include "base/sys_info.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
@@ -31,21 +30,15 @@
 #include "chrome/browser/ui/ash/chrome_screenshot_grabber.h"
 #include "chrome/browser/ui/ash/chrome_shell_content_state.h"
 #include "chrome/browser/ui/ash/chrome_shell_delegate.h"
-#include "chrome/browser/ui/ash/ime_controller_chromeos.h"
 #include "chrome/common/chrome_switches.h"
 #include "chromeos/accelerometer/accelerometer_reader.h"
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/login/login_state.h"
-#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/context_factory.h"
 #include "content/public/common/service_manager_connection.h"
 #include "ui/aura/env.h"
 #include "ui/aura/mus/window_tree_client.h"
 #include "ui/aura/window_tree_host.h"
-
-#if defined(USE_X11)
-#include "ui/base/x/x11_util.h"  // nogncheck
-#endif
 
 namespace {
 
@@ -56,7 +49,6 @@ void CreateClassicShell() {
   shell_init_params.context_factory = content::GetContextFactory();
   shell_init_params.context_factory_private =
       content::GetContextFactoryPrivate();
-  shell_init_params.blocking_pool = content::BrowserThread::GetBlockingPool();
 
   ash::Shell::CreateInstance(shell_init_params);
 }
@@ -64,15 +56,27 @@ void CreateClassicShell() {
 std::unique_ptr<ash::mus::WindowManager> CreateMusShell() {
   service_manager::Connector* connector =
       content::ServiceManagerConnection::GetForProcess()->GetConnector();
+  const bool show_primary_host_on_connect = true;
   std::unique_ptr<ash::mus::WindowManager> window_manager =
-      base::MakeUnique<ash::mus::WindowManager>(connector, ash::Config::MUS);
+      base::MakeUnique<ash::mus::WindowManager>(connector, ash::Config::MUS,
+                                                show_primary_host_on_connect);
+  // The WindowManager normally deletes the Shell when it loses its connection
+  // to mus. Disable that by installing an empty callback. Chrome installs
+  // its own callback to detect when the connection to mus is lost and that is
+  // what shuts everything down.
+  window_manager->SetLostConnectionCallback(base::BindOnce(&base::DoNothing));
+  // When Ash runs in the same services as chrome content creates the
+  // DiscardableSharedMemoryManager.
+  const bool create_discardable_memory = false;
   std::unique_ptr<aura::WindowTreeClient> window_tree_client =
-      base::MakeUnique<aura::WindowTreeClient>(connector, window_manager.get(),
-                                               window_manager.get());
-  window_tree_client->ConnectAsWindowManager();
+      base::MakeUnique<aura::WindowTreeClient>(
+          connector, window_manager.get(), window_manager.get(), nullptr,
+          nullptr, create_discardable_memory);
+  const bool automatically_create_display_roots = false;
+  window_tree_client->ConnectAsWindowManager(
+      automatically_create_display_roots);
   aura::Env::GetInstance()->SetWindowTreeClient(window_tree_client.get());
   window_manager->Init(std::move(window_tree_client),
-                       content::BrowserThread::GetBlockingPool(),
                        base::MakeUnique<ChromeShellDelegate>());
   CHECK(window_manager->WaitForInitialDisplays());
   return window_manager;
@@ -81,17 +85,6 @@ std::unique_ptr<ash::mus::WindowManager> CreateMusShell() {
 }  // namespace
 
 AshInit::AshInit() {
-#if defined(USE_X11)
-  if (base::SysInfo::IsRunningOnChromeOS()) {
-    // Mus only runs on ozone.
-    DCHECK_NE(ash::Config::MUS, chromeos::GetAshConfig());
-    // Hides the cursor outside of the Aura root window. The cursor will be
-    // drawn within the Aura root window, and it'll remain hidden after the
-    // Aura window is closed.
-    ui::HideHostCursor();
-  }
-#endif
-
   // Hide the mouse cursor completely at boot.
   if (!chromeos::LoginState::Get()->IsUserLoggedIn())
     ash::Shell::set_initially_hide_cursor(true);
@@ -104,9 +97,7 @@ AshInit::AshInit() {
   else
     CreateClassicShell();
 
-  ash::Shell* shell = ash::Shell::Get();
-
-  ash::AcceleratorControllerDelegateAura* accelerator_controller_delegate =
+  ash::AcceleratorControllerDelegateClassic* accelerator_controller_delegate =
       nullptr;
   if (chromeos::GetAshConfig() == ash::Config::CLASSIC) {
     accelerator_controller_delegate =
@@ -123,24 +114,16 @@ AshInit::AshInit() {
   }
   // TODO(flackr): Investigate exposing a blocking pool task runner to chromeos.
   chromeos::AccelerometerReader::GetInstance()->Initialize(
-      content::BrowserThread::GetBlockingPool()
-          ->GetSequencedTaskRunnerWithShutdownBehavior(
-              content::BrowserThread::GetBlockingPool()->GetSequenceToken(),
-              base::SequencedWorkerPool::SKIP_ON_SHUTDOWN));
-  shell->accelerator_controller()->SetImeControlDelegate(
-      std::unique_ptr<ash::ImeControlDelegate>(new ImeController));
+      base::CreateSequencedTaskRunnerWithTraits(
+          {base::MayBlock(), base::TaskPriority::BACKGROUND,
+           base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN}));
+  ash::Shell* shell = ash::Shell::Get();
   shell->high_contrast_controller()->SetEnabled(
       chromeos::AccessibilityManager::Get()->IsHighContrastEnabled());
 
   DCHECK(chromeos::MagnificationManager::Get());
-  bool magnifier_enabled =
-      chromeos::MagnificationManager::Get()->IsMagnifierEnabled();
-  ash::MagnifierType magnifier_type =
-      chromeos::MagnificationManager::Get()->GetMagnifierType();
   shell->magnification_controller()->SetEnabled(
-      magnifier_enabled && magnifier_type == ash::MAGNIFIER_FULL);
-  shell->partial_magnification_controller()->SetEnabled(
-      magnifier_enabled && magnifier_type == ash::MAGNIFIER_PARTIAL);
+      chromeos::MagnificationManager::Get()->IsMagnifierEnabled());
 
   if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
           switches::kDisableZeroBrowsersOpenForTests)) {
@@ -150,6 +133,11 @@ AshInit::AshInit() {
 }
 
 AshInit::~AshInit() {
+  // ImageCursorsSet may indirectly hold a reference to CursorDataFactoryOzone,
+  // which is indirectly owned by Shell. Make sure we destroy the
+  // ImageCursorsSet before the Shell to avoid potential use after free.
+  g_browser_process->platform_part()->DestroyImageCursorsSet();
+
   // |window_manager_| deletes the Shell.
   if (!window_manager_ && ash::Shell::HasInstance()) {
     ash::Shell::DeleteInstance();

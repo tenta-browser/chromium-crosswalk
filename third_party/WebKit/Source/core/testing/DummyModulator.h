@@ -35,17 +35,36 @@ class DummyModulator : public Modulator {
   WebTaskRunner* TaskRunner() override;
   ReferrerPolicy GetReferrerPolicy() override;
   SecurityOrigin* GetSecurityOrigin() override;
+  ScriptState* GetScriptState() override;
 
+  void FetchTree(const ModuleScriptFetchRequest&, ModuleTreeClient*) override;
+  void FetchTreeInternal(const ModuleScriptFetchRequest&,
+                         const AncestorList&,
+                         ModuleGraphLevel,
+                         ModuleTreeReachedUrlSet*,
+                         ModuleTreeClient*) override;
+  void FetchSingle(const ModuleScriptFetchRequest&,
+                   ModuleGraphLevel,
+                   SingleModuleClient*) override;
+  void FetchDescendantsForInlineScript(ModuleScript*,
+                                       ModuleTreeClient*) override;
   ModuleScript* GetFetchedModuleScript(const KURL&) override;
   void FetchNewSingleModule(const ModuleScriptFetchRequest&,
                             ModuleGraphLevel,
                             ModuleScriptLoaderClient*) override;
+  bool HasValidContext() override;
   ScriptModule CompileModule(const String& script,
                              const String& url_str,
-                             AccessControlStatus) override;
+                             AccessControlStatus,
+                             const TextPosition&,
+                             ExceptionState&) override;
   ScriptValue InstantiateModule(ScriptModule) override;
-  Vector<String> ModuleRequestsFromScriptModule(ScriptModule) override;
-  void ExecuteModule(ScriptModule) override;
+  ScriptModuleState GetRecordStatus(ScriptModule) override;
+  ScriptValue GetError(const ModuleScript*) override;
+  Vector<ModuleRequest> ModuleRequestsFromScriptModule(ScriptModule) override;
+  void ExecuteModule(const ModuleScript*) override;
+
+  Member<ScriptModuleResolver> resolver_;
 };
 
 }  // namespace blink

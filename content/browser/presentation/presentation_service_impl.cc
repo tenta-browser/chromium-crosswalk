@@ -13,6 +13,7 @@
 #include "base/stl_util.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/navigation_handle.h"
+#include "content/public/browser/presentation_request.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
@@ -32,12 +33,13 @@ int GetNextRequestId() {
 }
 
 void InvokeNewPresentationCallbackWithError(
-    const PresentationServiceImpl::NewPresentationCallback& callback) {
-  callback.Run(base::nullopt,
-               PresentationError(
-                   PRESENTATION_ERROR_PREVIOUS_START_IN_PROGRESS,
-                   "There is already an unsettled Promise from a previous call "
-                   "to start."));
+    PresentationServiceImpl::NewPresentationCallback callback) {
+  std::move(callback).Run(
+      base::nullopt,
+      PresentationError(
+          PRESENTATION_ERROR_PREVIOUS_START_IN_PROGRESS,
+          "There is already an unsettled Promise from a previous call "
+          "to start."));
 }
 
 }  // namespace
@@ -48,6 +50,7 @@ PresentationServiceImpl::PresentationServiceImpl(
     ControllerPresentationServiceDelegate* controller_delegate,
     ReceiverPresentationServiceDelegate* receiver_delegate)
     : WebContentsObserver(web_contents),
+      render_frame_host_(render_frame_host),
       controller_delegate_(controller_delegate),
       receiver_delegate_(receiver_delegate),
       start_presentation_request_id_(kInvalidRequestId),
@@ -58,8 +61,10 @@ PresentationServiceImpl::PresentationServiceImpl(
 
   render_process_id_ = render_frame_host->GetProcess()->GetID();
   render_frame_id_ = render_frame_host->GetRoutingID();
-  DVLOG(2) << "PresentationServiceImpl: "
-           << render_process_id_ << ", " << render_frame_id_;
+  is_main_frame_ = !render_frame_host->GetParent();
+
+  DVLOG(2) << "PresentationServiceImpl: " << render_process_id_ << ", "
+           << render_frame_id_ << " is main frame: " << is_main_frame_;
 
   if (auto* delegate = GetPresentationServiceDelegate())
     delegate->AddObserver(render_process_id_, render_frame_id_, this);
@@ -76,7 +81,7 @@ PresentationServiceImpl::~PresentationServiceImpl() {
 // static
 void PresentationServiceImpl::CreateMojoService(
     RenderFrameHost* render_frame_host,
-    mojo::InterfaceRequest<blink::mojom::PresentationService> request) {
+    blink::mojom::PresentationServiceRequest request) {
   DVLOG(2) << "CreateMojoService";
   WebContents* web_contents =
       WebContents::FromRenderFrameHost(render_frame_host);
@@ -101,7 +106,7 @@ void PresentationServiceImpl::CreateMojoService(
 }
 
 void PresentationServiceImpl::Bind(
-    mojo::InterfaceRequest<blink::mojom::PresentationService> request) {
+    blink::mojom::PresentationServiceRequest request) {
   binding_.reset(new mojo::Binding<blink::mojom::PresentationService>(
       this, std::move(request)));
 }
@@ -112,7 +117,7 @@ void PresentationServiceImpl::SetClient(
   // TODO(imcheng): Set ErrorHandler to listen for errors.
   client_ = std::move(client);
 
-  if (receiver_delegate_) {
+  if (receiver_delegate_ && is_main_frame_) {
     receiver_delegate_->RegisterReceiverConnectionAvailableCallback(
         base::Bind(&PresentationServiceImpl::OnReceiverConnectionAvailable,
                    weak_factory_.GetWeakPtr()));
@@ -121,8 +126,9 @@ void PresentationServiceImpl::SetClient(
 
 void PresentationServiceImpl::ListenForScreenAvailability(const GURL& url) {
   DVLOG(2) << "ListenForScreenAvailability " << url.spec();
-  if (!controller_delegate_) {
-    client_->OnScreenAvailabilityUpdated(url, false);
+  if (!controller_delegate_ || !url.is_valid()) {
+    client_->OnScreenAvailabilityUpdated(
+        url, blink::mojom::ScreenAvailability::UNAVAILABLE);
     return;
   }
 
@@ -156,27 +162,31 @@ void PresentationServiceImpl::StopListeningForScreenAvailability(
 
 void PresentationServiceImpl::StartPresentation(
     const std::vector<GURL>& presentation_urls,
-    const NewPresentationCallback& callback) {
+    NewPresentationCallback callback) {
   DVLOG(2) << "StartPresentation";
   if (!controller_delegate_) {
-    callback.Run(base::nullopt,
-                 PresentationError(PRESENTATION_ERROR_NO_AVAILABLE_SCREENS,
-                                   "No screens found."));
+    std::move(callback).Run(
+        base::nullopt,
+        PresentationError(PRESENTATION_ERROR_NO_AVAILABLE_SCREENS,
+                          "No screens found."));
     return;
   }
 
   // There is a StartPresentation request in progress. To avoid queueing up
   // requests, the incoming request is rejected.
   if (start_presentation_request_id_ != kInvalidRequestId) {
-    InvokeNewPresentationCallbackWithError(callback);
+    InvokeNewPresentationCallbackWithError(std::move(callback));
     return;
   }
 
   start_presentation_request_id_ = GetNextRequestId();
   pending_start_presentation_cb_.reset(
-      new NewPresentationCallbackWrapper(callback));
+      new NewPresentationCallbackWrapper(std::move(callback)));
+  PresentationRequest request({render_process_id_, render_frame_id_},
+                              presentation_urls,
+                              render_frame_host_->GetLastCommittedOrigin());
   controller_delegate_->StartPresentation(
-      render_process_id_, render_frame_id_, presentation_urls,
+      request,
       base::Bind(&PresentationServiceImpl::OnStartPresentationSucceeded,
                  weak_factory_.GetWeakPtr(), start_presentation_request_id_),
       base::Bind(&PresentationServiceImpl::OnStartPresentationError,
@@ -185,24 +195,28 @@ void PresentationServiceImpl::StartPresentation(
 
 void PresentationServiceImpl::ReconnectPresentation(
     const std::vector<GURL>& presentation_urls,
-    const base::Optional<std::string>& presentation_id,
-    const NewPresentationCallback& callback) {
+    const std::string& presentation_id,
+    NewPresentationCallback callback) {
   DVLOG(2) << "ReconnectPresentation";
   if (!controller_delegate_) {
-    callback.Run(base::nullopt,
-                 PresentationError(PRESENTATION_ERROR_NO_PRESENTATION_FOUND,
-                                   "Error joining route: No matching route"));
+    std::move(callback).Run(
+        base::nullopt,
+        PresentationError(PRESENTATION_ERROR_NO_PRESENTATION_FOUND,
+                          "Error joining route: No matching route"));
     return;
   }
 
-  int request_id = RegisterReconnectPresentationCallback(callback);
+  int request_id = RegisterReconnectPresentationCallback(&callback);
   if (request_id == kInvalidRequestId) {
-    InvokeNewPresentationCallbackWithError(callback);
+    InvokeNewPresentationCallbackWithError(std::move(callback));
     return;
   }
+
+  PresentationRequest request({render_process_id_, render_frame_id_},
+                              presentation_urls,
+                              render_frame_host_->GetLastCommittedOrigin());
   controller_delegate_->ReconnectPresentation(
-      render_process_id_, render_frame_id_, presentation_urls,
-      presentation_id.value_or(std::string()),
+      request, presentation_id,
       base::Bind(&PresentationServiceImpl::OnReconnectPresentationSucceeded,
                  weak_factory_.GetWeakPtr(), request_id),
       base::Bind(&PresentationServiceImpl::OnReconnectPresentationError,
@@ -210,13 +224,14 @@ void PresentationServiceImpl::ReconnectPresentation(
 }
 
 int PresentationServiceImpl::RegisterReconnectPresentationCallback(
-    const NewPresentationCallback& callback) {
+    NewPresentationCallback* callback) {
   if (pending_reconnect_presentation_cbs_.size() >= kMaxQueuedRequests)
     return kInvalidRequestId;
 
   int request_id = GetNextRequestId();
   pending_reconnect_presentation_cbs_[request_id].reset(
-      new NewPresentationCallbackWrapper(callback));
+      new NewPresentationCallbackWrapper(std::move(*callback)));
+  DCHECK_NE(kInvalidRequestId, request_id);
   return request_id;
 }
 
@@ -290,15 +305,18 @@ bool PresentationServiceImpl::RunAndEraseReconnectPresentationMojoCallback(
 void PresentationServiceImpl::SetDefaultPresentationUrls(
     const std::vector<GURL>& presentation_urls) {
   DVLOG(2) << "SetDefaultPresentationUrls";
-  if (!controller_delegate_)
+  if (!controller_delegate_ || !is_main_frame_)
     return;
 
   if (default_presentation_urls_ == presentation_urls)
     return;
 
   default_presentation_urls_ = presentation_urls;
+  PresentationRequest request({render_process_id_, render_frame_id_},
+                              presentation_urls,
+                              render_frame_host_->GetLastCommittedOrigin());
   controller_delegate_->SetDefaultPresentationUrls(
-      render_process_id_, render_frame_id_, presentation_urls,
+      request,
       base::Bind(&PresentationServiceImpl::OnDefaultPresentationStarted,
                  weak_factory_.GetWeakPtr()));
 }
@@ -350,18 +368,6 @@ PresentationServiceImpl::GetPresentationServiceDelegate() {
              : static_cast<PresentationServiceDelegate*>(controller_delegate_);
 }
 
-void PresentationServiceImpl::ListenForConnectionMessages(
-    const PresentationInfo& presentation_info) {
-  DVLOG(2) << "ListenForConnectionMessages";
-  if (!controller_delegate_)
-    return;
-
-  controller_delegate_->ListenForConnectionMessages(
-      render_process_id_, render_frame_id_, presentation_info,
-      base::Bind(&PresentationServiceImpl::OnConnectionMessages,
-                 weak_factory_.GetWeakPtr(), presentation_info));
-}
-
 void PresentationServiceImpl::SetPresentationConnection(
     const PresentationInfo& presentation_info,
     blink::mojom::PresentationConnectionPtr controller_connection_ptr,
@@ -375,16 +381,6 @@ void PresentationServiceImpl::SetPresentationConnection(
       render_process_id_, render_frame_id_, presentation_info,
       std::move(controller_connection_ptr),
       std::move(receiver_connection_request));
-}
-
-void PresentationServiceImpl::OnConnectionMessages(
-    const PresentationInfo& presentation_info,
-    std::vector<PresentationConnectionMessage> messages) {
-  DCHECK(client_);
-
-  DVLOG(2) << "OnConnectionMessages [id]: "
-           << presentation_info.presentation_id;
-  client_->OnConnectionMessagesReceived(presentation_info, std::move(messages));
 }
 
 void PresentationServiceImpl::OnReceiverConnectionAvailable(
@@ -444,8 +440,11 @@ void PresentationServiceImpl::WebContentsDestroyed() {
 void PresentationServiceImpl::Reset() {
   DVLOG(2) << "PresentationServiceImpl::Reset";
 
-  if (auto* delegate = GetPresentationServiceDelegate())
-    delegate->Reset(render_process_id_, render_frame_id_);
+  if (controller_delegate_)
+    controller_delegate_->Reset(render_process_id_, render_frame_id_);
+
+  if (receiver_delegate_ && is_main_frame_)
+    receiver_delegate_->Reset(render_process_id_, render_frame_id_);
 
   default_presentation_urls_.clear();
 
@@ -475,45 +474,44 @@ PresentationServiceImpl::ScreenAvailabilityListenerImpl::
     ScreenAvailabilityListenerImpl(const GURL& availability_url,
                                    PresentationServiceImpl* service)
     : availability_url_(availability_url), service_(service) {
+  DCHECK(availability_url_.is_valid());
   DCHECK(service_);
   DCHECK(service_->client_.get());
 }
 
 PresentationServiceImpl::ScreenAvailabilityListenerImpl::
-~ScreenAvailabilityListenerImpl() {
-}
+    ~ScreenAvailabilityListenerImpl() = default;
 
 GURL PresentationServiceImpl::ScreenAvailabilityListenerImpl::
     GetAvailabilityUrl() const {
   return availability_url_;
 }
 
-void PresentationServiceImpl::ScreenAvailabilityListenerImpl
-::OnScreenAvailabilityChanged(bool available) {
-  service_->client_->OnScreenAvailabilityUpdated(availability_url_, available);
-}
-
-void PresentationServiceImpl::ScreenAvailabilityListenerImpl
-::OnScreenAvailabilityNotSupported() {
-  service_->client_->OnScreenAvailabilityNotSupported(availability_url_);
+void PresentationServiceImpl::ScreenAvailabilityListenerImpl::
+    OnScreenAvailabilityChanged(blink::mojom::ScreenAvailability availability) {
+  service_->client_->OnScreenAvailabilityUpdated(availability_url_,
+                                                 availability);
 }
 
 PresentationServiceImpl::NewPresentationCallbackWrapper::
-    NewPresentationCallbackWrapper(const NewPresentationCallback& callback)
-    : callback_(callback) {}
+    NewPresentationCallbackWrapper(NewPresentationCallback callback)
+    : callback_(std::move(callback)) {}
 
 PresentationServiceImpl::NewPresentationCallbackWrapper::
     ~NewPresentationCallbackWrapper() {
-  if (!callback_.is_null())
-    InvokeNewPresentationCallbackWithError(callback_);
+  if (!callback_.is_null()) {
+    std::move(callback_).Run(
+        base::nullopt,
+        PresentationError(PRESENTATION_ERROR_PRESENTATION_REQUEST_CANCELLED,
+                          "The frame is navigating or being destroyed."));
+  }
 }
 
 void PresentationServiceImpl::NewPresentationCallbackWrapper::Run(
     const base::Optional<PresentationInfo>& presentation_info,
     const base::Optional<PresentationError>& error) {
   DCHECK(!callback_.is_null());
-  callback_.Run(presentation_info, error);
-  callback_.Reset();
+  std::move(callback_).Run(presentation_info, error);
 }
 
 }  // namespace content

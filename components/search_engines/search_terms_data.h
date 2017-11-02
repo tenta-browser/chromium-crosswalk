@@ -61,6 +61,14 @@ class SearchTermsData {
   // GOOGLE_IMAGE_SEARCH_SOURCE.
   virtual std::string GoogleImageSearchSource() const;
 
+  // Returns the optional referral ID to be passed to Yandex when searching from
+  // the omnibox (returns the empty string if not supported/applicable).
+  virtual std::string GetYandexReferralID() const;
+
+  // Returns the optional referral ID to be passed to @MAIL.RU when searching
+  // from the omnibox (returns the empty string if not supported/applicable).
+  virtual std::string GetMailRUReferralID() const;
+
  private:
   DISALLOW_COPY_AND_ASSIGN(SearchTermsData);
 };

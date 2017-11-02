@@ -46,19 +46,19 @@ namespace blink {
 
 namespace {
 
-class ExtraDataContainer : public ResourceRequest::ExtraData {
+class URLRequestExtraDataContainer : public ResourceRequest::ExtraData {
  public:
-  static PassRefPtr<ExtraDataContainer> Create(
+  static PassRefPtr<URLRequestExtraDataContainer> Create(
       WebURLRequest::ExtraData* extra_data) {
-    return AdoptRef(new ExtraDataContainer(extra_data));
+    return AdoptRef(new URLRequestExtraDataContainer(extra_data));
   }
 
-  ~ExtraDataContainer() override {}
+  ~URLRequestExtraDataContainer() override {}
 
   WebURLRequest::ExtraData* GetExtraData() const { return extra_data_.get(); }
 
  private:
-  explicit ExtraDataContainer(WebURLRequest::ExtraData* extra_data)
+  explicit URLRequestExtraDataContainer(WebURLRequest::ExtraData* extra_data)
       : extra_data_(WTF::WrapUnique(extra_data)) {}
 
   std::unique_ptr<WebURLRequest::ExtraData> extra_data_;
@@ -114,13 +114,12 @@ void WebURLRequest::SetURL(const WebURL& url) {
   resource_request_->SetURL(url);
 }
 
-WebURL WebURLRequest::FirstPartyForCookies() const {
-  return resource_request_->FirstPartyForCookies();
+WebURL WebURLRequest::SiteForCookies() const {
+  return resource_request_->SiteForCookies();
 }
 
-void WebURLRequest::SetFirstPartyForCookies(
-    const WebURL& first_party_for_cookies) {
-  resource_request_->SetFirstPartyForCookies(first_party_for_cookies);
+void WebURLRequest::SetSiteForCookies(const WebURL& site_for_cookies) {
+  resource_request_->SetSiteForCookies(site_for_cookies);
 }
 
 WebSecurityOrigin WebURLRequest::RequestorOrigin() const {
@@ -303,6 +302,14 @@ void WebURLRequest::SetUseStreamOnResponse(bool use_stream_on_response) {
   resource_request_->SetUseStreamOnResponse(use_stream_on_response);
 }
 
+bool WebURLRequest::GetKeepalive() const {
+  return resource_request_->GetKeepalive();
+}
+
+void WebURLRequest::SetKeepalive(bool keepalive) {
+  resource_request_->SetKeepalive(keepalive);
+}
+
 WebURLRequest::ServiceWorkerMode WebURLRequest::GetServiceWorkerMode() const {
   return resource_request_->GetServiceWorkerMode();
 }
@@ -347,6 +354,14 @@ void WebURLRequest::SetFetchRedirectMode(
   return resource_request_->SetFetchRedirectMode(redirect);
 }
 
+WebString WebURLRequest::GetFetchIntegrity() const {
+  return resource_request_->GetFetchIntegrity();
+}
+
+void WebURLRequest::SetFetchIntegrity(const WebString& integrity) {
+  return resource_request_->SetFetchIntegrity(integrity);
+}
+
 WebURLRequest::PreviewsState WebURLRequest::GetPreviewsState() const {
   return resource_request_->GetPreviewsState();
 }
@@ -360,12 +375,14 @@ WebURLRequest::ExtraData* WebURLRequest::GetExtraData() const {
   RefPtr<ResourceRequest::ExtraData> data = resource_request_->GetExtraData();
   if (!data)
     return 0;
-  return static_cast<ExtraDataContainer*>(data.Get())->GetExtraData();
+  return static_cast<URLRequestExtraDataContainer*>(data.Get())->GetExtraData();
 }
 
 void WebURLRequest::SetExtraData(WebURLRequest::ExtraData* extra_data) {
-  if (extra_data != GetExtraData())
-    resource_request_->SetExtraData(ExtraDataContainer::Create(extra_data));
+  if (extra_data != GetExtraData()) {
+    resource_request_->SetExtraData(
+        URLRequestExtraDataContainer::Create(extra_data));
+  }
 }
 
 ResourceRequest& WebURLRequest::ToMutableResourceRequest() {
@@ -402,9 +419,7 @@ bool WebURLRequest::IsExternalRequest() const {
 }
 
 WebURLRequest::LoadingIPCType WebURLRequest::GetLoadingIPCType() const {
-  if (RuntimeEnabledFeatures::loadingWithMojoEnabled())
-    return WebURLRequest::LoadingIPCType::kMojo;
-  return WebURLRequest::LoadingIPCType::kChromeIPC;
+  return resource_request_->GetLoadingIPCType();
 }
 
 void WebURLRequest::SetNavigationStartTime(double navigation_start_seconds) {

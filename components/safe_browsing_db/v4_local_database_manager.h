@@ -12,12 +12,14 @@
 #include <unordered_set>
 
 #include "base/memory/weak_ptr.h"
+#include "components/safe_browsing/proto/webui.pb.h"
 #include "components/safe_browsing_db/database_manager.h"
 #include "components/safe_browsing_db/hit_report.h"
 #include "components/safe_browsing_db/v4_database.h"
 #include "components/safe_browsing_db/v4_get_hash_protocol_manager.h"
 #include "components/safe_browsing_db/v4_protocol_manager_util.h"
 #include "components/safe_browsing_db/v4_update_protocol_manager.h"
+#include "content/public/browser/notification_service.h"
 #include "url/gurl.h"
 
 namespace safe_browsing {
@@ -34,15 +36,29 @@ class V4LocalDatabaseManager : public SafeBrowsingDatabaseManager {
       const base::FilePath& base_path,
       ExtendedReportingLevelCallback extended_reporting_level_callback);
 
+  // Populates the protobuf with the database data.
+  void CollectDatabaseManagerInfo(
+      DatabaseManagerInfo* v4_database_info,
+      FullHashCacheInfo* full_hash_cache_info) const;
+
+  // Return an instance of the V4LocalDatabaseManager object
+  static const V4LocalDatabaseManager* current_local_database_manager() {
+    return current_local_database_manager_;
+  }
+
   //
   // SafeBrowsingDatabaseManager implementation
   //
 
   void CancelCheck(Client* client) override;
   bool CanCheckResourceType(content::ResourceType resource_type) const override;
+  bool CanCheckSubresourceFilter() const override;
   bool CanCheckUrl(const GURL& url) const override;
   bool ChecksAreAlwaysAsync() const override;
-  bool CheckBrowseUrl(const GURL& url, Client* client) override;
+  bool CheckBrowseUrl(const GURL& url,
+                      const SBThreatTypeSet& threat_types,
+                      Client* client) override;
+  AsyncMatch CheckCsdWhitelistUrl(const GURL& url, Client* client) override;
   bool CheckDownloadUrl(const std::vector<GURL>& url_chain,
                         Client* client) override;
   // TODO(vakh): |CheckExtensionIDs| in the base class accepts a set of
@@ -76,40 +92,40 @@ class V4LocalDatabaseManager : public SafeBrowsingDatabaseManager {
   // Must be initialized by calling StartOnIOThread() before using.
   V4LocalDatabaseManager(
       const base::FilePath& base_path,
-      ExtendedReportingLevelCallback extended_reporting_level_callback);
+      ExtendedReportingLevelCallback extended_reporting_level_callback,
+      scoped_refptr<base::SequencedTaskRunner> task_runner_for_tests);
 
   ~V4LocalDatabaseManager() override;
-
-  void SetTaskRunnerForTest(
-      const scoped_refptr<base::SequencedTaskRunner>& task_runner) {
-    task_runner_ = task_runner;
-  }
 
   enum class ClientCallbackType {
     // This represents the case when we're trying to determine if a URL is
     // unsafe from the following perspectives: Malware, Phishing, UwS.
-    CHECK_BROWSE_URL = 0,
+    CHECK_BROWSE_URL,
 
     // This represents the case when we're trying to determine if any of the
     // URLs in a vector of URLs is unsafe for downloading binaries.
-    CHECK_DOWNLOAD_URLS = 1,
+    CHECK_DOWNLOAD_URLS,
 
     // This represents the case when we're trying to determine if a URL is an
     // unsafe resource.
-    CHECK_RESOURCE_URL = 2,
+    CHECK_RESOURCE_URL,
 
     // This represents the case when we're trying to determine if a Chrome
     // extension is a unsafe.
-    CHECK_EXTENSION_IDS = 3,
+    CHECK_EXTENSION_IDS,
 
     // This respresents the case when we're trying to determine if a URL belongs
     // to the list where subresource filter should be active.
-    CHECK_URL_FOR_SUBRESOURCE_FILTER = 4,
+    CHECK_URL_FOR_SUBRESOURCE_FILTER,
+
+    // This respresents the case when we're trying to determine if a URL is
+    // part of the CSD whitelist.
+    CHECK_CSD_WHITELIST,
 
     // This represents the other cases when a check is being performed
     // synchronously so a client callback isn't required. For instance, when
     // trying to determing if an IP address is unsafe due to hosting Malware.
-    CHECK_OTHER = 5,
+    CHECK_OTHER,
   };
 
   // The information we need to process a URL safety reputation request and
@@ -175,6 +191,7 @@ class V4LocalDatabaseManager : public SafeBrowsingDatabaseManager {
   friend class V4LocalDatabaseManagerTest;
   FRIEND_TEST_ALL_PREFIXES(V4LocalDatabaseManagerTest,
                            TestGetSeverestThreatTypeAndMetadata);
+  FRIEND_TEST_ALL_PREFIXES(V4LocalDatabaseManagerTest, NotificationOnUpdate);
 
   // The checks awaiting a full hash response from SafeBrowsing service.
   typedef std::unordered_set<const PendingCheck*> PendingChecks;
@@ -192,6 +209,9 @@ class V4LocalDatabaseManager : public SafeBrowsingDatabaseManager {
 
   // Called when the database has been updated and schedules the next update.
   void DatabaseUpdated();
+
+  // Delete any *.store files from disk that are no longer used.
+  void DeleteUnusedStoreFiles();
 
   // Identifies the prefixes and the store they matched in, for a given |check|.
   // Returns true if one or more hash prefix matches are found; false otherwise.
@@ -221,6 +241,15 @@ class V4LocalDatabaseManager : public SafeBrowsingDatabaseManager {
   // schedules a task to perform full hash check and returns false.
   bool HandleCheck(std::unique_ptr<PendingCheck> check);
 
+  // Like HandleCheck, but for whitelists that have both full-hashes and
+  // partial hashes in the DB. Returns MATCH, NO_MATCH, or ASYNC.
+  AsyncMatch HandleWhitelistCheck(std::unique_ptr<PendingCheck> check);
+
+  // Schedules a full-hash check for a given set of prefixes.
+  void ScheduleFullHashCheck(std::unique_ptr<PendingCheck> check,
+                             const FullHashToStoreAndHashPrefixesMap&
+                                 full_hash_to_store_and_hash_prefixes);
+
   // Checks |stores_to_check| in database synchronously for hash prefixes
   // matching |hash|. Returns true if there's a match; false otherwise. This is
   // used for lists that have full hash information in the database.
@@ -243,6 +272,12 @@ class V4LocalDatabaseManager : public SafeBrowsingDatabaseManager {
   virtual void PerformFullHashCheck(std::unique_ptr<PendingCheck> check,
                                     const FullHashToStoreAndHashPrefixesMap&
                                         full_hash_to_store_and_hash_prefixes);
+
+  // Post a notification about the completion of database update process.
+  // This is currently used by the extension blacklist checker to disable any
+  // installed extensions that have been blacklisted since.
+  static void PostUpdateNotificationOnUIThread(
+      const content::NotificationSource& source);
 
   // When the database is ready to use, process the checks that were queued
   // while the database was loading from disk.
@@ -272,10 +307,17 @@ class V4LocalDatabaseManager : public SafeBrowsingDatabaseManager {
 
   // Return true if we're enabled and have loaded real data for all of
   // these stores.
-  bool AreStoresAvailableNow(const StoresToCheck& stores_to_check) const;
+  bool AreAllStoresAvailableNow(const StoresToCheck& stores_to_check) const;
+
+  // Return true if we're enabled and have loaded real data for any of
+  // these stores.
+  bool AreAnyStoresAvailableNow(const StoresToCheck& stores_to_check) const;
 
   // The base directory under which to create the files that contain hashes.
   const base::FilePath base_path_;
+
+  // Instance of the V4LocalDatabaseManager object
+  static const V4LocalDatabaseManager* current_local_database_manager_;
 
   // Called when the V4Database has finished applying the latest update and is
   // ready to process next update.
@@ -310,7 +352,6 @@ class V4LocalDatabaseManager : public SafeBrowsingDatabaseManager {
 
   base::WeakPtrFactory<V4LocalDatabaseManager> weak_factory_;
 
-  friend class base::RefCountedThreadSafe<V4LocalDatabaseManager>;
   DISALLOW_COPY_AND_ASSIGN(V4LocalDatabaseManager);
 };  // class V4LocalDatabaseManager
 

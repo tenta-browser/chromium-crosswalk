@@ -5,8 +5,8 @@
 #ifndef Script_h
 #define Script_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/CoreExport.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/text/WTFString.h"
 
@@ -26,9 +26,6 @@ class CORE_EXPORT Script : public GarbageCollectedFinalized<Script> {
   virtual ~Script() {}
 
   virtual ScriptType GetScriptType() const = 0;
-
-  // Used to skip execution of the script if it is empty.
-  virtual bool IsEmpty() const = 0;
 
   // Returns false if the script should not be run due to MIME type check.
   virtual bool CheckMIMETypeBeforeRunScript(Document* context_document,

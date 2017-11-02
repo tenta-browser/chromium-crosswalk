@@ -17,8 +17,6 @@
 #include "media/blink/multibuffer_reader.h"
 #include "net/base/net_errors.h"
 
-using blink::WebFrame;
-
 namespace {
 
 // Minimum preload buffer.
@@ -104,22 +102,17 @@ void MultibufferDataSource::ReadOperation::Run(
 }
 
 MultibufferDataSource::MultibufferDataSource(
-    const GURL& url,
-    UrlData::CORSMode cors_mode,
     const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
-    linked_ptr<UrlIndex> url_index,
-    WebFrame* frame,
+    scoped_refptr<UrlData> url_data,
     MediaLog* media_log,
     BufferedDataSourceHost* host,
     const DownloadingCB& downloading_cb)
-    : cors_mode_(cors_mode),
-      total_bytes_(kPositionNotSpecified),
+    : total_bytes_(kPositionNotSpecified),
       streaming_(false),
       loading_(false),
       failed_(false),
       render_task_runner_(task_runner),
-      url_index_(url_index),
-      frame_(frame),
+      url_data_(std::move(url_data)),
       stop_signal_received_(false),
       media_has_played_(false),
       single_origin_(true),
@@ -135,9 +128,8 @@ MultibufferDataSource::MultibufferDataSource(
   DCHECK(host_);
   DCHECK(!downloading_cb_.is_null());
   DCHECK(render_task_runner_->BelongsToCurrentThread());
-  url_data_ = url_index_->GetByUrl(url, cors_mode_);
-  url_data_->Use();
   DCHECK(url_data_);
+  url_data_->Use();
   url_data_->OnRedirect(
       base::Bind(&MultibufferDataSource::OnRedirect, weak_ptr_));
 }
@@ -256,7 +248,7 @@ bool MultibufferDataSource::HasSingleOrigin() {
 }
 
 bool MultibufferDataSource::DidPassCORSAccessCheck() const {
-  if (cors_mode_ == UrlData::CORS_UNSPECIFIED)
+  if (url_data_->cors_mode() == UrlData::CORS_UNSPECIFIED)
     return false;
   // If init_cb is set, we initialization is not finished yet.
   if (!init_cb_.is_null())
@@ -403,7 +395,7 @@ void MultibufferDataSource::ReadTask() {
     bytes_read =
         static_cast<int>(std::min<int64_t>(available, read_op_->size()));
     bytes_read = reader_->TryRead(read_op_->data(), bytes_read);
-
+    url_data_->AddBytesRead(bytes_read);
     if (bytes_read == 0 && total_bytes_ == kPositionNotSpecified) {
       // We've reached the end of the file and we didn't know the total size
       // before. Update the total size so Read()s past the end of the file will
@@ -504,6 +496,8 @@ void MultibufferDataSource::StartCallback() {
 
   render_task_runner_->PostTask(
       FROM_HERE, base::Bind(base::ResetAndReturn(&init_cb_), success));
+
+  UpdateBufferSizes();
 
   // Even if data is cached, say that we're loading at this point for
   // compatibility.
@@ -610,6 +604,17 @@ void MultibufferDataSource::UpdateBufferSizes() {
       std::min((kTargetSecondsBufferedAhead + kTargetSecondsBufferedBehind) *
                    bytes_per_second,
                preload_high + pin_backward);
+
+  if (url_data_->FullyCached() ||
+      (url_data_->length() != kPositionNotSpecified &&
+       url_data_->length() < kDefaultPinSize)) {
+    // We just make pin_forwards/backwards big enough to encompass the
+    // whole file regardless of where we are, with some extra margins.
+    pin_forward = std::max(pin_forward, url_data_->length() * 2);
+    pin_backward = std::max(pin_backward, url_data_->length() * 2);
+    buffer_size = url_data_->length();
+  }
+
   reader_->SetMaxBuffer(buffer_size);
   reader_->SetPinRange(pin_backward, pin_forward);
 

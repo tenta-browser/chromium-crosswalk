@@ -23,20 +23,32 @@
 
 #include "core/CoreExport.h"
 #include "core/dom/PendingScript.h"
+#include "core/dom/Script.h"
 #include "core/dom/ScriptRunner.h"
-#include "core/loader/resource/ScriptResource.h"
-#include "platform/loader/fetch/FetchParameters.h"
-#include "platform/loader/fetch/ResourceClient.h"
+#include "core/html/CrossOriginAttribute.h"
+#include "platform/bindings/ScriptWrappable.h"
+#include "platform/bindings/TraceWrapperMember.h"
+#include "platform/loader/fetch/IntegrityMetadata.h"
+#include "platform/loader/fetch/ResourceLoaderOptions.h"
+#include "platform/wtf/text/TextEncoding.h"
 #include "platform/wtf/text/TextPosition.h"
 #include "platform/wtf/text/WTFString.h"
+#include "public/platform/WebURLRequest.h"
 
 namespace blink {
 
 class ScriptElementBase;
 class Script;
 
+class ResourceFetcher;
+class ScriptResource;
+
+class Modulator;
+class ModulePendingScriptTreeClient;
+
 class CORE_EXPORT ScriptLoader : public GarbageCollectedFinalized<ScriptLoader>,
-                                 public PendingScriptClient {
+                                 public PendingScriptClient,
+                                 public TraceWrapperBase {
   USING_GARBAGE_COLLECTED_MIXIN(ScriptLoader);
 
  public:
@@ -50,6 +62,7 @@ class CORE_EXPORT ScriptLoader : public GarbageCollectedFinalized<ScriptLoader>,
 
   ~ScriptLoader() override;
   DECLARE_VIRTUAL_TRACE();
+  DECLARE_TRACE_WRAPPERS();
 
   enum LegacyTypeSupport {
     kDisallowLegacyTypeInTypeAttribute,
@@ -58,27 +71,30 @@ class CORE_EXPORT ScriptLoader : public GarbageCollectedFinalized<ScriptLoader>,
   static bool IsValidScriptTypeAndLanguage(
       const String& type_attribute_value,
       const String& language_attribute_value,
-      LegacyTypeSupport support_legacy_types);
+      LegacyTypeSupport support_legacy_types,
+      ScriptType& out_script_type);
+
+  static bool BlockForNoModule(ScriptType, bool nomodule);
 
   // https://html.spec.whatwg.org/#prepare-a-script
   bool PrepareScript(const TextPosition& script_start_position =
                          TextPosition::MinimumPosition(),
                      LegacyTypeSupport = kDisallowLegacyTypeInTypeAttribute);
 
-  String ScriptContent() const;
+  // https://html.spec.whatwg.org/#execute-the-script-block
+  // The single entry point of script execution.
+  // PendingScript::Dispose() is called in ExecuteScriptBlock().
+  void ExecuteScriptBlock(PendingScript*, const KURL&);
 
   // Creates a PendingScript for external script whose fetch is started in
-  // fetchScript().
+  // FetchClassicScript()/FetchModuleScriptTree().
   PendingScript* CreatePendingScript();
 
-  // Returns false if and only if execution was blocked.
-  bool ExecuteScript(const Script*);
+  // The entry point only for ScriptRunner that wraps ExecuteScriptBlock().
   virtual void Execute();
 
-  // XML parser calls these
-  void DispatchLoadEvent();
-  void DispatchErrorEvent();
-  bool IsScriptTypeSupported(LegacyTypeSupport) const;
+  bool IsScriptTypeSupported(LegacyTypeSupport,
+                             ScriptType& out_script_type) const;
 
   bool HaveFiredLoadEvent() const { return have_fired_load_; }
   bool WillBeParserExecuted() const { return will_be_parser_executed_; }
@@ -94,6 +110,7 @@ class CORE_EXPORT ScriptLoader : public GarbageCollectedFinalized<ScriptLoader>,
   bool IsParserInserted() const { return parser_inserted_; }
   bool AlreadyStarted() const { return already_started_; }
   bool IsNonBlocking() const { return non_blocking_; }
+  ScriptType GetScriptType() const { return script_type_; }
 
   // Helper functions used by our parent classes.
   void DidNotifySubtreeInsertionsToDocument();
@@ -104,19 +121,17 @@ class CORE_EXPORT ScriptLoader : public GarbageCollectedFinalized<ScriptLoader>,
   virtual bool IsReady() const {
     return pending_script_ && pending_script_->IsReady();
   }
-  bool ErrorOccurred() const {
-    return pending_script_ && pending_script_->ErrorOccurred();
-  }
-
-  bool WasCreatedDuringDocumentWrite() {
-    return created_during_document_write_;
-  }
 
   bool DisallowedFetchForDocWrittenScript() {
     return document_write_intervention_ ==
            DocumentWriteIntervention::kDoNotFetchDocWrittenScript;
   }
   void SetFetchDocWrittenScriptDeferIdle();
+
+  // To support script streaming, the ScriptRunner may need to access the
+  // PendingScript. This breaks the intended layering, so please use with
+  // care. (Method is virtual to support testing.)
+  virtual PendingScript* GetPendingScriptIfScriptIsAsync();
 
  protected:
   ScriptLoader(ScriptElementBase*,
@@ -128,16 +143,44 @@ class CORE_EXPORT ScriptLoader : public GarbageCollectedFinalized<ScriptLoader>,
   bool IgnoresLoadRequest() const;
   bool IsScriptForEventSupported() const;
 
-  bool FetchScript(const String& source_url,
-                   const String& encoding,
-                   FetchParameters::DeferOption);
-  bool DoExecuteScript(const Script*);
+  // FetchClassicScript corresponds to Step 21.6 of
+  // https://html.spec.whatwg.org/#prepare-a-script
+  // and must NOT be called from outside of PendingScript().
+  //
+  // https://html.spec.whatwg.org/#fetch-a-classic-script
+  bool FetchClassicScript(const KURL&,
+                          ResourceFetcher*,
+                          const String& nonce,
+                          const IntegrityMetadataSet&,
+                          ParserDisposition,
+                          CrossOriginAttributeValue,
+                          SecurityOrigin*,
+                          const WTF::TextEncoding&);
+  // https://html.spec.whatwg.org/#fetch-a-module-script-tree
+  void FetchModuleScriptTree(const KURL&,
+                             Modulator*,
+                             const String& nonce,
+                             ParserDisposition,
+                             WebURLRequest::FetchCredentialsMode);
+
+  enum class ExecuteScriptResult {
+    kShouldFireErrorEvent,
+    kShouldFireLoadEvent,
+    kShouldFireNone
+  };
+  ExecuteScriptResult DoExecuteScript(const Script*);
+  void DispatchLoadEvent();
+  void DispatchErrorEvent();
 
   // Clears the connection to the PendingScript.
   void DetachPendingScript();
 
   // PendingScriptClient
   void PendingScriptFinished(PendingScript*) override;
+
+  bool WasCreatedDuringDocumentWrite() {
+    return created_during_document_write_;
+  }
 
   Member<ScriptElementBase> element_;
   Member<ScriptResource> resource_;
@@ -163,7 +206,8 @@ class CORE_EXPORT ScriptLoader : public GarbageCollectedFinalized<ScriptLoader>,
   bool ready_to_be_parser_executed_ = false;
 
   // https://html.spec.whatwg.org/#concept-script-type
-  // TODO(hiroshige): Implement "script's type".
+  // "It is determined when the script is prepared"
+  ScriptType script_type_ = ScriptType::kClassic;
 
   // https://html.spec.whatwg.org/#concept-script-external
   // "It is determined when the script is prepared"
@@ -194,7 +238,13 @@ class CORE_EXPORT ScriptLoader : public GarbageCollectedFinalized<ScriptLoader>,
 
   DocumentWriteIntervention document_write_intervention_;
 
-  Member<PendingScript> pending_script_;
+  TraceWrapperMember<PendingScript> pending_script_;
+  TraceWrapperMember<ModulePendingScriptTreeClient> module_tree_client_;
+
+  // The context document at the time when PrepareScript() is executed.
+  // This is only used to check whether the script element is moved between
+  // documents and thus doesn't retain a strong reference.
+  WeakMember<Document> original_document_;
 };
 
 }  // namespace blink

@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 #include "base/macros.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -29,7 +30,7 @@ struct Testcase {
 
 #if !defined(OS_ANDROID)
 void RunUrlTest(Testcase* testcases, size_t num_testcases) {
-  static const gfx::FontList font_list;
+  const gfx::FontList font_list;
   for (size_t i = 0; i < num_testcases; ++i) {
     const GURL url(testcases[i].input);
     const float available_width =
@@ -51,6 +52,8 @@ TEST(TextEliderTest, TestGeneralEliding) {
        "google.com/" + kEllipsisStr + "/ads/"},
       {"http://www.google.com/intl/en/ads/", "google.com/" + kEllipsisStr},
       {"http://www.google.com/intl/en/ads/", "goog" + kEllipsisStr},
+      {"https://subdomain.foo.com/bar/filename.html",
+       "https://subdomain.foo.com/bar/filename.html"},
       {"https://subdomain.foo.com/bar/filename.html",
        "subdomain.foo.com/bar/filename.html"},
       {"https://subdomain.foo.com/bar/filename.html",
@@ -93,6 +96,16 @@ TEST(TextEliderTest, TestTrailingEllipsisSlashEllipsisHack) {
   ASSERT_GT(expected.length(), std::string("battersbox.com/d").length());
   EXPECT_EQ(expected, url_formatter::ElideUrl(url, font_list, available_width));
 
+  // Regression test for https://crbug.com/756717. An empty path, eliding to a
+  // width in between the full domain ("www.angelfire.lycos.com") and a bit
+  // longer than the ETLD+1 ("…lycos.com…/…UV"). This previously crashed due to
+  // the path being empty.
+  url = GURL("http://www.angelfire.lycos.com/");
+  available_width = gfx::GetStringWidthF(
+      base::UTF8ToUTF16(kEllipsisStr + "angelfire.lycos.com"), font_list);
+  EXPECT_EQ(base::UTF8ToUTF16(kEllipsisStr + "lycos.com"),
+            url_formatter::ElideUrl(url, font_list, available_width));
+
   // More space available - elide directories, partially elide filename.
   Testcase testcases[] = {
       {"http://battersbox.com/directory/foo/peter_paul_and_mary.html",
@@ -109,10 +122,37 @@ TEST(TextEliderTest, TestMoreEliding) {
 #endif
   const std::string kEllipsisStr(gfx::kEllipsis);
   Testcase testcases[] = {
-      {"http://www.google.com/foo?bar", "www.google.com/foo?bar"},
+      // Eliding the same URL to various lengths.
+      {"http://xyz.google.com/foo?bar", "xyz.google.com/foo?bar"},
       {"http://xyz.google.com/foo?bar", "xyz.google.com/foo?" + kEllipsisStr},
       {"http://xyz.google.com/foo?bar", "xyz.google.com/foo" + kEllipsisStr},
       {"http://xyz.google.com/foo?bar", "xyz.google.com/fo" + kEllipsisStr},
+      {"http://xyz.google.com/foo?bar",
+       kEllipsisStr + "google.com/fo" + kEllipsisStr},
+      {"http://xyz.google.com/foo?bar",
+       kEllipsisStr + "google.com/f" + kEllipsisStr},
+      {"http://xyz.google.com/foo?bar",
+       kEllipsisStr + "google.com/" + kEllipsisStr},
+      {"http://xyz.google.com/foo?bar",
+       kEllipsisStr + "google.com" + kEllipsisStr},
+      {"http://xyz.google.com/foo?bar",
+       kEllipsisStr + "google.co" + kEllipsisStr},
+      {"http://xyz.google.com/foo?bar",
+       kEllipsisStr + "google.c" + kEllipsisStr},
+      {"http://xyz.google.com/foo?bar",
+       kEllipsisStr + "google." + kEllipsisStr},
+      {"http://xyz.google.com/foo?bar", kEllipsisStr + "google" + kEllipsisStr},
+      {"http://xyz.google.com/foo?bar", kEllipsisStr + "googl" + kEllipsisStr},
+      {"http://xyz.google.com/foo?bar", kEllipsisStr + "g" + kEllipsisStr},
+
+      // URL with "www" subdomain (gets removed specially).
+      {"http://www.google.com/foo?bar", "www.google.com/foo?bar"},
+      {"http://www.google.com/foo?bar", "google.com/foo?bar"},
+
+      // URL with no path.
+      {"http://xyz.google.com", kEllipsisStr + "google.com"},
+      {"https://xyz.google.com", kEllipsisStr + "google.com"},
+
       {"http://a.b.com/pathname/c?d", "a.b.com/" + kEllipsisStr + "/c?d"},
       {"", ""},
       {"http://foo.bar..example.com...hello/test/filename.html",

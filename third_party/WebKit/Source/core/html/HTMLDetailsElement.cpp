@@ -25,10 +25,10 @@
 #include "core/CSSValueKeywords.h"
 #include "core/HTMLNames.h"
 #include "core/dom/ElementTraversal.h"
+#include "core/dom/ShadowRoot.h"
 #include "core/dom/TaskRunnerHelper.h"
 #include "core/dom/Text.h"
-#include "core/dom/shadow/ShadowRoot.h"
-#include "core/events/Event.h"
+#include "core/dom/events/Event.h"
 #include "core/frame/UseCounter.h"
 #include "core/html/HTMLContentElement.h"
 #include "core/html/HTMLDivElement.h"
@@ -75,7 +75,7 @@ HTMLDetailsElement* HTMLDetailsElement::Create(Document& document) {
 
 HTMLDetailsElement::HTMLDetailsElement(Document& document)
     : HTMLElement(detailsTag, document), is_open_(false) {
-  UseCounter::Count(document, UseCounter::kDetailsElement);
+  UseCounter::Count(document, WebFeature::kDetailsElement);
 }
 
 HTMLDetailsElement::~HTMLDetailsElement() {}
@@ -114,10 +114,10 @@ Element* HTMLDetailsElement::FindMainSummary() const {
     return summary;
 
   HTMLContentElement* content =
-      toHTMLContentElementOrDie(UserAgentShadowRoot()->FirstChild());
-  DCHECK(content->FirstChild());
-  CHECK(isHTMLSummaryElement(*content->FirstChild()));
-  return ToElement(content->FirstChild());
+      toHTMLContentElementOrDie(UserAgentShadowRoot()->firstChild());
+  DCHECK(content->firstChild());
+  CHECK(isHTMLSummaryElement(*content->firstChild()));
+  return ToElement(content->firstChild());
 }
 
 void HTMLDetailsElement::ParseAttribute(
@@ -136,7 +136,7 @@ void HTMLDetailsElement::ParseAttribute(
                 WTF::Bind(&HTMLDetailsElement::DispatchPendingEvent,
                           WrapPersistent(this)));
 
-    Element* content = EnsureUserAgentShadowRoot().GetElementById(
+    Element* content = EnsureUserAgentShadowRoot().getElementById(
         ShadowElementNames::DetailsContent());
     DCHECK(content);
     if (is_open_)

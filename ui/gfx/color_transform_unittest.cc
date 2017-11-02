@@ -133,6 +133,14 @@ TEST(SimpleColorSpace, TransferFnCancel) {
       ColorTransform::NewColorTransform(
           bt709, gamma24, ColorTransform::Intent::INTENT_PERCEPTUAL));
   EXPECT_EQ(bt709_to_gamma24->NumberOfStepsForTesting(), 2u);
+
+  // Rec 601 YUV to RGB conversion should have a single step.
+  gfx::ColorSpace rec601 = gfx::ColorSpace::CreateREC601();
+  std::unique_ptr<ColorTransform> rec601_yuv_to_rgb(
+      ColorTransform::NewColorTransform(
+          rec601, rec601.GetAsFullRangeRGB(),
+          ColorTransform::Intent::INTENT_PERCEPTUAL));
+  EXPECT_EQ(rec601_yuv_to_rgb->NumberOfStepsForTesting(), 1u);
 }
 
 TEST(SimpleColorSpace, SRGBFromICCAndNotICC) {
@@ -309,33 +317,6 @@ TEST(SimpleColorSpace, GetColorSpace) {
   EXPECT_NEAR(tmp.x(), 0.0f, kEpsilon);
   EXPECT_NEAR(tmp.y(), 0.0f, kEpsilon);
   EXPECT_NEAR(tmp.z(), 1.0f, kEpsilon);
-}
-
-TEST(SimpleColorSpace, UnknownVideoToSRGB) {
-  // Invalid video spaces should be BT709.
-  ColorSpace unknown = gfx::ColorSpace::CreateVideo(
-      -1, -1, -1, gfx::ColorSpace::RangeID::LIMITED);
-  ColorSpace sRGB = ColorSpace::CreateSRGB();
-  std::unique_ptr<ColorTransform> t(ColorTransform::NewColorTransform(
-      unknown, sRGB, ColorTransform::Intent::INTENT_PERCEPTUAL));
-
-  ColorTransform::TriStim tmp(16.0f / 255.0f, 0.5f, 0.5f);
-  t->Transform(&tmp, 1);
-  EXPECT_NEAR(tmp.x(), 0.0f, 0.001f);
-  EXPECT_NEAR(tmp.y(), 0.0f, 0.001f);
-  EXPECT_NEAR(tmp.z(), 0.0f, 0.001f);
-
-  tmp = ColorTransform::TriStim(235.0f / 255.0f, 0.5f, 0.5f);
-  t->Transform(&tmp, 1);
-  EXPECT_NEAR(tmp.x(), 1.0f, 0.001f);
-  EXPECT_NEAR(tmp.y(), 1.0f, 0.001f);
-  EXPECT_NEAR(tmp.z(), 1.0f, 0.001f);
-
-  // Test a blue color
-  tmp = ColorTransform::TriStim(128.0f / 255.0f, 240.0f / 255.0f, 0.5f);
-  t->Transform(&tmp, 1);
-  EXPECT_GT(tmp.z(), tmp.x());
-  EXPECT_GT(tmp.z(), tmp.y());
 }
 
 TEST(SimpleColorSpace, ToUndefined) {

@@ -8,6 +8,7 @@
 #include "components/infobars/core/infobar_manager.h"
 #include "components/strings/grit/components_strings.h"
 #import "ios/chrome/browser/browser_state/chrome_browser_state.h"
+#include "ios/chrome/browser/infobars/infobar_manager_impl.h"
 #include "ios/chrome/browser/sync/sync_setup_service.h"
 #include "ios/chrome/browser/sync/sync_setup_service_factory.h"
 #import "ios/chrome/browser/tabs/tab.h"
@@ -19,12 +20,16 @@
 #include "ios/chrome/grit/ios_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 namespace {
 // Enumerated constants for logging when a sign-in error infobar was shown
 // to the user. This was added for crbug/265352 to quantify how often this
 // bug shows up in the wild. The logged histogram count should be interpreted
 // as a ratio of the number of active sync users.
-enum {
+enum ErrorState {
   SYNC_SIGN_IN_NEEDS_UPDATE = 1,
   SYNC_SERVICE_UNAVAILABLE,
   SYNC_NEEDS_PASSPHRASE,
@@ -33,9 +38,6 @@ enum {
 };
 
 }  // namespace
-
-namespace ios_internal {
-namespace sync {
 
 NSString* GetSyncErrorDescriptionForBrowserState(
     ios::ChromeBrowserState* browserState) {
@@ -109,23 +111,21 @@ GenericChromeCommand* GetSyncCommandForBrowserState(
       syncSetupService->GetSyncServiceState();
   switch (syncState) {
     case SyncSetupService::kSyncServiceSignInNeedsUpdate:
-      return [[[ShowSigninCommand alloc]
+      return [[ShowSigninCommand alloc]
           initWithOperation:AUTHENTICATION_OPERATION_REAUTHENTICATE
-          signInAccessPoint:signin_metrics::AccessPoint::ACCESS_POINT_UNKNOWN]
-          autorelease];
+                accessPoint:signin_metrics::AccessPoint::ACCESS_POINT_UNKNOWN];
     case SyncSetupService::kSyncServiceNeedsPassphrase:
-      return [[[GenericChromeCommand alloc]
-          initWithTag:IDC_SHOW_SYNC_PASSPHRASE_SETTINGS] autorelease];
+      return [[GenericChromeCommand alloc]
+          initWithTag:IDC_SHOW_SYNC_PASSPHRASE_SETTINGS];
     case SyncSetupService::kSyncServiceCouldNotConnect:
     case SyncSetupService::kSyncServiceServiceUnavailable:
     case SyncSetupService::kSyncServiceUnrecoverableError:
     case SyncSetupService::kNoSyncServiceError:
-      return [[[GenericChromeCommand alloc] initWithTag:IDC_SHOW_SYNC_SETTINGS]
-          autorelease];
+      return [[GenericChromeCommand alloc] initWithTag:IDC_SHOW_SYNC_SETTINGS];
   }
 }
 
-bool displaySyncErrors(ios::ChromeBrowserState* browser_state, Tab* tab) {
+bool DisplaySyncErrors(ios::ChromeBrowserState* browser_state, Tab* tab) {
   // Avoid displaying sync errors on incognito tabs.
   if (browser_state->IsOffTheRecord())
     return false;
@@ -140,7 +140,7 @@ bool displaySyncErrors(ios::ChromeBrowserState* browser_state, Tab* tab) {
     return false;
 
   // Logs when an infobar is shown to user. See crbug/265352.
-  int loggedErrorState = 0;
+  ErrorState loggedErrorState = SYNC_ERROR_COUNT;
   switch (errorState) {
     case SyncSetupService::kNoSyncServiceError:
     case SyncSetupService::kSyncServiceCouldNotConnect:
@@ -160,9 +160,11 @@ bool displaySyncErrors(ios::ChromeBrowserState* browser_state, Tab* tab) {
   UMA_HISTOGRAM_ENUMERATION("Sync.SyncErrorInfobarDisplayed", loggedErrorState,
                             SYNC_ERROR_COUNT);
 
-  DCHECK(tab);
-  DCHECK([tab infoBarManager]);
-  return SyncErrorInfoBarDelegate::Create([tab infoBarManager], browser_state);
+  DCHECK(tab.webState);
+  infobars::InfoBarManager* infoBarManager =
+      InfoBarManagerImpl::FromWebState(tab.webState);
+  DCHECK(infoBarManager);
+  return SyncErrorInfoBarDelegate::Create(infoBarManager, browser_state);
 }
 
 bool IsTransientSyncError(SyncSetupService::SyncServiceState errorState) {
@@ -178,5 +180,3 @@ bool IsTransientSyncError(SyncSetupService::SyncServiceState errorState) {
   }
 }
 
-}  // namespace sync
-}  // namespace ios_internal

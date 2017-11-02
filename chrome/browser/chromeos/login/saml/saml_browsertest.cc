@@ -358,16 +358,15 @@ class SamlTest : public OobeBaseTest {
   }
 
   void SetupAuthFlowChangeListener() {
-    ASSERT_TRUE(content::ExecuteScript(
+    content::ExecuteScriptAsync(
         GetLoginUI()->GetWebContents(),
         "$('gaia-signin').gaiaAuthHost_.addEventListener('authFlowChange',"
-            "function f() {"
-              "$('gaia-signin').gaiaAuthHost_.removeEventListener("
-                  "'authFlowChange', f);"
-              "window.domAutomationController.setAutomationId(0);"
-              "window.domAutomationController.send("
-                  "$('gaia-signin').isSAML() ? 'SamlLoaded' : 'GaiaLoaded');"
-            "});"));
+        "    function f() {"
+        "      $('gaia-signin').gaiaAuthHost_.removeEventListener("
+        "          'authFlowChange', f);"
+        "      window.domAutomationController.send("
+        "          $('gaia-signin').isSAML() ? 'SamlLoaded' : 'GaiaLoaded');"
+        "    });");
   }
 
   virtual void StartSamlAndWaitForIdpPageLoad(const std::string& gaia_email) {
@@ -463,9 +462,8 @@ IN_PROC_BROWSER_TEST_F(SamlTest, MAYBE_SamlUI) {
 
   // Click on 'cancel'.
   content::DOMMessageQueue message_queue;  // Observe before 'cancel'.
-  ASSERT_TRUE(
-      content::ExecuteScript(GetLoginUI()->GetWebContents(),
-                             "$('gaia-navigation').$.closeButton.click();"));
+  content::ExecuteScriptAsync(GetLoginUI()->GetWebContents(),
+                              "$('gaia-navigation').$.closeButton.click();");
 
   // Auth flow should change back to Gaia.
   std::string message;
@@ -524,7 +522,6 @@ IN_PROC_BROWSER_TEST_F(SamlTest, ScrapedSingle) {
       "$('gaia-signin').gaiaAuthHost_.addEventListener('authCompleted',"
       "    function(e) {"
       "      var password = e.detail.password;"
-      "      window.domAutomationController.setAutomationId(0);"
       "      window.domAutomationController.send(password);"
       "    });"));
 
@@ -1122,7 +1119,6 @@ void SAMLPolicyTest::ShowGAIALoginForm() {
   ASSERT_TRUE(content::ExecuteScript(
       GetLoginUI()->GetWebContents(),
       "$('gaia-signin').gaiaAuthHost_.addEventListener('ready', function() {"
-      "  window.domAutomationController.setAutomationId(0);"
       "  window.domAutomationController.send('ready');"
       "});"
       "$('add-user-button').click();"));
@@ -1139,7 +1135,6 @@ void SAMLPolicyTest::ShowSAMLInterstitial() {
       "$('saml-interstitial').addEventListener("
       "    'samlInterstitialPageReady',"
       "    function() {"
-      "        window.domAutomationController.setAutomationId(0);"
       "        window.domAutomationController.send("
       "            'samlInterstitialPageReady');"
       "    });"
@@ -1172,7 +1167,6 @@ void SAMLPolicyTest::ClickChangeAccountOnSAMLInterstitialPage() {
   ASSERT_TRUE(content::ExecuteScript(
       GetLoginUI()->GetWebContents(),
       "$('gaia-signin').gaiaAuthHost_.addEventListener('ready', function() {"
-      "  window.domAutomationController.setAutomationId(0);"
       "  window.domAutomationController.send('ready');"
       "});"
       "$('saml-interstitial').changeAccountLink.click();"));
@@ -1217,13 +1211,12 @@ void SAMLPolicyTest::GetCookies() {
   ASSERT_TRUE(profile);
   base::RunLoop run_loop;
   content::BrowserThread::PostTask(
-      content::BrowserThread::IO,
-      FROM_HERE,
-      base::Bind(&SAMLPolicyTest::GetCookiesOnIOThread,
-                 base::Unretained(this),
-                 scoped_refptr<net::URLRequestContextGetter>(
-                     profile->GetRequestContext()),
-                 run_loop.QuitClosure()));
+      content::BrowserThread::IO, FROM_HERE,
+      base::BindOnce(&SAMLPolicyTest::GetCookiesOnIOThread,
+                     base::Unretained(this),
+                     scoped_refptr<net::URLRequestContextGetter>(
+                         profile->GetRequestContext()),
+                     run_loop.QuitClosure()));
   run_loop.Run();
 }
 
@@ -1231,8 +1224,8 @@ void SAMLPolicyTest::GetCookiesOnIOThread(
     const scoped_refptr<net::URLRequestContextGetter>& request_context,
     const base::Closure& callback) {
   request_context->GetURLRequestContext()->cookie_store()->GetAllCookiesAsync(
-      base::Bind(&SAMLPolicyTest::StoreCookieList, base::Unretained(this),
-                 callback));
+      base::BindOnce(&SAMLPolicyTest::StoreCookieList, base::Unretained(this),
+                     callback));
 }
 
 void SAMLPolicyTest::StoreCookieList(
@@ -1347,8 +1340,9 @@ IN_PROC_BROWSER_TEST_F(SAMLPolicyTest, TransferCookiesAffiliated) {
 }
 
 // PRE_TransferCookiesUnaffiliated and TransferCookiesUnaffiliated are flaky on
-// MSAN and ASAN, most probably timing out. See crbug.com/683161.
-#if defined(MEMORY_SANITIZER) || defined(ADDRESS_SANITIZER)
+// MSAN, ASAN, Debug due to time out - most likely, because of the general
+// slowness of the test. See crbug.com/683161, crbug.com/714167.
+#if defined(MEMORY_SANITIZER) || defined(ADDRESS_SANITIZER) || !defined(NDEBUG)
 #define MAYBE_PRE_TransferCookiesUnaffiliated \
   DISABLED_PRE_TransferCookiesUnaffiliated
 #define MAYBE_TransferCookiesUnaffiliated DISABLED_TransferCookiesUnaffiliated

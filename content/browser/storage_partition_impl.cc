@@ -5,22 +5,27 @@
 #include "content/browser/storage_partition_impl.h"
 
 #include <stddef.h>
+#include <stdint.h>
 
 #include <set>
 #include <vector>
 
 #include "base/bind.h"
+#include "base/command_line.h"
 #include "base/location.h"
 #include "base/sequenced_task_runner.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
+#include "content/browser/blob_storage/blob_registry_wrapper.h"
+#include "content/browser/blob_storage/chrome_blob_storage_context.h"
 #include "content/browser/browser_main_loop.h"
 #include "content/browser/browsing_data/storage_partition_http_cache_data_remover.h"
+#include "content/browser/child_process_security_policy_impl.h"
 #include "content/browser/fileapi/browser_file_system_helper.h"
 #include "content/browser/gpu/shader_cache_factory.h"
-#include "content/browser/host_zoom_map_impl.h"
 #include "content/browser/notifications/platform_notification_context_impl.h"
 #include "content/common/dom_storage/dom_storage_types.h"
+#include "content/network/network_context.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
@@ -29,6 +34,8 @@
 #include "content/public/browser/local_storage_usage_info.h"
 #include "content/public/browser/session_storage_usage_info.h"
 #include "content/public/common/content_client.h"
+#include "content/public/common/content_features.h"
+#include "content/public/common/content_switches.h"
 #include "net/base/completion_callback.h"
 #include "net/base/net_errors.h"
 #include "net/cookies/canonical_cookie.h"
@@ -36,8 +43,15 @@
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "ppapi/features/features.h"
+#include "services/service_manager/public/cpp/connector.h"
+#include "storage/browser/blob/blob_registry_impl.h"
+#include "storage/browser/blob/blob_storage_context.h"
 #include "storage/browser/database/database_tracker.h"
 #include "storage/browser/quota/quota_manager.h"
+
+#if !defined(OS_ANDROID)
+#include "content/browser/host_zoom_map_impl.h"
+#endif  // !defined(OS_ANDROID)
 
 #if BUILDFLAG(ENABLE_PLUGINS)
 #include "content/browser/plugin_private_storage_helper.h"
@@ -52,7 +66,7 @@ bool DoesCookieMatchHost(const std::string& host,
   return cookie.IsHostCookie() && cookie.IsDomainMatch(host);
 }
 
-void OnClearedCookies(const base::Closure& callback, int num_deleted) {
+void OnClearedCookies(const base::Closure& callback, uint32_t num_deleted) {
   // The final callback needs to happen from UI thread.
   if (!BrowserThread::CurrentlyOn(BrowserThread::UI)) {
     BrowserThread::PostTask(
@@ -222,7 +236,45 @@ void ClearSessionStorageOnUIThread(
                  callback));
 }
 
+base::WeakPtr<storage::BlobStorageContext> BlobStorageContextGetter(
+    scoped_refptr<ChromeBlobStorageContext> blob_context) {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  return blob_context->context()->AsWeakPtr();
+}
+
 }  // namespace
+
+// Class to own the NetworkContext wrapping a storage partitions
+// URLRequestContext, when the ContentBrowserClient doesn't provide a
+// NetworkContext itself.
+//
+// Createdd on the UI thread, but must be initialized and destroyed on the IO
+// thread.
+class StoragePartitionImpl::NetworkContextOwner {
+ public:
+  NetworkContextOwner() { DCHECK_CURRENTLY_ON(BrowserThread::UI); }
+
+  ~NetworkContextOwner() { DCHECK_CURRENTLY_ON(BrowserThread::IO); }
+
+  void Initialize(mojom::NetworkContextRequest network_context_request,
+                  scoped_refptr<net::URLRequestContextGetter> context_getter) {
+    DCHECK_CURRENTLY_ON(BrowserThread::IO);
+    context_getter_ = std::move(context_getter);
+    network_context_ = base::MakeUnique<NetworkContext>(
+        std::move(network_context_request),
+        context_getter_->GetURLRequestContext());
+  }
+
+ private:
+  // Reference to the URLRequestContextGetter for the URLRequestContext used by
+  // NetworkContext. Depending on the embedder's implementation, this may be
+  // needed to keep the URLRequestContext alive until the NetworkContext is
+  // destroyed.
+  scoped_refptr<net::URLRequestContextGetter> context_getter_;
+  std::unique_ptr<mojom::NetworkContext> network_context_;
+
+  DISALLOW_COPY_AND_ASSIGN(NetworkContextOwner);
+};
 
 // Static.
 int StoragePartitionImpl::GenerateQuotaClientMask(uint32_t remove_mask) {
@@ -375,11 +427,8 @@ StoragePartitionImpl::StoragePartitionImpl(
 StoragePartitionImpl::~StoragePartitionImpl() {
   browser_context_ = nullptr;
 
-  // These message loop checks are just to avoid leaks in unittests.
-  if (GetDatabaseTracker() &&
-      BrowserThread::IsMessageLoopValid(BrowserThread::FILE)) {
-    BrowserThread::PostTask(
-        BrowserThread::FILE,
+  if (GetDatabaseTracker()) {
+    GetDatabaseTracker()->task_runner()->PostTask(
         FROM_HERE,
         base::Bind(&storage::DatabaseTracker::Shutdown, GetDatabaseTracker()));
   }
@@ -399,14 +448,14 @@ StoragePartitionImpl::~StoragePartitionImpl() {
   if (GetPlatformNotificationContext())
     GetPlatformNotificationContext()->Shutdown();
 
-  if (GetBackgroundFetchContext())
-    GetBackgroundFetchContext()->Shutdown();
-
   if (GetBackgroundSyncContext())
     GetBackgroundSyncContext()->Shutdown();
 
   if (GetPaymentAppContext())
     GetPaymentAppContext()->Shutdown();
+
+  BrowserThread::DeleteSoon(BrowserThread::IO, FROM_HERE,
+                            std::move(network_context_owner_));
 }
 
 // static
@@ -433,7 +482,6 @@ std::unique_ptr<StoragePartitionImpl> StoragePartitionImpl::Create(
   partition->quota_manager_ = new storage::QuotaManager(
       in_memory, partition_path,
       BrowserThread::GetTaskRunnerForThread(BrowserThread::IO).get(),
-      BrowserThread::GetTaskRunnerForThread(BrowserThread::DB).get(),
       context->GetSpecialStoragePolicy(),
       base::Bind(&StoragePartitionImpl::GetQuotaSettings,
                  partition->weak_factory_.GetWeakPtr()));
@@ -445,38 +493,23 @@ std::unique_ptr<StoragePartitionImpl> StoragePartitionImpl::Create(
   partition->filesystem_context_ = CreateFileSystemContext(
       context, partition_path, in_memory, quota_manager_proxy.get());
 
-  partition->database_tracker_ = new storage::DatabaseTracker(
+  partition->database_tracker_ = base::MakeRefCounted<storage::DatabaseTracker>(
       partition_path, in_memory, context->GetSpecialStoragePolicy(),
-      quota_manager_proxy.get(),
-      BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE).get());
+      quota_manager_proxy.get());
 
   partition->dom_storage_context_ = new DOMStorageContextWrapper(
       BrowserContext::GetConnectorFor(context),
       in_memory ? base::FilePath() : context->GetPath(),
       relative_partition_path, context->GetSpecialStoragePolicy());
 
-  // BrowserMainLoop may not be initialized in unit tests. Tests will
-  // need to inject their own task runner into the IndexedDBContext.
-  base::SequencedTaskRunner* idb_task_runner =
-      BrowserThread::CurrentlyOn(BrowserThread::UI) &&
-              BrowserMainLoop::GetInstance()
-          ? BrowserMainLoop::GetInstance()
-                ->indexed_db_thread()
-                ->task_runner()
-                .get()
-          : NULL;
-
   base::FilePath path = in_memory ? base::FilePath() : partition_path;
-  partition->indexed_db_context_ =
-      new IndexedDBContextImpl(path, context->GetSpecialStoragePolicy(),
-                               quota_manager_proxy.get(), idb_task_runner);
+  partition->indexed_db_context_ = new IndexedDBContextImpl(
+      path, context->GetSpecialStoragePolicy(), quota_manager_proxy);
 
   partition->cache_storage_context_ = new CacheStorageContextImpl(context);
   partition->cache_storage_context_->Init(path, quota_manager_proxy);
 
   partition->service_worker_context_ = new ServiceWorkerContextWrapper(context);
-  partition->service_worker_context_->Init(path, quota_manager_proxy.get(),
-                                           context->GetSpecialStoragePolicy());
   partition->service_worker_context_->set_storage_partition(partition.get());
 
   partition->appcache_service_ =
@@ -485,16 +518,18 @@ std::unique_ptr<StoragePartitionImpl> StoragePartitionImpl::Create(
   partition->push_messaging_context_ =
       new PushMessagingContext(context, partition->service_worker_context_);
 
+#if !defined(OS_ANDROID)
   partition->host_zoom_level_context_ = new HostZoomLevelContext(
       context->CreateZoomLevelDelegate(partition_path));
+#endif  // !defined(OS_ANDROID)
 
   partition->platform_notification_context_ =
       new PlatformNotificationContextImpl(path, context,
                                           partition->service_worker_context_);
   partition->platform_notification_context_->Initialize();
 
-  partition->background_fetch_context_ = new BackgroundFetchContext(
-      context, partition.get(), partition->service_worker_context_);
+  partition->background_fetch_context_ =
+      new BackgroundFetchContext(context, partition->service_worker_context_);
 
   partition->background_sync_context_ = new BackgroundSyncContext();
   partition->background_sync_context_->Init(partition->service_worker_context_);
@@ -505,6 +540,35 @@ std::unique_ptr<StoragePartitionImpl> StoragePartitionImpl::Create(
   partition->broadcast_channel_provider_ = new BroadcastChannelProvider();
 
   partition->bluetooth_allowed_devices_map_ = new BluetoothAllowedDevicesMap();
+
+  scoped_refptr<ChromeBlobStorageContext> blob_context =
+      ChromeBlobStorageContext::GetFor(context);
+
+  partition->network_context_ =
+      GetContentClient()->browser()->CreateNetworkContext(
+          context, in_memory, relative_partition_path);
+
+  if (base::FeatureList::IsEnabled(features::kNetworkService)) {
+    BlobURLLoaderFactory::BlobContextGetter blob_getter =
+        base::BindOnce(&BlobStorageContextGetter, blob_context);
+    partition->blob_url_loader_factory_ = BlobURLLoaderFactory::Create(
+        std::move(blob_getter), partition->filesystem_context_);
+
+    partition->url_loader_factory_getter_ = new URLLoaderFactoryGetter();
+    partition->url_loader_factory_getter_->Initialize(partition.get());
+  }
+
+  partition->service_worker_context_->Init(
+      path, quota_manager_proxy.get(), context->GetSpecialStoragePolicy(),
+      blob_context.get(), partition->url_loader_factory_getter_.get());
+
+  if (base::FeatureList::IsEnabled(features::kMojoBlobs)) {
+    partition->blob_registry_ = BlobRegistryWrapper::Create(
+        blob_context, partition->filesystem_context_);
+  }
+
+  partition->appcache_service_->set_url_loader_factory_getter(
+      partition->url_loader_factory_getter_.get());
 
   return partition;
 }
@@ -520,6 +584,21 @@ net::URLRequestContextGetter* StoragePartitionImpl::GetURLRequestContext() {
 net::URLRequestContextGetter*
 StoragePartitionImpl::GetMediaURLRequestContext() {
   return media_url_request_context_.get();
+}
+
+mojom::NetworkContext* StoragePartitionImpl::GetNetworkContext() {
+  // Create the NetworkContext as needed, when the network service is disabled.
+  if (!network_context_.get()) {
+    DCHECK(!base::FeatureList::IsEnabled(features::kNetworkService));
+    DCHECK(!network_context_owner_);
+    network_context_owner_ = base::MakeUnique<NetworkContextOwner>();
+    BrowserThread::PostTask(
+        BrowserThread::IO, FROM_HERE,
+        base::BindOnce(&NetworkContextOwner::Initialize,
+                       base::Unretained(network_context_owner_.get()),
+                       MakeRequest(&network_context_), url_request_context_));
+  }
+  return network_context_.get();
 }
 
 storage::QuotaManager* StoragePartitionImpl::GetQuotaManager() {
@@ -554,6 +633,7 @@ ServiceWorkerContextWrapper* StoragePartitionImpl::GetServiceWorkerContext() {
   return service_worker_context_.get();
 }
 
+#if !defined(OS_ANDROID)
 HostZoomMap* StoragePartitionImpl::GetHostZoomMap() {
   DCHECK(host_zoom_level_context_.get());
   return host_zoom_level_context_->GetHostZoomMap();
@@ -567,6 +647,7 @@ ZoomLevelDelegate* StoragePartitionImpl::GetZoomLevelDelegate() {
   DCHECK(host_zoom_level_context_.get());
   return host_zoom_level_context_->GetZoomLevelDelegate();
 }
+#endif  // !defined(OS_ANDROID)
 
 PlatformNotificationContextImpl*
 StoragePartitionImpl::GetPlatformNotificationContext() {
@@ -594,9 +675,23 @@ StoragePartitionImpl::GetBluetoothAllowedDevicesMap() {
   return bluetooth_allowed_devices_map_.get();
 }
 
+BlobURLLoaderFactory* StoragePartitionImpl::GetBlobURLLoaderFactory() {
+  return blob_url_loader_factory_.get();
+}
+
+BlobRegistryWrapper* StoragePartitionImpl::GetBlobRegistry() {
+  return blob_registry_.get();
+}
+
 void StoragePartitionImpl::OpenLocalStorage(
     const url::Origin& origin,
     mojo::InterfaceRequest<mojom::LevelDBWrapper> request) {
+  int process_id = bindings_.dispatch_context();
+  if (!ChildProcessSecurityPolicy::GetInstance()->CanAccessDataForOrigin(
+          process_id, origin.GetURL())) {
+    mojo::ReportBadMessage("Access denied for localStorage request");
+    return;
+  }
   dom_storage_context_->OpenLocalStorage(origin, std::move(request));
 }
 
@@ -909,8 +1004,9 @@ BrowserContext* StoragePartitionImpl::browser_context() const {
 }
 
 void StoragePartitionImpl::Bind(
+    int process_id,
     mojo::InterfaceRequest<mojom::StoragePartitionService> request) {
-  bindings_.AddBinding(this, std::move(request));
+  bindings_.AddBinding(this, std::move(request), process_id);
 }
 
 void StoragePartitionImpl::OverrideQuotaManagerForTesting(
@@ -934,9 +1030,9 @@ void StoragePartitionImpl::SetMediaURLRequestContext(
 }
 
 void StoragePartitionImpl::GetQuotaSettings(
-    const storage::OptionalQuotaSettingsCallback& callback) {
+    storage::OptionalQuotaSettingsCallback callback) {
   GetContentClient()->browser()->GetQuotaSettings(browser_context_, this,
-                                                  callback);
+                                                  std::move(callback));
 }
 
 }  // namespace content

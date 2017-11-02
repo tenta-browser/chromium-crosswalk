@@ -36,7 +36,6 @@
 #include "components/sessions/core/session_id.h"
 #include "components/toolbar/toolbar_model.h"
 #include "components/translate/content/browser/content_translate_driver.h"
-#include "components/zoom/zoom_observer.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/page_navigator.h"
@@ -53,6 +52,10 @@
 #if !defined(OS_CHROMEOS)
 #include "chrome/browser/ui/signin_view_controller.h"
 #endif
+
+#if !defined(OS_ANDROID)
+#include "components/zoom/zoom_observer.h"
+#endif  // !defined(OS_ANDROID)
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "extensions/browser/extension_registry_observer.h"
@@ -110,7 +113,9 @@ class Browser : public TabStripModelObserver,
                 public CoreTabHelperDelegate,
                 public ChromeWebModalDialogManagerDelegate,
                 public BookmarkTabHelperDelegate,
+#if !defined(OS_ANDROID)
                 public zoom::ZoomObserver,
+#endif  // !defined(OS_ANDROID)
                 public content::PageNavigator,
                 public content::NotificationObserver,
 #if BUILDFLAG(ENABLE_EXTENSIONS)
@@ -214,6 +219,10 @@ class Browser : public TabStripModelObserver,
 
   explicit Browser(const CreateParams& params);
   ~Browser() override;
+
+  // Returns the Browser that contains the specified WebContents. May return
+  // null if no Browser has that WebContents as a tab.
+  static Browser* FromWebContents(content::WebContents* web_contents);
 
   // Set overrides for the initial window bounds and maximized state.
   void set_override_bounds(const gfx::Rect& bounds) {
@@ -486,9 +495,6 @@ class Browser : public TabStripModelObserver,
   blink::WebSecurityStyle GetSecurityStyle(
       content::WebContents* web_contents,
       content::SecurityStyleExplanations* security_style_explanations) override;
-  void ShowCertificateViewerInDevTools(
-      content::WebContents* web_contents,
-      scoped_refptr<net::X509Certificate> certificate) override;
   std::unique_ptr<content::BluetoothChooser> RunBluetoothChooser(
       content::RenderFrameHost* frame,
       const content::BluetoothChooser::EventHandler& event_handler) override;
@@ -620,6 +626,7 @@ class Browser : public TabStripModelObserver,
   void ShowRepostFormWarningDialog(content::WebContents* source) override;
   bool ShouldCreateWebContents(
       content::WebContents* web_contents,
+      content::RenderFrameHost* opener,
       content::SiteInstance* source_site_instance,
       int32_t route_id,
       int32_t main_frame_route_id,
@@ -715,9 +722,11 @@ class Browser : public TabStripModelObserver,
   void URLStarredChanged(content::WebContents* web_contents,
                          bool starred) override;
 
+#if !defined(OS_ANDROID)
   // Overridden from ZoomObserver:
   void OnZoomChanged(
       const zoom::ZoomController::ZoomChangedEventData& data) override;
+#endif  // !defined(OS_ANDROID)
 
   // Overridden from SelectFileDialog::Listener:
   void FileSelected(const base::FilePath& path,
@@ -736,10 +745,9 @@ class Browser : public TabStripModelObserver,
   // Overridden from extensions::ExtensionRegistryObserver:
   void OnExtensionLoaded(content::BrowserContext* browser_context,
                          const extensions::Extension* extension) override;
-  void OnExtensionUnloaded(
-      content::BrowserContext* browser_context,
-      const extensions::Extension* extension,
-      extensions::UnloadedExtensionInfo::Reason reason) override;
+  void OnExtensionUnloaded(content::BrowserContext* browser_context,
+                           const extensions::Extension* extension,
+                           extensions::UnloadedExtensionReason reason) override;
 #endif
 
   // Overridden from translate::ContentTranslateDriver::Observer:
@@ -823,6 +831,10 @@ class Browser : public TabStripModelObserver,
                          int index,
                          DetachType type);
 
+  // Updates the loading state for the window and tabstrip.
+  void UpdateWindowForLoadingStateChanged(content::WebContents* source,
+                                          bool to_different_document);
+
   // Shared code between Reload() and ReloadBypassingCache().
   void ReloadInternal(WindowOpenDisposition disposition, bool bypass_cache);
 
@@ -854,6 +866,7 @@ class Browser : public TabStripModelObserver,
   // created.
   bool MaybeCreateBackgroundContents(
       content::SiteInstance* source_site_instance,
+      content::RenderFrameHost* opener,
       const GURL& opener_url,
       int32_t route_id,
       int32_t main_frame_route_id,

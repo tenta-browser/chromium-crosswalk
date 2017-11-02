@@ -34,12 +34,12 @@
 #include "components/metrics/net/cellular_logic_helper.h"
 #include "components/metrics/net/net_metrics_log_uploader.h"
 #include "components/metrics/net/network_metrics_provider.h"
-#include "components/metrics/net/version_utils.h"
 #include "components/metrics/profiler/profiler_metrics_provider.h"
 #include "components/metrics/profiler/tracking_synchronizer.h"
 #include "components/metrics/stability_metrics_helper.h"
 #include "components/metrics/ui/screen_info_metrics_provider.h"
 #include "components/metrics/url_constants.h"
+#include "components/metrics/version_utils.h"
 #include "components/omnibox/browser/omnibox_metrics_provider.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
@@ -69,7 +69,6 @@ IOSChromeMetricsServiceClient::IOSChromeMetricsServiceClient(
     : metrics_state_manager_(state_manager),
       stability_metrics_provider_(nullptr),
       profiler_metrics_provider_(nullptr),
-      drive_metrics_provider_(nullptr),
       start_time_(base::TimeTicks::Now()),
       has_uploaded_profiler_data_(false),
       weak_ptr_factory_(this) {
@@ -137,14 +136,6 @@ std::string IOSChromeMetricsServiceClient::GetVersionString() {
   return metrics::GetVersionString();
 }
 
-void IOSChromeMetricsServiceClient::InitializeSystemProfileMetrics(
-    const base::Closure& done_callback) {
-  finished_init_task_callback_ = done_callback;
-  drive_metrics_provider_->GetDriveMetrics(
-      base::Bind(&IOSChromeMetricsServiceClient::OnInitTaskGotDriveMetrics,
-                 weak_ptr_factory_.GetWeakPtr()));
-}
-
 void IOSChromeMetricsServiceClient::CollectFinalMetricsForLog(
     const base::Closure& done_callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
@@ -176,10 +167,6 @@ base::TimeDelta IOSChromeMetricsServiceClient::GetStandardUploadInterval() {
   return metrics::GetUploadInterval();
 }
 
-base::string16 IOSChromeMetricsServiceClient::GetRegistryBackupKey() {
-  return base::string16();
-}
-
 void IOSChromeMetricsServiceClient::OnRendererProcessCrash() {
   stability_metrics_provider_->LogRendererCrash();
 }
@@ -204,8 +191,7 @@ void IOSChromeMetricsServiceClient::Initialize() {
 
   // Register metrics providers.
   metrics_service_->RegisterMetricsProvider(
-      base::MakeUnique<metrics::NetworkMetricsProvider>(
-          web::WebThread::GetBlockingPool()));
+      base::MakeUnique<metrics::NetworkMetricsProvider>());
 
   // Currently, we configure OmniboxMetricsProvider to not log events to UMA
   // if there is a single incognito session visible. In the future, it may
@@ -226,15 +212,8 @@ void IOSChromeMetricsServiceClient::Initialize() {
   metrics_service_->RegisterMetricsProvider(
       base::MakeUnique<metrics::ScreenInfoMetricsProvider>());
 
-  {
-    auto drive_metrics_provider =
-        base::MakeUnique<metrics::DriveMetricsProvider>(
-            web::WebThread::GetTaskRunnerForThread(web::WebThread::FILE),
-            ios::FILE_LOCAL_STATE);
-    drive_metrics_provider_ = drive_metrics_provider.get();
-    metrics_service_->RegisterMetricsProvider(
-        std::move(drive_metrics_provider));
-  }
+  metrics_service_->RegisterMetricsProvider(
+      base::MakeUnique<metrics::DriveMetricsProvider>(ios::FILE_LOCAL_STATE));
 
   {
     auto profiler_metrics_provider =
@@ -262,10 +241,6 @@ void IOSChromeMetricsServiceClient::Initialize() {
 
   metrics_service_->RegisterMetricsProvider(
       base::MakeUnique<translate::TranslateRankerMetricsProvider>());
-}
-
-void IOSChromeMetricsServiceClient::OnInitTaskGotDriveMetrics() {
-  finished_init_task_callback_.Run();
 }
 
 bool IOSChromeMetricsServiceClient::ShouldIncludeProfilerDataInLog() {

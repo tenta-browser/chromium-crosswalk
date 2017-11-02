@@ -8,12 +8,17 @@ import android.support.test.InstrumentationRegistry;
 
 import org.junit.runners.model.InitializationError;
 
+import org.chromium.base.CollectionUtil;
 import org.chromium.base.test.BaseJUnit4ClassRunner;
+import org.chromium.base.test.BaseTestResult.PreTestHook;
+import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.SkipCheck;
-import org.chromium.chrome.test.ChromeInstrumentationTestRunner.ChromeDisableIfSkipCheck;
 import org.chromium.chrome.test.ChromeInstrumentationTestRunner.ChromeRestrictionSkipCheck;
+import org.chromium.content.browser.test.ChildProcessAllocatorSettingsHook;
+import org.chromium.policy.test.annotations.Policies;
+import org.chromium.ui.test.util.UiDisableIfSkipCheck;
+import org.chromium.ui.test.util.UiRestrictionSkipCheck;
 
-import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -26,12 +31,19 @@ public class ChromeJUnit4ClassRunner extends BaseJUnit4ClassRunner {
      * @throws InitializationError if the test class malformed
      */
     public ChromeJUnit4ClassRunner(final Class<?> klass) throws InitializationError {
-        super(klass, defaultSkipChecks(), null);
+        super(klass, defaultSkipChecks(), defaultPreTestHooks());
     }
 
     private static List<SkipCheck> defaultSkipChecks() {
-        return Arrays.asList(new SkipCheck[] {
+        return CollectionUtil.newArrayList(
                 new ChromeRestrictionSkipCheck(InstrumentationRegistry.getTargetContext()),
-                new ChromeDisableIfSkipCheck(InstrumentationRegistry.getTargetContext())});
+                new UiRestrictionSkipCheck(InstrumentationRegistry.getTargetContext()),
+                new UiDisableIfSkipCheck(InstrumentationRegistry.getTargetContext()));
     }
+
+    private static List<PreTestHook> defaultPreTestHooks() {
+        return CollectionUtil.newArrayList(CommandLineFlags.getRegistrationHook(),
+                new ChildProcessAllocatorSettingsHook(), Policies.getRegistrationHook());
+    }
+
 }

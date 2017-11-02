@@ -7,7 +7,6 @@
 #include <CommonCrypto/CommonDigest.h>
 
 #include "base/logging.h"
-#include "base/mac/mac_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "net/cert/x509_certificate.h"
 #include "third_party/apple_apsl/cssmapplePriv.h"
@@ -92,42 +91,16 @@ CreateSecCertificateFromX509Certificate(const X509Certificate* cert) {
 #endif
 }
 
-base::ScopedCFTypeRef<CFMutableArrayRef>
-CreateSecCertificateArrayForX509Certificate(X509Certificate* cert) {
-  base::ScopedCFTypeRef<CFMutableArrayRef> cert_list(
-      CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks));
-  if (!cert_list)
-    return base::ScopedCFTypeRef<CFMutableArrayRef>();
-#if BUILDFLAG(USE_BYTE_CERTS)
-  std::string bytes;
-  base::ScopedCFTypeRef<SecCertificateRef> sec_cert(
-      CreateSecCertificateFromBytes(CRYPTO_BUFFER_data(cert->os_cert_handle()),
-                                    CRYPTO_BUFFER_len(cert->os_cert_handle())));
-  if (!sec_cert)
-    return base::ScopedCFTypeRef<CFMutableArrayRef>();
-  CFArrayAppendValue(cert_list, sec_cert);
-  for (X509Certificate::OSCertHandle intermediate :
-       cert->GetIntermediateCertificates()) {
-    base::ScopedCFTypeRef<SecCertificateRef> sec_cert(
-        CreateSecCertificateFromBytes(CRYPTO_BUFFER_data(intermediate),
-                                      CRYPTO_BUFFER_len(intermediate)));
-    if (!sec_cert)
-      return base::ScopedCFTypeRef<CFMutableArrayRef>();
-    CFArrayAppendValue(cert_list, sec_cert);
-  }
-#else
-  X509Certificate::OSCertHandles intermediate_ca_certs =
-      cert->GetIntermediateCertificates();
-  CFArrayAppendValue(cert_list, cert->os_cert_handle());
-  for (size_t i = 0; i < intermediate_ca_certs.size(); ++i)
-    CFArrayAppendValue(cert_list, intermediate_ca_certs[i]);
-#endif
-  return cert_list;
+scoped_refptr<X509Certificate> CreateX509CertificateFromSecCertificate(
+    SecCertificateRef sec_cert,
+    const std::vector<SecCertificateRef>& sec_chain) {
+  return CreateX509CertificateFromSecCertificate(sec_cert, sec_chain, {});
 }
 
 scoped_refptr<X509Certificate> CreateX509CertificateFromSecCertificate(
     SecCertificateRef sec_cert,
-    const std::vector<SecCertificateRef>& sec_chain) {
+    const std::vector<SecCertificateRef>& sec_chain,
+    X509Certificate::UnsafeCreateOptions options) {
 #if BUILDFLAG(USE_BYTE_CERTS)
   CSSM_DATA der_data;
   if (!sec_cert || SecCertificateGetData(sec_cert, &der_data) != noErr)
@@ -153,7 +126,8 @@ scoped_refptr<X509Certificate> CreateX509CertificateFromSecCertificate(
     intermediates.push_back(std::move(intermediate_cert_handle));
   }
   scoped_refptr<X509Certificate> result(
-      X509Certificate::CreateFromHandle(cert_handle.get(), intermediates_raw));
+      X509Certificate::CreateFromHandleUnsafeOptions(
+          cert_handle.get(), intermediates_raw, options));
   return result;
 #else
   return X509Certificate::CreateFromHandle(sec_cert, sec_chain);
@@ -238,11 +212,7 @@ OSStatus CreateBasicX509Policy(SecPolicyRef* policy) {
 
 OSStatus CreateRevocationPolicies(bool enable_revocation_checking,
                                   CFMutableArrayRef policies) {
-  if (base::mac::IsAtLeastOS10_12()) {
-// SecPolicyCreateRevocation is only on 10.9 or newer. This pragma stops
-// clang from complaining about it.
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wunguarded-availability"
+  if (__builtin_available(macos 10.12, *)) {
     // On Sierra, it's not possible to disable network revocation checking
     // without also breaking AIA. If revocation checking isn't explicitly
     // enabled, just don't add a revocation policy.
@@ -264,7 +234,6 @@ OSStatus CreateRevocationPolicies(bool enable_revocation_checking,
       return errSecNoPolicyModule;
     CFArrayAppendValue(policies, revocation_policy);
     CFRelease(revocation_policy);
-#pragma clang diagnostic pop
     return noErr;
   }
   OSStatus status = noErr;

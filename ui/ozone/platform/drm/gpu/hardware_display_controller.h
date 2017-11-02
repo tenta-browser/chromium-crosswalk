@@ -17,9 +17,11 @@
 
 #include "base/callback.h"
 #include "base/macros.h"
+#include "base/time/time.h"
 #include "ui/gfx/swap_result.h"
 #include "ui/ozone/platform/drm/gpu/hardware_display_plane_manager.h"
 #include "ui/ozone/platform/drm/gpu/overlay_plane.h"
+#include "ui/ozone/public/swap_completion_callback.h"
 
 namespace gfx {
 class Point;
@@ -86,8 +88,6 @@ class DrmDevice;
 // framebuffers. Though, in this case, it would be possible to have all
 // connectors active if some use the same CRTC to mirror the display.
 class HardwareDisplayController {
-  typedef base::Callback<void(gfx::SwapResult)> PageFlipCallback;
-
  public:
   HardwareDisplayController(std::unique_ptr<CrtcController> controller,
                             const gfx::Point& origin);
@@ -118,7 +118,7 @@ class HardwareDisplayController {
   // Note that this function does not block. Also, this function should not be
   // called again before the page flip occurrs.
   void SchedulePageFlip(const OverlayPlaneList& plane_list,
-                        const PageFlipCallback& callback);
+                        SwapCompletionOnceCallback callback);
 
   // Returns true if the page flip with the |plane_list| would succeed. This
   // doesn't change any state.
@@ -150,7 +150,7 @@ class HardwareDisplayController {
   gfx::Point origin() const { return origin_; }
   void set_origin(const gfx::Point& origin) { origin_ = origin; }
 
-  uint64_t GetTimeOfLastFlip() const;
+  base::TimeTicks GetTimeOfLastFlip() const;
 
   const std::vector<std::unique_ptr<CrtcController>>& crtc_controllers() const {
     return crtc_controllers_;
@@ -161,7 +161,7 @@ class HardwareDisplayController {
  private:
   bool ActualSchedulePageFlip(const OverlayPlaneList& plane_list,
                               bool test_only,
-                              const PageFlipCallback& callback);
+                              SwapCompletionOnceCallback callback);
 
   std::unordered_map<DrmDevice*, std::unique_ptr<HardwareDisplayPlaneList>>
       owned_hardware_planes_;

@@ -59,8 +59,6 @@ const char kPrinterInfo[] = "prn-info-%" PRIuS;
 
 #if defined(OS_CHROMEOS)
 const char kNumberOfUsers[] = "num-users";
-// Temporary for https://crbug.com/660960
-const char kLastGoodCloseStack[] = "last-good-close-stack";
 #endif
 
 #if defined(OS_MACOSX)
@@ -88,6 +86,9 @@ const char kViewCount[] = "view-count";
 
 const char kZeroEncodeDetails[] = "zero-encode-details";
 
+const char kUserCloudPolicyManagerConnectTrace[] =
+    "user-cloud-policy-manager-connect-trace";
+
 size_t RegisterChromeCrashKeys() {
   // The following keys may be chunked by the underlying crash logging system,
   // but ultimately constitute a single key-value pair.
@@ -114,6 +115,8 @@ size_t RegisterChromeCrashKeys() {
     {kApValue, kSmallSize},
     {kCohortName, kSmallSize},
 #endif  // defined(OS_WIN)
+
+// gpu
 #if !defined(OS_ANDROID)
     {gpu::crash_keys::kGPUVendorID, kSmallSize},
     {gpu::crash_keys::kGPUDeviceID, kSmallSize},
@@ -127,6 +130,7 @@ size_t RegisterChromeCrashKeys() {
     {gpu::crash_keys::kGPUVendor, kSmallSize},
     {gpu::crash_keys::kGPURenderer, kSmallSize},
 #endif
+    {gpu::crash_keys::kGPUGLContextIsVirtual, kSmallSize},
 
     // content/:
     {"bad_message_reason", kSmallSize},
@@ -149,13 +153,6 @@ size_t RegisterChromeCrashKeys() {
     {kInputEventFilterSendFailure, kSmallSize},
 #if defined(OS_CHROMEOS)
     {kNumberOfUsers, kSmallSize},
-    // Temporary for https://crbug.com/660960
-    {kLastGoodCloseStack, kMediumSize},
-    // Temporary for https://crbug.com/629521
-    {"mmap_params", kSmallSize},
-    {"buffer_size", kSmallSize},
-    {"errno", kSmallSize},
-    {"number_of_fds", kSmallSize},
 #endif
 #if defined(OS_MACOSX)
     {mac::kFirstNSException, kMediumSize},
@@ -173,7 +170,7 @@ size_t RegisterChromeCrashKeys() {
     {"channel_error_bt", kMediumSize},
     {"remove_route_bt", kMediumSize},
     {"rwhvm_window", kMediumSize},
-    // media/:
+// media/:
 #endif
     {kBug464926CrashKey, kSmallSize},
     {kViewCount, kSmallSize},
@@ -189,16 +186,6 @@ size_t RegisterChromeCrashKeys() {
     {"seccomp-sigsys", kMediumSize},
 #endif
 
-    // Temporary for https://crbug.com/591478.
-    {"initrf_parent_proxy_exists", kSmallSize},
-    {"initrf_render_view_is_live", kSmallSize},
-    {"initrf_parent_is_in_same_site_instance", kSmallSize},
-    {"initrf_parent_process_is_live", kSmallSize},
-    {"initrf_root_is_in_same_site_instance", kSmallSize},
-    {"initrf_root_is_in_same_site_instance_as_parent", kSmallSize},
-    {"initrf_root_process_is_live", kSmallSize},
-    {"initrf_root_proxy_is_live", kSmallSize},
-
     // Temporary for https://crbug.com/626802.
     {"newframe_routing_id", kSmallSize},
     {"newframe_proxy_id", kSmallSize},
@@ -207,28 +194,20 @@ size_t RegisterChromeCrashKeys() {
     {"newframe_widget_id", kSmallSize},
     {"newframe_widget_hidden", kSmallSize},
     {"newframe_replicated_origin", kSmallSize},
-    {"newframe_oopifs_possible", kSmallSize},
-
-    // Temporary for https://crbug.com/630103.
-    {"origin_mismatch_url", crash_keys::kLargeSize},
-    {"origin_mismatch_origin", crash_keys::kMediumSize},
-    {"origin_mismatch_transition", crash_keys::kSmallSize},
-    {"origin_mismatch_redirects", crash_keys::kSmallSize},
-    {"origin_mismatch_same_page", crash_keys::kSmallSize},
 
     // Temporary for https://crbug.com/612711.
     {"aci_wrong_sp_extension_id", kSmallSize},
-
-    // Temporary for https://crbug.com/668633.
-    {"swdh_set_hosted_version_worker_pid", crash_keys::kSmallSize},
-    {"swdh_set_hosted_version_host_pid", crash_keys::kSmallSize},
-    {"swdh_set_hosted_version_is_new_process", crash_keys::kSmallSize},
-    {"swdh_set_hosted_version_restart_count", crash_keys::kSmallSize},
 
     // Temporary for https://crbug.com/697745.
     {"engine_params", crash_keys::kMediumSize},
     {"engine1_params", crash_keys::kMediumSize},
     {"engine2_params", crash_keys::kMediumSize},
+
+    // Temporary for https://crbug.com/685996.
+    {kUserCloudPolicyManagerConnectTrace, kMediumSize},
+
+    // TODO(asvitkine): Remove after fixing https://crbug.com/736675
+    {"bad_histogram", kMediumSize},
   };
 
   // This dynamic set of keys is used for sets of key value pairs when gathering

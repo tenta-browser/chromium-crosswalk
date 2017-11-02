@@ -20,11 +20,10 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/sys_string_conversions.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/notifications/native_notification_display_service.h"
 #include "chrome/browser/notifications/notification.h"
 #include "chrome/browser/notifications/notification_common.h"
+#include "chrome/browser/notifications/notification_display_service.h"
 #include "chrome/browser/notifications/notification_display_service_factory.h"
-#include "chrome/browser/notifications/persistent_notification_delegate.h"
 #include "chrome/browser/notifications/platform_notification_service_impl.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -79,13 +78,12 @@ void ProfileLoadedCallback(NotificationCommon::Operation operation,
     return;
   }
 
-  NotificationDisplayService* display_service =
+  auto* display_service =
       NotificationDisplayServiceFactory::GetForProfile(profile);
 
-  static_cast<NativeNotificationDisplayService*>(display_service)
-      ->ProcessNotificationOperation(operation, notification_type, origin,
-                                     notification_id, action_index,
-                                     base::NullableString16() /* reply */);
+  display_service->ProcessNotificationOperation(
+      operation, notification_type, origin, notification_id, action_index,
+      base::NullableString16() /* reply */);
 }
 
 // Loads the profile and process the Notification response
@@ -253,10 +251,10 @@ void NotificationPlatformBridgeMac::Display(
   std::vector<message_center::ButtonInfo> buttons = notification.buttons();
   if (!buttons.empty()) {
     DCHECK_LE(buttons.size(), blink::kWebNotificationMaxActions);
-    NSString* buttonOne = SysUTF16ToNSString(buttons[0].title);
+    NSString* buttonOne = base::SysUTF16ToNSString(buttons[0].title);
     NSString* buttonTwo = nullptr;
     if (buttons.size() > 1)
-      buttonTwo = SysUTF16ToNSString(buttons[1].title);
+      buttonTwo = base::SysUTF16ToNSString(buttons[1].title);
     [builder setButtons:buttonOne secondaryButton:buttonTwo];
   }
 
@@ -342,6 +340,11 @@ void NotificationPlatformBridgeMac::GetDisplayed(
                            incognito:incognito
                   notificationCenter:notification_center_
                             callback:callback];
+}
+
+void NotificationPlatformBridgeMac::SetReadyCallback(
+    NotificationBridgeReadyCallback callback) {
+  std::move(callback).Run(true);
 }
 
 // static
@@ -493,8 +496,7 @@ bool NotificationPlatformBridgeMac::VerifyNotificationData(
         initWithServiceName:
             [NSString
                 stringWithFormat:notification_constants::kAlertXPCServiceName,
-                                 [base::mac::FrameworkBundle()
-                                     bundleIdentifier]]]);
+                                 [base::mac::OuterBundle() bundleIdentifier]]]);
     xpcConnection_.get().remoteObjectInterface =
         [NSXPCInterface interfaceWithProtocol:@protocol(NotificationDelivery)];
 

@@ -12,6 +12,7 @@
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "chrome/browser/supervised_user/supervised_user_service_observer.h"
 #include "components/session_manager/core/session_manager_observer.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/notification_observer.h"
@@ -37,6 +38,7 @@ class SessionControllerClient
       public user_manager::UserManager::UserSessionStateObserver,
       public user_manager::UserManager::Observer,
       public session_manager::SessionManagerObserver,
+      public SupervisedUserServiceObserver,
       public content::NotificationObserver {
  public:
   SessionControllerClient();
@@ -46,6 +48,19 @@ class SessionControllerClient
 
   static SessionControllerClient* Get();
 
+  // Calls SessionController to prepare locking ash.
+  void PrepareForLock(base::OnceClosure callback);
+
+  // Calls SessionController to start locking ash. |callback| will be invoked
+  // to indicate whether the lock is successful. If |locked| is true, the post
+  // lock animation is finished and ash is fully locked. Otherwise, the lock
+  // is failed somehow.
+  using StartLockCallback = base::Callback<void(bool locked)>;
+  void StartLock(StartLockCallback callback);
+
+  // Notifies SessionController that chrome lock animations are finished.
+  void NotifyChromeLockAnimationsComplete();
+
   // Calls ash SessionController to run unlock animation.
   // |animation_finished_callback| will be invoked when the animation finishes.
   void RunUnlockAnimation(base::Closure animation_finished_callback);
@@ -54,6 +69,9 @@ class SessionControllerClient
   void RequestLockScreen() override;
   void SwitchActiveUser(const AccountId& account_id) override;
   void CycleActiveUser(ash::CycleUserDirection direction) override;
+  void ShowMultiProfileLogin() override;
+
+  static bool IsMultiProfileEnabled();
 
   // user_manager::UserManager::UserSessionStateObserver:
   void ActiveUserChanged(const user_manager::User* active_user) override;
@@ -65,6 +83,9 @@ class SessionControllerClient
 
   // session_manager::SessionManagerObserver:
   void OnSessionStateChanged() override;
+
+  // SupervisedUserServiceObserver:
+  void OnCustodianInfoChanged() override;
 
   // content::NotificationObserver:
   void Observe(int type,
@@ -86,9 +107,13 @@ class SessionControllerClient
   FRIEND_TEST_ALL_PREFIXES(SessionControllerClientTest, SendUserSession);
   FRIEND_TEST_ALL_PREFIXES(SessionControllerClientTest, SupervisedUser);
   FRIEND_TEST_ALL_PREFIXES(SessionControllerClientTest, UserPrefsChange);
+  FRIEND_TEST_ALL_PREFIXES(SessionControllerClientTest, SessionLengthLimit);
 
   // Called when the login profile is ready.
   void OnLoginUserProfilePrepared(Profile* profile);
+
+  // Sends the user session info for a given profile.
+  void SendUserSessionForProfile(Profile* profile);
 
   // Connects to the |session_controller_| interface.
   void ConnectToSessionController();
@@ -102,6 +127,9 @@ class SessionControllerClient
   // Sends the order of user sessions to ash.
   void SendUserSessionOrder();
 
+  // Sends the session length time limit to ash.
+  void SendSessionLengthLimit();
+
   // Binds to the client interface.
   mojo::Binding<ash::mojom::SessionControllerClient> binding_;
 
@@ -111,6 +139,10 @@ class SessionControllerClient
   // Whether the primary user session info is sent to ash.
   bool primary_user_session_sent_ = false;
 
+  // If the session is for a supervised user, the profile of that user.
+  // Chrome OS only supports a single supervised user in a session.
+  Profile* supervised_user_profile_ = nullptr;
+
   content::NotificationRegistrar registrar_;
 
   // Pref change observers to update session info when a relevant user pref
@@ -118,8 +150,12 @@ class SessionControllerClient
   // i.e. they don't much the user session order.
   std::vector<std::unique_ptr<PrefChangeRegistrar>> pref_change_registrars_;
 
+  // Observes changes to Local State prefs.
+  std::unique_ptr<PrefChangeRegistrar> local_state_registrar_;
+
   // Used to suppress duplicate IPCs to ash.
   ash::mojom::SessionInfoPtr last_sent_session_info_;
+  ash::mojom::UserSessionPtr last_sent_user_session_;
 
   base::WeakPtrFactory<SessionControllerClient> weak_ptr_factory_;
 

@@ -38,6 +38,7 @@ blink_modules_sources("mediastream") {
     "NavigatorUserMediaSuccessCallback.h",
     "URLMediaStream.cpp",
     "URLMediaStream.h",
+    "UserMediaClient.cpp",
     "UserMediaClient.h",
     "UserMediaController.cpp",
     "UserMediaController.h",

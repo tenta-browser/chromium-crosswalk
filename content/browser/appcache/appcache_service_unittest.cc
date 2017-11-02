@@ -79,8 +79,9 @@ class MockResponseReader : public AppCacheResponseReader {
  private:
   void ScheduleUserCallback(int result) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&MockResponseReader::InvokeUserCompletionCallback,
-                              weak_factory_.GetWeakPtr(), result));
+        FROM_HERE,
+        base::BindOnce(&MockResponseReader::InvokeUserCompletionCallback,
+                       weak_factory_.GetWeakPtr(), result));
   }
 
   std::unique_ptr<net::HttpResponseInfo> info_;
@@ -183,13 +184,11 @@ class AppCacheServiceImplTest : public testing::Test {
   const GURL kOrigin;
   const GURL kManifestUrl;
 
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   std::unique_ptr<AppCacheServiceImpl> service_;
   int delete_result_;
   int delete_completion_count_;
   net::CompletionCallback deletion_callback_;
-
- private:
-  base::test::ScopedTaskEnvironment scoped_task_environment_;
 };
 
 TEST_F(AppCacheServiceImplTest, DeleteAppCachesForOrigin) {

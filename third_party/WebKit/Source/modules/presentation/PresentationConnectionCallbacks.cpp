@@ -19,8 +19,16 @@ PresentationConnectionCallbacks::PresentationConnectionCallbacks(
     ScriptPromiseResolver* resolver,
     PresentationRequest* request)
     : resolver_(resolver), request_(request), connection_(nullptr) {
-  ASSERT(resolver_);
-  ASSERT(request_);
+  DCHECK(resolver_);
+  DCHECK(request_);
+}
+
+PresentationConnectionCallbacks::PresentationConnectionCallbacks(
+    ScriptPromiseResolver* resolver,
+    PresentationConnection* connection)
+    : resolver_(resolver), request_(nullptr), connection_(connection) {
+  DCHECK(resolver_);
+  DCHECK(connection_);
 }
 
 void PresentationConnectionCallbacks::OnSuccess(
@@ -30,8 +38,17 @@ void PresentationConnectionCallbacks::OnSuccess(
     return;
   }
 
-  connection_ = PresentationConnection::Take(resolver_.Get(), presentation_info,
-                                             request_);
+  // Reconnect to existing connection.
+  if (connection_ &&
+      connection_->GetState() == WebPresentationConnectionState::kClosed) {
+    connection_->DidChangeState(WebPresentationConnectionState::kConnecting);
+  }
+
+  // Create a new connection.
+  if (!connection_ && request_) {
+    connection_ = PresentationConnection::Take(resolver_.Get(),
+                                               presentation_info, request_);
+  }
   resolver_->Resolve(connection_);
 }
 

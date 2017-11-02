@@ -29,6 +29,7 @@
 #define ExecutionContext_h
 
 #include <memory>
+
 #include "core/CoreExport.h"
 #include "core/dom/ContextLifecycleNotifier.h"
 #include "core/dom/ContextLifecycleObserver.h"
@@ -40,17 +41,18 @@
 #include "platform/weborigin/ReferrerPolicy.h"
 #include "platform/wtf/Noncopyable.h"
 #include "public/platform/WebTraceLocation.h"
+#include "v8/include/v8.h"
 
 namespace blink {
 
-class SuspendableObject;
 class ConsoleMessage;
+class CoreProbeSink;
 class DOMTimerCoordinator;
 class ErrorEvent;
 class EventQueue;
 class EventTarget;
-class ExecutionContextTask;
 class LocalDOMWindow;
+class SuspendableObject;
 class PublicURLManager;
 class SecurityOrigin;
 class ScriptState;
@@ -68,15 +70,14 @@ class CORE_EXPORT ExecutionContext : public ContextLifecycleNotifier,
  public:
   DECLARE_VIRTUAL_TRACE();
 
-  // Used to specify whether |isSecureContext| should walk the
-  // ancestor tree to decide whether to restrict usage of a powerful
-  // feature.
-  enum SecureContextCheck {
-    kStandardSecureContextCheck,
-    kWebCryptoSecureContextCheck
-  };
-
   static ExecutionContext* From(const ScriptState*);
+
+  // Returns the ExecutionContext of the current realm.
+  static ExecutionContext* ForCurrentRealm(
+      const v8::FunctionCallbackInfo<v8::Value>&);
+  // Returns the ExecutionContext of the relevant realm for the receiver object.
+  static ExecutionContext* ForRelevantRealm(
+      const v8::FunctionCallbackInfo<v8::Value>&);
 
   virtual bool IsDocument() const { return false; }
   virtual bool IsWorkerOrWorkletGlobalScope() const { return false; }
@@ -100,14 +101,8 @@ class CORE_EXPORT ExecutionContext : public ContextLifecycleNotifier,
   const KURL& Url() const;
   KURL CompleteURL(const String& url) const;
   virtual void DisableEval(const String& error_message) = 0;
-  virtual LocalDOMWindow* ExecutingWindow() const { return 0; }
+  virtual LocalDOMWindow* ExecutingWindow() const { return nullptr; }
   virtual String UserAgent() const = 0;
-  // Executes the task on context's thread asynchronously.
-  virtual void PostTask(
-      TaskType,
-      const WebTraceLocation&,
-      std::unique_ptr<ExecutionContextTask>,
-      const String& task_name_for_instrumentation = g_empty_string) = 0;
 
   // Gets the DOMTimerCoordinator which maintains the "active timer
   // list" of tasks created by setTimeout and setInterval. The
@@ -172,11 +167,8 @@ class CORE_EXPORT ExecutionContext : public ContextLifecycleNotifier,
 
   // Decides whether this context is privileged, as described in
   // https://w3c.github.io/webappsec/specs/powerfulfeatures/#settings-privileged.
-  virtual bool IsSecureContext(
-      String& error_message,
-      const SecureContextCheck = kStandardSecureContextCheck) const = 0;
-  virtual bool IsSecureContext(
-      const SecureContextCheck = kStandardSecureContextCheck) const;
+  virtual bool IsSecureContext(String& error_message) const = 0;
+  virtual bool IsSecureContext() const;
 
   virtual String OutgoingReferrer() const;
   // Parses a comma-separated list of referrer policy tokens, and sets
@@ -191,6 +183,8 @@ class CORE_EXPORT ExecutionContext : public ContextLifecycleNotifier,
                                  bool support_legacy_keywords = false);
   void SetReferrerPolicy(ReferrerPolicy);
   virtual ReferrerPolicy GetReferrerPolicy() const { return referrer_policy_; }
+
+  virtual CoreProbeSink* GetProbeSink() { return nullptr; }
 
  protected:
   ExecutionContext();

@@ -13,6 +13,29 @@
 
 namespace ntp_snippets {
 
+// Holds an experiment ID. So long as the feature is set through a server-side
+// variations config, this feature should exist on the client. This ensures that
+// the experiment ID is visible in chrome://snippets-internals.
+const base::Feature kRemoteSuggestionsBackendFeature{
+    "NTPRemoteSuggestionsBackend", base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Keep sorted, and keep nullptr at the end.
+const base::Feature* const kAllFeatures[] = {
+    &kArticleSuggestionsFeature,
+    &kBookmarkSuggestionsFeature,
+    &kBreakingNewsPushFeature,
+    &kCategoryOrder,
+    &kCategoryRanker,
+    &kForeignSessionsSuggestionsFeature,
+    &kIncreasedVisibility,
+    &kKeepPrefetchedContentSuggestions,
+    &kNotificationsFeature,
+    &kPhysicalWebPageSuggestionsFeature,
+    &kPublisherFaviconsFromNewServerFeature,
+    &kRecentOfflineTabSuggestionsFeature,
+    &kRemoteSuggestionsBackendFeature,
+    nullptr};
+
 const base::Feature kArticleSuggestionsFeature{
     "NTPArticleSuggestions", base::FEATURE_ENABLED_BY_DEFAULT};
 
@@ -31,14 +54,18 @@ const base::Feature kPhysicalWebPageSuggestionsFeature{
 const base::Feature kForeignSessionsSuggestionsFeature{
     "NTPForeignSessionsSuggestions", base::FEATURE_DISABLED_BY_DEFAULT};
 
-const base::Feature kPreferAmpUrlsFeature{"NTPPreferAmpUrls",
-                                          base::FEATURE_ENABLED_BY_DEFAULT};
+const base::Feature kBreakingNewsPushFeature{"BreakingNewsPush",
+                                             base::FEATURE_DISABLED_BY_DEFAULT};
 
 const base::Feature kCategoryRanker{"ContentSuggestionsCategoryRanker",
                                     base::FEATURE_ENABLED_BY_DEFAULT};
 
 const base::Feature kPublisherFaviconsFromNewServerFeature{
     "ContentSuggestionsFaviconsFromNewServer",
+    base::FEATURE_DISABLED_BY_DEFAULT};
+
+const base::Feature kRemoteSuggestionsEmulateM58FetchingSchedule{
+    "RemoteSuggestionsEmulateM58FetchingSchedule",
     base::FEATURE_DISABLED_BY_DEFAULT};
 
 const char kCategoryRankerParameter[] = "category_ranker";
@@ -51,6 +78,9 @@ CategoryRankerChoice GetSelectedCategoryRanker() {
                                                   kCategoryRankerParameter);
 
   if (category_ranker_value.empty()) {
+    // TODO(crbug.com/735066): Remove the experiment configurations from
+    // fieldtrial_testing_config.json when enabling ClickBasedRanker by default.
+
     // Default, Enabled or Disabled.
     return CategoryRankerChoice::CONSTANT;
   }
@@ -112,5 +142,22 @@ CategoryOrderChoice GetSelectedCategoryOrder() {
               << category_order_value << "'";
   return CategoryOrderChoice::GENERAL;
 }
+
+const base::Feature kNotificationsFeature = {"ContentSuggestionsNotifications",
+                                             base::FEATURE_DISABLED_BY_DEFAULT};
+
+const char kNotificationsPriorityParam[] = "priority";
+const char kNotificationsTextParam[] = "text";
+const char kNotificationsTextValuePublisher[] = "publisher";
+const char kNotificationsTextValueSnippet[] = "snippet";
+const char kNotificationsTextValueAndMore[] = "and_more";
+const char kNotificationsKeepWhenFrontmostParam[] =
+    "keep_notification_when_frontmost";
+const char kNotificationsOpenToNTPParam[] = "open_to_ntp";
+const char kNotificationsDailyLimit[] = "daily_limit";
+const char kNotificationsIgnoredLimitParam[] = "ignored_limit";
+
+const base::Feature kKeepPrefetchedContentSuggestions{
+    "KeepPrefetchedContentSuggestions", base::FEATURE_DISABLED_BY_DEFAULT};
 
 }  // namespace ntp_snippets

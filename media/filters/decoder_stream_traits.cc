@@ -43,7 +43,7 @@ DecoderStreamTraits<DemuxerStream::AUDIO>::GetDecoderConfig(
 }
 
 DecoderStreamTraits<DemuxerStream::AUDIO>::DecoderStreamTraits(
-    const scoped_refptr<MediaLog>& media_log)
+    MediaLog* media_log)
     : media_log_(media_log) {}
 
 void DecoderStreamTraits<DemuxerStream::AUDIO>::ReportStatistics(
@@ -84,6 +84,13 @@ void DecoderStreamTraits<DemuxerStream::AUDIO>::OnDecodeDone(
   audio_ts_validator_->RecordOutputDuration(buffer);
 }
 
+void DecoderStreamTraits<DemuxerStream::AUDIO>::OnConfigChanged(
+    const DecoderConfigType& config) {
+  // Reset validator with the latest config. Also ensures that we do not attempt
+  // to match timestamps across config boundaries.
+  audio_ts_validator_.reset(new AudioTimestampValidator(config, media_log_));
+}
+
 // Video decoder stream traits implementation.
 
 // static
@@ -111,7 +118,7 @@ DecoderStreamTraits<DemuxerStream::VIDEO>::GetDecoderConfig(
 }
 
 DecoderStreamTraits<DemuxerStream::VIDEO>::DecoderStreamTraits(
-    const scoped_refptr<MediaLog>& media_log)
+    MediaLog* media_log)
     // Randomly selected number of samples to keep.
     : keyframe_distance_average_(16) {}
 

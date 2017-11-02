@@ -2,111 +2,79 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import json
 import unittest
 
 from webkitpy.common.host_mock import MockHost
-from webkitpy.common.system.executive_mock import mock_git_commands
-from webkitpy.w3c.chromium_commit import ChromiumCommit
-from webkitpy.w3c.common import exportable_commits_since
-
-
-class MockLocalWPT(object):
-
-    def test_patch(self, patch, chromium_commit):  # pylint: disable=unused-argument
-        return 'patch'
+from webkitpy.w3c.common import (
+    read_credentials,
+    is_testharness_baseline,
+    is_basename_skipped,
+    is_file_exportable,
+    CHROMIUM_WPT_DIR
+)
 
 
 class CommonTest(unittest.TestCase):
 
-    def test_exportable_commits_since(self):
+    def test_get_credentials_empty(self):
         host = MockHost()
-        host.executive = mock_git_commands({
-            'show': 'fake message',
-            'rev-list': 'add087a97844f4b9e307d9a216940582d96db306',
-            'rev-parse': 'add087a97844f4b9e307d9a216940582d96db306',
-            'crrev-parse': 'add087a97844f4b9e307d9a216940582d96db306',
-            'diff': 'fake diff',
-            'diff-tree': 'some\nfiles',
-            'format-patch': 'hey I\'m a patch',
-            'footers': 'cr-rev-position',
-        })
+        host.filesystem.write_text_file('/tmp/credentials.json', '{}')
+        self.assertEqual(read_credentials(host, '/tmp/credentials.json'), {})
 
-        commits = exportable_commits_since('beefcafe', host, MockLocalWPT())
-        self.assertEqual(len(commits), 1)
-        self.assertIsInstance(commits[0], ChromiumCommit)
-        self.assertEqual(host.executive.calls, [
-            ['git', 'rev-parse', '--show-toplevel'],
-            ['git', 'rev-list', 'beefcafe..HEAD', '--reverse', '--',
-             'add087a97844f4b9e307d9a216940582d96db306/third_party/WebKit/LayoutTests/external/wpt/'],
-            ['git', 'footers', '--position', 'add087a97844f4b9e307d9a216940582d96db306'],
-            ['git', 'diff-tree', '--name-only', '--no-commit-id', '-r', 'add087a97844f4b9e307d9a216940582d96db306', '--',
-             '/mock-checkout/third_party/WebKit/LayoutTests/external/wpt'],
-            ['git', 'format-patch', '-1', '--stdout', 'add087a97844f4b9e307d9a216940582d96db306', '--', 'some', 'files'],
-            ['git', 'show', '--format=%B', '--no-patch', 'add087a97844f4b9e307d9a216940582d96db306'],
-            ['git', 'show', '--format=%B', '--no-patch', 'add087a97844f4b9e307d9a216940582d96db306']
-        ])
+    def test_get_credentials_none(self):
+        self.assertEqual(read_credentials(MockHost(), None), {})
 
-    def test_ignores_commits_with_noexport_true(self):
+    def test_get_credentials_gets_values_from_file(self):
         host = MockHost()
-        host.executive = mock_git_commands({
-            'show': 'Commit message\nNOEXPORT=true',
-            'rev-list': 'add087a97844f4b9e307d9a216940582d96db306',
-            'rev-parse': 'add087a97844f4b9e307d9a216940582d96db306',
-            'footers': 'cr-rev-position',
-        })
+        host.filesystem.write_text_file(
+            '/tmp/credentials.json',
+            json.dumps({
+                'GH_USER': 'user-github',
+                'GH_TOKEN': 'pass-github',
+                'GERRIT_USER': 'user-gerrit',
+                'GERRIT_TOKEN': 'pass-gerrit',
+            }))
+        self.assertEqual(
+            read_credentials(host, '/tmp/credentials.json'),
+            {
+                'GH_USER': 'user-github',
+                'GH_TOKEN': 'pass-github',
+                'GERRIT_USER': 'user-gerrit',
+                'GERRIT_TOKEN': 'pass-gerrit',
+            })
 
-        commits = exportable_commits_since('add087a97844f4b9e307d9a216940582d96db306', host, MockLocalWPT())
-        self.assertEqual(commits, [])
-        self.assertEqual(host.executive.calls, [
-            ['git', 'rev-parse', '--show-toplevel'],
-            ['git', 'rev-list', 'add087a97844f4b9e307d9a216940582d96db306..HEAD', '--reverse', '--',
-             'add087a97844f4b9e307d9a216940582d96db306/third_party/WebKit/LayoutTests/external/wpt/'],
-            ['git', 'footers', '--position', 'add087a97844f4b9e307d9a216940582d96db306'],
-            ['git', 'diff-tree', '--name-only', '--no-commit-id', '-r', 'add087a97844f4b9e307d9a216940582d96db306', '--',
-             '/mock-checkout/third_party/WebKit/LayoutTests/external/wpt'],
-            ['git', 'show', '--format=%B', '--no-patch', 'add087a97844f4b9e307d9a216940582d96db306']
-        ])
+    def test_is_testharness_baseline(self):
+        self.assertTrue(is_testharness_baseline('fake-test-expected.txt'))
+        self.assertTrue(is_testharness_baseline('external/wpt/fake-test-expected.txt'))
+        self.assertTrue(is_testharness_baseline('/tmp/wpt/fake-test-expected.txt'))
+        self.assertFalse(is_testharness_baseline('fake-test-expected.html'))
+        self.assertFalse(is_testharness_baseline('external/wpt/fake-test-expected.html'))
 
-    def test_ignores_reverted_commits_with_noexport_true(self):
-        host = MockHost()
-        host.executive = mock_git_commands({
-            'show': 'Commit message\n> NOEXPORT=true',
-            'rev-list': 'add087a97844f4b9e307d9a216940582d96db306',
-            'rev-parse': 'add087a97844f4b9e307d9a216940582d96db306',
-            'footers': 'cr-rev-position',
-            'diff-tree': '',
-        }, strict=True)
+    def test_is_basename_skipped(self):
+        self.assertTrue(is_basename_skipped('MANIFEST.json'))
+        self.assertTrue(is_basename_skipped('OWNERS'))
+        self.assertTrue(is_basename_skipped('reftest.list'))
+        self.assertTrue(is_basename_skipped('.gitignore'))
+        self.assertFalse(is_basename_skipped('something.json'))
 
-        commits = exportable_commits_since('add087a97844f4b9e307d9a216940582d96db306', host, MockLocalWPT())
-        self.assertEqual(len(commits), 0)
-        self.assertEqual(host.executive.calls, [
-            ['git', 'rev-parse', '--show-toplevel'],
-            ['git', 'rev-list', 'add087a97844f4b9e307d9a216940582d96db306..HEAD', '--reverse', '--',
-             'add087a97844f4b9e307d9a216940582d96db306/third_party/WebKit/LayoutTests/external/wpt/'],
-            ['git', 'footers', '--position', 'add087a97844f4b9e307d9a216940582d96db306'],
-            ['git', 'diff-tree', '--name-only', '--no-commit-id', '-r', 'add087a97844f4b9e307d9a216940582d96db306', '--',
-             '/mock-checkout/third_party/WebKit/LayoutTests/external/wpt'],
-            ['git', 'show', '--format=%B', '--no-patch', 'add087a97844f4b9e307d9a216940582d96db306']
-        ])
+    def test_is_basename_skipped_asserts_basename(self):
+        with self.assertRaises(AssertionError):
+            is_basename_skipped('third_party/fake/OWNERS')
 
-    def test_ignores_commits_that_start_with_import(self):
-        host = MockHost()
-        host.executive = mock_git_commands({
-            'show': 'Import rutabaga@deadbeef',
-            'rev-list': 'add087a97844f4b9e307d9a216940582d96db306',
-            'rev-parse': 'add087a97844f4b9e307d9a216940582d96db306',
-            'footers': 'cr-rev-position',
-        })
+    def test_is_file_exportable(self):
+        self.assertTrue(is_file_exportable(CHROMIUM_WPT_DIR + 'html/fake-test.html'))
+        self.assertFalse(is_file_exportable(CHROMIUM_WPT_DIR + 'html/fake-test-expected.txt'))
+        self.assertFalse(is_file_exportable(CHROMIUM_WPT_DIR + 'MANIFEST.json'))
+        self.assertFalse(is_file_exportable(CHROMIUM_WPT_DIR + 'dom/OWNERS'))
 
-        commits = exportable_commits_since('beefcafe', host, MockLocalWPT())
-        self.assertEqual(commits, [])
-        self.assertEqual(host.executive.calls, [
-            ['git', 'rev-parse', '--show-toplevel'],
-            ['git', 'rev-list', 'beefcafe..HEAD', '--reverse', '--',
-             'add087a97844f4b9e307d9a216940582d96db306/third_party/WebKit/LayoutTests/external/wpt/'],
-            ['git', 'footers', '--position', 'add087a97844f4b9e307d9a216940582d96db306'],
-            ['git', 'diff-tree', '--name-only', '--no-commit-id', '-r', 'add087a97844f4b9e307d9a216940582d96db306', '--',
-             '/mock-checkout/third_party/WebKit/LayoutTests/external/wpt'],
-            ['git', 'show', '--format=%B', '--no-patch', 'add087a97844f4b9e307d9a216940582d96db306'],
-            ['git', 'show', '--format=%B', '--no-patch', 'add087a97844f4b9e307d9a216940582d96db306'],
-        ])
+    def test_is_file_exportable_asserts_path(self):
+        # Rejects basenames.
+        with self.assertRaises(AssertionError):
+            is_file_exportable('MANIFEST.json')
+        # Rejects files not in Chromium WPT.
+        with self.assertRaises(AssertionError):
+            is_file_exportable('third_party/fake/OWNERS')
+        # Rejects absolute paths.
+        with self.assertRaises(AssertionError):
+            is_file_exportable('/mock-checkout/third_party/WebKit/LayoutTests/external/wpt/OWNERS')

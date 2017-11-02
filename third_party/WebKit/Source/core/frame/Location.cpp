@@ -31,14 +31,13 @@
 #include "bindings/core/v8/BindingSecurity.h"
 #include "bindings/core/v8/ExceptionState.h"
 #include "bindings/core/v8/V8DOMActivityLogger.h"
-#include "core/dom/DOMURLUtilsReadOnly.h"
 #include "core/dom/Document.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/frame/DOMWindow.h"
 #include "core/frame/LocalDOMWindow.h"
 #include "core/frame/LocalFrame.h"
 #include "core/loader/FrameLoader.h"
-#include "platform/RuntimeEnabledFeatures.h"
+#include "core/url/DOMURLUtilsReadOnly.h"
 #include "platform/weborigin/KURL.h"
 #include "platform/weborigin/SecurityOrigin.h"
 
@@ -227,11 +226,8 @@ void Location::reload(LocalDOMWindow* current_window) {
     return;
   if (GetDocument()->Url().ProtocolIsJavaScript())
     return;
-  dom_window_->GetFrame()->Reload(
-      RuntimeEnabledFeatures::locationHardReloadEnabled()
-          ? kFrameLoadTypeReloadBypassingCache
-          : kFrameLoadTypeReload,
-      ClientRedirectPolicy::kClientRedirect);
+  dom_window_->GetFrame()->Reload(kFrameLoadTypeReload,
+                                  ClientRedirectPolicy::kClientRedirect);
 }
 
 void Location::SetLocation(const String& url,
@@ -245,7 +241,16 @@ void Location::SetLocation(const String& url,
   if (!current_window->GetFrame())
     return;
 
-  if (!current_window->GetFrame()->CanNavigate(*dom_window_->GetFrame())) {
+  Document* entered_document = entered_window->document();
+  if (!entered_document)
+    return;
+
+  KURL completed_url = entered_document->CompleteURL(url);
+  if (completed_url.IsNull())
+    return;
+
+  if (!current_window->GetFrame()->CanNavigate(*dom_window_->GetFrame(),
+                                               completed_url)) {
     if (exception_state) {
       exception_state->ThrowSecurityError(
           "The current window does not have permission to navigate the target "
@@ -254,14 +259,6 @@ void Location::SetLocation(const String& url,
     }
     return;
   }
-
-  Document* entered_document = entered_window->document();
-  if (!entered_document)
-    return;
-
-  KURL completed_url = entered_document->CompleteURL(url);
-  if (completed_url.IsNull())
-    return;
   if (exception_state && !completed_url.IsValid()) {
     exception_state->ThrowDOMException(kSyntaxError,
                                        "'" + url + "' is not a valid URL.");
@@ -279,7 +276,7 @@ void Location::SetLocation(const String& url,
     argv.push_back("url");
     argv.push_back(entered_document->Url());
     argv.push_back(completed_url);
-    activity_logger->LogEvent("blinkSetAttribute", argv.size(), argv.Data());
+    activity_logger->LogEvent("blinkSetAttribute", argv.size(), argv.data());
   }
   dom_window_->GetFrame()->Navigate(
       *current_window->document(), completed_url,

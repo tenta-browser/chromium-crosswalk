@@ -130,46 +130,37 @@ Profiler.ProfilesPanel = class extends UI.PanelWithSidebar {
     this.element.appendChild(this._fileSelectorElement);
   }
 
+  /**
+   * @param {string} fileName
+   * @return {?Profiler.ProfileType}
+   */
   _findProfileTypeByExtension(fileName) {
-    var types = this._profileTypes;
-    for (var i = 0; i < types.length; i++) {
-      var type = types[i];
-      var extension = type.fileExtension();
-      if (!extension)
-        continue;
-      if (fileName.endsWith(type.fileExtension()))
-        return type;
-    }
-    return null;
+    return this._profileTypes.find(type => !!type.fileExtension() && fileName.endsWith(type.fileExtension() || '')) ||
+        null;
   }
 
   /**
    * @param {!File} file
    */
-  _loadFromFile(file) {
+  async _loadFromFile(file) {
     this._createFileSelectorElement();
 
     var profileType = this._findProfileTypeByExtension(file.name);
     if (!profileType) {
-      var extensions = [];
-      var types = this._profileTypes;
-      for (var i = 0; i < types.length; i++) {
-        var extension = types[i].fileExtension();
-        if (!extension || extensions.indexOf(extension) !== -1)
-          continue;
-        extensions.push(extension);
-      }
-      Common.console.error(Common.UIString(
-          'Can\'t load file. Only files with extensions \'%s\' can be loaded.', extensions.join('\', \'')));
+      var extensions = new Set(this._profileTypes.map(type => type.fileExtension()).filter(ext => ext));
+      Common.console.error(
+          Common.UIString(`Can't load file. Supported file extensions: '%s'.`, Array.from(extensions).join(`', '`)));
       return;
     }
 
     if (!!profileType.profileBeingRecorded()) {
-      Common.console.error(Common.UIString('Can\'t load profile while another profile is recording.'));
+      Common.console.error(Common.UIString(`Can't load profile while another profile is being recorded.`));
       return;
     }
 
-    profileType.loadFromFile(file);
+    var error = await profileType.loadFromFile(file);
+    if (error)
+      UI.MessageDialog.show(Common.UIString('Profile loading failed: %s.', error.message));
   }
 
   /**
@@ -639,6 +630,41 @@ Profiler.ProfileSidebarTreeElement = class extends UI.TreeElement {
     }
     if (typeof statusUpdate.wait === 'boolean' && this.listItemElement)
       this.listItemElement.classList.toggle('wait', statusUpdate.wait);
+  }
+
+  /**
+   * @override
+   * @param {!Event} event
+   * @return {boolean}
+   */
+  ondblclick(event) {
+    if (!this._editing)
+      this._startEditing(/** @type {!Element} */ (event.target));
+    return false;
+  }
+
+  /**
+   * @param {!Element} eventTarget
+   */
+  _startEditing(eventTarget) {
+    var container = eventTarget.enclosingNodeOrSelfWithClass('title');
+    if (!container)
+      return;
+    var config = new UI.InplaceEditor.Config(this._editingCommitted.bind(this), this._editingCancelled.bind(this));
+    this._editing = UI.InplaceEditor.startEditing(container, config);
+  }
+
+  /**
+   * @param {!Element} container
+   * @param {string} newTitle
+   */
+  _editingCommitted(container, newTitle) {
+    delete this._editing;
+    this.profile.setTitle(newTitle);
+  }
+
+  _editingCancelled() {
+    delete this._editing;
   }
 
   dispose() {

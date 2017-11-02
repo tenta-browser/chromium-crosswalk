@@ -5,11 +5,9 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "base/memory/ref_counted.h"
+#include "components/viz/common/surfaces/surface_reference_factory.h"
 #include "ui/gfx/geometry/insets.h"
-
-namespace cc {
-class SurfaceInfo;
-}
 
 namespace gfx {
 class Insets;
@@ -17,6 +15,10 @@ class Insets;
 
 namespace ui {
 class Layer;
+}
+
+namespace viz {
+class SurfaceInfo;
 }
 
 namespace aura {
@@ -35,11 +37,11 @@ class ClientSurfaceEmbedder {
 
   // Updates the clip layer and primary SurfaceInfo of the surface layer based
   // on the provided |surface_info|.
-  void SetPrimarySurfaceInfo(const cc::SurfaceInfo& surface_info);
+  void SetPrimarySurfaceInfo(const viz::SurfaceInfo& surface_info);
 
   // Sets the fallback SurfaceInfo of the surface layer. The clip layer is not
   // updated.
-  void SetFallbackSurfaceInfo(const cc::SurfaceInfo& surface_info);
+  void SetFallbackSurfaceInfo(const viz::SurfaceInfo& surface_info);
 
   // Update the surface layer size and the right and bottom gutter layers for
   // the current window size.
@@ -61,6 +63,8 @@ class ClientSurfaceEmbedder {
   std::unique_ptr<ui::Layer> bottom_gutter_;
 
   gfx::Insets client_area_insets_;
+
+  scoped_refptr<viz::SurfaceReferenceFactory> ref_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ClientSurfaceEmbedder);
 };

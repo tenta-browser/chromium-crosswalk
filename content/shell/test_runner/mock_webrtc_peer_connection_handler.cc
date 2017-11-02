@@ -26,6 +26,7 @@
 #include "third_party/WebKit/public/platform/WebRTCPeerConnectionHandlerClient.h"
 #include "third_party/WebKit/public/platform/WebRTCRtpContributingSource.h"
 #include "third_party/WebKit/public/platform/WebRTCRtpReceiver.h"
+#include "third_party/WebKit/public/platform/WebRTCRtpSender.h"
 #include "third_party/WebKit/public/platform/WebRTCStatsResponse.h"
 #include "third_party/WebKit/public/platform/WebRTCVoidRequest.h"
 #include "third_party/WebKit/public/platform/WebString.h"
@@ -37,13 +38,12 @@ namespace test_runner {
 
 namespace {
 
-uintptr_t GetReceiverIDByTrack(
-    const std::string& track_id,
-    std::map<std::string, uintptr_t>* receiver_id_by_track) {
-  const auto& it = receiver_id_by_track->find(track_id);
-  if (it == receiver_id_by_track->end()) {
-    uintptr_t id = static_cast<uintptr_t>(receiver_id_by_track->size()) + 1;
-    receiver_id_by_track->insert(std::make_pair(track_id, id));
+uintptr_t GetIDByTrack(const std::string& track_id,
+                       std::map<std::string, uintptr_t>* id_by_track) {
+  const auto& it = id_by_track->find(track_id);
+  if (it == id_by_track->end()) {
+    uintptr_t id = static_cast<uintptr_t>(id_by_track->size()) + 1;
+    id_by_track->insert(std::make_pair(track_id, id));
     return id;
   }
   return it->second;
@@ -240,6 +240,26 @@ class MockWebRTCStatsReport : public blink::WebRTCStatsReport {
   size_t i_;
 };
 
+class MockWebRTCRtpSender : public blink::WebRTCRtpSender {
+ public:
+  MockWebRTCRtpSender(uintptr_t id,
+                      std::unique_ptr<blink::WebMediaStreamTrack> track)
+      : id_(id), track_(std::move(track)) {}
+
+  uintptr_t Id() const override { return id_; }
+  const blink::WebMediaStreamTrack* Track() const override {
+    return track_.get();
+  }
+
+  void SetTrack(std::unique_ptr<blink::WebMediaStreamTrack> track) {
+    track_ = std::move(track);
+  }
+
+ private:
+  uintptr_t id_;
+  std::unique_ptr<blink::WebMediaStreamTrack> track_;
+};
+
 class MockWebRTCRtpContributingSource
     : public blink::WebRTCRtpContributingSource {
  public:
@@ -316,6 +336,33 @@ class MockWebRTCRtpReceiver : public blink::WebRTCRtpReceiver {
   blink::WebMediaStreamTrack track_;
   size_t num_packets_;
 };
+
+blink::WebVector<std::unique_ptr<blink::WebRTCRtpReceiver>>
+GetReceiversOfStream(const blink::WebMediaStream& remote_web_stream,
+                     std::map<std::string, uintptr_t>* id_by_track) {
+  std::vector<std::unique_ptr<blink::WebRTCRtpReceiver>> receivers;
+  blink::WebVector<blink::WebMediaStreamTrack> remote_tracks;
+  remote_web_stream.AudioTracks(remote_tracks);
+  for (const auto& remote_track : remote_tracks) {
+    receivers.push_back(
+        std::unique_ptr<blink::WebRTCRtpReceiver>(new MockWebRTCRtpReceiver(
+            GetIDByTrack(remote_track.Id().Utf8(), id_by_track),
+            remote_track)));
+  }
+  remote_web_stream.VideoTracks(remote_tracks);
+  for (const auto& remote_track : remote_tracks) {
+    receivers.push_back(
+        std::unique_ptr<blink::WebRTCRtpReceiver>(new MockWebRTCRtpReceiver(
+            GetIDByTrack(remote_track.Id().Utf8(), id_by_track),
+            remote_track)));
+  }
+  blink::WebVector<std::unique_ptr<blink::WebRTCRtpReceiver>> result(
+      receivers.size());
+  for (size_t i = 0; i < receivers.size(); ++i) {
+    result[i] = std::move(receivers[i]);
+  }
+  return result;
+}
 
 }  // namespace
 
@@ -438,8 +485,13 @@ void MockWebRTCPeerConnectionHandler::SetRemoteDescription(
     const WebRTCVoidRequest& request,
     const WebRTCSessionDescription& remote_description) {
   if (!remote_description.IsNull() && remote_description.Sdp() == "remote") {
-    UpdateRemoteStreams();
     remote_description_ = remote_description;
+    // This ensures the promise is resolved before the remote stream event is
+    // fired. This may change in the future, see
+    // https://github.com/w3c/webrtc-pc/issues/1508.
+    interfaces_->GetDelegate()->PostTask(
+        base::Bind(&MockWebRTCPeerConnectionHandler::UpdateRemoteStreams,
+                   weak_factory_.GetWeakPtr()));
     PostRequestResult(request);
   } else
     PostRequestFailure(request);
@@ -517,7 +569,9 @@ void MockWebRTCPeerConnectionHandler::UpdateRemoteStreams() {
     blink::WebMediaStream new_remote_stream;
     new_remote_stream.Initialize(remote_audio_tracks, remote_video_tracks);
     remote_streams_[added_it->first] = new_remote_stream;
-    client_->DidAddRemoteStream(new_remote_stream);
+    blink::WebVector<std::unique_ptr<blink::WebRTCRtpReceiver>> receivers =
+        GetReceiversOfStream(new_remote_stream, &id_by_track_);
+    client_->DidAddRemoteStream(new_remote_stream, &receivers);
     ++added_it;
   }
 }
@@ -619,27 +673,59 @@ void MockWebRTCPeerConnectionHandler::GetStats(
       std::unique_ptr<blink::WebRTCStatsReport>(report.release()));
 }
 
+blink::WebVector<std::unique_ptr<blink::WebRTCRtpSender>>
+MockWebRTCPeerConnectionHandler::GetSenders() {
+  std::vector<std::unique_ptr<blink::WebRTCRtpSender>> senders;
+  // Senders of tracks in |local_streams_| (from |Add/RemoveStream|).
+  for (const auto& pair : local_streams_) {
+    const auto& local_stream = pair.second;
+    blink::WebVector<blink::WebMediaStreamTrack> local_tracks;
+    local_stream.AudioTracks(local_tracks);
+    for (const auto& local_track : local_tracks) {
+      senders.push_back(
+          std::unique_ptr<blink::WebRTCRtpSender>(new MockWebRTCRtpSender(
+              GetIDByTrack(local_track.Id().Utf8(), &id_by_track_),
+              base::MakeUnique<WebMediaStreamTrack>(local_track))));
+    }
+    local_stream.VideoTracks(local_tracks);
+    for (const auto& local_track : local_tracks) {
+      senders.push_back(
+          std::unique_ptr<blink::WebRTCRtpSender>(new MockWebRTCRtpSender(
+              GetIDByTrack(local_track.Id().Utf8(), &id_by_track_),
+              base::MakeUnique<WebMediaStreamTrack>(local_track))));
+    }
+  }
+  // Senders of tracks in |tracks_| (from |Add/RemoveTrack|).
+  for (const auto& pair : tracks_) {
+    const auto& track = pair.second;
+    bool has_sender_for_track = false;
+    for (const auto& sender : senders) {
+      if (sender->Track()->Id() == track.Id()) {
+        has_sender_for_track = true;
+        break;
+      }
+    }
+    if (has_sender_for_track)
+      continue;
+    senders.push_back(base::MakeUnique<MockWebRTCRtpSender>(
+        GetIDByTrack(track.Id().Utf8(), &id_by_track_),
+        base::MakeUnique<WebMediaStreamTrack>(track)));
+  }
+  blink::WebVector<std::unique_ptr<blink::WebRTCRtpSender>> web_vector(
+      senders.size());
+  for (size_t i = 0; i < senders.size(); ++i) {
+    web_vector[i] = std::move(senders[i]);
+  }
+  return web_vector;
+}
+
 blink::WebVector<std::unique_ptr<blink::WebRTCRtpReceiver>>
 MockWebRTCPeerConnectionHandler::GetReceivers() {
   std::vector<std::unique_ptr<blink::WebRTCRtpReceiver>> receivers;
   for (const auto& pair : remote_streams_) {
     const auto& remote_stream = pair.second;
-    blink::WebVector<blink::WebMediaStreamTrack> remote_tracks;
-    remote_stream.AudioTracks(remote_tracks);
-    for (const auto& remote_track : remote_tracks) {
-      receivers.push_back(
-          std::unique_ptr<blink::WebRTCRtpReceiver>(new MockWebRTCRtpReceiver(
-              GetReceiverIDByTrack(remote_track.Id().Utf8(),
-                                   &receiver_id_by_track_),
-              remote_track)));
-    }
-    remote_stream.VideoTracks(remote_tracks);
-    for (const auto& remote_track : remote_tracks) {
-      receivers.push_back(
-          std::unique_ptr<blink::WebRTCRtpReceiver>(new MockWebRTCRtpReceiver(
-              GetReceiverIDByTrack(remote_track.Id().Utf8(),
-                                   &receiver_id_by_track_),
-              remote_track)));
+    for (auto& receiver : GetReceiversOfStream(remote_stream, &id_by_track_)) {
+      receivers.push_back(std::move(receiver));
     }
   }
   blink::WebVector<std::unique_ptr<blink::WebRTCRtpReceiver>> web_vector(
@@ -648,6 +734,32 @@ MockWebRTCPeerConnectionHandler::GetReceivers() {
     web_vector[i] = std::move(receivers[i]);
   }
   return web_vector;
+}
+
+std::unique_ptr<blink::WebRTCRtpSender>
+MockWebRTCPeerConnectionHandler::AddTrack(
+    const blink::WebMediaStreamTrack& web_track,
+    const blink::WebVector<blink::WebMediaStream>& web_streams) {
+  for (const auto& sender : GetSenders()) {
+    if (sender->Track() && sender->Track()->Id() == web_track.Id()) {
+      return nullptr;
+    }
+  }
+  tracks_[web_track.Id().Utf8()] = web_track;
+  client_->NegotiationNeeded();
+  return base::MakeUnique<MockWebRTCRtpSender>(
+      GetIDByTrack(web_track.Id().Utf8(), &id_by_track_),
+      base::MakeUnique<blink::WebMediaStreamTrack>(web_track));
+}
+
+bool MockWebRTCPeerConnectionHandler::RemoveTrack(
+    blink::WebRTCRtpSender* web_sender) {
+  if (!tracks_.erase(web_sender->Track()->Id().Utf8()))
+    return false;
+  MockWebRTCRtpSender* sender = static_cast<MockWebRTCRtpSender*>(web_sender);
+  sender->SetTrack(nullptr);
+  client_->NegotiationNeeded();
+  return true;
 }
 
 void MockWebRTCPeerConnectionHandler::ReportCreationOfDataChannel() {

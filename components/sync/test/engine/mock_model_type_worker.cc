@@ -33,6 +33,8 @@ void MockModelTypeWorker::EnqueueForCommit(const CommitRequestDataList& list) {
   pending_commits_.push_back(list);
 }
 
+void MockModelTypeWorker::NudgeForCommit() {}
+
 size_t MockModelTypeWorker::GetNumPendingCommits() const {
   return pending_commits_.size();
 }
@@ -70,7 +72,7 @@ CommitRequestData MockModelTypeWorker::GetLatestPendingCommitForHash(
   return CommitRequestData();
 }
 
-void MockModelTypeWorker::ExpectNthPendingCommit(
+void MockModelTypeWorker::VerifyNthPendingCommit(
     size_t n,
     const std::string& tag_hash,
     const sync_pb::EntitySpecifics& specifics) {
@@ -81,7 +83,7 @@ void MockModelTypeWorker::ExpectNthPendingCommit(
   EXPECT_EQ(specifics.SerializeAsString(), data.specifics.SerializeAsString());
 }
 
-void MockModelTypeWorker::ExpectPendingCommits(
+void MockModelTypeWorker::VerifyPendingCommits(
     const std::vector<std::string>& tag_hashes) {
   EXPECT_EQ(tag_hashes.size(), GetNumPendingCommits());
   for (size_t i = 0; i < tag_hashes.size(); i++) {
@@ -118,6 +120,11 @@ void MockModelTypeWorker::UpdateFromServer(
   UpdateResponseDataList updates;
   updates.push_back(
       GenerateUpdateData(tag_hash, specifics, version_offset, ekn));
+  UpdateFromServer(updates);
+}
+
+void MockModelTypeWorker::UpdateFromServer(
+    const UpdateResponseDataList& updates) {
   processor_->OnUpdateReceived(model_type_state_, updates);
 }
 
@@ -150,6 +157,13 @@ UpdateResponseData MockModelTypeWorker::GenerateUpdateData(
   response_data.encryption_key_name = ekn;
 
   return response_data;
+}
+
+UpdateResponseData MockModelTypeWorker::GenerateUpdateData(
+    const std::string& tag_hash,
+    const sync_pb::EntitySpecifics& specifics) {
+  return GenerateUpdateData(tag_hash, specifics, 1,
+                            model_type_state_.encryption_key_name());
 }
 
 void MockModelTypeWorker::TombstoneFromServer(const std::string& tag_hash) {
@@ -225,6 +239,12 @@ void MockModelTypeWorker::UpdateWithEncryptionKey(
     const UpdateResponseDataList& update) {
   model_type_state_.set_encryption_key_name(ekn);
   processor_->OnUpdateReceived(model_type_state_, update);
+}
+
+void MockModelTypeWorker::UpdateWithGarbageConllection(
+    const sync_pb::GarbageCollectionDirective& gcd) {
+  *model_type_state_.mutable_progress_marker()->mutable_gc_directive() = gcd;
+  processor_->OnUpdateReceived(model_type_state_, UpdateResponseDataList());
 }
 
 std::string MockModelTypeWorker::GenerateId(const std::string& tag_hash) {

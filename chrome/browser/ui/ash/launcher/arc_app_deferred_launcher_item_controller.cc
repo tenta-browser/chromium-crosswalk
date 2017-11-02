@@ -5,6 +5,7 @@
 #include "chrome/browser/ui/ash/launcher/arc_app_deferred_launcher_item_controller.h"
 
 #include <memory>
+#include <utility>
 
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/profiles/profile.h"
@@ -16,9 +17,11 @@
 ArcAppDeferredLauncherItemController::ArcAppDeferredLauncherItemController(
     const std::string& arc_app_id,
     int event_flags,
+    int64_t display_id,
     const base::WeakPtr<ArcAppDeferredLauncherController>& host)
-    : ash::ShelfItemDelegate(ash::AppLaunchId(arc_app_id)),
+    : ash::ShelfItemDelegate(ash::ShelfID(arc_app_id)),
       event_flags_(event_flags),
+      display_id_(display_id),
       host_(host),
       start_time_(base::Time::Now()) {}
 
@@ -35,13 +38,16 @@ void ArcAppDeferredLauncherItemController::ItemSelected(
     std::unique_ptr<ui::Event> event,
     int64_t display_id,
     ash::ShelfLaunchSource source,
-    const ItemSelectedCallback& callback) {
-  callback.Run(ash::SHELF_ACTION_NONE, base::nullopt);
+    ItemSelectedCallback callback) {
+  std::move(callback).Run(ash::SHELF_ACTION_NONE, base::nullopt);
 }
 
-void ArcAppDeferredLauncherItemController::ExecuteCommand(uint32_t command_id,
-                                                          int32_t event_flags) {
-  // This delegate does not support showing an application menu.
+void ArcAppDeferredLauncherItemController::ExecuteCommand(
+    bool from_context_menu,
+    int64_t command_id,
+    int32_t event_flags,
+    int64_t display_id) {
+  // This delegate does not show custom context or application menu items.
   NOTIMPLEMENTED();
 }
 

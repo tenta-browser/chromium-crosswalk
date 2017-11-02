@@ -14,7 +14,6 @@
 #include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/sync_socket.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/media/capture/audio_mirroring_manager.h"
 #include "content/browser/media/media_internals.h"
 #include "content/browser/renderer_host/media/audio_input_device_manager.h"
@@ -23,12 +22,12 @@
 #include "content/public/browser/media_device_id.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/mock_render_process_host.h"
-#include "content/public/test/test_browser_context.h"
-#include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/test_renderer_host.h"
 #include "ipc/ipc_message_utils.h"
 #include "media/audio/audio_system_impl.h"
 #include "media/audio/fake_audio_log_factory.h"
 #include "media/audio/fake_audio_manager.h"
+#include "media/audio/test_audio_thread.h"
 #include "media/base/bind_to_current_loop.h"
 #include "media/base/media_switches.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -43,27 +42,13 @@ using ::testing::NotNull;
 namespace content {
 
 namespace {
-const int kRenderFrameId = 5;
 const int kStreamId = 50;
 const char kSecurityOrigin[] = "http://localhost";
-const char kBadSecurityOrigin[] = "about:about";
 const char kDefaultDeviceId[] = "";
 const char kSalt[] = "salt";
-const char kNondefaultDeviceId[] =
-    "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
 const char kBadDeviceId[] =
     "badbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbadbad1";
 const char kInvalidDeviceId[] = "invalid-device-id";
-
-void ValidateRenderFrameId(int render_process_id,
-                           int render_frame_id,
-                           const base::Callback<void(bool)>& callback) {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  const bool frame_exists = (render_frame_id == kRenderFrameId);
-  BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-                          base::Bind(callback, frame_exists));
-}
-
 
 class MockAudioMirroringManager : public AudioMirroringManager {
  public:
@@ -80,27 +65,10 @@ class MockAudioMirroringManager : public AudioMirroringManager {
   DISALLOW_COPY_AND_ASSIGN(MockAudioMirroringManager);
 };
 
-class MockRenderProcessHostWithSignaling : public MockRenderProcessHost {
- public:
-  MockRenderProcessHostWithSignaling(BrowserContext* context,
-                                     base::RunLoop* auth_run_loop)
-      : MockRenderProcessHost(context), auth_run_loop_(auth_run_loop) {}
-
-  void ShutdownForBadMessage(CrashReportMode crash_report_mode) override {
-    MockRenderProcessHost::ShutdownForBadMessage(crash_report_mode);
-    auth_run_loop_->Quit();
-  }
-
- private:
-  base::RunLoop* auth_run_loop_;
-};
-
 class FakeAudioManagerWithAssociations : public media::FakeAudioManager {
  public:
-  FakeAudioManagerWithAssociations(
-      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
-      media::AudioLogFactory* factory)
-      : FakeAudioManager(task_runner, task_runner, factory) {}
+  explicit FakeAudioManagerWithAssociations(media::AudioLogFactory* factory)
+      : FakeAudioManager(base::MakeUnique<media::TestAudioThread>(), factory) {}
 
   void CreateDeviceAssociation(const std::string& input_device_id,
                                const std::string& output_device_id) {
@@ -141,7 +109,6 @@ class MockAudioRendererHost : public AudioRendererHost {
                           salt),
         shared_memory_length_(0),
         auth_run_loop_(auth_run_loop) {
-    set_render_frame_id_validate_function_for_testing(&ValidateRenderFrameId);
   }
 
   // A list of mock methods.
@@ -231,41 +198,50 @@ class MockAudioRendererHost : public AudioRendererHost {
   DISALLOW_COPY_AND_ASSIGN(MockAudioRendererHost);
 };
 
-class AudioRendererHostTest : public testing::Test {
+class AudioRendererHostTest : public RenderViewHostTestHarness {
  public:
-  AudioRendererHostTest()
-      : log_factory(base::MakeUnique<media::FakeAudioLogFactory>()),
-        audio_manager_(base::MakeUnique<FakeAudioManagerWithAssociations>(
-            base::ThreadTaskRunnerHandle::Get(),
-            log_factory.get())),
-        audio_system_(media::AudioSystemImpl::Create(audio_manager_.get())),
-        render_process_host_(&browser_context_, &auth_run_loop_) {
+  AudioRendererHostTest() {}
+  ~AudioRendererHostTest() override {}
+
+  void SetUp() override {
     base::CommandLine::ForCurrentProcess()->AppendSwitch(
         switches::kUseFakeDeviceForMediaStream);
-    media_stream_manager_ =
-        base::MakeUnique<MediaStreamManager>(audio_system_.get());
-    host_ = new MockAudioRendererHost(
-        &auth_run_loop_, render_process_host_.GetID(), audio_manager_.get(),
+    // MediaStreamManager depends on legacy TestBrowserThreadBundle behavior.
+    // TODO: Remove once MediaStreamManager is ported to TaskScheduler.
+    DisableScopedTaskEnvironment();
+
+    RenderViewHostTestHarness::SetUp();
+    audio_manager_ =
+        base::MakeUnique<FakeAudioManagerWithAssociations>(&log_factory_);
+    audio_system_ = media::AudioSystemImpl::Create(audio_manager_.get());
+    media_stream_manager_ = base::MakeUnique<MediaStreamManager>(
+        audio_system_.get(), audio_manager_->GetTaskRunner());
+    auth_run_loop_ = base::MakeUnique<base::RunLoop>();
+    host_ = base::MakeRefCounted<MockAudioRendererHost>(
+        auth_run_loop_.get(), process()->GetID(), audio_manager_.get(),
         audio_system_.get(), &mirroring_manager_, media_stream_manager_.get(),
         kSalt);
 
     // Simulate IPC channel connected.
     host_->set_peer_process_for_testing(base::Process::Current());
+
+    NavigateAndCommit(GURL(kSecurityOrigin));
   }
 
-  ~AudioRendererHostTest() override {
+  void TearDown() override {
     // Simulate closing the IPC channel and give the audio thread time to close
     // the underlying streams.
     host_->OnChannelClosing();
-    SyncWithAudioThread();
-    // To correctly clean up the audio manager, we first put it in a
-    // ScopedAudioManagerPtr. It will immediately destruct, cleaning up the
-    // audio manager correctly.
-    media::ScopedAudioManagerPtr(audio_manager_.release());
 
     // Release the reference to the mock object.  The object will be destructed
     // on message_loop_.
     host_ = nullptr;
+
+    // Note: Shutdown is usually called after the IO thread is stopped, but in
+    // this case it is not possible as we won't have a message loop at that
+    // point.
+    audio_manager_->Shutdown();
+    RenderViewHostTestHarness::TearDown();
   }
 
  protected:
@@ -347,8 +323,9 @@ class AudioRendererHostTest : public testing::Test {
 
     if (expected_device_status == media::OUTPUT_DEVICE_STATUS_OK) {
       EXPECT_CALL(*host_.get(), WasNotifiedOfCreation(kStreamId, _));
-      EXPECT_CALL(mirroring_manager_, AddDiverter(render_process_host_.GetID(),
-                                                  kRenderFrameId, NotNull()))
+      EXPECT_CALL(mirroring_manager_,
+                  AddDiverter(process()->GetID(), main_rfh()->GetRoutingID(),
+                              NotNull()))
           .RetiresOnSaturation();
     }
 
@@ -360,28 +337,20 @@ class AudioRendererHostTest : public testing::Test {
         media::AudioParameters::kAudioCDSampleRate / 10);
     int session_id = 0;
 
-    host_->OnRequestDeviceAuthorization(kStreamId, kRenderFrameId, session_id,
-                                        device_id, security_origin);
+    host_->OnRequestDeviceAuthorization(kStreamId, main_rfh()->GetRoutingID(),
+                                        session_id, device_id, security_origin);
     if (wait_for_auth)
-      auth_run_loop_.Run();
+      auth_run_loop_->Run();
 
     if (!wait_for_auth ||
         expected_device_status == media::OUTPUT_DEVICE_STATUS_OK)
-      host_->OnCreateStream(kStreamId, kRenderFrameId, params);
+      host_->OnCreateStream(kStreamId, main_rfh()->GetRoutingID(), params);
 
     if (expected_device_status == media::OUTPUT_DEVICE_STATUS_OK)
       // At some point in the future, a corresponding RemoveDiverter() call must
       // be made.
       EXPECT_CALL(mirroring_manager_, RemoveDiverter(NotNull()))
           .RetiresOnSaturation();
-    SyncWithAudioThread();
-  }
-
-  void RequestDeviceAuthorizationWithBadOrigin(const std::string& device_id) {
-    int session_id = 0;
-    host_->OnRequestDeviceAuthorization(kStreamId, kRenderFrameId, session_id,
-                                        device_id,
-                                        url::Origin(GURL(kBadSecurityOrigin)));
     SyncWithAudioThread();
   }
 
@@ -402,7 +371,7 @@ class AudioRendererHostTest : public testing::Test {
 
     // Provide a seemingly-valid render frame ID; and it should be rejected when
     // AudioRendererHost calls ValidateRenderFrameId().
-    const int kInvalidRenderFrameId = kRenderFrameId + 1;
+    const int kInvalidRenderFrameId = main_rfh()->GetRoutingID() + 1;
     const media::AudioParameters params(
         media::AudioParameters::AUDIO_FAKE, media::CHANNEL_LAYOUT_STEREO,
         media::AudioParameters::kAudioCDSampleRate, 16,
@@ -436,19 +405,20 @@ class AudioRendererHostTest : public testing::Test {
                                    hashed_output_id))
         .Times(1);
     EXPECT_CALL(*host_.get(), WasNotifiedOfCreation(kStreamId, _));
-    EXPECT_CALL(mirroring_manager_, AddDiverter(render_process_host_.GetID(),
-                                                kRenderFrameId, NotNull()))
+    EXPECT_CALL(
+        mirroring_manager_,
+        AddDiverter(process()->GetID(), main_rfh()->GetRoutingID(), NotNull()))
         .RetiresOnSaturation();
     EXPECT_CALL(mirroring_manager_, RemoveDiverter(NotNull()))
         .RetiresOnSaturation();
 
-    host_->OnRequestDeviceAuthorization(kStreamId, kRenderFrameId, session_id,
-                                        /*device id*/ std::string(),
-                                        security_origin);
+    host_->OnRequestDeviceAuthorization(
+        kStreamId, main_rfh()->GetRoutingID(), session_id,
+        /*device id*/ std::string(), security_origin);
 
-    auth_run_loop_.Run();
+    auth_run_loop_->Run();
 
-    host_->OnCreateStream(kStreamId, kRenderFrameId, params);
+    host_->OnCreateStream(kStreamId, main_rfh()->GetRoutingID(), params);
 
     SyncWithAudioThread();
   }
@@ -506,21 +476,16 @@ class AudioRendererHostTest : public testing::Test {
   void AssertBadMsgReported() {
     // Bad messages can be reported either directly to the RPH or through the
     // ARH, so we check both of them.
-    EXPECT_EQ(render_process_host_.bad_msg_count() + host_->bad_msg_count, 1);
+    EXPECT_EQ(process()->bad_msg_count() + host_->bad_msg_count, 1);
   }
 
  private:
-  // MediaStreamManager uses a DestructionObserver, so it must outlive the
-  // TestBrowserThreadBundle.
-  std::unique_ptr<MediaStreamManager> media_stream_manager_;
-  TestBrowserThreadBundle thread_bundle_;
-  TestBrowserContext browser_context_;
-  std::unique_ptr<media::FakeAudioLogFactory> log_factory;
+  media::FakeAudioLogFactory log_factory_;
   std::unique_ptr<FakeAudioManagerWithAssociations> audio_manager_;
   std::unique_ptr<media::AudioSystem> audio_system_;
+  std::unique_ptr<MediaStreamManager> media_stream_manager_;
   MockAudioMirroringManager mirroring_manager_;
-  base::RunLoop auth_run_loop_;
-  MockRenderProcessHostWithSignaling render_process_host_;
+  std::unique_ptr<base::RunLoop> auth_run_loop_;
   scoped_refptr<MockAudioRendererHost> host_;
 
   DISALLOW_COPY_AND_ASSIGN(AudioRendererHostTest);
@@ -607,12 +572,6 @@ TEST_F(AudioRendererHostTest, CreateAuthorizedDevice) {
 
 TEST_F(AudioRendererHostTest, CreateDeviceWithAuthorizationPendingIsError) {
   CreateWithoutWaitingForAuth(kBadDeviceId);
-  Close();
-  AssertBadMsgReported();
-}
-
-TEST_F(AudioRendererHostTest, CreateDeviceWithBadSecurityOrigin) {
-  RequestDeviceAuthorizationWithBadOrigin(kNondefaultDeviceId);
   Close();
   AssertBadMsgReported();
 }

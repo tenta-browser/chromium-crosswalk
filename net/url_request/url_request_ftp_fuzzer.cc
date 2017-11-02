@@ -19,6 +19,7 @@
 #include "net/ftp/ftp_transaction_factory.h"
 #include "net/socket/client_socket_factory.h"
 #include "net/socket/fuzzed_socket_factory.h"
+#include "net/traffic_annotation/network_traffic_annotation_test_helper.h"
 #include "net/url_request/ftp_protocol_handler.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
@@ -39,7 +40,7 @@ class FuzzedFtpTransactionFactory : public net::FtpTransactionFactory {
 
   // FtpTransactionFactory:
   std::unique_ptr<net::FtpTransaction> CreateTransaction() override {
-    return base::MakeUnique<net::FtpNetworkTransaction>(host_resolver_,
+    return std::make_unique<net::FtpNetworkTransaction>(host_resolver_,
                                                         client_socket_factory_);
   }
 
@@ -69,7 +70,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   net::URLRequestJobFactoryImpl job_factory;
   job_factory.SetProtocolHandler(
       "ftp", net::FtpProtocolHandler::CreateForTesting(
-                 base::MakeUnique<FuzzedFtpTransactionFactory>(
+                 std::make_unique<FuzzedFtpTransactionFactory>(
                      &host_resolver, &fuzzed_socket_factory)));
   url_request_context.set_job_factory(&job_factory);
 
@@ -80,7 +81,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   std::unique_ptr<net::URLRequest> url_request(
       url_request_context.CreateRequest(
           GURL("ftp://foo/" + data_provider.ConsumeRandomLengthString(1000)),
-          net::DEFAULT_PRIORITY, &delegate));
+          net::DEFAULT_PRIORITY, &delegate, TRAFFIC_ANNOTATION_FOR_TESTS));
   url_request->Start();
   // TestDelegate quits the message loop on completion.
   base::RunLoop().Run();

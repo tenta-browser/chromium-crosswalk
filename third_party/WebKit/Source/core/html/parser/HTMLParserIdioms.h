@@ -63,6 +63,13 @@ CORE_EXPORT bool ParseHTMLInteger(const String&, int&);
 // http://www.whatwg.org/specs/web-apps/current-work/#rules-for-parsing-non-negative-integers
 CORE_EXPORT bool ParseHTMLNonNegativeInteger(const String&, unsigned&);
 
+// https://html.spec.whatwg.org/multipage/common-dom-interfaces.html#clamped-to-the-range
+// without default value processing.
+bool ParseHTMLClampedNonNegativeInteger(const String&,
+                                        unsigned min,
+                                        unsigned max,
+                                        unsigned&);
+
 // https://html.spec.whatwg.org/multipage/infrastructure.html#rules-for-parsing-a-list-of-floating-point-numbers
 CORE_EXPORT Vector<double> ParseHTMLListOfFloatingPointNumbers(const String&);
 
@@ -122,7 +129,7 @@ template <size_t inlineCapacity>
 inline static String AttemptStaticStringCreation(
     const Vector<UChar, inlineCapacity>& vector,
     CharacterWidth width) {
-  return AttemptStaticStringCreation(vector.Data(), vector.size(), width);
+  return AttemptStaticStringCreation(vector.data(), vector.size(), width);
 }
 
 inline static String AttemptStaticStringCreation(const String str) {

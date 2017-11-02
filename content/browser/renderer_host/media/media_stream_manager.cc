@@ -27,13 +27,16 @@
 #include "base/threading/thread_local.h"
 #include "build/build_config.h"
 #include "content/browser/child_process_security_policy_impl.h"
+#include "content/browser/gpu/browser_gpu_memory_buffer_manager.h"
 #include "content/browser/renderer_host/media/audio_input_device_manager.h"
 #include "content/browser/renderer_host/media/in_process_video_capture_provider.h"
 #include "content/browser/renderer_host/media/media_capture_devices_impl.h"
 #include "content/browser/renderer_host/media/media_devices_manager.h"
 #include "content/browser/renderer_host/media/media_stream_requester.h"
 #include "content/browser/renderer_host/media/media_stream_ui_proxy.h"
+#include "content/browser/renderer_host/media/service_video_capture_provider.h"
 #include "content/browser/renderer_host/media/video_capture_manager.h"
+#include "content/browser/renderer_host/media/video_capture_provider_switcher.h"
 #include "content/browser/renderer_host/render_process_host_impl.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
@@ -52,6 +55,8 @@
 #include "media/base/media_switches.h"
 #include "media/capture/video/video_capture_device_factory.h"
 #include "media/capture/video/video_capture_system_impl.h"
+#include "services/video_capture/public/cpp/constants.h"
+#include "services/video_capture/public/uma/video_capture_service_event.h"
 #include "url/gurl.h"
 #include "url/origin.h"
 
@@ -380,8 +385,9 @@ class MediaStreamManager::DeviceRequest {
 // static
 void MediaStreamManager::SendMessageToNativeLog(const std::string& message) {
   if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
-    BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-        base::Bind(&MediaStreamManager::SendMessageToNativeLog, message));
+    BrowserThread::PostTask(
+        BrowserThread::IO, FROM_HERE,
+        base::BindOnce(&MediaStreamManager::SendMessageToNativeLog, message));
     return;
   }
 
@@ -394,11 +400,14 @@ void MediaStreamManager::SendMessageToNativeLog(const std::string& message) {
   msm->AddLogMessageOnIOThread(message);
 }
 
-MediaStreamManager::MediaStreamManager(media::AudioSystem* audio_system)
-    : MediaStreamManager(audio_system, nullptr) {}
+MediaStreamManager::MediaStreamManager(
+    media::AudioSystem* audio_system,
+    scoped_refptr<base::SingleThreadTaskRunner> audio_task_runner)
+    : MediaStreamManager(audio_system, std::move(audio_task_runner), nullptr) {}
 
 MediaStreamManager::MediaStreamManager(
     media::AudioSystem* audio_system,
+    scoped_refptr<base::SingleThreadTaskRunner> audio_task_runner,
     std::unique_ptr<VideoCaptureProvider> video_capture_provider)
     : audio_system_(audio_system),
 #if defined(OS_WIN)
@@ -410,7 +419,7 @@ MediaStreamManager::MediaStreamManager(
 
   if (!video_capture_provider) {
     scoped_refptr<base::SingleThreadTaskRunner> device_task_runner =
-        audio_system_->GetTaskRunner();
+        std::move(audio_task_runner);
 #if defined(OS_WIN)
     // Use an STA Video Capture Thread to try to avoid crashes on enumeration of
     // buggy third party Direct Show modules, http://crbug.com/428958.
@@ -418,11 +427,21 @@ MediaStreamManager::MediaStreamManager(
     CHECK(video_capture_thread_.Start());
     device_task_runner = video_capture_thread_.task_runner();
 #endif
-    video_capture_provider = base::MakeUnique<InProcessVideoCaptureProvider>(
-        base::MakeUnique<media::VideoCaptureSystemImpl>(
-            media::VideoCaptureDeviceFactory::CreateFactory(
-                BrowserThread::GetTaskRunnerForThread(BrowserThread::UI))),
-        std::move(device_task_runner));
+    if (base::FeatureList::IsEnabled(video_capture::kMojoVideoCapture)) {
+      video_capture_provider = base::MakeUnique<VideoCaptureProviderSwitcher>(
+          base::MakeUnique<ServiceVideoCaptureProvider>(),
+          InProcessVideoCaptureProvider::CreateInstanceForNonDeviceCapture(
+              std::move(device_task_runner)));
+    } else {
+      video_capture::uma::LogVideoCaptureServiceEvent(
+          video_capture::uma::BROWSER_USING_LEGACY_CAPTURE);
+      video_capture_provider = InProcessVideoCaptureProvider::CreateInstance(
+          base::MakeUnique<media::VideoCaptureSystemImpl>(
+              media::VideoCaptureDeviceFactory::CreateFactory(
+                  BrowserThread::GetTaskRunnerForThread(BrowserThread::UI),
+                  BrowserGpuMemoryBufferManager::current())),
+          std::move(device_task_runner));
+    }
   }
   InitializeMaybeAsync(std::move(video_capture_provider));
 
@@ -463,6 +482,11 @@ MediaDevicesManager* MediaStreamManager::media_devices_manager() {
   return media_devices_manager_.get();
 }
 
+media::AudioSystem* MediaStreamManager::audio_system() {
+  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  return audio_system_;
+}
+
 void MediaStreamManager::AddVideoCaptureObserver(
     media::VideoCaptureObserver* capture_observer) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
@@ -484,7 +508,7 @@ std::string MediaStreamManager::MakeMediaAccessRequest(
     int page_request_id,
     const StreamControls& controls,
     const url::Origin& security_origin,
-    const MediaRequestResponseCallback& callback) {
+    MediaRequestResponseCallback callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
   // TODO(perkj): The argument list with NULL parameters to DeviceRequest
@@ -497,16 +521,15 @@ std::string MediaStreamManager::MakeMediaAccessRequest(
 
   const std::string& label = AddRequest(request);
 
-  request->callback = callback;
+  request->callback = std::move(callback);
   // Post a task and handle the request asynchronously. The reason is that the
   // requester won't have a label for the request until this function returns
   // and thus can not handle a response. Using base::Unretained is safe since
   // MediaStreamManager is deleted on the UI thread, after the IO thread has
   // been stopped.
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
-      base::Bind(&MediaStreamManager::SetupRequest,
-                 base::Unretained(this), label));
+  BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
+                          base::BindOnce(&MediaStreamManager::SetupRequest,
+                                         base::Unretained(this), label));
   return label;
 }
 
@@ -544,10 +567,9 @@ void MediaStreamManager::GenerateStream(MediaStreamRequester* requester,
   // and thus can not handle a response. Using base::Unretained is safe since
   // MediaStreamManager is deleted on the UI thread, after the IO thread has
   // been stopped.
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
-      base::Bind(&MediaStreamManager::SetupRequest,
-                 base::Unretained(this), label));
+  BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
+                          base::BindOnce(&MediaStreamManager::SetupRequest,
+                                         base::Unretained(this), label));
 }
 
 void MediaStreamManager::CancelRequest(int render_process_id,
@@ -740,10 +762,9 @@ void MediaStreamManager::OpenDevice(MediaStreamRequester* requester,
   // and thus can not handle a response. Using base::Unretained is safe since
   // MediaStreamManager is deleted on the UI thread, after the IO thread has
   // been stopped.
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
-      base::Bind(&MediaStreamManager::SetupRequest,
-                 base::Unretained(this), label));
+  BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
+                          base::BindOnce(&MediaStreamManager::SetupRequest,
+                                         base::Unretained(this), label));
 }
 
 bool MediaStreamManager::TranslateSourceIdToDeviceId(
@@ -927,8 +948,8 @@ void MediaStreamManager::ReadOutputParamsAndPostRequestToUI(
     // UI thread, after the IO thread has been stopped.
     audio_system_->GetOutputStreamParameters(
         media::AudioDeviceDescription::kDefaultDeviceId,
-        base::Bind(&MediaStreamManager::PostRequestToUI, base::Unretained(this),
-                   label, request, enumeration));
+        base::BindOnce(&MediaStreamManager::PostRequestToUI,
+                       base::Unretained(this), label, request, enumeration));
   } else {
     PostRequestToUI(label, request, enumeration, media::AudioParameters());
   }
@@ -975,8 +996,8 @@ void MediaStreamManager::PostRequestToUI(
 
   request->ui_proxy->RequestAccess(
       request->DetachUIRequest(),
-      base::Bind(&MediaStreamManager::HandleAccessRequestResponse,
-                 base::Unretained(this), label, output_parameters));
+      base::BindOnce(&MediaStreamManager::HandleAccessRequestResponse,
+                     base::Unretained(this), label, output_parameters));
 }
 
 void MediaStreamManager::SetupRequest(const std::string& label) {
@@ -1159,10 +1180,10 @@ bool MediaStreamManager::FindExistingRequestedDeviceInfo(
           *existing_device_info = device_info;
           // Make sure that the audio |effects| reflect what the request
           // is set to and not what the capabilities are.
-          FilterAudioEffects(request->controls,
-                             &existing_device_info->device.input.effects);
-          EnableHotwordEffect(request->controls,
-                              &existing_device_info->device.input.effects);
+          int effects = existing_device_info->device.input.effects();
+          FilterAudioEffects(request->controls, &effects);
+          EnableHotwordEffect(request->controls, &effects);
+          existing_device_info->device.input.set_effects(effects);
           *existing_request_state = request->state(device_info.device.type);
           return true;
         }
@@ -1203,7 +1224,8 @@ void MediaStreamManager::FinalizeRequestFailed(
 
   if (request->request_type == MEDIA_DEVICE_ACCESS &&
       !request->callback.is_null()) {
-    request->callback.Run(MediaStreamDevices(), std::move(request->ui_proxy));
+    std::move(request->callback)
+        .Run(MediaStreamDevices(), std::move(request->ui_proxy));
   }
 
   DeleteRequest(label);
@@ -1222,7 +1244,7 @@ void MediaStreamManager::FinalizeMediaAccessRequest(
     DeviceRequest* request,
     const MediaStreamDevices& devices) {
   if (!request->callback.is_null())
-    request->callback.Run(devices, std::move(request->ui_proxy));
+    std::move(request->callback).Run(devices, std::move(request->ui_proxy));
 
   // Delete the request since it is done.
   DeleteRequest(label);
@@ -1236,9 +1258,9 @@ void MediaStreamManager::InitializeMaybeAsync(
   if (!BrowserThread::CurrentlyOn(BrowserThread::IO)) {
     BrowserThread::PostTask(
         BrowserThread::IO, FROM_HERE,
-        base::Bind(&MediaStreamManager::InitializeMaybeAsync,
-                   base::Unretained(this),
-                   base::Passed(&video_capture_provider)));
+        base::BindOnce(&MediaStreamManager::InitializeMaybeAsync,
+                       base::Unretained(this),
+                       std::move(video_capture_provider)));
     return;
   }
 
@@ -1291,6 +1313,7 @@ void MediaStreamManager::Opened(MediaStreamType stream_type,
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   DVLOG(1) << "Opened({stream_type = " << stream_type <<  "} "
            << "{capture_session_id = " << capture_session_id << "})";
+
   // Find the request(s) containing this device and mark it as used.
   // It can be used in several requests since the same device can be
   // requested from the same web page.
@@ -1319,10 +1342,10 @@ void MediaStreamManager::Opened(MediaStreamType stream_type,
             // parameters to the default settings (including supported effects),
             // we need to adjust those settings here according to what the
             // request asks for.
-            FilterAudioEffects(request->controls,
-                               &device_info.device.input.effects);
-            EnableHotwordEffect(request->controls,
-                                &device_info.device.input.effects);
+            int effects = device_info.device.input.effects();
+            FilterAudioEffects(request->controls, &effects);
+            EnableHotwordEffect(request->controls, &effects);
+            device_info.device.input.set_effects(effects);
 
             device_info.device.matched_output = info->device.matched_output;
           }
@@ -1418,15 +1441,17 @@ void MediaStreamManager::UseFakeUIForTests(
 void MediaStreamManager::RegisterNativeLogCallback(
     int renderer_host_id,
     const base::Callback<void(const std::string&)>& callback) {
-  BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-      base::Bind(&MediaStreamManager::DoNativeLogCallbackRegistration,
-                 base::Unretained(this), renderer_host_id, callback));
+  BrowserThread::PostTask(
+      BrowserThread::IO, FROM_HERE,
+      base::BindOnce(&MediaStreamManager::DoNativeLogCallbackRegistration,
+                     base::Unretained(this), renderer_host_id, callback));
 }
 
 void MediaStreamManager::UnregisterNativeLogCallback(int renderer_host_id) {
-  BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-      base::Bind(&MediaStreamManager::DoNativeLogCallbackUnregistration,
-                 base::Unretained(this), renderer_host_id));
+  BrowserThread::PostTask(
+      BrowserThread::IO, FROM_HERE,
+      base::BindOnce(&MediaStreamManager::DoNativeLogCallbackUnregistration,
+                     base::Unretained(this), renderer_host_id));
 }
 
 void MediaStreamManager::AddLogMessageOnIOThread(const std::string& message) {
@@ -1485,8 +1510,14 @@ void MediaStreamManager::HandleAccessRequestResponse(
       if (sample_rate <= 0 || sample_rate > 96000)
         sample_rate = 44100;
 
-      device_info.device.input.sample_rate = sample_rate;
-      device_info.device.input.channel_layout = media::CHANNEL_LAYOUT_STEREO;
+      media::AudioParameters params(
+          device_info.device.input.format(), media::CHANNEL_LAYOUT_STEREO,
+          sample_rate, device_info.device.input.bits_per_sample(),
+          device_info.device.input.frames_per_buffer());
+      params.set_effects(device_info.device.input.effects());
+      params.set_mic_positions(device_info.device.input.mic_positions());
+      DCHECK(params.IsValid());
+      device_info.device.input = params;
     }
 
     if (device_info.device.type == request->audio_type())
@@ -1771,11 +1802,11 @@ void MediaStreamManager::OnStreamStarted(const std::string& label) {
 
   if (request->ui_proxy) {
     request->ui_proxy->OnStarted(
-        base::Bind(&MediaStreamManager::StopMediaStreamFromBrowser,
-                   base::Unretained(this), label),
-        base::Bind(&MediaStreamManager::OnMediaStreamUIWindowId,
-                   base::Unretained(this), request->video_type(),
-                   request->devices));
+        base::BindOnce(&MediaStreamManager::StopMediaStreamFromBrowser,
+                       base::Unretained(this), label),
+        base::BindOnce(&MediaStreamManager::OnMediaStreamUIWindowId,
+                       base::Unretained(this), request->video_type(),
+                       request->devices));
   }
 }
 

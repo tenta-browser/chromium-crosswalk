@@ -31,9 +31,9 @@
 #ifndef WebMenuItemInfo_h
 #define WebMenuItemInfo_h
 
-#include "../platform/WebCommon.h"
-#include "../platform/WebString.h"
-#include "../platform/WebVector.h"
+#include "public/platform/WebCommon.h"
+#include "public/platform/WebString.h"
+#include "public/platform/WebVector.h"
 #include "WebTextDirection.h"
 
 namespace blink {
@@ -50,8 +50,6 @@ struct WebMenuItemInfo {
         checked(false) {}
 
   WebString label;
-  // "icon" provides absolute URL of an image that repesents the command.
-  WebString icon;
   WebString tool_tip;
   Type type;
   unsigned action;

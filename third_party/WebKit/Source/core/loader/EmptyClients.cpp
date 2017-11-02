@@ -34,9 +34,8 @@
 #include "core/html/HTMLFormElement.h"
 #include "core/html/forms/ColorChooser.h"
 #include "core/html/forms/DateTimeChooser.h"
+#include "core/html/forms/FileChooser.h"
 #include "core/loader/DocumentLoader.h"
-#include "platform/FileChooser.h"
-#include "platform/FrameViewBase.h"
 #include "platform/wtf/PtrUtil.h"
 #include "public/platform/Platform.h"
 #include "public/platform/WebApplicationCacheHost.h"
@@ -72,26 +71,38 @@ class EmptyPopupMenu : public PopupMenu {
 class EmptyFrameScheduler : public WebFrameScheduler {
  public:
   EmptyFrameScheduler() { DCHECK(IsMainThread()); }
+  void AddThrottlingObserver(ObserverType, Observer*) override {}
+  void RemoveThrottlingObserver(ObserverType, Observer*) override {}
   void SetFrameVisible(bool) override {}
   RefPtr<WebTaskRunner> LoadingTaskRunner() override;
-  RefPtr<WebTaskRunner> TimerTaskRunner() override;
-  RefPtr<WebTaskRunner> UnthrottledTaskRunner() override;
-  RefPtr<WebTaskRunner> SuspendableTaskRunner() override;
+  RefPtr<WebTaskRunner> LoadingControlTaskRunner() override;
+  RefPtr<WebTaskRunner> ThrottleableTaskRunner() override;
+  RefPtr<WebTaskRunner> DeferrableTaskRunner() override;
+  RefPtr<WebTaskRunner> PausableTaskRunner() override;
+  RefPtr<WebTaskRunner> UnpausableTaskRunner() override;
 };
 
 RefPtr<WebTaskRunner> EmptyFrameScheduler::LoadingTaskRunner() {
   return Platform::Current()->MainThread()->GetWebTaskRunner();
 }
 
-RefPtr<WebTaskRunner> EmptyFrameScheduler::TimerTaskRunner() {
+RefPtr<WebTaskRunner> EmptyFrameScheduler::LoadingControlTaskRunner() {
   return Platform::Current()->MainThread()->GetWebTaskRunner();
 }
 
-RefPtr<WebTaskRunner> EmptyFrameScheduler::UnthrottledTaskRunner() {
+RefPtr<WebTaskRunner> EmptyFrameScheduler::ThrottleableTaskRunner() {
   return Platform::Current()->MainThread()->GetWebTaskRunner();
 }
 
-RefPtr<WebTaskRunner> EmptyFrameScheduler::SuspendableTaskRunner() {
+RefPtr<WebTaskRunner> EmptyFrameScheduler::DeferrableTaskRunner() {
+  return Platform::Current()->MainThread()->GetWebTaskRunner();
+}
+
+RefPtr<WebTaskRunner> EmptyFrameScheduler::PausableTaskRunner() {
+  return Platform::Current()->MainThread()->GetWebTaskRunner();
+}
+
+RefPtr<WebTaskRunner> EmptyFrameScheduler::UnpausableTaskRunner() {
   return Platform::Current()->MainThread()->GetWebTaskRunner();
 }
 
@@ -113,7 +124,7 @@ DateTimeChooser* EmptyChromeClient::OpenDateTimeChooser(
 
 void EmptyChromeClient::OpenTextDataListChooser(HTMLInputElement&) {}
 
-void EmptyChromeClient::OpenFileChooser(LocalFrame*, PassRefPtr<FileChooser>) {}
+void EmptyChromeClient::OpenFileChooser(LocalFrame*, RefPtr<FileChooser>) {}
 
 void EmptyChromeClient::AttachRootGraphicsLayer(GraphicsLayer* layer,
                                                 LocalFrame* local_root) {
@@ -134,11 +145,13 @@ std::unique_ptr<WebFrameScheduler> EmptyChromeClient::CreateFrameScheduler(
 
 NavigationPolicy EmptyLocalFrameClient::DecidePolicyForNavigation(
     const ResourceRequest&,
+    Document* origin_document,
     DocumentLoader*,
     NavigationType,
     NavigationPolicy,
     bool,
     bool,
+    WebTriggeringEventInfo,
     HTMLFormElement*,
     ContentSecurityPolicyDisposition) {
   return kNavigationPolicyIgnore;
@@ -159,13 +172,12 @@ DocumentLoader* EmptyLocalFrameClient::CreateDocumentLoader(
                                 client_redirect_policy);
 }
 
-LocalFrame* EmptyLocalFrameClient::CreateFrame(const FrameLoadRequest&,
-                                               const AtomicString&,
+LocalFrame* EmptyLocalFrameClient::CreateFrame(const AtomicString&,
                                                HTMLFrameOwnerElement*) {
   return nullptr;
 }
 
-PluginView* EmptyLocalFrameClient::CreatePlugin(HTMLPlugInElement*,
+PluginView* EmptyLocalFrameClient::CreatePlugin(HTMLPlugInElement&,
                                                 const KURL&,
                                                 const Vector<String>&,
                                                 const Vector<String>&,
@@ -178,7 +190,8 @@ PluginView* EmptyLocalFrameClient::CreatePlugin(HTMLPlugInElement*,
 std::unique_ptr<WebMediaPlayer> EmptyLocalFrameClient::CreateWebMediaPlayer(
     HTMLMediaElement&,
     const WebMediaPlayerSource&,
-    WebMediaPlayerClient*) {
+    WebMediaPlayerClient*,
+    WebLayerTreeView*) {
   return nullptr;
 }
 
@@ -212,5 +225,10 @@ EmptyLocalFrameClient::CreateApplicationCacheHost(
 }
 
 EmptyRemoteFrameClient::EmptyRemoteFrameClient() = default;
+
+bool EmptyContextMenuClient::ShowContextMenu(const ContextMenu*,
+                                             WebMenuSourceType source_type) {
+  return false;
+}
 
 }  // namespace blink

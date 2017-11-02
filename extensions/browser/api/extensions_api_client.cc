@@ -38,6 +38,12 @@ void ExtensionsAPIClient::AttachWebContentsHelpers(
     content::WebContents* web_contents) const {
 }
 
+bool ExtensionsAPIClient::ShouldHideResponseHeader(
+    const GURL& url,
+    const std::string& header_name) const {
+  return false;
+}
+
 AppViewGuestDelegate* ExtensionsAPIClient::CreateAppViewGuestDelegate() const {
   return NULL;
 }
@@ -51,7 +57,7 @@ ExtensionsAPIClient::CreateExtensionOptionsGuestDelegate(
 std::unique_ptr<guest_view::GuestViewManagerDelegate>
 ExtensionsAPIClient::CreateGuestViewManagerDelegate(
     content::BrowserContext* context) const {
-  return base::MakeUnique<ExtensionsGuestViewManagerDelegate>(context);
+  return std::make_unique<ExtensionsGuestViewManagerDelegate>(context);
 }
 
 std::unique_ptr<MimeHandlerViewGuestDelegate>
@@ -108,6 +114,18 @@ ExtensionsAPIClient::GetNetworkingCastPrivateDelegate() {
   return nullptr;
 }
 
+FileSystemDelegate* ExtensionsAPIClient::GetFileSystemDelegate() {
+  return nullptr;
+}
+
+MessagingDelegate* ExtensionsAPIClient::GetMessagingDelegate() {
+  return nullptr;
+}
+
+FeedbackPrivateDelegate* ExtensionsAPIClient::GetFeedbackPrivateDelegate() {
+  return nullptr;
+}
+
 #if defined(OS_CHROMEOS)
 NonNativeFileSystemDelegate*
 ExtensionsAPIClient::GetNonNativeFileSystemDelegate() {
@@ -117,6 +135,7 @@ ExtensionsAPIClient::GetNonNativeFileSystemDelegate() {
 void ExtensionsAPIClient::SaveImageDataToClipboard(
     const std::vector<char>& image_data,
     api::clipboard::ImageType type,
+    AdditionalDataItemList additional_items,
     const base::Closure& success_callback,
     const base::Callback<void(const std::string&)>& error_callback) {}
 #endif

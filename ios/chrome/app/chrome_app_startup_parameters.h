@@ -30,12 +30,9 @@ enum MobileSessionCallerApp {
 
 @interface ChromeAppStartupParameters : AppStartupParameters
 
-- (instancetype)initWithExternalURL:(const GURL&)externalURL
-                xCallbackParameters:(XCallbackParameters*)xCallbackParameters
-    NS_UNAVAILABLE;
+- (instancetype)initWithExternalURL:(const GURL&)externalURL NS_UNAVAILABLE;
 
 - (instancetype)initWithExternalURL:(const GURL&)externalURL
-                xCallbackParameters:(XCallbackParameters*)xCallbackParameters
                   declaredSourceApp:(NSString*)declaredSourceApp
                     secureSourceApp:(NSString*)secureSourceApp
                         completeURL:(NSURL*)completeURL
@@ -100,7 +97,8 @@ enum MobileSessionCallerApp {
 @interface ChromeAppStartupParameters (Testing)
 
 + (instancetype)newAppStartupParametersForCommand:(NSString*)command
-                                    withParameter:(id)parameter
+                                  withExternalURL:(NSString*)externalURL
+                                        withIndex:(NSNumber*)index
                                           withURL:(NSURL*)url
                             fromSourceApplication:(NSString*)appId
                       fromSecureSourceApplication:(NSString*)secureSourceApp;

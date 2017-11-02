@@ -78,7 +78,7 @@ bool StyleFetchedImage::ErrorOccurred() const {
 }
 
 LayoutSize StyleFetchedImage::ImageSize(
-    const LayoutObject&,
+    const Document&,
     float multiplier,
     const LayoutSize& default_object_size) const {
   if (image_->GetImage() && image_->GetImage()->IsSVGImage())
@@ -101,12 +101,12 @@ bool StyleFetchedImage::UsesImageContainerSize() const {
   return image_->UsesImageContainerSize();
 }
 
-void StyleFetchedImage::AddClient(LayoutObject* layout_object) {
-  image_->AddObserver(layout_object);
+void StyleFetchedImage::AddClient(ImageResourceObserver* observer) {
+  image_->AddObserver(observer);
 }
 
-void StyleFetchedImage::RemoveClient(LayoutObject* layout_object) {
-  image_->RemoveObserver(layout_object);
+void StyleFetchedImage::RemoveClient(ImageResourceObserver* observer) {
+  image_->RemoveObserver(observer);
 }
 
 void StyleFetchedImage::ImageNotifyFinished(ImageResourceContent*) {
@@ -117,21 +117,20 @@ void StyleFetchedImage::ImageNotifyFinished(ImageResourceContent*) {
   document_.Clear();
 }
 
-PassRefPtr<Image> StyleFetchedImage::GetImage(const LayoutObject&,
-                                              const IntSize& container_size,
-                                              float zoom) const {
+RefPtr<Image> StyleFetchedImage::GetImage(const ImageResourceObserver&,
+                                          const Document&,
+                                          const ComputedStyle& style,
+                                          const IntSize& container_size) const {
   if (!image_->GetImage()->IsSVGImage())
     return image_->GetImage();
 
   return SVGImageForContainer::Create(ToSVGImage(image_->GetImage()),
-                                      container_size, zoom, url_);
+                                      container_size, style.EffectiveZoom(),
+                                      url_);
 }
 
-bool StyleFetchedImage::KnownToBeOpaque(
-    const LayoutObject& layout_object) const {
-  TRACE_EVENT1(TRACE_DISABLED_BY_DEFAULT("devtools.timeline"), "PaintImage",
-               "data",
-               InspectorPaintImageEvent::Data(&layout_object, *image_.Get()));
+bool StyleFetchedImage::KnownToBeOpaque(const Document&,
+                                        const ComputedStyle&) const {
   return image_->GetImage()->CurrentFrameKnownToBeOpaque(
       Image::kPreCacheMetadata);
 }

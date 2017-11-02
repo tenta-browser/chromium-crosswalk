@@ -159,7 +159,9 @@ DEFINE_WEB_CONTENTS_USER_DATA_KEY(VisibilityTimerTabHelper);
 NotificationPermissionContext::NotificationPermissionContext(
     Profile* profile,
     ContentSettingsType content_settings_type)
-    : PermissionContextBase(profile, content_settings_type),
+    : PermissionContextBase(profile,
+                            content_settings_type,
+                            blink::WebFeaturePolicyFeature::kNotFound),
       weak_factory_ui_thread_(this) {
   DCHECK(content_settings_type == CONTENT_SETTINGS_TYPE_NOTIFICATIONS ||
          content_settings_type == CONTENT_SETTINGS_TYPE_PUSH_MESSAGING);
@@ -171,14 +173,13 @@ ContentSetting NotificationPermissionContext::GetPermissionStatusInternal(
     content::RenderFrameHost* render_frame_host,
     const GURL& requesting_origin,
     const GURL& embedding_origin) const {
-  // Push messaging is only allowed to be granted on top-level origins.
-  if (content_settings_type() == CONTENT_SETTINGS_TYPE_PUSH_MESSAGING
-          && requesting_origin != embedding_origin) {
-    return CONTENT_SETTING_BLOCK;
-  }
-
-  return PermissionContextBase::GetPermissionStatusInternal(
+  ContentSetting setting = PermissionContextBase::GetPermissionStatusInternal(
       render_frame_host, requesting_origin, embedding_origin);
+
+  if (requesting_origin != embedding_origin && setting == CONTENT_SETTING_ASK)
+    return CONTENT_SETTING_BLOCK;
+
+  return setting;
 }
 
 void NotificationPermissionContext::ResetPermission(
@@ -205,6 +206,16 @@ void NotificationPermissionContext::DecidePermission(
     bool user_gesture,
     const BrowserPermissionCallback& callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+
+  // Permission requests for either Web Notifications and Push Notifications may
+  // only happen on top-level frames and same-origin iframes. Usage will
+  // continue to be allowed in all iframes: such frames could trivially work
+  // around the restriction by posting a message to their Service Worker, where
+  // showing a notification is allowed.
+  if (requesting_origin != embedding_origin) {
+    callback.Run(CONTENT_SETTING_BLOCK);
+    return;
+  }
 
   // Notifications permission is always denied in incognito. To prevent sites
   // from using that to detect whether incognito mode is active, we deny after a
@@ -255,5 +266,5 @@ void NotificationPermissionContext::UpdateContentSetting(
 }
 
 bool NotificationPermissionContext::IsRestrictedToSecureOrigins() const {
-  return content_settings_type() == CONTENT_SETTINGS_TYPE_PUSH_MESSAGING;
+  return true;
 }

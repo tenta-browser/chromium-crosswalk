@@ -88,6 +88,9 @@ class CORE_EXPORT CSSValue : public GarbageCollectedFinalized<CSSValue> {
   bool IsFontFeatureValue() const { return class_type_ == kFontFeatureClass; }
   bool IsFontFamilyValue() const { return class_type_ == kFontFamilyClass; }
   bool IsFontFaceSrcValue() const { return class_type_ == kFontFaceSrcClass; }
+  bool IsFontStyleRangeValue() const {
+    return class_type_ == kFontStyleRangeClass;
+  }
   bool IsFontVariationValue() const {
     return class_type_ == kFontVariationClass;
   }
@@ -113,6 +116,7 @@ class CORE_EXPORT CSSValue : public GarbageCollectedFinalized<CSSValue> {
   }
   bool IsPathValue() const { return class_type_ == kPathClass; }
   bool IsQuadValue() const { return class_type_ == kQuadClass; }
+  bool IsRayValue() const { return class_type_ == kRayClass; }
   bool IsRadialGradientValue() const {
     return class_type_ == kRadialGradientClass;
   }
@@ -128,6 +132,9 @@ class CORE_EXPORT CSSValue : public GarbageCollectedFinalized<CSSValue> {
   }
   bool IsStepsTimingFunctionValue() const {
     return class_type_ == kStepsTimingFunctionClass;
+  }
+  bool IsFramesTimingFunctionValue() const {
+    return class_type_ == kFramesTimingFunctionClass;
   }
   bool IsGridTemplateAreasValue() const {
     return class_type_ == kGridTemplateAreasClass;
@@ -202,12 +209,14 @@ class CORE_EXPORT CSSValue : public GarbageCollectedFinalized<CSSValue> {
     // Timing function classes.
     kCubicBezierTimingFunctionClass,
     kStepsTimingFunctionClass,
+    kFramesTimingFunctionClass,
 
     // Other class types.
     kBorderImageSliceClass,
     kFontFeatureClass,
     kFontFaceSrcClass,
     kFontFamilyClass,
+    kFontStyleRangeClass,
     kFontVariationClass,
 
     kInheritedClass,
@@ -219,6 +228,7 @@ class CORE_EXPORT CSSValue : public GarbageCollectedFinalized<CSSValue> {
     kUnicodeRangeClass,
     kGridTemplateAreasClass,
     kPathClass,
+    kRayClass,
     kVariableReferenceClass,
     kCustomPropertyDeclarationClass,
     kPendingSubstitutionValueClass,
@@ -241,7 +251,6 @@ class CORE_EXPORT CSSValue : public GarbageCollectedFinalized<CSSValue> {
 
   explicit CSSValue(ClassType class_type)
       : primitive_unit_type_(0),
-        has_cached_css_text_(false),
         value_list_separator_(kSpaceSeparator),
         class_type_(class_type) {}
 
@@ -254,7 +263,6 @@ class CORE_EXPORT CSSValue : public GarbageCollectedFinalized<CSSValue> {
 
   // CSSPrimitiveValue bits:
   unsigned primitive_unit_type_ : 7;  // CSSPrimitiveValue::UnitType
-  mutable unsigned has_cached_css_text_ : 1;
 
   unsigned value_list_separator_ : kValueListSeparatorBits;
 

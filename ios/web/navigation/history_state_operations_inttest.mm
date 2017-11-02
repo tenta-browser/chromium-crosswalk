@@ -10,8 +10,8 @@
 #import "ios/web/navigation/navigation_item_impl.h"
 #import "ios/web/public/navigation_item.h"
 #import "ios/web/public/navigation_manager.h"
-#import "ios/web/public/test/http_server.h"
-#include "ios/web/public/test/http_server_util.h"
+#import "ios/web/public/test/http_server/http_server.h"
+#include "ios/web/public/test/http_server/http_server_util.h"
 #import "ios/web/public/test/web_view_interaction_test_util.h"
 #import "ios/web/public/web_state/web_state.h"
 #import "ios/web/test/web_int_test.h"
@@ -308,7 +308,13 @@ TEST_F(HistoryStateOperationsTest, StateReplacement) {
 
 // Tests that the state object is reset to the correct value after reloading a
 // page whose state has been replaced.
-TEST_F(HistoryStateOperationsTest, StateReplacementReload) {
+#if TARGET_IPHONE_SIMULATOR
+#define MAYBE_StateReplacementReload StateReplacementReload
+#else
+#define MAYBE_StateReplacementReload DISABLED_StateReplacementReload
+#endif
+// TODO(crbug.com/720381): Enable this test on device.
+TEST_F(HistoryStateOperationsTest, MAYBE_StateReplacementReload) {
   // Set up the state parameters and tap the replace state button.
   std::string new_state("STATE OBJECT");
   std::string empty_title;

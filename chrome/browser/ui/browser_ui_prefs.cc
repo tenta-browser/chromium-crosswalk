@@ -12,7 +12,7 @@
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
 #include "components/prefs/scoped_user_pref_update.h"
-#include "components/translate/core/common/translate_pref_names.h"
+#include "components/translate/core/browser/translate_pref_names.h"
 #include "content/public/common/webrtc_ip_handling_policy.h"
 #include "media/media_features.h"
 
@@ -23,7 +23,7 @@
 namespace {
 
 uint32_t GetHomeButtonAndHomePageIsNewTabPageFlags() {
-#if defined(OS_IOS) || defined(OS_ANDROID)
+#if defined(OS_ANDROID)
   return PrefRegistry::NO_REGISTRATION_FLAGS;
 #else
   return user_prefs::PrefRegistrySyncable::SYNCABLE_PREF;
@@ -75,6 +75,10 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
       prefs::kEnableDoNotTrack,
       false,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+#if !defined(OS_CHROMEOS) && !defined(OS_ANDROID)
+  registry->RegisterBooleanPref(prefs::kPrintPreviewUseSystemDefaultPrinter,
+                                false);
+#endif
 #if BUILDFLAG(ENABLE_WEBRTC)
   // TODO(guoweis): Remove next 2 options at M50.
   registry->RegisterBooleanPref(prefs::kWebRTCMultipleRoutesEnabled, true);
@@ -111,10 +115,6 @@ void RegisterBrowserUserPrefs(user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterBooleanPref(
       prefs::kShowFullscreenToolbar,
       true,
-      user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
-  registry->RegisterBooleanPref(
-      prefs::kHideFullscreenToolbar,
-      false,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
 #else
   registry->RegisterBooleanPref(prefs::kFullscreenAllowed, true);

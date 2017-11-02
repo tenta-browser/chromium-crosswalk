@@ -35,7 +35,8 @@
 #include "core/loader/ThreadableLoadingContext.h"
 #include "core/timing/WorkerGlobalScopePerformance.h"
 #include "core/workers/WorkerGlobalScope.h"
-#include "core/workers/WorkerLoaderProxy.h"
+#include "core/workers/WorkerThread.h"
+#include "core/workers/WorkerThreadLifecycleContext.h"
 #include "platform/CrossThreadFunctional.h"
 #include "platform/heap/SafePoint.h"
 #include "platform/loader/fetch/ResourceError.h"
@@ -56,7 +57,7 @@ std::unique_ptr<Vector<char>> CreateVectorFromMemoryRegion(
     unsigned data_length) {
   std::unique_ptr<Vector<char>> buffer =
       WTF::MakeUnique<Vector<char>>(data_length);
-  memcpy(buffer->Data(), data, data_length);
+  memcpy(buffer->data(), data, data_length);
   return buffer;
 }
 
@@ -65,39 +66,37 @@ std::unique_ptr<Vector<char>> CreateVectorFromMemoryRegion(
 class WorkerThreadableLoader::AsyncTaskForwarder final
     : public WorkerThreadableLoader::TaskForwarder {
  public:
-  explicit AsyncTaskForwarder(PassRefPtr<WorkerLoaderProxy> loader_proxy)
-      : loader_proxy_(std::move(loader_proxy)) {
+  explicit AsyncTaskForwarder(RefPtr<WebTaskRunner> worker_loading_task_runner)
+      : worker_loading_task_runner_(std::move(worker_loading_task_runner)) {
     DCHECK(IsMainThread());
   }
   ~AsyncTaskForwarder() override { DCHECK(IsMainThread()); }
 
   void ForwardTask(const WebTraceLocation& location,
-                   std::unique_ptr<CrossThreadClosure> task) override {
+                   CrossThreadClosure task) override {
     DCHECK(IsMainThread());
-    loader_proxy_->PostTaskToWorkerGlobalScope(location, std::move(task));
+    worker_loading_task_runner_->PostTask(location, std::move(task));
   }
-  void ForwardTaskWithDoneSignal(
-      const WebTraceLocation& location,
-      std::unique_ptr<CrossThreadClosure> task) override {
+  void ForwardTaskWithDoneSignal(const WebTraceLocation& location,
+                                 CrossThreadClosure task) override {
     DCHECK(IsMainThread());
-    loader_proxy_->PostTaskToWorkerGlobalScope(location, std::move(task));
+    worker_loading_task_runner_->PostTask(location, std::move(task));
   }
   void Abort() override { DCHECK(IsMainThread()); }
 
  private:
-  RefPtr<WorkerLoaderProxy> loader_proxy_;
+  RefPtr<WebTaskRunner> worker_loading_task_runner_;
 };
 
 struct WorkerThreadableLoader::TaskWithLocation final {
-  TaskWithLocation(const WebTraceLocation& location,
-                   std::unique_ptr<CrossThreadClosure> task)
+  TaskWithLocation(const WebTraceLocation& location, CrossThreadClosure task)
       : location_(location), task_(std::move(task)) {}
   TaskWithLocation(TaskWithLocation&& task)
       : TaskWithLocation(task.location_, std::move(task.task_)) {}
   ~TaskWithLocation() = default;
 
   WebTraceLocation location_;
-  std::unique_ptr<CrossThreadClosure> task_;
+  CrossThreadClosure task_;
 };
 
 // Observing functions and wait() need to be called on the worker thread.
@@ -107,7 +106,7 @@ struct WorkerThreadableLoader::TaskWithLocation final {
 class WorkerThreadableLoader::WaitableEventWithTasks final
     : public ThreadSafeRefCounted<WaitableEventWithTasks> {
  public:
-  static PassRefPtr<WaitableEventWithTasks> Create() {
+  static RefPtr<WaitableEventWithTasks> Create() {
     return AdoptRef(new WaitableEventWithTasks);
   }
 
@@ -161,21 +160,19 @@ class WorkerThreadableLoader::WaitableEventWithTasks final
 class WorkerThreadableLoader::SyncTaskForwarder final
     : public WorkerThreadableLoader::TaskForwarder {
  public:
-  explicit SyncTaskForwarder(
-      PassRefPtr<WaitableEventWithTasks> event_with_tasks)
+  explicit SyncTaskForwarder(RefPtr<WaitableEventWithTasks> event_with_tasks)
       : event_with_tasks_(std::move(event_with_tasks)) {
     DCHECK(IsMainThread());
   }
   ~SyncTaskForwarder() override { DCHECK(IsMainThread()); }
 
   void ForwardTask(const WebTraceLocation& location,
-                   std::unique_ptr<CrossThreadClosure> task) override {
+                   CrossThreadClosure task) override {
     DCHECK(IsMainThread());
     event_with_tasks_->Append(TaskWithLocation(location, std::move(task)));
   }
-  void ForwardTaskWithDoneSignal(
-      const WebTraceLocation& location,
-      std::unique_ptr<CrossThreadClosure> task) override {
+  void ForwardTaskWithDoneSignal(const WebTraceLocation& location,
+                                 CrossThreadClosure task) override {
     DCHECK(IsMainThread());
     event_with_tasks_->Append(TaskWithLocation(location, std::move(task)));
     event_with_tasks_->Signal();
@@ -197,8 +194,8 @@ WorkerThreadableLoader::WorkerThreadableLoader(
     const ResourceLoaderOptions& resource_loader_options,
     BlockingBehavior blocking_behavior)
     : worker_global_scope_(&worker_global_scope),
-      worker_loader_proxy_(
-          worker_global_scope.GetThread()->GetWorkerLoaderProxy()),
+      parent_frame_task_runners_(
+          worker_global_scope.GetThread()->GetParentFrameTaskRunners()),
       client_(client),
       threadable_loader_options_(options),
       resource_loader_options_(resource_loader_options),
@@ -223,6 +220,7 @@ WorkerThreadableLoader::~WorkerThreadableLoader() {
 }
 
 void WorkerThreadableLoader::Start(const ResourceRequest& original_request) {
+  DCHECK(worker_global_scope_->IsContextThread());
   ResourceRequest request(original_request);
   if (!request.DidSetHTTPReferrer()) {
     request.SetHTTPReferrer(SecurityPolicy::GenerateReferrer(
@@ -230,20 +228,25 @@ void WorkerThreadableLoader::Start(const ResourceRequest& original_request) {
         worker_global_scope_->OutgoingReferrer()));
   }
 
-  DCHECK(!IsMainThread());
   RefPtr<WaitableEventWithTasks> event_with_tasks;
   if (blocking_behavior_ == kLoadSynchronously)
     event_with_tasks = WaitableEventWithTasks::Create();
 
-  worker_loader_proxy_->PostTaskToLoader(
-      BLINK_FROM_HERE,
-      CrossThreadBind(
-          &MainThreadLoaderHolder::CreateAndStart,
-          WrapCrossThreadPersistent(this), worker_loader_proxy_,
-          WrapCrossThreadPersistent(worker_global_scope_->GetThread()
-                                        ->GetWorkerThreadLifecycleContext()),
-          request, threadable_loader_options_, resource_loader_options_,
-          event_with_tasks));
+  WorkerThread* worker_thread = worker_global_scope_->GetThread();
+  RefPtr<WebTaskRunner> worker_loading_task_runner = TaskRunnerHelper::Get(
+      TaskType::kUnspecedLoading, worker_global_scope_.Get());
+  parent_frame_task_runners_->Get(TaskType::kUnspecedLoading)
+      ->PostTask(
+          BLINK_FROM_HERE,
+          CrossThreadBind(
+              &MainThreadLoaderHolder::CreateAndStart,
+              WrapCrossThreadPersistent(this),
+              WrapCrossThreadPersistent(worker_thread->GetLoadingContext()),
+              std::move(worker_loading_task_runner),
+              WrapCrossThreadPersistent(
+                  worker_thread->GetWorkerThreadLifecycleContext()),
+              request, threadable_loader_options_, resource_loader_options_,
+              event_with_tasks));
 
   if (blocking_behavior_ == kLoadAsynchronously)
     return;
@@ -262,7 +265,7 @@ void WorkerThreadableLoader::Start(const ResourceRequest& original_request) {
     const void* program_counter = task.location_.program_counter();
     WTF::debug::Alias(&program_counter);
 
-    (*task.task_)();
+    task.task_();
   }
 }
 
@@ -271,18 +274,20 @@ void WorkerThreadableLoader::OverrideTimeout(
   DCHECK(!IsMainThread());
   if (!main_thread_loader_holder_)
     return;
-  worker_loader_proxy_->PostTaskToLoader(
-      BLINK_FROM_HERE,
-      CrossThreadBind(&MainThreadLoaderHolder::OverrideTimeout,
-                      main_thread_loader_holder_, timeout_milliseconds));
+  parent_frame_task_runners_->Get(TaskType::kUnspecedLoading)
+      ->PostTask(
+          BLINK_FROM_HERE,
+          CrossThreadBind(&MainThreadLoaderHolder::OverrideTimeout,
+                          main_thread_loader_holder_, timeout_milliseconds));
 }
 
 void WorkerThreadableLoader::Cancel() {
   DCHECK(!IsMainThread());
   if (main_thread_loader_holder_) {
-    worker_loader_proxy_->PostTaskToLoader(
-        BLINK_FROM_HERE, CrossThreadBind(&MainThreadLoaderHolder::Cancel,
-                                         main_thread_loader_holder_));
+    parent_frame_task_runners_->Get(TaskType::kUnspecedLoading)
+        ->PostTask(BLINK_FROM_HERE,
+                   CrossThreadBind(&MainThreadLoaderHolder::Cancel,
+                                   main_thread_loader_holder_));
     main_thread_loader_holder_ = nullptr;
   }
 
@@ -293,9 +298,7 @@ void WorkerThreadableLoader::Cancel() {
   // by sending a cancellation error.
   // Note: no more client callbacks will be done after this method -- the
   // clearClient() call ensures that.
-  ResourceError error(String(), 0, String(), String());
-  error.SetIsCancellation(true);
-  DidFail(error);
+  DidFail(ResourceError::CancelledError(KURL()));
   DCHECK(!client_);
 }
 
@@ -306,10 +309,11 @@ void WorkerThreadableLoader::DidStart(
   DCHECK(main_thread_loader_holder);
   if (!client_) {
     // The thread is terminating.
-    worker_loader_proxy_->PostTaskToLoader(
-        BLINK_FROM_HERE,
-        CrossThreadBind(&MainThreadLoaderHolder::Cancel,
-                        WrapCrossThreadPersistent(main_thread_loader_holder)));
+    parent_frame_task_runners_->Get(TaskType::kUnspecedLoading)
+        ->PostTask(BLINK_FROM_HERE,
+                   CrossThreadBind(
+                       &MainThreadLoaderHolder::Cancel,
+                       WrapCrossThreadPersistent(main_thread_loader_holder)));
     return;
   }
 
@@ -349,7 +353,7 @@ void WorkerThreadableLoader::DidReceiveData(
   CHECK_LE(data->size(), std::numeric_limits<unsigned>::max());
   if (!client_)
     return;
-  client_->DidReceiveData(data->Data(), data->size());
+  client_->DidReceiveData(data->data(), data->size());
 }
 
 void WorkerThreadableLoader::DidReceiveCachedMetadata(
@@ -357,7 +361,7 @@ void WorkerThreadableLoader::DidReceiveCachedMetadata(
   DCHECK(!IsMainThread());
   if (!client_)
     return;
-  client_->DidReceiveCachedMetadata(data->Data(), data->size());
+  client_->DidReceiveCachedMetadata(data->data(), data->size());
 }
 
 void WorkerThreadableLoader::DidFinishLoading(unsigned long identifier,
@@ -379,17 +383,6 @@ void WorkerThreadableLoader::DidFail(const ResourceError& error) {
   client_ = nullptr;
   main_thread_loader_holder_ = nullptr;
   client->DidFail(error);
-}
-
-void WorkerThreadableLoader::DidFailAccessControlCheck(
-    const ResourceError& error) {
-  DCHECK(!IsMainThread());
-  if (!client_)
-    return;
-  auto* client = client_;
-  client_ = nullptr;
-  main_thread_loader_holder_ = nullptr;
-  client->DidFailAccessControlCheck(error);
 }
 
 void WorkerThreadableLoader::DidFailRedirectCheck() {
@@ -428,22 +421,19 @@ DEFINE_TRACE(WorkerThreadableLoader) {
 
 void WorkerThreadableLoader::MainThreadLoaderHolder::CreateAndStart(
     WorkerThreadableLoader* worker_loader,
-    RefPtr<WorkerLoaderProxy> loader_proxy,
+    ThreadableLoadingContext* loading_context,
+    RefPtr<WebTaskRunner> worker_loading_task_runner,
     WorkerThreadLifecycleContext* worker_thread_lifecycle_context,
     std::unique_ptr<CrossThreadResourceRequestData> request,
     const ThreadableLoaderOptions& options,
     const ResourceLoaderOptions& resource_loader_options,
-    PassRefPtr<WaitableEventWithTasks> event_with_tasks) {
+    RefPtr<WaitableEventWithTasks> event_with_tasks) {
   DCHECK(IsMainThread());
   TaskForwarder* forwarder;
-  ThreadableLoadingContext* loading_context =
-      loader_proxy->GetThreadableLoadingContext();
-  if (!loading_context)
-    return;
   if (event_with_tasks)
     forwarder = new SyncTaskForwarder(std::move(event_with_tasks));
   else
-    forwarder = new AsyncTaskForwarder(std::move(loader_proxy));
+    forwarder = new AsyncTaskForwarder(std::move(worker_loading_task_runner));
 
   MainThreadLoaderHolder* main_thread_loader_holder =
       new MainThreadLoaderHolder(forwarder, worker_thread_lifecycle_context);
@@ -595,20 +585,6 @@ void WorkerThreadableLoader::MainThreadLoaderHolder::DidFail(
   forwarder_->ForwardTaskWithDoneSignal(
       BLINK_FROM_HERE,
       CrossThreadBind(&WorkerThreadableLoader::DidFail, worker_loader, error));
-  forwarder_ = nullptr;
-}
-
-void WorkerThreadableLoader::MainThreadLoaderHolder::DidFailAccessControlCheck(
-    const ResourceError& error) {
-  DCHECK(IsMainThread());
-  CrossThreadPersistent<WorkerThreadableLoader> worker_loader =
-      worker_loader_.Release();
-  if (!worker_loader || !forwarder_)
-    return;
-  forwarder_->ForwardTaskWithDoneSignal(
-      BLINK_FROM_HERE,
-      CrossThreadBind(&WorkerThreadableLoader::DidFailAccessControlCheck,
-                      worker_loader, error));
   forwarder_ = nullptr;
 }
 

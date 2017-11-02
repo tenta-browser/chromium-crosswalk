@@ -10,6 +10,7 @@
 #include <map>
 #include <queue>
 #include <string>
+#include <unordered_map>
 
 #include "base/files/file_path.h"
 #include "base/macros.h"
@@ -63,6 +64,9 @@ class ShaderDiskCache : public base::RefCounted<ShaderDiskCache> {
   // been written to the cache.
   int SetCacheCompleteCallback(const net::CompletionCallback& callback);
 
+  // Returns the size which should be used for the shader disk cache.
+  static size_t CacheSizeBytes();
+
  private:
   friend class base::RefCounted<ShaderDiskCache>;
   friend class ShaderDiskCacheEntry;
@@ -73,7 +77,7 @@ class ShaderDiskCache : public base::RefCounted<ShaderDiskCache> {
                   const base::FilePath& cache_path);
   ~ShaderDiskCache();
 
-  void Init(scoped_refptr<base::SingleThreadTaskRunner> cache_task_runner);
+  void Init();
   void CacheCreatedCallback(int rv);
 
   disk_cache::Backend* backend() { return backend_.get(); }
@@ -101,10 +105,9 @@ class ShaderDiskCache : public base::RefCounted<ShaderDiskCache> {
 
 // ShaderCacheFactory maintains a cache of ShaderDiskCache objects
 // so we only create one per profile directory.
-class ShaderCacheFactory : NON_EXPORTED_BASE(public base::ThreadChecker) {
+class ShaderCacheFactory : public base::ThreadChecker {
  public:
-  explicit ShaderCacheFactory(
-      scoped_refptr<base::SingleThreadTaskRunner> cache_task_runner);
+  ShaderCacheFactory();
   ~ShaderCacheFactory();
 
   // Clear the shader disk cache for the given |path|. This supports unbounded
@@ -140,8 +143,6 @@ class ShaderCacheFactory : NON_EXPORTED_BASE(public base::ThreadChecker) {
 
  private:
   friend class ShaderClearHelper;
-
-  scoped_refptr<base::SingleThreadTaskRunner> cache_task_runner_;
 
   scoped_refptr<ShaderDiskCache> GetByPath(const base::FilePath& path);
   void CacheCleared(const base::FilePath& path);

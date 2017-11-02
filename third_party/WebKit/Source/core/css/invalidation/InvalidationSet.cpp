@@ -108,6 +108,17 @@ bool InvalidationSet::InvalidatesElement(Element& element) const {
   return false;
 }
 
+bool InvalidationSet::InvalidatesTagName(Element& element) const {
+  if (tag_names_ && tag_names_->Contains(element.TagQName().LocalName())) {
+    TRACE_STYLE_INVALIDATOR_INVALIDATION_SELECTORPART_IF_ENABLED(
+        element, kInvalidationSetMatchedTagName, *this,
+        element.TagQName().LocalName());
+    return true;
+  }
+
+  return false;
+}
+
 void InvalidationSet::Combine(const InvalidationSet& other) {
   CHECK(is_alive_);
   CHECK(other.is_alive_);
@@ -300,12 +311,12 @@ void InvalidationSet::Show() const {
   value->BeginArray("InvalidationSet");
   ToTracedValue(value.get());
   value->EndArray();
-  fprintf(stderr, "%s\n", value->ToString().Ascii().Data());
+  fprintf(stderr, "%s\n", value->ToString().Ascii().data());
 }
 #endif  // NDEBUG
 
 SiblingInvalidationSet::SiblingInvalidationSet(
-    PassRefPtr<DescendantInvalidationSet> descendants)
+    RefPtr<DescendantInvalidationSet> descendants)
     : InvalidationSet(kInvalidateSiblings),
       max_direct_adjacent_selectors_(1),
       descendant_invalidation_set_(std::move(descendants)) {}

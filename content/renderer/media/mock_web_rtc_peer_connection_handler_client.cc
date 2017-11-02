@@ -19,7 +19,7 @@ MockWebRTCPeerConnectionHandlerClient()
       .WillByDefault(
           testing::Invoke(this, &MockWebRTCPeerConnectionHandlerClient::
                                     didGenerateICECandidateWorker));
-  ON_CALL(*this, DidAddRemoteStream(_))
+  ON_CALL(*this, DidAddRemoteStream(_, _))
       .WillByDefault(testing::Invoke(
           this,
           &MockWebRTCPeerConnectionHandlerClient::didAddRemoteStreamWorker));
@@ -34,19 +34,15 @@ MockWebRTCPeerConnectionHandlerClient::
 
 void MockWebRTCPeerConnectionHandlerClient::didGenerateICECandidateWorker(
     const blink::WebRTCICECandidate& candidate) {
-  if (!candidate.IsNull()) {
-    candidate_sdp_ = candidate.Candidate().Utf8();
-    candidate_mline_index_ = candidate.SdpMLineIndex();
-    candidate_mid_ = candidate.SdpMid().Utf8();
-  } else {
-    candidate_sdp_ = "";
-    candidate_mline_index_ = -1;
-    candidate_mid_ = "";
-  }
+  candidate_sdp_ = candidate.Candidate().Utf8();
+  candidate_mline_index_ = candidate.SdpMLineIndex();
+  candidate_mid_ = candidate.SdpMid().Utf8();
 }
 
 void MockWebRTCPeerConnectionHandlerClient::didAddRemoteStreamWorker(
-    const blink::WebMediaStream& stream_descriptor) {
+    const blink::WebMediaStream& stream_descriptor,
+    blink::WebVector<std::unique_ptr<blink::WebRTCRtpReceiver>>*
+        stream_web_rtp_receivers) {
   remote_steam_ = stream_descriptor;
 }
 

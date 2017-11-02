@@ -4,6 +4,7 @@
 
 #include "chromecast/browser/android/cast_web_contents_activity.h"
 
+#include "base/memory/ptr_util.h"
 #include "content/public/browser/web_contents.h"
 #include "jni/CastWebContentsActivity_jni.h"
 
@@ -34,11 +35,6 @@ void SetContentVideoViewEmbedder(JNIEnv* env,
 }
 
 // static
-bool CastWebContentsActivity::RegisterJni(JNIEnv* env) {
-  return RegisterNativesImpl(env);
-}
-
-// static
 CastWebContentsActivity* CastWebContentsActivity::Get(
     content::WebContents* web_contents) {
   DCHECK(web_contents);
@@ -46,7 +42,8 @@ CastWebContentsActivity* CastWebContentsActivity::Get(
       web_contents->GetUserData(kCastWebContentsActivityKey));
   if (!instance) {
     instance = new CastWebContentsActivity(web_contents);
-    web_contents->SetUserData(kCastWebContentsActivityKey, instance);
+    web_contents->SetUserData(kCastWebContentsActivityKey,
+                              base::WrapUnique(instance));
   }
   return instance;
 }

@@ -5,9 +5,12 @@
 #import "ios/clean/chrome/browser/ui/tab_collection/tab_collection_mediator.h"
 
 #include "base/memory/ptr_util.h"
+#import "ios/chrome/browser/snapshots/snapshot_cache.h"
+#import "ios/chrome/browser/web/tab_id_tab_helper.h"
 #include "ios/chrome/browser/web_state_list/fake_web_state_list_delegate.h"
 #include "ios/chrome/browser/web_state_list/web_state_list.h"
 #import "ios/chrome/browser/web_state_list/web_state_list_observer_bridge.h"
+#import "ios/chrome/browser/web_state_list/web_state_opener.h"
 #import "ios/clean/chrome/browser/ui/tab_collection/tab_collection_consumer.h"
 #import "ios/web/public/test/fakes/test_navigation_manager.h"
 #import "ios/web/public/test/fakes/test_web_state.h"
@@ -28,7 +31,7 @@ class TabCollectionMediatorTest : public PlatformTest {
     SetUpWebStateList();
     mediator_ = [[TabCollectionMediator alloc] init];
     mediator_.webStateList = web_state_list_.get();
-    consumer_ = [OCMockObject mockForProtocol:@protocol(TabCollectionConsumer)];
+    consumer_ = OCMProtocolMock(@protocol(TabCollectionConsumer));
     mediator_.consumer = consumer_;
   }
   ~TabCollectionMediatorTest() override { [mediator_ disconnect]; }
@@ -44,9 +47,12 @@ class TabCollectionMediatorTest : public PlatformTest {
 
   void InsertWebState(int index) {
     auto web_state = base::MakeUnique<web::TestWebState>();
+    TabIdTabHelper::CreateForWebState(web_state.get());
     GURL url("http://test/" + std::to_string(index));
     web_state->SetCurrentURL(url);
-    web_state_list_->InsertWebState(index, std::move(web_state));
+    web_state_list_->InsertWebState(index, std::move(web_state),
+                                    WebStateList::INSERT_FORCE_INDEX,
+                                    WebStateOpener());
   }
 
   web::TestWebState* GetWebStateAt(int index) {
@@ -60,67 +66,56 @@ class TabCollectionMediatorTest : public PlatformTest {
   id consumer_;
 };
 
-// Tests that -numberOfTabs returns the expected number of elements from
-// web_state_list_.
-TEST_F(TabCollectionMediatorTest, TestNumberOfTabs) {
-  EXPECT_EQ(3, [mediator_ numberOfTabs]);
-}
-
-// Tests that -indexOfActiveTab returns the expected active_index from
-// web_state_list_.
-TEST_F(TabCollectionMediatorTest, TestActiveTabIndex) {
-  EXPECT_EQ(0, [mediator_ indexOfActiveTab]);
-}
-
-// Tests that -titleAtIndex: returns the expected title from web_state_list_.
-TEST_F(TabCollectionMediatorTest, TestTitleAtIndex) {
-  EXPECT_NSEQ(@"http://test/0", [mediator_ titleAtIndex:0]);
-}
-
 // Tests that the consumer is notified of an insert into webStateList.
 TEST_F(TabCollectionMediatorTest, TestInsertWebState) {
-  [[consumer_ expect] insertItemAtIndex:2];
   InsertWebState(2);
-  EXPECT_OCMOCK_VERIFY(consumer_);
+  [[consumer_ verify] insertItem:[OCMArg any] atIndex:2 selectedIndex:0];
 }
 
 // Tests that the consumer is notified that a web state has been moved in
 // webStateList.
 TEST_F(TabCollectionMediatorTest, TestMoveWebState) {
-  NSMutableIndexSet* indexes = [NSMutableIndexSet indexSet];
-  [indexes addIndex:0];
-  [indexes addIndex:1];
-  [indexes addIndex:2];
-  [[consumer_ expect] reloadItemsAtIndexes:indexes];
   web_state_list_->MoveWebStateAt(0, 2);
-  EXPECT_OCMOCK_VERIFY(consumer_);
+  [[consumer_ verify] moveItemFromIndex:0 toIndex:2 selectedIndex:2];
 }
 
 // Tests that the consumer is notified that a web state has been replaced in
 // webStateList.
 TEST_F(TabCollectionMediatorTest, TestReplaceWebState) {
-  NSIndexSet* indexes = [NSIndexSet indexSetWithIndex:1];
-  [[consumer_ expect] reloadItemsAtIndexes:indexes];
   auto different_web_state = base::MakeUnique<web::TestWebState>();
+  TabIdTabHelper::CreateForWebState(different_web_state.get());
   web_state_list_->ReplaceWebStateAt(1, std::move(different_web_state));
-  EXPECT_OCMOCK_VERIFY(consumer_);
+  [[consumer_ verify] replaceItemAtIndex:1 withItem:[OCMArg any]];
 }
 
 // Tests that the consumer is notified that a web state has been deleted from
 // webStateList.
 TEST_F(TabCollectionMediatorTest, TestDetachWebState) {
-  [[consumer_ expect] deleteItemAtIndex:1];
   web_state_list_->CloseWebStateAt(1);
-  EXPECT_OCMOCK_VERIFY(consumer_);
+  [[consumer_ verify] deleteItemAtIndex:1 selectedIndex:0];
 }
 
 // Tests that the consumer is notified that the active web state has changed in
 // webStateList.
 TEST_F(TabCollectionMediatorTest, TestChangeActiveWebState) {
-  NSMutableIndexSet* indexes = [NSMutableIndexSet indexSet];
-  [indexes addIndex:0];
-  [indexes addIndex:2];
-  [[consumer_ expect] reloadItemsAtIndexes:indexes];
   web_state_list_->ActivateWebStateAt(2);
-  EXPECT_OCMOCK_VERIFY(consumer_);
+  // Due to use of id for OCMock objects, naming collisions can exist. In this
+  // case, the method -setSelectedIndex: collides with a property setter in
+  // UIKit's UITabBarController class. The fix is to cast after calling -verify.
+  auto consumer = static_cast<id<TabCollectionConsumer>>([consumer_ verify]);
+  [consumer setSelectedIndex:2];
+}
+
+// Tests that the consumer is notified that a snapshot has been updated.
+TEST_F(TabCollectionMediatorTest, TestTakeSnapshot) {
+  web::TestWebState* web_state = GetWebStateAt(0);
+  TabIdTabHelper::CreateForWebState(web_state);
+  TabIdTabHelper* tab_helper = TabIdTabHelper::FromWebState(web_state);
+  NSString* tab_id = tab_helper->tab_id();
+
+  id snapshot_cache = OCMClassMock([SnapshotCache class]);
+  [mediator_ takeSnapshotWithCache:snapshot_cache];
+
+  [[snapshot_cache verify] setImage:[OCMArg any] withSessionID:tab_id];
+  [[consumer_ verify] updateSnapshotAtIndex:0];
 }

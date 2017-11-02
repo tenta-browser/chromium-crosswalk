@@ -35,11 +35,13 @@
 #include "core/dom/NodeWithIndex.h"
 #include "core/dom/SynchronousMutationObserver.h"
 #include "core/dom/Text.h"
-#include "core/frame/FrameView.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/Settings.h"
 #include "core/html/HTMLHeadElement.h"
 #include "core/html/HTMLInputElement.h"
 #include "core/html/HTMLLinkElement.h"
+#include "core/loader/DocumentLoader.h"
+#include "core/loader/appcache/ApplicationCacheHost.h"
 #include "core/page/Page.h"
 #include "core/page/ValidationMessageClient.h"
 #include "core/testing/DummyPageHolder.h"
@@ -47,6 +49,7 @@
 #include "platform/weborigin/ReferrerPolicy.h"
 #include "platform/weborigin/SchemeRegistry.h"
 #include "platform/weborigin/SecurityOrigin.h"
+#include "public/platform/WebApplicationCacheHost.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -246,20 +249,54 @@ DEFINE_TRACE(TestSynchronousMutationObserver) {
   SynchronousMutationObserver::Trace(visitor);
 }
 
-class MockValidationMessageClient
-    : public GarbageCollectedFinalized<MockValidationMessageClient>,
-      public ValidationMessageClient {
-  USING_GARBAGE_COLLECTED_MIXIN(MockValidationMessageClient);
+class TestDocumentShutdownObserver
+    : public GarbageCollectedFinalized<TestDocumentShutdownObserver>,
+      public DocumentShutdownObserver {
+  USING_GARBAGE_COLLECTED_MIXIN(TestDocumentShutdownObserver);
 
  public:
-  MockValidationMessageClient() { Reset(); }
+  TestDocumentShutdownObserver(Document&);
+  virtual ~TestDocumentShutdownObserver() = default;
+
+  int CountContextDestroyedCalled() const {
+    return context_destroyed_called_counter_;
+  }
+
+  DECLARE_TRACE();
+
+ private:
+  // Implement |DocumentShutdownObserver| member functions.
+  void ContextDestroyed(Document*) final;
+
+  int context_destroyed_called_counter_ = 0;
+
+  DISALLOW_COPY_AND_ASSIGN(TestDocumentShutdownObserver);
+};
+
+TestDocumentShutdownObserver::TestDocumentShutdownObserver(Document& document) {
+  SetContext(&document);
+}
+
+void TestDocumentShutdownObserver::ContextDestroyed(Document*) {
+  ++context_destroyed_called_counter_;
+}
+
+DEFINE_TRACE(TestDocumentShutdownObserver) {
+  DocumentShutdownObserver::Trace(visitor);
+}
+
+class MockDocumentValidationMessageClient
+    : public GarbageCollectedFinalized<MockDocumentValidationMessageClient>,
+      public ValidationMessageClient {
+  USING_GARBAGE_COLLECTED_MIXIN(MockDocumentValidationMessageClient);
+
+ public:
+  MockDocumentValidationMessageClient() { Reset(); }
   void Reset() {
     show_validation_message_was_called = false;
-    will_unload_document_was_called = false;
     document_detached_was_called = false;
   }
   bool show_validation_message_was_called;
-  bool will_unload_document_was_called;
   bool document_detached_was_called;
 
   // ValidationMessageClient functions.
@@ -274,9 +311,6 @@ class MockValidationMessageClient
   bool IsValidationMessageVisible(const Element& anchor) override {
     return true;
   }
-  void WillUnloadDocument(const Document&) override {
-    will_unload_document_was_called = true;
-  }
   void DocumentDetached(const Document&) override {
     document_detached_was_called = true;
   }
@@ -285,7 +319,50 @@ class MockValidationMessageClient
   // DEFINE_INLINE_VIRTUAL_TRACE() { ValidationMessageClient::trace(visitor); }
 };
 
+class MockWebApplicationCacheHost : public blink::WebApplicationCacheHost {
+ public:
+  MockWebApplicationCacheHost() {}
+  ~MockWebApplicationCacheHost() override {}
+
+  void SelectCacheWithoutManifest() override {
+    without_manifest_was_called_ = true;
+  }
+  bool SelectCacheWithManifest(const blink::WebURL& manifestURL) override {
+    with_manifest_was_called_ = true;
+    return true;
+  }
+
+  bool with_manifest_was_called_ = false;
+  bool without_manifest_was_called_ = false;
+};
+
 }  // anonymous namespace
+
+TEST_F(DocumentTest, DomTreeVersionForRemoval) {
+  // ContainerNode::CollectChildrenAndRemoveFromOldParentWithCheck assumes this
+  // behavior.
+  Document& doc = GetDocument();
+  {
+    DocumentFragment* fragment = DocumentFragment::Create(doc);
+    fragment->appendChild(Element::Create(HTMLNames::divTag, &doc));
+    fragment->appendChild(Element::Create(HTMLNames::spanTag, &doc));
+    uint64_t original_version = doc.DomTreeVersion();
+    fragment->RemoveChildren();
+    EXPECT_EQ(original_version + 1, doc.DomTreeVersion())
+        << "RemoveChildren() should increase DomTreeVersion by 1.";
+  }
+
+  {
+    DocumentFragment* fragment = DocumentFragment::Create(doc);
+    Node* child = Element::Create(HTMLNames::divTag, &doc);
+    child->appendChild(Element::Create(HTMLNames::spanTag, &doc));
+    fragment->appendChild(child);
+    uint64_t original_version = doc.DomTreeVersion();
+    fragment->removeChild(child);
+    EXPECT_EQ(original_version + 1, doc.DomTreeVersion())
+        << "removeChild() should increase DomTreeVersion by 1.";
+  }
+}
 
 // This tests that we properly resize and re-layout pages for printing in the
 // presence of media queries effecting elements in a subtree layout boundary
@@ -419,6 +496,10 @@ TEST_F(DocumentTest, referrerPolicyParsing) {
       {"origin", kReferrerPolicyOrigin, false},
       {"origin-when-crossorigin", kReferrerPolicyOriginWhenCrossOrigin, true},
       {"origin-when-cross-origin", kReferrerPolicyOriginWhenCrossOrigin, false},
+      {"same-origin", kReferrerPolicySameOrigin, false},
+      {"strict-origin", kReferrerPolicyStrictOrigin, false},
+      {"strict-origin-when-cross-origin",
+       kReferrerPolicyNoReferrerWhenDowngradeOriginWhenCrossOrigin, false},
       {"unsafe-url", kReferrerPolicyAlways},
   };
 
@@ -438,14 +519,16 @@ TEST_F(DocumentTest, referrerPolicyParsing) {
 }
 
 TEST_F(DocumentTest, OutgoingReferrer) {
-  GetDocument().SetURL(KURL(KURL(), "https://www.example.com/hoge#fuga?piyo"));
+  GetDocument().SetURL(
+      KURL(NullURL(), "https://www.example.com/hoge#fuga?piyo"));
   GetDocument().SetSecurityOrigin(
-      SecurityOrigin::Create(KURL(KURL(), "https://www.example.com/")));
+      SecurityOrigin::Create(KURL(NullURL(), "https://www.example.com/")));
   EXPECT_EQ("https://www.example.com/hoge", GetDocument().OutgoingReferrer());
 }
 
 TEST_F(DocumentTest, OutgoingReferrerWithUniqueOrigin) {
-  GetDocument().SetURL(KURL(KURL(), "https://www.example.com/hoge#fuga?piyo"));
+  GetDocument().SetURL(
+      KURL(NullURL(), "https://www.example.com/hoge#fuga?piyo"));
   GetDocument().SetSecurityOrigin(SecurityOrigin::CreateUnique());
   EXPECT_EQ(String(), GetDocument().OutgoingReferrer());
 }
@@ -458,7 +541,7 @@ TEST_F(DocumentTest, StyleVersion) {
       "</style>"
       "<div id='x'><span class='c'></span></div>");
 
-  Element* element = GetDocument().GetElementById("x");
+  Element* element = GetDocument().getElementById("x");
   EXPECT_TRUE(element);
 
   uint64_t previous_style_version = GetDocument().StyleVersion();
@@ -593,7 +676,7 @@ TEST_F(DocumentTest, SynchronousMutationNotifierMoveTreeToNewDocument) {
   move_sample->appendChild(GetDocument().createTextNode("b456"));
   GetDocument().body()->AppendChild(move_sample);
 
-  Document& another_document = *Document::Create();
+  Document& another_document = *Document::CreateForTest();
   another_document.AppendChild(move_sample);
 
   EXPECT_EQ(1u, observer.MoveTreeToNewDocumentNodes().size());
@@ -681,6 +764,17 @@ TEST_F(DocumentTest, SynchronousMutationNotifierUpdateCharacterData) {
   EXPECT_EQ(3u, observer.UpdatedCharacterDataRecords()[3]->new_length_);
 }
 
+TEST_F(DocumentTest, DocumentShutdownNotifier) {
+  auto& observer = *new TestDocumentShutdownObserver(GetDocument());
+
+  EXPECT_EQ(GetDocument(), observer.LifecycleContext());
+  EXPECT_EQ(0, observer.CountContextDestroyedCalled());
+
+  GetDocument().Shutdown();
+  EXPECT_EQ(nullptr, observer.LifecycleContext());
+  EXPECT_EQ(1, observer.CountContextDestroyedCalled());
+}
+
 // This tests that meta-theme-color can be found correctly
 TEST_F(DocumentTest, ThemeColor) {
   {
@@ -703,13 +797,14 @@ TEST_F(DocumentTest, ThemeColor) {
 TEST_F(DocumentTest, ValidationMessageCleanup) {
   ValidationMessageClient* original_client =
       &GetPage().GetValidationMessageClient();
-  MockValidationMessageClient* mock_client = new MockValidationMessageClient();
+  MockDocumentValidationMessageClient* mock_client =
+      new MockDocumentValidationMessageClient();
   GetDocument().GetSettings()->SetScriptEnabled(true);
   GetPage().SetValidationMessageClient(mock_client);
-  // implicitOpen()-implicitClose() makes Document.loadEventFinished()
+  // ImplicitOpen()-CancelParsing() makes Document.loadEventFinished()
   // true. It's necessary to kick unload process.
   GetDocument().ImplicitOpen(kForceSynchronousParsing);
-  GetDocument().ImplicitClose();
+  GetDocument().CancelParsing();
   GetDocument().AppendChild(GetDocument().createElement("html"));
   SetHtmlInnerHTML("<body><input required></body>");
   Element* script = GetDocument().createElement("script");
@@ -718,7 +813,7 @@ TEST_F(DocumentTest, ValidationMessageCleanup) {
       "document.querySelector('input').reportValidity(); };");
   GetDocument().body()->AppendChild(script);
   HTMLInputElement* input =
-      toHTMLInputElement(GetDocument().body()->FirstChild());
+      toHTMLInputElement(GetDocument().body()->firstChild());
   DVLOG(0) << GetDocument().body()->outerHTML();
 
   // Sanity check.
@@ -728,12 +823,116 @@ TEST_F(DocumentTest, ValidationMessageCleanup) {
 
   // prepareForCommit() unloads the document, and shutdown.
   GetDocument().GetFrame()->PrepareForCommit();
-  EXPECT_TRUE(mock_client->will_unload_document_was_called);
   EXPECT_TRUE(mock_client->document_detached_was_called);
   // Unload handler tried to show a validation message, but it should fail.
   EXPECT_FALSE(mock_client->show_validation_message_was_called);
 
   GetPage().SetValidationMessageClient(original_client);
+}
+
+TEST_F(DocumentTest, SandboxDisablesAppCache) {
+  RefPtr<SecurityOrigin> origin =
+      SecurityOrigin::CreateFromString("https://test.com");
+  GetDocument().SetSecurityOrigin(origin);
+  SandboxFlags mask = kSandboxOrigin;
+  GetDocument().EnforceSandboxFlags(mask);
+  GetDocument().SetURL(KURL(NullURL(), "https://test.com/foobar/document"));
+
+  ApplicationCacheHost* appcache_host =
+      GetDocument().Loader()->GetApplicationCacheHost();
+  appcache_host->host_ = WTF::MakeUnique<MockWebApplicationCacheHost>();
+  appcache_host->SelectCacheWithManifest(
+      KURL(NullURL(), "https://test.com/foobar/manifest"));
+  MockWebApplicationCacheHost* mock_web_host =
+      static_cast<MockWebApplicationCacheHost*>(appcache_host->host_.get());
+  EXPECT_FALSE(mock_web_host->with_manifest_was_called_);
+  EXPECT_TRUE(mock_web_host->without_manifest_was_called_);
+}
+
+TEST_F(DocumentTest, SuboriginDisablesAppCache) {
+  RuntimeEnabledFeatures::SetSuboriginsEnabled(true);
+  RefPtr<SecurityOrigin> origin =
+      SecurityOrigin::CreateFromString("https://test.com");
+  Suborigin suborigin;
+  suborigin.SetName("foobar");
+  origin->AddSuborigin(suborigin);
+  GetDocument().SetSecurityOrigin(origin);
+  GetDocument().SetURL(KURL(NullURL(), "https://test.com/foobar/document"));
+
+  ApplicationCacheHost* appcache_host =
+      GetDocument().Loader()->GetApplicationCacheHost();
+  appcache_host->host_ = WTF::MakeUnique<MockWebApplicationCacheHost>();
+  appcache_host->SelectCacheWithManifest(
+      KURL(NullURL(), "https://test.com/foobar/manifest"));
+  MockWebApplicationCacheHost* mock_web_host =
+      static_cast<MockWebApplicationCacheHost*>(appcache_host->host_.get());
+  EXPECT_FALSE(mock_web_host->with_manifest_was_called_);
+  EXPECT_TRUE(mock_web_host->without_manifest_was_called_);
+}
+
+// Verifies that calling EnsurePaintLocationDataValidForNode cleans compositor
+// inputs only when necessary. We generally want to avoid cleaning the inputs,
+// as it is more expensive than just doing layout.
+TEST_F(DocumentTest,
+       EnsurePaintLocationDataValidForNodeCompositingInputsOnlyWhenNecessary) {
+  GetDocument().body()->setInnerHTML(
+      "<div id='ancestor'>"
+      "  <div id='sticky' style='position:sticky;'>"
+      "    <div id='stickyChild'></div>"
+      "  </div>"
+      "  <div id='nonSticky'></div>"
+      "</div>");
+  EXPECT_EQ(DocumentLifecycle::kStyleClean,
+            GetDocument().Lifecycle().GetState());
+
+  // Asking for any element that is not affected by a sticky element should only
+  // advance the lifecycle to layout clean.
+  GetDocument().EnsurePaintLocationDataValidForNode(
+      GetDocument().getElementById("ancestor"));
+  EXPECT_EQ(DocumentLifecycle::kLayoutClean,
+            GetDocument().Lifecycle().GetState());
+
+  GetDocument().EnsurePaintLocationDataValidForNode(
+      GetDocument().getElementById("nonSticky"));
+  EXPECT_EQ(DocumentLifecycle::kLayoutClean,
+            GetDocument().Lifecycle().GetState());
+
+  // However, asking for either the sticky element or it's descendents should
+  // clean compositing inputs as well.
+  GetDocument().EnsurePaintLocationDataValidForNode(
+      GetDocument().getElementById("sticky"));
+  EXPECT_EQ(DocumentLifecycle::kCompositingInputsClean,
+            GetDocument().Lifecycle().GetState());
+
+  // Dirty layout.
+  GetDocument().body()->setAttribute("style", "background: red;");
+  EXPECT_EQ(DocumentLifecycle::kVisualUpdatePending,
+            GetDocument().Lifecycle().GetState());
+
+  GetDocument().EnsurePaintLocationDataValidForNode(
+      GetDocument().getElementById("stickyChild"));
+  EXPECT_EQ(DocumentLifecycle::kCompositingInputsClean,
+            GetDocument().Lifecycle().GetState());
+}
+
+// Tests that the difference in computed style of direction on the html and body
+// elements does not trigger a style recalc for viewport style propagation when
+// the computed style for another element in the document is recalculated.
+TEST_F(DocumentTest, ViewportPropagationNoRecalc) {
+  SetHtmlInnerHTML(
+      "<body style='direction:rtl'>"
+      "  <div id=recalc></div>"
+      "</body>");
+
+  int old_element_count = GetDocument().GetStyleEngine().StyleForElementCount();
+
+  Element* div = GetDocument().getElementById("recalc");
+  div->setAttribute("style", "color:green");
+  GetDocument().UpdateStyleAndLayoutTree();
+
+  int new_element_count = GetDocument().GetStyleEngine().StyleForElementCount();
+
+  EXPECT_EQ(1, new_element_count - old_element_count);
 }
 
 }  // namespace blink

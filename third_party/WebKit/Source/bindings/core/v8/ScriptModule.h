@@ -5,16 +5,25 @@
 #ifndef ScriptModule_h
 #define ScriptModule_h
 
-#include "bindings/core/v8/ScriptState.h"
-#include "bindings/core/v8/SharedPersistent.h"
 #include "core/CoreExport.h"
+#include "platform/bindings/ScriptState.h"
+#include "platform/bindings/SharedPersistent.h"
 #include "platform/loader/fetch/AccessControlStatus.h"
 #include "platform/wtf/Allocator.h"
 #include "platform/wtf/Vector.h"
+#include "platform/wtf/text/TextPosition.h"
 #include "platform/wtf/text/WTFString.h"
 #include "v8/include/v8.h"
 
 namespace blink {
+
+class ExceptionState;
+
+// Correspond to TC39 ModuleRecord.[[Status]]
+// TODO(kouhei): Add URL after https://github.com/tc39/ecma262/pull/916 is
+// merged.
+using ScriptModuleState = v8::Module::Status;
+const char* ScriptModuleStateToString(ScriptModuleState);
 
 // ScriptModule wraps a handle to a v8::Module for use in core.
 //
@@ -30,19 +39,28 @@ class CORE_EXPORT ScriptModule final {
   static ScriptModule Compile(v8::Isolate*,
                               const String& source,
                               const String& file_name,
-                              AccessControlStatus);
+                              AccessControlStatus,
+                              const TextPosition& start_position,
+                              ExceptionState&);
 
   // TODO(kouhei): Remove copy ctor
-  ScriptModule() {}
-  ScriptModule(WTF::HashTableDeletedValueType)
-      : module_(WTF::kHashTableDeletedValue) {}
+  ScriptModule();
+  ScriptModule(WTF::HashTableDeletedValueType);
   ~ScriptModule();
 
   // Returns exception, if any.
   ScriptValue Instantiate(ScriptState*);
-  void Evaluate(ScriptState*);
+
+  void Evaluate(ScriptState*) const;
+  static void ReportException(ScriptState*, v8::Local<v8::Value> exception);
 
   Vector<String> ModuleRequests(ScriptState*);
+  Vector<TextPosition> ModuleRequestPositions(ScriptState*);
+  ScriptModuleState Status(ScriptState*);
+
+  // Returns record's [[ErrorCompletion]] field's [[Value]].
+  // Should only be used via ModulatorImpl::GetError()
+  v8::Local<v8::Value> ErrorCompletion(ScriptState*);
 
   bool IsHashTableDeletedValue() const {
     return module_.IsHashTableDeletedValue();
@@ -70,8 +88,18 @@ class CORE_EXPORT ScriptModule final {
 
   bool IsNull() const { return !module_ || module_->IsEmpty(); }
 
+  v8::Local<v8::Value> V8Namespace(v8::Isolate*);
+
  private:
+  // ModuleScript instances store their record as
+  // TraceWrapperV8Reference<v8::Module>, and reconstructs ScriptModule from it.
+  friend class ModuleScript;
+
   ScriptModule(v8::Isolate*, v8::Local<v8::Module>);
+
+  v8::Local<v8::Module> NewLocal(v8::Isolate* isolate) {
+    return module_->NewLocal(isolate);
+  }
 
   static v8::MaybeLocal<v8::Module> ResolveModuleCallback(
       v8::Local<v8::Context>,

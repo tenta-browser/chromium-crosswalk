@@ -139,11 +139,9 @@ class RenderingHelper {
   // Get the GL context.
   gl::GLContext* GetGLContext();
 
-  // Get rendered thumbnails as RGB.
-  // Sets alpha_solid to true if the alpha channel is entirely 0xff.
-  void GetThumbnailsAsRGB(std::vector<unsigned char>* rgb,
-                          bool* alpha_solid,
-                          base::WaitableEvent* done);
+  // Get rendered thumbnails as RGBA.
+  void GetThumbnailsAsRGBA(std::vector<unsigned char>* rgba,
+                           base::WaitableEvent* done);
 
  private:
   struct RenderedVideo {
@@ -192,13 +190,10 @@ class RenderingHelper {
   scoped_refptr<gl::GLContext> gl_context_;
   scoped_refptr<gl::GLSurface> gl_surface_;
 
-#if defined(USE_OZONE)
+#if defined(OS_CHROMEOS)
   class StubOzoneDelegate;
   std::unique_ptr<StubOzoneDelegate> platform_window_delegate_;
-
-#if defined(OS_CHROMEOS)
   std::unique_ptr<display::DisplayConfigurator> display_configurator_;
-#endif
 #endif
 
   bool ignore_vsync_;

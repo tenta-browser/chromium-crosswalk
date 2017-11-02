@@ -32,7 +32,7 @@
 
 #include "core/HTMLNames.h"
 #include "core/dom/Document.h"
-#include "core/dom/shadow/ShadowRoot.h"
+#include "core/dom/ShadowRoot.h"
 #include "core/frame/UseCounter.h"
 #include "core/inspector/ConsoleMessage.h"
 
@@ -41,8 +41,8 @@ namespace blink {
 class Document;
 
 inline HTMLShadowElement::HTMLShadowElement(Document& document)
-    : InsertionPoint(HTMLNames::shadowTag, document) {
-  UseCounter::Count(document, UseCounter::kHTMLShadowElement);
+    : V0InsertionPoint(HTMLNames::shadowTag, document) {
+  UseCounter::Count(document, WebFeature::kHTMLShadowElement);
 }
 
 DEFINE_NODE_FACTORY(HTMLShadowElement)
@@ -74,12 +74,12 @@ Node::InsertionNotificationRequest HTMLShadowElement::InsertedInto(
         root->GetType() != root->OlderShadowRoot()->GetType()) {
       String message =
           String::Format("<shadow> doesn't work for %s element host.",
-                         root->host().tagName().Utf8().Data());
+                         root->host().tagName().Utf8().data());
       GetDocument().AddConsoleMessage(ConsoleMessage::Create(
           kRenderingMessageSource, kWarningMessageLevel, message));
     }
   }
-  return InsertionPoint::InsertedInto(insertion_point);
+  return V0InsertionPoint::InsertedInto(insertion_point);
 }
 
 }  // namespace blink

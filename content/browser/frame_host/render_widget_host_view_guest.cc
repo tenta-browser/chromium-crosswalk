@@ -12,10 +12,9 @@
 #include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "build/build_config.h"
-#include "cc/surfaces/surface.h"
-#include "cc/surfaces/surface_factory.h"
-#include "cc/surfaces/surface_manager.h"
-#include "cc/surfaces/surface_sequence.h"
+#include "components/viz/common/surfaces/surface_sequence.h"
+#include "components/viz/service/surfaces/surface.h"
+#include "components/viz/service/surfaces/surface_manager.h"
 #include "content/browser/browser_plugin/browser_plugin_guest.h"
 #include "content/browser/compositor/surface_utils.h"
 #include "content/browser/renderer_host/input/input_router.h"
@@ -86,6 +85,11 @@ RenderWidgetHostViewGuest::RenderWidgetHostViewGuest(
       guest_(guest ? guest->AsWeakPtr() : base::WeakPtr<BrowserPluginGuest>()),
       platform_view_(platform_view),
       should_forward_text_selection_(false) {
+  // In tests |guest_| and therefore |owner| can be null.
+  auto* owner = GetOwnerRenderWidgetHostView();
+  if (owner)
+    SetParentFrameSinkId(owner->GetFrameSinkId());
+
   gfx::NativeView view = GetNativeView();
   if (view)
     UpdateScreenInfo(view);
@@ -125,7 +129,7 @@ void RenderWidgetHostViewGuest::Show() {
     // Since we were last shown, our renderer may have had a different surface
     // set (e.g. showing an interstitial), so we resend our current surface to
     // the renderer.
-    if (local_surface_id_.is_valid())
+    if (last_received_local_surface_id_.is_valid())
       SendSurfaceInfoToEmbedder();
   }
   host_->WasShown(ui::LatencyInfo());
@@ -204,8 +208,8 @@ void RenderWidgetHostViewGuest::ProcessTouchEvent(
     // touch. Sends a synthetic event for the focusing side effect.
     // TODO(wjmaclean): When we remove BrowserPlugin, delete this code.
     // http://crbug.com/533069
-    MaybeSendSyntheticTapGesture(event.touches[0].position,
-                                 event.touches[0].screen_position);
+    MaybeSendSyntheticTapGesture(event.touches[0].PositionInWidget(),
+                                 event.touches[0].PositionInScreen());
   }
 
   host_->ForwardTouchEventWithLatencyInfo(event, latency);
@@ -260,10 +264,19 @@ base::string16 RenderWidgetHostViewGuest::GetSelectedText() {
   return platform_view_->GetSelectedText();
 }
 
-void RenderWidgetHostViewGuest::SetNeedsBeginFrames(
-    bool needs_begin_frames) {
- if (platform_view_)
-   platform_view_->SetNeedsBeginFrames(needs_begin_frames);
+void RenderWidgetHostViewGuest::SetNeedsBeginFrames(bool needs_begin_frames) {
+  if (platform_view_)
+    platform_view_->SetNeedsBeginFrames(needs_begin_frames);
+}
+
+TouchSelectionControllerClientManager*
+RenderWidgetHostViewGuest::GetTouchSelectionControllerClientManager() {
+  RenderWidgetHostView* root_view = GetOwnerRenderWidgetHostView();
+  if (!root_view)
+    return nullptr;
+
+  // There is only ever one manager, and it's owned by the root view.
+  return root_view->GetTouchSelectionControllerClientManager();
 }
 
 void RenderWidgetHostViewGuest::SetTooltipText(
@@ -273,14 +286,14 @@ void RenderWidgetHostViewGuest::SetTooltipText(
 }
 
 void RenderWidgetHostViewGuest::SendSurfaceInfoToEmbedderImpl(
-    const cc::SurfaceInfo& surface_info,
-    const cc::SurfaceSequence& sequence) {
+    const viz::SurfaceInfo& surface_info,
+    const viz::SurfaceSequence& sequence) {
   if (guest_ && !guest_->is_in_destruction())
     guest_->SetChildFrameSurface(surface_info, sequence);
 }
 
 void RenderWidgetHostViewGuest::SubmitCompositorFrame(
-    const cc::LocalSurfaceId& local_surface_id,
+    const viz::LocalSurfaceId& local_surface_id,
     cc::CompositorFrame frame) {
   TRACE_EVENT0("content", "RenderWidgetHostViewGuest::OnSwapCompositorFrame");
 
@@ -348,14 +361,9 @@ void RenderWidgetHostViewGuest::UpdateCursor(const WebCursor& cursor) {
   // and so we will always hit this code path.
   if (!guest_)
     return;
-  if (SiteIsolationPolicy::AreCrossProcessFramesPossible()) {
-    RenderWidgetHostViewBase* rwhvb = GetOwnerRenderWidgetHostView();
-    if (rwhvb)
-      rwhvb->UpdateCursor(cursor);
-  } else {
-    guest_->SendMessageToEmbedder(base::MakeUnique<BrowserPluginMsg_SetCursor>(
-        guest_->browser_plugin_instance_id(), cursor));
-  }
+  RenderWidgetHostViewBase* rwhvb = GetOwnerRenderWidgetHostView();
+  if (rwhvb)
+    rwhvb->UpdateCursor(cursor);
 }
 
 void RenderWidgetHostViewGuest::SetIsLoading(bool is_loading) {
@@ -444,7 +452,7 @@ void RenderWidgetHostViewGuest::UnlockMouse() {
 }
 
 void RenderWidgetHostViewGuest::DidCreateNewRendererCompositorFrameSink(
-    cc::mojom::MojoCompositorFrameSinkClient* renderer_compositor_frame_sink) {
+    viz::mojom::CompositorFrameSinkClient* renderer_compositor_frame_sink) {
   RenderWidgetHostViewChildFrame::DidCreateNewRendererCompositorFrameSink(
       renderer_compositor_frame_sink);
   platform_view_->DidCreateNewRendererCompositorFrameSink(
@@ -551,9 +559,38 @@ void RenderWidgetHostViewGuest::GestureEventAck(
                       ack_result == INPUT_EVENT_ACK_STATE_NO_CONSUMER_EXISTS;
   // GestureScrollBegin/End are always consumed by the guest, so we only
   // forward GestureScrollUpdate.
+  // Consumed GestureScrollUpdates and GestureScrollBegins must still be
+  // forwarded to the owner RWHV so it may update its state.
   if (event.GetType() == blink::WebInputEvent::kGestureScrollUpdate &&
-      not_consumed)
+      not_consumed) {
     guest_->ResendEventToEmbedder(event);
+  } else if (event.GetType() == blink::WebInputEvent::kGestureScrollUpdate ||
+             event.GetType() == blink::WebInputEvent::kGestureScrollBegin) {
+    GetOwnerRenderWidgetHostView()->GestureEventAck(event, ack_result);
+  }
+}
+
+InputEventAckState RenderWidgetHostViewGuest::FilterInputEvent(
+    const blink::WebInputEvent& input_event) {
+  InputEventAckState ack_state =
+      RenderWidgetHostViewChildFrame::FilterInputEvent(input_event);
+  if (ack_state != INPUT_EVENT_ACK_STATE_NOT_CONSUMED)
+    return ack_state;
+
+  // The owner RWHV may want to consume the guest's GestureScrollUpdates.
+  // Also, we don't resend GestureFlingStarts, GestureScrollBegins, or
+  // GestureScrollEnds, so we let the owner RWHV know about them here.
+  if (input_event.GetType() == blink::WebInputEvent::kGestureScrollUpdate ||
+      input_event.GetType() == blink::WebInputEvent::kGestureFlingStart ||
+      input_event.GetType() == blink::WebInputEvent::kGestureScrollBegin ||
+      input_event.GetType() == blink::WebInputEvent::kGestureScrollEnd) {
+    const blink::WebGestureEvent& gesture_event =
+        static_cast<const blink::WebGestureEvent&>(input_event);
+    return GetOwnerRenderWidgetHostView()->FilterChildGestureEvent(
+        gesture_event);
+  }
+
+  return INPUT_EVENT_ACK_STATE_NOT_CONSUMED;
 }
 
 bool RenderWidgetHostViewGuest::IsRenderWidgetHostViewGuest() {
@@ -615,9 +652,8 @@ void RenderWidgetHostViewGuest::OnHandleInputEvent(
   }
 
   if (blink::WebInputEvent::IsKeyboardEventType(event->GetType())) {
-    if (!embedder->GetLastKeyboardEvent())
-      return;
-    NativeWebKeyboardEvent keyboard_event(*embedder->GetLastKeyboardEvent());
+    NativeWebKeyboardEvent keyboard_event(
+        *static_cast<const blink::WebKeyboardEvent*>(event));
     host_->ForwardKeyboardEvent(keyboard_event);
     return;
   }

@@ -83,6 +83,8 @@ const uint8_t kWebstoreSignaturesPublicKey[] = {
 const size_t kWebstoreSignaturesPublicKeySize =
     arraysize(kWebstoreSignaturesPublicKey);
 
+const int kNonWorkerThreadId = 0;
+
 const char kMimeTypeJpeg[] = "image/jpeg";
 const char kMimeTypePng[] = "image/png";
 
@@ -92,6 +94,7 @@ const int64_t kInvalidServiceWorkerVersionId = -1;
 
 namespace extension_misc {
 
+const char kFeedbackExtensionId[] = "gfdkimpbcpahaombhbimeihdjnejgicl";
 const char kPdfExtensionId[] = "mhjfbmdgcfjbbpaeojofohoefgiehjai";
 const char kQuickOfficeComponentExtensionId[] =
     "bpmcpldpdmajfigpchkicefoigmkfalc";
@@ -111,5 +114,9 @@ const char* const kHangoutsExtensionIds[6] = {
     "knipolnnllmklapflnccelgolnpehhpl"   // Packaged App Prod.
     // Keep in sync with _api_features.json and _manifest_features.json.
 };
+
+// Error returned when scripting of a page is denied due to enterprise policy.
+const char kPolicyBlockedScripting[] =
+    "This page cannot be scripted due to an ExtensionsSettings policy.";
 
 }  // namespace extension_misc

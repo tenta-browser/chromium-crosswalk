@@ -23,6 +23,10 @@
 #include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gfx/skia_util.h"
 
+namespace {
+static constexpr int kMaxScrollbarDimension = 8192;
+};
+
 namespace cc {
 
 std::unique_ptr<LayerImpl> PaintedScrollbarLayer::CreateLayerImpl(
@@ -34,16 +38,16 @@ std::unique_ptr<LayerImpl> PaintedScrollbarLayer::CreateLayerImpl(
 
 scoped_refptr<PaintedScrollbarLayer> PaintedScrollbarLayer::Create(
     std::unique_ptr<Scrollbar> scrollbar,
-    int scroll_layer_id) {
+    ElementId scroll_element_id) {
   return make_scoped_refptr(
-      new PaintedScrollbarLayer(std::move(scrollbar), scroll_layer_id));
+      new PaintedScrollbarLayer(std::move(scrollbar), scroll_element_id));
 }
 
 PaintedScrollbarLayer::PaintedScrollbarLayer(
     std::unique_ptr<Scrollbar> scrollbar,
-    int scroll_layer_id)
+    ElementId scroll_element_id)
     : scrollbar_(std::move(scrollbar)),
-      scroll_layer_id_(scroll_layer_id),
+      scroll_element_id_(scroll_element_id),
       internal_contents_scale_(1.f),
       thumb_thickness_(scrollbar_->ThumbThickness()),
       thumb_length_(scrollbar_->ThumbLength()),
@@ -57,28 +61,16 @@ PaintedScrollbarLayer::PaintedScrollbarLayer(
 
 PaintedScrollbarLayer::~PaintedScrollbarLayer() {}
 
-int PaintedScrollbarLayer::ScrollLayerId() const {
-  return scroll_layer_id_;
-}
-
-void PaintedScrollbarLayer::SetScrollLayer(int layer_id) {
-  if (layer_id == scroll_layer_id_)
+void PaintedScrollbarLayer::SetScrollElementId(ElementId element_id) {
+  if (element_id == scroll_element_id_)
     return;
 
-  scroll_layer_id_ = layer_id;
+  scroll_element_id_ = element_id;
   SetNeedsFullTreeSync();
 }
 
 bool PaintedScrollbarLayer::OpacityCanAnimateOnImplThread() const {
   return scrollbar_->IsOverlay();
-}
-
-bool PaintedScrollbarLayer::AlwaysUseActiveTreeOpacity() const {
-  return true;
-}
-
-ScrollbarOrientation PaintedScrollbarLayer::orientation() const {
-  return scrollbar_->Orientation();
 }
 
 void PaintedScrollbarLayer::PushPropertiesTo(LayerImpl* layer) {
@@ -87,13 +79,13 @@ void PaintedScrollbarLayer::PushPropertiesTo(LayerImpl* layer) {
   PaintedScrollbarLayerImpl* scrollbar_layer =
       static_cast<PaintedScrollbarLayerImpl*>(layer);
 
-  scrollbar_layer->SetScrollLayerId(scroll_layer_id_);
+  scrollbar_layer->SetScrollElementId(scroll_element_id_);
   scrollbar_layer->set_internal_contents_scale_and_bounds(
       internal_contents_scale_, internal_content_bounds_);
 
   scrollbar_layer->SetThumbThickness(thumb_thickness_);
   scrollbar_layer->SetThumbLength(thumb_length_);
-  if (orientation() == HORIZONTAL) {
+  if (scrollbar_->Orientation() == HORIZONTAL) {
     scrollbar_layer->SetTrackStart(
         track_rect_.x() - location_.x());
     scrollbar_layer->SetTrackLength(track_rect_.width());
@@ -147,7 +139,7 @@ gfx::Rect PaintedScrollbarLayer::ScrollbarLayerRectToContentRect(
 
 gfx::Rect PaintedScrollbarLayer::OriginThumbRect() const {
   gfx::Size thumb_size;
-  if (orientation() == HORIZONTAL) {
+  if (scrollbar_->Orientation() == HORIZONTAL) {
     thumb_size =
         gfx::Size(scrollbar_->ThumbLength(), scrollbar_->ThumbThickness());
   } else {
@@ -258,13 +250,23 @@ bool PaintedScrollbarLayer::Update() {
 
 UIResourceBitmap PaintedScrollbarLayer::RasterizeScrollbarPart(
     const gfx::Rect& layer_rect,
-    const gfx::Rect& content_rect,
+    const gfx::Rect& requested_content_rect,
     ScrollbarPart part) {
-  DCHECK(!content_rect.size().IsEmpty());
+  DCHECK(!requested_content_rect.size().IsEmpty());
   DCHECK(!layer_rect.size().IsEmpty());
 
+  gfx::Rect content_rect = requested_content_rect;
+
+  // Pages can end up requesting arbitrarily large scrollbars.  Prevent this
+  // from crashing due to OOM and try something smaller.
   SkBitmap skbitmap;
-  skbitmap.allocN32Pixels(content_rect.width(), content_rect.height());
+  if (!skbitmap.tryAllocN32Pixels(content_rect.width(),
+                                  content_rect.height())) {
+    content_rect.Intersect(
+        gfx::Rect(requested_content_rect.x(), requested_content_rect.y(),
+                  kMaxScrollbarDimension, kMaxScrollbarDimension));
+    skbitmap.allocN32Pixels(content_rect.width(), content_rect.height());
+  }
   SkiaPaintCanvas canvas(skbitmap);
 
   float scale_x =

@@ -64,7 +64,7 @@ class VideoCaptureDeviceMac : public VideoCaptureDevice {
       std::unique_ptr<VideoCaptureDevice::Client> client) override;
   void StopAndDeAllocate() override;
   void TakePhoto(TakePhotoCallback callback) override;
-  void GetPhotoCapabilities(GetPhotoCapabilitiesCallback callback) override;
+  void GetPhotoState(GetPhotoStateCallback callback) override;
   void SetPhotoOptions(mojom::PhotoSettingsPtr settings,
                        SetPhotoOptionsCallback callback) override;
 
@@ -117,7 +117,7 @@ class VideoCaptureDeviceMac : public VideoCaptureDevice {
   base::scoped_nsobject<VideoCaptureDeviceAVFoundation> capture_device_;
 
   // To hold on to the TakePhotoCallback while the picture is being taken.
-  std::unique_ptr<TakePhotoCallback> photo_callback_;
+  TakePhotoCallback photo_callback_;
 
   // Used with Bind and PostTask to ensure that methods aren't called after the
   // VideoCaptureDeviceMac is destroyed.

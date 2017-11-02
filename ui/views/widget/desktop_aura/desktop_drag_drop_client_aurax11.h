@@ -21,12 +21,12 @@
 #include "ui/base/dragdrop/drag_drop_types.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/size.h"
-#include "ui/gfx/x/x11_atom_cache.h"
 #include "ui/views/views_export.h"
 #include "ui/views/widget/desktop_aura/x11_move_loop_delegate.h"
 
 namespace aura {
 namespace client {
+class DragDropClientObserver;
 class DragDropDelegate;
 }
 }
@@ -90,6 +90,8 @@ class VIEWS_EXPORT DesktopDragDropClientAuraX11
                        ui::DragDropTypes::DragEventSource source) override;
   void DragCancel() override;
   bool IsDragDropInProgress() override;
+  void AddObserver(aura::client::DragDropClientObserver* observer) override;
+  void RemoveObserver(aura::client::DragDropClientObserver* observer) override;
 
   // Overridden from aura::WindowObserver:
   void OnWindowDestroyed(aura::Window* window) override;
@@ -201,7 +203,7 @@ class VIEWS_EXPORT DesktopDragDropClientAuraX11
   // with alpha > 32).
   bool IsValidDragImage(const gfx::ImageSkia& image);
 
-  // A nested message loop that notifies this object of events through the
+  // A nested run loop that notifies this object of events through the
   // X11MoveLoopDelegate interface.
   std::unique_ptr<X11MoveLoop> move_loop_;
 
@@ -211,8 +213,6 @@ class VIEWS_EXPORT DesktopDragDropClientAuraX11
 
   Display* xdisplay_;
   ::Window xwindow_;
-
-  ui::X11AtomCache atom_cache_;
 
   // Target side information.
   class X11DragContext;

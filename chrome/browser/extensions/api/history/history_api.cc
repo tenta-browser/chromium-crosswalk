@@ -173,9 +173,8 @@ void HistoryEventRouter::DispatchEvent(
     const std::string& event_name,
     std::unique_ptr<base::ListValue> event_args) {
   if (profile && EventRouter::Get(profile)) {
-    std::unique_ptr<Event> event(
-        new Event(histogram_value, event_name, std::move(event_args)));
-    event->restrict_to_browser_context = profile;
+    auto event = base::MakeUnique<Event>(histogram_value, event_name,
+                                         std::move(event_args), profile);
     EventRouter::Get(profile)->BroadcastEvent(std::move(event));
   }
 }
@@ -325,8 +324,8 @@ ExtensionFunction::ResponseAction HistorySearchFunction::Run() {
 void HistorySearchFunction::SearchComplete(history::QueryResults* results) {
   HistoryItemList history_item_vec;
   if (results && !results->empty()) {
-    for (const history::URLResult* item : *results)
-      history_item_vec.push_back(GetHistoryItem(*item));
+    for (const auto& item : *results)
+      history_item_vec.push_back(GetHistoryItem(item));
   }
   Respond(ArgumentList(Search::Results::Create(history_item_vec)));
   Release();  // Balanced in Run().

@@ -30,6 +30,7 @@ namespace chromecast {
 namespace media {
 class AlsaWrapper;
 class FilterGroup;
+class PostProcessingPipelineParser;
 
 // Mixer implementation. The mixer has one or more input queues; these can be
 // added/removed at any time. When an input source pushes frames to an input
@@ -142,6 +143,9 @@ class StreamMixerAlsa {
 
     // Sets whether or not this stream should be muted.
     virtual void SetMuted(bool muted) = 0;
+
+    // Returns the volume multiplier of the stream.
+    virtual float EffectiveVolume() = 0;
   };
 
   enum State {
@@ -161,6 +165,8 @@ class StreamMixerAlsa {
     return mixer_task_runner_;
   }
 
+  int filter_frame_alignment() const { return filter_frame_alignment_; }
+
   // Adds an input to the mixer. The input will live at least until
   // RemoveInput(input) is called. Can be called on any thread.
   void AddInput(std::unique_ptr<InputQueue> input);
@@ -172,8 +178,8 @@ class StreamMixerAlsa {
   // mixer thread.
   void OnFramesQueued();
 
+  void ResetPostProcessorsForTest(const std::string& pipeline_json);
   void SetAlsaWrapperForTest(std::unique_ptr<AlsaWrapper> alsa_wrapper);
-  void DisablePostProcessingForTest();
   void WriteFramesForTest();  // Can be called on any thread.
   void ClearInputsForTest();  // Removes all inputs.
 
@@ -191,6 +197,14 @@ class StreamMixerAlsa {
 
   // Sets the volume multiplier limit for the given content |type|.
   void SetOutputLimit(AudioContentType type, float limit);
+
+  // Sends configuration string |config| to processor |name|.
+  void SetPostProcessorConfig(const std::string& name,
+                              const std::string& config);
+
+  // Sets filter data alignment, required by some processors.
+  // Must be called before audio playback starts.
+  void SetFilterFrameAlignmentForTest(int filter_frame_alignment);
 
  protected:
   StreamMixerAlsa();
@@ -210,6 +224,7 @@ class StreamMixerAlsa {
   void FinalizeOnMixerThread();
   void FinishFinalize();
 
+  void CreatePostProcessors(PostProcessingPipelineParser* pipeline_parser);
   // Reads the buffer size, period size, start threshold, and avail min value
   // from the provided command line flags or uses default values if no flags are
   // provided.
@@ -239,7 +254,7 @@ class StreamMixerAlsa {
 
   void WriteFrames();
   bool TryWriteFrames();
-  void WriteMixedPcm(std::vector<uint8_t>* interleaved, int frames);
+  void WriteMixedPcm(int frames);
   void UpdateRenderingDelay(int newly_pushed_frames);
   size_t InterleavedSize(int frames);
   ssize_t BytesPerOutputFormatSample();
@@ -252,6 +267,7 @@ class StreamMixerAlsa {
   scoped_refptr<base::SingleThreadTaskRunner> mixer_task_runner_;
 
   unsigned int fixed_output_samples_per_second_;
+  int num_output_channels_;
   unsigned int low_sample_rate_cutoff_;
   int requested_output_samples_per_second_;
   int output_samples_per_second_;
@@ -272,7 +288,7 @@ class StreamMixerAlsa {
 
   std::vector<std::unique_ptr<InputQueue>> inputs_;
   std::vector<std::unique_ptr<InputQueue>> ignored_inputs_;
-  MediaPipelineBackendAlsa::RenderingDelay rendering_delay_;
+  MediaPipelineBackendAlsa::RenderingDelay alsa_rendering_delay_;
 
   std::unique_ptr<base::Timer> retry_write_frames_timer_;
 
@@ -280,6 +296,16 @@ class StreamMixerAlsa {
   std::unique_ptr<base::Timer> check_close_timer_;
 
   std::vector<std::unique_ptr<FilterGroup>> filter_groups_;
+  FilterGroup* default_filter_;
+  FilterGroup* mix_filter_;
+  FilterGroup* linearize_filter_;
+  std::vector<uint8_t> interleaved_;
+
+  // Force data to be filtered in multiples of |filter_frame_alignment_| frames.
+  // Must be a multiple of 4 for some NEON implementations. Some
+  // AudioPostProcessors require stricter alignment conditions.
+  int filter_frame_alignment_;
+
   std::vector<CastMediaShlib::LoopbackAudioObserver*> loopback_observers_;
 
   std::map<AudioContentType, VolumeInfo> volume_info_;

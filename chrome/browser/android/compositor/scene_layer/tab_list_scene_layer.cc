@@ -14,10 +14,11 @@
 #include "ui/android/resources/resource_manager_impl.h"
 
 using base::android::JavaParamRef;
+using base::android::JavaRef;
 
 namespace android {
 
-TabListSceneLayer::TabListSceneLayer(JNIEnv* env, jobject jobj)
+TabListSceneLayer::TabListSceneLayer(JNIEnv* env, const JavaRef<jobject>& jobj)
     : SceneLayer(env, jobj),
       content_obscures_self_(false),
       resource_manager_(nullptr),
@@ -209,10 +210,6 @@ static jlong Init(JNIEnv* env, const JavaParamRef<jobject>& jobj) {
   // This will automatically bind to the Java object and pass ownership there.
   TabListSceneLayer* scene_layer = new TabListSceneLayer(env, jobj);
   return reinterpret_cast<intptr_t>(scene_layer);
-}
-
-bool RegisterTabListSceneLayer(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 }  // namespace android

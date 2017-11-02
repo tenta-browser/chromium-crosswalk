@@ -17,11 +17,14 @@
 namespace {
 
 // Global atomic used to guarantee channel IDs are unique.
-base::StaticAtomicSequenceNumber g_last_id;
+base::AtomicSequenceNumber g_last_id;
 
 }  // namespace
 
 namespace IPC {
+
+// static
+constexpr size_t Channel::kMaximumMessageSize;
 
 // static
 std::string Channel::GenerateUniqueRandomChannelID() {

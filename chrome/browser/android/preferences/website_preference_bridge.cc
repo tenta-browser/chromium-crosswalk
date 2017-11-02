@@ -2,8 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/android/preferences/website_preference_bridge.h"
-
 #include <algorithm>
 #include <string>
 #include <vector>
@@ -18,6 +16,7 @@
 #include "base/json/json_writer.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/stl_util.h"
 #include "chrome/browser/android/search_geolocation/search_geolocation_service.h"
 #include "chrome/browser/browsing_data/browsing_data_flash_lso_helper.h"
 #include "chrome/browser/browsing_data/browsing_data_local_storage_helper.h"
@@ -112,14 +111,14 @@ ScopedJavaLocalRef<jstring> ConvertOriginToJavaString(
 
 typedef void (*InfoListInsertionFunction)(
     JNIEnv*,
-    const base::android::JavaRefOrBare<jobject>&,
-    const base::android::JavaRefOrBare<jstring>&,
-    const base::android::JavaRefOrBare<jstring>&);
+    const base::android::JavaRef<jobject>&,
+    const base::android::JavaRef<jstring>&,
+    const base::android::JavaRef<jstring>&);
 
 void GetOrigins(JNIEnv* env,
                 ContentSettingsType content_type,
                 InfoListInsertionFunction insertionFunc,
-                jobject list,
+                const JavaRef<jobject>& list,
                 jboolean managedOnly) {
   HostContentSettingsMap* content_settings_map =
       GetHostContentSettingsMap(false);  // is_incognito
@@ -139,7 +138,7 @@ void GetOrigins(JNIEnv* env,
 
   // Now add all origins that have a non-default setting to the list.
   for (const auto& settings_it : all_settings) {
-    if (settings_it.setting == default_content_setting)
+    if (settings_it.GetContentSetting() == default_content_setting)
       continue;
     if (managedOnly &&
         HostContentSettingsMap::GetProviderTypeFromSource(settings_it.source) !=
@@ -167,16 +166,35 @@ void GetOrigins(JNIEnv* env,
 
   for (const auto& settings_it : embargo_settings) {
     const std::string origin = settings_it.primary_pattern.ToString();
-    if (std::find(seen_origins.begin(), seen_origins.end(), origin) !=
-        seen_origins.end()) {
+    if (base::ContainsValue(seen_origins, origin)) {
       // This origin has already been added to the list, so don't add it again.
       continue;
     }
 
     if (auto_blocker->GetEmbargoResult(GURL(origin), content_type)
             .content_setting == CONTENT_SETTING_BLOCK) {
+      seen_origins.push_back(origin);
       insertionFunc(env, list, ConvertOriginToJavaString(env, origin),
                     jembedder);
+    }
+  }
+
+  // Add the DSE origin if it allows geolocation.
+  if (content_type == CONTENT_SETTINGS_TYPE_GEOLOCATION) {
+    SearchGeolocationService* search_helper =
+        SearchGeolocationService::Factory::GetForBrowserContext(
+            GetActiveUserProfile(false /* is_incognito */));
+    if (search_helper) {
+      const url::Origin& dse_origin = search_helper->GetDSEOriginIfEnabled();
+      if (!dse_origin.unique()) {
+        std::string dse_origin_string = dse_origin.Serialize();
+        if (!base::ContainsValue(seen_origins, dse_origin_string)) {
+          seen_origins.push_back(dse_origin_string);
+          insertionFunc(env, list,
+                        ConvertOriginToJavaString(env, dse_origin_string),
+                        jembedder);
+        }
+      }
     }
   }
 }
@@ -187,7 +205,15 @@ ContentSetting GetSettingForOrigin(JNIEnv* env,
                                    jstring embedder,
                                    jboolean is_incognito) {
   GURL url(ConvertJavaStringToUTF8(env, origin));
-  GURL embedder_url(ConvertJavaStringToUTF8(env, embedder));
+  std::string embedder_str = ConvertJavaStringToUTF8(env, embedder);
+  GURL embedder_url;
+  // TODO(raymes): This check to see if '*' is the embedder is a hack that fixes
+  // crbug.com/738377. In general querying the settings for patterns is broken
+  // and needs to be fixed. See crbug.com/738757.
+  if (embedder_str == "*")
+    embedder_url = url;
+  else
+    embedder_url = GURL(embedder_str);
   return PermissionManager::Get(GetActiveUserProfile(is_incognito))
       ->GetPermissionStatus(content_type, url, embedder_url)
       .content_setting;
@@ -562,7 +588,7 @@ class SiteDataDeleteHelper :
     RecursivelyFindSiteAndDelete(cookies_tree_model_->GetRoot());
 
     // This will result in this class getting deleted.
-    Release();
+    BrowserThread::ReleaseSoon(BrowserThread::UI, FROM_HERE, this);
   }
 
   void RecursivelyFindSiteAndDelete(CookieTreeNode* node) {
@@ -645,10 +671,11 @@ class StorageInfoClearedCallback {
 
 class LocalStorageInfoReadyCallback {
  public:
-  explicit LocalStorageInfoReadyCallback(const JavaRef<jobject>& java_callback)
+  LocalStorageInfoReadyCallback(const JavaRef<jobject>& java_callback,
+                                bool fetch_important)
       : env_(base::android::AttachCurrentThread()),
-        java_callback_(java_callback) {
-  }
+        java_callback_(java_callback),
+        fetch_important_(fetch_important) {}
 
   void OnLocalStorageModelInfoLoaded(
       Profile* profile,
@@ -657,9 +684,11 @@ class LocalStorageInfoReadyCallback {
     ScopedJavaLocalRef<jobject> map =
         Java_WebsitePreferenceBridge_createLocalStorageInfoMap(env_);
 
-    std::vector<ImportantSitesUtil::ImportantDomainInfo> important_domains =
-        ImportantSitesUtil::GetImportantRegisterableDomains(profile,
-                                                            kMaxImportantSites);
+    std::vector<ImportantSitesUtil::ImportantDomainInfo> important_domains;
+    if (fetch_important_) {
+      important_domains = ImportantSitesUtil::GetImportantRegisterableDomains(
+          profile, kMaxImportantSites);
+    }
 
     std::list<BrowsingDataLocalStorageHelper::LocalStorageInfo>::const_iterator
         i;
@@ -667,23 +696,27 @@ class LocalStorageInfoReadyCallback {
       ScopedJavaLocalRef<jstring> full_origin =
           ConvertUTF8ToJavaString(env_, i->origin_url.spec());
       std::string origin_str = i->origin_url.GetOrigin().spec();
+
       bool important = false;
-      std::string registerable_domain;
-      if (i->origin_url.HostIsIPAddress()) {
-        registerable_domain = i->origin_url.host();
-      } else {
-        registerable_domain =
-            net::registry_controlled_domains::GetDomainAndRegistry(
-                i->origin_url,
-                net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
-      }
-      auto important_domain_search = [&registerable_domain](
-          const ImportantSitesUtil::ImportantDomainInfo& item) {
-        return item.registerable_domain == registerable_domain;
-      };
-      if (std::find_if(important_domains.begin(), important_domains.end(),
-                       important_domain_search) != important_domains.end()) {
-        important = true;
+      if (fetch_important_) {
+        std::string registerable_domain;
+        if (i->origin_url.HostIsIPAddress()) {
+          registerable_domain = i->origin_url.host();
+        } else {
+          registerable_domain =
+              net::registry_controlled_domains::GetDomainAndRegistry(
+                  i->origin_url,
+                  net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
+        }
+        auto important_domain_search =
+            [&registerable_domain](
+                const ImportantSitesUtil::ImportantDomainInfo& item) {
+              return item.registerable_domain == registerable_domain;
+            };
+        if (std::find_if(important_domains.begin(), important_domains.end(),
+                         important_domain_search) != important_domains.end()) {
+          important = true;
+        }
       }
       // Remove the trailing slash so the origin is matched correctly in
       // SingleWebsitePreferences.mergePermissionInfoForTopLevelOrigin.
@@ -702,6 +735,7 @@ class LocalStorageInfoReadyCallback {
  private:
   JNIEnv* env_;
   ScopedJavaGlobalRef<jobject> java_callback_;
+  bool fetch_important_;
 };
 
 }  // anonymous namespace
@@ -718,13 +752,14 @@ class LocalStorageInfoReadyCallback {
 
 static void FetchLocalStorageInfo(JNIEnv* env,
                                   const JavaParamRef<jclass>& clazz,
-                                  const JavaParamRef<jobject>& java_callback) {
+                                  const JavaParamRef<jobject>& java_callback,
+                                  jboolean fetch_important) {
   Profile* profile = ProfileManager::GetActiveUserProfile();
   scoped_refptr<BrowsingDataLocalStorageHelper> local_storage_helper(
       new BrowsingDataLocalStorageHelper(profile));
   // local_storage_callback will delete itself when it is run.
   LocalStorageInfoReadyCallback* local_storage_callback =
-      new LocalStorageInfoReadyCallback(java_callback);
+      new LocalStorageInfoReadyCallback(java_callback, fetch_important);
   local_storage_helper->StartFetching(
       base::Bind(&LocalStorageInfoReadyCallback::OnLocalStorageModelInfoLoaded,
                  base::Unretained(local_storage_callback), profile));
@@ -823,7 +858,10 @@ static void SetDSEGeolocationSetting(JNIEnv* env,
   return search_helper->SetDSEGeolocationSetting(setting);
 }
 
-// Register native methods
-bool RegisterWebsitePreferenceBridge(JNIEnv* env) {
-  return RegisterNativesImpl(env);
+static jboolean GetAdBlockingActivated(JNIEnv* env,
+                                       const JavaParamRef<jclass>& clazz,
+                                       const JavaParamRef<jstring>& jorigin) {
+  GURL url(ConvertJavaStringToUTF8(env, jorigin));
+  return !!GetHostContentSettingsMap(false)->GetWebsiteSetting(
+      url, GURL(), CONTENT_SETTINGS_TYPE_ADS_DATA, std::string(), nullptr);
 }

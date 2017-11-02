@@ -481,7 +481,7 @@ TestLauncherDelegate::~TestLauncherDelegate() {
 }
 
 int LaunchTests(TestLauncherDelegate* launcher_delegate,
-                int default_jobs,
+                size_t parallel_jobs,
                 int argc,
                 char** argv) {
   DCHECK(!g_launcher_delegate);
@@ -496,9 +496,9 @@ int LaunchTests(TestLauncherDelegate* launcher_delegate,
     return 0;
   }
 
-  std::unique_ptr<ContentMainDelegate> chrome_main_delegate(
+  std::unique_ptr<ContentMainDelegate> content_main_delegate(
       launcher_delegate->CreateContentMainDelegate());
-  ContentMainParams params(chrome_main_delegate.get());
+  ContentMainParams params(content_main_delegate.get());
 
 #if defined(OS_WIN)
   sandbox::SandboxInterfaceInfo sandbox_info = {0};
@@ -544,11 +544,10 @@ int LaunchTests(TestLauncherDelegate* launcher_delegate,
   base::FileDescriptorWatcher file_descriptor_watcher(&message_loop);
 #endif
 
-  // Allow the |launcher_delegate| to modify |default_jobs|.
-  launcher_delegate->AdjustDefaultParallelJobs(&default_jobs);
+  launcher_delegate->PreSharding();
 
   WrapperTestLauncherDelegate delegate(launcher_delegate);
-  base::TestLauncher launcher(&delegate, default_jobs);
+  base::TestLauncher launcher(&delegate, parallel_jobs);
   const int result = launcher.Run() ? 0 : 1;
   launcher_delegate->OnDoneRunningTests();
   return result;

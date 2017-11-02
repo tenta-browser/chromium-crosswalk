@@ -46,7 +46,6 @@ class DevToolsNetworkTransaction
     : public net::HttpTransaction {
  public:
   static const char kDevToolsEmulateNetworkConditionsClientId[];
-  static const char kDevToolsRequestId[];
 
   DevToolsNetworkTransaction(
       DevToolsNetworkController* controller,
@@ -60,9 +59,10 @@ class DevToolsNetworkTransaction
             const net::NetLogWithSource& net_log) override;
   int RestartIgnoringLastError(
       const net::CompletionCallback& callback) override;
-  int RestartWithCertificate(net::X509Certificate* client_cert,
-                             net::SSLPrivateKey* client_private_key,
-                             const net::CompletionCallback& callback) override;
+  int RestartWithCertificate(
+      scoped_refptr<net::X509Certificate> client_cert,
+      scoped_refptr<net::SSLPrivateKey> client_private_key,
+      const net::CompletionCallback& callback) override;
   int RestartWithAuth(const net::AuthCredentials& credentials,
                       const net::CompletionCallback& callback) override;
   bool IsReadyToRestartForAuth() override;
@@ -88,6 +88,9 @@ class DevToolsNetworkTransaction
       const BeforeNetworkStartCallback& callback) override;
   void SetBeforeHeadersSentCallback(
       const BeforeHeadersSentCallback& callback) override;
+  void SetRequestHeadersCallback(net::RequestHeadersCallback callback) override;
+  void SetResponseHeadersCallback(
+      net::ResponseHeadersCallback callback) override;
   int ResumeNetworkStart() override;
   void GetConnectionAttempts(net::ConnectionAttempts* out) const override;
 

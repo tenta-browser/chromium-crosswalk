@@ -7,14 +7,17 @@
 #include <stddef.h>
 
 #include <memory>
+#include <utility>
 
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
+#include "base/values.h"
 #include "chromeos/network/network_profile_handler.h"
 #include "chromeos/network/network_type_pattern.h"
 #include "chromeos/network/network_util.h"
 #include "chromeos/network/onc/onc_utils.h"
 #include "chromeos/network/shill_property_util.h"
+#include "chromeos/network/tether_constants.h"
 #include "components/device_event_log/device_event_log.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
@@ -198,6 +201,8 @@ bool NetworkState::PropertyChanged(const std::string& key,
 
     vpn_provider_type_ = vpn_provider_type;
     return true;
+  } else if (key == shill::kTetheringProperty) {
+    return GetStringValue(key, value, &tethering_state_);
   }
   return false;
 }
@@ -232,17 +237,14 @@ void NetworkState::GetStateProperties(base::DictionaryValue* dictionary) const {
   ManagedState::GetStateProperties(dictionary);
 
   // Properties shared by all types.
-  dictionary->SetStringWithoutPathExpansion(shill::kGuidProperty, guid());
-  dictionary->SetStringWithoutPathExpansion(shill::kSecurityClassProperty,
-                                            security_class());
-  dictionary->SetStringWithoutPathExpansion(shill::kProfileProperty,
-                                            profile_path());
-  dictionary->SetIntegerWithoutPathExpansion(shill::kPriorityProperty,
-                                             priority_);
+  dictionary->SetKey(shill::kGuidProperty, base::Value(guid()));
+  dictionary->SetKey(shill::kSecurityClassProperty,
+                     base::Value(security_class()));
+  dictionary->SetKey(shill::kProfileProperty, base::Value(profile_path()));
+  dictionary->SetKey(shill::kPriorityProperty, base::Value(priority_));
 
   if (visible()) {
-    dictionary->SetStringWithoutPathExpansion(shill::kStateProperty,
-                                              connection_state());
+    dictionary->SetKey(shill::kStateProperty, base::Value(connection_state()));
   }
 
   // VPN properties.
@@ -251,14 +253,29 @@ void NetworkState::GetStateProperties(base::DictionaryValue* dictionary) const {
     // must replicate that nested structure.
     std::unique_ptr<base::DictionaryValue> provider_property(
         new base::DictionaryValue);
-    provider_property->SetStringWithoutPathExpansion(shill::kTypeProperty,
-                                                     vpn_provider_type_);
+    provider_property->SetKey(shill::kTypeProperty,
+                              base::Value(vpn_provider_type_));
     if (vpn_provider_type_ == shill::kProviderThirdPartyVpn) {
-      provider_property->SetStringWithoutPathExpansion(
-          shill::kHostProperty, third_party_vpn_provider_extension_id_);
+      provider_property->SetKey(
+          shill::kHostProperty,
+          base::Value(third_party_vpn_provider_extension_id_));
     }
     dictionary->SetWithoutPathExpansion(shill::kProviderProperty,
-                                        provider_property.release());
+                                        std::move(provider_property));
+  }
+
+  // Tether properties
+  if (NetworkTypePattern::Tether().MatchesType(type())) {
+    dictionary->SetKey(kTetherBatteryPercentage,
+                       base::Value(battery_percentage()));
+    dictionary->SetKey(kTetherCarrier, base::Value(carrier()));
+    dictionary->SetKey(kTetherHasConnectedToHost,
+                       base::Value(tether_has_connected_to_host()));
+    dictionary->SetKey(kTetherSignalStrength, base::Value(signal_strength()));
+
+    // Tether networks do not share some of the wireless/mobile properties added
+    // below; exit early to avoid having these properties applied.
+    return;
   }
 
   // Wireless properties
@@ -266,31 +283,28 @@ void NetworkState::GetStateProperties(base::DictionaryValue* dictionary) const {
     return;
 
   if (visible()) {
-    dictionary->SetBooleanWithoutPathExpansion(shill::kConnectableProperty,
-                                               connectable());
-    dictionary->SetIntegerWithoutPathExpansion(shill::kSignalStrengthProperty,
-                                               signal_strength());
+    dictionary->SetKey(shill::kConnectableProperty, base::Value(connectable()));
+    dictionary->SetKey(shill::kSignalStrengthProperty,
+                       base::Value(signal_strength()));
   }
 
   // Wifi properties
   if (NetworkTypePattern::WiFi().MatchesType(type())) {
-    dictionary->SetStringWithoutPathExpansion(shill::kWifiBSsid, bssid_);
-    dictionary->SetStringWithoutPathExpansion(shill::kEapMethodProperty,
-                                              eap_method());
-    dictionary->SetIntegerWithoutPathExpansion(shill::kWifiFrequency,
-                                               frequency_);
+    dictionary->SetKey(shill::kWifiBSsid, base::Value(bssid_));
+    dictionary->SetKey(shill::kEapMethodProperty, base::Value(eap_method()));
+    dictionary->SetKey(shill::kWifiFrequency, base::Value(frequency_));
+    dictionary->SetKey(shill::kWifiHexSsid, base::Value(GetHexSsid()));
   }
 
   // Mobile properties
   if (NetworkTypePattern::Mobile().MatchesType(type())) {
-    dictionary->SetStringWithoutPathExpansion(shill::kNetworkTechnologyProperty,
-                                              network_technology());
-    dictionary->SetStringWithoutPathExpansion(shill::kActivationStateProperty,
-                                              activation_state());
-    dictionary->SetStringWithoutPathExpansion(shill::kRoamingStateProperty,
-                                              roaming());
-    dictionary->SetBooleanWithoutPathExpansion(shill::kOutOfCreditsProperty,
-                                               cellular_out_of_credits());
+    dictionary->SetKey(shill::kNetworkTechnologyProperty,
+                       base::Value(network_technology()));
+    dictionary->SetKey(shill::kActivationStateProperty,
+                       base::Value(activation_state()));
+    dictionary->SetKey(shill::kRoamingStateProperty, base::Value(roaming()));
+    dictionary->SetKey(shill::kOutOfCreditsProperty,
+                       base::Value(cellular_out_of_credits()));
   }
 }
 
@@ -350,6 +364,11 @@ void NetworkState::set_connection_state(const std::string connection_state) {
   connection_state_ = connection_state;
 }
 
+bool NetworkState::IsUsingMobileData() const {
+  return type() == shill::kTypeCellular || type() == chromeos::kTypeTether ||
+         tethering_state() == shill::kTetheringConfirmedState;
+}
+
 bool NetworkState::IsDynamicWep() const {
   return security_class_ == shill::kSecurityWep &&
          eap_key_mgmt_ == shill::kKeyManagementIEEE8021X;
@@ -361,6 +380,11 @@ bool NetworkState::IsConnectedState() const {
 
 bool NetworkState::IsConnectingState() const {
   return visible() && StateIsConnecting(connection_state_);
+}
+
+bool NetworkState::IsConnectingOrConnected() const {
+  return visible() && (StateIsConnecting(connection_state_) ||
+                       StateIsConnected(connection_state_));
 }
 
 bool NetworkState::IsReconnecting() const {

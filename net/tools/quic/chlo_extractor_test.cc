@@ -5,11 +5,11 @@
 #include "net/tools/quic/chlo_extractor.h"
 
 #include "net/quic/core/quic_framer.h"
+#include "net/quic/platform/api/quic_test.h"
 #include "net/quic/test_tools/crypto_test_utils.h"
 #include "net/quic/test_tools/quic_test_utils.h"
 
 using std::string;
-using testing::Return;
 using testing::_;
 
 namespace net {
@@ -40,7 +40,7 @@ class TestDelegate : public ChloExtractor::Delegate {
   string chlo_;
 };
 
-class ChloExtractorTest : public ::testing::Test {
+class ChloExtractorTest : public QuicTest {
  public:
   ChloExtractorTest() {
     header_.public_header.connection_id = 42;

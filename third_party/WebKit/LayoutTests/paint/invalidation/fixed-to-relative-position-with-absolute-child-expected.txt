@@ -4,7 +4,7 @@
       "name": "LayoutView #document",
       "bounds": [800, 2016],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow BODY",
@@ -19,6 +19,11 @@
         {
           "object": "LayoutBlockFlow (positioned) DIV class='absolute green'",
           "rect": [108, 300, 100, 100],
+          "reason": "subtree"
+        },
+        {
+          "object": "LayoutBlockFlow (relative positioned) DIV id='container' class='fixed blue'",
+          "rect": [8, 208, 100, 100],
           "reason": "subtree"
         },
         {

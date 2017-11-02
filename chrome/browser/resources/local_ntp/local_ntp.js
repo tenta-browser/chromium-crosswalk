@@ -22,6 +22,7 @@ function LocalNTP() {
  * @return {HTMLElement} The found element or null if not found.
  */
 function $(id) {
+  // eslint-disable-next-line no-restricted-properties
   return document.getElementById(id);
 }
 
@@ -30,24 +31,18 @@ function $(id) {
  * Specifications for an NTP design (not comprehensive).
  *
  * numTitleLines: Number of lines to display in titles.
- * tileWidth: The width of each suggestion tile, in px.
- * tileMargin: Spacing between successive tiles, in px.
  * titleColor: The 4-component color of title text.
  * titleColorAgainstDark: The 4-component color of title text against a dark
  *   theme.
  *
  * @type {{
  *   numTitleLines: number,
- *   tileWidth: number,
- *   tileMargin: number,
  *   titleColor: string,
  *   titleColorAgainstDark: string,
  * }}
  */
 var NTP_DESIGN = {
   numTitleLines: 1,
-  tileWidth: 154,
-  tileMargin: 16,
   titleColor: [50, 50, 50, 255],
   titleColorAgainstDark: [210, 210, 210, 255],
 };
@@ -87,6 +82,7 @@ var IDS = {
   FAKEBOX: 'fakebox',
   FAKEBOX_INPUT: 'fakebox-input',
   FAKEBOX_TEXT: 'fakebox-text',
+  FAKEBOX_SPEECH: 'fakebox-speech',
   LOGO: 'logo',
   NOTIFICATION: 'mv-notice',
   NOTIFICATION_CLOSE_BUTTON: 'mv-notice-x',
@@ -118,14 +114,6 @@ var lastBlacklistedTile = null;
 
 
 /**
- * Current number of tiles columns shown based on the window width, including
- * those that just contain filler.
- * @type {number}
- */
-var numColumnsShown = 0;
-
-
-/**
  * The browser embeddedSearch.newTabPage object.
  * @type {Object}
  */
@@ -134,27 +122,6 @@ var ntpApiHandle;
 
 /** @type {number} @const */
 var MAX_NUM_TILES_TO_SHOW = 8;
-
-
-/** @type {number} @const */
-var MIN_NUM_COLUMNS = 2;
-
-
-/** @type {number} @const */
-var MAX_NUM_COLUMNS = 4;
-
-
-/** @type {number} @const */
-var NUM_ROWS = 2;
-
-
-/**
- * Minimum total padding to give to the left and right of the most visited
- * section. Used to determine how many tiles to show.
- * @type {number}
- * @const
- */
-var MIN_TOTAL_HORIZONTAL_PADDING = 200;
 
 
 /**
@@ -216,47 +183,60 @@ function renderTheme() {
 
 
 /**
+ * Updates the OneGoogleBar (if it is loaded) based on the current theme.
+ * @private
+ */
+function renderOneGoogleBarTheme() {
+  if (!window.gbar) {
+    return;
+  }
+  try {
+    var oneGoogleBarApi = window.gbar.a;
+    var oneGoogleBarPromise = oneGoogleBarApi.bf();
+    oneGoogleBarPromise.then(function(oneGoogleBar) {
+      var isThemeDark = getIsThemeDark(ntpApiHandle.themeBackgroundInfo);
+      var setForegroundStyle = oneGoogleBar.pc.bind(oneGoogleBar);
+      setForegroundStyle(isThemeDark ? 1 : 0);
+    });
+  } catch (err) {
+    console.log('Failed setting OneGoogleBar theme:\n' + err);
+  }
+}
+
+
+/**
  * Callback for embeddedSearch.newTabPage.onthemechange.
  * @private
  */
 function onThemeChange() {
   renderTheme();
+  renderOneGoogleBarTheme();
 }
 
 
 /**
  * Updates the NTP style according to theme.
- * @param {Object=} opt_themeInfo The information about the theme. If it is
- * omitted the style will be reverted to the default.
+ * @param {Object} themeInfo The information about the theme.
  * @private
  */
-// TODO(treib): We actually never call this without a themeInfo. Should we?
-function setCustomThemeStyle(opt_themeInfo) {
+function setCustomThemeStyle(themeInfo) {
   var customStyleElement = $(IDS.CUSTOM_THEME_STYLE);
   var head = document.head;
-  if (opt_themeInfo && !opt_themeInfo.usingDefaultTheme) {
+  if (!themeInfo.usingDefaultTheme) {
     $(IDS.NTP_CONTENTS).classList.remove(CLASSES.DEFAULT_THEME);
     var themeStyle =
       '#attribution {' +
-      '  color: ' + convertToRGBAColor(opt_themeInfo.textColorLightRgba) + ';' +
+      '  color: ' + convertToRGBAColor(themeInfo.textColorLightRgba) + ';' +
       '}' +
       '#mv-msg {' +
-      '  color: ' + convertToRGBAColor(opt_themeInfo.textColorRgba) + ';' +
+      '  color: ' + convertToRGBAColor(themeInfo.textColorRgba) + ';' +
       '}' +
       '#mv-notice-links span {' +
-      '  color: ' + convertToRGBAColor(opt_themeInfo.textColorLightRgba) + ';' +
+      '  color: ' + convertToRGBAColor(themeInfo.textColorLightRgba) + ';' +
       '}' +
       '#mv-notice-x {' +
       '  -webkit-filter: drop-shadow(0 0 0 ' +
-          convertToRGBAColor(opt_themeInfo.textColorRgba) + ');' +
-      '}' +
-      '.mv-page-ready .mv-mask {' +
-      '  border: 1px solid ' +
-          convertToRGBAColor(opt_themeInfo.sectionBorderColorRgba) + ';' +
-      '}' +
-      '.mv-page-ready:hover .mv-mask, .mv-page-ready .mv-focused ~ .mv-mask {' +
-      '  border-color: ' +
-          convertToRGBAColor(opt_themeInfo.headerColorRgba) + ';' +
+          convertToRGBAColor(themeInfo.textColorRgba) + ');' +
       '}';
 
     if (customStyleElement) {
@@ -347,7 +327,7 @@ function reloadTiles() {
   for (var i = 0; i < Math.min(MAX_NUM_TILES_TO_SHOW, pages.length); ++i) {
     cmds.push({cmd: 'tile', rid: pages[i].rid});
   }
-  cmds.push({cmd: 'show', maxVisible: numColumnsShown * NUM_ROWS});
+  cmds.push({cmd: 'show'});
 
   $(IDS.TILES_IFRAME).contentWindow.postMessage(cmds, '*');
 }
@@ -394,53 +374,6 @@ function onUndo() {
 function onRestoreAll() {
   hideNotification();
   ntpApiHandle.undoAllMostVisitedDeletions();
-}
-
-
-/**
- * Recomputes the number of tile columns, and width of various contents based
- * on the width of the window.
- * @return {boolean} Whether the number of tile columns has changed.
- */
-function updateContentWidth() {
-  var tileRequiredWidth = NTP_DESIGN.tileWidth + NTP_DESIGN.tileMargin;
-  // If innerWidth is zero, then use the maximum snap size.
-  var maxSnapSize = MAX_NUM_COLUMNS * tileRequiredWidth -
-      NTP_DESIGN.tileMargin + MIN_TOTAL_HORIZONTAL_PADDING;
-  var innerWidth = window.innerWidth || maxSnapSize;
-  // Each tile has left and right margins that sum to NTP_DESIGN.tileMargin.
-  var availableWidth = innerWidth + NTP_DESIGN.tileMargin -
-      MIN_TOTAL_HORIZONTAL_PADDING;
-  var newNumColumns = Math.floor(availableWidth / tileRequiredWidth);
-  newNumColumns =
-      Math.max(MIN_NUM_COLUMNS, Math.min(newNumColumns, MAX_NUM_COLUMNS));
-
-  if (numColumnsShown === newNumColumns)
-    return false;
-
-  numColumnsShown = newNumColumns;
-  // We add an extra pixel because rounding errors on different zooms can
-  // make the width shorter than it should be.
-  var tilesContainerWidth = Math.ceil(numColumnsShown * tileRequiredWidth) + 1;
-  $(IDS.TILES).style.width = tilesContainerWidth + 'px';
-  // -2 to account for border.
-  var fakeboxWidth = (tilesContainerWidth - NTP_DESIGN.tileMargin - 2);
-  $(IDS.FAKEBOX).style.width = fakeboxWidth + 'px';
-  return true;
-}
-
-
-/**
- * Resizes elements because the number of tile columns may need to change in
- * response to resizing. Also shows or hides extra tiles tiles according to the
- * new width of the page.
- */
-function onResize() {
-  if (updateContentWidth()) {
-    // If the number of tile columns changes, inform the iframe.
-    $(IDS.TILES_IFRAME).contentWindow.postMessage(
-        {cmd: 'tilesVisible', maxVisible: numColumnsShown * NUM_ROWS}, '*');
-  }
 }
 
 
@@ -494,7 +427,8 @@ function isFakeboxFocused() {
  * @return {boolean} True if the click occurred in an enabled fakebox.
  */
 function isFakeboxClick(event) {
-  return $(IDS.FAKEBOX).contains(event.target);
+  return $(IDS.FAKEBOX).contains(event.target) &&
+      !$(IDS.FAKEBOX_SPEECH).contains(event.target);
 }
 
 
@@ -565,9 +499,6 @@ function init() {
 
   $(IDS.NOTIFICATION_CLOSE_BUTTON).addEventListener('click', hideNotification);
 
-  window.addEventListener('resize', onResize);
-  updateContentWidth();
-
   var embeddedSearchApiHandle = window.chrome.embeddedSearch;
 
   ntpApiHandle = embeddedSearchApiHandle.newTabPage;
@@ -587,6 +518,12 @@ function init() {
 
     $(IDS.FAKEBOX_TEXT).textContent =
         configData.translatedStrings.searchboxPlaceholder;
+
+    if (configData.isVoiceSearchEnabled) {
+      speech.init(
+          configData.googleBaseUrl, configData.translatedStrings,
+          $(IDS.FAKEBOX_SPEECH), searchboxApiHandle);
+    }
 
     // Listener for updating the key capture state.
     document.body.onmousedown = function(event) {
@@ -623,6 +560,15 @@ function init() {
 
     // Update the fakebox style to match the current key capturing state.
     setFakeboxFocus(searchboxApiHandle.isKeyCaptureEnabled);
+
+    // Load the OneGoogleBar script. It'll create a global variable name "og"
+    // which is a dict corresponding to the native OneGoogleBarData type.
+    var ogScript = document.createElement('script');
+    ogScript.src = 'chrome-search://local-ntp/one-google.js';
+    document.body.appendChild(ogScript);
+    ogScript.onload = function() {
+      injectOneGoogleBar(og);
+    };
   } else {
     document.body.classList.add(CLASSES.NON_GOOGLE_PAGE);
   }
@@ -668,6 +614,42 @@ function init() {
 function listen() {
   document.addEventListener('DOMContentLoaded', init);
 }
+
+
+/**
+ * Injects the One Google Bar into the page. Called asynchronously, so that it
+ * doesn't block the main page load.
+ */
+function injectOneGoogleBar(ogb) {
+  var inHeadStyle = document.createElement('style');
+  inHeadStyle.type = 'text/css';
+  inHeadStyle.appendChild(document.createTextNode(ogb.inHeadStyle));
+  document.head.appendChild(inHeadStyle);
+
+  var inHeadScript = document.createElement('script');
+  inHeadScript.type = 'text/javascript';
+  inHeadScript.appendChild(document.createTextNode(ogb.inHeadScript));
+  document.head.appendChild(inHeadScript);
+
+  renderOneGoogleBarTheme();
+
+  var ogElem = $('one-google');
+  ogElem.innerHTML = ogb.barHtml;
+  ogElem.classList.remove('hidden');
+
+  var afterBarScript = document.createElement('script');
+  afterBarScript.type = 'text/javascript';
+  afterBarScript.appendChild(document.createTextNode(ogb.afterBarScript));
+  ogElem.parentNode.insertBefore(afterBarScript, ogElem.nextSibling);
+
+  $('one-google-end-of-body').innerHTML = ogb.endOfBodyHtml;
+
+  var endOfBodyScript = document.createElement('script');
+  endOfBodyScript.type = 'text/javascript';
+  endOfBodyScript.appendChild(document.createTextNode(ogb.endOfBodyScript));
+  document.body.appendChild(endOfBodyScript);
+}
+
 
 return {
   init: init,  // Exposed for testing.

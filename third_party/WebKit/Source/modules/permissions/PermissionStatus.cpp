@@ -6,7 +6,7 @@
 
 #include "bindings/core/v8/ScriptPromiseResolver.h"
 #include "core/dom/Document.h"
-#include "core/events/Event.h"
+#include "core/dom/events/Event.h"
 #include "modules/EventTargetModulesNames.h"
 #include "modules/permissions/PermissionUtils.h"
 #include "platform/wtf/Functional.h"
@@ -81,7 +81,7 @@ String PermissionStatus::state() const {
       return "prompt";
   }
 
-  ASSERT_NOT_REACHED();
+  NOTREACHED();
   return "denied";
 }
 

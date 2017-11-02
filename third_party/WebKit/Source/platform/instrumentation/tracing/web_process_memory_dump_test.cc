@@ -44,7 +44,6 @@ TEST(WebProcessMemoryDumpTest, IntegrationTest) {
   // Make sure that wpmd2 is still usable after it has been emptied.
   auto wmad = wpmd2->CreateMemoryAllocatorDump("2/new");
   wmad->AddScalar("attr_name", "bytes", 42);
-  wmad->AddScalarF("attr_name_2", "rate", 42.0f);
   ASSERT_EQ(1u, wpmd2->process_memory_dump()->allocator_dumps().size());
   auto mad = wpmd2->process_memory_dump()->GetAllocatorDump("2/new");
   ASSERT_NE(static_cast<base::trace_event::MemoryAllocatorDump*>(nullptr), mad);
@@ -61,13 +60,6 @@ TEST(WebProcessMemoryDumpTest, IntegrationTest) {
   ASSERT_EQ(base::trace_event::MemoryAllocatorDump::kTypeScalar, attr_value);
   ASSERT_TRUE(attr->GetString("units", &attr_value));
   ASSERT_EQ("bytes", attr_value);
-
-  ASSERT_TRUE(attrs->GetDictionary("attr_name_2", &attr));
-  ASSERT_TRUE(attr->GetString("type", &attr_value));
-  ASSERT_EQ(base::trace_event::MemoryAllocatorDump::kTypeScalar, attr_value);
-  ASSERT_TRUE(attr->GetString("units", &attr_value));
-  ASSERT_EQ("rate", attr_value);
-  ASSERT_TRUE(attr->HasKey("value"));
 
   // Check that AsValueInto() doesn't cause a crash.
   wpmd2->process_memory_dump()->AsValueInto(traced_value.get());
@@ -115,10 +107,12 @@ TEST(WebProcessMemoryDumpTest, IntegrationTest) {
   auto wmad4 = wpmd1->CreateMemoryAllocatorDump("1/4");
   wpmd1->AddOwnershipEdge(wmad4->Guid(), guid);
   auto allocator_dumps_edges =
-      wpmd1->process_memory_dump()->allocator_dumps_edges();
+      wpmd1->process_memory_dump()->allocator_dumps_edges_for_testing();
   ASSERT_EQ(1u, allocator_dumps_edges.size());
-  ASSERT_EQ(wmad4->Guid(), allocator_dumps_edges[0].source.ToUint64());
-  ASSERT_EQ(guid, allocator_dumps_edges[0].target.ToUint64());
+  auto it = allocator_dumps_edges.begin();
+  ASSERT_NE(allocator_dumps_edges.end(), it);
+  ASSERT_EQ(wmad4->Guid(), it->first.ToUint64());
+  ASSERT_EQ(guid, it->second.target.ToUint64());
 
   // Check that createDumpAdapterForSkia() works.
   auto skia_trace_memory_dump = wpmd1->CreateDumpAdapterForSkia("1/skia");

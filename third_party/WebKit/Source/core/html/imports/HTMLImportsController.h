@@ -31,8 +31,8 @@
 #ifndef HTMLImportsController_h
 #define HTMLImportsController_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/dom/Document.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Allocator.h"
 #include "platform/wtf/Vector.h"
@@ -58,9 +58,9 @@ class HTMLImportsController final
   HTMLImportTreeRoot* Root() const { return root_; }
 
   bool ShouldBlockScriptExecution(const Document&) const;
-  HTMLImportChild* Load(HTMLImport* parent,
+  HTMLImportChild* Load(const Document&,
                         HTMLImportChildClient*,
-                        FetchParameters);
+                        FetchParameters&);
 
   Document* Master() const;
 
@@ -84,7 +84,7 @@ class HTMLImportsController final
                                HTMLImport* parent,
                                HTMLImportChildClient*);
 
-  Member<HTMLImportTreeRoot> root_;
+  TraceWrapperMember<HTMLImportTreeRoot> root_;
   using LoaderList = HeapVector<Member<HTMLImportLoader>>;
   LoaderList loaders_;
 };

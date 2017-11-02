@@ -49,7 +49,7 @@ namespace content {
 // Decode() is non-blocking and queues the buffers. Decoded frames are
 // delivered to WebRTC on the media task runner.
 class CONTENT_EXPORT RTCVideoDecoder
-    : NON_EXPORTED_BASE(public webrtc::VideoDecoder),
+    : public webrtc::VideoDecoder,
       public media::VideoDecodeAccelerator::Client {
  public:
   ~RTCVideoDecoder() override;
@@ -229,12 +229,6 @@ class CONTENT_EXPORT RTCVideoDecoder
   gfx::Size frame_size_;
 
   media::GpuVideoAcceleratorFactories* const factories_;
-
-  // The texture target used for decoded pictures.
-  uint32_t decoder_texture_target_;
-
-  // The format of the decoded pictures.
-  media::VideoPixelFormat pixel_format_;
 
   // Metadata of the buffers that have been sent for decode.
   std::list<BufferData> input_buffer_data_;

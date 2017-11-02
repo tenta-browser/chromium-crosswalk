@@ -10,21 +10,17 @@
 #include <memory>
 #include <set>
 
+#include "ash/public/cpp/config.h"
 #include "ash/public/interfaces/wallpaper.mojom.h"
+#include "ash/shell_delegate.h"
 #include "base/macros.h"
-#include "base/memory/ref_counted.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
 #include "services/service_manager/public/cpp/service.h"
-#include "services/tracing/public/cpp/provider.h"
 #include "services/ui/common/types.h"
 
 namespace aura {
 class WindowTreeClient;
-}
-
-namespace base {
-class SequencedWorkerPool;
 }
 
 namespace chromeos {
@@ -33,14 +29,17 @@ class ScopedFakeStatisticsProvider;
 }
 }
 
+namespace service_manager {
+class Connector;
+}
+
 namespace views {
 class AuraInit;
 }
 
 namespace ash {
-namespace test {
 class AshTestHelper;
-}
+
 namespace mus {
 
 class NetworkConnectDelegateMus;
@@ -49,20 +48,25 @@ class WindowManager;
 // Hosts the window manager and the ash system user interface for mash.
 class WindowManagerApplication : public service_manager::Service {
  public:
-  WindowManagerApplication();
+  // If |observer| is non-null it is added to the WindowManager once created.
+  // See WindowManager's constructor for details of
+  // |show_primary_host_on_connect|.
+  explicit WindowManagerApplication(
+      bool show_primary_host_on_connect,
+      Config ash_config = Config::MASH,
+      std::unique_ptr<ash::ShellDelegate> shell_delegate = nullptr);
   ~WindowManagerApplication() override;
 
   WindowManager* window_manager() { return window_manager_.get(); }
 
+  service_manager::Connector* GetConnector();
+
  private:
-  friend class ash::test::AshTestHelper;
-  friend class WmTestBase;
-  friend class WmTestHelper;
+  friend class ash::AshTestHelper;
 
   // If |init_network_handler| is true, chromeos::NetworkHandler is initialized.
   void InitWindowManager(
       std::unique_ptr<aura::WindowTreeClient> window_tree_client,
-      const scoped_refptr<base::SequencedWorkerPool>& blocking_pool,
       bool init_network_handler);
 
   // Initializes lower-level OS-specific components (e.g. D-Bus services).
@@ -71,24 +75,31 @@ class WindowManagerApplication : public service_manager::Service {
 
   // service_manager::Service:
   void OnStart() override;
-  void OnBindInterface(const service_manager::ServiceInfo& source_info,
+  void OnBindInterface(const service_manager::BindSourceInfo& source_info,
                        const std::string& interface_name,
                        mojo::ScopedMessagePipeHandle interface_pipe) override;
 
-  tracing::Provider tracing_;
+  const bool show_primary_host_on_connect_;
 
   std::unique_ptr<views::AuraInit> aura_init_;
 
   std::unique_ptr<WindowManager> window_manager_;
-
-  // A blocking pool used by the WindowManager's shell; not used in tests.
-  scoped_refptr<base::SequencedWorkerPool> blocking_pool_;
 
   std::unique_ptr<NetworkConnectDelegateMus> network_connect_delegate_;
   std::unique_ptr<chromeos::system::ScopedFakeStatisticsProvider>
       statistics_provider_;
 
   service_manager::BinderRegistry registry_;
+
+  std::unique_ptr<ShellDelegate> shell_delegate_;
+
+  const Config ash_config_;
+
+  // Whether this class initialized NetworkHandler and needs to clean it up.
+  bool network_handler_initialized_ = false;
+
+  // Whether this class initialized DBusThreadManager and needs to clean it up.
+  bool dbus_thread_manager_initialized_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(WindowManagerApplication);
 };

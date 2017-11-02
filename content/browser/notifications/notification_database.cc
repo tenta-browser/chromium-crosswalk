@@ -122,24 +122,22 @@ NotificationDatabase::Status NotificationDatabase::Open(
 
   filter_policy_.reset(leveldb::NewBloomFilterPolicy(10));
 
-  leveldb::Options options;
+  leveldb_env::Options options;
   options.create_if_missing = create_if_missing;
   options.paranoid_checks = true;
-  options.reuse_logs = leveldb_env::kDefaultLogReuseOptionValue;
   options.filter_policy = filter_policy_.get();
+  options.block_cache = leveldb_env::SharedWebBlockCache();
   if (IsInMemoryDatabase()) {
     env_.reset(leveldb::NewMemEnv(leveldb::Env::Default()));
     options.env = env_.get();
   }
 
-  leveldb::DB* db = nullptr;
   Status status = LevelDBStatusToStatus(
-      leveldb::DB::Open(options, path_.AsUTF8Unsafe(), &db));
+      leveldb_env::OpenDB(options, path_.AsUTF8Unsafe(), &db_));
   if (status != STATUS_OK)
     return status;
 
   state_ = STATE_INITIALIZED;
-  db_.reset(db);
 
   return ReadNextPersistentNotificationId();
 }
@@ -258,7 +256,7 @@ NotificationDatabase::DeleteAllNotificationDataForServiceWorkerRegistration(
 NotificationDatabase::Status NotificationDatabase::Destroy() {
   DCHECK(sequence_checker_.CalledOnValidSequence());
 
-  leveldb::Options options;
+  leveldb_env::Options options;
   if (IsInMemoryDatabase()) {
     if (!env_)
       return STATUS_OK;  // The database has not been initialized.
@@ -327,11 +325,6 @@ NotificationDatabase::ReadAllNotificationDataInternal(
             service_worker_registration_id) {
       continue;
     }
-
-    // Silently ignore the notification if it doesn't have an ID assigned.
-    // TODO(peter): Remove this clause when Chrome 55 has branched.
-    if (notification_database_data.notification_id.empty())
-      continue;
 
     notification_data_vector->push_back(notification_database_data);
   }

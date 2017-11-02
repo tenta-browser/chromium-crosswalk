@@ -25,8 +25,6 @@ class LineLayoutBox;
 class LineLayoutBoxModel;
 class LineLayoutAPIShim;
 
-enum HitTestFilter;
-
 static LayoutObject* const kHashTableDeletedValue =
     reinterpret_cast<LayoutObject*>(-1);
 
@@ -260,6 +258,8 @@ class LineLayoutItem {
     return layout_object_->IsInFlowPositioned();
   }
 
+  bool IsRelPositioned() const { return layout_object_->IsRelPositioned(); }
+
   // TODO(dgrogan/eae): Can we change this to GlobalToLocal and vice versa
   // instead of having 4 methods? See localToAbsoluteQuad below.
   PositionWithAffinity PositionForPoint(const LayoutPoint& point) {
@@ -305,6 +305,10 @@ class LineLayoutItem {
 
   void SlowSetPaintingLayerNeedsRepaint() {
     ObjectPaintInvalidator(*layout_object_).SlowSetPaintingLayerNeedsRepaint();
+  }
+
+  void SetIsTruncated(bool set_truncation) {
+    layout_object_->SetIsTruncated(set_truncation);
   }
 
   struct LineLayoutItemHash {

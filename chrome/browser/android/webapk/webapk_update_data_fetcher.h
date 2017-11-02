@@ -45,9 +45,6 @@ class WebApkUpdateDataFetcher : public content::WebContentsObserver {
              const base::android::JavaParamRef<jobject>& obj,
              const base::android::JavaParamRef<jobject>& java_web_contents);
 
-  // Registers JNI hooks.
-  static bool Register(JNIEnv* env);
-
  private:
   ~WebApkUpdateDataFetcher() override;
 
@@ -60,12 +57,12 @@ class WebApkUpdateDataFetcher : public content::WebContentsObserver {
   // Called once the installable data has been fetched.
   void OnDidGetInstallableData(const InstallableData& installable_data);
 
-  // Called with the computed Murmur2 hash for the app icon.
-  void OnGotIconMurmur2Hash(const std::string& best_primary_icon_murmur2_hash);
+  // Called with the computed Murmur2 hash for the primary icon.
+  void OnGotPrimaryIconMurmur2Hash(const std::string& primary_icon_hash);
 
-  void OnDataAvailable(const ShortcutInfo& info,
-                       const std::string& best_primary_icon_murmur2_hash,
-                       const SkBitmap& best_primary_icon);
+  void OnDataAvailable(const std::string& primary_icon_murmur2_hash,
+                       bool did_fetch_badge_icon,
+                       const std::string& badge_icon_murmur2_hash);
 
   // Called when a page has no Web Manifest or the Web Manifest is not WebAPK
   // compatible.
@@ -80,15 +77,13 @@ class WebApkUpdateDataFetcher : public content::WebContentsObserver {
   // The WebAPK's Web Manifest URL that the detector is looking for.
   const GURL web_manifest_url_;
 
-  // Whether this is the initial URL fetch.
-  bool is_initial_fetch_;
-
   // The URL for which the installable data is being fetched / was last fetched.
   GURL last_fetched_url_;
 
   // Downloaded data for |web_manifest_url_|.
   ShortcutInfo info_;
-  SkBitmap best_primary_icon_;
+  SkBitmap primary_icon_;
+  SkBitmap badge_icon_;
 
   base::WeakPtrFactory<WebApkUpdateDataFetcher> weak_ptr_factory_;
 

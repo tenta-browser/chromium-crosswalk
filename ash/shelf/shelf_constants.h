@@ -10,14 +10,9 @@
 
 namespace ash {
 
-enum ShelfConstant {
-  // Size of the shelf when visible (height when the shelf is horizontal and
-  // width when the shelf is vertical).
-  SHELF_SIZE,
-
-  // Insets allocated for shelf when it is auto hidden.
-  SHELF_INSETS_FOR_AUTO_HIDE
-};
+// Size of the shelf when visible (height when the shelf is horizontal and
+// width when the shelf is vertical).
+ASH_EXPORT constexpr int kShelfSize = 48;
 
 // We reserve a small area on the edge of the workspace area to ensure that
 // the resize handle at the edge of the window can be hit.
@@ -64,14 +59,12 @@ ASH_EXPORT constexpr int kShelfTranslucentAlpha = 153;
 
 // The alpha value used to darken a colorized shelf when the shelf is
 // translucent.
-constexpr int kShelfTranslucentColorDarkenAlpha = 128;
+constexpr int kShelfTranslucentColorDarkenAlpha = 178;
 
 // The alpha vlaue usesd to darken a colorized shelf when the shelf is opaque.
 constexpr int kShelfOpaqueColorDarkenAlpha = 178;
 
 // The width and height of the material design overflow button.
-// TODO(tdanderson): Refactor constants which are common between the shelf
-// and the tray. See crbug.com/623987.
 constexpr int kOverflowButtonSize = 32;
 
 // The radius of the rounded corners of the overflow button.
@@ -82,8 +75,6 @@ constexpr int kAppListButtonRadius = kOverflowButtonSize / 2;
 
 // The direction of the focus cycling.
 enum CycleDirection { CYCLE_FORWARD, CYCLE_BACKWARD };
-
-ASH_EXPORT int GetShelfConstant(ShelfConstant shelf_constant);
 
 }  // namespace ash
 

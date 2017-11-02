@@ -33,6 +33,7 @@
 #include "core/page/ChromeClient.h"
 #include "core/page/Page.h"
 #include "platform/Language.h"
+#include "platform/MemoryCoordinator.h"
 
 namespace blink {
 
@@ -48,6 +49,10 @@ String Navigator::vendor() const {
   // https://www.w3.org/Bugs/Public/show_bug.cgi?id=27786
   // https://groups.google.com/a/chromium.org/forum/#!topic/blink-dev/QrgyulnqvmE
   return "Google Inc.";
+}
+
+float Navigator::deviceMemory() const {
+  return MemoryCoordinator::GetApproximatedDeviceMemory();
 }
 
 String Navigator::vendorSub() const {
@@ -75,6 +80,7 @@ bool Navigator::cookieEnabled() const {
 
 Vector<String> Navigator::languages() {
   Vector<String> languages;
+  languages_changed_ = false;
 
   if (!GetFrame() || !GetFrame()->GetPage()) {
     languages.push_back(DefaultLanguage());
@@ -92,7 +98,7 @@ Vector<String> Navigator::languages() {
     String& token = languages[i];
     token = token.StripWhiteSpace();
     if (token.length() >= 3 && token[2] == '_')
-      token.Replace(2, 1, "-");
+      token.replace(2, 1, "-");
   }
 
   return languages;

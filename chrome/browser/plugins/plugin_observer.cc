@@ -28,7 +28,6 @@
 #include "chrome/common/features.h"
 #include "chrome/common/render_messages.h"
 #include "chrome/grit/generated_resources.h"
-#include "chrome/grit/theme_resources.h"
 #include "components/component_updater/component_updater_service.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/infobars/core/confirm_infobar_delegate.h"
@@ -223,9 +222,10 @@ void PluginObserver::PluginCrashed(const base::FilePath& plugin_path,
                                     PROCESS_QUERY_INFORMATION | SYNCHRONIZE);
   bool is_running = false;
   if (plugin_process.IsValid()) {
-    is_running =
-        base::GetTerminationStatus(plugin_process.Handle(), NULL) ==
-            base::TERMINATION_STATUS_STILL_RUNNING;
+    int unused_exit_code = 0;
+    is_running = base::GetTerminationStatus(plugin_process.Handle(),
+                                            &unused_exit_code) ==
+                 base::TERMINATION_STATUS_STILL_RUNNING;
     plugin_process.Close();
   }
 
@@ -268,7 +268,6 @@ bool PluginObserver::OnMessageReceived(
                         OnShowFlashPermissionBubble)
     IPC_MESSAGE_HANDLER(ChromeViewHostMsg_CouldNotLoadPlugin,
                         OnCouldNotLoadPlugin)
-
     IPC_MESSAGE_UNHANDLED(return false)
   IPC_END_MESSAGE_MAP()
 

@@ -57,16 +57,16 @@ LogoCache::LogoCache(const base::FilePath& cache_directory)
     : cache_directory_(cache_directory),
       metadata_is_valid_(false) {
   // The LogoCache can be constructed on any thread, as long as it's used
-  // on a single thread after construction.
-  thread_checker_.DetachFromThread();
+  // on a single sequence after construction.
+  DETACH_FROM_SEQUENCE(sequence_checker_);
 }
 
 LogoCache::~LogoCache() {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 }
 
 void LogoCache::UpdateCachedLogoMetadata(const LogoMetadata& metadata) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(metadata_);
   DCHECK_EQ(metadata_->fingerprint, metadata.fingerprint);
 
@@ -75,24 +75,24 @@ void LogoCache::UpdateCachedLogoMetadata(const LogoMetadata& metadata) {
 }
 
 const LogoMetadata* LogoCache::GetCachedLogoMetadata() {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   ReadMetadataIfNeeded();
   return metadata_.get();
 }
 
 void LogoCache::SetCachedLogo(const EncodedLogo* logo) {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   std::unique_ptr<LogoMetadata> metadata;
   if (logo) {
-    metadata.reset(new LogoMetadata(logo->metadata));
+    metadata = base::MakeUnique<LogoMetadata>(logo->metadata);
     logo_num_bytes_ = static_cast<int>(logo->encoded_image->size());
   }
   UpdateMetadata(std::move(metadata));
-  WriteLogo(logo ? logo->encoded_image : NULL);
+  WriteLogo(logo ? logo->encoded_image : nullptr);
 }
 
 std::unique_ptr<EncodedLogo> LogoCache::GetCachedLogo() {
-  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   ReadMetadataIfNeeded();
   if (!metadata_)
@@ -128,11 +128,14 @@ std::unique_ptr<LogoMetadata> LogoCache::LogoMetadataFromString(
     return nullptr;
 
   std::unique_ptr<LogoMetadata> metadata(new LogoMetadata());
-  if (!dict->GetString(kSourceUrlKey, &metadata->source_url) ||
+  std::string source_url;
+  std::string on_click_url;
+  std::string animated_url;
+  if (!dict->GetString(kSourceUrlKey, &source_url) ||
       !dict->GetString(kFingerprintKey, &metadata->fingerprint) ||
-      !dict->GetString(kOnClickURLKey, &metadata->on_click_url) ||
+      !dict->GetString(kOnClickURLKey, &on_click_url) ||
       !dict->GetString(kAltTextKey, &metadata->alt_text) ||
-      !dict->GetString(kAnimatedUrlKey, &metadata->animated_url) ||
+      !dict->GetString(kAnimatedUrlKey, &animated_url) ||
       !dict->GetString(kMimeTypeKey, &metadata->mime_type) ||
       !dict->GetBoolean(kCanShowAfterExpirationKey,
                         &metadata->can_show_after_expiration) ||
@@ -140,6 +143,9 @@ std::unique_ptr<LogoMetadata> LogoCache::LogoMetadataFromString(
       !GetTimeValue(*dict, kExpirationTimeKey, &metadata->expiration_time)) {
     return nullptr;
   }
+  metadata->source_url = GURL(source_url);
+  metadata->on_click_url = GURL(on_click_url);
+  metadata->animated_url = GURL(animated_url);
 
   return metadata;
 }
@@ -149,11 +155,11 @@ void LogoCache::LogoMetadataToString(const LogoMetadata& metadata,
                                      int num_bytes,
                                      std::string* str) {
   base::DictionaryValue dict;
-  dict.SetString(kSourceUrlKey, metadata.source_url);
+  dict.SetString(kSourceUrlKey, metadata.source_url.spec());
   dict.SetString(kFingerprintKey, metadata.fingerprint);
-  dict.SetString(kOnClickURLKey, metadata.on_click_url);
+  dict.SetString(kOnClickURLKey, metadata.on_click_url.spec());
   dict.SetString(kAltTextKey, metadata.alt_text);
-  dict.SetString(kAnimatedUrlKey, metadata.animated_url);
+  dict.SetString(kAnimatedUrlKey, metadata.animated_url.spec());
   dict.SetString(kMimeTypeKey, metadata.mime_type);
   dict.SetBoolean(kCanShowAfterExpirationKey,
                   metadata.can_show_after_expiration);

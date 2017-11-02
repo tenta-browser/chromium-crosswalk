@@ -12,7 +12,6 @@
 #include "base/macros.h"
 #include "ui/message_center/message_center_export.h"
 #include "ui/message_center/notifier_settings.h"
-#include "ui/message_center/views/message_bubble_base.h"
 #include "ui/views/controls/button/checkbox.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/combobox/combobox_listener.h"
@@ -57,8 +56,8 @@ class MESSAGE_CENTER_EXPORT NotifierSettingsView
  private:
   FRIEND_TEST_ALL_PREFIXES(NotifierSettingsViewTest, TestLearnMoreButton);
 
-  class MESSAGE_CENTER_EXPORT NotifierButton : public views::CustomButton,
-                         public views::ButtonListener {
+  class MESSAGE_CENTER_EXPORT NotifierButton : public views::Button,
+                                               public views::ButtonListener {
    public:
     NotifierButton(NotifierSettingsProvider* provider,
                    std::unique_ptr<Notifier> notifier,
@@ -101,7 +100,7 @@ class MESSAGE_CENTER_EXPORT NotifierSettingsView
   // Overridden from views::View:
   void Layout() override;
   gfx::Size GetMinimumSize() const override;
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   bool OnKeyPressed(const ui::KeyEvent& event) override;
   bool OnMouseWheel(const ui::MouseWheelEvent& event) override;
 

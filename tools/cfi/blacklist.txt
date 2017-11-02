@@ -1,8 +1,11 @@
+# TODO(thakis): Remove clang is past r310132, works around r309617.
+type:std::*
+
 # e.g. RolloverProtectedTickClock
 fun:*MutableInstance*
 
-# WTF allocators.
-fun:*allocate*Backing*
+# WTF allocators. See https://crbug.com/713293.
+fun:*Allocate*Backing*
 
 # WTF::ThreadSpecific
 fun:*ThreadSpecific*
@@ -107,3 +110,6 @@ fun:*hasAspectRatio*
 fun:*nextBreakablePosition*
 fun:*supportsCachedOffsets*
 fun:*traceImpl*
+
+# b/64003142
+fun:*internal_default_instance*

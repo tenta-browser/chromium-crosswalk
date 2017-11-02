@@ -27,8 +27,8 @@
 #include "core/dom/Document.h"
 #include "core/dom/Element.h"
 #include "core/dom/ScriptableDocumentParser.h"
+#include "core/dom/ShadowRoot.h"
 #include "core/dom/StyleEngine.h"
-#include "core/dom/shadow/ShadowRoot.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/csp/ContentSecurityPolicy.h"
 #include "core/html/HTMLStyleElement.h"
@@ -139,11 +139,9 @@ StyleElement::ProcessingResult StyleElement::CreateSheet(Element& element,
   const ContentSecurityPolicy* csp = document.GetContentSecurityPolicy();
   bool passes_content_security_policy_checks =
       ShouldBypassMainWorldCSP(element) ||
-      csp->AllowStyleWithHash(text,
-                              ContentSecurityPolicy::InlineType::kBlock) ||
-      csp->AllowInlineStyle(&element, document.Url(),
-                            element.FastGetAttribute(HTMLNames::nonceAttr),
-                            start_position_.line_, text);
+      csp->AllowInlineStyle(&element, document.Url(), element.nonce(),
+                            start_position_.line_, text,
+                            ContentSecurityPolicy::InlineType::kBlock);
 
   // Clearing the current sheet may remove the cache entry so create the new
   // sheet first
@@ -154,19 +152,15 @@ StyleElement::ProcessingResult StyleElement::CreateSheet(Element& element,
   if (IsCSS(element, type) && passes_content_security_policy_checks) {
     RefPtr<MediaQuerySet> media_queries = MediaQuerySet::Create(media());
 
-    MediaQueryEvaluator screen_eval("screen");
-    MediaQueryEvaluator print_eval("print");
-    if (screen_eval.Eval(*media_queries) || print_eval.Eval(*media_queries)) {
-      loading_ = true;
-      TextPosition start_position =
-          start_position_ == TextPosition::BelowRangePosition()
-              ? TextPosition::MinimumPosition()
-              : start_position_;
-      new_sheet = document.GetStyleEngine().CreateSheet(
-          element, text, start_position, style_engine_context_);
-      new_sheet->SetMediaQueries(media_queries);
-      loading_ = false;
-    }
+    loading_ = true;
+    TextPosition start_position =
+        start_position_ == TextPosition::BelowRangePosition()
+            ? TextPosition::MinimumPosition()
+            : start_position_;
+    new_sheet = document.GetStyleEngine().CreateSheet(
+        element, text, start_position, style_engine_context_);
+    new_sheet->SetMediaQueries(media_queries);
+    loading_ = false;
   }
 
   if (sheet_)

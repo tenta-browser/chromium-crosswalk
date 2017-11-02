@@ -101,11 +101,6 @@ void WebView::SetResizeBackgroundColor(SkColor resize_background_color) {
   holder_->set_resize_background_color(resize_background_color);
 }
 
-void WebView::SetPreferredSize(const gfx::Size& preferred_size) {
-  preferred_size_ = preferred_size;
-  PreferredSizeChanged();
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // WebView, View overrides:
 
@@ -228,13 +223,6 @@ gfx::NativeViewAccessible WebView::GetNativeViewAccessible() {
   return View::GetNativeViewAccessible();
 }
 
-gfx::Size WebView::GetPreferredSize() const {
-  if (preferred_size_ == gfx::Size())
-    return View::GetPreferredSize();
-  else
-    return preferred_size_;
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // WebView, content::RenderProcessHostObserver implementation:
 
@@ -308,7 +296,8 @@ void WebView::DidDetachInterstitialPage() {
   NotifyAccessibilityWebContentsChanged();
 }
 
-void WebView::OnWebContentsFocused() {
+void WebView::OnWebContentsFocused(
+    content::RenderWidgetHost* render_widget_host) {
   RequestFocus();
 }
 

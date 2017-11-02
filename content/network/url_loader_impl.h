@@ -11,23 +11,36 @@
 
 #include "base/memory/weak_ptr.h"
 #include "content/common/content_export.h"
-#include "content/common/url_loader.mojom.h"
-#include "mojo/public/cpp/bindings/associated_binding.h"
+#include "content/public/common/url_loader.mojom.h"
+#include "mojo/public/cpp/bindings/binding.h"
+#include "mojo/public/cpp/system/data_pipe.h"
 #include "mojo/public/cpp/system/simple_watcher.h"
+#include "net/http/http_raw_request_headers.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/url_request.h"
+
+namespace net {
+class HttpResponseHeaders;
+}
+
+namespace network {
+class NetToMojoPendingBuffer;
+}
 
 namespace content {
 
 class NetworkContext;
-class NetToMojoPendingBuffer;
+struct ResourceResponse;
 
 class CONTENT_EXPORT URLLoaderImpl : public mojom::URLLoader,
                                      public net::URLRequest::Delegate {
  public:
   URLLoaderImpl(NetworkContext* context,
-                mojom::URLLoaderAssociatedRequest url_loader_request,
+                mojom::URLLoaderRequest url_loader_request,
+                int32_t options,
                 const ResourceRequest& request,
-                mojom::URLLoaderClientPtr url_loader_client);
+                mojom::URLLoaderClientPtr url_loader_client,
+                const net::NetworkTrafficAnnotationTag& traffic_annotation);
   ~URLLoaderImpl() override;
 
   // Called when the associated NetworkContext is going away.
@@ -42,30 +55,47 @@ class CONTENT_EXPORT URLLoaderImpl : public mojom::URLLoader,
   void OnReceivedRedirect(net::URLRequest* url_request,
                           const net::RedirectInfo& redirect_info,
                           bool* defer_redirect) override;
-  void OnResponseStarted(net::URLRequest* url_request) override;
+  void OnResponseStarted(net::URLRequest* url_request, int net_error) override;
   void OnReadCompleted(net::URLRequest* url_request, int bytes_read) override;
+
+  // Returns a WeakPtr so tests can validate that the object was destroyed.
+  base::WeakPtr<URLLoaderImpl> GetWeakPtrForTests();
 
  private:
   void ReadMore();
   void DidRead(uint32_t num_bytes, bool completed_synchronously);
   void NotifyCompleted(int error_code);
-  void SendDataPipeIfNecessary();
   void OnConnectionError();
   void OnResponseBodyStreamClosed(MojoResult result);
   void OnResponseBodyStreamReady(MojoResult result);
   void DeleteIfNeeded();
+  void SendResponseToClient();
+  void CompletePendingWrite();
+  void SetRawResponseHeaders(scoped_refptr<const net::HttpResponseHeaders>);
 
   NetworkContext* context_;
+  int32_t options_;
   bool connected_;
   std::unique_ptr<net::URLRequest> url_request_;
-  mojo::AssociatedBinding<mojom::URLLoader> binding_;
+  mojo::Binding<mojom::URLLoader> binding_;
   mojom::URLLoaderClientPtr url_loader_client_;
+  int64_t total_written_bytes_ = 0;
 
   mojo::ScopedDataPipeProducerHandle response_body_stream_;
-  mojo::ScopedDataPipeConsumerHandle response_body_consumer_handle_;
-  scoped_refptr<NetToMojoPendingBuffer> pending_write_;
+  scoped_refptr<network::NetToMojoPendingBuffer> pending_write_;
+  uint32_t pending_write_buffer_size_ = 0;
+  uint32_t pending_write_buffer_offset_ = 0;
   mojo::SimpleWatcher writable_handle_watcher_;
   mojo::SimpleWatcher peer_closed_handle_watcher_;
+
+  // Used when deferring sending the data to the client until mime sniffing is
+  // finished.
+  scoped_refptr<ResourceResponse> response_;
+  mojo::ScopedDataPipeConsumerHandle consumer_handle_;
+
+  bool report_raw_headers_;
+  net::HttpRawRequestHeaders raw_request_headers_;
+  scoped_refptr<const net::HttpResponseHeaders> raw_response_headers_;
 
   base::WeakPtrFactory<URLLoaderImpl> weak_ptr_factory_;
 

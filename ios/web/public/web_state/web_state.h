@@ -15,6 +15,8 @@
 #include "base/supports_user_data.h"
 #include "ios/web/public/referrer.h"
 #include "ios/web/public/web_state/url_verification_constants.h"
+#include "mojo/public/cpp/bindings/interface_request.h"
+#include "mojo/public/cpp/system/message_pipe.h"
 #include "ui/base/page_transition_types.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/gfx/geometry/size.h"
@@ -35,8 +37,8 @@ class DictionaryValue;
 class Value;
 }
 
-namespace service_manager {
-class InterfaceRegistry;
+namespace gfx {
+class Image;
 }
 
 namespace web {
@@ -46,6 +48,7 @@ class NavigationManager;
 class SessionCertificatePolicyCache;
 class WebInterstitial;
 class WebStateDelegate;
+class WebStateInterfaceProvider;
 class WebStateObserver;
 class WebStatePolicyDecider;
 class WebStateWeakPtrFactory;
@@ -110,7 +113,7 @@ class WebState : public base::SupportsUserData {
   virtual bool IsWebUsageEnabled() const = 0;
   virtual void SetWebUsageEnabled(bool enabled) = 0;
 
-  // Whether or not dialogs (JavaScript, geolocation) and window open requests
+  // Whether or not JavaScript dialogs and window open requests
   // should be suppressed. Default is false. When dialog is suppressed
   // |WebStateObserver::DidSuppressDialog| will be called.
   virtual bool ShouldSuppressDialogs() const = 0;
@@ -120,6 +123,10 @@ class WebState : public base::SupportsUserData {
   // been purged due to low memory, this will recreate it. It is up to the
   // caller to size the view.
   virtual UIView* GetView() = 0;
+
+  // Must be called when the WebState becomes shown/hidden.
+  virtual void WasShown() = 0;
+  virtual void WasHidden() = 0;
 
   // Gets the BrowserState associated with this WebState. Can never return null.
   virtual BrowserState* GetBrowserState() const = 0;
@@ -159,11 +166,12 @@ class WebState : public base::SupportsUserData {
   virtual void ExecuteJavaScript(const base::string16& javascript,
                                  const JavaScriptResultCallback& callback) = 0;
 
+  // Asynchronously executes |javaScript| in the main frame's context,
+  // registering user interaction.
+  virtual void ExecuteUserJavaScript(NSString* javaScript) = 0;
+
   // Gets the contents MIME type.
   virtual const std::string& GetContentsMimeType() const = 0;
-
-  // Gets the value of the "Content-Language" HTTP header.
-  virtual const std::string& GetContentLanguageHeader() const = 0;
 
   // Returns true if the current page is a web view with HTML.
   virtual bool ContentIsHTML() const = 0;
@@ -178,6 +186,17 @@ class WebState : public base::SupportsUserData {
   // The fraction of the page load that has completed as a number between 0.0
   // (nothing loaded) and 1.0 (fully loaded).
   virtual double GetLoadingProgress() const = 0;
+
+  // Returns true if the web process backing this WebState is believed to
+  // currently be crashed.
+  virtual bool IsCrashed() const = 0;
+
+  // Returns true if the web process backing this WebState is believed to
+  // currently be crashed or was evicted (by calling SetWebUsageEnabled
+  // with false).
+  // TODO(crbug.com/619971): Remove once all code has been ported to use
+  // IsCrashed() instead of IsEvicted().
+  virtual bool IsEvicted() const = 0;
 
   // Whether this instance is in the process of being destroyed.
   virtual bool IsBeingDestroyed() const = 0;
@@ -245,11 +264,37 @@ class WebState : public base::SupportsUserData {
   virtual CRWWebViewProxyType GetWebViewProxy() const = 0;
 
   // Returns Mojo interface registry for this WebState.
-  virtual service_manager::InterfaceRegistry* GetMojoInterfaceRegistry() = 0;
+  virtual WebStateInterfaceProvider* GetWebStateInterfaceProvider() = 0;
+
+ protected:
+  // Binds |interface_pipe| to an implementation of |interface_name| that is
+  // scoped to this WebState instance (if that such an implementation is
+  // present). Embedders of //ios/web can inject interface implementations by
+  // overriding WebClient::BindInterfaceRequestFromMainFrame().
+  // NOTE: Callers should use the more-friendly wrapper below.
+  virtual void BindInterfaceRequestFromMainFrame(
+      const std::string& interface_name,
+      mojo::ScopedMessagePipeHandle interface_pipe) {}
+
+ public:
+  template <class Interface>
+  void BindInterfaceRequestFromMainFrame(
+      mojo::InterfaceRequest<Interface> request) {
+    BindInterfaceRequestFromMainFrame(Interface::Name_,
+                                      std::move(request.PassMessagePipe()));
+  }
 
   // Returns whether this WebState was created with an opener.  See
   // CreateParams::created_with_opener for more details.
   virtual bool HasOpener() const = 0;
+
+  // Callback used to handle snapshots. The parameter is the snapshot image.
+  typedef base::Callback<void(const gfx::Image&)> SnapshotCallback;
+
+  // Takes a snapshot of this WebState with |target_size|. |callback| is
+  // asynchronously invoked after performing the snapshot.
+  virtual void TakeSnapshot(const SnapshotCallback& callback,
+                            CGSize target_size) const = 0;
 
  protected:
   friend class WebStateObserver;

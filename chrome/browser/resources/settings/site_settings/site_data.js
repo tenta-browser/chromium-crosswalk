@@ -20,14 +20,17 @@ DomRepeatEvent.prototype.model;
 Polymer({
   is: 'site-data',
 
-  behaviors: [CookieTreeBehavior, I18nBehavior],
+  behaviors: [
+    CookieTreeBehavior,
+  ],
 
   properties: {
     /**
      * The current filter applied to the cookie data list.
-     * @private
      */
-    filterString_: {
+    filter: {
+      observer: 'onSearchChanged_',
+      notify: true,
       type: String,
       value: '',
     },
@@ -40,6 +43,11 @@ Polymer({
       type: Object,
       observer: 'focusConfigChanged_',
     },
+  },
+
+  /** @override */
+  ready: function() {
+    this.loadCookies();
   },
 
   /**
@@ -55,14 +63,11 @@ Polymer({
     // Populate the |focusConfig| map of the parent <settings-animated-pages>
     // element, with additional entries that correspond to subpage trigger
     // elements residing in this element's Shadow DOM.
-    this.focusConfig.set(
-        settings.Route.SITE_SETTINGS_DATA_DETAILS.path,
-        '* /deep/ #filter /deep/ #searchInput');
-  },
-
-  /** @override */
-  ready: function() {
-    this.loadCookies();
+    if (settings.routes.SITE_SETTINGS_DATA_DETAILS) {
+      this.focusConfig.set(
+          settings.routes.SITE_SETTINGS_DATA_DETAILS.path,
+          '* /deep/ #filter /deep/ #searchInput');
+    }
   },
 
   /**
@@ -72,14 +77,13 @@ Polymer({
    * @private
    */
   showItem_: function(item) {
-    if (this.filterString_.length == 0)
+    if (this.filter.length == 0)
       return true;
-    return item.site.indexOf(this.filterString_) > -1;
+    return item.site.indexOf(this.filter) > -1;
   },
 
   /** @private */
-  onSearchChanged_: function(e) {
-    this.filterString_ = e.detail;
+  onSearchChanged_: function() {
     this.$.list.render();
   },
 
@@ -93,11 +97,11 @@ Polymer({
 
   /**
    * Returns the string to use for the Remove label.
-   * @return {string} filterString The current filter string.
+   * @return {string} filter The current filter string.
    * @private
    */
-  computeRemoveLabel_: function(filterString) {
-    if (filterString.length == 0)
+  computeRemoveLabel_: function(filter) {
+    if (filter.length == 0)
       return loadTimeData.getString('siteSettingsCookieRemoveAll');
     return loadTimeData.getString('siteSettingsCookieRemoveAllShown');
   },
@@ -109,7 +113,7 @@ Polymer({
 
   /** @private */
   onConfirmDeleteDialogClosed_: function() {
-    this.$.removeShowingSites.focus();
+    cr.ui.focusWithoutInk(assert(this.$.removeShowingSites));
   },
 
   /**
@@ -119,8 +123,8 @@ Polymer({
    */
   onRemoveShowingSitesTap_: function(e) {
     e.preventDefault();
-    this.confirmationDeleteMsg_ = loadTimeData.getString(
-        'siteSettingsCookieRemoveMultipleConfirmation');
+    this.confirmationDeleteMsg_ =
+        loadTimeData.getString('siteSettingsCookieRemoveMultipleConfirmation');
     this.$.confirmDeleteDialog.showModal();
   },
 
@@ -131,7 +135,7 @@ Polymer({
   onConfirmDelete_: function() {
     this.$.confirmDeleteDialog.close();
 
-    if (this.filterString_.length == 0) {
+    if (this.filter.length == 0) {
       this.removeAllCookies();
     } else {
       var items = this.$.list.items;
@@ -140,7 +144,7 @@ Polymer({
           this.browserProxy.removeCookie(items[i].id);
       }
       // We just deleted all items found by the filter, let's reset the filter.
-      /** @type {SettingsSubpageSearchElement} */(this.$.filter).setValue('');
+      /** @type {SettingsSubpageSearchElement} */ (this.$.filter).setValue('');
     }
   },
 
@@ -159,7 +163,8 @@ Polymer({
    * @private
    */
   onSiteTap_: function(event) {
-    settings.navigateTo(settings.Route.SITE_SETTINGS_DATA_DETAILS,
+    settings.navigateTo(
+        settings.routes.SITE_SETTINGS_DATA_DETAILS,
         new URLSearchParams('site=' + event.model.item.site));
   },
 });

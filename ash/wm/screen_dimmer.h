@@ -12,20 +12,13 @@
 #include "ash/shell_observer.h"
 #include "base/macros.h"
 
-namespace aura {
-class Window;
-}
-
 namespace ash {
 
+class ScreenDimmerTest;
 class WindowDimmer;
 
 template <typename UserData>
 class WindowUserData;
-
-namespace test {
-class ScreenDimmerTest;
-}
 
 // ScreenDimmer displays a partially-opaque layer above everything
 // else in the given container window to darken the display.  It shouldn't be
@@ -56,14 +49,14 @@ class ASH_EXPORT ScreenDimmer : public ShellObserver {
   static ScreenDimmer* FindForTest(int container_id);
 
  private:
-  friend class test::ScreenDimmerTest;
+  friend class ScreenDimmerTest;
 
   // Returns the aura::Windows (one per display) that correspond to
   // |container_|.
   std::vector<aura::Window*> GetAllContainers();
 
   // ShellObserver:
-  void OnRootWindowAdded(WmWindow* root_window) override;
+  void OnRootWindowAdded(aura::Window* root_window) override;
 
   // Update the dimming state. This will also create a new DimWindow
   // if necessary. (Used when a new display is connected)

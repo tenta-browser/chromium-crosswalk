@@ -11,8 +11,8 @@
 
 #include "cc/cc_export.h"
 #include "cc/input/selection.h"
-#include "cc/output/begin_frame_args.h"
-#include "cc/surfaces/surface_id.h"
+#include "components/viz/common/frame_sinks/begin_frame_args.h"
+#include "components/viz/common/surfaces/surface_id.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/geometry/size_f.h"
 #include "ui/gfx/geometry/vector2d_f.h"
@@ -83,10 +83,20 @@ class CC_EXPORT CompositorFrameMetadata {
   // determine which surfaces to retain and which to evict. It will likely
   // be unnecessary for the embedder to explicitly specify which surfaces to
   // retain. Thus, this field will likely go away.
-  std::vector<SurfaceId> referenced_surfaces;
+  std::vector<viz::SurfaceId> referenced_surfaces;
 
-  // This is the set of SurfaceIds embedded in DrawQuads.
-  std::vector<SurfaceId> embedded_surfaces;
+  // This is the set of dependent SurfaceIds that should be active in the
+  // display compositor before this CompositorFrame can be activated. Note
+  // that if |can_activate_before_dependencies| then the display compositor
+  // can choose to activate a CompositorFrame before all dependencies are
+  // available.
+  // Note: |activation_dependencies| and |referenced_surfaces| are disjoint
+  //       sets of surface IDs. If a surface ID is known to exist and can be
+  //       used without additional synchronization, then it is placed in
+  //       |referenced_surfaces|. |activation_dependencies| is the set of
+  //       surface IDs that this frame would like to block on until they
+  //       become available or a deadline hits.
+  std::vector<viz::SurfaceId> activation_dependencies;
 
   // This indicates whether this CompositorFrame can be activated before
   // dependencies have been resolved.
@@ -98,8 +108,8 @@ class CC_EXPORT CompositorFrameMetadata {
   // become available in all renderer processes. See https://crbug.com/695579.
   uint32_t content_source_id = 0;
 
-  // BeginFrameAck for the BeginFrame that this CompositorFrame answers.
-  BeginFrameAck begin_frame_ack;
+  // viz::BeginFrameAck for the BeginFrame that this CompositorFrame answers.
+  viz::BeginFrameAck begin_frame_ack;
 
   // Once the display compositor processes a frame containing a non-zero frame
   // token, the token is sent to embedder of the frame. This is helpful when

@@ -43,18 +43,23 @@ public class ChromePreferenceManager {
     private static final String CONTEXTUAL_SEARCH_CURRENT_WEEK_NUMBER =
             "contextual_search_current_week_number";
     private static final String HERB_FLAVOR_KEY = "herb_flavor";
-    private static final String WEBAPK_COMMAND_LINE_KEY = "webapk.command_line_enabled";
-    private static final String WEBAPK_RUNTIME_KEY = "webapk.runtime_enabled";
-    private static final String WEBAPK_ANY_PACKAGE_KEY = "webapk.any_package_name";
     private static final String CHROME_HOME_ENABLED_KEY = "chrome_home_enabled";
 
     private static final String CHROME_DEFAULT_BROWSER = "applink.chrome_default_browser";
 
-    private static final String NTP_SIGNIN_PROMO_DISMISSED = "ntp.signin_promo_dismissed";
+    private static final String CONTENT_SUGGESTIONS_SHOWN_KEY = "content_suggestions_shown";
+
+    // TODO(crbug.com/757892): Remove this preference key once the personalized signin promos
+    // launch completely.
+    private static final String NTP_GENERIC_SIGNIN_PROMO_DISMISSED = "ntp.signin_promo_dismissed";
+    private static final String NTP_PERSONALIZED_SIGNIN_PROMO_DISMISSED =
+            "ntp.personalized_signin_promo_dismissed";
     private static final String NTP_ANIMATION_RUN_COUNT = "ntp_recycler_view_animation_run_count";
 
     private static final String SUCCESS_UPLOAD_SUFFIX = "_crash_success_upload";
     private static final String FAILURE_UPLOAD_SUFFIX = "_crash_failure_upload";
+
+    private static final String OMNIBOX_PLACEHOLDER_GROUP = "omnibox-placeholder-group";
 
     private static ChromePreferenceManager sPrefs;
 
@@ -342,26 +347,6 @@ public class ChromePreferenceManager {
         writeString(HERB_FLAVOR_KEY, flavor);
     }
 
-    /** Checks the cached value for the webapk feature. */
-    public boolean getCachedWebApkRuntimeEnabled() {
-        return mSharedPreferences.getBoolean(WEBAPK_RUNTIME_KEY, false);
-    }
-
-    /** Writes the cached value for the webapk feature is enabled. */
-    public void setCachedWebApkRuntimeEnabled(boolean isEnabled) {
-        writeBoolean(WEBAPK_RUNTIME_KEY, isEnabled);
-    }
-
-    /** Checks the cached value for the webapk any package name feature. */
-    public boolean getCachedWebApkAnyPackageName() {
-        return mSharedPreferences.getBoolean(WEBAPK_ANY_PACKAGE_KEY, false);
-    }
-
-    /** Writes the cached value for the webapk any package name feature is enabled. */
-    public void setCachedWebApkAnyPackageNameEnabled(boolean isEnabled) {
-        writeBoolean(WEBAPK_ANY_PACKAGE_KEY, isEnabled);
-    }
-
     public boolean getCachedChromeDefaultBrowser() {
         return mSharedPreferences.getBoolean(CHROME_DEFAULT_BROWSER, false);
     }
@@ -370,14 +355,24 @@ public class ChromePreferenceManager {
         writeBoolean(CHROME_DEFAULT_BROWSER, isDefault);
     }
 
-    /** Checks if the user dismissed the sign in promo from the new tab page. */
-    public boolean getNewTabPageSigninPromoDismissed() {
-        return mSharedPreferences.getBoolean(NTP_SIGNIN_PROMO_DISMISSED, false);
+    /** Checks if the user dismissed the generic sign in promo from the new tab page. */
+    public boolean getNewTabPageGenericSigninPromoDismissed() {
+        return mSharedPreferences.getBoolean(NTP_GENERIC_SIGNIN_PROMO_DISMISSED, false);
     }
 
-    /** Set whether the user dismissed the sign in promo from the new tab page. */
-    public void setNewTabPageSigninPromoDismissed(boolean isPromoDismissed) {
-        writeBoolean(NTP_SIGNIN_PROMO_DISMISSED, isPromoDismissed);
+    /** Set whether the user dismissed the generic sign in promo from the new tab page. */
+    public void setNewTabPageGenericSigninPromoDismissed(boolean isPromoDismissed) {
+        writeBoolean(NTP_GENERIC_SIGNIN_PROMO_DISMISSED, isPromoDismissed);
+    }
+
+    /** Checks if the user dismissed the personalized sign in promo from the new tab page. */
+    public boolean getNewTabPagePersonalizedSigninPromoDismissed() {
+        return mSharedPreferences.getBoolean(NTP_PERSONALIZED_SIGNIN_PROMO_DISMISSED, false);
+    }
+
+    /** Set whether the user dismissed the personalized sign in promo from the new tab page. */
+    public void setNewTabPagePersonalizedSigninPromoDismissed(boolean isPromoDismissed) {
+        writeBoolean(NTP_PERSONALIZED_SIGNIN_PROMO_DISMISSED, isPromoDismissed);
     }
 
     /** Gets the number of times the New Tab Page first card animation has been run. */
@@ -414,6 +409,32 @@ public class ChromePreferenceManager {
      */
     public boolean isChromeHomeEnabled() {
         return mSharedPreferences.getBoolean(CHROME_HOME_ENABLED_KEY, false);
+    }
+
+    /** Marks that the content suggestions surface has been shown. */
+    public void setSuggestionsSurfaceShown() {
+        writeBoolean(CONTENT_SUGGESTIONS_SHOWN_KEY, true);
+    }
+
+    /** Returns whether the content suggestions surface has ever been shown. */
+    public boolean getSuggestionsSurfaceShown() {
+        return mSharedPreferences.getBoolean(CONTENT_SUGGESTIONS_SHOWN_KEY, false);
+    }
+
+    /**
+     * Set group of omnibox placeholder experiment
+     * @param group group name of omnibox placeholder experiment
+     */
+    public void setOmniboxPlaceholderGroup(String group) {
+        writeString(OMNIBOX_PLACEHOLDER_GROUP, group);
+    }
+
+    /**
+     * Get group of omnibox placeholder experiment
+     * @return String of omnibox placeholder experiment group name, empty string if not set
+     */
+    public String getOmniboxPlaceholderGroup() {
+        return mSharedPreferences.getString(OMNIBOX_PLACEHOLDER_GROUP, "");
     }
 
     /**

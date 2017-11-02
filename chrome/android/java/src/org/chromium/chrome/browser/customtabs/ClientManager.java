@@ -12,8 +12,10 @@ import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.IBinder;
 import android.os.SystemClock;
+import android.support.annotation.NonNull;
 import android.support.customtabs.CustomTabsCallback;
 import android.support.customtabs.CustomTabsService;
+import android.support.customtabs.CustomTabsService.Relation;
 import android.support.customtabs.CustomTabsSessionToken;
 import android.text.TextUtils;
 import android.util.SparseBooleanArray;
@@ -120,14 +122,15 @@ class ClientManager {
     private static class SessionParams {
         public final int uid;
         public final DisconnectCallback disconnectCallback;
-        public final String packageName;
         public final PostMessageHandler postMessageHandler;
         public boolean mIgnoreFragments;
         public boolean lowConfidencePrediction;
         public boolean highConfidencePrediction;
+        private String mPackageName;
         private boolean mShouldHideDomain;
         private boolean mShouldPrerenderOnCellular;
         private boolean mShouldSendNavigationInfo;
+        private boolean mShouldSendBottomBarScrollState;
         private KeepAliveServiceConnection mKeepAliveConnection;
         private String mPredictedUrl;
         private long mLastMayLaunchUrlTimestamp;
@@ -136,10 +139,25 @@ class ClientManager {
         public SessionParams(Context context, int uid, DisconnectCallback callback,
                 PostMessageHandler postMessageHandler) {
             this.uid = uid;
-            packageName = getPackageName(context, uid);
+            mPackageName = getPackageName(context, uid);
             disconnectCallback = callback;
             this.postMessageHandler = postMessageHandler;
+            if (postMessageHandler != null) this.postMessageHandler.setPackageName(mPackageName);
             this.mSpeculationMode = CustomTabsConnection.SpeculationParams.PRERENDER;
+        }
+
+        /**
+         * Overrides package name with given String. TO be used for testing only.
+         */
+        void overridePackageNameForTesting(String newPackageName) {
+            mPackageName = newPackageName;
+        }
+
+        /**
+         * @return The package name for this session.
+         */
+        public String getPackageName() {
+            return mPackageName;
         }
 
         private static String getPackageName(Context context, int uid) {
@@ -211,7 +229,7 @@ class ClientManager {
      * @return true for success.
      */
     public boolean newSession(CustomTabsSessionToken session, int uid,
-            DisconnectCallback onDisconnect, PostMessageHandler postMessageHandler) {
+            DisconnectCallback onDisconnect, @NonNull PostMessageHandler postMessageHandler) {
         if (session == null) return false;
         SessionParams params = new SessionParams(mContext, uid, onDisconnect, postMessageHandler);
         synchronized (this) {
@@ -326,8 +344,7 @@ class ClientManager {
     public synchronized boolean bindToPostMessageServiceForSession(CustomTabsSessionToken session) {
         SessionParams params = mSessionParams.get(session);
         if (params == null) return false;
-        return params.postMessageHandler.bindSessionToPostMessageService(
-                mContext, params.packageName);
+        return params.postMessageHandler.bindSessionToPostMessageService();
     }
 
     /**
@@ -338,6 +355,26 @@ class ClientManager {
         SessionParams params = mSessionParams.get(session);
         if (params == null) return;
         params.postMessageHandler.initializeWithOrigin(origin);
+    }
+
+    /**
+     * See {@link PostMessageHandler#verifyAndInitializeWithOrigin(Uri, int)}.
+     */
+    public synchronized void verifyAndInitializeWithPostMessageOriginForSession(
+            CustomTabsSessionToken session, Uri origin, @Relation int relation) {
+        SessionParams params = mSessionParams.get(session);
+        if (params == null) return;
+        params.postMessageHandler.verifyAndInitializeWithOrigin(origin, relation);
+    }
+
+    /**
+     * @return The postMessage origin for the given session.
+     */
+    @VisibleForTesting
+    synchronized Uri getPostMessageOriginForSessionForTesting(CustomTabsSessionToken session) {
+        SessionParams params = mSessionParams.get(session);
+        if (params == null) return null;
+        return params.postMessageHandler.getOriginForTesting();
     }
 
     /**
@@ -354,10 +391,8 @@ class ClientManager {
      * @return The referrer that is associated with the client owning given session.
      */
     public synchronized Referrer getReferrerForSession(CustomTabsSessionToken session) {
-        SessionParams params = mSessionParams.get(session);
-        if (params == null) return null;
-        final String packageName = params.packageName;
-        return IntentHandler.constructValidReferrerForAuthority(packageName);
+        return IntentHandler.constructValidReferrerForAuthority(
+                getClientPackageNameForSession(session));
     }
 
     /**
@@ -365,7 +400,17 @@ class ClientManager {
      */
     public synchronized String getClientPackageNameForSession(CustomTabsSessionToken session) {
         SessionParams params = mSessionParams.get(session);
-        return params == null ? null : params.packageName;
+        return params == null ? null : params.getPackageName();
+    }
+
+    /**
+     * Overrides the package name for the given session to be the given package name. To be used
+     * for testing only.
+     */
+    public synchronized void overridePackageNameForSession(
+            CustomTabsSessionToken session, String packageName) {
+        SessionParams params = mSessionParams.get(session);
+        if (params != null) params.overridePackageNameForTesting(packageName);
     }
 
     /**
@@ -390,6 +435,24 @@ class ClientManager {
     public synchronized void setHideDomainForSession(CustomTabsSessionToken session, boolean hide) {
         SessionParams params = mSessionParams.get(session);
         if (params != null) params.mShouldHideDomain = hide;
+    }
+
+    /**
+     * @return Whether bottom bar scrolling state should be recorded and shared for the session.
+     */
+    public synchronized boolean shouldSendBottomBarScrollStateForSession(
+            CustomTabsSessionToken session) {
+        SessionParams params = mSessionParams.get(session);
+        return params != null ? params.mShouldSendBottomBarScrollState : false;
+    }
+
+    /**
+     * Sets whether bottom bar scrolling state should be recorded and shared for the session.
+     */
+    public synchronized void setSendBottomBarScrollingStateForSessionn(
+            CustomTabsSessionToken session, boolean send) {
+        SessionParams params = mSessionParams.get(session);
+        if (params != null) params.mShouldSendBottomBarScrollState = send;
     }
 
     /**
@@ -471,6 +534,20 @@ class ClientManager {
                               : params.mSpeculationMode;
     }
 
+    /**
+     * Returns whether an origin is first-party with respect to a session, that is if the
+     * application linked to the session has a relation with the provided origin. This does not
+     * calls OriginVerifier, but only checks the cached relations.
+     *
+     * @param session The session.
+     * @param origin Origin to verify
+     */
+    public synchronized boolean isFirstPartyOriginForSession(
+            CustomTabsSessionToken session, Uri origin) {
+        return OriginVerifier.isValidOrigin(getClientPackageNameForSession(session), origin,
+                CustomTabsService.RELATION_USE_AS_ORIGIN);
+    }
+
     /** Tries to bind to a client to keep it alive, and returns true for success. */
     public synchronized boolean keepAliveForSession(CustomTabsSessionToken session, Intent intent) {
         // When an application is bound to a service, its priority is raised to
@@ -543,7 +620,7 @@ class ClientManager {
         if (params == null) return;
         mSessionParams.remove(session);
         if (params.postMessageHandler != null) {
-            params.postMessageHandler.unbindFromContext(mContext);
+            params.postMessageHandler.cleanup(mContext);
         }
         if (params.disconnectCallback != null) params.disconnectCallback.run(session);
         mUidHasCalledWarmup.delete(params.uid);

@@ -42,6 +42,18 @@ ParsedFeaturePolicyDeclaration::ParsedFeaturePolicyDeclaration(
 
 ParsedFeaturePolicyDeclaration::~ParsedFeaturePolicyDeclaration() {}
 
+bool operator==(const ParsedFeaturePolicyDeclaration& lhs,
+                const ParsedFeaturePolicyDeclaration& rhs) {
+  // This method returns true only when the arguments are actually identical,
+  // including the order of elements in the origins vector.
+  // TODO(iclelland): Consider making this return true when comparing equal-
+  // but-not-identical whitelists, or eliminate those comparisons by maintaining
+  // the whiteslists in a normalized form.
+  // https://crbug.com/710324
+  return std::tie(lhs.feature, lhs.matches_all_origins, lhs.origins) ==
+         std::tie(rhs.feature, rhs.matches_all_origins, rhs.origins);
+}
+
 FeaturePolicy::Whitelist::Whitelist() : matches_all_origins_(false) {}
 
 FeaturePolicy::Whitelist::Whitelist(const Whitelist& rhs) = default;
@@ -112,9 +124,8 @@ bool FeaturePolicy::IsFeatureEnabledForOrigin(
   auto whitelist = whitelists_.find(feature);
   if (whitelist != whitelists_.end())
     return whitelist->second->Contains(origin);
-  if (default_policy == FeaturePolicy::FeatureDefault::EnableForAll) {
+  if (default_policy == FeaturePolicy::FeatureDefault::EnableForAll)
     return true;
-  }
   if (default_policy == FeaturePolicy::FeatureDefault::EnableForSelf) {
     // TODO(iclelland): Remove the pointer equality check once it is possible to
     // compare opaque origins successfully against themselves.
@@ -150,6 +161,10 @@ std::unique_ptr<FeaturePolicy> FeaturePolicy::CreateFromParentPolicy(
     const ParsedFeaturePolicyHeader& container_policy,
     const url::Origin& origin,
     const FeaturePolicy::FeatureList& features) {
+  // If there is a non-empty container policy, then there must also be a parent
+  // policy.
+  DCHECK(parent_policy || container_policy.empty());
+
   std::unique_ptr<FeaturePolicy> new_policy =
       base::WrapUnique(new FeaturePolicy(origin, features));
   for (const auto& feature : features) {
@@ -159,9 +174,9 @@ std::unique_ptr<FeaturePolicy> FeaturePolicy::CreateFromParentPolicy(
     } else {
       new_policy->inherited_policies_[feature.first] = false;
     }
-    if (!container_policy.empty())
-      new_policy->AddContainerPolicy(container_policy, parent_policy);
   }
+  if (!container_policy.empty())
+    new_policy->AddContainerPolicy(container_policy, parent_policy);
   return new_policy;
 }
 
@@ -215,16 +230,14 @@ const FeaturePolicy::FeatureList& FeaturePolicy::GetDefaultFeatureList() {
                             FeaturePolicy::FeatureDefault::EnableForAll},
                            {blink::WebFeaturePolicyFeature::kDocumentWrite,
                             FeaturePolicy::FeatureDefault::EnableForAll},
-                           {blink::WebFeaturePolicyFeature::kNotifications,
-                            FeaturePolicy::FeatureDefault::EnableForAll},
-                           {blink::WebFeaturePolicyFeature::kPush,
-                            FeaturePolicy::FeatureDefault::EnableForAll},
                            {blink::WebFeaturePolicyFeature::kSyncScript,
                             FeaturePolicy::FeatureDefault::EnableForAll},
                            {blink::WebFeaturePolicyFeature::kSyncXHR,
                             FeaturePolicy::FeatureDefault::EnableForAll},
-                           {blink::WebFeaturePolicyFeature::kWebRTC,
-                            FeaturePolicy::FeatureDefault::EnableForAll}}));
+                           {blink::WebFeaturePolicyFeature::kUsb,
+                            FeaturePolicy::FeatureDefault::EnableForSelf},
+                           {blink::WebFeaturePolicyFeature::kWebVr,
+                            FeaturePolicy::FeatureDefault::EnableForSelf}}));
   return default_feature_list;
 }
 

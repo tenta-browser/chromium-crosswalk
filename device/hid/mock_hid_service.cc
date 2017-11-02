@@ -6,26 +6,28 @@
 
 namespace device {
 
-MockHidService::MockHidService() {}
+MockHidService::MockHidService() : weak_factory_(this) {}
 
-MockHidService::~MockHidService() {
-  // Shutdown() must be called before the base class destructor.
-  Shutdown();
+MockHidService::~MockHidService() = default;
+
+base::WeakPtr<HidService> MockHidService::GetWeakPtr() {
+  return weak_factory_.GetWeakPtr();
 }
 
 void MockHidService::AddDevice(scoped_refptr<HidDeviceInfo> info) {
   HidService::AddDevice(info);
 }
 
-void MockHidService::RemoveDevice(const HidDeviceId& device_id) {
-  HidService::RemoveDevice(device_id);
+void MockHidService::RemoveDevice(
+    const HidPlatformDeviceId& platform_device_id) {
+  HidService::RemoveDevice(platform_device_id);
 }
 
 void MockHidService::FirstEnumerationComplete() {
   HidService::FirstEnumerationComplete();
 }
 
-const std::map<HidDeviceId, scoped_refptr<HidDeviceInfo>>&
+const std::map<std::string, scoped_refptr<HidDeviceInfo>>&
 MockHidService::devices() const {
   return HidService::devices();
 }

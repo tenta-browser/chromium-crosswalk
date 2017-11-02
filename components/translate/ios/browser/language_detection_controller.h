@@ -24,6 +24,10 @@ namespace base {
 class DictionaryValue;
 }
 
+namespace net {
+class HttpResponseHeaders;
+}
+
 namespace web {
 class NavigationContext;
 class WebState;
@@ -34,7 +38,14 @@ namespace translate {
 class LanguageDetectionController : public web::WebStateObserver {
  public:
   // Language detection details, passed to language detection callbacks.
+  // TODO(crbug.com/715447): Investigate if we can use the existing
+  // detection_details under
+  // components/translate/core/common/language_detection_details.h.
   struct DetectionDetails {
+    DetectionDetails();
+    DetectionDetails(const DetectionDetails& other);
+    ~DetectionDetails();
+
     // The language detected by the content (Content-Language).
     std::string content_language;
 
@@ -43,6 +54,12 @@ class LanguageDetectionController : public web::WebStateObserver {
 
     // The adopted language.
     std::string adopted_language;
+
+    // The language detected by CLD.
+    std::string cld_language;
+
+    // Whether the CLD detection is reliable or not.
+    bool is_cld_reliable;
   };
 
   LanguageDetectionController(web::WebState* web_state,
@@ -60,6 +77,8 @@ class LanguageDetectionController : public web::WebStateObserver {
 
  private:
   FRIEND_TEST_ALL_PREFIXES(LanguageDetectionControllerTest, OnTextCaptured);
+  FRIEND_TEST_ALL_PREFIXES(LanguageDetectionControllerTest,
+                           MissingHttpContentLanguage);
 
   // Starts the page language detection and initiates the translation process.
   void StartLanguageDetection();
@@ -76,6 +95,9 @@ class LanguageDetectionController : public web::WebStateObserver {
                        const std::string& html_lang,
                        const base::string16& text);
 
+  // Extracts "content-language" header into content_language_header_ variable.
+  void ExtractContentLanguageHeader(net::HttpResponseHeaders* headers);
+
   // web::WebStateObserver implementation:
   void PageLoaded(
       web::PageLoadCompletionStatus load_completion_status) override;
@@ -85,6 +107,7 @@ class LanguageDetectionController : public web::WebStateObserver {
   CallbackList language_detection_callbacks_;
   JsLanguageDetectionManager* js_manager_;
   BooleanPrefMember translate_enabled_;
+  std::string content_language_header_;
   base::WeakPtrFactory<LanguageDetectionController> weak_method_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(LanguageDetectionController);

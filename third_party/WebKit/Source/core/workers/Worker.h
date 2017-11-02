@@ -7,6 +7,8 @@
 
 #include "core/workers/InProcessWorkerBase.h"
 
+#include "core/workers/WorkerClients.h"
+
 namespace blink {
 
 class ExceptionState;

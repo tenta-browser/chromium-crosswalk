@@ -56,6 +56,7 @@
 #include "chrome/browser/ui/exclusive_access/exclusive_access_manager.h"
 #include "chrome/browser/ui/extensions/app_launch_params.h"
 #include "chrome/browser/ui/extensions/application_launch.h"
+#include "chrome/browser/ui/javascript_dialogs/javascript_dialog_tab_helper.h"
 #include "chrome/browser/ui/search/search_tab_helper.h"
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
 #include "chrome/browser/ui/startup/startup_browser_creator_impl.h"
@@ -70,7 +71,6 @@
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
-#include "components/app_modal/app_modal_dialog.h"
 #include "components/app_modal/app_modal_dialog_queue.h"
 #include "components/app_modal/javascript_app_modal_dialog.h"
 #include "components/app_modal/native_app_modal_dialog.h"
@@ -126,7 +126,6 @@
 #include "chrome/browser/browser_process.h"
 #endif
 
-using app_modal::AppModalDialog;
 using app_modal::AppModalDialogQueue;
 using app_modal::JavaScriptAppModalDialog;
 using base::ASCIIToUTF16;
@@ -225,7 +224,7 @@ void CloseWindowCallback(Browser* browser) {
 void RunCloseWithAppMenuCallback(Browser* browser) {
   // ShowAppMenu is modal under views. Schedule a task that closes the window.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&CloseWindowCallback, browser));
+      FROM_HERE, base::BindOnce(&CloseWindowCallback, browser));
   chrome::ShowAppMenu(browser);
 }
 
@@ -348,28 +347,15 @@ class RenderViewSizeObserver : public content::WebContentsObserver {
   DISALLOW_COPY_AND_ASSIGN(RenderViewSizeObserver);
 };
 
-// Waits for a failed commit notification.
-class FailedCommitWatcher : public content::WebContentsObserver {
-public:
-  explicit FailedCommitWatcher(content::WebContents* wc)
-      : content::WebContentsObserver(wc) {}
-  void Wait() {
-    run_loop_.Run();
-  }
-
- private:
-  void DidFinishNavigation(
-      content::NavigationHandle* navigation_handle) override {
-    CHECK(!navigation_handle->HasCommitted());
-    run_loop_.Quit();
-  }
-  base::RunLoop run_loop_;
-};
-
 }  // namespace
 
 class BrowserTest : public ExtensionBrowserTest {
  protected:
+  void SetUpOnMainThread() override {
+    ExtensionBrowserTest::SetUpOnMainThread();
+    host_resolver()->AddRule("*", "127.0.0.1");
+  }
+
   // In RTL locales wrap the page title with RTL embedding characters so that it
   // matches the value returned by GetWindowTitle().
   base::string16 LocaleWindowCaptionFromPageTitle(
@@ -487,14 +473,17 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, JavascriptAlertActivatesTab) {
   EXPECT_EQ(0, browser()->tab_strip_model()->active_index());
   WebContents* second_tab = browser()->tab_strip_model()->GetWebContentsAt(1);
   ASSERT_TRUE(second_tab);
+  JavaScriptDialogTabHelper* js_helper =
+      JavaScriptDialogTabHelper::FromWebContents(second_tab);
+  base::RunLoop dialog_wait;
+  js_helper->SetDialogShownCallbackForTesting(dialog_wait.QuitClosure());
   second_tab->GetMainFrame()->ExecuteJavaScriptForTests(
       ASCIIToUTF16("alert('Activate!');"));
-  AppModalDialog* alert = ui_test_utils::WaitForAppModalDialog();
-  alert->CloseModalDialog();
+  dialog_wait.Run();
+  js_helper->HandleJavaScriptDialog(second_tab, true, nullptr);
   EXPECT_EQ(2, browser()->tab_strip_model()->count());
   EXPECT_EQ(1, browser()->tab_strip_model()->active_index());
 }
-
 
 #if defined(OS_WIN) && !defined(NDEBUG)
 // http://crbug.com/114859. Times out frequently on Windows.
@@ -588,7 +577,6 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, ClearPendingOnFailUnlessNTP) {
 // Flaky test, see https://crbug.com/445155.
 IN_PROC_BROWSER_TEST_F(BrowserTest, DISABLED_CrossProcessNavCancelsDialogs) {
   ASSERT_TRUE(embedded_test_server()->Start());
-  host_resolver()->AddRule("www.example.com", "127.0.0.1");
   GURL url(embedded_test_server()->GetURL("/empty.html"));
   ui_test_utils::NavigateToURL(browser(), url);
 
@@ -596,17 +584,19 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, DISABLED_CrossProcessNavCancelsDialogs) {
   // even if the renderer tries to synchronously create more.
   // See http://crbug.com/312490.
   WebContents* contents = browser()->tab_strip_model()->GetActiveWebContents();
+  JavaScriptDialogTabHelper* js_helper =
+      JavaScriptDialogTabHelper::FromWebContents(contents);
+  base::RunLoop dialog_wait;
+  js_helper->SetDialogShownCallbackForTesting(dialog_wait.QuitClosure());
   contents->GetMainFrame()->ExecuteJavaScriptForTests(
       ASCIIToUTF16("alert('one'); alert('two');"));
-  AppModalDialog* alert = ui_test_utils::WaitForAppModalDialog();
-  EXPECT_TRUE(alert->IsValid());
-  AppModalDialogQueue* dialog_queue = AppModalDialogQueue::GetInstance();
-  EXPECT_TRUE(dialog_queue->HasActiveDialog());
+  dialog_wait.Run();
+  EXPECT_TRUE(js_helper->IsShowingDialogForTesting());
 
   // A cross-site navigation should force the dialog to close.
   GURL url2("http://www.example.com/empty.html");
   ui_test_utils::NavigateToURL(browser(), url2);
-  EXPECT_FALSE(dialog_queue->HasActiveDialog());
+  EXPECT_FALSE(js_helper->IsShowingDialogForTesting());
 
   // Make sure input events still work in the renderer process.
   EXPECT_FALSE(contents->GetRenderProcessHost()->IgnoreInputEvents());
@@ -616,18 +606,15 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, DISABLED_CrossProcessNavCancelsDialogs) {
 // subsequent navigations work.  See http://crbug/com/343265.
 IN_PROC_BROWSER_TEST_F(BrowserTest, SadTabCancelsDialogs) {
   ASSERT_TRUE(embedded_test_server()->Start());
-  host_resolver()->AddRule("www.example.com", "127.0.0.1");
   GURL beforeunload_url(embedded_test_server()->GetURL("/beforeunload.html"));
   ui_test_utils::NavigateToURL(browser(), beforeunload_url);
   WebContents* contents = browser()->tab_strip_model()->GetActiveWebContents();
-  // Disable the hang monitor, otherwise there will be a race between the
-  // beforeunload dialog and the beforeunload hang timer.
-  contents->GetMainFrame()->DisableBeforeUnloadHangMonitorForTesting();
+  content::PrepContentsForBeforeUnloadTest(contents);
 
   // Start a navigation to trigger the beforeunload dialog.
   contents->GetMainFrame()->ExecuteJavaScriptForTests(
       ASCIIToUTF16("window.location.href = 'about:blank'"));
-  AppModalDialog* alert = ui_test_utils::WaitForAppModalDialog();
+  JavaScriptAppModalDialog* alert = ui_test_utils::WaitForAppModalDialog();
   EXPECT_TRUE(alert->IsValid());
   AppModalDialogQueue* dialog_queue = AppModalDialogQueue::GetInstance();
   EXPECT_TRUE(dialog_queue->HasActiveDialog());
@@ -654,14 +641,16 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, SadTabCancelsSubframeDialogs) {
       browser(), GURL("data:text/html, <html><body></body></html>"));
 
   // Create an iframe that opens an alert dialog.
+  JavaScriptDialogTabHelper* js_helper =
+      JavaScriptDialogTabHelper::FromWebContents(contents);
+  base::RunLoop dialog_wait;
+  js_helper->SetDialogShownCallbackForTesting(dialog_wait.QuitClosure());
   contents->GetMainFrame()->ExecuteJavaScriptForTests(
       ASCIIToUTF16("f = document.createElement('iframe');"
                    "f.srcdoc = '<script>alert(1)</script>';"
                    "document.body.appendChild(f);"));
-  AppModalDialog* alert = ui_test_utils::WaitForAppModalDialog();
-  EXPECT_TRUE(alert->IsValid());
-  AppModalDialogQueue* dialog_queue = AppModalDialogQueue::GetInstance();
-  EXPECT_TRUE(dialog_queue->HasActiveDialog());
+  dialog_wait.Run();
+  EXPECT_TRUE(js_helper->IsShowingDialogForTesting());
 
   // Crash the renderer process and ensure the dialog is gone.
   content::RenderProcessHost* child_process = contents->GetRenderProcessHost();
@@ -670,7 +659,7 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, SadTabCancelsSubframeDialogs) {
       content::RenderProcessHostWatcher::WATCH_FOR_PROCESS_EXIT);
   child_process->Shutdown(0, false);
   crash_observer.Wait();
-  EXPECT_FALSE(dialog_queue->HasActiveDialog());
+  EXPECT_FALSE(js_helper->IsShowingDialogForTesting());
 
   // Make sure subsequent navigations work.
   GURL url2("data:text/html,foo");
@@ -680,17 +669,19 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, SadTabCancelsSubframeDialogs) {
 // Make sure modal dialogs within a guestview are closed when an interstitial
 // page is showing. See crbug.com/482380.
 IN_PROC_BROWSER_TEST_F(BrowserTest, InterstitialCancelsGuestViewDialogs) {
+  WebContents* contents = browser()->tab_strip_model()->GetActiveWebContents();
+  JavaScriptDialogTabHelper* js_helper =
+      JavaScriptDialogTabHelper::FromWebContents(contents);
+  base::RunLoop dialog_wait;
+  js_helper->SetDialogShownCallbackForTesting(dialog_wait.QuitClosure());
+
   // Navigate to a PDF, which is loaded within a guestview.
   ASSERT_TRUE(embedded_test_server()->Start());
   GURL pdf_with_dialog(embedded_test_server()->GetURL("/alert_dialog.pdf"));
   ui_test_utils::NavigateToURL(browser(), pdf_with_dialog);
 
-  AppModalDialog* alert = ui_test_utils::WaitForAppModalDialog();
-  EXPECT_TRUE(alert->IsValid());
-  AppModalDialogQueue* dialog_queue = AppModalDialogQueue::GetInstance();
-  EXPECT_TRUE(dialog_queue->HasActiveDialog());
-
-  WebContents* contents = browser()->tab_strip_model()->GetActiveWebContents();
+  dialog_wait.Run();
+  EXPECT_TRUE(js_helper->IsShowingDialogForTesting());
 
   TestInterstitialPage* interstitial =
       new TestInterstitialPage(contents, false, GURL());
@@ -698,7 +689,7 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, InterstitialCancelsGuestViewDialogs) {
 
   // The interstitial should have closed the dialog.
   EXPECT_TRUE(contents->ShowingInterstitialPage());
-  EXPECT_FALSE(dialog_queue->HasActiveDialog());
+  EXPECT_FALSE(js_helper->IsShowingDialogForTesting());
 
   interstitial->DontProceed();
 }
@@ -709,19 +700,14 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, ReloadThenCancelBeforeUnload) {
   GURL url(std::string("data:text/html,") + kBeforeUnloadHTML);
   ui_test_utils::NavigateToURL(browser(), url);
   WebContents* contents = browser()->tab_strip_model()->GetActiveWebContents();
-  // Disable the hang monitor, otherwise there will be a race between the
-  // beforeunload dialog and the beforeunload hang timer.
-  contents->GetMainFrame()->DisableBeforeUnloadHangMonitorForTesting();
+  content::PrepContentsForBeforeUnloadTest(contents);
 
   // Navigate to another page, but click cancel in the dialog.  Make sure that
   // the throbber stops spinning.
   chrome::Reload(browser(), WindowOpenDisposition::CURRENT_TAB);
-  AppModalDialog* alert = ui_test_utils::WaitForAppModalDialog();
+  JavaScriptAppModalDialog* alert = ui_test_utils::WaitForAppModalDialog();
 
-  FailedCommitWatcher watcher(contents);
   alert->CloseModalDialog();
-  if (content::IsBrowserSideNavigationEnabled())
-    watcher.Wait();
   EXPECT_FALSE(contents->IsLoading());
 
   // Clear the beforeunload handler so the test can easily exit.
@@ -833,9 +819,7 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, SingleBeforeUnloadAfterRedirect) {
   GURL url(embedded_test_server()->GetURL("/beforeunload.html"));
   ui_test_utils::NavigateToURL(browser(), url);
   WebContents* contents = browser()->tab_strip_model()->GetActiveWebContents();
-  // Disable the hang monitor, otherwise there will be a race between the
-  // beforeunload dialog and the beforeunload hang timer.
-  contents->GetMainFrame()->DisableBeforeUnloadHangMonitorForTesting();
+  content::PrepContentsForBeforeUnloadTest(contents);
 
   // Navigate to a URL that redirects to another process and approve the
   // beforeunload dialog that pops up.
@@ -848,9 +832,8 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, SingleBeforeUnloadAfterRedirect) {
   browser()->OpenURL(OpenURLParams(redirect_url, Referrer(),
                                    WindowOpenDisposition::CURRENT_TAB,
                                    ui::PAGE_TRANSITION_TYPED, false));
-  AppModalDialog* alert = ui_test_utils::WaitForAppModalDialog();
-  EXPECT_TRUE(
-      static_cast<JavaScriptAppModalDialog*>(alert)->is_before_unload_dialog());
+  JavaScriptAppModalDialog* alert = ui_test_utils::WaitForAppModalDialog();
+  EXPECT_TRUE(alert->is_before_unload_dialog());
   alert->native_dialog()->AcceptAppModalDialog();
   nav_observer.Wait();
 
@@ -865,9 +848,7 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, CancelBeforeUnloadResetsURL) {
       base::FilePath::kCurrentDirectory), base::FilePath(kBeforeUnloadFile)));
   ui_test_utils::NavigateToURL(browser(), url);
   WebContents* contents = browser()->tab_strip_model()->GetActiveWebContents();
-  // Disable the hang monitor, otherwise there will be a race between the
-  // beforeunload dialog and the beforeunload hang timer.
-  contents->GetMainFrame()->DisableBeforeUnloadHangMonitorForTesting();
+  content::PrepContentsForBeforeUnloadTest(contents);
 
   // Navigate to a page that triggers a cross-site transition.
   ASSERT_TRUE(embedded_test_server()->Start());
@@ -881,11 +862,8 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, CancelBeforeUnloadResetsURL) {
       content::NotificationService::AllSources());
 
   // Cancel the dialog.
-  AppModalDialog* alert = ui_test_utils::WaitForAppModalDialog();
-  FailedCommitWatcher watcher(contents);
+  JavaScriptAppModalDialog* alert = ui_test_utils::WaitForAppModalDialog();
   alert->CloseModalDialog();
-  if (content::IsBrowserSideNavigationEnabled())
-    watcher.Wait();
   EXPECT_FALSE(contents->IsLoading());
 
   // Verify there are no pending history items after the dialog is cancelled.
@@ -924,12 +902,11 @@ IN_PROC_BROWSER_TEST_F(BrowserTest,
       ->GetMainFrame()
       ->ExecuteJavaScriptWithUserGestureForTests(
           ASCIIToUTF16("w.close(); alert('bar');"));
-  AppModalDialog* alert = ui_test_utils::WaitForAppModalDialog();
+  JavaScriptAppModalDialog* alert = ui_test_utils::WaitForAppModalDialog();
   alert->native_dialog()->AcceptAppModalDialog();
 
   alert = ui_test_utils::WaitForAppModalDialog();
-  EXPECT_FALSE(static_cast<JavaScriptAppModalDialog*>(alert)->
-                   is_before_unload_dialog());
+  EXPECT_FALSE(alert->is_before_unload_dialog());
   alert->native_dialog()->AcceptAppModalDialog();
 }
 
@@ -939,20 +916,18 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, BeforeUnloadVsBeforeReload) {
   GURL url(std::string("data:text/html,") + kBeforeUnloadHTML);
   ui_test_utils::NavigateToURL(browser(), url);
   WebContents* contents = browser()->tab_strip_model()->GetActiveWebContents();
-  // Disable the hang monitor, otherwise there will be a race between the
-  // beforeunload dialog and the beforeunload hang timer.
-  contents->GetMainFrame()->DisableBeforeUnloadHangMonitorForTesting();
+  content::PrepContentsForBeforeUnloadTest(contents);
 
   // Reload the page, and check that we get a "before reload" dialog.
   chrome::Reload(browser(), WindowOpenDisposition::CURRENT_TAB);
-  AppModalDialog* alert = ui_test_utils::WaitForAppModalDialog();
-  EXPECT_TRUE(static_cast<JavaScriptAppModalDialog*>(alert)->is_reload());
+  JavaScriptAppModalDialog* alert = ui_test_utils::WaitForAppModalDialog();
+  EXPECT_TRUE(alert->is_reload());
 
-  // Cancel the reload.
-  FailedCommitWatcher watcher(contents);
-  alert->native_dialog()->CancelAppModalDialog();
-  if (content::IsBrowserSideNavigationEnabled())
-    watcher.Wait();
+  // Proceed with the reload.
+  alert->native_dialog()->AcceptAppModalDialog();
+  EXPECT_TRUE(content::WaitForLoadStop(contents));
+
+  content::PrepContentsForBeforeUnloadTest(contents);
 
   // Navigate to another url, and check that we get a "before unload" dialog.
   GURL url2(url::kAboutBlankURL);
@@ -961,7 +936,7 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, BeforeUnloadVsBeforeReload) {
                                    ui::PAGE_TRANSITION_TYPED, false));
 
   alert = ui_test_utils::WaitForAppModalDialog();
-  EXPECT_FALSE(static_cast<JavaScriptAppModalDialog*>(alert)->is_reload());
+  EXPECT_FALSE(alert->is_reload());
 
   // Accept the navigation so we end up on a page without a beforeunload hook.
   alert->native_dialog()->AcceptAppModalDialog();
@@ -1012,6 +987,8 @@ IN_PROC_BROWSER_TEST_F(BeforeUnloadAtQuitWithTwoWindows,
   // In the first browser, set up a page that has a beforeunload handler.
   GURL url(std::string("data:text/html,") + kBeforeUnloadHTML);
   ui_test_utils::NavigateToURL(browser(), url);
+  WebContents* contents = browser()->tab_strip_model()->GetActiveWebContents();
+  content::PrepContentsForBeforeUnloadTest(contents);
 
   // Open a second browser window at about:blank.
   ui_test_utils::BrowserAddedObserver browser_added_observer;
@@ -1031,10 +1008,9 @@ IN_PROC_BROWSER_TEST_F(BeforeUnloadAtQuitWithTwoWindows,
 
   // The beforeunload handler will run at exit, ensure it does, and then accept
   // it to allow shutdown to proceed.
-  AppModalDialog* alert = ui_test_utils::WaitForAppModalDialog();
+  JavaScriptAppModalDialog* alert = ui_test_utils::WaitForAppModalDialog();
   ASSERT_TRUE(alert);
-  EXPECT_TRUE(
-      static_cast<JavaScriptAppModalDialog*>(alert)->is_before_unload_dialog());
+  EXPECT_TRUE(alert->is_before_unload_dialog());
   alert->native_dialog()->AcceptAppModalDialog();
 
   // But wait there's more! If this test times out, it likely means that the
@@ -1274,7 +1250,6 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, MAYBE_FaviconChange) {
 // tab.
 IN_PROC_BROWSER_TEST_F(BrowserTest, MAYBE_TabClosingWhenRemovingExtension) {
   ASSERT_TRUE(embedded_test_server()->Start());
-  host_resolver()->AddRule("www.example.com", "127.0.0.1");
   GURL url(embedded_test_server()->GetURL("/empty.html"));
   TabStripModel* model = browser()->tab_strip_model();
 
@@ -1322,7 +1297,6 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, AppIdSwitch) {
   ASSERT_EQ(1, browser()->tab_strip_model()->count());
 
   // Load an app.
-  host_resolver()->AddRule("www.example.com", "127.0.0.1");
   ASSERT_TRUE(LoadExtension(test_data_dir_.AppendASCII("app/")));
   const Extension* extension_app = GetExtension();
 
@@ -1357,7 +1331,6 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, ShouldShowLocationBar) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
   // Load an app.
-  host_resolver()->AddRule("www.example.com", "127.0.0.1");
   ASSERT_TRUE(LoadExtension(test_data_dir_.AppendASCII("app/")));
   const Extension* extension_app = GetExtension();
 
@@ -1453,7 +1426,6 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, RestorePinnedTabs) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
   // Add a pinned tab.
-  host_resolver()->AddRule("www.example.com", "127.0.0.1");
   GURL url(embedded_test_server()->GetURL("/empty.html"));
   TabStripModel* model = browser()->tab_strip_model();
   ui_test_utils::NavigateToURL(browser(), url);
@@ -1514,7 +1486,7 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, CloseWithAppMenuOpen) {
 
   // We need a message loop running for menus on windows.
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&RunCloseWithAppMenuCallback, browser()));
+      FROM_HERE, base::BindOnce(&RunCloseWithAppMenuCallback, browser()));
 }
 
 #if !defined(OS_MACOSX)
@@ -1522,7 +1494,6 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, OpenAppWindowLikeNtp) {
   ASSERT_TRUE(embedded_test_server()->Start());
 
   // Load an app
-  host_resolver()->AddRule("www.example.com", "127.0.0.1");
   ASSERT_TRUE(LoadExtension(test_data_dir_.AppendASCII("app/")));
   const Extension* extension_app = GetExtension();
 
@@ -1845,7 +1816,6 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, MAYBE_PageZoom) {
 
 IN_PROC_BROWSER_TEST_F(BrowserTest, InterstitialCommandDisable) {
   ASSERT_TRUE(embedded_test_server()->Start());
-  host_resolver()->AddRule("www.example.com", "127.0.0.1");
   GURL url(embedded_test_server()->GetURL("/empty.html"));
   ui_test_utils::NavigateToURL(browser(), url);
 
@@ -1885,17 +1855,18 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, InterstitialCommandDisable) {
 // that were present on the previous page.  See http://crbug.com/295695.
 IN_PROC_BROWSER_TEST_F(BrowserTest, InterstitialClosesDialogs) {
   ASSERT_TRUE(embedded_test_server()->Start());
-  host_resolver()->AddRule("www.example.com", "127.0.0.1");
   GURL url(embedded_test_server()->GetURL("/empty.html"));
   ui_test_utils::NavigateToURL(browser(), url);
 
   WebContents* contents = browser()->tab_strip_model()->GetActiveWebContents();
+  JavaScriptDialogTabHelper* js_helper =
+      JavaScriptDialogTabHelper::FromWebContents(contents);
+  base::RunLoop dialog_wait;
+  js_helper->SetDialogShownCallbackForTesting(dialog_wait.QuitClosure());
   contents->GetMainFrame()->ExecuteJavaScriptForTests(
       ASCIIToUTF16("alert('Dialog showing!');"));
-  AppModalDialog* alert = ui_test_utils::WaitForAppModalDialog();
-  EXPECT_TRUE(alert->IsValid());
-  AppModalDialogQueue* dialog_queue = AppModalDialogQueue::GetInstance();
-  EXPECT_TRUE(dialog_queue->HasActiveDialog());
+  dialog_wait.Run();
+  EXPECT_TRUE(js_helper->IsShowingDialogForTesting());
 
   TestInterstitialPage* interstitial =
       new TestInterstitialPage(contents, false, GURL());
@@ -1903,7 +1874,7 @@ IN_PROC_BROWSER_TEST_F(BrowserTest, InterstitialClosesDialogs) {
 
   // The interstitial should have closed the dialog.
   EXPECT_TRUE(contents->ShowingInterstitialPage());
-  EXPECT_FALSE(dialog_queue->HasActiveDialog());
+  EXPECT_FALSE(js_helper->IsShowingDialogForTesting());
 
   // Don't proceed and wait for interstitial to detach. This doesn't destroy
   // |contents|.
@@ -2063,7 +2034,14 @@ IN_PROC_BROWSER_TEST_F(BrowserTest2, NoTabsInPopups) {
 }
 #endif
 
-IN_PROC_BROWSER_TEST_F(BrowserTest, WindowOpenClose) {
+// Disabled due to flaky timeout on Win7 Tests (dbg): https://crbug.com/753691.
+#if defined(OS_WIN) && !defined(NDEBUG)
+#define MAYBE_WindowOpenClose DISABLED_WindowOpenClose
+#else
+#define MAYBE_WindowOpenClose WindowOpenClose
+#endif
+
+IN_PROC_BROWSER_TEST_F(BrowserTest, MAYBE_WindowOpenClose) {
   base::CommandLine::ForCurrentProcess()->AppendSwitch(
       switches::kDisablePopupBlocking);
   GURL url = ui_test_utils::GetTestUrl(

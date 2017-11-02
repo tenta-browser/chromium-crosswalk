@@ -55,15 +55,15 @@ ApplyBlockElementCommand::ApplyBlockElementCommand(
     : CompositeEditCommand(document), tag_name_(tag_name) {}
 
 void ApplyBlockElementCommand::DoApply(EditingState* editing_state) {
-  if (!EndingSelection().RootEditableElement())
-    return;
-
   // ApplyBlockElementCommands are only created directly by editor commands'
   // execution, which updates layout before entering doApply().
   DCHECK(!GetDocument().NeedsLayoutTreeUpdate());
 
-  VisiblePosition visible_end = EndingSelection().VisibleEnd();
-  VisiblePosition visible_start = EndingSelection().VisibleStart();
+  if (!RootEditableElementOf(EndingSelection().Base()))
+    return;
+
+  VisiblePosition visible_end = EndingVisibleSelection().VisibleEnd();
+  VisiblePosition visible_start = EndingVisibleSelection().VisibleStart();
   if (visible_start.IsNull() || visible_start.IsOrphan() ||
       visible_end.IsNull() || visible_end.IsOrphan())
     return;
@@ -89,11 +89,11 @@ void ApplyBlockElementCommand::DoApply(EditingState* editing_state) {
     const SelectionInDOMTree& new_selection = builder.Build();
     if (new_selection.IsNone())
       return;
-    SetEndingSelection(new_selection);
+    SetEndingSelection(SelectionForUndoStep::From(new_selection));
   }
 
   VisibleSelection selection =
-      SelectionForParagraphIteration(EndingSelection());
+      SelectionForParagraphIteration(EndingVisibleSelection());
   VisiblePosition start_of_selection = selection.VisibleStart();
   VisiblePosition end_of_selection = selection.VisibleEnd();
   DCHECK(!start_of_selection.IsNull());
@@ -117,12 +117,12 @@ void ApplyBlockElementCommand::DoApply(EditingState* editing_state) {
     VisiblePosition start(VisiblePositionForIndex(start_index, start_scope));
     VisiblePosition end(VisiblePositionForIndex(end_index, end_scope));
     if (start.IsNotNull() && end.IsNotNull()) {
-      SetEndingSelection(
+      SetEndingSelection(SelectionForUndoStep::From(
           SelectionInDOMTree::Builder()
               .Collapse(start.ToPositionWithAffinity())
               .Extend(end.DeepEquivalent())
               .SetIsDirectional(EndingSelection().IsDirectional())
-              .Build());
+              .Build()));
     }
   }
 }
@@ -150,10 +150,11 @@ void ApplyBlockElementCommand::FormatSelection(
     AppendNode(placeholder, blockquote, editing_state);
     if (editing_state->IsAborted())
       return;
-    SetEndingSelection(SelectionInDOMTree::Builder()
-                           .Collapse(Position::BeforeNode(placeholder))
-                           .SetIsDirectional(EndingSelection().IsDirectional())
-                           .Build());
+    SetEndingSelection(SelectionForUndoStep::From(
+        SelectionInDOMTree::Builder()
+            .Collapse(Position::BeforeNode(*placeholder))
+            .SetIsDirectional(EndingSelection().IsDirectional())
+            .Build()));
     return;
   }
 
@@ -279,7 +280,7 @@ void ApplyBlockElementCommand::RangeForParagraphSplittingTextNodesIfNeeded(
       SplitTextNode(start_text, start_offset);
       GetDocument().UpdateStyleAndLayoutTree();
 
-      start = Position::FirstPositionInNode(start_text);
+      start = Position::FirstPositionInNode(*start_text);
       if (is_start_and_end_on_same_node) {
         DCHECK_GE(end.OffsetInContainerNode(), start_offset);
         end = Position(start_text, end.OffsetInContainerNode() - start_offset);
@@ -315,7 +316,7 @@ void ApplyBlockElementCommand::RangeForParagraphSplittingTextNodesIfNeeded(
     }
 
     // If end is in the middle of a text node, split.
-    if (end_style->UserModify() != READ_ONLY &&
+    if (end_style->UserModify() != EUserModify::kReadOnly &&
         !end_style->CollapseWhiteSpace() && end.OffsetInContainerNode() &&
         end.OffsetInContainerNode() <
             end.ComputeContainerNode()->MaxCharacterOffset()) {
@@ -335,7 +336,7 @@ void ApplyBlockElementCommand::RangeForParagraphSplittingTextNodesIfNeeded(
               end_container, end_of_last_paragraph.OffsetInContainerNode() -
                                  end.OffsetInContainerNode());
       }
-      end = Position::LastPositionInNode(end_container->previousSibling());
+      end = Position::LastPositionInNode(*end_container->previousSibling());
     }
   }
 }
@@ -360,7 +361,7 @@ ApplyBlockElementCommand::EndOfNextParagrahSplittingTextNodesIfNeeded(
   if (!style->PreserveNewline() ||
       !end_of_next_paragraph_position.OffsetInContainerNode() ||
       !IsNewLineAtPosition(
-          Position::FirstPositionInNode(end_of_next_paragraph_text)))
+          Position::FirstPositionInNode(*end_of_next_paragraph_text)))
     return end_of_next_paragraph;
 
   // \n at the beginning of the text node immediately following the current

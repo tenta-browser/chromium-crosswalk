@@ -15,10 +15,10 @@
 #include "chrome/browser/ui/login/login_handler.h"
 #include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
 #include "chrome/common/chrome_switches.h"
-#include "chrome/common/chrome_switches.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_controller.h"
+#include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
 #include "net/test/spawned_test_server/spawned_test_server.h"
@@ -63,9 +63,7 @@ class ProxyAuthOnUserBoardScreenTest : public LoginManagerTest {
   ProxyAuthOnUserBoardScreenTest()
       : LoginManagerTest(true /* should_launch_browser */),
         proxy_server_(net::SpawnedTestServer::TYPE_BASIC_AUTH_PROXY,
-                      net::SpawnedTestServer::kLocalhost,
-                      base::FilePath()) {
-  }
+                      base::FilePath()) {}
 
   ~ProxyAuthOnUserBoardScreenTest() override {}
 
@@ -119,13 +117,13 @@ IN_PROC_BROWSER_TEST_F(ProxyAuthOnUserBoardScreenTest,
     OobeScreenWaiter screen_waiter(OobeScreen::SCREEN_GAIA_SIGNIN);
     ProxyAuthDialogWaiter auth_dialog_waiter;
     ASSERT_TRUE(content::ExecuteScript(oobe_ui->web_ui()->GetWebContents(),
-                                       "window.domAutomationController.send(!!("
-                                       "$('add-user-button').click()"
-                                       "));"));
+                                       "$('add-user-button').click()"));
     screen_waiter.Wait();
     auth_dialog_waiter.Wait();
     ASSERT_TRUE(auth_dialog_waiter.login_handler());
+    auth_dialog_waiter.login_handler()->CancelAuth();
   }
+  base::RunLoop().RunUntilIdle();
 }
 
 }  // namespace chromeos

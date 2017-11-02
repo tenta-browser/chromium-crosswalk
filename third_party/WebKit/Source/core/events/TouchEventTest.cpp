@@ -11,7 +11,7 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-using testing::ElementsAre;
+using ::testing::ElementsAre;
 
 namespace blink {
 
@@ -42,7 +42,7 @@ class ConsoleCapturingChromeClient : public EmptyChromeClient {
   std::vector<MessageSource> message_sources_;
 };
 
-class TouchEventTest : public testing::Test {
+class TouchEventTest : public ::testing::Test {
  public:
   TouchEventTest() {
     chrome_client_ = new ConsoleCapturingChromeClient();
@@ -64,8 +64,9 @@ class TouchEventTest : public testing::Test {
   TouchEvent* EventWithDispatchType(WebInputEvent::DispatchType dispatch_type) {
     WebTouchEvent web_touch_event(WebInputEvent::kTouchStart, 0, 0);
     web_touch_event.dispatch_type = dispatch_type;
-    return TouchEvent::Create(web_touch_event, nullptr, nullptr, nullptr,
-                              "touchstart", &Window(), kTouchActionAuto);
+    return TouchEvent::Create(WebCoalescedInputEvent(web_touch_event), nullptr,
+                              nullptr, nullptr, "touchstart", &Window(),
+                              TouchAction::kTouchActionAuto);
   }
 
  private:
@@ -86,11 +87,11 @@ TEST_F(TouchEventTest, PreventDefaultUncancelable) {
   EXPECT_THAT(MessageSources(), ElementsAre(kJSMessageSource));
 
   EXPECT_TRUE(UseCounter::IsCounted(
-      GetDocument(), UseCounter::kUncancellableTouchEventPreventDefaulted));
+      GetDocument(), WebFeature::kUncancelableTouchEventPreventDefaulted));
   EXPECT_FALSE(UseCounter::IsCounted(
       GetDocument(),
-      UseCounter::
-          kUncancellableTouchEventDueToMainThreadResponsivenessPreventDefaulted));
+      WebFeature::
+          kUncancelableTouchEventDueToMainThreadResponsivenessPreventDefaulted));
 }
 
 TEST_F(TouchEventTest,
@@ -109,11 +110,11 @@ TEST_F(TouchEventTest,
   EXPECT_THAT(MessageSources(), ElementsAre(kInterventionMessageSource));
 
   EXPECT_TRUE(UseCounter::IsCounted(
-      GetDocument(), UseCounter::kUncancellableTouchEventPreventDefaulted));
+      GetDocument(), WebFeature::kUncancelableTouchEventPreventDefaulted));
   EXPECT_TRUE(UseCounter::IsCounted(
       GetDocument(),
-      UseCounter::
-          kUncancellableTouchEventDueToMainThreadResponsivenessPreventDefaulted));
+      WebFeature::
+          kUncancelableTouchEventDueToMainThreadResponsivenessPreventDefaulted));
 }
 
 TEST_F(TouchEventTest,
@@ -132,7 +133,7 @@ TEST_F(TouchEventTest,
   EXPECT_THAT(MessageSources(), ElementsAre(kInterventionMessageSource));
 }
 
-class TouchEventTestNoFrame : public testing::Test {};
+class TouchEventTestNoFrame : public ::testing::Test {};
 
 TEST_F(TouchEventTestNoFrame, PreventDefaultDoesntRequireFrame) {
   TouchEvent::Create()->preventDefault();

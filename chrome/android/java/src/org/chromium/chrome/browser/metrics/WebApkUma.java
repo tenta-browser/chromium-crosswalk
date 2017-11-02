@@ -4,7 +4,16 @@
 
 package org.chromium.chrome.browser.metrics;
 
+import android.content.ContentResolver;
+import android.os.AsyncTask;
+import android.os.Build;
+import android.os.Environment;
+import android.os.StatFs;
+import android.provider.Settings;
+
+import org.chromium.base.ContextUtils;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.webapk.lib.common.WebApkConstants;
 
 import java.util.concurrent.TimeUnit;
 
@@ -38,7 +47,11 @@ public class WebApkUma {
     public static final int GOOGLE_PLAY_INSTALL_FAILED_DOWNLOAD_ERROR = 8;
     public static final int GOOGLE_PLAY_INSTALL_FAILED_INSTALL_ERROR = 9;
     public static final int GOOGLE_PLAY_INSTALL_FAILED_INSTALL_TIMEOUT = 10;
-    public static final int GOOGLE_PLAY_INSTALL_RESULT_MAX = 11;
+    public static final int GOOGLE_PLAY_INSTALL_REQUEST_FAILED_POLICY_DISABLED = 11;
+    public static final int GOOGLE_PLAY_INSTALL_REQUEST_FAILED_UNKNOWN_ACCOUNT = 12;
+    public static final int GOOGLE_PLAY_INSTALL_REQUEST_FAILED_NETWORK_ERROR = 13;
+    public static final int GOOGLE_PLAY_INSTALL_REQUSET_FAILED_RESOLVE_ERROR = 14;
+    public static final int GOOGLE_PLAY_INSTALL_RESULT_MAX = 14;
 
     public static final String HISTOGRAM_UPDATE_REQUEST_SENT =
             "WebApk.Update.RequestSent";
@@ -47,7 +60,7 @@ public class WebApkUma {
 
     private static final int WEBAPK_OPEN_MAX = 3;
     public static final int WEBAPK_OPEN_LAUNCH_SUCCESS = 0;
-    public static final int WEBAPK_OPEN_NO_LAUNCH_INTENT = 1;
+    // Obsolete: WEBAPK_OPEN_NO_LAUNCH_INTENT = 1;
     public static final int WEBAPK_OPEN_ACTIVITY_NOT_FOUND = 2;
 
     /**
@@ -90,9 +103,133 @@ public class WebApkUma {
                 "WebApk.Install.GooglePlayInstallResult", result, GOOGLE_PLAY_INSTALL_RESULT_MAX);
     }
 
+    /** Records the error code if installing a WebAPK via Google Play fails. */
+    public static void recordGooglePlayInstallErrorCode(int errorCode) {
+        // Don't use an enumerated histogram as there are > 30 potential error codes. In practice,
+        // a given client will always get the same error code.
+        RecordHistogram.recordSparseSlowlyHistogram(
+                "WebApk.Install.GooglePlayErrorCode", Math.min(errorCode, 1000));
+    }
+
+    /**
+     * Records whether updating a WebAPK from Google Play succeeded. If not, records the reason
+     * that the update failed.
+     */
+    public static void recordGooglePlayUpdateResult(int result) {
+        assert result >= 0 && result < GOOGLE_PLAY_INSTALL_RESULT_MAX;
+        RecordHistogram.recordEnumeratedHistogram(
+                "WebApk.Update.GooglePlayUpdateResult", result, GOOGLE_PLAY_INSTALL_RESULT_MAX);
+    }
+
     /** Records the duration of a WebAPK session (from launch/foreground to background). */
     public static void recordWebApkSessionDuration(long duration) {
         RecordHistogram.recordLongTimesHistogram(
                 "WebApk.Session.TotalDuration", duration, TimeUnit.MILLISECONDS);
+    }
+
+    /** Records the amount of time that it takes to bind to the play install service. */
+    public static void recordGooglePlayBindDuration(long durationMs) {
+        RecordHistogram.recordTimesHistogram(
+                "WebApk.Install.GooglePlayBindDuration", durationMs, TimeUnit.MILLISECONDS);
+    }
+
+    /** Records the current Shell APK version. */
+    public static void recordShellApkVersion(int shellApkVersion, String packageName) {
+        String name = packageName.startsWith(WebApkConstants.WEBAPK_PACKAGE_PREFIX)
+                ? "WebApk.ShellApkVersion.BrowserApk"
+                : "WebApk.ShellApkVersion.UnboundApk";
+        RecordHistogram.recordSparseSlowlyHistogram(name, shellApkVersion);
+    }
+
+    /**
+     * Recorded when a WebAPK is launched from the homescreen. Records the time elapsed since the
+     * previous WebAPK launch. Not recorded the first time that a WebAPK is launched.
+     */
+    public static void recordLaunchInterval(long intervalMs) {
+        RecordHistogram.recordCustomTimesHistogram("WebApk.LaunchInterval", intervalMs,
+                TimeUnit.HOURS.toMillis(1), TimeUnit.DAYS.toMillis(30), TimeUnit.MILLISECONDS, 50);
+    }
+
+    /**
+     * Log the estimated amount of space above the minimum free space threshold that can be used
+     * for WebAPK installation in UMA.
+     */
+    @SuppressWarnings("deprecation")
+    public static void logAvailableSpaceAboveLowSpaceLimitInUMA(boolean installSucceeded) {
+        // ContentResolver APIs are usually heavy, do it in AsyncTask.
+        new AsyncTask<Void, Void, Long>() {
+            long mPartitionAvailableBytes;
+            @Override
+            protected Long doInBackground(Void... params) {
+                StatFs partitionStats =
+                        new StatFs(Environment.getDataDirectory().getAbsolutePath());
+                long partitionTotalBytes;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
+                    mPartitionAvailableBytes = partitionStats.getAvailableBytes();
+                    partitionTotalBytes = partitionStats.getTotalBytes();
+                } else {
+                    // these APIs were deprecated in API level 18.
+                    long blockSize = partitionStats.getBlockSize();
+                    mPartitionAvailableBytes = blockSize
+                            * (long) partitionStats.getAvailableBlocks();
+                    partitionTotalBytes = blockSize * (long) partitionStats.getBlockCount();
+                }
+                return getLowSpaceLimitBytes(partitionTotalBytes);
+            }
+
+            @Override
+            protected void onPostExecute(Long minimumFreeBytes) {
+                long availableBytesForInstallation = mPartitionAvailableBytes - minimumFreeBytes;
+                int availableSpaceMb = (int) (availableBytesForInstallation / 1024L / 1024L);
+                // Bound the number to [-1000, 500] and round down to the nearest multiple of 10MB
+                // to avoid exploding the histogram.
+                availableSpaceMb = Math.max(-1000, availableSpaceMb);
+                availableSpaceMb = Math.min(500, availableSpaceMb);
+                availableSpaceMb = availableSpaceMb / 10 * 10;
+
+                if (installSucceeded) {
+                    RecordHistogram.recordSparseSlowlyHistogram(
+                            "WebApk.Install.AvailableSpace.Success", availableSpaceMb);
+                } else {
+                    RecordHistogram.recordSparseSlowlyHistogram(
+                            "WebApk.Install.AvailableSpace.Fail", availableSpaceMb);
+                }
+            }
+        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
+    }
+
+    /**
+     * Mirror the system-derived calculation of reserved bytes and return that value.
+     */
+    private static long getLowSpaceLimitBytes(long partitionTotalBytes) {
+        // Copied from android/os/storage/StorageManager.java
+        final int defaultThresholdPercentage = 10;
+        // Copied from android/os/storage/StorageManager.java
+        final long defaultThresholdMaxBytes = 500 * 1024 * 1024;
+        // Copied from android/provider/Settings.java
+        final String sysStorageThresholdPercentage = "sys_storage_threshold_percentage";
+        // Copied from android/provider/Settings.java
+        final String sysStorageThresholdMaxBytes = "sys_storage_threshold_max_bytes";
+
+        ContentResolver resolver = ContextUtils.getApplicationContext().getContentResolver();
+        int minFreePercent = 0;
+        long minFreeBytes = 0;
+
+        // Retrieve platform-appropriate values first
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
+            minFreePercent = Settings.Global.getInt(
+                    resolver, sysStorageThresholdPercentage, defaultThresholdPercentage);
+            minFreeBytes = Settings.Global.getLong(
+                    resolver, sysStorageThresholdMaxBytes, defaultThresholdMaxBytes);
+        } else {
+            minFreePercent = Settings.Secure.getInt(
+                    resolver, sysStorageThresholdPercentage, defaultThresholdPercentage);
+            minFreeBytes = Settings.Secure.getLong(
+                    resolver, sysStorageThresholdMaxBytes, defaultThresholdMaxBytes);
+        }
+
+        long minFreePercentInBytes = (partitionTotalBytes * minFreePercent) / 100;
+
+        return Math.min(minFreeBytes, minFreePercentInBytes);
     }
 }

@@ -26,15 +26,15 @@
 
 #include "core/layout/LayoutMenuList.h"
 
+#include <math.h>
 #include "core/dom/AXObjectCache.h"
 #include "core/dom/NodeComputedStyle.h"
-#include "core/frame/FrameView.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/html/HTMLOptionElement.h"
 #include "core/html/HTMLSelectElement.h"
 #include "core/layout/LayoutText.h"
 #include "core/layout/LayoutTheme.h"
 #include "platform/text/PlatformLocale.h"
-#include <math.h>
 
 namespace blink {
 
@@ -99,9 +99,10 @@ void LayoutMenuList::AdjustInnerStyle() {
 
   Length padding_start = Length(
       LayoutTheme::GetTheme().PopupInternalPaddingStart(StyleRef()), kFixed);
-  Length padding_end = Length(LayoutTheme::GetTheme().PopupInternalPaddingEnd(
-                                  GetFrameView()->GetHostWindow(), StyleRef()),
-                              kFixed);
+  Length padding_end =
+      Length(LayoutTheme::GetTheme().PopupInternalPaddingEnd(
+                 GetFrameView()->GetChromeClient(), StyleRef()),
+             kFixed);
   inner_style.SetPaddingLeft(StyleRef().Direction() == TextDirection::kLtr
                                  ? padding_start
                                  : padding_end);
@@ -126,8 +127,7 @@ void LayoutMenuList::AdjustInnerStyle() {
   }
 
   // LayoutMenuList::ControlClipRect() depends on inner_block_->ContentsSize().
-  if (RuntimeEnabledFeatures::slimmingPaintInvalidationEnabled())
-    SetNeedsPaintPropertyUpdate();
+  SetNeedsPaintPropertyUpdate();
 }
 
 HTMLSelectElement* LayoutMenuList::SelectElement() const {
@@ -143,8 +143,7 @@ void LayoutMenuList::AddChild(LayoutObject* new_child,
     cache->ChildrenChanged(this);
 
   // LayoutMenuList::ControlClipRect() depends on inner_block_->ContentsSize().
-  if (RuntimeEnabledFeatures::slimmingPaintInvalidationEnabled())
-    SetNeedsPaintPropertyUpdate();
+  SetNeedsPaintPropertyUpdate();
 }
 
 void LayoutMenuList::RemoveChild(LayoutObject* old_child) {
@@ -306,9 +305,6 @@ void LayoutMenuList::DidUpdateActiveOption(HTMLOptionElement* option) {
   if (last_active_index_ == option_index)
     return;
   last_active_index_ = option_index;
-
-  if (option_index < 0)
-    return;
 
   // We skip sending accessiblity notifications for the very first option,
   // otherwise we get extra focus and select events that are undesired.

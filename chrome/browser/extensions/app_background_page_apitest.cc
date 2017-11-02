@@ -7,6 +7,7 @@
 #include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_restrictions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
 #include "chrome/browser/background/background_contents_service.h"
@@ -24,6 +25,8 @@
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "content/public/browser/notification_service.h"
+#include "content/public/browser/render_frame_host.h"
+#include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_notification_tracker.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/browser/process_manager.h"
@@ -32,6 +35,7 @@
 #include "extensions/test/extension_test_message_listener.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "url/gurl.h"
 
 #if !defined(DISABLE_NACL)
 #include "components/nacl/browser/nacl_process_host.h"
@@ -52,8 +56,15 @@ class AppBackgroundPageApiTest : public ExtensionApiTest {
     command_line->AppendSwitch(extensions::switches::kAllowHTTPBackgroundPage);
   }
 
+  void SetUpOnMainThread() override {
+    ExtensionApiTest::SetUpOnMainThread();
+    host_resolver()->AddRule("*", "127.0.0.1");
+    ASSERT_TRUE(StartEmbeddedTestServer());
+  }
+
   bool CreateApp(const std::string& app_manifest,
                  base::FilePath* app_dir) {
+    base::ThreadRestrictions::ScopedAllowIO allow_io;
     if (!app_dir_.CreateUniqueTempDir()) {
       LOG(ERROR) << "Unable to create a temporary directory.";
       return false;
@@ -101,9 +112,8 @@ class AppBackgroundPageApiTest : public ExtensionApiTest {
 
   void UnloadExtensionViaTask(const std::string& id) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE,
-        base::Bind(&AppBackgroundPageApiTest::UnloadExtension,
-                   base::Unretained(this), id));
+        FROM_HERE, base::BindOnce(&AppBackgroundPageApiTest::UnloadExtension,
+                                  base::Unretained(this), id));
   }
 
  private:
@@ -130,6 +140,7 @@ class AppBackgroundPageNaClTest : public AppBackgroundPageApiTest {
 
  protected:
   void LaunchTestingApp() {
+    base::ThreadRestrictions::ScopedAllowIO allow_io;
     base::FilePath app_dir;
     PathService::Get(chrome::DIR_GEN_TEST_DATA, &app_dir);
     app_dir = app_dir.AppendASCII(
@@ -152,9 +163,6 @@ class AppBackgroundPageNaClTest : public AppBackgroundPageApiTest {
 #endif
 
 IN_PROC_BROWSER_TEST_F(AppBackgroundPageApiTest, MAYBE_Basic) {
-  host_resolver()->AddRule("a.com", "127.0.0.1");
-  ASSERT_TRUE(StartEmbeddedTestServer());
-
   std::string app_manifest = base::StringPrintf(
       "{"
       "  \"name\": \"App\","
@@ -185,9 +193,6 @@ IN_PROC_BROWSER_TEST_F(AppBackgroundPageApiTest, MAYBE_Basic) {
 
 // Crashy, http://crbug.com/69215.
 IN_PROC_BROWSER_TEST_F(AppBackgroundPageApiTest, DISABLED_LacksPermission) {
-  host_resolver()->AddRule("a.com", "127.0.0.1");
-  ASSERT_TRUE(StartEmbeddedTestServer());
-
   std::string app_manifest = base::StringPrintf(
       "{"
       "  \"name\": \"App\","
@@ -213,9 +218,6 @@ IN_PROC_BROWSER_TEST_F(AppBackgroundPageApiTest, DISABLED_LacksPermission) {
 }
 
 IN_PROC_BROWSER_TEST_F(AppBackgroundPageApiTest, ManifestBackgroundPage) {
-  host_resolver()->AddRule("a.com", "127.0.0.1");
-  ASSERT_TRUE(StartEmbeddedTestServer());
-
   std::string app_manifest = base::StringPrintf(
       "{"
       "  \"name\": \"App\","
@@ -246,10 +248,24 @@ IN_PROC_BROWSER_TEST_F(AppBackgroundPageApiTest, ManifestBackgroundPage) {
   // the app was loaded.
   ASSERT_TRUE(WaitForBackgroundMode(true));
 
+  // Verify that the background contents exist.
   const Extension* extension = GetSingleLoadedExtension();
-  ASSERT_TRUE(
-      BackgroundContentsServiceFactory::GetForProfile(browser()->profile())->
-          GetAppBackgroundContents(ASCIIToUTF16(extension->id())));
+  BackgroundContents* background_contents =
+      BackgroundContentsServiceFactory::GetForProfile(browser()->profile())
+          ->GetAppBackgroundContents(ASCIIToUTF16(extension->id()));
+  ASSERT_TRUE(background_contents);
+
+  // Verify that window.opener in the background contents is not set when
+  // creating the background page through the manifest (not through
+  // window.open).
+  EXPECT_FALSE(background_contents->web_contents()->GetOpener());
+  bool window_opener_null_in_js;
+  EXPECT_TRUE(content::ExecuteScriptAndExtractBool(
+      background_contents->web_contents(),
+      "domAutomationController.send(window.opener == null);",
+      &window_opener_null_in_js));
+  EXPECT_TRUE(window_opener_null_in_js);
+
   UnloadExtension(extension->id());
 }
 
@@ -265,10 +281,6 @@ IN_PROC_BROWSER_TEST_F(AppBackgroundPageApiTest, NoJsBackgroundPage) {
   background_deleted_tracker.ListenFor(
       chrome::NOTIFICATION_BACKGROUND_CONTENTS_DELETED,
       content::Source<Profile>(browser()->profile()));
-
-  host_resolver()->AddRule("a.com", "127.0.0.1");
-  ASSERT_TRUE(StartEmbeddedTestServer());
-
   std::string app_manifest = base::StringPrintf(
       "{"
       "  \"name\": \"App\","
@@ -301,18 +313,26 @@ IN_PROC_BROWSER_TEST_F(AppBackgroundPageApiTest, NoJsBackgroundPage) {
   // The test makes sure that window.open returns null.
   ASSERT_TRUE(RunExtensionTest("app_background_page/no_js")) << message_;
   // And after it runs there should be a background page.
-  ASSERT_TRUE(
-      BackgroundContentsServiceFactory::GetForProfile(browser()->profile())->
-          GetAppBackgroundContents(ASCIIToUTF16(extension->id())));
+  BackgroundContents* background_contents =
+      BackgroundContentsServiceFactory::GetForProfile(browser()->profile())
+          ->GetAppBackgroundContents(ASCIIToUTF16(extension->id()));
+  ASSERT_TRUE(background_contents);
+
+  // Verify that window.opener in the background contents is not set when
+  // allow_js_access=false.
+  EXPECT_FALSE(background_contents->web_contents()->GetOpener());
+  bool window_opener_null_in_js;
+  EXPECT_TRUE(content::ExecuteScriptAndExtractBool(
+      background_contents->web_contents(),
+      "domAutomationController.send(window.opener == null);",
+      &window_opener_null_in_js));
+  EXPECT_TRUE(window_opener_null_in_js);
 
   EXPECT_EQ(0u, background_deleted_tracker.size());
   UnloadExtension(extension->id());
 }
 
 IN_PROC_BROWSER_TEST_F(AppBackgroundPageApiTest, NoJsManifestBackgroundPage) {
-  host_resolver()->AddRule("a.com", "127.0.0.1");
-  ASSERT_TRUE(StartEmbeddedTestServer());
-
   std::string app_manifest = base::StringPrintf(
       "{"
       "  \"name\": \"App\","
@@ -339,20 +359,40 @@ IN_PROC_BROWSER_TEST_F(AppBackgroundPageApiTest, NoJsManifestBackgroundPage) {
   ASSERT_TRUE(CreateApp(app_manifest, &app_dir));
   ASSERT_TRUE(LoadExtension(app_dir));
 
-  // The background page should load, but window.open should return null.
+  // The background page should load.
   const Extension* extension = GetSingleLoadedExtension();
-  ASSERT_TRUE(
-      BackgroundContentsServiceFactory::GetForProfile(browser()->profile())->
-          GetAppBackgroundContents(ASCIIToUTF16(extension->id())));
+  BackgroundContents* background_contents =
+      BackgroundContentsServiceFactory::GetForProfile(browser()->profile())
+          ->GetAppBackgroundContents(ASCIIToUTF16(extension->id()));
+  ASSERT_TRUE(background_contents);
+
+  // Verify that window.opener in the background contents is not set when
+  // creating the background page through the manifest (not through
+  // window.open).
+  EXPECT_FALSE(background_contents->web_contents()->GetOpener());
+  bool window_opener_null_in_js;
+  EXPECT_TRUE(content::ExecuteScriptAndExtractBool(
+      background_contents->web_contents(),
+      "domAutomationController.send(window.opener == null);",
+      &window_opener_null_in_js));
+  EXPECT_TRUE(window_opener_null_in_js);
+
+  // window.open should return null.
   ASSERT_TRUE(RunExtensionTest("app_background_page/no_js_manifest")) <<
       message_;
+
+  // Verify that window.opener in the background contents is still not set.
+  EXPECT_FALSE(background_contents->web_contents()->GetOpener());
+  EXPECT_TRUE(content::ExecuteScriptAndExtractBool(
+      background_contents->web_contents(),
+      "domAutomationController.send(window.opener == null);",
+      &window_opener_null_in_js));
+  EXPECT_TRUE(window_opener_null_in_js);
+
   UnloadExtension(extension->id());
 }
 
 IN_PROC_BROWSER_TEST_F(AppBackgroundPageApiTest, OpenTwoBackgroundPages) {
-  host_resolver()->AddRule("a.com", "127.0.0.1");
-  ASSERT_TRUE(StartEmbeddedTestServer());
-
   std::string app_manifest = base::StringPrintf(
       "{"
       "  \"name\": \"App\","
@@ -379,9 +419,6 @@ IN_PROC_BROWSER_TEST_F(AppBackgroundPageApiTest, OpenTwoBackgroundPages) {
 }
 
 IN_PROC_BROWSER_TEST_F(AppBackgroundPageApiTest, OpenTwoPagesWithManifest) {
-  host_resolver()->AddRule("a.com", "127.0.0.1");
-  ASSERT_TRUE(StartEmbeddedTestServer());
-
   std::string app_manifest = base::StringPrintf(
       "{"
       "  \"name\": \"App\","
@@ -414,9 +451,6 @@ IN_PROC_BROWSER_TEST_F(AppBackgroundPageApiTest, OpenTwoPagesWithManifest) {
 
 // Times out occasionally -- see crbug.com/108493
 IN_PROC_BROWSER_TEST_F(AppBackgroundPageApiTest, DISABLED_OpenPopupFromBGPage) {
-  host_resolver()->AddRule("a.com", "127.0.0.1");
-  ASSERT_TRUE(StartEmbeddedTestServer());
-
   std::string app_manifest = base::StringPrintf(
       "{"
       "  \"name\": \"App\","
@@ -443,10 +477,9 @@ IN_PROC_BROWSER_TEST_F(AppBackgroundPageApiTest, DISABLED_OpenPopupFromBGPage) {
   ASSERT_TRUE(RunExtensionTest("app_background_page/bg_open")) << message_;
 }
 
-IN_PROC_BROWSER_TEST_F(AppBackgroundPageApiTest, DISABLED_OpenThenClose) {
-  host_resolver()->AddRule("a.com", "127.0.0.1");
-  ASSERT_TRUE(StartEmbeddedTestServer());
-
+// Partly a regression test for crbug.com/756465. Namely, that window.open
+// correctly matches an app URL with a path component.
+IN_PROC_BROWSER_TEST_F(AppBackgroundPageApiTest, OpenThenClose) {
   std::string app_manifest = base::StringPrintf(
       "{"
       "  \"name\": \"App\","
@@ -454,10 +487,10 @@ IN_PROC_BROWSER_TEST_F(AppBackgroundPageApiTest, DISABLED_OpenThenClose) {
       "  \"manifest_version\": 2,"
       "  \"app\": {"
       "    \"urls\": ["
-      "      \"http://a.com/\""
+      "      \"http://a.com/extensions/api_test\""
       "    ],"
       "    \"launch\": {"
-      "      \"web_url\": \"http://a.com:%u/\""
+      "      \"web_url\": \"http://a.com:%u/extensions/api_test\""
       "    }"
       "  },"
       "  \"permissions\": [\"background\"]"
@@ -477,11 +510,28 @@ IN_PROC_BROWSER_TEST_F(AppBackgroundPageApiTest, DISABLED_OpenThenClose) {
   ASSERT_TRUE(RunExtensionTest("app_background_page/basic_open")) << message_;
   // Background mode should be active now because a background page was created.
   ASSERT_TRUE(WaitForBackgroundMode(true));
-  ASSERT_TRUE(
-      BackgroundContentsServiceFactory::GetForProfile(browser()->profile())->
-          GetAppBackgroundContents(ASCIIToUTF16(extension->id())));
+
+  // Verify that the background contents exist.
+  BackgroundContents* background_contents =
+      BackgroundContentsServiceFactory::GetForProfile(browser()->profile())
+          ->GetAppBackgroundContents(ASCIIToUTF16(extension->id()));
+  ASSERT_TRUE(background_contents);
+
+  // Verify that window.opener in the background contents is set.
+  content::RenderFrameHost* background_opener =
+      background_contents->web_contents()->GetOpener();
+  ASSERT_TRUE(background_opener);
+  std::string window_opener_href;
+  EXPECT_TRUE(content::ExecuteScriptAndExtractString(
+      background_contents->web_contents(),
+      "domAutomationController.send(window.opener.location.href);",
+      &window_opener_href));
+  EXPECT_EQ(window_opener_href,
+            background_opener->GetLastCommittedURL().spec());
+
   // Now close the BackgroundContents.
   ASSERT_TRUE(RunExtensionTest("app_background_page/basic_close")) << message_;
+
   // Background mode should no longer be active.
   ASSERT_TRUE(WaitForBackgroundMode(false));
   ASSERT_FALSE(
@@ -490,9 +540,6 @@ IN_PROC_BROWSER_TEST_F(AppBackgroundPageApiTest, DISABLED_OpenThenClose) {
 }
 
 IN_PROC_BROWSER_TEST_F(AppBackgroundPageApiTest, UnloadExtensionWhileHidden) {
-  host_resolver()->AddRule("a.com", "127.0.0.1");
-  ASSERT_TRUE(StartEmbeddedTestServer());
-
   std::string app_manifest = base::StringPrintf(
       "{"
       "  \"name\": \"App\","

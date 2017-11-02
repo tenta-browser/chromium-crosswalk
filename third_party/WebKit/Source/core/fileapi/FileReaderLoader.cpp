@@ -31,51 +31,44 @@
 #include "core/fileapi/FileReaderLoader.h"
 
 #include <memory>
-#include "core/dom/DOMArrayBuffer.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/fileapi/Blob.h"
 #include "core/fileapi/FileReaderLoaderClient.h"
 #include "core/html/parser/TextResourceDecoder.h"
 #include "core/loader/ThreadableLoader.h"
+#include "core/typed_arrays/DOMArrayBuffer.h"
 #include "platform/blob/BlobRegistry.h"
 #include "platform/blob/BlobURL.h"
 #include "platform/loader/fetch/FetchInitiatorTypeNames.h"
 #include "platform/loader/fetch/ResourceError.h"
+#include "platform/loader/fetch/ResourceLoaderOptions.h"
 #include "platform/loader/fetch/ResourceRequest.h"
 #include "platform/loader/fetch/ResourceResponse.h"
+#include "platform/loader/fetch/TextResourceDecoderOptions.h"
+#include "platform/wtf/PtrUtil.h"
+#include "platform/wtf/RefPtr.h"
+#include "platform/wtf/Vector.h"
+#include "platform/wtf/text/Base64.h"
+#include "platform/wtf/text/StringBuilder.h"
 #include "public/platform/WebURLRequest.h"
-#include "wtf/PassRefPtr.h"
-#include "wtf/PtrUtil.h"
-#include "wtf/RefPtr.h"
-#include "wtf/Vector.h"
-#include "wtf/text/Base64.h"
-#include "wtf/text/StringBuilder.h"
+#include "v8/include/v8.h"
 
 namespace blink {
 
 FileReaderLoader::FileReaderLoader(ReadType read_type,
                                    FileReaderLoaderClient* client)
-    : read_type_(read_type),
-      client_(client),
-      is_raw_data_converted_(false),
-      string_result_(""),
-      finished_loading_(false),
-      bytes_loaded_(0),
-      total_bytes_(-1),
-      has_range_(false),
-      range_start_(0),
-      range_end_(0),
-      error_code_(FileError::kOK) {}
+    : read_type_(read_type), client_(client) {}
 
 FileReaderLoader::~FileReaderLoader() {
   Cleanup();
+  UnadjustReportedMemoryUsageToV8();
   if (!url_for_reading_.IsEmpty()) {
     BlobRegistry::RevokePublicBlobURL(url_for_reading_);
   }
 }
 
 void FileReaderLoader::Start(ExecutionContext* execution_context,
-                             PassRefPtr<BlobDataHandle> blob_data) {
+                             RefPtr<BlobDataHandle> blob_data) {
   DCHECK(execution_context);
   // The blob is read by routing through the request handling layer given a
   // temporary public url.
@@ -96,24 +89,16 @@ void FileReaderLoader::Start(ExecutionContext* execution_context,
   // FIXME: Should this really be 'internal'? Do we know anything about the
   // actual request that generated this fetch?
   request.SetRequestContext(WebURLRequest::kRequestContextInternal);
+  request.SetFetchRequestMode(WebURLRequest::kFetchRequestModeSameOrigin);
 
   request.SetHTTPMethod(HTTPNames::GET);
-  if (has_range_)
-    request.SetHTTPHeaderField(
-        HTTPNames::Range,
-        AtomicString(String::Format("bytes=%d-%d", range_start_, range_end_)));
 
   ThreadableLoaderOptions options;
-  options.preflight_policy = kConsiderPreflight;
-  options.cross_origin_request_policy = kDenyCrossOriginRequests;
-  // FIXME: Is there a directive to which this load should be subject?
-  options.content_security_policy_enforcement =
-      kDoNotEnforceContentSecurityPolicy;
-  // Use special initiator to hide the request from the inspector.
-  options.initiator = FetchInitiatorTypeNames::internal;
 
   ResourceLoaderOptions resource_loader_options;
-  resource_loader_options.allow_credentials = kAllowStoredCredentials;
+  // Use special initiator to hide the request from the inspector.
+  resource_loader_options.initiator_info.name =
+      FetchInitiatorTypeNames::internal;
 
   if (client_) {
     DCHECK(!loader_);
@@ -143,7 +128,25 @@ void FileReaderLoader::Cleanup() {
     string_result_ = "";
     is_raw_data_converted_ = true;
     decoder_.reset();
+    array_buffer_result_ = nullptr;
+    UnadjustReportedMemoryUsageToV8();
   }
+}
+
+void FileReaderLoader::AdjustReportedMemoryUsageToV8(int64_t usage) {
+  if (!usage)
+    return;
+  memory_usage_reported_to_v8_ += usage;
+  v8::Isolate::GetCurrent()->AdjustAmountOfExternalAllocatedMemory(usage);
+  DCHECK_GE(memory_usage_reported_to_v8_, 0);
+}
+
+void FileReaderLoader::UnadjustReportedMemoryUsageToV8() {
+  if (!memory_usage_reported_to_v8_)
+    return;
+  v8::Isolate::GetCurrent()->AdjustAmountOfExternalAllocatedMemory(
+      -memory_usage_reported_to_v8_);
+  memory_usage_reported_to_v8_ = 0;
 }
 
 void FileReaderLoader::DidReceiveResponse(
@@ -162,10 +165,6 @@ void FileReaderLoader::DidReceiveResponse(
   long long initial_buffer_length = -1;
 
   if (total_bytes_ >= 0) {
-    initial_buffer_length = total_bytes_;
-  } else if (has_range_) {
-    // Set m_totalBytes and allocate a buffer based on the specified range.
-    total_bytes_ = 1LL + range_end_ - range_start_;
     initial_buffer_length = total_bytes_;
   } else {
     // Nothing is known about the size of the resource. Normalize
@@ -230,6 +229,7 @@ void FileReaderLoader::DidReceiveData(const char* data, unsigned data_length) {
   }
   bytes_loaded_ += bytes_appended;
   is_raw_data_converted_ = false;
+  AdjustReportedMemoryUsageToV8(bytes_appended);
 
   if (client_)
     client_->DidReceiveData();
@@ -285,17 +285,19 @@ FileError::ErrorCode FileReaderLoader::HttpStatusCodeToErrorCode(
 
 DOMArrayBuffer* FileReaderLoader::ArrayBufferResult() {
   DCHECK_EQ(read_type_, kReadAsArrayBuffer);
+  if (array_buffer_result_)
+    return array_buffer_result_;
 
   // If the loading is not started or an error occurs, return an empty result.
   if (!raw_data_ || error_code_)
     return nullptr;
 
-  if (array_buffer_result_)
-    return array_buffer_result_;
-
   DOMArrayBuffer* result = DOMArrayBuffer::Create(raw_data_->ToArrayBuffer());
   if (finished_loading_) {
     array_buffer_result_ = result;
+    AdjustReportedMemoryUsageToV8(
+        -1 * static_cast<int64_t>(raw_data_->ByteLength()));
+    raw_data_.reset();
   }
   return result;
 }
@@ -304,44 +306,48 @@ String FileReaderLoader::StringResult() {
   DCHECK_NE(read_type_, kReadAsArrayBuffer);
   DCHECK_NE(read_type_, kReadByClient);
 
-  // If the loading is not started or an error occurs, return an empty result.
-  if (!raw_data_ || error_code_)
-    return string_result_;
-
-  // If already converted from the raw data, return the result now.
-  if (is_raw_data_converted_)
+  if (!raw_data_ || error_code_ || is_raw_data_converted_)
     return string_result_;
 
   switch (read_type_) {
     case kReadAsArrayBuffer:
       // No conversion is needed.
-      break;
+      return string_result_;
     case kReadAsBinaryString:
-      string_result_ = raw_data_->ToString();
-      is_raw_data_converted_ = true;
+      SetStringResult(raw_data_->ToString());
       break;
     case kReadAsText:
-      ConvertToText();
+      SetStringResult(ConvertToText());
       break;
     case kReadAsDataURL:
       // Partial data is not supported when reading as data URL.
       if (finished_loading_)
-        ConvertToDataURL();
+        SetStringResult(ConvertToDataURL());
       break;
     default:
       NOTREACHED();
   }
 
+  if (finished_loading_) {
+    DCHECK(is_raw_data_converted_);
+    AdjustReportedMemoryUsageToV8(
+        -1 * static_cast<int64_t>(raw_data_->ByteLength()));
+    raw_data_.reset();
+  }
   return string_result_;
 }
 
-void FileReaderLoader::ConvertToText() {
+void FileReaderLoader::SetStringResult(const String& result) {
+  AdjustReportedMemoryUsageToV8(
+      -1 * static_cast<int64_t>(string_result_.CharactersSizeInBytes()));
   is_raw_data_converted_ = true;
+  string_result_ = result;
+  AdjustReportedMemoryUsageToV8(string_result_.CharactersSizeInBytes());
+}
 
-  if (!bytes_loaded_) {
-    string_result_ = "";
-    return;
-  }
+String FileReaderLoader::ConvertToText() {
+  if (!bytes_loaded_)
+    return "";
 
   // Decode the data.
   // The File API spec says that we should use the supplied encoding if it is
@@ -350,28 +356,26 @@ void FileReaderLoader::ConvertToText() {
   // override the provided encoding.
   // FIXME: consider supporting incremental decoding to improve the perf.
   StringBuilder builder;
-  if (!decoder_)
-    decoder_ = TextResourceDecoder::Create(
-        "text/plain", encoding_.IsValid() ? encoding_ : UTF8Encoding());
+  if (!decoder_) {
+    decoder_ = TextResourceDecoder::Create(TextResourceDecoderOptions(
+        TextResourceDecoderOptions::kPlainTextContent,
+        encoding_.IsValid() ? encoding_ : UTF8Encoding()));
+  }
   builder.Append(decoder_->Decode(static_cast<const char*>(raw_data_->Data()),
                                   raw_data_->ByteLength()));
 
   if (finished_loading_)
     builder.Append(decoder_->Flush());
 
-  string_result_ = builder.ToString();
+  return builder.ToString();
 }
 
-void FileReaderLoader::ConvertToDataURL() {
-  is_raw_data_converted_ = true;
-
+String FileReaderLoader::ConvertToDataURL() {
   StringBuilder builder;
   builder.Append("data:");
 
-  if (!bytes_loaded_) {
-    string_result_ = builder.ToString();
-    return;
-  }
+  if (!bytes_loaded_)
+    return builder.ToString();
 
   builder.Append(data_type_);
   builder.Append(";base64,");
@@ -380,9 +384,9 @@ void FileReaderLoader::ConvertToDataURL() {
   Base64Encode(static_cast<const char*>(raw_data_->Data()),
                raw_data_->ByteLength(), out);
   out.push_back('\0');
-  builder.Append(out.Data());
+  builder.Append(out.data());
 
-  string_result_ = builder.ToString();
+  return builder.ToString();
 }
 
 void FileReaderLoader::SetEncoding(const String& encoding) {

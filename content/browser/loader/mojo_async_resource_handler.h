@@ -16,9 +16,9 @@
 #include "content/browser/loader/resource_handler.h"
 #include "content/browser/loader/upload_progress_tracker.h"
 #include "content/common/content_export.h"
-#include "content/common/url_loader.mojom.h"
 #include "content/public/common/resource_type.h"
-#include "mojo/public/cpp/bindings/associated_binding.h"
+#include "content/public/common/url_loader.mojom.h"
+#include "mojo/public/cpp/bindings/binding.h"
 #include "mojo/public/cpp/system/data_pipe.h"
 #include "mojo/public/cpp/system/simple_watcher.h"
 #include "net/base/io_buffer.h"
@@ -48,13 +48,12 @@ struct ResourceResponse;
 // TODO(yhirano): Send cached metadata.
 //
 // This class can be inherited only for tests.
-class CONTENT_EXPORT MojoAsyncResourceHandler
-    : public ResourceHandler,
-      public NON_EXPORTED_BASE(mojom::URLLoader) {
+class CONTENT_EXPORT MojoAsyncResourceHandler : public ResourceHandler,
+                                                public mojom::URLLoader {
  public:
   MojoAsyncResourceHandler(net::URLRequest* request,
                            ResourceDispatcherHostImpl* rdh,
-                           mojom::URLLoaderAssociatedRequest mojo_request,
+                           mojom::URLLoaderRequest mojo_request,
                            mojom::URLLoaderClientPtr url_loader_client,
                            ResourceType resource_type);
   ~MojoAsyncResourceHandler() override;
@@ -121,13 +120,13 @@ class CONTENT_EXPORT MojoAsyncResourceHandler
       const tracked_objects::Location& from_here,
       UploadProgressTracker::UploadProgressReportCallback callback);
 
-  void OnTransfer(mojom::URLLoaderAssociatedRequest mojo_request,
+  void OnTransfer(mojom::URLLoaderRequest mojo_request,
                   mojom::URLLoaderClientPtr url_loader_client);
   void SendUploadProgress(const net::UploadProgress& progress);
   void OnUploadProgressACK();
 
   ResourceDispatcherHostImpl* rdh_;
-  mojo::AssociatedBinding<mojom::URLLoader> binding_;
+  mojo::Binding<mojom::URLLoader> binding_;
 
   bool has_checked_for_sufficient_resources_ = false;
   bool sent_received_response_message_ = false;
@@ -139,6 +138,7 @@ class CONTENT_EXPORT MojoAsyncResourceHandler
   bool did_defer_on_redirect_ = false;
   base::TimeTicks response_started_ticks_;
   int64_t reported_total_received_bytes_ = 0;
+  int64_t total_written_bytes_ = 0;
 
   // Pointer to parent's information about the read buffer. Only non-null while
   // OnWillRead is deferred.

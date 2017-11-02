@@ -49,6 +49,8 @@ class NET_EXPORT_PRIVATE URLRequestHttpJob : public URLRequestJob {
   // Record Sdch specific packet stats. Public so that SdchPolicyDelegate can
   // access it.
   void RecordPacketStats(SdchPolicyDelegate::StatisticSelector statistic) const;
+  void SetRequestHeadersCallback(RequestHeadersCallback callback) override;
+  void SetResponseHeadersCallback(ResponseHeadersCallback callback) override;
 
  protected:
   URLRequestHttpJob(URLRequest* request,
@@ -102,6 +104,11 @@ class NET_EXPORT_PRIVATE URLRequestHttpJob : public URLRequestJob {
   // the Reporting API (in //net/reporting) will send reports for the origin.
   void ProcessReportToHeader();
 
+  // Processes the NEL header, if one exists. This header configures whether
+  // network errors will be reported to a specified group of endpoints using the
+  // Reporting API.
+  void ProcessNetworkErrorLoggingHeader();
+
   // |result| should be OK, or the request is canceled.
   void OnHeadersReceivedCallback(int result);
   void OnStartCompleted(int result);
@@ -129,8 +136,9 @@ class NET_EXPORT_PRIVATE URLRequestHttpJob : public URLRequestJob {
   void GetAuthChallengeInfo(scoped_refptr<AuthChallengeInfo>*) override;
   void SetAuth(const AuthCredentials& credentials) override;
   void CancelAuth() override;
-  void ContinueWithCertificate(X509Certificate* client_cert,
-                               SSLPrivateKey* client_private_key) override;
+  void ContinueWithCertificate(
+      scoped_refptr<X509Certificate> client_cert,
+      scoped_refptr<SSLPrivateKey> client_private_key) override;
   void ContinueDespiteLastError() override;
   int ReadRawData(IOBuffer* buf, int buf_size) override;
   void StopCaching() override;
@@ -262,6 +270,9 @@ class NET_EXPORT_PRIVATE URLRequestHttpJob : public URLRequestJob {
   // Keeps track of total sent bytes over the network from transactions used by
   // this job that have already been destroyed.
   int64_t total_sent_bytes_from_previous_transactions_;
+
+  RequestHeadersCallback request_headers_callback_;
+  ResponseHeadersCallback response_headers_callback_;
 
   base::WeakPtrFactory<URLRequestHttpJob> weak_factory_;
 

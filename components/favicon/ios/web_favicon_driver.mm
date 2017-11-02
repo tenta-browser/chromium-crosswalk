@@ -5,6 +5,7 @@
 #include "components/favicon/ios/web_favicon_driver.h"
 
 #include "base/bind.h"
+#include "base/memory/ptr_util.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "components/favicon/core/favicon_url.h"
 #include "components/favicon/ios/favicon_url_util.h"
@@ -13,10 +14,13 @@
 #include "ios/web/public/navigation_item.h"
 #include "ios/web/public/navigation_manager.h"
 #include "ios/web/public/web_state/web_state.h"
-#include "ios/web/public/web_thread.h"
 #include "skia/ext/skia_utils_ios.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/image/image.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 DEFINE_WEB_STATE_USER_DATA_KEY(favicon::WebFaviconDriver);
 
@@ -39,14 +43,15 @@ void WebFaviconDriver::CreateForWebState(
   if (FromWebState(web_state))
     return;
 
-  web_state->SetUserData(UserDataKey(),
-                         new WebFaviconDriver(web_state, favicon_service,
-                                              history_service, bookmark_model));
+  web_state->SetUserData(UserDataKey(), base::WrapUnique(new WebFaviconDriver(
+                                            web_state, favicon_service,
+                                            history_service, bookmark_model)));
 }
 
-void WebFaviconDriver::FetchFavicon(const GURL& url) {
-  fetch_favicon_url_ = url;
-  FaviconDriverImpl::FetchFavicon(url);
+void WebFaviconDriver::FetchFavicon(const GURL& page_url,
+                                    bool is_same_document) {
+  fetch_favicon_url_ = page_url;
+  FaviconDriverImpl::FetchFavicon(page_url, is_same_document);
 }
 
 gfx::Image WebFaviconDriver::GetFavicon() const {
@@ -97,6 +102,11 @@ int WebFaviconDriver::DownloadImage(const GURL& url,
   return downloaded_image_count;
 }
 
+void WebFaviconDriver::DownloadManifest(const GURL& url,
+                                        ManifestDownloadCallback callback) {
+  NOTREACHED();
+}
+
 bool WebFaviconDriver::IsOffTheRecord() {
   DCHECK(web_state());
   return web_state()->GetBrowserState()->IsOffTheRecord();
@@ -127,8 +137,7 @@ WebFaviconDriver::WebFaviconDriver(web::WebState* web_state,
                                    bookmarks::BookmarkModel* bookmark_model)
     : web::WebStateObserver(web_state),
       FaviconDriverImpl(favicon_service, history_service, bookmark_model),
-      image_fetcher_(web_state->GetBrowserState()->GetRequestContext(),
-                     web::WebThread::GetBlockingPool()) {}
+      image_fetcher_(web_state->GetBrowserState()->GetRequestContext()) {}
 
 WebFaviconDriver::~WebFaviconDriver() {
 }
@@ -136,7 +145,8 @@ WebFaviconDriver::~WebFaviconDriver() {
 void WebFaviconDriver::FaviconUrlUpdated(
     const std::vector<web::FaviconURL>& candidates) {
   DCHECK(!candidates.empty());
-  OnUpdateFaviconURL(GetActiveURL(), FaviconURLsFromWebFaviconURLs(candidates));
+  OnUpdateCandidates(GetActiveURL(), FaviconURLsFromWebFaviconURLs(candidates),
+                     GURL());
 }
 
 }  // namespace favicon

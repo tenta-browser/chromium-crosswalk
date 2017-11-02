@@ -5,13 +5,12 @@
 #include "ash/display/cursor_window_controller.h"
 
 #include "ash/ash_constants.h"
-#include "ash/ash_switches.h"
 #include "ash/display/mirror_window_controller.h"
 #include "ash/display/window_tree_host_manager.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/root_window_controller.h"
 #include "ash/shell.h"
-#include "base/command_line.h"
+#include "services/ui/public/interfaces/window_tree_constants.mojom.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window_delegate.h"
 #include "ui/aura/window_event_dispatcher.h"
@@ -90,15 +89,11 @@ class CursorWindowDelegate : public aura::WindowDelegate {
 CursorWindowController::CursorWindowController()
     : is_cursor_compositing_enabled_(false),
       container_(NULL),
-      cursor_type_(ui::kCursorNone),
+      cursor_type_(ui::CursorType::kNone),
       visible_(true),
-      cursor_set_(ui::CURSOR_SET_NORMAL),
+      cursor_size_(ui::CursorSize::kNormal),
       large_cursor_size_in_dip_(ash::kDefaultLargeCursorSize),
-      delegate_(new CursorWindowDelegate()) {
-  enable_adjustable_large_cursor_ =
-      base::CommandLine::ForCurrentProcess()->HasSwitch(
-          ash::switches::kAshAdjustableLargeCursor);
-}
+      delegate_(new CursorWindowDelegate()) {}
 
 CursorWindowController::~CursorWindowController() {
   SetContainer(NULL);
@@ -116,7 +111,7 @@ void CursorWindowController::SetLargeCursorSizeInDip(
 
   large_cursor_size_in_dip_ = large_cursor_size_in_dip;
 
-  if (enable_adjustable_large_cursor_ && display_.is_valid())
+  if (display_.is_valid())
     UpdateCursorImage();
 }
 
@@ -162,13 +157,11 @@ void CursorWindowController::SetDisplay(const display::Display& display) {
   }
 
   display_ = display;
-  aura::Window* root_window =
-      Shell::Get()->window_tree_host_manager()->GetRootWindowForDisplayId(
-          display.id());
+  aura::Window* root_window = Shell::GetRootWindowForDisplayId(display.id());
   if (!root_window)
     return;
 
-  SetContainer(GetRootWindowController(root_window)
+  SetContainer(RootWindowController::ForWindow(root_window)
                    ->GetContainer(kShellWindowId_MouseCursorContainer));
   SetBoundsInScreen(display.bounds());
   // Updates the hot point based on the current display.
@@ -198,8 +191,8 @@ void CursorWindowController::SetCursor(gfx::NativeCursor cursor) {
   UpdateCursorVisibility();
 }
 
-void CursorWindowController::SetCursorSet(ui::CursorSetType cursor_set) {
-  cursor_set_ = cursor_set;
+void CursorWindowController::SetCursorSize(ui::CursorSize cursor_size) {
+  cursor_size_ = cursor_size;
   UpdateCursorImage();
 }
 
@@ -222,7 +215,8 @@ void CursorWindowController::SetContainer(aura::Window* container) {
   cursor_window_.reset(new aura::Window(delegate_.get()));
   cursor_window_->SetTransparent(true);
   cursor_window_->Init(ui::LAYER_TEXTURED);
-  cursor_window_->set_ignore_events(true);
+  cursor_window_->SetEventTargetingPolicy(
+      ui::mojom::EventTargetingPolicy::NONE);
   cursor_window_->set_owned_by_parent(false);
   // Call UpdateCursorImage() to figure out |cursor_window_|'s desired size.
   UpdateCursorImage();
@@ -254,7 +248,7 @@ void CursorWindowController::UpdateCursorImage() {
   }
   int resource_id;
   // TODO(hshi): support custom cursor set.
-  if (!ui::GetCursorDataFor(cursor_set_, cursor_type_, cursor_scale,
+  if (!ui::GetCursorDataFor(cursor_size_, cursor_type_, cursor_scale,
                             &resource_id, &hot_point_)) {
     return;
   }
@@ -296,8 +290,7 @@ void CursorWindowController::UpdateCursorImage() {
     // large cursor. We don't need to care about the case where cursor
     // compositing is disabled as we always use cursor compositing if
     // accessibility large cursor is enabled.
-    if (enable_adjustable_large_cursor_ &&
-        cursor_set_ == ui::CursorSetType::CURSOR_SET_LARGE &&
+    if (cursor_size_ == ui::CursorSize::kLarge &&
         large_cursor_size_in_dip_ != image->size().width()) {
       float rescale = static_cast<float>(large_cursor_size_in_dip_) /
                       static_cast<float>(image->size().width());
@@ -326,7 +319,7 @@ void CursorWindowController::UpdateCursorImage() {
 void CursorWindowController::UpdateCursorVisibility() {
   if (!cursor_window_)
     return;
-  bool visible = (visible_ && cursor_type_ != ui::kCursorNone);
+  bool visible = (visible_ && cursor_type_ != ui::CursorType::kNone);
   if (visible)
     cursor_window_->Show();
   else

@@ -35,7 +35,9 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/content_features.h"
 #include "content/public/common/origin_util.h"
+#include "extensions/common/constants.h"
 #include "url/gurl.h"
 
 #if defined(OS_ANDROID)
@@ -82,9 +84,11 @@ const char PermissionContextBase::kPermissionsKillSwitchBlockedValue[] =
 
 PermissionContextBase::PermissionContextBase(
     Profile* profile,
-    const ContentSettingsType content_settings_type)
+    ContentSettingsType content_settings_type,
+    blink::WebFeaturePolicyFeature feature_policy_feature)
     : profile_(profile),
       content_settings_type_(content_settings_type),
+      feature_policy_feature_(feature_policy_feature),
       weak_factory_(this) {
 #if defined(OS_ANDROID)
   permission_queue_controller_.reset(
@@ -153,6 +157,7 @@ void PermissionContextBase::RequestPermission(
                                     kPermissionBlockedBlacklistMessage,
                                     content_settings_type_);
         break;
+      case PermissionStatusSource::INSECURE_ORIGIN:
       case PermissionStatusSource::UNSPECIFIED:
         break;
     }
@@ -225,8 +230,28 @@ PermissionResult PermissionContextBase::GetPermissionStatus(
                             PermissionStatusSource::KILL_SWITCH);
   }
 
-  if (IsRestrictedToSecureOrigins() &&
-      !content::IsOriginSecure(requesting_origin)) {
+  if (IsRestrictedToSecureOrigins()) {
+    if (!content::IsOriginSecure(requesting_origin)) {
+      return PermissionResult(CONTENT_SETTING_BLOCK,
+                              PermissionStatusSource::INSECURE_ORIGIN);
+    }
+
+    // TODO(raymes): We should check the entire chain of embedders here whenever
+    // possible as this corresponds to the requirements of the secure contexts
+    // spec and matches what is implemented in blink. Right now we just check
+    // the top level and requesting origins. Note: chrome-extension:// origins
+    // are currently exempt from checking the embedder chain. crbug.com/530507.
+    if (!requesting_origin.SchemeIs(extensions::kExtensionScheme) &&
+        !content::IsOriginSecure(embedding_origin)) {
+      return PermissionResult(CONTENT_SETTING_BLOCK,
+                              PermissionStatusSource::INSECURE_ORIGIN);
+    }
+  }
+
+  // Check whether the feature is enabled for the frame by feature policy. We
+  // can only do this when a RenderFrameHost has been provided.
+  if (render_frame_host &&
+      !PermissionAllowedByFeaturePolicy(render_frame_host)) {
     return PermissionResult(CONTENT_SETTING_BLOCK,
                             PermissionStatusSource::UNSPECIFIED);
   }
@@ -446,7 +471,20 @@ void PermissionContextBase::UpdateContentSetting(
 
 ContentSettingsType PermissionContextBase::content_settings_storage_type()
     const {
-  if (content_settings_type_ == CONTENT_SETTINGS_TYPE_PUSH_MESSAGING)
-    return CONTENT_SETTINGS_TYPE_NOTIFICATIONS;
-  return content_settings_type_;
+  return PermissionUtil::GetContentSettingsStorageType(content_settings_type_);
+}
+
+bool PermissionContextBase::PermissionAllowedByFeaturePolicy(
+    content::RenderFrameHost* rfh) const {
+  if (!base::FeatureList::IsEnabled(
+          features::kUseFeaturePolicyForPermissions)) {
+    // Default to ignoring the feature policy.
+    return true;
+  }
+
+  // Some features don't have an associated feature policy yet. Allow those.
+  if (feature_policy_feature_ == blink::WebFeaturePolicyFeature::kNotFound)
+    return true;
+
+  return rfh->IsFeatureEnabled(feature_policy_feature_);
 }

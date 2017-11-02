@@ -14,6 +14,7 @@
 #include "gpu/config/gpu_switches.h"
 #include "media/media_features.h"
 #include "ui/gl/gl_switches.h"
+#include "ui/gl/gl_utils.h"
 
 namespace {
 
@@ -63,9 +64,7 @@ const gpu::GpuPreferences GetGpuPreferencesFromCommandLine() {
 #endif
 #if BUILDFLAG(ENABLE_WEBRTC)
   gpu_preferences.disable_web_rtc_hw_encoding =
-      command_line->HasSwitch(switches::kDisableWebRtcHWEncoding) ||
-      (command_line->HasSwitch(switches::kDisableWebRtcHWVP8Encoding) &&
-       !base::FeatureList::IsEnabled(features::kWebRtcHWH264Encoding));
+      command_line->HasSwitch(switches::kDisableWebRtcHWEncoding);
 #endif
 #if defined(OS_WIN)
   uint32_t enable_accelerated_vpx_decode_val =
@@ -126,7 +125,7 @@ const gpu::GpuPreferences GetGpuPreferencesFromCommandLine() {
   gpu_preferences.enable_gpu_service_tracing =
       command_line->HasSwitch(switches::kEnableGPUServiceTracing);
   gpu_preferences.use_passthrough_cmd_decoder =
-      command_line->HasSwitch(switches::kUsePassthroughCmdDecoder);
+      gl::UsePassthroughCommandDecoder(command_line);
   // Some of these preferences are set or adjusted in
   // GpuDataManagerImplPrivate::AppendGpuCommandLine.
   return gpu_preferences;

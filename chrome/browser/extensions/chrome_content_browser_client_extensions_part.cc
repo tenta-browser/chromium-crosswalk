@@ -323,27 +323,23 @@ bool ChromeContentBrowserClientExtensionsPart::ShouldUseProcessPerSite(
 bool ChromeContentBrowserClientExtensionsPart::DoesSiteRequireDedicatedProcess(
     content::BrowserContext* browser_context,
     const GURL& effective_site_url) {
-  if (IsIsolateExtensionsEnabled()) {
-    const Extension* extension =
-        ExtensionRegistry::Get(browser_context)
-            ->enabled_extensions()
-            .GetExtensionOrAppByURL(effective_site_url);
-    if (extension) {
-      // Always isolate Chrome Web Store.
-      if (extension->id() == kWebStoreAppId)
-        return true;
+  const Extension* extension = ExtensionRegistry::Get(browser_context)
+                                   ->enabled_extensions()
+                                   .GetExtensionOrAppByURL(effective_site_url);
+  if (!extension)
+    return false;
 
-      // --isolate-extensions should isolate extensions, except for hosted
-      // apps. Isolating hosted apps is a good idea, but ought to be a separate
-      // knob.
-      if (extension->is_hosted_app())
-        return false;
+  // Always isolate Chrome Web Store.
+  if (extension->id() == kWebStoreAppId)
+    return true;
 
-      // Isolate all extensions.
-      return true;
-    }
-  }
-  return false;
+  // Extensions should be isolated, except for hosted apps. Isolating hosted
+  // apps is a good idea, but ought to be a separate knob.
+  if (extension->is_hosted_app())
+    return false;
+
+  // Isolate all extensions.
+  return true;
 }
 
 // static
@@ -363,8 +359,8 @@ bool ChromeContentBrowserClientExtensionsPart::ShouldLockToOrigin(
 
     // http://crbug.com/600441 workaround: Extension process reuse, implemented
     // in ShouldTryToUseExistingProcessHost(), means that extension processes
-    // aren't always actually dedicated to a single origin, even in
-    // --isolate-extensions. TODO(nick): Fix this.
+    // aren't always actually dedicated to a single origin.
+    // TODO(nick): Fix this.
     if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
             ::switches::kSitePerProcess))
       return false;
@@ -589,7 +585,9 @@ bool ChromeContentBrowserClientExtensionsPart::ShouldAllowOpenURL(
   const Extension* to_extension =
       registry->enabled_extensions().GetByID(to_origin.host());
   if (!to_extension) {
-    *result = true;
+    // Treat non-existent extensions the same as an extension without accessible
+    // resources.
+    *result = false;
     return true;
   }
 
@@ -626,14 +624,16 @@ bool ChromeContentBrowserClientExtensionsPart::ShouldAllowOpenURL(
     return true;
   }
 
-  // Navigations from chrome:// or chrome-search:// pages need to be allowed,
-  // even if |to_url| is not web-accessible.  See https://crbug.com/662602.
+  // Navigations from chrome://, chrome-search:// and chrome-devtools:// pages
+  // need to be allowed, even if |to_url| is not web-accessible. See
+  // https://crbug.com/662602.
   //
   // Note that this is intentionally done after the check for blob: and
   // filesystem: URLs above, for consistency with the renderer-side checks
   // which already disallow navigations from chrome URLs to blob/filesystem
   // URLs.
   if (site_url.SchemeIs(content::kChromeUIScheme) ||
+      site_url.SchemeIs(content::kChromeDevToolsScheme) ||
       site_url.SchemeIs(chrome::kChromeSearchScheme)) {
     *result = true;
     return true;
@@ -682,6 +682,19 @@ ChromeContentBrowserClientExtensionsPart::GetVpnServiceProxy(
 #else
   return nullptr;
 #endif
+}
+
+// static
+bool ChromeContentBrowserClientExtensionsPart::
+    ShouldFrameShareParentSiteInstanceDespiteTopDocumentIsolation(
+        const GURL& subframe_url,
+        content::SiteInstance* parent_site_instance) {
+  const Extension* extension =
+      ExtensionRegistry::Get(parent_site_instance->GetBrowserContext())
+          ->enabled_extensions()
+          .GetExtensionOrAppByURL(parent_site_instance->GetSiteURL());
+
+  return extension && extension->is_hosted_app();
 }
 
 // static
@@ -766,9 +779,10 @@ void ChromeContentBrowserClientExtensionsPart::SiteInstanceGotProcess(
 
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&InfoMap::RegisterExtensionProcess,
-                 ExtensionSystem::Get(context)->info_map(), extension->id(),
-                 site_instance->GetProcess()->GetID(), site_instance->GetId()));
+      base::BindOnce(&InfoMap::RegisterExtensionProcess,
+                     ExtensionSystem::Get(context)->info_map(), extension->id(),
+                     site_instance->GetProcess()->GetID(),
+                     site_instance->GetId()));
 }
 
 void ChromeContentBrowserClientExtensionsPart::SiteInstanceDeleting(
@@ -790,9 +804,10 @@ void ChromeContentBrowserClientExtensionsPart::SiteInstanceDeleting(
 
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&InfoMap::UnregisterExtensionProcess,
-                 ExtensionSystem::Get(context)->info_map(), extension->id(),
-                 site_instance->GetProcess()->GetID(), site_instance->GetId()));
+      base::BindOnce(&InfoMap::UnregisterExtensionProcess,
+                     ExtensionSystem::Get(context)->info_map(), extension->id(),
+                     site_instance->GetProcess()->GetID(),
+                     site_instance->GetId()));
 }
 
 void ChromeContentBrowserClientExtensionsPart::OverrideWebkitPrefs(
@@ -846,12 +861,8 @@ void ChromeContentBrowserClientExtensionsPart::GetAdditionalFileSystemBackends(
     const base::FilePath& storage_partition_path,
     std::vector<std::unique_ptr<storage::FileSystemBackend>>*
         additional_backends) {
-  base::SequencedWorkerPool* pool = content::BrowserThread::GetBlockingPool();
-  auto sequence_token =
-      pool->GetNamedSequenceToken(MediaFileSystemBackend::kMediaTaskRunnerName);
-  additional_backends->push_back(base::MakeUnique<MediaFileSystemBackend>(
-      storage_partition_path,
-      pool->GetSequencedTaskRunner(sequence_token).get()));
+  additional_backends->push_back(
+      base::MakeUnique<MediaFileSystemBackend>(storage_partition_path));
 
   additional_backends->push_back(
       base::MakeUnique<sync_file_system::SyncFileSystemBackend>(

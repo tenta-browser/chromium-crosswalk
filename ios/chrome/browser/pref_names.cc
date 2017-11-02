@@ -64,6 +64,16 @@ const char kIosBookmarkFolderDefault[] = "ios.bookmark.default_folder";
 // the bookmark promo dialog.
 const char kIosBookmarkPromoAlreadySeen[] = "ios.bookmark.promo_already_seen";
 
+// Integer to represent the number of time the sign-in promo has been displayed
+// in the bookmark view.
+const char kIosBookmarkSigninPromoDisplayedCount[] =
+    "ios.bookmark.signin_promo_displayed_count";
+
+// Integer to represent the number of time the sign-in promo has been displayed
+// in the settings view.
+const char kIosSettingsSigninPromoDisplayedCount[] =
+    "ios.settings.signin_promo_displayed_count";
+
 // Whether the user has enabled the Physical Web feature to surface URLs
 // broadcast by nearby devices.
 const char kIosPhysicalWebEnabled[] = "ios.physical_web_enabled";
@@ -160,7 +170,7 @@ const char kDesktopIOSPromotionLastImpression[] =
 // SMS.
 const char kDesktopIOSPromotionDone[] = "ios.desktop_ios_promo_done";
 
-// True if the user is eligible to recieve "desktop to iOS" promotion.
+// True if the user is eligible to receive "desktop to iOS" promotion.
 const char kDesktopIOSPromotionEligible[] = "ios.desktoptomobileeligible";
 
 // Integer that represents which variation of title and text of the

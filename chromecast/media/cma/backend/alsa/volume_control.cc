@@ -21,6 +21,7 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/synchronization/lock.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/thread.h"
@@ -29,33 +30,26 @@
 #include "chromecast/base/serializers.h"
 #include "chromecast/media/cma/backend/alsa/alsa_features.h"
 #include "chromecast/media/cma/backend/alsa/alsa_volume_control.h"
+#include "chromecast/media/cma/backend/alsa/cast_audio_json.h"
+#include "chromecast/media/cma/backend/alsa/post_processing_pipeline_parser.h"
 #include "chromecast/media/cma/backend/alsa/stream_mixer_alsa.h"
+#include "chromecast/media/cma/backend/alsa/volume_map.h"
 
 namespace chromecast {
 namespace media {
 
 namespace {
 
-const float kDefaultMediaDbFS = -25.0f;
-const float kDefaultAlarmDbFS = -20.0f;
-const float kDefaultCommunicationDbFS = -25.0f;
+constexpr float kDefaultMediaDbFS = -25.0f;
+constexpr float kDefaultAlarmDbFS = -20.0f;
+constexpr float kDefaultCommunicationDbFS = -25.0f;
 
-const float kMinDbFS = -120.0f;
+constexpr float kMinDbFS = -120.0f;
 
-const char kKeyMediaDbFS[] = "dbfs.media";
-const char kKeyAlarmDbFS[] = "dbfs.alarm";
-const char kKeyCommunicationDbFS[] = "dbfs.communication";
-
-struct LevelToDb {
-  float level;
-  float db;
-};
-
-const LevelToDb kVolumeMap[] = {{0.0f, kMinDbFS},
-                                {0.01f, -58.0f},
-                                {0.090909f, -48.0f},
-                                {0.818182f, -8.0f},
-                                {1.0f, 0.0f}};
+constexpr char kKeyMediaDbFS[] = "dbfs.media";
+constexpr char kKeyAlarmDbFS[] = "dbfs.alarm";
+constexpr char kKeyCommunicationDbFS[] = "dbfs.communication";
+constexpr char kKeyDefaultVolume[] = "default_volume";
 
 float DbFsToScale(float db) {
   if (db <= kMinDbFS) {
@@ -75,6 +69,8 @@ std::string ContentTypeToDbFSKey(AudioContentType type) {
   }
 }
 
+base::LazyInstance<VolumeMap>::Leaky g_volume_map = LAZY_INSTANCE_INITIALIZER;
+
 class VolumeControlInternal : public AlsaVolumeControl::Delegate {
  public:
   VolumeControlInternal()
@@ -82,6 +78,9 @@ class VolumeControlInternal : public AlsaVolumeControl::Delegate {
         initialize_complete_event_(
             base::WaitableEvent::ResetPolicy::MANUAL,
             base::WaitableEvent::InitialState::NOT_SIGNALED) {
+    // Load volume map to check that the config file is correct.
+    g_volume_map.Get();
+
     stored_values_.SetDouble(kKeyMediaDbFS, kDefaultMediaDbFS);
     stored_values_.SetDouble(kKeyAlarmDbFS, kDefaultAlarmDbFS);
     stored_values_.SetDouble(kKeyCommunicationDbFS, kDefaultCommunicationDbFS);
@@ -97,6 +96,26 @@ class VolumeControlInternal : public AlsaVolumeControl::Delegate {
       for (auto type : types) {
         if (old_stored_dict->GetDouble(ContentTypeToDbFSKey(type), &volume)) {
           stored_values_.SetDouble(ContentTypeToDbFSKey(type), volume);
+        }
+      }
+    } else {
+      // If saved_volumes does not exist, use per device default if it exists.
+      auto cast_audio_config =
+          DeserializeJsonFromFile(base::FilePath(kCastAudioJsonFilePath));
+      const base::DictionaryValue* cast_audio_dict;
+      if (cast_audio_config &&
+          cast_audio_config->GetAsDictionary(&cast_audio_dict)) {
+        const base::DictionaryValue* default_volume_dict;
+        if (cast_audio_dict && cast_audio_dict->GetDictionary(
+                                   kKeyDefaultVolume, &default_volume_dict)) {
+          for (auto type : types) {
+            if (default_volume_dict->GetDouble(ContentTypeToDbFSKey(type),
+                                               &volume)) {
+              stored_values_.SetDouble(ContentTypeToDbFSKey(type), volume);
+              LOG(INFO) << "Setting default volume for "
+                        << ContentTypeToDbFSKey(type) << " to " << volume;
+            }
+          }
         }
       }
     }
@@ -335,36 +354,12 @@ void VolumeControl::SetOutputLimit(AudioContentType type, float limit) {
 
 // static
 float VolumeControl::VolumeToDbFS(float volume) {
-  if (volume <= kVolumeMap[0].level) {
-    return kVolumeMap[0].db;
-  }
-  for (size_t i = 1; i < arraysize(kVolumeMap); ++i) {
-    if (volume < kVolumeMap[i].level) {
-      const float x_diff = kVolumeMap[i].level - kVolumeMap[i - 1].level;
-      const float y_diff = kVolumeMap[i].db - kVolumeMap[i - 1].db;
-
-      return kVolumeMap[i - 1].db +
-             (volume - kVolumeMap[i - 1].level) * y_diff / x_diff;
-    }
-  }
-  return kVolumeMap[arraysize(kVolumeMap) - 1].db;
+  return g_volume_map.Get().VolumeToDbFS(volume);
 }
 
 // static
 float VolumeControl::DbFSToVolume(float db) {
-  if (db <= kVolumeMap[0].db) {
-    return kVolumeMap[0].level;
-  }
-  for (size_t i = 1; i < arraysize(kVolumeMap); ++i) {
-    if (db < kVolumeMap[i].db) {
-      const float x_diff = kVolumeMap[i].db - kVolumeMap[i - 1].db;
-      const float y_diff = kVolumeMap[i].level - kVolumeMap[i - 1].level;
-
-      return kVolumeMap[i - 1].level +
-             (db - kVolumeMap[i - 1].db) * y_diff / x_diff;
-    }
-  }
-  return kVolumeMap[arraysize(kVolumeMap) - 1].level;
+  return g_volume_map.Get().DbFSToVolume(db);
 }
 
 }  // namespace media

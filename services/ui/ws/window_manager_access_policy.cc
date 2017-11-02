@@ -46,6 +46,12 @@ bool WindowManagerAccessPolicy::CanSetModal(
   return true;
 }
 
+bool WindowManagerAccessPolicy::CanSetChildModalParent(
+    const ServerWindow* window,
+    const ServerWindow* modal_parent) const {
+  return true;
+}
+
 bool WindowManagerAccessPolicy::CanReorderWindow(
     const ServerWindow* window,
     const ServerWindow* relative_window,
@@ -77,7 +83,7 @@ bool WindowManagerAccessPolicy::CanChangeWindowVisibility(
   if (WasCreatedByThisClient(window))
     return true;
   // The WindowManager can change the visibility of the WindowManager root.
-  const ServerWindow* root = window->GetRoot();
+  const ServerWindow* root = window->GetRootForDrawn();
   return root && window->parent() == root;
 }
 
@@ -96,6 +102,11 @@ bool WindowManagerAccessPolicy::CanSetWindowCompositorFrameSink(
 }
 
 bool WindowManagerAccessPolicy::CanSetWindowBounds(
+    const ServerWindow* window) const {
+  return WasCreatedByThisClient(window);
+}
+
+bool WindowManagerAccessPolicy::CanSetWindowTransform(
     const ServerWindow* window) const {
   return WasCreatedByThisClient(window);
 }

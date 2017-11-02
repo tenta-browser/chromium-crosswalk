@@ -14,6 +14,7 @@
 #include "gpu/command_buffer/service/gles2_cmd_validation.h"
 #include "gpu/config/gpu_driver_bug_workarounds.h"
 #include "gpu/gpu_export.h"
+#include "ui/gl/extension_set.h"
 
 namespace base {
 class CommandLine;
@@ -79,13 +80,17 @@ class GPU_EXPORT FeatureInfo : public base::RefCounted<FeatureInfo> {
     bool ext_discard_framebuffer = false;
     bool angle_depth_texture = false;
     bool is_swiftshader_for_webgl = false;
+    bool is_swiftshader = false;
+    bool chromium_texture_filtering_hint = false;
     bool angle_texture_usage = false;
     bool ext_texture_storage = false;
     bool chromium_path_rendering = false;
+    bool chromium_raster_transport = false;
     bool chromium_framebuffer_mixed_samples = false;
     bool blend_equation_advanced = false;
     bool blend_equation_advanced_coherent = false;
     bool ext_texture_rg = false;
+    bool ext_texture_norm16 = false;
     bool chromium_image_ycbcr_420v = false;
     bool chromium_image_ycbcr_422 = false;
     bool emulate_primitive_restart_fixed_index = false;
@@ -110,6 +115,10 @@ class GPU_EXPORT FeatureInfo : public base::RefCounted<FeatureInfo> {
     bool angle_client_arrays = false;
     bool angle_request_extension = false;
     bool ext_debug_marker = false;
+    bool arb_robustness = false;
+    bool khr_robustness = false;
+    bool ext_robustness = false;
+    bool ext_pixel_buffer_object = false;
   };
 
   FeatureInfo();
@@ -117,10 +126,6 @@ class GPU_EXPORT FeatureInfo : public base::RefCounted<FeatureInfo> {
   // Constructor with workarounds taken from the current process's CommandLine
   explicit FeatureInfo(
       const GpuDriverBugWorkarounds& gpu_driver_bug_workarounds);
-
-  // Constructor with workarounds taken from |command_line|.
-  FeatureInfo(const base::CommandLine& command_line,
-              const GpuDriverBugWorkarounds& gpu_driver_bug_workarounds);
 
   // Initializes the feature information. Needs a current GL context.
   bool Initialize(ContextType context_type,
@@ -185,14 +190,13 @@ class GPU_EXPORT FeatureInfo : public base::RefCounted<FeatureInfo> {
  private:
   friend class base::RefCounted<FeatureInfo>;
   friend class BufferManagerClientSideArraysTest;
-  class StringSet;
 
   ~FeatureInfo();
 
   void AddExtensionString(const char* s);
   void InitializeBasicState(const base::CommandLine* command_line);
   void InitializeFeatures();
-  void InitializeFloatAndHalfFloatFeatures(const StringSet& extensions);
+  void InitializeFloatAndHalfFloatFeatures(const gl::ExtensionSet& extensions);
 
   Validators validators_;
 

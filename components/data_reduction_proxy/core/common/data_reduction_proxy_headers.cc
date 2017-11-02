@@ -29,6 +29,10 @@ using base::TimeDelta;
 namespace {
 
 const char kChromeProxyHeader[] = "chrome-proxy";
+const char kDataReductionPassThroughHeader[] =
+    "Chrome-Proxy-Accept-Transform: identity\r\nCache-Control: "
+    "no-cache\r\n\r\n";
+const char kChromeProxyECTHeader[] = "chrome-proxy-ect";
 const char kChromeProxyAcceptTransformHeader[] =
     "chrome-proxy-accept-transform";
 const char kChromeProxyContentTransformHeader[] =
@@ -41,14 +45,11 @@ const char kEmptyImageDirective[] = "empty-image";
 const char kLitePageDirective[] = "lite-page";
 const char kCompressedVideoDirective[] = "compressed-video";
 const char kIdentityDirective[] = "identity";
+const char kChromeProxyPagePoliciesDirective[] = "page-policies";
 
-// The legacy Chrome-Proxy response header directive for LoFi images.
-const char kLegacyChromeProxyLoFiResponseDirective[] = "q=low";
-
-const char kChromeProxyLitePageIngoreBlacklistDirective[] =
-    "exp=ignore_preview_blacklist";
-
-const char kIfHeavyQualifier[] = "if-heavy";
+const char kChromeProxyExperimentForceLitePage[] = "force_lite_page";
+const char kChromeProxyExperimentForceEmptyImage[] =
+    "force_page_policies_empty_image";
 
 const char kChromeProxyActionBlockOnce[] = "block-once";
 const char kChromeProxyActionBlock[] = "block";
@@ -118,12 +119,44 @@ bool HasURLRedirectCycle(const std::vector<GURL>& url_chain) {
                    url_chain.back()) != url_chain.rend();
 }
 
+data_reduction_proxy::TransformDirective ParsePagePolicyDirective(
+    const std::string chrome_proxy_header_value) {
+  for (const auto& directive : base::SplitStringPiece(
+           chrome_proxy_header_value, ",", base::TRIM_WHITESPACE,
+           base::SPLIT_WANT_NONEMPTY)) {
+    if (!base::StartsWith(directive, kChromeProxyPagePoliciesDirective,
+                          base::CompareCase::INSENSITIVE_ASCII)) {
+      continue;
+    }
+
+    // Check policy directive for empty-image entry.
+    base::StringPiece page_policies_value = base::StringPiece(directive).substr(
+        arraysize(kChromeProxyPagePoliciesDirective));
+    for (const auto& policy :
+         base::SplitStringPiece(page_policies_value, "|", base::TRIM_WHITESPACE,
+                                base::SPLIT_WANT_NONEMPTY)) {
+      if (base::LowerCaseEqualsASCII(policy, kEmptyImageDirective)) {
+        return data_reduction_proxy::TRANSFORM_PAGE_POLICIES_EMPTY_IMAGE;
+      }
+    }
+  }
+  return data_reduction_proxy::TRANSFORM_NONE;
+}
+
 }  // namespace
 
 namespace data_reduction_proxy {
 
 const char* chrome_proxy_header() {
   return kChromeProxyHeader;
+}
+
+const char* chrome_proxy_pass_through_header() {
+  return kDataReductionPassThroughHeader;
+}
+
+const char* chrome_proxy_ect_header() {
+  return kChromeProxyECTHeader;
 }
 
 const char* chrome_proxy_accept_transform_header() {
@@ -146,22 +179,73 @@ const char* compressed_video_directive() {
   return kCompressedVideoDirective;
 }
 
-const char* identity_directive() {
-  return kIdentityDirective;
+const char* page_policies_directive() {
+  return kChromeProxyPagePoliciesDirective;
 }
 
-const char* chrome_proxy_lite_page_ignore_blacklist_directive() {
-  return kChromeProxyLitePageIngoreBlacklistDirective;
+const char* chrome_proxy_experiment_force_lite_page() {
+  return kChromeProxyExperimentForceLitePage;
 }
 
-const char* if_heavy_qualifier() {
-  return kIfHeavyQualifier;
+const char* chrome_proxy_experiment_force_empty_image() {
+  return kChromeProxyExperimentForceEmptyImage;
+}
+
+TransformDirective ParseRequestTransform(
+    const net::HttpRequestHeaders& headers) {
+  std::string accept_transform_value;
+  if (!headers.GetHeader(chrome_proxy_accept_transform_header(),
+                         &accept_transform_value)) {
+    return TRANSFORM_NONE;
+  }
+
+  if (base::LowerCaseEqualsASCII(accept_transform_value,
+                                 lite_page_directive())) {
+    return TRANSFORM_LITE_PAGE;
+  } else if (base::LowerCaseEqualsASCII(accept_transform_value,
+                                        empty_image_directive())) {
+    return TRANSFORM_EMPTY_IMAGE;
+  } else if (base::LowerCaseEqualsASCII(accept_transform_value,
+                                        compressed_video_directive())) {
+    return TRANSFORM_COMPRESSED_VIDEO;
+  } else if (base::LowerCaseEqualsASCII(accept_transform_value,
+                                        kIdentityDirective)) {
+    return TRANSFORM_IDENTITY;
+  }
+
+  return TRANSFORM_NONE;
+}
+
+TransformDirective ParseResponseTransform(
+    const net::HttpResponseHeaders& headers) {
+  std::string content_transform_value;
+  if (!headers.GetNormalizedHeader(chrome_proxy_content_transform_header(),
+                                   &content_transform_value)) {
+    // No content-transform so check for page-policies in chrome-proxy header.
+    std::string chrome_proxy_header_value;
+    if (headers.GetNormalizedHeader(chrome_proxy_header(),
+                                    &chrome_proxy_header_value)) {
+      return ParsePagePolicyDirective(chrome_proxy_header_value);
+    }
+    return TRANSFORM_NONE;
+  } else if (base::LowerCaseEqualsASCII(content_transform_value,
+                                        lite_page_directive())) {
+    return TRANSFORM_LITE_PAGE;
+  } else if (base::LowerCaseEqualsASCII(content_transform_value,
+                                        empty_image_directive())) {
+    return TRANSFORM_EMPTY_IMAGE;
+  } else if (base::LowerCaseEqualsASCII(content_transform_value,
+                                        kIdentityDirective)) {
+    return TRANSFORM_IDENTITY;
+  } else if (base::LowerCaseEqualsASCII(content_transform_value,
+                                        compressed_video_directive())) {
+    return TRANSFORM_COMPRESSED_VIDEO;
+  }
+  return TRANSFORM_UNKNOWN;
 }
 
 bool IsEmptyImagePreview(const net::HttpResponseHeaders& headers) {
-  return IsPreviewType(headers, kEmptyImageDirective) ||
-         headers.HasHeaderValue(kChromeProxyHeader,
-                                kLegacyChromeProxyLoFiResponseDirective);
+  return IsPreviewType(headers, kEmptyImageDirective);
 }
 
 bool IsEmptyImagePreview(const std::string& content_transform_value,
@@ -169,16 +253,6 @@ bool IsEmptyImagePreview(const std::string& content_transform_value,
   if (IsPreviewTypeInHeaderValue(content_transform_value, kEmptyImageDirective))
     return true;
 
-  // Look for "q=low" in the "Chrome-Proxy" response header.
-  net::HttpUtil::ValuesIterator values(chrome_proxy_value.begin(),
-                                       chrome_proxy_value.end(), ',');
-  while (values.GetNext()) {
-    base::StringPiece value(values.value_begin(), values.value_end());
-    if (base::LowerCaseEqualsASCII(value,
-                                   kLegacyChromeProxyLoFiResponseDirective)) {
-      return true;
-    }
-  }
   return false;
 }
 

@@ -26,8 +26,9 @@
 #endif
 
 namespace base {
-class Value;
 class CommandLine;
+class Value;
+struct Feature;
 }  // namespace base
 
 // A collection of functions designed for use with unit and browser tests.
@@ -56,8 +57,8 @@ void RunAllPendingInMessageLoop();
 // thread.
 void RunAllPendingInMessageLoop(BrowserThread::ID thread_id);
 
-// Runs until both the blocking pool and the current message loop are empty
-// (have no more scheduled tasks) and no tasks are running.
+// Runs until the blocking pool, task scheduler, and the current message loop
+// are all empty (have no more scheduled tasks) and no tasks are running.
 //
 // TODO(fdoray): Rename to RunAllTaskSchedulerTasksUntilIdle() once the blocking
 // pool is fully deprecated. https://crbug.com/667892
@@ -87,10 +88,16 @@ void IsolateAllSitesForTesting(base::CommandLine* command_line);
 // Resets the internal secure schemes/origins whitelist.
 void ResetSchemesAndOriginsWhitelist();
 
-#if defined(OS_ANDROID)
-// Registers content/browser JNI bindings necessary for some types of tests.
-bool RegisterJniForTesting(JNIEnv* env);
-#endif
+// Appends command line switches to |command_line| to enable the |feature| and
+// to set field trial params associated with the feature as specified by
+// |param_name| and |param_value|.
+//
+// Note that a dummy trial and trial group will be registered behind the scenes.
+// See also variations::testing::VariationsParamsManager class.
+void EnableFeatureWithParam(const base::Feature& feature,
+                            const std::string& param_name,
+                            const std::string& param_value,
+                            base::CommandLine* command_line);
 
 // Helper class to Run and Quit the message loop. Run and Quit can only happen
 // once per instance. Make a new instance for each use. Calling Quit after Run

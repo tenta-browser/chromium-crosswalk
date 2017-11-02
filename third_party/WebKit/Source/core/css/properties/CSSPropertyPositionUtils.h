@@ -6,6 +6,8 @@
 
 #include "core/CSSValueKeywords.h"
 #include "core/css/parser/CSSParserMode.h"
+#include "core/css/parser/CSSParserTokenRange.h"
+#include "core/css/parser/CSSPropertyParserHelpers.h"
 
 #include "platform/wtf/Allocator.h"
 
@@ -17,6 +19,7 @@ class CSSValue;
 class CSSPropertyPositionUtils {
   STATIC_ONLY(CSSPropertyPositionUtils);
 
+ public:
   template <CSSValueID start, CSSValueID end>
   static CSSValue* ConsumePositionLonghand(CSSParserTokenRange& range,
                                            CSSParserMode css_parser_mode) {

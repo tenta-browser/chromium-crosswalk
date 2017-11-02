@@ -50,7 +50,7 @@ void FrameConsole::AddMessage(ConsoleMessage* console_message) {
   // information for how the request was triggered has been stored in the
   // provisional DocumentLoader. Use it instead.
   DocumentLoader* provisional_loader =
-      frame_->Loader().ProvisionalDocumentLoader();
+      frame_->Loader().GetProvisionalDocumentLoader();
   if (provisional_loader) {
     std::unique_ptr<SourceLocation> source_location =
         provisional_loader->CopySourceLocation();
@@ -103,16 +103,6 @@ void FrameConsole::ReportMessageToClient(MessageSource source,
 
   frame_->GetChromeClient().AddMessageToConsole(
       frame_, source, level, message, location->LineNumber(), url, stack_trace);
-}
-
-void FrameConsole::AddMessageFromWorker(
-    MessageLevel level,
-    const String& message,
-    std::unique_ptr<SourceLocation> location,
-    const String& worker_id) {
-  ReportMessageToClient(kWorkerMessageSource, level, message, location.get());
-  AddMessageToStorage(ConsoleMessage::CreateFromWorker(
-      level, message, std::move(location), worker_id));
 }
 
 void FrameConsole::AddSingletonMessage(ConsoleMessage* console_message) {

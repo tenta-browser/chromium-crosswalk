@@ -32,6 +32,7 @@
 #ifndef ElementData_h
 #define ElementData_h
 
+#include "build/build_config.h"
 #include "core/dom/Attribute.h"
 #include "core/dom/AttributeCollection.h"
 #include "core/dom/SpaceSplitString.h"
@@ -54,8 +55,7 @@ class ElementData : public GarbageCollectedFinalized<ElementData> {
 
   void ClearClass() const { class_names_.Clear(); }
   void SetClass(const AtomicString& class_name, bool should_fold_case) const {
-    class_names_.Set(should_fold_case ? class_name.LowerASCII() : class_name,
-                     SpaceSplitString::kShouldNotFoldCase);
+    class_names_.Set(should_fold_case ? class_name.LowerASCII() : class_name);
   }
   const SpaceSplitString& ClassNames() const { return class_names_; }
 
@@ -113,10 +113,10 @@ class ElementData : public GarbageCollectedFinalized<ElementData> {
   DEFINE_TYPE_CASTS(thisType, ElementData, data, pointerPredicate, \
                     referencePredicate)
 
-#if COMPILER(MSVC)
+#if defined(COMPILER_MSVC)
 #pragma warning(push)
-#pragma warning( \
-    disable : 4200)  // Disable "zero-sized array in struct/union" warning
+// Disable "zero-sized array in struct/union" warning
+#pragma warning(disable : 4200)
 #endif
 
 // SharableElementData is managed by ElementDataCache and is produced by
@@ -151,7 +151,7 @@ DEFINE_ELEMENT_DATA_TYPE_CASTS(ShareableElementData,
                                !data->IsUnique(),
                                !data.IsUnique());
 
-#if COMPILER(MSVC)
+#if defined(COMPILER_MSVC)
 #pragma warning(pop)
 #endif
 
@@ -189,7 +189,7 @@ DEFINE_ELEMENT_DATA_TYPE_CASTS(UniqueElementData,
 
 inline const StylePropertySet* ElementData::PresentationAttributeStyle() const {
   if (!is_unique_)
-    return 0;
+    return nullptr;
   return ToUniqueElementData(this)->presentation_attribute_style_.Get();
 }
 
@@ -204,7 +204,7 @@ inline AttributeCollection ShareableElementData::Attributes() const {
 }
 
 inline AttributeCollection UniqueElementData::Attributes() const {
-  return AttributeCollection(attribute_vector_.Data(),
+  return AttributeCollection(attribute_vector_.data(),
                              attribute_vector_.size());
 }
 

@@ -27,23 +27,28 @@
 #include "content/browser/cache_storage/cache_storage.h"
 #include "content/browser/cache_storage/cache_storage.pb.h"
 #include "content/browser/cache_storage/cache_storage_cache_handle.h"
+#include "content/browser/cache_storage/cache_storage_context_impl.h"
 #include "content/browser/cache_storage/cache_storage_index.h"
 #include "content/browser/cache_storage/cache_storage_quota_client.h"
-#include "content/browser/quota/mock_quota_manager_proxy.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/cache_storage_usage_info.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/test/test_browser_context.h"
 #include "content/public/test/test_browser_thread_bundle.h"
+#include "content/public/test/test_utils.h"
+#include "net/disk_cache/disk_cache.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "net/url_request/url_request_job_factory_impl.h"
+#include "services/network/public/interfaces/fetch_api.mojom.h"
 #include "storage/browser/blob/blob_data_builder.h"
 #include "storage/browser/blob/blob_data_handle.h"
 #include "storage/browser/blob/blob_storage_context.h"
 #include "storage/browser/blob/blob_url_request_job_factory.h"
 #include "storage/browser/quota/quota_manager_proxy.h"
+#include "storage/browser/test/mock_quota_manager_proxy.h"
 #include "storage/browser/test/mock_special_storage_policy.h"
+#include "storage/common/blob_storage/blob_handle.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace content {
@@ -78,16 +83,29 @@ void CopyCacheStorageIndex(CacheStorageIndex* dest,
     dest->Insert(cache_metadata);
 }
 
+class TestCacheStorageObserver : public CacheStorageContextImpl::Observer {
+ public:
+  void OnCacheListChanged(const url::Origin& origin) override {
+    ++notify_list_changed_count;
+  }
+
+  void OnCacheContentChanged(const url::Origin& origin,
+                             const std::string& cache_name) override {
+    ++notify_content_changed_count;
+  }
+
+  int notify_list_changed_count = 0;
+  int notify_content_changed_count = 0;
+};
+
 }  // anonymous namespace
 
 // Returns a BlobProtocolHandler that uses |blob_storage_context|. Caller owns
 // the memory.
 std::unique_ptr<storage::BlobProtocolHandler> CreateMockBlobProtocolHandler(
     storage::BlobStorageContext* blob_storage_context) {
-  // The FileSystemContext and thread task runner are not actually used but a
-  // task runner is needed to avoid a DCHECK in BlobURLRequestJob ctor.
-  return base::WrapUnique(new storage::BlobProtocolHandler(
-      blob_storage_context, NULL, base::ThreadTaskRunnerHandle::Get().get()));
+  return base::WrapUnique(
+      new storage::BlobProtocolHandler(blob_storage_context, nullptr));
 }
 
 class CacheStorageManagerTest : public testing::Test {
@@ -108,7 +126,11 @@ class CacheStorageManagerTest : public testing::Test {
     CreateStorageManager();
   }
 
-  void TearDown() override { DestroyStorageManager(); }
+  void TearDown() override {
+    DestroyStorageManager();
+    disk_cache::FlushCacheThreadForTesting();
+    content::RunAllBlockingPoolTasksUntilIdle();
+  }
 
   virtual bool MemoryOnly() { return false; }
 
@@ -157,6 +179,11 @@ class CacheStorageManagerTest : public testing::Test {
     run_loop->Quit();
   }
 
+  void CacheDeleteCallback(base::RunLoop* run_loop, CacheStorageError error) {
+    callback_error_ = error;
+    run_loop->Quit();
+  }
+
   void CacheMatchCallback(
       base::RunLoop* run_loop,
       CacheStorageError error,
@@ -193,7 +220,7 @@ class CacheStorageManagerTest : public testing::Test {
     quota_policy_ = new MockSpecialStoragePolicy;
     mock_quota_manager_ = new MockQuotaManager(
         MemoryOnly(), temp_dir_path, base::ThreadTaskRunnerHandle::Get().get(),
-        base::ThreadTaskRunnerHandle::Get().get(), quota_policy_.get());
+        quota_policy_.get());
     mock_quota_manager_->SetQuota(
         GURL(origin1_), storage::kStorageTypeTemporary, 1024 * 1024 * 100);
     mock_quota_manager_->SetQuota(
@@ -217,8 +244,8 @@ class CacheStorageManagerTest : public testing::Test {
     base::RunLoop loop;
     bool write_was_scheduled =
         CacheStorageForOrigin(origin)->InitiateScheduledIndexWriteForTest(
-            base::Bind(&CacheStorageManagerTest::BoolCallback,
-                       base::Unretained(this), &loop));
+            base::BindOnce(&CacheStorageManagerTest::BoolCallback,
+                           base::Unretained(this), &loop));
     loop.Run();
     DCHECK(callback_bool_);
     return write_was_scheduled;
@@ -250,8 +277,8 @@ class CacheStorageManagerTest : public testing::Test {
     base::RunLoop loop;
     cache_manager_->OpenCache(
         origin, cache_name,
-        base::Bind(&CacheStorageManagerTest::CacheAndErrorCallback,
-                   base::Unretained(this), base::Unretained(&loop)));
+        base::BindOnce(&CacheStorageManagerTest::CacheAndErrorCallback,
+                       base::Unretained(this), base::Unretained(&loop)));
     loop.Run();
 
     bool error = callback_error_ != CACHE_STORAGE_OK;
@@ -266,8 +293,8 @@ class CacheStorageManagerTest : public testing::Test {
     base::RunLoop loop;
     cache_manager_->HasCache(
         origin, cache_name,
-        base::Bind(&CacheStorageManagerTest::BoolAndErrorCallback,
-                   base::Unretained(this), base::Unretained(&loop)));
+        base::BindOnce(&CacheStorageManagerTest::BoolAndErrorCallback,
+                       base::Unretained(this), base::Unretained(&loop)));
     loop.Run();
 
     return callback_bool_;
@@ -277,8 +304,8 @@ class CacheStorageManagerTest : public testing::Test {
     base::RunLoop loop;
     cache_manager_->DeleteCache(
         origin, cache_name,
-        base::Bind(&CacheStorageManagerTest::BoolAndErrorCallback,
-                   base::Unretained(this), base::Unretained(&loop)));
+        base::BindOnce(&CacheStorageManagerTest::BoolAndErrorCallback,
+                       base::Unretained(this), base::Unretained(&loop)));
     loop.Run();
 
     return callback_bool_;
@@ -287,8 +314,9 @@ class CacheStorageManagerTest : public testing::Test {
   size_t Keys(const GURL& origin) {
     base::RunLoop loop;
     cache_manager_->EnumerateCaches(
-        origin, base::Bind(&CacheStorageManagerTest::CacheMetadataCallback,
-                           base::Unretained(this), base::Unretained(&loop)));
+        origin,
+        base::BindOnce(&CacheStorageManagerTest::CacheMetadataCallback,
+                       base::Unretained(this), base::Unretained(&loop)));
     loop.Run();
     return callback_cache_index_.num_entries();
   }
@@ -315,8 +343,8 @@ class CacheStorageManagerTest : public testing::Test {
     base::RunLoop loop;
     cache_manager_->MatchCache(
         origin, cache_name, std::move(unique_request), match_params,
-        base::Bind(&CacheStorageManagerTest::CacheMatchCallback,
-                   base::Unretained(this), base::Unretained(&loop)));
+        base::BindOnce(&CacheStorageManagerTest::CacheMatchCallback,
+                       base::Unretained(this), base::Unretained(&loop)));
     loop.Run();
 
     return callback_error_ == CACHE_STORAGE_OK;
@@ -341,8 +369,8 @@ class CacheStorageManagerTest : public testing::Test {
     base::RunLoop loop;
     cache_manager_->MatchAllCaches(
         origin, std::move(unique_request), match_params,
-        base::Bind(&CacheStorageManagerTest::CacheMatchCallback,
-                   base::Unretained(this), base::Unretained(&loop)));
+        base::BindOnce(&CacheStorageManagerTest::CacheMatchCallback,
+                       base::Unretained(this), base::Unretained(&loop)));
     loop.Run();
 
     return callback_error_ == CACHE_STORAGE_OK;
@@ -378,9 +406,9 @@ class CacheStorageManagerTest : public testing::Test {
     url_list->push_back(request.url);
     ServiceWorkerResponse response(
         std::move(url_list), status_code, "OK",
-        blink::kWebServiceWorkerResponseTypeDefault,
+        network::mojom::FetchResponseType::kDefault,
         base::MakeUnique<ServiceWorkerHeaderMap>(response_headers),
-        blob_handle->uuid(), request.url.spec().size(), GURL(),
+        blob_handle->uuid(), request.url.spec().size(), nullptr /* blob */,
         blink::kWebServiceWorkerResponseErrorUnknown, base::Time(),
         false /* is_in_cache_storage */,
         std::string() /* cache_storage_cache_name */,
@@ -395,8 +423,28 @@ class CacheStorageManagerTest : public testing::Test {
     base::RunLoop loop;
     cache->BatchOperation(
         std::vector<CacheStorageBatchOperation>(1, operation),
-        base::Bind(&CacheStorageManagerTest::CachePutCallback,
-                   base::Unretained(this), base::Unretained(&loop)));
+        base::BindOnce(&CacheStorageManagerTest::CachePutCallback,
+                       base::Unretained(this), base::Unretained(&loop)));
+    loop.Run();
+
+    return callback_error_ == CACHE_STORAGE_OK;
+  }
+
+  bool CacheDelete(CacheStorageCache* cache, const GURL& url) {
+    ServiceWorkerFetchRequest request;
+    request.url = url;
+    ServiceWorkerResponse response;
+
+    CacheStorageBatchOperation operation;
+    operation.operation_type = CACHE_STORAGE_CACHE_OPERATION_TYPE_DELETE;
+    operation.request = request;
+    operation.response = response;
+
+    base::RunLoop loop;
+    cache->BatchOperation(
+        std::vector<CacheStorageBatchOperation>(1, operation),
+        base::BindOnce(&CacheStorageManagerTest::CacheDeleteCallback,
+                       base::Unretained(this), base::Unretained(&loop)));
     loop.Run();
 
     return callback_error_ == CACHE_STORAGE_OK;
@@ -407,9 +455,10 @@ class CacheStorageManagerTest : public testing::Test {
         new ServiceWorkerFetchRequest());
     request->url = url;
     base::RunLoop loop;
-    cache->Match(std::move(request), CacheStorageCacheQueryParams(),
-                 base::Bind(&CacheStorageManagerTest::CacheMatchCallback,
-                            base::Unretained(this), base::Unretained(&loop)));
+    cache->Match(
+        std::move(request), CacheStorageCacheQueryParams(),
+        base::BindOnce(&CacheStorageManagerTest::CacheMatchCallback,
+                       base::Unretained(this), base::Unretained(&loop)));
     loop.Run();
 
     return callback_error_ == CACHE_STORAGE_OK;
@@ -453,8 +502,8 @@ class CacheStorageManagerTest : public testing::Test {
     base::RunLoop loop;
     CacheStorage* cache_storage = CacheStorageForOrigin(origin);
     cache_storage->GetSizeThenCloseAllCaches(
-        base::Bind(&CacheStorageManagerTest::UsageCallback,
-                   base::Unretained(this), &loop));
+        base::BindOnce(&CacheStorageManagerTest::UsageCallback,
+                       base::Unretained(this), &loop));
     loop.Run();
     return callback_usage_;
   }
@@ -462,8 +511,8 @@ class CacheStorageManagerTest : public testing::Test {
   int64_t Size(const GURL& origin) {
     base::RunLoop loop;
     CacheStorage* cache_storage = CacheStorageForOrigin(origin);
-    cache_storage->Size(base::Bind(&CacheStorageManagerTest::UsageCallback,
-                                   base::Unretained(this), &loop));
+    cache_storage->Size(base::BindOnce(&CacheStorageManagerTest::UsageCallback,
+                                       base::Unretained(this), &loop));
     loop.Run();
     return callback_usage_;
   }
@@ -944,8 +993,8 @@ TEST_P(CacheStorageManagerTestP, OpenRunsSerially) {
   base::RunLoop open_loop;
   cache_manager_->OpenCache(
       origin1_, "foo",
-      base::Bind(&CacheStorageManagerTest::CacheAndErrorCallback,
-                 base::Unretained(this), base::Unretained(&open_loop)));
+      base::BindOnce(&CacheStorageManagerTest::CacheAndErrorCallback,
+                     base::Unretained(this), base::Unretained(&open_loop)));
 
   base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(callback_cache_handle_);
@@ -1218,6 +1267,102 @@ TEST_P(CacheStorageManagerTestP, SizeThenCloseStorageAccessed) {
   // GetSizeThenCloseAllCaches is not part of the web API and should not notify
   // the quota manager of an access.
   EXPECT_EQ(0, quota_manager_proxy_->notify_storage_accessed_count());
+}
+
+TEST_P(CacheStorageManagerTestP, NotifyCacheListChanged_Created) {
+  TestCacheStorageObserver observer;
+  cache_manager_->AddObserver(&observer);
+
+  EXPECT_EQ(0, observer.notify_list_changed_count);
+  EXPECT_TRUE(Open(origin1_, "foo"));
+  EXPECT_EQ(1, observer.notify_list_changed_count);
+  EXPECT_TRUE(CachePut(callback_cache_handle_->value(),
+                       GURL("http://example.com/foo")));
+  EXPECT_EQ(1, observer.notify_list_changed_count);
+}
+
+TEST_P(CacheStorageManagerTestP, NotifyCacheListChanged_Deleted) {
+  TestCacheStorageObserver observer;
+  cache_manager_->AddObserver(&observer);
+
+  EXPECT_EQ(0, observer.notify_list_changed_count);
+  EXPECT_FALSE(Delete(origin1_, "foo"));
+  EXPECT_EQ(0, observer.notify_list_changed_count);
+  EXPECT_TRUE(Open(origin1_, "foo"));
+  EXPECT_EQ(1, observer.notify_list_changed_count);
+  EXPECT_TRUE(Delete(origin1_, "foo"));
+  EXPECT_EQ(2, observer.notify_list_changed_count);
+}
+
+TEST_P(CacheStorageManagerTestP, NotifyCacheListChanged_DeletedThenCreated) {
+  TestCacheStorageObserver observer;
+  cache_manager_->AddObserver(&observer);
+
+  EXPECT_EQ(0, observer.notify_list_changed_count);
+  EXPECT_TRUE(Open(origin1_, "foo"));
+  EXPECT_EQ(1, observer.notify_list_changed_count);
+  EXPECT_TRUE(Delete(origin1_, "foo"));
+  EXPECT_EQ(2, observer.notify_list_changed_count);
+  EXPECT_TRUE(Open(origin2_, "foo2"));
+  EXPECT_EQ(3, observer.notify_list_changed_count);
+}
+
+TEST_P(CacheStorageManagerTestP, NotifyCacheContentChanged_PutEntry) {
+  TestCacheStorageObserver observer;
+  cache_manager_->AddObserver(&observer);
+
+  EXPECT_EQ(0, observer.notify_content_changed_count);
+  EXPECT_TRUE(Open(origin1_, "foo"));
+  EXPECT_EQ(0, observer.notify_content_changed_count);
+  EXPECT_TRUE(CachePut(callback_cache_handle_->value(),
+                       GURL("http://example.com/foo")));
+  EXPECT_EQ(1, observer.notify_content_changed_count);
+  EXPECT_TRUE(CachePut(callback_cache_handle_->value(),
+                       GURL("http://example.com/foo1")));
+  EXPECT_TRUE(CachePut(callback_cache_handle_->value(),
+                       GURL("http://example.com/foo2")));
+  EXPECT_EQ(3, observer.notify_content_changed_count);
+}
+
+TEST_P(CacheStorageManagerTestP, NotifyCacheContentChanged_DeleteEntry) {
+  TestCacheStorageObserver observer;
+  cache_manager_->AddObserver(&observer);
+
+  EXPECT_EQ(0, observer.notify_content_changed_count);
+  EXPECT_FALSE(Delete(origin1_, "foo"));
+  EXPECT_EQ(0, observer.notify_content_changed_count);
+  EXPECT_TRUE(Open(origin1_, "foo"));
+  EXPECT_EQ(0, observer.notify_content_changed_count);
+  EXPECT_TRUE(CachePut(callback_cache_handle_->value(),
+                       GURL("http://example.com/foo")));
+  EXPECT_EQ(1, observer.notify_content_changed_count);
+  EXPECT_TRUE(CacheDelete(callback_cache_handle_->value(),
+                          GURL("http://example.com/foo")));
+  EXPECT_EQ(2, observer.notify_content_changed_count);
+  EXPECT_FALSE(CacheDelete(callback_cache_handle_->value(),
+                           GURL("http://example.com/foo")));
+  EXPECT_EQ(2, observer.notify_content_changed_count);
+}
+
+TEST_P(CacheStorageManagerTestP, NotifyCacheContentChanged_DeleteThenPutEntry) {
+  TestCacheStorageObserver observer;
+  cache_manager_->AddObserver(&observer);
+
+  EXPECT_EQ(0, observer.notify_content_changed_count);
+  EXPECT_TRUE(Open(origin1_, "foo"));
+  EXPECT_EQ(0, observer.notify_content_changed_count);
+  EXPECT_TRUE(CachePut(callback_cache_handle_->value(),
+                       GURL("http://example.com/foo")));
+  EXPECT_EQ(1, observer.notify_content_changed_count);
+  EXPECT_TRUE(CacheDelete(callback_cache_handle_->value(),
+                          GURL("http://example.com/foo")));
+  EXPECT_EQ(2, observer.notify_content_changed_count);
+  EXPECT_TRUE(CachePut(callback_cache_handle_->value(),
+                       GURL("http://example.com/foo")));
+  EXPECT_EQ(3, observer.notify_content_changed_count);
+  EXPECT_TRUE(CacheDelete(callback_cache_handle_->value(),
+                          GURL("http://example.com/foo")));
+  EXPECT_EQ(4, observer.notify_content_changed_count);
 }
 
 TEST_P(CacheStorageManagerTestP, StorageMatch_IgnoreSearch) {

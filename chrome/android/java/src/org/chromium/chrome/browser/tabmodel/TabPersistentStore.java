@@ -565,8 +565,12 @@ public class TabPersistentStore extends TabPersister {
                 Log.w(TAG, "Failed to restore tab: not enough info about its type was available.");
                 return;
             } else if (isIncognito) {
-                Log.i(TAG, "Failed to restore Incognito tab: its TabState could not be restored.");
-                return;
+                if (!NewTabPage.isNTPUrl(tabToRestore.url) || !setAsActive
+                        || mCancelIncognitoTabLoads) {
+                    Log.i(TAG,
+                            "Failed to restore Incognito tab: its TabState could not be restored.");
+                    return;
+                }
             }
         }
 
@@ -604,6 +608,9 @@ public class TabPersistentStore extends TabPersister {
             Log.w(TAG, "Failed to restore TabState; creating Tab with last known URL.");
             Tab fallbackTab = mTabCreatorManager.getTabCreator(isIncognito).createNewTab(
                     new LoadUrlParams(tabToRestore.url), TabModel.TabLaunchType.FROM_RESTORE, null);
+
+            if (fallbackTab == null) return;
+
             tabId = fallbackTab.getId();
             model.moveTab(tabId, restoredIndex);
         }

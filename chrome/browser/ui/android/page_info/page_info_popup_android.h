@@ -11,6 +11,7 @@
 
 #include "base/android/scoped_java_ref.h"
 #include "base/macros.h"
+#include "base/optional.h"
 #include "chrome/browser/ui/page_info/page_info_ui.h"
 
 namespace content {
@@ -48,9 +49,14 @@ class PageInfoPopupAndroid : public PageInfoUI {
                          ChosenObjectInfoList chosen_object_info_list) override;
   void SetIdentityInfo(const IdentityInfo& identity_info) override;
 
-  static bool RegisterPageInfoPopupAndroid(JNIEnv* env);
-
  private:
+  // Returns an optional value which is set if this permission should be
+  // displayed in Page Info. Most permissions will only be displayed if they are
+  // set to some non-default value, but there are some permissions which require
+  // customized behavior.
+  base::Optional<ContentSetting> GetSettingToDisplay(
+      const PermissionInfo& permission);
+
   // The presenter that controlls the Page Info UI.
   std::unique_ptr<PageInfo> presenter_;
 

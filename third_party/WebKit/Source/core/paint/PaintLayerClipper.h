@@ -96,6 +96,8 @@ class ClipRectsContext {
 
   ClipRectsCacheSlot CacheSlot() const { return cache_slot_; }
 
+  bool ShouldRespectRootLayerClip() const;
+
   const PaintLayer* root_layer;
   const OverlayScrollbarClipBehavior overlay_scrollbar_clip_behavior;
 
@@ -203,10 +205,6 @@ class CORE_EXPORT PaintLayerClipper {
                       ClipRect& foreground_rect,
                       const LayoutPoint* offset_from_root = 0) const;
 
-  ClipRects& PaintingClipRects(const PaintLayer* root_layer,
-                               ShouldRespectOverflowClipType,
-                               const LayoutSize& subpixel_accumulation) const;
-
  private:
   void ClearCache(ClipRectsCacheSlot);
   ClipRects& GetClipRects(const ClipRectsContext&) const;
@@ -220,7 +218,6 @@ class CORE_EXPORT PaintLayerClipper {
   void GetOrCalculateClipRects(const ClipRectsContext&, ClipRects&) const;
 
   ALWAYS_INLINE bool ShouldClipOverflow(const ClipRectsContext&) const;
-  ALWAYS_INLINE bool ShouldRespectOverflowClip(const ClipRectsContext&) const;
 
   // Returned clip rect in |output| is in the space of the context's rootLayer.
   ALWAYS_INLINE void CalculateBackgroundClipRectWithGeometryMapper(

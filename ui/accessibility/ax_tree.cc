@@ -11,6 +11,7 @@
 #include "base/logging.h"
 #include "base/strings/stringprintf.h"
 #include "ui/accessibility/ax_node.h"
+#include "ui/gfx/transform.h"
 
 namespace ui {
 
@@ -154,10 +155,80 @@ AXNode* AXTree::GetFromId(int32_t id) const {
   return iter != id_map_.end() ? iter->second : NULL;
 }
 
-void AXTree::UpdateData(const AXTreeData& data) {
-  data_ = data;
+void AXTree::UpdateData(const AXTreeData& new_data) {
+  if (data_ == new_data)
+    return;
+
+  AXTreeData old_data = data_;
+  data_ = new_data;
   if (delegate_)
-    delegate_->OnTreeDataChanged(this);
+    delegate_->OnTreeDataChanged(this, old_data, new_data);
+}
+
+gfx::RectF AXTree::RelativeToTreeBounds(const AXNode* node,
+                                        gfx::RectF bounds) const {
+  // If |bounds| is uninitialized, which is not the same as empty,
+  // start with the node bounds.
+  if (bounds.width() == 0 && bounds.height() == 0) {
+    bounds = node->data().location;
+
+    // If the node bounds is empty (either width or height is zero),
+    // try to compute good bounds from the children.
+    if (bounds.IsEmpty()) {
+      for (size_t i = 0; i < node->children().size(); i++) {
+        ui::AXNode* child = node->children()[i];
+        bounds.Union(GetTreeBounds(child));
+      }
+      if (bounds.width() > 0 && bounds.height() > 0)
+        return bounds;
+    }
+  } else {
+    bounds.Offset(node->data().location.x(), node->data().location.y());
+  }
+
+  while (node != nullptr) {
+    if (node->data().transform)
+      node->data().transform->TransformRect(&bounds);
+    const AXNode* container;
+
+    // Normally we apply any transforms and offsets for each node and
+    // then walk up to its offset container - however, if the node has
+    // no width or height, walk up to its nearest ancestor until we find
+    // one that has bounds.
+    if (bounds.width() == 0 && bounds.height() == 0)
+      container = node->parent();
+    else
+      container = GetFromId(node->data().offset_container_id);
+    if (!container && container != root())
+      container = root();
+    if (!container || container == node)
+      break;
+
+    gfx::RectF container_bounds = container->data().location;
+    bounds.Offset(container_bounds.x(), container_bounds.y());
+
+    // If we don't have any size yet, take the size from this ancestor.
+    // The rationale is that it's not useful to the user for an object to
+    // have no width or height and it's probably a bug; it's better to
+    // reflect the bounds of the nearest ancestor rather than a 0x0 box.
+    if (bounds.width() == 0 && bounds.height() == 0)
+      bounds.set_size(container_bounds.size());
+
+    int scroll_x = 0;
+    int scroll_y = 0;
+    if (container->data().GetIntAttribute(ui::AX_ATTR_SCROLL_X, &scroll_x) &&
+        container->data().GetIntAttribute(ui::AX_ATTR_SCROLL_Y, &scroll_y)) {
+      bounds.Offset(-scroll_x, -scroll_y);
+    }
+
+    node = container;
+  }
+
+  return bounds;
+}
+
+gfx::RectF AXTree::GetTreeBounds(const AXNode* node) const {
+  return RelativeToTreeBounds(node, gfx::RectF());
 }
 
 bool AXTree::Unserialize(const AXTreeUpdate& update) {
@@ -220,6 +291,9 @@ bool AXTree::Unserialize(const AXTreeUpdate& update) {
     changes.reserve(update.nodes.size());
     for (size_t i = 0; i < update.nodes.size(); ++i) {
       AXNode* node = GetFromId(update.nodes[i].id);
+      if (!node)
+        continue;
+
       bool is_new_node = new_nodes.find(node) != new_nodes.end();
       bool is_reparented_node =
           is_new_node && update_state.HasRemovedNode(node);
@@ -360,10 +434,8 @@ void AXTree::CallNodeChangeCallbacks(AXNode* node, const AXNodeData& new_data) {
   if (old_data.state != new_data.state) {
     for (int i = AX_STATE_NONE + 1; i <= AX_STATE_LAST; ++i) {
       AXState state = static_cast<AXState>(i);
-      if (old_data.HasStateFlag(state) != new_data.HasStateFlag(state)) {
-        delegate_->OnStateChanged(this, node, state,
-                                  new_data.HasStateFlag(state));
-      }
+      if (old_data.HasState(state) != new_data.HasState(state))
+        delegate_->OnStateChanged(this, node, state, new_data.HasState(state));
     }
   }
 
@@ -409,6 +481,17 @@ void AXTree::CallNodeChangeCallbacks(AXNode* node, const AXNodeData& new_data) {
   CallIfAttributeValuesChanged(old_data.intlist_attributes,
                                new_data.intlist_attributes,
                                std::vector<int32_t>(), intlist_callback);
+
+  auto stringlist_callback =
+      [this, node](AXStringListAttribute attr,
+                   const std::vector<std::string>& old_stringlist,
+                   const std::vector<std::string>& new_stringlist) {
+        delegate_->OnStringListAttributeChanged(this, node, attr,
+                                                old_stringlist, new_stringlist);
+      };
+  CallIfAttributeValuesChanged(old_data.stringlist_attributes,
+                               new_data.stringlist_attributes,
+                               std::vector<std::string>(), stringlist_callback);
 }
 
 void AXTree::DestroySubtree(AXNode* node,

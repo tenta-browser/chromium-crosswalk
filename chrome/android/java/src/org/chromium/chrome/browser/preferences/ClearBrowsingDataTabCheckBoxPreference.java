@@ -13,9 +13,13 @@ import android.util.AttributeSet;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import org.chromium.base.ApiCompatibilityUtils;
+import org.chromium.chrome.R;
+import org.chromium.chrome.browser.util.AccessibilityUtil;
 import org.chromium.ui.text.NoUnderlineClickableSpan;
 import org.chromium.ui.text.SpanApplier;
 
@@ -48,7 +52,6 @@ public class ClearBrowsingDataTabCheckBoxPreference extends ClearBrowsingDataChe
 
         final TextView textView = (TextView) view.findViewById(android.R.id.summary);
 
-        // TODO(dullweber): Rethink how the link can be made accessible to TalkBack before launch.
         // Create custom onTouch listener to be able to respond to click events inside the summary.
         textView.setOnTouchListener(new View.OnTouchListener() {
             @Override
@@ -82,17 +85,29 @@ public class ClearBrowsingDataTabCheckBoxPreference extends ClearBrowsingDataChe
     @Override
     protected void setupLayout(LinearLayout view) {
         // Override to remove layout customizations from super class.
+
+        // Adjust icon padding.
+        int padding = getContext().getResources().getDimensionPixelSize(R.dimen.pref_icon_padding);
+        ImageView icon = (ImageView) view.findViewById(android.R.id.icon);
+        ApiCompatibilityUtils.setPaddingRelative(
+                icon, padding, icon.getPaddingTop(), 0, icon.getPaddingBottom());
     }
 
     @Override
     public void setSummary(CharSequence summary) {
-        // If there is no link in the summary, invoke the default behavior.
+        // If there is no link in the summary invoke the default behavior.
         String summaryString = summary.toString();
         if (!summaryString.contains("<link>") || !summaryString.contains("</link>")) {
             super.setSummary(summary);
             return;
         }
-
+        // Talkback users can't select links inside the summary because it is already a target
+        // that toggles the checkbox. Links will still be read out and users can manually
+        // navigate to them.
+        if (AccessibilityUtil.isAccessibilityEnabled()) {
+            super.setSummary(summaryString.replaceAll("</?link>", ""));
+            return;
+        }
         // Linkify <link></link> span.
         final SpannableString summaryWithLink = SpanApplier.applySpans(summaryString,
                 new SpanApplier.SpanInfo("<link>", "</link>", new NoUnderlineClickableSpan() {

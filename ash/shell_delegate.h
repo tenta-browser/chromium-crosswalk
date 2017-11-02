@@ -14,6 +14,10 @@
 
 class GURL;
 
+namespace aura {
+class Window;
+}
+
 namespace gfx {
 class Image;
 }
@@ -27,22 +31,17 @@ class Connector;
 }
 
 namespace ui {
-class MenuModel;
+class InputDeviceControllerClient;
 }
 
 namespace ash {
 
 class AccessibilityDelegate;
 class GPUSupport;
+class NetworkingConfigDelegate;
 class PaletteDelegate;
-class SessionStateDelegate;
-class ShelfDelegate;
-class ShelfModel;
-class SystemTrayDelegate;
-struct ShelfItem;
 class WallpaperDelegate;
-class WmShelf;
-class WmWindow;
+enum class TouchscreenEnabledSource;
 
 // Delegate of the Shell.
 class ASH_EXPORT ShellDelegate {
@@ -65,7 +64,7 @@ class ASH_EXPORT ShellDelegate {
 
   // Returns true if |window| can be shown for the delegate's concept of current
   // user.
-  virtual bool CanShowWindowForUser(WmWindow* window) const = 0;
+  virtual bool CanShowWindowForUser(aura::Window* window) const = 0;
 
   // Returns true if the first window shown on first run should be
   // unconditionally maximized, overriding the heuristic that normally chooses
@@ -83,33 +82,27 @@ class ASH_EXPORT ShellDelegate {
   // Invoked when the user uses Ctrl-Shift-Q to close chrome.
   virtual void Exit() = 0;
 
-  // Create a shell-specific keyboard::KeyboardUI
-  virtual keyboard::KeyboardUI* CreateKeyboardUI() = 0;
+  // Create a shell-specific keyboard::KeyboardUI.
+  virtual std::unique_ptr<keyboard::KeyboardUI> CreateKeyboardUI() = 0;
 
   // Opens the |url| in a new browser tab.
   virtual void OpenUrlFromArc(const GURL& url) = 0;
 
-  // Creates a new ShelfDelegate. Shell takes ownership of the returned value.
-  virtual ShelfDelegate* CreateShelfDelegate(ShelfModel* model) = 0;
+  // Functions called when the shelf is initialized and shut down.
+  // TODO(msw): Refine ChromeLauncherController lifetime management.
+  virtual void ShelfInit() = 0;
+  virtual void ShelfShutdown() = 0;
 
-  // Creates a system-tray delegate. Shell takes ownership of the delegate.
-  virtual SystemTrayDelegate* CreateSystemTrayDelegate() = 0;
+  // Returns the delegate. May be null in tests.
+  virtual NetworkingConfigDelegate* GetNetworkingConfigDelegate() = 0;
 
   // Creates a wallpaper delegate. Shell takes ownership of the delegate.
   virtual std::unique_ptr<WallpaperDelegate> CreateWallpaperDelegate() = 0;
-
-  // Creates a session state delegate. Shell takes ownership of the delegate.
-  virtual SessionStateDelegate* CreateSessionStateDelegate() = 0;
 
   // Creates a accessibility delegate. Shell takes ownership of the delegate.
   virtual AccessibilityDelegate* CreateAccessibilityDelegate() = 0;
 
   virtual std::unique_ptr<PaletteDelegate> CreatePaletteDelegate() = 0;
-
-  // Creates a menu model for the |wm_shelf| and optional shelf |item|.
-  // If |item| is null, this creates a context menu for the wallpaper or shelf.
-  virtual ui::MenuModel* CreateContextMenu(WmShelf* wm_shelf,
-                                           const ShelfItem* item) = 0;
 
   // Creates a GPU support object. Shell takes ownership of the object.
   virtual GPUSupport* CreateGPUSupport() = 0;
@@ -121,21 +114,25 @@ class ASH_EXPORT ShellDelegate {
 
   virtual gfx::Image GetDeprecatedAcceleratorImage() const = 0;
 
-  // If |use_local_state| is true, returns the touchscreen status from local
-  // state, otherwise from user prefs.
-  virtual bool IsTouchscreenEnabledInPrefs(bool use_local_state) const = 0;
+  // Returns the current touchscreen enabled status as specified by |source|.
+  // Note that the actual state of the touchscreen device is automatically
+  // determined based on the requests of multiple sources.
+  virtual bool GetTouchscreenEnabled(TouchscreenEnabledSource source) const = 0;
 
-  // Sets the status of touchscreen to |enabled| in prefs. If |use_local_state|,
-  // pref is set in local state, otherwise in user prefs.
-  virtual void SetTouchscreenEnabledInPrefs(bool enabled,
-                                            bool use_local_state) = 0;
-
-  // Updates the enabled/disabled status of the touchscreen from prefs. Enabled
-  // if both local state and user prefs are enabled, otherwise disabled.
-  virtual void UpdateTouchscreenStatusFromPrefs() = 0;
+  // Sets |source|'s requested touchscreen enabled status to |enabled|. Note
+  // that the actual state of the touchscreen device is automatically determined
+  // based on the requests of multiple sources.
+  virtual void SetTouchscreenEnabled(bool enabled,
+                                     TouchscreenEnabledSource source) = 0;
 
   // Toggles the status of touchpad between enabled and disabled.
   virtual void ToggleTouchpad() {}
+
+  // Suspends all WebContents-associated media sessions to stop managed players.
+  virtual void SuspendMediaSessions() {}
+
+  // Creator of Shell owns this; it's assumed this outlives Shell.
+  virtual ui::InputDeviceControllerClient* GetInputDeviceControllerClient() = 0;
 };
 
 }  // namespace ash

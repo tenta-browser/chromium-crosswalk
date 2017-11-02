@@ -8,7 +8,6 @@
 #include "base/bind.h"
 #include "base/format_macros.h"
 #include "base/memory/ptr_util.h"
-#include "base/memory/scoped_vector.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
 #include "base/synchronization/condition_variable.h"
@@ -95,7 +94,7 @@ class ScheduleWorkTest : public testing::Test {
     max_batch_times_.reset(new base::TimeDelta[num_scheduling_threads]);
 
     for (int i = 0; i < num_scheduling_threads; ++i) {
-      scheduling_threads.push_back(MakeUnique<Thread>("posting thread"));
+      scheduling_threads.push_back(std::make_unique<Thread>("posting thread"));
       scheduling_threads[i]->Start();
     }
 
@@ -286,6 +285,7 @@ class PostTaskTest : public testing::Test {
         (now - start).InMicroseconds() / static_cast<double>(num_posted),
         "us/task",
         true);
+    queue->WillDestroyCurrentMessageLoop();
   }
 };
 

@@ -7,21 +7,42 @@
 
 #include <list>
 
+#include "base/android/jni_array.h"
 #include "base/android/jni_weak_ref.h"
 #include "base/bind.h"
 #include "base/memory/ref_counted.h"
+#include "base/observer_list.h"
 #include "ui/android/ui_android_export.h"
+#include "ui/android/view_android_observer.h"
 #include "ui/gfx/geometry/rect_f.h"
+
+class SkBitmap;
 
 namespace cc {
 class Layer;
 }
 
+namespace gfx {
+class Point;
+}
+
 namespace ui {
+class DragEventAndroid;
 class EventForwarder;
 class MotionEventAndroid;
 class ViewClient;
 class WindowAndroid;
+class ViewAndroidObserver;
+
+// View-related parameters from frame updates.
+struct FrameInfo {
+  gfx::SizeF viewport_size;  // In CSS pixels.
+  float page_scale;
+
+  // Content offset from the top. Used to translate snapshots to
+  // the correct part of the view. In CSS pixels.
+  float content_offset;
+};
 
 // A simple container for a UI layer.
 // At the root of the hierarchy is a WindowAndroid, when attached.
@@ -63,7 +84,8 @@ class UI_ANDROID_EXPORT ViewAndroid {
   };
 
   // Layout parameters used to set the view's position and size.
-  // Position is in parent's coordinate space.
+  // Position is in parent's coordinate space, and all the values
+  // are in CSS pixel.
   struct LayoutParams {
     static LayoutParams MatchParent() { return {true, 0, 0, 0, 0}; }
     static LayoutParams Normal(int x, int y, int width, int height) {
@@ -92,15 +114,10 @@ class UI_ANDROID_EXPORT ViewAndroid {
   ViewAndroid();
   virtual ~ViewAndroid();
 
-  // The content offset is in CSS pixels, and is used to translate
-  // snapshots to the correct part of the view.
-  void set_content_offset(const gfx::Vector2dF& content_offset) {
-    content_offset_ = content_offset;
-  }
-
-  gfx::Vector2dF content_offset() const {
-    return content_offset_;
-  }
+  void UpdateFrameInfo(const FrameInfo& frame_info);
+  float content_offset() const { return frame_info_.content_offset; }
+  float page_scale() const { return frame_info_.page_scale; }
+  gfx::SizeF viewport_size() const { return frame_info_.viewport_size; }
 
   // Returns the window at the root of this hierarchy, or |null|
   // if disconnected.
@@ -127,12 +144,20 @@ class UI_ANDROID_EXPORT ViewAndroid {
   // Detaches this view from its parent.
   void RemoveFromParent();
 
+  bool HasFocus();
+  void RequestFocus();
+
   // Sets the layout relative to parent. Used to do hit testing against events.
   void SetLayout(LayoutParams params);
 
   bool StartDragAndDrop(const base::android::JavaRef<jstring>& jtext,
                         const base::android::JavaRef<jobject>& jimage);
 
+  gfx::Size GetPhysicalBackingSize();
+  void OnPhysicalBackingSizeChanged(const gfx::Size& size);
+  void OnCursorChanged(int type,
+                       const SkBitmap& custom_image,
+                       const gfx::Point& hotspot);
   void OnBackgroundColorChanged(unsigned int color);
   void OnTopControlsChanged(float top_controls_offset,
                             float top_content_offset);
@@ -146,6 +171,13 @@ class UI_ANDROID_EXPORT ViewAndroid {
   // This may return null.
   base::android::ScopedJavaLocalRef<jobject> GetContainerView();
 
+  // Return the location of the container view in physical pixels.
+  gfx::Point GetLocationOfContainerViewInWindow();
+
+  // ViewAndroid does not own |observer|s.
+  void AddObserver(ViewAndroidObserver* observer);
+  void RemoveObserver(ViewAndroidObserver* observer);
+
   float GetDipScale();
 
  protected:
@@ -155,33 +187,45 @@ class UI_ANDROID_EXPORT ViewAndroid {
   friend class EventForwarder;
   friend class ViewAndroidBoundsTest;
 
-  using ViewClientCallback =
-      const base::Callback<bool(ViewClient*, const MotionEventAndroid&)>;
-
-  bool OnTouchEvent(const MotionEventAndroid& event, bool for_touch_handle);
+  bool OnDragEvent(const DragEventAndroid& event);
+  bool OnTouchEvent(const MotionEventAndroid& event);
   bool OnMouseEvent(const MotionEventAndroid& event);
   bool OnMouseWheelEvent(const MotionEventAndroid& event);
 
   void RemoveChild(ViewAndroid* child);
 
-  bool HitTest(ViewClientCallback send_to_client,
-               const MotionEventAndroid& event);
+  void OnAttachedToWindow();
+  void OnDetachedFromWindow();
 
-  static bool SendTouchEventToClient(bool for_touch_handle,
-                                     ViewClient* client,
-                                     const MotionEventAndroid& event);
+  template <typename E>
+  using ViewClientCallback =
+      const base::Callback<bool(ViewClient*, const E&, const gfx::PointF&)>;
+
+  template <typename E>
+  bool HitTest(ViewClientCallback<E> send_to_client,
+               const E& event,
+               const gfx::PointF& point);
+
+  static bool SendDragEventToClient(ViewClient* client,
+                                    const DragEventAndroid& event,
+                                    const gfx::PointF& point);
+  static bool SendTouchEventToClient(ViewClient* client,
+                                     const MotionEventAndroid& event,
+                                     const gfx::PointF& point);
   static bool SendMouseEventToClient(ViewClient* client,
-                                     const MotionEventAndroid& event);
+                                     const MotionEventAndroid& event,
+                                     const gfx::PointF& point);
   static bool SendMouseWheelEventToClient(ViewClient* client,
-                                          const MotionEventAndroid& event);
+                                          const MotionEventAndroid& event,
+                                          const gfx::PointF& point);
 
   bool has_event_forwarder() const { return !!event_forwarder_; }
 
-  // Returns true if any node of the tree along the hierarchy (view's children
-  // and parents) already has |EventForwarder| attached to it.
-  static bool ViewTreeHasEventForwarder(ViewAndroid* view);
+  // Checks if there is any event forwarder in any node up to root.
+  static bool RootPathHasEventForwarder(ViewAndroid* view);
 
-  // Returns true if any children node (or self) has |EventForwarder|.
+  // Checks if there is any event forwarder in the node paths down to
+  // each leaf of subtree.
   static bool SubtreeHasEventForwarder(ViewAndroid* view);
 
   // Returns the Java delegate for this view. This is used to delegate work
@@ -191,6 +235,7 @@ class UI_ANDROID_EXPORT ViewAndroid {
       GetViewAndroidDelegate() const;
 
   std::list<ViewAndroid*> children_;
+  base::ObserverList<ViewAndroidObserver> observer_list_;
   scoped_refptr<cc::Layer> layer_;
   JavaObjectWeakGlobalRef delegate_;
 
@@ -200,7 +245,11 @@ class UI_ANDROID_EXPORT ViewAndroid {
   // the passed events should be processed by the view.
   LayoutParams layout_params_;
 
-  gfx::Vector2dF content_offset_;  // in CSS pixel.
+  // In physical pixel.
+  gfx::Size physical_size_;
+
+  FrameInfo frame_info_;
+
   std::unique_ptr<EventForwarder> event_forwarder_;
 
   DISALLOW_COPY_AND_ASSIGN(ViewAndroid);

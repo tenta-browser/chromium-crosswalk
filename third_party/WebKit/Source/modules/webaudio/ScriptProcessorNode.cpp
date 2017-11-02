@@ -45,7 +45,7 @@ ScriptProcessorHandler::ScriptProcessorHandler(
     size_t buffer_size,
     unsigned number_of_input_channels,
     unsigned number_of_output_channels)
-    : AudioHandler(kNodeTypeJavaScript, node, sample_rate),
+    : AudioHandler(kNodeTypeScriptProcessor, node, sample_rate),
       double_buffer_index_(0),
       buffer_size_(buffer_size),
       buffer_read_write_index_(0),
@@ -216,10 +216,11 @@ void ScriptProcessorHandler::Process(size_t frames_to_process) {
         // index.
         TaskRunnerHelper::Get(TaskType::kMediaElementEvent,
                               Context()->GetExecutionContext())
-            ->PostTask(BLINK_FROM_HERE,
-                       CrossThreadBind(
-                           &ScriptProcessorHandler::FireProcessEvent,
-                           CrossThreadUnretained(this), double_buffer_index_));
+            ->PostTask(
+                BLINK_FROM_HERE,
+                CrossThreadBind(&ScriptProcessorHandler::FireProcessEvent,
+                                RefPtr<ScriptProcessorHandler>(this),
+                                double_buffer_index_));
       } else {
         // If this node is in the offline audio context, use the
         // waitable event to synchronize to the offline rendering thread.
@@ -228,12 +229,13 @@ void ScriptProcessorHandler::Process(size_t frames_to_process) {
 
         TaskRunnerHelper::Get(TaskType::kMediaElementEvent,
                               Context()->GetExecutionContext())
-            ->PostTask(BLINK_FROM_HERE,
-                       CrossThreadBind(
-                           &ScriptProcessorHandler::
-                               FireProcessEventForOfflineAudioContext,
-                           CrossThreadUnretained(this), double_buffer_index_,
-                           CrossThreadUnretained(waitable_event.get())));
+            ->PostTask(
+                BLINK_FROM_HERE,
+                CrossThreadBind(&ScriptProcessorHandler::
+                                    FireProcessEventForOfflineAudioContext,
+                                RefPtr<ScriptProcessorHandler>(this),
+                                double_buffer_index_,
+                                CrossThreadUnretained(waitable_event.get())));
 
         // Okay to block the offline audio rendering thread since it is
         // not the actual audio device thread.

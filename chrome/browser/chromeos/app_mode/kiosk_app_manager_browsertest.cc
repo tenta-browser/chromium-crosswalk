@@ -243,14 +243,12 @@ class KioskAppManagerTest : public InProcessBrowserTest {
   }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
-    InProcessBrowserTest::SetUpCommandLine(command_line);
-
     // Initialize fake_cws_ to setup web store gallery.
     fake_cws_->Init(embedded_test_server());
   }
 
   void SetUpOnMainThread() override {
-    InProcessBrowserTest::SetUpOnMainThread();
+    host_resolver()->AddRule("*", "127.0.0.1");
 
     // Start the accept thread as the sandbox host process has already been
     // spawned.
@@ -262,12 +260,6 @@ class KioskAppManagerTest : public InProcessBrowserTest {
   }
 
   void TearDownOnMainThread() override { settings_helper_.RestoreProvider(); }
-
-  void SetUpInProcessBrowserTestFixture() override {
-    InProcessBrowserTest::SetUpInProcessBrowserTestFixture();
-
-    host_resolver()->AddRule("*", "127.0.0.1");
-  }
 
   std::string GetAppIds() const {
     KioskAppManager::Apps apps;
@@ -333,14 +325,12 @@ class KioskAppManagerTest : public InProcessBrowserTest {
     // Fake an account id. Note this needs to match GenerateKioskAppAccountId
     // in kiosk_app_manager.cc to make SetAutoLaunchApp work with the
     // existing app entry created here.
-    entry->SetStringWithoutPathExpansion(kAccountsPrefDeviceLocalAccountsKeyId,
-                                         app_id + "@kiosk-apps");
-    entry->SetIntegerWithoutPathExpansion(
-        kAccountsPrefDeviceLocalAccountsKeyType,
-        policy::DeviceLocalAccount::TYPE_KIOSK_APP);
-    entry->SetStringWithoutPathExpansion(
-        kAccountsPrefDeviceLocalAccountsKeyKioskAppId,
-        app_id);
+    entry->SetKey(kAccountsPrefDeviceLocalAccountsKeyId,
+                  base::Value(app_id + "@kiosk-apps"));
+    entry->SetKey(kAccountsPrefDeviceLocalAccountsKeyType,
+                  base::Value(policy::DeviceLocalAccount::TYPE_KIOSK_APP));
+    entry->SetKey(kAccountsPrefDeviceLocalAccountsKeyKioskAppId,
+                  base::Value(app_id));
     device_local_accounts.Append(std::move(entry));
     owner_settings_service_->Set(kAccountsPrefDeviceLocalAccounts,
                                  device_local_accounts);

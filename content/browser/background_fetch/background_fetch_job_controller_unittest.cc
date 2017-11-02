@@ -4,9 +4,12 @@
 
 #include "content/browser/background_fetch/background_fetch_job_controller.h"
 
+#include <map>
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include "base/guid.h"
 #include "base/macros.h"
@@ -15,6 +18,7 @@
 #include "content/browser/background_fetch/background_fetch_data_manager.h"
 #include "content/browser/background_fetch/background_fetch_registration_id.h"
 #include "content/browser/background_fetch/background_fetch_test_base.h"
+#include "content/browser/service_worker/service_worker_context_wrapper.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/download_item.h"
 #include "content/public/browser/storage_partition.h"
@@ -32,7 +36,9 @@ const char kExampleTag[] = "my-example-tag";
 
 class BackgroundFetchJobControllerTest : public BackgroundFetchTestBase {
  public:
-  BackgroundFetchJobControllerTest() : data_manager_(browser_context()) {}
+  BackgroundFetchJobControllerTest()
+      : data_manager_(browser_context(),
+                      embedded_worker_test_helper()->context_wrapper()) {}
   ~BackgroundFetchJobControllerTest() override = default;
 
   // Creates a new Background Fetch registration, whose id will be stored in
@@ -40,11 +46,8 @@ class BackgroundFetchJobControllerTest : public BackgroundFetchTestBase {
   // included |request_data|. Should be wrapped in ASSERT_NO_FATAL_FAILURE().
   void CreateRegistrationForRequests(
       BackgroundFetchRegistrationId* registration_id,
-      std::vector<scoped_refptr<BackgroundFetchRequestInfo>>*
-          out_initial_requests,
       std::map<std::string /* url */, std::string /* method */> request_data) {
     DCHECK(registration_id);
-    DCHECK(out_initial_requests);
 
     ASSERT_TRUE(CreateRegistrationId(kExampleTag, registration_id));
 
@@ -63,14 +66,10 @@ class BackgroundFetchJobControllerTest : public BackgroundFetchTestBase {
     data_manager_.CreateRegistration(
         *registration_id, requests, BackgroundFetchOptions(),
         base::BindOnce(&BackgroundFetchJobControllerTest::DidCreateRegistration,
-                       base::Unretained(this), &error, out_initial_requests,
-                       run_loop.QuitClosure()));
+                       base::Unretained(this), &error, run_loop.QuitClosure()));
     run_loop.Run();
 
     ASSERT_EQ(error, blink::mojom::BackgroundFetchError::NONE);
-    ASSERT_GE(out_initial_requests->size(), 1u);
-    ASSERT_LE(out_initial_requests->size(),
-              kMaximumBackgroundFetchParallelRequests);
 
     // Provide fake responses for the given |request_data| pairs.
     for (const auto& pair : request_data) {
@@ -83,13 +82,18 @@ class BackgroundFetchJobControllerTest : public BackgroundFetchTestBase {
   // Creates a new BackgroundFetchJobController instance.
   std::unique_ptr<BackgroundFetchJobController> CreateJobController(
       const BackgroundFetchRegistrationId& registration_id) {
+    // StoragePartition creates its own BackgroundFetchContext, but this test
+    // doesn't use that; it just uses the StoragePartition's URLRequestContext.
     StoragePartition* storage_partition =
         BrowserContext::GetDefaultStoragePartition(browser_context());
 
-    return base::MakeUnique<BackgroundFetchJobController>(
-        registration_id, BackgroundFetchOptions(), &data_manager_,
+    delegate_proxy_.reset(new BackgroundFetchDelegateProxy(
         browser_context(),
-        make_scoped_refptr(storage_partition->GetURLRequestContext()),
+        make_scoped_refptr(storage_partition->GetURLRequestContext())));
+
+    return base::MakeUnique<BackgroundFetchJobController>(
+        delegate_proxy_.get(), registration_id, BackgroundFetchOptions(),
+        &data_manager_,
         base::BindOnce(&BackgroundFetchJobControllerTest::DidCompleteJob,
                        base::Unretained(this)));
   }
@@ -102,19 +106,15 @@ class BackgroundFetchJobControllerTest : public BackgroundFetchTestBase {
   // available jobs. Enables use of a run loop for deterministic waits.
   base::OnceClosure job_completed_closure_;
 
+  std::unique_ptr<BackgroundFetchDelegateProxy> delegate_proxy_;
+
  private:
-  void DidCreateRegistration(
-      blink::mojom::BackgroundFetchError* out_error,
-      std::vector<scoped_refptr<BackgroundFetchRequestInfo>>*
-          out_initial_requests,
-      const base::Closure& quit_closure,
-      blink::mojom::BackgroundFetchError error,
-      std::vector<scoped_refptr<BackgroundFetchRequestInfo>> initial_requests) {
+  void DidCreateRegistration(blink::mojom::BackgroundFetchError* out_error,
+                             const base::Closure& quit_closure,
+                             blink::mojom::BackgroundFetchError error) {
     DCHECK(out_error);
-    DCHECK(out_initial_requests);
 
     *out_error = error;
-    *out_initial_requests = std::move(initial_requests);
 
     quit_closure.Run();
   }
@@ -136,11 +136,9 @@ class BackgroundFetchJobControllerTest : public BackgroundFetchTestBase {
 
 TEST_F(BackgroundFetchJobControllerTest, SingleRequestJob) {
   BackgroundFetchRegistrationId registration_id;
-  std::vector<scoped_refptr<BackgroundFetchRequestInfo>> initial_requests;
 
   ASSERT_NO_FATAL_FAILURE(CreateRegistrationForRequests(
-      &registration_id, &initial_requests,
-      {{"https://example.com/funny_cat.png", "GET"}}));
+      &registration_id, {{"https://example.com/funny_cat.png", "GET"}}));
 
   std::unique_ptr<BackgroundFetchJobController> controller =
       CreateJobController(registration_id);
@@ -148,7 +146,7 @@ TEST_F(BackgroundFetchJobControllerTest, SingleRequestJob) {
   EXPECT_EQ(controller->state(),
             BackgroundFetchJobController::State::INITIALIZED);
 
-  controller->Start(initial_requests /* deliberate copy */);
+  controller->Start();
   EXPECT_EQ(controller->state(), BackgroundFetchJobController::State::FETCHING);
 
   // Mark the single download item as finished, completing the job.
@@ -166,19 +164,17 @@ TEST_F(BackgroundFetchJobControllerTest, SingleRequestJob) {
 
 TEST_F(BackgroundFetchJobControllerTest, MultipleRequestJob) {
   BackgroundFetchRegistrationId registration_id;
-  std::vector<scoped_refptr<BackgroundFetchRequestInfo>> initial_requests;
 
   // This test should always issue more requests than the number of allowed
   // parallel requests. That way we ensure testing the iteration behaviour.
   ASSERT_GT(5u, kMaximumBackgroundFetchParallelRequests);
 
   ASSERT_NO_FATAL_FAILURE(CreateRegistrationForRequests(
-      &registration_id, &initial_requests,
-      {{"https://example.com/funny_cat.png", "GET"},
-       {"https://example.com/scary_cat.png", "GET"},
-       {"https://example.com/crazy_cat.png", "GET"},
-       {"https://example.com/silly_cat.png", "GET"},
-       {"https://example.com/happy_cat.png", "GET"}}));
+      &registration_id, {{"https://example.com/funny_cat.png", "GET"},
+                         {"https://example.com/scary_cat.png", "GET"},
+                         {"https://example.com/crazy_cat.png", "GET"},
+                         {"https://example.com/silly_cat.png", "GET"},
+                         {"https://example.com/happy_cat.png", "GET"}}));
 
   std::unique_ptr<BackgroundFetchJobController> controller =
       CreateJobController(registration_id);
@@ -192,7 +188,7 @@ TEST_F(BackgroundFetchJobControllerTest, MultipleRequestJob) {
     base::RunLoop run_loop;
     job_completed_closure_ = run_loop.QuitClosure();
 
-    controller->Start(initial_requests /* deliberate copy */);
+    controller->Start();
     EXPECT_EQ(controller->state(),
               BackgroundFetchJobController::State::FETCHING);
 
@@ -206,11 +202,9 @@ TEST_F(BackgroundFetchJobControllerTest, MultipleRequestJob) {
 
 TEST_F(BackgroundFetchJobControllerTest, AbortJob) {
   BackgroundFetchRegistrationId registration_id;
-  std::vector<scoped_refptr<BackgroundFetchRequestInfo>> initial_requests;
 
   ASSERT_NO_FATAL_FAILURE(CreateRegistrationForRequests(
-      &registration_id, &initial_requests,
-      {{"https://example.com/sad_cat.png", "GET"}}));
+      &registration_id, {{"https://example.com/sad_cat.png", "GET"}}));
 
   std::unique_ptr<BackgroundFetchJobController> controller =
       CreateJobController(registration_id);
@@ -218,12 +212,12 @@ TEST_F(BackgroundFetchJobControllerTest, AbortJob) {
   EXPECT_EQ(controller->state(),
             BackgroundFetchJobController::State::INITIALIZED);
 
-  // Start the set of |initial_requests|, and abort them immediately after.
+  // Start the first few requests, and abort them immediately after.
   {
     base::RunLoop run_loop;
     job_completed_closure_ = run_loop.QuitClosure();
 
-    controller->Start(initial_requests /* deliberate copy */);
+    controller->Start();
     EXPECT_EQ(controller->state(),
               BackgroundFetchJobController::State::FETCHING);
 

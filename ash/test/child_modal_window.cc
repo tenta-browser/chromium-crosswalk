@@ -63,7 +63,7 @@ class ChildModalWindow : public views::WidgetDelegateView {
  private:
   // Overridden from View:
   void OnPaint(gfx::Canvas* canvas) override;
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
 
   // Overridden from WidgetDelegate:
   base::string16 GetWindowTitle() const override;
@@ -86,7 +86,7 @@ void ChildModalWindow::OnPaint(gfx::Canvas* canvas) {
   canvas->FillRect(GetLocalBounds(), kChildColor);
 }
 
-gfx::Size ChildModalWindow::GetPreferredSize() const {
+gfx::Size ChildModalWindow::CalculatePreferredSize() const {
   return gfx::Size(kChildWindowWidth, kChildWindowHeight);
 }
 
@@ -114,8 +114,8 @@ ChildModalParent::ChildModalParent(aura::Window* context)
   params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.context = context;
   widget_->Init(params);
-  widget_->GetRootView()->set_background(
-      views::Background::CreateSolidBackground(kModalParentColor));
+  widget_->GetRootView()->SetBackground(
+      views::CreateSolidBackground(kModalParentColor));
   widget_->GetNativeView()->SetName("ModalParent");
   AddChildView(button_);
   AddChildView(textfield_);

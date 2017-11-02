@@ -46,10 +46,16 @@ class AXARIAGridRow final : public AXTableRow {
   ~AXARIAGridRow() override;
 
   void HeaderObjectsForRow(AXObjectVector&) override;
+  bool CanSetSelectedAttribute() const final {
+    return Restriction() != kDisabled;
+  }
+  AXObject* ParentTable() const final;
 
  private:
-  bool IsARIATreeGridRow() const override;
+  bool IsARIARow() const final;
 };
+
+DEFINE_AX_OBJECT_TYPE_CASTS(AXARIAGridRow, IsARIARow());
 
 }  // namespace blink
 

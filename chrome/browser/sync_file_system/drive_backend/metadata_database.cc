@@ -215,26 +215,24 @@ SyncStatusCode OpenDatabase(const base::FilePath& path,
   DCHECK(created);
   DCHECK(path.IsAbsolute());
 
-  leveldb::Options options;
+  leveldb_env::Options options;
   options.max_open_files = 0;  // Use minimum.
   options.create_if_missing = true;
   options.paranoid_checks = true;
-  options.reuse_logs = leveldb_env::kDefaultLogReuseOptionValue;
   if (env_override)
     options.env = env_override;
-  leveldb::DB* db = nullptr;
+  std::unique_ptr<leveldb::DB> db;
   leveldb::Status db_status =
-      leveldb::DB::Open(options, path.AsUTF8Unsafe(), &db);
+      leveldb_env::OpenDB(options, path.AsUTF8Unsafe(), &db);
   UMA_HISTOGRAM_ENUMERATION("SyncFileSystem.Database.Open",
                             leveldb_env::GetLevelDBStatusUMAValue(db_status),
                             leveldb_env::LEVELDB_STATUS_MAX);
   SyncStatusCode status = LevelDBStatusToSyncStatusCode(db_status);
   if (status != SYNC_STATUS_OK) {
-    delete db;
     return status;
   }
 
-  db_out->reset(new LevelDBWrapper(base::WrapUnique(db)));
+  db_out->reset(new LevelDBWrapper(std::move(db)));
   *created = IsDatabaseEmpty(db_out->get());
   return status;
 }
@@ -1612,7 +1610,7 @@ std::unique_ptr<base::ListValue> MetadataDatabase::DumpFiles(
                       FileKindToString(tracker.synced_details().file_kind()));
     }
 
-    base::DictionaryValue* details = new base::DictionaryValue;
+    auto details = base::MakeUnique<base::DictionaryValue>();
     details->SetString("file_id", tracker.file_id());
     if (tracker.has_synced_details() &&
         tracker.synced_details().file_kind() == FILE_KIND_FILE)
@@ -1620,7 +1618,7 @@ std::unique_ptr<base::ListValue> MetadataDatabase::DumpFiles(
     details->SetString("active", tracker.active() ? "true" : "false");
     details->SetString("dirty", tracker.dirty() ? "true" : "false");
 
-    file->Set("details", details);
+    file->Set("details", std::move(details));
 
     files->Append(std::move(file));
   }
@@ -1656,10 +1654,10 @@ std::unique_ptr<base::ListValue> MetadataDatabase::DumpTrackers() {
   };
   std::vector<std::string> key_strings(
       trackerKeys, trackerKeys + arraysize(trackerKeys));
-  base::ListValue* keys = new base::ListValue;
+  auto keys = base::MakeUnique<base::ListValue>();
   keys->AppendStrings(key_strings);
   metadata->SetString("title", "Trackers");
-  metadata->Set("keys", keys);
+  metadata->Set("keys", std::move(keys));
   trackers->Append(std::move(metadata));
 
   // Append tracker data.
@@ -1718,10 +1716,10 @@ std::unique_ptr<base::ListValue> MetadataDatabase::DumpMetadata() {
   };
   std::vector<std::string> key_strings(
       fileKeys, fileKeys + arraysize(fileKeys));
-  base::ListValue* keys = new base::ListValue;
+  auto keys = base::MakeUnique<base::ListValue>();
   keys->AppendStrings(key_strings);
   metadata->SetString("title", "Metadata");
-  metadata->Set("keys", keys);
+  metadata->Set("keys", std::move(keys));
   files->Append(std::move(metadata));
 
   // Append metadata data.

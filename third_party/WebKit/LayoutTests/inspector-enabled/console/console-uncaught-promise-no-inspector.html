@@ -64,15 +64,13 @@ function showWebInspector()
     runTest();
 }
 
-function test()
-{
-    InspectorTest.expandConsoleMessages(onExpanded);
+function test() {
+  ConsoleTestRunner.expandConsoleMessages(onExpanded);
 
-    function onExpanded()
-    {
-        InspectorTest.dumpConsoleMessagesIgnoreErrorStackFrames();
-        InspectorTest.completeTest();
-    }
+  function onExpanded() {
+    ConsoleTestRunner.dumpConsoleMessagesIgnoreErrorStackFrames();
+    TestRunner.completeTest();
+  }
 }
 
 </script>

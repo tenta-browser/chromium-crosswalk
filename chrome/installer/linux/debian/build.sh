@@ -55,14 +55,6 @@ stage_install_debian() {
   local USR_BIN_SYMLINK_NAME="${PACKAGE}-${CHANNEL}"
 
   if [ "$CHANNEL" != "stable" ]; then
-    # This would ideally be compiled into the app, but that's a bit too
-    # intrusive of a change for these limited use channels, so we'll just hack
-    # it into the wrapper script. The user can still override since it seems to
-    # work to specify --user-data-dir multiple times on the command line, with
-    # the last occurrence winning.
-    local SXS_USER_DATA_DIR="\${XDG_CONFIG_HOME:-\${HOME}/.config}/${PACKAGE}-${CHANNEL}"
-    local DEFAULT_FLAGS="--user-data-dir=\"${SXS_USER_DATA_DIR}\""
-
     # Avoid file collisions between channels.
     local INSTALLDIR="${INSTALLDIR}-${CHANNEL}"
 
@@ -96,6 +88,22 @@ stage_install_debian() {
   chmod 755 "${STAGEDIR}/DEBIAN/postrm"
 }
 
+verify_package() {
+  local DEPENDS="$1"
+  echo ${DEPENDS} | sed 's/, /\n/g' | LANG=C sort > expected_deb_depends
+  dpkg -I "${PACKAGE}-${CHANNEL}_${VERSIONFULL}_${ARCHITECTURE}.deb" | \
+      grep '^ Depends: ' | sed 's/^ Depends: //' | sed 's/, /\n/g' | \
+      LANG=C sort > actual_deb_depends
+  BAD_DIFF=0
+  diff -u expected_deb_depends actual_deb_depends || BAD_DIFF=1
+  if [ $BAD_DIFF -ne 0 ] && [ -z "${IGNORE_DEPS_CHANGES:-}" ]; then
+    echo
+    echo "ERROR: bad dpkg dependencies!"
+    echo
+    exit $BAD_DIFF
+  fi
+}
+
 # Actually generate the package file.
 do_package() {
   echo "Packaging ${ARCHITECTURE}..."
@@ -111,22 +119,7 @@ do_package() {
     gen_control
   fi
   fakeroot dpkg-deb -Zxz -z9 -b "${STAGEDIR}" .
-}
-
-verify_package() {
-  DEPENDS="${COMMON_DEPS}"  # This needs to match do_package() above.
-  echo ${DEPENDS} | sed 's/, /\n/g' | LANG=C sort > expected_deb_depends
-  dpkg -I "${PACKAGE}-${CHANNEL}_${VERSIONFULL}_${ARCHITECTURE}.deb" | \
-      grep '^ Depends: ' | sed 's/^ Depends: //' | sed 's/, /\n/g' | \
-      LANG=C sort > actual_deb_depends
-  BAD_DIFF=0
-  diff -u expected_deb_depends actual_deb_depends || BAD_DIFF=1
-  if [ $BAD_DIFF -ne 0 ] && [ -z "${IGNORE_DEPS_CHANGES:-}" ]; then
-    echo
-    echo "ERROR: bad dpkg dependencies!"
-    echo
-    exit $BAD_DIFF
-  fi
+  verify_package "$DEPENDS"
 }
 
 # Remove temporary files and unwanted packaging output.
@@ -225,11 +218,6 @@ process_opts() {
 
 SCRIPTDIR=$(readlink -f "$(dirname "$0")")
 OUTPUTDIR="${PWD}"
-STAGEDIR=$(mktemp -d -t deb.build.XXXXXX) || exit 1
-TMPFILEDIR=$(mktemp -d -t deb.tmp.XXXXXX) || exit 1
-DEB_CHANGELOG="${TMPFILEDIR}/changelog"
-DEB_FILES="${TMPFILEDIR}/files"
-DEB_CONTROL="${TMPFILEDIR}/control"
 CHANNEL="trunk"
 # Default target architecture to same as build host.
 if [ "$(uname -m)" = "x86_64" ]; then
@@ -243,12 +231,13 @@ trap cleanup 0
 process_opts "$@"
 BUILDDIR=${BUILDDIR:=$(readlink -f "${SCRIPTDIR}/../../../../out/Release")}
 
-if [[ "$(basename ${SYSROOT})" = "debian_jessie_"*"-sysroot" ]]; then
-  TARGET_DISTRO="jessie"
-else
-  echo "Debian package can only be built using the jessie sysroot."
-  exit 1
-fi
+STAGEDIR="${BUILDDIR}/deb-staging-${CHANNEL}"
+mkdir -p "${STAGEDIR}"
+TMPFILEDIR="${BUILDDIR}/deb-tmp-${CHANNEL}"
+mkdir -p "${TMPFILEDIR}"
+DEB_CHANGELOG="${TMPFILEDIR}/changelog"
+DEB_FILES="${TMPFILEDIR}/files"
+DEB_CONTROL="${TMPFILEDIR}/control"
 
 source ${BUILDDIR}/installer/common/installer.include
 
@@ -303,14 +292,15 @@ echo "$DPKG_SHLIB_DEPS" | sed 's/, /\n/g' | LANG=C sort > actual
 
 # Compare the expected dependency list to the generated list.
 BAD_DIFF=0
-diff -u "$SCRIPTDIR/expected_deps_${TARGETARCH}_${TARGET_DISTRO}" actual || \
-  BAD_DIFF=1
+if [ -r "$SCRIPTDIR/expected_deps_${TARGETARCH}" ]; then
+  diff -u "$SCRIPTDIR/expected_deps_${TARGETARCH}" actual || \
+    BAD_DIFF=1
+fi
 if [ $BAD_DIFF -ne 0 ] && [ -z "${IGNORE_DEPS_CHANGES:-}" ]; then
   echo
   echo "ERROR: Shared library dependencies changed!"
   echo "If this is intentional, please update:"
-  echo "chrome/installer/linux/debian/expected_deps_ia32_jessie"
-  echo "chrome/installer/linux/debian/expected_deps_x64_jessie"
+  echo "chrome/installer/linux/debian/expected_deps_x64"
   echo
   exit $BAD_DIFF
 fi
@@ -321,11 +311,11 @@ fi
 # libappindicator1: Make systray icons work in Unity.
 # libnss3: Pull a more recent version of NSS than required by runtime linking,
 #          for security and stability updates in NSS.
-# lsb-base: Implies many other dependencies.
+# lsb-release: For lsb_release.
 # xdg-utils: For OS integration.
 # wget: For uploading crash reports with Breakpad.
 ADDITIONAL_DEPS="ca-certificates, fonts-liberation, libappindicator1, \
-  libnss3 (>= 3.17.2), lsb-base (>= 4.1), xdg-utils (>= 1.0.2), wget"
+  libnss3 (>= 3.26), lsb-release, xdg-utils (>= 1.0.2), wget"
 
 # Fix-up libnspr dependency due to renaming in Ubuntu (the old package still
 # exists, but it was moved to "universe" repository, which isn't installed by
@@ -370,4 +360,3 @@ REPOCONFIGREGEX+="[[:space:]]*) https?://${BASEREPOCONFIG}"
 stage_install_debian
 
 do_package
-verify_package

@@ -5,7 +5,10 @@
 #ifndef NGConstraintSpaceBuilder_h
 #define NGConstraintSpaceBuilder_h
 
+#include "core/layout/ng/geometry/ng_bfc_offset.h"
 #include "core/layout/ng/ng_constraint_space.h"
+#include "core/layout/ng/ng_exclusion.h"
+#include "core/layout/ng/ng_unpositioned_float.h"
 #include "platform/wtf/Allocator.h"
 #include "platform/wtf/Optional.h"
 
@@ -15,16 +18,17 @@ class CORE_EXPORT NGConstraintSpaceBuilder final {
   DISALLOW_NEW();
 
  public:
-  NGConstraintSpaceBuilder(const NGConstraintSpace* parent_space);
+  // NOTE: This constructor doesn't act like a copy-constructor, it uses the
+  // writing_mode and icb_size from the parent constraint space, and passes
+  // them to the constructor below.
+  NGConstraintSpaceBuilder(const NGConstraintSpace& parent_space);
 
-  NGConstraintSpaceBuilder(NGWritingMode writing_mode);
+  NGConstraintSpaceBuilder(NGWritingMode writing_mode, NGPhysicalSize icb_size);
 
   NGConstraintSpaceBuilder& SetAvailableSize(NGLogicalSize available_size);
 
   NGConstraintSpaceBuilder& SetPercentageResolutionSize(
       NGLogicalSize percentage_resolution_size);
-
-  NGConstraintSpaceBuilder& SetInitialContainingBlockSize(NGPhysicalSize);
 
   NGConstraintSpaceBuilder& SetFragmentainerSpaceAvailable(LayoutUnit space) {
     fragmentainer_space_available_ = space;
@@ -47,12 +51,23 @@ class CORE_EXPORT NGConstraintSpaceBuilder final {
   NGConstraintSpaceBuilder& SetIsNewFormattingContext(bool is_new_fc);
   NGConstraintSpaceBuilder& SetIsAnonymous(bool is_anonymous);
 
+  NGConstraintSpaceBuilder& SetUnpositionedFloats(
+      Vector<RefPtr<NGUnpositionedFloat>>& unpositioned_floats);
+
   NGConstraintSpaceBuilder& SetMarginStrut(const NGMarginStrut& margin_strut);
 
-  NGConstraintSpaceBuilder& SetBfcOffset(const NGLogicalOffset& offset);
+  NGConstraintSpaceBuilder& SetBfcOffset(const NGBfcOffset& bfc_offset);
+  NGConstraintSpaceBuilder& SetFloatsBfcOffset(
+      const WTF::Optional<NGBfcOffset>& floats_bfc_offset);
 
   NGConstraintSpaceBuilder& SetClearanceOffset(
       const WTF::Optional<LayoutUnit>& clearance_offset);
+
+  NGConstraintSpaceBuilder& SetExclusionSpace(
+      const NGExclusionSpace& exclusion_space);
+
+  void AddBaselineRequests(const Vector<NGBaselineRequest>&);
+  NGConstraintSpaceBuilder& AddBaselineRequest(const NGBaselineRequest&);
 
   // Creates a new constraint space. This may be called multiple times, for
   // example the constraint space will be different for a child which:
@@ -69,6 +84,7 @@ class CORE_EXPORT NGConstraintSpaceBuilder final {
   NGLogicalSize available_size_;
   // Relative to parent_writing_mode_.
   NGLogicalSize percentage_resolution_size_;
+  Optional<NGLogicalSize> parent_percentage_resolution_size_;
   NGPhysicalSize initial_containing_block_size_;
   LayoutUnit fragmentainer_space_available_;
 
@@ -84,9 +100,12 @@ class CORE_EXPORT NGConstraintSpaceBuilder final {
   unsigned text_direction_ : 1;
 
   NGMarginStrut margin_strut_;
-  NGLogicalOffset bfc_offset_;
-  std::shared_ptr<NGExclusions> exclusions_;
+  NGBfcOffset bfc_offset_;
+  WTF::Optional<NGBfcOffset> floats_bfc_offset_;
+  const NGExclusionSpace* exclusion_space_;
   WTF::Optional<LayoutUnit> clearance_offset_;
+  Vector<RefPtr<NGUnpositionedFloat>> unpositioned_floats_;
+  Vector<NGBaselineRequest> baseline_requests_;
 };
 
 }  // namespace blink

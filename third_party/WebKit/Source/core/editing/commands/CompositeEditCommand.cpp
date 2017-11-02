@@ -34,6 +34,7 @@
 #include "core/dom/NodeTraversal.h"
 #include "core/dom/Range.h"
 #include "core/dom/Text.h"
+#include "core/dom/events/ScopedEventQueue.h"
 #include "core/editing/EditingUtilities.h"
 #include "core/editing/Editor.h"
 #include "core/editing/PlainTextRange.h"
@@ -63,7 +64,6 @@
 #include "core/editing/markers/DocumentMarkerController.h"
 #include "core/editing/serializers/Serialization.h"
 #include "core/editing/spellcheck/SpellChecker.h"
-#include "core/events/ScopedEventQueue.h"
 #include "core/frame/LocalFrame.h"
 #include "core/html/HTMLBRElement.h"
 #include "core/html/HTMLDivElement.h"
@@ -85,16 +85,24 @@ CompositeEditCommand::CompositeEditCommand(Document& document)
   SetStartingSelection(document.GetFrame()
                            ->Selection()
                            .ComputeVisibleSelectionInDOMTreeDeprecated());
-  SetEndingVisibleSelection(starting_selection_);
+  SetEndingSelection(starting_selection_);
 }
 
 CompositeEditCommand::~CompositeEditCommand() {
   DCHECK(IsTopLevelCommand() || !undo_step_);
 }
 
+VisibleSelection CompositeEditCommand::EndingVisibleSelection() const {
+  // TODO(editing-dev): The use of
+  // |Document::UpdateStyleAndLayoutIgnorePendingStylesheets()|
+  // needs to be audited.  See http://crbug.com/590369 for more details.
+  GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
+  return CreateVisibleSelection(ending_selection_);
+}
+
 bool CompositeEditCommand::Apply() {
   DCHECK(!IsCommandGroupWrapper());
-  if (!EndingSelection().IsContentRichlyEditable()) {
+  if (!IsRichlyEditablePosition(EndingVisibleSelection().Base())) {
     switch (GetInputType()) {
       case InputEvent::InputType::kInsertText:
       case InputEvent::InputType::kInsertLineBreak:
@@ -201,12 +209,12 @@ void CompositeEditCommand::ApplyCommandToComposite(
 
 void CompositeEditCommand::ApplyCommandToComposite(
     CompositeEditCommand* command,
-    const VisibleSelection& selection,
+    const SelectionForUndoStep& selection,
     EditingState* editing_state) {
   command->SetParent(this);
   if (selection != command->EndingSelection()) {
     command->SetStartingSelection(selection);
-    command->SetEndingVisibleSelection(selection);
+    command->SetEndingSelection(selection);
   }
   command->DoApply(editing_state);
   if (!editing_state->IsAborted())
@@ -267,7 +275,7 @@ bool CompositeEditCommand::IsRemovableBlock(const Node* node) {
 
   const HTMLDivElement& element = toHTMLDivElement(*node);
   ContainerNode* parent_node = element.parentNode();
-  if (parent_node && parent_node->FirstChild() != parent_node->LastChild())
+  if (parent_node && parent_node->firstChild() != parent_node->lastChild())
     return false;
 
   if (!element.hasAttributes())
@@ -303,7 +311,7 @@ void CompositeEditCommand::InsertNodeAfter(Node* insert_child,
   ContainerNode* parent = ref_child->parentNode();
   DCHECK(parent);
   DCHECK(!parent->IsShadowRoot()) << parent;
-  if (parent->LastChild() == ref_child) {
+  if (parent->lastChild() == ref_child) {
     AppendNode(insert_child, parent, editing_state);
   } else {
     DCHECK(ref_child->nextSibling()) << ref_child;
@@ -548,8 +556,8 @@ void CompositeEditCommand::ReplaceTextInNode(Text* node,
 }
 
 Position CompositeEditCommand::ReplaceSelectedTextInNode(const String& text) {
-  Position start = EndingSelection().Start();
-  Position end = EndingSelection().end();
+  const Position& start = EndingSelection().Start();
+  const Position& end = EndingSelection().End();
   if (start.ComputeContainerNode() != end.ComputeContainerNode() ||
       !start.ComputeContainerNode()->IsTextNode() ||
       IsTabHTMLSpanElementTextNode(start.ComputeContainerNode()))
@@ -774,13 +782,13 @@ void CompositeEditCommand::
 }
 
 void CompositeEditCommand::RebalanceWhitespace() {
-  VisibleSelection selection = EndingSelection();
+  VisibleSelection selection = EndingVisibleSelection();
   if (selection.IsNone())
     return;
 
   RebalanceWhitespaceAt(selection.Start());
   if (selection.IsRange())
-    RebalanceWhitespaceAt(selection.end());
+    RebalanceWhitespaceAt(selection.End());
 }
 
 void CompositeEditCommand::DeleteInsignificantText(Text* text_node,
@@ -798,8 +806,7 @@ void CompositeEditCommand::DeleteInsignificantText(Text* text_node,
   Vector<InlineTextBox*> sorted_text_boxes;
   size_t sorted_text_boxes_position = 0;
 
-  for (InlineTextBox* text_box = text_layout_object->FirstTextBox(); text_box;
-       text_box = text_box->NextTextBox())
+  for (InlineTextBox* text_box : InlineTextBoxesOf(*text_layout_object))
     sorted_text_boxes.push_back(text_box);
 
   // If there is mixed directionality text, the boxes can be out of order,
@@ -1053,10 +1060,11 @@ HTMLElement* CompositeEditCommand::MoveParagraphContentsToNewBlockIfNecessary(
   if (visible_paragraph_end.IsNull())
     return nullptr;
 
-  HTMLElement* new_block =
+  HTMLElement* const new_block =
       InsertNewDefaultParagraphElementAt(upstream_start, editing_state);
   if (editing_state->IsAborted())
     return nullptr;
+  DCHECK(new_block);
 
   bool end_was_br =
       isHTMLBRElement(*visible_paragraph_end.DeepEquivalent().AnchorNode());
@@ -1064,18 +1072,26 @@ HTMLElement* CompositeEditCommand::MoveParagraphContentsToNewBlockIfNecessary(
   // Inserting default paragraph element can change visible position. We
   // should update visible positions before use them.
   GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
+  const VisiblePosition& destination =
+      VisiblePosition::FirstPositionInNode(*new_block);
+  if (destination.IsNull()) {
+    // Reached by CompositeEditingCommandTest
+    //    .MoveParagraphContentsToNewBlockWithNonEditableStyle.
+    editing_state->Abort();
+    return nullptr;
+  }
+
   visible_pos = CreateVisiblePosition(pos, VP_DEFAULT_AFFINITY);
   visible_paragraph_start = StartOfParagraph(visible_pos);
   visible_paragraph_end = EndOfParagraph(visible_pos);
-  MoveParagraphs(visible_paragraph_start, visible_paragraph_end,
-                 VisiblePosition::FirstPositionInNode(new_block),
+  MoveParagraphs(visible_paragraph_start, visible_paragraph_end, destination,
                  editing_state);
   if (editing_state->IsAborted())
     return nullptr;
 
-  if (new_block->LastChild() && isHTMLBRElement(*new_block->LastChild()) &&
+  if (new_block->lastChild() && isHTMLBRElement(*new_block->lastChild()) &&
       !end_was_br) {
-    RemoveNode(new_block->LastChild(), editing_state);
+    RemoveNode(new_block->lastChild(), editing_state);
     if (editing_state->IsAborted())
       return nullptr;
   }
@@ -1207,7 +1223,7 @@ void CompositeEditCommand::CleanupAfterDeletion(EditingState* editing_state,
                                                 VisiblePosition destination) {
   GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
 
-  VisiblePosition caret_after_delete = EndingSelection().VisibleStart();
+  VisiblePosition caret_after_delete = EndingVisibleSelection().VisibleStart();
   Node* destination_node = destination.DeepEquivalent().AnchorNode();
   if (caret_after_delete.DeepEquivalent() != destination.DeepEquivalent() &&
       IsStartOfParagraph(caret_after_delete) &&
@@ -1266,9 +1282,10 @@ void CompositeEditCommand::MoveParagraphWithClones(
   DCHECK(outer_node);
   DCHECK(block_element);
 
-  VisiblePosition before_paragraph =
-      PreviousPositionOf(start_of_paragraph_to_move);
-  VisiblePosition after_paragraph = NextPositionOf(end_of_paragraph_to_move);
+  RelocatablePosition relocatable_before_paragraph(
+      PreviousPositionOf(start_of_paragraph_to_move).DeepEquivalent());
+  RelocatablePosition relocatable_after_paragraph(
+      NextPositionOf(end_of_paragraph_to_move).DeepEquivalent());
 
   // We upstream() the end and downstream() the start so that we don't include
   // collapsed whitespace in the move. When we paste a fragment, spaces after
@@ -1311,14 +1328,10 @@ void CompositeEditCommand::MoveParagraphWithClones(
   // would cause 'baz' to collapse onto the line with 'foobar' unless we insert
   // a br. Must recononicalize these two VisiblePositions after the pruning
   // above.
-  // TODO(yosin): We should abort when |beforeParagraph| is a orphan when
-  // we have a sample.
-  before_paragraph = CreateVisiblePosition(before_paragraph.DeepEquivalent());
-  if (after_paragraph.IsOrphan()) {
-    editing_state->Abort();
-    return;
-  }
-  after_paragraph = CreateVisiblePosition(after_paragraph.DeepEquivalent());
+  const VisiblePosition& before_paragraph =
+      CreateVisiblePosition(relocatable_before_paragraph.GetPosition());
+  const VisiblePosition& after_paragraph =
+      CreateVisiblePosition(relocatable_after_paragraph.GetPosition());
 
   if (before_paragraph.IsNotNull() &&
       !IsDisplayInsideTable(before_paragraph.DeepEquivalent().AnchorNode()) &&
@@ -1359,6 +1372,10 @@ void CompositeEditCommand::MoveParagraphs(
     ShouldPreserveStyle should_preserve_style,
     Node* constraining_ancestor) {
   DCHECK(!GetDocument().NeedsLayoutTreeUpdate());
+  DCHECK(start_of_paragraph_to_move.IsNotNull());
+  DCHECK(end_of_paragraph_to_move.IsNotNull());
+  DCHECK(destination.IsNotNull());
+
   if (start_of_paragraph_to_move.DeepEquivalent() ==
           destination.DeepEquivalent() ||
       start_of_paragraph_to_move.IsNull())
@@ -1380,8 +1397,8 @@ void CompositeEditCommand::MoveParagraphs(
   bool original_is_directional = EndingSelection().IsDirectional();
   if (should_preserve_selection == kPreserveSelection &&
       !EndingSelection().IsNone()) {
-    VisiblePosition visible_start = EndingSelection().VisibleStart();
-    VisiblePosition visible_end = EndingSelection().VisibleEnd();
+    VisiblePosition visible_start = EndingVisibleSelection().VisibleStart();
+    VisiblePosition visible_end = EndingVisibleSelection().VisibleEnd();
 
     bool start_after_paragraph =
         ComparePositions(visible_start, end_of_paragraph_to_move) > 0;
@@ -1494,7 +1511,8 @@ void CompositeEditCommand::MoveParagraphs(
   VisiblePosition after_paragraph =
       CreateVisiblePosition(after_paragraph_position.GetPosition());
   if (before_paragraph.IsNotNull() &&
-      (!IsEndOfParagraph(before_paragraph) ||
+      ((!IsStartOfParagraph(before_paragraph) &&
+        !IsEndOfParagraph(before_paragraph)) ||
        before_paragraph.DeepEquivalent() == after_paragraph.DeepEquivalent())) {
     // FIXME: Trim text between beforeParagraph and afterParagraph if they
     // aren't equal.
@@ -1508,7 +1526,7 @@ void CompositeEditCommand::MoveParagraphs(
   GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
 
   destination_index = TextIterator::RangeLength(
-      Position::FirstPositionInNode(GetDocument().documentElement()),
+      Position::FirstPositionInNode(*GetDocument().documentElement()),
       destination.ToParentAnchoredPosition(),
       TextIteratorBehavior::AllVisiblePositionsRangeLengthBehavior());
 
@@ -1539,14 +1557,14 @@ void CompositeEditCommand::MoveParagraphs(
   GetDocument()
       .GetFrame()
       ->GetSpellChecker()
-      .MarkMisspellingsForMovingParagraphs(EndingSelection());
+      .MarkMisspellingsForMovingParagraphs(EndingVisibleSelection());
 
   // If the selection is in an empty paragraph, restore styles from the old
   // empty paragraph to the new empty paragraph.
   bool selection_is_empty_paragraph =
       EndingSelection().IsCaret() &&
-      IsStartOfParagraph(EndingSelection().VisibleStart()) &&
-      IsEndOfParagraph(EndingSelection().VisibleStart());
+      IsStartOfParagraph(EndingVisibleSelection().VisibleStart()) &&
+      IsEndOfParagraph(EndingVisibleSelection().VisibleStart());
   if (style_in_empty_paragraph && selection_is_empty_paragraph) {
     ApplyStyle(style_in_empty_paragraph, editing_state);
     if (editing_state->IsAborted())
@@ -1587,7 +1605,7 @@ bool CompositeEditCommand::BreakOutOfEmptyListItem(
     EditingState* editing_state) {
   DCHECK(!GetDocument().NeedsLayoutTreeUpdate());
   Node* empty_list_item =
-      EnclosingEmptyListItem(EndingSelection().VisibleStart());
+      EnclosingEmptyListItem(EndingVisibleSelection().VisibleStart());
   if (!empty_list_item)
     return false;
 
@@ -1682,7 +1700,7 @@ bool CompositeEditCommand::BreakOutOfEmptyListItem(
     return false;
 
   SetEndingSelection(SelectionInDOMTree::Builder()
-                         .Collapse(Position::FirstPositionInNode(new_block))
+                         .Collapse(Position::FirstPositionInNode(*new_block))
                          .SetIsDirectional(EndingSelection().IsDirectional())
                          .Build());
 
@@ -1706,7 +1724,7 @@ bool CompositeEditCommand::BreakOutOfEmptyMailBlockquotedParagraph(
 
   GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
 
-  VisiblePosition caret = EndingSelection().VisibleStart();
+  VisiblePosition caret = EndingVisibleSelection().VisibleStart();
   HTMLQuoteElement* highest_blockquote =
       ToHTMLQuoteElement(HighestEnclosingNodeOfType(
           caret.DeepEquivalent(), &IsMailHTMLBlockquoteElement));
@@ -1733,7 +1751,7 @@ bool CompositeEditCommand::BreakOutOfEmptyMailBlockquotedParagraph(
 
   GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
 
-  VisiblePosition at_br = VisiblePosition::BeforeNode(br);
+  VisiblePosition at_br = VisiblePosition::BeforeNode(*br);
   // If the br we inserted collapsed, for example:
   //   foo<br><blockquote>...</blockquote>
   // insert a second one.
@@ -1802,9 +1820,9 @@ Position CompositeEditCommand::PositionAvoidingSpecialElementBoundary(
   // wrong paragraph.
   if (enclosing_anchor && !IsEnclosingBlock(enclosing_anchor)) {
     VisiblePosition first_in_anchor =
-        VisiblePosition::FirstPositionInNode(enclosing_anchor);
+        VisiblePosition::FirstPositionInNode(*enclosing_anchor);
     VisiblePosition last_in_anchor =
-        VisiblePosition::LastPositionInNode(enclosing_anchor);
+        VisiblePosition::LastPositionInNode(*enclosing_anchor);
     // If visually just after the anchor, insert *inside* the anchor unless it's
     // the last VisiblePosition in the document, to match NSTextView.
     if (visible_pos.DeepEquivalent() == last_in_anchor.DeepEquivalent()) {
@@ -1886,7 +1904,7 @@ Node* CompositeEditCommand::SplitTreeToNode(Node* start,
 
     // Do not split a node when doing so introduces an empty node.
     VisiblePosition position_in_parent =
-        VisiblePosition::FirstPositionInNode(parent_element);
+        VisiblePosition::FirstPositionInNode(*parent_element);
     VisiblePosition position_in_node =
         CreateVisiblePosition(FirstPositionInOrBeforeNode(node));
     if (position_in_parent.DeepEquivalent() !=
@@ -1898,7 +1916,7 @@ Node* CompositeEditCommand::SplitTreeToNode(Node* start,
 }
 
 void CompositeEditCommand::SetStartingSelection(
-    const VisibleSelection& selection) {
+    const SelectionForUndoStep& selection) {
   for (CompositeEditCommand* command = this;; command = command->Parent()) {
     if (UndoStep* undo_step = command->GetUndoStep()) {
       DCHECK(command->IsTopLevelCommand());
@@ -1908,6 +1926,12 @@ void CompositeEditCommand::SetStartingSelection(
     if (!command->Parent() || command->Parent()->IsFirstCommand(command))
       break;
   }
+}
+
+void CompositeEditCommand::SetStartingSelection(
+    const VisibleSelection& visible_selection) {
+  SetStartingSelection(
+      SelectionForUndoStep::From(visible_selection.AsSelection()));
 }
 
 // TODO(yosin): We will make |SelectionInDOMTree| version of
@@ -1925,7 +1949,13 @@ void CompositeEditCommand::SetEndingSelection(
 // TODO(yosin): We will make |SelectionInDOMTree| version of
 // |setEndingSelection()| as primary function instead of wrapper.
 void CompositeEditCommand::SetEndingVisibleSelection(
-    const VisibleSelection& selection) {
+    const VisibleSelection& visible_selection) {
+  SetEndingSelection(
+      SelectionForUndoStep::From(visible_selection.AsSelection()));
+}
+
+void CompositeEditCommand::SetEndingSelection(
+    const SelectionForUndoStep& selection) {
   for (CompositeEditCommand* command = this; command;
        command = command->Parent()) {
     if (UndoStep* undo_step = command->GetUndoStep()) {

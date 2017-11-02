@@ -27,13 +27,11 @@
 #define IDBVersionChangeEvent_h
 
 #include "bindings/core/v8/Nullable.h"
-#include "bindings/core/v8/SerializedScriptValue.h"
+#include "bindings/core/v8/serialization/SerializedScriptValue.h"
 #include "modules/EventModules.h"
 #include "modules/indexeddb/IDBAny.h"
 #include "modules/indexeddb/IDBRequest.h"
 #include "modules/indexeddb/IDBVersionChangeEventInit.h"
-#include "platform/wtf/PassRefPtr.h"
-#include "platform/wtf/RefPtr.h"
 #include "platform/wtf/text/WTFString.h"
 #include "public/platform/modules/indexeddb/WebIDBTypes.h"
 

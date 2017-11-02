@@ -16,7 +16,7 @@
 
 #include "base/strings/string_piece.h"
 #include "base/time/time.h"
-#include "components/safe_browsing_db/safe_browsing_prefs.h"
+#include "components/safe_browsing/common/safe_browsing_prefs.h"
 #include "components/safe_browsing_db/v4_protocol_manager_util.h"
 
 class GURL;
@@ -24,7 +24,7 @@ class GURL;
 namespace safe_browsing {
 
 // Metadata that indicates what kind of URL match this is.
-enum class ThreatPatternType {
+enum class ThreatPatternType : int {
   NONE = 0,                        // Pattern type didn't appear in the metadata
   MALWARE_LANDING = 1,             // The match is a malware landing page
   MALWARE_DISTRIBUTION = 2,        // The match is a malware distribution page
@@ -32,6 +32,15 @@ enum class ThreatPatternType {
   SOCIAL_ENGINEERING_LANDING = 4,  // The match is a social engineering landing
                                    // page
   PHISHING = 5,                    // The match is a phishing page
+
+  // The match is a better ads standard violating page
+  SUBRESOURCE_FILTER_BETTER_ADS = 6,
+
+  // The match is an abusive ads violating page
+  SUBRESOURCE_FILTER_ABUSIVE_ADS = 7,
+
+  // The match violates both better ads standard and abusive policies
+  SUBRESOURCE_FILTER_ALL_ADS = 8,
   THREAT_PATTERN_TYPE_MAX_VALUE
 };
 
@@ -57,6 +66,10 @@ struct ThreatMetadata {
   // Opaque base64 string used for user-population experiments in pver4.
   // This will be empty if it wasn't present in the response.
   std::string population_id;
+
+  // Used with threat type SUBRESOURCE_FILTER. Indicates that the site is only a
+  // match for experimental configurations.
+  bool experimental = false;
 };
 
 // A truncated hash's type.

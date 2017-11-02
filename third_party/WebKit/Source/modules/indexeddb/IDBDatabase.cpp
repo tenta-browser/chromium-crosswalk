@@ -27,12 +27,12 @@
 
 #include "bindings/core/v8/ExceptionState.h"
 #include "bindings/core/v8/Nullable.h"
-#include "bindings/core/v8/SerializedScriptValue.h"
+#include "bindings/core/v8/serialization/SerializedScriptValue.h"
 #include "bindings/modules/v8/IDBObserverCallback.h"
 #include "bindings/modules/v8/V8BindingForModules.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/dom/ExecutionContext.h"
-#include "core/events/EventQueue.h"
+#include "core/dom/events/EventQueue.h"
 #include "modules/indexeddb/IDBAny.h"
 #include "modules/indexeddb/IDBEventDispatcher.h"
 #include "modules/indexeddb/IDBIndex.h"
@@ -43,7 +43,9 @@
 #include "modules/indexeddb/IDBVersionChangeEvent.h"
 #include "modules/indexeddb/WebIDBDatabaseCallbacksImpl.h"
 #include "platform/Histogram.h"
+#include "platform/wtf/Assertions.h"
 #include "platform/wtf/Atomics.h"
+#include "public/platform/modules/indexeddb/WebIDBDatabaseException.h"
 #include "public/platform/modules/indexeddb/WebIDBKeyPath.h"
 #include "public/platform/modules/indexeddb/WebIDBTypes.h"
 
@@ -124,6 +126,13 @@ DEFINE_TRACE(IDBDatabase) {
   ContextLifecycleObserver::Trace(visitor);
 }
 
+DEFINE_TRACE_WRAPPERS(IDBDatabase) {
+  for (const auto& observer : observers_.Values()) {
+    visitor->TraceWrappers(observer);
+  }
+  EventTargetWithInlineData::TraceWrappers(visitor);
+}
+
 int64_t IDBDatabase::NextTransactionId() {
   // Only keep a 32-bit counter to allow ports to use the other 32
   // bits of the id.
@@ -186,7 +195,7 @@ void IDBDatabase::OnChanges(
     const WebVector<WebIDBObservation>& observations,
     const IDBDatabaseCallbacks::TransactionMap& transactions) {
   for (const auto& map_entry : observation_index_map) {
-    auto it = observers_.Find(map_entry.first);
+    auto it = observers_.find(map_entry.first);
     if (it != observers_.end()) {
       IDBObserver* observer = it->value;
 
@@ -221,7 +230,7 @@ DOMStringList* IDBDatabase::objectStoreNames() const {
 }
 
 const String& IDBDatabase::GetObjectStoreName(int64_t object_store_id) const {
-  const auto& it = metadata_.object_stores.Find(object_store_id);
+  const auto& it = metadata_.object_stores.find(object_store_id);
   DCHECK(it != metadata_.object_stores.end());
   return it->value->name;
 }
@@ -350,7 +359,7 @@ void IDBDatabase::deleteObjectStore(const String& name,
 
 IDBTransaction* IDBDatabase::transaction(
     ScriptState* script_state,
-    const StringOrStringSequenceOrDOMStringList& store_names,
+    const StringOrStringSequence& store_names,
     const String& mode_string,
     ExceptionState& exception_state) {
   IDB_TRACE("IDBDatabase::transaction");
@@ -361,10 +370,6 @@ IDBTransaction* IDBDatabase::transaction(
     scope.insert(store_names.getAsString());
   } else if (store_names.isStringSequence()) {
     for (const String& name : store_names.getAsStringSequence())
-      scope.insert(name);
-  } else if (store_names.isDOMStringList()) {
-    const Vector<String>& list = *store_names.getAsDOMStringList();
-    for (const String& name : list)
       scope.insert(name);
   } else {
     NOTREACHED();
@@ -490,7 +495,7 @@ void IDBDatabase::EnqueueEvent(Event* event) {
   DCHECK(GetExecutionContext());
   EventQueue* event_queue = GetExecutionContext()->GetEventQueue();
   event->SetTarget(this);
-  event_queue->EnqueueEvent(event);
+  event_queue->EnqueueEvent(BLINK_FROM_HERE, event);
   enqueued_events_.push_back(event);
 }
 
@@ -596,9 +601,16 @@ ExecutionContext* IDBDatabase::GetExecutionContext() const {
 void IDBDatabase::RecordApiCallsHistogram(IndexedDatabaseMethods method) {
   DEFINE_THREAD_SAFE_STATIC_LOCAL(
       EnumerationHistogram, api_calls_histogram,
-      new EnumerationHistogram("WebCore.IndexedDB.FrontEndAPICalls",
-                               kIDBMethodsMax));
+      ("WebCore.IndexedDB.FrontEndAPICalls", kIDBMethodsMax));
   api_calls_histogram.Count(method);
 }
+
+STATIC_ASSERT_ENUM(kWebIDBDatabaseExceptionUnknownError, kUnknownError);
+STATIC_ASSERT_ENUM(kWebIDBDatabaseExceptionConstraintError, kConstraintError);
+STATIC_ASSERT_ENUM(kWebIDBDatabaseExceptionDataError, kDataError);
+STATIC_ASSERT_ENUM(kWebIDBDatabaseExceptionVersionError, kVersionError);
+STATIC_ASSERT_ENUM(kWebIDBDatabaseExceptionAbortError, kAbortError);
+STATIC_ASSERT_ENUM(kWebIDBDatabaseExceptionQuotaError, kQuotaExceededError);
+STATIC_ASSERT_ENUM(kWebIDBDatabaseExceptionTimeoutError, kTimeoutError);
 
 }  // namespace blink

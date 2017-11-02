@@ -21,10 +21,11 @@
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
 #include "chrome/common/pref_names.h"
 #include "components/prefs/pref_service.h"
+#include "components/safe_browsing/common/safe_browsing_prefs.h"
 #include "components/safe_browsing/common/safebrowsing_messages.h"
-#include "components/safe_browsing/csd.pb.h"
+#include "components/safe_browsing/proto/csd.pb.h"
 #include "components/safe_browsing_db/database_manager.h"
-#include "components/safe_browsing_db/safe_browsing_prefs.h"
+#include "components/safe_browsing_db/whitelist_checker_client.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
@@ -110,12 +111,12 @@ class ClientSideDetectionHost::ShouldClassifyUrlRequest
       DontClassifyForMalware(NO_CLASSIFY_PRIVATE_IP);
     }
 
-    // For phishing we only classify HTTP pages.
-    if (!url_.SchemeIs(url::kHttpScheme)) {
+    // For phishing we only classify HTTP or HTTPS pages.
+    if (!url_.SchemeIsHTTPOrHTTPS()) {
       DVLOG(1) << "Skipping phishing classification for URL: " << url_
-               << " because it is not HTTP: "
+               << " because it is not HTTP or HTTPS: "
                << socket_address_.host();
-      DontClassifyForPhishing(NO_CLASSIFY_NOT_HTTP_URL);
+      DontClassifyForPhishing(NO_CLASSIFY_SCHEME_NOT_SUPPORTED);
     }
 
     // Don't run any classifier if the tab is incognito.
@@ -133,10 +134,9 @@ class ClientSideDetectionHost::ShouldClassifyUrlRequest
     // uses the SafeBrowsing service class.
     if (ShouldClassifyForPhishing() || ShouldClassifyForMalware()) {
       BrowserThread::PostTask(
-          BrowserThread::IO,
-          FROM_HERE,
-          base::Bind(&ShouldClassifyUrlRequest::CheckSafeBrowsingDatabase,
-                     this, url_));
+          BrowserThread::IO, FROM_HERE,
+          base::BindOnce(&ShouldClassifyUrlRequest::CheckSafeBrowsingDatabase,
+                         this, url_));
     }
   }
 
@@ -157,17 +157,18 @@ class ClientSideDetectionHost::ShouldClassifyUrlRequest
 
   // Enum used to keep stats about why the pre-classification check failed.
   enum PreClassificationCheckFailures {
-    OBSOLETE_NO_CLASSIFY_PROXY_FETCH,
-    NO_CLASSIFY_PRIVATE_IP,
-    NO_CLASSIFY_OFF_THE_RECORD,
-    NO_CLASSIFY_MATCH_CSD_WHITELIST,
-    NO_CLASSIFY_TOO_MANY_REPORTS,
-    NO_CLASSIFY_UNSUPPORTED_MIME_TYPE,
-    NO_CLASSIFY_NO_DATABASE_MANAGER,
-    NO_CLASSIFY_KILLSWITCH,
-    NO_CLASSIFY_CANCEL,
-    NO_CLASSIFY_RESULT_FROM_CACHE,
-    NO_CLASSIFY_NOT_HTTP_URL,
+    OBSOLETE_NO_CLASSIFY_PROXY_FETCH = 0,
+    NO_CLASSIFY_PRIVATE_IP = 1,
+    NO_CLASSIFY_OFF_THE_RECORD = 2,
+    NO_CLASSIFY_MATCH_CSD_WHITELIST = 3,
+    NO_CLASSIFY_TOO_MANY_REPORTS = 4,
+    NO_CLASSIFY_UNSUPPORTED_MIME_TYPE = 5,
+    NO_CLASSIFY_NO_DATABASE_MANAGER = 6,
+    NO_CLASSIFY_KILLSWITCH = 7,
+    NO_CLASSIFY_CANCEL = 8,
+    NO_CLASSIFY_RESULT_FROM_CACHE = 9,
+    DEPRECATED_NO_CLASSIFY_NOT_HTTP_URL = 10,
+    NO_CLASSIFY_SCHEME_NOT_SUPPORTED = 11,
 
     NO_CLASSIFY_MAX  // Always add new values before this one.
   };
@@ -213,32 +214,48 @@ class ClientSideDetectionHost::ShouldClassifyUrlRequest
 
   void CheckSafeBrowsingDatabase(const GURL& url) {
     DCHECK_CURRENTLY_ON(BrowserThread::IO);
-    // We don't want to call the classification callbacks from the IO
-    // thread so we simply pass the results of this method to CheckCache()
-    // which is called on the UI thread;
     PreClassificationCheckFailures phishing_reason = NO_CLASSIFY_MAX;
     PreClassificationCheckFailures malware_reason = NO_CLASSIFY_MAX;
     if (!database_manager_.get()) {
       // We cannot check the Safe Browsing whitelists so we stop here
       // for safety.
-      malware_reason = phishing_reason = NO_CLASSIFY_NO_DATABASE_MANAGER;
-    } else {
-      if (database_manager_->MatchCsdWhitelistUrl(url)) {
-        DVLOG(1) << "Skipping phishing classification for URL: " << url
-                 << " because it matches the csd whitelist";
-        phishing_reason = NO_CLASSIFY_MATCH_CSD_WHITELIST;
-      }
-      if (database_manager_->IsMalwareKillSwitchOn()) {
-        malware_reason = NO_CLASSIFY_KILLSWITCH;
-      }
+      OnWhitelistCheckDoneOnIO(url, NO_CLASSIFY_NO_DATABASE_MANAGER,
+                               NO_CLASSIFY_NO_DATABASE_MANAGER,
+                               /*match_whitelist=*/false);
+      return;
+    }
+
+    if (database_manager_->IsMalwareKillSwitchOn()) {
+      malware_reason = NO_CLASSIFY_KILLSWITCH;
+    }
+
+    // Query the CSD Whitelist asynchronously. We're already on the IO thread so
+    // can call WhitelistCheckerClient directly.
+    base::Callback<void(bool)> result_callback =
+        base::Bind(&ClientSideDetectionHost::ShouldClassifyUrlRequest::
+                       OnWhitelistCheckDoneOnIO,
+                   this, url, phishing_reason, malware_reason);
+    WhitelistCheckerClient::StartCheckCsdWhitelist(database_manager_, url,
+                                                   result_callback);
+  }
+
+  void OnWhitelistCheckDoneOnIO(const GURL& url,
+                                PreClassificationCheckFailures phishing_reason,
+                                PreClassificationCheckFailures malware_reason,
+                                bool match_whitelist) {
+    DCHECK_CURRENTLY_ON(BrowserThread::IO);
+    // We don't want to call the classification callbacks from the IO
+    // thread so we simply pass the results of this method to CheckCache()
+    // which is called on the UI thread;
+    if (match_whitelist) {
+      DVLOG(1) << "Skipping phishing classification for URL: " << url
+               << " because it matches the csd whitelist";
+      phishing_reason = NO_CLASSIFY_MATCH_CSD_WHITELIST;
     }
     BrowserThread::PostTask(
-        BrowserThread::UI,
-        FROM_HERE,
-        base::Bind(&ShouldClassifyUrlRequest::CheckCache,
-                   this,
-                   phishing_reason,
-                   malware_reason));
+        BrowserThread::UI, FROM_HERE,
+        base::BindOnce(&ShouldClassifyUrlRequest::CheckCache, this,
+                       phishing_reason, malware_reason));
   }
 
   void CheckCache(PreClassificationCheckFailures phishing_reason,
@@ -569,7 +586,7 @@ void ClientSideDetectionHost::MaybeShowPhishingWarning(GURL phishing_url,
       resource.url = phishing_url;
       resource.original_url = phishing_url;
       resource.is_subresource = false;
-      resource.threat_type = SB_THREAT_TYPE_CLIENT_SIDE_PHISHING_URL;
+      resource.threat_type = SB_THREAT_TYPE_URL_CLIENT_SIDE_PHISHING;
       resource.threat_source =
           safe_browsing::ThreatSource::CLIENT_SIDE_DETECTION;
       resource.web_contents_getter = safe_browsing::SafeBrowsingUIManager::
@@ -605,7 +622,7 @@ void ClientSideDetectionHost::MaybeShowMalwareWarning(GURL original_url,
       resource.url = malware_url;
       resource.original_url = original_url;
       resource.is_subresource = (malware_url.host() != original_url.host());
-      resource.threat_type = SB_THREAT_TYPE_CLIENT_SIDE_MALWARE_URL;
+      resource.threat_type = SB_THREAT_TYPE_URL_CLIENT_SIDE_MALWARE;
       resource.threat_source =
           safe_browsing::ThreatSource::CLIENT_SIDE_DETECTION;
       resource.web_contents_getter = safe_browsing::SafeBrowsingUIManager::

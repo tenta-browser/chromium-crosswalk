@@ -44,6 +44,7 @@
 
 #if defined(USE_AURA)
 #include "chrome/browser/ui/aura/accessibility/automation_manager_aura.h"
+#include "ui/aura/env.h"
 #endif
 
 namespace extensions {
@@ -179,6 +180,9 @@ class AutomationWebContentsObserver
       params.location_offset =
           web_contents()->GetContainerBounds().OffsetFromOrigin();
       params.event_from = event.event_from;
+#if defined(USE_AURA)
+      params.mouse_location = aura::Env::GetInstance()->last_mouse_location();
+#endif
 
       AutomationEventRouter* router = AutomationEventRouter::GetInstance();
       router->DispatchAccessibilityEvent(params);
@@ -331,7 +335,11 @@ ExtensionFunction::ResponseAction
 AutomationInternalPerformActionFunction::ConvertToAXActionData(
     api::automation_internal::PerformAction::Params* params,
     ui::AXActionData* action) {
+  action->target_tree_id = params->args.tree_id;
+  action->source_extension_id = extension_id();
   action->target_node_id = params->args.automation_node_id;
+  int* request_id = params->args.request_id.get();
+  action->request_id = request_id ? *request_id : -1;
   switch (params->args.action_type) {
     case api::automation_internal::ACTION_TYPE_DODEFAULT:
       action->action = ui::AX_ACTION_DO_DEFAULT;
@@ -365,6 +373,24 @@ AutomationInternalPerformActionFunction::ConvertToAXActionData(
     case api::automation_internal::ACTION_TYPE_MAKEVISIBLE:
       action->action = ui::AX_ACTION_SCROLL_TO_MAKE_VISIBLE;
       break;
+    case api::automation_internal::ACTION_TYPE_SCROLLBACKWARD:
+      action->action = ui::AX_ACTION_SCROLL_BACKWARD;
+      break;
+    case api::automation_internal::ACTION_TYPE_SCROLLFORWARD:
+      action->action = ui::AX_ACTION_SCROLL_FORWARD;
+      break;
+    case api::automation_internal::ACTION_TYPE_SCROLLUP:
+      action->action = ui::AX_ACTION_SCROLL_UP;
+      break;
+    case api::automation_internal::ACTION_TYPE_SCROLLDOWN:
+      action->action = ui::AX_ACTION_SCROLL_DOWN;
+      break;
+    case api::automation_internal::ACTION_TYPE_SCROLLLEFT:
+      action->action = ui::AX_ACTION_SCROLL_LEFT;
+      break;
+    case api::automation_internal::ACTION_TYPE_SCROLLRIGHT:
+      action->action = ui::AX_ACTION_SCROLL_RIGHT;
+      break;
     case api::automation_internal::ACTION_TYPE_SETSELECTION: {
       api::automation_internal::SetSelectionParams selection_params;
       EXTENSION_FUNCTION_VALIDATE(
@@ -381,14 +407,21 @@ AutomationInternalPerformActionFunction::ConvertToAXActionData(
       action->action = ui::AX_ACTION_SHOW_CONTEXT_MENU;
       break;
     }
-    case api::automation_internal::ACTION_TYPE_SETACCESSIBILITYFOCUS: {
-      action->action = ui::AX_ACTION_SET_ACCESSIBILITY_FOCUS;
-      break;
-    }
     case api::automation_internal::
         ACTION_TYPE_SETSEQUENTIALFOCUSNAVIGATIONSTARTINGPOINT: {
       action->action =
           ui::AX_ACTION_SET_SEQUENTIAL_FOCUS_NAVIGATION_STARTING_POINT;
+      break;
+    }
+    case api::automation_internal::ACTION_TYPE_CUSTOMACTION: {
+      api::automation_internal::PerformCustomActionParams
+          perform_custom_action_params;
+      EXTENSION_FUNCTION_VALIDATE(
+          api::automation_internal::PerformCustomActionParams::Populate(
+              params->opt_args.additional_properties,
+              &perform_custom_action_params));
+      action->action = ui::AX_ACTION_CUSTOM_ACTION;
+      action->custom_action_id = perform_custom_action_params.custom_action_id;
       break;
     }
     default:
@@ -411,8 +444,10 @@ AutomationInternalPerformActionFunction::Run() {
   if (delegate) {
 #if defined(USE_AURA)
     ui::AXActionData data;
-    ConvertToAXActionData(params.get(), &data);
+    ExtensionFunction::ResponseAction result =
+        ConvertToAXActionData(params.get(), &data);
     delegate->PerformAction(data);
+    return result;
 #else
     NOTREACHED();
     return RespondNow(Error("Unexpected action on desktop automation tree;"

@@ -57,8 +57,7 @@ class JsonSanitizerAndroid : public JsonSanitizer {
 JsonSanitizerAndroid::JsonSanitizerAndroid(
     const StringCallback& success_callback,
     const StringCallback& error_callback)
-    : success_callback_(success_callback),
-      error_callback_(error_callback) {}
+    : success_callback_(success_callback), error_callback_(error_callback) {}
 
 void JsonSanitizerAndroid::Sanitize(const std::string& unsafe_json) {
   // The JSON parser only accepts wellformed UTF-8.
@@ -111,15 +110,10 @@ void JsonSanitizer::Sanitize(const std::string& unsafe_json,
                              const StringCallback& success_callback,
                              const StringCallback& error_callback) {
   // JsonSanitizerAndroid does all its work synchronously, but posts any
-  // callbacks to the current message loop. This means it can be destroyed at
+  // callbacks to the current sequence. This means it can be destroyed at
   // the end of this method.
   JsonSanitizerAndroid sanitizer(success_callback, error_callback);
   sanitizer.Sanitize(unsafe_json);
-}
-
-// static
-bool JsonSanitizer::Register(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 }  // namespace safe_json

@@ -12,10 +12,10 @@
 namespace blink {
 namespace {
 
-class MockScheduler final : public WebScheduler {
+class MockIdleDeadlineScheduler final : public WebScheduler {
  public:
-  MockScheduler() {}
-  ~MockScheduler() override {}
+  MockIdleDeadlineScheduler() {}
+  ~MockIdleDeadlineScheduler() override {}
 
   // WebScheduler implementation:
   WebTaskRunner* LoadingTaskRunner() override { return nullptr; }
@@ -28,44 +28,47 @@ class MockScheduler final : public WebScheduler {
                                WebThread::IdleTask*) override {}
   std::unique_ptr<WebViewScheduler> CreateWebViewScheduler(
       InterventionReporter*,
-      WebViewScheduler::WebViewSchedulerSettings*) override {
+      WebViewScheduler::WebViewSchedulerDelegate*) override {
     return nullptr;
   }
-  void SuspendTimerQueue() override {}
+  WebTaskRunner* CompositorTaskRunner() override { return nullptr; }
+  void PauseTimerQueue() override {}
   void ResumeTimerQueue() override {}
-  void AddPendingNavigation(WebScheduler::NavigatingFrameType) override {}
-  void RemovePendingNavigation(WebScheduler::NavigatingFrameType) override {}
+  void AddPendingNavigation(
+      scheduler::RendererScheduler::NavigatingFrameType) override {}
+  void RemovePendingNavigation(
+      scheduler::RendererScheduler::NavigatingFrameType) override {}
 
  private:
-  DISALLOW_COPY_AND_ASSIGN(MockScheduler);
+  DISALLOW_COPY_AND_ASSIGN(MockIdleDeadlineScheduler);
 };
 
-class MockThread final : public WebThread {
+class MockIdleDeadlineThread final : public WebThread {
  public:
-  MockThread() {}
-  ~MockThread() override {}
+  MockIdleDeadlineThread() {}
+  ~MockIdleDeadlineThread() override {}
   bool IsCurrentThread() const override { return true; }
   WebScheduler* Scheduler() const override { return &scheduler_; }
 
  private:
-  mutable MockScheduler scheduler_;
-  DISALLOW_COPY_AND_ASSIGN(MockThread);
+  mutable MockIdleDeadlineScheduler scheduler_;
+  DISALLOW_COPY_AND_ASSIGN(MockIdleDeadlineThread);
 };
 
-class MockPlatform : public TestingPlatformSupport {
+class MockIdleDeadlinePlatform : public TestingPlatformSupport {
  public:
-  MockPlatform() {}
-  ~MockPlatform() override {}
+  MockIdleDeadlinePlatform() {}
+  ~MockIdleDeadlinePlatform() override {}
   WebThread* CurrentThread() override { return &thread_; }
 
  private:
-  MockThread thread_;
-  DISALLOW_COPY_AND_ASSIGN(MockPlatform);
+  MockIdleDeadlineThread thread_;
+  DISALLOW_COPY_AND_ASSIGN(MockIdleDeadlinePlatform);
 };
 
 }  // namespace
 
-class IdleDeadlineTest : public testing::Test {
+class IdleDeadlineTest : public ::testing::Test {
  public:
   void SetUp() override {
     original_time_function_ = SetTimeFunctionsForTesting([] { return 1.0; });
@@ -93,7 +96,7 @@ TEST_F(IdleDeadlineTest, deadlineInPast) {
 }
 
 TEST_F(IdleDeadlineTest, yieldForHighPriorityWork) {
-  ScopedTestingPlatformSupport<MockPlatform> platform;
+  ScopedTestingPlatformSupport<MockIdleDeadlinePlatform> platform;
 
   IdleDeadline* deadline =
       IdleDeadline::Create(1.25, IdleDeadline::CallbackType::kCalledWhenIdle);

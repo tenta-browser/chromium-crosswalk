@@ -4,16 +4,16 @@
 
 #include "modules/csspaint/CSSPaintDefinition.h"
 
-#include "bindings/core/v8/ScriptState.h"
-#include "bindings/core/v8/V8Binding.h"
-#include "bindings/core/v8/V8BindingMacros.h"
-#include "bindings/core/v8/V8ObjectConstructor.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "core/css/CSSComputedStyleDeclaration.h"
 #include "core/css/cssom/FilteredComputedStylePropertyMap.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/layout/LayoutObject.h"
 #include "modules/csspaint/PaintRenderingContext2D.h"
 #include "modules/csspaint/PaintSize.h"
+#include "platform/bindings/ScriptState.h"
+#include "platform/bindings/V8BindingMacros.h"
+#include "platform/bindings/V8ObjectConstructor.h"
 #include "platform/graphics/ImageBuffer.h"
 #include "platform/graphics/PaintGeneratedImage.h"
 #include "platform/graphics/RecordingImageBufferSurface.h"
@@ -37,9 +37,9 @@ CSSPaintDefinition* CSSPaintDefinition::Create(
     ScriptState* script_state,
     v8::Local<v8::Function> constructor,
     v8::Local<v8::Function> paint,
-    Vector<CSSPropertyID>& native_invalidation_properties,
-    Vector<AtomicString>& custom_invalidation_properties,
-    Vector<CSSSyntaxDescriptor>& input_argument_types,
+    const Vector<CSSPropertyID>& native_invalidation_properties,
+    const Vector<AtomicString>& custom_invalidation_properties,
+    const Vector<CSSSyntaxDescriptor>& input_argument_types,
     bool has_alpha) {
   return new CSSPaintDefinition(
       script_state, constructor, paint, native_invalidation_properties,
@@ -50,29 +50,33 @@ CSSPaintDefinition::CSSPaintDefinition(
     ScriptState* script_state,
     v8::Local<v8::Function> constructor,
     v8::Local<v8::Function> paint,
-    Vector<CSSPropertyID>& native_invalidation_properties,
-    Vector<AtomicString>& custom_invalidation_properties,
-    Vector<CSSSyntaxDescriptor>& input_argument_types,
+    const Vector<CSSPropertyID>& native_invalidation_properties,
+    const Vector<AtomicString>& custom_invalidation_properties,
+    const Vector<CSSSyntaxDescriptor>& input_argument_types,
     bool has_alpha)
     : script_state_(script_state),
-      constructor_(script_state->GetIsolate(), constructor),
-      paint_(script_state->GetIsolate(), paint),
+      constructor_(script_state->GetIsolate(), this, constructor),
+      paint_(script_state->GetIsolate(), this, paint),
+      instance_(this),
       did_call_constructor_(false),
       has_alpha_(has_alpha) {
-  native_invalidation_properties_.Swap(native_invalidation_properties);
-  custom_invalidation_properties_.Swap(custom_invalidation_properties);
-  input_argument_types_.Swap(input_argument_types);
+  native_invalidation_properties_ = native_invalidation_properties;
+  custom_invalidation_properties_ = custom_invalidation_properties;
+  input_argument_types_ = input_argument_types;
 }
 
 CSSPaintDefinition::~CSSPaintDefinition() {}
 
 PassRefPtr<Image> CSSPaintDefinition::Paint(
-    const LayoutObject& layout_object,
+    const ImageResourceObserver& client,
     const IntSize& size,
-    float zoom,
     const CSSStyleValueVector* paint_arguments) {
   DCHECK(paint_arguments);
 
+  // TODO: Break dependency on LayoutObject. Passing the Node should work.
+  const LayoutObject& layout_object = static_cast<const LayoutObject&>(client);
+
+  float zoom = layout_object.StyleRef().EffectiveZoom();
   const IntSize specified_size = GetSpecifiedSize(size, zoom);
 
   ScriptState::Scope scope(script_state_.Get());
@@ -90,9 +94,9 @@ PassRefPtr<Image> CSSPaintDefinition::Paint(
   DCHECK(layout_object.GetNode());
 
   PaintRenderingContext2D* rendering_context = PaintRenderingContext2D::Create(
-      ImageBuffer::Create(WTF::WrapUnique(
-          new RecordingImageBufferSurface(size, nullptr /* fallbackFactory */,
-                                          has_alpha_ ? kNonOpaque : kOpaque))),
+      ImageBuffer::Create(WTF::WrapUnique(new RecordingImageBufferSurface(
+          size, RecordingImageBufferSurface::kDisallowFallback,
+          has_alpha_ ? kNonOpaque : kOpaque))),
       has_alpha_, zoom);
   PaintSize* paint_size = PaintSize::Create(specified_size);
   StylePropertyMapReadonly* style_map =
@@ -143,6 +147,12 @@ void CSSPaintDefinition::MaybeCreatePaintInstance() {
   }
 
   did_call_constructor_ = true;
+}
+
+DEFINE_TRACE_WRAPPERS(CSSPaintDefinition) {
+  visitor->TraceWrappers(constructor_.Cast<v8::Value>());
+  visitor->TraceWrappers(paint_.Cast<v8::Value>());
+  visitor->TraceWrappers(instance_.Cast<v8::Value>());
 }
 
 }  // namespace blink

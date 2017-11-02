@@ -4,7 +4,7 @@
 
 /**
  * @fileoverview 'settings-cups-printers' is a component for showing CUPS
- * Printer settings subpage (chrome://md-settings/cupsPrinters). It is used to
+ * Printer settings subpage (chrome://settings/cupsPrinters). It is used to
  * set up legacy & non-CloudPrint printers on ChromeOS by leveraging CUPS (the
  * unix printing system) and the many open source drivers built for CUPS.
  */
@@ -21,12 +21,25 @@ Polymer({
       notify: true,
     },
 
+    /** @type {?CupsPrinterInfo} */
+    activePrinter: {
+      type: Object,
+      notify: true,
+    },
+
     searchTerm: {
       type: String,
     },
 
     /** @private */
     canAddPrinter_: Boolean,
+
+    /** @private */
+    showCupsEditPrinterDialog_: Boolean,
+  },
+
+  listeners: {
+    'edit-cups-printer-details': 'onShowCupsEditPrinterDialog_',
   },
 
   /**
@@ -61,8 +74,10 @@ Polymer({
    */
   refreshNetworks_: function() {
     chrome.networkingPrivate.getNetworks(
-        {'networkType': chrome.networkingPrivate.NetworkType.ALL,
-         'configured': true},
+        {
+          'networkType': chrome.networkingPrivate.NetworkType.ALL,
+          'configured': true
+        },
         this.onNetworksReceived_.bind(this));
   },
 
@@ -75,7 +90,7 @@ Polymer({
   onNetworksReceived_: function(states) {
     this.canAddPrinter_ = states.some(function(entry) {
       return entry.hasOwnProperty('ConnectionState') &&
-             entry.ConnectionState == 'Connected';
+          entry.ConnectionState == 'Connected';
     });
   },
 
@@ -88,8 +103,8 @@ Polymer({
     if (success) {
       this.updateCupsPrintersList_();
       var message = this.$.addPrinterDoneMessage;
-      message.textContent = loadTimeData.getStringF(
-          'printerAddedSuccessfulMessage', printerName);
+      message.textContent =
+          loadTimeData.getStringF('printerAddedSuccessfulMessage', printerName);
     } else {
       var message = this.$.addPrinterErrorMessage;
     }
@@ -101,8 +116,9 @@ Polymer({
 
   /** @private */
   updateCupsPrintersList_: function() {
-    settings.CupsPrintersBrowserProxyImpl.getInstance().
-        getCupsPrintersList().then(this.printersChanged_.bind(this));
+    settings.CupsPrintersBrowserProxyImpl.getInstance()
+        .getCupsPrintersList()
+        .then(this.printersChanged_.bind(this));
   },
 
   /**
@@ -121,6 +137,18 @@ Polymer({
 
   /** @private */
   onAddPrinterDialogClose_: function() {
-    this.$$('#addPrinter').focus();
+    cr.ui.focusWithoutInk(assert(this.$$('#addPrinter')));
   },
+
+  /** @private */
+  onShowCupsEditPrinterDialog_: function() {
+    this.showCupsEditPrinterDialog_ = true;
+    this.async(function() {
+      var dialog = this.$$('settings-cups-edit-printer-dialog');
+      dialog.addEventListener('close', function() {
+        this.showCupsEditPrinterDialog_ = false;
+      }.bind(this));
+    });
+  },
+
 });

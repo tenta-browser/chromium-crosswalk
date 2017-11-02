@@ -31,7 +31,7 @@
 #ifndef WebUserGestureIndicator_h
 #define WebUserGestureIndicator_h
 
-#include "../platform/WebCommon.h"
+#include "public/platform/WebCommon.h"
 
 namespace blink {
 
@@ -60,6 +60,9 @@ class WebUserGestureIndicator {
   // continue processing the user gesture later on using a
   // WebScopedUserGesture.
   BLINK_EXPORT static WebUserGestureToken CurrentUserGestureToken();
+
+  BLINK_EXPORT static void ExtendTimeout();
+  BLINK_EXPORT static void DisableTimeout();
 };
 }
 

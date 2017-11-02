@@ -108,6 +108,10 @@
       interfaceName: "HTMLContentElement",
     },
     {
+      name: "data",
+      interfaceName: "HTMLDataElement",
+    },
+    {
       name: "datalist",
       interfaceName: "HTMLDataListElement",
     },
@@ -269,11 +273,6 @@
     },
     "marquee",
     "menu",
-    {
-      name: "menuitem",
-      interfaceName: "HTMLMenuItemElement",
-      runtimeEnabled: "contextMenu",
-    },
     "meta",
     {
       name: "meter",
@@ -439,6 +438,10 @@
     {
       name: "thead",
       interfaceName: "HTMLTableSectionElement",
+    },
+    {
+      name: "time",
+      interfaceName: "HTMLTimeElement",
     },
     "title",
     {

@@ -14,6 +14,7 @@
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/macros.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -50,7 +51,6 @@ class MessageLoopQuitListener {
                         const Geoposition& position) {
     EXPECT_EQ(client_message_loop_, base::MessageLoop::current());
     updated_provider_ = provider;
-    client_message_loop_->QuitWhenIdle();
   }
 
   base::MessageLoop* client_message_loop_;

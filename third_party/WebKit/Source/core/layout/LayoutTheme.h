@@ -25,25 +25,26 @@
 
 #include "core/CSSValueKeywords.h"
 #include "core/CoreExport.h"
+#include "platform/LayoutUnit.h"
 #include "platform/ThemeTypes.h"
-#include "platform/fonts/Font.h"
-#include "platform/fonts/FontDescription.h"
-#include "platform/fonts/FontTraits.h"
+#include "platform/fonts/FontSelectionTypes.h"
 #include "platform/graphics/Color.h"
 #include "platform/scroll/ScrollTypes.h"
-#include "platform/text/PlatformLocale.h"
-#include "platform/wtf/PassRefPtr.h"
+#include "platform/wtf/Forward.h"
 #include "platform/wtf/RefCounted.h"
-#include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
 class ComputedStyle;
 class Element;
 class FileList;
-class HostWindow;
+class Font;
+class FontDescription;
 class HTMLInputElement;
 class LayoutObject;
+class LengthSize;
+class Locale;
+class PlatformChromeClient;
 class Theme;
 class ThemePainter;
 
@@ -63,6 +64,15 @@ class CORE_EXPORT LayoutTheme : public RefCounted<LayoutTheme> {
   virtual void DidChangeThemeEngine() {}
 
   static void SetSizeIfAuto(ComputedStyle&, const IntSize&);
+  // Sets the minimum size to |part_size| or |min_part_size| as appropriate
+  // according to the given style, if they are specified.
+  static void SetMinimumSize(ComputedStyle&,
+                             const LengthSize* part_size,
+                             const LengthSize* min_part_size = nullptr);
+  // SetMinimumSizeIfAuto must be called before SetSizeIfAuto, because we
+  // will not set a minimum size if an explicit size is set, and SetSizeIfAuto
+  // sets an explicit size.
+  static void SetMinimumSizeIfAuto(ComputedStyle&, const IntSize&);
 
   // This method is called whenever style has been computed for an element and
   // the appearance property has been set to a value other than "none".
@@ -80,15 +90,15 @@ class CORE_EXPORT LayoutTheme : public RefCounted<LayoutTheme> {
   // platform adjust the default CSS rules in html.css, quirks.css or
   // mediaControls.css.
   virtual String ExtraDefaultStyleSheet();
-  virtual String ExtraQuirksStyleSheet() { return String(); }
-  virtual String ExtraMediaControlsStyleSheet() { return String(); }
-  virtual String ExtraFullscreenStyleSheet() { return String(); }
+  virtual String ExtraQuirksStyleSheet();
+  virtual String ExtraMediaControlsStyleSheet();
+  virtual String ExtraFullscreenStyleSheet();
 
   // A method to obtain the baseline position for a "leaf" control. This will
   // only be used if a baseline position cannot be determined by examining child
   // content. Checkboxes and radio buttons are examples of controls that need to
   // do this.
-  virtual int BaselinePosition(const LayoutObject*) const;
+  virtual LayoutUnit BaselinePosition(const LayoutObject*) const;
 
   // A method for asking if a control is a container or not.  Leaf controls have
   // to have some special behavior (like the baseline position API above).
@@ -130,6 +140,11 @@ class CORE_EXPORT LayoutTheme : public RefCounted<LayoutTheme> {
   Color InactiveListBoxSelectionBackgroundColor() const;
   Color InactiveListBoxSelectionForegroundColor() const;
 
+  virtual Color PlatformSpellingMarkerUnderlineColor() const;
+  virtual Color PlatformGrammarMarkerUnderlineColor() const;
+
+  Color PlatformActiveSpellingMarkerHighlightColor() const;
+
   // Highlight and text colors for TextMatches.
   Color PlatformTextSearchHighlightColor(bool active_match) const;
   Color PlatformTextSearchColor(bool active_match) const;
@@ -151,8 +166,8 @@ class CORE_EXPORT LayoutTheme : public RefCounted<LayoutTheme> {
 
   // System fonts and colors for CSS.
   virtual void SystemFont(CSSValueID system_font_id,
-                          FontStyle&,
-                          FontWeight&,
+                          FontSelectionValue& font_slope,
+                          FontSelectionValue& font_weight,
                           float& font_size,
                           AtomicString& font_family) const = 0;
   void SystemFont(CSSValueID system_font_id, FontDescription&);
@@ -172,7 +187,7 @@ class CORE_EXPORT LayoutTheme : public RefCounted<LayoutTheme> {
   virtual int PopupInternalPaddingStart(const ComputedStyle&) const {
     return 0;
   }
-  virtual int PopupInternalPaddingEnd(const HostWindow*,
+  virtual int PopupInternalPaddingEnd(const PlatformChromeClient*,
                                       const ComputedStyle&) const {
     return 0;
   }
@@ -191,11 +206,6 @@ class CORE_EXPORT LayoutTheme : public RefCounted<LayoutTheme> {
   virtual double AnimationRepeatIntervalForProgressBar() const;
   // Returns the duration of the animation for the progress bar.
   virtual double AnimationDurationForProgressBar() const;
-
-  // Media controls
-  String FormatMediaControlsTime(float time) const;
-  String FormatMediaControlsCurrentTime(float current_time,
-                                        float duration) const;
 
   // Returns size of one slider tick mark for a horizontal track.
   // For vertical tracks we rotate it and use it. i.e. Width is always length

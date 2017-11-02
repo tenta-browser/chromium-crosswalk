@@ -222,7 +222,9 @@ def _ExtractSharedLibsFromRuntimeDeps(runtime_deps_files):
         line = line.rstrip()
         if not line.endswith('.so'):
           continue
-        ret.append(os.path.normpath(line))
+        # Only unstripped .so files are listed in runtime deps.
+        # Convert to the stripped .so by going up one directory.
+        ret.append(os.path.normpath(line.replace('lib.unstripped/', '')))
   ret.reverse()
   return ret
 
@@ -305,14 +307,16 @@ def main(argv):
   parser.add_option('--secondary-abi-shared-libraries-runtime-deps',
                     help='Path to file containing runtime deps for secondary '
                          'abi shared libraries.')
+  parser.add_option('--enable-relocation-packing',
+                    help='Whether relocation packing is enabled.')
 
   # apk options
   parser.add_option('--apk-path', help='Path to the target\'s apk output.')
   parser.add_option('--incremental-apk-path',
                     help="Path to the target's incremental apk output.")
-  parser.add_option('--incremental-install-script-path',
+  parser.add_option('--incremental-install-json-path',
                     help="Path to the target's generated incremental install "
-                    "script.")
+                    "json.")
 
   parser.add_option('--tested-apk-config',
       help='Path to the build config of the tested apk (for an instrumentation '
@@ -344,6 +348,7 @@ def main(argv):
       'dist_jar': ['build_config'],
       'resource_rewriter': ['build_config'],
       'group': ['build_config'],
+      'junit_binary': ['build_config'],
   }
   required_options = required_options_map.get(options.type)
   if not required_options:
@@ -409,13 +414,16 @@ def main(argv):
     deps_info['gradle_treat_as_prebuilt'] = options.gradle_treat_as_prebuilt
 
   if options.android_manifest:
-    gradle['android_manifest'] = options.android_manifest
+    deps_info['android_manifest'] = options.android_manifest
+
   if options.type in ('java_binary', 'java_library', 'android_apk'):
     if options.java_sources_file:
-      gradle['java_sources_file'] = options.java_sources_file
+      deps_info['java_sources_file'] = options.java_sources_file
     if options.bundled_srcjars:
       gradle['bundled_srcjars'] = (
           build_utils.ParseGnList(options.bundled_srcjars))
+    else:
+      gradle['bundled_srcjars'] = []
 
     gradle['dependent_android_projects'] = []
     gradle['dependent_java_projects'] = []
@@ -432,6 +440,14 @@ def main(argv):
       else:
         gradle['dependent_java_projects'].append(c['path'])
 
+
+  if options.type == 'android_apk':
+    config['jni'] = {}
+    all_java_sources = [c['java_sources_file'] for c in all_library_deps
+                        if 'java_sources_file' in c]
+    if options.java_sources_file:
+      all_java_sources.append(options.java_sources_file)
+    config['jni']['all_source'] = all_java_sources
 
   if (options.type in ('java_binary', 'java_library')):
     deps_info['requires_android'] = options.requires_android
@@ -458,10 +474,16 @@ def main(argv):
     if options.type == 'android_apk':
       deps_info['apk_path'] = options.apk_path
       deps_info['incremental_apk_path'] = options.incremental_apk_path
-      deps_info['incremental_install_script_path'] = (
-          options.incremental_install_script_path)
+      deps_info['incremental_install_json_path'] = (
+          options.incremental_install_json_path)
+      deps_info['enable_relocation_packing'] = options.enable_relocation_packing
 
-  if options.type in ('java_binary', 'java_library', 'android_apk', 'dist_jar'):
+  requires_javac_classpath = options.type in (
+      'java_binary', 'java_library', 'android_apk', 'dist_jar')
+  requires_full_classpath = (
+      options.type == 'java_prebuilt' or requires_javac_classpath)
+
+  if requires_javac_classpath:
     # Classpath values filled in below (after applying tested_apk_config).
     config['javac'] = {}
 
@@ -540,7 +562,8 @@ def main(argv):
     deps_info['owned_resources_dirs'] = list(owned_resource_dirs)
     deps_info['owned_resources_zips'] = list(owned_resource_zips)
 
-  if options.type in ('android_resources','android_apk', 'resource_rewriter'):
+  if options.type in (
+      'android_resources', 'android_apk', 'junit_binary', 'resource_rewriter'):
     config['resources'] = {}
     config['resources']['dependency_zips'] = [
         c['resources_zip'] for c in all_resources_deps]
@@ -556,8 +579,9 @@ def main(argv):
   if options.type in ['android_apk', 'deps_dex']:
     deps_dex_files = [c['dex_path'] for c in all_library_deps]
 
-  if options.type in ('java_binary', 'java_library', 'android_apk', 'dist_jar'):
+  if requires_javac_classpath:
     javac_classpath = [c['jar_path'] for c in direct_library_deps]
+  if requires_full_classpath:
     java_full_classpath = [c['jar_path'] for c in all_library_deps]
 
     if options.extra_classpath_jars:
@@ -635,12 +659,17 @@ def main(argv):
     dex_config = config['final_dex']
     dex_config['dependency_dex_files'] = deps_dex_files
 
-  if options.type in ('java_binary', 'java_library', 'android_apk', 'dist_jar'):
+  if requires_javac_classpath:
     config['javac']['classpath'] = javac_classpath
-    config['javac']['interface_classpath'] = [
-        _AsInterfaceJar(p) for p in javac_classpath]
+    javac_interface_classpath = [
+        _AsInterfaceJar(p) for p in javac_classpath
+        if p not in deps_info.get('extra_classpath_jars', [])]
+    javac_interface_classpath += deps_info.get('extra_classpath_jars', [])
+    config['javac']['interface_classpath'] = javac_interface_classpath
+
+  if requires_full_classpath:
     deps_info['java'] = {
-      'full_classpath': java_full_classpath
+      'full_classpath': java_full_classpath,
     }
 
   if options.type in ('android_apk', 'dist_jar'):
@@ -655,7 +684,6 @@ def main(argv):
     }
 
   if options.type == 'android_apk':
-    dependency_jars = [c['jar_path'] for c in all_library_deps]
     manifest = AndroidManifest(options.android_manifest)
     deps_info['package_name'] = manifest.GetPackageName()
     if not options.tested_apk_config and manifest.GetInstrumentationElements():
@@ -693,6 +721,9 @@ def main(argv):
         _CreateLocalePaksAssetJavaList(config['assets']))
     config['uncompressed_locales_java_list'] = (
         _CreateLocalePaksAssetJavaList(config['uncompressed_assets']))
+
+    config['extra_android_manifests'] = filter(None, (
+        d.get('android_manifest') for d in all_resources_deps))
 
     # Collect java resources
     java_resources_jars = [d['java_resources_jar'] for d in all_library_deps

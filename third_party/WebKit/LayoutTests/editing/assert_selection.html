@@ -147,7 +147,7 @@ test(() => assert_selection(
             '<b id="abc">abc</b>',
             '<b id="def">def</b>',
         '</div>',
-    ].join(''),
+    ],
     selection => {
       const document = selection.document;
       const host = document.getElementById('host');
@@ -170,7 +170,7 @@ test(() => assert_selection(
             '<b id="abc">^abc</b>',
             '<span id="mno">mno</span>',
         '</div>',
-    ].join(''),
+    ],
     {dumpAs: 'flattree'}), 'dump flat tree for shadow DOM V0');
 
 test(() => assert_selection(
@@ -254,12 +254,12 @@ test(() => {
 test(() => {
     assert_equals(checked_assert_selection('^|foo', 'noop', 'baz'),
         'You should have focus marker and should not have anchor marker if and only if selection is a caret in "^|foo".');
-}, 'anchor == foucs in input');
+}, 'anchor == focus in input');
 
 test(() => {
     assert_equals(checked_assert_selection('|foo', 'noop', 'b^|az'),
         'You should have focus marker and should not have anchor marker if and only if selection is a caret in "b^|az".');
-}, 'anchor == foucs in output');
+}, 'anchor == focus in output');
 
 // TODO: It's better to have more powerful diff like
 // |CreateUnifiedDiff()| in gtest or "Longest common substring"
@@ -345,4 +345,27 @@ test(() => {
             assert_equals(internals.textAffinity, 'Upstream'); },
         '<div contenteditable style="width: 25px;">foo|bar</div>');
 }, 'Textaffinity');
+
+test(() => {
+  assert_exists(window, 'eventSender');
+  assert_selection(
+    [
+      '<div id="first">one <span id="start"></span>two three</div>',
+      '<div id="second">four <span id="end"></span>five six</div>',
+    ].join(''),
+    selection => {
+      const start = selection.document.getElementById('start');
+      const end = selection.document.getElementById('end');
+      eventSender.mouseMoveTo(selection.computeLeft(start),
+                              selection.computeTop(start));
+      eventSender.mouseDown();
+      eventSender.mouseMoveTo(selection.computeLeft(end),
+                              selection.computeTop(end));
+      eventSender.mouseUp();
+    },
+    [
+      '<div id="first">one <span id="start"></span>^two three</div>',
+      '<div id="second">four |<span id="end"></span>five six</div>',
+    ].join(''));
+}, 'computeLeft() and computeTop()');
 </script>

@@ -352,10 +352,10 @@ void WebSocketChannel::SendAddChannelRequest(
     const GURL& socket_url,
     const std::vector<std::string>& requested_subprotocols,
     const url::Origin& origin,
-    const GURL& first_party_for_cookies,
+    const GURL& site_for_cookies,
     const std::string& additional_headers) {
   SendAddChannelRequestWithSuppliedCallback(
-      socket_url, requested_subprotocols, origin, first_party_for_cookies,
+      socket_url, requested_subprotocols, origin, site_for_cookies,
       additional_headers, base::Bind(&WebSocketStream::CreateAndConnectStream));
 }
 
@@ -477,7 +477,8 @@ ChannelState WebSocketChannel::SendFlowControl(int64_t quota) {
 
     pending_received_frames_.pop();
   }
-  if (pending_received_frames_.empty() && has_received_close_frame_) {
+  if (!InClosingState() && pending_received_frames_.empty() &&
+      has_received_close_frame_) {
     // We've been waiting for the client to consume the frames before
     // responding to the closing handshake initiated by the server.
     return RespondToClosingHandshake();
@@ -560,11 +561,11 @@ void WebSocketChannel::SendAddChannelRequestForTesting(
     const GURL& socket_url,
     const std::vector<std::string>& requested_subprotocols,
     const url::Origin& origin,
-    const GURL& first_party_for_cookies,
+    const GURL& site_for_cookies,
     const std::string& additional_headers,
     const WebSocketStreamRequestCreationCallback& callback) {
   SendAddChannelRequestWithSuppliedCallback(socket_url, requested_subprotocols,
-                                            origin, first_party_for_cookies,
+                                            origin, site_for_cookies,
                                             additional_headers, callback);
 }
 
@@ -582,7 +583,7 @@ void WebSocketChannel::SendAddChannelRequestWithSuppliedCallback(
     const GURL& socket_url,
     const std::vector<std::string>& requested_subprotocols,
     const url::Origin& origin,
-    const GURL& first_party_for_cookies,
+    const GURL& site_for_cookies,
     const std::string& additional_headers,
     const WebSocketStreamRequestCreationCallback& callback) {
   DCHECK_EQ(FRESHLY_CONSTRUCTED, state_);
@@ -599,10 +600,10 @@ void WebSocketChannel::SendAddChannelRequestWithSuppliedCallback(
   std::unique_ptr<WebSocketHandshakeStreamCreateHelper> create_helper(
       new WebSocketHandshakeStreamCreateHelper(connect_delegate.get(),
                                                requested_subprotocols));
-  stream_request_ = callback.Run(socket_url_, std::move(create_helper), origin,
-                                 first_party_for_cookies, additional_headers,
-                                 url_request_context_, NetLogWithSource(),
-                                 std::move(connect_delegate));
+  stream_request_ =
+      callback.Run(socket_url_, std::move(create_helper), origin,
+                   site_for_cookies, additional_headers, url_request_context_,
+                   NetLogWithSource(), std::move(connect_delegate));
   SetState(CONNECTING);
 }
 

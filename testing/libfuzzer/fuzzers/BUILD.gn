@@ -154,7 +154,7 @@ fuzzer_test("libsrtp_fuzzer") {
   deps = [
     "//third_party/libsrtp",
   ]
-  libfuzzer_options = [ "max_len=1000" ]
+  libfuzzer_options = [ "max_len=1500" ]
 }
 
 fuzzer_test("base_json_reader_fuzzer") {
@@ -167,7 +167,7 @@ fuzzer_test("base_json_reader_fuzzer") {
 }
 
 libpng_seed_corpuses = [
-  "//cc/test/data",
+  "//components/viz/test/data",
   "//third_party/WebKit/LayoutTests/images/png-suite/samples",
   "//third_party/WebKit/LayoutTests/images/resources/pngfuzz",
 ]
@@ -235,6 +235,7 @@ fuzzer_test("v8_script_parser_fuzzer") {
   ]
   dict = "dicts/generated/v8_script_parser_fuzzer.dict"
   seed_corpus = "//v8/test/mjsunit/regress/"
+  libfuzzer_options = [ "only_ascii=1" ]
 }
 
 fuzzer_test("v8_json_parser_fuzzer") {
@@ -285,17 +286,17 @@ fuzzer_test("v8_wasm_fuzzer") {
     "//v8:wasm_fuzzer",
   ]
   dict = "dicts/v8_wasm.dict"
-  seed_corpus = "//v8/test/fuzzer/wasm/"
+  seed_corpus = "//v8/test/fuzzer/wasm_corpus/"
   libfuzzer_options = [ "max_len=500" ]
 }
 
-fuzzer_test("v8_wasm_asmjs_fuzzer") {
+fuzzer_test("v8_wasm_async_fuzzer") {
   sources = []
   deps = [
-    "//v8:wasm_asmjs_fuzzer",
+    "//v8:wasm_async_fuzzer",
   ]
   dict = "dicts/v8_wasm.dict"
-  seed_corpus = "//v8/test/fuzzer/wasm_asmjs/"
+  seed_corpus = "//v8/test/fuzzer/wasm_corpus/"
   libfuzzer_options = [ "max_len=500" ]
 }
 
@@ -459,4 +460,17 @@ fuzzer_test("hash_fuzzer") {
   deps = [
     "//base",
   ]
+}
+
+# third_party/minizip/src is checked out only on unix platform by gclient.
+if (is_linux) {
+  # TODO(yawano): Add compress test case
+  fuzzer_test("minizip_uncompress_fuzzer") {
+    sources = [
+      "minizip_uncompress_fuzzer.cc",
+    ]
+    deps = [
+      "//third_party/minizip:minizip",
+    ]
+  }
 }

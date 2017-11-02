@@ -8,8 +8,9 @@
 #include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "components/viz/service/gl/gpu_service_impl.h"
 #include "gpu/config/gpu_info.h"
-#include "services/ui/gpu/gpu_service.h"
 #include "services/ui/public/interfaces/gpu.mojom.h"
 #include "services/ui/ws/gpu_client.h"
 #include "services/ui/ws/gpu_host_delegate.h"
@@ -42,7 +43,7 @@ class TestGpuHostDelegate : public GpuHostDelegate {
 
 // Test implementation of GpuService. For testing behaviour of calls made by
 // GpuClient
-class TestGpuService : public GpuService {
+class TestGpuService : public viz::GpuServiceImpl {
  public:
   explicit TestGpuService(
       scoped_refptr<base::SingleThreadTaskRunner> io_runner);
@@ -54,10 +55,10 @@ class TestGpuService : public GpuService {
 
 TestGpuService::TestGpuService(
     scoped_refptr<base::SingleThreadTaskRunner> io_runner)
-    : GpuService(gpu::GPUInfo(),
-                 nullptr /* watchdog_thread */,
-                 std::move(io_runner),
-                 gpu::GpuFeatureInfo()) {}
+    : GpuServiceImpl(gpu::GPUInfo(),
+                     nullptr /* watchdog_thread */,
+                     std::move(io_runner),
+                     gpu::GpuFeatureInfo()) {}
 
 }  // namespace
 
@@ -85,15 +86,14 @@ class GpuHostTest : public testing::Test {
   base::Thread io_thread_;
   TestGpuHostDelegate gpu_host_delegate_;
   std::unique_ptr<TestGpuService> gpu_service_;
-  ui::mojom::GpuServicePtr gpu_service_ptr_;
-  std::unique_ptr<GpuHost> gpu_host_;
+  viz::mojom::GpuServicePtr gpu_service_ptr_;
+  std::unique_ptr<DefaultGpuHost> gpu_host_;
 
   DISALLOW_COPY_AND_ASSIGN(GpuHostTest);
 };
 
 base::WeakPtr<GpuClient> GpuHostTest::AddGpuClient() {
-  mojom::GpuRequest request;
-  GpuClient* client = gpu_host_->AddInternal(std::move(request));
+  GpuClient* client = gpu_host_->AddInternal(mojom::GpuRequest());
   return client->weak_factory_.GetWeakPtr();
 }
 
@@ -103,10 +103,8 @@ void GpuHostTest::DestroyHost() {
 
 void GpuHostTest::SetUp() {
   testing::Test::SetUp();
-  gpu_host_ = base::MakeUnique<GpuHost>(&gpu_host_delegate_);
-
-  ui::mojom::GpuServiceRequest request(&gpu_service_ptr_);
-  gpu_service_->Bind(std::move(request));
+  gpu_host_ = base::MakeUnique<DefaultGpuHost>(&gpu_host_delegate_);
+  gpu_service_->Bind(mojo::MakeRequest(&gpu_service_ptr_));
   gpu_host_->gpu_service_ = std::move(gpu_service_ptr_);
 }
 

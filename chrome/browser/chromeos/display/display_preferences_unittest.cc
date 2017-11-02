@@ -16,7 +16,7 @@
 #include "ash/display/window_tree_host_manager.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
-#include "ash/wm/maximize_mode/maximize_mode_controller.h"
+#include "ash/wm/tablet_mode/tablet_mode_controller.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
@@ -61,7 +61,7 @@ bool IsRotationLocked() {
   return ash::Shell::Get()->screen_orientation_controller()->rotation_locked();
 }
 
-class DisplayPreferencesTest : public ash::test::AshTestBase {
+class DisplayPreferencesTest : public ash::AshTestBase {
  protected:
   DisplayPreferencesTest()
       : mock_user_manager_(new MockUserManager),
@@ -74,7 +74,7 @@ class DisplayPreferencesTest : public ash::test::AshTestBase {
     EXPECT_CALL(*mock_user_manager_, IsUserLoggedIn())
         .WillRepeatedly(testing::Return(false));
     EXPECT_CALL(*mock_user_manager_, Shutdown());
-    ash::test::AshTestBase::SetUp();
+    ash::AshTestBase::SetUp();
     RegisterDisplayLocalStatePrefs(local_state_.registry());
     TestingBrowserProcess::GetGlobal()->SetLocalState(&local_state_);
     observer_.reset(new DisplayConfigurationObserver());
@@ -83,7 +83,7 @@ class DisplayPreferencesTest : public ash::test::AshTestBase {
   void TearDown() override {
     observer_.reset();
     TestingBrowserProcess::GetGlobal()->SetLocalState(nullptr);
-    ash::test::AshTestBase::TearDown();
+    ash::AshTestBase::TearDown();
   }
 
   void LoggedInAsUser() {
@@ -176,16 +176,6 @@ class DisplayPreferencesTest : public ash::test::AshTestBase {
     pref_data->Set(name, std::move(insets_value));
   }
 
-  void StoreColorProfile(int64_t id, const std::string& profile) {
-    DictionaryPrefUpdate update(&local_state_, prefs::kDisplayProperties);
-    const std::string name = base::Int64ToString(id);
-
-    base::DictionaryValue* pref_data = update.Get();
-    auto property = base::MakeUnique<base::DictionaryValue>();
-    property->SetString("color_profile_name", profile);
-    pref_data->Set(name, std::move(property));
-  }
-
   void StoreDisplayRotationPrefsForTest(bool rotation_lock,
                                         display::Display::Rotation rotation) {
     DictionaryPrefUpdate update(local_state(), prefs::kDisplayRotationLock);
@@ -265,18 +255,6 @@ TEST_F(DisplayPreferencesTest, BasicStores) {
   int64_t id2 = display_manager()->GetSecondaryDisplay().id();
   int64_t dummy_id = id2 + 1;
   ASSERT_NE(id1, dummy_id);
-  std::vector<display::ColorCalibrationProfile> profiles;
-  profiles.push_back(display::COLOR_PROFILE_STANDARD);
-  profiles.push_back(display::COLOR_PROFILE_DYNAMIC);
-  profiles.push_back(display::COLOR_PROFILE_MOVIE);
-  profiles.push_back(display::COLOR_PROFILE_READING);
-  // Allows only |id1|.
-  display::test::DisplayManagerTestApi(display_manager())
-      .SetAvailableColorProfiles(id1, profiles);
-  display_manager()->SetColorCalibrationProfile(id1,
-                                                display::COLOR_PROFILE_DYNAMIC);
-  display_manager()->SetColorCalibrationProfile(id2,
-                                                display::COLOR_PROFILE_DYNAMIC);
 
   LoggedInAsUser();
 
@@ -370,10 +348,6 @@ TEST_F(DisplayPreferencesTest, BasicStores) {
   EXPECT_FALSE(property->GetInteger(kTouchCalibrationWidth, &width));
   EXPECT_FALSE(property->GetInteger(kTouchCalibrationHeight, &height));
 
-  std::string color_profile;
-  EXPECT_TRUE(property->GetString("color_profile_name", &color_profile));
-  EXPECT_EQ("dynamic", color_profile);
-
   EXPECT_TRUE(properties->GetDictionary(base::Int64ToString(id2), &property));
   EXPECT_TRUE(property->GetInteger("rotation", &rotation));
   EXPECT_TRUE(property->GetInteger("ui-scale", &ui_scale));
@@ -403,10 +377,6 @@ TEST_F(DisplayPreferencesTest, BasicStores) {
   EXPECT_TRUE(property->GetInteger(kTouchCalibrationHeight, &height));
   EXPECT_EQ(width, touch_size.width());
   EXPECT_EQ(height, touch_size.height());
-
-  // |id2| doesn't have the color_profile because it doesn't have 'dynamic' in
-  // its available list.
-  EXPECT_FALSE(property->GetString("color_profile_name", &color_profile));
 
   // Resolution is saved only when the resolution is set
   // by DisplayManager::SetDisplayMode
@@ -508,7 +478,7 @@ TEST_F(DisplayPreferencesTest, BasicStores) {
   // Set new display's selected resolution.
   display_manager()->RegisterDisplayProperty(
       id2 + 1, display::Display::ROTATE_0, 1.0f, nullptr, gfx::Size(500, 400),
-      1.0f, display::COLOR_PROFILE_STANDARD, nullptr);
+      1.0f, nullptr);
 
   UpdateDisplay("200x200*2, 600x500#600x500|500x400");
 
@@ -534,7 +504,7 @@ TEST_F(DisplayPreferencesTest, BasicStores) {
   // Set yet another new display's selected resolution.
   display_manager()->RegisterDisplayProperty(
       id2 + 1, display::Display::ROTATE_0, 1.0f, nullptr, gfx::Size(500, 400),
-      1.0f, display::COLOR_PROFILE_STANDARD, nullptr);
+      1.0f, nullptr);
   // Disconnect 2nd display first to generate new id for external display.
   UpdateDisplay("200x200*2");
   UpdateDisplay("200x200*2, 500x400#600x500|500x400%60.0f");
@@ -677,33 +647,6 @@ TEST_F(DisplayPreferencesTest, StoreForSwappedDisplay) {
   }
 }
 
-TEST_F(DisplayPreferencesTest, RestoreColorProfiles) {
-  int64_t id1 = display::Screen::GetScreen()->GetPrimaryDisplay().id();
-
-  StoreColorProfile(id1, "dynamic");
-
-  LoggedInAsUser();
-  LoadDisplayPreferences(false);
-
-  // id1's available color profiles list is empty, means somehow the color
-  // profile suport is temporary in trouble.
-  EXPECT_NE(display::COLOR_PROFILE_DYNAMIC,
-            display_manager()->GetDisplayInfo(id1).color_profile());
-
-  // Once the profile is supported, the color profile should be restored.
-  std::vector<display::ColorCalibrationProfile> profiles;
-  profiles.push_back(display::COLOR_PROFILE_STANDARD);
-  profiles.push_back(display::COLOR_PROFILE_DYNAMIC);
-  profiles.push_back(display::COLOR_PROFILE_MOVIE);
-  profiles.push_back(display::COLOR_PROFILE_READING);
-  display::test::DisplayManagerTestApi(ash::Shell::Get()->display_manager())
-      .SetAvailableColorProfiles(id1, profiles);
-
-  LoadDisplayPreferences(false);
-  EXPECT_EQ(display::COLOR_PROFILE_DYNAMIC,
-            display_manager()->GetDisplayInfo(id1).color_profile());
-}
-
 TEST_F(DisplayPreferencesTest, DontStoreInGuestMode) {
   ash::WindowTreeHostManager* window_tree_host_manager =
       ash::Shell::Get()->window_tree_host_manager();
@@ -810,9 +753,9 @@ TEST_F(DisplayPreferencesTest, DontSaveAndRestoreAllOff) {
             shell->display_configurator()->requested_power_state());
 }
 
-// Tests that display configuration changes caused by MaximizeModeController
+// Tests that display configuration changes caused by TabletModeController
 // are not saved.
-TEST_F(DisplayPreferencesTest, DontSaveMaximizeModeControllerRotations) {
+TEST_F(DisplayPreferencesTest, DontSaveTabletModeControllerRotations) {
   ash::Shell* shell = ash::Shell::Get();
   display::Display::SetInternalDisplayId(
       display::Screen::GetScreen()->GetPrimaryDisplay().id());
@@ -826,16 +769,16 @@ TEST_F(DisplayPreferencesTest, DontSaveMaximizeModeControllerRotations) {
                                         display::Display::ROTATE_0,
                                         display::Display::ROTATION_SOURCE_USER);
 
-  // Open up 270 degrees to trigger maximize mode
+  // Open up 270 degrees to trigger tablet mode
   scoped_refptr<chromeos::AccelerometerUpdate> update(
       new chromeos::AccelerometerUpdate());
   update->Set(chromeos::ACCELEROMETER_SOURCE_ATTACHED_KEYBOARD, 0.0f, 0.0f,
              kMeanGravity);
   update->Set(chromeos::ACCELEROMETER_SOURCE_SCREEN, 0.0f, -kMeanGravity, 0.0f);
-  ash::MaximizeModeController* controller =
-      ash::Shell::Get()->maximize_mode_controller();
+  ash::TabletModeController* controller =
+      ash::Shell::Get()->tablet_mode_controller();
   controller->OnAccelerometerUpdated(update);
-  EXPECT_TRUE(controller->IsMaximizeModeWindowManagerEnabled());
+  EXPECT_TRUE(controller->IsTabletModeWindowManagerEnabled());
 
   // Trigger 90 degree rotation
   update->Set(chromeos::ACCELEROMETER_SOURCE_ATTACHED_KEYBOARD, -kMeanGravity,
@@ -938,7 +881,7 @@ TEST_F(DisplayPreferencesTest, StoreRotationStateNormalUser) {
 }
 
 // Tests that rotation state is loaded without a user being logged in, and that
-// entering maximize mode applies the state.
+// entering tablet mode applies the state.
 TEST_F(DisplayPreferencesTest, LoadRotationNoLogin) {
   display::Display::SetInternalDisplayId(
       display::Screen::GetScreen()->GetPrimaryDisplay().id());
@@ -964,28 +907,28 @@ TEST_F(DisplayPreferencesTest, LoadRotationNoLogin) {
   EXPECT_EQ(display::Display::ROTATE_90, display_rotation);
 
   bool rotation_lock = IsRotationLocked();
-  display::Display::Rotation before_maximize_mode_rotation =
+  display::Display::Rotation before_tablet_mode_rotation =
       GetCurrentInternalDisplayRotation();
 
-  // Settings should not be applied until maximize mode activates
+  // Settings should not be applied until tablet mode activates
   EXPECT_FALSE(rotation_lock);
-  EXPECT_EQ(display::Display::ROTATE_0, before_maximize_mode_rotation);
+  EXPECT_EQ(display::Display::ROTATE_0, before_tablet_mode_rotation);
 
-  // Open up 270 degrees to trigger maximize mode
+  // Open up 270 degrees to trigger tablet mode
   scoped_refptr<chromeos::AccelerometerUpdate> update(
       new chromeos::AccelerometerUpdate());
   update->Set(chromeos::ACCELEROMETER_SOURCE_ATTACHED_KEYBOARD, 0.0f, 0.0f,
              kMeanGravity);
   update->Set(chromeos::ACCELEROMETER_SOURCE_SCREEN, 0.0f, -kMeanGravity, 0.0f);
-  ash::MaximizeModeController* maximize_mode_controller =
-      ash::Shell::Get()->maximize_mode_controller();
-  maximize_mode_controller->OnAccelerometerUpdated(update);
-  EXPECT_TRUE(maximize_mode_controller->IsMaximizeModeWindowManagerEnabled());
+  ash::TabletModeController* tablet_mode_controller =
+      ash::Shell::Get()->tablet_mode_controller();
+  tablet_mode_controller->OnAccelerometerUpdated(update);
+  EXPECT_TRUE(tablet_mode_controller->IsTabletModeWindowManagerEnabled());
   bool screen_orientation_rotation_lock = IsRotationLocked();
-  display::Display::Rotation maximize_mode_rotation =
+  display::Display::Rotation tablet_mode_rotation =
       GetCurrentInternalDisplayRotation();
   EXPECT_TRUE(screen_orientation_rotation_lock);
-  EXPECT_EQ(display::Display::ROTATE_90, maximize_mode_rotation);
+  EXPECT_EQ(display::Display::ROTATE_90, tablet_mode_rotation);
 }
 
 // Tests that rotation lock being set causes the rotation state to be saved.

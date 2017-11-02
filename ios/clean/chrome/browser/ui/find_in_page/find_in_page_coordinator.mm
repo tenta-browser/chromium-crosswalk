@@ -8,13 +8,13 @@
 
 #include "base/logging.h"
 #import "ios/chrome/browser/find_in_page/find_tab_helper.h"
+#import "ios/chrome/browser/ui/browser_list/browser.h"
+#import "ios/chrome/browser/ui/commands/command_dispatcher.h"
+#import "ios/chrome/browser/ui/coordinators/browser_coordinator+internal.h"
 #include "ios/chrome/browser/web_state_list/web_state_list.h"
 #import "ios/clean/chrome/browser/ui/commands/find_in_page_visibility_commands.h"
 #import "ios/clean/chrome/browser/ui/find_in_page/find_in_page_mediator.h"
 #import "ios/clean/chrome/browser/ui/find_in_page/find_in_page_view_controller.h"
-#import "ios/shared/chrome/browser/ui/browser_list/browser.h"
-#import "ios/shared/chrome/browser/ui/commands/command_dispatcher.h"
-#import "ios/shared/chrome/browser/ui/coordinators/browser_coordinator+internal.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -36,21 +36,6 @@
 
 #pragma mark - Coordinator lifecycle management
 
-- (void)dealloc {
-  // TODO(rohitrao): The __weak pointers in the CommandDispatcher appear to have
-  // already been zeroed out by this point, so stopDispatchingToTarget:self does
-  // not appear to properly delete the forwarding entries for this target.  Work
-  // around this by calling stopDispatchingForSelector: instead.
-
-  CommandDispatcher* dispatcher = self.browser->dispatcher();
-  [dispatcher stopDispatchingForSelector:@selector(showFindInPage)];
-  [dispatcher stopDispatchingForSelector:@selector(hideFindInPage)];
-
-  [dispatcher stopDispatchingForSelector:@selector(findStringInPage:)];
-  [dispatcher stopDispatchingForSelector:@selector(findNextInPage)];
-  [dispatcher stopDispatchingForSelector:@selector(findPreviousInPage)];
-}
-
 - (void)wasAddedToParentCoordinator:(BrowserCoordinator*)parent {
   DCHECK(self.browser);
 
@@ -61,7 +46,7 @@
   [dispatcher startDispatchingToTarget:self
                            forSelector:@selector(hideFindInPage)];
 
-  _mediator = [[FindInPageMediator alloc]
+  self.mediator = [[FindInPageMediator alloc]
       initWithWebStateList:(&self.browser->web_state_list())provider:self
                 dispatcher:static_cast<id>(dispatcher)];
   [dispatcher startDispatchingToTarget:self.mediator
@@ -72,10 +57,11 @@
                            forSelector:@selector(findPreviousInPage)];
 }
 
-- (void)wasRemovedFromParentCoordinator {
+- (void)willBeRemovedFromParentCoordinator {
   CommandDispatcher* dispatcher = self.browser->dispatcher();
   [dispatcher stopDispatchingToTarget:self];
   [dispatcher stopDispatchingToTarget:self.mediator];
+  self.mediator = nil;
 }
 
 - (void)start {

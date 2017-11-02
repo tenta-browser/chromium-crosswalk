@@ -28,9 +28,8 @@
 #define NodeEventContext_h
 
 #include "core/CoreExport.h"
-#include "core/events/TreeScopeEventContext.h"
-#include "wtf/PassRefPtr.h"
-#include "wtf/RefPtr.h"
+#include "core/dom/events/TreeScopeEventContext.h"
+#include "platform/wtf/RefPtr.h"
 
 namespace blink {
 

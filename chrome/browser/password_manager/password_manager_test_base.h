@@ -65,18 +65,30 @@ class BubbleObserver {
  public:
   explicit BubbleObserver(content::WebContents* web_contents);
 
-  // Checks if the save prompt is being currently shown.
-  bool IsShowingSavePrompt() const;
+  // Checks if the save prompt is being currently available due to either manual
+  // fallback or successful login.
+  bool IsSavePromptAvailable() const;
 
-  // Checks if the update prompt is being currently shown.
-  bool IsShowingUpdatePrompt() const;
+  // Checks if the update prompt is being currently available due to either
+  // manual fallback or successful login.
+  bool IsUpdatePromptAvailable() const;
+
+  // Checks if the save prompt was shown automatically.
+  // |web_contents| must be the custom one returned by
+  // PasswordManagerBrowserTestBase.
+  bool IsSavePromptShownAutomatically() const;
+
+  // Checks if the update prompt was shown automatically.
+  // |web_contents| must be the custom one returned by
+  // PasswordManagerBrowserTestBase.
+  bool IsUpdatePromptShownAutomatically() const;
 
   // Dismisses the prompt currently open and moves the controller to the
   // inactive state.
   void Dismiss() const;
 
-  // Expecting that the prompt is shown, saves the password. Checks that the
-  // prompt is no longer visible afterwards.
+  // Expecting that the prompt is available, saves the password. At the end,
+  // checks that the prompt is no longer available afterwards.
   void AcceptSavePrompt() const;
 
   // Expecting that the prompt is shown, update |form| with the password from
@@ -88,11 +100,26 @@ class BubbleObserver {
   // PasswordManagerBrowserTestBase.
   void WaitForAccountChooser() const;
 
+  // Returns once the UI controller is in inactive state.
+  // |web_contents| must be the custom one returned by
+  // PasswordManagerBrowserTestBase.
+  void WaitForInactiveState() const;
+
   // Returns once the UI controller is in the management state due to matching
   // credentials autofilled.
   // |web_contents| must be the custom one returned by
   // PasswordManagerBrowserTestBase.
   void WaitForManagementState() const;
+
+  // Returns once the save prompt pops up or it's already shown.
+  // |web_contents| must be the custom one returned by
+  // PasswordManagerBrowserTestBase.
+  void WaitForAutomaticSavePrompt() const;
+
+  // Returns once the fallback for saving becomes available.
+  // |web_contents| must be the custom one returned by
+  // PasswordManagerBrowserTestBase.
+  void WaitForFallbackForSaving() const;
 
  private:
   ManagePasswordsUIController* const passwords_ui_controller_;
@@ -132,6 +159,10 @@ class PasswordManagerBrowserTestBase : public InProcessBrowserTest {
   // waits until the "change" event is fired for the element. This also
   // guarantees that once the real value matches the expected, the JavaScript
   // event loop is spun to allow all other possible events to take place.
+  // WARNING:
+  // - the function waits only for the first "onchange" event.
+  // - "onchange" event is triggered by autofill. However, if user's typing is
+  // simulated then the event is triggered only when control looses focus.
   void WaitForElementValue(const std::string& element_id,
                            const std::string& expected_value);
   // Same as above except the element |element_id| is in iframe |iframe_id|
@@ -152,6 +183,11 @@ class PasswordManagerBrowserTestBase : public InProcessBrowserTest {
 
   // Synchronoulsy adds the given host to the list of valid HSTS hosts.
   void AddHSTSHost(const std::string& host);
+
+  // Checks that |password_store| stores only one credential with |username| and
+  // |password|.
+  void CheckThatCredentialsStored(const base::string16& username,
+                                  const base::string16& password);
 
   // Accessors
   // Return the first created tab with a custom ManagePasswordsUIController.

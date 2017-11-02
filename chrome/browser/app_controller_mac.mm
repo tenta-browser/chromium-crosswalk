@@ -6,21 +6,26 @@
 
 #include <stddef.h>
 
+#include "base/allocator/allocator_shim.h"
+#include "base/allocator/features.h"
 #include "base/auto_reset.h"
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/mac/foundation_util.h"
 #include "base/mac/mac_util.h"
+#include "base/mac/scoped_objc_class_swizzler.h"
 #include "base/mac/sdk_forward_declarations.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
+#include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task_scheduler/post_task.h"
+#include "base/threading/thread_restrictions.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/apps/app_shim/extension_app_shim_handler_mac.h"
 #include "chrome/browser/apps/app_window_registry_util.h"
@@ -30,8 +35,8 @@
 #include "chrome/browser/browser_shutdown.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/command_updater.h"
-#include "chrome/browser/download/download_service.h"
-#include "chrome/browser/download/download_service_factory.h"
+#include "chrome/browser/download/download_core_service.h"
+#include "chrome/browser/download/download_core_service_factory.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/first_run/first_run.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
@@ -75,6 +80,7 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/user_manager.h"
 #include "chrome/browser/web_applications/web_app_mac.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_paths_internal.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/cloud_print/cloud_print_class_mac.h"
@@ -90,7 +96,6 @@
 #include "components/prefs/pref_service.h"
 #include "components/sessions/core/tab_restore_service.h"
 #include "components/signin/core/browser/signin_manager.h"
-#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/download_manager.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
@@ -106,7 +111,6 @@ using apps::AppShimHandler;
 using apps::ExtensionAppShimHandler;
 using base::UserMetricsAction;
 using content::BrowserContext;
-using content::BrowserThread;
 using content::DownloadManager;
 
 namespace {
@@ -170,7 +174,7 @@ void RecordLastRunAppBundlePath() {
   // real, user-visible app bundle directory. (The alternatives give either the
   // framework's path or the initial app's path, which may be an app mode shim
   // or a unit test.)
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  base::ThreadRestrictions::AssertIOAllowed();
 
   base::FilePath app_bundle_path =
       chrome::GetVersionedDirectory().DirName().DirName().DirName();
@@ -282,6 +286,33 @@ class AppControllerProfileObserver : public ProfileAttributesStorage::Observer {
   DISALLOW_COPY_AND_ASSIGN(AppControllerProfileObserver);
 };
 
+#if BUILDFLAG(USE_ALLOCATOR_SHIM)
+// On macOS 10.12, the IME system attempts to allocate a 2^64 size buffer,
+// which would typically cause an OOM crash. To avoid this, the problematic
+// method is swizzled out and the make-OOM-fatal bit is disabled for the
+// duration of the original call. https://crbug.com/654695
+static base::mac::ScopedObjCClassSwizzler* g_swizzle_imk_input_session;
+
+@interface OOMDisabledIMKInputSession : NSObject
+@end
+
+@implementation OOMDisabledIMKInputSession
+
+- (void)_coreAttributesFromRange:(NSRange)range
+                 whichAttributes:(long long)attributes
+               completionHandler:(void (^)(void))block {
+  // The allocator flag is per-process, so other threads may temporarily
+  // not have fatal OOM occur while this method executes, but it is better
+  // than crashing when using IME.
+  base::allocator::SetCallNewHandlerOnMallocFailure(false);
+  g_swizzle_imk_input_session->GetOriginalImplementation()(self, _cmd, range,
+                                                           attributes, block);
+  base::allocator::SetCallNewHandlerOnMallocFailure(true);
+}
+
+@end
+#endif  // BUILDFLAG(USE_ALLOCATOR_SHIM)
+
 @implementation AppController
 
 @synthesize startupComplete = startupComplete_;
@@ -364,8 +395,22 @@ class AppControllerProfileObserver : public ProfileAttributesStorage::Observer {
   MacStartupProfiler::GetInstance()->Profile(
       MacStartupProfiler::WILL_FINISH_LAUNCHING);
 
-  if ([NSWindow respondsToSelector:@selector(allowsAutomaticWindowTabbing)]) {
+  if (@available(macOS 10.12, *)) {
     NSWindow.allowsAutomaticWindowTabbing = NO;
+  }
+
+  // If the OSX version supports this method, the system will automatically
+  // hide the item if there's no touch bar. However, for unsupported versions,
+  // we'll have to manually remove the item from the menu. The item also has
+  // to be removed if the feature is disabled.
+  if (![NSApp
+          respondsToSelector:@selector(toggleTouchBarCustomizationPalette:)] ||
+      !base::FeatureList::IsEnabled(features::kBrowserTouchBar)) {
+    NSMenu* mainMenu = [NSApp mainMenu];
+    NSMenu* viewMenu = [[mainMenu itemWithTag:IDC_VIEW_MENU] submenu];
+    NSMenuItem* customizeItem = [viewMenu itemWithTag:IDC_CUSTOMIZE_TOUCH_BAR];
+    if (customizeItem)
+      [viewMenu removeItem:customizeItem];
   }
 }
 
@@ -414,8 +459,8 @@ class AppControllerProfileObserver : public ProfileAttributesStorage::Observer {
 
     // At this point, the user has already chosen to cancel downloads. If we
     // were to shut down as usual, the downloads would be cancelled in
-    // DownloadService::Shutdown().
-    DownloadService::CancelAllDownloads();
+    // DownloadCoreService::Shutdown().
+    DownloadCoreService::CancelAllDownloads();
 
     return NO;
   }
@@ -712,11 +757,11 @@ class AppControllerProfileObserver : public ProfileAttributesStorage::Observer {
   [NSApp setHelpMenu:helpMenu_];
 
   // Record the path to the (browser) app bundle; this is used by the app mode
-  // shim.  It has to be done in FILE thread because getting the path requires
-  // I/O.
-  BrowserThread::PostTask(
-      BrowserThread::FILE, FROM_HERE,
-      base::Bind(&RecordLastRunAppBundlePath));
+  // shim.
+  base::PostTaskWithTraits(FROM_HERE,
+                           {base::MayBlock(), base::TaskPriority::BACKGROUND,
+                            base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN},
+                           base::Bind(&RecordLastRunAppBundlePath));
 
   // Makes "Services" menu items available.
   [self registerServicesMenuTypesTo:[notify object]];
@@ -741,6 +786,16 @@ class AppControllerProfileObserver : public ProfileAttributesStorage::Observer {
 
   handoff_active_url_observer_bridge_.reset(
       new HandoffActiveURLObserverBridge(self));
+
+#if BUILDFLAG(USE_ALLOCATOR_SHIM)
+  // Disable fatal OOM to hack around an OS bug https://crbug.com/654695.
+  if (base::mac::IsOS10_12()) {
+    g_swizzle_imk_input_session = new base::mac::ScopedObjCClassSwizzler(
+        NSClassFromString(@"IMKInputSession"),
+        [OOMDisabledIMKInputSession class],
+        @selector(_coreAttributesFromRange:whichAttributes:completionHandler:));
+  }
+#endif
 }
 
 // Helper function for populating and displaying the in progress downloads at
@@ -781,11 +836,12 @@ class AppControllerProfileObserver : public ProfileAttributesStorage::Observer {
 
   std::vector<Profile*> profiles(profile_manager->GetLoadedProfiles());
   for (size_t i = 0; i < profiles.size(); ++i) {
-    DownloadService* download_service =
-      DownloadServiceFactory::GetForBrowserContext(profiles[i]);
+    DownloadCoreService* download_core_service =
+        DownloadCoreServiceFactory::GetForBrowserContext(profiles[i]);
     DownloadManager* download_manager =
-        (download_service->HasCreatedDownloadManager() ?
-         BrowserContext::GetDownloadManager(profiles[i]) : NULL);
+        (download_core_service->HasCreatedDownloadManager()
+             ? BrowserContext::GetDownloadManager(profiles[i])
+             : NULL);
     if (download_manager &&
         download_manager->NonMaliciousInProgressCount() > 0) {
       int downloadCount = download_manager->NonMaliciousInProgressCount();
@@ -937,11 +993,12 @@ class AppControllerProfileObserver : public ProfileAttributesStorage::Observer {
   }
 
   // Ignore commands during session restore's browser creation.  It uses a
-  // nested message loop and commands dispatched during this operation cause
+  // nested run loop and commands dispatched during this operation cause
   // havoc.
   if (SessionRestore::IsRestoring(lastProfile) &&
-      base::MessageLoop::current()->IsNested())
+      base::RunLoop::IsNestedOnCurrentThread()) {
     return;
+  }
 
   NSInteger tag = [sender tag];
 
@@ -951,7 +1008,6 @@ class AppControllerProfileObserver : public ProfileAttributesStorage::Observer {
   // profile cannot have a browser.
   if (IsProfileSignedOut(lastProfile) || lastProfile->IsSystemProfile()) {
     UserManager::Show(base::FilePath(),
-                      profiles::USER_MANAGER_NO_TUTORIAL,
                       profiles::USER_MANAGER_SELECT_PROFILE_NO_ACTION);
     return;
   }
@@ -1003,7 +1059,6 @@ class AppControllerProfileObserver : public ProfileAttributesStorage::Observer {
       break;
     }
     case IDC_SHOW_BOOKMARK_MANAGER:
-      base::RecordAction(UserMetricsAction("ShowBookmarkManager"));
       if (Browser* browser = ActivateBrowser(lastProfile)) {
         chrome::ShowBookmarkManager(browser);
       } else {
@@ -1157,7 +1212,6 @@ class AppControllerProfileObserver : public ProfileAttributesStorage::Observer {
   if (lastProfile->IsGuestSession() || IsProfileSignedOut(lastProfile) ||
       lastProfile->IsSystemProfile()) {
     UserManager::Show(base::FilePath(),
-                      profiles::USER_MANAGER_NO_TUTORIAL,
                       profiles::USER_MANAGER_SELECT_PROFILE_NO_ACTION);
   } else {
     CreateBrowser(lastProfile);
@@ -1277,13 +1331,15 @@ class AppControllerProfileObserver : public ProfileAttributesStorage::Observer {
   Browser* browser = chrome::GetLastActiveBrowser();
   // if no browser window exists then create one with no tabs to be filled in
   if (!browser) {
-    browser = new Browser(Browser::CreateParams([self lastProfile], true));
+    browser = new Browser(
+        Browser::CreateParams([self safeLastProfileForNewWindows], true));
     browser->window()->Show();
   }
 
   base::CommandLine dummy(base::CommandLine::NO_PROGRAM);
-  chrome::startup::IsFirstRun first_run = first_run::IsChromeFirstRun() ?
-      chrome::startup::IS_FIRST_RUN : chrome::startup::IS_NOT_FIRST_RUN;
+  chrome::startup::IsFirstRun first_run =
+      first_run::IsChromeFirstRun() ? chrome::startup::IS_FIRST_RUN
+                                    : chrome::startup::IS_NOT_FIRST_RUN;
   StartupBrowserCreatorImpl launch(base::FilePath(), dummy, first_run);
   launch.OpenURLsInBrowser(browser, false, urls);
 }
@@ -1328,7 +1384,6 @@ class AppControllerProfileObserver : public ProfileAttributesStorage::Observer {
   } else {
     // No way to create a browser, default to the User Manager.
     UserManager::Show(base::FilePath(),
-                      profiles::USER_MANAGER_NO_TUTORIAL,
                       profiles::USER_MANAGER_SELECT_PROFILE_CHROME_SETTINGS);
   }
 }
@@ -1342,7 +1397,6 @@ class AppControllerProfileObserver : public ProfileAttributesStorage::Observer {
   } else {
     // No way to create a browser, default to the User Manager.
     UserManager::Show(base::FilePath(),
-                      profiles::USER_MANAGER_NO_TUTORIAL,
                       profiles::USER_MANAGER_SELECT_PROFILE_ABOUT_CHROME);
   }
 }
@@ -1516,13 +1570,15 @@ class AppControllerProfileObserver : public ProfileAttributesStorage::Observer {
 }
 
 - (BOOL)application:(NSApplication*)application
-    willContinueUserActivityWithType:(NSString*)userActivityType {
+    willContinueUserActivityWithType:(NSString*)userActivityType
+    API_AVAILABLE(macos(10.10)) {
   return [userActivityType isEqualToString:NSUserActivityTypeBrowsingWeb];
 }
 
 - (BOOL)application:(NSApplication*)application
     continueUserActivity:(NSUserActivity*)userActivity
-      restorationHandler:(void (^)(NSArray*))restorationHandler {
+      restorationHandler:(void (^)(NSArray*))restorationHandler
+    API_AVAILABLE(macos(10.10)) {
   if (![userActivity.activityType
           isEqualToString:NSUserActivityTypeBrowsingWeb]) {
     return NO;
@@ -1558,7 +1614,14 @@ class AppControllerProfileObserver : public ProfileAttributesStorage::Observer {
 }
 
 - (void)passURLToHandoffManager:(const GURL&)handoffURL {
-  [handoffManager_ updateActiveURL:handoffURL];
+  if (@available(macOS 10.10, *)) {
+    [handoffManager_ updateActiveURL:handoffURL];
+  } else {
+    // Only ends up being called in 10.10+, i.e. if shouldUseHandoff returns
+    // true. Some tests override shouldUseHandoff to always return true, but
+    // then they also override this function to do something else.
+    NOTREACHED();
+  }
 }
 
 - (void)updateHandoffManager:(content::WebContents*)webContents {

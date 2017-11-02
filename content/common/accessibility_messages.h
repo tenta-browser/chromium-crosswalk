@@ -46,6 +46,7 @@ IPC_STRUCT_TRAITS_BEGIN(content::AXContentNodeData)
   IPC_STRUCT_TRAITS_MEMBER(id)
   IPC_STRUCT_TRAITS_MEMBER(role)
   IPC_STRUCT_TRAITS_MEMBER(state)
+  IPC_STRUCT_TRAITS_MEMBER(actions)
   IPC_STRUCT_TRAITS_MEMBER(location)
   IPC_STRUCT_TRAITS_MEMBER(transform)
   IPC_STRUCT_TRAITS_MEMBER(string_attributes)
@@ -147,13 +148,6 @@ IPC_MESSAGE_ROUTED1(AccessibilityMsg_PerformAction,
 IPC_MESSAGE_ROUTED2(AccessibilityMsg_HitTest,
                     gfx::Point /* location to test */,
                     ui::AXEvent /* event to fire */)
-
-// Relay a request from assistive technology to set accessibility focus
-// to a given node. On platforms where this is used (currently Android),
-// inline text boxes are only computed for the node with accessibility focus,
-// rather than for the whole tree.
-IPC_MESSAGE_ROUTED1(AccessibilityMsg_SetAccessibilityFocus,
-                    int /* object id */)
 
 // Tells the render view that a AccessibilityHostMsg_Events
 // message was processed and it can send additional events. The argument

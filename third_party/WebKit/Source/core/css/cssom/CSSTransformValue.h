@@ -5,13 +5,15 @@
 #ifndef CSSTransformValue_h
 #define CSSTransformValue_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/CoreExport.h"
 #include "core/css/cssom/CSSStyleValue.h"
 #include "core/css/cssom/CSSTransformComponent.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/HeapAllocator.h"
 
 namespace blink {
+
+class DOMMatrix;
 
 class CORE_EXPORT CSSTransformValue final : public CSSStyleValue {
   WTF_MAKE_NONCOPYABLE(CSSTransformValue);
@@ -28,6 +30,8 @@ class CORE_EXPORT CSSTransformValue final : public CSSStyleValue {
   static CSSTransformValue* FromCSSValue(const CSSValue&);
 
   bool is2D() const;
+
+  DOMMatrix* toMatrix(ExceptionState&) const;
 
   const CSSValue* ToCSSValue() const override;
 

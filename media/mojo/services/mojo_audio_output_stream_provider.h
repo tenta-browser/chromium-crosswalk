@@ -19,13 +19,13 @@ namespace media {
 
 // Provides a single AudioOutput, given the audio parameters to use.
 class MEDIA_MOJO_EXPORT MojoAudioOutputStreamProvider
-    : NON_EXPORTED_BASE(public mojom::AudioOutputStreamProvider) {
+    : public mojom::AudioOutputStreamProvider {
  public:
   using CreateDelegateCallback =
       base::OnceCallback<std::unique_ptr<AudioOutputDelegate>(
           const AudioParameters& params,
           AudioOutputDelegate::EventHandler*)>;
-  using DeleterCallback = base::Callback<void(AudioOutputStreamProvider*)>;
+  using DeleterCallback = base::OnceCallback<void(AudioOutputStreamProvider*)>;
 
   // |create_delegate_callback| is used to obtain an AudioOutputDelegate for the
   // AudioOutput when it's initialized and |deleter_callback| is called when
@@ -41,7 +41,10 @@ class MEDIA_MOJO_EXPORT MojoAudioOutputStreamProvider
   // mojom::AudioOutputStreamProvider implementation.
   void Acquire(mojom::AudioOutputStreamRequest stream_request,
                const AudioParameters& params,
-               const AcquireCallback& acquire_callback) override;
+               AcquireCallback acquire_callback) override;
+
+  // Called when |audio_output_| had an error.
+  void OnError();
 
   // The callback for the Acquire() must be stored until the response is ready.
   AcquireCallback acquire_callback_;
@@ -49,7 +52,7 @@ class MEDIA_MOJO_EXPORT MojoAudioOutputStreamProvider
   base::Optional<MojoAudioOutputStream> audio_output_;
   mojo::Binding<AudioOutputStreamProvider> binding_;
   CreateDelegateCallback create_delegate_callback_;
-  base::Closure deleter_callback_;
+  DeleterCallback deleter_callback_;
   base::ThreadChecker thread_checker_;
 
   DISALLOW_COPY_AND_ASSIGN(MojoAudioOutputStreamProvider);

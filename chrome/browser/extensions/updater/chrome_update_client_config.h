@@ -5,13 +5,15 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_UPDATER_CHROME_UPDATE_CLIENT_CONFIG_H_
 #define CHROME_BROWSER_EXTENSIONS_UPDATER_CHROME_UPDATE_CLIENT_CONFIG_H_
 
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "components/component_updater/configurator_impl.h"
-#include "extensions/browser/updater/update_client_config.h"
+#include "components/update_client/configurator.h"
 
 namespace content {
 class BrowserContext;
@@ -19,7 +21,7 @@ class BrowserContext;
 
 namespace extensions {
 
-class ChromeUpdateClientConfig : public UpdateClientConfig {
+class ChromeUpdateClientConfig : public update_client::Configurator {
  public:
   explicit ChromeUpdateClientConfig(content::BrowserContext* context);
 
@@ -46,6 +48,7 @@ class ChromeUpdateClientConfig : public UpdateClientConfig {
   bool EnabledCupSigning() const override;
   PrefService* GetPrefService() const override;
   bool IsPerUserInstall() const override;
+  std::vector<uint8_t> GetRunActionKeyHash() const override;
 
  protected:
   friend class base::RefCountedThreadSafe<ChromeUpdateClientConfig>;

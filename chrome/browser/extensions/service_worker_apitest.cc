@@ -6,8 +6,10 @@
 
 #include "base/bind_helpers.h"
 #include "base/macros.h"
+#include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_restrictions.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/gcm/fake_gcm_profile_service.h"
@@ -35,6 +37,7 @@
 #include "content/public/common/page_type.h"
 #include "content/public/test/background_sync_test_util.h"
 #include "content/public/test/browser_test_utils.h"
+#include "content/public/test/service_worker_test_helpers.h"
 #include "extensions/browser/extension_host.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/process_manager.h"
@@ -42,6 +45,7 @@
 #include "extensions/test/extension_test_message_listener.h"
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "url/url_constants.h"
 
 namespace extensions {
 
@@ -97,6 +101,11 @@ class ServiceWorkerTest : public ExtensionApiTest {
   ServiceWorkerTest() : current_channel_(version_info::Channel::STABLE) {}
 
   ~ServiceWorkerTest() override {}
+
+  void SetUpOnMainThread() override {
+    ExtensionApiTest::SetUpOnMainThread();
+    host_resolver()->AddRule("a.com", "127.0.0.1");
+  }
 
  protected:
   // Returns the ProcessManager for the test's profile.
@@ -283,6 +292,7 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerTest, RegisterSucceeds) {
 }
 
 IN_PROC_BROWSER_TEST_F(ServiceWorkerTest, UpdateRefreshesServiceWorker) {
+  base::ThreadRestrictions::ScopedAllowIO allow_io;
   base::ScopedTempDir scoped_temp_dir;
   ASSERT_TRUE(scoped_temp_dir.CreateUniqueTempDir());
   base::FilePath pem_path = test_data_dir_.AppendASCII("service_worker")
@@ -323,6 +333,7 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerTest, UpdateRefreshesServiceWorker) {
 }
 
 IN_PROC_BROWSER_TEST_F(ServiceWorkerTest, UpdateWithoutSkipWaiting) {
+  base::ThreadRestrictions::ScopedAllowIO allow_io;
   base::ScopedTempDir scoped_temp_dir;
   ASSERT_TRUE(scoped_temp_dir.CreateUniqueTempDir());
   base::FilePath pem_path = test_data_dir_.AppendASCII("service_worker")
@@ -547,7 +558,7 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerTest,
 
   // Disable the extension. Opening the page should fail.
   extension_service()->DisableExtension(extension_id,
-                                        Extension::DISABLE_USER_ACTION);
+                                        disable_reason::DISABLE_USER_ACTION);
   base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(content::PAGE_TYPE_ERROR,
@@ -658,16 +669,59 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerTest, TabsCreate) {
   EXPECT_EQ(starting_tab_count, browser()->tab_strip_model()->count());
 }
 
+IN_PROC_BROWSER_TEST_F(ServiceWorkerTest, Events) {
+  // Extensions APIs from SW are only enabled on trunk.
+  ScopedCurrentChannel current_channel_override(version_info::Channel::UNKNOWN);
+  const Extension* extension = LoadExtensionWithFlags(
+      test_data_dir_.AppendASCII("service_worker/events"), kFlagNone);
+  ASSERT_TRUE(extension);
+  ui_test_utils::NavigateToURL(browser(),
+                               extension->GetResourceURL("page.html"));
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  std::string result;
+  ASSERT_TRUE(content::ExecuteScriptAndExtractString(
+      web_contents, "window.runEventTest()", &result));
+  ASSERT_EQ("chrome.tabs.onUpdated callback", result);
+}
+
+IN_PROC_BROWSER_TEST_F(ServiceWorkerTest, EventsToStoppedWorker) {
+  // Extensions APIs from SW are only enabled on trunk.
+  ScopedCurrentChannel current_channel_override(version_info::Channel::UNKNOWN);
+  const Extension* extension = LoadExtensionWithFlags(
+      test_data_dir_.AppendASCII("service_worker/events_to_stopped_worker"),
+      kFlagNone);
+  ASSERT_TRUE(extension);
+  ui_test_utils::NavigateToURL(browser(),
+                               extension->GetResourceURL("page.html"));
+  content::WebContents* web_contents =
+      browser()->tab_strip_model()->GetActiveWebContents();
+  {
+    std::string result;
+    ASSERT_TRUE(content::ExecuteScriptAndExtractString(
+        web_contents, "window.runServiceWorker()", &result));
+    ASSERT_EQ("ready", result);
+
+    base::RunLoop run_loop;
+    content::StoragePartition* storage_partition =
+        content::BrowserContext::GetDefaultStoragePartition(
+            browser()->profile());
+    content::StopServiceWorkerForPattern(
+        storage_partition->GetServiceWorkerContext(),
+        // The service worker is registered at the top level scope.
+        extension->url(), run_loop.QuitClosure());
+    run_loop.Run();
+  }
+
+  std::string result;
+  ASSERT_TRUE(content::ExecuteScriptAndExtractString(
+      web_contents, "window.createTabThenUpdate()", &result));
+  ASSERT_EQ("chrome.tabs.onUpdated callback", result);
+}
+
 // Tests that worker ref count increments while extension API function is
 // active.
-
-// Flaky on Linux and ChromeOS, https://crbug.com/702126
-#if defined(OS_LINUX)
-#define MAYBE_WorkerRefCount DISABLED_WorkerRefCount
-#else
-#define MAYBE_WorkerRefCount WorkerRefCount
-#endif
-IN_PROC_BROWSER_TEST_F(ServiceWorkerTest, MAYBE_WorkerRefCount) {
+IN_PROC_BROWSER_TEST_F(ServiceWorkerTest, WorkerRefCount) {
   // Extensions APIs from SW are only enabled on trunk.
   ScopedCurrentChannel current_channel_override(version_info::Channel::UNKNOWN);
   const Extension* extension = LoadExtensionWithFlags(
@@ -712,11 +766,26 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerTest, MAYBE_WorkerRefCount) {
     listener.Reply("Hello world");
   }
 
-  ExtensionTestMessageListener extension_listener("SUCCESS", false);
-  extension_listener.set_failure_message("FAILURE");
+  ExtensionTestMessageListener worker_completion_listener("SUCCESS_FROM_WORKER",
+                                                          false);
   // Finish executing chrome.test.sendMessage().
   worker_listener.Reply("Hello world");
-  ASSERT_TRUE(extension_listener.WaitUntilSatisfied());
+  EXPECT_TRUE(worker_completion_listener.WaitUntilSatisfied());
+
+  // The following block makes sure we have received all the IPCs related to
+  // ref-count from the worker.
+  {
+    // The following roundtrip:
+    // browser->extension->worker->extension->browser
+    // will ensure that the worker sent the relevant ref count IPCs.
+    std::string result;
+    EXPECT_TRUE(content::ExecuteScriptAndExtractString(
+        web_contents, "window.roundtripToWorker();", &result));
+    EXPECT_EQ("roundtrip-succeeded", result);
+
+    // Ensure IO thread IPCs run.
+    content::RunAllBlockingPoolTasksUntilIdle();
+  }
 
   // The ref count should drop to 0.
   EXPECT_EQ(0u, GetWorkerRefCount(extension->url()));
@@ -750,7 +819,6 @@ IN_PROC_BROWSER_TEST_F(ServiceWorkerTest, WebAccessibleResourcesIframeSrc) {
   // (non-localhost, non-https) URL for the web page. This page will create
   // iframes that load extension pages that must be controllable by service
   // worker.
-  host_resolver()->AddRule("a.com", "127.0.0.1");
   GURL page_url =
       embedded_test_server()->GetURL("a.com",
                                      "/extensions/api_test/service_worker/"

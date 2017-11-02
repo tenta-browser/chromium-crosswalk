@@ -81,6 +81,19 @@ var privateHelpers = {
     };
     chrome.networkingPrivate.onPortalDetectionCompleted.addListener(
         self.onPortalDetectionCompleted);
+  },
+  verifyTetherNetwork: function(
+      properties, expectedGuid, expectedName, expectedBatteryPercentage,
+      expectedCarrier, expectedSignalStrength, expectedHasConnectedToHost) {
+    //assertEq(NetworkType.Tether, properties.Type);
+    assertEq(expectedGuid, properties.GUID);
+    assertEq(expectedName,
+             properties.Name.hasOwnProperty('Active') ? properties.Name.Active
+                                                      : properties.Name);
+    assertEq(expectedBatteryPercentage, properties.Tether.BatteryPercentage);
+    assertEq(expectedCarrier, properties.Tether.Carrier);
+    assertEq(expectedHasConnectedToHost, properties.Tether.HasConnectedToHost);
+    assertEq(expectedSignalStrength, properties.Tether.SignalStrength);
   }
 };
 
@@ -261,8 +274,10 @@ var availableTests = [
           WiFi: {
             BSSID: '00:01:02:03:04:05',
             Frequency: 2400,
+            HexSSID: "7769666931",
             Security: 'WEP-PSK',
-            SignalStrength: 40
+            SignalStrength: 40,
+            SSID: "wifi1"
           }
         }, {
           GUID: 'stub_wifi2_guid',
@@ -273,7 +288,9 @@ var availableTests = [
           WiFi: {
             BSSID: '',
             Frequency: 5000,
+            HexSSID: "77696669325F50534B",
             Security: 'WPA-PSK',
+            SSID: "wifi2_PSK"
           }
         }], result);
 
@@ -293,8 +310,10 @@ var availableTests = [
               WiFi: {
                 BSSID: '00:01:02:03:04:05',
                 Frequency: 2400,
+                HexSSID: "7769666931",
                 Security: 'WEP-PSK',
-                SignalStrength: 40
+                SignalStrength: 40,
+                SSID: "wifi1"
               }
             }], result);
 
@@ -346,8 +365,10 @@ var availableTests = [
           WiFi: {
             BSSID: '00:01:02:03:04:05',
             Frequency: 2400,
+            HexSSID: "7769666931",
             Security: 'WEP-PSK',
-            SignalStrength: 40
+            SignalStrength: 40,
+            SSID: "wifi1"
           }
         }, {
           Connectable: true,
@@ -394,8 +415,10 @@ var availableTests = [
           WiFi: {
             BSSID: '',
             Frequency: 5000,
+            HexSSID: "77696669325F50534B",
             Security: 'WPA-PSK',
-            SignalStrength: 80
+            SignalStrength: 80,
+            SSID: "wifi2_PSK"
           }
         }], result);
       }));
@@ -415,8 +438,10 @@ var availableTests = [
           WiFi: {
             BSSID: '00:01:02:03:04:05',
             Frequency: 2400,
+            HexSSID: "7769666931",
             Security: 'WEP-PSK',
-            SignalStrength: 40
+            SignalStrength: 40,
+            SSID: "wifi1"
           }
         }, {
           Connectable: true,
@@ -429,8 +454,10 @@ var availableTests = [
           WiFi: {
             BSSID: '',
             Frequency: 5000,
+            HexSSID: "77696669325F50534B",
             Security: 'WPA-PSK',
-            SignalStrength: 80
+            SignalStrength: 80,
+            SSID: "wifi2_PSK"
           }
         }], result);
       }));
@@ -465,7 +492,9 @@ var availableTests = [
       assertEq([
         {Scanning: false, State: 'Enabled', Type: 'Ethernet'},
         {Scanning: false, State: 'Enabled', Type: 'WiFi'},
-        {State: 'Uninitialized', Type: 'Cellular', SimPresent: true},
+        {State: 'Uninitialized', SIMPresent: true,
+         SIMLockStatus: {LockEnabled: true, LockType: '', RetriesLeft: 3},
+         Type: 'Cellular' },
         {State: 'Disabled', Type: 'WiMAX'},
       ],
                result);
@@ -724,8 +753,10 @@ var availableTests = [
           WiFi: {
             BSSID: '',
             Frequency: 5000,
+            HexSSID: "77696669325F50534B",
             Security: 'WPA-PSK',
-            SignalStrength: 80
+            SignalStrength: 80,
+            SSID: "wifi2_PSK"
           }
         }, result);
       }));
@@ -785,6 +816,11 @@ var availableTests = [
     });
     chrome.networkingPrivate.onDeviceStateListChanged.addListener(listener);
     chrome.networkingPrivate.disableNetworkType('WiFi');
+  },
+  function onCertificateListsChangedEvent() {
+    chrome.test.listenOnce(
+        chrome.networkingPrivate.onCertificateListsChanged, function() {});
+    chrome.test.sendMessage('eventListenerReady');
   },
   function verifyDestination() {
     chrome.networkingPrivate.verifyDestination(
@@ -922,6 +958,48 @@ var availableTests = [
         AllowOnlyPolicyNetworksToConnect: false,
       }, result);
     }));
+  },
+  function getTetherNetworks() {
+    chrome.networkingPrivate.getNetworks(
+        {networkType: 'Tether'},
+        callbackPass(function(tetherNetworks) {
+          assertEq(2, tetherNetworks.length);
+          privateHelpers.verifyTetherNetwork(tetherNetworks[0], 'tetherGuid1',
+              'tetherName1', 50, 'tetherCarrier1', 75, true);
+          privateHelpers.verifyTetherNetwork(tetherNetworks[1], 'tetherGuid2',
+              'tetherName2', 75, 'tetherCarrier2', 100, false);
+        }));
+  },
+  function getTetherNetworkProperties() {
+    chrome.networkingPrivate.getProperties(
+        'tetherGuid1',
+        callbackPass(function(tetherNetwork) {
+          privateHelpers.verifyTetherNetwork(tetherNetwork, 'tetherGuid1',
+              'tetherName1', 50, 'tetherCarrier1', 75, true);
+        }));
+  },
+  function getTetherNetworkManagedProperties() {
+    chrome.networkingPrivate.getManagedProperties(
+        'tetherGuid1',
+        callbackPass(function(tetherNetwork) {
+          privateHelpers.verifyTetherNetwork(tetherNetwork, 'tetherGuid1',
+              'tetherName1', 50, 'tetherCarrier1', 75, true);
+        }));
+  },
+  function getTetherNetworkState() {
+    chrome.networkingPrivate.getState(
+        'tetherGuid1',
+        callbackPass(function(tetherNetwork) {
+          privateHelpers.verifyTetherNetwork(tetherNetwork, 'tetherGuid1',
+              'tetherName1', 50, 'tetherCarrier1', 75, true);
+        }));
+  },
+  function getCertificateLists() {
+    chrome.networkingPrivate.getCertificateLists(
+        callbackPass(function(certificateLists) {
+          assertEq(1, certificateLists.serverCaCertificates.length);
+          assertEq(0, certificateLists.userCertificates.length);
+        }));
   },
 ];
 

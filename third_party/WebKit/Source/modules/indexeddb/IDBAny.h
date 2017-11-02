@@ -26,12 +26,13 @@
 #ifndef IDBAny_h
 #define IDBAny_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/dom/DOMStringList.h"
 #include "modules/ModulesExport.h"
 #include "modules/indexeddb/IDBKey.h"
 #include "modules/indexeddb/IDBValue.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/wtf/Forward.h"
+#include "platform/wtf/RefPtr.h"
 #include "platform/wtf/text/WTFString.h"
 
 namespace blink {
@@ -63,7 +64,7 @@ class MODULES_EXPORT IDBAny : public GarbageCollectedFinalized<IDBAny> {
     return new IDBAny(dom_string_list);
   }
   static IDBAny* Create(int64_t value) { return new IDBAny(value); }
-  static IDBAny* Create(PassRefPtr<IDBValue> value) {
+  static IDBAny* Create(RefPtr<IDBValue> value) {
     return new IDBAny(std::move(value));
   }
   static IDBAny* Create(const Vector<RefPtr<IDBValue>>& values) {
@@ -110,7 +111,7 @@ class MODULES_EXPORT IDBAny : public GarbageCollectedFinalized<IDBAny> {
   explicit IDBAny(IDBObjectStore*);
   explicit IDBAny(IDBKey*);
   explicit IDBAny(const Vector<RefPtr<IDBValue>>&);
-  explicit IDBAny(PassRefPtr<IDBValue>);
+  explicit IDBAny(RefPtr<IDBValue>);
   explicit IDBAny(int64_t);
 
   const Type type_;

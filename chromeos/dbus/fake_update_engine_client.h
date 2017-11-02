@@ -38,7 +38,10 @@ class FakeUpdateEngineClient : public UpdateEngineClient {
   void GetEolStatus(const GetEolStatusCallback& callback) override;
   void SetUpdateOverCellularPermission(bool allowed,
                                        const base::Closure& callback) override;
-
+  void SetUpdateOverCellularOneTimePermission(
+      const std::string& target_version,
+      int64_t target_size,
+      const UpdateOverCellularOneTimePermissionCallback& callback) override;
   // Pushes UpdateEngineClient::Status in the queue to test changing status.
   // GetLastStatus() returns the status set by this method in FIFO order.
   // See set_default_status().
@@ -49,6 +52,9 @@ class FakeUpdateEngineClient : public UpdateEngineClient {
   // Sends status change notification.
   void NotifyObserversThatStatusChanged(
       const UpdateEngineClient::Status& status);
+
+  // Notifies observers that the user's one time permission is granted.
+  void NotifyUpdateOverCellularOneTimePermissionGranted();
 
   // Sets the default UpdateEngineClient::Status. GetLastStatus() returns the
   // value set here if |status_queue_| is empty.

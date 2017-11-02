@@ -4,7 +4,7 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutSVGPath path",
@@ -15,14 +15,6 @@
     }
   ],
   "objectPaintInvalidations": [
-    {
-      "object": "LayoutSVGResourceMarker marker id='markerMiddle'",
-      "reason": "layoutObject insertion"
-    },
-    {
-      "object": "LayoutSVGEllipse circle",
-      "reason": "layoutObject insertion"
-    },
     {
       "object": "LayoutSVGPath path",
       "reason": "style change"

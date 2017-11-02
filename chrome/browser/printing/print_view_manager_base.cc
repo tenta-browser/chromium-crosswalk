@@ -11,6 +11,7 @@
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
@@ -170,7 +171,7 @@ void PrintViewManagerBase::OnDidPrintPage(
   }
 
   std::unique_ptr<PdfMetafileSkia> metafile(
-      new PdfMetafileSkia(PDF_SKIA_DOCUMENT_TYPE));
+      new PdfMetafileSkia(SkiaDocumentType::PDF));
   if (metafile_must_be_valid) {
     if (!metafile->InitFromData(shared_buf->memory(), params.data_size)) {
       NOTREACHED() << "Invalid metafile header";
@@ -188,8 +189,11 @@ void PrintViewManagerBase::OnDidPrintPage(
     document->DebugDumpData(bytes.get(), FILE_PATH_LITERAL(".pdf"));
 
     const auto& settings = document->settings();
-    if ((settings.printer_is_ps2() || settings.printer_is_ps3()) &&
-        base::FeatureList::IsEnabled(features::kPostScriptPrinting)) {
+    if (settings.printer_is_textonly()) {
+      print_job_->StartPdfToTextConversion(bytes, params.page_size);
+    } else if ((settings.printer_is_ps2() || settings.printer_is_ps3()) &&
+               !base::FeatureList::IsEnabled(
+                   features::kDisablePostScriptPrinting)) {
       print_job_->StartPdfToPostScriptConversion(bytes, params.content_area,
                                                  params.physical_offsets,
                                                  settings.printer_is_ps2());
@@ -238,9 +242,9 @@ void PrintViewManagerBase::OnPrintingFailed(int cookie) {
 
 void PrintViewManagerBase::OnShowInvalidPrinterSettingsError() {
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(&ShowWarningMessageBox,
-                            l10n_util::GetStringUTF16(
-                                IDS_PRINT_INVALID_PRINTER_SETTINGS)));
+      FROM_HERE, base::BindOnce(&ShowWarningMessageBox,
+                                l10n_util::GetStringUTF16(
+                                    IDS_PRINT_INVALID_PRINTER_SETTINGS)));
 }
 
 void PrintViewManagerBase::DidStartLoading() {
@@ -269,6 +273,19 @@ void PrintViewManagerBase::RenderFrameDeleted(
     TerminatePrintJob(!document->IsComplete());
   }
 }
+
+#if defined(OS_WIN) && BUILDFLAG(ENABLE_PRINT_PREVIEW)
+void PrintViewManagerBase::SystemDialogCancelled() {
+  // System dialog was cancelled. Clean up the print job and notify the
+  // BackgroundPrintingManager.
+  ReleasePrinterQuery();
+  TerminatePrintJob(true);
+  content::NotificationService::current()->Notify(
+      chrome::NOTIFICATION_PRINT_JOB_RELEASED,
+      content::Source<content::WebContents>(web_contents()),
+      content::NotificationService::NoDetails());
+}
+#endif
 
 bool PrintViewManagerBase::OnMessageReceived(
     const IPC::Message& message,
@@ -363,7 +380,7 @@ bool PrintViewManagerBase::RenderAllMissingPagesNow() {
   // to actually spool the pages, only to have the renderer generate them. Run
   // a message loop until we get our signal that the print job is satisfied.
   // PrintJob will send a ALL_PAGES_REQUESTED after having received all the
-  // pages it needs. MessageLoop::current()->QuitWhenIdle() will be called as
+  // pages it needs. RunLoop::QuitCurrentWhenIdleDeprecated() will be called as
   // soon as print_job_->document()->IsComplete() is true on either
   // ALL_PAGES_REQUESTED or in DidPrintPage(). The check is done in
   // ShouldQuitFromInnerMessageLoop().
@@ -384,7 +401,7 @@ void PrintViewManagerBase::ShouldQuitFromInnerMessageLoop() {
       inside_inner_message_loop_) {
     // We are in a message loop created by RenderAllMissingPagesNow. Quit from
     // it.
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
     inside_inner_message_loop_ = false;
   }
 }
@@ -491,9 +508,10 @@ bool PrintViewManagerBase::RunInnerMessageLoop() {
   // memory-bound.
   static const int kPrinterSettingsTimeout = 60000;
   base::OneShotTimer quit_timer;
-  quit_timer.Start(
-      FROM_HERE, TimeDelta::FromMilliseconds(kPrinterSettingsTimeout),
-      base::MessageLoop::current(), &base::MessageLoop::QuitWhenIdle);
+  base::RunLoop run_loop;
+  quit_timer.Start(FROM_HERE,
+                   TimeDelta::FromMilliseconds(kPrinterSettingsTimeout),
+                   run_loop.QuitWhenIdleClosure());
 
   inside_inner_message_loop_ = true;
 
@@ -501,7 +519,7 @@ bool PrintViewManagerBase::RunInnerMessageLoop() {
   {
     base::MessageLoop::ScopedNestableTaskAllower allow(
         base::MessageLoop::current());
-    base::RunLoop().Run();
+    run_loop.Run();
   }
 
   bool success = true;
@@ -575,7 +593,7 @@ void PrintViewManagerBase::ReleasePrinterQuery() {
     return;
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&PrinterQuery::StopWorker, printer_query));
+      base::BindOnce(&PrinterQuery::StopWorker, printer_query));
 }
 
 void PrintViewManagerBase::SendPrintingEnabled(bool enabled,

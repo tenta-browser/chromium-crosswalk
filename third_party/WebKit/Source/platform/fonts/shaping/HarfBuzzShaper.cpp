@@ -48,9 +48,63 @@
 #include "platform/wtf/Compiler.h"
 #include "platform/wtf/MathExtras.h"
 #include "platform/wtf/PtrUtil.h"
+#include "platform/wtf/text/StringBuilder.h"
 #include "platform/wtf/text/Unicode.h"
 
 namespace blink {
+
+namespace {
+
+#if DCHECK_IS_ON()
+// Check if the ShapeResult has the specified range.
+// |text| and |font| are only for logging.
+void CheckShapeResultRange(const ShapeResult* result,
+                           unsigned start,
+                           unsigned end,
+                           const UChar* text,
+                           const Font* font) {
+  DCHECK_LE(start, end);
+  unsigned length = end - start;
+  if (length == result->NumCharacters() &&
+      (!length || (start == result->StartIndexForResult() &&
+                   end == result->EndIndexForResult())))
+    return;
+
+  // Log font-family/size as specified.
+  StringBuilder log;
+  log.Append("Font='");
+  const FontDescription& font_description = font->GetFontDescription();
+  for (const FontFamily* family = &font_description.Family();;) {
+    log.Append(family->Family());
+    family = family->Next();
+    if (!family)
+      break;
+    log.Append(", ");
+  }
+  log.Append(String::Format("', %f", font_description.ComputedSize()));
+
+  // Log the primary font with its family name in the font file.
+  const SimpleFontData* font_data = font->PrimaryFont();
+  if (font_data) {
+    const SkTypeface* typeface = font_data->PlatformData().Typeface();
+    SkString family_name;
+    typeface->getFamilyName(&family_name);
+    log.Append(", primary=");
+    log.Append(family_name.c_str());
+  }
+
+  // Log the text to shape.
+  log.Append(String::Format(": %u-%u -> %u-%u:", start, end,
+                            result->StartIndexForResult(),
+                            result->EndIndexForResult()));
+  for (unsigned i = start; i < end; ++i)
+    log.Append(String::Format(" %02X", text[i]));
+  NOTREACHED() << log.ToString();
+}
+#endif
+
+}  // namespace
+
 enum HolesQueueItemAction { kHolesQueueNextFont, kHolesQueueRange };
 
 struct HolesQueueItem {
@@ -150,7 +204,7 @@ inline bool ShapeRange(hb_buffer_t* buffer,
 
 }  // namespace
 
-bool HarfBuzzShaper::ExtractShapeResults(
+void HarfBuzzShaper::ExtractShapeResults(
     RangeData* range_data,
     bool& font_cycle_queued,
     const HolesQueueItem& current_queue_item,
@@ -171,10 +225,8 @@ bool HarfBuzzShaper::ExtractShapeResults(
 
   unsigned last_change_position = 0;
 
-  if (!num_glyphs) {
-    DLOG(ERROR) << "HarfBuzz returned empty glyph buffer after shaping.";
-    return false;
-  }
+  if (!num_glyphs)
+    return;
 
   for (unsigned glyph_index = 0; glyph_index <= num_glyphs; ++glyph_index) {
     // Iterating by clusters, check for when the state switches from shaped
@@ -191,7 +243,7 @@ bool HarfBuzzShaper::ExtractShapeResults(
         } else {
           // We can only call the current cluster fully shapped, if
           // all characters that are part of it are shaped, so update
-          // currentClusterResult to Shaped only if the previous
+          // currentClusterResult to kShaped only if the previous
           // characters have been shaped, too.
           current_cluster_result =
               current_cluster_result == kShaped ? kShaped : kNotDef;
@@ -203,8 +255,8 @@ bool HarfBuzzShaper::ExtractShapeResults(
       current_cluster_result =
           glyph_info[glyph_index].codepoint == 0 ? kNotDef : kShaped;
     } else {
-      // The code below operates on the "flanks"/changes between NotDef
-      // and Shaped. In order to keep the code below from explictly
+      // The code below operates on the "flanks"/changes between kNotDef
+      // and kShaped. In order to keep the code below from explictly
       // dealing with character indices and run end, we explicitly
       // terminate the cluster/run here by setting the result value to the
       // opposite of what it was, leading to atChange turning true.
@@ -227,9 +279,12 @@ bool HarfBuzzShaper::ExtractShapeResults(
     if (HB_DIRECTION_IS_FORWARD(hb_buffer_get_direction(range_data->buffer))) {
       start_index = glyph_info[last_change_position].cluster;
       if (glyph_index == num_glyphs) {
-        num_characters = current_queue_item.start_index_ +
-                         current_queue_item.num_characters_ -
-                         glyph_info[last_change_position].cluster;
+        // Clamp the end offsets of the queue item to the offsets representing
+        // the shaping window.
+        unsigned shape_end =
+            std::min(range_data->end, current_queue_item.start_index_ +
+                                          current_queue_item.num_characters_);
+        num_characters = shape_end - glyph_info[last_change_position].cluster;
         num_glyphs_to_insert = num_glyphs - last_change_position;
       } else {
         num_characters = glyph_info[glyph_index].cluster -
@@ -240,9 +295,12 @@ bool HarfBuzzShaper::ExtractShapeResults(
       // Direction Backwards
       start_index = glyph_info[glyph_index - 1].cluster;
       if (last_change_position == 0) {
-        num_characters = current_queue_item.start_index_ +
-                         current_queue_item.num_characters_ -
-                         glyph_info[glyph_index - 1].cluster;
+        // Clamp the end offsets of the queue item to the offsets representing
+        // the shaping window.
+        unsigned shape_end =
+            std::min(range_data->end, current_queue_item.start_index_ +
+                                          current_queue_item.num_characters_);
+        num_characters = shape_end - glyph_info[glyph_index - 1].cluster;
       } else {
         num_characters = glyph_info[last_change_position - 1].cluster -
                          glyph_info[glyph_index - 1].cluster;
@@ -280,10 +338,10 @@ bool HarfBuzzShaper::ExtractShapeResults(
           start_index, num_glyphs_to_insert, num_characters);
       shape_result->InsertRun(WTF::WrapUnique(run), last_change_position,
                               num_glyphs_to_insert, range_data->buffer);
+      range_data->font->ReportNotDefGlyph();
     }
     last_change_position = glyph_index;
   }
-  return true;
 }
 
 static inline const SimpleFontData* FontDataAdjustedForOrientation(
@@ -307,7 +365,7 @@ bool HarfBuzzShaper::CollectFallbackHintChars(
   if (!holes_queue.size())
     return false;
 
-  hint.Clear();
+  hint.clear();
 
   size_t num_chars_added = 0;
   for (auto it = holes_queue.begin(); it != holes_queue.end(); ++it) {
@@ -492,7 +550,7 @@ void SetFontFeatures(const Font* font, FeaturesVector* features) {
 }
 
 class CapsFeatureSettingsScopedOverlay final {
-  STACK_ALLOCATED()
+  STACK_ALLOCATED();
 
  public:
   CapsFeatureSettingsScopedOverlay(FeaturesVector*,
@@ -595,7 +653,7 @@ void HarfBuzzShaper::ShapeSegment(RangeData* range_data,
                                     fallback_chars_hint)) {
         // Give up shaping since we cannot retrieve a font fallback
         // font without a hintlist.
-        range_data->holes_queue.Clear();
+        range_data->holes_queue.clear();
         break;
       }
 
@@ -663,18 +721,16 @@ void HarfBuzzShaper::ShapeSegment(RangeData* range_data,
     if (!ShapeRange(range_data->buffer,
                     range_data->font_features.IsEmpty()
                         ? 0
-                        : range_data->font_features.Data(),
+                        : range_data->font_features.data(),
                     range_data->font_features.size(),
                     direction_and_small_caps_adjusted_font,
                     current_font_data_for_range_set->Ranges(), segment.script,
                     direction, language))
       DLOG(ERROR) << "Shaping range failed.";
 
-    if (!ExtractShapeResults(range_data, font_cycle_queued, current_queue_item,
-                             direction_and_small_caps_adjusted_font,
-                             segment.script, !fallback_iterator->HasNext(),
-                             result))
-      DLOG(ERROR) << "Shape result extraction failed.";
+    ExtractShapeResults(range_data, font_cycle_queued, current_queue_item,
+                        direction_and_small_caps_adjusted_font, segment.script,
+                        !fallback_iterator->HasNext(), result);
 
     hb_buffer_reset(range_data->buffer);
   }
@@ -711,7 +767,12 @@ PassRefPtr<ShapeResult> HarfBuzzShaper::Shape(const Font* font,
     if (start < segment_range.end && end > segment_range.start)
       ShapeSegment(&range_data, segment_range, result.Get());
   }
-  return result.Release();
+
+#if DCHECK_IS_ON()
+  CheckShapeResultRange(result.Get(), start, end, text_, font);
+#endif
+
+  return result;
 }
 
 PassRefPtr<ShapeResult> HarfBuzzShaper::Shape(const Font* font,

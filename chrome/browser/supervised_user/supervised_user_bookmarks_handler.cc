@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/values.h"
 #include "components/url_formatter/url_fixer.h"
@@ -170,9 +171,10 @@ void SupervisedUserBookmarksHandler::AddFoldersToTree() {
     folders_failed.clear();
     for (const auto& folder : folders) {
       std::unique_ptr<base::DictionaryValue> node(new base::DictionaryValue);
-      node->SetIntegerWithoutPathExpansion(kId, folder.id);
-      node->SetStringWithoutPathExpansion(kName, folder.name);
-      node->SetWithoutPathExpansion(kChildren, new base::ListValue);
+      node->SetKey(kId, base::Value(folder.id));
+      node->SetKey(kName, base::Value(folder.name));
+      node->SetWithoutPathExpansion(kChildren,
+                                    base::MakeUnique<base::ListValue>());
       if (!AddNodeToTree(folder.parent_id, std::move(node)))
         folders_failed.push_back(folder);
     }
@@ -196,8 +198,8 @@ void SupervisedUserBookmarksHandler::AddLinksToTree() {
       LOG(WARNING) << "Got invalid URL: " << link.url;
       continue;
     }
-    node->SetStringWithoutPathExpansion(kUrl, url.spec());
-    node->SetStringWithoutPathExpansion(kName, link.name);
+    node->SetKey(kUrl, base::Value(url.spec()));
+    node->SetKey(kName, base::Value(link.name));
     if (!AddNodeToTree(link.parent_id, std::move(node))) {
       LOG(WARNING) << "SupervisedUserBookmarksHandler::AddLinksToTree"
                    << " failed to add link (url,name,parent): "

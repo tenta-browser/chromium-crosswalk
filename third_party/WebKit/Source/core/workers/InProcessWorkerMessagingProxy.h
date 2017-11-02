@@ -32,11 +32,11 @@
 #include "core/dom/ExecutionContext.h"
 #include "core/dom/MessagePort.h"
 #include "core/workers/ThreadedMessagingProxyBase.h"
-#include "core/workers/WorkerLoaderProxy.h"
+#include "core/workers/WorkerBackingThreadStartupData.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Noncopyable.h"
-#include "platform/wtf/PassRefPtr.h"
-#include "platform/wtf/WeakPtr.h"
+#include "platform/wtf/Optional.h"
+#include "platform/wtf/RefPtr.h"
 
 namespace blink {
 
@@ -56,28 +56,23 @@ class CORE_EXPORT InProcessWorkerMessagingProxy
                               const String& user_agent,
                               const String& source_code,
                               const String& referrer_policy);
-  void PostMessageToWorkerGlobalScope(PassRefPtr<SerializedScriptValue>,
+  void PostMessageToWorkerGlobalScope(RefPtr<SerializedScriptValue>,
                                       MessagePortChannelArray);
 
+  // Implements ThreadedMessagingProxyBase.
   void WorkerThreadCreated() override;
-  void ParentObjectDestroyed() override;
 
   bool HasPendingActivity() const;
 
   // These methods come from worker context thread via
   // InProcessWorkerObjectProxy and are called on the parent context thread.
-  void PostMessageToWorkerObject(PassRefPtr<SerializedScriptValue>,
+  void PostMessageToWorkerObject(RefPtr<SerializedScriptValue>,
                                  MessagePortChannelArray);
   void DispatchErrorEvent(const String& error_message,
                           std::unique_ptr<SourceLocation>,
                           int exception_id);
 
-  // 'virtual' for testing.
-  virtual void ConfirmMessageFromWorkerObject();
-
-  // Called from InProcessWorkerObjectProxy when all pending activities on the
-  // worker context are finished. See InProcessWorkerObjectProxy.h for details.
-  virtual void PendingActivityFinished();
+  DECLARE_VIRTUAL_TRACE();
 
  protected:
   InProcessWorkerMessagingProxy(InProcessWorkerBase*, WorkerClients*);
@@ -87,30 +82,33 @@ class CORE_EXPORT InProcessWorkerMessagingProxy
     return *worker_object_proxy_.get();
   }
 
+  // Whether Atomics.wait (a blocking function call) is allowed on this thread.
+  virtual bool IsAtomicsWaitAllowed() { return false; }
+
  private:
   friend class InProcessWorkerMessagingProxyForTest;
   InProcessWorkerMessagingProxy(ExecutionContext*,
                                 InProcessWorkerBase*,
                                 WorkerClients*);
 
+  // TODO(nhiroki): Remove this creation function once we no longer have
+  // CompositorWorker.
+  virtual WTF::Optional<WorkerBackingThreadStartupData>
+  CreateBackingThreadStartupData(v8::Isolate*) = 0;
+
   std::unique_ptr<InProcessWorkerObjectProxy> worker_object_proxy_;
-  WeakPersistent<InProcessWorkerBase> worker_object_;
-  Persistent<WorkerClients> worker_clients_;
+
+  // This must be weak. The base class (i.e., ThreadedMessagingProxyBase) has a
+  // strong persistent reference to itself via SelfKeepAlive (see class-level
+  // comments on ThreadedMessagingProxyBase.h for details). To cut the
+  // persistent reference, this worker object needs to call a cleanup function
+  // in its dtor. If this is a strong reference, the dtor is never called
+  // because the worker object is reachable from the persistent reference.
+  WeakMember<InProcessWorkerBase> worker_object_;
 
   // Tasks are queued here until there's a thread object created.
   struct QueuedTask;
   Vector<QueuedTask> queued_early_tasks_;
-
-  // Unconfirmed messages from the parent context thread to the worker thread.
-  // When this is greater than 0, |m_workerGlobalScopeHasPendingActivity| should
-  // be true.
-  unsigned unconfirmed_message_count_ = 0;
-
-  // Indicates whether there are pending activities (e.g, MessageEvent,
-  // setTimeout) on the worker context.
-  bool worker_global_scope_has_pending_activity_ = false;
-
-  WeakPtrFactory<InProcessWorkerMessagingProxy> weak_ptr_factory_;
 };
 
 }  // namespace blink

@@ -67,9 +67,6 @@ class ScrollingCoordinator;
 class StickyPositionScrollingConstraints;
 class SubtreeLayoutScope;
 
-typedef WTF::HashMap<PaintLayer*, StickyPositionScrollingConstraints>
-    StickyConstraintsMap;
-
 struct CORE_EXPORT PaintLayerScrollableAreaRareData {
   WTF_MAKE_NONCOPYABLE(PaintLayerScrollableAreaRareData);
   USING_FAST_MALLOC(PaintLayerScrollableAreaRareData);
@@ -238,7 +235,9 @@ class CORE_EXPORT PaintLayerScrollableArea final
     return scrollbar_manager_.VerticalScrollbar();
   }
 
-  HostWindow* GetHostWindow() const override;
+  PlatformChromeClient* GetChromeClient() const override;
+
+  SmoothScrollSequencer* GetSmoothScrollSequencer() const override;
 
   // For composited scrolling, we allocate an extra GraphicsLayer to hold
   // onto the scrolling content. The layer can be shifted on the GPU and
@@ -246,6 +245,8 @@ class CORE_EXPORT PaintLayerScrollableArea final
   // Note that this is done in CompositedLayerMapping, this function being
   // only a helper.
   GraphicsLayer* LayerForScrolling() const override;
+
+  void DidScroll(const gfx::ScrollOffset&) override;
 
   // GraphicsLayers for the scrolling components.
   //
@@ -260,18 +261,16 @@ class CORE_EXPORT PaintLayerScrollableArea final
   bool IsActive() const override;
   bool IsScrollCornerVisible() const override;
   IntRect ScrollCornerRect() const override;
-  IntRect ConvertFromScrollbarToContainingFrameViewBase(
+  IntRect ConvertFromScrollbarToContainingEmbeddedContentView(
       const Scrollbar&,
       const IntRect&) const override;
-  IntRect ConvertFromContainingFrameViewBaseToScrollbar(
-      const Scrollbar&,
-      const IntRect&) const override;
-  IntPoint ConvertFromScrollbarToContainingFrameViewBase(
+  IntPoint ConvertFromScrollbarToContainingEmbeddedContentView(
       const Scrollbar&,
       const IntPoint&) const override;
-  IntPoint ConvertFromContainingFrameViewBaseToScrollbar(
+  IntPoint ConvertFromContainingEmbeddedContentViewToScrollbar(
       const Scrollbar&,
       const IntPoint&) const override;
+  IntPoint ConvertFromRootFrame(const IntPoint&) const override;
   int ScrollSize(ScrollbarOrientation) const override;
   IntSize ScrollOffsetInt() const override;
   ScrollOffset GetScrollOffset() const override;
@@ -279,8 +278,6 @@ class CORE_EXPORT PaintLayerScrollableArea final
   IntSize MaximumScrollOffsetInt() const override;
   IntRect VisibleContentRect(
       IncludeScrollbarsInRect = kExcludeScrollbars) const override;
-  int VisibleHeight() const override;
-  int VisibleWidth() const override;
   IntSize ContentsSize() const override;
   void ContentsResized() override;
   bool IsScrollable() const override;
@@ -299,6 +296,7 @@ class CORE_EXPORT PaintLayerScrollableArea final
   ScrollBehavior ScrollBehaviorStyle() const override;
   CompositorAnimationHost* GetCompositorAnimationHost() const override;
   CompositorAnimationTimeline* GetCompositorAnimationTimeline() const override;
+  void GetTickmarks(Vector<IntRect>&) const override;
 
   void VisibleSizeChanged();
 
@@ -384,7 +382,9 @@ class CORE_EXPORT PaintLayerScrollableArea final
   LayoutRect ScrollIntoView(const LayoutRect&,
                             const ScrollAlignment& align_x,
                             const ScrollAlignment& align_y,
-                            ScrollType = kProgrammaticScroll) override;
+                            bool is_smooth,
+                            ScrollType = kProgrammaticScroll,
+                            bool is_for_scroll_sequence = false) override;
 
   // Returns true if scrollable area is in the FrameView's collection of
   // scrollable areas. This can only happen if we're scrollable, visible to hit
@@ -396,9 +396,7 @@ class CORE_EXPORT PaintLayerScrollableArea final
   // Rectangle encompassing the scroll corner and resizer rect.
   IntRect ScrollCornerAndResizerRect() const final;
 
-  enum LCDTextMode { kConsiderLCDText, kIgnoreLCDText };
-
-  void UpdateNeedsCompositedScrolling(LCDTextMode = kConsiderLCDText);
+  void UpdateNeedsCompositedScrolling(bool layer_has_been_composited = false);
   bool NeedsCompositedScrolling() const { return needs_composited_scrolling_; }
 
   // These are used during compositing updates to determine if the overflow
@@ -427,7 +425,7 @@ class CORE_EXPORT PaintLayerScrollableArea final
   IntRect RectForHorizontalScrollbar(const IntRect& border_box_rect) const;
   IntRect RectForVerticalScrollbar(const IntRect& border_box_rect) const;
 
-  FrameViewBase* GetFrameViewBase() override;
+  bool ScheduleAnimation() override;
   bool ShouldPerformScrollAnchoring() const override;
   ScrollAnchor* GetScrollAnchor() override { return &scroll_anchor_; }
   bool IsPaintLayerScrollableArea() const override { return true; }
@@ -496,8 +494,6 @@ class CORE_EXPORT PaintLayerScrollableArea final
 
   bool HasHorizontalOverflow() const;
   bool HasVerticalOverflow() const;
-  bool HasScrollableHorizontalOverflow() const;
-  bool HasScrollableVerticalOverflow() const;
   bool VisualViewportSuppliesScrollbars() const;
 
   bool NeedsScrollbarReconstruction() const;
@@ -523,12 +519,14 @@ class CORE_EXPORT PaintLayerScrollableArea final
   bool SetHasVerticalScrollbar(bool has_scrollbar);
 
   void UpdateScrollCornerStyle();
+  LayoutSize MinimumSizeForResizing(float zoom_factor);
+  LayoutRect LayoutContentRect(IncludeScrollbarsInRect) const;
 
   // See comments on isPointInResizeControl.
   void UpdateResizerAreaSet();
   void UpdateResizerStyle();
 
-  void UpdateScrollableAreaSet(bool has_overflow);
+  void UpdateScrollableAreaSet();
 
   void UpdateCompositingLayersAfterScroll();
 
@@ -542,7 +540,7 @@ class CORE_EXPORT PaintLayerScrollableArea final
     return *rare_data_.get();
   }
 
-  bool ComputeNeedsCompositedScrolling(const LCDTextMode, const PaintLayer*);
+  bool ComputeNeedsCompositedScrolling(const bool, const PaintLayer*);
   PaintLayer& layer_;
 
   PaintLayer* next_topmost_scroll_child_;
@@ -597,9 +595,7 @@ class CORE_EXPORT PaintLayerScrollableArea final
   // MainThreadScrollingReason due to the properties of the LayoutObject
   uint32_t non_composited_main_thread_scrolling_reasons_;
 
-#if DCHECK_IS_ON()
   bool has_been_disposed_;
-#endif
 };
 
 DEFINE_TYPE_CASTS(PaintLayerScrollableArea,

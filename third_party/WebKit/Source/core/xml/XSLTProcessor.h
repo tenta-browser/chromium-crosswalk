@@ -23,10 +23,10 @@
 #ifndef XSLTProcessor_h
 #define XSLTProcessor_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/dom/Node.h"
 #include "core/xml/XSLStyleSheet.h"
 #include "platform/RuntimeEnabledFeatures.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/wtf/HashMap.h"
 #include "platform/wtf/text/StringHash.h"
 
@@ -45,7 +45,7 @@ class XSLTProcessor final : public GarbageCollectedFinalized<XSLTProcessor>,
 
  public:
   static XSLTProcessor* Create(Document& document) {
-    DCHECK(RuntimeEnabledFeatures::xsltEnabled());
+    DCHECK(RuntimeEnabledFeatures::XSLTEnabled());
     return new XSLTProcessor(document);
   }
   ~XSLTProcessor();
@@ -74,7 +74,7 @@ class XSLTProcessor final : public GarbageCollectedFinalized<XSLTProcessor>,
   String getParameter(const String& namespace_uri,
                       const String& local_name) const;
   void removeParameter(const String& namespace_uri, const String& local_name);
-  void clearParameters() { parameters_.Clear(); }
+  void clearParameters() { parameters_.clear(); }
 
   void reset();
 

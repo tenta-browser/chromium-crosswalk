@@ -138,8 +138,7 @@ SVGPointTearOff* SVGTextContentElement::getStartPositionOfChar(
 
   FloatPoint point =
       SVGTextQuery(GetLayoutObject()).StartPositionOfCharacter(charnum);
-  return SVGPointTearOff::Create(SVGPoint::Create(point), 0,
-                                 kPropertyIsNotAnimVal);
+  return SVGPointTearOff::CreateDetached(point);
 }
 
 SVGPointTearOff* SVGTextContentElement::getEndPositionOfChar(
@@ -156,8 +155,7 @@ SVGPointTearOff* SVGTextContentElement::getEndPositionOfChar(
 
   FloatPoint point =
       SVGTextQuery(GetLayoutObject()).EndPositionOfCharacter(charnum);
-  return SVGPointTearOff::Create(SVGPoint::Create(point), 0,
-                                 kPropertyIsNotAnimVal);
+  return SVGPointTearOff::CreateDetached(point);
 }
 
 SVGRectTearOff* SVGTextContentElement::getExtentOfChar(
@@ -173,8 +171,7 @@ SVGRectTearOff* SVGTextContentElement::getExtentOfChar(
   }
 
   FloatRect rect = SVGTextQuery(GetLayoutObject()).ExtentOfCharacter(charnum);
-  return SVGRectTearOff::Create(SVGRect::Create(rect), 0,
-                                kPropertyIsNotAnimVal);
+  return SVGRectTearOff::CreateDetached(rect);
 }
 
 float SVGTextContentElement::getRotationOfChar(
@@ -218,14 +215,18 @@ void SVGTextContentElement::selectSubString(unsigned charnum,
 
   // Find selection start
   VisiblePosition start = VisiblePosition::FirstPositionInNode(
-      const_cast<SVGTextContentElement*>(this));
+      *const_cast<SVGTextContentElement*>(this));
   for (unsigned i = 0; i < charnum; ++i)
     start = NextPositionOf(start);
+  if (start.IsNull())
+    return;
 
   // Find selection end
   VisiblePosition end(start);
   for (unsigned i = 0; i < nchars; ++i)
     end = NextPositionOf(end);
+  if (end.IsNull())
+    return;
 
   // TODO(editing-dev): We assume |start| and |end| are not null and we don't
   // known when |start| and |end| are null. Once we get a such case, we check
@@ -252,12 +253,12 @@ void SVGTextContentElement::CollectStyleForPresentationAttribute(
     DEFINE_STATIC_LOCAL(const AtomicString, preserve_string, ("preserve"));
 
     if (value == preserve_string) {
-      UseCounter::Count(GetDocument(), UseCounter::kWhiteSpacePreFromXMLSpace);
+      UseCounter::Count(GetDocument(), WebFeature::kWhiteSpacePreFromXMLSpace);
       AddPropertyToPresentationAttributeStyle(style, CSSPropertyWhiteSpace,
                                               CSSValuePre);
     } else {
       UseCounter::Count(GetDocument(),
-                        UseCounter::kWhiteSpaceNowrapFromXMLSpace);
+                        WebFeature::kWhiteSpaceNowrapFromXMLSpace);
       AddPropertyToPresentationAttributeStyle(style, CSSPropertyWhiteSpace,
                                               CSSValueNowrap);
     }

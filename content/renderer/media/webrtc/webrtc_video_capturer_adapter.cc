@@ -5,7 +5,6 @@
 #include "content/renderer/media/webrtc/webrtc_video_capturer_adapter.h"
 
 #include "base/bind.h"
-#include "base/memory/aligned_memory.h"
 #include "base/memory/ref_counted.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/thread_task_runner_handle.h"
@@ -75,8 +74,9 @@ class WebRtcVideoCapturerAdapter::TextureFrameCopier
     base::WaitableEvent waiter(base::WaitableEvent::ResetPolicy::MANUAL,
                                base::WaitableEvent::InitialState::NOT_SIGNALED);
     main_thread_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&TextureFrameCopier::CopyTextureFrameOnMainThread,
-                              this, frame, new_frame, &waiter));
+        FROM_HERE,
+        base::BindOnce(&TextureFrameCopier::CopyTextureFrameOnMainThread, this,
+                       frame, new_frame, &waiter));
     waiter.Wait();
   }
 
@@ -231,7 +231,8 @@ void WebRtcVideoCapturerAdapter::OnFrameCaptured(
   if (!video_frame)
     return;
 
-  video_frame->AddDestructionObserver(base::Bind(&ReleaseOriginalFrame, frame));
+  video_frame->AddDestructionObserver(
+      base::BindOnce(&ReleaseOriginalFrame, frame));
 
   // If no scaling is needed, return a wrapped version of |frame| directly.
   if (video_frame->natural_size() == video_frame->visible_rect().size()) {

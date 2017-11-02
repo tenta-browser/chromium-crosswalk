@@ -9,11 +9,14 @@
 
 #include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
+#include "components/viz/host/host_frame_sink_manager.h"
+#include "components/viz/host/renderer_settings_creation.h"
 #include "services/ui/common/transient_window_utils.h"
 #include "services/ui/public/interfaces/window_manager.mojom.h"
-#include "services/ui/ws/server_window_compositor_frame_sink_manager.h"
 #include "services/ui/ws/server_window_delegate.h"
 #include "services/ui/ws/server_window_observer.h"
+#include "services/ui/ws/server_window_tracker.h"
+#include "ui/base/cursor/cursor.h"
 
 namespace ui {
 namespace ws {
@@ -26,16 +29,16 @@ ServerWindow::ServerWindow(ServerWindowDelegate* delegate,
                            const Properties& properties)
     : delegate_(delegate),
       id_(id),
-      frame_sink_id_(WindowIdToTransportId(id), 0),
+      frame_sink_id_((id_.client_id << 16) | id_.window_id, 0),
       parent_(nullptr),
       stacking_target_(nullptr),
       transient_parent_(nullptr),
       modal_type_(MODAL_TYPE_NONE),
       visible_(false),
-      // Default to POINTER as CURSOR_NULL doesn't change the cursor, it leaves
+      // Default to kPointer as kNull doesn't change the cursor, it leaves
       // the last non-null cursor.
-      cursor_id_(mojom::CursorType::POINTER),
-      non_client_cursor_id_(mojom::CursorType::POINTER),
+      cursor_(ui::CursorType::kPointer),
+      non_client_cursor_(ui::CursorType::kPointer),
       opacity_(1),
       can_focus_(true),
       properties_(properties),
@@ -45,6 +48,11 @@ ServerWindow::ServerWindow(ServerWindowDelegate* delegate,
       observers_(
           base::ObserverList<ServerWindowObserver>::NOTIFY_EXISTING_ONLY) {
   DCHECK(delegate);  // Must provide a delegate.
+  // TODO(kylechar): Add method to reregister |frame_sink_id_| when viz service
+  // has crashed.
+  auto* host_frame_sink_manager = delegate_->GetHostFrameSinkManager();
+  if (host_frame_sink_manager)
+    host_frame_sink_manager->RegisterFrameSinkId(frame_sink_id_, this);
 }
 
 ServerWindow::~ServerWindow() {
@@ -70,6 +78,10 @@ ServerWindow::~ServerWindow() {
 
   for (auto& observer : observers_)
     observer.OnWindowDestroyed(this);
+
+  auto* host_frame_sink_manager = delegate_->GetHostFrameSinkManager();
+  if (host_frame_sink_manager)
+    host_frame_sink_manager->InvalidateFrameSinkId(frame_sink_id_);
 }
 
 void ServerWindow::AddObserver(ServerWindowObserver* observer) {
@@ -87,19 +99,25 @@ bool ServerWindow::HasObserver(ServerWindowObserver* observer) {
 
 void ServerWindow::CreateRootCompositorFrameSink(
     gfx::AcceleratedWidget widget,
-    cc::mojom::MojoCompositorFrameSinkAssociatedRequest sink_request,
-    cc::mojom::MojoCompositorFrameSinkClientPtr client,
-    cc::mojom::DisplayPrivateAssociatedRequest display_request) {
-  GetOrCreateCompositorFrameSinkManager()->CreateRootCompositorFrameSink(
-      widget, std::move(sink_request), std::move(client),
-      std::move(display_request));
+    viz::mojom::CompositorFrameSinkAssociatedRequest sink_request,
+    viz::mojom::CompositorFrameSinkClientPtr client,
+    viz::mojom::DisplayPrivateAssociatedRequest display_request) {
+  has_created_compositor_frame_sink_ = true;
+  // TODO(fsamuel): AcceleratedWidget cannot be transported over IPC for Mac
+  // or Android. We should instead use GpuSurfaceTracker here on those
+  // platforms.
+  delegate_->GetHostFrameSinkManager()->CreateRootCompositorFrameSink(
+      frame_sink_id_, widget,
+      viz::CreateRendererSettings(viz::BufferToTextureTargetMap()),
+      std::move(sink_request), std::move(client), std::move(display_request));
 }
 
 void ServerWindow::CreateCompositorFrameSink(
-    cc::mojom::MojoCompositorFrameSinkRequest request,
-    cc::mojom::MojoCompositorFrameSinkClientPtr client) {
-  GetOrCreateCompositorFrameSinkManager()->CreateCompositorFrameSink(
-      std::move(request), std::move(client));
+    viz::mojom::CompositorFrameSinkRequest request,
+    viz::mojom::CompositorFrameSinkClientPtr client) {
+  has_created_compositor_frame_sink_ = true;
+  delegate_->GetHostFrameSinkManager()->CreateCompositorFrameSink(
+      frame_sink_id_, std::move(request), std::move(client));
 }
 
 void ServerWindow::Add(ServerWindow* child) {
@@ -174,7 +192,7 @@ void ServerWindow::StackChildAtTop(ServerWindow* child) {
 
 void ServerWindow::SetBounds(
     const gfx::Rect& bounds,
-    const base::Optional<cc::LocalSurfaceId>& local_surface_id) {
+    const base::Optional<viz::LocalSurfaceId>& local_surface_id) {
   if (bounds_ == bounds && current_local_surface_id_ == local_surface_id)
     return;
 
@@ -213,8 +231,8 @@ void ServerWindow::SetCanAcceptDrops(bool accepts_drops) {
   accepts_drops_ = accepts_drops;
 }
 
-const ServerWindow* ServerWindow::GetRoot() const {
-  return delegate_->GetRootWindow(this);
+const ServerWindow* ServerWindow::GetRootForDrawn() const {
+  return delegate_->GetRootWindowForDrawn(this);
 }
 
 ServerWindow* ServerWindow::GetChildWindow(const WindowId& window_id) {
@@ -267,8 +285,37 @@ void ServerWindow::RemoveTransientWindow(ServerWindow* child) {
     observer.OnTransientWindowRemoved(this, child);
 }
 
+bool ServerWindow::HasTransientAncestor(const ServerWindow* window) const {
+  const ServerWindow* transient_ancestor = this;
+  while (transient_ancestor && transient_ancestor != window)
+    transient_ancestor = transient_ancestor->transient_parent_;
+  return transient_ancestor == window;
+}
+
 void ServerWindow::SetModalType(ModalType modal_type) {
+  if (modal_type_ == modal_type)
+    return;
+
+  const ModalType old_modal_type = modal_type_;
   modal_type_ = modal_type;
+  for (auto& observer : observers_)
+    observer.OnWindowModalTypeChanged(this, old_modal_type);
+}
+
+void ServerWindow::SetChildModalParent(ServerWindow* modal_parent) {
+  if (modal_parent) {
+    child_modal_parent_tracker_ = base::MakeUnique<ServerWindowTracker>();
+    child_modal_parent_tracker_->Add(modal_parent);
+  } else {
+    child_modal_parent_tracker_.reset();
+  }
+}
+
+const ServerWindow* ServerWindow::GetChildModalParent() const {
+  return child_modal_parent_tracker_ &&
+                 !child_modal_parent_tracker_->windows().empty()
+             ? *child_modal_parent_tracker_->windows().begin()
+             : nullptr;
 }
 
 bool ServerWindow::Contains(const ServerWindow* window) const {
@@ -299,27 +346,30 @@ void ServerWindow::SetOpacity(float value) {
     observer.OnWindowOpacityChanged(this, old_opacity, opacity_);
 }
 
-void ServerWindow::SetPredefinedCursor(ui::mojom::CursorType value) {
-  if (value == cursor_id_)
+void ServerWindow::SetCursor(ui::CursorData value) {
+  if (cursor_.IsSameAs(value))
     return;
-  cursor_id_ = value;
+  cursor_ = std::move(value);
   for (auto& observer : observers_)
-    observer.OnWindowPredefinedCursorChanged(this, value);
+    observer.OnWindowCursorChanged(this, cursor_);
 }
 
-void ServerWindow::SetNonClientCursor(ui::mojom::CursorType value) {
-  if (value == non_client_cursor_id_)
+void ServerWindow::SetNonClientCursor(ui::CursorData value) {
+  if (non_client_cursor_.IsSameAs(value))
     return;
-  non_client_cursor_id_ = value;
+  non_client_cursor_ = std::move(value);
   for (auto& observer : observers_)
-    observer.OnWindowNonClientCursorChanged(this, value);
+    observer.OnWindowNonClientCursorChanged(this, non_client_cursor_);
 }
 
 void ServerWindow::SetTransform(const gfx::Transform& transform) {
   if (transform_ == transform)
     return;
 
+  const gfx::Transform old_transform = transform_;
   transform_ = transform;
+  for (auto& observer : observers_)
+    observer.OnWindowTransformChanged(this, old_transform, transform);
 }
 
 void ServerWindow::SetProperty(const std::string& name,
@@ -364,7 +414,7 @@ void ServerWindow::SetTextInputState(const ui::TextInputState& state) {
 }
 
 bool ServerWindow::IsDrawn() const {
-  const ServerWindow* root = delegate_->GetRootWindow(this);
+  const ServerWindow* root = delegate_->GetRootWindowForDrawn(this);
   if (!root || !root->visible())
     return false;
   const ServerWindow* window = this;
@@ -373,12 +423,12 @@ bool ServerWindow::IsDrawn() const {
   return root == window;
 }
 
-ServerWindowCompositorFrameSinkManager*
-ServerWindow::GetOrCreateCompositorFrameSinkManager() {
-  if (!compositor_frame_sink_manager_.get())
-    compositor_frame_sink_manager_ =
-        base::MakeUnique<ServerWindowCompositorFrameSinkManager>(this);
-  return compositor_frame_sink_manager_.get();
+mojom::ShowState ServerWindow::GetShowState() const {
+  auto iter = properties_.find(mojom::WindowManager::kShowState_Property);
+  if (iter == properties_.end() || iter->second.empty())
+    return mojom::ShowState::DEFAULT;
+
+  return static_cast<mojom::ShowState>(iter->second[0]);
 }
 
 void ServerWindow::SetUnderlayOffset(const gfx::Vector2d& offset) {
@@ -406,7 +456,7 @@ std::string ServerWindow::GetDebugWindowInfo() const {
     name = "(no name)";
 
   std::string frame_sink;
-  if (compositor_frame_sink_manager_)
+  if (has_created_compositor_frame_sink_)
     frame_sink = " [" + frame_sink_id_.ToString() + "]";
 
   return base::StringPrintf("id=%s visible=%s bounds=%s name=%s%s",
@@ -423,6 +473,11 @@ void ServerWindow::BuildDebugInfo(const std::string& depth,
     child->BuildDebugInfo(depth + "  ", result);
 }
 #endif  // DCHECK_IS_ON()
+
+void ServerWindow::OnFirstSurfaceActivation(
+    const viz::SurfaceInfo& surface_info) {
+  delegate_->OnFirstSurfaceActivation(surface_info, this);
+}
 
 void ServerWindow::RemoveImpl(ServerWindow* window) {
   window->parent_ = nullptr;

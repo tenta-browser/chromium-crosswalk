@@ -24,10 +24,10 @@ import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.test.util.ApplicationData;
-import org.chromium.components.signin.AccountManagerHelper;
+import org.chromium.components.signin.AccountManagerFacade;
 import org.chromium.components.signin.ChromeSigninController;
 import org.chromium.components.signin.test.util.AccountHolder;
-import org.chromium.components.signin.test.util.MockAccountManager;
+import org.chromium.components.signin.test.util.FakeAccountManagerDelegate;
 import org.chromium.content.browser.test.NativeLibraryTestRule;
 
 import java.util.concurrent.Callable;
@@ -46,9 +46,9 @@ public class OAuth2TokenServiceIntegrationTest {
     public UiThreadTestRule mUiThreadTestRule = new UiThreadTestRule();
 
     private static final Account TEST_ACCOUNT1 =
-            AccountManagerHelper.createAccountFromName("foo@gmail.com");
+            AccountManagerFacade.createAccountFromName("foo@gmail.com");
     private static final Account TEST_ACCOUNT2 =
-            AccountManagerHelper.createAccountFromName("bar@gmail.com");
+            AccountManagerFacade.createAccountFromName("bar@gmail.com");
     private static final AccountHolder TEST_ACCOUNT_HOLDER_1 =
             AccountHolder.builder(TEST_ACCOUNT1).alwaysAccept(true).build();
     private static final AccountHolder TEST_ACCOUNT_HOLDER_2 =
@@ -56,7 +56,7 @@ public class OAuth2TokenServiceIntegrationTest {
 
     private AdvancedMockContext mContext;
     private OAuth2TokenService mOAuth2TokenService;
-    private MockAccountManager mAccountManager;
+    private FakeAccountManagerDelegate mAccountManager;
     private TestObserver mObserver;
     private ChromeSigninController mChromeSigninController;
 
@@ -65,14 +65,15 @@ public class OAuth2TokenServiceIntegrationTest {
         mapAccountNamesToIds();
         ApplicationData.clearAppData(
                 InstrumentationRegistry.getInstrumentation().getTargetContext());
-        mActivityTestRule.loadNativeLibraryAndInitBrowserProcess();
 
-        // Set up AccountManager.
+        // loadNativeLibraryAndInitBrowserProcess will access AccountManagerFacade, so it should
+        // be initialized beforehand.
         mContext = new AdvancedMockContext(
                 InstrumentationRegistry.getInstrumentation().getTargetContext());
-        mAccountManager = new MockAccountManager(
-                mContext, InstrumentationRegistry.getInstrumentation().getContext());
-        AccountManagerHelper.overrideAccountManagerHelperForTests(mContext, mAccountManager);
+        mAccountManager = new FakeAccountManagerDelegate(mContext);
+        AccountManagerFacade.overrideAccountManagerFacadeForTests(mContext, mAccountManager);
+
+        mActivityTestRule.loadNativeLibraryAndInitBrowserProcess();
 
         // Make sure there is no account signed in yet.
         mChromeSigninController = ChromeSigninController.get();
@@ -98,6 +99,7 @@ public class OAuth2TokenServiceIntegrationTest {
                 mOAuth2TokenService.validateAccounts(false);
             }
         });
+        AccountManagerFacade.resetAccountManagerFacadeForTests();
     }
 
     private void mapAccountNamesToIds() {

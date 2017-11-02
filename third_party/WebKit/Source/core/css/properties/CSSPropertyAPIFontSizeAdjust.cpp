@@ -9,11 +9,12 @@
 
 namespace blink {
 
-const CSSValue* CSSPropertyAPIFontSizeAdjust::parseSingleValue(
+const CSSValue* CSSPropertyAPIFontSizeAdjust::ParseSingleValue(
+    CSSPropertyID,
     CSSParserTokenRange& range,
     const CSSParserContext& context,
-    CSSPropertyID) {
-  DCHECK(RuntimeEnabledFeatures::cssFontSizeAdjustEnabled());
+    const CSSParserLocalContext&) const {
+  DCHECK(RuntimeEnabledFeatures::CSSFontSizeAdjustEnabled());
   if (range.Peek().Id() == CSSValueNone)
     return CSSPropertyParserHelpers::ConsumeIdent(range);
   return CSSPropertyParserHelpers::ConsumeNumber(range, kValueRangeNonNegative);

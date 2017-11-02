@@ -37,10 +37,10 @@
 #include "core/InputTypeNames.h"
 #include "core/dom/AXObjectCache.h"
 #include "core/dom/NodeComputedStyle.h"
-#include "core/dom/shadow/ShadowRoot.h"
+#include "core/dom/ShadowRoot.h"
+#include "core/dom/events/ScopedEventQueue.h"
 #include "core/events/KeyboardEvent.h"
 #include "core/events/MouseEvent.h"
-#include "core/events/ScopedEventQueue.h"
 #include "core/html/HTMLDataListElement.h"
 #include "core/html/HTMLDataListOptionsCollection.h"
 #include "core/html/HTMLDivElement.h"
@@ -92,11 +92,12 @@ InputType::ValueMode RangeInputType::GetValueMode() const {
 }
 
 void RangeInputType::CountUsage() {
-  CountUsageIfVisible(UseCounter::kInputTypeRange);
+  CountUsageIfVisible(WebFeature::kInputTypeRange);
   if (const ComputedStyle* style = GetElement().GetComputedStyle()) {
-    if (style->Appearance() == kSliderVerticalPart)
+    if (style->Appearance() == kSliderVerticalPart) {
       UseCounter::Count(GetElement().GetDocument(),
-                        UseCounter::kInputTypeRangeVerticalAppearance);
+                        WebFeature::kInputTypeRangeVerticalAppearance);
+    }
   }
 }
 
@@ -328,12 +329,12 @@ bool RangeInputType::ShouldRespectListAttribute() {
 
 inline SliderThumbElement* RangeInputType::GetSliderThumbElement() const {
   return ToSliderThumbElementOrDie(
-      GetElement().UserAgentShadowRoot()->GetElementById(
+      GetElement().UserAgentShadowRoot()->getElementById(
           ShadowElementNames::SliderThumb()));
 }
 
 inline Element* RangeInputType::SliderTrackElement() const {
-  return GetElement().UserAgentShadowRoot()->GetElementById(
+  return GetElement().UserAgentShadowRoot()->getElementById(
       ShadowElementNames::SliderTrack());
 }
 
@@ -356,7 +357,7 @@ static bool DecimalCompare(const Decimal& a, const Decimal& b) {
 void RangeInputType::UpdateTickMarkValues() {
   if (!tick_mark_values_dirty_)
     return;
-  tick_mark_values_.Clear();
+  tick_mark_values_.clear();
   tick_mark_values_dirty_ = false;
   HTMLDataListElement* data_list = GetElement().DataList();
   if (!data_list)

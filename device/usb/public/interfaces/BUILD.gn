@@ -10,4 +10,8 @@ mojom("interfaces") {
     "device.mojom",
     "device_manager.mojom",
   ]
+
+  deps = [
+    "//mojo/common:common_custom_types",
+  ]
 }

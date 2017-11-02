@@ -107,8 +107,7 @@ class StreamMixerAlsaInputImpl : public StreamMixerAlsa::InputQueue {
   void SetPaused(bool paused);
 
   // Sets the volume multiplier for this stream. If |multiplier| < 0, sets the
-  // volume multiplier to 0. If |multiplier| > 1, sets the volume multiplier
-  // to 1.
+  // volume multiplier to 0.
   void SetVolumeMultiplier(float multiplier);
 
   // Prevents any further calls to the delegate (ie, called when the delegate
@@ -141,6 +140,7 @@ class StreamMixerAlsaInputImpl : public StreamMixerAlsa::InputQueue {
   void PrepareToDelete(const OnReadyToDeleteCb& delete_cb) override;
   void SetContentTypeVolume(float volume, int fade_ms) override;
   void SetMuted(bool muted) override;
+  float EffectiveVolume() override;
 
   // Tells the mixer to delete |this|. Makes sure not to call |delete_cb_| more
   // than once for |this|.

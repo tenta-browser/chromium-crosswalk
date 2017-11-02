@@ -58,26 +58,23 @@ bool operator==(const ACMatchClassification& lhs,
 TEST(TitledUrlMatchUtilsTest, TitledUrlMatchToAutocompleteMatch) {
   base::string16 input_text(base::ASCIIToUTF16("goo"));
   base::string16 match_title(base::ASCIIToUTF16("Google Search"));
-  base::string16 match_url_string(
-      base::ASCIIToUTF16("https://www.google.com/"));
-  GURL match_url(match_url_string);
-  bookmarks::TitledUrlMatch::MatchPositions title_match_positions = {{0, 3}};
-  bookmarks::TitledUrlMatch::MatchPositions url_match_positions = {{12, 15}};
+  GURL match_url("https://www.google.com/");
   AutocompleteMatchType::Type type = AutocompleteMatchType::BOOKMARK_TITLE;
   int relevance = 123;
 
   MockTitledUrlNode node(match_title, match_url);
   bookmarks::TitledUrlMatch titled_url_match;
   titled_url_match.node = &node;
-  titled_url_match.title_match_positions = title_match_positions;
-  titled_url_match.url_match_positions = url_match_positions;
+  titled_url_match.title_match_positions = {{0, 3}};
+  titled_url_match.url_match_positions = {{12, 15}};
 
   scoped_refptr<MockAutocompleteProvider> provider =
       new MockAutocompleteProvider(AutocompleteProvider::Type::TYPE_BOOKMARK);
   TestSchemeClassifier classifier;
   AutocompleteInput input(input_text, base::string16::npos, std::string(),
-                          GURL(), metrics::OmniboxEventProto::NTP, false, false,
-                          true, true, false, classifier);
+                          GURL(), base::string16(),
+                          metrics::OmniboxEventProto::NTP, false, false, true,
+                          true, false, classifier);
   const base::string16 fixed_up_input(input_text);
 
   AutocompleteMatch autocomplete_match = TitledUrlMatchToAutocompleteMatch(
@@ -119,25 +116,23 @@ TEST(TitledUrlMatchUtilsTest, EmptyInlineAutocompletion) {
   // match, the inline autocompletion string will be empty.
   base::string16 input_text(base::ASCIIToUTF16("goo"));
   base::string16 match_title(base::ASCIIToUTF16("Email by Google"));
-  base::string16 match_url_string(base::ASCIIToUTF16("https://www.gmail.com/"));
-  GURL match_url(match_url_string);
-  bookmarks::TitledUrlMatch::MatchPositions title_match_positions = {{9, 12}};
-  bookmarks::TitledUrlMatch::MatchPositions url_match_positions;
+  GURL match_url("http://www.gmail.com/");
   AutocompleteMatchType::Type type = AutocompleteMatchType::BOOKMARK_TITLE;
   int relevance = 123;
 
   MockTitledUrlNode node(match_title, match_url);
   bookmarks::TitledUrlMatch titled_url_match;
   titled_url_match.node = &node;
-  titled_url_match.title_match_positions = title_match_positions;
-  titled_url_match.url_match_positions = url_match_positions;
+  titled_url_match.title_match_positions = {{9, 12}};
+  titled_url_match.url_match_positions = {};
 
   scoped_refptr<MockAutocompleteProvider> provider =
       new MockAutocompleteProvider(AutocompleteProvider::Type::TYPE_BOOKMARK);
   TestSchemeClassifier classifier;
   AutocompleteInput input(input_text, base::string16::npos, std::string(),
-                          GURL(), metrics::OmniboxEventProto::NTP, false, false,
-                          true, true, false, classifier);
+                          GURL(), base::string16(),
+                          metrics::OmniboxEventProto::NTP, false, false, true,
+                          true, false, classifier);
   const base::string16 fixed_up_input(input_text);
 
   AutocompleteMatch autocomplete_match = TitledUrlMatchToAutocompleteMatch(
@@ -152,7 +147,10 @@ TEST(TitledUrlMatchUtilsTest, EmptyInlineAutocompletion) {
       {9, ACMatchClassification::MATCH},
       {12, ACMatchClassification::NONE},
   };
-  base::string16 expected_contents(base::ASCIIToUTF16("https://www.gmail.com"));
+
+  // Because there is no match on the URL scheme, we should be able to trim
+  // the HTTP scheme off.
+  base::string16 expected_contents(base::ASCIIToUTF16("www.gmail.com"));
 
   EXPECT_EQ(provider.get(), autocomplete_match.provider);
   EXPECT_EQ(type, autocomplete_match.type);

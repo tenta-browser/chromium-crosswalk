@@ -22,9 +22,6 @@ group("perf") {
     # For blink_perf benchmarks.
     "//third_party/WebKit/PerformanceTests/",
 
-    # For blink_perf.BlinkPerfPywebsocket benchmark.
-    "//third_party/pywebsocket/",
-
     # For smoothness.tough_canvas_cases
     "//chrome/test/data/perf/",
 
@@ -33,6 +30,9 @@ group("perf") {
 
     # For indexeddb_perf
     "//chrome/test/data/indexeddb/",
+
+    # For Pylib used by VR tests
+    "//build/android/pylib/",
   ]
 }
 

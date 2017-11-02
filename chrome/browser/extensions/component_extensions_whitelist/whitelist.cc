@@ -32,9 +32,7 @@ bool IsComponentExtensionWhitelisted(const std::string& extension_id) {
   const char* const kAllowed[] = {
     extension_misc::kHotwordSharedModuleId,
     extension_misc::kInAppPaymentsSupportAppId,
-#if defined(ENABLE_MEDIA_ROUTER)
     extension_misc::kMediaRouterStableExtensionId,
-#endif  // defined(ENABLE_MEDIA_ROUTER)
     extension_misc::kPdfExtensionId,
 #if defined(OS_CHROMEOS)
     extension_misc::kChromeVoxExtensionId,
@@ -42,6 +40,7 @@ bool IsComponentExtensionWhitelisted(const std::string& extension_id) {
     extension_misc::kSpeechSynthesisExtensionId,
     extension_misc::kSwitchAccessExtensionId,
     extension_misc::kZIPUnpackerExtensionId,
+    extension_misc::kZipArchiverExtensionId,
 #endif
   };
 

@@ -5,11 +5,13 @@
 #include "content/browser/appcache/appcache_host.h"
 
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "content/browser/appcache/appcache.h"
 #include "content/browser/appcache/appcache_backend_impl.h"
 #include "content/browser/appcache/appcache_policy.h"
+#include "content/browser/appcache/appcache_request.h"
 #include "content/browser/appcache/appcache_request_handler.h"
 #include "net/url_request/url_request.h"
 #include "storage/browser/quota/quota_manager_proxy.h"
@@ -42,21 +44,26 @@ void FillCacheInfo(const AppCache* cache,
 
 }  // Anonymous namespace
 
-AppCacheHost::AppCacheHost(int host_id, AppCacheFrontend* frontend,
+AppCacheHost::AppCacheHost(int host_id,
+                           AppCacheFrontend* frontend,
                            AppCacheServiceImpl* service)
     : host_id_(host_id),
-      spawning_host_id_(kAppCacheNoHostId), spawning_process_id_(0),
-      parent_host_id_(kAppCacheNoHostId), parent_process_id_(0),
+      spawning_host_id_(kAppCacheNoHostId),
+      spawning_process_id_(0),
+      parent_host_id_(kAppCacheNoHostId),
+      parent_process_id_(0),
       pending_main_resource_cache_id_(kAppCacheNoCacheId),
       pending_selected_cache_id_(kAppCacheNoCacheId),
       was_select_cache_called_(false),
       is_cache_selection_enabled_(true),
-      frontend_(frontend), service_(service),
+      frontend_(frontend),
+      service_(service),
       storage_(service->storage()),
       pending_callback_param_(NULL),
       main_resource_was_namespace_entry_(false),
       main_resource_blocked_(false),
-      associated_cache_info_pending_(false) {
+      associated_cache_info_pending_(false),
+      weak_factory_(this) {
   service_->AddObserver(this);
 }
 
@@ -203,13 +210,13 @@ bool AppCacheHost::MarkAsForeignEntry(const GURL& document_url,
   return true;
 }
 
-void AppCacheHost::GetStatusWithCallback(const GetStatusCallback& callback,
+void AppCacheHost::GetStatusWithCallback(GetStatusCallback callback,
                                          void* callback_param) {
   DCHECK(pending_start_update_callback_.is_null() &&
          pending_swap_cache_callback_.is_null() &&
          pending_get_status_callback_.is_null());
 
-  pending_get_status_callback_ = callback;
+  pending_get_status_callback_ = std::move(callback);
   pending_callback_param_ = callback_param;
   if (is_selection_pending())
     return;
@@ -220,18 +227,18 @@ void AppCacheHost::GetStatusWithCallback(const GetStatusCallback& callback,
 void AppCacheHost::DoPendingGetStatus() {
   DCHECK_EQ(false, pending_get_status_callback_.is_null());
 
-  pending_get_status_callback_.Run(GetStatus(), pending_callback_param_);
-  pending_get_status_callback_.Reset();
+  std::move(pending_get_status_callback_)
+      .Run(GetStatus(), pending_callback_param_);
   pending_callback_param_ = NULL;
 }
 
-void AppCacheHost::StartUpdateWithCallback(const StartUpdateCallback& callback,
+void AppCacheHost::StartUpdateWithCallback(StartUpdateCallback callback,
                                            void* callback_param) {
   DCHECK(pending_start_update_callback_.is_null() &&
          pending_swap_cache_callback_.is_null() &&
          pending_get_status_callback_.is_null());
 
-  pending_start_update_callback_ = callback;
+  pending_start_update_callback_ = std::move(callback);
   pending_callback_param_ = callback_param;
   if (is_selection_pending())
     return;
@@ -252,18 +259,18 @@ void AppCacheHost::DoPendingStartUpdate() {
     }
   }
 
-  pending_start_update_callback_.Run(success, pending_callback_param_);
-  pending_start_update_callback_.Reset();
+  std::move(pending_start_update_callback_)
+      .Run(success, pending_callback_param_);
   pending_callback_param_ = NULL;
 }
 
-void AppCacheHost::SwapCacheWithCallback(const SwapCacheCallback& callback,
+void AppCacheHost::SwapCacheWithCallback(SwapCacheCallback callback,
                                          void* callback_param) {
   DCHECK(pending_start_update_callback_.is_null() &&
          pending_swap_cache_callback_.is_null() &&
          pending_get_status_callback_.is_null());
 
-  pending_swap_cache_callback_ = callback;
+  pending_swap_cache_callback_ = std::move(callback);
   pending_callback_param_ = callback_param;
   if (is_selection_pending())
     return;
@@ -288,8 +295,7 @@ void AppCacheHost::DoPendingSwapCache() {
     }
   }
 
-  pending_swap_cache_callback_.Run(success, pending_callback_param_);
-  pending_swap_cache_callback_.Reset();
+  std::move(pending_swap_cache_callback_).Run(success, pending_callback_param_);
   pending_callback_param_ = NULL;
 }
 
@@ -310,30 +316,30 @@ AppCacheHost* AppCacheHost::GetParentAppCacheHost() const {
   return backend ? backend->GetHost(parent_host_id_) : NULL;
 }
 
-AppCacheRequestHandler* AppCacheHost::CreateRequestHandler(
-    net::URLRequest* request,
+std::unique_ptr<AppCacheRequestHandler> AppCacheHost::CreateRequestHandler(
+    std::unique_ptr<AppCacheRequest> request,
     ResourceType resource_type,
     bool should_reset_appcache) {
   if (is_for_dedicated_worker()) {
     AppCacheHost* parent_host = GetParentAppCacheHost();
     if (parent_host)
       return parent_host->CreateRequestHandler(
-          request, resource_type, should_reset_appcache);
+          std::move(request), resource_type, should_reset_appcache);
     return NULL;
   }
 
   if (AppCacheRequestHandler::IsMainResourceType(resource_type)) {
     // Store the first party origin so that it can be used later in SelectCache
     // for checking whether the creation of the appcache is allowed.
-    first_party_url_ = request->first_party_for_cookies();
-    return new AppCacheRequestHandler(
-        this, resource_type, should_reset_appcache);
+    first_party_url_ = request->GetSiteForCookies();
+    return base::WrapUnique(new AppCacheRequestHandler(
+        this, resource_type, should_reset_appcache, std::move(request)));
   }
 
   if ((associated_cache() && associated_cache()->is_complete()) ||
       is_selection_pending()) {
-    return new AppCacheRequestHandler(
-        this, resource_type, should_reset_appcache);
+    return base::WrapUnique(new AppCacheRequestHandler(
+        this, resource_type, should_reset_appcache, std::move(request)));
   }
   return NULL;
 }
@@ -539,6 +545,10 @@ void AppCacheHost::PrepareForTransfer() {
 void AppCacheHost::CompleteTransfer(int host_id, AppCacheFrontend* frontend) {
   host_id_ = host_id;
   frontend_ = frontend;
+}
+
+base::WeakPtr<AppCacheHost> AppCacheHost::GetWeakPtr() {
+  return weak_factory_.GetWeakPtr();
 }
 
 void AppCacheHost::AssociateNoCache(const GURL& manifest_url) {

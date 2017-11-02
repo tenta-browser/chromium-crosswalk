@@ -23,45 +23,28 @@ function reopenWebInspector(objectId)
     }, 0);
 }
 
-function test()
-{
-    InspectorTest.RuntimeAgent.evaluate("window.objectId", dispatch);
+async function test() {
+  var result = await TestRunner.RuntimeAgent.evaluate('window.objectId');
 
-    function dispatch(error, result, exceptionDetails)
-    {
-        if (result.type !== "string") {
-            InspectorTest.evaluateInPage("console.log('Opening front-end for the first time')");
-            installHandleInInjectedScript();
-        } else {
-            InspectorTest.evaluateInPage("console.log('Opening front-end second time')");
-            checkHandleInInjectedScript(result.value, InspectorTest.completeTest);
-        }
-    }
+  if (result.type !== 'string') {
+    TestRunner.evaluateInPage('console.log(\'Opening front-end for the first time\')');
+    result = await TestRunner.RuntimeAgent.evaluate(`({ handle : "handle" })`);
+    checkHandleInInjectedScript(result.objectId, reopenInspector);
+  } else {
+    TestRunner.evaluateInPage('console.log(\'Opening front-end second time\')');
+    checkHandleInInjectedScript(result.value, TestRunner.completeTest);
+  }
 
-    function installHandleInInjectedScript()
-    {
-        InspectorTest.RuntimeAgent.evaluate("({ handle : \"handle\" })", storeIdInTargetWindow);
+  function reopenInspector() {
+    TestRunner.evaluateInPage('reopenWebInspector(\'' + escape(result.objectId) + '\')');
+  }
 
-        function storeIdInTargetWindow(error, result, exceptionDetails)
-        {
-            checkHandleInInjectedScript(result.objectId, reopenInspector);
-
-            function reopenInspector()
-            {
-                InspectorTest.evaluateInPage("reopenWebInspector('" + escape(result.objectId) + "')");
-            }
-        }
-    }
-
-    function checkHandleInInjectedScript(objectId, callback)
-    {
-        InspectorTest.RuntimeAgent.getProperties(objectId, false, propertiesAvailable);
-
-        function propertiesAvailable(error, properties)
-        {
-            InspectorTest.evaluateInPage(error ? "console.log('Error resolving object')" : "console.log('Resolved object successfully')", callback);
-        }
-    }
+  async function checkHandleInInjectedScript(objectId, callback) {
+    var properties = await TestRunner.RuntimeAgent.getProperties(objectId, false);
+    TestRunner.evaluateInPage(
+        !properties ? 'console.log(\'Error resolving object\')' : 'console.log(\'Resolved object successfully\')',
+        callback);
+  }
 }
 
 </script>

@@ -32,6 +32,7 @@
 #include "core/frame/Deprecation.h"
 #include "core/frame/FrameConsole.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameClient.h"
 #include "core/inspector/ConsoleMessage.h"
 #include "core/page/Page.h"
 #include "core/workers/WorkerOrWorkletGlobalScope.h"
@@ -46,7 +47,7 @@ int totalPagesMeasuredCSSSampleId() {
 }
 
 // Make sure update_use_counter_css.py was run which updates histograms.xml.
-constexpr int kMaximumCSSSampleId = 560;
+constexpr int kMaximumCSSSampleId = 587;
 
 }  // namespace
 
@@ -881,14 +882,10 @@ int UseCounter::MapCSSPropertyIdToCSSSampleIdForHistogram(
       return 454;
     case CSSPropertyJustifyItems:
       return 455;
-    case CSSPropertyAliasMotionPath:
-      return 457;
-    case CSSPropertyAliasMotionOffset:
-      return 458;
-    case CSSPropertyAliasMotionRotation:
-      return 459;
-    case CSSPropertyMotion:
-      return 460;
+    // CSSPropertyMotionPath was 457.
+    // CSSPropertyAliasMotionOffset was 458.
+    // CSSPropertyAliasMotionRotation was 459.
+    // CSSPropertyMotion was 460.
     case CSSPropertyX:
       return 461;
     case CSSPropertyY:
@@ -967,14 +964,10 @@ int UseCounter::MapCSSPropertyIdToCSSSampleIdForHistogram(
       return 498;
     case CSSPropertyScrollSnapType:
       return 499;
-    case CSSPropertyScrollSnapPointsX:
-      return 500;
-    case CSSPropertyScrollSnapPointsY:
-      return 501;
-    case CSSPropertyScrollSnapCoordinate:
-      return 502;
-    case CSSPropertyScrollSnapDestination:
-      return 503;
+    // CSSPropertyScrollSnapPointsX was 500.
+    // CSSPropertyScrollSnapPointsY was 501.
+    // CSSPropertyScrollSnapCoordinate was 502.
+    // CSSPropertyScrollSnapDestination was 503.
     case CSSPropertyTranslate:
       return 504;
     case CSSPropertyRotate:
@@ -1051,8 +1044,7 @@ int UseCounter::MapCSSPropertyIdToCSSSampleIdForHistogram(
       return 540;
     case CSSPropertyOffsetPath:
       return 541;
-    case CSSPropertyOffsetRotation:
-      return 542;
+    // CSSPropertyOffsetRotation was 542.
     case CSSPropertyOffset:
       return 543;
     case CSSPropertyOffsetAnchor:
@@ -1079,7 +1071,7 @@ int UseCounter::MapCSSPropertyIdToCSSSampleIdForHistogram(
       return 554;
     case CSSPropertyMaxBlockSize:
       return 555;
-    case CSSPropertyAliasLineBreak:
+    case CSSPropertyLineBreak:
       return 556;
     case CSSPropertyPlaceContent:
       return 557;
@@ -1089,6 +1081,60 @@ int UseCounter::MapCSSPropertyIdToCSSSampleIdForHistogram(
       return 559;
     case CSSPropertyPlaceSelf:
       return 560;
+    case CSSPropertyScrollSnapAlign:
+      return 561;
+    case CSSPropertyScrollPadding:
+      return 562;
+    case CSSPropertyScrollPaddingTop:
+      return 563;
+    case CSSPropertyScrollPaddingRight:
+      return 564;
+    case CSSPropertyScrollPaddingBottom:
+      return 565;
+    case CSSPropertyScrollPaddingLeft:
+      return 566;
+    case CSSPropertyScrollPaddingBlock:
+      return 567;
+    case CSSPropertyScrollPaddingBlockStart:
+      return 568;
+    case CSSPropertyScrollPaddingBlockEnd:
+      return 569;
+    case CSSPropertyScrollPaddingInline:
+      return 570;
+    case CSSPropertyScrollPaddingInlineStart:
+      return 571;
+    case CSSPropertyScrollPaddingInlineEnd:
+      return 572;
+    case CSSPropertyScrollSnapMargin:
+      return 573;
+    case CSSPropertyScrollSnapMarginTop:
+      return 574;
+    case CSSPropertyScrollSnapMarginRight:
+      return 575;
+    case CSSPropertyScrollSnapMarginBottom:
+      return 576;
+    case CSSPropertyScrollSnapMarginLeft:
+      return 577;
+    case CSSPropertyScrollSnapMarginBlock:
+      return 578;
+    case CSSPropertyScrollSnapMarginBlockStart:
+      return 579;
+    case CSSPropertyScrollSnapMarginBlockEnd:
+      return 580;
+    case CSSPropertyScrollSnapMarginInline:
+      return 581;
+    case CSSPropertyScrollSnapMarginInlineStart:
+      return 582;
+    case CSSPropertyScrollSnapMarginInlineEnd:
+      return 583;
+    case CSSPropertyScrollSnapStop:
+      return 584;
+    case CSSPropertyScrollBoundaryBehavior:
+      return 585;
+    case CSSPropertyScrollBoundaryBehaviorX:
+      return 586;
+    case CSSPropertyScrollBoundaryBehaviorY:
+      return 587;
     // 1. Add new features above this line (don't change the assigned numbers of
     // the existing items).
     // 2. Update kMaximumCSSSampleId with the new maximum value.
@@ -1096,19 +1142,18 @@ int UseCounter::MapCSSPropertyIdToCSSSampleIdForHistogram(
     // chromium/src/tools/metrics/histograms to update the UMA histogram names.
 
     case CSSPropertyInvalid:
-      ASSERT_NOT_REACHED();
+      NOTREACHED();
       return 0;
   }
 
-  ASSERT_NOT_REACHED();
+  NOTREACHED();
   return 0;
 }
 
 UseCounter::UseCounter(Context context)
     : mute_count_(0),
-      disable_reporting_(false),
       context_(context),
-      features_recorded_(kNumberOfFeatures),
+      features_recorded_(static_cast<int>(WebFeature::kNumberOfFeatures)),
       css_recorded_(numCSSPropertyIDs),
       animated_css_recorded_(numCSSPropertyIDs) {}
 
@@ -1120,84 +1165,92 @@ void UseCounter::UnmuteForInspector() {
   mute_count_--;
 }
 
-void UseCounter::RecordMeasurement(Feature feature) {
+void UseCounter::RecordMeasurement(WebFeature feature,
+                                   const LocalFrame& source_frame) {
   if (mute_count_)
     return;
 
-  DCHECK(feature != kOBSOLETE_PageDestruction &&
-         feature !=
-             kPageVisits);  // PageDestruction is reserved as a scaling factor.
-  DCHECK(feature < kNumberOfFeatures);
+  // PageDestruction is reserved as a scaling factor.
+  DCHECK_NE(WebFeature::kOBSOLETE_PageDestruction, feature);
+  DCHECK_NE(WebFeature::kPageVisits, feature);
+  DCHECK_GE(WebFeature::kNumberOfFeatures, feature);
 
-  if (!features_recorded_.QuickGet(feature)) {
+  int feature_id = static_cast<int>(feature);
+  if (!features_recorded_.QuickGet(feature_id)) {
     // Note that HTTPArchive tooling looks specifically for this event - see
     // https://github.com/HTTPArchive/httparchive/issues/59
-    if (!disable_reporting_) {
+    if (context_ != kDisabledContext) {
       TRACE_EVENT1(TRACE_DISABLED_BY_DEFAULT("blink.feature_usage"),
-                   "FeatureFirstUsed", "feature", feature);
-      FeaturesHistogram().Count(feature);
+                   "FeatureFirstUsed", "feature", feature_id);
+      FeaturesHistogram().Count(feature_id);
+      if (LocalFrameClient* client = source_frame.Client())
+        client->DidObserveNewFeatureUsage(feature);
       NotifyFeatureCounted(feature);
     }
-    features_recorded_.QuickSet(feature);
+    features_recorded_.QuickSet(feature_id);
   }
   legacy_counter_.CountFeature(feature);
 }
 
-bool UseCounter::HasRecordedMeasurement(Feature feature) const {
+bool UseCounter::HasRecordedMeasurement(WebFeature feature) const {
   if (mute_count_)
     return false;
 
-  DCHECK(feature != kOBSOLETE_PageDestruction &&
-         feature !=
-             kPageVisits);  // PageDestruction is reserved as a scaling factor.
-  DCHECK(feature < kNumberOfFeatures);
+  // PageDestruction is reserved as a scaling factor.
+  DCHECK_NE(WebFeature::kOBSOLETE_PageDestruction, feature);
+  DCHECK_NE(WebFeature::kPageVisits, feature);
+  DCHECK_GE(WebFeature::kNumberOfFeatures, feature);
 
-  return features_recorded_.QuickGet(feature);
+  return features_recorded_.QuickGet(static_cast<int>(feature));
 }
 
 DEFINE_TRACE(UseCounter) {
   visitor->Trace(observers_);
 }
 
-void UseCounter::DidCommitLoad(KURL url) {
+void UseCounter::DidCommitLoad(const KURL& url) {
   legacy_counter_.UpdateMeasurements();
 
   // Reset state from previous load.
-  disable_reporting_ = false;
-
   // Use the protocol of the document being loaded into the main frame to
   // decide whether this page is interesting from a metrics perspective.
   // Note that SVGImage cases always have an about:blank URL
-  if (context_ == kDefaultContext &&
-      !SchemeRegistry::ShouldTrackUsageMetricsForScheme(url.Protocol())) {
-    disable_reporting_ = true;
+  if (context_ != kSVGImageContext) {
+    if (url.ProtocolIs("chrome-extension"))
+      context_ = kExtensionContext;
+    else if (SchemeRegistry::ShouldTrackUsageMetricsForScheme(url.Protocol()))
+      context_ = kDefaultContext;
+    else
+      context_ = kDisabledContext;
   }
 
   features_recorded_.ClearAll();
   css_recorded_.ClearAll();
   animated_css_recorded_.ClearAll();
-  if (!disable_reporting_ && !mute_count_) {
-    FeaturesHistogram().Count(kPageVisits);
-    CssHistogram().Count(totalPagesMeasuredCSSSampleId());
-    AnimatedCSSHistogram().Count(totalPagesMeasuredCSSSampleId());
+  if (context_ != kDisabledContext && !mute_count_) {
+    FeaturesHistogram().Count(static_cast<int>(WebFeature::kPageVisits));
+    if (context_ != kExtensionContext) {
+      CssHistogram().Count(totalPagesMeasuredCSSSampleId());
+      AnimatedCSSHistogram().Count(totalPagesMeasuredCSSSampleId());
+    }
   }
 }
 
-void UseCounter::Count(const Frame* frame, Feature feature) {
+void UseCounter::Count(const LocalFrame* frame, WebFeature feature) {
   if (!frame)
     return;
   Page* page = frame->GetPage();
   if (!page)
     return;
 
-  page->GetUseCounter().Count(feature);
+  page->GetUseCounter().Count(feature, frame);
 }
 
-void UseCounter::Count(const Document& document, Feature feature) {
+void UseCounter::Count(const Document& document, WebFeature feature) {
   Count(document.GetFrame(), feature);
 }
 
-bool UseCounter::IsCounted(Document& document, Feature feature) {
+bool UseCounter::IsCounted(Document& document, WebFeature feature) {
   Page* page = document.GetPage();
   if (!page)
     return false;
@@ -1224,19 +1277,20 @@ bool UseCounter::IsCounted(Document& document, const String& string) {
   return page->GetUseCounter().IsCounted(unresolved_property);
 }
 
-void UseCounter::Count(ExecutionContext* context, Feature feature) {
+void UseCounter::Count(ExecutionContext* context, WebFeature feature) {
   if (!context)
     return;
   if (context->IsDocument()) {
     Count(*ToDocument(context), feature);
     return;
   }
-  if (context->IsWorkerOrWorkletGlobalScope())
+  if (context->IsWorkerOrWorkletGlobalScope()) {
     ToWorkerOrWorkletGlobalScope(context)->CountFeature(feature);
+  }
 }
 
 void UseCounter::CountCrossOriginIframe(const Document& document,
-                                        Feature feature) {
+                                        WebFeature feature) {
   LocalFrame* frame = document.GetFrame();
   if (frame && frame->IsCrossOriginSubframe())
     Count(frame, feature);
@@ -1252,7 +1306,7 @@ void UseCounter::Count(CSSParserMode css_parser_mode, CSSPropertyID property) {
     // Note that HTTPArchive tooling looks specifically for this event - see
     // https://github.com/HTTPArchive/httparchive/issues/59
     int sample_id = MapCSSPropertyIdToCSSSampleIdForHistogram(property);
-    if (!disable_reporting_) {
+    if (context_ != kDisabledContext && context_ != kExtensionContext) {
       TRACE_EVENT1(TRACE_DISABLED_BY_DEFAULT("blink.feature_usage"),
                    "CSSFirstUsed", "feature", sample_id);
       CssHistogram().Count(sample_id);
@@ -1262,8 +1316,10 @@ void UseCounter::Count(CSSParserMode css_parser_mode, CSSPropertyID property) {
   legacy_counter_.CountCSS(property);
 }
 
-void UseCounter::Count(Feature feature) {
-  RecordMeasurement(feature);
+void UseCounter::Count(WebFeature feature, const LocalFrame* source_frame) {
+  // TODO(rbyers): Report UseCounter to browser process along with page
+  // load metrics for sourceFrame  crbug.com/716565
+  RecordMeasurement(feature, *source_frame);
 }
 
 bool UseCounter::IsCountedAnimatedCSS(CSSPropertyID unresolved_property) {
@@ -1299,7 +1355,7 @@ void UseCounter::CountAnimatedCSS(CSSPropertyID property) {
 
   if (!animated_css_recorded_.QuickGet(property)) {
     int sample_id = MapCSSPropertyIdToCSSSampleIdForHistogram(property);
-    if (!disable_reporting_) {
+    if (context_ != kDisabledContext && context_ != kExtensionContext) {
       TRACE_EVENT1(TRACE_DISABLED_BY_DEFAULT("blink.feature_usage"),
                    "AnimatedCSSFirstUsed", "feature", sample_id);
       AnimatedCSSHistogram().Count(sample_id);
@@ -1308,9 +1364,9 @@ void UseCounter::CountAnimatedCSS(CSSPropertyID property) {
   }
 }
 
-void UseCounter::NotifyFeatureCounted(Feature feature) {
+void UseCounter::NotifyFeatureCounted(WebFeature feature) {
   DCHECK(!mute_count_);
-  DCHECK(!disable_reporting_);
+  DCHECK_NE(kDisabledContext, context_);
   HeapHashSet<Member<Observer>> to_be_removed;
   for (auto observer : observers_) {
     if (observer->OnCountFeature(feature))
@@ -1320,23 +1376,37 @@ void UseCounter::NotifyFeatureCounted(Feature feature) {
 }
 
 EnumerationHistogram& UseCounter::FeaturesHistogram() const {
+  DCHECK_NE(kDisabledContext, context_);
   // Every SVGImage has it's own Page instance, and multiple web pages can
   // share the usage of a single SVGImage.  Ideally perhaps we'd delegate
   // metrics from an SVGImage to one of the Page's it's displayed in, but
   // that's tricky (SVGImage is intentionally isolated, and the Page that
   // created it may not even exist anymore).
   // So instead we just use a dedicated histogram for the SVG case.
-  DEFINE_STATIC_LOCAL(
-      blink::EnumerationHistogram, histogram,
-      ("Blink.UseCounter.Features", blink::UseCounter::kNumberOfFeatures));
   DEFINE_STATIC_LOCAL(blink::EnumerationHistogram, svg_histogram,
                       ("Blink.UseCounter.SVGImage.Features",
-                       blink::UseCounter::kNumberOfFeatures));
-
-  return context_ == kSVGImageContext ? svg_histogram : histogram;
+                       static_cast<int32_t>(WebFeature::kNumberOfFeatures)));
+  DEFINE_STATIC_LOCAL(blink::EnumerationHistogram, extension_histogram,
+                      ("Blink.UseCounter.Extensions.Features",
+                       static_cast<int32_t>(WebFeature::kNumberOfFeatures)));
+  DEFINE_STATIC_LOCAL(blink::EnumerationHistogram, histogram,
+                      ("Blink.UseCounter.Features",
+                       static_cast<int32_t>(WebFeature::kNumberOfFeatures)));
+  switch (context_) {
+    case kSVGImageContext:
+      return svg_histogram;
+    case kExtensionContext:
+      return extension_histogram;
+    case kDefaultContext:
+    case kDisabledContext:
+      break;
+  }
+  return histogram;
 }
 
 EnumerationHistogram& UseCounter::CssHistogram() const {
+  DCHECK_NE(kExtensionContext, context_);
+  DCHECK_NE(kDisabledContext, context_);
   DEFINE_STATIC_LOCAL(blink::EnumerationHistogram, histogram,
                       ("Blink.UseCounter.CSSProperties", kMaximumCSSSampleId));
   DEFINE_STATIC_LOCAL(
@@ -1365,24 +1435,26 @@ EnumerationHistogram& UseCounter::AnimatedCSSHistogram() const {
  */
 
 static EnumerationHistogram& FeatureObserverHistogram() {
-  DEFINE_STATIC_LOCAL(
-      EnumerationHistogram, histogram,
-      ("WebCore.FeatureObserver", UseCounter::kNumberOfFeatures));
+  DEFINE_STATIC_LOCAL(EnumerationHistogram, histogram,
+                      ("WebCore.FeatureObserver",
+                       static_cast<int32_t>(WebFeature::kNumberOfFeatures)));
   return histogram;
 }
 
 UseCounter::LegacyCounter::LegacyCounter()
-    : feature_bits_(kNumberOfFeatures), css_bits_(numCSSPropertyIDs) {}
+    : feature_bits_(static_cast<int>(WebFeature::kNumberOfFeatures)),
+      css_bits_(numCSSPropertyIDs) {}
 
 UseCounter::LegacyCounter::~LegacyCounter() {
   // PageDestruction was intended to be used as a scale, but it's broken (due to
   // fast shutdown).  See https://crbug.com/597963.
-  FeatureObserverHistogram().Count(kOBSOLETE_PageDestruction);
+  FeatureObserverHistogram().Count(
+      static_cast<int>(WebFeature::kOBSOLETE_PageDestruction));
   UpdateMeasurements();
 }
 
-void UseCounter::LegacyCounter::CountFeature(Feature feature) {
-  feature_bits_.QuickSet(feature);
+void UseCounter::LegacyCounter::CountFeature(WebFeature feature) {
+  feature_bits_.QuickSet(static_cast<int>(feature));
 }
 
 void UseCounter::LegacyCounter::CountCSS(CSSPropertyID property) {
@@ -1391,8 +1463,8 @@ void UseCounter::LegacyCounter::CountCSS(CSSPropertyID property) {
 
 void UseCounter::LegacyCounter::UpdateMeasurements() {
   EnumerationHistogram& feature_histogram = FeatureObserverHistogram();
-  feature_histogram.Count(kPageVisits);
-  for (size_t i = 0; i < kNumberOfFeatures; ++i) {
+  feature_histogram.Count(static_cast<int>(WebFeature::kPageVisits));
+  for (size_t i = 0; i < static_cast<int>(WebFeature::kNumberOfFeatures); ++i) {
     if (feature_bits_.QuickGet(i))
       feature_histogram.Count(i);
   }

@@ -3,10 +3,6 @@
     export_symbol: "CORE_EXPORT",
     include_path: "core/inspector",
     includes: [
-      "core/animation/Animation.h",
-      "core/dom/CharacterData.h",
-      "core/dom/PseudoElement.h",
-      "core/html/HTMLSlotElement.h",
       "core/probe/CoreProbes.h",
     ],
   },
@@ -130,7 +126,7 @@
       probes: [
         "didChangeViewport",
         "didClearDocumentOfWindowObject",
-        "didCommitLoad",
+        "willCommitLoad",
         "didResizeMainFrame",
         "didRunJavaScriptDialog",
         "domContentLoadedEventFired",
@@ -140,7 +136,9 @@
         "frameScheduledNavigation",
         "frameStartedLoading",
         "frameStoppedLoading",
+        "lifecycleEvent",
         "loadEventFired",
+        "paintTiming",
         "RecalculateStyle",
         "UpdateLayout",
         "willRunJavaScriptDialog",
@@ -152,22 +150,38 @@
       include_path: "core/frame",
       probes: [
         "CallFunction",
-        "documentWriteFetchScript",
         "ExecuteScript",
         "RecalculateStyle",
         "UpdateLayout",
         "UserCallback",
+        "V8Compile",
+        "didFailLoading",
+        "didFinishLoading",
+        "documentWriteFetchScript",
+        "domContentLoadedEventFired",
+        "willSendRequest",
+      ]
+    },
+    PerformanceMetrics: {
+      class: "InspectorPerformanceAgent",
+      probes: [
+        "consoleTimeStamp",
+        "CallFunction",
+        "ExecuteScript",
+        "RecalculateStyle",
+        "UpdateLayout",
       ]
     },
     TraceEvents: {
       class: "InspectorTraceEvents",
       probes: [
         "CallFunction",
+        "ParseHTML",
         "didFailLoading",
         "didFinishLoading",
         "didReceiveData",
         "didReceiveResourceResponse",
-        "ParseHTML",
+        "paintTiming",
         "willSendRequest",
       ]
     },

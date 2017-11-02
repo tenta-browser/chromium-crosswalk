@@ -35,7 +35,7 @@ struct IndexedDBPendingConnection;
 struct IndexedDBDataLossInfo;
 
 class CONTENT_EXPORT IndexedDBFactory
-    : NON_EXPORTED_BASE(public base::RefCountedThreadSafe<IndexedDBFactory>) {
+    : public base::RefCountedThreadSafe<IndexedDBFactory> {
  public:
   typedef std::multimap<url::Origin, IndexedDBDatabase*> OriginDBMap;
   typedef OriginDBMap::const_iterator OriginDBMapIterator;
@@ -64,6 +64,13 @@ class CONTENT_EXPORT IndexedDBFactory
       const base::FilePath& data_directory,
       bool force_close) = 0;
 
+  virtual void AbortTransactionsAndCompactDatabase(
+      base::OnceCallback<void(leveldb::Status)> callback,
+      const url::Origin& origin) = 0;
+  virtual void AbortTransactionsForDatabase(
+      base::OnceCallback<void(leveldb::Status)> callback,
+      const url::Origin& origin) = 0;
+
   virtual void HandleBackingStoreFailure(const url::Origin& origin) = 0;
   virtual void HandleBackingStoreCorruption(
       const url::Origin& origin,
@@ -84,6 +91,9 @@ class CONTENT_EXPORT IndexedDBFactory
   // Called by an IndexedDBDatabase when it is actually deleted.
   virtual void DatabaseDeleted(
       const IndexedDBDatabase::Identifier& identifier) = 0;
+
+  // Called by IndexedDBBackingStore when blob files have been cleaned.
+  virtual void BlobFilesCleaned(const url::Origin& origin) = 0;
 
   virtual size_t GetConnectionCount(const url::Origin& origin) const = 0;
 

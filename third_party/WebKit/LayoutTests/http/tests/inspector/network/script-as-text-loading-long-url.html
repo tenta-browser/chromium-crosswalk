@@ -10,16 +10,14 @@ function loadScript()
     document.body.appendChild(i);
 }
 
-function test()
-{
-    InspectorTest.addConsoleSniffer(step1);
-    InspectorTest.evaluateInPage("loadScript()");
+function test() {
+  ConsoleTestRunner.addConsoleSniffer(step1);
+  TestRunner.evaluateInPage('loadScript()');
 
-    function step1()
-    {
-        InspectorTest.dumpConsoleMessages();
-        InspectorTest.completeTest();
-    }
+  function step1() {
+    ConsoleTestRunner.dumpConsoleMessages();
+    TestRunner.completeTest();
+  }
 }
 </script>
 </head>

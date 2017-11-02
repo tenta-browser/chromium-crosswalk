@@ -16,14 +16,16 @@ static_library("feedback") {
     "feedback_switches.h",
     "feedback_uploader.cc",
     "feedback_uploader.h",
-    "feedback_uploader_chrome.cc",
-    "feedback_uploader_chrome.h",
     "feedback_uploader_delegate.cc",
     "feedback_uploader_delegate.h",
     "feedback_uploader_factory.cc",
     "feedback_uploader_factory.h",
     "feedback_util.cc",
     "feedback_util.h",
+    "system_logs/system_logs_fetcher.cc",
+    "system_logs/system_logs_fetcher.h",
+    "system_logs/system_logs_source.cc",
+    "system_logs/system_logs_source.h",
     "tracing_manager.cc",
     "tracing_manager.h",
   ]
@@ -39,7 +41,7 @@ static_library("feedback") {
     "//content/public/common",
     "//net",
     "//third_party/re2",
-    "//third_party/zlib:zip",
+    "//third_party/zlib/google:zip",
   ]
 }
 
@@ -49,7 +51,7 @@ source_set("unit_tests") {
     "anonymizer_tool_unittest.cc",
     "feedback_common_unittest.cc",
     "feedback_data_unittest.cc",
-    "feedback_uploader_chrome_unittest.cc",
+    "feedback_uploader_dispatch_unittest.cc",
     "feedback_uploader_unittest.cc",
   ]
   deps = [

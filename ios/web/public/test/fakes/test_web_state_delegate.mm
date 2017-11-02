@@ -6,6 +6,10 @@
 
 #include "base/memory/ptr_util.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 namespace web {
 
 TestOpenURLRequest::TestOpenURLRequest()
@@ -92,10 +96,9 @@ JavaScriptDialogPresenter* TestWebStateDelegate::GetJavaScriptDialogPresenter(
   return &java_script_dialog_presenter_;
 }
 
-bool TestWebStateDelegate::HandleContextMenu(WebState*,
+void TestWebStateDelegate::HandleContextMenu(WebState*,
                                              const ContextMenuParams&) {
   handle_context_menu_called_ = true;
-  return NO;
 }
 
 void TestWebStateDelegate::ShowRepostFormWarningDialog(
@@ -118,9 +121,8 @@ void TestWebStateDelegate::OnAuthRequired(
     const AuthCallback& callback) {
   last_authentication_request_ = base::MakeUnique<TestAuthenticationRequest>();
   last_authentication_request_->web_state = source;
-  last_authentication_request_->protection_space.reset(
-      [protection_space retain]);
-  last_authentication_request_->credential.reset([credential retain]);
+  last_authentication_request_->protection_space = protection_space;
+  last_authentication_request_->credential = credential;
   last_authentication_request_->auth_callback = callback;
 }
 

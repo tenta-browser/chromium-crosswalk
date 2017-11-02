@@ -5,8 +5,13 @@
 #ifndef CHROME_BROWSER_MEDIA_ROUTER_MEDIA_ROUTER_METRICS_H_
 #define CHROME_BROWSER_MEDIA_ROUTER_MEDIA_ROUTER_METRICS_H_
 
+#include <memory>
+
 #include "base/gtest_prod_util.h"
 #include "base/time/time.h"
+#include "chrome/browser/ui/webui/media_router/media_cast_mode.h"
+#include "chrome/common/media_router/mojo/dial_device_description_parser.mojom.h"
+#include "media/base/container_names.h"
 
 namespace media_router {
 
@@ -54,12 +59,19 @@ enum class MediaRouterUserAction {
 
 class MediaRouterMetrics {
  public:
+  MediaRouterMetrics();
+  ~MediaRouterMetrics();
+
   // UMA histogram names.
+  static const char kHistogramDialParsingError[];
   static const char kHistogramIconClickLocation[];
+  static const char kHistogramMediaRouterCastingSource[];
+  static const char kHistogramMediaRouterFileFormat[];
+  static const char kHistogramMediaRouterFileSize[];
+  static const char kHistogramRouteCreationOutcome[];
   static const char kHistogramUiDialogPaint[];
   static const char kHistogramUiDialogLoadedWithData[];
   static const char kHistogramUiFirstAction[];
-  static const char kHistogramRouteCreationOutcome[];
 
   // Records where the user clicked to open the Media Router dialog.
   static void RecordMediaRouterDialogOrigin(
@@ -83,6 +95,20 @@ class MediaRouterMetrics {
   // Records the outcome in a create route response.
   static void RecordRouteCreationOutcome(
       MediaRouterRouteCreationOutcome outcome);
+
+  // Records casting source.
+  static void RecordMediaRouterCastingSource(MediaCastMode source);
+
+  // Records the format of a cast file.
+  static void RecordMediaRouterFileFormat(
+      media::container_names::MediaContainerName format);
+
+  // Records the size of a cast file.
+  static void RecordMediaRouterFileSize(int64_t size);
+
+  // Records why DIAL device description resolution failed.
+  static void RecordDialParsingError(
+      chrome::mojom::DialParsingError parsing_error);
 };
 
 }  // namespace media_router

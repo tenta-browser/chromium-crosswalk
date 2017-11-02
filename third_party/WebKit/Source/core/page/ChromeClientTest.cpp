@@ -32,14 +32,14 @@ class ChromeClientToolTipLogger : public EmptyChromeClient {
 
 }  // anonymous namespace
 
-class ChromeClientTest : public testing::Test {};
+class ChromeClientTest : public ::testing::Test {};
 
 TEST_F(ChromeClientTest, SetToolTipFlood) {
   ChromeClientToolTipLogger logger;
   ChromeClient* client = &logger;
   HitTestResult result(HitTestRequest(HitTestRequest::kMove),
                        LayoutPoint(10, 20));
-  Document* doc = Document::Create();
+  Document* doc = Document::CreateForTest();
   Element* element = HTMLElement::Create(HTMLNames::divTag, *doc);
   element->setAttribute(HTMLNames::titleAttr, "tooltip");
   result.SetInnerNode(element);

@@ -12,7 +12,8 @@ import org.chromium.base.test.util.Feature;
 import org.chromium.net.CronetEngine;
 import org.chromium.net.CronetException;
 import org.chromium.net.CronetTestBase;
-import org.chromium.net.CronetTestFramework;
+import org.chromium.net.CronetTestRule.CompareDefaultWithCronet;
+import org.chromium.net.CronetTestRule.OnlyRunCronetHttpURLConnection;
 import org.chromium.net.MockUrlRequestJobFactory;
 import org.chromium.net.NativeTestServer;
 
@@ -24,12 +25,16 @@ import java.io.OutputStream;
 import java.lang.reflect.Method;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.FutureTask;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -47,13 +52,8 @@ public class CronetHttpURLConnectionTest extends CronetTestBase {
     @Override
     protected void setUp() throws Exception {
         super.setUp();
-        String[] commandLineArgs = {
-                CronetTestFramework.CACHE_KEY, CronetTestFramework.CACHE_DISK,
-                CronetTestFramework.LIBRARY_INIT_KEY,
-                CronetTestFramework.LibraryInitType.HTTP_URL_CONNECTION,
-        };
-        mCronetEngine = startCronetTestFrameworkWithUrlAndCommandLineArgs(null,
-                commandLineArgs).mCronetEngine;
+        mCronetEngine = enableDiskCache(new CronetEngine.Builder(getContext())).build();
+        setStreamHandlerFactory(mCronetEngine);
         assertTrue(NativeTestServer.startNativeTestServer(getContext()));
     }
 
@@ -277,6 +277,7 @@ public class CronetHttpURLConnectionTest extends CronetTestBase {
                     || e.getMessage().contains("net::ERR_CONNECTION_REFUSED")));
         }
         checkExceptionsAreThrown(secondConnection);
+        urlConnection.disconnect();
         // Starts the server to avoid crashing on shutdown in tearDown().
         assertTrue(NativeTestServer.startNativeTestServer(getContext()));
     }
@@ -828,7 +829,7 @@ public class CronetHttpURLConnectionTest extends CronetTestBase {
         } catch (IOException e) {
             // Expected.
             if (!testingSystemHttpURLConnection()) {
-                assertEquals("stream closed", e.getMessage());
+                assertEquals("disconnect() called", e.getMessage());
             }
         }
         // Read once more, and make sure exception is thrown.
@@ -838,7 +839,7 @@ public class CronetHttpURLConnectionTest extends CronetTestBase {
         } catch (IOException e) {
             // Expected.
             if (!testingSystemHttpURLConnection()) {
-                assertEquals("stream closed", e.getMessage());
+                assertEquals("disconnect() called", e.getMessage());
             }
         }
     }
@@ -1196,6 +1197,39 @@ public class CronetHttpURLConnectionTest extends CronetTestBase {
         // Disables caching. No cached response is received.
         checkRequestCaching(url,
                 CacheSetting.DONT_USE_CACHE, ExpectedOutcome.FAILURE);
+    }
+
+    @SmallTest
+    @Feature({"Cronet"})
+    @OnlyRunCronetHttpURLConnection
+    // Tests that if disconnect() is called on a different thread when
+    // getResponseCode() is still waiting for response, there is no
+    // NPE but only IOException.
+    // Regression test for crbug.com/751786
+    public void testDisconnectWhenGetResponseCodeIsWaiting() throws Exception {
+        ServerSocket hangingServer = new ServerSocket(0);
+        URL url = new URL("http://localhost:" + hangingServer.getLocalPort());
+        final HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+        // connect() is non-blocking. This is to make sure disconnect() triggers cancellation.
+        connection.connect();
+        FutureTask<IOException> task = new FutureTask<IOException>(new Callable<IOException>() {
+            @Override
+            public IOException call() {
+                try {
+                    connection.getResponseCode();
+                } catch (IOException e) {
+                    return e;
+                }
+                return null;
+            }
+        });
+        new Thread(task).start();
+        Socket s = hangingServer.accept();
+        connection.disconnect();
+        IOException e = task.get();
+        assertEquals("disconnect() called", e.getMessage());
+        s.close();
+        hangingServer.close();
     }
 
     private void checkExceptionsAreThrown(HttpURLConnection connection)

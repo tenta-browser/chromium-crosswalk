@@ -16,12 +16,12 @@
 #include "content/renderer/media/webrtc/webrtc_video_frame_adapter.h"
 #include "gpu/command_buffer/common/mailbox_holder.h"
 #include "media/base/bind_to_current_loop.h"
-#include "media/renderers/gpu_video_accelerator_factories.h"
+#include "media/video/gpu_video_accelerator_factories.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/webrtc/api/video/video_frame.h"
-#include "third_party/webrtc/base/bind.h"
-#include "third_party/webrtc/base/refcount.h"
 #include "third_party/webrtc/modules/video_coding/codecs/h264/include/h264.h"
+#include "third_party/webrtc/rtc_base/bind.h"
+#include "third_party/webrtc/rtc_base/refcount.h"
 
 #if defined(OS_WIN)
 #include "base/command_line.h"
@@ -68,8 +68,6 @@ RTCVideoDecoder::RTCVideoDecoder(webrtc::VideoCodecType type,
     : vda_error_counter_(0),
       video_codec_type_(type),
       factories_(factories),
-      decoder_texture_target_(0),
-      pixel_format_(media::PIXEL_FORMAT_UNKNOWN),
       next_picture_buffer_id_(0),
       state_(UNINITIALIZED),
       decode_complete_callback_(nullptr),
@@ -126,10 +124,8 @@ std::unique_ptr<RTCVideoDecoder> RTCVideoDecoder::Create(
   decoder.reset(new RTCVideoDecoder(type, factories));
   decoder->factories_->GetTaskRunner()->PostTask(
       FROM_HERE,
-      base::Bind(&RTCVideoDecoder::CreateVDA,
-                 base::Unretained(decoder.get()),
-                 profile,
-                 &waiter));
+      base::BindOnce(&RTCVideoDecoder::CreateVDA,
+                     base::Unretained(decoder.get()), profile, &waiter));
   waiter.Wait();
   // |decoder->vda_| is nullptr if the codec is not supported.
   if (decoder->vda_)
@@ -272,9 +268,8 @@ int32_t RTCVideoDecoder::Decode(
 
   SaveToDecodeBuffers_Locked(inputImage, std::move(shm_buffer), buffer_data);
   factories_->GetTaskRunner()->PostTask(
-      FROM_HERE,
-      base::Bind(&RTCVideoDecoder::RequestBufferDecode,
-                 weak_factory_.GetWeakPtr()));
+      FROM_HERE, base::BindOnce(&RTCVideoDecoder::RequestBufferDecode,
+                                weak_factory_.GetWeakPtr()));
   return WEBRTC_VIDEO_CODEC_OK;
 }
 
@@ -318,22 +313,13 @@ void RTCVideoDecoder::ProvidePictureBuffers(uint32_t buffer_count,
 
   std::vector<uint32_t> texture_ids;
   std::vector<gpu::Mailbox> texture_mailboxes;
-  decoder_texture_target_ = texture_target;
 
   if (format == media::PIXEL_FORMAT_UNKNOWN)
     format = media::PIXEL_FORMAT_ARGB;
 
-  if ((pixel_format_ != media::PIXEL_FORMAT_UNKNOWN) &&
-      (format != pixel_format_)) {
-    NotifyError(media::VideoDecodeAccelerator::PLATFORM_FAILURE);
-    return;
-  }
-
-  pixel_format_ = format;
   const uint32_t texture_count = buffer_count * textures_per_buffer;
   if (!factories_->CreateTextures(texture_count, size, &texture_ids,
-                                  &texture_mailboxes,
-                                  decoder_texture_target_)) {
+                                  &texture_mailboxes, texture_target)) {
     NotifyError(media::VideoDecodeAccelerator::PLATFORM_FAILURE);
     return;
   }
@@ -352,8 +338,9 @@ void RTCVideoDecoder::ProvidePictureBuffers(uint32_t buffer_count,
       mailboxes.push_back(texture_mailboxes[texture_id]);
     }
 
-    picture_buffers.push_back(
-        media::PictureBuffer(next_picture_buffer_id_++, size, ids, mailboxes));
+    picture_buffers.push_back(media::PictureBuffer(next_picture_buffer_id_++,
+                                                   size, ids, mailboxes,
+                                                   texture_target, format));
     const bool inserted =
         assigned_picture_buffers_
             .insert(std::make_pair(picture_buffers.back().id(),
@@ -415,7 +402,7 @@ void RTCVideoDecoder::PictureReady(const media::Picture& picture) {
   }
 
   scoped_refptr<media::VideoFrame> frame =
-      CreateVideoFrame(picture, pb, timestamp, visible_rect, pixel_format_);
+      CreateVideoFrame(picture, pb, timestamp, visible_rect, pb.pixel_format());
   if (!frame) {
     NotifyError(media::VideoDecodeAccelerator::PLATFORM_FAILURE);
     return;
@@ -451,7 +438,7 @@ scoped_refptr<media::VideoFrame> RTCVideoDecoder::CreateVideoFrame(
     uint32_t timestamp,
     const gfx::Rect& visible_rect,
     media::VideoPixelFormat pixel_format) {
-  DCHECK(decoder_texture_target_);
+  DCHECK(pb.texture_target());
   // Convert timestamp from 90KHz to ms.
   base::TimeDelta timestamp_ms = base::TimeDelta::FromInternalValue(
       base::checked_cast<uint64_t>(timestamp) * 1000 / 90);
@@ -464,7 +451,7 @@ scoped_refptr<media::VideoFrame> RTCVideoDecoder::CreateVideoFrame(
   gpu::MailboxHolder holders[media::VideoFrame::kMaxPlanes];
   for (size_t i = 0; i < pb.client_texture_ids().size(); ++i) {
     holders[i].mailbox = pb.texture_mailbox(i);
-    holders[i].texture_target = decoder_texture_target_;
+    holders[i].texture_target = pb.texture_target();
   }
   scoped_refptr<media::VideoFrame> frame =
       media::VideoFrame::WrapNativeTextures(
@@ -669,9 +656,8 @@ void RTCVideoDecoder::Reset_Locked() {
   if (state_ != RESETTING) {
     state_ = RESETTING;
     factories_->GetTaskRunner()->PostTask(
-        FROM_HERE,
-        base::Bind(&RTCVideoDecoder::ResetInternal,
-                   weak_factory_.GetWeakPtr()));
+        FROM_HERE, base::BindOnce(&RTCVideoDecoder::ResetInternal,
+                                  weak_factory_.GetWeakPtr()));
   }
 }
 
@@ -829,8 +815,8 @@ std::unique_ptr<base::SharedMemory> RTCVideoDecoder::GetSHM_Locked(
   // Create twice as large buffers as required, to avoid frequent reallocation.
   factories_->GetTaskRunner()->PostTask(
       FROM_HERE,
-      base::Bind(&RTCVideoDecoder::CreateSHM, weak_factory_.GetWeakPtr(),
-                 kNumSharedMemorySegments, min_size * 2));
+      base::BindOnce(&RTCVideoDecoder::CreateSHM, weak_factory_.GetWeakPtr(),
+                     kNumSharedMemorySegments, min_size * 2));
 
   // We'll be called again after the shared memory is created.
   return NULL;

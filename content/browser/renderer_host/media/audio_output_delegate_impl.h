@@ -33,21 +33,35 @@ namespace content {
 class CONTENT_EXPORT AudioOutputDelegateImpl
     : public media::AudioOutputDelegate {
  public:
-  AudioOutputDelegateImpl(EventHandler* handler,
-                          media::AudioManager* audio_manager,
-                          std::unique_ptr<media::AudioLog> audio_log,
-                          AudioMirroringManager* mirroring_manager,
-                          MediaObserver* media_observer,
-                          int stream_id,
-                          int render_frame_id,
-                          int render_process_id,
-                          const media::AudioParameters& params,
-                          const std::string& output_device_id);
+  static std::unique_ptr<AudioOutputDelegate> Create(
+      EventHandler* handler,
+      media::AudioManager* audio_manager,
+      std::unique_ptr<media::AudioLog> audio_log,
+      AudioMirroringManager* mirroring_manager,
+      MediaObserver* media_observer,
+      int stream_id,
+      int render_frame_id,
+      int render_process_id,
+      const media::AudioParameters& params,
+      const std::string& output_device_id);
+
+  AudioOutputDelegateImpl(
+      std::unique_ptr<AudioSyncReader> reader,
+      std::unique_ptr<base::CancelableSyncSocket> foreign_socket,
+      EventHandler* handler,
+      media::AudioManager* audio_manager,
+      std::unique_ptr<media::AudioLog> audio_log,
+      AudioMirroringManager* mirroring_manager,
+      MediaObserver* media_observer,
+      int stream_id,
+      int render_frame_id,
+      int render_process_id,
+      const media::AudioParameters& params,
+      const std::string& output_device_id);
 
   ~AudioOutputDelegateImpl() override;
 
   // AudioOutputDelegate implementation.
-  scoped_refptr<media::AudioOutputController> GetController() const override;
   int GetStreamId() const override;
   void OnPlayStream() override;
   void OnPauseStream() override;
@@ -55,10 +69,12 @@ class CONTENT_EXPORT AudioOutputDelegateImpl
 
  private:
   class ControllerEventHandler;
+  friend class AudioOutputDelegateTest;
 
   void SendCreatedNotification();
   void OnError();
   void UpdatePlayingState(bool playing);
+  media::AudioOutputController* GetControllerForTesting() const;
 
   // This is the event handler which |this| send notifications to.
   EventHandler* subscriber_;
@@ -68,6 +84,7 @@ class CONTENT_EXPORT AudioOutputDelegateImpl
   // outlive |this|, see the destructor for details.
   std::unique_ptr<ControllerEventHandler> controller_event_handler_;
   std::unique_ptr<AudioSyncReader> reader_;
+  std::unique_ptr<base::CancelableSyncSocket> foreign_socket_;
   AudioMirroringManager* mirroring_manager_;
   scoped_refptr<media::AudioOutputController> controller_;
   const int stream_id_;

@@ -5,7 +5,7 @@
 #include "core/inspector/InspectorAnimationAgent.h"
 
 #include <memory>
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "core/animation/Animation.h"
 #include "core/animation/AnimationEffectReadOnly.h"
 #include "core/animation/AnimationEffectTiming.h"
@@ -21,15 +21,15 @@
 #include "core/css/CSSStyleRule.h"
 #include "core/css/resolver/StyleResolver.h"
 #include "core/dom/DOMNodeIds.h"
-#include "core/dom/NodeComputedStyle.h"
 #include "core/frame/LocalFrame.h"
+#include "core/inspector/AddStringToDigestor.h"
 #include "core/inspector/InspectedFrames.h"
 #include "core/inspector/InspectorCSSAgent.h"
 #include "core/inspector/InspectorStyleSheet.h"
 #include "core/inspector/V8InspectorString.h"
 #include "platform/Decimal.h"
 #include "platform/animation/TimingFunction.h"
-#include "wtf/text/Base64.h"
+#include "platform/wtf/text/Base64.h"
 
 namespace AnimationAgentState {
 static const char animationAgentEnabled[] = "animationAgentEnabled";
@@ -72,19 +72,19 @@ Response InspectorAnimationAgent::disable() {
     clone->cancel();
   state_->setBoolean(AnimationAgentState::animationAgentEnabled, false);
   instrumenting_agents_->removeInspectorAnimationAgent(this);
-  id_to_animation_.Clear();
-  id_to_animation_type_.Clear();
-  id_to_animation_clone_.Clear();
-  cleared_animations_.Clear();
+  id_to_animation_.clear();
+  id_to_animation_type_.clear();
+  id_to_animation_clone_.clear();
+  cleared_animations_.clear();
   return Response::OK();
 }
 
 void InspectorAnimationAgent::DidCommitLoadForLocalFrame(LocalFrame* frame) {
   if (frame == inspected_frames_->Root()) {
-    id_to_animation_.Clear();
-    id_to_animation_type_.Clear();
-    id_to_animation_clone_.Clear();
-    cleared_animations_.Clear();
+    id_to_animation_.clear();
+    id_to_animation_type_.clear();
+    id_to_animation_clone_.clear();
+    cleared_animations_.clear();
   }
   double playback_rate = 1;
   state_->getDouble(AnimationAgentState::animationAgentPlaybackRate,
@@ -102,7 +102,7 @@ BuildObjectForAnimationEffect(KeyframeEffectReadOnly* effect,
 
   if (is_transition) {
     // Obtain keyframes and convert keyframes back to delay
-    ASSERT(effect->Model()->IsKeyframeEffectModel());
+    DCHECK(effect->Model()->IsKeyframeEffectModel());
     const KeyframeEffectModelBase* model =
         ToKeyframeEffectModelBase(effect->Model());
     Vector<RefPtr<Keyframe>> keyframes =
@@ -136,7 +136,7 @@ static std::unique_ptr<protocol::Animation::KeyframeStyle>
 BuildObjectForStringKeyframe(const StringKeyframe* keyframe) {
   Decimal decimal = Decimal::FromDouble(keyframe->Offset() * 100);
   String offset = decimal.ToString();
-  offset.Append('%');
+  offset.append('%');
 
   std::unique_ptr<protocol::Animation::KeyframeStyle> keyframe_object =
       protocol::Animation::KeyframeStyle::create()
@@ -245,7 +245,7 @@ Response InspectorAnimationAgent::getCurrentTime(const String& id,
   } else {
     // Use startTime where possible since currentTime is limited.
     *current_time =
-        animation->timeline()->currentTime() - animation->startTime();
+        animation->TimelineInternal()->currentTime() - animation->startTime();
   }
   return Response::OK();
 }
@@ -265,7 +265,7 @@ Response InspectorAnimationAgent::setPaused(
     if (paused && !clone->Paused()) {
       // Ensure we restore a current time if the animation is limited.
       double current_time =
-          clone->timeline()->currentTime() - clone->startTime();
+          clone->TimelineInternal()->currentTime() - clone->startTime();
       clone->pause();
       clone->setCurrentTime(current_time, false);
     } else if (!paused && clone->Paused()) {
@@ -281,7 +281,7 @@ blink::Animation* InspectorAnimationAgent::AnimationClone(
   if (!id_to_animation_clone_.at(id)) {
     KeyframeEffectReadOnly* old_effect =
         ToKeyframeEffectReadOnly(animation->effect());
-    ASSERT(old_effect->Model()->IsKeyframeEffectModel());
+    DCHECK(old_effect->Model()->IsKeyframeEffectModel());
     KeyframeEffectModelBase* old_model =
         ToKeyframeEffectModelBase(old_effect->Model());
     EffectModel* new_model = nullptr;
@@ -387,7 +387,7 @@ Response InspectorAnimationAgent::setTiming(const String& animation_id,
     // Refer to CSSAnimations::calculateTransitionUpdateForProperty() for the
     // structure of transitions.
     const KeyframeVector& frames = old_model->GetFrames();
-    ASSERT(frames.size() == 3);
+    DCHECK(frames.size() == 3);
     KeyframeVector new_frames;
     for (int i = 0; i < 3; i++)
       new_frames.push_back(ToTransitionKeyframe(frames[i]->Clone().Get()));
@@ -455,17 +455,10 @@ static CSSPropertyID g_transition_properties[] = {
     CSSPropertyTransitionProperty, CSSPropertyTransitionTimingFunction,
 };
 
-static void AddStringToDigestor(WebCryptoDigestor* digestor,
-                                const String& string) {
-  digestor->Consume(
-      reinterpret_cast<const unsigned char*>(string.Ascii().Data()),
-      string.length());
-}
-
 String InspectorAnimationAgent::CreateCSSId(blink::Animation& animation) {
   String type =
       id_to_animation_type_.at(String::Number(animation.SequenceNumber()));
-  ASSERT(type != AnimationType::WebAnimation);
+  DCHECK_NE(type, AnimationType::WebAnimation);
 
   KeyframeEffectReadOnly* effect = ToKeyframeEffectReadOnly(animation.effect());
   Vector<CSSPropertyID> css_properties;
@@ -500,7 +493,7 @@ String InspectorAnimationAgent::CreateCSSId(blink::Animation& animation) {
   }
   DigestValue digest_result;
   FinishDigestor(digestor.get(), digest_result);
-  return Base64Encode(reinterpret_cast<const char*>(digest_result.Data()), 10);
+  return Base64Encode(reinterpret_cast<const char*>(digest_result.data()), 10);
 }
 
 void InspectorAnimationAgent::DidCreateAnimation(unsigned sequence_number) {
@@ -535,7 +528,7 @@ void InspectorAnimationAgent::DidClearDocumentOfWindowObject(
   if (!state_->booleanProperty(AnimationAgentState::animationAgentEnabled,
                                false))
     return;
-  ASSERT(frame->GetDocument());
+  DCHECK(frame->GetDocument());
   frame->GetDocument()->Timeline().SetPlaybackRate(
       ReferenceTimeline().PlaybackRate());
 }
@@ -548,18 +541,19 @@ Response InspectorAnimationAgent::AssertAnimation(const String& id,
   return Response::OK();
 }
 
-AnimationTimeline& InspectorAnimationAgent::ReferenceTimeline() {
+DocumentTimeline& InspectorAnimationAgent::ReferenceTimeline() {
   return inspected_frames_->Root()->GetDocument()->Timeline();
 }
 
 double InspectorAnimationAgent::NormalizedStartTime(
     blink::Animation& animation) {
-  if (ReferenceTimeline().PlaybackRate() == 0)
+  if (ReferenceTimeline().PlaybackRate() == 0) {
     return animation.startTime() + ReferenceTimeline().currentTime() -
-           animation.timeline()->currentTime();
-  return animation.startTime() +
-         (animation.timeline()->ZeroTime() - ReferenceTimeline().ZeroTime()) *
-             1000 * ReferenceTimeline().PlaybackRate();
+           animation.TimelineInternal()->currentTime();
+  }
+  return animation.startTime() + (animation.TimelineInternal()->ZeroTime() -
+                                  ReferenceTimeline().ZeroTime()) *
+                                     1000 * ReferenceTimeline().PlaybackRate();
 }
 
 DEFINE_TRACE(InspectorAnimationAgent) {

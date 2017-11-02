@@ -5,6 +5,7 @@
 #import "ui/views/controls/scrollbar/cocoa_scroll_bar.h"
 
 #import "base/mac/sdk_forward_declarations.h"
+#include "cc/paint/paint_shader.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/effects/SkGradientShader.h"
 #include "ui/compositor/layer.h"
@@ -73,7 +74,7 @@ class CocoaScrollBarThumb : public BaseScrollBarThumb {
 
  protected:
   // View:
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   void OnPaint(gfx::Canvas* canvas) override;
   bool OnMousePressed(const ui::MouseEvent& event) override;
   void OnMouseReleased(const ui::MouseEvent& event) override;
@@ -102,14 +103,14 @@ CocoaScrollBarThumb::CocoaScrollBarThumb(CocoaScrollBar* scroll_bar)
 CocoaScrollBarThumb::~CocoaScrollBarThumb() {}
 
 bool CocoaScrollBarThumb::IsStateHovered() const {
-  return GetState() == CustomButton::STATE_HOVERED;
+  return GetState() == Button::STATE_HOVERED;
 }
 
 bool CocoaScrollBarThumb::IsStatePressed() const {
-  return GetState() == CustomButton::STATE_PRESSED;
+  return GetState() == Button::STATE_PRESSED;
 }
 
-gfx::Size CocoaScrollBarThumb::GetPreferredSize() const {
+gfx::Size CocoaScrollBarThumb::CalculatePreferredSize() const {
   return gfx::Size(kScrollbarThumbThickness, kScrollbarThumbThickness);
 }
 
@@ -153,8 +154,8 @@ void CocoaScrollBarThumb::OnMouseExited(const ui::MouseEvent& event) {
   // The thumb should remain pressed when dragged, even if the mouse leaves
   // the scrollview. The thumb will be set back to its hover or normal state
   // when the mouse is released.
-  if (GetState() != CustomButton::STATE_PRESSED)
-    SetState(CustomButton::STATE_NORMAL);
+  if (GetState() != Button::STATE_PRESSED)
+    SetState(Button::STATE_NORMAL);
 }
 
 //////////////////////////////////////////////////////////////////
@@ -237,7 +238,7 @@ void CocoaScrollBar::Layout() {
   }
 }
 
-gfx::Size CocoaScrollBar::GetPreferredSize() const {
+gfx::Size CocoaScrollBar::CalculatePreferredSize() const {
   return gfx::Size();
 }
 
@@ -257,9 +258,9 @@ void CocoaScrollBar::OnPaint(gfx::Canvas* canvas) {
     gradient_bounds[1].set(track_rect.right(), track_rect.y());
   }
   cc::PaintFlags gradient;
-  gradient.setShader(cc::WrapSkShader(SkGradientShader::MakeLinear(
+  gradient.setShader(cc::PaintShader::MakeLinearGradient(
       gradient_bounds, kScrollerTrackGradientColors, nullptr,
-      arraysize(kScrollerTrackGradientColors), SkShader::kClamp_TileMode)));
+      arraysize(kScrollerTrackGradientColors), SkShader::kClamp_TileMode));
   canvas->DrawRect(track_rect, gradient);
 
   // Draw the inner border: top if horizontal, left if vertical.

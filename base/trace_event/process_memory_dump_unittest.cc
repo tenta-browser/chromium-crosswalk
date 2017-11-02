@@ -8,11 +8,24 @@
 
 #include "base/memory/aligned_memory.h"
 #include "base/memory/ptr_util.h"
+#include "base/memory/shared_memory_tracker.h"
 #include "base/process/process_metrics.h"
 #include "base/trace_event/memory_allocator_dump_guid.h"
 #include "base/trace_event/memory_infra_background_whitelist.h"
 #include "base/trace_event/trace_event_argument.h"
+#include "base/unguessable_token.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+#if defined(OS_WIN)
+#include "winbase.h"
+#elif defined(OS_POSIX)
+#include <sys/mman.h>
+#endif
+
+#if defined(OS_IOS)
+#include "base/ios/ios_util.h"
+#endif
 
 namespace base {
 namespace trace_event {
@@ -29,7 +42,82 @@ TracedValue* GetHeapDump(const ProcessMemoryDump& pmd, const char* name) {
   return it == pmd.heap_dumps().end() ? nullptr : it->second.get();
 }
 
+void* Map(size_t size) {
+#if defined(OS_WIN)
+  return ::VirtualAlloc(nullptr, size, MEM_RESERVE | MEM_COMMIT,
+                        PAGE_READWRITE);
+#elif defined(OS_POSIX)
+  return ::mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON,
+                0, 0);
+#else
+#error This architecture is not (yet) supported.
+#endif
+}
+
+void Unmap(void* addr, size_t size) {
+#if defined(OS_WIN)
+  ::VirtualFree(addr, 0, MEM_DECOMMIT);
+#elif defined(OS_POSIX)
+  ::munmap(addr, size);
+#else
+#error This architecture is not (yet) supported.
+#endif
+}
+
 }  // namespace
+
+TEST(ProcessMemoryDumpTest, MoveConstructor) {
+  auto heap_state = MakeRefCounted<HeapProfilerSerializationState>();
+  heap_state->SetStackFrameDeduplicator(MakeUnique<StackFrameDeduplicator>());
+  heap_state->SetTypeNameDeduplicator(MakeUnique<TypeNameDeduplicator>());
+
+  ProcessMemoryDump pmd1 = ProcessMemoryDump(heap_state, kDetailedDumpArgs);
+  pmd1.CreateAllocatorDump("mad1");
+  pmd1.CreateAllocatorDump("mad2");
+  pmd1.AddOwnershipEdge(MemoryAllocatorDumpGuid(42),
+                        MemoryAllocatorDumpGuid(4242));
+
+  ProcessMemoryDump pmd2(std::move(pmd1));
+
+  EXPECT_EQ(1u, pmd2.allocator_dumps().count("mad1"));
+  EXPECT_EQ(1u, pmd2.allocator_dumps().count("mad2"));
+  EXPECT_EQ(MemoryDumpLevelOfDetail::DETAILED,
+            pmd2.dump_args().level_of_detail);
+  EXPECT_EQ(1u, pmd2.allocator_dumps_edges_for_testing().size());
+  EXPECT_EQ(heap_state.get(), pmd2.heap_profiler_serialization_state().get());
+
+  // Check that calling AsValueInto() doesn't cause a crash.
+  auto traced_value = MakeUnique<TracedValue>();
+  pmd2.AsValueInto(traced_value.get());
+}
+
+TEST(ProcessMemoryDumpTest, MoveAssignment) {
+  auto heap_state = MakeRefCounted<HeapProfilerSerializationState>();
+  heap_state->SetStackFrameDeduplicator(MakeUnique<StackFrameDeduplicator>());
+  heap_state->SetTypeNameDeduplicator(MakeUnique<TypeNameDeduplicator>());
+
+  ProcessMemoryDump pmd1 = ProcessMemoryDump(heap_state, kDetailedDumpArgs);
+  pmd1.CreateAllocatorDump("mad1");
+  pmd1.CreateAllocatorDump("mad2");
+  pmd1.AddOwnershipEdge(MemoryAllocatorDumpGuid(42),
+                        MemoryAllocatorDumpGuid(4242));
+
+  ProcessMemoryDump pmd2(nullptr, {MemoryDumpLevelOfDetail::BACKGROUND});
+  pmd2.CreateAllocatorDump("malloc");
+
+  pmd2 = std::move(pmd1);
+  EXPECT_EQ(1u, pmd2.allocator_dumps().count("mad1"));
+  EXPECT_EQ(1u, pmd2.allocator_dumps().count("mad2"));
+  EXPECT_EQ(0u, pmd2.allocator_dumps().count("mad3"));
+  EXPECT_EQ(MemoryDumpLevelOfDetail::DETAILED,
+            pmd2.dump_args().level_of_detail);
+  EXPECT_EQ(1u, pmd2.allocator_dumps_edges_for_testing().size());
+  EXPECT_EQ(heap_state.get(), pmd2.heap_profiler_serialization_state().get());
+
+  // Check that calling AsValueInto() doesn't cause a crash.
+  auto traced_value = MakeUnique<TracedValue>();
+  pmd2.AsValueInto(traced_value.get());
+}
 
 TEST(ProcessMemoryDumpTest, Clear) {
   std::unique_ptr<ProcessMemoryDump> pmd1(
@@ -37,12 +125,6 @@ TEST(ProcessMemoryDumpTest, Clear) {
   pmd1->CreateAllocatorDump("mad1");
   pmd1->CreateAllocatorDump("mad2");
   ASSERT_FALSE(pmd1->allocator_dumps().empty());
-
-  pmd1->process_totals()->set_resident_set_bytes(42);
-  pmd1->set_has_process_totals();
-
-  pmd1->process_mmaps()->AddVMRegion(ProcessMemoryMaps::VMRegion());
-  pmd1->set_has_process_mmaps();
 
   pmd1->AddOwnershipEdge(MemoryAllocatorDumpGuid(42),
                          MemoryAllocatorDumpGuid(4242));
@@ -54,12 +136,9 @@ TEST(ProcessMemoryDumpTest, Clear) {
 
   pmd1->Clear();
   ASSERT_TRUE(pmd1->allocator_dumps().empty());
-  ASSERT_TRUE(pmd1->allocator_dumps_edges().empty());
+  ASSERT_TRUE(pmd1->allocator_dumps_edges_for_testing().empty());
   ASSERT_EQ(nullptr, pmd1->GetAllocatorDump("mad1"));
   ASSERT_EQ(nullptr, pmd1->GetAllocatorDump("mad2"));
-  ASSERT_FALSE(pmd1->has_process_totals());
-  ASSERT_FALSE(pmd1->has_process_mmaps());
-  ASSERT_TRUE(pmd1->process_mmaps()->vm_regions().empty());
   ASSERT_EQ(nullptr, pmd1->GetSharedGlobalAllocatorDump(shared_mad_guid1));
   ASSERT_EQ(nullptr, pmd1->GetSharedGlobalAllocatorDump(shared_mad_guid2));
 
@@ -90,26 +169,26 @@ TEST(ProcessMemoryDumpTest, Clear) {
 
 TEST(ProcessMemoryDumpTest, TakeAllDumpsFrom) {
   std::unique_ptr<TracedValue> traced_value(new TracedValue);
-  hash_map<AllocationContext, AllocationMetrics> metrics_by_context;
-  metrics_by_context[AllocationContext()] = { 1, 1 };
+  std::unordered_map<AllocationContext, AllocationMetrics> metrics_by_context;
+  metrics_by_context[AllocationContext()] = {1, 1};
   TraceEventMemoryOverhead overhead;
 
-  scoped_refptr<MemoryDumpSessionState> session_state =
-      new MemoryDumpSessionState;
-  session_state->SetStackFrameDeduplicator(
+  scoped_refptr<HeapProfilerSerializationState>
+      heap_profiler_serialization_state = new HeapProfilerSerializationState;
+  heap_profiler_serialization_state->SetStackFrameDeduplicator(
       WrapUnique(new StackFrameDeduplicator));
-  session_state->SetTypeNameDeduplicator(
+  heap_profiler_serialization_state->SetTypeNameDeduplicator(
       WrapUnique(new TypeNameDeduplicator));
-  std::unique_ptr<ProcessMemoryDump> pmd1(
-      new ProcessMemoryDump(session_state.get(), kDetailedDumpArgs));
+  std::unique_ptr<ProcessMemoryDump> pmd1(new ProcessMemoryDump(
+      heap_profiler_serialization_state.get(), kDetailedDumpArgs));
   auto* mad1_1 = pmd1->CreateAllocatorDump("pmd1/mad1");
   auto* mad1_2 = pmd1->CreateAllocatorDump("pmd1/mad2");
   pmd1->AddOwnershipEdge(mad1_1->guid(), mad1_2->guid());
   pmd1->DumpHeapUsage(metrics_by_context, overhead, "pmd1/heap_dump1");
   pmd1->DumpHeapUsage(metrics_by_context, overhead, "pmd1/heap_dump2");
 
-  std::unique_ptr<ProcessMemoryDump> pmd2(
-      new ProcessMemoryDump(session_state.get(), kDetailedDumpArgs));
+  std::unique_ptr<ProcessMemoryDump> pmd2(new ProcessMemoryDump(
+      heap_profiler_serialization_state.get(), kDetailedDumpArgs));
   auto* mad2_1 = pmd2->CreateAllocatorDump("pmd2/mad1");
   auto* mad2_2 = pmd2->CreateAllocatorDump("pmd2/mad2");
   pmd2->AddOwnershipEdge(mad2_1->guid(), mad2_2->guid());
@@ -126,7 +205,7 @@ TEST(ProcessMemoryDumpTest, TakeAllDumpsFrom) {
 
   // Make sure that pmd2 is empty but still usable after it has been emptied.
   ASSERT_TRUE(pmd2->allocator_dumps().empty());
-  ASSERT_TRUE(pmd2->allocator_dumps_edges().empty());
+  ASSERT_TRUE(pmd2->allocator_dumps_edges_for_testing().empty());
   ASSERT_TRUE(pmd2->heap_dumps().empty());
   pmd2->CreateAllocatorDump("pmd2/this_mad_stays_with_pmd2");
   ASSERT_EQ(1u, pmd2->allocator_dumps().size());
@@ -147,7 +226,7 @@ TEST(ProcessMemoryDumpTest, TakeAllDumpsFrom) {
   ASSERT_EQ(1u, pmd1->allocator_dumps().count("pmd1/mad2"));
   ASSERT_EQ(1u, pmd1->allocator_dumps().count("pmd2/mad1"));
   ASSERT_EQ(1u, pmd1->allocator_dumps().count("pmd1/mad2"));
-  ASSERT_EQ(2u, pmd1->allocator_dumps_edges().size());
+  ASSERT_EQ(2u, pmd1->allocator_dumps_edges_for_testing().size());
   ASSERT_EQ(shared_mad1, pmd1->GetSharedGlobalAllocatorDump(shared_mad_guid1));
   ASSERT_EQ(shared_mad2, pmd1->GetSharedGlobalAllocatorDump(shared_mad_guid2));
   ASSERT_TRUE(MemoryAllocatorDump::Flags::WEAK & shared_mad2->flags());
@@ -162,6 +241,72 @@ TEST(ProcessMemoryDumpTest, TakeAllDumpsFrom) {
   pmd1->AsValueInto(traced_value.get());
 
   pmd1.reset();
+}
+
+TEST(ProcessMemoryDumpTest, OverrideOwnershipEdge) {
+  std::unique_ptr<ProcessMemoryDump> pmd(
+      new ProcessMemoryDump(nullptr, kDetailedDumpArgs));
+
+  auto* shm_dump1 = pmd->CreateAllocatorDump("shared_mem/seg1");
+  auto* shm_dump2 = pmd->CreateAllocatorDump("shared_mem/seg2");
+  auto* shm_dump3 = pmd->CreateAllocatorDump("shared_mem/seg3");
+  auto* shm_dump4 = pmd->CreateAllocatorDump("shared_mem/seg4");
+
+  // Create one allocation with an auto-assigned guid and mark it as a
+  // suballocation of "fakealloc/allocated_objects".
+  auto* child1_dump = pmd->CreateAllocatorDump("shared_mem/child/seg1");
+  pmd->AddOverridableOwnershipEdge(child1_dump->guid(), shm_dump1->guid(),
+                                   0 /* importance */);
+  auto* child2_dump = pmd->CreateAllocatorDump("shared_mem/child/seg2");
+  pmd->AddOwnershipEdge(child2_dump->guid(), shm_dump2->guid(),
+                        3 /* importance */);
+  MemoryAllocatorDumpGuid shared_mad_guid(1);
+  pmd->CreateSharedGlobalAllocatorDump(shared_mad_guid);
+  pmd->AddOverridableOwnershipEdge(shm_dump3->guid(), shared_mad_guid,
+                                   0 /* importance */);
+  auto* child4_dump = pmd->CreateAllocatorDump("shared_mem/child/seg4");
+  pmd->AddOverridableOwnershipEdge(child4_dump->guid(), shm_dump4->guid(),
+                                   4 /* importance */);
+
+  const ProcessMemoryDump::AllocatorDumpEdgesMap& edges =
+      pmd->allocator_dumps_edges_for_testing();
+  EXPECT_EQ(4u, edges.size());
+  EXPECT_EQ(shm_dump1->guid(), edges.find(child1_dump->guid())->second.target);
+  EXPECT_EQ(0, edges.find(child1_dump->guid())->second.importance);
+  EXPECT_TRUE(edges.find(child1_dump->guid())->second.overridable);
+  EXPECT_EQ(shm_dump2->guid(), edges.find(child2_dump->guid())->second.target);
+  EXPECT_EQ(3, edges.find(child2_dump->guid())->second.importance);
+  EXPECT_FALSE(edges.find(child2_dump->guid())->second.overridable);
+  EXPECT_EQ(shared_mad_guid, edges.find(shm_dump3->guid())->second.target);
+  EXPECT_EQ(0, edges.find(shm_dump3->guid())->second.importance);
+  EXPECT_TRUE(edges.find(shm_dump3->guid())->second.overridable);
+  EXPECT_EQ(shm_dump4->guid(), edges.find(child4_dump->guid())->second.target);
+  EXPECT_EQ(4, edges.find(child4_dump->guid())->second.importance);
+  EXPECT_TRUE(edges.find(child4_dump->guid())->second.overridable);
+
+  // These should override old edges:
+  pmd->AddOwnershipEdge(child1_dump->guid(), shm_dump1->guid(),
+                        1 /* importance */);
+  pmd->AddOwnershipEdge(shm_dump3->guid(), shared_mad_guid, 2 /* importance */);
+  // This should not change the old edges.
+  pmd->AddOverridableOwnershipEdge(child2_dump->guid(), shm_dump2->guid(),
+                                   0 /* importance */);
+  pmd->AddOwnershipEdge(child4_dump->guid(), shm_dump4->guid(),
+                        0 /* importance */);
+
+  EXPECT_EQ(4u, edges.size());
+  EXPECT_EQ(shm_dump1->guid(), edges.find(child1_dump->guid())->second.target);
+  EXPECT_EQ(1, edges.find(child1_dump->guid())->second.importance);
+  EXPECT_FALSE(edges.find(child1_dump->guid())->second.overridable);
+  EXPECT_EQ(shm_dump2->guid(), edges.find(child2_dump->guid())->second.target);
+  EXPECT_EQ(3, edges.find(child2_dump->guid())->second.importance);
+  EXPECT_FALSE(edges.find(child2_dump->guid())->second.overridable);
+  EXPECT_EQ(shared_mad_guid, edges.find(shm_dump3->guid())->second.target);
+  EXPECT_EQ(2, edges.find(shm_dump3->guid())->second.importance);
+  EXPECT_FALSE(edges.find(shm_dump3->guid())->second.overridable);
+  EXPECT_EQ(shm_dump4->guid(), edges.find(child4_dump->guid())->second.target);
+  EXPECT_EQ(0, edges.find(child4_dump->guid())->second.importance);
+  EXPECT_FALSE(edges.find(child4_dump->guid())->second.overridable);
 }
 
 TEST(ProcessMemoryDumpTest, Suballocations) {
@@ -193,11 +338,11 @@ TEST(ProcessMemoryDumpTest, Suballocations) {
   // Finally check that AddSuballocation() has created also the
   // edges between the pictures and the anonymous allocator child dumps.
   bool found_edge[2]{false, false};
-  for (const auto& e : pmd->allocator_dumps_edges()) {
-    found_edge[0] |= (e.source == pic1_dump->guid() &&
-                      e.target == anon_node_1_it->second->guid());
-    found_edge[1] |= (e.source == pic2_dump->guid() &&
-                      e.target == anon_node_2_it->second->guid());
+  for (const auto& e : pmd->allocator_dumps_edges_for_testing()) {
+    found_edge[0] |= (e.first == pic1_dump->guid() &&
+                      e.second.target == anon_node_1_it->second->guid());
+    found_edge[1] |= (e.first == pic2_dump->guid() &&
+                      e.second.target == anon_node_2_it->second->guid());
   }
   ASSERT_TRUE(found_edge[0]);
   ASSERT_TRUE(found_edge[1]);
@@ -232,6 +377,34 @@ TEST(ProcessMemoryDumpTest, GlobalAllocatorDumpTest) {
   auto* shared_mad5 = pmd->CreateWeakSharedGlobalAllocatorDump(shared_mad_guid);
   ASSERT_EQ(shared_mad1, shared_mad5);
   ASSERT_EQ(MemoryAllocatorDump::Flags::DEFAULT, shared_mad1->flags());
+}
+
+TEST(ProcessMemoryDumpTest, SharedMemoryOwnershipTest) {
+  std::unique_ptr<ProcessMemoryDump> pmd(
+      new ProcessMemoryDump(nullptr, kDetailedDumpArgs));
+  const ProcessMemoryDump::AllocatorDumpEdgesMap& edges =
+      pmd->allocator_dumps_edges_for_testing();
+
+  auto* client_dump2 = pmd->CreateAllocatorDump("discardable/segment2");
+  auto shm_token2 = UnguessableToken::Create();
+  MemoryAllocatorDumpGuid shm_local_guid2 =
+      MemoryAllocatorDump::GetDumpIdFromName(
+          SharedMemoryTracker::GetDumpNameForTracing(shm_token2));
+  MemoryAllocatorDumpGuid shm_global_guid2 =
+      SharedMemoryTracker::GetGlobalDumpIdForTracing(shm_token2);
+  pmd->AddOverridableOwnershipEdge(shm_local_guid2, shm_global_guid2,
+                                   0 /* importance */);
+
+  pmd->CreateSharedMemoryOwnershipEdge(client_dump2->guid(), shm_token2,
+                                       1 /* importance */);
+  EXPECT_EQ(2u, edges.size());
+
+  EXPECT_EQ(shm_global_guid2, edges.find(shm_local_guid2)->second.target);
+  EXPECT_EQ(1, edges.find(shm_local_guid2)->second.importance);
+  EXPECT_FALSE(edges.find(shm_local_guid2)->second.overridable);
+  EXPECT_EQ(shm_local_guid2, edges.find(client_dump2->guid())->second.target);
+  EXPECT_EQ(1, edges.find(client_dump2->guid())->second.importance);
+  EXPECT_FALSE(edges.find(client_dump2->guid())->second.overridable);
 }
 
 TEST(ProcessMemoryDumpTest, BackgroundModeTest) {
@@ -285,20 +458,67 @@ TEST(ProcessMemoryDumpTest, CountResidentBytes) {
 
   // Allocate few page of dirty memory and check if it is resident.
   const size_t size1 = 5 * page_size;
-  std::unique_ptr<char, base::AlignedFreeDeleter> memory1(
-      static_cast<char*>(base::AlignedAlloc(size1, page_size)));
-  memset(memory1.get(), 0, size1);
-  size_t res1 = ProcessMemoryDump::CountResidentBytes(memory1.get(), size1);
+  void* memory1 = Map(size1);
+  memset(memory1, 0, size1);
+  size_t res1 = ProcessMemoryDump::CountResidentBytes(memory1, size1);
   ASSERT_EQ(res1, size1);
+  Unmap(memory1, size1);
 
   // Allocate a large memory segment (> 8Mib).
   const size_t kVeryLargeMemorySize = 15 * 1024 * 1024;
-  std::unique_ptr<char, base::AlignedFreeDeleter> memory2(
-      static_cast<char*>(base::AlignedAlloc(kVeryLargeMemorySize, page_size)));
-  memset(memory2.get(), 0, kVeryLargeMemorySize);
-  size_t res2 = ProcessMemoryDump::CountResidentBytes(memory2.get(),
-                                                      kVeryLargeMemorySize);
+  void* memory2 = Map(kVeryLargeMemorySize);
+  memset(memory2, 0, kVeryLargeMemorySize);
+  size_t res2 =
+      ProcessMemoryDump::CountResidentBytes(memory2, kVeryLargeMemorySize);
   ASSERT_EQ(res2, kVeryLargeMemorySize);
+  Unmap(memory2, kVeryLargeMemorySize);
+}
+
+TEST(ProcessMemoryDumpTest, CountResidentBytesInSharedMemory) {
+#if defined(OS_IOS)
+  // TODO(crbug.com/748410): Reenable this test.
+  if (!base::ios::IsRunningOnIOS10OrLater()) {
+    return;
+  }
+#endif
+
+  const size_t page_size = ProcessMemoryDump::GetSystemPageSize();
+
+  // Allocate few page of dirty memory and check if it is resident.
+  const size_t size1 = 5 * page_size;
+  SharedMemory shared_memory1;
+  shared_memory1.CreateAndMapAnonymous(size1);
+  memset(shared_memory1.memory(), 0, size1);
+  base::Optional<size_t> res1 =
+      ProcessMemoryDump::CountResidentBytesInSharedMemory(shared_memory1);
+  ASSERT_TRUE(res1.has_value());
+  ASSERT_EQ(res1.value(), size1);
+  shared_memory1.Unmap();
+  shared_memory1.Close();
+
+  // Allocate a large memory segment (> 8Mib).
+  const size_t kVeryLargeMemorySize = 15 * 1024 * 1024;
+  SharedMemory shared_memory2;
+  shared_memory2.CreateAndMapAnonymous(kVeryLargeMemorySize);
+  memset(shared_memory2.memory(), 0, kVeryLargeMemorySize);
+  base::Optional<size_t> res2 =
+      ProcessMemoryDump::CountResidentBytesInSharedMemory(shared_memory2);
+  ASSERT_TRUE(res2.has_value());
+  ASSERT_EQ(res2.value(), kVeryLargeMemorySize);
+  shared_memory2.Unmap();
+  shared_memory2.Close();
+
+  // Allocate a large memory segment, but touch about half of all pages.
+  const size_t kTouchedMemorySize = 7 * 1024 * 1024;
+  SharedMemory shared_memory3;
+  shared_memory3.CreateAndMapAnonymous(kVeryLargeMemorySize);
+  memset(shared_memory3.memory(), 0, kTouchedMemorySize);
+  base::Optional<size_t> res3 =
+      ProcessMemoryDump::CountResidentBytesInSharedMemory(shared_memory3);
+  ASSERT_TRUE(res3.has_value());
+  ASSERT_EQ(res3.value(), kTouchedMemorySize);
+  shared_memory3.Unmap();
+  shared_memory3.Close();
 }
 #endif  // defined(COUNT_RESIDENT_BYTES_SUPPORTED)
 

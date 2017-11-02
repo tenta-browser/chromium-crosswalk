@@ -10,28 +10,27 @@ function addScript() {
     document.head.appendChild(script);
 }
 
-async function test()
-{
-    var sourcesNavigator = new Sources.SourcesNavigatorView();
-    sourcesNavigator.show(UI.inspectorView.element);
+async function test() {
+  var sourcesNavigator = new Sources.SourcesNavigatorView();
+  sourcesNavigator.show(UI.inspectorView.element);
 
-    Common.moduleSetting('jsSourceMapsEnabled').set(true);
-    InspectorTest.evaluateInPagePromise('addScript()');
-    await InspectorTest.waitForUISourceCode('sourcemap-typescript.ts'),
+  Common.moduleSetting('jsSourceMapsEnabled').set(true);
+  TestRunner.evaluateInPagePromise('addScript()');
+  await TestRunner.waitForUISourceCode('sourcemap-typescript.ts'),
 
-    InspectorTest.markStep('dumpInitialNavigator');
-    InspectorTest.dumpNavigatorView(sourcesNavigator, false);
+      TestRunner.markStep('dumpInitialNavigator');
+  SourcesTestRunner.dumpNavigatorView(sourcesNavigator, false);
 
-    InspectorTest.markStep('disableJSSourceMaps');
-    Common.moduleSetting('jsSourceMapsEnabled').set(false);
-    InspectorTest.dumpNavigatorView(sourcesNavigator, false);
+  TestRunner.markStep('disableJSSourceMaps');
+  Common.moduleSetting('jsSourceMapsEnabled').set(false);
+  SourcesTestRunner.dumpNavigatorView(sourcesNavigator, false);
 
-    InspectorTest.markStep('enableJSSourceMaps');
-    Common.moduleSetting('jsSourceMapsEnabled').set(true);
-    await InspectorTest.waitForUISourceCode('sourcemap-typescript.ts'),
-    InspectorTest.dumpNavigatorView(sourcesNavigator, false);
+  TestRunner.markStep('enableJSSourceMaps');
+  Common.moduleSetting('jsSourceMapsEnabled').set(true);
+  await TestRunner.waitForUISourceCode('sourcemap-typescript.ts'),
+      SourcesTestRunner.dumpNavigatorView(sourcesNavigator, false);
 
-    InspectorTest.completeTest();
+  TestRunner.completeTest();
 };
 
 </script>

@@ -39,6 +39,7 @@
 #include "core/css/CSSCustomPropertyDeclaration.h"
 #include "core/css/CSSFontFamilyValue.h"
 #include "core/css/CSSFontFeatureValue.h"
+#include "core/css/CSSFontStyleRangeValue.h"
 #include "core/css/CSSFontVariationValue.h"
 #include "core/css/CSSFunctionValue.h"
 #include "core/css/CSSGridLineNamesValue.h"
@@ -179,7 +180,7 @@ static CSSValue* ValueForFillSourceType(EMaskSourceType type) {
       return CSSIdentifierValue::Create(CSSValueLuminance);
   }
 
-  ASSERT_NOT_REACHED();
+  NOTREACHED();
 
   return nullptr;
 }
@@ -224,7 +225,10 @@ static CSSValue* ValueForPositionOffset(const ComputedStyle& style,
   if (offset.IsAuto() && layout_object) {
     // If the property applies to a positioned element and the resolved value of
     // the display property is not none, the resolved value is the used value.
-    if (layout_object->IsInFlowPositioned()) {
+    // Position offsets have special meaning for position sticky so we return
+    // auto when offset.isAuto() on a sticky position object:
+    // https://crbug.com/703816.
+    if (layout_object->IsRelPositioned()) {
       // If e.g. left is auto and right is not auto, then left's computed value
       // is negative right. So we get the opposite length unit and see if it is
       // auto.
@@ -284,7 +288,7 @@ static CSSValue* ValueForPositionOffset(const ComputedStyle& style,
                      (layout_box->OffsetHeight() + client_offset.Height());
           break;
         default:
-          ASSERT_NOT_REACHED();
+          NOTREACHED();
       }
       return ZoomAdjustedPixelValue(position, style);
     }
@@ -500,13 +504,7 @@ static CSSValueList* ValueForItemPositionWithOverflowAlignment(
   CSSValueList* result = CSSValueList::CreateSpaceSeparated();
   if (data.PositionType() == kLegacyPosition)
     result->Append(*CSSIdentifierValue::Create(CSSValueLegacy));
-  if (data.GetPosition() == kItemPositionAuto) {
-    // To avoid needing to copy the RareNonInheritedData, we repurpose the
-    // 'auto' flag to not just mean 'auto' prior to running the StyleAdjuster
-    // but also mean 'normal' after running it.
-    result->Append(*CSSIdentifierValue::Create(
-        ComputedStyle::InitialDefaultAlignment().GetPosition()));
-  } else if (data.GetPosition() == kItemPositionBaseline) {
+  if (data.GetPosition() == kItemPositionBaseline) {
     result->Append(
         *CSSValuePair::Create(CSSIdentifierValue::Create(CSSValueBaseline),
                               CSSIdentifierValue::Create(CSSValueBaseline),
@@ -676,7 +674,7 @@ ValueForContentPositionAndDistributionWithOverflowAlignment(
       // Handle 'normal' value, not valid as content-distribution fallback.
       if (data.Distribution() == kContentDistributionDefault) {
         result->Append(*CSSIdentifierValue::Create(
-            RuntimeEnabledFeatures::cssGridLayoutEnabled()
+            RuntimeEnabledFeatures::CSSGridLayoutEnabled()
                 ? CSSValueNormal
                 : normal_behavior_value_id));
       }
@@ -759,16 +757,58 @@ static CSSPrimitiveValue* ValueForFontSize(const ComputedStyle& style) {
                                 style);
 }
 
-static CSSIdentifierValue* ValueForFontStretch(const ComputedStyle& style) {
-  return CSSIdentifierValue::Create(style.GetFontDescription().Stretch());
+static CSSPrimitiveValue* ValueForFontStretch(const ComputedStyle& style) {
+  return CSSPrimitiveValue::Create(style.GetFontDescription().Stretch(),
+                                   CSSPrimitiveValue::UnitType::kPercentage);
+}
+
+static CSSIdentifierValue* ValueForFontStretchAsKeyword(
+    const ComputedStyle& style) {
+  FontSelectionValue stretch_value = style.GetFontDescription().Stretch();
+  CSSValueID value_id = CSSValueInvalid;
+  if (stretch_value == UltraCondensedWidthValue())
+    value_id = CSSValueUltraCondensed;
+  if (stretch_value == UltraCondensedWidthValue())
+    value_id = CSSValueUltraCondensed;
+  if (stretch_value == ExtraCondensedWidthValue())
+    value_id = CSSValueExtraCondensed;
+  if (stretch_value == CondensedWidthValue())
+    value_id = CSSValueCondensed;
+  if (stretch_value == SemiCondensedWidthValue())
+    value_id = CSSValueSemiCondensed;
+  if (stretch_value == NormalWidthValue())
+    value_id = CSSValueNormal;
+  if (stretch_value == SemiExpandedWidthValue())
+    value_id = CSSValueSemiExpanded;
+  if (stretch_value == ExpandedWidthValue())
+    value_id = CSSValueExpanded;
+  if (stretch_value == ExtraExpandedWidthValue())
+    value_id = CSSValueExtraExpanded;
+  if (stretch_value == UltraExpandedWidthValue())
+    value_id = CSSValueUltraExpanded;
+
+  if (value_id != CSSValueInvalid)
+    return CSSIdentifierValue::Create(value_id);
+  return nullptr;
 }
 
 static CSSIdentifierValue* ValueForFontStyle(const ComputedStyle& style) {
-  return CSSIdentifierValue::Create(style.GetFontDescription().Style());
+  FontSelectionValue angle = style.GetFontDescription().Style();
+  if (angle == NormalSlopeValue()) {
+    return CSSIdentifierValue::Create(CSSValueNormal);
+  }
+
+  if (angle == ItalicSlopeValue()) {
+    return CSSIdentifierValue::Create(CSSValueItalic);
+  }
+
+  NOTREACHED();
+  return CSSIdentifierValue::Create(CSSValueNormal);
 }
 
-static CSSIdentifierValue* ValueForFontWeight(const ComputedStyle& style) {
-  return CSSIdentifierValue::Create(style.GetFontDescription().Weight());
+static CSSPrimitiveValue* ValueForFontWeight(const ComputedStyle& style) {
+  return CSSPrimitiveValue::Create(style.GetFontDescription().Weight(),
+                                   CSSPrimitiveValue::UnitType::kNumber);
 }
 
 static CSSIdentifierValue* ValueForFontVariantCaps(const ComputedStyle& style) {
@@ -967,8 +1007,8 @@ void OrderedNamedLinesCollector::AppendLines(
     size_t index,
     NamedLinesType type) const {
   auto iter = type == kNamedLines
-                  ? ordered_named_grid_lines_.Find(index)
-                  : ordered_named_auto_repeat_grid_lines_.Find(index);
+                  ? ordered_named_grid_lines_.find(index)
+                  : ordered_named_auto_repeat_grid_lines_.find(index);
   auto end_iter = type == kNamedLines
                       ? ordered_named_grid_lines_.end()
                       : ordered_named_auto_repeat_grid_lines_.end();
@@ -1133,14 +1173,15 @@ static LayoutRect SizingBox(const LayoutObject* layout_object) {
              : box->ComputedCSSContentBoxRect();
 }
 
-static CSSValue* RenderTextDecorationFlagsToCSSValue(int text_decoration) {
+static CSSValue* RenderTextDecorationFlagsToCSSValue(
+    TextDecoration text_decoration) {
   // Blink value is ignored.
   CSSValueList* list = CSSValueList::CreateSpaceSeparated();
-  if (text_decoration & kTextDecorationUnderline)
+  if (EnumHasFlags(text_decoration, TextDecoration::kUnderline))
     list->Append(*CSSIdentifierValue::Create(CSSValueUnderline));
-  if (text_decoration & kTextDecorationOverline)
+  if (EnumHasFlags(text_decoration, TextDecoration::kOverline))
     list->Append(*CSSIdentifierValue::Create(CSSValueOverline));
-  if (text_decoration & kTextDecorationLineThrough)
+  if (EnumHasFlags(text_decoration, TextDecoration::kLineThrough))
     list->Append(*CSSIdentifierValue::Create(CSSValueLineThrough));
 
   if (!list->length())
@@ -1149,17 +1190,17 @@ static CSSValue* RenderTextDecorationFlagsToCSSValue(int text_decoration) {
 }
 
 static CSSValue* ValueForTextDecorationStyle(
-    TextDecorationStyle text_decoration_style) {
+    ETextDecorationStyle text_decoration_style) {
   switch (text_decoration_style) {
-    case kTextDecorationStyleSolid:
+    case ETextDecorationStyle::kSolid:
       return CSSIdentifierValue::Create(CSSValueSolid);
-    case kTextDecorationStyleDouble:
+    case ETextDecorationStyle::kDouble:
       return CSSIdentifierValue::Create(CSSValueDouble);
-    case kTextDecorationStyleDotted:
+    case ETextDecorationStyle::kDotted:
       return CSSIdentifierValue::Create(CSSValueDotted);
-    case kTextDecorationStyleDashed:
+    case ETextDecorationStyle::kDashed:
       return CSSIdentifierValue::Create(CSSValueDashed);
-    case kTextDecorationStyleWavy:
+    case ETextDecorationStyle::kWavy:
       return CSSIdentifierValue::Create(CSSValueWavy);
   }
 
@@ -1170,9 +1211,9 @@ static CSSValue* ValueForTextDecorationStyle(
 static CSSValue* ValueForTextDecorationSkip(
     TextDecorationSkip text_decoration_skip) {
   CSSValueList* list = CSSValueList::CreateSpaceSeparated();
-  if (text_decoration_skip & kTextDecorationSkipObjects)
+  if (EnumHasFlags(text_decoration_skip, TextDecorationSkip::kObjects))
     list->Append(*CSSIdentifierValue::Create(CSSValueObjects));
-  if (text_decoration_skip & kTextDecorationSkipInk)
+  if (EnumHasFlags(text_decoration_skip, TextDecorationSkip::kInk))
     list->Append(*CSSIdentifierValue::Create(CSSValueInk));
 
   DCHECK(list->length());
@@ -1181,27 +1222,30 @@ static CSSValue* ValueForTextDecorationSkip(
 
 static CSSValue* TouchActionFlagsToCSSValue(TouchAction touch_action) {
   CSSValueList* list = CSSValueList::CreateSpaceSeparated();
-  if (touch_action == kTouchActionAuto) {
+  if (touch_action == TouchAction::kTouchActionAuto) {
     list->Append(*CSSIdentifierValue::Create(CSSValueAuto));
-  } else if (touch_action == kTouchActionNone) {
+  } else if (touch_action == TouchAction::kTouchActionNone) {
     list->Append(*CSSIdentifierValue::Create(CSSValueNone));
-  } else if (touch_action == kTouchActionManipulation) {
+  } else if (touch_action == TouchAction::kTouchActionManipulation) {
     list->Append(*CSSIdentifierValue::Create(CSSValueManipulation));
   } else {
-    if ((touch_action & kTouchActionPanX) == kTouchActionPanX)
+    if ((touch_action & TouchAction::kTouchActionPanX) ==
+        TouchAction::kTouchActionPanX)
       list->Append(*CSSIdentifierValue::Create(CSSValuePanX));
-    else if (touch_action & kTouchActionPanLeft)
+    else if (touch_action & TouchAction::kTouchActionPanLeft)
       list->Append(*CSSIdentifierValue::Create(CSSValuePanLeft));
-    else if (touch_action & kTouchActionPanRight)
+    else if (touch_action & TouchAction::kTouchActionPanRight)
       list->Append(*CSSIdentifierValue::Create(CSSValuePanRight));
-    if ((touch_action & kTouchActionPanY) == kTouchActionPanY)
+    if ((touch_action & TouchAction::kTouchActionPanY) ==
+        TouchAction::kTouchActionPanY)
       list->Append(*CSSIdentifierValue::Create(CSSValuePanY));
-    else if (touch_action & kTouchActionPanUp)
+    else if (touch_action & TouchAction::kTouchActionPanUp)
       list->Append(*CSSIdentifierValue::Create(CSSValuePanUp));
-    else if (touch_action & kTouchActionPanDown)
+    else if (touch_action & TouchAction::kTouchActionPanDown)
       list->Append(*CSSIdentifierValue::Create(CSSValuePanDown));
 
-    if ((touch_action & kTouchActionPinchZoom) == kTouchActionPinchZoom)
+    if ((touch_action & TouchAction::kTouchActionPinchZoom) ==
+        TouchAction::kTouchActionPinchZoom)
       list->Append(*CSSIdentifierValue::Create(CSSValuePinchZoom));
   }
 
@@ -1348,6 +1392,13 @@ static CSSValue* CreateTimingFunctionValue(
                                 ? CSSValueStepStart
                                 : CSSValueStepEnd;
       return CSSIdentifierValue::Create(value_id);
+    }
+
+    case TimingFunction::Type::FRAMES: {
+      const FramesTimingFunction* frames_timing_function =
+          ToFramesTimingFunction(timing_function);
+      int frames = frames_timing_function->NumberOfFrames();
+      return CSSFramesTimingFunctionValue::Create(frames);
     }
 
     default:
@@ -1645,6 +1696,27 @@ static CSSValueList* ValuesForSidesShorthand(
   return list;
 }
 
+static CSSValuePair* ValuesForInlineBlockShorthand(
+    const StylePropertyShorthand& shorthand,
+    const ComputedStyle& style,
+    const LayoutObject* layout_object,
+    Node* styled_node,
+    bool allow_visited_style) {
+  const CSSValue* start_value = ComputedStyleCSSValueMapping::Get(
+      shorthand.properties()[0], style, layout_object, styled_node,
+      allow_visited_style);
+  const CSSValue* end_value = ComputedStyleCSSValueMapping::Get(
+      shorthand.properties()[1], style, layout_object, styled_node,
+      allow_visited_style);
+  // Both properties must be specified.
+  if (!start_value || !end_value)
+    return nullptr;
+
+  CSSValuePair* pair = CSSValuePair::Create(start_value, end_value,
+                                            CSSValuePair::kDropIdenticalValues);
+  return pair;
+}
+
 static CSSValueList* ValueForBorderRadiusShorthand(const ComputedStyle& style) {
   CSSValueList* list = CSSValueList::CreateSlashSeparated();
 
@@ -1884,6 +1956,44 @@ CSSValue* ComputedStyleCSSValueMapping::ValueForFilter(
   return list;
 }
 
+CSSValue* ComputedStyleCSSValueMapping::ValueForOffset(
+    const ComputedStyle& style,
+    const LayoutObject* layout_object,
+    Node* styled_node,
+    bool allow_visited_style) {
+  CSSValueList* list = CSSValueList::CreateSpaceSeparated();
+  if (RuntimeEnabledFeatures::CSSOffsetPositionAnchorEnabled()) {
+    CSSValue* position = ValueForPosition(style.OffsetPosition(), style);
+    if (!position->IsIdentifierValue())
+      list->Append(*position);
+    else
+      DCHECK(ToCSSIdentifierValue(position)->GetValueID() == CSSValueAuto);
+  }
+
+  CSSPropertyID longhands[] = {CSSPropertyOffsetPath, CSSPropertyOffsetDistance,
+                               CSSPropertyOffsetRotate};
+  for (CSSPropertyID longhand : longhands) {
+    const CSSValue* value = ComputedStyleCSSValueMapping::Get(
+        longhand, style, layout_object, styled_node, allow_visited_style);
+    DCHECK(value);
+    list->Append(*value);
+  }
+
+  if (RuntimeEnabledFeatures::CSSOffsetPositionAnchorEnabled()) {
+    CSSValue* anchor = ValueForPosition(style.OffsetAnchor(), style);
+    if (!anchor->IsIdentifierValue()) {
+      // Add a slash before anchor.
+      CSSValueList* result = CSSValueList::CreateSlashSeparated();
+      result->Append(*list);
+      result->Append(*anchor);
+      return result;
+    } else {
+      DCHECK(ToCSSIdentifierValue(anchor)->GetValueID() == CSSValueAuto);
+    }
+  }
+  return list;
+}
+
 CSSValue* ComputedStyleCSSValueMapping::ValueForFont(
     const ComputedStyle& style) {
   // Add a slash between size and line-height.
@@ -1898,10 +2008,17 @@ CSSValue* ComputedStyleCSSValueMapping::ValueForFont(
   // this serialization.
   CSSValue* ligatures_value = ValueForFontVariantLigatures(style);
   CSSValue* numeric_value = ValueForFontVariantNumeric(style);
-  if (!DataEquivalent<CSSValue>(ligatures_value,
-                                CSSIdentifierValue::Create(CSSValueNormal)) ||
-      !DataEquivalent<CSSValue>(numeric_value,
-                                CSSIdentifierValue::Create(CSSValueNormal)))
+  // FIXME: Use DataEquivalent<CSSValue>(...) once http://crbug.com/729447 is
+  // resolved.
+  if (!DataEquivalent(
+          ligatures_value,
+          static_cast<CSSValue*>(CSSIdentifierValue::Create(CSSValueNormal))) ||
+      !DataEquivalent(
+          numeric_value,
+          static_cast<CSSValue*>(CSSIdentifierValue::Create(CSSValueNormal))))
+    return nullptr;
+
+  if (!ValueForFontStretchAsKeyword(style))
     return nullptr;
 
   CSSIdentifierValue* caps_value = ValueForFontVariantCaps(style);
@@ -1911,49 +2028,28 @@ CSSValue* ComputedStyleCSSValueMapping::ValueForFont(
   list->Append(*caps_value);
 
   list->Append(*ValueForFontWeight(style));
-  list->Append(*ValueForFontStretch(style));
+  list->Append(*ValueForFontStretchAsKeyword(style));
   list->Append(*size_and_line_height);
   list->Append(*ValueForFontFamily(style));
 
   return list;
 }
 
-static CSSValue* ValueForScrollSnapDestination(const LengthPoint& destination,
-                                               const ComputedStyle& style) {
-  CSSValueList* list = CSSValueList::CreateSpaceSeparated();
-  list->Append(*ZoomAdjustedPixelValueForLength(destination.X(), style));
-  list->Append(*ZoomAdjustedPixelValueForLength(destination.Y(), style));
-  return list;
-}
-
-static CSSValue* ValueForScrollSnapPoints(const ScrollSnapPoints& points,
-                                          const ComputedStyle& style) {
-  if (points.has_repeat) {
-    CSSFunctionValue* repeat = CSSFunctionValue::Create(CSSValueRepeat);
-    repeat->Append(
-        *ZoomAdjustedPixelValueForLength(points.repeat_offset, style));
-    return repeat;
+static CSSValue* ValueForScrollSnapType(const ScrollSnapType& type,
+                                        const ComputedStyle& style) {
+  if (!type.is_none) {
+    return CSSValuePair::Create(CSSIdentifierValue::Create(type.axis),
+                                CSSIdentifierValue::Create(type.strictness),
+                                CSSValuePair::kDropIdenticalValues);
   }
-
   return CSSIdentifierValue::Create(CSSValueNone);
 }
 
-static CSSValue* ValueForScrollSnapCoordinate(
-    const Vector<LengthPoint>& coordinates,
-    const ComputedStyle& style) {
-  if (coordinates.IsEmpty())
-    return CSSIdentifierValue::Create(CSSValueNone);
-
-  CSSValueList* list = CSSValueList::CreateCommaSeparated();
-
-  for (auto& coordinate : coordinates) {
-    auto pair = CSSValueList::CreateSpaceSeparated();
-    pair->Append(*ZoomAdjustedPixelValueForLength(coordinate.X(), style));
-    pair->Append(*ZoomAdjustedPixelValueForLength(coordinate.Y(), style));
-    list->Append(*pair);
-  }
-
-  return list;
+static CSSValue* ValueForScrollSnapAlign(const ScrollSnapAlign& align,
+                                         const ComputedStyle& style) {
+  return CSSValuePair::Create(CSSIdentifierValue::Create(align.alignmentX),
+                              CSSIdentifierValue::Create(align.alignmentY),
+                              CSSValuePair::kDropIdenticalValues);
 }
 
 // Returns a suitable value for the page-break-(before|after) property, given
@@ -2266,7 +2362,7 @@ const CSSValue* ComputedStyleCSSValueMapping::Get(
     case CSSPropertyWebkitBoxAlign:
       return CSSIdentifierValue::Create(style.BoxAlign());
     case CSSPropertyWebkitBoxDecorationBreak:
-      if (style.BoxDecorationBreak() == kBoxDecorationBreakSlice)
+      if (style.BoxDecorationBreak() == EBoxDecorationBreak::kSlice)
         return CSSIdentifierValue::Create(CSSValueSlice);
       return CSSIdentifierValue::Create(CSSValueClone);
     case CSSPropertyWebkitBoxDirection:
@@ -2331,8 +2427,9 @@ const CSSValue* ComputedStyleCSSValueMapping::Get(
     case CSSPropertyColumnRuleWidth:
       return ZoomAdjustedPixelValue(style.ColumnRuleWidth(), style);
     case CSSPropertyColumnSpan:
-      return CSSIdentifierValue::Create(style.GetColumnSpan() ? CSSValueAll
-                                                              : CSSValueNone);
+      return CSSIdentifierValue::Create(
+          static_cast<unsigned>(style.GetColumnSpan()) ? CSSValueAll
+                                                       : CSSValueNone);
     case CSSPropertyWebkitColumnBreakAfter:
       return ValueForWebkitColumnBreakBetween(style.BreakAfter());
     case CSSPropertyWebkitColumnBreakBefore:
@@ -2472,7 +2569,7 @@ const CSSValue* ComputedStyleCSSValueMapping::Get(
       return list;
     }
     case CSSPropertyFontVariationSettings: {
-      DCHECK(RuntimeEnabledFeatures::cssVariableFontsEnabled());
+      DCHECK(RuntimeEnabledFeatures::CSSVariableFontsEnabled());
       const FontVariationSettings* variation_settings =
           style.GetFontDescription().VariationSettings();
       if (!variation_settings || !variation_settings->size())
@@ -2599,7 +2696,10 @@ const CSSValue* ComputedStyleCSSValueMapping::Get(
     case CSSPropertyIsolation:
       return CSSIdentifierValue::Create(style.Isolation());
     case CSSPropertyJustifyItems:
-      return ValueForItemPositionWithOverflowAlignment(style.JustifyItems());
+      return ValueForItemPositionWithOverflowAlignment(
+          style.JustifyItems().GetPosition() == kItemPositionAuto
+              ? ComputedStyle::InitialDefaultAlignment()
+              : style.JustifyItems());
     case CSSPropertyJustifySelf:
       return ValueForItemPositionWithOverflowAlignment(style.JustifySelf());
     case CSSPropertyLeft:
@@ -2812,9 +2912,9 @@ const CSSValue* ComputedStyleCSSValueMapping::Get(
     case CSSPropertyTextAlign:
       return CSSIdentifierValue::Create(style.GetTextAlign());
     case CSSPropertyTextAlignLast:
-      return CSSIdentifierValue::Create(style.GetTextAlignLast());
+      return CSSIdentifierValue::Create(style.TextAlignLast());
     case CSSPropertyTextDecoration:
-      if (RuntimeEnabledFeatures::css3TextDecorationsEnabled())
+      if (RuntimeEnabledFeatures::CSS3TextDecorationsEnabled())
         return ValuesForShorthandProperty(textDecorationShorthand(), style,
                                           layout_object, styled_node,
                                           allow_visited_style);
@@ -2824,7 +2924,7 @@ const CSSValue* ComputedStyleCSSValueMapping::Get(
     case CSSPropertyTextDecorationSkip:
       return ValueForTextDecorationSkip(style.GetTextDecorationSkip());
     case CSSPropertyTextDecorationStyle:
-      return ValueForTextDecorationStyle(style.GetTextDecorationStyle());
+      return ValueForTextDecorationStyle(style.TextDecorationStyle());
     case CSSPropertyTextDecorationColor:
       return CurrentColorOrValidColor(style, style.TextDecorationColor());
     case CSSPropertyTextJustify:
@@ -2838,22 +2938,42 @@ const CSSValue* ComputedStyleCSSValueMapping::Get(
       return CurrentColorOrValidColor(style, style.TextFillColor());
     case CSSPropertyWebkitTextEmphasisColor:
       return CurrentColorOrValidColor(style, style.TextEmphasisColor());
-    case CSSPropertyWebkitTextEmphasisPosition:
-      return CSSIdentifierValue::Create(style.GetTextEmphasisPosition());
+    case CSSPropertyWebkitTextEmphasisPosition: {
+      CSSValueList* list = CSSValueList::CreateSpaceSeparated();
+      switch (style.GetTextEmphasisPosition()) {
+        case TextEmphasisPosition::kOverRight:
+          list->Append(*CSSIdentifierValue::Create(CSSValueOver));
+          list->Append(*CSSIdentifierValue::Create(CSSValueRight));
+          break;
+        case TextEmphasisPosition::kOverLeft:
+          list->Append(*CSSIdentifierValue::Create(CSSValueOver));
+          list->Append(*CSSIdentifierValue::Create(CSSValueLeft));
+          break;
+        case TextEmphasisPosition::kUnderRight:
+          list->Append(*CSSIdentifierValue::Create(CSSValueUnder));
+          list->Append(*CSSIdentifierValue::Create(CSSValueRight));
+          break;
+        case TextEmphasisPosition::kUnderLeft:
+          list->Append(*CSSIdentifierValue::Create(CSSValueUnder));
+          list->Append(*CSSIdentifierValue::Create(CSSValueLeft));
+          break;
+      }
+      return list;
+    }
     case CSSPropertyWebkitTextEmphasisStyle:
       switch (style.GetTextEmphasisMark()) {
-        case kTextEmphasisMarkNone:
+        case TextEmphasisMark::kNone:
           return CSSIdentifierValue::Create(CSSValueNone);
-        case kTextEmphasisMarkCustom:
+        case TextEmphasisMark::kCustom:
           return CSSStringValue::Create(style.TextEmphasisCustomMark());
-        case kTextEmphasisMarkAuto:
+        case TextEmphasisMark::kAuto:
           NOTREACHED();
         // Fall through
-        case kTextEmphasisMarkDot:
-        case kTextEmphasisMarkCircle:
-        case kTextEmphasisMarkDoubleCircle:
-        case kTextEmphasisMarkTriangle:
-        case kTextEmphasisMarkSesame: {
+        case TextEmphasisMark::kDot:
+        case TextEmphasisMark::kCircle:
+        case TextEmphasisMark::kDoubleCircle:
+        case TextEmphasisMark::kTriangle:
+        case TextEmphasisMark::kSesame: {
           CSSValueList* list = CSSValueList::CreateSpaceSeparated();
           list->Append(
               *CSSIdentifierValue::Create(style.GetTextEmphasisFill()));
@@ -2865,12 +2985,12 @@ const CSSValue* ComputedStyleCSSValueMapping::Get(
     case CSSPropertyTextIndent: {
       CSSValueList* list = CSSValueList::CreateSpaceSeparated();
       list->Append(*ZoomAdjustedPixelValueForLength(style.TextIndent(), style));
-      if (RuntimeEnabledFeatures::css3TextEnabled() &&
-          (style.GetTextIndentLine() == kTextIndentEachLine ||
-           style.GetTextIndentType() == kTextIndentHanging)) {
-        if (style.GetTextIndentLine() == kTextIndentEachLine)
+      if (RuntimeEnabledFeatures::CSS3TextEnabled() &&
+          (style.GetTextIndentLine() == TextIndentLine::kEachLine ||
+           style.GetTextIndentType() == TextIndentType::kHanging)) {
+        if (style.GetTextIndentLine() == TextIndentLine::kEachLine)
           list->Append(*CSSIdentifierValue::Create(CSSValueEachLine));
-        if (style.GetTextIndentType() == kTextIndentHanging)
+        if (style.GetTextIndentType() == TextIndentType::kHanging)
           list->Append(*CSSIdentifierValue::Create(CSSValueHanging));
       }
       return list;
@@ -2881,7 +3001,7 @@ const CSSValue* ComputedStyleCSSValueMapping::Get(
       return CSSIdentifierValue::Create(
           style.GetFontDescription().TextRendering());
     case CSSPropertyTextOverflow:
-      if (style.GetTextOverflow())
+      if (style.TextOverflow() != ETextOverflow::kClip)
         return CSSIdentifierValue::Create(CSSValueEllipsis);
       return CSSIdentifierValue::Create(CSSValueClip);
     case CSSPropertyWebkitTextSecurity:
@@ -2948,6 +3068,7 @@ const CSSValue* ComputedStyleCSSValueMapping::Get(
       return ZoomAdjustedPixelValue(style.WordSpacing(), style);
     case CSSPropertyWordWrap:
       return CSSIdentifierValue::Create(style.OverflowWrap());
+    case CSSPropertyLineBreak:
     case CSSPropertyWebkitLineBreak:
       return CSSIdentifierValue::Create(style.GetLineBreak());
     case CSSPropertyResize:
@@ -2977,8 +3098,8 @@ const CSSValue* ComputedStyleCSSValueMapping::Get(
         return CSSIdentifierValue::Create(CSSValueContentBox);
       return CSSIdentifierValue::Create(CSSValueBorderBox);
     case CSSPropertyWebkitAppRegion:
-      return CSSIdentifierValue::Create(style.GetDraggableRegionMode() ==
-                                                kDraggableRegionDrag
+      return CSSIdentifierValue::Create(style.DraggableRegionMode() ==
+                                                EDraggableRegionMode::kDrag
                                             ? CSSValueDrag
                                             : CSSValueNoDrag);
     case CSSPropertyAnimationDelay:
@@ -3107,7 +3228,7 @@ const CSSValue* ComputedStyleCSSValueMapping::Get(
       return CSSIdentifierValue::Create(style.Appearance());
     case CSSPropertyBackfaceVisibility:
       return CSSIdentifierValue::Create(
-          (style.BackfaceVisibility() == kBackfaceVisibilityHidden)
+          (style.BackfaceVisibility() == EBackfaceVisibility::kHidden)
               ? CSSValueHidden
               : CSSValueVisible);
     case CSSPropertyWebkitBorderImage:
@@ -3237,7 +3358,7 @@ const CSSValue* ComputedStyleCSSValueMapping::Get(
     }
     case CSSPropertyTransformStyle:
       return CSSIdentifierValue::Create(
-          (style.TransformStyle3D() == kTransformStyle3DPreserve3D)
+          (style.TransformStyle3D() == ETransformStyle3D::kPreserve3d)
               ? CSSValuePreserve3d
               : CSSValueFlat);
     case CSSPropertyTransitionDelay:
@@ -3290,12 +3411,12 @@ const CSSValue* ComputedStyleCSSValueMapping::Get(
     case CSSPropertyWebkitWritingMode:
       return CSSIdentifierValue::Create(style.GetWritingMode());
     case CSSPropertyWebkitTextCombine:
-      if (style.GetTextCombine() == kTextCombineAll)
+      if (style.TextCombine() == ETextCombine::kAll)
         return CSSIdentifierValue::Create(CSSValueHorizontal);
     case CSSPropertyTextCombineUpright:
-      return CSSIdentifierValue::Create(style.GetTextCombine());
+      return CSSIdentifierValue::Create(style.TextCombine());
     case CSSPropertyWebkitTextOrientation:
-      if (style.GetTextOrientation() == kTextOrientationMixed)
+      if (style.GetTextOrientation() == ETextOrientation::kMixed)
         return CSSIdentifierValue::Create(CSSValueVerticalRight);
     case CSSPropertyTextOrientation:
       return CSSIdentifierValue::Create(style.GetTextOrientation());
@@ -3407,18 +3528,38 @@ const CSSValue* ComputedStyleCSSValueMapping::Get(
     case CSSPropertyPadding:
       return ValuesForSidesShorthand(paddingShorthand(), style, layout_object,
                                      styled_node, allow_visited_style);
+    case CSSPropertyScrollPadding:
+      return ValuesForSidesShorthand(scrollPaddingShorthand(), style,
+                                     layout_object, styled_node,
+                                     allow_visited_style);
+    case CSSPropertyScrollPaddingBlock:
+      return ValuesForInlineBlockShorthand(scrollPaddingBlockShorthand(), style,
+                                           layout_object, styled_node,
+                                           allow_visited_style);
+    case CSSPropertyScrollPaddingInline:
+      return ValuesForInlineBlockShorthand(scrollPaddingInlineShorthand(),
+                                           style, layout_object, styled_node,
+                                           allow_visited_style);
+    case CSSPropertyScrollSnapMargin:
+      return ValuesForSidesShorthand(scrollSnapMarginShorthand(), style,
+                                     layout_object, styled_node,
+                                     allow_visited_style);
+    case CSSPropertyScrollSnapMarginBlock:
+      return ValuesForInlineBlockShorthand(scrollSnapMarginBlockShorthand(),
+                                           style, layout_object, styled_node,
+                                           allow_visited_style);
+    case CSSPropertyScrollSnapMarginInline:
+      return ValuesForInlineBlockShorthand(scrollSnapMarginInlineShorthand(),
+                                           style, layout_object, styled_node,
+                                           allow_visited_style);
     // Individual properties not part of the spec.
     case CSSPropertyBackgroundRepeatX:
     case CSSPropertyBackgroundRepeatY:
       return nullptr;
 
-    case CSSPropertyMotion:
-      return ValuesForShorthandProperty(motionShorthand(), style, layout_object,
-                                        styled_node, allow_visited_style);
-
     case CSSPropertyOffset:
-      return ValuesForShorthandProperty(offsetShorthand(), style, layout_object,
-                                        styled_node, allow_visited_style);
+      return ValueForOffset(style, layout_object, styled_node,
+                            allow_visited_style);
 
     case CSSPropertyOffsetAnchor:
       return ValueForPosition(style.OffsetAnchor(), style);
@@ -3427,20 +3568,19 @@ const CSSValue* ComputedStyleCSSValueMapping::Get(
       return ValueForPosition(style.OffsetPosition(), style);
 
     case CSSPropertyOffsetPath:
-      if (const StylePath* style_motion_path = style.OffsetPath())
-        return style_motion_path->ComputedCSSValue();
+      if (const BasicShape* style_motion_path = style.OffsetPath())
+        return ValueForBasicShape(style, style_motion_path);
       return CSSIdentifierValue::Create(CSSValueNone);
 
     case CSSPropertyOffsetDistance:
       return ZoomAdjustedPixelValueForLength(style.OffsetDistance(), style);
 
-    case CSSPropertyOffsetRotate:
-    case CSSPropertyOffsetRotation: {
+    case CSSPropertyOffsetRotate: {
       CSSValueList* list = CSSValueList::CreateSpaceSeparated();
-      if (style.OffsetRotation().type == kOffsetRotationAuto)
+      if (style.OffsetRotate().type == kOffsetRotationAuto)
         list->Append(*CSSIdentifierValue::Create(CSSValueAuto));
       list->Append(*CSSPrimitiveValue::Create(
-          style.OffsetRotation().angle, CSSPrimitiveValue::UnitType::kDegrees));
+          style.OffsetRotate().angle, CSSPrimitiveValue::UnitType::kDegrees));
       return list;
     }
 
@@ -3490,6 +3630,7 @@ const CSSValue* ComputedStyleCSSValueMapping::Get(
       return nullptr;
 
     // Unimplemented @font-face properties.
+    case CSSPropertyFontDisplay:
     case CSSPropertySrc:
     case CSSPropertyUnicodeRange:
       return nullptr;
@@ -3641,16 +3782,64 @@ const CSSValue* ComputedStyleCSSValueMapping::Get(
     case CSSPropertyRy:
       return ZoomAdjustedPixelValueForLength(svg_style.Ry(), style);
     case CSSPropertyScrollSnapType:
-      return CSSIdentifierValue::Create(style.GetScrollSnapType());
-    case CSSPropertyScrollSnapPointsX:
-      return ValueForScrollSnapPoints(style.ScrollSnapPointsX(), style);
-    case CSSPropertyScrollSnapPointsY:
-      return ValueForScrollSnapPoints(style.ScrollSnapPointsY(), style);
-    case CSSPropertyScrollSnapCoordinate:
-      return ValueForScrollSnapCoordinate(style.ScrollSnapCoordinate(), style);
-    case CSSPropertyScrollSnapDestination:
-      return ValueForScrollSnapDestination(style.ScrollSnapDestination(),
-                                           style);
+      return ValueForScrollSnapType(style.GetScrollSnapType(), style);
+    case CSSPropertyScrollSnapAlign:
+      return ValueForScrollSnapAlign(style.GetScrollSnapAlign(), style);
+    case CSSPropertyScrollSnapStop:
+      return CSSIdentifierValue::Create(style.ScrollSnapStop());
+    case CSSPropertyScrollPaddingTop:
+      return ZoomAdjustedPixelValueForLength(style.ScrollPaddingTop(), style);
+    case CSSPropertyScrollPaddingRight:
+      return ZoomAdjustedPixelValueForLength(style.ScrollPaddingRight(), style);
+    case CSSPropertyScrollPaddingBottom:
+      return ZoomAdjustedPixelValueForLength(style.ScrollPaddingBottom(),
+                                             style);
+    case CSSPropertyScrollPaddingLeft:
+      return ZoomAdjustedPixelValueForLength(style.ScrollPaddingLeft(), style);
+    case CSSPropertyScrollPaddingBlockStart:
+      return ZoomAdjustedPixelValueForLength(style.ScrollPaddingBlockStart(),
+                                             style);
+    case CSSPropertyScrollPaddingBlockEnd:
+      return ZoomAdjustedPixelValueForLength(style.ScrollPaddingBlockEnd(),
+                                             style);
+    case CSSPropertyScrollPaddingInlineStart:
+      return ZoomAdjustedPixelValueForLength(style.ScrollPaddingInlineStart(),
+                                             style);
+    case CSSPropertyScrollPaddingInlineEnd:
+      return ZoomAdjustedPixelValueForLength(style.ScrollPaddingInlineEnd(),
+                                             style);
+    case CSSPropertyScrollSnapMarginTop:
+      return ZoomAdjustedPixelValueForLength(style.ScrollSnapMarginTop(),
+                                             style);
+    case CSSPropertyScrollSnapMarginRight:
+      return ZoomAdjustedPixelValueForLength(style.ScrollSnapMarginRight(),
+                                             style);
+    case CSSPropertyScrollSnapMarginBottom:
+      return ZoomAdjustedPixelValueForLength(style.ScrollSnapMarginBottom(),
+                                             style);
+    case CSSPropertyScrollSnapMarginLeft:
+      return ZoomAdjustedPixelValueForLength(style.ScrollSnapMarginLeft(),
+                                             style);
+    case CSSPropertyScrollSnapMarginBlockStart:
+      return ZoomAdjustedPixelValueForLength(style.ScrollSnapMarginBlockStart(),
+                                             style);
+    case CSSPropertyScrollSnapMarginBlockEnd:
+      return ZoomAdjustedPixelValueForLength(style.ScrollSnapMarginBlockEnd(),
+                                             style);
+    case CSSPropertyScrollSnapMarginInlineStart:
+      return ZoomAdjustedPixelValueForLength(
+          style.ScrollSnapMarginInlineStart(), style);
+    case CSSPropertyScrollSnapMarginInlineEnd:
+      return ZoomAdjustedPixelValueForLength(style.ScrollSnapMarginInlineEnd(),
+                                             style);
+    case CSSPropertyScrollBoundaryBehavior:
+      if (style.ScrollBoundaryBehaviorX() == style.ScrollBoundaryBehaviorY())
+        return CSSIdentifierValue::Create(style.ScrollBoundaryBehaviorX());
+      return nullptr;
+    case CSSPropertyScrollBoundaryBehaviorX:
+      return CSSIdentifierValue::Create(style.ScrollBoundaryBehaviorX());
+    case CSSPropertyScrollBoundaryBehaviorY:
+      return CSSIdentifierValue::Create(style.ScrollBoundaryBehaviorY());
     case CSSPropertyTranslate: {
       if (!style.Translate())
         return CSSIdentifierValue::Create(CSSValueNone);

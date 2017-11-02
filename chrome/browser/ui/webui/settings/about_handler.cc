@@ -8,7 +8,6 @@
 
 #include <string>
 
-#include "ash/system/devicetype_utils.h"
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
@@ -19,6 +18,7 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/string16.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task_scheduler/post_task.h"
@@ -26,12 +26,12 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/obsolete_system/obsolete_system.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/chrome_pages.h"
+#include "chrome/browser/upgrade_detector.h"
 #include "chrome/common/channel_info.h"
 #include "chrome/common/chrome_content_client.h"
 #include "chrome/common/pref_names.h"
@@ -45,7 +45,6 @@
 #include "components/strings/grit/components_strings.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/notification_service.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
@@ -68,8 +67,11 @@
 #include "chrome/browser/ui/webui/help/version_updater_chromeos.h"
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/dbus/power_manager_client.h"
+#include "chromeos/network/network_state.h"
+#include "chromeos/network/network_state_handler.h"
 #include "chromeos/system/statistics_provider.h"
 #include "components/user_manager/user_manager.h"
+#include "ui/chromeos/devicetype_utils.h"
 #endif
 
 using base::ListValue;
@@ -97,8 +99,19 @@ struct RegulatoryLabel {
 // Returns message that informs user that for update it's better to
 // connect to a network of one of the allowed types.
 base::string16 GetAllowedConnectionTypesMessage() {
-  if (help_utils_chromeos::IsUpdateOverCellularAllowed()) {
-    return l10n_util::GetStringUTF16(IDS_UPGRADE_NETWORK_LIST_CELLULAR_ALLOWED);
+  const chromeos::NetworkState* network = chromeos::NetworkHandler::Get()
+                                              ->network_state_handler()
+                                              ->DefaultNetwork();
+  const bool mobile_data =
+      network && network->IsConnectedState() && network->IsUsingMobileData();
+
+  if (help_utils_chromeos::IsUpdateOverCellularAllowed(
+          true /* interactive */)) {
+    return mobile_data
+               ? l10n_util::GetStringUTF16(
+                     IDS_UPGRADE_NETWORK_LIST_CELLULAR_ALLOWED_NOT_AUTOMATIC)
+               : l10n_util::GetStringUTF16(
+                     IDS_UPGRADE_NETWORK_LIST_CELLULAR_ALLOWED);
   } else {
     return l10n_util::GetStringUTF16(
         IDS_UPGRADE_NETWORK_LIST_CELLULAR_DISALLOWED);
@@ -135,7 +148,7 @@ bool CanChangeChannel(Profile* profile) {
       domain = email.substr(email.find('@') + 1);
     policy::BrowserPolicyConnectorChromeOS* connector =
         g_browser_process->platform_part()->browser_policy_connector_chromeos();
-    return domain == connector->GetEnterpriseDomain();
+    return domain == connector->GetEnterpriseEnrollmentDomain();
   }
 
   // On non-managed machines, only the local owner can change the channel.
@@ -239,6 +252,9 @@ std::string UpdateStatusToString(VersionUpdater::Status status) {
     case VersionUpdater::DISABLED_BY_ADMIN:
       status_str = "disabled_by_admin";
       break;
+    case VersionUpdater::NEED_PERMISSION_TO_UPDATE:
+      status_str = "need_permission_to_update";
+      break;
   }
 
   return status_str;
@@ -248,9 +264,14 @@ std::string UpdateStatusToString(VersionUpdater::Status status) {
 
 namespace settings {
 
-AboutHandler::AboutHandler() : weak_factory_(this) {}
+AboutHandler::AboutHandler()
+    : apply_changes_from_upgrade_observer_(false), weak_factory_(this) {
+  UpgradeDetector::GetInstance()->AddObserver(this);
+}
 
-AboutHandler::~AboutHandler() {}
+AboutHandler::~AboutHandler() {
+  UpgradeDetector::GetInstance()->RemoveObserver(this);
+}
 
 AboutHandler* AboutHandler::Create(content::WebUIDataSource* html_source,
                                    Profile* profile) {
@@ -340,7 +361,10 @@ void AboutHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
       "requestUpdate",
       base::Bind(&AboutHandler::HandleRequestUpdate, base::Unretained(this)));
-
+  web_ui()->RegisterMessageCallback(
+      "requestUpdateOverCellular",
+      base::Bind(&AboutHandler::HandleRequestUpdateOverCellular,
+                 base::Unretained(this)));
   web_ui()->RegisterMessageCallback(
       "getVersionInfo",
       base::Bind(&AboutHandler::HandleGetVersionInfo, base::Unretained(this)));
@@ -365,9 +389,8 @@ void AboutHandler::RegisterMessages() {
 }
 
 void AboutHandler::OnJavascriptAllowed() {
+  apply_changes_from_upgrade_observer_ = true;
   version_updater_.reset(VersionUpdater::Create(web_ui()->GetWebContents()));
-  registrar_.Add(this, chrome::NOTIFICATION_UPGRADE_RECOMMENDED,
-                 content::NotificationService::AllSources());
   policy_registrar_.reset(new policy::PolicyChangeRegistrar(
       g_browser_process->policy_service(),
       policy::PolicyNamespace(policy::POLICY_DOMAIN_CHROME, std::string())));
@@ -378,20 +401,17 @@ void AboutHandler::OnJavascriptAllowed() {
 }
 
 void AboutHandler::OnJavascriptDisallowed() {
+  apply_changes_from_upgrade_observer_ = false;
   version_updater_.reset();
   policy_registrar_.reset();
-  registrar_.Remove(this, chrome::NOTIFICATION_UPGRADE_RECOMMENDED,
-                    content::NotificationService::AllSources());
 }
 
-void AboutHandler::Observe(int type,
-                           const content::NotificationSource& source,
-                           const content::NotificationDetails& details) {
-  DCHECK_EQ(chrome::NOTIFICATION_UPGRADE_RECOMMENDED, type);
-
-  // A version update is installed and ready to go. Refresh the UI so the
-  // correct state will be shown.
-  RequestUpdate();
+void AboutHandler::OnUpgradeRecommended() {
+  if (apply_changes_from_upgrade_observer_) {
+    // A version update is installed and ready to go. Refresh the UI so the
+    // correct state will be shown.
+    RequestUpdate();
+  }
 }
 
 void AboutHandler::OnDeviceAutoUpdatePolicyChanged(
@@ -440,7 +460,8 @@ void AboutHandler::HandleOpenFeedbackDialog(const base::ListValue* args) {
   DCHECK(args->empty());
   Browser* browser =
       chrome::FindBrowserWithWebContents(web_ui()->GetWebContents());
-  chrome::OpenFeedbackDialog(browser);
+  chrome::OpenFeedbackDialog(browser,
+                             chrome::kFeedbackSourceMdSettingsAboutPage);
 }
 
 void AboutHandler::HandleOpenHelpPage(const base::ListValue* args) {
@@ -484,8 +505,7 @@ void AboutHandler::HandleGetVersionInfo(const base::ListValue* args) {
   CHECK(args->GetString(0, &callback_id));
 
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, base::TaskTraits().MayBlock().WithPriority(
-                     base::TaskPriority::USER_VISIBLE),
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
       base::Bind(&GetVersionInfo),
       base::Bind(&AboutHandler::OnGetVersionInfoReady,
                  weak_factory_.GetWeakPtr(), callback_id));
@@ -503,8 +523,7 @@ void AboutHandler::HandleGetRegulatoryInfo(const base::ListValue* args) {
   CHECK(args->GetString(0, &callback_id));
 
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, base::TaskTraits().MayBlock().WithPriority(
-                     base::TaskPriority::USER_VISIBLE),
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
       base::Bind(&FindRegulatoryLabelDir),
       base::Bind(&AboutHandler::OnRegulatoryLabelDirFound,
                  weak_factory_.GetWeakPtr(), callback_id));
@@ -545,6 +564,28 @@ void AboutHandler::HandleRequestUpdate(const base::ListValue* args) {
   RequestUpdate();
 }
 
+void AboutHandler::HandleRequestUpdateOverCellular(
+    const base::ListValue* args) {
+  CHECK_EQ(2U, args->GetSize());
+
+  std::string update_version;
+  std::string update_size_string;
+  int64_t update_size;
+
+  CHECK(args->GetString(0, &update_version));
+  CHECK(args->GetString(1, &update_size_string));
+  CHECK(base::StringToInt64(update_size_string, &update_size));
+
+  RequestUpdateOverCellular(update_version, update_size);
+}
+
+void AboutHandler::RequestUpdateOverCellular(const std::string& update_version,
+                                             int64_t update_size) {
+  version_updater_->SetUpdateOverCellularOneTimePermission(
+      base::Bind(&AboutHandler::SetUpdateStatus, base::Unretained(this)),
+      update_version, update_size);
+}
+
 #endif  // defined(OS_CHROMEOS)
 
 void AboutHandler::RequestUpdate() {
@@ -559,6 +600,8 @@ void AboutHandler::RequestUpdate() {
 
 void AboutHandler::SetUpdateStatus(VersionUpdater::Status status,
                                    int progress,
+                                   const std::string& version,
+                                   int64_t size,
                                    const base::string16& message) {
   // Only UPDATING state should have progress set.
   DCHECK(status == VersionUpdater::UPDATING || progress == 0);
@@ -567,7 +610,9 @@ void AboutHandler::SetUpdateStatus(VersionUpdater::Status status,
   event->SetString("status", UpdateStatusToString(status));
   event->SetString("message", message);
   event->SetInteger("progress", progress);
-
+  event->SetString("version", version);
+  // DictionaryValue does not support int64_t, so convert to string.
+  event->SetString("size", base::Int64ToString(size));
 #if defined(OS_CHROMEOS)
   if (status == VersionUpdater::FAILED_OFFLINE ||
       status == VersionUpdater::FAILED_CONNECTION_TYPE_DISALLOWED) {
@@ -581,8 +626,7 @@ void AboutHandler::SetUpdateStatus(VersionUpdater::Status status,
   }
 #endif  // defined(OS_CHROMEOS)
 
-  CallJavascriptFunction("cr.webUIListenerCallback",
-                         base::Value("update-status-changed"), *event);
+  FireWebUIListener("update-status-changed", *event);
 }
 
 #if defined(OS_MACOSX)
@@ -609,8 +653,7 @@ void AboutHandler::SetPromotionState(VersionUpdater::PromotionState state) {
   if (!text.empty())
     promo_state.SetString("text", text);
 
-  CallJavascriptFunction("cr.webUIListenerCallback",
-                         base::Value("promotion-state-changed"), promo_state);
+  FireWebUIListener("promotion-state-changed", promo_state);
 }
 #endif  // defined(OS_MACOSX)
 
@@ -624,8 +667,7 @@ void AboutHandler::OnRegulatoryLabelDirFound(
   }
 
   base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, base::TaskTraits().MayBlock().WithPriority(
-                     base::TaskPriority::USER_VISIBLE),
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_VISIBLE},
       base::Bind(&ReadRegulatoryLabelText, label_dir_path),
       base::Bind(&AboutHandler::OnRegulatoryLabelTextRead,
                  weak_factory_.GetWeakPtr(), callback_id, label_dir_path));

@@ -9,13 +9,15 @@
 #include "core/dom/ExecutionContext.h"
 #include "core/workers/MainThreadWorkletGlobalScope.h"
 #include "modules/ModulesExport.h"
+#include "modules/csspaint/PaintWorkletPendingGeneratorRegistry.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/graphics/ImageBuffer.h"
 
 namespace blink {
 
 class CSSPaintDefinition;
-class CSSPaintImageGeneratorImpl;
 class ExceptionState;
+class WorkerReportingProxy;
 
 class MODULES_EXPORT PaintWorkletGlobalScope final
     : public MainThreadWorkletGlobalScope {
@@ -27,7 +29,10 @@ class MODULES_EXPORT PaintWorkletGlobalScope final
                                          const KURL&,
                                          const String& user_agent,
                                          PassRefPtr<SecurityOrigin>,
-                                         v8::Isolate*);
+                                         v8::Isolate*,
+                                         WorkerReportingProxy&,
+                                         PaintWorkletPendingGeneratorRegistry*,
+                                         size_t global_scope_number);
   ~PaintWorkletGlobalScope() override;
   void Dispose() final;
 
@@ -37,26 +42,27 @@ class MODULES_EXPORT PaintWorkletGlobalScope final
                      ExceptionState&);
 
   CSSPaintDefinition* FindDefinition(const String& name);
-  void AddPendingGenerator(const String& name, CSSPaintImageGeneratorImpl*);
+  double devicePixelRatio() const;
 
   DECLARE_VIRTUAL_TRACE();
+  DECLARE_TRACE_WRAPPERS();
 
  private:
   PaintWorkletGlobalScope(LocalFrame*,
                           const KURL&,
                           const String& user_agent,
                           PassRefPtr<SecurityOrigin>,
-                          v8::Isolate*);
+                          v8::Isolate*,
+                          WorkerReportingProxy&,
+                          PaintWorkletPendingGeneratorRegistry*);
 
-  typedef HeapHashMap<String, Member<CSSPaintDefinition>> DefinitionMap;
+  // The implementation of the "paint definition" concept:
+  // https://drafts.css-houdini.org/css-paint-api/#paint-definition
+  typedef HeapHashMap<String, TraceWrapperMember<CSSPaintDefinition>>
+      DefinitionMap;
   DefinitionMap paint_definitions_;
 
-  // The map of CSSPaintImageGeneratorImpl which are waiting for a
-  // CSSPaintDefinition to be registered. The global scope is expected to
-  // outlive the generators hence are held onto with a WeakMember.
-  typedef HeapHashSet<WeakMember<CSSPaintImageGeneratorImpl>> GeneratorHashSet;
-  typedef HeapHashMap<String, Member<GeneratorHashSet>> PendingGeneratorMap;
-  PendingGeneratorMap pending_generators_;
+  Member<PaintWorkletPendingGeneratorRegistry> pending_generator_registry_;
 };
 
 DEFINE_TYPE_CASTS(PaintWorkletGlobalScope,

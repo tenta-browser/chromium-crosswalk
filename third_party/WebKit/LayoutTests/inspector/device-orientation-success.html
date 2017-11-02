@@ -23,25 +23,21 @@ function handler(evt)
     console.log("alpha: " + evt.alpha + " beta: " + evt.beta + " gamma: " + evt.gamma);
 }
 
-function test()
-{
-    InspectorTest.runTestSuite([
-        function setUp(next)
-        {
-            InspectorTest.evaluateInPage("setup()", next);
-        },
+function test() {
+  TestRunner.runTestSuite([
+    function setUp(next) {
+      TestRunner.evaluateInPage('setup()', next);
+    },
 
-        function setOverride(next)
-        {
-            InspectorTest.addConsoleSniffer(next);
-            InspectorTest.DeviceOrientationAgent.setDeviceOrientationOverride(20, 30, 40);
-        },
+    function setOverride(next) {
+      ConsoleTestRunner.addConsoleSniffer(next);
+      TestRunner.DeviceOrientationAgent.setDeviceOrientationOverride(20, 30, 40);
+    },
 
-        function clearOverride(next)
-        {
-            InspectorTest.DeviceOrientationAgent.clearDeviceOrientationOverride(next);
-        }
-    ]);
+    function clearOverride(next) {
+      TestRunner.DeviceOrientationAgent.clearDeviceOrientationOverride().then(next);
+    }
+  ]);
 }
 </script>
 </head>

@@ -15,7 +15,14 @@ namespace {
 
 const char kDummyFrameName[] = "chromedriver dummy frame";
 const char kDummyFrameUrl[] = "about:blank";
-const char kUnreachableWebDataURL[] = "data:text/html,chromewebdata";
+
+// The error page URL was renamed in
+// https://chromium-review.googlesource.com/c/580169, but because ChromeDriver
+// needs to be backward-compatible with older versions of Chrome, it is
+// necessary to compare against both the old and new error URL.
+const char kUnreachableWebDataURL[] = "chrome-error://chromewebdata/";
+const char kDeprecatedUnreachableWebDataURL[] = "data:text/html,chromewebdata";
+
 const char kAutomationExtensionBackgroundPage[] =
     "chrome-extension://aapnijgdinlhnhlmodcfapnahmbfebeb/"
     "_generated_background_page.html";
@@ -117,15 +124,26 @@ Status NavigationTracker::IsPendingNavigation(const std::string& frame_id,
   if (loading_state_ == kUnknown) {
     // In the case that a http request is sent to server to fetch the page
     // content and the server hasn't responded at all, a dummy page is created
-    // for the new window. In such case, the baseURL will be empty.
+    // for the new window. In such case, the baseURL will be empty for <=M59 ;
+    // whereas the baseURL will be 'about:blank' for >=M60. See crbug/711562.
+    // TODO(gmanikpure):Remove condition for <3076 when we stop supporting M59.
     base::DictionaryValue empty_params;
     std::unique_ptr<base::DictionaryValue> result;
     Status status = client_->SendCommandAndGetResultWithTimeout(
         "DOM.getDocument", empty_params, timeout, &result);
     std::string base_url;
-    if (status.IsError() || !result->GetString("root.baseURL", &base_url))
+    std::string doc_url;
+    if (status.IsError() || !result->GetString("root.baseURL", &base_url) ||
+        !result->GetString("root.documentURL", &doc_url))
       return MakeNavigationCheckFailedStatus(status);
-    if (base_url.empty()) {
+
+    bool condition;
+    if (browser_info_->build_no >= 3076)
+      condition = doc_url != "about:blank" && base_url == "about:blank";
+    else
+      condition = base_url.empty();
+
+    if (condition) {
       *is_pending = true;
       loading_state_ = kLoading;
       return Status(kOk);
@@ -266,6 +284,10 @@ Status NavigationTracker::OnEvent(DevToolsClient* client,
     if (delay > 1)
       return Status(kOk);
     scheduled_frame_set_.insert(frame_id);
+
+    // A normal Page.loadEventFired event isn't expected after a scheduled
+    // navigation, so set load_event_fired_ flag.
+    load_event_fired_ = true;
   } else if (method == "Page.frameClearedScheduledNavigation") {
     std::string frame_id;
     if (!params.GetString("frameId", &frame_id))
@@ -302,7 +324,8 @@ Status NavigationTracker::OnEvent(DevToolsClient* client,
         std::string frame_url;
         if (!params.GetString("frame.url", &frame_url))
           return Status(kUnknownError, "missing or invalid 'frame.url'");
-        if (frame_url == kUnreachableWebDataURL)
+        if (frame_url == kUnreachableWebDataURL ||
+            frame_url == kDeprecatedUnreachableWebDataURL)
           pending_frame_set_.clear();
       }
     } else {

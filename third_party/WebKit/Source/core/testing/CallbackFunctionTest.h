@@ -5,16 +5,17 @@
 #ifndef CallbackFunctionTest_h
 #define CallbackFunctionTest_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
-#include "wtf/Vector.h"
-#include "wtf/text/WTFString.h"
+#include "platform/wtf/Vector.h"
+#include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
 class ExceptionState;
 class HTMLDivElement;
 class TestCallback;
+class TestEnumCallback;
 class TestInterfaceCallback;
 class TestReceiverObjectCallback;
 class TestSequenceCallback;
@@ -44,6 +45,9 @@ class CallbackFunctionTest final
   Vector<String> testSequenceCallback(TestSequenceCallback*,
                                       const Vector<int>& numbers,
                                       ExceptionState&);
+  void testEnumCallback(TestEnumCallback*,
+                        const String& enum_value,
+                        ExceptionState&);
 };
 
 }  // namespace blink

@@ -46,13 +46,31 @@ class CONTENT_EXPORT BrowserAccessibilityManagerMac
 
  private:
   // AXTreeDelegate methods.
-  void OnNodeDataWillChange(ui::AXTree* tree,
-                            const ui::AXNodeData& old_node_data,
-                            const ui::AXNodeData& new_node_data) override;
+  void OnTreeDataChanged(ui::AXTree* tree,
+                         const ui::AXTreeData& old_tree_data,
+                         const ui::AXTreeData& new_tree_data) override;
   void OnStateChanged(ui::AXTree* tree,
                       ui::AXNode* node,
                       ui::AXState state,
                       bool new_value) override;
+  void OnStringAttributeChanged(ui::AXTree* tree,
+                                ui::AXNode* node,
+                                ui::AXStringAttribute attr,
+                                const std::string& old_value,
+                                const std::string& new_value) override;
+  void OnIntAttributeChanged(ui::AXTree* tree,
+                             ui::AXNode* node,
+                             ui::AXIntAttribute attr,
+                             int32_t old_value,
+                             int32_t new_value) override;
+  void OnFloatAttributeChanged(ui::AXTree* tree,
+                               ui::AXNode* node,
+                               ui::AXFloatAttribute attr,
+                               float old_value,
+                               float new_value) override;
+  void OnAtomicUpdateFinished(ui::AXTree* tree,
+                              bool root_changed,
+                              const std::vector<Change>& changes) override;
 
   // Returns an autoreleased object.
   NSDictionary* GetUserInfoForSelectedTextChangedNotification();
@@ -63,14 +81,14 @@ class CONTENT_EXPORT BrowserAccessibilityManagerMac
       const base::string16& deleted_text,
       const base::string16& inserted_text) const;
 
+  // Keeps track of any edits that have been made by the user during a tree
+  // update. Used by NSAccessibilityValueChangedNotification.
+  // Maps AXNode IDs to value attribute changes.
+  std::map<int32_t, AXTextEdit> text_edits_;
+
   // This gives BrowserAccessibilityManager::Create access to the class
   // constructor.
   friend class BrowserAccessibilityManager;
-
-  // Keeps track of any edits that have been made by the user during a tree
-  // update. Used by NSAccessibilityValueChangedNotification.
-  // Maps AXNode IDs to name or value attribute changes.
-  std::map<int32_t, base::string16> text_edits_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserAccessibilityManagerMac);
 };

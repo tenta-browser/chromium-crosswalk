@@ -38,7 +38,7 @@ void PacingSender::OnCongestionEvent(
     bool rtt_updated,
     QuicByteCount bytes_in_flight,
     QuicTime event_time,
-    const SendAlgorithmInterface::CongestionVector& acked_packets,
+    const SendAlgorithmInterface::AckedPacketVector& acked_packets,
     const SendAlgorithmInterface::CongestionVector& lost_packets) {
   DCHECK(sender_ != nullptr);
   if (!lost_packets.empty()) {
@@ -109,9 +109,8 @@ bool PacingSender::OnPacketSent(
   return in_flight;
 }
 
-QuicTime::Delta PacingSender::TimeUntilSend(
-    QuicTime now,
-    QuicByteCount bytes_in_flight) const {
+QuicTime::Delta PacingSender::TimeUntilSend(QuicTime now,
+                                            QuicByteCount bytes_in_flight) {
   DCHECK(sender_ != nullptr);
   QuicTime::Delta time_until_send =
       sender_->TimeUntilSend(now, bytes_in_flight);

@@ -28,7 +28,10 @@
 
 #include "platform/image-decoders/webp/WEBPImageDecoder.h"
 
-#if CPU(BIG_ENDIAN) || CPU(MIDDLE_ENDIAN)
+#include "build/build_config.h"
+#include "third_party/skia/include/core/SkData.h"
+
+#if defined(ARCH_CPU_BIG_ENDIAN)
 #error Blink assumes a little-endian target.
 #endif
 
@@ -79,7 +82,7 @@ inline void findBlendRangeAtRow(const blink::IntRect& src,
 
 // alphaBlendPremultiplied and alphaBlendNonPremultiplied are separate methods,
 // even though they only differ by one line. This is done so that the compiler
-// can inline blendSrcOverDstPremultiplied() and blensSrcOverDstRaw() calls.
+// can inline BlendSrcOverDstPremultiplied() and BlensSrcOverDstRaw() calls.
 // For GIF images, this optimization reduces decoding time by 15% for 3MB
 // images.
 void alphaBlendPremultiplied(blink::ImageFrame& src,
@@ -126,7 +129,7 @@ WEBPImageDecoder::WEBPImageDecoder(AlphaOption alpha_option,
       demux_(0),
       demux_state_(WEBP_DEMUX_PARSING_HEADER),
       have_already_parsed_this_data_(false),
-      repetition_count_(kCAnimationLoopOnce),
+      repetition_count_(kAnimationLoopOnce),
       decoded_height_(0) {
   blend_function_ = (alpha_option == kAlphaPremultiplied)
                         ? alphaBlendPremultiplied
@@ -156,14 +159,14 @@ void WEBPImageDecoder::OnSetData(SegmentReader*) {
 }
 
 int WEBPImageDecoder::RepetitionCount() const {
-  return Failed() ? kCAnimationLoopOnce : repetition_count_;
+  return Failed() ? kAnimationLoopOnce : repetition_count_;
 }
 
-bool WEBPImageDecoder::FrameIsCompleteAtIndex(size_t index) const {
+bool WEBPImageDecoder::FrameIsReceivedAtIndex(size_t index) const {
   if (!demux_ || demux_state_ <= WEBP_DEMUX_PARSING_HEADER)
     return false;
   if (!(format_flags_ & ANIMATION_FLAG))
-    return ImageDecoder::FrameIsCompleteAtIndex(index);
+    return ImageDecoder::FrameIsReceivedAtIndex(index);
   bool frame_is_received_at_index = index < frame_buffer_cache_.size();
   return frame_is_received_at_index;
 }
@@ -211,7 +214,7 @@ bool WEBPImageDecoder::UpdateDemuxer() {
 
     format_flags_ = WebPDemuxGetI(demux_, WEBP_FF_FORMAT_FLAGS);
     if (!(format_flags_ & ANIMATION_FLAG)) {
-      repetition_count_ = kCAnimationNone;
+      repetition_count_ = kAnimationNone;
     } else {
       // Since we have parsed at least one frame, even if partially,
       // the global animation (ANIM) properties have been read since
@@ -220,7 +223,7 @@ bool WEBPImageDecoder::UpdateDemuxer() {
       // Repetition count is always <= 16 bits.
       DCHECK_EQ(repetition_count_, repetition_count_ & 0xffff);
       if (!repetition_count_)
-        repetition_count_ = kCAnimationLoopInfinite;
+        repetition_count_ = kAnimationLoopInfinite;
       // FIXME: Implement ICC profile support for animated images.
       format_flags_ &= ~ICCP_FLAG;
     }
@@ -238,7 +241,7 @@ bool WEBPImageDecoder::UpdateDemuxer() {
 }
 
 void WEBPImageDecoder::OnInitFrameBuffer(size_t frame_index) {
-  // ImageDecoder::initFrameBuffer does a DCHECK if |frameIndex| exists.
+  // ImageDecoder::InitFrameBuffer does a DCHECK if |frame_index| exists.
   ImageFrame& buffer = frame_buffer_cache_[frame_index];
 
   const size_t required_previous_frame_index =
@@ -357,7 +360,7 @@ void WEBPImageDecoder::ApplyPostProcessing(size_t frame_index) {
     } else if (prev_disposal_method == ImageFrame::kDisposeOverwriteBgcolor) {
       const IntRect& prev_rect = prev_buffer.OriginalFrameRect();
       // We need to blend a transparent pixel with the starting value (from just
-      // after the initFrame() call). If the pixel belongs to prevRect, the
+      // after the InitFrame() call). If the pixel belongs to prev_rect, the
       // starting value was fully transparent, so this is a no-op. Otherwise, we
       // need to blend against the pixel from the previous canvas.
       for (int y = decoded_height_; y < decoded_height; ++y) {
@@ -378,7 +381,7 @@ void WEBPImageDecoder::ApplyPostProcessing(size_t frame_index) {
 }
 
 size_t WEBPImageDecoder::DecodeFrameCount() {
-  // If updateDemuxer() fails, return the existing number of frames.  This way
+  // If UpdateDemuxer() fails, return the existing number of frames.  This way
   // if we get halfway through the image before decoding fails, we won't
   // suddenly start reporting that the image has zero frames.
   return UpdateDemuxer() ? WebPDemuxGetI(demux_, WEBP_FF_FRAME_COUNT)
@@ -511,7 +514,7 @@ bool WEBPImageDecoder::DecodeSingleFrame(const uint8_t* data_bytes,
       ClearDecoder();
       return true;
     case VP8_STATUS_SUSPENDED:
-      if (!IsAllDataReceived() && !FrameIsCompleteAtIndex(frame_index)) {
+      if (!IsAllDataReceived() && !FrameIsReceivedAtIndex(frame_index)) {
         ApplyPostProcessing(frame_index);
         return false;
       }

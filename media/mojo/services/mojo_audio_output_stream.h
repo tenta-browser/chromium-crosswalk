@@ -19,8 +19,8 @@ namespace media {
 // This class handles IPC for single audio output stream by delegating method
 // calls to its AudioOutputDelegate.
 class MEDIA_MOJO_EXPORT MojoAudioOutputStream
-    : NON_EXPORTED_BASE(public mojom::AudioOutputStream),
-      NON_EXPORTED_BASE(public AudioOutputDelegate::EventHandler) {
+    : public mojom::AudioOutputStream,
+      public AudioOutputDelegate::EventHandler {
  public:
   using StreamCreatedCallback =
       mojom::AudioOutputStreamProvider::AcquireCallback;
@@ -49,7 +49,7 @@ class MEDIA_MOJO_EXPORT MojoAudioOutputStream
   // AudioOutputDelegate::EventHandler implementation.
   void OnStreamCreated(
       int stream_id,
-      base::SharedMemory* shared_memory,
+      const base::SharedMemory* shared_memory,
       std::unique_ptr<base::CancelableSyncSocket> foreign_socket) override;
   void OnStreamError(int stream_id) override;
 
@@ -61,6 +61,7 @@ class MEDIA_MOJO_EXPORT MojoAudioOutputStream
   mojo::Binding<AudioOutputStream> binding_;
   base::ThreadChecker thread_checker_;
   std::unique_ptr<AudioOutputDelegate> delegate_;
+  base::WeakPtrFactory<MojoAudioOutputStream> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(MojoAudioOutputStream);
 };

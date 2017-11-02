@@ -7,35 +7,12 @@
 #include "platform/graphics/LoggingCanvas.h"
 #include "platform/graphics/paint/DrawingDisplayItem.h"
 #include "platform/graphics/paint/PaintChunk.h"
-#include "third_party/skia/include/core/SkPictureAnalyzer.h"
 
 #ifndef NDEBUG
 #include "platform/wtf/text/WTFString.h"
 #endif
 
 namespace blink {
-
-DisplayItem& DisplayItemList::AppendByMoving(DisplayItem& item) {
-#ifndef NDEBUG
-  String original_debug_string = item.AsDebugString();
-#endif
-  DCHECK(item.HasValidClient());
-  DisplayItem& result =
-      ContiguousContainer::AppendByMoving(item, item.DerivedSize());
-  // ContiguousContainer::appendByMoving() calls an in-place constructor
-  // on item which replaces it with a tombstone/"dead display item" that
-  // can be safely destructed but should never be used.
-  DCHECK(!item.HasValidClient());
-#ifndef NDEBUG
-  // Save original debug string in the old item to help debugging.
-  item.SetClientDebugString(original_debug_string);
-#endif
-  return result;
-}
-
-void DisplayItemList::AppendVisualRect(const IntRect& visual_rect) {
-  visual_rects_.push_back(visual_rect);
-}
 
 DisplayItemList::Range<DisplayItemList::iterator>
 DisplayItemList::ItemsInPaintChunk(const PaintChunk& paint_chunk) {
@@ -53,17 +30,43 @@ std::unique_ptr<JSONArray> DisplayItemList::SubsequenceAsJSON(
     size_t begin_index,
     size_t end_index,
     JsonFlags options) const {
-  std::unique_ptr<JSONArray> json_array = JSONArray::Create();
-  size_t i = 0;
-  for (auto it = begin() + begin_index; it != begin() + end_index; ++it, ++i) {
+  auto json_array = JSONArray::Create();
+  AppendSubsequenceAsJSON(begin_index, end_index, options, *json_array);
+  return json_array;
+}
+
+void DisplayItemList::AppendSubsequenceAsJSON(size_t begin_index,
+                                              size_t end_index,
+                                              JsonFlags options,
+                                              JSONArray& json_array) const {
+  for (size_t i = begin_index; i < end_index; ++i) {
     std::unique_ptr<JSONObject> json = JSONObject::Create();
 
-    const DisplayItem& display_item = *it;
+    const auto& display_item = (*this)[i];
     if ((options & kSkipNonDrawings) && !display_item.IsDrawing())
       continue;
 
     json->SetInteger("index", i);
-#ifndef NDEBUG
+
+    bool show_client_debug_name = options & kShowClientDebugName;
+#if DCHECK_IS_ON()
+    if (display_item.HasValidClient()) {
+      if (display_item.Client().IsAlive())
+        show_client_debug_name = true;
+      else
+        json->SetBoolean("clientIsAlive", false);
+    }
+#endif
+
+#ifdef NDEBUG
+    // This is for NDEBUG only because DisplayItem::DumpPropertiesAsDebugString
+    // will output these information.
+    if (show_client_debug_name)
+      json->SetString("clientDebugName", display_item.Client().DebugName());
+
+    json->SetInteger("type", static_cast<int>(display_item.GetType()));
+    json->SetString("visualRect", display_item.VisualRect().ToString());
+#else
     StringBuilder string_builder;
     display_item.DumpPropertiesAsDebugString(string_builder);
 
@@ -74,42 +77,17 @@ std::unique_ptr<JSONArray> DisplayItemList::SubsequenceAsJSON(
       json->SetString("properties", string_builder.ToString());
     }
 
-#endif
-    if (display_item.HasValidClient()) {
-#if CHECK_DISPLAY_ITEM_CLIENT_ALIVENESS
-      if (!display_item.Client().IsAlive()) {
-        json->SetBoolean("clientIsAlive", true);
-      } else {
-#else
-
-      if (options & kShowClientDebugName) {
-#endif
+    if ((options & kShowPaintRecords) && display_item.IsDrawing()) {
+      const auto& item = static_cast<const DrawingDisplayItem&>(display_item);
+      if (const PaintRecord* record = item.GetPaintRecord().get()) {
         json->SetString(
-            "clientDebugName",
-            String::Format("clientDebugName: \"%s\"",
-                           display_item.Client().DebugName().Ascii().Data()));
+            "record", RecordAsDebugString(record, item.GetPaintRecordBounds()));
       }
-#ifndef NDEBUG
-      if ((options & kShowPaintRecords) && display_item.IsDrawing()) {
-        const DrawingDisplayItem& item =
-            static_cast<const DrawingDisplayItem&>(display_item);
-        if (const PaintRecord* record = item.GetPaintRecord().get()) {
-          json->SetString("record", RecordAsDebugString(record));
-        }
-      }
+    }
 #endif
-    }
-    if (HasVisualRect(i)) {
-      IntRect local_visual_rect = VisualRect(i);
-      json->SetString(
-          "visualRect",
-          String::Format("[%d,%d %dx%d]", local_visual_rect.X(),
-                         local_visual_rect.Y(), local_visual_rect.Width(),
-                         local_visual_rect.Height()));
-    }
-    json_array->PushObject(std::move(json));
+
+    json_array.PushObject(std::move(json));
   }
-  return json_array;
 }
 
 }  // namespace blink

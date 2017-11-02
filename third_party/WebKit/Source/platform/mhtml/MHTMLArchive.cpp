@@ -30,6 +30,7 @@
 
 #include "platform/mhtml/MHTMLArchive.h"
 
+#include "build/build_config.h"
 #include "platform/DateComponents.h"
 #include "platform/SerializedResource.h"
 #include "platform/SharedBuffer.h"
@@ -118,7 +119,7 @@ bool MHTMLArchive::CanLoadArchive(const KURL& url) {
     return true;
   if (url.ProtocolIsInHTTPFamily())
     return true;
-#if OS(ANDROID)
+#if defined(OS_ANDROID)
   if (url.ProtocolIs("content"))
     return true;
 #endif
@@ -126,11 +127,12 @@ bool MHTMLArchive::CanLoadArchive(const KURL& url) {
 }
 
 void MHTMLArchive::GenerateMHTMLHeader(const String& boundary,
+                                       const KURL& url,
                                        const String& title,
                                        const String& mime_type,
                                        Vector<char>& output_buffer) {
-  ASSERT(!boundary.IsEmpty());
-  ASSERT(!mime_type.IsEmpty());
+  DCHECK(!boundary.IsEmpty());
+  DCHECK(!mime_type.IsEmpty());
 
   DateComponents now;
   now.SetMillisecondsSinceEpochForDateTime(CurrentTimeMS());
@@ -141,7 +143,27 @@ void MHTMLArchive::GenerateMHTMLHeader(const String& boundary,
 
   StringBuilder string_builder;
   string_builder.Append("From: <Saved by Blink>\r\n");
-  string_builder.Append("Subject: ");
+
+  // Add the versioning information. This can be used to maintain these headers
+  // for backward compatibility.
+  string_builder.Append("X-Snapshot-Version: 1.0\r\n");
+  // Encode the title as sequences of printable ASCII characters per RFC 1342
+  // (https://tools.ietf.org/html/rfc1342). Specially, the encoded title will be
+  // as:   =?utf-8?Q?encoded_text?=
+  // where, "utf-8" is the chosen charset to represent the title and "Q" is the
+  // Quoted-Printable format to convert to 7-bit printable ASCII characters.
+  CString utf8_title = title.Utf8();
+  Vector<char> encoded_title;
+  QuotedPrintableEncode(utf8_title.data(), utf8_title.length(), encoded_title);
+  string_builder.Append("X-Snapshot-Title: =?utf-8?Q?");
+  string_builder.Append(encoded_title.data(), encoded_title.size());
+  string_builder.Append("?=\r\n");
+  // Add the document URL in the MHTML headers in order to avoid complicated
+  // parsing to locate it in the multipart body headers.
+  string_builder.Append("X-Snapshot-Content-Location: ");
+  string_builder.Append(url.GetString());
+
+  string_builder.Append("\r\nSubject: ");
   // We replace non ASCII characters with '?' characters to match IE's behavior.
   string_builder.Append(ReplaceNonPrintableCharacters(title));
   string_builder.Append("\r\nDate: ");
@@ -157,10 +179,10 @@ void MHTMLArchive::GenerateMHTMLHeader(const String& boundary,
 
   // We use utf8() below instead of ascii() as ascii() replaces CRLFs with ??
   // (we still only have put ASCII characters in it).
-  ASSERT(string_builder.ToString().ContainsOnlyASCII());
+  DCHECK(string_builder.ToString().ContainsOnlyASCII());
   CString ascii_string = string_builder.ToString().Utf8();
 
-  output_buffer.Append(ascii_string.Data(), ascii_string.length());
+  output_buffer.Append(ascii_string.data(), ascii_string.length());
 }
 
 void MHTMLArchive::GenerateMHTMLPart(const String& boundary,
@@ -168,8 +190,8 @@ void MHTMLArchive::GenerateMHTMLPart(const String& boundary,
                                      EncodingPolicy encoding_policy,
                                      const SerializedResource& resource,
                                      Vector<char>& output_buffer) {
-  ASSERT(!boundary.IsEmpty());
-  ASSERT(content_id.IsEmpty() || content_id[0] == '<');
+  DCHECK(!boundary.IsEmpty());
+  DCHECK(content_id.IsEmpty() || content_id[0] == '<');
 
   StringBuilder string_builder;
   string_builder.Append("--");
@@ -209,7 +231,7 @@ void MHTMLArchive::GenerateMHTMLPart(const String& boundary,
   string_builder.Append("\r\n");
 
   CString ascii_string = string_builder.ToString().Utf8();
-  output_buffer.Append(ascii_string.Data(), ascii_string.length());
+  output_buffer.Append(ascii_string.data(), ascii_string.length());
 
   if (!strcmp(content_encoding, kBinary)) {
     const char* data;
@@ -221,15 +243,16 @@ void MHTMLArchive::GenerateMHTMLPart(const String& boundary,
   } else {
     // FIXME: ideally we would encode the content as a stream without having to
     // fetch it all.
-    const char* data = resource.data->Data();
-    size_t data_length = resource.data->size();
+    const SharedBuffer::DeprecatedFlatData flat_data(resource.data);
+    const char* data = flat_data.Data();
+    size_t data_length = flat_data.size();
     Vector<char> encoded_data;
     if (!strcmp(content_encoding, kQuotedPrintable)) {
       QuotedPrintableEncode(data, data_length, encoded_data);
-      output_buffer.Append(encoded_data.Data(), encoded_data.size());
+      output_buffer.Append(encoded_data.data(), encoded_data.size());
       output_buffer.Append("\r\n", 2u);
     } else {
-      ASSERT(!strcmp(content_encoding, kBase64));
+      DCHECK(!strcmp(content_encoding, kBase64));
       // We are not specifying insertLFs = true below as it would cut the lines
       // with LFs and MHTML requires CRLFs.
       Base64Encode(data, data_length, encoded_data);
@@ -239,7 +262,7 @@ void MHTMLArchive::GenerateMHTMLPart(const String& boundary,
       do {
         size_t line_length =
             std::min(encoded_data_length - index, kMaximumLineLength);
-        output_buffer.Append(encoded_data.Data() + index, line_length);
+        output_buffer.Append(encoded_data.data() + index, line_length);
         output_buffer.Append("\r\n", 2u);
         index += kMaximumLineLength;
       } while (index < encoded_data_length);
@@ -249,9 +272,9 @@ void MHTMLArchive::GenerateMHTMLPart(const String& boundary,
 
 void MHTMLArchive::GenerateMHTMLFooterForTesting(const String& boundary,
                                                  Vector<char>& output_buffer) {
-  ASSERT(!boundary.IsEmpty());
+  DCHECK(!boundary.IsEmpty());
   CString ascii_string = String("--" + boundary + "--\r\n").Utf8();
-  output_buffer.Append(ascii_string.Data(), ascii_string.length());
+  output_buffer.Append(ascii_string.data(), ascii_string.length());
 }
 
 void MHTMLArchive::SetMainResource(ArchiveResource* main_resource) {

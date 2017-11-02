@@ -4,8 +4,7 @@
 
 #include "chrome/browser/chromeos/ui/accessibility_cursor_ring_layer.h"
 
-#include "ash/shell_port.h"
-#include "ash/wm_window.h"
+#include "ash/shell.h"
 #include "third_party/skia/include/core/SkPaint.h"
 #include "third_party/skia/include/core/SkPath.h"
 #include "ui/aura/window.h"
@@ -14,6 +13,7 @@
 #include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/gfx/canvas.h"
+#include "ui/wm/core/coordinate_conversion.h"
 
 namespace chromeos {
 
@@ -48,10 +48,9 @@ void AccessibilityCursorRingLayer::Set(const gfx::Point& location) {
 
   display::Display display =
       display::Screen::GetScreen()->GetDisplayMatching(bounds);
-  ash::WmWindow* root_wm_window =
-      ash::ShellPort::Get()->GetRootWindowForDisplayId(display.id());
-  aura::Window* root_window = root_wm_window->aura_window();
-  bounds = root_wm_window->ConvertRectFromScreen(bounds);
+  aura::Window* root_window =
+      ash::Shell::GetRootWindowForDisplayId(display.id());
+  ::wm::ConvertRectFromScreen(root_window, &bounds);
   CreateOrUpdateLayer(root_window, "AccessibilityCursorRing", bounds);
 }
 

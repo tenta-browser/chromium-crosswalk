@@ -33,6 +33,7 @@ from collections import defaultdict
 import logging
 import re
 
+from webkitpy.common.path_finder import PathFinder
 from webkitpy.layout_tests.models.test_configuration import TestConfigurationConverter
 
 _log = logging.getLogger(__name__)
@@ -43,7 +44,7 @@ _log = logging.getLogger(__name__)
 # FIXME: range() starts with 0 which makes if expectation checks harder
 # as PASS is 0.
 (PASS, FAIL, TEXT, IMAGE, IMAGE_PLUS_TEXT, AUDIO, TIMEOUT, CRASH, LEAK, SKIP, WONTFIX,
- SLOW, REBASELINE, NEEDS_REBASELINE, NEEDS_MANUAL_REBASELINE, MISSING, FLAKY, NOW, NONE) = range(19)
+ SLOW, REBASELINE, NEEDS_REBASELINE_UNUSED, NEEDS_MANUAL_REBASELINE, MISSING, FLAKY, NOW, NONE) = range(19)
 
 # FIXME: Perhaps these two routines should be part of the Port instead?
 BASELINE_SUFFIX_LIST = ('png', 'wav', 'txt')
@@ -55,7 +56,6 @@ V8_BUG_PREFIX = 'code.google.com/p/v8/issues/detail?id='
 NAMED_BUG_PREFIX = 'Bug('
 
 MISSING_KEYWORD = 'Missing'
-NEEDS_REBASELINE_KEYWORD = 'NeedsRebaseline'
 NEEDS_MANUAL_REBASELINE_KEYWORD = 'NeedsManualRebaseline'
 
 
@@ -78,7 +78,6 @@ class TestExpectationParser(object):
     # FIXME: Rename these to *_KEYWORD as in MISSING_KEYWORD above, but make
     # the case studdly-caps to match the actual file contents.
     REBASELINE_MODIFIER = 'rebaseline'
-    NEEDS_REBASELINE_MODIFIER = 'needsrebaseline'
     NEEDS_MANUAL_REBASELINE_MODIFIER = 'needsmanualrebaseline'
     PASS_EXPECTATION = 'pass'
     SKIP_MODIFIER = 'skip'
@@ -169,17 +168,16 @@ class TestExpectationParser(object):
         if self.REBASELINE_MODIFIER in expectations:
             expectation_line.warnings.append('REBASELINE should only be used for running rebaseline.py. Cannot be checked in.')
 
-        if self.NEEDS_REBASELINE_MODIFIER in expectations or self.NEEDS_MANUAL_REBASELINE_MODIFIER in expectations:
+        if self.NEEDS_MANUAL_REBASELINE_MODIFIER in expectations:
             for test in expectation_line.matching_tests:
                 if self._port.reference_files(test):
                     text_expected_filename = self._port.expected_filename(test, '.txt')
                     if not self._port.host.filesystem.exists(text_expected_filename):
                         expectation_line.warnings.append(
-                            'A reftest without text expectation cannot be marked as NeedsRebaseline/NeedsManualRebaseline')
+                            'A reftest without text expectation cannot be marked as NeedsManualRebaseline')
 
         specifiers = [specifier.lower() for specifier in expectation_line.specifiers]
-        if (self.REBASELINE_MODIFIER in expectations or self.NEEDS_REBASELINE_MODIFIER in expectations) and (
-                'debug' in specifiers or 'release' in specifiers):
+        if self.REBASELINE_MODIFIER in expectations and ('debug' in specifiers or 'release' in specifiers):
             expectation_line.warnings.append('A test cannot be rebaselined for Debug/Release.')
 
     def _parse_expectations(self, expectation_line):
@@ -249,7 +247,8 @@ class TestExpectationLine(object):
             self.name, self.matching_configurations, self.original_string)
 
     def __eq__(self, other):
-        return (self.original_string == other.original_string
+        return (isinstance(other, self.__class__)
+                and self.original_string == other.original_string
                 and self.filename == other.filename
                 and self.line_numbers == other.line_numbers
                 and self.name == other.name
@@ -281,7 +280,7 @@ class TestExpectationLine(object):
     _configuration_tokens_list = [
         'Mac', 'Mac10.9', 'Mac10.10', 'Mac10.11', 'Retina', 'Mac10.12',
         'Win', 'Win7', 'Win10',
-        'Linux', 'Trusty',
+        'Linux',
         'Android',
         'Release',
         'Debug',
@@ -298,7 +297,6 @@ class TestExpectationLine(object):
         MISSING_KEYWORD: 'MISSING',
         'Pass': 'PASS',
         'Rebaseline': 'REBASELINE',
-        NEEDS_REBASELINE_KEYWORD: 'NEEDSREBASELINE',
         NEEDS_MANUAL_REBASELINE_KEYWORD: 'NEEDSMANUALREBASELINE',
         'Skip': 'SKIP',
         'Slow': 'SLOW',
@@ -440,8 +438,8 @@ class TestExpectationLine(object):
 
         if 'MISSING' in expectations:
             warnings.append(
-                '"Missing" expectations are not allowed; either download new baselines '
-                '(see https://goo.gl/SHVYrZ) or use "NeedsRebaseline" expectations.')
+                '"Missing" expectations are not allowed; download new baselines '
+                '(see https://goo.gl/SHVYrZ), or as a fallback, use "NeedsManualRebaseline".')
 
         expectation_line.bugs = bugs
         expectation_line.specifiers = specifiers
@@ -694,7 +692,7 @@ class TestExpectationsModel(object):
         raise ValueError(expectation)
 
     def remove_expectation_line(self, test):
-        if not self.has_test(test):
+        if not self.has_test(test.name):
             return
         self._clear_expectations_for_test(test)
         del self._test_to_expectation_line[test]
@@ -880,7 +878,6 @@ class TestExpectations(object):
         'leak': LEAK,
         'missing': MISSING,
         TestExpectationParser.SKIP_MODIFIER: SKIP,
-        TestExpectationParser.NEEDS_REBASELINE_MODIFIER: NEEDS_REBASELINE,
         TestExpectationParser.NEEDS_MANUAL_REBASELINE_MODIFIER: NEEDS_MANUAL_REBASELINE,
         TestExpectationParser.WONTFIX_MODIFIER: WONTFIX,
         TestExpectationParser.SLOW_MODIFIER: SLOW,
@@ -938,10 +935,9 @@ class TestExpectations(object):
 
         if result in expected_results:
             return True
-        if result in (PASS, TEXT, IMAGE, IMAGE_PLUS_TEXT, AUDIO, MISSING) and (
-                NEEDS_REBASELINE in expected_results or NEEDS_MANUAL_REBASELINE in expected_results):
+        if result in (PASS, TEXT, IMAGE, IMAGE_PLUS_TEXT, AUDIO, MISSING) and NEEDS_MANUAL_REBASELINE in expected_results:
             return True
-        if result in (TEXT, IMAGE, IMAGE_PLUS_TEXT, AUDIO) and (FAIL in expected_results):
+        if result in (TEXT, IMAGE, IMAGE_PLUS_TEXT, AUDIO) and FAIL in expected_results:
             return True
         if result == MISSING and test_needs_rebaselining:
             return True
@@ -1039,8 +1035,7 @@ class TestExpectations(object):
                 self._expectations += expectations
                 self._model.merge_model(model)
 
-        # FIXME: move ignore_tests into port.skipped_layout_tests()
-        self.add_extra_skipped_tests(port.skipped_layout_tests(tests).union(set(port.get_option('ignore_tests', []))))
+        self.add_extra_skipped_tests(set(port.get_option('ignore_tests', [])))
         self.add_expectations_from_bot()
 
         self._has_warnings = False
@@ -1054,9 +1049,6 @@ class TestExpectations(object):
 
     def expectations(self):
         return self._expectations
-
-    def get_needs_rebaseline_failures(self):
-        return self._model.get_test_set(NEEDS_REBASELINE)
 
     def get_rebaselining_failures(self):
         return self._model.get_test_set(REBASELINE)
@@ -1095,8 +1087,9 @@ class TestExpectations(object):
         return REBASELINE in self._model.get_expectations(test)
 
     def _shorten_filename(self, filename):
-        if filename.startswith(self._port.path_from_webkit_base()):
-            return self._port.host.filesystem.relpath(filename, self._port.path_from_webkit_base())
+        finder = PathFinder(self._port.host.filesystem)
+        if filename.startswith(finder.path_from_chromium_base()):
+            return self._port.host.filesystem.relpath(filename, finder.path_from_chromium_base())
         return filename
 
     def _report_warnings(self):
@@ -1178,10 +1171,17 @@ class TestExpectations(object):
             model.add_expectation_line(expectation_line)
         self._model.merge_model(model)
 
-    def remove_tests(self, tests_to_remove):
+    def remove_tests_from_expectations(self, tests_to_remove):
         for test in self._expectations:
-            if test.name and test.name in tests_to_remove:
-                self.remove_expectation_line(test)
+            if not test.name:
+                continue
+            if test.name not in tests_to_remove:
+                continue
+            self._expectations.remove(test)
+            if not self._model.has_test(test.name):
+                continue
+            line = self._model.get_expectation_line(test.name)
+            self._model.remove_expectation_line(line)
 
     def add_expectations_from_bot(self):
         # FIXME: With mode 'very-flaky' and 'maybe-flaky', this will show the expectations entry in the flakiness
@@ -1198,12 +1198,6 @@ class TestExpectations(object):
     def add_expectation_line(self, expectation_line):
         self._model.add_expectation_line(expectation_line)
         self._expectations += [expectation_line]
-
-    def remove_expectation_line(self, test):
-        if not self._model.has_test(test):
-            return
-        self._expectations.remove(self._model.get_expectation_line(test))
-        self._model.remove_expectation_line(test)
 
     @staticmethod
     def list_to_string(expectation_lines, test_configuration_converter=None, reconstitute_only_these=None):

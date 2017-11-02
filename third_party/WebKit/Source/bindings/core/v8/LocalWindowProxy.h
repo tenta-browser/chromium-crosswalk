@@ -31,10 +31,10 @@
 #ifndef LocalWindowProxy_h
 #define LocalWindowProxy_h
 
-#include "bindings/core/v8/DOMWrapperWorld.h"
-#include "bindings/core/v8/ScriptState.h"
 #include "bindings/core/v8/WindowProxy.h"
 #include "core/frame/LocalFrame.h"
+#include "platform/bindings/DOMWrapperWorld.h"
+#include "platform/bindings/ScriptState.h"
 #include "platform/wtf/Assertions.h"
 #include "platform/wtf/RefPtr.h"
 #include "platform/wtf/text/AtomicString.h"
@@ -74,7 +74,7 @@ class LocalWindowProxy final : public WindowProxy {
 
   bool IsLocal() const override { return true; }
   void Initialize() override;
-  void DisposeContext(Lifecycle next_status) override;
+  void DisposeContext(Lifecycle next_status, FrameReuseStatus) override;
 
   // Creates a new v8::Context with the window wrapper object as the global
   // object (aka the inner global).  Note that the window wrapper and its

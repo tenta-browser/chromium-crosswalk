@@ -62,7 +62,8 @@ std::unique_ptr<InterpolableValue> CreateScaleIdentity() {
   return std::move(list);
 }
 
-class InheritedScaleChecker : public InterpolationType::ConversionChecker {
+class InheritedScaleChecker
+    : public CSSInterpolationType::CSSConversionChecker {
  public:
   static std::unique_ptr<InheritedScaleChecker> Create(const Scale& scale) {
     return WTF::WrapUnique(new InheritedScaleChecker(scale));
@@ -71,9 +72,9 @@ class InheritedScaleChecker : public InterpolationType::ConversionChecker {
  private:
   InheritedScaleChecker(const Scale& scale) : scale_(scale) {}
 
-  bool IsValid(const InterpolationEnvironment& environment,
+  bool IsValid(const StyleResolverState& state,
                const InterpolationValue&) const final {
-    return scale_ == Scale(environment.GetState().ParentStyle()->Scale());
+    return scale_ == Scale(state.ParentStyle()->Scale());
   }
 
   const Scale scale_;
@@ -85,12 +86,12 @@ class CSSScaleNonInterpolableValue : public NonInterpolableValue {
  public:
   ~CSSScaleNonInterpolableValue() final {}
 
-  static PassRefPtr<CSSScaleNonInterpolableValue> Create(const Scale& scale) {
+  static RefPtr<CSSScaleNonInterpolableValue> Create(const Scale& scale) {
     return AdoptRef(
         new CSSScaleNonInterpolableValue(scale, scale, false, false));
   }
 
-  static PassRefPtr<CSSScaleNonInterpolableValue> Merge(
+  static RefPtr<CSSScaleNonInterpolableValue> Merge(
       const CSSScaleNonInterpolableValue& start,
       const CSSScaleNonInterpolableValue& end) {
     return AdoptRef(new CSSScaleNonInterpolableValue(start.Start(), end.end(),

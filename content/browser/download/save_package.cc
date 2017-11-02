@@ -20,13 +20,16 @@
 #include "base/strings/string_split.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task_runner_util.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_restrictions.h"
 #include "build/build_config.h"
 #include "components/url_formatter/url_formatter.h"
 #include "content/browser/bad_message.h"
 #include "content/browser/download/download_item_impl.h"
 #include "content/browser/download/download_manager_impl.h"
 #include "content/browser/download/download_stats.h"
+#include "content/browser/download/download_task_runner.h"
 #include "content/browser/download/save_file.h"
 #include "content/browser/download/save_file_manager.h"
 #include "content/browser/download/save_item.h"
@@ -117,7 +120,7 @@ bool CanSaveAsComplete(const std::string& contents_mime_type) {
 }
 
 // Request handle for SavePackage downloads. Currently doesn't support
-// pause/resume/cancel, but returns a WebContents.
+// pause/resume, but returns a WebContents.
 class SavePackageRequestHandle : public DownloadRequestHandleInterface {
  public:
   explicit SavePackageRequestHandle(base::WeakPtr<SavePackage> save_package)
@@ -130,7 +133,10 @@ class SavePackageRequestHandle : public DownloadRequestHandleInterface {
   DownloadManager* GetDownloadManager() const override { return nullptr; }
   void PauseRequest() const override {}
   void ResumeRequest() const override {}
-  void CancelRequest() const override {}
+  void CancelRequest(bool user_cancel) const override {
+    if (save_package_.get() && !save_package_->canceled())
+      save_package_->Cancel(user_cancel, false);
+  }
 
  private:
   base::WeakPtr<SavePackage> save_package_;
@@ -189,8 +195,11 @@ SavePackage::~SavePackage() {
   // We should no longer be observing the DownloadItem at this point.
   CHECK(!download_);
 
-  DCHECK_EQ(all_save_items_count_, waiting_item_queue_.size() +
-                                       completed_count() + in_process_count());
+  DCHECK_EQ(all_save_items_count_,
+            waiting_item_queue_.size() + completed_count() + in_process_count())
+      << "waiting: " << waiting_item_queue_.size()
+      << " completed: " << completed_count()
+      << " in_progress: " << in_process_count();
 
   // Free all SaveItems.
   waiting_item_queue_.clear();
@@ -219,14 +228,14 @@ GURL SavePackage::GetUrlToBeSaved(WebContents* web_contents) {
   return visible_entry ? visible_entry->GetURL() : GURL::EmptyGURL();
 }
 
-void SavePackage::Cancel(bool user_action) {
+void SavePackage::Cancel(bool user_action, bool cancel_download_item) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   if (!canceled()) {
     if (user_action)
       user_canceled_ = true;
     else
       disk_error_occurred_ = true;
-    Stop();
+    Stop(cancel_download_item);
   }
   RecordSavePackageEvent(SAVE_PACKAGE_CANCELLED);
 }
@@ -283,7 +292,6 @@ void SavePackage::InitWithDownloadItem(
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(item);
   download_ = item;
-  download_->AddObserver(this);
   // Confirm above didn't delete the tab out from under us.
   if (!download_created_callback.is_null())
     download_created_callback.Run(download_);
@@ -315,21 +323,17 @@ void SavePackage::InitWithDownloadItem(
 
 void SavePackage::OnMHTMLGenerated(int64_t size) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  if (!download_)
+    return;
+
+  CHECK_EQ(download_->GetState(), DownloadItem::IN_PROGRESS);
   if (size <= 0) {
     Cancel(false);
     return;
   }
   wrote_to_completed_file_ = true;
 
-  // Hack to avoid touching download_ after user cancel.
-  // TODO(rdsmith/benjhayden): Integrate canceling on DownloadItem
-  // with SavePackage flow.
-  if (download_->GetState() == DownloadItem::IN_PROGRESS) {
-    // Must call OnAllDataSaved here in order for
-    // GDataDownloadObserver::ShouldUpload() to return true.
-    // ShouldCompleteDownload() may depend on the gdata uploader to finish.
-    download_->OnAllDataSaved(size, std::unique_ptr<crypto::SecureHash>());
-  }
+  download_->OnAllDataSaved(size, std::unique_ptr<crypto::SecureHash>());
 
   if (!download_manager_->GetDelegate()) {
     Finish();
@@ -599,9 +603,9 @@ bool SavePackage::UpdateSaveProgress(SaveItemId save_item_id,
   return true;
 }
 
-// Stop all page saving jobs that are in progress and instruct the FILE thread
-// to delete all saved  files.
-void SavePackage::Stop() {
+// Stop all page saving jobs that are in progress and instruct the download
+// sequence to delete all saved files.
+void SavePackage::Stop(bool cancel_download_item) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   // If we haven't moved out of the initial state, there's nothing to cancel and
   // there won't be valid pointers for |file_manager_| or |download_|.
@@ -631,17 +635,17 @@ void SavePackage::Stop() {
   for (const auto& it : saved_failed_items_)
     save_item_ids.push_back(it.first);
 
-  BrowserThread::PostTask(
-      BrowserThread::FILE, FROM_HERE,
-      base::Bind(&SaveFileManager::RemoveSavedFileFromFileMap, file_manager_,
-                 save_item_ids));
+  GetDownloadTaskRunner()->PostTask(
+      FROM_HERE, base::BindOnce(&SaveFileManager::RemoveSavedFileFromFileMap,
+                                file_manager_, save_item_ids));
 
   finished_ = true;
   wait_state_ = FAILED;
 
   // Inform the DownloadItem we have canceled whole save page job.
   if (download_) {
-    download_->Cancel(false);
+    if (cancel_download_item)
+      download_->Cancel(false);
     FinalizeDownloadEntry();
   }
 }
@@ -659,15 +663,12 @@ void SavePackage::CheckFinish() {
   for (const auto& it : saved_success_items_)
     final_names.insert(std::make_pair(it.first, it.second->full_path()));
 
-  BrowserThread::PostTask(
-      BrowserThread::FILE, FROM_HERE,
-      base::Bind(&SaveFileManager::RenameAllFiles,
-                 file_manager_,
-                 final_names,
-                 dir,
-                 web_contents()->GetRenderProcessHost()->GetID(),
-                 web_contents()->GetMainFrame()->GetRoutingID(),
-                 id()));
+  GetDownloadTaskRunner()->PostTask(
+      FROM_HERE,
+      base::BindOnce(&SaveFileManager::RenameAllFiles, file_manager_,
+                     final_names, dir,
+                     web_contents()->GetRenderProcessHost()->GetID(),
+                     web_contents()->GetMainFrame()->GetRoutingID(), id()));
 }
 
 // Successfully finished all items of this SavePackage.
@@ -699,25 +700,20 @@ void SavePackage::Finish() {
     list_of_failed_save_item_ids.push_back(save_item->id());
   }
 
-  BrowserThread::PostTask(
-      BrowserThread::FILE, FROM_HERE,
-      base::Bind(&SaveFileManager::RemoveSavedFileFromFileMap, file_manager_,
-                 list_of_failed_save_item_ids));
+  GetDownloadTaskRunner()->PostTask(
+      FROM_HERE, base::BindOnce(&SaveFileManager::RemoveSavedFileFromFileMap,
+                                file_manager_, list_of_failed_save_item_ids));
 
   if (download_) {
-    // Hack to avoid touching |download_| after user cancel.
-    // TODO(rdsmith/benjhayden): Integrate canceling on DownloadItem
-    // with SavePackage flow.
-    if (download_->GetState() == DownloadItem::IN_PROGRESS) {
-      if (save_type_ != SAVE_PAGE_TYPE_AS_MHTML) {
-        download_->DestinationUpdate(
-            all_save_items_count_, CurrentSpeed(),
-            std::vector<DownloadItem::ReceivedSlice>());
-        download_->OnAllDataSaved(all_save_items_count_,
-                                  std::unique_ptr<crypto::SecureHash>());
-      }
-      download_->MarkAsComplete();
+    if (save_type_ != SAVE_PAGE_TYPE_AS_MHTML) {
+      CHECK_EQ(download_->GetState(), DownloadItem::IN_PROGRESS);
+      download_->DestinationUpdate(
+          all_save_items_count_, CurrentSpeed(),
+          std::vector<DownloadItem::ReceivedSlice>());
+      download_->OnAllDataSaved(all_save_items_count_,
+                                std::unique_ptr<crypto::SecureHash>());
     }
+    download_->MarkAsComplete();
     FinalizeDownloadEntry();
   }
 }
@@ -741,10 +737,8 @@ void SavePackage::SaveFinished(SaveItemId save_item_id,
 
   // Inform the DownloadItem to update UI.
   // We use the received bytes as number of saved files.
-  // Hack to avoid touching download_ after user cancel.
-  // TODO(rdsmith/benjhayden): Integrate canceling on DownloadItem
-  // with SavePackage flow.
-  if (download_ && (download_->GetState() == DownloadItem::IN_PROGRESS)) {
+  if (download_) {
+    CHECK_EQ(download_->GetState(), DownloadItem::IN_PROGRESS);
     download_->DestinationUpdate(
         completed_count(), CurrentSpeed(),
         std::vector<DownloadItem::ReceivedSlice>());
@@ -772,9 +766,9 @@ void SavePackage::SaveFinished(SaveItemId save_item_id,
 void SavePackage::SaveCanceled(const SaveItem* save_item) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   file_manager_->RemoveSaveFile(save_item->id(), this);
-  BrowserThread::PostTask(
-      BrowserThread::FILE, FROM_HERE,
-      base::Bind(&SaveFileManager::CancelSave, file_manager_, save_item->id()));
+  GetDownloadTaskRunner()->PostTask(
+      FROM_HERE, base::BindOnce(&SaveFileManager::CancelSave, file_manager_,
+                                save_item->id()));
 }
 
 void SavePackage::SaveNextFile(bool process_all_remaining_items) {
@@ -933,10 +927,10 @@ void SavePackage::GetSerializedHtmlWithLocalLinks() {
       number_of_frames_pending_response_++;
     } else {
       // Notify SaveFileManager about the failure to save this SaveItem.
-      BrowserThread::PostTask(
-          BrowserThread::FILE, FROM_HERE,
-          base::Bind(&SaveFileManager::SaveFinished, file_manager_,
-                     save_item->id(), id(), false));
+      GetDownloadTaskRunner()->PostTask(
+          FROM_HERE,
+          base::BindOnce(&SaveFileManager::SaveFinished, file_manager_,
+                         save_item->id(), id(), false));
     }
   }
   if (number_of_frames_pending_response_ == 0) {
@@ -1046,22 +1040,21 @@ void SavePackage::OnSerializedHtmlWithLocalLinksResponse(
     scoped_refptr<net::IOBuffer> new_data(new net::IOBuffer(data.size()));
     memcpy(new_data->data(), data.data(), data.size());
 
-    // Call write file functionality in FILE thread.
-    BrowserThread::PostTask(
-        BrowserThread::FILE, FROM_HERE,
-        base::Bind(&SaveFileManager::UpdateSaveProgress, file_manager_,
-                   save_item->id(), base::RetainedRef(new_data),
-                   static_cast<int>(data.size())));
+    // Call write file functionality in download sequence.
+    GetDownloadTaskRunner()->PostTask(
+        FROM_HERE,
+        base::BindOnce(&SaveFileManager::UpdateSaveProgress, file_manager_,
+                       save_item->id(), base::RetainedRef(new_data),
+                       static_cast<int>(data.size())));
   }
 
-  // Current frame is completed saving, call finish in FILE thread.
+  // Current frame is completed saving, call finish in download sequence.
   if (end_of_data) {
     DVLOG(20) << __func__ << "() save_item_id = " << save_item->id()
               << " url = \"" << save_item->url().spec() << "\"";
-    BrowserThread::PostTask(
-        BrowserThread::FILE, FROM_HERE,
-        base::Bind(&SaveFileManager::SaveFinished, file_manager_,
-                   save_item->id(), id(), true));
+    GetDownloadTaskRunner()->PostTask(
+        FROM_HERE, base::BindOnce(&SaveFileManager::SaveFinished, file_manager_,
+                                  save_item->id(), id(), true));
     number_of_frames_pending_response_--;
     DCHECK_LE(0, number_of_frames_pending_response_);
   }
@@ -1089,6 +1082,7 @@ void SavePackage::GetSavableResourceLinks() {
   EnqueueFrame(FrameTreeNode::kFrameTreeNodeInvalidId,  // No container.
                main_frame_tree_node->frame_tree_node_id(),
                main_frame_tree_node->current_url());
+  all_save_items_count_ = 1;
 }
 
 void SavePackage::OnSavableResourceLinksResponse(
@@ -1227,10 +1221,7 @@ void SavePackage::CompleteSavableResourceLinksResponse() {
   all_save_items_count_ = static_cast<int>(waiting_item_queue_.size());
 
   // We use total bytes as the total number of files we want to save.
-  // Hack to avoid touching download_ after user cancel.
-  // TODO(rdsmith/benjhayden): Integrate canceling on DownloadItem
-  // with SavePackage flow.
-  if (download_ && (download_->GetState() == DownloadItem::IN_PROGRESS))
+  if (download_)
     download_->SetTotalBytes(all_save_items_count_);
 
   if (all_save_items_count_) {
@@ -1295,7 +1286,7 @@ base::FilePath SavePackage::GetSuggestedNameForSaveAs(
 
 // static
 base::FilePath SavePackage::EnsureHtmlExtension(const base::FilePath& name) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  base::ThreadRestrictions::AssertIOAllowed();
 
   base::FilePath::StringType ext = name.Extension();
   if (!ext.empty())
@@ -1312,7 +1303,7 @@ base::FilePath SavePackage::EnsureHtmlExtension(const base::FilePath& name) {
 // static
 base::FilePath SavePackage::EnsureMimeExtension(const base::FilePath& name,
     const std::string& contents_mime_type) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  base::ThreadRestrictions::AssertIOAllowed();
 
   // Start extension at 1 to skip over period if non-empty.
   base::FilePath::StringType ext = name.Extension();
@@ -1352,8 +1343,8 @@ const base::FilePath::CharType* SavePackage::ExtensionForMimeType(
 
 void SavePackage::GetSaveInfo() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  // Can't use |web_contents_| in the FILE thread, so get the data that we need
-  // before calling to it.
+  // Can't use |web_contents_| in the download sequence, so get the data that we
+  // need before calling to it.
   base::FilePath website_save_dir;
   base::FilePath download_save_dir;
   bool skip_dir_check = false;
@@ -1365,8 +1356,8 @@ void SavePackage::GetSaveInfo() {
   }
   std::string mime_type = web_contents()->GetContentsMimeType();
   bool can_save_as_complete = CanSaveAsComplete(mime_type);
-  BrowserThread::PostTaskAndReplyWithResult(
-      BrowserThread::FILE, FROM_HERE,
+  base::PostTaskAndReplyWithResult(
+      GetDownloadTaskRunner().get(), FROM_HERE,
       base::Bind(&SavePackage::CreateDirectoryOnFileThread, title_, page_url_,
                  can_save_as_complete, mime_type, website_save_dir,
                  download_save_dir, skip_dir_check),
@@ -1383,7 +1374,7 @@ base::FilePath SavePackage::CreateDirectoryOnFileThread(
     const base::FilePath& website_save_dir,
     const base::FilePath& download_save_dir,
     bool skip_dir_check) {
-  DCHECK_CURRENTLY_ON(BrowserThread::FILE);
+  DCHECK(GetDownloadTaskRunner()->RunsTasksInCurrentSequence());
 
   base::FilePath suggested_filename = GetSuggestedNameForSaveAs(
       title, page_url, can_save_as_complete, mime_type);
@@ -1426,7 +1417,7 @@ void SavePackage::ContinueGetSaveInfo(bool can_save_as_complete,
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   // The WebContents which owns this SavePackage may have disappeared during
-  // the UI->FILE->UI thread hop of
+  // the UI->download sequence->UI thread hop of
   // GetSaveInfo->CreateDirectoryOnFileThread->ContinueGetSaveInfo.
   if (!web_contents() || !download_manager_->GetDelegate())
     return;
@@ -1470,25 +1461,11 @@ void SavePackage::OnPathPicked(
   Init(download_created_callback);
 }
 
-void SavePackage::RemoveObservers() {
-  DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  DCHECK(download_);
-  DCHECK(download_manager_);
-
-  download_->RemoveObserver(this);
-  download_ = nullptr;
-  download_manager_ = nullptr;
-}
-
-void SavePackage::OnDownloadDestroyed(DownloadItem* download) {
-  RemoveObservers();
-}
-
 void SavePackage::FinalizeDownloadEntry() {
   DCHECK(download_);
-
-  download_manager_->OnSavePackageSuccessfullyFinished(download_);
-  RemoveObservers();
+  DCHECK(download_manager_);
+  download_ = nullptr;
+  download_manager_ = nullptr;
 }
 
 }  // namespace content

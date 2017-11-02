@@ -282,7 +282,6 @@ class FlashFullscreenInteractiveBrowserTest : public OutOfProcessPPAPITest {
                                       const SkBitmap& bitmap,
                                       content::ReadbackResponse response) {
     if (response == content::READBACK_SUCCESS) {
-      SkAutoLockPixels lock_pixels(bitmap);
       if (bitmap.width() > 0 && bitmap.height() > 0)
         *is_expected_color = (bitmap.getColor(0, 0) == expected_color);
     }
@@ -428,7 +427,7 @@ IN_PROC_BROWSER_TEST_F(FlashFullscreenInteractiveBrowserTest,
       fullscreen_view->GetRenderWidgetHost();
   content::RenderProcessHost* process = fullscreen_widget->GetProcess();
   content::PwnMessageHelper::LockMouse(
-      process, fullscreen_widget->GetRoutingID(), true, false, true);
+      process, fullscreen_widget->GetRoutingID(), true, true);
 
   // Make sure that the fullscreen widget got the mouse lock.
   EXPECT_TRUE(fullscreen_view->IsMouseLocked());

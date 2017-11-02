@@ -8,9 +8,11 @@
 #include <utility>
 
 #include "base/bind.h"
+#include "base/format_macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/numerics/safe_math.h"
 #include "base/process/memory.h"
+#include "base/strings/stringprintf.h"
 #include "ui/gfx/buffer_format_util.h"
 #include "ui/gl/gl_bindings.h"
 
@@ -101,6 +103,8 @@ bool GpuMemoryBufferImplSharedMemory::IsUsageSupported(gfx::BufferUsage usage) {
     case gfx::BufferUsage::SCANOUT_CPU_READ_WRITE:
       return true;
     case gfx::BufferUsage::SCANOUT:
+    case gfx::BufferUsage::SCANOUT_CAMERA_READ_WRITE:
+    case gfx::BufferUsage::SCANOUT_VDA_WRITE:
       return false;
   }
   NOTREACHED();
@@ -128,6 +132,7 @@ bool GpuMemoryBufferImplSharedMemory::IsSizeValidForFormat(
       // by the block size.
       return size.width() % 4 == 0 && size.height() % 4 == 0;
     case gfx::BufferFormat::R_8:
+    case gfx::BufferFormat::R_16:
     case gfx::BufferFormat::RG_88:
     case gfx::BufferFormat::BGR_565:
     case gfx::BufferFormat::RGBA_4444:
@@ -209,6 +214,13 @@ gfx::GpuMemoryBufferHandle GpuMemoryBufferImplSharedMemory::GetHandle() const {
   handle.stride = stride_;
   handle.handle = shared_memory_->handle();
   return handle;
+}
+
+base::trace_event::MemoryAllocatorDumpGuid
+GpuMemoryBufferImplSharedMemory::GetGUIDForTracing(
+    uint64_t tracing_process_id) const {
+  return base::trace_event::MemoryAllocatorDumpGuid(base::StringPrintf(
+      "shared_memory_gpu/%" PRIx64 "/%d", tracing_process_id, id_.id));
 }
 
 }  // namespace gpu

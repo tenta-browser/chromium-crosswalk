@@ -5,14 +5,12 @@
 
 <script>
 
-function test()
-{
-    InspectorTest.changeExecutionContext("myIFrame");
-    InspectorTest.evaluateInConsoleAndDump("foo", finish, true);
-    function finish()
-    {
-        InspectorTest.completeTest();
-    }
+function test() {
+  ConsoleTestRunner.changeExecutionContext('myIFrame');
+  ConsoleTestRunner.evaluateInConsoleAndDump('foo', finish, true);
+  function finish() {
+    TestRunner.completeTest();
+  }
 }
 
 </script>

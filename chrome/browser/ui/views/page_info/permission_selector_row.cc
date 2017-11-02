@@ -12,7 +12,6 @@
 #include "chrome/browser/ui/views/harmony/chrome_typography.h"
 #include "chrome/browser/ui/views/page_info/non_accessible_image_view.h"
 #include "chrome/browser/ui/views/page_info/page_info_bubble_view.h"
-#include "chrome/grit/generated_resources.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/models/combobox_model.h"
@@ -110,9 +109,8 @@ void PermissionMenuButton::OnNativeThemeChanged(const ui::NativeTheme* theme) {
 void PermissionMenuButton::OnMenuButtonClicked(views::MenuButton* source,
                                                const gfx::Point& point,
                                                const ui::Event* event) {
-  menu_runner_.reset(new views::MenuRunner(
-      menu_model_,
-      views::MenuRunner::HAS_MNEMONICS | views::MenuRunner::ASYNC));
+  menu_runner_.reset(
+      new views::MenuRunner(menu_model_, views::MenuRunner::HAS_MNEMONICS));
 
   gfx::Point p(point);
   p.Offset(is_rtl_display_ ? source->width() : -source->width(), 0);
@@ -211,15 +209,17 @@ PermissionCombobox::~PermissionCombobox() {}
 
 void PermissionCombobox::UpdateSelectedIndex(bool use_default) {
   int index = model_->GetCheckedIndex();
-  if (use_default && index == -1)
+  if (use_default && index == -1) {
     index = 0;
+  }
   SetSelectedIndex(index);
 }
 
 void PermissionCombobox::OnPaintBorder(gfx::Canvas* canvas) {
   // No border except a focus indicator for MD mode.
-  if (ui::MaterialDesignController::IsSecondaryUiMaterial() && !HasFocus())
+  if (ui::MaterialDesignController::IsSecondaryUiMaterial() && !HasFocus()) {
     return;
+  }
   Combobox::OnPaintBorder(canvas);
 }
 
@@ -264,10 +264,11 @@ PermissionSelectorRow::PermissionSelectorRow(
   bool use_real_combobox =
       ui::MaterialDesignController::IsSecondaryUiMaterial();
 #endif
-  if (use_real_combobox)
+  if (use_real_combobox) {
     InitializeComboboxView(layout, permission);
-  else
+  } else {
     InitializeMenuButtonView(layout, permission);
+  }
 
   // Show the permission decision reason, if it was not the user.
   base::string16 reason =
@@ -302,8 +303,9 @@ PermissionSelectorRow::~PermissionSelectorRow() {
   //
   // Technically, the MenuButton has the same problem, but MenuButton doesn't
   // use its model in its destructor.
-  if (combobox_)
+  if (combobox_) {
     combobox_->parent()->RemoveChildView(combobox_);
+  }
 }
 
 void PermissionSelectorRow::InitializeMenuButtonView(
@@ -358,8 +360,9 @@ void PermissionSelectorRow::PermissionChanged(
     combobox_->UpdateSelectedIndex(use_default);
   }
 
-  for (PermissionSelectorRowObserver& observer : observer_list_)
+  for (PermissionSelectorRowObserver& observer : observer_list_) {
     observer.OnPermissionChanged(permission);
+  }
 }
 
 views::View* PermissionSelectorRow::button() {

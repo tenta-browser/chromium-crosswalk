@@ -17,6 +17,7 @@
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/subresource_filter/chrome_subresource_filter_client.h"
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
 #include "chrome/browser/ui/browser_window.h"
@@ -37,7 +38,6 @@ using content::DevToolsAgentHost;
 
 char ChromeDevToolsManagerDelegate::kTypeApp[] = "app";
 char ChromeDevToolsManagerDelegate::kTypeBackgroundPage[] = "background_page";
-char ChromeDevToolsManagerDelegate::kTypeWebView[] = "webview";
 
 namespace {
 
@@ -82,18 +82,14 @@ std::unique_ptr<base::DictionaryValue> GetBounds(BrowserWindow* window) {
   return bounds_object;
 }
 
-bool GetExtensionInfo(content::RenderFrameHost* host,
+bool GetExtensionInfo(content::WebContents* wc,
                       std::string* name,
                       std::string* type) {
-  content::WebContents* wc = content::WebContents::FromRenderFrameHost(host);
-  if (!wc)
-    return false;
   Profile* profile = Profile::FromBrowserContext(wc->GetBrowserContext());
   if (!profile)
     return false;
   const extensions::Extension* extension =
-      extensions::ProcessManager::Get(profile)->GetExtensionForRenderFrameHost(
-          host);
+      extensions::ProcessManager::Get(profile)->GetExtensionForWebContents(wc);
   if (!extension)
     return false;
   extensions::ExtensionHost* extension_host =
@@ -111,6 +107,15 @@ bool GetExtensionInfo(content::RenderFrameHost* host,
     return true;
   }
   return false;
+}
+
+void ToggleAdBlocking(bool enabled, content::DevToolsAgentHost* agent_host) {
+  if (content::WebContents* web_contents = agent_host->GetWebContents()) {
+    if (auto* client =
+            ChromeSubresourceFilterClient::FromWebContents(web_contents)) {
+      client->ToggleForceActivationInCurrentWebContents(enabled);
+    }
+  }
 }
 
 }  // namespace
@@ -280,6 +285,27 @@ ChromeDevToolsManagerDelegate::SetWindowBounds(int id,
 }
 
 std::unique_ptr<base::DictionaryValue>
+ChromeDevToolsManagerDelegate::SetAdBlockingEnabled(
+    content::DevToolsAgentHost* agent_host,
+    int id,
+    base::DictionaryValue* params) {
+  if (!page_enable_)
+    return DevToolsProtocol::CreateErrorResponse(id, "Page domain is disabled");
+  bool enabled = false;
+  params->GetBoolean("enabled", &enabled);
+  ToggleAdBlocking(enabled, agent_host);
+  return DevToolsProtocol::CreateSuccessResponse(id, nullptr);
+}
+
+void ChromeDevToolsManagerDelegate::TogglePageEnable(
+    bool enable,
+    content::DevToolsAgentHost* agent_host) {
+  page_enable_ = enable;
+  if (!page_enable_)
+    ToggleAdBlocking(false /* enable */, agent_host);
+}
+
+std::unique_ptr<base::DictionaryValue>
 ChromeDevToolsManagerDelegate::HandleBrowserCommand(
     int id,
     std::string method,
@@ -332,9 +358,19 @@ base::DictionaryValue* ChromeDevToolsManagerDelegate::HandleCommand(
   if (!DevToolsProtocol::ParseCommand(command_dict, &id, &method, &params))
     return nullptr;
 
-  if (agent_host->GetType() == DevToolsAgentHost::kTypeBrowser &&
-      method.find("Browser.") == 0)
-    return HandleBrowserCommand(id, method, params).release();
+  // Do not actually handle the enable/disable commands, just keep track of the
+  // enable state.
+  if (method == chrome::devtools::Page::enable::kName)
+    TogglePageEnable(true /* enable */, agent_host);
+  if (method == chrome::devtools::Page::disable::kName)
+    TogglePageEnable(false /* enable */, agent_host);
+
+  auto* result = HandleBrowserCommand(id, method, params).release();
+  if (result)
+    return result;
+
+  if (method == chrome::devtools::Page::setAdBlockingEnabled::kName)
+    return SetAdBlockingEnabled(agent_host, id, params).release();
 
   if (method == chrome::devtools::Target::setRemoteLocations::kName)
     return SetRemoteLocations(agent_host, id, params).release();
@@ -343,20 +379,7 @@ base::DictionaryValue* ChromeDevToolsManagerDelegate::HandleCommand(
 }
 
 std::string ChromeDevToolsManagerDelegate::GetTargetType(
-    content::RenderFrameHost* host) {
-  content::WebContents* web_contents =
-      content::WebContents::FromRenderFrameHost(host);
-
-  guest_view::GuestViewBase* guest =
-      guest_view::GuestViewBase::FromWebContents(web_contents);
-  content::WebContents* guest_contents =
-      guest ? guest->embedder_web_contents() : nullptr;
-  if (guest_contents)
-    return kTypeWebView;
-
-  if (host->GetParent())
-    return DevToolsAgentHost::kTypeFrame;
-
+    content::WebContents* web_contents) {
   for (TabContentsIterator it; !it.done(); it.Next()) {
     if (*it == web_contents)
       return DevToolsAgentHost::kTypePage;
@@ -364,16 +387,16 @@ std::string ChromeDevToolsManagerDelegate::GetTargetType(
 
   std::string extension_name;
   std::string extension_type;
-  if (!GetExtensionInfo(host, &extension_name, &extension_type))
+  if (!GetExtensionInfo(web_contents, &extension_name, &extension_type))
     return DevToolsAgentHost::kTypeOther;
   return extension_type;
 }
 
 std::string ChromeDevToolsManagerDelegate::GetTargetTitle(
-    content::RenderFrameHost* host) {
+    content::WebContents* web_contents) {
   std::string extension_name;
   std::string extension_type;
-  if (!GetExtensionInfo(host, &extension_name, &extension_type))
+  if (!GetExtensionInfo(web_contents, &extension_name, &extension_type))
     return std::string();
   return extension_name;
 }
@@ -410,6 +433,8 @@ void ChromeDevToolsManagerDelegate::DevToolsAgentHostAttached(
 void ChromeDevToolsManagerDelegate::DevToolsAgentHostDetached(
     content::DevToolsAgentHost* agent_host) {
   network_protocol_handler_->DevToolsAgentStateChanged(agent_host, false);
+  ToggleAdBlocking(false /* enable */, agent_host);
+
   // This class is created lazily, so it may not know about some attached hosts.
   if (host_data_.find(agent_host) != host_data_.end()) {
     host_data_.erase(agent_host);

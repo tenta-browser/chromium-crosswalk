@@ -12,6 +12,7 @@ source_set("favicon") {
     "//base",
     "//components/favicon/core",
     "//components/favicon_base",
+    "//ios/chrome/browser/favicon",
     "//url",
   ]
   configs += [ "//build/config/compiler:enable_arc" ]
@@ -26,7 +27,7 @@ source_set("favicon_ui") {
   ]
   deps = [
     "//base",
-    "//ios/chrome/browser/ui",
+    "//ios/chrome/browser/ui/util:constraints_ui",
   ]
   configs += [ "//build/config/compiler:enable_arc" ]
 }

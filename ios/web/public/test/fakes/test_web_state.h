@@ -33,6 +33,8 @@ class TestWebState : public WebState {
   bool ShouldSuppressDialogs() const override;
   void SetShouldSuppressDialogs(bool should_suppress) override;
   UIView* GetView() override;
+  void WasShown() override;
+  void WasHidden() override;
   BrowserState* GetBrowserState() const override;
   void OpenURL(const OpenURLParams& params) override {}
   void Stop() override {}
@@ -46,12 +48,14 @@ class TestWebState : public WebState {
   void ExecuteJavaScript(const base::string16& javascript) override;
   void ExecuteJavaScript(const base::string16& javascript,
                          const JavaScriptResultCallback& callback) override;
+  void ExecuteUserJavaScript(NSString* javaScript) override;
   const std::string& GetContentsMimeType() const override;
-  const std::string& GetContentLanguageHeader() const override;
   bool ContentIsHTML() const override;
   const base::string16& GetTitle() const override;
   bool IsLoading() const override;
   double GetLoadingProgress() const override;
+  bool IsCrashed() const override;
+  bool IsEvicted() const override;
   bool IsBeingDestroyed() const override;
   const GURL& GetVisibleURL() const override;
   const GURL& GetLastCommittedURL() const override;
@@ -74,8 +78,10 @@ class TestWebState : public WebState {
 
   void AddPolicyDecider(WebStatePolicyDecider* decider) override {}
   void RemovePolicyDecider(WebStatePolicyDecider* decider) override {}
-  service_manager::InterfaceRegistry* GetMojoInterfaceRegistry() override;
+  WebStateInterfaceProvider* GetWebStateInterfaceProvider() override;
   bool HasOpener() const override;
+  void TakeSnapshot(const SnapshotCallback& callback,
+                    CGSize target_size) const override;
   base::WeakPtr<WebState> AsWeakPtr() override;
 
   // Setters for test data.
@@ -87,28 +93,32 @@ class TestWebState : public WebState {
   void SetNavigationManager(
       std::unique_ptr<NavigationManager> navigation_manager);
   void SetView(UIView* view);
+  void SetIsCrashed(bool value);
+  void SetIsEvicted(bool value);
 
   // Getters for test data.
-  bool IsShowingTransientContentView();
+  CRWContentView* GetTransientContentView();
 
   // Notifier for tests.
   void OnPageLoaded(PageLoadCompletionStatus load_completion_status);
-  void OnProvisionalNavigationStarted(const GURL& url);
+  void OnNavigationStarted(NavigationContext* navigation_context);
+  void OnNavigationFinished(NavigationContext* navigation_context);
   void OnRenderProcessGone();
 
  private:
   BrowserState* browser_state_;
   bool web_usage_enabled_;
   bool is_loading_;
-  bool is_showing_transient_content_view_;
+  bool is_crashed_;
+  bool is_evicted_;
+  CRWContentView* transient_content_view_;
   GURL url_;
   base::string16 title_;
   URLVerificationTrustLevel trust_level_;
   bool content_is_html_;
   std::string mime_type_;
-  std::string content_language_;
   std::unique_ptr<NavigationManager> navigation_manager_;
-  base::scoped_nsobject<UIView> view_;
+  UIView* view_;
 
   // A list of observers notified when page state changes. Weak references.
   base::ObserverList<WebStateObserver, true> observers_;

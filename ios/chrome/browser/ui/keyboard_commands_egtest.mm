@@ -5,7 +5,9 @@
 #import <EarlGrey/EarlGrey.h>
 #import <XCTest/XCTest.h>
 
+#include "base/test/scoped_feature_list.h"
 #include "components/strings/grit/components_strings.h"
+#include "ios/chrome/browser/bookmarks/bookmark_new_generation_features.h"
 #import "ios/chrome/browser/ui/browser_view_controller.h"
 #import "ios/chrome/browser/ui/commands/generic_chrome_command.h"
 #include "ios/chrome/browser/ui/commands/ios_command_ids.h"
@@ -21,8 +23,8 @@
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
 #import "ios/chrome/test/earl_grey/chrome_matchers.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
-#import "ios/web/public/test/http_server.h"
-#include "ios/web/public/test/http_server_util.h"
+#import "ios/web/public/test/http_server/http_server.h"
+#include "ios/web/public/test/http_server/http_server_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -115,8 +117,7 @@ const CGFloat kScrollDisplacement = 50.0;
 - (void)selectToolsMenuItem:(id<GREYMatcher>)toolsMenuItem {
   [ChromeEarlGreyUI openToolsMenu];
 
-  id<GREYMatcher> toolsMenuTableView =
-      grey_accessibilityID(kToolsMenuTableViewId);
+  id<GREYMatcher> toolsMenuTableView = chrome_test_util::ToolsMenuView();
   [[[EarlGrey selectElementWithMatcher:toolsMenuItem]
          usingSearchAction:grey_scrollInDirection(kGREYDirectionDown,
                                                   kScrollDisplacement)
@@ -133,10 +134,7 @@ const CGFloat kScrollDisplacement = 50.0;
 
 // Tests that keyboard commands are not registered when Settings are shown.
 - (void)testKeyboardCommandsNotRegistered_SettingsPresented {
-  // Open Settings
-  id<GREYMatcher> toolsMenuSettings =
-      grey_accessibilityID(kToolsMenuSettingsId);
-  [self selectToolsMenuItem:toolsMenuSettings];
+  [ChromeEarlGreyUI openSettingsMenu];
 
   [self verifyNoKeyboardCommandsAreRegistered];
 
@@ -179,7 +177,13 @@ const CGFloat kScrollDisplacement = 50.0;
 
 // Tests that keyboard commands are not registered when the Bookmarks UI is
 // shown on iPhone and registered on iPad.
+// TODO(crbug.com/695749): Check if we need to rewrite this test for the new
+// Bookmarks UI.
 - (void)testKeyboardCommandsNotRegistered_BookmarksPresented {
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndDisableFeature(
+      bookmark_new_generation::features::kBookmarkNewGeneration);
+
   // Open Bookmarks
   [self selectToolsMenuItem:grey_accessibilityID(kToolsMenuBookmarksId)];
 

@@ -8,18 +8,24 @@
 
 #include "base/mac/foundation_util.h"
 #include "base/memory/ptr_util.h"
+#include "base/scoped_observer.h"
 #include "ios/chrome/browser/chrome_url_constants.h"
-#import "ios/clean/chrome/browser/ui/animators/zoom_transition_animator.h"
+#import "ios/chrome/browser/ui/broadcaster/chrome_broadcaster.h"
+#import "ios/chrome/browser/ui/browser_list/browser.h"
+#import "ios/chrome/browser/ui/commands/command_dispatcher.h"
+#import "ios/chrome/browser/ui/coordinators/browser_coordinator+internal.h"
+#include "ios/chrome/browser/web_state_list/web_state_list.h"
+#include "ios/chrome/browser/web_state_list/web_state_list_observer_bridge.h"
 #import "ios/clean/chrome/browser/ui/commands/tab_commands.h"
+#import "ios/clean/chrome/browser/ui/commands/tab_strip_commands.h"
 #import "ios/clean/chrome/browser/ui/find_in_page/find_in_page_coordinator.h"
 #import "ios/clean/chrome/browser/ui/ntp/ntp_coordinator.h"
 #import "ios/clean/chrome/browser/ui/tab/tab_container_view_controller.h"
+#import "ios/clean/chrome/browser/ui/tab/tab_navigation_controller.h"
 #import "ios/clean/chrome/browser/ui/tab_strip/tab_strip_coordinator.h"
 #import "ios/clean/chrome/browser/ui/toolbar/toolbar_coordinator.h"
+#import "ios/clean/chrome/browser/ui/transitions/zoom_transition_controller.h"
 #import "ios/clean/chrome/browser/ui/web_contents/web_coordinator.h"
-#import "ios/shared/chrome/browser/ui/browser_list/browser.h"
-#import "ios/shared/chrome/browser/ui/commands/command_dispatcher.h"
-#import "ios/shared/chrome/browser/ui/coordinators/browser_coordinator+internal.h"
 #import "ios/web/public/web_state/web_state.h"
 #import "ios/web/public/web_state/web_state_observer_bridge.h"
 
@@ -27,42 +33,72 @@
 #error "This file requires ARC support."
 #endif
 
-namespace {
-// Placeholder "experiment" flag. Change this to YES to have the toolbar at the
-// bottom.
-const BOOL kUseBottomToolbar = NO;
-}  // namespace
-
 @interface TabCoordinator ()<CRWWebStateObserver,
                              TabCommands,
-                             UIViewControllerTransitioningDelegate>
+                             WebStateListObserving>
+@property(nonatomic, strong) ZoomTransitionController* transitionController;
 @property(nonatomic, strong) TabContainerViewController* viewController;
 @property(nonatomic, weak) NTPCoordinator* ntpCoordinator;
 @property(nonatomic, weak) WebCoordinator* webCoordinator;
+@property(nonatomic, weak) ToolbarCoordinator* toolbarCoordinator;
+@property(nonatomic, strong) TabNavigationController* navigationController;
 @end
 
 @implementation TabCoordinator {
   std::unique_ptr<web::WebStateObserverBridge> _webStateObserver;
+  std::unique_ptr<WebStateListObserverBridge> _webStateListObserver;
+  std::unique_ptr<ScopedObserver<WebStateList, WebStateListObserverBridge>>
+      _scopedWebStateListObserver;
 }
 
+@synthesize transitionController = _transitionController;
 @synthesize presentationKey = _presentationKey;
 @synthesize viewController = _viewController;
 @synthesize webState = _webState;
 @synthesize webCoordinator = _webCoordinator;
 @synthesize ntpCoordinator = _ntpCoordinator;
+@synthesize toolbarCoordinator = _toolbarCoordinator;
+@synthesize navigationController = _navigationController;
+
+#pragma mark - Public
+
+- (void)disconnect {
+  _webStateListObserver.reset();
+  _webStateObserver.reset();
+}
 
 #pragma mark - BrowserCoordinator
 
 - (void)start {
   self.viewController = [self newTabContainer];
-  self.viewController.transitioningDelegate = self;
+  self.transitionController = [[ZoomTransitionController alloc] init];
+  self.transitionController.presentationKey = self.presentationKey;
+  self.viewController.transitioningDelegate = self.transitionController;
   self.viewController.modalPresentationStyle = UIModalPresentationCustom;
   _webStateObserver =
       base::MakeUnique<web::WebStateObserverBridge>(self.webState, self);
 
+  _webStateListObserver = base::MakeUnique<WebStateListObserverBridge>(self);
+  _scopedWebStateListObserver = base::MakeUnique<
+      ScopedObserver<WebStateList, WebStateListObserverBridge>>(
+      _webStateListObserver.get());
+  _scopedWebStateListObserver->Add(&self.browser->web_state_list());
+
+  [self.browser->broadcaster()
+      broadcastValue:@"tabStripVisible"
+            ofObject:self.viewController
+            selector:@selector(broadcastTabStripVisible:)];
+
   CommandDispatcher* dispatcher = self.browser->dispatcher();
-  // TabCommands
+  // Register Commands
   [dispatcher startDispatchingToTarget:self forSelector:@selector(loadURL:)];
+  [dispatcher startDispatchingToTarget:self
+                           forSelector:@selector(showTabStrip)];
+
+  // NavigationController will handle all the dispatcher navigation calls.
+  self.navigationController = [[TabNavigationController alloc]
+      initWithDispatcher:self.browser->dispatcher()
+                webState:self.webState];
 
   WebCoordinator* webCoordinator = [[WebCoordinator alloc] init];
   webCoordinator.webState = self.webState;
@@ -74,6 +110,7 @@ const BOOL kUseBottomToolbar = NO;
   toolbarCoordinator.webState = self.webState;
   [self addChildCoordinator:toolbarCoordinator];
   [toolbarCoordinator start];
+  self.toolbarCoordinator = toolbarCoordinator;
 
   // Create the FindInPage coordinator but do not start it.  It will be started
   // when a find in page operation is invoked.
@@ -99,8 +136,14 @@ const BOOL kUseBottomToolbar = NO;
 
 - (void)stop {
   [super stop];
+  for (BrowserCoordinator* child in self.children) {
+    [self removeChildCoordinator:child];
+  }
+  [self.browser->broadcaster()
+      stopBroadcastingForSelector:@selector(broadcastTabStripVisible:)];
   _webStateObserver.reset();
   [self.browser->dispatcher() stopDispatchingToTarget:self];
+  [self.navigationController stop];
 }
 
 - (void)childCoordinatorDidStart:(BrowserCoordinator*)childCoordinator {
@@ -133,11 +176,18 @@ const BOOL kUseBottomToolbar = NO;
 
 #pragma mark - Experiment support
 
-// Create and return a new view controller for use as a tab container;
+- (BOOL)usesBottomToolbar {
+  NSUserDefaults* defaults = [NSUserDefaults standardUserDefaults];
+  NSString* bottomToolbarPreference =
+      [defaults stringForKey:@"EnableBottomToolbar"];
+  return [bottomToolbarPreference isEqualToString:@"Enabled"];
+}
+
+// Creates and returns a new view controller for use as a tab container;
 // experimental configurations determine which subclass of
 // TabContainerViewController to return.
 - (TabContainerViewController*)newTabContainer {
-  if (kUseBottomToolbar) {
+  if ([self usesBottomToolbar]) {
     return [[BottomToolbarTabViewController alloc] init];
   }
   return [[TopToolbarTabViewController alloc] init];
@@ -150,6 +200,43 @@ const BOOL kUseBottomToolbar = NO;
 - (void)webState:(web::WebState*)webState
     didCommitNavigationWithDetails:(const web::LoadCommittedDetails&)details {
   if (webState->GetLastCommittedURL() == GURL(kChromeUINewTabURL)) {
+    [self addNTPCoordinator];
+  }
+}
+
+- (void)webState:(web::WebState*)webState
+    didStartNavigation:(web::NavigationContext*)navigation {
+  [self removeNTPCoordinator];
+}
+
+#pragma mark - WebStateListObserver
+
+- (void)webStateList:(WebStateList*)webStateList
+    didChangeActiveWebState:(web::WebState*)newWebState
+                oldWebState:(web::WebState*)oldWebState
+                    atIndex:(int)atIndex
+                 userAction:(BOOL)userAction {
+  self.webState = newWebState;
+  _webStateObserver =
+      base::MakeUnique<web::WebStateObserverBridge>(self.webState, self);
+  // Push down the new Webstate.
+  self.navigationController.webState = newWebState;
+  self.toolbarCoordinator.webState = newWebState;
+  self.webCoordinator.webState = newWebState;
+
+  if (self.webState->GetLastCommittedURL() == GURL(kChromeUINewTabURL)) {
+    [self addNTPCoordinator];
+  } else {
+    [self removeNTPCoordinator];
+  }
+}
+
+#pragma mark - Helper Methods
+
+- (void)addNTPCoordinator {
+  if (self.ntpCoordinator) {
+    [self addChildCoordinator:self.ntpCoordinator];
+  } else {
     NTPCoordinator* ntpCoordinator = [[NTPCoordinator alloc] init];
     [self addChildCoordinator:ntpCoordinator];
     [ntpCoordinator start];
@@ -157,8 +244,7 @@ const BOOL kUseBottomToolbar = NO;
   }
 }
 
-- (void)webState:(web::WebState*)webState
-    didStartProvisionalNavigationForURL:(const GURL&)URL {
+- (void)removeNTPCoordinator {
   if (self.ntpCoordinator) {
     [self.ntpCoordinator stop];
     [self removeChildCoordinator:self.ntpCoordinator];
@@ -167,32 +253,16 @@ const BOOL kUseBottomToolbar = NO;
   }
 }
 
-#pragma mark - UIViewControllerTransitioningDelegate
-
-- (id<UIViewControllerAnimatedTransitioning>)
-animationControllerForPresentedController:(UIViewController*)presented
-                     presentingController:(UIViewController*)presenting
-                         sourceController:(UIViewController*)source {
-  ZoomTransitionAnimator* animator = [[ZoomTransitionAnimator alloc] init];
-  animator.presenting = YES;
-  animator.presentationKey = self.presentationKey;
-  [animator selectDelegate:@[ source, presenting ]];
-  return animator;
-}
-
-- (id<UIViewControllerAnimatedTransitioning>)
-animationControllerForDismissedController:(UIViewController*)dismissed {
-  ZoomTransitionAnimator* animator = [[ZoomTransitionAnimator alloc] init];
-  animator.presenting = NO;
-  animator.presentationKey = self.presentationKey;
-  [animator selectDelegate:@[ dismissed.presentingViewController ]];
-  return animator;
-}
-
 #pragma mark - TabCommands
 
 - (void)loadURL:(web::NavigationManager::WebLoadParams)params {
   self.webState->GetNavigationManager()->LoadURLWithParams(params);
+}
+
+#pragma mark - TabStripCommands
+
+- (void)showTabStrip {
+  self.viewController.tabStripVisible = YES;
 }
 
 @end

@@ -19,6 +19,7 @@ class CSSValueList;
 class CSSPropertyFontUtils {
   STATIC_ONLY(CSSPropertyFontUtils);
 
+ public:
   static CSSValue* ConsumeFontSize(
       CSSParserTokenRange&,
       CSSParserMode,
@@ -32,10 +33,18 @@ class CSSPropertyFontUtils {
   static CSSValue* ConsumeFamilyName(CSSParserTokenRange&);
   static String ConcatenateFamilyName(CSSParserTokenRange&);
 
-  static CSSIdentifierValue* ConsumeFontWeight(CSSParserTokenRange&);
+  static CSSIdentifierValue* ConsumeFontStretchKeywordOnly(
+      CSSParserTokenRange&);
+  static CSSValue* ConsumeFontStretch(CSSParserTokenRange&,
+                                      const CSSParserMode&);
+  static CSSValue* ConsumeFontStyle(CSSParserTokenRange&, const CSSParserMode&);
+  static CSSValue* ConsumeFontWeight(CSSParserTokenRange&,
+                                     const CSSParserMode&);
 
   static CSSValue* ConsumeFontFeatureSettings(CSSParserTokenRange&);
   static CSSFontFeatureValue* ConsumeFontFeatureTag(CSSParserTokenRange&);
+
+  static CSSIdentifierValue* ConsumeFontVariantCSS21(CSSParserTokenRange&);
 };
 
 }  // namespace blink

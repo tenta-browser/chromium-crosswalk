@@ -25,7 +25,7 @@ LLVM_BOOTSTRAP_INSTALL_DIR = os.path.join(THIRD_PARTY_DIR,
                                           'llvm-bootstrap-install')
 LLVM_BUILD_DIR = os.path.join(THIRD_PARTY_DIR, 'llvm-build')
 LLVM_RELEASE_DIR = os.path.join(LLVM_BUILD_DIR, 'Release+Asserts')
-LLVM_LTO_GOLD_PLUGIN_DIR = os.path.join(THIRD_PARTY_DIR, 'llvm-lto-gold-plugin')
+LLVM_LTO_LLD_DIR = os.path.join(THIRD_PARTY_DIR, 'llvm-lto-lld')
 STAMP_FILE = os.path.join(LLVM_BUILD_DIR, 'cr_build_revision')
 
 
@@ -174,7 +174,6 @@ def main():
 
   expected_stamp = GetExpectedStamp()
   pdir = 'clang-' + expected_stamp
-  golddir = 'llvmgold-' + expected_stamp
   print pdir
 
   if sys.platform == 'darwin':
@@ -185,15 +184,10 @@ def main():
     platform = 'Linux_x64'
 
   # Check if Google Cloud Storage already has the artifacts we want to build.
-  if (args.upload and GsutilArchiveExists(pdir, platform) and
-      (not sys.platform.startswith('linux') or
-      GsutilArchiveExists(golddir, platform))):
+  if args.upload and GsutilArchiveExists(pdir, platform):
     print ('Desired toolchain revision %s is already available '
            'in Google Cloud Storage:') % expected_stamp
     print 'gs://chromium-browser-clang-staging/%s/%s.tgz' % (platform, pdir)
-    if sys.platform.startswith('linux'):
-      print 'gs://chromium-browser-clang-staging/%s/%s.tgz' % (platform,
-                                                               golddir)
     return 0
 
   with open('buildlog.txt', 'w') as log:
@@ -228,7 +222,7 @@ def main():
 
     opt_flags = []
     if sys.platform.startswith('linux'):
-      opt_flags += ['--lto-gold-plugin']
+      opt_flags += ['--lto-lld']
     build_cmd = [sys.executable, os.path.join(THIS_DIR, 'update.py'),
                  '--bootstrap', '--force-local-build',
                  '--run-tests'] + opt_flags
@@ -267,10 +261,12 @@ def main():
                  'lib/clang/*/lib/darwin/*asan_iossim*',
                  'lib/clang/*/lib/darwin/*profile_osx*',
                  'lib/clang/*/lib/darwin/*profile_iossim*',
+                 # And the OSX and ios builtin libraries (iossim is lipo'd into
+                 # ios) for the _IsOSVersionAtLeast runtime function.
+                 'lib/clang/*/lib/darwin/*.ios.a',
+                 'lib/clang/*/lib/darwin/*.osx.a',
                  ])
   elif sys.platform.startswith('linux'):
-    # Copy the libstdc++.so.6 we linked Clang against so it can run.
-    want.append('lib/libstdc++.so.6')
     # Add llvm-ar and lld for LTO.
     want.append('bin/llvm-ar')
     want.append('bin/lld')
@@ -286,7 +282,6 @@ def main():
   elif sys.platform == 'win32':
     want.extend(['lib/clang/*/lib/windows/clang_rt.asan*.dll',
                  'lib/clang/*/lib/windows/clang_rt.asan*.lib',
-                 'lib/clang/*/include_sanitizer/*',
                  ])
 
   for root, dirs, files in os.walk(LLVM_RELEASE_DIR):
@@ -316,6 +311,7 @@ def main():
 
   if sys.platform.startswith('linux'):
     os.symlink('lld', os.path.join(pdir, 'bin', 'ld.lld'))
+    os.symlink('lld', os.path.join(pdir, 'bin', 'lld-link'))
 
   # Copy libc++ headers.
   if sys.platform == 'darwin':
@@ -335,17 +331,6 @@ def main():
 
   MaybeUpload(args, pdir, platform)
 
-  # Zip up gold plugin on Linux.
-  if sys.platform.startswith('linux'):
-    shutil.rmtree(golddir, ignore_errors=True)
-    os.makedirs(os.path.join(golddir, 'lib'))
-    shutil.copy(os.path.join(LLVM_LTO_GOLD_PLUGIN_DIR, 'lib', 'LLVMgold.so'),
-                os.path.join(golddir, 'lib'))
-    with tarfile.open(golddir + '.tgz', 'w:gz') as tar:
-      tar.add(os.path.join(golddir, 'lib'), arcname='lib',
-              filter=PrintTarProgress)
-    MaybeUpload(args, golddir, platform)
-
   # Zip up llvm-objdump for sanitizer coverage.
   objdumpdir = 'llvmobjdump-' + stamp
   shutil.rmtree(objdumpdir, ignore_errors=True)
@@ -356,6 +341,18 @@ def main():
     tar.add(os.path.join(objdumpdir, 'bin'), arcname='bin',
             filter=PrintTarProgress)
   MaybeUpload(args, objdumpdir, platform)
+
+  # Zip up the translation_unit tool.
+  translation_unit_dir = 'translation_unit-' + stamp
+  shutil.rmtree(translation_unit_dir, ignore_errors=True)
+  os.makedirs(os.path.join(translation_unit_dir, 'bin'))
+  shutil.copy(os.path.join(LLVM_RELEASE_DIR, 'bin', 'translation_unit' +
+                           exe_ext),
+              os.path.join(translation_unit_dir, 'bin'))
+  with tarfile.open(translation_unit_dir + '.tgz', 'w:gz') as tar:
+    tar.add(os.path.join(translation_unit_dir, 'bin'), arcname='bin',
+            filter=PrintTarProgress)
+  MaybeUpload(args, translation_unit_dir, platform)
 
   if sys.platform == 'win32' and args.upload:
     UploadPDBToSymbolServer()

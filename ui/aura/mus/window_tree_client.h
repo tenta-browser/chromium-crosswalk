@@ -18,7 +18,8 @@
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "cc/surfaces/local_surface_id_allocator.h"
+#include "base/single_thread_task_runner.h"
+#include "components/viz/common/surfaces/local_surface_id_allocator.h"
 #include "mojo/public/cpp/bindings/associated_binding.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 #include "services/ui/public/interfaces/window_tree.mojom.h"
@@ -31,6 +32,7 @@
 #include "ui/aura/mus/window_manager_delegate.h"
 #include "ui/aura/mus/window_tree_host_mus_delegate.h"
 #include "ui/base/ui_base_types.h"
+#include "ui/compositor/compositor_observer.h"
 
 namespace base {
 class Thread;
@@ -87,14 +89,15 @@ using EventResultCallback = base::Callback<void(ui::mojom::EventResult)>;
 // When WindowTreeClient is deleted all windows are deleted (and observers
 // notified).
 class AURA_EXPORT WindowTreeClient
-    : NON_EXPORTED_BASE(public ui::mojom::WindowTreeClient),
-      NON_EXPORTED_BASE(public ui::mojom::WindowManager),
+    : public ui::mojom::WindowTreeClient,
+      public ui::mojom::WindowManager,
       public CaptureSynchronizerDelegate,
       public FocusSynchronizerDelegate,
       public DragDropControllerHost,
       public WindowManagerClient,
       public WindowTreeHostMusDelegate,
-      public client::TransientWindowClientObserver {
+      public client::TransientWindowClientObserver,
+      public ui::CompositorObserver {
  public:
   // |create_discardable_memory| If it is true, WindowTreeClient will setup the
   // dicardable shared memory manager for this process. In some test, more than
@@ -116,6 +119,8 @@ class AURA_EXPORT WindowTreeClient
   // See mojom for details on |automatically_create_display_roots|.
   void ConnectAsWindowManager(bool automatically_create_display_roots = true);
 
+  void DisableDragDropClient() { install_drag_drop_client_ = false; }
+
   service_manager::Connector* connector() { return connector_; }
   ui::Gpu* gpu() { return gpu_.get(); }
   CaptureSynchronizer* capture_synchronizer() {
@@ -124,15 +129,14 @@ class AURA_EXPORT WindowTreeClient
   FocusSynchronizer* focus_synchronizer() { return focus_synchronizer_.get(); }
 
   bool connected() const { return tree_ != nullptr; }
-  ClientSpecificId client_id() const { return client_id_; }
 
   void SetCanFocus(Window* window, bool can_focus);
   void SetCanAcceptDrops(WindowMus* window, bool can_accept_drops);
   void SetEventTargetingPolicy(WindowMus* window,
                                ui::mojom::EventTargetingPolicy policy);
-  void SetPredefinedCursor(WindowMus* window,
-                           ui::mojom::CursorType old_cursor,
-                           ui::mojom::CursorType new_cursor);
+  void SetCursor(WindowMus* window,
+                 const ui::CursorData& old_cursor,
+                 const ui::CursorData& new_cursor);
   void SetWindowTextInputState(WindowMus* window,
                                mojo::TextInputStatePtr state);
   void SetImeVisibility(WindowMus* window,
@@ -150,8 +154,8 @@ class AURA_EXPORT WindowTreeClient
 
   void AttachCompositorFrameSink(
       Id window_id,
-      cc::mojom::MojoCompositorFrameSinkRequest compositor_frame_sink,
-      cc::mojom::MojoCompositorFrameSinkClientPtr client);
+      viz::mojom::CompositorFrameSinkRequest compositor_frame_sink,
+      viz::mojom::CompositorFrameSinkClientPtr client);
 
   bool IsRoot(WindowMus* window) const { return roots_.count(window) > 0; }
 
@@ -181,6 +185,7 @@ class AURA_EXPORT WindowTreeClient
   friend class InFlightBoundsChange;
   friend class InFlightFocusChange;
   friend class InFlightPropertyChange;
+  friend class InFlightTransformChange;
   friend class InFlightVisibleChange;
   friend class WindowPortMus;
   friend class WindowTreeClientPrivate;
@@ -200,6 +205,22 @@ class AURA_EXPORT WindowTreeClient
   WindowMus* GetWindowByServerId(Id id);
 
   bool IsWindowKnown(aura::Window* window);
+
+  // Updates the coordinates of |event| to be in DIPs. |window| is the source
+  // of the event, and may be null. A null |window| means either there is no
+  // local window the event is targeted at *or* |window| was valid at the time
+  // the event was generated at the server but was deleted locally before the
+  // event was received.
+  void ConvertPointerEventLocationToDip(int64_t display_id,
+                                        WindowMus* window,
+                                        ui::LocatedEvent* event) const;
+
+  // Variant of ConvertPointerEventLocationToDip() that is used when in
+  // the window-manager.
+  void ConvertPointerEventLocationToDipInWindowManager(
+      int64_t display_id,
+      WindowMus* window,
+      ui::LocatedEvent* event) const;
 
   // Returns the oldest InFlightChange that matches |change|.
   InFlightChange* GetOldestInFlightChangeMatching(const InFlightChange& change);
@@ -230,13 +251,15 @@ class AURA_EXPORT WindowTreeClient
       WindowMus* window,
       const ui::mojom::WindowData& window_data);
 
+  const WindowTreeHostMus* GetWindowTreeHostForDisplayId(
+      int64_t display_id) const;
+
   // Creates a new WindowTreeHostMus.
   std::unique_ptr<WindowTreeHostMus> CreateWindowTreeHost(
       WindowMusType window_mus_type,
       const ui::mojom::WindowData& window_data,
       int64_t display_id,
-      const cc::FrameSinkId& frame_sink_id = cc::FrameSinkId(),
-      const base::Optional<cc::LocalSurfaceId>& local_surface_id =
+      const base::Optional<viz::LocalSurfaceId>& local_surface_id =
           base::nullopt);
 
   WindowMus* NewWindowFromWindowData(WindowMus* parent,
@@ -259,21 +282,18 @@ class AURA_EXPORT WindowTreeClient
 
   // OnEmbed() calls into this. Exposed as a separate function for testing.
   void OnEmbedImpl(ui::mojom::WindowTree* window_tree,
-                   ClientSpecificId client_id,
                    ui::mojom::WindowDataPtr root_data,
                    int64_t display_id,
                    Id focused_window_id,
                    bool drawn,
-                   const cc::FrameSinkId& frame_sink_id,
-                   const base::Optional<cc::LocalSurfaceId>& local_surface_id);
+                   const base::Optional<viz::LocalSurfaceId>& local_surface_id);
 
   // Called by WmNewDisplayAdded().
   WindowTreeHostMus* WmNewDisplayAddedImpl(
       const display::Display& display,
       ui::mojom::WindowDataPtr root_data,
       bool parent_drawn,
-      const cc::FrameSinkId& frame_sink_id,
-      const base::Optional<cc::LocalSurfaceId>& local_surface_id);
+      const base::Optional<viz::LocalSurfaceId>& local_surface_id);
 
   std::unique_ptr<EventResultCallback> CreateEventResultCallback(
       int32_t event_id);
@@ -285,7 +305,9 @@ class AURA_EXPORT WindowTreeClient
   void SetWindowBoundsFromServer(
       WindowMus* window,
       const gfx::Rect& revert_bounds_in_pixels,
-      const base::Optional<cc::LocalSurfaceId>& local_surface_id);
+      const base::Optional<viz::LocalSurfaceId>& local_surface_id);
+  void SetWindowTransformFromServer(WindowMus* window,
+                                    const gfx::Transform& transform);
   void SetWindowVisibleFromServer(WindowMus* window, bool visible);
 
   // Called from OnWindowMusBoundsChanged() and SetRootWindowBounds().
@@ -299,6 +321,9 @@ class AURA_EXPORT WindowTreeClient
   void OnWindowMusBoundsChanged(WindowMus* window,
                                 const gfx::Rect& old_bounds,
                                 const gfx::Rect& new_bounds);
+  void OnWindowMusTransformChanged(WindowMus* window,
+                                   const gfx::Transform& old_transform,
+                                   const gfx::Transform& new_transform);
   void OnWindowMusAddChild(WindowMus* parent, WindowMus* child);
   void OnWindowMusRemoveChild(WindowMus* parent, WindowMus* child);
   void OnWindowMusMoveChild(WindowMus* parent,
@@ -318,32 +343,32 @@ class AURA_EXPORT WindowTreeClient
 
   // Overridden from WindowTreeClient:
   void OnEmbed(
-      ClientSpecificId client_id,
       ui::mojom::WindowDataPtr root,
       ui::mojom::WindowTreePtr tree,
       int64_t display_id,
       Id focused_window_id,
       bool drawn,
-      const cc::FrameSinkId& frame_sink_Id,
-      const base::Optional<cc::LocalSurfaceId>& local_surface_id) override;
+      const base::Optional<viz::LocalSurfaceId>& local_surface_id) override;
   void OnEmbeddedAppDisconnected(Id window_id) override;
   void OnUnembed(Id window_id) override;
   void OnCaptureChanged(Id new_capture_window_id,
                         Id old_capture_window_id) override;
   void OnFrameSinkIdAllocated(Id window_id,
-                              const cc::FrameSinkId& frame_sink_id) override;
+                              const viz::FrameSinkId& frame_sink_id) override;
   void OnTopLevelCreated(
       uint32_t change_id,
       ui::mojom::WindowDataPtr data,
       int64_t display_id,
       bool drawn,
-      const cc::FrameSinkId& frame_sink_id,
-      const base::Optional<cc::LocalSurfaceId>& local_surface_id) override;
+      const base::Optional<viz::LocalSurfaceId>& local_surface_id) override;
   void OnWindowBoundsChanged(
       Id window_id,
       const gfx::Rect& old_bounds,
       const gfx::Rect& new_bounds,
-      const base::Optional<cc::LocalSurfaceId>& local_surface_id) override;
+      const base::Optional<viz::LocalSurfaceId>& local_surface_id) override;
+  void OnWindowTransformChanged(Id window_id,
+                                const gfx::Transform& old_transform,
+                                const gfx::Transform& new_transform) override;
   void OnClientAreaChanged(
       uint32_t window_id,
       const gfx::Insets& new_client_area,
@@ -379,10 +404,9 @@ class AURA_EXPORT WindowTreeClient
                               uint32_t window_id,
                               int64_t display_id) override;
   void OnWindowFocused(Id focused_window_id) override;
-  void OnWindowPredefinedCursorChanged(Id window_id,
-                                       ui::mojom::CursorType cursor) override;
+  void OnWindowCursorChanged(Id window_id, ui::CursorData cursor) override;
   void OnWindowSurfaceChanged(Id window_id,
-                              const cc::SurfaceInfo& surface_info) override;
+                              const viz::SurfaceInfo& surface_info) override;
   void OnDragDropStart(
       const std::unordered_map<std::string, std::vector<uint8_t>>& mime_data)
       override;
@@ -408,17 +432,18 @@ class AURA_EXPORT WindowTreeClient
   void OnDragDropDone() override;
   void OnChangeCompleted(uint32_t change_id, bool success) override;
   void RequestClose(uint32_t window_id) override;
+  void SetBlockingContainers(
+      const std::vector<BlockingContainers>& all_blocking_containers) override;
   void GetWindowManager(
       mojo::AssociatedInterfaceRequest<WindowManager> internal) override;
 
   // Overridden from WindowManager:
-  void OnConnect(ClientSpecificId client_id) override;
+  void OnConnect() override;
   void WmNewDisplayAdded(
       const display::Display& display,
       ui::mojom::WindowDataPtr root_data,
       bool parent_drawn,
-      const cc::FrameSinkId& frame_sink_id,
-      const base::Optional<cc::LocalSurfaceId>& local_surface_id) override;
+      const base::Optional<viz::LocalSurfaceId>& local_surface_id) override;
   void WmDisplayRemoved(int64_t display_id) override;
   void WmDisplayModified(const display::Display& display) override;
   void WmSetBounds(uint32_t change_id,
@@ -456,21 +481,44 @@ class AURA_EXPORT WindowTreeClient
   void OnAccelerator(uint32_t ack_id,
                      uint32_t accelerator_id,
                      std::unique_ptr<ui::Event> event) override;
+  void OnCursorTouchVisibleChanged(bool enabled) override;
+  void OnEventBlockedByModalWindow(Id window_id) override;
 
   // Overridden from WindowManagerClient:
   void SetFrameDecorationValues(
       ui::mojom::FrameDecorationValuesPtr values) override;
   void SetNonClientCursor(Window* window,
-                          ui::mojom::CursorType cursor_id) override;
+                          const ui::CursorData& cursor) override;
   void AddAccelerators(std::vector<ui::mojom::WmAcceleratorPtr> accelerators,
                        const base::Callback<void(bool)>& callback) override;
   void RemoveAccelerator(uint32_t id) override;
   void AddActivationParent(Window* window) override;
   void RemoveActivationParent(Window* window) override;
-  void ActivateNextWindow() override;
-  void SetExtendedHitArea(Window* window, const gfx::Insets& hit_area) override;
+  void SetExtendedHitRegionForChildren(
+      Window* window,
+      const gfx::Insets& mouse_insets,
+      const gfx::Insets& touch_insets) override;
+  void LockCursor() override;
+  void UnlockCursor() override;
+  void SetCursorVisible(bool visible) override;
+  void SetCursorSize(ui::CursorSize cursor_size) override;
+  void SetGlobalOverrideCursor(base::Optional<ui::CursorData> cursor) override;
+  void SetCursorTouchVisible(bool enabled) override;
+  void SetKeyEventsThatDontHideCursor(
+      std::vector<ui::mojom::EventMatcherPtr> cursor_key_list) override;
   void RequestClose(Window* window) override;
   bool WaitForInitialDisplays() override;
+  WindowTreeHostMusInitParams CreateInitParamsForNewDisplay() override;
+  void SetDisplayConfiguration(
+      const std::vector<display::Display>& displays,
+      std::vector<ui::mojom::WmViewportMetricsPtr> viewport_metrics,
+      int64_t primary_display_id) override;
+  void AddDisplayReusingWindowTreeHost(
+      WindowTreeHostMus* window_tree_host,
+      const display::Display& display,
+      ui::mojom::WmViewportMetricsPtr viewport_metrics) override;
+  void SwapDisplayRoots(WindowTreeHostMus* window_tree_host1,
+                        WindowTreeHostMus* window_tree_host2) override;
 
   // Overriden from WindowTreeHostMusDelegate:
   void OnWindowTreeHostBoundsWillChange(WindowTreeHostMus* window_tree_host,
@@ -496,6 +544,11 @@ class AURA_EXPORT WindowTreeClient
       const base::Callback<void(bool)>& callback) override;
   void OnWindowTreeHostCancelWindowMove(
       WindowTreeHostMus* window_tree_host) override;
+  void OnWindowTreeHostMoveCursorToDisplayLocation(
+      const gfx::Point& location_in_pixels,
+      int64_t display_id) override;
+  void OnWindowTreeHostConfineCursorToBounds(const gfx::Rect& bounds_in_pixels,
+                                             int64_t display_id) override;
   std::unique_ptr<WindowPortMus> CreateWindowPortForTopLevel(
       const std::map<std::string, std::vector<uint8_t>>* properties) override;
   void OnWindowTreeHostCreated(WindowTreeHostMus* window_tree_host) override;
@@ -519,6 +572,14 @@ class AURA_EXPORT WindowTreeClient
   // Overrided from FocusSynchronizerDelegate:
   uint32_t CreateChangeIdForFocus(WindowMus* window) override;
 
+  // Overrided from CompositorObserver:
+  void OnCompositingDidCommit(ui::Compositor* compositor) override;
+  void OnCompositingStarted(ui::Compositor* compositor,
+                            base::TimeTicks start_time) override;
+  void OnCompositingEnded(ui::Compositor* compositor) override;
+  void OnCompositingLockStateChanged(ui::Compositor* compositor) override;
+  void OnCompositingShuttingDown(ui::Compositor* compositor) override;
+
   // The one int in |cursor_location_mapping_|. When we read from this
   // location, we must always read from it atomically.
   base::subtle::Atomic32* cursor_location_memory() {
@@ -528,10 +589,6 @@ class AURA_EXPORT WindowTreeClient
 
   // This may be null in tests.
   service_manager::Connector* connector_;
-
-  // This is set once and only once when we get OnEmbed(). It gives the unique
-  // id for this client.
-  ClientSpecificId client_id_;
 
   // Id assigned to the next window created.
   ClientSpecificId next_window_id_;
@@ -564,8 +621,6 @@ class AURA_EXPORT WindowTreeClient
 
   bool in_destructor_;
 
-  bool enable_surface_synchronization_ = false;
-
   // A mapping to shared memory that is one 32 bit integer long. The window
   // server uses this to let us synchronously read the cursor location.
   mojo::ScopedSharedBufferMapping cursor_location_mapping_;
@@ -575,6 +630,11 @@ class AURA_EXPORT WindowTreeClient
   std::unique_ptr<mojo::AssociatedBinding<ui::mojom::WindowManager>>
       window_manager_internal_;
   ui::mojom::WindowManagerClientAssociatedPtr window_manager_internal_client_;
+  // Normally the same as |window_manager_internal_client_|. Tests typically
+  // run without a service_manager::Connector, which means this (and
+  // |window_manager_internal_client_|) are null. Tests that need to test
+  // WindowManagerClient set this, but not |window_manager_internal_client_|.
+  ui::mojom::WindowManagerClient* window_manager_client_ = nullptr;
 
   bool has_pointer_watcher_ = false;
 
@@ -609,7 +669,19 @@ class AURA_EXPORT WindowTreeClient
   // Set to true once OnWmDisplayAdded() is called.
   bool got_initial_displays_ = false;
 
+  // Set to true if the next CompositorFrame will block on a new child surface.
+  bool synchronizing_with_child_on_next_frame_ = false;
+
+  // Set to true if this WindowTreeClient is currently holding pointer moves.
+  bool holding_pointer_moves_ = false;
+
   gfx::Insets normal_client_area_insets_;
+
+  bool in_shutdown_ = false;
+
+  // Temporary while we have mushrome, once we switch to mash this can be
+  // removed.
+  bool install_drag_drop_client_ = true;
 
   base::WeakPtrFactory<WindowTreeClient> weak_factory_;
 

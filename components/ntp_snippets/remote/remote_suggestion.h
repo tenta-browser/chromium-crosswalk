@@ -31,6 +31,8 @@ class RemoteSuggestion {
  public:
   using PtrVector = std::vector<std::unique_ptr<RemoteSuggestion>>;
 
+  enum ContentType { UNKNOWN, VIDEO };
+
   ~RemoteSuggestion();
 
   // Creates a RemoteSuggestion from a dictionary, as returned by Chrome Reader.
@@ -49,18 +51,13 @@ class RemoteSuggestion {
                                          int remote_category_id,
                                          const base::Time& fetch_date);
 
+  static std::unique_ptr<RemoteSuggestion>
+  CreateFromContextualSuggestionsDictionary(const base::DictionaryValue& dict);
+
   // Creates an RemoteSuggestion from a protocol buffer. Returns a null pointer
   // if the protocol buffer doesn't correspond to a valid suggestion.
   static std::unique_ptr<RemoteSuggestion> CreateFromProto(
       const SnippetProto& proto);
-
-  // TODO(treib): Make tests use the public interface and remove this.
-  static std::unique_ptr<RemoteSuggestion> CreateForTesting(
-      const std::string& id,
-      int remote_category_id,
-      const GURL& url,
-      const std::string& publisher_name,
-      const GURL& amp_url);
 
   // Creates a protocol buffer corresponding to this suggestion, for persisting.
   SnippetProto ToProto() const;
@@ -113,14 +110,24 @@ class RemoteSuggestion {
   float score() const { return score_; }
 
   bool should_notify() const { return should_notify_; }
+  void set_should_notify(bool new_value) { should_notify_ = new_value; }
+
   base::Time notification_deadline() const { return notification_deadline_; }
+  void set_notification_deadline(const base::Time& new_value) {
+    notification_deadline_ = new_value;
+  }
+
+  ContentType content_type() const { return content_type_; }
 
   bool is_dismissed() const { return is_dismissed_; }
   void set_dismissed(bool dismissed) { is_dismissed_ = dismissed; }
 
   // The ID of the remote category this suggestion belongs to, for use with
-  // CategoryFactory::FromRemoteCategory.
+  // Category::FromRemoteCategory.
   int remote_category_id() const { return remote_category_id_; }
+
+  int rank() const { return rank_; }
+  void set_rank(int rank) { rank_ = rank; }
 
   base::Time fetch_date() const { return fetch_date_; }
 
@@ -152,9 +159,12 @@ class RemoteSuggestion {
   float score_;
   bool is_dismissed_;
   int remote_category_id_;
+  int rank_;
 
   bool should_notify_;
   base::Time notification_deadline_;
+
+  ContentType content_type_;
 
   // The time when the remote suggestion was fetched from the server.
   base::Time fetch_date_;

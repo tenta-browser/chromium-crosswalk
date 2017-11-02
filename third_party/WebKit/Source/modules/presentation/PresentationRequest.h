@@ -5,12 +5,12 @@
 #ifndef PresentationRequest_h
 #define PresentationRequest_h
 
-#include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "bindings/core/v8/ScriptPromise.h"
 #include "core/dom/ContextLifecycleObserver.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/EventTarget.h"
 #include "modules/ModulesExport.h"
 #include "modules/presentation/PresentationPromiseProperty.h"
+#include "platform/bindings/ActiveScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/heap/Heap.h"
 #include "platform/weborigin/KURL.h"
@@ -44,6 +44,8 @@ class MODULES_EXPORT PresentationRequest final
   // ScriptWrappable implementation.
   bool HasPendingActivity() const final;
 
+  static void RecordStartOriginTypeAccess(ExecutionContext&);
+
   ScriptPromise start(ScriptState*);
   ScriptPromise reconnect(ScriptState*, const String& id);
   ScriptPromise getAvailability(ScriptState*);
@@ -53,7 +55,6 @@ class MODULES_EXPORT PresentationRequest final
   DEFINE_ATTRIBUTE_EVENT_LISTENER(connectionavailable);
 
   DECLARE_VIRTUAL_TRACE();
-
  protected:
   // EventTarget implementation.
   void AddedEventListener(const AtomicString& event_type,
@@ -61,8 +62,7 @@ class MODULES_EXPORT PresentationRequest final
 
  private:
   PresentationRequest(ExecutionContext*, const Vector<KURL>&);
-
-  void RecordOriginTypeAccess(ExecutionContext*) const;
+  static void RecordConstructorOriginTypeAccess(ExecutionContext&);
 
   Member<PresentationAvailabilityProperty> availability_property_;
   Vector<KURL> urls_;

@@ -2,18 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "build/build_config.h"
 #include "content/public/common/sandboxed_process_launcher_delegate.h"
+
+#include "build/build_config.h"
 
 namespace content {
 
 #if defined(OS_WIN)
 bool SandboxedProcessLauncherDelegate::ShouldLaunchElevated() {
   return false;
-}
-
-bool SandboxedProcessLauncherDelegate::ShouldSandbox() {
-  return true;
 }
 
 bool SandboxedProcessLauncherDelegate::DisableDefaultPolicy() {
@@ -26,8 +23,9 @@ bool SandboxedProcessLauncherDelegate::PreSpawnTarget(
 }
 
 #elif(OS_POSIX)
+
 #if !defined(OS_MACOSX) && !defined(OS_ANDROID)
-ZygoteHandle* SandboxedProcessLauncherDelegate::GetZygote() {
+ZygoteHandle SandboxedProcessLauncherDelegate::GetZygote() {
   return nullptr;
 }
 #endif  // !defined(OS_MACOSX) && !defined(OS_ANDROID)
@@ -36,9 +34,5 @@ base::EnvironmentMap SandboxedProcessLauncherDelegate::GetEnvironment() {
   return base::EnvironmentMap();
 }
 #endif
-
-SandboxType SandboxedProcessLauncherDelegate::GetSandboxType() {
-  return SANDBOX_TYPE_INVALID;
-}
 
 }  // namespace content

@@ -14,6 +14,7 @@
 #import "ios/chrome/browser/passwords/passwords_ui_delegate.h"
 #import "ios/web/public/web_state/web_state_observer_bridge.h"
 
+@protocol ApplicationCommands;
 @class CRWWebController;
 @protocol FormInputAccessoryViewProvider;
 @class JsPasswordManager;
@@ -38,10 +39,10 @@ class PasswordManagerDriver;
 
 // Initializes PasswordGenerationAgent, which observes the specified web state.
 - (instancetype)
-         initWithWebState:(web::WebState*)webState
-          passwordManager:(password_manager::PasswordManager*)passwordManager
-    passwordManagerDriver:(password_manager::PasswordManagerDriver*)driver
-      passwordsUiDelegate:(id<PasswordsUiDelegate>)UIDelegate;
+     initWithWebState:(web::WebState*)webState
+      passwordManager:(password_manager::PasswordManager*)passwordManager
+passwordManagerDriver:(password_manager::PasswordManagerDriver*)driver
+  passwordsUiDelegate:(id<PasswordsUiDelegate>)delegate;
 
 - (instancetype)init NS_UNAVAILABLE;
 
@@ -57,6 +58,9 @@ class PasswordManagerDriver;
 // Provides an input accessory view from this PasswordGenerationAgent.
 @property(nonatomic, readonly)
     id<FormInputAccessoryViewProvider> accessoryViewProvider;
+
+// The dispatcher used for the PasswordGenerationAgent.
+@property(nonatomic, weak) id<ApplicationCommands> dispatcher;
 
 @end
 
@@ -81,12 +85,12 @@ class PasswordManagerDriver;
 // Initializes PasswordGenerationAgent, which observes the specified web state,
 // and allows injecting JavaScript managers for testing.
 - (instancetype)
-         initWithWebState:(web::WebState*)webState
-          passwordManager:(password_manager::PasswordManager*)passwordManager
-    passwordManagerDriver:(password_manager::PasswordManagerDriver*)driver
-        JSPasswordManager:(JsPasswordManager*)JSPasswordManager
-      JSSuggestionManager:(JsSuggestionManager*)JSSuggestionManager
-      passwordsUiDelegate:(id<PasswordsUiDelegate>)UIDelegate;
+     initWithWebState:(web::WebState*)webState
+      passwordManager:(password_manager::PasswordManager*)passwordManager
+passwordManagerDriver:(password_manager::PasswordManagerDriver*)driver
+    JSPasswordManager:(JsPasswordManager*)javaScriptPasswordManager
+  JSSuggestionManager:(JsSuggestionManager*)suggestionManager
+  passwordsUiDelegate:(id<PasswordsUiDelegate>)delegate;
 
 // Clears all per-page state.
 - (void)clearState;

@@ -14,7 +14,7 @@
 #if defined(USE_AURA)
 #include "ui/aura/test/ui_controls_factory_aura.h"
 #include "ui/base/test/ui_controls_aura.h"
-#if defined(USE_X11) && !defined(OS_CHROMEOS)
+#if defined(USE_X11)
 #include "ui/views/test/ui_controls_factory_desktop_aurax11.h"
 #endif
 #endif
@@ -102,11 +102,13 @@ int main(int argc, char** argv) {
   InProcessBrowserTest::set_global_browser_set_up_function(
       &ui_test_utils::BringBrowserWindowToFront);
 #endif
+
   // Run interactive_ui_tests serially, they do not support running in parallel.
-  int default_jobs = 1;
+  size_t parallel_jobs = 1U;
+
   InteractiveUITestSuiteRunner runner;
   ChromeTestLauncherDelegate delegate(&runner);
-  const int result = LaunchChromeTests(default_jobs, &delegate, argc, argv);
+  const int result = LaunchChromeTests(parallel_jobs, &delegate, argc, argv);
 #if defined(OS_WIN)
   KillAlwaysOnTopWindows(RunType::AFTER_TEST);
 #endif

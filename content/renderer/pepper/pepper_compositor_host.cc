@@ -14,8 +14,9 @@
 #include "cc/layers/layer.h"
 #include "cc/layers/solid_color_layer.h"
 #include "cc/layers/texture_layer.h"
-#include "cc/resources/texture_mailbox.h"
 #include "cc/trees/layer_tree_host.h"
+#include "components/viz/client/client_shared_bitmap_manager.h"
+#include "components/viz/common/quads/texture_mailbox.h"
 #include "content/public/renderer/renderer_ppapi_host.h"
 #include "content/renderer/pepper/gfx_conversion.h"
 #include "content/renderer/pepper/host_globals.h"
@@ -28,7 +29,6 @@
 #include "ppapi/proxy/ppapi_messages.h"
 #include "ppapi/thunk/enter.h"
 #include "ppapi/thunk/ppb_image_data_api.h"
-#include "services/ui/public/cpp/bitmap/child_shared_bitmap_manager.h"
 #include "third_party/khronos/GLES2/gl2.h"
 #include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gfx/transform.h"
@@ -192,7 +192,7 @@ void PepperCompositorHost::ViewInitiatedPaint() {
 void PepperCompositorHost::ImageReleased(
     int32_t id,
     std::unique_ptr<base::SharedMemory> shared_memory,
-    std::unique_ptr<cc::SharedBitmap> bitmap,
+    std::unique_ptr<viz::SharedBitmap> bitmap,
     const gpu::SyncToken& sync_token,
     bool is_lost) {
   bitmap.reset();
@@ -281,14 +281,14 @@ void PepperCompositorHost::UpdateLayer(
         static_cast<cc::TextureLayer*>(layer.get()));
     if (!old_layer ||
         new_layer->common.resource_id != old_layer->common.resource_id) {
-      cc::TextureMailbox mailbox(new_layer->texture->mailbox,
-                                 new_layer->texture->sync_token,
-                                 new_layer->texture->target);
-      texture_layer->SetTextureMailbox(mailbox,
-          cc::SingleReleaseCallback::Create(
-              base::Bind(&PepperCompositorHost::ResourceReleased,
-                         weak_factory_.GetWeakPtr(),
-                         new_layer->common.resource_id)));
+      viz::TextureMailbox mailbox(new_layer->texture->mailbox,
+                                  new_layer->texture->sync_token,
+                                  new_layer->texture->target);
+      texture_layer->SetTextureMailbox(
+          mailbox,
+          viz::SingleReleaseCallback::Create(base::Bind(
+              &PepperCompositorHost::ResourceReleased,
+              weak_factory_.GetWeakPtr(), new_layer->common.resource_id)));
       // TODO(penghuang): get a damage region from the application and
       // pass it to SetNeedsDisplayRect().
       texture_layer->SetNeedsDisplay();
@@ -314,15 +314,15 @@ void PepperCompositorHost::UpdateLayer(
       DCHECK_EQ(rv, PP_TRUE);
       DCHECK_EQ(desc.stride, desc.size.width * 4);
       DCHECK_EQ(desc.format, PP_IMAGEDATAFORMAT_RGBA_PREMUL);
-      std::unique_ptr<cc::SharedBitmap> bitmap =
+      std::unique_ptr<viz::SharedBitmap> bitmap =
           RenderThreadImpl::current()
               ->shared_bitmap_manager()
               ->GetBitmapForSharedMemory(image_shm.get());
 
-      cc::TextureMailbox mailbox(bitmap.get(), PP_ToGfxSize(desc.size));
+      viz::TextureMailbox mailbox(bitmap.get(), PP_ToGfxSize(desc.size));
       image_layer->SetTextureMailbox(
           mailbox,
-          cc::SingleReleaseCallback::Create(base::Bind(
+          viz::SingleReleaseCallback::Create(base::Bind(
               &PepperCompositorHost::ImageReleased, weak_factory_.GetWeakPtr(),
               new_layer->common.resource_id, base::Passed(&image_shm),
               base::Passed(&bitmap))));

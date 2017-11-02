@@ -38,40 +38,27 @@ Security.SecurityPanel = class extends UI.PanelWithSidebar {
 
   /**
    * @param {string} text
-   * @param {!Security.SecurityPanel} panel
+   * @param {string} origin
    * @return {!Element}
    */
-  static createCertificateViewerButton(text, panel) {
-    /**
-     * @param {!Event} e
-     */
-    function showCertificateViewer(e) {
+  static createCertificateViewerButtonForOrigin(text, origin) {
+    return UI.createTextButton(text, async e => {
       e.consume();
-      panel.showCertificateViewer();
-    }
-
-    return UI.createTextButton(text, showCertificateViewer, 'security-certificate-button');
+      var names = await SDK.multitargetNetworkManager.getCertificate(origin);
+      InspectorFrontendHost.showCertificateViewer(names);
+    }, 'security-certificate-button');
   }
 
   /**
    * @param {string} text
-   * @param {string} origin
+   * @param {!Array<string>} names
    * @return {!Element}
    */
-  static createCertificateViewerButton2(text, origin) {
-    /**
-     * @param {!Event} e
-     */
-    function showCertificateViewer(e) {
-      function certificateCallback(names) {
-        InspectorFrontendHost.showCertificateViewer(names);
-      }
-
+  static createCertificateViewerButtonForCert(text, names) {
+    return UI.createTextButton(text, e => {
       e.consume();
-      SDK.multitargetNetworkManager.getCertificate(origin, certificateCallback);
-    }
-
-    return UI.createTextButton(text, showCertificateViewer, 'security-certificate-button');
+      InspectorFrontendHost.showCertificateViewer(names);
+    }, 'security-certificate-button');
   }
 
   /**
@@ -183,11 +170,10 @@ Security.SecurityPanel = class extends UI.PanelWithSidebar {
 
     var securityState = /** @type {!Protocol.Security.SecurityState} */ (request.securityState());
 
-    if (request.mixedContentType === Protocol.Network.RequestMixedContentType.Blockable &&
-        this._ranInsecureContentStyle)
+    if (request.mixedContentType === Protocol.Security.MixedContentType.Blockable && this._ranInsecureContentStyle)
       securityState = this._ranInsecureContentStyle;
     else if (
-        request.mixedContentType === Protocol.Network.RequestMixedContentType.OptionallyBlockable &&
+        request.mixedContentType === Protocol.Security.MixedContentType.OptionallyBlockable &&
         this._displayedInsecureContentStyle)
       securityState = this._displayedInsecureContentStyle;
 
@@ -234,16 +220,16 @@ Security.SecurityPanel = class extends UI.PanelWithSidebar {
    * @param {!SDK.NetworkRequest} request
    */
   _updateFilterRequestCounts(request) {
-    if (request.mixedContentType === Protocol.Network.RequestMixedContentType.None)
+    if (request.mixedContentType === Protocol.Security.MixedContentType.None)
       return;
 
     /** @type {!Network.NetworkLogView.MixedContentFilterValues} */
     var filterKey = Network.NetworkLogView.MixedContentFilterValues.All;
     if (request.wasBlocked())
       filterKey = Network.NetworkLogView.MixedContentFilterValues.Blocked;
-    else if (request.mixedContentType === Protocol.Network.RequestMixedContentType.Blockable)
+    else if (request.mixedContentType === Protocol.Security.MixedContentType.Blockable)
       filterKey = Network.NetworkLogView.MixedContentFilterValues.BlockOverridden;
-    else if (request.mixedContentType === Protocol.Network.RequestMixedContentType.OptionallyBlockable)
+    else if (request.mixedContentType === Protocol.Security.MixedContentType.OptionallyBlockable)
       filterKey = Network.NetworkLogView.MixedContentFilterValues.Displayed;
 
     if (!this._filterRequestCounts.has(filterKey))
@@ -260,10 +246,6 @@ Security.SecurityPanel = class extends UI.PanelWithSidebar {
    */
   filterRequestCount(filterKey) {
     return this._filterRequestCounts.get(filterKey) || 0;
-  }
-
-  showCertificateViewer() {
-    this._securityModel.showCertificateViewer();
   }
 
   /**
@@ -391,6 +373,7 @@ Security.SecurityPanelSidebarTree = class extends UI.TreeOutlineInShadow {
       var originGroupName = Security.SecurityPanelSidebarTree.OriginGroupName[key];
       var originGroup = new UI.TreeElement(originGroupName, true);
       originGroup.selectable = false;
+      originGroup.setCollapsible(false);
       originGroup.expand();
       originGroup.listItemElement.classList.add('security-sidebar-origins');
       this._originGroups.set(originGroupName, originGroup);
@@ -498,10 +481,10 @@ Security.SecurityPanelSidebarTree = class extends UI.TreeOutlineInShadow {
  * @enum {string}
  */
 Security.SecurityPanelSidebarTree.OriginGroupName = {
-  MainOrigin: Common.UIString('Main Origin'),
-  NonSecure: Common.UIString('Non-Secure Origins'),
-  Secure: Common.UIString('Secure Origins'),
-  Unknown: Common.UIString('Unknown / Canceled')
+  MainOrigin: Common.UIString('Main origin'),
+  NonSecure: Common.UIString('Non-secure origins'),
+  Secure: Common.UIString('Secure origins'),
+  Unknown: Common.UIString('Unknown / canceled')
 };
 
 /**
@@ -589,12 +572,12 @@ Security.SecurityMainView = class extends UI.VBox {
 
     // Fill the security summary section.
     this._summarySection.createChild('div', 'security-summary-section-title').textContent =
-        Common.UIString('Security Overview');
+        Common.UIString('Security overview');
 
     var lockSpectrum = this._summarySection.createChild('div', 'lock-spectrum');
     lockSpectrum.createChild('div', 'lock-icon lock-icon-secure').title = Common.UIString('Secure');
-    lockSpectrum.createChild('div', 'lock-icon lock-icon-neutral').title = Common.UIString('Not Secure');
-    lockSpectrum.createChild('div', 'lock-icon lock-icon-insecure').title = Common.UIString('Not Secure (Broken)');
+    lockSpectrum.createChild('div', 'lock-icon lock-icon-neutral').title = Common.UIString('Not secure');
+    lockSpectrum.createChild('div', 'lock-icon lock-icon-insecure').title = Common.UIString('Not secure (broken)');
 
     this._summarySection.createChild('div', 'triangle-pointer-container')
         .createChild('div', 'triangle-pointer-wrapper')
@@ -618,11 +601,10 @@ Security.SecurityMainView = class extends UI.VBox {
     text.createChild('div', 'security-explanation-title').textContent = explanation.summary;
     text.createChild('div').textContent = explanation.description;
 
-    if (explanation.hasCertificate) {
-      text.appendChild(
-          Security.SecurityPanel.createCertificateViewerButton(Common.UIString('View certificate'), this._panel));
+    if (explanation.certificate.length) {
+      text.appendChild(Security.SecurityPanel.createCertificateViewerButtonForCert(
+          Common.UIString('View certificate'), explanation.certificate));
     }
-
     return text;
   }
 
@@ -664,114 +646,46 @@ Security.SecurityMainView = class extends UI.VBox {
     this._securityExplanationsMain.removeChildren();
     this._securityExplanationsExtra.removeChildren();
     for (var explanation of this._explanations) {
-      if (explanation.securityState === Protocol.Security.SecurityState.Info)
+      if (explanation.securityState === Protocol.Security.SecurityState.Info) {
         this._addExplanation(this._securityExplanationsExtra, explanation);
-      else
-        this._addExplanation(this._securityExplanationsMain, explanation);
-    }
-
-    this._addMixedContentExplanations();
-    this._addContentWithCertErrorsExplanations();
-
-    // If all resources were served securely, add a Secure explanation.
-    if (this._schemeIsCryptographic && this._insecureContentStatus &&
-        (!this._insecureContentStatus.displayedMixedContent && !this._insecureContentStatus.ranMixedContent &&
-         !this._insecureContentStatus.displayedContentWithCertErrors &&
-         !this._insecureContentStatus.ranContentWithCertErrors)) {
-      this._addExplanation(this._securityExplanationsMain, /** @type {!Protocol.Security.SecurityStateExplanation} */ ({
-                             'securityState': Protocol.Security.SecurityState.Secure,
-                             'summary': Common.UIString('Secure Resources'),
-                             'description': Common.UIString('All resources on this page are served securely.')
-                           }));
-    }
-  }
-
-  _addMixedContentExplanations() {
-    if (!this._schemeIsCryptographic)
-      return;
-
-    if (this._insecureContentStatus &&
-        (this._insecureContentStatus.ranMixedContent || this._insecureContentStatus.displayedMixedContent ||
-         this._insecureContentStatus.containedMixedForm)) {
-      if (this._insecureContentStatus.ranMixedContent) {
-        this._addMixedContentExplanation(
-            this._securityExplanationsMain, this._insecureContentStatus.ranInsecureContentStyle,
-            Common.UIString('Active Mixed Content'),
-            Common.UIString(
-                'You have recently allowed non-secure content (such as scripts or iframes) to run on this site.'),
-            Network.NetworkLogView.MixedContentFilterValues.BlockOverridden,
-            showBlockOverriddenMixedContentInNetworkPanel);
-      }
-      if (this._insecureContentStatus.containedMixedForm) {
-        this._addMixedFormExplanation(
-            // TODO(elawrence): Replace |displayedInsecureContentStyle| with |containedMixedFormStyle|. https://crbug.com/705003
-            this._securityExplanationsMain, this._insecureContentStatus.displayedInsecureContentStyle,
-            Common.UIString('Non-secure Form'),
-            Common.UIString('The page includes a form with a non-secure "action" attribute.'));
-      }
-      if (this._insecureContentStatus.displayedMixedContent) {
-        this._addMixedContentExplanation(
-            this._securityExplanationsMain, this._insecureContentStatus.displayedInsecureContentStyle,
-            Common.UIString('Mixed Content'), Common.UIString('The site includes HTTP resources.'),
-            Network.NetworkLogView.MixedContentFilterValues.Displayed, showDisplayedMixedContentInNetworkPanel);
+      } else {
+        switch (explanation.mixedContentType) {
+          case Protocol.Security.MixedContentType.Blockable:
+            this._addMixedContentExplanation(
+                this._securityExplanationsMain, explanation,
+                Network.NetworkLogView.MixedContentFilterValues.BlockOverridden);
+            break;
+          case Protocol.Security.MixedContentType.OptionallyBlockable:
+            this._addMixedContentExplanation(
+                this._securityExplanationsMain, explanation, Network.NetworkLogView.MixedContentFilterValues.Displayed);
+            break;
+          default:
+            this._addExplanation(this._securityExplanationsMain, explanation);
+            break;
+        }
       }
     }
 
     if (this._panel.filterRequestCount(Network.NetworkLogView.MixedContentFilterValues.Blocked) > 0) {
+      var explanation = /** @type {!Protocol.Security.SecurityStateExplanation} */ ({
+        securityState: Protocol.Security.SecurityState.Info,
+        summary: Common.UIString('Blocked mixed content'),
+        description: Common.UIString('Your page requested non-secure resources that were blocked.'),
+        mixedContentType: Protocol.Security.MixedContentType.Blockable,
+        certificate: []
+      });
       this._addMixedContentExplanation(
-          this._securityExplanationsExtra, Protocol.Security.SecurityState.Info,
-          Common.UIString('Blocked mixed content'),
-          Common.UIString('Your page requested non-secure resources that were blocked.'),
-          Network.NetworkLogView.MixedContentFilterValues.Blocked, showBlockedMixedContentInNetworkPanel);
-    }
-
-    /**
-     * @param {!Event} e
-     */
-    function showDisplayedMixedContentInNetworkPanel(e) {
-      e.consume();
-      Network.NetworkPanel.revealAndFilter([{
-        filterType: Network.NetworkLogView.FilterType.MixedContent,
-        filterValue: Network.NetworkLogView.MixedContentFilterValues.Displayed
-      }]);
-    }
-
-    /**
-     * @param {!Event} e
-     */
-    function showBlockOverriddenMixedContentInNetworkPanel(e) {
-      e.consume();
-      Network.NetworkPanel.revealAndFilter([{
-        filterType: Network.NetworkLogView.FilterType.MixedContent,
-        filterValue: Network.NetworkLogView.MixedContentFilterValues.BlockOverridden
-      }]);
-    }
-
-    /**
-     * @param {!Event} e
-     */
-    function showBlockedMixedContentInNetworkPanel(e) {
-      e.consume();
-      Network.NetworkPanel.revealAndFilter([{
-        filterType: Network.NetworkLogView.FilterType.MixedContent,
-        filterValue: Network.NetworkLogView.MixedContentFilterValues.Blocked
-      }]);
+          this._securityExplanationsMain, explanation, Network.NetworkLogView.MixedContentFilterValues.Blocked);
     }
   }
 
   /**
    * @param {!Element} parent
-   * @param {!Protocol.Security.SecurityState} securityState
-   * @param {string} summary
-   * @param {string} description
+   * @param {!Protocol.Security.SecurityStateExplanation} explanation
    * @param {!Network.NetworkLogView.MixedContentFilterValues} filterKey
-   * @param {!Function} networkFilterFn
    */
-  _addMixedContentExplanation(parent, securityState, summary, description, filterKey, networkFilterFn) {
-    var mixedContentExplanation = /** @type {!Protocol.Security.SecurityStateExplanation} */ (
-        {'securityState': securityState, 'summary': summary, 'description': description});
-
-    var explanation = this._addExplanation(parent, mixedContentExplanation);
+  _addMixedContentExplanation(parent, explanation, filterKey) {
+    var element = this._addExplanation(parent, explanation);
 
     var filterRequestCount = this._panel.filterRequestCount(filterKey);
     if (!filterRequestCount) {
@@ -780,59 +694,29 @@ Security.SecurityMainView = class extends UI.VBox {
       // individual mixed requests at this point. Prompt them to refresh
       // instead of pointing them to the Network panel to get prompted
       // to refresh.
-      var refreshPrompt = explanation.createChild('div', 'security-mixed-content');
+      var refreshPrompt = element.createChild('div', 'security-mixed-content');
       refreshPrompt.textContent = Common.UIString('Reload the page to record requests for HTTP resources.');
       return;
     }
 
-    var requestsAnchor = explanation.createChild('div', 'security-mixed-content link');
+    var requestsAnchor = element.createChild('div', 'security-mixed-content link');
     if (filterRequestCount === 1)
       requestsAnchor.textContent = Common.UIString('View %d request in Network Panel', filterRequestCount);
     else
       requestsAnchor.textContent = Common.UIString('View %d requests in Network Panel', filterRequestCount);
 
     requestsAnchor.href = '';
-    requestsAnchor.addEventListener('click', networkFilterFn);
+    requestsAnchor.addEventListener('click', this.showNetworkFilter.bind(this, filterKey));
   }
 
   /**
-   * @param {!Element} parent
-   * @param {!Protocol.Security.SecurityState} securityState
-   * @param {string} summary
-   * @param {string} description
+   * @param {!Network.NetworkLogView.MixedContentFilterValues} filterKey
+   * @param {!Event} e
    */
-  _addMixedFormExplanation(parent, securityState, summary, description) {
-    var mixedContentExplanation = /** @type {!Protocol.Security.SecurityStateExplanation} */ (
-        {'securityState': securityState, 'summary': summary, 'description': description});
-
-    this._addExplanation(parent, mixedContentExplanation);
-  }
-
-  _addContentWithCertErrorsExplanations() {
-    if (!this._schemeIsCryptographic)
-      return;
-
-    if (!this._insecureContentStatus)
-      return;
-
-    if (this._insecureContentStatus.ranContentWithCertErrors) {
-      this._addExplanation(
-          this._securityExplanationsMain, /** @type {!Protocol.Security.SecurityStateExplanation} */ ({
-            'securityState': this._insecureContentStatus.ranInsecureContentStyle,
-            'summary': Common.UIString('Active content with certificate errors'),
-            'description': Common.UIString(
-                'You have recently allowed content loaded with certificate errors (such as scripts or iframes) to run on this site.')
-          }));
-    }
-
-    if (this._insecureContentStatus.displayedContentWithCertErrors) {
-      this._addExplanation(
-          this._securityExplanationsMain, /** @type {!Protocol.Security.SecurityStateExplanation} */ ({
-            'securityState': this._insecureContentStatus.displayedInsecureContentStyle,
-            'summary': Common.UIString('Content with certificate errors'),
-            'description': Common.UIString('This site includes resources that were loaded with certificate errors.')
-          }));
-    }
+  showNetworkFilter(filterKey, e) {
+    e.consume();
+    Network.NetworkPanel.revealAndFilter(
+        [{filterType: Network.NetworkLogView.FilterType.MixedContent, filterValue: filterKey}]);
   }
 };
 
@@ -877,13 +761,13 @@ Security.SecurityOriginView = class extends UI.VBox {
 
       var table = new Security.SecurityDetailsTable();
       connectionSection.appendChild(table.element());
-      table.addRow('Protocol', originState.securityDetails.protocol);
+      table.addRow(Common.UIString('Protocol'), originState.securityDetails.protocol);
       if (originState.securityDetails.keyExchange)
-        table.addRow('Key Exchange', originState.securityDetails.keyExchange);
+        table.addRow(Common.UIString('Key exchange'), originState.securityDetails.keyExchange);
       if (originState.securityDetails.keyExchangeGroup)
-        table.addRow('Key Exchange Group', originState.securityDetails.keyExchangeGroup);
+        table.addRow(Common.UIString('Key exchange group'), originState.securityDetails.keyExchangeGroup);
       table.addRow(
-          'Cipher', originState.securityDetails.cipher +
+          Common.UIString('Cipher'), originState.securityDetails.cipher +
               (originState.securityDetails.mac ? ' with ' + originState.securityDetails.mac : ''));
 
       // Create the certificate section outside the callback, so that it appears in the right place.
@@ -905,12 +789,14 @@ Security.SecurityOriginView = class extends UI.VBox {
       certificateSection.appendChild(table.element());
       table.addRow(Common.UIString('Subject'), originState.securityDetails.subjectName);
       table.addRow(Common.UIString('SAN'), sanDiv);
-      table.addRow(Common.UIString('Valid From'), validFromString);
-      table.addRow(Common.UIString('Valid Until'), validUntilString);
+      table.addRow(Common.UIString('Valid from'), validFromString);
+      table.addRow(Common.UIString('Valid until'), validUntilString);
       table.addRow(Common.UIString('Issuer'), originState.securityDetails.issuer);
+
       table.addRow(
-          '', Security.SecurityPanel.createCertificateViewerButton2(
-                  Common.UIString('Open full certificate details'), origin));
+          '',
+          Security.SecurityPanel.createCertificateViewerButtonForOrigin(
+              Common.UIString('Open full certificate details'), origin));
 
       if (!originState.securityDetails.signedCertificateTimestampList.length)
         return;
@@ -932,14 +818,14 @@ Security.SecurityOriginView = class extends UI.VBox {
         var sctTable = new Security.SecurityDetailsTable();
         sctTableWrapper.appendChild(sctTable.element());
         var sct = originState.securityDetails.signedCertificateTimestampList[i];
-        sctTable.addRow(Common.UIString('Log Name'), sct.logDescription);
+        sctTable.addRow(Common.UIString('Log name'), sct.logDescription);
         sctTable.addRow(Common.UIString('Log ID'), sct.logId.replace(/(.{2})/g, '$1 '));
-        sctTable.addRow(Common.UIString('Validation Status'), sct.status);
+        sctTable.addRow(Common.UIString('Validation status'), sct.status);
         sctTable.addRow(Common.UIString('Source'), sct.origin);
-        sctTable.addRow(Common.UIString('Issued At'), new Date(sct.timestamp).toUTCString());
-        sctTable.addRow(Common.UIString('Hash Algorithm'), sct.hashAlgorithm);
-        sctTable.addRow(Common.UIString('Signature Algorithm'), sct.signatureAlgorithm);
-        sctTable.addRow(Common.UIString('Signature Data'), sct.signatureData.replace(/(.{2})/g, '$1 '));
+        sctTable.addRow(Common.UIString('Issued at'), new Date(sct.timestamp).toUTCString());
+        sctTable.addRow(Common.UIString('Hash algorithm'), sct.hashAlgorithm);
+        sctTable.addRow(Common.UIString('Signature algorithm'), sct.signatureAlgorithm);
+        sctTable.addRow(Common.UIString('Signature data'), sct.signatureData.replace(/(.{2})/g, '$1 '));
       }
 
       // Add link to toggle between displaying of the summary of the SCT(s) and the detailed SCT(s).
@@ -963,13 +849,13 @@ Security.SecurityOriginView = class extends UI.VBox {
           Common.UIString('The security details above are from the first inspected response.');
     } else if (originState.securityState !== Protocol.Security.SecurityState.Unknown) {
       var notSecureSection = this.element.createChild('div', 'origin-view-section');
-      notSecureSection.createChild('div', 'origin-view-section-title').textContent = Common.UIString('Not Secure');
+      notSecureSection.createChild('div', 'origin-view-section-title').textContent = Common.UIString('Not secure');
       notSecureSection.createChild('div').textContent =
           Common.UIString('Your connection to this origin is not secure.');
     } else {
       var noInfoSection = this.element.createChild('div', 'origin-view-section');
       noInfoSection.createChild('div', 'origin-view-section-title').textContent =
-          Common.UIString('No Security Information');
+          Common.UIString('No security information');
       noInfoSection.createChild('div').textContent =
           Common.UIString('No security details are available for this origin.');
     }
@@ -982,7 +868,7 @@ Security.SecurityOriginView = class extends UI.VBox {
   _createSanDiv(sanList) {
     var sanDiv = createElement('div');
     if (sanList.length === 0) {
-      sanDiv.textContent = Common.UIString('(N/A)');
+      sanDiv.textContent = Common.UIString('(n/a)');
       sanDiv.classList.add('empty-san');
     } else {
       var truncatedNumToShow = 2;

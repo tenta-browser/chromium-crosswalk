@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef NET_TOOLS_TRANSPORT_SECURITY_STATE_INPUT_FILE_PARSERS_H_
-#define NET_TOOLS_TRANSPORT_SECURITY_STATE_INPUT_FILE_PARSERS_H_
+#ifndef NET_TOOLS_TRANSPORT_SECURITY_STATE_GENERATOR_INPUT_FILE_PARSERS_H_
+#define NET_TOOLS_TRANSPORT_SECURITY_STATE_GENERATOR_INPUT_FILE_PARSERS_H_
 
 #include <string>
 
@@ -23,19 +23,17 @@ class Pinsets;
 // net/http/transport_security_state_static.pins
 bool ParseCertificatesFile(base::StringPiece certs_input, Pinsets* pinsets);
 
-// Parses the |json| string and copies the items under the "entries" key to
-// |entries|, the pinsets under the "pinsets" key to |pinsets|, and the domain
-// IDs under the "domain_ids" key to |domain_ids|.
+// Parses the |json| string; copies the items under the "entries" key to
+// |entries| and the pinsets under the "pinsets" key to |pinsets|.
 //
 // More info on the format can be found in
 // net/http/transport_security_state_static.json
 bool ParseJSON(base::StringPiece json,
                TransportSecurityStateEntries* entries,
-               Pinsets* pinsets,
-               DomainIDList* domain_ids);
+               Pinsets* pinsets);
 
 }  // namespace transport_security_state
 
 }  // namespace net
 
-#endif  // NET_TOOLS_TRANSPORT_SECURITY_STATE_INPUT_FILE_PARSERS_H_
+#endif  // NET_TOOLS_TRANSPORT_SECURITY_STATE_GENERATOR_INPUT_FILE_PARSERS_H_

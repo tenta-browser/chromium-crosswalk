@@ -34,8 +34,10 @@ QuickOpen.FilteredListWidget = class extends UI.VBox {
     this._progressElement = this._bottomElementsContainer.createChild('div', 'filtered-list-widget-progress');
     this._progressBarElement = this._progressElement.createChild('div', 'filtered-list-widget-progress-bar');
 
+    /** @type {!UI.ListModel<number>} */
+    this._items = new UI.ListModel();
     /** @type {!UI.ListControl<number>} */
-    this._list = new UI.ListControl(this, UI.ListMode.EqualHeightItems);
+    this._list = new UI.ListControl(this._items, this, UI.ListMode.EqualHeightItems);
     this._itemElementsContainer = this._list.element;
     this._itemElementsContainer.classList.add('container');
     this._bottomElementsContainer.appendChild(this._itemElementsContainer);
@@ -150,6 +152,8 @@ QuickOpen.FilteredListWidget = class extends UI.VBox {
   }
 
   _attachProvider() {
+    this._items.replaceAll([]);
+    this._list.invalidateItemHeight();
     if (this._provider) {
       this._provider.setRefreshCallback(this._itemsLoaded.bind(this, this._provider));
       this._provider.attach();
@@ -172,7 +176,6 @@ QuickOpen.FilteredListWidget = class extends UI.VBox {
    * @override
    */
   wasShown() {
-    this._list.invalidateItemHeight();
     this._attachProvider();
   }
 
@@ -432,7 +435,7 @@ QuickOpen.FilteredListWidget = class extends UI.VBox {
     filteredItems = [].concat(bestItems, overflowItems, filteredItems);
     this._updateNotFoundMessage(!!filteredItems.length);
     var oldHeight = this._list.element.offsetHeight;
-    this._list.replaceAllItems(filteredItems);
+    this._items.replaceAll(filteredItems);
     if (filteredItems.length)
       this._list.selectItem(filteredItems[0]);
     if (this._list.element.offsetHeight !== oldHeight)

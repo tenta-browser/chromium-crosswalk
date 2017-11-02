@@ -57,7 +57,7 @@ class OfflinePageModelImpl : public OfflinePageModel, public KeyedService {
   // All blocking calls/disk access will happen on the provided |task_runner|.
   OfflinePageModelImpl(
       std::unique_ptr<OfflinePageMetadataStore> store,
-      const base::FilePath& archives_dir,
+      std::unique_ptr<ArchiveManager> archive_manager,
       const scoped_refptr<base::SequencedTaskRunner>& task_runner);
   ~OfflinePageModelImpl() override;
 
@@ -67,6 +67,8 @@ class OfflinePageModelImpl : public OfflinePageModel, public KeyedService {
   void SavePage(const SavePageParams& save_page_params,
                 std::unique_ptr<OfflinePageArchiver> archiver,
                 const SavePageCallback& callback) override;
+  void AddPage(const OfflinePageItem& page,
+               const AddPageCallback& callback) override;
   void MarkPageAccessed(int64_t offline_id) override;
   void DeletePagesByOfflineId(const std::vector<int64_t>& offline_ids,
                               const DeletePageCallback& callback) override;
@@ -79,6 +81,10 @@ class OfflinePageModelImpl : public OfflinePageModel, public KeyedService {
 
   void GetPagesByClientIds(
       const std::vector<ClientId>& client_ids,
+      const MultipleOfflinePageItemCallback& callback) override;
+
+  void GetPagesByRequestOrigin(
+      const std::string& request_origin,
       const MultipleOfflinePageItemCallback& callback) override;
 
   void DeleteCachedPagesByURLPredicate(
@@ -109,6 +115,10 @@ class OfflinePageModelImpl : public OfflinePageModel, public KeyedService {
   bool is_loaded() const override;
 
   OfflineEventLogger* GetLogger() override;
+
+  void set_skip_clearing_original_url_for_testing() {
+    skip_clearing_original_url_for_testing_ = true;
+  }
 
  protected:
   // Adding a protected constructor for testing-only purposes in
@@ -146,11 +156,10 @@ class OfflinePageModelImpl : public OfflinePageModel, public KeyedService {
 
   // Callback for loading pages from the offline page metadata store.
   void OnStoreInitialized(const base::TimeTicks& start_time,
-                          int reset_attempts_left,
+                          int init_attempts_spent,
                           bool success);
-  void OnStoreResetDone(const base::TimeTicks& start_time,
-                        int reset_attempts_left,
-                        bool success);
+  void RetryDbInitialization(const base::TimeTicks& start_time,
+                             int init_attempts_spent);
   void OnInitialGetOfflinePagesDone(
       const base::TimeTicks& start_time,
       const std::vector<OfflinePageItem>& offline_pages);
@@ -167,16 +176,22 @@ class OfflinePageModelImpl : public OfflinePageModel, public KeyedService {
                            const base::FilePath& file_path,
                            const base::string16& title,
                            int64_t file_size);
-  void OnAddOfflinePageDone(OfflinePageArchiver* archiver,
-                            const base::FilePath& file_path,
-                            const SavePageCallback& callback,
-                            const OfflinePageItem& offline_page,
-                            ItemActionStatus status);
+  void OnAddSavedPageDone(const OfflinePageItem& offline_page,
+                          const SavePageCallback& callback,
+                          AddPageResult add_result,
+                          int64_t offline_id);
   void InformSavePageDone(const SavePageCallback& callback,
                           SavePageResult result,
                           const ClientId& client_id,
                           int64_t offline_id);
   void DeletePendingArchiver(OfflinePageArchiver* archiver);
+
+  // Steps for adding a page entry to metadata store.
+  void AddPageWhenLoadDone(const OfflinePageItem& page,
+                           const AddPageCallback& callback);
+  void OnAddPageDone(const OfflinePageItem& offline_page,
+                     const AddPageCallback& callback,
+                     ItemActionStatus status);
 
   // Steps for deleting files and data for an offline page.
   void OnDeleteArchiveFilesDone(const std::vector<int64_t>& offline_ids,
@@ -252,9 +267,6 @@ class OfflinePageModelImpl : public OfflinePageModel, public KeyedService {
   // Persistent store for offline page metadata.
   std::unique_ptr<OfflinePageMetadataStore> store_;
 
-  // Location where all of the archive files will be stored.
-  base::FilePath archives_dir_;
-
   // The observers.
   base::ObserverList<Observer> observers_;
 
@@ -285,6 +297,9 @@ class OfflinePageModelImpl : public OfflinePageModel, public KeyedService {
   // Clock for getting time in testing code. The setter is responsible to reset
   // it once it is not longer needed.
   base::Clock* testing_clock_;
+
+  // Don't clear original URL if it is same as final URL. For testing only.
+  bool skip_clearing_original_url_for_testing_;
 
   base::WeakPtrFactory<OfflinePageModelImpl> weak_ptr_factory_;
 

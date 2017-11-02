@@ -7,10 +7,8 @@
 
 #include "bindings/core/v8/ScriptPromise.h"
 #include "bindings/core/v8/ScriptValue.h"
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "components/payments/content/payment_request.mojom-blink.h"
 #include "core/dom/ContextLifecycleObserver.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/EventTarget.h"
 #include "modules/ModulesExport.h"
 #include "modules/payments/PaymentCompleter.h"
 #include "modules/payments/PaymentMethodData.h"
@@ -18,12 +16,14 @@
 #include "modules/payments/PaymentUpdater.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "platform/Timer.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Compiler.h"
 #include "platform/wtf/Noncopyable.h"
 #include "platform/wtf/RefPtr.h"
 #include "platform/wtf/Vector.h"
 #include "platform/wtf/text/WTFString.h"
+#include "public/platform/modules/payments/payment_request.mojom-blink.h"
 
 namespace blink {
 
@@ -36,7 +36,7 @@ class ScriptState;
 
 class MODULES_EXPORT PaymentRequest final
     : public EventTargetWithInlineData,
-      NON_EXPORTED_BASE(public payments::mojom::blink::PaymentRequestClient),
+      public payments::mojom::blink::PaymentRequestClient,
       public PaymentCompleter,
       public PaymentUpdater,
       public ContextLifecycleObserver,
@@ -61,6 +61,7 @@ class MODULES_EXPORT PaymentRequest final
   ScriptPromise show(ScriptState*);
   ScriptPromise abort(ScriptState*);
 
+  const String& id() const { return id_; }
   PaymentAddress* getShippingAddress() const { return shipping_address_.Get(); }
   const String& shippingOption() const { return shipping_option_; }
   const String& shippingType() const { return shipping_type_; }
@@ -108,6 +109,7 @@ class MODULES_EXPORT PaymentRequest final
   void OnAbort(bool aborted_successfully) override;
   void OnCanMakePayment(
       payments::mojom::blink::CanMakePaymentQueryResult) override;
+  void WarnNoFavicon() override;
 
   void OnCompleteTimeout(TimerBase*);
 
@@ -116,6 +118,7 @@ class MODULES_EXPORT PaymentRequest final
 
   PaymentOptions options_;
   Member<PaymentAddress> shipping_address_;
+  String id_;
   String shipping_option_;
   String shipping_type_;
   Member<ScriptPromiseResolver> show_resolver_;

@@ -14,9 +14,8 @@
 #include "base/files/file_util.h"
 #include "base/json/json_reader.h"
 #include "base/macros.h"
-#include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
-#include "base/test/scoped_task_scheduler.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/test/simple_test_clock.h"
 #include "base/values.h"
 #include "chromeos/cert_loader.h"
@@ -53,22 +52,19 @@ const char* kUserHash = "user_hash";
 class ClientCertResolverTest : public testing::Test,
                                public ClientCertResolver::Observer {
  public:
-  ClientCertResolverTest()
-      : network_properties_changed_count_(0),
-        service_test_(nullptr),
-        profile_test_(nullptr),
-        cert_loader_(nullptr),
-        scoped_task_scheduler_(&message_loop_) {}
+  ClientCertResolverTest() {}
   ~ClientCertResolverTest() override {}
 
   void SetUp() override {
     ASSERT_TRUE(test_nssdb_.is_open());
+    ASSERT_TRUE(test_system_nssdb_.is_open());
 
     // Use the same DB for public and private slot.
     test_nsscertdb_.reset(new net::NSSCertDatabaseChromeOS(
         crypto::ScopedPK11Slot(PK11_ReferenceSlot(test_nssdb_.slot())),
         crypto::ScopedPK11Slot(PK11_ReferenceSlot(test_nssdb_.slot()))));
-    test_nsscertdb_->SetSlowTaskRunnerForTest(message_loop_.task_runner());
+    test_nsscertdb_->SetSlowTaskRunnerForTest(
+        scoped_task_environment_.GetMainThreadTaskRunner());
 
     DBusThreadManager::Initialize();
     service_test_ =
@@ -76,9 +72,9 @@ class ClientCertResolverTest : public testing::Test,
     profile_test_ =
         DBusThreadManager::Get()->GetShillProfileClient()->GetTestInterface();
     profile_test_->AddProfile(kUserProfilePath, kUserHash);
-    base::RunLoop().RunUntilIdle();
+    scoped_task_environment_.RunUntilIdle();
     service_test_->ClearServices();
-    base::RunLoop().RunUntilIdle();
+    scoped_task_environment_.RunUntilIdle();
 
     CertLoader::Initialize();
     cert_loader_ = CertLoader::Get();
@@ -86,10 +82,12 @@ class ClientCertResolverTest : public testing::Test,
   }
 
   void TearDown() override {
-    client_cert_resolver_->RemoveObserver(this);
+    if (client_cert_resolver_)
+      client_cert_resolver_->RemoveObserver(this);
     client_cert_resolver_.reset();
     test_clock_.reset();
-    network_state_handler_->Shutdown();
+    if (network_state_handler_)
+      network_state_handler_->Shutdown();
     managed_config_handler_.reset();
     network_config_handler_.reset();
     network_profile_handler_.reset();
@@ -100,7 +98,7 @@ class ClientCertResolverTest : public testing::Test,
 
  protected:
   void StartCertLoader() {
-    cert_loader_->StartWithNSSDB(test_nsscertdb_.get());
+    cert_loader_->SetUserNSSDB(test_nsscertdb_.get());
     if (test_client_cert_.get()) {
       int slot_id = 0;
       const std::string pkcs11_id =
@@ -137,6 +135,16 @@ class ClientCertResolverTest : public testing::Test,
     ASSERT_TRUE(test_client_cert_.get());
   }
 
+  void SetupTestCertInSystemToken(const std::string& prefix) {
+    test_nsscertdb_->SetSystemSlot(
+        crypto::ScopedPK11Slot(PK11_ReferenceSlot(test_system_nssdb_.slot())));
+
+    test_client_cert_ = net::ImportClientCertAndKeyFromFile(
+        net::GetTestCertsDirectory(), prefix + ".pem", prefix + ".pk8",
+        test_system_nssdb_.slot());
+    ASSERT_TRUE(test_client_cert_.get());
+  }
+
   void SetupNetworkHandlers() {
     network_state_handler_ = NetworkStateHandler::InitializeForTest();
     network_profile_handler_.reset(new NetworkProfileHandler());
@@ -156,7 +164,7 @@ class ClientCertResolverTest : public testing::Test,
         network_config_handler_.get(), nullptr /* network_device_handler */,
         nullptr /* prohibited_technologies_handler */);
     // Run all notifications before starting the cert loader to reduce run time.
-    base::RunLoop().RunUntilIdle();
+    scoped_task_environment_.RunUntilIdle();
 
     client_cert_resolver_->Init(network_state_handler_.get(),
                                 managed_config_handler_.get());
@@ -184,7 +192,7 @@ class ClientCertResolverTest : public testing::Test,
 
   // Sets up a policy with a certificate pattern that matches any client cert
   // with a certain Issuer CN. It will match the test client cert.
-  void SetupPolicyMatchingIssuerCN() {
+  void SetupPolicyMatchingIssuerCN(onc::ONCSource onc_source) {
     const char* kTestPolicy =
         "[ { \"GUID\": \"wifi_stub\","
         "    \"Name\": \"wifi_stub\","
@@ -213,15 +221,40 @@ class ClientCertResolverTest : public testing::Test,
     base::ListValue* policy = nullptr;
     ASSERT_TRUE(policy_value->GetAsList(&policy));
 
+    std::string user_hash =
+        onc_source == onc::ONC_SOURCE_USER_POLICY ? kUserHash : "";
     managed_config_handler_->SetPolicy(
-        onc::ONC_SOURCE_USER_POLICY, kUserHash, *policy,
+        onc_source, user_hash, *policy,
         base::DictionaryValue() /* no global network config */);
+  }
+
+  void SetupCertificateConfigMatchingIssuerCN(
+      onc::ONCSource onc_source,
+      client_cert::ClientCertConfig* client_cert_config) {
+    const char* kTestOncPattern =
+        "{"
+        "  \"Issuer\": {"
+        "    \"CommonName\": \"B CA\""
+        "  }"
+        "}";
+    std::string error;
+    std::unique_ptr<base::Value> onc_pattern_value =
+        base::JSONReader::ReadAndReturnError(
+            kTestOncPattern, base::JSON_ALLOW_TRAILING_COMMAS, nullptr, &error);
+    ASSERT_TRUE(onc_pattern_value) << error;
+
+    base::DictionaryValue* onc_pattern_dict;
+    onc_pattern_value->GetAsDictionary(&onc_pattern_dict);
+
+    client_cert_config->onc_source = onc_source;
+    client_cert_config->pattern.ReadFromONCDictionary(*onc_pattern_dict);
   }
 
   // Sets up a policy with a certificate pattern that matches any client cert
   // that is signed by the test CA cert (stored in |test_ca_cert_pem_|). In
   // particular it will match the test client cert.
-  void SetupPolicyMatchingIssuerPEM(const std::string& identity) {
+  void SetupPolicyMatchingIssuerPEM(onc::ONCSource onc_source,
+                                    const std::string& identity) {
     const char* kTestPolicyTemplate =
         "[ { \"GUID\": \"wifi_stub\","
         "    \"Name\": \"wifi_stub\","
@@ -251,10 +284,10 @@ class ClientCertResolverTest : public testing::Test,
     base::ListValue* policy = nullptr;
     ASSERT_TRUE(policy_value->GetAsList(&policy));
 
+    std::string user_hash =
+        onc_source == onc::ONC_SOURCE_USER_POLICY ? kUserHash : "";
     managed_config_handler_->SetPolicy(
-        onc::ONC_SOURCE_USER_POLICY,
-        kUserHash,
-        *policy,
+        onc_source, user_hash, *policy,
         base::DictionaryValue() /* no global network config */);
   }
 
@@ -273,10 +306,12 @@ class ClientCertResolverTest : public testing::Test,
     properties->GetStringWithoutPathExpansion(prop_name, prop_value);
   }
 
-  int network_properties_changed_count_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
+  int network_properties_changed_count_ = 0;
   std::string test_cert_id_;
   std::unique_ptr<base::SimpleTestClock> test_clock_;
   std::unique_ptr<ClientCertResolver> client_cert_resolver_;
+  CertLoader* cert_loader_ = nullptr;
 
  private:
   // ClientCertResolver::Observer:
@@ -285,19 +320,17 @@ class ClientCertResolverTest : public testing::Test,
       ++network_properties_changed_count_;
   }
 
-  ShillServiceClient::TestInterface* service_test_;
-  ShillProfileClient::TestInterface* profile_test_;
-  CertLoader* cert_loader_;
+  ShillServiceClient::TestInterface* service_test_ = nullptr;
+  ShillProfileClient::TestInterface* profile_test_ = nullptr;
   std::unique_ptr<NetworkStateHandler> network_state_handler_;
   std::unique_ptr<NetworkProfileHandler> network_profile_handler_;
   std::unique_ptr<NetworkConfigurationHandler> network_config_handler_;
   std::unique_ptr<ManagedNetworkConfigurationHandlerImpl>
       managed_config_handler_;
-  base::MessageLoop message_loop_;
-  base::test::ScopedTaskScheduler scoped_task_scheduler_;
   scoped_refptr<net::X509Certificate> test_client_cert_;
   std::string test_ca_cert_pem_;
   crypto::ScopedTestNSSDB test_nssdb_;
+  crypto::ScopedTestNSSDB test_system_nssdb_;
   std::unique_ptr<net::NSSCertDatabaseChromeOS> test_nsscertdb_;
 
   DISALLOW_COPY_AND_ASSIGN(ClientCertResolverTest);
@@ -307,11 +340,11 @@ TEST_F(ClientCertResolverTest, NoMatchingCertificates) {
   SetupTestCerts("client_1", false /* do not import the issuer */);
   StartCertLoader();
   SetupWifi();
-  base::RunLoop().RunUntilIdle();
+  scoped_task_environment_.RunUntilIdle();
   network_properties_changed_count_ = 0;
   SetupNetworkHandlers();
-  SetupPolicyMatchingIssuerPEM("");
-  base::RunLoop().RunUntilIdle();
+  SetupPolicyMatchingIssuerPEM(onc::ONC_SOURCE_USER_POLICY, "");
+  scoped_task_environment_.RunUntilIdle();
 
   // Verify that no client certificate was configured.
   std::string pkcs11_id;
@@ -324,15 +357,15 @@ TEST_F(ClientCertResolverTest, NoMatchingCertificates) {
 TEST_F(ClientCertResolverTest, MatchIssuerCNWithoutIssuerInstalled) {
   SetupTestCerts("client_1", false /* do not import the issuer */);
   SetupWifi();
-  base::RunLoop().RunUntilIdle();
+  scoped_task_environment_.RunUntilIdle();
 
   SetupNetworkHandlers();
-  SetupPolicyMatchingIssuerCN();
-  base::RunLoop().RunUntilIdle();
+  SetupPolicyMatchingIssuerCN(onc::ONC_SOURCE_USER_POLICY);
+  scoped_task_environment_.RunUntilIdle();
 
   network_properties_changed_count_ = 0;
   StartCertLoader();
-  base::RunLoop().RunUntilIdle();
+  scoped_task_environment_.RunUntilIdle();
 
   // Verify that the resolver positively matched the pattern in the policy with
   // the test client cert and configured the network.
@@ -345,15 +378,15 @@ TEST_F(ClientCertResolverTest, MatchIssuerCNWithoutIssuerInstalled) {
 TEST_F(ClientCertResolverTest, ResolveOnCertificatesLoaded) {
   SetupTestCerts("client_1", true /* import issuer */);
   SetupWifi();
-  base::RunLoop().RunUntilIdle();
+  scoped_task_environment_.RunUntilIdle();
 
   SetupNetworkHandlers();
-  SetupPolicyMatchingIssuerPEM("");
-  base::RunLoop().RunUntilIdle();
+  SetupPolicyMatchingIssuerPEM(onc::ONC_SOURCE_USER_POLICY, "");
+  scoped_task_environment_.RunUntilIdle();
 
   network_properties_changed_count_ = 0;
   StartCertLoader();
-  base::RunLoop().RunUntilIdle();
+  scoped_task_environment_.RunUntilIdle();
 
   // Verify that the resolver positively matched the pattern in the policy with
   // the test client cert and configured the network.
@@ -366,15 +399,15 @@ TEST_F(ClientCertResolverTest, ResolveOnCertificatesLoaded) {
 TEST_F(ClientCertResolverTest, ResolveAfterPolicyApplication) {
   SetupTestCerts("client_1", true /* import issuer */);
   SetupWifi();
-  base::RunLoop().RunUntilIdle();
+  scoped_task_environment_.RunUntilIdle();
   StartCertLoader();
   SetupNetworkHandlers();
-  base::RunLoop().RunUntilIdle();
+  scoped_task_environment_.RunUntilIdle();
 
   // Policy application will trigger the ClientCertResolver.
   network_properties_changed_count_ = 0;
-  SetupPolicyMatchingIssuerPEM("");
-  base::RunLoop().RunUntilIdle();
+  SetupPolicyMatchingIssuerPEM(onc::ONC_SOURCE_USER_POLICY, "");
+  scoped_task_environment_.RunUntilIdle();
 
   // Verify that the resolver positively matched the pattern in the policy with
   // the test client cert and configured the network.
@@ -387,17 +420,17 @@ TEST_F(ClientCertResolverTest, ResolveAfterPolicyApplication) {
 TEST_F(ClientCertResolverTest, ExpiringCertificate) {
   SetupTestCerts("client_1", true /* import issuer */);
   SetupWifi();
-  base::RunLoop().RunUntilIdle();
+  scoped_task_environment_.RunUntilIdle();
 
   SetupNetworkHandlers();
-  SetupPolicyMatchingIssuerPEM("");
-  base::RunLoop().RunUntilIdle();
+  SetupPolicyMatchingIssuerPEM(onc::ONC_SOURCE_USER_POLICY, "");
+  scoped_task_environment_.RunUntilIdle();
 
   StartCertLoader();
-  base::RunLoop().RunUntilIdle();
+  scoped_task_environment_.RunUntilIdle();
 
   SetWifiState(shill::kStateOnline);
-  base::RunLoop().RunUntilIdle();
+  scoped_task_environment_.RunUntilIdle();
 
   // Verify that the resolver positively matched the pattern in the policy with
   // the test client cert and configured the network.
@@ -409,23 +442,140 @@ TEST_F(ClientCertResolverTest, ExpiringCertificate) {
   // happens, no client certificate was configured.
   test_clock_->SetNow(base::Time::Max());
   SetWifiState(shill::kStateOffline);
-  base::RunLoop().RunUntilIdle();
+  scoped_task_environment_.RunUntilIdle();
   GetServiceProperty(shill::kEapCertIdProperty, &pkcs11_id);
+  EXPECT_EQ(std::string(), pkcs11_id);
+}
+
+TEST_F(ClientCertResolverTest, UserPolicyUsesSystemToken) {
+  SetupTestCertInSystemToken("client_1");
+  SetupWifi();
+  scoped_task_environment_.RunUntilIdle();
+
+  SetupNetworkHandlers();
+  SetupPolicyMatchingIssuerCN(onc::ONC_SOURCE_USER_POLICY);
+  scoped_task_environment_.RunUntilIdle();
+
+  StartCertLoader();
+  scoped_task_environment_.RunUntilIdle();
+  EXPECT_EQ(1U, cert_loader_->system_certs().size());
+
+  // Verify that the resolver positively matched the pattern in the policy with
+  // the test client cert and configured the network.
+  std::string pkcs11_id;
+  GetServiceProperty(shill::kEapCertIdProperty, &pkcs11_id);
+  EXPECT_EQ(test_cert_id_, pkcs11_id);
+}
+
+TEST_F(ClientCertResolverTest, UserPolicyUsesSystemTokenSync) {
+  SetupTestCertInSystemToken("client_1");
+  StartCertLoader();
+  scoped_task_environment_.RunUntilIdle();
+
+  client_cert::ClientCertConfig client_cert_config;
+  SetupCertificateConfigMatchingIssuerCN(onc::ONC_SOURCE_USER_POLICY,
+                                         &client_cert_config);
+
+  base::DictionaryValue shill_properties;
+  ClientCertResolver::ResolveCertificatePatternSync(
+      client_cert::CONFIG_TYPE_EAP, client_cert_config, &shill_properties);
+  std::string pkcs11_id;
+  shill_properties.GetStringWithoutPathExpansion(shill::kEapCertIdProperty,
+                                                 &pkcs11_id);
+  EXPECT_EQ(test_cert_id_, pkcs11_id);
+}
+
+TEST_F(ClientCertResolverTest, DevicePolicyUsesSystemToken) {
+  SetupTestCertInSystemToken("client_1");
+  SetupWifi();
+  scoped_task_environment_.RunUntilIdle();
+
+  SetupNetworkHandlers();
+  SetupPolicyMatchingIssuerCN(onc::ONC_SOURCE_USER_POLICY);
+  scoped_task_environment_.RunUntilIdle();
+
+  StartCertLoader();
+  scoped_task_environment_.RunUntilIdle();
+  EXPECT_EQ(1U, cert_loader_->system_certs().size());
+
+  // Verify that the resolver positively matched the pattern in the policy with
+  // the test client cert and configured the network.
+  std::string pkcs11_id;
+  GetServiceProperty(shill::kEapCertIdProperty, &pkcs11_id);
+  EXPECT_EQ(test_cert_id_, pkcs11_id);
+}
+
+TEST_F(ClientCertResolverTest, DevicePolicyUsesSystemTokenSync) {
+  SetupTestCertInSystemToken("client_1");
+  StartCertLoader();
+  scoped_task_environment_.RunUntilIdle();
+
+  client_cert::ClientCertConfig client_cert_config;
+  SetupCertificateConfigMatchingIssuerCN(onc::ONC_SOURCE_DEVICE_POLICY,
+                                         &client_cert_config);
+
+  base::DictionaryValue shill_properties;
+  ClientCertResolver::ResolveCertificatePatternSync(
+      client_cert::CONFIG_TYPE_EAP, client_cert_config, &shill_properties);
+  std::string pkcs11_id;
+  shill_properties.GetStringWithoutPathExpansion(shill::kEapCertIdProperty,
+                                                 &pkcs11_id);
+  EXPECT_EQ(test_cert_id_, pkcs11_id);
+}
+
+TEST_F(ClientCertResolverTest, DevicePolicyDoesNotUseUserToken) {
+  SetupTestCerts("client_1", false /* do not import the issuer */);
+  SetupWifi();
+  scoped_task_environment_.RunUntilIdle();
+
+  SetupNetworkHandlers();
+  SetupPolicyMatchingIssuerCN(onc::ONC_SOURCE_DEVICE_POLICY);
+  scoped_task_environment_.RunUntilIdle();
+
+  network_properties_changed_count_ = 0;
+  StartCertLoader();
+  scoped_task_environment_.RunUntilIdle();
+  EXPECT_EQ(0U, cert_loader_->system_certs().size());
+
+  // Verify that no client certificate was configured.
+  std::string pkcs11_id;
+  GetServiceProperty(shill::kEapCertIdProperty, &pkcs11_id);
+  EXPECT_EQ(std::string(), pkcs11_id);
+  EXPECT_EQ(1, network_properties_changed_count_);
+  EXPECT_FALSE(client_cert_resolver_->IsAnyResolveTaskRunning());
+}
+
+TEST_F(ClientCertResolverTest, DevicePolicyDoesNotUseUserTokenSync) {
+  SetupTestCerts("client_1", false /* do not import the issuer */);
+  StartCertLoader();
+  scoped_task_environment_.RunUntilIdle();
+
+  client_cert::ClientCertConfig client_cert_config;
+  SetupCertificateConfigMatchingIssuerCN(onc::ONC_SOURCE_DEVICE_POLICY,
+                                         &client_cert_config);
+
+  base::DictionaryValue shill_properties;
+  ClientCertResolver::ResolveCertificatePatternSync(
+      client_cert::CONFIG_TYPE_EAP, client_cert_config, &shill_properties);
+  std::string pkcs11_id;
+  shill_properties.GetStringWithoutPathExpansion(shill::kEapCertIdProperty,
+                                                 &pkcs11_id);
   EXPECT_EQ(std::string(), pkcs11_id);
 }
 
 TEST_F(ClientCertResolverTest, PopulateIdentityFromCert) {
   SetupTestCerts("client_3", true /* import issuer */);
   SetupWifi();
-  base::RunLoop().RunUntilIdle();
+  scoped_task_environment_.RunUntilIdle();
 
   SetupNetworkHandlers();
-  SetupPolicyMatchingIssuerPEM("${CERT_SAN_EMAIL}");
-  base::RunLoop().RunUntilIdle();
+  SetupPolicyMatchingIssuerPEM(onc::ONC_SOURCE_USER_POLICY,
+                               "${CERT_SAN_EMAIL}");
+  scoped_task_environment_.RunUntilIdle();
 
   network_properties_changed_count_ = 0;
   StartCertLoader();
-  base::RunLoop().RunUntilIdle();
+  scoped_task_environment_.RunUntilIdle();
 
   // Verify that the resolver read the subjectAltName email field from the
   // cert, and wrote it into the shill service entry.
@@ -437,8 +587,9 @@ TEST_F(ClientCertResolverTest, PopulateIdentityFromCert) {
   // Verify that after changing the ONC policy to request a variant of the
   // Microsoft Universal Principal Name field instead, the correct value is
   // substituted into the shill service entry.
-  SetupPolicyMatchingIssuerPEM("upn-${CERT_SAN_UPN}-suffix");
-  base::RunLoop().RunUntilIdle();
+  SetupPolicyMatchingIssuerPEM(onc::ONC_SOURCE_USER_POLICY,
+                               "upn-${CERT_SAN_UPN}-suffix");
+  scoped_task_environment_.RunUntilIdle();
 
   GetServiceProperty(shill::kEapIdentityProperty, &identity);
   EXPECT_EQ("upn-santest@ad.corp.example.com-suffix", identity);

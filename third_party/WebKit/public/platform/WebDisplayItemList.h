@@ -37,7 +37,8 @@ class WebDisplayItemList {
   virtual ~WebDisplayItemList() {}
 
   virtual void AppendDrawingItem(const WebRect& visual_rect,
-                                 sk_sp<const cc::PaintRecord>) {}
+                                 sk_sp<const cc::PaintRecord>,
+                                 const WebRect& record_bounds) {}
 
   virtual void AppendClipItem(const WebRect& clip_rect,
                               const WebVector<SkRRect>& rounded_clip_rects) {}
@@ -48,6 +49,8 @@ class WebDisplayItemList {
   virtual void AppendEndFloatClipItem() {}
   virtual void AppendTransformItem(const SkMatrix44&) {}
   virtual void AppendEndTransformItem() {}
+  // If bounds is provided, the content will be explicitly clipped to those
+  // bounds.
   virtual void AppendCompositingItem(float opacity,
                                      SkBlendMode,
                                      SkRect* bounds,
@@ -65,8 +68,6 @@ class WebDisplayItemList {
   virtual void AppendScrollItem(const WebSize& scroll_offset,
                                 ScrollContainerId) {}
   virtual void AppendEndScrollItem() {}
-
-  virtual void SetIsSuitableForGpuRasterization(bool is_suitable) {}
 };
 
 }  // namespace blink

@@ -31,22 +31,22 @@
 #include "core/dom/ContainerNode.h"
 #include "core/dom/Document.h"
 #include "core/dom/Element.h"
+#include "core/dom/ElementShadow.h"
 #include "core/dom/ElementTraversal.h"
 #include "core/dom/Range.h"
-#include "core/dom/shadow/ElementShadow.h"
-#include "core/dom/shadow/ShadowRoot.h"
-#include "core/dom/shadow/SlotScopedTraversal.h"
+#include "core/dom/ShadowRoot.h"
+#include "core/dom/events/Event.h"
 #include "core/editing/EditingUtilities.h"  // For firstPositionInOrBeforeNode
 #include "core/editing/FrameSelection.h"
 #include "core/editing/InputMethodController.h"
-#include "core/events/Event.h"
 #include "core/frame/FrameClient.h"
-#include "core/frame/FrameView.h"
 #include "core/frame/LocalDOMWindow.h"
 #include "core/frame/LocalFrame.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/RemoteFrame.h"
 #include "core/frame/Settings.h"
 #include "core/html/HTMLAreaElement.h"
+#include "core/html/HTMLFormElement.h"
 #include "core/html/HTMLImageElement.h"
 #include "core/html/HTMLPlugInElement.h"
 #include "core/html/HTMLShadowElement.h"
@@ -54,10 +54,12 @@
 #include "core/html/TextControlElement.h"
 #include "core/input/EventHandler.h"
 #include "core/layout/HitTestResult.h"
+#include "core/layout/LayoutObject.h"
 #include "core/page/ChromeClient.h"
 #include "core/page/FocusChangedObserver.h"
 #include "core/page/FrameTree.h"
 #include "core/page/Page.h"
+#include "core/page/SlotScopedTraversal.h"
 #include "core/page/SpatialNavigation.h"
 
 #include <limits>
@@ -267,7 +269,6 @@ ScopedFocusNavigation ScopedFocusNavigation::OwnedByNonFocusableFocusScopeOwner(
   if (IsShadowInsertionPointFocusScopeOwner(element))
     return ScopedFocusNavigation::OwnedByShadowInsertionPoint(
         toHTMLShadowElement(element));
-  DCHECK(isHTMLSlotElement(element));
   return ScopedFocusNavigation::OwnedByHTMLSlotElement(
       toHTMLSlotElement(element));
 }
@@ -364,7 +365,7 @@ inline void DispatchEventsOnWindowAndFocusedElement(Document* document,
   // Do not fire events while modal dialogs are up.  See
   // https://bugs.webkit.org/show_bug.cgi?id=33962
   if (Page* page = document->GetPage()) {
-    if (page->Suspended())
+    if (page->Paused())
       return;
   }
 
@@ -372,6 +373,7 @@ inline void DispatchEventsOnWindowAndFocusedElement(Document* document,
     Element* focused_element = document->FocusedElement();
     // Use focus_type kWebFocusTypePage, same as used in DispatchBlurEvent.
     focused_element->SetFocused(false, kWebFocusTypePage);
+    focused_element->SetHasFocusWithinUpToAncestor(false, nullptr);
     DispatchBlurEvent(*document, *focused_element);
   }
 
@@ -382,6 +384,7 @@ inline void DispatchEventsOnWindowAndFocusedElement(Document* document,
     Element* focused_element(document->FocusedElement());
     // Use focus_type kWebFocusTypePage, same as used in DispatchFocusEvent.
     focused_element->SetFocused(true, kWebFocusTypePage);
+    focused_element->SetHasFocusWithinUpToAncestor(true, nullptr);
     DispatchFocusEvent(*document, *focused_element);
   }
 }
@@ -752,12 +755,12 @@ void FocusController::SetFocusedFrame(Frame* frame, bool notify_embedder) {
   // Now that the frame is updated, fire events and update the selection focused
   // states of both frames.
   if (old_frame && old_frame->View()) {
-    old_frame->Selection().SetFocused(false);
+    old_frame->Selection().SetFrameIsFocused(false);
     old_frame->DomWindow()->DispatchEvent(Event::Create(EventTypeNames::blur));
   }
 
   if (new_frame && new_frame->View() && IsFocused()) {
-    new_frame->Selection().SetFocused(true);
+    new_frame->Selection().SetFrameIsFocused(true);
     new_frame->DomWindow()->DispatchEvent(Event::Create(EventTypeNames::focus));
   }
 
@@ -820,7 +823,7 @@ Frame* FocusController::FocusedOrMainFrame() const {
   // FIXME: This is a temporary hack to ensure that we return a LocalFrame, even
   // when the mainFrame is remote.  FocusController needs to be refactored to
   // deal with RemoteFrames cross-process focus transfers.
-  for (Frame* frame = page_->MainFrame()->Tree().Top(); frame;
+  for (Frame* frame = &page_->MainFrame()->Tree().Top(); frame;
        frame = frame->Tree().TraverseNext()) {
     if (frame->IsLocalRoot())
       return frame;
@@ -867,7 +870,7 @@ void FocusController::SetFocused(bool focused) {
   // m_focusedFrame might be changed by blur/focus event handlers.
   if (focused_frame_ && focused_frame_->IsLocalFrame() &&
       ToLocalFrame(focused_frame_.Get())->View()) {
-    ToLocalFrame(focused_frame_.Get())->Selection().SetFocused(focused);
+    ToLocalFrame(focused_frame_.Get())->Selection().SetFrameIsFocused(focused);
     DispatchEventsOnWindowAndFocusedElement(
         ToLocalFrame(focused_frame_.Get())->GetDocument(), focused);
   }
@@ -933,7 +936,11 @@ bool FocusController::AdvanceFocusAcrossFrames(
     start = ToHTMLFrameOwnerElement(from->Owner());
   }
 
-  return AdvanceFocusInDocumentOrder(to, start, type, false,
+  // If we're coming from a parent frame, we need to restart from the first or
+  // last focusable element.
+  bool initial_focus = to->Tree().Parent() == from;
+
+  return AdvanceFocusInDocumentOrder(to, start, type, initial_focus,
                                      source_capabilities);
 }
 
@@ -971,8 +978,9 @@ bool FocusController::AdvanceFocusInDocumentOrder(
     if (frame->LocalFrameRoot() != frame->Tree().Top()) {
       document->ClearFocusedElement();
       document->SetSequentialFocusNavigationStartingPoint(nullptr);
-      ToRemoteFrame(frame->LocalFrameRoot()->Tree().Parent())
-          ->AdvanceFocus(type, frame->LocalFrameRoot());
+      SetFocusedFrame(nullptr);
+      ToRemoteFrame(frame->LocalFrameRoot().Tree().Parent())
+          ->AdvanceFocus(type, &frame->LocalFrameRoot());
       return true;
     }
 
@@ -998,7 +1006,11 @@ bool FocusController::AdvanceFocusInDocumentOrder(
   }
 
   if (element == document->FocusedElement()) {
-    // Focus wrapped around to the same element.
+    // Focus is either coming from a remote frame or has wrapped around.
+    if (FocusedFrame() != document->GetFrame()) {
+      SetFocusedFrame(document->GetFrame());
+      DispatchFocusEvent(*document, *element);
+    }
     return true;
   }
 
@@ -1012,14 +1024,17 @@ bool FocusController::AdvanceFocusInDocumentOrder(
       return false;
 
     document->ClearFocusedElement();
-    SetFocusedFrame(owner->ContentFrame());
 
-    // If contentFrame is remote, continue the search for focusable
-    // elements in that frame's process.
-    // clearFocusedElement() fires events that might detach the
-    // contentFrame, hence the need to null-check it again.
+    // If ContentFrame is remote, continue the search for focusable elements in
+    // that frame's process. The target ContentFrame's process will grab focus
+    // from inside AdvanceFocusInDocumentOrder().
+    //
+    // ClearFocusedElement() fires events that might detach the contentFrame,
+    // hence the need to null-check it again.
     if (owner->ContentFrame() && owner->ContentFrame()->IsRemoteFrame())
       ToRemoteFrame(owner->ContentFrame())->AdvanceFocus(type, frame);
+    else
+      SetFocusedFrame(owner->ContentFrame());
 
     return true;
   }
@@ -1052,6 +1067,51 @@ Element* FocusController::FindFocusableElement(WebFocusType type,
   return FindFocusableElementAcrossFocusScopes(type, scope);
 }
 
+Element* FocusController::NextFocusableElementInForm(Element* element,
+                                                     WebFocusType focus_type) {
+  element->GetDocument().UpdateStyleAndLayoutIgnorePendingStylesheets();
+  if (!element->IsHTMLElement())
+    return nullptr;
+
+  if (!element->IsFormControlElement() &&
+      !ToHTMLElement(element)->isContentEditableForBinding())
+    return nullptr;
+
+  HTMLFormElement* form_owner = nullptr;
+  if (ToHTMLElement(element)->isContentEditableForBinding())
+    form_owner = Traversal<HTMLFormElement>::FirstAncestor(*element);
+  else
+    form_owner = ToHTMLFormControlElement(element)->formOwner();
+
+  if (!form_owner)
+    return nullptr;
+
+  Element* next_element = element;
+  for (next_element = FindFocusableElement(focus_type, *next_element);
+       next_element;
+       next_element = FindFocusableElement(focus_type, *next_element)) {
+    if (!next_element->IsHTMLElement())
+      continue;
+    if (ToHTMLElement(next_element)->isContentEditableForBinding() &&
+        next_element->IsDescendantOf(form_owner))
+      return next_element;
+    if (!next_element->IsFormControlElement())
+      continue;
+    HTMLFormControlElement* form_element =
+        ToHTMLFormControlElement(next_element);
+    if (form_element->formOwner() != form_owner ||
+        form_element->IsDisabledOrReadOnly())
+      continue;
+    LayoutObject* layout = next_element->GetLayoutObject();
+    if (layout && layout->IsTextControl()) {
+      // TODO(ajith.v) Extend it for select elements, radio buttons and check
+      // boxes
+      return next_element;
+    }
+  }
+  return nullptr;
+}
+
 Element* FocusController::FindFocusableElementInShadowHost(
     const Element& shadow_host) {
   DCHECK(shadow_host.AuthorShadowRoot());
@@ -1063,36 +1123,6 @@ Element* FocusController::FindFocusableElementInShadowHost(
 static bool RelinquishesEditingFocus(const Element& element) {
   DCHECK(HasEditableStyle(element));
   return element.GetDocument().GetFrame() && RootEditableElement(element);
-}
-
-static void ClearSelectionIfNeeded(LocalFrame* old_focused_frame,
-                                   LocalFrame* new_focused_frame,
-                                   Element* new_focused_element) {
-  if (!old_focused_frame || !new_focused_frame)
-    return;
-
-  if (old_focused_frame->GetDocument() != new_focused_frame->GetDocument())
-    return;
-
-  FrameSelection& selection = old_focused_frame->Selection();
-  const SelectionInDOMTree& selection_in_dom_tree =
-      selection.GetSelectionInDOMTree();
-  if (selection_in_dom_tree.IsNone())
-    return;
-
-  Node* selection_start_node = selection_in_dom_tree.Base().AnchorNode();
-  if (selection_start_node == new_focused_element ||
-      selection_start_node->IsDescendantOf(new_focused_element))
-    return;
-
-  if (!EnclosingTextControl(selection_start_node))
-    return;
-
-  if (selection_start_node->IsInShadowTree() &&
-      selection_start_node->OwnerShadowHost() == new_focused_element)
-    return;
-
-  selection.Clear();
 }
 
 bool FocusController::SetFocusedElement(Element* element,
@@ -1131,9 +1161,6 @@ bool FocusController::SetFocusedElement(Element* element,
       new_document->FocusedElement() == element)
     return true;
 
-  if (new_focused_frame && new_focused_frame->IsLocalFrame())
-    ClearSelectionIfNeeded(old_focused_frame, ToLocalFrame(new_focused_frame),
-                           element);
 
   if (old_document && old_document != new_document)
     old_document->ClearFocusedElement();
@@ -1163,14 +1190,14 @@ void FocusController::SetActive(bool active) {
   Frame* frame = FocusedOrMainFrame();
   if (frame->IsLocalFrame()) {
     Document* const document =
-        ToLocalFrame(frame)->LocalFrameRoot()->GetDocument();
+        ToLocalFrame(frame)->LocalFrameRoot().GetDocument();
     DCHECK(document);
     if (!document->IsActive())
       return;
     // Invalidate all custom scrollbars because they support the CSS
     // window-active attribute. This should be applied to the entire page so
-    // we invalidate from the root FrameView instead of just the focused.
-    if (FrameView* view = document->View())
+    // we invalidate from the root LocalFrameView instead of just the focused.
+    if (LocalFrameView* view = document->View())
       view->InvalidateAllCustomScrollbarsOnActiveChanged();
     ToLocalFrame(frame)->Selection().PageActivationChanged();
   }
@@ -1360,6 +1387,13 @@ bool FocusController::AdvanceFocusDirectionallyInContainer(
   Element* element = ToElement(focus_candidate.focusable_node);
   DCHECK(element);
 
+  if (!element->IsTextControl() && !HasEditableStyle(*element->ToNode())) {
+    // To fulfill the expectation of spatial-navigation/snav-textarea.html
+    // we clear selection when spatnav moves focus away from a text-field.
+    // TODO(hugoh@opera.com): crbug.com/734552 remove Selection.Clear()
+    if (FocusedFrame())
+      FocusedFrame()->Selection().Clear();
+  }
   element->focus(FocusParams(SelectionBehaviorOnFocus::kReset, type, nullptr));
   return true;
 }
@@ -1391,9 +1425,11 @@ bool FocusController::AdvanceFocusDirectionally(WebFocusType type) {
                                                     true /* ignore border */);
     } else if (isHTMLAreaElement(*focused_element)) {
       HTMLAreaElement& area = toHTMLAreaElement(*focused_element);
-      container = ScrollableEnclosingBoxOrParentFrameForNodeInDirection(
-          type, area.ImageElement());
-      starting_rect = VirtualRectForAreaElementAndDirection(area, type);
+      if (area.ImageElement()) {
+        container = ScrollableEnclosingBoxOrParentFrameForNodeInDirection(
+            type, area.ImageElement());
+        starting_rect = VirtualRectForAreaElementAndDirection(area, type);
+      }
     }
   }
 

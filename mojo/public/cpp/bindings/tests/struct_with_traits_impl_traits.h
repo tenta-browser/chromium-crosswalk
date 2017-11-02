@@ -20,12 +20,7 @@ namespace mojo {
 template <>
 struct StructTraits<test::NestedStructWithTraitsDataView,
                     test::NestedStructWithTraitsImpl> {
-  static void* SetUpContext(const test::NestedStructWithTraitsImpl& input);
-  static void TearDownContext(const test::NestedStructWithTraitsImpl& input,
-                              void* context);
-
-  static int32_t value(const test::NestedStructWithTraitsImpl& input,
-                       void* context);
+  static int32_t value(const test::NestedStructWithTraitsImpl& input);
 
   static bool Read(test::NestedStructWithTraitsDataView data,
                    test::NestedStructWithTraitsImpl* output);
@@ -95,6 +90,22 @@ struct StructTraits<test::StructWithTraitsDataView,
   static const std::map<std::string, test::NestedStructWithTraitsImpl>&
   f_struct_map(const test::StructWithTraitsImpl& value) {
     return value.get_struct_map();
+  }
+};
+
+template <>
+struct StructTraits<test::StructWithUnreachableTraitsDataView,
+                    test::StructWithUnreachableTraitsImpl> {
+ public:
+  static bool ignore_me(const test::StructWithUnreachableTraitsImpl& input) {
+    NOTREACHED();
+    return false;
+  }
+
+  static bool Read(test::StructWithUnreachableTraitsDataView data,
+                   test::StructWithUnreachableTraitsImpl* out) {
+    NOTREACHED();
+    return false;
   }
 };
 

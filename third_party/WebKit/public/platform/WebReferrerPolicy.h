@@ -33,6 +33,11 @@
 
 namespace blink {
 
+// These values are serialized and persisted, so do not remove values and add
+// new ones at the end.
+// A Java counterpart will be generated for this enum.
+// GENERATED_JAVA_ENUM_PACKAGE: org.chromium.blink_public.web
+// GENERATED_JAVA_CLASS_NAME_OVERRIDE: WebReferrerPolicy
 enum WebReferrerPolicy {
   kWebReferrerPolicyAlways,
   kWebReferrerPolicyDefault,
@@ -40,9 +45,12 @@ enum WebReferrerPolicy {
   kWebReferrerPolicyNever,
   kWebReferrerPolicyOrigin,
   kWebReferrerPolicyOriginWhenCrossOrigin,
+  // This policy corresponds to strict-origin-when-cross-origin.
+  // TODO(estark): rename to match the spec.
   kWebReferrerPolicyNoReferrerWhenDowngradeOriginWhenCrossOrigin,
-  kWebReferrerPolicyLast =
-      kWebReferrerPolicyNoReferrerWhenDowngradeOriginWhenCrossOrigin
+  kWebReferrerPolicySameOrigin,
+  kWebReferrerPolicyStrictOrigin,
+  kWebReferrerPolicyLast = kWebReferrerPolicyStrictOrigin
 };
 
 }  // namespace blink

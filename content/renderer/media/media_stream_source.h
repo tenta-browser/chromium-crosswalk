@@ -17,7 +17,7 @@
 namespace content {
 
 class CONTENT_EXPORT MediaStreamSource
-    : NON_EXPORTED_BASE(public blink::WebMediaStreamSource::ExtraData) {
+    : public blink::WebMediaStreamSource::ExtraData {
  public:
   typedef base::Callback<void(const blink::WebMediaStreamSource& source)>
       SourceStoppedCallback;
@@ -44,6 +44,9 @@ class CONTENT_EXPORT MediaStreamSource
   // |stop_callback_| (if set), and then sets the
   // WebMediaStreamSource::readyState to ended.
   void StopSource();
+
+  // Sets the source's state to muted or to live.
+  void SetSourceMuted(bool is_muted);
 
   // Sets device information about a source that has been created by a
   // JavaScript call to GetUserMedia. F.E a camera or microphone.

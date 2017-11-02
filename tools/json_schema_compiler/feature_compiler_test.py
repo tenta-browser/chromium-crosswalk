@@ -42,7 +42,11 @@ class FeatureCompilerTest(unittest.TestCase):
       'channel': 'stable',
       'command_line_switch': 'switch',
       'component_extensions_auto_granted': False,
-      'contexts': ['blessed_extension', 'blessed_web_page'],
+      'contexts': [
+        'blessed_extension',
+        'blessed_web_page',
+        'lock_screen_extension'
+      ],
       'default_parent': True,
       'dependencies': ['dependency1', 'dependency2'],
       'extension_types': ['extension'],
@@ -342,6 +346,16 @@ class FeatureCompilerTest(unittest.TestCase):
     with self.assertRaisesRegexp(AssertionError,
                                  'No default parent found for bookmarks'):
       c._CompileFeature('bookmarks.export', { "whitelist": ["asdf"] })
+
+  def testRealIdsDisallowedInWhitelist(self):
+    fake_id = 'a' * 32;
+    f = self._parseFeature({'whitelist': [fake_id],
+                            'extension_types': ['extension'],
+                            'channel': 'beta'})
+    f.Validate('PermissionFeature', {})
+    self._hasError(
+        f, 'list should only have hex-encoded SHA1 hashes of extension ids')
+
 
 if __name__ == '__main__':
   unittest.main()

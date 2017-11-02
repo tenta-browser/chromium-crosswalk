@@ -43,8 +43,7 @@ class LocalFrame;
 class SpellCheckRequester;
 class TextCheckerClient;
 
-// TODO(xiaochengh): Move this class to dedicated files.
-class SpellCheckRequest final : public TextCheckingRequest {
+class CORE_EXPORT SpellCheckRequest final : public TextCheckingRequest {
  public:
   static SpellCheckRequest* Create(const EphemeralRange& checking_range,
                                    int request_number);
@@ -123,6 +122,7 @@ class SpellCheckRequester final
 
   int last_request_sequence_;
   int last_processed_sequence_;
+  double last_request_time_;
 
   TaskRunnerTimer<SpellCheckRequester> timer_to_process_queued_request_;
 

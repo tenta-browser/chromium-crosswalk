@@ -5,11 +5,11 @@
 #ifndef PaintRenderingContext2D_h
 #define PaintRenderingContext2D_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
+#include <memory>
 #include "modules/ModulesExport.h"
 #include "modules/canvas2d/BaseRenderingContext2D.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/graphics/ImageBuffer.h"
-#include <memory>
 
 namespace blink {
 
@@ -59,14 +59,8 @@ class MODULES_EXPORT PaintRenderingContext2D
 
   void DidDraw(const SkIRect& dirty_rect) final;
 
-  ColorBehavior DrawImageColorBehavior() const final;
-
-  // TODO(ikilpatrick): We'll need to either only accept resolved filters
-  // from a typed-om <filter> object, or use the appropriate style resolution
-  // host to determine 'em' units etc in filters. At the moment just pretend
-  // that we don't have a filter set.
-  bool StateHasFilter() final { return false; }
-  sk_sp<SkImageFilter> StateGetFilter() final { return nullptr; }
+  bool StateHasFilter() final;
+  sk_sp<SkImageFilter> StateGetFilter() final;
   void SnapshotStateForFilter() final {}
 
   void ValidateStateStack() const final;

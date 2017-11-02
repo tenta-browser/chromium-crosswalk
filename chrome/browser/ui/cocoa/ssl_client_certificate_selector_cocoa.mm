@@ -27,6 +27,7 @@
 #include "net/cert/x509_certificate.h"
 #include "net/cert/x509_util_mac.h"
 #include "net/ssl/ssl_cert_request_info.h"
+#include "net/ssl/ssl_platform_key_mac.h"
 #include "ui/base/cocoa/window_size_constants.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 
@@ -36,7 +37,7 @@ using content::BrowserThread;
 // A system-private interface that dismisses a panel whose sheet was started by
 // -beginSheetForWindow:modalDelegate:didEndSelector:contextInfo:identities:message:
 // as though the user clicked the button identified by returnCode. Verified
-// present in 10.5 through 10.8.
+// present in 10.5 through 10.12.
 - (void)_dismissWithCode:(NSInteger)code;
 @end
 
@@ -81,6 +82,7 @@ namespace chrome {
 void ShowSSLClientCertificateSelector(
     content::WebContents* contents,
     net::SSLCertRequestInfo* cert_request_info,
+    net::ClientCertIdentityList client_certs,
     std::unique_ptr<content::ClientCertificateDelegate> delegate) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
@@ -101,7 +103,7 @@ void ShowSSLClientCertificateSelector(
           initWithBrowserContext:contents->GetBrowserContext()
                  certRequestInfo:cert_request_info
                         delegate:std::move(delegate)];
-  [selector displayForWebContents:contents];
+  [selector displayForWebContents:contents clientCerts:std::move(client_certs)];
 }
 
 }  // namespace chrome
@@ -113,13 +115,12 @@ namespace {
 // an NSTableView. Future events may make cause the table view to query its
 // dataSource, which will have been deallocated.
 //
-// NSTableView.dataSource becomes a zeroing weak reference starting in 10.11,
-// so this workaround can be removed once we're on the 10.11 SDK.
+// Linking against the 10.12 SDK does not "fix" this issue, since
+// NSTableView.dataSource is a "weak" reference, which in non-ARC land still
+// translates to "raw pointer".
 //
-// See https://crbug.com/653093 and rdar://29409207 for more information.
-
-#if !defined(MAC_OS_X_VERSION_10_11) || \
-    MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_X_VERSION_10_11
+// See https://crbug.com/653093, https://crbug.com/750242 and rdar://29409207
+// for more information.
 
 void ClearTableViewDataSources(NSView* view) {
   if (auto table_view = base::mac::ObjCCast<NSTableView>(view)) {
@@ -149,12 +150,6 @@ void ClearTableViewDataSourcesIfNeeded(NSWindow* leaked_window) {
                             base::Unretained(leaked_window)));
 }
 
-#else
-
-void ClearTableViewDataSourcesIfNeeded(NSWindow*) {}
-
-#endif  // MAC_OS_X_VERSION_10_11
-
 }  // namespace
 
 @implementation SSLClientCertificateSelectorCocoa
@@ -176,13 +171,13 @@ void ClearTableViewDataSourcesIfNeeded(NSWindow*) {}
 - (void)sheetDidEnd:(NSWindow*)sheet
          returnCode:(NSInteger)returnCode
             context:(void*)context {
-  net::X509Certificate* cert = NULL;
+  net::ClientCertIdentity* cert = nullptr;
   if (returnCode == NSFileHandlingPanelOKButton) {
-    CFRange range = CFRangeMake(0, CFArrayGetCount(identities_));
+    CFRange range = CFRangeMake(0, CFArrayGetCount(sec_identities_));
     CFIndex index =
-        CFArrayGetFirstIndexOfValue(identities_, range, [panel_ identity]);
+        CFArrayGetFirstIndexOfValue(sec_identities_, range, [panel_ identity]);
     if (index != -1)
-      cert = certificates_[index].get();
+      cert = cert_identities_[index].get();
     else
       NOTREACHED();
   }
@@ -196,29 +191,32 @@ void ClearTableViewDataSourcesIfNeeded(NSWindow*) {}
     // certificate. Otherwise, tell the backend which identity (or none) the
     // user selected.
     userResponded_ = YES;
-    observer_->CertificateSelected(cert);
+
+    if (cert) {
+      observer_->CertificateSelected(
+          cert->certificate(),
+          CreateSSLPrivateKeyForSecIdentity(cert->certificate(),
+                                            cert->sec_identity_ref())
+              .get());
+    } else {
+      observer_->CertificateSelected(nullptr, nullptr);
+    }
 
     constrainedWindow_->CloseWebContentsModalDialog();
   }
 }
 
-- (void)displayForWebContents:(content::WebContents*)webContents {
+- (void)displayForWebContents:(content::WebContents*)webContents
+                  clientCerts:(net::ClientCertIdentityList)inputClientCerts {
+  cert_identities_ = std::move(inputClientCerts);
   // Create an array of CFIdentityRefs for the certificates:
-  size_t numCerts = observer_->cert_request_info()->client_certs.size();
-  identities_.reset(CFArrayCreateMutable(
-      kCFAllocatorDefault, numCerts, &kCFTypeArrayCallBacks));
+  size_t numCerts = cert_identities_.size();
+  sec_identities_.reset(CFArrayCreateMutable(kCFAllocatorDefault, numCerts,
+                                             &kCFTypeArrayCallBacks));
   for (size_t i = 0; i < numCerts; ++i) {
-    base::ScopedCFTypeRef<SecCertificateRef> cert(
-        net::x509_util::CreateSecCertificateFromX509Certificate(
-            observer_->cert_request_info()->client_certs[i].get()));
-    if (!cert)
-      continue;
-    SecIdentityRef identity;
-    if (SecIdentityCreateWithCertificate(NULL, cert, &identity) == noErr) {
-      CFArrayAppendValue(identities_, identity);
-      CFRelease(identity);
-      certificates_.push_back(observer_->cert_request_info()->client_certs[i]);
-    }
+    DCHECK(cert_identities_[i]->sec_identity_ref());
+    CFArrayAppendValue(sec_identities_,
+                       cert_identities_[i]->sec_identity_ref());
   }
 
   // Get the message to display:
@@ -263,7 +261,7 @@ void ClearTableViewDataSourcesIfNeeded(NSWindow*) {}
                 modalDelegate:self
                didEndSelector:@selector(sheetDidEnd:returnCode:context:)
                   contextInfo:NULL
-                   identities:base::mac::CFToNSCast(identities_)
+                   identities:base::mac::CFToNSCast(sec_identities_)
                       message:title];
 }
 

@@ -5,9 +5,13 @@
 #import <EarlGrey/EarlGrey.h>
 #import <XCTest/XCTest.h>
 
+#include "base/ios/ios_util.h"
+#include "base/test/scoped_feature_list.h"
 #include "components/strings/grit/components_strings.h"
+#include "ios/chrome/browser/bookmarks/bookmark_new_generation_features.h"
 #import "ios/chrome/browser/ui/commands/generic_chrome_command.h"
 #include "ios/chrome/browser/ui/commands/ios_command_ids.h"
+#import "ios/chrome/browser/ui/content_suggestions/ntp_home_constant.h"
 #import "ios/chrome/browser/ui/ntp/new_tab_page_controller.h"
 #include "ios/chrome/browser/ui/ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
@@ -23,13 +27,7 @@
 #error "This file requires ARC support."
 #endif
 
-@implementation NewTabPageController (ExposedForTesting)
-- (GoogleLandingController*)googleLandingController {
-  return googleLandingController_;
-}
-@end
-
-@interface GoogleLandingController (ExposedForTesting)
+@interface GoogleLandingViewController (ExposedForTesting)
 - (BOOL)scrolledToTop;
 - (BOOL)animateHeader;
 @end
@@ -63,16 +61,16 @@ void WaitForHistoryToDisappear() {
 
 // Displays the |panel_type| new tab page.  An a phone this will send a command
 // to display a dialog, on tablet this calls -selectPanel to slide the NTP.
-void SelectNewTabPagePanel(NewTabPage::PanelIdentifier panel_type) {
+void SelectNewTabPagePanel(ntp_home::PanelIdentifier panel_type) {
   NewTabPageController* ntp_controller =
       chrome_test_util::GetCurrentNewTabPageController();
   if (IsIPadIdiom()) {
     [ntp_controller selectPanel:panel_type];
   } else {
     NSUInteger tag = 0;
-    if (panel_type == NewTabPage::PanelIdentifier::kBookmarksPanel) {
+    if (panel_type == ntp_home::BOOKMARKS_PANEL) {
       tag = IDC_SHOW_BOOKMARK_MANAGER;
-    } else if (panel_type == NewTabPage::PanelIdentifier::kOpenTabsPanel) {
+    } else if (panel_type == ntp_home::RECENT_TABS_PANEL) {
       tag = IDC_SHOW_OTHER_DEVICES;
     }
     if (tag) {
@@ -88,15 +86,16 @@ void AssertNTPScrolledToTop(bool scrolledToTop) {
   [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
   NewTabPageController* ntp_controller =
       chrome_test_util::GetCurrentNewTabPageController();
-  GoogleLandingController* google_landing_controller =
+  GoogleLandingViewController* google_landing_view_controller =
       [ntp_controller googleLandingController];
   [[GREYCondition
       conditionWithName:@"Wait for end of animation."
                   block:^BOOL {
-                    return ![google_landing_controller animateHeader];
+                    return ![google_landing_view_controller animateHeader];
                   }] waitWithTimeout:testing::kWaitForUIElementTimeout];
-  GREYAssertTrue([google_landing_controller scrolledToTop] == scrolledToTop,
-                 @"scrolledToTop_ does not match expected value");
+  GREYAssertTrue(
+      [google_landing_view_controller scrolledToTop] == scrolledToTop,
+      @"scrolledToTop_ does not match expected value");
 }
 
 }  // namespace
@@ -112,20 +111,26 @@ void AssertNTPScrolledToTop(bool scrolledToTop) {
 
 // Tests that all items are accessible on the most visited page.
 - (void)testAccessibilityOnMostVisited {
-  SelectNewTabPagePanel(NewTabPage::kMostVisitedPanel);
+  SelectNewTabPagePanel(ntp_home::HOME_PANEL);
   chrome_test_util::VerifyAccessibilityForCurrentScreen();
 }
 
 // Tests that all items are accessible on the open tabs page.
 - (void)testAccessibilityOnOpenTabs {
-  SelectNewTabPagePanel(NewTabPage::kOpenTabsPanel);
+  SelectNewTabPagePanel(ntp_home::RECENT_TABS_PANEL);
   chrome_test_util::VerifyAccessibilityForCurrentScreen();
   DismissNewTabPagePanel();
 }
 
 // Tests that all items are accessible on the bookmarks page.
+// TODO(crbug.com/695749): Check if we need to rewrite this test for the new
+// Bookmarks UI.
 - (void)testAccessibilityOnBookmarks {
-  SelectNewTabPagePanel(NewTabPage::kBookmarksPanel);
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndDisableFeature(
+      bookmark_new_generation::features::kBookmarkNewGeneration);
+
+  SelectNewTabPagePanel(ntp_home::BOOKMARKS_PANEL);
   chrome_test_util::VerifyAccessibilityForCurrentScreen();
   DismissNewTabPagePanel();
 }
@@ -133,7 +138,7 @@ void AssertNTPScrolledToTop(bool scrolledToTop) {
 // Tests that all items are accessible on the incognito page.
 - (void)testAccessibilityOnIncognitoTab {
   chrome_test_util::OpenNewIncognitoTab();
-  SelectNewTabPagePanel(NewTabPage::kIncognitoPanel);
+  SelectNewTabPagePanel(ntp_home::INCOGNITO_PANEL);
   WaitForHistoryToDisappear();
   chrome_test_util::VerifyAccessibilityForCurrentScreen();
   chrome_test_util::CloseAllIncognitoTabs();
@@ -150,7 +155,7 @@ void AssertNTPScrolledToTop(bool scrolledToTop) {
 
   NSString* ntpOmniboxLabel = l10n_util::GetNSString(IDS_OMNIBOX_EMPTY_HINT);
   NSString* focusedOmniboxLabel = l10n_util::GetNSString(IDS_ACCNAME_LOCATION);
-  SelectNewTabPagePanel(NewTabPage::kMostVisitedPanel);
+  SelectNewTabPagePanel(ntp_home::HOME_PANEL);
   AssertNTPScrolledToTop(NO);
 
   if (IsIPadIdiom()) {
@@ -226,7 +231,7 @@ void AssertNTPScrolledToTop(bool scrolledToTop) {
   NSString* omniboxLabel = l10n_util::GetNSString(IDS_OMNIBOX_EMPTY_HINT);
   NSString* cancelLabel = l10n_util::GetNSString(IDS_CANCEL);
   if (IsIPadIdiom()) {
-    SelectNewTabPagePanel(NewTabPage::kMostVisitedPanel);
+    SelectNewTabPagePanel(ntp_home::HOME_PANEL);
   }
 
   // Check that the NTP is in its normal state.

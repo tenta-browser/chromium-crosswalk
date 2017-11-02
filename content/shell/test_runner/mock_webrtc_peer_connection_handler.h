@@ -61,8 +61,14 @@ class MockWebRTCPeerConnectionHandler
   void RemoveStream(const blink::WebMediaStream& stream) override;
   void GetStats(const blink::WebRTCStatsRequest& request) override;
   void GetStats(std::unique_ptr<blink::WebRTCStatsReportCallback>) override;
+  blink::WebVector<std::unique_ptr<blink::WebRTCRtpSender>> GetSenders()
+      override;
   blink::WebVector<std::unique_ptr<blink::WebRTCRtpReceiver>> GetReceivers()
       override;
+  std::unique_ptr<blink::WebRTCRtpSender> AddTrack(
+      const blink::WebMediaStreamTrack& web_track,
+      const blink::WebVector<blink::WebMediaStream>& web_streams) override;
+  bool RemoveTrack(blink::WebRTCRtpSender* web_sender) override;
   blink::WebRTCDataChannelHandler* CreateDataChannel(
       const blink::WebString& label,
       const blink::WebRTCDataChannelInit& init) override;
@@ -99,7 +105,9 @@ class MockWebRTCPeerConnectionHandler
   typedef std::map<std::string, blink::WebMediaStream> StreamMap;
   StreamMap local_streams_;
   StreamMap remote_streams_;
-  std::map<std::string, uintptr_t> receiver_id_by_track_;
+  // Tracks added with |addTrack|, not including tracks of |local_streams_|.
+  std::map<std::string, blink::WebMediaStreamTrack> tracks_;
+  std::map<std::string, uintptr_t> id_by_track_;
 
   base::WeakPtrFactory<MockWebRTCPeerConnectionHandler> weak_factory_;
 

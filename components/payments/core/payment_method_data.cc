@@ -20,6 +20,27 @@ static const char kSupportedMethods[] = "supportedMethods";
 static const char kSupportedNetworks[] = "supportedNetworks";
 static const char kSupportedTypes[] = "supportedTypes";
 
+// Converts |supported_type| to |card_type| and returns true on success.
+bool ConvertCardTypeStringToEnum(const std::string& supported_type,
+                                 autofill::CreditCard::CardType* card_type) {
+  if (supported_type == "credit") {
+    *card_type = autofill::CreditCard::CARD_TYPE_CREDIT;
+    return true;
+  }
+
+  if (supported_type == "debit") {
+    *card_type = autofill::CreditCard::CARD_TYPE_DEBIT;
+    return true;
+  }
+
+  if (supported_type == "prepaid") {
+    *card_type = autofill::CreditCard::CARD_TYPE_PREPAID;
+    return true;
+  }
+
+  return false;
+}
+
 }  // namespace
 
 PaymentMethodData::PaymentMethodData() {}
@@ -43,20 +64,30 @@ bool PaymentMethodData::FromDictionaryValue(
   this->supported_networks.clear();
   this->supported_types.clear();
 
+  // The value of supportedMethods can be an array or a string.
   const base::ListValue* supported_methods_list = nullptr;
-  // At least one supported method is required.
-  if (!value.GetList(kSupportedMethods, &supported_methods_list) ||
-      supported_methods_list->GetSize() == 0) {
-    return false;
-  }
-  for (size_t i = 0; i < supported_methods_list->GetSize(); ++i) {
+  if (value.GetList(kSupportedMethods, &supported_methods_list)) {
+    for (size_t i = 0; i < supported_methods_list->GetSize(); ++i) {
+      std::string supported_method;
+      if (!supported_methods_list->GetString(i, &supported_method) ||
+          !base::IsStringASCII(supported_method)) {
+        return false;
+      }
+      if (!supported_method.empty())
+        this->supported_methods.push_back(supported_method);
+    }
+  } else {
     std::string supported_method;
-    if (!supported_methods_list->GetString(i, &supported_method) ||
-        !base::IsStringASCII(supported_method)) {
+    if (!value.GetString(kSupportedMethods, &supported_method) ||
+        !base::IsStringASCII(supported_method) || supported_method.empty()) {
       return false;
     }
     this->supported_methods.push_back(supported_method);
   }
+
+  // At least one supported method is required.
+  if (supported_methods.empty())
+    return false;
 
   // Data is optional, but if a dictionary is present, save a stringified
   // version and attempt to parse supportedNetworks/supportedTypes.
@@ -84,7 +115,10 @@ bool PaymentMethodData::FromDictionaryValue(
             !base::IsStringASCII(supported_type)) {
           return false;
         }
-        this->supported_types.push_back(supported_type);
+        autofill::CreditCard::CardType card_type =
+            autofill::CreditCard::CARD_TYPE_UNKNOWN;
+        if (ConvertCardTypeStringToEnum(supported_type, &card_type))
+          this->supported_types.insert(card_type);
       }
     }
   }

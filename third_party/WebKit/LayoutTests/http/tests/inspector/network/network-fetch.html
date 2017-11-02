@@ -3,28 +3,23 @@
 <script src="../inspector-test.js"></script>
 <script src="../network-test.js"></script>
 <script>
-function test()
-{
-    InspectorTest.recordNetwork();
-    InspectorTest.makeFetch("resources/resource.php", {}, step2);
+function test() {
+  NetworkTestRunner.recordNetwork();
+  NetworkTestRunner.makeFetch('resources/resource.php', {}, step2);
 
-    function step2()
-    {
-        var request1 = InspectorTest.networkRequests().pop();
-        InspectorTest.addResult(request1.url());
-        InspectorTest.addResult("resource.type: " + request1.resourceType());
-        InspectorTest.addResult("resource.content before requesting content: " + request1.content);
-        InspectorTest.assertTrue(!request1.failed, "Resource loading failed.");
-        request1.requestContent().then(step3);
-    }
+  async function step2() {
+    var request1 = NetworkTestRunner.networkRequests().pop();
+    TestRunner.addResult(request1.url());
+    TestRunner.addResult('resource.type: ' + request1.resourceType());
+    TestRunner.assertTrue(!request1.failed, 'Resource loading failed.');
 
-    function step3()
-    {
-        var request1 = InspectorTest.networkRequests().pop();
-        InspectorTest.addResult("resource.content after requesting content: " + request1.content);
+    var content = await request1.requestContent();
+    TestRunner.addResult('resource.content after requesting content: ' + content);
+    TestRunner.completeTest();
+  }
 
-        InspectorTest.completeTest();
-    }
+  function step3() {
+  }
 }
 </script>
 </head>

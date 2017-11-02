@@ -10,7 +10,8 @@ policies and contribution forms [3].
 [3] http://www.w3.org/2004/10/27-testcases
 */
 
-/* Documentation is in docs/api.md */
+/* Documentation: http://web-platform-tests.org/writing-tests/testharness-api.html
+ * (../docs/_writing-tests/testharness-api.md) */
 
 (function ()
 {
@@ -66,6 +67,7 @@ policies and contribution forms [3].
         this.all_loaded = false;
         var this_obj = this;
         this.message_events = [];
+        this.dispatched_messages = [];
 
         this.message_functions = {
             start: [add_start_callback, remove_start_callback,
@@ -102,9 +104,23 @@ policies and contribution forms [3].
         on_event(window, 'load', function() {
             this_obj.all_loaded = true;
         });
+
+        on_event(window, 'message', function(event) {
+            if (event.data && event.data.type === "getmessages" && event.source) {
+                // A window can post "getmessages" to receive a duplicate of every
+                // message posted by this environment so far. This allows subscribers
+                // from fetch_tests_from_window to 'catch up' to the current state of
+                // this environment.
+                for (var i = 0; i < this_obj.dispatched_messages.length; ++i)
+                {
+                    event.source.postMessage(this_obj.dispatched_messages[i], "*");
+                }
+            }
+        });
     }
 
     WindowTestEnvironment.prototype._dispatch = function(selector, callback_args, message_arg) {
+        this.dispatched_messages.push(message_arg);
         this._forEach_windows(
                 function(w, same_origin) {
                     if (same_origin) {
@@ -142,33 +158,14 @@ policies and contribution forms [3].
             var w = self;
             var i = 0;
             var so;
-            var origins = location.ancestorOrigins;
             while (w != w.parent) {
                 w = w.parent;
-                // In WebKit, calls to parent windows' properties that aren't on the same
-                // origin cause an error message to be displayed in the error console but
-                // don't throw an exception. This is a deviation from the current HTML5
-                // spec. See: https://bugs.webkit.org/show_bug.cgi?id=43504
-                // The problem with WebKit's behavior is that it pollutes the error console
-                // with error messages that can't be caught.
-                //
-                // This issue can be mitigated by relying on the (for now) proprietary
-                // `location.ancestorOrigins` property which returns an ordered list of
-                // the origins of enclosing windows. See:
-                // http://trac.webkit.org/changeset/113945.
-                if (origins) {
-                    so = (location.origin == origins[i]);
-                } else {
-                    so = is_same_origin(w);
-                }
+                so = is_same_origin(w);
                 cache.push([w, so]);
                 i++;
             }
             w = window.opener;
             if (w) {
-                // window.opener isn't included in the `location.ancestorOrigins` prop.
-                // We'll just have to deal with a simple check and an error msg on WebKit
-                // browsers in this case.
                 cache.push([w, is_same_origin(w)]);
             }
             this.window_cache = cache;
@@ -414,7 +411,7 @@ policies and contribution forms [3].
         var this_obj = this;
         self.addEventListener("message",
                 function(event) {
-                    if (event.data.type && event.data.type === "connect") {
+                    if (event.data && event.data.type && event.data.type === "connect") {
                         if (event.ports && event.ports[0]) {
                             // If a MessageChannel was passed, then use it to
                             // send results back to the main window.  This
@@ -436,15 +433,25 @@ policies and contribution forms [3].
         // all imported scripts have been fetched and executed. It's the
         // equivalent of an onload event for a document. All tests should have
         // been added by the time this event is received, thus it's not
-        // necessary to wait until the onactivate event.
-        on_event(self, "install",
-                function(event) {
-                    this_obj.all_loaded = true;
-                    if (this_obj.on_loaded_callback) {
-                        this_obj.on_loaded_callback();
-                    }
-                });
+        // necessary to wait until the onactivate event. However, tests for
+        // installed service workers need another event which is equivalent to
+        // the onload event because oninstall is fired only on installation. The
+        // onmessage event is used for that purpose since tests using
+        // testharness.js should ask the result to its service worker by
+        // PostMessage. If the onmessage event is triggered on the service
+        // worker's context, that means the worker's script has been evaluated.
+        on_event(self, "install", on_all_loaded);
+        on_event(self, "message", on_all_loaded);
+        function on_all_loaded() {
+            if (this_obj.all_loaded)
+                return;
+            this_obj.all_loaded = true;
+            if (this_obj.on_loaded_callback) {
+              this_obj.on_loaded_callback();
+            }
+        }
     }
+
     ServiceWorkerTestEnvironment.prototype = Object.create(WorkerTestEnvironment.prototype);
 
     ServiceWorkerTestEnvironment.prototype.add_on_loaded_callback = function(callback) {
@@ -486,7 +493,10 @@ policies and contribution forms [3].
     }
 
     function is_service_worker(worker) {
-        return 'ServiceWorker' in self && worker instanceof ServiceWorker;
+        // The worker object may be from another execution context,
+        // so do not use instanceof here.
+        return 'ServiceWorker' in self &&
+            Object.prototype.toString.call(worker) == '[object ServiceWorker]';
     }
 
     /*
@@ -1182,7 +1192,7 @@ policies and contribution forms [3].
                 throw e;
             }
             if (code === null) {
-                return;
+                throw new AssertionError('Test bug: need to pass exception to assert_throws()');
             }
             if (typeof code === "object") {
                 assert(typeof e == "object" && "name" in e && e.name == code.name,
@@ -1326,7 +1336,8 @@ policies and contribution forms [3].
         }
         this.name = name;
 
-        this.phase = this.phases.INITIAL;
+        this.phase = tests.phase === tests.phases.ABORTED ?
+            this.phases.COMPLETE : this.phases.INITIAL;
 
         this.status = this.NOTRUN;
         this.timeout_id = null;
@@ -1374,12 +1385,14 @@ policies and contribution forms [3].
             this._structured_clone = merge({
                 name:String(this.name),
                 properties:merge({}, this.properties),
+                phases:merge({}, this.phases)
             }, Test.statuses);
         }
         this._structured_clone.status = this.status;
         this._structured_clone.message = this.message;
         this._structured_clone.stack = this.stack;
         this._structured_clone.index = this.index;
+        this._structured_clone.phase = this.phase;
         return this._structured_clone;
     };
 
@@ -1520,11 +1533,35 @@ policies and contribution forms [3].
         this.cleanup();
     };
 
+    /*
+     * Invoke all specified cleanup functions. If one or more produce an error,
+     * the context is in an unpredictable state, so all further testing should
+     * be cancelled.
+     */
     Test.prototype.cleanup = function() {
+        var error_count = 0;
+        var total;
+
         forEach(this.cleanup_callbacks,
                 function(cleanup_callback) {
-                    cleanup_callback();
+                    try {
+                        cleanup_callback();
+                    } catch (e) {
+                        // Set test phase immediately so that tests declared
+                        // within subsequent cleanup functions are not run.
+                        tests.phase = tests.phases.ABORTED;
+                        error_count += 1;
+                    }
                 });
+
+        if (error_count > 0) {
+            total = this.cleanup_callbacks.length;
+            tests.status.status = tests.status.ERROR;
+            tests.status.message = "Test named '" + this.name +
+                "' specified " + total + " 'cleanup' function" +
+                (total > 1 ? "s" : "") + ", and " + error_count + " failed.";
+            tests.status.stack = null;
+        }
     };
 
     /*
@@ -1550,10 +1587,12 @@ policies and contribution forms [3].
         var clone = {};
         Object.keys(this).forEach(
                 (function(key) {
-                    if (typeof(this[key]) === "object") {
-                        clone[key] = merge({}, this[key]);
+                    var value = this[key];
+
+                    if (typeof value === "object" && value !== null) {
+                        clone[key] = merge({}, value);
                     } else {
-                        clone[key] = this[key];
+                        clone[key] = value;
                     }
                 }).bind(this));
         clone.phases = merge({}, this.phases);
@@ -1575,73 +1614,56 @@ policies and contribution forms [3].
     }
 
     /*
-     * A RemoteWorker listens for test events from a worker. These events are
-     * then used to construct and maintain RemoteTest objects that mirror the
-     * tests running on the remote worker.
+     * A RemoteContext listens for test events from a remote test context, such
+     * as another window or a worker. These events are then used to construct
+     * and maintain RemoteTest objects that mirror the tests running in the
+     * remote context.
+     *
+     * An optional third parameter can be used as a predicate to filter incoming
+     * MessageEvents.
      */
-    function RemoteWorker(worker) {
+    function RemoteContext(remote, message_target, message_filter) {
         this.running = true;
         this.tests = new Array();
 
         var this_obj = this;
-        worker.onerror = function(error) { this_obj.worker_error(error); };
+        remote.onerror = function(error) { this_obj.remote_error(error); };
 
-        var message_port;
-
-        if (is_service_worker(worker)) {
-            if (window.MessageChannel) {
-                // The ServiceWorker's implicit MessagePort is currently not
-                // reliably accessible from the ServiceWorkerGlobalScope due to
-                // Blink setting MessageEvent.source to null for messages sent
-                // via ServiceWorker.postMessage(). Until that's resolved,
-                // create an explicit MessageChannel and pass one end to the
-                // worker.
-                var message_channel = new MessageChannel();
-                message_port = message_channel.port1;
-                message_port.start();
-                worker.postMessage({type: "connect"}, [message_channel.port2]);
-            } else {
-                // If MessageChannel is not available, then try the
-                // ServiceWorker.postMessage() approach using MessageEvent.source
-                // on the other end.
-                message_port = navigator.serviceWorker;
-                worker.postMessage({type: "connect"});
+        // Keeping a reference to the remote object and the message handler until
+        // remote_done() is seen prevents the remote object and its message channel
+        // from going away before all the messages are dispatched.
+        this.remote = remote;
+        this.message_target = message_target;
+        this.message_handler = function(message) {
+            var passesFilter = !message_filter || message_filter(message);
+            if (this_obj.running && message.data && passesFilter &&
+                (message.data.type in this_obj.message_handlers)) {
+                this_obj.message_handlers[message.data.type].call(this_obj, message.data);
             }
-        } else if (is_shared_worker(worker)) {
-            message_port = worker.port;
-        } else {
-            message_port = worker;
-        }
+        };
 
-        // Keeping a reference to the worker until worker_done() is seen
-        // prevents the Worker object and its MessageChannel from going away
-        // before all the messages are dispatched.
-        this.worker = worker;
-
-        message_port.onmessage =
-            function(message) {
-                if (this_obj.running && (message.data.type in this_obj.message_handlers)) {
-                    this_obj.message_handlers[message.data.type].call(this_obj, message.data);
-                }
-            };
+        this.message_target.addEventListener("message", this.message_handler);
     }
 
-    RemoteWorker.prototype.worker_error = function(error) {
+    RemoteContext.prototype.remote_error = function(error) {
         var message = error.message || String(error);
         var filename = (error.filename ? " " + error.filename: "");
-        // FIXME: Display worker error states separately from main document
+        // FIXME: Display remote error states separately from main document
         // error state.
-        this.worker_done({
+        this.remote_done({
             status: {
                 status: tests.status.ERROR,
-                message: "Error in worker" + filename + ": " + message,
+                message: "Error in remote" + filename + ": " + message,
                 stack: error.stack
             }
         });
-        error.preventDefault();
+
+        if (error.preventDefault) {
+            error.preventDefault();
+        }
     };
 
-    RemoteWorker.prototype.test_state = function(data) {
+    RemoteContext.prototype.test_state = function(data) {
         var remote_test = this.tests[data.test.index];
         if (!remote_test) {
             remote_test = new RemoteTest(data.test);
@@ -1651,31 +1673,33 @@ policies and contribution forms [3].
         tests.notify_test_state(remote_test);
     };
 
-    RemoteWorker.prototype.test_done = function(data) {
+    RemoteContext.prototype.test_done = function(data) {
         var remote_test = this.tests[data.test.index];
         remote_test.update_state_from(data.test);
         remote_test.done();
         tests.result(remote_test);
     };
 
-    RemoteWorker.prototype.worker_done = function(data) {
+    RemoteContext.prototype.remote_done = function(data) {
         if (tests.status.status === null &&
             data.status.status !== data.status.OK) {
             tests.status.status = data.status.status;
             tests.status.message = data.status.message;
             tests.status.stack = data.status.stack;
         }
+        this.message_target.removeEventListener("message", this.message_handler);
         this.running = false;
-        this.worker = null;
+        this.remote = null;
+        this.message_target = null;
         if (tests.all_done()) {
             tests.complete();
         }
     };
 
-    RemoteWorker.prototype.message_handlers = {
-        test_state: RemoteWorker.prototype.test_state,
-        result: RemoteWorker.prototype.test_done,
-        complete: RemoteWorker.prototype.worker_done
+    RemoteContext.prototype.message_handlers = {
+        test_state: RemoteContext.prototype.test_state,
+        result: RemoteContext.prototype.test_done,
+        complete: RemoteContext.prototype.remote_done
     };
 
     /*
@@ -1721,7 +1745,8 @@ policies and contribution forms [3].
             SETUP:1,
             HAVE_TESTS:2,
             HAVE_RESULTS:3,
-            COMPLETE:4
+            COMPLETE:4,
+            ABORTED:5
         };
         this.phase = this.phases.INITIAL;
 
@@ -1743,7 +1768,7 @@ policies and contribution forms [3].
         this.test_done_callbacks = [];
         this.all_done_callbacks = [];
 
-        this.pending_workers = [];
+        this.pending_remotes = [];
 
         this.status = new TestsStatus();
 
@@ -1855,10 +1880,11 @@ policies and contribution forms [3].
     };
 
     Tests.prototype.all_done = function() {
-        return (this.tests.length > 0 && test_environment.all_loaded &&
+        return this.phase === this.phases.ABORTED ||
+            (this.tests.length > 0 && test_environment.all_loaded &&
                 this.num_pending === 0 && !this.wait_for_finish &&
                 !this.processing_callbacks &&
-                !this.pending_workers.some(function(w) { return w.running; }));
+                !this.pending_remotes.some(function(w) { return w.running; }));
     };
 
     Tests.prototype.start = function() {
@@ -1967,18 +1993,84 @@ policies and contribution forms [3].
                  });
     };
 
+    /*
+     * Constructs a RemoteContext that tracks tests from a specific worker.
+     */
+    Tests.prototype.create_remote_worker = function(worker) {
+        var message_port;
+
+        if (is_service_worker(worker)) {
+            // Microsoft Edge's implementation of ServiceWorker doesn't support MessagePort yet.
+            // Feature detection isn't a straightforward option here; it's only possible in the
+            // worker's script context.
+            var isMicrosoftEdgeBrowser = navigator.userAgent.includes("Edge");
+            if (window.MessageChannel && !isMicrosoftEdgeBrowser) {
+                // The ServiceWorker's implicit MessagePort is currently not
+                // reliably accessible from the ServiceWorkerGlobalScope due to
+                // Blink setting MessageEvent.source to null for messages sent
+                // via ServiceWorker.postMessage(). Until that's resolved,
+                // create an explicit MessageChannel and pass one end to the
+                // worker.
+                var message_channel = new MessageChannel();
+                message_port = message_channel.port1;
+                message_port.start();
+                worker.postMessage({type: "connect"}, [message_channel.port2]);
+            } else {
+                // If MessageChannel is not available, then try the
+                // ServiceWorker.postMessage() approach using MessageEvent.source
+                // on the other end.
+                message_port = navigator.serviceWorker;
+                worker.postMessage({type: "connect"});
+            }
+        } else if (is_shared_worker(worker)) {
+            message_port = worker.port;
+            message_port.start();
+        } else {
+            message_port = worker;
+        }
+
+        return new RemoteContext(worker, message_port);
+    };
+
+    /*
+     * Constructs a RemoteContext that tracks tests from a specific window.
+     */
+    Tests.prototype.create_remote_window = function(remote) {
+        remote.postMessage({type: "getmessages"}, "*");
+        return new RemoteContext(
+            remote,
+            window,
+            function(msg) {
+                return msg.source === remote;
+            }
+        );
+    };
+
     Tests.prototype.fetch_tests_from_worker = function(worker) {
         if (this.phase >= this.phases.COMPLETE) {
             return;
         }
 
-        this.pending_workers.push(new RemoteWorker(worker));
+        this.pending_remotes.push(this.create_remote_worker(worker));
     };
 
     function fetch_tests_from_worker(port) {
         tests.fetch_tests_from_worker(port);
     }
     expose(fetch_tests_from_worker, 'fetch_tests_from_worker');
+
+    Tests.prototype.fetch_tests_from_window = function(remote) {
+        if (this.phase >= this.phases.COMPLETE) {
+            return;
+        }
+
+        this.pending_remotes.push(this.create_remote_window(remote));
+    };
+
+    function fetch_tests_from_window(window) {
+        tests.fetch_tests_from_window(window);
+    }
+    expose(fetch_tests_from_window, 'fetch_tests_from_window');
 
     function timeout() {
         if (tests.timeout_length === null) {
@@ -2139,7 +2231,7 @@ policies and contribution forms [3].
         }
 
         var harness_url = get_harness_url();
-        if (harness_url !== null) {
+        if (harness_url !== undefined) {
             var stylesheet = output_document.createElementNS(xhtml_ns, "link");
             stylesheet.setAttribute("rel", "stylesheet");
             stylesheet.setAttribute("href", harness_url + "testharness.css");
@@ -2493,6 +2585,7 @@ policies and contribution forms [3].
         this.message = message;
         this.stack = this.get_stack();
     }
+    expose(AssertionError, "AssertionError");
 
     AssertionError.prototype = Object.create(Error.prototype);
 

@@ -20,12 +20,13 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ssl/cert_report_helper.h"
 #include "chrome/browser/ssl/ssl_cert_reporter.h"
-#include "chrome/grit/generated_resources.h"
 #include "components/captive_portal/captive_portal_detector.h"
+#include "components/captive_portal/captive_portal_metrics.h"
 #include "components/certificate_reporting/error_reporter.h"
-#include "components/safe_browsing_db/safe_browsing_prefs.h"
+#include "components/safe_browsing/common/safe_browsing_prefs.h"
 #include "components/security_interstitials/core/controller_client.h"
 #include "components/security_interstitials/core/metrics_helper.h"
+#include "components/strings/grit/components_strings.h"
 #include "components/url_formatter/url_formatter.h"
 #include "components/wifi/wifi_service.h"
 #include "content/public/browser/navigation_entry.h"
@@ -39,18 +40,6 @@
 namespace {
 
 const char kMetricsName[] = "captive_portal";
-
-// Events for UMA.
-enum CaptivePortalBlockingPageEvent {
-  SHOW_ALL,
-  OPEN_LOGIN_PAGE,
-  CAPTIVE_PORTAL_BLOCKING_PAGE_EVENT_COUNT
-};
-
-void RecordUMA(CaptivePortalBlockingPageEvent event) {
-  UMA_HISTOGRAM_ENUMERATION("interstitial.captive_portal", event,
-                            CAPTIVE_PORTAL_BLOCKING_PAGE_EVENT_COUNT);
-}
 
 std::unique_ptr<ChromeMetricsHelper> CreateMetricsHelper(
     content::WebContents* web_contents,
@@ -95,7 +84,8 @@ CaptivePortalBlockingPage::CaptivePortalBlockingPage(
         base::Time::Now(), nullptr));
   }
 
-  RecordUMA(SHOW_ALL);
+  captive_portal::CaptivePortalMetrics::LogCaptivePortalBlockingPageEvent(
+      captive_portal::CaptivePortalMetrics::SHOW_ALL);
 }
 
 CaptivePortalBlockingPage::~CaptivePortalBlockingPage() {
@@ -147,6 +137,7 @@ void CaptivePortalBlockingPage::PopulateInterstitialStrings(
   load_time_data->SetString("iconClass", "icon-offline");
   load_time_data->SetString("type", "CAPTIVE_PORTAL");
   load_time_data->SetBoolean("overridable", false);
+  load_time_data->SetBoolean("hide_primary_button", false);
 
   // |IsWifiConnection| isn't accurate on some platforms, so always try to get
   // the Wi-Fi SSID even if |IsWifiConnection| is false.
@@ -223,7 +214,8 @@ void CaptivePortalBlockingPage::CommandReceived(const std::string& command) {
           command_num);
   switch (cmd) {
     case security_interstitials::CMD_OPEN_LOGIN:
-      RecordUMA(OPEN_LOGIN_PAGE);
+      captive_portal::CaptivePortalMetrics::LogCaptivePortalBlockingPageEvent(
+          captive_portal::CaptivePortalMetrics::OPEN_LOGIN_PAGE);
       CaptivePortalTabHelper::OpenLoginTabForWebContents(web_contents(), true);
       break;
     case security_interstitials::CMD_DO_REPORT:
@@ -239,10 +231,10 @@ void CaptivePortalBlockingPage::CommandReceived(const std::string& command) {
           safe_browsing::SBER_OPTIN_SITE_SECURITY_INTERSTITIAL);
       break;
     case security_interstitials::CMD_OPEN_REPORTING_PRIVACY:
-      controller()->OpenExtendedReportingPrivacyPolicy();
+      controller()->OpenExtendedReportingPrivacyPolicy(true);
       break;
     case security_interstitials::CMD_OPEN_WHITEPAPER:
-      controller()->OpenExtendedReportingWhitepaper();
+      controller()->OpenExtendedReportingWhitepaper(true);
       break;
     case security_interstitials::CMD_ERROR:
     case security_interstitials::CMD_TEXT_FOUND:

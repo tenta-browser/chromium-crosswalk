@@ -5,7 +5,6 @@
 package org.chromium.media;
 
 import android.annotation.TargetApi;
-import android.content.Context;
 import android.graphics.ImageFormat;
 import android.graphics.Rect;
 import android.graphics.SurfaceTexture;
@@ -48,15 +47,15 @@ public class VideoCaptureCamera
         COLOR_TEMPERATURES_MAP.append(
                 2850, android.hardware.Camera.Parameters.WHITE_BALANCE_INCANDESCENT);
         COLOR_TEMPERATURES_MAP.append(
-                2940, android.hardware.Camera.Parameters.WHITE_BALANCE_WARM_FLUORESCENT);
+                2950, android.hardware.Camera.Parameters.WHITE_BALANCE_WARM_FLUORESCENT);
         COLOR_TEMPERATURES_MAP.append(
-                3000, android.hardware.Camera.Parameters.WHITE_BALANCE_TWILIGHT);
+                4250, android.hardware.Camera.Parameters.WHITE_BALANCE_FLUORESCENT);
         COLOR_TEMPERATURES_MAP.append(
-                4230, android.hardware.Camera.Parameters.WHITE_BALANCE_FLUORESCENT);
+                4600, android.hardware.Camera.Parameters.WHITE_BALANCE_TWILIGHT);
+        COLOR_TEMPERATURES_MAP.append(
+                5500, android.hardware.Camera.Parameters.WHITE_BALANCE_DAYLIGHT);
         COLOR_TEMPERATURES_MAP.append(
                 6000, android.hardware.Camera.Parameters.WHITE_BALANCE_CLOUDY_DAYLIGHT);
-        COLOR_TEMPERATURES_MAP.append(
-                6504, android.hardware.Camera.Parameters.WHITE_BALANCE_DAYLIGHT);
         COLOR_TEMPERATURES_MAP.append(7000, android.hardware.Camera.Parameters.WHITE_BALANCE_SHADE);
     };
 
@@ -125,11 +124,13 @@ public class VideoCaptureCamera
         return parameters;
     }
 
-    private String getClosestWhiteBalance(int colorTemperature) {
+    private String getClosestWhiteBalance(
+            int colorTemperature, List<String> supportedTemperatures) {
         int minDiff = Integer.MAX_VALUE;
         String matchedTemperature = null;
 
         for (int i = 0; i < COLOR_TEMPERATURES_MAP.size(); ++i) {
+            if (!supportedTemperatures.contains(COLOR_TEMPERATURES_MAP.valueAt(i))) continue;
             final int diff = Math.abs(colorTemperature - COLOR_TEMPERATURES_MAP.keyAt(i));
             if (diff >= minDiff) continue;
             minDiff = diff;
@@ -215,7 +216,12 @@ public class VideoCaptureCamera
         // with at least one element, but when the camera is in bad state, they
         // can return null pointers; in that case we use a 0 entry, so we can
         // retrieve as much information as possible.
-        List<Integer> pixelFormats = parameters.getSupportedPreviewFormats();
+        List<Integer> pixelFormats = null;
+        try {
+            pixelFormats = parameters.getSupportedPreviewFormats();
+        } catch (NullPointerException ex) {
+            Log.e(TAG, "Camera.Parameters.getSupportedPreviewFormats: ", ex);
+        }
         if (pixelFormats == null) {
             pixelFormats = new ArrayList<Integer>();
         }
@@ -230,7 +236,12 @@ public class VideoCaptureCamera
                 continue;
             }
 
-            List<int[]> listFpsRange = parameters.getSupportedPreviewFpsRange();
+            List<int[]> listFpsRange = null;
+            try {
+                listFpsRange = parameters.getSupportedPreviewFpsRange();
+            } catch (StringIndexOutOfBoundsException ex) {
+                Log.e(TAG, "Camera.Parameters.getSupportedPreviewFpsRange: ", ex);
+            }
             if (listFpsRange == null) {
                 listFpsRange = new ArrayList<int[]>();
             }
@@ -256,8 +267,8 @@ public class VideoCaptureCamera
         return formatList.toArray(new VideoCaptureFormat[formatList.size()]);
     }
 
-    VideoCaptureCamera(Context context, int id, long nativeVideoCaptureDeviceAndroid) {
-        super(context, id, nativeVideoCaptureDeviceAndroid);
+    VideoCaptureCamera(int id, long nativeVideoCaptureDeviceAndroid) {
+        super(id, nativeVideoCaptureDeviceAndroid);
     }
 
     @Override
@@ -581,6 +592,7 @@ public class VideoCaptureCamera
             final int index = COLOR_TEMPERATURES_MAP.indexOfValue(parameters.getWhiteBalance());
             if (index >= 0) builder.setCurrentColorTemperature(COLOR_TEMPERATURES_MAP.keyAt(index));
         }
+        builder.setStepColorTemperature(50);
 
         final List<String> flashModes = parameters.getSupportedFlashModes();
         if (flashModes != null) {
@@ -702,30 +714,32 @@ public class VideoCaptureCamera
         } else if (whiteBalanceMode == AndroidMeteringMode.FIXED
                 && parameters.isAutoWhiteBalanceLockSupported()) {
             parameters.setAutoWhiteBalanceLock(true);
-            if (colorTemperature > 0.0) {
-                final String closestSetting = getClosestWhiteBalance((int) colorTemperature);
-                if (closestSetting != null) parameters.setWhiteBalance(closestSetting);
-            }
+        }
+        if (colorTemperature > 0.0) {
+            final String closestSetting = getClosestWhiteBalance(
+                    (int) colorTemperature, parameters.getSupportedWhiteBalance());
+            Log.d(TAG, " Color temperature (%f ==> %s)", colorTemperature, closestSetting);
+            if (closestSetting != null) parameters.setWhiteBalance(closestSetting);
         }
 
-        if (parameters.getSupportedFlashModes() != null
-                && fillLightMode != AndroidFillLightMode.NOT_SET) {
-            switch (fillLightMode) {
-                case AndroidFillLightMode.OFF:
-                    parameters.setFlashMode(android.hardware.Camera.Parameters.FLASH_MODE_OFF);
-                    break;
-                case AndroidFillLightMode.AUTO:
-                    parameters.setFlashMode(hasRedEyeReduction && redEyeReduction
-                                    ? android.hardware.Camera.Parameters.FLASH_MODE_RED_EYE
-                                    : android.hardware.Camera.Parameters.FLASH_MODE_AUTO);
-                    break;
-                case AndroidFillLightMode.FLASH:
-                    parameters.setFlashMode(android.hardware.Camera.Parameters.FLASH_MODE_ON);
-                    break;
-                default:
-            }
+        if (parameters.getSupportedFlashModes() != null) {
             if (hasTorch && torch) {
                 parameters.setFlashMode(android.hardware.Camera.Parameters.FLASH_MODE_TORCH);
+            } else if (fillLightMode != AndroidFillLightMode.NOT_SET) {
+                switch (fillLightMode) {
+                    case AndroidFillLightMode.OFF:
+                        parameters.setFlashMode(android.hardware.Camera.Parameters.FLASH_MODE_OFF);
+                        break;
+                    case AndroidFillLightMode.AUTO:
+                        parameters.setFlashMode(hasRedEyeReduction && redEyeReduction
+                                        ? android.hardware.Camera.Parameters.FLASH_MODE_RED_EYE
+                                        : android.hardware.Camera.Parameters.FLASH_MODE_AUTO);
+                        break;
+                    case AndroidFillLightMode.FLASH:
+                        parameters.setFlashMode(android.hardware.Camera.Parameters.FLASH_MODE_ON);
+                        break;
+                    default:
+                }
             }
         }
 

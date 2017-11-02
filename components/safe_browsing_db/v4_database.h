@@ -16,11 +16,12 @@
 #include "base/memory/weak_ptr.h"
 #include "base/sequenced_task_runner.h"
 #include "base/single_thread_task_runner.h"
+#include "components/safe_browsing/proto/webui.pb.h"
 #include "components/safe_browsing_db/v4_protocol_manager_util.h"
 #include "components/safe_browsing_db/v4_store.h"
 
 namespace subresource_filter {
-class SubresourceFilterBrowserTestImpl;
+class SubresourceFilterBrowserTest;
 }
 
 namespace safe_browsing {
@@ -131,7 +132,13 @@ class V4Database {
   // A store may be unavailble if either it hasn't yet gotten a proper
   // full-update (just after install, or corrupted/missing file), or if it's
   // not supported in this build (i.e. Chromium).
-  virtual bool AreStoresAvailable(const StoresToCheck& stores_to_check) const;
+  virtual bool AreAllStoresAvailable(
+      const StoresToCheck& stores_to_check) const;
+
+  // Check if any of the stores are available and populated.
+  // Returns false if all of |stores_to_check| don't have valid data.
+  virtual bool AreAnyStoresAvailable(
+      const StoresToCheck& stores_to_check) const;
 
   // Searches for a hash prefix matching the |full_hash| in stores in the
   // database, filtered by |stores_to_check|, and returns the identifier of the
@@ -157,15 +164,22 @@ class V4Database {
   // with the combined size of all the stores.
   void RecordFileSizeHistograms();
 
+  // Populates the DatabaseInfo message of the safe_browsing_page proto.
+  void CollectDatabaseInfo(DatabaseManagerInfo::DatabaseInfo* database_info);
+
  protected:
   V4Database(const scoped_refptr<base::SequencedTaskRunner>& db_task_runner,
              std::unique_ptr<StoreMap> store_map);
 
-  // Map of ListIdentifier to the V4Store.
+  // The collection of V4Stores, keyed by ListIdentifier.
+  // The map itself lives on the V4Database's parent thread, but its V4Store
+  // objects live on the db_task_runner_thread.
+  // TODO(vakh): Consider writing a container object which encapsulates or
+  // harmonizes thread affinity for the associative container and the data.
   const std::unique_ptr<StoreMap> store_map_;
 
  private:
-  friend class subresource_filter::SubresourceFilterBrowserTestImpl;
+  friend class subresource_filter::SubresourceFilterBrowserTest;
   friend class V4DatabaseFactory;
   friend class V4DatabaseTest;
   friend class V4SafeBrowsingServiceTest;
@@ -208,6 +222,8 @@ class V4Database {
   void VerifyChecksumOnTaskRunner(
       const scoped_refptr<base::SingleThreadTaskRunner>& callback_task_runner,
       DatabaseReadyForUpdatesCallback db_ready_for_updates_callback);
+
+  bool IsStoreAvailable(const ListIdentifier& identifier) const;
 
   const scoped_refptr<base::SequencedTaskRunner> db_task_runner_;
 

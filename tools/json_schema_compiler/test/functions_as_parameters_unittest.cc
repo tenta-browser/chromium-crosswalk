@@ -4,6 +4,8 @@
 
 #include "tools/json_schema_compiler/test/functions_as_parameters.h"
 
+#include "base/memory/ptr_util.h"
+#include "base/values.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using namespace test::api::functions_as_parameters;
@@ -19,7 +21,7 @@ TEST(JsonSchemaCompilerFunctionsAsParametersTest, PopulateRequiredFunction) {
   {
     base::DictionaryValue value;
     base::DictionaryValue function_dict;
-    value.Set("event_callback", function_dict.DeepCopy());
+    value.SetKey("event_callback", function_dict.Clone());
     FunctionType out;
     ASSERT_TRUE(FunctionType::Populate(value, &out));
     EXPECT_TRUE(out.event_callback.empty());
@@ -30,7 +32,7 @@ TEST(JsonSchemaCompilerFunctionsAsParametersTest, RequiredFunctionToValue) {
   {
     base::DictionaryValue value;
     base::DictionaryValue function_dict;
-    value.Set("event_callback", function_dict.DeepCopy());
+    value.SetKey("event_callback", function_dict.Clone());
 
     FunctionType out;
     ASSERT_TRUE(FunctionType::Populate(value, &out));
@@ -40,8 +42,8 @@ TEST(JsonSchemaCompilerFunctionsAsParametersTest, RequiredFunctionToValue) {
     base::DictionaryValue value;
     base::DictionaryValue expected_value;
     base::DictionaryValue function_dict;
-    value.Set("event_callback", function_dict.DeepCopy());
-    expected_value.Set("event_callback", function_dict.DeepCopy());
+    value.SetKey("event_callback", function_dict.Clone());
+    expected_value.SetKey("event_callback", function_dict.Clone());
 
     FunctionType out;
     ASSERT_TRUE(FunctionType::Populate(value, &out));
@@ -59,7 +61,7 @@ TEST(JsonSchemaCompilerFunctionsAsParametersTest, PopulateOptionalFunction) {
   {
     base::DictionaryValue value;
     base::DictionaryValue function_value;
-    value.Set("event_callback", function_value.DeepCopy());
+    value.SetKey("event_callback", function_value.Clone());
     OptionalFunctionType out;
     ASSERT_TRUE(OptionalFunctionType::Populate(value, &out));
     EXPECT_TRUE(out.event_callback.get());
@@ -67,7 +69,7 @@ TEST(JsonSchemaCompilerFunctionsAsParametersTest, PopulateOptionalFunction) {
   {
     base::DictionaryValue value;
     base::DictionaryValue function_value;
-    value.Set("event_callback", function_value.DeepCopy());
+    value.SetKey("event_callback", function_value.Clone());
     OptionalFunctionType out;
     ASSERT_TRUE(OptionalFunctionType::Populate(value, &out));
     EXPECT_TRUE(out.event_callback.get());
@@ -85,7 +87,7 @@ TEST(JsonSchemaCompilerFunctionsAsParametersTest, OptionalFunctionToValue) {
   {
     base::DictionaryValue value;
     base::DictionaryValue function_value;
-    value.Set("event_callback", function_value.DeepCopy());
+    value.SetKey("event_callback", function_value.Clone());
 
     OptionalFunctionType out;
     ASSERT_TRUE(OptionalFunctionType::Populate(value, &out));

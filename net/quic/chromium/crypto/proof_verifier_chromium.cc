@@ -385,8 +385,6 @@ int ProofVerifierChromium::Job::DoVerifyCertComplete(int result) {
       verify_details_->cert_verify_result;
   const CertStatus cert_status = cert_verify_result.cert_status;
   verify_details_->ct_verify_result.ct_policies_applied = result == OK;
-  verify_details_->ct_verify_result.ev_policy_compliance =
-      ct::EVPolicyCompliance::EV_POLICY_DOES_NOT_APPLY;
 
   // If the connection was good, check HPKP and CT status simultaneously,
   // but prefer to treat the HPKP error as more serious, if there was one.
@@ -395,38 +393,28 @@ int ProofVerifierChromium::Job::DoVerifyCertComplete(int result) {
        (IsCertificateError(result) && IsCertStatusMinorError(cert_status)))) {
     SCTList verified_scts = ct::SCTsMatchingStatus(
         verify_details_->ct_verify_result.scts, ct::SCT_STATUS_OK);
-    if ((cert_verify_result.cert_status & CERT_STATUS_IS_EV)) {
-      ct::EVPolicyCompliance ev_policy_compliance =
-          policy_enforcer_->DoesConformToCTEVPolicy(
-              cert_verify_result.verified_cert.get(),
-              SSLConfigService::GetEVCertsWhitelist().get(), verified_scts,
-              net_log_);
-      verify_details_->ct_verify_result.ev_policy_compliance =
-          ev_policy_compliance;
-      if (ev_policy_compliance !=
-              ct::EVPolicyCompliance::EV_POLICY_DOES_NOT_APPLY &&
-          ev_policy_compliance !=
-              ct::EVPolicyCompliance::EV_POLICY_COMPLIES_VIA_WHITELIST &&
-          ev_policy_compliance !=
-              ct::EVPolicyCompliance::EV_POLICY_COMPLIES_VIA_SCTS) {
-        verify_details_->cert_verify_result.cert_status |=
-            CERT_STATUS_CT_COMPLIANCE_FAILED;
-        verify_details_->cert_verify_result.cert_status &= ~CERT_STATUS_IS_EV;
-      }
-    }
 
     verify_details_->ct_verify_result.cert_policy_compliance =
         policy_enforcer_->DoesConformToCertPolicy(
             cert_verify_result.verified_cert.get(), verified_scts, net_log_);
+    if ((verify_details_->cert_verify_result.cert_status & CERT_STATUS_IS_EV) &&
+        (verify_details_->ct_verify_result.cert_policy_compliance !=
+         ct::CertPolicyCompliance::CERT_POLICY_COMPLIES_VIA_SCTS)) {
+      verify_details_->cert_verify_result.cert_status |=
+          CERT_STATUS_CT_COMPLIANCE_FAILED;
+      verify_details_->cert_verify_result.cert_status &= ~CERT_STATUS_IS_EV;
+    }
 
     int ct_result = OK;
-    if (verify_details_->ct_verify_result.cert_policy_compliance !=
-            ct::CertPolicyCompliance::CERT_POLICY_COMPLIES_VIA_SCTS &&
-        verify_details_->ct_verify_result.cert_policy_compliance !=
-            ct::CertPolicyCompliance::CERT_POLICY_BUILD_NOT_TIMELY &&
-        transport_security_state_->ShouldRequireCT(
-            hostname_, cert_verify_result.verified_cert.get(),
-            cert_verify_result.public_key_hashes)) {
+    if (transport_security_state_->CheckCTRequirements(
+            HostPortPair(hostname_, port_),
+            cert_verify_result.is_issued_by_known_root,
+            cert_verify_result.public_key_hashes,
+            cert_verify_result.verified_cert.get(), cert_.get(),
+            verify_details_->ct_verify_result.scts,
+            TransportSecurityState::ENABLE_EXPECT_CT_REPORTS,
+            verify_details_->ct_verify_result.cert_policy_compliance) !=
+        TransportSecurityState::CT_REQUIREMENTS_MET) {
       verify_details_->cert_verify_result.cert_status |=
           CERT_STATUS_CERTIFICATE_TRANSPARENCY_REQUIRED;
       ct_result = ERR_CERTIFICATE_TRANSPARENCY_REQUIRED;
@@ -569,7 +557,7 @@ QuicAsyncStatus ProofVerifierChromium::VerifyProof(
   }
   const ProofVerifyContextChromium* chromium_context =
       reinterpret_cast<const ProofVerifyContextChromium*>(verify_context);
-  std::unique_ptr<Job> job = base::MakeUnique<Job>(
+  std::unique_ptr<Job> job = std::make_unique<Job>(
       this, cert_verifier_, ct_policy_enforcer_, transport_security_state_,
       cert_transparency_verifier_, chromium_context->cert_verify_flags,
       chromium_context->net_log);
@@ -596,7 +584,7 @@ QuicAsyncStatus ProofVerifierChromium::VerifyCertChain(
   }
   const ProofVerifyContextChromium* chromium_context =
       reinterpret_cast<const ProofVerifyContextChromium*>(verify_context);
-  std::unique_ptr<Job> job = base::MakeUnique<Job>(
+  std::unique_ptr<Job> job = std::make_unique<Job>(
       this, cert_verifier_, ct_policy_enforcer_, transport_security_state_,
       cert_transparency_verifier_, chromium_context->cert_verify_flags,
       chromium_context->net_log);

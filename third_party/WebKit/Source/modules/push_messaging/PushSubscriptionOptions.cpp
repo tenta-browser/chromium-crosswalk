@@ -5,14 +5,14 @@
 #include "modules/push_messaging/PushSubscriptionOptions.h"
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "core/dom/DOMArrayBuffer.h"
 #include "core/dom/ExceptionCode.h"
+#include "core/typed_arrays/DOMArrayBuffer.h"
 #include "modules/push_messaging/PushSubscriptionOptionsInit.h"
+#include "platform/wtf/ASCIICType.h"
 #include "platform/wtf/Assertions.h"
 #include "platform/wtf/text/WTFString.h"
 #include "public/platform/WebString.h"
 #include "public/platform/modules/push_messaging/WebPushSubscriptionOptions.h"
-#include "third_party/WebKit/Source/wtf/ASCIICType.h"
 
 namespace blink {
 namespace {

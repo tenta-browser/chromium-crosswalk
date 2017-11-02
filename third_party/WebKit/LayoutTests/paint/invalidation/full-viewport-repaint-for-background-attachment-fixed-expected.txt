@@ -4,12 +4,12 @@
       "name": "LayoutView #document",
       "bounds": [785, 5000],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutView #document",
           "rect": [0, 0, 785, 5000],
-          "reason": "full"
+          "reason": "background"
         }
       ]
     }
@@ -17,7 +17,7 @@
   "objectPaintInvalidations": [
     {
       "object": "LayoutView #document",
-      "reason": "full"
+      "reason": "background"
     }
   ]
 }

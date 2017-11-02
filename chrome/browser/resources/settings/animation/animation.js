@@ -48,6 +48,7 @@ cr.define('settings.animation', function() {
         self.queueDispatch_(e);
       });
       self.animation_.addEventListener('cancel', function(e) {
+        // clang-format off
         reject(new
             /**
              * @see https://heycam.github.io/webidl/#es-DOMException-call
@@ -55,6 +56,7 @@ cr.define('settings.animation', function() {
              */(
                 DOMException
             )('', 'AbortError'));
+        // clang-format on
         self.queueDispatch_(e);
       });
     });
@@ -78,10 +80,10 @@ cr.define('settings.animation', function() {
      * @private
      */
     queueDispatch_: function(e) {
-      setTimeout(function() {
+      setTimeout(() => {
         this.dispatchEvent(e);
         this.animation_ = undefined;
-      }.bind(this));
+      });
     },
   };
 

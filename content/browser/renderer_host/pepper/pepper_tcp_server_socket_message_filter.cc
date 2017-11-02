@@ -123,13 +123,9 @@ int32_t PepperTCPServerSocketMessageFilter::OnMsgListen(
   }
 
   BrowserThread::PostTask(
-      BrowserThread::IO,
-      FROM_HERE,
-      base::Bind(&PepperTCPServerSocketMessageFilter::DoListen,
-                 this,
-                 context->MakeReplyMessageContext(),
-                 addr,
-                 backlog));
+      BrowserThread::IO, FROM_HERE,
+      base::BindOnce(&PepperTCPServerSocketMessageFilter::DoListen, this,
+                     context->MakeReplyMessageContext(), addr, backlog));
   return PP_OK_COMPLETIONPENDING;
 }
 
@@ -174,7 +170,7 @@ void PepperTCPServerSocketMessageFilter::DoListen(
     int32_t backlog) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
-  std::vector<uint8_t> address;
+  net::IPAddressBytes address;
   uint16_t port;
   if (state_ != STATE_BEFORE_LISTENING ||
       !NetAddressPrivateImpl::NetAddressToIPEndPoint(addr, &address, &port)) {

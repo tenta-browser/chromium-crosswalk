@@ -32,15 +32,21 @@
 #define FetchContext_h
 
 #include "platform/PlatformExport.h"
+#include "platform/WebFrameScheduler.h"
 #include "platform/heap/Handle.h"
 #include "platform/loader/fetch/FetchInitiatorInfo.h"
 #include "platform/loader/fetch/FetchParameters.h"
 #include "platform/loader/fetch/Resource.h"
 #include "platform/loader/fetch/ResourceLoadPriority.h"
 #include "platform/loader/fetch/ResourceRequest.h"
+#include "platform/network/ContentSecurityPolicyParsers.h"
 #include "platform/weborigin/SecurityViolationReportingPolicy.h"
 #include "platform/wtf/Forward.h"
 #include "platform/wtf/Noncopyable.h"
+#include "public/platform/WebApplicationCacheHost.h"
+#include "public/platform/WebCachePolicy.h"
+#include "public/platform/WebURLLoader.h"
+#include "public/platform/WebURLRequest.h"
 
 namespace blink {
 
@@ -51,8 +57,6 @@ class PlatformProbeSink;
 class ResourceError;
 class ResourceResponse;
 class ResourceTimingInfo;
-class WebTaskRunner;
-enum class WebCachePolicy;
 
 enum FetchResourceType { kFetchMainResource, kFetchSubresource };
 
@@ -68,7 +72,16 @@ class PLATFORM_EXPORT FetchContext
   WTF_MAKE_NONCOPYABLE(FetchContext);
 
  public:
-  enum LogMessageType { kLogErrorMessage, kLogWarningMessage };
+  // This enum corresponds to blink::MessageSource. We have this not to
+  // introduce any dependency to core/.
+  //
+  // Currently only kJSMessageSource is used, but not to impress readers that
+  // AddConsoleMessage() call from FetchContext() should always use it, which is
+  // not true, we ask users of the Add.*ConsoleMessage() methods to explicitly
+  // specify the MessageSource to use.
+  //
+  // Extend this when needed.
+  enum LogSource { kJSSource };
 
   static FetchContext& NullInstance();
 
@@ -76,7 +89,7 @@ class PLATFORM_EXPORT FetchContext
 
   DECLARE_VIRTUAL_TRACE();
 
-  virtual bool IsLiveContext() { return false; }
+  virtual bool IsFrameFetchContext() { return false; }
 
   virtual void AddAdditionalRequestHeaders(ResourceRequest&, FetchResourceType);
 
@@ -84,7 +97,7 @@ class PLATFORM_EXPORT FetchContext
   // a const reference as a header needs to be added for doc.write blocking
   // intervention.
   virtual WebCachePolicy ResourceRequestCachePolicy(
-      ResourceRequest&,
+      const ResourceRequest&,
       Resource::Type,
       FetchParameters::DeferOption) const;
 
@@ -151,19 +164,24 @@ class PLATFORM_EXPORT FetchContext
       const KURL&,
       const ResourceLoaderOptions&,
       SecurityViolationReportingPolicy,
-      FetchParameters::OriginRestriction) const {
+      FetchParameters::OriginRestriction,
+      ResourceRequest::RedirectStatus) const {
     return ResourceRequestBlockedReason::kOther;
   }
-  virtual ResourceRequestBlockedReason AllowResponse(
-      Resource::Type,
-      const ResourceRequest&,
+  virtual ResourceRequestBlockedReason CheckCSPForRequest(
+      WebURLRequest::RequestContext,
       const KURL&,
-      const ResourceLoaderOptions&) const {
+      const ResourceLoaderOptions&,
+      SecurityViolationReportingPolicy,
+      ResourceRequest::RedirectStatus) const {
     return ResourceRequestBlockedReason::kOther;
   }
 
   virtual bool IsControlledByServiceWorker() const { return false; }
   virtual int64_t ServiceWorkerID() const { return -1; }
+  virtual int ApplicationCacheHostID() const {
+    return WebApplicationCacheHost::kAppCacheNoHostId;
+  }
 
   virtual bool IsMainFrame() const { return true; }
   virtual bool DefersLoading() const { return false; }
@@ -173,8 +191,10 @@ class PLATFORM_EXPORT FetchContext
     return false;
   }
   virtual void SendImagePing(const KURL&);
-  virtual void AddConsoleMessage(const String&,
-                                 LogMessageType = kLogErrorMessage) const;
+
+  virtual void AddWarningConsoleMessage(const String&, LogSource) const;
+  virtual void AddErrorConsoleMessage(const String&, LogSource) const;
+
   virtual SecurityOrigin* GetSecurityOrigin() const { return nullptr; }
 
   // Populates the ResourceRequest using the given values and information
@@ -190,16 +210,27 @@ class PLATFORM_EXPORT FetchContext
 
   virtual MHTMLArchive* Archive() const { return nullptr; }
 
-  virtual ResourceLoadPriority ModifyPriorityForExperiments(
-      ResourceLoadPriority priority) {
-    return priority;
-  }
-
-  virtual RefPtr<WebTaskRunner> LoadingTaskRunner() const { return nullptr; }
-
   PlatformProbeSink* GetPlatformProbeSink() const {
     return platform_probe_sink_;
   }
+
+  virtual std::unique_ptr<WebURLLoader> CreateURLLoader(
+      const ResourceRequest&) {
+    NOTREACHED();
+    return nullptr;
+  }
+
+  virtual bool IsDetached() const { return false; }
+
+  // Obtains WebFrameScheduler instance that is used in the attached frame.
+  // May return nullptr if a frame is not attached or detached.
+  virtual WebFrameScheduler* GetFrameScheduler() { return nullptr; }
+
+  // Called when the underlying context is detached. Note that some
+  // FetchContexts continue working after detached (e.g., for fetch() operations
+  // with "keepalive" specified).
+  // Returns a "detached" fetch context which can be null.
+  virtual FetchContext* Detach() { return nullptr; }
 
  protected:
   FetchContext();

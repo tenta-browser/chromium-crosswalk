@@ -5,16 +5,18 @@
 #ifndef BASE_CONTAINERS_FLAT_MAP_H_
 #define BASE_CONTAINERS_FLAT_MAP_H_
 
+#include <functional>
 #include <utility>
 
 #include "base/containers/flat_tree.h"
 #include "base/logging.h"
+#include "base/template_util.h"
 
 namespace base {
 
 namespace internal {
 
-// An implementation of the flat_set GetKeyFromValue template parameter that
+// An implementation of the flat_tree GetKeyFromValue template parameter that
 // extracts the key as the first element of a pair.
 template <class Key, class Mapped>
 struct GetKeyFromValuePairFirst {
@@ -25,14 +27,31 @@ struct GetKeyFromValuePairFirst {
 
 }  // namespace internal
 
-// OVERVIEW
+// flat_map is a container with a std::map-like interface that stores its
+// contents in a sorted vector.
 //
-// This file implements flat_map container. It is an alternative to standard
-// sorted containers that stores its elements in contiguous memory (a vector).
+// Please see //base/containers/README.md for an overview of which container
+// to select.
 //
-// Additional documentation and usage advice is in flat_set.h.
+// PROS
 //
-// DOCUMENTATION
+//  - Good memory locality.
+//  - Low overhead, especially for smaller maps.
+//  - Performance is good for more workloads than you might expect (see
+//    overview link above).
+//  - Supports C++14 map interface.
+//
+// CONS
+//
+//  - Inserts and removals are O(n).
+//
+// IMPORTANT NOTES
+//
+//  - Iterators are invalidated across mutations.
+//  - If possible, construct a flat_map in one operation by inserting into
+//    a std::vector and moving that vector into the flat_map constructor.
+//
+// QUICK REFERENCE
 //
 // Most of the core functionality is inherited from flat_tree. Please see
 // flat_tree.h for more details for most of these functions. As a quick
@@ -78,31 +97,36 @@ struct GetKeyFromValuePairFirst {
 //   const_reverse_iterator crend() const;
 //
 // Insert and accessor functions:
-//   Mapped&              operator[](const Key&);
-//   Mapped&              operator[](Key&&);
-//   pair<iterator, bool> insert(const pair<Key, Mapped>&);
-//   pair<iterator, bool> insert(pair<Key, Mapped>&&);
+//   Mapped&              operator[](const key_type&);
+//   Mapped&              operator[](key_type&&);
+//   pair<iterator, bool> insert(const value_type&);
+//   pair<iterator, bool> insert(value_type&&);
+//   iterator             insert(const_iterator hint, const value_type&);
+//   iterator             insert(const_iterator hint, value_type&&);
+//   void                 insert(InputIterator first, InputIterator last,
+//                               FlatContainerDupes);
 //   pair<iterator, bool> emplace(Args&&...);
 //   iterator             emplace_hint(const_iterator, Args&&...);
 //
 // Erase functions:
+//   iterator erase(iterator);
 //   iterator erase(const_iterator);
 //   iterator erase(const_iterator first, const_iterator& last);
-//   size_t   erase(const Key& key)
+//   template <class K> size_t erase(const K& key)
 //
 // Comparators (see std::map documentation).
 //   key_compare   key_comp() const;
 //   value_compare value_comp() const;
 //
 // Search functions:
-//   size_t                   count(const Key&) const;
-//   iterator                 find(const Key&);
-//   const_iterator           find(const Key&) const;
-//   pair<iterator, iterator> equal_range(Key&)
-//   iterator                 lower_bound(const Key&);
-//   const_iterator           lower_bound(const Key&) const;
-//   iterator                 upper_bound(const Key&);
-//   const_iterator           upper_bound(const Key&) const;
+//   template <typename K> size_t                   count(const K&) const;
+//   template <typename K> iterator                 find(const K&);
+//   template <typename K> const_iterator           find(const K&) const;
+//   template <typename K> pair<iterator, iterator> equal_range(const K&);
+//   template <typename K> iterator                 lower_bound(const K&);
+//   template <typename K> const_iterator           lower_bound(const K&) const;
+//   template <typename K> iterator                 upper_bound(const K&);
+//   template <typename K> const_iterator           upper_bound(const K&) const;
 //
 // General functions:
 //   void swap(flat_map&&)
@@ -115,7 +139,7 @@ struct GetKeyFromValuePairFirst {
 //   bool operator>=(const flat_map&, const flat_map);
 //   bool operator<=(const flat_map&, const flat_map);
 //
-template <class Key, class Mapped, class Compare = std::less<Key>>
+template <class Key, class Mapped, class Compare = std::less<>>
 // Meets the requirements of Container, AssociativeContainer,
 // ReversibleContainer.
 // Requires: Key is Movable, Compare is a StrictWeakOrdering on Key.

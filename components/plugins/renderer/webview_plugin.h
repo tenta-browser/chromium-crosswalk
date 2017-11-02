@@ -11,6 +11,7 @@
 #include "base/memory/weak_ptr.h"
 #include "base/sequenced_task_runner_helpers.h"
 #include "content/public/renderer/render_view_observer.h"
+#include "services/service_manager/public/cpp/interface_provider.h"
 #include "third_party/WebKit/public/platform/WebCursorInfo.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/platform/WebURLResponse.h"
@@ -20,6 +21,7 @@
 #include "third_party/WebKit/public/web/WebViewClient.h"
 
 namespace blink {
+class WebLocalFrame;
 class WebMouseEvent;
 }
 
@@ -55,6 +57,8 @@ class WebViewPlugin : public blink::WebPlugin,
 
     // Called when the unobscured rect of the plugin is updated.
     virtual void OnUnobscuredRectUpdate(const gfx::Rect& unobscured_rect) {}
+
+    virtual bool IsErrorPlaceholder() = 0;
   };
 
   // Convenience method to set up a new WebViewPlugin using |preferences|
@@ -66,7 +70,7 @@ class WebViewPlugin : public blink::WebPlugin,
                                const std::string& html_data,
                                const GURL& url);
 
-  blink::WebView* web_view() { return web_view_helper_.web_view(); }
+  blink::WebLocalFrame* main_frame() { return web_view_helper_.main_frame(); }
 
   const blink::WebString& old_title() const { return old_title_; }
 
@@ -84,6 +88,8 @@ class WebViewPlugin : public blink::WebPlugin,
 
   v8::Local<v8::Object> V8ScriptableObject(v8::Isolate* isolate) override;
 
+  bool IsErrorPlaceholder() override;
+
   void UpdateAllLifecyclePhases() override;
   void Paint(blink::WebCanvas* canvas, const blink::WebRect& rect) override;
 
@@ -91,14 +97,13 @@ class WebViewPlugin : public blink::WebPlugin,
   void UpdateGeometry(const blink::WebRect& window_rect,
                       const blink::WebRect& clip_rect,
                       const blink::WebRect& unobscured_rect,
-                      const blink::WebVector<blink::WebRect>& cut_outs_rects,
                       bool is_visible) override;
 
   void UpdateFocus(bool foucsed, blink::WebFocusType focus_type) override;
   void UpdateVisibility(bool) override {}
 
   blink::WebInputEventResult HandleInputEvent(
-      const blink::WebInputEvent& event,
+      const blink::WebCoalescedInputEvent& event,
       blink::WebCursorInfo& cursor_info) override;
 
   void DidReceiveResponse(const blink::WebURLResponse& response) override;
@@ -112,6 +117,8 @@ class WebViewPlugin : public blink::WebPlugin,
                 Delegate* delegate,
                 const content::WebPreferences& preferences);
   ~WebViewPlugin() override;
+
+  blink::WebView* web_view() { return web_view_helper_.web_view(); }
 
   // content::RenderViewObserver methods:
   void OnDestruct() override {}
@@ -148,6 +155,7 @@ class WebViewPlugin : public blink::WebPlugin,
     ~WebViewHelper() override;
 
     blink::WebView* web_view() { return web_view_; }
+    blink::WebLocalFrame* main_frame();
 
     // WebViewClient methods:
     bool AcceptsLoadDrops() override;
@@ -168,12 +176,18 @@ class WebViewPlugin : public blink::WebPlugin,
     void DidInvalidateRect(const blink::WebRect&) override;
     void DidChangeCursor(const blink::WebCursorInfo& cursor) override;
     void ScheduleAnimation() override;
+    std::unique_ptr<blink::WebURLLoader> CreateURLLoader(
+        const blink::WebURLRequest& request,
+        base::SingleThreadTaskRunner* task_runner) override;
 
     // WebFrameClient methods:
-    void DidClearWindowObject(blink::WebLocalFrame* frame) override;
+    void DidClearWindowObject() override;
+    void FrameDetached(DetachType) override;
+    service_manager::InterfaceProvider* GetInterfaceProvider() override;
 
    private:
     WebViewPlugin* plugin_;
+    service_manager::InterfaceProvider interface_provider_;
 
     // Owned by us, deleted via |close()|.
     blink::WebView* web_view_;

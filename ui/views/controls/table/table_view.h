@@ -170,7 +170,7 @@ class VIEWS_EXPORT TableView
   // View overrides:
   void Layout() override;
   const char* GetClassName() const override;
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   bool OnKeyPressed(const ui::KeyEvent& event) override;
   bool OnMousePressed(const ui::MouseEvent& event) override;
   void OnGestureEvent(ui::GestureEvent* event) override;
@@ -218,6 +218,14 @@ class VIEWS_EXPORT TableView
     ADVANCE_DECREMENT,
     ADVANCE_INCREMENT,
   };
+
+  // Returns the horizontal margin between the bounds of a cell and its
+  // contents.
+  int GetCellMargin() const;
+
+  // Returns the horizontal spacing between elements (grouper, icon, and text)
+  // in a cell.
+  int GetCellElementSpacing() const;
 
   // Invoked when the number of rows changes in some way.
   void NumRowsChanged();

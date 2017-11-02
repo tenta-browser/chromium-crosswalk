@@ -14,18 +14,71 @@
 
 #include <memory>
 
-namespace blink {
-class IntWrapper;
-}
+namespace {
 
-using IntVector = blink::HeapVector<blink::Member<blink::IntWrapper>>;
-using IntDeque = blink::HeapDeque<blink::Member<blink::IntWrapper>>;
-using IntMap = blink::HeapHashMap<blink::Member<blink::IntWrapper>, int>;
+enum VerifyArenaCompaction {
+  NoVerify,
+  VectorsAreCompacted,
+  HashTablesAreCompacted,
+};
+
+class IntWrapper : public blink::GarbageCollectedFinalized<IntWrapper> {
+ public:
+  static IntWrapper* Create(int x, VerifyArenaCompaction verify = NoVerify) {
+    return new IntWrapper(x, verify);
+  }
+
+  virtual ~IntWrapper() {}
+
+  DEFINE_INLINE_TRACE() {
+    // Verify if compaction is indeed activated.
+    //
+    // What arenas end up being compacted is dependent on residency,
+    // so approximate the arena checks to fit.
+    blink::HeapCompact* compaction = visitor->Heap().Compaction();
+    switch (verify_) {
+      case NoVerify:
+        return;
+      case HashTablesAreCompacted:
+        CHECK(compaction->IsCompactingArena(
+            blink::BlinkGC::kHashTableArenaIndex));
+        return;
+      case VectorsAreCompacted:
+        CHECK(compaction->IsCompactingVectorArenas());
+        return;
+    }
+  }
+
+  int Value() const { return x_; }
+
+  bool operator==(const IntWrapper& other) const {
+    return other.Value() == Value();
+  }
+
+  unsigned GetHash() { return IntHash<int>::GetHash(x_); }
+
+  IntWrapper(int x, VerifyArenaCompaction verify) : x_(x), verify_(verify) {}
+
+ private:
+  IntWrapper();
+
+  int x_;
+  VerifyArenaCompaction verify_;
+};
+static_assert(WTF::IsTraceable<IntWrapper>::value,
+              "IsTraceable<> template failed to recognize trace method.");
+
+}  // namespace
+
+using IntVector = blink::HeapVector<blink::Member<IntWrapper>>;
+using IntDeque = blink::HeapDeque<blink::Member<IntWrapper>>;
+using IntMap = blink::HeapHashMap<blink::Member<IntWrapper>, int>;
 // TODO(sof): decide if this ought to be a global trait specialization.
 // (i.e., for HeapHash*<T>.)
 WTF_ALLOW_CLEAR_UNUSED_SLOTS_WITH_MEM_FUNCTIONS(IntMap);
 
 namespace blink {
+#if ENABLE_HEAP_COMPACTION
 
 static const size_t kChunkRange = SparseHeapBitmap::kBitmapChunkRange;
 static const size_t kUnitPointer = 0x1u
@@ -188,36 +241,10 @@ static void ClearOutOldGarbage() {
   }
 }
 
-class IntWrapper : public GarbageCollectedFinalized<IntWrapper> {
- public:
-  static IntWrapper* Create(int x) { return new IntWrapper(x); }
-
-  virtual ~IntWrapper() { ++destructor_calls_; }
-
-  static int destructor_calls_;
-  DEFINE_INLINE_TRACE() {}
-
-  int Value() const { return x_; }
-
-  bool operator==(const IntWrapper& other) const {
-    return other.Value() == Value();
-  }
-
-  unsigned GetHash() { return IntHash<int>::GetHash(x_); }
-
-  IntWrapper(int x) : x_(x) {}
-
- private:
-  IntWrapper();
-  int x_;
-};
-static_assert(WTF::IsTraceable<IntWrapper>::value,
-              "IsTraceable<> template failed to recognize trace method.");
-
 TEST(HeapCompactTest, CompactVector) {
   ClearOutOldGarbage();
 
-  IntWrapper* val = IntWrapper::Create(1);
+  IntWrapper* val = IntWrapper::Create(1, VectorsAreCompacted);
   Persistent<IntVector> vector = new IntVector(10, val);
   EXPECT_EQ(10u, vector->size());
 
@@ -235,7 +262,7 @@ TEST(HeapCompactTest, CompactHashMap) {
 
   Persistent<IntMap> int_map = new IntMap();
   for (size_t i = 0; i < 100; ++i) {
-    IntWrapper* val = IntWrapper::Create(i);
+    IntWrapper* val = IntWrapper::Create(i, HashTablesAreCompacted);
     int_map->insert(val, 100 - i);
   }
 
@@ -258,7 +285,7 @@ TEST(HeapCompactTest, CompactVectorPartHashMap) {
   for (size_t i = 0; i < 10; ++i) {
     IntMap map;
     for (size_t j = 0; j < 10; ++j) {
-      IntWrapper* val = IntWrapper::Create(j);
+      IntWrapper* val = IntWrapper::Create(j, VectorsAreCompacted);
       map.insert(val, 10 - j);
     }
     int_map_vector->push_back(map);
@@ -292,7 +319,7 @@ TEST(HeapCompactTest, CompactHashPartVector) {
   for (size_t i = 0; i < 10; ++i) {
     IntVector vector;
     for (size_t j = 0; j < 10; ++j) {
-      vector.push_back(IntWrapper::Create(j));
+      vector.push_back(IntWrapper::Create(j, HashTablesAreCompacted));
     }
     int_vector_map->insert(1 + i, vector);
   }
@@ -319,7 +346,7 @@ TEST(HeapCompactTest, CompactHashPartVector) {
 TEST(HeapCompactTest, CompactDeques) {
   Persistent<IntDeque> deque = new IntDeque;
   for (int i = 0; i < 8; ++i) {
-    deque->push_front(IntWrapper::Create(i));
+    deque->push_front(IntWrapper::Create(i, VectorsAreCompacted));
   }
   EXPECT_EQ(8u, deque->size());
 
@@ -335,7 +362,7 @@ TEST(HeapCompactTest, CompactDeques) {
 TEST(HeapCompactTest, CompactDequeVectors) {
   Persistent<HeapDeque<IntVector>> deque = new HeapDeque<IntVector>;
   for (int i = 0; i < 8; ++i) {
-    IntWrapper* value = IntWrapper::Create(i);
+    IntWrapper* value = IntWrapper::Create(i, VectorsAreCompacted);
     IntVector vector = IntVector(8, value);
     deque->push_front(vector);
   }
@@ -354,7 +381,7 @@ TEST(HeapCompactTest, CompactLinkedHashSet) {
   using OrderedHashSet = HeapLinkedHashSet<Member<IntWrapper>>;
   Persistent<OrderedHashSet> set = new OrderedHashSet;
   for (int i = 0; i < 13; ++i) {
-    IntWrapper* value = IntWrapper::Create(i);
+    IntWrapper* value = IntWrapper::Create(i, HashTablesAreCompacted);
     set->insert(value);
   }
   EXPECT_EQ(13u, set->size());
@@ -458,5 +485,5 @@ TEST(HeapCompactTest, CompactLinkedHashSetNested) {
     expected++;
   }
 }
-
+#endif
 }  // namespace blink

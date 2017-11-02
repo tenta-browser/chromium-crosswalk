@@ -32,8 +32,7 @@ class NavigationEntryScreenshotManager;
 class SiteInstance;
 struct LoadCommittedDetails;
 
-class CONTENT_EXPORT NavigationControllerImpl
-    : public NON_EXPORTED_BASE(NavigationController) {
+class CONTENT_EXPORT NavigationControllerImpl : public NavigationController {
  public:
   NavigationControllerImpl(
       NavigationControllerDelegate* delegate,
@@ -85,7 +84,8 @@ class CONTENT_EXPORT NavigationControllerImpl
   bool IsInitialBlankNavigation() const override;
   void Reload(ReloadType reload_type, bool check_for_repost) override;
   void NotifyEntryChanged(const NavigationEntry* entry) override;
-  void CopyStateFrom(const NavigationController& source) override;
+  void CopyStateFrom(const NavigationController& source,
+                     bool needs_reload) override;
   void CopyStateFromAndPrune(NavigationController* source,
                              bool replace_entry) override;
   bool CanPruneAllButLastCommitted() override;
@@ -276,13 +276,13 @@ class CONTENT_EXPORT NavigationControllerImpl
   void RendererDidNavigateToNewPage(
       RenderFrameHostImpl* rfh,
       const FrameHostMsg_DidCommitProvisionalLoad_Params& params,
-      bool is_in_page,
+      bool is_same_document,
       bool replace_entry,
       NavigationHandleImpl* handle);
   void RendererDidNavigateToExistingPage(
       RenderFrameHostImpl* rfh,
       const FrameHostMsg_DidCommitProvisionalLoad_Params& params,
-      bool is_in_page,
+      bool is_same_document,
       bool was_restored,
       NavigationHandleImpl* handle);
   void RendererDidNavigateToSamePage(
@@ -292,7 +292,7 @@ class CONTENT_EXPORT NavigationControllerImpl
   void RendererDidNavigateNewSubframe(
       RenderFrameHostImpl* rfh,
       const FrameHostMsg_DidCommitProvisionalLoad_Params& params,
-      bool is_in_page,
+      bool is_same_document,
       bool replace_entry);
   bool RendererDidNavigateAutoSubframe(
       RenderFrameHostImpl* rfh,
@@ -363,7 +363,7 @@ class CONTENT_EXPORT NavigationControllerImpl
   // displayed tab is.
   //
   // This may refer to an item in the entries_ list if the pending_entry_index_
-  // == -1, or it may be its own entry that should be deleted. Be careful with
+  // != -1, or it may be its own entry that should be deleted. Be careful with
   // the memory management.
   NavigationEntryImpl* pending_entry_;
 

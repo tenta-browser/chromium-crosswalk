@@ -4,7 +4,7 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutSVGRect rect",
@@ -15,18 +15,6 @@
     }
   ],
   "objectPaintInvalidations": [
-    {
-      "object": "LayoutSVGContainer use id='use'",
-      "reason": "full"
-    },
-    {
-      "object": "LayoutSVGRect rect id='rect'",
-      "reason": "bounds change"
-    },
-    {
-      "object": "LayoutSVGResourceFilterPrimitive feImage id='feimage'",
-      "reason": "full"
-    },
     {
       "object": "LayoutSVGRect rect",
       "reason": "full"

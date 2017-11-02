@@ -8,6 +8,12 @@ hd-iron-icon.oobe-icon {
   --iron-icon-fill-color: var(--google-blue-500);
 }
 
+iron-icon.oobe-icon {
+  --iron-icon-height: 32px;
+  --iron-icon-width: 32px;
+  color: var(--google-blue-500);
+}
+
 oobe-dialog .header {
   color: rgba(0, 0, 0, 0.87);
   font-family: Roboto, sans-serif;
@@ -23,6 +29,7 @@ oobe-dialog h1.title {
 oobe-dialog .subtitle {
   color: rgba(0, 0, 0, 0.87);
   font-size: 13px;
+  line-height: 18px;
   margin: 23px 0 0 0; /* = 40 - 4 (adjustment) - line-height */
 }
 

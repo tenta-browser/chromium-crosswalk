@@ -12,6 +12,7 @@
 #include "base/command_line.h"
 #include "base/debug/activity_tracker.h"
 #include "base/debug/profiler.h"
+#include "base/feature_list.h"
 #include "base/files/file_util.h"
 #include "base/hash.h"
 #include "base/logging.h"
@@ -24,6 +25,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/sys_info.h"
 #include "base/trace_event/trace_event.h"
 #include "base/win/iat_patch_function.h"
 #include "base/win/scoped_handle.h"
@@ -58,81 +60,82 @@ namespace {
 // of it, see:
 // https://sites.google.com/a/chromium.org/dev/Home/third-party-developers
 const wchar_t* const kTroublesomeDlls[] = {
-  L"adialhk.dll",                 // Kaspersky Internet Security.
-  L"acpiz.dll",                   // Unknown.
-  L"activedetect32.dll",          // Lenovo One Key Theater (crbug.com/536056).
-  L"activedetect64.dll",          // Lenovo One Key Theater (crbug.com/536056).
-  L"airfoilinject3.dll",          // Airfoil.
-  L"akinsofthook32.dll",          // Akinsoft Software Engineering.
-  L"assistant_x64.dll",           // Unknown.
-  L"avcuf64.dll",                 // Bit Defender Internet Security x64.
-  L"avgrsstx.dll",                // AVG 8.
-  L"babylonchromepi.dll",         // Babylon translator.
-  L"btkeyind.dll",                // Widcomm Bluetooth.
-  L"cmcsyshk.dll",                // CMC Internet Security.
-  L"cmsetac.dll",                 // Unknown (suspected malware).
-  L"cooliris.dll",                // CoolIris.
-  L"cplushook.dll",               // Unknown (suspected malware).
-  L"dockshellhook.dll",           // Stardock Objectdock.
-  L"easyhook32.dll",              // GDIPP and others.
-  L"esspd.dll",                   // Samsung Smart Security ESCORT.
-  L"googledesktopnetwork3.dll",   // Google Desktop Search v5.
-  L"fwhook.dll",                  // PC Tools Firewall Plus.
-  L"guard64.dll",                 // Comodo Internet Security x64.
-  L"hookprocesscreation.dll",     // Blumentals Program protector.
-  L"hookterminateapis.dll",       // Blumentals and Cyberprinter.
-  L"hookprintapis.dll",           // Cyberprinter.
-  L"imon.dll",                    // NOD32 Antivirus.
-  L"icatcdll.dll",                // Samsung Smart Security ESCORT.
-  L"icdcnl.dll",                  // Samsung Smart Security ESCORT.
-  L"ioloHL.dll",                  // Iolo (System Mechanic).
-  L"kloehk.dll",                  // Kaspersky Internet Security.
-  L"lawenforcer.dll",             // Spyware-Browser AntiSpyware (Spybro).
-  L"libdivx.dll",                 // DivX.
-  L"lvprcinj01.dll",              // Logitech QuickCam.
-  L"madchook.dll",                // Madshi (generic hooking library).
-  L"mdnsnsp.dll",                 // Bonjour.
-  L"moonsysh.dll",                // Moon Secure Antivirus.
-  L"mpk.dll",                     // KGB Spy.
-  L"npdivx32.dll",                // DivX.
-  L"npggNT.des",                  // GameGuard 2008.
-  L"npggNT.dll",                  // GameGuard (older).
-  L"oawatch.dll",                 // Online Armor.
-  L"pastali32.dll",               // PastaLeads.
-  L"pavhook.dll",                 // Panda Internet Security.
-  L"pavlsphook.dll",              // Panda Antivirus.
-  L"pavshook.dll",                // Panda Antivirus.
-  L"pavshookwow.dll",             // Panda Antivirus.
-  L"pctavhook.dll",               // PC Tools Antivirus.
-  L"pctgmhk.dll",                 // PC Tools Spyware Doctor.
-  L"picrmi32.dll",                // PicRec.
-  L"picrmi64.dll",                // PicRec.
-  L"prntrack.dll",                // Pharos Systems.
-  L"protector.dll",               // Unknown (suspected malware).
-  L"radhslib.dll",                // Radiant Naomi Internet Filter.
-  L"radprlib.dll",                // Radiant Naomi Internet Filter.
-  L"rapportnikko.dll",            // Trustware Rapport.
-  L"rlhook.dll",                  // Trustware Bufferzone.
-  L"rooksdol.dll",                // Trustware Rapport.
-  L"rndlpepperbrowserrecordhelper.dll", // RealPlayer.
-  L"rpchromebrowserrecordhelper.dll",   // RealPlayer.
-  L"r3hook.dll",                  // Kaspersky Internet Security.
-  L"sahook.dll",                  // McAfee Site Advisor.
-  L"sbrige.dll",                  // Unknown.
-  L"sc2hook.dll",                 // Supercopier 2.
-  L"sdhook32.dll",                // Spybot - Search & Destroy Live Protection.
-  L"sguard.dll",                  // Iolo (System Guard).
-  L"smum32.dll",                  // Spyware Doctor version 6.
-  L"smumhook.dll",                // Spyware Doctor version 5.
-  L"ssldivx.dll",                 // DivX.
-  L"syncor11.dll",                // SynthCore Midi interface.
-  L"systools.dll",                // Panda Antivirus.
-  L"tfwah.dll",                   // Threatfire (PC tools).
-  L"wblind.dll",                  // Stardock Object desktop.
-  L"wbhelp.dll",                  // Stardock Object desktop.
-  L"windowsapihookdll32.dll",     // Lenovo One Key Theater (crbug.com/536056).
-  L"windowsapihookdll64.dll",     // Lenovo One Key Theater (crbug.com/536056).
-  L"winstylerthemehelper.dll"     // Tuneup utilities 2006.
+    L"adialhk.dll",                // Kaspersky Internet Security.
+    L"acpiz.dll",                  // Unknown.
+    L"activedetect32.dll",         // Lenovo One Key Theater (crbug.com/536056).
+    L"activedetect64.dll",         // Lenovo One Key Theater (crbug.com/536056).
+    L"airfoilinject3.dll",         // Airfoil.
+    L"akinsofthook32.dll",         // Akinsoft Software Engineering.
+    L"assistant_x64.dll",          // Unknown.
+    L"avcuf64.dll",                // Bit Defender Internet Security x64.
+    L"avgrsstx.dll",               // AVG 8.
+    L"babylonchromepi.dll",        // Babylon translator.
+    L"btkeyind.dll",               // Widcomm Bluetooth.
+    L"cmcsyshk.dll",               // CMC Internet Security.
+    L"cmsetac.dll",                // Unknown (suspected malware).
+    L"cooliris.dll",               // CoolIris.
+    L"cplushook.dll",              // Unknown (suspected malware).
+    L"dockshellhook.dll",          // Stardock Objectdock.
+    L"easyhook32.dll",             // GDIPP and others.
+    L"easyhook64.dll",             // Symantec BlueCoat and others.
+    L"esspd.dll",                  // Samsung Smart Security ESCORT.
+    L"googledesktopnetwork3.dll",  // Google Desktop Search v5.
+    L"fwhook.dll",                 // PC Tools Firewall Plus.
+    L"guard64.dll",                // Comodo Internet Security x64.
+    L"hookprocesscreation.dll",    // Blumentals Program protector.
+    L"hookterminateapis.dll",      // Blumentals and Cyberprinter.
+    L"hookprintapis.dll",          // Cyberprinter.
+    L"imon.dll",                   // NOD32 Antivirus.
+    L"icatcdll.dll",               // Samsung Smart Security ESCORT.
+    L"icdcnl.dll",                 // Samsung Smart Security ESCORT.
+    L"ioloHL.dll",                 // Iolo (System Mechanic).
+    L"kloehk.dll",                 // Kaspersky Internet Security.
+    L"lawenforcer.dll",            // Spyware-Browser AntiSpyware (Spybro).
+    L"libdivx.dll",                // DivX.
+    L"lvprcinj01.dll",             // Logitech QuickCam.
+    L"madchook.dll",               // Madshi (generic hooking library).
+    L"mdnsnsp.dll",                // Bonjour.
+    L"moonsysh.dll",               // Moon Secure Antivirus.
+    L"mpk.dll",                    // KGB Spy.
+    L"npdivx32.dll",               // DivX.
+    L"npggNT.des",                 // GameGuard 2008.
+    L"npggNT.dll",                 // GameGuard (older).
+    L"oawatch.dll",                // Online Armor.
+    L"pastali32.dll",              // PastaLeads.
+    L"pavhook.dll",                // Panda Internet Security.
+    L"pavlsphook.dll",             // Panda Antivirus.
+    L"pavshook.dll",               // Panda Antivirus.
+    L"pavshookwow.dll",            // Panda Antivirus.
+    L"pctavhook.dll",              // PC Tools Antivirus.
+    L"pctgmhk.dll",                // PC Tools Spyware Doctor.
+    L"picrmi32.dll",               // PicRec.
+    L"picrmi64.dll",               // PicRec.
+    L"prntrack.dll",               // Pharos Systems.
+    L"protector.dll",              // Unknown (suspected malware).
+    L"radhslib.dll",               // Radiant Naomi Internet Filter.
+    L"radprlib.dll",               // Radiant Naomi Internet Filter.
+    L"rapportnikko.dll",           // Trustware Rapport.
+    L"rlhook.dll",                 // Trustware Bufferzone.
+    L"rooksdol.dll",               // Trustware Rapport.
+    L"rndlpepperbrowserrecordhelper.dll",  // RealPlayer.
+    L"rpchromebrowserrecordhelper.dll",    // RealPlayer.
+    L"r3hook.dll",                         // Kaspersky Internet Security.
+    L"sahook.dll",                         // McAfee Site Advisor.
+    L"sbrige.dll",                         // Unknown.
+    L"sc2hook.dll",                        // Supercopier 2.
+    L"sdhook32.dll",             // Spybot - Search & Destroy Live Protection.
+    L"sguard.dll",               // Iolo (System Guard).
+    L"smum32.dll",               // Spyware Doctor version 6.
+    L"smumhook.dll",             // Spyware Doctor version 5.
+    L"ssldivx.dll",              // DivX.
+    L"syncor11.dll",             // SynthCore Midi interface.
+    L"systools.dll",             // Panda Antivirus.
+    L"tfwah.dll",                // Threatfire (PC tools).
+    L"wblind.dll",               // Stardock Object desktop.
+    L"wbhelp.dll",               // Stardock Object desktop.
+    L"windowsapihookdll32.dll",  // Lenovo One Key Theater (crbug.com/536056).
+    L"windowsapihookdll64.dll",  // Lenovo One Key Theater (crbug.com/536056).
+    L"winstylerthemehelper.dll"  // Tuneup utilities 2006.
 };
 
 #if !defined(NACL_WIN64)
@@ -402,27 +405,15 @@ sandbox::ResultCode AddPolicyForSandboxedProcess(
   sandbox::ResultCode result = sandbox::SBOX_ALL_OK;
 
   // Win8+ adds a device DeviceApi that we don't need.
-  if (base::win::GetVersion() > base::win::VERSION_WIN7)
+  if (base::win::GetVersion() >= base::win::VERSION_WIN8)
     result = policy->AddKernelObjectToClose(L"File", L"\\Device\\DeviceApi");
   if (result != sandbox::SBOX_ALL_OK)
     return result;
 
-  // Close the proxy settings on XP.
-  if (base::win::GetVersion() <= base::win::VERSION_SERVER_2003)
-    result = policy->AddKernelObjectToClose(L"Key",
-                 L"HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\" \
-                     L"CurrentVersion\\Internet Settings");
-  if (result != sandbox::SBOX_ALL_OK)
-    return result;
-
-  sandbox::TokenLevel initial_token = sandbox::USER_UNPROTECTED;
-  if (base::win::GetVersion() > base::win::VERSION_XP) {
-    // On 2003/Vista the initial token has to be restricted if the main
-    // token is restricted.
-    initial_token = sandbox::USER_RESTRICTED_SAME_ACCESS;
-  }
-
-  result = policy->SetTokenLevel(initial_token, sandbox::USER_LOCKDOWN);
+  // On 2003/Vista+ the initial token has to be restricted if the main
+  // token is restricted.
+  result = policy->SetTokenLevel(sandbox::USER_RESTRICTED_SAME_ACCESS,
+                                 sandbox::USER_LOCKDOWN);
   if (result != sandbox::SBOX_ALL_OK)
     return result;
   // Prevents the renderers from manipulating low-integrity processes.
@@ -583,6 +574,33 @@ bool IsAppContainerEnabled() {
                           base::CompareCase::INSENSITIVE_ASCII);
 }
 
+sandbox::ResultCode SetJobMemoryLimit(const base::CommandLine& cmd_line,
+                                      sandbox::TargetPolicy* policy) {
+  DCHECK_NE(policy->GetJobLevel(), sandbox::JOB_NONE);
+
+#ifdef _WIN64
+  int64_t GB = 1024 * 1024 * 1024;
+  size_t memory_limit = 4 * GB;
+
+  // Note that this command line flag hasn't been fetched by all
+  // callers of SetJobLevel, only those in this file.
+  if (cmd_line.GetSwitchValueASCII(switches::kProcessType) ==
+      switches::kGpuProcess) {
+    // Allow the GPU process's sandbox to access more physical memory if
+    // it's available on the system.
+    int64_t physical_memory = base::SysInfo::AmountOfPhysicalMemory();
+    if (physical_memory > 16 * GB) {
+      memory_limit = 16 * GB;
+    } else if (physical_memory > 8 * GB) {
+      memory_limit = 8 * GB;
+    }
+  }
+  return policy->SetJobMemoryLimit(memory_limit);
+#else
+  return sandbox::SBOX_ALL_OK;
+#endif
+}
+
 }  // namespace
 
 sandbox::ResultCode SetJobLevel(const base::CommandLine& cmd_line,
@@ -592,18 +610,28 @@ sandbox::ResultCode SetJobLevel(const base::CommandLine& cmd_line,
   if (!ShouldSetJobLevel(cmd_line))
     return policy->SetJobLevel(sandbox::JOB_NONE, 0);
 
-#ifdef _WIN64
-  sandbox::ResultCode ret =
-      policy->SetJobMemoryLimit(4ULL * 1024 * 1024 * 1024);
+  sandbox::ResultCode ret = policy->SetJobLevel(job_level, ui_exceptions);
   if (ret != sandbox::SBOX_ALL_OK)
     return ret;
-#endif
-  return policy->SetJobLevel(job_level, ui_exceptions);
+
+  return SetJobMemoryLimit(cmd_line, policy);
 }
+
+// This is for finch. See also crbug.com/464430 for details.
+const base::Feature kEnableCsrssLockdownFeature{
+    "EnableCsrssLockdown", base::FEATURE_DISABLED_BY_DEFAULT};
 
 // TODO(jschuh): Need get these restrictions applied to NaCl and Pepper.
 // Just have to figure out what needs to be warmed up first.
 sandbox::ResultCode AddBaseHandleClosePolicy(sandbox::TargetPolicy* policy) {
+  if (base::FeatureList::IsEnabled(kEnableCsrssLockdownFeature)) {
+    // Close all ALPC ports.
+    sandbox::ResultCode ret = policy->SetDisconnectCsrss();
+    if (ret != sandbox::SBOX_ALL_OK) {
+      return ret;
+    }
+  }
+
   // TODO(cpu): Add back the BaseNamedObjects policy.
   base::string16 object_path = PrependWindowsSessionPath(
       L"\\BaseNamedObjects\\windows_shell_global_counters");
@@ -711,19 +739,12 @@ sandbox::ResultCode StartSandboxedProcess(
 
   ProcessDebugFlags(cmd_line);
 
-  if ((!delegate->ShouldSandbox()) ||
+  if (IsUnsandboxedSandboxType(delegate->GetSandboxType()) ||
       browser_command_line.HasSwitch(switches::kNoSandbox) ||
       cmd_line->HasSwitch(switches::kNoSandbox)) {
     base::LaunchOptions options;
-
-    base::HandlesToInheritVector handles = handles_to_inherit;
-    if (!handles_to_inherit.empty()) {
-      options.inherit_handles = true;
-      options.handles_to_inherit = &handles;
-    }
-    base::Process unsandboxed_process = base::LaunchProcess(*cmd_line, options);
-
-    *process = std::move(unsandboxed_process);
+    options.handles_to_inherit = handles_to_inherit;
+    *process = base::LaunchProcess(*cmd_line, options);
     return sandbox::SBOX_ALL_OK;
   }
 
@@ -740,13 +761,11 @@ sandbox::ResultCode StartSandboxedProcess(
       sandbox::MITIGATION_BOTTOM_UP_ASLR |
       sandbox::MITIGATION_DEP |
       sandbox::MITIGATION_DEP_NO_ATL_THUNK |
+      sandbox::MITIGATION_EXTENSION_POINT_DISABLE |
       sandbox::MITIGATION_SEHOP |
       sandbox::MITIGATION_NONSYSTEM_FONT_DISABLE |
       sandbox::MITIGATION_IMAGE_LOAD_NO_REMOTE |
       sandbox::MITIGATION_IMAGE_LOAD_NO_LOW_LABEL;
-
-  if (base::FeatureList::IsEnabled(features::kWinSboxDisableExtensionPoints))
-    mitigations |= sandbox::MITIGATION_EXTENSION_POINT_DISABLE;
 
   sandbox::ResultCode result = sandbox::SBOX_ERROR_GENERIC;
   result = policy->SetProcessMitigations(mitigations);
@@ -765,6 +784,8 @@ sandbox::ResultCode StartSandboxedProcess(
   // Post-startup mitigations.
   mitigations = sandbox::MITIGATION_STRICT_HANDLE_CHECKS |
                 sandbox::MITIGATION_DLL_SEARCH_ORDER;
+  if (base::FeatureList::IsEnabled(features::kWinSboxForceMsSigned))
+    mitigations |= sandbox::MITIGATION_FORCE_MS_SIGNED_BINS;
 
   result = policy->SetDelayedProcessMitigations(mitigations);
   if (result != sandbox::SBOX_ALL_OK)

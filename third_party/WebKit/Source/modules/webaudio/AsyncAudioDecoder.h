@@ -28,14 +28,14 @@
 
 #include <memory>
 #include "platform/heap/Handle.h"
-#include "platform/wtf/build_config.h"
 
 namespace blink {
 
 class BaseAudioContext;
 class AudioBuffer;
-class AudioBufferCallback;
 class AudioBus;
+class DecodeErrorCallback;
+class DecodeSuccessCallback;
 class DOMArrayBuffer;
 class ScriptPromiseResolver;
 
@@ -58,8 +58,8 @@ class AsyncAudioDecoder {
   // appropriately when finished.
   void DecodeAsync(DOMArrayBuffer* audio_data,
                    float sample_rate,
-                   AudioBufferCallback* success_callback,
-                   AudioBufferCallback* error_callback,
+                   DecodeSuccessCallback*,
+                   DecodeErrorCallback*,
                    ScriptPromiseResolver*,
                    BaseAudioContext*);
 
@@ -67,13 +67,13 @@ class AsyncAudioDecoder {
   AudioBuffer* CreateAudioBufferFromAudioBus(AudioBus*);
   static void DecodeOnBackgroundThread(DOMArrayBuffer* audio_data,
                                        float sample_rate,
-                                       AudioBufferCallback* success_callback,
-                                       AudioBufferCallback* error_callback,
+                                       DecodeSuccessCallback*,
+                                       DecodeErrorCallback*,
                                        ScriptPromiseResolver*,
                                        BaseAudioContext*);
   static void NotifyComplete(DOMArrayBuffer* audio_data,
-                             AudioBufferCallback* success_callback,
-                             AudioBufferCallback* error_callback,
+                             DecodeSuccessCallback*,
+                             DecodeErrorCallback*,
                              AudioBus*,
                              ScriptPromiseResolver*,
                              BaseAudioContext*);

@@ -47,14 +47,13 @@
 #include "ash/shelf/shelf_constants.h"  // nogncheck
 #endif
 
+#if defined(OS_CHROMEOS)
+#include "chrome/browser/chromeos/lock_screen_apps/state_controller.h"
+#endif
+
 #if BUILDFLAG(ENABLE_PRINTING)
-#if BUILDFLAG(ENABLE_PRINT_PREVIEW)
-#include "chrome/browser/printing/print_preview_message_handler.h"
-#include "chrome/browser/printing/print_view_manager.h"
-#else
-#include "chrome/browser/printing/print_view_manager_basic.h"
-#endif  // BUILDFLAG(ENABLE_PRINT_PREVIEW)
-#endif  // BUILDFLAG(ENABLE_PRINTING)
+#include "chrome/browser/printing/printing_init.h"
+#endif
 
 namespace {
 
@@ -98,15 +97,16 @@ void OnCheckIsDefaultBrowserFinished(
   switch (state) {
     case shell_integration::IS_DEFAULT:
       OpenURLFromTabInternal(profile, params);
-      break;
+      return;
     case shell_integration::NOT_DEFAULT:
     case shell_integration::UNKNOWN_DEFAULT:
+    case shell_integration::OTHER_MODE_IS_DEFAULT:
       platform_util::OpenExternal(profile, params.url);
-      break;
+      return;
     case shell_integration::NUM_DEFAULT_STATES:
-      NOTREACHED();
       break;
   }
+  NOTREACHED();
 }
 
 }  // namespace
@@ -164,6 +164,7 @@ ChromeAppDelegate::NewWindowContentsDelegate::OpenURLFromTab(
 ChromeAppDelegate::ChromeAppDelegate(bool keep_alive)
     : has_been_shown_(false),
       is_hidden_(true),
+      for_lock_screen_app_(false),
       new_window_contents_delegate_(new NewWindowContentsDelegate()),
       weak_factory_(this) {
   if (keep_alive) {
@@ -190,13 +191,8 @@ void ChromeAppDelegate::InitWebContents(content::WebContents* web_contents) {
   favicon::CreateContentFaviconDriverForWebContents(web_contents);
 
 #if BUILDFLAG(ENABLE_PRINTING)
-#if BUILDFLAG(ENABLE_PRINT_PREVIEW)
-  printing::PrintViewManager::CreateForWebContents(web_contents);
-  printing::PrintPreviewMessageHandler::CreateForWebContents(web_contents);
-#else
-  printing::PrintViewManagerBasic::CreateForWebContents(web_contents);
-#endif  // BUILDFLAG(ENABLE_PRINT_PREVIEW)
-#endif  // BUILDFLAG(ENABLE_PRINTING)
+  printing::InitializePrinting(web_contents);
+#endif
   extensions::ChromeExtensionWebContentsObserver::CreateForWebContents(
       web_contents);
 
@@ -294,9 +290,9 @@ bool ChromeAppDelegate::CheckMediaAccessPermission(
           web_contents, security_origin, type, extension);
 }
 
-int ChromeAppDelegate::PreferredIconSize() {
+int ChromeAppDelegate::PreferredIconSize() const {
 #if defined(USE_ASH)
-  return ash::GetShelfConstant(ash::SHELF_SIZE);
+  return ash::kShelfSize;
 #else
   return extension_misc::EXTENSION_ICON_SMALL;
 #endif
@@ -336,8 +332,8 @@ void ChromeAppDelegate::OnHide() {
   // the window.
   content::BrowserThread::PostDelayedTask(
       content::BrowserThread::UI, FROM_HERE,
-      base::Bind(&ChromeAppDelegate::RelinquishKeepAliveAfterTimeout,
-                 weak_factory_.GetWeakPtr()),
+      base::BindOnce(&ChromeAppDelegate::RelinquishKeepAliveAfterTimeout,
+                     weak_factory_.GetWeakPtr()),
       base::TimeDelta::FromSeconds(kAppWindowFirstShowTimeoutSeconds));
 }
 
@@ -346,6 +342,18 @@ void ChromeAppDelegate::OnShow() {
   is_hidden_ = false;
   keep_alive_.reset(new ScopedKeepAlive(KeepAliveOrigin::CHROME_APP_DELEGATE,
                                         KeepAliveRestartOption::DISABLED));
+}
+
+bool ChromeAppDelegate::TakeFocus(content::WebContents* web_contents,
+                                  bool reverse) {
+  if (!for_lock_screen_app_)
+    return false;
+#if defined(OS_CHROMEOS)
+  return lock_screen_apps::StateController::Get()->HandleTakeFocus(web_contents,
+                                                                   reverse);
+#else
+  return false;
+#endif
 }
 
 void ChromeAppDelegate::Observe(int type,

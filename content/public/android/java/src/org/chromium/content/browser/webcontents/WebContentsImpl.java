@@ -13,6 +13,7 @@ import android.os.Message;
 import android.os.Parcel;
 import android.os.ParcelUuid;
 import android.os.Parcelable;
+import android.support.annotation.Nullable;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
@@ -22,8 +23,10 @@ import org.chromium.content.browser.AppWebMessagePort;
 import org.chromium.content.browser.MediaSessionImpl;
 import org.chromium.content.browser.RenderCoordinates;
 import org.chromium.content.browser.framehost.RenderFrameHostDelegate;
+import org.chromium.content.browser.framehost.RenderFrameHostImpl;
 import org.chromium.content_public.browser.AccessibilitySnapshotCallback;
 import org.chromium.content_public.browser.AccessibilitySnapshotNode;
+import org.chromium.content_public.browser.ChildProcessImportance;
 import org.chromium.content_public.browser.ContentBitmapCallback;
 import org.chromium.content_public.browser.ImageDownloadCallback;
 import org.chromium.content_public.browser.JavaScriptCallback;
@@ -34,7 +37,6 @@ import org.chromium.content_public.browser.SmartClipCallback;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.browser.WebContentsObserver;
 import org.chromium.ui.OverscrollRefreshHandler;
-import org.chromium.ui.accessibility.AXTextStyle;
 import org.chromium.ui.base.EventForwarder;
 import org.chromium.ui.base.WindowAndroid;
 
@@ -96,9 +98,13 @@ import java.util.UUID;
                 }
             };
 
+    // Note this list may be incomplete. Frames that never had to initialize java side would
+    // not have an entry here. This is here mainly to keep the java RenderFrameHosts alive, since
+    // native side generally cannot safely hold strong references to them.
+    private final List<RenderFrameHostImpl> mFrames = new ArrayList<>();
+
     private long mNativeWebContentsAndroid;
     private NavigationController mNavigationController;
-    private RenderFrameHost mMainFrame;
 
     // Lazily created proxy observer for handling all Java-based WebContentsObservers.
     private WebContentsObserverProxy mObserverProxy;
@@ -158,6 +164,20 @@ import java.util.UUID;
         }
     }
 
+    // =================== RenderFrameHostDelegate overrides ===================
+    @Override
+    public void renderFrameCreated(RenderFrameHostImpl host) {
+        assert !mFrames.contains(host);
+        mFrames.add(host);
+    }
+
+    @Override
+    public void renderFrameDeleted(RenderFrameHostImpl host) {
+        assert mFrames.contains(host);
+        mFrames.remove(host);
+    }
+    // ================= end RenderFrameHostDelegate overrides =================
+
     @Override
     public int describeContents() {
         return 0;
@@ -205,10 +225,7 @@ import java.util.UUID;
 
     @Override
     public RenderFrameHost getMainFrame() {
-        if (mMainFrame == null) {
-            mMainFrame = nativeGetMainFrame(mNativeWebContentsAndroid);
-        }
-        return mMainFrame;
+        return nativeGetMainFrame(mNativeWebContentsAndroid);
     }
 
     @Override
@@ -252,6 +269,11 @@ import java.util.UUID;
     }
 
     @Override
+    public void pasteAsPlainText() {
+        nativePasteAsPlainText(mNativeWebContentsAndroid);
+    }
+
+    @Override
     public void replace(String word) {
         nativeReplace(mNativeWebContentsAndroid, word);
     }
@@ -278,6 +300,11 @@ import java.util.UUID;
     @Override
     public void onShow() {
         nativeOnShow(mNativeWebContentsAndroid);
+    }
+
+    @Override
+    public void setImportance(@ChildProcessImportance int importance) {
+        nativeSetImportance(mNativeWebContentsAndroid, importance);
     }
 
     @Override
@@ -348,12 +375,6 @@ import java.util.UUID;
     }
 
     @Override
-    public String getUrl() {
-        if (isDestroyed()) return null;
-        return nativeGetURL(mNativeWebContentsAndroid);
-    }
-
-    @Override
     public String getLastCommittedUrl() {
         return nativeGetLastCommittedURL(mNativeWebContentsAndroid);
     }
@@ -398,6 +419,10 @@ import java.util.UUID;
                     throw new IllegalStateException("Port is already started");
                 }
             }
+        }
+        // Treat "*" as a wildcard. Internally, a wildcard is a empty string.
+        if (targetOrigin.equals("*")) {
+            targetOrigin = "";
         }
         nativePostMessageToFrame(
                 mNativeWebContentsAndroid, frameName, message, sourceOrigin, targetOrigin, ports);
@@ -480,15 +505,12 @@ import java.util.UUID;
     @CalledByNative
     private static AccessibilitySnapshotNode createAccessibilitySnapshotNode(int parentRelativeLeft,
             int parentRelativeTop, int width, int height, boolean isRootNode, String text,
-            int color, int bgcolor, float size, int textStyle, String className) {
+            int color, int bgcolor, float size, boolean bold, boolean italic, boolean underline,
+            boolean lineThrough, String className) {
         AccessibilitySnapshotNode node = new AccessibilitySnapshotNode(text, className);
 
         // if size is smaller than 0, then style information does not exist.
         if (size >= 0.0) {
-            boolean bold = (textStyle & AXTextStyle.text_style_bold) > 0;
-            boolean italic = (textStyle & AXTextStyle.text_style_italic) > 0;
-            boolean underline = (textStyle & AXTextStyle.text_style_underline) > 0;
-            boolean lineThrough = (textStyle & AXTextStyle.text_style_line_through) > 0;
             node.setStyle(color, bgcolor, size, bold, italic, underline, lineThrough);
         }
         node.setLocationInfo(parentRelativeLeft, parentRelativeTop, width, height, isRootNode);
@@ -563,8 +585,8 @@ import java.util.UUID;
     }
 
     @Override
-    public void showContextMenuAtPoint(int x, int y) {
-        nativeShowContextMenuAtPoint(mNativeWebContentsAndroid, x, y);
+    public void showContextMenuAtTouchHandle(int x, int y) {
+        nativeShowContextMenuAtTouchHandle(mNativeWebContentsAndroid, x, y);
     }
 
     @Override
@@ -575,6 +597,11 @@ import java.util.UUID;
     @Override
     public boolean hasActiveEffectivelyFullscreenVideo() {
         return nativeHasActiveEffectivelyFullscreenVideo(mNativeWebContentsAndroid);
+    }
+
+    @Override
+    public @Nullable Rect getFullscreenVideoSize() {
+        return nativeGetFullscreenVideoSize(mNativeWebContentsAndroid);
     }
 
     @CalledByNative
@@ -602,6 +629,11 @@ import java.util.UUID;
         sizes.add(new Rect(0, 0, width, height));
     }
 
+    @CalledByNative
+    private static Rect createSize(int width, int height) {
+        return new Rect(0, 0, width, height);
+    }
+
     // This is static to avoid exposing a public destroy method on the native side of this class.
     private static native void nativeDestroyWebContents(long webContentsAndroidPtr);
 
@@ -617,11 +649,13 @@ import java.util.UUID;
     private native void nativeCut(long nativeWebContentsAndroid);
     private native void nativeCopy(long nativeWebContentsAndroid);
     private native void nativePaste(long nativeWebContentsAndroid);
+    private native void nativePasteAsPlainText(long nativeWebContentsAndroid);
     private native void nativeReplace(long nativeWebContentsAndroid, String word);
     private native void nativeSelectAll(long nativeWebContentsAndroid);
     private native void nativeCollapseSelection(long nativeWebContentsAndroid);
     private native void nativeOnHide(long nativeWebContentsAndroid);
     private native void nativeOnShow(long nativeWebContentsAndroid);
+    private native void nativeSetImportance(long nativeWebContentsAndroid, int importance);
     private native void nativeSuspendAllMediaPlayers(long nativeWebContentsAndroid);
     private native void nativeSetAudioMuted(long nativeWebContentsAndroid, boolean mute);
     private native int nativeGetBackgroundColor(long nativeWebContentsAndroid);
@@ -637,7 +671,6 @@ import java.util.UUID;
     private native void nativeSelectWordAroundCaret(long nativeWebContentsAndroid);
     private native void nativeAdjustSelectionByCharacterOffset(
             long nativeWebContentsAndroid, int startAdjust, int endAdjust);
-    private native String nativeGetURL(long nativeWebContentsAndroid);
     private native String nativeGetLastCommittedURL(long nativeWebContentsAndroid);
     private native boolean nativeIsIncognito(long nativeWebContentsAndroid);
     private native void nativeResumeLoadingCreatedWebContents(long nativeWebContentsAndroid);
@@ -665,8 +698,10 @@ import java.util.UUID;
             String url, boolean isFavicon, int maxBitmapSize,
             boolean bypassCache, ImageDownloadCallback callback);
     private native void nativeDismissTextHandles(long nativeWebContentsAndroid);
-    private native void nativeShowContextMenuAtPoint(long nativeWebContentsAndroid, int x, int y);
+    private native void nativeShowContextMenuAtTouchHandle(
+            long nativeWebContentsAndroid, int x, int y);
     private native void nativeSetHasPersistentVideo(long nativeWebContentsAndroid, boolean value);
     private native boolean nativeHasActiveEffectivelyFullscreenVideo(long nativeWebContentsAndroid);
+    private native Rect nativeGetFullscreenVideoSize(long nativeWebContentsAndroid);
     private native EventForwarder nativeGetOrCreateEventForwarder(long nativeWebContentsAndroid);
 }

@@ -27,7 +27,9 @@ class BoxReader;
 
 class MEDIA_EXPORT MP4StreamParser : public StreamParser {
  public:
-  MP4StreamParser(const std::set<int>& audio_object_types, bool has_sbr);
+  MP4StreamParser(const std::set<int>& audio_object_types,
+                  bool has_sbr,
+                  bool has_flac);
   ~MP4StreamParser() override;
 
   void Init(const InitCB& init_cb,
@@ -37,7 +39,7 @@ class MEDIA_EXPORT MP4StreamParser : public StreamParser {
             const EncryptedMediaInitDataCB& encrypted_media_init_data_cb,
             const NewMediaSegmentCB& new_segment_cb,
             const EndMediaSegmentCB& end_of_segment_cb,
-            const scoped_refptr<MediaLog>& media_log) override;
+            MediaLog* media_log) override;
   void Flush() override;
   bool Parse(const uint8_t* buf, int size) override;
 
@@ -94,7 +96,7 @@ class MEDIA_EXPORT MP4StreamParser : public StreamParser {
   EncryptedMediaInitDataCB encrypted_media_init_data_cb_;
   NewMediaSegmentCB new_segment_cb_;
   EndMediaSegmentCB end_of_segment_cb_;
-  scoped_refptr<MediaLog> media_log_;
+  MediaLog* media_log_;
 
   OffsetByteQueue queue_;
 
@@ -120,9 +122,11 @@ class MEDIA_EXPORT MP4StreamParser : public StreamParser {
   bool has_video_;
   std::set<uint32_t> audio_track_ids_;
   std::set<uint32_t> video_track_ids_;
-  // The object types allowed for audio tracks.
-  std::set<int> audio_object_types_;
-  bool has_sbr_;
+  // The object types allowed for audio tracks. For FLAC indication, use
+  // |has_flac_|;
+  const std::set<int> audio_object_types_;
+  const bool has_sbr_;
+  const bool has_flac_;
   std::map<uint32_t, bool> is_track_encrypted_;
 
   // Tracks the number of MEDIA_LOGS for skipping empty trun samples.

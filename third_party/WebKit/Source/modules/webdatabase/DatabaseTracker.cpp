@@ -61,8 +61,7 @@ static void DatabaseClosed(Database* database) {
 }
 
 DatabaseTracker& DatabaseTracker::Tracker() {
-  DEFINE_THREAD_SAFE_STATIC_LOCAL(DatabaseTracker, tracker,
-                                  new DatabaseTracker);
+  DEFINE_THREAD_SAFE_STATIC_LOCAL(DatabaseTracker, tracker, ());
   return tracker;
 }
 
@@ -128,7 +127,7 @@ void DatabaseTracker::RemoveOpenDatabase(Database* database) {
     if (!database_set)
       return;
 
-    DatabaseSet::iterator found = database_set->Find(database);
+    DatabaseSet::iterator found = database_set->find(database);
     if (found == database_set->end())
       return;
 
@@ -195,9 +194,8 @@ void DatabaseTracker::CloseDatabasesImmediately(SecurityOrigin* origin,
   }
 }
 
-void DatabaseTracker::ForEachOpenDatabaseInPage(
-    Page* page,
-    std::unique_ptr<DatabaseCallback> callback) {
+void DatabaseTracker::ForEachOpenDatabaseInPage(Page* page,
+                                                DatabaseCallback callback) {
   MutexLocker open_database_map_lock(open_database_map_guard_);
   if (!open_database_map_)
     return;
@@ -207,7 +205,7 @@ void DatabaseTracker::ForEachOpenDatabaseInPage(
         ExecutionContext* context = database->GetExecutionContext();
         DCHECK(context->IsDocument());
         if (ToDocument(context)->GetFrame()->GetPage() == page)
-          (*callback)(database);
+          callback(database);
       }
     }
   }
@@ -230,7 +228,7 @@ void DatabaseTracker::CloseOneDatabaseImmediately(const String& origin_string,
     if (!database_set)
       return;
 
-    DatabaseSet::iterator found = database_set->Find(database);
+    DatabaseSet::iterator found = database_set->find(database);
     if (found == database_set->end())
       return;
   }

@@ -11,6 +11,7 @@
 #include "base/containers/hash_tables.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_restrictions.h"
@@ -18,16 +19,16 @@
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
+#include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_view.h"
-#include "content/public/renderer/render_view_observer.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
+#include "content/public/test/frame_load_waiter.h"
 #include "content/public/test/test_utils.h"
 #include "content/renderer/savable_resources.h"
 #include "content/shell/browser/shell.h"
 #include "net/base/filename_util.h"
 #include "net/url_request/url_request_context.h"
-#include "third_party/WebKit/public/platform/WebCString.h"
 #include "third_party/WebKit/public/platform/WebData.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/platform/WebURL.h"
@@ -42,7 +43,6 @@
 #include "third_party/WebKit/public/web/WebNode.h"
 #include "third_party/WebKit/public/web/WebView.h"
 
-using blink::WebCString;
 using blink::WebData;
 using blink::WebDocument;
 using blink::WebElement;
@@ -64,24 +64,6 @@ bool HasDocType(const WebDocument& doc) {
   return doc.FirstChild().IsDocumentTypeNode();
 }
 
-class LoadObserver : public RenderViewObserver {
- public:
-  LoadObserver(RenderView* render_view, const base::Closure& quit_closure)
-      : RenderViewObserver(render_view),
-        quit_closure_(quit_closure) {}
-
-  void DidFinishLoad(blink::WebLocalFrame* frame) override {
-    if (frame == render_view()->GetWebView()->MainFrame())
-      quit_closure_.Run();
-  }
-
- private:
-  // RenderViewObserver implementation.
-  void OnDestruct() override { delete this; }
-
-  base::Closure quit_closure_;
-};
-
 class DomSerializerTests : public ContentBrowserTest,
                            public WebFrameSerializerClient {
  public:
@@ -101,13 +83,13 @@ class DomSerializerTests : public ContentBrowserTest,
   }
 
   // DomSerializerDelegate.
-  void DidSerializeDataForFrame(const WebCString& data,
+  void DidSerializeDataForFrame(const WebVector<char>& data,
                                 FrameSerializationStatus status) override {
     // Check finish status of current frame.
     ASSERT_FALSE(serialization_reported_end_of_data_);
 
     // Add data to corresponding frame's content.
-    serialized_contents_ += data;
+    serialized_contents_.append(data.Data(), data.size());
 
     // Current frame is completed saving, change the finish status.
     if (status == WebFrameSerializerClient::kCurrentFrameIsFinished)
@@ -122,13 +104,16 @@ class DomSerializerTests : public ContentBrowserTest,
     return GetRenderView()->GetWebView();
   }
 
-  WebFrame* GetMainFrame() { return GetWebView()->MainFrame(); }
+  WebLocalFrame* GetMainFrame() {
+    return GetRenderView()->GetMainRenderFrame()->GetWebFrame();
+  }
 
-  WebFrame* FindSubFrameByURL(const GURL& url) {
+  WebLocalFrame* FindSubFrameByURL(const GURL& url) {
     for (WebFrame* frame = GetWebView()->MainFrame(); frame;
          frame = frame->TraverseNext()) {
-      if (GURL(frame->GetDocument().Url()) == url)
-        return frame;
+      DCHECK(frame->IsWebLocalFrame());
+      if (GURL(frame->ToWebLocalFrame()->GetDocument().Url()) == url)
+        return frame->ToWebLocalFrame();
     }
     return nullptr;
   }
@@ -138,27 +123,19 @@ class DomSerializerTests : public ContentBrowserTest,
   void LoadContents(const std::string& contents,
                     const GURL& base_url,
                     const WebString encoding_info) {
-    scoped_refptr<MessageLoopRunner> runner = new MessageLoopRunner;
-    LoadObserver observer(GetRenderView(), runner->QuitClosure());
-
+    FrameLoadWaiter waiter(GetRenderView()->GetMainRenderFrame());
     // If input encoding is empty, use UTF-8 as default encoding.
     if (encoding_info.IsEmpty()) {
       GetMainFrame()->LoadHTMLString(contents, base_url);
     } else {
-      WebData data(contents.data(), contents.length());
-
       // Do not use WebFrame.LoadHTMLString because it assumes that input
       // html contents use UTF-8 encoding.
-      // TODO(darin): This should use WebFrame::loadData.
-      WebFrame* web_frame = GetMainFrame();
-
-      ASSERT_TRUE(web_frame != NULL);
-
-      web_frame->ToWebLocalFrame()->LoadData(data, "text/html", encoding_info,
-                                             base_url);
+      WebData data(contents.data(), contents.length());
+      GetMainFrame()->LoadData(data, "text/html", encoding_info, base_url);
     }
-
-    runner->Run();
+    base::MessageLoop::ScopedNestableTaskAllower allow(
+        base::MessageLoop::current());
+    waiter.Wait();
   }
 
   class SingleLinkRewritingDelegate
@@ -200,7 +177,7 @@ class DomSerializerTests : public ContentBrowserTest,
 
   void SerializeHTMLDOMWithDocTypeOnRenderer(const GURL& file_url) {
     // Make sure original contents have document type.
-    WebFrame* web_frame = FindSubFrameByURL(file_url);
+    WebLocalFrame* web_frame = FindSubFrameByURL(file_url);
     ASSERT_TRUE(web_frame != NULL);
     WebDocument doc = web_frame->GetDocument();
     ASSERT_TRUE(HasDocType(doc));
@@ -218,7 +195,7 @@ class DomSerializerTests : public ContentBrowserTest,
 
   void SerializeHTMLDOMWithoutDocTypeOnRenderer(const GURL& file_url) {
     // Make sure original contents do not have document type.
-    WebFrame* web_frame = FindSubFrameByURL(file_url);
+    WebLocalFrame* web_frame = FindSubFrameByURL(file_url);
     ASSERT_TRUE(web_frame != NULL);
     WebDocument doc = web_frame->GetDocument();
     ASSERT_TRUE(!HasDocType(doc));
@@ -264,7 +241,7 @@ class DomSerializerTests : public ContentBrowserTest,
   void SerializeHTMLDOMWithNoMetaCharsetInOriginalDocOnRenderer(
       const GURL& file_url) {
     // Make sure there is no META charset declaration in original document.
-    WebFrame* web_frame = FindSubFrameByURL(file_url);
+    WebLocalFrame* web_frame = FindSubFrameByURL(file_url);
     ASSERT_TRUE(web_frame != NULL);
     WebDocument doc = web_frame->GetDocument();
     ASSERT_TRUE(doc.IsHTMLDocument());
@@ -313,7 +290,7 @@ class DomSerializerTests : public ContentBrowserTest,
       const GURL& file_url) {
     // Make sure there are multiple META charset declarations in original
     // document.
-    WebFrame* web_frame = FindSubFrameByURL(file_url);
+    WebLocalFrame* web_frame = FindSubFrameByURL(file_url);
     ASSERT_TRUE(web_frame != NULL);
     WebDocument doc = web_frame->GetDocument();
     ASSERT_TRUE(doc.IsHTMLDocument());
@@ -329,7 +306,7 @@ class DomSerializerTests : public ContentBrowserTest,
         ++charset_declaration_count;
     }
     // The original doc has more than META tags which have charset declaration.
-    ASSERT_TRUE(charset_declaration_count > 1);
+    ASSERT_GT(charset_declaration_count, 1);
 
     // Do serialization.
     SerializeDomForURL(file_url);
@@ -377,7 +354,7 @@ class DomSerializerTests : public ContentBrowserTest,
     LoadContents(original_contents, file_url, WebString());
 
     // Get BODY's text content in DOM.
-    WebFrame* web_frame = FindSubFrameByURL(file_url);
+    WebLocalFrame* web_frame = FindSubFrameByURL(file_url);
     ASSERT_TRUE(web_frame != NULL);
     WebDocument doc = web_frame->GetDocument();
     ASSERT_TRUE(doc.IsHTMLDocument());
@@ -385,7 +362,7 @@ class DomSerializerTests : public ContentBrowserTest,
     ASSERT_TRUE(!body_ele.IsNull());
     WebNode text_node = body_ele.FirstChild();
     ASSERT_TRUE(text_node.IsTextNode());
-    ASSERT_TRUE(std::string(text_node.NodeValue().Utf8()) == "&<>\"\'");
+    ASSERT_EQ(text_node.NodeValue().Utf8(), "&<>\"\'");
     // Do serialization.
     SerializeDomForURL(file_url);
     // Compare the serialized contents with original contents.
@@ -429,14 +406,14 @@ class DomSerializerTests : public ContentBrowserTest,
     // Load the test contents.
     LoadContents(original_contents, file_url, WebString());
     // Get value of BODY's title attribute in DOM.
-    WebFrame* web_frame = FindSubFrameByURL(file_url);
+    WebLocalFrame* web_frame = FindSubFrameByURL(file_url);
     ASSERT_TRUE(web_frame != NULL);
     WebDocument doc = web_frame->GetDocument();
     ASSERT_TRUE(doc.IsHTMLDocument());
     WebElement body_ele = doc.Body();
     ASSERT_TRUE(!body_ele.IsNull());
     WebString value = body_ele.GetAttribute("title");
-    ASSERT_TRUE(std::string(value.Utf8()) == "&<>\"\'");
+    ASSERT_EQ(value.Utf8(), "&<>\"\'");
     // Do serialization.
     SerializeDomForURL(file_url);
     // Compare the serialized contents with original contents.
@@ -463,7 +440,7 @@ class DomSerializerTests : public ContentBrowserTest,
 
   void SerializeHTMLDOMWithNonStandardEntitiesOnRenderer(const GURL& file_url) {
     // Get value of BODY's title attribute in DOM.
-    WebFrame* web_frame = FindSubFrameByURL(file_url);
+    WebLocalFrame* web_frame = FindSubFrameByURL(file_url);
     WebDocument doc = web_frame->GetDocument();
     ASSERT_TRUE(doc.IsHTMLDocument());
     WebElement body_element = doc.Body();
@@ -495,7 +472,7 @@ class DomSerializerTests : public ContentBrowserTest,
     // Since for this test, we assume there is no savable sub-resource links for
     // this test file, also all links are relative URLs in this test file, so we
     // need to check those relative URLs and make sure document has BASE tag.
-    WebFrame* web_frame = FindSubFrameByURL(file_url);
+    WebLocalFrame* web_frame = FindSubFrameByURL(file_url);
     ASSERT_TRUE(web_frame != NULL);
     WebDocument doc = web_frame->GetDocument();
     ASSERT_TRUE(doc.IsHTMLDocument());
@@ -586,7 +563,7 @@ class DomSerializerTests : public ContentBrowserTest,
     LoadContents(empty_head_contents, file_url, WebString());
 
     // Make sure the head tag is empty.
-    WebFrame* web_frame = GetMainFrame();
+    WebLocalFrame* web_frame = GetMainFrame();
     ASSERT_TRUE(web_frame != NULL);
     WebDocument doc = web_frame->GetDocument();
     ASSERT_TRUE(doc.IsHTMLDocument());
@@ -626,7 +603,7 @@ class DomSerializerTests : public ContentBrowserTest,
 
   void SubResourceForElementsInNonHTMLNamespaceOnRenderer(
       const GURL& file_url) {
-    WebFrame* web_frame = FindSubFrameByURL(file_url);
+    WebLocalFrame* web_frame = FindSubFrameByURL(file_url);
     ASSERT_TRUE(web_frame != NULL);
     WebDocument doc = web_frame->GetDocument();
     WebNode lastNodeInBody = doc.Body().LastChild();

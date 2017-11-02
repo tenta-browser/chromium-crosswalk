@@ -24,13 +24,15 @@ class WebFaviconDriver : public web::WebStateObserver,
                          public web::WebStateUserData<WebFaviconDriver>,
                          public FaviconDriverImpl {
  public:
+  ~WebFaviconDriver() override;
+
   static void CreateForWebState(web::WebState* web_state,
                                 FaviconService* favicon_service,
                                 history::HistoryService* history_service,
                                 bookmarks::BookmarkModel* bookmark_model);
 
   // FaviconDriver implementation.
-  void FetchFavicon(const GURL& url) override;
+  void FetchFavicon(const GURL& page_url, bool is_same_document) override;
   gfx::Image GetFavicon() const override;
   bool FaviconIsValid() const override;
   GURL GetActiveURL() override;
@@ -39,6 +41,8 @@ class WebFaviconDriver : public web::WebStateObserver,
   int DownloadImage(const GURL& url,
                     int max_image_size,
                     ImageDownloadCallback callback) override;
+  void DownloadManifest(const GURL& url,
+                        ManifestDownloadCallback callback) override;
   bool IsOffTheRecord() override;
   void OnFaviconUpdated(
       const GURL& page_url,
@@ -54,7 +58,6 @@ class WebFaviconDriver : public web::WebStateObserver,
                    FaviconService* favicon_service,
                    history::HistoryService* history_service,
                    bookmarks::BookmarkModel* bookmark_model);
-  ~WebFaviconDriver() override;
 
   // web::WebStateObserver implementation.
   void FaviconUrlUpdated(

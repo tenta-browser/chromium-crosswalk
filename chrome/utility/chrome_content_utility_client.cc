@@ -10,29 +10,37 @@
 
 #include "base/command_line.h"
 #include "base/files/file_path.h"
+#include "base/lazy_instance.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
+#include "chrome/common/features.h"
 #include "chrome/common/file_patcher.mojom.h"
+#include "chrome/common/profiling/constants.mojom.h"
+#include "chrome/profiling/profiling_service.h"
 #include "chrome/utility/utility_message_handler.h"
 #include "components/payments/content/utility/payment_manifest_parser.h"
 #include "components/safe_json/utility/safe_json_parser_mojo_impl.h"
 #include "content/public/common/content_switches.h"
-#include "content/public/common/service_info.h"
+#include "content/public/common/service_manager_connection.h"
+#include "content/public/common/simple_connection_filter.h"
 #include "content/public/utility/utility_thread.h"
 #include "courgette/courgette.h"
 #include "courgette/third_party/bsdiff/bsdiff.h"
 #include "extensions/features/features.h"
 #include "mojo/public/cpp/bindings/strong_binding.h"
 #include "printing/features/features.h"
-#include "services/service_manager/public/cpp/interface_registry.h"
+#include "services/service_manager/embedder/embedded_service_info.h"
+#include "services/service_manager/public/cpp/binder_registry.h"
 #include "third_party/zlib/google/zip.h"
 
 #if !defined(OS_ANDROID)
 #include "chrome/common/resource_usage_reporter.mojom.h"
+#include "chrome/utility/importer/profile_import_impl.h"
+#include "chrome/utility/importer/profile_import_service.h"
 #include "chrome/utility/media_router/dial_device_description_parser_impl.h"
-#include "chrome/utility/profile_import_handler.h"
-#include "net/proxy/mojo_proxy_resolver_factory_impl.h"
+#include "net/proxy/mojo_proxy_resolver_factory_impl.h"  // nogncheck
 #include "net/proxy/proxy_resolver_v8.h"
 #endif  // !defined(OS_ANDROID)
 
@@ -41,7 +49,6 @@
 #endif
 
 #if defined(OS_WIN)
-#include "chrome/utility/ipc_shell_handler_win.h"
 #include "chrome/utility/shell_handler_impl_win.h"
 #endif
 
@@ -54,10 +61,16 @@
 #include "chrome/utility/printing_handler.h"
 #endif
 
+#if BUILDFLAG(ENABLE_PRINTING)
+#include "chrome/common/chrome_content_client.h"
+#include "components/printing/service/public/cpp/pdf_compositor_service_factory.h"
+#include "components/printing/service/public/interfaces/pdf_compositor.mojom.h"  // nogncheck
+#endif
+
 #if defined(FULL_SAFE_BROWSING)
-#include "chrome/common/safe_archive_analyzer.mojom.h"
+#include "chrome/common/safe_browsing/archive_analyzer_results.h"
+#include "chrome/common/safe_browsing/safe_archive_analyzer.mojom.h"
 #include "chrome/common/safe_browsing/zip_analyzer.h"
-#include "chrome/common/safe_browsing/zip_analyzer_results.h"
 #if defined(OS_MACOSX)
 #include "chrome/utility/safe_browsing/mac/dmg_analyzer.h"
 #endif
@@ -159,7 +172,7 @@ class SafeArchiveAnalyzerImpl : public chrome::mojom::SafeArchiveAnalyzer {
     DCHECK(temporary_file.IsValid());
     DCHECK(zip_file.IsValid());
 
-    safe_browsing::zip_analyzer::Results results;
+    safe_browsing::ArchiveAnalyzerResults results;
     safe_browsing::zip_analyzer::AnalyzeZipFile(
         std::move(zip_file), std::move(temporary_file), &results);
     callback.Run(results);
@@ -169,7 +182,7 @@ class SafeArchiveAnalyzerImpl : public chrome::mojom::SafeArchiveAnalyzer {
                       const AnalyzeDmgFileCallback& callback) override {
 #if defined(OS_MACOSX)
     DCHECK(dmg_file.IsValid());
-    safe_browsing::zip_analyzer::Results results;
+    safe_browsing::ArchiveAnalyzerResults results;
     safe_browsing::dmg::AnalyzeDMGFile(std::move(dmg_file), &results);
     callback.Run(results);
 #else
@@ -210,11 +223,14 @@ class ResourceUsageReporterImpl : public chrome::mojom::ResourceUsageReporter {
 };
 
 void CreateResourceUsageReporter(
-    mojo::InterfaceRequest<chrome::mojom::ResourceUsageReporter> request) {
+    chrome::mojom::ResourceUsageReporterRequest request) {
   mojo::MakeStrongBinding(base::MakeUnique<ResourceUsageReporterImpl>(),
                           std::move(request));
 }
 #endif  // !defined(OS_ANDROID)
+
+base::LazyInstance<ChromeContentUtilityClient::NetworkBinderCreationCallback>::
+    Leaky g_network_binder_creation_callback = LAZY_INSTANCE_INITIALIZER;
 
 }  // namespace
 
@@ -228,10 +244,6 @@ ChromeContentUtilityClient::ChromeContentUtilityClient()
     (BUILDFLAG(ENABLE_BASIC_PRINTING) && defined(OS_WIN))
   handlers_.push_back(base::MakeUnique<printing::PrintingHandler>());
 #endif
-
-#if defined(OS_WIN)
-  handlers_.push_back(base::MakeUnique<IPCShellHandler>());
-#endif
 }
 
 ChromeContentUtilityClient::~ChromeContentUtilityClient() = default;
@@ -244,6 +256,58 @@ void ChromeContentUtilityClient::UtilityThreadStarted() {
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   if (command_line->HasSwitch(switches::kUtilityProcessRunningElevated))
     utility_process_running_elevated_ = true;
+
+  content::ServiceManagerConnection* connection =
+      content::ChildThread::Get()->GetServiceManagerConnection();
+
+  // NOTE: Some utility process instances are not connected to the Service
+  // Manager. Nothing left to do in that case.
+  if (!connection)
+    return;
+
+  auto registry = base::MakeUnique<service_manager::BinderRegistry>();
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+  extensions::ExtensionsHandler::ExposeInterfacesToBrowser(
+      registry.get(), utility_process_running_elevated_);
+  extensions::utility_handler::ExposeInterfacesToBrowser(
+      registry.get(), utility_process_running_elevated_);
+#endif
+  // If our process runs with elevated privileges, only add elevated Mojo
+  // interfaces to the interface registry.
+  if (!utility_process_running_elevated_) {
+    registry->AddInterface(base::Bind(&FilePatcherImpl::Create),
+                           base::ThreadTaskRunnerHandle::Get());
+#if !defined(OS_ANDROID)
+    registry->AddInterface<net::interfaces::ProxyResolverFactory>(
+        base::Bind(CreateProxyResolverFactory),
+        base::ThreadTaskRunnerHandle::Get());
+    registry->AddInterface(base::Bind(CreateResourceUsageReporter),
+                           base::ThreadTaskRunnerHandle::Get());
+    registry->AddInterface(
+        base::Bind(&media_router::DialDeviceDescriptionParserImpl::Create),
+        base::ThreadTaskRunnerHandle::Get());
+#endif  // !defined(OS_ANDROID)
+    registry->AddInterface(base::Bind(&payments::PaymentManifestParser::Create),
+                           base::ThreadTaskRunnerHandle::Get());
+    registry->AddInterface(
+        base::Bind(&safe_json::SafeJsonParserMojoImpl::Create),
+        base::ThreadTaskRunnerHandle::Get());
+#if defined(OS_WIN)
+    registry->AddInterface(base::Bind(&ShellHandlerImpl::Create),
+                           base::ThreadTaskRunnerHandle::Get());
+#endif
+#if defined(OS_CHROMEOS)
+    registry->AddInterface(base::Bind(&ZipFileCreatorImpl::Create),
+                           base::ThreadTaskRunnerHandle::Get());
+#endif
+#if defined(FULL_SAFE_BROWSING)
+    registry->AddInterface(base::Bind(&SafeArchiveAnalyzerImpl::Create),
+                           base::ThreadTaskRunnerHandle::Get());
+#endif
+  }
+
+  connection->AddConnectionFilter(
+      base::MakeUnique<content::SimpleConnectionFilter>(std::move(registry)));
 }
 
 bool ChromeContentUtilityClient::OnMessageReceived(
@@ -259,40 +323,34 @@ bool ChromeContentUtilityClient::OnMessageReceived(
   return false;
 }
 
-void ChromeContentUtilityClient::ExposeInterfacesToBrowser(
-    service_manager::InterfaceRegistry* registry) {
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-  extensions::ExtensionsHandler::ExposeInterfacesToBrowser(
-      registry, utility_process_running_elevated_);
-  extensions::utility_handler::ExposeInterfacesToBrowser(
-      registry, utility_process_running_elevated_);
+void ChromeContentUtilityClient::RegisterServices(
+    ChromeContentUtilityClient::StaticServiceMap* services) {
+#if BUILDFLAG(ENABLE_PRINTING)
+  service_manager::EmbeddedServiceInfo pdf_compositor_info;
+  pdf_compositor_info.factory =
+      base::Bind(&printing::CreatePdfCompositorService, GetUserAgent());
+  services->emplace(printing::mojom::kServiceName, pdf_compositor_info);
 #endif
-  // If our process runs with elevated privileges, only add elevated Mojo
-  // interfaces to the interface registry.
-  if (utility_process_running_elevated_)
-    return;
 
-  registry->AddInterface(base::Bind(&FilePatcherImpl::Create));
+  service_manager::EmbeddedServiceInfo profiling_info;
+  profiling_info.task_runner = content::ChildThread::Get()->GetIOTaskRunner();
+  profiling_info.factory =
+      base::Bind(&profiling::ProfilingService::CreateService);
+  services->emplace(profiling::mojom::kServiceName, profiling_info);
+
 #if !defined(OS_ANDROID)
-  registry->AddInterface<net::interfaces::ProxyResolverFactory>(
-      base::Bind(CreateProxyResolverFactory));
-  registry->AddInterface(base::Bind(CreateResourceUsageReporter));
-  registry->AddInterface(base::Bind(&ProfileImportHandler::Create));
-  registry->AddInterface(
-      base::Bind(&media_router::DialDeviceDescriptionParserImpl::Create));
-#endif  // !defined(OS_ANDROID)
-  registry->AddInterface(base::Bind(&payments::PaymentManifestParser::Create));
-  registry->AddInterface(
-      base::Bind(&safe_json::SafeJsonParserMojoImpl::Create));
-#if defined(OS_WIN)
-  registry->AddInterface(base::Bind(&ShellHandlerImpl::Create));
+  service_manager::EmbeddedServiceInfo profile_import_info;
+  profile_import_info.factory =
+      base::Bind(&ProfileImportService::CreateService);
+  services->emplace(chrome::mojom::kProfileImportServiceName,
+                    profile_import_info);
 #endif
-#if defined(OS_CHROMEOS)
-  registry->AddInterface(base::Bind(&ZipFileCreatorImpl::Create));
-#endif
-#if defined(FULL_SAFE_BROWSING)
-  registry->AddInterface(base::Bind(&SafeArchiveAnalyzerImpl::Create));
-#endif
+}
+
+void ChromeContentUtilityClient::RegisterNetworkBinders(
+    service_manager::BinderRegistry* registry) {
+  if (g_network_binder_creation_callback.Get())
+    g_network_binder_creation_callback.Get().Run(registry);
 }
 
 // static
@@ -300,4 +358,10 @@ void ChromeContentUtilityClient::PreSandboxStartup() {
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   extensions::ExtensionsHandler::PreSandboxStartup();
 #endif
+}
+
+// static
+void ChromeContentUtilityClient::SetNetworkBinderCreationCallback(
+    const NetworkBinderCreationCallback& callback) {
+  g_network_binder_creation_callback.Get() = callback;
 }

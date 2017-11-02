@@ -6,24 +6,23 @@
 #define CC_IPC_CC_PARAM_TRAITS_MACROS_H_
 
 #include "cc/base/filter_operation.h"
-#include "cc/output/begin_frame_args.h"
 #include "cc/output/compositor_frame.h"
 #include "cc/quads/debug_border_draw_quad.h"
 #include "cc/quads/draw_quad.h"
 #include "cc/quads/render_pass.h"
-#include "cc/quads/shared_quad_state.h"
 #include "cc/quads/solid_color_draw_quad.h"
 #include "cc/quads/stream_video_draw_quad.h"
 #include "cc/quads/surface_draw_quad.h"
 #include "cc/quads/texture_draw_quad.h"
 #include "cc/quads/tile_draw_quad.h"
 #include "cc/quads/yuv_video_draw_quad.h"
-#include "cc/resources/resource_format.h"
-#include "cc/resources/returned_resource.h"
-#include "cc/resources/transferable_resource.h"
-#include "cc/surfaces/surface_id.h"
-#include "cc/surfaces/surface_info.h"
-#include "cc/surfaces/surface_sequence.h"
+#include "components/viz/common/frame_sinks/begin_frame_args.h"
+#include "components/viz/common/resources/resource_format.h"
+#include "components/viz/common/resources/returned_resource.h"
+#include "components/viz/common/resources/transferable_resource.h"
+#include "components/viz/common/surfaces/surface_id.h"
+#include "components/viz/common/surfaces/surface_info.h"
+#include "components/viz/common/surfaces/surface_sequence.h"
 #include "ui/gfx/ipc/color/gfx_param_traits.h"
 #include "ui/gfx/ipc/gfx_param_traits.h"
 #include "ui/gfx/ipc/skia/gfx_skia_param_traits.h"
@@ -35,7 +34,10 @@
 IPC_ENUM_TRAITS_MAX_VALUE(cc::DrawQuad::Material, cc::DrawQuad::MATERIAL_LAST)
 IPC_ENUM_TRAITS_MAX_VALUE(cc::FilterOperation::FilterType,
                           cc::FilterOperation::FILTER_TYPE_LAST)
-IPC_ENUM_TRAITS_MAX_VALUE(cc::ResourceFormat, cc::RESOURCE_FORMAT_MAX)
+// TODO(wutao): This trait belongs with skia code.
+IPC_ENUM_TRAITS_MAX_VALUE(SkBlurImageFilter::TileMode,
+                          SkBlurImageFilter::kMax_TileMode)
+IPC_ENUM_TRAITS_MAX_VALUE(viz::ResourceFormat, viz::RESOURCE_FORMAT_MAX)
 
 // TODO(fsamuel): This trait belongs with skia code.
 IPC_ENUM_TRAITS_MAX_VALUE(SkBlendMode, SkBlendMode::kLastMode)
@@ -44,7 +46,7 @@ IPC_ENUM_TRAITS_MAX_VALUE(cc::YUVVideoDrawQuad::ColorSpace,
 IPC_ENUM_TRAITS_MAX_VALUE(cc::SurfaceDrawQuadType,
                           cc::SurfaceDrawQuadType::LAST)
 
-IPC_STRUCT_TRAITS_BEGIN(cc::SurfaceSequence)
+IPC_STRUCT_TRAITS_BEGIN(viz::SurfaceSequence)
   IPC_STRUCT_TRAITS_MEMBER(frame_sink_id)
   IPC_STRUCT_TRAITS_MEMBER(sequence)
 IPC_STRUCT_TRAITS_END()
@@ -52,7 +54,6 @@ IPC_STRUCT_TRAITS_END()
 IPC_STRUCT_TRAITS_BEGIN(cc::DrawQuad)
   IPC_STRUCT_TRAITS_MEMBER(material)
   IPC_STRUCT_TRAITS_MEMBER(rect)
-  IPC_STRUCT_TRAITS_MEMBER(opaque_rect)
   IPC_STRUCT_TRAITS_MEMBER(visible_rect)
   IPC_STRUCT_TRAITS_MEMBER(needs_blending)
   IPC_STRUCT_TRAITS_MEMBER(resources)
@@ -124,9 +125,9 @@ IPC_STRUCT_TRAITS_BEGIN(cc::TileDrawQuad)
   IPC_STRUCT_TRAITS_MEMBER(nearest_neighbor)
 IPC_STRUCT_TRAITS_END()
 
-IPC_STRUCT_TRAITS_BEGIN(cc::SharedQuadState)
+IPC_STRUCT_TRAITS_BEGIN(viz::SharedQuadState)
   IPC_STRUCT_TRAITS_MEMBER(quad_to_target_transform)
-  IPC_STRUCT_TRAITS_MEMBER(quad_layer_bounds)
+  IPC_STRUCT_TRAITS_MEMBER(quad_layer_rect)
   IPC_STRUCT_TRAITS_MEMBER(visible_quad_layer_rect)
   IPC_STRUCT_TRAITS_MEMBER(clip_rect)
   IPC_STRUCT_TRAITS_MEMBER(is_clipped)
@@ -135,7 +136,7 @@ IPC_STRUCT_TRAITS_BEGIN(cc::SharedQuadState)
   IPC_STRUCT_TRAITS_MEMBER(sorting_context_id)
 IPC_STRUCT_TRAITS_END()
 
-IPC_STRUCT_TRAITS_BEGIN(cc::TransferableResource)
+IPC_STRUCT_TRAITS_BEGIN(viz::TransferableResource)
   IPC_STRUCT_TRAITS_MEMBER(id)
   IPC_STRUCT_TRAITS_MEMBER(format)
   IPC_STRUCT_TRAITS_MEMBER(buffer_format)
@@ -144,6 +145,7 @@ IPC_STRUCT_TRAITS_BEGIN(cc::TransferableResource)
   IPC_STRUCT_TRAITS_MEMBER(mailbox_holder)
   IPC_STRUCT_TRAITS_MEMBER(read_lock_fences_enabled)
   IPC_STRUCT_TRAITS_MEMBER(is_software)
+  IPC_STRUCT_TRAITS_MEMBER(shared_bitmap_sequence_number)
   IPC_STRUCT_TRAITS_MEMBER(is_overlay_candidate)
   IPC_STRUCT_TRAITS_MEMBER(color_space)
 #if defined(OS_ANDROID)
@@ -152,7 +154,7 @@ IPC_STRUCT_TRAITS_BEGIN(cc::TransferableResource)
 #endif
 IPC_STRUCT_TRAITS_END()
 
-IPC_STRUCT_TRAITS_BEGIN(cc::ReturnedResource)
+IPC_STRUCT_TRAITS_BEGIN(viz::ReturnedResource)
   IPC_STRUCT_TRAITS_MEMBER(id)
   IPC_STRUCT_TRAITS_MEMBER(sync_token)
   IPC_STRUCT_TRAITS_MEMBER(count)
@@ -164,23 +166,16 @@ IPC_STRUCT_TRAITS_BEGIN(cc::Selection<gfx::SelectionBound>)
   IPC_STRUCT_TRAITS_MEMBER(end)
 IPC_STRUCT_TRAITS_END()
 
-IPC_ENUM_TRAITS_MAX_VALUE(cc::BeginFrameArgs::BeginFrameArgsType,
-                          cc::BeginFrameArgs::BEGIN_FRAME_ARGS_TYPE_MAX - 1)
+IPC_ENUM_TRAITS_MAX_VALUE(viz::BeginFrameArgs::BeginFrameArgsType,
+                          viz::BeginFrameArgs::BEGIN_FRAME_ARGS_TYPE_MAX - 1)
 
-IPC_STRUCT_TRAITS_BEGIN(cc::BeginFrameArgs)
+IPC_STRUCT_TRAITS_BEGIN(viz::BeginFrameArgs)
   IPC_STRUCT_TRAITS_MEMBER(frame_time)
   IPC_STRUCT_TRAITS_MEMBER(deadline)
   IPC_STRUCT_TRAITS_MEMBER(interval)
   IPC_STRUCT_TRAITS_MEMBER(sequence_number)
   IPC_STRUCT_TRAITS_MEMBER(source_id)
   IPC_STRUCT_TRAITS_MEMBER(type)
-IPC_STRUCT_TRAITS_END()
-
-IPC_STRUCT_TRAITS_BEGIN(cc::BeginFrameAck)
-  IPC_STRUCT_TRAITS_MEMBER(sequence_number)
-  IPC_STRUCT_TRAITS_MEMBER(latest_confirmed_sequence_number)
-  IPC_STRUCT_TRAITS_MEMBER(source_id)
-// |has_damage| is implicit through IPC message name, so not transmitted.
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(cc::CompositorFrameMetadata)
@@ -205,7 +200,7 @@ IPC_STRUCT_TRAITS_BEGIN(cc::CompositorFrameMetadata)
   IPC_STRUCT_TRAITS_MEMBER(selection)
   IPC_STRUCT_TRAITS_MEMBER(latency_info)
   IPC_STRUCT_TRAITS_MEMBER(referenced_surfaces)
-  IPC_STRUCT_TRAITS_MEMBER(embedded_surfaces)
+  IPC_STRUCT_TRAITS_MEMBER(activation_dependencies)
   IPC_STRUCT_TRAITS_MEMBER(content_source_id)
   IPC_STRUCT_TRAITS_MEMBER(begin_frame_ack)
   IPC_STRUCT_TRAITS_MEMBER(frame_token)

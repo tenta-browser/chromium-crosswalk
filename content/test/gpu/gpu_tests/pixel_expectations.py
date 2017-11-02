@@ -31,6 +31,11 @@ class PixelExpectations(GpuTestExpectations):
     # TODO(ccameron) fix these on Mac Retina
     self.Fail('Pixel_CSS3DBlueBox', ['mac'], bug=533690)
 
+    # TODO(ccameron): Re-enable this after baseline. This is caused by changing
+    # the way we interpret BT709 color spaces.
+    self.Fail('Pixel_Video_VP9', bug=763260)
+    self.Fail('Pixel_Video_MP4', bug=763260)
+
     # TODO(vmiura) check / generate reference images for Android devices
     self.Fail('Pixel_SolidColorBackground', ['mac', 'android'], bug=624256)
 
@@ -42,6 +47,8 @@ class PixelExpectations(GpuTestExpectations):
     # TODO(kbr): flakily timing out on this configuration.
     self.Flaky('*', ['linux', 'intel', 'debug'], bug=648369)
 
+    self.Flaky('Pixel_Video_MP4', ['android', 'nvidia'], bug=716564)
+
     # Flaky for unknown reasons only on macOS. Not planning to investigate
     # further.
     self.Flaky('Pixel_ScissorTestWithPreserveDrawingBuffer', ['mac'],
@@ -50,8 +57,10 @@ class PixelExpectations(GpuTestExpectations):
     self.Flaky('Pixel_OffscreenCanvas2DResizeOnWorker',
         ['win10', ('intel', 0x1912)], bug=690663)
 
-    # TODO(jbauman): Re-enable when references images created.
-    self.Fail('Pixel_DirectComposition_Video_*', ['win'], bug=704389)
+    self.Flaky('Pixel_OffscreenCanvasTransferBeforeStyleResize',
+              ['mac', 'linux', 'win', 'android'], bug=735228)
+    self.Flaky('Pixel_OffscreenCanvasTransferAfterStyleResize',
+              ['mac', 'linux', 'win', 'android'], bug=735171)
 
-    # TODO(zakerinasab): check / generate reference images.
-    self.Fail('Pixel_Canvas2DUntagged', bug=713632)
+    self.Flaky('Pixel_OffscreenCanvasWebGLSoftwareCompositingWorker',
+        ['mac', ('nvidia', 0xfe9), 'debug'], bug=751328)

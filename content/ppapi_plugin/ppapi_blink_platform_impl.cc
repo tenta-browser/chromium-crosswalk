@@ -16,6 +16,7 @@
 #include "content/common/child_process_messages.h"
 #include "ppapi/proxy/plugin_globals.h"
 #include "ppapi/shared_impl/proxy_lock.h"
+#include "third_party/WebKit/public/platform/WebStorageNamespace.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 
 #if defined(OS_MACOSX)
@@ -129,9 +130,10 @@ PpapiBlinkPlatformImpl::~PpapiBlinkPlatformImpl() {
 
 void PpapiBlinkPlatformImpl::Shutdown() {
 #if !defined(OS_ANDROID) && !defined(OS_WIN)
-  // SandboxSupport contains a map of WebFontFamily objects, which hold
-  // WebCStrings, which become invalidated when blink is shut down. Hence, we
-  // need to clear that map now, just before blink::shutdown() is called.
+  // SandboxSupport contains a map of WebFallbackFont objects, which hold
+  // WebStrings and WebVectors, which become invalidated when blink is shut
+  // down. Hence, we need to clear that map now, just before blink::shutdown()
+  // is called.
   sandbox_support_.reset();
 #endif
 }
@@ -182,16 +184,15 @@ void PpapiBlinkPlatformImpl::CreateMessageChannel(
   *channel2 = nullptr;
 }
 
-void PpapiBlinkPlatformImpl::setCookies(
-    const blink::WebURL& url,
-    const blink::WebURL& first_party_for_cookies,
-    const blink::WebString& value) {
+void PpapiBlinkPlatformImpl::setCookies(const blink::WebURL& url,
+                                        const blink::WebURL& site_for_cookies,
+                                        const blink::WebString& value) {
   NOTREACHED();
 }
 
 blink::WebString PpapiBlinkPlatformImpl::cookies(
     const blink::WebURL& url,
-    const blink::WebURL& first_party_for_cookies) {
+    const blink::WebURL& site_for_cookies) {
   NOTREACHED();
   return blink::WebString();
 }
@@ -205,7 +206,9 @@ blink::WebThemeEngine* PpapiBlinkPlatformImpl::ThemeEngine() {
   return NULL;
 }
 
-blink::WebURLLoader* PpapiBlinkPlatformImpl::CreateURLLoader() {
+std::unique_ptr<blink::WebURLLoader> PpapiBlinkPlatformImpl::CreateURLLoader(
+    const blink::WebURLRequest& request,
+    base::SingleThreadTaskRunner* task_runner) {
   NOTREACHED();
   return NULL;
 }
@@ -217,15 +220,15 @@ void PpapiBlinkPlatformImpl::GetPluginList(
   NOTREACHED();
 }
 
-blink::WebData PpapiBlinkPlatformImpl::LoadResource(const char* name) {
+blink::WebData PpapiBlinkPlatformImpl::GetDataResource(const char* name) {
   NOTREACHED();
   return blink::WebData();
 }
 
-blink::WebStorageNamespace*
+std::unique_ptr<blink::WebStorageNamespace>
 PpapiBlinkPlatformImpl::CreateLocalStorageNamespace() {
   NOTREACHED();
-  return 0;
+  return nullptr;
 }
 
 void PpapiBlinkPlatformImpl::dispatchStorageEvent(

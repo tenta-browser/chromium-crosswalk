@@ -3,12 +3,15 @@ Tests list of user metrics codes and invocations.
 recordActionTaken:
 {
     AnimationsPlaybackRateChanged : 11
+    Audits2Finished : 30
+    Audits2Started : 29
     AuditsStarted : 7
     ChangeInspectedNodeInElementsPanel : 26
     CommandEvaluatedInConsolePanel : 15
     ConnectToNodeJSDirectly : 20
     ConnectToNodeJSFromFrontend : 19
     ConsoleEvaluated : 8
+    CoverageStarted : 28
     CpuProfileNodeExcluded : 23
     CpuProfileNodeFocused : 22
     CpuThrottlingEnabled : 21
@@ -36,6 +39,7 @@ Action taken: WindowUndocked
 recordPanelShown:
 {
     audits : 7
+    audits2 : 18
     console : 8
     drawer-animations : 11
     drawer-console : 10

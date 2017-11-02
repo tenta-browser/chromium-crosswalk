@@ -83,7 +83,7 @@ class IDLNode(object):
       'WARNINGS': [],
       'FILENAME': filename,
       'LINENO' : lineno,
-      'POSSITION' : pos,
+      'POSITION' : pos,
     }
 
     self._children = []
@@ -96,6 +96,9 @@ class IDLNode(object):
   # Return a string representation of this node
   def __str__(self):
     name = self.GetProperty('NAME','')
+    value = self.GetProperty('VALUE')
+    if value or value == '':
+      return '%s(%s) = "%s"' % (self._cls, name, value)
     return '%s(%s)' % (self._cls, name)
 
   def GetLogLine(self, msg):
@@ -157,7 +160,7 @@ class IDLNode(object):
             self.out.extend(proplist)
 
     if filter_nodes == None:
-      filter_nodes = ['Comment', 'Copyright']
+      filter_nodes = ['SpecialComment']
 
     search = DumpTreeSearch(accept_props)
     self.Traverse(search, filter_nodes)

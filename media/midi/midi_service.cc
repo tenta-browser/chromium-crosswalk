@@ -9,6 +9,7 @@
 #include "base/strings/stringprintf.h"
 #include "media/midi/midi_manager.h"
 #include "media/midi/midi_switches.h"
+#include "media/midi/task_service.h"
 
 namespace midi {
 
@@ -27,8 +28,8 @@ bool IsDynamicInstantiationEnabled() {
 }  // namespace
 
 MidiService::MidiService(void)
-    : is_dynamic_instantiation_enabled_(IsDynamicInstantiationEnabled()),
-      active_clients_(0u) {
+    : task_service_(base::MakeUnique<TaskService>()),
+      is_dynamic_instantiation_enabled_(IsDynamicInstantiationEnabled()) {
   base::AutoLock lock(lock_);
 
   if (!is_dynamic_instantiation_enabled_)
@@ -36,7 +37,8 @@ MidiService::MidiService(void)
 }
 
 MidiService::MidiService(std::unique_ptr<MidiManager> manager)
-    : is_dynamic_instantiation_enabled_(false), active_clients_(0u) {
+    : task_service_(base::MakeUnique<TaskService>()),
+      is_dynamic_instantiation_enabled_(false) {
   base::AutoLock lock(lock_);
 
   manager_ = std::move(manager);
@@ -53,33 +55,39 @@ MidiService::~MidiService() {
 
 void MidiService::Shutdown() {
   base::AutoLock lock(lock_);
-  if (manager_.get())
+  if (manager_) {
     manager_->Shutdown();
+    if (is_dynamic_instantiation_enabled_)
+      manager_destructor_runner_->DeleteSoon(FROM_HERE, std::move(manager_));
+    manager_destructor_runner_ = nullptr;
+  }
 }
 
 void MidiService::StartSession(MidiManagerClient* client) {
   base::AutoLock lock(lock_);
-  if (!manager_.get()) {
-    CHECK(is_dynamic_instantiation_enabled_);
-    CHECK_EQ(0u, active_clients_);
+  if (!manager_) {
+    DCHECK(is_dynamic_instantiation_enabled_);
     manager_.reset(MidiManager::Create(this));
+    if (!manager_destructor_runner_)
+      manager_destructor_runner_ = base::ThreadTaskRunnerHandle::Get();
   }
-  active_clients_++;
   manager_->StartSession(client);
 }
 
 void MidiService::EndSession(MidiManagerClient* client) {
   base::AutoLock lock(lock_);
-  CHECK(manager_.get());
-  CHECK_NE(0u, active_clients_);
-  manager_->EndSession(client);
-  active_clients_--;
-  if (is_dynamic_instantiation_enabled_ && !active_clients_) {
+
+  // |client| does not seem to be valid.
+  if (!manager_ || !manager_->EndSession(client))
+    return;
+
+  if (is_dynamic_instantiation_enabled_ && !manager_->HasOpenSession()) {
     // MidiManager for each platform should be able to shutdown correctly even
     // if following Shutdown() call happens in the middle of
     // StartInitialization() to support the dynamic instantiation feature.
     manager_->Shutdown();
     manager_.reset();
+    manager_destructor_runner_ = nullptr;
   }
 }
 
@@ -88,7 +96,11 @@ void MidiService::DispatchSendMidiData(MidiManagerClient* client,
                                        const std::vector<uint8_t>& data,
                                        double timestamp) {
   base::AutoLock lock(lock_);
-  manager_->DispatchSendMidiData(client, port_index, data, timestamp);
+
+  // MidiService needs to consider invalid DispatchSendMidiData calls without
+  // an open session that could be sent from a broken renderer.
+  if (manager_)
+    manager_->DispatchSendMidiData(client, port_index, data, timestamp);
 }
 
 scoped_refptr<base::SingleThreadTaskRunner> MidiService::GetTaskRunner(
@@ -96,7 +108,7 @@ scoped_refptr<base::SingleThreadTaskRunner> MidiService::GetTaskRunner(
   base::AutoLock lock(threads_lock_);
   if (threads_.size() <= runner_id)
     threads_.resize(runner_id + 1);
-  if (!threads_[runner_id].get()) {
+  if (!threads_[runner_id]) {
     threads_[runner_id] = base::MakeUnique<base::Thread>(
         base::StringPrintf("MidiServiceThread(%zu)", runner_id));
 #if defined(OS_WIN)

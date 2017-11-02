@@ -64,8 +64,13 @@ void PasswordFormToJSON(const PasswordForm& form,
   target->SetBoolean("was_parsed_using_autofill_predictions",
                      form.was_parsed_using_autofill_predictions);
   target->SetString("affiliated_web_realm", form.affiliated_web_realm);
+  target->SetString("app_display_name", form.app_display_name);
+  target->SetString("app_icon_url", form.app_icon_url.possibly_invalid_spec());
   target->SetBoolean("does_look_like_signup_form",
                      form.does_look_like_signup_form);
+  std::ostringstream submission_event_string_stream;
+  submission_event_string_stream << form.submission_event;
+  target->SetString("submission_event", submission_event_string_stream.str());
 }
 
 }  // namespace
@@ -86,7 +91,8 @@ PasswordForm::PasswordForm()
       was_parsed_using_autofill_predictions(false),
       is_public_suffix_match(false),
       is_affiliation_based_match(false),
-      does_look_like_signup_form(false) {}
+      does_look_like_signup_form(false),
+      submission_event(SubmissionIndicatorEvent::NONE) {}
 
 PasswordForm::PasswordForm(const PasswordForm& other) = default;
 
@@ -130,7 +136,10 @@ bool PasswordForm::operator==(const PasswordForm& form) const {
          is_public_suffix_match == form.is_public_suffix_match &&
          is_affiliation_based_match == form.is_affiliation_based_match &&
          affiliated_web_realm == form.affiliated_web_realm &&
-         does_look_like_signup_form == form.does_look_like_signup_form;
+         app_display_name == form.app_display_name &&
+         app_icon_url == form.app_icon_url &&
+         does_look_like_signup_form == form.does_look_like_signup_form &&
+         submission_event == form.submission_event;
 }
 
 bool PasswordForm::operator!=(const PasswordForm& form) const {
@@ -216,6 +225,47 @@ std::ostream& operator<<(std::ostream& os, const PasswordForm& form) {
 
 std::ostream& operator<<(std::ostream& os, PasswordForm* form) {
   return os << "&" << *form;
+}
+
+std::ostream& operator<<(
+    std::ostream& os,
+    PasswordForm::SubmissionIndicatorEvent submission_event) {
+  switch (submission_event) {
+    case PasswordForm::SubmissionIndicatorEvent::HTML_FORM_SUBMISSION:
+      os << "HTML_FORM_SUBMISSION";
+      break;
+    case PasswordForm::SubmissionIndicatorEvent::SAME_DOCUMENT_NAVIGATION:
+      os << "SAME_DOCUMENT_NAVIGATION";
+      break;
+    case PasswordForm::SubmissionIndicatorEvent::XHR_SUCCEEDED:
+      os << "XHR_SUCCEEDED";
+      break;
+    case PasswordForm::SubmissionIndicatorEvent::FRAME_DETACHED:
+      os << "FRAME_DETACHED";
+      break;
+    case PasswordForm::SubmissionIndicatorEvent::MANUAL_SAVE:
+      os << "MANUAL_SAVE";
+      break;
+    case PasswordForm::SubmissionIndicatorEvent::DOM_MUTATION_AFTER_XHR:
+      os << "DOM_MUTATION_AFTER_XHR";
+      break;
+    case PasswordForm::SubmissionIndicatorEvent::
+        PROVISIONALLY_SAVED_FORM_ON_START_PROVISIONAL_LOAD:
+      os << "PROVISIONALLY_SAVED_FORM_ON_START_PROVISIONAL_LOAD";
+      break;
+    case PasswordForm::SubmissionIndicatorEvent::
+        FILLED_FORM_ON_START_PROVISIONAL_LOAD:
+      os << "FILLED_FORM_ON_START_PROVISIONAL_LOAD";
+      break;
+    case PasswordForm::SubmissionIndicatorEvent::
+        FILLED_INPUT_ELEMENTS_ON_START_PROVISIONAL_LOAD:
+      os << "FILLED_INPUT_ELEMENTS_ON_START_PROVISIONAL_LOAD";
+      break;
+    default:
+      os << "NO_SUBMISSION";
+      break;
+  }
+  return os;
 }
 
 }  // namespace autofill

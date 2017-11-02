@@ -28,7 +28,6 @@ class ChromePluginPlaceholder final
 
   static ChromePluginPlaceholder* CreateBlockedPlugin(
       content::RenderFrame* render_frame,
-      blink::WebLocalFrame* frame,
       const blink::WebPluginParams& params,
       const content::WebPluginInfo& info,
       const std::string& identifier,
@@ -40,7 +39,6 @@ class ChromePluginPlaceholder final
   // Creates a new WebViewPlugin with a MissingPlugin as a delegate.
   static ChromePluginPlaceholder* CreateLoadableMissingPlugin(
       content::RenderFrame* render_frame,
-      blink::WebLocalFrame* frame,
       const blink::WebPluginParams& params);
 
   void SetStatus(ChromeViewHostMsg_GetPluginInfo_Status status);
@@ -49,7 +47,6 @@ class ChromePluginPlaceholder final
 
  private:
   ChromePluginPlaceholder(content::RenderFrame* render_frame,
-                          blink::WebLocalFrame* frame,
                           const blink::WebPluginParams& params,
                           const std::string& html_data,
                           const base::string16& title);
@@ -57,7 +54,8 @@ class ChromePluginPlaceholder final
 
   // content::LoadablePluginPlaceholder overrides.
   blink::WebPlugin* CreatePlugin() override;
-  void OnBlockedTinyContent() override;
+  void OnBlockedContent(content::RenderFrame::PeripheralContentStatus status,
+                        bool is_same_origin) override;
 
   // gin::Wrappable (via PluginPlaceholder) method
   gin::ObjectTemplateBuilder GetObjectTemplateBuilder(
@@ -97,8 +95,6 @@ class ChromePluginPlaceholder final
 
   int context_menu_request_id_;  // Nonzero when request pending.
   base::string16 plugin_name_;
-
-  bool did_send_blocked_content_notification_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromePluginPlaceholder);
 };

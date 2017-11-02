@@ -4,65 +4,78 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true
+      "backgroundColor": "#FFFFFF"
     },
     {
       "name": "Ancestor Clipping Layer",
       "position": [48, 38],
       "bounds": [60, 70],
-      "shouldFlattenTransform": false
+      "drawsContent": false
     },
     {
       "name": "LayoutBlockFlow DIV class='box'",
       "position": [2, 12],
       "bounds": [100, 150],
       "contentsOpaque": true,
-      "drawsContent": true,
       "backgroundColor": "#808080",
-      "transform": [
-        [1, 0, 0, 0],
-        [0, 1, 0, 0],
-        [0, 0, 1, 0],
-        [0, 0, 1, 1]
-      ]
+      "transform": 1
     },
     {
       "name": "Ancestor Clipping Layer",
       "position": [240, 38],
       "bounds": [60, 70],
-      "shouldFlattenTransform": false
+      "drawsContent": false
     },
     {
       "name": "LayoutBlockFlow DIV class='box'",
       "position": [2, 12],
       "bounds": [100, 150],
       "contentsOpaque": true,
-      "drawsContent": true,
       "backgroundColor": "#808080",
-      "transform": [
-        [1, 0, 0, 0],
-        [0, 1, 0, 0],
-        [0, 0, 1, 0],
-        [0, 0, 1, 1]
-      ]
+      "transform": 2
     },
     {
       "name": "LayoutBlockFlow (positioned) DIV class='container'",
       "position": [48, 230],
-      "bounds": [60, 70],
-      "drawsContent": true
+      "bounds": [60, 70]
     },
     {
       "name": "Child Containment Layer",
-      "bounds": [60, 70]
+      "position": [48, 230],
+      "bounds": [60, 70],
+      "drawsContent": false
     },
     {
       "name": "LayoutBlockFlow DIV class='box'",
       "position": [2, 12],
       "bounds": [100, 150],
       "contentsOpaque": true,
-      "drawsContent": true,
       "backgroundColor": "#808080",
+      "transform": 3
+    },
+    {
+      "name": "LayoutBlockFlow (positioned) DIV class='container'",
+      "position": [240, 230],
+      "bounds": [60, 70]
+    },
+    {
+      "name": "Child Containment Layer",
+      "position": [240, 230],
+      "bounds": [60, 70],
+      "drawsContent": false
+    },
+    {
+      "name": "LayoutBlockFlow DIV class='box'",
+      "position": [2, 12],
+      "bounds": [100, 150],
+      "contentsOpaque": true,
+      "backgroundColor": "#808080",
+      "transform": 4
+    }
+  ],
+  "transforms": [
+    {
+      "id": 1,
       "transform": [
         [1, 0, 0, 0],
         [0, 1, 0, 0],
@@ -71,22 +84,25 @@
       ]
     },
     {
-      "name": "LayoutBlockFlow (positioned) DIV class='container'",
-      "position": [240, 230],
-      "bounds": [60, 70],
-      "drawsContent": true
+      "id": 2,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [0, 0, 1, 1]
+      ]
     },
     {
-      "name": "Child Containment Layer",
-      "bounds": [60, 70]
+      "id": 3,
+      "transform": [
+        [1, 0, 0, 0],
+        [0, 1, 0, 0],
+        [0, 0, 1, 0],
+        [0, 0, 1, 1]
+      ]
     },
     {
-      "name": "LayoutBlockFlow DIV class='box'",
-      "position": [2, 12],
-      "bounds": [100, 150],
-      "contentsOpaque": true,
-      "drawsContent": true,
-      "backgroundColor": "#808080",
+      "id": 4,
       "transform": [
         [1, 0, 0, 0],
         [0, 1, 0, 0],

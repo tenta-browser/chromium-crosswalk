@@ -50,7 +50,10 @@ class PLATFORM_EXPORT HeapCompact final {
   // Determine if a GC for the given type and reason should also perform
   // additional heap compaction.
   //
-  bool ShouldCompact(ThreadState*, BlinkGC::GCType, BlinkGC::GCReason);
+  bool ShouldCompact(ThreadState*,
+                     BlinkGC::StackState,
+                     BlinkGC::GCType,
+                     BlinkGC::GCReason);
 
   // Compaction should be performed as part of the ongoing GC, initialize
   // the heap compaction pass. Returns the appropriate visitor type to
@@ -111,6 +114,17 @@ class PLATFORM_EXPORT HeapCompact final {
   // to the new value, returning old.
   static bool ScheduleCompactionGCForTesting(bool);
 
+  // Test-only: verify that one or more of the vector arenas are
+  // in the process of being compacted.
+  bool IsCompactingVectorArenas() {
+    for (int i = BlinkGC::kVector1ArenaIndex; i <= BlinkGC::kVector4ArenaIndex;
+         ++i) {
+      if (IsCompactingArena(i))
+        return true;
+    }
+    return false;
+  }
+
  private:
   class MovableObjectFixups;
 
@@ -161,7 +175,7 @@ class PLATFORM_EXPORT HeapCompact final {
 
 // Logging macros activated by debug switches.
 
-#define LOG_HEAP_COMPACTION_INTERNAL(msg, ...) dataLogF(msg, ##__VA_ARGS__)
+#define LOG_HEAP_COMPACTION_INTERNAL(msg, ...) DataLogF(msg, ##__VA_ARGS__)
 
 #if DEBUG_HEAP_COMPACTION
 #define LOG_HEAP_COMPACTION(msg, ...) \

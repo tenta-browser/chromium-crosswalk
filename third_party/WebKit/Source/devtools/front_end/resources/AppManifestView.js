@@ -106,14 +106,17 @@ Resources.AppManifestView = class extends UI.VBox {
     if (!data)
       return;
 
+    if (data.charCodeAt(0) === 0xFEFF)
+      data = data.slice(1);  // Trim the BOM as per https://tools.ietf.org/html/rfc7159#section-8.1.
+
     var parsedManifest = JSON.parse(data);
     this._nameField.textContent = stringProperty('name');
     this._shortNameField.textContent = stringProperty('short_name');
     this._startURLField.removeChildren();
     var startURL = stringProperty('start_url');
     if (startURL) {
-      this._startURLField.appendChild(Components.Linkifier.linkifyURL(
-          /** @type {string} */ (Common.ParsedURL.completeURL(url, startURL)), startURL));
+      var completeURL = /** @type {string} */ (Common.ParsedURL.completeURL(url, startURL));
+      this._startURLField.appendChild(Components.Linkifier.linkifyURL(completeURL, {text: startURL}));
     }
 
     this._themeColorSwatch.classList.toggle('hidden', !stringProperty('theme_color'));

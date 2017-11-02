@@ -14,7 +14,6 @@
 #include "base/files/file_util.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
@@ -129,7 +128,7 @@ TemplateURLFetcherTest::TemplateURLFetcherTest()
 void TemplateURLFetcherTest::RequestCompletedCallback() {
   requests_completed_++;
   if (waiting_for_download_)
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
 }
 
 void TemplateURLFetcherTest::StartDownload(
@@ -180,6 +179,25 @@ TEST_F(TemplateURLFetcherTest, BasicAutodetectedTest) {
                 test_util()->model()->search_terms_data()));
   EXPECT_EQ(ASCIIToUTF16("Simple Search"), t_url->short_name());
   EXPECT_TRUE(t_url->safe_for_autoreplace());
+}
+
+// This test is similar to the BasicAutodetectedTest except the xml file
+// provided doesn't include a short name for the search engine.  We should
+// fall back to the hostname.
+TEST_F(TemplateURLFetcherTest, InvalidShortName) {
+  base::string16 keyword(ASCIIToUTF16("test"));
+
+  test_util()->ChangeModelToLoadState();
+  ASSERT_FALSE(test_util()->model()->GetTemplateURLForKeyword(keyword));
+
+  std::string osdd_file_name("simple_open_search_no_name.xml");
+  StartDownload(keyword, osdd_file_name, true);
+  WaitForDownloadToFinish();
+
+  const TemplateURL* t_url =
+      test_util()->model()->GetTemplateURLForKeyword(keyword);
+  ASSERT_TRUE(t_url);
+  EXPECT_EQ(ASCIIToUTF16("example.com"), t_url->short_name());
 }
 
 TEST_F(TemplateURLFetcherTest, DuplicatesThrownAway) {

@@ -5,23 +5,25 @@
 #include "modules/webaudio/AudioWorkletGlobalScope.h"
 
 #include "bindings/core/v8/ScriptSourceCode.h"
-#include "bindings/core/v8/ScriptState.h"
 #include "bindings/core/v8/ScriptValue.h"
 #include "bindings/core/v8/SourceLocation.h"
 #include "bindings/core/v8/ToV8ForCore.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/core/v8/V8BindingForTesting.h"
-#include "bindings/core/v8/V8BindingMacros.h"
+#include "bindings/core/v8/V8CacheOptions.h"
 #include "bindings/core/v8/V8GCController.h"
-#include "bindings/core/v8/V8ObjectConstructor.h"
 #include "bindings/core/v8/WorkerOrWorkletScriptController.h"
+#include "core/dom/TaskRunnerHelper.h"
+#include "core/workers/GlobalScopeCreationParams.h"
 #include "core/workers/WorkerBackingThread.h"
 #include "core/workers/WorkerReportingProxy.h"
-#include "core/workers/WorkerThreadStartupData.h"
 #include "modules/webaudio/AudioBuffer.h"
 #include "modules/webaudio/AudioWorkletProcessor.h"
 #include "modules/webaudio/AudioWorkletProcessorDefinition.h"
 #include "modules/webaudio/AudioWorkletThread.h"
+#include "platform/bindings/ScriptState.h"
+#include "platform/bindings/V8BindingMacros.h"
+#include "platform/bindings/V8ObjectConstructor.h"
 #include "platform/weborigin/SecurityOrigin.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -51,45 +53,61 @@ class AudioWorkletGlobalScopeTest : public ::testing::Test {
     std::unique_ptr<AudioWorkletThread> thread =
         AudioWorkletThread::Create(nullptr, *reporting_proxy_);
     thread->Start(
-        WorkerThreadStartupData::Create(
+        WTF::MakeUnique<GlobalScopeCreationParams>(
             KURL(kParsedURLString, "http://fake.url/"), "fake user agent", "",
             nullptr, kDontPauseWorkerGlobalScopeOnStart, nullptr, "",
             security_origin_.Get(), nullptr, kWebAddressSpaceLocal, nullptr,
-            nullptr, WorkerV8Settings::Default()),
-        ParentFrameTaskRunners::Create(nullptr));
+            nullptr, kV8CacheOptionsDefault),
+        WTF::nullopt, ParentFrameTaskRunners::Create());
     return thread;
   }
 
   void RunBasicTest(WorkerThread* thread) {
     WaitableEvent waitable_event;
-    thread->PostTask(
-        BLINK_FROM_HERE,
-        CrossThreadBind(
-            &AudioWorkletGlobalScopeTest::RunBasicTestOnWorkletThread,
-            CrossThreadUnretained(this), CrossThreadUnretained(thread),
-            CrossThreadUnretained(&waitable_event)));
+    TaskRunnerHelper::Get(TaskType::kUnthrottled, thread)
+        ->PostTask(
+            BLINK_FROM_HERE,
+            CrossThreadBind(
+                &AudioWorkletGlobalScopeTest::RunBasicTestOnWorkletThread,
+                CrossThreadUnretained(this), CrossThreadUnretained(thread),
+                CrossThreadUnretained(&waitable_event)));
     waitable_event.Wait();
   }
 
   void RunSimpleProcessTest(WorkerThread* thread) {
     WaitableEvent waitable_event;
-    thread->PostTask(
-        BLINK_FROM_HERE,
-        CrossThreadBind(
-            &AudioWorkletGlobalScopeTest::RunSimpleProcessTestOnWorkletThread,
-            CrossThreadUnretained(this), CrossThreadUnretained(thread),
-            CrossThreadUnretained(&waitable_event)));
+    TaskRunnerHelper::Get(TaskType::kUnthrottled, thread)
+        ->PostTask(BLINK_FROM_HERE,
+                   CrossThreadBind(&AudioWorkletGlobalScopeTest::
+                                       RunSimpleProcessTestOnWorkletThread,
+                                   CrossThreadUnretained(this),
+                                   CrossThreadUnretained(thread),
+                                   CrossThreadUnretained(&waitable_event)));
     waitable_event.Wait();
   }
 
   void RunParsingTest(WorkerThread* thread) {
     WaitableEvent waitable_event;
-    thread->PostTask(
-        BLINK_FROM_HERE,
-        CrossThreadBind(
-            &AudioWorkletGlobalScopeTest::RunParsingTestOnWorkletThread,
-            CrossThreadUnretained(this), CrossThreadUnretained(thread),
-            CrossThreadUnretained(&waitable_event)));
+    TaskRunnerHelper::Get(TaskType::kUnthrottled, thread)
+        ->PostTask(
+            BLINK_FROM_HERE,
+            CrossThreadBind(
+                &AudioWorkletGlobalScopeTest::RunParsingTestOnWorkletThread,
+                CrossThreadUnretained(this), CrossThreadUnretained(thread),
+                CrossThreadUnretained(&waitable_event)));
+    waitable_event.Wait();
+  }
+
+  void RunParsingParameterDescriptorTest(WorkerThread* thread) {
+    WaitableEvent waitable_event;
+    TaskRunnerHelper::Get(TaskType::kUnthrottled, thread)
+        ->PostTask(
+            BLINK_FROM_HERE,
+            CrossThreadBind(
+                &AudioWorkletGlobalScopeTest::
+                    RunParsingParameterDescriptorTestOnWorkletThread,
+                CrossThreadUnretained(this), CrossThreadUnretained(thread),
+                CrossThreadUnretained(&waitable_event)));
     waitable_event.Wait();
   }
 
@@ -241,6 +259,53 @@ class AudioWorkletGlobalScopeTest : public ::testing::Test {
     wait_event->Signal();
   }
 
+  void RunParsingParameterDescriptorTestOnWorkletThread(
+      WorkerThread* thread,
+      WaitableEvent* wait_event) {
+    EXPECT_TRUE(thread->IsCurrentThread());
+
+    AudioWorkletGlobalScope* global_scope =
+        static_cast<AudioWorkletGlobalScope*>(thread->GlobalScope());
+    ScriptState* script_state =
+        global_scope->ScriptController()->GetScriptState();
+
+    ScriptState::Scope scope(script_state);
+
+    global_scope->ScriptController()->Evaluate(ScriptSourceCode(
+        R"JS(
+          registerProcessor('testProcessor', class {
+              static get parameterDescriptors () {
+                return [{
+                  name: 'gain',
+                  defaultValue: 0.707,
+                  minValue: 0.0,
+                  maxValue: 1.0
+                }];
+              }
+              constructor () {}
+              process () {}
+            }
+          )
+        )JS"));
+
+    AudioWorkletProcessorDefinition* definition =
+        global_scope->FindDefinition("testProcessor");
+    EXPECT_TRUE(definition);
+    EXPECT_EQ(definition->GetName(), "testProcessor");
+
+    const Vector<String> param_names =
+        definition->GetAudioParamDescriptorNames();
+    EXPECT_EQ(param_names[0], "gain");
+
+    const AudioParamDescriptor* descriptor =
+        definition->GetAudioParamDescriptor(param_names[0]);
+    EXPECT_EQ(descriptor->defaultValue(), 0.707f);
+    EXPECT_EQ(descriptor->minValue(), 0.0f);
+    EXPECT_EQ(descriptor->maxValue(), 1.0f);
+
+    wait_event->Signal();
+  }
+
   RefPtr<SecurityOrigin> security_origin_;
   std::unique_ptr<WorkerReportingProxy> reporting_proxy_;
 };
@@ -248,19 +313,29 @@ class AudioWorkletGlobalScopeTest : public ::testing::Test {
 TEST_F(AudioWorkletGlobalScopeTest, Basic) {
   std::unique_ptr<AudioWorkletThread> thread = CreateAudioWorkletThread();
   RunBasicTest(thread.get());
-  thread->TerminateAndWait();
+  thread->Terminate();
+  thread->WaitForShutdownForTesting();
 }
 
 TEST_F(AudioWorkletGlobalScopeTest, Parsing) {
   std::unique_ptr<AudioWorkletThread> thread = CreateAudioWorkletThread();
   RunParsingTest(thread.get());
-  thread->TerminateAndWait();
+  thread->Terminate();
+  thread->WaitForShutdownForTesting();
 }
 
 TEST_F(AudioWorkletGlobalScopeTest, BufferProcessing) {
   std::unique_ptr<AudioWorkletThread> thread = CreateAudioWorkletThread();
   RunSimpleProcessTest(thread.get());
-  thread->TerminateAndWait();
+  thread->Terminate();
+  thread->WaitForShutdownForTesting();
+}
+
+TEST_F(AudioWorkletGlobalScopeTest, ParsingParameterDescriptor) {
+  std::unique_ptr<AudioWorkletThread> thread = CreateAudioWorkletThread();
+  RunParsingParameterDescriptorTest(thread.get());
+  thread->Terminate();
+  thread->WaitForShutdownForTesting();
 }
 
 }  // namespace blink

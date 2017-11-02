@@ -136,7 +136,7 @@ class EventSender {
                          float velocity_x,
                          float velocity_y,
                          gin::Arguments* args);
-  bool IsFlinging() const;
+  bool IsFlinging();
   void GestureScrollFirstPoint(int x, int y);
 
   void TouchStart(gin::Arguments* args);
@@ -167,7 +167,7 @@ class EventSender {
 
   void MouseScrollBy(gin::Arguments* args, MouseScrollType scroll_type);
   void MouseMoveTo(gin::Arguments* args);
-  void MouseLeave();
+  void MouseLeave(blink::WebPointerProperties::PointerType, int pointerId);
   void ScheduleAsynchronousClick(int button_number, int modifiers);
   void ScheduleAsynchronousKeyDown(const std::string& code_str,
                                    int modifiers,

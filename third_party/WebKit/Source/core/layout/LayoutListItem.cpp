@@ -24,7 +24,7 @@
 #include "core/layout/LayoutListItem.h"
 
 #include "core/HTMLNames.h"
-#include "core/dom/shadow/FlatTreeTraversal.h"
+#include "core/dom/FlatTreeTraversal.h"
 #include "core/html/HTMLOListElement.h"
 #include "core/layout/LayoutListMarker.h"
 #include "core/paint/ListItemPainter.h"
@@ -228,10 +228,10 @@ inline int LayoutListItem::CalcValue() const {
   // FIXME: This recurses to a possible depth of the length of the list.
   // That's not good -- we need to change this to an iterative algorithm.
   if (LayoutListItem* previous_item = PreviousListItem(list, this))
-    return SaturatedAddition(previous_item->Value(), value_step);
+    return ClampAdd(previous_item->Value(), value_step);
 
   if (o_list_element)
-    return o_list_element->start();
+    return o_list_element->StartConsideringItemCount();
 
   return 1;
 }
@@ -259,7 +259,7 @@ static LayoutObject* GetParentOfFirstLineBox(LayoutBlockFlow* curr,
 
     // Shouldn't add marker into Overflow box, instead, add marker
     // into listitem
-    if (curr_child->HasOverflowClip())
+    if (curr->HasOverflowClip())
       break;
 
     if (curr_child->IsInline() &&
@@ -523,7 +523,7 @@ void LayoutListItem::UpdateListMarkerNumbers() {
     return;
 
   Node* list_node = EnclosingList(this);
-  DCHECK(list_node);
+  CHECK(list_node);
 
   bool is_list_reversed = false;
   HTMLOListElement* o_list_element =

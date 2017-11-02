@@ -34,8 +34,9 @@
 #include "core/dom/Document.h"
 #include "core/dom/ElementTraversal.h"
 #include "core/dom/NodeListsNodeData.h"
-#include "core/events/Event.h"
-#include "core/events/ScopedEventQueue.h"
+#include "core/dom/UserGestureIndicator.h"
+#include "core/dom/events/Event.h"
+#include "core/dom/events/ScopedEventQueue.h"
 #include "core/frame/LocalDOMWindow.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/LocalFrameClient.h"
@@ -53,10 +54,8 @@
 #include "core/inspector/ConsoleMessage.h"
 #include "core/layout/LayoutObject.h"
 #include "core/loader/FormSubmission.h"
-#include "core/loader/FrameLoader.h"
 #include "core/loader/MixedContentChecker.h"
 #include "core/loader/NavigationScheduler.h"
-#include "platform/UserGestureIndicator.h"
 #include "platform/wtf/AutoReset.h"
 #include "platform/wtf/text/AtomicString.h"
 #include "public/platform/WebInsecureRequestPolicy.h"
@@ -76,7 +75,7 @@ HTMLFormElement::HTMLFormElement(Document& document)
       was_demoted_(false) {}
 
 HTMLFormElement* HTMLFormElement::Create(Document& document) {
-  UseCounter::Count(document, UseCounter::kFormElement);
+  UseCounter::Count(document, WebFeature::kFormElement);
   return new HTMLFormElement(document);
 }
 
@@ -236,7 +235,7 @@ void HTMLFormElement::SubmitImplicitly(Event* event,
 }
 
 bool HTMLFormElement::ValidateInteractively() {
-  UseCounter::Count(GetDocument(), UseCounter::kFormValidationStarted);
+  UseCounter::Count(GetDocument(), WebFeature::kFormValidationStarted);
   for (const auto& element : ListedElements()) {
     if (element->IsFormControlElement())
       ToHTMLFormControlElement(element)->HideVisibleValidationMessage();
@@ -247,7 +246,7 @@ bool HTMLFormElement::ValidateInteractively() {
           &unhandled_invalid_controls, kCheckValidityDispatchInvalidEvent))
     return true;
   UseCounter::Count(GetDocument(),
-                    UseCounter::kFormValidationAbortedSubmission);
+                    WebFeature::kFormValidationAbortedSubmission);
   // Because the form has invalid controls, we abort the form submission and
   // show a validation message on a focusable form control.
 
@@ -260,7 +259,7 @@ bool HTMLFormElement::ValidateInteractively() {
     if (unhandled->IsFocusable()) {
       unhandled->ShowValidationMessage();
       UseCounter::Count(GetDocument(),
-                        UseCounter::kFormValidationShowedMessage);
+                        WebFeature::kFormValidationShowedMessage);
       break;
     }
   }
@@ -286,6 +285,13 @@ void HTMLFormElement::PrepareForSubmission(
   if (!frame || is_submitting_ || in_user_js_submit_event_)
     return;
 
+  if (!isConnected()) {
+    GetDocument().AddConsoleMessage(ConsoleMessage::Create(
+        kJSMessageSource, kWarningMessageLevel,
+        "Form submission canceled because the form is not connected"));
+    return;
+  }
+
   if (GetDocument().IsSandboxed(kSandboxForms)) {
     GetDocument().AddConsoleMessage(ConsoleMessage::Create(
         kSecurityMessageSource, kErrorMessageLevel,
@@ -300,8 +306,8 @@ void HTMLFormElement::PrepareForSubmission(
     if (element->IsFormControlElement() &&
         ToHTMLFormControlElement(element)->BlocksFormSubmission()) {
       UseCounter::Count(GetDocument(),
-                        UseCounter::kFormSubmittedWithUnclosedFormControl);
-      if (RuntimeEnabledFeatures::unclosedFormControlIsInvalidEnabled()) {
+                        WebFeature::kFormSubmittedWithUnclosedFormControl);
+      if (RuntimeEnabledFeatures::UnclosedFormControlIsInvalidEnabled()) {
         String tag_name = ToHTMLFormControlElement(element)->tagName();
         GetDocument().AddConsoleMessage(ConsoleMessage::Create(
             kSecurityMessageSource, kErrorMessageLevel,
@@ -324,7 +330,7 @@ void HTMLFormElement::PrepareForSubmission(
   if (submit_button && submit_button->FormNoValidate())
     skip_validation = true;
 
-  UseCounter::Count(GetDocument(), UseCounter::kFormSubmissionStarted);
+  UseCounter::Count(GetDocument(), WebFeature::kFormSubmissionStarted);
   // Interactive validation must be done before dispatching the submit event.
   if (!skip_validation && !ValidateInteractively())
     return;
@@ -332,7 +338,7 @@ void HTMLFormElement::PrepareForSubmission(
   bool should_submit;
   {
     AutoReset<bool> submit_event_handler_scope(&in_user_js_submit_event_, true);
-    frame->Loader().Client()->DispatchWillSendSubmitEvent(this);
+    frame->Client()->DispatchWillSendSubmitEvent(this);
     should_submit =
         DispatchEvent(Event::CreateCancelableBubble(EventTypeNames::submit)) ==
         DispatchEventResult::kNotCanceled;
@@ -354,8 +360,8 @@ void HTMLFormElement::submitFromJavaScript() {
 
 void HTMLFormElement::SubmitDialog(FormSubmission* form_submission) {
   for (Node* node = this; node; node = node->ParentOrShadowHostNode()) {
-    if (isHTMLDialogElement(*node)) {
-      toHTMLDialogElement(*node).CloseDialog(form_submission->Result());
+    if (auto* dialog = ToHTMLDialogElementOrNull(*node)) {
+      dialog->CloseDialog(form_submission->Result());
       return;
     }
   }
@@ -363,7 +369,7 @@ void HTMLFormElement::SubmitDialog(FormSubmission* form_submission) {
 
 void HTMLFormElement::Submit(Event* event,
                              HTMLFormControlElement* submit_button) {
-  FrameView* view = GetDocument().View();
+  LocalFrameView* view = GetDocument().View();
   LocalFrame* frame = GetDocument().GetFrame();
   if (!view || !frame || !frame->GetPage())
     return;
@@ -451,11 +457,9 @@ void HTMLFormElement::ScheduleFormSubmission(FormSubmission* submission) {
   }
 
   Frame* target_frame = GetDocument().GetFrame()->FindFrameForNavigation(
-      submission->Target(), *GetDocument().GetFrame());
+      submission->Target(), *GetDocument().GetFrame(),
+      submission->RequestURL());
   if (!target_frame) {
-    if (!LocalDOMWindow::AllowPopUp(*GetDocument().GetFrame()) &&
-        !UserGestureIndicator::UtilizeUserGesture())
-      return;
     target_frame = GetDocument().GetFrame();
   } else {
     submission->ClearTarget();
@@ -463,11 +467,12 @@ void HTMLFormElement::ScheduleFormSubmission(FormSubmission* submission) {
   if (!target_frame->GetPage())
     return;
 
-  UseCounter::Count(GetDocument(), UseCounter::kFormsSubmitted);
+  UseCounter::Count(GetDocument(), WebFeature::kFormsSubmitted);
   if (MixedContentChecker::IsMixedFormAction(GetDocument().GetFrame(),
-                                             submission->Action()))
+                                             submission->Action())) {
     UseCounter::Count(GetDocument().GetFrame(),
-                      UseCounter::kMixedContentFormsSubmitted);
+                      WebFeature::kMixedContentFormsSubmitted);
+  }
 
   // TODO(lukasza): Investigate if the code below can uniformly handle remote
   // and local frames (i.e. by calling virtual Frame::navigate from a timer).
@@ -523,9 +528,10 @@ void HTMLFormElement::ParseAttribute(
         attributes_.Action().IsEmpty() ? GetDocument().Url().GetString()
                                        : attributes_.Action());
     if (MixedContentChecker::IsMixedFormAction(GetDocument().GetFrame(),
-                                               action_url))
+                                               action_url)) {
       UseCounter::Count(GetDocument().GetFrame(),
-                        UseCounter::kMixedContentFormPresent);
+                        WebFeature::kMixedContentFormPresent);
+    }
   } else if (name == targetAttr) {
     attributes_.SetTarget(params.new_value);
   } else if (name == methodAttr) {
@@ -541,14 +547,14 @@ void HTMLFormElement::ParseAttribute(
 
 void HTMLFormElement::Associate(ListedElement& e) {
   listed_elements_are_dirty_ = true;
-  listed_elements_.Clear();
+  listed_elements_.clear();
   if (ToHTMLElement(e).FastHasAttribute(formAttr))
     has_elements_associated_by_form_attribute_ = true;
 }
 
 void HTMLFormElement::Disassociate(ListedElement& e) {
   listed_elements_are_dirty_ = true;
-  listed_elements_.Clear();
+  listed_elements_.clear();
   RemoveFromPastNamesMap(ToHTMLElement(e));
 }
 
@@ -563,12 +569,12 @@ bool HTMLFormElement::HasLegalLinkAttribute(const QualifiedName& name) const {
 
 void HTMLFormElement::Associate(HTMLImageElement& e) {
   image_elements_are_dirty_ = true;
-  image_elements_.Clear();
+  image_elements_.clear();
 }
 
 void HTMLFormElement::Disassociate(HTMLImageElement& e) {
   image_elements_are_dirty_ = true;
-  image_elements_.Clear();
+  image_elements_.clear();
   RemoveFromPastNamesMap(e);
 }
 
@@ -576,7 +582,7 @@ void HTMLFormElement::DidAssociateByParser() {
   if (!did_finish_parsing_children_)
     return;
   has_elements_associated_by_parser_ = true;
-  UseCounter::Count(GetDocument(), UseCounter::kFormAssociationByParser);
+  UseCounter::Count(GetDocument(), WebFeature::kFormAssociationByParser);
 }
 
 HTMLFormControlsCollection* HTMLFormElement::elements() {
@@ -586,7 +592,7 @@ HTMLFormControlsCollection* HTMLFormElement::elements() {
 void HTMLFormElement::CollectListedElements(
     Node& root,
     ListedElement::List& elements) const {
-  elements.Clear();
+  elements.clear();
   for (HTMLElement& element : Traversal<HTMLElement>::StartsAfter(root)) {
     ListedElement* listed_element = 0;
     if (element.IsFormControlElement())
@@ -620,7 +626,7 @@ const ListedElement::List& HTMLFormElement::ListedElements() const {
 void HTMLFormElement::CollectImageElements(
     Node& root,
     HeapVector<Member<HTMLImageElement>>& elements) {
-  elements.Clear();
+  elements.clear();
   for (HTMLImageElement& image :
        Traversal<HTMLImageElement>::StartsAfter(root)) {
     if (image.formOwner() == this)
@@ -768,7 +774,7 @@ void HTMLFormElement::GetNamedElements(
   } else if (element_from_past && named_items.IsEmpty()) {
     named_items.push_back(element_from_past);
     UseCounter::Count(GetDocument(),
-                      UseCounter::kFormNameAccessForPastNamesMap);
+                      WebFeature::kFormNameAccessForPastNamesMap);
   }
 }
 
@@ -812,14 +818,14 @@ void HTMLFormElement::AnonymousNamedGetter(
       !elements.IsEmpty() && isHTMLImageElement(*elements.front());
   if (only_match_img) {
     UseCounter::Count(GetDocument(),
-                      UseCounter::kFormNameAccessForImageElement);
+                      WebFeature::kFormNameAccessForImageElement);
     // The following code has performance impact, but it should be small
     // because <img> access via <form> name getter is rarely used.
     for (auto& element : elements) {
       if (isHTMLImageElement(*element) && !element->IsDescendantOf(this)) {
         UseCounter::Count(
             GetDocument(),
-            UseCounter::kFormNameAccessForNonDescendantImageElement);
+            WebFeature::kFormNameAccessForNonDescendantImageElement);
         break;
       }
     }
@@ -834,7 +840,7 @@ void HTMLFormElement::AnonymousNamedGetter(
 
 void HTMLFormElement::SetDemoted(bool demoted) {
   if (demoted)
-    UseCounter::Count(GetDocument(), UseCounter::kDemotedFormElement);
+    UseCounter::Count(GetDocument(), WebFeature::kDemotedFormElement);
   was_demoted_ = demoted;
 }
 

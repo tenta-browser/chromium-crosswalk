@@ -22,9 +22,9 @@
 #ifndef NodeRareData_h
 #define NodeRareData_h
 
-#include "bindings/core/v8/TraceWrapperMember.h"
 #include "core/dom/MutationObserverRegistration.h"
 #include "core/dom/NodeListsNodeData.h"
+#include "platform/bindings/TraceWrapperMember.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/HashSet.h"
 
@@ -50,8 +50,7 @@ class NodeMutationObserverData final
   }
 
   void AddTransientRegistration(MutationObserverRegistration* registration) {
-    transient_registry_.insert(
-        TraceWrapperMember<MutationObserverRegistration>(this, registration));
+    transient_registry_.insert(registration);
   }
 
   void RemoveTransientRegistration(MutationObserverRegistration* registration) {
@@ -60,8 +59,7 @@ class NodeMutationObserverData final
   }
 
   void AddRegistration(MutationObserverRegistration* registration) {
-    registry_.push_back(
-        TraceWrapperMember<MutationObserverRegistration>(this, registration));
+    registry_.push_back(registration);
   }
 
   void RemoveRegistration(MutationObserverRegistration* registration) {
@@ -98,7 +96,7 @@ class NodeRareData : public GarbageCollectedFinalized<NodeRareData>,
   WTF_MAKE_NONCOPYABLE(NodeRareData);
 
  public:
-  static NodeRareData* Create(NodeLayoutData* node_layout_data) {
+  static NodeRareData* Create(NodeRenderingData* node_layout_data) {
     return new NodeRareData(node_layout_data);
   }
 
@@ -111,7 +109,6 @@ class NodeRareData : public GarbageCollectedFinalized<NodeRareData>,
     DCHECK(ThreadState::Current()->IsGCForbidden());
     if (!node_lists_) {
       node_lists_ = NodeListsNodeData::Create();
-      ScriptWrappableVisitor::WriteBarrier(this, node_lists_);
     }
     return *node_lists_;
   }
@@ -122,7 +119,6 @@ class NodeRareData : public GarbageCollectedFinalized<NodeRareData>,
   NodeMutationObserverData& EnsureMutationObserverData() {
     if (!mutation_observer_data_) {
       mutation_observer_data_ = NodeMutationObserverData::Create();
-      ScriptWrappableVisitor::WriteBarrier(this, mutation_observer_data_);
     }
     return *mutation_observer_data_;
   }
@@ -163,7 +159,7 @@ class NodeRareData : public GarbageCollectedFinalized<NodeRareData>,
   DECLARE_TRACE_WRAPPERS_AFTER_DISPATCH();
 
  protected:
-  explicit NodeRareData(NodeLayoutData* node_layout_data)
+  explicit NodeRareData(NodeRenderingData* node_layout_data)
       : NodeRareDataBase(node_layout_data),
         connected_frame_count_(0),
         element_flags_(0),
@@ -173,8 +169,8 @@ class NodeRareData : public GarbageCollectedFinalized<NodeRareData>,
   }
 
  private:
-  Member<NodeListsNodeData> node_lists_;
-  Member<NodeMutationObserverData> mutation_observer_data_;
+  TraceWrapperMember<NodeListsNodeData> node_lists_;
+  TraceWrapperMember<NodeMutationObserverData> mutation_observer_data_;
 
   unsigned connected_frame_count_ : kConnectedFrameCountBits;
   unsigned element_flags_ : kNumberOfElementFlags;

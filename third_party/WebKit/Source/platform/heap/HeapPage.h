@@ -33,6 +33,7 @@
 
 #include <stdint.h>
 #include "base/trace_event/memory_allocator_dump.h"
+#include "build/build_config.h"
 #include "platform/PlatformExport.h"
 #include "platform/heap/BlinkGC.h"
 #include "platform/heap/GCInfo.h"
@@ -181,15 +182,15 @@ class PLATFORM_EXPORT HeapObjectHeader {
     static_assert(
         sizeof(HeapObjectHeader) <= kAllocationGranularity,
         "size of HeapObjectHeader must be smaller than allocationGranularity");
-#if CPU(64BIT)
+#if defined(ARCH_CPU_64_BITS)
     static_assert(sizeof(HeapObjectHeader) == 8,
                   "sizeof(HeapObjectHeader) must be 8 bytes");
     magic_ = GetMagic();
 #endif
 
-    ASSERT(gc_info_index < GCInfoTable::kMaxIndex);
-    ASSERT(size < kNonLargeObjectPageSizeMax);
-    ASSERT(!(size & kAllocationMask));
+    DCHECK(gc_info_index < GCInfoTable::kMaxIndex);
+    DCHECK_LT(size, kNonLargeObjectPageSizeMax);
+    DCHECK(!(size & kAllocationMask));
     encoded_ = static_cast<uint32_t>(
         (gc_info_index << kHeaderGCInfoIndexShift) | size |
         (gc_info_index == kGcInfoIndexForFreeListHeader ? kHeaderFreedBitMask
@@ -216,7 +217,7 @@ class PLATFORM_EXPORT HeapObjectHeader {
   }
 
   NO_SANITIZE_ADDRESS void SetSize(size_t size) {
-    ASSERT(size < kNonLargeObjectPageSizeMax);
+    DCHECK_LT(size, kNonLargeObjectPageSizeMax);
     CheckHeader();
     encoded_ = static_cast<uint32_t>(size) | (encoded_ & ~kHeaderSizeMask);
   }
@@ -243,10 +244,13 @@ class PLATFORM_EXPORT HeapObjectHeader {
   // understand, and is public.
   static void CheckFromPayload(const void*);
 
+  // Returns true if magic number is valid.
+  bool IsValid() const;
+
   static const uint32_t kZappedMagic = 0xDEAD4321;
 
  protected:
-#if DCHECK_IS_ON() && CPU(64BIT)
+#if DCHECK_IS_ON() && defined(ARCH_CPU_64_BITS)
   // Zap |m_magic| with a new magic number that means there was once an object
   // allocated here, but it was freed because nobody marked it during GC.
   void ZapMagic();
@@ -255,7 +259,7 @@ class PLATFORM_EXPORT HeapObjectHeader {
  private:
   void CheckHeader() const;
 
-#if CPU(64BIT)
+#if defined(ARCH_CPU_64_BITS)
   // Returns a random value.
   //
   // The implementation gets its randomness from the locations of 2 independent
@@ -266,7 +270,7 @@ class PLATFORM_EXPORT HeapObjectHeader {
   // arbitrary infoleak bug (used twice).
   uint32_t GetMagic() const;
   uint32_t magic_;
-#endif  // CPU(64BIT)
+#endif  // defined(ARCH_CPU_64_BITS)
 
   uint32_t encoded_;
 };
@@ -276,8 +280,8 @@ class FreeListEntry final : public HeapObjectHeader {
   NO_SANITIZE_ADDRESS
   explicit FreeListEntry(size_t size)
       : HeapObjectHeader(size, kGcInfoIndexForFreeListHeader), next_(nullptr) {
-#if DCHECK_IS_ON() && CPU(64BIT)
-    ASSERT(size >= sizeof(HeapObjectHeader));
+#if DCHECK_IS_ON() && defined(ARCH_CPU_64_BITS)
+    DCHECK_GE(size, sizeof(HeapObjectHeader));
     ZapMagic();
 #endif
   }
@@ -301,7 +305,7 @@ class FreeListEntry final : public HeapObjectHeader {
 
   NO_SANITIZE_ADDRESS
   void Append(FreeListEntry* next) {
-    ASSERT(!next_);
+    DCHECK(!next_);
     next_ = next;
   }
 
@@ -436,12 +440,12 @@ class BasePage {
   bool HasBeenSwept() const { return swept_; }
 
   void MarkAsSwept() {
-    ASSERT(!swept_);
+    DCHECK(!swept_);
     swept_ = true;
   }
 
   void MarkAsUnswept() {
-    ASSERT(swept_);
+    DCHECK(swept_);
     swept_ = false;
   }
 
@@ -762,8 +766,10 @@ class PLATFORM_EXPORT NormalPageArena final : public BaseArena {
  public:
   NormalPageArena(ThreadState*, int);
   void AddToFreeList(Address address, size_t size) {
-    ASSERT(FindPageFromAddress(address));
-    ASSERT(FindPageFromAddress(address + size - 1));
+#if DCHECK_IS_ON()
+    DCHECK(FindPageFromAddress(address));
+    DCHECK(FindPageFromAddress(address + size - 1));
+#endif
     free_list_.AddToFreeList(address, size);
   }
   void ClearFreeLists() override;
@@ -846,7 +852,9 @@ PLATFORM_EXPORT inline BasePage* PageFromObject(const void* object) {
   Address address = reinterpret_cast<Address>(const_cast<void*>(object));
   BasePage* page = reinterpret_cast<BasePage*>(BlinkPageAddress(address) +
                                                kBlinkGuardPageSize);
-  ASSERT(page->Contains(address));
+#if DCHECK_IS_ON()
+  DCHECK(page->Contains(address));
+#endif
   return page;
 }
 
@@ -854,15 +862,22 @@ NO_SANITIZE_ADDRESS inline size_t HeapObjectHeader::size() const {
   size_t result = encoded_ & kHeaderSizeMask;
   // Large objects should not refer to header->size(). The actual size of a
   // large object is stored in |LargeObjectPage::m_payloadSize|.
-  ASSERT(result != kLargeObjectSizeInHeader);
-  ASSERT(!PageFromObject(this)->IsLargeObjectPage());
+  DCHECK(result != kLargeObjectSizeInHeader);
+  DCHECK(!PageFromObject(this)->IsLargeObjectPage());
   return result;
 }
 
+NO_SANITIZE_ADDRESS inline bool HeapObjectHeader::IsValid() const {
+#if defined(ARCH_CPU_64_BITS)
+  return GetMagic() == magic_;
+#else
+  return true;
+#endif
+}
+
 NO_SANITIZE_ADDRESS inline void HeapObjectHeader::CheckHeader() const {
-#if CPU(64BIT)
-  const bool good_magic = GetMagic() == magic_;
-  DCHECK(good_magic);
+#if defined(ARCH_CPU_64_BITS)
+  DCHECK(IsValid());
 #endif
 }
 
@@ -878,11 +893,11 @@ NO_SANITIZE_ADDRESS inline size_t HeapObjectHeader::PayloadSize() {
   CheckHeader();
   size_t size = encoded_ & kHeaderSizeMask;
   if (UNLIKELY(size == kLargeObjectSizeInHeader)) {
-    ASSERT(PageFromObject(this)->IsLargeObjectPage());
+    DCHECK(PageFromObject(this)->IsLargeObjectPage());
     return static_cast<LargeObjectPage*>(PageFromObject(this))->PayloadSize() -
            sizeof(HeapObjectHeader);
   }
-  ASSERT(!PageFromObject(this)->IsLargeObjectPage());
+  DCHECK(!PageFromObject(this)->IsLargeObjectPage());
   return size - sizeof(HeapObjectHeader);
 }
 
@@ -898,9 +913,9 @@ inline void HeapObjectHeader::CheckFromPayload(const void* payload) {
   (void)FromPayload(payload);
 }
 
-#if CPU(64BIT)
+#if defined(ARCH_CPU_64_BITS)
 ALWAYS_INLINE uint32_t RotateLeft16(uint32_t x) {
-#if COMPILER(MSVC)
+#if defined(COMPILER_MSVC)
   return _lrotr(x, 16);
 #else
   // http://blog.regehr.org/archives/1063
@@ -911,7 +926,7 @@ ALWAYS_INLINE uint32_t RotateLeft16(uint32_t x) {
 inline uint32_t HeapObjectHeader::GetMagic() const {
 // Ignore C4319: It is OK to 0-extend into the high-order bits of the uintptr_t
 // on 64-bit, in this case.
-#if COMPILER(MSVC)
+#if defined(COMPILER_MSVC)
 #pragma warning(push)
 #pragma warning(disable : 4319)
 #endif
@@ -919,22 +934,22 @@ inline uint32_t HeapObjectHeader::GetMagic() const {
   const uintptr_t random1 = ~(RotateLeft16(reinterpret_cast<uintptr_t>(
       base::trace_event::MemoryAllocatorDump::kNameSize)));
 
-#if OS(WIN)
+#if defined(OS_WIN)
   const uintptr_t random2 =
       ~(RotateLeft16(reinterpret_cast<uintptr_t>(::ReadFile)));
-#elif OS(POSIX)
+#elif defined(OS_POSIX)
   const uintptr_t random2 =
       ~(RotateLeft16(reinterpret_cast<uintptr_t>(::read)));
 #else
 #error OS not supported
 #endif
 
-#if CPU(64BIT)
+#if defined(ARCH_CPU_64_BITS)
   static_assert(sizeof(uintptr_t) == sizeof(uint64_t),
                 "uintptr_t is not uint64_t");
   const uint32_t random = static_cast<uint32_t>(
       (random1 & 0x0FFFFULL) | ((random2 >> 32) & 0x0FFFF0000ULL));
-#elif CPU(32BIT)
+#elif defined(ARCH_CPU_32_BITS)
   // Although we don't use heap metadata canaries on 32-bit due to memory
   // pressure, keep this code around just in case we do, someday.
   static_assert(sizeof(uintptr_t) == sizeof(uint32_t),
@@ -944,13 +959,13 @@ inline uint32_t HeapObjectHeader::GetMagic() const {
 #error architecture not supported
 #endif
 
-#if COMPILER(MSVC)
+#if defined(COMPILER_MSVC)
 #pragma warning(pop)
 #endif
 
   return random;
 }
-#endif  // CPU(64BIT)
+#endif  // defined(ARCH_CPU_64_BITS)
 
 NO_SANITIZE_ADDRESS inline bool HeapObjectHeader::IsWrapperHeaderMarked()
     const {
@@ -960,13 +975,13 @@ NO_SANITIZE_ADDRESS inline bool HeapObjectHeader::IsWrapperHeaderMarked()
 
 NO_SANITIZE_ADDRESS inline void HeapObjectHeader::MarkWrapperHeader() {
   CheckHeader();
-  ASSERT(!IsWrapperHeaderMarked());
+  DCHECK(!IsWrapperHeaderMarked());
   encoded_ |= kHeaderWrapperMarkBitMask;
 }
 
 NO_SANITIZE_ADDRESS inline void HeapObjectHeader::UnmarkWrapperHeader() {
   CheckHeader();
-  ASSERT(IsWrapperHeaderMarked());
+  DCHECK(IsWrapperHeaderMarked());
   encoded_ &= ~kHeaderWrapperMarkBitMask;
 }
 
@@ -977,13 +992,13 @@ NO_SANITIZE_ADDRESS inline bool HeapObjectHeader::IsMarked() const {
 
 NO_SANITIZE_ADDRESS inline void HeapObjectHeader::Mark() {
   CheckHeader();
-  ASSERT(!IsMarked());
+  DCHECK(!IsMarked());
   encoded_ = encoded_ | kHeaderMarkBitMask;
 }
 
 NO_SANITIZE_ADDRESS inline void HeapObjectHeader::Unmark() {
   CheckHeader();
-  ASSERT(IsMarked());
+  DCHECK(IsMarked());
   encoded_ &= ~kHeaderMarkBitMask;
 }
 
@@ -993,14 +1008,16 @@ inline Address NormalPageArena::AllocateObject(size_t allocation_size,
     Address header_address = current_allocation_point_;
     current_allocation_point_ += allocation_size;
     remaining_allocation_size_ -= allocation_size;
-    ASSERT(gc_info_index > 0);
+    DCHECK_GT(gc_info_index, 0u);
     new (NotNull, header_address)
         HeapObjectHeader(allocation_size, gc_info_index);
     Address result = header_address + sizeof(HeapObjectHeader);
-    ASSERT(!(reinterpret_cast<uintptr_t>(result) & kAllocationMask));
+    DCHECK(!(reinterpret_cast<uintptr_t>(result) & kAllocationMask));
 
     SET_MEMORY_ACCESSIBLE(result, allocation_size - sizeof(HeapObjectHeader));
-    ASSERT(FindPageFromAddress(header_address + allocation_size - 1));
+#if DCHECK_IS_ON()
+    DCHECK(FindPageFromAddress(header_address + allocation_size - 1));
+#endif
     return result;
   }
   return OutOfLineAllocate(allocation_size, gc_info_index);

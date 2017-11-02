@@ -26,12 +26,16 @@
 #include "extensions/common/api/messaging/port_id.h"
 #include "extensions/common/extension_messages.h"
 #include "extensions/common/manifest_handlers/externally_connectable.h"
+#include "extensions/renderer/dispatcher.h"
+#include "extensions/renderer/extension_bindings_system.h"
 #include "extensions/renderer/extension_frame_helper.h"
 #include "extensions/renderer/extension_port.h"
+#include "extensions/renderer/extensions_renderer_client.h"
 #include "extensions/renderer/gc_callback.h"
 #include "extensions/renderer/script_context.h"
 #include "extensions/renderer/script_context_set.h"
 #include "extensions/renderer/v8_helpers.h"
+#include "gin/converter.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
 #include "third_party/WebKit/public/web/WebLocalFrame.h"
 #include "third_party/WebKit/public/web/WebScopedUserGesture.h"
@@ -86,18 +90,36 @@ void DispatchOnConnectToScriptContext(
   if (bindings->context_id() == target_port_id.context_id)
     return;
 
+  // First, determine the event we'll use to connect.
+  std::string target_extension_id = script_context->GetExtensionID();
+  bool is_external = info.source_id != target_extension_id;
+  std::string event_name;
+  if (channel_name == "chrome.extension.sendRequest") {
+    event_name =
+        is_external ? "extension.onRequestExternal" : "extension.onRequest";
+  } else if (channel_name == "chrome.runtime.sendMessage") {
+    event_name =
+        is_external ? "runtime.onMessageExternal" : "runtime.onMessage";
+  } else {
+    event_name =
+        is_external ? "runtime.onConnectExternal" : "runtime.onConnect";
+  }
+
+  ExtensionBindingsSystem* bindings_system =
+      ExtensionsRendererClient::Get()->GetDispatcher()->bindings_system();
+  // If there are no listeners for the given event, then we know the port won't
+  // be used in this context.
+  if (!bindings_system->HasEventListenerInContext(event_name, script_context)) {
+    return;
+  }
+  *port_created = true;
+
   ExtensionPort* port = bindings->CreateNewPortWithId(target_port_id);
-  // Remove the port.
-  base::ScopedClosureRunner remove_port(
-      base::Bind(&MessagingBindings::RemovePortWithJsId, bindings->GetWeakPtr(),
-                 port->js_id()));
 
   v8::Isolate* isolate = script_context->isolate();
   v8::HandleScope handle_scope(isolate);
 
-
   const std::string& source_url_spec = info.source_url.spec();
-  std::string target_extension_id = script_context->GetExtensionID();
   const Extension* extension = script_context->extension();
 
   v8::Local<v8::Value> tab = v8::Null(isolate);
@@ -107,9 +129,8 @@ void DispatchOnConnectToScriptContext(
 
   if (extension) {
     if (!source->tab.empty() && !extension->is_platform_app()) {
-      std::unique_ptr<content::V8ValueConverter> converter(
-          content::V8ValueConverter::create());
-      tab = converter->ToV8Value(&source->tab, script_context->v8_context());
+      tab = content::V8ValueConverter::Create()->ToV8Value(
+          &source->tab, script_context->v8_context());
     }
 
     ExternallyConnectableInfo* externally_connectable =
@@ -164,19 +185,9 @@ void DispatchOnConnectToScriptContext(
       tls_channel_id_value,
   };
 
-  v8::Local<v8::Value> retval =
-      script_context->module_system()->CallModuleMethod(
-          "messaging", "dispatchOnConnect", arraysize(arguments), arguments);
-
-  if (!retval.IsEmpty() && !retval->IsUndefined()) {
-    CHECK(retval->IsBoolean());
-    bool used = retval.As<v8::Boolean>()->Value();
-    *port_created |= used;
-    if (used)  // Port was used; don't remove it.
-      remove_port.ReplaceClosure(base::Closure());
-  } else {
-    LOG(ERROR) << "Empty return value from dispatchOnConnect.";
-  }
+  // Note: this can execute asynchronously if JS is suspended.
+  script_context->module_system()->CallModuleMethodSafe(
+      "messaging", "dispatchOnConnect", arraysize(arguments), arguments);
 }
 
 void DeliverMessageToScriptContext(const Message& message,
@@ -359,13 +370,9 @@ ExtensionPort* MessagingBindings::GetPortWithId(const PortId& id) {
 
 ExtensionPort* MessagingBindings::CreateNewPortWithId(const PortId& id) {
   int js_id = GetNextJsId();
-  auto port = base::MakeUnique<ExtensionPort>(context(), id, js_id);
+  auto port = std::make_unique<ExtensionPort>(context(), id, js_id);
   return ports_.insert(std::make_pair(js_id, std::move(port)))
       .first->second.get();
-}
-
-void MessagingBindings::RemovePortWithJsId(int js_id) {
-  ports_.erase(js_id);
 }
 
 base::WeakPtr<MessagingBindings> MessagingBindings::GetWeakPtr() {
@@ -381,11 +388,36 @@ void MessagingBindings::PostMessage(
 
   int js_port_id = args[0].As<v8::Int32>()->Value();
   auto iter = ports_.find(js_port_id);
-  if (iter != ports_.end()) {
-    iter->second->PostExtensionMessage(base::MakeUnique<Message>(
-        *v8::String::Utf8Value(args[1]),
-        blink::WebUserGestureIndicator::IsProcessingUserGesture()));
+
+  if (iter == ports_.end())
+    return;
+
+  ExtensionPort& port = *iter->second;
+
+  auto message = std::make_unique<Message>(
+      *v8::String::Utf8Value(args[1]),
+      blink::WebUserGestureIndicator::IsProcessingUserGesture());
+
+  size_t message_length = message->data.length();
+
+  // Max bucket at 512 MB - anything over that, and we don't care.
+  static constexpr int kMaxUmaLength = 1024 * 1024 * 512;
+  static constexpr int kMinUmaLength = 1;
+  static constexpr int kBucketCount = 50;
+  UMA_HISTOGRAM_CUSTOM_COUNTS("Extensions.Messaging.MessageSize",
+                              message_length, kMinUmaLength, kMaxUmaLength,
+                              kBucketCount);
+
+  // IPC messages will fail at > 128 MB. Restrict extension messages to 64 MB.
+  // A 64 MB JSON-ifiable object is scary enough as is.
+  static constexpr size_t kMaxMessageLength = 1024 * 1024 * 64;
+  if (message_length > kMaxMessageLength) {
+    args.GetReturnValue().Set(gin::StringToV8(
+        args.GetIsolate(), "Message length exceeded maximum allowed length."));
+    return;
   }
+
+  port.PostExtensionMessage(std::move(message));
 }
 
 void MessagingBindings::CloseChannel(
@@ -437,7 +469,7 @@ void MessagingBindings::OpenChannelToExtension(
 
   int js_id = GetNextJsId();
   PortId port_id(context_id_, js_id, true);
-  ports_[js_id] = base::MakeUnique<ExtensionPort>(context(), port_id, js_id);
+  ports_[js_id] = std::make_unique<ExtensionPort>(context(), port_id, js_id);
 
   ExtensionMsg_ExternalConnectionInfo info;
   // For messaging APIs, hosted apps should be considered a web page so hide
@@ -481,7 +513,7 @@ void MessagingBindings::OpenChannelToNativeApp(
 
   int js_id = GetNextJsId();
   PortId port_id(context_id_, js_id, true);
-  ports_[js_id] = base::MakeUnique<ExtensionPort>(context(), port_id, js_id);
+  ports_[js_id] = std::make_unique<ExtensionPort>(context(), port_id, js_id);
 
   {
     SCOPED_UMA_HISTOGRAM_TIMER(
@@ -514,7 +546,7 @@ void MessagingBindings::OpenChannelToTab(
 
   int js_id = GetNextJsId();
   PortId port_id(context_id_, js_id, true);
-  ports_[js_id] = base::MakeUnique<ExtensionPort>(context(), port_id, js_id);
+  ports_[js_id] = std::make_unique<ExtensionPort>(context(), port_id, js_id);
 
   ExtensionMsg_TabTargetConnectionInfo info;
   info.tab_id = args[0]->Int32Value();

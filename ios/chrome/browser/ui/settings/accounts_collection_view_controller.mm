@@ -34,9 +34,7 @@
 #import "ios/chrome/browser/ui/collection_view/cells/collection_view_text_item.h"
 #import "ios/chrome/browser/ui/collection_view/collection_view_model.h"
 #import "ios/chrome/browser/ui/colors/MDCPalette+CrAdditions.h"
-#import "ios/chrome/browser/ui/commands/UIKit+ChromeExecuteCommand.h"
-#import "ios/chrome/browser/ui/commands/generic_chrome_command.h"
-#include "ios/chrome/browser/ui/commands/ios_command_ids.h"
+#import "ios/chrome/browser/ui/commands/application_commands.h"
 #import "ios/chrome/browser/ui/commands/open_url_command.h"
 #import "ios/chrome/browser/ui/icons/chrome_icon.h"
 #import "ios/chrome/browser/ui/settings/settings_navigation_controller.h"
@@ -115,11 +113,15 @@ typedef NS_ENUM(NSInteger, ItemType) {
 
 @implementation AccountsCollectionViewController
 
+@synthesize dispatcher = _dispatcher;
+
 - (instancetype)initWithBrowserState:(ios::ChromeBrowserState*)browserState
            closeSettingsOnAddAccount:(BOOL)closeSettingsOnAddAccount {
   DCHECK(browserState);
   DCHECK(!browserState->IsOffTheRecord());
-  self = [super initWithStyle:CollectionViewControllerStyleAppBar];
+  UICollectionViewLayout* layout = [[MDCCollectionViewFlowLayout alloc] init];
+  self =
+      [super initWithLayout:layout style:CollectionViewControllerStyleAppBar];
   if (self) {
     _browserState = browserState;
     _closeSettingsOnAddAccount = closeSettingsOnAddAccount;
@@ -292,14 +294,12 @@ typedef NS_ENUM(NSInteger, ItemType) {
   }
 
   ChromeIdentity* identity = [self authService]->GetAuthenticatedIdentity();
-  bool hasSyncError = !ios_internal::sync::IsTransientSyncError(
-      syncSetupService->GetSyncServiceState());
+  bool hasSyncError =
+      !IsTransientSyncError(syncSetupService->GetSyncServiceState());
   bool hasMDMError = [self authService]->HasCachedMDMErrorForIdentity(identity);
   if (hasSyncError || hasMDMError) {
     syncItem.image = [UIImage imageNamed:@"settings_error"];
-    syncItem.detailText =
-        ios_internal::sync::GetSyncErrorDescriptionForBrowserState(
-            _browserState);
+    syncItem.detailText = GetSyncErrorDescriptionForBrowserState(_browserState);
     syncItem.shouldDisplayError = YES;
   } else {
     syncItem.image = [UIImage imageNamed:@"settings_sync"];
@@ -432,10 +432,11 @@ typedef NS_ENUM(NSInteger, ItemType) {
     return;
   }
 
-  UIViewController* controllerToPush =
+  SyncSettingsCollectionViewController* controllerToPush =
       [[SyncSettingsCollectionViewController alloc]
             initWithBrowserState:_browserState
           allowSwitchSyncAccount:YES];
+  controllerToPush.dispatcher = self.dispatcher;
   [self.navigationController pushViewController:controllerToPush animated:YES];
 }
 
@@ -447,7 +448,7 @@ typedef NS_ENUM(NSInteger, ItemType) {
   UINavigationController* settingsDetails =
       ios::GetChromeBrowserProvider()
           ->GetChromeIdentityService()
-          ->NewWebAndAppSettingDetails(
+          ->CreateWebAndAppSettingDetailsController(
               [self authService]->GetAuthenticatedIdentity(), self);
   UIImage* closeIcon = [ChromeIcon closeIcon];
   SEL action = @selector(closeGoogleActivitySettings:);
@@ -481,8 +482,11 @@ typedef NS_ENUM(NSInteger, ItemType) {
           initWithBrowserState:_browserState
       presentingViewController:self.navigationController
          isPresentedOnSettings:YES
-             signInAccessPoint:signin_metrics::AccessPoint::
-                                   ACCESS_POINT_SETTINGS];
+                   accessPoint:signin_metrics::AccessPoint::
+                                   ACCESS_POINT_SETTINGS
+                   promoAction:signin_metrics::PromoAction::
+                                   PROMO_ACTION_NO_SIGNIN_PROMO
+                    dispatcher:self.dispatcher];
 
   // |_authenticationOperationInProgress| is reset when the signin interaction
   // controller is dismissed.
@@ -498,18 +502,17 @@ typedef NS_ENUM(NSInteger, ItemType) {
   _signinInteractionController = nil;
   [self handleAuthenticationOperationDidFinish];
   if (success && _closeSettingsOnAddAccount) {
-    GenericChromeCommand* closeSettingsCommand =
-        [[GenericChromeCommand alloc] initWithTag:IDC_CLOSE_SETTINGS];
-    [self chromeExecuteCommand:closeSettingsCommand];
+    [self.dispatcher closeSettingsUI];
   }
 }
 
 - (void)showAccountDetails:(ChromeIdentity*)identity {
   if ([_alertCoordinator isVisible])
     return;
-  UIViewController* accountDetails = ios::GetChromeBrowserProvider()
-                                         ->GetChromeIdentityService()
-                                         ->NewAccountDetails(identity, self);
+  UIViewController* accountDetails =
+      ios::GetChromeBrowserProvider()
+          ->GetChromeIdentityService()
+          ->CreateAccountDetailsController(identity, self);
   if (!accountDetails) {
     // Failed to create a new account details. Ignored.
     return;
@@ -635,24 +638,24 @@ typedef NS_ENUM(NSInteger, ItemType) {
     viewController:(UIViewController*)viewController {
   OpenUrlCommand* command =
       [[OpenUrlCommand alloc] initWithURLFromChrome:net::GURLWithNSURL(url)];
-  [command setTag:IDC_CLOSE_SETTINGS_AND_OPEN_URL];
-  [self chromeExecuteCommand:command];
+  [self.dispatcher closeSettingsUIAndOpenURL:command];
 }
 
 #pragma mark - ChromeIdentityServiceObserver
 
-- (void)onProfileUpdate:(ChromeIdentity*)identity {
+- (void)profileUpdate:(ChromeIdentity*)identity {
   CollectionViewAccountItem* item =
       base::mac::ObjCCastStrict<CollectionViewAccountItem>(
           [_identityMap objectForKey:identity.gaiaID]);
+  if (!item) {
+    return;
+  }
   [self updateAccountItem:item withIdentity:identity];
-  NSIndexPath* indexPath =
-      [self.collectionViewModel indexPathForItem:item
-                         inSectionWithIdentifier:SectionIdentifierAccounts];
+  NSIndexPath* indexPath = [self.collectionViewModel indexPathForItem:item];
   [self.collectionView reloadItemsAtIndexPaths:@[ indexPath ]];
 }
 
-- (void)onChromeIdentityServiceWillBeDestroyed {
+- (void)chromeIdentityServiceWillBeDestroyed {
   _identityServiceObserver.reset();
 }
 

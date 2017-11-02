@@ -10,6 +10,7 @@
 #include "base/strings/stringprintf.h"
 #include "mojo/public/cpp/bindings/map.h"
 #include "services/ui/common/util.h"
+#include "ui/base/cursor/cursor.h"
 
 namespace ui {
 
@@ -37,8 +38,7 @@ std::string ChangeToDescription(const Change& change,
     case CHANGE_TYPE_EMBED:
       if (type == ChangeDescriptionType::ONE)
         return "OnEmbed";
-      return base::StringPrintf("OnEmbed %s drawn=%s",
-                                change.frame_sink_id.ToString().c_str(),
+      return base::StringPrintf("OnEmbed drawn=%s",
                                 change.bool_value ? "true" : "false");
 
     case CHANGE_TYPE_EMBEDDED_APP_DISCONNECTED:
@@ -131,20 +131,19 @@ std::string ChangeToDescription(const Change& change,
                                 WindowIdToString(change.window_id).c_str());
 
     case CHANGE_TYPE_CURSOR_CHANGED:
-      return base::StringPrintf("CursorChanged id=%s cursor_id=%d",
+      return base::StringPrintf("CursorChanged id=%s cursor_type=%d",
                                 WindowIdToString(change.window_id).c_str(),
-                                change.cursor_id);
+                                static_cast<int>(change.cursor_type));
     case CHANGE_TYPE_ON_CHANGE_COMPLETED:
       return base::StringPrintf("ChangeCompleted id=%d sucess=%s",
                                 change.change_id,
                                 change.bool_value ? "true" : "false");
 
     case CHANGE_TYPE_ON_TOP_LEVEL_CREATED:
-      return base::StringPrintf(
-          "TopLevelCreated id=%d %s window_id=%s drawn=%s", change.change_id,
-          change.frame_sink_id.ToString().c_str(),
-          WindowIdToString(change.window_id).c_str(),
-          change.bool_value ? "true" : "false");
+      return base::StringPrintf("TopLevelCreated id=%d window_id=%s drawn=%s",
+                                change.change_id,
+                                WindowIdToString(change.window_id).c_str(),
+                                change.bool_value ? "true" : "false");
     case CHANGE_TYPE_OPACITY:
       return base::StringPrintf("OpacityChanged window_id=%s opacity=%.2f",
                                 WindowIdToString(change.window_id).c_str(),
@@ -153,6 +152,9 @@ std::string ChangeToDescription(const Change& change,
       return base::StringPrintf("SurfaceCreated window_id=%s surface_id=%s",
                                 WindowIdToString(change.window_id).c_str(),
                                 change.surface_id.ToString().c_str());
+    case CHANGE_TYPE_TRANSFORM_CHANGED:
+      return base::StringPrintf("TransformChanged window_id=%s",
+                                WindowIdToString(change.window_id).c_str());
   }
   return std::string();
 }
@@ -221,7 +223,6 @@ void WindowDatasToTestWindows(const std::vector<mojom::WindowDataPtr>& data,
 
 Change::Change()
     : type(CHANGE_TYPE_EMBED),
-      client_id(0),
       window_id(0),
       window_id2(0),
       window_id3(0),
@@ -230,7 +231,7 @@ Change::Change()
       direction(mojom::OrderDirection::ABOVE),
       bool_value(false),
       float_value(0.f),
-      cursor_id(0),
+      cursor_type(ui::CursorType::kNull),
       change_id(0u) {}
 
 Change::Change(const Change& other) = default;
@@ -241,15 +242,10 @@ TestChangeTracker::TestChangeTracker() : delegate_(NULL) {}
 
 TestChangeTracker::~TestChangeTracker() {}
 
-void TestChangeTracker::OnEmbed(ClientSpecificId client_id,
-                                mojom::WindowDataPtr root,
-                                bool drawn,
-                                const cc::FrameSinkId& frame_sink_id) {
+void TestChangeTracker::OnEmbed(mojom::WindowDataPtr root, bool drawn) {
   Change change;
   change.type = CHANGE_TYPE_EMBED;
-  change.client_id = client_id;
   change.bool_value = drawn;
-  change.frame_sink_id = frame_sink_id;
   change.windows.push_back(WindowDataToTestWindow(root));
   AddChange(change);
 }
@@ -265,13 +261,20 @@ void TestChangeTracker::OnWindowBoundsChanged(
     Id window_id,
     const gfx::Rect& old_bounds,
     const gfx::Rect& new_bounds,
-    const base::Optional<cc::LocalSurfaceId>& local_surface_id) {
+    const base::Optional<viz::LocalSurfaceId>& local_surface_id) {
   Change change;
   change.type = CHANGE_TYPE_NODE_BOUNDS_CHANGED;
   change.window_id = window_id;
   change.bounds = old_bounds;
   change.bounds2 = new_bounds;
   change.local_surface_id = local_surface_id;
+  AddChange(change);
+}
+
+void TestChangeTracker::OnWindowTransformChanged(Id window_id) {
+  Change change;
+  change.type = CHANGE_TYPE_TRANSFORM_CHANGED;
+  change.window_id = window_id;
   AddChange(change);
 }
 
@@ -311,7 +314,7 @@ void TestChangeTracker::OnCaptureChanged(Id new_capture_window_id,
 
 void TestChangeTracker::OnFrameSinkIdAllocated(
     Id window_id,
-    const cc::FrameSinkId& frame_sink_id) {
+    const viz::FrameSinkId& frame_sink_id) {
   Change change;
   change.type = CHANGE_TYPE_FRAME_SINK_ID_ALLOCATED;
   change.window_id = window_id;
@@ -420,13 +423,12 @@ void TestChangeTracker::OnWindowFocused(Id window_id) {
   AddChange(change);
 }
 
-void TestChangeTracker::OnWindowPredefinedCursorChanged(
-    Id window_id,
-    mojom::CursorType cursor_id) {
+void TestChangeTracker::OnWindowCursorChanged(Id window_id,
+                                              const ui::CursorData& cursor) {
   Change change;
   change.type = CHANGE_TYPE_CURSOR_CHANGED;
   change.window_id = window_id;
-  change.cursor_id = static_cast<int32_t>(cursor_id);
+  change.cursor_type = cursor.cursor_type();
   AddChange(change);
 }
 
@@ -438,23 +440,20 @@ void TestChangeTracker::OnChangeCompleted(uint32_t change_id, bool success) {
   AddChange(change);
 }
 
-void TestChangeTracker::OnTopLevelCreated(
-    uint32_t change_id,
-    mojom::WindowDataPtr window_data,
-    bool drawn,
-    const cc::FrameSinkId& frame_sink_id) {
+void TestChangeTracker::OnTopLevelCreated(uint32_t change_id,
+                                          mojom::WindowDataPtr window_data,
+                                          bool drawn) {
   Change change;
   change.type = CHANGE_TYPE_ON_TOP_LEVEL_CREATED;
   change.change_id = change_id;
   change.window_id = window_data->window_id;
   change.bool_value = drawn;
-  change.frame_sink_id = frame_sink_id;
   AddChange(change);
 }
 
 void TestChangeTracker::OnWindowSurfaceChanged(
     Id window_id,
-    const cc::SurfaceInfo& surface_info) {
+    const viz::SurfaceInfo& surface_info) {
   Change change;
   change.type = CHANGE_TYPE_SURFACE_CHANGED;
   change.window_id = window_id;

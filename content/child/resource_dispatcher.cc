@@ -8,6 +8,7 @@
 
 #include <utility>
 
+#include "base/atomic_sequence_num.h"
 #include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/debug/alias.h"
@@ -20,21 +21,26 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/rand_util.h"
 #include "base/strings/string_util.h"
+#include "base/synchronization/waitable_event.h"
+#include "base/task_scheduler/post_task.h"
 #include "build/build_config.h"
 #include "content/child/request_extra_data.h"
 #include "content/child/resource_scheduling_filter.h"
 #include "content/child/shared_memory_received_data_factory.h"
 #include "content/child/site_isolation_stats_gatherer.h"
+#include "content/child/sync_load_context.h"
 #include "content/child/sync_load_response.h"
 #include "content/child/url_loader_client_impl.h"
 #include "content/common/inter_process_time_ticks_converter.h"
 #include "content/common/navigation_params.h"
 #include "content/common/resource_messages.h"
-#include "content/common/resource_request.h"
-#include "content/common/resource_request_completion_status.h"
+#include "content/common/throttling_url_loader.h"
 #include "content/public/child/fixed_received_data.h"
 #include "content/public/child/request_peer.h"
 #include "content/public/child/resource_dispatcher_delegate.h"
+#include "content/public/common/content_features.h"
+#include "content/public/common/resource_request.h"
+#include "content/public/common/resource_request_completion_status.h"
 #include "content/public/common/resource_response.h"
 #include "content/public/common/resource_type.h"
 #include "net/base/net_errors.h"
@@ -62,15 +68,6 @@ void CrashOnMapFailure() {
   CHECK(false);
 }
 
-// Each resource request is assigned an ID scoped to this process.
-int MakeRequestID() {
-  // NOTE: The resource_dispatcher_host also needs probably unique
-  // request_ids, so they count down from -2 (-1 is a special we're
-  // screwed value), while the renderer process counts up.
-  static int next_request_id = 0;
-  return next_request_id++;
-}
-
 void CheckSchemeForReferrerPolicy(const ResourceRequest& request) {
   if ((request.referrer_policy == blink::kWebReferrerPolicyDefault ||
        request.referrer_policy ==
@@ -86,15 +83,23 @@ void CheckSchemeForReferrerPolicy(const ResourceRequest& request) {
 
 }  // namespace
 
+// static
+int ResourceDispatcher::MakeRequestID() {
+  // NOTE: The resource_dispatcher_host also needs probably unique
+  // request_ids, so they count down from -2 (-1 is a special "we're
+  // screwed value"), while the renderer process counts up.
+  static base::AtomicSequenceNumber sequence;
+  return sequence.GetNext();  // We start at zero.
+}
+
 ResourceDispatcher::ResourceDispatcher(
     IPC::Sender* sender,
-    scoped_refptr<base::SingleThreadTaskRunner> main_thread_task_runner)
+    scoped_refptr<base::SingleThreadTaskRunner> thread_task_runner)
     : message_sender_(sender),
       delegate_(NULL),
       io_timestamp_(base::TimeTicks()),
-      main_thread_task_runner_(main_thread_task_runner),
-      weak_factory_(this) {
-}
+      thread_task_runner_(thread_task_runner),
+      weak_factory_(this) {}
 
 ResourceDispatcher::~ResourceDispatcher() {
 }
@@ -315,7 +320,7 @@ void ResourceDispatcher::OnReceivedRedirect(
     request_info->pending_redirect_message.reset(
         new ResourceHostMsg_FollowRedirect(request_id));
     if (!request_info->is_deferred) {
-      FollowPendingRedirect(request_id, request_info);
+      FollowPendingRedirect(request_info);
     }
   } else {
     Cancel(request_id);
@@ -323,7 +328,6 @@ void ResourceDispatcher::OnReceivedRedirect(
 }
 
 void ResourceDispatcher::FollowPendingRedirect(
-    int request_id,
     PendingRequestInfo* request_info) {
   IPC::Message* msg = request_info->pending_redirect_message.release();
   if (msg) {
@@ -371,11 +375,11 @@ void ResourceDispatcher::OnRequestComplete(
   // but the past attempt to change it seems to have caused crashes.
   // (crbug.com/547047)
   peer->OnCompletedRequest(request_complete_data.error_code,
-                           request_complete_data.was_ignored_by_handler,
                            request_complete_data.exists_in_cache,
                            renderer_completion_time,
                            request_complete_data.encoded_data_length,
-                           request_complete_data.encoded_body_length);
+                           request_complete_data.encoded_body_length,
+                           request_complete_data.decoded_body_length);
 }
 
 bool ResourceDispatcher::RemovePendingRequest(int request_id) {
@@ -401,7 +405,7 @@ bool ResourceDispatcher::RemovePendingRequest(int request_id) {
   // Always delete the pending_request asyncly so that cancelling the request
   // doesn't delete the request context info while its response is still being
   // handled.
-  main_thread_task_runner_->DeleteSoon(FROM_HERE, it->second.release());
+  thread_task_runner_->DeleteSoon(FROM_HERE, it->second.release());
   pending_requests_.erase(it);
 
   if (release_downloaded_file) {
@@ -468,11 +472,11 @@ void ResourceDispatcher::SetDefersLoading(int request_id, bool value) {
     if (request_info->url_loader_client)
       request_info->url_loader_client->UnsetDefersLoading();
 
-    FollowPendingRedirect(request_id, request_info);
+    FollowPendingRedirect(request_info);
 
-    main_thread_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&ResourceDispatcher::FlushDeferredMessages,
-                              weak_factory_.GetWeakPtr(), request_id));
+    thread_task_runner_->PostTask(
+        FROM_HERE, base::BindOnce(&ResourceDispatcher::FlushDeferredMessages,
+                                  weak_factory_.GetWeakPtr(), request_id));
   }
 }
 
@@ -576,20 +580,36 @@ void ResourceDispatcher::FlushDeferredMessages(int request_id) {
 void ResourceDispatcher::StartSync(
     std::unique_ptr<ResourceRequest> request,
     int routing_id,
+    const url::Origin& frame_origin,
     SyncLoadResponse* response,
     blink::WebURLRequest::LoadingIPCType ipc_type,
-    mojom::URLLoaderFactory* url_loader_factory) {
+    mojom::URLLoaderFactory* url_loader_factory,
+    std::vector<std::unique_ptr<URLLoaderThrottle>> throttles) {
   CheckSchemeForReferrerPolicy(*request);
 
-  SyncLoadResult result;
-
   if (ipc_type == blink::WebURLRequest::LoadingIPCType::kMojo) {
-    if (!url_loader_factory->SyncLoad(
-            routing_id, MakeRequestID(), *request, &result)) {
-      response->error_code = net::ERR_FAILED;
-      return;
-    }
+    mojom::URLLoaderFactoryPtrInfo url_loader_factory_copy;
+    url_loader_factory->Clone(mojo::MakeRequest(&url_loader_factory_copy));
+    base::WaitableEvent event(base::WaitableEvent::ResetPolicy::MANUAL,
+                              base::WaitableEvent::InitialState::NOT_SIGNALED);
+
+    // TODO(reillyg): Support passing URLLoaderThrottles to this task.
+    DCHECK_EQ(0u, throttles.size());
+
+    // A task is posted to a separate thread to execute the request so that
+    // this thread may block on a waitable event. It is safe to pass raw
+    // pointers to |sync_load_response| and |event| as this stack frame will
+    // survive until the request is complete.
+    base::CreateSingleThreadTaskRunnerWithTraits({})->PostTask(
+        FROM_HERE,
+        base::BindOnce(&SyncLoadContext::StartAsyncWithWaitableEvent,
+                       std::move(request), routing_id, frame_origin,
+                       std::move(url_loader_factory_copy),
+                       base::Unretained(response), base::Unretained(&event)));
+
+    event.Wait();
   } else {
+    SyncLoadResult result;
     IPC::SyncMessage* msg = new ResourceHostMsg_SyncLoad(
         routing_id, MakeRequestID(), *request, &result);
 
@@ -598,22 +618,22 @@ void ResourceDispatcher::StartSync(
       response->error_code = net::ERR_FAILED;
       return;
     }
-  }
 
-  response->error_code = result.error_code;
-  response->url = result.final_url;
-  response->headers = result.headers;
-  response->mime_type = result.mime_type;
-  response->charset = result.charset;
-  response->request_time = result.request_time;
-  response->response_time = result.response_time;
-  response->load_timing = result.load_timing;
-  response->devtools_info = result.devtools_info;
-  response->data.swap(result.data);
-  response->download_file_path = result.download_file_path;
-  response->socket_address = result.socket_address;
-  response->encoded_data_length = result.encoded_data_length;
-  response->encoded_body_length = result.encoded_body_length;
+    response->error_code = result.error_code;
+    response->url = result.final_url;
+    response->headers = result.headers;
+    response->mime_type = result.mime_type;
+    response->charset = result.charset;
+    response->request_time = result.request_time;
+    response->response_time = result.response_time;
+    response->load_timing = result.load_timing;
+    response->devtools_info = result.devtools_info;
+    response->data.swap(result.data);
+    response->download_file_path = result.download_file_path;
+    response->socket_address = result.socket_address;
+    response->encoded_data_length = result.encoded_data_length;
+    response->encoded_body_length = result.encoded_body_length;
+  }
 }
 
 int ResourceDispatcher::StartAsync(
@@ -621,9 +641,11 @@ int ResourceDispatcher::StartAsync(
     int routing_id,
     scoped_refptr<base::SingleThreadTaskRunner> loading_task_runner,
     const url::Origin& frame_origin,
+    bool is_sync,
     std::unique_ptr<RequestPeer> peer,
     blink::WebURLRequest::LoadingIPCType ipc_type,
     mojom::URLLoaderFactory* url_loader_factory,
+    std::vector<std::unique_ptr<URLLoaderThrottle>> throttles,
     mojo::ScopedDataPipeConsumerHandle consumer_handle) {
   CheckSchemeForReferrerPolicy(*request);
 
@@ -639,36 +661,72 @@ int ResourceDispatcher::StartAsync(
   }
 
   scoped_refptr<base::SingleThreadTaskRunner> task_runner =
-      loading_task_runner ? loading_task_runner : main_thread_task_runner_;
+      loading_task_runner ? loading_task_runner : thread_task_runner_;
 
   if (consumer_handle.is_valid()) {
     pending_requests_[request_id]->url_loader_client =
         base::MakeUnique<URLLoaderClientImpl>(request_id, this, task_runner);
 
-    task_runner->PostTask(FROM_HERE,
-                          base::Bind(&ResourceDispatcher::ContinueForNavigation,
-                                     weak_factory_.GetWeakPtr(), request_id,
-                                     base::Passed(std::move(consumer_handle))));
+    task_runner->PostTask(
+        FROM_HERE, base::BindOnce(&ResourceDispatcher::ContinueForNavigation,
+                                  weak_factory_.GetWeakPtr(), request_id,
+                                  base::Passed(std::move(consumer_handle))));
 
     return request_id;
   }
 
+  net::NetworkTrafficAnnotationTag traffic_annotation =
+      net::DefineNetworkTrafficAnnotation("blink_resource_loader", R"(
+      semantics {
+        sender: "Blink Resource Loader"
+        description:
+          "Blink initiated request, which includes all resources for "
+          "normal page loads, chrome URLs, resources for installed "
+          "extensions, as well as downloads."
+        trigger:
+          "Navigating to a URL or downloading a file. A webpage, "
+          "ServiceWorker, chrome:// page, or extension may also initiate "
+          "requests in the background."
+        data: "Anything the initiator wants to send."
+        destination: OTHER
+      }
+      policy {
+        cookies_allowed: YES
+        cookies_store: "user"
+        setting: "These requests cannot be disabled in settings."
+        policy_exception_justification:
+          "Not implemented. Without these requests, Chrome will be unable "
+          "to load any webpage."
+      })");
+
   if (ipc_type == blink::WebURLRequest::LoadingIPCType::kMojo) {
     scoped_refptr<base::SingleThreadTaskRunner> task_runner =
-        loading_task_runner ? loading_task_runner : main_thread_task_runner_;
+        loading_task_runner ? loading_task_runner : thread_task_runner_;
     std::unique_ptr<URLLoaderClientImpl> client(
-        new URLLoaderClientImpl(request_id, this, std::move(task_runner)));
-    mojom::URLLoaderAssociatedPtr url_loader;
-    mojom::URLLoaderClientPtr client_ptr;
-    client->Bind(&client_ptr);
-    url_loader_factory->CreateLoaderAndStart(MakeRequest(&url_loader),
-                                             routing_id, request_id, *request,
-                                             std::move(client_ptr));
+        new URLLoaderClientImpl(request_id, this, task_runner));
+
+    uint32_t options = mojom::kURLLoadOptionNone;
+    // TODO(jam): use this flag for ResourceDispatcherHost code path once
+    // MojoLoading is the only IPC code path.
+    if (base::FeatureList::IsEnabled(features::kNetworkService) &&
+        request->fetch_request_context_type != REQUEST_CONTEXT_TYPE_FETCH) {
+      // MIME sniffing should be disabled for a request initiated by fetch().
+      options |= mojom::kURLLoadOptionSniffMimeType;
+    }
+    if (is_sync)
+      options |= mojom::kURLLoadOptionSynchronous;
+
+    std::unique_ptr<ThrottlingURLLoader> url_loader =
+        ThrottlingURLLoader::CreateLoaderAndStart(
+            url_loader_factory, std::move(throttles), routing_id, request_id,
+            options, *request, client.get(), traffic_annotation,
+            std::move(task_runner));
     pending_requests_[request_id]->url_loader = std::move(url_loader);
     pending_requests_[request_id]->url_loader_client = std::move(client);
   } else {
-    message_sender_->Send(
-        new ResourceHostMsg_RequestResource(routing_id, request_id, *request));
+    message_sender_->Send(new ResourceHostMsg_RequestResource(
+        routing_id, request_id, *request,
+        net::MutableNetworkTrafficAnnotationTag(traffic_annotation)));
   }
 
   return request_id;
@@ -710,23 +768,6 @@ void ResourceDispatcher::ToResourceResponseInfo(
   RemoteToLocalTimeTicks(converter, &load_timing->push_end);
   RemoteToLocalTimeTicks(converter, &renderer_info->service_worker_start_time);
   RemoteToLocalTimeTicks(converter, &renderer_info->service_worker_ready_time);
-
-  // Collect UMA on the inter-process skew.
-  bool is_skew_additive = false;
-  if (converter.IsSkewAdditiveForMetrics()) {
-    is_skew_additive = true;
-    base::TimeDelta skew = converter.GetSkewForMetrics();
-    if (skew >= base::TimeDelta()) {
-      UMA_HISTOGRAM_TIMES(
-          "InterProcessTimeTicks.BrowserAhead_BrowserToRenderer", skew);
-    } else {
-      UMA_HISTOGRAM_TIMES(
-          "InterProcessTimeTicks.BrowserBehind_BrowserToRenderer", -skew);
-    }
-  }
-  UMA_HISTOGRAM_BOOLEAN(
-      "InterProcessTimeTicks.IsSkewAdditive_BrowserToRenderer",
-      is_skew_additive);
 }
 
 base::TimeTicks ResourceDispatcher::ToRendererCompletionTime(
@@ -767,20 +808,29 @@ void ResourceDispatcher::ContinueForNavigation(
   // the request. ResourceResponseHead can be empty here because we
   // pull the StreamOverride's one in
   // WebURLLoaderImpl::Context::OnReceivedResponse.
-  client_ptr->OnReceiveResponse(ResourceResponseHead(),
+  client_ptr->OnReceiveResponse(ResourceResponseHead(), base::nullopt,
                                 mojom::DownloadedTempFilePtr());
+
+  // Abort if the request is cancelled.
+  if (!GetPendingRequestInfo(request_id))
+    return;
+
   // Start streaming now.
   client_ptr->OnStartLoadingResponseBody(std::move(consumer_handle));
+
+  // Abort if the request is cancelled.
+  if (!GetPendingRequestInfo(request_id))
+    return;
 
   // Call OnComplete now too, as it won't get called on the client.
   // TODO(kinuko): Fill this properly.
   ResourceRequestCompletionStatus completion_status;
   completion_status.error_code = net::OK;
-  completion_status.was_ignored_by_handler = false;
   completion_status.exists_in_cache = false;
   completion_status.completion_time = base::TimeTicks::Now();
   completion_status.encoded_data_length = -1;
   completion_status.encoded_body_length = -1;
+  completion_status.decoded_body_length = -1;
   client_ptr->OnComplete(completion_status);
 }
 

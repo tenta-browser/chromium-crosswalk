@@ -75,6 +75,9 @@ Common.Settings = class {
                             this.createSetting(settingName, defaultValue, storageType);
     if (descriptor['title'])
       setting.setTitle(descriptor['title']);
+    if (descriptor['userActionCondition'])
+      setting.setRequiresUserAction(!!Runtime.queryParam(descriptor['userActionCondition']));
+    setting._extension = extension;
     this._moduleSettings.set(settingName, setting);
   }
 
@@ -263,6 +266,7 @@ Common.Setting = class {
     this._storage = storage;
     /** @type {string} */
     this._title = '';
+    this._extension = null;
   }
 
   /**
@@ -300,9 +304,19 @@ Common.Setting = class {
   }
 
   /**
+   * @param {boolean} requiresUserAction
+   */
+  setRequiresUserAction(requiresUserAction) {
+    this._requiresUserAction = requiresUserAction;
+  }
+
+  /**
    * @return {V}
    */
   get() {
+    if (this._requiresUserAction && !this._hadUserAction)
+      return this._defaultValue;
+
     if (typeof this._value !== 'undefined')
       return this._value;
 
@@ -321,6 +335,7 @@ Common.Setting = class {
    * @param {V} value
    */
   set(value) {
+    this._hadUserAction = true;
     this._value = value;
     try {
       var settingString = JSON.stringify(value);
@@ -339,6 +354,13 @@ Common.Setting = class {
     this._settings._registry.delete(this._name);
     this._settings._moduleSettings.delete(this._name);
     this._storage.remove(this._name);
+  }
+
+  /**
+   * @return {?Runtime.Extension}
+   */
+  extension() {
+    return this._extension;
   }
 
   /**
@@ -766,6 +788,14 @@ Common.VersionController = class {
     oldSetting.remove();
   }
 
+  _updateVersionFrom24To25() {
+    var defaultColumns = {status: true, type: true, initiator: true, size: true, time: true};
+    var networkLogColumnsSetting = Common.settings.createSetting('networkLogColumns', defaultColumns);
+    var columns = networkLogColumnsSetting.get();
+    delete columns.product;
+    networkLogColumnsSetting.set(columns);
+  }
+
   _migrateSettingsFromLocalStorage() {
     // This step migrates all the settings except for the ones below into the browser profile.
     var localSettings = new Set([
@@ -798,7 +828,7 @@ Common.VersionController = class {
 };
 
 Common.VersionController._currentVersionName = 'inspectorVersion';
-Common.VersionController.currentVersion = 24;
+Common.VersionController.currentVersion = 25;
 
 /**
  * @type {!Common.Settings}

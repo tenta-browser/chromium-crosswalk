@@ -185,8 +185,8 @@ public class ContentViewRenderView extends FrameLayout {
                 nativeSurfaceChanged(mNativeContentViewRenderView,
                         format, width, height, holder.getSurface());
                 if (mContentViewCore != null) {
-                    mContentViewCore.onPhysicalBackingSizeChanged(
-                            width, height);
+                    nativeOnPhysicalBackingSizeChanged(mNativeContentViewRenderView,
+                            mContentViewCore.getWebContents(), width, height);
                 }
             }
 
@@ -194,6 +194,13 @@ public class ContentViewRenderView extends FrameLayout {
             public void surfaceCreated(SurfaceHolder holder) {
                 assert mNativeContentViewRenderView != 0;
                 nativeSurfaceCreated(mNativeContentViewRenderView);
+
+                // On pre-M Android, layers start in the hidden state until a relayout happens.
+                // There is a bug that manifests itself when entering overlay mode on pre-M devices,
+                // where a relayout never happens. This bug is out of Chromium's control, but can be
+                // worked around by forcibly re-setting the visibility of the surface view.
+                // Otherwise, the screen stays black, and some tests fail.
+                mSurfaceView.setVisibility(mSurfaceView.getVisibility());
 
                 onReadyToRender();
             }
@@ -249,13 +256,12 @@ public class ContentViewRenderView extends FrameLayout {
         assert mNativeContentViewRenderView != 0;
         mContentViewCore = contentViewCore;
 
-        if (mContentViewCore != null) {
-            mContentViewCore.onPhysicalBackingSizeChanged(getWidth(), getHeight());
-            nativeSetCurrentWebContents(
-                    mNativeContentViewRenderView, mContentViewCore.getWebContents());
-        } else {
-            nativeSetCurrentWebContents(mNativeContentViewRenderView, null);
+        WebContents webContents = contentViewCore != null ? contentViewCore.getWebContents() : null;
+        if (webContents != null) {
+            nativeOnPhysicalBackingSizeChanged(
+                    mNativeContentViewRenderView, webContents, getWidth(), getHeight());
         }
+        nativeSetCurrentWebContents(mNativeContentViewRenderView, webContents);
     }
 
     /**
@@ -328,6 +334,8 @@ public class ContentViewRenderView extends FrameLayout {
     private native void nativeDestroy(long nativeContentViewRenderView);
     private native void nativeSetCurrentWebContents(
             long nativeContentViewRenderView, WebContents webContents);
+    private native void nativeOnPhysicalBackingSizeChanged(
+            long nativeContentViewRenderView, WebContents webContents, int width, int height);
     private native void nativeSurfaceCreated(long nativeContentViewRenderView);
     private native void nativeSurfaceDestroyed(long nativeContentViewRenderView);
     private native void nativeSurfaceChanged(long nativeContentViewRenderView,

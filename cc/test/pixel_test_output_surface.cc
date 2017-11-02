@@ -13,11 +13,12 @@
 #include "gpu/command_buffer/client/gles2_interface.h"
 #include "third_party/khronos/GLES2/gl2.h"
 #include "ui/gfx/transform.h"
+#include "ui/gl/gl_utils.h"
 
 namespace cc {
 
 PixelTestOutputSurface::PixelTestOutputSurface(
-    scoped_refptr<ContextProvider> context_provider,
+    scoped_refptr<viz::ContextProvider> context_provider,
     bool flipped_output_surface)
     : OutputSurface(std::move(context_provider)), weak_ptr_factory_(this) {
   capabilities_.flipped_output_surface = flipped_output_surface;
@@ -55,7 +56,8 @@ void PixelTestOutputSurface::Reshape(const gfx::Size& size,
   DCHECK(!use_stencil || !external_stencil_test_);
   if (context_provider()) {
     context_provider()->ContextGL()->ResizeCHROMIUM(
-        size.width(), size.height(), device_scale_factor, has_alpha);
+        size.width(), size.height(), device_scale_factor,
+        gl::GetGLColorSpace(color_space), has_alpha);
   } else {
     software_device()->Resize(size, device_scale_factor);
   }
@@ -88,6 +90,10 @@ bool PixelTestOutputSurface::IsDisplayedAsOverlayPlane() const {
 
 unsigned PixelTestOutputSurface::GetOverlayTextureId() const {
   return 0;
+}
+
+gfx::BufferFormat PixelTestOutputSurface::GetOverlayBufferFormat() const {
+  return gfx::BufferFormat::RGBX_8888;
 }
 
 bool PixelTestOutputSurface::SurfaceIsSuspendForRecycle() const {

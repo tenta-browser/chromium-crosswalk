@@ -12,6 +12,7 @@
 #include "base/files/file_util.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
 #include "content/browser/browser_plugin/browser_plugin_guest.h"
@@ -61,12 +62,12 @@
 #include "ui/base/clipboard/clipboard.h"
 #include "ui/base/clipboard/custom_data_helper.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
-#include "ui/base/dragdrop/drag_utils.h"
 #include "ui/base/dragdrop/drop_target_event.h"
 #include "ui/base/dragdrop/os_exchange_data.h"
 #include "ui/base/dragdrop/os_exchange_data_provider_factory.h"
 #include "ui/base/hit_test.h"
 #include "ui/compositor/layer.h"
+#include "ui/display/display.h"
 #include "ui/display/screen.h"
 #include "ui/events/blink/web_input_event.h"
 #include "ui/events/event.h"
@@ -92,11 +93,6 @@ namespace {
 
 WebContentsViewAura::RenderWidgetHostViewCreateFunction
     g_create_render_widget_host_view = nullptr;
-
-bool IsScrollEndEffectEnabled() {
-  return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-      switches::kScrollEndEffect) == "1";
-}
 
 RenderWidgetHostViewAura* ToRenderWidgetHostViewAura(
     RenderWidgetHostView* view) {
@@ -154,7 +150,7 @@ class WebDragSourceAura : public NotificationObserver {
   DISALLOW_COPY_AND_ASSIGN(WebDragSourceAura);
 };
 
-#if (!defined(OS_CHROMEOS) && defined(USE_X11)) || defined(OS_WIN)
+#if defined(USE_X11) || defined(OS_WIN)
 // Fill out the OSExchangeData with a file contents, synthesizing a name if
 // necessary.
 void PrepareDragForFileContents(const DropData& drop_data,
@@ -290,7 +286,7 @@ void PrepareDragData(const DropData& drop_data,
   if (!drop_data.download_metadata.empty())
     PrepareDragForDownload(drop_data, provider, web_contents);
 #endif
-#if (!defined(OS_CHROMEOS) && defined(USE_X11)) || defined(OS_WIN)
+#if defined(USE_X11) || defined(OS_WIN)
   // We set the file contents before the URL because the URL also sets file
   // contents (to a .URL shortcut).  We want to prefer file content data over
   // a shortcut so we add it first.
@@ -496,7 +492,7 @@ class WebContentsViewAura::WindowObserver
   }
 
   // Overridden WindowTreeHostObserver:
-  void OnHostMovedInPixels(const aura::WindowTreeHost* host,
+  void OnHostMovedInPixels(aura::WindowTreeHost* host,
                            const gfx::Point& new_origin_in_pixels) override {
     TRACE_EVENT1("ui",
                  "WebContentsViewAura::WindowObserver::OnHostMovedInPixels",
@@ -647,12 +643,6 @@ void WebContentsViewAura::CompleteOverscrollNavigation(OverscrollMode mode) {
     selection_controller->HideAndDisallowShowingAutomatically();
 }
 
-void WebContentsViewAura::OverscrollUpdateForWebContentsDelegate(
-    float delta_y) {
-  if (web_contents_->GetDelegate() && IsScrollEndEffectEnabled())
-    web_contents_->GetDelegate()->OverscrollUpdate(delta_y);
-}
-
 ui::TouchSelectionController* WebContentsViewAura::GetSelectionController()
     const {
   RenderWidgetHostViewAura* view =
@@ -711,10 +701,8 @@ void GetScreenInfoForWindow(ScreenInfo* results,
   results->depth_per_component = display.depth_per_component();
   results->is_monochrome = display.is_monochrome();
   results->device_scale_factor = display.device_scale_factor();
-  results->icc_profile = gfx::ICCProfile::FromBestMonitor();
-  if (!results->icc_profile.IsValid())
-    gfx::ColorSpace::CreateSRGB().GetICCProfile(&results->icc_profile);
-  DCHECK(results->icc_profile.IsValid());
+  results->color_space = display.color_space();
+  results->color_space.GetICCProfile(&results->icc_profile);
 
   // The Display rotation and the ScreenInfo orientation are not the same
   // angle. The former is the physical display rotation while the later is the
@@ -811,7 +799,7 @@ void WebContentsViewAura::CreateView(
   DCHECK(aura::Env::GetInstanceDontCreate());
   window_ = base::MakeUnique<aura::Window>(this);
   window_->set_owned_by_parent(false);
-  window_->SetType(ui::wm::WINDOW_TYPE_CONTROL);
+  window_->SetType(aura::client::WINDOW_TYPE_CONTROL);
   window_->SetName("WebContentsViewAura");
   window_->Init(ui::LAYER_NOT_DRAWN);
   window_->AddObserver(this);
@@ -953,7 +941,7 @@ void WebContentsViewAura::StartDragging(
   }
 
   // Grab a weak pointer to the RenderWidgetHost, since it can be destroyed
-  // during the drag and drop nested message loop in StartDragAndDrop.
+  // during the drag and drop nested run loop in StartDragAndDrop.
   // For example, the RenderWidgetHost can be deleted if a cross-process
   // transfer happens while dragging, since the RenderWidgetHost is deleted in
   // that case.
@@ -974,7 +962,7 @@ void WebContentsViewAura::StartDragging(
       std::move(provider));  // takes ownership of |provider|.
 
   if (!image.isNull())
-    drag_utils::SetDragImageOnDataObject(image, image_offset, &data);
+    data.provider().SetDragImage(image, image_offset);
 
   std::unique_ptr<WebDragSourceAura> drag_source(
       new WebDragSourceAura(GetNativeView(), web_contents_));
@@ -1012,8 +1000,12 @@ void WebContentsViewAura::UpdateDragCursor(blink::WebDragOperation operation) {
   current_drag_op_ = operation;
 }
 
-void WebContentsViewAura::GotFocus() {
-  web_contents_->NotifyWebContentsFocused();
+void WebContentsViewAura::GotFocus(RenderWidgetHostImpl* render_widget_host) {
+  web_contents_->NotifyWebContentsFocused(render_widget_host);
+}
+
+void WebContentsViewAura::LostFocus(RenderWidgetHostImpl* render_widget_host) {
+  web_contents_->NotifyWebContentsLostFocus(render_widget_host);
 }
 
 void WebContentsViewAura::TakeFocus(bool reverse) {
@@ -1027,46 +1019,41 @@ void WebContentsViewAura::TakeFocus(bool reverse) {
 ////////////////////////////////////////////////////////////////////////////////
 // WebContentsViewAura, OverscrollControllerDelegate implementation:
 
-gfx::Rect WebContentsViewAura::GetVisibleBounds() const {
+gfx::Size WebContentsViewAura::GetDisplaySize() const {
   RenderWidgetHostView* rwhv = web_contents_->GetRenderWidgetHostView();
-  if (!rwhv || !rwhv->IsShowing())
-    return gfx::Rect();
+  if (!rwhv)
+    return gfx::Size();
 
-  return rwhv->GetViewBounds();
+  return display::Screen::GetScreen()
+      ->GetDisplayNearestView(rwhv->GetNativeView())
+      .size();
 }
 
 bool WebContentsViewAura::OnOverscrollUpdate(float delta_x, float delta_y) {
-  if (current_overscroll_gesture_ == OVERSCROLL_NONE)
+  if (current_overscroll_gesture_ != OVERSCROLL_EAST &&
+      current_overscroll_gesture_ != OVERSCROLL_WEST) {
     return false;
-
-  if (current_overscroll_gesture_ == OVERSCROLL_NORTH ||
-      current_overscroll_gesture_ == OVERSCROLL_SOUTH) {
-    OverscrollUpdateForWebContentsDelegate(delta_y);
-    return delta_y != 0;
   }
+
   return navigation_overlay_->relay_delegate()->OnOverscrollUpdate(delta_x,
                                                                    delta_y);
 }
 
 void WebContentsViewAura::OnOverscrollComplete(OverscrollMode mode) {
-  if (web_contents_->GetDelegate() &&
-      IsScrollEndEffectEnabled() &&
-      (mode == OVERSCROLL_NORTH || mode == OVERSCROLL_SOUTH)) {
-    web_contents_->GetDelegate()->OverscrollComplete();
-  }
   CompleteOverscrollNavigation(mode);
 }
 
 void WebContentsViewAura::OnOverscrollModeChange(OverscrollMode old_mode,
                                                  OverscrollMode new_mode,
                                                  OverscrollSource source) {
-  if (old_mode == OVERSCROLL_NORTH || old_mode == OVERSCROLL_SOUTH)
-    OverscrollUpdateForWebContentsDelegate(0);
-
   current_overscroll_gesture_ = new_mode;
   navigation_overlay_->relay_delegate()->OnOverscrollModeChange(
       old_mode, new_mode, source);
   completed_overscroll_gesture_ = OVERSCROLL_NONE;
+}
+
+base::Optional<float> WebContentsViewAura::GetMaxOverscrollDelta() const {
+  return navigation_overlay_->relay_delegate()->GetMaxOverscrollDelta();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1172,7 +1159,7 @@ void WebContentsViewAura::OnMouseEvent(ui::MouseEvent* event) {
     // Linux window managers like to handle raise-on-click themselves.  If we
     // raise-on-click manually, this may override user settings that prevent
     // focus-stealing.
-#if !defined(USE_X11) || defined (OS_CHROMEOS)
+#if !defined(USE_X11)
     web_contents_->GetDelegate()->ActivateContents(web_contents_);
 #endif
   }

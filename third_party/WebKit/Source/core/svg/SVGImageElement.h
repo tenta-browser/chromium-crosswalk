@@ -21,20 +21,22 @@
 #ifndef SVGImageElement_h
 #define SVGImageElement_h
 
-#include "core/SVGNames.h"
-#include "core/html/canvas/CanvasImageElementSource.h"
+#include "core/html/canvas/ImageElementBase.h"
 #include "core/svg/SVGAnimatedLength.h"
 #include "core/svg/SVGAnimatedPreserveAspectRatio.h"
 #include "core/svg/SVGGraphicsElement.h"
 #include "core/svg/SVGImageLoader.h"
 #include "core/svg/SVGURIReference.h"
+#include "platform/bindings/ActiveScriptWrappable.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
 
-class CORE_EXPORT SVGImageElement final : public SVGGraphicsElement,
-                                          public CanvasImageElementSource,
-                                          public SVGURIReference {
+class CORE_EXPORT SVGImageElement final
+    : public SVGGraphicsElement,
+      public ImageElementBase,
+      public SVGURIReference,
+      public ActiveScriptWrappable<SVGImageElement> {
   DEFINE_WRAPPERTYPEINFO();
   USING_GARBAGE_COLLECTED_MIXIN(SVGImageElement);
 
@@ -50,6 +52,10 @@ class CORE_EXPORT SVGImageElement final : public SVGGraphicsElement,
   SVGAnimatedLength* height() const { return height_.Get(); }
   SVGAnimatedPreserveAspectRatio* preserveAspectRatio() {
     return preserve_aspect_ratio_.Get();
+  }
+
+  bool HasPendingActivity() const final {
+    return GetImageLoader().HasPendingActivity();
   }
 
   // Exposed for testing.
@@ -70,7 +76,7 @@ class CORE_EXPORT SVGImageElement final : public SVGGraphicsElement,
 
   void SvgAttributeChanged(const QualifiedName&) override;
 
-  void AttachLayoutTree(const AttachContext& = AttachContext()) override;
+  void AttachLayoutTree(AttachContext&) override;
   InsertionNotificationRequest InsertedInto(ContainerNode*) override;
 
   LayoutObject* CreateLayoutObject(const ComputedStyle&) override;
@@ -91,7 +97,6 @@ class CORE_EXPORT SVGImageElement final : public SVGGraphicsElement,
   Member<SVGAnimatedPreserveAspectRatio> preserve_aspect_ratio_;
 
   Member<SVGImageLoader> image_loader_;
-  bool needs_loader_uri_update_ : 1;
 };
 
 }  // namespace blink

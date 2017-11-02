@@ -104,6 +104,7 @@ IPC_ENUM_TRAITS_MAX_VALUE(PP_FileType, PP_FILETYPE_OTHER)
 IPC_ENUM_TRAITS(PP_Flash_BrowserOperations_Permission)
 IPC_ENUM_TRAITS(PP_Flash_BrowserOperations_SettingType)
 IPC_ENUM_TRAITS(PP_FlashSetting)
+IPC_ENUM_TRAITS_MAX_VALUE(PP_HdcpVersion, PP_HDCPVERSION_MAX)
 IPC_ENUM_TRAITS(PP_ImageDataFormat)
 IPC_ENUM_TRAITS_MAX_VALUE(PP_InitDataType, PP_INITDATATYPE_MAX)
 IPC_ENUM_TRAITS(PP_InputEvent_MouseButton)
@@ -389,6 +390,11 @@ IPC_STRUCT_TRAITS_BEGIN(ppapi::Preferences)
   IPC_STRUCT_TRAITS_MEMBER(is_stage3d_supported)
   IPC_STRUCT_TRAITS_MEMBER(is_stage3d_baseline_supported)
   IPC_STRUCT_TRAITS_MEMBER(is_accelerated_video_decode_enabled)
+IPC_STRUCT_TRAITS_END()
+
+IPC_STRUCT_TRAITS_BEGIN(ppapi::TouchPointWithTilt)
+  IPC_STRUCT_TRAITS_MEMBER(touch)
+  IPC_STRUCT_TRAITS_MEMBER(tilt)
 IPC_STRUCT_TRAITS_END()
 
 IPC_STRUCT_TRAITS_BEGIN(ppapi::InputEventData)
@@ -785,6 +791,22 @@ IPC_SYNC_MESSAGE_ROUTED1_2(
     PP_Bool /* result */)
 IPC_MESSAGE_ROUTED1(PpapiMsg_PPPPdf_EnableAccessibility,
                     PP_Instance /* instance */)
+IPC_MESSAGE_ROUTED2(PpapiMsg_PPPPdf_SetCaretPosition,
+                    PP_Instance /* instance */,
+                    PP_FloatPoint /* position */)
+IPC_MESSAGE_ROUTED2(PpapiMsg_PPPPdf_MoveRangeSelectionExtent,
+                    PP_Instance /* instance */,
+                    PP_FloatPoint /* extent */)
+IPC_MESSAGE_ROUTED3(PpapiMsg_PPPPdf_SetSelectionBounds,
+                    PP_Instance /* instance */,
+                    PP_FloatPoint /* base */,
+                    PP_FloatPoint /* extent */)
+IPC_SYNC_MESSAGE_ROUTED1_1(PpapiMsg_PPPPdf_CanEditText,
+                           PP_Instance /* instance */,
+                           PP_Bool /* result */)
+IPC_MESSAGE_ROUTED2(PpapiMsg_PPPPdf_ReplaceSelection,
+                    PP_Instance /* instance */,
+                    std::string /* text */)
 
 // Find
 IPC_MESSAGE_ROUTED2(PpapiPluginMsg_PPPFind_StartFind,
@@ -851,6 +873,10 @@ IPC_MESSAGE_ROUTED3(PpapiMsg_PPPContentDecryptor_SetServerCertificate,
                     PP_Instance /* instance */,
                     uint32_t /* promise_id */,
                     std::vector<uint8_t> /* certificate */)
+IPC_MESSAGE_ROUTED3(PpapiMsg_PPPContentDecryptor_GetStatusForPolicy,
+                    PP_Instance /* instance */,
+                    uint32_t /* promise_id */,
+                    PP_HdcpVersion /* min_hdcp_version */)
 IPC_MESSAGE_ROUTED5(
     PpapiMsg_PPPContentDecryptor_CreateSessionAndGenerateRequest,
     PP_Instance /* instance */,
@@ -1063,8 +1089,9 @@ IPC_SYNC_MESSAGE_ROUTED3_2(PpapiHostMsg_PPBGraphics3D_WaitForTokenInRange,
                            int32_t /* end */,
                            gpu::CommandBuffer::State /* state */,
                            bool /* success */)
-IPC_SYNC_MESSAGE_ROUTED3_2(PpapiHostMsg_PPBGraphics3D_WaitForGetOffsetInRange,
+IPC_SYNC_MESSAGE_ROUTED4_2(PpapiHostMsg_PPBGraphics3D_WaitForGetOffsetInRange,
                            ppapi::HostResource /* context */,
+                           uint32_t /* set_get_buffer_count */,
                            int32_t /* start */,
                            int32_t /* end */,
                            gpu::CommandBuffer::State /* state */,
@@ -1280,6 +1307,10 @@ IPC_SYNC_MESSAGE_ROUTED2_2(
 IPC_MESSAGE_ROUTED2(PpapiHostMsg_PPBInstance_PromiseResolved,
                     PP_Instance /* instance */,
                     uint32_t /* promise_id */)
+IPC_MESSAGE_ROUTED3(PpapiHostMsg_PPBInstance_PromiseResolvedWithKeyStatus,
+                    PP_Instance /* instance */,
+                    uint32_t /* promise_id */,
+                    PP_CdmKeyStatus /* key_status */)
 IPC_MESSAGE_ROUTED3(PpapiHostMsg_PPBInstance_PromiseResolvedWithSession,
                     PP_Instance /* instance */,
                     uint32_t /* promise_id */,
@@ -1835,6 +1866,9 @@ IPC_MESSAGE_CONTROL3(PpapiHostMsg_PlatformVerification_ChallengePlatformReply,
                      std::vector<uint8_t> /* signed_data */,
                      std::vector<uint8_t> /* signed_data_signature */,
                      std::string /* platform_key_certificate */)
+IPC_MESSAGE_CONTROL0(PpapiHostMsg_PlatformVerification_GetStorageId)
+IPC_MESSAGE_CONTROL1(PpapiHostMsg_PlatformVerification_GetStorageIdReply,
+                     std::string /* storage_id */)
 
 // Printing.
 IPC_MESSAGE_CONTROL0(PpapiHostMsg_Printing_Create)
@@ -2512,6 +2546,13 @@ IPC_MESSAGE_CONTROL3(
     std::vector<PP_PrivateAccessibilityTextRunInfo> /* text_runs */,
     std::vector<PP_PrivateAccessibilityCharInfo> /* chars */)
 
+// Send information about the selection coordinates.
+IPC_MESSAGE_CONTROL4(PpapiHostMsg_PDF_SelectionChanged,
+                     PP_FloatPoint /* left */,
+                     int32_t /* left_height */,
+                     PP_FloatPoint /* right */,
+                     int32_t /* right_height */)
+
 // VideoCapture ----------------------------------------------------------------
 
 // VideoCapture_Dev, plugin -> host
@@ -2540,8 +2581,5 @@ IPC_MESSAGE_CONTROL1(PpapiPluginMsg_VideoCapture_OnError,
                      uint32_t /* error */)
 IPC_MESSAGE_CONTROL1(PpapiPluginMsg_VideoCapture_OnBufferReady,
                      uint32_t /* buffer */)
-
-// Sent by the PPAPI process to indicate that a field trial has been activated.
-IPC_MESSAGE_CONTROL1(PpapiHostMsg_FieldTrialActivated, std::string /* name */)
 
 #endif  // !defined(OS_NACL) && !defined(NACL_WIN64)

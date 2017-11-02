@@ -1141,7 +1141,7 @@ TEST(FieldTrialDeathTest, OneTimeRandomizedTrialWithoutFieldTrialList) {
 #if defined(OS_WIN)
 TEST(FieldTrialListTest, TestCopyFieldTrialStateToFlags) {
   base::FieldTrialList field_trial_list(
-      base::MakeUnique<base::MockEntropyProvider>());
+      std::make_unique<base::MockEntropyProvider>());
   base::FieldTrialList::CreateFieldTrial("Trial1", "Group1");
   base::FilePath test_file_path = base::FilePath(FILE_PATH_LITERAL("Program"));
   base::CommandLine cmd_line = base::CommandLine(test_file_path);
@@ -1368,5 +1368,24 @@ TEST(FieldTrialListTest, DumpAndFetchFromSharedMemory) {
   EXPECT_EQ("value1", shm_params["key1"]);
   EXPECT_EQ("value2", shm_params["key2"]);
 }
+
+#if !defined(OS_NACL)
+TEST(FieldTrialListTest, SerializeSharedMemoryHandleMetadata) {
+  std::unique_ptr<base::SharedMemory> shm(new SharedMemory());
+  shm->CreateAndMapAnonymous(4 << 10);
+
+  std::string serialized =
+      FieldTrialList::SerializeSharedMemoryHandleMetadata(shm->handle());
+#if defined(OS_WIN) || defined(OS_FUCHSIA)
+  SharedMemoryHandle deserialized =
+      FieldTrialList::DeserializeSharedMemoryHandleMetadata(serialized);
+#else
+  SharedMemoryHandle deserialized =
+      FieldTrialList::DeserializeSharedMemoryHandleMetadata(-1, serialized);
+#endif
+  EXPECT_EQ(deserialized.GetGUID(), shm->handle().GetGUID());
+  EXPECT_FALSE(deserialized.GetGUID().is_empty());
+}
+#endif  // !defined(OS_NACL)
 
 }  // namespace base

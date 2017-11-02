@@ -188,13 +188,10 @@ class BASE_EXPORT SequencedWorkerPool : public TaskRunner {
   static void EnableForProcess();
 
   // Same as EnableForProcess(), but tasks are redirected to the registered
-  // TaskScheduler. All redirections' TaskPriority will be capped to
-  // |max_task_priority|. There must be a registered TaskScheduler when this is
-  // called.
-  // TODO(gab): Remove this if http://crbug.com/622400 fails
-  // (SequencedWorkerPool will be phased out completely otherwise).
-  static void EnableWithRedirectionToTaskSchedulerForProcess(
-      TaskPriority max_task_priority = TaskPriority::HIGHEST);
+  // TaskScheduler. There must be a registered TaskScheduler when this is
+  // called. TODO(gab): Phase out SequencedWorkerPool entirely:
+  // http://crbug.com/533920.
+  static void EnableWithRedirectionToTaskSchedulerForProcess();
 
   // Disables posting tasks to this process' SequencedWorkerPools. Calling this
   // while there are active SequencedWorkerPools is not supported. This is not
@@ -278,19 +275,6 @@ class BASE_EXPORT SequencedWorkerPool : public TaskRunner {
   bool PostWorkerTask(const tracked_objects::Location& from_here,
                       OnceClosure task);
 
-  // Same as PostWorkerTask but allows a delay to be specified (although doing
-  // so changes the shutdown behavior). The task will be run after the given
-  // delay has elapsed.
-  //
-  // If the delay is nonzero, the task won't be guaranteed to run to completion
-  // before shutdown (SKIP_ON_SHUTDOWN semantics) to avoid shutdown hangs.
-  // If the delay is zero, this behaves exactly like PostWorkerTask, i.e. the
-  // task will be guaranteed to run to completion before shutdown
-  // (BLOCK_SHUTDOWN semantics).
-  bool PostDelayedWorkerTask(const tracked_objects::Location& from_here,
-                             OnceClosure task,
-                             TimeDelta delay);
-
   // Same as PostWorkerTask but allows specification of the shutdown behavior.
   bool PostWorkerTaskWithShutdownBehavior(
       const tracked_objects::Location& from_here,
@@ -345,7 +329,7 @@ class BASE_EXPORT SequencedWorkerPool : public TaskRunner {
   bool PostDelayedTask(const tracked_objects::Location& from_here,
                        OnceClosure task,
                        TimeDelta delay) override;
-  bool RunsTasksOnCurrentThread() const override;
+  bool RunsTasksInCurrentSequence() const override;
 
   // Blocks until all pending tasks are complete. This should only be called in
   // unit tests when you want to validate something that should have happened.
@@ -380,12 +364,6 @@ class BASE_EXPORT SequencedWorkerPool : public TaskRunner {
   // the limit is reached, subsequent calls to post task fail in all cases.
   // Must be called from the same thread this object was constructed on.
   void Shutdown(int max_new_blocking_tasks_after_shutdown);
-
-  // Check if Shutdown was called for given threading pool. This method is used
-  // for aborting time consuming operation to avoid blocking shutdown.
-  //
-  // Can be called from any thread.
-  bool IsShutdownInProgress();
 
  protected:
   ~SequencedWorkerPool() override;

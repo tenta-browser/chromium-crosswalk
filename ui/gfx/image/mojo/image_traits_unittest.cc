@@ -2,9 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <utility>
 #include <vector>
 
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -44,7 +46,7 @@ class ImageTraitsTest : public testing::Test,
 
   // testing::Test:
   void SetUp() override {
-    service_ = bindings_.CreateInterfacePtrAndBind(this);
+    bindings_.AddBinding(this, mojo::MakeRequest(&service_));
   }
 
   mojom::ImageTraitsTestServicePtr& service() { return service_; }
@@ -52,12 +54,12 @@ class ImageTraitsTest : public testing::Test,
  private:
   // mojom::ImageTraitsTestService:
   void EchoImageSkiaRep(const ImageSkiaRep& in,
-                        const EchoImageSkiaRepCallback& callback) override {
-    callback.Run(in);
+                        EchoImageSkiaRepCallback callback) override {
+    std::move(callback).Run(in);
   }
   void EchoImageSkia(const ImageSkia& in,
-                     const EchoImageSkiaCallback& callback) override {
-    callback.Run(in);
+                     EchoImageSkiaCallback callback) override {
+    std::move(callback).Run(in);
   }
 
   base::MessageLoop loop_;
@@ -129,20 +131,22 @@ TEST_F(ImageTraitsTest, NullImageSkia) {
   EXPECT_TRUE(output.isNull());
 }
 
-TEST_F(ImageTraitsTest, ImageSkiaWithNoRepsTreatedAsNull) {
+TEST_F(ImageTraitsTest, ImageSkiaRepsAreCreatedAsNeeded) {
   const gfx::Size kSize(1, 2);
-  ImageSkia image(new TestImageSkiaSource(kSize), kSize);
-  ASSERT_FALSE(image.isNull());
+  ImageSkia image(base::MakeUnique<TestImageSkiaSource>(kSize), kSize);
+  EXPECT_FALSE(image.isNull());
+  EXPECT_TRUE(image.image_reps().empty());
 
-  ImageSkia output(ImageSkiaRep(gfx::Size(1, 1), 1.0f));
-  ASSERT_FALSE(output.isNull());
-  service()->EchoImageSkia(image, &output);
+  ImageSkia output;
   EXPECT_TRUE(output.isNull());
+  service()->EchoImageSkia(image, &output);
+  EXPECT_FALSE(image.image_reps().empty());
+  EXPECT_FALSE(output.isNull());
 }
 
 TEST_F(ImageTraitsTest, ImageSkia) {
   const gfx::Size kSize(1, 2);
-  ImageSkia image(new TestImageSkiaSource(kSize), kSize);
+  ImageSkia image(base::MakeUnique<TestImageSkiaSource>(kSize), kSize);
   image.GetRepresentation(1.0f);
   image.GetRepresentation(2.0f);
 
@@ -154,7 +158,7 @@ TEST_F(ImageTraitsTest, ImageSkia) {
 
 TEST_F(ImageTraitsTest, EmptyRepPreserved) {
   const gfx::Size kSize(1, 2);
-  ImageSkia image(new TestImageSkiaSource(kSize), kSize);
+  ImageSkia image(base::MakeUnique<TestImageSkiaSource>(kSize), kSize);
   image.GetRepresentation(1.0f);
 
   SkBitmap empty_bitmap;
@@ -169,7 +173,7 @@ TEST_F(ImageTraitsTest, EmptyRepPreserved) {
 
 TEST_F(ImageTraitsTest, ImageSkiaWithOperations) {
   const gfx::Size kSize(32, 32);
-  ImageSkia image(new TestImageSkiaSource(kSize), kSize);
+  ImageSkia image(base::MakeUnique<TestImageSkiaSource>(kSize), kSize);
 
   const gfx::Size kNewSize(16, 16);
   ImageSkia resized = ImageSkiaOperations::CreateResizedImage(

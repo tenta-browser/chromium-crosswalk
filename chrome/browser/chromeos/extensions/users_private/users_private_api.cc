@@ -8,6 +8,7 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/memory/ptr_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
@@ -70,20 +71,22 @@ UsersPrivateGetWhitelistedUsersFunction::Run() {
     email_list.reset(new base::ListValue());
   }
 
+  const user_manager::UserManager* user_manager =
+      user_manager::UserManager::Get();
+
   // Remove all supervised users. On the next step only supervised users present
   // on the device will be added back. Thus not present SU are removed.
   // No need to remove usual users as they can simply login back.
   for (size_t i = 0; i < email_list->GetSize(); ++i) {
     std::string whitelisted_user;
     email_list->GetString(i, &whitelisted_user);
-    if (gaia::ExtractDomainName(whitelisted_user) ==
-        user_manager::kSupervisedUserDomain) {
+    if (user_manager->IsSupervisedAccountId(
+            AccountId::FromUserEmail(whitelisted_user))) {
       email_list->Remove(i, NULL);
       --i;
     }
   }
 
-  user_manager::UserManager* user_manager = user_manager::UserManager::Get();
   const user_manager::UserList& users = user_manager->GetUsers();
   for (const auto* user : users) {
     email_list->AppendIfNotPresent(
@@ -98,17 +101,27 @@ UsersPrivateGetWhitelistedUsersFunction::Run() {
 
   // Now populate the list of User objects for returning to the JS.
   for (size_t i = 0; i < email_list->GetSize(); ++i) {
-    api::users_private::User user;
-    email_list->GetString(i, &user.email);
-    AccountId account_id = AccountId::FromUserEmail(user.email);
-    user.name = base::UTF16ToUTF8(user_manager->GetUserDisplayName(account_id));
-    if (user.name.empty()) {
-      // User is not associated with a gaia account.
-      user.name = user_manager->GetUserDisplayEmail(account_id);
+    std::string email;
+    email_list->GetString(i, &email);
+    AccountId account_id = AccountId::FromUserEmail(email);
+    const user_manager::User* user = user_manager->FindUser(account_id);
+    api::users_private::User api_user;
+    if (user) {
+      api_user.email = email;
+      api_user.display_email = user->GetDisplayEmail();
+      api_user.name = base::UTF16ToUTF8(user->GetDisplayName());
+      api_user.is_owner =
+          user->GetAccountId() == user_manager->GetOwnerAccountId();
+      api_user.is_supervised = user->IsSupervised();
+    } else {
+      // User is unknown (i.e. not on device).
+      api_user.email = email;
+      api_user.display_email = email;
+      api_user.name = email;
+      api_user.is_owner = false;
+      api_user.is_supervised = false;
     }
-    user.is_owner = chromeos::ProfileHelper::IsOwnerProfile(profile) &&
-                    user.email == profile->GetProfileUserName();
-    user_list->Append(user.ToValue());
+    user_list->Append(api_user.ToValue());
   }
 
   return RespondNow(OneArgument(std::move(user_list)));
@@ -201,9 +214,15 @@ UsersPrivateIsCurrentUserOwnerFunction::
 
 ExtensionFunction::ResponseAction
 UsersPrivateIsCurrentUserOwnerFunction::Run() {
-  bool is_owner =
-      chromeos::ProfileHelper::IsOwnerProfile(chrome_details_.GetProfile());
-  return RespondNow(OneArgument(base::MakeUnique<base::Value>(is_owner)));
+  chromeos::OwnerSettingsServiceChromeOSFactory::GetForBrowserContext(
+      browser_context())
+      ->IsOwnerAsync(base::Bind(
+          &UsersPrivateIsCurrentUserOwnerFunction::IsOwnerCallback, this));
+  return RespondLater();
+}
+
+void UsersPrivateIsCurrentUserOwnerFunction::IsOwnerCallback(bool is_owner) {
+  Respond(OneArgument(base::MakeUnique<base::Value>(is_owner)));
 }
 
 ////////////////////////////////////////////////////////////////////////////////

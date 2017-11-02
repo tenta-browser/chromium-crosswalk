@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_UI_ASH_LAUNCHER_ARC_APP_DEFERRED_LAUNCHER_CONTROLLER_H_
 #define CHROME_BROWSER_UI_ASH_LAUNCHER_ARC_APP_DEFERRED_LAUNCHER_CONTROLLER_H_
 
+#include <stdint.h>
+
 #include <map>
 #include <string>
 
@@ -16,7 +18,7 @@
 #include "chrome/browser/ui/app_list/arc/arc_app_list_prefs.h"
 
 class ArcAppDeferredLauncherItemController;
-class ChromeLauncherControllerImpl;
+class ChromeLauncherController;
 
 // ArcAppDeferredLauncherController displays visual feedback that the ARC
 // application the user has just activated is waiting for ARC to be ready, and
@@ -25,8 +27,7 @@ class ArcAppDeferredLauncherController
     : public ArcAppListPrefs::Observer,
       public arc::ArcSessionManager::Observer {
  public:
-  explicit ArcAppDeferredLauncherController(
-      ChromeLauncherControllerImpl* owner);
+  explicit ArcAppDeferredLauncherController(ChromeLauncherController* owner);
   ~ArcAppDeferredLauncherController() override;
 
   bool HasApp(const std::string& app_id) const;
@@ -36,7 +37,9 @@ class ArcAppDeferredLauncherController
   // Registers deferred ARC app launch. |app_id| is the app to be launched, and
   // |event_flags| describes the original event flags that triggered the app's
   // activation.
-  void RegisterDeferredLaunch(const std::string& app_id, int event_flags);
+  void RegisterDeferredLaunch(const std::string& app_id,
+                              int event_flags,
+                              int64_t display_id);
 
   // Applies spinning effect if requested app is handled by deferred controller.
   void MaybeApplySpinningEffect(const std::string& app_id,
@@ -63,10 +66,11 @@ class ArcAppDeferredLauncherController
       std::map<std::string, ArcAppDeferredLauncherItemController*>;
 
   void UpdateApps();
+  void UpdateShelfItemIcon(const std::string& app_id);
   void RegisterNextUpdate();
 
   // Unowned pointers.
-  ChromeLauncherControllerImpl* owner_;
+  ChromeLauncherController* owner_;
   Profile* observed_profile_ = nullptr;
 
   AppControllerMap app_controller_map_;

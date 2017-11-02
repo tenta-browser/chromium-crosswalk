@@ -36,10 +36,11 @@ Resources.DOMStorageItemsView = class extends Resources.StorageItemsView {
     this.element.classList.add('storage-view', 'table');
 
     var columns = /** @type {!Array<!DataGrid.DataGrid.ColumnDescriptor>} */ ([
-      {id: 'key', title: Common.UIString('Key'), sortable: false, editable: true, weight: 50},
-      {id: 'value', title: Common.UIString('Value'), sortable: false, editable: true, weight: 50}
+      {id: 'key', title: Common.UIString('Key'), sortable: false, editable: true, longText: true, weight: 50},
+      {id: 'value', title: Common.UIString('Value'), sortable: false, editable: true, longText: true, weight: 50}
     ]);
     this._dataGrid = new DataGrid.DataGrid(columns, this._editingCallback.bind(this), this._deleteCallback.bind(this));
+    this._dataGrid.setStriped(true);
     this._dataGrid.setName('DOMStorageItemsView');
     this._dataGrid.asWidget().show(this.element);
     this._eventListeners = [];
@@ -149,12 +150,9 @@ Resources.DOMStorageItemsView = class extends Resources.StorageItemsView {
   }
 
   /**
-   * @param {?string} error
    * @param {!Array<!Array<string>>} items
    */
-  _showDOMStorageItems(error, items) {
-    if (error)
-      return;
+  _showDOMStorageItems(items) {
     var rootNode = this._dataGrid.rootNode();
     var selectedKey = null;
     for (var node of rootNode.children) {
@@ -195,7 +193,7 @@ Resources.DOMStorageItemsView = class extends Resources.StorageItemsView {
    * @override
    */
   refreshItems() {
-    this._domStorage.getItems((error, items) => this._showDOMStorageItems(error, items));
+    this._domStorage.getItems().then(items => items && this._showDOMStorageItems(items));
   }
 
   /**

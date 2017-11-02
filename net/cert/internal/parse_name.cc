@@ -4,7 +4,6 @@
 
 #include "net/cert/internal/parse_name.h"
 
-#include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversion_utils.h"
@@ -230,6 +229,17 @@ bool X509NameAttribute::ValueAsString(std::string* out) const {
     default:
       return false;
   }
+}
+
+bool X509NameAttribute::ValueAsStringWithUnsafeOptions(
+    PrintableStringHandling printable_string_handling,
+    std::string* out) const {
+  if (printable_string_handling == PrintableStringHandling::kAsUTF8Hack &&
+      value_tag == der::kPrintableString) {
+    *out = value.AsString();
+    return true;
+  }
+  return ValueAsString(out);
 }
 
 bool X509NameAttribute::ValueAsStringUnsafe(std::string* out) const {

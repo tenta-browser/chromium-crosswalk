@@ -19,7 +19,7 @@ Timeline.TimelineFlameChartView = class extends UI.VBox {
     this._delegate = delegate;
     /** @type {?Timeline.PerformanceModel} */
     this._model = null;
-    /** @type {!Array<!SDK.TracingModel.Event>|undefined} */
+    /** @type {!Array<number>|undefined} */
     this._searchResults;
     this._filters = filters;
 
@@ -30,6 +30,8 @@ Timeline.TimelineFlameChartView = class extends UI.VBox {
 
     var mainViewGroupExpansionSetting = Common.settings.createSetting('timelineFlamechartMainViewGroupExpansion', {});
     this._mainDataProvider = new Timeline.TimelineFlameChartDataProvider(filters);
+    this._mainDataProvider.addEventListener(
+        Timeline.TimelineFlameChartDataProvider.Events.DataChanged, () => this._mainFlameChart.scheduleUpdate());
     this._mainFlameChart = new PerfUI.FlameChart(this._mainDataProvider, this, mainViewGroupExpansionSetting);
     this._mainFlameChart.alwaysShowVerticalScroll();
     this._mainFlameChart.enableRuler(false);
@@ -77,6 +79,36 @@ Timeline.TimelineFlameChartView = class extends UI.VBox {
     this._nextExtensionIndex = 0;
 
     this._boundRefresh = this._refresh.bind(this);
+
+    this._mainDataProvider.setEventColorMapping(Timeline.TimelineUIUtils.eventColor);
+    if (!Runtime.experiments.isEnabled('timelineColorByProduct'))
+      return;
+    this._groupBySetting =
+        Common.settings.createSetting('timelineTreeGroupBy', Timeline.AggregatedTimelineTreeView.GroupBy.None);
+    this._groupBySetting.addChangeListener(this._updateColorMapper, this);
+    this._updateColorMapper();
+    ProductRegistry.instance().then(registry => this._productRegistry = registry);
+  }
+
+  _updateColorMapper() {
+    /** @type {!Map<string, string>} */
+    this._urlToColorCache = new Map();
+    if (!this._model)
+      return;
+    var colorByProduct = Runtime.experiments.isEnabled('timelineColorByProduct') &&
+        this._groupBySetting.get() === Timeline.AggregatedTimelineTreeView.GroupBy.Product;
+    this._mainDataProvider.setEventColorMapping(
+        colorByProduct ? this._colorByProductForEvent.bind(this) : Timeline.TimelineUIUtils.eventColor);
+    this._mainFlameChart.update();
+  }
+
+  /**
+   * @param {!SDK.TracingModel.Event} event
+   * @return {string}
+   */
+  _colorByProductForEvent(event) {
+    return Timeline.TimelineUIUtils.eventColorByProduct(
+        this._productRegistry, this._model.timelineModel(), this._urlToColorCache, event);
   }
 
   /**
@@ -120,11 +152,11 @@ Timeline.TimelineFlameChartView = class extends UI.VBox {
     this._networkDataProvider.setModel(this._model);
     this._countersView.setModel(this._model);
     this._detailsView.setModel(this._model);
+    this._updateColorMapper();
 
     this._nextExtensionIndex = 0;
     this._appendExtensionData();
 
-    this._updateSearchHighlight(false, true);
     this._refresh();
   }
 
@@ -139,6 +171,7 @@ Timeline.TimelineFlameChartView = class extends UI.VBox {
     }
     this._mainFlameChart.reset();
     this._networkFlameChart.reset();
+    this._updateSearchResults(false, false);
   }
 
   _appendExtensionData() {
@@ -154,7 +187,7 @@ Timeline.TimelineFlameChartView = class extends UI.VBox {
    * @param {!Common.Event} commonEvent
    */
   _onEntryHighlighted(commonEvent) {
-    SDK.DOMModel.hideDOMNodeHighlight();
+    SDK.OverlayModel.hideDOMNodeHighlight();
     var entryIndex = /** @type {number} */ (commonEvent.data);
     var event = this._mainDataProvider.eventByIndex(entryIndex);
     if (!event)
@@ -231,33 +264,19 @@ Timeline.TimelineFlameChartView = class extends UI.VBox {
     this._countersView.setWindowTimes(startTime, endTime);
     this._windowStartTime = startTime;
     this._windowEndTime = endTime;
-  }
-
-  /**
-   * @param {?SDK.TracingModel.Event} event
-   * @param {string=} regex
-   * @param {boolean=} select
-   */
-  _highlightSearchResult(event, regex, select) {
-    if (!event) {
-      this._delegate.select(null);
-      return;
-    }
-    var timelineSelection = this._mainDataProvider.selectionForEvent(event);
-    if (timelineSelection)
-      this._delegate.select(timelineSelection);
+    this._updateSearchResults(false, false);
   }
 
   /**
    * @override
-   * @param {?Timeline.TimelineSelection} selection
+   * @param {!Timeline.TimelineSelection} selection
    */
   setSelection(selection) {
     var index = this._mainDataProvider.entryIndexForSelection(selection);
     this._mainFlameChart.setSelectedEntry(index);
     index = this._networkDataProvider.entryIndexForSelection(selection);
     this._networkFlameChart.setSelectedEntry(index);
-    if (selection && this._detailsView)
+    if (this._detailsView)
       this._detailsView.setSelection(selection);
   }
 
@@ -302,8 +321,10 @@ Timeline.TimelineFlameChartView = class extends UI.VBox {
   jumpToNextSearchResult() {
     if (!this._searchResults || !this._searchResults.length)
       return;
-    var index = this._selectedSearchResult ? this._searchResults.indexOf(this._selectedSearchResult) : -1;
-    this._jumpToSearchResult(index + 1);
+    var index = typeof this._selectedSearchResult !== 'undefined' ?
+        this._searchResults.indexOf(this._selectedSearchResult) :
+        -1;
+    this._selectSearchResult(mod(index + 1, this._searchResults.length));
   }
 
   /**
@@ -312,8 +333,9 @@ Timeline.TimelineFlameChartView = class extends UI.VBox {
   jumpToPreviousSearchResult() {
     if (!this._searchResults || !this._searchResults.length)
       return;
-    var index = this._selectedSearchResult ? this._searchResults.indexOf(this._selectedSearchResult) : 0;
-    this._jumpToSearchResult(index - 1);
+    var index =
+        typeof this._selectedSearchResult !== 'undefined' ? this._searchResults.indexOf(this._selectedSearchResult) : 0;
+    this._selectSearchResult(mod(index - 1, this._searchResults.length));
   }
 
   /**
@@ -335,36 +357,10 @@ Timeline.TimelineFlameChartView = class extends UI.VBox {
   /**
    * @param {number} index
    */
-  _jumpToSearchResult(index) {
-    this._selectSearchResult(mod(index, this._searchResults.length));
-    this._highlightSearchResult(this._selectedSearchResult, this._searchRegex, true);
-  }
-
-  /**
-   * @param {number} index
-   */
   _selectSearchResult(index) {
-    this._selectedSearchResult = this._searchResults[index];
     this._searchableView.updateCurrentMatchIndex(index);
-  }
-
-  _clearHighlight() {
-    this._highlightSearchResult(null);
-  }
-
-  /**
-   * @param {boolean} revealRecord
-   * @param {boolean} shouldJump
-   * @param {boolean=} jumpBackwards
-   */
-  _updateSearchHighlight(revealRecord, shouldJump, jumpBackwards) {
-    if (!this._searchRegex) {
-      this._clearHighlight();
-      return;
-    }
-    if (!this._searchResults)
-      this._updateSearchResults(shouldJump, jumpBackwards);
-    this._highlightSearchResult(this._selectedSearchResult, this._searchRegex, revealRecord);
+    this._selectedSearchResult = this._searchResults[index];
+    this._delegate.select(this._mainDataProvider.createSelection(this._selectedSearchResult));
   }
 
   /**
@@ -372,42 +368,29 @@ Timeline.TimelineFlameChartView = class extends UI.VBox {
    * @param {boolean=} jumpBackwards
    */
   _updateSearchResults(shouldJump, jumpBackwards) {
+    var oldSelectedSearchResult = this._selectedSearchResult;
+    delete this._selectedSearchResult;
+    this._searchResults = [];
     if (!this._searchRegex)
       return;
 
-    // FIXME: search on all threads.
-    var events = this._model ? this._model.timelineModel().mainThreadEvents() : [];
-    var filters = [...this._filters, new Timeline.TimelineFilters.RegExp(this._searchRegex)];
-    var matches = [];
-    var startIndex = events.lowerBound(this._windowStartTime, (time, event) => time - event.startTime);
-    for (var index = startIndex; index < events.length; ++index) {
-      var event = events[index];
-      if (event.startTime > this._windowEndTime)
-        break;
-      if (TimelineModel.TimelineModel.isVisible(filters, event))
-        matches.push(event);
-    }
-
-    var matchesCount = matches.length;
-    if (matchesCount) {
-      this._searchResults = matches;
-      this._searchableView.updateSearchMatchesCount(matchesCount);
-
-      var selectedIndex = matches.indexOf(this._selectedSearchResult);
-      if (shouldJump && selectedIndex === -1)
-        selectedIndex = jumpBackwards ? this._searchResults.length - 1 : 0;
-      this._selectSearchResult(selectedIndex);
-    } else {
-      this._searchableView.updateSearchMatchesCount(0);
-      delete this._selectedSearchResult;
-    }
+    var regExpFilter = new Timeline.TimelineFilters.RegExp(this._searchRegex);
+    this._searchResults = this._mainDataProvider.search(this._windowStartTime, this._windowEndTime, regExpFilter);
+    this._searchableView.updateSearchMatchesCount(this._searchResults.length);
+    if (!shouldJump || !this._searchResults.length)
+      return;
+    var selectedIndex = this._searchResults.indexOf(oldSelectedSearchResult);
+    if (selectedIndex === -1)
+      selectedIndex = jumpBackwards ? this._searchResults.length - 1 : 0;
+    this._selectSearchResult(selectedIndex);
   }
 
   /**
    * @override
    */
   searchCanceled() {
-    this._clearHighlight();
+    if (typeof this._selectedSearchResult !== 'undefined')
+      this._delegate.select(null);
     delete this._searchResults;
     delete this._selectedSearchResult;
     delete this._searchRegex;
@@ -421,8 +404,7 @@ Timeline.TimelineFlameChartView = class extends UI.VBox {
    */
   performSearch(searchConfig, shouldJump, jumpBackwards) {
     this._searchRegex = searchConfig.toSearchRegex();
-    delete this._searchResults;
-    this._updateSearchHighlight(true, shouldJump, jumpBackwards);
+    this._updateSearchResults(shouldJump, jumpBackwards);
   }
 };
 
@@ -442,16 +424,6 @@ Timeline.TimelineFlameChartView.Selection = class {
 
 Timeline.FlameChartStyle = {
   textColor: '#333'
-};
-
-/**
- * @enum {symbol}
- */
-Timeline.TimelineFlameChartEntryType = {
-  Frame: Symbol('Frame'),
-  Event: Symbol('Event'),
-  InteractionRecord: Symbol('InteractionRecord'),
-  ExtensionEvent: Symbol('ExtensionEvent')
 };
 
 /**
@@ -530,4 +502,10 @@ Timeline.TimelineFlameChartMarker = class {
     }
     context.restore();
   }
+};
+
+/** @enum {string} */
+Timeline.TimelineFlameChartView._ColorBy = {
+  URL: 'URL',
+  Product: 'Product'
 };

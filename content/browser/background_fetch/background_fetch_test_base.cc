@@ -5,6 +5,7 @@
 #include "content/browser/background_fetch/background_fetch_test_base.h"
 
 #include <stdint.h>
+#include <map>
 #include <memory>
 #include <utility>
 
@@ -14,6 +15,7 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/guid.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
 #include "base/time/time.h"
@@ -21,6 +23,7 @@
 #include "content/browser/service_worker/service_worker_context_core.h"
 #include "content/browser/service_worker/service_worker_registration.h"
 #include "content/common/service_worker/service_worker_status_code.h"
+#include "content/common/service_worker/service_worker_types.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/download_item.h"
 #include "content/public/browser/download_url_parameters.h"
@@ -137,7 +140,8 @@ class BackgroundFetchTestBase::RespondingDownloadManager
     download_item->SetURL(params->url());
     download_item->SetUrlChain({params->url()});
     download_item->SetState(DownloadItem::DownloadState::IN_PROGRESS);
-    download_item->SetGuid(base::GenerateGUID());
+    download_item->SetGuid(params->guid().empty() ? base::GenerateGUID()
+                                                  : params->guid());
     download_item->SetStartTime(base::Time::Now());
     download_item->SetResponseHeaders(response->headers);
 
@@ -145,10 +149,10 @@ class BackgroundFetchTestBase::RespondingDownloadManager
     // dealing with the response in this class.
     BrowserThread::PostTaskAndReply(
         BrowserThread::UI, FROM_HERE,
-        base::Bind(params->callback(), download_item.get(),
-                   DOWNLOAD_INTERRUPT_REASON_NONE),
-        base::Bind(&RespondingDownloadManager::DidStartDownload,
-                   weak_ptr_factory_.GetWeakPtr(), download_item.get()));
+        base::BindOnce(params->callback(), download_item.get(),
+                       DOWNLOAD_INTERRUPT_REASON_NONE),
+        base::BindOnce(&RespondingDownloadManager::DidStartDownload,
+                       weak_ptr_factory_.GetWeakPtr(), download_item.get()));
 
     download_items_.push_back(std::move(download_item));
   }
@@ -200,6 +204,8 @@ class BackgroundFetchTestBase::RespondingDownloadManager
 };
 
 BackgroundFetchTestBase::BackgroundFetchTestBase()
+    // Using REAL_IO_THREAD would give better coverage for thread safety, but
+    // at time of writing EmbeddedWorkerTestHelper didn't seem to support that.
     : thread_bundle_(TestBrowserThreadBundle::IO_MAINLOOP),
       origin_(GURL(kTestOrigin)) {}
 
@@ -213,8 +219,8 @@ void BackgroundFetchTestBase::SetUp() {
 
   // The |download_manager_| ownership is given to the BrowserContext, and the
   // BrowserContext will take care of deallocating it.
-  BrowserContext::SetDownloadManagerForTesting(browser_context(),
-                                               download_manager_);
+  BrowserContext::SetDownloadManagerForTesting(
+      browser_context(), base::WrapUnique(download_manager_));
 
   set_up_called_ = true;
 }
@@ -239,7 +245,8 @@ bool BackgroundFetchTestBase::CreateRegistrationId(
   {
     base::RunLoop run_loop;
     embedded_worker_test_helper_.context()->RegisterServiceWorker(
-        origin_.GetURL(), script_url, nullptr /* provider_host */,
+        script_url, ServiceWorkerRegistrationOptions(origin_.GetURL()),
+        nullptr /* provider_host */,
         base::Bind(&DidRegisterServiceWorker, &service_worker_registration_id,
                    run_loop.QuitClosure()));
 

@@ -7,10 +7,12 @@
 #include <algorithm>
 #include <utility>
 
+#include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/message_loop/message_loop.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/task_runner_util.h"
+#include "base/task_scheduler/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/default_clock.h"
 #include "components/data_use_measurement/core/data_use_user_data.h"
@@ -35,10 +37,8 @@ bool IsLogoOkToShow(const LogoMetadata& metadata, base::Time now) {
   base::TimeDelta offset =
       base::TimeDelta::FromMilliseconds(kMaxTimeToLiveMS * 3 / 2);
   base::Time distant_past = now - offset;
-  base::Time distant_future = now + offset;
   // Sanity check so logos aren't accidentally cached forever.
-  if (metadata.expiration_time < distant_past ||
-      metadata.expiration_time > distant_future) {
+  if (metadata.expiration_time < distant_past) {
     return false;
   }
   return metadata.can_show_after_expiration || metadata.expiration_time >= now;
@@ -53,8 +53,7 @@ std::unique_ptr<EncodedLogo> GetLogoFromCacheOnFileThread(LogoCache* logo_cache,
   if (!metadata)
     return nullptr;
 
-  if (metadata->source_url != logo_url.spec() ||
-      !IsLogoOkToShow(*metadata, now)) {
+  if (metadata->source_url != logo_url || !IsLogoOkToShow(*metadata, now)) {
     logo_cache->SetCachedLogo(NULL);
     return nullptr;
   }
@@ -62,41 +61,32 @@ std::unique_ptr<EncodedLogo> GetLogoFromCacheOnFileThread(LogoCache* logo_cache,
   return logo_cache->GetCachedLogo();
 }
 
-void DeleteLogoCacheOnFileThread(LogoCache* logo_cache) {
-  delete logo_cache;
-}
-
 }  // namespace
 
 LogoTracker::LogoTracker(
     base::FilePath cached_logo_directory,
-    scoped_refptr<base::SequencedTaskRunner> file_task_runner,
-    scoped_refptr<base::TaskRunner> background_task_runner,
     scoped_refptr<net::URLRequestContextGetter> request_context_getter,
     std::unique_ptr<LogoDelegate> delegate)
     : is_idle_(true),
       is_cached_logo_valid_(false),
       logo_delegate_(std::move(delegate)),
-      logo_cache_(new LogoCache(cached_logo_directory)),
-      clock_(new base::DefaultClock()),
-      file_task_runner_(file_task_runner),
-      background_task_runner_(background_task_runner),
+      cache_task_runner_(base::CreateSequencedTaskRunnerWithTraits(
+          {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
+           base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN})),
+      logo_cache_(new LogoCache(cached_logo_directory),
+                  base::OnTaskRunnerDeleter(cache_task_runner_)),
+      clock_(base::MakeUnique<base::DefaultClock>()),
       request_context_getter_(request_context_getter),
       weak_ptr_factory_(this) {}
 
 LogoTracker::~LogoTracker() {
   ReturnToIdle(kDownloadOutcomeNotTracked);
-  file_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&DeleteLogoCacheOnFileThread, logo_cache_));
-  logo_cache_ = NULL;
 }
 
 void LogoTracker::SetServerAPI(
     const GURL& logo_url,
     const ParseLogoResponse& parse_logo_response_func,
-    const AppendQueryparamsToLogoURL& append_queryparams_func,
-    bool wants_cta,
-    bool gray_background) {
+    const AppendQueryparamsToLogoURL& append_queryparams_func) {
   if (logo_url == logo_url_)
     return;
 
@@ -105,8 +95,6 @@ void LogoTracker::SetServerAPI(
   logo_url_ = logo_url;
   parse_logo_response_func_ = parse_logo_response_func;
   append_queryparams_func_ = append_queryparams_func;
-  wants_cta_ = wants_cta;
-  gray_background_ = gray_background;
 }
 
 void LogoTracker::GetLogo(LogoObserver* observer) {
@@ -116,11 +104,9 @@ void LogoTracker::GetLogo(LogoObserver* observer) {
   if (is_idle_) {
     is_idle_ = false;
     base::PostTaskAndReplyWithResult(
-        file_task_runner_.get(),
-        FROM_HERE,
+        cache_task_runner_.get(), FROM_HERE,
         base::Bind(&GetLogoFromCacheOnFileThread,
-                   logo_cache_,
-                   logo_url_,
+                   base::Unretained(logo_cache_.get()), logo_url_,
                    clock_->Now()),
         base::Bind(&LogoTracker::OnCachedLogoRead,
                    weak_ptr_factory_.GetWeakPtr()));
@@ -135,9 +121,9 @@ void LogoTracker::RemoveObserver(LogoObserver* observer) {
 
 void LogoTracker::SetLogoCacheForTests(std::unique_ptr<LogoCache> cache) {
   DCHECK(cache);
-  file_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&DeleteLogoCacheOnFileThread, logo_cache_));
-  logo_cache_ = cache.release();
+  // Call reset() and release() to keep the deleter of the |logo_cache_| member
+  // and run it on the old value.
+  logo_cache_.reset(cache.release());
 }
 
 void LogoTracker::SetClockForTests(std::unique_ptr<base::Clock> clock) {
@@ -146,7 +132,8 @@ void LogoTracker::SetClockForTests(std::unique_ptr<base::Clock> clock) {
 
 void LogoTracker::ReturnToIdle(int outcome) {
   if (outcome != kDownloadOutcomeNotTracked) {
-    UMA_HISTOGRAM_ENUMERATION("NewTabPage.LogoDownloadOutcome", outcome,
+    UMA_HISTOGRAM_ENUMERATION("NewTabPage.LogoDownloadOutcome",
+                              static_cast<LogoDownloadOutcome>(outcome),
                               DOWNLOAD_OUTCOME_COUNT);
   }
   // Cancel the current asynchronous operation, if any.
@@ -195,18 +182,16 @@ void LogoTracker::OnCachedLogoAvailable(const LogoMetadata& metadata,
 }
 
 void LogoTracker::SetCachedLogo(std::unique_ptr<EncodedLogo> logo) {
-  file_task_runner_->PostTask(
+  cache_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&LogoCache::SetCachedLogo,
-                 base::Unretained(logo_cache_),
+      base::Bind(&LogoCache::SetCachedLogo, base::Unretained(logo_cache_.get()),
                  base::Owned(logo.release())));
 }
 
 void LogoTracker::SetCachedMetadata(const LogoMetadata& metadata) {
-  file_task_runner_->PostTask(FROM_HERE,
-                              base::Bind(&LogoCache::UpdateCachedLogoMetadata,
-                                         base::Unretained(logo_cache_),
-                                         metadata));
+  cache_task_runner_->PostTask(
+      FROM_HERE, base::Bind(&LogoCache::UpdateCachedLogoMetadata,
+                            base::Unretained(logo_cache_.get()), metadata));
 }
 
 void LogoTracker::FetchLogo() {
@@ -223,8 +208,7 @@ void LogoTracker::FetchLogo() {
   if (command_line->HasSwitch(switches::kGoogleDoodleUrl)) {
     url = GURL(command_line->GetSwitchValueASCII(switches::kGoogleDoodleUrl));
   } else {
-    url = append_queryparams_func_.Run(logo_url_, fingerprint, wants_cta_,
-                                       gray_background_);
+    url = append_queryparams_func_.Run(logo_url_, fingerprint);
   }
 
   net::NetworkTrafficAnnotationTag traffic_annotation =
@@ -241,7 +225,7 @@ void LogoTracker::FetchLogo() {
           destination: OTHER
         }
         policy {
-          cookies_allowed: true
+          cookies_allowed: YES
           cookies_store: "user"
           setting:
             "Choosing a non-Google search engine in Chromium settings under "
@@ -266,7 +250,7 @@ void LogoTracker::OnFreshLogoParsed(bool* parsing_failed,
   DCHECK(!is_idle_);
 
   if (logo)
-    logo->metadata.source_url = logo_url_.spec();
+    logo->metadata.source_url = logo_url_;
 
   if (!logo || !logo->encoded_image.get()) {
     OnFreshLogoAvailable(std::move(logo), *parsing_failed, from_http_cache,
@@ -367,8 +351,10 @@ void LogoTracker::OnURLFetchComplete(const net::URLFetcher* source) {
   bool from_http_cache = source->WasCached();
 
   bool* parsing_failed = new bool(false);
-  base::PostTaskAndReplyWithResult(
-      background_task_runner_.get(), FROM_HERE,
+  base::PostTaskWithTraitsAndReplyWithResult(
+      FROM_HERE,
+      {base::MayBlock(), base::TaskPriority::USER_VISIBLE,
+       base::TaskShutdownBehavior::SKIP_ON_SHUTDOWN},
       base::Bind(parse_logo_response_func_, base::Passed(&response),
                  response_time, parsing_failed),
       base::Bind(&LogoTracker::OnFreshLogoParsed,

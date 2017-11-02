@@ -55,15 +55,12 @@ void LayoutTableCol::StyleDidChange(StyleDifference diff,
   if (!table)
     return;
 
-  // TODO(dgrogan): Is the "else" necessary for correctness or just a brittle
-  // optimization? The optimization would be: if the first branch is taken then
-  // the next one can't be, so don't even check its condition.
-  if (!table->SelfNeedsLayout() && !table->NormalChildNeedsLayout() &&
-      old_style->Border() != Style()->Border()) {
-    table->InvalidateCollapsedBorders();
-  } else if ((old_style->LogicalWidth() != Style()->LogicalWidth()) ||
-             LayoutTableBoxComponent::DoCellsHaveDirtyWidth(*this, *table, diff,
-                                                            *old_style)) {
+  LayoutTableBoxComponent::InvalidateCollapsedBordersOnStyleChange(
+      *this, *table, diff, *old_style);
+
+  if ((old_style->LogicalWidth() != Style()->LogicalWidth()) ||
+      LayoutTableBoxComponent::DoCellsHaveDirtyWidth(*this, *table, diff,
+                                                     *old_style)) {
     // TODO(dgrogan): Optimization opportunities:
     // (1) Only mark cells which are affected by this col, not every cell in the
     //     table.
@@ -111,7 +108,13 @@ bool LayoutTableCol::CanHaveChildren() const {
   return IsTableColumnGroup();
 }
 
-LayoutRect LayoutTableCol::LocalVisualRect() const {
+LayoutRect LayoutTableCol::LocalVisualRectIgnoringVisibility() const {
+  // On SPv2, raster invalidation is based on paint result. LayoutTableCol
+  // paints nothing (its background is painted by LayoutTableSection) so should
+  // not issue any raster invalidation.
+  if (RuntimeEnabledFeatures::SlimmingPaintV2Enabled())
+    return LayoutRect();
+
   // Entire table gets invalidated, instead of invalidating
   // every cell in the column. This is simpler, but suboptimal.
 
@@ -123,7 +126,7 @@ LayoutRect LayoutTableCol::LocalVisualRect() const {
   // location is always zero.
   DCHECK(this->Location() == LayoutPoint());
 
-  return table->LocalVisualRect();
+  return table->LocalVisualRectIgnoringVisibility();
 }
 
 void LayoutTableCol::ClearPreferredLogicalWidthsDirtyBits() {
@@ -168,35 +171,6 @@ LayoutTableCol* LayoutTableCol::NextColumn() const {
   }
 
   return ToLayoutTableCol(next);
-}
-
-const BorderValue& LayoutTableCol::BorderAdjoiningCellStartBorder(
-    const LayoutTableCell*) const {
-  return Style()->BorderStart();
-}
-
-const BorderValue& LayoutTableCol::BorderAdjoiningCellEndBorder(
-    const LayoutTableCell*) const {
-  return Style()->BorderEnd();
-}
-
-const BorderValue& LayoutTableCol::BorderAdjoiningCellBefore(
-    const LayoutTableCell* cell) const {
-  DCHECK_EQ(Table()
-                ->ColElementAtAbsoluteColumn(cell->AbsoluteColumnIndex() +
-                                             cell->ColSpan())
-                .InnermostColOrColGroup(),
-            this);
-  return Style()->BorderStart();
-}
-
-const BorderValue& LayoutTableCol::BorderAdjoiningCellAfter(
-    const LayoutTableCell* cell) const {
-  DCHECK_EQ(Table()
-                ->ColElementAtAbsoluteColumn(cell->AbsoluteColumnIndex() - 1)
-                .InnermostColOrColGroup(),
-            this);
-  return Style()->BorderEnd();
 }
 
 }  // namespace blink

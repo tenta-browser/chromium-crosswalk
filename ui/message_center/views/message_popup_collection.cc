@@ -195,22 +195,19 @@ void MessagePopupCollection::UpdateWidgets() {
       continue;
 #endif
 
-    MessageView* view;
     // Create top-level notification.
+    MessageView* view = MessageViewFactory::Create(NULL, *(*iter), true);
 #if defined(OS_CHROMEOS)
-    if ((*iter)->pinned()) {
-      Notification notification = *(*iter);
-      // Override pinned status, since toasts should be closable even when it's
-      // pinned.
-      notification.set_pinned(false);
-      view = MessageViewFactory::Create(NULL, notification, true);
-    } else
+    // Disable pinned feature since this is a popup.
+    view->set_force_disable_pinned();
 #endif  // defined(OS_CHROMEOS)
-    {
-      view = MessageViewFactory::Create(NULL, *(*iter), true);
-    }
+    view->SetExpanded(true);
 
-    view->set_context_menu_controller(context_menu_controller_.get());
+    // TODO(yoshiki): Temporary disable context menu on custom notifications.
+    // See crbug.com/750307 for detail.
+    if ((*iter)->type() != NOTIFICATION_TYPE_CUSTOM)
+      view->set_context_menu_controller(context_menu_controller_.get());
+
     int view_height = ToastContentsView::GetToastSizeForView(view).height();
     int height_available =
         top_down ? alignment_delegate_->GetWorkArea().bottom() - base

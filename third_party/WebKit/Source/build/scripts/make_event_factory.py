@@ -92,8 +92,6 @@ def create_event_measure_whitelist(name):
             or name == 'TrackEvent'
             or name == 'TransitionEvent'
             or name == 'WebGLContextEvent'
-            or name == 'WebKitAnimationEvent'
-            or name == 'WebKitTransitionEvent'
             or name == 'WheelEvent')
 
 
@@ -103,8 +101,8 @@ def measure_name(name):
 
 class EventFactoryWriter(json5_generator.Writer):
     default_parameters = {
-        'ImplementedAs': None,
-        'RuntimeEnabled': None,
+        'ImplementedAs': {},
+        'RuntimeEnabled': {},
     }
     default_metadata = {
         'export': '',
@@ -165,6 +163,7 @@ class EventFactoryWriter(json5_generator.Writer):
         if self.suffix:
             base_header_for_suffix = '\n#include "core/%(namespace)sHeaders.h"\n' % {'namespace': self.namespace}
         return HEADER_TEMPLATE % {
+            'input_files': self._input_files,
             'license': license.license_for_generated_cpp(),
             'namespace': self.namespace,
             'suffix': self.suffix,
@@ -172,9 +171,10 @@ class EventFactoryWriter(json5_generator.Writer):
             'includes': '\n'.join(self._headers_header_includes(self.json5_file.name_dictionaries)),
         }
 
-    @template_expander.use_jinja('EventFactory.cpp.tmpl', filters=filters)
+    @template_expander.use_jinja('templates/EventFactory.cpp.tmpl', filters=filters)
     def generate_implementation(self):
         return {
+            'input_files': self._input_files,
             'namespace': self.namespace,
             'suffix': self.suffix,
             'events': self.json5_file.name_dictionaries,

@@ -16,11 +16,12 @@
 namespace blink {
 
 // WebThreadSupportingGC wraps a WebThread and adds support for attaching
-// to and detaching from the Blink GC infrastructure. The initialize method
-// must be called during initialization on the WebThread and before the
-// thread allocates any objects managed by the Blink GC. The shutdown
-// method must be called on the WebThread during shutdown when the thread
-// no longer needs to access objects managed by the Blink GC.
+// to and detaching from the Blink GC infrastructure.
+//
+// The initialize method must be called during initialization on the WebThread
+// and before the thread allocates any objects managed by the Blink GC. The
+// shutdown method must be called on the WebThread during shutdown when the
+// thread no longer needs to access objects managed by the Blink GC.
 //
 // WebThreadSupportingGC usually internally creates and owns WebThread unless
 // an existing WebThread is given via createForThread.
@@ -33,28 +34,26 @@ class PLATFORM_EXPORT WebThreadSupportingGC final {
   static std::unique_ptr<WebThreadSupportingGC> CreateForThread(WebThread*);
   ~WebThreadSupportingGC();
 
-  void PostTask(const WebTraceLocation& location,
-                std::unique_ptr<WTF::Closure> task) {
+  void PostTask(const WebTraceLocation& location, WTF::Closure task) {
     thread_->GetWebTaskRunner()->PostTask(location, std::move(task));
   }
 
   void PostDelayedTask(const WebTraceLocation& location,
-                       std::unique_ptr<WTF::Closure> task,
-                       long long delay_ms) {
+                       WTF::Closure task,
+                       TimeDelta delay) {
     thread_->GetWebTaskRunner()->PostDelayedTask(location, std::move(task),
-                                                 delay_ms);
+                                                 delay);
   }
 
-  void PostTask(const WebTraceLocation& location,
-                std::unique_ptr<CrossThreadClosure> task) {
+  void PostTask(const WebTraceLocation& location, CrossThreadClosure task) {
     thread_->GetWebTaskRunner()->PostTask(location, std::move(task));
   }
 
   void PostDelayedTask(const WebTraceLocation& location,
-                       std::unique_ptr<CrossThreadClosure> task,
-                       long long delay_ms) {
+                       CrossThreadClosure task,
+                       TimeDelta delay) {
     thread_->GetWebTaskRunner()->PostDelayedTask(location, std::move(task),
-                                                 delay_ms);
+                                                 delay);
   }
 
   bool IsCurrentThread() const { return thread_->IsCurrentThread(); }
@@ -67,11 +66,12 @@ class PLATFORM_EXPORT WebThreadSupportingGC final {
     thread_->RemoveTaskObserver(observer);
   }
 
-  void Initialize();
-  void Shutdown();
+  // Must be called on the WebThread.
+  void InitializeOnThread();
+  void ShutdownOnThread();
 
   WebThread& PlatformThread() const {
-    ASSERT(thread_);
+    DCHECK(thread_);
     return *thread_;
   }
 

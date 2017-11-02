@@ -23,7 +23,8 @@ extra_cq_trybots = [
   },
   {
     "mastername": "master.tryserver.chromium.linux",
-    "buildernames": ["linux_optional_gpu_tests_rel"]
+    "buildernames": ["linux_optional_gpu_tests_rel",
+                     "linux_chromium_cfi_rel_ng"]
   },
   {
     "mastername": "master.tryserver.chromium.android",
@@ -87,7 +88,6 @@ def _ParseDepsDict(deps_content):
   local_scope = {}
   var = GClientKeywords.VarImpl({}, local_scope)
   global_scope = {
-    'From': GClientKeywords.FromImpl,
     'Var': var.Lookup,
     'deps_os': {},
   }

@@ -5,21 +5,20 @@
 #include "ash/host/ash_window_tree_host.h"
 
 #include "ash/host/ash_window_tree_host_init_params.h"
+#include "ash/host/ash_window_tree_host_platform.h"
 #include "ash/host/ash_window_tree_host_unified.h"
+#include "ash/shell_port.h"
+#include "base/memory/ptr_util.h"
 #include "ui/aura/client/screen_position_client.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/events/event.h"
 #include "ui/gfx/geometry/rect.h"
 
-#if defined(USE_OZONE)
-#include "ash/host/ash_window_tree_host_platform.h"
-#elif defined(USE_X11)
-#include "ash/host/ash_window_tree_host_x11.h"
-#endif
-
 namespace ash {
 
-AshWindowTreeHost::AshWindowTreeHost() : input_method_handler_(nullptr) {}
+AshWindowTreeHost::AshWindowTreeHost() {}
+
+AshWindowTreeHost::~AshWindowTreeHost() = default;
 
 void AshWindowTreeHost::TranslateLocatedEvent(ui::LocatedEvent* event) {
   if (event->IsTouchEvent())
@@ -47,17 +46,19 @@ void AshWindowTreeHost::TranslateLocatedEvent(ui::LocatedEvent* event) {
 }
 
 // static
-AshWindowTreeHost* AshWindowTreeHost::Create(
+std::unique_ptr<AshWindowTreeHost> AshWindowTreeHost::Create(
     const AshWindowTreeHostInitParams& init_params) {
-  if (init_params.offscreen)
-    return new AshWindowTreeHostUnified(init_params.initial_bounds);
-#if defined(USE_OZONE)
-  return new AshWindowTreeHostPlatform(init_params.initial_bounds);
-#elif defined(USE_X11)
-  return new AshWindowTreeHostX11(init_params.initial_bounds);
-#else
-#error Unsupported platform.
-#endif
+  std::unique_ptr<AshWindowTreeHost> ash_window_tree_host =
+      ShellPort::Get()->CreateAshWindowTreeHost(init_params);
+  if (ash_window_tree_host)
+    return ash_window_tree_host;
+
+  if (init_params.offscreen) {
+    return base::MakeUnique<AshWindowTreeHostUnified>(
+        init_params.initial_bounds);
+  }
+  return base::MakeUnique<AshWindowTreeHostPlatform>(
+      init_params.initial_bounds);
 }
 
 }  // namespace ash

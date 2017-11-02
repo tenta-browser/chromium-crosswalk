@@ -157,8 +157,8 @@ void PrivetRegisterOperationImpl::Cancel() {
 
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE,
-        base::Bind(&PrivetRegisterOperationImpl::Cancelation::Cleanup,
-                   base::Owned(cancelation)),
+        base::BindOnce(&PrivetRegisterOperationImpl::Cancelation::Cleanup,
+                       base::Owned(cancelation)),
         base::TimeDelta::FromSeconds(kPrivetCancelationTimeoutSeconds));
 
     ongoing_ = false;
@@ -585,8 +585,9 @@ void PrivetLocalPrintOperationImpl::OnSubmitdocResponse(
       timeout = std::max(timeout, kPrivetMinimumTimeout);
 
       base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-          FROM_HERE, base::Bind(&PrivetLocalPrintOperationImpl::DoCreatejob,
-                                weak_factory_.GetWeakPtr()),
+          FROM_HERE,
+          base::BindOnce(&PrivetLocalPrintOperationImpl::DoCreatejob,
+                         weak_factory_.GetWeakPtr()),
           base::TimeDelta::FromSeconds(timeout));
     } else if (use_pdf_ && error == kPrivetErrorInvalidDocumentType) {
       use_pdf_ = false;
@@ -728,7 +729,7 @@ std::unique_ptr<PrivetURLFetcher> PrivetHTTPClientImpl::CreateURLFetcher(
   replacements.SetPortStr(port);
 
   net::NetworkTrafficAnnotationTag traffic_annotation =
-      net::DefineNetworkTrafficAnnotation("cloud_print", R"(
+      net::DefineNetworkTrafficAnnotation("privet_http_impl", R"(
         semantics {
           sender: "Cloud Print"
           description:
@@ -742,7 +743,7 @@ std::unique_ptr<PrivetURLFetcher> PrivetHTTPClientImpl::CreateURLFetcher(
           destination: OTHER
         }
         policy {
-          cookies_allowed: false
+          cookies_allowed: NO
           setting:
             "Users can enable or disable background requests by 'Show "
             "notifications when new printers are detected on the network' in "

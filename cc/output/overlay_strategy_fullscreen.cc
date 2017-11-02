@@ -22,7 +22,7 @@ OverlayStrategyFullscreen::OverlayStrategyFullscreen(
 OverlayStrategyFullscreen::~OverlayStrategyFullscreen() {}
 
 bool OverlayStrategyFullscreen::Attempt(
-    ResourceProvider* resource_provider,
+    DisplayResourceProvider* resource_provider,
     RenderPass* render_pass,
     OverlayCandidateList* candidate_list,
     std::vector<gfx::Rect>* content_bounds) {
@@ -44,10 +44,6 @@ bool OverlayStrategyFullscreen::Attempt(
 
   OverlayCandidate candidate;
   if (!OverlayCandidate::FromDrawQuad(resource_provider, quad, &candidate)) {
-    return false;
-  }
-
-  if (candidate.transform != gfx::OVERLAY_TRANSFORM_NONE) {
     return false;
   }
 

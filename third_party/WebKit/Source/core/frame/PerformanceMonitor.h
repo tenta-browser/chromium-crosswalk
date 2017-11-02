@@ -6,10 +6,14 @@
 #define PerformanceMonitor_h
 
 #include "core/CoreExport.h"
+#include "core/dom/Document.h"
+#include "core/frame/LocalFrame.h"
+#include "core/timing/SubTaskAttribution.h"
+#include "platform/Timer.h"
 #include "platform/heap/Handle.h"
+#include "platform/scheduler/base/task_time_observer.h"
 #include "platform/wtf/text/AtomicString.h"
 #include "public/platform/WebThread.h"
-#include "public/platform/scheduler/base/task_time_observer.h"
 #include "v8/include/v8.h"
 
 namespace blink {
@@ -20,13 +24,12 @@ class ExecuteScript;
 class RecalculateStyle;
 class UpdateLayout;
 class UserCallback;
+class V8Compile;
 }
 
 class DOMWindow;
 class Document;
 class ExecutionContext;
-class Frame;
-class LocalFrame;
 class Performance;
 class SourceLocation;
 
@@ -53,15 +56,17 @@ class CORE_EXPORT PerformanceMonitor final
 
   class CORE_EXPORT Client : public GarbageCollectedMixin {
    public:
-    virtual void ReportLongTask(double start_time,
-                                double end_time,
-                                ExecutionContext* task_context,
-                                bool has_multiple_contexts){};
-    virtual void ReportLongLayout(double duration){};
+    virtual void ReportLongTask(
+        double start_time,
+        double end_time,
+        ExecutionContext* task_context,
+        bool has_multiple_contexts,
+        const SubTaskAttribution::EntriesVector& sub_task_attributions) {}
+    virtual void ReportLongLayout(double duration) {}
     virtual void ReportGenericViolation(Violation,
                                         const String& text,
                                         double time,
-                                        SourceLocation*){};
+                                        SourceLocation*) {}
     DEFINE_INLINE_VIRTUAL_TRACE() {}
   };
 
@@ -87,6 +92,23 @@ class CORE_EXPORT PerformanceMonitor final
 
   void Will(const probe::UserCallback&);
   void Did(const probe::UserCallback&);
+
+  void Will(const probe::V8Compile&);
+  void Did(const probe::V8Compile&);
+
+  void WillSendRequest(ExecutionContext*,
+                       unsigned long,
+                       DocumentLoader*,
+                       ResourceRequest&,
+                       const ResourceResponse&,
+                       const FetchInitiatorInfo&);
+  void DidFailLoading(unsigned long, DocumentLoader*, const ResourceError&);
+  void DidFinishLoading(unsigned long,
+                        DocumentLoader*,
+                        double,
+                        int64_t,
+                        int64_t);
+  void DomContentLoadedEventFired(LocalFrame*);
 
   void DocumentWriteFetchScript(Document*);
 
@@ -116,13 +138,12 @@ class CORE_EXPORT PerformanceMonitor final
                                    std::unique_ptr<SourceLocation>);
 
   // scheduler::TaskTimeObserver implementation
-  void WillProcessTask(scheduler::TaskQueue*, double start_time) override;
-  void DidProcessTask(scheduler::TaskQueue*,
-                      double start_time,
-                      double end_time) override;
-  void OnBeginNestedMessageLoop() override {}
+  void WillProcessTask(double start_time) override;
+  void DidProcessTask(double start_time, double end_time) override;
+
   void WillExecuteScript(ExecutionContext*);
   void DidExecuteScript();
+  void DidLoadResource();
 
   std::pair<String, DOMWindow*> SanitizedAttribution(
       const HeapHashSet<Member<Frame>>& frame_contexts,
@@ -134,6 +155,9 @@ class CORE_EXPORT PerformanceMonitor final
   unsigned layout_depth_ = 0;
   unsigned user_callback_depth_ = 0;
   const void* user_callback_;
+  double v8_compile_start_time_ = 0;
+
+  SubTaskAttribution::EntriesVector sub_task_attributions_;
 
   double thresholds_[kAfterLast];
 
@@ -146,6 +170,8 @@ class CORE_EXPORT PerformanceMonitor final
               typename DefaultHash<size_t>::Hash,
               WTF::UnsignedWithZeroKeyHashTraits<size_t>>
       subscriptions_;
+  double network_0_quiet_ = 0;
+  double network_2_quiet_ = 0;
 };
 
 }  // namespace blink

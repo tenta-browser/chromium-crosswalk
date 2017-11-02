@@ -13,17 +13,18 @@ namespace blink {
 
 using namespace CSSPropertyParserHelpers;
 
-const CSSValue* CSSPropertyAPIShapeOutside::parseSingleValue(
+const CSSValue* CSSPropertyAPIShapeOutside::ParseSingleValue(
+    CSSPropertyID,
     CSSParserTokenRange& range,
     const CSSParserContext& context,
-    CSSPropertyID) {
+    const CSSParserLocalContext&) const {
   if (CSSValue* image_value = ConsumeImageOrNone(range, &context))
     return image_value;
   CSSValueList* list = CSSValueList::CreateSpaceSeparated();
   if (CSSValue* box_value = ConsumeShapeBox(range))
     list->Append(*box_value);
   if (CSSValue* shape_value =
-          CSSPropertyShapeUtils::ConsumeBasicShape(range, &context)) {
+          CSSPropertyShapeUtils::ConsumeBasicShape(range, context)) {
     list->Append(*shape_value);
     if (list->length() < 2) {
       if (CSSValue* box_value = ConsumeShapeBox(range))

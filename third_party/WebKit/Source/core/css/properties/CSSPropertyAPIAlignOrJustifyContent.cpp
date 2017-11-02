@@ -9,11 +9,12 @@
 
 namespace blink {
 
-const CSSValue* CSSPropertyAPIAlignOrJustifyContent::parseSingleValue(
+const CSSValue* CSSPropertyAPIAlignOrJustifyContent::ParseSingleValue(
+    CSSPropertyID,
     CSSParserTokenRange& range,
     const CSSParserContext& context,
-    CSSPropertyID) {
-  DCHECK(RuntimeEnabledFeatures::cssGridLayoutEnabled());
+    const CSSParserLocalContext&) const {
+  DCHECK(RuntimeEnabledFeatures::CSSGridLayoutEnabled());
   return CSSPropertyAlignmentUtils::ConsumeContentDistributionOverflowPosition(
       range);
 }

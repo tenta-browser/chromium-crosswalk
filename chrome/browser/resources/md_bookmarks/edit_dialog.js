@@ -43,7 +43,7 @@ Polymer({
     this.isFolder_ = isFolder;
     this.parentId_ = parentId;
 
-    this.$.dialog.showModal();
+    bookmarks.DialogFocusManager.getInstance().showDialog(this.$.dialog);
   },
 
   /**
@@ -60,7 +60,7 @@ Polymer({
     if (!this.isFolder_)
       this.urlValue_ = assert(editItem.url);
 
-    this.$.dialog.showModal();
+    bookmarks.DialogFocusManager.getInstance().showDialog(this.$.dialog);
   },
 
   /**
@@ -127,7 +127,9 @@ Polymer({
       chrome.bookmarks.update(this.editItem_.id, edit);
     } else {
       edit['parentId'] = this.parentId_;
-      chrome.bookmarks.create(edit);
+      bookmarks.ApiListener.trackUpdatedItems();
+      chrome.bookmarks.create(
+          edit, bookmarks.ApiListener.highlightUpdatedItems);
     }
     this.$.dialog.close();
   },

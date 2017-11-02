@@ -12,6 +12,7 @@
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_view_aura.h"
 #include "content/browser/renderer_host/ui_events_helper.h"
+#include "ui/aura/event_injector.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/events/event_sink.h"
@@ -46,9 +47,10 @@ void SyntheticGestureTargetAura::DispatchWebTouchEventToPlatform(
 
   aura::Window* window = GetWindow();
   aura::WindowTreeHost* host = window->GetHost();
+  aura::EventInjector injector;
+
   for (const auto& event : events) {
     event->ConvertLocationToTarget(window, host->window());
-
     // Apply the screen scale factor to the event location after it has been
     // transformed to the target.
     gfx::PointF device_location =
@@ -57,8 +59,7 @@ void SyntheticGestureTargetAura::DispatchWebTouchEventToPlatform(
         gfx::ScalePoint(event->root_location_f(), device_scale_factor_);
     event->set_location_f(device_location);
     event->set_root_location_f(device_root_location);
-    ui::EventDispatchDetails details =
-        host->event_sink()->OnEventFromSource(event.get());
+    ui::EventDispatchDetails details = injector.Inject(host, event.get());
     if (details.dispatcher_destroyed)
       break;
   }
@@ -67,6 +68,17 @@ void SyntheticGestureTargetAura::DispatchWebTouchEventToPlatform(
 void SyntheticGestureTargetAura::DispatchWebMouseWheelEventToPlatform(
       const blink::WebMouseWheelEvent& web_wheel,
       const ui::LatencyInfo&) {
+  if (web_wheel.phase == blink::WebMouseWheelEvent::kPhaseEnded) {
+    DCHECK(
+        !render_widget_host()->GetView()->IsRenderWidgetHostViewChildFrame() &&
+        !render_widget_host()->GetView()->IsRenderWidgetHostViewGuest());
+    // Send the pending wheel end event immediately.
+    static_cast<RenderWidgetHostViewAura*>(render_widget_host()->GetView())
+        ->event_handler()
+        ->mouse_wheel_phase_handler()
+        .DispatchPendingWheelEndEvent();
+    return;
+  }
   ui::MouseWheelEvent wheel_event(
       gfx::Vector2d(web_wheel.delta_x, web_wheel.delta_y), gfx::Point(),
       gfx::Point(), ui::EventTimeForNow(), ui::EF_NONE, ui::EF_NONE);
@@ -77,8 +89,9 @@ void SyntheticGestureTargetAura::DispatchWebMouseWheelEventToPlatform(
 
   aura::Window* window = GetWindow();
   wheel_event.ConvertLocationToTarget(window, window->GetRootWindow());
+  aura::EventInjector injector;
   ui::EventDispatchDetails details =
-      window->GetHost()->event_sink()->OnEventFromSource(&wheel_event);
+      injector.Inject(window->GetHost(), &wheel_event);
   if (details.dispatcher_destroyed)
     return;
 }
@@ -162,8 +175,9 @@ void SyntheticGestureTargetAura::DispatchWebMouseEventToPlatform(
 
   aura::Window* window = GetWindow();
   mouse_event.ConvertLocationToTarget(window, window->GetRootWindow());
+  aura::EventInjector injector;
   ui::EventDispatchDetails details =
-      window->GetHost()->event_sink()->OnEventFromSource(&mouse_event);
+      injector.Inject(window->GetHost(), &mouse_event);
   if (details.dispatcher_destroyed)
     return;
 }

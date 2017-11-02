@@ -21,7 +21,7 @@ namespace api {
 
 static std::unique_ptr<KeyedService> ApiResourceManagerTestFactory(
     content::BrowserContext* context) {
-  return base::MakeUnique<ApiResourceManager<ResumableTCPSocket>>(context);
+  return std::make_unique<ApiResourceManager<ResumableTCPSocket>>(context);
 }
 
 class SocketsTcpUnitTest : public ApiUnitTest {
@@ -36,13 +36,9 @@ class SocketsTcpUnitTest : public ApiUnitTest {
 };
 
 TEST_F(SocketsTcpUnitTest, Create) {
-  // Get BrowserThread
-  content::BrowserThread::ID id;
-  CHECK(content::BrowserThread::GetCurrentThreadIdentifier(&id));
-
   // Create SocketCreateFunction and put it on BrowserThread
   SocketsTcpCreateFunction* function = new SocketsTcpCreateFunction();
-  function->set_work_thread_id(id);
+  function->set_work_task_runner(base::SequencedTaskRunnerHandle::Get());
 
   // Run tests
   std::unique_ptr<base::DictionaryValue> result(RunFunctionAndReturnDictionary(

@@ -17,7 +17,10 @@ class LayoutTestDevToolsBindings : public ShellDevToolsBindings {
  public:
   static GURL GetDevToolsPathAsURL(const std::string& frontend_url);
 
-  static GURL MapJSTestURL(const GURL& test_url);
+  static GURL MapTestURLIfNeeded(const GURL& test_url,
+                                 bool* is_devtools_js_test);
+
+  static GURL GetInspectedPageURL(const GURL& test_url);
 
   static LayoutTestDevToolsBindings* LoadDevTools(
       WebContents* devtools_contents_,
@@ -29,6 +32,9 @@ class LayoutTestDevToolsBindings : public ShellDevToolsBindings {
   ~LayoutTestDevToolsBindings() override;
 
  private:
+  static GURL MapJSTestURL(const GURL& test_url,
+                           const std::string& entry_filename);
+
   LayoutTestDevToolsBindings(WebContents* devtools_contents,
                              WebContents* inspected_contents);
 

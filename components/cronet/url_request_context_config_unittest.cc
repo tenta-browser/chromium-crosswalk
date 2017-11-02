@@ -5,7 +5,7 @@
 #include "components/cronet/url_request_context_config.h"
 
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/values.h"
 #include "net/cert/cert_verifier.h"
 #include "net/http/http_network_session.h"
@@ -20,6 +20,9 @@
 namespace cronet {
 
 TEST(URLRequestContextConfigTest, TestExperimentalOptionParsing) {
+  base::test::ScopedTaskEnvironment scoped_task_environment_(
+      base::test::ScopedTaskEnvironment::MainThreadType::IO);
+
   URLRequestContextConfig config(
       // Enable QUIC.
       true,
@@ -28,6 +31,8 @@ TEST(URLRequestContextConfigTest, TestExperimentalOptionParsing) {
       // Enable SPDY.
       true,
       // Enable SDCH.
+      false,
+      // Enable Brotli.
       false,
       // Type of http cache.
       URLRequestContextConfig::HttpCacheType::DISK,
@@ -42,8 +47,6 @@ TEST(URLRequestContextConfigTest, TestExperimentalOptionParsing) {
       "fake agent",
       // JSON encoded experimental options.
       "{\"QUIC\":{\"max_server_configs_stored_in_properties\":2,"
-      "\"delay_tcp_race\":true,"
-      "\"prefer_aes\":true,"
       "\"user_agent_id\":\"Custom QUIC UAID\","
       "\"idle_connection_timeout_seconds\":300,"
       "\"close_sessions_on_ip_change\":true,"
@@ -55,14 +58,6 @@ TEST(URLRequestContextConfigTest, TestExperimentalOptionParsing) {
       "\"MAP * 127.0.0.1\"},"
       // See http://crbug.com/696569.
       "\"disable_ipv6_on_wifi\":true}",
-      // Data reduction proxy key.
-      "",
-      // Data reduction proxy.
-      "",
-      // Fallback data reduction proxy.
-      "",
-      // Data reduction proxy secure proxy check URL.
-      "",
       // MockCertVerifier to use for testing purposes.
       std::unique_ptr<net::CertVerifier>(),
       // Enable network quality estimator.
@@ -72,10 +67,9 @@ TEST(URLRequestContextConfigTest, TestExperimentalOptionParsing) {
       // Certificate verifier cache data.
       "");
 
-  base::MessageLoop message_loop;
   net::URLRequestContextBuilder builder;
   net::NetLog net_log;
-  config.ConfigureURLRequestContextBuilder(&builder, &net_log, nullptr);
+  config.ConfigureURLRequestContextBuilder(&builder, &net_log);
   EXPECT_FALSE(config.effective_experimental_options->HasKey("UnknownOption"));
   // Set a ProxyConfigService to avoid DCHECK failure when building.
   builder.set_proxy_config_service(
@@ -96,12 +90,6 @@ TEST(URLRequestContextConfigTest, TestExperimentalOptionParsing) {
 
   // Check max_server_configs_stored_in_properties.
   EXPECT_EQ(2u, params->quic_max_server_configs_stored_in_properties);
-
-  // Check delay_tcp_race.
-  EXPECT_TRUE(params->quic_delay_tcp_race);
-
-  // Check prefer_aes.
-  EXPECT_TRUE(params->quic_prefer_aes);
 
   // Check idle_connection_timeout_seconds.
   EXPECT_EQ(300, params->quic_idle_connection_timeout_seconds);
@@ -125,6 +113,9 @@ TEST(URLRequestContextConfigTest, TestExperimentalOptionParsing) {
 }
 
 TEST(URLRequestContextConfigTest, SetQuicConnectionMigrationOptions) {
+  base::test::ScopedTaskEnvironment scoped_task_environment_(
+      base::test::ScopedTaskEnvironment::MainThreadType::IO);
+
   URLRequestContextConfig config(
       // Enable QUIC.
       true,
@@ -133,6 +124,8 @@ TEST(URLRequestContextConfigTest, SetQuicConnectionMigrationOptions) {
       // Enable SPDY.
       true,
       // Enable SDCH.
+      false,
+      // Enable Brotli.
       false,
       // Type of http cache.
       URLRequestContextConfig::HttpCacheType::DISK,
@@ -148,14 +141,6 @@ TEST(URLRequestContextConfigTest, SetQuicConnectionMigrationOptions) {
       // JSON encoded experimental options.
       "{\"QUIC\":{\"migrate_sessions_on_network_change\":true,"
       "\"migrate_sessions_early\":true}}",
-      // Data reduction proxy key.
-      "",
-      // Data reduction proxy.
-      "",
-      // Fallback data reduction proxy.
-      "",
-      // Data reduction proxy secure proxy check URL.
-      "",
       // MockCertVerifier to use for testing purposes.
       std::unique_ptr<net::CertVerifier>(),
       // Enable network quality estimator.
@@ -165,10 +150,9 @@ TEST(URLRequestContextConfigTest, SetQuicConnectionMigrationOptions) {
       // Certificate verifier cache data.
       "");
 
-  base::MessageLoop message_loop;
   net::URLRequestContextBuilder builder;
   net::NetLog net_log;
-  config.ConfigureURLRequestContextBuilder(&builder, &net_log, nullptr);
+  config.ConfigureURLRequestContextBuilder(&builder, &net_log);
   // Set a ProxyConfigService to avoid DCHECK failure when building.
   builder.set_proxy_config_service(
       base::MakeUnique<net::ProxyConfigServiceFixed>(

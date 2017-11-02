@@ -54,8 +54,8 @@ class WindowReorderer;
 class VIEWS_EXPORT DesktopNativeWidgetAura
     : public internal::NativeWidgetPrivate,
       public aura::WindowDelegate,
-      public aura::client::ActivationDelegate,
-      public aura::client::ActivationChangeObserver,
+      public wm::ActivationDelegate,
+      public wm::ActivationChangeObserver,
       public aura::client::FocusChangeObserver,
       public aura::client::DragDropDelegate,
       public aura::WindowTreeHostObserver {
@@ -138,7 +138,7 @@ class VIEWS_EXPORT DesktopNativeWidgetAura
   void SetSize(const gfx::Size& size) override;
   void StackAbove(gfx::NativeView native_view) override;
   void StackAtTop() override;
-  void SetShape(std::unique_ptr<SkRegion> shape) override;
+  void SetShape(std::unique_ptr<Widget::ShapeRects> shape) override;
   void Close() override;
   void CloseNow() override;
   void Show() override;
@@ -212,14 +212,13 @@ class VIEWS_EXPORT DesktopNativeWidgetAura
   void OnScrollEvent(ui::ScrollEvent* event) override;
   void OnGestureEvent(ui::GestureEvent* event) override;
 
-  // Overridden from aura::client::ActivationDelegate:
+  // Overridden from wm::ActivationDelegate:
   bool ShouldActivate() const override;
 
-  // Overridden from aura::client::ActivationChangeObserver:
-  void OnWindowActivated(
-      aura::client::ActivationChangeObserver::ActivationReason reason,
-      aura::Window* gained_active,
-      aura::Window* lost_active) override;
+  // Overridden from wm::ActivationChangeObserver:
+  void OnWindowActivated(wm::ActivationChangeObserver::ActivationReason reason,
+                         aura::Window* gained_active,
+                         aura::Window* lost_active) override;
 
   // Overridden from aura::client::FocusChangeObserver:
   void OnWindowFocused(aura::Window* gained_focus,
@@ -232,10 +231,10 @@ class VIEWS_EXPORT DesktopNativeWidgetAura
   int OnPerformDrop(const ui::DropTargetEvent& event) override;
 
   // Overridden from aura::WindowTreeHostObserver:
-  void OnHostCloseRequested(const aura::WindowTreeHost* host) override;
-  void OnHostResized(const aura::WindowTreeHost* host) override;
-  void OnHostWorkspaceChanged(const aura::WindowTreeHost* host) override;
-  void OnHostMovedInPixels(const aura::WindowTreeHost* host,
+  void OnHostCloseRequested(aura::WindowTreeHost* host) override;
+  void OnHostResized(aura::WindowTreeHost* host) override;
+  void OnHostWorkspaceChanged(aura::WindowTreeHost* host) override;
+  void OnHostMovedInPixels(aura::WindowTreeHost* host,
                            const gfx::Point& new_origin_in_pixels) override;
 
  private:

@@ -29,16 +29,17 @@
 #ifndef ImageData_h
 #define ImageData_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "bindings/core/v8/Uint8ClampedArrayOrUint16ArrayOrFloat32Array.h"
 #include "core/CoreExport.h"
-#include "core/dom/DOMTypedArray.h"
-#include "core/dom/NotShared.h"
 #include "core/html/ImageDataColorSettings.h"
 #include "core/html/canvas/CanvasRenderingContext.h"
 #include "core/imagebitmap/ImageBitmapSource.h"
+#include "core/typed_arrays/ArrayBufferViewHelpers.h"
+#include "core/typed_arrays/DOMTypedArray.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/geometry/IntRect.h"
 #include "platform/geometry/IntSize.h"
+#include "platform/graphics/CanvasColorParams.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/CheckedNumeric.h"
 #include "platform/wtf/Compiler.h"
@@ -78,6 +79,9 @@ class CORE_EXPORT ImageData final : public GarbageCollectedFinalized<ImageData>,
   static ImageData* Create(const IntSize&,
                            const ImageDataColorSettings* = nullptr);
   static ImageData* Create(const IntSize&,
+                           CanvasColorSpace,
+                           ImageDataStorageFormat);
+  static ImageData* Create(const IntSize&,
                            NotShared<DOMArrayBufferView>,
                            const ImageDataColorSettings* = nullptr);
 
@@ -90,15 +94,15 @@ class CORE_EXPORT ImageData final : public GarbageCollectedFinalized<ImageData>,
                            unsigned height,
                            ExceptionState&);
 
-  ImageData* createImageData(unsigned width,
-                             unsigned height,
-                             const ImageDataColorSettings&,
-                             ExceptionState&);
-  ImageData* createImageData(ImageDataArray&,
-                             unsigned width,
-                             unsigned height,
-                             ImageDataColorSettings&,
-                             ExceptionState&);
+  static ImageData* CreateImageData(unsigned width,
+                                    unsigned height,
+                                    const ImageDataColorSettings&,
+                                    ExceptionState&);
+  static ImageData* CreateImageData(ImageDataArray&,
+                                    unsigned width,
+                                    unsigned height,
+                                    ImageDataColorSettings&,
+                                    ExceptionState&);
 
   void getColorSettings(ImageDataColorSettings& result) {
     result = color_settings_;
@@ -108,13 +112,15 @@ class CORE_EXPORT ImageData final : public GarbageCollectedFinalized<ImageData>,
   static ImageData* CreateForTest(const IntSize&,
                                   DOMArrayBufferView*,
                                   const ImageDataColorSettings* = nullptr);
-  static sk_sp<SkColorSpace> GetSkColorSpaceForTest(const CanvasColorSpace&,
-                                                    const CanvasPixelFormat&);
 
+  ImageData* CropRect(const IntRect&, bool = false);
+
+  ImageDataStorageFormat GetImageDataStorageFormat();
   static CanvasColorSpace GetCanvasColorSpace(const String&);
-  static String CanvasColorSpaceName(const CanvasColorSpace&);
+  static String CanvasColorSpaceName(CanvasColorSpace);
   static ImageDataStorageFormat GetImageDataStorageFormat(const String&);
   static unsigned StorageFormatDataSize(const String&);
+  static unsigned StorageFormatDataSize(ImageDataStorageFormat);
   static DOMArrayBufferView*
   ConvertPixelsFromCanvasPixelFormatToImageDataStorageFormat(
       WTF::ArrayBufferContents&,
@@ -131,9 +137,12 @@ class CORE_EXPORT ImageData final : public GarbageCollectedFinalized<ImageData>,
   const ImageDataArray& dataUnion() const { return data_union_; }
   void dataUnion(ImageDataArray& result) { result = data_union_; };
 
-  sk_sp<SkColorSpace> GetSkColorSpace();
-  bool ImageDataInCanvasColorSettings(const CanvasColorSpace&,
-                                      const CanvasPixelFormat&,
+  DOMArrayBufferBase* BufferBase() const;
+  CanvasColorParams GetCanvasColorParams();
+  bool ImageDataInCanvasColorSettings(CanvasColorSpace,
+                                      CanvasPixelFormat,
+                                      std::unique_ptr<uint8_t[]>&);
+  bool ImageDataInCanvasColorSettings(const CanvasColorParams&,
                                       std::unique_ptr<uint8_t[]>&);
 
   // ImageBitmapSource implementation
@@ -141,8 +150,7 @@ class CORE_EXPORT ImageData final : public GarbageCollectedFinalized<ImageData>,
   ScriptPromise CreateImageBitmap(ScriptState*,
                                   EventTarget&,
                                   Optional<IntRect> crop_rect,
-                                  const ImageBitmapOptions&,
-                                  ExceptionState&) override;
+                                  const ImageBitmapOptions&) override;
 
   void Trace(Visitor*);
 
@@ -191,9 +199,6 @@ class CORE_EXPORT ImageData final : public GarbageCollectedFinalized<ImageData>,
 
   static DOMFloat32Array* ConvertFloat16ArrayToFloat32Array(const uint16_t*,
                                                             unsigned);
-
-  static sk_sp<SkColorSpace> GetSkColorSpace(const CanvasColorSpace&,
-                                             const CanvasPixelFormat&);
 };
 
 }  // namespace blink

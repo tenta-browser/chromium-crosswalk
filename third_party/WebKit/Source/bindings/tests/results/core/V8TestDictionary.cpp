@@ -25,9 +25,9 @@
 #include "bindings/core/v8/V8TestInterfaceGarbageCollected.h"
 #include "bindings/core/v8/V8TestObject.h"
 #include "bindings/core/v8/V8Uint8Array.h"
-#include "core/dom/FlexibleArrayBufferView.h"
-#include "core/dom/NotShared.h"
 #include "core/frame/Deprecation.h"
+#include "core/typed_arrays/ArrayBufferViewHelpers.h"
+#include "core/typed_arrays/FlexibleArrayBufferView.h"
 #include "platform/RuntimeEnabledFeatures.h"
 
 namespace blink {
@@ -54,10 +54,10 @@ static const v8::Eternal<v8::Name>* eternalV8TestDictionaryKeys(v8::Isolate* iso
     "objectOrNullMember",
     "otherDoubleOrStringMember",
     "prefixGetMember",
+    "public",
     "recordMember",
     "restrictedDoubleMember",
     "runtimeMember",
-    "stringArrayMember",
     "stringMember",
     "stringOrNullMember",
     "stringSequenceMember",
@@ -100,10 +100,10 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   if (anyInRecordMemberValue.IsEmpty() || anyInRecordMemberValue->IsUndefined()) {
     // Do nothing.
   } else {
-    Vector<std::pair<String, ScriptValue>> anyInRecordMember = NativeValueTraits<IDLRecord<IDLString, ScriptValue>>::NativeValue(isolate, anyInRecordMemberValue, exceptionState);
+    Vector<std::pair<String, ScriptValue>> anyInRecordMemberCppValue = NativeValueTraits<IDLRecord<IDLString, ScriptValue>>::NativeValue(isolate, anyInRecordMemberValue, exceptionState);
     if (exceptionState.HadException())
       return;
-    impl.setAnyInRecordMember(anyInRecordMember);
+    impl.setAnyInRecordMember(anyInRecordMemberCppValue);
   }
 
   v8::Local<v8::Value> anyMemberValue;
@@ -114,8 +114,8 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   if (anyMemberValue.IsEmpty() || anyMemberValue->IsUndefined()) {
     // Do nothing.
   } else {
-    ScriptValue anyMember = ScriptValue(ScriptState::Current(isolate), anyMemberValue);
-    impl.setAnyMember(anyMember);
+    ScriptValue anyMemberCppValue = ScriptValue(ScriptState::Current(isolate), anyMemberValue);
+    impl.setAnyMember(anyMemberCppValue);
   }
 
   v8::Local<v8::Value> booleanMemberValue;
@@ -126,10 +126,10 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   if (booleanMemberValue.IsEmpty() || booleanMemberValue->IsUndefined()) {
     // Do nothing.
   } else {
-    bool booleanMember = NativeValueTraits<IDLBoolean>::NativeValue(isolate, booleanMemberValue, exceptionState);
+    bool booleanMemberCppValue = NativeValueTraits<IDLBoolean>::NativeValue(isolate, booleanMemberValue, exceptionState);
     if (exceptionState.HadException())
       return;
-    impl.setBooleanMember(booleanMember);
+    impl.setBooleanMember(booleanMemberCppValue);
   }
 
   v8::Local<v8::Value> createValue;
@@ -140,10 +140,10 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   if (createValue.IsEmpty() || createValue->IsUndefined()) {
     // Do nothing.
   } else {
-    bool create = NativeValueTraits<IDLBoolean>::NativeValue(isolate, createValue, exceptionState);
+    bool createCppValue = NativeValueTraits<IDLBoolean>::NativeValue(isolate, createValue, exceptionState);
     if (exceptionState.HadException())
       return;
-    impl.setCreateMember(create);
+    impl.setCreateMember(createCppValue);
   }
 
   v8::Local<v8::Value> deprecatedCreateMemberValue;
@@ -154,11 +154,11 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   if (deprecatedCreateMemberValue.IsEmpty() || deprecatedCreateMemberValue->IsUndefined()) {
     // Do nothing.
   } else {
-    Deprecation::CountDeprecation(CurrentExecutionContext(isolate), UseCounter::kCreateMember);
-    bool deprecatedCreateMember = NativeValueTraits<IDLBoolean>::NativeValue(isolate, deprecatedCreateMemberValue, exceptionState);
+    Deprecation::CountDeprecation(CurrentExecutionContext(isolate), WebFeature::kCreateMember);
+    bool deprecatedCreateMemberCppValue = NativeValueTraits<IDLBoolean>::NativeValue(isolate, deprecatedCreateMemberValue, exceptionState);
     if (exceptionState.HadException())
       return;
-    impl.setCreateMember(deprecatedCreateMember);
+    impl.setCreateMember(deprecatedCreateMemberCppValue);
   }
 
   v8::Local<v8::Value> dictionaryMemberValue;
@@ -169,14 +169,14 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   if (dictionaryMemberValue.IsEmpty() || dictionaryMemberValue->IsUndefined()) {
     // Do nothing.
   } else {
-    Dictionary dictionaryMember = NativeValueTraits<Dictionary>::NativeValue(isolate, dictionaryMemberValue, exceptionState);
+    Dictionary dictionaryMemberCppValue = NativeValueTraits<Dictionary>::NativeValue(isolate, dictionaryMemberValue, exceptionState);
     if (exceptionState.HadException())
       return;
-    if (!dictionaryMember.IsObject()) {
+    if (!dictionaryMemberCppValue.IsObject()) {
       exceptionState.ThrowTypeError("member dictionaryMember is not an object.");
       return;
     }
-    impl.setDictionaryMember(dictionaryMember);
+    impl.setDictionaryMember(dictionaryMemberCppValue);
   }
 
   v8::Local<v8::Value> doubleOrNullMemberValue;
@@ -189,10 +189,10 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   } else if (doubleOrNullMemberValue->IsNull()) {
     impl.setDoubleOrNullMemberToNull();
   } else {
-    double doubleOrNullMember = NativeValueTraits<IDLDouble>::NativeValue(isolate, doubleOrNullMemberValue, exceptionState);
+    double doubleOrNullMemberCppValue = NativeValueTraits<IDLDouble>::NativeValue(isolate, doubleOrNullMemberValue, exceptionState);
     if (exceptionState.HadException())
       return;
-    impl.setDoubleOrNullMember(doubleOrNullMember);
+    impl.setDoubleOrNullMember(doubleOrNullMemberCppValue);
   }
 
   v8::Local<v8::Value> doubleOrStringMemberValue;
@@ -203,11 +203,11 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   if (doubleOrStringMemberValue.IsEmpty() || doubleOrStringMemberValue->IsUndefined()) {
     // Do nothing.
   } else {
-    DoubleOrString doubleOrStringMember;
-    V8DoubleOrString::toImpl(isolate, doubleOrStringMemberValue, doubleOrStringMember, UnionTypeConversionMode::kNotNullable, exceptionState);
+    DoubleOrString doubleOrStringMemberCppValue;
+    V8DoubleOrString::toImpl(isolate, doubleOrStringMemberValue, doubleOrStringMemberCppValue, UnionTypeConversionMode::kNotNullable, exceptionState);
     if (exceptionState.HadException())
       return;
-    impl.setDoubleOrStringMember(doubleOrStringMember);
+    impl.setDoubleOrStringMember(doubleOrStringMemberCppValue);
   }
 
   v8::Local<v8::Value> doubleOrStringSequenceMemberValue;
@@ -218,10 +218,10 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   if (doubleOrStringSequenceMemberValue.IsEmpty() || doubleOrStringSequenceMemberValue->IsUndefined()) {
     // Do nothing.
   } else {
-    HeapVector<DoubleOrString> doubleOrStringSequenceMember = ToImplArray<HeapVector<DoubleOrString>>(doubleOrStringSequenceMemberValue, 0, isolate, exceptionState);
+    HeapVector<DoubleOrString> doubleOrStringSequenceMemberCppValue = NativeValueTraits<IDLSequence<DoubleOrString>>::NativeValue(isolate, doubleOrStringSequenceMemberValue, exceptionState);
     if (exceptionState.HadException())
       return;
-    impl.setDoubleOrStringSequenceMember(doubleOrStringSequenceMember);
+    impl.setDoubleOrStringSequenceMember(doubleOrStringSequenceMemberCppValue);
   }
 
   v8::Local<v8::Value> elementOrNullMemberValue;
@@ -234,12 +234,12 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   } else if (elementOrNullMemberValue->IsNull()) {
     impl.setElementOrNullMemberToNull();
   } else {
-    Element* elementOrNullMember = V8Element::toImplWithTypeCheck(isolate, elementOrNullMemberValue);
-    if (!elementOrNullMember) {
+    Element* elementOrNullMemberCppValue = V8Element::toImplWithTypeCheck(isolate, elementOrNullMemberValue);
+    if (!elementOrNullMemberCppValue) {
       exceptionState.ThrowTypeError("member elementOrNullMember is not of type Element.");
       return;
     }
-    impl.setElementOrNullMember(elementOrNullMember);
+    impl.setElementOrNullMember(elementOrNullMemberCppValue);
   }
 
   v8::Local<v8::Value> enumMemberValue;
@@ -250,8 +250,8 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   if (enumMemberValue.IsEmpty() || enumMemberValue->IsUndefined()) {
     // Do nothing.
   } else {
-    V8StringResource<> enumMember = enumMemberValue;
-    if (!enumMember.Prepare(exceptionState))
+    V8StringResource<> enumMemberCppValue = enumMemberValue;
+    if (!enumMemberCppValue.Prepare(exceptionState))
       return;
     const char* validValues[] = {
         "",
@@ -259,9 +259,9 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
         "EnumValue2",
         "EnumValue3",
     };
-    if (!IsValidEnum(enumMember, validValues, WTF_ARRAY_LENGTH(validValues), "TestEnum", exceptionState))
+    if (!IsValidEnum(enumMemberCppValue, validValues, WTF_ARRAY_LENGTH(validValues), "TestEnum", exceptionState))
       return;
-    impl.setEnumMember(enumMember);
+    impl.setEnumMember(enumMemberCppValue);
   }
 
   v8::Local<v8::Value> enumSequenceMemberValue;
@@ -272,7 +272,7 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   if (enumSequenceMemberValue.IsEmpty() || enumSequenceMemberValue->IsUndefined()) {
     // Do nothing.
   } else {
-    Vector<String> enumSequenceMember = ToImplArray<Vector<String>>(enumSequenceMemberValue, 0, isolate, exceptionState);
+    Vector<String> enumSequenceMemberCppValue = NativeValueTraits<IDLSequence<IDLString>>::NativeValue(isolate, enumSequenceMemberValue, exceptionState);
     if (exceptionState.HadException())
       return;
     const char* validValues[] = {
@@ -281,9 +281,9 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
         "EnumValue2",
         "EnumValue3",
     };
-    if (!IsValidEnum(enumSequenceMember, validValues, WTF_ARRAY_LENGTH(validValues), "TestEnum", exceptionState))
+    if (!IsValidEnum(enumSequenceMemberCppValue, validValues, WTF_ARRAY_LENGTH(validValues), "TestEnum", exceptionState))
       return;
-    impl.setEnumSequenceMember(enumSequenceMember);
+    impl.setEnumSequenceMember(enumSequenceMemberCppValue);
   }
 
   v8::Local<v8::Value> eventTargetMemberValue;
@@ -294,12 +294,12 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   if (eventTargetMemberValue.IsEmpty() || eventTargetMemberValue->IsUndefined()) {
     // Do nothing.
   } else {
-    EventTarget* eventTargetMember = V8EventTarget::toImplWithTypeCheck(isolate, eventTargetMemberValue);
-    if (!eventTargetMember) {
+    EventTarget* eventTargetMemberCppValue = V8EventTarget::toImplWithTypeCheck(isolate, eventTargetMemberValue);
+    if (!eventTargetMemberCppValue) {
       exceptionState.ThrowTypeError("member eventTargetMember is not of type EventTarget.");
       return;
     }
-    impl.setEventTargetMember(eventTargetMember);
+    impl.setEventTargetMember(eventTargetMemberCppValue);
   }
 
   v8::Local<v8::Value> garbageCollectedRecordMemberValue;
@@ -310,10 +310,10 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   if (garbageCollectedRecordMemberValue.IsEmpty() || garbageCollectedRecordMemberValue->IsUndefined()) {
     // Do nothing.
   } else {
-    HeapVector<std::pair<String, Member<TestObject>>> garbageCollectedRecordMember = NativeValueTraits<IDLRecord<IDLUSVString, TestObject>>::NativeValue(isolate, garbageCollectedRecordMemberValue, exceptionState);
+    HeapVector<std::pair<String, Member<TestObject>>> garbageCollectedRecordMemberCppValue = NativeValueTraits<IDLRecord<IDLUSVString, TestObject>>::NativeValue(isolate, garbageCollectedRecordMemberValue, exceptionState);
     if (exceptionState.HadException())
       return;
-    impl.setGarbageCollectedRecordMember(garbageCollectedRecordMember);
+    impl.setGarbageCollectedRecordMember(garbageCollectedRecordMemberCppValue);
   }
 
   v8::Local<v8::Value> internalDictionarySequenceMemberValue;
@@ -324,10 +324,10 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   if (internalDictionarySequenceMemberValue.IsEmpty() || internalDictionarySequenceMemberValue->IsUndefined()) {
     // Do nothing.
   } else {
-    HeapVector<InternalDictionary> internalDictionarySequenceMember = ToImplArray<HeapVector<InternalDictionary>>(internalDictionarySequenceMemberValue, 0, isolate, exceptionState);
+    HeapVector<InternalDictionary> internalDictionarySequenceMemberCppValue = NativeValueTraits<IDLSequence<InternalDictionary>>::NativeValue(isolate, internalDictionarySequenceMemberValue, exceptionState);
     if (exceptionState.HadException())
       return;
-    impl.setInternalDictionarySequenceMember(internalDictionarySequenceMember);
+    impl.setInternalDictionarySequenceMember(internalDictionarySequenceMemberCppValue);
   }
 
   v8::Local<v8::Value> longMemberValue;
@@ -338,10 +338,10 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   if (longMemberValue.IsEmpty() || longMemberValue->IsUndefined()) {
     // Do nothing.
   } else {
-    int32_t longMember = NativeValueTraits<IDLLong>::NativeValue(isolate, longMemberValue, exceptionState, kNormalConversion);
+    int32_t longMemberCppValue = NativeValueTraits<IDLLong>::NativeValue(isolate, longMemberValue, exceptionState, kNormalConversion);
     if (exceptionState.HadException())
       return;
-    impl.setLongMember(longMember);
+    impl.setLongMember(longMemberCppValue);
   }
 
   v8::Local<v8::Value> objectMemberValue;
@@ -352,12 +352,12 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   if (objectMemberValue.IsEmpty() || objectMemberValue->IsUndefined()) {
     // Do nothing.
   } else {
-    ScriptValue objectMember = ScriptValue(ScriptState::Current(isolate), objectMemberValue);
-    if (!objectMember.IsObject()) {
+    ScriptValue objectMemberCppValue = ScriptValue(ScriptState::Current(isolate), objectMemberValue);
+    if (!objectMemberCppValue.IsObject()) {
       exceptionState.ThrowTypeError("member objectMember is not an object.");
       return;
     }
-    impl.setObjectMember(objectMember);
+    impl.setObjectMember(objectMemberCppValue);
   }
 
   v8::Local<v8::Value> objectOrNullMemberValue;
@@ -370,12 +370,12 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   } else if (objectOrNullMemberValue->IsNull()) {
     impl.setObjectOrNullMemberToNull();
   } else {
-    ScriptValue objectOrNullMember = ScriptValue(ScriptState::Current(isolate), objectOrNullMemberValue);
-    if (!objectOrNullMember.IsObject()) {
+    ScriptValue objectOrNullMemberCppValue = ScriptValue(ScriptState::Current(isolate), objectOrNullMemberValue);
+    if (!objectOrNullMemberCppValue.IsObject()) {
       exceptionState.ThrowTypeError("member objectOrNullMember is not an object.");
       return;
     }
-    impl.setObjectOrNullMember(objectOrNullMember);
+    impl.setObjectOrNullMember(objectOrNullMemberCppValue);
   }
 
   v8::Local<v8::Value> otherDoubleOrStringMemberValue;
@@ -386,11 +386,11 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   if (otherDoubleOrStringMemberValue.IsEmpty() || otherDoubleOrStringMemberValue->IsUndefined()) {
     // Do nothing.
   } else {
-    DoubleOrString otherDoubleOrStringMember;
-    V8DoubleOrString::toImpl(isolate, otherDoubleOrStringMemberValue, otherDoubleOrStringMember, UnionTypeConversionMode::kNotNullable, exceptionState);
+    DoubleOrString otherDoubleOrStringMemberCppValue;
+    V8DoubleOrString::toImpl(isolate, otherDoubleOrStringMemberValue, otherDoubleOrStringMemberCppValue, UnionTypeConversionMode::kNotNullable, exceptionState);
     if (exceptionState.HadException())
       return;
-    impl.setOtherDoubleOrStringMember(otherDoubleOrStringMember);
+    impl.setOtherDoubleOrStringMember(otherDoubleOrStringMemberCppValue);
   }
 
   v8::Local<v8::Value> prefixGetMemberValue;
@@ -401,70 +401,70 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   if (prefixGetMemberValue.IsEmpty() || prefixGetMemberValue->IsUndefined()) {
     // Do nothing.
   } else {
-    ScriptValue prefixGetMember = ScriptValue(ScriptState::Current(isolate), prefixGetMemberValue);
-    if (!prefixGetMember.IsObject()) {
+    ScriptValue prefixGetMemberCppValue = ScriptValue(ScriptState::Current(isolate), prefixGetMemberValue);
+    if (!prefixGetMemberCppValue.IsObject()) {
       exceptionState.ThrowTypeError("member prefixGetMember is not an object.");
       return;
     }
-    impl.setPrefixGetMember(prefixGetMember);
+    impl.setPrefixGetMember(prefixGetMemberCppValue);
+  }
+
+  v8::Local<v8::Value> publicValue;
+  if (!v8Object->Get(context, keys[20].Get(isolate)).ToLocal(&publicValue)) {
+    exceptionState.RethrowV8Exception(block.Exception());
+    return;
+  }
+  if (publicValue.IsEmpty() || publicValue->IsUndefined()) {
+    // Do nothing.
+  } else {
+    bool publicCppValue = NativeValueTraits<IDLBoolean>::NativeValue(isolate, publicValue, exceptionState);
+    if (exceptionState.HadException())
+      return;
+    impl.setIsPublic(publicCppValue);
   }
 
   v8::Local<v8::Value> recordMemberValue;
-  if (!v8Object->Get(context, keys[20].Get(isolate)).ToLocal(&recordMemberValue)) {
+  if (!v8Object->Get(context, keys[21].Get(isolate)).ToLocal(&recordMemberValue)) {
     exceptionState.RethrowV8Exception(block.Exception());
     return;
   }
   if (recordMemberValue.IsEmpty() || recordMemberValue->IsUndefined()) {
     // Do nothing.
   } else {
-    Vector<std::pair<String, int8_t>> recordMember = NativeValueTraits<IDLRecord<IDLByteString, IDLByte>>::NativeValue(isolate, recordMemberValue, exceptionState);
+    Vector<std::pair<String, int8_t>> recordMemberCppValue = NativeValueTraits<IDLRecord<IDLByteString, IDLByte>>::NativeValue(isolate, recordMemberValue, exceptionState);
     if (exceptionState.HadException())
       return;
-    impl.setRecordMember(recordMember);
+    impl.setRecordMember(recordMemberCppValue);
   }
 
   v8::Local<v8::Value> restrictedDoubleMemberValue;
-  if (!v8Object->Get(context, keys[21].Get(isolate)).ToLocal(&restrictedDoubleMemberValue)) {
+  if (!v8Object->Get(context, keys[22].Get(isolate)).ToLocal(&restrictedDoubleMemberValue)) {
     exceptionState.RethrowV8Exception(block.Exception());
     return;
   }
   if (restrictedDoubleMemberValue.IsEmpty() || restrictedDoubleMemberValue->IsUndefined()) {
     // Do nothing.
   } else {
-    double restrictedDoubleMember = NativeValueTraits<IDLDouble>::NativeValue(isolate, restrictedDoubleMemberValue, exceptionState);
+    double restrictedDoubleMemberCppValue = NativeValueTraits<IDLDouble>::NativeValue(isolate, restrictedDoubleMemberValue, exceptionState);
     if (exceptionState.HadException())
       return;
-    impl.setRestrictedDoubleMember(restrictedDoubleMember);
+    impl.setRestrictedDoubleMember(restrictedDoubleMemberCppValue);
   }
 
-  if (RuntimeEnabledFeatures::runtimeFeatureEnabled()) {
+  if (RuntimeEnabledFeatures::RuntimeFeatureEnabled()) {
     v8::Local<v8::Value> runtimeMemberValue;
-    if (!v8Object->Get(context, keys[22].Get(isolate)).ToLocal(&runtimeMemberValue)) {
+    if (!v8Object->Get(context, keys[23].Get(isolate)).ToLocal(&runtimeMemberValue)) {
       exceptionState.RethrowV8Exception(block.Exception());
       return;
     }
     if (runtimeMemberValue.IsEmpty() || runtimeMemberValue->IsUndefined()) {
       // Do nothing.
     } else {
-      bool runtimeMember = NativeValueTraits<IDLBoolean>::NativeValue(isolate, runtimeMemberValue, exceptionState);
+      bool runtimeMemberCppValue = NativeValueTraits<IDLBoolean>::NativeValue(isolate, runtimeMemberValue, exceptionState);
       if (exceptionState.HadException())
         return;
-      impl.setRuntimeMember(runtimeMember);
+      impl.setRuntimeMember(runtimeMemberCppValue);
     }
-  }
-
-  v8::Local<v8::Value> stringArrayMemberValue;
-  if (!v8Object->Get(context, keys[23].Get(isolate)).ToLocal(&stringArrayMemberValue)) {
-    exceptionState.RethrowV8Exception(block.Exception());
-    return;
-  }
-  if (stringArrayMemberValue.IsEmpty() || stringArrayMemberValue->IsUndefined()) {
-    // Do nothing.
-  } else {
-    Vector<String> stringArrayMember = ToImplArray<Vector<String>>(stringArrayMemberValue, 0, isolate, exceptionState);
-    if (exceptionState.HadException())
-      return;
-    impl.setStringArrayMember(stringArrayMember);
   }
 
   v8::Local<v8::Value> stringMemberValue;
@@ -475,10 +475,10 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   if (stringMemberValue.IsEmpty() || stringMemberValue->IsUndefined()) {
     // Do nothing.
   } else {
-    V8StringResource<> stringMember = stringMemberValue;
-    if (!stringMember.Prepare(exceptionState))
+    V8StringResource<> stringMemberCppValue = stringMemberValue;
+    if (!stringMemberCppValue.Prepare(exceptionState))
       return;
-    impl.setStringMember(stringMember);
+    impl.setStringMember(stringMemberCppValue);
   }
 
   v8::Local<v8::Value> stringOrNullMemberValue;
@@ -491,10 +491,10 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   } else if (stringOrNullMemberValue->IsNull()) {
     impl.setStringOrNullMemberToNull();
   } else {
-    V8StringResource<> stringOrNullMember = stringOrNullMemberValue;
-    if (!stringOrNullMember.Prepare(exceptionState))
+    V8StringResource<> stringOrNullMemberCppValue = stringOrNullMemberValue;
+    if (!stringOrNullMemberCppValue.Prepare(exceptionState))
       return;
-    impl.setStringOrNullMember(stringOrNullMember);
+    impl.setStringOrNullMember(stringOrNullMemberCppValue);
   }
 
   v8::Local<v8::Value> stringSequenceMemberValue;
@@ -505,10 +505,10 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   if (stringSequenceMemberValue.IsEmpty() || stringSequenceMemberValue->IsUndefined()) {
     // Do nothing.
   } else {
-    Vector<String> stringSequenceMember = ToImplArray<Vector<String>>(stringSequenceMemberValue, 0, isolate, exceptionState);
+    Vector<String> stringSequenceMemberCppValue = NativeValueTraits<IDLSequence<IDLString>>::NativeValue(isolate, stringSequenceMemberValue, exceptionState);
     if (exceptionState.HadException())
       return;
-    impl.setStringSequenceMember(stringSequenceMember);
+    impl.setStringSequenceMember(stringSequenceMemberCppValue);
   }
 
   v8::Local<v8::Value> testInterface2OrUint8ArrayMemberValue;
@@ -519,11 +519,11 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   if (testInterface2OrUint8ArrayMemberValue.IsEmpty() || testInterface2OrUint8ArrayMemberValue->IsUndefined()) {
     // Do nothing.
   } else {
-    TestInterface2OrUint8Array testInterface2OrUint8ArrayMember;
-    V8TestInterface2OrUint8Array::toImpl(isolate, testInterface2OrUint8ArrayMemberValue, testInterface2OrUint8ArrayMember, UnionTypeConversionMode::kNotNullable, exceptionState);
+    TestInterface2OrUint8Array testInterface2OrUint8ArrayMemberCppValue;
+    V8TestInterface2OrUint8Array::toImpl(isolate, testInterface2OrUint8ArrayMemberValue, testInterface2OrUint8ArrayMemberCppValue, UnionTypeConversionMode::kNotNullable, exceptionState);
     if (exceptionState.HadException())
       return;
-    impl.setTestInterface2OrUint8ArrayMember(testInterface2OrUint8ArrayMember);
+    impl.setTestInterface2OrUint8ArrayMember(testInterface2OrUint8ArrayMemberCppValue);
   }
 
   v8::Local<v8::Value> testInterfaceGarbageCollectedMemberValue;
@@ -534,12 +534,12 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   if (testInterfaceGarbageCollectedMemberValue.IsEmpty() || testInterfaceGarbageCollectedMemberValue->IsUndefined()) {
     // Do nothing.
   } else {
-    TestInterfaceGarbageCollected* testInterfaceGarbageCollectedMember = V8TestInterfaceGarbageCollected::toImplWithTypeCheck(isolate, testInterfaceGarbageCollectedMemberValue);
-    if (!testInterfaceGarbageCollectedMember) {
+    TestInterfaceGarbageCollected* testInterfaceGarbageCollectedMemberCppValue = V8TestInterfaceGarbageCollected::toImplWithTypeCheck(isolate, testInterfaceGarbageCollectedMemberValue);
+    if (!testInterfaceGarbageCollectedMemberCppValue) {
       exceptionState.ThrowTypeError("member testInterfaceGarbageCollectedMember is not of type TestInterfaceGarbageCollected.");
       return;
     }
-    impl.setTestInterfaceGarbageCollectedMember(testInterfaceGarbageCollectedMember);
+    impl.setTestInterfaceGarbageCollectedMember(testInterfaceGarbageCollectedMemberCppValue);
   }
 
   v8::Local<v8::Value> testInterfaceGarbageCollectedOrNullMemberValue;
@@ -552,12 +552,12 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   } else if (testInterfaceGarbageCollectedOrNullMemberValue->IsNull()) {
     impl.setTestInterfaceGarbageCollectedOrNullMemberToNull();
   } else {
-    TestInterfaceGarbageCollected* testInterfaceGarbageCollectedOrNullMember = V8TestInterfaceGarbageCollected::toImplWithTypeCheck(isolate, testInterfaceGarbageCollectedOrNullMemberValue);
-    if (!testInterfaceGarbageCollectedOrNullMember) {
+    TestInterfaceGarbageCollected* testInterfaceGarbageCollectedOrNullMemberCppValue = V8TestInterfaceGarbageCollected::toImplWithTypeCheck(isolate, testInterfaceGarbageCollectedOrNullMemberValue);
+    if (!testInterfaceGarbageCollectedOrNullMemberCppValue) {
       exceptionState.ThrowTypeError("member testInterfaceGarbageCollectedOrNullMember is not of type TestInterfaceGarbageCollected.");
       return;
     }
-    impl.setTestInterfaceGarbageCollectedOrNullMember(testInterfaceGarbageCollectedOrNullMember);
+    impl.setTestInterfaceGarbageCollectedOrNullMember(testInterfaceGarbageCollectedOrNullMemberCppValue);
   }
 
   v8::Local<v8::Value> testInterfaceGarbageCollectedSequenceMemberValue;
@@ -568,10 +568,10 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   if (testInterfaceGarbageCollectedSequenceMemberValue.IsEmpty() || testInterfaceGarbageCollectedSequenceMemberValue->IsUndefined()) {
     // Do nothing.
   } else {
-    HeapVector<Member<TestInterfaceGarbageCollected>> testInterfaceGarbageCollectedSequenceMember = ToMemberNativeArray<TestInterfaceGarbageCollected>(testInterfaceGarbageCollectedSequenceMemberValue, 0, isolate, exceptionState);
+    HeapVector<Member<TestInterfaceGarbageCollected>> testInterfaceGarbageCollectedSequenceMemberCppValue = NativeValueTraits<IDLSequence<TestInterfaceGarbageCollected>>::NativeValue(isolate, testInterfaceGarbageCollectedSequenceMemberValue, exceptionState);
     if (exceptionState.HadException())
       return;
-    impl.setTestInterfaceGarbageCollectedSequenceMember(testInterfaceGarbageCollectedSequenceMember);
+    impl.setTestInterfaceGarbageCollectedSequenceMember(testInterfaceGarbageCollectedSequenceMemberCppValue);
   }
 
   v8::Local<v8::Value> testInterfaceMemberValue;
@@ -582,12 +582,12 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   if (testInterfaceMemberValue.IsEmpty() || testInterfaceMemberValue->IsUndefined()) {
     // Do nothing.
   } else {
-    TestInterfaceImplementation* testInterfaceMember = V8TestInterface::toImplWithTypeCheck(isolate, testInterfaceMemberValue);
-    if (!testInterfaceMember) {
+    TestInterfaceImplementation* testInterfaceMemberCppValue = V8TestInterface::toImplWithTypeCheck(isolate, testInterfaceMemberValue);
+    if (!testInterfaceMemberCppValue) {
       exceptionState.ThrowTypeError("member testInterfaceMember is not of type TestInterface.");
       return;
     }
-    impl.setTestInterfaceMember(testInterfaceMember);
+    impl.setTestInterfaceMember(testInterfaceMemberCppValue);
   }
 
   v8::Local<v8::Value> testInterfaceOrNullMemberValue;
@@ -600,12 +600,12 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   } else if (testInterfaceOrNullMemberValue->IsNull()) {
     impl.setTestInterfaceOrNullMemberToNull();
   } else {
-    TestInterfaceImplementation* testInterfaceOrNullMember = V8TestInterface::toImplWithTypeCheck(isolate, testInterfaceOrNullMemberValue);
-    if (!testInterfaceOrNullMember) {
+    TestInterfaceImplementation* testInterfaceOrNullMemberCppValue = V8TestInterface::toImplWithTypeCheck(isolate, testInterfaceOrNullMemberValue);
+    if (!testInterfaceOrNullMemberCppValue) {
       exceptionState.ThrowTypeError("member testInterfaceOrNullMember is not of type TestInterface.");
       return;
     }
-    impl.setTestInterfaceOrNullMember(testInterfaceOrNullMember);
+    impl.setTestInterfaceOrNullMember(testInterfaceOrNullMemberCppValue);
   }
 
   v8::Local<v8::Value> testInterfaceSequenceMemberValue;
@@ -616,10 +616,10 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   if (testInterfaceSequenceMemberValue.IsEmpty() || testInterfaceSequenceMemberValue->IsUndefined()) {
     // Do nothing.
   } else {
-    HeapVector<Member<TestInterfaceImplementation>> testInterfaceSequenceMember = ToMemberNativeArray<TestInterface>(testInterfaceSequenceMemberValue, 0, isolate, exceptionState);
+    HeapVector<Member<TestInterfaceImplementation>> testInterfaceSequenceMemberCppValue = NativeValueTraits<IDLSequence<TestInterfaceImplementation>>::NativeValue(isolate, testInterfaceSequenceMemberValue, exceptionState);
     if (exceptionState.HadException())
       return;
-    impl.setTestInterfaceSequenceMember(testInterfaceSequenceMember);
+    impl.setTestInterfaceSequenceMember(testInterfaceSequenceMemberCppValue);
   }
 
   v8::Local<v8::Value> testObjectSequenceMemberValue;
@@ -630,10 +630,10 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   if (testObjectSequenceMemberValue.IsEmpty() || testObjectSequenceMemberValue->IsUndefined()) {
     // Do nothing.
   } else {
-    HeapVector<Member<TestObject>> testObjectSequenceMember = ToMemberNativeArray<TestObject>(testObjectSequenceMemberValue, 0, isolate, exceptionState);
+    HeapVector<Member<TestObject>> testObjectSequenceMemberCppValue = NativeValueTraits<IDLSequence<TestObject>>::NativeValue(isolate, testObjectSequenceMemberValue, exceptionState);
     if (exceptionState.HadException())
       return;
-    impl.setTestObjectSequenceMember(testObjectSequenceMember);
+    impl.setTestObjectSequenceMember(testObjectSequenceMemberCppValue);
   }
 
   v8::Local<v8::Value> uint8ArrayMemberValue;
@@ -644,14 +644,14 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   if (uint8ArrayMemberValue.IsEmpty() || uint8ArrayMemberValue->IsUndefined()) {
     // Do nothing.
   } else {
-    NotShared<DOMUint8Array> uint8ArrayMember = ToNotShared<NotShared<DOMUint8Array>>(isolate, uint8ArrayMemberValue, exceptionState);
+    NotShared<DOMUint8Array> uint8ArrayMemberCppValue = ToNotShared<NotShared<DOMUint8Array>>(isolate, uint8ArrayMemberValue, exceptionState);
     if (exceptionState.HadException())
       return;
-    if (!uint8ArrayMember) {
+    if (!uint8ArrayMemberCppValue) {
       exceptionState.ThrowTypeError("member uint8ArrayMember is not of type Uint8Array.");
       return;
     }
-    impl.setUint8ArrayMember(uint8ArrayMember);
+    impl.setUint8ArrayMember(uint8ArrayMemberCppValue);
   }
 
   v8::Local<v8::Value> unionInRecordMemberValue;
@@ -662,10 +662,10 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   if (unionInRecordMemberValue.IsEmpty() || unionInRecordMemberValue->IsUndefined()) {
     // Do nothing.
   } else {
-    HeapVector<std::pair<String, LongOrBoolean>> unionInRecordMember = NativeValueTraits<IDLRecord<IDLByteString, LongOrBoolean>>::NativeValue(isolate, unionInRecordMemberValue, exceptionState);
+    HeapVector<std::pair<String, LongOrBoolean>> unionInRecordMemberCppValue = NativeValueTraits<IDLRecord<IDLByteString, LongOrBoolean>>::NativeValue(isolate, unionInRecordMemberValue, exceptionState);
     if (exceptionState.HadException())
       return;
-    impl.setUnionInRecordMember(unionInRecordMember);
+    impl.setUnionInRecordMember(unionInRecordMemberCppValue);
   }
 
   v8::Local<v8::Value> unionWithTypedefsValue;
@@ -676,11 +676,11 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   if (unionWithTypedefsValue.IsEmpty() || unionWithTypedefsValue->IsUndefined()) {
     // Do nothing.
   } else {
-    FloatOrBoolean unionWithTypedefs;
-    V8FloatOrBoolean::toImpl(isolate, unionWithTypedefsValue, unionWithTypedefs, UnionTypeConversionMode::kNotNullable, exceptionState);
+    FloatOrBoolean unionWithTypedefsCppValue;
+    V8FloatOrBoolean::toImpl(isolate, unionWithTypedefsValue, unionWithTypedefsCppValue, UnionTypeConversionMode::kNotNullable, exceptionState);
     if (exceptionState.HadException())
       return;
-    impl.setUnionWithTypedefs(unionWithTypedefs);
+    impl.setUnionWithTypedefs(unionWithTypedefsCppValue);
   }
 
   v8::Local<v8::Value> unrestrictedDoubleMemberValue;
@@ -691,10 +691,10 @@ void V8TestDictionary::toImpl(v8::Isolate* isolate, v8::Local<v8::Value> v8Value
   if (unrestrictedDoubleMemberValue.IsEmpty() || unrestrictedDoubleMemberValue->IsUndefined()) {
     // Do nothing.
   } else {
-    double unrestrictedDoubleMember = NativeValueTraits<IDLUnrestrictedDouble>::NativeValue(isolate, unrestrictedDoubleMemberValue, exceptionState);
+    double unrestrictedDoubleMemberCppValue = NativeValueTraits<IDLUnrestrictedDouble>::NativeValue(isolate, unrestrictedDoubleMemberValue, exceptionState);
     if (exceptionState.HadException())
       return;
-    impl.setUnrestrictedDoubleMember(unrestrictedDoubleMember);
+    impl.setUnrestrictedDoubleMember(unrestrictedDoubleMemberCppValue);
   }
 }
 
@@ -736,7 +736,7 @@ bool toV8TestDictionary(const TestDictionary& impl, v8::Local<v8::Object> dictio
   v8::Local<v8::Value> booleanMemberValue;
   bool booleanMemberHasValueOrDefault = false;
   if (impl.hasBooleanMember()) {
-    booleanMemberValue = V8Boolean(impl.booleanMember(), isolate);
+    booleanMemberValue = v8::Boolean::New(isolate, impl.booleanMember());
     booleanMemberHasValueOrDefault = true;
   }
   if (booleanMemberHasValueOrDefault &&
@@ -747,7 +747,7 @@ bool toV8TestDictionary(const TestDictionary& impl, v8::Local<v8::Object> dictio
   v8::Local<v8::Value> createValue;
   bool createHasValueOrDefault = false;
   if (impl.hasCreateMember()) {
-    createValue = V8Boolean(impl.createMember(), isolate);
+    createValue = v8::Boolean::New(isolate, impl.createMember());
     createHasValueOrDefault = true;
   }
   if (createHasValueOrDefault &&
@@ -758,7 +758,7 @@ bool toV8TestDictionary(const TestDictionary& impl, v8::Local<v8::Object> dictio
   v8::Local<v8::Value> deprecatedCreateMemberValue;
   bool deprecatedCreateMemberHasValueOrDefault = false;
   if (impl.hasCreateMember()) {
-    deprecatedCreateMemberValue = V8Boolean(impl.createMember(), isolate);
+    deprecatedCreateMemberValue = v8::Boolean::New(isolate, impl.createMember());
     deprecatedCreateMemberHasValueOrDefault = true;
   }
   if (deprecatedCreateMemberHasValueOrDefault &&
@@ -956,6 +956,17 @@ bool toV8TestDictionary(const TestDictionary& impl, v8::Local<v8::Object> dictio
     return false;
   }
 
+  v8::Local<v8::Value> publicValue;
+  bool publicHasValueOrDefault = false;
+  if (impl.hasIsPublic()) {
+    publicValue = v8::Boolean::New(isolate, impl.isPublic());
+    publicHasValueOrDefault = true;
+  }
+  if (publicHasValueOrDefault &&
+      !V8CallBoolean(dictionary->CreateDataProperty(context, keys[20].Get(isolate), publicValue))) {
+    return false;
+  }
+
   v8::Local<v8::Value> recordMemberValue;
   bool recordMemberHasValueOrDefault = false;
   if (impl.hasRecordMember()) {
@@ -963,7 +974,7 @@ bool toV8TestDictionary(const TestDictionary& impl, v8::Local<v8::Object> dictio
     recordMemberHasValueOrDefault = true;
   }
   if (recordMemberHasValueOrDefault &&
-      !V8CallBoolean(dictionary->CreateDataProperty(context, keys[20].Get(isolate), recordMemberValue))) {
+      !V8CallBoolean(dictionary->CreateDataProperty(context, keys[21].Get(isolate), recordMemberValue))) {
     return false;
   }
 
@@ -977,29 +988,18 @@ bool toV8TestDictionary(const TestDictionary& impl, v8::Local<v8::Object> dictio
     restrictedDoubleMemberHasValueOrDefault = true;
   }
   if (restrictedDoubleMemberHasValueOrDefault &&
-      !V8CallBoolean(dictionary->CreateDataProperty(context, keys[21].Get(isolate), restrictedDoubleMemberValue))) {
+      !V8CallBoolean(dictionary->CreateDataProperty(context, keys[22].Get(isolate), restrictedDoubleMemberValue))) {
     return false;
   }
 
   v8::Local<v8::Value> runtimeMemberValue;
   bool runtimeMemberHasValueOrDefault = false;
   if (impl.hasRuntimeMember()) {
-    runtimeMemberValue = V8Boolean(impl.runtimeMember(), isolate);
+    runtimeMemberValue = v8::Boolean::New(isolate, impl.runtimeMember());
     runtimeMemberHasValueOrDefault = true;
   }
   if (runtimeMemberHasValueOrDefault &&
-      !V8CallBoolean(dictionary->CreateDataProperty(context, keys[22].Get(isolate), runtimeMemberValue))) {
-    return false;
-  }
-
-  v8::Local<v8::Value> stringArrayMemberValue;
-  bool stringArrayMemberHasValueOrDefault = false;
-  if (impl.hasStringArrayMember()) {
-    stringArrayMemberValue = ToV8(impl.stringArrayMember(), creationContext, isolate);
-    stringArrayMemberHasValueOrDefault = true;
-  }
-  if (stringArrayMemberHasValueOrDefault &&
-      !V8CallBoolean(dictionary->CreateDataProperty(context, keys[23].Get(isolate), stringArrayMemberValue))) {
+      !V8CallBoolean(dictionary->CreateDataProperty(context, keys[23].Get(isolate), runtimeMemberValue))) {
     return false;
   }
 

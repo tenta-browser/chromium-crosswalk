@@ -15,7 +15,6 @@
 #include "base/time/time.h"
 #include "base/value_conversions.h"
 #include "base/values.h"
-#include "chrome/browser/download/all_download_item_notifier.h"
 #include "chrome/browser/download/download_crx_util.h"
 #include "chrome/browser/download/download_item_model.h"
 #include "chrome/browser/download/download_query.h"
@@ -336,13 +335,12 @@ void DownloadsListTracker::SetChunkSizeForTesting(size_t chunk_size) {
 }
 
 bool DownloadsListTracker::ShouldShow(const DownloadItem& item) const {
-  return !download_crx_util::IsExtensionDownload(item) &&
-      !item.IsTemporary() &&
-      !item.GetFileNameToReportUser().empty() &&
-      !item.GetTargetFilePath().empty() &&
-      !item.GetURL().is_empty() &&
-      DownloadItemModel(const_cast<DownloadItem*>(&item)).ShouldShowInShelf() &&
-      DownloadQuery::MatchesQuery(search_terms_, item);
+  return !download_crx_util::IsExtensionDownload(item) && !item.IsTemporary() &&
+         !item.IsTransient() && !item.GetFileNameToReportUser().empty() &&
+         !item.GetTargetFilePath().empty() && !item.GetURL().is_empty() &&
+         DownloadItemModel(const_cast<DownloadItem*>(&item))
+             .ShouldShowInShelf() &&
+         DownloadQuery::MatchesQuery(search_terms_, item);
 }
 
 bool DownloadsListTracker::StartTimeComparator::operator() (
@@ -355,7 +353,7 @@ void DownloadsListTracker::Init() {
       GetMainNotifierManager()->GetBrowserContext());
   if (profile->IsOffTheRecord()) {
     Profile* original_profile = profile->GetOriginalProfile();
-    original_notifier_.reset(new AllDownloadItemNotifier(
+    original_notifier_.reset(new download::AllDownloadItemNotifier(
         BrowserContext::GetDownloadManager(original_profile), this));
   }
 

@@ -15,9 +15,10 @@
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/metrics/field_trial.h"
+#include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
+#include "components/viz/service/gl/gpu_service_impl.h"
 #include "content/child/child_thread_impl.h"
 #include "content/common/associated_interface_registry_impl.h"
 #include "gpu/command_buffer/service/gpu_preferences.h"
@@ -28,10 +29,10 @@
 #include "gpu/ipc/service/gpu_channel_manager_delegate.h"
 #include "gpu/ipc/service/gpu_config.h"
 #include "gpu/ipc/service/x_util.h"
+#include "media/base/android_overlay_mojo_factory.h"
 #include "mojo/public/cpp/bindings/associated_binding_set.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
 #include "services/service_manager/public/interfaces/service_factory.mojom.h"
-#include "services/ui/gpu/gpu_service.h"
 #include "services/ui/gpu/interfaces/gpu_main.mojom.h"
 #include "ui/gfx/native_widget_types.h"
 
@@ -46,9 +47,7 @@ class GpuServiceFactory;
 // these per process. It does process initialization and shutdown. It forwards
 // IPC messages to gpu::GpuChannelManager, which is responsible for issuing
 // rendering commands to the GPU.
-class GpuChildThread : public ChildThreadImpl,
-                       public ui::mojom::GpuMain,
-                       public base::FieldTrialList::Observer {
+class GpuChildThread : public ChildThreadImpl, public ui::mojom::GpuMain {
  public:
   struct LogMessage {
     int severity;
@@ -90,17 +89,13 @@ class GpuChildThread : public ChildThreadImpl,
       mojo::ScopedInterfaceEndpointHandle handle) override;
 
   // ui::mojom::GpuMain:
-  void CreateGpuService(ui::mojom::GpuServiceRequest request,
+  void CreateGpuService(viz::mojom::GpuServiceRequest request,
                         ui::mojom::GpuHostPtr gpu_host,
                         const gpu::GpuPreferences& preferences,
                         mojo::ScopedSharedBufferHandle activity_flags) override;
   void CreateFrameSinkManager(
-      cc::mojom::FrameSinkManagerRequest request,
-      cc::mojom::FrameSinkManagerClientPtr client) override;
-
-  // base::FieldTrialList::Observer:
-  void OnFieldTrialGroupFinalized(const std::string& trial_name,
-                                  const std::string& group_name) override;
+      viz::mojom::FrameSinkManagerRequest request,
+      viz::mojom::FrameSinkManagerClientPtr client) override;
 
   void BindServiceFactoryRequest(
       service_manager::mojom::ServiceFactoryRequest request);
@@ -108,6 +103,12 @@ class GpuChildThread : public ChildThreadImpl,
   gpu::GpuChannelManager* gpu_channel_manager() {
     return gpu_service_->gpu_channel_manager();
   }
+
+#if defined(OS_ANDROID)
+  static std::unique_ptr<media::AndroidOverlay> CreateAndroidOverlay(
+      const base::UnguessableToken& routing_token,
+      media::AndroidOverlayConfig);
+#endif
 
   // Set this flag to true if a fatal error occurred before we receive the
   // OnInitialize message, in which case we just declare ourselves DOA.
@@ -127,8 +128,13 @@ class GpuChildThread : public ChildThreadImpl,
       service_factory_bindings_;
 
   AssociatedInterfaceRegistryImpl associated_interfaces_;
-  std::unique_ptr<ui::GpuService> gpu_service_;
+  std::unique_ptr<viz::GpuServiceImpl> gpu_service_;
   mojo::AssociatedBinding<ui::mojom::GpuMain> gpu_main_binding_;
+
+  // Holds a closure that releases pending interface requests on the IO thread.
+  base::Closure release_pending_requests_closure_;
+
+  base::WeakPtrFactory<GpuChildThread> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(GpuChildThread);
 };

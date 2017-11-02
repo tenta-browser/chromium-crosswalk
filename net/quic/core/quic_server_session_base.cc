@@ -6,9 +6,9 @@
 
 #include "net/quic/core/proto/cached_network_parameters.pb.h"
 #include "net/quic/core/quic_connection.h"
-#include "net/quic/core/quic_flags.h"
 #include "net/quic/core/quic_stream.h"
 #include "net/quic/platform/api/quic_bug_tracker.h"
+#include "net/quic/platform/api/quic_flags.h"
 #include "net/quic/platform/api/quic_logging.h"
 #include "net/quic/platform/api/quic_string_piece.h"
 
@@ -55,8 +55,7 @@ void QuicServerSessionBase::OnConfigNegotiated() {
   bandwidth_resumption_enabled_ =
       last_bandwidth_resumption || max_bandwidth_resumption;
 
-  if (!FLAGS_quic_reloadable_flag_quic_enable_server_push_by_default ||
-      connection()->version() < QUIC_VERSION_35) {
+  if (connection()->version() < QUIC_VERSION_35) {
     set_server_push_enabled(
         ContainsQuicTag(config()->ReceivedConnectionOptions(), kSPSH));
   }
@@ -227,7 +226,12 @@ bool QuicServerSessionBase::ShouldCreateOutgoingDynamicStream() {
   return true;
 }
 
-QuicCryptoServerStreamBase* QuicServerSessionBase::GetCryptoStream() {
+QuicCryptoServerStreamBase* QuicServerSessionBase::GetMutableCryptoStream() {
+  return crypto_stream_.get();
+}
+
+const QuicCryptoServerStreamBase* QuicServerSessionBase::GetCryptoStream()
+    const {
   return crypto_stream_.get();
 }
 

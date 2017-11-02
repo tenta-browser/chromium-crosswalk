@@ -4,18 +4,23 @@
 
 #include "content/network/url_loader_impl.h"
 
+#include <string>
+
 #include "base/task_scheduler/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
-#include "content/network/net_adapters.h"
+#include "content/common/loader_util.h"
 #include "content/network/network_context.h"
 #include "content/public/common/referrer.h"
 #include "content/public/common/resource_response.h"
+#include "content/public/common/url_loader_factory.mojom.h"
 #include "net/base/elements_upload_data_stream.h"
 #include "net/base/load_flags.h"
+#include "net/base/mime_sniffer.h"
 #include "net/base/upload_bytes_element_reader.h"
 #include "net/base/upload_file_element_reader.h"
 #include "net/url_request/url_request_context.h"
+#include "services/network/public/cpp/net_adapters.h"
 
 namespace content {
 
@@ -69,78 +74,79 @@ void PopulateResourceResponse(net::URLRequest* request,
 
   response->head.request_start = request->creation_time();
   response->head.response_start = base::TimeTicks::Now();
+  response->head.encoded_data_length = request->GetTotalReceivedBytes();
 }
 
 // A subclass of net::UploadBytesElementReader which owns
-// ResourceRequestBodyImpl.
+// ResourceRequestBody.
 class BytesElementReader : public net::UploadBytesElementReader {
  public:
-  BytesElementReader(ResourceRequestBodyImpl* resource_request_body,
-                     const ResourceRequestBodyImpl::Element& element)
+  BytesElementReader(ResourceRequestBody* resource_request_body,
+                     const ResourceRequestBody::Element& element)
       : net::UploadBytesElementReader(element.bytes(), element.length()),
         resource_request_body_(resource_request_body) {
-    DCHECK_EQ(ResourceRequestBodyImpl::Element::TYPE_BYTES, element.type());
+    DCHECK_EQ(ResourceRequestBody::Element::TYPE_BYTES, element.type());
   }
 
   ~BytesElementReader() override {}
 
  private:
-  scoped_refptr<ResourceRequestBodyImpl> resource_request_body_;
+  scoped_refptr<ResourceRequestBody> resource_request_body_;
 
   DISALLOW_COPY_AND_ASSIGN(BytesElementReader);
 };
 
 // A subclass of net::UploadFileElementReader which owns
-// ResourceRequestBodyImpl.
+// ResourceRequestBody.
 // This class is necessary to ensure the BlobData and any attached shareable
 // files survive until upload completion.
 class FileElementReader : public net::UploadFileElementReader {
  public:
-  FileElementReader(ResourceRequestBodyImpl* resource_request_body,
+  FileElementReader(ResourceRequestBody* resource_request_body,
                     base::TaskRunner* task_runner,
-                    const ResourceRequestBodyImpl::Element& element)
+                    const ResourceRequestBody::Element& element)
       : net::UploadFileElementReader(task_runner,
                                      element.path(),
                                      element.offset(),
                                      element.length(),
                                      element.expected_modification_time()),
         resource_request_body_(resource_request_body) {
-    DCHECK_EQ(ResourceRequestBodyImpl::Element::TYPE_FILE, element.type());
+    DCHECK_EQ(ResourceRequestBody::Element::TYPE_FILE, element.type());
   }
 
   ~FileElementReader() override {}
 
  private:
-  scoped_refptr<ResourceRequestBodyImpl> resource_request_body_;
+  scoped_refptr<ResourceRequestBody> resource_request_body_;
 
   DISALLOW_COPY_AND_ASSIGN(FileElementReader);
 };
 
 // TODO: copied from content/browser/loader/upload_data_stream_builder.cc.
 std::unique_ptr<net::UploadDataStream> CreateUploadDataStream(
-    ResourceRequestBodyImpl* body,
+    ResourceRequestBody* body,
     base::SequencedTaskRunner* file_task_runner) {
   std::vector<std::unique_ptr<net::UploadElementReader>> element_readers;
   for (const auto& element : *body->elements()) {
     switch (element.type()) {
-      case ResourceRequestBodyImpl::Element::TYPE_BYTES:
+      case ResourceRequestBody::Element::TYPE_BYTES:
         element_readers.push_back(
             base::MakeUnique<BytesElementReader>(body, element));
         break;
-      case ResourceRequestBodyImpl::Element::TYPE_FILE:
+      case ResourceRequestBody::Element::TYPE_FILE:
         element_readers.push_back(base::MakeUnique<FileElementReader>(
             body, file_task_runner, element));
         break;
-      case ResourceRequestBodyImpl::Element::TYPE_FILE_FILESYSTEM:
+      case ResourceRequestBody::Element::TYPE_FILE_FILESYSTEM:
         NOTIMPLEMENTED();
         break;
-      case ResourceRequestBodyImpl::Element::TYPE_BLOB: {
+      case ResourceRequestBody::Element::TYPE_BLOB: {
         NOTIMPLEMENTED();
         break;
       }
-      case ResourceRequestBodyImpl::Element::TYPE_DISK_CACHE_ENTRY:
-      case ResourceRequestBodyImpl::Element::TYPE_BYTES_DESCRIPTION:
-      case ResourceRequestBodyImpl::Element::TYPE_UNKNOWN:
+      case ResourceRequestBody::Element::TYPE_DISK_CACHE_ENTRY:
+      case ResourceRequestBody::Element::TYPE_BYTES_DESCRIPTION:
+      case ResourceRequestBody::Element::TYPE_UNKNOWN:
         NOTREACHED();
         break;
     }
@@ -154,10 +160,13 @@ std::unique_ptr<net::UploadDataStream> CreateUploadDataStream(
 
 URLLoaderImpl::URLLoaderImpl(
     NetworkContext* context,
-    mojom::URLLoaderAssociatedRequest url_loader_request,
+    mojom::URLLoaderRequest url_loader_request,
+    int32_t options,
     const ResourceRequest& request,
-    mojom::URLLoaderClientPtr url_loader_client)
+    mojom::URLLoaderClientPtr url_loader_client,
+    const net::NetworkTrafficAnnotationTag& traffic_annotation)
     : context_(context),
+      options_(options),
       connected_(true),
       binding_(this, std::move(url_loader_request)),
       url_loader_client_(std::move(url_loader_client)),
@@ -165,15 +174,20 @@ URLLoaderImpl::URLLoaderImpl(
                                mojo::SimpleWatcher::ArmingPolicy::MANUAL),
       peer_closed_handle_watcher_(FROM_HERE,
                                   mojo::SimpleWatcher::ArmingPolicy::MANUAL),
+      report_raw_headers_(false),
       weak_ptr_factory_(this) {
-  binding_.set_connection_error_handler(
-      base::Bind(&URLLoaderImpl::OnConnectionError, base::Unretained(this)));
+  // TODO(caseq): Make sure the client renderer actually has premissions to
+  // get raw headers (i.e. has DevTools attached).
+  report_raw_headers_ = request.report_raw_headers;
+  context_->RegisterURLLoader(this);
+  binding_.set_connection_error_handler(base::BindOnce(
+      &URLLoaderImpl::OnConnectionError, base::Unretained(this)));
 
   url_request_ = context_->url_request_context()->CreateRequest(
-      GURL(request.url), net::DEFAULT_PRIORITY, this);
+      GURL(request.url), net::DEFAULT_PRIORITY, this, traffic_annotation);
   url_request_->set_method(request.method);
 
-  url_request_->set_first_party_for_cookies(request.first_party_for_cookies);
+  url_request_->set_site_for_cookies(request.site_for_cookies);
 
   const Referrer referrer(request.referrer, request.referrer_policy);
   Referrer::SetReferrerForRequest(url_request_.get(), referrer);
@@ -186,29 +200,37 @@ URLLoaderImpl::URLLoaderImpl(
   if (request.request_body.get()) {
     scoped_refptr<base::SequencedTaskRunner> task_runner =
         base::CreateSequencedTaskRunnerWithTraits(
-            base::TaskTraits().MayBlock().WithPriority(
-                base::TaskPriority::USER_VISIBLE));
+            {base::MayBlock(), base::TaskPriority::USER_VISIBLE});
     url_request_->set_upload(
         CreateUploadDataStream(request.request_body.get(), task_runner.get()));
   }
 
   int load_flags = BuildLoadFlagsForRequest(request, false);
   url_request_->SetLoadFlags(load_flags);
-
+  if (report_raw_headers_) {
+    url_request_->SetRequestHeadersCallback(
+        base::Bind(&net::HttpRawRequestHeaders::Assign,
+                   base::Unretained(&raw_request_headers_)));
+    url_request_->SetResponseHeadersCallback(base::Bind(
+        &URLLoaderImpl::SetRawResponseHeaders, base::Unretained(this)));
+  }
   url_request_->Start();
 }
 
-URLLoaderImpl::~URLLoaderImpl() {}
+URLLoaderImpl::~URLLoaderImpl() {
+  context_->DeregisterURLLoader(this);
+}
 
 void URLLoaderImpl::Cleanup() {
   // The associated network context is going away and we have to destroy
-  // net::URLRequest hold by this loader.
+  // net::URLRequest held by this loader.
   delete this;
 }
 
 void URLLoaderImpl::FollowRedirect() {
   if (!url_request_) {
     NotifyCompleted(net::ERR_UNEXPECTED);
+    // |this| may have been deleted.
     return;
   }
 
@@ -232,44 +254,37 @@ void URLLoaderImpl::OnReceivedRedirect(net::URLRequest* url_request,
 
   scoped_refptr<ResourceResponse> response = new ResourceResponse();
   PopulateResourceResponse(url_request_.get(), response.get());
-  response->head.encoded_data_length = url_request_->GetTotalReceivedBytes();
-
+  if (report_raw_headers_) {
+    response->head.devtools_info = BuildDevToolsInfo(
+        *url_request_, raw_request_headers_, raw_response_headers_.get());
+    raw_request_headers_ = net::HttpRawRequestHeaders();
+    raw_response_headers_ = nullptr;
+  }
   url_loader_client_->OnReceiveRedirect(redirect_info, response->head);
 }
 
-void URLLoaderImpl::OnResponseStarted(net::URLRequest* url_request) {
+void URLLoaderImpl::OnResponseStarted(net::URLRequest* url_request,
+                                      int net_error) {
   DCHECK(url_request == url_request_.get());
 
-  // TODO: Add support for optional MIME sniffing.
-
-  scoped_refptr<ResourceResponse> response = new ResourceResponse();
-  PopulateResourceResponse(url_request_.get(), response.get());
-  response->head.encoded_data_length = url_request_->raw_header_size();
-
-  mojom::DownloadedTempFilePtr downloaded_file_ptr;
-  url_loader_client_->OnReceiveResponse(response->head,
-                                        std::move(downloaded_file_ptr));
-
-  net::IOBufferWithSize* metadata = url_request->response_info().metadata.get();
-  if (metadata) {
-    const uint8_t* data = reinterpret_cast<const uint8_t*>(metadata->data());
-
-    url_loader_client_->OnReceiveCachedMetadata(
-        std::vector<uint8_t>(data, data + metadata->size()));
+  if (net_error != net::OK) {
+    NotifyCompleted(net_error);
+    // |this| may have been deleted.
+    return;
   }
 
-  MojoCreateDataPipeOptions options;
-  options.struct_size = sizeof(MojoCreateDataPipeOptions);
-  options.flags = MOJO_CREATE_DATA_PIPE_OPTIONS_FLAG_NONE;
-  options.element_num_bytes = 1;
-  options.capacity_num_bytes = kDefaultAllocationSize;
-  mojo::DataPipe data_pipe(options);
+  response_ = new ResourceResponse();
+  PopulateResourceResponse(url_request_.get(), response_.get());
+  if (report_raw_headers_) {
+    response_->head.devtools_info = BuildDevToolsInfo(
+        *url_request_, raw_request_headers_, raw_response_headers_.get());
+    raw_request_headers_ = net::HttpRawRequestHeaders();
+    raw_response_headers_ = nullptr;
+  }
 
-  DCHECK(data_pipe.producer_handle.is_valid());
-  DCHECK(data_pipe.consumer_handle.is_valid());
-
+  mojo::DataPipe data_pipe(kDefaultAllocationSize);
   response_body_stream_ = std::move(data_pipe.producer_handle);
-  response_body_consumer_handle_ = std::move(data_pipe.consumer_handle);
+  consumer_handle_ = std::move(data_pipe.consumer_handle);
   peer_closed_handle_watcher_.Watch(
       response_body_stream_.get(), MOJO_HANDLE_SIGNAL_PEER_CLOSED,
       base::Bind(&URLLoaderImpl::OnResponseBodyStreamClosed,
@@ -281,57 +296,98 @@ void URLLoaderImpl::OnResponseStarted(net::URLRequest* url_request) {
       base::Bind(&URLLoaderImpl::OnResponseBodyStreamReady,
                  base::Unretained(this)));
 
+  if (!(options_ & mojom::kURLLoadOptionSniffMimeType) ||
+      !ShouldSniffContent(url_request_.get(), response_.get()))
+    SendResponseToClient();
+
   // Start reading...
   ReadMore();
 }
 
 void URLLoaderImpl::ReadMore() {
-  DCHECK(!pending_write_.get());
+  // Once the MIME type is sniffed, all data is sent as soon as it is read from
+  // the network.
+  DCHECK(consumer_handle_.is_valid() || !pending_write_);
+  if (!pending_write_.get()) {
+    // TODO: we should use the abstractions in MojoAsyncResourceHandler.
+    pending_write_buffer_offset_ = 0;
+    MojoResult result = network::NetToMojoPendingBuffer::BeginWrite(
+        &response_body_stream_, &pending_write_, &pending_write_buffer_size_);
+    if (result != MOJO_RESULT_OK && result != MOJO_RESULT_SHOULD_WAIT) {
+      // The response body stream is in a bad state. Bail.
+      // TODO: How should this be communicated to our client?
+      writable_handle_watcher_.Cancel();
+      response_body_stream_.reset();
+      DeleteIfNeeded();
+      return;
+    }
 
-  uint32_t num_bytes;
-  // TODO: we should use the abstractions in MojoAsyncResourceHandler.
-  MojoResult result = NetToMojoPendingBuffer::BeginWrite(
-      &response_body_stream_, &pending_write_, &num_bytes);
-  if (result == MOJO_RESULT_SHOULD_WAIT) {
-    // The pipe is full. We need to wait for it to have more space.
-    writable_handle_watcher_.ArmOrNotify();
-    return;
-  } else if (result != MOJO_RESULT_OK) {
-    // The response body stream is in a bad state. Bail.
-    // TODO: How should this be communicated to our client?
-    writable_handle_watcher_.Cancel();
-    response_body_stream_.reset();
-    DeleteIfNeeded();
-    return;
+    DCHECK_GT(static_cast<uint32_t>(std::numeric_limits<int>::max()),
+              pending_write_buffer_size_);
+    if (consumer_handle_.is_valid()) {
+      DCHECK_GE(pending_write_buffer_size_,
+                static_cast<uint32_t>(net::kMaxBytesToSniff));
+    }
+    if (result == MOJO_RESULT_SHOULD_WAIT) {
+      // The pipe is full. We need to wait for it to have more space.
+      writable_handle_watcher_.ArmOrNotify();
+      return;
+    }
   }
 
-  CHECK_GT(static_cast<uint32_t>(std::numeric_limits<int>::max()), num_bytes);
-  scoped_refptr<net::IOBuffer> buf(new NetToMojoIOBuffer(pending_write_.get()));
+  auto buf = base::MakeRefCounted<network::NetToMojoIOBuffer>(
+      pending_write_.get(), pending_write_buffer_offset_);
   int bytes_read;
-  url_request_->Read(buf.get(), static_cast<int>(num_bytes), &bytes_read);
+  url_request_->Read(buf.get(),
+                     static_cast<int>(pending_write_buffer_size_ -
+                                      pending_write_buffer_offset_),
+                     &bytes_read);
   if (url_request_->status().is_io_pending()) {
     // Wait for OnReadCompleted.
   } else if (url_request_->status().is_success() && bytes_read > 0) {
-    SendDataPipeIfNecessary();
     DidRead(static_cast<uint32_t>(bytes_read), true);
   } else {
-    NotifyCompleted(net::OK);
     writable_handle_watcher_.Cancel();
-    pending_write_->Complete(0);
-    pending_write_ = nullptr;  // This closes the data pipe.
-    DeleteIfNeeded();
+    CompletePendingWrite();
+
+    // Close body pipe.
+    response_body_stream_.reset();
+
+    NotifyCompleted(url_request_->status().ToNetError());
+    // |this| may have been deleted.
     return;
   }
 }
 
 void URLLoaderImpl::DidRead(uint32_t num_bytes, bool completed_synchronously) {
+  pending_write_buffer_offset_ += num_bytes;
   DCHECK(url_request_->status().is_success());
-  response_body_stream_ = pending_write_->Complete(num_bytes);
-  pending_write_ = nullptr;
+  bool complete_read = true;
+  if (consumer_handle_.is_valid()) {
+    const std::string& type_hint = response_->head.mime_type;
+    std::string new_type;
+    bool made_final_decision = net::SniffMimeType(
+        pending_write_->buffer(), pending_write_buffer_offset_,
+        url_request_->url(), type_hint, &new_type);
+    // SniffMimeType() returns false if there is not enough data to determine
+    // the mime type. However, even if it returns false, it returns a new type
+    // that is probably better than the current one.
+    response_->head.mime_type.assign(new_type);
+
+    if (made_final_decision) {
+      SendResponseToClient();
+    } else {
+      complete_read = false;
+    }
+  }
+
+  if (complete_read) {
+    CompletePendingWrite();
+  }
   if (completed_synchronously) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE,
-        base::Bind(&URLLoaderImpl::ReadMore, weak_ptr_factory_.GetWeakPtr()));
+        FROM_HERE, base::BindOnce(&URLLoaderImpl::ReadMore,
+                                  weak_ptr_factory_.GetWeakPtr()));
   } else {
     ReadMore();
   }
@@ -343,17 +399,28 @@ void URLLoaderImpl::OnReadCompleted(net::URLRequest* url_request,
 
   if (!url_request->status().is_success()) {
     writable_handle_watcher_.Cancel();
-    pending_write_ = nullptr;  // This closes the data pipe.
-    DeleteIfNeeded();
+    CompletePendingWrite();
+
+    // This closes the data pipe.
+    // TODO(mmenke): Should NotifyCompleted close the data pipe itself instead?
+    response_body_stream_.reset();
+
+    NotifyCompleted(url_request_->status().ToNetError());
+    // |this| may have been deleted.
     return;
   }
-
-  SendDataPipeIfNecessary();
 
   DidRead(static_cast<uint32_t>(bytes_read), false);
 }
 
+base::WeakPtr<URLLoaderImpl> URLLoaderImpl::GetWeakPtrForTests() {
+  return weak_ptr_factory_.GetWeakPtr();
+}
+
 void URLLoaderImpl::NotifyCompleted(int error_code) {
+  if (consumer_handle_.is_valid())
+    SendResponseToClient();
+
   ResourceRequestCompletionStatus request_complete_data;
   request_complete_data.error_code = error_code;
   request_complete_data.exists_in_cache =
@@ -362,17 +429,10 @@ void URLLoaderImpl::NotifyCompleted(int error_code) {
   request_complete_data.encoded_data_length =
       url_request_->GetTotalReceivedBytes();
   request_complete_data.encoded_body_length = url_request_->GetRawBodyBytes();
+  request_complete_data.decoded_body_length = total_written_bytes_;
 
   url_loader_client_->OnComplete(request_complete_data);
   DeleteIfNeeded();
-}
-
-void URLLoaderImpl::SendDataPipeIfNecessary() {
-  if (response_body_consumer_handle_.is_valid()) {
-    // Send the data pipe on the first OnReadCompleted call.
-    url_loader_client_->OnStartLoadingResponseBody(
-        std::move(response_body_consumer_handle_));
-  }
 }
 
 void URLLoaderImpl::OnConnectionError() {
@@ -397,6 +457,39 @@ void URLLoaderImpl::DeleteIfNeeded() {
   bool has_data_pipe = pending_write_.get() || response_body_stream_.is_valid();
   if (!connected_ && !has_data_pipe)
     delete this;
+}
+
+void URLLoaderImpl::SendResponseToClient() {
+  base::Optional<net::SSLInfo> ssl_info;
+  if (options_ & mojom::kURLLoadOptionSendSSLInfo)
+    ssl_info = url_request_->ssl_info();
+  mojom::DownloadedTempFilePtr downloaded_file_ptr;
+  url_loader_client_->OnReceiveResponse(response_->head, ssl_info,
+                                        std::move(downloaded_file_ptr));
+
+  net::IOBufferWithSize* metadata =
+      url_request_->response_info().metadata.get();
+  if (metadata) {
+    const uint8_t* data = reinterpret_cast<const uint8_t*>(metadata->data());
+
+    url_loader_client_->OnReceiveCachedMetadata(
+        std::vector<uint8_t>(data, data + metadata->size()));
+  }
+
+  url_loader_client_->OnStartLoadingResponseBody(std::move(consumer_handle_));
+  response_ = nullptr;
+}
+
+void URLLoaderImpl::CompletePendingWrite() {
+  response_body_stream_ =
+      pending_write_->Complete(pending_write_buffer_offset_);
+  pending_write_ = nullptr;
+  total_written_bytes_ += pending_write_buffer_offset_;
+}
+
+void URLLoaderImpl::SetRawResponseHeaders(
+    scoped_refptr<const net::HttpResponseHeaders> headers) {
+  raw_response_headers_ = headers;
 }
 
 }  // namespace content

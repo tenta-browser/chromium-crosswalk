@@ -12,6 +12,7 @@
 #include "content/browser/accessibility/browser_accessibility.h"
 #include "content/browser/accessibility/browser_accessibility_manager.h"
 #include "ui/accessibility/ax_enums.h"
+#include "ui/accessibility/ax_role_properties.h"
 
 namespace content {
 
@@ -252,12 +253,11 @@ bool AccessibilityComboboxPredicate(
 
 bool AccessibilityControlPredicate(
     BrowserAccessibility* start, BrowserAccessibility* node) {
-  if (node->IsControl())
+  if (ui::IsControl(node->GetRole()))
     return true;
   if (node->HasState(ui::AX_STATE_FOCUSABLE) &&
       node->GetRole() != ui::AX_ROLE_IFRAME &&
       node->GetRole() != ui::AX_ROLE_IFRAME_PRESENTATIONAL &&
-      node->GetRole() != ui::AX_ROLE_IMAGE_MAP_LINK &&
       node->GetRole() != ui::AX_ROLE_LINK &&
       node->GetRole() != ui::AX_ROLE_WEB_AREA &&
       node->GetRole() != ui::AX_ROLE_ROOT_WEB_AREA) {
@@ -362,8 +362,7 @@ bool AccessibilityLandmarkPredicate(
 
 bool AccessibilityLinkPredicate(
     BrowserAccessibility* start, BrowserAccessibility* node) {
-  return (node->GetRole() == ui::AX_ROLE_LINK ||
-          node->GetRole() == ui::AX_ROLE_IMAGE_MAP_LINK);
+  return node->GetRole() == ui::AX_ROLE_LINK;
 }
 
 bool AccessibilityListPredicate(
@@ -409,8 +408,7 @@ bool AccessibilityRadioGroupPredicate(
 
 bool AccessibilityTablePredicate(
     BrowserAccessibility* start, BrowserAccessibility* node) {
-  return (node->GetRole() == ui::AX_ROLE_TABLE ||
-          node->GetRole() == ui::AX_ROLE_GRID);
+  return ui::IsTableLikeRole(node->GetRole());
 }
 
 bool AccessibilityTextfieldPredicate(
@@ -443,16 +441,14 @@ bool AccessibilityTreePredicate(
 
 bool AccessibilityUnvisitedLinkPredicate(
     BrowserAccessibility* start, BrowserAccessibility* node) {
-  return ((node->GetRole() == ui::AX_ROLE_LINK ||
-           node->GetRole() == ui::AX_ROLE_IMAGE_MAP_LINK) &&
-          !node->HasState(ui::AX_STATE_VISITED));
+  return node->GetRole() == ui::AX_ROLE_LINK &&
+         !node->HasState(ui::AX_STATE_VISITED);
 }
 
 bool AccessibilityVisitedLinkPredicate(
     BrowserAccessibility* start, BrowserAccessibility* node) {
-  return ((node->GetRole() == ui::AX_ROLE_LINK ||
-           node->GetRole() == ui::AX_ROLE_IMAGE_MAP_LINK) &&
-          node->HasState(ui::AX_STATE_VISITED));
+  return node->GetRole() == ui::AX_ROLE_LINK &&
+         node->HasState(ui::AX_STATE_VISITED);
 }
 
 }  // namespace content

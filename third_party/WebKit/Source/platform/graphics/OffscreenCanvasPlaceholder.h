@@ -26,6 +26,8 @@ class PLATFORM_EXPORT OffscreenCanvasPlaceholder {
                                    unsigned resource_id);
   void ReleasePlaceholderFrame();
 
+  void SetSuspendOffscreenCanvasAnimation(bool);
+
   static OffscreenCanvasPlaceholder* GetPlaceholderById(
       unsigned placeholder_id);
 
@@ -35,10 +37,12 @@ class PLATFORM_EXPORT OffscreenCanvasPlaceholder {
     return placeholder_frame_;
   }
 
- private:
   bool IsPlaceholderRegistered() const {
     return placeholder_id_ != kNoPlaceholderId;
   }
+
+ private:
+  bool PostSetSuspendAnimationToOffscreenCanvasThread(bool suspend);
 
   RefPtr<StaticBitmapImage> placeholder_frame_;
   WeakPtr<OffscreenCanvasFrameDispatcher> frame_dispatcher_;
@@ -49,6 +53,14 @@ class PLATFORM_EXPORT OffscreenCanvasPlaceholder {
     kNoPlaceholderId = -1,
   };
   int placeholder_id_ = kNoPlaceholderId;
+
+  enum AnimationState {
+    kActiveAnimation,
+    kSuspendedAnimation,
+    kShouldSuspendAnimation,
+    kShouldActivateAnimation,
+  };
+  AnimationState animation_state_ = kActiveAnimation;
 };
 
 }  // blink

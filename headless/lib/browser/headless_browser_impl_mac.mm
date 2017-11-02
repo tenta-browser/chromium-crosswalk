@@ -6,22 +6,41 @@
 
 #include "content/public/browser/web_contents.h"
 #include "ui/base/cocoa/base_view.h"
+#include "ui/gfx/mac/coordinate_conversion.h"
 
 namespace headless {
 
+namespace {
+
+NSString* const kActivityReason = @"Batch headless process";
+const NSActivityOptions kActivityOptions =
+    (NSActivityUserInitiatedAllowingIdleSystemSleep |
+     NSActivityLatencyCritical) &
+    ~(NSActivitySuddenTerminationDisabled |
+      NSActivityAutomaticTerminationDisabled);
+
+}  // namespace
+
 void HeadlessBrowserImpl::PlatformInitialize() {}
 
-void HeadlessBrowserImpl::PlatformCreateWindow() {}
+void HeadlessBrowserImpl::PlatformStart() {
+  // Disallow headless to be throttled as a background process.
+  [[NSProcessInfo processInfo] beginActivityWithOptions:kActivityOptions
+                                                 reason:kActivityReason];
+}
 
 void HeadlessBrowserImpl::PlatformInitializeWebContents(
-    const gfx::Size& initial_size,
     HeadlessWebContentsImpl* web_contents) {
   NSView* web_view = web_contents->web_contents()->GetNativeView();
   [web_view setAutoresizingMask:(NSViewWidthSizable | NSViewHeightSizable)];
+}
 
-  NSRect frame = NSMakeRect(0, 0, initial_size.width(), initial_size.height());
+void HeadlessBrowserImpl::PlatformSetWebContentsBounds(
+    HeadlessWebContentsImpl* web_contents,
+    const gfx::Rect& bounds) {
+  NSView* web_view = web_contents->web_contents()->GetNativeView();
+  NSRect frame = gfx::ScreenRectToNSRect(bounds);
   [web_view setFrame:frame];
-  return;
 }
 
 }  // namespace headless

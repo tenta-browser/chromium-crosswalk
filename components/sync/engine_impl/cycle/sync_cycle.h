@@ -56,7 +56,7 @@ class SyncCycle {
     // solely based on absolute time values. So, this cannot be used to infer
     // that any given cycle _instance_ is silenced.  An example of reasonable
     // use is for UI reporting.
-    virtual bool IsCurrentlyThrottled() = 0;
+    virtual bool IsAnyThrottleOrBackoff() = 0;
 
     // The client has been instructed to change its short poll interval.
     virtual void OnReceivedShortPollIntervalUpdate(
@@ -88,9 +88,7 @@ class SyncCycle {
     virtual ~Delegate() {}
   };
 
-  // Build a cycle without a nudge tracker.  Used for poll or configure type
-  // sync cycles.
-  static SyncCycle* Build(SyncCycleContext* context, Delegate* delegate);
+  SyncCycle(SyncCycleContext* context, Delegate* delegate);
   ~SyncCycle();
 
   // Builds a thread-safe and read-only copy of the current cycle state.
@@ -117,8 +115,6 @@ class SyncCycle {
   }
 
  private:
-  SyncCycle(SyncCycleContext* context, Delegate* delegate);
-
   // The context for this cycle, guaranteed to outlive |this|.
   SyncCycleContext* const context_;
 

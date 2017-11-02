@@ -33,6 +33,7 @@
 
 #include "WebCommon.h"
 #include "WebThreadSafeData.h"
+#include "mojo/public/cpp/system/message_pipe.h"
 
 #include <memory>
 
@@ -51,12 +52,12 @@ class WebURL;
 class WebBlobRegistry {
  public:
   // Builder class for creating blobs. The blob is built on calling the
-  // build() method, where IPCs are sent to the browser.
+  // Build() method, where IPCs are sent to the browser.
   // Preconditions:
   // * Not meant to be used on multiple threads.
   // * Must not be kept alive longer than creator WebBlobRegistry (shouldn't
   //   be an issue because of the singleton nature of the WebBlobRegistry)
-  // * append.* methods are invalid after build() is called.
+  // * Append.* methods are invalid after Build() is called.
   class Builder {
    public:
     virtual ~Builder() {}
@@ -75,17 +76,17 @@ class WebBlobRegistry {
                                      uint64_t length,
                                      double expected_modification_time) = 0;
 
-    // Builds the blob. All calls to append* are invalid after calling this
+    // Builds the blob. All calls to Append* are invalid after calling this
     // method.
     virtual void Build() = 0;
   };
 
   virtual ~WebBlobRegistry() {}
 
-  // TODO(dmurph): Deprecate and migrate to createBuilder
+  // TODO(dmurph): Deprecate and migrate to CreateBuilder
   virtual void RegisterBlobData(const WebString& uuid, const WebBlobData&) {}
 
-  // The blob is finalized (and sent to the browser) on calling build() on the
+  // The blob is finalized (and sent to the browser) on calling Build() on the
   // Builder object.
   virtual std::unique_ptr<Builder> CreateBuilder(
       const WebString& uuid,
@@ -95,33 +96,6 @@ class WebBlobRegistry {
   virtual void RemoveBlobDataRef(const WebString& uuid) {}
   virtual void RegisterPublicBlobURL(const WebURL&, const WebString& uuid) {}
   virtual void RevokePublicBlobURL(const WebURL&) {}
-
-  // Registers a stream URL referring to a stream with the specified media
-  // type.
-  virtual void RegisterStreamURL(const WebURL&, const WebString&) = 0;
-
-  // Registers a stream URL referring to the stream identified by the
-  // specified srcURL.
-  virtual void RegisterStreamURL(const WebURL&, const WebURL& src_url) = 0;
-
-  // Add data to the stream referred by the URL.
-  virtual void AddDataToStream(const WebURL&,
-                               const char* data,
-                               size_t length) = 0;
-
-  // Flush contents buffered in the stream to the corresponding reader.
-  virtual void FlushStream(const WebURL&) = 0;
-
-  // Tell the registry that construction of this stream has completed
-  // successfully and so it won't receive any more data.
-  virtual void FinalizeStream(const WebURL&) = 0;
-
-  // Tell the registry that construction of this stream has been aborted and
-  // so it won't receive any more data.
-  virtual void AbortStream(const WebURL&) = 0;
-
-  // Unregisters a stream referred by the URL.
-  virtual void UnregisterStreamURL(const WebURL&) = 0;
 };
 
 }  // namespace blink

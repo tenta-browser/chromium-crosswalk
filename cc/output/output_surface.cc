@@ -19,7 +19,8 @@
 
 namespace cc {
 
-OutputSurface::OutputSurface(scoped_refptr<ContextProvider> context_provider)
+OutputSurface::OutputSurface(
+    scoped_refptr<viz::ContextProvider> context_provider)
     : context_provider_(std::move(context_provider)) {
   DCHECK(context_provider_);
 }
@@ -31,7 +32,7 @@ OutputSurface::OutputSurface(
 }
 
 OutputSurface::OutputSurface(
-    scoped_refptr<VulkanContextProvider> vulkan_context_provider)
+    scoped_refptr<viz::VulkanContextProvider> vulkan_context_provider)
     : vulkan_context_provider_(std::move(vulkan_context_provider)) {
   DCHECK(vulkan_context_provider_);
 }

@@ -4,14 +4,20 @@
 
 #include "modules/csspaint/PaintWorkletGlobalScope.h"
 
-#include "bindings/core/v8/V8BindingMacros.h"
+#include "bindings/core/v8/IDLTypes.h"
+#include "bindings/core/v8/NativeValueTraitsImpl.h"
 #include "bindings/core/v8/WorkerOrWorkletScriptController.h"
 #include "core/CSSPropertyNames.h"
 #include "core/css/CSSSyntaxDescriptor.h"
 #include "core/dom/ExceptionCode.h"
+#include "core/frame/LocalDOMWindow.h"
+#include "core/frame/LocalFrame.h"
 #include "core/inspector/MainThreadDebugger.h"
 #include "modules/csspaint/CSSPaintDefinition.h"
 #include "modules/csspaint/CSSPaintImageGeneratorImpl.h"
+#include "modules/csspaint/CSSPaintWorklet.h"
+#include "modules/csspaint/PaintWorklet.h"
+#include "platform/bindings/V8BindingMacros.h"
 
 namespace blink {
 
@@ -21,11 +27,18 @@ PaintWorkletGlobalScope* PaintWorkletGlobalScope::Create(
     const KURL& url,
     const String& user_agent,
     PassRefPtr<SecurityOrigin> security_origin,
-    v8::Isolate* isolate) {
+    v8::Isolate* isolate,
+    WorkerReportingProxy& reporting_proxy,
+    PaintWorkletPendingGeneratorRegistry* pending_generator_registry,
+    size_t global_scope_number) {
   PaintWorkletGlobalScope* paint_worklet_global_scope =
       new PaintWorkletGlobalScope(frame, url, user_agent,
-                                  std::move(security_origin), isolate);
-  paint_worklet_global_scope->ScriptController()->InitializeContextIfNeeded();
+                                  std::move(security_origin), isolate,
+                                  reporting_proxy, pending_generator_registry);
+  String context_name("PaintWorklet #");
+  context_name.append(String::Number(global_scope_number));
+  paint_worklet_global_scope->ScriptController()->InitializeContextIfNeeded(
+      context_name);
   MainThreadDebugger::Instance()->ContextCreated(
       paint_worklet_global_scope->ScriptController()->GetScriptState(),
       paint_worklet_global_scope->GetFrame(),
@@ -38,28 +51,35 @@ PaintWorkletGlobalScope::PaintWorkletGlobalScope(
     const KURL& url,
     const String& user_agent,
     PassRefPtr<SecurityOrigin> security_origin,
-    v8::Isolate* isolate)
+    v8::Isolate* isolate,
+    WorkerReportingProxy& reporting_proxy,
+    PaintWorkletPendingGeneratorRegistry* pending_generator_registry)
     : MainThreadWorkletGlobalScope(frame,
                                    url,
                                    user_agent,
                                    std::move(security_origin),
-                                   isolate) {}
+                                   isolate,
+                                   reporting_proxy),
+      pending_generator_registry_(pending_generator_registry) {}
 
 PaintWorkletGlobalScope::~PaintWorkletGlobalScope() {}
 
 void PaintWorkletGlobalScope::Dispose() {
   MainThreadDebugger::Instance()->ContextWillBeDestroyed(
       ScriptController()->GetScriptState());
-  // Explicitly clear the paint defininitions to break a reference cycle
-  // between them and this global scope.
-  paint_definitions_.Clear();
 
+  pending_generator_registry_ = nullptr;
   WorkletGlobalScope::Dispose();
 }
 
 void PaintWorkletGlobalScope::registerPaint(const String& name,
                                             const ScriptValue& ctor_value,
                                             ExceptionState& exception_state) {
+  if (name.IsEmpty()) {
+    exception_state.ThrowTypeError("The empty string is not a valid name.");
+    return;
+  }
+
   if (paint_definitions_.Contains(name)) {
     exception_state.ThrowDOMException(
         kNotSupportedError,
@@ -67,29 +87,25 @@ void PaintWorkletGlobalScope::registerPaint(const String& name,
     return;
   }
 
-  if (name.IsEmpty()) {
-    exception_state.ThrowTypeError("The empty string is not a valid name.");
-    return;
-  }
-
   v8::Isolate* isolate = ScriptController()->GetScriptState()->GetIsolate();
   v8::Local<v8::Context> context = ScriptController()->GetContext();
 
-  ASSERT(ctor_value.V8Value()->IsFunction());
+  DCHECK(ctor_value.V8Value()->IsFunction());
   v8::Local<v8::Function> constructor =
       v8::Local<v8::Function>::Cast(ctor_value.V8Value());
 
   v8::Local<v8::Value> input_properties_value;
-  if (!V8Call(constructor->Get(context, V8String(isolate, "inputProperties")),
-              input_properties_value))
+  if (!constructor->Get(context, V8AtomicString(isolate, "inputProperties"))
+           .ToLocal(&input_properties_value))
     return;
 
   Vector<CSSPropertyID> native_invalidation_properties;
   Vector<AtomicString> custom_invalidation_properties;
 
   if (!IsUndefinedOrNull(input_properties_value)) {
-    Vector<String> properties = ToImplArray<Vector<String>>(
-        input_properties_value, 0, isolate, exception_state);
+    Vector<String> properties =
+        NativeValueTraits<IDLSequence<IDLString>>::NativeValue(
+            isolate, input_properties_value, exception_state);
 
     if (exception_state.HadException())
       return;
@@ -107,15 +123,16 @@ void PaintWorkletGlobalScope::registerPaint(const String& name,
   // Get input argument types. Parse the argument type values only when
   // cssPaintAPIArguments is enabled.
   Vector<CSSSyntaxDescriptor> input_argument_types;
-  if (RuntimeEnabledFeatures::cssPaintAPIArgumentsEnabled()) {
+  if (RuntimeEnabledFeatures::CSSPaintAPIArgumentsEnabled()) {
     v8::Local<v8::Value> input_argument_type_values;
-    if (!V8Call(constructor->Get(context, V8String(isolate, "inputArguments")),
-                input_argument_type_values))
+    if (!constructor->Get(context, V8AtomicString(isolate, "inputArguments"))
+             .ToLocal(&input_argument_type_values))
       return;
 
     if (!IsUndefinedOrNull(input_argument_type_values)) {
-      Vector<String> argument_types = ToImplArray<Vector<String>>(
-          input_argument_type_values, 0, isolate, exception_state);
+      Vector<String> argument_types =
+          NativeValueTraits<IDLSequence<IDLString>>::NativeValue(
+              isolate, input_argument_type_values, exception_state);
 
       if (exception_state.HadException())
         return;
@@ -133,8 +150,8 @@ void PaintWorkletGlobalScope::registerPaint(const String& name,
 
   // Parse 'alpha' AKA hasAlpha property.
   v8::Local<v8::Value> alpha_value;
-  if (!V8Call(constructor->Get(context, V8String(isolate, "alpha")),
-              alpha_value))
+  if (!constructor->Get(context, V8AtomicString(isolate, "alpha"))
+           .ToLocal(&alpha_value))
     return;
   if (!IsUndefinedOrNull(alpha_value) && !alpha_value->IsBoolean()) {
     exception_state.ThrowTypeError(
@@ -146,8 +163,8 @@ void PaintWorkletGlobalScope::registerPaint(const String& name,
                        : true;
 
   v8::Local<v8::Value> prototype_value;
-  if (!V8Call(constructor->Get(context, V8String(isolate, "prototype")),
-              prototype_value))
+  if (!constructor->Get(context, V8AtomicString(isolate, "prototype"))
+           .ToLocal(&prototype_value))
     return;
 
   if (IsUndefinedOrNull(prototype_value)) {
@@ -166,7 +183,8 @@ void PaintWorkletGlobalScope::registerPaint(const String& name,
       v8::Local<v8::Object>::Cast(prototype_value);
 
   v8::Local<v8::Value> paint_value;
-  if (!V8Call(prototype->Get(context, V8String(isolate, "paint")), paint_value))
+  if (!prototype->Get(context, V8AtomicString(isolate, "paint"))
+           .ToLocal(&paint_value))
     return;
 
   if (IsUndefinedOrNull(paint_value)) {
@@ -189,16 +207,37 @@ void PaintWorkletGlobalScope::registerPaint(const String& name,
       input_argument_types, has_alpha);
   paint_definitions_.Set(name, definition);
 
-  // Set the definition on any pending generators.
-  GeneratorHashSet* set = pending_generators_.at(name);
-  if (set) {
-    for (const auto& generator : *set) {
-      if (generator) {
-        generator->SetDefinition(definition);
-      }
+  // TODO(xidachen): the following steps should be done with a postTask when
+  // we move PaintWorklet off main thread.
+  PaintWorklet* paint_worklet =
+      PaintWorklet::From(*GetFrame()->GetDocument()->domWindow());
+  PaintWorklet::DocumentDefinitionMap& document_definition_map =
+      paint_worklet->GetDocumentDefinitionMap();
+  if (document_definition_map.Contains(name)) {
+    DocumentPaintDefinition* existing_document_definition =
+        document_definition_map.at(name);
+    if (existing_document_definition == kInvalidDocumentDefinition)
+      return;
+    if (!existing_document_definition->RegisterAdditionalPaintDefinition(
+            *definition)) {
+      document_definition_map.Set(name, kInvalidDocumentDefinition);
+      exception_state.ThrowDOMException(
+          kNotSupportedError,
+          "A class with name:'" + name +
+              "' was registered with a different definition.");
+      return;
     }
+    // Notify the generator ready only when register paint is called the second
+    // time with the same |name| (i.e. there is already a document definition
+    // associated with |name|
+    if (existing_document_definition->GetRegisteredDefinitionCount() ==
+        PaintWorklet::kNumGlobalScopes)
+      pending_generator_registry_->NotifyGeneratorReady(name);
+  } else {
+    DocumentPaintDefinition* document_definition =
+        new DocumentPaintDefinition(definition);
+    document_definition_map.Set(name, document_definition);
   }
-  pending_generators_.erase(name);
 }
 
 CSSPaintDefinition* PaintWorkletGlobalScope::FindDefinition(
@@ -206,20 +245,20 @@ CSSPaintDefinition* PaintWorkletGlobalScope::FindDefinition(
   return paint_definitions_.at(name);
 }
 
-void PaintWorkletGlobalScope::AddPendingGenerator(
-    const String& name,
-    CSSPaintImageGeneratorImpl* generator) {
-  Member<GeneratorHashSet>& set =
-      pending_generators_.insert(name, nullptr).stored_value->value;
-  if (!set)
-    set = new GeneratorHashSet;
-  set->insert(generator);
+double PaintWorkletGlobalScope::devicePixelRatio() const {
+  return GetFrame()->DevicePixelRatio();
 }
 
 DEFINE_TRACE(PaintWorkletGlobalScope) {
   visitor->Trace(paint_definitions_);
-  visitor->Trace(pending_generators_);
+  visitor->Trace(pending_generator_registry_);
   MainThreadWorkletGlobalScope::Trace(visitor);
+}
+
+DEFINE_TRACE_WRAPPERS(PaintWorkletGlobalScope) {
+  for (auto definition : paint_definitions_)
+    visitor->TraceWrappers(definition.value);
+  MainThreadWorkletGlobalScope::TraceWrappers(visitor);
 }
 
 }  // namespace blink

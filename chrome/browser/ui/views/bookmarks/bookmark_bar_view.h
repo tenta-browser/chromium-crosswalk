@@ -49,7 +49,7 @@ class FontList;
 }
 
 namespace views {
-class CustomButton;
+class Button;
 class MenuButton;
 class MenuItemView;
 class LabelButton;
@@ -163,13 +163,13 @@ class BookmarkBarView : public views::AccessiblePaneView,
   int GetToolbarOverlap() const;
 
   // views::View:
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   gfx::Size GetMinimumSize() const override;
   bool CanProcessEventsWithinSubtree() const override;
   void Layout() override;
   void ViewHierarchyChanged(
       const ViewHierarchyChangedDetails& details) override;
-  void PaintChildren(const ui::PaintContext& context) override;
+  void PaintChildren(const views::PaintInfo& paint_info) override;
   bool GetDropFormats(
       int* formats,
       std::set<ui::Clipboard::FormatType>* format_types) override;
@@ -362,7 +362,7 @@ class BookmarkBarView : public views::AccessiblePaneView,
   // Returns the view to throb when a node is removed. |parent| is the parent of
   // the node that was removed, and |old_index| the index of the node that was
   // removed.
-  views::CustomButton* DetermineViewToThrobFromRemove(
+  views::Button* DetermineViewToThrobFromRemove(
       const bookmarks::BookmarkNode* parent,
       int old_index);
 
@@ -453,7 +453,7 @@ class BookmarkBarView : public views::AccessiblePaneView,
   // If the bookmark bubble is showing, this is the visible ancestor of the URL.
   // The visible ancestor is either the |other_bookmarks_button_|,
   // |overflow_button_| or a button on the bar.
-  views::CustomButton* throbbing_view_;
+  views::Button* throbbing_view_;
 
   BookmarkBar::State bookmark_bar_state_;
 

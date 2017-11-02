@@ -14,7 +14,7 @@
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
+#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/rand_util.h"
 #include "base/run_loop.h"
@@ -24,6 +24,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task/cancelable_task_tracker.h"
+#include "base/threading/thread_restrictions.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/bookmarks/managed_bookmark_service_factory.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
@@ -127,7 +128,7 @@ class FaviconChangeObserver : public bookmarks::BookmarkModelObserver {
                                   const BookmarkNode* node) override {
     if (model == model_ && node == node_) {
       if (!wait_for_load_ || (wait_for_load_ && node->is_favicon_loaded()))
-        base::MessageLoopForUI::current()->QuitWhenIdle();
+        base::RunLoop::QuitCurrentWhenIdleDeprecated();
     }
   }
 
@@ -190,8 +191,6 @@ bool FaviconRawBitmapsMatch(const SkBitmap& bitmap_a,
                << bitmap_b.height() << ")";
     return false;
   }
-  SkAutoLockPixels bitmap_lock_a(bitmap_a);
-  SkAutoLockPixels bitmap_lock_b(bitmap_b);
   void* node_pixel_addr_a = bitmap_a.getPixels();
   EXPECT_TRUE(node_pixel_addr_a);
   void* node_pixel_addr_b = bitmap_b.getPixels();
@@ -235,7 +234,8 @@ FaviconData GetFaviconData(BookmarkModel* model,
     model->GetFavicon(node);
     observer.WaitForGetFavicon();
   }
-  return FaviconData(model->GetFavicon(node), node->icon_url());
+  return FaviconData(model->GetFavicon(node),
+                     node->icon_url() ? *node->icon_url() : GURL());
 }
 
 // Sets the favicon for |profile| and |node|. |profile| may be
@@ -312,7 +312,7 @@ void WaitForHistoryToProcessPendingTasks() {
     base::CancelableTaskTracker task_tracker;
     // Post a task that signals |done|. Since tasks run in posting order, all
     // previously posted tasks have run when |done| is signaled.
-    history_service->ScheduleDBTask(base::MakeUnique<SignalEventTask>(&done),
+    history_service->ScheduleDBTask(std::make_unique<SignalEventTask>(&done),
                                     &task_tracker);
     done.Wait();
   }
@@ -854,6 +854,7 @@ gfx::Image CreateFavicon(SkColor color) {
 }
 
 gfx::Image Create1xFaviconFromPNGFile(const std::string& path) {
+  base::ThreadRestrictions::ScopedAllowIO allow_io;
   const char* kPNGExtension = ".png";
   if (!base::EndsWith(path, kPNGExtension,
                       base::CompareCase::INSENSITIVE_ASCII))

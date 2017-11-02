@@ -1,11 +1,13 @@
-{% from "macros.tmpl" import license %}
+{% from "templates/macros.tmpl" import license, source_files_for_generated_file %}
 {{ license() }}
+
+{{source_files_for_generated_file(template_file, input_files)}}
 
 #include "{{namespace}}Names.h"
 
-#include "wtf/PtrUtil.h"
-#include "wtf/StaticConstructors.h"
-#include "wtf/StdLibExtras.h"
+#include "platform/wtf/PtrUtil.h"
+#include "platform/wtf/StaticConstructors.h"
+#include "platform/wtf/StdLibExtras.h"
 #include <memory>
 
 namespace blink {
@@ -97,9 +99,9 @@ void init() {
     attr_i++;
   }
   {% if tags %}
-  ASSERT(tag_i == {{namespace}}TagsCount);
+  DCHECK_EQ(tag_i, {{namespace}}TagsCount);
   {% endif %}
-  ASSERT(attr_i == {{namespace}}AttrsCount);
+  DCHECK_EQ(attr_i, {{namespace}}AttrsCount);
 }
 
 } // {{namespace}}

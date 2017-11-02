@@ -90,7 +90,7 @@ PrefHashStoreImpl::~PrefHashStoreImpl() {}
 std::unique_ptr<PrefHashStoreTransaction> PrefHashStoreImpl::BeginTransaction(
     HashStoreContents* storage) {
   return std::unique_ptr<PrefHashStoreTransaction>(
-      new PrefHashStoreTransactionImpl(this, std::move(storage)));
+      new PrefHashStoreTransactionImpl(this, storage));
 }
 
 std::string PrefHashStoreImpl::ComputeMac(const std::string& path,
@@ -115,8 +115,8 @@ std::unique_ptr<base::DictionaryValue> PrefHashStoreImpl::ComputeSplitMacs(
     // get the new |keyed_path|.
     keyed_path.replace(common_part_length, std::string::npos, it.key());
 
-    split_macs->SetStringWithoutPathExpansion(
-        it.key(), ComputeMac(keyed_path, &it.value()));
+    split_macs->SetKey(it.key(),
+                       base::Value(ComputeMac(keyed_path, &it.value())));
   }
 
   return split_macs;
@@ -126,7 +126,7 @@ PrefHashStoreImpl::PrefHashStoreTransactionImpl::PrefHashStoreTransactionImpl(
     PrefHashStoreImpl* outer,
     HashStoreContents* storage)
     : outer_(outer),
-      contents_(std::move(storage)),
+      contents_(storage),
       super_mac_valid_(false),
       super_mac_dirty_(false) {
   if (!outer_->use_super_mac_)

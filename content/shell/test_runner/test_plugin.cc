@@ -16,10 +16,11 @@
 #include "base/strings/stringprintf.h"
 #include "cc/blink/web_layer_impl.h"
 #include "cc/layers/texture_layer.h"
-#include "cc/resources/shared_bitmap_manager.h"
+#include "components/viz/common/resources/shared_bitmap_manager.h"
 #include "content/shell/test_runner/web_test_delegate.h"
 #include "gpu/command_buffer/client/gles2_interface.h"
 #include "third_party/WebKit/public/platform/Platform.h"
+#include "third_party/WebKit/public/platform/WebCoalescedInputEvent.h"
 #include "third_party/WebKit/public/platform/WebCompositorSupport.h"
 #include "third_party/WebKit/public/platform/WebGestureEvent.h"
 #include "third_party/WebKit/public/platform/WebGraphicsContext3DProvider.h"
@@ -30,7 +31,6 @@
 #include "third_party/WebKit/public/platform/WebTouchPoint.h"
 #include "third_party/WebKit/public/platform/WebTraceLocation.h"
 #include "third_party/WebKit/public/platform/WebURL.h"
-#include "third_party/WebKit/public/web/WebFrame.h"
 #include "third_party/WebKit/public/web/WebKit.h"
 #include "third_party/WebKit/public/web/WebPluginParams.h"
 #include "third_party/WebKit/public/web/WebUserGestureIndicator.h"
@@ -72,9 +72,9 @@ void PrintTouchList(WebTestDelegate* delegate,
                     const blink::WebTouchPoint* points,
                     int length) {
   for (int i = 0; i < length; ++i) {
-    delegate->PrintMessage(
-        base::StringPrintf("* %.2f, %.2f: %s\n", points[i].position.x,
-                           points[i].position.y, PointState(points[i].state)));
+    delegate->PrintMessage(base::StringPrintf(
+        "* %.2f, %.2f: %s\n", points[i].PositionInWidget().x,
+        points[i].PositionInWidget().y, PointState(points[i].state)));
   }
 }
 
@@ -103,6 +103,8 @@ blink::WebPluginContainer::TouchEventRequestType ParseTouchEventRequestType(
     const blink::WebString& string) {
   if (string == blink::WebString::FromUTF8("raw"))
     return blink::WebPluginContainer::kTouchEventRequestTypeRaw;
+  if (string == blink::WebString::FromUTF8("raw-lowlatency"))
+    return blink::WebPluginContainer::kTouchEventRequestTypeRawLowLatency;
   if (string == blink::WebString::FromUTF8("synthetic"))
     return blink::WebPluginContainer::kTouchEventRequestTypeSynthesizedMouse;
   return blink::WebPluginContainer::kTouchEventRequestTypeNone;
@@ -110,11 +112,9 @@ blink::WebPluginContainer::TouchEventRequestType ParseTouchEventRequestType(
 
 }  // namespace
 
-TestPlugin::TestPlugin(blink::WebFrame* frame,
-                       const blink::WebPluginParams& params,
+TestPlugin::TestPlugin(const blink::WebPluginParams& params,
                        WebTestDelegate* delegate)
-    : frame_(frame),
-      delegate_(delegate),
+    : delegate_(delegate),
       container_(nullptr),
       gl_(nullptr),
       color_texture_(0),
@@ -175,9 +175,9 @@ bool TestPlugin::Initialize(blink::WebPluginContainer* container) {
       1;  // We are creating a context through the WebGL APIs.
   blink::WebURL url = container->GetDocument().Url();
   blink::Platform::GraphicsInfo gl_info;
-  context_provider_ = base::WrapUnique(
+  context_provider_ =
       blink::Platform::Current()->CreateOffscreenGraphicsContext3DProvider(
-          attrs, url, nullptr, &gl_info));
+          attrs, url, nullptr, &gl_info);
   if (!context_provider_->BindToCurrentThread())
     context_provider_ = nullptr;
   gl_ = context_provider_ ? context_provider_->ContextGL() : nullptr;
@@ -212,7 +212,6 @@ void TestPlugin::Destroy() {
   context_provider_.reset();
 
   container_ = nullptr;
-  frame_ = nullptr;
 
   blink::Platform::Current()
       ->MainThread()
@@ -236,14 +235,13 @@ void TestPlugin::UpdateGeometry(
     const blink::WebRect& window_rect,
     const blink::WebRect& clip_rect,
     const blink::WebRect& unobscured_rect,
-    const blink::WebVector<blink::WebRect>& cut_outs_rects,
     bool is_visible) {
   if (clip_rect == rect_)
     return;
   rect_ = clip_rect;
 
   if (rect_.IsEmpty()) {
-    texture_mailbox_ = cc::TextureMailbox();
+    texture_mailbox_ = viz::TextureMailbox();
   } else if (gl_) {
     gl_->Viewport(0, 0, rect_.width, rect_.height);
 
@@ -268,16 +266,16 @@ void TestPlugin::UpdateGeometry(
 
     gpu::SyncToken sync_token;
     gl_->GenSyncTokenCHROMIUM(fence_sync, sync_token.GetData());
-    texture_mailbox_ = cc::TextureMailbox(mailbox, sync_token, GL_TEXTURE_2D);
+    texture_mailbox_ = viz::TextureMailbox(mailbox, sync_token, GL_TEXTURE_2D);
   } else {
-    std::unique_ptr<cc::SharedBitmap> bitmap =
+    std::unique_ptr<viz::SharedBitmap> bitmap =
         delegate_->GetSharedBitmapManager()->AllocateSharedBitmap(
             gfx::Rect(rect_).size());
     if (!bitmap) {
-      texture_mailbox_ = cc::TextureMailbox();
+      texture_mailbox_ = viz::TextureMailbox();
     } else {
       DrawSceneSoftware(bitmap->pixels());
-      texture_mailbox_ = cc::TextureMailbox(
+      texture_mailbox_ = viz::TextureMailbox(
           bitmap.get(), gfx::Size(rect_.width, rect_.height));
       shared_bitmap_ = std::move(bitmap);
     }
@@ -294,21 +292,21 @@ bool TestPlugin::IsPlaceholder() {
 static void IgnoreReleaseCallback(const gpu::SyncToken& sync_token, bool lost) {
 }
 
-static void ReleaseSharedMemory(std::unique_ptr<cc::SharedBitmap> bitmap,
+static void ReleaseSharedMemory(std::unique_ptr<viz::SharedBitmap> bitmap,
                                 const gpu::SyncToken& sync_token,
                                 bool lost) {}
 
 bool TestPlugin::PrepareTextureMailbox(
-    cc::TextureMailbox* mailbox,
-    std::unique_ptr<cc::SingleReleaseCallback>* release_callback) {
+    viz::TextureMailbox* mailbox,
+    std::unique_ptr<viz::SingleReleaseCallback>* release_callback) {
   if (!mailbox_changed_)
     return false;
   *mailbox = texture_mailbox_;
   if (texture_mailbox_.IsTexture()) {
     *release_callback =
-        cc::SingleReleaseCallback::Create(base::Bind(&IgnoreReleaseCallback));
+        viz::SingleReleaseCallback::Create(base::Bind(&IgnoreReleaseCallback));
   } else if (texture_mailbox_.IsSharedMemory()) {
-    *release_callback = cc::SingleReleaseCallback::Create(
+    *release_callback = viz::SingleReleaseCallback::Create(
         base::Bind(&ReleaseSharedMemory, base::Passed(&shared_bitmap_)));
   }
   mailbox_changed_ = false;
@@ -539,8 +537,9 @@ GLuint TestPlugin::LoadProgram(const std::string& vertex_source,
 }
 
 blink::WebInputEventResult TestPlugin::HandleInputEvent(
-    const blink::WebInputEvent& event,
+    const blink::WebCoalescedInputEvent& coalesced_event,
     blink::WebCursorInfo& info) {
+  const blink::WebInputEvent& event = coalesced_event.Event();
   const char* event_name = blink::WebInputEvent::GetName(event.GetType());
   if (!strcmp(event_name, "") || !strcmp(event_name, "Undefined"))
     event_name = "unknown";
@@ -587,10 +586,9 @@ bool TestPlugin::HandleDragStatusUpdate(
   return false;
 }
 
-TestPlugin* TestPlugin::create(blink::WebFrame* frame,
-                               const blink::WebPluginParams& params,
+TestPlugin* TestPlugin::Create(const blink::WebPluginParams& params,
                                WebTestDelegate* delegate) {
-  return new TestPlugin(frame, params, delegate);
+  return new TestPlugin(params, delegate);
 }
 
 const blink::WebString& TestPlugin::MimeType() {

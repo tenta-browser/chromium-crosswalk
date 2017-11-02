@@ -36,7 +36,7 @@ class LayoutObject;
 class FEImage final : public FilterEffect {
  public:
   static FEImage* CreateWithImage(Filter*,
-                                  PassRefPtr<Image>,
+                                  RefPtr<Image>,
                                   SVGPreserveAspectRatio*);
   static FEImage* CreateWithIRIReference(Filter*,
                                          TreeScope&,
@@ -45,7 +45,7 @@ class FEImage final : public FilterEffect {
 
   // feImage does not perform color interpolation of any kind, so doesn't
   // depend on the value of color-interpolation-filters.
-  void SetOperatingColorSpace(ColorSpace) override {}
+  void SetOperatingInterpolationSpace(InterpolationSpace) override {}
 
   TextStream& ExternalRepresentation(TextStream&, int indention) const override;
 
@@ -53,7 +53,7 @@ class FEImage final : public FilterEffect {
 
  private:
   ~FEImage() override {}
-  FEImage(Filter*, PassRefPtr<Image>, SVGPreserveAspectRatio*);
+  FEImage(Filter*, RefPtr<Image>, SVGPreserveAspectRatio*);
   FEImage(Filter*, TreeScope&, const String&, SVGPreserveAspectRatio*);
   LayoutObject* ReferencedLayoutObject() const;
 

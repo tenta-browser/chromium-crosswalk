@@ -282,12 +282,6 @@ class DataReductionProxyTestContext {
 
     ~Builder();
 
-    // |DataReductionProxyParams| flags to use.
-    Builder& WithParamsFlags(int params_flags);
-
-    // |TestDataReductionProxyParams| flags to use.
-    Builder& WithParamsDefinitions(unsigned int params_definitions);
-
     // The |Client| enum to use for |DataReductionProxyRequestOptions|.
     Builder& WithClient(Client client);
 
@@ -334,8 +328,6 @@ class DataReductionProxyTestContext {
     std::unique_ptr<DataReductionProxyTestContext> Build();
 
    private:
-    int params_flags_;
-    unsigned int params_definitions_;
     Client client_;
     net::URLRequestContext* request_context_;
     net::MockClientSocketFactory* mock_socket_factory_;
@@ -467,23 +459,6 @@ class DataReductionProxyTestContext {
   std::vector<net::ProxyServer> GetConfiguredProxiesForHttp() const;
 
  private:
-  enum TestContextOptions {
-    // Permits mocking of the underlying |DataReductionProxyConfig|.
-    USE_MOCK_CONFIG = 0x1,
-    // Construct, but do not initialize the |DataReductionProxySettings| object.
-    // Primarily used for testing of the |DataReductionProxySettings| object
-    // itself.
-    SKIP_SETTINGS_INITIALIZATION = 0x2,
-    // Permits mocking of the underlying |DataReductionProxyService|.
-    USE_MOCK_SERVICE = 0x4,
-    // Permits mocking of the underlying |DataReductionProxyRequestOptions|.
-    USE_MOCK_REQUEST_OPTIONS = 0x8,
-    // Specifies the use of the |DataReductionProxyConfigServiceClient|.
-    USE_CONFIG_CLIENT = 0x10,
-    // Specifies the use of the |TESTDataReductionProxyConfigServiceClient|.
-    USE_TEST_CONFIG_CLIENT = 0x20,
-  };
-
   // Used to storage a serialized Data Reduction Proxy config.
   class TestConfigStorer {
    public:

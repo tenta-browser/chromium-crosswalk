@@ -53,36 +53,10 @@ class PLATFORM_EXPORT LengthBox {
         top_(Length(t, kFixed)),
         bottom_(Length(b, kFixed)) {}
 
-  // For use in ComputedStyle.h
-  static const Length& LogicalLeft(WritingMode,
-                                   const Length& left,
-                                   const Length& top);
-  static const Length& LogicalRight(WritingMode,
-                                    const Length& right,
-                                    const Length& bottom);
-  static const Length& Before(WritingMode,
-                              const Length& top,
-                              const Length& left,
-                              const Length& right);
-  static const Length& After(WritingMode,
-                             const Length& bottom,
-                             const Length& left,
-                             const Length& right);
-
   const Length& Left() const { return left_; }
   const Length& Right() const { return right_; }
   const Length& Top() const { return top_; }
   const Length& Bottom() const { return bottom_; }
-
-  const Length& LogicalLeft(WritingMode) const;
-  const Length& LogicalRight(WritingMode) const;
-
-  const Length& Before(WritingMode) const;
-  const Length& After(WritingMode) const;
-  const Length& Start(WritingMode, TextDirection) const;
-  const Length& end(WritingMode, TextDirection) const;
-  const Length& Over(WritingMode) const;
-  const Length& Under(WritingMode) const;
 
   bool operator==(const LengthBox& o) const {
     return left_ == o.left_ && right_ == o.right_ && top_ == o.top_ &&

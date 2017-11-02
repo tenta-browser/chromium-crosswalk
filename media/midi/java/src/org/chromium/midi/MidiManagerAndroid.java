@@ -6,12 +6,14 @@ package org.chromium.midi;
 
 import android.annotation.TargetApi;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.media.midi.MidiDevice;
 import android.media.midi.MidiDeviceInfo;
 import android.media.midi.MidiManager;
 import android.os.Build;
 import android.os.Handler;
 
+import org.chromium.base.ContextUtils;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
@@ -53,23 +55,31 @@ class MidiManagerAndroid {
     private final long mNativeManagerPointer;
 
     /**
-     * A creation function called by C++.
-     * @param context
-     * @param nativeManagerPointer The native pointer to a midi::MidiManagerAndroid object.
+     * Checks if Android MIDI is supported on the device.
      */
     @CalledByNative
-    static MidiManagerAndroid create(Context context, long nativeManagerPointer) {
-        return new MidiManagerAndroid(context, nativeManagerPointer);
+    static boolean hasSystemFeatureMidi() {
+        return ContextUtils.getApplicationContext().getPackageManager().hasSystemFeature(
+                PackageManager.FEATURE_MIDI);
     }
 
     /**
-     * @param context
+     * A creation function called by C++.
      * @param nativeManagerPointer The native pointer to a midi::MidiManagerAndroid object.
      */
-    private MidiManagerAndroid(Context context, long nativeManagerPointer) {
+    @CalledByNative
+    static MidiManagerAndroid create(long nativeManagerPointer) {
+        return new MidiManagerAndroid(nativeManagerPointer);
+    }
+
+    /**
+     * @param nativeManagerPointer The native pointer to a midi::MidiManagerAndroid object.
+     */
+    private MidiManagerAndroid(long nativeManagerPointer) {
         assert !ThreadUtils.runningOnUiThread();
 
-        mManager = (MidiManager) context.getSystemService(Context.MIDI_SERVICE);
+        mManager = (MidiManager) ContextUtils.getApplicationContext().getSystemService(
+                Context.MIDI_SERVICE);
         mHandler = new Handler(ThreadUtils.getUiThreadLooper());
         mNativeManagerPointer = nativeManagerPointer;
     }

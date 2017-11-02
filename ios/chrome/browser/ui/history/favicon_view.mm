@@ -4,7 +4,7 @@
 
 #import "ios/chrome/browser/ui/history/favicon_view.h"
 
-#import "ios/chrome/browser/ui/uikit_ui_util.h"
+#import "ios/chrome/browser/ui/util/constraints_ui_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -48,10 +48,8 @@ const CGFloat kDefaultCornerRadius = 3;
 
     [_faviconImage setTranslatesAutoresizingMaskIntoConstraints:NO];
     [_faviconFallbackLabel setTranslatesAutoresizingMaskIntoConstraints:NO];
-    AddSameCenterConstraints(_faviconImage, self);
-    AddSameSizeConstraint(_faviconImage, self);
-    AddSameCenterConstraints(_faviconFallbackLabel, self);
-    AddSameSizeConstraint(_faviconFallbackLabel, self);
+    AddSameConstraints(_faviconImage, self);
+    AddSameConstraints(_faviconFallbackLabel, self);
     _faviconSizeConstraints = @[
       [self.widthAnchor constraintEqualToConstant:0],
       [self.heightAnchor constraintEqualToConstant:0],

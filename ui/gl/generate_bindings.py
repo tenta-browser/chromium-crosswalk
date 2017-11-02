@@ -238,11 +238,25 @@ GL_FUNCTIONS = [
       'GLenum target, GLint level, GLenum internalformat, GLsizei width, '
       'GLsizei height, GLint border, GLsizei imageSize, const void* data', },
 { 'return_type': 'void',
+  'versions': [{'name': 'glCompressedTexImage2DRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum target, GLint level, GLenum internalformat, GLsizei width, '
+      'GLsizei height, GLint border, GLsizei imageSize, GLsizei dataSize, '
+      'const void* data', },
+{ 'return_type': 'void',
   'versions': [{ 'name': 'glCompressedTexImage3D' }],
   'arguments':
       'GLenum target, GLint level, GLenum internalformat, GLsizei width, '
       'GLsizei height, GLsizei depth, GLint border, GLsizei imageSize, '
       'const void* data', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glCompressedTexImage3DRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum target, GLint level, GLenum internalformat, GLsizei width, '
+      'GLsizei height, GLsizei depth, GLint border, GLsizei imageSize, '
+      'GLsizei dataSize, const void* data', },
 { 'return_type': 'void',
   'names': ['glCompressedTexSubImage2D'],
   'arguments':
@@ -250,11 +264,26 @@ GL_FUNCTIONS = [
       'GLsizei width, GLsizei height, GLenum format, GLsizei imageSize, '
       'const void* data', },
 { 'return_type': 'void',
+  'versions': [{'name': 'glCompressedTexSubImage2DRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum target, GLint level, GLint xoffset, GLint yoffset, '
+      'GLsizei width, GLsizei height, GLenum format, GLsizei imageSize, '
+      'GLsizei dataSize, const void* data', },
+{ 'return_type': 'void',
   'versions': [{ 'name': 'glCompressedTexSubImage3D' }],
   'arguments':
       'GLenum target, GLint level, GLint xoffset, GLint yoffset, '
       'GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, '
       'GLenum format, GLsizei imageSize, const void* data', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glCompressedTexSubImage3DRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum target, GLint level, GLint xoffset, GLint yoffset, '
+      'GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, '
+      'GLenum format, GLsizei imageSize, GLsizei dataSize, '
+      'const void* data', },
 { 'return_type': 'void',
   'versions': [{ 'name': 'glCopyBufferSubData' }],
   'arguments':
@@ -731,7 +760,8 @@ GL_FUNCTIONS = [
   'arguments':
       'GLenum pname, GLsizei bufSize, GLsizei* length, GLint* data', },
 { 'return_type': 'void',
-  'versions': [{ 'name': 'glGetInternalformativ' }],
+  'versions': [{'name': 'glGetInternalformativ',
+                'extensions': ['GL_ARB_internalformat_query']}],
   'arguments': 'GLenum target, GLenum internalformat, GLenum pname, '
                'GLsizei bufSize, GLint* params', },
 { 'return_type': 'void',
@@ -740,6 +770,10 @@ GL_FUNCTIONS = [
   'arguments':
       'GLenum target, GLenum internalformat, GLenum pname, GLsizei bufSize, '
       'GLsizei* length, GLint* params', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glGetMultisamplefv',
+                'extensions': ['GL_ARB_texture_multisample']}],
+  'arguments': 'GLenum pname, GLuint index, GLfloat* val', },
 { 'return_type': 'void',
   'versions': [{'name': 'glGetMultisamplefvRobustANGLE',
                 'extensions': ['GL_ANGLE_robust_client_memory']}],
@@ -1244,6 +1278,9 @@ GL_FUNCTIONS = [
   'names': ['glPointParameteri'],
   'arguments': 'GLenum pname, GLint param', },
 { 'return_type': 'void',
+  'names': ['glPolygonMode'],
+  'arguments': 'GLenum face, GLenum mode', },
+{ 'return_type': 'void',
   'names': ['glPolygonOffset'],
   'arguments': 'GLfloat factor, GLfloat units', },
 { 'return_type': 'void',
@@ -1476,6 +1513,14 @@ GL_FUNCTIONS = [
 { 'return_type': 'GLboolean',
   'names': ['glTestFenceNV'],
   'arguments': 'GLuint fence', },
+{ 'return_type': 'void',
+  'names': ['glTexBuffer', 'glTexBufferOES', 'glTexBufferEXT'],
+  'arguments': 'GLenum target, GLenum internalformat, GLuint buffer', } ,
+{ 'return_type': 'void',
+  'names': ['glTexBufferRange', 'glTexBufferRangeOES', 'glTexBufferRangeEXT'],
+  'arguments':
+      'GLenum target, GLenum internalformat, GLuint buffer, '
+      'GLintptr offset, GLsizeiptr size', },
 { 'return_type': 'void',
   'names': ['glTexImage2D'],
   'arguments':
@@ -1728,7 +1773,7 @@ GL_FUNCTIONS = [
 { 'return_type': 'void',
   'known_as': 'glVertexAttribDivisorANGLE',
   'names': ['glVertexAttribDivisorARB', 'glVertexAttribDivisorANGLE',
-            'glVertexAttribDivisor'],
+            'glVertexAttribDivisorEXT', 'glVertexAttribDivisor'],
   'arguments':
       'GLuint index, GLuint divisor', },
 { 'return_type': 'void',
@@ -1754,7 +1799,7 @@ GL_FUNCTIONS = [
 { 'return_type': 'void',
   'names': ['glViewport'],
   'arguments': 'GLint x, GLint y, GLsizei width, GLsizei height', },
-{ 'return_type': 'GLenum',
+{ 'return_type': 'void',
   'versions': [{ 'name': 'glWaitSync',
                  'extensions': ['GL_ARB_sync'] }],
   'arguments':
@@ -1953,6 +1998,24 @@ EGL_FUNCTIONS = [
   'names': ['eglPostSubBufferNV'],
   'arguments': 'EGLDisplay dpy, EGLSurface surface, '
     'EGLint x, EGLint y, EGLint width, EGLint height', },
+{ 'return_type': 'EGLint',
+  'versions': [{ 'name': 'eglProgramCacheGetAttribANGLE',
+                 'extensions': ['EGL_ANGLE_program_cache_control'] }],
+  'arguments': 'EGLDisplay dpy, EGLenum attrib', },
+{ 'return_type': 'void',
+  'versions': [{ 'name': 'eglProgramCachePopulateANGLE',
+                 'extensions': ['EGL_ANGLE_program_cache_control'] }],
+  'arguments': 'EGLDisplay dpy, const void* key, '
+    'EGLint keysize, const void* binary, EGLint binarysize', },
+{ 'return_type': 'void',
+  'versions': [{ 'name': 'eglProgramCacheQueryANGLE',
+                 'extensions': ['EGL_ANGLE_program_cache_control'] }],
+  'arguments': 'EGLDisplay dpy, EGLint index, '
+    'void* key, EGLint* keysize, void* binary, EGLint* binarysize', },
+{ 'return_type': 'EGLint',
+  'versions': [{ 'name': 'eglProgramCacheResizeANGLE',
+                 'extensions': ['EGL_ANGLE_program_cache_control'] }],
+  'arguments': 'EGLDisplay dpy, EGLint limit, EGLenum mode', },
 { 'return_type': 'EGLenum',
   'names': ['eglQueryAPI'],
   'arguments': 'void', },
@@ -2391,6 +2454,8 @@ def GenerateHeader(file, functions, set_name,
 #ifndef UI_GL_GL_BINDINGS_AUTOGEN_%(name)s_H_
 #define UI_GL_GL_BINDINGS_AUTOGEN_%(name)s_H_
 
+#include <string>
+
 namespace gl {
 
 class GLContext;
@@ -2427,6 +2492,9 @@ class GLContext;
  public:
   %(name)sApi();
   virtual ~%(name)sApi();
+
+  virtual void SetDisabledExtensions(
+      const std::string& disabled_extensions) {}
 
 """ % {'name': set_name.upper()})
   for func in functions:
@@ -2656,25 +2724,22 @@ namespace gl {
 
   if set_name == 'gl':
     file.write("""\
-void DriverGL::InitializeDynamicBindings(
-    const GLVersionInfo* ver, const std::string& context_extensions) {
-  std::string extensions = context_extensions + " ";
-  ALLOW_UNUSED_LOCAL(extensions);
-
+void DriverGL::InitializeDynamicBindings(const GLVersionInfo* ver,
+                                         const ExtensionSet& extensions) {
 """)
   elif set_name == 'egl':
     file.write("""\
 void DriverEGL::InitializeClientExtensionBindings() {
   std::string client_extensions(GetClientExtensions());
-  client_extensions += " ";
-  ALLOW_UNUSED_LOCAL(client_extensions);
+  ExtensionSet extensions(MakeExtensionSet(client_extensions));
+  ALLOW_UNUSED_LOCAL(extensions);
 
 """)
   else:
     file.write("""\
 void Driver%s::InitializeExtensionBindings() {
-  std::string extensions(GetPlatformExtensions());
-  extensions += " ";
+  std::string platform_extensions(GetPlatformExtensions());
+  ExtensionSet extensions(MakeExtensionSet(platform_extensions));
   ALLOW_UNUSED_LOCAL(extensions);
 
 """ % (set_name.upper(),))
@@ -2683,7 +2748,7 @@ void Driver%s::InitializeExtensionBindings() {
     # Extra space at the end of the extension name is intentional,
     # it is used as a separator
     for extension in extensions:
-      file.write('  ext.b_%s = %s.find("%s ") != std::string::npos;\n' %
+      file.write('  ext.b_%s = HasExtension(%s, "%s");\n' %
                  (extension, extension_var, extension))
 
     for func in extension_funcs:
@@ -2692,7 +2757,7 @@ void Driver%s::InitializeExtensionBindings() {
         WriteConditionalFuncBinding(file, func)
 
   OutputExtensionBindings(
-    'client_extensions',
+    'extensions',
     sorted(used_client_extensions),
     [ f for f in functions if IsClientExtensionFunc(f) ])
 
@@ -2701,8 +2766,8 @@ void Driver%s::InitializeExtensionBindings() {
 }
 
 void DriverEGL::InitializeExtensionBindings() {
-  std::string extensions(GetPlatformExtensions());
-  extensions += " ";
+  std::string platform_extensions(GetPlatformExtensions());
+  ExtensionSet extensions(MakeExtensionSet(platform_extensions));
   ALLOW_UNUSED_LOCAL(extensions);
 
 """)
@@ -2972,6 +3037,9 @@ void MakeFunctionUnique(const char *func_name) {
   file.write('\n')
   file.write('}  // namespace gl\n')
 
+def SamePrefix(a, b):
+  return a[:a.rfind("_")] == b[:b.rfind("_")]
+
 def GenerateEnumUtils(out_file, input_filenames):
   enum_re = re.compile(r'\#define\s+(GL_[a-zA-Z0-9_]+)\s+([0-9A-Fa-fx]+)')
   dict = {}
@@ -2986,9 +3054,11 @@ def GenerateEnumUtils(out_file, input_filenames):
           if not value in dict:
             dict[value] = name
           # check our own _CHROMIUM macro conflicts with khronos GL headers.
-          elif dict[value] != name and (name.endswith('_CHROMIUM') or
-              dict[value].endswith('_CHROMIUM')):
-            raise RunTimeError("code collision: %s and %s have the same code %s"
+          # we allow for name duplication if they have the same prefix.
+          elif dict[value] != name and ((name.endswith('_CHROMIUM') or
+              dict[value].endswith('_CHROMIUM')) and
+              not SamePrefix(name, dict[value])):
+            raise RuntimeError("code collision: %s and %s have the same code %s"
                                %  (dict[value], name, value))
 
   out_file.write(LICENSE_AND_HEADER)
@@ -3254,7 +3324,8 @@ def main(argv):
   parser.add_option('--verify-order', action='store_true')
   parser.add_option('--generate-dchecks', action='store_true',
                     help='Generates DCHECKs into the logging functions '
-                        'asserting no GL errors (useful for debugging)')
+                         'asserting no GL errors (useful for debugging with '
+                         '--enable-gpu-service-logging)')
   parser.add_option('--validate-bindings', action='store_true',
                     help='Generate DCHECKs to validate function bindings '
                          ' were correctly supplied (useful for debugging)')

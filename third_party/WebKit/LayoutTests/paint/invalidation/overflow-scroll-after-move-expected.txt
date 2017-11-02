@@ -4,50 +4,53 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true
+      "backgroundColor": "#FFFFFF"
     },
     {
       "name": "LayoutBlockFlow (positioned) DIV id='scroller'",
       "position": [10, 60],
-      "bounds": [300, 400],
-      "shouldFlattenTransform": false,
-      "drawsContent": true
+      "bounds": [300, 400]
     },
     {
       "name": "Scrolling Layer",
+      "position": [10, 60],
       "bounds": [285, 385],
-      "shouldFlattenTransform": false
+      "drawsContent": false
     },
     {
       "name": "Scrolling Contents Layer",
+      "position": [10, 60],
       "bounds": [285, 900],
-      "drawsContent": true,
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow (positioned) DIV id='block'",
           "rect": [50, 310, 200, 50],
-          "reason": "bounds change"
+          "reason": "geometry"
         },
         {
           "object": "LayoutBlockFlow (positioned) DIV id='block'",
           "rect": [50, 200, 200, 50],
-          "reason": "bounds change"
+          "reason": "geometry"
         }
       ]
     },
     {
       "name": "Overflow Controls Host Layer",
-      "bounds": [300, 400]
+      "position": [10, 60],
+      "bounds": [300, 400],
+      "drawsContent": false
     },
     {
       "name": "Horizontal Scrollbar Layer",
-      "position": [0, 385],
-      "bounds": [285, 15]
+      "position": [10, 445],
+      "bounds": [285, 15],
+      "drawsContent": false
     },
     {
       "name": "Vertical Scrollbar Layer",
-      "position": [285, 0],
+      "position": [295, 60],
       "bounds": [15, 385],
+      "drawsContent": false,
       "paintInvalidations": [
         {
           "object": "Vertical Scrollbar Layer",
@@ -58,15 +61,14 @@
     },
     {
       "name": "Scroll Corner Layer",
-      "position": [285, 385],
-      "bounds": [15, 15],
-      "drawsContent": true
+      "position": [295, 445],
+      "bounds": [15, 15]
     }
   ],
   "objectPaintInvalidations": [
     {
       "object": "LayoutBlockFlow (positioned) DIV id='block'",
-      "reason": "bounds change"
+      "reason": "geometry"
     }
   ]
 }

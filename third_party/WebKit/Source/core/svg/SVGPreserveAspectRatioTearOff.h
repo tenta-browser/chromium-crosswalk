@@ -31,9 +31,9 @@
 #ifndef SVGPreserveAspectRatioTearOff_h
 #define SVGPreserveAspectRatioTearOff_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/svg/SVGPreserveAspectRatio.h"
 #include "core/svg/properties/SVGPropertyTearOff.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
@@ -79,7 +79,7 @@ class SVGPreserveAspectRatioTearOff final
       SVGPreserveAspectRatio* target,
       SVGElement* context_element,
       PropertyIsAnimValType property_is_anim_val,
-      const QualifiedName& attribute_name = QualifiedName::Null()) {
+      const QualifiedName& attribute_name) {
     return new SVGPreserveAspectRatioTearOff(
         target, context_element, property_is_anim_val, attribute_name);
   }
@@ -92,11 +92,10 @@ class SVGPreserveAspectRatioTearOff final
   DECLARE_VIRTUAL_TRACE_WRAPPERS();
 
  private:
-  SVGPreserveAspectRatioTearOff(
-      SVGPreserveAspectRatio*,
-      SVGElement* context_element,
-      PropertyIsAnimValType,
-      const QualifiedName& attribute_name = QualifiedName::Null());
+  SVGPreserveAspectRatioTearOff(SVGPreserveAspectRatio*,
+                                SVGElement* context_element,
+                                PropertyIsAnimValType,
+                                const QualifiedName& attribute_name);
 };
 
 }  // namespace blink

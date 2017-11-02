@@ -5,10 +5,11 @@
 #include "core/paint/FramePainter.h"
 
 #include "core/editing/markers/DocumentMarkerController.h"
-#include "core/frame/FrameView.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/inspector/InspectorTraceEvents.h"
 #include "core/layout/LayoutView.h"
 #include "core/page/Page.h"
+#include "core/paint/FramePaintTiming.h"
 #include "core/paint/LayoutObjectDrawingRecorder.h"
 #include "core/paint/PaintInfo.h"
 #include "core/paint/PaintLayer.h"
@@ -32,12 +33,23 @@ void FramePainter::Paint(GraphicsContext& context,
                          const CullRect& rect) {
   GetFrameView().NotifyPageThatContentAreaWillPaint();
 
-  IntRect document_dirty_rect = rect.rect_;
+  IntRect document_dirty_rect;
   IntRect visible_area_without_scrollbars(
       GetFrameView().Location(), GetFrameView().VisibleContentRect().Size());
-  document_dirty_rect.Intersect(visible_area_without_scrollbars);
-  document_dirty_rect.MoveBy(-GetFrameView().Location() +
-                             GetFrameView().ScrollOffsetInt());
+  IntPoint content_offset =
+      -GetFrameView().Location() + GetFrameView().ScrollOffsetInt();
+  if (RuntimeEnabledFeatures::SlimmingPaintV2Enabled() &&
+      !RuntimeEnabledFeatures::RootLayerScrollingEnabled()) {
+    auto content_cull_rect = rect;
+    content_cull_rect.UpdateForScrollingContents(
+        visible_area_without_scrollbars,
+        AffineTransform().Translate(-content_offset.X(), -content_offset.Y()));
+    document_dirty_rect = content_cull_rect.rect_;
+  } else {
+    document_dirty_rect = rect.rect_;
+    document_dirty_rect.Intersect(visible_area_without_scrollbars);
+    document_dirty_rect.MoveBy(content_offset);
+  }
 
   bool should_paint_contents = !document_dirty_rect.IsEmpty();
   bool should_paint_scrollbars = !GetFrameView().ScrollbarsSuppressed() &&
@@ -51,8 +63,8 @@ void FramePainter::Paint(GraphicsContext& context,
     // settings()->rootLayerScrolls() is enabled.
     // TODO(pdr): Make this conditional on the rootLayerScrolls setting.
     Optional<ScopedPaintChunkProperties> scoped_paint_chunk_properties;
-    if (RuntimeEnabledFeatures::slimmingPaintV2Enabled() &&
-        !RuntimeEnabledFeatures::rootLayerScrollingEnabled()) {
+    if (RuntimeEnabledFeatures::SlimmingPaintV2Enabled() &&
+        !RuntimeEnabledFeatures::RootLayerScrollingEnabled()) {
       if (const PropertyTreeState* contents_state =
               frame_view_->TotalPropertyTreeStateForContents()) {
         PaintChunkProperties properties(
@@ -70,7 +82,7 @@ void FramePainter::Paint(GraphicsContext& context,
             GetFrameView().X() - GetFrameView().ScrollX(),
             GetFrameView().Y() - GetFrameView().ScrollY()));
 
-    if (RuntimeEnabledFeatures::rootLayerScrollingEnabled()) {
+    if (RuntimeEnabledFeatures::RootLayerScrollingEnabled()) {
       PaintContents(context, global_paint_flags, document_dirty_rect);
     } else {
       ClipRecorder clip_recorder(context, *GetFrameView().GetLayoutView(),
@@ -82,7 +94,7 @@ void FramePainter::Paint(GraphicsContext& context,
   }
 
   if (should_paint_scrollbars) {
-    DCHECK(!RuntimeEnabledFeatures::rootLayerScrollingEnabled());
+    DCHECK(!RuntimeEnabledFeatures::RootLayerScrollingEnabled());
     IntRect scroll_view_dirty_rect = rect.rect_;
     IntRect visible_area_with_scrollbars(
         GetFrameView().Location(),
@@ -91,7 +103,7 @@ void FramePainter::Paint(GraphicsContext& context,
     scroll_view_dirty_rect.MoveBy(-GetFrameView().Location());
 
     Optional<ScopedPaintChunkProperties> scoped_paint_chunk_properties;
-    if (RuntimeEnabledFeatures::slimmingPaintV2Enabled()) {
+    if (RuntimeEnabledFeatures::SlimmingPaintV2Enabled()) {
       if (const PropertyTreeState* contents_state =
               frame_view_->TotalPropertyTreeStateForContents()) {
         // The scrollbar's property nodes are similar to the frame view's
@@ -147,6 +159,7 @@ void FramePainter::PaintContents(GraphicsContext& context,
   DCHECK(document->Lifecycle().GetState() >=
          DocumentLifecycle::kCompositingClean);
 
+  FramePaintTiming frame_paint_timing(context, &GetFrameView().GetFrame());
   TRACE_EVENT1("devtools.timeline,rail", "Paint", "data",
                InspectorPaintEvent::Data(layout_view, LayoutRect(rect), 0));
 
@@ -206,8 +219,10 @@ void FramePainter::PaintScrollbars(GraphicsContext& context,
       !GetFrameView().LayerForVerticalScrollbar())
     PaintScrollbar(context, *GetFrameView().VerticalScrollbar(), rect);
 
-  if (GetFrameView().LayerForScrollCorner())
+  if (GetFrameView().LayerForScrollCorner() ||
+      !GetFrameView().IsScrollCornerVisible()) {
     return;
+  }
 
   PaintScrollCorner(context, GetFrameView().ScrollCornerRect());
 }
@@ -259,7 +274,7 @@ void FramePainter::PaintScrollbar(GraphicsContext& context,
   bar.Paint(context, CullRect(rect));
 }
 
-const FrameView& FramePainter::GetFrameView() {
+const LocalFrameView& FramePainter::GetFrameView() {
   DCHECK(frame_view_);
   return *frame_view_;
 }

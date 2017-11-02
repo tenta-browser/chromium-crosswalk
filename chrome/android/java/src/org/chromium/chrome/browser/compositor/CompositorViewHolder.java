@@ -10,6 +10,7 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.RectF;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.support.v4.view.ViewCompat;
@@ -20,6 +21,7 @@ import android.util.AttributeSet;
 import android.util.Pair;
 import android.view.DragEvent;
 import android.view.MotionEvent;
+import android.view.PointerIcon;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.accessibility.AccessibilityEvent;
@@ -39,7 +41,6 @@ import org.chromium.chrome.browser.compositor.layouts.content.ContentOffsetProvi
 import org.chromium.chrome.browser.compositor.layouts.content.TabContentManager;
 import org.chromium.chrome.browser.contextualsearch.ContextualSearchManagementDelegate;
 import org.chromium.chrome.browser.device.DeviceClassManager;
-import org.chromium.chrome.browser.dom_distiller.ReaderModeManagerDelegate;
 import org.chromium.chrome.browser.fullscreen.ChromeFullscreenManager;
 import org.chromium.chrome.browser.fullscreen.ChromeFullscreenManager.FullscreenListener;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
@@ -74,7 +75,6 @@ import java.util.List;
 public class CompositorViewHolder extends FrameLayout
         implements ContentOffsetProvider, LayoutManagerHost, LayoutRenderHost, Invalidator.Host,
                 FullscreenListener {
-
     private boolean mIsKeyboardShowing;
 
     private final Invalidator mInvalidator = new Invalidator();
@@ -124,7 +124,7 @@ public class CompositorViewHolder extends FrameLayout
      * The information about {@link ContentView} for overlay panel. Used to adjust the backing
      * size of the content accordingly.
      */
-    private ContentView mOverlayContentView;
+    private View mOverlayContentView;
     private int mOverlayContentWidthMeasureSpec = ContentView.DEFAULT_MEASURE_SPEC;
     private int mOverlayContentHeightMeasureSpec = ContentView.DEFAULT_MEASURE_SPEC;
 
@@ -183,6 +183,14 @@ public class CompositorViewHolder extends FrameLayout
         internalInit();
     }
 
+    @Override
+    public PointerIcon onResolvePointerIcon(MotionEvent event, int pointerIndex) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return null;
+        View activeView = getActiveView();
+        if (activeView == null || !ViewCompat.isAttachedToWindow(activeView)) return null;
+        return activeView.onResolvePointerIcon(event, pointerIndex);
+    }
+
     /**
      * Creates a {@link CompositorView}.
      * @param c     The Context to create this {@link CompositorView} in.
@@ -214,7 +222,7 @@ public class CompositorViewHolder extends FrameLayout
             }
         };
 
-        mEnableCompositorTabStrip = DeviceFormFactor.isTablet(getContext());
+        mEnableCompositorTabStrip = DeviceFormFactor.isTablet();
 
         addOnLayoutChangeListener(new OnLayoutChangeListener() {
             @Override
@@ -262,7 +270,7 @@ public class CompositorViewHolder extends FrameLayout
      * @param width The width of the content view in {@link MeasureSpec}.
      * @param height The height of the content view in {@link MeasureSpec}.
      */
-    public void setOverlayContentInfo(ContentView overlayContentView, int width, int height) {
+    public void setOverlayContentInfo(View overlayContentView, int width, int height) {
         mOverlayContentView = overlayContentView;
         mOverlayContentWidthMeasureSpec = width;
         mOverlayContentHeightMeasureSpec = height;
@@ -292,6 +300,7 @@ public class CompositorViewHolder extends FrameLayout
         setTab(null);
         if (mLayerTitleCache != null) mLayerTitleCache.shutDown();
         mCompositorView.shutDown();
+        if (mLayoutManager != null) mLayoutManager.destroy();
     }
 
     /**
@@ -411,7 +420,7 @@ public class CompositorViewHolder extends FrameLayout
     /**
      * @return The SurfaceView proxy used by the Compositor.
      */
-    public View getCompositorView() {
+    public CompositorView getCompositorView() {
         return mCompositorView;
     }
 
@@ -435,7 +444,7 @@ public class CompositorViewHolder extends FrameLayout
     }
 
     @Override
-    public void onPhysicalBackingSizeChanged(int width, int height) {
+    public void onSurfaceResized(int width, int height) {
         ContentViewCore content = getActiveContent();
         if (content != null) adjustPhysicalBackingSize(content, width, height);
     }
@@ -481,6 +490,15 @@ public class CompositorViewHolder extends FrameLayout
         }
     }
 
+    /**
+     * Sets the overlay mode.
+     */
+    public void setOverlayMode(boolean useOverlayMode) {
+        if (mCompositorView != null) {
+            mCompositorView.setOverlayVideoMode(useOverlayMode);
+        }
+    }
+
     private void setContentViewMotionEventOffsets(MotionEvent e, boolean canClear) {
         // TODO(dtrainor): Factor this out to LayoutDriver.
         if (e == null || mTabVisible == null) return;
@@ -514,7 +532,7 @@ public class CompositorViewHolder extends FrameLayout
         if (mLayoutManager != null) {
             mLayoutManager.onUpdate();
 
-            if (!DeviceFormFactor.isTablet(getContext()) && mControlContainer != null) {
+            if (!DeviceFormFactor.isTablet() && mControlContainer != null) {
                 if (mProgressBarDrawingInfo == null) mProgressBarDrawingInfo = new DrawingInfo();
                 mControlContainer.getProgressBarDrawingInfo(mProgressBarDrawingInfo);
             } else {
@@ -578,14 +596,17 @@ public class CompositorViewHolder extends FrameLayout
     public void didSwapFrame(int pendingFrameCount) {
         TraceEvent.instant("didSwapFrame");
 
-        // Wait until the second frame to turn off the placeholder background on
-        // tablets so the tab strip has time to start drawing.
+        // Wait until the second frame to turn off the placeholder background for the CompositorView
+        // and the tab strip, to ensure the compositor frame has been drawn.
         final ViewGroup controlContainer = (ViewGroup) mControlContainer;
-        if (controlContainer != null && controlContainer.getBackground() != null && mHasDrawnOnce) {
+        if (mHasDrawnOnce) {
             post(new Runnable() {
                 @Override
                 public void run() {
-                    controlContainer.setBackgroundResource(0);
+                    mCompositorView.setBackgroundResource(0);
+                    if (controlContainer != null) {
+                        controlContainer.setBackgroundResource(0);
+                    }
                 }
             });
         }
@@ -718,7 +739,6 @@ public class CompositorViewHolder extends FrameLayout
 
     @Override
     public void onDetachedFromWindow() {
-        if (mLayoutManager != null) mLayoutManager.destroy();
         flushInvalidation();
         mInvalidator.set(null);
         super.onDetachedFromWindow();
@@ -730,15 +750,6 @@ public class CompositorViewHolder extends FrameLayout
             removeView(mAccessibilityView);
             mAccessibilityView = null;
         }
-    }
-
-    /**
-     * @return True if the currently active content view is shown in the normal interactive mode.
-     */
-    public boolean isTabInteractive() {
-        return mLayoutManager != null && mLayoutManager.getActiveLayout() != null
-                && mLayoutManager.getActiveLayout().isTabInteractive() && mContentOverlayVisiblity
-                && mView != null;
     }
 
     @Override
@@ -769,16 +780,14 @@ public class CompositorViewHolder extends FrameLayout
      * @param androidContentContainer The {@link ViewGroup} the {@link LayoutManager} should bind
      *                                Android content to.
      * @param contextualSearchManager A {@link ContextualSearchManagementDelegate} instance.
-     * @param readerModeManager       A {@link ReaderModeManagerDelegate} instance.
      */
     public void onFinishNativeInitialization(TabModelSelector tabModelSelector,
             TabCreatorManager tabCreatorManager, TabContentManager tabContentManager,
             ViewGroup androidContentContainer,
-            ContextualSearchManagementDelegate contextualSearchManager,
-            ReaderModeManagerDelegate readerModeManager) {
+            ContextualSearchManagementDelegate contextualSearchManager) {
         assert mLayoutManager != null;
         mLayoutManager.init(tabModelSelector, tabCreatorManager, tabContentManager,
-                androidContentContainer, contextualSearchManager, readerModeManager,
+                androidContentContainer, contextualSearchManager,
                 mCompositorView.getResourceManager().getDynamicResourceLoader());
 
         attachToTabModelSelector(tabModelSelector);
@@ -904,12 +913,12 @@ public class CompositorViewHolder extends FrameLayout
      * @param height The default height.
      */
     private void adjustPhysicalBackingSize(ContentViewCore contentViewCore, int width, int height) {
-        ContentView contentView = (ContentView) contentViewCore.getContainerView();
-        if (contentView == mOverlayContentView) {
+        if (contentViewCore.getContainerView() == mOverlayContentView) {
             width = MeasureSpec.getSize(mOverlayContentWidthMeasureSpec);
             height = MeasureSpec.getSize(mOverlayContentHeightMeasureSpec);
         }
-        contentViewCore.onPhysicalBackingSizeChanged(width, height);
+        mCompositorView.onPhysicalBackingSizeChanged(
+                contentViewCore.getWebContents(), width, height);
     }
 
     /**

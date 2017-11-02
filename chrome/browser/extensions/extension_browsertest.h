@@ -241,16 +241,6 @@ class ExtensionBrowserTest : virtual public InProcessBrowserTest {
     return observer_->WaitForExtensionInstallError();
   }
 
-  // Waits until an extension is loaded and all view have loaded.
-  void WaitForExtensionAndViewLoad() {
-    return observer_->WaitForExtensionAndViewLoad();
-  }
-
-  // Waits until an extension is loaded.
-  void WaitForExtensionLoad() {
-    return observer_->WaitForExtensionLoad();
-  }
-
   // Waits for an extension load error. Returns true if the error really
   // happened.
   bool WaitForExtensionLoadError() {
@@ -286,9 +276,13 @@ class ExtensionBrowserTest : virtual public InProcessBrowserTest {
 
   // Simulates a page calling window.open on an URL and waits for the
   // navigation.
+  // |should_succeed| indicates whether the navigation should succeed, in which
+  // case the last committed url should match the passed url and the page should
+  // not be an error or interstitial page.
   void OpenWindow(content::WebContents* contents,
                   const GURL& url,
                   bool newtab_process_should_equal_opener,
+                  bool should_succeed,
                   content::WebContents** newtab_result);
 
   // Simulates a page navigating itself to an URL and waits for the
@@ -324,7 +318,8 @@ class ExtensionBrowserTest : virtual public InProcessBrowserTest {
   bool set_chromeos_user_;
 #endif
 
-  // test_data/extensions.
+  // Set to "chrome/test/data/extensions". Derived classes may override.
+  // TODO(michaelpg): Don't override protected data members.
   base::FilePath test_data_dir_;
 
   std::unique_ptr<extensions::ChromeExtensionTestNotificationObserver>

@@ -19,34 +19,32 @@ TransformPaintPropertyNode* TransformPaintPropertyNode::Root() {
   return root;
 }
 
-const ScrollPaintPropertyNode*
-TransformPaintPropertyNode::FindEnclosingScrollNode() const {
-  if (scroll_)
-    return scroll_.Get();
-
-  for (const auto* ancestor = Parent(); ancestor;
-       ancestor = ancestor->Parent()) {
-    if (const auto* scroll_node = ancestor->ScrollNode())
-      return scroll_node;
+const TransformPaintPropertyNode&
+TransformPaintPropertyNode::NearestScrollTranslationNode() const {
+  const auto* transform = this;
+  while (!transform->ScrollNode()) {
+    transform = transform->Parent();
+    // The transform should never be null because the root transform has an
+    // associated scroll node (see: TransformPaintPropertyNode::Root()).
+    DCHECK(transform);
   }
-  // The root transform node references the root scroll node so a scroll node
-  // should always exist.
-  NOTREACHED();
-  return nullptr;
+  return *transform;
 }
 
 String TransformPaintPropertyNode::ToString() const {
   auto transform = String::Format(
       "parent=%p transform=%s origin=%s flattensInheritedTransform=%s "
       "renderingContextId=%x directCompositingReasons=%s "
-      "compositorElementId=(%d, %d)",
-      parent_.Get(), matrix_.ToString().Ascii().Data(),
-      origin_.ToString().Ascii().Data(),
+      "compositorElementId=%s",
+      Parent(), matrix_.ToString().Ascii().data(),
+      origin_.ToString().Ascii().data(),
       flattens_inherited_transform_ ? "yes" : "no", rendering_context_id_,
-      CompositingReasonsAsString(direct_compositing_reasons_).Ascii().Data(),
-      compositor_element_id_.primaryId, compositor_element_id_.secondaryId);
-  if (scroll_)
-    return transform + " scroll=" + scroll_->ToString();
+      CompositingReasonsAsString(direct_compositing_reasons_).Ascii().data(),
+      compositor_element_id_.ToString().c_str());
+  if (scroll_) {
+    return String::Format("%s scroll=%p", transform.Utf8().data(),
+                          scroll_.Get());
+  }
   return transform;
 }
 

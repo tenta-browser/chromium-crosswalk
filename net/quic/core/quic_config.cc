@@ -8,11 +8,11 @@
 
 #include "net/quic/core/crypto/crypto_handshake_message.h"
 #include "net/quic/core/crypto/crypto_protocol.h"
-#include "net/quic/core/quic_flags.h"
 #include "net/quic/core/quic_socket_address_coder.h"
 #include "net/quic/core/quic_utils.h"
 #include "net/quic/platform/api/quic_bug_tracker.h"
 #include "net/quic/platform/api/quic_flag_utils.h"
+#include "net/quic/platform/api/quic_flags.h"
 #include "net/quic/platform/api/quic_logging.h"
 #include "net/quic/platform/api/quic_string_piece.h"
 
@@ -232,10 +232,8 @@ QuicErrorCode QuicFixedTagVector::ProcessPeerHello(
     HelloType hello_type,
     string* error_details) {
   DCHECK(error_details != nullptr);
-  const QuicTag* received_tags;
-  size_t received_tags_length;
-  QuicErrorCode error =
-      peer_hello.GetTaglist(tag_, &received_tags, &received_tags_length);
+  QuicTagVector values;
+  QuicErrorCode error = peer_hello.GetTaglist(tag_, &values);
   switch (error) {
     case QUIC_CRYPTO_MESSAGE_PARAMETER_NOT_FOUND:
       if (presence_ == PRESENCE_OPTIONAL) {
@@ -246,9 +244,8 @@ QuicErrorCode QuicFixedTagVector::ProcessPeerHello(
     case QUIC_NO_ERROR:
       QUIC_DVLOG(1) << "Received Connection Option tags from receiver.";
       has_receive_values_ = true;
-      for (size_t i = 0; i < received_tags_length; ++i) {
-        receive_values_.push_back(received_tags[i]);
-      }
+      receive_values_.insert(receive_values_.end(), values.begin(),
+                             values.end());
       break;
     default:
       *error_details = "Bad " + QuicTagToString(tag_);
@@ -341,9 +338,7 @@ QuicConfig::QuicConfig()
       connection_migration_disabled_(kNCMR, PRESENCE_OPTIONAL),
       alternate_server_address_(kASAD, PRESENCE_OPTIONAL),
       force_hol_blocking_(kFHL2, PRESENCE_OPTIONAL),
-      support_max_header_list_size_(kSMHL, PRESENCE_OPTIONAL),
-      latched_no_socket_receive_buffer_(
-          FLAGS_quic_reloadable_flag_quic_no_socket_receive_buffer) {
+      support_max_header_list_size_(kSMHL, PRESENCE_OPTIONAL) {
   SetDefaults();
 }
 
@@ -544,22 +539,6 @@ uint32_t QuicConfig::ReceivedInitialSessionFlowControlWindowBytes() const {
   return initial_session_flow_control_window_bytes_.GetReceivedValue();
 }
 
-void QuicConfig::SetSocketReceiveBufferToSend(uint32_t tcp_receive_window) {
-  if (latched_no_socket_receive_buffer_) {
-    QUIC_FLAG_COUNT_N(quic_reloadable_flag_quic_no_socket_receive_buffer, 1, 3);
-  } else {
-    socket_receive_buffer_.SetSendValue(tcp_receive_window);
-  }
-}
-
-bool QuicConfig::HasReceivedSocketReceiveBuffer() const {
-  return socket_receive_buffer_.HasReceivedValue();
-}
-
-uint32_t QuicConfig::ReceivedSocketReceiveBuffer() const {
-  return socket_receive_buffer_.GetReceivedValue();
-}
-
 void QuicConfig::SetDisableConnectionMigration() {
   connection_migration_disabled_.SetSendValue(1);
 }
@@ -638,11 +617,6 @@ void QuicConfig::ToHandshakeMessage(CryptoHandshakeMessage* out) const {
   initial_round_trip_time_us_.ToHandshakeMessage(out);
   initial_stream_flow_control_window_bytes_.ToHandshakeMessage(out);
   initial_session_flow_control_window_bytes_.ToHandshakeMessage(out);
-  if (latched_no_socket_receive_buffer_) {
-    QUIC_FLAG_COUNT_N(quic_reloadable_flag_quic_no_socket_receive_buffer, 2, 3);
-  } else {
-    socket_receive_buffer_.ToHandshakeMessage(out);
-  }
   connection_migration_disabled_.ToHandshakeMessage(out);
   connection_options_.ToHandshakeMessage(out);
   alternate_server_address_.ToHandshakeMessage(out);
@@ -688,12 +662,6 @@ QuicErrorCode QuicConfig::ProcessPeerHello(
   if (error == QUIC_NO_ERROR) {
     error = initial_session_flow_control_window_bytes_.ProcessPeerHello(
         peer_hello, hello_type, error_details);
-  }
-  if (latched_no_socket_receive_buffer_) {
-    QUIC_FLAG_COUNT_N(quic_reloadable_flag_quic_no_socket_receive_buffer, 3, 3);
-  } else if (error == QUIC_NO_ERROR) {
-    error = socket_receive_buffer_.ProcessPeerHello(peer_hello, hello_type,
-                                                    error_details);
   }
   if (error == QUIC_NO_ERROR) {
     error = connection_migration_disabled_.ProcessPeerHello(

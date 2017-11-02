@@ -26,23 +26,16 @@ FloatRect EffectPaintPropertyNode::MapRect(const FloatRect& input_rect) const {
   return result;
 }
 
-cc::Layer* EffectPaintPropertyNode::EnsureDummyLayer() const {
-  if (dummy_layer_)
-    return dummy_layer_.get();
-  dummy_layer_ = cc::Layer::Create();
-  return dummy_layer_.get();
-}
-
 String EffectPaintPropertyNode::ToString() const {
   return String::Format(
       "parent=%p localTransformSpace=%p outputClip=%p opacity=%f filter=%s "
-      "blendMode=%s directCompositingReasons=%s compositorElementId=(%d, %d) "
+      "blendMode=%s directCompositingReasons=%s compositorElementId=%s "
       "paintOffset=%s",
-      parent_.Get(), local_transform_space_.Get(), output_clip_.Get(), opacity_,
-      filter_.ToString().Ascii().Data(), SkBlendMode_Name(blend_mode_),
-      CompositingReasonsAsString(direct_compositing_reasons_).Ascii().Data(),
-      compositor_element_id_.primaryId, compositor_element_id_.secondaryId,
-      paint_offset_.ToString().Ascii().Data());
+      Parent(), local_transform_space_.Get(), output_clip_.Get(), opacity_,
+      filter_.ToString().Ascii().data(), SkBlendMode_Name(blend_mode_),
+      CompositingReasonsAsString(direct_compositing_reasons_).Ascii().data(),
+      compositor_element_id_.ToString().c_str(),
+      paint_offset_.ToString().Ascii().data());
 }
 
 #if DCHECK_IS_ON()

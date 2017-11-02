@@ -26,8 +26,8 @@ var CookieTreeBehaviorImpl = {
 
   /** @override */
   ready: function() {
-    cr.addWebUIListener('onTreeItemRemoved',
-                        this.onTreeItemRemoved_.bind(this));
+    cr.addWebUIListener(
+        'onTreeItemRemoved', this.onTreeItemRemoved_.bind(this));
     this.rootCookieNode = new settings.CookieTreeNode(null);
   },
 
@@ -38,33 +38,33 @@ var CookieTreeBehaviorImpl = {
    * @private
    */
   loadChildren_: function(list) {
-    var loadChildrenRecurse = function(childList) {
+    var loadChildrenRecurse = childList => {
       var parentId = childList.id;
       var children = childList.children;
       var prefix = '';
       if (parentId !== null) {
-        this.rootCookieNode.populateChildNodes(parentId,
-            this.rootCookieNode, children);
+        this.rootCookieNode.populateChildNodes(
+            parentId, this.rootCookieNode, children);
         prefix = parentId + ', ';
       }
       var promises = [];
       for (var i = 0; i < children.length; i++) {
         var child = children[i];
         if (child.hasChildren) {
-          promises.push(this.browserProxy.loadCookieChildren(
-              prefix + child.id).then(loadChildrenRecurse.bind(this)));
+          promises.push(this.browserProxy.loadCookieChildren(prefix + child.id)
+                            .then(loadChildrenRecurse.bind(this)));
         }
       }
       return Promise.all(promises);
-    }.bind(this);
+    };
 
     // New root being added, clear the list and add the nodes.
     this.sites = [];
     this.rootCookieNode.addChildNodes(this.rootCookieNode, list.children);
-    return loadChildrenRecurse(list).then(function() {
+    return loadChildrenRecurse(list).then(() => {
       this.sites = this.rootCookieNode.getSummaryList();
       return Promise.resolve();
-    }.bind(this));
+    });
   },
 
   /**

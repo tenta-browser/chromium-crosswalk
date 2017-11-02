@@ -18,7 +18,6 @@ var tests = [
   'self.performance.now();',
 ];
 
-var startTime = window.performance.now();
 var worker = new SharedWorker("/w3c/webperf/resources/worker.js");
 
 worker.port.onmessage = function(event) {
@@ -26,7 +25,7 @@ worker.port.onmessage = function(event) {
     assert_true(results.length == 3);
     test_true(results[0], "self.performance is defined");
     test_true(results[1], "self.performance.now is defined");
-    test_greater_than(startTime, results[2], "Time since origin time should be greater in the main document than the worker");
+    test_greater_than(window.performance.now(), results[2], "Time since origin time should be greater in the main document than the worker");
     setupIframe();
 }
 
@@ -39,8 +38,7 @@ window.test_iframe = function(event, iframeNow) {
 }
 
 function start() {
-    test_true("workerStart" in worker, "workerStart is defined on the SharedWorker object");
-    test_greater_than(worker.workerStart, 0, "Time of worker start was after the navigation start for the document");
+    test_true(!("workerStart" in worker), "workerStart is not defined on the SharedWorker object");
     worker.port.postMessage(tests);
 }
 

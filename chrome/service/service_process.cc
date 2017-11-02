@@ -17,6 +17,7 @@
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
+#include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string16.h"
@@ -41,10 +42,12 @@
 #include "chrome/service/cloud_print/cloud_print_proxy.h"
 #include "chrome/service/net/service_url_request_context_getter.h"
 #include "chrome/service/service_process_prefs.h"
+#include "components/network_session_configurator/common/network_switches.h"
 #include "components/prefs/json_pref_store.h"
 #include "mojo/edk/embedder/embedder.h"
 #include "mojo/edk/embedder/named_platform_handle.h"
 #include "mojo/edk/embedder/named_platform_handle_utils.h"
+#include "mojo/edk/embedder/peer_connection.h"
 #include "mojo/edk/embedder/platform_handle_utils.h"
 #include "mojo/edk/embedder/scoped_ipc_support.h"
 #include "net/base/network_change_notifier.h"
@@ -163,8 +166,6 @@ bool ServiceProcess::Initialize(base::MessageLoopForUI* message_loop,
   }
 
   // Initialize TaskScheduler and redirect SequencedWorkerPool tasks to it.
-  using StandbyThreadPolicy =
-      base::SchedulerWorkerPoolParams::StandbyThreadPolicy;
   constexpr int kMaxBackgroundThreads = 1;
   constexpr int kMaxBackgroundBlockingThreads = 1;
   constexpr int kMaxForegroundThreads = 3;
@@ -172,16 +173,12 @@ bool ServiceProcess::Initialize(base::MessageLoopForUI* message_loop,
   constexpr base::TimeDelta kSuggestedReclaimTime =
       base::TimeDelta::FromSeconds(30);
 
-  base::TaskScheduler::CreateAndSetDefaultTaskScheduler(
-      "CloudPrintServiceProcess",
-      {{StandbyThreadPolicy::LAZY, kMaxBackgroundThreads,
-        kSuggestedReclaimTime},
-       {StandbyThreadPolicy::LAZY, kMaxBackgroundBlockingThreads,
-        kSuggestedReclaimTime},
-       {StandbyThreadPolicy::LAZY, kMaxForegroundThreads,
-        kSuggestedReclaimTime},
-       {StandbyThreadPolicy::LAZY, kMaxForegroundBlockingThreads,
-        kSuggestedReclaimTime,
+  base::TaskScheduler::Create("CloudPrintServiceProcess");
+  base::TaskScheduler::GetInstance()->Start(
+      {{kMaxBackgroundThreads, kSuggestedReclaimTime},
+       {kMaxBackgroundBlockingThreads, kSuggestedReclaimTime},
+       {kMaxForegroundThreads, kSuggestedReclaimTime},
+       {kMaxForegroundBlockingThreads, kSuggestedReclaimTime,
         base::SchedulerBackwardCompatibility::INIT_COM_STA}});
 
   base::SequencedWorkerPool::EnableWithRedirectionToTaskSchedulerForProcess();
@@ -246,9 +243,8 @@ bool ServiceProcess::Initialize(base::MessageLoopForUI* message_loop,
 
   ipc_server_.reset(new ServiceIPCServer(this /* client */, io_task_runner(),
                                          &shutdown_event_));
-  ipc_server_->AddMessageHandler(
-      base::MakeUnique<cloud_print::CloudPrintMessageHandler>(ipc_server_.get(),
-                                                              this));
+  ipc_server_->binder_registry().AddInterface(
+      base::Bind(&cloud_print::CloudPrintMessageHandler::Create, this));
   ipc_server_->Init();
 
   // After the IPC server has started we signal that the service process is
@@ -371,7 +367,9 @@ mojo::ScopedMessagePipeHandle ServiceProcess::CreateChannelMessagePipe() {
 #endif
   CHECK(channel_handle.is_valid());
 
-  return mojo::edk::ConnectToPeerProcess(std::move(channel_handle));
+  peer_connection_ = base::MakeUnique<mojo::edk::PeerConnection>();
+  return peer_connection_->Connect(mojo::edk::ConnectionParams(
+      mojo::edk::TransportProtocol::kLegacy, std::move(channel_handle)));
 }
 
 cloud_print::CloudPrintProxy* ServiceProcess::GetCloudPrintProxy() {

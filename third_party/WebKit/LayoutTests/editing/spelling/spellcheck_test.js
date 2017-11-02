@@ -19,7 +19,7 @@
 // one parameter |Document|.
 //
 // |expectedText| is an HTML fragment indicating the expected result, where text
-// with spelling marker is surrounded by '_', and text with grammar marker is
+// with spelling marker is surrounded by '#', and text with grammar marker is
 // surrounded by '~'.
 //
 // |opt_args| is an optional object with the following optional fields:
@@ -359,7 +359,7 @@ function invokeSpellcheckTest(testObject, input, tester, expectedText) {
       });
     };
 
-    if (internals.idleTimeSpellCheckerState !== undefined) {
+    if (internals.runtimeFlags.idleTimeSpellCheckingEnabled) {
       if (internals.idleTimeSpellCheckerState(sample.document) === 'HotModeRequested')
         internals.runIdleTimeSpellChecker(sample.document);
       if (testObject.properties[kNeedsFullCheck]) {

@@ -11,6 +11,7 @@
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/extensions/api/messaging/native_message_process_host.h"
 #include "content/public/browser/browser_thread.h"
+#include "extensions/common/api/messaging/message.h"
 
 namespace extensions {
 
@@ -50,10 +51,10 @@ NativeMessagePort::Core::Core(
       message_service_task_runner_(message_service_task_runner),
       host_task_runner_(host_->task_runner()) {
   DCHECK(message_service_task_runner_->BelongsToCurrentThread());
-  host_task_runner_->PostTask(FROM_HERE,
-                              base::Bind(&NativeMessageHost::Start,
-                                         base::Unretained(host_.get()),
-                                         base::Unretained(this)));
+  host_task_runner_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&NativeMessageHost::Start, base::Unretained(host_.get()),
+                     base::Unretained(this)));
 }
 
 NativeMessagePort::Core::~Core() {
@@ -62,33 +63,31 @@ NativeMessagePort::Core::~Core() {
 
 void NativeMessagePort::Core::OnMessageFromChrome(const std::string& message) {
   DCHECK(message_service_task_runner_->BelongsToCurrentThread());
-  host_task_runner_->PostTask(FROM_HERE,
-                              base::Bind(&NativeMessageHost::OnMessage,
-                                         base::Unretained(host_.get()),
-                                         message));
+  host_task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(&NativeMessageHost::OnMessage,
+                                base::Unretained(host_.get()), message));
 }
 
 void NativeMessagePort::Core::PostMessageFromNativeHost(
     const std::string& message) {
   DCHECK(host_task_runner_->BelongsToCurrentThread());
   message_service_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(
-          &NativeMessagePort::PostMessageFromNativeHost, port_, message));
+      FROM_HERE, base::BindOnce(&NativeMessagePort::PostMessageFromNativeHost,
+                                port_, message));
 }
 
 void NativeMessagePort::Core::CloseChannel(const std::string& error_message) {
   DCHECK(host_task_runner_->BelongsToCurrentThread());
   message_service_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&NativeMessagePort::CloseChannel, port_, error_message));
+      base::BindOnce(&NativeMessagePort::CloseChannel, port_, error_message));
 }
 
 NativeMessagePort::NativeMessagePort(
-    base::WeakPtr<MessageService> message_service,
+    base::WeakPtr<ChannelDelegate> channel_delegate,
     const PortId& port_id,
     std::unique_ptr<NativeMessageHost> native_message_host)
-    : weak_message_service_(message_service),
+    : weak_channel_delegate_(channel_delegate),
       host_task_runner_(native_message_host->task_runner()),
       port_id_(port_id),
       weak_factory_(this) {
@@ -118,16 +117,16 @@ void NativeMessagePort::DispatchOnMessage(const Message& message) {
 
 void NativeMessagePort::PostMessageFromNativeHost(const std::string& message) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  if (weak_message_service_) {
-    weak_message_service_->PostMessage(
+  if (weak_channel_delegate_) {
+    weak_channel_delegate_->PostMessage(
         port_id_, Message(message, false /* user_gesture */));
   }
 }
 
 void NativeMessagePort::CloseChannel(const std::string& error_message) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  if (weak_message_service_) {
-    weak_message_service_->CloseChannel(port_id_, error_message);
+  if (weak_channel_delegate_) {
+    weak_channel_delegate_->CloseChannel(port_id_, error_message);
   }
 }
 

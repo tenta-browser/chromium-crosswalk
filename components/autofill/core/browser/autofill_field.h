@@ -59,6 +59,10 @@ class AutofillField : public FormFieldData {
     parseable_name_ = parseable_name;
   }
 
+  // Set the heuristic or server type, depending on whichever is currently
+  // assigned, to |type|.
+  void SetTypeTo(ServerFieldType type);
+
   // This function automatically chooses between server and heuristic autofill
   // type, depending on the data available.
   AutofillType Type() const;
@@ -96,6 +100,13 @@ class AutofillField : public FormFieldData {
     return generation_type_;
   }
 
+  void set_generated_password_changed(bool generated_password_changed) {
+    generated_password_changed_ = generated_password_changed;
+  }
+  bool generated_password_changed() const {
+    return generated_password_changed_;
+  }
+
   void set_form_classifier_outcome(
       AutofillUploadContents::Field::FormClassifierOutcome outcome) {
     form_classifier_outcome_ = outcome;
@@ -103,6 +114,14 @@ class AutofillField : public FormFieldData {
   AutofillUploadContents::Field::FormClassifierOutcome form_classifier_outcome()
       const {
     return form_classifier_outcome_;
+  }
+
+  void set_username_vote_type(
+      AutofillUploadContents::Field::UsernameVoteType type) {
+    username_vote_type_ = type;
+  }
+  AutofillUploadContents::Field::UsernameVoteType username_vote_type() const {
+    return username_vote_type_;
   }
 
   // Set |field_data|'s value to |value|. Uses |field|, |address_language_code|,
@@ -176,8 +195,15 @@ class AutofillField : public FormFieldData {
   // The type of password generation event, if it happened.
   AutofillUploadContents::Field::PasswordGenerationType generation_type_;
 
+  // Whether the generated password was changed by user.
+  bool generated_password_changed_;
+
   // The outcome of HTML parsing based form classifier.
   AutofillUploadContents::Field::FormClassifierOutcome form_classifier_outcome_;
+
+  // The username vote type, if the autofill type is USERNAME. Otherwise, the
+  // field is ignored.
+  AutofillUploadContents::Field::UsernameVoteType username_vote_type_;
 
   DISALLOW_COPY_AND_ASSIGN(AutofillField);
 };

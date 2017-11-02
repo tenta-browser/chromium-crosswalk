@@ -16,6 +16,7 @@ settings.ContentSettingsTypes = {
   COOKIES: 'cookies',
   IMAGES: 'images',
   JAVASCRIPT: 'javascript',
+  SOUND: 'sound',
   PLUGINS: 'plugins',  // AKA Flash.
   POPUPS: 'popups',
   GEOLOCATION: 'location',
@@ -29,26 +30,41 @@ settings.ContentSettingsTypes = {
   MIDI_DEVICES: 'midi-sysex',
   USB_DEVICES: 'usb-chooser-data',
   ZOOM_LEVELS: 'zoom-levels',
-// <if expr="chromeos">
+  // <if expr="chromeos">
   PROTECTED_CONTENT: 'protectedContent',
-// </if>
-  SUBRESOURCE_FILTER: 'subresource-filter',
+  // </if>
+  ADS: 'ads',
 };
 
 /**
- * Contains the possible string values for a given contentSettingsType.
+ * Contains the possible string values for a given ContentSettingsTypes.
+ * This should be kept in sync with the |ContentSetting| enum in
+ * components/content_settings/core/common/content_settings.h
  * @enum {string}
- *
- * TODO(dschuyler): This should be rename as ContentSetting to maintain
- * nomenclature with C++.
  */
-settings.PermissionValues = {
+settings.ContentSetting = {
   DEFAULT: 'default',
   ALLOW: 'allow',
   BLOCK: 'block',
   ASK: 'ask',
   SESSION_ONLY: 'session_only',
   IMPORTANT_CONTENT: 'detect_important_content',
+};
+
+/**
+ * Contains the possible sources of a ContentSetting.
+ * This should be kept in sync with the |SiteSettingSource| enum in
+ * chrome/browser/ui/webui/site_settings_helper.h
+ * @enum {string}
+ */
+settings.SiteSettingSource = {
+  EMBARGO: 'embargo',
+  EXTENSION: 'extension',
+  INSECURE_ORIGIN: 'insecure-origin',
+  KILL_SWITCH: 'kill-switch',
+  POLICY: 'policy',
+  PREFERENCE: 'preference',
+  DEFAULT: 'default',
 };
 
 /**

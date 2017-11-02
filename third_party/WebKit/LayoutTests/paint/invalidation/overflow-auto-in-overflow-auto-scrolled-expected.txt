@@ -4,7 +4,7 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow DIV id='innerDiv'",
@@ -12,9 +12,19 @@
           "reason": "subtree"
         },
         {
+          "object": "LayoutBlockFlow DIV",
+          "rect": [8, 8, 300, 300],
+          "reason": "subtree"
+        },
+        {
+          "object": "LayoutBlockFlow DIV",
+          "rect": [8, 8, 300, 300],
+          "reason": "subtree"
+        },
+        {
           "object": "LayoutBlockFlow DIV id='innerDiv'",
           "rect": [762, 8, 15, 300],
-          "reason": "scroll"
+          "reason": "scroll control"
         }
       ]
     }
@@ -26,7 +36,7 @@
     },
     {
       "object": "VerticalScrollbar",
-      "reason": "scroll"
+      "reason": "scroll control"
     },
     {
       "object": "LayoutBlockFlow DIV",

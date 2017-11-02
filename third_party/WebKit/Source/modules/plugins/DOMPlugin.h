@@ -20,30 +20,25 @@
 #ifndef DOMPlugin_h
 #define DOMPlugin_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/dom/ContextLifecycleObserver.h"
 #include "modules/plugins/DOMMimeType.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Forward.h"
 #include "platform/wtf/RefPtr.h"
 
 namespace blink {
 
-class PluginData;
-
-class DOMPlugin final : public GarbageCollectedFinalized<DOMPlugin>,
+class DOMPlugin final : public GarbageCollected<DOMPlugin>,
                         public ScriptWrappable,
                         public ContextClient {
   USING_GARBAGE_COLLECTED_MIXIN(DOMPlugin);
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static DOMPlugin* Create(PluginData* plugin_data,
-                           LocalFrame* frame,
-                           unsigned index) {
-    return new DOMPlugin(plugin_data, frame, index);
+  static DOMPlugin* Create(LocalFrame* frame, const PluginInfo& plugin_info) {
+    return new DOMPlugin(frame, plugin_info);
   }
-  virtual ~DOMPlugin();
 
   String name() const;
   String filename() const;
@@ -57,14 +52,9 @@ class DOMPlugin final : public GarbageCollectedFinalized<DOMPlugin>,
   DECLARE_VIRTUAL_TRACE();
 
  private:
-  DOMPlugin(PluginData*, LocalFrame*, unsigned index);
+  DOMPlugin(LocalFrame*, const PluginInfo&);
 
-  const PluginInfo& GetPluginInfo() const {
-    return plugin_data_->Plugins()[index_];
-  }
-
-  RefPtr<PluginData> plugin_data_;
-  unsigned index_;
+  Member<const PluginInfo> plugin_info_;
 };
 
 }  // namespace blink

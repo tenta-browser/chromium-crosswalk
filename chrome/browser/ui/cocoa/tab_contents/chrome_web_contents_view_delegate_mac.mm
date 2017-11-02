@@ -16,6 +16,7 @@
 #include "chrome/browser/ui/tab_contents/chrome_web_contents_view_delegate.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
+#include "ui/base/ui_features.h"
 
 ChromeWebContentsViewDelegateMac::ChromeWebContentsViewDelegateMac(
     content::WebContents* web_contents)
@@ -74,8 +75,7 @@ void ChromeWebContentsViewDelegateMac::ShowMenu(
   // the second mouse event arrives. In this case, |ShowContextMenu()| will
   // get called multiple times - if so, don't create another context menu.
   // TODO(asvitkine): Fix the renderer so that it doesn't do this.
-  content::RenderWidgetHostView* widget_view = GetActiveRenderWidgetHostView();
-  if (widget_view && widget_view->IsShowingContextMenu())
+  if (web_contents_->IsShowingContextMenu())
     return;
 
   context_menu_->Show();
@@ -125,6 +125,7 @@ ChromeWebContentsViewDelegateMac::GetActiveRenderWidgetHostView() {
       web_contents_->GetTopLevelRenderWidgetHostView();
 }
 
+#if !BUILDFLAG(MAC_VIEWS_BROWSER)
 namespace chrome {
 
 content::WebContentsViewDelegate* CreateWebContentsViewDelegate(
@@ -133,3 +134,4 @@ content::WebContentsViewDelegate* CreateWebContentsViewDelegate(
 }
 
 }  // namespace chrome
+#endif  // MAC_VIEWS_BROWSER

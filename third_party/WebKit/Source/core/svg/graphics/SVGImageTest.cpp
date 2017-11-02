@@ -4,6 +4,9 @@
 
 #include "core/svg/graphics/SVGImage.h"
 
+#include "core/frame/LocalFrameView.h"
+#include "core/layout/LayoutView.h"
+#include "core/paint/PaintLayer.h"
 #include "core/svg/graphics/SVGImageChromeClient.h"
 #include "platform/SharedBuffer.h"
 #include "platform/Timer.h"
@@ -55,6 +58,8 @@ class SVGImageTest : public ::testing::Test {
 
     void ChangedInRect(const Image*, const IntRect&) override {}
 
+    void AsyncLoadCompleted(const blink::Image*) override {}
+
     DEFINE_INLINE_VIRTUAL_TRACE() { ImageObserver::Trace(visitor); }
 
    private:
@@ -98,9 +103,8 @@ TEST_F(SVGImageTest, TimelineSuspendAndResume) {
   // Fire the timer/trigger a frame update. Since the observer always returns
   // true for shouldPauseAnimation, this will result in the timeline being
   // suspended.
-  // TODO(alexclarke): Move over to using base::TimeDelta and base::TimeTicks so
-  // we can avoid computations like this.
-  testing::RunDelayedTasks(1.0 + timer->NextFireInterval() * 1000.0);
+  testing::RunDelayedTasks(TimeDelta::FromMilliseconds(1) +
+                           TimeDelta::FromSecondsD(timer->NextFireInterval()));
   EXPECT_TRUE(chrome_client.IsSuspended());
   EXPECT_FALSE(timer->IsActive());
 
@@ -131,9 +135,8 @@ TEST_F(SVGImageTest, ResetAnimation) {
 
   // Fire the timer/trigger a frame update. The timeline will remain
   // suspended and no frame will be scheduled.
-  // TODO(alexclarke): Move over to using base::TimeDelta and base::TimeTicks so
-  // we can avoid computations like this.
-  testing::RunDelayedTasks(1.0 + timer->NextFireInterval() * 1000.0);
+  testing::RunDelayedTasks(TimeDelta::FromMillisecondsD(1) +
+                           TimeDelta::FromSecondsD(timer->NextFireInterval()));
   EXPECT_TRUE(chrome_client.IsSuspended());
   EXPECT_FALSE(timer->IsActive());
 
@@ -141,6 +144,19 @@ TEST_F(SVGImageTest, ResetAnimation) {
   PumpFrame();
   EXPECT_FALSE(chrome_client.IsSuspended());
   EXPECT_TRUE(timer->IsActive());
+}
+
+TEST_F(SVGImageTest, SupportsSubsequenceCaching) {
+  const bool kShouldPause = true;
+  Load(kAnimatedDocument, kShouldPause);
+  PumpFrame();
+  LocalFrame* local_frame =
+      ToLocalFrame(GetImage().GetPageForTesting()->MainFrame());
+  EXPECT_TRUE(local_frame->GetDocument()->IsSVGDocument());
+  LayoutObject* svg_root = local_frame->View()->GetLayoutView()->FirstChild();
+  EXPECT_TRUE(svg_root->IsSVGRoot());
+  EXPECT_TRUE(
+      ToLayoutBoxModelObject(svg_root)->Layer()->SupportsSubsequenceCaching());
 }
 
 }  // namespace blink

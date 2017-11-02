@@ -7,20 +7,20 @@
 namespace content {
 
 FakeRendererCompositorFrameSink::FakeRendererCompositorFrameSink(
-    cc::mojom::MojoCompositorFrameSinkPtr sink,
-    cc::mojom::MojoCompositorFrameSinkClientRequest request)
+    viz::mojom::CompositorFrameSinkPtr sink,
+    viz::mojom::CompositorFrameSinkClientRequest request)
     : binding_(this, std::move(request)), sink_(std::move(sink)) {}
 
 FakeRendererCompositorFrameSink::~FakeRendererCompositorFrameSink() = default;
 
 void FakeRendererCompositorFrameSink::DidReceiveCompositorFrameAck(
-    const cc::ReturnedResourceArray& resources) {
+    const std::vector<viz::ReturnedResource>& resources) {
   ReclaimResources(resources);
   did_receive_ack_ = true;
 }
 
 void FakeRendererCompositorFrameSink::ReclaimResources(
-    const cc::ReturnedResourceArray& resources) {
+    const std::vector<viz::ReturnedResource>& resources) {
   last_reclaimed_resources_ = resources;
 }
 

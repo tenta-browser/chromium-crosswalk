@@ -400,10 +400,12 @@ TEST(RemoteSuggestionTest, CreateFromProtoToProtoRoundtrip) {
   proto.set_dismissed(false);
   proto.set_remote_category_id(1);
   proto.set_fetch_date(1476364691);
+  proto.set_content_type(SnippetProto_ContentType_VIDEO);
   auto* source = proto.add_sources();
   source->set_url("http://cool-suggestions.com/");
   source->set_publisher_name("Great Suggestions Inc.");
   source->set_amp_url("http://cdn.ampproject.org/c/foo/");
+  proto.set_rank(7);
 
   std::unique_ptr<RemoteSuggestion> snippet =
       RemoteSuggestion::CreateFromProto(proto);
@@ -563,6 +565,41 @@ TEST(RemoteSuggestionTest, ToContentSuggestionWithNotificationInfo) {
   ASSERT_THAT(sugg.notification_extra(), NotNull());
   EXPECT_THAT(sugg.notification_extra()->deadline.ToJavaTime(),
               Eq(1467291697000));
+}
+
+TEST(RemoteSuggestionTest, ToContentSuggestionWithContentTypeVideo) {
+  auto json = ContentSuggestionSnippet();
+  json->SetString("contentType", "VIDEO");
+  auto snippet = RemoteSuggestion::CreateFromContentSuggestionsDictionary(
+      *json, 0, base::Time());
+  ASSERT_THAT(snippet, NotNull());
+  ContentSuggestion content_suggestion = snippet->ToContentSuggestion(
+      Category::FromKnownCategory(KnownCategories::ARTICLES));
+
+  EXPECT_THAT(content_suggestion.is_video_suggestion(), Eq(true));
+}
+
+TEST(RemoteSuggestionTest, ToContentSuggestionWithContentTypeUnknown) {
+  auto json = ContentSuggestionSnippet();
+  json->SetString("contentType", "UNKNOWN");
+  auto snippet = RemoteSuggestion::CreateFromContentSuggestionsDictionary(
+      *json, 0, base::Time());
+  ASSERT_THAT(snippet, NotNull());
+  ContentSuggestion content_suggestion = snippet->ToContentSuggestion(
+      Category::FromKnownCategory(KnownCategories::ARTICLES));
+
+  EXPECT_THAT(content_suggestion.is_video_suggestion(), Eq(false));
+}
+
+TEST(RemoteSuggestionTest, ToContentSuggestionWithMissingContentType) {
+  auto json = ContentSuggestionSnippet();
+  auto snippet = RemoteSuggestion::CreateFromContentSuggestionsDictionary(
+      *json, 0, base::Time());
+  ASSERT_THAT(snippet, NotNull());
+  ContentSuggestion content_suggestion = snippet->ToContentSuggestion(
+      Category::FromKnownCategory(KnownCategories::ARTICLES));
+
+  EXPECT_THAT(content_suggestion.is_video_suggestion(), Eq(false));
 }
 
 }  // namespace

@@ -104,9 +104,8 @@ v8::Local<v8::Value> LanguageDetectionResult::ToValue(ScriptContext* context) {
   v8::Isolate* isolate = v8_context->GetIsolate();
   v8::EscapableHandleScope handle_scope(isolate);
 
-  std::unique_ptr<content::V8ValueConverter> converter(
-      content::V8ValueConverter::create());
-  v8::Local<v8::Value> result = converter->ToV8Value(&dict_value, v8_context);
+  v8::Local<v8::Value> result =
+      content::V8ValueConverter::Create()->ToV8Value(&dict_value, v8_context);
   return handle_scope.Escape(result);
 }
 
@@ -129,7 +128,7 @@ void InitDetectedLanguages(
           CLD2::LanguageCode(static_cast<CLD2::Language>(languages[i]));
     }
     detected_languages->push_back(
-        base::MakeUnique<DetectedLanguage>(language_code, percents[i]));
+        std::make_unique<DetectedLanguage>(language_code, percents[i]));
   }
 }
 
@@ -171,7 +170,7 @@ void InitDetectedLanguages(
     *is_reliable = *is_reliable && lang_result.is_reliable;
     const int percent = static_cast<int>(100 * lang_result.proportion);
     detected_languages->push_back(
-        base::MakeUnique<DetectedLanguage>(language_code, percent));
+        std::make_unique<DetectedLanguage>(language_code, percent));
   }
 
   if (detected_languages->empty()) {

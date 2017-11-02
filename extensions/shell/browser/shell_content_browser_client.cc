@@ -126,12 +126,9 @@ bool ShellContentBrowserClient::ShouldUseProcessPerSite(
 void ShellContentBrowserClient::GetQuotaSettings(
     content::BrowserContext* context,
     content::StoragePartition* partition,
-    const storage::OptionalQuotaSettingsCallback& callback) {
-  content::BrowserThread::PostTaskAndReplyWithResult(
-      content::BrowserThread::FILE, FROM_HERE,
-      base::Bind(&storage::CalculateNominalDynamicSettings,
-                 partition->GetPath(), context->IsOffTheRecord()),
-      callback);
+    storage::OptionalQuotaSettingsCallback callback) {
+  storage::GetNominalDynamicSettings(
+      partition->GetPath(), context->IsOffTheRecord(), std::move(callback));
 }
 
 bool ShellContentBrowserClient::IsHandledURL(const GURL& url) {
@@ -253,14 +250,14 @@ ShellContentBrowserClient::CreateThrottlesForNavigation(
     content::NavigationHandle* navigation_handle) {
   std::vector<std::unique_ptr<content::NavigationThrottle>> throttles;
   throttles.push_back(
-      base::MakeUnique<ExtensionNavigationThrottle>(navigation_handle));
+      std::make_unique<ExtensionNavigationThrottle>(navigation_handle));
   return throttles;
 }
 
 std::unique_ptr<content::NavigationUIData>
 ShellContentBrowserClient::GetNavigationUIData(
     content::NavigationHandle* navigation_handle) {
-  return base::MakeUnique<ShellNavigationUIData>(navigation_handle);
+  return std::make_unique<ShellNavigationUIData>(navigation_handle);
 }
 
 ShellBrowserMainParts* ShellContentBrowserClient::CreateShellBrowserMainParts(
@@ -271,19 +268,24 @@ ShellBrowserMainParts* ShellContentBrowserClient::CreateShellBrowserMainParts(
 
 void ShellContentBrowserClient::AppendRendererSwitches(
     base::CommandLine* command_line) {
-  // TODO(jamescook): Should we check here if the process is in the extension
-  // service process map, or can we assume all renderers are extension
-  // renderers?
-  command_line->AppendSwitch(switches::kExtensionProcess);
+  static const char* const kSwitchNames[] = {
+      switches::kWhitelistedExtensionID,
+      // TODO(jamescook): Should we check here if the process is in the
+      // extension service process map, or can we assume all renderers are
+      // extension renderers?
+      switches::kExtensionProcess,
+  };
+  command_line->CopySwitchesFrom(*base::CommandLine::ForCurrentProcess(),
+                                 kSwitchNames, arraysize(kSwitchNames));
 
 #if !defined(DISABLE_NACL)
   // NOTE: app_shell does not support non-SFI mode, so it does not pass through
   // SFI switches either here or for the zygote process.
-  static const char* const kSwitchNames[] = {
-    ::switches::kEnableNaClDebug,
+  static const char* const kNaclSwitchNames[] = {
+      ::switches::kEnableNaClDebug,
   };
   command_line->CopySwitchesFrom(*base::CommandLine::ForCurrentProcess(),
-                                 kSwitchNames, arraysize(kSwitchNames));
+                                 kNaclSwitchNames, arraysize(kNaclSwitchNames));
 #endif  // !defined(DISABLE_NACL)
 }
 

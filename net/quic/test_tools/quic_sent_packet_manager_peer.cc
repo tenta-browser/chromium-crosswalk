@@ -38,12 +38,6 @@ bool QuicSentPacketManagerPeer::GetUseNewRto(
 }
 
 // static
-bool QuicSentPacketManagerPeer::GetUndoRetransmits(
-    QuicSentPacketManager* sent_packet_manager) {
-  return sent_packet_manager->undo_pending_retransmits_;
-}
-
-// static
 void QuicSentPacketManagerPeer::SetPerspective(
     QuicSentPacketManager* sent_packet_manager,
     Perspective perspective) {
@@ -80,17 +74,6 @@ void QuicSentPacketManagerPeer::SetLossAlgorithm(
 bool QuicSentPacketManagerPeer::HasPendingPackets(
     const QuicSentPacketManager* sent_packet_manager) {
   return sent_packet_manager->unacked_packets_.HasInFlightPackets();
-}
-
-// static
-QuicTime QuicSentPacketManagerPeer::GetSentTime(
-    const QuicSentPacketManager* sent_packet_manager,
-    QuicPacketNumber packet_number) {
-  DCHECK(sent_packet_manager->unacked_packets_.IsUnacked(packet_number));
-
-  return sent_packet_manager->unacked_packets_
-      .GetTransmissionInfo(packet_number)
-      .sent_time;
 }
 
 // static
@@ -150,13 +133,6 @@ QuicByteCount QuicSentPacketManagerPeer::GetBytesInFlight(
 }
 
 // static
-QuicSentPacketManager::NetworkChangeVisitor*
-QuicSentPacketManagerPeer::GetNetworkChangeVisitor(
-    const QuicSentPacketManager* sent_packet_manager) {
-  return sent_packet_manager->network_change_visitor_;
-}
-
-// static
 void QuicSentPacketManagerPeer::SetConsecutiveRtoCount(
     QuicSentPacketManager* sent_packet_manager,
     size_t count) {
@@ -180,6 +156,13 @@ QuicSustainedBandwidthRecorder& QuicSentPacketManagerPeer::GetBandwidthRecorder(
 bool QuicSentPacketManagerPeer::UsingPacing(
     const QuicSentPacketManager* sent_packet_manager) {
   return sent_packet_manager->using_pacing_;
+}
+
+// static
+void QuicSentPacketManagerPeer::SetUsingPacing(
+    QuicSentPacketManager* sent_packet_manager,
+    bool using_pacing) {
+  sent_packet_manager->using_pacing_ = using_pacing;
 }
 
 // static

@@ -98,8 +98,8 @@ void ImageDocumentTest::CreateDocumentWithoutLoadingImage(int view_width,
 
   LocalFrame& frame = dummy_page_holder_->GetFrame();
   frame.GetDocument()->Shutdown();
-  DocumentInit init(KURL(), &frame);
-  frame.DomWindow()->InstallNewDocument("image/jpeg", init);
+  DocumentInit init = DocumentInit::Create().WithFrame(&frame);
+  frame.DomWindow()->InstallNewDocument("image/jpeg", init, false);
 }
 
 void ImageDocumentTest::CreateDocument(int view_width, int view_height) {
@@ -117,7 +117,7 @@ void ImageDocumentTest::LoadImage() {
   DocumentParser* parser = GetDocument().ImplicitOpen(
       ParserSynchronizationPolicy::kForceSynchronousParsing);
   const Vector<unsigned char>& data = JpegImage();
-  parser->AppendBytes(reinterpret_cast<const char*>(data.Data()), data.size());
+  parser->AppendBytes(reinterpret_cast<const char*>(data.data()), data.size());
   parser->Finish();
 }
 

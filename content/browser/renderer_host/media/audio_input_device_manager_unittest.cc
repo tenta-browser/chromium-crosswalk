@@ -20,8 +20,9 @@
 #include "build/build_config.h"
 #include "content/public/common/media_stream_request.h"
 #include "content/public/test/test_browser_thread_bundle.h"
-#include "media/audio/audio_manager_base.h"
 #include "media/audio/audio_system_impl.h"
+#include "media/audio/audio_thread_impl.h"
+#include "media/audio/mock_audio_manager.h"
 #include "media/base/media_switches.h"
 #include "media/base/test_helpers.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -60,31 +61,33 @@ class MockAudioInputDeviceManagerListener
 
 class MAYBE_AudioInputDeviceManagerTest : public testing::Test {
  public:
-  MAYBE_AudioInputDeviceManagerTest() : audio_thread_("AudioSystemThread") {
-    audio_thread_.StartAndWaitForTesting();
-  }
+  MAYBE_AudioInputDeviceManagerTest() {}
 
  protected:
-  void SetUp() override {
+  virtual void Initialize() {
     base::CommandLine::ForCurrentProcess()->AppendSwitch(
         switches::kUseFakeDeviceForMediaStream);
     // AudioInputDeviceManager accesses AudioSystem from IO thread, so it never
     // runs on the same thread with it, even on Mac.
-    audio_manager_ =
-        media::AudioManager::CreateForTesting(audio_thread_.task_runner());
+    audio_manager_ = media::AudioManager::CreateForTesting(
+        base::MakeUnique<media::AudioThreadImpl>());
     // Flush the message loop to ensure proper initialization of AudioManager.
     base::RunLoop().RunUntilIdle();
-
-    audio_system_ = media::AudioSystemImpl::Create(audio_manager_.get());
-    manager_ = new AudioInputDeviceManager(audio_system_.get());
-    audio_input_listener_.reset(new MockAudioInputDeviceManagerListener());
-    manager_->RegisterListener(audio_input_listener_.get());
 
     // Use fake devices.
     devices_.emplace_back(MEDIA_DEVICE_AUDIO_CAPTURE, "Fake Device 1",
                           "fake_device_1");
     devices_.emplace_back(MEDIA_DEVICE_AUDIO_CAPTURE, "Fake Device 2",
                           "fake_device_2");
+  }
+
+  void SetUp() override {
+    Initialize();
+
+    audio_system_ = media::AudioSystemImpl::Create(audio_manager_.get());
+    manager_ = new AudioInputDeviceManager(audio_system_.get());
+    audio_input_listener_.reset(new MockAudioInputDeviceManagerListener());
+    manager_->RegisterListener(audio_input_listener_.get());
 
     // Wait until we get the list.
     base::RunLoop().RunUntilIdle();
@@ -92,24 +95,21 @@ class MAYBE_AudioInputDeviceManagerTest : public testing::Test {
 
   void TearDown() override {
     manager_->UnregisterListener(audio_input_listener_.get());
-    audio_system_.reset();
-    audio_manager_.reset();
-    audio_thread_.Stop();
+    audio_manager_->Shutdown();
   }
 
   void WaitForOpenCompletion() {
     media::WaitableMessageLoopEvent event;
-    audio_thread_.task_runner()->PostTaskAndReply(
-        FROM_HERE, base::Bind(&base::DoNothing), event.GetClosure());
-    // Runs the loop and waits for the |audio_thread_| to call event's
+    audio_manager_->GetTaskRunner()->PostTaskAndReply(
+        FROM_HERE, base::BindOnce(&base::DoNothing), event.GetClosure());
+    // Runs the loop and waits for the audio thread to call event's
     // closure.
     event.RunAndWait();
     base::RunLoop().RunUntilIdle();
   }
 
   TestBrowserThreadBundle thread_bundle_;
-  base::Thread audio_thread_;
-  media::ScopedAudioManagerPtr audio_manager_;
+  std::unique_ptr<media::AudioManager> audio_manager_;
   std::unique_ptr<media::AudioSystem> audio_system_;
   scoped_refptr<AudioInputDeviceManager> manager_;
   std::unique_ptr<MockAudioInputDeviceManagerListener> audio_input_listener_;
@@ -298,6 +298,59 @@ TEST_F(MAYBE_AudioInputDeviceManagerTest, AccessInvalidSession) {
               Closed(MEDIA_DEVICE_AUDIO_CAPTURE, session_id))
       .Times(1);
   base::RunLoop().RunUntilIdle();
+}
+
+class AudioInputDeviceManagerNoDevicesTest
+    : public MAYBE_AudioInputDeviceManagerTest {
+ public:
+  AudioInputDeviceManagerNoDevicesTest() {}
+
+ protected:
+  void Initialize() override {
+    // MockAudioManager has no input and no output audio devices.
+    audio_manager_ = base::MakeUnique<media::MockAudioManager>(
+        base::MakeUnique<media::AudioThreadImpl>());
+
+    // Devices to request from AudioInputDeviceManager.
+    devices_.emplace_back(MEDIA_TAB_AUDIO_CAPTURE, "Tab capture",
+                          "tab_capture");
+    devices_.emplace_back(MEDIA_DESKTOP_AUDIO_CAPTURE, "Desktop capture",
+                          "desktop_capture");
+    devices_.emplace_back(MEDIA_DEVICE_AUDIO_CAPTURE, "Fake Device",
+                          "fake_device");
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(AudioInputDeviceManagerNoDevicesTest);
+};
+
+TEST_F(AudioInputDeviceManagerNoDevicesTest,
+       ParametersValidWithoutAudioDevices) {
+  ASSERT_FALSE(devices_.empty());
+
+  InSequence s;
+
+  for (const auto& device_request : devices_) {
+    int session_id = manager_->Open(device_request.device);
+
+    EXPECT_CALL(*audio_input_listener_,
+                Opened(device_request.device.type, session_id))
+        .Times(1);
+    WaitForOpenCompletion();
+
+    // Expects that device parameters stored by the manager are valid.
+    const StreamDeviceInfo* device_info =
+        manager_->GetOpenedDeviceInfoById(session_id);
+    EXPECT_TRUE(device_info->device.input.IsValid());
+    EXPECT_TRUE(device_info->device.matched_output.IsValid());
+
+    manager_->Close(session_id);
+    EXPECT_CALL(*audio_input_listener_,
+                Closed(device_request.device.type, session_id))
+        .Times(1);
+
+    base::RunLoop().RunUntilIdle();
+  }
 }
 
 }  // namespace content

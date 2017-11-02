@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "chrome/browser/extensions/extension_message_bubble_controller.h"
 #include "chrome/browser/ui/browser.h"
@@ -17,7 +18,6 @@
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
 #import "chrome/browser/ui/cocoa/extensions/browser_action_button.h"
 #import "chrome/browser/ui/cocoa/extensions/browser_actions_container_view.h"
-#import "chrome/browser/ui/cocoa/extensions/extension_popup_controller.h"
 #import "chrome/browser/ui/cocoa/extensions/toolbar_actions_bar_bubble_mac.h"
 #import "chrome/browser/ui/cocoa/extensions/toolbar_actions_bar_bubble_views_presenter.h"
 #import "chrome/browser/ui/cocoa/image_button_cell.h"
@@ -356,7 +356,7 @@ void ToolbarActionsBarBridge::ShowToolbarActionBubble(
 }
 
 - (gfx::Size)preferredSize {
-  return toolbarActionsBar_->GetPreferredSize();
+  return toolbarActionsBar_->GetFullSize();
 }
 
 - (NSPoint)popupPointForId:(const std::string&)id {
@@ -460,8 +460,7 @@ void ToolbarActionsBarBridge::ShowToolbarActionBubble(
   // Tracking down crbug.com/653100.
   // TODO(devlin): Remove or relax this one the bug is fixed?
   for (BrowserActionButton* button in buttons_.get()) {
-    CHECK(std::find(toolbarActions.begin(), toolbarActions.end(),
-                    [button viewController]) != toolbarActions.end());
+    CHECK(base::ContainsValue(toolbarActions, [button viewController]));
   }
   // Reorder |buttons_| to reflect |toolbarActions|. (Ugly n^2 sort, but the
   // data set should be tiny.)
@@ -599,9 +598,9 @@ void ToolbarActionsBarBridge::ShowToolbarActionBubble(
     // right edge in the container so that, if the container is animating, the
     // button appears stationary.
     if (!cocoa_l10n_util::ShouldDoExperimentalRTLLayout()) {
-      buttonFrame.origin.x = NSWidth([containerView_ frame]) -
-                             (toolbarActionsBar_->GetPreferredSize().width() -
-                              NSMinX(buttonFrame));
+      buttonFrame.origin.x =
+          NSWidth([containerView_ frame]) -
+          (toolbarActionsBar_->GetFullSize().width() - NSMinX(buttonFrame));
     }
     [button setFrame:buttonFrame animate:NO];
   }
@@ -749,8 +748,13 @@ void ToolbarActionsBarBridge::ShowToolbarActionBubble(
   // Convert the point to the container view's frame, and adjust for animation.
   NSPoint anchorInContainer =
       [containerView_ convertPoint:anchor fromView:view];
-  anchorInContainer.x -= NSMinX([containerView_ frame]) -
-      NSMinX([containerView_ animationEndFrame]);
+  if (cocoa_l10n_util::ShouldDoExperimentalRTLLayout()) {
+    anchorInContainer.x += NSMaxX([containerView_ frame]) -
+                           NSMaxX([containerView_ animationEndFrame]);
+  } else {
+    anchorInContainer.x -= NSMinX([containerView_ frame]) -
+                           NSMinX([containerView_ animationEndFrame]);
+  }
 
   return [containerView_ convertPoint:anchorInContainer toView:nil];
 }
@@ -760,8 +764,8 @@ void ToolbarActionsBarBridge::ShowToolbarActionBubble(
   NSRect buttonFrame = [self frameForIndex:index];
 
   CGFloat currentX = NSMinX([button frame]);
-  CGFloat xLeft = toolbarActionsBar_->GetPreferredSize().width() -
-      NSMinX(buttonFrame);
+  CGFloat xLeft =
+      toolbarActionsBar_->GetFullSize().width() - NSMinX(buttonFrame);
   // We check if the button is already in the correct place for the toolbar's
   // current size. This could mean that the button could be the correct distance
   // from the left or from the right edge. If it has the correct distance, we

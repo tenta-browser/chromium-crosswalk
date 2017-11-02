@@ -11,8 +11,8 @@
 class SearchModelObserver {
  public:
   // Informs the observer that the model's state has changed.
-  virtual void ModelChanged(const SearchModel::State& old_state,
-                            const SearchModel::State& new_state) = 0;
+  virtual void ModelChanged(SearchModel::Origin old_origin,
+                            SearchModel::Origin new_origin) = 0;
 
  protected:
   virtual ~SearchModelObserver() {}

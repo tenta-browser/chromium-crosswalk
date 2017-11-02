@@ -28,8 +28,12 @@
 #include "gpu/ipc/common/gpu_messages.h"
 #include "ipc/ipc_channel_handle.h"
 #include "ipc/message_filter.h"
-#include "services/resource_coordinator/public/interfaces/memory/constants.mojom.h"
+#include "services/resource_coordinator/public/interfaces/memory_instrumentation/constants.mojom.h"
 #include "services/service_manager/runner/common/client_util.h"
+
+#if defined(USE_AURA)
+#include "ui/aura/env.h"
+#endif
 
 namespace content {
 
@@ -77,8 +81,9 @@ BrowserGpuChannelHostFactory::EstablishRequest::Create(
   // PostTask outside the constructor to ensure at least one reference exists.
   task_runner->PostTask(
       FROM_HERE,
-      base::Bind(&BrowserGpuChannelHostFactory::EstablishRequest::EstablishOnIO,
-                 establish_request));
+      base::BindOnce(
+          &BrowserGpuChannelHostFactory::EstablishRequest::EstablishOnIO,
+          establish_request));
   return establish_request;
 }
 
@@ -136,8 +141,8 @@ void BrowserGpuChannelHostFactory::EstablishRequest::FinishOnIO() {
   event_.Signal();
   main_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&BrowserGpuChannelHostFactory::EstablishRequest::FinishOnMain,
-                 this));
+      base::BindOnce(
+          &BrowserGpuChannelHostFactory::EstablishRequest::FinishOnMain, this));
 }
 
 void BrowserGpuChannelHostFactory::EstablishRequest::FinishOnMain() {
@@ -182,10 +187,6 @@ void BrowserGpuChannelHostFactory::CloseChannel() {
   }
 }
 
-bool BrowserGpuChannelHostFactory::CanUseForTesting() {
-  return GpuDataManager::GetInstance()->GpuAccessAllowed(NULL);
-}
-
 void BrowserGpuChannelHostFactory::Initialize(bool establish_gpu_channel) {
   DCHECK(!instance_);
   instance_ = new BrowserGpuChannelHostFactory();
@@ -218,7 +219,7 @@ BrowserGpuChannelHostFactory::BrowserGpuChannelHostFactory()
     if (!cache_dir.empty()) {
       GetIOThreadTaskRunner()->PostTask(
           FROM_HERE,
-          base::Bind(
+          base::BindOnce(
               &BrowserGpuChannelHostFactory::InitializeShaderDiskCacheOnIO,
               gpu_client_id_, cache_dir));
     }
@@ -255,7 +256,10 @@ BrowserGpuChannelHostFactory::AllocateSharedMemory(size_t size) {
 
 void BrowserGpuChannelHostFactory::EstablishGpuChannel(
     const gpu::GpuChannelEstablishedCallback& callback) {
-  DCHECK(!service_manager::ServiceManagerIsRemote());
+#if defined(USE_AURA)
+  DCHECK_EQ(aura::Env::Mode::LOCAL, aura::Env::GetInstance()->mode());
+#endif
+  DCHECK(IsMainThread());
   if (gpu_channel_.get() && gpu_channel_->IsLost()) {
     DCHECK(!pending_request_.get());
     // Recreate the channel if it has been lost.

@@ -9,6 +9,8 @@
 
 #import "ios/chrome/browser/ui/collection_view/collection_view_controller.h"
 
+extern NSString* const kSigninConfirmationCollectionViewId;
+
 @class ChromeIdentity;
 @class SigninConfirmationViewController;
 
@@ -31,13 +33,14 @@
 - (instancetype)initWithIdentity:(ChromeIdentity*)identity
     NS_DESIGNATED_INITIALIZER;
 
-- (instancetype)initWithStyle:(CollectionViewControllerStyle)style
+- (instancetype)initWithLayout:(UICollectionViewLayout*)layout
+                         style:(CollectionViewControllerStyle)style
     NS_UNAVAILABLE;
 
 // Scrolls the confirmation view to the bottom of its content.
 - (void)scrollToBottom;
 
-@property(nonatomic, assign) id<SigninConfirmationViewControllerDelegate>
+@property(nonatomic, weak) id<SigninConfirmationViewControllerDelegate>
     delegate;
 
 @end

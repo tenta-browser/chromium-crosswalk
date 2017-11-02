@@ -4,17 +4,32 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow DIV id='test'",
           "rect": [38, 74, 152, 110],
-          "reason": "forced by layout"
+          "reason": "geometry"
         },
         {
           "object": "LayoutText #text",
           "rect": [39, 75, 123, 108],
-          "reason": "layoutObject removal"
+          "reason": "disappeared"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [112, 165, 42, 18],
+          "reason": "geometry"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [74, 75, 39, 18],
+          "reason": "geometry"
+        },
+        {
+          "object": "LayoutText #text",
+          "rect": [39, 75, 36, 18],
+          "reason": "geometry"
         }
       ]
     }
@@ -22,43 +37,51 @@
   "objectPaintInvalidations": [
     {
       "object": "LayoutText #text",
-      "reason": "layoutObject removal"
+      "reason": "disappeared"
     },
     {
       "object": "LayoutInline SPAN id='removeme'",
-      "reason": "layoutObject removal"
+      "reason": "disappeared"
+    },
+    {
+      "object": "LayoutBlockFlow HTML",
+      "reason": "selection"
+    },
+    {
+      "object": "LayoutBlockFlow BODY",
+      "reason": "selection"
     },
     {
       "object": "LayoutBlockFlow DIV id='test'",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "RootInlineBox",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "LayoutText #text",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "InlineTextBox 'hello '",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "LayoutText #text",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "InlineTextBox 'world'",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "LayoutBR BR",
-      "reason": "forced by layout"
+      "reason": "geometry"
     },
     {
       "object": "InlineTextBox '\n'",
-      "reason": "forced by layout"
+      "reason": "geometry"
     }
   ]
 }

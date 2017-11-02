@@ -35,7 +35,7 @@
 #include "WebPrivatePtr.h"
 
 #if INSIDE_BLINK
-#include "wtf/PassRefPtr.h"
+#include "platform/wtf/PassRefPtr.h"
 #else
 #include <string>
 #endif
@@ -66,6 +66,7 @@ class WebThreadSafeData {
 
 #if INSIDE_BLINK
   BLINK_PLATFORM_EXPORT WebThreadSafeData(WTF::PassRefPtr<RawData>);
+  BLINK_PLATFORM_EXPORT WebThreadSafeData(WTF::RefPtr<RawData>&&);
   BLINK_PLATFORM_EXPORT WebThreadSafeData& operator=(WTF::PassRefPtr<RawData>);
 #else
   operator std::string() const {

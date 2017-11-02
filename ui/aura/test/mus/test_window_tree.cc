@@ -137,10 +137,16 @@ void TestWindowTree::SetWindowBounds(
     uint32_t change_id,
     uint32_t window_id,
     const gfx::Rect& bounds,
-    const base::Optional<cc::LocalSurfaceId>& local_surface_id) {
+    const base::Optional<viz::LocalSurfaceId>& local_surface_id) {
   window_id_ = window_id;
   last_local_surface_id_ = local_surface_id;
   OnChangeReceived(change_id, WindowTreeChangeType::BOUNDS);
+}
+
+void TestWindowTree::SetWindowTransform(uint32_t change_id,
+                                        uint32_t window_id,
+                                        const gfx::Transform& transform) {
+  OnChangeReceived(change_id, WindowTreeChangeType::TRANSFORM);
 }
 
 void TestWindowTree::SetClientArea(
@@ -181,8 +187,8 @@ void TestWindowTree::SetWindowOpacity(uint32_t change_id,
 
 void TestWindowTree::AttachCompositorFrameSink(
     uint32_t window_id,
-    mojo::InterfaceRequest<cc::mojom::MojoCompositorFrameSink> surface,
-    cc::mojom::MojoCompositorFrameSinkClientPtr client) {}
+    mojo::InterfaceRequest<viz::mojom::CompositorFrameSink> surface,
+    viz::mojom::CompositorFrameSinkClientPtr client) {}
 
 void TestWindowTree::AddWindow(uint32_t change_id,
                                uint32_t parent,
@@ -216,6 +222,10 @@ void TestWindowTree::SetModalType(uint32_t change_id,
                                   ui::ModalType modal_type) {
   OnChangeReceived(change_id, WindowTreeChangeType::MODAL);
 }
+
+void TestWindowTree::SetChildModalParent(uint32_t change_id,
+                                         Id window_id,
+                                         Id parent_window_id) {}
 
 void TestWindowTree::ReorderWindow(uint32_t change_id,
                                    uint32_t window_id,
@@ -254,9 +264,9 @@ void TestWindowTree::SetEventTargetingPolicy(
     uint32_t window_id,
     ui::mojom::EventTargetingPolicy policy) {}
 
-void TestWindowTree::SetPredefinedCursor(uint32_t change_id,
-                                         uint32_t window_id,
-                                         ui::mojom::CursorType cursor_id) {
+void TestWindowTree::SetCursor(uint32_t change_id,
+                               Id transport_window_id,
+                               ui::CursorData cursor_data) {
   OnChangeReceived(change_id);
 }
 

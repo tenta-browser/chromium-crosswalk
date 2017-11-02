@@ -7,7 +7,9 @@
 
 #include <list>
 
+#include "base/cancelable_callback.h"
 #include "device/hid/hid_service.h"
+#include "device/hid/public/interfaces/hid.mojom.h"
 #include "u2f_device.h"
 
 namespace net {
@@ -18,12 +20,11 @@ namespace device {
 
 class U2fMessage;
 class HidConnection;
-class HidDeviceInfo;
 
 class U2fHidDevice : public U2fDevice {
  public:
-  U2fHidDevice(scoped_refptr<HidDeviceInfo>);
-  ~U2fHidDevice();
+  U2fHidDevice(device::mojom::HidDeviceInfoPtr);
+  ~U2fHidDevice() final;
 
   // Send a U2f command to this device
   void DeviceTransact(std::unique_ptr<U2fApduCommand> command,
@@ -85,11 +86,17 @@ class U2fHidDevice : public U2fDevice {
   void OnWink(const WinkCallback& callback,
               bool success,
               std::unique_ptr<U2fMessage> response);
+  void ArmTimeout(const DeviceCallback& callback);
+  void OnTimeout(const DeviceCallback& callback);
+  void OnDeviceTransact(bool success,
+                        std::unique_ptr<U2fApduResponse> response);
+  base::WeakPtr<U2fDevice> GetWeakPtr() override;
 
   State state_;
+  base::CancelableClosure timeout_callback_;
   std::list<std::pair<std::unique_ptr<U2fApduCommand>, DeviceCallback>>
       pending_transactions_;
-  scoped_refptr<HidDeviceInfo> device_info_;
+  device::mojom::HidDeviceInfoPtr device_info_;
   scoped_refptr<HidConnection> connection_;
   base::WeakPtrFactory<U2fHidDevice> weak_factory_;
 

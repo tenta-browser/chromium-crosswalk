@@ -49,14 +49,6 @@ struct RecentTabSuggestionExtra {
 // ReadingListSuggestionExtra contains additional data which is only available
 // for Reading List suggestions.
 struct ReadingListSuggestionExtra {
-  // State of the distillation a suggestion. This is the meaningful extract of
-  // ReadingListEntry::DistillationState for the suggestions. It is duplicated
-  // here to avoid a dependence on ReadingList.
-  enum class ReadingListSuggestionDistilledState { PENDING, SUCCESS, FAILURE };
-
-  // State of the distillation of the suggestion.
-  ReadingListSuggestionDistilledState distilled_state =
-      ReadingListSuggestionDistilledState::PENDING;
   // URL of the page whose favicon should be displayed for this suggestion.
   GURL favicon_page_url;
 };
@@ -147,6 +139,11 @@ class ContentSuggestion {
     publisher_name_ = publisher_name;
   }
 
+  bool is_video_suggestion() const { return is_video_suggestion_; }
+  void set_is_video_suggestion(bool is_video_suggestion) {
+    is_video_suggestion_ = is_video_suggestion;
+  }
+
   // TODO(pke): Remove the score from the ContentSuggestion class. The UI only
   // uses it to track user clicks (histogram data). Instead, the providers
   // should be informed about clicks and do appropriate logging themselves.
@@ -214,6 +211,8 @@ class ContentSuggestion {
   // is only populated when the ContentSuggestion is created from a
   // RemoteSuggestion.
   base::Time fetch_date_;
+
+  bool is_video_suggestion_;
 
   DISALLOW_COPY_AND_ASSIGN(ContentSuggestion);
 };

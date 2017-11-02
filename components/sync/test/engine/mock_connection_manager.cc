@@ -5,9 +5,9 @@
 #include "components/sync/test/engine/mock_connection_manager.h"
 
 #include <map>
+#include <utility>
 
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "components/sync/engine_impl/syncer_proto_util.h"
 #include "components/sync/protocol/bookmark_specifics.pb.h"
@@ -230,13 +230,13 @@ sync_pb::SyncEntity* MockConnectionManager::AddUpdateDirectory(
 }
 
 void MockConnectionManager::SetGUClientCommand(
-    sync_pb::ClientCommand* command) {
-  gu_client_command_.reset(command);
+    std::unique_ptr<sync_pb::ClientCommand> command) {
+  gu_client_command_ = std::move(command);
 }
 
 void MockConnectionManager::SetCommitClientCommand(
-    sync_pb::ClientCommand* command) {
-  commit_client_command_.reset(command);
+    std::unique_ptr<sync_pb::ClientCommand> command) {
+  commit_client_command_ = std::move(command);
 }
 
 void MockConnectionManager::SetTransientErrorId(syncable::Id id) {
@@ -548,9 +548,12 @@ void MockConnectionManager::ProcessGetUpdates(
   std::string token = response->get_updates().new_progress_marker(0).token();
   response->mutable_get_updates()->clear_new_progress_marker();
   for (int i = 0; i < gu.from_progress_marker_size(); ++i) {
+    int data_type_id = gu.from_progress_marker(i).data_type_id();
+    EXPECT_TRUE(expected_filter_.Has(
+        GetModelTypeFromSpecificsFieldNumber(data_type_id)));
     sync_pb::DataTypeProgressMarker* new_marker =
         response->mutable_get_updates()->add_new_progress_marker();
-    new_marker->set_data_type_id(gu.from_progress_marker(i).data_type_id());
+    new_marker->set_data_type_id(data_type_id);
     new_marker->set_token(token);
   }
 
@@ -595,7 +598,7 @@ void MockConnectionManager::ProcessCommit(
   map<string, string> changed_ids;
   const CommitMessage& commit_message = csm->commit();
   CommitResponse* commit_response = response_buffer->mutable_commit();
-  commit_messages_.push_back(base::MakeUnique<CommitMessage>());
+  commit_messages_.push_back(std::make_unique<CommitMessage>());
   commit_messages_.back()->CopyFrom(commit_message);
   map<string, sync_pb::CommitResponse_EntryResponse*> response_map;
   for (int i = 0; i < commit_message.entries_size(); i++) {
@@ -647,7 +650,7 @@ void MockConnectionManager::ProcessCommit(
     }
   }
   commit_responses_.push_back(
-      base::MakeUnique<CommitResponse>(*commit_response));
+      std::make_unique<CommitResponse>(*commit_response));
 
   if (commit_client_command_) {
     response_buffer->mutable_client_command()->CopyFrom(
@@ -759,15 +762,10 @@ void MockConnectionManager::SetServerNotReachable() {
 
 void MockConnectionManager::UpdateConnectionStatus() {
   if (!server_reachable_) {
-    server_status_ = HttpResponse::CONNECTION_UNAVAILABLE;
+    SetServerStatus(HttpResponse::CONNECTION_UNAVAILABLE);
   } else {
-    server_status_ = HttpResponse::SERVER_CONNECTION_OK;
+    SetServerStatus(HttpResponse::SERVER_CONNECTION_OK);
   }
-}
-
-void MockConnectionManager::SetServerStatus(
-    HttpResponse::ServerConnectionCode server_status) {
-  server_status_ = server_status;
 }
 
 }  // namespace syncer

@@ -15,9 +15,10 @@
 #include "components/metrics/metrics_service_accessor.h"
 
 class BrowserProcessImpl;
-class Profile;
 class ChromeMetricsServiceClient;
 class ChromePasswordManagerClient;
+class NavigationMetricsRecorder;
+class Profile;
 
 namespace {
 class CrashesDOMHandler;
@@ -50,21 +51,17 @@ namespace options {
 class BrowserOptionsHandler;
 }
 
-namespace precache {
-void RegisterPrecacheSyntheticFieldTrial(base::Time);
-}
-
 namespace prerender {
 bool IsOmniboxEnabled(Profile* profile);
 }
 
 namespace safe_browsing {
+class ChromeCleanerControllerDelegate;
 class DownloadUrlSBClient;
 class IncidentReportingService;
 class ReporterRunner;
 class SafeBrowsingService;
 class SafeBrowsingUIManager;
-class SRTFetcher;
 class SRTGlobalError;
 }
 
@@ -115,22 +112,22 @@ class ChromeMetricsServiceAccessor : public metrics::MetricsServiceAccessor {
       bool,
       const OnMetricsReportingCallbackType&);
   friend class options::BrowserOptionsHandler;
-  friend void precache::RegisterPrecacheSyntheticFieldTrial(base::Time);
   friend bool prerender::IsOmniboxEnabled(Profile* profile);
   friend class settings::MetricsReportingHandler;
   friend class speech::ChromeSpeechRecognitionManagerDelegate;
   friend class system_logs::ChromeInternalLogSource;
   friend class UmaSessionStats;
+  friend class safe_browsing::ChromeCleanerControllerDelegate;
   friend class safe_browsing::DownloadUrlSBClient;
   friend class safe_browsing::IncidentReportingService;
   friend class safe_browsing::ReporterRunner;
-  friend class safe_browsing::SRTFetcher;
   friend class safe_browsing::SRTGlobalError;
   friend class safe_browsing::SafeBrowsingService;
   friend class safe_browsing::SafeBrowsingUIManager;
   friend void SyzyASANRegisterExperiment(const char*, const char*);
   friend class ChromeMetricsServiceClient;
   friend class ChromePasswordManagerClient;
+  friend class NavigationMetricsRecorder;
 
   FRIEND_TEST_ALL_PREFIXES(ChromeMetricsServiceAccessorTest,
                            MetricsReportingEnabled);

@@ -38,6 +38,7 @@
 #include "content/test/mock_render_process.h"
 #include "content/test/test_content_client.h"
 #include "content/test/test_render_frame.h"
+#include "services/service_manager/public/cpp/connector.h"
 #include "third_party/WebKit/public/platform/WebGestureEvent.h"
 #include "third_party/WebKit/public/platform/WebInputEvent.h"
 #include "third_party/WebKit/public/platform/WebMouseEvent.h"
@@ -119,7 +120,7 @@ class RendererBlinkPlatformImplTestOverrideImpl
  public:
   RendererBlinkPlatformImplTestOverrideImpl(
       blink::scheduler::RendererScheduler* scheduler)
-      : RendererBlinkPlatformImpl(scheduler, nullptr) {}
+      : RendererBlinkPlatformImpl(scheduler) {}
 
   // Get rid of the dependency to the sandbox, which is not available in
   // RenderViewTest.
@@ -129,18 +130,21 @@ class RendererBlinkPlatformImplTestOverrideImpl
 RenderViewTest::RendererBlinkPlatformImplTestOverride::
     RendererBlinkPlatformImplTestOverride() {
   InitializeMojo();
-  renderer_scheduler_ = blink::scheduler::RendererScheduler::Create();
-  blink_platform_impl_.reset(
-      new RendererBlinkPlatformImplTestOverrideImpl(renderer_scheduler_.get()));
 }
 
 RenderViewTest::RendererBlinkPlatformImplTestOverride::
     ~RendererBlinkPlatformImplTestOverride() {
 }
 
-blink::Platform*
-    RenderViewTest::RendererBlinkPlatformImplTestOverride::Get() const {
+RendererBlinkPlatformImpl*
+RenderViewTest::RendererBlinkPlatformImplTestOverride::Get() const {
   return blink_platform_impl_.get();
+}
+
+void RenderViewTest::RendererBlinkPlatformImplTestOverride::Initialize() {
+  renderer_scheduler_ = blink::scheduler::RendererScheduler::Create();
+  blink_platform_impl_.reset(
+      new RendererBlinkPlatformImplTestOverrideImpl(renderer_scheduler_.get()));
 }
 
 void RenderViewTest::RendererBlinkPlatformImplTestOverride::Shutdown() {
@@ -154,12 +158,6 @@ RenderViewTest::RenderViewTest()
 }
 
 RenderViewTest::~RenderViewTest() {
-}
-
-void RenderViewTest::ProcessPendingMessages() {
-  msg_loop_.task_runner()->PostTask(FROM_HERE,
-                                    base::MessageLoop::QuitWhenIdleClosure());
-  base::RunLoop().Run();
 }
 
 WebLocalFrame* RenderViewTest::GetMainFrame() {
@@ -233,8 +231,21 @@ void RenderViewTest::SetUp() {
       test_io_thread_->task_runner(),
       mojo::edk::ScopedIPCSupport::ShutdownPolicy::FAST));
 
+  // Subclasses can set render_thread_ with their own implementation before
+  // calling RenderViewTest::SetUp().
+  // The render thread needs to exist before blink::Initialize. It also mirrors
+  // the order on Chromium initialization.
+  if (!render_thread_)
+    render_thread_.reset(new MockRenderThread());
+  render_thread_->set_routing_id(kRouteId);
+  render_thread_->set_new_window_routing_id(kNewWindowRouteId);
+  render_thread_->set_new_window_main_frame_widget_routing_id(
+      kNewFrameWidgetRouteId);
+  render_thread_->set_new_frame_routing_id(kNewFrameRouteId);
+
   // Blink needs to be initialized before calling CreateContentRendererClient()
   // because it uses blink internally.
+  blink_platform_impl_.Initialize();
   blink::Initialize(blink_platform_impl_.Get());
 
   content_client_.reset(CreateContentClient());
@@ -252,16 +263,6 @@ void RenderViewTest::SetUp() {
   // font IPCs, causing all font loading to fail.
   SetDWriteFontProxySenderForTesting(CreateFakeCollectionSender());
 #endif
-
-  // Subclasses can set render_thread_ with their own implementation before
-  // calling RenderViewTest::SetUp().
-  if (!render_thread_)
-    render_thread_.reset(new MockRenderThread());
-  render_thread_->set_routing_id(kRouteId);
-  render_thread_->set_new_window_routing_id(kNewWindowRouteId);
-  render_thread_->set_new_window_main_frame_widget_routing_id(
-      kNewFrameWidgetRouteId);
-  render_thread_->set_new_frame_routing_id(kNewFrameRouteId);
 
 #if defined(OS_MACOSX)
   autorelease_pool_.reset(new base::mac::ScopedNSAutoreleasePool());
@@ -283,6 +284,9 @@ void RenderViewTest::SetUp() {
   // Ensure that we register any necessary schemes when initializing WebKit,
   // since we are using a MockRenderThread.
   RenderThreadImpl::RegisterSchemes();
+
+  RenderThreadImpl::SetRendererBlinkPlatformImplForTesting(
+      blink_platform_impl_.Get());
 
   // This check is needed because when run under content_browsertests,
   // ResourceBundle isn't initialized (since we have to use a diferent test
@@ -322,7 +326,7 @@ void RenderViewTest::SetUp() {
 
 void RenderViewTest::TearDown() {
   // Run the loop so the release task from the renderwidget executes.
-  ProcessPendingMessages();
+  base::RunLoop().RunUntilIdle();
 
   render_thread_->SendCloseMessage();
 
@@ -333,6 +337,8 @@ void RenderViewTest::TearDown() {
 
   view_ = NULL;
   mock_process_.reset();
+
+  RenderThreadImpl::SetRendererBlinkPlatformImplForTesting(nullptr);
 
   // After telling the view to close and resetting mock_process_ we may get
   // some new tasks which need to be processed before shutting down WebKit
@@ -373,20 +379,26 @@ void RenderViewTest::SendNativeKeyEvent(
   SendWebKeyboardEvent(key_event);
 }
 
-void RenderViewTest::SendWebKeyboardEvent(
-    const blink::WebKeyboardEvent& key_event) {
+void RenderViewTest::SendInputEvent(const blink::WebInputEvent& input_event) {
   RenderViewImpl* impl = static_cast<RenderViewImpl*>(view_);
   impl->OnMessageReceived(InputMsg_HandleInputEvent(
-      0, &key_event, std::vector<const WebInputEvent*>(), ui::LatencyInfo(),
+      0, &input_event, std::vector<const WebInputEvent*>(), ui::LatencyInfo(),
       InputEventDispatchType::DISPATCH_TYPE_BLOCKING));
+}
+
+void RenderViewTest::SendWebKeyboardEvent(
+    const blink::WebKeyboardEvent& key_event) {
+  SendInputEvent(key_event);
 }
 
 void RenderViewTest::SendWebMouseEvent(
     const blink::WebMouseEvent& mouse_event) {
-  RenderViewImpl* impl = static_cast<RenderViewImpl*>(view_);
-  impl->OnMessageReceived(InputMsg_HandleInputEvent(
-      0, &mouse_event, std::vector<const WebInputEvent*>(), ui::LatencyInfo(),
-      InputEventDispatchType::DISPATCH_TYPE_BLOCKING));
+  SendInputEvent(mouse_event);
+}
+
+void RenderViewTest::SendWebGestureEvent(
+    const blink::WebGestureEvent& gesture_event) {
+  SendInputEvent(gesture_event);
 }
 
 const char* const kGetCoordinatesScript =
@@ -526,10 +538,6 @@ void RenderViewTest::Reload(const GURL& url) {
   view_->GetWebView()->UpdateAllLifecyclePhases();
 }
 
-uint32_t RenderViewTest::GetNavigationIPCType() {
-  return FrameHostMsg_DidCommitProvisionalLoad::ID;
-}
-
 void RenderViewTest::Resize(gfx::Size new_size,
                             bool is_fullscreen_granted) {
   ResizeParams params;
@@ -614,7 +622,7 @@ void RenderViewTest::OnSameDocumentNavigation(blink::WebLocalFrame* frame,
   item.SetDocumentSequenceNumber(current_item.DocumentSequenceNumber());
 
   impl->GetMainRenderFrame()->DidNavigateWithinPage(
-      frame, item,
+      item,
       is_new_navigation ? blink::kWebStandardCommit
                         : blink::kWebHistoryInertCommit,
       content_initiated);
@@ -638,7 +646,11 @@ ContentRendererClient* RenderViewTest::CreateContentRendererClient() {
 }
 
 std::unique_ptr<ResizeParams> RenderViewTest::InitialSizeParams() {
-  return base::MakeUnique<ResizeParams>();
+  auto initial_size = base::MakeUnique<ResizeParams>();
+  // Ensure the view has some size so tests involving scrolling bounds work.
+  initial_size->new_size = gfx::Size(400, 300);
+  initial_size->visible_viewport_size = gfx::Size(400, 300);
+  return initial_size;
 }
 
 void RenderViewTest::GoToOffset(int offset,

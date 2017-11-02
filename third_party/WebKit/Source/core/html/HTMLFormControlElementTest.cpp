@@ -6,7 +6,7 @@
 
 #include <memory>
 #include "core/dom/Document.h"
-#include "core/frame/FrameView.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/html/HTMLInputElement.h"
 #include "core/layout/LayoutObject.h"
 #include "core/loader/EmptyClients.h"
@@ -18,10 +18,10 @@
 namespace blink {
 
 namespace {
-class MockValidationMessageClient
-    : public GarbageCollectedFinalized<MockValidationMessageClient>,
+class MockFormValidationMessageClient
+    : public GarbageCollectedFinalized<MockFormValidationMessageClient>,
       public ValidationMessageClient {
-  USING_GARBAGE_COLLECTED_MIXIN(MockValidationMessageClient);
+  USING_GARBAGE_COLLECTED_MIXIN(MockFormValidationMessageClient);
 
  public:
   void ShowValidationMessage(const Element& anchor,
@@ -30,18 +30,19 @@ class MockValidationMessageClient
                              const String&,
                              TextDirection) override {
     anchor_ = anchor;
+    ++operation_count_;
   }
 
   void HideValidationMessage(const Element& anchor) override {
     if (anchor_ == &anchor)
       anchor_ = nullptr;
+    ++operation_count_;
   }
 
   bool IsValidationMessageVisible(const Element& anchor) override {
     return anchor_ == &anchor;
   }
 
-  void WillUnloadDocument(const Document&) override {}
   void DocumentDetached(const Document&) override {}
   void WillBeDestroyed() override {}
   DEFINE_INLINE_VIRTUAL_TRACE() {
@@ -49,8 +50,12 @@ class MockValidationMessageClient
     ValidationMessageClient::Trace(visitor);
   }
 
+  // The number of calls of ShowValidationMessage() and HideValidationMessage().
+  int OperationCount() const { return operation_count_; }
+
  private:
   Member<const Element> anchor_;
+  int operation_count_ = 0;
 };
 }
 
@@ -83,7 +88,7 @@ TEST_F(HTMLFormControlElementTest, customValidationMessageTextDirection) {
   GetDocument().View()->UpdateAllLifecyclePhases();
 
   HTMLInputElement* input =
-      toHTMLInputElement(GetDocument().GetElementById("input"));
+      toHTMLInputElement(GetDocument().getElementById("input"));
   input->setCustomValidity(
       String::FromUTF8("\xD8\xB9\xD8\xB1\xD8\xA8\xD9\x89"));
   input->setAttribute(
@@ -128,7 +133,7 @@ TEST_F(HTMLFormControlElementTest, UpdateValidationMessageSkippedIfPrinting) {
       "<body><input required id=input></body>");
   GetDocument().View()->UpdateAllLifecyclePhases();
   ValidationMessageClient* validation_message_client =
-      new MockValidationMessageClient();
+      new MockFormValidationMessageClient();
   GetPage().SetValidationMessageClient(validation_message_client);
   Page::OrdinaryPages().insert(&GetPage());
 
@@ -137,6 +142,26 @@ TEST_F(HTMLFormControlElementTest, UpdateValidationMessageSkippedIfPrinting) {
   ScopedPageSuspender suspender;  // print() suspends the page.
   input->reportValidity();
   EXPECT_FALSE(validation_message_client->IsValidationMessageVisible(*input));
+}
+
+TEST_F(HTMLFormControlElementTest, DoNotUpdateLayoutDuringDOMMutation) {
+  // The real ValidationMessageClient has UpdateStyleAndLayout*() in
+  // ShowValidationMessage(). So calling it during DOM mutation is
+  // dangerous. This test ensures ShowValidationMessage() is NOT called in
+  // appendChild(). crbug.com/756408
+  GetDocument().documentElement()->setInnerHTML("<select></select>");
+  HTMLFormControlElement* const select =
+      ToHTMLFormControlElement(GetDocument().QuerySelector("select"));
+  Element* const optgroup = GetDocument().createElement("optgroup");
+  auto validation_client = new MockFormValidationMessageClient();
+  GetDocument().GetPage()->SetValidationMessageClient(validation_client);
+
+  select->setCustomValidity("foobar");
+  select->reportValidity();
+  int start_operation_count = validation_client->OperationCount();
+  select->appendChild(optgroup);
+  EXPECT_EQ(start_operation_count, validation_client->OperationCount())
+      << "DOM mutation should not handle validation message UI in it.";
 }
 
 }  // namespace blink

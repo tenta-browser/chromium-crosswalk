@@ -18,8 +18,8 @@ ostream& operator<<(ostream& out, const Id& id) {
   return out;
 }
 
-base::Value* Id::ToValue() const {
-  return new base::Value(s_);
+std::unique_ptr<base::Value> Id::ToValue() const {
+  return std::make_unique<base::Value>(s_);
 }
 
 string Id::GetServerId() const {

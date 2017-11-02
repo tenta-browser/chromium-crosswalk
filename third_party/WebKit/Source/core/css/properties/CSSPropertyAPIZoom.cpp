@@ -10,10 +10,11 @@
 
 namespace blink {
 
-const CSSValue* CSSPropertyAPIZoom::parseSingleValue(
+const CSSValue* CSSPropertyAPIZoom::ParseSingleValue(
+    CSSPropertyID,
     CSSParserTokenRange& range,
     const CSSParserContext& context,
-    CSSPropertyID) {
+    const CSSParserLocalContext&) const {
   const CSSParserToken& token = range.Peek();
   CSSValue* zoom = nullptr;
   if (token.GetType() == kIdentToken) {
@@ -32,7 +33,7 @@ const CSSValue* CSSPropertyAPIZoom::parseSingleValue(
            ToCSSPrimitiveValue(zoom)->GetDoubleValue() == 1) ||
           (token.GetType() == kPercentageToken &&
            ToCSSPrimitiveValue(zoom)->GetDoubleValue() == 100)))
-      context.Count(UseCounter::kCSSZoomNotEqualToOne);
+      context.Count(WebFeature::kCSSZoomNotEqualToOne);
   }
   return zoom;
 }

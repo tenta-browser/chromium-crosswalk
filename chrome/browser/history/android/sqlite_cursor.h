@@ -5,9 +5,8 @@
 #ifndef CHROME_BROWSER_HISTORY_ANDROID_SQLITE_CURSOR_H_
 #define CHROME_BROWSER_HISTORY_ANDROID_SQLITE_CURSOR_H_
 
-#include <jni.h>
-
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "base/android/scoped_java_ref.h"
@@ -75,8 +74,6 @@ class SQLiteCursor {
       const std::vector<std::string>& column_names,
       history::AndroidStatement* statement,
       AndroidHistoryProviderService* service);
-
-  static bool RegisterSqliteCursor(JNIEnv* env);
 
   // JNI methods -----------------------------------------------------------
 

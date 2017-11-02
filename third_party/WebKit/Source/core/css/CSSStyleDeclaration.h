@@ -21,9 +21,9 @@
 #ifndef CSSStyleDeclaration_h
 #define CSSStyleDeclaration_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/CSSPropertyNames.h"
 #include "core/CoreExport.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/wtf/Forward.h"
 #include "platform/wtf/Noncopyable.h"
 #include "platform/wtf/text/WTFString.h"
@@ -84,8 +84,6 @@ class CORE_EXPORT CSSStyleDeclaration
   virtual CSSStyleSheet* ParentStyleSheet() const { return 0; }
 
   DEFINE_INLINE_VIRTUAL_TRACE() {}
-
-  DECLARE_VIRTUAL_TRACE_WRAPPERS();
 
  protected:
   CSSStyleDeclaration() {}

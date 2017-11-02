@@ -37,8 +37,9 @@
 #include "bindings/core/v8/V8ArrayBuffer.h"
 #include "bindings/core/v8/V8ArrayBufferView.h"
 #include "bindings/modules/v8/V8CryptoKey.h"
-#include "core/dom/DOMArrayPiece.h"
-#include "core/dom/DOMTypedArray.h"
+#include "core/typed_arrays/DOMArrayPiece.h"
+#include "core/typed_arrays/DOMTypedArray.h"
+#include "modules/crypto/CryptoUtilities.h"
 #include "platform/wtf/MathExtras.h"
 #include "platform/wtf/PtrUtil.h"
 #include "platform/wtf/Vector.h"
@@ -49,8 +50,6 @@
 namespace blink {
 
 namespace {
-
-typedef ArrayBufferOrArrayBufferView BufferSource;
 
 struct AlgorithmNameMapping {
   // Must be an upper case ASCII string.
@@ -140,7 +139,7 @@ bool VerifyAlgorithmNameMappings(const AlgorithmNameMapping* begin,
     String str(it->algorithm_name, it->algorithm_name_length);
     if (!str.ContainsOnlyASCII())
       return false;
-    if (str.DeprecatedUpper() != str)
+    if (str.UpperASCII() != str)
       return false;
   }
 
@@ -180,7 +179,9 @@ bool LookupAlgorithmIdByName(const String& algorithm_name,
   const AlgorithmNameMapping* end =
       kAlgorithmNameMappings + WTF_ARRAY_LENGTH(kAlgorithmNameMappings);
 
-  ASSERT(VerifyAlgorithmNameMappings(begin, end));
+#if DCHECK_IS_ON()
+  DCHECK(VerifyAlgorithmNameMappings(begin, end));
+#endif
 
   const AlgorithmNameMapping* it;
   if (algorithm_name.Impl()->Is8Bit())
@@ -261,11 +262,6 @@ class ErrorContext {
   // the majority of cases (up to 1 nested algorithm identifier).
   Vector<const char*, 10> messages_;
 };
-
-static WebVector<uint8_t> CopyBytes(const DOMArrayPiece& source) {
-  return WebVector<uint8_t>(static_cast<const uint8_t*>(source.Data()),
-                            source.ByteLength());
-}
 
 // Defined by the WebCrypto spec as:
 //
@@ -987,7 +983,7 @@ bool ParseAlgorithmParams(const Dictionary& raw,
       context.Add("Pbkdf2Params");
       return ParsePbkdf2Params(raw, params, context, error);
   }
-  ASSERT_NOT_REACHED();
+  NOTREACHED();
   return false;
 }
 

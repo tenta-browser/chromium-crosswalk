@@ -4,8 +4,9 @@
 
 #include "core/html/canvas/CanvasFontCache.h"
 
+#include <memory>
 #include "core/dom/Document.h"
-#include "core/frame/FrameView.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/html/canvas/CanvasContextCreationAttributes.h"
 #include "core/html/canvas/CanvasRenderingContext.h"
 #include "core/loader/EmptyClients.h"
@@ -13,7 +14,6 @@
 #include "platform/graphics/UnacceleratedImageBufferSurface.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include <memory>
 
 using ::testing::Mock;
 
@@ -55,7 +55,7 @@ void CanvasFontCacheTest::SetUp() {
   document_->documentElement()->setInnerHTML(
       "<body><canvas id='c'></canvas></body>");
   document_->View()->UpdateAllLifecyclePhases();
-  canvas_element_ = toHTMLCanvasElement(document_->GetElementById("c"));
+  canvas_element_ = toHTMLCanvasElement(document_->getElementById("c"));
   String canvas_type("2d");
   CanvasContextCreationAttributes attributes;
   attributes.setAlpha(true);

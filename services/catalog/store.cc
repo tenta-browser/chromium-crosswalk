@@ -11,6 +11,8 @@ const char Store::kNameKey[] = "name";
 // static
 const char Store::kDisplayNameKey[] = "display_name";
 // static
+const char Store::kSandboxTypeKey[] = "sandbox_type";
+// static
 const char Store::kInterfaceProviderSpecsKey[] = "interface_provider_specs";
 // static
 const char Store::kInterfaceProviderSpecs_ProvidesKey[] = "provides";
@@ -32,4 +34,7 @@ const char Store::kRequiredFilesKey_PlatformValue_Linux[] = "linux";
 const char Store::kRequiredFilesKey_PlatformValue_MacOSX[] = "macosx";
 // static
 const char Store::kRequiredFilesKey_PlatformValue_Android[] = "android";
+// static
+const char Store::kRequiredFilesKey_PlatformValue_Fuchsia[] = "fuchsia";
+
 }  // namespace catalog

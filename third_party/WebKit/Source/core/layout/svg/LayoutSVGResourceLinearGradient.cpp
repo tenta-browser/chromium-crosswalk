@@ -52,14 +52,14 @@ FloatPoint LayoutSVGResourceLinearGradient::EndPoint(
                                         *attributes.X2(), *attributes.Y2());
 }
 
-PassRefPtr<Gradient> LayoutSVGResourceLinearGradient::BuildGradient() const {
+RefPtr<Gradient> LayoutSVGResourceLinearGradient::BuildGradient() const {
   const LinearGradientAttributes& attributes = this->Attributes();
   RefPtr<Gradient> gradient = Gradient::CreateLinear(
       StartPoint(attributes), EndPoint(attributes),
       PlatformSpreadMethodFromSVGType(attributes.SpreadMethod()),
       Gradient::ColorInterpolation::kUnpremultiplied);
   gradient->AddColorStops(attributes.Stops());
-  return gradient.Release();
+  return gradient;
 }
 
 }  // namespace blink

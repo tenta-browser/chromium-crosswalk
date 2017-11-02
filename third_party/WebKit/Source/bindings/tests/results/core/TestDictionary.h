@@ -21,9 +21,9 @@
 #include "bindings/core/v8/TestInterface2OrUint8Array.h"
 #include "bindings/tests/idls/core/TestInterface2.h"
 #include "core/CoreExport.h"
-#include "core/dom/DOMTypedArray.h"
-#include "core/dom/NotShared.h"
 #include "core/testing/InternalDictionary.h"
+#include "core/typed_arrays/ArrayBufferViewHelpers.h"
+#include "core/typed_arrays/DOMTypedArray.h"
 #include "platform/heap/Handle.h"
 #include "platform/wtf/Vector.h"
 #include "platform/wtf/text/WTFString.h"
@@ -83,8 +83,8 @@ class CORE_EXPORT TestDictionary : public IDLDictionaryBase {
   void setElementOrNullMemberToNull();
 
   bool hasEnumMember() const;
-  String enumMember() const;
-  void setEnumMember(String);
+  const String& enumMember() const;
+  void setEnumMember(const String&);
 
   bool hasEnumSequenceMember() const;
   const Vector<String>& enumSequenceMember() const;
@@ -101,6 +101,10 @@ class CORE_EXPORT TestDictionary : public IDLDictionaryBase {
   bool hasInternalDictionarySequenceMember() const;
   const HeapVector<InternalDictionary>& internalDictionarySequenceMember() const;
   void setInternalDictionarySequenceMember(const HeapVector<InternalDictionary>&);
+
+  bool hasIsPublic() const;
+  bool isPublic() const;
+  void setIsPublic(bool);
 
   bool hasLongMember() const;
   int32_t longMember() const;
@@ -135,17 +139,13 @@ class CORE_EXPORT TestDictionary : public IDLDictionaryBase {
   bool runtimeMember() const;
   void setRuntimeMember(bool);
 
-  bool hasStringArrayMember() const;
-  const Vector<String>& stringArrayMember() const;
-  void setStringArrayMember(const Vector<String>&);
-
   bool hasStringMember() const;
-  String stringMember() const;
-  void setStringMember(String);
+  const String& stringMember() const;
+  void setStringMember(const String&);
 
   bool hasStringOrNullMember() const;
-  String stringOrNullMember() const;
-  void setStringOrNullMember(String);
+  const String& stringOrNullMember() const;
+  void setStringOrNullMember(const String&);
   void setStringOrNullMemberToNull();
 
   bool hasStringSequenceMember() const;
@@ -207,61 +207,62 @@ class CORE_EXPORT TestDictionary : public IDLDictionaryBase {
 
  private:
   bool m_hasAnyInRecordMember = false;
+  bool m_hasBooleanMember = false;
+  bool m_hasCreateMember = false;
+  bool m_hasDoubleOrNullMember = false;
+  bool m_hasDoubleOrStringSequenceMember = false;
+  bool m_hasEnumSequenceMember = false;
+  bool m_hasGarbageCollectedRecordMember = false;
+  bool m_hasInternalDictionarySequenceMember = false;
+  bool m_hasIsPublic = false;
+  bool m_hasLongMember = false;
+  bool m_hasRecordMember = false;
+  bool m_hasRestrictedDoubleMember = false;
+  bool m_hasRuntimeMember = false;
+  bool m_hasStringSequenceMember = false;
+  bool m_hasTestInterfaceGarbageCollectedSequenceMember = false;
+  bool m_hasTestInterfaceSequenceMember = false;
+  bool m_hasTestObjectSequenceMember = false;
+  bool m_hasUnionInRecordMember = false;
+  bool m_hasUnrestrictedDoubleMember = false;
+
   Vector<std::pair<String, ScriptValue>> m_anyInRecordMember;
   ScriptValue m_anyMember;
-  bool m_hasBooleanMember = false;
   bool m_booleanMember;
-  bool m_hasCreateMember = false;
   bool m_createMember;
   Dictionary m_dictionaryMember;
-  bool m_hasDoubleOrNullMember = false;
   double m_doubleOrNullMember;
   DoubleOrString m_doubleOrStringMember;
-  bool m_hasDoubleOrStringSequenceMember = false;
   HeapVector<DoubleOrString> m_doubleOrStringSequenceMember;
   Member<Element> m_elementOrNullMember;
   String m_enumMember;
-  bool m_hasEnumSequenceMember = false;
   Vector<String> m_enumSequenceMember;
   Member<EventTarget> m_eventTargetMember;
-  bool m_hasGarbageCollectedRecordMember = false;
   HeapVector<std::pair<String, Member<TestObject>>> m_garbageCollectedRecordMember;
-  bool m_hasInternalDictionarySequenceMember = false;
   HeapVector<InternalDictionary> m_internalDictionarySequenceMember;
-  bool m_hasLongMember = false;
+  bool m_isPublic;
   int32_t m_longMember;
   ScriptValue m_objectMember;
   ScriptValue m_objectOrNullMember;
   DoubleOrString m_otherDoubleOrStringMember;
   ScriptValue m_prefixGetMember;
-  bool m_hasRecordMember = false;
   Vector<std::pair<String, int8_t>> m_recordMember;
-  bool m_hasRestrictedDoubleMember = false;
   double m_restrictedDoubleMember;
-  bool m_hasRuntimeMember = false;
   bool m_runtimeMember;
-  bool m_hasStringArrayMember = false;
-  Vector<String> m_stringArrayMember;
   String m_stringMember;
   String m_stringOrNullMember;
-  bool m_hasStringSequenceMember = false;
   Vector<String> m_stringSequenceMember;
   TestInterface2OrUint8Array m_testInterface2OrUint8ArrayMember;
   Member<TestInterfaceGarbageCollected> m_testInterfaceGarbageCollectedMember;
   Member<TestInterfaceGarbageCollected> m_testInterfaceGarbageCollectedOrNullMember;
-  bool m_hasTestInterfaceGarbageCollectedSequenceMember = false;
   HeapVector<Member<TestInterfaceGarbageCollected>> m_testInterfaceGarbageCollectedSequenceMember;
   Member<TestInterfaceImplementation> m_testInterfaceMember;
   Member<TestInterfaceImplementation> m_testInterfaceOrNullMember;
-  bool m_hasTestInterfaceSequenceMember = false;
   HeapVector<Member<TestInterfaceImplementation>> m_testInterfaceSequenceMember;
-  bool m_hasTestObjectSequenceMember = false;
   HeapVector<Member<TestObject>> m_testObjectSequenceMember;
   Member<DOMUint8Array> m_uint8ArrayMember;
-  bool m_hasUnionInRecordMember = false;
   HeapVector<std::pair<String, LongOrBoolean>> m_unionInRecordMember;
   FloatOrBoolean m_unionWithTypedefs;
-  bool m_hasUnrestrictedDoubleMember = false;
   double m_unrestrictedDoubleMember;
 
   friend class V8TestDictionary;

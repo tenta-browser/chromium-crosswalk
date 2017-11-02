@@ -15,6 +15,7 @@
         ]
       },
       "requires": {
+        "*": [ "app" ],
         "content_browser": [ "gpu" ],
         "device": [ "device:power_monitor" ]
       }

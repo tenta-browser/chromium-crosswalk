@@ -15,6 +15,7 @@
 #import "ios/chrome/browser/ui/popup_menu/popup_menu_controller.h"
 
 @class BidiContainerView;
+@protocol BrowserCommands;
 class PageInfoModel;
 
 // TODO(crbug.com/227827) Merge 178763: PageInfoModel has been removed in
@@ -23,12 +24,15 @@ class PageInfoModel;
 @interface PageInfoViewController : NSObject
 // Designated initializer.
 // The |source| parameter should be in the coordinate system of the parent.
-// Typically this would be the frame of a button that resulted in this popup
+// Typically this would be the midpoint of a button that resulted in this popup
 // being displayed.
 - (id)initWithModel:(PageInfoModel*)model
              bridge:(PageInfoModelObserver*)bridge
-        sourceFrame:(CGRect)source
+        sourcePoint:(CGPoint)sourcePoint
          parentView:(UIView*)parent;
+
+// Dispatcher for browser commands.
+@property(nonatomic, weak) id<BrowserCommands> dispatcher;
 
 // Dismisses the view.
 - (void)dismiss;

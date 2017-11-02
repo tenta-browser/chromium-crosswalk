@@ -7,7 +7,6 @@
 #include "core/layout/LayoutBlock.h"
 #include "core/layout/LayoutView.h"
 #include "core/layout/ng/ng_constraint_space_builder.h"
-#include "core/layout/ng/ng_layout_opportunity_iterator.h"
 
 namespace blink {
 
@@ -16,6 +15,7 @@ NGConstraintSpace::NGConstraintSpace(
     TextDirection direction,
     NGLogicalSize available_size,
     NGLogicalSize percentage_resolution_size,
+    Optional<LayoutUnit> parent_percentage_resolution_inline_size,
     NGPhysicalSize initial_containing_block_size,
     LayoutUnit fragmentainer_space_available,
     bool is_fixed_size_inline,
@@ -27,11 +27,16 @@ NGConstraintSpace::NGConstraintSpace(
     bool is_new_fc,
     bool is_anonymous,
     const NGMarginStrut& margin_strut,
-    const NGLogicalOffset& bfc_offset,
-    const std::shared_ptr<NGExclusions>& exclusions,
-    const WTF::Optional<LayoutUnit>& clearance_offset)
+    const NGBfcOffset& bfc_offset,
+    const WTF::Optional<NGBfcOffset>& floats_bfc_offset,
+    const NGExclusionSpace& exclusion_space,
+    Vector<RefPtr<NGUnpositionedFloat>>& unpositioned_floats,
+    const WTF::Optional<LayoutUnit>& clearance_offset,
+    Vector<NGBaselineRequest>& baseline_requests)
     : available_size_(available_size),
       percentage_resolution_size_(percentage_resolution_size),
+      parent_percentage_resolution_inline_size_(
+          parent_percentage_resolution_inline_size),
       initial_containing_block_size_(initial_containing_block_size),
       fragmentainer_space_available_(fragmentainer_space_available),
       is_fixed_size_inline_(is_fixed_size_inline),
@@ -48,12 +53,17 @@ NGConstraintSpace::NGConstraintSpace(
       direction_(static_cast<unsigned>(direction)),
       margin_strut_(margin_strut),
       bfc_offset_(bfc_offset),
-      exclusions_(exclusions),
-      clearance_offset_(clearance_offset),
-      layout_opp_iter_(nullptr) {}
+      floats_bfc_offset_(floats_bfc_offset),
+      exclusion_space_(WTF::MakeUnique<NGExclusionSpace>(exclusion_space)),
+      clearance_offset_(clearance_offset) {
+  unpositioned_floats_.swap(unpositioned_floats);
+  baseline_requests_.swap(baseline_requests);
+}
 
 RefPtr<NGConstraintSpace> NGConstraintSpace::CreateFromLayoutObject(
-    const LayoutBox& box) {
+    const LayoutBox& box,
+    Optional<LayoutUnit> override_logical_width,
+    Optional<LayoutUnit> override_logical_height) {
   auto writing_mode = FromPlatformWritingMode(box.StyleRef().GetWritingMode());
   bool parallel_containing_block = IsParallelWritingMode(
       FromPlatformWritingMode(
@@ -90,15 +100,30 @@ RefPtr<NGConstraintSpace> NGConstraintSpace::CreateFromLayoutObject(
     available_size.inline_size =
         box.BorderAndPaddingLogicalWidth() + box.OverrideLogicalContentWidth();
     fixed_inline = true;
+  } else if (override_logical_width.has_value()) {
+    available_size.inline_size =
+        box.BorderAndPaddingLogicalWidth() + override_logical_width.value();
+    fixed_inline = true;
   }
   if (box.HasOverrideLogicalContentHeight()) {
     available_size.block_size = box.BorderAndPaddingLogicalHeight() +
                                 box.OverrideLogicalContentHeight();
     fixed_block = true;
+  } else if (override_logical_height.has_value()) {
+    available_size.block_size =
+        box.BorderAndPaddingLogicalHeight() + override_logical_height.value();
+    fixed_block = true;
   }
 
-  bool is_new_fc =
-      box.IsLayoutBlock() && ToLayoutBlock(box).CreatesNewFormattingContext();
+  bool is_new_fc = true;
+  // TODO(ikilpatrick): This DCHECK needs to be enabled once we've switched
+  // LayoutTableCell, etc over to LayoutNG.
+  //
+  // We currently need to "force" LayoutNG roots to be formatting contexts so
+  // that floats have layout performed on them.
+  //
+  // DCHECK(is_new_fc,
+  //  box.IsLayoutBlock() && ToLayoutBlock(box).CreatesNewFormattingContext());
 
   FloatSize icb_float_size = box.View()->ViewportSizeForViewportUnits();
   NGPhysicalSize initial_containing_block_size{
@@ -108,10 +133,9 @@ RefPtr<NGConstraintSpace> NGConstraintSpace::CreateFromLayoutObject(
   DCHECK_GE(initial_containing_block_size.width, LayoutUnit());
   DCHECK_GE(initial_containing_block_size.height, LayoutUnit());
 
-  return NGConstraintSpaceBuilder(writing_mode)
+  return NGConstraintSpaceBuilder(writing_mode, initial_containing_block_size)
       .SetAvailableSize(available_size)
       .SetPercentageResolutionSize(percentage_size)
-      .SetInitialContainingBlockSize(initial_containing_block_size)
       .SetIsInlineDirectionTriggersScrollbar(
           box.StyleRef().OverflowInlineDirection() == EOverflow::kAuto)
       .SetIsBlockDirectionTriggersScrollbar(
@@ -125,39 +149,72 @@ RefPtr<NGConstraintSpace> NGConstraintSpace::CreateFromLayoutObject(
       .ToConstraintSpace(writing_mode);
 }
 
-void NGConstraintSpace::AddExclusion(const NGExclusion& exclusion) {
-  exclusions_->Add(exclusion);
-  // Invalidate the Layout Opportunity Iterator.
-  layout_opp_iter_.reset();
+Optional<LayoutUnit> NGConstraintSpace::ParentPercentageResolutionInlineSize()
+    const {
+  if (!parent_percentage_resolution_inline_size_.has_value())
+    return {};
+  if (*parent_percentage_resolution_inline_size_ != NGSizeIndefinite)
+    return *parent_percentage_resolution_inline_size_;
+  return initial_containing_block_size_.ConvertToLogical(WritingMode())
+      .inline_size;
 }
 
 NGFragmentationType NGConstraintSpace::BlockFragmentationType() const {
   return static_cast<NGFragmentationType>(block_direction_fragmentation_type_);
 }
 
-NGLayoutOpportunityIterator* NGConstraintSpace::LayoutOpportunityIterator(
-    const NGLogicalOffset& iter_offset) {
-  if (layout_opp_iter_ && layout_opp_iter_->Offset() != iter_offset)
-    layout_opp_iter_.reset();
+bool NGConstraintSpace::operator==(const NGConstraintSpace& other) const {
+  // TODO(cbiesinger): For simplicity and performance, for now, we only
+  // consider two constraint spaces equal if neither one has unpositioned
+  // floats. We should consider changing this in the future.
+  if (unpositioned_floats_.size() || other.unpositioned_floats_.size())
+    return false;
 
-  if (!layout_opp_iter_) {
-    layout_opp_iter_ = WTF::MakeUnique<NGLayoutOpportunityIterator>(
-        this, AvailableSize(), iter_offset);
-  }
-  return layout_opp_iter_.get();
+  if (exclusion_space_ && other.exclusion_space_ &&
+      *exclusion_space_ != *other.exclusion_space_)
+    return false;
+
+  return available_size_ == other.available_size_ &&
+         percentage_resolution_size_ == other.percentage_resolution_size_ &&
+         parent_percentage_resolution_inline_size_ ==
+             other.parent_percentage_resolution_inline_size_ &&
+         initial_containing_block_size_ ==
+             other.initial_containing_block_size_ &&
+         fragmentainer_space_available_ ==
+             other.fragmentainer_space_available_ &&
+         is_fixed_size_inline_ == other.is_fixed_size_inline_ &&
+         is_fixed_size_block_ == other.is_fixed_size_block_ &&
+         is_shrink_to_fit_ == other.is_shrink_to_fit_ &&
+         is_inline_direction_triggers_scrollbar_ ==
+             other.is_inline_direction_triggers_scrollbar_ &&
+         is_block_direction_triggers_scrollbar_ ==
+             other.is_block_direction_triggers_scrollbar_ &&
+         block_direction_fragmentation_type_ ==
+             other.block_direction_fragmentation_type_ &&
+         is_new_fc_ == other.is_new_fc_ &&
+         is_anonymous_ == other.is_anonymous_ &&
+         writing_mode_ == other.writing_mode_ &&
+         direction_ == other.direction_ &&
+         margin_strut_ == other.margin_strut_ &&
+         bfc_offset_ == other.bfc_offset_ &&
+         floats_bfc_offset_ == other.floats_bfc_offset_ &&
+         clearance_offset_ == other.clearance_offset_ &&
+         baseline_requests_ == other.baseline_requests_;
+}
+
+bool NGConstraintSpace::operator!=(const NGConstraintSpace& other) const {
+  return !(*this == other);
 }
 
 String NGConstraintSpace::ToString() const {
   return String::Format(
-      "Offset: %s,%s Size: %sx%s MarginStrut: %s"
-      " Clearance: %s",
-      bfc_offset_.inline_offset.ToString().Ascii().Data(),
-      bfc_offset_.block_offset.ToString().Ascii().Data(),
-      AvailableSize().inline_size.ToString().Ascii().Data(),
-      AvailableSize().block_size.ToString().Ascii().Data(),
-      margin_strut_.ToString().Ascii().Data(),
+      "Offset: %s,%s Size: %sx%s Clearance: %s",
+      bfc_offset_.line_offset.ToString().Ascii().data(),
+      bfc_offset_.block_offset.ToString().Ascii().data(),
+      AvailableSize().inline_size.ToString().Ascii().data(),
+      AvailableSize().block_size.ToString().Ascii().data(),
       clearance_offset_.has_value()
-          ? clearance_offset_.value().ToString().Ascii().Data()
+          ? clearance_offset_.value().ToString().Ascii().data()
           : "none");
 }
 

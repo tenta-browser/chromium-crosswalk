@@ -6,8 +6,16 @@
 
 #include <stdint.h>
 
+#include "base/bind.h"
 #include "base/callback.h"
+#include "base/threading/sequenced_task_runner_handle.h"
+#import "ios/web/public/web_state/ui/crw_content_view.h"
 #include "ios/web/public/web_state/web_state_observer.h"
+#include "ui/gfx/image/image.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace web {
 
@@ -23,7 +31,8 @@ TestWebState::TestWebState()
     : browser_state_(nullptr),
       web_usage_enabled_(false),
       is_loading_(false),
-      is_showing_transient_content_view_(false),
+      is_crashed_(false),
+      is_evicted_(false),
       trust_level_(kAbsolute),
       content_is_html_(true) {}
 
@@ -50,6 +59,8 @@ bool TestWebState::IsWebUsageEnabled() const {
 
 void TestWebState::SetWebUsageEnabled(bool enabled) {
   web_usage_enabled_ = enabled;
+  if (!web_usage_enabled_)
+    SetIsEvicted(true);
 }
 
 bool TestWebState::ShouldSuppressDialogs() const {
@@ -59,7 +70,17 @@ bool TestWebState::ShouldSuppressDialogs() const {
 void TestWebState::SetShouldSuppressDialogs(bool should_suppress) {}
 
 UIView* TestWebState::GetView() {
-  return view_.get();
+  return view_;
+}
+
+void TestWebState::WasShown() {
+  for (auto& observer : observers_)
+    observer.WasShown();
+}
+
+void TestWebState::WasHidden() {
+  for (auto& observer : observers_)
+    observer.WasHidden();
 }
 
 const NavigationManager* TestWebState::GetNavigationManager() const {
@@ -90,7 +111,17 @@ void TestWebState::SetNavigationManager(
 }
 
 void TestWebState::SetView(UIView* view) {
-  view_.reset([view retain]);
+  view_ = view;
+}
+
+void TestWebState::SetIsCrashed(bool value) {
+  is_crashed_ = value;
+  if (is_crashed_)
+    SetIsEvicted(true);
+}
+
+void TestWebState::SetIsEvicted(bool value) {
+  is_evicted_ = value;
 }
 
 CRWJSInjectionReceiver* TestWebState::GetJSInjectionReceiver() const {
@@ -104,12 +135,10 @@ void TestWebState::ExecuteJavaScript(const base::string16& javascript,
   callback.Run(nullptr);
 }
 
+void TestWebState::ExecuteUserJavaScript(NSString* javaScript) {}
+
 const std::string& TestWebState::GetContentsMimeType() const {
   return mime_type_;
-}
-
-const std::string& TestWebState::GetContentLanguageHeader() const {
-  return content_language_;
 }
 
 bool TestWebState::ContentIsHTML() const {
@@ -157,6 +186,14 @@ double TestWebState::GetLoadingProgress() const {
   return 0.0;
 }
 
+bool TestWebState::IsCrashed() const {
+  return is_crashed_;
+}
+
+bool TestWebState::IsEvicted() const {
+  return is_evicted_;
+}
+
 bool TestWebState::IsBeingDestroyed() const {
   return false;
 }
@@ -182,9 +219,14 @@ void TestWebState::OnPageLoaded(
     observer.PageLoaded(load_completion_status);
 }
 
-void TestWebState::OnProvisionalNavigationStarted(const GURL& url) {
+void TestWebState::OnNavigationStarted(NavigationContext* navigation_context) {
   for (auto& observer : observers_)
-    observer.ProvisionalNavigationStarted(url);
+    observer.DidStartNavigation(navigation_context);
+}
+
+void TestWebState::OnNavigationFinished(NavigationContext* navigation_context) {
+  for (auto& observer : observers_)
+    observer.DidFinishNavigation(navigation_context);
 }
 
 void TestWebState::OnRenderProcessGone() {
@@ -194,12 +236,16 @@ void TestWebState::OnRenderProcessGone() {
 
 void TestWebState::ShowTransientContentView(CRWContentView* content_view) {
   if (content_view) {
-    is_showing_transient_content_view_ = true;
+    transient_content_view_ = content_view;
   }
 }
 
 void TestWebState::ClearTransientContentView() {
-  is_showing_transient_content_view_ = false;
+  transient_content_view_ = nil;
+}
+
+CRWContentView* TestWebState::GetTransientContentView() {
+  return transient_content_view_;
 }
 
 void TestWebState::SetCurrentURL(const GURL& url) {
@@ -214,7 +260,7 @@ CRWWebViewProxyType TestWebState::GetWebViewProxy() const {
   return nullptr;
 }
 
-service_manager::InterfaceRegistry* TestWebState::GetMojoInterfaceRegistry() {
+WebStateInterfaceProvider* TestWebState::GetWebStateInterfaceProvider() {
   return nullptr;
 }
 
@@ -222,13 +268,14 @@ bool TestWebState::HasOpener() const {
   return false;
 }
 
+void TestWebState::TakeSnapshot(const SnapshotCallback& callback,
+                                CGSize target_size) const {
+  callback.Run(gfx::Image([[UIImage alloc] init]));
+}
+
 base::WeakPtr<WebState> TestWebState::AsWeakPtr() {
   NOTREACHED();
   return base::WeakPtr<WebState>();
-}
-
-bool TestWebState::IsShowingTransientContentView() {
-  return is_showing_transient_content_view_;
 }
 
 }  // namespace web

@@ -6,7 +6,7 @@
 
 #include "bindings/core/v8/ScriptPromiseResolver.h"
 #include "core/dom/Document.h"
-#include "core/events/Event.h"
+#include "core/dom/events/Event.h"
 #include "core/frame/UseCounter.h"
 #include "modules/EventTargetModulesNames.h"
 #include "modules/presentation/PresentationController.h"
@@ -15,22 +15,6 @@
 #include "public/platform/modules/presentation/WebPresentationClient.h"
 
 namespace blink {
-
-namespace {
-
-WebPresentationClient* PresentationClient(ExecutionContext* execution_context) {
-  if (!execution_context)
-    return nullptr;
-  DCHECK(execution_context->IsDocument());
-  Document* document = ToDocument(execution_context);
-  if (!document->GetFrame())
-    return nullptr;
-  PresentationController* controller =
-      PresentationController::From(*document->GetFrame());
-  return controller ? controller->Client() : nullptr;
-}
-
-}  // anonymous namespace
 
 // static
 PresentationAvailability* PresentationAvailability::Take(
@@ -54,7 +38,7 @@ PresentationAvailability::PresentationAvailability(
       urls_(urls),
       value_(value),
       state_(State::kActive) {
-  ASSERT(execution_context->IsDocument());
+  DCHECK(execution_context->IsDocument());
   WebVector<WebURL> data(urls.size());
   for (size_t i = 0; i < urls.size(); ++i)
     data[i] = WebURL(urls[i]);
@@ -77,12 +61,15 @@ void PresentationAvailability::AddedEventListener(
     RegisteredEventListener& registered_listener) {
   EventTargetWithInlineData::AddedEventListener(event_type,
                                                 registered_listener);
-  if (event_type == EventTypeNames::change)
+  if (event_type == EventTypeNames::change) {
     UseCounter::Count(GetExecutionContext(),
-                      UseCounter::kPresentationAvailabilityChangeEventListener);
+                      WebFeature::kPresentationAvailabilityChangeEventListener);
+  }
 }
 
-void PresentationAvailability::AvailabilityChanged(bool value) {
+void PresentationAvailability::AvailabilityChanged(
+    blink::mojom::ScreenAvailability availability) {
+  bool value = availability == blink::mojom::ScreenAvailability::AVAILABLE;
   if (value_ == value)
     return;
 
@@ -118,7 +105,8 @@ void PresentationAvailability::SetState(State state) {
 }
 
 void PresentationAvailability::UpdateListening() {
-  WebPresentationClient* client = PresentationClient(GetExecutionContext());
+  WebPresentationClient* client =
+      PresentationController::ClientFromContext(GetExecutionContext());
   if (!client)
     return;
 

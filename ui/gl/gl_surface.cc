@@ -38,6 +38,7 @@ bool GLSurface::Initialize(GLSurfaceFormat format) {
 
 bool GLSurface::Resize(const gfx::Size& size,
                        float scale_factor,
+                       ColorSpace color_space,
                        bool has_alpha) {
   NOTIMPLEMENTED();
   return false;
@@ -182,12 +183,26 @@ bool GLSurface::SupportsDCLayers() const {
   return false;
 }
 
+bool GLSurface::UseOverlaysForVideo() const {
+  return false;
+}
+
 bool GLSurface::SetDrawRectangle(const gfx::Rect& rect) {
   return false;
 }
 
 gfx::Vector2d GLSurface::GetDrawOffset() const {
   return gfx::Vector2d();
+}
+
+void GLSurface::WaitForSnapshotRendering() {
+  // By default, just executing the SwapBuffers is normally enough.
+}
+
+void GLSurface::SetRelyOnImplicitSync() {
+  // Some GLSurface derived classes might not implement this workaround while
+  // still being allocated on devices where the workaround is enabled.
+  // It is fine to ignore this call in those cases.
 }
 
 GLSurface* GLSurface::GetCurrent() {
@@ -228,8 +243,9 @@ void GLSurfaceAdapter::Destroy() {
 
 bool GLSurfaceAdapter::Resize(const gfx::Size& size,
                               float scale_factor,
+                              ColorSpace color_space,
                               bool has_alpha) {
-  return surface_->Resize(size, scale_factor, has_alpha);
+  return surface_->Resize(size, scale_factor, color_space, has_alpha);
 }
 
 bool GLSurfaceAdapter::Recreate() {
@@ -381,12 +397,24 @@ bool GLSurfaceAdapter::SupportsDCLayers() const {
   return surface_->SupportsDCLayers();
 }
 
+bool GLSurfaceAdapter::UseOverlaysForVideo() const {
+  return surface_->UseOverlaysForVideo();
+}
+
 bool GLSurfaceAdapter::SetDrawRectangle(const gfx::Rect& rect) {
   return surface_->SetDrawRectangle(rect);
 }
 
 gfx::Vector2d GLSurfaceAdapter::GetDrawOffset() const {
   return surface_->GetDrawOffset();
+}
+
+void GLSurfaceAdapter::WaitForSnapshotRendering() {
+  surface_->WaitForSnapshotRendering();
+}
+
+void GLSurfaceAdapter::SetRelyOnImplicitSync() {
+  surface_->SetRelyOnImplicitSync();
 }
 
 GLSurfaceAdapter::~GLSurfaceAdapter() {}

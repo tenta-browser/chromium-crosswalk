@@ -16,9 +16,8 @@
 #include "ppapi/shared_impl/ppb_image_data_shared.h"
 #include "ppapi/shared_impl/resource.h"
 #include "ppapi/thunk/ppb_image_data_api.h"
-#include "third_party/skia/include/core/SkCanvas.h"
+#include "third_party/skia/include/core/SkBitmap.h"
 
-class SkBitmap;
 class SkCanvas;
 class TransportDIB;
 
@@ -31,7 +30,7 @@ namespace content {
 class CONTENT_EXPORT PPB_ImageData_Impl
     : public ppapi::Resource,
       public ppapi::PPB_ImageData_Shared,
-      public NON_EXPORTED_BASE(ppapi::thunk::PPB_ImageData_API) {
+      public ppapi::thunk::PPB_ImageData_API {
  public:
   // We delegate most of our implementation to a back-end class that either uses
   // a PlatformCanvas (for most trusted stuff) or bare shared memory (for use by

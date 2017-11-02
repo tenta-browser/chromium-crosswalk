@@ -108,14 +108,58 @@ scoped_refptr<GLSurface> CreateOffscreenGLSurfaceWithFormat(
           new UnmappedNativeViewGLSurfaceGLX(size), format);
     case kGLImplementationSwiftShaderGL:
     case kGLImplementationEGLGLES2:
-      return InitializeGLSurfaceWithFormat(
-          new PbufferGLSurfaceEGL(size), format);
+      if (GLSurfaceEGL::IsEGLSurfacelessContextSupported() &&
+          size.width() == 0 && size.height() == 0) {
+        return InitializeGLSurfaceWithFormat(new SurfacelessEGL(size), format);
+      } else {
+        return InitializeGLSurfaceWithFormat(new PbufferGLSurfaceEGL(size),
+                                             format);
+      }
     case kGLImplementationMockGL:
     case kGLImplementationStubGL:
       return new GLSurfaceStub;
     default:
       NOTREACHED();
       return nullptr;
+  }
+}
+
+void SetDisabledExtensionsPlatform(const std::string& disabled_extensions) {
+  GLImplementation implementation = GetGLImplementation();
+  DCHECK_NE(kGLImplementationNone, implementation);
+  switch (implementation) {
+    case kGLImplementationDesktopGL:
+      SetDisabledExtensionsGLX(disabled_extensions);
+      break;
+    case kGLImplementationEGLGLES2:
+      SetDisabledExtensionsEGL(disabled_extensions);
+      break;
+    case kGLImplementationSwiftShaderGL:
+    case kGLImplementationOSMesaGL:
+    case kGLImplementationMockGL:
+    case kGLImplementationStubGL:
+      break;
+    default:
+      NOTREACHED();
+  }
+}
+
+bool InitializeExtensionSettingsOneOffPlatform() {
+  GLImplementation implementation = GetGLImplementation();
+  DCHECK_NE(kGLImplementationNone, implementation);
+  switch (implementation) {
+    case kGLImplementationDesktopGL:
+      return InitializeExtensionSettingsOneOffGLX();
+    case kGLImplementationEGLGLES2:
+      return InitializeExtensionSettingsOneOffEGL();
+    case kGLImplementationSwiftShaderGL:
+    case kGLImplementationOSMesaGL:
+    case kGLImplementationMockGL:
+    case kGLImplementationStubGL:
+      return true;
+    default:
+      NOTREACHED();
+      return false;
   }
 }
 

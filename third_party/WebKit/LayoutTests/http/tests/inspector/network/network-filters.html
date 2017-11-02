@@ -3,102 +3,68 @@
 <script src="../inspector-test.js"></script>
 <script src="../network-test.js"></script>
 <script>
-function test()
-{
-    function fetchResources() {
-      InspectorTest.recordNetwork();
 
-      InspectorTest.makeFetch("resources/style.css", {}, ensureAllResources);
-      InspectorTest.makeFetch("resources/abe.png", {}, () => {
-          // Ensures result is cached.
-          InspectorTest.makeFetch("resources/abe.png", {}, ensureAllResources);
-          ensureAllResources();
-      });
-      InspectorTest.makeFetch("missing/foo.bar", {}, ensureAllResources);
+async function test() {
+  await NetworkTestRunner.clearNetworkCache();
+
+  NetworkTestRunner.recordNetwork();
+
+  NetworkTestRunner.makeFetch('resources/style.css', {}, ensureAllResources);
+  NetworkTestRunner.makeFetch('resources/abe.png', {}, () => {
+    // Ensures result is cached.
+    NetworkTestRunner.makeFetch('resources/abe.png', {}, ensureAllResources);
+    ensureAllResources();
+  });
+  NetworkTestRunner.makeFetch('missing/foo.bar', {}, ensureAllResources);
+
+  var filterChecks = [
+    '-.css',
+    '-.png',
+    'css',
+    '',
+    '/.*/',
+    '/.*\\..*/',
+    '/.*\\.png/',
+    '/NOTHINGTOMATCH/',
+    '//',
+    'png',
+    '-missing',
+    'is:from-cache',
+    '-is:from-cache',
+  ];
+
+  var resourceCount = 0;
+  var totalResourceCount = 4;
+  function ensureAllResources() {
+    if (++resourceCount >= totalResourceCount)
+      checkFilters();
+  }
+
+  function checkFilters() {
+    for (var filterText of filterChecks) {
+      TestRunner.addResult('filterText: ' + filterText);
+      setNetworkLogFilter(filterText);
+
+      var nodes = UI.panels.network._networkLogView.flatNodesList();
+      var foundNodesCount = 0;
+      for (var i = 0; i < nodes.length; i++) {
+        if (!nodes[i][Network.NetworkLogView._isFilteredOutSymbol])
+          foundNodesCount++;
+      }
+
+      TestRunner.addResult('Found results: ' + foundNodesCount);
+      TestRunner.addResult('');
     }
+    TestRunner.completeTest();
+  }
 
-    InspectorTest.clearNetworkCache(fetchResources);
-
-    var filterChecks = [{
-        filterText: "-.css",
-        isRegex: false
-    }, {
-        filterText: "-.png",
-        isRegex: false
-    }, {
-        filterText: "css",
-        isRegex: false
-    }, {
-        filterText: "",
-        isRegex: false
-    }, {
-        filterText: ".*",
-        isRegex: true
-    }, {
-        filterText: ".*\\..*",
-        isRegex: true
-    }, {
-        filterText: ".*\\.png",
-        isRegex: true
-    }, {
-        filterText: "NOTHINGTOMATCH",
-        isRegex: true
-    }, {
-        filterText: "",
-        isRegex: true
-    }, {
-        filterText: "png",
-        isRegex: false
-    }, {
-        filterText: "-missing",
-        isRegex: false
-    }, {
-        filterText: "is:from-cache",
-        isRegex: false
-    }, {
-        filterText: "-is:from-cache",
-        isRegex: false
-    }];
-
-    var resourceCount = 0;
-    var totalResourceCount = 4;
-    function ensureAllResources()
-    {
-        if (++resourceCount >= totalResourceCount)
-            checkFilters();
-    }
-
-    function checkFilters()
-    {
-        for (var filterObj of filterChecks) {
-            InspectorTest.addResult("filterText: " + filterObj.filterText);
-            InspectorTest.addResult("isRegex: " + filterObj.isRegex);
-
-            setNetworkLogFilter(filterObj.filterText, filterObj.isRegex);
-
-            var nodes = UI.panels.network._networkLogView._nodesByRequestId.valuesArray();
-            var foundNodesCount = 0;
-            for (var i = 0; i < nodes.length; i++) {
-                if (!nodes[i][Network.NetworkLogView._isFilteredOutSymbol])
-                    foundNodesCount++;
-            }
-
-            InspectorTest.addResult("Found results: " + foundNodesCount);
-            InspectorTest.addResult("");
-        }
-        InspectorTest.completeTest();
-    }
-
-    /**
+  /**
      * @param {string} value
-     * @param {RegExp} isRegex
      */
-    function setNetworkLogFilter(value, isRegex)
-    {
-        UI.panels.network._networkLogView._textFilterUI._regexCheckBox.checked = isRegex;
-        UI.panels.network._networkLogView._textFilterUI.setValue(value);
-        UI.panels.network._networkLogView._filterChanged(null); // event not used in this method, so passing null
-    }
+  function setNetworkLogFilter(value) {
+    UI.panels.network._networkLogView._textFilterUI.setValue(value);
+    UI.panels.network._networkLogView._filterChanged(null);  // event not used in this method, so passing null
+  }
 }
 </script>
 </head>

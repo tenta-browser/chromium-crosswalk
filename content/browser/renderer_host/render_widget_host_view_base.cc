@@ -16,8 +16,10 @@
 #include "content/browser/renderer_host/render_widget_host_view_frame_subscriber.h"
 #include "content/browser/renderer_host/text_input_manager.h"
 #include "content/common/content_switches_internal.h"
+#include "content/public/common/content_features.h"
 #include "media/base/video_frame.h"
 #include "ui/base/layout.h"
+#include "ui/base/ui_base_types.h"
 #include "ui/display/screen.h"
 #include "ui/gfx/geometry/point_conversions.h"
 #include "ui/gfx/geometry/size_conversions.h"
@@ -27,19 +29,18 @@ namespace content {
 
 namespace {
 
-// How many microseconds apart input events should be flushed.
-const int kFlushInputRateInUs = 16666;
-
 }
 
 RenderWidgetHostViewBase::RenderWidgetHostViewBase()
     : is_fullscreen_(false),
       popup_type_(blink::kWebPopupTypeNone),
       mouse_locked_(false),
-      showing_context_menu_(false),
       current_device_scale_factor_(0),
       current_display_rotation_(display::Display::ROTATE_0),
       text_input_manager_(nullptr),
+      wheel_scroll_latching_enabled_(base::FeatureList::IsEnabled(
+          features::kTouchpadAndWheelScrollLatching)),
+      web_contents_accessibility_(nullptr),
       renderer_frame_number_(0),
       weak_factory_(this) {}
 
@@ -162,15 +163,6 @@ void RenderWidgetHostViewBase::CopyFromSurfaceToVideoFrame(
   callback.Run(gfx::Rect(), false);
 }
 
-bool RenderWidgetHostViewBase::IsShowingContextMenu() const {
-  return showing_context_menu_;
-}
-
-void RenderWidgetHostViewBase::SetShowingContextMenu(bool showing) {
-  DCHECK_NE(showing_context_menu_, showing);
-  showing_context_menu_ = showing;
-}
-
 base::string16 RenderWidgetHostViewBase::GetSelectedText() {
   if (!GetTextInputManager())
     return base::string16();
@@ -187,15 +179,10 @@ InputEventAckState RenderWidgetHostViewBase::FilterInputEvent(
   return INPUT_EVENT_ACK_STATE_NOT_CONSUMED;
 }
 
-void RenderWidgetHostViewBase::OnSetNeedsFlushInput() {
-  if (flush_input_timer_.IsRunning())
-    return;
-
-  flush_input_timer_.Start(
-      FROM_HERE,
-      base::TimeDelta::FromMicroseconds(kFlushInputRateInUs),
-      this,
-      &RenderWidgetHostViewBase::FlushInput);
+InputEventAckState RenderWidgetHostViewBase::FilterChildGestureEvent(
+    const blink::WebGestureEvent& gesture_event) {
+  // By default, do nothing with the child's gesture events.
+  return INPUT_EVENT_ACK_STATE_NOT_CONSUMED;
 }
 
 void RenderWidgetHostViewBase::WheelEventAck(
@@ -229,7 +216,7 @@ void RenderWidgetHostViewBase::AccessibilityShowMenu(const gfx::Point& point) {
     impl = RenderWidgetHostImpl::From(GetRenderWidgetHost());
 
   if (impl)
-    impl->ShowContextMenuAtPoint(point);
+    impl->ShowContextMenuAtPoint(point, ui::MENU_SOURCE_NONE);
 }
 
 gfx::Point RenderWidgetHostViewBase::AccessibilityOriginInScreen(
@@ -264,13 +251,15 @@ bool RenderWidgetHostViewBase::HasDisplayPropertyChanged(gfx::NativeView view) {
       display::Screen::GetScreen()->GetDisplayNearestView(view);
   if (current_display_area_ == display.work_area() &&
       current_device_scale_factor_ == display.device_scale_factor() &&
-      current_display_rotation_ == display.rotation()) {
+      current_display_rotation_ == display.rotation() &&
+      current_display_color_space_ == display.color_space()) {
     return false;
   }
 
   current_display_area_ = display.work_area();
   current_device_scale_factor_ = display.device_scale_factor();
   current_display_rotation_ = display.rotation();
+  current_display_color_space_ = display.color_space();
   return true;
 }
 
@@ -317,15 +306,6 @@ void RenderWidgetHostViewBase::DidReceiveRendererFrame() {
   ++renderer_frame_number_;
 }
 
-void RenderWidgetHostViewBase::FlushInput() {
-  RenderWidgetHostImpl* impl = NULL;
-  if (GetRenderWidgetHost())
-    impl = RenderWidgetHostImpl::From(GetRenderWidgetHost());
-  if (!impl)
-    return;
-  impl->FlushInput();
-}
-
 void RenderWidgetHostViewBase::ShowDisambiguationPopup(
     const gfx::Rect& rect_pixels,
     const SkBitmap& zoomed_bitmap) {
@@ -338,6 +318,14 @@ gfx::Size RenderWidgetHostViewBase::GetVisibleViewportSize() const {
 
 void RenderWidgetHostViewBase::SetInsets(const gfx::Insets& insets) {
   NOTIMPLEMENTED();
+}
+
+void RenderWidgetHostViewBase::DisplayCursor(const WebCursor& cursor) {
+  return;
+}
+
+CursorManager* RenderWidgetHostViewBase::GetCursorManager() {
+  return nullptr;
 }
 
 // static
@@ -402,16 +390,20 @@ ScreenOrientationValues RenderWidgetHostViewBase::GetOrientationTypeForDesktop(
 void RenderWidgetHostViewBase::OnDidNavigateMainFrameToNewPage() {
 }
 
-cc::FrameSinkId RenderWidgetHostViewBase::GetFrameSinkId() {
-  return cc::FrameSinkId();
+viz::FrameSinkId RenderWidgetHostViewBase::GetFrameSinkId() {
+  return viz::FrameSinkId();
 }
 
-cc::FrameSinkId RenderWidgetHostViewBase::FrameSinkIdAtPoint(
-    cc::SurfaceHittestDelegate* delegate,
+viz::LocalSurfaceId RenderWidgetHostViewBase::GetLocalSurfaceId() const {
+  return viz::LocalSurfaceId();
+}
+
+viz::FrameSinkId RenderWidgetHostViewBase::FrameSinkIdAtPoint(
+    viz::SurfaceHittestDelegate* delegate,
     const gfx::Point& point,
     gfx::Point* transformed_point) {
   NOTREACHED();
-  return cc::FrameSinkId();
+  return viz::FrameSinkId();
 }
 
 gfx::Point RenderWidgetHostViewBase::TransformPointToRootCoordSpace(
@@ -427,7 +419,7 @@ gfx::PointF RenderWidgetHostViewBase::TransformPointToRootCoordSpaceF(
 
 bool RenderWidgetHostViewBase::TransformPointToLocalCoordSpace(
     const gfx::Point& point,
-    const cc::SurfaceId& original_surface,
+    const viz::SurfaceId& original_surface,
     gfx::Point* transformed_point) {
   *transformed_point = point;
   return true;
@@ -497,12 +489,17 @@ void RenderWidgetHostViewBase::RemoveObserver(
   observers_.RemoveObserver(observer);
 }
 
+TouchSelectionControllerClientManager*
+RenderWidgetHostViewBase::GetTouchSelectionControllerClientManager() {
+  return nullptr;
+}
+
 bool RenderWidgetHostViewBase::IsChildFrameForTesting() const {
   return false;
 }
 
-cc::SurfaceId RenderWidgetHostViewBase::SurfaceIdForTesting() const {
-  return cc::SurfaceId();
+viz::SurfaceId RenderWidgetHostViewBase::SurfaceIdForTesting() const {
+  return viz::SurfaceId();
 }
 
 }  // namespace content

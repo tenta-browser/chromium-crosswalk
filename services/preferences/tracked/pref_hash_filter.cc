@@ -201,6 +201,17 @@ PrefFilter::OnWriteCallbackPair PrefHashFilter::FilterSerializeData(
   return callback_pair;
 }
 
+void PrefHashFilter::OnStoreDeletionFromDisk() {
+  if (external_validation_hash_store_pair_) {
+    external_validation_hash_store_pair_->second.get()->Reset();
+
+    // The PrefStore will attempt to write preferences even if it's marked for
+    // deletion. Clear the external store pair to avoid re-writing to the
+    // external store.
+    external_validation_hash_store_pair_.reset();
+  }
+}
+
 void PrefHashFilter::FinalizeFilterOnLoad(
     const PostFilterOnLoadCallback& post_filter_on_load_callback,
     std::unique_ptr<base::DictionaryValue> pref_store_contents,
@@ -243,9 +254,9 @@ void PrefHashFilter::FinalizeFilterOnLoad(
   }
 
   if (did_reset) {
-    pref_store_contents->Set(user_prefs::kPreferenceResetTime,
-                             new base::Value(base::Int64ToString(
-                                 base::Time::Now().ToInternalValue())));
+    pref_store_contents->SetString(
+        user_prefs::kPreferenceResetTime,
+        base::Int64ToString(base::Time::Now().ToInternalValue()));
     FilterUpdate(user_prefs::kPreferenceResetTime);
 
     if (reset_on_load_observer_)
@@ -327,10 +338,10 @@ PrefFilter::OnWriteCallbackPair PrefHashFilter::GetOnWriteSynchronousCallbacks(
       case TrackedPreferenceType::ATOMIC: {
         const base::Value* new_value = nullptr;
         pref_store_contents->Get(changed_path, &new_value);
-        changed_paths_macs->SetStringWithoutPathExpansion(
+        changed_paths_macs->SetKey(
             changed_path,
-            external_validation_hash_store_pair_->first->ComputeMac(
-                changed_path, new_value));
+            base::Value(external_validation_hash_store_pair_->first->ComputeMac(
+                changed_path, new_value)));
         break;
       }
       case TrackedPreferenceType::SPLIT: {

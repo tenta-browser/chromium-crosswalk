@@ -5,17 +5,11 @@
 /**
  * @fileoverview
  * 'settings-on-startup-page' is a settings page.
- *
- * Example:
- *
- *    <neon-animated-pages>
- *      <settings-on-startup-page prefs="{{prefs}}">
- *      </settings-on-startup-page>
- *      ... other pages ...
- *    </neon-animated-pages>
  */
 Polymer({
   is: 'settings-on-startup-page',
+
+  behaviors: [WebUIListenerBehavior],
 
   properties: {
     prefs: {
@@ -44,6 +38,10 @@ Polymer({
   /** @override */
   attached: function() {
     this.getNtpExtension_();
+    this.addWebUIListener('update-ntp-extension', ntpExtension => {
+      // Note that |ntpExtension| is empty if there is no NTP extension.
+      this.ntpExtension_ = ntpExtension;
+    });
   },
 
   /** @private */
@@ -65,11 +63,11 @@ Polymer({
   },
 
   /**
-    * Determine whether to show the user defined startup pages.
-    * @param {number} restoreOnStartup Enum value from prefValues_.
-    * @return {boolean} Whether the open specific pages is selected.
-    * @private
-    */
+   * Determine whether to show the user defined startup pages.
+   * @param {number} restoreOnStartup Enum value from prefValues_.
+   * @return {boolean} Whether the open specific pages is selected.
+   * @private
+   */
   showStartupUrls_: function(restoreOnStartup) {
     return restoreOnStartup == this.prefValues_.OPEN_SPECIFIC;
   },

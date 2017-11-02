@@ -27,12 +27,11 @@ namespace arc {
 // Values to be stored in the local state preference to keep track of the
 // filesystem encryption migration status.
 enum FileSystemCompatibilityState : int32_t {
-  // No migiration has happend, user keeps using the old file system.
+  // No migration has happened, user keeps using the old file system.
   kFileSystemIncompatible = 0,
-  // Migration has happend. New filesystem is in use.
+  // Migration has happened. New filesystem is in use.
   kFileSystemCompatible = 1,
-  // Migration has happend, and a notification about the fact was already shown.
-  // TODO(kinaba): This value isn't yet used until crbug.com/711095 is done.
+  // Migration has happened, and a notification about it was already shown.
   kFileSystemCompatibleAndNotified = 2,
 
   // Existing code assumes that kFileSystemIncompatible is the only state
@@ -47,12 +46,23 @@ enum FileSystemCompatibilityState : int32_t {
 // nullptr can be safely passed to this function. In that case, returns false.
 bool IsArcAllowedForProfile(const Profile* profile);
 
-// Returns true if ARC app is allowed to show up on app list for the given
-// profile. This can be a looser condition than IsArcAllowedForProfile.
-// ARC may be temporaliry disallowed for the profile, but it may become again
-// avaiable after the user's action. ARC app list can stay there to ease the
-// user (by showing apps not gone) and to give a guide for the action.
-bool IsArcAllowedInAppListForProfile(const Profile* profile);
+// Returns true if the profile is unmanaged or if the policy
+// EcryptfsMigrationStrategy for the user doesn't disable the migration.
+// Specifically if the policy states to ask the user, it is also considered that
+// migration is allowed, so return true.
+bool IsArcMigrationAllowedByPolicyForProfile(const Profile* profile);
+
+// Returns true if the profile is temporarily blocked to run ARC in the current
+// session, because the filesystem storing the profile is incompatible with the
+// currently installed ARC version.
+//
+// The actual filesystem check is performed only when it is running on the
+// Chrome OS device. Otherwise, it just returns the dummy value set by
+// SetArcBlockedDueToIncompatibleFileSystemForTesting (false by default.)
+bool IsArcBlockedDueToIncompatibleFileSystem(const Profile* profile);
+
+// Sets the result of IsArcBlockedDueToIncompatibleFileSystem for testing.
+void SetArcBlockedDueToIncompatibleFileSystemForTesting(bool block);
 
 // Returns true if the profile is already marked to be on a filesystem
 // compatible to the currently installed ARC version. The check almost never
@@ -92,12 +102,18 @@ bool IsArcPlayStoreEnabledPreferenceManagedForProfile(const Profile* profile);
 // the given |profile|.
 // TODO(hidehiko): De-couple the concept to enable ARC system and opt-in
 // to use Google Play Store. Note that there is a plan to use ARC without
-// Google Play Store, then ARC can run without opt-in.
-void SetArcPlayStoreEnabledForProfile(Profile* profile, bool enabled);
+// Google Play Store, then ARC can run without opt-in. Returns false in case
+// enabled state of the Play Store cannot be changed.
+bool SetArcPlayStoreEnabledForProfile(Profile* profile, bool enabled);
 
 // Returns whether all ARC related OptIn preferences (i.e.
-// ArcBackupRestoreEnabled and ArcLocationServiceEnabled) are managed.
-bool AreArcAllOptInPreferencesManagedForProfile(const Profile* profile);
+// ArcBackupRestoreEnabled and ArcLocationServiceEnabled) are managed or unused
+// (e.g. for Active Directory users).
+bool AreArcAllOptInPreferencesIgnorableForProfile(const Profile* profile);
+
+// Returns true iff there is a user associated with |profile|, and it is an
+// Active Directory user.
+bool IsActiveDirectoryUserForProfile(const Profile* profile);
 
 // Checks and updates the preference value whether the underlying filesystem
 // for the profile is compatible with ARC, when necessary. After it's done (or

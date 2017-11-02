@@ -8,10 +8,10 @@
 #include "core/CoreExport.h"
 #include "core/dom/ExecutionContext.h"
 #include "platform/Supplementable.h"
-#include "wtf/HashSet.h"
-#include "wtf/Vector.h"
-#include "wtf/text/StringHash.h"
-#include "wtf/text/WTFString.h"
+#include "platform/wtf/HashSet.h"
+#include "platform/wtf/Vector.h"
+#include "platform/wtf/text/StringHash.h"
+#include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
@@ -67,6 +67,10 @@ class CORE_EXPORT OriginTrialContext final
 
   void AddToken(const String& token);
   void AddTokens(const Vector<String>& tokens);
+
+  // Forces a given origin-trial-enabled feature to be enabled in this context
+  // and immediately adds required bindings to already initialized JS contexts.
+  void AddFeature(const String& feature);
 
   // Returns true if the trial (and therefore the feature or features it
   // controls) should be considered enabled for the current execution context.

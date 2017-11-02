@@ -106,7 +106,7 @@ class ProfileWriterTest : public testing::Test {
   }
 
   void HistoryQueryComplete(history::QueryResults* results) {
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
     history_count_ = results->size();
   }
 

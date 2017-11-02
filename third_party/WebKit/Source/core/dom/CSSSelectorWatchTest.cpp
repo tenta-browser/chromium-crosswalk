@@ -4,13 +4,13 @@
 
 #include "core/dom/CSSSelectorWatch.h"
 
+#include <memory>
 #include "core/dom/Document.h"
 #include "core/dom/StyleEngine.h"
-#include "core/frame/FrameView.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/html/HTMLElement.h"
 #include "core/testing/DummyPageHolder.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include <memory>
 
 namespace blink {
 
@@ -38,8 +38,8 @@ void CSSSelectorWatchTest::SetUp() {
 }
 
 void CSSSelectorWatchTest::ClearAddedRemoved(CSSSelectorWatch& watch) {
-  watch.added_selectors_.Clear();
-  watch.removed_selectors_.Clear();
+  watch.added_selectors_.clear();
+  watch.removed_selectors_.clear();
 }
 
 TEST_F(CSSSelectorWatchTest, RecalcOnDocumentChange) {
@@ -58,7 +58,7 @@ TEST_F(CSSSelectorWatchTest, RecalcOnDocumentChange) {
 
   GetDocument().View()->UpdateAllLifecyclePhases();
 
-  selectors.Clear();
+  selectors.clear();
   selectors.push_back(".b");
   selectors.push_back(".c");
   selectors.push_back("#nomatch");
@@ -66,9 +66,9 @@ TEST_F(CSSSelectorWatchTest, RecalcOnDocumentChange) {
 
   GetDocument().View()->UpdateAllLifecyclePhases();
 
-  Element* x = GetDocument().GetElementById("x");
-  Element* y = GetDocument().GetElementById("y");
-  Element* z = GetDocument().GetElementById("z");
+  Element* x = GetDocument().getElementById("x");
+  Element* y = GetDocument().getElementById("y");
+  Element* z = GetDocument().getElementById("z");
   ASSERT_TRUE(x);
   ASSERT_TRUE(y);
   ASSERT_TRUE(z);

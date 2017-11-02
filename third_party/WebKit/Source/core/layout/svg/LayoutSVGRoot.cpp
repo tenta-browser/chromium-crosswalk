@@ -26,7 +26,8 @@
 #include "core/frame/LocalFrame.h"
 #include "core/layout/HitTestResult.h"
 #include "core/layout/LayoutAnalyzer.h"
-#include "core/layout/api/LayoutPartItem.h"
+#include "core/layout/LayoutView.h"
+#include "core/layout/api/LayoutEmbeddedContentItem.h"
 #include "core/layout/svg/LayoutSVGText.h"
 #include "core/layout/svg/SVGLayoutSupport.h"
 #include "core/layout/svg/SVGResourcesCache.h"
@@ -134,6 +135,13 @@ LayoutUnit LayoutSVGRoot::ComputeReplacedLogicalHeight(
     return ContainingBlock()->AvailableLogicalHeight(
         kIncludeMarginBorderPadding);
 
+  const Length& logical_height = Style()->LogicalHeight();
+  if (IsDocumentElement() && logical_height.IsPercentOrCalc()) {
+    return ValueForLength(
+        logical_height,
+        GetDocument().GetLayoutView()->ViewLogicalHeightForPercentages());
+  }
+
   return LayoutReplaced::ComputeReplacedLogicalHeight(estimated_used_width);
 }
 
@@ -177,8 +185,7 @@ void LayoutSVGRoot::UpdateLayout() {
   if (transform_change != SVGTransformChange::kNone ||
       viewport_may_have_changed) {
     SetMayNeedPaintInvalidationSubtree();
-    if (RuntimeEnabledFeatures::slimmingPaintInvalidationEnabled())
-      SetNeedsPaintPropertyUpdate();
+    SetNeedsPaintPropertyUpdate();
   }
 
   SVGSVGElement* svg = toSVGSVGElement(GetNode());
@@ -207,7 +214,7 @@ void LayoutSVGRoot::UpdateLayout() {
     AddContentsVisualOverflow(EnclosingLayoutRect(content_visual_rect));
   }
 
-  UpdateLayerTransformAfterLayout();
+  UpdateAfterLayout();
   has_box_decoration_background_ = IsDocumentElement()
                                        ? StyleRef().HasBoxDecorationBackground()
                                        : HasBoxDecorationBackground();
@@ -232,12 +239,6 @@ LayoutRect LayoutSVGRoot::VisualOverflowRect() const {
   if (!ShouldApplyViewportClip())
     rect.Unite(ContentsVisualOverflowRect());
   return rect;
-}
-
-LayoutRect LayoutSVGRoot::OverflowClipRect(const LayoutPoint& location,
-                                           OverlayScrollbarClipBehavior) const {
-  return LayoutRect(PixelSnappedIntRect(LayoutReplaced::OverflowClipRect(
-      location, kIgnorePlatformOverlayScrollbarSize)));
 }
 
 void LayoutSVGRoot::PaintReplaced(const PaintInfo& paint_info,
@@ -311,8 +312,7 @@ void LayoutSVGRoot::DescendantIsolationRequirementsChanged(
       has_non_isolated_blending_descendants_dirty_ = true;
       break;
   }
-  if (RuntimeEnabledFeatures::slimmingPaintInvalidationEnabled())
-    SetNeedsPaintPropertyUpdate();
+  SetNeedsPaintPropertyUpdate();
 }
 
 void LayoutSVGRoot::InsertedIntoTree() {
@@ -378,7 +378,7 @@ AffineTransform LayoutSVGRoot::LocalToSVGParentTransform() const {
          local_to_border_box_transform_;
 }
 
-LayoutRect LayoutSVGRoot::LocalVisualRect() const {
+LayoutRect LayoutSVGRoot::LocalVisualRectIgnoringVisibility() const {
   // This is an open-coded aggregate of SVGLayoutSupport::localVisualRect
   // and LayoutReplaced::localVisualRect. The reason for this is to optimize/
   // minimize the visual rect when the box is not "decorated" (does not have
@@ -386,8 +386,7 @@ LayoutRect LayoutSVGRoot::LocalVisualRect() const {
   // LayoutSVGRootTest.VisualRectMappingWithViewportClipWithoutBorder).
 
   // Return early for any cases where we don't actually paint.
-  if (Style()->Visibility() != EVisibility::kVisible &&
-      !EnclosingLayer()->HasVisibleContent())
+  if (!EnclosingLayer()->HasVisibleContent())
     return LayoutRect();
 
   // Compute the visual rect of the content of the SVG in the border-box

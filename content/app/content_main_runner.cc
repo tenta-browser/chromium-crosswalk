@@ -54,16 +54,13 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/common/main_function_params.h"
 #include "content/public/common/sandbox_init.h"
-#include "ipc/ipc_descriptors.h"
+#include "gin/v8_initializer.h"
 #include "media/base/media.h"
+#include "media/media_features.h"
 #include "ppapi/features/features.h"
+#include "services/service_manager/embedder/switches.h"
 #include "ui/base/ui_base_paths.h"
 #include "ui/base/ui_base_switches.h"
-
-#if defined(V8_USE_EXTERNAL_STARTUP_DATA) && \
-    !defined(CHROME_MULTIPLE_DLL_BROWSER)
-#include "gin/v8_initializer.h"
-#endif
 
 #if defined(OS_WIN)
 #include <malloc.h>
@@ -94,10 +91,6 @@
 #endif
 
 #endif  // OS_POSIX
-
-#if defined(USE_NSS_CERTS)
-#include "crypto/nss_util.h"
-#endif
 
 #if !defined(CHROME_MULTIPLE_DLL_BROWSER)
 #include "content/public/gpu/content_gpu_client.h"
@@ -181,6 +174,24 @@ void InitializeFieldTrialAndFeatureList(
   base::FeatureList::SetInstance(std::move(feature_list));
 }
 
+void LoadV8ContextSnapshotFile() {
+#if defined(OS_POSIX) && !defined(OS_MACOSX)
+  base::FileDescriptorStore& file_descriptor_store =
+      base::FileDescriptorStore::GetInstance();
+  base::MemoryMappedFile::Region region;
+  base::ScopedFD fd = file_descriptor_store.MaybeTakeFD(
+      kV8ContextSnapshotDataDescriptor, &region);
+  if (fd.is_valid()) {
+    gin::V8Initializer::LoadV8ContextSnapshotFromFD(fd.get(), region.offset,
+                                                    region.size);
+    return;
+  }
+#endif  // OS
+#if !defined(CHROME_MULTIPLE_DLL_BROWSER)
+  gin::V8Initializer::LoadV8ContextSnapshot();
+#endif  // !CHROME_MULTIPLE_DLL_BROWSER
+}
+
 void InitializeV8IfNeeded(
     const base::CommandLine& command_line,
     const std::string& process_type) {
@@ -197,24 +208,26 @@ void InitializeV8IfNeeded(
   if (v8_snapshot_fd.is_valid()) {
     gin::V8Initializer::LoadV8SnapshotFromFD(v8_snapshot_fd.get(),
                                              region.offset, region.size);
-    } else {
-      gin::V8Initializer::LoadV8Snapshot();
-    }
-    base::ScopedFD v8_natives_fd =
-        file_descriptor_store.MaybeTakeFD(kV8NativesDataDescriptor, &region);
-    if (v8_natives_fd.is_valid()) {
-      gin::V8Initializer::LoadV8NativesFromFD(v8_natives_fd.get(),
-                                              region.offset, region.size);
-    } else {
-      gin::V8Initializer::LoadV8Natives();
-    }
+  } else {
+    gin::V8Initializer::LoadV8Snapshot();
+  }
+  base::ScopedFD v8_natives_fd =
+      file_descriptor_store.MaybeTakeFD(kV8NativesDataDescriptor, &region);
+  if (v8_natives_fd.is_valid()) {
+    gin::V8Initializer::LoadV8NativesFromFD(v8_natives_fd.get(), region.offset,
+                                            region.size);
+  } else {
+    gin::V8Initializer::LoadV8Natives();
+  }
 #else
 #if !defined(CHROME_MULTIPLE_DLL_BROWSER)
-    gin::V8Initializer::LoadV8Snapshot();
-    gin::V8Initializer::LoadV8Natives();
+  gin::V8Initializer::LoadV8Snapshot();
+  gin::V8Initializer::LoadV8Natives();
 #endif  // !CHROME_MULTIPLE_DLL_BROWSER
 #endif  // OS_POSIX && !OS_MACOSX
 #endif  // V8_USE_EXTERNAL_STARTUP_DATA
+
+  LoadV8ContextSnapshotFile();
 }
 
 }  // namespace
@@ -232,33 +245,6 @@ base::LazyInstance<ContentRendererClient>::DestructorAtExit
 base::LazyInstance<ContentUtilityClient>::DestructorAtExit
     g_empty_content_utility_client = LAZY_INSTANCE_INITIALIZER;
 #endif  // !CHROME_MULTIPLE_DLL_BROWSER
-
-void CommonSubprocessInit() {
-#if defined(OS_WIN)
-  // HACK: Let Windows know that we have started.  This is needed to suppress
-  // the IDC_APPSTARTING cursor from being displayed for a prolonged period
-  // while a subprocess is starting.
-  PostThreadMessage(GetCurrentThreadId(), WM_NULL, 0, 0);
-  MSG msg;
-  PeekMessage(&msg, NULL, 0, 0, PM_REMOVE);
-#endif
-#if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
-  // Various things break when you're using a locale where the decimal
-  // separator isn't a period.  See e.g. bugs 22782 and 39964.  For
-  // all processes except the browser process (where we call system
-  // APIs that may rely on the correct locale for formatting numbers
-  // when presenting them to the user), reset the locale for numeric
-  // formatting.
-  // Note that this is not correct for plugin processes -- they can
-  // surface UI -- but it's likely they get this wrong too so why not.
-  setlocale(LC_NUMERIC, "C");
-#endif
-
-#if !defined(OFFICIAL_BUILD) && defined(OS_WIN)
-  base::RouteStdioToConsole(false);
-  LoadLibraryA("dbghelp.dll");
-#endif
-}
 
 class ContentClientInitializer {
  public:
@@ -312,7 +298,8 @@ struct MainFunction {
   int (*function)(const MainFunctionParams&);
 };
 
-#if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
+#if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID) && \
+    !defined(OS_FUCHSIA)
 // On platforms that use the zygote, we have a special subset of
 // subprocesses that are launched via the zygote.  This function
 // fills in some process-launching bits around ZygoteMain().
@@ -373,7 +360,8 @@ int RunZygote(const MainFunctionParams& main_function_params,
   NOTREACHED() << "Unknown zygote process type: " << process_type;
   return 1;
 }
-#endif  // defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
+#endif  // defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID) && \
+//         !defined(OS_FUCHSIA)
 
 static void RegisterMainThreadFactories() {
 #if !defined(CHROME_MULTIPLE_DLL_BROWSER) && !defined(CHROME_MULTIPLE_DLL_CHILD)
@@ -439,7 +427,8 @@ int RunNamedProcessTypeMain(
     }
   }
 
-#if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
+#if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID) && \
+    !defined(OS_FUCHSIA)
   // Zygote startup is special -- see RunZygote comments above
   // for why we don't use ZygoteMain directly.
   if (process_type == switches::kZygoteProcess)
@@ -474,6 +463,8 @@ class ContentMainRunnerImpl : public ContentMainRunner {
 
   int Initialize(const ContentMainParams& params) override {
     ui_task_ = params.ui_task;
+
+    create_discardable_memory_ = params.create_discardable_memory;
 
 #if defined(USE_AURA)
     env_mode_ = params.env_mode;
@@ -560,12 +551,6 @@ class ContentMainRunnerImpl : public ContentMainRunner {
       SetContentClient(&empty_content_client_);
     ContentClientInitializer::Set(process_type, delegate_);
 
-#if defined(OS_WIN)
-    // Route stdio to parent console (if any) or create one.
-    if (command_line.HasSwitch(switches::kEnableLogging))
-      base::RouteStdioToConsole(true);
-#endif
-
 #if !defined(OS_ANDROID)
     // Enable startup tracing asap to avoid early TRACE_EVENT calls being
     // ignored. For Android, startup tracing is enabled in an even earlier place
@@ -632,11 +617,6 @@ class ContentMainRunnerImpl : public ContentMainRunner {
     }
 #endif
 
-#if defined(USE_NSS_CERTS)
-    crypto::EarlySetupForNSSInit();
-#endif
-
-    ui::RegisterPathProvider();
     RegisterPathProvider();
     RegisterContentSchemes(true);
 
@@ -668,17 +648,15 @@ class ContentMainRunnerImpl : public ContentMainRunner {
     // happen before crash reporting is initialized (which for chrome happens in
     // the call to PreSandboxStartup() on the delegate below), because otherwise
     // this would interfere with signal handlers used by crash reporting.
-    if (should_enable_stack_dump && !command_line.HasSwitch(
-            switches::kDisableInProcessStackTraces)) {
+    if (should_enable_stack_dump &&
+        !command_line.HasSwitch(
+            service_manager::switches::kDisableInProcessStackTraces)) {
       base::debug::EnableInProcessStackDumping();
     }
 #endif  // !defined(OFFICIAL_BUILD)
 
     if (delegate_)
       delegate_->PreSandboxStartup();
-
-    if (!process_type.empty())
-      CommonSubprocessInit();
 
 #if defined(OS_WIN)
     CHECK(InitializeSandbox(params.sandbox_info));
@@ -708,16 +686,6 @@ class ContentMainRunnerImpl : public ContentMainRunner {
     std::string process_type =
         command_line.GetSwitchValueASCII(switches::kProcessType);
 
-    // --enable-network-service requires both --enable-browser-side-navigation
-    // (PlzNavigate) and the LoadingWithMojo feature.
-    if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-            switches::kEnableNetworkService)) {
-      base::CommandLine::ForCurrentProcess()->AppendSwitch(
-          switches::kEnableBrowserSideNavigation);
-      base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
-          switches::kEnableFeatures, features::kLoadingWithMojo.name);
-    }
-
     // Run this logic on all child processes. Zygotes will run this at a later
     // point in time when the command line has been updated.
     std::unique_ptr<base::FieldTrialList> field_trial_list;
@@ -736,6 +704,7 @@ class ContentMainRunnerImpl : public ContentMainRunner {
 #if defined(USE_AURA)
     main_params.env_mode = env_mode_;
 #endif
+    main_params.create_discardable_memory = create_discardable_memory_;
 
     return RunNamedProcessTypeMain(process_type, main_params, delegate_);
   }
@@ -793,6 +762,8 @@ class ContentMainRunnerImpl : public ContentMainRunner {
 #if defined(USE_AURA)
   aura::Env::Mode env_mode_ = aura::Env::Mode::LOCAL;
 #endif
+
+  bool create_discardable_memory_ = true;
 
   DISALLOW_COPY_AND_ASSIGN(ContentMainRunnerImpl);
 };

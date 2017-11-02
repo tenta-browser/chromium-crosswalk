@@ -6,7 +6,7 @@
 
 #include "core/editing/EditingTestBase.h"
 #include "core/editing/FrameSelection.h"
-#include "core/frame/FrameView.h"
+#include "core/frame/LocalFrameView.h"
 #include "core/frame/Settings.h"
 #include "core/input/EventHandler.h"
 
@@ -17,7 +17,7 @@ class SelectionControllerTest : public EditingTestBase {
   SelectionControllerTest() = default;
 
   const VisibleSelection& VisibleSelectionInDOMTree() const {
-    return Selection().ComputeVisibleSelectionInDOMTreeDeprecated();
+    return Selection().ComputeVisibleSelectionInDOMTree();
   }
 
   const VisibleSelectionInFlatTree& GetVisibleSelectionInFlatTree() const {
@@ -56,20 +56,21 @@ TEST_F(SelectionControllerTest, setNonDirectionalSelectionIfNeeded) {
   SetBodyContent(body_content);
   ShadowRoot* shadow_root = SetShadowContent(shadow_content, "host");
 
-  Node* top = GetDocument().GetElementById("top")->FirstChild();
-  Node* bottom = shadow_root->GetElementById("bottom")->FirstChild();
-  Node* host = GetDocument().GetElementById("host");
+  Node* top = GetDocument().getElementById("top")->firstChild();
+  Node* bottom = shadow_root->getElementById("bottom")->firstChild();
 
   // top to bottom
   SetNonDirectionalSelectionIfNeeded(SelectionInFlatTree::Builder()
                                          .Collapse(PositionInFlatTree(top, 1))
                                          .Extend(PositionInFlatTree(bottom, 3))
                                          .Build(),
-                                     kCharacterGranularity);
-  EXPECT_EQ(Position(top, 1), VisibleSelectionInDOMTree().Base());
-  EXPECT_EQ(Position::BeforeNode(host), VisibleSelectionInDOMTree().Extent());
+                                     TextGranularity::kCharacter);
+  EXPECT_EQ(VisibleSelectionInDOMTree().Start(),
+            VisibleSelectionInDOMTree().Base());
+  EXPECT_EQ(VisibleSelectionInDOMTree().End(),
+            VisibleSelectionInDOMTree().Extent());
   EXPECT_EQ(Position(top, 1), VisibleSelectionInDOMTree().Start());
-  EXPECT_EQ(Position(top, 3), VisibleSelectionInDOMTree().end());
+  EXPECT_EQ(Position(top, 3), VisibleSelectionInDOMTree().End());
 
   EXPECT_EQ(PositionInFlatTree(top, 1), GetVisibleSelectionInFlatTree().Base());
   EXPECT_EQ(PositionInFlatTree(bottom, 3),
@@ -77,7 +78,7 @@ TEST_F(SelectionControllerTest, setNonDirectionalSelectionIfNeeded) {
   EXPECT_EQ(PositionInFlatTree(top, 1),
             GetVisibleSelectionInFlatTree().Start());
   EXPECT_EQ(PositionInFlatTree(bottom, 3),
-            GetVisibleSelectionInFlatTree().end());
+            GetVisibleSelectionInFlatTree().End());
 
   // bottom to top
   SetNonDirectionalSelectionIfNeeded(
@@ -85,12 +86,13 @@ TEST_F(SelectionControllerTest, setNonDirectionalSelectionIfNeeded) {
           .Collapse(PositionInFlatTree(bottom, 3))
           .Extend(PositionInFlatTree(top, 1))
           .Build(),
-      kCharacterGranularity);
-  EXPECT_EQ(Position(bottom, 3), VisibleSelectionInDOMTree().Base());
-  EXPECT_EQ(Position::BeforeNode(bottom->parentNode()),
+      TextGranularity::kCharacter);
+  EXPECT_EQ(VisibleSelectionInDOMTree().End(),
+            VisibleSelectionInDOMTree().Base());
+  EXPECT_EQ(VisibleSelectionInDOMTree().Start(),
             VisibleSelectionInDOMTree().Extent());
   EXPECT_EQ(Position(bottom, 0), VisibleSelectionInDOMTree().Start());
-  EXPECT_EQ(Position(bottom, 3), VisibleSelectionInDOMTree().end());
+  EXPECT_EQ(Position(bottom, 3), VisibleSelectionInDOMTree().End());
 
   EXPECT_EQ(PositionInFlatTree(bottom, 3),
             GetVisibleSelectionInFlatTree().Base());
@@ -99,7 +101,7 @@ TEST_F(SelectionControllerTest, setNonDirectionalSelectionIfNeeded) {
   EXPECT_EQ(PositionInFlatTree(top, 1),
             GetVisibleSelectionInFlatTree().Start());
   EXPECT_EQ(PositionInFlatTree(bottom, 3),
-            GetVisibleSelectionInFlatTree().end());
+            GetVisibleSelectionInFlatTree().End());
 }
 
 TEST_F(SelectionControllerTest, setCaretAtHitTestResult) {
@@ -114,7 +116,6 @@ TEST_F(SelectionControllerTest, setCaretAtHitTestResult) {
   GetDocument().body()->AppendChild(script);
   GetDocument().View()->UpdateAllLifecyclePhases();
   GetFrame().GetEventHandler().GetSelectionController().HandleGestureLongPress(
-      WebGestureEvent(),
       GetFrame().GetEventHandler().HitTestResultAtPoint(IntPoint(8, 8)));
 }
 

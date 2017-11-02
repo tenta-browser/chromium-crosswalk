@@ -722,7 +722,7 @@ bool SandboxDirectoryDatabase::DestroyDatabase() {
   const std::string path =
       FilePathToString(filesystem_data_directory_.Append(
           kDirectoryDatabaseName));
-  leveldb::Options options;
+  leveldb_env::Options options;
   if (env_override_)
     options.env = env_override_;
   leveldb::Status status = leveldb::DestroyDB(path, options);
@@ -740,17 +740,14 @@ bool SandboxDirectoryDatabase::Init(RecoveryOption recovery_option) {
   std::string path =
       FilePathToString(filesystem_data_directory_.Append(
           kDirectoryDatabaseName));
-  leveldb::Options options;
+  leveldb_env::Options options;
   options.max_open_files = 0;  // Use minimum.
   options.create_if_missing = true;
-  options.reuse_logs = leveldb_env::kDefaultLogReuseOptionValue;
   if (env_override_)
     options.env = env_override_;
-  leveldb::DB* db;
-  leveldb::Status status = leveldb::DB::Open(options, path, &db);
+  leveldb::Status status = leveldb_env::OpenDB(options, path, &db_);
   ReportInitStatus(status);
   if (status.ok()) {
-    db_.reset(db);
     return true;
   }
   HandleError(FROM_HERE, status);
@@ -791,7 +788,8 @@ bool SandboxDirectoryDatabase::Init(RecoveryOption recovery_option) {
 
 bool SandboxDirectoryDatabase::RepairDatabase(const std::string& db_path) {
   DCHECK(!db_.get());
-  leveldb::Options options;
+  leveldb_env::Options options;
+  options.reuse_logs = false;
   options.max_open_files = 0;  // Use minimum.
   if (env_override_)
     options.env = env_override_;

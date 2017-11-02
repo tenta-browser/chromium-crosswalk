@@ -32,7 +32,7 @@ class AudioRendererMixerPool;
 class AudioRendererMixer;
 
 class MEDIA_EXPORT AudioRendererMixerInput
-    : NON_EXPORTED_BASE(public SwitchableAudioRendererSink),
+    : public SwitchableAudioRendererSink,
       public AudioConverter::InputCallback {
  public:
   AudioRendererMixerInput(AudioRendererMixerPool* mixer_pool,
@@ -48,6 +48,7 @@ class MEDIA_EXPORT AudioRendererMixerInput
   void Pause() override;
   bool SetVolume(double volume) override;
   OutputDeviceInfo GetOutputDeviceInfo() override;
+  bool IsOptimizedForHardwareParameters() override;
   void Initialize(const AudioParameters& params,
                   AudioRendererSink::RenderCallback* renderer) override;
   void SwitchOutputDevice(const std::string& device_id,

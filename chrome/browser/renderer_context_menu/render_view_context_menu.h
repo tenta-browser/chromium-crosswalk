@@ -76,6 +76,7 @@ class RenderViewContextMenu : public RenderViewContextMenuBase {
 
   // RenderViewContextMenuBase:
   bool IsCommandIdChecked(int command_id) const override;
+  bool IsCommandIdVisible(int command_id) const override;
   bool IsCommandIdEnabled(int command_id) const override;
   void ExecuteCommand(int command_id, int event_flags) override;
   void AddSpellCheckServiceItem(bool is_checked) override;
@@ -218,8 +219,6 @@ class RenderViewContextMenu : public RenderViewContextMenuBase {
   bool multiple_profiles_open_;
   ui::SimpleMenuModel protocol_handler_submenu_model_;
   ProtocolHandlerRegistry* protocol_handler_registry_;
-  // Whether the Save As text experiment is on.
-  bool save_as_text_experiement_enabled_;
 
   // An observer that handles spelling suggestions, "Add to dictionary", and
   // "Ask Google for suggestions" items.
@@ -232,8 +231,10 @@ class RenderViewContextMenu : public RenderViewContextMenuBase {
       spelling_options_submenu_observer_;
 #endif
 
+#if defined(OS_CHROMEOS)
   // An observer that handles "Open with <app>" items.
   std::unique_ptr<RenderViewContextMenuObserver> open_with_menu_observer_;
+#endif
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
   // An observer that disables menu items when print preview is active.

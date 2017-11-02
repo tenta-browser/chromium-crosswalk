@@ -13,9 +13,15 @@
 #include "base/files/file_path.h"
 #include "base/macros.h"
 #include "ui/ozone/common/gpu/ozone_gpu_message_params.h"
+#include "ui/ozone/platform/drm/common/display_types.h"
 #include "ui/ozone/platform/drm/common/scoped_drm_types.h"
 
 typedef struct _drmModeModeInfo drmModeModeInfo;
+
+namespace display {
+class DisplayMode;
+class DisplaySnapshot;
+}  // namespace display
 
 namespace gfx {
 class Point;
@@ -63,12 +69,47 @@ DisplaySnapshot_Params CreateDisplaySnapshotParams(
     size_t device_index,
     const gfx::Point& origin);
 
+std::vector<DisplaySnapshot_Params> CreateParamsFromSnapshot(
+    const MovableDisplaySnapshots& displays);
+
+std::unique_ptr<display::DisplaySnapshot> CreateDisplaySnapshotFromParams(
+    const DisplaySnapshot_Params& params);
+
 int GetFourCCFormatFromBufferFormat(gfx::BufferFormat format);
 gfx::BufferFormat GetBufferFormatFromFourCCFormat(int format);
 
 int GetFourCCFormatForOpaqueFramebuffer(gfx::BufferFormat format);
 
 gfx::Size GetMaximumCursorSize(int fd);
+
+DisplayMode_Params GetDisplayModeParams(const display::DisplayMode& mode);
+
+std::unique_ptr<display::DisplayMode> CreateDisplayModeFromParams(
+    const DisplayMode_Params& pmode);
+
+bool MatchMode(const display::DisplayMode& display_mode,
+               const drmModeModeInfo& m);
+
+const gfx::Size ModeSize(const drmModeModeInfo& mode);
+
+float ModeRefreshRate(const drmModeModeInfo& mode);
+
+bool ModeIsInterlaced(const drmModeModeInfo& mode);
+
+MovableDisplaySnapshots CreateMovableDisplaySnapshotsFromParams(
+    const std::vector<DisplaySnapshot_Params>& displays);
+
+OverlaySurfaceCandidateList CreateOverlaySurfaceCandidateListFrom(
+    const std::vector<OverlayCheck_Params>& params);
+
+std::vector<OverlayCheck_Params> CreateParamsFromOverlaySurfaceCandidate(
+    const OverlaySurfaceCandidateList& candidates);
+
+OverlayStatusList CreateOverlayStatusListFrom(
+    const std::vector<OverlayCheckReturn_Params>& params);
+
+std::vector<OverlayCheckReturn_Params> CreateParamsFromOverlayStatusList(
+    const OverlayStatusList& returns);
 
 }  // namespace ui
 

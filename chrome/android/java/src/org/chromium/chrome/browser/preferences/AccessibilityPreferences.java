@@ -8,6 +8,7 @@ import android.os.Bundle;
 import android.preference.Preference;
 import android.preference.Preference.OnPreferenceChangeListener;
 import android.preference.PreferenceFragment;
+import android.widget.ListView;
 
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.accessibility.FontSizePrefs;
@@ -46,7 +47,7 @@ public class AccessibilityPreferences extends PreferenceFragment
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         getActivity().setTitle(R.string.prefs_accessibility);
-        addPreferencesFromResource(R.xml.accessibility_preferences);
+        PreferenceUtils.addPreferencesFromResource(this, R.xml.accessibility_preferences);
 
         mFormat = NumberFormat.getPercentInstance();
         mFontSizePrefs = FontSizePrefs.getInstance(getActivity());
@@ -58,6 +59,13 @@ public class AccessibilityPreferences extends PreferenceFragment
                 PREF_FORCE_ENABLE_ZOOM);
         mForceEnableZoomPref.setOnPreferenceChangeListener(this);
         mForceEnableZoomPref.setLinkedSeekBarPreference(mTextScalePref);
+    }
+
+    @Override
+    public void onActivityCreated(Bundle savedInstanceState) {
+        super.onActivityCreated(savedInstanceState);
+
+        ((ListView) getView().findViewById(android.R.id.list)).setItemsCanFocus(true);
     }
 
     @Override

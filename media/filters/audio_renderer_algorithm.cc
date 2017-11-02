@@ -64,9 +64,20 @@ static const int kMaxCapacityInSeconds = 3;
 // The minimum size in ms for the |audio_buffer_|. Arbitrarily determined.
 static const int kStartingCapacityInMs = 200;
 
+// The minimum size in ms for the |audio_buffer_| for encrypted streams.
+// This is a temporary workaround for http://crbug.com/718161. Encrypted
+// audio may be decrypted on the renderer main thread, so if that thread
+// is blocked for a significant amount of time, decoding can stall. By
+// maintaining a larger audio buffer we are more resilient to underflows
+// caused by long running main thread tasks.
+// TODO(watk,xhwang): Delete this when decrypting moves to the media thread
+// (http://crbug.com/403462).
+static const int kStartingCapacityForEncryptedInMs = 500;
+
 AudioRendererAlgorithm::AudioRendererAlgorithm()
     : channels_(0),
       samples_per_second_(0),
+      is_bitstream_format_(false),
       muted_partial_frame_(0),
       capacity_(0),
       output_time_(0.0),
@@ -82,14 +93,18 @@ AudioRendererAlgorithm::AudioRendererAlgorithm()
 
 AudioRendererAlgorithm::~AudioRendererAlgorithm() {}
 
-void AudioRendererAlgorithm::Initialize(const AudioParameters& params) {
+void AudioRendererAlgorithm::Initialize(const AudioParameters& params,
+                                        bool is_encrypted) {
   CHECK(params.IsValid());
 
   channels_ = params.channels();
   samples_per_second_ = params.sample_rate();
-  initial_capacity_ = capacity_ =
-      std::max(params.frames_per_buffer() * 2,
-               ConvertMillisecondsToFrames(kStartingCapacityInMs));
+  is_bitstream_format_ = params.IsBitstreamFormat();
+  initial_capacity_ = capacity_ = std::max(
+      params.frames_per_buffer() * 2,
+      ConvertMillisecondsToFrames(is_encrypted
+                                      ? kStartingCapacityForEncryptedInMs
+                                      : kStartingCapacityInMs));
   max_capacity_ =
       std::max(initial_capacity_, kMaxCapacityInSeconds * samples_per_second_);
   num_candidate_blocks_ = ConvertMillisecondsToFrames(kWsolaSearchIntervalMs);
@@ -143,6 +158,10 @@ int AudioRendererAlgorithm::FillBuffer(AudioBus* dest,
 
   DCHECK_GT(playback_rate, 0);
   DCHECK_EQ(channels_, dest->channels());
+
+  // In case of compressed bitstream formats, no post processing is allowed.
+  if (is_bitstream_format_)
+    return audio_buffer_.ReadFrames(requested_frames, dest_offset, dest);
 
   // Optimize the muted case to issue a single clear instead of performing
   // the full crossfade and clearing each crossfaded frame.

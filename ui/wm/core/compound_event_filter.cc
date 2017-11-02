@@ -68,23 +68,23 @@ gfx::NativeCursor CompoundEventFilter::CursorForWindowComponent(
     int window_component) {
   switch (window_component) {
     case HTBOTTOM:
-      return ui::kCursorSouthResize;
+      return ui::CursorType::kSouthResize;
     case HTBOTTOMLEFT:
-      return ui::kCursorSouthWestResize;
+      return ui::CursorType::kSouthWestResize;
     case HTBOTTOMRIGHT:
-      return ui::kCursorSouthEastResize;
+      return ui::CursorType::kSouthEastResize;
     case HTLEFT:
-      return ui::kCursorWestResize;
+      return ui::CursorType::kWestResize;
     case HTRIGHT:
-      return ui::kCursorEastResize;
+      return ui::CursorType::kEastResize;
     case HTTOP:
-      return ui::kCursorNorthResize;
+      return ui::CursorType::kNorthResize;
     case HTTOPLEFT:
-      return ui::kCursorNorthWestResize;
+      return ui::CursorType::kNorthWestResize;
     case HTTOPRIGHT:
-      return ui::kCursorNorthEastResize;
+      return ui::CursorType::kNorthEastResize;
     default:
-      return ui::kCursorNull;
+      return ui::CursorType::kNull;
   }
 }
 
@@ -215,8 +215,7 @@ void CompoundEventFilter::OnMouseEvent(ui::MouseEvent* event) {
         event->type() == ui::ET_MOUSE_PRESSED ||
         event->type() == ui::ET_MOUSEWHEEL)) {
     SetMouseEventsEnableStateOnEvent(window, event, true);
-    SetCursorVisibilityOnEvent(window, event,
-                               !(event->flags() & ui::EF_DIRECT_INPUT));
+    SetCursorVisibilityOnEvent(window, event, true);
     UpdateCursor(window, event);
   }
 

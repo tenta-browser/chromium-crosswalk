@@ -20,13 +20,12 @@ import org.junit.runner.RunWith;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.BaseJUnit4ClassRunner;
-import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.browser.preferences.password.SavePasswordsPreferences;
 import org.chromium.chrome.browser.sync.ProfileSyncService;
-import org.chromium.components.signin.AccountManagerHelper;
+import org.chromium.components.signin.AccountManagerFacade;
 import org.chromium.components.signin.test.util.AccountHolder;
-import org.chromium.components.signin.test.util.MockAccountManager;
+import org.chromium.components.signin.test.util.FakeAccountManagerDelegate;
 import org.chromium.components.sync.AndroidSyncSettings;
 import org.chromium.components.sync.test.util.MockSyncContentResolverDelegate;
 import org.chromium.content.browser.test.NativeLibraryTestRule;
@@ -49,7 +48,7 @@ public class PasswordViewingTypeTest {
     private MockSyncContentResolverDelegate mSyncContentResolverDelegate;
     private String mAuthority;
     private Account mAccount;
-    private MockAccountManager mAccountManager;
+    private FakeAccountManagerDelegate mAccountManager;
 
     @Before
     public void setUp() throws Exception {
@@ -68,9 +67,9 @@ public class PasswordViewingTypeTest {
     }
 
     private void setupTestAccount(Context context) {
-        mAccountManager = new MockAccountManager(context, context);
-        AccountManagerHelper.overrideAccountManagerHelperForTests(context, mAccountManager);
-        mAccount = AccountManagerHelper.createAccountFromName("account@example.com");
+        mAccountManager = new FakeAccountManagerDelegate(context);
+        AccountManagerFacade.overrideAccountManagerFacadeForTests(context, mAccountManager);
+        mAccount = AccountManagerFacade.createAccountFromName("account@example.com");
         AccountHolder.Builder accountHolder =
                 AccountHolder.builder(mAccount).password("password").alwaysAccept(true);
         mAccountManager.addAccountHolderExplicitly(accountHolder.build());
@@ -132,10 +131,10 @@ public class PasswordViewingTypeTest {
 
     /**
      * Verifies that sync settings are being set up correctly in the case of redirecting users.
+     * Checks that sync users are allowed to view passwords natively.
      */
     @Test
     @SmallTest
-    @CommandLineFlags.Add("enable-features=" + MainPreferences.VIEW_PASSWORDS)
     @Feature({"Sync"})
     public void testUserRedirectSyncSettings() throws InterruptedException {
         setSyncability(true);
@@ -148,6 +147,8 @@ public class PasswordViewingTypeTest {
                 Assert.assertFalse(ProfileSyncService.get().isUsingSecondaryPassphrase());
             }
         });
+        Assert.assertEquals(
+                SavePasswordsPreferences.class.getCanonicalName(), mPasswordsPref.getFragment());
     }
 
     /**

@@ -35,6 +35,7 @@
 #include "platform/graphics/DeferredImageDecoder.h"
 #include "platform/graphics/ImageObserver.h"
 #include "platform/testing/HistogramTester.h"
+#include "platform/testing/TestingPlatformSupport.h"
 #include "platform/testing/UnitTestHelpers.h"
 #include "platform/wtf/StdLibExtras.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -59,6 +60,7 @@ class BitmapImageTest : public ::testing::Test {
     }
     bool ShouldPauseAnimation(const Image*) override { return false; }
     void AnimationAdvanced(const Image*) override {}
+    void AsyncLoadCompleted(const Image*) override { NOTREACHED(); }
 
     virtual void ChangedInRect(const Image*, const IntRect&) {}
 
@@ -68,17 +70,15 @@ class BitmapImageTest : public ::testing::Test {
 
   static PassRefPtr<SharedBuffer> ReadFile(const char* file_name) {
     String file_path = testing::BlinkRootDir();
-    file_path.Append(file_name);
+    file_path.append(file_name);
     return testing::ReadFromFile(file_path);
   }
 
   // Accessors to BitmapImage's protected methods.
   void DestroyDecodedData() { image_->DestroyDecodedData(); }
   size_t FrameCount() { return image_->FrameCount(); }
-  sk_sp<SkImage> FrameAtIndex(size_t index) {
-    return image_->FrameAtIndex(index);
-  }
-  void SetCurrentFrame(size_t frame) { image_->current_frame_ = frame; }
+  void FrameAtIndex(size_t index) { image_->FrameAtIndex(index); }
+  void SetCurrentFrame(size_t frame) { image_->current_frame_index_ = frame; }
   size_t FrameDecodedSize(size_t frame) {
     return image_->frames_[frame].frame_bytes_;
   }
@@ -139,6 +139,8 @@ class BitmapImageTest : public ::testing::Test {
 
   Persistent<FakeImageObserver> image_observer_;
   RefPtr<BitmapImage> image_;
+  ScopedTestingPlatformSupport<TestingPlatformSupportWithMockScheduler>
+      platform_;
 };
 
 TEST_F(BitmapImageTest, destroyDecodedData) {
@@ -251,8 +253,92 @@ TEST_F(BitmapImageTest, recachingFrameAfterDataChanged) {
   image_->DataChanged(true);
   EXPECT_EQ(0, LastDecodedSizeChange());
   // Recaching the first frame also shouldn't affect decoded size.
-  image_->ImageForCurrentFrame();
+  image_->PaintImageForCurrentFrame();
   EXPECT_EQ(0, LastDecodedSizeChange());
+}
+
+TEST_F(BitmapImageTest, ConstantImageIdForPartiallyLoadedImages) {
+  RefPtr<SharedBuffer> image_data =
+      ReadFile("/LayoutTests/images/resources/green.jpg");
+  ASSERT_TRUE(image_data.Get());
+
+  // Create a new buffer to partially supply the data.
+  RefPtr<SharedBuffer> partial_buffer = SharedBuffer::Create();
+  partial_buffer->Append(image_data->Data(), image_data->size() - 4);
+
+  // First partial load. Repeated calls for a PaintImage should have the same
+  // image until the data changes or the decoded data is destroyed.
+  ASSERT_EQ(image_->SetData(partial_buffer, false), Image::kSizeAvailable);
+  auto image1 = image_->PaintImageForCurrentFrame();
+  auto image2 = image_->PaintImageForCurrentFrame();
+  EXPECT_EQ(image1, image2);
+  auto sk_image1 = image1.GetSkImage();
+  auto sk_image2 = image2.GetSkImage();
+  EXPECT_EQ(sk_image1->uniqueID(), sk_image2->uniqueID());
+
+  // Frame keys should be the same for these PaintImages.
+  EXPECT_EQ(image1.GetKeyForFrame(image1.frame_index()),
+            image2.GetKeyForFrame(image2.frame_index()));
+  EXPECT_EQ(image1.frame_index(), 0u);
+  EXPECT_EQ(image2.frame_index(), 0u);
+
+  // Destroy the decoded data. This generates a new id since we don't cache
+  // image ids for partial decodes.
+  DestroyDecodedData();
+  auto image3 = image_->PaintImageForCurrentFrame();
+  auto sk_image3 = image3.GetSkImage();
+  EXPECT_NE(sk_image1, sk_image3);
+  EXPECT_NE(sk_image1->uniqueID(), sk_image3->uniqueID());
+
+  // Since the cached generator is discarded on destroying the cached decode,
+  // the new content id is generated resulting in an updated frame key.
+  EXPECT_NE(image1.GetKeyForFrame(image1.frame_index()),
+            image3.GetKeyForFrame(image3.frame_index()));
+  EXPECT_EQ(image3.frame_index(), 0u);
+
+  // Load complete. This should generate a new image id.
+  image_->SetData(image_data, true);
+  auto complete_image = image_->PaintImageForCurrentFrame();
+  auto complete_sk_image = complete_image.GetSkImage();
+  EXPECT_NE(sk_image3, complete_sk_image);
+  EXPECT_NE(sk_image3->uniqueID(), complete_sk_image->uniqueID());
+  EXPECT_NE(complete_image.GetKeyForFrame(complete_image.frame_index()),
+            image3.GetKeyForFrame(image3.frame_index()));
+  EXPECT_EQ(complete_image.frame_index(), 0u);
+
+  // Destroy the decoded data and re-create the PaintImage. The SkImage id used
+  // should remain consistent, even if a new image is created.
+  DestroyDecodedData();
+  auto new_complete_image = image_->PaintImageForCurrentFrame();
+  auto new_complete_sk_image = new_complete_image.GetSkImage();
+  EXPECT_NE(new_complete_sk_image, complete_sk_image);
+  EXPECT_EQ(new_complete_sk_image->uniqueID(), complete_sk_image->uniqueID());
+  EXPECT_EQ(new_complete_image.GetKeyForFrame(new_complete_image.frame_index()),
+            complete_image.GetKeyForFrame(complete_image.frame_index()));
+  EXPECT_EQ(new_complete_image.frame_index(), 0u);
+}
+
+TEST_F(BitmapImageTest, ImageForDefaultFrame_MultiFrame) {
+  LoadImage("/LayoutTests/images/resources/anim_none.gif", false);
+
+  // Multi-frame images create new StaticBitmapImages for each call.
+  auto default_image1 = image_->ImageForDefaultFrame();
+  auto default_image2 = image_->ImageForDefaultFrame();
+  EXPECT_NE(default_image1, default_image2);
+
+  // But the PaintImage should be the same.
+  auto paint_image1 = default_image1->PaintImageForCurrentFrame();
+  auto paint_image2 = default_image2->PaintImageForCurrentFrame();
+  EXPECT_EQ(paint_image1, paint_image2);
+  EXPECT_EQ(paint_image1.GetSkImage()->uniqueID(),
+            paint_image2.GetSkImage()->uniqueID());
+}
+
+TEST_F(BitmapImageTest, ImageForDefaultFrame_SingleFrame) {
+  LoadImage("/LayoutTests/images/resources/green.jpg");
+
+  // Default frame images for single-frame cases is the image itself.
+  EXPECT_EQ(image_->ImageForDefaultFrame(), image_);
 }
 
 template <typename HistogramEnumType>
@@ -309,8 +395,8 @@ TEST_P(DecodedImageOrientationHistogramTest, ImageOrientation) {
   RunTest("Blink.DecodedImage.Orientation");
 }
 
-DecodedImageOrientationHistogramTest::ParamType
-    g_k_decoded_image_orientation_histogram_test_params[] = {
+const DecodedImageOrientationHistogramTest::ParamType
+    kDecodedImageOrientationHistogramTestParams[] = {
         {"/LayoutTests/images/resources/exif-orientation-1-ul.jpg",
          kOriginTopLeft},
         {"/LayoutTests/images/resources/exif-orientation-2-ur.jpg",
@@ -331,6 +417,6 @@ DecodedImageOrientationHistogramTest::ParamType
 INSTANTIATE_TEST_CASE_P(
     DecodedImageOrientationHistogramTest,
     DecodedImageOrientationHistogramTest,
-    ::testing::ValuesIn(g_k_decoded_image_orientation_histogram_test_params));
+    ::testing::ValuesIn(kDecodedImageOrientationHistogramTestParams));
 
 }  // namespace blink

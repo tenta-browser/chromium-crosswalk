@@ -8,21 +8,22 @@
 #include <string>
 
 #include "content/common/content_export.h"
-#include "content/common/resource_request_body_impl.h"
-#include "content/common/service_worker/service_worker_types.h"
 #include "content/public/common/request_context_frame_type.h"
 #include "content/public/common/request_context_type.h"
+#include "content/public/common/resource_request_body.h"
 #include "content/public/common/resource_type.h"
+#include "content/public/common/service_worker_modes.h"
 #include "third_party/WebKit/public/platform/WebMixedContentContextType.h"
+#include "third_party/WebKit/public/platform/WebURLRequest.h"
 
 namespace blink {
 class WebHTTPBody;
-class WebURL;
-class WebURLRequest;
-struct WebURLError;
 }
 
 namespace content {
+
+ResourceType WebURLRequestContextToResourceType(
+    blink::WebURLRequest::RequestContext request_context);
 
 CONTENT_EXPORT ResourceType WebURLRequestToResourceType(
     const blink::WebURLRequest& request);
@@ -31,18 +32,18 @@ std::string GetWebURLRequestHeaders(const blink::WebURLRequest& request);
 
 int GetLoadFlagsForWebURLRequest(const blink::WebURLRequest& request);
 
-// Takes a ResourceRequestBodyImpl and converts into WebHTTPBody.
+// Takes a ResourceRequestBody and converts into WebHTTPBody.
 blink::WebHTTPBody GetWebHTTPBodyForRequestBody(
-    const scoped_refptr<ResourceRequestBodyImpl>& input);
+    const scoped_refptr<ResourceRequestBody>& input);
 
-// Takes a WebHTTPBody and converts into a ResourceRequestBodyImpl.
-scoped_refptr<ResourceRequestBodyImpl> GetRequestBodyForWebHTTPBody(
+// Takes a WebHTTPBody and converts into a ResourceRequestBody.
+scoped_refptr<ResourceRequestBody> GetRequestBodyForWebHTTPBody(
     const blink::WebHTTPBody& httpBody);
 
 // Takes a WebURLRequest and sets the appropriate information
-// in a ResourceRequestBodyImpl structure. Returns an empty scoped_refptr
+// in a ResourceRequestBody structure. Returns an empty scoped_refptr
 // if the request body is not present.
-scoped_refptr<ResourceRequestBodyImpl> GetRequestBodyForWebURLRequest(
+scoped_refptr<ResourceRequestBody> GetRequestBodyForWebURLRequest(
     const blink::WebURLRequest& request);
 
 // Helper functions to convert enums from the blink type to the content
@@ -53,6 +54,8 @@ FetchCredentialsMode GetFetchCredentialsModeForWebURLRequest(
     const blink::WebURLRequest& request);
 FetchRedirectMode GetFetchRedirectModeForWebURLRequest(
     const blink::WebURLRequest& request);
+std::string GetFetchIntegrityForWebURLRequest(
+    const blink::WebURLRequest& request);
 RequestContextFrameType GetRequestContextFrameTypeForWebURLRequest(
     const blink::WebURLRequest& request);
 RequestContextType GetRequestContextTypeForWebURLRequest(
@@ -61,17 +64,6 @@ blink::WebMixedContentContextType GetMixedContentContextTypeForWebURLRequest(
     const blink::WebURLRequest& request);
 ServiceWorkerMode GetServiceWorkerModeForWebURLRequest(
     const blink::WebURLRequest& request);
-
-// Generates a WebURLError based on |reason|.
-blink::WebURLError CreateWebURLError(const blink::WebURL& unreachable_url,
-                                     bool stale_copy_in_cache,
-                                     int reason);
-
-// Generates a WebURLError based on |reason|.
-blink::WebURLError CreateWebURLError(const blink::WebURL& unreachable_url,
-                                     bool stale_copy_in_cache,
-                                     int reason,
-                                     bool was_ignored_by_handler);
 
 }  // namespace content
 

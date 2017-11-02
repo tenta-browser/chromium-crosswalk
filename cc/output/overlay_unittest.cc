@@ -7,12 +7,12 @@
 #include <utility>
 #include <vector>
 
+#include "base/containers/flat_map.h"
 #include "base/memory/ptr_util.h"
 #include "base/test/scoped_feature_list.h"
 #include "cc/base/filter_operation.h"
 #include "cc/base/region.h"
 #include "cc/output/ca_layer_overlay.h"
-#include "cc/output/gl_renderer.h"
 #include "cc/output/output_surface.h"
 #include "cc/output/output_surface_client.h"
 #include "cc/output/output_surface_frame.h"
@@ -27,14 +27,15 @@
 #include "cc/quads/solid_color_draw_quad.h"
 #include "cc/quads/stream_video_draw_quad.h"
 #include "cc/quads/texture_draw_quad.h"
-#include "cc/resources/resource_provider.h"
-#include "cc/resources/texture_mailbox.h"
+#include "cc/resources/display_resource_provider.h"
 #include "cc/test/fake_output_surface_client.h"
 #include "cc/test/fake_resource_provider.h"
 #include "cc/test/geometry_test_utils.h"
 #include "cc/test/test_context_provider.h"
 #include "cc/test/test_shared_bitmap_manager.h"
 #include "cc/test/test_web_graphics_context_3d.h"
+#include "components/viz/common/quads/texture_mailbox.h"
+#include "components/viz/service/display/gl_renderer.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/geometry/rect_conversions.h"
@@ -43,6 +44,7 @@
 
 using testing::_;
 using testing::Mock;
+using viz::SharedQuadState;
 
 namespace cc {
 namespace {
@@ -72,7 +74,7 @@ void MailboxReleased(const gpu::SyncToken& sync_token,
 class FullscreenOverlayValidator : public OverlayCandidateValidator {
  public:
   void GetStrategies(OverlayProcessor::StrategyList* strategies) override {
-    strategies->push_back(base::MakeUnique<OverlayStrategyFullscreen>(this));
+    strategies->push_back(std::make_unique<OverlayStrategyFullscreen>(this));
   }
   bool AllowCALayerOverlays() override { return false; }
   bool AllowDCLayerOverlays() override { return false; }
@@ -84,8 +86,8 @@ class SingleOverlayValidator : public OverlayCandidateValidator {
   SingleOverlayValidator() : expected_rects_(1, gfx::RectF(kOverlayRect)) {}
 
   void GetStrategies(OverlayProcessor::StrategyList* strategies) override {
-    strategies->push_back(base::MakeUnique<OverlayStrategySingleOnTop>(this));
-    strategies->push_back(base::MakeUnique<OverlayStrategyUnderlay>(this));
+    strategies->push_back(std::make_unique<OverlayStrategySingleOnTop>(this));
+    strategies->push_back(std::make_unique<OverlayStrategyUnderlay>(this));
   }
 
   bool AllowCALayerOverlays() override { return false; }
@@ -147,21 +149,21 @@ class DCLayerValidator : public OverlayCandidateValidator {
 class SingleOnTopOverlayValidator : public SingleOverlayValidator {
  public:
   void GetStrategies(OverlayProcessor::StrategyList* strategies) override {
-    strategies->push_back(base::MakeUnique<OverlayStrategySingleOnTop>(this));
+    strategies->push_back(std::make_unique<OverlayStrategySingleOnTop>(this));
   }
 };
 
 class UnderlayOverlayValidator : public SingleOverlayValidator {
  public:
   void GetStrategies(OverlayProcessor::StrategyList* strategies) override {
-    strategies->push_back(base::MakeUnique<OverlayStrategyUnderlay>(this));
+    strategies->push_back(std::make_unique<OverlayStrategyUnderlay>(this));
   }
 };
 
 class UnderlayCastOverlayValidator : public SingleOverlayValidator {
  public:
   void GetStrategies(OverlayProcessor::StrategyList* strategies) override {
-    strategies->push_back(base::MakeUnique<OverlayStrategyUnderlayCast>(this));
+    strategies->push_back(std::make_unique<OverlayStrategyUnderlayCast>(this));
   }
 };
 
@@ -215,6 +217,9 @@ class OverlayOutputSurface : public OutputSurface {
     return is_displayed_as_overlay_plane_;
   }
   unsigned GetOverlayTextureId() const override { return 10000; }
+  gfx::BufferFormat GetOverlayBufferFormat() const override {
+    return gfx::BufferFormat::RGBX_8888;
+  }
   bool SurfaceIsSuspendForRecycle() const override { return false; }
 
   void set_is_displayed_as_overlay_plane(bool value) {
@@ -259,12 +264,12 @@ std::unique_ptr<RenderPass> CreateRenderPassWithTransform(
   return pass;
 }
 
-ResourceId CreateResource(ResourceProvider* resource_provider,
-                          const gfx::Size& size,
-                          bool is_overlay_candidate) {
-  TextureMailbox mailbox =
-      TextureMailbox(gpu::Mailbox::Generate(), gpu::SyncToken(), GL_TEXTURE_2D,
-                     size, is_overlay_candidate, false);
+viz::ResourceId CreateResource(ResourceProvider* resource_provider,
+                               const gfx::Size& size,
+                               bool is_overlay_candidate) {
+  viz::TextureMailbox mailbox =
+      viz::TextureMailbox(gpu::Mailbox::Generate(), gpu::SyncToken(),
+                          GL_TEXTURE_2D, size, is_overlay_candidate, false);
   std::unique_ptr<SingleReleaseCallbackImpl> release_callback =
       SingleReleaseCallbackImpl::Create(base::Bind(&MailboxReleased));
 
@@ -287,21 +292,48 @@ TextureDrawQuad* CreateCandidateQuadAt(ResourceProvider* resource_provider,
                                        const SharedQuadState* shared_quad_state,
                                        RenderPass* render_pass,
                                        const gfx::Rect& rect) {
+  bool needs_blending = false;
   bool premultiplied_alpha = false;
   bool flipped = false;
   bool nearest_neighbor = false;
   float vertex_opacity[4] = {1.0f, 1.0f, 1.0f, 1.0f};
   gfx::Size resource_size_in_pixels = rect.size();
   bool is_overlay_candidate = true;
-  ResourceId resource_id = CreateResource(
+  viz::ResourceId resource_id = CreateResource(
       resource_provider, resource_size_in_pixels, is_overlay_candidate);
 
   TextureDrawQuad* overlay_quad =
       render_pass->CreateAndAppendDrawQuad<TextureDrawQuad>();
-  overlay_quad->SetNew(shared_quad_state, rect, rect, rect, resource_id,
-                       premultiplied_alpha, kUVTopLeft, kUVBottomRight,
-                       SK_ColorTRANSPARENT, vertex_opacity, flipped,
-                       nearest_neighbor, false);
+  overlay_quad->SetNew(shared_quad_state, rect, rect, needs_blending,
+                       resource_id, premultiplied_alpha, kUVTopLeft,
+                       kUVBottomRight, SK_ColorTRANSPARENT, vertex_opacity,
+                       flipped, nearest_neighbor, false);
+  overlay_quad->set_resource_size_in_pixels(resource_size_in_pixels);
+
+  return overlay_quad;
+}
+
+TextureDrawQuad* CreateTransparentCandidateQuadAt(
+    ResourceProvider* resource_provider,
+    const SharedQuadState* shared_quad_state,
+    RenderPass* render_pass,
+    const gfx::Rect& rect) {
+  bool needs_blending = true;
+  bool premultiplied_alpha = false;
+  bool flipped = false;
+  bool nearest_neighbor = false;
+  float vertex_opacity[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+  gfx::Size resource_size_in_pixels = rect.size();
+  bool is_overlay_candidate = true;
+  viz::ResourceId resource_id = CreateResource(
+      resource_provider, resource_size_in_pixels, is_overlay_candidate);
+
+  TextureDrawQuad* overlay_quad =
+      render_pass->CreateAndAppendDrawQuad<TextureDrawQuad>();
+  overlay_quad->SetNew(shared_quad_state, rect, rect, needs_blending,
+                       resource_id, premultiplied_alpha, kUVTopLeft,
+                       kUVBottomRight, SK_ColorTRANSPARENT, vertex_opacity,
+                       flipped, nearest_neighbor, false);
   overlay_quad->set_resource_size_in_pixels(resource_size_in_pixels);
 
   return overlay_quad;
@@ -313,15 +345,16 @@ StreamVideoDrawQuad* CreateCandidateVideoQuadAt(
     RenderPass* render_pass,
     const gfx::Rect& rect,
     const gfx::Transform& transform) {
+  bool needs_blending = false;
   gfx::Size resource_size_in_pixels = rect.size();
   bool is_overlay_candidate = true;
-  ResourceId resource_id = CreateResource(
+  viz::ResourceId resource_id = CreateResource(
       resource_provider, resource_size_in_pixels, is_overlay_candidate);
 
   StreamVideoDrawQuad* overlay_quad =
       render_pass->CreateAndAppendDrawQuad<StreamVideoDrawQuad>();
-  overlay_quad->SetNew(shared_quad_state, rect, rect, rect, resource_id,
-                       resource_size_in_pixels, transform);
+  overlay_quad->SetNew(shared_quad_state, rect, rect, needs_blending,
+                       resource_id, resource_size_in_pixels, transform);
 
   return overlay_quad;
 }
@@ -348,17 +381,18 @@ YUVVideoDrawQuad* CreateFullscreenCandidateYUVVideoQuad(
     ResourceProvider* resource_provider,
     const SharedQuadState* shared_quad_state,
     RenderPass* render_pass) {
+  bool needs_blending = false;
   gfx::RectF tex_coord_rect(0, 0, 1, 1);
   gfx::Rect rect = render_pass->output_rect;
   gfx::Size resource_size_in_pixels = rect.size();
   bool is_overlay_candidate = true;
-  ResourceId resource_id = CreateResource(
+  viz::ResourceId resource_id = CreateResource(
       resource_provider, resource_size_in_pixels, is_overlay_candidate);
 
   YUVVideoDrawQuad* overlay_quad =
       render_pass->CreateAndAppendDrawQuad<YUVVideoDrawQuad>();
-  overlay_quad->SetNew(shared_quad_state, rect, rect, rect, tex_coord_rect,
-                       tex_coord_rect, resource_size_in_pixels,
+  overlay_quad->SetNew(shared_quad_state, rect, rect, needs_blending,
+                       tex_coord_rect, tex_coord_rect, resource_size_in_pixels,
                        resource_size_in_pixels, resource_id, resource_id,
                        resource_id, resource_id, YUVVideoDrawQuad::REC_601,
                        gfx::ColorSpace(), 0, 1.0, 8);
@@ -417,8 +451,8 @@ static void CompareRenderPassLists(const RenderPassList& expected_list,
          exp_iter != expected->quad_list.cend();
          ++exp_iter, ++act_iter) {
       EXPECT_EQ(exp_iter->rect.ToString(), act_iter->rect.ToString());
-      EXPECT_EQ(exp_iter->shared_quad_state->quad_layer_bounds.ToString(),
-                act_iter->shared_quad_state->quad_layer_bounds.ToString());
+      EXPECT_EQ(exp_iter->shared_quad_state->quad_layer_rect.ToString(),
+                act_iter->shared_quad_state->quad_layer_rect.ToString());
     }
   }
 }
@@ -431,13 +465,13 @@ class OverlayTest : public testing::Test {
   void SetUp() override {
     provider_ = TestContextProvider::Create();
     provider_->BindToCurrentThread();
-    output_surface_ = base::MakeUnique<OutputSurfaceType>(provider_);
+    output_surface_ = std::make_unique<OutputSurfaceType>(provider_);
     output_surface_->BindToClient(&client_);
     output_surface_->SetOverlayCandidateValidator(
         new OverlayCandidateValidatorType);
 
     shared_bitmap_manager_.reset(new TestSharedBitmapManager());
-    resource_provider_ = FakeResourceProvider::Create(
+    resource_provider_ = FakeResourceProvider::Create<DisplayResourceProvider>(
         provider_.get(), shared_bitmap_manager_.get());
 
     overlay_processor_.reset(new OverlayProcessor(output_surface_.get()));
@@ -447,8 +481,8 @@ class OverlayTest : public testing::Test {
   scoped_refptr<TestContextProvider> provider_;
   std::unique_ptr<OutputSurfaceType> output_surface_;
   FakeOutputSurfaceClient client_;
-  std::unique_ptr<SharedBitmapManager> shared_bitmap_manager_;
-  std::unique_ptr<ResourceProvider> resource_provider_;
+  std::unique_ptr<viz::SharedBitmapManager> shared_bitmap_manager_;
+  std::unique_ptr<DisplayResourceProvider> resource_provider_;
   std::unique_ptr<OverlayProcessor> overlay_processor_;
   gfx::Rect damage_rect_;
   std::vector<gfx::Rect> content_bounds_;
@@ -459,7 +493,6 @@ using SingleOverlayOnTopTest = OverlayTest<SingleOnTopOverlayValidator>;
 using UnderlayTest = OverlayTest<UnderlayOverlayValidator>;
 using UnderlayCastTest = OverlayTest<UnderlayCastOverlayValidator>;
 using CALayerOverlayTest = OverlayTest<CALayerValidator>;
-using DCLayerOverlayTest = OverlayTest<DCLayerValidator>;
 
 TEST(OverlayTest, NoOverlaysByDefault) {
   scoped_refptr<TestContextProvider> provider = TestContextProvider::Create();
@@ -478,10 +511,11 @@ TEST(OverlayTest, OverlaysProcessorHasStrategy) {
   output_surface.BindToClient(&client);
   output_surface.SetOverlayCandidateValidator(new SingleOverlayValidator);
 
-  std::unique_ptr<SharedBitmapManager> shared_bitmap_manager(
+  std::unique_ptr<viz::SharedBitmapManager> shared_bitmap_manager(
       new TestSharedBitmapManager());
-  std::unique_ptr<ResourceProvider> resource_provider =
-      FakeResourceProvider::Create(provider.get(), shared_bitmap_manager.get());
+  std::unique_ptr<DisplayResourceProvider> resource_provider =
+      FakeResourceProvider::Create<DisplayResourceProvider>(
+          provider.get(), shared_bitmap_manager.get());
 
   std::unique_ptr<DefaultOverlayProcessor> overlay_processor(
       new DefaultOverlayProcessor(&output_surface));
@@ -491,6 +525,7 @@ TEST(OverlayTest, OverlaysProcessorHasStrategy) {
 
 TEST_F(FullscreenOverlayTest, SuccessfulOverlay) {
   std::unique_ptr<RenderPass> pass = CreateRenderPass();
+  gfx::Rect output_rect = pass->output_rect;
   TextureDrawQuad* original_quad = CreateFullscreenCandidateQuad(
       resource_provider_.get(), pass->shared_quad_state_list.back(),
       pass.get());
@@ -502,40 +537,48 @@ TEST_F(FullscreenOverlayTest, SuccessfulOverlay) {
 
   // Check for potential candidates.
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  RenderPass* main_pass = pass.get();
+  pass_list.push_back(std::move(pass));
+
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   ASSERT_EQ(1U, candidate_list.size());
 
-  RenderPass* main_pass = pass.get();
   // Check that all the quads are gone.
   EXPECT_EQ(0U, main_pass->quad_list.size());
   // Check that we have only one overlay.
   EXPECT_EQ(1U, candidate_list.size());
   // Check that the right resource id got extracted.
   EXPECT_EQ(original_resource_id, candidate_list.front().resource_id);
+  gfx::Rect overlay_damage_rect =
+      overlay_processor_->GetAndResetOverlayDamage();
+  EXPECT_EQ(output_rect, overlay_damage_rect);
 }
 
 TEST_F(FullscreenOverlayTest, AlphaFail) {
   std::unique_ptr<RenderPass> pass = CreateRenderPass();
-  TextureDrawQuad* original_quad = CreateFullscreenCandidateQuad(
-      resource_provider_.get(), pass->shared_quad_state_list.back(),
-      pass.get());
-  original_quad->opaque_rect = gfx::Rect(0, 0, 0, 0);
+  CreateTransparentCandidateQuadAt(resource_provider_.get(),
+                                   pass->shared_quad_state_list.back(),
+                                   pass.get(), pass.get()->output_rect);
 
   // Check for potential candidates.
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  RenderPass* main_pass = pass.get();
+  pass_list.push_back(std::move(pass));
+
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
 
-  RenderPass* main_pass = pass.get();
   // Check that all the quads are gone.
   EXPECT_EQ(1U, main_pass->quad_list.size());
   // Check that we have only one overlay.
@@ -551,15 +594,18 @@ TEST_F(FullscreenOverlayTest, ResourceSizeInPixelsFail) {
 
   // Check for potential candidates.
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  RenderPass* main_pass = pass.get();
+  pass_list.push_back(std::move(pass));
+
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   ASSERT_EQ(0U, candidate_list.size());
 
-  RenderPass* main_pass = pass.get();
   // Check that the quad is not gone.
   EXPECT_EQ(1U, main_pass->quad_list.size());
 }
@@ -578,15 +624,18 @@ TEST_F(FullscreenOverlayTest, OnTopFail) {
 
   // Check for potential candidates.
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  RenderPass* main_pass = pass.get();
+  pass_list.push_back(std::move(pass));
+
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   ASSERT_EQ(0U, candidate_list.size());
 
-  RenderPass* main_pass = pass.get();
   // Check that the 2 quads are not gone.
   EXPECT_EQ(2U, main_pass->quad_list.size());
 }
@@ -601,15 +650,17 @@ TEST_F(FullscreenOverlayTest, NotCoveringFullscreenFail) {
 
   // Check for potential candidates.
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  RenderPass* main_pass = pass.get();
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   ASSERT_EQ(0U, candidate_list.size());
 
-  RenderPass* main_pass = pass.get();
   // Check that the quad is not gone.
   EXPECT_EQ(1U, main_pass->quad_list.size());
 }
@@ -631,17 +682,20 @@ TEST_F(FullscreenOverlayTest, RemoveFullscreenQuadFromQuadList) {
 
   // Check for potential candidates.
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  RenderPass* main_pass = pass.get();
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   ASSERT_EQ(1U, candidate_list.size());
 
   // Check that the fullscreen quad is gone.
-  for (const DrawQuad* quad : pass->quad_list) {
-    EXPECT_NE(pass->output_rect, quad->rect);
+  for (const DrawQuad* quad : main_pass->quad_list) {
+    EXPECT_NE(main_pass->output_rect, quad->rect);
   }
 }
 
@@ -661,15 +715,17 @@ TEST_F(SingleOverlayOnTopTest, SuccessfulOverlay) {
 
   // Check for potential candidates.
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  RenderPass* main_pass = pass.get();
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   ASSERT_EQ(1U, candidate_list.size());
 
-  RenderPass* main_pass = pass.get();
   // Check that the quad is gone.
   EXPECT_EQ(2U, main_pass->quad_list.size());
   const QuadList& quad_list = main_pass->quad_list;
@@ -709,15 +765,17 @@ TEST_F(SingleOverlayOnTopTest, PrioritizeBiggerOne) {
 
   // Check for potential candidates.
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  RenderPass* main_pass = pass.get();
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   ASSERT_EQ(1U, candidate_list.size());
 
-  RenderPass* main_pass = pass.get();
   // Check that one quad is gone.
   EXPECT_EQ(2U, main_pass->quad_list.size());
   // Check that we have only one overlay.
@@ -745,15 +803,16 @@ TEST_F(SingleOverlayOnTopTest, DamageRect) {
   // Primary plane.
   OverlayCandidate output_surface_plane;
   output_surface_plane.display_rect = gfx::RectF(kOverlayRect);
-  output_surface_plane.quad_rect_in_target_space = kOverlayRect;
   output_surface_plane.use_output_surface_for_resource = true;
   output_surface_plane.overlay_handled = true;
   candidate_list.push_back(output_surface_plane);
 
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   EXPECT_TRUE(damage_rect_.IsEmpty());
@@ -773,10 +832,10 @@ TEST_F(SingleOverlayOnTopTest, NoCandidates) {
   RenderPass::CopyAll(pass_list, &original_pass_list);
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass_list.back().get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   EXPECT_EQ(0U, candidate_list.size());
@@ -802,10 +861,10 @@ TEST_F(SingleOverlayOnTopTest, OccludedCandidates) {
   RenderPass::CopyAll(pass_list, &original_pass_list);
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass_list.back().get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   EXPECT_EQ(0U, candidate_list.size());
@@ -828,10 +887,12 @@ TEST_F(SingleOverlayOnTopTest, MultipleRenderPasses) {
 
   // Check for potential candidates.
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   EXPECT_EQ(1U, candidate_list.size());
@@ -844,18 +905,22 @@ TEST_F(SingleOverlayOnTopTest, AcceptBlending) {
                                     pass->shared_quad_state_list.back(),
                                     pass.get());
   quad->needs_blending = true;
-  quad->opaque_rect = gfx::Rect(0, 0, 0, 0);
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
   damage_rect_ = quad->rect;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   EXPECT_EQ(1U, candidate_list.size());
   EXPECT_FALSE(damage_rect_.IsEmpty());
+  gfx::Rect overlay_damage_rect =
+      overlay_processor_->GetAndResetOverlayDamage();
+  EXPECT_FALSE(overlay_damage_rect.IsEmpty());
 }
 
 TEST_F(SingleOverlayOnTopTest, RejectBackgroundColor) {
@@ -867,10 +932,12 @@ TEST_F(SingleOverlayOnTopTest, RejectBackgroundColor) {
   quad->background_color = SK_ColorBLACK;
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   EXPECT_EQ(0U, candidate_list.size());
@@ -884,10 +951,12 @@ TEST_F(SingleOverlayOnTopTest, RejectBlendMode) {
   pass->shared_quad_state_list.back()->blend_mode = SkBlendMode::kScreen;
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   EXPECT_EQ(0U, candidate_list.size());
@@ -901,10 +970,12 @@ TEST_F(SingleOverlayOnTopTest, RejectOpacity) {
   pass->shared_quad_state_list.back()->opacity = 0.5f;
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   EXPECT_EQ(0U, candidate_list.size());
@@ -919,10 +990,12 @@ TEST_F(SingleOverlayOnTopTest, RejectNonAxisAlignedTransform) {
       ->quad_to_target_transform.RotateAboutXAxis(45.f);
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   EXPECT_EQ(0U, candidate_list.size());
@@ -937,10 +1010,12 @@ TEST_F(SingleOverlayOnTopTest, AllowClipped) {
   pass->shared_quad_state_list.back()->clip_rect = kOverlayClipRect;
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   EXPECT_EQ(1U, candidate_list.size());
@@ -956,10 +1031,12 @@ TEST_F(UnderlayTest, AllowVerticalFlip) {
   pass->shared_quad_state_list.back()->quad_to_target_transform.Scale(2.0f,
                                                                       -1.0f);
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   ASSERT_EQ(1U, candidate_list.size());
@@ -978,10 +1055,12 @@ TEST_F(UnderlayTest, AllowHorizontalFlip) {
                                                                       2.0f);
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   ASSERT_EQ(1U, candidate_list.size());
@@ -998,32 +1077,36 @@ TEST_F(SingleOverlayOnTopTest, AllowPositiveScaleTransform) {
   pass->shared_quad_state_list.back()->quad_to_target_transform.Scale(2.0f,
                                                                       1.0f);
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   EXPECT_EQ(1U, candidate_list.size());
 }
 
-TEST_F(SingleOverlayOnTopTest, RejectTransform) {
+TEST_F(SingleOverlayOnTopTest, AcceptMirrorYTransform) {
   gfx::Rect rect = kOverlayRect;
   rect.Offset(0, -rect.height());
   std::unique_ptr<RenderPass> pass = CreateRenderPass();
   CreateCandidateQuadAt(resource_provider_.get(),
                         pass->shared_quad_state_list.back(), pass.get(), rect);
-  pass->shared_quad_state_list.back()
-      ->quad_to_target_transform.RotateAboutZAxis(90.f);
+  pass->shared_quad_state_list.back()->quad_to_target_transform.Scale(1.f,
+                                                                      -1.f);
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
-  ASSERT_EQ(0U, candidate_list.size());
+  ASSERT_EQ(1U, candidate_list.size());
 }
 
 TEST_F(UnderlayTest, Allow90DegreeRotation) {
@@ -1036,10 +1119,12 @@ TEST_F(UnderlayTest, Allow90DegreeRotation) {
       ->quad_to_target_transform.RotateAboutZAxis(90.f);
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   ASSERT_EQ(1U, candidate_list.size());
@@ -1056,10 +1141,12 @@ TEST_F(UnderlayTest, Allow180DegreeRotation) {
       ->quad_to_target_transform.RotateAboutZAxis(180.f);
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   ASSERT_EQ(1U, candidate_list.size());
@@ -1076,10 +1163,12 @@ TEST_F(UnderlayTest, Allow270DegreeRotation) {
       ->quad_to_target_transform.RotateAboutZAxis(270.f);
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   ASSERT_EQ(1U, candidate_list.size());
@@ -1100,10 +1189,12 @@ TEST_F(SingleOverlayOnTopTest, AllowNotTopIfNotOccluded) {
                         kOverlayBottomRightRect);
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   EXPECT_EQ(1U, candidate_list.size());
@@ -1124,10 +1215,12 @@ TEST_F(SingleOverlayOnTopTest, AllowTransparentOnTop) {
                         kOverlayBottomRightRect);
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   EXPECT_EQ(1U, candidate_list.size());
@@ -1146,10 +1239,12 @@ TEST_F(SingleOverlayOnTopTest, AllowTransparentColorOnTop) {
                         kOverlayBottomRightRect);
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   EXPECT_EQ(1U, candidate_list.size());
@@ -1167,10 +1262,12 @@ TEST_F(SingleOverlayOnTopTest, RejectOpaqueColorOnTop) {
                         kOverlayBottomRightRect);
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   EXPECT_EQ(0U, candidate_list.size());
@@ -1180,16 +1277,18 @@ TEST_F(SingleOverlayOnTopTest, RejectTransparentColorOnTopWithoutBlending) {
   std::unique_ptr<RenderPass> pass = CreateRenderPass();
   SharedQuadState* shared_state = pass->CreateAndAppendSharedQuadState();
   CreateSolidColorQuadAt(shared_state, SK_ColorTRANSPARENT, pass.get(),
-                         kOverlayBottomRightRect)->opaque_rect =
-      kOverlayBottomRightRect;
+                         kOverlayBottomRightRect)
+      ->needs_blending = false;
   CreateCandidateQuadAt(resource_provider_.get(), shared_state, pass.get(),
                         kOverlayBottomRightRect);
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   EXPECT_EQ(0U, candidate_list.size());
@@ -1202,10 +1301,12 @@ TEST_F(SingleOverlayOnTopTest, RejectVideoSwapTransform) {
                                      pass.get(), kSwapTransform);
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   EXPECT_EQ(0U, candidate_list.size());
@@ -1218,10 +1319,12 @@ TEST_F(UnderlayTest, AllowVideoXMirrorTransform) {
                                      pass.get(), kXMirrorTransform);
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   EXPECT_EQ(1U, candidate_list.size());
@@ -1234,10 +1337,12 @@ TEST_F(UnderlayTest, AllowVideoBothMirrorTransform) {
                                      pass.get(), kBothMirrorTransform);
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   EXPECT_EQ(1U, candidate_list.size());
@@ -1250,10 +1355,12 @@ TEST_F(UnderlayTest, AllowVideoNormalTransform) {
                                      pass.get(), kNormalTransform);
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   EXPECT_EQ(1U, candidate_list.size());
@@ -1266,10 +1373,12 @@ TEST_F(SingleOverlayOnTopTest, AllowVideoYMirrorTransform) {
                                      pass.get(), kYMirrorTransform);
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   EXPECT_EQ(1U, candidate_list.size());
@@ -1287,17 +1396,25 @@ TEST_F(UnderlayTest, OverlayLayerUnderMainLayer) {
                         kOverlayBottomRightRect);
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  RenderPass* main_pass = pass.get();
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   ASSERT_EQ(1U, candidate_list.size());
   EXPECT_EQ(-1, candidate_list[0].plane_z_order);
-  EXPECT_EQ(2U, pass->quad_list.size());
+  EXPECT_EQ(2U, main_pass->quad_list.size());
   // The overlay quad should have changed to a SOLID_COLOR quad.
-  EXPECT_EQ(pass->quad_list.back()->material, DrawQuad::SOLID_COLOR);
+  EXPECT_EQ(main_pass->quad_list.back()->material, DrawQuad::SOLID_COLOR);
+  SolidColorDrawQuad* quad =
+      static_cast<SolidColorDrawQuad*>(main_pass->quad_list.back());
+  EXPECT_EQ(quad->rect, quad->visible_rect);
+  EXPECT_EQ(false, quad->needs_blending);
+  EXPECT_EQ(SK_ColorTRANSPARENT, quad->color);
 }
 
 TEST_F(UnderlayTest, AllowOnTop) {
@@ -1310,16 +1427,24 @@ TEST_F(UnderlayTest, AllowOnTop) {
                              pass->shared_quad_state_list.back(), pass.get());
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  RenderPass* main_pass = pass.get();
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   ASSERT_EQ(1U, candidate_list.size());
   EXPECT_EQ(-1, candidate_list[0].plane_z_order);
   // The overlay quad should have changed to a SOLID_COLOR quad.
-  EXPECT_EQ(pass->quad_list.front()->material, DrawQuad::SOLID_COLOR);
+  EXPECT_EQ(main_pass->quad_list.front()->material, DrawQuad::SOLID_COLOR);
+  SolidColorDrawQuad* quad =
+      static_cast<SolidColorDrawQuad*>(main_pass->quad_list.front());
+  EXPECT_EQ(quad->rect, quad->visible_rect);
+  EXPECT_EQ(false, quad->needs_blending);
+  EXPECT_EQ(SK_ColorTRANSPARENT, quad->color);
 }
 
 // The first time an underlay is scheduled its damage must not be subtracted.
@@ -1332,10 +1457,12 @@ TEST_F(UnderlayTest, InitialUnderlayDamageNotSubtracted) {
   damage_rect_ = kOverlayRect;
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
 
@@ -1358,10 +1485,12 @@ TEST_F(UnderlayTest, DamageSubtractedForConsecutiveIdenticalUnderlays) {
                                pass->shared_quad_state_list.back(), pass.get());
 
     OverlayCandidateList candidate_list;
-    RenderPassFilterList render_pass_filters;
-    RenderPassFilterList render_pass_background_filters;
+    OverlayProcessor::FilterOperationsMap render_pass_filters;
+    OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+    RenderPassList pass_list;
+    pass_list.push_back(std::move(pass));
     overlay_processor_->ProcessForOverlays(
-        resource_provider_.get(), pass.get(), render_pass_filters,
+        resource_provider_.get(), &pass_list, render_pass_filters,
         render_pass_background_filters, &candidate_list, nullptr, nullptr,
         &damage_rect_, &content_bounds_);
   }
@@ -1388,15 +1517,51 @@ TEST_F(UnderlayTest, DamageNotSubtractedForNonIdenticalConsecutiveUnderlays) {
     damage_rect_ = overlay_rects[i];
 
     OverlayCandidateList candidate_list;
-    RenderPassFilterList render_pass_filters;
-    RenderPassFilterList render_pass_background_filters;
+    OverlayProcessor::FilterOperationsMap render_pass_filters;
+    OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+    RenderPassList pass_list;
+    pass_list.push_back(std::move(pass));
     overlay_processor_->ProcessForOverlays(
-        resource_provider_.get(), pass.get(), render_pass_filters,
+        resource_provider_.get(), &pass_list, render_pass_filters,
         render_pass_background_filters, &candidate_list, nullptr, nullptr,
         &damage_rect_, &content_bounds_);
 
     EXPECT_EQ(overlay_rects[i], damage_rect_);
   }
+}
+
+// Underlay damage can only be subtracted if the previous frame's underlay
+// exists.
+TEST_F(UnderlayTest, DamageNotSubtractedForNonConsecutiveIdenticalUnderlays) {
+  bool has_fullscreen_candidate[] = {true, false, true};
+
+  for (int i = 0; i < 3; ++i) {
+    std::unique_ptr<RenderPass> pass = CreateRenderPass();
+
+    if (has_fullscreen_candidate[i]) {
+      CreateFullscreenCandidateQuad(resource_provider_.get(),
+                                    pass->shared_quad_state_list.back(),
+                                    pass.get());
+    }
+
+    damage_rect_ = kOverlayRect;
+
+    // Add something behind it.
+    CreateFullscreenOpaqueQuad(resource_provider_.get(),
+                               pass->shared_quad_state_list.back(), pass.get());
+
+    OverlayCandidateList candidate_list;
+    OverlayProcessor::FilterOperationsMap render_pass_filters;
+    OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+    RenderPassList pass_list;
+    pass_list.push_back(std::move(pass));
+    overlay_processor_->ProcessForOverlays(
+        resource_provider_.get(), &pass_list, render_pass_filters,
+        render_pass_background_filters, &candidate_list, nullptr, nullptr,
+        &damage_rect_, &content_bounds_);
+  }
+
+  EXPECT_EQ(kOverlayRect, damage_rect_);
 }
 
 TEST_F(UnderlayTest, DamageNotSubtractedWhenQuadsAboveOverlap) {
@@ -1412,10 +1577,12 @@ TEST_F(UnderlayTest, DamageNotSubtractedWhenQuadsAboveOverlap) {
     damage_rect_ = kOverlayRect;
 
     OverlayCandidateList candidate_list;
-    RenderPassFilterList render_pass_filters;
-    RenderPassFilterList render_pass_background_filters;
+    OverlayProcessor::FilterOperationsMap render_pass_filters;
+    OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+    RenderPassList pass_list;
+    pass_list.push_back(std::move(pass));
     overlay_processor_->ProcessForOverlays(
-        resource_provider_.get(), pass.get(), render_pass_filters,
+        resource_provider_.get(), &pass_list, render_pass_filters,
         render_pass_background_filters, &candidate_list, nullptr, nullptr,
         &damage_rect_, &content_bounds_);
   }
@@ -1440,10 +1607,12 @@ TEST_F(UnderlayTest, DamageSubtractedWhenQuadsAboveDontOverlap) {
     damage_rect_ = kOverlayBottomRightRect;
 
     OverlayCandidateList candidate_list;
-    RenderPassFilterList render_pass_filters;
-    RenderPassFilterList render_pass_background_filters;
+    OverlayProcessor::FilterOperationsMap render_pass_filters;
+    OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+    RenderPassList pass_list;
+    pass_list.push_back(std::move(pass));
     overlay_processor_->ProcessForOverlays(
-        resource_provider_.get(), pass.get(), render_pass_filters,
+        resource_provider_.get(), &pass_list, render_pass_filters,
         render_pass_background_filters, &candidate_list, nullptr, nullptr,
         &damage_rect_, &content_bounds_);
   }
@@ -1459,10 +1628,12 @@ TEST_F(UnderlayCastTest, NoOverlayContentBounds) {
                      kOverlayTopLeftRect);
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
   EXPECT_EQ(0U, content_bounds_.size());
@@ -1475,10 +1646,12 @@ TEST_F(UnderlayCastTest, FullScreenOverlayContentBounds) {
                         kOverlayRect);
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
 
@@ -1505,10 +1678,12 @@ TEST_F(UnderlayCastTest, BlackOutsideOverlayContentBounds) {
                      SK_ColorBLACK);
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
 
@@ -1526,10 +1701,12 @@ TEST_F(UnderlayCastTest, OverlayOccludedContentBounds) {
                         kOverlayRect);
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
 
@@ -1550,10 +1727,12 @@ TEST_F(UnderlayCastTest, OverlayOccludedUnionContentBounds) {
                         kOverlayRect);
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
 
@@ -1580,10 +1759,12 @@ TEST_F(UnderlayCastTest, RoundOverlayContentBounds) {
                      gfx::Rect(0, 0, 10, 10), SK_ColorWHITE);
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
 
@@ -1611,10 +1792,12 @@ TEST_F(UnderlayCastTest, RoundContentBounds) {
                      gfx::Rect(0, 0, 255, 255), SK_ColorWHITE);
 
   OverlayCandidateList candidate_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &candidate_list, nullptr, nullptr,
       &damage_rect_, &content_bounds_);
 
@@ -1626,8 +1809,6 @@ OverlayCandidateList BackbufferOverlayList(const RenderPass* root_render_pass) {
   OverlayCandidateList list;
   OverlayCandidate output_surface_plane;
   output_surface_plane.display_rect = gfx::RectF(root_render_pass->output_rect);
-  output_surface_plane.quad_rect_in_target_space =
-      root_render_pass->output_rect;
   output_surface_plane.use_output_surface_for_resource = true;
   output_surface_plane.overlay_handled = true;
   list.push_back(output_surface_plane);
@@ -1645,10 +1826,12 @@ TEST_F(CALayerOverlayTest, AllowNonAxisAlignedTransform) {
   gfx::Rect damage_rect;
   CALayerOverlayList ca_layer_list;
   OverlayCandidateList overlay_list(BackbufferOverlayList(pass.get()));
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &overlay_list, &ca_layer_list, nullptr,
       &damage_rect_, &content_bounds_);
   EXPECT_EQ(gfx::Rect(), damage_rect);
@@ -1668,10 +1851,12 @@ TEST_F(CALayerOverlayTest, ThreeDTransform) {
   gfx::Rect damage_rect;
   CALayerOverlayList ca_layer_list;
   OverlayCandidateList overlay_list(BackbufferOverlayList(pass.get()));
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &overlay_list, &ca_layer_list, nullptr,
       &damage_rect_, &content_bounds_);
   EXPECT_EQ(0U, overlay_list.size());
@@ -1694,10 +1879,12 @@ TEST_F(CALayerOverlayTest, AllowContainingClip) {
   gfx::Rect damage_rect;
   CALayerOverlayList ca_layer_list;
   OverlayCandidateList overlay_list(BackbufferOverlayList(pass.get()));
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &overlay_list, &ca_layer_list, nullptr,
       &damage_rect_, &content_bounds_);
   EXPECT_EQ(gfx::Rect(), damage_rect);
@@ -1717,10 +1904,12 @@ TEST_F(CALayerOverlayTest, NontrivialClip) {
   gfx::Rect damage_rect;
   CALayerOverlayList ca_layer_list;
   OverlayCandidateList overlay_list(BackbufferOverlayList(pass.get()));
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &overlay_list, &ca_layer_list, nullptr,
       &damage_rect_, &content_bounds_);
   EXPECT_EQ(gfx::Rect(), damage_rect);
@@ -1742,10 +1931,12 @@ TEST_F(CALayerOverlayTest, SkipTransparent) {
   gfx::Rect damage_rect;
   CALayerOverlayList ca_layer_list;
   OverlayCandidateList overlay_list(BackbufferOverlayList(pass.get()));
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &overlay_list, &ca_layer_list, nullptr,
       &damage_rect_, &content_bounds_);
   EXPECT_EQ(gfx::Rect(), damage_rect);
@@ -1754,7 +1945,20 @@ TEST_F(CALayerOverlayTest, SkipTransparent) {
   EXPECT_EQ(0U, output_surface_->bind_framebuffer_count());
 }
 
-TEST_F(DCLayerOverlayTest, AllowNonAxisAlignedTransform) {
+class DCLayerOverlayTest : public OverlayTest<DCLayerValidator>,
+                           public ::testing::WithParamInterface<bool> {
+  void SetUp() override {
+    OverlayTest<DCLayerValidator>::SetUp();
+    if (GetParam())
+      feature_list_.InitAndEnableFeature(
+          features::kDirectCompositionNonrootOverlays);
+  }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+};
+
+TEST_P(DCLayerOverlayTest, AllowNonAxisAlignedTransform) {
   base::test::ScopedFeatureList feature_list;
   feature_list.InitAndEnableFeature(
       features::kDirectCompositionComplexOverlays);
@@ -1768,11 +1972,13 @@ TEST_F(DCLayerOverlayTest, AllowNonAxisAlignedTransform) {
   gfx::Rect damage_rect;
   DCLayerOverlayList dc_layer_list;
   OverlayCandidateList overlay_list;
-  RenderPassFilterList render_pass_filters;
-  RenderPassFilterList render_pass_background_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
   damage_rect_ = gfx::Rect(1, 1, 10, 10);
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
   overlay_processor_->ProcessForOverlays(
-      resource_provider_.get(), pass.get(), render_pass_filters,
+      resource_provider_.get(), &pass_list, render_pass_filters,
       render_pass_background_filters, &overlay_list, nullptr, &dc_layer_list,
       &damage_rect_, &content_bounds_);
   EXPECT_EQ(gfx::Rect(), damage_rect);
@@ -1783,7 +1989,39 @@ TEST_F(DCLayerOverlayTest, AllowNonAxisAlignedTransform) {
   EXPECT_EQ(gfx::Rect(1, 1, 10, 10), damage_rect_);
 }
 
-TEST_F(DCLayerOverlayTest, Occluded) {
+TEST_P(DCLayerOverlayTest, AllowRequiredNonAxisAlignedTransform) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(
+      features::kDirectCompositionNonrootOverlays);
+  std::unique_ptr<RenderPass> pass = CreateRenderPass();
+  YUVVideoDrawQuad* yuv_quad = CreateFullscreenCandidateYUVVideoQuad(
+      resource_provider_.get(), pass->shared_quad_state_list.back(),
+      pass.get());
+  yuv_quad->require_overlay = true;
+  pass->shared_quad_state_list.back()
+      ->quad_to_target_transform.RotateAboutZAxis(45.f);
+
+  gfx::Rect damage_rect;
+  DCLayerOverlayList dc_layer_list;
+  OverlayCandidateList overlay_list;
+  OverlayProcessor::FilterOperationsMap render_pass_filters;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+  damage_rect_ = gfx::Rect(1, 1, 10, 10);
+  RenderPassList pass_list;
+  pass_list.push_back(std::move(pass));
+  overlay_processor_->ProcessForOverlays(
+      resource_provider_.get(), &pass_list, render_pass_filters,
+      render_pass_background_filters, &overlay_list, nullptr, &dc_layer_list,
+      &damage_rect_, &content_bounds_);
+  EXPECT_EQ(gfx::Rect(), damage_rect);
+  EXPECT_EQ(0U, overlay_list.size());
+  ASSERT_EQ(1U, dc_layer_list.size());
+  EXPECT_EQ(1, dc_layer_list.back().shared_state->z_order);
+  EXPECT_EQ(0U, output_surface_->bind_framebuffer_count());
+  EXPECT_EQ(gfx::Rect(1, 1, 10, 10), damage_rect_);
+}
+
+TEST_P(DCLayerOverlayTest, Occluded) {
   base::test::ScopedFeatureList feature_list;
   feature_list.InitAndEnableFeature(features::kDirectCompositionUnderlays);
   {
@@ -1798,11 +2036,13 @@ TEST_F(DCLayerOverlayTest, Occluded) {
     gfx::Rect damage_rect;
     DCLayerOverlayList dc_layer_list;
     OverlayCandidateList overlay_list;
-    RenderPassFilterList render_pass_filters;
-    RenderPassFilterList render_pass_background_filters;
+    OverlayProcessor::FilterOperationsMap render_pass_filters;
+    OverlayProcessor::FilterOperationsMap render_pass_background_filters;
     damage_rect_ = gfx::Rect(1, 1, 10, 10);
+    RenderPassList pass_list;
+    pass_list.push_back(std::move(pass));
     overlay_processor_->ProcessForOverlays(
-        resource_provider_.get(), pass.get(), render_pass_filters,
+        resource_provider_.get(), &pass_list, render_pass_filters,
         render_pass_background_filters, &overlay_list, nullptr, &dc_layer_list,
         &damage_rect_, &content_bounds_);
     EXPECT_EQ(gfx::Rect(), damage_rect);
@@ -1825,11 +2065,13 @@ TEST_F(DCLayerOverlayTest, Occluded) {
     gfx::Rect damage_rect;
     DCLayerOverlayList dc_layer_list;
     OverlayCandidateList overlay_list;
-    RenderPassFilterList render_pass_filters;
-    RenderPassFilterList render_pass_background_filters;
+    OverlayProcessor::FilterOperationsMap render_pass_filters;
+    OverlayProcessor::FilterOperationsMap render_pass_background_filters;
     damage_rect_ = gfx::Rect(1, 1, 10, 10);
+    RenderPassList pass_list;
+    pass_list.push_back(std::move(pass));
     overlay_processor_->ProcessForOverlays(
-        resource_provider_.get(), pass.get(), render_pass_filters,
+        resource_provider_.get(), &pass_list, render_pass_filters,
         render_pass_background_filters, &overlay_list, nullptr, &dc_layer_list,
         &damage_rect_, &content_bounds_);
     EXPECT_EQ(gfx::Rect(), damage_rect);
@@ -1843,7 +2085,7 @@ TEST_F(DCLayerOverlayTest, Occluded) {
   }
 }
 
-TEST_F(DCLayerOverlayTest, DamageRect) {
+TEST_P(DCLayerOverlayTest, DamageRect) {
   for (int i = 0; i < 2; i++) {
     std::unique_ptr<RenderPass> pass = CreateRenderPass();
     CreateFullscreenCandidateYUVVideoQuad(resource_provider_.get(),
@@ -1853,11 +2095,13 @@ TEST_F(DCLayerOverlayTest, DamageRect) {
     gfx::Rect damage_rect;
     DCLayerOverlayList dc_layer_list;
     OverlayCandidateList overlay_list;
-    RenderPassFilterList render_pass_filters;
-    RenderPassFilterList render_pass_background_filters;
+    OverlayProcessor::FilterOperationsMap render_pass_filters;
+    OverlayProcessor::FilterOperationsMap render_pass_background_filters;
     damage_rect_ = gfx::Rect(1, 1, 10, 10);
+    RenderPassList pass_list;
+    pass_list.push_back(std::move(pass));
     overlay_processor_->ProcessForOverlays(
-        resource_provider_.get(), pass.get(), render_pass_filters,
+        resource_provider_.get(), &pass_list, render_pass_filters,
         render_pass_background_filters, &overlay_list, nullptr, &dc_layer_list,
         &damage_rect_, &content_bounds_);
     EXPECT_EQ(gfx::Rect(), damage_rect);
@@ -1875,7 +2119,75 @@ TEST_F(DCLayerOverlayTest, DamageRect) {
   }
 }
 
-TEST_F(DCLayerOverlayTest, ClipRect) {
+TEST_P(DCLayerOverlayTest, MultiplePassDamageRect) {
+  for (int i = 0; i < 2; i++) {
+    RenderPassId child_pass_id(5);
+    std::unique_ptr<RenderPass> pass1 = CreateRenderPass();
+    pass1->id = child_pass_id;
+    YUVVideoDrawQuad* yuv_quad = CreateFullscreenCandidateYUVVideoQuad(
+        resource_provider_.get(), pass1->shared_quad_state_list.back(),
+        pass1.get());
+    yuv_quad->require_overlay = true;
+    pass1->damage_rect = gfx::Rect();
+    pass1->transform_to_root_target.Translate(0, 100);
+    pass1->shared_quad_state_list.back()->opacity = 0.9f;
+
+    std::unique_ptr<RenderPass> pass2 = CreateRenderPass();
+
+    gfx::Rect rect(0, 0, 1, 1);
+    RenderPassDrawQuad* render_pass_quad =
+        pass2->CreateAndAppendDrawQuad<RenderPassDrawQuad>();
+    render_pass_quad->SetNew(pass2->shared_quad_state_list.back(), rect, rect,
+                             child_pass_id, 0, gfx::RectF(), gfx::Size(),
+                             gfx::Vector2dF(), gfx::PointF(),
+                             gfx::RectF(0, 0, 1, 1));
+    pass2->shared_quad_state_list.back()->quad_to_target_transform =
+        pass1->transform_to_root_target;
+    pass2->shared_quad_state_list.back()->opacity = 0.8f;
+    pass2->damage_rect = gfx::Rect();
+
+    gfx::Rect damage_rect;
+    DCLayerOverlayList dc_layer_list;
+    OverlayCandidateList overlay_list;
+    OverlayProcessor::FilterOperationsMap render_pass_filters;
+    OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+    damage_rect_ = gfx::Rect();
+    RenderPassList pass_list;
+    pass_list.push_back(std::move(pass1));
+    pass_list.push_back(std::move(pass2));
+    overlay_processor_->ProcessForOverlays(
+        resource_provider_.get(), &pass_list, render_pass_filters,
+        render_pass_background_filters, &overlay_list, nullptr, &dc_layer_list,
+        &damage_rect_, &content_bounds_);
+    EXPECT_EQ(gfx::Rect(), damage_rect);
+    EXPECT_EQ(0U, overlay_list.size());
+    EXPECT_EQ(0U, output_surface_->bind_framebuffer_count());
+    if (GetParam()) {
+      // With nonroot overlays enabled, the portions of both RenderPasses
+      // corresponding to the overlay should always be damaged.
+      ASSERT_EQ(1U, dc_layer_list.size());
+      EXPECT_EQ(-1, dc_layer_list.back().shared_state->z_order);
+      EXPECT_EQ(gfx::Rect(0, 0, 256, 256), pass_list[0]->damage_rect);
+      EXPECT_EQ(gfx::Rect(0, 100, 256, 156), damage_rect_);
+      gfx::Rect overlay_damage = overlay_processor_->GetAndResetOverlayDamage();
+      EXPECT_EQ(gfx::Rect(0, 100, 256, 256), overlay_damage);
+
+      EXPECT_EQ(1u, pass_list[0]->quad_list.size());
+      EXPECT_EQ(0.9f,
+                pass_list[0]->quad_list.back()->shared_quad_state->opacity);
+      EXPECT_EQ(2u, pass_list[1]->quad_list.size());
+      EXPECT_EQ(0.9f * 0.8f,
+                pass_list[1]->quad_list.back()->shared_quad_state->opacity);
+    } else {
+      // Without nonroot overlays, no overlays should be created.
+      EXPECT_EQ(0U, dc_layer_list.size());
+      EXPECT_EQ(1u, pass_list[0]->quad_list.size());
+      EXPECT_EQ(1u, pass_list[1]->quad_list.size());
+    }
+  }
+}
+
+TEST_P(DCLayerOverlayTest, ClipRect) {
   base::test::ScopedFeatureList feature_list;
   feature_list.InitAndEnableFeature(features::kDirectCompositionUnderlays);
 
@@ -1899,11 +2211,13 @@ TEST_F(DCLayerOverlayTest, ClipRect) {
 
     DCLayerOverlayList dc_layer_list;
     OverlayCandidateList overlay_list;
-    RenderPassFilterList render_pass_filters;
-    RenderPassFilterList render_pass_background_filters;
+    OverlayProcessor::FilterOperationsMap render_pass_filters;
+    OverlayProcessor::FilterOperationsMap render_pass_background_filters;
+    RenderPassList pass_list;
+    pass_list.push_back(std::move(pass));
     damage_rect_ = gfx::Rect(1, 1, 10, 10);
     overlay_processor_->ProcessForOverlays(
-        resource_provider_.get(), pass.get(), render_pass_filters,
+        resource_provider_.get(), &pass_list, render_pass_filters,
         render_pass_background_filters, &overlay_list, nullptr, &dc_layer_list,
         &damage_rect_, &content_bounds_);
     EXPECT_EQ(0U, overlay_list.size());
@@ -1919,7 +2233,7 @@ TEST_F(DCLayerOverlayTest, ClipRect) {
   }
 }
 
-TEST_F(DCLayerOverlayTest, TransparentOnTop) {
+TEST_P(DCLayerOverlayTest, TransparentOnTop) {
   base::test::ScopedFeatureList feature_list;
 
   // Process twice. The second time through the overlay list shouldn't change,
@@ -1934,11 +2248,13 @@ TEST_F(DCLayerOverlayTest, TransparentOnTop) {
 
     DCLayerOverlayList dc_layer_list;
     OverlayCandidateList overlay_list;
-    RenderPassFilterList render_pass_filters;
-    RenderPassFilterList render_pass_background_filters;
+    OverlayProcessor::FilterOperationsMap render_pass_filters;
+    OverlayProcessor::FilterOperationsMap render_pass_background_filters;
     damage_rect_ = gfx::Rect(1, 1, 10, 10);
+    RenderPassList pass_list;
+    pass_list.push_back(std::move(pass));
     overlay_processor_->ProcessForOverlays(
-        resource_provider_.get(), pass.get(), render_pass_filters,
+        resource_provider_.get(), &pass_list, render_pass_filters,
         render_pass_background_filters, &overlay_list, nullptr, &dc_layer_list,
         &damage_rect_, &content_bounds_);
     EXPECT_EQ(0U, overlay_list.size());
@@ -1949,12 +2265,14 @@ TEST_F(DCLayerOverlayTest, TransparentOnTop) {
   }
 }
 
-class OverlayInfoRendererGL : public GLRenderer {
+INSTANTIATE_TEST_CASE_P(, DCLayerOverlayTest, ::testing::Bool());
+
+class OverlayInfoRendererGL : public viz::GLRenderer {
  public:
-  OverlayInfoRendererGL(const RendererSettings* settings,
+  OverlayInfoRendererGL(const viz::RendererSettings* settings,
                         OutputSurface* output_surface,
-                        ResourceProvider* resource_provider)
-      : GLRenderer(settings, output_surface, resource_provider, NULL, 0),
+                        DisplayResourceProvider* resource_provider)
+      : viz::GLRenderer(settings, output_surface, resource_provider, NULL),
         expect_overlays_(false) {}
 
   MOCK_METHOD2(DoDrawQuad,
@@ -1964,10 +2282,10 @@ class OverlayInfoRendererGL : public GLRenderer {
     SetCurrentFrameForTesting(frame);
   }
 
-  using GLRenderer::BeginDrawingFrame;
+  using viz::GLRenderer::BeginDrawingFrame;
 
   void FinishDrawingFrame() override {
-    GLRenderer::FinishDrawingFrame();
+    viz::GLRenderer::FinishDrawingFrame();
 
     if (!expect_overlays_) {
       EXPECT_EQ(0U, current_frame()->overlay_list.size());
@@ -2005,7 +2323,8 @@ class GLRendererWithOverlaysTest : public testing::Test {
     provider_->BindToCurrentThread();
     output_surface_.reset(new OutputSurfaceType(provider_));
     output_surface_->BindToClient(&output_surface_client_);
-    resource_provider_ = FakeResourceProvider::Create(provider_.get(), nullptr);
+    resource_provider_ = FakeResourceProvider::Create<DisplayResourceProvider>(
+        provider_.get(), nullptr);
 
     provider_->support()->SetScheduleOverlayPlaneCallback(base::Bind(
         &MockOverlayScheduler::Schedule, base::Unretained(&scheduler_)));
@@ -2015,7 +2334,7 @@ class GLRendererWithOverlaysTest : public testing::Test {
     if (use_validator)
       output_surface_->SetOverlayCandidateValidator(new SingleOverlayValidator);
 
-    renderer_ = base::MakeUnique<OverlayInfoRendererGL>(
+    renderer_ = std::make_unique<OverlayInfoRendererGL>(
         &settings_, output_surface_.get(), resource_provider_.get());
     renderer_->Initialize();
     renderer_->SetVisible(true);
@@ -2034,8 +2353,9 @@ class GLRendererWithOverlaysTest : public testing::Test {
   void SwapBuffersComplete() {
     renderer_->SwapBuffersComplete();
   }
-  void ReturnResourceInUseQuery(ResourceId id) {
-    ResourceProvider::ScopedReadLockGL lock(resource_provider_.get(), id);
+  void ReturnResourceInUseQuery(viz::ResourceId id) {
+    DisplayResourceProvider::ScopedReadLockGL lock(resource_provider_.get(),
+                                                   id);
     gpu::TextureInUseResponse response;
     response.texture = lock.texture_id();
     response.in_use = false;
@@ -2044,10 +2364,10 @@ class GLRendererWithOverlaysTest : public testing::Test {
     renderer_->DidReceiveTextureInUseResponses(responses);
   }
 
-  RendererSettings settings_;
+  viz::RendererSettings settings_;
   FakeOutputSurfaceClient output_surface_client_;
   std::unique_ptr<OutputSurfaceType> output_surface_;
-  std::unique_ptr<ResourceProvider> resource_provider_;
+  std::unique_ptr<DisplayResourceProvider> resource_provider_;
   std::unique_ptr<OverlayInfoRendererGL> renderer_;
   scoped_refptr<TestContextProvider> provider_;
   MockOverlayScheduler scheduler_;
@@ -2166,7 +2486,7 @@ TEST_F(GLRendererWithOverlaysTest, NoValidatorNoOverlay) {
   Mock::VerifyAndClearExpectations(&scheduler_);
 }
 
-// GLRenderer skips drawing occluded quads when partial swap is enabled.
+// viz::GLRenderer skips drawing occluded quads when partial swap is enabled.
 TEST_F(GLRendererWithOverlaysTest, OccludedQuadNotDrawnWhenPartialSwapEnabled) {
   provider_->TestContext3d()->set_have_post_sub_buffer(true);
   settings_.partial_swap_enabled = true;
@@ -2198,7 +2518,7 @@ TEST_F(GLRendererWithOverlaysTest, OccludedQuadNotDrawnWhenPartialSwapEnabled) {
   Mock::VerifyAndClearExpectations(&scheduler_);
 }
 
-// GLRenderer skips drawing occluded quads when empty swap is enabled.
+// viz::GLRenderer skips drawing occluded quads when empty swap is enabled.
 TEST_F(GLRendererWithOverlaysTest, OccludedQuadNotDrawnWhenEmptySwapAllowed) {
   provider_->TestContext3d()->set_have_commit_overlay_planes(true);
   bool use_validator = true;
@@ -2235,11 +2555,11 @@ TEST_F(GLRendererWithOverlaysTest, ResourcesExportedAndReturnedWithDelay) {
   Init(use_validator);
   renderer_->set_expect_overlays(true);
 
-  ResourceId resource1 =
+  viz::ResourceId resource1 =
       CreateResource(resource_provider_.get(), gfx::Size(32, 32), true);
-  ResourceId resource2 =
+  viz::ResourceId resource2 =
       CreateResource(resource_provider_.get(), gfx::Size(32, 32), true);
-  ResourceId resource3 =
+  viz::ResourceId resource3 =
       CreateResource(resource_provider_.get(), gfx::Size(32, 32), true);
 
   std::unique_ptr<RenderPass> pass = CreateRenderPass();
@@ -2373,11 +2693,11 @@ TEST_F(GLRendererWithOverlaysTest, ResourcesExportedAndReturnedAfterGpuQuery) {
   Init(use_validator);
   renderer_->set_expect_overlays(true);
 
-  ResourceId resource1 =
+  viz::ResourceId resource1 =
       CreateResource(resource_provider_.get(), gfx::Size(32, 32), true);
-  ResourceId resource2 =
+  viz::ResourceId resource2 =
       CreateResource(resource_provider_.get(), gfx::Size(32, 32), true);
-  ResourceId resource3 =
+  viz::ResourceId resource3 =
       CreateResource(resource_provider_.get(), gfx::Size(32, 32), true);
 
   std::unique_ptr<RenderPass> pass = CreateRenderPass();
@@ -2476,26 +2796,28 @@ class CALayerOverlayRPDQTest : public CALayerOverlayTest {
  protected:
   void SetUp() override {
     CALayerOverlayTest::SetUp();
-    pass_ = CreateRenderPass();
+    pass_list_.push_back(CreateRenderPass());
+    pass_ = pass_list_.back().get();
     quad_ = pass_->CreateAndAppendDrawQuad<RenderPassDrawQuad>();
     render_pass_id_ = 3;
   }
 
   void ProcessForOverlays() {
     gfx::Rect damage_rect;
-    overlay_list_ = BackbufferOverlayList(pass_.get());
+    overlay_list_ = BackbufferOverlayList(pass_);
     overlay_processor_->ProcessForOverlays(
-        resource_provider_.get(), pass_.get(), render_pass_filters_,
+        resource_provider_.get(), &pass_list_, render_pass_filters_,
         render_pass_background_filters_, &overlay_list_, &ca_layer_list_,
         nullptr, &damage_rect_, &content_bounds_);
   }
-  std::unique_ptr<RenderPass> pass_;
+  RenderPassList pass_list_;
+  RenderPass* pass_;
   RenderPassDrawQuad* quad_;
   int render_pass_id_;
   FilterOperations filters_;
   FilterOperations background_filters_;
-  RenderPassFilterList render_pass_filters_;
-  RenderPassFilterList render_pass_background_filters_;
+  OverlayProcessor::FilterOperationsMap render_pass_filters_;
+  OverlayProcessor::FilterOperationsMap render_pass_background_filters_;
   CALayerOverlayList ca_layer_list_;
   OverlayCandidateList overlay_list_;
 };
@@ -2521,7 +2843,7 @@ TEST_F(CALayerOverlayRPDQTest, RenderPassDrawQuadAllValidFilters) {
   filters_.Append(FilterOperation::CreateBlurFilter(0.9f));
   filters_.Append(FilterOperation::CreateDropShadowFilter(gfx::Point(10, 20),
                                                           1.0f, SK_ColorGREEN));
-  render_pass_filters_.push_back(std::make_pair(render_pass_id_, &filters_));
+  render_pass_filters_[render_pass_id_] = &filters_;
   quad_->SetNew(pass_->shared_quad_state_list.back(), kOverlayRect,
                 kOverlayRect, render_pass_id_, 0, gfx::RectF(), gfx::Size(),
                 gfx::Vector2dF(1, 1), gfx::PointF(), gfx::RectF());
@@ -2532,7 +2854,7 @@ TEST_F(CALayerOverlayRPDQTest, RenderPassDrawQuadAllValidFilters) {
 
 TEST_F(CALayerOverlayRPDQTest, RenderPassDrawQuadOpacityFilterScale) {
   filters_.Append(FilterOperation::CreateOpacityFilter(0.8f));
-  render_pass_filters_.push_back(std::make_pair(render_pass_id_, &filters_));
+  render_pass_filters_[render_pass_id_] = &filters_;
   quad_->SetNew(pass_->shared_quad_state_list.back(), kOverlayRect,
                 kOverlayRect, render_pass_id_, 0, gfx::RectF(), gfx::Size(),
                 gfx::Vector2dF(1, 2), gfx::PointF(), gfx::RectF());
@@ -2542,7 +2864,7 @@ TEST_F(CALayerOverlayRPDQTest, RenderPassDrawQuadOpacityFilterScale) {
 
 TEST_F(CALayerOverlayRPDQTest, RenderPassDrawQuadBlurFilterScale) {
   filters_.Append(FilterOperation::CreateBlurFilter(0.8f));
-  render_pass_filters_.push_back(std::make_pair(render_pass_id_, &filters_));
+  render_pass_filters_[render_pass_id_] = &filters_;
   quad_->SetNew(pass_->shared_quad_state_list.back(), kOverlayRect,
                 kOverlayRect, render_pass_id_, 0, gfx::RectF(), gfx::Size(),
                 gfx::Vector2dF(1, 2), gfx::PointF(), gfx::RectF());
@@ -2553,7 +2875,7 @@ TEST_F(CALayerOverlayRPDQTest, RenderPassDrawQuadBlurFilterScale) {
 TEST_F(CALayerOverlayRPDQTest, RenderPassDrawQuadDropShadowFilterScale) {
   filters_.Append(FilterOperation::CreateDropShadowFilter(gfx::Point(10, 20),
                                                           1.0f, SK_ColorGREEN));
-  render_pass_filters_.push_back(std::make_pair(render_pass_id_, &filters_));
+  render_pass_filters_[render_pass_id_] = &filters_;
   quad_->SetNew(pass_->shared_quad_state_list.back(), kOverlayRect,
                 kOverlayRect, render_pass_id_, 0, gfx::RectF(), gfx::Size(),
                 gfx::Vector2dF(1, 2), gfx::PointF(), gfx::RectF());
@@ -2563,8 +2885,7 @@ TEST_F(CALayerOverlayRPDQTest, RenderPassDrawQuadDropShadowFilterScale) {
 
 TEST_F(CALayerOverlayRPDQTest, RenderPassDrawQuadBackgroundFilter) {
   background_filters_.Append(FilterOperation::CreateGrayscaleFilter(0.1f));
-  render_pass_background_filters_.push_back(
-      std::make_pair(render_pass_id_, &background_filters_));
+  render_pass_background_filters_[render_pass_id_] = &background_filters_;
   quad_->SetNew(pass_->shared_quad_state_list.back(), kOverlayRect,
                 kOverlayRect, render_pass_id_, 0, gfx::RectF(), gfx::Size(),
                 gfx::Vector2dF(1, 1), gfx::PointF(), gfx::RectF());
@@ -2582,7 +2903,7 @@ TEST_F(CALayerOverlayRPDQTest, RenderPassDrawQuadMask) {
 
 TEST_F(CALayerOverlayRPDQTest, RenderPassDrawQuadUnsupportedFilter) {
   filters_.Append(FilterOperation::CreateZoomFilter(0.9f, 1));
-  render_pass_filters_.push_back(std::make_pair(render_pass_id_, &filters_));
+  render_pass_filters_[render_pass_id_] = &filters_;
   quad_->SetNew(pass_->shared_quad_state_list.back(), kOverlayRect,
                 kOverlayRect, render_pass_id_, 0, gfx::RectF(), gfx::Size(),
                 gfx::Vector2dF(1, 1), gfx::PointF(), gfx::RectF());

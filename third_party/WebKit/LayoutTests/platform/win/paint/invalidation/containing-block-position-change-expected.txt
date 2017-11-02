@@ -4,7 +4,7 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow (positioned) DIV",
@@ -20,6 +20,14 @@
     }
   ],
   "objectPaintInvalidations": [
+    {
+      "object": "LayoutBlockFlow (positioned) DIV",
+      "reason": "subtree"
+    },
+    {
+      "object": "LayoutBlockFlow DIV id='t'",
+      "reason": "subtree"
+    },
     {
       "object": "LayoutBlockFlow (positioned) DIV",
       "reason": "subtree"

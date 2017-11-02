@@ -3,14 +3,13 @@
 <script src="../inspector-test.js"></script>
 <script src="../security-test.js"></script>
 <script>
-function test()
-{
-    var request = new SDK.NetworkRequest(InspectorTest.mainTarget, 0, "http://unknown", "https://foo.test", 0, 0, null);
-    InspectorTest.dispatchRequestFinished(request);
+function test() {
+  var request = new SDK.NetworkRequest(0, 'http://unknown', 'https://foo.test', 0, 0, null);
+  SecurityTestRunner.dispatchRequestFinished(request);
 
-    InspectorTest.dumpSecurityPanelSidebarOrigins();
+  SecurityTestRunner.dumpSecurityPanelSidebarOrigins();
 
-    InspectorTest.completeTest();
+  TestRunner.completeTest();
 }
 </script>
 </head>

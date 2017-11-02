@@ -4,11 +4,11 @@
 
 #include "ash/display/mirror_window_controller.h"
 
+#include "ash/display/mirror_window_test_api.h"
 #include "ash/display/window_tree_host_manager.h"
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
-#include "ash/test/cursor_manager_test_api.h"
-#include "ash/test/mirror_window_test_api.h"
+#include "ash/wm/cursor_manager_test_api.h"
 #include "base/command_line.h"
 #include "base/strings/stringprintf.h"
 #include "ui/aura/env.h"
@@ -33,7 +33,7 @@ display::ManagedDisplayInfo CreateDisplayInfo(int64_t id,
   return info;
 }
 
-class MirrorOnBootTest : public test::AshTestBase {
+class MirrorOnBootTest : public AshTestBase {
  public:
   MirrorOnBootTest() {}
   ~MirrorOnBootTest() override {}
@@ -43,19 +43,19 @@ class MirrorOnBootTest : public test::AshTestBase {
         ::switches::kHostWindowBounds, "1+1-300x300,1+301-300x300");
     base::CommandLine::ForCurrentProcess()->AppendSwitch(
         ::switches::kEnableSoftwareMirroring);
-    test::AshTestBase::SetUp();
+    AshTestBase::SetUp();
   }
-  void TearDown() override { test::AshTestBase::TearDown(); }
+  void TearDown() override { AshTestBase::TearDown(); }
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MirrorOnBootTest);
 };
 }
 
-typedef test::AshTestBase MirrorWindowControllerTest;
+using MirrorWindowControllerTest = AshTestBase;
 
 TEST_F(MirrorWindowControllerTest, MirrorCursorBasic) {
-  test::MirrorWindowTestApi test_api;
+  MirrorWindowTestApi test_api;
   aura::test::TestWindowDelegate test_window_delegate;
   test_window_delegate.set_window_component(HTTOP);
 
@@ -77,14 +77,14 @@ TEST_F(MirrorWindowControllerTest, MirrorCursorBasic) {
   EXPECT_EQ("4,4", test_api.GetCursorHotPoint().ToString());
   EXPECT_EQ("10,10",
             test_api.GetCursorHotPointLocationInRootWindow().ToString());
-  EXPECT_EQ(ui::kCursorNull, test_api.GetCurrentCursorType());
+  EXPECT_EQ(ui::CursorType::kNull, test_api.GetCurrentCursorType());
   EXPECT_TRUE(test_api.GetCursorWindow()->IsVisible());
 
   // Test if cursor type change is propertly reflected in mirror window.
   generator.MoveMouseTo(100, 100);
   EXPECT_EQ("100,100",
             test_api.GetCursorHotPointLocationInRootWindow().ToString());
-  EXPECT_EQ(ui::kCursorNorthResize, test_api.GetCurrentCursorType());
+  EXPECT_EQ(ui::CursorType::kNorthResize, test_api.GetCurrentCursorType());
 
   // Test if visibility change is propertly reflected in mirror window.
   // A key event hides cursor.
@@ -96,12 +96,12 @@ TEST_F(MirrorWindowControllerTest, MirrorCursorBasic) {
   generator.MoveMouseTo(300, 300);
   EXPECT_EQ("300,300",
             test_api.GetCursorHotPointLocationInRootWindow().ToString());
-  EXPECT_EQ(ui::kCursorNull, test_api.GetCurrentCursorType());
+  EXPECT_EQ(ui::CursorType::kNull, test_api.GetCurrentCursorType());
   EXPECT_TRUE(test_api.GetCursorWindow()->IsVisible());
 }
 
 TEST_F(MirrorWindowControllerTest, MirrorCursorRotate) {
-  test::MirrorWindowTestApi test_api;
+  MirrorWindowTestApi test_api;
   aura::test::TestWindowDelegate test_window_delegate;
   test_window_delegate.set_window_component(HTTOP);
 
@@ -123,11 +123,11 @@ TEST_F(MirrorWindowControllerTest, MirrorCursorRotate) {
   EXPECT_EQ("11,12", test_api.GetCursorHotPoint().ToString());
   EXPECT_EQ("100,100",
             test_api.GetCursorHotPointLocationInRootWindow().ToString());
-  EXPECT_EQ(ui::kCursorNorthResize, test_api.GetCurrentCursorType());
+  EXPECT_EQ(ui::CursorType::kNorthResize, test_api.GetCurrentCursorType());
 
   UpdateDisplay("400x400/r,400x400");  // 90 degrees.
   generator.MoveMouseToInHost(300, 100);
-  EXPECT_EQ(ui::kCursorNorthResize, test_api.GetCurrentCursorType());
+  EXPECT_EQ(ui::CursorType::kNorthResize, test_api.GetCurrentCursorType());
   // The size of cursor image is 25x25, so the rotated hot point must
   // be (25-12, 11).
   EXPECT_EQ("13,11", test_api.GetCursorHotPoint().ToString());
@@ -136,7 +136,7 @@ TEST_F(MirrorWindowControllerTest, MirrorCursorRotate) {
 
   UpdateDisplay("400x400/u,400x400");  // 180 degrees.
   generator.MoveMouseToInHost(300, 300);
-  EXPECT_EQ(ui::kCursorNorthResize, test_api.GetCurrentCursorType());
+  EXPECT_EQ(ui::CursorType::kNorthResize, test_api.GetCurrentCursorType());
   // Rotated hot point must be (25-11, 25-12).
   EXPECT_EQ("14,13", test_api.GetCursorHotPoint().ToString());
   EXPECT_EQ("300,300",
@@ -144,7 +144,7 @@ TEST_F(MirrorWindowControllerTest, MirrorCursorRotate) {
 
   UpdateDisplay("400x400/l,400x400");  // 270 degrees.
   generator.MoveMouseToInHost(100, 300);
-  EXPECT_EQ(ui::kCursorNorthResize, test_api.GetCurrentCursorType());
+  EXPECT_EQ(ui::CursorType::kNorthResize, test_api.GetCurrentCursorType());
   // Rotated hot point must be (12, 25-11).
   EXPECT_EQ("12,14", test_api.GetCursorHotPoint().ToString());
   EXPECT_EQ("100,300",
@@ -155,7 +155,7 @@ TEST_F(MirrorWindowControllerTest, MirrorCursorRotate) {
 // the source display's host location in the mirror root window's
 // coordinates.
 TEST_F(MirrorWindowControllerTest, MirrorCursorLocations) {
-  test::MirrorWindowTestApi test_api;
+  MirrorWindowTestApi test_api;
   display_manager()->SetMultiDisplayMode(display::DisplayManager::MIRRORING);
 
   // Test with device scale factor.
@@ -206,7 +206,7 @@ TEST_F(MirrorWindowControllerTest, MirrorCursorMoveOnEnter) {
       window_tree_host_manager->GetRootWindowForDisplayId(secondary_display_id);
   secondary_root_window->MoveCursorTo(gfx::Point(100, 200));
   EXPECT_EQ("300,200", env->last_mouse_location().ToString());
-  test::CursorManagerTestApi cursor_test_api(shell->cursor_manager());
+  CursorManagerTestApi cursor_test_api(shell->cursor_manager());
   EXPECT_EQ(1.0f, cursor_test_api.GetCurrentCursor().device_scale_factor());
   EXPECT_EQ(display::Display::ROTATE_0,
             cursor_test_api.GetCurrentCursorRotation());
@@ -223,14 +223,14 @@ TEST_F(MirrorWindowControllerTest, MirrorCursorMoveOnEnter) {
             cursor_test_api.GetCurrentCursorRotation());
 
   // Check mirrored cursor's location.
-  test::MirrorWindowTestApi test_api;
+  MirrorWindowTestApi test_api;
   // The hot point location depends on the specific cursor.
-  EXPECT_EQ(ui::kCursorNull, test_api.GetCurrentCursorType());
+  EXPECT_EQ(ui::CursorType::kNull, test_api.GetCurrentCursorType());
   // Rotated hot point must be (25-7, 7).
   EXPECT_EQ("18,7", test_api.GetCursorHotPoint().ToString());
   // New coordinates are not (200,200) because (200,200) is not the center of
   // the display.
-  EXPECT_EQ("199,200",
+  EXPECT_EQ("200,200",
             test_api.GetCursorHotPointLocationInRootWindow().ToString());
 }
 
@@ -283,7 +283,7 @@ TEST_F(MirrorWindowControllerTest, DockMode) {
 TEST_F(MirrorOnBootTest, MirrorOnBoot) {
   EXPECT_TRUE(display_manager()->IsInMirrorMode());
   RunAllPendingInMessageLoop();
-  test::MirrorWindowTestApi test_api;
+  MirrorWindowTestApi test_api;
   EXPECT_TRUE(test_api.GetHost());
 }
 

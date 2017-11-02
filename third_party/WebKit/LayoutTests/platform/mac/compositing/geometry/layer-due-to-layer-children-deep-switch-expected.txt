@@ -8,7 +8,7 @@ First dump layer tree:
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true
+      "backgroundColor": "#FFFFFF"
     }
   ]
 }
@@ -20,20 +20,18 @@ Second dump layer tree:
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true
+      "backgroundColor": "#FFFFFF"
     },
     {
       "name": "LayoutBlockFlow (relative positioned) DIV id='parent'",
       "position": [8, 8],
-      "bounds": [342, 292],
-      "drawsContent": true
+      "bounds": [342, 292]
     },
     {
       "name": "LayoutBlockFlow (relative positioned) DIV id='child'",
-      "position": [31, 39],
+      "position": [39, 47],
       "bounds": [250, 220],
       "contentsOpaque": true,
-      "drawsContent": true,
       "backgroundColor": "#0000FF"
     },
     {
@@ -41,28 +39,39 @@ Second dump layer tree:
       "position": [10, 10],
       "bounds": [200, 200],
       "contentsOpaque": true,
-      "drawsContent": true,
       "backgroundColor": "#FFFF00",
-      "transform": [
-        [0.866025403784439, 0.5, 0, 0],
-        [-0.5, 0.866025403784439, 0, 0],
-        [0, 0, 1, 0],
-        [0, 0, 0, 1]
-      ]
+      "transform": 1
     },
     {
       "name": "LayoutBlockFlow (relative positioned) DIV id='greatgrandchild'",
       "position": [100, 0],
       "bounds": [250, 100],
       "contentsOpaque": true,
-      "drawsContent": true,
       "backgroundColor": "#008000",
+      "transform": 2
+    }
+  ],
+  "transforms": [
+    {
+      "id": 1,
+      "transform": [
+        [0.866025403784439, 0.5, 0, 0],
+        [-0.5, 0.866025403784439, 0, 0],
+        [0, 0, 1, 0],
+        [0, 0, 0, 1]
+      ],
+      "origin": [100, 100]
+    },
+    {
+      "id": 2,
+      "parent": 1,
       "transform": [
         [0.5, 0, -0.866025403784439, 0.0021650635094611],
         [0, 1, 0, 0],
         [0.866025403784439, 0, 0.5, -0.00125],
         [-30, 30, 100, 0.75]
-      ]
+      ],
+      "origin": [125, 50]
     }
   ]
 }
@@ -72,9 +81,9 @@ Third dump layer tree:
   "layers": [
     {
       "name": "LayoutView #document",
-      "bounds": [785, 1316],
+      "bounds": [785, 1451],
       "contentsOpaque": true,
-      "drawsContent": true
+      "backgroundColor": "#FFFFFF"
     }
   ]
 }

@@ -10,51 +10,39 @@ function attachIframe()
     document.body.appendChild(frame);
 }
 
-function test()
-{
-    var finished = false;
-    InspectorTest.NetworkAgent.setCacheDisabled(true, step1);
+function test() {
+  var finished = false;
+  TestRunner.NetworkAgent.setCacheDisabled(true).then(step1);
 
-    function findResource(url, status, cached)
-    {
-        var requests = InspectorTest.networkRequests();
-        for (var i = 0; i < requests.length; ++i) {
-            var request = requests[i];
-            if (url.test(request.url()) && (status === request.statusCode) && (cached === request.cached()))
-                return request;
-        }
-        return null;
-    }
+  function findResource(url, status, cached) {
+    return NetworkTestRunner.networkRequests().find(
+        request => url.test(request.url()) && (status === request.statusCode) && (cached === request.cached()));
+  }
 
-    function step1()
-    {
-        InspectorTest.networkManager.addEventListener(SDK.NetworkManager.Events.RequestFinished, onRequest);
-        InspectorTest.reloadPage(step2);
-    }
+  function step1() {
+    TestRunner.networkManager.addEventListener(SDK.NetworkManager.Events.RequestFinished, onRequest);
+    TestRunner.reloadPage(step2);
+  }
 
-    function step2()
-    {
-        InspectorTest.evaluateInPage("attachIframe()");
-    }
+  function step2() {
+    TestRunner.evaluateInPage('attachIframe()');
+  }
 
-    function onRequest()
-    {
-        if (!finished && findResource(/abe\.png/, 200, false) && findResource(/abe\.png/, 200, true)) {
-            finished = true;
-            InspectorTest.addResult("Memory-cached resource found.");
-            step3();
-        }
+  function onRequest() {
+    if (!finished && findResource(/abe\.png/, 200, false) && findResource(/abe\.png/, 200, true)) {
+      finished = true;
+      TestRunner.addResult('Memory-cached resource found.');
+      step3();
     }
+  }
 
-    function step3()
-    {
-        InspectorTest.NetworkAgent.setCacheDisabled(false, step4);
-    }
+  function step3() {
+    TestRunner.NetworkAgent.setCacheDisabled(false).then(step4);
+  }
 
-    function step4(msg)
-    {
-        InspectorTest.completeTest();
-    }
+  function step4() {
+    TestRunner.completeTest();
+  }
 }
 </script>
 </head>

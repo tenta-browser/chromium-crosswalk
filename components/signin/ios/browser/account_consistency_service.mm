@@ -6,7 +6,6 @@
 
 #import <WebKit/WebKit.h>
 
-#import "base/ios/weak_nsobject.h"
 #include "base/logging.h"
 #import "base/mac/foundation_util.h"
 #include "base/macros.h"
@@ -23,6 +22,10 @@
 #include "net/base/mac/url_conversions.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
 #include "url/gurl.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace {
 
@@ -53,12 +56,13 @@ class AccountConsistencyHandler : public web::WebStatePolicyDecider {
 
  private:
   // web::WebStatePolicyDecider override
-  bool ShouldAllowResponse(NSURLResponse* response) override;
+  bool ShouldAllowResponse(NSURLResponse* response,
+                           bool for_main_frame) override;
   void WebStateDestroyed() override;
 
   AccountConsistencyService* account_consistency_service_;  // Weak.
   AccountReconcilor* account_reconcilor_;                   // Weak.
-  base::WeakNSProtocol<id<ManageAccountsDelegate>> delegate_;
+  __weak id<ManageAccountsDelegate> delegate_;
 };
 }
 
@@ -72,7 +76,8 @@ AccountConsistencyHandler::AccountConsistencyHandler(
       account_reconcilor_(account_reconcilor),
       delegate_(delegate) {}
 
-bool AccountConsistencyHandler::ShouldAllowResponse(NSURLResponse* response) {
+bool AccountConsistencyHandler::ShouldAllowResponse(NSURLResponse* response,
+                                                    bool for_main_frame) {
   NSHTTPURLResponse* http_response =
       base::mac::ObjCCast<NSHTTPURLResponse>(response);
   if (!http_response)
@@ -370,7 +375,7 @@ void AccountConsistencyService::FinishedApplyingCookieRequest(bool success) {
       case ADD_CHROME_CONNECTED_COOKIE:
         // Add request.domain to prefs, use |true| as a dummy value (that is
         // never used), as the dictionary is used as a set.
-        update->SetBooleanWithoutPathExpansion(request.domain, true);
+        update->SetKey(request.domain, base::Value(true));
         break;
       case REMOVE_CHROME_CONNECTED_COOKIE:
         // Remove request.domain from prefs.
@@ -390,14 +395,14 @@ WKWebView* AccountConsistencyService::GetWKWebView() {
     return nil;
   }
   if (!web_view_) {
-    web_view_.reset([BuildWKWebView() retain]);
-    navigation_delegate_.reset([[AccountConsistencyNavigationDelegate alloc]
+    web_view_ = BuildWKWebView();
+    navigation_delegate_ = [[AccountConsistencyNavigationDelegate alloc]
         initWithCallback:base::Bind(&AccountConsistencyService::
                                         FinishedApplyingCookieRequest,
-                                    base::Unretained(this), true)]);
+                                    base::Unretained(this), true)];
     [web_view_ setNavigationDelegate:navigation_delegate_];
   }
-  return web_view_.get();
+  return web_view_;
 }
 
 WKWebView* AccountConsistencyService::BuildWKWebView() {
@@ -407,8 +412,8 @@ WKWebView* AccountConsistencyService::BuildWKWebView() {
 void AccountConsistencyService::ResetWKWebView() {
   [web_view_ setNavigationDelegate:nil];
   [web_view_ stopLoading];
-  web_view_.reset();
-  navigation_delegate_.reset();
+  web_view_ = nil;
+  navigation_delegate_ = nil;
   applying_cookie_requests_ = false;
 }
 
@@ -459,8 +464,7 @@ void AccountConsistencyService::OnGaiaAccountsInCookieUpdated(
 
 void AccountConsistencyService::GoogleSigninSucceeded(
     const std::string& account_id,
-    const std::string& username,
-    const std::string& password) {
+    const std::string& username) {
   AddChromeConnectedCookies();
 }
 

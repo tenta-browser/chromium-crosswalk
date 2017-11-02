@@ -15,6 +15,10 @@
 
 #if defined(USE_AURA)
 #include "base/run_loop.h"
+#include "components/ui_devtools/devtools_server.h"
+#include "components/ui_devtools/views/ui_devtools_css_agent.h"
+#include "components/ui_devtools/views/ui_devtools_dom_agent.h"
+#include "components/ui_devtools/views/ui_devtools_overlay_agent.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/service_manager_connection.h"
 #include "services/service_manager/public/cpp/connector.h"
@@ -23,6 +27,7 @@
 #include "services/ui/public/cpp/input_devices/input_device_client.h"
 #include "services/ui/public/interfaces/constants.mojom.h"
 #include "services/ui/public/interfaces/input_devices/input_device_server.mojom.h"
+#include "ui/aura/env.h"
 #include "ui/display/screen.h"
 #include "ui/views/mus/mus_client.h"
 #include "ui/views/widget/desktop_aura/desktop_screen.h"
@@ -73,9 +78,6 @@ void ChromeBrowserMainExtraPartsViews::ToolkitInitialized() {
   if (!views::ViewsDelegate::GetInstance())
     views_delegate_ = base::MakeUnique<ChromeViewsDelegate>();
 
-  if (!views::LayoutProvider::Get())
-    layout_provider_ = ChromeLayoutProvider::CreateLayoutProvider();
-
   SetConstrainedWindowViewsClient(CreateChromeConstrainedWindowViewsClient());
 
 #if defined(USE_AURA)
@@ -90,13 +92,38 @@ void ChromeBrowserMainExtraPartsViews::PreCreateThreads() {
   if (!display::Screen::GetScreen())
     display::Screen::SetScreenInstance(views::CreateDesktopScreen());
 #endif
+
+  // TODO(pkasting): Try to move ViewsDelegate creation here as well;
+  // see https://crbug.com/691894#c1
+  // The layout_provider_ must be intialized here instead of in
+  // ToolkitInitialized() because it relies on
+  // ui::MaterialDesignController::Intialize() having already been called.
+  if (!views::LayoutProvider::Get())
+    layout_provider_ = ChromeLayoutProvider::CreateLayoutProvider();
 }
 
 void ChromeBrowserMainExtraPartsViews::PreProfileInit() {
 #if defined(USE_AURA)
   // IME driver must be available at login screen, so initialize before profile.
-  if (service_manager::ServiceManagerIsRemote())
+  if (aura::Env::GetInstance()->mode() == aura::Env::Mode::MUS)
     IMEDriver::Register();
+
+  // Start devtools server
+  devtools_server_ = ui_devtools::UiDevToolsServer::Create(nullptr);
+  if (devtools_server_) {
+    auto dom_backend = base::MakeUnique<ui_devtools::UIDevToolsDOMAgent>();
+    auto overlay_backend =
+        base::MakeUnique<ui_devtools::UIDevToolsOverlayAgent>(
+            dom_backend.get());
+    auto css_backend =
+        base::MakeUnique<ui_devtools::UIDevToolsCSSAgent>(dom_backend.get());
+    auto devtools_client = base::MakeUnique<ui_devtools::UiDevToolsClient>(
+        "UiDevToolsClient", devtools_server_.get());
+    devtools_client->AddAgent(std::move(dom_backend));
+    devtools_client->AddAgent(std::move(css_backend));
+    devtools_client->AddAgent(std::move(overlay_backend));
+    devtools_server_->AttachClient(std::move(devtools_client));
+  }
 #endif
 
 #if defined(OS_LINUX) && !defined(OS_CHROMEOS)
@@ -137,7 +164,7 @@ void ChromeBrowserMainExtraPartsViews::ServiceManagerConnectionStarted(
     content::ServiceManagerConnection* connection) {
   DCHECK(connection);
 #if defined(USE_AURA)
-  if (!service_manager::ServiceManagerIsRemote())
+  if (aura::Env::GetInstance()->mode() == aura::Env::Mode::LOCAL)
     return;
 
   input_device_client_ = base::MakeUnique<ui::InputDeviceClient>();

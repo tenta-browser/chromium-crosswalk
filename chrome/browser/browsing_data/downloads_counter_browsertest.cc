@@ -10,9 +10,9 @@
 #include "base/guid.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
+#include "chrome/browser/download/download_core_service.h"
+#include "chrome/browser/download/download_core_service_factory.h"
 #include "chrome/browser/download/download_history.h"
-#include "chrome/browser/download/download_service.h"
-#include "chrome/browser/download/download_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -38,8 +38,8 @@ class DownloadsCounterTest : public InProcessBrowserTest,
     manager_ =
         content::BrowserContext::GetDownloadManager(browser()->profile());
     history_ =
-        DownloadServiceFactory::GetForBrowserContext(browser()->profile())->
-            GetDownloadHistory();
+        DownloadCoreServiceFactory::GetForBrowserContext(browser()->profile())
+            ->GetDownloadHistory();
     history_->AddObserver(this);
 
     otr_manager_ =
@@ -122,7 +122,7 @@ class DownloadsCounterTest : public InProcessBrowserTest,
       const GURL& url,
       std::string mime_type,
       bool incognito) {
-    std::string guid = base::ToUpperASCII(base::GenerateGUID());
+    std::string guid = base::GenerateGUID();
 
     std::vector<GURL> url_chain;
     url_chain.push_back(url);
@@ -338,7 +338,13 @@ IN_PROC_BROWSER_TEST_F(DownloadsCounterTest, NotPersisted) {
 }
 
 // Tests that the counter takes time ranges into account.
-IN_PROC_BROWSER_TEST_F(DownloadsCounterTest, TimeRanges) {
+// Flaky on Mac (crbug.com/736820)
+#if defined(OS_MACOSX)
+#define MAYBE_TimeRanges DISABLED_TimeRanges
+#else
+#define MAYBE_TimeRanges TimeRanges
+#endif
+IN_PROC_BROWSER_TEST_F(DownloadsCounterTest, MAYBE_TimeRanges) {
   AddDownload();
   AddDownload();  // 2 items
 

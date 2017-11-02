@@ -28,21 +28,14 @@ BluetoothLowEnergyCharacteristicsFinder::
         const SuccessCallback& success_callback,
         const ErrorCallback& error_callback)
     : adapter_(adapter),
+      bluetooth_device_(device),
       remote_service_(remote_service),
       to_peripheral_char_(to_peripheral_char),
       from_peripheral_char_(from_peripheral_char),
       success_callback_(success_callback),
       error_callback_(error_callback) {
-  if (!adapter_) {
-    error_callback_.Run(to_peripheral_char_, from_peripheral_char_);
-    ResetCallbacks();
-    return;
-  }
-
   adapter_->AddObserver(this);
   ScanRemoteCharacteristics(device, remote_service_.uuid);
-
-  // TODO(sacomoto): implement a timeout for characteristic discovery.
 }
 
 BluetoothLowEnergyCharacteristicsFinder::
@@ -50,93 +43,101 @@ BluetoothLowEnergyCharacteristicsFinder::
 
 BluetoothLowEnergyCharacteristicsFinder::
     ~BluetoothLowEnergyCharacteristicsFinder() {
-  ResetCallbacks();
   if (adapter_) {
     adapter_->RemoveObserver(this);
-    adapter_ = NULL;
   }
 }
 
 void BluetoothLowEnergyCharacteristicsFinder::GattCharacteristicAdded(
     BluetoothAdapter* adapter,
     BluetoothRemoteGattCharacteristic* characteristic) {
-  PA_LOG(INFO) << "New char found: "
-               << characteristic->GetUUID().canonical_value();
+  // Ignore events about other devices.
+  if (characteristic->GetService()->GetDevice() != bluetooth_device_)
+    return;
   HandleCharacteristicUpdate(characteristic);
 }
 
 void BluetoothLowEnergyCharacteristicsFinder::GattDiscoveryCompleteForService(
     BluetoothAdapter* adapter,
     BluetoothRemoteGattService* service) {
-  if (service && service->GetUUID() == remote_service_.uuid) {
-    PA_LOG(INFO) << "All characteristics discovered for "
-                 << remote_service_.uuid.canonical_value();
+  if (!service || service->GetUUID() != remote_service_.uuid)
+    return;
 
-    if (to_peripheral_char_.id.empty() || from_peripheral_char_.id.empty()) {
-      if (!error_callback_.is_null()) {
-        error_callback_.Run(to_peripheral_char_, from_peripheral_char_);
-        ResetCallbacks();
-      }
-    }
-  }
+  OnCharacteristicDiscoveryEnded(service->GetDevice());
+}
+
+void BluetoothLowEnergyCharacteristicsFinder::GattServicesDiscovered(
+    BluetoothAdapter* adapter,
+    BluetoothDevice* device) {
+  OnCharacteristicDiscoveryEnded(device);
+}
+
+void BluetoothLowEnergyCharacteristicsFinder::OnCharacteristicDiscoveryEnded(
+    BluetoothDevice* device) {
+  // Ignore events about other devices.
+  if (device != bluetooth_device_)
+    return;
+
+  if (!to_peripheral_char_.id.empty() && !from_peripheral_char_.id.empty())
+    return;
+
+  if (has_error_callback_been_invoked_)
+    return;
+  // If all GATT services have been discovered and we haven't found the
+  // characteristics we are looking for, call the error callback.
+  has_error_callback_been_invoked_ = true;
+  error_callback_.Run(to_peripheral_char_, from_peripheral_char_);
 }
 
 void BluetoothLowEnergyCharacteristicsFinder::ScanRemoteCharacteristics(
     BluetoothDevice* device,
     const BluetoothUUID& service_uuid) {
-  PA_LOG(INFO) << "Scanning remote characteristics.";
-  if (device) {
-    std::vector<BluetoothRemoteGattService*> services =
-        device->GetGattServices();
-    PA_LOG(INFO) << device->GetAddress() << " has " << services.size()
-                 << " services.";
-    for (const auto* service : services) {
-      if (service->GetUUID() == service_uuid) {
-        // Right service found, now scaning its characteristics.
-        std::vector<device::BluetoothRemoteGattCharacteristic*>
-            characteristics = service->GetCharacteristics();
-        PA_LOG(INFO) << "Service " << service_uuid.canonical_value() << " has "
-                     << characteristics.size() << " characteristics.";
-        for (auto* characteristic : characteristics) {
-          HandleCharacteristicUpdate(characteristic);
-        }
-        break;
-      }
+  if (!device)
+    return;
+
+  for (const auto* service : device->GetGattServices()) {
+    if (service->GetUUID() != service_uuid)
+      continue;
+
+    // Right service found, now scaning its characteristics.
+    std::vector<device::BluetoothRemoteGattCharacteristic*> characteristics =
+        service->GetCharacteristics();
+    for (auto* characteristic : characteristics) {
+      if (HandleCharacteristicUpdate(characteristic))
+        return;
     }
+    break;
   }
 }
 
-void BluetoothLowEnergyCharacteristicsFinder::HandleCharacteristicUpdate(
+bool BluetoothLowEnergyCharacteristicsFinder::HandleCharacteristicUpdate(
     BluetoothRemoteGattCharacteristic* characteristic) {
   UpdateCharacteristicsStatus(characteristic);
 
-  if (!to_peripheral_char_.id.empty() && !from_peripheral_char_.id.empty() &&
-      !success_callback_.is_null()) {
-    PA_LOG(INFO) << "Found write and read characteristics on remote device.";
-    success_callback_.Run(remote_service_, to_peripheral_char_,
-                          from_peripheral_char_);
-    ResetCallbacks();
-  }
+  if (to_peripheral_char_.id.empty() || from_peripheral_char_.id.empty())
+    return false;
+
+  success_callback_.Run(remote_service_, to_peripheral_char_,
+                        from_peripheral_char_);
+  return true;
 }
 
 void BluetoothLowEnergyCharacteristicsFinder::UpdateCharacteristicsStatus(
     BluetoothRemoteGattCharacteristic* characteristic) {
-  if (characteristic &&
-      characteristic->GetService()->GetUUID() == remote_service_.uuid) {
-    BluetoothUUID uuid = characteristic->GetUUID();
-    if (to_peripheral_char_.uuid == uuid)
-      to_peripheral_char_.id = characteristic->GetIdentifier();
-    if (from_peripheral_char_.uuid == uuid)
-      from_peripheral_char_.id = characteristic->GetIdentifier();
-
-    BluetoothRemoteGattService* service = characteristic->GetService();
-    remote_service_.id = service->GetIdentifier();
+  if (!characteristic ||
+      characteristic->GetService()->GetUUID() != remote_service_.uuid) {
+    return;
   }
-}
 
-void BluetoothLowEnergyCharacteristicsFinder::ResetCallbacks() {
-  success_callback_.Reset();
-  error_callback_.Reset();
+  BluetoothUUID uuid = characteristic->GetUUID();
+  if (to_peripheral_char_.uuid == uuid)
+    to_peripheral_char_.id = characteristic->GetIdentifier();
+  if (from_peripheral_char_.uuid == uuid)
+    from_peripheral_char_.id = characteristic->GetIdentifier();
+
+  BluetoothRemoteGattService* service = characteristic->GetService();
+  if (service)
+    remote_service_.id = service->GetIdentifier();
 }
 
 }  // namespace cryptauth

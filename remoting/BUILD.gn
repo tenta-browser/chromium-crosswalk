@@ -38,7 +38,7 @@ group("remoting_all") {
   }
 
   if (is_ios) {
-    deps += [ "//remoting/client/ios:all" ]
+    deps += [ "//remoting/ios:all" ]
   }
 
   if (enable_remoting_host) {
@@ -153,7 +153,10 @@ test("remoting_unittests") {
     "//google_apis",
     "//remoting/base:unit_tests",
     "//remoting/client:unit_tests",
+    "//remoting/client/audio:unit_tests",
     "//remoting/client/display:unit_tests",
+    "//remoting/client/input:unit_tests",
+    "//remoting/client/ui:unit_tests",
     "//remoting/protocol:unit_tests",
     "//remoting/signaling:unit_tests",
     "//remoting/test:unit_tests",

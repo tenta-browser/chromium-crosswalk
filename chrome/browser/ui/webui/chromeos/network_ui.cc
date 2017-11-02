@@ -28,7 +28,6 @@
 #include "content/public/browser/web_ui_message_handler.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/chromeos/strings/grit/ui_chromeos_strings.h"
 
 namespace chromeos {
 
@@ -64,10 +63,10 @@ void SetDeviceProperties(base::DictionaryValue* dictionary) {
       ip_configs->Append(iter.value().CreateDeepCopy());
     }
     device_dictionary->SetWithoutPathExpansion(shill::kIPConfigsProperty,
-                                               ip_configs.release());
+                                               std::move(ip_configs));
   }
   if (!device_dictionary->empty())
-    dictionary->Set(shill::kDeviceProperty, device_dictionary.release());
+    dictionary->Set(shill::kDeviceProperty, std::move(device_dictionary));
 }
 
 class NetworkConfigMessageHandler : public content::WebUIMessageHandler {
@@ -115,7 +114,7 @@ class NetworkConfigMessageHandler : public content::WebUIMessageHandler {
         dictionary.DeepCopy());
 
     // Set the 'ServicePath' property for debugging.
-    dictionary_copy->SetStringWithoutPathExpansion("ServicePath", service_path);
+    dictionary_copy->SetKey("ServicePath", base::Value(service_path));
     // Set the device properties for debugging.
     SetDeviceProperties(dictionary_copy.get());
 
@@ -132,8 +131,8 @@ class NetworkConfigMessageHandler : public content::WebUIMessageHandler {
     NET_LOG(ERROR) << "Shill Error: " << error_name << " guid=" << guid;
     base::ListValue return_arg_list;
     std::unique_ptr<base::DictionaryValue> dictionary;
-    dictionary->SetStringWithoutPathExpansion(shill::kGuidProperty, guid);
-    dictionary->SetStringWithoutPathExpansion("ShillError", error_name);
+    dictionary->SetKey(shill::kGuidProperty, base::Value(guid));
+    dictionary->SetKey("ShillError", base::Value(error_name));
     return_arg_list.Append(std::move(dictionary));
     web_ui()->CallJavascriptFunctionUnsafe("NetworkUI.getShillPropertiesResult",
                                            return_arg_list);
@@ -145,8 +144,7 @@ class NetworkConfigMessageHandler : public content::WebUIMessageHandler {
     std::string shill_type = (onc_type == ::onc::network_type::kVPN)
                                  ? shill::kTypeVPN
                                  : shill::kTypeWifi;
-    NetworkConfigView::ShowForType(
-        shill_type, web_ui()->GetWebContents()->GetTopLevelNativeWindow());
+    NetworkConfigView::ShowForType(shill_type);
   }
 
   base::WeakPtrFactory<NetworkConfigMessageHandler> weak_ptr_factory_;

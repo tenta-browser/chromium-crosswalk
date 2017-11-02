@@ -6,11 +6,10 @@ package org.chromium.chrome.browser.customtabs;
 
 import android.view.ViewGroup;
 
-import org.chromium.chrome.browser.compositor.layouts.LayoutManagerDocument;
+import org.chromium.chrome.browser.compositor.layouts.LayoutManager;
 import org.chromium.chrome.browser.compositor.layouts.LayoutManagerHost;
 import org.chromium.chrome.browser.compositor.layouts.content.TabContentManager;
 import org.chromium.chrome.browser.contextualsearch.ContextualSearchManagementDelegate;
-import org.chromium.chrome.browser.dom_distiller.ReaderModeManagerDelegate;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tabmodel.EmptyTabModelObserver;
 import org.chromium.chrome.browser.tabmodel.TabCreatorManager;
@@ -24,8 +23,7 @@ import org.chromium.ui.resources.dynamics.DynamicResourceLoader;
 /**
  * A simple LayoutManager that shows multiple tabs without animation.
  */
-public class CustomTabLayoutManager extends LayoutManagerDocument {
-
+public class CustomTabLayoutManager extends LayoutManager {
     TabModelObserver mTabModelObserver = new EmptyTabModelObserver() {
         @Override
         public void didAddTab(Tab tab, TabLaunchType type) {
@@ -54,10 +52,9 @@ public class CustomTabLayoutManager extends LayoutManagerDocument {
     public void init(TabModelSelector selector, TabCreatorManager creator,
             TabContentManager content, ViewGroup androidContentContainer,
             ContextualSearchManagementDelegate contextualSearchDelegate,
-            ReaderModeManagerDelegate readerModeDelegate,
             DynamicResourceLoader dynamicResourceLoader) {
         super.init(selector, creator, content, androidContentContainer, contextualSearchDelegate,
-                readerModeDelegate, dynamicResourceLoader);
+                dynamicResourceLoader);
         for (TabModel model : selector.getModels()) model.addObserver(mTabModelObserver);
     }
 }

@@ -28,16 +28,16 @@
 
 #include <memory>
 #include "bindings/core/v8/ExceptionState.h"
-#include "bindings/core/v8/ScriptState.h"
-#include "bindings/core/v8/SerializedScriptValue.h"
-#include "bindings/core/v8/SerializedScriptValueFactory.h"
+#include "bindings/core/v8/serialization/SerializedScriptValue.h"
+#include "bindings/core/v8/serialization/SerializedScriptValueFactory.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/dom/ExecutionContext.h"
-#include "core/dom/ExecutionContextTask.h"
 #include "core/dom/TaskRunnerHelper.h"
 #include "core/events/MessageEvent.h"
 #include "core/frame/LocalDOMWindow.h"
 #include "core/workers/WorkerGlobalScope.h"
+#include "platform/CrossThreadFunctional.h"
+#include "platform/bindings/ScriptState.h"
 #include "platform/wtf/Atomics.h"
 #include "platform/wtf/PtrUtil.h"
 #include "platform/wtf/text/AtomicString.h"
@@ -51,16 +51,15 @@ MessagePort* MessagePort::Create(ExecutionContext& execution_context) {
 
 MessagePort::MessagePort(ExecutionContext& execution_context)
     : ContextLifecycleObserver(&execution_context),
-      pending_dispatch_task_(0),
-      started_(false),
-      closed_(false) {}
+      task_runner_(TaskRunnerHelper::Get(TaskType::kPostedMessage,
+                                         &execution_context)) {}
 
 MessagePort::~MessagePort() {
   DCHECK(!started_ || !IsEntangled());
 }
 
 void MessagePort::postMessage(ScriptState* script_state,
-                              PassRefPtr<SerializedScriptValue> message,
+                              RefPtr<SerializedScriptValue> message,
                               const MessagePortArray& ports,
                               ExceptionState& exception_state) {
   if (!IsEntangled())
@@ -82,10 +81,12 @@ void MessagePort::postMessage(ScriptState* script_state,
   if (exception_state.HadException())
     return;
 
-  WebString message_string = message->ToWireString();
+  StringView wire_data = message->GetWireData();
   WebMessagePortChannelArray web_channels =
       ToWebMessagePortChannelArray(std::move(channels));
-  entangled_channel_->PostMessage(message_string, std::move(web_channels));
+  entangled_channel_->PostMessage(
+      reinterpret_cast<const uint8_t*>(wire_data.Characters8()),
+      wire_data.length(), std::move(web_channels));
 }
 
 // static
@@ -122,13 +123,9 @@ void MessagePort::MessageAvailable() {
   if (AtomicTestAndSetToOne(&pending_dispatch_task_))
     return;
 
-  DCHECK(GetExecutionContext());
-  // TODO(tzik): Use ParentThreadTaskRunners instead of ExecutionContext here to
-  // avoid touching foreign thread GCed object.
-  GetExecutionContext()->PostTask(
-      TaskType::kPostedMessage, BLINK_FROM_HERE,
-      CreateCrossThreadTask(&MessagePort::DispatchMessages,
-                            WrapCrossThreadWeakPersistent(this)));
+  task_runner_->PostTask(BLINK_FROM_HERE,
+                         CrossThreadBind(&MessagePort::DispatchMessages,
+                                         WrapCrossThreadWeakPersistent(this)));
 }
 
 void MessagePort::start() {
@@ -166,17 +163,18 @@ const AtomicString& MessagePort::InterfaceName() const {
 static bool TryGetMessageFrom(WebMessagePortChannel& web_channel,
                               RefPtr<SerializedScriptValue>& message,
                               MessagePortChannelArray& channels) {
-  WebString message_string;
+  WebVector<uint8_t> message_data;
   WebMessagePortChannelArray web_channels;
-  if (!web_channel.TryGetMessage(&message_string, web_channels))
+  if (!web_channel.TryGetMessage(&message_data, web_channels))
     return false;
 
   if (web_channels.size()) {
-    channels.Resize(web_channels.size());
+    channels.resize(web_channels.size());
     for (size_t i = 0; i < web_channels.size(); ++i)
       channels[i] = std::move(web_channels[i]);
   }
-  message = SerializedScriptValue::Create(message_string);
+  message = SerializedScriptValue::Create(
+      reinterpret_cast<const char*>(message_data.Data()), message_data.size());
   return true;
 }
 
@@ -265,7 +263,7 @@ MessagePortChannelArray MessagePort::DisentanglePorts(
     visited.insert(port);
   }
 
-  UseCounter::Count(context, UseCounter::kMessagePortsTransferred);
+  UseCounter::Count(context, WebFeature::kMessagePortsTransferred);
 
   // Passed-in ports passed validity checks, so we can disentangle them.
   MessagePortChannelArray port_array(ports.size());

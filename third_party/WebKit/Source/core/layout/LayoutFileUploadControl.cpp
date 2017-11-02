@@ -20,9 +20,10 @@
 
 #include "core/layout/LayoutFileUploadControl.h"
 
+#include <math.h>
 #include "core/HTMLNames.h"
 #include "core/InputTypeNames.h"
-#include "core/dom/shadow/ShadowRoot.h"
+#include "core/dom/ShadowRoot.h"
 #include "core/editing/PositionWithAffinity.h"
 #include "core/fileapi/FileList.h"
 #include "core/html/HTMLInputElement.h"
@@ -31,7 +32,6 @@
 #include "platform/fonts/Font.h"
 #include "platform/text/PlatformLocale.h"
 #include "platform/text/TextRun.h"
-#include <math.h>
 
 namespace blink {
 
@@ -163,7 +163,7 @@ HTMLInputElement* LayoutFileUploadControl::UploadButton() const {
   // FIXME: This should be on HTMLInputElement as an API like
   // innerButtonElement().
   HTMLInputElement* input = toHTMLInputElement(GetNode());
-  Node* button_node = input->UserAgentShadowRoot()->FirstChild();
+  Node* button_node = input->UserAgentShadowRoot()->firstChild();
   return isHTMLInputElement(button_node) ? toHTMLInputElement(button_node) : 0;
 }
 

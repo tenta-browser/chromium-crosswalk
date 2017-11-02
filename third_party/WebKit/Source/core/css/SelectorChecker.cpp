@@ -34,16 +34,16 @@
 #include "core/dom/Document.h"
 #include "core/dom/Element.h"
 #include "core/dom/ElementTraversal.h"
-#include "core/dom/Fullscreen.h"
+#include "core/dom/FlatTreeTraversal.h"
 #include "core/dom/NodeComputedStyle.h"
 #include "core/dom/NthIndexCache.h"
+#include "core/dom/ShadowRoot.h"
 #include "core/dom/StyleEngine.h"
 #include "core/dom/Text.h"
-#include "core/dom/shadow/FlatTreeTraversal.h"
-#include "core/dom/shadow/InsertionPoint.h"
-#include "core/dom/shadow/ShadowRoot.h"
+#include "core/dom/V0InsertionPoint.h"
 #include "core/editing/FrameSelection.h"
 #include "core/frame/LocalFrame.h"
+#include "core/fullscreen/Fullscreen.h"
 #include "core/html/HTMLDocument.h"
 #include "core/html/HTMLFrameElementBase.h"
 #include "core/html/HTMLInputElement.h"
@@ -57,6 +57,7 @@
 #include "core/page/Page.h"
 #include "core/probe/CoreProbes.h"
 #include "core/style/ComputedStyle.h"
+#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/scroll/ScrollableArea.h"
 #include "platform/scroll/ScrollbarTheme.h"
 #include "platform/wtf/AutoReset.h"
@@ -66,8 +67,10 @@ namespace blink {
 using namespace HTMLNames;
 
 static bool IsFrameFocused(const Element& element) {
-  return element.GetDocument().GetFrame() &&
-         element.GetDocument().GetFrame()->Selection().IsFocusedAndActive();
+  return element.GetDocument().GetFrame() && element.GetDocument()
+                                                 .GetFrame()
+                                                 ->Selection()
+                                                 .FrameIsFocusedAndActive();
 }
 
 static bool MatchesSpatialNavigationFocusPseudoClass(const Element& element) {
@@ -260,6 +263,17 @@ SelectorChecker::MatchStatus SelectorChecker::MatchForSubSelector(
       dynamic_pseudo != kPseudoIdNone &&
       (scrollbar_ || dynamic_pseudo == kPseudoIdScrollbarCorner ||
        dynamic_pseudo == kPseudoIdResizer);
+
+  // Only match pseudo classes following scrollbar pseudo elements while
+  // actually computing style for scrollbar pseudo elements. This is to
+  // avoid incorrectly setting affected-by flags on actual elements for
+  // cases like: div::-webkit-scrollbar-thumb:hover { }
+  if (context.in_rightmost_compound && dynamic_pseudo != kPseudoIdNone &&
+      dynamic_pseudo != kPseudoIdSelection &&
+      !next_context.has_scrollbar_pseudo) {
+    return kSelectorFailsCompletely;
+  }
+
   next_context.has_selection_pseudo = dynamic_pseudo == kPseudoIdSelection;
   next_context.is_sub_selector = true;
   return MatchSelector(next_context, result);
@@ -317,6 +331,12 @@ SelectorChecker::MatchStatus SelectorChecker::MatchForRelation(
   next_context.pseudo_id = kPseudoIdNone;
 
   switch (relation) {
+    case CSSSelector::kShadowDeepAsDescendant:
+      DCHECK(
+          !RuntimeEnabledFeatures::DeepCombinatorInCSSDynamicProfileEnabled());
+      Deprecation::CountDeprecation(context.element->GetDocument(),
+                                    WebFeature::kCSSDeepCombinator);
+    // fall through
     case CSSSelector::kDescendant:
       if (context.selector->RelationIsAffectedByPseudoContent()) {
         for (Element* element = context.element; element;
@@ -332,7 +352,8 @@ SelectorChecker::MatchStatus SelectorChecker::MatchForRelation(
         return MatchForPseudoShadow(
             next_context, context.element->ContainingShadowRoot(), result);
 
-      for (next_context.element = ParentElement(context); next_context.element;
+      for (next_context.element = ParentElement(next_context);
+           next_context.element;
            next_context.element = ParentElement(next_context)) {
         MatchStatus match = MatchSelector(next_context, result);
         if (match == kSelectorMatches || match == kSelectorFailsCompletely)
@@ -349,7 +370,7 @@ SelectorChecker::MatchStatus SelectorChecker::MatchForRelation(
         return MatchForPseudoShadow(next_context, context.element->parentNode(),
                                     result);
 
-      next_context.element = ParentElement(context);
+      next_context.element = ParentElement(next_context);
       if (!next_context.element)
         return kSelectorFailsCompletely;
       return MatchSelector(next_context, result);
@@ -393,10 +414,14 @@ SelectorChecker::MatchStatus SelectorChecker::MatchForRelation(
       return kSelectorFailsAllSiblings;
 
     case CSSSelector::kShadowPseudo: {
-      if (!is_ua_rule_ && mode_ != kQueryingRules &&
-          context.selector->GetPseudoType() == CSSSelector::kPseudoShadow)
-        Deprecation::CountDeprecation(context.element->GetDocument(),
-                                      UseCounter::kCSSSelectorPseudoShadow);
+      if (RuntimeEnabledFeatures::
+              ShadowPseudoElementInCSSDynamicProfileEnabled()) {
+        if (!is_ua_rule_ && mode_ != kQueryingRules &&
+            context.selector->GetPseudoType() == CSSSelector::kPseudoShadow) {
+          Deprecation::CountDeprecation(context.element->GetDocument(),
+                                        WebFeature::kCSSSelectorPseudoShadow);
+        }
+      }
       // If we're in the same tree-scope as the scoping element, then following
       // a shadow descendant combinator would escape that and thus the scope.
       if (context.scope && context.scope->OwnerShadowHost() &&
@@ -412,9 +437,10 @@ SelectorChecker::MatchStatus SelectorChecker::MatchForRelation(
     }
 
     case CSSSelector::kShadowDeep: {
-      if (!is_ua_rule_ && mode_ != kQueryingRules)
+      if (!is_ua_rule_ && mode_ != kQueryingRules) {
         Deprecation::CountDeprecation(context.element->GetDocument(),
-                                      UseCounter::kCSSDeepCombinator);
+                                      WebFeature::kCSSDeepCombinator);
+      }
       if (ShadowRoot* root = context.element->ContainingShadowRoot()) {
         if (root->GetType() == ShadowRootType::kUserAgent)
           return kSelectorFailsCompletely;
@@ -427,9 +453,10 @@ SelectorChecker::MatchStatus SelectorChecker::MatchForRelation(
              element = element->ParentOrShadowHostElement()) {
           if (MatchForPseudoContent(next_context, *element, result) ==
               kSelectorMatches) {
-            if (context.element->IsInShadowTree())
+            if (context.element->IsInShadowTree()) {
               UseCounter::Count(context.element->GetDocument(),
-                                UseCounter::kCSSDeepCombinatorAndShadow);
+                                WebFeature::kCSSDeepCombinatorAndShadow);
+            }
             return kSelectorMatches;
           }
         }
@@ -441,9 +468,10 @@ SelectorChecker::MatchStatus SelectorChecker::MatchForRelation(
            next_context.element =
                ParentOrV0ShadowHostElement(*next_context.element)) {
         MatchStatus match = MatchSelector(next_context, result);
-        if (match == kSelectorMatches && context.element->IsInShadowTree())
+        if (match == kSelectorMatches && context.element->IsInShadowTree()) {
           UseCounter::Count(context.element->GetDocument(),
-                            UseCounter::kCSSDeepCombinatorAndShadow);
+                            WebFeature::kCSSDeepCombinatorAndShadow);
+        }
         if (match == kSelectorMatches || match == kSelectorFailsCompletely)
           return match;
         if (NextSelectorExceedsScope(next_context))
@@ -455,7 +483,7 @@ SelectorChecker::MatchStatus SelectorChecker::MatchForRelation(
     case CSSSelector::kShadowPiercingDescendant: {
       DCHECK_EQ(mode_, kQueryingRules);
       UseCounter::Count(context.element->GetDocument(),
-                        UseCounter::kCSSShadowPiercingDescendantCombinator);
+                        WebFeature::kCSSShadowPiercingDescendantCombinator);
       // TODO(kochi): parentOrOpenShadowHostElement() is necessary because
       // SelectorQuery can pass V0 shadow roots. All closed shadow roots are
       // already filtered out, thus once V0 is removed this logic can use
@@ -494,14 +522,11 @@ SelectorChecker::MatchStatus SelectorChecker::MatchForPseudoContent(
     const SelectorCheckingContext& context,
     const Element& element,
     MatchResult& result) const {
-  HeapVector<Member<InsertionPoint>, 8> insertion_points;
+  HeapVector<Member<V0InsertionPoint>, 8> insertion_points;
   CollectDestinationInsertionPoints(element, insertion_points);
   SelectorCheckingContext next_context(context);
   for (const auto& insertion_point : insertion_points) {
     next_context.element = insertion_point;
-    // TODO(esprehn): Why does kSharingRules have a special case?
-    if (mode_ == kSharingRules)
-      next_context.scope = insertion_point->ContainingShadowRoot();
     if (Match(next_context, result))
       return kSelectorMatches;
   }
@@ -630,7 +655,7 @@ static bool AnyAttributeMatches(Element& element,
         AttributeValueMatches(attribute_item, match, selector_value,
                               kTextCaseASCIIInsensitive)) {
       UseCounter::Count(element.GetDocument(),
-                        UseCounter::kCaseInsensitiveAttrSelectorMatch);
+                        WebFeature::kCaseInsensitiveAttrSelectorMatch);
       return true;
     }
     if (selector_attr.NamespaceURI() != g_star_atom)
@@ -706,22 +731,6 @@ bool SelectorChecker::CheckPseudoNot(const SelectorCheckingContext& context,
         (sub_context.selector->GetPseudoType() == CSSSelector::kPseudoLink &&
          sub_context.visited_match_type == kVisitedMatchEnabled))
       return true;
-    if (mode_ == kSharingRules) {
-      // context.scope is not available if mode_ == kSharingRules.
-      // We cannot determine whether :host or :scope matches a given element or
-      // not.
-      if (sub_context.selector->IsHostPseudoClass() ||
-          sub_context.selector->GetPseudoType() == CSSSelector::kPseudoScope)
-        return true;
-      // :hover, :active, :focus, :-webkit-drag relies on setting flags on
-      // ComputedStyle even if the whole selector may not match. That
-      // means we cannot share style between elements which may fail
-      // matching the same selector for different reasons. An example is
-      // [attr]:hover which both fail for :hover, but an element without
-      // attr won't reach the :hover selector, hence not setting the bit.
-      if (sub_context.selector->IsUserActionPseudoClass())
-        return true;
-    }
     if (!CheckOne(sub_context, result))
       return true;
   }
@@ -746,7 +755,7 @@ bool SelectorChecker::CheckPseudoClass(const SelectorCheckingContext& context,
       return CheckPseudoNot(context, result);
     case CSSSelector::kPseudoEmpty: {
       bool result = true;
-      for (Node* n = element.FirstChild(); n; n = n->nextSibling()) {
+      for (Node* n = element.firstChild(); n; n = n->nextSibling()) {
         if (n->IsElementNode()) {
           result = false;
           break;
@@ -763,9 +772,7 @@ bool SelectorChecker::CheckPseudoClass(const SelectorCheckingContext& context,
         element.SetStyleAffectedByEmpty();
         if (context.in_rightmost_compound)
           element_style_->SetEmptyState(result);
-        else if (element.GetComputedStyle() &&
-                 (element.GetDocument().GetStyleEngine().UsesSiblingRules() ||
-                  element.GetComputedStyle()->Unique()))
+        else if (element.GetComputedStyle())
           element.MutableComputedStyle()->SetEmptyState(result);
       }
       return result;
@@ -891,8 +898,6 @@ bool SelectorChecker::CheckPseudoClass(const SelectorCheckingContext& context,
       return element.IsLink() &&
              context.visited_match_type == kVisitedMatchEnabled;
     case CSSSelector::kPseudoDrag:
-      if (mode_ == kSharingRules)
-        return true;
       if (mode_ == kResolvingStyle) {
         if (context.in_rightmost_compound) {
           element_style_->SetAffectedByDrag();
@@ -903,20 +908,12 @@ bool SelectorChecker::CheckPseudoClass(const SelectorCheckingContext& context,
       }
       return element.IsDragged();
     case CSSSelector::kPseudoFocus:
-      if (mode_ == kSharingRules)
-        return true;
-      if (mode_ == kResolvingStyle) {
-        if (context.in_rightmost_compound) {
-          element_style_->SetAffectedByFocus();
-        } else {
-          element_style_->SetUnique();
-          element.SetChildrenOrSiblingsAffectedByFocus();
-        }
+      if (mode_ == kResolvingStyle && !context.in_rightmost_compound) {
+        element_style_->SetUnique();
+        element.SetChildrenOrSiblingsAffectedByFocus();
       }
       return MatchesFocusPseudoClass(element);
     case CSSSelector::kPseudoFocusWithin:
-      if (mode_ == kSharingRules)
-        return true;
       if (mode_ == kResolvingStyle) {
         if (context.in_rightmost_compound) {
           element_style_->SetAffectedByFocusWithin();
@@ -931,8 +928,6 @@ bool SelectorChecker::CheckPseudoClass(const SelectorCheckingContext& context,
         return true;
       return element.HasFocusWithin();
     case CSSSelector::kPseudoHover:
-      if (mode_ == kSharingRules)
-        return true;
       if (mode_ == kResolvingStyle) {
         if (context.in_rightmost_compound) {
           element_style_->SetAffectedByHover();
@@ -949,8 +944,6 @@ bool SelectorChecker::CheckPseudoClass(const SelectorCheckingContext& context,
         return true;
       return element.IsHovered();
     case CSSSelector::kPseudoActive:
-      if (mode_ == kSharingRules)
-        return true;
       if (mode_ == kResolvingStyle) {
         if (context.in_rightmost_compound) {
           element_style_->SetAffectedByActive();
@@ -1036,15 +1029,16 @@ bool SelectorChecker::CheckPseudoClass(const SelectorCheckingContext& context,
       if (IsHTMLFrameElementBase(element) &&
           element.ContainsFullScreenElement())
         return true;
-      return Fullscreen::IsCurrentFullScreenElement(element);
+      return Fullscreen::IsFullscreenElement(element);
     case CSSSelector::kPseudoFullScreenAncestor:
       return element.ContainsFullScreenElement();
     case CSSSelector::kPseudoVideoPersistent:
-      if (!is_ua_rule_ || !isHTMLVideoElement(element))
-        return false;
-      return toHTMLVideoElement(element).IsPersistent();
+      DCHECK(is_ua_rule_);
+      return isHTMLVideoElement(element) &&
+             toHTMLVideoElement(element).IsPersistent();
     case CSSSelector::kPseudoVideoPersistentAncestor:
-      return is_ua_rule_ && element.ContainsPersistentVideo();
+      DCHECK(is_ua_rule_);
+      return element.ContainsPersistentVideo();
     case CSSSelector::kPseudoInRange:
       if (mode_ == kResolvingStyle)
         element.GetDocument().SetContainsValidityStyleRules();
@@ -1058,26 +1052,24 @@ bool SelectorChecker::CheckPseudoClass(const SelectorCheckingContext& context,
     case CSSSelector::kPseudoPastCue:
       return element.IsVTTElement() && ToVTTElement(element).IsPastNode();
     case CSSSelector::kPseudoScope:
-      if (mode_ == kSharingRules)
-        return true;
       if (context.scope == &element.GetDocument())
         return element == element.GetDocument().documentElement();
       return context.scope == &element;
     case CSSSelector::kPseudoUnresolved:
       return element.IsUnresolvedV0CustomElement();
     case CSSSelector::kPseudoDefined:
-      DCHECK(RuntimeEnabledFeatures::customElementsV1Enabled());
       return element.IsDefined();
     case CSSSelector::kPseudoHost:
     case CSSSelector::kPseudoHostContext:
       return CheckPseudoHost(context, result);
     case CSSSelector::kPseudoSpatialNavigationFocus:
-      return is_ua_rule_ && MatchesSpatialNavigationFocusPseudoClass(element);
+      DCHECK(is_ua_rule_);
+      return MatchesSpatialNavigationFocusPseudoClass(element);
     case CSSSelector::kPseudoListBox:
-      return is_ua_rule_ && MatchesListBoxPseudoClass(element);
+      DCHECK(is_ua_rule_);
+      return MatchesListBoxPseudoClass(element);
     case CSSSelector::kPseudoHostHasAppearance:
-      if (!is_ua_rule_)
-        return false;
+      DCHECK(is_ua_rule_);
       if (ShadowRoot* root = element.ContainingShadowRoot()) {
         if (root->GetType() != ShadowRootType::kUserAgent)
           return false;
@@ -1141,8 +1133,7 @@ bool SelectorChecker::CheckPseudoElement(const SelectorCheckingContext& context,
       return false;
     }
     case CSSSelector::kPseudoBlinkInternalElement:
-      if (!is_ua_rule_)
-        return false;
+      DCHECK(is_ua_rule_);
       if (ShadowRoot* root = element.ContainingShadowRoot())
         return root->GetType() == ShadowRootType::kUserAgent &&
                element.ShadowPseudoId() == selector.Value();
@@ -1160,12 +1151,10 @@ bool SelectorChecker::CheckPseudoElement(const SelectorCheckingContext& context,
       return Match(sub_context);
     }
     case CSSSelector::kPseudoContent:
-      return element.IsInShadowTree() && element.IsInsertionPoint();
+      return element.IsInShadowTree() && element.IsV0InsertionPoint();
     case CSSSelector::kPseudoShadow:
       return element.IsInShadowTree() && context.previous_element;
     default:
-      if (mode_ == kSharingRules)
-        return true;
       DCHECK_NE(mode_, kQueryingRules);
       result.dynamic_pseudo =
           CSSSelector::GetPseudoId(selector.GetPseudoType());
@@ -1179,8 +1168,6 @@ bool SelectorChecker::CheckPseudoHost(const SelectorCheckingContext& context,
   const CSSSelector& selector = *context.selector;
   Element& element = *context.element;
 
-  if (mode_ == kSharingRules)
-    return true;
   // :host only matches a shadow host when :host is in a shadow tree of the
   // shadow host.
   if (!context.scope)

@@ -30,12 +30,12 @@
 
 #include "core/html/FormData.h"
 
-#include "bindings/core/v8/ScriptState.h"
 #include "core/dom/ExecutionContext.h"
 #include "core/fileapi/Blob.h"
 #include "core/fileapi/File.h"
 #include "core/frame/UseCounter.h"
 #include "core/html/HTMLFormElement.h"
+#include "platform/bindings/ScriptState.h"
 #include "platform/network/FormDataEncoder.h"
 #include "platform/text/LineEnding.h"
 #include "platform/wtf/text/WTFString.h"
@@ -108,7 +108,7 @@ void FormData::append(ScriptState* script_state,
                       const String& filename) {
   if (!blob) {
     UseCounter::Count(ExecutionContext::From(script_state),
-                      UseCounter::kFormDataAppendNull);
+                      WebFeature::kFormDataAppendNull);
   }
   append(name, blob, filename);
 }
@@ -211,10 +211,10 @@ CString FormData::EncodeAndNormalize(const String& string) const {
 }
 
 String FormData::Decode(const CString& data) const {
-  return Encoding().Decode(data.Data(), data.length());
+  return Encoding().Decode(data.data(), data.length());
 }
 
-PassRefPtr<EncodedFormData> FormData::EncodeFormData(
+RefPtr<EncodedFormData> FormData::EncodeFormData(
     EncodedFormData::EncodingType encoding_type) {
   RefPtr<EncodedFormData> form_data = EncodedFormData::Create();
   Vector<char> encoded_data;
@@ -224,17 +224,17 @@ PassRefPtr<EncodedFormData> FormData::EncodeFormData(
         entry->isFile() ? EncodeAndNormalize(entry->GetFile()->name())
                         : entry->Value(),
         encoding_type);
-  form_data->AppendData(encoded_data.Data(), encoded_data.size());
-  return form_data.Release();
+  form_data->AppendData(encoded_data.data(), encoded_data.size());
+  return form_data;
 }
 
-PassRefPtr<EncodedFormData> FormData::EncodeMultiPartFormData() {
+RefPtr<EncodedFormData> FormData::EncodeMultiPartFormData() {
   RefPtr<EncodedFormData> form_data = EncodedFormData::Create();
   form_data->SetBoundary(FormDataEncoder::GenerateUniqueBoundaryString());
   Vector<char> encoded_data;
   for (const auto& entry : Entries()) {
     Vector<char> header;
-    FormDataEncoder::BeginMultiPartHeader(header, form_data->Boundary().Data(),
+    FormDataEncoder::BeginMultiPartHeader(header, form_data->Boundary().data(),
                                           entry->name());
 
     // If the current type is blob, then we also need to include the
@@ -280,7 +280,7 @@ PassRefPtr<EncodedFormData> FormData::EncodeMultiPartFormData() {
     FormDataEncoder::FinishMultiPartHeader(header);
 
     // Append body
-    form_data->AppendData(header.Data(), header.size());
+    form_data->AppendData(header.data(), header.size());
     if (entry->GetBlob()) {
       if (entry->GetBlob()->HasBackingFile()) {
         File* file = ToFile(entry->GetBlob());
@@ -294,14 +294,14 @@ PassRefPtr<EncodedFormData> FormData::EncodeMultiPartFormData() {
                               entry->GetBlob()->GetBlobDataHandle());
       }
     } else {
-      form_data->AppendData(entry->Value().Data(), entry->Value().length());
+      form_data->AppendData(entry->Value().data(), entry->Value().length());
     }
     form_data->AppendData("\r\n", 2);
   }
   FormDataEncoder::AddBoundaryToMultiPartHeader(
-      encoded_data, form_data->Boundary().Data(), true);
-  form_data->AppendData(encoded_data.Data(), encoded_data.size());
-  return form_data.Release();
+      encoded_data, form_data->Boundary().data(), true);
+  form_data->AppendData(encoded_data.data(), encoded_data.size());
+  return form_data;
 }
 
 PairIterable<String, FormDataEntryValue>::IterationSource*

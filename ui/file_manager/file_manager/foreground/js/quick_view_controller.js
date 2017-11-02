@@ -9,6 +9,7 @@
  * @param {!MetadataModel} metadataModel File system metadata.
  * @param {!FileSelectionHandler} selectionHandler
  * @param {!ListContainer} listContainer
+ * @param {!cr.ui.MenuButton} selectionMenuButton
  * @param {!QuickViewModel} quickViewModel
  * @param {!TaskController} taskController
  * @param {!cr.ui.ListSelectionModel} fileListSelectionModel
@@ -20,8 +21,8 @@
  * @constructor
  */
 function QuickViewController(
-    metadataModel, selectionHandler, listContainer, quickViewModel,
-    taskController, fileListSelectionModel, quickViewUma,
+    metadataModel, selectionHandler, listContainer, selectionMenuButton,
+    quickViewModel, taskController, fileListSelectionModel, quickViewUma,
     metadataBoxController, dialogType, volumeManager) {
   /**
    * @type {FilesQuickView}
@@ -103,8 +104,12 @@ function QuickViewController(
   this.listContainer_.element.addEventListener(
       'keydown', this.onKeyDownToOpen_.bind(this));
   this.listContainer_.element.addEventListener('command', function(event) {
-    if(event.command.id === 'get-info')
+    if (event.command.id === 'get-info')
       this.display_(QuickViewUma.WayToOpen.CONTEXT_MENU);
+  }.bind(this));
+  selectionMenuButton.addEventListener('command', function(event) {
+    if (event.command.id === 'get-info')
+      this.display_(QuickViewUma.WayToOpen.SELECTION_MENU);
   }.bind(this));
 }
 
@@ -131,6 +136,16 @@ QuickViewController.LOCAL_VOLUME_TYPES_ = [
 ];
 
 /**
+ * List of unsupported image subtypes
+ * @type {!Array<string>}
+ * @const
+ * @private
+ */
+QuickViewController.UNSUPPORTED_IMAGE_SUBTYPES_ = [
+  'TIFF',
+];
+
+/**
  * Initialize the controller with quick view which will be lazily loaded.
  * @param {!FilesQuickView} quickView
  * @private
@@ -138,8 +153,9 @@ QuickViewController.LOCAL_VOLUME_TYPES_ = [
 QuickViewController.prototype.init_ = function(quickView) {
   this.quickView_ = quickView;
   this.metadataBoxController_.init(quickView);
-  quickView.addEventListener('keydown', this.onQuickViewKeyDown_.bind(this));
-  quickView.addEventListener('iron-overlay-closed', function() {
+  document.body.addEventListener(
+      'keydown', this.onQuickViewKeyDown_.bind(this));
+  quickView.addEventListener('close', function() {
     this.listContainer_.focus();
   }.bind(this));
   quickView.onOpenInNewButtonTap = this.onOpenInNewButtonTap_.bind(this);
@@ -198,26 +214,28 @@ QuickViewController.prototype.onKeyDownToOpen_ = function(event) {
  * @private
  */
 QuickViewController.prototype.onQuickViewKeyDown_ = function(event) {
-  switch (event.key) {
-    case ' ':
-    case 'Escape':
-      event.preventDefault();
-      // Prevent the open dialog from closing.
-      event.stopImmediatePropagation();
-      this.quickView_.close();
-      break;
-    case 'ArrowRight':
-      var index = this.fileListSelectionModel_.selectedIndex + 1;
-      if (index >= this.fileListSelectionModel_.length)
-        index = 0;
-      this.fileListSelectionModel_.selectedIndex = index;
-      break;
-    case 'ArrowLeft':
-      var index = this.fileListSelectionModel_.selectedIndex - 1;
-      if (index < 0)
-        index = this.fileListSelectionModel_.length - 1;
-      this.fileListSelectionModel_.selectedIndex = index;
-      break;
+  if (this.quickView_.isOpened()) {
+    switch (event.key) {
+      case ' ':
+      case 'Escape':
+        event.preventDefault();
+        // Prevent the open dialog from closing.
+        event.stopImmediatePropagation();
+        this.quickView_.close();
+        break;
+      case 'ArrowRight':
+        var index = this.fileListSelectionModel_.selectedIndex + 1;
+        if (index >= this.fileListSelectionModel_.length)
+          index = 0;
+        this.fileListSelectionModel_.selectedIndex = index;
+        break;
+      case 'ArrowLeft':
+        var index = this.fileListSelectionModel_.selectedIndex - 1;
+        if (index < 0)
+          index = this.fileListSelectionModel_.length - 1;
+        this.fileListSelectionModel_.selectedIndex = index;
+        break;
+    }
   }
 };
 
@@ -345,7 +363,8 @@ var QuickViewParams;
 QuickViewController.prototype.getQuickViewParameters_ = function(
     entry, items, tasks) {
   var item = items[0];
-  var type = FileType.getType(entry).type;
+  var typeInfo = FileType.getType(entry);
+  var type = typeInfo.type;
 
   /** @type {!QuickViewParams} */
   var params = {
@@ -397,7 +416,12 @@ QuickViewController.prototype.getQuickViewParameters_ = function(
       .then(function(file) {
         switch (type) {
           case 'image':
-            params.contentUrl = URL.createObjectURL(file);
+            if (QuickViewController.UNSUPPORTED_IMAGE_SUBTYPES_.indexOf(
+                    typeInfo.subtype) !== -1) {
+              params.contentUrl = '';
+            } else {
+              params.contentUrl = URL.createObjectURL(file);
+            }
             return params;
           case 'video':
             params.contentUrl = URL.createObjectURL(file);

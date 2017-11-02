@@ -37,6 +37,10 @@ class AutoPulseLock {
   DISALLOW_COPY_AND_ASSIGN(AutoPulseLock);
 };
 
+bool MEDIA_EXPORT InitPulse(pa_threaded_mainloop** mainloop,
+                            pa_context** context);
+void DestroyPulse(pa_threaded_mainloop* mainloop, pa_context* context);
+
 // Triggers pa_threaded_mainloop_signal() to avoid deadlocks.
 void StreamSuccessCallback(pa_stream* s, int error, void* mainloop);
 void ContextStateCallback(pa_context* context, void* mainloop);
@@ -49,10 +53,6 @@ void WaitForOperationCompletion(pa_threaded_mainloop* mainloop,
                                 pa_operation* operation);
 
 base::TimeDelta GetHardwareLatency(pa_stream* stream);
-
-int GetHardwareLatencyInBytes(pa_stream* stream,
-                              int sample_rate,
-                              int bytes_per_frame);
 
 // Create a recording stream for the threaded mainloop, return true if success,
 // otherwise false. |mainloop| and |context| have to be from a valid Pulse

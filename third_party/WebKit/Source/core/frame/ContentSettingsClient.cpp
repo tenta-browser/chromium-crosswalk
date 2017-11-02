@@ -58,12 +58,6 @@ bool ContentSettingsClient::AllowScriptFromSource(bool enabled_per_settings,
   return enabled_per_settings;
 }
 
-bool ContentSettingsClient::AllowPlugins(bool enabled_per_settings) {
-  if (client_)
-    return client_->AllowPlugins(enabled_per_settings);
-  return enabled_per_settings;
-}
-
 bool ContentSettingsClient::AllowImage(bool enabled_per_settings,
                                        const KURL& image_url) {
   if (client_)
@@ -125,6 +119,15 @@ void ContentSettingsClient::DidNotAllowScript() {
 void ContentSettingsClient::DidNotAllowPlugins() {
   if (client_)
     client_->DidNotAllowPlugins();
+}
+
+void ContentSettingsClient::PersistClientHints(
+    const WebEnabledClientHints& enabled_client_hints,
+    TimeDelta duration,
+    const KURL& url) {
+  if (client_) {
+    return client_->PersistClientHints(enabled_client_hints, duration, url);
+  }
 }
 
 }  // namespace blink

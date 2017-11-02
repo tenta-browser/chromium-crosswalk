@@ -32,11 +32,11 @@
 #ifndef PerformanceEntry_h
 #define PerformanceEntry_h
 
-#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/CoreExport.h"
 #include "core/dom/DOMHighResTimeStamp.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
-#include "wtf/text/WTFString.h"
+#include "platform/wtf/text/WTFString.h"
 
 namespace blink {
 
@@ -101,7 +101,7 @@ class CORE_EXPORT PerformanceEntry
                    const String& entry_type,
                    double start_time,
                    double finish_time);
-  virtual void BuildJSONValue(V8ObjectBuilder&) const;
+  virtual void BuildJSONValue(ScriptState*, V8ObjectBuilder&) const;
 
  private:
   const String name_;

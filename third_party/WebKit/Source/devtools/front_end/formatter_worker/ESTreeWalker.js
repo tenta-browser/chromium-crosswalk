@@ -93,6 +93,7 @@ FormatterWorker.ESTreeWalker.SkipSubtree = {};
 FormatterWorker.ESTreeWalker._walkOrder = {
   'AwaitExpression': ['arguments'],
   'ArrayExpression': ['elements'],
+  'ArrayPattern': ['elements'],
   'ArrowFunctionExpression': ['params', 'body'],
   'AssignmentExpression': ['left', 'right'],
   'BinaryExpression': ['left', 'right'],
@@ -123,6 +124,8 @@ FormatterWorker.ESTreeWalker._walkOrder = {
   'MethodDefinition': ['key', 'value'],
   'NewExpression': ['callee', 'arguments'],
   'ObjectExpression': ['properties'],
+  'ObjectPattern': ['properties'],
+  'ParenthesizedExpression': ['expression'],
   'Program': ['body'],
   'Property': ['key', 'value'],
   'ReturnStatement': ['argument'],

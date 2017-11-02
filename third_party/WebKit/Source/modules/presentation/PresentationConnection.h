@@ -7,10 +7,10 @@
 
 #include <memory>
 #include "core/dom/ContextLifecycleObserver.h"
-#include "core/dom/NotShared.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/EventTarget.h"
 #include "core/fileapi/Blob.h"
 #include "core/fileapi/FileError.h"
+#include "core/typed_arrays/ArrayBufferViewHelpers.h"
 #include "platform/heap/Handle.h"
 #include "platform/weborigin/KURL.h"
 #include "platform/wtf/text/WTFString.h"
@@ -95,6 +95,8 @@ class PresentationConnection final : public EventTargetWithInlineData,
   WebPresentationConnectionState GetState();
   void DidChangeState(WebPresentationConnectionState,
                       bool should_dispatch_event);
+  // Notify target connection about connection state change.
+  void NotifyTargetConnection(WebPresentationConnectionState);
 
  protected:
   // EventTarget implementation.

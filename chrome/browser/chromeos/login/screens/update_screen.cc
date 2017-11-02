@@ -38,7 +38,7 @@ namespace {
 
 constexpr const char kContextKeyEstimatedTimeLeftSec[] = "time-left-sec";
 constexpr const char kContextKeyShowEstimatedTimeLeft[] = "show-time-left";
-constexpr const char kContextKeyUpdateMessage[] = "update-msg";
+constexpr const char kContextKeyUpdateCompleted[] = "update-completed";
 constexpr const char kContextKeyShowCurtain[] = "show-curtain";
 constexpr const char kContextKeyShowProgressMessage[] = "show-progress-msg";
 constexpr const char kContextKeyProgress[] = "progress";
@@ -197,6 +197,7 @@ void UpdateScreen::ExitUpdate(UpdateScreen::ExitReason reason) {
         case UpdateEngineClient::UPDATE_STATUS_DOWNLOADING:
         case UpdateEngineClient::UPDATE_STATUS_FINALIZING:
         case UpdateEngineClient::UPDATE_STATUS_VERIFYING:
+        case UpdateEngineClient::UPDATE_STATUS_NEED_PERMISSION_TO_UPDATE:
           DCHECK(!HasCriticalUpdate());
         // Noncritical update, just exit screen as if there is no update.
         // no break
@@ -330,6 +331,7 @@ void UpdateScreen::UpdateStatusChanged(
       // else no break
     case UpdateEngineClient::UPDATE_STATUS_ERROR:
     case UpdateEngineClient::UPDATE_STATUS_REPORTING_ERROR_EVENT:
+    case UpdateEngineClient::UPDATE_STATUS_NEED_PERMISSION_TO_UPDATE:
       ExitUpdate(REASON_UPDATE_ENDED);
       break;
     default:
@@ -359,7 +361,7 @@ void UpdateScreen::OnPortalDetectionCompleted(
     is_first_detection_notification_ = false;
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(
+        base::BindOnce(
             base::IgnoreResult(&NetworkPortalDetector::StartDetectionIfIdle),
             base::Unretained(network_portal_detector::GetInstance())));
     return;
@@ -502,8 +504,7 @@ bool UpdateScreen::HasCriticalUpdate() {
 void UpdateScreen::OnWaitForRebootTimeElapsed() {
   LOG(ERROR) << "Unable to reboot - asking user for a manual reboot.";
   MakeSureScreenIsShown();
-  GetContextEditor().SetString(kContextKeyUpdateMessage,
-                               l10n_util::GetStringUTF16(IDS_UPDATE_COMPLETED));
+  GetContextEditor().SetBoolean(kContextKeyUpdateCompleted, true);
 }
 
 void UpdateScreen::MakeSureScreenIsShown() {
@@ -534,8 +535,8 @@ void UpdateScreen::SetHostPairingControllerStatus(
     // Send UPDATE_STATUS_UPDATING message every |kHostStatusReportDelay|ms.
     base::SequencedTaskRunnerHandle::Get()->PostNonNestableDelayedTask(
         FROM_HERE,
-        base::Bind(&UpdateScreen::SetHostPairingControllerStatus,
-                   weak_factory_.GetWeakPtr(), update_status),
+        base::BindOnce(&UpdateScreen::SetHostPairingControllerStatus,
+                       weak_factory_.GetWeakPtr(), update_status),
         base::TimeDelta::FromMilliseconds(kHostStatusReportDelay));
   }
 }
@@ -552,6 +553,7 @@ void UpdateScreen::StartUpdateCheck() {
   connect_request_subscription_.reset();
   if (state_ == State::STATE_ERROR)
     HideErrorMessage();
+
   state_ = State::STATE_UPDATE;
   DBusThreadManager::Get()->GetUpdateEngineClient()->AddObserver(this);
   VLOG(1) << "Initiate update check";

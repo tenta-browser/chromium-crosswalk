@@ -62,7 +62,6 @@ class WebContents;
 class CONTENT_EXPORT SavePackage
     : public base::RefCountedThreadSafe<SavePackage>,
       public WebContentsObserver,
-      public DownloadItem::Observer,
       public base::SupportsWeakPtr<SavePackage> {
  public:
   enum WaitState {
@@ -97,11 +96,11 @@ class CONTENT_EXPORT SavePackage
   bool Init(const SavePackageDownloadCreatedCallback& cb);
 
   // Cancel all in progress request, might be called by user or internal error.
-  void Cancel(bool user_action);
+  void Cancel(bool user_action, bool cancel_download_item = true);
 
   void Finish();
 
-  // Notifications sent from the FILE thread to the UI thread.
+  // Notifications sent from the download sequence to the UI thread.
   void StartSave(const SaveFileCreateInfo* info);
   bool UpdateSaveProgress(SaveItemId save_item_id,
                           int64_t size,
@@ -133,6 +132,7 @@ class CONTENT_EXPORT SavePackage
   FRIEND_TEST_ALL_PREFIXES(SavePackageTest, TestLongSafePureFilename);
   FRIEND_TEST_ALL_PREFIXES(SavePackageBrowserTest, ImplicitCancel);
   FRIEND_TEST_ALL_PREFIXES(SavePackageBrowserTest, ExplicitCancel);
+  FRIEND_TEST_ALL_PREFIXES(SavePackageBrowserTest, DownloadItemDestroyed);
 
   // Map from SaveItem::id() (aka save_item_id) into a SaveItem.
   using SaveItemIdMap = std::
@@ -164,7 +164,7 @@ class CONTENT_EXPORT SavePackage
   // Notes from Init() above applies here as well.
   void InternalInit();
 
-  void Stop();
+  void Stop(bool cancel_download_item);
   void CheckFinish();
 
   // Initiate a saving job of a specific URL. We send the request to
@@ -180,14 +180,8 @@ class CONTENT_EXPORT SavePackage
   bool OnMessageReceived(const IPC::Message& message,
                          RenderFrameHost* render_frame_host) override;
 
-  // DownloadItem::Observer implementation.
-  void OnDownloadDestroyed(DownloadItem* download) override;
-
   // Update the download history of this item upon completion.
   void FinalizeDownloadEntry();
-
-  // Detach from DownloadManager.
-  void RemoveObservers();
 
   // Return max length of a path for a specific base directory.
   // This is needed on POSIX, which restrict the length of file names in
@@ -392,7 +386,7 @@ class CONTENT_EXPORT SavePackage
   // Map of all saving job which are successfully saved.
   SaveItemIdMap saved_success_items_;
 
-  // Non-owning pointer for handling file writing on the FILE thread.
+  // Non-owning pointer for handling file writing on the download sequence.
   SaveFileManager* file_manager_ = nullptr;
 
   // DownloadManager owns the DownloadItem and handles history and UI.

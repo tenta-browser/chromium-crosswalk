@@ -11,6 +11,7 @@ import android.view.ViewGroup.LayoutParams;
 import org.chromium.base.TraceEvent;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.fullscreen.FullscreenManager;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.third_party.android.swiperefresh.SwipeRefreshLayout;
 import org.chromium.ui.OverscrollRefreshHandler;
@@ -69,34 +70,25 @@ public class SwipeRefreshHandler implements OverscrollRefreshHandler {
         mSwipeRefreshLayout.setEnabled(false);
 
         setEnabled(true);
-        mSwipeRefreshLayout.setOnRefreshListener(new SwipeRefreshLayout.OnRefreshListener() {
-            @Override
-            public void onRefresh() {
-                cancelStopRefreshingRunnable();
-                mSwipeRefreshLayout.postDelayed(
-                        getStopRefreshingRunnable(), MAX_REFRESH_ANIMATION_DURATION_MS);
-                if (mAccessibilityRefreshString == null) {
-                    int resId = R.string.accessibility_swipe_refresh;
-                    mAccessibilityRefreshString = context.getResources().getString(resId);
-                }
-                mSwipeRefreshLayout.announceForAccessibility(mAccessibilityRefreshString);
-                mTab.reload();
-                RecordUserAction.record("MobilePullGestureReload");
+        mSwipeRefreshLayout.setOnRefreshListener(() -> {
+            cancelStopRefreshingRunnable();
+            mSwipeRefreshLayout.postDelayed(
+                    getStopRefreshingRunnable(), MAX_REFRESH_ANIMATION_DURATION_MS);
+            if (mAccessibilityRefreshString == null) {
+                int resId = R.string.accessibility_swipe_refresh;
+                mAccessibilityRefreshString = context.getResources().getString(resId);
             }
+            mSwipeRefreshLayout.announceForAccessibility(mAccessibilityRefreshString);
+            mTab.reload();
+            RecordUserAction.record("MobilePullGestureReload");
         });
-        mSwipeRefreshLayout.setOnResetListener(new SwipeRefreshLayout.OnResetListener() {
-            @Override
-            public void onReset() {
-                if (mDetachLayoutRunnable != null) return;
-                mDetachLayoutRunnable = new Runnable() {
-                    @Override
-                    public void run() {
-                        mDetachLayoutRunnable = null;
-                        detachSwipeRefreshLayoutIfNecessary();
-                    }
-                };
-                mSwipeRefreshLayout.post(mDetachLayoutRunnable);
-            }
+        mSwipeRefreshLayout.setOnResetListener(() -> {
+            if (mDetachLayoutRunnable != null) return;
+            mDetachLayoutRunnable = () -> {
+                mDetachLayoutRunnable = null;
+                detachSwipeRefreshLayoutIfNecessary();
+            };
+            mSwipeRefreshLayout.post(mDetachLayoutRunnable);
         });
         mTab.getWebContents().setOverscrollRefreshHandler(this);
     }
@@ -124,6 +116,15 @@ public class SwipeRefreshHandler implements OverscrollRefreshHandler {
 
     @Override
     public boolean start() {
+        FullscreenManager manager = mTab.getFullscreenManager();
+
+        // If the controls are at the bottom and hidden, allow cc to handle the scroll event to show
+        // them.
+        if (manager != null && manager.areBrowserControlsAtBottom()
+                && manager.getBrowserControlHiddenRatio() > 0) {
+            return false;
+        }
+
         attachSwipeRefreshLayoutIfNecessary();
         return mSwipeRefreshLayout.start();
     }
@@ -169,12 +170,7 @@ public class SwipeRefreshHandler implements OverscrollRefreshHandler {
 
     private Runnable getStopRefreshingRunnable() {
         if (mStopRefreshingRunnable == null) {
-            mStopRefreshingRunnable = new Runnable() {
-                @Override
-                public void run() {
-                    mSwipeRefreshLayout.setRefreshing(false);
-                }
-            };
+            mStopRefreshingRunnable = () -> mSwipeRefreshLayout.setRefreshing(false);
         }
         return mStopRefreshingRunnable;
     }

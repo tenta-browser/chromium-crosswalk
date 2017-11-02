@@ -21,10 +21,10 @@
 
 #include "core/css/CSSRule.h"
 
-#include "bindings/core/v8/ScriptWrappableVisitor.h"
 #include "core/css/CSSStyleSheet.h"
 #include "core/css/StyleRule.h"
 #include "core/css/StyleSheetContents.h"
+#include "platform/bindings/ScriptWrappableVisitor.h"
 
 namespace blink {
 
@@ -47,13 +47,13 @@ const CSSParserContext* CSSRule::ParserContext() const {
 void CSSRule::SetParentStyleSheet(CSSStyleSheet* style_sheet) {
   parent_is_rule_ = false;
   parent_style_sheet_ = style_sheet;
-  ScriptWrappableVisitor::WriteBarrier(this, parent_style_sheet_);
+  ScriptWrappableVisitor::WriteBarrier(parent_style_sheet_);
 }
 
 void CSSRule::SetParentRule(CSSRule* rule) {
   parent_is_rule_ = true;
   parent_rule_ = rule;
-  ScriptWrappableVisitor::WriteBarrier(this, parent_rule_);
+  ScriptWrappableVisitor::WriteBarrier(parent_rule_);
 }
 
 DEFINE_TRACE(CSSRule) {
@@ -64,6 +64,13 @@ DEFINE_TRACE(CSSRule) {
     visitor->Trace(parent_rule_);
   else
     visitor->Trace(parent_style_sheet_);
+}
+
+DEFINE_TRACE_WRAPPERS(CSSRule) {
+  if (parent_is_rule_)
+    visitor->TraceWrappersWithManualWriteBarrier(parent_rule_);
+  else
+    visitor->TraceWrappersWithManualWriteBarrier(parent_style_sheet_);
 }
 
 }  // namespace blink

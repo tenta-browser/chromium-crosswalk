@@ -4,9 +4,8 @@
 
 #include "core/origin_trials/OriginTrialContext.h"
 
-#include "bindings/core/v8/ConditionalFeatures.h"
 #include "bindings/core/v8/ScriptController.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/core/v8/WindowProxy.h"
 #include "bindings/core/v8/WorkerOrWorkletScriptController.h"
 #include "core/dom/Document.h"
@@ -15,14 +14,15 @@
 #include "core/workers/WorkerGlobalScope.h"
 #include "platform/Histogram.h"
 #include "platform/RuntimeEnabledFeatures.h"
+#include "platform/bindings/ConditionalFeatures.h"
 #include "platform/weborigin/SecurityOrigin.h"
+#include "platform/wtf/Vector.h"
+#include "platform/wtf/text/StringBuilder.h"
 #include "public/platform/Platform.h"
 #include "public/platform/WebOriginTrialTokenStatus.h"
 #include "public/platform/WebSecurityOrigin.h"
 #include "public/platform/WebTrialTokenValidator.h"
 #include "v8/include/v8.h"
-#include "wtf/Vector.h"
-#include "wtf/text/StringBuilder.h"
 
 namespace blink {
 
@@ -31,9 +31,8 @@ namespace {
 static EnumerationHistogram& TokenValidationResultHistogram() {
   DEFINE_THREAD_SAFE_STATIC_LOCAL(
       EnumerationHistogram, histogram,
-      new EnumerationHistogram(
-          "OriginTrials.ValidationResult",
-          static_cast<int>(WebOriginTrialTokenStatus::kLast)));
+      ("OriginTrials.ValidationResult",
+       static_cast<int>(WebOriginTrialTokenStatus::kLast)));
   return histogram;
 }
 
@@ -205,8 +204,13 @@ void OriginTrialContext::InitializePendingFeatures() {
   }
 }
 
+void OriginTrialContext::AddFeature(const String& feature) {
+  enabled_trials_.insert(feature);
+  InitializePendingFeatures();
+}
+
 bool OriginTrialContext::IsTrialEnabled(const String& trial_name) {
-  if (!RuntimeEnabledFeatures::originTrialsEnabled())
+  if (!RuntimeEnabledFeatures::OriginTrialsEnabled())
     return false;
 
   return enabled_trials_.Contains(trial_name);

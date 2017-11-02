@@ -30,12 +30,6 @@ extra_cq_trybots = [
     "buildernames": ["android_optional_gpu_tests_rel"]
   }
 ]
-extra_fyi_trybots = [
-  {
-    "mastername": "master.tryserver.chromium.win",
-    "buildernames": ["win_clang_dbg"]
-  }
-]
 
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
 SRC_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, os.pardir))
@@ -43,7 +37,6 @@ sys.path.insert(0, os.path.join(SRC_DIR, 'build'))
 import find_depot_tools
 find_depot_tools.add_depot_tools_to_path()
 import roll_dep_svn
-from gclient import GClientKeywords
 from third_party import upload
 
 # Avoid depot_tools/third_party/upload.py print verbose messages.
@@ -62,6 +55,9 @@ ANGLE_PATH = os.path.join('third_party', 'angle')
 CommitInfo = collections.namedtuple('CommitInfo', ['git_commit',
                                                    'git_repo_url'])
 CLInfo = collections.namedtuple('CLInfo', ['issue', 'url', 'rietveld_server'])
+
+def _VarLookup(local_scope):
+  return lambda var_name: local_scope['vars'][var_name]
 
 def _PosixPath(path):
   """Convert a possibly-Windows path to a posix-style path."""
@@ -85,10 +81,8 @@ def _ParseDepsFile(filename):
 
 def _ParseDepsDict(deps_content):
   local_scope = {}
-  var = GClientKeywords.VarImpl({}, local_scope)
   global_scope = {
-    'From': GClientKeywords.FromImpl,
-    'Var': var.Lookup,
+    'Var': _VarLookup(local_scope),
     'deps_os': {},
   }
   exec(deps_content, global_scope, local_scope)
@@ -311,16 +305,6 @@ class AutoRoller(object):
       # Kick off tryjobs.
       base_try_cmd = ['git', 'cl', 'try']
       self._RunCommand(base_try_cmd)
-
-      if extra_cq_trybots:
-        # Run additional tryjobs.
-        # TODO(kbr): this should not be necessary -- the
-        # CQ_INCLUDE_TRYBOTS directive above should handle it.
-        # http://crbug.com/585237
-        self._TriggerExtraTrybots(extra_cq_trybots)
-
-      if extra_fyi_trybots:
-        self._TriggerExtraTrybots(extra_fyi_trybots)
 
       # Mark the CL to be committed if requested
       if should_commit:

@@ -15,7 +15,7 @@
 #include "chrome/browser/renderer_preferences_util.h"
 #include "chrome/browser/ssl/cert_report_helper.h"
 #include "chrome/browser/ssl/ssl_cert_reporter.h"
-#include "components/safe_browsing_db/safe_browsing_prefs.h"
+#include "components/safe_browsing/common/safe_browsing_prefs.h"
 #include "components/security_interstitials/core/bad_clock_ui.h"
 #include "components/security_interstitials/core/metrics_helper.h"
 #include "content/public/browser/interstitial_page.h"
@@ -53,7 +53,7 @@ std::unique_ptr<ChromeMetricsHelper> CreateMetricsHelper(
 }  // namespace
 
 // static
-InterstitialPageDelegate::TypeID BadClockBlockingPage::kTypeForTesting =
+const InterstitialPageDelegate::TypeID BadClockBlockingPage::kTypeForTesting =
     &BadClockBlockingPage::kTypeForTesting;
 
 // Note that we always create a navigation entry with SSL errors.

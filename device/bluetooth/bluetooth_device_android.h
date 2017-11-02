@@ -36,9 +36,6 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDeviceAndroid final
 
   ~BluetoothDeviceAndroid() override;
 
-  // Register C++ methods exposed to Java using JNI.
-  static bool RegisterJNI(JNIEnv* env);
-
   // Returns the associated ChromeBluetoothDevice Java object.
   base::android::ScopedJavaLocalRef<jobject> GetJavaObject();
 
@@ -65,6 +62,9 @@ class DEVICE_BLUETOOTH_EXPORT BluetoothDeviceAndroid final
   bool ExpectingPasskey() const override;
   bool ExpectingConfirmation() const override;
   void GetConnectionInfo(const ConnectionInfoCallback& callback) override;
+  void SetConnectionLatency(ConnectionLatency connection_latency,
+                            const base::Closure& callback,
+                            const ErrorCallback& error_callback) override;
   void Connect(device::BluetoothDevice::PairingDelegate* pairing_delegate,
                const base::Closure& callback,
                const ConnectErrorCallback& error_callback) override;

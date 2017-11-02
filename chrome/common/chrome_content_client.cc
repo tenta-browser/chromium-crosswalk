@@ -9,6 +9,7 @@
 #include <map>
 #include <memory>
 #include <tuple>
+#include <utility>
 
 #include "base/command_line.h"
 #include "base/debug/crash_logging.h"
@@ -71,7 +72,6 @@
 #endif
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-#include "chrome/common/extensions/extension_process_policy.h"
 #include "extensions/common/features/feature_util.h"
 #endif
 
@@ -81,7 +81,7 @@
 #include "ppapi/shared_impl/ppapi_permissions.h"  // nogncheck
 #endif
 
-#if defined(WIDEVINE_CDM_AVAILABLE) && BUILDFLAG(ENABLE_PEPPER_CDMS) && \
+#if defined(WIDEVINE_CDM_AVAILABLE) && BUILDFLAG(ENABLE_LIBRARY_CDMS) && \
     !defined(WIDEVINE_CDM_IS_COMPONENT)
 #define WIDEVINE_CDM_AVAILABLE_NOT_COMPONENT
 #include "chrome/common/widevine_cdm_constants.h"
@@ -163,7 +163,7 @@ void ComputeBuiltInPlugins(std::vector<content::PepperPluginInfo>* plugins) {
   content::PepperPluginInfo pdf_info;
   pdf_info.is_internal = true;
   pdf_info.is_out_of_process = true;
-  pdf_info.name = ChromeContentClient::kPDFPluginName;
+  pdf_info.name = ChromeContentClient::kPDFInternalPluginName;
   pdf_info.description = kPDFPluginDescription;
   pdf_info.path = base::FilePath::FromUTF8Unsafe(
       ChromeContentClient::kPDFPluginPath);
@@ -533,7 +533,7 @@ void ChromeContentClient::AddContentDecryptionModules(
     std::vector<content::CdmHostFilePath>* cdm_host_file_paths) {
   if (cdms) {
 // TODO(jrummell): Need to have a better flag to indicate systems Widevine
-// is available on. For now we continue to use ENABLE_PEPPER_CDMS so that
+// is available on. For now we continue to use ENABLE_LIBRARY_CDMS so that
 // we can experiment between pepper and mojo.
 #if defined(WIDEVINE_CDM_AVAILABLE_NOT_COMPONENT)
     base::FilePath adapter_path;
@@ -592,12 +592,12 @@ void ChromeContentClient::AddAdditionalSchemes(Schemes* schemes) {
 
   schemes->secure_origins = GetSecureOriginWhitelist();
 
-  schemes->no_access_schemes.push_back(chrome::kChromeNativeScheme);
-
   // chrome-native: is a scheme used for placeholder navigations that allow
   // UIs to be drawn with platform native widgets instead of HTML.  These pages
   // should be treated as empty documents that can commit synchronously.
   schemes->empty_document_schemes.push_back(chrome::kChromeNativeScheme);
+  schemes->no_access_schemes.push_back(chrome::kChromeNativeScheme);
+  schemes->secure_schemes.push_back(chrome::kChromeNativeScheme);
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   if (extensions::feature_util::ExtensionServiceWorkersEnabled())
@@ -689,13 +689,17 @@ bool ChromeContentClient::AllowScriptExtensionForServiceWorker(
 
 bool ChromeContentClient::IsSupplementarySiteIsolationModeEnabled() {
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-  return extensions::IsIsolateExtensionsEnabled();
+  return true;
 #else
   return false;
 #endif
 }
 
 content::OriginTrialPolicy* ChromeContentClient::GetOriginTrialPolicy() {
+  // Prevent initialization race (see crbug.com/721144). There may be a
+  // race when the policy is needed for worker startup (which happens on a
+  // separate worker thread).
+  base::AutoLock auto_lock(origin_trial_policy_lock_);
   if (!origin_trial_policy_)
     origin_trial_policy_ = base::MakeUnique<ChromeOriginTrialPolicy>();
   return origin_trial_policy_.get();
@@ -706,3 +710,8 @@ media::MediaDrmBridgeClient* ChromeContentClient::GetMediaDrmBridgeClient() {
   return new ChromeMediaDrmBridgeClient();
 }
 #endif  // OS_ANDROID
+
+void ChromeContentClient::OnServiceManagerConnected(
+    content::ServiceManagerConnection* connection) {
+  memlog_client_.OnServiceManagerConnected(connection);
+}

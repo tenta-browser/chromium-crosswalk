@@ -100,7 +100,7 @@ static bool ShouldTreatAsUniqueOrigin(const KURL& url) {
   // URLs with schemes that require an authority, but which don't have one,
   // will have failed the isValid() test; e.g. valid HTTP URLs must have a
   // host.
-  ASSERT(!((relevant_url.ProtocolIsInHTTPFamily() ||
+  DCHECK(!((relevant_url.ProtocolIsInHTTPFamily() ||
             relevant_url.ProtocolIs("ftp")) &&
            relevant_url.Host().IsEmpty()));
 
@@ -176,14 +176,12 @@ SecurityOrigin::SecurityOrigin(const SecurityOrigin* other)
       is_unique_origin_potentially_trustworthy_(
           other->is_unique_origin_potentially_trustworthy_) {}
 
-PassRefPtr<SecurityOrigin> SecurityOrigin::Create(const KURL& url) {
+RefPtr<SecurityOrigin> SecurityOrigin::Create(const KURL& url) {
   if (RefPtr<SecurityOrigin> origin = GetOriginFromMap(url))
-    return origin.Release();
+    return origin;
 
-  if (ShouldTreatAsUniqueOrigin(url)) {
-    RefPtr<SecurityOrigin> origin = AdoptRef(new SecurityOrigin());
-    return origin.Release();
-  }
+  if (ShouldTreatAsUniqueOrigin(url))
+    return AdoptRef(new SecurityOrigin());
 
   if (ShouldUseInnerURL(url))
     return AdoptRef(new SecurityOrigin(ExtractInnerURL(url)));
@@ -191,13 +189,13 @@ PassRefPtr<SecurityOrigin> SecurityOrigin::Create(const KURL& url) {
   return AdoptRef(new SecurityOrigin(url));
 }
 
-PassRefPtr<SecurityOrigin> SecurityOrigin::CreateUnique() {
+RefPtr<SecurityOrigin> SecurityOrigin::CreateUnique() {
   RefPtr<SecurityOrigin> origin = AdoptRef(new SecurityOrigin());
-  ASSERT(origin->IsUnique());
-  return origin.Release();
+  DCHECK(origin->IsUnique());
+  return origin;
 }
 
-PassRefPtr<SecurityOrigin> SecurityOrigin::IsolatedCopy() const {
+RefPtr<SecurityOrigin> SecurityOrigin::IsolatedCopy() const {
   return AdoptRef(new SecurityOrigin(this));
 }
 
@@ -221,6 +219,17 @@ bool SecurityOrigin::IsSecure(const KURL& url) {
   return false;
 }
 
+bool SecurityOrigin::HasSameSuboriginAs(const SecurityOrigin* other) const {
+  if (HasSuborigin() != other->HasSuborigin())
+    return false;
+
+  if (HasSuborigin() &&
+      GetSuborigin()->GetName() != other->GetSuborigin()->GetName())
+    return false;
+
+  return true;
+}
+
 bool SecurityOrigin::CanAccess(const SecurityOrigin* other) const {
   if (universal_access_)
     return true;
@@ -231,11 +240,7 @@ bool SecurityOrigin::CanAccess(const SecurityOrigin* other) const {
   if (IsUnique() || other->IsUnique())
     return false;
 
-  if (HasSuborigin() != other->HasSuborigin())
-    return false;
-
-  if (HasSuborigin() &&
-      GetSuborigin()->GetName() != other->GetSuborigin()->GetName())
+  if (!HasSameSuboriginAs(other))
     return false;
 
   // document.domain handling, as per
@@ -253,8 +258,12 @@ bool SecurityOrigin::CanAccess(const SecurityOrigin* other) const {
       if (host_ == other->host_ && port_ == other->port_)
         can_access = true;
     } else if (domain_was_set_in_dom_ && other->domain_was_set_in_dom_) {
-      if (domain_ == other->domain_)
+      // TODO(mkwst): If/when we ship this behavior, change this to check
+      // IsNull() rather than relying on string comparison.
+      // https://crbug.com/733150
+      if (domain_ == other->domain_ && domain_ != "null") {
         can_access = true;
+      }
     }
   }
 
@@ -265,7 +274,8 @@ bool SecurityOrigin::CanAccess(const SecurityOrigin* other) const {
 }
 
 bool SecurityOrigin::PassesFileCheck(const SecurityOrigin* other) const {
-  ASSERT(IsLocal() && other->IsLocal());
+  DCHECK(IsLocal());
+  DCHECK(other->IsLocal());
 
   return !block_local_access_from_local_origin_ &&
          !other->block_local_access_from_local_origin_;
@@ -337,7 +347,7 @@ bool SecurityOrigin::CanDisplay(const KURL& url) const {
 }
 
 bool SecurityOrigin::IsPotentiallyTrustworthy() const {
-  ASSERT(protocol_ != "data");
+  DCHECK_NE(protocol_, "data");
   if (IsUnique())
     return is_unique_origin_potentially_trustworthy_;
 
@@ -369,17 +379,17 @@ void SecurityOrigin::GrantUniversalAccess() {
 }
 
 void SecurityOrigin::AddSuborigin(const Suborigin& suborigin) {
-  ASSERT(RuntimeEnabledFeatures::suboriginsEnabled());
+  DCHECK(RuntimeEnabledFeatures::SuboriginsEnabled());
   // Changing suborigins midstream is bad. Very bad. It should not happen.
   // This is, in fact,  one of the very basic invariants that makes
   // suborigins an effective security tool.
-  RELEASE_ASSERT(suborigin_.GetName().IsNull() ||
-                 (suborigin_.GetName() == suborigin.GetName()));
+  CHECK(suborigin_.GetName().IsNull() ||
+        (suborigin_.GetName() == suborigin.GetName()));
   suborigin_.SetTo(suborigin);
 }
 
 void SecurityOrigin::BlockLocalAccessFromLocalOrigin() {
-  ASSERT(IsLocal());
+  DCHECK(IsLocal());
   block_local_access_from_local_origin_ = true;
 }
 
@@ -401,7 +411,7 @@ bool SecurityOrigin::IsLocalhost() const {
   DCHECK(host_.ContainsOnlyASCII());
   StringUTF8Adaptor utf8(host_);
   Vector<uint8_t, 4> ip_number;
-  ip_number.Resize(4);
+  ip_number.resize(4);
 
   int num_components;
   url::Component host_component(0, utf8.length());
@@ -470,7 +480,7 @@ bool SecurityOrigin::DeserializeSuboriginAndProtocolAndHost(
   DCHECK_NE(protocol_end, WTF::kNotFound);
   new_protocol = old_protocol.Substring(0, protocol_end);
 
-  size_t suborigin_end = old_host.Find('.');
+  size_t suborigin_end = old_host.find('.');
   // Suborigins cannot be empty.
   if (suborigin_end == 0 || suborigin_end == WTF::kNotFound) {
     new_protocol = original_protocol;
@@ -510,31 +520,31 @@ void SecurityOrigin::BuildRawString(StringBuilder& builder,
   }
 }
 
-PassRefPtr<SecurityOrigin> SecurityOrigin::CreateFromString(
+RefPtr<SecurityOrigin> SecurityOrigin::CreateFromString(
     const String& origin_string) {
-  return SecurityOrigin::Create(KURL(KURL(), origin_string));
+  return SecurityOrigin::Create(KURL(NullURL(), origin_string));
 }
 
-PassRefPtr<SecurityOrigin> SecurityOrigin::Create(const String& protocol,
-                                                  const String& host,
-                                                  int port) {
+RefPtr<SecurityOrigin> SecurityOrigin::Create(const String& protocol,
+                                              const String& host,
+                                              int port) {
   if (port < 0 || port > kMaxAllowedPort)
     return CreateUnique();
 
   DCHECK_EQ(host, DecodeURLEscapeSequences(host));
 
   String port_part = port ? ":" + String::Number(port) : String();
-  return Create(KURL(KURL(), protocol + "://" + host + port_part + "/"));
+  return Create(KURL(NullURL(), protocol + "://" + host + port_part + "/"));
 }
 
-PassRefPtr<SecurityOrigin> SecurityOrigin::Create(const String& protocol,
-                                                  const String& host,
-                                                  int port,
-                                                  const String& suborigin) {
+RefPtr<SecurityOrigin> SecurityOrigin::Create(const String& protocol,
+                                              const String& host,
+                                              int port,
+                                              const String& suborigin) {
   RefPtr<SecurityOrigin> origin = Create(protocol, host, port);
   if (!suborigin.IsEmpty())
     origin->suborigin_.SetName(suborigin);
-  return origin.Release();
+  return origin;
 }
 
 bool SecurityOrigin::IsSameSchemeHostPort(const SecurityOrigin* other) const {
@@ -561,11 +571,23 @@ bool SecurityOrigin::IsSameSchemeHostPort(const SecurityOrigin* other) const {
 
 bool SecurityOrigin::IsSameSchemeHostPortAndSuborigin(
     const SecurityOrigin* other) const {
-  bool same_suborigins =
-      (HasSuborigin() == other->HasSuborigin()) &&
-      (!HasSuborigin() ||
-       (GetSuborigin()->GetName() == other->GetSuborigin()->GetName()));
-  return IsSameSchemeHostPort(other) && same_suborigins;
+  if (!HasSameSuboriginAs(other))
+    return false;
+
+  return IsSameSchemeHostPort(other);
+}
+
+bool SecurityOrigin::HasSuboriginAndShouldAllowCredentialsFor(
+    const KURL& url) const {
+  if (!HasSuborigin())
+    return false;
+
+  if (!GetSuborigin()->PolicyContains(
+          Suborigin::SuboriginPolicyOptions::kUnsafeCredentials))
+    return false;
+
+  RefPtr<SecurityOrigin> other = SecurityOrigin::Create(url);
+  return IsSameSchemeHostPort(other.Get());
 }
 
 bool SecurityOrigin::AreSameSchemeHostPort(const KURL& a, const KURL& b) {
@@ -575,7 +597,7 @@ bool SecurityOrigin::AreSameSchemeHostPort(const KURL& a, const KURL& b) {
 }
 
 const KURL& SecurityOrigin::UrlWithUniqueSecurityOrigin() {
-  ASSERT(IsMainThread());
+  DCHECK(IsMainThread());
   DEFINE_STATIC_LOCAL(const KURL, unique_security_origin_url,
                       (kParsedURLString, "data:,"));
   return unique_security_origin_url;
@@ -602,7 +624,7 @@ void SecurityOrigin::TransferPrivilegesFrom(
 
 void SecurityOrigin::SetUniqueOriginIsPotentiallyTrustworthy(
     bool is_unique_origin_potentially_trustworthy) {
-  ASSERT(!is_unique_origin_potentially_trustworthy || IsUnique());
+  DCHECK(!is_unique_origin_potentially_trustworthy || IsUnique());
   is_unique_origin_potentially_trustworthy_ =
       is_unique_origin_potentially_trustworthy;
 }

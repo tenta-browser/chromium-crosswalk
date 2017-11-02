@@ -13,6 +13,7 @@
 #include "core/workers/WorkerClients.h"
 #include "modules/EventTargetModules.h"
 #include "modules/compositorworker/CompositorWorkerMessagingProxy.h"
+#include "modules/compositorworker/CompositorWorkerProxyClientImpl.h"
 #include "modules/compositorworker/CompositorWorkerThread.h"
 
 namespace blink {
@@ -23,7 +24,7 @@ inline CompositorWorker::CompositorWorker(ExecutionContext* context)
 CompositorWorker* CompositorWorker::Create(ExecutionContext* context,
                                            const String& url,
                                            ExceptionState& exception_state) {
-  ASSERT(IsMainThread());
+  DCHECK(IsMainThread());
   Document* document = ToDocument(context);
   if (!document->GetPage()) {
     exception_state.ThrowDOMException(kInvalidAccessError,
@@ -43,7 +44,7 @@ CompositorWorker* CompositorWorker::Create(ExecutionContext* context,
 }
 
 CompositorWorker::~CompositorWorker() {
-  ASSERT(IsMainThread());
+  DCHECK(IsMainThread());
 }
 
 const AtomicString& CompositorWorker::InterfaceName() const {
@@ -56,8 +57,7 @@ CompositorWorker::CreateInProcessWorkerMessagingProxy(
   Document* document = ToDocument(context);
   WorkerClients* worker_clients = WorkerClients::Create();
   CompositorWorkerProxyClient* client =
-      document->GetFrame()->GetChromeClient().CreateCompositorWorkerProxyClient(
-          document->GetFrame());
+      CompositorWorkerProxyClientImpl::FromDocument(document);
   ProvideCompositorWorkerProxyClientTo(worker_clients, client);
   return new CompositorWorkerMessagingProxy(this, worker_clients);
 }

@@ -29,6 +29,9 @@ class BrowserNonClientFrameView : public views::NonClientFrameView,
   // Called when BrowserView creates all it's child views.
   virtual void OnBrowserViewInitViewsComplete();
 
+  // Called on Linux X11 after the browser window is maximized or restored.
+  virtual void OnMaximizedStateChanged();
+
   // Retrieves the bounds, in non-client view coordinates within which the
   // TabStrip should be laid out.
   virtual gfx::Rect GetBoundsForTabStrip(views::View* tabstrip) const = 0;
@@ -60,7 +63,11 @@ class BrowserNonClientFrameView : public views::NonClientFrameView,
   // Provided for mus. Updates the client-area of the WindowTreeHostMus.
   virtual void UpdateClientArea();
 
+  // Provided for mus to update the minimum window size property.
+  virtual void UpdateMinimumSize();
+
   // Overriden from views::View.
+  void ChildPreferredSizeChanged(views::View* child) override;
   void VisibilityChanged(views::View* starting_from, bool is_visible) override;
 
  protected:
@@ -87,6 +94,8 @@ class BrowserNonClientFrameView : public views::NonClientFrameView,
   // Updates the icon that indicates incognito/teleportation state.
   void UpdateProfileIndicatorIcon();
 
+  void PaintToolbarBackground(gfx::Canvas* canvas) const;
+
   const views::View* profile_indicator_icon() const {
     return profile_indicator_icon_;
   }
@@ -95,6 +104,7 @@ class BrowserNonClientFrameView : public views::NonClientFrameView,
   }
 
   // views::NonClientFrameView:
+  void ActivationChanged(bool active) override;
   bool DoesIntersectRect(const views::View* target,
                          const gfx::Rect& rect) const override;
 
@@ -102,13 +112,14 @@ class BrowserNonClientFrameView : public views::NonClientFrameView,
   // views::NonClientFrameView:
   void ViewHierarchyChanged(
       const ViewHierarchyChangedDetails& details) override;
-  void ActivationChanged(bool active) override;
 
   // ProfileAttributesStorage::Observer:
   void OnProfileAdded(const base::FilePath& profile_path) override;
   void OnProfileWasRemoved(const base::FilePath& profile_path,
                            const base::string16& profile_name) override;
   void OnProfileAvatarChanged(const base::FilePath& profile_path) override;
+  void OnProfileHighResAvatarLoaded(
+      const base::FilePath& profile_path) override;
 
   // Gets a theme provider that should be non-null even before we're added to a
   // view hierarchy.

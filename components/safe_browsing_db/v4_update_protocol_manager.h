@@ -18,10 +18,11 @@
 
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/threading/non_thread_safe.h"
+#include "base/sequence_checker.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
-#include "components/safe_browsing_db/safe_browsing_prefs.h"
+#include "components/safe_browsing/common/safe_browsing_prefs.h"
+#include "components/safe_browsing/proto/webui.pb.h"
 #include "components/safe_browsing_db/safebrowsing.pb.h"
 #include "components/safe_browsing_db/util.h"
 #include "components/safe_browsing_db/v4_protocol_manager_util.h"
@@ -47,8 +48,7 @@ typedef base::Callback<void(std::unique_ptr<ParsedServerResponse>)>
 
 typedef base::Callback<ExtendedReportingLevel()> ExtendedReportingLevelCallback;
 
-class V4UpdateProtocolManager : public net::URLFetcherDelegate,
-                                public base::NonThreadSafe {
+class V4UpdateProtocolManager : public net::URLFetcherDelegate {
  public:
   ~V4UpdateProtocolManager() override;
 
@@ -70,6 +70,9 @@ class V4UpdateProtocolManager : public net::URLFetcherDelegate,
 
   // Schedule the next update without backoff.
   void ScheduleNextUpdate(std::unique_ptr<StoreStateMap> store_state_map);
+
+  // Populates the UpdateInfo message.
+  void CollectUpdateInfo(DatabaseManagerInfo::UpdateInfo* database_info);
 
  protected:
   // Constructs a V4UpdateProtocolManager that issues network requests using
@@ -102,6 +105,9 @@ class V4UpdateProtocolManager : public net::URLFetcherDelegate,
   // Fills a FetchThreatListUpdatesRequest protocol buffer for a request.
   // Returns the serialized and base64 URL encoded request as a string.
   std::string GetBase64SerializedUpdateRequestProto();
+
+  // Records the network response code of the last update
+  int last_response_code_ = 0;
 
   // The method to populate |gurl| with the URL to be sent to the server.
   // |request_base64| is the base64 encoded form of an instance of the protobuf
@@ -191,6 +197,8 @@ class V4UpdateProtocolManager : public net::URLFetcherDelegate,
   base::OneShotTimer timeout_timer_;
 
   ExtendedReportingLevelCallback extended_reporting_level_callback_;
+
+  SEQUENCE_CHECKER(sequence_checker_);
 
   DISALLOW_COPY_AND_ASSIGN(V4UpdateProtocolManager);
 };

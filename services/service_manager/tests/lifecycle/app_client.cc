@@ -5,36 +5,36 @@
 #include "services/service_manager/tests/lifecycle/app_client.h"
 
 #include "base/macros.h"
+#include "base/run_loop.h"
 #include "services/service_manager/public/cpp/service_context.h"
 
 namespace service_manager {
 namespace test {
 
 AppClient::AppClient() {
-  registry_.AddInterface<mojom::LifecycleControl>(this);
+  registry_.AddInterface<mojom::LifecycleControl>(
+      base::Bind(&AppClient::Create, base::Unretained(this)));
 }
 
 AppClient::~AppClient() {}
 
-void AppClient::OnBindInterface(const ServiceInfo& source_info,
+void AppClient::OnBindInterface(const BindSourceInfo& source_info,
                                 const std::string& interface_name,
                                 mojo::ScopedMessagePipeHandle interface_pipe) {
-  registry_.BindInterface(source_info.identity, interface_name,
-                          std::move(interface_pipe));
+  registry_.BindInterface(interface_name, std::move(interface_pipe));
 }
 
 bool AppClient::OnServiceManagerConnectionLost() {
-  base::MessageLoop::current()->QuitWhenIdle();
+  base::RunLoop::QuitCurrentWhenIdleDeprecated();
   return true;
 }
 
-void AppClient::Create(const Identity& remote_identity,
-                       mojom::LifecycleControlRequest request) {
+void AppClient::Create(mojom::LifecycleControlRequest request) {
   bindings_.AddBinding(this, std::move(request));
 }
 
-void AppClient::Ping(const PingCallback& callback) {
-  callback.Run();
+void AppClient::Ping(PingCallback callback) {
+  std::move(callback).Run();
 }
 
 void AppClient::GracefulQuit() {

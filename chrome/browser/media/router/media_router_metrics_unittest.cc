@@ -2,11 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/media/router/media_router_metrics.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/test/histogram_tester.h"
+#include "base/test/simple_test_clock.h"
 #include "base/time/time.h"
-#include "chrome/browser/media/router/media_router_metrics.h"
+#include "chrome/browser/ui/webui/media_router/media_cast_mode.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -91,6 +94,49 @@ TEST(MediaRouterMetricsTest, RecordRouteCreationOutcome) {
       tester.GetAllSamples(MediaRouterMetrics::kHistogramRouteCreationOutcome),
       ElementsAre(Bucket(static_cast<int>(outcome1), 1),
                   Bucket(static_cast<int>(outcome2), 2)));
+}
+
+TEST(MediaRouterMetricsTest, RecordMediaRouterCastingSource) {
+  base::HistogramTester tester;
+  const MediaCastMode source1 = MediaCastMode::PRESENTATION;
+  const MediaCastMode source2 = MediaCastMode::TAB_MIRROR;
+  const MediaCastMode source3 = MediaCastMode::LOCAL_FILE;
+
+  tester.ExpectTotalCount(
+      MediaRouterMetrics::kHistogramMediaRouterCastingSource, 0);
+  MediaRouterMetrics::RecordMediaRouterCastingSource(source1);
+  MediaRouterMetrics::RecordMediaRouterCastingSource(source2);
+  MediaRouterMetrics::RecordMediaRouterCastingSource(source2);
+  MediaRouterMetrics::RecordMediaRouterCastingSource(source3);
+  tester.ExpectTotalCount(
+      MediaRouterMetrics::kHistogramMediaRouterCastingSource, 4);
+  EXPECT_THAT(tester.GetAllSamples(
+                  MediaRouterMetrics::kHistogramMediaRouterCastingSource),
+              ElementsAre(Bucket(static_cast<int>(source1), 1),
+                          Bucket(static_cast<int>(source2), 2),
+                          Bucket(static_cast<int>(source3), 1)));
+}
+
+TEST(MediaRouterMetricsTest, RecordDialDeviceDescriptionParsingError) {
+  base::HistogramTester tester;
+  const chrome::mojom::DialParsingError action1 =
+      chrome::mojom::DialParsingError::MISSING_UNIQUE_ID;
+  const chrome::mojom::DialParsingError action2 =
+      chrome::mojom::DialParsingError::MISSING_FRIENDLY_NAME;
+  const chrome::mojom::DialParsingError action3 =
+      chrome::mojom::DialParsingError::MISSING_APP_URL;
+
+  tester.ExpectTotalCount(MediaRouterMetrics::kHistogramDialParsingError, 0);
+  MediaRouterMetrics::RecordDialParsingError(action3);
+  MediaRouterMetrics::RecordDialParsingError(action2);
+  MediaRouterMetrics::RecordDialParsingError(action3);
+  MediaRouterMetrics::RecordDialParsingError(action1);
+  tester.ExpectTotalCount(MediaRouterMetrics::kHistogramDialParsingError, 4);
+  EXPECT_THAT(
+      tester.GetAllSamples(MediaRouterMetrics::kHistogramDialParsingError),
+      ElementsAre(Bucket(static_cast<int>(action1), 1),
+                  Bucket(static_cast<int>(action2), 1),
+                  Bucket(static_cast<int>(action3), 2)));
 }
 
 }  // namespace media_router

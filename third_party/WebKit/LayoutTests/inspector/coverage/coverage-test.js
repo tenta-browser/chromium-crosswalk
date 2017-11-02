@@ -18,7 +18,7 @@ InspectorTest.stopCoverage = function()
 InspectorTest.sourceDecorated = async function(source)
 {
     await UI.inspectorView.showPanel("sources");
-    var decoratePromise = InspectorTest.addSnifferPromise(Coverage.CoverageView.LineDecorator.prototype, "decorate");
+    var decoratePromise = InspectorTest.addSnifferPromise(Coverage.CoverageView.LineDecorator.prototype, "_innerDecorate");
     var sourceFrame = await new Promise(fulfill => InspectorTest.showScriptSource(source, fulfill));
     await decoratePromise;
     return sourceFrame;
@@ -43,7 +43,7 @@ InspectorTest.findCoverageNodeForURL = function(url)
 
 InspectorTest.dumpDecorationsInSourceFrame = function(sourceFrame)
 {
-    var markerMap = new Map([['used', '+'], ['unused', '-'], ['mixed', '*']]);
+    var markerMap = new Map([['used', '+'], ['unused', '-']]);
 
     var codeMirror = sourceFrame.textEditor.codeMirror();
     for (var line = 0; line < codeMirror.lineCount(); ++line) {
@@ -61,5 +61,19 @@ InspectorTest.dumpDecorationsInSourceFrame = function(sourceFrame)
     }
 }
 
+InspectorTest.dumpCoverageListView = function()
+{
+    var coverageListView = self.runtime.sharedInstance(Coverage.CoverageView)._listView;
+    var dataGrid = coverageListView._dataGrid;
+    dataGrid.updateInstantly();
+    for (var child of dataGrid.rootNode().children) {
+        var data = child._coverageInfo;
+        var url = InspectorTest.formatters.formatAsURL(data.url());
+        if (url.endsWith("-test.js") || url.endsWith(".html"))
+            continue;
+        var type = Coverage.CoverageListView._typeToString(data.type());
+        InspectorTest.addResult(`${url} ${type} used: ${data.usedSize()} unused: ${data.unusedSize()} total: ${data.size()}`);
+    }
+}
 
 }

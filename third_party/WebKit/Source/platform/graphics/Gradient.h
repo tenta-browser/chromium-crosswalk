@@ -75,7 +75,10 @@ class PLATFORM_EXPORT Gradient : public RefCounted<Gradient> {
 
   static PassRefPtr<Gradient> CreateConic(
       const FloatPoint& position,
-      float angle,
+      float rotation,
+      float start_angle,
+      float end_angle,
+      GradientSpreadMethod = kSpreadMethodPad,
       ColorInterpolation = ColorInterpolation::kUnpremultiplied);
 
   virtual ~Gradient();
@@ -102,14 +105,17 @@ class PLATFORM_EXPORT Gradient : public RefCounted<Gradient> {
 
   using ColorBuffer = Vector<SkColor, 8>;
   using OffsetBuffer = Vector<SkScalar, 8>;
-  virtual sk_sp<SkShader> CreateShader(const ColorBuffer&,
-                                       const OffsetBuffer&,
-                                       SkShader::TileMode,
-                                       uint32_t flags,
-                                       const SkMatrix&) const = 0;
+  virtual sk_sp<PaintShader> CreateShader(const ColorBuffer&,
+                                          const OffsetBuffer&,
+                                          SkShader::TileMode,
+                                          uint32_t flags,
+                                          const SkMatrix&,
+                                          SkColor) const = 0;
 
  private:
   sk_sp<PaintShader> CreateShaderInternal(const SkMatrix& local_matrix);
+
+  sk_sp<SkColorFilter> color_filter_;
 
   void SortStopsIfNecessary();
   void FillSkiaStops(ColorBuffer&, OffsetBuffer&) const;

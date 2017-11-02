@@ -8,10 +8,10 @@
 #include "ash/shell.h"
 #include "ash/shell_port.h"
 #include "ash/wm/window_positioning_utils.h"
-#include "ash/wm_window.h"
 #include "components/exo/buffer.h"
 #include "components/exo/pointer_delegate.h"
 #include "components/exo/shell_surface.h"
+#include "components/exo/sub_surface.h"
 #include "components/exo/surface.h"
 #include "components/exo/test/exo_test_base.h"
 #include "components/exo/test/exo_test_helper.h"
@@ -153,7 +153,8 @@ TEST_F(PointerTest, OnPointerMotion) {
                         gfx::Vector2d(1, 1));
 
   std::unique_ptr<Surface> sub_surface(new Surface);
-  surface->AddSubSurface(sub_surface.get());
+  std::unique_ptr<SubSurface> sub(
+      new SubSurface(sub_surface.get(), surface.get()));
   surface->SetSubSurfacePosition(sub_surface.get(), gfx::Point(5, 5));
   gfx::Size sub_buffer_size(5, 5);
   std::unique_ptr<Buffer> sub_buffer(
@@ -313,7 +314,7 @@ TEST_F(PointerTest, IgnorePointerEventDuringModal) {
       new Buffer(exo_test_helper()->CreateGpuMemoryBuffer(gfx::Size(5, 5))));
   surface2->Attach(buffer2.get());
   surface2->Commit();
-  ash::wm::CenterWindow(ash::WmWindow::Get(surface2->window()));
+  ash::wm::CenterWindow(surface2->window());
   gfx::Point location2 = surface2->window()->GetBoundsInScreen().origin();
 
   // Make the window modal.
@@ -442,6 +443,35 @@ TEST_F(PointerTest, IgnorePointerEventDuringModal) {
     EXPECT_CALL(delegate, OnPointerLeave(surface.get()));
   }
   generator.MoveMouseTo(surface->window()->GetBoundsInScreen().bottom_right());
+
+  EXPECT_CALL(delegate, OnPointerDestroying(pointer.get()));
+  pointer.reset();
+}
+
+TEST_F(PointerTest, OnPointerInStylusOnlyWindow) {
+  std::unique_ptr<Surface> surface(new Surface);
+  std::unique_ptr<ShellSurface> shell_surface(new ShellSurface(surface.get()));
+  gfx::Size buffer_size(10, 10);
+  std::unique_ptr<Buffer> buffer(
+      new Buffer(exo_test_helper()->CreateGpuMemoryBuffer(buffer_size)));
+  surface->Attach(buffer.get());
+  surface->SetStylusOnly();
+  surface->Commit();
+
+  MockPointerDelegate delegate;
+  std::unique_ptr<Pointer> pointer(new Pointer(&delegate));
+  ui::test::EventGenerator generator(ash::Shell::GetPrimaryRootWindow());
+
+  EXPECT_CALL(delegate, CanAcceptPointerEventsForSurface(surface.get()))
+      .WillRepeatedly(testing::Return(true));
+
+  EXPECT_CALL(delegate, OnPointerFrame()).Times(0);
+  EXPECT_CALL(delegate, OnPointerEnter(surface.get(), testing::_, 0)).Times(0);
+  EXPECT_CALL(delegate, OnPointerButton(testing::_, testing::_, testing::_))
+      .Times(0);
+
+  generator.MoveMouseTo(surface->window()->GetBoundsInScreen().origin());
+  generator.ClickLeftButton();
 
   EXPECT_CALL(delegate, OnPointerDestroying(pointer.get()));
   pointer.reset();

@@ -9,7 +9,7 @@
 
 #import "ios/clean/chrome/browser/ui/tab_collection/tab_collection_consumer.h"
 
-@protocol TabCollectionDataSource;
+@class SnapshotCache;
 
 // Controller for a scrolling view displaying square cells that represent
 // the user's open tabs.
@@ -17,8 +17,11 @@
     : UIViewController<TabCollectionConsumer, UICollectionViewDataSource>
 // A collection view of tabs.
 @property(nonatomic, weak, readonly) UICollectionView* tabs;
-// Data source for the tabs to be displayed.
-@property(nonatomic, weak) id<TabCollectionDataSource> dataSource;
+// Model for collection view.
+@property(nonatomic, strong, readonly)
+    NSMutableArray<TabCollectionItem*>* items;
+// Cache used to retrieve snapshot images for tab cells.
+@property(nonatomic, weak) SnapshotCache* snapshotCache;
 @end
 
 #endif  // IOS_CLEAN_CHROME_BROWSER_UI_TAB_COLLECTION_TAB_COLLECTION_VIEW_CONTROLLER_H_

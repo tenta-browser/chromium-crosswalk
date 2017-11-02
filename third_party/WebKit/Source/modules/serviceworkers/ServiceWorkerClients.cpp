@@ -58,7 +58,7 @@ WebServiceWorkerClientType GetClientType(const String& type) {
     return kWebServiceWorkerClientTypeSharedWorker;
   if (type == "all")
     return kWebServiceWorkerClientTypeAll;
-  ASSERT_NOT_REACHED();
+  NOTREACHED();
   return kWebServiceWorkerClientTypeWindow;
 }
 
@@ -185,7 +185,7 @@ ScriptPromise ServiceWorkerClients::openWindow(ScriptState* script_state,
   }
   context->ConsumeWindowInteraction();
 
-  ServiceWorkerGlobalScopeClient::From(context)->OpenWindow(
+  ServiceWorkerGlobalScopeClient::From(context)->OpenWindowForClients(
       parsed_url, WTF::MakeUnique<NavigateClientCallback>(resolver));
   return promise;
 }

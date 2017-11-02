@@ -5,8 +5,11 @@
 #include "platform/fonts/shaping/HarfBuzzShaper.h"
 
 #include <unicode/uscript.h>
+
+#include "build/build_config.h"
 #include "platform/fonts/Font.h"
 #include "platform/fonts/FontCache.h"
+#include "platform/fonts/FontTestUtilities.h"
 #include "platform/fonts/shaping/ShapeResultInlineHeaders.h"
 #include "platform/fonts/shaping/ShapeResultTestInfo.h"
 #include "platform/text/TextBreakIterator.h"
@@ -30,17 +33,13 @@ class HarfBuzzShaperTest : public ::testing::Test {
   FontDescription font_description;
   Font font;
   unsigned start_index = 0;
+  unsigned num_characters = 0;
   unsigned num_glyphs = 0;
   hb_script_t script = HB_SCRIPT_INVALID;
 };
 
 static inline ShapeResultTestInfo* TestInfo(RefPtr<ShapeResult>& result) {
   return static_cast<ShapeResultTestInfo*>(result.Get());
-}
-
-static inline String To16Bit(const char* text, unsigned length) {
-  return String::Make16BitFrom8BitSource(reinterpret_cast<const LChar*>(text),
-                                         length);
 }
 
 TEST_F(HarfBuzzShaperTest, ResolveCandidateRunsLatin) {
@@ -95,7 +94,7 @@ TEST_F(HarfBuzzShaperTest, ResolveCandidateRunsUnicodeVariants) {
 // If the specified VS is not in the font, it's mapped to .notdef.
 // then hb_ot_hide_default_ignorables() swaps it to a space with zero-advance.
 // http://lists.freedesktop.org/archives/harfbuzz/2015-May/004888.html
-#if !OS(MACOSX)
+#if !defined(OS_MACOSX)
       EXPECT_EQ(TestInfo(result)->FontDataForTesting(0)->SpaceGlyph(),
                 TestInfo(result)->GlyphForTesting(0, 1))
           << test.name;
@@ -225,6 +224,19 @@ TEST_F(HarfBuzzShaperTest, ShapeLatinSegment) {
   RefPtr<ShapeResult> second = shaper.Shape(&font, direction, 6, 11);
   RefPtr<ShapeResult> third = shaper.Shape(&font, direction, 11, 12);
 
+  ASSERT_TRUE(TestInfo(first)->RunInfoForTesting(0, start_index, num_characters,
+                                                 num_glyphs, script));
+  EXPECT_EQ(0u, start_index);
+  EXPECT_EQ(6u, num_characters);
+  ASSERT_TRUE(TestInfo(second)->RunInfoForTesting(
+      0, start_index, num_characters, num_glyphs, script));
+  EXPECT_EQ(6u, start_index);
+  EXPECT_EQ(5u, num_characters);
+  ASSERT_TRUE(TestInfo(third)->RunInfoForTesting(0, start_index, num_characters,
+                                                 num_glyphs, script));
+  EXPECT_EQ(11u, start_index);
+  EXPECT_EQ(1u, num_characters);
+
   HarfBuzzShaper shaper2(string.Characters16(), 6);
   RefPtr<ShapeResult> first_reference = shaper2.Shape(&font, direction);
 
@@ -267,6 +279,72 @@ TEST_F(HarfBuzzShaperTest, DISABLED_ShapeArabicWithContext) {
   ASSERT_NEAR(combined->Width(), first->Width() + second->Width(), 0.1);
 }
 
+TEST_F(HarfBuzzShaperTest, ShapeVerticalUpright) {
+  font_description.SetOrientation(FontOrientation::kVerticalUpright);
+  font = Font(font_description);
+  font.Update(nullptr);
+
+  // This string should create 2 runs, ideographic and Latin, both in upright.
+  String string(u"\u65E5\u65E5\u65E5lllll");
+  TextDirection direction = TextDirection::kLtr;
+  HarfBuzzShaper shaper(string.Characters16(), string.length());
+  RefPtr<ShapeResult> result = shaper.Shape(&font, direction);
+
+  // Check width and bounds are not too much different. ".1" is heuristic.
+  EXPECT_NEAR(result->Width(), result->Bounds().Width(), result->Width() * .1);
+
+  // Shape each run and merge them using CopyRange. Bounds() should match.
+  RefPtr<ShapeResult> result1 = shaper.Shape(&font, direction, 0, 3);
+  RefPtr<ShapeResult> result2 =
+      shaper.Shape(&font, direction, 3, string.length());
+
+  RefPtr<ShapeResult> composite_result =
+      ShapeResult::Create(&font, 0, direction);
+  result1->CopyRange(0, 3, composite_result.Get());
+  result2->CopyRange(3, string.length(), composite_result.Get());
+
+  EXPECT_EQ(result->Bounds(), composite_result->Bounds());
+}
+
+TEST_F(HarfBuzzShaperTest, ShapeVerticalMixed) {
+  font_description.SetOrientation(FontOrientation::kVerticalMixed);
+  font = Font(font_description);
+  font.Update(nullptr);
+
+  // This string should create 2 runs, ideographic in upright and Latin in
+  // rotated horizontal.
+  String string(u"\u65E5\u65E5\u65E5lllll");
+  TextDirection direction = TextDirection::kLtr;
+  HarfBuzzShaper shaper(string.Characters16(), string.length());
+  RefPtr<ShapeResult> result = shaper.Shape(&font, direction);
+
+  // Check width and bounds are not too much different. ".1" is heuristic.
+  EXPECT_NEAR(result->Width(), result->Bounds().Width(), result->Width() * .1);
+
+  // Shape each run and merge them using CopyRange. Bounds() should match.
+  RefPtr<ShapeResult> result1 = shaper.Shape(&font, direction, 0, 3);
+  RefPtr<ShapeResult> result2 =
+      shaper.Shape(&font, direction, 3, string.length());
+
+  RefPtr<ShapeResult> composite_result =
+      ShapeResult::Create(&font, 0, direction);
+  result1->CopyRange(0, 3, composite_result.Get());
+  result2->CopyRange(3, string.length(), composite_result.Get());
+
+  EXPECT_EQ(result->Bounds(), composite_result->Bounds());
+}
+
+TEST_F(HarfBuzzShaperTest, MissingGlyph) {
+  // U+FFF0 is not assigned as of Unicode 10.0.
+  String string(
+      u"\uFFF0"
+      u"Hello");
+  HarfBuzzShaper shaper(string.Characters16(), string.length());
+  RefPtr<ShapeResult> result = shaper.Shape(&font, TextDirection::kLtr);
+  EXPECT_EQ(0u, result->StartIndexForResult());
+  EXPECT_EQ(string.length(), result->EndIndexForResult());
+}
+
 TEST_F(HarfBuzzShaperTest, PositionForOffsetLatin) {
   String string = To16Bit("Hello World!", 12);
   TextDirection direction = TextDirection::kLtr;
@@ -294,59 +372,89 @@ TEST_F(HarfBuzzShaperTest, PositionForOffsetArabic) {
   ASSERT_NEAR(result->Width(), result->PositionForOffset(0), 0.1);
 }
 
-TEST_F(HarfBuzzShaperTest, OffsetForPositionMatchesPositionForOffsetLatin) {
+// A Value-Parameterized Test class to test OffsetForPosition() with
+// |include_partial_glyphs| parameter.
+class IncludePartialGlyphs : public HarfBuzzShaperTest,
+                             public ::testing::WithParamInterface<bool> {};
+
+INSTANTIATE_TEST_CASE_P(OffsetForPositionTest,
+                        IncludePartialGlyphs,
+                        ::testing::Bool());
+
+TEST_P(IncludePartialGlyphs, OffsetForPositionMatchesPositionForOffsetLatin) {
   String string = To16Bit("Hello World!", 12);
   TextDirection direction = TextDirection::kLtr;
 
   HarfBuzzShaper shaper(string.Characters16(), 12);
   RefPtr<ShapeResult> result = shaper.Shape(&font, direction);
 
-  // Last argument is includePartialGlyphs
-  EXPECT_EQ(0u, result->OffsetForPosition(result->PositionForOffset(0), true));
-  EXPECT_EQ(1u, result->OffsetForPosition(result->PositionForOffset(1), true));
-  EXPECT_EQ(2u, result->OffsetForPosition(result->PositionForOffset(2), true));
-  EXPECT_EQ(3u, result->OffsetForPosition(result->PositionForOffset(3), true));
-  EXPECT_EQ(4u, result->OffsetForPosition(result->PositionForOffset(4), true));
-  EXPECT_EQ(5u, result->OffsetForPosition(result->PositionForOffset(5), true));
-  EXPECT_EQ(6u, result->OffsetForPosition(result->PositionForOffset(6), true));
-  EXPECT_EQ(7u, result->OffsetForPosition(result->PositionForOffset(7), true));
-  EXPECT_EQ(8u, result->OffsetForPosition(result->PositionForOffset(8), true));
-  EXPECT_EQ(9u, result->OffsetForPosition(result->PositionForOffset(9), true));
-  EXPECT_EQ(10u,
-            result->OffsetForPosition(result->PositionForOffset(10), true));
-  EXPECT_EQ(11u,
-            result->OffsetForPosition(result->PositionForOffset(11), true));
-  EXPECT_EQ(12u,
-            result->OffsetForPosition(result->PositionForOffset(12), true));
+  bool include_partial_glyphs = GetParam();
+  EXPECT_EQ(0u, result->OffsetForPosition(result->PositionForOffset(0),
+                                          include_partial_glyphs));
+  EXPECT_EQ(1u, result->OffsetForPosition(result->PositionForOffset(1),
+                                          include_partial_glyphs));
+  EXPECT_EQ(2u, result->OffsetForPosition(result->PositionForOffset(2),
+                                          include_partial_glyphs));
+  EXPECT_EQ(3u, result->OffsetForPosition(result->PositionForOffset(3),
+                                          include_partial_glyphs));
+  EXPECT_EQ(4u, result->OffsetForPosition(result->PositionForOffset(4),
+                                          include_partial_glyphs));
+  EXPECT_EQ(5u, result->OffsetForPosition(result->PositionForOffset(5),
+                                          include_partial_glyphs));
+  EXPECT_EQ(6u, result->OffsetForPosition(result->PositionForOffset(6),
+                                          include_partial_glyphs));
+  EXPECT_EQ(7u, result->OffsetForPosition(result->PositionForOffset(7),
+                                          include_partial_glyphs));
+  EXPECT_EQ(8u, result->OffsetForPosition(result->PositionForOffset(8),
+                                          include_partial_glyphs));
+  EXPECT_EQ(9u, result->OffsetForPosition(result->PositionForOffset(9),
+                                          include_partial_glyphs));
+  EXPECT_EQ(10u, result->OffsetForPosition(result->PositionForOffset(10),
+                                           include_partial_glyphs));
+  EXPECT_EQ(11u, result->OffsetForPosition(result->PositionForOffset(11),
+                                           include_partial_glyphs));
+  EXPECT_EQ(12u, result->OffsetForPosition(result->PositionForOffset(12),
+                                           include_partial_glyphs));
 }
 
-TEST_F(HarfBuzzShaperTest, OffsetForPositionMatchesPositionForOffsetArabic) {
+TEST_P(IncludePartialGlyphs, OffsetForPositionMatchesPositionForOffsetArabic) {
   UChar arabic_string[] = {0x628, 0x64A, 0x629};
   TextDirection direction = TextDirection::kRtl;
 
   HarfBuzzShaper shaper(arabic_string, 3);
   RefPtr<ShapeResult> result = shaper.Shape(&font, direction);
 
-  // Last argument is includePartialGlyphs
-  EXPECT_EQ(0u, result->OffsetForPosition(result->PositionForOffset(0), true));
-  EXPECT_EQ(1u, result->OffsetForPosition(result->PositionForOffset(1), true));
-  EXPECT_EQ(2u, result->OffsetForPosition(result->PositionForOffset(2), true));
-  EXPECT_EQ(3u, result->OffsetForPosition(result->PositionForOffset(3), true));
+  bool include_partial_glyphs = GetParam();
+  EXPECT_EQ(0u, result->OffsetForPosition(result->PositionForOffset(0),
+                                          include_partial_glyphs));
+  EXPECT_EQ(1u, result->OffsetForPosition(result->PositionForOffset(1),
+                                          include_partial_glyphs));
+  EXPECT_EQ(2u, result->OffsetForPosition(result->PositionForOffset(2),
+                                          include_partial_glyphs));
+  EXPECT_EQ(3u, result->OffsetForPosition(result->PositionForOffset(3),
+                                          include_partial_glyphs));
 }
 
-TEST_F(HarfBuzzShaperTest, OffsetForPositionMatchesPositionForOffsetMixed) {
+TEST_P(IncludePartialGlyphs, OffsetForPositionMatchesPositionForOffsetMixed) {
   UChar mixed_string[] = {0x628, 0x64A, 0x629, 0xE20, 0x65E5, 0x62};
   HarfBuzzShaper shaper(mixed_string, 6);
   RefPtr<ShapeResult> result = shaper.Shape(&font, TextDirection::kLtr);
 
-  // Last argument is includePartialGlyphs
-  EXPECT_EQ(0u, result->OffsetForPosition(result->PositionForOffset(0), true));
-  EXPECT_EQ(1u, result->OffsetForPosition(result->PositionForOffset(1), true));
-  EXPECT_EQ(2u, result->OffsetForPosition(result->PositionForOffset(2), true));
-  EXPECT_EQ(3u, result->OffsetForPosition(result->PositionForOffset(3), true));
-  EXPECT_EQ(4u, result->OffsetForPosition(result->PositionForOffset(4), true));
-  EXPECT_EQ(5u, result->OffsetForPosition(result->PositionForOffset(5), true));
-  EXPECT_EQ(6u, result->OffsetForPosition(result->PositionForOffset(6), true));
+  bool include_partial_glyphs = GetParam();
+  EXPECT_EQ(0u, result->OffsetForPosition(result->PositionForOffset(0),
+                                          include_partial_glyphs));
+  EXPECT_EQ(1u, result->OffsetForPosition(result->PositionForOffset(1),
+                                          include_partial_glyphs));
+  EXPECT_EQ(2u, result->OffsetForPosition(result->PositionForOffset(2),
+                                          include_partial_glyphs));
+  EXPECT_EQ(3u, result->OffsetForPosition(result->PositionForOffset(3),
+                                          include_partial_glyphs));
+  EXPECT_EQ(4u, result->OffsetForPosition(result->PositionForOffset(4),
+                                          include_partial_glyphs));
+  EXPECT_EQ(5u, result->OffsetForPosition(result->PositionForOffset(5),
+                                          include_partial_glyphs));
+  EXPECT_EQ(6u, result->OffsetForPosition(result->PositionForOffset(6),
+                                          include_partial_glyphs));
 }
 
 TEST_F(HarfBuzzShaperTest, ShapeResultCopyRangeIntoLatin) {
@@ -365,6 +473,7 @@ TEST_F(HarfBuzzShaperTest, ShapeResultCopyRangeIntoLatin) {
 
   EXPECT_EQ(result->NumCharacters(), composite_result->NumCharacters());
   EXPECT_EQ(result->SnappedWidth(), composite_result->SnappedWidth());
+  EXPECT_EQ(result->Bounds(), composite_result->Bounds());
   EXPECT_EQ(result->SnappedStartPositionForOffset(0),
             composite_result->SnappedStartPositionForOffset(0));
   EXPECT_EQ(result->SnappedStartPositionForOffset(15),
@@ -382,6 +491,9 @@ TEST_F(HarfBuzzShaperTest, ShapeResultCopyRangeIntoArabicThaiHanLatin) {
   HarfBuzzShaper shaper(mixed_string, 8);
   RefPtr<ShapeResult> result = shaper.Shape(&font, direction);
 
+  // Check width and bounds are not too much different. ".2" is heuristic.
+  EXPECT_NEAR(result->Width(), result->Bounds().Width(), result->Width() * .2);
+
   RefPtr<ShapeResult> composite_result =
       ShapeResult::Create(&font, 0, direction);
   result->CopyRange(0, 4, composite_result.Get());
@@ -390,6 +502,7 @@ TEST_F(HarfBuzzShaperTest, ShapeResultCopyRangeIntoArabicThaiHanLatin) {
 
   EXPECT_EQ(result->NumCharacters(), composite_result->NumCharacters());
   EXPECT_EQ(result->SnappedWidth(), composite_result->SnappedWidth());
+  EXPECT_EQ(result->Bounds(), composite_result->Bounds());
   EXPECT_EQ(result->SnappedStartPositionForOffset(0),
             composite_result->SnappedStartPositionForOffset(0));
   EXPECT_EQ(result->SnappedStartPositionForOffset(1),
@@ -408,6 +521,46 @@ TEST_F(HarfBuzzShaperTest, ShapeResultCopyRangeIntoArabicThaiHanLatin) {
             composite_result->SnappedStartPositionForOffset(7));
   EXPECT_EQ(result->SnappedStartPositionForOffset(8),
             composite_result->SnappedStartPositionForOffset(8));
+}
+
+TEST_F(HarfBuzzShaperTest, ShapeResultCopyRangeAcrossRuns) {
+  // Create 3 runs:
+  // [0]: 1 character.
+  // [1]: 5 characters.
+  // [2]: 2 character.
+  String mixed_string(u"\u65E5Hello\u65E5\u65E5");
+  TextDirection direction = TextDirection::kLtr;
+  HarfBuzzShaper shaper(mixed_string.Characters16(), mixed_string.length());
+  RefPtr<ShapeResult> result = shaper.Shape(&font, direction);
+
+  // Check width and bounds are not too much different. ".1" is heuristic.
+  EXPECT_NEAR(result->Width(), result->Bounds().Width(), result->Width() * .1);
+
+  // CopyRange(5, 7) should copy 1 character from [1] and 1 from [2].
+  RefPtr<ShapeResult> target = ShapeResult::Create(&font, 0, direction);
+  result->CopyRange(5, 7, target.Get());
+  EXPECT_EQ(2u, target->NumCharacters());
+}
+
+TEST_F(HarfBuzzShaperTest, ShapeResultCopyRangeSegmentGlyphBoundingBox) {
+  String string(u"THello worldL");
+  TextDirection direction = TextDirection::kLtr;
+
+  HarfBuzzShaper shaper(string.Characters16(), string.length());
+  RefPtr<ShapeResult> result1 = shaper.Shape(&font, direction, 0, 6);
+  RefPtr<ShapeResult> result2 =
+      shaper.Shape(&font, direction, 6, string.length());
+
+  RefPtr<ShapeResult> composite_result =
+      ShapeResult::Create(&font, 0, direction);
+  result1->CopyRange(0, 6, composite_result.Get());
+  result2->CopyRange(6, string.length(), composite_result.Get());
+
+  RefPtr<ShapeResult> result = shaper.Shape(&font, direction);
+  EXPECT_EQ(result->Bounds(), composite_result->Bounds());
+
+  // Check width and bounds are not too much different. ".1" is heuristic.
+  EXPECT_NEAR(result->Width(), result->Bounds().Width(), result->Width() * .1);
 }
 
 }  // namespace blink

@@ -6,7 +6,7 @@
 #define PresentationConnectionList_h
 
 #include "core/dom/ExecutionContext.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/EventTarget.h"
 #include "modules/ModulesExport.h"
 #include "modules/presentation/PresentationConnection.h"
 #include "platform/heap/Handle.h"
@@ -37,6 +37,9 @@ class MODULES_EXPORT PresentationConnectionList final
   DEFINE_ATTRIBUTE_EVENT_LISTENER(connectionavailable);
 
   void AddConnection(PresentationConnection*);
+  // Remove connection from connection list. Returns true if connection is
+  // successfully removed; Returns false if connection does not exist.
+  bool RemoveConnection(WebPresentationConnection*);
   void DispatchConnectionAvailableEvent(PresentationConnection*);
   bool IsEmpty();
 

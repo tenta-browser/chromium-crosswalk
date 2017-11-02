@@ -38,7 +38,6 @@
 #include "core/dom/TaskRunnerHelper.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/LocalFrameClient.h"
-#include "core/style/StyleRareNonInheritedData.h"
 
 namespace blink {
 
@@ -81,11 +80,11 @@ void CSSSelectorWatch::CallbackSelectorChangeTimerFired(TimerBase*) {
     Vector<String> removed_selectors;
     CopyToVector(added_selectors_, added_selectors);
     CopyToVector(removed_selectors_, removed_selectors);
-    GetSupplementable()->GetFrame()->Loader().Client()->SelectorMatchChanged(
+    GetSupplementable()->GetFrame()->Client()->SelectorMatchChanged(
         added_selectors, removed_selectors);
   }
-  added_selectors_.Clear();
-  removed_selectors_.Clear();
+  added_selectors_.clear();
+  removed_selectors_.clear();
   timer_expirations_ = 0;
 }
 
@@ -100,7 +99,7 @@ void CSSSelectorWatch::UpdateSelectorMatches(
 
     // Count reached 0.
     should_update_timer = true;
-    auto it = added_selectors_.Find(selector);
+    auto it = added_selectors_.find(selector);
     if (it != added_selectors_.end())
       added_selectors_.erase(it);
     else
@@ -114,7 +113,7 @@ void CSSSelectorWatch::UpdateSelectorMatches(
       continue;
 
     should_update_timer = true;
-    auto it = removed_selectors_.Find(selector);
+    auto it = removed_selectors_.find(selector);
     if (it != removed_selectors_.end())
       removed_selectors_.erase(it);
     else
@@ -146,7 +145,7 @@ static bool AllCompound(const CSSSelectorList& selector_list) {
 }
 
 void CSSSelectorWatch::WatchCSSSelectors(const Vector<String>& selectors) {
-  watched_callback_selectors_.Clear();
+  watched_callback_selectors_.clear();
 
   StylePropertySet* callback_property_set =
       ImmutableStylePropertySet::Create(nullptr, 0, kUASheetMode);

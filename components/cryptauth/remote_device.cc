@@ -8,24 +8,61 @@
 
 namespace cryptauth {
 
-RemoteDevice::RemoteDevice() {}
+namespace {
+
+// Returns true if both vectors are BeaconSeeds are equal.
+bool AreBeaconSeedsEqual(const std::vector<BeaconSeed> beacon_seeds1,
+                         const std::vector<BeaconSeed> beacon_seeds2) {
+  if (beacon_seeds1.size() != beacon_seeds2.size()) {
+    return false;
+  }
+
+  for (size_t i = 0; i < beacon_seeds1.size(); ++i) {
+    const BeaconSeed& seed1 = beacon_seeds1[i];
+    const BeaconSeed& seed2 = beacon_seeds2[i];
+    if (seed1.start_time_millis() != seed2.start_time_millis() ||
+        seed1.end_time_millis() != seed2.end_time_millis() ||
+        seed1.data() != seed2.data()) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+}  // namespace
+
+RemoteDevice::RemoteDevice()
+    : unlock_key(false),
+      supports_mobile_hotspot(false),
+      last_update_time_millis(0L) {}
 
 RemoteDevice::RemoteDevice(const std::string& user_id,
                            const std::string& name,
                            const std::string& public_key,
                            const std::string& bluetooth_address,
                            const std::string& persistent_symmetric_key,
-                           std::string sign_in_challenge)
+                           bool unlock_key,
+                           bool supports_mobile_hotspot,
+                           int64_t last_update_time_millis)
     : user_id(user_id),
       name(name),
       public_key(public_key),
       bluetooth_address(bluetooth_address),
       persistent_symmetric_key(persistent_symmetric_key),
-      sign_in_challenge(sign_in_challenge) {}
+      unlock_key(unlock_key),
+      supports_mobile_hotspot(supports_mobile_hotspot),
+      last_update_time_millis(last_update_time_millis) {}
 
 RemoteDevice::RemoteDevice(const RemoteDevice& other) = default;
 
 RemoteDevice::~RemoteDevice() {}
+
+void RemoteDevice::LoadBeaconSeeds(
+    const std::vector<BeaconSeed>& beacon_seeds) {
+  this->are_beacon_seeds_loaded = true;
+  this->beacon_seeds = beacon_seeds;
+}
 
 std::string RemoteDevice::GetDeviceId() const {
   std::string to_return;
@@ -38,12 +75,24 @@ std::string RemoteDevice::GetTruncatedDeviceIdForLogs() const {
 }
 
 bool RemoteDevice::operator==(const RemoteDevice& other) const {
-  return user_id == other.user_id
-      && name == other.name
-      && public_key == other.public_key
-      && bluetooth_address == other.bluetooth_address
-      && persistent_symmetric_key == other.persistent_symmetric_key
-      && sign_in_challenge == other.sign_in_challenge;
+  // Only compare |beacon_seeds| if they are loaded.
+  bool are_beacon_seeds_equal = false;
+  if (are_beacon_seeds_loaded) {
+    are_beacon_seeds_equal =
+        other.are_beacon_seeds_loaded &&
+        AreBeaconSeedsEqual(beacon_seeds, other.beacon_seeds);
+  } else {
+    are_beacon_seeds_equal = !other.are_beacon_seeds_loaded;
+  }
+
+  return user_id == other.user_id && name == other.name &&
+         public_key == other.public_key &&
+         bluetooth_address == other.bluetooth_address &&
+         persistent_symmetric_key == other.persistent_symmetric_key &&
+         unlock_key == other.unlock_key &&
+         supports_mobile_hotspot == other.supports_mobile_hotspot &&
+         last_update_time_millis == other.last_update_time_millis &&
+         are_beacon_seeds_equal;
 }
 
 bool RemoteDevice::operator<(const RemoteDevice& other) const {

@@ -128,16 +128,17 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
       bool first_line,
       LineDirectionMode,
       LinePositionMode = kPositionOnContainingLine) const final;
-  int BaselinePosition(
+  LayoutUnit BaselinePosition(
       FontBaseline,
       bool first_line,
       LineDirectionMode,
       LinePositionMode = kPositionOnContainingLine) const override;
+  bool UseLogicalBottomMarginEdgeForInlineBlockBaseline() const;
 
   LayoutUnit MinLineHeightForReplacedObject(bool is_first_line,
                                             LayoutUnit replaced_height) const;
 
-  bool CreatesNewFormattingContext() const;
+  virtual bool CreatesNewFormattingContext() const { return true; }
 
   const char* GetName() const override;
 
@@ -214,8 +215,6 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
 
   LayoutUnit BlockDirectionOffset(const LayoutSize& offset_from_block) const;
   LayoutUnit InlineDirectionOffset(const LayoutSize& offset_from_block) const;
-
-  void SetSelectionState(SelectionState) override;
 
   static LayoutBlock* CreateAnonymousWithParentAndDisplay(
       const LayoutObject*,
@@ -369,7 +368,7 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
 
   LayoutUnit MarginIntrinsicLogicalWidthForChild(const LayoutBox& child) const;
 
-  int BeforeMarginInLineDirection(LineDirectionMode) const;
+  LayoutUnit BeforeMarginInLineDirection(LineDirectionMode) const;
 
   void Paint(const PaintInfo&, const LayoutPoint&) const override;
 
@@ -392,8 +391,8 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
       LayoutUnit& min_preferred_logical_width,
       LayoutUnit& max_preferred_logical_width) const;
 
-  int FirstLineBoxBaseline() const override;
-  int InlineBlockBaseline(LineDirectionMode) const override;
+  LayoutUnit FirstLineBoxBaseline() const override;
+  LayoutUnit InlineBlockBaseline(LineDirectionMode) const override;
 
   // This function disables the 'overflow' check in inlineBlockBaseline.
   // For 'inline-block', CSS says that the baseline is the bottom margin edge
@@ -412,7 +411,7 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
                        HitTestAction) override;
   void UpdateHitTestResult(HitTestResult&, const LayoutPoint&) override;
 
-  void UpdateAfterLayout();
+  void UpdateAfterLayout() override;
 
   void StyleWillChange(StyleDifference,
                        const ComputedStyle& new_style) override;
@@ -453,6 +452,8 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
     return IsInline() && IsAtomicInlineLevel();
   }
 
+  bool NeedsPreferredWidthsRecalculation() const override;
+
  private:
   LayoutObjectChildList* VirtualChildren() final { return Children(); }
   const LayoutObjectChildList* VirtualChildren() const final {
@@ -468,8 +469,6 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
 
   // Returns true if the positioned movement-only layout succeeded.
   bool TryLayoutDoingPositionedMovementOnly();
-
-  bool AvoidsFloats() const override { return true; }
 
   bool IsInSelfHitTestingPhase(HitTestAction hit_test_action) const final {
     return hit_test_action == kHitTestBlockBackground ||
@@ -491,9 +490,7 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
   }
 
  protected:
-  PaintInvalidationReason InvalidatePaintIfNeeded(
-      const PaintInvalidationState&) override;
-  PaintInvalidationReason InvalidatePaintIfNeeded(
+  PaintInvalidationReason InvalidatePaint(
       const PaintInvalidatorContext&) const override;
 
   void ClearPreviousVisualRects() override;
@@ -565,7 +562,7 @@ class CORE_EXPORT LayoutBlock : public LayoutBox {
   friend class NGBlockNode;
 
  public:
-  // TODO(lunalu): Temporary in order to ensure compatibility with existing
+  // TODO(loonybear): Temporary in order to ensure compatibility with existing
   // layout test results.
   virtual void AdjustChildDebugRect(LayoutRect&) const {}
 };

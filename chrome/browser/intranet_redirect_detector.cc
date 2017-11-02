@@ -40,15 +40,16 @@ IntranetRedirectDetector::IntranetRedirectDetector()
   // no function to do this.
   static const int kStartFetchDelaySeconds = 7;
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE, base::Bind(&IntranetRedirectDetector::FinishSleep,
-                            weak_ptr_factory_.GetWeakPtr()),
+      FROM_HERE,
+      base::BindOnce(&IntranetRedirectDetector::FinishSleep,
+                     weak_ptr_factory_.GetWeakPtr()),
       base::TimeDelta::FromSeconds(kStartFetchDelaySeconds));
 
-  net::NetworkChangeNotifier::AddIPAddressObserver(this);
+  net::NetworkChangeNotifier::AddNetworkChangeObserver(this);
 }
 
 IntranetRedirectDetector::~IntranetRedirectDetector() {
-  net::NetworkChangeNotifier::RemoveIPAddressObserver(this);
+  net::NetworkChangeNotifier::RemoveNetworkChangeObserver(this);
 }
 
 // static
@@ -94,7 +95,7 @@ void IntranetRedirectDetector::FinishSleep() {
           destination: OTHER
         }
         policy {
-          cookies_allowed: false
+          cookies_allowed: NO
           setting: "This feature cannot be disabled by settings."
           policy_exception_justification:
               "Not implemented, considered not useful."
@@ -176,7 +177,10 @@ void IntranetRedirectDetector::OnURLFetchComplete(
           redirect_origin_.spec() : std::string());
 }
 
-void IntranetRedirectDetector::OnIPAddressChanged() {
+void IntranetRedirectDetector::OnNetworkChanged(
+    net::NetworkChangeNotifier::ConnectionType type) {
+  if (type == net::NetworkChangeNotifier::CONNECTION_NONE)
+    return;
   // If a request is already scheduled, do not scheduled yet another one.
   if (in_sleep_)
     return;
@@ -186,7 +190,8 @@ void IntranetRedirectDetector::OnIPAddressChanged() {
   in_sleep_ = true;
   static const int kNetworkSwitchDelayMS = 1000;
   base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-      FROM_HERE, base::Bind(&IntranetRedirectDetector::FinishSleep,
-                            weak_ptr_factory_.GetWeakPtr()),
+      FROM_HERE,
+      base::BindOnce(&IntranetRedirectDetector::FinishSleep,
+                     weak_ptr_factory_.GetWeakPtr()),
       base::TimeDelta::FromMilliseconds(kNetworkSwitchDelayMS));
 }

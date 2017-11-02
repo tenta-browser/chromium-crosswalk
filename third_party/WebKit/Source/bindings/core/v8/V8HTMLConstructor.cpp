@@ -4,21 +4,20 @@
 
 #include "bindings/core/v8/V8HTMLConstructor.h"
 
-#include "bindings/core/v8/DOMWrapperWorld.h"
 #include "bindings/core/v8/ExceptionState.h"
 #include "bindings/core/v8/ScriptCustomElementDefinition.h"
-#include "bindings/core/v8/V8Binding.h"
-#include "bindings/core/v8/V8BindingMacros.h"
-#include "bindings/core/v8/V8DOMWrapper.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "bindings/core/v8/V8HTMLElement.h"
-#include "bindings/core/v8/V8PerContextData.h"
-#include "bindings/core/v8/V8ThrowException.h"
 #include "core/dom/Document.h"
 #include "core/dom/Element.h"
 #include "core/dom/ExceptionCode.h"
-#include "core/dom/custom/CustomElementRegistry.h"
 #include "core/frame/LocalDOMWindow.h"
-#include "platform/RuntimeEnabledFeatures.h"
+#include "core/html/custom/CustomElementRegistry.h"
+#include "platform/bindings/DOMWrapperWorld.h"
+#include "platform/bindings/V8BindingMacros.h"
+#include "platform/bindings/V8DOMWrapper.h"
+#include "platform/bindings/V8PerContextData.h"
+#include "platform/bindings/V8ThrowException.h"
 #include "platform/instrumentation/tracing/TraceEvent.h"
 
 namespace blink {
@@ -40,8 +39,7 @@ void V8HTMLConstructor::HtmlConstructor(
     return;
   }
 
-  if (!RuntimeEnabledFeatures::customElementsV1Enabled() ||
-      !script_state->World().IsMainWorld()) {
+  if (!script_state->World().IsMainWorld()) {
     V8ThrowException::ThrowTypeError(isolate, "Illegal constructor");
     return;
   }
@@ -102,9 +100,9 @@ void V8HTMLConstructor::HtmlConstructor(
   // 6. Let prototype be Get(NewTarget, "prototype"). Rethrow any exceptions.
   v8::Local<v8::Value> prototype;
   v8::Local<v8::String> prototype_string = V8AtomicString(isolate, "prototype");
-  if (!V8Call(new_target.As<v8::Object>()->Get(script_state->GetContext(),
-                                               prototype_string),
-              prototype)) {
+  if (!new_target.As<v8::Object>()
+           ->Get(script_state->GetContext(), prototype_string)
+           .ToLocal(&prototype)) {
     return;
   }
 

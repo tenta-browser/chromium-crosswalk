@@ -134,7 +134,7 @@ class PluginInfoMessageFilterTest : public ::testing::Test {
 #endif
     base::RunLoop run_loop;
     PluginService::GetInstance()->GetPlugins(
-        base::Bind(&PluginsLoaded, run_loop.QuitClosure()));
+        base::BindOnce(&PluginsLoaded, run_loop.QuitClosure()));
     run_loop.Run();
 #if !defined(OS_WIN)
     content::RenderProcessHost::SetRunRendererInProcess(false);
@@ -238,9 +238,6 @@ TEST_F(PluginInfoMessageFilterTest, FindEnabledPlugin) {
 }
 
 TEST_F(PluginInfoMessageFilterTest, PreferHtmlOverPlugins) {
-  base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndEnableFeature(features::kPreferHtmlOverPlugins);
-
   // The HTML5 By Default feature hides Flash using the plugin filter.
   filter_.set_plugin_enabled(fake_flash_path_, false);
 

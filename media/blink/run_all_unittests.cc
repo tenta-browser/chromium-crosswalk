@@ -11,13 +11,13 @@
 #include "build/build_config.h"
 #include "media/base/media.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/WebKit/public/platform/WebThread.h"
 #include "third_party/WebKit/public/platform/scheduler/renderer/renderer_scheduler.h"
 #include "third_party/WebKit/public/platform/scheduler/test/renderer_scheduler_test_support.h"
 #include "third_party/WebKit/public/web/WebKit.h"
 
 #if defined(OS_ANDROID)
-#include "base/android/jni_android.h"
-#include "media/base/android/media_jni_registrar.h"
+#include "media/base/android/media_codec_util.h"
 #endif
 
 #if !defined(OS_IOS)
@@ -74,7 +74,8 @@ void BlinkMediaTestSuite::Initialize() {
   base::TestSuite::Initialize();
 
 #if defined(OS_ANDROID)
-  media::RegisterJni(base::android::AttachCurrentThread());
+  if (media::MediaCodecUtil::IsMediaCodecAvailable())
+    media::EnablePlatformDecoderSupport();
 #endif
 
   // Run this here instead of main() to ensure an AtExitManager is already

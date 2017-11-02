@@ -33,7 +33,7 @@ static const int kDefaultVideoUnderflowThresholdMs = 3000;
 
 static const int kAudioRestartUnderflowThresholdMs = 2000;
 
-class RendererImpl::RendererClientInternal : public RendererClient {
+class RendererImpl::RendererClientInternal final : public RendererClient {
  public:
   RendererClientInternal(DemuxerStream::Type type, RendererImpl* renderer)
       : type_(type), renderer_(renderer) {
@@ -50,6 +50,12 @@ class RendererImpl::RendererClientInternal : public RendererClient {
   }
   void OnWaitingForDecryptionKey() override {
     renderer_->OnWaitingForDecryptionKey();
+  }
+  void OnAudioConfigChange(const AudioDecoderConfig& config) override {
+    renderer_->OnAudioConfigChange(config);
+  }
+  void OnVideoConfigChange(const VideoDecoderConfig& config) override {
+    renderer_->OnVideoConfigChange(config);
   }
   void OnVideoNaturalSizeChange(const gfx::Size& size) override {
     DCHECK(type_ == DemuxerStream::VIDEO);
@@ -167,17 +173,13 @@ void RendererImpl::SetCdm(CdmContext* cdm_context,
   }
 
   cdm_context_ = cdm_context;
+  cdm_attached_cb.Run(true);
 
-  if (state_ != STATE_INIT_PENDING_CDM) {
-    cdm_attached_cb.Run(true);
+  if (state_ != STATE_INIT_PENDING_CDM)
     return;
-  }
 
   DCHECK(!init_cb_.is_null());
   state_ = STATE_INITIALIZING;
-  // |cdm_attached_cb| will be fired after initialization finishes.
-  pending_cdm_attached_cb_ = cdm_attached_cb;
-
   InitializeAudioRenderer();
 }
 
@@ -264,6 +266,13 @@ void RendererImpl::SetVolume(float volume) {
 base::TimeDelta RendererImpl::GetMediaTime() {
   // No BelongsToCurrentThread() checking because this can be called from other
   // threads.
+  {
+    base::AutoLock lock(restarting_audio_lock_);
+    if (restarting_audio_) {
+      DCHECK_NE(kNoTimestamp, restarting_audio_time_);
+      return restarting_audio_time_;
+    }
+  }
   return time_source_->CurrentMediaTime();
 }
 
@@ -327,10 +336,6 @@ bool RendererImpl::HasEncryptedStream() {
 
 void RendererImpl::FinishInitialization(PipelineStatus status) {
   DCHECK(!init_cb_.is_null());
-
-  if (!pending_cdm_attached_cb_.is_null())
-    base::ResetAndReturn(&pending_cdm_attached_cb_).Run(status == PIPELINE_OK);
-
   base::ResetAndReturn(&init_cb_).Run(status);
 }
 
@@ -575,7 +580,11 @@ void RendererImpl::OnStreamStatusChanged(DemuxerStream* stream,
   } else if (stream->type() == DemuxerStream::AUDIO) {
     DCHECK(audio_renderer_);
     DCHECK(time_source_);
-    restarting_audio_ = true;
+    {
+      base::AutoLock lock(restarting_audio_lock_);
+      restarting_audio_time_ = time;
+      restarting_audio_ = true;
+    }
     base::Closure handle_track_status_cb =
         base::Bind(stream == current_audio_stream_
                        ? &RendererImpl::RestartAudioRenderer
@@ -769,7 +778,11 @@ void RendererImpl::OnStreamRestartCompleted() {
            << " restarting_video_=" << restarting_video_;
   DCHECK(task_runner_->BelongsToCurrentThread());
   DCHECK(restarting_audio_ || restarting_video_);
-  restarting_audio_ = false;
+  {
+    base::AutoLock lock(restarting_audio_lock_);
+    restarting_audio_ = false;
+    restarting_audio_time_ = kNoTimestamp;
+  }
   restarting_video_ = false;
   if (!pending_actions_.empty()) {
     base::Closure closure = pending_actions_.front();
@@ -985,6 +998,16 @@ void RendererImpl::OnError(PipelineStatus error) {
 void RendererImpl::OnWaitingForDecryptionKey() {
   DCHECK(task_runner_->BelongsToCurrentThread());
   client_->OnWaitingForDecryptionKey();
+}
+
+void RendererImpl::OnAudioConfigChange(const AudioDecoderConfig& config) {
+  DCHECK(task_runner_->BelongsToCurrentThread());
+  client_->OnAudioConfigChange(config);
+}
+
+void RendererImpl::OnVideoConfigChange(const VideoDecoderConfig& config) {
+  DCHECK(task_runner_->BelongsToCurrentThread());
+  client_->OnVideoConfigChange(config);
 }
 
 void RendererImpl::OnVideoNaturalSizeChange(const gfx::Size& size) {

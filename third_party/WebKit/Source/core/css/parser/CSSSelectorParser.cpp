@@ -210,6 +210,11 @@ bool IsSimpleSelectorValidAfterPseudoElement(
     return true;
   if (compound_pseudo_element == CSSSelector::kPseudoContent)
     return simple_selector.Match() != CSSSelector::kPseudoElement;
+  if (compound_pseudo_element == CSSSelector::kPseudoSlotted) {
+    return simple_selector.Match() == CSSSelector::kPseudoElement &&
+           (simple_selector.GetPseudoType() == CSSSelector::kPseudoBefore ||
+            simple_selector.GetPseudoType() == CSSSelector::kPseudoAfter);
+  }
   if (simple_selector.Match() != CSSSelector::kPseudoClass)
     return false;
   CSSSelector::PseudoType pseudo = simple_selector.GetPseudoType();
@@ -239,7 +244,7 @@ std::unique_ptr<CSSParserSelector> CSSSelectorParser::ConsumeCompoundSelector(
       compound_pseudo_element = compound_selector->GetPseudoType();
   }
   if (context_->IsHTMLDocument())
-    element_name = element_name.DeprecatedLower();
+    element_name = element_name.LowerASCII();
 
   while (std::unique_ptr<CSSParserSelector> simple_selector =
              ConsumeSimpleSelector(range)) {
@@ -388,7 +393,7 @@ std::unique_ptr<CSSParserSelector> CSSSelectorParser::ConsumeAttribute(
   block.ConsumeWhitespace();
 
   if (context_->IsHTMLDocument())
-    attribute_name = attribute_name.DeprecatedLower();
+    attribute_name = attribute_name.LowerASCII();
 
   AtomicString namespace_uri = DetermineNamespace(namespace_prefix);
   if (namespace_uri.IsNull())
@@ -442,9 +447,9 @@ std::unique_ptr<CSSParserSelector> CSSSelectorParser::ConsumePseudo(
 
   AtomicString value = token.Value().ToAtomicString().LowerASCII();
   bool has_arguments = token.GetType() == kFunctionToken;
-  selector->UpdatePseudoType(value, has_arguments);
+  selector->UpdatePseudoType(value, *context_, has_arguments, context_->Mode());
 
-  if (!RuntimeEnabledFeatures::cssSelectorsFocusWithinEnabled() &&
+  if (!RuntimeEnabledFeatures::CSSSelectorsFocusWithinEnabled() &&
       selector->GetPseudoType() == CSSSelector::kPseudoFocusWithin)
     return nullptr;
 
@@ -553,7 +558,7 @@ CSSSelector::RelationType CSSSelectorParser::ConsumeCombinator(
 
     case '>':
       if (!RuntimeEnabledFeatures::
-              shadowPiercingDescendantCombinatorEnabled() ||
+              ShadowPiercingDescendantCombinatorEnabled() ||
           context_->IsDynamicProfile() ||
           range.Peek(1).GetType() != kDelimiterToken ||
           range.Peek(1).Delimiter() != '>') {
@@ -582,7 +587,11 @@ CSSSelector::RelationType CSSSelectorParser::ConsumeCombinator(
       const CSSParserToken& slash = range.ConsumeIncludingWhitespace();
       if (slash.GetType() != kDelimiterToken || slash.Delimiter() != '/')
         failed_parsing_ = true;
-      return CSSSelector::kShadowDeep;
+      if (RuntimeEnabledFeatures::DeepCombinatorInCSSDynamicProfileEnabled()) {
+        return CSSSelector::kShadowDeep;
+      }
+      return context_->IsDynamicProfile() ? CSSSelector::kShadowDeepAsDescendant
+                                          : CSSSelector::kShadowDeep;
     }
 
     default:
@@ -630,7 +639,7 @@ bool CSSSelectorParser::ConsumeANPlusB(CSSParserTokenRange& range,
   const CSSParserToken& token = range.Consume();
   if (token.GetType() == kNumberToken &&
       token.GetNumericValueType() == kIntegerValueType) {
-    result = std::make_pair(0, static_cast<int>(token.NumericValue()));
+    result = std::make_pair(0, clampTo<int>(token.NumericValue()));
     return true;
   }
   if (token.GetType() == kIdentToken) {
@@ -654,7 +663,7 @@ bool CSSSelectorParser::ConsumeANPlusB(CSSParserTokenRange& range,
     n_string = range.Consume().Value().ToString();
   } else if (token.GetType() == kDimensionToken &&
              token.GetNumericValueType() == kIntegerValueType) {
-    result.first = token.NumericValue();
+    result.first = clampTo<int>(token.NumericValue());
     n_string = token.Value().ToString();
   } else if (token.GetType() == kIdentToken) {
     if (token.Value()[0] == '-') {
@@ -701,9 +710,14 @@ bool CSSSelectorParser::ConsumeANPlusB(CSSParserTokenRange& range,
     return false;
   if ((b.GetNumericSign() == kNoSign) == (sign == kNoSign))
     return false;
-  result.second = b.NumericValue();
-  if (sign == kMinusSign)
-    result.second = -result.second;
+  result.second = clampTo<int>(b.NumericValue());
+  if (sign == kMinusSign) {
+    // Negating minimum integer returns itself, instead return max integer.
+    if (UNLIKELY(result.second == std::numeric_limits<int>::min()))
+      result.second = std::numeric_limits<int>::max();
+    else
+      result.second = -result.second;
+  }
   return true;
 }
 
@@ -757,13 +771,15 @@ void CSSSelectorParser::PrependTypeSelectorIfNeeded(
   // ::cue, ::shadow), we need a universal selector to set the combinator
   // (relation) on in the cases where there are no simple selectors preceding
   // the pseudo element.
-  bool explicit_for_host =
-      compound_selector->IsHostPseudoSelector() && !element_name.IsNull();
-  if (tag != AnyQName() || explicit_for_host ||
-      compound_selector->NeedsImplicitShadowCombinatorForMatching())
+  bool is_host_pseudo = compound_selector->IsHostPseudoSelector();
+  if (is_host_pseudo && element_name.IsNull() && namespace_prefix.IsNull())
+    return;
+  if (tag != AnyQName() || is_host_pseudo ||
+      compound_selector->NeedsImplicitShadowCombinatorForMatching()) {
     compound_selector->PrependTagSelector(
         tag, determined_prefix == g_null_atom &&
-                 determined_element_name == g_star_atom && !explicit_for_host);
+                 determined_element_name == g_star_atom && !is_host_pseudo);
+  }
 }
 
 std::unique_ptr<CSSParserSelector>
@@ -828,66 +844,111 @@ void CSSSelectorParser::RecordUsageAndDeprecations(
        selector = CSSSelectorList::Next(*selector)) {
     for (const CSSSelector* current = selector; current;
          current = current->TagHistory()) {
-      UseCounter::Feature feature = UseCounter::kNumberOfFeatures;
+      WebFeature feature = WebFeature::kNumberOfFeatures;
       switch (current->GetPseudoType()) {
         case CSSSelector::kPseudoAny:
-          feature = UseCounter::kCSSSelectorPseudoAny;
+          feature = WebFeature::kCSSSelectorPseudoAny;
           break;
         case CSSSelector::kPseudoUnresolved:
-          feature = UseCounter::kCSSSelectorPseudoUnresolved;
+          feature = WebFeature::kCSSSelectorPseudoUnresolved;
           break;
         case CSSSelector::kPseudoDefined:
-          feature = UseCounter::kCSSSelectorPseudoDefined;
+          feature = WebFeature::kCSSSelectorPseudoDefined;
           break;
         case CSSSelector::kPseudoSlotted:
-          feature = UseCounter::kCSSSelectorPseudoSlotted;
+          feature = WebFeature::kCSSSelectorPseudoSlotted;
           break;
         case CSSSelector::kPseudoContent:
-          feature = UseCounter::kCSSSelectorPseudoContent;
+          feature = WebFeature::kCSSSelectorPseudoContent;
           break;
         case CSSSelector::kPseudoHost:
-          feature = UseCounter::kCSSSelectorPseudoHost;
+          feature = WebFeature::kCSSSelectorPseudoHost;
           break;
         case CSSSelector::kPseudoHostContext:
-          feature = UseCounter::kCSSSelectorPseudoHostContext;
+          feature = WebFeature::kCSSSelectorPseudoHostContext;
           break;
         case CSSSelector::kPseudoFullScreenAncestor:
-          feature = UseCounter::kCSSSelectorPseudoFullScreenAncestor;
+          feature = WebFeature::kCSSSelectorPseudoFullScreenAncestor;
           break;
         case CSSSelector::kPseudoFullScreen:
-          feature = UseCounter::kCSSSelectorPseudoFullScreen;
+          feature = WebFeature::kCSSSelectorPseudoFullScreen;
           break;
         case CSSSelector::kPseudoListBox:
           if (context_->Mode() != kUASheetMode)
-            feature = UseCounter::kCSSSelectorInternalPseudoListBox;
+            feature = WebFeature::kCSSSelectorInternalPseudoListBox;
           break;
         case CSSSelector::kPseudoWebKitCustomElement:
           if (context_->Mode() != kUASheetMode) {
             if (current->Value() ==
                 "-internal-media-controls-overlay-cast-button") {
-              feature = UseCounter::
+              feature = WebFeature::
                   kCSSSelectorInternalMediaControlsOverlayCastButton;
+            } else if (current->Value() == "-webkit-media-controls") {
+              feature = WebFeature::kCSSSelectorWebkitMediaControls;
+            } else if (current->Value() ==
+                       "-webkit-media-controls-overlay-enclosure") {
+              feature =
+                  WebFeature::kCSSSelectorWebkitMediaControlsOverlayEnclosure;
+            } else if (current->Value() ==
+                       "-webkit-media-controls-overlay-play-button") {
+              feature =
+                  WebFeature::kCSSSelectorWebkitMediaControlsOverlayPlayButton;
+            } else if (current->Value() == "-webkit-media-controls-enclosure") {
+              feature = WebFeature::kCSSSelectorWebkitMediaControlsEnclosure;
+            } else if (current->Value() == "-webkit-media-controls-panel") {
+              feature = WebFeature::kCSSSelectorWebkitMediaControlsPanel;
+            } else if (current->Value() ==
+                       "-webkit-media-controls-play-button") {
+              feature = WebFeature::kCSSSelectorWebkitMediaControlsPlayButton;
+            } else if (current->Value() ==
+                       "-webkit-media-controls-current-time-display") {
+              feature =
+                  WebFeature::kCSSSelectorWebkitMediaControlsCurrentTimeDisplay;
+            } else if (current->Value() ==
+                       "-webkit-media-controls-time-remaining-display") {
+              feature = WebFeature::
+                  kCSSSelectorWebkitMediaControlsTimeRemainingDisplay;
+            } else if (current->Value() == "-webkit-media-controls-timeline") {
+              feature = WebFeature::kCSSSelectorWebkitMediaControlsTimeline;
+            } else if (current->Value() ==
+                       "-webkit-media-controls-timeline-container") {
+              feature =
+                  WebFeature::kCSSSelectorWebkitMediaControlsTimelineContainer;
+            } else if (current->Value() ==
+                       "-webkit-media-controls-mute-button") {
+              feature = WebFeature::kCSSSelectorWebkitMediaControlsMuteButton;
+            } else if (current->Value() ==
+                       "-webkit-media-controls-volume-slider") {
+              feature = WebFeature::kCSSSelectorWebkitMediaControlsVolumeSlider;
+            } else if (current->Value() ==
+                       "-webkit-media-controls-fullscreen-button") {
+              feature =
+                  WebFeature::kCSSSelectorWebkitMediaControlsFullscreenButton;
+            } else if (current->Value() ==
+                       "-webkit-media-controls-toggle-closed-captions-button") {
+              feature = WebFeature::
+                  kCSSSelectorWebkitMediaControlsToggleClosedCaptionsButton;
             }
           }
           break;
         case CSSSelector::kPseudoSpatialNavigationFocus:
           if (context_->Mode() != kUASheetMode) {
             feature =
-                UseCounter::kCSSSelectorInternalPseudoSpatialNavigationFocus;
+                WebFeature::kCSSSelectorInternalPseudoSpatialNavigationFocus;
           }
           break;
         case CSSSelector::kPseudoReadOnly:
           if (context_->Mode() != kUASheetMode)
-            feature = UseCounter::kCSSSelectorPseudoReadOnly;
+            feature = WebFeature::kCSSSelectorPseudoReadOnly;
           break;
         case CSSSelector::kPseudoReadWrite:
           if (context_->Mode() != kUASheetMode)
-            feature = UseCounter::kCSSSelectorPseudoReadWrite;
+            feature = WebFeature::kCSSSelectorPseudoReadWrite;
           break;
         default:
           break;
       }
-      if (feature != UseCounter::kNumberOfFeatures) {
+      if (feature != WebFeature::kNumberOfFeatures) {
         if (!Deprecation::DeprecationMessage(feature).IsEmpty() &&
             style_sheet_->AnyOwnerDocument()) {
           Deprecation::CountDeprecation(*style_sheet_->AnyOwnerDocument(),
@@ -897,7 +958,7 @@ void CSSSelectorParser::RecordUsageAndDeprecations(
         }
       }
       if (current->Relation() == CSSSelector::kIndirectAdjacent)
-        context_->Count(UseCounter::kCSSSelectorIndirectAdjacent);
+        context_->Count(WebFeature::kCSSSelectorIndirectAdjacent);
       if (current->SelectorList())
         RecordUsageAndDeprecations(*current->SelectorList());
     }

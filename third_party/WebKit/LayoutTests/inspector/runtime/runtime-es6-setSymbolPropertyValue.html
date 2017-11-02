@@ -14,53 +14,32 @@ function dumpSymbolProperty(label)
     console.log("");
 }
 
-function test()
-{
-    var obj1, name;
+function test() {
+  var obj1, name;
 
-    InspectorTest.runTestSuite([
-        function testSetUp(next)
-        {
-            InspectorTest.evaluateInPage("dumpSymbolProperty('Initial')", step0);
+  TestRunner.runTestSuite([
+    function testSetUp(next) {
+      TestRunner.evaluateInPage('dumpSymbolProperty(\'Initial\')', step0);
 
-            function step0()
-            {
-                InspectorTest.RuntimeAgent.evaluate("object1", step1);
-            }
+      async function step0() {
+        var result = await TestRunner.RuntimeAgent.evaluate('object1');
+        obj1 = TestRunner.runtimeModel.createRemoteObject(result);
+        result = await TestRunner.RuntimeAgent.evaluate('symbol1');
+        name = SDK.RemoteObject.toCallArgument(TestRunner.runtimeModel.createRemoteObject(result));
+        next();
+      }
+    },
 
-            function step1(error, result, exceptionDetails)
-            {
-                obj1 = InspectorTest.runtimeModel.createRemoteObject(result);
-                InspectorTest.RuntimeAgent.evaluate("symbol1", step2);
-            }
+    async function testSetSymbolPropertyValue(next) {
+      await obj1.setPropertyValue(name, '3');
+      TestRunner.evaluateInPage('dumpSymbolProperty(\'Set property\')', next);
+    },
 
-            function step2(error, result, exceptionDetails)
-            {
-                name = SDK.RemoteObject.toCallArgument(InspectorTest.runtimeModel.createRemoteObject(result));
-                next();
-            }
-        },
-
-        function testSetSymbolPropertyValue(next)
-        {
-            obj1.setPropertyValue(name, "3", step1);
-
-            function step1()
-            {
-                InspectorTest.evaluateInPage("dumpSymbolProperty('Set property')", next);
-            }
-        },
-
-        function testDeleteSymbolProperty(next)
-        {
-            obj1.deleteProperty(name, step1);
-
-            function step1()
-            {
-                InspectorTest.evaluateInPage("dumpSymbolProperty('Delete property')", next);
-            }
-        }
-    ]);
+    async function testDeleteSymbolProperty(next) {
+      await obj1.deleteProperty(name);
+      TestRunner.evaluateInPage('dumpSymbolProperty(\'Delete property\')', next);
+    }
+  ]);
 }
 
 </script>

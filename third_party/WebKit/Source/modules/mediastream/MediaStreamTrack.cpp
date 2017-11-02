@@ -32,7 +32,7 @@
 #include "core/dom/Document.h"
 #include "core/dom/ExceptionCode.h"
 #include "core/dom/ExecutionContext.h"
-#include "core/events/Event.h"
+#include "core/dom/events/Event.h"
 #include "core/frame/Deprecation.h"
 #include "modules/imagecapture/ImageCapture.h"
 #include "modules/mediastream/MediaConstraintsImpl.h"
@@ -64,13 +64,17 @@ MediaStreamTrack* MediaStreamTrack::Create(ExecutionContext* context,
 MediaStreamTrack::MediaStreamTrack(ExecutionContext* context,
                                    MediaStreamComponent* component)
     : ContextLifecycleObserver(context),
-      ready_state_(MediaStreamSource::kReadyStateLive),
+      ready_state_(component->Source()->GetReadyState()),
       is_iterating_registered_media_streams_(false),
       stopped_(false),
       component_(component),
       // The source's constraints aren't yet initialized at creation time.
       constraints_() {
   component_->Source()->AddObserver(this);
+
+  // If the source is already non-live at this point, the observer won't have
+  // been called. Update the muted state manually.
+  component_->SetMuted(ready_state_ == MediaStreamSource::kReadyStateMuted);
 
   if (component_->Source() &&
       component_->Source()->GetType() == MediaStreamSource::kTypeVideo) {
@@ -183,11 +187,12 @@ String MediaStreamTrack::readyState() const {
   if (Ended())
     return "ended";
 
+  // Although muted is tracked as a ReadyState, only "live" and "ended" are
+  // visible externally.
   switch (ready_state_) {
     case MediaStreamSource::kReadyStateLive:
-      return "live";
     case MediaStreamSource::kReadyStateMuted:
-      return "muted";
+      return "live";
     case MediaStreamSource::kReadyStateEnded:
       return "ended";
   }
@@ -202,7 +207,6 @@ void MediaStreamTrack::stopTrack(ExceptionState& exception_state) {
 
   ready_state_ = MediaStreamSource::kReadyStateEnded;
   MediaStreamCenter::Instance().DidStopMediaStreamTrack(Component());
-  DispatchEvent(Event::Create(EventTypeNames::ended));
   PropagateTrackEnded();
 }
 
@@ -263,10 +267,15 @@ void MediaStreamTrack::getSettings(MediaTrackSettings& settings) {
     settings.setWidth(platform_settings.width);
   if (platform_settings.HasHeight())
     settings.setHeight(platform_settings.height);
-  if (RuntimeEnabledFeatures::mediaCaptureDepthEnabled() &&
+  if (platform_settings.HasAspectRatio())
+    settings.setAspectRatio(platform_settings.aspect_ratio);
+  if (RuntimeEnabledFeatures::MediaCaptureDepthVideoKindEnabled() &&
       component_->Source()->GetType() == MediaStreamSource::kTypeVideo) {
     if (platform_settings.HasVideoKind())
       settings.setVideoKind(platform_settings.video_kind);
+  }
+  if (RuntimeEnabledFeatures::MediaCaptureDepthEnabled() &&
+      component_->Source()->GetType() == MediaStreamSource::kTypeVideo) {
     if (platform_settings.HasDepthNear())
       settings.setDepthNear(platform_settings.depth_near);
     if (platform_settings.HasDepthFar())
@@ -296,6 +305,11 @@ void MediaStreamTrack::getSettings(MediaTrackSettings& settings) {
         break;
     }
   }
+  if (platform_settings.HasEchoCancellationValue()) {
+    settings.setEchoCancellation(
+        static_cast<bool>(platform_settings.echo_cancellation));
+  }
+
   if (image_capture_)
     image_capture_->GetMediaTrackSettings(settings);
 }
@@ -317,7 +331,7 @@ ScriptPromise MediaStreamTrack::applyConstraints(
   }
 
   // |constraints| empty means "remove/clear all current constraints".
-  if (!constraints.hasAdvanced())
+  if (!constraints.hasAdvanced() || constraints.advanced().IsEmpty())
     image_capture_->ClearMediaTrackConstraints(resolver);
   else
     image_capture_->SetMediaTrackConstraints(resolver, constraints.advanced());
@@ -394,7 +408,7 @@ void MediaStreamTrack::RegisterMediaStream(MediaStream* media_stream) {
 void MediaStreamTrack::UnregisterMediaStream(MediaStream* media_stream) {
   CHECK(!is_iterating_registered_media_streams_);
   HeapHashSet<Member<MediaStream>>::iterator iter =
-      registered_media_streams_.Find(media_stream);
+      registered_media_streams_.find(media_stream);
   CHECK(iter != registered_media_streams_.end());
   registered_media_streams_.erase(iter);
 }

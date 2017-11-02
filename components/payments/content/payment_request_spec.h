@@ -5,20 +5,29 @@
 #ifndef COMPONENTS_PAYMENTS_CONTENT_PAYMENT_REQUEST_SPEC_H_
 #define COMPONENTS_PAYMENTS_CONTENT_PAYMENT_REQUEST_SPEC_H_
 
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "base/macros.h"
 #include "base/observer_list.h"
-#include "components/payments/content/payment_request.mojom.h"
+#include "base/strings/string16.h"
+#include "components/autofill/core/browser/credit_card.h"
 #include "components/payments/core/currency_formatter.h"
 #include "components/payments/core/payment_options_provider.h"
+#include "third_party/WebKit/public/platform/modules/payments/payment_request.mojom.h"
+#include "url/gurl.h"
 
 namespace payments {
 
-// Identifier for the basic card payment method in the PaymentMethodData.
+class PaymentInstrument;
+
+// Identifier for the basic card payment method and google-related payment
+// methods in the PaymentMethodData.
 extern const char kBasicCardMethodName[];
+extern const char kGooglePayMethodName[];
+extern const char kAndroidPayMethodName[];
 
 // The spec contains all the options that the merchant has specified about this
 // Payment Request. It's a (mostly) read-only view, which can be updated in
@@ -37,9 +46,6 @@ class PaymentRequestSpec : public PaymentOptionsProvider {
   // notification about spec events.
   class Observer {
    public:
-    // Called when the provided spec (details, options, method_data) is invalid.
-    virtual void OnInvalidSpecProvided() = 0;
-
     // Called when the website is notified that the user selected shipping
     // options or a shipping address. This will be followed by a call to
     // OnSpecUpdated or the PaymentRequest being aborted due to a timeout.
@@ -79,47 +85,75 @@ class PaymentRequestSpec : public PaymentOptionsProvider {
   const std::set<std::string>& supported_card_networks_set() const {
     return supported_card_networks_set_;
   }
+  const std::map<std::string, std::set<std::string>>& stringified_method_data()
+      const {
+    return stringified_method_data_;
+  }
+  const std::set<autofill::CreditCard::CardType>& supported_card_types_set()
+      const {
+    return supported_card_types_set_;
+  }
+  const std::vector<GURL>& url_payment_method_identifiers() const {
+    return url_payment_method_identifiers_;
+  }
   // Returns whether the |method_name| was specified as supported through the
   // "basic-card" payment method. If false, it means either the |method_name| is
   // not supported at all, or specified directly in supportedMethods.
   bool IsMethodSupportedThroughBasicCard(const std::string& method_name);
 
-  // Uses CurrencyFormatter to format |amount| with the currency symbol for this
-  // request's currency. Will use currency of the "total" display item, because
-  // all items are supposed to have the same currency in a given request.
-  base::string16 GetFormattedCurrencyAmount(const std::string& amount);
+  // Uses CurrencyFormatter to format the value of |currency_amount| with the
+  // currency symbol for its currency.
+  base::string16 GetFormattedCurrencyAmount(
+      const mojom::PaymentCurrencyAmountPtr& currency_amount);
 
-  // Uses CurrencyFormatter to get the formatted currency code for this
-  // request's currency. Will use currency of the "total" display item, because
-  // all items are supposed to have the same currency in a given request.
-  std::string GetFormattedCurrencyCode();
+  // Uses CurrencyFormatter to get the formatted currency code for
+  // |currency_amount|'s currency.
+  std::string GetFormattedCurrencyCode(
+      const mojom::PaymentCurrencyAmountPtr& currency_amount);
 
   mojom::PaymentShippingOption* selected_shipping_option() const {
     return selected_shipping_option_;
   }
+  // This may contain a non-empty error returned by the merchant. In this case
+  // PaymentRequestState::selected_shipping_option_error_profile() will contain
+  // the profile related to the error.
+  const base::string16& selected_shipping_option_error() const {
+    return selected_shipping_option_error_;
+  }
+
+  void StartWaitingForUpdateWith(UpdateReason reason);
+  bool IsMixedCurrency() const;
+
+  UpdateReason current_update_reason() const { return current_update_reason_; }
+
+  // Returns the total object of this payment request, taking into account the
+  // applicable modifier for |selected_instrument| if any.
+  const mojom::PaymentItemPtr& GetTotal(
+      PaymentInstrument* selected_instrument) const;
+  // Returns the display items for this payment request, taking into account the
+  // applicable modifier for |selected_instrument| if any.
+  std::vector<const mojom::PaymentItemPtr*> GetDisplayItems(
+      PaymentInstrument* selected_instrument) const;
+
+  const std::vector<mojom::PaymentShippingOptionPtr>& GetShippingOptions()
+      const;
+
+ private:
+  // Returns the first applicable modifier in the Payment Request for the
+  // |selected_instrument|.
+  const mojom::PaymentDetailsModifierPtr* GetApplicableModifier(
+      PaymentInstrument* selected_instrument) const;
 
   const mojom::PaymentDetails& details() const { return *details_.get(); }
 
-  void StartWaitingForUpdateWith(UpdateReason reason);
-
- private:
-  friend class PaymentRequestDialogView;
-  void add_observer_for_testing(Observer* observer_for_testing) {
-    observer_for_testing_ = observer_for_testing;
-  }
-
-  // Validates the |method_data| and fills |supported_card_networks_|,
-  // |supported_card_networks_set_| and |basic_card_specified_networks_|.
-  void PopulateValidatedMethodData(
-      const std::vector<mojom::PaymentMethodDataPtr>& method_data);
-
-  // Updates the selected_shipping_option based on the data passed to this
+  // Updates the |selected_shipping_option| based on the data passed to this
   // payment request by the website. This will set selected_shipping_option_ to
-  // the last option marked selected in the options array.
-  void UpdateSelectedShippingOption();
+  // the last option marked selected in the options array. If no options are
+  // provided and this method is called |after_update|, it means the merchant
+  // doesn't ship to this location. In this case,
+  // |selected_shipping_option_error_| will be set.
+  void UpdateSelectedShippingOption(bool after_update);
 
-  // Will notify all observers that the spec is invalid.
-  void NotifyOnInvalidSpecProvided();
   // Will notify all observers that the spec has changed.
   void NotifyOnSpecUpdated();
 
@@ -137,8 +171,10 @@ class PaymentRequestSpec : public PaymentOptionsProvider {
   const std::string app_locale_;
   // The currently shipping option as specified by the merchant.
   mojom::PaymentShippingOption* selected_shipping_option_;
+  base::string16 selected_shipping_option_error_;
 
-  std::unique_ptr<CurrencyFormatter> currency_formatter_;
+  // One currency formatter is instantiated and cached per currency code.
+  std::map<std::string, CurrencyFormatter> currency_formatters_;
 
   // A list/set of supported basic card networks. The list is used to keep the
   // order in which they were specified by the merchant. The set is used for
@@ -146,14 +182,28 @@ class PaymentRequestSpec : public PaymentOptionsProvider {
   std::vector<std::string> supported_card_networks_;
   std::set<std::string> supported_card_networks_set_;
 
+  std::set<autofill::CreditCard::CardType> supported_card_types_set_;
+
   // Only the set of basic-card specified networks. NOTE: callers should use
   // |supported_card_networks_set_| to check merchant support.
   std::set<std::string> basic_card_specified_networks_;
 
+  // A list of supported url-based payment method identifers specified by the
+  // merchant. This encompasses one of the two types of payment method
+  // identifers, the other being standardized payment method identifiers i.e.,
+  // basic-card.
+  std::vector<GURL> url_payment_method_identifiers_;
+
+  // A mapping of the payment method names to the corresponding JSON-stringified
+  // payment method specific data.
+  std::map<std::string, std::set<std::string>> stringified_method_data_;
+
+  // The reason why this payment request is waiting for updateWith.
+  UpdateReason current_update_reason_;
+
   // The |observer_for_testing_| will fire after all the |observers_| have been
   // notified.
   base::ObserverList<Observer> observers_;
-  Observer* observer_for_testing_;
 
   DISALLOW_COPY_AND_ASSIGN(PaymentRequestSpec);
 };

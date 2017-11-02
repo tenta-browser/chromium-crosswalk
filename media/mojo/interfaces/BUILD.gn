@@ -13,20 +13,21 @@ mojom("interfaces") {
     "decryptor.mojom",
     "demuxer_stream.mojom",
     "interface_factory.mojom",
+    "media_log.mojom",
     "media_service.mojom",
     "media_types.mojom",
     "output_protection.mojom",
+    "platform_verification.mojom",
     "provision_fetcher.mojom",
     "renderer.mojom",
+    "video_decode_stats_recorder.mojom",
     "video_decoder.mojom",
+    "video_encode_accelerator.mojom",
+    "watch_time_recorder.mojom",
   ]
 
   if (is_android) {
     sources += [ "media_drm_storage.mojom" ]
-  }
-
-  if (is_chromeos) {
-    sources += [ "platform_verification.mojom" ]
   }
 
   if (is_android) {
@@ -43,8 +44,50 @@ mojom("interfaces") {
   ]
 }
 
+mojom("constants") {
+  sources = [
+    "constants.mojom",
+  ]
+}
+
+mojom("remoting_common") {
+  sources = [
+    "remoting_common.mojom",
+  ]
+
+  # TODO(crbug.com/699569): Convert to use the new JS bindings.
+  use_new_js_bindings = false
+}
+
+mojom("mirror_service_remoting") {
+  sources = [
+    "mirror_service_remoting.mojom",
+  ]
+
+  public_deps = [
+    ":remoting_common",
+  ]
+
+  # TODO(crbug.com/699569): Convert to use the new JS bindings.
+  use_new_js_bindings = false
+}
+
 mojom("remoting") {
   sources = [
     "remoting.mojom",
+  ]
+
+  public_deps = [
+    ":remoting_common",
+  ]
+}
+
+mojom("test_interfaces") {
+  testonly = true
+  sources = [
+    "traits_test_service.mojom",
+  ]
+  public_deps = [
+    ":interfaces",
   ]
 }

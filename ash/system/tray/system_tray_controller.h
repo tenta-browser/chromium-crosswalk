@@ -17,19 +17,20 @@ namespace ash {
 // Both implements mojom::SystemTray and wraps the mojom::SystemTrayClient
 // interface. Implements both because it caches state pushed down from the
 // browser process via SystemTray so it can be synchronously queried inside ash.
-//
-// Conceptually similar to historical ash-to-chrome interfaces like
-// SystemTrayDelegate. Lives on the main thread.
+// Lives on the main thread.
 //
 // TODO: Consider renaming this to SystemTrayClient or renaming the current
 // SystemTray to SystemTrayView and making this class SystemTray.
-class ASH_EXPORT SystemTrayController
-    : NON_EXPORTED_BASE(public mojom::SystemTray) {
+class ASH_EXPORT SystemTrayController : public mojom::SystemTray {
  public:
   SystemTrayController();
   ~SystemTrayController() override;
 
   base::HourClockType hour_clock_type() const { return hour_clock_type_; }
+  const std::string& enterprise_display_domain() const {
+    return enterprise_display_domain_;
+  }
+  bool active_directory_managed() const { return active_directory_managed_; }
 
   // Wrappers around the mojom::SystemTrayClient interface.
   void ShowSettings();
@@ -44,12 +45,14 @@ class ASH_EXPORT SystemTrayController
   void ShowPowerSettings();
   void ShowChromeSlow();
   void ShowIMESettings();
+  void ShowAboutChromeOS();
   void ShowHelp();
   void ShowAccessibilityHelp();
   void ShowAccessibilitySettings();
   void ShowPaletteHelp();
   void ShowPaletteSettings();
   void ShowPublicAccountInfo();
+  void ShowEnterpriseInfo();
   void ShowNetworkConfigure(const std::string& network_id);
   void ShowNetworkCreate(const std::string& type);
   void ShowThirdPartyVpnCreate(const std::string& extension_id);
@@ -66,9 +69,13 @@ class ASH_EXPORT SystemTrayController
   void SetPrimaryTrayEnabled(bool enabled) override;
   void SetPrimaryTrayVisible(bool visible) override;
   void SetUse24HourClock(bool use_24_hour) override;
+  void SetEnterpriseDisplayDomain(const std::string& enterprise_display_domain,
+                                  bool active_directory_managed) override;
+  void SetPerformanceTracingIconVisible(bool visible) override;
   void ShowUpdateIcon(mojom::UpdateSeverity severity,
                       bool factory_reset_required,
                       mojom::UpdateType update_type) override;
+  void SetUpdateOverCellularAvailableIconVisible(bool visible) override;
 
  private:
   // Client interface in chrome browser. May be null in tests.
@@ -79,6 +86,13 @@ class ASH_EXPORT SystemTrayController
 
   // The type of clock hour display: 12 or 24 hour.
   base::HourClockType hour_clock_type_;
+
+  // The domain name of the organization that manages the device. Empty if the
+  // device is not enterprise enrolled or if it uses Active Directory.
+  std::string enterprise_display_domain_;
+
+  // Whether this is an Active Directory managed enterprise device.
+  bool active_directory_managed_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(SystemTrayController);
 };

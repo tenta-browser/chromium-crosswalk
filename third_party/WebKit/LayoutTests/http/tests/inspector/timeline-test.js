@@ -8,7 +8,6 @@ function wrapCallFunctionForTimeline(f)
 var initialize_Timeline = function() {
 
 InspectorTest.preloadPanel("timeline");
-Bindings.TempFile = InspectorTest.TempFileMock;
 
 // Scrub values when printing out these properties in the record or data field.
 InspectorTest.timelinePropertyFormatters = {
@@ -43,6 +42,7 @@ InspectorTest.timelinePropertyFormatters = {
     allottedMilliseconds: "formatAsTypeName",
     timedOut: "formatAsTypeName",
     networkTime: "formatAsTypeName",
+    timing: "formatAsTypeName",
 };
 
 InspectorTest.InvalidationFormatters = {
@@ -69,12 +69,12 @@ InspectorTest.formatters.formatAsInvalidationCause = function(cause)
     return "{reason: " + cause.reason + ", stackTrace: " + stackTrace + "}";
 }
 
-InspectorTest.preloadPanel("timeline");
-Bindings.TempFile = InspectorTest.TempFileMock;
-
-InspectorTest.createTracingModel = function()
+InspectorTest.createTracingModel = function(events)
 {
-    return new SDK.TracingModel(new Bindings.TempFileBackingStorage("tracing"));
+    var model = new SDK.TracingModel(new Bindings.TempFileBackingStorage("tracing"));
+    model.addEvents(events);
+    model.tracingComplete();
+    return model;
 }
 
 InspectorTest.tracingModel = function()
@@ -299,15 +299,6 @@ InspectorTest.findChildEvent = function(events, parentIndex, name)
     return null;
 }
 
-InspectorTest.FakeFileReader = function(input, delegate, callback)
-{
-    this._delegate = delegate;
-    this._callback = callback;
-    this._input = input;
-    this._loadedSize = 0;
-    this._fileSize = input.length;
-};
-
 InspectorTest.dumpFrame = function(frame)
 {
     var fieldsToDump = ["cpuTime", "duration", "startTime", "endTime", "id", "mainThreadFrameId", "timeByCategory", "other", "scripting", "painting", "rendering", "committedFrom", "idle"];
@@ -369,60 +360,10 @@ InspectorTest.dumpTimelineFlameChart = function(includeGroups) {
     InspectorTest.dumpFlameChartProvider(provider, includeGroups);
 }
 
-InspectorTest.FakeFileReader.prototype = {
-    start: function(output)
-    {
-        this._delegate.onTransferStarted(this);
-
-        var length = this._input.length;
-        var half = (length + 1) >> 1;
-
-        var chunk = this._input.substring(0, half);
-        this._loadedSize += chunk.length;
-        output.write(chunk);
-        this._delegate.onChunkTransferred(this);
-
-        chunk = this._input.substring(half);
-        this._loadedSize += chunk.length;
-        output.write(chunk);
-        this._delegate.onChunkTransferred(this);
-
-        output.close();
-        this._delegate.onTransferFinished(this);
-
-        this._callback();
-    },
-
-    cancel: function() { },
-
-    loadedSize: function()
-    {
-        return this._loadedSize;
-    },
-
-    fileSize: function()
-    {
-        return this._fileSize;
-    },
-
-    fileName: function()
-    {
-        return "fakeFile";
-    }
-};
-
 InspectorTest.loadTimeline = function(timelineData)
 {
-    var timeline = UI.panels.timeline;
-
-    function createFileReader(file, delegate)
-    {
-        return new InspectorTest.FakeFileReader(timelineData, delegate, timeline._saveToFile.bind(timeline));
-    }
-
-    InspectorTest.override(Timeline.TimelineLoader, "_createFileReader", createFileReader);
     var promise = new Promise(fulfill => InspectorTest.runWhenTimelineIsReady(fulfill));
-    timeline._loadFromFile({});
+    UI.panels.timeline._loadFromFile(new Blob([timelineData], {type: 'text/plain'}));
     return promise;
 }
 

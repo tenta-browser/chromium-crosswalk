@@ -6,7 +6,7 @@
 
 #include <memory>
 
-#import "base/mac/scoped_nsobject.h"
+#include "base/ios/ios_util.h"
 #include "base/run_loop.h"
 #include "google_apis/gaia/gaia_urls.h"
 #include "ios/chrome/browser/signin/gaia_auth_fetcher_ios_private.h"
@@ -20,6 +20,10 @@
 #import "third_party/ocmock/OCMock/OCMock.h"
 #import "third_party/ocmock/gtest_support.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 namespace {
 
 class FakeGaiaAuthFetcherIOSBridge : public GaiaAuthFetcherIOSBridge {
@@ -31,12 +35,11 @@ class FakeGaiaAuthFetcherIOSBridge : public GaiaAuthFetcherIOSBridge {
  private:
   WKWebView* BuildWKWebView() override {
     if (!mock_web_view_) {
-      mock_web_view_.reset(
-          [[OCMockObject niceMockForClass:[WKWebView class]] retain]);
+      mock_web_view_ = [OCMockObject niceMockForClass:[WKWebView class]];
     }
     return mock_web_view_;
   }
-  base::scoped_nsobject<id> mock_web_view_;
+  id mock_web_view_;
 };
 
 class MockGaiaConsumer : public GaiaAuthConsumer {
@@ -89,9 +92,15 @@ TEST_F(GaiaAuthFetcherIOSTest, StartOAuthLoginCancelled) {
       GoogleServiceAuthError(GoogleServiceAuthError::REQUEST_CANCELED);
   EXPECT_CALL(consumer_, OnClientLoginFailure(expected_error)).Times(1);
 
-  [static_cast<WKWebView*>([GetMockWKWebView() expect])
-      loadHTMLString:[OCMArg any]
-             baseURL:[OCMArg any]];
+  if (base::ios::IsRunningOnIOS11OrLater()) {
+    [static_cast<WKWebView*>([GetMockWKWebView() expect])
+        loadRequest:[OCMArg any]];
+  } else {
+    // TODO(crbug.com/740987): Remove this code once iOS 10 is dropped.
+    [static_cast<WKWebView*>([GetMockWKWebView() expect])
+        loadHTMLString:[OCMArg any]
+               baseURL:[OCMArg any]];
+  }
   [[GetMockWKWebView() expect] stopLoading];
 
   gaia_auth_fetcher_->StartOAuthLogin("fake_token", "gaia");

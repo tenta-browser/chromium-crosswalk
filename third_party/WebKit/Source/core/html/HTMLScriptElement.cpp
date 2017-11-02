@@ -32,7 +32,7 @@
 #include "core/dom/ScriptLoader.h"
 #include "core/dom/ScriptRunner.h"
 #include "core/dom/Text.h"
-#include "core/events/Event.h"
+#include "core/dom/events/Event.h"
 #include "core/frame/UseCounter.h"
 #include "core/frame/csp/ContentSecurityPolicy.h"
 
@@ -44,10 +44,10 @@ inline HTMLScriptElement::HTMLScriptElement(Document& document,
                                             bool was_inserted_by_parser,
                                             bool already_started,
                                             bool created_during_document_write)
-    : HTMLElement(scriptTag, document) {
-  InitializeScriptLoader(was_inserted_by_parser, already_started,
-                         created_during_document_write);
-}
+    : HTMLElement(scriptTag, document),
+      loader_(InitializeScriptLoader(was_inserted_by_parser,
+                                     already_started,
+                                     created_during_document_write)) {}
 
 HTMLScriptElement* HTMLScriptElement::Create(
     Document& document,
@@ -89,14 +89,6 @@ void HTMLScriptElement::ParseAttribute(
     LogUpdateAttributeIfIsolatedWorldAndInDocument("script", params);
   } else if (params.name == asyncAttr) {
     loader_->HandleAsyncAttribute();
-  } else if (params.name == nonceAttr) {
-    if (params.new_value == ContentSecurityPolicy::GetNonceReplacementString())
-      return;
-    setNonce(params.new_value);
-    if (RuntimeEnabledFeatures::hideNonceContentAttributeEnabled()) {
-      setAttribute(nonceAttr,
-                   ContentSecurityPolicy::GetNonceReplacementString());
-    }
   } else {
     HTMLElement::ParseAttribute(params);
   }
@@ -104,13 +96,16 @@ void HTMLScriptElement::ParseAttribute(
 
 Node::InsertionNotificationRequest HTMLScriptElement::InsertedInto(
     ContainerNode* insertion_point) {
+  ScriptType script_type = ScriptType::kClassic;
   if (insertion_point->isConnected() && HasSourceAttribute() &&
       !Loader()->IsScriptTypeSupported(
-          ScriptLoader::kDisallowLegacyTypeInTypeAttribute))
+          ScriptLoader::kDisallowLegacyTypeInTypeAttribute, script_type)) {
     UseCounter::Count(GetDocument(),
-                      UseCounter::kScriptElementWithInvalidTypeHasSrc);
+                      WebFeature::kScriptElementWithInvalidTypeHasSrc);
+  }
   HTMLElement::InsertedInto(insertion_point);
   LogAddElementIfIsolatedWorldAndInDocument("script", srcAttr);
+
   return kInsertionShouldCallDidNotifySubtreeInsertions;
 }
 
@@ -151,6 +146,10 @@ String HTMLScriptElement::LanguageAttributeValue() const {
   return getAttribute(languageAttr).GetString();
 }
 
+bool HTMLScriptElement::NomoduleAttributeValue() const {
+  return FastHasAttribute(nomoduleAttr);
+}
+
 String HTMLScriptElement::ForAttributeValue() const {
   return getAttribute(forAttr).GetString();
 }
@@ -169,10 +168,6 @@ String HTMLScriptElement::IntegrityAttributeValue() const {
 
 String HTMLScriptElement::TextFromChildren() {
   return Element::TextFromChildren();
-}
-
-String HTMLScriptElement::TextContent() const {
-  return Element::textContent();
 }
 
 bool HTMLScriptElement::AsyncAttributeValue() const {
@@ -195,16 +190,19 @@ bool HTMLScriptElement::HasChildren() const {
   return Node::hasChildren();
 }
 
-bool HTMLScriptElement::IsNonceableElement() const {
-  return ContentSecurityPolicy::IsNonceableElement(this);
+const AtomicString& HTMLScriptElement::GetNonceForElement() const {
+  return ContentSecurityPolicy::IsNonceableElement(this) ? nonce()
+                                                         : g_null_atom;
 }
 
 bool HTMLScriptElement::AllowInlineScriptForCSP(
     const AtomicString& nonce,
     const WTF::OrdinalNumber& context_line,
-    const String& script_content) {
+    const String& script_content,
+    ContentSecurityPolicy::InlineType inline_type) {
   return GetDocument().GetContentSecurityPolicy()->AllowInlineScript(
-      this, GetDocument().Url(), nonce, context_line, script_content);
+      this, GetDocument().Url(), nonce, context_line, script_content,
+      inline_type);
 }
 
 AtomicString HTMLScriptElement::InitiatorName() const {
@@ -236,8 +234,14 @@ Element* HTMLScriptElement::CloneElementWithoutAttributesAndChildren() {
 }
 
 DEFINE_TRACE(HTMLScriptElement) {
+  visitor->Trace(loader_);
   HTMLElement::Trace(visitor);
   ScriptElementBase::Trace(visitor);
+}
+
+DEFINE_TRACE_WRAPPERS(HTMLScriptElement) {
+  visitor->TraceWrappers(loader_);
+  HTMLElement::TraceWrappers(visitor);
 }
 
 }  // namespace blink

@@ -66,10 +66,6 @@ bool ExtensionViewGuest::NavigateGuest(const std::string& src,
 }
 
 // GuestViewBase implementation.
-bool ExtensionViewGuest::CanRunInDetachedState() const {
-  return true;
-}
-
 void ExtensionViewGuest::CreateWebContents(
     const base::DictionaryValue& create_params,
     const WebContentsCreatedCallback& callback) {
@@ -127,7 +123,7 @@ void ExtensionViewGuest::DidFinishNavigation(
 
   std::unique_ptr<base::DictionaryValue> args(new base::DictionaryValue());
   args->SetString(guest_view::kUrl, url_.spec());
-  DispatchEventToView(base::MakeUnique<GuestViewEvent>(
+  DispatchEventToView(std::make_unique<GuestViewEvent>(
       extensionview::kEventLoadCommit, std::move(args)));
 }
 

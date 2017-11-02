@@ -64,7 +64,7 @@ SVGParsingError SVGPreserveAspectRatio::ParseInternal(const CharType*& ptr,
     return SVGParsingError(SVGParseStatus::kExpectedEnumeration, ptr - start);
 
   if (*ptr == 'n') {
-    if (!skipToken(ptr, end, "none"))
+    if (!SkipToken(ptr, end, "none"))
       return SVGParsingError(SVGParseStatus::kExpectedEnumeration, ptr - start);
     align = kSvgPreserveaspectratioNone;
     SkipOptionalSVGSpaces(ptr, end);
@@ -134,12 +134,12 @@ SVGParsingError SVGPreserveAspectRatio::ParseInternal(const CharType*& ptr,
 
   if (ptr < end) {
     if (*ptr == 'm') {
-      if (!skipToken(ptr, end, "meet"))
+      if (!SkipToken(ptr, end, "meet"))
         return SVGParsingError(SVGParseStatus::kExpectedEnumeration,
                                ptr - start);
       SkipOptionalSVGSpaces(ptr, end);
     } else if (*ptr == 's') {
-      if (!skipToken(ptr, end, "slice"))
+      if (!SkipToken(ptr, end, "slice"))
         return SVGParsingError(SVGParseStatus::kExpectedEnumeration,
                                ptr - start);
       SkipOptionalSVGSpaces(ptr, end);
@@ -287,12 +287,13 @@ void SVGPreserveAspectRatio::TransformRect(FloatRect& dest_rect,
   }
 }
 
-AffineTransform SVGPreserveAspectRatio::GetCTM(float logical_x,
-                                               float logical_y,
-                                               float logical_width,
-                                               float logical_height,
-                                               float physical_width,
-                                               float physical_height) const {
+AffineTransform SVGPreserveAspectRatio::ComputeTransform(
+    float logical_x,
+    float logical_y,
+    float logical_width,
+    float logical_height,
+    float physical_width,
+    float physical_height) const {
   DCHECK(logical_width);
   DCHECK(logical_height);
   DCHECK(physical_width);

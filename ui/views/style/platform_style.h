@@ -9,8 +9,6 @@
 
 #include "base/macros.h"
 #include "ui/views/controls/button/button.h"
-#include "ui/views/controls/button/custom_button.h"
-#include "ui/views/controls/combobox/combobox.h"
 #include "ui/views/views_export.h"
 
 namespace views {
@@ -25,10 +23,6 @@ class VIEWS_EXPORT PlatformStyle {
  public:
   // Type used by LabelButton to map button states to text colors.
   using ButtonColorByState = SkColor[Button::STATE_COUNT];
-
-  // Padding to use on either side of the arrow for a Combobox when in
-  // Combobox::STYLE_NORMAL.
-  static const int kComboboxNormalArrowPadding;
 
   // Minimum size for platform-styled buttons (Button::STYLE_BUTTON).
   static const int kMinLabelButtonWidth;
@@ -47,10 +41,10 @@ class VIEWS_EXPORT PlatformStyle {
   static const bool kSelectAllOnRightClickWhenUnfocused;
 
   // The menu button's action to show the menu.
-  static const CustomButton::NotifyAction kMenuNotifyActivationAction;
+  static const Button::NotifyAction kMenuNotifyActivationAction;
 
   // Whether the Space key clicks a button on key press or key release.
-  static const CustomButton::KeyClickAction kKeyClickActionOnSpace;
+  static const Button::KeyClickAction kKeyClickActionOnSpace;
 
   // Whether the Return key clicks the focused control (on key press).
   // Otherwise, Return does nothing unless it is handled by an accelerator.
@@ -71,12 +65,9 @@ class VIEWS_EXPORT PlatformStyle {
   // opens in the opposite direction.
   static const bool kMirrorBubbleArrowInRTLByDefault;
 
-  // Creates an ImageSkia containing the image to use for the combobox arrow.
-  // The |is_enabled| argument is true if the control the arrow is for is
-  // enabled, and false if the control is disabled. The |style| argument is the
-  // style of the combobox the arrow is being drawn for.
-  static gfx::ImageSkia CreateComboboxArrow(bool is_enabled,
-                                            Combobox::Style style);
+  // Whether to scroll text fields to the beginning when they gain or lose
+  // focus.
+  static const bool kTextfieldScrollsToStartOnFocusChange;
 
   // Creates the default scrollbar for the given orientation.
   static std::unique_ptr<ScrollBar> CreateScrollBar(bool is_horizontal);

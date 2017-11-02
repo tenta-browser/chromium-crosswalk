@@ -7,9 +7,10 @@
 
 #include <memory>
 #include "bindings/core/v8/ExceptionState.h"
-#include "bindings/core/v8/ScriptWrappable.h"
-#include "core/dom/DOMTypedArray.h"
-#include "core/dom/NotShared.h"
+#include "bindings/core/v8/StringOrUnrestrictedDoubleSequence.h"
+#include "core/typed_arrays/ArrayBufferViewHelpers.h"
+#include "core/typed_arrays/DOMTypedArray.h"
+#include "platform/bindings/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
 #include "platform/transforms/TransformationMatrix.h"
 
@@ -26,14 +27,16 @@ class CORE_EXPORT DOMMatrixReadOnly
   DEFINE_WRAPPERTYPEINFO();
 
  public:
-  static DOMMatrixReadOnly* Create(ExceptionState&);
-  static DOMMatrixReadOnly* Create(const String&, ExceptionState&);
-  static DOMMatrixReadOnly* Create(Vector<double>, ExceptionState&);
+  static DOMMatrixReadOnly* Create(ExecutionContext*, ExceptionState&);
+  static DOMMatrixReadOnly* Create(ExecutionContext*,
+                                   StringOrUnrestrictedDoubleSequence&,
+                                   ExceptionState&);
   static DOMMatrixReadOnly* fromFloat32Array(NotShared<DOMFloat32Array>,
                                              ExceptionState&);
   static DOMMatrixReadOnly* fromFloat64Array(NotShared<DOMFloat64Array>,
                                              ExceptionState&);
   static DOMMatrixReadOnly* fromMatrix(DOMMatrixInit&, ExceptionState&);
+  static DOMMatrixReadOnly* CreateForSerialization(double[], int size);
   virtual ~DOMMatrixReadOnly();
 
   double a() const { return matrix_->M11(); }
@@ -95,7 +98,7 @@ class CORE_EXPORT DOMMatrixReadOnly
   NotShared<DOMFloat32Array> toFloat32Array() const;
   NotShared<DOMFloat64Array> toFloat64Array() const;
 
-  const String toString() const;
+  const String toString(ExceptionState&) const;
 
   ScriptValue toJSONForBinding(ScriptState*) const;
 

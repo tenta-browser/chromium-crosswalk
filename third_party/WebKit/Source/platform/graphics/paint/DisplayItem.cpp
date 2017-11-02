@@ -9,6 +9,8 @@ namespace blink {
 struct SameSizeAsDisplayItem {
   virtual ~SameSizeAsDisplayItem() {}  // Allocate vtable pointer.
   void* pointer;
+  LayoutRect rect;
+  LayoutUnit outset;
   int i;
 #ifndef NDEBUG
   WTF::String debug_string_;
@@ -68,23 +70,6 @@ static WTF::String PaintPhaseAsDebugString(int paint_phase) {
     return "Unknown"
 
 static WTF::String SpecialDrawingTypeAsDebugString(DisplayItem::Type type) {
-  if (type >= DisplayItem::kTableCollapsedBorderUnalignedBase) {
-    if (type <= DisplayItem::kTableCollapsedBorderBase)
-      return "TableCollapsedBorderAlignment";
-    if (type <= DisplayItem::kTableCollapsedBorderLast) {
-      StringBuilder sb;
-      sb.Append("TableCollapsedBorder");
-      if (type & DisplayItem::kTableCollapsedBorderTop)
-        sb.Append("Top");
-      if (type & DisplayItem::kTableCollapsedBorderRight)
-        sb.Append("Right");
-      if (type & DisplayItem::kTableCollapsedBorderBottom)
-        sb.Append("Bottom");
-      if (type & DisplayItem::kTableCollapsedBorderLeft)
-        sb.Append("Left");
-      return sb.ToString();
-    }
-  }
   switch (type) {
     DEBUG_STRING_CASE(BoxDecorationBackground);
     DEBUG_STRING_CASE(Caret);
@@ -120,6 +105,7 @@ static WTF::String SpecialDrawingTypeAsDebugString(DisplayItem::Type type) {
     DEBUG_STRING_CASE(ScrollbarTrackBackground);
     DEBUG_STRING_CASE(ScrollbarCompositedScrollbar);
     DEBUG_STRING_CASE(SelectionTint);
+    DEBUG_STRING_CASE(TableCollapsedBorders);
     DEBUG_STRING_CASE(VideoBitmap);
     DEBUG_STRING_CASE(WebPlugin);
     DEBUG_STRING_CASE(WebFont);
@@ -139,6 +125,13 @@ static String ForeignLayerTypeAsDebugString(DisplayItem::Type type) {
     DEBUG_STRING_CASE(ForeignLayerCanvas);
     DEBUG_STRING_CASE(ForeignLayerPlugin);
     DEBUG_STRING_CASE(ForeignLayerVideo);
+    DEFAULT_CASE;
+  }
+}
+
+static String ScrollHitTestTypeAsDebugString(DisplayItem::Type type) {
+  switch (type) {
+    DEBUG_STRING_CASE(ScrollHitTest);
     DEFAULT_CASE;
   }
 }
@@ -208,6 +201,9 @@ WTF::String DisplayItem::TypeAsDebugString(Type type) {
     return "End" + Transform3DTypeAsDebugString(
                        endTransform3DTypeToTransform3DType(type));
 
+  if (IsScrollHitTestType(type))
+    return ScrollHitTestTypeAsDebugString(type);
+
   switch (type) {
     DEBUG_STRING_CASE(BeginFilter);
     DEBUG_STRING_CASE(EndFilter);
@@ -244,7 +240,14 @@ void DisplayItem::DumpPropertiesAsDebugString(
     string_builder.Append(' ');
     string_builder.Append(ClientDebugString());
   }
-  string_builder.Append("\", type: \"");
+  string_builder.Append("\", visualRect: \"");
+  string_builder.Append(VisualRect().ToString());
+  string_builder.Append("\", ");
+  if (OutsetForRasterEffects()) {
+    string_builder.Append(
+        String::Format("outset: %f, ", OutsetForRasterEffects().ToFloat()));
+  }
+  string_builder.Append("type: \"");
   string_builder.Append(TypeAsDebugString(GetType()));
   string_builder.Append('"');
   if (skipped_cache_)

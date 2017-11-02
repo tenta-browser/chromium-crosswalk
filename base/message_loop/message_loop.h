@@ -21,13 +21,17 @@
 #include "base/message_loop/timer_slack.h"
 #include "base/observer_list.h"
 #include "base/pending_task.h"
+#include "base/run_loop.h"
 #include "base/synchronization/lock.h"
+#include "base/threading/sequence_local_storage_map.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 
 // TODO(sky): these includes should not be necessary. Nuke them.
 #if defined(OS_WIN)
 #include "base/message_loop/message_pump_win.h"
+#elif defined(OS_FUCHSIA)
+#include "base/message_loop/message_pump_fuchsia.h"
 #elif defined(OS_IOS)
 #include "base/message_loop/message_pump_io_ios.h"
 #elif defined(OS_POSIX)
@@ -46,7 +50,6 @@ class JavaMessageHandlerFactory;
 
 namespace base {
 
-class RunLoop;
 class ThreadTaskRunnerHandle;
 class WaitableEvent;
 
@@ -81,7 +84,8 @@ class WaitableEvent;
 // Please be SURE your task is reentrant (nestable) and all global variables
 // are stable and accessible before calling SetNestableTasksAllowed(true).
 //
-class BASE_EXPORT MessageLoop : public MessagePump::Delegate {
+class BASE_EXPORT MessageLoop : public MessagePump::Delegate,
+                                public RunLoop::Delegate {
  public:
   // A MessageLoop has a particular type, which indicates the set of
   // asynchronous events it may process in addition to tasks and timers.
@@ -128,7 +132,7 @@ class BASE_EXPORT MessageLoop : public MessagePump::Delegate {
   // Returns the MessageLoop object for the current thread, or null if none.
   static MessageLoop* current();
 
-  typedef std::unique_ptr<MessagePump>(MessagePumpFactory)();
+  using MessagePumpFactory = std::unique_ptr<MessagePump>();
   // Uses the given base::MessagePumpForUIFactory to override the default
   // MessagePump implementation for 'TYPE_UI'. Returns true if the factory
   // was successfully registered.
@@ -161,42 +165,6 @@ class BASE_EXPORT MessageLoop : public MessagePump::Delegate {
   // Remove a DestructionObserver.  It is safe to call this method while a
   // DestructionObserver is receiving a notification callback.
   void RemoveDestructionObserver(DestructionObserver* destruction_observer);
-
-  // A NestingObserver is notified when a nested message loop begins. The
-  // observers are notified before the first task is processed.
-  class BASE_EXPORT NestingObserver {
-   public:
-    virtual void OnBeginNestedMessageLoop() = 0;
-
-   protected:
-    virtual ~NestingObserver();
-  };
-
-  void AddNestingObserver(NestingObserver* observer);
-  void RemoveNestingObserver(NestingObserver* observer);
-
-  // Deprecated: use RunLoop instead.
-  //
-  // Signals the Run method to return when it becomes idle. It will continue to
-  // process pending messages and future messages as long as they are enqueued.
-  // Warning: if the MessageLoop remains busy, it may never quit. Only use this
-  // Quit method when looping procedures (such as web pages) have been shut
-  // down.
-  //
-  // This method may only be called on the same thread that called Run, and Run
-  // must still be on the call stack.
-  //
-  // Use QuitClosure variants if you need to Quit another thread's MessageLoop,
-  // but note that doing so is fairly dangerous if the target thread makes
-  // nested calls to MessageLoop::Run.  The problem being that you won't know
-  // which nested run loop you are quitting, so be careful!
-  void QuitWhenIdle();
-
-  // Deprecated: use RunLoop instead.
-  //
-  // This method is a variant of Quit, that does not wait for pending messages
-  // to be processed before returning from Run.
-  void QuitNow();
 
   // Deprecated: use RunLoop instead.
   // Construct a Closure that will call QuitWhenIdle(). Useful to schedule an
@@ -257,10 +225,20 @@ class BASE_EXPORT MessageLoop : public MessagePump::Delegate {
   // - With NestableTasksAllowed set to true, the task #2 will run right away.
   //   Otherwise, it will get executed right after task #1 completes at "thread
   //   message loop level".
+  //
+  // DEPRECATED: Use RunLoop::Type on the relevant RunLoop instead of these
+  // methods.
+  // TODO(gab): Migrate usage and delete these methods.
   void SetNestableTasksAllowed(bool allowed);
   bool NestableTasksAllowed() const;
 
   // Enables nestable tasks on |loop| while in scope.
+  // DEPRECATED: This should not be used when the nested loop is driven by
+  // RunLoop (use RunLoop::Type::KNestableTasksAllowed instead). It can however
+  // still be useful in a few scenarios where re-entrancy is caused by a native
+  // message loop.
+  // TODO(gab): Remove usage of this class alongside RunLoop and rename it to
+  // ScopedApplicationTasksAllowedInNativeNestedLoop(?).
   class ScopedNestableTaskAllower {
    public:
     explicit ScopedNestableTaskAllower(MessageLoop* loop)
@@ -276,9 +254,6 @@ class BASE_EXPORT MessageLoop : public MessagePump::Delegate {
     MessageLoop* loop_;
     bool old_state_;
   };
-
-  // Returns true if we are currently running a nested message loop.
-  bool IsNested();
 
   // A TaskObserver is an object that receives task notifications from the
   // MessageLoop.
@@ -303,13 +278,6 @@ class BASE_EXPORT MessageLoop : public MessagePump::Delegate {
   void AddTaskObserver(TaskObserver* task_observer);
   void RemoveTaskObserver(TaskObserver* task_observer);
 
-  // Can only be called from the thread that owns the MessageLoop.
-  bool is_running() const;
-
-  // Returns true if the message loop has high resolution timers enabled.
-  // Provided for testing.
-  bool HasHighResolutionTasks();
-
   // Returns true if the message loop is "idle". Provided for testing.
   bool IsIdleForTesting();
 
@@ -320,12 +288,6 @@ class BASE_EXPORT MessageLoop : public MessagePump::Delegate {
   // Runs the specified PendingTask.
   void RunTask(PendingTask* pending_task);
 
-  bool nesting_allowed() const { return allow_nesting_; }
-
-  // Disallow nesting. After this is called, running a nested RunLoop or calling
-  // Add/RemoveNestingObserver() on this MessageLoop will crash.
-  void DisallowNesting() { allow_nesting_ = false; }
-
   // Disallow task observers. After this is called, calling
   // Add/RemoveTaskObserver() on this MessageLoop will crash.
   void DisallowTaskObservers() { allow_task_observers_ = false; }
@@ -334,7 +296,8 @@ class BASE_EXPORT MessageLoop : public MessagePump::Delegate {
  protected:
   std::unique_ptr<MessagePump> pump_;
 
-  using MessagePumpFactoryCallback = Callback<std::unique_ptr<MessagePump>()>;
+  using MessagePumpFactoryCallback =
+      OnceCallback<std::unique_ptr<MessagePump>()>;
 
   // Common protected constructor. Other constructors delegate the
   // initialization to this constructor.
@@ -349,7 +312,6 @@ class BASE_EXPORT MessageLoop : public MessagePump::Delegate {
 
  private:
   friend class internal::IncomingTaskQueue;
-  friend class RunLoop;
   friend class ScheduleWorkTest;
   friend class Thread;
   friend struct PendingTask;
@@ -375,8 +337,10 @@ class BASE_EXPORT MessageLoop : public MessagePump::Delegate {
   // task runner for this message loop.
   void SetThreadTaskRunnerHandle();
 
-  // Invokes the actual run loop using the message pump.
-  void RunHandler();
+  // RunLoop::Delegate:
+  void Run() override;
+  void Quit() override;
+  void EnsureWorkScheduled() override;
 
   // Called to process any delayed non-nestable tasks.
   bool ProcessNextDelayedNonNestableTask();
@@ -387,6 +351,10 @@ class BASE_EXPORT MessageLoop : public MessagePump::Delegate {
 
   // Adds the pending task to delayed_work_queue_.
   void AddToDelayedWorkQueue(PendingTask pending_task);
+
+  // Sweeps any cancelled tasks from the front of the delayed work queue and
+  // returns true if there is remaining work.
+  bool SweepDelayedWorkQueueAndReturnTrueIfStillHasWork();
 
   // Delete tasks that haven't run yet without running them.  Used in the
   // destructor to make sure all the task's destructors get called.  Returns
@@ -401,9 +369,6 @@ class BASE_EXPORT MessageLoop : public MessagePump::Delegate {
   // responsible for synchronizing ScheduleWork() calls.
   void ScheduleWork();
 
-  // Notify observers that a nested message loop is starting.
-  void NotifyBeginNestedLoop();
-
   // MessagePump::Delegate methods:
   bool DoWork() override;
   bool DoDelayedWork(TimeTicks* next_delayed_work_time) override;
@@ -416,6 +381,10 @@ class BASE_EXPORT MessageLoop : public MessagePump::Delegate {
   TaskQueue work_queue_;
 
 #if defined(OS_WIN)
+  // Helper to decrement the high resolution task count if |pending_task| is a
+  // high resolution task.
+  void DecrementHighResTaskCountIfNeeded(const PendingTask& pending_Task);
+
   // How many high resolution tasks are in the pending task queue. This value
   // increases by N every time we call ReloadWorkQueue() and decreases by 1
   // every time we call RunTask() if the task needs a high resolution timer.
@@ -432,23 +401,21 @@ class BASE_EXPORT MessageLoop : public MessagePump::Delegate {
   TimeTicks recent_time_;
 
   // A queue of non-nestable tasks that we had to defer because when it came
-  // time to execute them we were in a nested message loop.  They will execute
-  // once we're out of nested message loops.
+  // time to execute them we were in a nested run loop.  They will execute
+  // once we're out of nested run loops.
   TaskQueue deferred_non_nestable_work_queue_;
 
   ObserverList<DestructionObserver> destruction_observers_;
 
-  ObserverList<NestingObserver> nesting_observers_;
-
   // A recursion block that prevents accidentally running additional tasks when
-  // insider a (accidentally induced?) nested message pump.
+  // insider a (accidentally induced?) nested message pump. Deprecated in favor
+  // of run_loop_client_->ProcessingTasksAllowed(), equivalent until then (both
+  // need to be checked in conditionals).
   bool nestable_tasks_allowed_;
 
   // pump_factory_.Run() is called to create a message pump for this loop
   // if type_ is TYPE_CUSTOM and pump_ is null.
   MessagePumpFactoryCallback pump_factory_;
-
-  RunLoop* run_loop_;
 
   ObserverList<TaskObserver> task_observers_;
 
@@ -474,11 +441,19 @@ class BASE_EXPORT MessageLoop : public MessagePump::Delegate {
   // MessageLoop is bound to its thread and constant forever after.
   PlatformThreadId thread_id_;
 
-  // Whether nesting is allowed.
-  bool allow_nesting_ = true;
-
   // Whether task observers are allowed.
   bool allow_task_observers_ = true;
+
+  // An interface back to RunLoop state accessible by this RunLoop::Delegate.
+  RunLoop::Delegate::Client* run_loop_client_ = nullptr;
+
+  // Holds data stored through the SequenceLocalStorageSlot API.
+  internal::SequenceLocalStorageMap sequence_local_storage_map_;
+
+  // Enables the SequenceLocalStorageSlot API within its scope.
+  // Instantiated in BindToCurrentThread().
+  std::unique_ptr<internal::ScopedSetSequenceLocalStorageMapForCurrentThread>
+      scoped_set_sequence_local_storage_map_for_current_thread_;
 
   DISALLOW_COPY_AND_ASSIGN(MessageLoop);
 };
@@ -531,7 +506,8 @@ class BASE_EXPORT MessageLoopForUI : public MessageLoop {
   void Abort();
 #endif
 
-#if defined(USE_OZONE) || (defined(USE_X11) && !defined(USE_GLIB))
+#if (defined(USE_OZONE) && !defined(OS_FUCHSIA)) || \
+    (defined(USE_X11) && !defined(USE_GLIB))
   // Please see MessagePumpLibevent for definition.
   bool WatchFileDescriptor(
       int fd,
@@ -580,6 +556,16 @@ class BASE_EXPORT MessageLoopForIO : public MessageLoop {
 #if defined(OS_WIN)
   typedef MessagePumpForIO::IOHandler IOHandler;
   typedef MessagePumpForIO::IOContext IOContext;
+#elif defined(OS_FUCHSIA)
+  typedef MessagePumpFuchsia::FdWatcher Watcher;
+  typedef MessagePumpFuchsia::FdWatchController FileDescriptorWatcher;
+
+  enum Mode{WATCH_READ = MessagePumpFuchsia::WATCH_READ,
+            WATCH_WRITE = MessagePumpFuchsia::WATCH_WRITE,
+            WATCH_READ_WRITE = MessagePumpFuchsia::WATCH_READ_WRITE};
+
+  typedef MessagePumpFuchsia::MxHandleWatchController MxHandleWatchController;
+  typedef MessagePumpFuchsia::MxHandleWatcher MxHandleWatcher;
 #elif defined(OS_IOS)
   typedef MessagePumpIOSForIO::Watcher Watcher;
   typedef MessagePumpIOSForIO::FileDescriptorWatcher
@@ -591,9 +577,8 @@ class BASE_EXPORT MessageLoopForIO : public MessageLoop {
     WATCH_READ_WRITE = MessagePumpIOSForIO::WATCH_READ_WRITE
   };
 #elif defined(OS_POSIX)
-  typedef MessagePumpLibevent::Watcher Watcher;
-  typedef MessagePumpLibevent::FileDescriptorWatcher
-      FileDescriptorWatcher;
+  using Watcher = MessagePumpLibevent::Watcher;
+  using FileDescriptorWatcher = MessagePumpLibevent::FileDescriptorWatcher;
 
   enum Mode {
     WATCH_READ = MessagePumpLibevent::WATCH_READ,
@@ -616,6 +601,15 @@ class BASE_EXPORT MessageLoopForIO : public MessageLoop {
                            Watcher* delegate);
 #endif  // defined(OS_IOS) || defined(OS_POSIX)
 #endif  // !defined(OS_NACL_SFI)
+
+#if defined(OS_FUCHSIA)
+  // Additional watch API for native platform resources.
+  bool WatchMxHandle(mx_handle_t handle,
+                     bool persistent,
+                     mx_signals_t signals,
+                     MxHandleWatchController* controller,
+                     MxHandleWatcher* delegate);
+#endif
 };
 
 // Do not add any member variables to MessageLoopForIO!  This is important b/c

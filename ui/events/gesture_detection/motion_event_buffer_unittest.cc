@@ -102,7 +102,8 @@ class MotionEventBufferTest : public testing::Test,
       EXPECT_EQ(a.GetTouchMinor(i), b.GetTouchMinor(bi));
       EXPECT_EQ(a.GetOrientation(i), b.GetOrientation(bi));
       EXPECT_EQ(a.GetPressure(i), b.GetPressure(bi));
-      EXPECT_EQ(a.GetTilt(i), b.GetTilt(bi));
+      EXPECT_EQ(a.GetTiltX(i), b.GetTiltX(bi));
+      EXPECT_EQ(a.GetTiltY(i), b.GetTiltY(bi));
       EXPECT_EQ(a.GetToolType(i), b.GetToolType(bi));
     }
 
@@ -201,7 +202,7 @@ class MotionEventBufferTest : public testing::Test,
 
           base::TimeDelta dt = current_flushed_event->GetEventTime() -
                                last_flushed_event->GetEventTime();
-          EXPECT_GE(dt.ToInternalValue(), 0);
+          EXPECT_GE(dt, base::TimeDelta());
           // A time delta of 0 is possible if the flush rate is greater than the
           // event rate, in which case we can simply skip forward.
           if (dt.is_zero())

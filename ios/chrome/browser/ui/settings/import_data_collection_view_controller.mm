@@ -62,7 +62,9 @@ typedef NS_ENUM(NSInteger, ItemType) {
                       isSignedIn:(BOOL)isSignedIn {
   DCHECK(fromEmail);
   DCHECK(toEmail);
-  self = [super initWithStyle:CollectionViewControllerStyleAppBar];
+  UICollectionViewLayout* layout = [[MDCCollectionViewFlowLayout alloc] init];
+  self =
+      [super initWithLayout:layout style:CollectionViewControllerStyleAppBar];
   if (self) {
     _delegate = delegate;
     _fromEmail = [fromEmail copy];
@@ -197,8 +199,7 @@ typedef NS_ENUM(NSInteger, ItemType) {
   _keepDataSeparateItem.accessoryType =
       importDataSelected ? MDCCollectionViewCellAccessoryNone
                          : MDCCollectionViewCellAccessoryCheckmark;
-  [self reconfigureCellsForItems:@[ _importDataItem, _keepDataSeparateItem ]
-         inSectionWithIdentifier:SectionIdentifierOptions];
+  [self reconfigureCellsForItems:@[ _importDataItem, _keepDataSeparateItem ]];
 }
 
 - (void)didTapContinue {

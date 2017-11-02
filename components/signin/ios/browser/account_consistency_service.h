@@ -5,13 +5,12 @@
 #ifndef COMPONENTS_SIGNIN_IOS_BROWSER_ACCOUNT_CONSISTENCY_SERVICE_H_
 #define COMPONENTS_SIGNIN_IOS_BROWSER_ACCOUNT_CONSISTENCY_SERVICE_H_
 
-#include <deque>
 #include <map>
 #include <memory>
 #include <set>
 #include <string>
 
-#include "base/mac/scoped_nsobject.h"
+#include "base/containers/circular_deque.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
@@ -144,8 +143,7 @@ class AccountConsistencyService : public KeyedService,
 
   // SigninManagerBase::Observer implementation.
   void GoogleSigninSucceeded(const std::string& account_id,
-                             const std::string& username,
-                             const std::string& password) override;
+                             const std::string& username) override;
   void GoogleSignedOut(const std::string& account_id,
                        const std::string& username) override;
 
@@ -172,17 +170,16 @@ class AccountConsistencyService : public KeyedService,
   // Whether a CHROME_CONNECTED cookie request is currently being applied.
   bool applying_cookie_requests_;
   // The queue of CHROME_CONNECTED cookie requests to be applied.
-  std::deque<CookieRequest> cookie_requests_;
+  base::circular_deque<CookieRequest> cookie_requests_;
   // The map between domains where a CHROME_CONNECTED cookie is present and
   // the time when the cookie was last updated.
   std::map<std::string, base::Time> last_cookie_update_map_;
 
   // Web view used to apply the CHROME_CONNECTED cookie requests.
-  base::scoped_nsobject<WKWebView> web_view_;
+  __strong WKWebView* web_view_;
   // Navigation delegate of |web_view_| that informs the service when a cookie
   // request has been applied.
-  base::scoped_nsobject<AccountConsistencyNavigationDelegate>
-      navigation_delegate_;
+  AccountConsistencyNavigationDelegate* navigation_delegate_;
 
   // Handlers reacting on GAIA responses with the X-Chrome-Manage-Accounts
   // header set.

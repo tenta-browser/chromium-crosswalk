@@ -10,9 +10,9 @@
 #include "net/quic/core/congestion_control/rtt_stats.h"
 #include "net/quic/core/crypto/crypto_protocol.h"
 #include "net/quic/core/proto/cached_network_parameters.pb.h"
-#include "net/quic/core/quic_flags.h"
 #include "net/quic/platform/api/quic_bug_tracker.h"
 #include "net/quic/platform/api/quic_flag_utils.h"
+#include "net/quic/platform/api/quic_flags.h"
 #include "net/quic/platform/api/quic_logging.h"
 
 namespace net {
@@ -46,6 +46,7 @@ const QuicTime::Delta kProbeRttTime = QuicTime::Delta::FromMilliseconds(200);
 // will exit the STARTUP mode.
 const float kStartupGrowthTarget = 1.25;
 const QuicRoundTripCount kRoundTripsWithoutGrowthBeforeExitingStartup = 3;
+
 }  // namespace
 
 BbrSender::DebugState::DebugState(const BbrSender& sender)
@@ -62,7 +63,7 @@ BbrSender::DebugState::DebugState(const BbrSender& sender)
       recovery_state(sender.recovery_state_),
       recovery_window(sender.recovery_window_),
       last_sample_is_app_limited(sender.last_sample_is_app_limited_),
-      end_of_app_limited_phase(sender.sampler_.end_of_app_limited_phase()) {}
+      end_of_app_limited_phase(sender.sampler_->end_of_app_limited_phase()) {}
 
 BbrSender::DebugState::DebugState(const DebugState& state) = default;
 
@@ -75,17 +76,16 @@ BbrSender::BbrSender(const RttStats* rtt_stats,
       unacked_packets_(unacked_packets),
       random_(random),
       mode_(STARTUP),
-      sampler_(),
+      sampler_(new BandwidthSampler()),
       round_trip_count_(0),
       last_sent_packet_(0),
       current_round_trip_end_(0),
       max_bandwidth_(kBandwidthWindowSize, QuicBandwidth::Zero(), 0),
-      max_ack_spacing_(kBandwidthWindowSize, QuicTime::Delta::Zero(), 0),
-      largest_acked_time_(QuicTime::Zero()),
-      largest_acked_sent_time_(QuicTime::Zero()),
       max_ack_height_(kBandwidthWindowSize, 0, 0),
       aggregation_epoch_start_time_(QuicTime::Zero()),
       aggregation_epoch_bytes_(0),
+      bytes_acked_since_queue_drained_(0),
+      max_aggregation_bytes_multiplier_(0),
       min_rtt_(QuicTime::Delta::Zero()),
       min_rtt_timestamp_(QuicTime::Zero()),
       congestion_window_(initial_tcp_congestion_window * kDefaultTCPMSS),
@@ -96,10 +96,11 @@ BbrSender::BbrSender(const RttStats* rtt_stats,
       pacing_gain_(1),
       congestion_window_gain_(1),
       congestion_window_gain_constant_(
-          static_cast<float>(base::GetFlag(FLAGS_quic_bbr_cwnd_gain))),
-      rtt_variance_weight_(static_cast<float>(
-          base::GetFlag(FLAGS_quic_bbr_rtt_variation_weight))),
+          static_cast<float>(FLAGS_quic_bbr_cwnd_gain)),
+      rtt_variance_weight_(
+          static_cast<float>(FLAGS_quic_bbr_rtt_variation_weight)),
       num_startup_rtts_(kRoundTripsWithoutGrowthBeforeExitingStartup),
+      exit_startup_on_loss_(false),
       cycle_current_offset_(0),
       last_cycle_start_(QuicTime::Zero()),
       is_at_full_bandwidth_(false),
@@ -111,7 +112,8 @@ BbrSender::BbrSender(const RttStats* rtt_stats,
       last_sample_is_app_limited_(false),
       recovery_state_(NOT_IN_RECOVERY),
       end_recovery_at_(0),
-      recovery_window_(max_congestion_window_) {
+      recovery_window_(max_congestion_window_),
+      rate_based_recovery_(false) {
   EnterStartupMode();
 }
 
@@ -128,24 +130,28 @@ bool BbrSender::OnPacketSent(QuicTime sent_time,
                              HasRetransmittableData is_retransmittable) {
   last_sent_packet_ = packet_number;
 
-  if (bytes_in_flight == 0 && sampler_.is_app_limited()) {
+  if (bytes_in_flight == 0 && sampler_->is_app_limited()) {
     exiting_quiescence_ = true;
   }
 
-  sampler_.OnPacketSent(sent_time, packet_number, bytes, bytes_in_flight,
-                        is_retransmittable);
+  if (!aggregation_epoch_start_time_.IsInitialized()) {
+    aggregation_epoch_start_time_ = sent_time;
+  }
+
+  sampler_->OnPacketSent(sent_time, packet_number, bytes, bytes_in_flight,
+                         is_retransmittable);
   return is_retransmittable == HAS_RETRANSMITTABLE_DATA;
 }
 
 QuicTime::Delta BbrSender::TimeUntilSend(QuicTime /* now */,
-                                         QuicByteCount bytes_in_flight) const {
+                                         QuicByteCount bytes_in_flight) {
   if (bytes_in_flight < GetCongestionWindow()) {
     return QuicTime::Delta::Zero();
   }
   return QuicTime::Delta::Infinite();
 }
 
-QuicBandwidth BbrSender::PacingRate(QuicByteCount /*bytes_in_flight*/) const {
+QuicBandwidth BbrSender::PacingRate(QuicByteCount bytes_in_flight) const {
   if (pacing_rate_.IsZero()) {
     return kHighGain * QuicBandwidth::FromBytesAndTimeDelta(
                            initial_congestion_window_, GetMinRtt());
@@ -162,7 +168,7 @@ QuicByteCount BbrSender::GetCongestionWindow() const {
     return kMinimumCongestionWindow;
   }
 
-  if (InRecovery()) {
+  if (InRecovery() && !rate_based_recovery_) {
     return std::min(congestion_window_, recovery_window_);
   }
 
@@ -177,34 +183,52 @@ bool BbrSender::InRecovery() const {
   return recovery_state_ != NOT_IN_RECOVERY;
 }
 
+bool BbrSender::IsProbingForMoreBandwidth() const {
+  return mode_ == PROBE_BW && pacing_gain_ > 1;
+}
+
 void BbrSender::SetFromConfig(const QuicConfig& config,
                               Perspective perspective) {
-  if (FLAGS_quic_reloadable_flag_quic_allow_2_rtt_bbr_startup) {
-    QUIC_FLAG_COUNT(quic_reloadable_flag_quic_allow_2_rtt_bbr_startup);
-    if (config.HasClientRequestedIndependentOption(k1RTT, perspective)) {
-      num_startup_rtts_ = 1;
-    }
-    if (config.HasClientRequestedIndependentOption(k2RTT, perspective)) {
-      num_startup_rtts_ = 2;
-    }
+  if (FLAGS_quic_reloadable_flag_quic_bbr_exit_startup_on_loss &&
+      config.HasClientRequestedIndependentOption(kLRTT, perspective)) {
+    QUIC_FLAG_COUNT(quic_reloadable_flag_quic_bbr_exit_startup_on_loss);
+    exit_startup_on_loss_ = true;
+  }
+  if (config.HasClientRequestedIndependentOption(k1RTT, perspective)) {
+    num_startup_rtts_ = 1;
+  }
+  if (config.HasClientRequestedIndependentOption(k2RTT, perspective)) {
+    num_startup_rtts_ = 2;
+  }
+  if (FLAGS_quic_reloadable_flag_quic_bbr_rate_recovery &&
+      config.HasClientRequestedIndependentOption(kBBRR, perspective)) {
+    rate_based_recovery_ = true;
+  }
+  if (FLAGS_quic_reloadable_flag_quic_bbr_ack_aggregation_bytes4 &&
+      config.HasClientRequestedIndependentOption(kBBR1, perspective)) {
+    QUIC_FLAG_COUNT_N(quic_reloadable_flag_quic_bbr_ack_aggregation_bytes4, 1,
+                      2);
+    max_aggregation_bytes_multiplier_ = 1.5;
+  }
+  if (FLAGS_quic_reloadable_flag_quic_bbr_ack_aggregation_bytes4 &&
+      config.HasClientRequestedIndependentOption(kBBR2, perspective)) {
+    QUIC_FLAG_COUNT_N(quic_reloadable_flag_quic_bbr_ack_aggregation_bytes4, 2,
+                      2);
+    max_aggregation_bytes_multiplier_ = 2;
   }
 }
 
-void BbrSender::ResumeConnectionState(
-    const CachedNetworkParameters& cached_network_params,
-    bool max_bandwidth_resumption) {
+void BbrSender::AdjustNetworkParameters(QuicBandwidth bandwidth,
+                                        QuicTime::Delta rtt) {
   if (!FLAGS_quic_reloadable_flag_quic_bbr_bandwidth_resumption) {
     return;
   }
 
-  QuicBandwidth bandwidth = QuicBandwidth::FromBytesPerSecond(
-      max_bandwidth_resumption
-          ? cached_network_params.max_bandwidth_estimate_bytes_per_second()
-          : cached_network_params.bandwidth_estimate_bytes_per_second());
-  QuicTime::Delta rtt =
-      QuicTime::Delta::FromMilliseconds(cached_network_params.min_rtt_ms());
+  QUIC_FLAG_COUNT(quic_reloadable_flag_quic_bbr_bandwidth_resumption);
 
-  max_bandwidth_.Update(bandwidth, round_trip_count_);
+  if (!bandwidth.IsZero()) {
+    max_bandwidth_.Update(bandwidth, round_trip_count_);
+  }
   if (!rtt.IsZero() && (min_rtt_ > rtt || min_rtt_.IsZero())) {
     min_rtt_ = rtt;
   }
@@ -213,9 +237,9 @@ void BbrSender::ResumeConnectionState(
 void BbrSender::OnCongestionEvent(bool /*rtt_updated*/,
                                   QuicByteCount prior_in_flight,
                                   QuicTime event_time,
-                                  const CongestionVector& acked_packets,
+                                  const AckedPacketVector& acked_packets,
                                   const CongestionVector& lost_packets) {
-  const QuicByteCount total_bytes_acked_before = sampler_.total_bytes_acked();
+  const QuicByteCount total_bytes_acked_before = sampler_->total_bytes_acked();
 
   bool is_round_start = false;
   bool min_rtt_expired = false;
@@ -224,20 +248,23 @@ void BbrSender::OnCongestionEvent(bool /*rtt_updated*/,
 
   // Input the new data into the BBR model of the connection.
   if (!acked_packets.empty()) {
-    QuicPacketNumber last_acked_packet = acked_packets.rbegin()->first;
+    QuicPacketNumber last_acked_packet = acked_packets.rbegin()->packet_number;
     is_round_start = UpdateRoundTripCounter(last_acked_packet);
     min_rtt_expired = UpdateBandwidthAndMinRtt(event_time, acked_packets);
     UpdateRecoveryState(last_acked_packet, !lost_packets.empty(),
                         is_round_start);
-    if (FLAGS_quic_reloadable_flag_quic_bbr_ack_spacing2) {
-      QUIC_FLAG_COUNT_N(quic_reloadable_flag_quic_bbr_ack_spacing2, 1, 2);
-      UpdateAckSpacing(event_time, last_acked_packet, acked_packets);
-    }
-    if (FLAGS_quic_reloadable_flag_quic_bbr_ack_aggregation_bytes) {
-      QUIC_FLAG_COUNT_N(quic_reloadable_flag_quic_bbr_ack_aggregation_bytes, 1,
-                        2);
-      UpdateAckAggregationBytes(
-          event_time, sampler_.total_bytes_acked() - total_bytes_acked_before);
+
+    const QuicByteCount bytes_acked =
+        sampler_->total_bytes_acked() - total_bytes_acked_before;
+
+    UpdateAckAggregationBytes(event_time, bytes_acked);
+    if (max_aggregation_bytes_multiplier_ > 0) {
+      if (unacked_packets_->bytes_in_flight() <=
+          1.25 * GetTargetCongestionWindow(pacing_gain_)) {
+        bytes_acked_since_queue_drained_ = 0;
+      } else {
+        bytes_acked_since_queue_drained_ += bytes_acked;
+      }
     }
   }
 
@@ -255,16 +282,22 @@ void BbrSender::OnCongestionEvent(bool /*rtt_updated*/,
   // Handle logic specific to PROBE_RTT.
   MaybeEnterOrExitProbeRtt(event_time, is_round_start, min_rtt_expired);
 
+  // Calculate number of packets acked and lost.
+  QuicByteCount bytes_acked =
+      sampler_->total_bytes_acked() - total_bytes_acked_before;
+  QuicByteCount bytes_lost = 0;
+  for (const auto& packet : lost_packets) {
+    bytes_lost += packet.second;
+  }
+
   // After the model is updated, recalculate the pacing rate and congestion
   // window.
-  QuicByteCount bytes_acked =
-      sampler_.total_bytes_acked() - total_bytes_acked_before;
   CalculatePacingRate();
   CalculateCongestionWindow(bytes_acked);
-  CalculateRecoveryWindow(bytes_acked);
+  CalculateRecoveryWindow(bytes_acked, bytes_lost);
 
   // Cleanup internal state.
-  sampler_.RemoveObsoletePackets(unacked_packets_->GetLeastUnacked());
+  sampler_->RemoveObsoletePackets(unacked_packets_->GetLeastUnacked());
 }
 
 CongestionControlType BbrSender::GetCongestionControlType() const {
@@ -302,8 +335,7 @@ void BbrSender::EnterProbeBandwidthMode(QuicTime now) {
   // Pick a random offset for the gain cycle out of {0, 2..7} range. 1 is
   // excluded because in that case increased gain and decreased gain would not
   // follow each other.
-  cycle_current_offset_ =
-      random_->RandUint64() % (sizeof(kGainCycleLength) - 1);
+  cycle_current_offset_ = random_->RandUint64() % (kGainCycleLength - 1);
   if (cycle_current_offset_ >= 1) {
     cycle_current_offset_ += 1;
   }
@@ -314,7 +346,7 @@ void BbrSender::EnterProbeBandwidthMode(QuicTime now) {
 
 void BbrSender::DiscardLostPackets(const CongestionVector& lost_packets) {
   for (const auto& packet : lost_packets) {
-    sampler_.OnPacketLost(packet.first);
+    sampler_->OnPacketLost(packet.first);
   }
 }
 
@@ -330,11 +362,11 @@ bool BbrSender::UpdateRoundTripCounter(QuicPacketNumber last_acked_packet) {
 
 bool BbrSender::UpdateBandwidthAndMinRtt(
     QuicTime now,
-    const CongestionVector& acked_packets) {
+    const AckedPacketVector& acked_packets) {
   QuicTime::Delta sample_min_rtt = QuicTime::Delta::Infinite();
   for (const auto& packet : acked_packets) {
     BandwidthSample bandwidth_sample =
-        sampler_.OnPacketAcknowledged(now, packet.first);
+        sampler_->OnPacketAcknowledged(now, packet.packet_number);
     last_sample_is_app_limited_ = bandwidth_sample.is_app_limited;
     if (!bandwidth_sample.rtt.IsZero()) {
       sample_min_rtt = std::min(sample_min_rtt, bandwidth_sample.rtt);
@@ -411,7 +443,8 @@ void BbrSender::CheckIfFullBandwidthReached() {
   }
 
   rounds_without_bandwidth_gain_++;
-  if (rounds_without_bandwidth_gain_ >= num_startup_rtts_) {
+  if ((rounds_without_bandwidth_gain_ >= num_startup_rtts_) ||
+      (exit_startup_on_loss_ && InRecovery())) {
     is_at_full_bandwidth_ = true;
   }
 }
@@ -440,7 +473,7 @@ void BbrSender::MaybeEnterOrExitProbeRtt(QuicTime now,
   }
 
   if (mode_ == PROBE_RTT) {
-    sampler_.OnAppLimited();
+    sampler_->OnAppLimited();
 
     if (exit_probe_rtt_at_ == QuicTime::Zero()) {
       // If the window has reached the appropriate size, schedule exiting
@@ -483,6 +516,9 @@ void BbrSender::UpdateRecoveryState(QuicPacketNumber last_acked_packet,
       // Enter conservation on the first loss.
       if (has_losses) {
         recovery_state_ = CONSERVATION;
+        // This will cause the |recovery_window_| to be set to the correct
+        // value in CalculateRecoveryWindow().
+        recovery_window_ = 0;
         // Since the conservation phase is meant to be lasting for a whole
         // round, extend the current round as if it were started right now.
         current_round_trip_end_ = last_sent_packet_;
@@ -499,43 +535,9 @@ void BbrSender::UpdateRecoveryState(QuicPacketNumber last_acked_packet,
       if (!has_losses && last_acked_packet > end_recovery_at_) {
         recovery_state_ = NOT_IN_RECOVERY;
       }
+
       break;
   }
-}
-
-// TODO(ianswett): Move this logic into BandwidthSampler.
-void BbrSender::UpdateAckSpacing(QuicTime ack_time,
-                                 QuicPacketNumber largest_newly_acked,
-                                 const CongestionVector& acked_packets) {
-  // Ignore acks of reordered packets.
-  if (largest_newly_acked < unacked_packets_->largest_observed()) {
-    return;
-  }
-  // Ignore acks of only one packet to filter out delayed acks.
-  if (acked_packets.size() == 1) {
-    return;
-  }
-  QuicTime largest_newly_acked_sent_time =
-      unacked_packets_->GetTransmissionInfo(largest_newly_acked).sent_time;
-  // Initialize on the first ack.
-  if (!largest_acked_time_.IsInitialized()) {
-    largest_acked_time_ = ack_time;
-    largest_acked_sent_time_ = largest_newly_acked_sent_time;
-    return;
-  }
-  QuicTime::Delta ack_delta = ack_time - largest_acked_time_;
-  QuicTime::Delta send_delta =
-      largest_newly_acked_sent_time - largest_acked_sent_time_;
-  largest_acked_time_ = ack_time;
-  largest_acked_sent_time_ = largest_newly_acked_sent_time;
-  if (ack_delta <= send_delta) {
-    return;
-  }
-
-  // Limit the ack spacing to SRTT to filter outliers.
-  QuicTime::Delta ack_spacing =
-      std::min(ack_delta - send_delta, rtt_stats_->smoothed_rtt());
-  max_ack_spacing_.Update(ack_spacing, round_trip_count_);
 }
 
 // TODO(ianswett): Move this logic into BandwidthSampler.
@@ -567,6 +569,10 @@ void BbrSender::CalculatePacingRate() {
   }
 
   QuicBandwidth target_rate = pacing_gain_ * BandwidthEstimate();
+  if (rate_based_recovery_ && InRecovery()) {
+    QUIC_FLAG_COUNT(quic_reloadable_flag_quic_bbr_rate_recovery);
+    pacing_rate_ = pacing_gain_ * max_bandwidth_.GetThirdBest();
+  }
   if (is_at_full_bandwidth_) {
     pacing_rate_ = target_rate;
     return;
@@ -595,17 +601,20 @@ void BbrSender::CalculateCongestionWindow(QuicByteCount bytes_acked) {
   if (rtt_variance_weight_ > 0.f && !BandwidthEstimate().IsZero()) {
     target_window += rtt_variance_weight_ * rtt_stats_->mean_deviation() *
                      BandwidthEstimate();
-  } else if (FLAGS_quic_reloadable_flag_quic_bbr_ack_spacing2 &&
-             is_at_full_bandwidth_) {
-    QUIC_FLAG_COUNT_N(quic_reloadable_flag_quic_bbr_ack_spacing2, 2, 2);
-    // Add CWND for inter-ack spacing once STARTUP has been exited.
-    target_window += max_ack_spacing_.GetBest() * BandwidthEstimate();
-  } else if (FLAGS_quic_reloadable_flag_quic_bbr_ack_aggregation_bytes &&
-             is_at_full_bandwidth_) {
-    QUIC_FLAG_COUNT_N(quic_reloadable_flag_quic_bbr_ack_aggregation_bytes, 2,
-                      2);
+  } else if (max_aggregation_bytes_multiplier_ > 0 && is_at_full_bandwidth_) {
+    // Subtracting only half the bytes_acked_since_queue_drained ensures sending
+    // doesn't completely stop for a long period of time if the queue hasn't
+    // been drained recently.
+    if (max_aggregation_bytes_multiplier_ * max_ack_height_.GetBest() >
+        bytes_acked_since_queue_drained_ / 2) {
+      target_window +=
+          max_aggregation_bytes_multiplier_ * max_ack_height_.GetBest() -
+          bytes_acked_since_queue_drained_ / 2;
+    }
+  } else if (is_at_full_bandwidth_) {
     target_window += max_ack_height_.GetBest();
   }
+
   if (FLAGS_quic_reloadable_flag_quic_bbr_add_tso_cwnd) {
     // QUIC doesn't have TSO, but it does have similarly quantized pacing, so
     // allow extra CWND to make QUIC's BBR CWND identical to TCP's.
@@ -629,7 +638,7 @@ void BbrSender::CalculateCongestionWindow(QuicByteCount bytes_acked) {
     congestion_window_ =
         std::min(target_window, congestion_window_ + bytes_acked);
   } else if (congestion_window_ < target_window ||
-             sampler_.total_bytes_acked() < initial_congestion_window_) {
+             sampler_->total_bytes_acked() < initial_congestion_window_) {
     // If the connection is not yet out of startup phase, do not decrease the
     // window.
     congestion_window_ = congestion_window_ + bytes_acked;
@@ -640,17 +649,39 @@ void BbrSender::CalculateCongestionWindow(QuicByteCount bytes_acked) {
   congestion_window_ = std::min(congestion_window_, max_congestion_window_);
 }
 
-void BbrSender::CalculateRecoveryWindow(QuicByteCount bytes_acked) {
-  switch (recovery_state_) {
-    case CONSERVATION:
-      recovery_window_ = unacked_packets_->bytes_in_flight() + bytes_acked;
-      break;
-    case GROWTH:
-      recovery_window_ = unacked_packets_->bytes_in_flight() + 2 * bytes_acked;
-      break;
-    default:
-      break;
+void BbrSender::CalculateRecoveryWindow(QuicByteCount bytes_acked,
+                                        QuicByteCount bytes_lost) {
+  if (rate_based_recovery_) {
+    return;
   }
+
+  if (recovery_state_ == NOT_IN_RECOVERY) {
+    return;
+  }
+
+  // Set up the initial recovery window.
+  if (recovery_window_ == 0) {
+    recovery_window_ = unacked_packets_->bytes_in_flight() + bytes_acked;
+    recovery_window_ = std::max(kMinimumCongestionWindow, recovery_window_);
+    return;
+  }
+
+  // Remove losses from the recovery window, while accounting for a potential
+  // integer underflow.
+  recovery_window_ = recovery_window_ >= bytes_lost
+                         ? recovery_window_ - bytes_lost
+                         : kMaxSegmentSize;
+
+  // In CONSERVATION mode, just subtracting losses is sufficient.  In GROWTH,
+  // release additional |bytes_acked| to achieve a slow-start-like behavior.
+  if (recovery_state_ == GROWTH) {
+    recovery_window_ += bytes_acked;
+  }
+
+  // Sanity checks.  Ensure that we always allow to send at least
+  // |bytes_acked| in response.
+  recovery_window_ = std::max(
+      recovery_window_, unacked_packets_->bytes_in_flight() + bytes_acked);
   recovery_window_ = std::max(kMinimumCongestionWindow, recovery_window_);
 }
 
@@ -665,7 +696,7 @@ void BbrSender::OnApplicationLimited(QuicByteCount bytes_in_flight) {
     return;
   }
 
-  sampler_.OnAppLimited();
+  sampler_->OnAppLimited();
   QUIC_DVLOG(2) << "Becoming application limited. Last sent packet: "
                 << last_sent_packet_ << ", CWND: " << GetCongestionWindow();
 }

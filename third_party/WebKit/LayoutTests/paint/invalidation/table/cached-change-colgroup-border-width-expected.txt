@@ -4,101 +4,107 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutTableCol COLGROUP id='colgroup'",
-          "rect": [8, 8, 166, 102],
+          "rect": [8, 8, 167, 104],
+          "reason": "style change"
+        },
+        {
+          "object": "LayoutTableSection TBODY",
+          "rect": [8, 8, 167, 104],
+          "reason": "geometry"
+        },
+        {
+          "object": "LayoutTableRow TR",
+          "rect": [8, 59, 167, 53],
+          "reason": "style change"
+        },
+        {
+          "object": "LayoutTableRow TR",
+          "rect": [8, 8, 167, 53],
+          "reason": "style change"
+        },
+        {
+          "object": "LayoutTable TABLE",
+          "rect": [8, 108, 167, 4],
+          "reason": "incremental"
+        },
+        {
+          "object": "LayoutTableRow TR",
+          "rect": [8, 58, 162, 52],
           "reason": "style change"
         },
         {
           "object": "LayoutTableCell TD",
-          "rect": [63, 7, 58, 53],
-          "reason": "bounds change"
+          "rect": [65, 60, 55, 50],
+          "reason": "geometry"
         },
         {
           "object": "LayoutTableCell TD",
-          "rect": [7, 58, 58, 53],
-          "reason": "bounds change"
+          "rect": [65, 10, 55, 50],
+          "reason": "geometry"
         },
         {
           "object": "LayoutTableCell TD",
-          "rect": [7, 7, 58, 53],
-          "reason": "bounds change"
+          "rect": [10, 60, 55, 50],
+          "reason": "geometry"
         },
         {
           "object": "LayoutTableCell TD",
-          "rect": [117, 59, 57, 52],
-          "reason": "bounds change"
+          "rect": [10, 10, 55, 50],
+          "reason": "geometry"
         },
         {
           "object": "LayoutTableCell TD",
-          "rect": [117, 7, 57, 52],
-          "reason": "bounds change"
+          "rect": [120, 60, 54, 50],
+          "reason": "geometry"
         },
         {
           "object": "LayoutTableCell TD",
-          "rect": [64, 59, 57, 52],
-          "reason": "bounds change"
+          "rect": [120, 10, 54, 50],
+          "reason": "geometry"
         },
         {
           "object": "LayoutTableCell TD",
-          "rect": [62, 8, 55, 52],
-          "reason": "bounds change"
+          "rect": [9, 59, 54, 50],
+          "reason": "geometry"
         },
         {
           "object": "LayoutTableCell TD",
-          "rect": [116, 59, 54, 51],
-          "reason": "bounds change"
+          "rect": [9, 9, 54, 50],
+          "reason": "geometry"
         },
         {
           "object": "LayoutTableCell TD",
-          "rect": [63, 59, 54, 51],
-          "reason": "bounds change"
+          "rect": [116, 59, 53, 50],
+          "reason": "geometry"
         },
         {
           "object": "LayoutTableCell TD",
-          "rect": [116, 9, 54, 50],
-          "reason": "bounds change"
+          "rect": [116, 9, 53, 50],
+          "reason": "geometry"
+        },
+        {
+          "object": "LayoutTableCell TD",
+          "rect": [63, 59, 53, 50],
+          "reason": "geometry"
+        },
+        {
+          "object": "LayoutTableCell TD",
+          "rect": [63, 9, 53, 50],
+          "reason": "geometry"
         },
         {
           "object": "LayoutTable TABLE",
-          "rect": [169, 8, 5, 102],
-          "reason": "incremental"
-        },
-        {
-          "object": "LayoutTableSection TBODY",
-          "rect": [169, 9, 4, 100],
+          "rect": [169, 8, 6, 104],
           "reason": "incremental"
         }
       ]
     }
   ],
   "objectPaintInvalidations": [
-    {
-      "object": "LayoutTableCell TD",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutTableCell TD",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutTableCell TD",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutTableCell TD",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutTableCell TD",
-      "reason": "style change"
-    },
-    {
-      "object": "LayoutTableCell TD",
-      "reason": "style change"
-    },
     {
       "object": "LayoutTable TABLE",
       "reason": "incremental"
@@ -109,31 +115,39 @@
     },
     {
       "object": "LayoutTableSection TBODY",
-      "reason": "incremental"
+      "reason": "geometry"
+    },
+    {
+      "object": "LayoutTableRow TR",
+      "reason": "style change"
     },
     {
       "object": "LayoutTableCell TD",
-      "reason": "bounds change"
+      "reason": "geometry"
     },
     {
       "object": "LayoutTableCell TD",
-      "reason": "bounds change"
+      "reason": "geometry"
     },
     {
       "object": "LayoutTableCell TD",
-      "reason": "bounds change"
+      "reason": "geometry"
+    },
+    {
+      "object": "LayoutTableRow TR",
+      "reason": "style change"
     },
     {
       "object": "LayoutTableCell TD",
-      "reason": "bounds change"
+      "reason": "geometry"
     },
     {
       "object": "LayoutTableCell TD",
-      "reason": "bounds change"
+      "reason": "geometry"
     },
     {
       "object": "LayoutTableCell TD",
-      "reason": "bounds change"
+      "reason": "geometry"
     }
   ]
 }

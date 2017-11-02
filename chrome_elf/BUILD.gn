@@ -26,17 +26,21 @@ windows_manifest("chrome_elf_manifest") {
   sources = [
     as_invoker_manifest,
   ]
-  type = "dll"
 }
 
 # We should move chrome_result_codes.h to another target which does not bring
 # in the world.
 shared_library("chrome_elf") {
   sources = [
-    "chrome_elf.def",
     "chrome_elf_main.cc",
     "chrome_elf_main.h",
   ]
+  if (target_cpu == "x86") {
+    sources += [ "chrome_elf_x86.def" ]
+  } else {
+    sources += [ "chrome_elf_x64.def" ]
+  }
+
   deps = [
     ":blacklist",
     ":chrome_elf_manifest",
@@ -46,9 +50,10 @@ shared_library("chrome_elf") {
     ":hook_util",
     ":nt_registry",
     ":security",
-    "//build/config/sanitizers:deps",
+    "//build/config:exe_and_shlib_deps",
     "//chrome/install_static:install_static_util",
     "//chrome/install_static:primary_module",
+    "//components/crash/content/app:crash_export_thunks",
   ]
   configs += [ "//build/config/win:windowed" ]
   configs -= [ "//build/config/win:console" ]
@@ -65,6 +70,22 @@ shared_library("chrome_elf") {
     # Don"t set an x64 base address (to avoid breaking HE-ASLR).
     ldflags += [ "/BASE:0x01c20000" ]
   }
+}
+
+# For code that isn't Chrome-the browser, like test binaries, these stubs stand
+# in for chrome_elf.;
+static_library("test_stubs") {
+  testonly = true
+
+  sources = [
+    "chrome_elf_main.h",
+    "chrome_elf_test_stubs.cc",
+  ]
+
+  deps = [
+    "//base",
+    "//chrome/common:constants",
+  ]
 }
 
 ##------------------------------------------------------------------------------
@@ -110,7 +131,7 @@ executable("dll_hash_main") {
   ]
   deps = [
     ":dll_hash",
-    "//build/config/sanitizers:deps",
+    "//build/config:exe_and_shlib_deps",
     "//build/win:default_exe_manifest",
   ]
 }
@@ -145,14 +166,15 @@ static_library("crash") {
   ]
   deps = [
     ":hook_util",
-    "//base:base",  # This needs to go.  DEP of app, crash_keys, client.
+    "//base",  # This needs to go.  DEP of app, crash_keys, client.
     "//base:base_static",  # pe_image
     "//chrome/install_static:install_static_util",
-    "//components/crash/content/app:app",
+    "//components/crash/content/app",
     "//components/crash/core/common",  # crash_keys
     "//components/version_info:channel",
     "//content/public/common:result_codes",
-    "//third_party/crashpad/crashpad/client:client",  # DumpWithoutCrash
+    "//gpu/config:crash_keys",
+    "//third_party/crashpad/crashpad/client",  # DumpWithoutCrash
   ]
 }
 
@@ -218,6 +240,7 @@ test("chrome_elf_unittests") {
     "//chrome/common:version_header",
     "//chrome/install_static:install_static_util",
     "//chrome/install_static/test:test_support",
+    "//components/crash/content/app:test_support",
     "//sandbox",
     "//testing/gtest",
   ]
@@ -242,6 +265,7 @@ test("chrome_elf_unittests") {
     "/DELAYLOAD:advapi32.dll",
     "/DELAYLOAD:ole32.dll",
     "/DELAYLOAD:shell32.dll",
+    "/DELAYLOAD:shlwapi.dll",
     "/DELAYLOAD:user32.dll",
     "/DELAYLOAD:winmm.dll",
   ]
@@ -258,8 +282,9 @@ shared_library("blacklist_test_main_dll") {
     ":blacklist",
     ":nt_registry",
     "//base",
-    "//build/config/sanitizers:deps",
+    "//build/config:exe_and_shlib_deps",
     "//chrome/install_static:install_static_util",
+    "//components/crash/content/app:test_support",
   ]
 }
 
@@ -270,7 +295,7 @@ loadable_module("blacklist_test_dll_1") {
     "blacklist/test/blacklist_test_dll_1.def",
   ]
   deps = [
-    "//build/config/sanitizers:deps",
+    "//build/config:exe_and_shlib_deps",
   ]
 }
 
@@ -281,7 +306,7 @@ loadable_module("blacklist_test_dll_2") {
     "blacklist/test/blacklist_test_dll_2.def",
   ]
   deps = [
-    "//build/config/sanitizers:deps",
+    "//build/config:exe_and_shlib_deps",
   ]
 }
 
@@ -296,7 +321,7 @@ loadable_module("blacklist_test_dll_3") {
     "blacklist/test/blacklist_test_dll_3.cc",
   ]
   deps = [
-    "//build/config/sanitizers:deps",
+    "//build/config:exe_and_shlib_deps",
   ]
 }
 
@@ -307,6 +332,6 @@ shared_library("hook_util_test_dll") {
     "hook_util/test/hook_util_test_dll.h",
   ]
   deps = [
-    "//build/config/sanitizers:deps",
+    "//build/config:exe_and_shlib_deps",
   ]
 }

@@ -17,7 +17,7 @@
 #include "ui/app_list/search_result_observer.h"
 #include "ui/app_list/views/search_result_actions_view_delegate.h"
 #include "ui/views/context_menu_controller.h"
-#include "ui/views/controls/button/custom_button.h"
+#include "ui/views/controls/button/button.h"
 
 namespace gfx {
 class RenderText;
@@ -40,11 +40,11 @@ class SearchResultActionsView;
 
 // SearchResultView displays a SearchResult.
 class APP_LIST_EXPORT SearchResultView
-    : public views::CustomButton,
+    : public views::Button,
       public views::ButtonListener,
       public views::ContextMenuController,
       public SearchResultObserver,
-      NON_EXPORTED_BASE(public SearchResultActionsViewDelegate) {
+      public SearchResultActionsViewDelegate {
  public:
   // Internal class name.
   static const char kViewClassName[];
@@ -74,13 +74,17 @@ class APP_LIST_EXPORT SearchResultView
   void UpdateDetailsText();
   void UpdateAccessibleName();
 
+  // Creates title/details render text.
+  void CreateTitleRenderText();
+  void CreateDetailsRenderText();
+
   // views::View overrides:
   const char* GetClassName() const override;
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   void Layout() override;
   bool OnKeyPressed(const ui::KeyEvent& event) override;
   void ChildPreferredSizeChanged(views::View* child) override;
-  void OnPaint(gfx::Canvas* canvas) override;
+  void PaintButtonContents(gfx::Canvas* canvas) override;
 
   // views::ButtonListener overrides:
   void ButtonPressed(views::Button* sender, const ui::Event& event) override;
@@ -105,14 +109,14 @@ class APP_LIST_EXPORT SearchResultView
   // SearchResultActionsViewDelegate overrides:
   void OnSearchResultActionActivated(size_t index, int event_flags) override;
 
-  SearchResult* result_;  // Owned by AppListModel::SearchResults.
+  SearchResult* result_ = nullptr;  // Owned by AppListModel::SearchResults.
 
-  bool is_last_result_;
+  bool is_last_result_ = false;
 
   // Parent list view. Owned by views hierarchy.
   SearchResultListView* list_view_;
 
-  views::ImageView* icon_;  // Owned by views hierarchy.
+  views::ImageView* icon_;        // Owned by views hierarchy.
   views::ImageView* badge_icon_;  // Owned by views hierarchy.
   std::unique_ptr<gfx::RenderText> title_text_;
   std::unique_ptr<gfx::RenderText> details_text_;
@@ -120,6 +124,8 @@ class APP_LIST_EXPORT SearchResultView
   views::ProgressBar* progress_bar_;       // Owned by views hierarchy.
 
   std::unique_ptr<views::MenuRunner> context_menu_runner_;
+
+  const bool is_fullscreen_app_list_enabled_;
 
   DISALLOW_COPY_AND_ASSIGN(SearchResultView);
 };

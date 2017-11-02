@@ -43,11 +43,8 @@ namespace blink {
 template <typename Strategy>
 VisibleSelectionTemplate<Strategy>::VisibleSelectionTemplate()
     : affinity_(TextAffinity::kDownstream),
-      selection_type_(kNoSelection),
       base_is_first_(true),
-      is_directional_(false),
-      granularity_(kCharacterGranularity),
-      has_trailing_whitespace_(false) {}
+      is_directional_(false) {}
 
 template <typename Strategy>
 VisibleSelectionTemplate<Strategy>::VisibleSelectionTemplate(
@@ -55,17 +52,13 @@ VisibleSelectionTemplate<Strategy>::VisibleSelectionTemplate(
     : base_(selection.Base()),
       extent_(selection.Extent()),
       affinity_(selection.Affinity()),
-      selection_type_(kNoSelection),
-      is_directional_(selection.IsDirectional()),
-      granularity_(selection.Granularity()),
-      has_trailing_whitespace_(selection.HasTrailingWhitespace()) {
-  Validate(granularity_);
-}
+      base_is_first_(selection.IsBaseFirst()),
+      is_directional_(selection.IsDirectional()) {}
 
 template <typename Strategy>
 VisibleSelectionTemplate<Strategy> VisibleSelectionTemplate<Strategy>::Create(
     const SelectionTemplate<Strategy>& selection) {
-  return VisibleSelectionTemplate(selection);
+  return CreateWithGranularity(selection, TextGranularity::kCharacter);
 }
 
 VisibleSelection CreateVisibleSelection(const SelectionInDOMTree& selection) {
@@ -75,6 +68,35 @@ VisibleSelection CreateVisibleSelection(const SelectionInDOMTree& selection) {
 VisibleSelectionInFlatTree CreateVisibleSelection(
     const SelectionInFlatTree& selection) {
   return VisibleSelectionInFlatTree::Create(selection);
+}
+
+// TODO(editing-dev): We should move |ComputeVisibleSelection()| to here to
+// avoid forward declaration.
+template <typename Strategy>
+static SelectionTemplate<Strategy> ComputeVisibleSelection(
+    const SelectionTemplate<Strategy>&,
+    TextGranularity);
+
+template <typename Strategy>
+VisibleSelectionTemplate<Strategy>
+VisibleSelectionTemplate<Strategy>::CreateWithGranularity(
+    const SelectionTemplate<Strategy>& selection,
+    TextGranularity granularity) {
+  return VisibleSelectionTemplate(
+      ComputeVisibleSelection(selection, granularity));
+}
+
+VisibleSelection CreateVisibleSelectionWithGranularity(
+    const SelectionInDOMTree& selection,
+    TextGranularity granularity) {
+  return VisibleSelection::CreateWithGranularity(selection, granularity);
+}
+
+VisibleSelectionInFlatTree CreateVisibleSelectionWithGranularity(
+    const SelectionInFlatTree& selection,
+    TextGranularity granularity) {
+  return VisibleSelectionInFlatTree::CreateWithGranularity(selection,
+                                                           granularity);
 }
 
 template <typename Strategy>
@@ -98,49 +120,66 @@ VisibleSelectionTemplate<Strategy>::VisibleSelectionTemplate(
     const VisibleSelectionTemplate<Strategy>& other)
     : base_(other.base_),
       extent_(other.extent_),
-      start_(other.start_),
-      end_(other.end_),
       affinity_(other.affinity_),
-      selection_type_(other.selection_type_),
       base_is_first_(other.base_is_first_),
-      is_directional_(other.is_directional_),
-      granularity_(other.granularity_),
-      has_trailing_whitespace_(other.has_trailing_whitespace_) {}
+      is_directional_(other.is_directional_) {}
 
 template <typename Strategy>
 VisibleSelectionTemplate<Strategy>& VisibleSelectionTemplate<Strategy>::
 operator=(const VisibleSelectionTemplate<Strategy>& other) {
   base_ = other.base_;
   extent_ = other.extent_;
-  start_ = other.start_;
-  end_ = other.end_;
   affinity_ = other.affinity_;
-  selection_type_ = other.selection_type_;
   base_is_first_ = other.base_is_first_;
   is_directional_ = other.is_directional_;
-  granularity_ = other.granularity_;
-  has_trailing_whitespace_ = other.has_trailing_whitespace_;
   return *this;
 }
 
 template <typename Strategy>
 SelectionTemplate<Strategy> VisibleSelectionTemplate<Strategy>::AsSelection()
     const {
-  typename SelectionTemplate<Strategy>::Builder builder;
-  if (base_.IsNotNull())
-    builder.SetBaseAndExtent(base_, extent_);
-  return builder.SetAffinity(affinity_)
-      .SetGranularity(granularity_)
+  if (base_.IsNull()) {
+    return typename SelectionTemplate<Strategy>::Builder()
+        .SetIsDirectional(is_directional_)
+        .Build();
+  }
+  return typename SelectionTemplate<Strategy>::Builder()
+      .SetBaseAndExtent(base_, extent_)
+      .SetAffinity(affinity_)
       .SetIsDirectional(is_directional_)
-      .SetHasTrailingWhitespace(has_trailing_whitespace_)
       .Build();
+}
+
+template <typename Strategy>
+bool VisibleSelectionTemplate<Strategy>::IsCaret() const {
+  return base_.IsNotNull() && base_ == extent_;
+}
+
+template <typename Strategy>
+bool VisibleSelectionTemplate<Strategy>::IsNone() const {
+  return base_.IsNull();
+}
+
+template <typename Strategy>
+bool VisibleSelectionTemplate<Strategy>::IsRange() const {
+  return base_ != extent_;
+}
+
+template <typename Strategy>
+PositionTemplate<Strategy> VisibleSelectionTemplate<Strategy>::Start() const {
+  return base_is_first_ ? base_ : extent_;
+}
+
+template <typename Strategy>
+PositionTemplate<Strategy> VisibleSelectionTemplate<Strategy>::End() const {
+  return base_is_first_ ? extent_ : base_;
 }
 
 EphemeralRange FirstEphemeralRangeOf(const VisibleSelection& selection) {
   if (selection.IsNone())
     return EphemeralRange();
   Position start = selection.Start().ParentAnchoredEquivalent();
-  Position end = selection.end().ParentAnchoredEquivalent();
+  Position end = selection.End().ParentAnchoredEquivalent();
   return EphemeralRange(start, end);
 }
 
@@ -154,14 +193,14 @@ VisibleSelectionTemplate<Strategy>::ToNormalizedEphemeralRange() const {
   // in the course of running edit commands which modify the DOM.
   // Failing to ensure this can result in equivalentXXXPosition calls returning
   // incorrect results.
-  DCHECK(!NeedsLayoutTreeUpdate(start_)) << *this;
+  DCHECK(!NeedsLayoutTreeUpdate(Start())) << *this;
 
   if (IsCaret()) {
     // If the selection is a caret, move the range start upstream. This
     // helps us match the conventions of text editors tested, which make
     // style determinations based on the character before the caret, if any.
     const PositionTemplate<Strategy> start =
-        MostBackwardCaretPosition(start_).ParentAnchoredEquivalent();
+        MostBackwardCaretPosition(Start()).ParentAnchoredEquivalent();
     return EphemeralRangeTemplate<Strategy>(start, start);
   }
   // If the selection is a range, select the minimum range that encompasses
@@ -176,60 +215,80 @@ VisibleSelectionTemplate<Strategy>::ToNormalizedEphemeralRange() const {
   //                       ^ selected
   //
   DCHECK(IsRange());
-  return NormalizeRange(EphemeralRangeTemplate<Strategy>(start_, end_));
+  return NormalizeRange(EphemeralRangeTemplate<Strategy>(Start(), End()));
 }
 
-template <typename Strategy>
-void VisibleSelectionTemplate<Strategy>::AppendTrailingWhitespace() {
-  if (IsNone())
-    return;
-  DCHECK_EQ(granularity_, kWordGranularity);
-  if (!IsRange())
-    return;
-  const PositionTemplate<Strategy>& new_end = SkipWhitespace(end_);
-  if (end_ == new_end)
-    return;
-  has_trailing_whitespace_ = true;
-  end_ = new_end;
-}
-
-template <typename Strategy>
-void VisibleSelectionTemplate<Strategy>::SetBaseAndExtentToDeepEquivalents() {
-  // Move the selection to rendered positions, if possible.
-  bool base_and_extent_equal = base_ == extent_;
-  if (base_.IsNotNull()) {
-    base_ = CreateVisiblePosition(base_, affinity_).DeepEquivalent();
-    if (base_and_extent_equal)
-      extent_ = base_;
+// TODO(editing-dev): We should move |AdjustSelectionWithTrailingWhitespace()|
+// to "SelectionController.cpp" as file local function.
+SelectionInFlatTree AdjustSelectionWithTrailingWhitespace(
+    const SelectionInFlatTree& selection) {
+  if (selection.IsNone())
+    return selection;
+  if (!selection.IsRange())
+    return selection;
+  const bool base_is_first =
+      selection.Base() == selection.ComputeStartPosition();
+  const PositionInFlatTree& end =
+      base_is_first ? selection.Extent() : selection.Base();
+  DCHECK_EQ(end, selection.ComputeEndPosition());
+  const PositionInFlatTree& new_end = SkipWhitespace(end);
+  if (end == new_end)
+    return selection;
+  if (base_is_first) {
+    return SelectionInFlatTree::Builder(selection)
+        .SetBaseAndExtent(selection.Base(), new_end)
+        .Build();
   }
-  if (extent_.IsNotNull() && !base_and_extent_equal)
-    extent_ = CreateVisiblePosition(extent_, affinity_).DeepEquivalent();
-
-  // Make sure we do not have a dangling base or extent.
-  if (base_.IsNull() && extent_.IsNull()) {
-    base_is_first_ = true;
-  } else if (base_.IsNull()) {
-    base_ = extent_;
-    base_is_first_ = true;
-  } else if (extent_.IsNull()) {
-    extent_ = base_;
-    base_is_first_ = true;
-  } else {
-    base_is_first_ = base_.CompareTo(extent_) <= 0;
-  }
+  return SelectionInFlatTree::Builder(selection)
+      .SetBaseAndExtent(new_end, selection.Extent())
+      .Build();
 }
 
 template <typename Strategy>
-static PositionTemplate<Strategy> ComputeStartRespectingGranularity(
+static SelectionTemplate<Strategy> CanonicalizeSelection(
+    const SelectionTemplate<Strategy>& selection) {
+  if (selection.IsNone())
+    return SelectionTemplate<Strategy>();
+  const PositionTemplate<Strategy>& base =
+      CreateVisiblePosition(selection.Base(), selection.Affinity())
+          .DeepEquivalent();
+  if (selection.IsCaret()) {
+    if (base.IsNull())
+      return SelectionTemplate<Strategy>();
+    return
+        typename SelectionTemplate<Strategy>::Builder().Collapse(base).Build();
+  }
+  const PositionTemplate<Strategy>& extent =
+      CreateVisiblePosition(selection.Extent(), selection.Affinity())
+          .DeepEquivalent();
+  if (base.IsNotNull() && extent.IsNotNull()) {
+    return typename SelectionTemplate<Strategy>::Builder()
+        .SetBaseAndExtent(base, extent)
+        .Build();
+  }
+  if (base.IsNotNull()) {
+    return
+        typename SelectionTemplate<Strategy>::Builder().Collapse(base).Build();
+  }
+  if (extent.IsNotNull()) {
+    return typename SelectionTemplate<Strategy>::Builder()
+        .Collapse(extent)
+        .Build();
+  }
+  return SelectionTemplate<Strategy>();
+}
+
+template <typename Strategy>
+static PositionTemplate<Strategy> ComputeStartRespectingGranularityAlgorithm(
     const PositionWithAffinityTemplate<Strategy>& passed_start,
     TextGranularity granularity) {
   DCHECK(passed_start.IsNotNull());
 
   switch (granularity) {
-    case kCharacterGranularity:
+    case TextGranularity::kCharacter:
       // Don't do any expansion.
       return passed_start.GetPosition();
-    case kWordGranularity: {
+    case TextGranularity::kWord: {
       // General case: Select the word the caret is positioned inside of.
       // If the caret is on the word boundary, select the word according to
       // |wordSide|.
@@ -250,27 +309,27 @@ static PositionTemplate<Strategy> ComputeStartRespectingGranularity(
       return StartOfWord(visible_start, kRightWordIfOnBoundary)
           .DeepEquivalent();
     }
-    case kSentenceGranularity:
+    case TextGranularity::kSentence:
       return StartOfSentence(CreateVisiblePosition(passed_start))
           .DeepEquivalent();
-    case kLineGranularity:
+    case TextGranularity::kLine:
       return StartOfLine(CreateVisiblePosition(passed_start)).DeepEquivalent();
-    case kLineBoundary:
+    case TextGranularity::kLineBoundary:
       return StartOfLine(CreateVisiblePosition(passed_start)).DeepEquivalent();
-    case kParagraphGranularity: {
+    case TextGranularity::kParagraph: {
       const VisiblePositionTemplate<Strategy> pos =
           CreateVisiblePosition(passed_start);
       if (IsStartOfLine(pos) && IsEndOfEditableOrNonEditableContent(pos))
         return StartOfParagraph(PreviousPositionOf(pos)).DeepEquivalent();
       return StartOfParagraph(pos).DeepEquivalent();
     }
-    case kDocumentBoundary:
+    case TextGranularity::kDocumentBoundary:
       return StartOfDocument(CreateVisiblePosition(passed_start))
           .DeepEquivalent();
-    case kParagraphBoundary:
+    case TextGranularity::kParagraphBoundary:
       return StartOfParagraph(CreateVisiblePosition(passed_start))
           .DeepEquivalent();
-    case kSentenceBoundary:
+    case TextGranularity::kSentenceBoundary:
       return StartOfSentence(CreateVisiblePosition(passed_start))
           .DeepEquivalent();
   }
@@ -279,18 +338,30 @@ static PositionTemplate<Strategy> ComputeStartRespectingGranularity(
   return passed_start.GetPosition();
 }
 
+static Position ComputeStartRespectingGranularity(
+    const PositionWithAffinity& start,
+    TextGranularity granularity) {
+  return ComputeStartRespectingGranularityAlgorithm(start, granularity);
+}
+
+PositionInFlatTree ComputeStartRespectingGranularity(
+    const PositionInFlatTreeWithAffinity& start,
+    TextGranularity granularity) {
+  return ComputeStartRespectingGranularityAlgorithm(start, granularity);
+}
+
 template <typename Strategy>
-static PositionTemplate<Strategy> ComputeEndRespectingGranularity(
+static PositionTemplate<Strategy> ComputeEndRespectingGranularityAlgorithm(
     const PositionTemplate<Strategy>& start,
     const PositionWithAffinityTemplate<Strategy>& passed_end,
     TextGranularity granularity) {
   DCHECK(passed_end.IsNotNull());
 
   switch (granularity) {
-    case kCharacterGranularity:
+    case TextGranularity::kCharacter:
       // Don't do any expansion.
       return passed_end.GetPosition();
-    case kWordGranularity: {
+    case TextGranularity::kWord: {
       // General case: Select the word the caret is positioned inside of.
       // If the caret is on the word boundary, select the word according to
       // |wordSide|.
@@ -337,9 +408,9 @@ static PositionTemplate<Strategy> ComputeEndRespectingGranularity(
         return word_end.DeepEquivalent();
       return next.DeepEquivalent();
     }
-    case kSentenceGranularity:
+    case TextGranularity::kSentence:
       return EndOfSentence(CreateVisiblePosition(passed_end)).DeepEquivalent();
-    case kLineGranularity: {
+    case TextGranularity::kLine: {
       const VisiblePositionTemplate<Strategy> end =
           EndOfLine(CreateVisiblePosition(passed_end));
       if (!IsEndOfParagraph(end))
@@ -351,9 +422,9 @@ static PositionTemplate<Strategy> ComputeEndRespectingGranularity(
         return end.DeepEquivalent();
       return next.DeepEquivalent();
     }
-    case kLineBoundary:
+    case TextGranularity::kLineBoundary:
       return EndOfLine(CreateVisiblePosition(passed_end)).DeepEquivalent();
-    case kParagraphGranularity: {
+    case TextGranularity::kParagraph: {
       const VisiblePositionTemplate<Strategy> visible_paragraph_end =
           EndOfParagraph(CreateVisiblePosition(passed_end));
 
@@ -384,75 +455,126 @@ static PositionTemplate<Strategy> ComputeEndRespectingGranularity(
         return visible_paragraph_end.DeepEquivalent();
       return next.DeepEquivalent();
     }
-    case kDocumentBoundary:
+    case TextGranularity::kDocumentBoundary:
       return EndOfDocument(CreateVisiblePosition(passed_end)).DeepEquivalent();
-    case kParagraphBoundary:
+    case TextGranularity::kParagraphBoundary:
       return EndOfParagraph(CreateVisiblePosition(passed_end)).DeepEquivalent();
-    case kSentenceBoundary:
+    case TextGranularity::kSentenceBoundary:
       return EndOfSentence(CreateVisiblePosition(passed_end)).DeepEquivalent();
   }
   NOTREACHED();
   return passed_end.GetPosition();
 }
 
-template <typename Strategy>
-void VisibleSelectionTemplate<Strategy>::UpdateSelectionType() {
-  selection_type_ = ComputeSelectionType(start_, end_);
-
-  // Affinity only makes sense for a caret
-  if (selection_type_ != kCaretSelection)
-    affinity_ = TextAffinity::kDownstream;
+static Position ComputeEndRespectingGranularity(const Position& start,
+                                                const PositionWithAffinity& end,
+                                                TextGranularity granularity) {
+  return ComputeEndRespectingGranularityAlgorithm(start, end, granularity);
 }
 
+PositionInFlatTree ComputeEndRespectingGranularity(
+    const PositionInFlatTree& start,
+    const PositionInFlatTreeWithAffinity& end,
+    TextGranularity granularity) {
+  return ComputeEndRespectingGranularityAlgorithm(start, end, granularity);
+}
+
+// TODO(editing-dev): Once we move all static functions into anonymous
+// namespace, we should get rid of this forward declaration.
 template <typename Strategy>
-void VisibleSelectionTemplate<Strategy>::Validate(TextGranularity granularity) {
-  DCHECK(!NeedsLayoutTreeUpdate(base_));
-  DCHECK(!NeedsLayoutTreeUpdate(extent_));
-  // TODO(xiaochengh): Add a DocumentLifecycle::DisallowTransitionScope here.
+static EphemeralRangeTemplate<Strategy>
+AdjustSelectionToAvoidCrossingEditingBoundaries(
+    const EphemeralRangeTemplate<Strategy>&,
+    const PositionTemplate<Strategy>& base);
 
-  granularity_ = granularity;
-  if (granularity_ != kWordGranularity)
-    has_trailing_whitespace_ = false;
-  SetBaseAndExtentToDeepEquivalents();
-  if (base_.IsNull() || extent_.IsNull()) {
-    base_ = extent_ = start_ = end_ = PositionTemplate<Strategy>();
-    UpdateSelectionType();
-    return;
-  }
+template <typename Strategy>
+static SelectionTemplate<Strategy> ComputeVisibleSelection(
+    const SelectionTemplate<Strategy>& passed_selection,
+    TextGranularity granularity) {
+  DCHECK(!NeedsLayoutTreeUpdate(passed_selection.Base()));
+  DCHECK(!NeedsLayoutTreeUpdate(passed_selection.Extent()));
 
-  const PositionTemplate<Strategy> start = base_is_first_ ? base_ : extent_;
+  const SelectionTemplate<Strategy>& canonicalized_selection =
+      CanonicalizeSelection(passed_selection);
+
+  if (canonicalized_selection.IsNone())
+    return SelectionTemplate<Strategy>();
+
+  const TextAffinity affinity = canonicalized_selection.Affinity();
+
+  const PositionTemplate<Strategy> start =
+      canonicalized_selection.ComputeStartPosition();
   const PositionTemplate<Strategy> new_start =
       ComputeStartRespectingGranularity(
-          PositionWithAffinityTemplate<Strategy>(start, affinity_),
-          granularity);
-  start_ = new_start.IsNotNull() ? new_start : start;
+          PositionWithAffinityTemplate<Strategy>(start, affinity), granularity);
+  const PositionTemplate<Strategy> expanded_start =
+      new_start.IsNotNull() ? new_start : start;
 
-  const PositionTemplate<Strategy> end = base_is_first_ ? extent_ : base_;
+  const PositionTemplate<Strategy> end =
+      canonicalized_selection.ComputeEndPosition();
   const PositionTemplate<Strategy> new_end = ComputeEndRespectingGranularity(
-      start_, PositionWithAffinityTemplate<Strategy>(end, affinity_),
+      expanded_start, PositionWithAffinityTemplate<Strategy>(end, affinity),
       granularity);
-  end_ = new_end.IsNotNull() ? new_end : end;
+  const PositionTemplate<Strategy> expanded_end =
+      new_end.IsNotNull() ? new_end : end;
 
-  AdjustSelectionToAvoidCrossingShadowBoundaries();
-  AdjustSelectionToAvoidCrossingEditingBoundaries();
-  UpdateSelectionType();
+  const EphemeralRangeTemplate<Strategy> expanded_range(expanded_start,
+                                                        expanded_end);
 
-  if (GetSelectionType() == kRangeSelection) {
-    // "Constrain" the selection to be the smallest equivalent range of
-    // nodes. This is a somewhat arbitrary choice, but experience shows that
-    // it is useful to make to make the selection "canonical" (if only for
-    // purposes of comparing selections). This is an ideal point of the code
-    // to do this operation, since all selection changes that result in a
-    // RANGE come through here before anyone uses it.
-    // TODO(yosin) Canonicalizing is good, but haven't we already done it
-    // (when we set these two positions to |VisiblePosition|
-    // |deepEquivalent()|s above)?
-    start_ = MostForwardCaretPosition(start_);
-    end_ = MostBackwardCaretPosition(end_);
+  const EphemeralRangeTemplate<Strategy> shadow_adjusted_range =
+      canonicalized_selection.IsBaseFirst()
+          ? EphemeralRangeTemplate<Strategy>(
+                expanded_range.StartPosition(),
+                SelectionAdjuster::
+                    AdjustSelectionEndToAvoidCrossingShadowBoundaries(
+                        expanded_range))
+          : EphemeralRangeTemplate<Strategy>(
+                SelectionAdjuster::
+                    AdjustSelectionStartToAvoidCrossingShadowBoundaries(
+                        expanded_range),
+                expanded_range.EndPosition());
+
+  const EphemeralRangeTemplate<Strategy> editing_adjusted_range =
+      AdjustSelectionToAvoidCrossingEditingBoundaries(
+          shadow_adjusted_range, canonicalized_selection.Base());
+  const SelectionType selection_type =
+      ComputeSelectionType(editing_adjusted_range.StartPosition(),
+                           editing_adjusted_range.EndPosition());
+  DCHECK_NE(selection_type, kNoSelection);
+
+  // "Constrain" the selection to be the smallest equivalent range of
+  // nodes. This is a somewhat arbitrary choice, but experience shows that
+  // it is useful to make to make the selection "canonical" (if only for
+  // purposes of comparing selections). This is an ideal point of the code
+  // to do this operation, since all selection changes that result in a
+  // RANGE come through here before anyone uses it.
+  // TODO(yosin) Canonicalizing is good, but haven't we already done it
+  // (when we set these two positions to |VisiblePosition|
+  // |DeepEquivalent()|s above)?
+  const EphemeralRangeTemplate<Strategy> range =
+      selection_type == kRangeSelection
+          ? EphemeralRangeTemplate<Strategy>(
+                MostForwardCaretPosition(
+                    editing_adjusted_range.StartPosition()),
+                MostBackwardCaretPosition(editing_adjusted_range.EndPosition()))
+          : editing_adjusted_range;
+  if (selection_type == kCaretSelection) {
+    return typename SelectionTemplate<Strategy>::Builder()
+        .Collapse(PositionWithAffinityTemplate<Strategy>(
+            range.StartPosition(), passed_selection.Affinity()))
+        .SetIsDirectional(passed_selection.IsDirectional())
+        .Build();
   }
-  if (!has_trailing_whitespace_)
-    return;
-  AppendTrailingWhitespace();
+  if (canonicalized_selection.IsBaseFirst()) {
+    return typename SelectionTemplate<Strategy>::Builder()
+        .SetIsDirectional(passed_selection.IsDirectional())
+        .SetAsForwardSelection(range)
+        .Build();
+  }
+  return typename SelectionTemplate<Strategy>::Builder()
+      .SetIsDirectional(passed_selection.IsDirectional())
+      .SetAsBackwardSelection(range)
+      .Build();
 }
 
 template <typename Strategy>
@@ -462,7 +584,7 @@ bool VisibleSelectionTemplate<Strategy>::IsValidFor(
     return true;
 
   return base_.GetDocument() == &document && !base_.IsOrphan() &&
-         !extent_.IsOrphan() && !start_.IsOrphan() && !end_.IsOrphan();
+         !extent_.IsOrphan();
 }
 
 // TODO(yosin) This function breaks the invariant of this class.
@@ -473,40 +595,27 @@ bool VisibleSelectionTemplate<Strategy>::IsValidFor(
 // |VisibleSelection| or create a new class for editing to use that can
 // manipulate selections that are not currently valid.
 template <typename Strategy>
-void VisibleSelectionTemplate<Strategy>::SetWithoutValidation(
+VisibleSelectionTemplate<Strategy>
+VisibleSelectionTemplate<Strategy>::CreateWithoutValidationDeprecated(
     const PositionTemplate<Strategy>& base,
-    const PositionTemplate<Strategy>& extent) {
-  if (base.IsNull() || extent.IsNull()) {
-    base_ = extent_ = start_ = end_ = PositionTemplate<Strategy>();
-    UpdateSelectionType();
-    return;
-  }
+    const PositionTemplate<Strategy>& extent,
+    TextAffinity affinity) {
+  DCHECK(base.IsNotNull());
+  DCHECK(extent.IsNotNull());
 
-  base_ = base;
-  extent_ = extent;
-  base_is_first_ = base.CompareTo(extent) <= 0;
-  if (base_is_first_) {
-    start_ = base;
-    end_ = extent;
-  } else {
-    start_ = extent;
-    end_ = base;
+  VisibleSelectionTemplate<Strategy> visible_selection;
+  visible_selection.base_ = base;
+  visible_selection.extent_ = extent;
+  visible_selection.base_is_first_ = base.CompareTo(extent) <= 0;
+  if (base == extent) {
+    visible_selection.affinity_ = affinity;
+    return visible_selection;
   }
-  selection_type_ = base == extent ? kCaretSelection : kRangeSelection;
-  if (selection_type_ != kCaretSelection) {
-    // Since |m_affinity| for non-|CaretSelection| is always |Downstream|,
-    // we should keep this invariant. Note: This function can be called with
-    // |m_affinity| is |TextAffinity::Upstream|.
-    affinity_ = TextAffinity::kDownstream;
-  }
-}
-
-template <typename Strategy>
-void VisibleSelectionTemplate<
-    Strategy>::AdjustSelectionToAvoidCrossingShadowBoundaries() {
-  if (base_.IsNull() || start_.IsNull() || base_.IsNull())
-    return;
-  SelectionAdjuster::AdjustSelectionToAvoidCrossingShadowBoundaries(this);
+  // Since |affinity_| for non-|CaretSelection| is always |kDownstream|,
+  // we should keep this invariant. Note: This function can be called with
+  // |affinity_| is |kUpstream|.
+  visible_selection.affinity_ = TextAffinity::kDownstream;
+  return visible_selection;
 }
 
 static Element* LowestEditableAncestor(Node* node) {
@@ -521,23 +630,113 @@ static Element* LowestEditableAncestor(Node* node) {
   return nullptr;
 }
 
+// Returns true if |position| is editable or its lowest editable root is not
+// |base_editable_ancestor|.
 template <typename Strategy>
-void VisibleSelectionTemplate<
-    Strategy>::AdjustSelectionToAvoidCrossingEditingBoundaries() {
-  if (base_.IsNull() || start_.IsNull() || end_.IsNull())
-    return;
+static bool ShouldContinueSearchEditingBoundary(
+    const PositionTemplate<Strategy>& position,
+    Element* base_editable_ancestor) {
+  if (position.IsNull())
+    return false;
+  if (IsEditablePosition(position))
+    return true;
+  return LowestEditableAncestor(position.ComputeContainerNode()) !=
+         base_editable_ancestor;
+}
 
-  ContainerNode* base_root = HighestEditableRoot(base_);
-  ContainerNode* start_root = HighestEditableRoot(start_);
-  ContainerNode* end_root = HighestEditableRoot(end_);
+template <typename Strategy>
+static bool ShouldAdjustPositionToAvoidCrossingEditingBoundaries(
+    const PositionTemplate<Strategy>& position,
+    const ContainerNode* editable_root,
+    const Element* base_editable_ancestor) {
+  if (editable_root)
+    return true;
+  Element* const editable_ancestor =
+      LowestEditableAncestor(position.ComputeContainerNode());
+  return editable_ancestor != base_editable_ancestor;
+}
+
+// The selection ends in editable content or non-editable content inside a
+// different editable ancestor, move backward until non-editable content inside
+// the same lowest editable ancestor is reached.
+template <typename Strategy>
+PositionTemplate<Strategy> AdjustSelectionEndToAvoidCrossingEditingBoundaries(
+    const PositionTemplate<Strategy>& end,
+    ContainerNode* end_root,
+    Element* base_editable_ancestor) {
+  if (ShouldAdjustPositionToAvoidCrossingEditingBoundaries(
+          end, end_root, base_editable_ancestor)) {
+    PositionTemplate<Strategy> position =
+        PreviousVisuallyDistinctCandidate(end);
+    Element* shadow_ancestor = end_root ? end_root->OwnerShadowHost() : nullptr;
+    if (position.IsNull() && shadow_ancestor)
+      position = PositionTemplate<Strategy>::AfterNode(*shadow_ancestor);
+    while (
+        ShouldContinueSearchEditingBoundary(position, base_editable_ancestor)) {
+      Element* root = RootEditableElementOf(position);
+      shadow_ancestor = root ? root->OwnerShadowHost() : nullptr;
+      position = IsAtomicNode(position.ComputeContainerNode())
+                     ? PositionTemplate<Strategy>::InParentBeforeNode(
+                           *position.ComputeContainerNode())
+                     : PreviousVisuallyDistinctCandidate(position);
+      if (position.IsNull() && shadow_ancestor)
+        position = PositionTemplate<Strategy>::AfterNode(*shadow_ancestor);
+    }
+    return CreateVisiblePosition(position).DeepEquivalent();
+  }
+  return end;
+}
+
+// The selection starts in editable content or non-editable content inside a
+// different editable ancestor, move forward until non-editable content inside
+// the same lowest editable ancestor is reached.
+template <typename Strategy>
+PositionTemplate<Strategy> AdjustSelectionStartToAvoidCrossingEditingBoundaries(
+    const PositionTemplate<Strategy>& start,
+    ContainerNode* start_root,
+    Element* base_editable_ancestor) {
+  if (ShouldAdjustPositionToAvoidCrossingEditingBoundaries(
+          start, start_root, base_editable_ancestor)) {
+    PositionTemplate<Strategy> position = NextVisuallyDistinctCandidate(start);
+    Element* shadow_ancestor =
+        start_root ? start_root->OwnerShadowHost() : nullptr;
+    if (position.IsNull() && shadow_ancestor)
+      position = PositionTemplate<Strategy>::BeforeNode(*shadow_ancestor);
+    while (
+        ShouldContinueSearchEditingBoundary(position, base_editable_ancestor)) {
+      Element* root = RootEditableElementOf(position);
+      shadow_ancestor = root ? root->OwnerShadowHost() : nullptr;
+      position = IsAtomicNode(position.ComputeContainerNode())
+                     ? PositionTemplate<Strategy>::InParentAfterNode(
+                           *position.ComputeContainerNode())
+                     : NextVisuallyDistinctCandidate(position);
+      if (position.IsNull() && shadow_ancestor)
+        position = PositionTemplate<Strategy>::BeforeNode(*shadow_ancestor);
+    }
+    return CreateVisiblePosition(position).DeepEquivalent();
+  }
+  return start;
+}
+
+template <typename Strategy>
+static EphemeralRangeTemplate<Strategy>
+AdjustSelectionToAvoidCrossingEditingBoundaries(
+    const EphemeralRangeTemplate<Strategy>& range,
+    const PositionTemplate<Strategy>& base) {
+  DCHECK(base.IsNotNull());
+  DCHECK(range.IsNotNull());
+
+  ContainerNode* base_root = HighestEditableRoot(base);
+  ContainerNode* start_root = HighestEditableRoot(range.StartPosition());
+  ContainerNode* end_root = HighestEditableRoot(range.EndPosition());
 
   Element* base_editable_ancestor =
-      LowestEditableAncestor(base_.ComputeContainerNode());
+      LowestEditableAncestor(base.ComputeContainerNode());
 
   // The base, start and end are all in the same region.  No adjustment
   // necessary.
   if (base_root == start_root && base_root == end_root)
-    return;
+    return range;
 
   // The selection is based in editable content.
   if (base_root) {
@@ -546,124 +745,59 @@ void VisibleSelectionTemplate<
     // If the start is in non-editable content that is inside the base's
     // editable root, put it at the first editable position after start inside
     // the base's editable root.
+    PositionTemplate<Strategy> start = range.StartPosition();
     if (start_root != base_root) {
       const VisiblePositionTemplate<Strategy> first =
-          FirstEditableVisiblePositionAfterPositionInRoot(start_, *base_root);
-      start_ = first.DeepEquivalent();
-      if (start_.IsNull()) {
+          FirstEditableVisiblePositionAfterPositionInRoot(start, *base_root);
+      start = first.DeepEquivalent();
+      if (start.IsNull()) {
         NOTREACHED();
-        start_ = end_;
+        return {};
       }
     }
     // If the end is outside the base's editable root, cap it at the end of that
     // root.
     // If the end is in non-editable content that is inside the base's root, put
     // it at the last editable position before the end inside the base's root.
+    PositionTemplate<Strategy> end = range.EndPosition();
     if (end_root != base_root) {
       const VisiblePositionTemplate<Strategy> last =
-          LastEditableVisiblePositionBeforePositionInRoot(end_, *base_root);
-      end_ = last.DeepEquivalent();
-      if (end_.IsNull())
-        end_ = start_;
+          LastEditableVisiblePositionBeforePositionInRoot(end, *base_root);
+      end = last.DeepEquivalent();
+      if (end.IsNull())
+        end = start;
     }
-    // The selection is based in non-editable content.
+    return {start, end};
   } else {
+    // The selection is based in non-editable content.
     // FIXME: Non-editable pieces inside editable content should be atomic, in
     // the same way that editable pieces in non-editable content are atomic.
-
-    // The selection ends in editable content or non-editable content inside a
-    // different editable ancestor, move backward until non-editable content
-    // inside the same lowest editable ancestor is reached.
-    Element* end_editable_ancestor =
-        LowestEditableAncestor(end_.ComputeContainerNode());
-    if (end_root || end_editable_ancestor != base_editable_ancestor) {
-      PositionTemplate<Strategy> p = PreviousVisuallyDistinctCandidate(end_);
-      Element* shadow_ancestor =
-          end_root ? end_root->OwnerShadowHost() : nullptr;
-      if (p.IsNull() && shadow_ancestor)
-        p = PositionTemplate<Strategy>::AfterNode(shadow_ancestor);
-      while (p.IsNotNull() &&
-             !(LowestEditableAncestor(p.ComputeContainerNode()) ==
-                   base_editable_ancestor &&
-               !IsEditablePosition(p))) {
-        Element* root = RootEditableElementOf(p);
-        shadow_ancestor = root ? root->OwnerShadowHost() : nullptr;
-        p = IsAtomicNode(p.ComputeContainerNode())
-                ? PositionTemplate<Strategy>::InParentBeforeNode(
-                      *p.ComputeContainerNode())
-                : PreviousVisuallyDistinctCandidate(p);
-        if (p.IsNull() && shadow_ancestor)
-          p = PositionTemplate<Strategy>::AfterNode(shadow_ancestor);
-      }
-      const VisiblePositionTemplate<Strategy> previous =
-          CreateVisiblePosition(p);
-
-      if (previous.IsNull()) {
-        // The selection crosses an Editing boundary.  This is a
-        // programmer error in the editing code.  Happy debugging!
-        NOTREACHED();
-        *this = VisibleSelectionTemplate<Strategy>();
-        return;
-      }
-      end_ = previous.DeepEquivalent();
+    const PositionTemplate<Strategy>& end =
+        AdjustSelectionEndToAvoidCrossingEditingBoundaries(
+            range.EndPosition(), end_root, base_editable_ancestor);
+    if (end.IsNull()) {
+      // The selection crosses an Editing boundary.  This is a
+      // programmer error in the editing code.  Happy debugging!
+      NOTREACHED();
+      return {};
     }
 
-    // The selection starts in editable content or non-editable content inside a
-    // different editable ancestor, move forward until non-editable content
-    // inside the same lowest editable ancestor is reached.
-    Element* start_editable_ancestor =
-        LowestEditableAncestor(start_.ComputeContainerNode());
-    if (start_root || start_editable_ancestor != base_editable_ancestor) {
-      PositionTemplate<Strategy> p = NextVisuallyDistinctCandidate(start_);
-      Element* shadow_ancestor =
-          start_root ? start_root->OwnerShadowHost() : nullptr;
-      if (p.IsNull() && shadow_ancestor)
-        p = PositionTemplate<Strategy>::BeforeNode(shadow_ancestor);
-      while (p.IsNotNull() &&
-             !(LowestEditableAncestor(p.ComputeContainerNode()) ==
-                   base_editable_ancestor &&
-               !IsEditablePosition(p))) {
-        Element* root = RootEditableElementOf(p);
-        shadow_ancestor = root ? root->OwnerShadowHost() : nullptr;
-        p = IsAtomicNode(p.ComputeContainerNode())
-                ? PositionTemplate<Strategy>::InParentAfterNode(
-                      *p.ComputeContainerNode())
-                : NextVisuallyDistinctCandidate(p);
-        if (p.IsNull() && shadow_ancestor)
-          p = PositionTemplate<Strategy>::BeforeNode(shadow_ancestor);
-      }
-      const VisiblePositionTemplate<Strategy> next = CreateVisiblePosition(p);
-
-      if (next.IsNull()) {
-        // The selection crosses an Editing boundary.  This is a
-        // programmer error in the editing code.  Happy debugging!
-        NOTREACHED();
-        *this = VisibleSelectionTemplate<Strategy>();
-        return;
-      }
-      start_ = next.DeepEquivalent();
+    const PositionTemplate<Strategy>& start =
+        AdjustSelectionStartToAvoidCrossingEditingBoundaries(
+            range.StartPosition(), start_root, base_editable_ancestor);
+    if (start.IsNull()) {
+      // The selection crosses an Editing boundary.  This is a
+      // programmer error in the editing code.  Happy debugging!
+      NOTREACHED();
+      return {};
     }
+    return {start, end};
   }
-
-  // Correct the extent if necessary.
-  if (base_editable_ancestor !=
-      LowestEditableAncestor(extent_.ComputeContainerNode()))
-    extent_ = base_is_first_ ? end_ : start_;
 }
 
 template <typename Strategy>
 bool VisibleSelectionTemplate<Strategy>::IsContentEditable() const {
   return IsEditablePosition(Start());
-}
-
-template <typename Strategy>
-bool VisibleSelectionTemplate<Strategy>::HasEditableStyle() const {
-  return IsEditablePosition(Start());
-}
-
-template <typename Strategy>
-bool VisibleSelectionTemplate<Strategy>::IsContentRichlyEditable() const {
-  return IsRichlyEditablePosition(ToPositionInDOMTree(Start()));
 }
 
 template <typename Strategy>
@@ -685,9 +819,7 @@ static bool EqualSelectionsAlgorithm(
   const VisibleSelectionTemplate<Strategy> selection_wrapper1(selection1);
   const VisibleSelectionTemplate<Strategy> selection_wrapper2(selection2);
 
-  return selection_wrapper1.Start() == selection_wrapper2.Start() &&
-         selection_wrapper1.end() == selection_wrapper2.end() &&
-         selection_wrapper1.Base() == selection_wrapper2.Base() &&
+  return selection_wrapper1.Base() == selection_wrapper2.Base() &&
          selection_wrapper1.Extent() == selection_wrapper2.Extent();
 }
 
@@ -701,8 +833,6 @@ template <typename Strategy>
 DEFINE_TRACE(VisibleSelectionTemplate<Strategy>) {
   visitor->Trace(base_);
   visitor->Trace(extent_);
-  visitor->Trace(start_);
-  visitor->Trace(end_);
 }
 
 #ifndef NDEBUG
@@ -715,12 +845,12 @@ void VisibleSelectionTemplate<Strategy>::ShowTreeForThis() const {
             << Start()
                    .AnchorNode()
                    ->ToMarkedTreeString(Start().AnchorNode(), "S",
-                                        end().AnchorNode(), "E")
+                                        End().AnchorNode(), "E")
                    .Utf8()
-                   .Data()
-            << "start: " << Start().ToAnchorTypeAndOffsetString().Utf8().Data()
+                   .data()
+            << "start: " << Start().ToAnchorTypeAndOffsetString().Utf8().data()
             << "\n"
-            << "end: " << end().ToAnchorTypeAndOffsetString().Utf8().Data();
+            << "end: " << End().ToAnchorTypeAndOffsetString().Utf8().data();
 }
 
 #endif
@@ -735,7 +865,7 @@ void VisibleSelectionTemplate<Strategy>::PrintTo(
   }
   *ostream << "VisibleSelection(base: " << selection.Base()
            << " extent:" << selection.Extent()
-           << " start: " << selection.Start() << " end: " << selection.end()
+           << " start: " << selection.Start() << " end: " << selection.End()
            << ' ' << selection.Affinity() << ' '
            << (selection.IsDirectional() ? "Directional" : "NonDirectional")
            << ')';

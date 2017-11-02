@@ -23,8 +23,9 @@ class PointerWatcherEventRouter;
 
 namespace ash {
 
-class AcceleratorControllerDelegateAura;
-class PointerWatcherAdapter;
+class AcceleratorControllerDelegateClassic;
+class DisplaySynchronizer;
+class PointerWatcherAdapterClassic;
 class RootWindowController;
 
 namespace mus {
@@ -38,19 +39,15 @@ class ShellPortMashTestApi;
 // ShellPort implementation for mash/mus. See ash/README.md for more.
 class ShellPortMash : public ShellPort {
  public:
-  // If |create_session_state_delegate_stub| is true SessionStateDelegateStub is
-  // created. If false, the SessionStateDelegate from Shell is used.
-  ShellPortMash(WmWindow* primary_root_window,
-                WindowManager* window_manager,
-                views::PointerWatcherEventRouter* pointer_watcher_event_router,
-                bool create_session_state_delegate_stub);
+  ShellPortMash(WindowManager* window_manager,
+                views::PointerWatcherEventRouter* pointer_watcher_event_router);
   ~ShellPortMash() override;
 
   static ShellPortMash* Get();
 
   ash::RootWindowController* GetRootWindowControllerWithDisplayId(int64_t id);
 
-  AcceleratorControllerDelegateAura* accelerator_controller_delegate_mus() {
+  AcceleratorControllerDelegateClassic* accelerator_controller_delegate_mus() {
     return mus_state_->accelerator_controller_delegate.get();
   }
 
@@ -58,44 +55,34 @@ class ShellPortMash : public ShellPort {
 
   WindowManager* window_manager() { return window_manager_; }
 
+  // Called when the window server has changed the mouse enabled state.
+  void OnCursorTouchVisibleChanged(bool enabled);
+
   // ShellPort:
   void Shutdown() override;
   Config GetAshConfig() const override;
-  WmWindow* GetPrimaryRootWindow() override;
-  WmWindow* GetRootWindowForDisplayId(int64_t display_id) override;
-  const display::ManagedDisplayInfo& GetDisplayInfo(
-      int64_t display_id) const override;
-  bool IsActiveDisplayId(int64_t display_id) const override;
-  display::Display GetFirstDisplay() const override;
-  bool IsInUnifiedMode() const override;
-  bool IsInUnifiedModeIgnoreMirroring() const override;
-  void SetDisplayWorkAreaInsets(WmWindow* window,
-                                const gfx::Insets& insets) override;
+  std::unique_ptr<display::TouchTransformSetter> CreateTouchTransformDelegate()
+      override;
   void LockCursor() override;
   void UnlockCursor() override;
+  void ShowCursor() override;
+  void HideCursor() override;
+  void SetCursorSize(ui::CursorSize cursor_size) override;
+  void SetGlobalOverrideCursor(base::Optional<ui::CursorData> cursor) override;
   bool IsMouseEventsEnabled() override;
-  std::vector<WmWindow*> GetAllRootWindows() override;
-  void RecordGestureAction(GestureActionType action) override;
-  void RecordUserMetricsAction(UserMetricsAction action) override;
-  void RecordTaskSwitchMetric(TaskSwitchSource source) override;
+  void SetCursorTouchVisible(bool enabled) override;
   std::unique_ptr<WindowResizer> CreateDragWindowResizer(
       std::unique_ptr<WindowResizer> next_window_resizer,
       wm::WindowState* window_state) override;
   std::unique_ptr<WindowCycleEventFilter> CreateWindowCycleEventFilter()
       override;
-  std::unique_ptr<wm::MaximizeModeEventHandler> CreateMaximizeModeEventHandler()
+  std::unique_ptr<wm::TabletModeEventHandler> CreateTabletModeEventHandler()
       override;
   std::unique_ptr<WorkspaceEventHandler> CreateWorkspaceEventHandler(
-      WmWindow* workspace_window) override;
-  std::unique_ptr<ScopedDisableInternalMouseAndKeyboard>
-  CreateScopedDisableInternalMouseAndKeyboard() override;
+      aura::Window* workspace_window) override;
   std::unique_ptr<ImmersiveFullscreenController>
   CreateImmersiveFullscreenController() override;
   std::unique_ptr<KeyboardUI> CreateKeyboardUI() override;
-  std::unique_ptr<KeyEventWatcher> CreateKeyEventWatcher() override;
-  SessionStateDelegate* GetSessionStateDelegate() override;
-  void AddDisplayObserver(WmDisplayObserver* observer) override;
-  void RemoveDisplayObserver(WmDisplayObserver* observer) override;
   void AddPointerWatcher(views::PointerWatcher* watcher,
                          views::PointerWatcherEventTypes events) override;
   void RemovePointerWatcher(views::PointerWatcher* watcher) override;
@@ -104,8 +91,14 @@ class ShellPortMash : public ShellPort {
   void SetLaserPointerEnabled(bool enabled) override;
   void SetPartialMagnifierEnabled(bool enabled) override;
   void CreatePointerWatcherAdapter() override;
-  void CreatePrimaryHost() override;
-  void InitHosts(const ShellInitParams& init_params) override;
+  std::unique_ptr<AshWindowTreeHost> CreateAshWindowTreeHost(
+      const AshWindowTreeHostInitParams& init_params) override;
+  void OnCreatedRootWindowContainers(
+      RootWindowController* root_window_controller) override;
+  void UpdateSystemModalAndBlockingContainers() override;
+  void OnHostsInitialized() override;
+  std::unique_ptr<display::NativeDisplayDelegate> CreateNativeDisplayDelegate()
+      override;
   std::unique_ptr<AcceleratorController> CreateAcceleratorController() override;
 
  private:
@@ -127,21 +120,21 @@ class ShellPortMash : public ShellPort {
     MusSpecificState();
     ~MusSpecificState();
 
-    std::unique_ptr<PointerWatcherAdapter> pointer_watcher_adapter;
-    std::unique_ptr<AcceleratorControllerDelegateAura>
+    std::unique_ptr<PointerWatcherAdapterClassic> pointer_watcher_adapter;
+    std::unique_ptr<AcceleratorControllerDelegateClassic>
         accelerator_controller_delegate;
   };
 
   WindowManager* window_manager_;
-
-  WmWindow* primary_root_window_;
 
   // Only one of |mash_state_| or |mus_state_| is created, depending upon
   // Config.
   std::unique_ptr<MashSpecificState> mash_state_;
   std::unique_ptr<MusSpecificState> mus_state_;
 
-  std::unique_ptr<SessionStateDelegate> session_state_delegate_;
+  std::unique_ptr<DisplaySynchronizer> display_synchronizer_;
+
+  bool cursor_touch_visible_ = true;
 
   DISALLOW_COPY_AND_ASSIGN(ShellPortMash);
 };

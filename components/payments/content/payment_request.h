@@ -9,16 +9,20 @@
 #include <vector>
 
 #include "base/macros.h"
-#include "components/payments/content/payment_request.mojom.h"
+#include "base/memory/weak_ptr.h"
 #include "components/payments/content/payment_request_spec.h"
 #include "components/payments/content/payment_request_state.h"
+#include "components/payments/core/journey_logger.h"
 #include "components/payments/core/payment_request_delegate.h"
 #include "mojo/public/cpp/bindings/binding.h"
 #include "mojo/public/cpp/bindings/interface_request.h"
+#include "third_party/WebKit/public/platform/modules/payments/payment_request.mojom.h"
+#include "url/gurl.h"
 
 namespace content {
+class RenderFrameHost;
 class WebContents;
-}
+}  // namespace content
 
 namespace payments {
 
@@ -37,12 +41,16 @@ class PaymentRequest : public mojom::PaymentRequest,
   class ObserverForTest {
    public:
     virtual void OnCanMakePaymentCalled() = 0;
+    virtual void OnNotSupportedError() = 0;
+    virtual void OnConnectionTerminated() = 0;
+    virtual void OnAbortCalled() = 0;
 
    protected:
     virtual ~ObserverForTest() {}
   };
 
-  PaymentRequest(content::WebContents* web_contents,
+  PaymentRequest(content::RenderFrameHost* render_frame_host,
+                 content::WebContents* web_contents,
                  std::unique_ptr<PaymentRequestDelegate> delegate,
                  PaymentRequestWebContentsManager* manager,
                  mojo::InterfaceRequest<mojom::PaymentRequest> request,
@@ -62,7 +70,6 @@ class PaymentRequest : public mojom::PaymentRequest,
 
   // PaymentRequestSpec::Observer:
   void OnSpecUpdated() override {}
-  void OnInvalidSpecProvided() override;
 
   // PaymentRequestState::Delegate:
   void OnPaymentResponseAvailable(mojom::PaymentResponsePtr response) override;
@@ -73,6 +80,10 @@ class PaymentRequest : public mojom::PaymentRequest,
   // to the renderer which will indirectly destroy this object (through
   // OnConnectionTerminated).
   void UserCancelled();
+
+  // Called when the frame attached to this PaymentRequest is navigating away,
+  // but before the PaymentRequest is destroyed.
+  void DidStartNavigation(bool is_user_initiated);
 
   // As a result of a browser-side error or renderer-initiated mojo channel
   // closure (e.g. there was an error on the renderer side, or payment was
@@ -89,6 +100,11 @@ class PaymentRequest : public mojom::PaymentRequest,
   PaymentRequestState* state() { return state_.get(); }
 
  private:
+  // Only records the abort reason if it's the first completion for this Payment
+  // Request. This is necessary since the aborts cascade into one another with
+  // the first one being the most precise.
+  void RecordFirstAbortReason(JourneyLogger::AbortReason completion_status);
+
   content::WebContents* web_contents_;
   std::unique_ptr<PaymentRequestDelegate> delegate_;
   // |manager_| owns this PaymentRequest.
@@ -99,8 +115,23 @@ class PaymentRequest : public mojom::PaymentRequest,
   std::unique_ptr<PaymentRequestSpec> spec_;
   std::unique_ptr<PaymentRequestState> state_;
 
+  // The RFC 6454 origin of the top level frame that has invoked PaymentRequest
+  // API. This is what the user sees in the address bar.
+  const GURL top_level_origin_;
+
+  // The RFC 6454 origin of the frame that has invoked PaymentRequest API. This
+  // can be either the main frame or an iframe.
+  const GURL frame_origin_;
+
   // May be null, must outlive this object.
   ObserverForTest* observer_for_testing_;
+
+  JourneyLogger journey_logger_;
+
+  // Whether a completion was already recorded for this Payment Request.
+  bool has_recorded_completion_ = false;
+
+  base::WeakPtrFactory<PaymentRequest> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(PaymentRequest);
 };

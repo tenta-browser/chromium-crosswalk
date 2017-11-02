@@ -13,6 +13,7 @@
 #include <windows.h>
 #endif
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -139,9 +140,12 @@ class PDFEngine {
     // Creates and returns new URL loader for partial document requests.
     virtual pp::URLLoader CreateURLLoader() = 0;
 
-    // Calls the client's OnCallback() function in delay_in_ms with the given
-    // id.
+    // Calls the client's OnCallback() function in |delay_in_ms| with the given
+    // |id|.
     virtual void ScheduleCallback(int id, int delay_in_ms) = 0;
+    // Calls the client's OnTouchTimerCallback() function in |delay_in_ms| with
+    // the given |id|.
+    virtual void ScheduleTouchTimerCallback(int id, int delay_in_ms) = 0;
 
     // Searches the given string for "term" and returns the results.  Unicode-
     // aware.
@@ -186,10 +190,13 @@ class PDFEngine {
 
     // Sets selection status.
     virtual void IsSelectingChanged(bool is_selecting) {}
+
+    virtual void SelectionChanged(const pp::Rect& left, const pp::Rect& right) {
+    }
   };
 
   // Factory method to create an instance of the PDF Engine.
-  static PDFEngine* Create(Client* client);
+  static std::unique_ptr<PDFEngine> Create(Client* client);
 
   virtual ~PDFEngine() {}
 
@@ -224,6 +231,13 @@ class PDFEngine {
   virtual void RotateClockwise() = 0;
   virtual void RotateCounterclockwise() = 0;
   virtual std::string GetSelectedText() = 0;
+  // Returns true if focus is within an editable form text area, and false
+  // otherwise.
+  virtual bool CanEditText() = 0;
+  // Replace selected text within an editable form text area with another
+  // string. If there is no selected text, append the replacement text after the
+  // current caret position.
+  virtual void ReplaceSelection(const std::string& text) = 0;
   virtual std::string GetLinkAtPosition(const pp::Point& point) = 0;
   // Checks the permissions associated with this document.
   virtual bool HasPermission(DocumentPermission permission) const = 0;
@@ -250,6 +264,8 @@ class PDFEngine {
   virtual void SetGrayscale(bool grayscale) = 0;
   // Callback for timer that's set with ScheduleCallback().
   virtual void OnCallback(int id) = 0;
+  // Callback for timer that's set with ScheduleTouchTimerCallback().
+  virtual void OnTouchTimerCallback(int id) = 0;
   // Get the number of characters on a given page.
   virtual int GetCharCount(int page_index) = 0;
   // Get the bounds in page pixels of a character on a given page.
@@ -299,6 +315,11 @@ class PDFEngine {
   virtual bool IsProgressiveLoad() = 0;
 
   virtual std::string GetMetadata(const std::string& key) = 0;
+
+  virtual void SetCaretPosition(const pp::Point& position) = 0;
+  virtual void MoveRangeSelectionExtent(const pp::Point& extent) = 0;
+  virtual void SetSelectionBounds(const pp::Point& base,
+                                  const pp::Point& extent) = 0;
 };
 
 // Interface for exports that wrap the PDF engine.
@@ -341,8 +362,7 @@ class PDFEngineExports {
       PDFEnsureTypefaceCharactersAccessible func) = 0;
 
   virtual void SetPDFUseGDIPrinting(bool enable) = 0;
-
-  virtual void SetPDFPostscriptPrintingLevel(int postscript_level) = 0;
+  virtual void SetPDFUsePrintMode(int mode) = 0;
 #endif  // defined(OS_WIN)
 
   // See the definition of RenderPDFPageToBitmap in pdf.cc for details.

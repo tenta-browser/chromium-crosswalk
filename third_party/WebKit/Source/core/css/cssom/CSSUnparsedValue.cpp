@@ -70,7 +70,7 @@ CSSUnparsedValue* CSSUnparsedValue::FromCSSValue(
       css_variable_reference_value.VariableDataValue()->TokenRange()));
 }
 
-CSSValue* CSSUnparsedValue::ToCSSValue() const {
+const CSSValue* CSSUnparsedValue::ToCSSValue() const {
   StringBuilder tokens;
 
   for (unsigned i = 0; i < fragments_.size(); i++) {
@@ -87,9 +87,13 @@ CSSValue* CSSUnparsedValue::ToCSSValue() const {
   }
 
   CSSTokenizer tokenizer(tokens.ToString());
-  return CSSVariableReferenceValue::Create(CSSVariableData::Create(
-      tokenizer.TokenRange(), false /* isAnimationTainted */,
-      true /* needsVariableResolution */));
+  // TODO(alancutter): This should be using a real parser context instead of
+  // StrictCSSParserContext.
+  return CSSVariableReferenceValue::Create(
+      CSSVariableData::Create(tokenizer.TokenRange(),
+                              false /* isAnimationTainted */,
+                              true /* needsVariableResolution */),
+      *StrictCSSParserContext());
 }
 
 }  // namespace blink

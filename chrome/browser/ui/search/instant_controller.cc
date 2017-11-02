@@ -7,9 +7,8 @@
 #include <stddef.h>
 #include <utility>
 
-#include "base/location.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search/instant_service.h"
 #include "chrome/browser/search/instant_service_factory.h"
@@ -17,29 +16,17 @@
 #include "content/public/browser/web_contents.h"
 #include "url/gurl.h"
 
-namespace {
-
-bool IsContentsFrom(const InstantTab* page,
-                    const content::WebContents* contents) {
-  return page && (page->web_contents() == contents);
-}
-
-}  // namespace
-
 InstantController::InstantController(BrowserInstantController* browser)
-    : browser_(browser) {
-}
+    : browser_(browser), search_origin_(SearchModel::Origin::DEFAULT) {}
 
-InstantController::~InstantController() {
-}
+InstantController::~InstantController() = default;
 
-void InstantController::SearchModeChanged(const SearchMode& old_mode,
-                                          const SearchMode& new_mode) {
-  LogDebugEvent(base::StringPrintf(
-      "SearchModeChanged: [origin:mode] %d:%d to %d:%d", old_mode.origin,
-      old_mode.mode, new_mode.origin, new_mode.mode));
+void InstantController::SearchModeChanged(SearchModel::Origin old_origin,
+                                          SearchModel::Origin new_origin) {
+  LogDebugEvent(base::StringPrintf("SearchModeChanged: %d to %d", old_origin,
+                                   new_origin));
 
-  search_mode_ = new_mode;
+  search_origin_ = new_origin;
   ResetInstantTab();
 }
 
@@ -62,43 +49,26 @@ void InstantController::ClearDebugEvents() {
   debug_events_.clear();
 }
 
-void InstantController::InstantSupportChanged(
-    InstantSupportState instant_support) {
-  // Handle INSTANT_SUPPORT_YES here because InstantTab is not hooked up to the
-  // active tab. Search model changed listener in InstantTab will handle other
-  // cases.
-  if (instant_support != INSTANT_SUPPORT_YES)
-    return;
-
-  ResetInstantTab();
-}
-
-void InstantController::InstantSupportDetermined(
-    const content::WebContents* contents,
-    bool supports_instant) {
-  DCHECK(IsContentsFrom(instant_tab_.get(), contents));
-
-  if (!supports_instant) {
-    base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE,
-                                                    instant_tab_.release());
-  }
-}
-
 void InstantController::InstantTabAboutToNavigateMainFrame(
     const content::WebContents* contents,
     const GURL& url) {
-  DCHECK(IsContentsFrom(instant_tab_.get(), contents));
+  DCHECK(instant_tab_);
+  DCHECK_EQ(instant_tab_->web_contents(), contents);
 
-  // The Instant tab navigated.  Send it the data it needs to display
-  // properly.
+  // The Instant tab navigated (which means it had instant support both before
+  // and after the navigation). This may cause it to be assigned to a new
+  // renderer process, which doesn't have the most visited/theme data yet, so
+  // send it now.
+  // TODO(treib): This seems unnecessarily convoluted and fragile. Can't we just
+  // send this when the Instant process is created?
   UpdateInfoForInstantTab();
 }
 
 void InstantController::ResetInstantTab() {
-  if (!search_mode_.is_origin_default()) {
+  if (search_origin_ == SearchModel::Origin::NTP) {
     content::WebContents* active_tab = browser_->GetActiveWebContents();
     if (!instant_tab_ || active_tab != instant_tab_->web_contents()) {
-      instant_tab_.reset(new InstantTab(this, active_tab));
+      instant_tab_ = base::MakeUnique<InstantTab>(this, active_tab);
       instant_tab_->Init();
       UpdateInfoForInstantTab();
     }
@@ -108,16 +78,11 @@ void InstantController::ResetInstantTab() {
 }
 
 void InstantController::UpdateInfoForInstantTab() {
-  if (instant_tab_) {
-    // Update theme details.
-    InstantService* instant_service = GetInstantService();
-    if (instant_service) {
-      instant_service->UpdateThemeInfo();
-      instant_service->UpdateMostVisitedItemsInfo();
-    }
+  DCHECK(instant_tab_);
+  InstantService* instant_service =
+      InstantServiceFactory::GetForProfile(browser_->profile());
+  if (instant_service) {
+    instant_service->UpdateThemeInfo();
+    instant_service->UpdateMostVisitedItemsInfo();
   }
-}
-
-InstantService* InstantController::GetInstantService() const {
-  return InstantServiceFactory::GetForProfile(browser_->profile());
 }

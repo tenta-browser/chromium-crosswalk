@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "base/logging.h"
+#include "base/task_scheduler/scoped_set_task_priority_for_current_thread.h"
 #include "base/task_scheduler/task_scheduler.h"
 #include "base/threading/post_task_and_reply_impl.h"
 
@@ -29,6 +30,15 @@ class PostTaskAndReplyTaskRunner : public internal::PostTaskAndReplyImpl {
   const TaskTraits traits_;
 };
 
+// Returns TaskTraits based on |traits|. If TaskPriority hasn't been set
+// explicitly in |traits|, the returned TaskTraits have the current
+// TaskPriority.
+TaskTraits GetTaskTraitsWithExplicitPriority(const TaskTraits& traits) {
+  if (traits.priority_set_explicitly())
+    return traits;
+  return TaskTraits::Override(traits,
+                              {internal::GetTaskPriorityForCurrentThread()});
+}
 
 }  // namespace
 
@@ -60,9 +70,12 @@ void PostDelayedTaskWithTraits(const tracked_objects::Location& from_here,
                                OnceClosure task,
                                TimeDelta delay) {
   DCHECK(TaskScheduler::GetInstance())
-      << "Ref. Prerequisite section of post_task.h";
+      << "Ref. Prerequisite section of post_task.h.\n\n"
+         "Hint: if this is in a unit test, you're likely merely missing a "
+         "base::test::ScopedTaskEnvironment member in your fixture.\n";
   TaskScheduler::GetInstance()->PostDelayedTaskWithTraits(
-      from_here, traits, std::move(task), std::move(delay));
+      from_here, GetTaskTraitsWithExplicitPriority(traits), std::move(task),
+      std::move(delay));
 }
 
 void PostTaskWithTraitsAndReply(const tracked_objects::Location& from_here,
@@ -75,32 +88,44 @@ void PostTaskWithTraitsAndReply(const tracked_objects::Location& from_here,
 
 scoped_refptr<TaskRunner> CreateTaskRunnerWithTraits(const TaskTraits& traits) {
   DCHECK(TaskScheduler::GetInstance())
-      << "Ref. Prerequisite section of post_task.h";
-  return TaskScheduler::GetInstance()->CreateTaskRunnerWithTraits(traits);
+      << "Ref. Prerequisite section of post_task.h.\n\n"
+         "Hint: if this is in a unit test, you're likely merely missing a "
+         "base::test::ScopedTaskEnvironment member in your fixture.\n";
+  return TaskScheduler::GetInstance()->CreateTaskRunnerWithTraits(
+      GetTaskTraitsWithExplicitPriority(traits));
 }
 
 scoped_refptr<SequencedTaskRunner> CreateSequencedTaskRunnerWithTraits(
     const TaskTraits& traits) {
   DCHECK(TaskScheduler::GetInstance())
-      << "Ref. Prerequisite section of post_task.h";
+      << "Ref. Prerequisite section of post_task.h.\n\n"
+         "Hint: if this is in a unit test, you're likely merely missing a "
+         "base::test::ScopedTaskEnvironment member in your fixture.\n";
   return TaskScheduler::GetInstance()->CreateSequencedTaskRunnerWithTraits(
-      traits);
+      GetTaskTraitsWithExplicitPriority(traits));
 }
 
 scoped_refptr<SingleThreadTaskRunner> CreateSingleThreadTaskRunnerWithTraits(
-    const TaskTraits& traits) {
+    const TaskTraits& traits,
+    SingleThreadTaskRunnerThreadMode thread_mode) {
   DCHECK(TaskScheduler::GetInstance())
-      << "Ref. Prerequisite section of post_task.h";
+      << "Ref. Prerequisite section of post_task.h.\n\n"
+         "Hint: if this is in a unit test, you're likely merely missing a "
+         "base::test::ScopedTaskEnvironment member in your fixture.\n";
   return TaskScheduler::GetInstance()->CreateSingleThreadTaskRunnerWithTraits(
-      traits);
+      GetTaskTraitsWithExplicitPriority(traits), thread_mode);
 }
 
 #if defined(OS_WIN)
 scoped_refptr<SingleThreadTaskRunner> CreateCOMSTATaskRunnerWithTraits(
-    const TaskTraits& traits) {
+    const TaskTraits& traits,
+    SingleThreadTaskRunnerThreadMode thread_mode) {
   DCHECK(TaskScheduler::GetInstance())
-      << "Ref. Prerequisite section of post_task.h";
-  return TaskScheduler::GetInstance()->CreateCOMSTATaskRunnerWithTraits(traits);
+      << "Ref. Prerequisite section of post_task.h.\n\n"
+         "Hint: if this is in a unit test, you're likely merely missing a "
+         "base::test::ScopedTaskEnvironment member in your fixture.\n";
+  return TaskScheduler::GetInstance()->CreateCOMSTATaskRunnerWithTraits(
+      GetTaskTraitsWithExplicitPriority(traits), thread_mode);
 }
 #endif  // defined(OS_WIN)
 

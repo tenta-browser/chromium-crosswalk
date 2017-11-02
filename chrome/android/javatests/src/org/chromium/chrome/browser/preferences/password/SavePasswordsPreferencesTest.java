@@ -8,22 +8,19 @@ import android.support.test.InstrumentationRegistry;
 import android.support.test.filters.SmallTest;
 
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.BaseJUnit4ClassRunner;
-import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
-import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.preferences.ChromeBaseCheckBoxPreference;
 import org.chromium.chrome.browser.preferences.ChromeSwitchPreference;
 import org.chromium.chrome.browser.preferences.PrefServiceBridge;
 import org.chromium.chrome.browser.preferences.Preferences;
 import org.chromium.chrome.browser.preferences.PreferencesTest;
-import org.chromium.content.browser.test.NativeLibraryTestRule;
+import org.chromium.chrome.browser.test.ChromeBrowserTestRule;
 
 /**
  * Tests for the "Save Passwords" settings screen.
@@ -31,12 +28,7 @@ import org.chromium.content.browser.test.NativeLibraryTestRule;
 @RunWith(BaseJUnit4ClassRunner.class)
 public class SavePasswordsPreferencesTest {
     @Rule
-    public NativeLibraryTestRule mActivityTestRule = new NativeLibraryTestRule();
-
-    @Before
-    public void setUp() throws Exception {
-        mActivityTestRule.loadNativeLibraryAndInitBrowserProcess();
-    }
+    public final ChromeBrowserTestRule mBrowserTestRule = new ChromeBrowserTestRule();
 
     /**
      * Ensure that the on/off switch in "Save Passwords" settings actually enables and disables
@@ -100,7 +92,6 @@ public class SavePasswordsPreferencesTest {
      */
     @Test
     @SmallTest
-    @CommandLineFlags.Add("enable-features=" + SavePasswordsPreferences.CREDENTIAL_MANAGER_API)
     @Feature({"Preferences"})
     public void testAutoSignInCheckbox() throws Exception {
         ThreadUtils.runOnUiThreadBlocking(new Runnable() {
@@ -117,8 +108,6 @@ public class SavePasswordsPreferencesTest {
         ThreadUtils.runOnUiThreadBlocking(new Runnable() {
             @Override
             public void run() {
-                Assert.assertTrue(ChromeFeatureList.isEnabled(
-                        SavePasswordsPreferences.CREDENTIAL_MANAGER_API));
                 SavePasswordsPreferences passwordPrefs =
                         (SavePasswordsPreferences) preferences.getFragmentForTest();
                 ChromeBaseCheckBoxPreference onOffSwitch =
@@ -145,8 +134,6 @@ public class SavePasswordsPreferencesTest {
         ThreadUtils.runOnUiThreadBlocking(new Runnable() {
             @Override
             public void run() {
-                Assert.assertTrue(ChromeFeatureList.isEnabled(
-                        SavePasswordsPreferences.CREDENTIAL_MANAGER_API));
                 SavePasswordsPreferences passwordPrefs =
                         (SavePasswordsPreferences) preferences2.getFragmentForTest();
                 ChromeBaseCheckBoxPreference onOffSwitch =

@@ -6,9 +6,9 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "components/sync/base/model_type.h"
 #include "components/sync/device_info/local_device_info_provider_mock.h"
@@ -23,17 +23,19 @@ namespace {
 class DeviceInfoDataTypeControllerTest : public testing::Test {
  public:
   DeviceInfoDataTypeControllerTest()
-      : load_finished_(false),
+      : scoped_task_environment_(
+            base::test::ScopedTaskEnvironment::MainThreadType::UI),
+        load_finished_(false),
         last_type_(UNSPECIFIED),
         weak_ptr_factory_(this) {}
   ~DeviceInfoDataTypeControllerTest() override {}
 
   void SetUp() override {
-    local_device_ = base::MakeUnique<LocalDeviceInfoProviderMock>(
+    local_device_ = std::make_unique<LocalDeviceInfoProviderMock>(
         "cache_guid", "Wayne Gretzky's Hacking Box", "Chromium 10k",
         "Chrome 10k", sync_pb::SyncEnums_DeviceType_TYPE_LINUX, "device_id");
 
-    controller_ = base::MakeUnique<DeviceInfoDataTypeController>(
+    controller_ = std::make_unique<DeviceInfoDataTypeController>(
         base::Closure(), &sync_client_, local_device_.get());
 
     load_finished_ = false;
@@ -78,13 +80,15 @@ class DeviceInfoDataTypeControllerTest : public testing::Test {
     return testing::AssertionSuccess();
   }
 
+ private:
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
+
  protected:
   std::unique_ptr<DeviceInfoDataTypeController> controller_;
   std::unique_ptr<LocalDeviceInfoProviderMock> local_device_;
   bool load_finished_;
 
  private:
-  base::MessageLoopForUI message_loop_;
   ModelType last_type_;
   SyncError last_error_;
   FakeSyncClient sync_client_;

@@ -38,30 +38,8 @@ class CC_EXPORT YUVVideoDrawQuad : public DrawQuad {
   YUVVideoDrawQuad();
   YUVVideoDrawQuad(const YUVVideoDrawQuad& other);
 
-  void SetNew(const SharedQuadState* shared_quad_state,
+  void SetNew(const viz::SharedQuadState* shared_quad_state,
               const gfx::Rect& rect,
-              const gfx::Rect& opaque_rect,
-              const gfx::Rect& visible_rect,
-              // |*_tex_coord_rect| contains non-normalized coordinates.
-              // TODO(reveman): Make the use of normalized vs non-normalized
-              // coordinates consistent across all quad types: crbug.com/487370
-              const gfx::RectF& ya_tex_coord_rect,
-              const gfx::RectF& uv_tex_coord_rect,
-              const gfx::Size& ya_tex_size,
-              const gfx::Size& uv_tex_size,
-              unsigned y_plane_resource_id,
-              unsigned u_plane_resource_id,
-              unsigned v_plane_resource_id,
-              unsigned a_plane_resource_id,
-              ColorSpace color_space,
-              const gfx::ColorSpace& video_color_space,
-              float offset,
-              float multiplier,
-              uint32_t bits_per_channel);
-
-  void SetAll(const SharedQuadState* shared_quad_state,
-              const gfx::Rect& rect,
-              const gfx::Rect& opaque_rect,
               const gfx::Rect& visible_rect,
               bool needs_blending,
               // |*_tex_coord_rect| contains non-normalized coordinates.
@@ -81,6 +59,28 @@ class CC_EXPORT YUVVideoDrawQuad : public DrawQuad {
               float multiplier,
               uint32_t bits_per_channel);
 
+  void SetAll(const viz::SharedQuadState* shared_quad_state,
+              const gfx::Rect& rect,
+              const gfx::Rect& visible_rect,
+              bool needs_blending,
+              // |*_tex_coord_rect| contains non-normalized coordinates.
+              // TODO(reveman): Make the use of normalized vs non-normalized
+              // coordinates consistent across all quad types: crbug.com/487370
+              const gfx::RectF& ya_tex_coord_rect,
+              const gfx::RectF& uv_tex_coord_rect,
+              const gfx::Size& ya_tex_size,
+              const gfx::Size& uv_tex_size,
+              unsigned y_plane_resource_id,
+              unsigned u_plane_resource_id,
+              unsigned v_plane_resource_id,
+              unsigned a_plane_resource_id,
+              ColorSpace color_space,
+              const gfx::ColorSpace& video_color_space,
+              float offset,
+              float multiplier,
+              uint32_t bits_per_channel,
+              bool require_overlay);
+
   gfx::RectF ya_tex_coord_rect;
   gfx::RectF uv_tex_coord_rect;
   gfx::Size ya_tex_size;
@@ -91,19 +91,20 @@ class CC_EXPORT YUVVideoDrawQuad : public DrawQuad {
   uint32_t bits_per_channel = 8;
   // TODO(hubbe): Move to ResourceProvider::ScopedSamplerGL.
   gfx::ColorSpace video_color_space;
+  bool require_overlay = false;
 
   static const YUVVideoDrawQuad* MaterialCast(const DrawQuad*);
 
-  ResourceId y_plane_resource_id() const {
+  viz::ResourceId y_plane_resource_id() const {
     return resources.ids[kYPlaneResourceIdIndex];
   }
-  ResourceId u_plane_resource_id() const {
+  viz::ResourceId u_plane_resource_id() const {
     return resources.ids[kUPlaneResourceIdIndex];
   }
-  ResourceId v_plane_resource_id() const {
+  viz::ResourceId v_plane_resource_id() const {
     return resources.ids[kVPlaneResourceIdIndex];
   }
-  ResourceId a_plane_resource_id() const {
+  viz::ResourceId a_plane_resource_id() const {
     return resources.ids[kAPlaneResourceIdIndex];
   }
 

@@ -42,13 +42,14 @@
 namespace blink {
 
 class Dictionary;
+class RespondWithObserver;
 class ScriptPromise;
 class ScriptState;
 class ServiceWorkerClients;
 class ServiceWorkerRegistration;
 class ServiceWorkerThread;
 class WaitUntilObserver;
-class WorkerThreadStartupData;
+struct GlobalScopeCreationParams;
 
 typedef RequestOrUSVString RequestInfo;
 
@@ -58,14 +59,18 @@ class MODULES_EXPORT ServiceWorkerGlobalScope final : public WorkerGlobalScope {
  public:
   static ServiceWorkerGlobalScope* Create(
       ServiceWorkerThread*,
-      std::unique_ptr<WorkerThreadStartupData>);
+      std::unique_ptr<GlobalScopeCreationParams>,
+      double time_origin);
 
   ~ServiceWorkerGlobalScope() override;
   bool IsServiceWorkerGlobalScope() const override { return true; }
 
-  // Counts an evaluated script and its size. Called for each of the main
-  // worker script and imported scripts.
-  void CountScript(size_t script_size, size_t cached_metadata_size);
+  // Counts an evaluated script and its size. Called for the main worker script.
+  void CountWorkerScript(size_t script_size, size_t cached_metadata_size);
+
+  // Counts an evaluated script and its size. Called for each of imported
+  // scripts.
+  void CountImportedScript(size_t script_size, size_t cached_metadata_size);
 
   // Called when the main worker script is evaluated.
   void DidEvaluateWorkerScript();
@@ -87,6 +92,11 @@ class MODULES_EXPORT ServiceWorkerGlobalScope final : public WorkerGlobalScope {
   const AtomicString& InterfaceName() const override;
 
   void DispatchExtendableEvent(Event*, WaitUntilObserver*);
+
+  // For ExtendableEvents that also have a respondWith() function.
+  void DispatchExtendableEventWithRespondWith(Event*,
+                                              WaitUntilObserver*,
+                                              RespondWithObserver*);
 
   DEFINE_ATTRIBUTE_EVENT_LISTENER(install);
   DEFINE_ATTRIBUTE_EVENT_LISTENER(activate);
@@ -115,6 +125,10 @@ class MODULES_EXPORT ServiceWorkerGlobalScope final : public WorkerGlobalScope {
       const KURL& script_url,
       const Vector<char>* meta_data) override;
   void ExceptionThrown(ErrorEvent*) override;
+
+  // Records the |script_size| and |cached_metadata_size| for UMA to measure the
+  // number of scripts and the total bytes of scripts.
+  void RecordScriptSize(size_t script_size, size_t cached_metadata_size);
 
   Member<ServiceWorkerClients> clients_;
   Member<ServiceWorkerRegistration> registration_;

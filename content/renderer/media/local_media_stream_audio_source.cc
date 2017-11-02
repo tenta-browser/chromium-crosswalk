@@ -6,6 +6,7 @@
 
 #include "content/common/media/media_stream_options.h"
 #include "content/renderer/media/audio_device_factory.h"
+#include "content/renderer/media/webrtc_logging.h"
 #include "content/renderer/render_frame_impl.h"
 
 namespace content {
@@ -21,24 +22,23 @@ LocalMediaStreamAudioSource::LocalMediaStreamAudioSource(
   MediaStreamSource::SetDeviceInfo(device_info);
 
   // If the device buffer size was not provided, use a default.
-  int frames_per_buffer = device_info.device.input.frames_per_buffer;
+  int frames_per_buffer = device_info.device.input.frames_per_buffer();
   if (frames_per_buffer <= 0) {
     // TODO(miu): Like in ProcessedLocalAudioSource::GetBufferSize(), we should
     // re-evaluate whether Android needs special treatment here. Or, perhaps we
     // should just DCHECK_GT(device_info...frames_per_buffer, 0)?
     // http://crbug.com/638081
 #if defined(OS_ANDROID)
-    frames_per_buffer = device_info.device.input.sample_rate / 50;  // 20 ms
+    frames_per_buffer = device_info.device.input.sample_rate() / 50;  // 20 ms
 #else
-    frames_per_buffer = device_info.device.input.sample_rate / 100;  // 10 ms
+    frames_per_buffer = device_info.device.input.sample_rate() / 100;  // 10 ms
 #endif
   }
 
   MediaStreamAudioSource::SetFormat(media::AudioParameters(
       media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
-      static_cast<media::ChannelLayout>(
-          device_info.device.input.channel_layout),
-      device_info.device.input.sample_rate,
+      device_info.device.input.channel_layout(),
+      device_info.device.input.sample_rate(),
       16,  // Legacy parameter (data is always in 32-bit float format).
       frames_per_buffer));
 }
@@ -105,7 +105,12 @@ void LocalMediaStreamAudioSource::Capture(const media::AudioBus* audio_bus,
 }
 
 void LocalMediaStreamAudioSource::OnCaptureError(const std::string& why) {
+  WebRtcLogMessage("LocalMediaStreamAudioSource::OnCaptureError: " + why);
   StopSourceOnError(why);
+}
+
+void LocalMediaStreamAudioSource::OnCaptureMuted(bool is_muted) {
+  SetMutedState(is_muted);
 }
 
 }  // namespace content

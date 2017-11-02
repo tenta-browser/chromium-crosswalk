@@ -31,8 +31,8 @@
 #define TreeScopeStyleSheetCollection_h
 
 #include "core/CoreExport.h"
-#include "core/dom/DocumentOrderedList.h"
 #include "core/dom/StyleSheetCollection.h"
+#include "core/dom/TreeOrderedList.h"
 #include "core/dom/TreeScope.h"
 
 namespace blink {
@@ -49,10 +49,12 @@ class CORE_EXPORT TreeScopeStyleSheetCollection : public StyleSheetCollection {
   bool HasStyleSheetCandidateNodes() const {
     return !style_sheet_candidate_nodes_.IsEmpty();
   }
+  bool HasStyleSheets() const;
 
   bool MediaQueryAffectingValueChanged();
 
   virtual bool IsShadowTreeStyleSheetCollection() const { return false; }
+  void UpdateStyleSheetList();
 
   DECLARE_VIRTUAL_TRACE();
 
@@ -65,7 +67,7 @@ class CORE_EXPORT TreeScopeStyleSheetCollection : public StyleSheetCollection {
   void ApplyActiveStyleSheetChanges(StyleSheetCollection&);
 
   Member<TreeScope> tree_scope_;
-  DocumentOrderedList style_sheet_candidate_nodes_;
+  TreeOrderedList style_sheet_candidate_nodes_;
 
  private:
   friend class TreeScopeStyleSheetCollectionTest;

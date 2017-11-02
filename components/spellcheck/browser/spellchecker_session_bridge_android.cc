@@ -37,11 +37,6 @@ SpellCheckerSessionBridge::~SpellCheckerSessionBridge() {
   DisconnectSession();
 }
 
-// static
-bool SpellCheckerSessionBridge::RegisterJNI(JNIEnv* env) {
-  return RegisterNativesImpl(env);
-}
-
 void SpellCheckerSessionBridge::RequestTextCheck(int route_id,
                                                  int identifier,
                                                  const base::string16& text) {
@@ -94,7 +89,8 @@ void SpellCheckerSessionBridge::ProcessSpellCheckResults(
     JNIEnv* env,
     const JavaParamRef<jobject>& jobj,
     const JavaParamRef<jintArray>& offset_array,
-    const JavaParamRef<jintArray>& length_array) {
+    const JavaParamRef<jintArray>& length_array,
+    const JavaParamRef<jobjectArray>& suggestions_array) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   std::vector<int> offsets;
   std::vector<int> lengths;
@@ -104,8 +100,14 @@ void SpellCheckerSessionBridge::ProcessSpellCheckResults(
 
   std::vector<SpellCheckResult> results;
   for (size_t i = 0; i < offsets.size(); i++) {
-    results.push_back(
-        SpellCheckResult(SpellCheckResult::SPELLING, offsets[i], lengths[i]));
+    base::android::ScopedJavaLocalRef<jobjectArray> suggestions_for_word_array(
+        env, static_cast<jobjectArray>(
+                 env->GetObjectArrayElement(suggestions_array, i)));
+    std::vector<base::string16> suggestions_for_word;
+    base::android::AppendJavaStringArrayToStringVector(
+        env, suggestions_for_word_array.obj(), &suggestions_for_word);
+    results.push_back(SpellCheckResult(SpellCheckResult::SPELLING, offsets[i],
+                                       lengths[i], suggestions_for_word));
   }
 
   content::RenderProcessHost* sender =

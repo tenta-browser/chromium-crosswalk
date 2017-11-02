@@ -9,7 +9,7 @@
 #include "base/posix/global_descriptors.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
-#include "content/browser/file_descriptor_info_impl.h"
+#include "content/browser/posix_file_descriptor_info_impl.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_descriptors.h"
@@ -71,18 +71,21 @@ base::PlatformFile OpenFileIfNecessary(const base::FilePath& path,
 
 }  // namespace
 
-std::unique_ptr<FileDescriptorInfo> CreateDefaultPosixFilesToMap(
+std::unique_ptr<PosixFileDescriptorInfo> CreateDefaultPosixFilesToMap(
     int child_process_id,
     const mojo::edk::PlatformHandle& mojo_client_handle,
     bool include_service_required_files,
     const std::string& process_type,
     base::CommandLine* command_line) {
-  std::unique_ptr<FileDescriptorInfo> files_to_register(
-      FileDescriptorInfoImpl::Create());
+  std::unique_ptr<PosixFileDescriptorInfo> files_to_register(
+      PosixFileDescriptorInfoImpl::Create());
 
-  int field_trial_handle = base::FieldTrialList::GetFieldTrialHandle();
-  if (field_trial_handle != base::kInvalidPlatformFile)
-    files_to_register->Share(kFieldTrialDescriptor, field_trial_handle);
+  base::SharedMemoryHandle shm = base::FieldTrialList::GetFieldTrialHandle();
+  if (shm.IsValid()) {
+    files_to_register->Share(
+        kFieldTrialDescriptor,
+        base::SharedMemory::GetFdFromSharedMemoryHandle(shm));
+  }
 
   DCHECK(mojo_client_handle.is_valid());
   files_to_register->Share(kMojoIPCChannel, mojo_client_handle.handle);
@@ -112,7 +115,8 @@ std::unique_ptr<FileDescriptorInfo> CreateDefaultPosixFilesToMap(
       base::PlatformFile file =
           OpenFileIfNecessary(key_path_iter.second, &region);
       if (file == base::kInvalidPlatformFile) {
-        DLOG(ERROR) << "Ignoring invalid file " << key_path_iter.second.value();
+        DLOG(WARNING) << "Ignoring invalid file "
+                      << key_path_iter.second.value();
         continue;
       }
       file_switch_value_builder.AddEntry(key_path_iter.first, key);
@@ -120,7 +124,7 @@ std::unique_ptr<FileDescriptorInfo> CreateDefaultPosixFilesToMap(
       key++;
       DCHECK(key < kContentDynamicDescriptorMax);
     }
-    command_line->AppendSwitchASCII(switches::kSharedFiles,
+    command_line->AppendSwitchASCII(service_manager::switches::kSharedFiles,
                                     file_switch_value_builder.switch_value());
   }
 

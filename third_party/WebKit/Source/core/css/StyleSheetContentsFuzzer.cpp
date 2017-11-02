@@ -8,16 +8,23 @@
 #include "platform/wtf/text/WTFString.h"
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
+  static blink::BlinkFuzzerTestSupport test_support =
+      blink::BlinkFuzzerTestSupport();
   blink::CSSParserContext* context =
       blink::CSSParserContext::Create(blink::kHTMLStandardMode);
   blink::StyleSheetContents* styleSheet =
       blink::StyleSheetContents::Create(context);
+
   styleSheet->ParseString(String::FromUTF8WithLatin1Fallback(
       reinterpret_cast<const char*>(data), size));
+
+#if defined(ADDRESS_SANITIZER)
+  // LSAN needs unreachable objects to be released to avoid reporting them
+  // incorrectly as a memory leak.
+  blink::ThreadState* currentThreadState = blink::ThreadState::Current();
+  currentThreadState->CollectAllGarbage();
+#endif
+
   return 0;
 }
 
-extern "C" int LLVMFuzzerInitialize(int* argc, char*** argv) {
-  blink::InitializeBlinkFuzzTest(argc, argv);
-  return 0;
-}

@@ -81,10 +81,8 @@ SpellcheckHunspellDictionary::DictionaryFile::DictionaryFile() {
 
 SpellcheckHunspellDictionary::DictionaryFile::~DictionaryFile() {
   if (file.IsValid()) {
-    BrowserThread::PostTask(
-        BrowserThread::FILE,
-        FROM_HERE,
-        base::Bind(&CloseDictionary, Passed(&file)));
+    BrowserThread::PostTask(BrowserThread::FILE, FROM_HERE,
+                            base::BindOnce(&CloseDictionary, Passed(&file)));
   }
 }
 
@@ -266,7 +264,7 @@ void SpellcheckHunspellDictionary::DownloadDictionary(GURL url) {
           destination: GOOGLE_OWNED_SERVICE
         }
         policy {
-          cookies_allowed: false
+          cookies_allowed: NO
           setting:
             "You can prevent downloading dictionaries by not selecting 'Use "
             "this language for spell checking.' in Chrome's settings under "

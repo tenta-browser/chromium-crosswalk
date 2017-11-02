@@ -12,7 +12,7 @@
 #define GeneratedCodeHelper_h
 
 #include "bindings/core/v8/ExceptionState.h"
-#include "bindings/core/v8/V8Binding.h"
+#include "bindings/core/v8/V8BindingForCore.h"
 #include "core/CoreExport.h"
 #include "platform/wtf/PassRefPtr.h"
 #include "v8/include/v8.h"
@@ -50,7 +50,7 @@ class CORE_EXPORT ExceptionToRejectPromiseScope {
     // As exceptions must always be created in the current realm, reject
     // promises must also be created in the current realm while regular promises
     // are created in the relevant realm of the context object.
-    ScriptState* script_state = ScriptState::ForFunctionObject(info_);
+    ScriptState* script_state = ScriptState::ForCurrentRealm(info_);
     V8SetReturnValue(info_, exception_state_.Reject(script_state).V8Value());
   }
 
@@ -64,12 +64,14 @@ using InstallTemplateFunction =
              const DOMWrapperWorld& world,
              v8::Local<v8::FunctionTemplate> interface_template);
 
-using InstallRuntimeEnabledFunction =
-    void (*)(v8::Isolate* isolate,
-             const DOMWrapperWorld& world,
+using InstallRuntimeEnabledFeaturesFunction =
+    void (*)(v8::Isolate*,
+             const DOMWrapperWorld&,
              v8::Local<v8::Object> instance,
              v8::Local<v8::Object> prototype,
              v8::Local<v8::Function> interface);
+
+using InstallRuntimeEnabledFeaturesOnTemplateFunction = InstallTemplateFunction;
 
 }  // namespace blink
 

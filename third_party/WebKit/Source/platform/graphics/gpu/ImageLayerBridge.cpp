@@ -4,8 +4,8 @@
 
 #include "platform/graphics/gpu/ImageLayerBridge.h"
 
-#include "cc/resources/shared_bitmap.h"
-#include "cc/resources/texture_mailbox.h"
+#include "components/viz/common/quads/shared_bitmap.h"
+#include "components/viz/common/quads/texture_mailbox.h"
 #include "gpu/command_buffer/client/gles2_interface.h"
 #include "platform/graphics/ColorBehavior.h"
 #include "platform/graphics/GraphicsLayer.h"
@@ -18,7 +18,7 @@
 namespace blink {
 
 ImageLayerBridge::ImageLayerBridge(OpacityMode opacity_mode)
-    : weak_ptr_factory_(this), opacity_mode_(opacity_mode) {
+    : opacity_mode_(opacity_mode) {
   layer_ = Platform::Current()->CompositorSupport()->CreateExternalTextureLayer(
       this);
   GraphicsLayer::RegisterContentsLayer(layer_->Layer());
@@ -49,7 +49,8 @@ void ImageLayerBridge::SetImage(PassRefPtr<StaticBitmapImage> image) {
     // m_image->ensureMailbox() call of
     // ImageLayerBridge::PrepareTextureMailbox. To prevent a potential memory
     // leak we must flush the GrContext here.
-    image_->ImageForCurrentFrame()->getTextureHandle(true);  // GrContext flush.
+    image_->PaintImageForCurrentFrame().GetSkImage()->getTextureHandle(
+        true);  // GrContext flush.
   }
   has_presented_since_last_set_image_ = false;
 }
@@ -65,8 +66,8 @@ void ImageLayerBridge::Dispose() {
 }
 
 bool ImageLayerBridge::PrepareTextureMailbox(
-    cc::TextureMailbox* out_mailbox,
-    std::unique_ptr<cc::SingleReleaseCallback>* out_release_callback) {
+    viz::TextureMailbox* out_mailbox,
+    std::unique_ptr<viz::SingleReleaseCallback>* out_release_callback) {
   if (disposed_)
     return false;
 
@@ -79,19 +80,19 @@ bool ImageLayerBridge::PrepareTextureMailbox(
   has_presented_since_last_set_image_ = true;
 
   if (image_->IsTextureBacked()) {
-    image_->EnsureMailbox();
-    *out_mailbox = cc::TextureMailbox(image_->GetMailbox(),
-                                      image_->GetSyncToken(), GL_TEXTURE_2D);
+    image_->EnsureMailbox(kUnverifiedSyncToken);
+    *out_mailbox = viz::TextureMailbox(image_->GetMailbox(),
+                                       image_->GetSyncToken(), GL_TEXTURE_2D);
     auto func = WTF::Bind(&ImageLayerBridge::MailboxReleasedGpu,
-                          weak_ptr_factory_.CreateWeakPtr(), image_);
-    *out_release_callback = cc::SingleReleaseCallback::Create(
+                          WrapWeakPersistent(this), image_);
+    *out_release_callback = viz::SingleReleaseCallback::Create(
         ConvertToBaseCallback(std::move(func)));
   } else {
-    std::unique_ptr<cc::SharedBitmap> bitmap = CreateOrRecycleBitmap();
+    std::unique_ptr<viz::SharedBitmap> bitmap = CreateOrRecycleBitmap();
     if (!bitmap)
       return false;
 
-    sk_sp<SkImage> sk_image = image_->ImageForCurrentFrame();
+    sk_sp<SkImage> sk_image = image_->PaintImageForCurrentFrame().GetSkImage();
     if (!sk_image)
       return false;
 
@@ -107,12 +108,12 @@ bool ImageLayerBridge::PrepareTextureMailbox(
         return false;
     }
 
-    *out_mailbox = cc::TextureMailbox(
+    *out_mailbox = viz::TextureMailbox(
         bitmap.get(), gfx::Size(image_->width(), image_->height()));
     auto func = WTF::Bind(&ImageLayerBridge::MailboxReleasedSoftware,
-                          weak_ptr_factory_.CreateWeakPtr(),
-                          base::Passed(&bitmap), image_->Size());
-    *out_release_callback = cc::SingleReleaseCallback::Create(
+                          WrapWeakPersistent(this), base::Passed(&bitmap),
+                          image_->Size());
+    *out_release_callback = viz::SingleReleaseCallback::Create(
         ConvertToBaseCallback(std::move(func)));
   }
 
@@ -123,7 +124,7 @@ bool ImageLayerBridge::PrepareTextureMailbox(
   return true;
 }
 
-std::unique_ptr<cc::SharedBitmap> ImageLayerBridge::CreateOrRecycleBitmap() {
+std::unique_ptr<viz::SharedBitmap> ImageLayerBridge::CreateOrRecycleBitmap() {
   auto it = std::remove_if(recycled_bitmaps_.begin(), recycled_bitmaps_.end(),
                            [this](const RecycledBitmap& bitmap) {
                              return bitmap.size != image_->Size();
@@ -142,26 +143,19 @@ std::unique_ptr<cc::SharedBitmap> ImageLayerBridge::CreateOrRecycleBitmap() {
 void ImageLayerBridge::MailboxReleasedGpu(RefPtr<StaticBitmapImage> image,
                                           const gpu::SyncToken& token,
                                           bool lost_resource) {
-  if (image) {
+  if (image && image->IsValid()) {
     DCHECK(image->IsTextureBacked());
-    if (token.HasData()) {
-      if (image->HasMailbox()) {
-        image->UpdateSyncToken(token);
-      } else {
-        // Wait on sync token now because SkiaTextureHolder does not know
-        // about sync tokens.
-        gpu::gles2::GLES2Interface* shared_gl = SharedGpuContext::Gl();
-        if (shared_gl)
-          shared_gl->WaitSyncTokenCHROMIUM(token.GetConstData());
-      }
+    if (token.HasData() && image->ContextProvider() &&
+        image->ContextProvider()->ContextGL()) {
+      image->ContextProvider()->ContextGL()->WaitSyncTokenCHROMIUM(
+          token.GetConstData());
     }
   }
-  // let 'image' go out of scope to finalize the release. The
-  // destructor will wait on sync token before deleting resource.
+  // let 'image' go out of scope to release gpu resources.
 }
 
 void ImageLayerBridge::MailboxReleasedSoftware(
-    std::unique_ptr<cc::SharedBitmap> bitmap,
+    std::unique_ptr<viz::SharedBitmap> bitmap,
     const IntSize& size,
     const gpu::SyncToken& sync_token,
     bool lost_resource) {

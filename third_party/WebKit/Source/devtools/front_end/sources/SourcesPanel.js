@@ -87,8 +87,6 @@ Sources.SourcesPanel = class extends UI.Panel {
 
     this._threadsSidebarPane = null;
     this._watchSidebarPane = /** @type {!UI.View} */ (UI.viewManager.view('sources.watch'));
-    // TODO: Force installing listeners from the model, not the UI.
-    self.runtime.sharedInstance(Sources.XHRBreakpointsSidebarPane);
     this._callstackPane = self.runtime.sharedInstance(Sources.CallStackSidebarPane);
     this._callstackPane.registerShortcuts(this.registerShortcuts.bind(this));
 
@@ -121,7 +119,6 @@ Sources.SourcesPanel = class extends UI.Panel {
     new Sources.WorkspaceMappingTip(this, this._workspace);
     Extensions.extensionServer.addEventListener(
         Extensions.ExtensionServer.Events.SidebarPaneAdded, this._extensionSidebarPaneAdded, this);
-    Components.DataSaverInfobar.maybeShowInPanel(this);
     SDK.targetManager.observeTargets(this);
   }
 
@@ -688,18 +685,13 @@ Sources.SourcesPanel = class extends UI.Panel {
     this._pauseOnExceptionButton.addEventListener(UI.ToolbarButton.Events.Click, this._togglePauseOnExceptions, this);
     debugToolbar.appendToolbarItem(this._pauseOnExceptionButton);
 
-    debugToolbar.appendSeparator();
-    debugToolbar.appendToolbarItem(new UI.ToolbarSettingCheckbox(
-        Common.moduleSetting('enableAsyncStackTraces'), Common.UIString('Capture async stack traces'),
-        Common.UIString('Async')));
-
     return debugToolbar;
   }
 
   _createDebugToolbarDrawer() {
     var debugToolbarDrawer = createElementWithClass('div', 'scripts-debug-toolbar-drawer');
 
-    var label = Common.UIString('Pause On Caught Exceptions');
+    var label = Common.UIString('Pause on caught exceptions');
     var setting = Common.moduleSetting('pauseOnCaughtException');
     debugToolbarDrawer.appendChild(UI.SettingsUI.createSettingCheckbox(label, setting, true));
 
@@ -742,7 +734,8 @@ Sources.SourcesPanel = class extends UI.Panel {
       if (!networkUISourceCode)
         return;
       var fileSystemPath = Persistence.FileSystemWorkspaceBinding.fileSystemPath(uiSourceCode.project().id());
-      Workspace.fileSystemMapping.addMappingForResource(networkUISourceCode.url(), fileSystemPath, uiSourceCode.url());
+      Persistence.fileSystemMapping.addMappingForResource(
+          networkUISourceCode.url(), fileSystemPath, uiSourceCode.url());
     }
   }
 
@@ -760,7 +753,8 @@ Sources.SourcesPanel = class extends UI.Panel {
       if (!uiSourceCode)
         return;
       var fileSystemPath = Persistence.FileSystemWorkspaceBinding.fileSystemPath(uiSourceCode.project().id());
-      Workspace.fileSystemMapping.addMappingForResource(networkUISourceCode.url(), fileSystemPath, uiSourceCode.url());
+      Persistence.fileSystemMapping.addMappingForResource(
+          networkUISourceCode.url(), fileSystemPath, uiSourceCode.url());
     }
   }
 
@@ -768,7 +762,7 @@ Sources.SourcesPanel = class extends UI.Panel {
    * @param {!Workspace.UISourceCode} uiSourceCode
    */
   _removeNetworkMapping(uiSourceCode) {
-    Workspace.fileSystemMapping.removeMappingForURL(uiSourceCode.url());
+    Persistence.fileSystemMapping.removeMappingForURL(uiSourceCode.url());
   }
 
   /**
@@ -784,12 +778,10 @@ Sources.SourcesPanel = class extends UI.Panel {
       var binding = Persistence.persistence.binding(uiSourceCode);
       if (!binding) {
         contextMenu.appendItem(
-            Common.UIString.capitalize('Map to ^network ^resource\u2026'),
-            this.mapFileSystemToNetwork.bind(this, uiSourceCode));
+            Common.UIString('Map to network resource\u2026'), this.mapFileSystemToNetwork.bind(this, uiSourceCode));
       } else {
         contextMenu.appendItem(
-            Common.UIString.capitalize('Remove ^network ^mapping'),
-            this._removeNetworkMapping.bind(this, binding.network));
+            Common.UIString('Remove network mapping'), this._removeNetworkMapping.bind(this, binding.network));
       }
     }
 
@@ -806,8 +798,7 @@ Sources.SourcesPanel = class extends UI.Panel {
         return;
       if (this._workspace.uiSourceCodeForURL(uiSourceCode.url()) === uiSourceCode) {
         contextMenu.appendItem(
-            Common.UIString.capitalize('Map to ^file ^system ^resource\u2026'),
-            this.mapNetworkToFileSystem.bind(this, uiSourceCode));
+            Common.UIString('Map to file system resource\u2026'), this.mapNetworkToFileSystem.bind(this, uiSourceCode));
       }
     }
   }
@@ -825,13 +816,13 @@ Sources.SourcesPanel = class extends UI.Panel {
     if (!uiSourceCode.project().isServiceProject() &&
         !event.target.isSelfOrDescendant(this._navigatorTabbedLocation.widget().element)) {
       contextMenu.appendItem(
-          Common.UIString.capitalize('Reveal in ^navigator'), this._handleContextMenuReveal.bind(this, uiSourceCode));
+          Common.UIString('Reveal in navigator'), this._handleContextMenuReveal.bind(this, uiSourceCode));
       contextMenu.appendSeparator();
     }
     this._appendUISourceCodeMappingItems(contextMenu, uiSourceCode);
     if (!uiSourceCode.project().canSetFileContent()) {
       contextMenu.appendItem(
-          Common.UIString.capitalize('Local ^modifications\u2026'), this._showLocalHistory.bind(this, uiSourceCode));
+          Common.UIString('Local modifications\u2026'), this._showLocalHistory.bind(this, uiSourceCode));
     }
   }
 
@@ -860,10 +851,9 @@ Sources.SourcesPanel = class extends UI.Panel {
     if (contentType.hasScripts()) {
       var target = UI.context.flavor(SDK.Target);
       var debuggerModel = target ? target.model(SDK.DebuggerModel) : null;
-      if (debuggerModel && debuggerModel.isPaused()) {
-        contextMenu.appendItem(
-            Common.UIString.capitalize('Continue to ^here'), this._continueToLocation.bind(this, uiLocation));
-      }
+      if (debuggerModel && debuggerModel.isPaused())
+        contextMenu.appendItem(Common.UIString('Continue to here'), this._continueToLocation.bind(this, uiLocation));
+
       this._callstackPane.appendBlackboxURLContextMenuItems(contextMenu, uiSourceCode);
     }
   }
@@ -885,11 +875,10 @@ Sources.SourcesPanel = class extends UI.Panel {
       return;
     var remoteObject = /** @type {!SDK.RemoteObject} */ (target);
     contextMenu.appendItem(
-        Common.UIString.capitalize('Store as ^global ^variable'), this._saveToTempVariable.bind(this, remoteObject));
+        Common.UIString('Store as global variable'), this._saveToTempVariable.bind(this, remoteObject));
     if (remoteObject.type === 'function') {
       contextMenu.appendItem(
-          Common.UIString.capitalize('Show ^function ^definition'),
-          this._showFunctionDefinition.bind(this, remoteObject));
+          Common.UIString('Show function definition'), this._showFunctionDefinition.bind(this, remoteObject));
     }
   }
 
@@ -904,60 +893,54 @@ Sources.SourcesPanel = class extends UI.Panel {
     var uiSourceCode = this._workspace.uiSourceCodeForURL(request.url());
     if (!uiSourceCode)
       return;
-    var openText = Common.UIString.capitalize('Open in Sources ^panel');
+    var openText = Common.UIString('Open in Sources panel');
     contextMenu.appendItem(openText, this.showUILocation.bind(this, uiSourceCode.uiLocation(0, 0)));
   }
 
   /**
    * @param {!SDK.RemoteObject} remoteObject
    */
-  _saveToTempVariable(remoteObject) {
+  async _saveToTempVariable(remoteObject) {
     var currentExecutionContext = UI.context.flavor(SDK.ExecutionContext);
     if (!currentExecutionContext)
       return;
 
-    currentExecutionContext.globalObject('', false, didGetGlobalObject);
-    /**
-     * @param {?SDK.RemoteObject} global
-     * @param {!Protocol.Runtime.ExceptionDetails=} exceptionDetails
-     */
-    function didGetGlobalObject(global, exceptionDetails) {
-      /**
-       * @suppressReceiverCheck
-       * @this {Window}
-       */
-      function remoteFunction(value) {
-        var prefix = 'temp';
-        var index = 1;
-        while ((prefix + index) in this)
-          ++index;
-        var name = prefix + index;
-        this[name] = value;
-        return name;
-      }
-
-      if (!!exceptionDetails || !global) {
-        failedToSave(global);
-      } else {
-        global.callFunction(
-            remoteFunction, [SDK.RemoteObject.toCallArgument(remoteObject)], didSave.bind(null, global));
-      }
+    var result = await currentExecutionContext.globalObject(/* objectGroup */ '', /* generatePreview */ false);
+    if (!!result.exceptionDetails || !result.object) {
+      failedToSave(result.object || null);
+      return;
     }
 
+    var globalObject = result.object;
+    var callFunctionResult =
+        await globalObject.callFunctionPromise(saveVariable, [SDK.RemoteObject.toCallArgument(remoteObject)]);
+    globalObject.release();
+    if (callFunctionResult.wasThrown || !callFunctionResult.object || callFunctionResult.object.type !== 'string') {
+      failedToSave(callFunctionResult.object || null);
+    } else {
+      var executionContext = /** @type {!SDK.ExecutionContext} */ (currentExecutionContext);
+      var text = /** @type {string} */ (callFunctionResult.object.value);
+      var message = ConsoleModel.consoleModel.addCommandMessage(executionContext, text);
+      text = SDK.RuntimeModel.wrapObjectLiteralExpressionIfNeeded(text);
+      ConsoleModel.consoleModel.evaluateCommandInConsole(
+          executionContext, message, text,
+          /* useCommandLineAPI */ false, /* awaitPromise */ false);
+    }
+    if (callFunctionResult.object)
+      callFunctionResult.object.release();
+
     /**
-     * @param {!SDK.RemoteObject} global
-     * @param {?SDK.RemoteObject} result
-     * @param {boolean=} wasThrown
+     * @suppressReceiverCheck
+     * @this {Window}
      */
-    function didSave(global, result, wasThrown) {
-      global.release();
-      if (wasThrown || !result || result.type !== 'string') {
-        failedToSave(result);
-      } else {
-        ConsoleModel.consoleModel.evaluateCommandInConsole(
-            /** @type {!SDK.ExecutionContext} */ (currentExecutionContext), /** @type {string} */ (result.value),
-            /* useCommandLineAPI */ false);
-      }
+    function saveVariable(value) {
+      var prefix = 'temp';
+      var index = 1;
+      while ((prefix + index) in this)
+        ++index;
+      var name = prefix + index;
+      this[name] = value;
+      return name;
     }
 
     /**
@@ -965,10 +948,8 @@ Sources.SourcesPanel = class extends UI.Panel {
      */
     function failedToSave(result) {
       var message = Common.UIString('Failed to save to temp variable.');
-      if (result) {
+      if (result)
         message += ' ' + result.description;
-        result.release();
-      }
       Common.console.error(message);
     }
   }
@@ -1050,12 +1031,18 @@ Sources.SourcesPanel = class extends UI.Panel {
     var jsBreakpoints = /** @type {!UI.View} */ (UI.viewManager.view('sources.jsBreakpoints'));
     var scopeChainView = /** @type {!UI.View} */ (UI.viewManager.view('sources.scopeChain'));
 
+    if (this._tabbedLocationHeader) {
+      this._splitWidget.uninstallResizer(this._tabbedLocationHeader);
+      this._tabbedLocationHeader = null;
+    }
+
     if (!vertically) {
       // Populate the rest of the stack.
       this._sidebarPaneStack.showView(scopeChainView);
       this._sidebarPaneStack.showView(jsBreakpoints);
       this._extensionSidebarPanesContainer = this._sidebarPaneStack;
       this.sidebarPaneView = vbox;
+      this._splitWidget.uninstallResizer(this._debugToolbar.gripElementForResize());
     } else {
       var splitWidget = new UI.SplitWidget(true, true, 'sourcesPanelDebuggerSidebarSplitViewState', 0.5);
       splitWidget.setMainWidget(vbox);
@@ -1065,6 +1052,9 @@ Sources.SourcesPanel = class extends UI.Panel {
 
       var tabbedLocation = UI.viewManager.createTabbedLocation(this._revealDebuggerSidebar.bind(this));
       splitWidget.setSidebarWidget(tabbedLocation.tabbedPane());
+      this._tabbedLocationHeader = tabbedLocation.tabbedPane().headerElement();
+      this._splitWidget.installResizer(this._tabbedLocationHeader);
+      this._splitWidget.installResizer(this._debugToolbar.gripElementForResize());
       tabbedLocation.appendView(scopeChainView);
       tabbedLocation.appendView(this._watchSidebarPane);
       this._extensionSidebarPanesContainer = tabbedLocation;
@@ -1160,8 +1150,10 @@ Sources.SourcesPanel.DebuggerLocationRevealer = class {
   reveal(rawLocation, omitFocus) {
     if (!(rawLocation instanceof SDK.DebuggerModel.Location))
       return Promise.reject(new Error('Internal error: not a debugger location'));
-    Sources.SourcesPanel.instance().showUILocation(
-        Bindings.debuggerWorkspaceBinding.rawLocationToUILocation(rawLocation), omitFocus);
+    var uiLocation = Bindings.debuggerWorkspaceBinding.rawLocationToUILocation(rawLocation);
+    if (!uiLocation)
+      return Promise.resolve();
+    Sources.SourcesPanel.instance().showUILocation(uiLocation, omitFocus);
     return Promise.resolve();
   }
 };
@@ -1258,8 +1250,12 @@ Sources.SourcesPanel.DebuggingActionDelegate = class {
         if (frame) {
           var text = frame.textEditor.text(frame.textEditor.selection());
           var executionContext = UI.context.flavor(SDK.ExecutionContext);
-          if (executionContext)
-            ConsoleModel.consoleModel.evaluateCommandInConsole(executionContext, text, /* useCommandLineAPI */ true);
+          if (executionContext) {
+            var message = ConsoleModel.consoleModel.addCommandMessage(executionContext, text);
+            text = SDK.RuntimeModel.wrapObjectLiteralExpressionIfNeeded(text);
+            ConsoleModel.consoleModel.evaluateCommandInConsole(
+                executionContext, message, text, /* useCommandLineAPI */ true, /* awaitPromise */ false);
+          }
         }
         return true;
     }

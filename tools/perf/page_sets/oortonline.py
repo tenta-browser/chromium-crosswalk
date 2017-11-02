@@ -24,8 +24,8 @@ class OortOnlinePage(page_module.Page):
         url='http://oortonline.gl/#run', page_set=page_set,
         shared_page_state_class=(
             webgl_supported_shared_state.WebGLSupportedSharedState),
-        make_javascript_deterministic=False)
-    self.archive_data_file = 'data/oortonline.json'
+        make_javascript_deterministic=False,
+        name='http://oortonline.gl/#run')
     self.script_to_evaluate_on_commit = STARTUP_SCRIPT
 
   @property
@@ -66,6 +66,7 @@ class OortOnlineTBMPage(OortOnlinePage):
       action_runner.Wait(RUN_TIME_IN_SECONDS)
     with action_runner.CreateInteraction('End'):
       action_runner.tab.browser.DumpMemory()
+
 
 class OortOnlineTBMPageSet(story.StorySet):
   """Oort Online WebGL benchmark for TBM.

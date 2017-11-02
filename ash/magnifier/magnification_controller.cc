@@ -12,9 +12,10 @@
 #include "ash/display/root_window_transformers.h"
 #include "ash/host/ash_window_tree_host.h"
 #include "ash/host/root_window_transformer.h"
+#include "ash/public/cpp/config.h"
 #include "ash/root_window_controller.h"
 #include "ash/shell.h"
-#include "ash/system/tray/system_tray_delegate.h"
+#include "ash/shell_port.h"
 #include "base/command_line.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/timer/timer.h"
@@ -167,7 +168,11 @@ class MagnificationControllerImpl : public MagnificationController,
 
   // Redraw with the given zoom scale keeping the mouse cursor location. In
   // other words, zoom (or unzoom) centering around the cursor.
-  void RedrawKeepingMousePosition(float scale, bool animate);
+  // Ignore mouse position change after redrawing if |ignore_mouse_change| is
+  // true.
+  void RedrawKeepingMousePosition(float scale,
+                                  bool animate,
+                                  bool ignore_mouse_change);
 
   void OnMouseMove(const gfx::Point& location);
 
@@ -217,7 +222,6 @@ class MagnificationControllerImpl : public MagnificationController,
   void OnMoveMagnifierTimer();
 
   // ui::InputMethodObserver:
-  void OnTextInputTypeChanged(const ui::TextInputClient* client) override {}
   void OnFocus() override {}
   void OnBlur() override {}
   void OnTextInputStateChanged(const ui::TextInputClient* client) override {}
@@ -292,10 +296,11 @@ MagnificationControllerImpl::~MagnificationControllerImpl() {
   Shell::Get()->RemovePreTargetHandler(this);
 }
 
-void MagnificationControllerImpl::RedrawKeepingMousePosition(float scale,
-                                                             bool animate) {
+void MagnificationControllerImpl::RedrawKeepingMousePosition(
+    float scale,
+    bool animate,
+    bool ignore_mouse_change) {
   gfx::Point mouse_in_root = point_of_interest_;
-
   // mouse_in_root is invalid value when the cursor is hidden.
   if (!root_window_->bounds().Contains(mouse_in_root))
     mouse_in_root = root_window_->bounds().CenterPoint();
@@ -306,7 +311,7 @@ void MagnificationControllerImpl::RedrawKeepingMousePosition(float scale,
   bool changed =
       RedrawDIP(origin, scale, animate ? kDefaultAnimationDurationInMs : 0,
                 kDefaultAnimationTweenType);
-  if (changed)
+  if (!ignore_mouse_change && changed)
     AfterAnimationMoveCursorTo(mouse_in_root);
 }
 
@@ -374,7 +379,7 @@ bool MagnificationControllerImpl::RedrawDIP(const gfx::PointF& position_in_dip,
       display::Screen::GetScreen()->GetDisplayNearestWindow(root_window_);
   std::unique_ptr<RootWindowTransformer> transformer(
       CreateRootWindowTransformerForDisplay(root_window_, display));
-  GetRootWindowController(root_window_)
+  RootWindowController::ForWindow(root_window_)
       ->ash_host()
       ->SetRootWindowTransformer(std::move(transformer));
 
@@ -459,10 +464,14 @@ void MagnificationControllerImpl::SwitchTargetRootWindow(
 
   // Unmagnify the previous root window.
   root_window_->RemoveObserver(this);
+  // Do not move mouse back to its original position (point at border of the
+  // root window) after redrawing as doing so will trigger root window switch
+  // again.
   if (redraw_original_root_window)
-    RedrawKeepingMousePosition(1.0f, true);
+    RedrawKeepingMousePosition(1.0f, true, true);
   root_window_ = new_root_window;
-  RedrawKeepingMousePosition(scale, true);
+  RedrawKeepingMousePosition(scale, true, true);
+
   root_window_->AddObserver(this);
 }
 
@@ -478,6 +487,8 @@ void MagnificationControllerImpl::AfterAnimationMoveCursorTo(
     if (!cursor_client->IsCursorVisible())
       return;
     cursor_client->DisableMouseEvents();
+  } else if (Shell::GetAshConfig() == Config::MASH) {
+    ShellPort::Get()->SetCursorTouchVisible(false);
   }
   move_cursor_after_animation_ = true;
   position_after_animation_ = location;
@@ -525,6 +536,8 @@ void MagnificationControllerImpl::OnImplicitAnimationsCompleted() {
         aura::client::GetCursorClient(root_window_);
     if (cursor_client)
       cursor_client->EnableMouseEvents();
+    else if (Shell::GetAshConfig() == Config::MASH)
+      ShellPort::Get()->SetCursorTouchVisible(true);
   }
 
   is_on_animation_ = false;
@@ -566,7 +579,7 @@ void MagnificationControllerImpl::SetScale(float scale, bool animate) {
 
   ValidateScale(&scale);
   Shell::Get()->accessibility_delegate()->SaveScreenMagnifierScale(scale);
-  RedrawKeepingMousePosition(scale, animate);
+  RedrawKeepingMousePosition(scale, animate, false);
 }
 
 void MagnificationControllerImpl::MoveWindow(int x, int y, bool animate) {
@@ -608,7 +621,7 @@ void MagnificationControllerImpl::SetEnabled(bool enabled) {
       return;
 
     is_enabled_ = enabled;
-    RedrawKeepingMousePosition(scale, true);
+    RedrawKeepingMousePosition(scale, true, false);
     shell->accessibility_delegate()->SaveScreenMagnifierScale(scale);
   } else {
     // Do nothing, if already disabled.
@@ -618,7 +631,7 @@ void MagnificationControllerImpl::SetEnabled(bool enabled) {
     if (input_method)
       input_method->RemoveObserver(this);
 
-    RedrawKeepingMousePosition(kNonMagnifiedScale, true);
+    RedrawKeepingMousePosition(kNonMagnifiedScale, true, false);
     is_enabled_ = enabled;
   }
 }
@@ -692,10 +705,8 @@ void MagnificationControllerImpl::OnTouchEvent(ui::TouchEvent* event) {
 }
 
 void MagnificationControllerImpl::OnGestureEvent(ui::GestureEvent* event) {
-  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
-          chromeos::switches::kEnableTouchSupportForScreenMagnifier)) {
+  if (!IsEnabled())
     return;
-  }
 
   const ui::GestureEventDetails& details = event->details();
   if (details.type() == ui::ET_GESTURE_SCROLL_UPDATE &&

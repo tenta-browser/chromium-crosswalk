@@ -20,21 +20,19 @@ function performActions()
     return Promise.all([imagePromise, scriptPromise]);
 }
 
-function test()
-{
-    InspectorTest.invokeAsyncWithTimeline("performActions", done);
+function test() {
+  PerformanceTestRunner.invokeAsyncWithTimeline('performActions', done);
 
-    function done()
-    {
-        InspectorTest.addResult("Script evaluated.");
-        var event = InspectorTest.findTimelineEvent("ResourceReceivedData");
-        if (event) {
-            var data = event.args["data"];
-            if (data && typeof data.encodedDataLength === "number")
-                InspectorTest.addResult("Resource received data has length, test passed.");
-        }
-        InspectorTest.completeTest();
+  function done() {
+    TestRunner.addResult('Script evaluated.');
+    var event = PerformanceTestRunner.findTimelineEvent('ResourceReceivedData');
+    if (event) {
+      var data = event.args['data'];
+      if (data && typeof data.encodedDataLength === 'number')
+        TestRunner.addResult('Resource received data has length, test passed.');
     }
+    TestRunner.completeTest();
+  }
 }
 
 </script>

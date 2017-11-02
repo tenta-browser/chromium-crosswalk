@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "base/format_macros.h"
 #include "base/guid.h"
@@ -13,6 +14,7 @@
 #include "base/json/json_writer.h"
 #include "base/mac/foundation_util.h"
 #include "base/mac/scoped_block.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/strings/string16.h"
 #include "base/strings/sys_string_conversions.h"
@@ -773,7 +775,8 @@ void GetFormAndField(autofill::FormData* form,
   // Tell the manager about the form activity (for metrics).
   if (type.compare("input") == 0 && (field.form_control_type == "text" ||
                                      field.form_control_type == "password")) {
-    autofillManager->OnTextFieldDidChange(form, field, base::TimeTicks::Now());
+    autofillManager->OnTextFieldDidChange(form, field, gfx::RectF(),
+                                          base::TimeTicks::Now());
   }
 }
 
@@ -808,14 +811,14 @@ void GetFormAndField(autofill::FormData* form,
   formData->SetString("formName", base::UTF16ToUTF8(form.name));
   // Note: Destruction of all child base::Value types is handled by the root
   // formData object on its own destruction.
-  base::DictionaryValue* fieldsData = new base::DictionaryValue;
+  auto fieldsData = base::MakeUnique<base::DictionaryValue>();
 
   const std::vector<autofill::FormFieldData>& fields = form.fields;
   for (const auto& fieldData : fields) {
-    fieldsData->SetStringWithoutPathExpansion(base::UTF16ToUTF8(fieldData.name),
-                                              fieldData.value);
+    fieldsData->SetKey(base::UTF16ToUTF8(fieldData.name),
+                       base::Value(fieldData.value));
   }
-  formData->Set("fields", fieldsData);
+  formData->Set("fields", std::move(fieldsData));
 
   // Stringify the JSON data and send it to the UIWebView-side fillForm method.
   std::string dataString;
@@ -860,18 +863,17 @@ void GetFormAndField(autofill::FormData* form,
     (const std::vector<autofill::FormStructure*>&)structure {
   base::DictionaryValue predictionData;
   for (autofill::FormStructure* form : structure) {
-    // |predictionData| will take ownership below.
-    base::DictionaryValue* formJSONData = new base::DictionaryValue;
+    auto formJSONData = base::MakeUnique<base::DictionaryValue>();
     autofill::FormData formData = form->ToFormData();
     for (const auto& field : *form) {
       autofill::AutofillType type(field->Type());
       if (type.IsUnknown())
         continue;
-      formJSONData->SetStringWithoutPathExpansion(
-          base::UTF16ToUTF8(field->name), type.ToString());
+      formJSONData->SetKey(base::UTF16ToUTF8(field->name),
+                           base::Value(type.ToString()));
     }
     predictionData.SetWithoutPathExpansion(base::UTF16ToUTF8(formData.name),
-                                           formJSONData);
+                                           std::move(formJSONData));
   }
   std::string dataString;
   base::JSONWriter::Write(predictionData, &dataString);

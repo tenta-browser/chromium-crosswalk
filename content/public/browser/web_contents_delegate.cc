@@ -14,7 +14,6 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/bindings_policy.h"
 #include "content/public/common/url_constants.h"
-#include "net/cert/x509_certificate.h"
 #include "ui/gfx/geometry/rect.h"
 
 namespace content {
@@ -137,6 +136,7 @@ bool WebContentsDelegate::OnGoToEntryOffset(int offset) {
 
 bool WebContentsDelegate::ShouldCreateWebContents(
     WebContents* web_contents,
+    RenderFrameHost* opener,
     SiteInstance* source_site_instance,
     int32_t route_id,
     int32_t main_frame_route_id,
@@ -216,6 +216,8 @@ WebContentsDelegate::GetContentVideoViewEmbedder() {
 bool WebContentsDelegate::ShouldBlockMediaRequest(const GURL& url) {
   return false;
 }
+
+void WebContentsDelegate::SetOverlayMode(bool use_overlay_mode) {}
 #endif
 
 bool WebContentsDelegate::RequestPpapiBrokerPermission(
@@ -261,11 +263,6 @@ blink::WebSecurityStyle WebContentsDelegate::GetSecurityStyle(
     WebContents* web_contents,
     SecurityStyleExplanations* security_style_explanations) {
   return blink::kWebSecurityStyleUnknown;
-}
-
-void WebContentsDelegate::ShowCertificateViewerInDevTools(
-    WebContents* web_contents,
-    scoped_refptr<net::X509Certificate> certificate) {
 }
 
 void WebContentsDelegate::RequestAppBannerFromDevTools(

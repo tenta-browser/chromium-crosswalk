@@ -70,6 +70,8 @@ class IOSChromePasswordManagerDriver
       override;
   void ForceSavePassword() override;
   autofill::AutofillDriver* GetAutofillDriver() override;
+  bool IsMainFrame() const override;
+  void MatchingBlacklistedFormFound() override;
 
  private:
   id<PasswordManagerDriverDelegate> delegate_;  // (weak)

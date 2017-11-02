@@ -24,6 +24,7 @@
 #include "core/CoreExport.h"
 #include "core/css/CSSValue.h"
 #include "platform/CrossOriginAttributeValue.h"
+#include "platform/loader/fetch/FetchParameters.h"
 #include "platform/weborigin/Referrer.h"
 #include "platform/wtf/RefPtr.h"
 
@@ -32,7 +33,7 @@ namespace blink {
 class Document;
 class KURL;
 class StyleImage;
-class LayoutObject;
+class ComputedStyle;
 
 class CORE_EXPORT CSSImageValue : public CSSValue {
  public:
@@ -63,6 +64,7 @@ class CORE_EXPORT CSSImageValue : public CSSValue {
   }
   StyleImage* CacheImage(
       const Document&,
+      FetchParameters::PlaceholderImageRequestType,
       CrossOriginAttributeValue = kCrossOriginAttributeNotSet);
 
   const String& Url() const { return absolute_url_; }
@@ -77,7 +79,7 @@ class CORE_EXPORT CSSImageValue : public CSSValue {
 
   bool Equals(const CSSImageValue&) const;
 
-  bool KnownToBeOpaque(const LayoutObject&) const;
+  bool KnownToBeOpaque(const Document&, const ComputedStyle&) const;
 
   CSSImageValue* ValueWithURLMadeAbsolute() const {
     return Create(KURL(kParsedURLString, absolute_url_), cached_image_.Get());

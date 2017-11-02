@@ -16,8 +16,7 @@
 
 namespace content {
 
-class WebApplicationCacheHostImpl
-    : NON_EXPORTED_BASE(public blink::WebApplicationCacheHost) {
+class WebApplicationCacheHostImpl : public blink::WebApplicationCacheHost {
  public:
   // Returns the host having given id or NULL if there is no such host.
   static WebApplicationCacheHostImpl* FromId(int id);
@@ -55,6 +54,7 @@ class WebApplicationCacheHostImpl
   bool SwapCache() override;
   void GetResourceList(blink::WebVector<ResourceInfo>* resources) override;
   void GetAssociatedCacheInfo(CacheInfo* info) override;
+  int GetHostID() const override;
 
  private:
   enum IsNewMasterEntry { MAYBE_NEW_ENTRY, NEW_ENTRY, OLD_ENTRY };

@@ -6,6 +6,9 @@
 
 #include <stddef.h>
 
+#include <map>
+#include <string>
+
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/profiler/scoped_tracker.h"
@@ -280,13 +283,15 @@ void MutableProfileOAuth2TokenServiceDelegate::LoadCredentials(
   }
 
   load_credentials_state_ = LOAD_CREDENTIALS_IN_PROGRESS;
-  if (primary_account_id.empty()) {
+  if (primary_account_id.empty() &&
+      !signin::IsAccountConsistencyDiceEnabled()) {
     load_credentials_state_ = LOAD_CREDENTIALS_FINISHED_WITH_SUCCESS;
     FireRefreshTokensLoaded();
     return;
   }
 
-  ValidateAccountId(primary_account_id);
+  if (!primary_account_id.empty())
+    ValidateAccountId(primary_account_id);
   DCHECK(loading_primary_account_id_.empty());
   DCHECK_EQ(0, web_data_service_request_);
 
@@ -301,13 +306,15 @@ void MutableProfileOAuth2TokenServiceDelegate::LoadCredentials(
     return;
   }
 
-  // If the account_id is an email address, then canonicalize it.  This
-  // is to support legacy account_ids, and will not be needed after
-  // switching to gaia-ids.
-  if (primary_account_id.find('@') != std::string::npos) {
-    loading_primary_account_id_ = gaia::CanonicalizeEmail(primary_account_id);
-  } else {
-    loading_primary_account_id_ = primary_account_id;
+  if (!primary_account_id.empty()) {
+    // If the account_id is an email address, then canonicalize it.  This
+    // is to support legacy account_ids, and will not be needed after
+    // switching to gaia-ids.
+    if (primary_account_id.find('@') != std::string::npos) {
+      loading_primary_account_id_ = gaia::CanonicalizeEmail(primary_account_id);
+    } else {
+      loading_primary_account_id_ = primary_account_id;
+    }
   }
 
   web_data_service_request_ = token_web_data->GetAllTokens(this);
@@ -317,7 +324,8 @@ void MutableProfileOAuth2TokenServiceDelegate::OnWebDataServiceRequestDone(
     WebDataServiceBase::Handle handle,
     std::unique_ptr<WDTypedResult> result) {
   VLOG(1) << "MutablePO2TS::OnWebDataServiceRequestDone. Result type: "
-          << (result.get() == nullptr ? -1 : (int)result->GetType());
+          << (result.get() == nullptr ? -1
+                                      : static_cast<int>(result->GetType()));
 
   // TODO(robliao): Remove ScopedTracker below once https://crbug.com/422460 is
   // fixed.
@@ -343,8 +351,10 @@ void MutableProfileOAuth2TokenServiceDelegate::OnWebDataServiceRequestDone(
   // Make sure that we have an entry for |loading_primary_account_id_| in the
   // map.  The entry could be missing if there is a corruption in the token DB
   // while this profile is connected to an account.
-  DCHECK(!loading_primary_account_id_.empty());
-  if (refresh_tokens_.count(loading_primary_account_id_) == 0) {
+  DCHECK(!loading_primary_account_id_.empty() ||
+         signin::IsAccountConsistencyDiceEnabled());
+  if (!loading_primary_account_id_.empty() &&
+      refresh_tokens_.count(loading_primary_account_id_) == 0) {
     refresh_tokens_[loading_primary_account_id_].reset(new AccountStatus(
         signin_error_controller_, loading_primary_account_id_, std::string()));
   }
@@ -428,8 +438,9 @@ void MutableProfileOAuth2TokenServiceDelegate::LoadAllCredentialsIntoMemory(
         }
 
         // Only load secondary accounts when account consistency is enabled.
-        if (switches::IsEnableAccountConsistency() ||
-            account_id == loading_primary_account_id_) {
+        if (account_id == loading_primary_account_id_ ||
+            signin::IsAccountConsistencyDiceEnabled() ||
+            signin::IsAccountConsistencyMirrorEnabled()) {
           refresh_tokens_[account_id].reset(new AccountStatus(
               signin_error_controller_, account_id, refresh_token));
           FireRefreshTokenAvailable(account_id);
@@ -469,7 +480,7 @@ void MutableProfileOAuth2TokenServiceDelegate::UpdateCredentials(
     if (refresh_token_present) {
       VLOG(1) << "MutablePO2TS::UpdateCredentials; Refresh Token was present. "
               << "account_id=" << account_id;
-
+      RevokeCredentialsOnServer(refresh_tokens_[account_id]->refresh_token());
       refresh_tokens_[account_id]->set_refresh_token(refresh_token);
     } else {
       VLOG(1) << "MutablePO2TS::UpdateCredentials; Refresh Token was absent. "

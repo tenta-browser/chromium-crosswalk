@@ -3,13 +3,10 @@
 // found in the LICENSE file.
 
 cr.define('extensions', function() {
-  var ItemList = Polymer({
+  const ItemList = Polymer({
     is: 'extensions-item-list',
 
-    behaviors: [
-      Polymer.NeonAnimatableBehavior,
-      Polymer.IronResizableBehavior
-    ],
+    behaviors: [Polymer.IronResizableBehavior],
 
     properties: {
       /** @type {Array<!chrome.developerPrivate.ExtensionInfo>} */
@@ -24,25 +21,17 @@ cr.define('extensions', function() {
       },
 
       filter: String,
+
+      /** @private {Array<!chrome.developerPrivate.ExtensionInfo>} */
+      shownItems_: {
+        type: Array,
+        computed: 'computeShownItems_(items.*, filter)',
+      }
     },
 
     listeners: {
       'list.extension-item-size-changed': 'itemSizeChanged_',
-    },
-
-    ready: function() {
-      /** @type {extensions.AnimationHelper} */
-      this.animationHelper = new extensions.AnimationHelper(this, this.$.list);
-      this.animationHelper.setEntryAnimations([extensions.Animation.FADE_IN]);
-      this.animationHelper.setExitAnimations([extensions.Animation.HERO]);
-    },
-
-    /**
-     * Called when a subpage for a given item is about to be shown.
-     * @param {string} id
-     */
-    willShowItemSubpage: function(id) {
-      this.sharedElements = {hero: this.$$('#' + id)};
+      'view-enter-start': 'onViewEnterStart_',
     },
 
     /**
@@ -53,15 +42,7 @@ cr.define('extensions', function() {
      */
     itemSizeChanged_: function(e) {
       this.$.list.updateSizeForItem(e.detail.item);
-    },
-
-    /**
-     * Called right before an item enters the detailed view.
-     * @param {CustomEvent} e
-     * @private
-     */
-    showItemDetails_: function(e) {
-      this.sharedElements = {hero: e.detail.element};
+      this.fire('resize');
     },
 
     /**
@@ -75,6 +56,20 @@ cr.define('extensions', function() {
       return this.items.filter(function(item) {
         return item.name.toLowerCase().includes(this.filter.toLowerCase());
       }, this);
+    },
+
+    shouldShowEmptyItemsMessage_: function() {
+      return this.items.length === 0;
+    },
+
+    shouldShowEmptySearchMessage_: function() {
+      return !this.shouldShowEmptyItemsMessage_() &&
+          this.shownItems_.length === 0;
+    },
+
+    /** @private */
+    onViewEnterStart_: function() {
+      this.fire('resize');  // This is needed to correctly render iron-list.
     },
   });
 

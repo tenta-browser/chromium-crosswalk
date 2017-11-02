@@ -30,23 +30,25 @@
 #include "platform/PlatformExport.h"
 #include "platform/SharedBuffer.h"
 #include "platform/geometry/IntRect.h"
-#include "platform/graphics/Color.h"
-#include "platform/graphics/GraphicsTypes.h"
 #include "platform/graphics/ImageAnimationPolicy.h"
 #include "platform/graphics/ImageObserver.h"
 #include "platform/graphics/ImageOrientation.h"
-#include "platform/graphics/paint/PaintCanvas.h"
-#include "platform/graphics/paint/PaintFlags.h"
-#include "platform/wtf/Assertions.h"
+#include "platform/graphics/paint/PaintImage.h"
+#include "platform/graphics/paint/PaintRecord.h"
+#include "platform/wtf/Forward.h"
 #include "platform/wtf/Noncopyable.h"
 #include "platform/wtf/PassRefPtr.h"
 #include "platform/wtf/RefPtr.h"
 #include "platform/wtf/ThreadSafeRefCounted.h"
-#include "platform/wtf/text/WTFString.h"
+#include "platform/wtf/WeakPtr.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 
-class SkImage;
 class SkMatrix;
+
+namespace cc {
+class PaintCanvas;
+class PaintFlags;
+}  // namespace cc
 
 namespace blink {
 
@@ -55,6 +57,12 @@ class FloatRect;
 class FloatSize;
 class GraphicsContext;
 class Image;
+class KURL;
+class WebGraphicsContext3DProvider;
+class WebGraphicsContext3DProviderWrapper;
+
+using cc::PaintCanvas;
+using cc::PaintFlags;
 
 class PLATFORM_EXPORT Image : public ThreadSafeRefCounted<Image> {
   friend class GeneratedImage;
@@ -71,6 +79,8 @@ class PLATFORM_EXPORT Image : public ThreadSafeRefCounted<Image> {
 
   virtual bool IsSVGImage() const { return false; }
   virtual bool IsBitmapImage() const { return false; }
+  virtual bool IsStaticBitmapImage() const { return false; }
+  virtual bool IsPlaceholderImage() const { return false; }
 
   // To increase accuracy of currentFrameKnownToBeOpaque() it may,
   // for applicable image types, be told to pre-cache metadata for
@@ -83,6 +93,7 @@ class PLATFORM_EXPORT Image : public ThreadSafeRefCounted<Image> {
 
   virtual bool CurrentFrameIsComplete() { return false; }
   virtual bool CurrentFrameIsLazyDecoded() { return false; }
+  virtual size_t FrameCount() { return 0; }
   virtual bool IsTextureBacked() const { return false; }
 
   // Derived classes should override this if they can assure that the current
@@ -101,16 +112,27 @@ class PLATFORM_EXPORT Image : public ThreadSafeRefCounted<Image> {
   int height() const { return Size().Height(); }
   virtual bool GetHotSpot(IntPoint&) const { return false; }
 
-  enum SizeAvailability { kSizeAvailable, kSizeUnavailable };
-  virtual SizeAvailability SetData(PassRefPtr<SharedBuffer> data,
+  enum SizeAvailability {
+    kSizeUnavailable,
+    kSizeAvailableAndLoadingAsynchronously,
+    kSizeAvailable,
+  };
+
+  // If SetData() returns |kSizeAvailableAndLoadingAsynchronously|:
+  //   Image loading is continuing asynchronously
+  //   (only when |this| is SVGImage and |all_data_received| is true), and
+  //   ImageResourceObserver::AsyncLoadCompleted() is called when finished.
+  // Otherwise:
+  //   Image loading is completed synchronously.
+  //   ImageResourceObserver::AsyncLoadCompleted() is not called.
+  virtual SizeAvailability SetData(RefPtr<SharedBuffer> data,
                                    bool all_data_received);
-  virtual SizeAvailability DataChanged(bool /*allDataReceived*/) {
+  virtual SizeAvailability DataChanged(bool /*all_data_received*/) {
     return kSizeUnavailable;
   }
 
-  virtual String FilenameExtension() const {
-    return String();
-  }  // null string if unknown
+  // null string if unknown
+  virtual String FilenameExtension() const;
 
   virtual void DestroyDecodedData() = 0;
 
@@ -151,8 +173,9 @@ class PLATFORM_EXPORT Image : public ThreadSafeRefCounted<Image> {
 
   enum TileRule { kStretchTile, kRoundTile, kSpaceTile, kRepeatTile };
 
-  virtual sk_sp<SkImage> ImageForCurrentFrame() = 0;
   virtual PassRefPtr<Image> ImageForDefaultFrame();
+
+  virtual PaintImage PaintImageForCurrentFrame() = 0;
 
   enum ImageClampingMode {
     kClampImageToSourceRect,
@@ -167,6 +190,17 @@ class PLATFORM_EXPORT Image : public ThreadSafeRefCounted<Image> {
                     ImageClampingMode) = 0;
 
   virtual bool ApplyShader(PaintFlags&, const SkMatrix& local_matrix);
+
+  // Use ContextProvider() for immediate use only, use ContextProviderWrapper()
+  // to obtain a retainable reference.
+  // Note: Implemented only in sub-classes that use the GPU.
+  virtual WebGraphicsContext3DProvider* ContextProvider() const {
+    return nullptr;
+  }
+  virtual WeakPtr<WebGraphicsContext3DProviderWrapper> ContextProviderWrapper()
+      const {
+    return nullptr;
+  }
 
   // Compute the tile which contains a given point (assuming a repeating tile
   // grid). The point and returned value are in destination grid space.
@@ -183,8 +217,17 @@ class PLATFORM_EXPORT Image : public ThreadSafeRefCounted<Image> {
                                         const FloatRect& dest,
                                         const FloatSize& image_size);
 
+  virtual sk_sp<PaintRecord> PaintRecordForContainer(
+      const KURL& url,
+      const IntSize& container_size,
+      const IntRect& draw_src_rect,
+      const IntRect& draw_dst_rect,
+      bool flip_y) {
+    return nullptr;
+  }
+
  protected:
-  Image(ImageObserver* = 0);
+  Image(ImageObserver* = 0, bool is_multipart = false);
 
   void DrawTiledBackground(GraphicsContext&,
                            const FloatRect& dst_rect,
@@ -206,17 +249,24 @@ class PLATFORM_EXPORT Image : public ThreadSafeRefCounted<Image> {
                            const FloatPoint& phase,
                            SkBlendMode,
                            const FloatRect&,
-                           const FloatSize& repeat_spacing = FloatSize());
+                           const FloatSize& repeat_spacing);
+
+  // Initializes a PaintImageBuilder with the metadata flags for the PaintImage.
+  void InitPaintImageBuilder(PaintImageBuilder&);
 
  private:
+  bool image_observer_disabled_;
   RefPtr<SharedBuffer> encoded_image_data_;
   // TODO(Oilpan): consider having Image on the Oilpan heap and
   // turn this into a Member<>.
   //
-  // The observer (an ImageResourceContent) is an untraced member, with the
-  // ImageResourceContent being responsible for clearing itself out.
-  UntracedMember<ImageObserver> image_observer_;
-  bool image_observer_disabled_;
+  // The observer (an ImageResourceContent) is responsible for clearing
+  // itself out when it switches to another Image.
+  // When the ImageResourceContent is garbage collected while Image is still
+  // alive, |image_observer_| is cleared by WeakPersistent mechanism.
+  WeakPersistent<ImageObserver> image_observer_;
+  PaintImage::Id stable_image_id_;
+  const bool is_multipart_;
 };
 
 #define DEFINE_IMAGE_TYPE_CASTS(typeName)                          \

@@ -5,15 +5,20 @@
 package org.chromium.chrome.browser.download.ui;
 
 import android.content.ComponentName;
+import android.support.annotation.Nullable;
 import android.support.v7.widget.RecyclerView.ViewHolder;
 import android.text.TextUtils;
 import android.view.LayoutInflater;
+import android.view.View;
 import android.view.ViewGroup;
 
+import org.chromium.base.ContextUtils;
+import org.chromium.base.Log;
 import org.chromium.base.ObserverList;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.download.DownloadItem;
 import org.chromium.chrome.browser.download.DownloadSharedPreferenceHelper;
 import org.chromium.chrome.browser.download.DownloadUtils;
@@ -25,6 +30,7 @@ import org.chromium.chrome.browser.download.ui.DownloadManagerUi.DownloadUiObser
 import org.chromium.chrome.browser.offlinepages.downloads.OfflinePageDownloadBridge;
 import org.chromium.chrome.browser.offlinepages.downloads.OfflinePageDownloadItem;
 import org.chromium.chrome.browser.widget.DateDividedAdapter;
+import org.chromium.chrome.browser.widget.displaystyle.UiConfig;
 import org.chromium.chrome.browser.widget.selection.SelectionDelegate;
 import org.chromium.components.offline_items_collection.ContentId;
 import org.chromium.content_public.browser.DownloadState;
@@ -42,6 +48,7 @@ import java.util.Set;
 /** Bridges the user's download history and the UI used to display it. */
 public class DownloadHistoryAdapter extends DateDividedAdapter
         implements DownloadUiObserver, DownloadSharedPreferenceHelper.Observer {
+    private static final String TAG = "DownloadAdapter";
 
     /** Alerted about changes to internal state. */
     static interface TestObserver {
@@ -137,6 +144,9 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
 
     private static final String EMPTY_QUERY = null;
 
+    private static final String PREF_SHOW_STORAGE_INFO_HEADER =
+            "download_home_show_storage_info_header";
+
     private final BackendItems mRegularDownloadItems = new BackendItemsImpl();
     private final BackendItems mIncognitoDownloadItems = new BackendItemsImpl();
     private final BackendItems mOfflinePageItems = new BackendItemsImpl();
@@ -155,6 +165,13 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
     private OfflinePageDownloadBridge.Observer mOfflinePageObserver;
     private int mFilter = DownloadFilter.FILTER_ALL;
     private String mSearchQuery = EMPTY_QUERY;
+    private SpaceDisplay mSpaceDisplay;
+    private HeaderItem mSpaceDisplayHeaderItem;
+    private boolean mIsSearching;
+    private boolean mShouldShowStorageInfoHeader;
+
+    @Nullable // This may be null during tests.
+    private UiConfig mUiConfig;
 
     DownloadHistoryAdapter(boolean showOffTheRecord, ComponentName parentComponent) {
         mShowOffTheRecord = showOffTheRecord;
@@ -165,8 +182,16 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
         setHasStableIds(true);
     }
 
-    public void initialize(BackendProvider provider) {
+    /**
+     * Initializes the adapter.
+     * @param provider The {@link BackendProvider} that provides classes needed by the adapter.
+     * @param uiConfig The UiConfig used to observe display style changes.
+     */
+    public void initialize(BackendProvider provider, @Nullable UiConfig uiConfig) {
         mBackendProvider = provider;
+        mUiConfig = uiConfig;
+
+        generateHeaderItems();
 
         DownloadItemSelectionDelegate selectionDelegate =
                 (DownloadItemSelectionDelegate) mBackendProvider.getSelectionDelegate();
@@ -181,6 +206,9 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
         initializeOfflinePageBridge();
 
         sDeletedFileTracker.incrementInstanceCount();
+        mShouldShowStorageInfoHeader = ContextUtils.getAppSharedPreferences().getBoolean(
+                PREF_SHOW_STORAGE_INFO_HEADER,
+                ChromeFeatureList.isEnabled(ChromeFeatureList.DOWNLOAD_HOME_SHOW_STORAGE_INFO));
     }
 
     /** Called when the user's regular or incognito download history has been loaded. */
@@ -324,8 +352,24 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
     }
 
     @Override
+    protected void bindViewHolderForHeaderItem(ViewHolder viewHolder, HeaderItem headerItem) {
+        super.bindViewHolderForHeaderItem(viewHolder, headerItem);
+        mSpaceDisplay.onChanged();
+    }
+
+    @Override
     protected ItemGroup createGroup(long timeStamp) {
         return new DownloadItemGroup(timeStamp);
+    }
+
+    /**
+     * Initialize space display view in storage info header and generate header item for it.
+     */
+    void generateHeaderItems() {
+        mSpaceDisplay = new SpaceDisplay(null, this);
+        View view = mSpaceDisplay.getViewContainer();
+        registerAdapterDataObserver(mSpaceDisplay);
+        mSpaceDisplayHeaderItem = new HeaderItem(0, view);
     }
 
     /** Called when a new DownloadItem has been created by the native DownloadManager. */
@@ -383,7 +427,13 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
                 // changed.  This prevents the RecyclerView from detaching and immediately
                 // reattaching the same view, causing janky animations.
                 for (DownloadItemView view : mViews) {
-                    if (TextUtils.equals(item.getId(), view.getItem().getId())) {
+                    DownloadHistoryItemWrapper wrapper = view.getItem();
+                    if (wrapper == null) {
+                        // TODO(qinmin): remove this once crbug.com/731789 is fixed.
+                        Log.e(TAG, "DownloadItemView contains empty DownloadHistoryItemWrapper");
+                        continue;
+                    }
+                    if (TextUtils.equals(item.getId(), wrapper.getId())) {
                         view.displayItem(mBackendProvider, existingWrapper);
                     }
                 }
@@ -420,6 +470,7 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
         getDownloadDelegate().removeDownloadHistoryAdapter(this);
         getOfflinePageBridge().removeObserver(mOfflinePageObserver);
         sDeletedFileTracker.decrementInstanceCount();
+        if (mSpaceDisplay != null) unregisterAdapterDataObserver(mSpaceDisplay);
     }
 
     @Override
@@ -469,6 +520,7 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
      * @param query The text to search for.
      */
     void search(String query) {
+        mIsSearching = true;
         mSearchQuery = query;
         filter(mFilter);
     }
@@ -477,8 +529,29 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
      * Called when a search is ended.
      */
     void onEndSearch() {
+        mIsSearching = false;
         mSearchQuery = EMPTY_QUERY;
         filter(mFilter);
+    }
+
+    /** @return Whether the storage info header should be visible. */
+    boolean shouldShowStorageInfoHeader() {
+        return mShouldShowStorageInfoHeader;
+    }
+
+    /**
+     * Sets the visibility of the storage info header and saves user selection to shared preference.
+     * @param show Whether or not we should show the storage info header.
+     */
+    void setShowStorageInfoHeader(boolean show) {
+        mShouldShowStorageInfoHeader = show;
+        ContextUtils.getAppSharedPreferences()
+                .edit()
+                .putBoolean(PREF_SHOW_STORAGE_INFO_HEADER, mShouldShowStorageInfoHeader)
+                .apply();
+        RecordHistogram.recordBooleanHistogram(
+                "Android.DownloadManager.ShowStorageInfo", mShouldShowStorageInfoHeader);
+        if (mLoadingDelegate.isLoaded()) filter(mFilter);
     }
 
     private DownloadDelegate getDownloadDelegate() {
@@ -510,6 +583,10 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
         }
 
         clear(false);
+        if (!filteredTimedItems.isEmpty() && !mIsSearching && mShouldShowStorageInfoHeader) {
+            setHeaders(mSpaceDisplayHeaderItem);
+        }
+
         loadItems(filteredTimedItems);
     }
 
@@ -695,5 +772,10 @@ public class DownloadHistoryAdapter extends DateDividedAdapter
         // if/when incognito downloads are persistently available in downloads home.
         RecordHistogram.recordCountHistogram("Android.DownloadManager.InitialCount.Total",
                 mRegularDownloadItems.size() + mOfflinePageItems.size());
+    }
+
+    /** Returns the {@link SpaceDisplay}. */
+    public SpaceDisplay getSpaceDisplayForTests() {
+        return mSpaceDisplay;
     }
 }

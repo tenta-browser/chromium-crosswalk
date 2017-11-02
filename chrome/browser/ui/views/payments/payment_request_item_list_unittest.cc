@@ -19,21 +19,33 @@ namespace {
 class TestListItem : public PaymentRequestItemList::Item {
  public:
   TestListItem(PaymentRequestItemList* list, bool selected)
-      : PaymentRequestItemList::Item(nullptr, nullptr, list, selected),
-        selected_state_changed_calls_count_(0) {}
+      : PaymentRequestItemList::Item(nullptr,
+                                     nullptr,
+                                     list,
+                                     selected,
+                                     /*clickable=*/true,
+                                     /*show_edit_button=*/false),
+        selected_state_changed_calls_count_(0) {
+    Init();
+  }
 
   int selected_state_changed_calls_count() {
     return selected_state_changed_calls_count_;
   }
 
  private:
-  std::unique_ptr<views::View> CreateContentView() override {
+  std::unique_ptr<views::View> CreateContentView(
+      base::string16* accessible_content) override {
     return base::MakeUnique<views::View>();
   }
 
-  bool CanBeSelected() const override { return true; }
+  base::string16 GetNameForDataType() override { return base::string16(); }
+
+  bool CanBeSelected() override { return true; }
 
   void PerformSelectionFallback() override {}
+
+  void EditButtonPressed() override {}
 
   void SelectedStateChanged() override {
     ++selected_state_changed_calls_count_;
@@ -47,7 +59,7 @@ class TestListItem : public PaymentRequestItemList::Item {
 }  // namespace
 
 TEST(PaymentRequestItemListTest, TestAddItem) {
-  PaymentRequestItemList list;
+  PaymentRequestItemList list(nullptr);
 
   std::unique_ptr<views::View> list_view = list.CreateListView();
   EXPECT_FALSE(list_view->has_children());
@@ -78,7 +90,7 @@ TEST(PaymentRequestItemListTest, TestAddItem) {
 }
 
 TEST(PaymentRequestItemListTest, TestSelectItemResultsInSingleItemSelected) {
-  PaymentRequestItemList list;
+  PaymentRequestItemList list(nullptr);
 
   std::vector<std::unique_ptr<TestListItem>> items;
   items.push_back(base::MakeUnique<TestListItem>(&list, false));

@@ -15,7 +15,6 @@ class DictionaryValue;
 }
 
 namespace chromeos {
-namespace printing {
 
 CHROMEOS_EXPORT extern const char kPrinterId[];
 
@@ -24,7 +23,6 @@ CHROMEOS_EXPORT extern const char kPrinterId[];
 CHROMEOS_EXPORT std::unique_ptr<Printer> RecommendedPrinterToPrinter(
     const base::DictionaryValue& pref);
 
-}  // namespace printing
 }  // namespace chromeos
 
 #endif  // CHROMEOS_PRINTING_PRINTER_TRANSLATOR_H_

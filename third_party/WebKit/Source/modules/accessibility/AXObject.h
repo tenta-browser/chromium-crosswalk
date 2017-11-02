@@ -34,6 +34,7 @@
 #include "core/editing/markers/DocumentMarker.h"
 #include "core/inspector/protocol/Accessibility.h"
 #include "modules/ModulesExport.h"
+#include "modules/accessibility/AXEnums.h"
 #include "platform/geometry/FloatQuad.h"
 #include "platform/geometry/LayoutRect.h"
 #include "platform/graphics/Color.h"
@@ -44,147 +45,25 @@ class SkMatrix44;
 
 namespace blink {
 
+class AccessibleNodeList;
 class AXObject;
 class AXObjectCacheImpl;
 class Element;
-class FrameView;
 class IntPoint;
-class Node;
 class LayoutObject;
+class LocalFrameView;
+class Node;
 class ScrollableArea;
 
+enum class AOMBooleanProperty;
 enum class AOMStringProperty;
+enum class AOMUIntProperty;
+enum class AOMIntProperty;
+enum class AOMFloatProperty;
+enum class AOMRelationProperty;
+enum class AOMRelationListProperty;
 
 typedef unsigned AXID;
-
-enum AccessibilityRole {
-  kUnknownRole = 0,
-  kAbbrRole,  // No mapping to ARIA role.
-  kAlertDialogRole,
-  kAlertRole,
-  kAnchorRole,      // No mapping to ARIA role.
-  kAnnotationRole,  // No mapping to ARIA role.
-  kApplicationRole,
-  kArticleRole,
-  kAudioRole,  // No mapping to ARIA role.
-  kBannerRole,
-  kBlockquoteRole,     // No mapping to ARIA role.
-  kBusyIndicatorRole,  // No mapping to ARIA role.
-  kButtonRole,
-  kCanvasRole,   // No mapping to ARIA role.
-  kCaptionRole,  // No mapping to ARIA role.
-  kCellRole,
-  kCheckBoxRole,
-  kColorWellRole,  // No mapping to ARIA role.
-  kColumnHeaderRole,
-  kColumnRole,  // No mapping to ARIA role.
-  kComboBoxRole,
-  kComplementaryRole,
-  kContentInfoRole,
-  kDateRole,      // No mapping to ARIA role.
-  kDateTimeRole,  // No mapping to ARIA role.
-  kDefinitionRole,
-  kDescriptionListDetailRole,  // No mapping to ARIA role.
-  kDescriptionListRole,        // No mapping to ARIA role.
-  kDescriptionListTermRole,    // No mapping to ARIA role.
-  kDetailsRole,                // No mapping to ARIA role.
-  kDialogRole,
-  kDirectoryRole,
-  kDisclosureTriangleRole,  // No mapping to ARIA role.
-  kDivRole,                 // No mapping to ARIA role.
-  kDocumentRole,
-  kEmbeddedObjectRole,  // No mapping to ARIA role.
-  kFeedRole,
-  kFigcaptionRole,  // No mapping to ARIA role.
-  kFigureRole,
-  kFooterRole,
-  kFormRole,
-  kGridRole,
-  kGroupRole,
-  kHeadingRole,
-  kIframePresentationalRole,  // No mapping to ARIA role.
-  kIframeRole,                // No mapping to ARIA role.
-  kIgnoredRole,               // No mapping to ARIA role.
-  kImageMapLinkRole,          // No mapping to ARIA role.
-  kImageMapRole,              // No mapping to ARIA role.
-  kImageRole,
-  kInlineTextBoxRole,  // No mapping to ARIA role.
-  kInputTimeRole,      // No mapping to ARIA role.
-  kLabelRole,
-  kLegendRole,     // No mapping to ARIA role.
-  kLineBreakRole,  // No mapping to ARIA role.
-  kLinkRole,
-  kListBoxOptionRole,
-  kListBoxRole,
-  kListItemRole,
-  kListMarkerRole,  // No mapping to ARIA role.
-  kListRole,
-  kLogRole,
-  kMainRole,
-  kMarkRole,  // No mapping to ARIA role.
-  kMarqueeRole,
-  kMathRole,
-  kMenuBarRole,
-  kMenuButtonRole,
-  kMenuItemRole,
-  kMenuItemCheckBoxRole,
-  kMenuItemRadioRole,
-  kMenuListOptionRole,
-  kMenuListPopupRole,
-  kMenuRole,
-  kMeterRole,
-  kNavigationRole,
-  kNoneRole,  // No mapping to ARIA role.
-  kNoteRole,
-  kOutlineRole,    // No mapping to ARIA role.
-  kParagraphRole,  // No mapping to ARIA role.
-  kPopUpButtonRole,
-  kPreRole,  // No mapping to ARIA role.
-  kPresentationalRole,
-  kProgressIndicatorRole,
-  kRadioButtonRole,
-  kRadioGroupRole,
-  kRegionRole,
-  kRootWebAreaRole,  // No mapping to ARIA role.
-  kRowHeaderRole,
-  kRowRole,
-  kRubyRole,        // No mapping to ARIA role.
-  kRulerRole,       // No mapping to ARIA role.
-  kSVGRootRole,     // No mapping to ARIA role.
-  kScrollAreaRole,  // No mapping to ARIA role.
-  kScrollBarRole,
-  kSeamlessWebAreaRole,  // No mapping to ARIA role.
-  kSearchRole,
-  kSearchBoxRole,
-  kSliderRole,
-  kSliderThumbRole,     // No mapping to ARIA role.
-  kSpinButtonPartRole,  // No mapping to ARIA role.
-  kSpinButtonRole,
-  kSplitterRole,
-  kStaticTextRole,  // No mapping to ARIA role.
-  kStatusRole,
-  kSwitchRole,
-  kTabGroupRole,  // No mapping to ARIA role.
-  kTabListRole,
-  kTabPanelRole,
-  kTabRole,
-  kTableHeaderContainerRole,  // No mapping to ARIA role.
-  kTableRole,
-  kTermRole,
-  kTextFieldRole,
-  kTimeRole,  // No mapping to ARIA role.
-  kTimerRole,
-  kToggleButtonRole,
-  kToolbarRole,
-  kTreeGridRole,
-  kTreeItemRole,
-  kTreeRole,
-  kUserInterfaceTooltipRole,
-  kVideoRole,    // No mapping to ARIA role.
-  kWebAreaRole,  // No mapping to ARIA role.
-  kWindowRole,   // No mapping to ARIA role.
-  kNumRoles
-};
 
 enum AccessibilityTextSource {
   kAlternativeText,
@@ -195,30 +74,6 @@ enum AccessibilityTextSource {
   kTitleTagText,
   kPlaceholderText,
   kLabelByElementText,
-};
-
-enum AccessibilityState {
-  kAXBusyState,
-  kAXCheckedState,
-  kAXEnabledState,
-  kAXExpandedState,
-  kAXFocusableState,
-  kAXFocusedState,
-  kAXHaspopupState,
-  kAXHoveredState,
-  kAXInvisibleState,
-  kAXLinkedState,
-  kAXMultilineState,
-  kAXMultiselectableState,
-  kAXOffscreenState,
-  kAXPressedState,
-  kAXProtectedState,
-  kAXReadonlyState,
-  kAXRequiredState,
-  kAXSelectableState,
-  kAXSelectedState,
-  kAXVerticalState,
-  kAXVisitedState
 };
 
 class AccessibilityText final
@@ -238,55 +93,17 @@ class AccessibilityText final
   Member<AXObject> text_element_;
 };
 
-enum AccessibilityOrientation {
-  kAccessibilityOrientationUndefined = 0,
-  kAccessibilityOrientationVertical,
-  kAccessibilityOrientationHorizontal,
-};
-
 enum AXObjectInclusion {
   kIncludeObject,
   kIgnoreObject,
   kDefaultBehavior,
 };
 
-enum class AXSupportedAction {
-  kNone = 0,
-  kActivate,
-  kCheck,
-  kClick,
-  kJump,
-  kOpen,
-  kPress,
-  kSelect,
-  kUncheck
-};
-
-enum AccessibilityButtonState {
-  kButtonStateOff = 0,
-  kButtonStateOn,
-  kButtonStateMixed,
-};
-
-enum AccessibilityTextDirection {
-  kAccessibilityTextDirectionLTR,
-  kAccessibilityTextDirectionRTL,
-  kAccessibilityTextDirectionTTB,
-  kAccessibilityTextDirectionBTT
-};
-
-enum SortDirection {
-  kSortDirectionUndefined = 0,
-  kSortDirectionNone,
-  kSortDirectionAscending,
-  kSortDirectionDescending,
-  kSortDirectionOther
-};
-
-enum AccessibilityExpanded {
-  kExpandedUndefined = 0,
-  kExpandedCollapsed,
-  kExpandedExpanded,
+enum AccessibilityCheckedState {
+  kCheckedStateUndefined = 0,
+  kCheckedStateFalse,
+  kCheckedStateTrue,
+  kCheckedStateMixed
 };
 
 enum AccessibilityOptionalBool {
@@ -295,56 +112,10 @@ enum AccessibilityOptionalBool {
   kOptionalBoolFalse
 };
 
-enum AriaCurrentState {
-  kAriaCurrentStateUndefined = 0,
-  kAriaCurrentStateFalse,
-  kAriaCurrentStateTrue,
-  kAriaCurrentStatePage,
-  kAriaCurrentStateStep,
-  kAriaCurrentStateLocation,
-  kAriaCurrentStateDate,
-  kAriaCurrentStateTime
-};
-
-enum InvalidState {
-  kInvalidStateUndefined = 0,
-  kInvalidStateFalse,
-  kInvalidStateTrue,
-  kInvalidStateSpelling,
-  kInvalidStateGrammar,
-  kInvalidStateOther
-};
-
-enum TextStyle {
-  kTextStyleNone = 0,
-  kTextStyleBold = 1 << 0,
-  kTextStyleItalic = 1 << 1,
-  kTextStyleUnderline = 1 << 2,
-  kTextStyleLineThrough = 1 << 3
-};
-
 enum TextUnderElementMode {
   kTextUnderElementAll,
   kTextUnderElementAny  // If the text is unimportant, just whether or not it's
                         // present
-};
-
-enum class AXBoolAttribute {};
-
-enum class AXStringAttribute {
-  kAriaKeyShortcuts,
-  kAriaRoleDescription,
-};
-
-enum class AXObjectAttribute {
-  kAriaActiveDescendant,
-  kAriaErrorMessage,
-};
-
-enum class AXObjectVectorAttribute {
-  kAriaControls,
-  kAriaDetails,
-  kAriaFlowTo,
 };
 
 class AXSparseAttributeClient {
@@ -354,20 +125,6 @@ class AXSparseAttributeClient {
   virtual void AddObjectAttribute(AXObjectAttribute, AXObject&) = 0;
   virtual void AddObjectVectorAttribute(AXObjectVectorAttribute,
                                         HeapVector<Member<AXObject>>&) = 0;
-};
-
-// The source of the accessible name of an element. This is needed
-// because on some platforms this determines how the accessible name
-// is exposed.
-enum AXNameFrom {
-  kAXNameFromUninitialized = -1,
-  kAXNameFromAttribute = 0,
-  kAXNameFromCaption,
-  kAXNameFromContents,
-  kAXNameFromPlaceholder,
-  kAXNameFromRelatedElement,
-  kAXNameFromValue,
-  kAXNameFromTitle,
 };
 
 // The potential native HTML-based text (name, description or placeholder)
@@ -384,25 +141,15 @@ enum AXTextFromNativeHTML {
   kAXTextFromNativeHTMLTitleElement,
 };
 
-// The source of the accessible description of an element. This is needed
-// because on some platforms this determines how the accessible description
-// is exposed.
-enum AXDescriptionFrom {
-  kAXDescriptionFromUninitialized = -1,
-  kAXDescriptionFromAttribute = 0,
-  kAXDescriptionFromContents,
-  kAXDescriptionFromRelatedElement,
-};
-
 enum AXIgnoredReason {
   kAXActiveModalDialog,
-  kAXAncestorDisallowsChild,
   kAXAncestorIsLeafNode,
-  kAXAriaHidden,
-  kAXAriaHiddenRoot,
+  kAXAriaHiddenElement,
+  kAXAriaHiddenSubtree,
   kAXEmptyAlt,
   kAXEmptyText,
-  kAXInert,
+  kAXInertElement,
+  kAXInertSubtree,
   kAXInheritsPresentation,
   kAXLabelContainer,
   kAXLabelFor,
@@ -604,15 +351,27 @@ class MODULES_EXPORT AXObject : public GarbageCollectedFinalized<AXObject> {
 
   // Wrappers that retrieve either an Accessibility Object Model property,
   // or the equivalent ARIA attribute, in that order.
-  // TODO(dmazzoni): Add equivalents for other types of properties besides
-  // just strings.
   const AtomicString& GetAOMPropertyOrARIAAttribute(AOMStringProperty) const;
+  Element* GetAOMPropertyOrARIAAttribute(AOMRelationProperty) const;
+  bool HasAOMProperty(AOMRelationListProperty,
+                      HeapVector<Member<Element>>& result) const;
+  bool HasAOMPropertyOrARIAAttribute(AOMRelationListProperty,
+                                     HeapVector<Member<Element>>& result) const;
+  bool HasAOMPropertyOrARIAAttribute(AOMBooleanProperty, bool& result) const;
+  bool AOMPropertyOrARIAAttributeIsTrue(AOMBooleanProperty) const;
+  bool AOMPropertyOrARIAAttributeIsFalse(AOMBooleanProperty) const;
+  bool HasAOMPropertyOrARIAAttribute(AOMUIntProperty, uint32_t& result) const;
+  bool HasAOMPropertyOrARIAAttribute(AOMIntProperty, int32_t& result) const;
+  bool HasAOMPropertyOrARIAAttribute(AOMFloatProperty, float& result) const;
+  bool HasAOMPropertyOrARIAAttribute(AOMStringProperty,
+                                     AtomicString& result) const;
 
   virtual void GetSparseAXAttributes(AXSparseAttributeClient&) const {}
 
   // Determine subclass type.
   virtual bool IsAXNodeObject() const { return false; }
   virtual bool IsAXLayoutObject() const { return false; }
+  virtual bool IsAXInlineTextBox() const { return false; }
   virtual bool IsAXListBox() const { return false; }
   virtual bool IsAXListBoxOption() const { return false; }
   virtual bool IsAXRadioInput() const { return false; }
@@ -621,7 +380,7 @@ class MODULES_EXPORT AXObject : public GarbageCollectedFinalized<AXObject> {
   // Check object role or purpose.
   virtual AccessibilityRole RoleValue() const { return role_; }
   bool IsARIATextControl() const;
-  virtual bool IsARIATreeGridRow() const { return false; }
+  virtual bool IsARIARow() const { return false; }
   virtual bool IsAXTable() const { return false; }
   virtual bool IsAnchor() const { return false; }
   bool IsButton() const;
@@ -667,11 +426,12 @@ class MODULES_EXPORT AXObject : public GarbageCollectedFinalized<AXObject> {
   bool IsRange() const {
     return RoleValue() == kProgressIndicatorRole ||
            RoleValue() == kScrollBarRole || RoleValue() == kSliderRole ||
-           RoleValue() == kSpinButtonRole;
+           RoleValue() == kSpinButtonRole || IsMoveableSplitter();
   }
   bool IsScrollbar() const { return RoleValue() == kScrollBarRole; }
   virtual bool IsSlider() const { return false; }
   virtual bool IsNativeSlider() const { return false; }
+  virtual bool IsMoveableSplitter() const { return false; }
   virtual bool IsSpinButton() const { return RoleValue() == kSpinButtonRole; }
   virtual bool IsSpinButtonPart() const { return false; }
   bool IsTabItem() const { return RoleValue() == kTabRole; }
@@ -683,10 +443,8 @@ class MODULES_EXPORT AXObject : public GarbageCollectedFinalized<AXObject> {
   bool IsWebArea() const { return RoleValue() == kWebAreaRole; }
 
   // Check object state.
-  virtual bool IsChecked() const { return false; }
   virtual bool IsClickable() const;
   virtual bool IsCollapsed() const { return false; }
-  virtual bool IsEnabled() const { return false; }
   virtual AccessibilityExpanded IsExpanded() const {
     return kExpandedUndefined;
   }
@@ -697,8 +455,6 @@ class MODULES_EXPORT AXObject : public GarbageCollectedFinalized<AXObject> {
   virtual bool IsModal() const { return false; }
   virtual bool IsMultiSelectable() const { return false; }
   virtual bool IsOffScreen() const { return false; }
-  virtual bool IsPressed() const { return false; }
-  virtual bool IsReadOnly() const { return false; }
   virtual bool IsRequired() const { return false; }
   virtual bool IsSelected() const { return false; }
   virtual bool IsSelectedOptionActive() const { return false; }
@@ -706,12 +462,12 @@ class MODULES_EXPORT AXObject : public GarbageCollectedFinalized<AXObject> {
   virtual bool IsVisited() const { return false; }
 
   // Check whether certain properties can be modified.
-  virtual bool CanSetFocusAttribute() const { return false; }
-  virtual bool CanSetValueAttribute() const { return false; }
-  virtual bool CanSetSelectedAttribute() const { return false; }
+  virtual bool CanSetFocusAttribute() const;
+  bool CanSetValueAttribute() const;
+  virtual bool CanSetSelectedAttribute() const;
 
   // Whether objects are ignored, i.e. not included in the tree.
-  bool AccessibilityIsIgnored() const;
+  bool AccessibilityIsIgnored();
   typedef HeapVector<IgnoredReason> IgnoredReasons;
   virtual bool ComputeAccessibilityIsIgnored(IgnoredReasons* = nullptr) const {
     return true;
@@ -857,8 +613,8 @@ class MODULES_EXPORT AXObject : public GarbageCollectedFinalized<AXObject> {
   virtual void GetWordBoundaries(Vector<AXRange>&) const {}
 
   // Properties of interactive elements.
-  AXSupportedAction Action() const;
-  virtual AccessibilityButtonState CheckboxOrRadioValue() const;
+  AXDefaultActionVerb Action() const;
+  AccessibilityCheckedState CheckedState() const;
   virtual AriaCurrentState GetAriaCurrentState() const {
     return kAriaCurrentStateUndefined;
   }
@@ -872,6 +628,7 @@ class MODULES_EXPORT AXObject : public GarbageCollectedFinalized<AXObject> {
   virtual float MaxValueForRange() const { return 0.0f; }
   virtual float MinValueForRange() const { return 0.0f; }
   virtual String StringValue() const { return String(); }
+  virtual AXRestriction Restriction() const { return kNone; }
 
   // ARIA attributes.
   virtual AXObject* ActiveDescendant() { return nullptr; }
@@ -881,14 +638,12 @@ class MODULES_EXPORT AXObject : public GarbageCollectedFinalized<AXObject> {
   virtual void AriaLabelledbyElements(AXObjectVector&) const {}
   virtual bool AriaHasPopup() const { return false; }
   virtual bool IsEditable() const { return false; }
-  bool IsMultiline() const;
+  bool IsEditableRoot() const;
+  virtual bool IsMultiline() const { return false; }
   virtual bool IsRichlyEditable() const { return false; }
+  bool AriaCheckedIsPresent() const;
   bool AriaPressedIsPresent() const;
   virtual AccessibilityRole AriaRoleAttribute() const { return kUnknownRole; }
-  virtual bool AriaRoleHasPresentationalChildren() const { return false; }
-  virtual AXObject* AncestorForWhichThisIsAPresentationalChild() const {
-    return 0;
-  }
   bool SupportsActiveDescendant() const;
   bool SupportsARIAAttributes() const;
   virtual bool SupportsARIADragging() const { return false; }
@@ -914,7 +669,6 @@ class MODULES_EXPORT AXObject : public GarbageCollectedFinalized<AXObject> {
   virtual const AtomicString& LiveRegionStatus() const { return g_null_atom; }
   virtual const AtomicString& LiveRegionRelevant() const { return g_null_atom; }
   virtual bool LiveRegionAtomic() const { return false; }
-  virtual bool LiveRegionBusy() const { return false; }
 
   const AtomicString& ContainerLiveRegionStatus() const;
   const AtomicString& ContainerLiveRegionRelevant() const;
@@ -958,6 +712,8 @@ class MODULES_EXPORT AXObject : public GarbageCollectedFinalized<AXObject> {
   virtual AXObject* ComputeParentIfExists() const { return 0; }
   AXObject* CachedParentObject() const { return parent_; }
   AXObject* ParentObjectUnignored() const;
+  AXObject* ContainerWidget() const;
+  bool IsContainerWidget() const;
 
   // Low-level accessibility tree exploration, only for use within the
   // accessibility module.
@@ -977,12 +733,13 @@ class MODULES_EXPORT AXObject : public GarbageCollectedFinalized<AXObject> {
   virtual double EstimatedLoadingProgress() const { return 0; }
 
   // DOM and layout tree access.
-  virtual Node* GetNode() const { return 0; }
-  virtual LayoutObject* GetLayoutObject() const { return 0; }
+  virtual Node* GetNode() const { return nullptr; }
+  virtual Element* GetElement() const;  // Same as GetNode, if it's an Element.
+  virtual LayoutObject* GetLayoutObject() const { return nullptr; }
   virtual Document* GetDocument() const;
-  virtual FrameView* DocumentFrameView() const;
-  virtual Element* AnchorElement() const { return 0; }
-  virtual Element* ActionElement() const { return 0; }
+  virtual LocalFrameView* DocumentFrameView() const;
+  virtual Element* AnchorElement() const { return nullptr; }
+  virtual Element* ActionElement() const { return nullptr; }
   String Language() const;
   bool HasAttribute(const QualifiedName&) const;
   const AtomicString& GetAttribute(const QualifiedName&) const;
@@ -995,7 +752,6 @@ class MODULES_EXPORT AXObject : public GarbageCollectedFinalized<AXObject> {
   // current object as the starting point. Returns a null selection if there is
   // no selection in the subtree rooted at this object.
   virtual AXRange SelectionUnderObject() const { return AXRange(); }
-  virtual void SetSelection(const AXRange&) {}
 
   // Scrollable containers.
   bool IsScrollableContainer() const;
@@ -1008,24 +764,44 @@ class MODULES_EXPORT AXObject : public GarbageCollectedFinalized<AXObject> {
   virtual ScrollableArea* GetScrollableAreaIfScrollable() const { return 0; }
 
   // Modify or take an action on an object.
-  virtual void Increment() {}
-  virtual void Decrement() {}
-  bool PerformDefaultAction() { return Press(); }
-  virtual bool Press();
-  // Make this object visible by scrolling as many nested scrollable views as
-  // needed.
-  void ScrollToMakeVisible() const;
-  // Same, but if the whole object can't be made visible, try for this subrect,
-  // in local coordinates.
-  void ScrollToMakeVisibleWithSubFocus(const IntRect&) const;
-  // Scroll this object to a given point in global coordinates of the top-level
-  // window.
-  void ScrollToGlobalPoint(const IntPoint&) const;
-  virtual void SetFocused(bool) {}
-  virtual void SetSelected(bool) {}
-  virtual void SetSequentialFocusNavigationStartingPoint();
-  virtual void SetValue(const String&) {}
-  virtual void SetValue(float) {}
+  //
+  // These are the public interfaces, called from outside of Blink.
+  // Each one first tries to fire an Accessibility Object Model event,
+  // if applicable, and if that isn't handled, falls back on the
+  // native implementation via a virtual member function, below.
+  //
+  // For example, |RequestIncrementAction| fires the AOM event and if
+  // that isn't handled it calls |DoNativeIncrement|.
+  //
+  // These all return true if handled.
+  bool RequestDecrementAction();
+  bool RequestClickAction();
+  bool RequestFocusAction();
+  bool RequestIncrementAction();
+  bool RequestScrollToGlobalPointAction(const IntPoint&);
+  bool RequestScrollToMakeVisibleAction();
+  bool RequestScrollToMakeVisibleWithSubFocusAction(const IntRect&);
+  bool RequestSetSelectedAction(bool);
+  bool RequestSetSelectionAction(const AXRange&);
+  bool RequestSetSequentialFocusNavigationStartingPointAction();
+  bool RequestSetValueAction(const String&);
+  bool RequestShowContextMenuAction();
+
+  // Native implementations of actions that aren't handled by AOM
+  // event listeners. These all return true if handled.
+  virtual bool OnNativeDecrementAction();
+  virtual bool OnNativeClickAction();
+  virtual bool OnNativeFocusAction();
+  virtual bool OnNativeIncrementAction();
+  virtual bool OnNativeScrollToGlobalPointAction(const IntPoint&) const;
+  virtual bool OnNativeScrollToMakeVisibleAction() const;
+  virtual bool OnNativeScrollToMakeVisibleWithSubFocusAction(
+      const IntRect&) const;
+  virtual bool OnNativeSetSelectedAction(bool);
+  virtual bool OnNativeSetSelectionAction(const AXRange&);
+  virtual bool OnNativeSetSequentialFocusNavigationStartingPointAction();
+  virtual bool OnNativeSetValueAction(const String&);
+  virtual bool OnNativeShowContextMenuAction();
 
   // Notifications that this object may have changed.
   virtual void ChildrenChanged() {}
@@ -1047,10 +823,13 @@ class MODULES_EXPORT AXObject : public GarbageCollectedFinalized<AXObject> {
   // Static helper functions.
   static bool IsARIAControl(AccessibilityRole);
   static bool IsARIAInput(AccessibilityRole);
+  // Is this a widget that requires container widget
+  static bool IsSubWidget(AccessibilityRole);
   static AccessibilityRole AriaRoleToWebCoreRole(const String&);
   static const AtomicString& RoleName(AccessibilityRole);
   static const AtomicString& InternalRoleName(AccessibilityRole);
-  static bool IsInsideFocusableElementOrARIAWidget(const Node&);
+  static void AccessibleNodeListToElementVector(const AccessibleNodeList&,
+                                                HeapVector<Member<Element>>&);
 
  protected:
   AXID id_;
@@ -1085,16 +864,21 @@ class MODULES_EXPORT AXObject : public GarbageCollectedFinalized<AXObject> {
   String TextFromAriaLabelledby(AXObjectSet& visited,
                                 AXRelatedObjectVector* related_objects) const;
   String TextFromAriaDescribedby(AXRelatedObjectVector* related_objects) const;
-
   virtual const AXObject* InheritsPresentationalRoleFrom() const { return 0; }
 
-  virtual bool NameFromContents() const;
+  bool CanReceiveAccessibilityFocus() const;
+  bool NameFromContents(bool recursive) const;
 
   AccessibilityRole ButtonRoleType() const;
 
   virtual LayoutObject* LayoutObjectForRelativeBounds() const {
     return nullptr;
   }
+
+  const AXObject* InertRoot() const;
+
+  // Returns true if the event was handled.
+  bool DispatchEventToAOMEventListeners(Event&, Element*);
 
   mutable Member<AXObject> parent_;
 
@@ -1108,8 +892,8 @@ class MODULES_EXPORT AXObject : public GarbageCollectedFinalized<AXObject> {
   mutable bool cached_is_descendant_of_leaf_node_ : 1;
   mutable bool cached_is_descendant_of_disabled_node_ : 1;
   mutable bool cached_has_inherited_presentational_role_ : 1;
-  mutable bool cached_is_presentational_child_ : 1;
   mutable bool cached_ancestor_exposes_active_descendant_ : 1;
+  mutable bool cached_is_editable_root_;
   mutable Member<AXObject> cached_live_region_root_;
 
   Member<AXObjectCacheImpl> ax_object_cache_;
@@ -1120,6 +904,8 @@ class MODULES_EXPORT AXObject : public GarbageCollectedFinalized<AXObject> {
   void UpdateCachedAttributeValuesIfNeeded() const;
 
  private:
+  bool IsCheckable() const;
+  static bool IsNativeCheckboxInMixedState(const Node*);
   static bool IncludesARIAWidgetRole(const String&);
   static bool HasInteractiveARIAAttribute(const Element&);
 

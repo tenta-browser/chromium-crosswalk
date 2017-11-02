@@ -3,16 +3,14 @@
 <script src="../../http/tests/inspector/inspector-test.js"></script>
 <script src="../../http/tests/inspector/layers-test.js"></script>
 <script>
-function test()
-{
-    function onGotLayers()
-    {
-        InspectorTest.addResult("Scroll rectangles");
-        InspectorTest.dumpModelScrollRects();
-        InspectorTest.completeTest();
-    }
+function test() {
+  function onGotLayers() {
+    TestRunner.addResult('Scroll rectangles');
+    LayersTestRunner.dumpModelScrollRects();
+    TestRunner.completeTest();
+  }
 
-    InspectorTest.requestLayers(onGotLayers);
+  LayersTestRunner.requestLayers(onGotLayers);
 }
 </script>
 </head>

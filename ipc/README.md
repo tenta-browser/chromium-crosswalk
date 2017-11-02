@@ -303,7 +303,7 @@ to binder function:
 
 ``` cpp
 void BindFrobinator(mojom::FrobinatorRequest request) {
-  mojo::MakeStrongBinding(base::MakeUnique<FrobinatorImpl>, std::move(request));
+  mojo::MakeStrongBinding(std::make_unique<FrobinatorImpl>, std::move(request));
 }
 
 // |registry| will hereby handle all incoming requests for "mojom::Frobinator"
@@ -604,7 +604,7 @@ and add a typemap like [url_request.typemap](https://cs.chromium.org/chromium/sr
 to define the mapping:
 
 ```
-mojom = "//content/common/url_loader.mojom"
+mojom = "//content/public/common/url_loader.mojom"
 public_headers = [ "//content/common/resource_request.h" ]
 traits_headers = [ "//content/common/resource_messages.h" ]
 ...

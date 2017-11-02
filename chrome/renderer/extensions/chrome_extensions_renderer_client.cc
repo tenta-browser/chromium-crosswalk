@@ -77,8 +77,7 @@ bool CrossesExtensionExtents(blink::WebLocalFrame* frame,
 
     // We want to compare against the URL that determines the type of
     // process.  Use the URL of the opener's local frame root, which will
-    // correctly handle any site isolation modes (--site-per-process and
-    // --isolate-extensions).
+    // correctly handle any site isolation modes (e.g. --site-per-process).
     blink::WebLocalFrame* local_root = opener_frame->LocalRoot();
     old_url = local_root->GetDocument().Url();
 
@@ -133,6 +132,20 @@ int ChromeExtensionsRendererClient::GetLowestIsolatedWorldId() const {
   return chrome::ISOLATED_WORLD_ID_EXTENSIONS;
 }
 
+extensions::Dispatcher* ChromeExtensionsRendererClient::GetDispatcher() {
+  return extension_dispatcher_.get();
+}
+
+void ChromeExtensionsRendererClient::OnExtensionLoaded(
+    const extensions::Extension& extension) {
+  resource_request_policy_->OnExtensionLoaded(extension);
+}
+
+void ChromeExtensionsRendererClient::OnExtensionUnloaded(
+    const extensions::ExtensionId& extension_id) {
+  resource_request_policy_->OnExtensionUnloaded(extension_id);
+}
+
 void ChromeExtensionsRendererClient::RenderThreadStarted() {
   content::RenderThread* thread = content::RenderThread::Get();
   extension_dispatcher_delegate_.reset(
@@ -157,8 +170,9 @@ void ChromeExtensionsRendererClient::RenderThreadStarted() {
 }
 
 void ChromeExtensionsRendererClient::RenderFrameCreated(
-    content::RenderFrame* render_frame) {
-  new extensions::ExtensionsRenderFrameObserver(render_frame);
+    content::RenderFrame* render_frame,
+    service_manager::BinderRegistry* registry) {
+  new extensions::ExtensionsRenderFrameObserver(render_frame, registry);
   new extensions::ExtensionFrameHelper(render_frame,
                                        extension_dispatcher_.get());
   extension_dispatcher_->OnRenderFrameCreated(render_frame);
@@ -195,6 +209,7 @@ bool ChromeExtensionsRendererClient::AllowPopup() {
     case extensions::Feature::UNBLESSED_EXTENSION_CONTEXT:
     case extensions::Feature::WEBUI_CONTEXT:
     case extensions::Feature::SERVICE_WORKER_CONTEXT:
+    case extensions::Feature::LOCK_SCREEN_EXTENSION_CONTEXT:
       return false;
     case extensions::Feature::BLESSED_EXTENSION_CONTEXT:
     case extensions::Feature::CONTENT_SCRIPT_CONTEXT:

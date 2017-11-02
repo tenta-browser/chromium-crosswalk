@@ -72,7 +72,8 @@ AudioBufferSourceHandler::AudioBufferSourceHandler(
       is_grain_(false),
       grain_offset_(0.0),
       grain_duration_(kDefaultGrainDuration),
-      min_playback_rate_(1.0) {
+      min_playback_rate_(1.0),
+      buffer_has_been_set_(false) {
   // Default to mono. A call to setBuffer() will set the number of output
   // channels to that of the buffer.
   AddOutput(1);
@@ -388,10 +389,11 @@ void AudioBufferSourceHandler::SetBuffer(AudioBuffer* buffer,
                                          ExceptionState& exception_state) {
   DCHECK(IsMainThread());
 
-  if (buffer_) {
-    exception_state.ThrowDOMException(
-        kInvalidStateError,
-        "Cannot set buffer after it has been already been set");
+  if (buffer && buffer_has_been_set_) {
+    exception_state.ThrowDOMException(kInvalidStateError,
+                                      "Cannot set buffer to non-null after it "
+                                      "has been already been set to a non-null "
+                                      "buffer");
     return;
   }
 
@@ -403,6 +405,8 @@ void AudioBufferSourceHandler::SetBuffer(AudioBuffer* buffer,
   MutexLocker process_locker(process_lock_);
 
   if (buffer) {
+    buffer_has_been_set_ = true;
+
     // Do any necesssary re-configuration to the buffer's number of channels.
     unsigned number_of_channels = buffer->numberOfChannels();
 
@@ -514,23 +518,20 @@ void AudioBufferSourceHandler::StartSource(double when,
   }
 
   if (when < 0) {
-    exception_state.ThrowDOMException(
-        kInvalidStateError,
+    exception_state.ThrowRangeError(
         ExceptionMessages::IndexExceedsMinimumBound("start time", when, 0.0));
     return;
   }
 
   if (grain_offset < 0) {
-    exception_state.ThrowDOMException(
-        kInvalidStateError, ExceptionMessages::IndexExceedsMinimumBound(
-                                "offset", grain_offset, 0.0));
+    exception_state.ThrowRangeError(ExceptionMessages::IndexExceedsMinimumBound(
+        "offset", grain_offset, 0.0));
     return;
   }
 
   if (grain_duration < 0) {
-    exception_state.ThrowDOMException(
-        kInvalidStateError, ExceptionMessages::IndexExceedsMinimumBound(
-                                "duration", grain_duration, 0.0));
+    exception_state.ThrowRangeError(ExceptionMessages::IndexExceedsMinimumBound(
+        "duration", grain_duration, 0.0));
     return;
   }
 
@@ -590,10 +591,19 @@ double AudioBufferSourceHandler::ComputePlaybackRate() {
   if (!is_playback_rate_valid)
     final_playback_rate = 1.0;
 
-  // Record the minimum playback rate for use by handleStoppableSourceNode.
-  min_playback_rate_ = std::min(final_playback_rate, min_playback_rate_);
+  // Record the minimum playback rate for use by HandleStoppableSourceNode.
+  if (final_playback_rate < min_playback_rate_) {
+    MutexLocker locker(min_playback_rate_mutex_);
+    min_playback_rate_ = final_playback_rate;
+  }
 
   return final_playback_rate;
+}
+
+double AudioBufferSourceHandler::GetMinPlaybackRate() {
+  DCHECK(IsMainThread());
+  MutexLocker locker(min_playback_rate_mutex_);
+  return min_playback_rate_;
 }
 
 bool AudioBufferSourceHandler::PropagatesSilence() const {
@@ -611,12 +621,13 @@ void AudioBufferSourceHandler::HandleStoppableSourceNode() {
   // If looping was ever done (m_didSetLooping = true), give up.  We can't
   // easily determine how long we looped so we don't know the actual duration
   // thus far, so don't try to do anything fancy.
+  double min_playback_rate = GetMinPlaybackRate();
   if (!DidSetLooping() && Buffer() && IsPlayingOrScheduled() &&
-      min_playback_rate_ > 0) {
+      min_playback_rate > 0) {
     // Adjust the duration to include the playback rate. Only need to account
     // for rate < 1 which makes the sound last longer.  For rate >= 1, the
     // source stops sooner, but that's ok.
-    double actual_duration = Buffer()->duration() / min_playback_rate_;
+    double actual_duration = Buffer()->duration() / min_playback_rate;
 
     double stop_time = start_time_ + actual_duration;
 

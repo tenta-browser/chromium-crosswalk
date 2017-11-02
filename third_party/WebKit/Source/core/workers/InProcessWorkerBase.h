@@ -5,15 +5,14 @@
 #ifndef InProcessWorkerBase_h
 #define InProcessWorkerBase_h
 
-#include "bindings/core/v8/ActiveScriptWrappable.h"
 #include "core/CoreExport.h"
 #include "core/dom/MessagePort.h"
 #include "core/dom/SuspendableObject.h"
-#include "core/events/EventListener.h"
-#include "core/events/EventTarget.h"
+#include "core/dom/events/EventListener.h"
+#include "core/dom/events/EventTarget.h"
 #include "core/workers/AbstractWorker.h"
+#include "platform/bindings/ActiveScriptWrappable.h"
 #include "platform/wtf/Forward.h"
-#include "platform/wtf/PassRefPtr.h"
 #include "platform/wtf/RefPtr.h"
 
 namespace blink {
@@ -29,11 +28,15 @@ class WorkerScriptLoader;
 class CORE_EXPORT InProcessWorkerBase
     : public AbstractWorker,
       public ActiveScriptWrappable<InProcessWorkerBase> {
+  // Eager finalization is needed to notify the parent object destruction of the
+  // GC-managed messaging proxy and to initiate worker termination.
+  EAGERLY_FINALIZE();
+
  public:
   ~InProcessWorkerBase() override;
 
   void postMessage(ScriptState*,
-                   PassRefPtr<SerializedScriptValue> message,
+                   RefPtr<SerializedScriptValue> message,
                    const MessagePortArray&,
                    ExceptionState&);
   static bool CanTransferArrayBuffersAndImageBitmaps() { return true; }
@@ -67,8 +70,7 @@ class CORE_EXPORT InProcessWorkerBase
 
   RefPtr<WorkerScriptLoader> script_loader_;
 
-  // The proxy outlives the worker to perform thread shutdown.
-  InProcessWorkerMessagingProxy* context_proxy_;
+  Member<InProcessWorkerMessagingProxy> context_proxy_;
 };
 
 }  // namespace blink

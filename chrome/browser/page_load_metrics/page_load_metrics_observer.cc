@@ -20,8 +20,9 @@ PageLoadExtraInfo::PageLoadExtraInfo(
     PageEndReason page_end_reason,
     UserInitiatedInfo page_end_user_initiated_info,
     const base::Optional<base::TimeDelta>& page_end_time,
-    const PageLoadMetadata& main_frame_metadata,
-    const PageLoadMetadata& child_frame_metadata)
+    const mojom::PageLoadMetadata& main_frame_metadata,
+    const mojom::PageLoadMetadata& subframe_metadata,
+    ukm::SourceId source_id)
     : navigation_start(navigation_start),
       first_background_time(first_background_time),
       first_foreground_time(first_foreground_time),
@@ -34,7 +35,8 @@ PageLoadExtraInfo::PageLoadExtraInfo(
       page_end_user_initiated_info(page_end_user_initiated_info),
       page_end_time(page_end_time),
       main_frame_metadata(main_frame_metadata),
-      child_frame_metadata(child_frame_metadata) {}
+      subframe_metadata(subframe_metadata),
+      source_id(source_id) {}
 
 PageLoadExtraInfo::PageLoadExtraInfo(const PageLoadExtraInfo& other) = default;
 
@@ -52,22 +54,53 @@ PageLoadExtraInfo PageLoadExtraInfo::CreateForTesting(
       UserInitiatedInfo::BrowserInitiated(), url, url, true /* did_commit */,
       page_load_metrics::END_NONE,
       page_load_metrics::UserInitiatedInfo::NotUserInitiated(),
-      base::TimeDelta(), page_load_metrics::PageLoadMetadata(),
-      page_load_metrics::PageLoadMetadata());
+      base::TimeDelta(), page_load_metrics::mojom::PageLoadMetadata(),
+      page_load_metrics::mojom::PageLoadMetadata(), 0 /* source_id */);
 }
 
-ExtraRequestInfo::ExtraRequestInfo(
+ExtraRequestCompleteInfo::ExtraRequestCompleteInfo(
+    const GURL& url,
+    const net::HostPortPair& host_port_pair,
+    int frame_tree_node_id,
     bool was_cached,
     int64_t raw_body_bytes,
     int64_t original_network_content_length,
     std::unique_ptr<data_reduction_proxy::DataReductionProxyData>
-        data_reduction_proxy_data)
-    : was_cached(was_cached),
+        data_reduction_proxy_data,
+    content::ResourceType detected_resource_type,
+    int net_error,
+    std::unique_ptr<net::LoadTimingInfo> load_timing_info)
+    : url(url),
+      host_port_pair(host_port_pair),
+      frame_tree_node_id(frame_tree_node_id),
+      was_cached(was_cached),
       raw_body_bytes(raw_body_bytes),
       original_network_content_length(original_network_content_length),
-      data_reduction_proxy_data(std::move(data_reduction_proxy_data)) {}
+      data_reduction_proxy_data(std::move(data_reduction_proxy_data)),
+      resource_type(detected_resource_type),
+      net_error(net_error),
+      load_timing_info(std::move(load_timing_info)) {}
 
-ExtraRequestInfo::~ExtraRequestInfo() {}
+ExtraRequestCompleteInfo::ExtraRequestCompleteInfo(
+    const ExtraRequestCompleteInfo& other)
+    : url(other.url),
+      host_port_pair(other.host_port_pair),
+      frame_tree_node_id(other.frame_tree_node_id),
+      was_cached(other.was_cached),
+      raw_body_bytes(other.raw_body_bytes),
+      original_network_content_length(other.original_network_content_length),
+      data_reduction_proxy_data(
+          other.data_reduction_proxy_data == nullptr
+              ? nullptr
+              : other.data_reduction_proxy_data->DeepCopy()),
+      resource_type(other.resource_type),
+      net_error(other.net_error),
+      load_timing_info(other.load_timing_info == nullptr
+                           ? nullptr
+                           : base::MakeUnique<net::LoadTimingInfo>(
+                                 *other.load_timing_info)) {}
+
+ExtraRequestCompleteInfo::~ExtraRequestCompleteInfo() {}
 
 FailedProvisionalLoadInfo::FailedProvisionalLoadInfo(base::TimeDelta interval,
                                                      net::Error error)
@@ -88,12 +121,13 @@ PageLoadMetricsObserver::ObservePolicy PageLoadMetricsObserver::OnRedirect(
 }
 
 PageLoadMetricsObserver::ObservePolicy PageLoadMetricsObserver::OnCommit(
-    content::NavigationHandle* navigation_handle) {
+    content::NavigationHandle* navigation_handle,
+    ukm::SourceId source_id) {
   return CONTINUE_OBSERVING;
 }
 
 PageLoadMetricsObserver::ObservePolicy PageLoadMetricsObserver::OnHidden(
-    const PageLoadTiming& timing,
+    const mojom::PageLoadTiming& timing,
     const PageLoadExtraInfo& extra_info) {
   return CONTINUE_OBSERVING;
 }
@@ -104,7 +138,7 @@ PageLoadMetricsObserver::ObservePolicy PageLoadMetricsObserver::OnShown() {
 
 PageLoadMetricsObserver::ObservePolicy
 PageLoadMetricsObserver::FlushMetricsOnAppEnterBackground(
-    const PageLoadTiming& timing,
+    const mojom::PageLoadTiming& timing,
     const PageLoadExtraInfo& extra_info) {
   return CONTINUE_OBSERVING;
 }
@@ -112,9 +146,14 @@ PageLoadMetricsObserver::FlushMetricsOnAppEnterBackground(
 PageLoadMetricsObserver::ObservePolicy
 PageLoadMetricsObserver::ShouldObserveMimeType(
     const std::string& mime_type) const {
-  return mime_type == "text/html" || mime_type == "application/xhtml+xml"
-             ? CONTINUE_OBSERVING
-             : STOP_OBSERVING;
+  return IsStandardWebPageMimeType(mime_type) ? CONTINUE_OBSERVING
+                                              : STOP_OBSERVING;
+}
+
+// static
+bool PageLoadMetricsObserver::IsStandardWebPageMimeType(
+    const std::string& mime_type) {
+  return mime_type == "text/html" || mime_type == "application/xhtml+xml";
 }
 
 }  // namespace page_load_metrics

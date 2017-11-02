@@ -49,7 +49,7 @@ class FaviconDelegate : public ui::MenuModelDelegate {
 
   void OnIconChanged(int model_index) override {
     was_called_ = true;
-    base::MessageLoop::current()->QuitWhenIdle();
+    base::RunLoop::QuitCurrentWhenIdleDeprecated();
   }
 
   bool was_called() const { return was_called_; }
@@ -551,9 +551,6 @@ TEST_F(BackFwdMenuModelTest, FaviconLoadTest) {
   SkBitmap default_icon_bitmap = *default_icon.ToSkBitmap();
   SkBitmap valid_icon_bitmap = *valid_icon.ToSkBitmap();
 
-  SkAutoLockPixels a(new_icon_bitmap);
-  SkAutoLockPixels b(valid_icon_bitmap);
-  SkAutoLockPixels c(default_icon_bitmap);
   // Verify we did not get the default favicon.
   EXPECT_NE(0, memcmp(default_icon_bitmap.getPixels(),
                       valid_icon_bitmap.getPixels(),

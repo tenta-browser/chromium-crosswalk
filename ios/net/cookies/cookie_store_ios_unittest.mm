@@ -19,6 +19,10 @@
 #include "net/cookies/cookie_store_unittest.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 namespace net {
 
 struct CookieStoreIOSTestTraits {
@@ -33,6 +37,8 @@ struct CookieStoreIOSTestTraits {
   static const bool preserves_trailing_dots = false;
   static const bool filters_schemes = false;
   static const bool has_path_prefix_bug = true;
+  static const bool forbids_setting_empty_name = true;
+  static const bool supports_global_cookie_tracking = false;
   static const int creation_time_granularity_in_ms = 1000;
 
   base::MessageLoop loop_;
@@ -75,7 +81,7 @@ void IgnoreString(const std::string& ignored) {
 
 }  // namespace
 
-// Test fixture to exersize net::CookieStoreIOS created without backend and
+// Test fixture to exercise net::CookieStoreIOS created without backend and
 // synchronized with |[NSHTTPCookieStorage sharedHTTPCookieStorage]|.
 class CookieStoreIOSTest : public testing::Test {
  public:
@@ -95,10 +101,11 @@ class CookieStoreIOSTest : public testing::Test {
   ~CookieStoreIOSTest() override {}
 
   // Gets the cookies. |callback| will be called on completion.
-  void GetCookies(const net::CookieStore::GetCookiesCallback& callback) {
+  void GetCookies(net::CookieStore::GetCookiesCallback callback) {
     net::CookieOptions options;
     options.set_include_httponly();
-    store_->GetCookiesWithOptionsAsync(kTestCookieURL, options, callback);
+    store_->GetCookiesWithOptionsAsync(kTestCookieURL, options,
+                                       std::move(callback));
   }
 
   // Sets a cookie.

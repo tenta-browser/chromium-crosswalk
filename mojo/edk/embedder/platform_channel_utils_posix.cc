@@ -10,6 +10,7 @@
 
 #include <utility>
 
+#include "base/containers/queue.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/posix/eintr_wrapper.h"
@@ -99,7 +100,7 @@ bool IsPeerAuthorized(PlatformHandle peer_handle) {
 //    - Mac: 2.21 s, 2.91 s, 2.98 s, 3.08 s, 3.59 s, 4.74 s
 
 // Flags to use with calling |send()| or |sendmsg()| (see above).
-#if defined(OS_MACOSX)
+#if defined(OS_MACOSX) || defined(OS_FUCHSIA)
 const int kSendFlags = 0;
 #else
 const int kSendFlags = MSG_NOSIGNAL;
@@ -201,11 +202,12 @@ bool PlatformChannelSendHandles(PlatformHandle h,
   return true;
 }
 
-ssize_t PlatformChannelRecvmsg(PlatformHandle h,
-                               void* buf,
-                               size_t num_bytes,
-                               std::deque<PlatformHandle>* platform_handles,
-                               bool block) {
+ssize_t PlatformChannelRecvmsg(
+    PlatformHandle h,
+    void* buf,
+    size_t num_bytes,
+    base::circular_deque<PlatformHandle>* platform_handles,
+    bool block) {
   DCHECK(buf);
   DCHECK_GT(num_bytes, 0u);
   DCHECK(platform_handles);

@@ -7,10 +7,10 @@
 #include "core/css/invalidation/InvalidationSet.h"
 #include "core/dom/Document.h"
 #include "core/dom/Element.h"
+#include "core/dom/ElementShadow.h"
 #include "core/dom/ElementTraversal.h"
+#include "core/dom/ShadowRoot.h"
 #include "core/dom/StyleChangeReason.h"
-#include "core/dom/shadow/ElementShadow.h"
-#include "core/dom/shadow/ShadowRoot.h"
 #include "core/html/HTMLSlotElement.h"
 #include "core/inspector/InspectorTraceEvents.h"
 #include "core/layout/LayoutObject.h"
@@ -40,7 +40,7 @@ void StyleInvalidator::Invalidate(Document& document) {
     Invalidate(*document_element, recursion_data, sibling_data);
   document.ClearChildNeedsStyleInvalidation();
   document.ClearNeedsStyleInvalidation();
-  pending_invalidation_map_.Clear();
+  pending_invalidation_map_.clear();
 }
 
 void StyleInvalidator::ScheduleInvalidationSetsForNode(
@@ -205,7 +205,7 @@ StyleInvalidator::RecursionData::MatchesCurrentInvalidationSets(
     return true;
   }
 
-  if (insertion_point_crossing_ && element.IsInsertionPoint())
+  if (insertion_point_crossing_ && element.IsV0InsertionPoint())
     return true;
 
   for (const auto& invalidation_set : invalidation_sets_) {
@@ -401,23 +401,9 @@ bool StyleInvalidator::Invalidate(Element& element,
     element.SetNeedsStyleRecalc(kLocalStyleChange,
                                 StyleChangeReasonForTracing::Create(
                                     StyleChangeReason::kStyleInvalidator));
-  } else if (recursion_data.HasInvalidationSets() &&
-             some_children_need_style_recalc) {
-    // Clone the ComputedStyle in order to preserve correct style sharing, if
-    // possible. Otherwise recalc style.
-    if (LayoutObject* layout_object = element.GetLayoutObject()) {
-      layout_object->SetStyleInternal(
-          ComputedStyle::Clone(layout_object->StyleRef()));
-    } else {
-      TRACE_STYLE_INVALIDATOR_INVALIDATION_IF_ENABLED(
-          element, kPreventStyleSharingForParent);
-      element.SetNeedsStyleRecalc(kLocalStyleChange,
-                                  StyleChangeReasonForTracing::Create(
-                                      StyleChangeReason::kStyleInvalidator));
-    }
   }
 
-  if (recursion_data.InsertionPointCrossing() && element.IsInsertionPoint())
+  if (recursion_data.InsertionPointCrossing() && element.IsV0InsertionPoint())
     element.SetNeedsStyleRecalc(kSubtreeStyleChange,
                                 StyleChangeReasonForTracing::Create(
                                     StyleChangeReason::kStyleInvalidator));

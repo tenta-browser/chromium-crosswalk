@@ -4,12 +4,12 @@
 
 #include <string>
 
-#include "ash/shelf/wm_shelf.h"
+#include "ash/shelf/shelf.h"
 #include "ash/shell.h"
 #include "ash/system/tray/system_tray.h"
-#include "ash/wm_window.h"
 #include "base/command_line.h"
 #include "base/location.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -113,7 +113,6 @@ class LoginTest : public LoginManagerTest {
       "authenticator.addEventListener('ready',"
         "function f() {"
           "authenticator.removeEventListener('ready', f);"
-          "window.domAutomationController.setAutomationId(0);"
           "window.domAutomationController.send('offlineLoaded');"
         "});"
       "$('error-offline-login-link').onclick();"
@@ -150,7 +149,6 @@ class LoginTest : public LoginManagerTest {
         animated_pages +
         ".addEventListener('neon-animation-finish',"
         "function() {"
-        "window.domAutomationController.setAutomationId(0);"
         "window.domAutomationController.send('switchToPassword');"
         "})";
     ASSERT_TRUE(content::ExecuteScript(web_contents(), js));
@@ -187,7 +185,6 @@ class LoginTest : public LoginManagerTest {
 };
 
 const char kDeviceId[] = "device_id";
-const char kTestRealm[] = "test_realm.com";
 const char kTestActiveDirectoryUser[] = "test-user";
 const char kAdMachineInput[] = "machineNameInput";
 const char kAdUserInput[] = "userInput";
@@ -200,9 +197,12 @@ class ActiveDirectoryLoginTest : public LoginManagerTest {
  public:
   ActiveDirectoryLoginTest()
       : LoginManagerTest(true),
+        // Using the same realm as supervised user domain. Should be treated as
+        // normal realm.
+        test_realm_(user_manager::kSupervisedUserDomain),
         install_attributes_(
             ScopedStubInstallAttributes::CreateActiveDirectoryManaged(
-                kTestRealm,
+                test_realm_,
                 kDeviceId)) {}
 
   ~ActiveDirectoryLoginTest() override = default;
@@ -214,16 +214,15 @@ class ActiveDirectoryLoginTest : public LoginManagerTest {
 
   void SetUpOnMainThread() override {
     LoginManagerTest::SetUpOnMainThread();
-    fake_auth_policy_client_ = static_cast<FakeAuthPolicyClient*>(
-        DBusThreadManager::Get()->GetAuthPolicyClient());
+    fake_auth_policy_client()->DisableOperationDelayForTesting();
   }
 
   void MarkAsActiveDirectoryEnterprise() {
     StartupUtils::MarkOobeCompleted();
     base::RunLoop loop;
-    fake_auth_policy_client_->RefreshDevicePolicy(
-        base::Bind(&ActiveDirectoryLoginTest::OnRefreshedPolicy,
-                   base::Unretained(this), loop.QuitClosure()));
+    fake_auth_policy_client()->RefreshDevicePolicy(
+        base::BindOnce(&ActiveDirectoryLoginTest::OnRefreshedPolicy,
+                       base::Unretained(this), loop.QuitClosure()));
     loop.Run();
   }
 
@@ -241,12 +240,12 @@ class ActiveDirectoryLoginTest : public LoginManagerTest {
     const std::string innerText(".innerText");
     // Checks if Active Directory welcome message contains realm.
     EXPECT_EQ(l10n_util::GetStringFUTF8(IDS_AD_DOMAIN_AUTH_WELCOME_MESSAGE,
-                                        base::UTF8ToUTF16(kTestRealm)),
+                                        base::UTF8ToUTF16(test_realm_)),
               js_checker().GetString(JSElement(kAdWelcomMessage) + innerText));
 
     // Checks if realm is set to autocomplete username.
     EXPECT_EQ(
-        "@" + std::string(kTestRealm),
+        "@" + test_realm_,
         js_checker().GetString(JSElement(kAdAutocompleteRealm) + innerText));
 
     // Checks if bottom bar is visible.
@@ -290,7 +289,6 @@ class ActiveDirectoryLoginTest : public LoginManagerTest {
         "var testInvalidateAd = login.GaiaSigninScreen.invalidateAd;"
         "login.GaiaSigninScreen.invalidateAd = function(user, errorState) {"
         "  testInvalidateAd(user, errorState);"
-        "  window.domAutomationController.setAutomationId(0);"
         "  window.domAutomationController.send('ShowAuthError');"
         "}");
   }
@@ -310,7 +308,12 @@ class ActiveDirectoryLoginTest : public LoginManagerTest {
     return "document.querySelector('#offline-ad-auth /deep/ #" + element_id +
            "')";
   }
-  FakeAuthPolicyClient* fake_auth_policy_client_ = nullptr;
+  FakeAuthPolicyClient* fake_auth_policy_client() {
+    return static_cast<FakeAuthPolicyClient*>(
+        DBusThreadManager::Get()->GetAuthPolicyClient());
+  }
+
+  const std::string test_realm_;
 
  private:
   // Used for the callback from FakeAuthPolicy::RefreshDevicePolicy.
@@ -329,11 +332,10 @@ class ActiveDirectoryLoginTest : public LoginManagerTest {
 void TestSystemTrayIsVisible(bool otr) {
   ash::SystemTray* tray = ash::Shell::Get()->GetPrimarySystemTray();
   aura::Window* primary_win = ash::Shell::GetPrimaryRootWindow();
-  ash::WmWindow* wm_primary_win = ash::WmWindow::Get(primary_win);
-  ash::WmShelf* wm_shelf = ash::WmShelf::ForWindow(wm_primary_win);
+  ash::Shelf* shelf = ash::Shelf::ForWindow(primary_win);
   SCOPED_TRACE(testing::Message()
-               << "ShelfVisibilityState=" << wm_shelf->GetVisibilityState()
-               << " ShelfAutoHideBehavior=" << wm_shelf->auto_hide_behavior());
+               << "ShelfVisibilityState=" << shelf->GetVisibilityState()
+               << " ShelfAutoHideBehavior=" << shelf->auto_hide_behavior());
   EXPECT_TRUE(tray->visible());
 
   // This check flakes for LoginGuestTest: https://crbug.com/693106.
@@ -471,14 +473,14 @@ IN_PROC_BROWSER_TEST_F(ActiveDirectoryLoginTest, LoginErrors) {
   TestUserError();
   TestDomainHidden();
 
-  fake_auth_policy_client_->set_auth_error(authpolicy::ERROR_BAD_USER_NAME);
+  fake_auth_policy_client()->set_auth_error(authpolicy::ERROR_BAD_USER_NAME);
   SubmitActiveDirectoryCredentials(
-      std::string(kTestActiveDirectoryUser) + "@" + kTestRealm, kPassword);
+      std::string(kTestActiveDirectoryUser) + "@" + test_realm_, kPassword);
   WaitForMessage(&message_queue, "\"ShowAuthError\"");
   TestUserError();
   TestDomainVisible();
 
-  fake_auth_policy_client_->set_auth_error(authpolicy::ERROR_BAD_PASSWORD);
+  fake_auth_policy_client()->set_auth_error(authpolicy::ERROR_BAD_PASSWORD);
   SubmitActiveDirectoryCredentials(kTestActiveDirectoryUser, kPassword);
   WaitForMessage(&message_queue, "\"ShowAuthError\"");
   TestPasswordError();

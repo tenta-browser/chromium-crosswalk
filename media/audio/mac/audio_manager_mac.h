@@ -29,10 +29,9 @@ class AUHALStream;
 // the AudioManager class.
 class MEDIA_EXPORT AudioManagerMac : public AudioManagerBase {
  public:
-  AudioManagerMac(
-      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
-      scoped_refptr<base::SingleThreadTaskRunner> worker_task_runner,
-      AudioLogFactory* audio_log_factory);
+  AudioManagerMac(std::unique_ptr<AudioThread> audio_thread,
+                  AudioLogFactory* audio_log_factory);
+  ~AudioManagerMac() override;
 
   // Implementation of AudioManager.
   bool HasAudioOutputDevices() override;
@@ -85,7 +84,7 @@ class MEDIA_EXPORT AudioManagerMac : public AudioManagerBase {
   // Streams should consult ShouldDeferStreamStart() and if true check the value
   // again after |kStartDelayInSecsForPowerEvents| has elapsed. If false, the
   // stream may be started immediately.
-  // TOOD(henrika): track UMA statistics related to defer start to come up with
+  // TODO(henrika): track UMA statistics related to defer start to come up with
   // a suitable delay value.
   enum { kStartDelayInSecsForPowerEvents = 5 };
   bool ShouldDeferStreamStart() const;
@@ -121,10 +120,10 @@ class MEDIA_EXPORT AudioManagerMac : public AudioManagerBase {
   size_t basic_input_streams() const { return basic_input_streams_.size(); }
 
  protected:
-  ~AudioManagerMac() override;
   AudioParameters GetPreferredOutputStreamParameters(
       const std::string& output_device_id,
       const AudioParameters& input_params) override;
+  void ShutdownOnAudioThread() override;
 
  private:
   void InitializeOnAudioThread();

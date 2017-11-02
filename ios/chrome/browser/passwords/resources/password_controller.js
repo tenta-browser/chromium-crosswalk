@@ -34,20 +34,6 @@ if (__gCrWeb && !__gCrWeb['fillPasswordForm']) {
     return __gCrWeb.stringify(formDataList);
   };
 
-  /**
-   * Returns true if the top window or any frames inside contain an input field
-   * of type 'password'. This method is only used for unit tests and are only
-   * kept for legacy reasons. Prefer to use the private
-   * {@code hasPasswordField_} within this file.
-   * @return {boolean} Whether a password field exists.
-   *
-   * TODO(crbug.com/614092): investigate if this method can be completely
-   * removed from the gCrWeb public interface.
-   */
-  __gCrWeb['hasPasswordField'] = function() {
-    return hasPasswordField_(window);
-  };
-
   /** Returns true if the supplied window or any frames inside contain an input
    * field of type 'password'.
    * @private
@@ -65,7 +51,7 @@ if (__gCrWeb && !__gCrWeb['fillPasswordForm']) {
       return true;
     }
 
-    var frames = win.frames;
+    var frames = getSameOriginFrames_(win);
     for (var i = 0; i < frames.length; i++) {
       if (hasPasswordField_(frames[i])) {
         return true;
@@ -73,6 +59,37 @@ if (__gCrWeb && !__gCrWeb['fillPasswordForm']) {
     }
 
     return false;
+  };
+
+  /**
+   * Returns the contentWindow of all iframes that are from the the same origin
+   * as the containing window.
+   * @param {Window} win The window in which to look for frames.
+   * @return {Array.<Window>} Array of the same-origin frames found.
+   */
+  var getSameOriginFrames_ = function(win) {
+    var frames = win.document.getElementsByTagName("iframe");
+    var result = [];
+    for (var i = 0; i < frames.length; i++) {
+      if (!frames[i].src ||
+          __gCrWeb.common.isSameOrigin(win.location.href, frames[i].src)) {
+        result.push(frames[i].contentWindow);
+      }
+    }
+    return result;
+  };
+
+  /**
+   * Returns a canonical action for |formElement|. It works the same as upstream
+   * function GetCanonicalActionForForm.
+   * @param {Form} formElement.
+   * @return {string} Canonical action.
+   */
+  var getCanonicalActionForForm_ = function(formElement) {
+    var raw_action = formElement.getAttribute('action') || "";
+    var absolute_url = __gCrWeb.common.absoluteURL(
+          formElement.ownerDocument, raw_action);
+    return __gCrWeb.common.removeQueryAndReferenceFromURL(absolute_url);
   };
 
   /**
@@ -107,8 +124,7 @@ if (__gCrWeb && !__gCrWeb['fillPasswordForm']) {
     for (var i = 0; i < forms.length; i++) {
       var form = forms[i];
       var normalizedFormAction = opt_normalizedAction ||
-          __gCrWeb.common.removeQueryAndReferenceFromURL(
-              __gCrWeb.common.absoluteURL(doc, form.action));
+          getCanonicalActionForForm_(form);
       if (formData.action != normalizedFormAction) {
         continue;
       }
@@ -210,7 +226,7 @@ if (__gCrWeb && !__gCrWeb['fillPasswordForm']) {
    */
   __gCrWeb['fillPasswordForm'] = function(formData, username, password,
                                           opt_normalizedOrigin) {
-    return __gCrWeb.fillPasswordFormWithData(
+    return fillPasswordFormWithData_(
         formData, username, password, window, opt_normalizedOrigin);
   };
 
@@ -253,21 +269,9 @@ if (__gCrWeb && !__gCrWeb['fillPasswordForm']) {
    * @param {string=} opt_normalizedOrigin The origin URL to compare to.
    * @return {boolean} Whether a form field has been filled.
    */
-  __gCrWeb.fillPasswordFormWithData =
-      function(formData, username, password, win, opt_normalizedOrigin) {
-    var doc = null;
-
-    try {
-      doc = win.document;
-    } catch(e) {
-    }
-
-    // If unable to read the 'document' property from a frame in a different
-    // origin, do nothing.
-    if (!doc) {
-      return false;
-    }
-
+  var fillPasswordFormWithData_ = function(
+      formData, username, password, win, opt_normalizedOrigin) {
+    var doc = win.document;
     var origin = formData['origin'];
     var normalizedOrigin = opt_normalizedOrigin ||
         __gCrWeb.common.removeQueryAndReferenceFromURL(win.location.href);
@@ -294,7 +298,14 @@ if (__gCrWeb && !__gCrWeb['fillPasswordForm']) {
             filled = true;
           }
         } else {
+          // Setting input fields via .value assignment does not trigger all
+          // the events that a web site can observe. This has the effect of
+          // certain web sites rejecting an autofilled sign in form as not
+          // signed in because the user didn't actually "typed" into the field.
+          // Adding the .focus() works around this problems.
+          usernameInput.focus();
           usernameInput.value = username;
+          passwordInput.focus();
           passwordInput.value = password;
           __gCrWeb.setAutofilled(passwordInput, true);
           __gCrWeb.setAutofilled(usernameInput, true);
@@ -303,11 +314,11 @@ if (__gCrWeb && !__gCrWeb['fillPasswordForm']) {
       }
     });
 
-    // Recursively invoke for all frames/iframes.
-    var frames = win.frames;
+    // Recursively invoke for all iframes.
+    var frames = getSameOriginFrames_(win);
     for (var i = 0; i < frames.length; i++) {
-      if (__gCrWeb.fillPasswordFormWithData(
-              formData, username, password, frames[i], opt_normalizedOrigin)) {
+      if (fillPasswordFormWithData_(
+          formData, username, password, frames[i], opt_normalizedOrigin)) {
         filled = true;
       }
     }
@@ -404,8 +415,8 @@ if (__gCrWeb && !__gCrWeb['fillPasswordForm']) {
       }
     }
 
-    // Recursively invoke for all frames/iframes.
-    var frames = win.frames;
+    // Recursively invoke for all iframes.
+    var frames = getSameOriginFrames_(win);
     for (var i = 0; i < frames.length; i++) {
       __gCrWeb.getPasswordFormDataList(formDataList, frames[i]);
     }
@@ -463,7 +474,7 @@ if (__gCrWeb && !__gCrWeb['fillPasswordForm']) {
         formElement.ownerDocument.location.href);
 
     return {
-      'action': formElement.getAttribute('action'),
+      'action': getCanonicalActionForForm_(formElement),
       'method': formElement.getAttribute('method'),
       'name': __gCrWeb.common.getFormIdentifier(formElement),
       'origin': origin,

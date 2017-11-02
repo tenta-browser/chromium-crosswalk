@@ -5,7 +5,6 @@
 #ifndef CHROME_BROWSER_MEDIA_ANDROID_REMOTE_REMOTE_MEDIA_PLAYER_BRIDGE_H_
 #define CHROME_BROWSER_MEDIA_ANDROID_REMOTE_REMOTE_MEDIA_PLAYER_BRIDGE_H_
 
-#include <jni.h>
 #include <vector>
 
 #include "base/macros.h"
@@ -29,8 +28,6 @@ class RemoteMediaPlayerBridge : public media::MediaPlayerAndroid {
                           RemoteMediaPlayerManager* manager);
   ~RemoteMediaPlayerBridge() override;
 
-  static bool RegisterRemoteMediaPlayerBridge(JNIEnv* env);
-
   // Initialize this object.
   virtual void Initialize();
 
@@ -52,7 +49,7 @@ class RemoteMediaPlayerBridge : public media::MediaPlayerAndroid {
   bool CanSeekBackward() override;
   bool IsPlayerReady() override;
   GURL GetUrl() override;
-  GURL GetFirstPartyForCookies() override;
+  GURL GetSiteForCookies() override;
 
   // JNI functions
   void OnPlaying(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
@@ -134,7 +131,7 @@ class RemoteMediaPlayerBridge : public media::MediaPlayerAndroid {
   GURL url_;
 
   // First party url for cookies.
-  GURL first_party_for_cookies_;
+  GURL site_for_cookies_;
 
   // Cookies for |url_|.
   std::string cookies_;

@@ -127,6 +127,20 @@ MultiProfileUserController::GetPrimaryUserPolicy() {
   return ALLOWED;
 }
 
+// static
+ash::mojom::MultiProfileUserBehavior
+MultiProfileUserController::UserBehaviorStringToEnum(
+    const std::string& behavior) {
+  if (behavior == kBehaviorPrimaryOnly)
+    return ash::mojom::MultiProfileUserBehavior::PRIMARY_ONLY;
+  if (behavior == kBehaviorNotAllowed)
+    return ash::mojom::MultiProfileUserBehavior::NOT_ALLOWED;
+  if (behavior == kBehaviorOwnerPrimaryOnly)
+    return ash::mojom::MultiProfileUserBehavior::OWNER_PRIMARY_ONLY;
+
+  return ash::mojom::MultiProfileUserBehavior::UNRESTRICTED;
+}
+
 bool MultiProfileUserController::IsUserAllowedInSession(
     const std::string& user_email,
     MultiProfileUserController::UserAllowedInSessionReason* reason) const {
@@ -200,8 +214,7 @@ void MultiProfileUserController::SetCachedValue(
     const std::string& behavior) {
   DictionaryPrefUpdate update(local_state_,
                               prefs::kCachedMultiProfileUserBehavior);
-  update->SetStringWithoutPathExpansion(user_email,
-                                        SanitizeBehaviorValue(behavior));
+  update->SetKey(user_email, base::Value(SanitizeBehaviorValue(behavior)));
 }
 
 void MultiProfileUserController::CheckSessionUsers() {

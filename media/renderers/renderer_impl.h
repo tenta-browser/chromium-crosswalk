@@ -17,12 +17,14 @@
 #include "base/time/clock.h"
 #include "base/time/default_tick_clock.h"
 #include "base/time/time.h"
+#include "media/base/audio_decoder_config.h"
 #include "media/base/buffering_state.h"
 #include "media/base/decryptor.h"
 #include "media/base/demuxer_stream.h"
 #include "media/base/media_export.h"
 #include "media/base/pipeline_status.h"
 #include "media/base/renderer.h"
+#include "media/base/video_decoder_config.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace base {
@@ -171,8 +173,11 @@ class MEDIA_EXPORT RendererImpl : public Renderer {
 
   // Callback executed when a runtime error happens.
   void OnError(PipelineStatus error);
+
   void OnWaitingForDecryptionKey();
   void OnVideoNaturalSizeChange(const gfx::Size& size);
+  void OnAudioConfigChange(const AudioDecoderConfig& config);
+  void OnVideoConfigChange(const VideoDecoderConfig& config);
   void OnVideoOpacityChange(bool opaque);
 
   void OnStreamRestartCompleted();
@@ -214,7 +219,6 @@ class MEDIA_EXPORT RendererImpl : public Renderer {
   bool video_ended_;
 
   CdmContext* cdm_context_;
-  CdmAttachedCB pending_cdm_attached_cb_;
 
   bool underflow_disabled_for_testing_;
   bool clockless_video_playback_enabled_for_testing_;
@@ -229,7 +233,14 @@ class MEDIA_EXPORT RendererImpl : public Renderer {
   // runs out of data but the audio renderer still has enough.
   base::TimeDelta video_underflow_threshold_;
 
+  // Lock used to protect access to the |restarting_audio_| flag and
+  // |restarting_audio_time_|.
+  // TODO(servolk): Get rid of the lock and replace restarting_audio_ with
+  // std::atomic<bool> when atomics are unbanned in Chromium.
+  base::Lock restarting_audio_lock_;
   bool restarting_audio_ = false;
+  base::TimeDelta restarting_audio_time_ = kNoTimestamp;
+
   bool restarting_video_ = false;
 
   // Flush operations and media track status changes must be serialized to avoid

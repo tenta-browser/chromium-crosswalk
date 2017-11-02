@@ -6,26 +6,80 @@
 
 #include "chrome/browser/ui/views/payments/payment_request_views_util.h"
 #include "third_party/skia/include/core/SkColor.h"
+#include "ui/native_theme/native_theme.h"
 #include "ui/views/background.h"
 #include "ui/views/border.h"
+#include "ui/views/widget/widget.h"
 
 namespace payments {
 
-PaymentRequestRowView::PaymentRequestRowView(
-    views::ButtonListener* listener)
-  : views::CustomButton(listener) {
-  SetBorder(payments::CreatePaymentRequestRowBorder());
+PaymentRequestRowView::PaymentRequestRowView(views::ButtonListener* listener,
+                                             bool clickable,
+                                             const gfx::Insets& insets)
+    : views::Button(listener),
+      clickable_(clickable),
+      insets_(insets),
+      previous_row_(nullptr) {
+  SetEnabled(clickable_);
+  ShowBottomSeparator();
+  SetFocusBehavior(views::View::FocusBehavior::ALWAYS);
 }
 
 PaymentRequestRowView::~PaymentRequestRowView() {}
 
-// views::CustomButton:
-void PaymentRequestRowView::StateChanged(ButtonState old_state) {
-  if (state() == views::Button::STATE_HOVERED ||
-      state() == views::Button::STATE_PRESSED) {
-    set_background(views::Background::CreateSolidBackground(SK_ColorLTGRAY));
+void PaymentRequestRowView::SetActiveBackground() {
+  ui::NativeTheme* theme = GetWidget()->GetNativeTheme();
+  SetBackground(views::CreateSolidBackground(theme->GetSystemColor(
+      ui::NativeTheme::kColorId_ResultsTableHoveredBackground)));
+}
+
+void PaymentRequestRowView::ShowBottomSeparator() {
+  SetBorder(payments::CreatePaymentRequestRowBorder(
+      GetNativeTheme()->GetSystemColor(
+          ui::NativeTheme::kColorId_SeparatorColor),
+      insets_));
+  SchedulePaint();
+}
+
+void PaymentRequestRowView::HideBottomSeparator() {
+  SetBorder(views::CreateEmptyBorder(insets_));
+  SchedulePaint();
+}
+
+void PaymentRequestRowView::SetIsHighlighted(bool highlighted) {
+  if (highlighted) {
+    SetActiveBackground();
+    HideBottomSeparator();
+    if (previous_row_)
+      previous_row_->HideBottomSeparator();
   } else {
-    set_background(nullptr);
+    SetBackground(nullptr);
+    ShowBottomSeparator();
+    if (previous_row_)
+      previous_row_->ShowBottomSeparator();
+  }
+}
+
+// views::Button:
+void PaymentRequestRowView::StateChanged(ButtonState old_state) {
+  if (!clickable())
+    return;
+
+  SetIsHighlighted(state() == views::Button::STATE_HOVERED ||
+                   state() == views::Button::STATE_PRESSED);
+}
+
+void PaymentRequestRowView::OnFocus() {
+  if (clickable()) {
+    SetIsHighlighted(true);
+    SchedulePaint();
+  }
+}
+
+void PaymentRequestRowView::OnBlur() {
+  if (clickable()) {
+    SetIsHighlighted(false);
+    SchedulePaint();
   }
 }
 

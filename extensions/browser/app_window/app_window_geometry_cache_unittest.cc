@@ -41,7 +41,8 @@ scoped_refptr<Extension> CreateExtension(const std::string& id) {
 // Base class for tests.
 class AppWindowGeometryCacheTest : public ExtensionsTest {
  public:
-  AppWindowGeometryCacheTest() = default;
+  AppWindowGeometryCacheTest()
+      : ExtensionsTest(std::make_unique<content::TestBrowserThreadBundle>()) {}
 
   // testing::Test overrides:
   void SetUp() override;
@@ -65,7 +66,6 @@ class AppWindowGeometryCacheTest : public ExtensionsTest {
   std::string AddExtensionWithPrefs(const std::string& name);
 
  protected:
-  content::TestBrowserThreadBundle test_browser_thread_bundle_;
   ExtensionPrefs* extension_prefs_;  // Weak.
   std::unique_ptr<AppWindowGeometryCache> cache_;
 };
@@ -89,9 +89,9 @@ void AppWindowGeometryCacheTest::AddGeometryAndLoadExtension(
     const gfx::Rect& screen_bounds,
     ui::WindowShowState state) {
   std::unique_ptr<base::DictionaryValue> dict =
-      base::MakeUnique<base::DictionaryValue>();
+      std::make_unique<base::DictionaryValue>();
   std::unique_ptr<base::DictionaryValue> value =
-      base::MakeUnique<base::DictionaryValue>();
+      std::make_unique<base::DictionaryValue>();
   value->SetInteger("x", bounds.x());
   value->SetInteger("y", bounds.y());
   value->SetInteger("w", bounds.width());
@@ -119,9 +119,8 @@ void AppWindowGeometryCacheTest::LoadExtension(
 void AppWindowGeometryCacheTest::UnloadExtension(
     const std::string& extension_id) {
   scoped_refptr<Extension> extension = CreateExtension(extension_id);
-  cache_->OnExtensionUnloaded(browser_context(),
-                              extension.get(),
-                              UnloadedExtensionInfo::REASON_DISABLE);
+  cache_->OnExtensionUnloaded(browser_context(), extension.get(),
+                              UnloadedExtensionReason::DISABLE);
   WaitForSync();
 }
 

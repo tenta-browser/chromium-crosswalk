@@ -18,16 +18,9 @@ void BeginClipPathDisplayItem::Replay(GraphicsContext& context) const {
 }
 
 void BeginClipPathDisplayItem::AppendToWebDisplayItemList(
-    const IntRect& visual_rect,
+    const LayoutSize&,
     WebDisplayItemList* list) const {
   list->AppendClipPathItem(clip_path_, true);
-}
-
-void BeginClipPathDisplayItem::AnalyzeForGpuRasterization(
-    SkPictureGpuAnalyzer& analyzer) const {
-  // Temporarily disabled (pref regressions due to GPU veto stickiness:
-  // http://crbug.com/603969).
-  // analyzer.analyzeClipPath(m_clipPath, SkRegion::kIntersect_Op, true);
 }
 
 void EndClipPathDisplayItem::Replay(GraphicsContext& context) const {
@@ -35,7 +28,7 @@ void EndClipPathDisplayItem::Replay(GraphicsContext& context) const {
 }
 
 void EndClipPathDisplayItem::AppendToWebDisplayItemList(
-    const IntRect& visual_rect,
+    const LayoutSize&,
     WebDisplayItemList* list) const {
   list->AppendEndClipPathItem();
 }

@@ -12,10 +12,11 @@
 #import "ios/chrome/browser/ui/colors/MDCPalette+CrAdditions.h"
 #import "ios/chrome/browser/ui/rtl_geometry.h"
 #import "ios/chrome/browser/ui/uikit_ui_util.h"
+#import "ios/chrome/browser/ui/util/constraints_ui_util.h"
 #include "ios/chrome/grit/ios_chromium_strings.h"
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/third_party/material_components_ios/src/components/Buttons/src/MaterialButtons.h"
-#import "ios/third_party/material_roboto_font_loader_ios/src/src/MaterialRobotoFontLoader.h"
+#import "ios/third_party/material_components_ios/src/components/Typography/src/MaterialTypography.h"
 #import "ui/base/l10n/l10n_util_mac.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -76,8 +77,7 @@ void SetTextWithLineHeight(UILabel* label, NSString* text, CGFloat lineHeight) {
     UILabel* titleLabel = [[UILabel alloc] init];
     _titleLabel = titleLabel;
     _titleLabel.textColor = bookmark_utils_ios::darkTextColor();
-    _titleLabel.font =
-        [[MDFRobotoFontLoader sharedInstance] mediumFontOfSize:16];
+    _titleLabel.font = [[MDCTypography fontLoader] mediumFontOfSize:16];
     _titleLabel.numberOfLines = 0;
     SetTextWithLineHeight(_titleLabel,
                           l10n_util::GetNSString(IDS_IOS_BOOKMARK_PROMO_TITLE),
@@ -89,8 +89,7 @@ void SetTextWithLineHeight(UILabel* label, NSString* text, CGFloat lineHeight) {
     UILabel* subtitleLabel = [[UILabel alloc] init];
     _subtitleLabel = subtitleLabel;
     _subtitleLabel.textColor = bookmark_utils_ios::darkTextColor();
-    _subtitleLabel.font =
-        [[MDFRobotoFontLoader sharedInstance] regularFontOfSize:14];
+    _subtitleLabel.font = [[MDCTypography fontLoader] regularFontOfSize:14];
     _subtitleLabel.numberOfLines = 0;
     SetTextWithLineHeight(
         _subtitleLabel, l10n_util::GetNSString(IDS_IOS_BOOKMARK_PROMO_MESSAGE),
@@ -103,7 +102,8 @@ void SetTextWithLineHeight(UILabel* label, NSString* text, CGFloat lineHeight) {
     _signInButton = signInButton;
     [_signInButton setBackgroundColor:[[MDCPalette cr_bluePalette] tint500]
                              forState:UIControlStateNormal];
-    _signInButton.customTitleColor = [UIColor whiteColor];
+    [_signInButton setTitleColor:[UIColor whiteColor]
+                        forState:UIControlStateNormal];
     _signInButton.inkColor = [UIColor colorWithWhite:1 alpha:0.2];
     [_signInButton
         setTitle:l10n_util::GetNSString(IDS_IOS_BOOKMARK_PROMO_SIGN_IN_BUTTON)
@@ -118,7 +118,8 @@ void SetTextWithLineHeight(UILabel* label, NSString* text, CGFloat lineHeight) {
     [_dismissButton
         setTitle:l10n_util::GetNSString(IDS_IOS_BOOKMARK_PROMO_DISMISS_BUTTON)
         forState:UIControlStateNormal];
-    _dismissButton.customTitleColor = [[MDCPalette cr_bluePalette] tint500];
+    [_dismissButton setTitleColor:[[MDCPalette cr_bluePalette] tint500]
+                         forState:UIControlStateNormal];
     _dismissButton.accessibilityIdentifier = @"promo_no_thanks_button";
     _dismissButton.translatesAutoresizingMaskIntoConstraints = NO;
     [self addSubview:_dismissButton];

@@ -25,7 +25,7 @@
 #include "cc/layers/content_layer_client.h"
 #include "cc/layers/layer.h"
 #include "cc/layers/texture_layer_client.h"
-#include "cc/resources/texture_mailbox.h"
+#include "components/viz/common/quads/texture_mailbox.h"
 #include "content/common/content_export.h"
 #include "content/public/renderer/pepper_plugin_instance.h"
 #include "content/public/renderer/plugin_instance_throttler.h"
@@ -72,12 +72,13 @@ struct PP_Point;
 class SkBitmap;
 
 namespace blink {
+class WebCoalescedInputEvent;
 class WebInputEvent;
 class WebLayer;
 class WebMouseEvent;
 class WebPluginContainer;
 class WebURLResponse;
-struct WebCompositionUnderline;
+struct WebImeTextSpan;
 struct WebCursorInfo;
 struct WebURLError;
 struct WebPrintParams;
@@ -125,11 +126,11 @@ class RenderFrameImpl;
 // ResourceTracker.
 class CONTENT_EXPORT PepperPluginInstanceImpl
     : public base::RefCounted<PepperPluginInstanceImpl>,
-      public NON_EXPORTED_BASE(PepperPluginInstance),
+      public PepperPluginInstance,
       public ppapi::PPB_Instance_Shared,
-      public NON_EXPORTED_BASE(cc::TextureLayerClient),
+      public cc::TextureLayerClient,
       public RenderFrameObserver,
-      public NON_EXPORTED_BASE(PluginInstanceThrottler::Observer) {
+      public PluginInstanceThrottler::Observer {
  public:
   // Create and return a PepperPluginInstanceImpl object which supports the most
   // recent version of PPP_Instance possible by querying the given
@@ -201,14 +202,14 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   void ScrollRect(int dx, int dy, const gfx::Rect& rect);
 
   // Commit the texture mailbox to the screen.
-  void CommitTextureMailbox(const cc::TextureMailbox& texture_mailbox);
+  void CommitTextureMailbox(const viz::TextureMailbox& texture_mailbox);
 
   // Passes the committed texture to |texture_layer_| and marks it as in use.
   void PassCommittedTextureToTextureLayer();
 
   // Callback when the compositor is finished consuming the committed texture.
   void FinishedConsumingCommittedTexture(
-      const cc::TextureMailbox& texture_mailbox,
+      const viz::TextureMailbox& texture_mailbox,
       scoped_refptr<PPB_Graphics3D_Impl> graphics_3d,
       const gpu::SyncToken& sync_token,
       bool is_lost);
@@ -226,6 +227,8 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
                   bool full_frame,
                   std::unique_ptr<PluginInstanceThrottlerImpl> throttler);
   bool HandleDocumentLoad(const blink::WebURLResponse& response);
+  bool HandleCoalescedInputEvent(const blink::WebCoalescedInputEvent& event,
+                                 blink::WebCursorInfo* cursor_info);
   bool HandleInputEvent(const blink::WebInputEvent& event,
                         blink::WebCursorInfo* cursor_info);
   PP_Var GetInstanceObject(v8::Isolate* isolate);
@@ -237,7 +240,7 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   bool HandleCompositionStart(const base::string16& text);
   bool HandleCompositionUpdate(
       const base::string16& text,
-      const std::vector<blink::WebCompositionUnderline>& underlines,
+      const std::vector<blink::WebImeTextSpan>& ime_text_spans,
       int selection_start,
       int selection_end);
   bool HandleCompositionEnd(const base::string16& text);
@@ -348,7 +351,7 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
                              ppapi::ScopedPPVar* result);
 
   // Returns true if the plugin is processing a user gesture.
-  bool IsProcessingUserGesture();
+  bool IsProcessingUserGesture() const;
 
   // Returns the user gesture token to use for creating a WebScopedUserGesture,
   // if IsProcessingUserGesture returned true.
@@ -413,6 +416,12 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   void SetLinkUnderCursor(const std::string& url) override;
   void SetTextInputType(ui::TextInputType type) override;
   void PostMessageToJavaScript(PP_Var message) override;
+  void SetCaretPosition(const gfx::PointF& position) override;
+  void MoveRangeSelectionExtent(const gfx::PointF& extent) override;
+  void SetSelectionBounds(const gfx::PointF& base,
+                          const gfx::PointF& extent) override;
+  bool CanEditText() override;
+  void ReplaceSelection(const std::string& text) override;
 
   // PPB_Instance_API implementation.
   PP_Bool BindGraphics(PP_Instance instance, PP_Resource device) override;
@@ -484,6 +493,9 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
 
   // PPB_ContentDecryptor_Private implementation.
   void PromiseResolved(PP_Instance instance, uint32_t promise_id) override;
+  void PromiseResolvedWithKeyStatus(PP_Instance instance,
+                                    uint32_t promise_id,
+                                    PP_CdmKeyStatus key_status) override;
   void PromiseResolvedWithSession(PP_Instance instance,
                                   uint32_t promise_id,
                                   PP_Var session_id_var) override;
@@ -548,8 +560,8 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
 
   // cc::TextureLayerClient implementation.
   bool PrepareTextureMailbox(
-      cc::TextureMailbox* mailbox,
-      std::unique_ptr<cc::SingleReleaseCallback>* release_callback) override;
+      viz::TextureMailbox* mailbox,
+      std::unique_ptr<viz::SingleReleaseCallback>* release_callback) override;
 
   // RenderFrameObserver
   void AccessibilityModeChanged() override;
@@ -592,6 +604,8 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
     std::list<std::string> data_;
     bool finished_loading_;
     std::unique_ptr<blink::WebURLError> error_;
+
+    DISALLOW_COPY_AND_ASSIGN(ExternalDocumentLoader);
   };
 
   // Implements PPB_Gamepad_API. This is just to avoid having an excessive
@@ -669,15 +683,15 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
                        int num_ranges,
                        printing::PdfMetafileSkia* metafile);
 
-  void DoSetCursor(blink::WebCursorInfo* cursor);
+  void DoSetCursor(std::unique_ptr<blink::WebCursorInfo> cursor);
 
   // Internal helper functions for HandleCompositionXXX().
   bool SendCompositionEventToPlugin(PP_InputEvent_Type type,
                                     const base::string16& text);
-  bool SendCompositionEventWithUnderlineInformationToPlugin(
+  bool SendCompositionEventWithImeTextSpanInformationToPlugin(
       PP_InputEvent_Type type,
       const base::string16& text,
-      const std::vector<blink::WebCompositionUnderline>& underlines,
+      const std::vector<blink::WebImeTextSpan>& ime_text_spans,
       int selection_start,
       int selection_end);
 
@@ -698,6 +712,9 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   void SetSizeAttributesForFullscreen();
   void ResetSizeAttributesAfterFullscreen();
 
+  // Shared code between SetFullscreen() and FlashSetFullscreen().
+  bool SetFullscreenCommon(bool fullscreen) const;
+
   bool IsMouseLocked();
   bool LockMouse();
   MouseLockDispatcher* GetMouseLockDispatcher();
@@ -714,25 +731,25 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
 
   // Each time CommitTextureMailbox() is called, this instance is given
   // ownership
-  // of a cc::TextureMailbox. This instance always needs to hold on to the most
-  // recently committed cc::TextureMailbox, since UpdateLayer() might require
+  // of a viz::TextureMailbox. This instance always needs to hold on to the most
+  // recently committed viz::TextureMailbox, since UpdateLayer() might require
   // it.
-  // Since it is possible for a cc::TextureMailbox to be passed to
+  // Since it is possible for a viz::TextureMailbox to be passed to
   // texture_layer_ more than once, a reference counting mechanism is necessary
-  // to ensure that a cc::TextureMailbox isn't returned until all copies of it
+  // to ensure that a viz::TextureMailbox isn't returned until all copies of it
   // have been released by texture_layer_.
   //
-  // This method should be called each time a cc::TextureMailbox is passed to
+  // This method should be called each time a viz::TextureMailbox is passed to
   // |texture_layer_|. It increments an internal reference count.
-  void IncrementTextureReferenceCount(const cc::TextureMailbox& mailbox);
+  void IncrementTextureReferenceCount(const viz::TextureMailbox& mailbox);
 
   // This method should be called each time |texture_layer_| finishes consuming
-  // a cc::TextureMailbox. It decrements an internal reference count. Returns
+  // a viz::TextureMailbox. It decrements an internal reference count. Returns
   // whether the last reference was removed.
-  bool DecrementTextureReferenceCount(const cc::TextureMailbox& mailbox);
+  bool DecrementTextureReferenceCount(const viz::TextureMailbox& mailbox);
 
-  // Whether a given cc::TextureMailbox is in use by |texture_layer_|.
-  bool IsTextureInUse(const cc::TextureMailbox& mailbox) const;
+  // Whether a given viz::TextureMailbox is in use by |texture_layer_|.
+  bool IsTextureInUse(const viz::TextureMailbox& mailbox) const;
 
   RenderFrameImpl* render_frame_;
   scoped_refptr<PluginModule> module_;
@@ -837,7 +854,7 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   // print only a subset of all the pages, it is impossible to know if a call
   // to PrintPage() is the last call. Thus in PrintPage(), just store the page
   // number in |ranges_|. The hack is in PrintEnd(), where a valid |metafile_|
-  // is preserved in PrintWebViewHelper::PrintPages. This makes it possible
+  // is preserved in PrintWebFrameHelper::PrintPages. This makes it possible
   // to generate the entire PDF given the variables below:
   //
   // The most recently used metafile_, guaranteed to be valid.
@@ -959,7 +976,7 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
 
   // The most recently committed texture. This is kept around in case the layer
   // needs to be regenerated.
-  cc::TextureMailbox committed_texture_;
+  viz::TextureMailbox committed_texture_;
 
   // The Graphics3D that produced the most recently committed texture.
   scoped_refptr<PPB_Graphics3D_Impl> committed_texture_graphics_3d_;
@@ -967,10 +984,10 @@ class CONTENT_EXPORT PepperPluginInstanceImpl
   gpu::SyncToken committed_texture_consumed_sync_token_;
 
   // Holds the number of references |texture_layer_| has to any given
-  // cc::TextureMailbox.
+  // viz::TextureMailbox.
   // We expect there to be no more than 10 textures in use at a time. A
   // std::vector will have better performance than a std::map.
-  using TextureMailboxRefCount = std::pair<cc::TextureMailbox, int>;
+  using TextureMailboxRefCount = std::pair<viz::TextureMailbox, int>;
   std::vector<TextureMailboxRefCount> texture_ref_counts_;
 
   bool initialized_;

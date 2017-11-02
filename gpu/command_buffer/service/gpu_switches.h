@@ -15,7 +15,6 @@ namespace switches {
 GPU_EXPORT extern const char kCompileShaderAlwaysSucceeds[];
 GPU_EXPORT extern const char kDisableGLErrorLimit[];
 GPU_EXPORT extern const char kDisableGLSLTranslator[];
-GPU_EXPORT extern const char kDisableGpuDriverBugWorkarounds[];
 GPU_EXPORT extern const char kDisableShaderNameHashing[];
 GPU_EXPORT extern const char kEnableGPUCommandLogging[];
 GPU_EXPORT extern const char kEnableGPUDebugging[];
@@ -29,7 +28,6 @@ GPU_EXPORT extern const char kDisableGpuShaderDiskCache[];
 GPU_EXPORT extern const char kEnableThreadedTextureMailboxes[];
 GPU_EXPORT extern const char kGLShaderIntermOutput[];
 GPU_EXPORT extern const char kEmulateShaderPrecision[];
-GPU_EXPORT extern const char kUsePassthroughCmdDecoder[];
 
 }  // namespace switches
 

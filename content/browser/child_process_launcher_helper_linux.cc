@@ -40,22 +40,19 @@ ChildProcessLauncherHelper::GetFilesToMap() {
 }
 
 void ChildProcessLauncherHelper::BeforeLaunchOnLauncherThread(
-    const FileDescriptorInfo& files_to_register,
+    const PosixFileDescriptorInfo& files_to_register,
     base::LaunchOptions* options) {
   // Convert FD mapping to FileHandleMappingVector
-  std::unique_ptr<base::FileHandleMappingVector> fds_to_map =
-      files_to_register.GetMappingWithIDAdjustment(
-          base::GlobalDescriptors::kBaseDescriptor);
+  options->fds_to_remap = files_to_register.GetMappingWithIDAdjustment(
+      base::GlobalDescriptors::kBaseDescriptor);
 
   if (GetProcessType() == switches::kRendererProcess) {
     const int sandbox_fd =
         RenderSandboxHostLinux::GetInstance()->GetRendererSocket();
-    fds_to_map->push_back(std::make_pair(sandbox_fd, GetSandboxFD()));
+    options->fds_to_remap.push_back(std::make_pair(sandbox_fd, GetSandboxFD()));
   }
 
   options->environ = delegate_->GetEnvironment();
-  // fds_to_remap will de deleted in AfterLaunchOnLauncherThread() below.
-  options->fds_to_remap = fds_to_map.release();
 }
 
 ChildProcessLauncherHelper::Process
@@ -66,23 +63,20 @@ ChildProcessLauncherHelper::LaunchProcessOnLauncherThread(
     int* launch_result) {
   *is_synchronous_launch = true;
 
-  ZygoteHandle* zygote_handle =
-      base::CommandLine::ForCurrentProcess()->HasSwitch(switches::kNoZygote) ?
-      nullptr : delegate_->GetZygote();
+  ZygoteHandle zygote_handle =
+      base::CommandLine::ForCurrentProcess()->HasSwitch(switches::kNoZygote)
+          ? nullptr
+          : delegate_->GetZygote();
   if (zygote_handle) {
-    // This code runs on the PROCESS_LAUNCHER thread so race conditions are not
-    // an issue with the lazy initialization.
-    if (*zygote_handle == nullptr) {
-      *zygote_handle = CreateZygote();
-    }
-    base::ProcessHandle handle = (*zygote_handle)->ForkRequest(
-        command_line()->argv(),
-        std::move(files_to_register),
-        GetProcessType());
+    // TODO(crbug.com/569191): If chrome supported multiple zygotes they could
+    // be created lazily here, or in the delegate GetZygote() implementations.
+    // Additionally, the delegate could provide a UseGenericZygote() method.
+    base::ProcessHandle handle = zygote_handle->ForkRequest(
+        command_line()->argv(), std::move(files_to_register), GetProcessType());
     *launch_result = LAUNCH_RESULT_SUCCESS;
     Process process;
     process.process = base::Process(handle);
-    process.zygote = *zygote_handle;
+    process.zygote = zygote_handle;
     return process;
   }
 
@@ -96,7 +90,6 @@ ChildProcessLauncherHelper::LaunchProcessOnLauncherThread(
 void ChildProcessLauncherHelper::AfterLaunchOnLauncherThread(
     const ChildProcessLauncherHelper::Process& process,
     const base::LaunchOptions& options) {
-  delete options.fds_to_remap;
 }
 
 base::TerminationStatus ChildProcessLauncherHelper::GetTerminationStatus(
@@ -134,11 +127,12 @@ void ChildProcessLauncherHelper::ForceNormalProcessTerminationSync(
   }
 }
 
-void ChildProcessLauncherHelper::SetProcessBackgroundedOnLauncherThread(
-      base::Process process, bool background) {
+void ChildProcessLauncherHelper::SetProcessPriorityOnLauncherThread(
+    base::Process process,
+    const ChildProcessLauncherPriority& priority) {
   DCHECK_CURRENTLY_ON(BrowserThread::PROCESS_LAUNCHER);
   if (process.CanBackgroundProcesses())
-    process.SetProcessBackgrounded(background);
+    process.SetProcessBackgrounded(priority.background);
 }
 
 // static

@@ -93,6 +93,20 @@
   DESKTOP_USER_MANAGER: 'login-add-user'
 };
 
+/* Possible lock screen enabled app activity state. */
+/** @const */ var LOCK_SCREEN_APPS_STATE = {
+  // No lock screen enabled app available.
+  NONE: 'LOCK_SCREEN_APPS_STATE.NONE',
+  // A lock screen enabled note taking app is available, but has not been
+  // launched to handle a lock screen action.
+  AVAILABLE: 'LOCK_SCREEN_APPS_STATE.AVAILABLE',
+  // A lock screen enabled app is running in background - behind lock screen UI.
+  BACKGROUND: 'LOCK_SCREEN_APPS_STATE.BACKGROUND',
+  // A lock screen enabled app is running in foreground - an app window is
+  // shown over the lock screen user pods (header bar should still be visible).
+  FOREGROUND: 'LOCK_SCREEN_APPS_STATE.FOREGROUND',
+};
+
 /** @const */ var USER_ACTION_ROLLBACK_TOGGLED = 'rollback-toggled';
 
 cr.define('cr.ui.login', function() {
@@ -265,11 +279,6 @@ cr.define('cr.ui.login', function() {
 
     set headerHidden(hidden) {
       $('login-header-bar').hidden = hidden;
-    },
-
-    set pinHidden(hidden) {
-      this.virtualKeyboardShown = hidden;
-      $('pod-row').setFocusedPodPinVisibility(!hidden);
     },
 
     /**
@@ -796,6 +805,9 @@ cr.define('cr.ui.login', function() {
       var currentScreen = $(currentScreenId);
       if (currentScreen)
         currentScreen.onWindowResize();
+      // The account picker always needs to be notified of window size changes.
+      if (currentScreenId != SCREEN_ACCOUNT_PICKER && $(SCREEN_ACCOUNT_PICKER))
+        $(SCREEN_ACCOUNT_PICKER).onWindowResize();
     },
 
     /*
@@ -1042,6 +1054,15 @@ cr.define('cr.ui.login', function() {
   DisplayManager.setEnterpriseInfo = function(messageText, assetId) {
     $('asset-id').textContent = ((assetId == "") ? "" :
         loadTimeData.getStringF('assetIdLabel', assetId));
+  };
+
+  /**
+   * Sets the text content of the Bluetooth device info message.
+   * @param {string} bluetoothName The Bluetooth device name text.
+   */
+  DisplayManager.setBluetoothDeviceInfo = function(bluetoothName) {
+    $('bluetooth-name').hidden = false;
+    $('bluetooth-name').textContent = bluetoothName;
   };
 
   /**

@@ -4,16 +4,18 @@
 
 #include "ash/display/screen_ash.h"
 
+#include "ash/ash_switches.h"
 #include "ash/display/window_tree_host_manager.h"
 #include "ash/root_window_controller.h"
 #include "ash/root_window_settings.h"
 #include "ash/shelf/shelf_widget.h"
 #include "ash/shell.h"
 #include "ash/wm/root_window_finder.h"
-#include "ash/wm_window.h"
+#include "base/command_line.h"
 #include "base/logging.h"
 #include "ui/aura/client/screen_position_client.h"
 #include "ui/aura/env.h"
+#include "ui/aura/window.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/display/display.h"
 #include "ui/display/display_finder.h"
@@ -95,8 +97,7 @@ bool ScreenAsh::IsWindowUnderCursor(gfx::NativeWindow window) {
 }
 
 gfx::NativeWindow ScreenAsh::GetWindowAtScreenPoint(const gfx::Point& point) {
-  aura::Window* root_window =
-      WmWindow::GetAuraWindow(wm::GetRootWindowAt(point));
+  aura::Window* root_window = wm::GetRootWindowAt(point);
   aura::client::ScreenPositionClient* position_client =
       aura::client::GetScreenPositionClient(root_window);
 
@@ -185,7 +186,13 @@ display::DisplayManager* ScreenAsh::CreateDisplayManager() {
   // use ash's screen.
   if (!current || current == screen_for_shutdown)
     display::Screen::SetScreenInstance(screen.get());
-  return new display::DisplayManager(std::move(screen));
+  display::DisplayManager* manager =
+      new display::DisplayManager(std::move(screen));
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kAshEnableTabletMode)) {
+    manager->set_internal_display_has_accelerometer(true);
+  }
+  return manager;
 }
 
 // static

@@ -20,13 +20,14 @@ namespace net {
 
 class NET_EXPORT_PRIVATE URLRequestFileDirJob
     : public URLRequestJob,
-      public NON_EXPORTED_BASE(DirectoryLister::DirectoryListerDelegate) {
+      public DirectoryLister::DirectoryListerDelegate {
  public:
   URLRequestFileDirJob(URLRequest* request,
                        NetworkDelegate* network_delegate,
                        const base::FilePath& dir_path);
 
   void StartAsync();
+
   // Overridden from URLRequestJob:
   void Start() override;
   void Kill() override;
@@ -42,7 +43,8 @@ class NET_EXPORT_PRIVATE URLRequestFileDirJob
   ~URLRequestFileDirJob() override;
 
  private:
-  void CloseLister();
+  // Called after the target directory path is resolved to an absolute path.
+  void DidMakeAbsolutePath(const base::FilePath& absolute_path);
 
   // When we have data and a read has been pending, this function
   // will fill the response buffer and notify the request
@@ -52,7 +54,7 @@ class NET_EXPORT_PRIVATE URLRequestFileDirJob
   int ReadBuffer(char* buf, int buf_size);
 
   DirectoryLister lister_;
-  base::FilePath dir_path_;
+  const base::FilePath dir_path_;
 
   std::string data_;
   bool canceled_;

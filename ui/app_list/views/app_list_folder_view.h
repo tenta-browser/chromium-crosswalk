@@ -60,7 +60,7 @@ class AppListFolderView : public views::View,
   void CloseFolderPage();
 
   // views::View
-  gfx::Size GetPreferredSize() const override;
+  gfx::Size CalculatePreferredSize() const override;
   void Layout() override;
   bool OnKeyPressed(const ui::KeyEvent& event) override;
 
@@ -119,6 +119,8 @@ class AppListFolderView : public views::View,
   bool hide_for_reparent_;
 
   base::string16 accessible_name_;
+
+  const bool is_fullscreen_app_list_enabled_;
 
   DISALLOW_COPY_AND_ASSIGN(AppListFolderView);
 };

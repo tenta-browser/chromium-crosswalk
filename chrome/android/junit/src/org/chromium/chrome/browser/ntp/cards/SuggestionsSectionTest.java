@@ -29,6 +29,7 @@ import static org.mockito.Mockito.when;
 import static org.chromium.chrome.browser.ntp.cards.ContentSuggestionsUnitTestUtils.bindViewHolders;
 import static org.chromium.chrome.test.util.browser.suggestions.ContentSuggestionsTestUtils.createDummySuggestions;
 
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -38,19 +39,23 @@ import org.mockito.MockitoAnnotations;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.Callback;
+import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.base.test.util.Feature;
+import org.chromium.chrome.browser.ChromeFeatureList;
 import org.chromium.chrome.browser.DisableHistogramsRule;
 import org.chromium.chrome.browser.ntp.cards.NewTabPageViewHolder.UpdateLayoutParamsCallback;
 import org.chromium.chrome.browser.ntp.snippets.CategoryStatus;
+import org.chromium.chrome.browser.ntp.snippets.KnownCategories;
 import org.chromium.chrome.browser.ntp.snippets.SnippetArticle;
-import org.chromium.chrome.browser.ntp.snippets.SuggestionsSource;
 import org.chromium.chrome.browser.offlinepages.OfflinePageItem;
 import org.chromium.chrome.browser.suggestions.ContentSuggestionsAdditionalAction;
-import org.chromium.chrome.browser.suggestions.SuggestionsMetricsReporter;
+import org.chromium.chrome.browser.suggestions.SuggestionsEventReporter;
 import org.chromium.chrome.browser.suggestions.SuggestionsNavigationDelegate;
 import org.chromium.chrome.browser.suggestions.SuggestionsRanker;
 import org.chromium.chrome.browser.suggestions.SuggestionsUiDelegate;
+import org.chromium.chrome.test.util.browser.Features;
 import org.chromium.chrome.test.util.browser.suggestions.ContentSuggestionsTestUtils.CategoryInfoBuilder;
+import org.chromium.chrome.test.util.browser.suggestions.FakeSuggestionsSource;
 import org.chromium.testing.local.LocalRobolectricTestRunner;
 
 import java.util.ArrayList;
@@ -66,26 +71,54 @@ import java.util.TreeSet;
  */
 @RunWith(LocalRobolectricTestRunner.class)
 @Config(manifest = Config.NONE)
+// TODO(bauerb): Enable these tests with the modern layout.
+@Features({
+        @Features.Register(value = ChromeFeatureList.CHROME_HOME_MODERN_LAYOUT, enabled = false)
+})
 public class SuggestionsSectionTest {
     @Rule
     public DisableHistogramsRule mDisableHistogramsRule = new DisableHistogramsRule();
 
+    @Rule
+    public Features.Processor mFeatureProcessor = new Features.Processor();
+
     private static final int TEST_CATEGORY_ID = 42;
+
+    private static final int REMOTE_TEST_CATEGORY =
+            KnownCategories.REMOTE_CATEGORIES_OFFSET + TEST_CATEGORY_ID;
+
     @Mock
     private SuggestionsSection.Delegate mDelegate;
     @Mock
     private NodeParent mParent;
     @Mock
     private SuggestionsUiDelegate mUiDelegate;
+
+    private FakeSuggestionsSource mSuggestionsSource;
+
     private FakeOfflinePageBridge mBridge;
 
     @Before
     public void setUp() {
+        RecordUserAction.setDisabledForTests(true);
         MockitoAnnotations.initMocks(this);
+
         mBridge = new FakeOfflinePageBridge();
+
+        mSuggestionsSource = spy(new FakeSuggestionsSource());
+        mSuggestionsSource.setStatusForCategory(TEST_CATEGORY_ID, CategoryStatus.AVAILABLE);
+        when(mUiDelegate.getSuggestionsSource()).thenReturn(mSuggestionsSource);
+        when(mUiDelegate.getNavigationDelegate())
+                .thenReturn(mock(SuggestionsNavigationDelegate.class));
+        when(mUiDelegate.getEventReporter()).thenReturn(mock(SuggestionsEventReporter.class));
 
         // Set empty variation params for the test.
         CardsVariationParameters.setTestVariationParams(new HashMap<String, String>());
+    }
+
+    @After
+    public void tearDown() {
+        RecordUserAction.setDisabledForTests(false);
     }
 
     @Test
@@ -106,7 +139,7 @@ public class SuggestionsSectionTest {
         assertEquals(setOf(1, 2), section.getItemDismissalGroup(2));
 
         // With snippets.
-        section.setSuggestions(snippets, CategoryStatus.AVAILABLE, /* replaceExisting = */ true);
+        section.appendSuggestions(snippets, /*keepSectionSize=*/true);
         assertEquals(ItemViewType.HEADER, section.getItemViewType(0));
         assertEquals(Collections.emptySet(), section.getItemDismissalGroup(0));
         assertEquals(ItemViewType.SNIPPET, section.getItemViewType(1));
@@ -161,7 +194,7 @@ public class SuggestionsSectionTest {
         assertEquals(2, section.getItemCount()); // When empty, we have the header and status card.
         assertEquals(ItemViewType.STATUS, section.getItemViewType(1));
 
-        section.setSuggestions(snippets, CategoryStatus.AVAILABLE, /* replaceExisting = */ true);
+        section.appendSuggestions(snippets, /*keepSectionSize=*/true);
         verify(mParent).onItemRangeInserted(section, 1, suggestionCount);
         verify(mParent).onItemRangeRemoved(section, 1 + suggestionCount, 1);
     }
@@ -176,7 +209,8 @@ public class SuggestionsSectionTest {
 
         // Simulate initialisation by the adapter. Here we don't care about the notifications, since
         // the RecyclerView will be updated through notifyDataSetChanged.
-        section.setSuggestions(snippets, CategoryStatus.AVAILABLE, /* replaceExisting = */ true);
+        section.setStatus(CategoryStatus.AVAILABLE);
+        section.appendSuggestions(snippets, /*keepSectionSize=*/true);
         reset(mParent);
 
         // We don't clear suggestions when the status is AVAILABLE.
@@ -215,7 +249,7 @@ public class SuggestionsSectionTest {
         section.setStatus(CategoryStatus.AVAILABLE);
         reset(mParent);
 
-        section.setSuggestions(snippets, CategoryStatus.AVAILABLE, /* replaceExisting = */ true);
+        section.appendSuggestions(snippets, /*keepSectionSize=*/true);
 
         section.removeSuggestionById(snippets.get(1).mIdWithinCategory);
         verify(mParent).onItemRangeRemoved(section, 2, 1);
@@ -244,7 +278,7 @@ public class SuggestionsSectionTest {
         reset(mParent);
         assertEquals(3, section.getItemCount()); // We have the header and status card and a button.
 
-        section.setSuggestions(snippets, CategoryStatus.AVAILABLE, /* replaceExisting = */ true);
+        section.appendSuggestions(snippets, /*keepSectionSize=*/true);
         assertEquals(4, section.getItemCount());
 
         section.removeSuggestionById(snippets.get(0).mIdWithinCategory);
@@ -290,7 +324,8 @@ public class SuggestionsSectionTest {
         mBridge.setItems(Arrays.asList(item0, item1));
 
         SuggestionsSection section = createSectionWithFetchAction(true);
-        section.setSuggestions(snippets, CategoryStatus.AVAILABLE, /* replaceExisting = */ true);
+        section.setStatus(CategoryStatus.AVAILABLE);
+        section.appendSuggestions(snippets, /*keepSectionSize=*/true);
 
         // Check that we pick up the correct information.
         assertEquals(Long.valueOf(0L), snippets.get(0).getOfflinePageOfflineId());
@@ -312,14 +347,14 @@ public class SuggestionsSectionTest {
     @Feature({"Ntp"})
     public void testOfflineStatusIgnoredIfDetached() {
         final int suggestionCount = 2;
-        final List<SnippetArticle> suggestions = createDummySuggestions(suggestionCount,
-                TEST_CATEGORY_ID);
+        final List<SnippetArticle> suggestions =
+                mSuggestionsSource.createAndSetSuggestions(suggestionCount, TEST_CATEGORY_ID);
         assertNull(suggestions.get(0).getOfflinePageOfflineId());
         assertNull(suggestions.get(1).getOfflinePageOfflineId());
 
         final OfflinePageItem item0 = createOfflinePageItem(suggestions.get(0).mUrl, 0L);
         mBridge.setIsOfflinePageModelLoaded(true);
-        mBridge.setItems(Arrays.asList(item0));
+        mBridge.setItems(Collections.singletonList(item0));
 
         SuggestionsSection section = createSectionWithSuggestions(suggestions);
 
@@ -397,8 +432,8 @@ public class SuggestionsSectionTest {
                                 .showIfEmpty()
                                 .build());
         SuggestionsSection section = createSection(info);
-        section.setSuggestions(createDummySuggestions(suggestionCount, TEST_CATEGORY_ID),
-                CategoryStatus.AVAILABLE, /* replaceExisting = */ true);
+        section.setStatus(CategoryStatus.AVAILABLE);
+        section.appendSuggestions(createDummySuggestions(suggestionCount, TEST_CATEGORY_ID), true);
         assertFalse(section.getProgressItemForTesting().isVisible());
 
         // Tap the button
@@ -406,9 +441,60 @@ public class SuggestionsSectionTest {
         assertTrue(section.getProgressItemForTesting().isVisible());
 
         // Simulate receiving suggestions.
-        section.setSuggestions(createDummySuggestions(suggestionCount, TEST_CATEGORY_ID),
-                CategoryStatus.AVAILABLE, /* replaceExisting = */ false);
+        section.setStatus(CategoryStatus.AVAILABLE);
+        section.appendSuggestions(createDummySuggestions(suggestionCount, TEST_CATEGORY_ID), false);
         assertFalse(section.getProgressItemForTesting().isVisible());
+    }
+
+    /**
+     * Tests that the More button appends new suggestions after dismissing all items. The tricky
+     * condition is that if a section is empty, we issue a fetch instead of a fetch-more. This means
+     * we are using the 'updateSuggestions()' flow to append to the list the user is looking at.
+     */
+    @Test
+    @Feature({"Ntp"})
+    public void testFetchMoreAfterDismissAll() {
+        final int suggestionCount = 10;
+        SuggestionsCategoryInfo info =
+                spy(new CategoryInfoBuilder(REMOTE_TEST_CATEGORY)
+                                .withAction(ContentSuggestionsAdditionalAction.FETCH)
+                                .showIfEmpty()
+                                .build());
+        SuggestionsSection section = createSection(info);
+        section.setStatus(CategoryStatus.AVAILABLE);
+        section.appendSuggestions(createDummySuggestions(suggestionCount, REMOTE_TEST_CATEGORY),
+                /*keepSectionSize=*/true);
+        assertFalse(section.getProgressItemForTesting().isVisible());
+        assertEquals(10, section.getSuggestionsCount());
+        assertTrue(section.getCategoryInfo().isRemote());
+
+        // Dismiss all suggestions.
+        for (int i = 0; i < suggestionCount; i++) {
+            // Bind the first suggestion - indicate that it is being viewed.
+            // Indices in section are off-by-one (index 0 is the header).
+            bindViewHolders(section, 1, 2);
+            @SuppressWarnings("unchecked")
+            Callback<String> callback = mock(Callback.class);
+            section.dismissItem(1, callback);
+        }
+        assertEquals(0, section.getSuggestionsCount());
+
+        // Tap the button -- we handle this case explicitly here to avoid complexity in
+        // verifyAction().
+        section.getActionItemForTesting().performAction(mUiDelegate);
+        verify(mUiDelegate.getSuggestionsSource(), times(1)).fetchRemoteSuggestions();
+
+        // Simulate the arrival of new data.
+        // In production, fetchRemoteSuggestions() triggers a fetch through the bridge. We simulate
+        // the functionality triggered by new data at the bridge.
+        mSuggestionsSource.setStatusForCategory(REMOTE_TEST_CATEGORY, CategoryStatus.AVAILABLE);
+        mSuggestionsSource.createAndSetSuggestions(10, REMOTE_TEST_CATEGORY);
+        section.setStatus(CategoryStatus.AVAILABLE);
+        section.updateSuggestions();
+
+        assertEquals(10, section.getSuggestionsCount());
+
+        assertFalse(section.isDataStale());
     }
 
     /**
@@ -416,16 +502,18 @@ public class SuggestionsSectionTest {
      */
     @Test
     @Feature({"Ntp"})
-    public void testSectionUpdatesOnNewSuggestions() {
-        SuggestionsSection section =
-                createSectionWithSuggestions(createDummySuggestions(4, TEST_CATEGORY_ID));
+    public void testUpdateSectionReplacesSuggestions() {
+        SuggestionsSection section = createSectionWithSuggestions(
+                mSuggestionsSource.createAndSetSuggestions(4, TEST_CATEGORY_ID));
         assertEquals(4, section.getSuggestionsCount());
 
-        section.setSuggestions(createDummySuggestions(3, TEST_CATEGORY_ID),
-                CategoryStatus.AVAILABLE, /* replaceExisting = */ true);
+        mSuggestionsSource.createAndSetSuggestions(3, TEST_CATEGORY_ID);
+        section.updateSuggestions();
         verify(mParent).onItemRangeRemoved(section, 1, 4);
         verify(mParent).onItemRangeInserted(section, 1, 3);
         assertEquals(3, section.getSuggestionsCount());
+
+        assertFalse(section.isDataStale());
     }
 
     /**
@@ -433,21 +521,23 @@ public class SuggestionsSectionTest {
      */
     @Test
     @Feature({"Ntp"})
-    public void testSectionDoesNotUpdateOnNewSuggestionsWhenDisabled() {
+    public void testUpdateSectionDoesNothingWhenReplacingIsDisabled() {
         // Override variation params for the test.
-        HashMap<String, String> params = new HashMap<String, String>();
+        HashMap<String, String> params = new HashMap<>();
         params.put("ignore_updates_for_existing_suggestions", "true");
         CardsVariationParameters.setTestVariationParams(params);
 
-        SuggestionsSection section =
-                createSectionWithSuggestions(createDummySuggestions(4, TEST_CATEGORY_ID));
+        SuggestionsSection section = createSectionWithSuggestions(
+                mSuggestionsSource.createAndSetSuggestions(4, TEST_CATEGORY_ID));
         assertEquals(4, section.getSuggestionsCount());
 
-        section.setSuggestions(createDummySuggestions(3, TEST_CATEGORY_ID),
-                CategoryStatus.AVAILABLE, /* replaceExisting = */ true);
+        mSuggestionsSource.createAndSetSuggestions(3, TEST_CATEGORY_ID);
+        section.updateSuggestions();
         verify(mParent, never()).onItemRangeRemoved(any(TreeNode.class), anyInt(), anyInt());
         verify(mParent, never()).onItemRangeInserted(any(TreeNode.class), anyInt(), anyInt());
         assertEquals(4, section.getSuggestionsCount());
+
+        assertTrue(section.isDataStale());
     }
 
     /**
@@ -455,8 +545,9 @@ public class SuggestionsSectionTest {
      */
     @Test
     @Feature({"Ntp"})
-    public void testSectionDoesNotUpdateFirstSuggestionOnNewSuggestionsWhenSeen() {
-        List<SnippetArticle> snippets = createDummySuggestions(4, TEST_CATEGORY_ID, "old");
+    public void testUpdateSectionDoesNotReplaceFirstSuggestionWhenSeen() {
+        List<SnippetArticle> snippets =
+                mSuggestionsSource.createAndSetSuggestions(4, TEST_CATEGORY_ID, "old");
         // Copy the list when passing to the section - it may alter it but we later need it.
         SuggestionsSection section =
                 createSectionWithSuggestions(new ArrayList<>(snippets));
@@ -467,18 +558,19 @@ public class SuggestionsSectionTest {
         bindViewHolders(section, 1, 2);
 
         List<SnippetArticle> newSnippets =
-                createDummySuggestions(3, TEST_CATEGORY_ID, "new");
-        // Copy the list when passing to the section - it may alter it but we later need it.
-        section.setSuggestions(new ArrayList<>(newSnippets), CategoryStatus.AVAILABLE,
-                /* replaceExisting = */ true);
+                mSuggestionsSource.createAndSetSuggestions(3, TEST_CATEGORY_ID, "new");
+        section.updateSuggestions();
         verify(mParent).onItemRangeRemoved(section, 2, 3);
         verify(mParent).onItemRangeInserted(section, 2, 2);
         assertEquals(3, section.getSuggestionsCount());
-        assertEquals(snippets.get(0), section.getSuggestionAt(1));
-        assertNotEquals(snippets.get(1), section.getSuggestionAt(2));
-        assertEquals(newSnippets.get(0), section.getSuggestionAt(2));
-        assertNotEquals(snippets.get(2), section.getSuggestionAt(3));
-        assertEquals(newSnippets.get(1), section.getSuggestionAt(3));
+        List<SnippetArticle> sectionSuggestions = getSuggestions(section);
+        assertEquals(snippets.get(0), sectionSuggestions.get(0));
+        assertNotEquals(snippets.get(1), sectionSuggestions.get(1));
+        assertEquals(newSnippets.get(0), sectionSuggestions.get(1));
+        assertNotEquals(snippets.get(2), sectionSuggestions.get(2));
+        assertEquals(newSnippets.get(1), sectionSuggestions.get(2));
+
+        assertTrue(section.isDataStale());
     }
 
     /**
@@ -487,8 +579,9 @@ public class SuggestionsSectionTest {
      */
     @Test
     @Feature({"Ntp"})
-    public void testSectionDoesNotUpdateFirstTwoSuggestionOnNewSuggestionsWhenSeen() {
-        List<SnippetArticle> snippets = createDummySuggestions(4, TEST_CATEGORY_ID, "old");
+    public void testUpdateSectionDoesNotReplaceFirstTwoSuggestionWhenSeen() {
+        List<SnippetArticle> snippets =
+                mSuggestionsSource.createAndSetSuggestions(4, TEST_CATEGORY_ID, "old");
         // Copy the list when passing to the section - it may alter it but we later need it.
         SuggestionsSection section =
                 createSectionWithSuggestions(new ArrayList<>(snippets));
@@ -499,17 +592,18 @@ public class SuggestionsSectionTest {
         bindViewHolders(section, 1, 3);
 
         List<SnippetArticle> newSnippets =
-                createDummySuggestions(3, TEST_CATEGORY_ID, "new");
-        // Copy the list when passing to the section - it may alter it but we later need it.
-        section.setSuggestions(new ArrayList<>(newSnippets), CategoryStatus.AVAILABLE,
-                /* replaceExisting = */ true);
+                mSuggestionsSource.createAndSetSuggestions(3, TEST_CATEGORY_ID, "new");
+        section.updateSuggestions();
         verify(mParent).onItemRangeRemoved(section, 3, 2);
         verify(mParent).onItemRangeInserted(section, 3, 1);
         assertEquals(3, section.getSuggestionsCount());
-        assertEquals(snippets.get(0), section.getSuggestionAt(1));
-        assertEquals(snippets.get(1), section.getSuggestionAt(2));
-        assertNotEquals(snippets.get(2), section.getSuggestionAt(3));
-        assertEquals(newSnippets.get(0), section.getSuggestionAt(3));
+        List<SnippetArticle> sectionSuggestions = getSuggestions(section);
+        assertEquals(snippets.get(0), sectionSuggestions.get(0));
+        assertEquals(snippets.get(1), sectionSuggestions.get(1));
+        assertNotEquals(snippets.get(2), sectionSuggestions.get(2));
+        assertEquals(newSnippets.get(0), sectionSuggestions.get(2));
+
+        assertTrue(section.isDataStale());
     }
 
     /**
@@ -518,7 +612,7 @@ public class SuggestionsSectionTest {
      */
     @Test
     @Feature({"Ntp"})
-    public void testSectionDoesNotUpdateOnNewSuggestionsWhenNewListIsShorter() {
+    public void testUpdateSectionDoesNothingWhenNewListIsShorterThanItemsSeen() {
         List<SnippetArticle> snippets = createDummySuggestions(4, TEST_CATEGORY_ID, "old");
         // Copy the list when passing to the section - it may alter it but we later need it.
         SuggestionsSection section =
@@ -529,15 +623,60 @@ public class SuggestionsSectionTest {
         // Indices in section are off-by-one (index 0 is the header).
         bindViewHolders(section, 1, 3);
 
-        section.setSuggestions(createDummySuggestions(1, TEST_CATEGORY_ID),
-                CategoryStatus.AVAILABLE, /* replaceExisting = */ true);
+        mSuggestionsSource.createAndSetSuggestions(1, TEST_CATEGORY_ID);
+        section.updateSuggestions();
         // Even though the new list has just one suggestion, we need to keep the two seen ones
         // around.
         verify(mParent).onItemRangeRemoved(section, 3, 2);
         verify(mParent, never()).onItemRangeInserted(any(TreeNode.class), anyInt(), anyInt());
         assertEquals(2, section.getSuggestionsCount());
-        assertEquals(snippets.get(0), section.getSuggestionAt(1));
-        assertEquals(snippets.get(1), section.getSuggestionAt(2));
+        List<SnippetArticle> sectionSuggestions = getSuggestions(section);
+        assertEquals(snippets.get(0), sectionSuggestions.get(0));
+        assertEquals(snippets.get(1), sectionSuggestions.get(1));
+
+        assertTrue(section.isDataStale());
+    }
+
+    /**
+     * Tests that the UI updates items of the section if which have not been seen.
+     */
+    @Test
+    @Feature({"Ntp"})
+    public void testUiUpdatesNotSeenItems() {
+        List<SnippetArticle> snippets = createDummySuggestions(4, TEST_CATEGORY_ID, "old");
+        // Copy the list when passing to the section - it may alter it but we later need it.
+        SuggestionsSection section = createSectionWithSuggestions(new ArrayList<>(snippets));
+        assertEquals(4, section.getSuggestionsCount());
+
+        // Bind the first two suggestions - indicate that they are being viewed.
+        // Indices in section are off-by-one (index 0 is the header).
+        bindViewHolders(section, 1, 3);
+
+        // Remove the first item (already seen) and the last item (not yet seen).
+        List<SnippetArticle> sectionSuggestions = getSuggestions(section);
+        section.removeSuggestionById(sectionSuggestions.get(0).mIdWithinCategory);
+        section.removeSuggestionById(sectionSuggestions.get(3).mIdWithinCategory);
+        // Two suggestions left, one seen, one unseen.
+        assertEquals(2, section.getSuggestionsCount());
+
+        reset(mParent);
+
+        mSuggestionsSource.setSuggestionsForCategory(
+                TEST_CATEGORY_ID, createDummySuggestions(4, TEST_CATEGORY_ID));
+        section.updateSuggestions();
+        assertEquals(4, section.getSuggestionsCount());
+        // Verify the list.
+        sectionSuggestions = getSuggestions(section);
+        // Only the seen suggestion should stay in the list.
+        assertEquals(snippets.get(1), sectionSuggestions.get(0));
+        assertEquals(mSuggestionsSource.getSuggestionsForCategory(TEST_CATEGORY_ID).get(0),
+                sectionSuggestions.get(1));
+        assertEquals(mSuggestionsSource.getSuggestionsForCategory(TEST_CATEGORY_ID).get(1),
+                sectionSuggestions.get(2));
+        assertEquals(mSuggestionsSource.getSuggestionsForCategory(TEST_CATEGORY_ID).get(2),
+                sectionSuggestions.get(3));
+
+        assertTrue(section.isDataStale());
     }
 
     /**
@@ -546,7 +685,7 @@ public class SuggestionsSectionTest {
      */
     @Test
     @Feature({"Ntp"})
-    public void testSectionDoesNotUpdateOnNewSuggestionsWhenCurrentListIsShorter() {
+    public void testUpdateSectionDoesNothingWhenCurrentListIsShorterThanItemsSeen() {
         List<SnippetArticle> snippets = createDummySuggestions(3, TEST_CATEGORY_ID, "old");
         // Copy the list when passing to the section - it may alter it but we later need it.
         SuggestionsSection section =
@@ -558,19 +697,24 @@ public class SuggestionsSectionTest {
         bindViewHolders(section, 1, 3);
 
         // Remove last two items.
-        section.removeSuggestionById(section.getSuggestionAt(3).mIdWithinCategory);
-        section.removeSuggestionById(section.getSuggestionAt(2).mIdWithinCategory);
+        List<SnippetArticle> sectionSuggestions = getSuggestions(section);
+        section.removeSuggestionById(sectionSuggestions.get(2).mIdWithinCategory);
+        section.removeSuggestionById(sectionSuggestions.get(1).mIdWithinCategory);
         reset(mParent);
 
         assertEquals(1, section.getSuggestionsCount());
 
-        section.setSuggestions(createDummySuggestions(4, TEST_CATEGORY_ID),
-                CategoryStatus.AVAILABLE, /* replaceExisting = */ true);
+        mSuggestionsSource.setSuggestionsForCategory(
+                TEST_CATEGORY_ID, createDummySuggestions(4, TEST_CATEGORY_ID));
+        section.updateSuggestions();
         // We do not touch the current list if all has been seen.
+        sectionSuggestions = getSuggestions(section);
         verify(mParent, never()).onItemRangeRemoved(any(TreeNode.class), anyInt(), anyInt());
         verify(mParent, never()).onItemRangeInserted(any(TreeNode.class), anyInt(), anyInt());
         assertEquals(1, section.getSuggestionsCount());
-        assertEquals(snippets.get(0), section.getSuggestionAt(1));
+        assertEquals(snippets.get(0), sectionSuggestions.get(0));
+
+        assertTrue(section.isDataStale());
     }
 
     /**
@@ -578,7 +722,7 @@ public class SuggestionsSectionTest {
      */
     @Test
     @Feature({"Ntp"})
-    public void testSectionDoesNotUpdateOnNewSuggestionsWhenAllSeen() {
+    public void testUpdateSectionDoesNothingWhenAllSeen() {
         List<SnippetArticle> snippets = createDummySuggestions(4, TEST_CATEGORY_ID, "old");
         SuggestionsSection section = createSectionWithSuggestions(snippets);
         assertEquals(4, section.getSuggestionsCount());
@@ -586,13 +730,16 @@ public class SuggestionsSectionTest {
         // Bind all the suggestions - indicate that they are being viewed.
         bindViewHolders(section);
 
-        section.setSuggestions(createDummySuggestions(3, TEST_CATEGORY_ID),
-                CategoryStatus.AVAILABLE, /* replaceExisting = */ true);
+        mSuggestionsSource.setSuggestionsForCategory(
+                TEST_CATEGORY_ID, createDummySuggestions(3, TEST_CATEGORY_ID));
+        section.updateSuggestions();
         verify(mParent, never()).onItemRangeRemoved(any(TreeNode.class), anyInt(), anyInt());
         verify(mParent, never()).onItemRangeInserted(any(TreeNode.class), anyInt(), anyInt());
 
         // All old snippets should be in place.
-        verifySnippets(section, snippets);
+        assertEquals(snippets, getSuggestions(section));
+
+        assertTrue(section.isDataStale());
     }
 
     /**
@@ -600,28 +747,28 @@ public class SuggestionsSectionTest {
      */
     @Test
     @Feature({"Ntp"})
-    public void testSectionDoesNotUpdateOnNewSuggestionsWhenAppended() {
+    public void testUpdateSectionDoesNothingWhenUserAppended() {
         List<SnippetArticle> snippets = createDummySuggestions(4, TEST_CATEGORY_ID, "old");
         SuggestionsSection section = createSectionWithSuggestions(snippets);
 
         // Append another 3 suggestions.
         List<SnippetArticle> appendedSnippets =
                 createDummySuggestions(3, TEST_CATEGORY_ID, "appended");
-        section.setSuggestions(
-                appendedSnippets, CategoryStatus.AVAILABLE, /* replaceExisting = */ false);
+        section.appendSuggestions(appendedSnippets, /*keepSectionSize=*/false);
 
         // All 7 snippets should be in place.
         snippets.addAll(appendedSnippets);
-        verifySnippets(section, snippets);
+        assertEquals(snippets, getSuggestions(section));
 
         // Try to replace them with another list. Should have no effect.
-        List<SnippetArticle> newSnippets =
-                createDummySuggestions(5, TEST_CATEGORY_ID, "new");
-        section.setSuggestions(newSnippets, CategoryStatus.AVAILABLE,
-                /* replaceExisting = */ true);
+        mSuggestionsSource.setSuggestionsForCategory(
+                TEST_CATEGORY_ID, createDummySuggestions(5, TEST_CATEGORY_ID, "new"));
+        section.updateSuggestions();
 
         // All previous snippets should be in place.
-        verifySnippets(section, snippets);
+        assertEquals(snippets, getSuggestions(section));
+
+        assertTrue(section.isDataStale());
     }
 
     @Test
@@ -629,7 +776,7 @@ public class SuggestionsSectionTest {
     public void testCardIsNotifiedWhenBecomingFirst() {
         List<SnippetArticle> suggestions = createDummySuggestions(5, /* categoryId = */ 42);
         SuggestionsSection section = createSectionWithFetchAction(false);
-        section.setSuggestions(suggestions, CategoryStatus.AVAILABLE, /* replaceExisting = */ true);
+        section.appendSuggestions(suggestions, /*keepSectionSize=*/true);
         reset(mParent);
 
         // Remove the first card. The second one should get the update.
@@ -643,7 +790,7 @@ public class SuggestionsSectionTest {
     public void testCardIsNotifiedWhenBecomingLast() {
         List<SnippetArticle> suggestions = createDummySuggestions(5, /* categoryId = */ 42);
         SuggestionsSection section = createSectionWithFetchAction(false);
-        section.setSuggestions(suggestions, CategoryStatus.AVAILABLE, /* replaceExisting = */ true);
+        section.appendSuggestions(suggestions, /*keepSectionSize=*/true);
         reset(mParent);
 
         // Remove the last card. The penultimate one should get the update.
@@ -657,7 +804,7 @@ public class SuggestionsSectionTest {
     public void testCardIsNotifiedWhenBecomingSoleCard() {
         List<SnippetArticle> suggestions = createDummySuggestions(2, /* categoryId = */ 42);
         SuggestionsSection section = createSectionWithFetchAction(false);
-        section.setSuggestions(suggestions, CategoryStatus.AVAILABLE, /* replaceExisting = */ true);
+        section.appendSuggestions(suggestions, /*keepSectionSize=*/true);
         reset(mParent);
 
         // Remove the last card. The penultimate one should get the update.
@@ -671,7 +818,7 @@ public class SuggestionsSectionTest {
     public void testGetItemDismissalGroupWithSuggestions() {
         List<SnippetArticle> suggestions = createDummySuggestions(5, TEST_CATEGORY_ID);
         SuggestionsSection section = createSectionWithFetchAction(false);
-        section.setSuggestions(suggestions, CategoryStatus.AVAILABLE, /* replaceExisting = */ true);
+        section.appendSuggestions(suggestions, /*keepSectionSize=*/true);
 
         assertThat(section.getItemDismissalGroup(1).size(), is(1));
         assertThat(section.getItemDismissalGroup(1), contains(1));
@@ -699,11 +846,11 @@ public class SuggestionsSectionTest {
         List<SnippetArticle> suggestions = createDummySuggestions(5, /* categoryId = */ 42);
         SuggestionsSection section = createSectionWithFetchAction(false);
 
-        section.setSuggestions(suggestions, CategoryStatus.AVAILABLE, /* replaceExisting = */ true);
+        section.appendSuggestions(suggestions, /*keepSectionSize=*/true);
         reset(mParent);
 
-        section.setSuggestions(createDummySuggestions(2, /* categoryId = */ 42, "new"),
-                CategoryStatus.AVAILABLE, /* replaceExisting = */ false);
+        section.appendSuggestions(createDummySuggestions(2, /* categoryId = */ 42, "new"),
+                /*keepSectionSize=*/false);
         verify(mParent).onItemRangeChanged(
                 same(section), eq(5), eq(1), any(UpdateLayoutParamsCallback.class));
     }
@@ -711,7 +858,7 @@ public class SuggestionsSectionTest {
     private SuggestionsSection createSectionWithSuggestions(List<SnippetArticle> snippets) {
         SuggestionsSection section = createSectionWithFetchAction(true);
         section.setStatus(CategoryStatus.AVAILABLE);
-        section.setSuggestions(snippets, CategoryStatus.AVAILABLE, /* replaceExisting = */ true);
+        section.appendSuggestions(snippets, /*keepSectionSize=*/true);
 
         // Reset any notification invocations on the parent from setting the initial list
         // of suggestions.
@@ -721,9 +868,20 @@ public class SuggestionsSectionTest {
 
     @SafeVarargs
     private static <T> Set<T> setOf(T... elements) {
-        Set<T> set = new TreeSet<T>();
+        Set<T> set = new TreeSet<>();
         set.addAll(Arrays.asList(elements));
         return set;
+    }
+
+    private static List<SnippetArticle> getSuggestions(TreeNode root) {
+        final List<SnippetArticle> suggestions = new ArrayList<>();
+        root.visitItems(new NodeVisitor() {
+            @Override
+            public void visitSuggestion(SnippetArticle suggestion) {
+                suggestions.add(suggestion);
+            }
+        });
+        return suggestions;
     }
 
     private SuggestionsSection createSectionWithFetchAction(boolean hasFetchAction) {
@@ -740,36 +898,22 @@ public class SuggestionsSectionTest {
     }
 
     private OfflinePageItem createOfflinePageItem(String url, long offlineId) {
-        return new OfflinePageItem(url, offlineId, "", "", "", 0, 0, 0, 0);
+        return new OfflinePageItem(url, offlineId, "", "", "", "", 0, 0, 0, 0, "");
     }
 
-    private static void verifyAction(
+    private void verifyAction(
             SuggestionsSection section, @ContentSuggestionsAdditionalAction int action) {
-        SuggestionsSource suggestionsSource = mock(SuggestionsSource.class);
-        SuggestionsUiDelegate manager = mock(SuggestionsUiDelegate.class);
-        SuggestionsNavigationDelegate navDelegate = mock(SuggestionsNavigationDelegate.class);
-        when(manager.getSuggestionsSource()).thenReturn(suggestionsSource);
-        when(manager.getNavigationDelegate()).thenReturn(navDelegate);
-        when(manager.getMetricsReporter()).thenReturn(mock(SuggestionsMetricsReporter.class));
-
         if (action != ContentSuggestionsAdditionalAction.NONE) {
-            section.getActionItemForTesting().performAction(manager);
+            section.getActionItemForTesting().performAction(mUiDelegate);
         }
 
         verify(section.getCategoryInfo(),
                 (action == ContentSuggestionsAdditionalAction.VIEW_ALL ? times(1) : never()))
-                .performViewAllAction(navDelegate);
-        verify(suggestionsSource,
-                (action == ContentSuggestionsAdditionalAction.FETCH ? times(1) : never()))
-                .fetchSuggestions(anyInt(), any(String[].class));
-    }
+                .performViewAllAction(mUiDelegate.getNavigationDelegate());
 
-    private static void verifySnippets(SuggestionsSection section, List<SnippetArticle> snippets) {
-        assertEquals(snippets.size(), section.getSuggestionsCount());
-        // Indices in section are off-by-one (index 0 is the header).
-        int index = 1;
-        for (SnippetArticle snippet : snippets) {
-            assertEquals(snippet, section.getSuggestionAt(index++));
-        }
+        // noinspection unchecked -- See https://crbug.com/740162 for rationale.
+        verify(mUiDelegate.getSuggestionsSource(),
+                (action == ContentSuggestionsAdditionalAction.FETCH ? times(1) : never()))
+                .fetchSuggestions(anyInt(), any(String[].class), any(Callback.class));
     }
 }

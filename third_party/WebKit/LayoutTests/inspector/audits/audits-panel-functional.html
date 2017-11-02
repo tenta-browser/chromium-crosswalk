@@ -42,44 +42,40 @@ img:nth-child(1):hover:after { border: 1px solid cyan }
 JSON = {};
 </script>
 <script src="../../http/tests/inspector/inspector-test.js"></script>
-<script src="audits-test.js"></script>
+<script src="../../http/tests/inspector/audits-test.js"></script>
 
 <!-- These scripts are needed to result in a violation of the max JS resource count from the same domain -->
 <script src="resources/audits-script1.js"></script>
 <link rel="stylesheet" href="resources/audits-style1.css" type="text/css">
 <script src="resources/audits-script2.js"></script>
 <script>
-var test = function()
-{
-    InspectorTest.reloadPage(onPageReloaded);
-    var pendingStyleSheetsCount = 4;
-    InspectorTest.addSniffer(SDK.CSSModel.prototype, "_styleSheetAdded", maybeStylesheetsLoaded, true);
+var test = function() {
+  TestRunner.reloadPage(onPageReloaded);
+  var pendingStyleSheetsCount = 4;
+  TestRunner.addSniffer(SDK.CSSModel.prototype, '_styleSheetAdded', maybeStylesheetsLoaded, true);
 
-    var pageReloaded = false;
-    function onPageReloaded()
-    {
-        pageReloaded = true;
-        maybeStylesheetsLoaded();
-    }
+  var pageReloaded = false;
+  function onPageReloaded() {
+    pageReloaded = true;
+    maybeStylesheetsLoaded();
+  }
 
-    function maybeStylesheetsLoaded()
-    {
-        if (!pageReloaded)
-            return;
-        if (InspectorTest.cssModel.styleSheetHeaders().length !== pendingStyleSheetsCount)
-            return;
-        Audits.AuditRuleResult.resourceDomain = function() {
-            return "[domain]";
-        };
+  function maybeStylesheetsLoaded() {
+    if (!pageReloaded)
+      return;
+    if (TestRunner.cssModel.styleSheetHeaders().length !== pendingStyleSheetsCount)
+      return;
+    Audits.AuditRuleResult.resourceDomain = function() {
+      return '[domain]';
+    };
 
-        InspectorTest.launchAllAudits(false, onAuditsFinished);
-    }
+    AuditsTestRunner.launchAllAudits(false, onAuditsFinished);
+  }
 
-    function onAuditsFinished()
-    {
-        InspectorTest.collectAuditResults(InspectorTest.completeTest);
-    }
-}
+  function onAuditsFinished() {
+    AuditsTestRunner.collectAuditResults(TestRunner.completeTest);
+  }
+};
 </script>
 </head>
 

@@ -46,7 +46,7 @@
 #include "platform/loader/fetch/ResourceTimingInfo.h"
 #include "platform/RuntimeEnabledFeatures.h"
 
-static const double kLongTaskThreshold = 0.05;
+static const double kLongTaskObserverThreshold = 0.05;
 
 static const char kUnknownAttribution[] = "unknown";
 static const char kAmbiguousAttribution[] = "multiple-contexts";
@@ -83,6 +83,13 @@ const char* SameOriginAttribution(Frame* observer_frame, Frame* culprit_frame) {
   if (culprit_frame->Tree().IsDescendantOf(observer_frame))
     return kSameOriginDescendantAttribution;
   return kSameOriginAttribution;
+}
+
+bool IsSameOrigin(String key) {
+  return key == kSameOriginAttribution ||
+         key == kSameOriginDescendantAttribution ||
+         key == kSameOriginAncestorAttribution ||
+         key == kSameOriginSelfAttribution;
 }
 
 }  // namespace
@@ -136,7 +143,7 @@ PerformanceTiming* Performance::timing() const {
 }
 
 PerformanceNavigationTiming* Performance::CreateNavigationTimingInstance() {
-  if (!RuntimeEnabledFeatures::performanceNavigationTiming2Enabled())
+  if (!RuntimeEnabledFeatures::PerformanceNavigationTiming2Enabled())
     return nullptr;
   if (!GetFrame())
     return nullptr;
@@ -146,7 +153,11 @@ PerformanceNavigationTiming* Performance::CreateNavigationTimingInstance() {
   ResourceTimingInfo* info = document_loader->GetNavigationTimingInfo();
   if (!info)
     return nullptr;
-  return new PerformanceNavigationTiming(GetFrame(), info, TimeOrigin());
+  PerformanceServerTimingVector serverTiming =
+      PerformanceServerTiming::ParseServerTiming(
+          *info, PerformanceServerTiming::ShouldAllowTimingDetails::Yes);
+  return new PerformanceNavigationTiming(GetFrame(), info, GetTimeOrigin(),
+                                         serverTiming);
 }
 
 void Performance::UpdateLongTaskInstrumentation() {
@@ -155,10 +166,10 @@ void Performance::UpdateLongTaskInstrumentation() {
     return;
 
   if (HasObserverFor(PerformanceEntry::kLongTask)) {
-    UseCounter::Count(GetFrame()->LocalFrameRoot(),
-                      UseCounter::kLongTaskObserver);
+    UseCounter::Count(&GetFrame()->LocalFrameRoot(),
+                      WebFeature::kLongTaskObserver);
     GetFrame()->GetPerformanceMonitor()->Subscribe(
-        PerformanceMonitor::kLongTask, kLongTaskThreshold, this);
+        PerformanceMonitor::kLongTask, kLongTaskObserverThreshold, this);
   } else {
     GetFrame()->GetPerformanceMonitor()->UnsubscribeAll(this);
   }
@@ -239,19 +250,24 @@ std::pair<String, DOMWindow*> Performance::SanitizedAttribution(
   return std::make_pair(kCrossOriginAttribution, nullptr);
 }
 
-void Performance::ReportLongTask(double start_time,
-                                 double end_time,
-                                 ExecutionContext* task_context,
-                                 bool has_multiple_contexts) {
+void Performance::ReportLongTask(
+    double start_time,
+    double end_time,
+    ExecutionContext* task_context,
+    bool has_multiple_contexts,
+    const SubTaskAttribution::EntriesVector& sub_task_attributions) {
   if (!GetFrame())
     return;
   std::pair<String, DOMWindow*> attribution = Performance::SanitizedAttribution(
       task_context, has_multiple_contexts, GetFrame());
   DOMWindow* culprit_dom_window = attribution.second;
+  SubTaskAttribution::EntriesVector empty_vector;
   if (!culprit_dom_window || !culprit_dom_window->GetFrame() ||
       !culprit_dom_window->GetFrame()->DeprecatedLocalOwner()) {
-    AddLongTaskTiming(start_time, end_time, attribution.first, g_empty_string,
-                      g_empty_string, g_empty_string);
+    AddLongTaskTiming(
+        start_time, end_time, attribution.first, g_empty_string, g_empty_string,
+        g_empty_string,
+        IsSameOrigin(attribution.first) ? sub_task_attributions : empty_vector);
   } else {
     HTMLFrameOwnerElement* frame_owner =
         culprit_dom_window->GetFrame()->DeprecatedLocalOwner();
@@ -259,7 +275,8 @@ void Performance::ReportLongTask(double start_time,
         start_time, end_time, attribution.first,
         GetFrameAttribute(frame_owner, HTMLNames::srcAttr, false),
         GetFrameAttribute(frame_owner, HTMLNames::idAttr, false),
-        GetFrameAttribute(frame_owner, HTMLNames::nameAttr, true));
+        GetFrameAttribute(frame_owner, HTMLNames::nameAttr, true),
+        IsSameOrigin(attribution.first) ? sub_task_attributions : empty_vector);
   }
 }
 

@@ -54,7 +54,7 @@ class CC_EXPORT TextureLayerImpl : public LayerImpl {
   void SetVertexOpacity(const float vertex_opacity[4]);
 
   void SetTextureMailbox(
-      const TextureMailbox& mailbox,
+      const viz::TextureMailbox& mailbox,
       std::unique_ptr<SingleReleaseCallbackImpl> release_callback);
 
  private:
@@ -63,7 +63,7 @@ class CC_EXPORT TextureLayerImpl : public LayerImpl {
   const char* LayerTypeAsString() const override;
   void FreeTextureMailbox();
 
-  ResourceId external_texture_resource_;
+  viz::ResourceId external_texture_resource_;
   bool premultiplied_alpha_;
   bool blend_background_color_;
   bool flipped_;
@@ -74,7 +74,7 @@ class CC_EXPORT TextureLayerImpl : public LayerImpl {
   // This is a resource that's a GL copy of a software texture mailbox.
   std::unique_ptr<ScopedResource> texture_copy_;
 
-  TextureMailbox texture_mailbox_;
+  viz::TextureMailbox texture_mailbox_;
   std::unique_ptr<SingleReleaseCallbackImpl> release_callback_;
   bool own_mailbox_;
   bool valid_texture_copy_;

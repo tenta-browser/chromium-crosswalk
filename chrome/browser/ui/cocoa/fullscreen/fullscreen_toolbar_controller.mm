@@ -5,6 +5,7 @@
 #import "chrome/browser/ui/cocoa/fullscreen/fullscreen_toolbar_controller.h"
 
 #include "base/command_line.h"
+#include "base/feature_list.h"
 #include "chrome/browser/profiles/profile.h"
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
 #import "chrome/browser/ui/cocoa/fullscreen/fullscreen_menubar_tracker.h"
@@ -12,6 +13,7 @@
 #import "chrome/browser/ui/cocoa/fullscreen/fullscreen_toolbar_mouse_tracker.h"
 #import "chrome/browser/ui/cocoa/fullscreen/fullscreen_toolbar_visibility_lock_controller.h"
 #import "chrome/browser/ui/cocoa/fullscreen/immersive_fullscreen_controller.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 
@@ -82,13 +84,13 @@ const CGFloat kShowFraction = 1.0;
   animationController_->StopAnimationAndTimer();
 }
 
-- (void)revealToolbarForTabStripChanges {
-  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableFullscreenToolbarReveal)) {
+- (void)revealToolbarForWebContents:(content::WebContents*)contents
+                       inForeground:(BOOL)inForeground {
+  if (!base::FeatureList::IsEnabled(features::kFullscreenToolbarReveal))
     return;
-  }
 
-  animationController_->AnimateToolbarForTabstripChanges();
+  animationController_->AnimateToolbarForTabstripChanges(contents,
+                                                         inForeground);
 }
 
 - (CGFloat)toolbarFraction {

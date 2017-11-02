@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <set>
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/command_line.h"
@@ -24,6 +25,7 @@
 #include "base/file_version_info.h"
 #include "base/i18n/case_conversion.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/scoped_generic.h"
 #include "base/strings/string_number_conversions.h"
@@ -33,9 +35,9 @@
 #include "base/time/time.h"
 #include "base/values.h"
 #include "base/version.h"
-#include "base/win/registry.h"
 #include "base/win/scoped_handle.h"
 #include "base/win/windows_version.h"
+#include "chrome/browser/conflicts/enumerate_shell_extensions_win.h"
 #include "chrome/browser/net/service_providers_win.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/crash_keys.h"
@@ -44,10 +46,6 @@
 #include "ui/base/l10n/l10n_util.h"
 
 using content::BrowserThread;
-
-// The path to the Shell Extension key in the Windows registry.
-static const wchar_t kRegPath[] =
-    L"Software\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions\\Approved";
 
 // A sort method that sorts by bad modules first, then by full name (including
 // path).
@@ -165,11 +163,8 @@ void ModuleEnumerator::NormalizeModule(Module* module) {
 
 ModuleEnumerator::ModuleEnumerator(EnumerateModulesModel* observer)
     : background_task_runner_(base::CreateTaskRunnerWithTraits(
-          base::TaskTraits()
-              .MayBlock()
-              .WithPriority(base::TaskPriority::BACKGROUND)
-              .WithShutdownBehavior(
-                  base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN))),
+          {base::MayBlock(), base::TaskPriority::BACKGROUND,
+           base::TaskShutdownBehavior::CONTINUE_ON_SHUTDOWN})),
       enumerated_modules_(nullptr),
       observer_(observer),
       per_module_delay_(kDefaultPerModuleDelay) {}
@@ -311,34 +306,18 @@ void ModuleEnumerator::EnumerateLoadedModules() {
 }
 
 void ModuleEnumerator::EnumerateShellExtensions() {
-  ReadShellExtensions(HKEY_LOCAL_MACHINE);
-  ReadShellExtensions(HKEY_CURRENT_USER);
+  // The callback is executed synchronously, so the use of base::Unretained is
+  // safe.
+  EnumerateShellExtensionPaths(base::BindRepeating(
+      &ModuleEnumerator::OnShellExtensionEnumerated, base::Unretained(this)));
 }
 
-void ModuleEnumerator::ReadShellExtensions(HKEY parent) {
-  base::win::RegistryValueIterator registration(parent, kRegPath);
-  while (registration.Valid()) {
-    std::wstring key(std::wstring(L"CLSID\\") + registration.Name() +
-        L"\\InProcServer32");
-    base::win::RegKey clsid;
-    if (clsid.Open(HKEY_CLASSES_ROOT, key.c_str(), KEY_READ) != ERROR_SUCCESS) {
-      ++registration;
-      continue;
-    }
-    base::string16 dll;
-    if (clsid.ReadValue(L"", &dll) != ERROR_SUCCESS) {
-      ++registration;
-      continue;
-    }
-    clsid.Close();
-
-    Module entry;
-    entry.type = SHELL_EXTENSION;
-    entry.location = dll;
-    AddToListWithoutDuplicating(entry);
-
-    ++registration;
-  }
+void ModuleEnumerator::OnShellExtensionEnumerated(
+    const base::FilePath& shell_extension) {
+  Module entry;
+  entry.type = SHELL_EXTENSION;
+  entry.location = shell_extension.value();
+  AddToListWithoutDuplicating(entry);
 }
 
 void ModuleEnumerator::EnumerateWinsockModules() {
@@ -590,7 +569,7 @@ void EnumerateModulesModel::ScanNow(bool background_mode) {
   module_enumerator_->ScanNow(&enumerated_modules_);
 }
 
-base::ListValue* EnumerateModulesModel::GetModuleList() {
+std::unique_ptr<base::ListValue> EnumerateModulesModel::GetModuleList() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   // If a |module_enumerator_| is still around then scanning has not yet
@@ -601,12 +580,12 @@ base::ListValue* EnumerateModulesModel::GetModuleList() {
   if (enumerated_modules_.empty())
     return nullptr;
 
-  base::ListValue* list = new base::ListValue();
+  auto list = base::MakeUnique<base::ListValue>();
 
   for (ModuleEnumerator::ModulesVector::const_iterator module =
            enumerated_modules_.begin();
        module != enumerated_modules_.end(); ++module) {
-    base::DictionaryValue* data = new base::DictionaryValue();
+    auto data = base::MakeUnique<base::DictionaryValue>();
     data->SetInteger("type", module->type);
     base::string16 type_string;
     if ((module->type & ModuleEnumerator::LOADED_MODULE) == 0) {
@@ -670,18 +649,10 @@ base::ListValue* EnumerateModulesModel::GetModuleList() {
     // TODO(chrisha): Set help_url when we have a meaningful place for users
     // to land.
 
-    list->Append(data);
+    list->Append(std::move(data));
   }
 
   return list;
-}
-
-GURL EnumerateModulesModel::GetConflictUrl() {
-  // For now, simply bring up the chrome://conflicts page, which has detailed
-  // information about each module.
-  if (ShouldShowConflictWarning())
-    return GURL(L"chrome://conflicts");
-  return GURL();
 }
 
 EnumerateModulesModel::EnumerateModulesModel()

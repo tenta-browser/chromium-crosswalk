@@ -72,7 +72,7 @@ namespace {
   DrawPolygon name(NULL, points_vector, normal, polygon_id)
 
 #define CREATE_NEW_DRAW_POLYGON_PTR(name, points_vector, normal, polygon_id) \
-  std::unique_ptr<DrawPolygon> name(base::MakeUnique<DrawPolygon>(           \
+  std::unique_ptr<DrawPolygon> name(std::make_unique<DrawPolygon>(           \
       nullptr, points_vector, normal, polygon_id))
 
 #define CREATE_TEST_DRAW_FORWARD_POLYGON(name, points_vector, id)        \
@@ -169,7 +169,7 @@ TEST(DrawPolygonConstructionTest, ManyVertexNormal) {
   EXPECT_NORMAL(polygon_c, 0.0f, 0.0f, 1.0f);
 
   CREATE_TEST_DRAW_FORWARD_POLYGON(polygon_d, vertices_d, 4);
-  EXPECT_NORMAL(polygon_c, 0.0f, 0.0f, 1.0f);
+  EXPECT_NORMAL(polygon_d, 0.0f, 0.0f, 1.0f);
 }
 
 // A simple rect being transformed.

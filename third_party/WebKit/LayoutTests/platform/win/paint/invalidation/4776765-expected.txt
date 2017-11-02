@@ -4,12 +4,22 @@
       "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
+      "backgroundColor": "#FFFFFF",
       "paintInvalidations": [
         {
           "object": "LayoutBlockFlow DIV",
           "rect": [7, 43, 786, 62],
-          "reason": "border box change"
+          "reason": "geometry"
+        },
+        {
+          "object": "LayoutBlockFlow DIV id='div'",
+          "rect": [8, 84, 784, 20],
+          "reason": "appeared"
+        },
+        {
+          "object": "LayoutBlockFlow DIV id='div'",
+          "rect": [8, 64, 1, 19],
+          "reason": "caret"
         }
       ]
     }
@@ -17,7 +27,7 @@
   "objectPaintInvalidations": [
     {
       "object": "LayoutBlockFlow DIV",
-      "reason": "border box change"
+      "reason": "geometry"
     },
     {
       "object": "Caret",
@@ -25,11 +35,11 @@
     },
     {
       "object": "LayoutBlockFlow DIV id='div'",
-      "reason": "layoutObject insertion"
+      "reason": "appeared"
     },
     {
       "object": "RootInlineBox",
-      "reason": "layoutObject insertion"
+      "reason": "appeared"
     },
     {
       "object": "Caret",
@@ -37,11 +47,11 @@
     },
     {
       "object": "LayoutBR BR",
-      "reason": "layoutObject insertion"
+      "reason": "appeared"
     },
     {
       "object": "InlineTextBox '\n'",
-      "reason": "layoutObject insertion"
+      "reason": "appeared"
     }
   ]
 }

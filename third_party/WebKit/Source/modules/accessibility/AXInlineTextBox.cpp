@@ -101,8 +101,8 @@ void AXInlineTextBox::TextCharacterOffsets(Vector<int>& offsets) const {
   unsigned len = inline_text_box_->Len();
   Vector<float> widths;
   inline_text_box_->CharacterWidths(widths);
-  DCHECK(widths.size() == len);
-  offsets.Resize(len);
+  DCHECK_EQ(widths.size(), len);
+  offsets.resize(len);
 
   float width_so_far = 0;
   for (unsigned i = 0; i < len; i++) {
@@ -117,7 +117,7 @@ void AXInlineTextBox::GetWordBoundaries(Vector<AXRange>& words) const {
 
   Vector<AbstractInlineTextBox::WordBoundaries> word_boundaries;
   inline_text_box_->GetWordBoundaries(word_boundaries);
-  words.Resize(word_boundaries.size());
+  words.resize(word_boundaries.size());
   for (unsigned i = 0; i < word_boundaries.size(); i++)
     words[i] =
         AXRange(word_boundaries[i].start_index, word_boundaries[i].end_index);
@@ -160,6 +160,13 @@ AccessibilityTextDirection AXInlineTextBox::GetTextDirection() const {
   }
 
   return AXObject::GetTextDirection();
+}
+
+Node* AXInlineTextBox::GetNode() const {
+  if (!inline_text_box_)
+    return nullptr;
+
+  return inline_text_box_->GetNode();
 }
 
 AXObject* AXInlineTextBox::NextOnLine() const {

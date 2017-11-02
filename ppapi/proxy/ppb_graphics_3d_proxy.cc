@@ -28,9 +28,6 @@ namespace proxy {
 
 namespace {
 
-const int32_t kCommandBufferSize = 1024 * 1024;
-const int32_t kTransferBufferSize = 1024 * 1024;
-
 #if !defined(OS_NACL)
 base::SharedMemoryHandle TransportSHMHandle(
     Dispatcher* dispatcher,
@@ -68,8 +65,7 @@ bool Graphics3D::Init(gpu::gles2::GLES2Implementation* share_gles2,
       host_resource(), dispatcher, capabilities, shared_state,
       command_buffer_id));
 
-  return CreateGLES2Impl(kCommandBufferSize, kTransferBufferSize,
-                         share_gles2);
+  return CreateGLES2Impl(share_gles2);
 }
 
 PP_Bool Graphics3D::SetGetBuffer(int32_t /* transfer_buffer_id */) {
@@ -96,8 +92,10 @@ gpu::CommandBuffer::State Graphics3D::WaitForTokenInRange(int32_t start,
   return GetErrorState();
 }
 
-gpu::CommandBuffer::State Graphics3D::WaitForGetOffsetInRange(int32_t start,
-                                                              int32_t end) {
+gpu::CommandBuffer::State Graphics3D::WaitForGetOffsetInRange(
+    uint32_t set_get_buffer_count,
+    int32_t start,
+    int32_t end) {
   return GetErrorState();
 }
 
@@ -191,6 +189,9 @@ PP_Resource PPB_Graphics3D_Proxy::CreateProxyResource(
                   ? gl::PreferIntegratedGpu
                   : gl::PreferDiscreteGpu;
           break;
+        case PP_GRAPHICS3DATTRIB_SINGLE_BUFFER:
+          attrib_helper.single_buffer = !!attr[1];
+          break;
         default:
           attribs.push_back(attr[0]);
           attribs.push_back(attr[1]);
@@ -272,7 +273,7 @@ void PPB_Graphics3D_Proxy::OnMsgCreate(
   if (!enter.succeeded())
     return;
 
-  base::SharedMemoryHandle handle = base::SharedMemory::NULLHandle();
+  base::SharedMemoryHandle handle;
   result->SetHostResource(
       instance, enter.functions()->CreateGraphics3DRaw(
                     instance, share_context.host_resource(), attrib_helper,
@@ -307,6 +308,7 @@ void PPB_Graphics3D_Proxy::OnMsgWaitForTokenInRange(
 
 void PPB_Graphics3D_Proxy::OnMsgWaitForGetOffsetInRange(
     const HostResource& context,
+    uint32_t set_get_buffer_count,
     int32_t start,
     int32_t end,
     gpu::CommandBuffer::State* state,
@@ -316,7 +318,8 @@ void PPB_Graphics3D_Proxy::OnMsgWaitForGetOffsetInRange(
     *success = false;
     return;
   }
-  *state = enter.object()->WaitForGetOffsetInRange(start, end);
+  *state =
+      enter.object()->WaitForGetOffsetInRange(set_get_buffer_count, start, end);
   *success = true;
 }
 

@@ -30,7 +30,6 @@ struct LoadCommittedDetails;
 
 class GURL;
 class InstantService;
-class InstantTabTest;
 class OmniboxView;
 class Profile;
 class SearchIPCRouterTest;
@@ -38,10 +37,9 @@ class SearchIPCRouterTest;
 // Per-tab search "helper".  Acts as the owner and controller of the tab's
 // search UI model.
 //
-// When the page is finished loading, SearchTabHelper determines the instant
-// support for the page. When a navigation entry is committed (except for
-// in-page navigations), SearchTabHelper resets the instant support state to
-// INSTANT_SUPPORT_UNKNOWN and cause support to be determined again.
+// When a navigation is committed and when the page is finished loading,
+// SearchTabHelper determines the instant support for the page, i.e. whether
+// the page is rendered in the instant process.
 class SearchTabHelper : public content::WebContentsObserver,
                         public content::WebContentsUserData<SearchTabHelper>,
                         public InstantServiceObserver,
@@ -62,18 +60,11 @@ class SearchTabHelper : public content::WebContentsObserver,
   void OmniboxFocusChanged(OmniboxFocusState state,
                            OmniboxFocusChangeReason reason);
 
-  // Invoked when the active navigation entry is updated in some way that might
-  // affect the search mode. This is used by Instant when it "fixes up" the
-  // virtual URL of the active entry. Regular navigations are captured through
-  // the notification system and shouldn't call this method.
-  void NavigationEntryUpdated();
-
   // Sends the current SearchProvider suggestion to the Instant page if any.
   void SetSuggestionToPrefetch(const InstantSuggestion& suggestion);
 
   // Tells the page that the user pressed Enter in the omnibox.
-  void Submit(const base::string16& text,
-              const EmbeddedSearchRequestParams& params);
+  void Submit(const EmbeddedSearchRequestParams& params);
 
   // Called when the tab corresponding to |this| instance is activated.
   void OnTabActivated();
@@ -85,15 +76,8 @@ class SearchTabHelper : public content::WebContentsObserver,
 
  private:
   friend class content::WebContentsUserData<SearchTabHelper>;
-  friend class SearchIPCRouterPolicyTest;
   friend class SearchIPCRouterTest;
 
-  FRIEND_TEST_ALL_PREFIXES(SearchTabHelperTest,
-                           DetermineIfPageSupportsInstant_Local);
-  FRIEND_TEST_ALL_PREFIXES(SearchTabHelperTest,
-                           DetermineIfPageSupportsInstant_NonLocal);
-  FRIEND_TEST_ALL_PREFIXES(SearchTabHelperTest,
-                           PageURLDoesntBelongToInstantRenderer);
   FRIEND_TEST_ALL_PREFIXES(SearchTabHelperTest,
                            OnChromeIdentityCheckMatch);
   FRIEND_TEST_ALL_PREFIXES(SearchTabHelperTest,
@@ -107,16 +91,7 @@ class SearchTabHelper : public content::WebContentsObserver,
                            OnHistorySyncCheckSyncing);
   FRIEND_TEST_ALL_PREFIXES(SearchTabHelperTest,
                            OnHistorySyncCheckNotSyncing);
-  FRIEND_TEST_ALL_PREFIXES(SearchIPCRouterTest,
-                           IgnoreMessageIfThePageIsNotActive);
   FRIEND_TEST_ALL_PREFIXES(SearchIPCRouterTest, HandleTabChangedEvents);
-  FRIEND_TEST_ALL_PREFIXES(InstantTabTest,
-                           DetermineIfPageSupportsInstant_Local);
-  FRIEND_TEST_ALL_PREFIXES(InstantTabTest,
-                           DetermineIfPageSupportsInstant_NonLocal);
-  FRIEND_TEST_ALL_PREFIXES(InstantTabTest,
-                           PageURLDoesntBelongToInstantRenderer);
-  FRIEND_TEST_ALL_PREFIXES(InstantTabTest, PageSupportsInstant);
 
   explicit SearchTabHelper(content::WebContents* web_contents);
 
@@ -134,7 +109,6 @@ class SearchTabHelper : public content::WebContentsObserver,
       const content::LoadCommittedDetails& load_details) override;
 
   // Overridden from SearchIPCRouter::Delegate:
-  void OnInstantSupportDetermined(bool supports_instant) override;
   void FocusOmnibox(OmniboxFocusState state) override;
   void OnDeleteMostVisitedItem(const GURL& url) override;
   void OnUndoMostVisitedDeletion(const GURL& url) override;
@@ -155,18 +129,8 @@ class SearchTabHelper : public content::WebContentsObserver,
   void MostVisitedItemsChanged(
       const std::vector<InstantMostVisitedItem>& items) override;
 
-  // Invoked to update the instant support state.
-  void InstantSupportChanged(bool supports_instant);
-
   // Sets the mode of the model based on the current URL of web_contents().
-  // Only updates the origin part of the mode if |update_origin| is true,
-  // otherwise keeps the current origin.
-  void UpdateMode(bool update_origin);
-
-  // Tells the renderer to determine if the page supports the Instant API, which
-  // results in a call to OnInstantSupportDetermined() when the reply is
-  // received.
-  void DetermineIfPageSupportsInstant();
+  void UpdateMode();
 
   OmniboxView* GetOmniboxView();
   const OmniboxView* GetOmniboxView() const;

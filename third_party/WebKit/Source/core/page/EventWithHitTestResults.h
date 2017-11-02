@@ -43,10 +43,11 @@ class EventWithHitTestResults {
   LayoutPoint LocalPoint() const { return hit_test_result_.LocalPoint(); }
   Scrollbar* GetScrollbar() const { return hit_test_result_.GetScrollbar(); }
   bool IsOverLink() const { return hit_test_result_.IsOverLink(); }
-  bool IsOverFrameViewBase() const {
-    return hit_test_result_.IsOverFrameViewBase();
+  bool IsOverEmbeddedContentView() const {
+    return hit_test_result_.IsOverEmbeddedContentView();
   }
   Node* InnerNode() const { return hit_test_result_.InnerNode(); }
+  Element* InnerElement() const { return hit_test_result_.InnerElement(); }
   const String& CanvasRegionId() const {
     return hit_test_result_.CanvasRegionId();
   }

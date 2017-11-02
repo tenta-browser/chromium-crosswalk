@@ -32,19 +32,18 @@ class MenuRunnerDestructionTest;
 namespace internal {
 
 // A menu runner implementation that uses views::MenuItemView to show a menu.
-class VIEWS_EXPORT MenuRunnerImpl
-    : NON_EXPORTED_BASE(public MenuRunnerImplInterface),
-      NON_EXPORTED_BASE(public MenuControllerDelegate) {
+class VIEWS_EXPORT MenuRunnerImpl : public MenuRunnerImplInterface,
+                                    public MenuControllerDelegate {
  public:
   explicit MenuRunnerImpl(MenuItemView* menu);
 
   bool IsRunning() const override;
   void Release() override;
-  MenuRunner::RunResult RunMenuAt(Widget* parent,
-                                  MenuButton* button,
-                                  const gfx::Rect& bounds,
-                                  MenuAnchorPosition anchor,
-                                  int32_t run_types) override;
+  void RunMenuAt(Widget* parent,
+                 MenuButton* button,
+                 const gfx::Rect& bounds,
+                 MenuAnchorPosition anchor,
+                 int32_t run_types) override;
   void Cancel() override;
   base::TimeTicks GetClosingEventTime() const override;
 
@@ -58,12 +57,6 @@ class VIEWS_EXPORT MenuRunnerImpl
   friend class ::views::test::MenuRunnerDestructionTest;
 
   ~MenuRunnerImpl() override;
-
-  // Cleans up after the menu is no longer showing. |result| is the menu that
-  // the user selected, or NULL if nothing was selected.
-  MenuRunner::RunResult MenuDone(NotifyType type,
-                                 MenuItemView* result,
-                                 int mouse_event_flags);
 
   // Returns true if mnemonics should be shown in the menu.
   bool ShouldShowMnemonics(MenuButton* button);

@@ -26,6 +26,7 @@ struct CONTENT_EXPORT IndexedDBIndexMetadata {
   IndexedDBIndexMetadata(const IndexedDBIndexMetadata& other);
   ~IndexedDBIndexMetadata();
   IndexedDBIndexMetadata& operator=(const IndexedDBIndexMetadata& other);
+  bool operator==(const IndexedDBIndexMetadata& other) const;
 
   base::string16 name;
   int64_t id;
@@ -47,6 +48,7 @@ struct CONTENT_EXPORT IndexedDBObjectStoreMetadata {
   ~IndexedDBObjectStoreMetadata();
   IndexedDBObjectStoreMetadata& operator=(
       const IndexedDBObjectStoreMetadata& other);
+  bool operator==(const IndexedDBObjectStoreMetadata& other) const;
 
   base::string16 name;
   int64_t id;
@@ -68,7 +70,8 @@ struct CONTENT_EXPORT IndexedDBDatabaseMetadata {
                             int64_t max_object_store_id);
   IndexedDBDatabaseMetadata(const IndexedDBDatabaseMetadata& other);
   ~IndexedDBDatabaseMetadata();
-  IndexedDBDatabaseMetadata& operator=(IndexedDBDatabaseMetadata& other);
+  IndexedDBDatabaseMetadata& operator=(const IndexedDBDatabaseMetadata& other);
+  bool operator==(const IndexedDBDatabaseMetadata& other) const;
 
   base::string16 name;
   int64_t id;
@@ -77,6 +80,7 @@ struct CONTENT_EXPORT IndexedDBDatabaseMetadata {
 
   std::map<int64_t, IndexedDBObjectStoreMetadata> object_stores;
 };
+
 }  // namespace content
 
 #endif  // CONTENT_BROWSER_INDEXED_DB_INDEXED_DB_METADATA_H_

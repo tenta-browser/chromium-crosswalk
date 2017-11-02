@@ -31,19 +31,21 @@
 
 #include "platform/scroll/ScrollableArea.h"
 
-#include "platform/HostWindow.h"
+#include "build/build_config.h"
+#include "platform/PlatformChromeClient.h"
 #include "platform/graphics/GraphicsLayer.h"
 #include "platform/instrumentation/tracing/TraceEvent.h"
 #include "platform/scroll/MainThreadScrollingReason.h"
 #include "platform/scroll/ProgrammaticScrollAnimator.h"
 #include "platform/scroll/ScrollbarTheme.h"
+#include "platform/scroll/SmoothScrollSequencer.h"
 
 static const int kPixelsPerLineStep = 40;
 static const float kMinFractionToStepWhenPaging = 0.875f;
 
 namespace blink {
 
-int ScrollableArea::PixelsPerLineStep(HostWindow* host) {
+int ScrollableArea::PixelsPerLineStep(PlatformChromeClient* host) {
   if (!host)
     return kPixelsPerLineStep;
   return host->WindowToViewportScalar(kPixelsPerLineStep);
@@ -73,7 +75,7 @@ ScrollableArea::ScrollableArea()
 ScrollableArea::~ScrollableArea() {}
 
 void ScrollableArea::ClearScrollableArea() {
-#if OS(MACOSX)
+#if defined(OS_MACOSX)
   if (scroll_animator_)
     scroll_animator_->Dispose();
 #endif
@@ -131,7 +133,7 @@ float ScrollableArea::ScrollStep(ScrollGranularity granularity,
     case kScrollByPrecisePixel:
       return PixelStep(orientation);
     default:
-      ASSERT_NOT_REACHED();
+      NOTREACHED();
       return 0.0f;
   }
 }
@@ -154,6 +156,8 @@ ScrollResult ScrollableArea::UserScroll(ScrollGranularity granularity,
   }
 
   CancelProgrammaticScrollAnimation();
+  if (SmoothScrollSequencer* sequencer = GetSmoothScrollSequencer())
+    sequencer->AbortAnimations();
 
   ScrollResult result =
       GetScrollAnimator().UserScroll(granularity, pixel_delta);
@@ -170,6 +174,12 @@ ScrollResult ScrollableArea::UserScroll(ScrollGranularity granularity,
 void ScrollableArea::SetScrollOffset(const ScrollOffset& offset,
                                      ScrollType scroll_type,
                                      ScrollBehavior behavior) {
+  if (scroll_type != kSequencedScroll && scroll_type != kClampingScroll &&
+      scroll_type != kAnchoringScroll) {
+    if (SmoothScrollSequencer* sequencer = GetSmoothScrollSequencer())
+      sequencer->AbortAnimations();
+  }
+
   ScrollOffset clamped_offset = ClampScrollOffset(offset);
   if (clamped_offset == GetScrollOffset())
     return;
@@ -187,13 +197,16 @@ void ScrollableArea::SetScrollOffset(const ScrollOffset& offset,
                                                             scroll_type);
       break;
     case kProgrammaticScroll:
-      ProgrammaticScrollHelper(clamped_offset, behavior);
+      ProgrammaticScrollHelper(clamped_offset, behavior, false);
+      break;
+    case kSequencedScroll:
+      ProgrammaticScrollHelper(clamped_offset, behavior, true);
       break;
     case kUserScroll:
       UserScrollHelper(clamped_offset, behavior);
       break;
     default:
-      ASSERT_NOT_REACHED();
+      NOTREACHED();
   }
 }
 
@@ -223,18 +236,24 @@ void ScrollableArea::SetScrollOffsetSingleAxis(ScrollbarOrientation orientation,
 }
 
 void ScrollableArea::ProgrammaticScrollHelper(const ScrollOffset& offset,
-                                              ScrollBehavior scroll_behavior) {
+                                              ScrollBehavior scroll_behavior,
+                                              bool is_sequenced_scroll) {
   CancelScrollAnimation();
 
-  if (scroll_behavior == kScrollBehaviorSmooth)
-    GetProgrammaticScrollAnimator().AnimateToOffset(offset);
-  else
-    GetProgrammaticScrollAnimator().ScrollToOffsetWithoutAnimation(offset);
+  if (scroll_behavior == kScrollBehaviorSmooth) {
+    GetProgrammaticScrollAnimator().AnimateToOffset(offset,
+                                                    is_sequenced_scroll);
+  } else {
+    GetProgrammaticScrollAnimator().ScrollToOffsetWithoutAnimation(
+        offset, is_sequenced_scroll);
+  }
 }
 
 void ScrollableArea::UserScrollHelper(const ScrollOffset& offset,
                                       ScrollBehavior scroll_behavior) {
   CancelProgrammaticScrollAnimation();
+  if (SmoothScrollSequencer* sequencer = GetSmoothScrollSequencer())
+    sequencer->AbortAnimations();
 
   float x = UserInputScrollable(kHorizontalScrollbar)
                 ? offset.Width()
@@ -248,17 +267,19 @@ void ScrollableArea::UserScrollHelper(const ScrollOffset& offset,
   // TODO(bokan): The userScroll method should probably be modified to call this
   //              method and ScrollAnimatorBase to have a simpler
   //              animateToOffset method like the ProgrammaticScrollAnimator.
-  ASSERT(scroll_behavior == kScrollBehaviorInstant);
+  DCHECK_EQ(scroll_behavior, kScrollBehaviorInstant);
   GetScrollAnimator().ScrollToOffsetWithoutAnimation(ScrollOffset(x, y));
 }
 
 LayoutRect ScrollableArea::ScrollIntoView(const LayoutRect& rect_in_content,
                                           const ScrollAlignment& align_x,
                                           const ScrollAlignment& align_y,
-                                          ScrollType) {
+                                          bool is_smooth,
+                                          ScrollType,
+                                          bool is_for_scroll_sequence) {
   // TODO(bokan): This should really be implemented here but ScrollAlignment is
   // in Core which is a dependency violation.
-  ASSERT_NOT_REACHED();
+  NOTREACHED();
   return LayoutRect();
 }
 
@@ -283,9 +304,10 @@ void ScrollableArea::ScrollOffsetChanged(const ScrollOffset& offset,
   if (Scrollbar* vertical_scrollbar = this->VerticalScrollbar())
     vertical_scrollbar->OffsetDidChange();
 
-  if (GetScrollOffset() != old_offset)
-    GetScrollAnimator().NotifyContentAreaScrolled(GetScrollOffset() -
-                                                  old_offset);
+  if (GetScrollOffset() != old_offset) {
+    GetScrollAnimator().NotifyContentAreaScrolled(
+        GetScrollOffset() - old_offset, scroll_type);
+  }
 
   GetScrollAnimator().SetCurrentOffset(offset);
 }
@@ -397,7 +419,6 @@ void ScrollableArea::WillRemoveScrollbar(Scrollbar& scrollbar,
 }
 
 void ScrollableArea::ContentsResized() {
-  ShowOverlayScrollbars();
   if (ScrollAnimatorBase* scroll_animator = ExistingScrollAnimator())
     scroll_animator->ContentsResized();
 }
@@ -491,14 +512,6 @@ void ScrollableArea::LayerForScrollingDidChange(
         timeline);
   if (ScrollAnimatorBase* scroll_animator = ExistingScrollAnimator())
     scroll_animator->LayerForCompositedScrollingDidChange(timeline);
-}
-
-bool ScrollableArea::ScheduleAnimation() {
-  if (HostWindow* window = GetHostWindow()) {
-    window->ScheduleAnimation(GetFrameViewBase());
-    return true;
-  }
-  return false;
 }
 
 void ScrollableArea::ServiceScrollAnimations(double monotonic_time) {
@@ -597,20 +610,6 @@ void ScrollableArea::ShowOverlayScrollbars() {
   }
 }
 
-IntRect ScrollableArea::VisibleContentRect(
-    IncludeScrollbarsInRect scrollbar_inclusion) const {
-  int scrollbar_width =
-      scrollbar_inclusion == kIncludeScrollbars ? VerticalScrollbarWidth() : 0;
-  int scrollbar_height = scrollbar_inclusion == kIncludeScrollbars
-                             ? HorizontalScrollbarHeight()
-                             : 0;
-
-  return EnclosingIntRect(
-      IntRect(GetScrollOffset().Width(), GetScrollOffset().Height(),
-              std::max(0, VisibleWidth() + scrollbar_width),
-              std::max(0, VisibleHeight() + scrollbar_height)));
-}
-
 IntSize ScrollableArea::ClampScrollOffset(const IntSize& scroll_offset) const {
   return scroll_offset.ShrunkTo(MaximumScrollOffsetInt())
       .ExpandedTo(MinimumScrollOffsetInt());
@@ -623,7 +622,7 @@ ScrollOffset ScrollableArea::ClampScrollOffset(
 }
 
 int ScrollableArea::LineStep(ScrollbarOrientation) const {
-  return PixelsPerLineStep(GetHostWindow());
+  return PixelsPerLineStep(GetChromeClient());
 }
 
 int ScrollableArea::PageStep(ScrollbarOrientation orientation) const {

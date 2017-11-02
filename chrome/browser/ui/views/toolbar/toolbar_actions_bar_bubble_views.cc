@@ -4,10 +4,12 @@
 
 #include "chrome/browser/ui/views/toolbar/toolbar_actions_bar_bubble_views.h"
 
+#include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
 #include "chrome/grit/locale_settings.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/color_palette.h"
+#include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/views/controls/button/label_button.h"
 #include "ui/views/controls/image_view.h"
@@ -34,12 +36,20 @@ ToolbarActionsBarBubbleViews::ToolbarActionsBarBubbleViews(
   set_close_on_deactivate(delegate_->ShouldCloseOnDeactivate());
   if (!anchor_view)
     SetAnchorRect(gfx::Rect(anchor_point, gfx::Size()));
+  chrome::RecordDialogCreation(chrome::DialogIdentifier::TOOLBAR_ACTIONS_BAR);
 }
 
 ToolbarActionsBarBubbleViews::~ToolbarActionsBarBubbleViews() {}
 
 void ToolbarActionsBarBubbleViews::Show() {
-  delegate_->OnBubbleShown();
+  // Passing the Widget pointer (via GetWidget()) below in the lambda is safe
+  // because the controller, which eventually invokes the callback passed to
+  // OnBubbleShown, will never outlive the bubble view. This is because the
+  // ToolbarActionsBarBubbleView owns the ToolbarActionsBarBubbleDelegate.
+  // The ToolbarActionsBarBubbleDelegate is an ExtensionMessageBubbleBridge,
+  // which owns the ExtensionMessageBubbleController.
+  delegate_->OnBubbleShown(
+      base::Bind([](views::Widget* widget) { widget->Close(); }, GetWidget()));
   GetWidget()->Show();
 }
 
@@ -72,7 +82,7 @@ views::View* ToolbarActionsBarBubbleViews::CreateExtraView() {
   if (icon && label) {
     views::View* parent = new views::View();
     parent->SetLayoutManager(
-        new views::BoxLayout(views::BoxLayout::kHorizontal, 0, 0,
+        new views::BoxLayout(views::BoxLayout::kHorizontal, gfx::Insets(),
                              ChromeLayoutProvider::Get()->GetDistanceMetric(
                                  views::DISTANCE_RELATED_CONTROL_VERTICAL)));
     parent->AddChildView(icon.release());
@@ -117,7 +127,7 @@ bool ToolbarActionsBarBubbleViews::Close() {
 void ToolbarActionsBarBubbleViews::Init() {
   ChromeLayoutProvider* provider = ChromeLayoutProvider::Get();
   SetLayoutManager(new views::BoxLayout(
-      views::BoxLayout::kVertical, 0, 0,
+      views::BoxLayout::kVertical, gfx::Insets(),
       provider->GetDistanceMetric(views::DISTANCE_RELATED_CONTROL_VERTICAL)));
 
   // Add the content string.
@@ -155,8 +165,8 @@ int ToolbarActionsBarBubbleViews::GetDialogButtons() const {
 }
 
 int ToolbarActionsBarBubbleViews::GetDefaultDialogButton() const {
-  // TODO(estade): we should set a default where approprite. See
-  // http://crbug.com/621122
+  // TODO(estade): we should set a default where appropriate. See
+  // http://crbug.com/751279
   return ui::DIALOG_BUTTON_NONE;
 }
 
